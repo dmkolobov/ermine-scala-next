@@ -1,7 +1,5 @@
 name := "ermine-javafx-util"
 
-compileOrder := CompileOrder.JavaThenScala
-
 javacOptions in (Compile, compile) ++= Seq("-Xlint:unchecked", "-Xlint:rawtypes")
 
 unmanagedJars in Compile <++= streams map { s =>
