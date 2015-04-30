@@ -18,7 +18,8 @@ version in ThisBuild := "1.0.0-SNAPSHOT"
 initialCommands in ThisBuild := ""
 
 resolvers in ThisBuild ++= Seq(
-    "Bintray JCenter Repo" at "https://dl.bintray.com/bintray/jcenter"
+  "Bintray JCenter Repo"    at "https://dl.bintray.com/bintray/jcenter",
+  "Josh Cough's Maven Repo" at "https://dl.bintray.com/joshcough/maven"
 )
 
 enableTypeCheck in ThisBuild := {
