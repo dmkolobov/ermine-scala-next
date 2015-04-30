@@ -1,0 +1,56 @@
+
+
+We have the relational algebra. The relation algebra is just an ADT with NO knowledge of how it is interpreted. The `Backend` trait specifies the interpretation of the algebra for a particular storage backend, like Vertica, BigTable, whatever.
+
+  trait Backend {
+    def scan[A](r: Relation, f: EphemeralStream[Tuple] -> A): A
+    def materialize(r: Relation): Relation
+    def destroy(r: Relation): Unit
+    def destroyDeep(r: Relation): Unit
+  }
+
+We also have the single-column algebra. This still needs to be worked out, but can use the BAT trait in old reporting project as inspiration. Like the relational algebra, it's also just a pure ADT with no knowledge of how it is interpreted. The `ColumnBackend` specifies the implementation of the algebra for a particular storage backend. Given a `ColumnBackend`, we should be able to derive a `Backend`. This still needs to be worked out, but again, can use the `ColumnStore` trait from the old reporting project as inspiration.
+
+This takes care of the relational view of the data. At this point, we should be able to write a `ColumnBackend` (perhaps a simple, in-memory one), and once we have this example backend, any other dev should be able to write a different backend. 
+
+Next step is defining the structured view of the data. This is going to involve:
+
+* Nail down the Expr ADT. This is basically done: 
+
+  data Expr = 
+    Atom Primitive Type |
+    Apply Expr Expr |
+    Lambda Name Type Expr |
+    Variable Name |
+    Builtin (Expr -> Expr) Type Type
+
+  data Primitive = 
+    Number Double |
+    Str String |
+    Date | ...
+    Product (Set Primitive) |
+    Relation r
+
+ALL non-scalar data should be backed by relations. Don't want the user to be able to define in-memory data types. There's no need to define your own datatypes - you just implement each function over your data type in terms of the relational representation of your data type. 
+
+* Relational representation of list - 2-column relation with (index, value)
+* Relational representation of tree - 2-column relation with (path, value)
+* Relational representation of option - 1-column relation where the value is either there, or missing
+
+We will need a very simple type declaration ADT:
+
+  data Alias = Alias { inputType :: Type, name :: Name }
+
+This makes the given name available as a type `Var`, and also exposes a function from `inputType` to `Union inputType (Var name)`. This is the value constructor for that type. "Unwrapping" is automatic with union types. 
+
+Notes: 
+
+We can have some Scala functions for converting Expr to various Scala types, like EphemeralStream, etc.
+
+Don't need Atom in the type calculus. Variable is sufficient. 
+
+Likewise, don't need to have declarations in the value calculus. Variable is sufficient here as well. The lambda evaluator will accept an initial environment - this environment can be populated by the user interacting with the lambda editor. 
+
+At this point, we have all the building blocks we need to persist and unpersist Java/Scala objects. Might need to write some additional helper functions, but we're basically good. We can also define the document - it's just a (relation, query) pair, where the query extracts some structured object. 
+
+how would you write a DMTL function that takes a relation, and returns f1 if the relation is empty, and f2 otherwise

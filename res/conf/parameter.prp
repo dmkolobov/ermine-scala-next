@@ -1,0 +1,3 @@
+# How mutable paramters are rounded - number of places to the right of the decimal
+# If missing, default is 8
+roundingScale=8

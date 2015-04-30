@@ -1,0 +1,129 @@
+<h1 id="dmtl-tutorial">DMTL Tutorial</h1>
+<p>DMTL is a language for building custom reports, inspired significantly by the Haskell programming language (along with some related research). Like Haskell, it is a functional language, and programs are constructed by giving a series of definitions of types and values. The values in the language are immutable, and variables cannot be reassigned; variables are simply names for a value (although names can be shadowed in local definitions). Also like Haskell, functions are first-class values in DMTL, and can be passed around like any other value.</p>
+<p>DMTL also has built-in support for various relational algebra operations. It has types for database rows and entire relations, and functions for manipulating them.</p>
+<h2 id="basic-syntax">Basic Syntax</h2>
+<p>A DMTL source file consists of a sequence of definitions, presented as equations. For instance:</p>
+<pre><code>m = 5
+</code></pre>
+<p>defines the variable <code>m</code> to be bound to the value 5. Normal identifiers must start with an alphabetic character and may continue with alphanumeric characters, <code>'</code> and <code>_</code>. Functions may also be specified in this manner, by giving a sequence of argument identifiers like so:</p>
+<pre><code>const x y = x
+</code></pre>
+<p>This definition form mirrors the use of functions; if <code>f</code> is a function, and <code>x</code> is a value of the appropriate type, then <code>f x</code> denotes the result of <code>f</code> when fed the value <code>x</code>. Parentheses are necessary only for grouping. Function application is left-associative, so <code>f x y z</code> is equivalent to <code>((f x) y) z</code>. DMTL also has function literals, traditionally known as lambda expressions, for when a function is needed in-line and isn't worth giving a name. For instance, the definition:</p>
+<pre><code>konst = x y -&gt; x
+</code></pre>
+<p>is equivalent to the previous definition, and uses a function literal on the right hand side instead of a parameter list on the left.</p>
+<p>Definitions may also be accompanied by an optional type specification, consisting of the name followed by a colon followed by the type:</p>
+<pre><code>n : Int
+n = 5
+
+id'int : Int -&gt; Int
+id'int x = x
+</code></pre>
+<p>The second definition is given the type of functions from Int to Int. The <code>-&gt;</code> operator is right associative, meaning that <code>T -&gt; U -&gt; V</code> is equivalent to <code>T -&gt; (U -&gt; V)</code>. This matches appropriately with the left associative application like so:</p>
+<pre><code>f : A -&gt; B -&gt; C -&gt; D -&gt; Z
+f a b c d = ...
+</code></pre>
+<p>Definitions may refer to the name being defined, allowing for recursive definitions:</p>
+<pre><code>factorial : Int -&gt; Int
+factorial n = if (n == 0) 1 (n * factorial (n - 1))
+</code></pre>
+<p>And like Haskell, infinite structures may be constructed by recursion, and are lazily evaluated.</p>
+<pre><code>ones : List Int
+ones = 1 :: ones
+</code></pre>
+<p>where <code>::</code> constructs a list from a head element and a tail list.</p>
+<p>Comments are currently limited to a single line, and are introduced by two dashes:</p>
+<pre><code>some code -- this is a comment
+</code></pre>
+<h2 id="types">Types</h2>
+<h3 id="standard-types">Standard Types</h3>
+<p>DMTL has a number of primitive, specially handled or just predefined types.</p>
+<ul>
+<li><p><code>Int</code></p>
+<p>This is the type of machine-length integers. Integer literals have this type, and there are basic arithmetic functions defined for them.</p></li>
+<li><p><code>String</code></p>
+<p>This is the type of character strings. String literals are delimited by double quotes, and there are a few primitive functions for working with strings.</p></li>
+<li><p><code>Double</code></p>
+<p>This is the usual type of double-precision floating point numbers. There are as yet no literals for Double, but they can be produced by using mkDouble with a string.</p></li>
+<li><p><code>List</code></p>
+<p>Lists are not technically a primitive type, but they receive special handling. <code>[]</code> denotes an empty list, while <code>h :: t</code> builds a list out of a head element <code>h</code> and a tail list <code>t</code>. There is also special syntax for defining a list with several given elements:</p>
+<pre><code>[1] : List Int
+[1, 2] : List Int
+[1, 2, 3] : List Int
+...
+</code></pre></li>
+<li><p><code>Bool</code></p>
+<p>Bools are not primitive either, but they are defined in the default prelude. They have constructors <code>True</code> and <code>False</code>, and can be branched on using the <code>if</code> function (or the <code>bool</code> function, which takes the boolean condition last, if that's more convenient). Due to DMTL's lazy evaluation, <code>if</code> is just a regular function; no special forms are necessary to delay the evaluation of the branches.</p></li>
+<li><p><code>List#</code>, <code>Maybe#</code>, <code>Pair#</code>, <code>Function1</code>, <code>Function2</code>, ...</p>
+<p>These are imports of corresponding Scala types. There are conversions between similar DMTL types and these, for interoperation.</p>
+<pre><code>listIn  : List# a -&gt; List a
+listOut : List a -&gt; List# a
+
+toFn2 : (a -&gt; b -&gt; c) -&gt; Function2 a b c
+</code></pre></li>
+</ul>
+<p>These are mainly used for interoperation with imported Scala code. For instance, the report writers are defined in Scala, imported into DMTL using these primitive functions, and then wrappers are written to give them more sensible DMTL types.</p>
+<h3 id="algebraic-data-types">Algebraic Data Types</h3>
+<p>DMTL is not limited to the predefined types above; new types can be introduced using the <code>data</code> keyword. These declaration allow one to define types by giving a series of constructors by which it can be built. Each constructor is a name followed by a series of types indicating the fields it should contain, and the constructors for each data type should be separated by <code>|</code>. For instance, the type of booleans above is just an ordinary data type:</p>
+<pre><code>data Bool = False | True
+</code></pre>
+<p>Data types may also be parameterized by one or more types by giving a list of variables, similar to the definition of a function. For instance:</p>
+<pre><code>data Maybe a = Nothing | Just a
+</code></pre>
+<p>This defines an entire family of types; a <code>Maybe Int</code> is either <code>Nothing</code> or <code>Just (n : Int)</code>, et cetera.</p>
+<p>Finally, data types may refer to themselves on the right hand side of the definition, allowing one to create recursive types. For instance, the above-mentioned <code>List</code> is just:</p>
+<pre><code>data List a = Nil | (::) a (List a)
+</code></pre>
+<p>(<code>[]</code> is sugar for <code>Nil</code>, and <code>(::)</code> is a way to write <code>::</code> prefix.) So a <code>List a</code> is either an empty list or an element of type <code>a</code> prepended to another <code>List a</code>.</p>
+<p>Finally, all data definitions of this type generate an eliminator, allowing one to do case analysis on the constructors, determining which constructor was used to generate a given value, and branching on the result. The eliminator is given the name of the type with the first letter down-cased. The following are the eliminators for the above types:</p>
+<pre><code>bool  : r -&gt; r -&gt; Bool -&gt; r
+maybe : r -&gt; (a -&gt; r) -&gt; Maybe a -&gt; r
+list  : r -&gt; (a -&gt; List a -&gt; r) -&gt; List a -&gt; r
+</code></pre>
+<p>In general, the eliminators have the following form:</p>
+<ol style="list-style-type: decimal">
+<li>The eliminator takes a value of the data type to a value of a result type <code>r</code>, making the last bit <code>T -&gt; r</code>, with <code>T</code> being the data type.</li>
+<li>For each constructor, there is one additional argument to the eliminator.</li>
+<li>The type of each extra argument is that of functions from all the fields of the particular constructor to the result type.</li>
+<li>The additional arguments to the eliminator appear in the order the constructors were specified in the definition.</li>
+</ol>
+<p>So, for instance, the simplest eliminator would be for the 'empty' type:</p>
+<pre><code>data Empty -- no = is necessary when there are no constructors
+empty : Empty -&gt; r
+</code></pre>
+<p>Eliminators work by analyzing their last argument, and dispatching to the function corresponding to the constructor the analysis finds, so for instance:</p>
+<pre><code>bool x y False = x
+bool x y True  = y
+</code></pre>
+<p>given the definition of <code>Bool</code> above. Also:</p>
+<pre><code>list z f Nil       = z
+list z f (x :: xs) = f x xs
+</code></pre>
+<p>In the case of <code>Empty</code>, we have no constructors, so one can think of it being an empty set of cases. In practice, the only way to create a value of type <code>Empty</code> is with a vicious loop like so:</p>
+<pre><code>bad : Empty
+bad = bad
+</code></pre>
+<p><code>empty</code> will try to evaluate this value, and spin in an infinite loop, giving you a similar looping value of whichever <code>r</code> you have chosen to eliminate into.</p>
+<h3 id="parametric-polymorphism">Parametric Polymorphism</h3>
+<p>In the types of the eliminators above (and a couple other places), we made use of a variable <code>r</code>, intending it to mean that the eliminator works for every choice of type we wish to fill in for it. However, this was not just a convention of this tutorial; DMTL genuinely allows types containing variables, provided the definition is sufficiently oblivious to what that variable may be filled in with. For instance, a more general type for our identity function above is:</p>
+<pre><code>id : a -&gt; a
+id x = x
+</code></pre>
+<p>as it behaves exactly the same way regardless of the type of its argument. Another way of writing the same type is:</p>
+<pre><code>forall a. a -&gt; a
+</code></pre>
+<p>explicitly quantifying the variable (DMTL will typically display types in this format). Further, DMTL is able to infer types of this format, so if we left the type annotation off, it would determine that <code>id</code> should have this type. Some other types of this form for above definitions are:</p>
+<pre><code>const, konst : forall a b. a -&gt; b -&gt; a
+bad          : forall a. a
+Nothing      : forall a. Maybe a
+Just         : forall a. a -&gt; Maybe a
+</code></pre>
+<p>Polymorphic functions like these are also first-class entities in DMTL, and can be passed around in functions. This feature is typically called higher-rank polymorphism. For instance, if we consider the following function:</p>
+<pre><code>f g = (g [1, 2, 3], g ['a', 'b', 'c'])
+</code></pre>
+<p><code>g</code> is used with both a <code>List Int</code> and a <code>List Char</code>, so we need it to be capable of being used at multiple different types. This can be achieved by giving <code>f</code> the following signature:</p>
+<pre><code>f : forall r. (forall a. List a -&gt; r) -&gt; (r, r)
+</code></pre>
+<p>This says that <code>g</code> has the type <code>forall a. List a -&gt; r</code>, and we can then instantiate <code>a = Int</code> in the first use and <code>a = Char</code> in the second.</p>
+<p>Unfortunately, types of this sort cannot be inferred. If they are desired, specific annotations must be given to help DMTL determine what type you are expecting. The default mode of inference is to assume that all variables will be quantified outermost, fitting with the convention that <code>a -&gt; a</code> is an abbreviation for <code>forall a. a -&gt; a</code>, for instance, and not <code>(forall a. a) -&gt; (forall a. a)</code>.</p>
+<h3 id="relational-algebra">Relational Algebra</h3>

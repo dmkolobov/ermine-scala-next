@@ -1,0 +1,247 @@
+-- Prelude
+
+($) : (a -> b) -> a -> b
+f $ x = f x
+
+data Maybe a = Just a | Nothing
+
+data List a = Nil | Cons a (List a)
+
+listToMaybe : List a -> Maybe a
+listToMaybe Nil        = Nothing
+listToMaybe (Cons a _) = Just a
+
+data Bool = True | False
+
+and : Bool -> Bool -> Bool
+and True True = True
+and _ _       = False
+
+data Ordering (a : Rho) = external
+
+emptyOrdering : Ordering a
+emptyOrdering = external
+
+asc : f -> Ordering (| .. a |) -> Ordering (| f .. a |)
+asc = external
+
+desc : f -> Ordering (| .. a |) -> Ordering (| f .. a |)
+desc = external
+
+scan : [| .. a |] -> Ordering a -> IO (List {| .. a |})
+scan = external
+
+-- with this we can build an IO monad, but we have pretty flexible tuples, so can we build up a notion of classes on them?
+-- IO monad
+(>>=) : IO a -> (a -> IO b) -> IO b
+return : a -> IO a
+
+class Functor f with
+    map : (a -> b) -> f a -> f b
+
+-- defines:
+--     mkFunctor : {| map : \/ a. (a -> b) -> f a -> f b |} -> Functor f
+--     runFunctor : Functor f -> {| map : \/ a. (a -> b) -> f a -> f b |}
+
+class Pointed f <: Functor f with
+    return : a -> f a 
+
+-- defines a term
+--     mkPointed : {| map : \/ a. (a -> b) -> f a -> f b, return : \/ a. a -> f a |} -> Pointed f
+--     runPointed :: Pointed f -> {| map : \/ a. (a -> b) -> f a -> f b, return : \/ a. a -> f a |}
+    
+class Applicative f <: Pointed f where
+    ap :: f (a -> b) -> f a -> f b
+
+since this is repetitive lets use the data field syntax
+
+data field Map f : (a -> b) -> f a -> f b
+data field Return f : a -> f a
+data field Ap f : f (a -> b) -> f a -> f b
+data field Bind f : (a -> f b) -> f a -> f b
+
+mkFunctor :: {| Map f |} -> Functor f
+mkPointed :: {| Map f, Return f |} -> Pointed f
+mkApplicative :: {| Map f, Return f, Ap f |} -> Applicative f
+mkMonad :: {| Map f, Return f, Ap f, Bind f |} -> Monad f
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- defines
+--     
+
+class Monad f <: Applicative f where
+    bind  :: (a -> f b) -> f a -> f b
+
+-- defines a type
+--     mkMonad : \/ f. [| map : forall a. (a -> b) -> f a -> f b
+--                          , return : forall a. a -> f a
+--                          , ap : forall a. f (a -> b) -> f a -> f b
+--                          , bind :: forall a b. (a -> f b) -> f a -> f b
+--                          |] -> Monad f
+
+data field Map f = (a -> b) -> f a -> f b
+data field Return f = a -> f a
+data field Ap f = f (a -> b) -> f a -> f b
+data field Bind f = (a -> f b) -> f a -> f b
+data field Get f s = f s
+data field Put f s = s -> f ()
+
+data table Functor f with
+	Map f
+
+data table Pointed f : Functor f with
+        Return f
+
+data table Monad f : Pointed f with
+        Ap f
+
+data table Bind f : Applicative f with
+        Bind f
+
+data table MonadState f s : Monad f with
+        Get f s
+        Put f s
+
+
+data State s a = State (s -> (a, s))
+
+stateMonad : MonadState (State s) s
+stateMonad = 
+    {
+	map    : f (State g) => State (s0 => let (a, s1) = g s0 in (f a, s0))
+        return : a => State (s => (a, s))
+        bind   : ...
+
+
+    }
+
+    
+type FunctorRow f = (| map :: (a -> b) -> f a -> f b |)
+type AddReturn f rest = (| return :: a -> f a |)
+type AddAp f rest = (| ap :: f (a -> b) -> f a -> f b .. rest |)
+type AddBind f rest = (| bind :: f a -> (a -> f b) -> f b .. rest |)
+type AddState f s rest = a -> (| get :: f s, put :: s -> f () .. rest |)
+
+type Functor = {| .. FunctorRow f |} 
+
+type 
+
+type Monad f = AddBind 
+
+data State s a = State (s -> (a, s))
+
+stateMonad : {| .. AddState State s (Monad (State s)) |} 
+stateMonad = 
+    {
+        map : f (State g) =>  State (\s0 -> let (a, s1) = g s0 in (f a, s0)),
+        return : a = State (s => (a, s)),
+        bind : f (State g) => State (s0 => let (a, s1) = g s0 in runState (f b) s1)
+        ap :                                           
+    }
+
+data StateT s m a = StateT (s -> m (a, s))
+
+stateTMonad : Monad m -> Monad (StateT s m)
+stateTMonad = 
+
+
+-- defines fields
+--     data field Monad_map map f : a b. (a -> b) -> f a -> f b
+--     ...
+
+
+-- these class definitions run counter to the assumption that field types are fully specified and give rise to a class of type indexed families of fields                      
+
+
+state : Monad
+state = [| return = 
+    
+    
+
+type Functor f = {| map : forall a b. (a -> b) -> f a -> f b |}
+type Monad f   = {| return : forall a. a -> f a, (>>=) : IO a -> (a -> IO b) -> IO b) .. |}
+
+monadMap :: ({| return :: a -> f a
+              , (>>=) :: f a -> (a -> f b) -> f b 
+             .. xs |} ->
+             {| return :: a -> f a
+              , (>>=) :: f a -> (a -> f b) -> f b
+              , map :: (a -> b) -> f a -> f b
+           {| 
+
+
+matches :: Predicate a -> {| .. a |} -> Bool
+matches = external
+
+columnEq :: f -> FieldType f -> Predicate (| f .. |)
+columnEq = external
+
+
+select :: f -> [| f .. |] -> [| f |]
+select = external
+
+(!) :: {| f .. |} -> FieldType f
+(!) = external
+
+except :: f -> [| f .. a |] -> [| .. a |] 
+except = external
+
+-- partition :: f -> [| f .. a |] -> ([| f |], [| .. a |])
+partition f rel = (select f rel, except f rel)
+
+-- intrinsic
+first :: Predicate a -> [| .. a |] -> Maybe {| .. a |} 
+
+Paul = fromJust $ first Clarifi EmpName "Paul Chiusano"
+
+data table Employee with
+    EmpID : int
+    EmpName : string
+    DeptID : int
+
+data table Department with
+    DeptID : int
+    DeptName : string
+
+EmployeeDepartments :: [| EmpID, EmpName, DeptID, DeptName |]
+EmployeeDepartments = join Employee Department
+
+-- ClariFi :: [| EmpID, EmpName |]
+ClariFi = project (| EmpID, EmpName |) $ filter (columnEq DeptName "ClariFi") EmployeeDepartments
+
+project : (x : Row) -> 
+
+
+data IO a where
+    GetChar :: (Char -> IO a) -> IO a
+    PutChar :: Char -> IO a -> IO a
+    Return  :: a -> IO a
+
+
+
+foo = do
+    x <- getChar
+
+    
+    
+
+
+    
+
+syntactic consequences:
+    lazy interpretation
+    IO can be managed through an explicit pump and a free monad of IO actions/FFI considerations
+    terms that depend on types do not infer those types, the type argument gets plumbed explicitly
+
+    

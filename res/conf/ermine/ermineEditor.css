@@ -1,0 +1,107 @@
+.root {
+  -fx-background-color: #DDDDDD;
+}
+
+#flow-strut {
+  -fx-padding: 2;
+}
+
+#corner-button-pane {
+  -fx-padding: 8;
+}
+
+#header-label {
+  -fx-fill: #000000;
+  -fx-font-size: 12px;
+  -fx-background-color: #BDBAD6;
+  -fx-padding: 0 0 2 2;
+}
+
+#header-content {
+  -fx-padding: 6;
+}
+
+#header-pane {
+  -fx-border-color: #BDBAD6;
+  -fx-border-width: 2;
+  -fx-background-color: #FFFFFF;
+}
+
+#fix-width-label {
+  -fx-font-weight: bold;
+}
+
+.Ermine {
+}
+
+.label:focused {
+  -fx-text-fill: #FF0000;
+}
+
+.literal {
+  -fx-text-fill: #008800;
+}
+
+.hole {
+  -fx-text-fill: #FF0000;
+  -fx-font-weight: bold;
+  -fx-border-color: #BBBBBB;
+  -fx-border-width: 1;
+}
+
+.let {
+  -fx-text-fill: #808080;
+}
+
+.letIn {
+  -fx-text-fill: #808080;
+}
+
+.variable {
+  -fx-text-fill: #000000;
+}
+
+.paren {
+  -fx-text-fill: #808080;
+}
+
+.termVar {
+  -fx-text-fill: #0000FF;
+}
+
+.bracket {
+  -fx-text-fill: #008080;
+}
+
+.brace {
+  -fx-text-fill: #008080;
+}
+
+.lambda {
+  -fx-text-fill: #800080;
+}
+
+.bindingContainer {
+  -fx-padding: 5;
+}
+
+.binding {
+}
+
+.hoverHighlight {
+  -fx-text-fill: #FF0000;
+  -fx-font-weight: bold;
+}
+
+.caret {
+  -fx-background-color: #CECFFF;
+  -fx-border-width: 0 0 2 0;
+  -fx-border-color: black;
+}
+
+.statusBar {
+	-fx-background-color: #CCCCCC;
+}
+
+.statusText {	
+}

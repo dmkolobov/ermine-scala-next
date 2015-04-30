@@ -1,0 +1,6 @@
+#Contains configuration information used by InputGroup and their related classes
+
+doExport=false
+
+#This value must be >=1.
+historySize=20

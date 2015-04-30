@@ -1,0 +1,35 @@
+
+  // subtract :: f -> {| f .. etc |} -> {| .. etc |} 
+  // subtract f { 'f .. etc } = { .. etc }  
+
+  // case object SubtractT extends E[TTyp] // :: Name -> Rho -> Rho
+
+  // select :: f -> {| f .. |} -> {| f |} 
+
+  // case object SelectT extends E[TTyp]   // :: Name -> Rho -> Rho
+
+  // Row Types
+  // [] :: Rho
+  // [..a] :: Rho
+  // [name:Type..a] :: Rho
+  // [id:Int,name:String..a] :: Rho
+  // [id:Int,name:String..] 
+  // [a..b]
+  // [a]
+
+  // Tuples
+  // {| .. |} 
+  // {| id : int, name : string |} 
+
+  // { id : 12, name : "Edward Kmett" } : {| id : int, name : string |}
+
+  // Relations
+  // [|..|]
+  // [| id : Int, name : String ... a |]
+
+  // [ { id : 1, name : "Paul" }
+  // , { id : 2, name : "Runar" }
+  // ] : [| id : Int, name : String |]
+
+  // joinRelation :: [|..a|] -> [|..b|] -> [|..a ++ b|]
+

@@ -1,0 +1,124 @@
+This document describes the Ermine raw data API. The API consists of a set of interfaces for creating, manipulating, and persisting data. The purpose of these interfaces is to make the framework agnostic to the particular storage backend. Code written in terms of these interfaces should work, without modification, whether the backend is a simple in-memory database or a clustered fleet of remote servers. 
+
+First, we'll introduce `Relation`, which is the abstract representation of data in [http://en.wikipedia.org/wiki/Relational_model relational form]. `Relation` is not tied to a particular backend - the interface `Backend` is responsible for knowing how to pull data out of a `Relation`.
+
+As discussed in the [[Ermine overview|overview]], Ermine makes a distinction between raw and structured data. The user ultimately interacts with some structured view of the data, but a Ermine-enabled workflow will always output data in raw or relational form. *Data in Ermine is always persisted in relational form*, the exception being data exported out of Ermine to some non-relational target such as Excel or Swing.
+
+The relational form is the data reduced to a set of tuples and a header, where a header is a set of types (in SQL this would be a list of column names), and each tuple is a map from type to a value. We notate this as:
+
+    type Header = Set Type 
+    type Tuple = Map Type Value
+    type Model = (Header, Set Tuple)
+
+This is [http://haskell.org Haskell] type [http://en.wikibooks.org/wiki/Haskell/Type_declarations#type_for_making_type_synonyms aliasing syntax]. We'll be using Haskell notation throughout this document.
+
+Here, `Model` is not meant to suggest any particular implementation or representation - it is an abstract model (Luke Palmer's [http://lukepalmer.wordpress.com/2008/07/18/semantic-design/ Semantic Design] discusses this kind of separation in more detail). We construct, interact with, and manipulate the logical set of tuples implied by this model purely in terms of the following algebra:
+
+    data Relation = 
+      One |
+      Empty (Set Type) |
+      Atom Value Type |
+      Join Relation Relation |
+      Union Relation Relation |
+      Minus Relation Relation |
+      Filter Relation Predicate |
+      Project Relation (Set Type) |
+      Rename Relation Type Type |
+      Combine Relation (Set Type) Type Op |
+      Ref RefID Type
+
+This is the *Relation algebraic data type (ADT)*, given using Haskell [http://en.wikibooks.org/wiki/Haskell/Type_declarations#data_and_constructor_functions data declaration notation]. In this notation, an [ADT](http://en.wikipedia.org/wiki/Algebraic_data_type) is given as a `|`-delimited list of *data constructors* (or just "constructors"). Each constructor has an ordered tuple of *fields*. Above, `One`, `Empty`, `Atom`, `Join`, etc are all constructors. `Join`, for instance, has two fields, both of which are relations. Valid `Relation` values can be any one of the `Relation` constructors. So, given some relations, `a` and `b`, `Join a b` is also a relation, as is as is `Union b a`, `Empty cs`, etc.
+
+`Relation` is essentially the [relational algebra](http://en.wikipedia.org/wiki/Relational_algebra) and can be mapped easily to an SQL query - `Type` (with an uppercase 'T') is used where a column name would be used in SQL. Note that `Type` is not literally an alias for `String`; `Type` is itself an ADT that will be introduced later.
+
+The constructors of the `Relation` ADT have the following meanings:
+
+* `One`: represents a relation with an empty header (an empty set of columns), and a single, empty tuple
+* `Empty`: represents a relation with the given header and no tuples
+* `Atom`: represents a relation with a single column and a single tuple with a corresponding value for that column
+* `Join`: represents the natural join of two relations
+* `Union`: represents the union of the two sets of tuples contained in both relations (this operation is only defined for two relations of the same type)
+* `Minus`: represents the relation formed by removing all tuples present in the second relation from the set of tuples in the first relation (this operation is only defined for two relations of the same type)
+* `Filter`: represents the relation formed by retaining only the tuples matching the given predicate
+* `Project`: represents the relation formed by retaining only the given columns, and retaining only the tuples unique with respect to these columns
+* `Rename`: represents the relation formed by changing the name of the first column to that of the second column (this operation is only defined when the source and target names are compatible)
+
+See [http://en.wikipedia.org/wiki/Relational_algebra relational algebra] for more details. 
+
+There are two constructors here that aren't part of the relational algebra, `Combine` and `Ref`:
+
+* `Combine`: represents the relation formed by combining the given columns using the specified operation (the `Op` ADT is discussed later, but it will at a minimum include things like addition subtraction, multiplication, etc). The new relation will have one additional column of the given `Type`.
+* `Ref`: a backend-specific reference to some existing relation. 
+
+`Relation` is so far purely symbolic - there is no way to get at the tuples that logically back each `Relation`. Actually evaluating a `Relation` is a separate concern, handled by an instance of the interface `Backend`: 
+
+    class Backend g where
+      data RefID g :: *
+      scan :: (Relation, Iteratee Tuple a) -> g (Iteratee Tuple a)
+      materialize :: Relation -> g RefID
+      destroy :: RefID -> g ()
+
+This is [http://en.wikibooks.org/wiki/Haskell/Class_declarations Haskell typeclass syntax] - `class` here is roughly synonymous with `interface` in Java - `g` is a type parameter to the interface. The interface consists of three functions, each with a name and a signature. The `materialize :: Relation -> g RefID` line, for instance, declares that an implementation of `Backend` will have a function called `materialize`, which takes as input a `Relation`, and returns a `g RefID`. 
+
+The behavior of these functions is as follows:
+
+* `scan`: iterate over the set of tuples contained in the given relation, resulting in value of type `a`. The `Iteratee` interface defines the function used for the iteration and serves much the same purpose as an `[Tuple] -> a`. For more background on `Iteratee`, see [http://themonadreader.files.wordpress.com/2010/05/issue16.pdf Iteratee: Teaching an Old Fold New Tricks].
+* `materialize`: persists the given `Relation` and returns a handle to its persisted form
+* `destroy`: deletes the `Relation` corresponding to the given `RefID`
+
+All methods on the `Backend` return their values within some type, `g`. To actually pull the value out, we use the following interface:
+
+    class Run g where
+      run :: g a -> config -> IO a
+
+Code that needs to be agnostic to the storage backend will generally take an instance of the `Backend` and `Run` interfaces as parameters. 
+
+`Relation` details
+------------------
+
+As discussed above, Ermine uses a `Type` ADT instead of simple `String` column names:
+
+    data Type =
+      Label String Type | 
+      Primitive PrimitiveType |
+      Tuple [Type] |
+      Conjunction (Set Type) |
+      RelationType (Set Type)
+
+    data PrimitiveType = 
+      Int | Double | ... | Date | ...
+   
+As an example, an "age" column of a table could be modeled with the value `Conjunction (Set [Variable "age", Variable "int"])`. Generally, one of the members of `Conjunction` will be a `Variable` corresponding to a primitive type, like `int`. The ADT also indicates that `Relation` can be nested - a `Relation` can contain another `Relation` as one of its columns, although this ability might not be supported by all backends.
+
+The `Type` ADT includes a few other constructors, since `Type` is also used by the [[Ermine - DMTL|DMTL]] to model the type of expressions in that language. However, these other constructors will not appear as columns in a `Relation`.
+
+The `Predicate` ADT is intended to capture expressions that could realistically be directly implementable by a backend.
+
+    data Predicate =
+      Atom Bool |
+      Lt Type Type | 
+      Gt Type Type |
+      Eq Type Type |
+      Not Predicate |
+      Xor Predicate Predicate |
+      Or Predicate Predicate |
+      And Predicate Predicate
+
+The binary predicates all take two column names and compare pairwise. Note that arbitrary predicates besides these can be implemented using scans. The intent here is that most of these predicates could be directly interpreted by a backend (for instance, mapped to an SQL "where" clause), so the filtering is done within the database.
+
+Implementation notes and requirements
+-------------------------------------
+
+Since Ermine does not persist data in non-relational form, this implies that structured data types are never actually materialized - their access functions are always implemented in terms of relational expressions. So, for instance, a `List` can be modeled with a two-column `Relation` - an integer index column and a value column. The various functions defined for `List` are simply transformations of these two-column relations (for instance, to obtain the first element, we `Filter` the original `Relation` only rows whose index column is equal to 1, then project out just the value column). 
+
+Because all data access is ultimately implemented using relational expressions, a good backend will implement certain operations efficiently:
+
+* `Filter` will ideally not require scans of the full set of tuples, regardless of what columns are filtered on. This translates to the recommendation that the data be indexed by every column, although this isn't an absolute requirement and probably won't matter for small relations. 
+* `Project` should be fast, especially for the common case of retaining just a single column (again, this will be fast as long as there is an index for that column). Accessing the values of a deeply nested data structure formed from a `Relation` will generally be a series of filters, followed by a project of a single column to pull out the relevant values. 
+
+Other notes:
+
+* In general relations will be relatively small since they are the output of individual workflows and the data is generally meant to be consumed by humans. Queries requiring scans are probably acceptable in many instances. Still, it would be preferable if the backend was robust enough to scale to larger datasets.
+* The backend should not place limits on the number of persisted relations / tables per database, or else should provide some way of logically combining databases to behave as a single database (for instance, SQLite's [ATTACH statement](http://www2.sqlite.org/lang_attach.html)). This is to enable data from multiple workflows to be combined easily. 
+* For a simple SQL-backed implementation, each Relation would correspond to a select statement. The various operations could be defined by combining the select statements appropriately. Materializing the cube amounts to pumping the results of the select statement into a fresh table with new name, n, and "resetting" the select statement back to a `select * from n`.
+* An SQL implementation need not (and probably should not) map each `Relation` to a single table. We can store each column of the table separately. In fact, it's possible to derive a full implementation of the `Backend` interface from a "single column" backend. The general idea is to store an id along with each value of every column. To reconstruct the full table, we `select *` from an arbitrary column, then join on the id dimension of every other column. (This is similar to the star or snowflake schema used in OLAP settings.)

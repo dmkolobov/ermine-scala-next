@@ -1,0 +1,66 @@
+module Sample where
+
+-- fields to use as tags for layout 
+field Table a : a;
+field Left a : a;
+field Right a : a;
+field Top a : a;
+field Bottom a : a;
+
+type Woot x = x;
+
+foo : (Int:*) -> (Int:*) -> Int;
+foo x y = plus x y;
+
+field HCons a b : { Left a, Right b };
+field VCons a b : { Top a, Bottom b };
+field TabCons a b : { Left a, Right b};
+
+-- layout combinators
+tableLayout : [..r] -> { Table [..r] };
+tableLayout h r = { Table: r }; 
+
+hcons l r = {HCons: {Left: l, Right: r}};
+vcons t b = {VCons: {Top: t, Bottom: b}};
+tabcons l r = {TabCons: {Left: l, Right: r}};
+
+field Ind : Int;
+field Index a : a;
+type Indexed t = [Ind .. t];
+field Value a : a;
+field Extract a : a;
+type ListT a = {List a};
+
+-- list2 : Indexed [] -> MapT Indexed r -> (r -> a) -> ListT a;
+-- list2 ind val e = {List: {Index: ind, Value: val, Extract: e}};
+
+-- actually, this is overkill, just do:
+field List a : {
+  Index [Ind], 
+  Value v,
+  Extract (Int -> v -> a)
+};
+
+field PInd : Int;
+type PIndexed a = [PInd Int ..a]; 
+field Tree k a : {
+  Value v,
+  Extract (Int -> v -> a) -- v -> ListT k -> v
+};
+type TreeT k a = {Tree k a};
+field Path a : Indexed (PIndexed a); 
+
+tree : Indexed [] -> Indexed (PIndexed k) -> MapT Indexed r -> 
+       (r -> a) -> TreeT k a;
+tree ind paths rels f = 
+  {Index: ind, Path: paths, Value: rels, Extract: f};
+
+field Drilldown a : a;
+drilldown : ListT (TreeT k v) -> { Drilldown (ListT (TreeT k v)) }; 
+drilldown ts = {Drilldown: ts};
+
+-- now can write actual template
+-- type alias for PA data - basically the schema for the data
+-- probably requires generating all the fields for this
+
+
