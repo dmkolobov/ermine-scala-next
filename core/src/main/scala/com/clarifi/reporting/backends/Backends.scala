@@ -43,7 +43,6 @@ object Runners {
   def SQLite(url: String): Run[DB]             = DB.Run("org.sqlite.JDBC")(url)
   def Postgres(url: String): Run[DB]           = DB.Run("org.postgresql.Driver")(url)
 
-  def testDB: Run[DB] = DB.msSqlTestDB
   def liteDB: Run[DB] = DB.sqliteTestDB
 
   def cloudDB: Run[DB] = {
