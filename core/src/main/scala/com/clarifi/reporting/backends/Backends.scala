@@ -52,7 +52,7 @@ object Runners {
     val password = System.getProperty("db.dev.password")
     val url      = System.getProperty("db.dev.ds.url")
     val pwConnectString = ";user=%s;password=%s".format(user,password)
-    val connectUrl = url + if (!(user eq null) && !(password eq null)) pwConnectString else ""
+    val connectUrl = url + (if (!(user eq null) && !(password eq null)) pwConnectString else "")
     DB.Run("net.sourceforge.jtds.jdbc.Driver")(connectUrl)
   }
 
