@@ -1,6 +1,7 @@
 package com.clarifi.reporting
 package writers
 
+/*
 import scalaz.NonEmptyList
 
 import org.scalacheck.{Arbitrary, Gen, Prop, Properties}
@@ -10,7 +11,7 @@ import Prop.{AnyOperators, forAll, propBoolean, secure}
 import com.clarifi.{reporting => ccr}
 import ccr.PrimExpr
 
-/*object TestWriters extends Properties("writer API") {
+object TestWriters extends Properties("writer API") {
   implicit val primexpr = Arbitrary(ccr.RelationGens.genPrimExpr)
 
   property("toPrimExprNel encodes all PrimExprs") = forAll {(pe: PrimExpr) =>

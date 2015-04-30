@@ -2,17 +2,19 @@ package com.clarifi.reporting
 package ermine
 
 import com.clarifi.reporting.{ PrimT }
-import com.clarifi.reporting.ermine.Document.{ ordinal, text }
+import scalaparsers.Document.{ ordinal, text }
 import com.clarifi.reporting.ermine.Relocatable.{ preserveLoc }
 import scala.collection.Iterable
 import scalaz.{ Show, Equal }
 import scalaz.Scalaz._
+import scalaparsers.{Document, Loc, Located, Supply}
 import scala.collection.immutable.List
 import java.util.Date
 import Kind._
 import Type._
-import Equal._
 import Show._
+
+import scala.reflect._
 
 /** Types
  *
@@ -37,7 +39,7 @@ sealed abstract class Type extends Located {
    * The Java/Scala class that the type corresponds to for the
    * purposes of FFI marshalling.
    */
-  def foreignLookup: Class[_] = implicitly[Manifest[AnyRef]].erasure
+  def foreignLookup: Class[_] = implicitly[ClassTag[AnyRef]].runtimeClass
   def unboxedForeign: Boolean = false
   /**
    * A convenience function that allows us to write
@@ -105,7 +107,7 @@ trait ConDecl {
    * type in Scala. It is used when looking up foreign functions
    * and the like.
    */
-  def foreignLookup: Class[_] = implicitly[Manifest[AnyRef]].erasure
+  def foreignLookup: Class[_] = implicitly[ClassTag[AnyRef]].runtimeClass
   def unboxedForeign: Boolean = false
   /**
    * A short description of the declaration source of the Con
@@ -150,8 +152,8 @@ case class ConcreteRho(loc: Loc, fields: Set[Name] = Set()) extends Type {
  */
 case class ProductT(loc: Loc, n: Int) extends Type {
   override def foreignLookup: Class[_] =
-    if (n == 0) implicitly[Manifest[Unit]].erasure
-    else implicitly[Manifest[AnyRef]].erasure
+    if (n == 0) implicitly[ClassTag[Unit]].runtimeClass
+    else implicitly[ClassTag[AnyRef]].runtimeClass
   override def unboxedForeign = n == 0
   override def equals(v: Any) = v match {
     case ProductT(_, m) => m == n
@@ -166,7 +168,7 @@ case class ProductT(loc: Loc, n: Int) extends Type {
  * Function space
  */
 case class Arrow(loc: Loc) extends Type {
-  override def foreignLookup = implicitly[Manifest[Function1[_,_]]].erasure
+  override def foreignLookup = implicitly[ClassTag[Function1[_,_]]].runtimeClass
   override def nfWith(stk: List[Type])(implicit su: Supply) = stk match {
     case l :: r :: rest => Arrow(loc, l, r).apply(rest:_*)
     case _              => this.apply(stk:_*)
@@ -413,6 +415,25 @@ case class Memory(id: Int, body: Type) extends Type {
   override def forget = body
 }
 
+case class PrimConDecl(override val foreignLookup: Class[_]) extends ConDecl {
+  val box = PrimConDecl.boxes(foreignLookup.toString)
+  override val unboxedForeign = true
+  override val desc = "primitive"
+  override def isInstance(a: Any) = box.isInstance(a)
+}
+
+object PrimConDecl {
+  lazy val boxes: Map[String, Class[_]] = Map(
+    "byte" -> classOf[java.lang.Byte],
+    "short" -> classOf[java.lang.Short],
+    "int" -> classOf[java.lang.Integer],
+    "long" -> classOf[java.lang.Long],
+    "float" -> classOf[java.lang.Float],
+    "double" -> classOf[java.lang.Double],
+    "char" -> classOf[java.lang.Character]
+  )
+}
+
 case class TypeConDecl(
   override val foreignLookup: Class[_],
   override val unboxedForeign: Boolean
@@ -491,14 +512,17 @@ object Type {
     override def isClassConstraint = decl.isClassConstraint
   }
 
-  def mkConEx[C:ClassManifest](s: Global, ks: KindSchema, unboxed: Boolean = true): Con =
-    Con(Loc.builtin,s,TypeConDecl(implicitly[ClassManifest[C]].erasure, unboxed), ks)
+  def mkConEx[C:ClassTag](s: Global, ks: KindSchema, unboxed: Boolean = true): Con =
+    Con(Loc.builtin,s,TypeConDecl(implicitly[ClassTag[C]].runtimeClass, unboxed), ks)
 
-  def mkCon[C:ClassManifest](s: Global, k: Kind = star, unboxed: Boolean = true): Con =
-    Con(Loc.builtin,s,TypeConDecl(implicitly[ClassManifest[C]].erasure, unboxed), k.schema)
+  def mkCon[C:ClassTag](s: Global, k: Kind = star, unboxed: Boolean = true): Con =
+    Con(Loc.builtin,s,TypeConDecl(implicitly[ClassTag[C]].runtimeClass, unboxed), k.schema)
+
+  def mkPrimCon[C:ClassTag](s: Global): Con =
+    Con(Loc.builtin,s,PrimConDecl(implicitly[ClassTag[C]].runtimeClass), star.schema)
 
   def mkRuntimeCon(s: Global, k: Kind = star, unboxed: Boolean = true): Con =
-    Con(Loc.builtin,s,TypeConDecl(implicitly[Manifest[Object]].erasure, unboxed), k.schema)
+    Con(Loc.builtin,s,TypeConDecl(implicitly[ClassTag[Object]].runtimeClass, unboxed), k.schema)
   // todo: make this a foreign?
 
   def mkClassCon(s: Global, k: KindSchema = (star ->: constraint).schema): Con =
@@ -508,15 +532,15 @@ object Type {
   val bool      = mkCon[Boolean](Global("Builtin","Bool"), star, true) // constructors True and False
   val True      = Data(Global("Builtin","True"))
   val False     = Data(Global("Builtin","False"))
-  val int       = mkCon[Int](Global("Builtin","Int"))
-  val long      = mkCon[Long](Global("Builtin","Long"))
+  val int       = mkPrimCon[Int](Global("Builtin","Int"))
+  val long      = mkPrimCon[Long](Global("Builtin","Long"))
   val string    = mkCon[String](Global("Builtin","String"))
-  val char      = mkCon[Char](Global("Builtin","Char"))
-  val float     = mkCon[Float](Global("Builtin","Float"))
-  val double    = mkCon[Double](Global("Builtin","Double"))
-  val byte      = mkCon[Byte](Global("Builtin","Byte"))
+  val char      = mkPrimCon[Char](Global("Builtin","Char"))
+  val float     = mkPrimCon[Float](Global("Builtin","Float"))
+  val double    = mkPrimCon[Double](Global("Builtin","Double"))
+  val byte      = mkPrimCon[Byte](Global("Builtin","Byte"))
   val date      = mkCon[Date](Global("Builtin","Date"))
-  val short     = mkCon[Short](Global("Builtin","Short"))
+  val short     = mkPrimCon[Short](Global("Builtin","Short"))
   val field     = mkRuntimeCon(Global("Builtin","Field",Idfix), rho ->: star ->: star, false)
   val nullable  = mkRuntimeCon(Global("Builtin","Nullable",Idfix), star ->: star, false)
   val ffi       = mkCon[FFI[_]](Global("Builtin","FFI",Idfix), star ->: star, true)
@@ -524,6 +548,7 @@ object Type {
   val recordT    = mkCon[AnyRef](Global("Builtin", "Record"), rho ->: star)
   val relationT = mkCon[AnyRef](Global("Builtin", "Relation"), rho ->: star)
 
+  import scalaparsers.Relocatable
   implicit def relocatableType: Relocatable[Type] = new Relocatable[Type] {
     def setLoc(k: Type, l: Loc) = k at l
   }
@@ -662,8 +687,6 @@ object Type {
 //    char   -> PrimT.CharT(),
   )
 }
-
-import Type._
 
 abstract class HasTypeVars[A] {
   def vars(a: A): TypeVars

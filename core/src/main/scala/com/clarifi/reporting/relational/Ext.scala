@@ -1,13 +1,16 @@
 package com.clarifi.reporting
 package relational
 
-import scalaz._
-import Scalaz._
+import scalaz.{Bifoldable, Equal, Monoid}
+import scalaz.std.string._
+import scalaz.syntax.equal._
+import scalaz.syntax.monoid.mzero
 
 /** Multi-sourced relations */
 sealed abstract class Ext[+M,+R] {
   def bimap[N, S](f: M => N, g: R => S): Ext[N, S]
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]): Ext[N, S]
+  def bifoldMap[Z: Monoid](f: M => Z, g: R => Z): Z
   def foreach(f: M => Any, g: R => Any): Unit
   def unquote[N >: M, S >: R](f: Object => Option[Mem[S, N]], g: Object => Option[Relation[N, S]]): Ext[N, S] = this
   def unquoteR[N >: M, S >: R](g: Object => Option[Relation[N, S]]): Ext[N, S] = unquote(_ => None, g)
@@ -18,6 +21,7 @@ sealed abstract class Ext[+M,+R] {
 case class ExtSM(sm: SM) extends Ext[Nothing, Nothing] {
   def bimap[N, S](f: Nothing => N, g: Nothing => S) = this
   def subst[N, S](f: Nothing => Mem[S, N], g: Nothing => Relation[N, S]) = this
+  def bifoldMap[Z: Monoid](f: Nothing => Z, g: Nothing => Z) = mzero[Z]
   def foreach(f: Nothing => Any, g: Nothing => Any) = ()
 }
 
@@ -25,6 +29,7 @@ case class ExtSM(sm: SM) extends Ext[Nothing, Nothing] {
 case class ExtMem[+M, +R](mem: Mem[R, M]) extends Ext[M, R] {
   def bimap[N, S](f: M => N, g: R => S) = ExtMem(mem bimap (g, f))
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = ExtMem(mem subst (g, f))
+  def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = mem bifoldMap (g, f)
   def foreach(f: M => Any, g: R => Any) = mem foreach (g, f)
   override def unquote[N >: M, S >: R](f: Object => Option[Mem[S, N]], g: Object => Option[Relation[N, S]]): Ext[N, S] =
     ExtMem(mem.unquote(f, g))
@@ -34,6 +39,7 @@ case class ExtMem[+M, +R](mem: Mem[R, M]) extends Ext[M, R] {
 case class ExtRel[+M, +R](rel: Relation[M, R], database: String) extends Ext[M, R] {
   def bimap[N, S](f: M => N, g: R => S) = ExtRel(rel bimap (f, g), database)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = ExtRel(rel subst(f, g), database)
+  def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = rel bifoldMap (f, g)
   def foreach(f: M => Any, g: R => Any) = rel foreach (f, g)
   override def unquote[N >: M, S >: R](f: Object => Option[Mem[S, N]],
                                        g: Object => Option[Relation[N, S]]): Ext[N, S] =
@@ -41,6 +47,11 @@ case class ExtRel[+M, +R](rel: Relation[M, R], database: String) extends Ext[M, 
 }
 
 object Ext {
+  implicit val extBifoldable: Bifoldable[Ext] = new Bifoldable.FromBifoldMap[Ext] {
+    def bifoldMap[A,B,M:Monoid](fa: Ext[A, B])(f: A => M)(g: B => M): M =
+      fa bifoldMap (f, g)
+  }
+
   implicit def extEq[M: Equal, R: Equal]: Equal[Ext[M, R]] = new Equal[Ext[M, R]] {
     def equal(e1: Ext[M, R], e2: Ext[M, R]) = (e1, e2) match {
       case (ExtSM(s1), ExtSM(s2)) => s1 === s2

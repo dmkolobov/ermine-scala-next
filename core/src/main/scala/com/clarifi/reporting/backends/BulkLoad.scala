@@ -1,8 +1,12 @@
 package com.clarifi.reporting.backends
 
+import scala.util.control.NonFatal
+
 import f0._
 import f0.Writers._
 import f0.Readers._
+import f0.Formats.StreamF
+import f0.Effects.effectW
 import f0.Sinks
 import com.clarifi.reporting._
 import com.clarifi.reporting.flatteners.TableFlattener
@@ -15,7 +19,7 @@ import util.{IOUtils, StreamTUtils}
 import java.io.{FileInputStream, File, InputStream, OutputStream}
 import com.clarifi.reporting.util.PimpedLogger._
 import Reporting._
-import scalaz.Scalaz._
+import scalaz.std.anyVal._
 
 object BulkLoad {
 
@@ -111,15 +115,43 @@ object BulkLoad {
     listR(primExprR) map (l => colOrder zip l toMap)
 
   def rowInTableW(orders: Map[String,List[String]]) = //: Writer[(String, Record), _]
-    stringW withLast (s => rowW(orders(s)))
+    withLastW(stringW)(s => rowW(orders(s)))
 
   def rowInTableR(orders: Map[String, List[String]]) =
     stringR flatMap { s =>
       rowR(orders(s)) map ((s, _))
     }
 
-  def flattenerStreamW(orders: Map[String,List[(String,PrimT)]]) = // Writer[DataSet, _]
-    unfoldW(rowInTableW(orders.toMap.mapValues(_.toList.map(_._1))))((d: SimpleDataSet) => StreamTUtils.unconsId(d))
+  // Writes out an unfold without the final terminator,
+  // so that an additional unfold can be written and look
+  // like a single stream.
+  def danglingUnfoldW[S,A,F1](w: Writer[A,F1])(f: S => Option[(A,S)]): Writer[S,StreamF[F1]] = new Writer[S,StreamF[F1]] {
+    def bind(o: Sink): S => EffectW[StreamF[F1]] = {
+      val bindA = w.bind(o)
+      s => {
+        var cur = s
+        var cont = true
+        while (cont) {
+          f(cur) match {
+            case Some((h,t)) => { o(0); bindA(h); cur = t }
+            case None => { cont = false }
+          }
+        }
+        effectW[StreamF[F1]]
+      }
+    }
+  }
+
+  def terminatorW[A,F](w: Writer[A,F]): Writer[A, F] = new Writer[A, F] {
+    def bind(o: Sink): A => EffectW[F] = a => {
+      w.bind(o)(a)
+      o(1)
+      effectW[F]
+    }
+  }
+
+  private def flattenerStreamW(orders: Map[String,List[(String,PrimT)]]) = // Writer[DataSet, _]
+    danglingUnfoldW(rowInTableW(orders.toMap.mapValues(_.toList.map(_._1))))((d: SimpleDataSet) => StreamTUtils.unconsId(d))
 
   def flattenerStreamR(orders: Map[String, List[(String, PrimT)]]) =
     streamR(rowInTableR(orders.mapValues(_.map(_._1))))
@@ -137,11 +169,12 @@ object BulkLoad {
 
   def metadataR = p5R(stringR, optionR(stringR), optionR(stringR), optionR(stringR), optionR(stringR))(Metadata(_,_,_,_,_))
 
-  // Writer[(connectionURL, (Map[String,List[(ColumnName,ColumnTypeString)]], DataSet)), _]
+  // Writer[(Metadata, (Map[String,List[(ColumnName,ColumnTypeString)]], DataSet)), _]
   def schemaRows =
-    tuple2W(
-      metadataW,
-      schemaW) withLast { case (_,s) => flattenerStreamW(s.mapValues(_.toList)) }
+    withLastW(tuple2W(
+                metadataW,
+                schemaW)){ case (_,s) =>
+                terminatorW(flattenerStreamW(s.mapValues(_.toList))) }
 
   def schemaRowsR =
     tuple2R(metadataR, preschemaR) flatMap {
@@ -175,12 +208,13 @@ object BulkLoad {
     // send the data to the web handler and read the result when it's finished
     Log.timed("streaming data from: " + input + " to: " + webHandlerURL) {
       try Right(StreamingWebRequest.streamWith(webHandlerURL){ (out, in) =>
-      // write all the data from the input stream to the web stream
-        IOUtils.copy(new FileInputStream(input), out)
+        // write all the data from the input stream to the web stream
+        val inStream = new FileInputStream(input)
+        try IOUtils.copy(inStream, out) finally inStream.close()
         // read the result
         BulkLoad.readResult(in)
       })
-      catch { case e => Left(new Exception("Error processing bulk loading response", e)) }
+      catch { case NonFatal(e) => Left(new Exception("Error processing bulk loading response", e)) }
     }
   }
 
@@ -195,10 +229,25 @@ object BulkLoad {
   import com.clarifi.reporting.util.StreamTUtils
 
   def flattenTo[A](f: TableFlattener[Unit,A])(a: A, out: OutputStream, md: Metadata): Unit =
+    withFlattening(out, md, f)(_(a))
+
+  // Given an OutputStream, Metadata and a Flattener, we set up the ability to
+  // flatten multiple values of a given type using the flattener. A
+  // continuation is specified that may call the flattening function an
+  // arbitrary number of times.
+  def withFlattening[A,R](out: OutputStream, md: Metadata, f: TableFlattener[Unit,A])(body: (A => Unit) => R): R =
     Sinks.using(Sinks.toOutputStream(out)) { sink =>
-      schemaRows.bind(sink)(((md, f.schema.map {
-        case (k,v) => (k.name, v)
-      }), StreamTUtils.runStreamT(f(a).map { case (x, y) => (x.name, y) })))
+      metadataW.bind(sink)(md)
+      val sch = f.schema.map { case (k,v) => (k.name, v) }
+      schemaW.bind(sink)(sch)
+      val res = body { a =>
+        flattenerStreamW(sch.mapValues(_.toList)).bind(sink)(
+          StreamTUtils.runStreamT(f(a).map { case (x, y) => (x.name, y) })
+        )
+      }
+      // signal termination of the stream
+      sink(1)
+      res
     }
 }
 

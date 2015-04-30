@@ -71,8 +71,6 @@ object SqlPredicate {
 sealed abstract class SqlExpr {
   import scalaz.std.iterable._
 
-  import SqlExpr._
-
   def emitSql(implicit emitter: SqlEmitter): RawSql = this match {
     case ColumnSqlExpr(table,column) => emitter.emitQualifiedColumnName(table, column)
     case BinSqlExpr(op, e1, e2) => raw("(") |+| e1.emitSql(emitter) |+| ") " |+| op |+| " (" |+| e2.emitSql(emitter) |+| ")"
@@ -129,7 +127,7 @@ object SqlExpr {
       case Mul(a, b) =>
         BinSqlExpr("*", rec(a), rec(b))
       case FloorDiv(a, b) =>
-        BinSqlExpr(emitter.emitIntegerDivisionOp, rec(a), rec(b))
+        emitter.emitIntegerDivision(rec(a), rec(b))
       case DoubleDiv(a, b) =>
         BinSqlExpr("/", rec(a), rec(b))
       case Pow(a, b) =>
@@ -159,7 +157,9 @@ object SqlExpr {
       case Coalesce(l, r) =>
         FunSqlExpr("coalesce", List(rec(l),rec(r)))
       case DateAdd(d, n, u) =>
-        FunSqlExpr(emitter.emitDateAddName, List(rec(d), IntervalExpr(n, u)))
+        FunSqlExpr(emitter.emitDateAddName, List(IntervalExpr(n, u), rec(d)))
+      case DateDiff(u, s, e) =>
+        FunSqlExpr("datediff", List(Verbatim(u.toString.toLowerCase), rec(s), rec(e)))
       case Funcall(name, db, ns, args, _) =>
         FunSqlExpr(emitter emitProcedureName (name, ns) run,
                    args map rec)

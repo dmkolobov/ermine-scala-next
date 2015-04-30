@@ -60,12 +60,12 @@ object Predicates {
   /** Chain `ps` with OR. */
   def any(ps: Traversable[Predicate]) =
     if (ps.isEmpty) Predicate.Atom(false)
-    else simplify((ps.tail /:\ ps.head) (Predicate.Or(_, _)))
+    else simplify(ps.tail.fold(ps.head)(Predicate.Or(_, _)))
 
   /** Chain `ps` with AND. */
   def all(ps: Traversable[Predicate]) =
     if (ps.isEmpty) Predicate.Atom(true)
-    else simplify((ps.tail /:\ ps.head) (Predicate.And(_, _)))
+    else simplify(ps.tail.fold(ps.head)(Predicate.And(_, _)))
 }
 
 /** Things that are true for every record in a relation.

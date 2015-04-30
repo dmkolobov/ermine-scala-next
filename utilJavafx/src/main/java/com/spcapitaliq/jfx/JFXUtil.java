@@ -42,6 +42,7 @@ public final class JFXUtil
 
   private JFXUtil()
   {
+    /** static only */
   }
 
   public static void throwIfApplicationThread()
@@ -84,6 +85,63 @@ public final class JFXUtil
       logic.run();
     else
       Platform.runLater( logic );
+  }
+
+  private static class RunAndWait implements Runnable
+  {
+    private final Runnable _logic;
+
+    RunAndWait(Runnable logic)
+    {
+      _logic = logic;
+    }
+
+    void go()
+    {
+      synchronized(this)
+      {
+        Platform.runLater(this);
+        try
+        {
+          wait();
+        }
+        catch (InterruptedException e)
+        {
+          // TODO Auto-generated catch block
+          e.printStackTrace();
+        }
+      }
+    }
+
+    @Override
+    public void run()
+    {
+      try
+      {
+        _logic.run();
+      }
+      catch (Throwable t)
+      {
+        _log.error("_logic unexpectedly fail", t);
+      }
+      finally
+      {
+        synchronized (this)
+        {
+          notify();
+        }
+      }
+    }
+  }
+
+  public static void runSafeAndWait( Runnable logic )
+  {
+    if( Platform.isFxApplicationThread() )
+      logic.run();
+    else
+    {
+      new RunAndWait(logic).go();
+    }
   }
 
   private static Map<String, Integer> _classCounters = new HashMap<String, Integer>();

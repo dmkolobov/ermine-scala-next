@@ -1,9 +1,11 @@
 package com.clarifi.reporting
 
-import scalaz._
-import Scalaz._
-import Equal._
-import Show._
+import scalaz.{Applicative, Equal, Foldable, IterV, Monoid, Reducer, Show}
+import Reducer.unitReducer
+import scalaz.std.anyVal._
+import scalaz.std.tuple._
+import scalaz.syntax.applicative._
+import scalaz.syntax.monoid._
 
 import com.clarifi.machines._
 import com.clarifi.machines.Source._
@@ -11,9 +13,9 @@ import com.clarifi.machines.Source._
 sealed abstract class AggFunc extends TraversableColumns[AggFunc] {
   import AggFunc._
 
-  def traverseColumns[F[+_]: Applicative](f: ColumnName => F[ColumnName]): F[AggFunc] =
+  def traverseColumns[F[_]: Applicative](f: ColumnName => F[ColumnName]): F[AggFunc] =
     this match {
-      case Count => Count.pure[F]
+      case Count => (Count: AggFunc).pure[F]
       case Sum(op) => op.traverseColumns(f).map(Sum(_))
       case Avg(op) => op.traverseColumns(f).map(Avg(_))
       case Min(op) => op.traverseColumns(f).map(Min(_))
@@ -56,16 +58,13 @@ object AggFunc {
   case class Stddev(op: Op) extends AggFunc
   case class Variance(op: Op) extends AggFunc
 
-  implicit val AggFuncEqual: Equal[AggFunc] = equalA
-  implicit val AggFuncShow: Show[AggFunc] = showFromToString
+  implicit val AggFuncEqual: Equal[AggFunc] = Equal.equalA
+  implicit val AggFuncShow: Show[AggFunc] = Show.showFromToString
 
-  import PrimT._
   import PrimExpr._
   import java.util.{Date, UUID}
 
-  import IterV._
   import Reducer._
-  import Op._
 
   def reduce[F[_]](a: AggFunc, t: PrimT)(implicit F: Foldable[F]): F[Record] => PrimExpr =
     xs => (reduceProcess(a, t) cap source(xs)).foldRight(NullExpr(t):PrimExpr)((a, _) => a)

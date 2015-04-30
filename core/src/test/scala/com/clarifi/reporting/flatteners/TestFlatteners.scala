@@ -7,15 +7,13 @@ import scalaz._
 import Scalaz._
 
 import org.scalacheck._
-import Prop.{extendedAny => _, _}
+import Prop._
 
-import com.clarifi.reporting.Reporting._
 import com.clarifi.reporting.Gens._
 import com.clarifi.reporting.PrimType._
 import com.clarifi.reporting.backends.Backends
 
 import com.clarifi.reporting._
-import relational._
 import flatteners.Flatteners._
 import Flatteners.Implicits._
 import Lens._
@@ -99,10 +97,10 @@ object TestFlatteners extends Properties("Flatteners") {
           (availReferencees,
            Prop.all(errors +: (for {
              fkPerTable <- fks(tableName).getOrElse(Map.empty)
-             val (ftabName, fks) = fkPerTable
-             val availfrs = availReferencees.get(ftabName).getOrElse(Map.empty)
+             (ftabName, fks) = fkPerTable
+             availfrs = availReferencees.get(ftabName).getOrElse(Map.empty)
              oneFkSet <- fks
-             val oneFk = oneFkSet.toList
+             oneFk = oneFkSet.toList
            } yield (availfrs(oneFk.map(_._2))
                     contains oneFk.map(record apply _._1)) :|
                           "Foreign reference %s required by %s".format(oneFk, record))
@@ -291,7 +289,7 @@ object TestFlatteners extends Properties("Flatteners") {
     include(new MonoidProperties[Unit]("examples") {
       val t = TableName("Table1")
       val i = prim[Int]
-      checkTableFlattener[Int]("table.localState", i table t localState 1000, (a, s) => s ?= Stream((t,(i(a) eval ())._1)))
+      checkTableFlattener[Int]("table.localState", i table t localState 1000, (a, s) => s ?= Stream((t,(i(a) eval (()))._1)))
     })
   })
 }

@@ -1,26 +1,27 @@
 package com.clarifi.reporting.ermine.parsing
 
 import com.clarifi.reporting.ermine._
-import com.clarifi.reporting.ermine.Diagnostic._
-import com.clarifi.reporting.ermine.Document.text
+import scalaparsers.Diagnostic._
+import scalaparsers.Document.text
+import scalaparsers._
 
 import TypeNameParsers._
 import KindParsers._
-import ParseState.Lenses._
+import ErParseState.Lenses._
 
 import scala.collection.immutable.List
-import scalaz.{Name => _, Arrow => _, Free => _, Forall => _, _}
-import Scalaz._
 
 import Type.{recordT, relationT}
 
 object TypeParsers {
-  private def typeName: Parser[Name] = get.flatMap(u => name(u.canonicalTypes))
+  import SI8862._
+
+  private def typeName: Parser[Name] = get.flatMap(u => name(u.s.canonicalTypes))
   private def localTypeName: Parser[Local] = typeName.map(_.local)
 
   def distinct(loc: Pos, l: List[V[Any]]) = {
     val lp = l.map(_.name)
-    assert(lp.lengthCompare(lp.toSet.size) == 0) | raise(loc, text("error: duplicate variable names in binding"))
+    assert(lp.lengthCompare(lp.toSet.size) == 0) | raise[Parser](loc, text("error: duplicate variable names in binding"))
   }
 
   // top level definitions which bind local names
@@ -31,7 +32,7 @@ object TypeParsers {
     n <- typeName
     _ <- if (!n.isInstanceOf[Local]) raise(p, "error: type definition would shadow global type definition")
          else unit(())
-    val l = typeNames.member(n)
+    l = typeNames.member(n)
     m <- gets(l.get(_))
     r <- m match {
       case Some(v) =>
@@ -49,7 +50,7 @@ object TypeParsers {
   def typeVar(mk: Option[Kind] = None): Parser[V[Kind]] = for {
     p <- loc
     n <- typeName
-    val l = typeNames.member(n)
+    l = typeNames.member(n)
     m <- gets(l.get(_))
     r <- m match {
       case Some(v) => unit(v at p)
@@ -68,9 +69,12 @@ object TypeParsers {
     for {
       p <- loc
       s <- op
-      Some(n) <- gets(_.canonicalTypes.get(Local(s,fix)))
+      Some(n) <- gets(_.s.canonicalTypes.get(Local(s,fix))) flatMap {
+        case Some(List(n)) => unit( Some(n) )
+        case Some(ns) => fail[Parser]("ambiguous type operator or identifier: " + s + ", " + ns)
+        }
       if f(n.fixity)
-      val l = typeNames.member(n)
+      l = typeNames.member(n)
       m <- gets(l.get(_))
       r <- m match {
         case Some(v) => unit(v at p)
@@ -122,10 +126,10 @@ object TypeParsers {
     n ++ k <- (localTypeName ++ defaultKind(p)) |
          paren(localTypeName ++ (colon >> kind))
     id <- freshId
-    val l = typeNames.member(n)
-    val v = V(p, id, Some(n), Bound, k)
-    val r = for {old <- gets(l.get(_))
-                 _ <- modify(l.set(_, Some(v)))} yield modify(l.set(_, old))
+    l = typeNames.member(n)
+    v = V(p, id, Some(n), Bound, k)
+    r = for {old <- gets(l.get(_))
+             _ <- modify(l.set(_, Some(v)))} yield modify(l.set(_, old))
     u <- r
   } yield Localized(v, List(n), u, r)
 
@@ -150,7 +154,7 @@ object TypeParsers {
         v <- typeVar(Some(Rho(lp.inferred)))
       } yield VarT(v)
     ) |
-    gets(_.moduleName).flatMap( mod =>
+    gets(_.s.moduleName).flatMap( mod =>
       typeName.sepBy(comma).map(xs => ConcreteRho(l,xs.map(f(mod)).toSet))
     )
   } scope "row type"
@@ -216,7 +220,7 @@ object TypeParsers {
   def exists = for {
     l <- loc
     xs <- keyword("exists") >> localType().many << keyOp(".")
-    val lxs = dist(xs)
+    lxs = dist(xs)
     body <- lxs.distinct(l) >> typL2.sepBy1(comma) << lxs.unbind
   } yield Exists(l, lxs.extract, body)
 

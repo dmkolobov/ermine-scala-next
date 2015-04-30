@@ -23,17 +23,19 @@ import Function
 import Int
 import Maybe
 import List
+import Layout.Chart using type AxisLabel; NoAxisLabel
 import Layout.Chart.Unsafe
 import Layout.Color using type Color
 import Layout.Format as Fmt
 import Layout.Legend using type Legend
-import Layout.Presentation using type Presentation
-import Layout.Report using type Report
+import Layout.Presentation using type Presentation; asPresentation
+import Layout.Report using {type Report; type DisplayScale; Linear; chartLegendDefaultLocation}
 import Layout.Report.Atomic
 import Layout.Report.Direction
 import Layout.SortPriority using {type SortPriorityAnnotated; unsorted}
 import Layout.SortStrategy as SS
 import Layout.Magnitude
+import Relation.Op using prim
 import Ord using type Ord
 import Relation.Sort using {type Sort; type SortOrder; Ascending}
 import Void
@@ -94,10 +96,10 @@ tabularDefaults : TabularDefaults u1 r
 tabularDefaults = TabularOptions Nothing
 
 -- | scaled
-data ScaledOptions dirlowup a = ScaledOptions SortOrder (Maybe a) (Maybe a)
+data ScaledOptions dirlowup a = ScaledOptions SortOrder (Maybe a) (Maybe a) DisplayScale
 type ScaledDefaults u1 a = ScaledOptions u1 a
 scaledDefaults : ScaledDefaults u1 a
-scaledDefaults = ScaledOptions Ascending Nothing Nothing
+scaledDefaults = ScaledOptions Ascending Nothing Nothing Linear
 
 -- | unscaled
 data UnscaledOptions sort a = UnscaledOptions (Either SortOrder (Ord a))
@@ -106,30 +108,33 @@ unscaledDefaults : UnscaledDefaults u1 a
 unscaledDefaults = UnscaledOptions $ Left Ascending
 
 -- | chart
-data ChartOptions tdloxlxfylyf xa ya x y {-title' dir' legOpts' xlbl' xfmt' xax' ylbl' yfmt' yax'-} =
+data ChartOptions tdloxlxfylyf xa ya {-title' dir' legOpts' xlbl' xfmt' xax' ylbl' yfmt' yax'-} =
   ChartOptions (Maybe String) Direction ChartLegendOptions#
-               (Maybe (Atomic x)) (Format_Fmt xa) Bool
-               (Maybe (Atomic y)) (Format_Fmt ya) Bool
+               AxisLabel (Format_Fmt xa) Bool
+               AxisLabel (Format_Fmt ya) Bool
 -- defaults here are a little more complicated; see the term
-type ChartDefaults u1 xa ya x y = ChartOptions u1 xa ya x y
-chartDefaults : (Primitive xa, Primitive ya) => ChartDefaults u1 xa ya x y
+type ChartDefaults u1 xa ya = ChartOptions u1 xa ya
+chartDefaults : (Primitive xa, Primitive ya) => ChartDefaults u1 xa ya
 chartDefaults = ChartOptions Nothing Vertical defaultChartLegendOptions#
-                             Nothing unit_Fmt True
-                             Nothing unit_Fmt True
+                             NoAxisLabel unit_Fmt True
+                             NoAxisLabel unit_Fmt True
 
 -- | pieChart and drilldownPieChart
 data PieChartOptions ph lbl r1 r2 id =
-  PieChartOptions String (List ({..lbl}, Color))
+  PieChartOptions String ChartLegendOptions# (List ({..lbl}, Color))
                   (Maybe (Field r1 id, Field r2 id))
 type PieChartDefaults ph lbl = PieChartOptions ph lbl (| |) (| |) Void
 pieChartDefaults : PieChartDefaults ph lbl
-pieChartDefaults = PieChartOptions "" Nil Nothing
+pieChartDefaults = PieChartOptions "" chartLegendDefaultLocation Nil Nothing
 
 -- | drilldownBarChart
-data DrilldownBarChartOptions tdcv cl vl {-title' dir' cl' vl'-} =
-  DrilldownBarChartOptions (Maybe String) Direction
-                           (Maybe (Atomic cl)) (Maybe (Atomic vl))
-type DrilldownBarChartDefaults u1 cl vl = DrilldownBarChartOptions u1 cl vl
-drilldownBarChartDefaults : DrilldownBarChartDefaults u1 cl vl
+data DrilldownBarChartOptions tdlocv sr sa cr vr {-title' logOpts' dir' cl' vl'-} =
+  DrilldownBarChartOptions (Maybe String) Direction ChartLegendOptions#
+                           AxisLabel AxisLabel
+                           (Presentation sr sa)
+                           (List ({..cr}, {..cr})) (List ({..vr}, {..vr}))
+type DrilldownBarChartDefaults u1 cr vr = DrilldownBarChartOptions u1 (||) String cr vr
+drilldownBarChartDefaults : DrilldownBarChartDefaults u1 cr vr
 drilldownBarChartDefaults =
-  DrilldownBarChartOptions Nothing Vertical Nothing Nothing
+  DrilldownBarChartOptions Nothing Vertical defaultChartLegendOptions# NoAxisLabel NoAxisLabel
+                           (asPresentation ' prim "") Nil Nil

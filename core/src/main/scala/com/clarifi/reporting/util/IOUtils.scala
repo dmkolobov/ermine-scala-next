@@ -9,7 +9,7 @@ object IOUtils {
    * and copy it to the given OutputStream.
    * @return the number of bytes read and sent
    */
-  def copy(input:InputStream, output:OutputStream, defaultBufferSize:Int=(256), closeInputStream:Boolean=true): Long = try {
+  def copy(input:InputStream, output:OutputStream, defaultBufferSize:Int=(256)): Long = {
     val buffer = new Array[Byte](defaultBufferSize)
     var count = 0L
     var n = input.read(buffer)
@@ -19,7 +19,7 @@ object IOUtils {
       n = input.read(buffer)
     }
     count
-  } finally if (closeInputStream) input.close()
+  }
 
   /**
    * Tries to find a file. If it exists, returns Some(file). If not, None.

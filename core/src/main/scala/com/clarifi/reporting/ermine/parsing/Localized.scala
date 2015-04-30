@@ -1,11 +1,11 @@
 package com.clarifi.reporting.ermine.parsing
 
-import com.clarifi.reporting.ermine.{ Comonadic, Applied, Local, Pos, Diagnostic }
-import com.clarifi.reporting.ermine.Diagnostic._
-import com.clarifi.reporting.ermine.Document.text
+import scalaparsers.{ Comonadic, Applied, Pos, Diagnostic }
+import Diagnostic._
+import com.clarifi.reporting.ermine.Local
+import scalaparsers.Document.text
 import scala.collection.immutable.List
 import scalaz.{ Name => _, Arrow => _, Free => _, Forall => _, _ }
-import Scalaz._
 
 case class Localized[+A](
   extract: A,

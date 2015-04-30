@@ -2,7 +2,6 @@ package com.clarifi.reporting.ermine
 
 import com.clarifi.reporting.{ PrimT, Header, TableName }
 import com.clarifi.reporting.ermine.Type._
-import com.clarifi.reporting.ermine.Kind._
 import com.clarifi.reporting.ermine.Runtime.Thunk
 import com.clarifi.reporting.relational.Typer._
 import java.io.StringWriter
@@ -10,6 +9,7 @@ import scala.util.matching.Regex
 import scala.collection.immutable.List
 import scalaz.{Arrow => _, Forall => _, Name => _, _}
 import scalaz.Scalaz._
+import scalaparsers._
 
 
 /** Pretty printing for DMTL types
@@ -52,7 +52,7 @@ object Pretty {
   /** Suggest a name for a variable. Pulls from the infinite list of variable names we carry around. */
   def suggest : Pretty[Local] = Pretty((t,c,s,p) => (t, c, s.tail, s.head))
 
-  import Document._
+  import scalaparsers.Document._
 
   // precedence reader
   def apply[A](f : Int => A) : Pretty[A] = new Pretty[A] {
@@ -341,7 +341,7 @@ object Pretty {
     case Thunk(t)    => ppRuntime(t, d + 1)
     case Rel(r)      => unit("<relation with " + extTyper(r) + ">")
     case EmptyRel    => unit("<empty relation>")
-    case Bottom(f)   => try f() catch { case e => unit("<error: " + e.getMessage + ">") }
+    case b@Bottom(_)   => unit("<error: " + b.thrown.getMessage + ">")
     case Rec(m)      => braces(ppRecord(m))
     case Data(Global("Builtin","Nil",Idfix),Array()) => unit("[]")
     case Data(n@Global("Builtin","::",Infix(_,_)),Array(x,xs)) => asList(xs.whnf) match {

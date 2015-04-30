@@ -16,7 +16,7 @@ import Prim using type PrimExpr#
 import Relation.Row using type Row; Row; rowUsed#
 import String as S
 import Relation.Op.Type
-import Relation.Op using asOp
+import Relation.Op using asOp; show
 import Relation.Sort using {type Sort; type SortOrder; Sort}
 
 private foreign
@@ -30,6 +30,9 @@ private foreign
                            -> NonEmpty# PrimExpr#
   function "com.clarifi.reporting.writers.Writer" "fromPrimExprNel"
       unsafeFromPrimExprNel : NonEmpty# PrimExpr# -> a
+
+  function "com.clarifi.reporting.writers.Presentation" "devolve"
+      unsafeDevolve : Presentation r a -> Op r b
 
 -- Describe how to display values of a column or two, and also how to
 -- sort by that column.
@@ -66,8 +69,11 @@ currency = presentation . currency_Fmt
 basic : (Primitive a, AsOp op) => op r a -> Presentation r a
 basic = presentation unit_Fmt
 
+withMarkdown : (AsOp op, Unscaled a) => Format_Fmt a -> op r a -> Presentation r a
+withMarkdown fmt =  presentation $ markdown_Fmt fmt
+
 markdown : (AsOp op, Unscaled a) => op r a -> Presentation r a
-markdown =  presentation $ markdown_Fmt unit_Fmt
+markdown =  withMarkdown unit_Fmt
 
 -- | Extract record elements to render.
 extractScalar : AsPresentation pr => pr r a -> {..r} -> Atomic a
@@ -86,6 +92,17 @@ columnsUsed = columnsUsed# . AsTraversableColumns . asPresentation
 -- | Answer the Row schema used by a presentation.
 rowUsed : AsPresentation pr => pr r a -> Row r
 rowUsed = rowUsed# . AsTraversableColumns . asPresentation
+
+-- | Extract an existentially-typed 'Op' that implements *some* of the
+-- underlying presentation logic.  'Relation.Op.show' is a good first
+-- argument.
+devolve : forall r a z. (forall b. Op r b -> z) -> Presentation r a -> z
+devolve (f : some r z. forall b. Op r b -> z) = f . unsafeDevolve
+
+-- | Just 'devolve show_Op'.  Turn *some* of the presentation's logic
+-- into an Op, discarding the unimplementable parts.
+devolveShowOp : Presentation r a -> Op r String
+devolveShowOp = devolve show
 
 {-
 builtin

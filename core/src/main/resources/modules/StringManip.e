@@ -9,6 +9,7 @@ import List
 import Ord
 import Function
 import Native.List
+import Native.Pair
 
 private foreign
   data "java.lang.CharSequence" CharSequence#
@@ -20,6 +21,7 @@ private foreign
   method "r" regex# : ScalaStringOps# -> Regex#
   method "findAllIn" srFindAllIn : Regex# -> CharSequence# -> MatchIterator#
   method "toList" miToList# : MatchIterator# -> List# String
+  function "com.clarifi.reporting.writers.Markdown" "replaceTemplates" replaceTemplates : String -> List# (Pair# String String) -> String
 
 foreign
   function "java.lang.Integer" "parseInt" parseInt : String -> Int
@@ -30,6 +32,11 @@ allMatches : String             -- ^ Regex.
           -> List String
 allMatches r = fromList# . miToList#
              . (srFindAllIn . regex# . toStringOps $ r) . StringIsCS
+
+-- | Takes a string "like {{this}}" and a list like [("this,"replacement")] and returns
+-- a string "like replacement".
+templateSubstitute : String -> List (String, String) -> String
+templateSubstitute tmpl subs = replaceTemplates tmpl . toList# . map_List toPair# $ subs
 
 {-
 >> allMatches  "\\d+" "1 2 3 4"

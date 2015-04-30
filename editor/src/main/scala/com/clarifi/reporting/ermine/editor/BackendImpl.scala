@@ -5,17 +5,21 @@ import com.clarifi.reporting.ermine.session.{ SessionEnv, Session, Printer }
 import com.clarifi.reporting.ermine.session.Session.{ loadModules }
 import com.clarifi.reporting.ermine.syntax.{ Module, ImportExportStatement, FieldStatement }
 import com.clarifi.reporting.ermine.{ die => _, _ }
-import com.clarifi.reporting.ermine.Diagnostic._
-import com.clarifi.reporting.ermine.Subst.Gamma
-import com.clarifi.reporting.ermine.Subst.{ Gamma, subsumeType }
+import scalaparsers._
+import scalaparsers.Diagnostic._
+import com.clarifi.reporting.ermine.Subst.subsumeType
 import com.clarifi.reporting.ermine.Runtime.Thunk
 
 import scalaz.{Success => _, Failure => _, Name => _, Free => _, _}
 import scalaz.Free.{ suspend, Return, Trampoline }
 import scalaz.Monad
+
+// Scalaz._ imports assorted implicits.  This messes with importing specific objects, like scalaz.syntax.monad
+// since you'll get ambiguous references to the same implicit, which means it won't be used and e.g. map can't be found
+// TODO:  get rid of this import, and replace it with what we need to actually import.
 import scalaz.Scalaz._
 
-import scalaz.syntax.monad._
+//import scalaz.syntax.monad._
 
 import Cursors._
 
@@ -186,7 +190,7 @@ class BackendImpl extends Backend[EditorSession, Option[Document], (Module,Sessi
   def renameField(loc: MCursor[FieldStatement], old: Name, name: String) = for {
     mn <- gets(_.name)
     (fs, k) <- lensM(loc)
-    val n = Global(mn, name)
+    n = Global(mn, name)
     _ <- k(fs.copy(vs = fs.vs.map(v => if(v.name == Some(old)) v copy (name = Some(n)) else v)))
   } yield ()
 
@@ -201,7 +205,7 @@ class BackendImpl extends Backend[EditorSession, Option[Document], (Module,Sessi
   def availableActions[A](loc: MCursor[A]) = {
     def termActions(c: MCursor[Term]): EditorSession[List[Action[P,Q] forSome { type P ; type Q }]] = for {
       m <- get
-      val optional = lens(c,m) match {
+      optional = lens(c,m) match {
         case Some((Let(_,_,_,_),_)) => List(DeclareLocal((s,i) => declareLocal(s,i,c)))
         case _ => List()
       }
@@ -269,7 +273,7 @@ class BackendImpl extends Backend[EditorSession, Option[Document], (Module,Sessi
     }
     v <- fv(n)
     args <- fpat().replicateM(argCount)
-    val bnd = ImplicitBinding(editorPos, v, List(Alt(editorPos, args, Hole(editorPos))))
+    bnd = ImplicitBinding(editorPos, v, List(Alt(editorPos, args, Hole(editorPos))))
     _ <- modify(m => m copy (implicits = bnd :: m.implicits))
   } yield Cursors.Modules.Binding(v)
 
@@ -283,7 +287,7 @@ class BackendImpl extends Backend[EditorSession, Option[Document], (Module,Sessi
                  "Name already exists in binding group.")
           v <- fv(mn)
           ps <- fpat().replicateM(argCount)
-          val b = ImplicitBinding(editorPos, v, List(Alt(editorPos, ps, Hole(editorPos))))
+          b = ImplicitBinding(editorPos, v, List(Alt(editorPos, ps, Hole(editorPos))))
           _ <- k(Let(l, b :: is, es, body))
         } yield Compose(c, Cursors.Terms.LetBinding(v))
       case _ => fail[EditorSession]("A local binding can only be added to an existing binding group.")
@@ -299,7 +303,7 @@ class BackendImpl extends Backend[EditorSession, Option[Document], (Module,Sessi
 
   def globalEnvironment(t: Type, name: Option[String]) = for {
     tms <- session { _.termNames }
-    val terms = tms.toList.collect {
+    terms = tms.toList.collect {
       case (g, v) if name.map(g.string == _).getOrElse(true) => v
     }.distinct
   } yield terms
@@ -352,7 +356,7 @@ class BackendImpl extends Backend[EditorSession, Option[Document], (Module,Sessi
   def addArgument(loc: MCursor[ImplicitBinding], name: Option[String]) = for {
     (ImplicitBinding(l, v, alts, r), k) <- lensM(loc)
     p <- fpat(name map (Local(_)))
-    val nalts = alts map {
+    nalts = alts map {
       case Alt(al, ps, body) => Alt(al, ps ++ List(p), body)
     }
     _ <- k(ImplicitBinding(l, v, nalts, r))
@@ -387,7 +391,7 @@ class BackendImpl extends Backend[EditorSession, Option[Document], (Module,Sessi
     case Bindings.Name => unit(x copy (v = x.v copy (name = None)))
     case Bindings.Alt(n) => x match {
       case ImplicitBinding(loc, v, alts, re) => alts.splitAt(n) match {
-        case (List(), List()) => unit(ImplicitBinding(loc, v, List(), re))
+        case (l, List())      => unit(ImplicitBinding(loc, v, l, re))
         case (l, _ :: r)      => unit(ImplicitBinding(loc, v, l ++ r, re))
       }
     }

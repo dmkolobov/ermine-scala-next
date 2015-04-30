@@ -28,10 +28,9 @@ object StreamTUtils {
     def iterator: Iterator[A] = new Iterator[A] {
       var cursor = s
       def hasNext: Boolean = !cursor.isEmpty
-      def next: A = cursor uncons match {
-        case None => sys.error("next on empty stream")
-        case Some((h,t)) => { cursor = t; h }
-      }
+      def next: A = unconsId(cursor)
+        .cata ({case (h, t) => cursor = t; h},
+               throw new NoSuchElementException("next on empty stream"))
     }
   }
 
@@ -80,8 +79,8 @@ object StreamTUtils {
   }
 
   @deprecated("Prefer scalaz.StreamT.runStreamT", "Cantor_47")
-  def runStreamT_[S,A](as: StreamT[({type f[+x] = State[S,x]})#f, A])(s: S) = StreamT.runStreamT(as,s)
-  def runStreamT[S:Monoid,A](as: StreamT[({type f[+x] = State[S,x]})#f, A]) = StreamT.runStreamT(as,mzero[S])
+  def runStreamT_[S,A](as: StreamT[State[S,+?], A])(s: S) = StreamT.runStreamT(as,s)
+  def runStreamT[S:Monoid,A](as: StreamT[State[S,+?], A]) = StreamT.runStreamT(as,mzero[S])
 
   /** A variant of [[scalaz.StreamT]]`#runStreamT` that delivers the
     * final state to the resulting promise.
@@ -99,10 +98,10 @@ object StreamTUtils {
     * @author SMRC
     */
   private[reporting]
-  def runStreamTOut[S,A](stream : StreamT[({type λ[+X] = State[S,X]})#λ,A], s0: S)
+  def runStreamTOut[S,A](stream : StreamT[State[S,+?],A], s0: S)
                         : (Promise[S], StreamT[Id,A]) = {
     val scary = Promise.emptyPromise[S](Strategy.Sequential)
-    def rec(stream: StreamT[({type λ[+X] = State[S,X]})#λ,A], s0: S): StreamT[Id, A] =
+    def rec(stream: StreamT[State[S,+?],A], s0: S): StreamT[Id, A] =
       StreamT[Id,A]{
         val (s1, sa) = stream.step(s0)
         sa((a, as) => Yield(a, rec(as, s1)),
@@ -129,7 +128,7 @@ object StreamTUtils {
                bs <- chop(us)
              } yield node(v,as) #:: bs
       } yield a
-    case _ => Stream().pure[({type S[+x] = State[Set[A],x]})#S]
+    case _ => Stream().pure[State[Set[A],+?]]
   }
 
   def prune[A](forest: Forest[A]): Forest[A] = chop(forest) eval Set()

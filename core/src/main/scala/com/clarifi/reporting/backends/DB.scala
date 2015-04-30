@@ -1,10 +1,12 @@
 package com.clarifi.reporting
 package backends
 
-import Reporting._
+import scala.util.control.NonFatal
+
 import java.sql._
-import scalaz._
-import scalaz.Scalaz._
+import scalaz.{\/, -\/, \/-, IterV}
+import scalaz.std.function._
+import scalaz.syntax.monad._
 
 import sql._
 
@@ -22,7 +24,7 @@ object DB {
       c.commit
       r
     }
-    catch { case e => { c.rollback; throw e }}
+    catch { case e: Throwable => { c.rollback; throw e }}
     finally { c.setAutoCommit(oldAutoCommit) }
   }
 
@@ -32,7 +34,7 @@ object DB {
   def ensure[A](db: DB[A], what: DB[_]): DB[A] =
     c => try { db(c) } finally { what(c) }
 
-  def catchException[A](db : DB[A]) : DB[Either[java.lang.Throwable,A]] = c => try{Right(db(c))} catch {case e => Left(e)}
+  def catchException[A](db : DB[A]) : DB[Throwable \/ A] = c => try{\/-(db(c))} catch {case NonFatal(e) => -\/(e)}
 
   def prepStmt(s: => RawSql): DB[PreparedStatement] =
     c => {

@@ -96,7 +96,7 @@ class Memo[S, K](
 
   def apply(key: K) = lookup(key) map {
     case (id, b) => {
-      val (tup, _) = flattenIndex(id) eval ()
+      val (tup, _) = flattenIndex(id) eval (())
       (tup, if (b) flattenIndexKey((id, key)) else StreamT.empty[M,(TableName, Record)])
     }
   }
@@ -217,9 +217,9 @@ class PathMemo[S, K](
   type N[+X] = State[T, X]
   def freshen(k: K): State[T, Unit] = for {
     t <- init[T]
-    val (s, freshIds, _, parentId) = t
+    (s, freshIds, _, parentId) = t
     p <- lensId[T]._1.lifts(lookup(parentId, k))
-    val (nodeId, fresh) = p
+    (nodeId, fresh) = p
     s <- gets[T,S](_._1)
     _ <- put (
       ( s
@@ -242,8 +242,8 @@ class PathMemo[S, K](
 
   def apply(kv: NonEmptyList[K]): State[S, (Record, DataSetS[S])] = for {
     idspidid <- freshIds(kv)
-    val (ids, pid, id) = idspidid
+    (ids, pid, id) = idspidid
     tds1 <- factRowFlattener((pid, id))
-    val (tup, ds1) = tds1
+    (tup, ds1) = tds1
   } yield (tup, ds1 ++ StreamTUtils.concatMapIterable[M,(Int,Int,K),(TableName,Record)](ids)(dimTableFlattener apply _))
 }

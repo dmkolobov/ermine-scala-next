@@ -3,6 +3,7 @@ import scala.collection.immutable.List
 
 import scalaz.Traverse
 import scalaz.Applicative
+import scalaparsers.{Comonadic, Loc, Located}
 
 /**
  * Vars is used in the collection of free variables from some variable-containing
@@ -111,6 +112,7 @@ object V {
     def cobind[A,B](v: V[A])(f: V[A] => B) = map(cojoin(v))(f)
   }
 
+  import scalaparsers.Relocatable
   implicit def relocatableV[A]: Relocatable[V[A]] = new Relocatable[V[A]] {
     def setLoc(v: V[A], l: Loc) = v copy (loc = l)
   }

@@ -1,19 +1,22 @@
 package com.clarifi.reporting
 package writers
 
+import java.awt.Color
+import java.util.{Date, UUID}
 import collection.immutable.IndexedSeq
+
+import scalaz.{Order, Foldable, Functor, Monad, NonEmptyList, Tree, Tag, Tags}
+import scalaz.std.vector._
+import scalaz.syntax.bifunctor._
+import scalaz.syntax.equal._
+import scalaz.syntax.monad._
+import scalaz.syntax.foldable._
+import scalaz.std.list._
+import com.clarifi.machines._
 
 import com.clarifi.reporting.ermine._
 import com.clarifi.reporting.relational._
-import scalaz._
-import scalaz.Tree
-import scalaz.std.vector._
-import java.util.{Date, UUID}
-import com.clarifi.reporting.Reporting._
 import com.clarifi.reporting.backends.DB
-import scalaz.syntax.monad._
-import scalaz.syntax.applicative._
-import Scalaz._
 import Writer._
 import Magnitude._
 import com.clarifi.machines._
@@ -24,14 +27,20 @@ import Predicate._
 sealed trait SelectorMode
   case object Dropdown extends SelectorMode
   case object RadioButton extends SelectorMode
+  case object CheckBox extends SelectorMode
   case object TextBox extends SelectorMode
+  case object TextArea extends SelectorMode
   case object Slider extends SelectorMode
+  case class ForeignMode(nm : String) extends SelectorMode
+
 
 object SelectorModes {
   val dropdown    = Dropdown
   val radioButton = RadioButton
+  val checkBox    = CheckBox
   val slider      = Slider
   val textBox     = TextBox
+  val textArea    = TextArea
 }
 
 //selector events are things that union (aka commutative monoids)
@@ -88,12 +97,12 @@ abstract class Writer[F[_],C] { self =>
   def atom(f: Format, p: NonEmptyList[PrimExpr]): C
 
   /** a text label with font information */
-  def atomFont(fonts: List[Font], fontSize: Option[Int], f: Format, p: NonEmptyList[PrimExpr]): C = atom(f, p)
+  def atomFont(fonts: List[Font], fontSize: Option[Int], f: Format, p: NonEmptyList[PrimExpr]): C
 
   /** a word-wrapped text label */
-  def wrapAtom(s: List[Magnitude], f: Format, p: NonEmptyList[PrimExpr]): C = atom(f,p)
+  def wrapAtom(s: List[Magnitude], f: Format, p: NonEmptyList[PrimExpr]): C
   /** a word-wrapped text label with font info*/
-  def wrapAtomFont(s: List[Magnitude], fonts: List[Font], fontSize: Option[Int], f: Format, p: NonEmptyList[PrimExpr]): C = atomFont(fonts, fontSize, f, p)
+  def wrapAtomFont(s: List[Magnitude], fonts: List[Font], fontSize: Option[Int], f: Format, p: NonEmptyList[PrimExpr]): C
 
   /*  Hack Alert: we need the ability to take a date formatter
       Currently, the ExcelWriter and JFXWriter are parameterized on a formatter
@@ -102,10 +111,10 @@ abstract class Writer[F[_],C] { self =>
    */
   def dateToString(d: Date): String = PrimExprs.formatDate(d)
 
-  def image(fileName: String, altText: Option[String]): C = {
+  def image(fileName: String, altText: Option[String]): C // = {
     // If someone has markdown implemented, they might be able to display the image
-    atom(Format.Markdown(Format.Default), NonEmptyList(StringExpr( false , "![" + altText.getOrElse("") + "](" + fileName + ")" )))
-  }
+    //atom(Format.Markdown(Format.Default), NonEmptyList(StringExpr( false , "![" + altText.getOrElse("") + "](" + fileName + ")" )))
+  //}
 
   /** Assign a style to the target that may be used to influence the writer.
     * By default styles are ignored.
@@ -114,13 +123,13 @@ abstract class Writer[F[_],C] { self =>
 
   /** The target should recognize that it has a preferred size */
   // def prefSize(w: Option[Int], h: Option[Int], target: C): C = target
-  def prefArea(as: List[Area], target: C): C = target
-  def prefHeight(as: List[Magnitude], target: C): C = target
-  def prefWidth(as: List[Magnitude], target: C): C = target
+  def prefArea(as: List[Area], target: C): C
+  def prefHeight(as: List[Magnitude], target: C): C
+  def prefWidth(as: List[Magnitude], target: C): C
 
-  def maxArea(as: List[Area], target: C): C = target
-  def maxHeight(as: List[Magnitude], target: C): C = target
-  def maxWidth(as: List[Magnitude], target: C): C = target
+  def maxArea(as: List[Area], target: C): C
+  def maxHeight(as: List[Magnitude], target: C): C
+  def maxWidth(as: List[Magnitude], target: C): C
 
   // ignore these if we can't implement them
   def backgroundColor(c: Color, target: C): C = target
@@ -138,22 +147,13 @@ abstract class Writer[F[_],C] { self =>
 
   /** A grid layout of the reports where each element of the outer list is a row
     * and that rows elements become columns */
-  def grid(data: List[List[C]]): C = {
-    // Note: this isn't grid like, but will work "well enough" until a writer implements this
-    /* example of non gridlike behaivor (because information isn't shared between the vflows):
-     *    1 3 5
-     *    1 4 5
-     *    1   6
-     *    2
-     */
-    horizontalFlow( data.transpose.map( verticalFlow ))
-  }
+  def grid(data: List[List[C]]): C
 
   /** A table described by a `Column.Table` structure.  The default
     * exploits equivalence with `table` and `drilldownTable`; you are
     * free to reinterpret it.
     */
-  def columnTable(table: Column.Table[Atomic, ClosedExt]): F[C] = {
+  def columnTable(displayTransposed: Boolean, table: Column.Table[Atomic, ClosedExt]): F[C] = {
     val tablestr = ((_:Atomic)() extractNullableString "") <-: table
     val (ext, lgstr) = KeyValueTabular dynamicSchema tablestr
     val initSort = tablestr.initialSort.toList
@@ -169,7 +169,8 @@ abstract class Writer[F[_],C] { self =>
         drilldownTableDMTL2(Some(lgstr), lgstr.columnReferencesList.head, cols.map(_._1),
                            initSort, ext, table.rootNodes.get)
 
-      case None => tableDMTL(Some(lgstr), initSort, ext)
+      case None => if(displayTransposed) transposedTableDMTL(Some(lgstr), initSort, ext)
+                   else tableDMTL(Some(lgstr), initSort, ext)
     }
   }
 
@@ -180,12 +181,18 @@ abstract class Writer[F[_],C] { self =>
   // We generally want to reorder the table so the label column is first, if we have a default legend; this is the most sensible general behaivor
   // We also don't want to rearange a user-supplied legend.
   def drilldownTable(labelColumn: String, parentCol: String, childCol: String, isDefaultLegend: Boolean, t: TreeTabular[F, Record]): F[C]
+
   def drilldownTable2(labelColumn: String, cols: List[(String, String)], isDefaultLegend: Boolean, t: TreeTabular[F, Record]): F[C] =
     drilldownTable(labelColumn, cols.head._1, cols.head._2, isDefaultLegend, t) // correct as long as the writer ignores parent and child cols, which all do.
 
 
- /** @see [[com.clarifi.reporting.writers.AxisChart]] */
- def axisChart(chart: AxisChart[Tabular[F, Record]]): F[C]
+  /** @see [[com.clarifi.reporting.writers.AxisChart]] */
+  def axisChart(chart: AxisChart[Tabular[F, Record]]): F[C]
+
+
+  def treeMap(parentCol: String, childCol: String,
+              labelCol: Presentation, intensityCol: Presentation, sizeCol: Presentation,
+              data: TreeTabular[F,Record]): F[C]
 
   /** @note Invariant: _2.head of data elements is PrimitiveNum. */
   def pieChart(pcd: PieChartData, labelcol: Presentation, datacol: Presentation, data: Tabular[F,(NonEmptyList[PrimExpr],NonEmptyList[PrimExpr])]): F[C]
@@ -195,23 +202,16 @@ abstract class Writer[F[_],C] { self =>
   def drilldownPieChart(pcd: PieChartData, labelColumn: Presentation, dataCol : Presentation, parentCol: String, childCol: String, data: TreeTabular[F,(NonEmptyList[PrimExpr],NonEmptyList[PrimExpr])]): F[C]
 
   /** Create a drilldown bar chart. */
-  def drilldownBarChart(meta: AxisChartData, categoryPres: Presentation,
-                        dataPres: Presentation,
-                        parentCol: String, childCol: String,
-                        data: TreeTabular[F,(NonEmptyList[PrimExpr], NonEmptyList[PrimExpr])]): F[C]
+  def drilldownBarChartPC(chart: DrilldownBarAxisChart[(String, String), TreeTabular[F,(NonEmptyList[PrimExpr], NonEmptyList[PrimExpr])]]): F[C]
 
   /** @note Invariant: _2.head of data elements is PrimitiveNum.
     * @param data Tabular of (label, value) pairs. */
-  def drilldownPieChart2(pcd: PieChartData, labelColumn: Presentation, dataCol : Presentation, cols: List[(String, String)], data: TreeTabular[F,(NonEmptyList[PrimExpr],NonEmptyList[PrimExpr])]): F[C] = sys.error("todo")
+  def drilldownPieChart2(pcd: PieChartData, labelColumn: Presentation, dataCol : Presentation, cols: List[(String, String)], roots: ClosedExt, data: TreeTabular[F,(NonEmptyList[PrimExpr],NonEmptyList[PrimExpr])]): F[C]
 
   /** Create a drilldown bar chart. */
-  def drilldownBarChart2(meta: AxisChartData, categoryPres: Presentation,
-                        dataPres: Presentation,
-                        cols: List[(String, String)],
-                        data: TreeTabular[F,(NonEmptyList[PrimExpr], NonEmptyList[PrimExpr])]): F[C] = sys.error("todo")
+  def drilldownBarChart2(chart: DrilldownBarAxisChart[(List[(String, String)], ClosedExt), TreeTabular[F,(NonEmptyList[PrimExpr], NonEmptyList[PrimExpr])]]): F[C]
   /* This should render something like: https://51help.clarifi.com/Risk_attribution_snapshot */
-  def tree(legend: C, t: Tree[C]): C =
-    sys.error("todo: tree")
+  def tree(legend: C, t: Tree[C]): C
 
   /** @see Layout.Report.hspan */
   def horizontalSpan(cs: List[(Option[Int],C)]): C
@@ -231,14 +231,9 @@ abstract class Writer[F[_],C] { self =>
 
   def tabbed(cs: List[(String,C)]): C
 
-  def sideTabbed(cs: List[(String,C)]): C = tabbed(cs)
+  def sideTabbed(cs: List[(String,C)]): C
 
-  def collapsible(expanded: java.lang.Boolean, title: String, body: C): C =
-    style("collapsible",
-      verticalFlow(List(
-        style("collapsible-title", atom(Format.Default, NonEmptyList(StringExpr(false, title)))),
-        style("collapsible-body", body)))
-    )
+  def collapsible(expanded: java.lang.Boolean, title: String, body: C): C
 
   def scanRelation(r: ClosedExt, f: List[Record] => F[C], order: List[(String, SortOrder)] = List()): F[C] =
     B.scanExt(r.out, Process.wrapping[Record], order).flatMap(i => f(i.toList))
@@ -246,7 +241,7 @@ abstract class Writer[F[_],C] { self =>
   def run(c: C): Unit
 
   // DMTL hooks
-  def scanRelationDMTL(order: List[(String, SortOrder)], r: ClosedExt, f: List[Map[String,Runtime]] => F[C]): F[C] =
+  final def scanRelationDMTL(order: List[(String, SortOrder)], r: ClosedExt, f: List[Map[String,Runtime]] => F[C]): F[C] =
     scanRelation(r.out, (ts: List[Record]) => f(ts.map(_.mapValues(Runtime fromPrimExpr _))), order)
 
   /**
@@ -264,80 +259,102 @@ abstract class Writer[F[_],C] { self =>
    */
 
   def textBox(default:String, f: (C, SelectorEvent, ((SelectorEvent, String => F[C]) => F[C])) => F[C]) : F[C] =
-    sys.error("todo: implement Writer.textBox")
+    selector(TextBox,(NonEmptyList(StringExpr(false, default)),default),Format.Default,List(),f)
+
+  def textArea(default:String, f: (C, SelectorEvent, ((SelectorEvent, String => F[C]) => F[C])) => F[C]) : F[C] =
+    selector(TextArea,(NonEmptyList(StringExpr(false, default)),default),Format.Default,List(),f)
+
   def selector[A](mode: SelectorMode, default: (NonEmptyList[PrimExpr],A), fmt: Format, values: List[(NonEmptyList[PrimExpr],A)],
                    f: (C, SelectorEvent, ((SelectorEvent, A => F[C]) => F[C])) => F[C]
-                  ) : F[C] = sys.error("todo: implement Writer.selector")
-  def button(name: NonEmptyList[PrimExpr], fmt: Format, f: (C, SelectorEvent) => F[C]) : F[C] = sys.error("todo: implement Writer.button")
+                  ) : F[C]
 
-  def widget[S](state: S, controls: (S, (S => F[C])) => F[C], view: S => F[C]) : F[C] = sys.error("todo: implement Writer.widget")
+  def button(name: NonEmptyList[PrimExpr], fmt: Format, f: (C, SelectorEvent) => F[C]) : F[C]
+
+  def widget[S](state: S, controls: (S, (S => F[C])) => F[C], view: S => F[C]) : F[C]
+
+  def foreignSelector[A](nm: String, default: A, f : A => F[C]) : F[C] =
+                              // todo: do we want to take in a Nel[PrimExpr] and format?
+    selector(ForeignMode(nm),(NonEmptyList(StringExpr(false, default.toString)),default),Format.Default,List(),
+             {
+               case (_,e,k) => k(e,f)
+             } : (C, SelectorEvent, ((SelectorEvent, A => F[C]) => F[C])) => F[C])
+
+  def foreignSink[A](nm: String, f : (A => F[C]) => F[C]) : F[C]
 
   final def atomDMTL(fmt: Format, ps: AnyRef): C = atom(fmt, toPrimExprNel(ps))
   final def atomFontDMTL(fonts: List[Font], fontSize: Option[Int], f: Format, ps: AnyRef): C = atomFont(fonts, fontSize, f, toPrimExprNel(ps))
   final def atomWrappedDMTL(s:List[Magnitude], fmt: Format, ps: AnyRef): C = wrapAtom(s,fmt, toPrimExprNel(ps))
   final def atomWrappedFontDMTL(s:List[Magnitude], fonts: List[Font], fontSize: Option[Int], f: Format, ps: AnyRef): C = wrapAtomFont(s,fonts, fontSize, f, toPrimExprNel(ps))
 
-  final def tableDMTL(legend: Option[Legend[String]], order: List[(String, SortOrder)],
+  final def tableDMTL(legend: Option[Legend.U[String]], order: List[(String, SortOrder)],
                       r: ClosedExt): F[C] = {
     val tabular = Tabular.relationRec(r)
     table(legend.map(lg => tabular.label(lg)).getOrElse(tabular)
           .orderBy(order.toIndexedSeq))
   }
 
-  private[this] def nullableDouble(pe: PrimExpr): Option[Double] = pe match {
-    case DoubleExpr(_, d) => Some(d)
-    case NullExpr(_) => None
-    case _ => None                       // everything is nothing
+  final def transposedTableDMTL(legend: Option[Legend.U[String]], order: List[(String, SortOrder)],
+                      r: ClosedExt): F[C] = {
+    val tabular = Tabular.relationRec(r)
+    val inp = legend.map(lg => tabular.label(lg)).getOrElse(tabular).orderBy(order.toIndexedSeq).transpose
+    table(inp)
   }
 
-  def axisChartDMTL(chart: AxisChart[ClosedExt]): F[C] =
+  final def axisChartDMTL(chart: AxisChart[ClosedExt]): F[C] =
     axisChart(chart map (Tabular.relationRec(_)))
 
-  def pieChartDMTL(pcd: PieChartData, labelColumn: Presentation, dataColumn: Presentation,
-                   r: ClosedExt): F[C] =
+  final def pieChartDMTL(pcd: PieChartData, labelColumn: Presentation, dataColumn: Presentation,
+                         r: ClosedExt): F[C] =
     pieChart(pcd, labelColumn, dataColumn, Tabular.relationRec(r).map(tup =>
       (labelColumn extract tup, dataColumn extract tup)))
 
-  def drilldownPieChartDMTL(pcd: PieChartData, labelColumn: Presentation, dataColumn: Presentation,
-                            parentIdColumn: String, childColumn: String, fact: ClosedExt): F[C] =
+  final def treeMapDMTL(parentCol: String, childCol: String,
+                        labelCol: Presentation, intensityCol: Presentation, sizeCol: Presentation,
+                        fact: ClosedExt): F[C] =
+    treeTabular(parentCol, childCol, fact, rootParentId = 1) flatMap (ttab =>
+      treeMap(parentCol, childCol, labelCol, intensityCol, sizeCol, ttab))
+
+  final def drilldownPieChartDMTL(pcd: PieChartData, labelColumn: Presentation, dataColumn: Presentation,
+                                  parentIdColumn: String, childColumn: String, fact: ClosedExt): F[C] =
     treeTabular(parentIdColumn, childColumn, fact, rootParentId = 1) flatMap (ttab =>
       drilldownPieChart(pcd, labelColumn, dataColumn, parentIdColumn, childColumn,
                         ttab.map { tab =>
                           (labelColumn extract tab, dataColumn extract tab) }))
 
   final def drilldownBarChartDMTL(
-    meta: AxisChartData, categoryPres: Presentation, dataPres: Presentation,
-    parentCol: String, childCol: String, query: ClosedExt): F[C] =
+    chart: DrilldownBarAxisChart[(String, String), ClosedExt]): F[C] = {
+    val DrilldownBarAxisChart(_, categoryPres, dataPres, query, (parentCol, childCol), _) = chart
     treeTabular(parentCol, childCol, query, rootParentId = 1) flatMap (ttab =>
-      drilldownBarChart(meta, categoryPres, dataPres,
-                        parentCol, childCol,
-                        ttab map { tab =>
-                          (categoryPres extract tab, dataPres extract tab)}))
+      drilldownBarChartPC(chart.flattenFormat rightMap
+                          (_ => ttab map { tab =>
+                             (categoryPres extract tab, dataPres extract tab)})))
+  }
 
-  final def drilldownTableDMTL(legend: Option[Legend[String]], labelColumn: String, parentIdColumn: String, childColumn: String, order: List[(String, SortOrder)], fact: ClosedExt): F[C] =
+  final def drilldownTableDMTL(legend: Option[Legend.U[String]], labelColumn: String, parentIdColumn: String, childColumn: String, order: List[(String, SortOrder)], fact: ClosedExt): F[C] =
     treeTabular(parentIdColumn, childColumn, fact, rootParentId = 0) flatMap {tab =>
       drilldownTable(labelColumn, parentIdColumn, childColumn, legend.isEmpty,
                      legend.map(lg => tab.label(lg)).getOrElse(tab)
                        .orderBy(order.toIndexedSeq))
   }
 
-  def drilldownPieChartDMTL2(pcd: PieChartData, labelColumn: Presentation, dataColumn: Presentation,
-                            cols: List[(String, String)], fact: ClosedExt, roots: ClosedExt): F[C] =
+  final def drilldownPieChartDMTL2(pcd: PieChartData, labelColumn: Presentation, dataColumn: Presentation,
+                                   cols: List[(String, String)], fact: ClosedExt, roots: ClosedExt): F[C] =
     treeTabular2(cols, fact, roots) flatMap (ttab =>
-      drilldownPieChart2(pcd, labelColumn, dataColumn, cols,
-                        ttab.map { tab =>
-                          (labelColumn extract tab, dataColumn extract tab) }))
+      drilldownPieChart2(pcd, labelColumn, dataColumn, cols, roots,
+                         ttab.map { tab =>
+                           (labelColumn extract tab, dataColumn extract tab) }))
 
   final def drilldownBarChartDMTL2(
-    meta: AxisChartData, categoryPres: Presentation, dataPres: Presentation,
-    cols: List[(String, String)], query: ClosedExt, roots: ClosedExt): F[C] =
+    chart: DrilldownBarAxisChart[(List[(String, String)], ClosedExt), ClosedExt]): F[C] = {
+    val DrilldownBarAxisChart(_, categoryPres, dataPres, query, (cols, roots), _) = chart
+    // TODO ask estern whether the 3rd arg to treeTabular2 makes sense -SMRC
     treeTabular2(cols, query, roots) flatMap (ttab =>
-      drilldownBarChart2(meta, categoryPres, dataPres,
-                        cols,
-                        ttab map { tab =>
-                          (categoryPres extract tab, dataPres extract tab)}))
+      drilldownBarChart2(chart.flattenFormat rightMap
+                           (_ => ttab map { tab =>
+                              (categoryPres extract tab, dataPres extract tab)})))
+  }
 
-  final def drilldownTableDMTL2(legend: Option[Legend[String]], labelColumn: String, cols: List[(String, String)], order: List[(String, SortOrder)], fact: ClosedExt, roots: ClosedExt): F[C] =
+  final def drilldownTableDMTL2(legend: Option[Legend.U[String]], labelColumn: String, cols: List[(String, String)], order: List[(String, SortOrder)], fact: ClosedExt, roots: ClosedExt): F[C] =
     treeTabular2(cols, fact, roots) flatMap {tab =>
       drilldownTable2(labelColumn, cols, legend.isEmpty,
                      legend.map(lg => tab.label(lg)).getOrElse(tab)
@@ -346,14 +363,16 @@ abstract class Writer[F[_],C] { self =>
 
   /** Alias for `columnTable`. */
   final def columnTableDMTL(table: Column.Table[Atomic, ClosedExt]): F[C] =
-    columnTable(table)
+    columnTable(false,table)
+
+  final def columnTableTransposedDMTL(table: Column.Table[Atomic, ClosedExt]): F[C] =
+    columnTable(true,table)
 
   // returns a tree tabular of (dimension, fact table row) pairs
   private[this] def treeTabular(parentIdColumn: String,
                                 nodeIdColumn: String,
                                 fact: ClosedExt,
                                 rootParentId: Int = 0): F[TreeTabular[F, Record]] = {
-    import PrimT._
     fact match {
       case Closed(ExtRel(r, _), h) => relTreeTabular(parentIdColumn, nodeIdColumn, fact, rootParentId).pure[F]
       case _ => memTreeTabular(parentIdColumn, nodeIdColumn, fact, rootParentId)
@@ -418,7 +437,6 @@ abstract class Writer[F[_],C] { self =>
                                 fact: ClosedExt,
                                 rootFact: ClosedExt): F[TreeTabular[F, Record]] = {
     import Op._
-    import PrimT._
     val nodes = cols.map( _._2 )
     val parents = cols.map( _._1 )
     val ntypes = nodes.map( nodeIdColumn => fact.header.getOrElse(nodeIdColumn,
@@ -485,6 +503,8 @@ abstract class Writer[F[_],C] { self =>
                                , go(childMap.getOrElse(parentKey(row), Vector()), childMap)
                                )
             , None
+                                                                , None
+                                                                , false
             )
       }
 
@@ -519,19 +539,6 @@ object Writer {
   /** Implement Writer#atom in terms of a string display. */
   def displayedAtom[Z](atomShown: String => Z)(f: Format, p: NonEmptyList[PrimExpr]): Z =
     atomShown(f.basicEval(p) extractNullableString "")
-
-  /** `drilldownBarChart` for writers that can't drill down. */
-  def undrilldownBar[A](meta: AxisChartData, categoryPres: Presentation,
-                        dataPres: Presentation, data: A): AxisChart[A] =
-    AxisChart(List(ChartSeries(Presentation constant
-                               (meta.title cata (StringExpr(false, _),
-                                                 NullExpr(PrimT.StringT(0)))),
-                               categoryPres.displayData.head,
-                               dataPres.displayData.head,
-                               Bar, data)),
-              ((AxisChartData.domainL >=> Axis.formatL := categoryPres.format)
-               *> (AxisChartData.rangeL >=> Axis.formatL := dataPres.format))
-              exec meta)
 
   /** Coerce Ermine data, and other sorts, to a NEL of PrimExprs.  See
     * Layout.Report.ChoiceTest for sample calls required to

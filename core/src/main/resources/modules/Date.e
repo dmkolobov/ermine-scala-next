@@ -23,6 +23,7 @@ foreign
   function "com.clarifi.reporting.PrimExprs" "formatMonthYear" formatMonthYear : Date -> String
   function "com.clarifi.reporting.PrimExprs" "formatYear" formatYear : Date -> String
   function "com.clarifi.reporting.PrimExprs" "formatMonth" formatMonth : Date -> String
+  function "com.clarifi.reporting.PrimExprs" "formatDay" formatDay : Date -> String
 
   method "getTime" getTime       : Date -> Long
   method "getDate" getDate       : Date -> Int
@@ -66,6 +67,7 @@ decrementDate n = incrementDate (-n)
 -- date arithmetic
 foreign
   data "com.clarifi.reporting.TimeUnit" TimeUnit
+  function "com.clarifi.reporting.TimeUnits" "Millisecond" milliseconds : TimeUnit
   function "com.clarifi.reporting.TimeUnits" "Day" days : TimeUnit
   function "com.clarifi.reporting.TimeUnits" "Week" weeks : TimeUnit
   function "com.clarifi.reporting.TimeUnits" "Month" months : TimeUnit

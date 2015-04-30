@@ -28,6 +28,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
                oif: (Predicate, => z, => z) => z, // lazy makes sense for If
                coalesce: (z, => z) => z,
                dateadd: (z, Int, TimeUnit) => z,
+               datediff: (TimeUnit, z, z) => z,
                funcall: (String, String, List[String], List[z], PrimT) => z): z = {
     def rec(o: Op): z = o match {
       case OpLiteral(lit) => opliteral(lit)
@@ -43,6 +44,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case If(t, c, a) => oif(t, rec(c), rec(a))
       case Coalesce(l, r) => coalesce(rec(l), rec(r))
       case DateAdd(o, n, u) => dateadd(rec(o), n, u)
+      case DateDiff(u, s, e) => datediff(u, rec(s), rec(e))
       case Funcall(n, d, spc, args, ty) => funcall(n, d, spc, args map rec, ty)
     }
     rec(this)
@@ -57,17 +59,18 @@ sealed abstract class Op extends TraversableColumns[Op] {
     add = (_ + _),
     sub = (_ - _),
     mul = (_ * _),
-    floordiv = (_ / _),
+    floordiv = (_ floordiv _),
     doublediv = (_ / _),
     pow = (_ pow _),
     abs = _ abs,
-    concat = xs => StringExpr(false, xs.map(_.extractString).concatenate),
+    concat = xs => StringExpr(false, xs.map(_ extractNullableString "").concatenate),
     oif = (test, c, a) => if (test eval t) c else a,
     coalesce = (l, r) => l match { case NullExpr(_) => r ; case _ => l },
     dateadd = (d, n, u) => d match {
       case NullExpr(_) => d
       case _ => DateExpr(false, u.increment(d.extractDate, n))
     },
+    datediff = (u, s, e) => if(u == TimeUnit.Millisecond) IntExpr(false, (e.extractDate.getTime - s.extractDate.getTime).toInt) else sys error "datediff is meant to be used from SQL; built-in Java date subtraction is limited to milliseconds",
     funcall = (n, _, _, _, _) =>
                  sys error ("Can't invoke %s outside a database" format n))
 
@@ -95,8 +98,8 @@ sealed abstract class Op extends TraversableColumns[Op] {
               add = opbin(Add, (_ + _), pnum(0), pnum(0)),
               sub = opbin(Sub, (_ - _), Function const false, pnum(0)),
               mul = opbin(Mul, (_ * _), pnum(1), pnum(1)),
-              floordiv = opbin(FloorDiv, (_ / _),
-                               Function const false, pnum(1)),
+              floordiv = opbin(FloorDiv, (_ floordiv _),
+                               Function const false, Function const false),
               doublediv = opbin(DoubleDiv, (_ / _),
                                 Function const false, pnum(1)),
               pow = opbin(Pow, (_ pow _), Function const false, pnum(1)),
@@ -109,12 +112,14 @@ sealed abstract class Op extends TraversableColumns[Op] {
                                   case op => Right(op)})(_.isLeft).toList flatMap {
                   case lits@(Left(_) :: _) =>
                     List(OpLiteral(StringExpr(
-                      false, lits.map(_.left.get.extractString).suml)))
+                      false, lits.map(_.left.get extractNullableString "").suml)))
                   case unsimpl => unsimpl flatMap (_.right.toSeq)
                 } filter {case OpLiteral(StringExpr(_, "")) => false
                           case _ => true} match {
                   case List() => OpLiteral(StringExpr(false, ""))
-                  case List(lit@OpLiteral(_)) => lit
+                  case List(lit@OpLiteral(StringExpr(_, _))) => lit
+                  // one-arg concat is not an identity for non-strings
+                  // case List(lit@OpLiteral(_)) => lit
                   case unsimpl => Concat(unsimpl)
                 }},
               oif = ((test, c, a) =>
@@ -123,7 +128,8 @@ sealed abstract class Op extends TraversableColumns[Op] {
                   case pr => If(pr, c, a)
               }),
               coalesce = (l, r) => Coalesce(l, r),
-              dateadd = (d, n, u) => DateAdd(d, n, u),
+              dateadd = DateAdd,
+              datediff = DateDiff,
               funcall = Funcall)
   }
 
@@ -167,8 +173,11 @@ sealed abstract class Op extends TraversableColumns[Op] {
       oif = (_, mc, ma) => (mc |@| ma)(_ -> _) flatMap {case (c, a) =>
         c sup a map (_.success) getOrElse
         ("Unmatched if branches %s and %s" format (c, a) failureNel)},
-      coalesce = (_, t) => t,
+      coalesce = (e, t) => (e |@| t)(_ -> _) flatMap {case (e, t) =>
+        e.withoutNull sup t map (_.success) getOrElse
+        ("Unmatched coalesce branches %s and %s" format (e, t) failureNel)},
       dateadd = (d, _, _) => d, // type of date arithmetic is always a date
+      datediff = (_, _, _) => IntT().success,
       funcall = (name, db, ns, args, ty) => args.sequence >| ty)
   }
 
@@ -188,8 +197,9 @@ sealed abstract class Op extends TraversableColumns[Op] {
       abs = _.map(Abs(_)) >>= f,
       concat = _.sequence flatMap (f compose Concat),
       oif = (t, c, a) => ((t postReplaceOp f) |@| c |@| a)(If) >>= f,
-      coalesce = (l, r) => (l |@| r)(Coalesce),
-      dateadd = (d, n, u) => d.map(DateAdd(_,n,u)),
+      coalesce = (l, r) => binop(Coalesce)(l, r),
+      dateadd = (d, n, u) => d.flatMap(d => f(DateAdd(d,n,u))),
+      datediff = (u, sF, eF) => binop((s, e) => DateDiff(u, s, e))(sF, eF),
       funcall = (name, db, ns, args, ty) => args.sequence flatMap (args =>
                   f(Funcall(name, db, ns, args, ty))))
   }
@@ -211,6 +221,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
       oif = (test, c, a) => ((test traverseColumns f) |@| c |@| a)(If),
       coalesce = (l, r) => (l |@| r)(Coalesce),
       dateadd = (d, n, u) => d.map(DateAdd(_,n,u)),
+      datediff = (u, sF, eF) => binop[Op]((s, e) => DateDiff(u, s, e))(sF, eF),
       funcall = ((name, db, ns, args, ty) =>
                  args.sequence map (Funcall(name, db, ns, _, ty))))
   }
@@ -239,6 +250,7 @@ trait TimeUnit {
       cal.getTime
     }
     val (units, n2) = this match {
+      case Millisecond => (Calendar.MILLISECOND, n)
       case Day => (Calendar.DATE, n)
       case Week => (Calendar.DATE, n*7)
       case Month => (Calendar.MONTH, n)
@@ -249,6 +261,7 @@ trait TimeUnit {
 }
 
 object TimeUnit {
+  case object Millisecond extends TimeUnit
   // case object Second extends TimeUnit
   case object Day extends TimeUnit
   case object Week extends TimeUnit
@@ -258,6 +271,7 @@ object TimeUnit {
 }
 
 object TimeUnits {
+  val Millisecond = TimeUnit.Millisecond
   val Day = TimeUnit.Day
   val Week = TimeUnit.Week
   val Month = TimeUnit.Month
@@ -269,6 +283,8 @@ object TimeUnits {
 object Ops {
   def dateAdd(n: Int, units: TimeUnit, date: Op): Op =
     Op.DateAdd(date, n, units)
+  def dateDiff(units: TimeUnit, start: Op, end: Op): Op =
+    Op.DateDiff(units, start, end)
   def coalesce(l: Op, r: Op): Op = Op.Coalesce(l, r)
 }
 
@@ -286,6 +302,7 @@ object Op {
   case class If(test: Predicate, consequent: Op, alternate: Op) extends Op
   case class Coalesce(l: Op, r: Op) extends Op
   case class DateAdd(date: Op, n: Int, units: TimeUnit) extends Op
+  case class DateDiff(units: TimeUnit, start: Op, end: Op) extends Op
   case class Funcall(name: String, database: String, namespace: List[String],
                      args: List[Op], typ: PrimT) extends Op
 

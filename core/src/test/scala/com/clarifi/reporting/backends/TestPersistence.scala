@@ -2,14 +2,15 @@ package com.clarifi.reporting
 package backends
 
 import scalaz.{Source => _, _}
+//TODO: remove Scalaz._ and import single things
 import Scalaz._
-import scalaz.syntax.monad._
+//import scalaz.syntax.monad._
 import scalaz.effect.IO
 import IO.{apply => _, _}
-import std.function._
+//import std.function._
 
 import org.scalacheck._
-import Prop.{extendedAny => _, _}
+import Prop._
 
 import Reporting._
 import flatteners.{Flatteners => F, TableFlattener}

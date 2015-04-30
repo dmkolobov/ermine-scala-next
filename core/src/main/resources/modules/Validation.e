@@ -3,9 +3,11 @@ module Validation where
 import Map
 import Either
 import List as List
-import Native.Object using toString
 import Field using cons; fieldName
 import Parse
+import Control.Functor using fmap
+import Native.Object using toString
+import Nullable using toMaybe
 import Function
 import Maybe
 import String as String
@@ -22,6 +24,39 @@ nilV _ = Right {}
 
 consV : (t <- (r,s)) => Field r a -> Validator (Maybe String) a -> FormValidator s -> FormValidator t
 consV fld fn vs env = combineErrors (cons fld) (fieldName fld) (fn (lookup (fieldName fld) env)) (vs env)
+
+-- I'm not wild about exposing any of Validator's variance, really.
+-- So there are no combinators for it, and 'arr' is private to this
+-- module. -SMRC
+
+-- | Always produce 'b'. (Applicative unit)
+always : b -> Validator a b
+always = const . Right
+
+-- | Pass through the value as success. (Category id)
+pass : Validator a a
+pass = arr id
+
+-- | Wrap 'a' in 'Some'.
+someify : Validator a (Nullable a)
+someify = arr Some
+
+-- | Separate null from non-null.
+unnullify : Validator (Nullable a) (Either () a)
+unnullify = arr (maybeEither () . toMaybe)
+
+-- | Choose based on input.  (Category |||)
+choice : Validator a c -> Validator b c -> Validator (Either a b) c
+choice = either
+
+-- | Fallback on right if left fails.  (lifted mplus, satisfies Left
+-- Catch)
+orTry : Validator a b -> Validator a b -> Validator a b
+orTry f g a = orEither (f a) (g a)
+
+-- | Forgive failure.
+forgive : Validator a b -> Validator a (Either String b)
+forgive = arr
 
 combineErrors : (a -> b -> c) -> String -> Either String a -> Either (List Err) b -> Either (List Err) c
 combineErrors f n (Right a) (Right b) = Right (f a b)
@@ -73,3 +108,7 @@ within bs pred vab a =
       existsb b = find_List (pred b) bs
       checkWithin = maybe (Left errmsg) Right . existsb
   in either Left checkWithin $ vab a
+
+private
+  arr : (a -> b) -> Validator a b
+  arr = (.) Right

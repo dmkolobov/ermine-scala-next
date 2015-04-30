@@ -1,9 +1,8 @@
 package com.clarifi.reporting
 package ermine.session
 
-import java.util.concurrent._
-import com.clarifi.reporting.ermine.{ Result, Success, Failure, Filtered, Document, Death }
-import com.clarifi.reporting.ermine.Document.{ text, vsep }
+import scalaparsers.{Success, Failure, Document, Death, Supply}
+import scalaparsers.Document.{ text, vsep }
 import scalaz.concurrent.{ Promise, Strategy }
 import scalaz.concurrent.Strategy._
 import java.util.Date

@@ -49,8 +49,6 @@ infixl 5 &_Mem
 infixl 5 &'_Mem
 infixl 8 #
 
---(#) = (|>)
-
 (**) = join
 (**') : (a <- (r, o), relalComb rel) => rel a -> rel r -> rel a
 (**') = (**)

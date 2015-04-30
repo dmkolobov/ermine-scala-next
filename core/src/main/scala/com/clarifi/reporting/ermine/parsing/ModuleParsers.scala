@@ -3,7 +3,8 @@ package com.clarifi.reporting.ermine.parsing
 import com.clarifi.reporting.ermine.syntax._
 import com.clarifi.reporting.ermine.syntax.Statement._
 
-import com.clarifi.reporting.ermine.{ Located, Pos, ++, ImplicitBinding, Comonadic, TermVar, TypeVar, Term }
+import scalaparsers.{++, Located, Pos}
+import com.clarifi.reporting.ermine.{ ImplicitBinding, Term }
 import scala.collection.immutable.List
 import StatementParsers._
 
@@ -13,6 +14,8 @@ case class ModuleHeader(
   explicitLayout: Boolean = false,
   importExports: List[ImportExportStatement] = List()
 ) extends Located {
+  import SI8862._
+
   def topLayout: Parser[List[Statement]] =
     if (explicitLayout)
       for {
@@ -41,6 +44,8 @@ case class ModuleHeader(
 }
 
 object ModuleParsers {
+  import SI8862._
+
   def moduleName: Parser[String] = for {
     ns <- DataConParsers.ident.sepBy(keyOp(".")) scope "module name"
   } yield ns.mkString(".")
@@ -55,7 +60,7 @@ object ModuleParsers {
     for {
       p <- whiteSpace(false, false) >> loc
       name <- (keyword("module") >> moduleName << keyword("where")) scope "module header" orElse defaultName
-      _ <- modify(s => s.copy(moduleName = name))
+      _ <- modify(ErParseState.Lenses.moduleName.set(_, name))
       explicit <- leftBrace.as(true) | (semi | eof).as(false)
       importExports <- importExportStatement.sepEndBy(if (explicit) token(";") else semi) scope "import statements"
     } yield ModuleHeader(p, name, explicit, importExports)
@@ -97,7 +102,7 @@ object ModuleParsers {
     for {
       pos <- loc
       stmts <- header.topLayout scope "statements"
-      val (sigs, mod) = go(stmts, List(), Module(header.loc, header.name, header.importExports))
+      (sigs, mod) = go(stmts, List(), Module(header.loc, header.name, header.importExports))
       p <- checkBindings(pos, mod.implicits, sigs)
       _ <- p.distinct(pos)
     } yield mod.copy( // reversing just so we get errors roughly in order

@@ -1,11 +1,14 @@
 package com.clarifi.reporting
 
-import com.clarifi.reporting.ermine.{ Relocatable, Located, Loc }
+import scalaparsers.Loc
 import scalaz.{ Lens }
+import scalaparsers._
 import scala.collection.immutable.List
 import Lens._
 
 package object ermine {
+  import scalaparsers.Relocatable
+
   def setLoc[T<:Located](t: T, l: Loc)(implicit T:Relocatable[T]) = T.setLoc(t,l)
   def location[T <: Located](implicit T:Relocatable[T]) = lensu[T,Loc]((s, u) => T.setLoc(s, u), _.loc)
 
@@ -21,11 +24,7 @@ package object ermine {
   type PatternVar = V[Annot]
   type PatternVars = Vars[Annot]
 
-  def cast[A,B](a: A): Option[B] =
-    if (a.isInstanceOf[B]) Some(a.asInstanceOf[B])
-    else None
-
-  def skip[T[+_]](p:Functorial[T,Any]): T[Unit] = p as ()
+  def skip[T[+_]](p:Functorial[T,Any]): T[Unit] = p as (())
   def as[T[+_],A](p:Functorial[T,Any], a: A): T[A] = p as a
   def filterMap[T[+_],A,B](p: Filtered[T,A])(f: A => Option[B]): T[B] = p filterMap f
   def many1[T[+_],A](p: Alternating[T,A]): T[List[A]] = p some // can't use some!

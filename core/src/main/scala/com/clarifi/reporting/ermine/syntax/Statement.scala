@@ -1,15 +1,15 @@
 package com.clarifi.reporting.ermine.syntax
 
-import com.clarifi.reporting.Supply
 import com.clarifi.reporting.ermine.parsing.Localized
 import com.clarifi.reporting.ermine._
-import com.clarifi.reporting.ermine.Diagnostic._
 import com.clarifi.reporting.ermine.Kind.{ subKind }
 import com.clarifi.reporting.ermine.Type.{ typeVars, allTypeVars, sub }
 import com.clarifi.reporting.ermine.Term.{ termVars }
 import scala.collection.immutable.List
 import scalaz.Monad
 import scalaz.Scalaz._
+import scalaparsers.{Diagnostic, Loc, Located, Pos, Supply}
+import scalaparsers.Diagnostic._
 
 // misc.
 case class ForeignClass(loc: Pos, cls: Class[_]) extends Located

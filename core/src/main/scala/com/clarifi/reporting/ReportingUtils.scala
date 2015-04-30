@@ -2,12 +2,9 @@ package com.clarifi.reporting
 
 import scalaz._
 import Scalaz._
-import Ordering._
-import syntax.traverse._
 import scalaz.Scalaz._
 
 import com.clarifi.reporting.Predicate._
-import com.clarifi.reporting.Reporting._
 
 /**
  * Collection of various utility and convenience methods that do not

@@ -12,21 +12,14 @@ import org.scalacheck.Gen
 
 import java.util.UUID
 
-import com.clarifi.reporting._
 import com.clarifi.reporting.Gens._
-import com.clarifi.reporting.Reporting._
 import com.clarifi.reporting.PredicateGens._
 import com.clarifi.reporting.AggFuncGens._
 import com.clarifi.reporting.OpGens._
 
 import relational._
-import backends._
-import sql._
 
-import com.clarifi.reporting.util._
 import com.clarifi.reporting.PrimT._
-
-import Op._
 
 /**
  * Contains generators used to create relations, as well as other
@@ -136,10 +129,14 @@ object RelationGens {
   } yield pe.typ
 
 
-  def simplePrimT: Gen[PrimT] = Gen.oneOf(
-    genStringLen().map(StringT(_,false)), ByteT(), ShortT(), IntT(),
-    LongT(), DoubleT(), DateT(), BooleanT(), UuidT()
-  )
+  def simplePrimT: Gen[PrimT] = {
+    import Gen.const
+    Gen.oneOf(
+      genStringLen().map(StringT(_,false)), const(ByteT()),
+      const(ShortT()), const(IntT()), const(LongT()), const(DoubleT()),
+      const(DateT()), const(BooleanT()), const(UuidT())
+    )
+  }
 
   def primT: Gen[PrimT] = Gen.oneOf(
     simplePrimT,
@@ -163,12 +160,12 @@ object RelationGens {
    */
   private def primExpr(t: PrimT): Gen[PrimExpr] = {
     val simple = simplePrimExpr(t)
-    if (t.nullable) Gen.oneOf(simple, Gen.value(NullExpr(t)))
+    if (t.nullable) Gen.oneOf(simple, Gen.const(NullExpr(t)))
     else simple
   }
 
   private def genOptionExpr(t: PrimT): Gen[PrimExpr] = Gen.oneOf(
-    Gen.value(NullExpr(t)),
+    Gen.const(NullExpr(t)),
     simplePrimExpr(t)
   )
 
@@ -219,7 +216,7 @@ object RelationGens {
    */
   def genLiteral(h: Header): Gen[Relation[Nothing, Nothing]] = h.toList.foldLeftM(Map[ColumnName, PrimExpr]())((a, attr) => for {
       expr <- primExpr(attr._2)
-      r <- Gen.value(a ++ Map(attr._1 -> expr))
+      r <- Gen.const(a ++ Map(attr._1 -> expr))
     } yield r).map(x => SmallLit(NonEmptyList(x)))
 
   def genLiteral: Gen[Relation[Nothing, Nothing]] = for {
@@ -229,13 +226,13 @@ object RelationGens {
 
   def genLiteral(expr: PrimExpr): Gen[Relation[Nothing, Nothing]] =
     Gen.listOfN(10, Gen.alphaLowerChar).map(k => SmallLit(NonEmptyList(Map(k.mkString("") -> expr))))
-  def genZero: Gen[Relation[Nothing, Nothing]] = Gen.value(RelEmpty(Map()))
-  def genOne: Gen[Relation[Nothing, Nothing]] = Gen.value(SmallLit(NonEmptyList(Map())))
+  def genZero: Gen[Relation[Nothing, Nothing]] = Gen.const(RelEmpty(Map()))
+  def genOne: Gen[Relation[Nothing, Nothing]] = Gen.const(SmallLit(NonEmptyList(Map())))
   def genEmpty: Gen[Relation[Nothing, Nothing]] = for {
     h <- genVariableHeader
     r <- genEmpty(h)
   } yield r
-  def genEmpty(h: Header): Gen[Relation[Nothing, Nothing]] = Gen.value(RelEmpty(h))
+  def genEmpty(h: Header): Gen[Relation[Nothing, Nothing]] = Gen.const(RelEmpty(h))
 
   /**
    * Generates a join relation that, depending on the given boolean, will
@@ -252,8 +249,6 @@ object RelationGens {
     t <- _genJoinWithHeader(commonHeaders, h, NoRelationLevel, minRecords, maxRecords)
   } yield t
 
-  import org.scalacheck.util.Buildable.buildableStream
-
   /** Generates a JoinOn relation */
   def genJoinOn[M[+_]:Monad](minRecords: Int = MinRecordSize, maxRecords: Int = MaxRecordSize):
     Gen[(Relation[Nothing, Nothing], Relation[Nothing, Nothing], Set[(String, String)])] = for {
@@ -265,9 +260,10 @@ object RelationGens {
       r1 <- _genRelationAnyNestedWithHeader(h1, NoRelationLevel, minRecords, maxRecords)
       r2 <- _genRelationAnyNestedWithHeader(h2, NoRelationLevel, minRecords, maxRecords)
       // (\ d i -> fmap (\ f -> f >>= \ e -> e) (Data.Traversable.traverse d i))
-      ch <- Gen.sequence((h1.toStream |@| h2.toStream)((_, _)) map {
-        case ((k1, v1), (k2, v2)) => Gen.oneOf(true, false) map (b =>
-                                                   if (b && (v1 == v2)) Stream((k1, k2)) else Stream())})
+      ch <- Gen.sequence[Stream, Stream[(String, String)]](
+        (h1.toStream |@| h2.toStream)((_, _)) map {
+          case ((k1, v1), (k2, v2)) => Gen.oneOf(true, false) map (b =>
+            if (b && (v1 == v2)) Stream((k1, k2)) else Stream())})
     } yield (r1, r2, ch.flatten.toMap.map(_.swap).map(_.swap).toSet)
 
   /**
@@ -338,8 +334,8 @@ object RelationGens {
       // create the projected relations, then yield the union of
       // the projected relations with the other relation
       //
-      (p1, p2) = (Project(r1, headerProj(ph1)),
-                  Project(r1, headerProj(ph2)))
+      (p1, p2) = (Project(r1, Header.proj(ph1)),
+                  Project(r1, Header.proj(ph2)))
     } yield (Union(p1, u1), Union(p2, u2), Some(common))
   }
 
@@ -398,8 +394,8 @@ object RelationGens {
     //
     r1 <- _genRelationAnyNestedWithHeader(h, level, minRecords, maxRecords)
     r2 <- _genRelationAnyNestedWithHeader(h, level, minRecords, maxRecords)
-  } yield f(Project(r1, headerProj(h)),
-            Project(r2, headerProj(h)))
+  } yield f(Project(r1, Header.proj(h)),
+            Project(r2, Header.proj(h)))
 
   /**
    * Generates two arbitrary relations with the same header.
@@ -503,7 +499,7 @@ object RelationGens {
   def genRelationHeaderTuple(g: Gen[Relation[Nothing, Nothing]]): Gen[(Relation[Nothing, Nothing], Set[String])] = {
     for {
       r <- g
-      val h = Typer.relTyper(r).toOption.get.filter(t => random > 0.5)
+      h = Typer.relTyper(r).toOption.get.filter(t => random > 0.5)
     } yield (r, h.keys.toSet)
   }
 
@@ -622,7 +618,7 @@ object RelationGens {
    * Generates Tuples based on a header to match up the types.
    */
   def genRecord(h: Header): Gen[Record] = {
-    h.mapValues((v: Type) => primExpr(v)).foldLeft(Gen.value(Map[String, PrimExpr]()))(
+    h.mapValues((v: Type) => primExpr(v)).foldLeft(Gen.const(Map[String, PrimExpr]()))(
       (z: Gen[Map[String, PrimExpr]], kv: (String, Gen[PrimExpr])) => {
         for {
           m <- z

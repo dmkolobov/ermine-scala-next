@@ -3,8 +3,6 @@ package com.clarifi.reporting.ermine.editor
 import Backend.{MCursor,Loc}
 
 import com.clarifi.reporting.ermine._
-import com.clarifi.reporting.ermine.syntax._
-import Cursors._
 
 object Editor {
 
@@ -108,7 +106,6 @@ object JFXUtil {
 
 object Interactivity {
   import JFXUtil._
-  import collection.JavaConversions._
 
   def JFX = new Interactivity[Node] {
     def enable[F[_],E,S](editor: Editor[F,E,S,Node]): Unit = ()

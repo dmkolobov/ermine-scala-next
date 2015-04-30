@@ -28,7 +28,7 @@ foreign data "com.clarifi.reporting.writers.Legend" Legend# (a: *)
 
 --case class Legend[Lbl](inOrder: Seq[(Presentation, SortStrategy, Lbl)], undisplayed: Seq[(ColumnName, PrimT, SortOrder)])
 -- | The "legend" (essentially, display metadata) for a set of fields.
-data Legend (r: ρ) = Legend (List (Legend# String, SortPriority, String)) (Legend# String)
+data Legend (r: ρ) = Legend (List (String, SortPriority)) (Legend# String)
 
 infixr 5 ++
 
@@ -44,15 +44,17 @@ private foreign
       unsafeHidden: Op r a -> SortStrategy# r -> Maybe# (Pair# SortOrder# Int) -> Legend# lbl
 
   method "append" append# : Legend# lbl -> Legend# lbl -> Legend# lbl
+  method "columnGroup" columnGroup# : Legend# lbl -> lbl -> Legend# lbl
   method "columnReferencesList" columnsUsed## : Legend# lbl -> List# String
-  method "map" map## : Legend# a -> Function1 a b -> Legend# b
+  function "com.clarifi.reporting.writers.Legend" "umap"
+      map## : Legend# a -> Function1 a b -> Legend# b
 
 reprioritizeLabel : String -> SortPriority -> Legend r -> Legend r
 reprioritizeLabel lbl newPriority (Legend l1 l2) =
-  Legend (fmap listFunctor_L ((leg, oldPriority, lbl') -> 
+  Legend (fmap listFunctor_L ((lbl',oldPriority) -> 
            if (lbl == lbl')
-                (leg, newPriority, lbl') 
-                (leg, oldPriority, lbl')) l1)
+                (lbl', newPriority) 
+                (lbl', oldPriority)) l1)
          l2
 
 -- | Give a label to a single presentation, producing its legend.
@@ -70,10 +72,8 @@ exoticLegend : AsPresentation pr
             -> String
             -> Legend r
 legend p = exoticLegend p (sortBy_SS forward_SS p) Unsorted
-exoticLegend p srt init lbl = Legend ([(unsafeLegend (asPresentation p)
-                                                    (nativeSortStrategyData# srt)
-                                                    lbl,
-                                       init, lbl)]_L) empty#
+exoticLegend p srt init lbl = Legend ([(lbl, init)]_L) $
+  unsafeLegend (asPresentation p) (nativeSortStrategyData# srt) lbl
 
 hidden : AsOp op => SortPriorityAnnotated (op r a) -> Legend r
 hidden (op, srt) = exoticHidden op (sortBy_SS forward_SS $ asOp op) srt
@@ -83,7 +83,7 @@ exoticHidden op ss sp = Legend ([]_L) $ unsafeHidden (asOp op) (sortStrategy# ss
 -- | Do not use; meant for writers.  (Boxes a legend for report
 -- nesting and export to writers.)
 legend# : Legend r -> Legend# String
-legend# (Legend xs hs) = append# (foldl_L append# empty# $ map ((nl, _, _) -> nl) xs) hs
+legend# (Legend _ hs) = hs
 
 -- | Do not use; meant for writers.  (Extract unique columns
 -- references in a legend, in order.)
@@ -101,7 +101,7 @@ initialSort# = toSort# . partialSort
 
 -- | List the initial sort priority of each label, in order.
 partialSort : Legend r -> List (String, SortPriority)
-partialSort (Legend xs _) = map ((_, pri, lbl) -> (lbl, pri)) xs
+partialSort (Legend xs _) = xs
 
 legendFunctor# : Functor Legend#
 legendFunctor# = Functor (f l -> map## l (function1 f))
@@ -115,32 +115,42 @@ fromField = fromRow . single
 
 -- | Default legend for a row.  Note: legendRow . fromRow = id
 fromRow : Row r -> Legend r
-fromRow (Row sps) = Legend (col <$> sort (contramap fst ord_S) sps) empty#
-  where col (s, pt) = ((case existentialF s (unsafePrim# pt) of
-                         (EField e) -> unsafeLegend (asPresentation e)
-                                         (nativeSortStrategyData# $
-                                           sortBy_SS forward_SS e)
-                                         s),
-                       Unsorted, s)
+fromRow (Row sps) = Legend (map ((s, _) -> (s, Unsorted)) naturalSps)
+                           (foldl_L append# empty# . map col $ naturalSps)
+  where naturalSps = sort (contramap fst ord_S) sps
+        col (s, pt) = case existentialF s (unsafePrim# pt) of
+                        (EField e) -> unsafeLegend (asPresentation e)
+                                        (nativeSortStrategyData# $
+                                          sortBy_SS forward_SS e)
+                                        s
+
+-- | Group these columns under a single column group, like:
+--       | Some group name |
+--       | foo | bar | baz |
+legendGroup : String -> Legend r -> Legend r
+legendGroup g (Legend ss lg) = Legend ss $ columnGroup# lg g
 
 -- | Default legend for a row, where all rows use a given Format.
 fromRowWithFormat : Format a -> Row r -> Legend r
-fromRowWithFormat f (Row sps) = Legend (col <$> sort (contramap fst ord_S) sps) empty#
-  where col (s, pt) = ((case existentialF s (unsafePrim# pt) of
-                         (EField e) -> unsafeLegend (presentation f e)
-                                         (nativeSortStrategyData# $
-                                           sortBy_SS forward_SS e)
-                                         s),
-                       Unsorted, s)
+fromRowWithFormat f (Row sps) = Legend (map ((s, _) -> (s, Unsorted)) naturalSps)
+                           (foldl_L append# empty# . map col $ naturalSps)
+  where naturalSps = sort (contramap fst ord_S) sps
+        col (s, pt) = case existentialF s (unsafePrim# pt) of
+                        (EField e) -> unsafeLegend (presentation f e)
+                                        (nativeSortStrategyData# $
+                                          sortBy_SS forward_SS e)
+                                        s
 
 fromRowWithDisplayFunc : (String -> String) -> Row r -> Legend r
-fromRowWithDisplayFunc f  (Row sps)= Legend (col <$> sort (contramap fst ord_S) sps) empty#
-  where col (s, pt) = ((case existentialF s (unsafePrim# pt) of
-                         (EField e) -> unsafeLegend (asPresentation e)
-                                         (nativeSortStrategyData# $
-                                           sortBy_SS forward_SS e)
-                                         (f s)),
-                       Unsorted, s)
+fromRowWithDisplayFunc f  (Row sps) = Legend (map ((s, _) -> (s, Unsorted)) naturalSps)
+                           (foldl_L append# empty# . map col $ naturalSps)
+  where naturalSps = sort (contramap fst ord_S) sps
+        col (s, pt) = case existentialF s (unsafePrim# pt) of
+                        (EField e) -> unsafeLegend (asPresentation e)
+                                        (nativeSortStrategyData# $
+                                          sortBy_SS forward_SS e)
+                                        (f s)
+
 -- | Combine two legends into one.  They may not specify information
 -- for overlapping fields.
 (++) : forall r s t. t <- (r, s) => Legend r -> Legend s -> Legend t

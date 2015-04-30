@@ -12,14 +12,19 @@ object TestMarkdown extends Properties("Markdown") {
     parseMarkdown(s).nonEmpty
   })
 
-  property("parse empty") = secure { parseMarkdown("") == List() }
+  property("parse empty") = secure { parseMarkdown("") == List(MPara(List())) }
 
-  test(  "_test_",   MStyle(MSItal, List(MPlain("test"))))
-  test(  "*test*",   MStyle(MSItal, List(MPlain("test"))))
-  test( "__test__",  MStyle(MSBold, List(MPlain("test"))))
-  test( "**test**",  MStyle(MSBold, List(MPlain("test"))))
-  test("_**test**_", MStyle(MSItal, List(MStyle(MSBold, List(MPlain("test"))))))
-  test("__*test*__", MStyle(MSBold, List(MStyle(MSItal, List(MPlain("test"))))))
+  property("parse para") = secure { 
+    parseMarkdown("test\n\ntest") == List(MPara(List(MPlain("test")))
+                                         , MPara(List(MPlain("test"))))
+  }
+
+  test(  "_test_",     MPara(List(MStyle(MSItal, List(MPlain("test"))))))
+  test(  "*test*",     MPara(List(MStyle(MSItal, List(MPlain("test"))))))
+  test( "__test__",    MPara(List(MStyle(MSBold, List(MPlain("test"))))))
+  test( "**test**",    MPara(List(MStyle(MSBold, List(MPlain("test"))))))
+  test("_**test**_",   MPara(List(MStyle(MSItal, List(MStyle(MSBold, List(MPlain("test"))))))))
+  test("__*test*__",   MPara(List(MStyle(MSBold, List(MStyle(MSItal, List(MPlain("test"))))))))
 
 
   List("MStyle(MSItal,List(MStyle(MSBold,List(MPlain(test)))))")
@@ -35,6 +40,7 @@ object TestMarkdown extends Properties("Markdown") {
       case MStyle(s, inner) => MStyle(s, cleanAll(inner))
       case MLink(isImage, inner, dest, title) =>
         MLink(isImage, cleanAll(inner), dest, title)
+      case MPara(inner) => MPara(cleanAll(inner))
       case x => x
     }
     ms.foldLeft(List[MSyntax]()){

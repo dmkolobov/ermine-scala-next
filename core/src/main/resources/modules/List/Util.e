@@ -2,7 +2,7 @@ module List.Util where
 
 import Map as M
 import Ord
-import Primitive
+import Primitive as P
 import Function
 import List
 import Bool
@@ -13,6 +13,7 @@ import Eq
 import Maybe
 import Math
 import String as S
+import Vector as V
 
 -- | Left-biased, O(n log n) duplicate elimination.
 distinct : Ord a -> List a -> List a
@@ -24,13 +25,12 @@ distinct o xs =
    in unfoldr next (empty_M o, xs)
 
 sort : Ord a -> List a -> List a
-sort o = map fst . toAssocList_M . fromAssocList_M o
-       . map (a -> (a, ()))
+sort o =  toList_V . sort_V o . fromList_V 
 
 median : List Double -> Maybe Double
 median [] = Nothing
 median vs = let
-    sorted = sort primOrd vs
+    sorted = sort primOrd_P vs
     l = length vs
     midPoint = l / 2
     isEven = midPoint * 2 == l

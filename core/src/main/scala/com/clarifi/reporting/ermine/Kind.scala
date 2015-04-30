@@ -1,7 +1,7 @@
 package com.clarifi.reporting.ermine
 
 import scalaz._
-import scalaz.Scalaz._
+import scalaparsers.{Loc, Located}
 import scala.collection.immutable.List
 import scala.collection.Iterable
 import Equal._
@@ -60,6 +60,8 @@ case class VarK(v: V[Unit]) extends Kind with Variable[Unit] {
 }
 
 object Kind {
+  import scalaparsers.Relocatable
+
   val star       = Star(Loc.builtin)
   val rho        = Rho(Loc.builtin)
   val constraint = Constraint(Loc.builtin)

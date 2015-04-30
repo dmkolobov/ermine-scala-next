@@ -3,12 +3,18 @@ package relational
 
 import PrimT._
 
-import scalaz._
-import syntax.validation._
-import syntax.applicative._
-import Scalaz._
-import Show._
-import syntax.foldable._
+import scalaz.{Monad, NonEmptyList, Show, Validation}
+import scalaz.std.either._
+import scalaz.std.list._
+import scalaz.syntax.monad._
+import scalaz.syntax.traverse.{ToFunctorOps => _, ToFunctorOpsUnapply => _, _}
+import scalaz.syntax.validation._
+
+case class Closed[F[_, _]](out: F[Nothing, Nothing], header: Header) {
+    def map[G[_, _]](f: F[Nothing, Nothing] => G[Nothing, Nothing]): Closed[G] =
+      Closed[G](f(out), header)
+}
+
 
 object Typer {
   private def badColumns[F[+_]](cols: List[String])(implicit err: (String, String*) => F[Nothing]): F[Nothing] = {

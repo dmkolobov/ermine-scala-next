@@ -1,7 +1,6 @@
 package com.clarifi.reporting.util
 
 import scalaz.Scalaz.mzero
-import scalaz.scalacheck.ScalaCheckBinding._
 import scalaz.scalacheck.ScalazProperties._
 import scalaz.scalacheck.ScalazArbitrary.OrderingArbitrary
 

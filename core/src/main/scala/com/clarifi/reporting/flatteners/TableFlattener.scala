@@ -182,7 +182,7 @@ object TableFlattener {
     implicit val M = backend.M
     for {
       ran <- Kleisli{_: Source => M.point(runStreamTOut(f(a), s0))}
-      val (scary, statefree) = ran
+      (scary, statefree) = ran
       _ <- backend.populateSchema(f.schema.transform((tn,hdr) => (RefID(tn.name),hdr)),
                                  statefree, batchSize)
     } yield scary.get

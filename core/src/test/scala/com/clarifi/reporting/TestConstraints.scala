@@ -1,9 +1,10 @@
 package com.clarifi.reporting
 
 import org.scalacheck._
-import Prop.{extendedAny => _, _}
+import Prop._
 import Gen._
 
+import scalaparsers._
 import ermine._
 import Constraints._
 import Q._
@@ -11,6 +12,7 @@ import Subst.{ solve, substType }
 
 import scalaz.{Free => _, Name => _, _}
 import Scalaz._
+import scalaz.scalacheck.ScalaCheckBinding.GenMonad
 
 object TestConstraints extends Properties("Constraints") {
   implicit val su: Supply = Supply.create
@@ -82,11 +84,6 @@ object TestConstraints extends Properties("Constraints") {
     (choose(0,3) >>= (listOfN(_, fieldName))) map (_.toSet)
   }
 
-  implicit def genMonad: Monad[Gen] = new Monad[Gen] {
-    def bind[A,B](a: Gen[A])(f: A => Gen[B]): Gen[B] = a flatMap f
-    def point[A](x: => A): Gen[A] = value(x)
-  }
-
   def cfresh(n: Option[Name] = None): TypeVar = fresh(Loc.builtin, n, Free, Rho(Loc.builtin))
 
   def variables(n: Int): Gen[List[TypeVar]] = choose(0, n) map (k => (0 until k).toList map (_ => cfresh()))
@@ -148,11 +145,11 @@ object TestConstraints extends Properties("Constraints") {
   // Valuation generators
   def splitConcreteGen: Gen[(TypeVar, TypeVar, Set[TypeVar], RHS, Valuation)] = for {
     (vs, vl) <- valuatedVariables(25)
-    val a = cfresh()
-    val u = cfresh()
+    a = cfresh()
+    u = cfresh()
     cs <- fields
-    val ufs = setUnions(vl.values)
-    val afs = cs ++ ufs
+    ufs = setUnions(vl.values)
+    afs = cs ++ ufs
   } yield ( a, u
           , vs.toSet
           , RHS(vs.toSet, cs)
@@ -161,15 +158,15 @@ object TestConstraints extends Properties("Constraints") {
   def commonSubexpressionGen: Gen[(TypeVar, TypeVar, TypeVar, Set[TypeVar], RHS, RHS, Valuation)] = for {
     cs <- fields
     ds <- fields
-    val a = cfresh()
-    val b = cfresh()
-    val w = cfresh()
+    a = cfresh()
+    b = cfresh()
+    w = cfresh()
     (xs, vxs) <- valuatedVariables(10)
     (ys, vys) <- valuatedVariables(10)
     (zs, vzs) <- valuatedVariables(10)
-    val vw = setUnions(vxs.values)
-    val va = cs ++ vw ++ setUnions(vys.values)
-    val vb = ds ++ vw ++ setUnions(vzs.values)
+    vw = setUnions(vxs.values)
+    va = cs ++ vw ++ setUnions(vys.values)
+    vb = ds ++ vw ++ setUnions(vzs.values)
   } yield ( a, b, w, xs.toSet
           , RHS((xs ++ ys).toSet, cs)
           , RHS((xs ++ zs).toSet, ds)
@@ -179,12 +176,12 @@ object TestConstraints extends Properties("Constraints") {
   def cancellationGen: Gen[(TypeVar, TypeVar, RHS, RHS, Valuation)] = for {
     (ys, vys) <- valuatedVariables(10)
     (zs, vzs) <- valuatedVariables(10)
-    val a = cfresh()
-    val x = cfresh()
+    a = cfresh()
+    x = cfresh()
     cs <- fields
     ds <- fields
-    val xfs = setUnions(vzs.values)
-    val afs = cs ++ xfs ++ setUnions(vys.values)
+    xfs = setUnions(vzs.values)
+    afs = cs ++ xfs ++ setUnions(vys.values)
   } yield ( a, x, RHS(ys.toSet + x, cs)
           , RHS(ys.toSet ++ zs.toSet, cs ++ ds)
           , vys ++ vzs + (a -> afs) + (x -> xfs)
@@ -193,39 +190,39 @@ object TestConstraints extends Properties("Constraints") {
   def randRHS(inc: TypeVar, vali: Set[Name]): Gen[(RHS, Set[Name], Valuation)] = for {
     (vs, vvs) <- valuatedVariables(5)
     gs <- fields
-    val comb = gs ++ vali ++ setUnions(vvs.values)
+    comb = gs ++ vali ++ setUnions(vvs.values)
   } yield (RHS(vs.toSet + inc, gs), comb, vvs)
 
   def subGenCommon(x: TypeVar, vxs: Set[Name]): Gen[(PQueue, PQueue, Valuation)] = for {
     vs1 <- variables(5)
     vs2 <- variables(5)
-    val f = (v: TypeVar) => randRHS(x, vxs) map {
-              case (rhs, vv, m) => (Partition(v, rhs), m + (v -> vv)) }
+    f = (v: TypeVar) => randRHS(x, vxs) map {
+          case (rhs, vv, m) => (Partition(v, rhs), m + (v -> vv)) }
     tup1 <- vs1.traverse(f)
     tup2 <- vs2.traverse(f)
-    val (parts1, vals1) = tup1.unzip
-    val (parts2, vals2) = tup2.unzip
-    val valMap = mapUnions(vals1) ++ mapUnions(vals2)
+    (parts1, vals1) = tup1.unzip
+    (parts2, vals2) = tup2.unzip
+    valMap = mapUnions(vals1) ++ mapUnions(vals2)
   } yield ( PQueue(parts1)
           , PQueue(parts2)
           , valMap)
 
   def subGenMixed: Gen[(TypeVar, RHS, PQueue, PQueue, Valuation)] = for {
     fs <- fields
-    val x = cfresh()
+    x = cfresh()
     (es, ves)  <- valuatedVariables(5)
-    val vxs = fs ++ setUnions(ves.values)
-    val rhs = RHS(es.toSet, fs)
+    vxs = fs ++ setUnions(ves.values)
+    rhs = RHS(es.toSet, fs)
     (incm, proc, g) <- subGenCommon(x, vxs)
   } yield (x, rhs, incm, proc, g ++ ves + (x -> vxs))
 
   def emptyGen: Gen[(TypeVar, PQueue, PQueue, Valuation)] = for {
     bs <- variables(8)
     ds <- variables(8)
-    val x = cfresh()
-    val vl = (bs.map(b => b -> Set[Name]()) ++ ds.map(d => d -> Set[Name]())).toMap
+    x = cfresh()
+    vl = (bs.map(b => b -> Set[Name]()) ++ ds.map(d => d -> Set[Name]())).toMap
     tup <- subGenCommon(x, Set[Name]())
-    val (incm, proc, g) = tup
+    (incm, proc, g) = tup
   } yield ( x, incm +! Partition(x, RHSAbstr(bs.toSet))
           , proc + Partition(x -> RHSAbstr(ds.toSet))
           , g ++ vl + (x -> Set[Name]()))
@@ -235,9 +232,9 @@ object TestConstraints extends Properties("Constraints") {
         ds <- fields
         es <- fields
         fs <- fields
-        val a = cfresh()
-        val x = cfresh()
-        val y = cfresh()
+        a = cfresh()
+        x = cfresh()
+        y = cfresh()
       } yield ( a, x, y
               , RHS(Set(x), cs ++ ds)
               , RHS(Set(y), es ++ es)
@@ -248,12 +245,12 @@ object TestConstraints extends Properties("Constraints") {
   def substitutionGen: Gen[(TypeVar, TypeVar, RHS, RHS, Valuation)] = for {
     fs <- fields
     gs <- fields
-    val x = cfresh()
-    val y = cfresh()
+    x = cfresh()
+    y = cfresh()
     (as, vas) <- valuatedVariables(6)
     (bs, vbs) <- valuatedVariables(6)
-    val vx = fs ++ setUnions(vas.values)
-    val vy = vx ++ gs ++ setUnions(vbs.values)
+    vx = fs ++ setUnions(vas.values)
+    vy = vx ++ gs ++ setUnions(vbs.values)
   } yield ( x, y, RHS(as.toSet, fs)
           , RHS(bs.toSet + x, gs)
           , vas ++ vbs + (x -> vx) + (y -> vy))
@@ -265,21 +262,21 @@ object TestConstraints extends Properties("Constraints") {
 
   def divideAmong(fs: Set[Name], vs: List[TypeVar]): Gen[(Set[Name], Valuation)] = for {
     k <- choose(0, fs.size)
-    val (ls, rs) = fs.splitAt(k)
+    (ls, rs) = fs.splitAt(k)
     (rest, vl) <- vs.foldLeftM((rs, Map() : Valuation)) {
       case ((remaining, acc), v) => for {
         j <- choose(0, remaining.size)
-        val (ls, rs) = remaining.splitAt(j)
+        (ls, rs) = remaining.splitAt(j)
       } yield(rs, acc + (v -> ls))
     }
   } yield (ls ++ rest, vl)
 
   def unifyGen: Gen[(TypeVar, TypeVar, PQueue, PQueue, Valuation)] = for {
     fs <- fields
-    val x = cfresh()
-    val y = cfresh()
+    x = cfresh()
+    y = cfresh()
     (as, vas) <- valuatedVariables(6)
-    val vxy = fs ++ setUnions(vas.values)
+    vxy = fs ++ setUnions(vas.values)
     (rhs1, vl1) <- divide(vxy)
     (rhs2, vl2) <- divide(vxy)
     (rs3, cs3, vl3) <- subGenCommon(x, vxy)
@@ -291,7 +288,7 @@ object TestConstraints extends Properties("Constraints") {
   def selfSubGen: Gen[(TypeVar, Partition, Valuation)] = for {
     // x <- x ys
     ys <- variables(10)
-    val x = cfresh()
+    x = cfresh()
     fs <- fields
   } yield ( x
           , Partition(x, RHS(ys.toSet + x), none)
@@ -315,10 +312,10 @@ object TestConstraints extends Properties("Constraints") {
     // y <- A* a*       C* c* D* d* G* g*
     gfs <- fields
     (gvs, vgs) <- valuatedVariables(6)
-    val x = cfresh()
-    val y = cfresh()
-    val vx = afs ++ bfs ++ cfs ++ efs ++ setUnions(vas.values ++ vbs.values ++ vcs.values ++ ves.values)
-    val vy = afs ++ cfs ++ dfs ++ gfs ++ setUnions(vas.values ++ vcs.values ++ vds.values ++ vgs.values)
+    x = cfresh()
+    y = cfresh()
+    vx = afs ++ bfs ++ cfs ++ efs ++ setUnions(vas.values ++ vbs.values ++ vcs.values ++ ves.values)
+    vy = afs ++ cfs ++ dfs ++ gfs ++ setUnions(vas.values ++ vcs.values ++ vds.values ++ vgs.values)
   } yield ( Partition(x, RHS((avs ++ bvs ++ cvs ++ evs).toSet, afs union bfs union cfs union efs))
           , Partition(y, RHS((avs ++ bvs ++ dvs ++ fvs).toSet, afs union bfs union dfs union ffs))
           , Partition(y, RHS((avs ++ cvs ++ dvs ++ gvs).toSet, afs union cfs union dfs union gfs))
@@ -328,35 +325,35 @@ object TestConstraints extends Properties("Constraints") {
   def queueGen: Gen[(PQueue, Valuation)] = choose(0,8) >>= (_ match {
     case 0 => for {
       tup <- splitConcreteGen
-      val (v, u, _, rhs, f) = tup
+      (v, u, _, rhs, f) = tup
     } yield (PQueue(Partition(v, rhs)), f - u)
     case 1 => for {
       tup <- commonSubexpressionGen
-      val (a, b, w, vs, rhs1, rhs2, f) = tup
+      (a, b, w, vs, rhs1, rhs2, f) = tup
     } yield (PQueue(Partition(a, rhs1), Partition(b, rhs2)), f - w)
     case 2 => for {
       tup <- cancellationGen
-      val (a, _, rhs1, rhs2, f) = tup
+      (a, _, rhs1, rhs2, f) = tup
     } yield (PQueue(Partition(a, rhs1), Partition(a, rhs2)), f)
     case 3 => for {
       tup <- subGenMixed
-      val (v, rhs, rs, cs, f) = tup
+      (v, rhs, rs, cs, f) = tup
     } yield (cs ++ rs + Partition(v, rhs), f)
     case 4 => for {
       tup <- emptyGen
-      val (v, rs, cs, f) = tup
+      (v, rs, cs, f) = tup
     } yield (cs ++ rs + Partition(v, RHS()), f)
     case 5 => for {
       tup <- resolutionGen
-      val (a, _, _, rhs1, rhs2, f) = tup
+      (a, _, _, rhs1, rhs2, f) = tup
     } yield (PQueue(Partition(a, rhs1), Partition(a, rhs2)), f)
     case 6 => for {
       tup <- substitutionGen
-      val (x, y, rhs1, rhs2, f) = tup
+      (x, y, rhs1, rhs2, f) = tup
     } yield(PQueue(Partition(x, rhs1), Partition(y, rhs2)), f)
     case 7 => for {
       tup <- unifyGen
-      val (x, y, rs, cs, f) = tup
+      (x, y, rs, cs, f) = tup
     } yield (cs ++ rs + Partition(x, RHSAbstr(Set(y))), f)
     case 8 => for {
       tup <- selfSubGen
@@ -372,8 +369,8 @@ object TestConstraints extends Properties("Constraints") {
   def situationGen: Gen[(PQueue, PQueue, Valuation)] = for {
     rsf <- queueGen
     csg <- queueGen
-    val (rs, f) = rsf
-    val (cs, g) = csg
+    (rs, f) = rsf
+    (cs, g) = csg
   } yield (rs, cs, f ++ g)
 
   property("resolution sound") = {

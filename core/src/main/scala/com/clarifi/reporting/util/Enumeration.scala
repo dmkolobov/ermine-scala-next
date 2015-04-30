@@ -5,6 +5,8 @@ import Scalaz._
 import IterV._
 
 /** A producer of elements of type A. */
+@deprecated("Prefer scalaz.EphemeralStream or [x]scalaz.StreamT[Id, x]",
+            "55bb867cc040")
   trait Enumeration[A] {
 
     /** Return the head and tail of this Enumeration, if it exists. */

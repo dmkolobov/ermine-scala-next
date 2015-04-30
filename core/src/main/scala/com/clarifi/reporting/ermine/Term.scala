@@ -4,7 +4,8 @@ package ermine
 import java.util.Date
 
 import com.clarifi.reporting.ermine.Type.{ typeVars, sub, typeHasTypeVars }
-import com.clarifi.reporting.ermine.Document._
+import scalaparsers.Document._
+import scalaparsers.{DocException, Loc, Located, Supply}
 import com.clarifi.reporting.ermine.Pretty.prettyRuntime
 import scala.collection.immutable.List
 import scalaz.{ Name => _, _ }
@@ -117,6 +118,7 @@ object Term {
   def extFun(f: Runtime => Runtime) = Fun(f)
   def zipTerms[A](xs: Iterable[A], ks: Iterable[TermVar]): Map[A,TermVar] = xs.zip(ks).toMap
 
+  import scalaparsers.Relocatable
   implicit def relocatableTerm: Relocatable[Term] = new Relocatable[Term] {
     def setLoc(tm: Term, l: Loc) = tm match {
       case Var(v)             => Var(v.copy(loc = l))
@@ -296,8 +298,6 @@ object Term {
   def subTerm[A](m: PartialFunction[TermVar,TermVar], x: A)(implicit vars: HasTermVars[A]) = vars.sub(Map(), Map(), m, x)
   def subTermEx[A](ks: PartialFunction[KindVar,Kind], ts: PartialFunction[TypeVar, Type], ms: PartialFunction[TermVar,TermVar], x: A)(implicit vars: HasTermVars[A]) = vars.sub(ks,ts,ms,x)
 }
-
-import Term._
 
 abstract class HasTermVars[A] {
   def vars(a: A): TermVars

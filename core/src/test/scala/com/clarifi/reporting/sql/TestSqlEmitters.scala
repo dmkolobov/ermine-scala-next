@@ -21,7 +21,7 @@ object SqlEmitterGens {
     */
   def setOfN[A](count: Int, elt: Gen[A]): Gen[Set[A]] = {
     def basis(xs: Set[A]): Gen[Set[A]] =
-      if (xs.size == count) Gen.value(xs)
+      if (xs.size == count) Gen.const(xs)
       else Gen.listOfN(count - xs.size, elt).flatMap {more => basis(xs ++ more)}
     basis(Set.empty[A])
   }
@@ -57,7 +57,7 @@ object SqlEmitterGens {
   /** Make `OverSqlExpr`s. */
   val overSqlExprs = for {
     i <- sqlInts map (LitSqlExpr(_))
-    l <- listOf1(for {
+    l <- nonEmptyListOf(for {
            b <- sqlBools map (LitSqlExpr(_))
            o <- sqlOrders
          } yield (b, o))
@@ -66,7 +66,7 @@ object SqlEmitterGens {
   /** Make FromTables exprs. */
   val fromTables = for {
     n <- nonEmptyAlphaStr
-    l <- listOf1(nonEmptyAlphaStr)
+    l <- nonEmptyListOf(nonEmptyAlphaStr)
   } yield FromTable(TableName(n), l.toSet.toList)
 
   private def trivialHeader(cols: Seq[ColumnName]): Header =
@@ -75,7 +75,7 @@ object SqlEmitterGens {
   /** Make `SqlJoinOn`s. */
   val joinOnExprs = for {
     surrogates <- setOfN(3, nonEmptyAlphaStr)
-    val Seq(unLeft, unRight, joinName) = surrogates.toSeq.map(TableName(_))
+    Seq(unLeft, unRight, joinName) = surrogates.toSeq.map(TableName(_))
     left      <- fromTables
     right     <- fromTables
     joinColCt <- choose(1, left.cols.size min right.cols.size)
@@ -87,7 +87,7 @@ object SqlEmitterGens {
 }
 
 object TestSqlEmitters extends Properties("emitSql") {
-  import Prop.{extendedAny => _, _}
+  import Prop._
   import SqlEmitterGens._
 
   implicit val overSqlExprArb = Arbitrary(overSqlExprs)

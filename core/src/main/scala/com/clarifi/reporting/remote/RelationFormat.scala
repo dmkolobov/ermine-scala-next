@@ -2,12 +2,12 @@ package com.clarifi.reporting
 package remote
 
 import f0.{Source => _, _}
+import f0.Effects._
 import f0.Formats._
 import f0.Writers._
 import f0.Readers._
 import com.clarifi.reporting._
 import PrimT._
-import Reporting._
 import SortOrder._
 import Op._
 import AggFunc._
@@ -33,10 +33,59 @@ object Format {
   val colorR: Reader[java.awt.Color, IntF] =
     intR.map(new java.awt.Color(_, true))
 
-  lazy val rowsW =
+  /**
+   * Using the old (incorrect) F0 style of writing streams, where
+   * 1 meant termination (Nil), and 0 meant continue (Cons)
+   * This has been changed in F0 so that it is consistent with Haskell stream serialization
+   */
+  lazy val rowsW = {
+    def streamW[A,F1](w: Writer[A,F1]): Writer[TraversableOnce[A],StreamF[F1]] = new Writer[TraversableOnce[A],StreamF[F1]] {
+      def bind(o: Sink) = {
+        val bindA = w.bind(o)
+        (as) => {
+          as.foreach(a => { o(0); bindA(a) })
+          o(1)
+          effectW[StreamF[F1]]
+        }
+      }
+    }
     streamW(recordW).orError.selfDescribing
-  lazy val rowsR =
+  }
+
+
+  /**
+   * Using the old (incorrect) F0 style of readings streams, where
+   * 1 meant termination (Nil), and 0 meant continue (Cons)
+   * This has been changed in F0 so that it is consistent with Haskell stream serialization
+   */
+  lazy val rowsR = {
+    def streamR[A,F](r: Reader[A,F]): Reader[List[A],StreamF[F]] =
+      foldStreamR(r)(List[A]())((buf,a) => a :: buf) map (_.reverse)
+
+    def foldStreamR[A,B,F](r: Reader[A,F])(z: B)(f: (B,A) => B): Reader[B,StreamF[F]] = new Reader[B,StreamF[F]] {
+      def bind(s: f0.Source): Get[B] = new Get[B] {
+        val elem = lazyStreamR(r).bind(s)
+        def get = {
+          var acc = z
+          var cur = elem.get
+          while (cur != None) { acc = f(acc, cur.get); cur = elem.get }
+          acc
+        }
+      }
+    }
+    def lazyStreamR[A,F](r: Reader[A,F]): Reader[Option[A],StreamF[F]] = new Reader[Option[A],StreamF[F]] {
+      def bind(s: f0.Source): Get[Option[A]] = new Get[Option[A]] {
+        val elem = r.bind(s)
+        var eof = false
+        def get = {
+          eof = s.readByte == 1
+          if (eof) { eof = false; None }
+          else Some(elem.get)
+        }
+      }
+    }
     eitherR(stringR, streamR(recordR)).label("rows").selfDescribing
+  }
   unify(rowsW, rowsR)
 
   def unify[A,B,F](w: Writer[A,F], r: Reader[B,F]): Unit = ()
@@ -287,7 +336,7 @@ object Format {
       self.map(MemoR(_))
     ) erase)
 
-  lazy val orderedHeaderR: Reader[OrderedHeader, OrderedHeaderF] =
+  lazy val orderedHeaderR: Reader[Header.Ordered, OrderedHeaderF] =
     listR(tuple2R(stringR, primTR))
 
   lazy val headerR: Reader[Header, HeaderF] = orderedHeaderR map (_.toMap)
@@ -320,18 +369,19 @@ object Format {
              primTR map (NullExpr))
 
   lazy val predicateR: Reader[Predicate, DynamicF] = fixR[Predicate, DynamicF](self =>
-    union7R(booleanR map (x => Predicate.Atom(x)),
+    union8R(booleanR map (x => Predicate.Atom(x)),
             p2R(opR, opR)((a, b) => Lt(a, b)),
             p2R(opR, opR)((a, b) => Gt(a, b)),
             p2R(opR, opR)((a, b) => Eq(a, b)),
             self map (was => Not(was)),
             p2R(self, self)((a, b) => Or(a, b)),
-            p2R(self, self)((a, b) => And(a, b))) erase)
+            p2R(self, self)((a, b) => And(a, b)),
+            opR map IsNull) erase)
 
   lazy val attributeR: Reader[Attribute, AttributeF] =
     p2R(stringR, primTR)(Attribute(_, _))
 
-  lazy val opR: Reader[Op, DynamicF] = fixR[Op, DynamicF](self => union12R(
+  lazy val opR: Reader[Op, DynamicF] = fixR[Op, DynamicF](self => union14R(
     primExprR map OpLiteral,
     p2R(stringR, primTR)(ColumnValue),
     p2R(self, self)((a, b) => Add(a, b)),
@@ -343,6 +393,8 @@ object Format {
     listR(self) map (x => Concat(x)),
     p3R(predicateR, self, self)(If),
     p2R(self, self)(Coalesce),
+    p3R(self, intR, timeUnitR)(DateAdd),
+    p3R(timeUnitR, self, self)(DateDiff),
     p5R(stringR, stringR, listR(stringR), listR(self), primTR)(Funcall)) erase)
 
   lazy val aggR: Reader[AggFunc, DynamicF] = union7R(
@@ -361,14 +413,31 @@ object Format {
   lazy val orderByR = listR(tuple2R(stringR, sortOrderR))
   lazy val orderByW = repeatW(tuple2W(stringW, sortOrderW))
 
+  lazy val timeUnitR: Reader[TimeUnit, IntF] = intR map {
+    case 0 => TimeUnit.Day
+    case 1 => TimeUnit.Week
+    case 2 => TimeUnit.Month
+    case 3 => TimeUnit.Year
+    case 4 => TimeUnit.Millisecond
+  }
+  lazy val timeUnitW: Writer[TimeUnit, IntF] = intW cmap {
+    case TimeUnit.Day => 0
+    case TimeUnit.Week => 1
+    case TimeUnit.Month => 2
+    case TimeUnit.Year => 3
+    case TimeUnit.Millisecond => 4
+  }
+
   lazy val opW: Writer[Op, DynamicF] = fixW[Op, DynamicF]{self =>
     lazy val binopW = tuple2W(self, self)
-    s12W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
+    s14W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
          binopW, binopW, binopW, binopW, repeatW(self),
          tuple3W(predicateW, self, self),
          binopW,
+         tuple3W(self, intW, timeUnitW),
+         tuple3W(timeUnitW, self, self),
          tuple5W(stringW, stringW, repeatW(stringW), repeatW(self), primTW))(
-    (opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, funcall) => (r: Op) => r match {
+    (opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, dateadd, datediff, funcall) => (r: Op) => r match {
       case OpLiteral(lit) => opliteral(lit)
       case ColumnValue(cn, ty) => columnvalue(cn -> ty)
       case Add(a, b) => add(a -> b)
@@ -380,11 +449,13 @@ object Format {
       case Concat(ss) => cat(ss.toList)
       case If(test, c, a) => oif((test, c, a))
       case Coalesce(l, r) => coalesce(l, r)
+      case DateAdd(d, n, u) => dateadd(d, n, u)
+      case DateDiff(u, s, e) => datediff(u, s, e)
       case Funcall(n, db, ns, args, ty) => funcall((n, db, ns, args, ty))
     }) erase}
   lazy val aggW: Writer[AggFunc, DynamicF] = s7W(unitW, opW, opW, opW, opW, opW, opW)(
     (count, sum, avg, min, max, stddev, variance) => (r:AggFunc) => r(count(()), sum, avg, min, max, stddev, variance)) erase
-  lazy val orderedHeaderW: Writer[OrderedHeader, OrderedHeaderF] =
+  lazy val orderedHeaderW: Writer[Header.Ordered, OrderedHeaderF] =
     repeatW(tuple2W(stringW, primTW))
   lazy val headerW: Writer[Header, HeaderF] = orderedHeaderW cmap ((h: Header) =>
     h.toList)
@@ -414,14 +485,15 @@ object Format {
          case UuidT(n) => uuid(n)
        })
   lazy val predicateW: Writer[Predicate, DynamicF] = fixW[Predicate, DynamicF](self =>
-    s7W(booleanW, // Atom
+    s8W(booleanW, // Atom
         tuple2W(opW, opW), // Lt
         tuple2W(opW, opW), // Gt
         tuple2W(opW, opW), // Eq
         self, // Not
         tuple2W(self, self), // Or
-        tuple2W(self, self) // And
-       )((atom, lt, gt, eq, not, or, and) => (r: Predicate) =>
+        tuple2W(self, self), // And
+        opW // IsNull
+       )((atom, lt, gt, eq, not, or, and, isNull) => (r: Predicate) =>
         r match {
           case Predicate.Atom(x) => atom(x)
           case Lt(x, y) => lt(x -> y)
@@ -430,6 +502,7 @@ object Format {
           case Not(x) => not(x)
           case Or(x, y) => or(x -> y)
           case And(x, y) => and(x -> y)
+          case IsNull(x) => isNull(x)
         }) erase)
   lazy val primExprW: Writer[PrimExpr, PrimExprF] =
     s10W(tuple2W(booleanW, stringW), tuple2W(booleanW, doubleW), tuple2W(booleanW, byteW), tuple2W(booleanW, shortW), tuple2W(booleanW, longW), tuple2W(booleanW, intW), tuple2W(booleanW, longW), tuple2W(booleanW, booleanW), tuple2W(booleanW, stringW), primTW)(
@@ -503,41 +576,45 @@ object Format {
   def nelW[A, F](w: Writer[A, F]): Writer[NonEmptyList[A], NelF[F]] = p2W(w, repeatW(w))(f =>
     (n:NonEmptyList[A]) => f(n.head, n.tail))
 
-  import writers.{Legend, Presentation, SortDirection, SortStrategy,
-                  Format => WFormat}
+  import writers.{Legend, LegendColumns, Presentation, SortDirection,
+                  SortStrategy, Format => WFormat}
 
-  type WFormatF[A] = S8[UnitF, // Default
+  type WFormatF[A] = S9[UnitF, // Default
                      A, // Markdown
-                     IntF :: BooleanF, // Percent
-                     StringF, // Currency
+                     StringF, // Constant
+                     BooleanF :: IntF :: BooleanF, // Percent
+                     BooleanF :: StringF, // Currency
                      UnitF, // DateRange
-                     IntF,  // Round
-                     IntF,  // IntegralRound
+                     BooleanF :: IntF,  // Round
+                     BooleanF :: IntF,  // IntegralRound
                      IntF   // Truncate
                    ]
 
-  lazy val wformatR = fixFR[WFormat,WFormatF](self => union8R(
+  lazy val wformatR = fixFR[WFormat,WFormatF](self => union9R(
     unitR   map (_ => WFormat.Default),
     self map (inner => WFormat.Markdown(inner) ),
-    p2R(intR, booleanR)(WFormat.Percentage),
-    stringR   map (s => WFormat.Currency(s)),
+    stringR map (s => WFormat.Constant(s)),
+    p3R(booleanR,intR, booleanR)(WFormat.Percentage),
+    p2R(booleanR,stringR)(WFormat.Currency),
     unitR   map (_ => WFormat.DateRange),
-    intR    map (i => WFormat.Round(i)),
-    intR    map (i => WFormat.IntegralRound(i)),
+    p2R(booleanR,intR)(WFormat.Round),
+    p2R(booleanR,intR)(WFormat.IntegralRound),
     intR    map (i => WFormat.Truncate(i))
   ))
 
-  lazy val wformatW = fixFW[WFormat, WFormatF]( self => s8W(unitW, self, tuple2W(intW, booleanW), stringW, unitW, intW, intW, intW)(
-    (d, md, p, c, dr, r, sr, t) => (w: WFormat) => w match {
-      case WFormat.Default       => d(())
-      case WFormat.Markdown(f)   => md(f)
-      case WFormat.Percentage(r, pad) => p((r, pad))
-      case WFormat.Currency(s)   => c((s))
-      case WFormat.DateRange     => dr(())
-      case WFormat.Round(i)      => r(i)
-      case WFormat.IntegralRound(i) => sr(i)
-      case WFormat.Truncate(i)   => t(i)
-    }))
+  lazy val wformatW = fixFW[WFormat, WFormatF]( self =>
+    s9W(unitW, self, stringW, tuple3W(booleanW, intW, booleanW), tuple2W(booleanW,stringW), unitW, tuple2W(booleanW,intW), tuple2W(booleanW,intW), intW)(
+      (d, md, k, p, c, dr, r, sr, t) => (w: WFormat) => w match {
+        case WFormat.Default              => d(())
+        case WFormat.Markdown(f)          => md(f)
+        case WFormat.Constant(s)          => k(s)
+        case WFormat.Percentage(b,r, pad) => p((b,r, pad))
+        case WFormat.Currency(b,s)        => c((b,s))
+        case WFormat.DateRange            => dr(())
+        case WFormat.Round(b,i)           => r(b,i)
+        case WFormat.IntegralRound(b,i)   => sr(b,i)
+        case WFormat.Truncate(i)        => t(i)
+      }))
 
   type SortDirF = BooleanF
 
@@ -557,21 +634,31 @@ object Format {
   lazy val presentationR: Reader[Presentation, PresentationF] = tuple2R(wformatR, opNelR) map {
     case (f, d) => Presentation(f, d)
   }
-  lazy val presentationW: Writer[Presentation, PresentationF] = p2W(wformatW, opNelW)(f =>
+  lazy val presentationW: Writer[Presentation, PresentationF] = p2W[WFormat, FixF[WFormatF[SelfF]], NonEmptyList[Op], NelF[DynamicF], Presentation](wformatW, opNelW)(f =>
     {case Presentation(fmt, displayData) => f(fmt, displayData)}
   )
 
-  type LegendColumns[F] = RepeatF[PresentationF :: SortStrategyF :: F]
+  type LegendColumnsF[F, G] = {
+    type λ[A] = RepeatF[S2[A :: F, PresentationF :: SortStrategyF :: G]]
+  }
   type LegendHiddenColumns = RepeatF[StringF :: PrimTF :: SortOrderF]
-  type LegendF[F] = LegendColumns[F] :: LegendHiddenColumns
+  type LegendF[F, G] = FixF[LegendColumnsF[F, G]#λ[SelfF]] :: LegendHiddenColumns
 
-  def legendR[A,F](implicit r: Reader[A, F]): Reader[Legend[A], LegendF[F]] =
-    tuple2R(listR(tuple3R(presentationR, sortStrategyR, r)), listR(tuple3R(stringR, primTR, sortOrderR))) map {
+  def legendR[A,B,F,G](implicit ra: Reader[A, F], rb: Reader[B, G]): Reader[Legend[A, B], LegendF[F, G]] =
+    tuple2R(fixFR[LegendColumns[A, B], LegendColumnsF[F, G]#λ](rec =>
+              listR(R_\/(tuple2R(rec, ra),
+                         tuple3R(presentationR, sortStrategyR, rb)))
+                map LegendColumns.apply),
+            listR(tuple3R(stringR, primTR, sortOrderR))) map {
       case (is, hs) => Legend(is, hs)
     }
 
-  def legendW[A,F](implicit w: Writer[A, F]): Writer[Legend[A], LegendF[F]] =
-    tuple2W(repeatW(tuple3W(presentationW, sortStrategyW, w)), repeatW(tuple3W(stringW, primTW, sortOrderW))) cmap {
+  def legendW[A,B,F,G](implicit wa: Writer[A, F], wb: Writer[B, G]): Writer[Legend[A,B], LegendF[F,G]] =
+    tuple2W(fixFW[LegendColumns[A, B], LegendColumnsF[F, G]#λ](rec =>
+              repeatW(W_\/(tuple2W(rec, wa),
+                           tuple3W(presentationW, sortStrategyW, wb)))
+                cmap ((_:LegendColumns[A, B]).inOrder)),
+            repeatW(tuple3W(stringW, primTW, sortOrderW))) cmap {
       case Legend(cols, hidden) => (cols, hidden)
     }
 }

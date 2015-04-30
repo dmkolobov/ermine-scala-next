@@ -81,8 +81,8 @@ class CapabilitySink
                         data: TreeTabular[F,(NonEmptyList[PrimExpr],NonEmptyList[PrimExpr])]) =
     F.point(capabilityOf treeTabular data)
 
-  def drilldownBarChart(meta: AxisChartData, categoryPres: Presentation,
-                        dataPres: Presentation,
+  def drilldownBarChart(meta: AxisChartData, seriesPres: Presentation,
+                        categoryPres: Presentation, dataPres: Presentation,
                         parentCol: String, childCol: String, query: Relation[Sourced],
                         data: TreeTabular[F,(NonEmptyList[PrimExpr], NonEmptyList[PrimExpr])]): F[C] =
     F.point(capabilityOf treeTabular data)

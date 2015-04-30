@@ -1,12 +1,8 @@
 package com.clarifi
 
-import scalaz.Cofree
-
-import scalaz._
-import Scalaz._
-import scalaz.Show._
-import scalaz.Equal._
-import scalaz.Order._
+import scalaz.{Enumerator, IterV, Order, ValidationNel}
+import scalaz.std.map._
+import scalaz.std.string._
 
 import java.math.BigInteger
 
@@ -14,24 +10,13 @@ package object reporting {
   /** Relational algebra. */
   type Projection = Map[Attribute, Op]
 
-  /** Special uses only; most should sort Headers. */
-  type OrderedHeader = List[(ColumnName, PrimT)]
-
+  /** A relational rowtype at the Scala level. */
   type Header = Map[ColumnName, PrimT]
 
   import java.util.UUID._
   def guid = randomUUID.toString.replaceAll("-", "")
 
   def sguid = new BigInteger(randomUUID.toString.replaceAll("-", ""), 16).toString(36)
-
-  def headerProj(h: Header): Projection =
-    h map { case (n, t) => Attribute(n, t) -> Op.ColumnValue(n, t) }
-
-  def sup(h1: Header, h2: Header): Option[Header] =
-    if (h1.keySet != h2.keySet) None
-    else h1.keySet.toList.map(k => (h1(k) sup h2(k)).map((k,_))).sequence.map(_.toMap)
-
-  val emptyHeader: Header = Map()
 
   type ColumnName = String
 
@@ -66,9 +51,4 @@ package object reporting {
       }
     }
   }
-
-  /**
-   * Converts a TypeTag to a Header.
-   */
-  def typeTagToHeader(t: TypeTag): Header = t.fold(e => sys.error(e.list.mkString("\n")), s => s)
 }

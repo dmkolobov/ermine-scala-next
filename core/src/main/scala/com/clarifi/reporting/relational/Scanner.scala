@@ -2,7 +2,6 @@ package com.clarifi.reporting
 package relational
 
 import com.clarifi.reporting.{ SortOrder }
-import com.clarifi.reporting.Reporting._
 
 import com.clarifi.machines._
 

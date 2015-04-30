@@ -11,12 +11,10 @@ libraryDependencies ++= Seq (
   "net.sourceforge.jtds" % "jtds" % "1.2.8",
   "org.xerial"    % "sqlite-jdbc" % "3.7.2",
   //"com.microsoft" % "jdbc4" % "4.0",
-  "com.clarifi"  %% "f0" % "1.0.1-2.9.2",
-  "clarifi"      %% "machines"    % "8819a4a87d998f2cddda808a8d19ac4fc2772c97",
-  // TODO: used in writers package that should move out,
-  // but would be an annoying refactoring -- JC 4/27/15
-  "jfree" % "jfreechart" % "1.0.1" excludeAll ExclusionRule(organization = "junit"),
-  "org.scalacheck" %% "scalacheck" % "1.10.1" % "test"
+  "com.clarifi"  %% "f0" % "1.1.2",
+  "scala-parsers" %% "scala-parsers" % "0.2.1",
+  "machines"      %% "machines"    % "1.1",
+  "org.scalacheck" %% "scalacheck" % "1.11.3" % "test"
 )
 
 libraryDependencies +=

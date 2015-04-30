@@ -6,22 +6,20 @@ import java.util.UUID
 import math.Ordering
 import org.apache.log4j.Logger
 import scalaz._
-import scalaz.Scalaz._
+//import scalaz.Scalaz._
 import scalaz.IterV._
 import scalaz.effect.IO
 import IO._
-import Show._
-import Equal._
-import Kleisli._
 import syntax.monad._
+import syntax.traverse.{ToFunctorOps => _, _} // ToFunctorOps is already imported by syntax.monad
+import syntax.semigroup._
 import scalaz.NaturalTransformation.{id => ident}
+import std.function._
+import std.list._
 
 import com.clarifi.reporting.Reporting._
 import com.clarifi.reporting._
 import com.clarifi.reporting.util.StreamTUtils
-import com.clarifi.reporting.util.PimpedLogger._
-import com.clarifi.reporting.Op._
-import com.clarifi.reporting.AggFunc._
 import com.clarifi.reporting.backends.DB._
 import com.clarifi.reporting.PrimT._
 
@@ -110,7 +108,7 @@ class SqlBackend(implicit emitter: SqlEmitter) extends Backend[DB] {
             val hdr = keys.getOrElse(tt._1, sys.error("reference to table not in schema"))
             def set(k: Int, v: PrimExpr): Unit = v match {
               case IntExpr(_, l) => stmt.setInt(k, l)
-              case DoubleExpr(_, d) => 
+              case DoubleExpr(_, d) =>
 			    if (!d.isInfinity && !d.isNaN) stmt.setDouble(k, d)
               case DateExpr(_, d) => emitter.emitDateStatement(stmt, k, d)
               case StringExpr(_, s) =>
@@ -162,7 +160,7 @@ class SqlBackend(implicit emitter: SqlEmitter) extends Backend[DB] {
   def schemaPopulator(schema: Map[TableName,(RefID,Header)], s: Source, batchSize: Int = 5000): DB[(IO[Unit], Iteratee[IO, (TableName, Record), Unit], IO[Unit])] =
     for {
       prepost <- constraints(schema.values.map(x => TableName(x._1.toString)).toList)
-      val (pre, post) = prepost
+      (pre, post) = prepost
       iv <- populateSchemaImpl(schema, batchSize)
     } yield (pre, iv, post)
 

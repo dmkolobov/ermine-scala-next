@@ -2,7 +2,6 @@ package com.clarifi.reporting
 import org.scalacheck._
 import org.scalacheck.Gen._
 
-import scalaz._
 import scalaz.Scalaz._
 import scalaz.scalacheck.ScalaCheckBinding._
 
@@ -23,7 +22,7 @@ object PredicateGens {
   // other predicates can include these predicates, so they all need
   // these two parameters (except for Atom).
   //
-  def genPredicateAtom: Gen[Predicate] = for { b <- Gen.oneOf(Gen.value(true), Gen.value(false)) } yield Atom(b)
+  def genPredicateAtom: Gen[Predicate] = for { b <- Gen.oneOf(Gen.const(true), Gen.const(false)) } yield Atom(b)
 
   private def genPredicateBin(h0: String, h1: String) = {
     val op = OpGens.genOpAny(PrimT.IntT(), h0, h1)

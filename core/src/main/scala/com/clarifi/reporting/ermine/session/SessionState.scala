@@ -1,13 +1,13 @@
 package com.clarifi.reporting.ermine.session
 
-import com.clarifi.reporting.ermine.{ V, Global, Runtime, Type, Kind, Requirements, Located, Loc, Document, Pretty }
+import com.clarifi.reporting.ermine.{ V, Global, Runtime, Type, Kind, Requirements, Pretty }
 import com.clarifi.reporting.ermine.Type.subType
-import com.clarifi.reporting.ermine.parsing.{ ModuleHeader, ParseState }
+import com.clarifi.reporting.ermine.parsing.{ ModuleHeader }
 import com.clarifi.reporting.ermine.Pretty.{ prettyType, ppType, ppName, ppVar }
-import com.clarifi.reporting.ermine.Document._
+import scalaparsers.Document._
 import scala.collection.mutable.ListBuffer
-import scalaz._
 import scalaz.Scalaz._
+import scalaparsers.{Located, Loc, Document}
 
 case class ClassDef(
   loc: Loc,
@@ -67,38 +67,47 @@ case class Instantiation(
 }
 
 class SessionEnv(
-  var env:           Map[V[Type],Runtime]           = Map(), // vars here are all for global names
-  var termNames:     Map[Global,V[Type]]            = Map(),
-  var cons:          Map[Global,Type.Con]           = Map(),
-  var loadFile:      Session.SourceFile.Loader      = Session.SourceFile.defaultLoader,
-  var loadedFiles:   Map[Session.SourceFile,String] = Map(), // filenames that have been loaded already
-  var loadedModules: Set[String]                    = Set("Builtin"),
-  var classes:       Map[Global,ClassDef]           = Map(),
-     _typeCheck:     Option[Boolean]                = None
+  var env:             Map[V[Type],Runtime]           = Map(), // vars here are all for global names
+  var termNames:       Map[Global,V[Type]]            = Map(),
+  var termNameOrigins: Map[Global, List[Global]]      = Map(), // Control.Monad.Functor => Control.Functor.Functor
+  var cons:            Map[Global,Type.Con]           = Map(),
+  var consOrigins:     Map[Global,List[Global]]       = Map(),
+  var loadFile:        Session.SourceFile.Loader      = Session.SourceFile.defaultLoader,
+  var loadedFiles:     Map[Session.SourceFile,String] = Map(), // filenames that have been loaded already
+  var loadedModules:   Set[String]                    = Set("Builtin"),
+  var classes:         Map[Global,ClassDef]           = Map(),
+  var classOrigins:    Map[Global, List[Global]]      = Map(),
+     _typeCheck:       Option[Boolean]                = None
 ) { that =>
+  def copy = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck))
 
   val typeCheck : Boolean = _typeCheck.getOrElse(java.lang.Boolean.getBoolean("ermine.typeCheck"))
 
-  def copy = new SessionEnv(that.env, that.termNames, that.cons, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, Some(that.typeCheck))
   def +=(sp: SessionEnv) {
-    env           = env ++ sp.env
-    termNames     = termNames ++ sp.termNames
-    cons          = cons ++ sp.cons
+    env             = env ++ sp.env
+    termNames       = termNames ++ sp.termNames
+    termNameOrigins = termNameOrigins ++ sp.termNameOrigins
+    cons            = cons ++ sp.cons
+    consOrigins     = consOrigins ++ sp.consOrigins
     // no loadFile union, so skip
-    loadedFiles   = loadedFiles ++ sp.loadedFiles
-    loadedModules = loadedModules | sp.loadedModules
-    classes       = classes ++ sp.classes ++
+    loadedFiles     = loadedFiles ++ sp.loadedFiles
+    loadedModules   = loadedModules | sp.loadedModules
+    classes         = classes ++ sp.classes ++
       (classes.keySet.intersect(sp.classes.keySet).map {
         k => k -> (classes(k) ++ sp.classes(k).instances)
       })
+    classOrigins    = classOrigins ++ sp.classOrigins // is this enough, or do we need the keySet.intersect?
   }
   def :=(s: SessionEnv) {
     env = s.env
     termNames = s.termNames
+    termNameOrigins = termNameOrigins ++ s.termNameOrigins
     cons = s.cons
+    consOrigins = consOrigins ++ s.consOrigins
     loadFile = s.loadFile
     loadedFiles = s.loadedFiles
     loadedModules = s.loadedModules
     classes = s.classes
+    classOrigins = classOrigins ++ s.classOrigins
   }
 }

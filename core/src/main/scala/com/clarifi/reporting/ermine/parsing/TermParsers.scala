@@ -1,8 +1,9 @@
 package com.clarifi.reporting.ermine.parsing
 
 import com.clarifi.reporting.ermine._
-import com.clarifi.reporting.ermine.Diagnostic._
-import com.clarifi.reporting.ermine.Document.text
+import scalaparsers._
+import scalaparsers.Diagnostic._
+import scalaparsers.Document.text
 import com.clarifi.reporting.ermine.Name.{ lib, prelude }
 import com.clarifi.reporting.ermine.Type.{ subType, ftvs, mkCon }
 import com.clarifi.reporting.ermine.Term._
@@ -11,15 +12,14 @@ import com.clarifi.reporting.ermine.parsing.TermNameParsers.{
   bindFixity, bindName, op, termName, termVar, termOpVar }
 import com.clarifi.reporting.ermine.parsing.PatternParsers.{ pattern, patternL0 }
 import com.clarifi.reporting.ermine.parsing.StatementParsers.{ bindingStatement }
-import com.clarifi.reporting.ermine.parsing.KindParsers._
 import com.clarifi.reporting.ermine.parsing.TypeParsers._
-import com.clarifi.reporting.ermine.parsing.ParseState.Lenses._
+import com.clarifi.reporting.ermine.parsing.ErParseState.Lenses._
 import scala.collection.immutable.List
-import scalaz.{ Name => _, Arrow => _, Free => _, Forall => _, _ }
 import scalaz.Scalaz._
 
 
 object TermParsers {
+  import SI8862._
 
   /** This simply expects the name being looked up to exist in the parser state.
    *  The intention is that this be used for internal syntactic desugaring, so
@@ -28,13 +28,17 @@ object TermParsers {
   def internalVar(n: Name): Parser[V[Type]] = for {
     l <- loc
     n <- n match {
-      case l : Local => gets(_.canonicalTerms.getOrElse(l,l))
-      case g : Global => unit(g)
+      case l : Local => gets(_.s.canonicalTerms.get(l)).flatMap(_ match {
+                            case None => unit(l)
+                            case Some(List(x)) => unit(x)
+                            case Some(xs) => fail[Parser]("Ambiguous term " + n + " alternatives are " + xs)
+       })
+      case g : Global => unit[Name](g)
     }
     m <- gets(termNames.member(n).get(_))
     r <- m match {
       case Some(a) => unit(a)
-      case None => warn("Missing primitive:" :+: text(n.toString)) >> empty // warn to ensure the message gets out
+      case None => warn("Missing primitive:" :+: text(n.toString)) >> empty[Parser] // warn to ensure the message gets out
     }
   } yield r
 
@@ -117,10 +121,10 @@ object TermParsers {
       }
 
   private def bindBinOps(ts: List[V[Type]]): Parser[Parser[Unit]] =
-    (ts traverse (v => (bindFixity(v.name.get.local, false)
-                       ++ bindName(v.name.get.local, v, termNames))
-                      map {case (unfix, unmap) => unmap >> unfix})
-        map (_.reverse.traverse_(identity)))
+    (ts traverseU (v => (bindFixity(v.name.get.local, false)
+                        ++ bindName(v.name.get.local, v, termNames))
+                       map {case (unfix, unmap) => unmap >> unfix})
+        map (_.reverse.traverse_[Parser](identity)))
 
   private def bindingPredCombs[A](in: Parser[A]): Parser[A] =
     predCombs flatMap bindBinOps flatMap (in << _)
@@ -222,16 +226,16 @@ object TermParsers {
     _ <- leftLet
     bgLoc <- loc
     bs <- laidout("let binding", bindingStatement)
-    val (is, ss) = gatherBindings(bs)
+    (is, ss) = gatherBindings(bs)
 //    bg <- mkBindingGroup(bgLoc, is, ss)
     p <- checkBindings[Parser](bgLoc, is, ss) // Annotation required here because of kind mismatch
     _ <- p.distinct(bgLoc)
     _ <- right // keyword("in")
     body <- term << p.unbind // p.unbind is just unit(()) - checkBindings isn't setting unbind, so it's using the default argument.
     // unbind let-bound vars
-    val l = termNames
+    l = termNames
     curBS <- gets(termNames.get(_))
-    val letBS = is.map(i=>i.v.name)
+    letBS = is.map(i=>i.v.name)
                   .flatten
     _ <- modify(l.set(_, curBS -- letBS))
   } yield Let(letLoc,p.extract._1,p.extract._2,body)
@@ -270,13 +274,13 @@ object TermParsers {
   def product: Parser[Term] = for {
     p <- loc
     xs <- paren(term sepBy comma)
-    val len = xs.length
+    len = xs.length
   } yield if (len == 1) xs.head else Product(p, len)(xs:_*)
 
   def productSection: Parser[Term] = for {
     p <- loc
     xs <- paren(comma.many).attempt
-    val len = xs.length
+    len = xs.length
   } yield Product(p, if (len == 0) 0 else len + 1)
 
   def hole: Parser[Term] = ((loc <* token("_")) map2 freshId)(

@@ -2,7 +2,6 @@ package com.clarifi.reporting
 package writers
 
 import scalaz._
-import scalaz.Id._
 import scalaz.syntax.std.all.ToTuple2Ops
 import scalaz.std.list._
 import scalaz.syntax.monad._
@@ -17,12 +16,9 @@ import com.clarifi.machines._
 
 import PrimT.IntT
 
-import KeyValueTabular._
-
 /** A scanner that always yields the same records. */
 class ConstScanner[G[_]: Monad: Distributive](data: Traversable[Record])
       extends Scanner[G] {
-  import ConstScanner._
   def scanRel[A:Monoid](r: Relation[Nothing, Nothing], f: Process[Record, A],
                         order: List[(String, SortOrder)]): G[A] =
     f.cap(com.clarifi.machines.Source(data.toList)).foldMap(x => x).pure[G]

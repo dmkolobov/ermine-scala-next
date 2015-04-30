@@ -1,15 +1,16 @@
 package com.clarifi.reporting.writers
 
-import scala.collection.JavaConversions._
 import collection.immutable.IndexedSeq
-
 import com.clarifi.reporting._
-import scalaz._
-import scalaz.Scalaz._
-import scalaz.concurrent.{Run => _, _}
-import syntax.monad._
+import scalaz.{Monad, Monoid}
+import scalaz.syntax.bifunctor._
+import scalaz.syntax.monad._
+import scalaz.syntax.traverse.{ToFunctorOps => _, ToFunctorOpsUnapply => _, _}
+import scalaz.syntax.std.list._
+import scalaz.std.option._
 import scalaz.std.vector._
 import scalaz.std.list._
+import scalaz.std.tuple._
 
 import Tabular.Label
 import TreeTabular._
@@ -150,7 +151,7 @@ abstract class TreeTabular[F[_], A] extends GenTabular[TreeTabular, F, A] { self
          .map( _.toList.filterM(_._2.size.map((x:Int) => x > 0) )(F))
          .join
     val dispCurLevel = f(c)(curLevel)
-    val visitChildren = children.map(_.map { case (parent:A, tab:TreeTabular[F,A]) =>
+    val visitChildren = children.map(_.map { case (parent, tab) =>
                                                 tab.foldTreeWithParent( nextC(parent) )(nextC)(f)(g)
                                            }
                                       .toList
@@ -178,7 +179,7 @@ abstract class TreeTabular[F[_], A] extends GenTabular[TreeTabular, F, A] { self
   def clearOrder: TreeTabular[F,A] = transTabulars(_.clearOrder)
 
   /** Answer self with columns relabeled. */
-  def label(labels: Legend[Label]): TreeTabular[F,A] =
+  def label(labels: Legend.U[Label]): TreeTabular[F,A] =
     transTabulars(_.label(labels))
 
   ///** Transform the underlying relation - this should not modify the type of this table. */

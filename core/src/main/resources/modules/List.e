@@ -100,6 +100,10 @@ headOrElse : List a -> a -> a
 headOrElse (x :: _) _ = x
 headOrElse _ a = a
 
+headDef : a -> List a -> a
+headDef _ (x :: _) = x
+headDef a _ = a
+
 maybeHead : b -> (a -> b) -> List a -> b
 maybeHead _ f (h :: _) = f h
 maybeHead b _ _ = b
@@ -115,7 +119,7 @@ null _  = False
 length : List a -> Int
 length  = foldl (x _ -> x + 1) 0
 
-isEmpty l = 0 == length l
+isEmpty = null
 
 sum, product : List Int -> Int
 sum     = foldl (+) 0
@@ -294,3 +298,39 @@ listAlt = Alt Nil (++) listAp
 
 empty_Bracket = Nil
 cons_Bracket = (::)
+
+-- | O(n^2). Removes duplicate elements from a list, keeping the first occurrence.
+-- stolen from Haskell's Data.List
+nub : Eq a => List a -> List a
+nub = nubBy (==)
+
+nubBy : (a -> a -> Bool) -> List a -> List a
+nubBy eq [] = []
+nubBy eq l = nubBy' l []
+      where nubBy' [] _ = []
+            nubBy' (y::ys) xs = if (elemBy eq y xs) (nubBy' ys xs) (y :: nubBy' ys (y::xs))
+
+-- | list membership predicate
+elem : Eq a => a -> List a -> Bool
+elem = elemBy (==)
+
+elemBy : (a -> a -> Bool) -> a -> List a -> Bool
+elemBy x y [] = False
+elemBy p y (x::xs) = p y x || elemBy p y xs
+
+-- groupBy is already taken
+private groupBy : (a -> a -> Bool) -> List a -> List (List a)
+groupBy _ [] = []
+groupBy p (x::xs) = (x::ys) :: groupBy p zs
+    where s = span (p x) xs
+          ys = fst s
+          zs = snd s
+
+groupBy_List = groupBy
+
+-- cycle is already taken
+private cycle : List a -> List a
+cycle [] = []
+cycle xs = let xs' = xs ++ xs' in xs'
+
+cycle_List = cycle

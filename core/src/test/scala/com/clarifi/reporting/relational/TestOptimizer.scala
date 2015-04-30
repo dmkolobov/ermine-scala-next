@@ -8,7 +8,6 @@ import Op._
 import Predicate._
 
 import scalaz._
-import Scalaz._
 
 object TestOptimizer extends Properties("SQL relation optimizer") {
   implicit val nothingEq: Equal[Nothing] = Equal.equalA

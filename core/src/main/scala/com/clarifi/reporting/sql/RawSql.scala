@@ -3,7 +3,6 @@ package com.clarifi.reporting.sql
 import math.Ordering
 import scalaz._
 import Scalaz._
-import Equal._
 
 /** The ultimate output of a SQL code generator. */
 case class RawSql(private[RawSql] val contents: Vector[String]) {
@@ -20,33 +19,37 @@ object RawSql {
   implicit def raw(v: String) = RawSql(Vector(v))
   def raw[F[_]: Foldable](vs: F[String]) = RawSql(vs.foldLeft(Vector[String]())((a, b) => a :+ b))
 
-  /** Join `xs` with `inject`, right-to-left. */
-  def interposeR[F[_]: Foldable, A: Monoid](xs: F[A], inject: A) =
-    xs intercalate inject
-
-  /** Raw is a monoid. */
-  implicit val rawMonoid: Monoid[RawSql] = new Monoid[RawSql] {
+  /** Raw is a monoid, can be shown, and can be ordered with respect to
+    * its literal, unparameterized SQL content.
+    */
+  implicit object rawInstance extends Monoid[RawSql] with Show[RawSql] with Order[RawSql] {
     import std.vector._
+
+    // monoid
     def append(left: RawSql, right: => RawSql) =
       RawSql(left.contents |+| right.contents)
     val zero = raw("")
-  }
 
-  final class RawStringJoins[F[_]](val value: F[RawSql]) {
-    /** Like `mkString`, but for joining raws safely. */
-    def rawMkString(join: String)(implicit ev: Foldable[F]) =
-      interposeR(value, raw(join))
-    /** Like `mkString`, but for joining raws safely. */
-    def rawMkString(left: String, join: String, right: String
-                   )(implicit ev: Foldable[F]) =
-      raw(left) |+| interposeR(value, raw(join)) |+| raw(right)
+    // show
+    override def show(r: RawSql) = Cord("RawSql") |+| r.contents.show
+
+    // order
+    def order(left: RawSql, right: RawSql) = left.stringValue ?|? right.stringValue
   }
 
   /** Raws can be interposed with strings. */
-  implicit def rawStringJoins[F[_]](raws: F[RawSql]): RawStringJoins[F] =
-    new RawStringJoins[F](raws)
+  implicit final class RawStringJoins[F[_]](val value: F[RawSql]) extends AnyVal {
+    /** Like `mkString`, but for joining raws safely. */
+    def rawMkString(join: String)(implicit ev: Foldable[F]) =
+      value intercalate raw(join)
+    /** Like `mkString`, but for joining raws safely. */
+    def rawMkString(left: String, join: String, right: String
+                   )(implicit ev: Foldable[F]) =
+      raw(left) |+| (value intercalate raw(join)) |+| raw(right)
+  }
 
-  final class RawFormatter(val value: String) {
+  /** Raws can be laid out against format strings. */
+  implicit final class RawFormatter(val value: String) extends AnyVal {
     /** Combine `raws` with a `formatSpec`.  The consequences of not
       * including enough directives to consume all `raws` are not
       * nice.
@@ -54,10 +57,7 @@ object RawSql {
     def formatRaws(raws: RawSql*) = raw(value format ((raws map (_.stringValue)): _*))
   }
 
-  /** Raws can be laid out against format strings. */
-  implicit def rawFormatter(s: String): RawFormatter = new RawFormatter(s)
-
-  /** Raws can be ordered with respect to their literal,
-    * unparameterized SQL content. */
-  implicit val rawOrdering: Ordering[RawSql] = Ordering by (_.stringValue)
+  /** Scala compatibility. */
+  private[sql] implicit val rawOrdering: Ordering[RawSql] =
+    rawInstance.toScalaOrdering
 }

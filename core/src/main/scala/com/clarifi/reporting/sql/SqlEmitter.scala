@@ -1,7 +1,6 @@
 package com.clarifi.reporting.sql
 
 import com.clarifi.reporting._
-import com.clarifi.reporting.Reporting._
 import com.clarifi.reporting.PrimT._
 import com.clarifi.reporting.Hints._
 import com.clarifi.reporting.flatteners.TableFlattener
@@ -9,7 +8,7 @@ import RawSql._
 
 import scalaz._
 import Scalaz._
-import java.sql.{PreparedStatement,ResultSet,Types}
+import java.sql.{PreparedStatement,ResultSet,SQLException,Types}
 import java.util.Date
 import java.util.UUID
 
@@ -142,9 +141,14 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     * 2. At least one row, first row has NULL `col`: `t` does not exist
     * 3. At least one row, first row has non-NULL `col`: `t` exists
     *
+    * Relying on that alone can yield false negatives.  So the other
+    * part of the result is a predicate on [[java.sql.SQLException]]s;
+    * if true on an error thrown while creating `t`, treat that as a
+    * positive existence result.
+    *
     * @see [[com.clarifi.reporting.relational.SqlScanner]]`#sequenceSql`
     */
-  def checkExists(t: TableName, col: ColumnName) : RawSql
+  def checkExists(t: TableName, col: ColumnName) : (RawSql, SQLException => Boolean)
 
   /**
    * Creates the column names for a create table statement, by default.
@@ -197,7 +201,8 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
    * Emits union to ensure proper grouping of multiple options.
    */
   def emitNaryOp(op: SqlBinOp, rs: NonEmptyList[SqlQuery]): RawSql =
-    RawSql.interposeR(rs.map(r => raw("select * from ") |+| r.emitSubquery(this)), raw(" ") |+| op.emit |+| " ")
+    rs.map(r => raw("select * from ") |+| r.emitSubquery(this))
+      .intercalate(raw(" ") |+| op.emit |+| " ")
 
   /**
    * Emit Sql for a natural inner join.
@@ -205,9 +210,9 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   def emitJoin(rs: NonEmptyList[Subquery],
                      joinName: TableName): RawSql = {
     val (leftP, rightP) = if (aliasParens) ("(", ")") else ("", "")
-    raw("select * from ") |+| RawSql.interposeR(rs.map {
+    raw("select * from ") |+| (rs.map {
       case (q, t, _) => raw(leftP) |+| q.emitSubquery(this) |+| " " |+| emitTableName(t) |+| rightP
-    }, raw(" natural join "))
+    } intercalate raw(" natural join "))
   }
 
   /**
@@ -225,12 +230,12 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     raw("select ") |+| rs.toSet.flatMap {
       case (q, t, h) => h.keySet.map(emitQualifiedColumnName(t, _))
     }.rawMkString(",") |+|
-    " from " |+| RawSql.interposeR(rs.map {
+    " from " |+| (rs.map {
       case (q, t, _) => raw(leftP) |+| q.emitSubquery(this) |+| " " |+| emitTableName(t) |+| rightP
-    }, raw(" inner join ")) |+|
-    " on (" |+| RawSql.interposeR(on.map {
+    } intercalate raw(" inner join ")) |+|
+    " on (" |+| (on.map {
       case (c1, c2) => emitQualifiedColumnName(r1._2, c1) |+| " = " |+| emitQualifiedColumnName(r2._2, c2)
-    }, raw(" and ")) |+| ")"
+    } intercalate raw(" and ")) |+| ")"
   }
 
   /**
@@ -268,26 +273,14 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
 
   /**
    * Takes a list of SqlExprs and returns a SqlExpr representing that list
-   * concatenated together.  The default implementation uses the infix || operator.
-   * Override emitConcat_helper to override this functionality.
+   * concatenated together.  Defers to `emitConcat_helper` for
+   * non-empty `terms`.
    */
-  final def emitConcat(terms: List[SqlExpr]): SqlExpr = {
-    if (terms.length == 0)
-      sys.error("Cannot concat zero items")
-    else if (terms.length == 1)
-      terms(0)
-    else
-      emitConcat_helper(terms)
-  }
+  final def emitConcat(terms: List[SqlExpr]): SqlExpr =
+    terms.toNel cata (emitConcat_helper, LitSqlExpr(SqlString("")))
 
-  /**
-   * Helper for emitConcat that does the actual work.  The length of the list
-   * argument is guaranteed to be at least 2.
-   */
-  protected def emitConcat_helper(terms: List[SqlExpr]): SqlExpr = {
-    val first = BinSqlExpr("||", terms(0), terms(1))
-    terms.tail.tail.foldLeft(first)(BinSqlExpr("||", _, _))
-  }
+  protected def emitConcat_helper(terms: NonEmptyList[SqlExpr]): SqlExpr =
+    terms.foldLeft1(BinSqlExpr("||", _, _))
 
   /**
    * Emits the population standard deviation aggregation function.  Default
@@ -321,7 +314,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
    *
    * The default implementation returns /.
    */
-  def emitIntegerDivisionOp: String = "/"
+  def emitIntegerDivision(a: SqlExpr, b: SqlExpr): SqlExpr = BinSqlExpr("/", a, b)
 
   /**
    * Mapping from ADT type names to SQL type names
@@ -526,22 +519,26 @@ trait EmitOver_UsingOver extends SqlEmitter {
 }
 
 /**
- * Overrides emitConcat to use the + operator instead of the || operator
+ * Overrides emitConcat to use the + operator instead of the ||
+ * operator, and coerce to string.
  */
-trait EmitConcat_+ extends SqlEmitter {
-  override def emitConcat_helper(terms: List[SqlExpr]): SqlExpr = {
-    val first = BinSqlExpr("+", terms(0), terms(1))
-    terms.tail.tail.foldLeft(first)(BinSqlExpr("+", _, _))
-  }
+trait EmitConcat_MsSql extends SqlEmitter {
+  // SQL Server 2012 supports CONCAT with the correct semantics.  But
+  // we need to support 2008, which lacks concat, so we do a really
+  // hacky thing with replicate(x, 1), which is a string coercion.
+  override protected def emitConcat_helper(terms: NonEmptyList[SqlExpr]): SqlExpr =
+    terms.map{
+      case t@LitSqlExpr(SqlString(_)) => t
+      case t => FunSqlExpr("replicate", List(t, LitSqlExpr(SqlInt(1))))
+    }.foldLeft1(BinSqlExpr("+", _, _))
 }
 
 /**
  * Overrides emitConcat to use the CONCAT(arg1, ... argn) function present in MySQL
  */
 trait EmitConcat_MySQL extends SqlEmitter {
-  override def emitConcat_helper(terms: List[SqlExpr]): SqlExpr = {
-    FunSqlExpr("Concat", terms)
-  }
+  override protected def emitConcat_helper(terms: NonEmptyList[SqlExpr]): SqlExpr =
+    FunSqlExpr("Concat", terms.list)
 }
 
 /** Pretend UUIDS are strings. */
@@ -578,20 +575,28 @@ trait EmitName_MsSql extends SqlEmitter {
   }
 }
 
+trait EmitIntDivOp_MsSql extends SqlEmitter {
+  override def emitIntegerDivision(a: SqlExpr, b: SqlExpr): SqlExpr =
+    FunSqlExpr("floor", List(BinSqlExpr("/", FunSqlExpr("floor", List(a)),
+                                        FunSqlExpr("floor", List(b)))))
+}
+
 /**
  * Override emitIntegerDivisionOp to return 'div', which is
  * MySQL's integer division operator.
  */
 trait EmitIntDivOp_MySQL extends SqlEmitter {
-  override def emitIntegerDivisionOp: String = "div"
+  override def emitIntegerDivision(a: SqlExpr, b: SqlExpr): SqlExpr =
+    BinSqlExpr("div", FunSqlExpr("floor", List(a)), FunSqlExpr("floor", List(b)))
 }
 
 /** An unimplemented #checkExists. */
 trait EmitCheckExists_AlwaysFails extends SqlEmitter {
   /** @todo Actually yield true sometimes. */
-  def checkExists(t: TableName, col: ColumnName) : RawSql =
+  def checkExists(t: TableName, col: ColumnName) : (RawSql, SQLException => Boolean) =
     (raw("select (") |+| emitNull |+| ") " |+| emitColumnName(col)
-       |+| " " |+| emitFromEmptyTable)
+       |+| " " |+| emitFromEmptyTable,
+     Function const false)
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -696,7 +701,7 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
 
   def sqlPrimT(x: Int, tn: String, cs: Int) = SqlEmitter.defaultDecodeType(x)
 
-  def checkExists(t: TableName, col: ColumnName) : RawSql =
+  def checkExists(t: TableName, col: ColumnName) : (RawSql, SQLException => Boolean) =
     (raw("select (") |+| emitColumnName("TABLE_NAME")
        |+| ") " |+| emitColumnName(col)
        |+| " from "
@@ -704,7 +709,8 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
        |+| " where "
        |+| emitColumnName("TABLE_NAME") |+| " = " |+| SqlString(t.name).emitSql(this)
        |+| " and " |+| emitColumnName("TABLE_SCHEMA")
-       |+| " = " |+| SqlString(t.schema mkString ".").emitSql(this))
+       |+| " = " |+| SqlString(t.schema mkString ".").emitSql(this),
+     e => e.getErrorCode == 1050)
 }
 
 class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
@@ -712,8 +718,9 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitNoDropTempTable
                                       with EmitUnion
                                       with EmitJoin_MsSql
-                                      with EmitConcat_+
+                                      with EmitConcat_MsSql
                                       with EmitExcept_MsSql
+                                      with EmitIntDivOp_MsSql
                                       with EmitLimit_AsRowNumberOver
                                       with EmitOver_UsingOver
                                       with EmitStddevVar_MsSQL
@@ -733,11 +740,21 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
   override def emitDateStatement(stmt: PreparedStatement, index: Int, d: Date): Unit =
     stmt.setDate(index, new java.sql.Date(d.getTime - java.util.TimeZone.getDefault.getRawOffset))
 
-  def sqlTypeName(p: PrimT): RawSql = SqlEmitter.fallbackSqlTypeName(p)
-  def sqlTypeId(p: PrimT): Int = SqlEmitter.fallbackSqlTypeId(p)
+  private def nn(n: Boolean, s: String): RawSql = if (n) s else (s |+| " not null")
+
+  def sqlTypeName(p: PrimT): RawSql = p match {
+    case StringT(l,n) => nn(n,"nvarchar(" |+| (if (l == 0) "1000" else l.toString) |+| ")")
+    case _ => SqlEmitter.fallbackSqlTypeName(p)
+  }
+
+  def sqlTypeId(p: PrimT): Int = p match {
+    case StringT(_,_) => Types.VARCHAR
+    case _ => SqlEmitter.fallbackSqlTypeId(p)
+  }
+
   def emitDateAddName = "dateadd"
   def emitInterval(n: Int, u: TimeUnit) =
-    raw(n.toString) |+| raw(", " + u.toString.toLowerCase)
+    raw(u.toString.toLowerCase) |+| raw(", " + n.toString)
 
   def sqlPrimT(x: Int, tn: String, cs: Int) = tn match {
     case "date" | "datetime" => Some(DateT()) // jtds gives x = varchar for dates
@@ -755,9 +772,10 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
   override def emitCreateTableStmt(t: TableName): RawSql =
     raw("CREATE ") |+| " TABLE " |+| emitTableName(t)
 
-  def checkExists(t: TableName, col: ColumnName): RawSql =
+  def checkExists(t: TableName, col: ColumnName): (RawSql, SQLException => Boolean) =
     (raw("select object_id(N'") |+| emitTableName(t)
-       |+| raw("') ") |+| emitColumnName(col) |+| emitFromEmptyTable)
+       |+| raw("') ") |+| emitColumnName(col) |+| emitFromEmptyTable,
+     e => e.getErrorCode == 2714)
 }
 
 
@@ -907,6 +925,7 @@ object SqlEmitter {
 
   val msSqlEmitter2005 = new MsSqlEmitter {
     override def sqlTypeName(p: PrimT): RawSql = p match {
+      case StringT(l,n) => nn(n,"nvarchar(" |+| (if (l == 0) "1000" else l.toString) |+| ")")
       case DateT(n)     => nn(n,"datetime")
       case _ => SqlEmitter.fallbackSqlTypeName(p)
     }

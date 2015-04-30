@@ -3,9 +3,6 @@ module HelloWorld where
 -- comment syntax
 import Prelude hiding sum
 import Int
--- eventually:
--- import CapitalIQ using somePATable_tbl
--- import PortfolioAnalytics using { anotherTableName_tbl ; andAnother_tbl }
 
 -- blah
 msg = "Hello world!"
@@ -32,7 +29,6 @@ field ID : Int
 field FavoriteColor : String
 
 -- a literal dataset, though this could also be loaded from a database table
--- see `PASchema.e`
 employees = relation [
   { Name = "Alice", ID = 1, FavoriteColor = "Blue" },
   { Name = "Bob",   ID = 2, FavoriteColor = "Red" },

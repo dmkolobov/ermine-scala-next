@@ -3,6 +3,7 @@ package ermine
 
 import Term.{ subTermEx, termVars }
 import HasTermVars._
+import scalaparsers.{Loc, Located, Supply}
 import scala.collection.immutable.List
 
 case class Alt(loc: Loc, patterns: List[Pattern], body: Term) extends Located {

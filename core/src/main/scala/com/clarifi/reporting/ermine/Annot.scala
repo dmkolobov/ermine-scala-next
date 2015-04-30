@@ -1,6 +1,6 @@
 package com.clarifi.reporting.ermine
 
-import com.clarifi.reporting.Supply
+import scalaparsers.{Loc, Located, Supply}
 import com.clarifi.reporting.ermine.Kind.{ zipKinds, kindVars, subKind }
 import com.clarifi.reporting.ermine.Type.{ typeVars, allTypeVars }
 import scala.collection.immutable.List
@@ -31,6 +31,7 @@ object Annot {
 
   def plain(l: Loc, ty: Type): Annot = Annot(l, List(), List(), ty)
 
+  import scalaparsers.Relocatable
   implicit def relocatableAnnot: Relocatable[Annot] = new Relocatable[Annot] {
     def setLoc(a: Annot, l: Loc) = Annot(l, a.eksists, a.exists, a.body)
   }

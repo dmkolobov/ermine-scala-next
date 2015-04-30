@@ -10,10 +10,10 @@ import Double
 import Num
 import Eq
 import Record as R
-import Relation.Row
+import Relation.Row hiding empty_Bracket; cons_Bracket
 import Vector as V
 import Map as M
-import Nullable
+import Nullable hiding map
 import Control.Functor
 import Syntax.List
 import Ord
@@ -23,7 +23,7 @@ import Bool
 import Relation.Op as Op
 import Relation.Predicate as P
 import Syntax.Relation
-import Relation.Aggregate
+import Relation.Aggregate as Agg
 
 private
   type Record a = Record_R a
@@ -47,7 +47,7 @@ cutoffGroupedFldsPosNegRel' valueFld nameFld flds cutoffAgg rel =
                    tooSmallRel = tooSmall ** mem [{ nameFld = "Other" }]
                    tooSmallNegRel = tooSmallNeg ** mem [{ nameFld = "Other (Negative)" }]
                in except {cutoff} . union tooSmallRel . union tooSmallNegRel $ largeEnough
-      relWithCutoff = rel ** aggregate (cutoffAgg valueFld) cutoff rel
+      relWithCutoff = rel ** aggregate_Agg (cutoffAgg valueFld) cutoff rel
   in groupBy flds f $ relWithCutoff
 
 private field cutoffCount : Int
@@ -69,7 +69,7 @@ cutoffDrilldownRel
   -> Relation s
 cutoffDrilldownRel valueFld parentFld childFld (cutoffPct : Double) groupFld rel = union largers others
  where
- cutoffs = aggregateByGroup (sum . abs_Op $ valueFld) {parentFld} valueFld rel
+ cutoffs = aggregateByGroup_Agg (sum_Agg . abs_Op $ valueFld) {parentFld} valueFld rel
          |> [| cutoff = prim_Op (Some cutoffPct) *_Op valueFld |]
          |> except {valueFld}
 
@@ -81,10 +81,10 @@ cutoffDrilldownRel valueFld parentFld childFld (cutoffPct : Double) groupFld rel
        |> filter_P (abs_Op valueFld <=_P cutoff)
        |> except {cutoff}
 
- smallsum = aggregateByGroup (sum . abs_Op $ valueFld) {parentFld} valueFld small
- smallcount = aggregateByGroup countAgg {parentFld} cutoffCount small
- smallid = aggregateByGroup (max childFld) {parentFld} cutoffChild small
- smallgroup = aggregateByGroup (max groupFld) {parentFld} cutoffGroup small
+ smallsum = aggregateByGroup_Agg (sum_Agg . abs_Op $ valueFld) {parentFld} valueFld small
+ smallcount = aggregateByGroup_Agg countAgg_Agg {parentFld} cutoffCount small
+ smallid = aggregateByGroup_Agg (max_Agg childFld) {parentFld} cutoffChild small
+ smallgroup = aggregateByGroup_Agg (max_Agg groupFld) {parentFld} cutoffGroup small
 
  others = smallsum ** smallcount ** smallid ** smallgroup
         |> [| cutoffCount > 0

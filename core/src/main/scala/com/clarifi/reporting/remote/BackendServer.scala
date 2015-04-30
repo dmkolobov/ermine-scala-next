@@ -2,21 +2,16 @@ package com.clarifi.reporting
 package remote
 
 import relational._
-import SMEnv._
 
 import com.clarifi.machines._
 
 import backends.DB
-import Reporting._
 
 import f0._
 import Readers._
-import Writers._
 import Format._
 
-import scalaz._
-import Scalaz._
-import IterV._
+import scala.util.control.NonFatal
 import scalaz.std.vector._
 
 import org.apache.log4j.Logger
@@ -35,7 +30,7 @@ class BackendServer[F[_]](B: Scanner[F])(implicit R: Run[F]) {
     val bs = rowsW.toByteArray(Right(results))
     Log.info("response bytes: " + bs.length)
     bs
-  } catch { case e => rowsW.toByteArray(Left(e)) }
+  } catch { case NonFatal(e) => rowsW.toByteArray(Left(e)) }
 }
 
 object BackendServer {

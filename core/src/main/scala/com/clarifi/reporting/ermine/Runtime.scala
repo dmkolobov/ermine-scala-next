@@ -1,9 +1,8 @@
 package com.clarifi.reporting.ermine
 
 import scala.collection.immutable.{ IntMap, List }
-import scalaz.{Success => _, _}
+import scala.util.control.NonFatal
 import scalaz.Scalaz._
-import com.clarifi.reporting.Reporting._
 import com.clarifi.reporting.relational._
 import com.clarifi.reporting._
 
@@ -57,7 +56,7 @@ object Prim {
       case r: Runtime => r
       case p => new Prim(p)
     }
-  } catch { case e => Bottom(throw e) }
+  } catch { case e: Throwable => Bottom(throw e) }
   def unapply(p: Prim) = Some(p.extract[Any])
 }
 
@@ -87,7 +86,7 @@ object Box {
       case r: Runtime => r
       case b => new Box(b)
     }
-  } catch { case e => Bottom(throw e) }
+  } catch { case e: Throwable => Bottom(throw e) }
   def unapply(b: Box) = Some(b.extract[Any])
 }
 
@@ -106,7 +105,7 @@ class Rel(r: Ext[Nothing, Nothing]) extends Runtime {
 
 object Rel {
   def apply(h: => Ext[Nothing, Nothing]) =
-    try new Rel(h) catch { case e => Bottom(throw e) }
+    try new Rel(h) catch { case NonFatal(e) => Bottom(throw e) }
   def unapply(r: Rel) = Some(r.extract[Ext[Nothing, Nothing]])
 }
 
@@ -146,9 +145,11 @@ class Bottom(msg: => Nothing) extends Runtime {
   def inspect = msg
   def extract[A] = msg
   def exn: Exception = try msg catch { case e: Exception => e }
+  /** @todo SMRC Use NonFatal for this? */
+  private[ermine] def thrown: Throwable = try msg catch { case e: Throwable => e }
   override def apply1(r: Runtime) = this
   override def err(caller: String) = this
-  override def toString = "Bottom(" + (try { msg } catch { case e => e.toString }) + ")"
+  override def toString = "Bottom(" + thrown.toString + ")"
   override def equals(v: Any) = inspect
 }
 
@@ -175,7 +176,7 @@ class Rec(val t: Map[String, Runtime]) extends Runtime {
 
 object Rec {
   def apply(t: => Map[String, Runtime]): Runtime =
-    try new Rec(t) catch { case e => Bottom (throw e) }
+    try new Rec(t) catch { case NonFatal(e) => Bottom (throw e) }
   def unapply(t: Rec) = Some(t.t)
 }
 
@@ -229,7 +230,7 @@ object Runtime {
             var r : Runtime = null
             try {
               r = old.result
-            } catch { case e : Throwable => r = Bottom(throw e) }
+            } catch { case NonFatal(e) => r = Bottom(throw e) }
             r
           }
 
@@ -352,7 +353,7 @@ object Runtime {
           case Rec(tup) => tup.map(a => a._1 -> toPrimExpr(a._2))
           case o => die("Panic: buildRelation: Expected a record. Found: " + o)
         }).toNel.get), ""))
-      } catch { case e => Bottom(throw e) }
+      } catch { case NonFatal(e) => Bottom(throw e) }
     }
   }
 
@@ -364,7 +365,7 @@ object Runtime {
           case Rec(tup) => tup.map(a => a._1 -> toPrimExpr(a._2))
           case o => die("Panic: buildRelation: Expected a record. Found: " + o)
         })).get))
-      } catch { case e => Bottom(throw e) }
+      } catch { case NonFatal(e) => Bottom(throw e) }
     }
   }
 }
@@ -372,10 +373,8 @@ object Runtime {
 object NullableValue {
   def unapply(rt: Runtime): Option[Either[PrimT,Runtime]] = rt match {
     case Data(Global("Builtin","Null",Idfix), p) => p(0).whnf match {
-      case Prim(x) => x match {
-        case pt: PrimT => Some(Left(pt))
-        case o => die("Null data constructor contained a non PrimT value: " + o)
-      }
+      case Prim(pt: PrimT) => Some(Left(pt))
+      case o => die("Null data constructor contained a non PrimT value: " + o)
     }
     case Data(Global("Builtin","Some",Idfix), p) => Some(Right(p(0))) // TODO: this is actually not in lib, we need to change this to Prelude when it exists
     case _ => None

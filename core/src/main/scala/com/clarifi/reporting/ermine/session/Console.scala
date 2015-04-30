@@ -19,15 +19,17 @@ import scalaz.Scalaz._
 import com.clarifi.reporting.ermine.parsing.{
   phrase, semi, eof,
   startingKeywords, otherKeywords,
-  Parser, ParseState,
+  ParseState, ErParseState,
   TermParsers, StatementParsers,
   ModuleHeader, ModuleParsers
 }
+import ErParseState.Implicits._
 
 import com.clarifi.reporting.ermine.parsing.TermParsers.term
 import com.clarifi.reporting.ermine.parsing.TypeParsers.typ
 import com.clarifi.reporting.ermine._
-import com.clarifi.reporting.ermine.Document._
+import scalaparsers.{Death, DocException, Document, Supply}
+import scalaparsers.Document._
 import com.clarifi.reporting.ermine.Pretty.{
   prettyRuntime, prettyType, prettyKind, prettyVarHasType, prettyVarHasKind, prettyTypeHasKindSchema, prettyConHasKindSchema
 }
@@ -147,7 +149,7 @@ class ConsoleEnv(
 
   def updateCompletor {
     val ps = parseState("")
-    val names = otherKeywords ++ (ps.termNames.keySet ++ ps.typeNames.keySet ++ ps.kindNames.keySet).map(_.string)
+    val names = otherKeywords ++ (ps.s.termNames.keySet ++ ps.s.typeNames.keySet ++ ps.s.kindNames.keySet).map(_.string)
     completor.setCandidateStrings(names.toArray)
   }
 
@@ -181,7 +183,7 @@ class ConsoleEnv(
     updateCompletor
   }
 
-  def parseState(s: String) = ParseState.mk("<interactive>", s, "REPL").importing(sessionEnv.termNames, sessionEnv.cons.keySet, imports)
+  def parseState(s: String) = ErParseState.mk("<interactive>", s, "REPL").importing(sessionEnv.termNames, sessionEnv.cons.keySet, imports, sessionEnv.termNameOrigins, sessionEnv.consOrigins)
 
 
   def session[A](s: SessionEnv => A): Option[A] = {
@@ -230,7 +232,7 @@ class ConsoleEnv(
     stackHandler = () => a.printStackTrace(out)
   }
 
-  def conMap(ps: ParseState) = Type.conMap("REPL", ps.typeNames, sessionEnv.cons)
+  def conMap(ps: ParseState) = Type.conMap("REPL", ps.s.typeNames, sessionEnv.cons)
 
   def fixCons[A](ps: ParseState, a: A)(implicit A: HasTypeVars[A]) =
     Type.subType(conMap(ps), a)
@@ -242,6 +244,17 @@ object Console {
   def session[A](s: SessionEnv => A)(implicit e: ConsoleEnv): Option[A] = e.session(s)
   def importing(m: String, affix: Option[String] = None)(implicit e: ConsoleEnv) = e.importing(m, affix, List(), false)
   def sessionEnv(implicit e: ConsoleEnv) = e.sessionEnv
+
+  /** Partially reverse `sbt.JLine.fixTerminalProperty` (as of 0.13.0),
+    * which might work for scala REPL, but not for us.
+    */
+  private[reporting]
+  def unfixSbtTerminalProperty(): Unit = {
+    val termprop = "jline.terminal"
+    Option(System.getProperty(termprop)) collect {
+      case "none" => "jline.UnsupportedTerminal"
+    } foreach (System.setProperty(termprop, _))
+  }
 
   val header = """
     Commands available from the prompt:
@@ -280,7 +293,7 @@ object Console {
     new Action(":slowload",List(),None, "reload all of the modules for the current session (slowly and incorrectly)") {
       def apply(s: String)(implicit e: ConsoleEnv) {
         import e.{con,supply}
-        val then = new Date()
+        val prior = new Date()
         val old = e.mark
         val files = old.sessionEnv.loadedFiles
         e.mark = e.namedMarks("lib")
@@ -290,7 +303,7 @@ object Console {
           writeLn("Error during reload, reverting.")
         } else {
           val now = new Date()
-          val secs = (now.getTime() - then.getTime()) / 1000.0
+          val secs = (now.getTime() - prior.getTime()) / 1000.0
           e.imports = old.imports
           writeLn("Reloaded" :+: ordinal(files.toList.length, "module","modules") :+: "successfully in" :+: secs.toString :+: text("seconds."))
         }
@@ -299,7 +312,7 @@ object Console {
     new Action(":slowerload",List(),None, "reload all of the modules for the current session (slowly and incorrectly)") {
       def apply(s: String)(implicit e: ConsoleEnv) {
         import e.{con,supply}
-        val then = new Date()
+        val prior = new Date()
         val old = e.mark
         val files = old.sessionEnv.loadedFiles
         e.mark = e.namedMarks("lib")
@@ -309,7 +322,7 @@ object Console {
           writeLn("Error during reload, reverting.")
         } else {
           val now = new Date()
-          val secs = (now.getTime() - then.getTime()) / 1000.0
+          val secs = (now.getTime() - prior.getTime()) / 1000.0
           e.imports = old.imports
           writeLn("Reloaded" :+: ordinal(files.toList.length, "module","modules") :+: "successfully in" :+: secs.toString :+: text("seconds."))
         }
@@ -317,7 +330,7 @@ object Console {
     },
     new Action(":reload",List(),None, "reload all of the modules for the current session (intelligently)") {
       def apply(s: String)(implicit e: ConsoleEnv) {
-        val then = new Date();
+        val prior = new Date();
         val old = e.mark
         val lib = e.namedMarks("lib")
         import e.{con,supply}
@@ -534,19 +547,19 @@ object Console {
                               (Map[Local, (Option[String], Document)],
                                Map[Local, (Option[String], Document)]) = {
     val types = for {
-      (tn,cn : Global) <- ps.canonicalTypes.filter(_._1.string.contains(filt))
+      (tn, List(cn: Global) ) <- ps.s.canonicalTypes.filter(_._1.string.contains(filt))
       c <- ss.cons.get(cn).toList
     } yield ss.classes.get(c.name) match {
       case Some(cls) => (tn, Some(cn.module) -> cls.pretty)
       case None =>      (tn, Some(cn.module) -> (c.decl.desc :+: prettyConHasKindSchema(tn, c.schema)))
     }
     val terms = for {
-      (tn,cn) <- ps.canonicalTerms.filter(_._1.string.contains(filt))
-      val mod = cn match {
+      (tn,List(cn)) <- ps.s.canonicalTerms.filter(_._1.string.contains(filt))
+      mod = cn match {
         case Global(m, _, _) => Some(m)
         case _: Local => None
       }
-      v <- ps.termNames.get(cn).toList
+      v <- ps.s.termNames.get(cn).toList
     } yield (tn, mod -> prettyVarHasType(v copy (name = Some(tn))))
     (types, terms)
   }
@@ -757,6 +770,7 @@ object Console {
 
   def main(args: Array[String]) {
     com.clarifi.reporting.util.Logging.initializeLogging
+    unfixSbtTerminalProperty()
     try {
       implicit val env = new ConsoleEnv(new SessionEnv)
       env.reader.getHistory.setHistoryFile(new java.io.File(".ermine_history"))

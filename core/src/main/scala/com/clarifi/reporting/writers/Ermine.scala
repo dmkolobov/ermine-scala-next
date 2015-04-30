@@ -2,7 +2,6 @@
 package com.clarifi.reporting.writers
 
 import scalaz.syntax.id._
-import scalaz.syntax.monoid._
 import scalaz.syntax.std.all.ToTuple2Ops
 
 // import com.clarifi.reporting.Provenance.RefUsage._ // for Disjunction monoid

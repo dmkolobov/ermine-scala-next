@@ -79,8 +79,8 @@ tabular oa = oa tabularDefaults |> (TabularOptions leg) ->
 scaled : Scaled a
       => (Options (ScaledOptions u1 a) (ScaledDefaults u1' a))
       -> Axis a
-scaled oa = oa scaledDefaults |> (ScaledOptions so low up) ->
-  scaled_R so low up
+scaled oa = oa scaledDefaults |> (ScaledOptions so low up ds) ->
+  scaled_R so low up ds
 
 unscaled : Unscaled a
         => (Options (UnscaledOptions u1 a) (UnscaledDefaults u1' a))
@@ -89,8 +89,8 @@ unscaled oa = oa unscaledDefaults |> (UnscaledOptions so) ->
   unscaled_R (fmap eitherFunctor lt so)
 
 chart : (Primitive xa', Primitive ya')
-     => (Options (ChartOptions tdxfyf xa ya x y)
-                 (ChartDefaults tdxfyf' xa' ya' x y))
+     => (Options (ChartOptions tdxfyf xa ya)
+                 (ChartDefaults tdxfyf' xa' ya'))
      -> Axis xa
      -> Axis ya
      -> List (ChartSeries xa ya)
@@ -106,18 +106,18 @@ pieChart : (r <- (label, value, r1, r2, o), PrimitiveNum d,
         -> prv value d
         -> rel (|..r|)
         -> Report_R f z
-pieChart oa label value = oa pieChartDefaults |> (PieChartOptions title color dd) ->
-  maybe (pieChart_R title color label value)
-        (uncurry (drilldownPieChart_R title color label value))
+pieChart oa label value = oa pieChartDefaults |> (PieChartOptions title lo color dd) ->
+  maybe (pieChart_R title lo color label value)
+        (uncurry (drilldownPieChart_R title lo color label value))
         dd
 
-drilldownBarChart : (exists o. r <- (cr, vr, pi, ci, o),
+drilldownBarChart : (exists o. r <- (sr, cr, vr, pi, ci, o),
                                AsPresentation cpr, AsPresentation vpr,
                                Relational rel)
                  => Axis ca
                  -> Axis va
-                 -> (Options (DrilldownBarChartOptions tdcv cl vl)
-                             (DrilldownBarChartDefaults tdcv' cl vl))
+                 -> (Options (DrilldownBarChartOptions tdlocv sr sa cr vr)
+                             (DrilldownBarChartDefaults tdlocv' cr vr))
                  -> cpr cr ca
                  -> vpr vr va
                  -> Field pi id
@@ -125,5 +125,5 @@ drilldownBarChart : (exists o. r <- (cr, vr, pi, ci, o),
                  -> rel r
                  -> Report_R f z
 drilldownBarChart cax vax oa = oa drilldownBarChartDefaults
-  |> (DrilldownBarChartOptions title dir clbl vlbl) ->
-    drilldownBarChart_R title dir clbl cax vlbl vax
+  |> (DrilldownBarChartOptions title dir lo clbl vlbl spr cov vov) ->
+    drilldownBarChart_R title dir lo clbl cov cax vlbl vov vax spr

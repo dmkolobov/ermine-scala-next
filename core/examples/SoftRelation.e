@@ -11,6 +11,7 @@ import Layout.Magnitude
 import Field
 import Ord using fromLess
 import Relation.Op as Op
+import Syntax.Relation
 import Relation.Sort using ordering
 
 import DrilldownList as DDL

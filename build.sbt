@@ -1,11 +1,16 @@
-scalaVersion in ThisBuild := "2.9.2"
+scalaVersion in ThisBuild := "2.11.5"
 
 scalacOptions in ThisBuild ++=
   Seq("-encoding", "UTF-8", "-Yrecursion", "50", "-deprecation",
-      "-unchecked", "-Xlint")
+      "-unchecked", "-Xlint", "-Ywarn-unused-import",
+      /* TODO enable "-Ywarn-adapted-args", */ "-Ydelambdafy:method", "-feature",
+      "-language:implicitConversions", "-language:higherKinds",
+      "-language:existentials", "-language:postfixOps")
 
 javacOptions in ThisBuild in (Compile, compile) ++=
   Seq("-Werror", "-Xlint", "-Xlint:-path", "-Xlint:-serial")
+
+incOptions in ThisBuild := (incOptions in ThisBuild).value.withNameHashing(true)
 
 parallelExecution in ThisBuild := true
 
@@ -13,12 +18,13 @@ name := "ermine-scala"
 
 organization in ThisBuild := "com.clarifi"
 
-version in ThisBuild := "1.0.0-SNAPSHOT"
+version in ThisBuild := "2.0.0-SNAPSHOT"
 
 initialCommands in ThisBuild := ""
 
 resolvers in ThisBuild ++= Seq(
     "Bintray JCenter Repo" at "https://dl.bintray.com/bintray/jcenter"
+   ,"Erik Osheim's Bintray Repo" at "http://dl.bintray.com/non/maven"
 )
 
 enableTypeCheck in ThisBuild := {

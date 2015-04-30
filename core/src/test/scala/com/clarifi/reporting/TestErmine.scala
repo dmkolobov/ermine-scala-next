@@ -3,16 +3,18 @@ package com.clarifi.reporting
 import com.clarifi.reporting.ermine._
 import Subst.{ inferType, inferKind, assertTypeClosed }
 import Type.{ int, subType, conMap, typeVars }
-import parsing.{ phrase, Parser, ParseState, ModuleHeader }
+import scalaparsers._
+import parsing.{ phrase, ErParseState, Parser, ParseState, ModuleHeader }
 import parsing.ModuleParsers.moduleBody
 import parsing.TermParsers.term
 import parsing.TypeParsers.typ
 import session.{ Lib, SessionEnv, Printer, Session }
 import session.Session.{loadModules => _, _}
 import syntax.{ ImportExportStatement, Explicit }
+import ErParseState.Implicits._
 
 import org.scalacheck._
-import Prop.{ extendedAny => _, Result => _, _ }
+import Prop.{ Result => _, _ }
 
 import java.io.File
 import scalaz.{ Failure => _, Success => _, _ }
@@ -62,7 +64,12 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
     imports: Map[String,ImportSpec] = imps
   )(implicit s: SessionEnv) {
     loadModules(imports.keySet.toList)
-    val spsz = ParseState.mk("<test statements>", stmts, "Test").importing(s.termNames, s.cons.keySet, imports)
+    val spsz = ErParseState.mk("<test statements>", stmts, "Test").importing( s.termNames
+                                                                            , s.cons.keySet
+                                                                            , imports
+                                                                            , s.termNameOrigins
+                                                                            , s.consOrigins
+                                                                            )
     val (sps,m) = parse(moduleBody(ModuleHeader(spsz.loc,"Test",false,imports.toList.map {
       case (k,(as,explicits,using)) => ImportExportStatement(spsz.loc, false, k, as, explicits, using)
     })),spsz)
@@ -70,8 +77,9 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
   }
 
   def testParse[A](p: Parser[A], e: String, m: Map[String,ImportSpec] = imps)(implicit s: SessionEnv): (ParseState, A) = {
+    import ErParseState.Implicits._
     loadModules(m.keySet.toList)
-    val epsz = ParseState.mk("<test>", e, "Test").importing(s.termNames, s.cons.keySet, m)
+    val epsz = ErParseState.mk("<test>", e, "Test").importing(s.termNames, s.cons.keySet, m, s.termNameOrigins, s.consOrigins)
     parse(p, epsz)
   }
 
@@ -100,7 +108,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
 
   def kindOf(e: String, m: Map[String, ImportSpec] = imps)(implicit s: SessionEnv): KindSchema = {
     val (ps, tz) = testParse(phrase(typ), e, m)
-    val t = subType(conMap("Test", ps.typeNames, s.cons), tz)
+    val t = subType(conMap("Test", ps.s.typeNames, s.cons), tz)
     assertTypeClosed(t)
     subst { implicit hm => inferKind(Nil,t.close) }
   }

@@ -1,9 +1,8 @@
 package com.clarifi.reporting
 
 import scalaz._
-import scalaz.Scalaz._
 import org.scalacheck._
-import Prop.{extendedAny => _, _}
+import Prop._
 import Lens._
 import scalaz.scalacheck.ScalazArbitrary._
 

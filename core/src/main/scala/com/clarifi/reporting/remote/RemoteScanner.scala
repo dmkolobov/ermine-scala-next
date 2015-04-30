@@ -1,7 +1,6 @@
 package com.clarifi.reporting
 package remote
 
-import Reporting._
 import Format._
 import com.clarifi.reporting.relational._
 
@@ -10,11 +9,9 @@ import com.clarifi.machines._
 import scalaz._
 import scalaz.Scalaz._
 import scalaz.effect._
-import scalaz.syntax.functor._
 
 import f0.{Source => _, _}
 import Writers._
-import Readers._
 
 import org.apache.log4j.Logger
 

@@ -17,9 +17,8 @@ import javafx.scene.input.KeyCode
 import javafx.stage.FileChooser
 import javafx.geometry.Pos
 import javafx.geometry.Insets
+import scalaparsers.{Document, Supply}
 
-import com.clarifi.reporting.ermine._
-import com.clarifi.reporting.ermine.Document
 import com.clarifi.reporting.ermine.session._
 import com.clarifi.reporting.ermine.syntax.Module
 import com.spcapitaliq.jfx.JFXAppHarness

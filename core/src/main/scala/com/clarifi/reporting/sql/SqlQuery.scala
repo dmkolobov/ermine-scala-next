@@ -24,25 +24,25 @@ sealed abstract class SqlQuery {
     case SqlSelect(options, attrs, tables, criteria, groupBy, orderBy, limit) =>
       raw("select ") |+|
       (if (options contains "distinct") raw("distinct ") else raw("")) |+|
-      { if (attrs.size == 0) "*"
+      { if (attrs.isEmpty) "*"
         else (attrs.toIndexedSeq.sortBy((_: (SqlColumn, SqlExpr))._1)
               .map(x => raw("(") |+| x._2.emitSql |+| ") " |+|
                    emitter.emitColumnName(x._1)).rawMkString(", ")) } |+|
-      (if (tables.size > 0) {
+      (if (!tables.isEmpty) {
         raw(" from ") |+| tables.map(x => x._2.emitSubquery |+|
                                      " " |+| emitter.emitTableName(x._1)).rawMkString(", ")
                                  } else emitter.emitFromEmptyTable ) |+|
-      (if (criteria.size > 0)
+      (if (!criteria.isEmpty)
         raw(" where ") |+| criteria.map(x => raw("(") |+| x.emitSql |+| ")").toIterable.rawMkString(" and ")
       else raw("")) |+|
-      (if (groupBy.size > 0)
-        raw(" group by ") |+| { if (attrs.size == 0) "*"
+      (if (!groupBy.isEmpty)
+        raw(" group by ") |+| { if (attrs.isEmpty) "*"
         else (groupBy.toIndexedSeq.sortBy((_: (SqlColumn, SqlExpr))._1)
               .map(x => // raw("(") |+| x._2.emitSql |+| ") " |+|
                    emitter.emitColumnName(x._1)).rawMkString(", ")) }
       else raw("")) |+|
-      (if (orderBy.size > 0)
-        raw(" order by ") |+| orderBy.map(x => x._1.emitSql |+| " " |+| x._2.emitSql).toIterable.rawMkString(", ")
+      (if (!orderBy.isEmpty)
+        raw(" order by ") |+| orderBy.distinct.map(x => x._1.emitSql |+| " " |+| x._2.emitSql).toIterable.rawMkString(", ")
       else raw("")) |+|
       (limit match { case (from, to) =>
         raw(" ") |+| emitter.emitLimitClause(from, to)})

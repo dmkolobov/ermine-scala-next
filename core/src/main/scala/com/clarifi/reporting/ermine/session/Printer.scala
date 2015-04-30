@@ -2,8 +2,8 @@ package com.clarifi.reporting.ermine.session
 
 import System.nanoTime
 import java.text.DecimalFormat
-import com.clarifi.reporting.ermine.Document
-import com.clarifi.reporting.ermine.Document._
+import scalaparsers.Document
+import scalaparsers.Document._
 
 abstract class Printer {
   def apply(s: String): Unit
@@ -30,10 +30,10 @@ object Printer {
   private val df = new DecimalFormat("0.00")
 
   def benchmark[A](p: => A)(wut: A => Document)(implicit con: Printer): A = {
-    val then = nanoTime
+    val prior = nanoTime
     val a = p
     val now = nanoTime
-    val secs = df.format((now - then) / 1000000000.0)
+    val secs = df.format((now - prior) / 1000000000.0)
     con((wut(a) :+: "(" :: secs :+: "seconds)\n").toString)
     a
   }

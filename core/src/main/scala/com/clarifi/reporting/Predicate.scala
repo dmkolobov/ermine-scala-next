@@ -53,7 +53,7 @@ sealed abstract class Predicate extends TraversableColumns[Predicate] {
     liftOp(_.traverseColumns(f))
 
   def typedColumnFoldMap[Z: Monoid](f: (ColumnName, PrimT) => Z): Z =
-    liftOp[({type λ[α] = Z})#λ](_ typedColumnFoldMap f)
+    liftOp[λ[α => Z]](_ typedColumnFoldMap f)
 
   /** Lift `Op#postReplace(f)` into this predicate.  Despite its
     * similarity, this is not the same operation as `liftOp`

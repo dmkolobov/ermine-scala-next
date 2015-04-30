@@ -1,31 +1,30 @@
 package com.clarifi.reporting.ermine.parsing
 
 import com.clarifi.reporting.ermine.Type.mkCon
-import com.clarifi.reporting.ermine.Document.text
+import scalaparsers.Document.text
 import com.clarifi.reporting.ermine._
-import com.clarifi.reporting.ermine.Diagnostic._
+import scalaparsers.Diagnostic._
+import scalaparsers._
 import scala.collection.immutable.List
 import Name.{ lib, prelude }
 import Type.{ subType, ftvs }
-import Term._
-import KindParsers._
 import TypeParsers._
 import TermParsers.{ literal, internalVar }
 import DataConParsers.{ termOpVar }
-import ParseState.Lenses._
-import scalaz.{ Name => _, Arrow => _, Free => _, Forall => _, _ }
-import Scalaz._
+import ErParseState.Lenses._
 
 object PatternParsers {
+  import SI8862._
+
   def unspecifiedAnnot(loc: Loc): Parser[Annot] = for {
     id <- freshId
-    val a = V(loc.inferred, id, None, Bound, Star(loc.inferred))
+    a = V(loc.inferred, id, None, Bound, Star(loc.inferred))
   } yield Annot(loc.inferred, List(), List(a), VarT(a))
 
   val patternVarName: Parser[Local] = for {
     u <- get
     p <- loc
-    n <- PatternVarParsers.localName(u.canonicalTerms)
+    n <- PatternVarParsers.localName(canonicalTerms get u)
     r <- n match {
       case n : Local => unit(n)
       case _ => raise(p, "error: pattern variable shadows global binding " + n)
@@ -34,11 +33,11 @@ object PatternParsers {
 
   def mkLocalPatternVar(p: Loc, n: Local, a: Annot): Parser[Localized[VarP]] = for {
     id <- freshId
-    val l = termNames.member(n)
-    val v : PatternVar = V(p, id, Some(n), Bound, a)
-    val r = for {old <- gets(l.get(_))
-                 _ <- modify(l.set(_, Some(v.map(_.body)))) // should we store PatternVar?
-               } yield modify(l.set(_, old))
+    l = termNames.member(n)
+    v : PatternVar = V(p, id, Some(n), Bound, a)
+    r = for {old <- gets(l.get(_))
+             _ <- modify(l.set(_, Some(v.map(_.body)))) // should we store PatternVar?
+           } yield modify(l.set(_, old))
     u <- r
   } yield Localized(VarP(v), List(n), u, r)
 
@@ -68,7 +67,7 @@ object PatternParsers {
   val productPattern: Parser[Localized[Pattern]] = for {
     p <- loc
     xs <- paren(pattern sepBy comma)
-    val len = xs.length
+    len = xs.length
   } yield if (len == 1) xs.head
           else dist(xs) map { ProductP(p, _) }
 

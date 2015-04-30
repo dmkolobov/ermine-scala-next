@@ -4,7 +4,6 @@ import org.scalacheck.Gen
 import org.scalacheck.Gen._
 
 import scalaz._
-import scalaz.Scalaz._
 import scalaz.scalacheck.ScalaCheckBinding._
 import syntax.applicative._
 
@@ -16,7 +15,6 @@ import com.clarifi.reporting.Predicate.Atom
  * Generators for the different kinds of operations for the combine relation.
  */
 object OpGens {
-  import RelationGens._
   import PredicateGens.genPredicateAny
 
   def genOpLiteral(t: PrimT): Gen[Op] =

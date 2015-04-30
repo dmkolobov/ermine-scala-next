@@ -44,7 +44,8 @@ object ReportingBuild extends Build {
   )
 
   /** List of projects we actually publish. */
-  def publishedProjects[A](implicit bc: Project => A): Seq[A] = Seq(core, utilJavafx, ermineEditor, scalacheckBinding)
+  def publishedProjects[A](implicit bc: Project => A): Seq[A] =
+    Seq(core, utilJavafx, ermineEditor, scalacheckBinding)
 
   private[this] def cons[A](a: A, as: Seq[A]) = a +: as // Scala is weird.
 
@@ -56,9 +57,49 @@ object ReportingBuild extends Build {
     aggregate = publishedProjects
   )
 
+  /** Seriously evil. */
+  private[this] val initedClassloaders =
+    collection.mutable.WeakHashMap[ClassLoader, Map[Set[File], ClassLoader]]()
+
+  /** An evil way to hijack the classloader sharing in sbt.  Used in
+    * scalaInstance setting.  Using anywhere else will not work.
+    */
+  def sharedClassloaderInit(files: Seq[File], parent: ClassLoader
+                          )(init: => ClassLoader): ClassLoader =
+    initedClassloaders.synchronized{
+      val m = initedClassloaders get parent getOrElse Map()
+      val fs = files.toSet
+      m get fs getOrElse {
+        val cl = init
+        initedClassloaders(parent) = m updated (fs, cl)
+        cl
+      }
+    }
+
+  /** Make a `scalaInstance` that can use jline 1.0 safely, and recycles
+    * via `sharedClassloaderInit`.
+    */
+  def jlineOneScalaInstance(s: TaskStreams, dc: Seq[Attributed[File]],
+                            si: ScalaInstance): ScalaInstance = {
+    import sbt.classpath.ClasspathUtilities.{makeLoader, rootLoader}
+    val extras = dc.view.map(_.data)
+      .filter(_.getPath endsWith "jline.jar").force
+    if (extras.isEmpty) si else {
+      // si.loader has an incompatible jline loaded into it, so we
+      // use rootLoader instead of si.loader.
+      val jljxload = sharedClassloaderInit(extras, rootLoader){
+        makeLoader(extras, rootLoader, si)
+      }
+      s.log.debug("Using custom classloader " + jljxload)
+      // XXX will likely need to be adapted for sbt 0.14 -SMRC
+      new ScalaInstance(si.version, jljxload, si.libraryJar,
+                        si.compilerJar, si.extraJars, si.explicitActual)
+    }
+  }
+
   /** Multiply a setting across Compile, Test, Runtime. */
   def compileTestRuntime[A](f: Configuration => Setting[A]): SettingsDefinition =
-    seq(f(Compile), f(Test), f(Runtime))
+    Seq(f(Compile), f(Test), f(Runtime))
 
   /** Filter messages sent through loggers produced by `coreLogMgr`.
     *

@@ -12,7 +12,7 @@ import com.clarifi.reporting.AggFunc._
  */
 object AggFuncGens {
 
-  private def genCount: Gen[AggFunc] = value(Count)
+  private def genCount: Gen[AggFunc] = const(Count)
   private def genOpAgg(s: String, ty: Type, fs: (Op => AggFunc)*) =
     oneOf(fs) map (_ apply Op.ColumnValue(s, ty))
 

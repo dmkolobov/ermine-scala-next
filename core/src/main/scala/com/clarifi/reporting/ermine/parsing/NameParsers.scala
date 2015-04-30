@@ -3,10 +3,11 @@ package com.clarifi.reporting.ermine.parsing
 import scalaz.{Name => _, _}
 import Scalaz.{modify => _, _}
 
+import scalaparsers._
+import scalaparsers.Diagnostic._
+import scalaparsers.Document.text
 import com.clarifi.reporting.ermine._
-import com.clarifi.reporting.ermine.Diagnostic._
-import com.clarifi.reporting.ermine.Document.text
-import ParseState.Lenses._
+import ErParseState.Lenses._
 
 /** Parsers for dealing with DMTL identifiers and keywords
   *
@@ -14,6 +15,8 @@ import ParseState.Lenses._
   */
 
 abstract class NameParser {
+  import SI8862._
+
   def identStart : Parser[Char]
   def opStart: Parser[Char]
 
@@ -35,17 +38,31 @@ abstract class NameParser {
            else unit(())
   } yield i).attempt("operator"))
 
-  def opName[N](m: PartialFunction[Local,N]) = for {
+  def opName[N](m: PartialFunction[Local,List[N]]) = for {
     x <- (
       (keyword("prefix") >> op).map(prefix(_)) |
       (keyword("postfix") >> op).map(postfix(_)) |
       op.map(infix(_))
     ).attempt
-    r <- liftOption(m.lift(x)) | fail("forward reference to an operator with unknown precedence")
+    /* r <- liftOpt(m.lift(x))
+         | fail("forward reference to an operator with unknown precedence")
+    */
+    r <- m.lift(x) match {
+        case None => fail("forward reference to an operator with unknown precedence")
+        case Some(List( o )) => unit(o)
+        case Some( os ) => fail("ambiguous reference to operator: " + os)
+    }
   } yield r
 
-  def name[N>:Local](m: PartialFunction[Local,N]): Parser[N] = (
-    ident.map(n => m.lift(n).getOrElse(n)) | paren(opName(m)).attempt) scope "name"
+  // m maps a local to all of the definitions that are in scope - foo could be Foo.foo or Baz.foo
+  // Therefore, we can only unambiguously choose if there are zero or one entries in that list
+  def name[N>:Local](m: PartialFunction[Local,List[N]]): Parser[N] = (
+    ident.flatMap(n => m.lift(n) match {
+               case None => unit(n)
+               case Some(List( x )) => unit(x)
+               // Todo: better error message
+               case Some(xs) => fail[Parser]("Ambiguous reference to identifier " + n + " imported from: " + xs.toString )
+             }) | paren(opName(m)).attempt) scope "name"
 
 //  def localName(l: Lens[ParseState, Map[Local,Name]]): Parser[Localized[Local]] = for {
 //    m <- gets(l.get)
@@ -70,22 +87,26 @@ abstract class NameParser {
 //  } yield Localized(n, List(n), modify(lp.set(_, m.lift(n))))
 
   // also returns the previous name for restoration purposes if found
-  def localName[N>:Local](m: PartialFunction[Local,N]): Parser[N] = {
-    def lookup(n: Local) = m.lift(n).getOrElse(n)
-    ident.map(lookup(_)) |
+  def localName[N>:Local](m: PartialFunction[Local,List[N]]): Parser[N] = {
+    def lookup(n: Local) = m.lift(n) match {
+      case None => unit(n)
+      case Some(List(x)) => unit(x)
+      case Some(xs) => fail("Ambiguous reference: " + xs.toString)
+    }
+    ident.flatMap( lookup(_)) |
     paren(
-      (keyword("prefix") >> prec.optional ++ op).map({
-        case Some(n) ++ r => prefix(r,n)
+      (keyword("prefix") >> prec.optional ++ op).flatMap({
+        case Some(n) ++ r => unit( prefix(r,n))
         case None ++ r => lookup(prefix(r))
       }) |
-      (keyword("postfix") >> prec.optional ++ op).map({
-        case Some(n) ++ r => postfix(r,n)
+      (keyword("postfix") >> prec.optional ++ op).flatMap({
+        case Some(n) ++ r => unit(postfix(r,n))
         case None ++ r => lookup(postfix(r))
       }) |
       (keyword("infixl") >> prec map2 op)((n,r) => infix(r,n,AssocL)) |
       (keyword("infixr") >> prec map2 op)((n,r) => infix(r,n,AssocR)) |
       (keyword("infix")  >> prec map2 op)((n,r) => infix(r,n,AssocN)) |
-      op.map(r => lookup(infix(r)))
+      op.flatMap(r => lookup(infix(r)))
     )
   }
 
@@ -96,9 +117,9 @@ abstract class NameParser {
   }
 
   def addFixity(n: Local, ty: Boolean): Parser[Unit] = {
-    def add(l: Lens[ParseState, Map[Local,Name]]) = {
+    def add(l: Lens[ParseState, Map[Local,List[Name]]]) = {
       gets(l.member(n).get) flatMap {
-        case Some(_) => fail("Multiple fixity definitions for operator: " + n.toString)
+        case Some(_) => fail[Parser]("Multiple fixity definitions for operator: " + n.toString)
         case None    => bindFixity(n, ty).skip
       }
     }
@@ -108,9 +129,9 @@ abstract class NameParser {
   /** Answer a Parser that binds `n` to type or term fixities, whose
     * inner Parser undoes the binding. */
   def bindFixity(n: Local, ty: Boolean): Parser[Parser[Unit]] = {
-    def add(l: Lens[ParseState, Map[Local,Name]]) = {
+    def add(l: Lens[ParseState, Map[Local,List[Name]]]) = {
       val lp = l.member(n)
-      for {old <- gets(lp.get) << modify(s => lp.set(s, Some(n)))}
+      for {old <- gets(lp.get) << modify(s => lp.set(s, Some(List(n))))} // TODO: make sure this is right.
       yield modify(lp.set(_, old))
     }
     if (ty) add(canonicalTypes) else add(canonicalTerms)
@@ -118,10 +139,10 @@ abstract class NameParser {
   // support for literal identifiers, for example, ``$dollars-us``
   // a literal identifer is anything wrapped between two sets of backticks
   // primarily implemented for interop wth the Security Master
-  def literalIdentStart = word("``")
+  def literalIdentStart = parsing.word("``")
   def escape = ch('\\') >> satisfy(c => true)
   def literalIdentMiddle = (satisfy(c => c != '`' && c != '\\') | escape).many
-  def literalIdentEnd = word("``")
+  def literalIdentEnd = parsing.word("``")
 
   def literalIdent = token( for {
     _ <- literalIdentStart

@@ -6,19 +6,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.spcapitaliq.jfx.JFXUtil;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.scene.Node;
-import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.image.Image;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
-import javafx.stage.Window;
-import javafx.scene.image.Image;
 import org.apache.log4j.Logger;
-
-import com.spcapitaliq.jfx.JFXDebug;
-import com.spcapitaliq.jfx.JFXUtil;
 
 /**
 * Collection of methods relating to bridging in to the JavaFX environment from
@@ -33,12 +29,13 @@ public class JFXAppHarness
 
   static final String CONF_FILENAME_ROOT = "res/conf/ermine/";
 
-  private static final String CSS_CONF_FILENAME = CONF_FILENAME_ROOT + "REPL.css";
+  public static final String CSS_CONF_FILENAME = CONF_FILENAME_ROOT + "REPL.css";
 
   private static final String DEFAULT_TITLE = "Proto FX Report";
 
   private JFXAppHarness()
   {
+    /** static only */
   }
 
   public static class App extends Application

@@ -11,3 +11,7 @@ tail (_ :| as) = as
 cons a (b :| bs) = a :| b :: bs
 
 (++) xs ys = head xs :| tail xs ++_List head ys :: tail ys
+
+toList (a :| as) = (a :: as)
+
+map f (x :| xs) = f x :| map_List_List f xs

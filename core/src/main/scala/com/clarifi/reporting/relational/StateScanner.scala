@@ -3,7 +3,6 @@ package relational
 
 import scalaz._
 import Scalaz._
-import IterV._
 
 import com.clarifi.reporting.SortOrder._
 
@@ -84,12 +83,12 @@ class StateScanner(sms: SM => BS[StateEntry]) extends Scanner[BS] {
     case HashInnerJoin(fst, snd) => for {
       sfst <- scanMemAux(fst, smv, srv)
       ssnd <- scanMemAux(snd, smv, srv)
-      val jk = sfst.header.keySet intersect ssnd.header.keySet
+      jk = sfst.header.keySet intersect ssnd.header.keySet
     } yield joinOnH(sfst, ssnd, jk map (x => (x, x)))
     case MergeOuterJoin(fst, snd) => for {
       sfst <- scanMemAux(fst, smv, srv)
       ssnd <- scanMemAux(snd, smv, srv)
-      val jk = sfst.header.keySet intersect ssnd.header.keySet
+      jk = sfst.header.keySet intersect ssnd.header.keySet
     } yield StateEntry(sfst.header ++ ssnd.header,
               Tee.mergeOuterJoin[Record, Record, Record](_ filterKeys jk, _ filterKeys jk).
                 capL(source(sort(sfst.records, jk.toList.map(x => x -> Asc)))).
@@ -122,7 +121,7 @@ class StateScanner(sms: SM => BS[StateEntry]) extends Scanner[BS] {
     case Join(fst, snd) => for {
       sfst <- scanRel(fst, smv, srv)
       ssnd <- scanRel(snd, smv, srv)
-      val jk = sfst.header.keySet intersect ssnd.header.keySet
+      jk = sfst.header.keySet intersect ssnd.header.keySet
     } yield joinOnH(sfst, ssnd, jk map (x => (x, x)))
     case JoinOn(fst, snd, cols) => for {
       sfst <- scanRel(fst, smv, srv)

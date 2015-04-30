@@ -40,7 +40,7 @@ export Record as Record
 export Constraint
 export Relation.Predicate as Predicate
 export Relation.Op as Op
-export Relation.Row
+export Relation.Row hiding cons_Bracket; empty_Bracket
 export Relation.UnifyFields
 export Relation
 export Runners as Runners
@@ -83,27 +83,26 @@ export DB
 type Scanner = Scanner_Scanners
 type Runner = Runner_Runners
 
-formatPeriod = formatPeriod_DateRange
-formatPeriodOr = formatPeriodOr_DateRange
+--formatDateRange = formatDateRange_DateRange
+--formatPeriod = formatPeriod_DateRange
+--formatPeriodOr = formatPeriodOr_DateRange
 
-infixl 5 **
+--infixl 5 **
 
-primOrd = primOrd_Primitive
-all = all_Predicate
-filterAll = filter_Predicate . all
-selectNulls = selectNulls_Predicate
-selectNotNulls = selectNotNulls_Predicate
-(**) = (**_Relation)
-spaced = spaced_String
-splitCamelCase = splitCamelCase_String
-appendR = appendR_Record
-map = map_List
-distinct = distinct_ListUtil
-sort = sort_ListUtil
-median = median_ListUtil
-weightedMean = weightedMean_ListUtil
-weightedHarmonicMean = weightedHarmonicMean_ListUtil
-vector = vector_Vector
+--primOrd = primOrd_Primitive
+--all = all_Predicate
+filterAll = filter_Predicate . all_Predicate
+--(**) = (**_Relation)
+--spaced = spaced_String
+--splitCamelCase = splitCamelCase_String
+--appendR = appendR_Record
+--map = map_List
+--distinct = distinct_ListUtil
+--sort = sort_ListUtil
+--median = median_ListUtil
+--weightedMean = weightedMean_ListUtil
+--weightedHarmonicMean = weightedHarmonicMean_ListUtil
+--vector = vector_Vector
 
 headFieldOr ifMissing f l =
   maybeHead ifMissing (orElse ifMissing . toMaybe_Nullable . getF f) l

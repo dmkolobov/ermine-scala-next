@@ -3,7 +3,7 @@ package com.clarifi.reporting.ermine.core
 import com.clarifi.reporting.ermine._
 import java.util.Date
 import scalaz._
-import scalaz.Scalaz._
+import scalaparsers.{Loc, Located, Monadic}
 import Runtime.Thunk
 
 class OpenException extends Exception

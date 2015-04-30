@@ -54,8 +54,11 @@ pieChart1 = pieChart_K ([pieTitle_O := "hi there",
 drilldownBarChart1 = drilldownBarChart_K unscaled1 scaled1
                        ([titleB_O := "hi there",
                          yDirectionB_O := whatever,
+                         legendOptsB_O := whatever,
                          xLabelB_O := whatever,
-                         yLabelB_O := whatever]_Opt)
+                         yLabelB_O := whatever,
+                         xTicksB_O := whatever,
+                         yTicksB_O := whatever]_Opt)
 
 field x: Int
 field y: Int

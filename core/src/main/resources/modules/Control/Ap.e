@@ -27,6 +27,10 @@ liftA4 f g fa fb fc fd = ap f (ap f (ap f (ap f (pure f g) fa) fb) fc) fd
 liftA5 : Ap f -> (a -> b -> c -> d -> e -> g) -> f a -> f b -> f c -> f d -> f e -> f g
 liftA5 f g fa fb fc fd fe = ap f (ap f (ap f (ap f (ap f (pure f g) fa) fb) fc) fd) fe
 
+liftA6 : Ap f -> (a -> b -> c -> d -> e -> g -> h) -> f a -> f b -> f c -> f d -> f e -> f g -> f h
+liftA6 f g fa fb fc fd fe fg = ap f (ap f (ap f (ap f (ap f (ap f (pure f g) fa) fb) fc) fd) fe) fg
+
+
 apFunctor: Ap f -> Functor f
 apFunctor (Ap p ap) = Functor (f -> ap (p f))
 

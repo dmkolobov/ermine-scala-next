@@ -1,11 +1,10 @@
 package com.clarifi.reporting.ermine.editor
 
 import com.clarifi.reporting.ermine._
-import com.clarifi.reporting.ermine.editor._
 import com.clarifi.reporting.ermine.editor.Backend.{MCursor,Loc}
 import com.clarifi.reporting.ermine.session.Session
 import com.clarifi.reporting.ermine.syntax._
-import com.clarifi.reporting.ermine.Loc._
+import scalaparsers.Loc._
 
 import javafx.application.Platform
 import javafx.embed.swing.JFXPanel
@@ -36,6 +35,7 @@ import scala.collection.immutable.{IndexedSeq, TreeSet}
 import scalaz.Monad
 import scalaz.Functor
 import scalaz.Cofree
+import scalaparsers.{AssocL, AssocN, AssocR}
 
 trait Nat[F[_],G[_ <: UB],UB] {
   def apply[A <: UB](f: String=>F[A]): G[A]
@@ -529,10 +529,10 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
   object CellF {
     case class DelimitedCell[R,T](t: T, args: IndexedSeq[R], start: Node, stop: Node, delims: IndexedSeq[Node], delimGen: ()=>Node) extends CellF[R]
     case class AppCell[R](head: R, args: IndexedSeq[R]) extends CellF[R]
-    case class OperatorChain[R](fx: Fixity, chain: Delimited[R,R]) extends CellF[R]
+    case class OperatorChain[+R](fx: Fixity, chain: Delimited[R,R]) extends CellF[R]
     case class UnaryCell[R](fx: Fixity, op: R, exp: R) extends CellF[R]
     case class LeafCell[R](n: Node) extends CellF[R]
-    case class BindingCell[R](bindVar: TermVar, altIndex: Int, nameNode: Node, pattern: Option[R], eq: Node, body: R) extends CellF[R]
+    case class BindingCell[+R](bindVar: TermVar, altIndex: Int, nameNode: Node, pattern: Option[R], eq: Node, body: R) extends CellF[R]
     case class LetCell[R](let: Node, bindings: IndexedSeq[R], in: Node, body: R) extends CellF[R]
     case object EmptyCell extends CellF[Nothing]
 
@@ -593,9 +593,9 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
             applyDown(exp,expS)(f))
         case (OperatorChain(fx,ch), OperatorChain(_,chS)) =>
           OperatorChain(fx, Delimited(
-            applyDown(ch.head, chS.head)(f),
+            applyDown[S,A,B](ch.head, chS.head)(f),
             (ch.tail zip chS.tail).map {
-              case ((b,a),(bS,aS)) => (applyDown(b, bS)(f), applyDown(a, aS)(f))
+              case ((b,a),(bS,aS)) => (applyDown[S,A,B](b, bS)(f), applyDown[S,A,B](a, aS)(f))
             }))
         case (AppCell(h,as),AppCell(hS,asS)) =>
           AppCell(applyDown(h,hS)(f), downAll(as, asS))
@@ -1312,7 +1312,7 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
           case LeafCell(_) => Some((path,c))
           case bc@BindingCell(v,ai,_,_,_,_) => {
             val bp = path :+ BindingAlt(v,ai)
-            bindFind(bp, bc) orElse Some((bp, c))
+            bindFind(bp, bc) orElse Some((bp, c))  // problem: bc comes from c.out, which is covariant
           }
           case LetCell(let,bs,in,b) =>
             bs.foldLeft(None: Option[(CellPath,Cell[A])])(
@@ -1816,7 +1816,7 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
     }
 
     def itemGenerator[F[_],E,S](editor: Editor[F,E,S,Node])(typ: Type)(baseItems: List[(TermVar,Term,Type)]): String=>List[TermItem] = {
-      val loc = Loc.builtin
+      val loc = builtin
       str => {
         def matches(tc: Type) = editor.matches(tc,typ).getOrElse(false)
         val tt = IndexedSeq[(Type,PartialFunction[String,Term])](
@@ -1938,7 +1938,7 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
         cp <- ViewImpl.this.cellPane(path)
         cur <- pathToCursor(path)
       } yield {
-        val t = Hole(Loc.builtin)
+        val t = Hole(builtin)
         editor.replace(cur, t)
         cp.updateRoot(replace(cp.root)(path)(terml(t)))
         setCaret(path)
@@ -2011,7 +2011,7 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
     def doAtCaret(f: CellPath=>Unit): Unit =
       for {
         cl <- caretLoc.get()
-        val path = cl match { case CaretLoc(p) => p }
+        path = cl match { case CaretLoc(p) => p }
       } yield(f(path))
 
     def handleClick[F[_],E,S](editor: Editor[F,E,S,Node])(me: MouseEvent): Unit = (me.getClickCount(), me.getButton()) match {

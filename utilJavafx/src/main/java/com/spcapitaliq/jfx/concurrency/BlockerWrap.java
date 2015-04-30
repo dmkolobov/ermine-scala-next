@@ -75,7 +75,6 @@ public final class BlockerWrap extends NodeWrap<StackPane>
     _content.setCenter( content );
   }
 
-  @Override
   protected StackPane buildNode()
   {
     _overlay.setVisible( false );

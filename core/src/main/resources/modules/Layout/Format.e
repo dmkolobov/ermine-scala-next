@@ -22,11 +22,11 @@ foreign
 
 private foreign
   value "com.clarifi.reporting.writers.Format$Percentage$" "MODULE$"
-      percentage## : PrimitiveNum n => Function2 Int Bool# (Format n)
+      percentage# : PrimitiveNum n => Function3 Bool# Int Bool# (Format n)
   value "com.clarifi.reporting.writers.Format$Round$" "MODULE$"
-      round# : PrimitiveNum n => Function1 Int (Format n)
+      round# : PrimitiveNum n => Function2 Bool# Int (Format n)
   value "com.clarifi.reporting.writers.Format$IntegralRound$" "MODULE$"
-      integralRound# : PrimitiveNum n => Function1 Int (Format n)
+      integralRound# : PrimitiveNum n => Function2 Bool# Int (Format n)
   value "com.clarifi.reporting.writers.Format$Truncate$" "MODULE$"
       truncate# : Primitive a => Function1 Int (Format a)
   -- Renders markdown in strings.  e.g. "[**The Best Link EVAR**](bestaddrever.com)" creates a bold link to bestaddr.com.
@@ -34,33 +34,38 @@ private foreign
   value "com.clarifi.reporting.writers.Format$Markdown$" "MODULE$"
       markdown# : Unscaled a => Function1 (Format a) (Format a)
   -- 1.5 -> "USD" -> "$1.50"
-  -- As per CFI 21264, in scala-2.9.2 we do not want to actually render the currency symbol
-  -- in order to maintain backwards compatibility with java
-  -- Make sure this is reverted in default!
-  value "com.clarifi.reporting.writers.Format$IntegralRound$" "MODULE$"
-      currency# : PrimitiveNum n =>  Function1 Int (Format n)
+  value "com.clarifi.reporting.writers.Format$Currency$" "MODULE$"
+      currency# : PrimitiveNum n => Function2 Bool# String (Format n)
+  value "com.clarifi.reporting.writers.Format$Constant$" "MODULE$"
+      constant# : Function1 String (Format a)
 
 -- 2 -> 34.7652 -> 34.77
-round : PrimitiveNum n => Int -> Format n
-round = funcall1# round#
+round, roundParens : PrimitiveNum n => Int -> Format n
+round = funcall2# round# (toBool# False)
+-- | xParens is like x, but displaying negative numbers as (1.7) instead of -1.7
+roundParens = funcall2# round# (toBool# True)
 
-currency s = funcall1# currency# 2
+currency = funcall2# currency# (toBool# False)
+currencyParens = funcall2# currency# (toBool# True)
 
 -- exactly the same as round with one exception:
 --   if a double is the same as it's int value,
 --   then it gets displayed as an int
 --     eg:  6.00 -> 6
 integralRound : PrimitiveNum n => Int -> Format n
-integralRound = funcall1# integralRound#
+integralRound = funcall2# integralRound# (toBool# False)
 
 -- 0.42 -> "42%"
 percentage : PrimitiveNum n => Format n
 percentage = percentageIntegralRound 2
 
 percentageRound, percentageIntegralRound : PrimitiveNum n => Int -> Format n
-percentageRound = percentage# True
-percentageIntegralRound = percentage# False
+percentageRound n = funcall3# percentage# (toBool# False) n (toBool# True)
+percentageIntegralRound n = funcall3# percentage# (toBool# False) n (toBool# False)
 
+percentageRoundParens, percentageIntegralRoundParens : PrimitiveNum n => Int -> Format n
+percentageRoundParens n = funcall3# percentage# (toBool# True) n (toBool# True)
+percentageIntegralRoundParens n = funcall3# percentage# (toBool# True) n (toBool# False)
 {--
 truncate examples, truncating at 10 characters
   10 -> "abcdefghijkl" -> "abcdefg..."  -- input length 12,  output length 10
@@ -74,9 +79,9 @@ truncate = funcall1# truncate#
 markdown : Unscaled a => Format a -> Format a
 markdown = funcall1# markdown#
 
+constant : String -> Format a
+constant = funcall1# constant#
+
 -- Add Nullable to a formatter, as all formatters can format anything.
 nullable : Format a -> Format (Nullable a)
 nullable = unsafeCoerce
-
-private
-  percentage# = flip (funcall2# percentage##) . toBool#

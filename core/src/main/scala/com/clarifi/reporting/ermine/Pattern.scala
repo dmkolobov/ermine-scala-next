@@ -3,6 +3,7 @@ package com.clarifi.reporting.ermine
 import java.util.Date
 
 import Term.{ Env, termVars, subTermEx }
+import scalaparsers.{DocException, Document, Loc, Located}
 import Document._
 import scala.collection.immutable.List
 import Pretty.prettyRuntime

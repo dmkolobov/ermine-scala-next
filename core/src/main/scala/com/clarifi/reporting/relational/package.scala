@@ -4,8 +4,6 @@ import com.clarifi.machines._
 
 import scala.collection.SeqLike
 
-import backends._
-
 import scalaz._
 import Scalaz.Id
 import scalaz.syntax.foldable._
@@ -42,11 +40,6 @@ package object relational {
       Process.grouping(
         (t1: Record, t2: Record) => (t1 filterKeys chunkCols) == (t2 filterKeys chunkCols)).
         outmap(sort(_, sortCols)) andThen Machine.flattened((x: Vector[Record] => Any) => x)
-  }
-
-  case class Closed[F[_, _]](out: F[Nothing, Nothing], header: Header) {
-    def map[G[_, _]](f: F[Nothing, Nothing] => G[Nothing, Nothing]): Closed[G] =
-      Closed[G](f(out), header)
   }
 
   type ClosedExt = Closed[Ext]
@@ -120,9 +113,9 @@ package object relational {
       case ep : EffectfulProcedure[B] => new EffectfulProcedure[C] {
           type K = self.K \/ ep.K
 
-          def machine = tee2(self.machine, ep.machine)(t)
+          def machine: Machine[K, C] = tee2(self.machine, ep.machine)(t)
 
-          def setup = {
+          def setup: (Driver[Id, K], () => Unit) = {
             val (d1, teardown1) = self.setup
             val (d2, teardown2) = ep.setup
             (d1 * d2, () => { teardown1() ; teardown2() })

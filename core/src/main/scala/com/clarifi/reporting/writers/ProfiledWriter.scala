@@ -6,9 +6,7 @@ import Magnitude._
 import collection.immutable.IndexedSeq
 import compat.Platform.currentTime
 
-import scalaz.{NonEmptyList, Applicative}
-import scalaz.syntax.functor._
-import scalaz.std.tuple._
+import scalaz.{Applicative, NonEmptyList, Tree}
 
 import com.clarifi.reporting.util.PimpedLogger._
 
@@ -40,6 +38,18 @@ abstract class ProfiledWriter[F[_], C](inner: Writer[F, C])(implicit val R: Run[
   def atom(f: Format, p: NonEmptyList[PrimExpr]) =
     timed("atom", inner atom (f, p))
 
+  def atomFont(fonts: List[Font], fontSize: Option[Int], f: Format, p: NonEmptyList[PrimExpr]) =
+    timed("atomFont", inner atomFont (fonts, fontSize, f, p))
+
+  def wrapAtom(s: List[Magnitude], f: Format, p: NonEmptyList[PrimExpr]) =
+    timed("wrapAtom", inner wrapAtom (s, f, p))
+
+  def wrapAtomFont(s: List[Magnitude], fonts: List[Font], fontSize: Option[Int], f: Format, p: NonEmptyList[PrimExpr]) =
+    timed("wrapAtomFont", inner wrapAtomFont (s, fonts, fontSize, f, p))
+
+  def image(fileName: String, altText: Option[String]) =
+    timed("image", inner image (fileName, altText))
+
   override def grid(data: List[List[C]]) =
     timed("grid", inner grid data, data.flatten)
 
@@ -58,6 +68,15 @@ abstract class ProfiledWriter[F[_], C](inner: Writer[F, C])(implicit val R: Run[
   override def prefWidth(w: List[Magnitude], target: C) =
     timed("prefWidth", inner prefWidth (w, target),
           Seq(target))
+
+  def maxArea(as: List[Area], target: C): C =
+    timed("maxArea", inner maxArea (as, target), Seq(target))
+
+  def maxHeight(as: List[Magnitude], target: C): C =
+    timed("maxHeight", inner maxHeight (as, target), Seq(target))
+
+  def maxWidth(as: List[Magnitude], target: C): C =
+    timed("maxWidth", inner maxWidth (as, target), Seq(target))
 
   override def scrolling(target: C) =
     timed("scrolling", inner scrolling target, Seq(target))
@@ -85,6 +104,12 @@ abstract class ProfiledWriter[F[_], C](inner: Writer[F, C])(implicit val R: Run[
   def tabbed(cs: List[(String,C)]) =
     timed("tabbed", inner tabbed cs, cs map (_._2))
 
+  def sideTabbed(cs: List[(String,C)]) =
+    timed("sideTabbed", inner sideTabbed cs, cs map (_._2))
+
+  def collapsible(expanded: java.lang.Boolean, title: String, body: C) =
+    timed("collapsible", inner collapsible (expanded, title, body), Seq(body))
+
   def table(t: Tabular[F, Record]) =
     timedF("table", inner table t)
 
@@ -93,8 +118,18 @@ abstract class ProfiledWriter[F[_], C](inner: Writer[F, C])(implicit val R: Run[
     timedF("drilldownTable",
            inner drilldownTable (labelColumn, parentCol, childCol, isDefaultLegend, t))
 
+  override def drilldownTable2(labelColumn: String, cols: List[(String, String)], isDefaultLegend: Boolean, t: TreeTabular[F, Record]) =
+    timedF("drilldownTable2",
+           inner drilldownTable2 (labelColumn, cols, isDefaultLegend, t))
+
   def axisChart(chart: AxisChart[Tabular[F, Record]]) =
     timedF("axisChart", inner axisChart chart)
+
+  def treeMap(parentCol: String, childCol: String,
+              labelCol: Presentation, intensityCol: Presentation, sizeCol: Presentation,
+              data: TreeTabular[F,Record]) =
+    timedF("treeMap", inner treeMap (parentCol, childCol, labelCol,
+                                     intensityCol, sizeCol, data))
 
   def pieChart(pcd: PieChartData, labelcol: Presentation, datacol: Presentation,
                data: Tabular[F,(NonEmptyList[PrimExpr],NonEmptyList[PrimExpr])]) =
@@ -108,13 +143,18 @@ abstract class ProfiledWriter[F[_], C](inner: Writer[F, C])(implicit val R: Run[
            inner drilldownPieChart (pcd, labelColumn, dataCol, parentCol,
                                     childCol, data))
 
-  def drilldownBarChart(meta: AxisChartData, categoryPres: Presentation,
-                        dataPres: Presentation,
-                        parentCol: String, childCol: String,
-                        data: TreeTabular[F,(NonEmptyList[PrimExpr], NonEmptyList[PrimExpr])]) =
-    timedF("drilldownBarChart",
-           inner drilldownBarChart (meta, categoryPres, dataPres,
-                                    parentCol, childCol, data))
+  def drilldownBarChartPC(chart: DrilldownBarAxisChart[(String, String), TreeTabular[F,(NonEmptyList[PrimExpr], NonEmptyList[PrimExpr])]]) =
+    timedF("drilldownBarChartPC", inner drilldownBarChartPC chart)
+
+  def drilldownPieChart2(pcd: PieChartData, labelColumn: Presentation, dataCol : Presentation, cols: List[(String, String)], roots: ClosedExt, data: TreeTabular[F,(NonEmptyList[PrimExpr],NonEmptyList[PrimExpr])]) =
+    timedF("drilldownPieChart2", inner drilldownPieChart2
+             (pcd, labelColumn, dataCol, cols, roots, data))
+
+  def drilldownBarChart2(chart: DrilldownBarAxisChart[(List[(String, String)], ClosedExt), TreeTabular[F,(NonEmptyList[PrimExpr], NonEmptyList[PrimExpr])]]) =
+    timedF("drilldownBarChart2", inner drilldownBarChart2 chart)
+
+  def tree(legend: C, t: Tree[C]): C =
+    timed("tree", inner tree (legend, t))
 
   override def scanRelation(r: ClosedExt, f: List[Record] => F[C], ord: List[(String, SortOrder)] = List()): F[C] =
     timedF("scanRelation", inner scanRelation (r, f, ord))
@@ -122,6 +162,14 @@ abstract class ProfiledWriter[F[_], C](inner: Writer[F, C])(implicit val R: Run[
   override def button(name: NonEmptyList[PrimExpr], fmt: Format, f: (C, SelectorEvent) => F[C]) =
     timedF("button", inner button (name, fmt, f))
 
+  def widget[S](state: S, controls: (S, (S => F[C])) => F[C], view: S => F[C]) =
+    timedF("widget", inner widget (state, controls, view))
+
+  override def foreignSelector[A](nm: String, default: A, f : A => F[C]) =
+    timedF("foreignSelector", inner foreignSelector (nm, default, f))
+
+  def foreignSink[A](nm: String, f : (A => F[C]) => F[C]) =
+    timedF("foreignSink", inner foreignSink (nm, f))
 
   override def textBox(default: String, f: (C, SelectorEvent, ((SelectorEvent, String => F[C]) => F[C])) => F[C]) : F[C] =
     timedF("selector", inner textBox (default, f))

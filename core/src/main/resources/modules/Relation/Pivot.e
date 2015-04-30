@@ -10,12 +10,12 @@ import Native.List using toList#; fromList#
 import Native.Pair
 import Native.Record
 import Pair
+import Relation.Op hiding empty_Bracket ; cons_Bracket
 import Prim
 import Date
 import Record
-import Relation.Op
 import Relation.Op.Unsafe
-import Relation.Row hiding single_Brace ; snoc_Brace
+import Relation.Row hiding empty_Bracket ; cons_Bracket ; single_Brace ; snoc_Brace
 import Layout.Presentation using rowUsed
 
 data Fulcrum k v p = Fulcrum (List String) -- field names of key row

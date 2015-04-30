@@ -6,6 +6,7 @@ import java.text.DecimalFormat
 import java.net.URL
 import java.io.File
 import java.io.File.{separator, separatorChar}
+import scala.util.control.NonFatal
 import com.clarifi.reporting.{ PrimT, Header, Source, TableName }
 import com.clarifi.reporting.Reporting.{ RefID }
 import com.clarifi.reporting.ermine.session.SessionTask._
@@ -13,10 +14,11 @@ import com.clarifi.reporting.ermine.session.Printer._
 import java.util.Date
 import com.clarifi.reporting.ermine._
 import com.clarifi.reporting.ermine.Relocatable.preserveLoc
-import com.clarifi.reporting.ermine.Document._
+import scalaparsers.{++, Death, Err, Loc, Located, Pos, Supply}
+import scalaparsers.Document._
 import com.clarifi.reporting.ermine.Type.{
   Con, ffi, io, bool, subType, int, long, float, double, string, char, date, byte, short, field, Nullable, typeVars,
-  allTypeVars, True, False, AliasExpanded, Bad, Expanded, Unexpanded, primTypes
+  allTypeVars, True, False, Bad, Expanded, Unexpanded, primTypes
 }
 import com.clarifi.reporting.ermine.Term.{ subTermEx, termVars }
 import com.clarifi.reporting.ermine.HasTermVars._
@@ -27,16 +29,18 @@ import com.clarifi.reporting.ermine.Subst.{
 }
 import com.clarifi.reporting.ermine.syntax._
 import com.clarifi.reporting.ermine.syntax.TypeDef.typeDefComponents
-import com.clarifi.reporting.ermine.parsing.{ phrase, ModuleHeader, ParseState, Parser }
+import com.clarifi.reporting.ermine.parsing.{
+  phrase, ModuleHeader, ErParseState, ParseState, Parser
+}
+import ErParseState.Implicits._
 import com.clarifi.reporting.ermine.parsing.ModuleParsers._
-import com.clarifi.reporting.ermine.parsing.Err
 import com.clarifi.reporting.ermine.parsing.TermParsers.term
 import com.clarifi.reporting.relational._
 
-import scala.io._
+import scala.reflect._
 import scalaz.Scalaz._
 import scalaz.Monad
-import scalaz.Free.{ suspend, Return, Trampoline }
+import scalaz.Free.{ suspend, Return }
 
 import scala.collection.mutable.{HashMap, SynchronizedMap, ListBuffer}
 import scala.collection.immutable.List
@@ -174,10 +178,11 @@ object Session {
   }
 
   object SourceFile {
-    type Loader = String => Option[SourceFile]
+    type ALoader[-A] = A => Option[SourceFile]
+    type Loader = ALoader[String]
 
     /** Search subloaders in order. */
-    def inOrder(ls: Loader*): Loader =
+    def inOrder[A](ls: ALoader[A]*): ALoader[A] =
       s => (ls.view map (_(s)) find (_ isDefined) join)
 
     /** Load from arbitrary filesystem location.
@@ -217,7 +222,7 @@ object Session {
 
     private[Session] def cached(sf: SourceFile): Option[Dep] = for {
       lmd <- depCache get sf
-      val (lm, d) = lmd
+      (lm, d) = lmd
       newTime <- sf.lastModified
       if newTime == lm
     } yield d
@@ -260,7 +265,7 @@ object Session {
     acyclic(file, making)
     cacheDep(file, file :: making, expectedName) {
       val start = nanoTime
-      val (ps, mh) = parse(moduleHeader(file.defaultModuleName), ParseState.mk(file.toString, file.contents, file.defaultModuleName))
+      val (ps, mh) = parse(moduleHeader(file.defaultModuleName), ErParseState.mk(file.toString, file.contents, file.defaultModuleName))
       val mhParse = nanoTime
       val expTys = mh.importExports.flatMap { ie => ie.explicits.collect { case e if e.isType => e.global } }
       val expTms = mh.importExports.flatMap { ie => ie.explicits.collect { case e if !e.isType => e.global } }
@@ -277,7 +282,11 @@ object Session {
           case Some(_) => None // we were already loaded
           case None    =>
             val before = nanoTime
-            val r = parse(moduleBody(mh), ps.importing(s.termNames, s.cons.keySet, mh.imports))(su)
+            val r = parse(moduleBody(mh), ps.importing( s.termNames
+                                                      , s.cons.keySet
+                                                      , mh.imports
+                                                      , s.termNameOrigins
+                                                      , s.consOrigins))(su)
             val after = nanoTime
             profile(mh.name + " parse module", before, "parsed" -> after)
             Some(r)
@@ -544,7 +553,7 @@ object Session {
     source: String = "<interactive>"
   )(implicit s: SessionEnv, su: Supply, con: Printer): (Type, Runtime) = {
     loadModules(importedModules.keySet.toList)
-    val (eps,a) = parse(phrase(term), ParseState.mk(source,text, "REPL").importing(s.termNames, s.cons.keySet, importedModules))
+    val (eps,a) = parse(phrase(term), ErParseState.mk(source,text, "REPL").importing(s.termNames, s.cons.keySet, importedModules, s.termNameOrigins, s.consOrigins))
     val ty = subst { implicit hm => inferType(Nil,a.close) }
     (ty, Term.eval(a, s.env))
   }
@@ -558,10 +567,14 @@ object Session {
     implicit val isu : Supply = su
     implicit val icon : Printer = con
     val fileName = "Remote.m" // Remote.e!
-    val (psz, h) = parse(moduleHeader("Remote.m"), ParseState.mk(source, moduleText, "Remote"))
+    val (psz, h) = parse(moduleHeader("Remote.m"), ErParseState.mk(source, moduleText, "Remote"))
     loadModules(h.importExports.map(_.module))
     val snap = s.copy
-    val (ps, m) = parse(moduleBody(h), psz.importing(snap.termNames, snap.cons.keySet, h.imports))
+    //So we don't get another version of ourselves from the env
+    val hImports = h.imports - psz.s.moduleName
+    val h2 = h.copy(name = "Remote")
+    val psz2 = psz.copy(s = psz.s.copy(moduleName = "Remote")).importing(snap.termNames, snap.cons.keySet, hImports, snap.termNameOrigins, snap.consOrigins)
+    val (ps, m) = parse(moduleBody(h2), psz2)
     val maps = loadModule(ps, m)
     val (_, tm) = parse(phrase(term), ps copy (loc = Pos.start(fileName, exprText),
                                                offset = 0,
@@ -668,8 +681,8 @@ object Session {
 
   // assumes the binding group has had its cons replaced
   def loadModule(ps: ParseState, m: Module)(implicit s: SessionEnv, su: Supply): Maps = {
-    val then = nanoTime
-    var maps = (Type.conMap(m.name, ps.typeNames, s.cons), Map(): Map[TermVar,TermVar])
+    val prior = nanoTime
+    var maps = (Type.conMap(m.name, ps.s.typeNames, s.cons), Map(): Map[TermVar,TermVar])
     val mod = m.name
     maps = mapAccum_(maps, m.fields) { processFieldStatement(mod, ps) }
     maps = mapAccum_(maps, m.foreignData) { processForeignDataStatement(mod) }
@@ -786,10 +799,15 @@ object Session {
     s.termNames = (tmp ++ s.termNames) -- gptms
     s.cons = (etcs ++ s.cons) -- gptys
 
+    s.termNameOrigins = s.termNameOrigins ++ ps.s.termOrigins
+    s.consOrigins = s.consOrigins ++ ps.s.typeOrigins
+
+
     val preEnv = nanoTime
     val msFinal = (maps._1, maps._2 ++ terms)
     val endTime = nanoTime
-    profile(mp.name + " loadModule", then, "misc" -> miscStatementTime, "closure" -> closureTime, "binding" -> bgTime, "misc" -> preEnv, "environment" -> endTime)
+    // _ <- profile(mp.name + " loadModule", prior, "misc" -> miscStatementTime, "closure" -> closureTime, "binding" -> bgTime, "rest" -> endTime)
+    profile(mp.name + " loadModule", prior, "misc" -> miscStatementTime, "closure" -> closureTime, "binding" -> bgTime, "misc" -> preEnv, "environment" -> endTime)
     msFinal
   }
 
@@ -857,10 +875,24 @@ object Session {
               case d : Death => throw d // Don't catch ermine panics as a side effect of foreign interface
               case e : java.lang.reflect.InvocationTargetException =>
                 val ep = e.getTargetException
-                throw new RuntimeException((if (ep != null) ep else e).getMessage, ep)
+                val ep2 = if (ep != null) ep else e
+                _log.error(ep2.getMessage, ep2)
+                throw ep2
               case e : Throwable =>
                 println(args.mkString(", "))
-                throw new RuntimeException("error invoking foreign function: " + methName + " on object of type " + self.asInstanceOf[AnyRef].getClass + "; expected an object of type " + method.getDeclaringClass , e)
+                if( self != null && method != null ) {
+                  _log.error("error invoking foreign function: " + methName + " on object of type " + self.asInstanceOf[AnyRef].getClass + "; expected an object of type " + method.getDeclaringClass , e)
+                  throw new RuntimeException("error invoking foreign function: " + methName + " on object of type " + self.asInstanceOf[AnyRef].getClass + "; expected an object of type " + method.getDeclaringClass , e)
+                } else {
+                  _log.error("error invokingforeign function: " + methName
+                            + "on object of type "
+                            + Option(self).map( _.asInstanceOf[AnyRef].getClass.toString).getOrElse("null")
+                            + "; expected an object of type " + Option(method).map(_.getDeclaringClass).getOrElse(" null") , e)
+                  throw new RuntimeException("error invoking static foreign function: " + methName
+                            + "on object of type "
+                            + Option(self).map( _.asInstanceOf[AnyRef].getClass.toString).getOrElse("null")
+                            + "; expected an object of type " + Option(method).map(_.getDeclaringClass).getOrElse(" null") , e)
+                }
             }
             finally
             {
@@ -890,7 +922,7 @@ object Session {
         h.apply(Nil)
       } catch {
         case d : Death => throw d // Don't catch ermine panics as a side effect of foreign interface
-        case e => Bottom(throw e)
+        case NonFatal(e) => Bottom(throw e)
       }
       if (static) mk(null) else Fun(x => mk(whnfForeign(x, methName)))
   }
@@ -913,7 +945,7 @@ object Session {
         val (r, p) = c match {
           case AppT(`io`, a)  => (a.foreignLookup, IO)
           case AppT(`ffi`, a) => (a.foreignLookup, FF)
-          case `bool`         => (implicitly[Manifest[Boolean]].erasure, BOOL)
+          case `bool`         => (implicitly[ClassTag[Boolean]].runtimeClass, BOOL)
           case _              => (c.foreignLookup, Raw)
         }
         staticClazz match {
@@ -980,7 +1012,7 @@ object Session {
       val r = primOp(
         loc,
         global(mod, v),
-        perhapsForeign(post, try { value.get(null) } catch { case e => throw e.getCause }),
+        perhapsForeign(post, try { value.get(null) } catch { case NonFatal(e) => throw e.getCause }),
         typ
       )
       (cm._1, cm._2 + (fvs.v -> r))
@@ -1002,7 +1034,7 @@ object Session {
       val (domain, codomain, post) = unfurlType(ty) match {
         case (d, AppT(`io`,  a)) => (d, a.foreignLookup, IO)
         case (d, AppT(`ffi`, a)) => (d, a.foreignLookup, FF)
-        case (d, `bool`)         => (d, implicitly[Manifest[Boolean]].erasure, BOOL)
+        case (d, `bool`)         => (d, implicitly[ClassTag[Boolean]].runtimeClass, BOOL)
         case (d, c             ) => (d, c.foreignLookup, Raw)
       }
       val classDomain = domain.map(_.foreignLookup)
@@ -1019,7 +1051,7 @@ object Session {
                 perhapsForeign(post,
                   try {
                     ctor.newInstance(args:_*)
-                  } catch { case e => throw e.getCause }
+                  } catch { case NonFatal(e) => throw e.getCause }
                 )
       val f = domain.foldRight((z: List[Any]) => g(z.asInstanceOf[List[AnyRef]].reverse)) { (t, b) =>
                 z => Fun(a => b(marshalForeign(t, a, name.string) :: z))
@@ -1132,7 +1164,7 @@ object Session {
       val tyCon = addCon(Con(v.loc.inferred,global(module, v),FieldConDecl(ty),Field(v.loc.inferred).schema))
       val tmv = primOp(fs.loc, tyCon.name, Data(tyCon.name, Array(Prim(otyp.get))),
                        field(ConcreteRho(v.loc.inferred, Set(tyCon.name)), ty))
-      ps.termNames.get(v.name.get) match {
+      ps.s.termNames.get(v.name.get) match {
         case None    => (Map(v -> tyCon), Map():Map[TermVar,TermVar])
         case Some(u) => (Map(v -> tyCon), Map(u -> tmv))
       }
@@ -1172,8 +1204,8 @@ object Session {
   }
 
   def parseModule(filename: String, content: String, module: String)(implicit s: SessionEnv, v: Supply): Either[Err, Module] =
-    moduleHeader(module).run(ParseState.mk(filename, content, module), v).right flatMap {
-      case (ps, mh) => moduleBody(mh).run(ps.importing(s.termNames, s.cons.keySet, mh.imports), v).
+    moduleHeader(module).run(ErParseState.mk(filename, content, module), v).right flatMap {
+      case (ps, mh) => moduleBody(mh).run(ps.importing(s.termNames, s.cons.keySet, mh.imports, s.termNameOrigins, s.consOrigins), v).
                                       right.map(_._2)
     }
 }

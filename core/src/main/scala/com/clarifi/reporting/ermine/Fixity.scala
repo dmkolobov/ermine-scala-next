@@ -1,7 +1,6 @@
 package com.clarifi.reporting.ermine
 
-import scalaz._
-import scalaz.Scalaz._
+import scalaparsers._
 
 /** Fixity defines the fixity of a name (whether it is prefix, infix, postfix, or an identifier),
   * along with the precedence level and in the case of infix, the associativity

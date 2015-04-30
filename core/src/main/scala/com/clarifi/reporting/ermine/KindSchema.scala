@@ -1,5 +1,7 @@
 package com.clarifi.reporting.ermine
 
+import scalaparsers.{Loc, Located}
+
 import Kind._
 
 case class KindSchema(loc: Loc, forall: List[V[Unit]], body: Kind) extends Located {
@@ -16,6 +18,7 @@ case class KindSchema(loc: Loc, forall: List[V[Unit]], body: Kind) extends Locat
 }
 
 object KindSchema {
+  import scalaparsers.Relocatable
   implicit def relocatableKindSchema: Relocatable[KindSchema] = new Relocatable[KindSchema] {
     def setLoc(t: KindSchema, l: Loc) = KindSchema(l, t.forall, t.body)
   }

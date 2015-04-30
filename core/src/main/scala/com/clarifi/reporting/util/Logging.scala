@@ -1,5 +1,7 @@
 package com.clarifi.reporting.util
 
+import scala.util.control.NonFatal
+
 object Logging {
   import org.apache.log4j.{Logger,PropertyConfigurator}
 
@@ -10,7 +12,7 @@ object Logging {
       {
         PropertyConfigurator.configure( filename );
       }
-      catch { case e =>
+      catch { case NonFatal(e) =>
         /**
          * One of the few places to print an exception to STDERR because
          * log4j is not available.

@@ -5,11 +5,10 @@ import com.clarifi.reporting.sql.{ SqlEmitter }
 import com.clarifi.reporting.Reporting._
 import org.apache.log4j.Logger
 
-import scalaz._
-import Scalaz._
-import Kleisli._
-import syntax.monad._
-import std.function._
+import scalaz.Kleisli
+import Kleisli.kleisliApplicative
+import scalaz.syntax.applicative._
+import scalaz.std.function._
 
 class DumpToFileBackend(outputFile:String="tables.bin") extends SqlBackend()(SqlEmitter.msSqlEmitter) {
   val Log = Logger.getLogger(this.getClass)
@@ -21,5 +20,5 @@ class DumpToFileBackend(outputFile:String="tables.bin") extends SqlBackend()(Sql
         records.map{case (x, y) => (x.name, y)}
         )))
       Log.info("done writing " + outputFile)
-  }.point[({type f[x] = Kleisli[DB, Source, x]})#f]
+  }.point[Kleisli[DB, Source, ?]]
 }

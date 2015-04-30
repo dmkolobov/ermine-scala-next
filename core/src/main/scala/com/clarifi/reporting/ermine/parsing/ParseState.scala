@@ -3,10 +3,8 @@ package com.clarifi.reporting.ermine.parsing
 import com.clarifi.reporting.ermine._
 
 import scala.collection.immutable.List
-import scala.collection.immutable.TreeSet
 import scalaz.{ Name => _, _ }
 import scalaz.Scalaz._
-import scalaz.Lens._
 import com.clarifi.reporting.ermine.syntax.{Renaming, Single, Explicit}
 
 /** Used to track the current indentation level
@@ -14,27 +12,24 @@ import com.clarifi.reporting.ermine.syntax.{Renaming, Single, Explicit}
   * @author EAK
   */
 
-case class ParseState(
-  loc:            Pos,
-  input:          String,
+case class ErParseState(
   moduleName:     String,
-  offset:         Int = 0,
-  canonicalTerms: Map[Local, Name] = Map(), // used to patch up fixity and to globalize local names
-  canonicalTypes: Map[Local, Name] = Map(), // "
+  canonicalTerms: Map[Local, List[Name]] = Map(), // used to patch up fixity and to globalize local names
+  canonicalTypes: Map[Local, List[Name]] = Map(), // "
   termNames:      Map[Name, V[Type]] = Map(),
   typeNames:      Map[Name, V[Kind]] = Map(),
   kindNames:      Map[Name, V[Unit]] = Map(),
-  layoutStack:    List[LayoutContext] = List(IndentedLayout(1,"top level")),
-  bol:            Boolean = false
-) extends Located {
-  def depth: Int = layoutStack match {
-    case IndentedLayout(n,_)   :: _ => n
-    case BracedLayout(_,_,_,_) :: _ => 0
-    case List()                     => 0
-  }
-  def layoutEndsWith: Parser[Any] = layoutStack.collectFirst({ case p : BracedLayout => p.endsWith }).getOrElse(eofIgnoringLayout scope "end of top level layout")
-  def tracing = true // if we ever add an option we can add it to the case class
-  def importing(sessionTerms: Map[Global,TermVar], cons: Set[Global], m: Map[String, (Option[String], List[Explicit], Boolean)]) = {
+  /* Note - a given global *can* have two origins.  For example, if Foo exports Bar.bar and Baz.bar, Foo.bar itself
+     is ambiguous.  This should probably be an error at module definition time.*/
+  termOrigins:    Map[Global, List[Global]] = Map(), // e.g. Control.Monad.Functor => List(Control.Functor.Functor)
+  typeOrigins:    Map[Global, List[Global]] = Map()  // "
+) {
+  def importing( sessionTerms: Map[Global,TermVar]
+               , cons: Set[Global]
+               , m: Map[String, (Option[String], List[Explicit], Boolean)]
+               , sessionTermOrigins: Map[Global, List[Global]] // current global map of origins from the session env
+               , sessionTypeOrigins: Map[Global, List[Global]] // "
+               ) = {
     def imported(isType: Boolean, g: Global): Boolean = m.get(g.module) match {
       case Some((_, explicit, using)) =>
         if(using) // using: only import things mentioned explicitly
@@ -46,50 +41,95 @@ case class ParseState(
           }
       case None => false
     }
-    def local(isType: Boolean): PartialFunction[Global,(Local,Global)] = {
+    def toGlobal(n:Name) =
+      n match {
+        case (g: Global) => g
+        case (l:Local) => l.global(moduleName)
+      }
+    // We don't want to have Control.Monad.Functor, Control.Ap.Functor, and Control.Functor.Functor all in scope.
+    // So, collapse those all down to a single name
+    def collapseNames(origins: Map[Global, List[Global]])(m: Map[Local, List[Name]]): Map[Local, List[Name]] = {
+      def greatestAncestors(g: Global): List[Global] = {
+        val g2: List[Global] = origins.applyOrElse(g, (x: Global) => List(x))
+        if (g2 == List(g)) g2 else g2.flatMap(greatestAncestors(_))
+      }
+      m mapValues {
+        case List(x) => List(x)
+        case xs => {
+          val collapse = xs.flatMap(x => greatestAncestors(toGlobal(x))).toSet.toList
+          collapse
+        }
+      }}
+    def localImportsToGlobals(m: Map[Local, List[Name]]) : Map[Global, List[Global]] = {
+      m.collect( {
+        case (l, xs) => (toGlobal(l), xs.map(toGlobal(_)))
+      })
+    }
+    def local(isType: Boolean): PartialFunction[Global,(Local,List[Global])] = {
       case (g: Global) if imported(isType, g) => m(g.module) match {
-        case (as, explicits, _) => (g.localized(as, Explicit.lookup(g, explicits.filter(_.isType == isType))), g)
+        case (as, explicits, _) => (g.localized(as, Explicit.lookup(g, explicits.filter(_.isType == isType))), List(g))
       }
     }
-
-    def ordering = scala.math.Ordering[(String, String, String)].on[(Local,Global)]({ case (l,g) => (l.string, g.module, g.string) })
-    copy(
-      // toMap depends on the order, whereas TreeSet guarentees a unique ordering.
-      canonicalTerms = canonicalTerms ++ (TreeSet()(ordering) ++ sessionTerms.keySet.collect(local(false))).toMap,
-      canonicalTypes = canonicalTypes ++ (TreeSet()(ordering) ++ cons.collect(local(true))).toMap,
-      termNames = termNames ++ sessionTerms
+    val newps = copy(
+      // First, fix up the origins to include previous imports
+      termOrigins = termOrigins ++ sessionTermOrigins
+    , typeOrigins = typeOrigins ++ sessionTypeOrigins
     )
+    val newps2 = newps.copy(  // because collapseNames needs them all to be there.
+      canonicalTerms = collapseNames(newps.termOrigins)(canonicalTerms |+| sessionTerms.keySet
+                                                                           .collect(local(false))
+                                                                           .map( Map(_) )
+                                                                           .fold(Map())( _ |+| _))
+    , canonicalTypes = collapseNames(newps.typeOrigins)(canonicalTypes |+| cons.collect(local(true))
+                                                                  .map( Map(_) )
+                                                                  .fold(Map())( _ |+| _))
+    , termNames = termNames ++ sessionTerms
+    )
+    val newps3 = newps2.copy( // now, fix up Origins to have what we just imported
+      termOrigins = termOrigins ++ localImportsToGlobals( newps2.canonicalTerms )
+    , typeOrigins = typeOrigins ++ localImportsToGlobals( newps2.canonicalTypes )
+    )
+    newps3
   }
 }
 
-/** LayoutContext are used to track the current indentation level for parsing */
-sealed abstract class LayoutContext
-case class IndentedLayout(depth: Int, desc: String) extends LayoutContext {
-  override def toString = "indented " + desc + " (" + depth + ")"
-}
-case class BracedLayout(left: String, endsWith: Parser[Any], unmatchedBy: Parser[Nothing], right: String) extends LayoutContext {
-  override def toString = left + " " + right
-}
+object ErParseState {
+  import scalaparsers.{ParseState => SPPS}
 
-object ParseState {
-  def mk(filename: String, content: String, module: String) = {
-    ParseState(
-      loc = Pos.start(filename, content),
-      input = content,
-      moduleName = module
-    )
-  }
+  def mk(filename: String, content: String, module: String) =
+    SPPS.mk(filename, content, ErParseState(moduleName = module))
 
-  private def kindNamesLens = Lens[ParseState, Map[Name, V[Unit]]](s => Store(n => s.copy (kindNames = n), s.kindNames))
-  private def typeNamesLens = Lens[ParseState, Map[Name, V[Kind]]](s => Store(n => s.copy (typeNames = n), s.typeNames))
-  private def termNamesLens = Lens[ParseState, Map[Name, V[Type]]](s => Store(n => s.copy (termNames = n), s.termNames))
-  private def canonicalTermsLens = Lens[ParseState, Map[Local, Name]](s => Store(n => s.copy (canonicalTerms = n), s.canonicalTerms))
-  private def canonicalTypesLens = Lens[ParseState, Map[Local, Name]](s => Store(n => s.copy (canonicalTypes = n), s.canonicalTypes))
+  private[ermine] val erpsLens: ParseState @> ErParseState =
+    Lens.lensu((p, s) => p.copy(s=s), _.s)
+
+  private[this] def inParseState[A](il: ErParseState @> A): ParseState @> A =
+    il compose erpsLens
+
+  private def moduleNameLens: ErParseState @> String =
+    Lens lensu ((e, s) => e copy (moduleName = s), _.moduleName)
+  private def kindNamesLens = Lens[ErParseState, Map[Name, V[Unit]]](s => Store(n => s.copy (kindNames = n), s.kindNames))
+  private def typeNamesLens = Lens[ErParseState, Map[Name, V[Kind]]](s => Store(n => s.copy (typeNames = n), s.typeNames))
+  private def termNamesLens = Lens[ErParseState, Map[Name, V[Type]]](s => Store(n => s.copy (termNames = n), s.termNames))
+  private def canonicalTermsLens = Lens[ErParseState, Map[Local, List[Name]]](s => Store(n => s.copy (canonicalTerms = n), s.canonicalTerms))
+  private def canonicalTypesLens = Lens[ErParseState, Map[Local, List[Name]]](s => Store(n => s.copy (canonicalTypes = n), s.canonicalTypes))
   object Lenses {
-    def kindNames      = kindNamesLens
-    def typeNames      = typeNamesLens // These would be inline, but !@&*#(& scala
-    def termNames      = termNamesLens
-    def canonicalTerms = canonicalTermsLens
-    def canonicalTypes = canonicalTypesLens
+    def moduleName     = inParseState(moduleNameLens)
+    def kindNames      = inParseState(kindNamesLens)
+    def typeNames      = inParseState(typeNamesLens) // These would be inline, but !@&*#(& scala
+    def termNames      = inParseState(termNamesLens)
+    def canonicalTerms = inParseState(canonicalTermsLens)
+    def canonicalTypes = inParseState(canonicalTypesLens)
+  }
+
+  object Implicits {
+    implicit class ParseStateErParseState(val _value: SPPS[ErParseState])
+        extends AnyVal {
+      def importing( sessionTerms: Map[Global,TermVar]
+                   , cons: Set[Global]
+                   , m: Map[String, (Option[String], List[Explicit], Boolean)]
+                   , sessionTermOrigins: Map[Global, List[Global]]
+                   , sessionTypeOrigins: Map[Global, List[Global]]) =
+        erpsLens mod (_.importing(sessionTerms, cons, m, sessionTermOrigins, sessionTypeOrigins), _value)
+    }
   }
 }

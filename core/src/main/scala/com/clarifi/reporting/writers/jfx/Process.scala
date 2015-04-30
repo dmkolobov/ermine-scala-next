@@ -19,7 +19,7 @@ object Process {
     def bind[A,B](fa: Promise[A])(f: A => Promise[B]): Promise[B] = fa flatMap f
   }
 
-  private def newDaemonThreadFactory(threadLabel: String) = new ThreadFactory {
+  private[jfx] def newDaemonThreadFactory(threadLabel: String) = new ThreadFactory {
     def newThread(r: Runnable) = {
       val t = new Thread(r, threadLabel)
       t.setDaemon(true)

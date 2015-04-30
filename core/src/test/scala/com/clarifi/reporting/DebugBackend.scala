@@ -2,12 +2,13 @@ package com.clarifi.reporting
 
 import java.sql._
 
+import scalaparsers._
 import scalaz.State
 import scala.collection.mutable.ListBuffer
+import scala.collection.mutable.HashSet
 
 import com.clarifi.reporting.relational._
 import com.clarifi.reporting.backends._
-import com.clarifi.reporting.sql._
 import com.clarifi.reporting.sql.SqlEmitter._
 
 import SMEnv._
@@ -24,6 +25,7 @@ trait DebugBackend[DB[_]] {
 }
 
 object DebugBackend {
+  implicit val memoLookup = new HashSet[TableName]()
   val mySqlDebug = new DebugBackend[DB] {
     def flush: DB[Unit] = (c: Connection) => {
       c.prepareStatement("FLUSH TABLES").executeUpdate
@@ -33,6 +35,7 @@ object DebugBackend {
     def explain(r: ClosedRel): DB[String] = (c: Connection) => {
       val mySqlBackend = Scanners.MySQL(dummySmenv)
       implicit val sup = Supply.create
+      implicit val scopeBuilder = List[() => String]()
       val SqlPrg(_, p, q, _) = mySqlBackend.compileRel(r.out, (x:Nothing) => x, (x:Nothing) => x)
 
       if (p.isEmpty) {
@@ -64,6 +67,7 @@ object DebugBackend {
     def explain(r: ClosedRel): DB[String] = (c: Connection) => {
       val verticaBackend = Scanners.Vertica(dummySmenv)
       implicit val sup = Supply.create
+      implicit val scopeBuilder = List[() => String]()
       val SqlPrg(_, p, q, _) = verticaBackend.compileRel(r.out, (x:Nothing) => x, (x:Nothing) => x)
 
       if (p.isEmpty) {

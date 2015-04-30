@@ -49,7 +49,9 @@ data Column t (k:row) v =
       (Maybe (Atomic a))
       (Maybe (Presentation r2 b))
       (Maybe (SortStrategy r3))
+  | Hidden Relation#
   | JoinAll JoinType (List (Column t k v))
+  | forall a. JoinGroup (Atomic a) (Column t k v)
   | forall t2 . SetLegend (Legend k) (Column t2 k v)
   | SetSortPriority SortPriority (Column t k v)
   | forall t2 k2 pid cid a . SetDrilldown (Field pid a) (Field cid a) (Column t2 k2 v)
@@ -60,8 +62,11 @@ private
                  Relation# -> Maybe (Atomic a)
               -> Maybe (Presentation r2 b)
               -> Maybe (SortStrategy r3) -> Column t1 k1 v1)
+             (hc: some t7 k7 v7. Relation# -> Column t7 k7 v7)
              (ja: some t2 k2 v2.
                   JoinType -> List (Column t2 k2 v2) -> Column t2 k2 v2)
+             (jg: some t6 k6 v6. forall a.
+                  Atomic a -> Column t6 k6 v6 -> Column t6 k6 v6)
              (sl: some t3 k3 v3. forall t' k'.
                   Legend k' -> Column t' k' v3 -> Column t3 k' v3)
              (ss: some t4 k4 v4.
@@ -73,7 +78,9 @@ private
                   DrilldownList a -> Relation# -> Column t' k' v5
                -> Column t5 k5 v5)  =
     foldColumn (r a p -> unsafeCol . s r a p)
+               (unsafeCol . hc)
                (jt -> unsafeCol . ja jt)
+               (gn -> unsafeCol . jg gn)
                (lg -> unsafeCol . sl lg . unsafeCol)
                (sp -> unsafeCol . ss sp)
                (pid cid -> unsafeCol . sd pid cid)
@@ -81,7 +88,9 @@ private
 
 -- | Polymorphic fold to monomorphic Column representations.
 foldColumn : (forall a r2 b r3. Relation# -> Maybe (Atomic a) -> Maybe (Presentation r2 b) -> Maybe (SortStrategy r3) -> z)
+          -> (Relation# -> z)
           -> (JoinType -> List z -> z)
+          -> (forall a. Atomic a -> z -> z)
           -> (forall k. Legend k -> z -> z)
           -> (SortPriority -> z -> z)
           -> (forall pid cid id. Field pid id -> Field cid id -> z -> z)
@@ -92,7 +101,9 @@ foldColumn (s: some z. forall r2 r3 a b.
                Relation# -> Maybe (Atomic a)
             -> Maybe (Presentation r2 b)
             -> Maybe (SortStrategy r3) -> z)          -- ^ Single.
+           (hc: some z. Relation# -> z)               -- ^ Hidden.
            (ja: some z. JoinType -> List z -> z)      -- ^ JoinAll.
+           (jg: some z. forall a. Atomic a -> z -> z) -- ^ JoinGroup.
            (sl: some z. forall k. Legend k -> z -> z) -- ^ SetLegend.
            (ss: some z. SortPriority -> z -> z)       -- ^ SetSortPriority.
            (sd: some z. forall pid cid a.
@@ -101,7 +112,9 @@ foldColumn (s: some z. forall r2 r3 a b.
                 DrilldownList r -> Relation# -> z -> z)
            = fc . unsafeCol
   where fc (Single r a p ss) = s r a p ss
+        fc (Hidden r) = hc r
         fc (JoinAll jt cs) = ja jt ' map fc cs
+        fc (JoinGroup gn cs) = jg gn ' fc cs
         fc (SetLegend lg c) = sl lg ' fc (unsafePhantomCol c)
         fc (SetSortPriority sp c) = ss sp ' fc c
         fc (SetDrilldown pid cid c) = sd pid cid ' fc (unsafePhantomColK c)
@@ -113,6 +126,8 @@ foldColumn (s: some z. forall r2 r3 a b.
 column : (r <- (k, r2), Relational rel) => rel r
       -> Column (Unbound a, Unbound l, Unbound p, Unbound d) k {..r2}
 column r = Single (relation# r) Nothing Nothing Nothing
+
+hiddenColumn r = Hidden (relation# r)
 
 {-
 Allow arbitrary
@@ -145,20 +160,26 @@ joinAllStrict xs = JoinAll Inner (xs >>= fcjas)
         fcjas x = [x]_L
 
 join : Column (JoinReady a p d) k v
-    -> Column (JoinReady a p d) k v2
-    -> Column (JoinReady a p d) k MulticolumnT
+    -> Column (JoinReady a p2 d) k v2
+    -> Column (JoinReady a p3 d) k MulticolumnT
 join c1 c2 = unsafeCol $ JoinAll Inner [c1, unsafeCol c2]_L
 
 outerJoin : Column (JoinReady a p d) k v
-         -> Column (JoinReady a p d) k v2
-         -> Column (JoinReady a p d) k MulticolumnT
+         -> Column (JoinReady a p2 d) k v2
+         -> Column (JoinReady a p3 d) k MulticolumnT
 outerJoin c1 c2 = unsafeCol $ JoinAll Outer [c1, unsafeCol c2]_L
 
 heading : Atomic x
        -> Column (Unbound a, l, p, d) k v
        -> Column (Bound NameT, l, p, d) k v
-heading x = endoColumn (r _ -> Single r (Just x))
-                       JoinAll SetLegend SetSortPriority SetDrilldown SetDrilldown2
+heading x = endoColumn (r _ -> Single r (Just x)) Hidden
+                JoinAll JoinGroup SetLegend SetSortPriority SetDrilldown SetDrilldown2
+
+-- | Wrap columns in a group under the given heading.
+headingGroup : Atomic x
+            -> Column (JoinReady a p d) k v
+            -> Column (JoinReady a p d) k v
+headingGroup = JoinGroup
 
 formatV : AsPresentation pr
        => pr v a
@@ -176,8 +197,8 @@ updateFormatV : AsPresentation pr
        => pr v a
        -> Column (n, l, x, d) k {..v}
        -> Column (n, l, Bound (Presentation v a), d) k {..v}
-updateFormatV pr = endoColumn (r a _ -> Single r a (Just ' asPresentation pr))
-                        JoinAll SetLegend SetSortPriority SetDrilldown SetDrilldown2
+updateFormatV pr = endoColumn (r a _ -> Single r a (Just ' asPresentation pr)) Hidden
+                       JoinAll JoinGroup SetLegend SetSortPriority SetDrilldown SetDrilldown2
 
 updateFormatSortedV : AsPresentation pr
        => pr v a -> SortStrategy v
@@ -209,16 +230,16 @@ formatK = SetLegend
 
 sortPriority : SortPriority -> Column t k v -> Column t k v
 sortPriority prio = SetSortPriority prio
-                  . endoColumn Single JoinAll SetLegend (flip const) SetDrilldown SetDrilldown2
+                  . endoColumn Single Hidden JoinAll JoinGroup SetLegend (flip const) SetDrilldown SetDrilldown2
 
 sortStrategy : SortStrategy v -> Column t k {..v} -> Column t k {..v}
-sortStrategy ss = endoColumn (r a p _ -> Single r a p (Just ss))
-                             JoinAll SetLegend SetSortPriority SetDrilldown SetDrilldown2
+sortStrategy ss = endoColumn (r a p _ -> Single r a p (Just ss)) Hidden
+                             JoinAll JoinGroup SetLegend SetSortPriority SetDrilldown SetDrilldown2
 
-drilldown : k' <- (pid, cid, k)
+drilldown : (k' <- (pid, cid, k), pc <- (pid, cid))
          => Field pid a -> Field cid a
          -> Column (n, Unbound KeysT, pres, Unbound (DrilldownT x)) k' v
-         -> Column (n, Unbound KeysT, pres, Bound (DrilldownT (Row (|pid,cid|)))) k v
+         -> Column (n, Unbound KeysT, pres, Bound (DrilldownT (Row pc))) k v
 drilldown = SetDrilldown
 
 drilldown2 : (k' <- (r, k), Relational rel)

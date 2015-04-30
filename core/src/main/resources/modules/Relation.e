@@ -9,8 +9,8 @@ export Relation.Aggregate as Aggregate
 export Relation.Process
 import Relation.Predicate
 import Relation.Row
-import Relation.Op
-import List
+import Relation.Op hiding {empty_Bracket; cons_Bracket}
+import List hiding {empty_Bracket; cons_Bracket}
 import Constraint
 import Field
 import Syntax.List using map
@@ -228,6 +228,6 @@ copyColumn f1 f2 r = [| f2 = f1 |] r
 --   join : (a <- (d,e), b <- (e, f), c <- (d,e,f)) => [..a] -> [..b] -> [..c]
 --   rename: (u1 <- (r1,t), u2 <- (r2,t)) => Field r1 a -> Field r2 a -> [..u1] ->: [..u2]
 --   union : [..a] -> [..a] -> [..a]
---   diff : [..a] -> [..a] -> [..a]
+--   difference : [..a] -> [..a] -> [..a]
 --   data Relation#
 

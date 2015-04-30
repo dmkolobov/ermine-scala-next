@@ -1,13 +1,13 @@
 package com.clarifi.reporting
 package relational
 
+import java.sql.SQLException
+
 import com.clarifi.reporting._
 import com.clarifi.reporting.sql._
 import com.clarifi.reporting.backends._
-import com.clarifi.reporting.Reporting._
 import com.clarifi.reporting.util.PartitionedSet
 import DB._
-import PrimT._
 import ReportingUtils.simplifyPredicate
 import SqlPredicate._
 import SqlExpr.compileOp
@@ -15,21 +15,33 @@ import SqlExpr.compileOp
 import scalaz._
 import scalaz.Coproduct._
 import scalaz.IterV._
-import Scalaz.{^ => _, toNel => _, _}
-import scalaz.syntax.monad._
-// important for instance resolution.
-import scala.collection.immutable.IndexedSeq
+import scalaz.Id._
+//import Scalaz.{^ => _, _}
 import scalaz.std.indexedSeq.{toNel => _, _}
-import scalaz.std.list._
 import scalaz.std.vector.{toNel => _, _}
 import scalaz.std.map._
+import scalaz.std.function._
+import scalaz.std.option._
+import scalaz.std.list._
+import scalaz.std.string._
+import scalaz.std.anyVal._
+
+import scalaz.syntax.monad._
+import scalaz.syntax.traverse.{ToFunctorOps => _, _}
+// important for instance resolution.
+import scala.collection.immutable.IndexedSeq
 
 import com.clarifi.machines._
 import Plan.{ await, awaits, emit }
 import Tee.{ right, left }
 
+import scalaparsers.Supply
 import org.apache.log4j.Logger
 import com.clarifi.reporting.util.PimpedLogger._
+import scala.collection.mutable.HashSet
+
+//TODO: switch to a dumber supply that is onyl locally unique instead of globally so.
+//TODO: also swap temp tables to be locally fresh instead of guids
 
 case class SqlPrg(h: Header,
                   prg: List[SqlStatement],
@@ -68,24 +80,40 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   val exec = new SqlExecution()
   import exec._
 
+  private[this]
+  def explainSQLException(e: SQLException): String =
+    s"ErrorCode=`${e.getErrorCode}' SQLState=`${e.getSQLState}' class=`${e.getClass}' msg=`${e.getMessage}'"
 
   /** Execute `p` statements, returning the list of `TableName`s that were
     * created.
     */
-  def sequenceSql(p : List[SqlStatement]): DB[List[TableName]] = p.distinct.traverse {
+  def sequenceSql(p : List[SqlStatement])(implicit memoLookup : HashSet[TableName]): DB[List[TableName]] = p.distinct.traverse {
     case SqlLoad(tn, h, pc) => bulkLoad(h, tn, pc) as List()
-    case SqlIfNotExists(tn,stats) => {
-      val tecol = "tableExists"
-      val sql = emitter.checkExists(tn, tecol)
-      logger ltrace ("Executing sql: " + sql.run)
-      catchException(DB.transaction(withResultSet(sql, rs => {
-        rs.next() && (rs.getObject(tecol) ne null)
-      }.point[DB]).flatMap(b => if (!b) sequenceSql(stats) else List().point[DB])))
-      .map(_ fold (e => {logger error ("While executing: " + e.getMessage)
-                        List()}, // drop them on the floor.
-                   identity))
-    }
-    //TODO write job to clean out old memos
+    case SqlCreateIfNotExists(tn,pre,create,stats) =>
+      if(memoLookup.contains(tn))
+          List().point[DB]
+          else {
+            memoLookup += tn
+            val tecol = "tableExists"
+            val (sql, errorMeansExists) = emitter.checkExists(tn, tecol)
+            logger ltrace ("Executing sql: " + sql.run)
+            DB.transaction(withResultSet(sql, rs => {
+              rs.next() && (rs.getObject(tecol) ne null)
+            }.point[DB]).flatMap(b =>
+              if (!b) ^(sequenceSql(pre),
+                        catchException(sequenceSql(List(create))).flatMap{
+                          case -\/(e: SQLException) if errorMeansExists(e) =>
+                            logger ltrace s"SQL memocache race caught, dropped: ${explainSQLException(e)}"
+                          List().point[DB]
+                          case -\/(e: SQLException) =>
+                            logger error "SQL error in memocache: ${explainSQLException(e)}"
+                          throw e
+                          case -\/(e) => throw e
+                          case \/-(u) => sequenceSql(stats)
+                        })(_ ++ _)
+              else List().point[DB]))
+          }
+
     case x =>
       val sql = x.emitSql(emitter)
       logger ltrace ("Executing sql: " + sql.run)
@@ -111,6 +139,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                         f: Process[Record, A],
                         order: List[(String, SortOrder)] = List()): DB[A] = {
     implicit val sup = Supply.create
+    implicit val memoLookup = new HashSet[TableName]()
+    implicit val scopeBuilder = List()
     compileMem(Optimizer.optimize(m), (x:Nothing) => x, (x: Nothing) => x) match {
       case MemPrg(h, p, q, rx) => for {
         ts <- sequenceSql(p)
@@ -124,9 +154,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                         f: Process[Record, A],
                         order: List[(String, SortOrder)] = List()): DB[A] = {
     implicit val sup = Supply.create
+    implicit val memoLookup = new HashSet[TableName]()
+    implicit val scopeBuilder = List()
     compileRel(Optimizer.optimize(m), (x:Nothing) => x, (x: Nothing) => x) match {
       case SqlPrg(h, p, q, rx) => for {
-	ts <- sequenceSql(p)
+	    ts <- sequenceSql(p)
         a <- scanQuery(orderQuery(q, order), h) map (_ andThen f execute)
         _ <- cleanTempTables(ts)
       } yield a
@@ -165,7 +197,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
   import SortOrder._
 
-  def compileMem[M,R](m: Mem[R, M], smv: M => MemPrg, srv: R => SqlPrg)(implicit sup: Supply): MemPrg =
+  def compileMem[M,R](m: Mem[R, M], smv: M => MemPrg, srv: R => SqlPrg)(implicit sup: Supply, memoLookup: HashSet[TableName], scopeBuilder : List[() => String]): MemPrg =
     m match {
       case VarM(v) => smv(v)
       case LetM(ext, expr) =>
@@ -455,7 +487,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
     await[Record] flatMap prime
   }
-  
+
   def memoProc[R,M](dbp: OrderedProcedure[DB, Record], m: MemoMem[R, M]): OrderedProcedure[DB, Record] = order => conn => {
     if (m.memo.isEmpty) {
       m.memo = dbp(order)(conn).foldLeftM(Vector[Record]())( (xs, x) => xs :+ x ).toList
@@ -465,7 +497,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     }
   }
 
-  def compileMerge[R,M](m1: Mem[R,M], m2: Mem[R,M],  smv: M => MemPrg, srv: R => SqlPrg, merge: Order[Record] => Tee[Record, Record, Record])(implicit sup: Supply) = {
+  def compileMerge[R,M](m1: Mem[R,M], m2: Mem[R,M],  smv: M => MemPrg, srv: R => SqlPrg, merge: Order[Record] => Tee[Record, Record, Record])(implicit sup: Supply, memoLookup: HashSet[TableName], scopeBuilder : List[() => String]) = {
         val r1 = compileMem(m1, smv, srv)
         val r2 = compileMem(m2, smv, srv)
         val MemPrg(h1, p1, q1, rx1) = r1
@@ -559,7 +591,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     rx combineAll (mapKeys(comb)(_.name), {case x => x}, identity, keepOld)
 
   def compileRel[M,R](m: Relation[M, R], smv: M => MemPrg,
-                                    srv: R => SqlPrg)(implicit sup: Supply): SqlPrg = {
+                      srv: R => SqlPrg)(implicit sup: Supply, memoLookup: HashSet[TableName]
+                      , scopeBuilder: List[() => String]
+                      ): SqlPrg = {
 
     def mkUnion(l: Relation[M, R], r: Relation[M, R], op: (SqlQuery, SqlQuery) => SqlQuery) = {
       val lc = compileRel(l, smv, srv)
@@ -730,12 +764,14 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                FromTable(TableName(un, List(), TableName.Temporary), h.keys.toList),
                Reflexivity literal ts)
       case MemoR(r) => {
-	val rc = compileRel(r,smv,srv)
-	val relHash = "MemoHash_" + r.##.toString
-	val myTN = TableName(relHash, List(), TableName.Persistent)
-	val fillStat = fillTable(myTN, rc.h, rc.q)
-	val myPrg = List(SqlIfNotExists(myTN,rc.prg ++ fillStat))
-	SqlPrg(rc.h, myPrg, FromTable(myTN, rc.h.keys.toList), rc.refl)
+        val rc = compileRel(r,smv,srv)
+        // val relHash = "MemoHash_" + (r, scopeBuilder).##.toString
+        val scopeStr : List[String] = scopeBuilder.map(mkstr => mkstr())
+        val relHash = "MemoHash_" + java.security.MessageDigest.getInstance("SHA").digest(s"$r\n$scopeStr".getBytes("UTF-8")).map("%02x" format _).mkString
+        val myTN = TableName(relHash, List(), TableName.Persistent)
+        val create :: fillStat = fillTable(myTN, rc.h, rc.q)
+        val myPrg = List(SqlCreateIfNotExists(myTN, rc.prg, create, fillStat))
+        SqlPrg(rc.h, myPrg, FromTable(myTN, rc.h.keys.toList), rc.refl)
       }
       case LetR(ext, exp) =>
         val un = guidName
@@ -760,7 +796,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         val ec = compileRel(exp, smv, (v: RLevel[M,R]) => v match {
           case RTop => SqlPrg(ih, List(), FromTable(TableName(un, List(), TableName.Temporary), ih.keys.toList), rx1)
           case RPop(e) => compileRel(e, smv, srv)
-        })
+        })(sup, memoLookup, (() => ext.toString) :: scopeBuilder)
         val SqlPrg(h, p, q, rx2) = ec
         SqlPrg(h, ps ++ p, q, rx2)
       case SelectR(rs, cs, where) =>
@@ -794,9 +830,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                          criteria = compilePredicate(simplifyPredicate(where, rx),
                                                      lookupColumn) :: (for {
                                       natJoin <- columnLocs
-                                      val (colName, sources) = natJoin
+                                      (colName, sources) = natJoin
                                       natJoinAtom <- sources zip sources.tail
-                                      val (l, r) = natJoinAtom
+                                      (l, r) = natJoinAtom
                                     } yield SqlEq(ColumnSqlExpr(TableName(l), colName),
                                                   ColumnSqlExpr(TableName(r), colName))).toList), rx2)
     }

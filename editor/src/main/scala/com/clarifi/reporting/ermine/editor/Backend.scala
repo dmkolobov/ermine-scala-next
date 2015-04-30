@@ -4,14 +4,14 @@ import com.clarifi.reporting.{ermine => L}
 import com.clarifi.reporting.ermine.{syntax => S}
 import scalaz.Scalaz._
 import scalaz.Monad
-import com.clarifi.reporting.ermine.MonadicPlus
+import scalaparsers.{Loc, MonadicPlus}
 
 object Backend {
   type MCursor[A] = Cursor[S.Module,A]
   type Loc = Cursor[Any,Any]
 }
 
-import Backend.{ MCursor, Loc }
+import Backend.MCursor
 
 trait Backend[F[_],E,S] {
   sealed trait Action[P,R] {
@@ -78,7 +78,7 @@ trait Backend[F[_],E,S] {
   
   /** the required type for a replacement at the given location */
   def typeOfReplacement(loc: MCursor[L.Term]): F[L.Type] =
-    replace(loc, L.Hole(L.Loc.builtin)).flatMap(_ => typeOf(loc))
+    replace(loc, L.Hole(Loc.builtin)).flatMap(_ => typeOf(loc))
 
   /** The list of local variables, and their types. Example, for `f x y z = [?]`,
     * this would return x, y, z.
@@ -106,7 +106,7 @@ trait Backend[F[_],E,S] {
     } yield (ls ++ gs)
 
     def applyNHoles(f: L.Term, n: Int): L.Term =
-      (0 until n).foldLeft(f)((t, _) => L.App(t, L.Hole(L.Loc.builtin)))
+      (0 until n).foldLeft(f)((t, _) => L.App(t, L.Hole(Loc.builtin)))
 
     def functionReturns(f: L.Type, t: L.Type, nArgs: Int = 1): F[List[(Int,L.Type)]] =
       f match {

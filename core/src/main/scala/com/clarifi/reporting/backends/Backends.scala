@@ -3,10 +3,6 @@ package backends
 
 import java.sql.Connection
 
-import scalaz.{Source => _, _}
-import Scalaz._
-
-import com.clarifi.reporting.Reporting._
 import relational._
 
 import com.clarifi.reporting.sql.{ SqlEmitter }
@@ -43,7 +39,6 @@ object Runners {
   def SQLite(url: String): Run[DB]             = DB.Run("org.sqlite.JDBC")(url)
   def Postgres(url: String): Run[DB]           = DB.Run("org.postgresql.Driver")(url)
 
-  def testDB: Run[DB] = DB.msSqlTestDB
   def liteDB: Run[DB] = DB.sqliteTestDB
 
   def cloudDB: Run[DB] = {
@@ -52,7 +47,7 @@ object Runners {
     val password = System.getProperty("db.dev.password")
     val url      = System.getProperty("db.dev.ds.url")
     val pwConnectString = ";user=%s;password=%s".format(user,password)
-    val connectUrl = url + if (!(user eq null) && !(password eq null)) pwConnectString else ""
+    val connectUrl = url + (if (!(user eq null) && !(password eq null)) pwConnectString else "")
     DB.Run("net.sourceforge.jtds.jdbc.Driver")(connectUrl)
   }
 

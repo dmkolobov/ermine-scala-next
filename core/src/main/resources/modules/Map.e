@@ -22,7 +22,7 @@ import Control.Functor
 import Control.Monoid
 import Vector as V
 import Syntax.List
-import String
+import String as S
 
 pure_IO = pure ioAp
 map_IO = fmap ioFunctor
@@ -43,7 +43,7 @@ lookupOr' v m k = lookupOr v k m
 
 infix 5 !
 (!) : Map k v -> k -> v
-(!) m k = let msg = "Key not found: " ++ (toString k)
+(!) m k = let msg = "Key not found: " ++_S (toString k)
           in getJust msg (lookup k m)
 
 member : k -> Map k v -> Bool

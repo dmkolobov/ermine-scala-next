@@ -6,18 +6,19 @@ import scalaz.{@@, Equal, Ordering, Order, Semigroup, Show, Scalaz, Validation}
 import scalaz.Tags.Disjunction
 import scalaz.std.option._
 import scalaz.syntax.bind._
-import Scalaz.{^ => _, _}
+import scalaz.syntax.show._
 import Show._
 import Equal._
 import Order._
-import Ordering._
 
 abstract sealed class PrimT {
   type Value
   def isa(that: PrimT): Boolean
   def sup(that: PrimT): Option[PrimT]
   def nullable: Boolean
-  def withNull: PrimT
+  private[reporting] def withNull_(b: Boolean): PrimT
+  final def withNull: PrimT = withNull_(true)
+  final def withoutNull: PrimT = withNull_(false)
   def name: String
   def primType: PrimType[_]
 }
@@ -39,7 +40,7 @@ object PrimT {
       case ByteT(n) => Some(ByteT(nullable || n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    private[reporting] def withNull_(n: Boolean = true) = this.copy(nullable = n)
     def name = "Byte"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
@@ -54,7 +55,7 @@ object PrimT {
       case ShortT(n) => Some(ShortT(nullable || n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    private[reporting] def withNull_(n: Boolean = true) = this.copy(nullable = n)
     def name = "Short"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
@@ -69,7 +70,7 @@ object PrimT {
       case IntT(n) => Some(IntT(nullable || n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    private[reporting] def withNull_(n: Boolean = true) = this.copy(nullable = n)
     def name = "Int"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
@@ -84,7 +85,7 @@ object PrimT {
       case LongT(n) => Some(LongT(nullable || n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    private[reporting] def withNull_(n: Boolean = true) = this.copy(nullable = n)
     def name = "Long"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
@@ -100,7 +101,7 @@ object PrimT {
                                         else len max l, nullable || n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    private[reporting] def withNull_(n: Boolean = true) = this.copy(nullable = n)
     def name = "String"
     def primType = nullify(nullable, PrimType primString len)
   }
@@ -115,7 +116,7 @@ object PrimT {
       case DateT(n) => Some(DateT(nullable||n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    private[reporting] def withNull_(n: Boolean = true) = this.copy(nullable = n)
     def name = "Date"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
@@ -130,7 +131,7 @@ object PrimT {
       case DoubleT(n) => Some(DoubleT(nullable||n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    private[reporting] def withNull_(n: Boolean = true) = this.copy(nullable = n)
     def name = "Double"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
@@ -145,7 +146,7 @@ object PrimT {
       case BooleanT(n) => Some(BooleanT(nullable||n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    private[reporting] def withNull_(n: Boolean = true) = this.copy(nullable = n)
     def name = "Bool"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
@@ -160,7 +161,7 @@ object PrimT {
       case UuidT(n) => Some(UuidT(nullable||n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    private[reporting] def withNull_(n: Boolean = true) = this.copy(nullable = n)
     def name = "UUID"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
@@ -201,7 +202,7 @@ object PrimT {
   /** `sup` forms a semigroup. */
   implicit val PrimTUnion: Semigroup[Union] = new Semigroup[Union] {
     def append(l: Union, r: => Union): Union =
-      Disjunction(^(l, r)(_ sup _).join)
+      Disjunction(^(l, r)(_ sup _)(optionInstance).join)
   }
 
   def isNumeric(p:PrimT): Boolean = p match {
@@ -214,7 +215,7 @@ object PrimT {
   }
 
   def read(s: String): PrimT = {
-    import ermine.Pos
+    import scalaparsers.{ParseState, Pos, Supply}
     import ermine.parsing._
     val bool = (word("true") as true) | (word("false") as false)
     val strt : Parser[PrimT] = word("StringT") >> paren(for { n <- nat ; _ <- comma ; b <- bool } yield StringT(n.toInt, b))
@@ -231,7 +232,7 @@ object PrimT {
     val main : Parser[PrimT] = strt | (for { c <- nstr ; b <- paren(bool) } yield c(b))
 
     // this is ugly
-    main.run(ParseState(Pos("","",0,0,false), s, ""), Supply.create) match {
+    main.run(ParseState(Pos("","",0,0,false), s, s = ErParseState("")), Supply.create) match {
       case Right((_, x)) => x
       case _             => sys.error("Failed to read PrimT: \"" + s + "\"")
     }

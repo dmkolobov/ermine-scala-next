@@ -7,20 +7,20 @@ import com.clarifi.reporting.ermine.Subst.unfurlApp
 import com.clarifi.reporting.ermine.Runtime._
 import com.clarifi.reporting.ermine.Type._
 import com.clarifi.reporting.ermine.Kind._
-import com.clarifi.reporting.ermine.Loc.builtin
+import scalaparsers.{Loc, Supply}
+import scalaparsers.Loc.builtin
 import com.clarifi.reporting.ermine.Pretty.{ ppType, ppName }
-import com.clarifi.reporting.ermine.Document.{ text, nest, group }
+import scalaparsers.Document.{ text, nest, group }
 import com.clarifi.reporting.ermine.session.Session._
-import com.clarifi.reporting.Reporting._
 import com.clarifi.reporting.relational.{EmptyRel => _, _}
 import java.util.Date
 import java.lang.Math
+import scala.util.control.NonFatal
 import scala.Predef.{error => _, _ }
 import scalaz.{Forall => _, Arrow => _, _}
 import scalaz.Scalaz._
 import scala.collection.immutable.List
 import sys.error
-import Op._
 
 class EmptyException extends Exception("empty")
 /**
@@ -320,7 +320,7 @@ object Lib {
     primOp(Global("Native.List","::#", InfixR(5)), fun2((x,xs) => Prim(x.extract[Any] :: xs.extract[List[_]])), FA(a => a ->: listH(a) ->: listH(a)))
     primOp(Global("Native.List","head#"), Fun(xs => Prim(xs.extract[List[_]].head)), FA(a => listH(a) ->: a))
     primOp(Global("Native.List","tail#"), Fun(xs => Prim(xs.extract[List[_]].tail)), FA(a => listH(a) ->: listH(a)))
-    primOp(Global("Native.List","fromList#"), Fun(xs => xs.extract[List[_]].foldr(Nil:Runtime)(x => ys => Data(listCons,Array(Prim(x),ys)))), FA(a => listH(a) ->: list(a)))
+    primOp(Global("Native.List","fromList#"), Fun(xs => xs.extract[List[_]].foldRight(Nil:Runtime)((x,ys) => Data(listCons,Array(Prim(x),ys)))), FA(a => listH(a) ->: list(a)))
     primOp(Global("Native.List","mkRelation#"), Fun("Native.List.mkRelation#", {
         case Prim(l : List[Rec]) => buildRelation(l)
       }), FAR(a => listH(recordT(a)) ->: relationT(a)))
@@ -503,7 +503,7 @@ object Lib {
 
     primOp(Global("Relation.Row","project#"), fun2("Relation.Row.project#", {
       case Prim(h: List[(String, PrimT)]) => {
-        case Rel(r) => Rel(ProjectE(r, headerProj(h.toMap)))
+        case Rel(r) => Rel(ProjectE(r, Header.proj(h.toMap)))
         case EmptyRel => EmptyRel}}),
       FA(rho ->: star, rel => FAR(r => FAR(t => FAR(s =>
         (t -> List(r,s)) =>: relationalCombCon(rel) =>:
@@ -574,7 +574,7 @@ object Lib {
               case EmptyRel => EmptyRel
               case Rel(ExtRel(r, db)) =>
                 Rel(ExtRel(AggregateByGroup( r
-                                    , row.asInstanceOf[List[(String, PrimT)]].map(r => Attribute(r._1, r._2) -> ColumnValue(r._1, r._2)).toMap
+                                    , row.asInstanceOf[List[(String, PrimT)]].map(r => Attribute(r._1, r._2) -> Op.ColumnValue(r._1, r._2)).toMap
                                     , List((Attribute(n.string,arr(0).extract), aggFun.extract[AggFunc]))
                                     ), db))
             }
@@ -679,7 +679,8 @@ object Lib {
      }}}), FAR(r => FA(a => FA(rho ->: star, rel => FAR(s => FAR(t => relationalCombCon(rel) =>:
               field(r, a) ->: unsafeOp ->: rel(s) ->: rel(t)))))))
 
-    val rel = addCon(mkCon[ClosedExt](Global("Native.Relation","Relation#")))
+    // error: "erroneous or inaccesable type".  Replace classmanifest with classtag.
+    val rel: Con = addCon(mkCon[ClosedExt](Global("Native.Relation","Relation#")))
 
     primOp(Global("Relation", "header#"), Fun("Relation.header#", {
       case Prim(rel: ClosedExt) => Prim(rel.header.toList: List[(String, PrimT)])
@@ -693,7 +694,7 @@ object Lib {
 
     def storedFunctionish(name: String,
                           f: (String, String, List[String],
-                              OrderedHeader,
+                              Header.Ordered,
                               List[Either[(String, Ext[Nothing, Nothing]), PrimExpr]])
                            => Ext[Nothing, Nothing]): Runtime =
       fun3(name, {
@@ -701,7 +702,7 @@ object Lib {
                case Prim(proc: String) => {
                  case Prim(qual: List[String]) =>
                    fun2(name, {
-                          case Prim(rowty: OrderedHeader) => {
+                          case Prim(rowty: Header.Ordered) => {
                             case Prim(args: List[Either[(String, Ext[Nothing, Nothing]),
                                                         PrimExpr]]) =>
                               Rel(f(dbc, proc, qual, rowty, args))}})}}})
@@ -861,7 +862,7 @@ object Lib {
     primOp(Global("Native.Record","record#"), Fun(x => x.whnfMatch("Native.Record.record#") {
            case t@Rec(m) =>
              try { Prim(m.mapValues(_.whnf)) }
-             catch { case e => Bottom(throw new RuntimeException("error invoking record#", e)) }
+             catch { case NonFatal(e) => Bottom(throw new RuntimeException("error invoking record#", e)) }
          }), FAR(a => recordT(a) ->: rec))
     primOp(Global("Native.Record","unsafeRecordIn#"), Fun(x => x.whnfMatch("Native.Record.unsafeRecordIn#") {
            case Prim(p) => Rec(p.asInstanceOf[Map[String,Runtime]]) }
@@ -872,9 +873,9 @@ object Lib {
                      try {  Fun(y => y.whnfMatch("Native.Record.appendRec#") {
                               case t2@Rec(m2) =>
                                  try { Rec(m ++ m2) }
-                                 catch { case e => Bottom(throw new RuntimeException("error invoking appendRec#", e)) }})
+                                 catch { case NonFatal(e) => Bottom(throw new RuntimeException("error invoking appendRec#", e)) }})
                          }
-                     catch { case e => Bottom(throw new RuntimeException("error invoking appendRec#", e)) }
+                     catch { case NonFatal(e) => Bottom(throw new RuntimeException("error invoking appendRec#", e)) }
                  })
                  , FAR(a => FAR(b => FAR(c => recordT(a) ->: recordT(b) ->: recordT(c)))))
     primOp(Global("Native.Record", "scalaRecord#"),
@@ -1012,7 +1013,7 @@ object Lib {
 
   def prims(implicit s: SessionEnv, su: Supply) {
     addCon(prim)
-    for (b <- primBindings; val (name, primt, typ, _) = b)
+    for (b <- primBindings; (name, primt, typ, _) = b)
       primOp(name, Prim(primt), typ)
 
     def primInstance(cls: Con, t: Type, d: PrimT) = new Instance(su.fresh) {
@@ -1113,7 +1114,7 @@ object Lib {
       val r = e.extract[FFI[_]].eval
       t(Prim(r))
     } catch {
-      case err => c(Prim(err))
+      case err: Throwable => c(Prim(err))
     }), FA(a => FA(r => (a ->: r) ->: (throwable ->: r) ->: ffi(a) ->: r)))
     primOp(Global("Native.Throwable","raise"), Fun("Native.Throwable.raise", { case Prim(e : Throwable) => Bottom(throw e) }), FA(a => throwable ->: a))
     primOp(Global("Builtin", "IO"), Fun(f => Data(Global("Builtin","IO"),Array(f))),

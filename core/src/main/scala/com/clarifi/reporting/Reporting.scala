@@ -2,14 +2,13 @@ package com.clarifi.reporting
 
 import java.util.Date
 import java.util.UUID
+import scala.math.{Ordering => SOrdering}
 
 import scalaz._
 import Scalaz._
 import Equal._
 import Show._
-import Ordering._
 import Order._
-import IterV._
 
 import com.clarifi.reporting.PrimT._
 
@@ -47,7 +46,7 @@ object Reporting {
   // Pattern for non-empty lists
   object NEL { def unapply[A](n: NonEmptyList[A]): Option[(A, List[A])] = Some((n.head, n.tail)) }
 
-  type RefHandler[M[_]] = ({type f[x] = (RefID, IterV[Record, x])})#f ~> ({type f[x] = M[IterV[Record, x]]})#f
+  type RefHandler[M[_]] = λ[x => (RefID, IterV[Record, x])] ~> λ[x => M[IterV[Record, x]]]
 
   // Show, Equal, and Order instances
   implicit val RefIDShow: Show[RefID] = showFromToString[String] contramap (_.toString)
@@ -56,32 +55,27 @@ object Reporting {
   implicit val DynEqual: Equal[Dyn] = equalA[Any] contramap (x => x : Any)
   implicit val AttributeEqual: Equal[Attribute] = equal((a, b) => a.name === b.name && a.t == b.t)
   implicit val AttributeShow: Show[Attribute] = show(a => (a.name, a.t).show)
-  implicit def MapShow[K,V] = showFromToString[Map[K,V]]
+  implicit def MapShow[K,V] = Show.showFromToString[Map[K,V]]
 
-  implicit val DateShow = showFromToString[Date]
-  implicit val DateEqual = equalA[Date]
-  implicit val DateOrder: Order[Date] = order((a, b) => a.getTime ?|? b.getTime)
-  implicit val DateOrdering: scala.math.Ordering[Date] = new scala.math.Ordering[Date] {
-    def compare(d1: Date, d2: Date): Int = (d1.getTime - d2.getTime).asInstanceOf[Int]
+  implicit val DateShow = Show.showFromToString[Date]
+  implicit val DateOrder: Order[Date] = new Order[Date] {
+    override def equalIsNatural = true
+    override def equal(a: Date, b: Date) = a == b
+    def order(a: Date, b: Date) = a.getTime ?|? b.getTime
   }
-
-  implicit val UuidOrder: Order[UUID] = order((a, b) => a compareTo b match {
-    case -1 => LT
-    case 0 => EQ
-    case 1 => GT
-  })
+  implicit val DateOrdering: SOrdering[Date] =
+    DateOrder.toScalaOrdering
 
   implicit val UuidShow = showFromToString[UUID]
   implicit val UuidEqual = equalA[UUID]
-  implicit val UuidOrdering: scala.math.Ordering[UUID] = new scala.math.Ordering[UUID] {
-    def compare(d1: UUID, d2: UUID): Int = d1 compareTo d2
-  }
+  implicit val UuidOrdering: SOrdering[UUID] = SOrdering.ordered
+  implicit val UuidOrder: Order[UUID] = Order.fromScalaOrdering
 
   implicit def refIDToTableName(r: RefID): TableName =
     TableName(r.toString, Nil)
 
   type DataSetT[M[+_]] = StreamT[M, (TableName, Record)]
-  type DataSetS[S] = DataSetT[({type M[+X] = State[S, X]})#M]
+  type DataSetS[S] = DataSetT[State[S, +?]]
   type DataSet = DataSetT[Id]
   type SimpleDataSet = StreamT[Id, (String, Record)]
 

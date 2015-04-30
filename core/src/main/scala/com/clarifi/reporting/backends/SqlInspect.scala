@@ -13,12 +13,11 @@ import scalaz.syntax.semigroup._
 import scalaz.syntax.std.list._
 import scalaz.syntax.std.all.ToTuple2Ops
 
-import ermine.{Document => PP}
+import scalaparsers.{Document => PP}
 import ermine.parsing.inverseStringLiteral
 import ermine.session.{Lib => ELib, Session}
 import ermine.session.Session.SourceFile
 import ermine.syntax.Explicit
-import PrimT._
 
 import sql.{ SqlColumn, SqlEmitter }
 
@@ -182,8 +181,8 @@ object SqlErmine {
       tail <- if (reqMod startsWith modNamePref)
         Some(reqMod drop modNamePref.size) else None
       db <- databases.lift(tail)
-      val (dbName, schemata, runner) = db
-      val module = databaseModule(reqMod, dbName, runner run schemata)
+      (dbName, schemata, runner) = db
+      module = databaseModule(reqMod, dbName, runner run schemata)
     } yield Session.Literal(written(module.ermineCode
                                     format (java.lang.Integer.MAX_VALUE, _))._1,
                             reqMod)

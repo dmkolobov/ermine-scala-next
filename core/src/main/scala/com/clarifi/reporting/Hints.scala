@@ -1,11 +1,13 @@
 package com.clarifi.reporting
 
 import collection.immutable.SortedSet
+import scala.util.control.NonFatal
 
 import Reporting._
 import Reporting.alignMap
-import scalaz.Scalaz._
+import scalaz.syntax.apply._
 import scalaz.std.indexedSeq._
+import scalaz.std.option._
 
 /** Type aliases and utility functions for building Hints. */
 object Hints {
@@ -76,7 +78,7 @@ class Hints private(val tables: Map[TableName,TableHints]) {
       if (!(tables.keySet.toSet -- h.keySet).isEmpty) sys.error("table sets do not match")
       h.foreach(kv => tables.get(kv._1).foreach(th => if (!th.check(kv._2, h)) sys.error("table is invalid: " + kv._1)))
       this
-    } catch { case e => 
+    } catch { case NonFatal(e) => 
       println("Invalid hints with respect to headers:\n" + h.mkString("\n----\n") + "\n" + tables.mkString("\n"))
       throw e
     }

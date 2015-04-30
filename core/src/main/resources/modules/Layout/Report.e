@@ -1,6 +1,8 @@
 module Layout.Report where
 
 import Native
+import Native.Map as NM
+import Native.Ord using ord#
 import Function
 import Field
 import Layout.Color
@@ -17,7 +19,6 @@ import Layout.Report.SoftRelation
 import Layout.Magnitude
 import Layout.BorderOptions
 import Layout.Font
-import Ord using {type Ord; fromLess}
 import Date
 import DateRange
 import IO
@@ -29,6 +30,7 @@ import Tree as T
 import Either
 import Maybe
 import Int
+import Ord using {type Ord; fromLess}
 import Pair
 import Prim using {unsafePrimExprIn#; primExpr#; type PrimExpr#}
 import Error
@@ -46,7 +48,7 @@ import Relation.Sort
 import Record using type Record
 import Syntax.Do hiding unit
 import Syntax.List
-import Syntax.IO
+import Syntax.IO hiding map
 import Layout.Chart
 import Layout.Chart.Unsafe
 import Layout.Writer
@@ -60,8 +62,6 @@ import Eq
 import Parse
 import Validation hiding empty_Bracket; cons_Bracket
 
-import Primitive
-
 export Layout.Report.Direction
 export Layout.Report.SelectorMode
 
@@ -70,7 +70,6 @@ export Layout.Report.SelectorMode
 -- z=the thing being built, like a JavaFX Node for the JavaFXWriter
 data Report f z = Report (Writer f z -> f z)
 runReport w (Report f) = f w
-
 
 ---------------------------------------------------
 -- Terrible, Terrible Hacks
@@ -112,6 +111,8 @@ atomShown : Primitive a => a -> Report f z
 atomShown = atom . Atomic unit_Fmt
 
 atomShown' fonts size = atom' fonts size . Atomic unit_Fmt
+
+markdownShown = atom . Atomic (markdown_Fmt unit_Fmt)
 
 val : Primitive a => a -> Atomic a
 val = Atomic unit_Fmt
@@ -437,7 +438,7 @@ headerScroll title content = section (text title) (scroll content)
 
 private
   sectionHeaderAny : Report f z -> (Report f z -> Report f z) -> Report f z
-  sectionHeaderAny r ui = padBottom [pixelsM 12] . wrap "section-header" . ui . style "h5" ' r
+  sectionHeaderAny r ui = padBottom ``12pixels`` . wrap "section-header" . ui . style "h5" ' r
   majorPadding : Report f z -> Report f z
   majorPadding r = (pad' (bottom [pixelsM 12] . left [pixelsM 12] )) $ r
 
@@ -455,7 +456,7 @@ sectionUnderlined r =
   |> pad' (bottom [pixelsM 2] . right [cellsM 9])
   |> borderSizeBottom solid thin
   |> borderColorBottom underlineColor
-  |> padBottom [pixelsM 12]  
+  |> padBottom ``12pixels``
   
 sectionUnderlinedMajor : Report f z -> Report f z
 sectionUnderlinedMajor r = sectionUnderlined $ majorPadding r
@@ -498,8 +499,8 @@ valueGridN rows = valueGridNPad rows ``12pixels`` ``6pixels``
 -- for excel, it's sometimes useful to manually control the padding
 valueGridNPad rows paddingMajor paddingMinor =
   let makeRow [] = []
-      makeRow ((k,v) :: t) = style "fix-width-label" (padRight paddingMinor (text k))
-                          :: (hugLeft v |> padRight paddingMajor)
+      makeRow ((k,v) :: t) = style "fix-width-label" (padRight [pixelsM 6, cellsM 1] (text k))
+                          :: (hugLeft v |> padRight [pixelsM 12, cellsM 2])
                           :: makeRow t
   in style "value-grid-table" . grid ' map makeRow rows
 
@@ -621,6 +622,10 @@ columnTable : Column (a, Bound (Legend k), p, d) k v
            -> Report f z
 columnTable col = Report $ w -> columnTableW w (column# col)
 
+columnTableTransposed : Column (a, Bound (Legend k), p, d) k v
+           -> Report f z
+columnTableTransposed col = Report $ w -> columnTableTransposedW w (column# col)
+
 columnTable2 : Column (a, Bound (Legend k), p, d) k v
            -> a
            -> Report f z
@@ -722,7 +727,11 @@ dropdown'    = selector' DropDown
 radioButton = selector RadioButton
 slider      = selector Slider
 button      = button_
-input       = input_
+input       = input_ inputW
+
+
+checkBox : Bool -> (Report f z -> Selector f z Bool -> Report f z) -> Report f z
+checkBox initVal kont = selector CheckBox (x -> case x of True -> "True"; False -> "False") initVal [True, False] kont
 
 barHeader ui = pad [pixelsM 4] . style "bar-header" ' ui
 
@@ -748,19 +757,55 @@ zipSelector (Selector e1 v1) (Selector e2 v2) =
 
 selectorFunctor = Functor mapSelector
 
+selectorAp : Ap (Selector f z)
+selectorAp = Ap unitSelector
+                (ff -> mapSelector (uncurry id) . zipSelector ff)
+
+{- TODO and then, you can use
+sequenceSelector = sequenceA listTraversable selectorAp
+-}
+
 mapSelector : (a -> b) -> Selector f z a -> Selector f z b
 mapSelector f (Selector e av) = Selector e $ mapSource f av
   where mapSource: (a -> b) -> (SelectorEvent z -> (a -> Report f z) -> Report f z) -> SelectorEvent z -> (b -> Report f z) -> Report f z
         mapSource aToB sel evt bToReport = sel evt $ a -> bToReport (aToB a)
 
+-- | A selector that always yields the given 'a'.
+unitSelector : a -> Selector f z a
+unitSelector = Selector live . const . flip id
+
+-- | Combine a list of selectors into a single selector producing the
+-- list of all of its values.
+--
+-- TODO SMRC (identity: sequenceSelector . map unitSelector = unitSelector)?
+sequenceSelector : List (Selector f z a) -> Selector f z (List a)
+sequenceSelector Nil = unitSelector Nil
+sequenceSelector (s :: ss) = seqSel ss $ mapSelector singleton s
+    where seqSel (t :: ts) acc = seqSel ts $ mapSelector ((x,y) -> x :: y) (zipSelector t acc)
+          seqSel Nil acc = acc
+
+makeSelectors' : (List b -> Report f z) -> (a -> (b -> Selector f z a -> Report f z) -> Report f z) -> List a -> (Report f z -> Selector f z (List a) -> Report f z) -> Report f z
+makeSelectors' flow f sss k = msGo sss Nil Nil
+    where
+      msGo (s :: ss) iacc selacc = f s $ i sel -> msGo ss (i :: iacc) (sel :: selacc)
+      msGo Nil iacc selacc = k (flow $ reverse iacc) (sequenceSelector $ selacc)
+
+makeSelectors = makeSelectors' vflow
+gridSelectors = makeSelectors' grid
+gridSelectorsH hdr = makeSelectors' (rs -> grid (hdr::rs))
+
 parseInput : (String -> Maybe a) -> String -> (Report f z -> Selector f z (Maybe a) -> Report f z) -> Report f z
-parseInput parse default f = input_ default $ t s -> f t $ mapSelector parse s
+parseInput parse default f = input_ inputW default $ t s -> f t $ mapSelector parse s
 
 parseInputV : (String -> Either String a) -> String -> (Report f z -> Selector f z (Either String a) -> Report f z) -> Report f z
-parseInputV parse default f = input_ default $ t s -> f t $ mapSelector parse s
+parseInputV parse default f = input_ inputW default $ t s -> f t $ mapSelector parse s
 
 stringInput : String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
-stringInput s f = input_ s $ t s -> f t s
+stringInput s f = input_ inputW s $ t s -> f t s
+
+--| create a multi line text input selector
+stringAreaInput : String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
+stringAreaInput s f = input_ inputAreaW s $ t s -> f t s
 
 intInput default k =
   parseInput (parseInt 10) (toString default) (r s -> k (prefW [pixelsM 30] r) s)
@@ -810,7 +855,7 @@ intInputSectionV = stackIntInputV
 
 -- Integer value input selector with custom validation support
 stackIntInputH5V = stackIntInputV
-                    (padBottom ``6pixels`` . style "h5")
+                    (padBottom [pixelsM 6, cellsM 1] . style "h5")
                     (hugTop . padTop [pixelsM 6, cellsM 0] . padLeft [pixelsM 6, cellsM 0] . text)
 
 
@@ -854,10 +899,16 @@ private
     selectorW w (selectorMode# mode) (toPair# ((toPrimExprNel . showf $ default), default)) fmt (toList# (lmap (a -> toPair# ((toPrimExprNel . showf $ a),a)) as)) (function3 $ sel evt src ->
       runReport w $ (f (lit sel) (Selector evt $ e f2 -> Report $ w -> funcall2# src e (function1 $ runReport w . f2))))
 
-  input_ : String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
-  input_ default f = Report $ w ->
-    inputW w default (function3 $ sel evt src ->
+  type TextBoxPrim f z = Writer f z -> String ->
+                         Function3 z (SelectorEvent z) (Function2 (SelectorEvent z) (Function1 String (f z)) (f z)) (f z) ->
+                         f z
+
+  input_ : (TextBoxPrim f z) -> String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
+  input_ primf default f = Report $ w ->
+    primf w default (function3 $ sel evt src ->
       runReport w $ (f (lit sel) (Selector evt $ e f2 -> Report $ w -> funcall2# src e (function1 $ runReport w . f2))))
+
+
 
   --button_ : Primitive a => a -> Format a -> (Report f z -> SelectorEvent z -> Report f z) -> Report f z
   button_ name f = Report $ w -> buttonW w (toPrimExprNel name) unit_Fmt (function2 $ button evt -> runReport w $ f (lit button) evt)
@@ -871,6 +922,7 @@ widget a view controls = Report $ w -> widgetW w a
 ---------------------------------------------------
 -- Chart functions
 ---------------------------------------------------
+-- | Deprecated; Use chart from Layout.Report.Keyed instead.
 timeSeriesChart : forall x y a r1 r2 r3 r v z rel .
         (exists t . r <- (r1, r2, r3, t), Scaled v, Scaled d,
                    AsPresentation pr1, AsOp op2, AsOp op3, Relational rel)
@@ -885,8 +937,8 @@ timeSeriesChart : forall x y a r1 r2 r3 r v z rel .
         -> Report f z
 timeSeriesChart t xl yl series s x y r =
     chart t Vertical defaultChartLegendOptions
-      xl unit_Fmt True (scaled Ascending Nothing Nothing)
-      yl unit_Fmt True (scaled Ascending Nothing Nothing)
+      (upgradeAxisLabel xl) unit_Fmt True (scaled Ascending Nothing Nothing Linear)
+      (upgradeAxisLabel yl) unit_Fmt True (scaled Ascending Nothing Nothing Linear)
       [series s x y r]
 
 -- | Axis information for a Scaled axis.
@@ -894,22 +946,28 @@ scaled : Scaled a
       => SortOrder              -- ^ Direction from origin.
       -> Maybe a                -- ^ Lower bound; computed if Nothing.
       -> Maybe a                -- ^ Upper bound; computed if Nothing.
+      -> DisplayScale
       -> Axis a
-scaled s l u = scaledConstraints# (toSortOrder# s) (ope l) (ope u)
+scaled s l u ds = scaledConstraints# (toSortOrder# s) (ope l) (ope u) (toDisplayScale ds)
     where ope = toMaybe# . fmap maybeFunctor primExpr#
+
+data DisplayScale = Linear | Logarithmic
+toDisplayScale : DisplayScale -> DisplayScale#
+toDisplayScale Linear = linear#
+toDisplayScale Logarithmic = logarithmic#
 
 -- | The default axis for number-y data, sorting ascending with
 -- computed axis display bounds.
 defaultScaled : forall a . Scaled a => Axis a
-defaultScaled = scaled Ascending Nothing Nothing
+defaultScaled = scaled Ascending Nothing Nothing Linear
 
 -- | Axis information for an Unscaled axis.
 unscaled : Unscaled a
         => Either SortOrder (a -> a -> Bool) -- ^ Natural or computed (less-than) sort.
         -> Axis a
-unscaled = unscaledConstraints# . toEither#
-         . either (Left . toSortOrder#) (Right . function2 . peify)
-    where peify f l r = toBool# $ f (unsafePrimExprIn# l) (unsafePrimExprIn# r)
+unscaled = flip unscaledConstraints# empty#_NM . toEitherZ#
+         . either (Left . toSortOrder#) (Right . ord# . peify . fromLess)
+    where peify f l r = f (unsafePrimExprIn# l) (unsafePrimExprIn# r)
 
 -- | The default axis for discrete data, sorting natural ascending.
 defaultUnscaled : forall a . Unscaled a => Axis a
@@ -945,6 +1003,8 @@ stackedArea = seriesW stackedArea#
 boxAndWhiskers : ScaledChartMode
 boxAndWhiskers = seriesW boxAndWhiskers#
 
+-- | Deprecated; Use chart from Layout.Report.Keyed instead, with the
+-- 'bar' series function.
 barChart : forall x y d e r1 r2 r3 r v z rel .
         (exists t . r <- (r1, r2, r3, t), Unscaled e, Scaled v,
                    AsPresentation pr1, AsOp op2, AsOp op3, Relational rel)
@@ -958,8 +1018,8 @@ barChart : forall x y d e r1 r2 r3 r v z rel .
         -> Report f z
 barChart t xl yl s x y r =
     chart t Vertical defaultChartLegendOptions
-      xl unit_Fmt True (unscaled $ Left Ascending)
-      yl unit_Fmt True (scaled Ascending Nothing Nothing)
+      (upgradeAxisLabel xl) unit_Fmt True (unscaled $ Left Ascending)
+      (upgradeAxisLabel yl) unit_Fmt True (scaled Ascending Nothing Nothing Linear)
       [bar s x y r]
 
 -- | Build a ChartSeries.
@@ -982,8 +1042,26 @@ coloredSeries : (s sr sa -> xa' -> ya' -> relr -> ChartSeries xa ya)
              -> ya'
              -> relr
              -> ChartSeries xa ya
-coloredSeries comb colors s x y r = comb s x y r |> (ChartSeries _ ncs) ->
-  ChartSeries colors ncs
+coloredSeries comb colors s x y r = comb s x y r |> (ChartSeries _ ct vt ncs) ->
+  ChartSeries colors ct vt ncs
+
+-- | Label some category ticks specially.  Stacks with 'coloredSeries'
+-- et al.
+categoryTickLabels : Unscaled xa
+                  => List ({..xr}, {..xr})
+                  -> (sa' -> x xr xa -> ya' -> relr -> ChartSeries xa ya)
+                  -> (sa' -> x xr xa -> ya' -> relr -> ChartSeries xa ya)
+categoryTickLabels ct comb s x y r = comb s x y r |> (ChartSeries colors _ vt ncs) ->
+  ChartSeries colors ct vt ncs
+
+-- | Label some value ticks specially.  Stacks with 'coloredSeries',
+-- 'categoryTickLabels', et al.
+valueTickLabels : Unscaled ya
+               => List ({..yr}, {..yr})
+               -> (sa' -> xa' -> y yr ya -> relr -> ChartSeries xa ya)
+               -> (sa' -> xa' -> y yr ya -> relr -> ChartSeries xa ya)
+valueTickLabels vt comb s x y r = comb s x y r |> (ChartSeries colors ct _ ncs) ->
+  ChartSeries colors ct vt ncs
 
 -- | Collect multiple ChartSeries into a chart.
 chart : forall xa ya .
@@ -1112,18 +1190,28 @@ keyedDrilldown pid nid k v (lbl, lblF) rel =
     (softRelation k (Left $ ordering {k}) (r -> ((v, Nothing), Unsorted_Pri)))
     (Just (legend lblF lbl)) lblF pid nid rel
 
+treemapChart : forall d id l labels prl pri prs r r1 r2 ivalue svalue z rel.
+             (exists o. r <- (labels, ivalue, svalue, r1, r2, o), PrimitiveNum d, AsPresentation prl, AsPresentation pri, AsPresentation prv, Relational rel) =>
+             Field r1 id ->
+             Field r2 id ->
+             prl labels l ->
+             pri ivalue d ->
+             prs svalue d ->
+             rel (|..r|) -> Report f z
+treemapChart parentId childId labelPres intensityPres sizePres rel = Report $ w -> treeMap# w (fieldName parentId) (fieldName childId) (asPresentation labelPres) (asPresentation intensityPres) (asPresentation sizePres) (relation# rel)
 
 pieChart : forall d l labels prl prv r value z rel .
            (exists o . r <- (labels, value, o), PrimitiveNum d,
                       AsPresentation prl, AsPresentation prv, Relational rel)
         => String               -- ^ Title.
+        -> ChartLegendOptions#      -- ^ Options for the charts legend.
         -> List ({..labels}, Color) -- ^ Color selections.
         -> prl labels l
         -> prv value d          -- ^ Chart values.
         -> rel (|..r|)
         -> Report f z
-pieChart title color labelPres valuePres rel = Report $ w ->
-    pieChartW w title color (asPresentation labelPres) (asPresentation valuePres)
+pieChart title legOpt color labelPres valuePres rel = Report $ w ->
+    pieChartW w title legOpt color (asPresentation labelPres) (asPresentation valuePres)
               (relation# rel)
 {-
 drilldownPieChart2 : forall d prl prd r r0 r1 label lv z rel .
@@ -1131,20 +1219,22 @@ drilldownPieChart2 : forall d prl prd r r0 r1 label lv z rel .
                                Has r r1
                                AsPresentation prl, AsPresentation prd, Relational rel)
                  => String
+                 -> ChartLegendOptions#     -- ^ Options for the charts legend.
                  -> List ({..label}, Color) -- ^ Color selections.
                  -> prl label lv
                  -> prd r0 d
                  -> DrilldownList r1
                  -> rel (|..r|)
                  -> Report f z -}
-drilldownPieChart2 title color labelPres dataPres parentChildCols fact roots = Report $ w ->
-  drilldownPieChart2W w title color (asPresentation labelPres) (asPresentation dataPres)
+drilldownPieChart2 title legOpt color labelPres dataPres parentChildCols fact roots = Report $ w ->
+  drilldownPieChart2W w title legOpt color (asPresentation labelPres) (asPresentation dataPres)
                     (fromDrilldown parentChildCols) (relation# fact) (relation# roots)
 
 drilldownPieChart : forall d id prl prd r r0 r1 r2 label lv z rel .
                     (exists t . r <- (r0, r1, r2, label, t), PrimitiveNum d,
                                AsPresentation prl, AsPresentation prd, Relational rel)
                  => String
+                 -> ChartLegendOptions#     -- ^ Options for the charts legend.
                  -> List ({..label}, Color) -- ^ Color selections.
                  -> prl label lv
                  -> prd r0 d
@@ -1152,62 +1242,76 @@ drilldownPieChart : forall d id prl prd r r0 r1 r2 label lv z rel .
                  -> Field r2 id
                  -> rel (|..r|)
                  -> Report f z
-drilldownPieChart title color labelPres dataPres parentId childId fact = Report $ w ->
-  drilldownPieChartW w title color (asPresentation labelPres) (asPresentation dataPres)
+drilldownPieChart title legOpt color labelPres dataPres parentId childId fact = Report $ w ->
+  drilldownPieChartW w title legOpt color (asPresentation labelPres) (asPresentation dataPres)
                      (fieldName parentId) (fieldName childId) (relation# fact)
 -- | A drilldown bar chart.
-drilldownBarChart : forall f cpr cl cr ca vpr vl vr va pi ci id r z rel .
-                    (exists o . r <- (cr, vr, pi, ci, o),
-                               AsPresentation cpr, AsPresentation vpr, Relational rel)
+drilldownBarChart : forall f spr sr sa cpr cr ca vpr vr va pi ci id r z rel .
+                    (exists o . r <- (sr, cr, vr, pi, ci, o),
+                               AsPresentation spr, AsPresentation cpr,
+                               AsPresentation vpr, Relational rel)
                  => Maybe String       -- ^ Chart title.
                  -> Direction          -- ^ Orientation.
-                 -> Maybe (Atomic cl)  -- ^ Category axis label.
+                 -> ChartLegendOptions# -- ^ Options for the charts legend.
+                 -> AxisLabel           -- ^ Category axis label.
+                 -> List ({..cr}, {..cr}) -- ^ Tick label overrides on category.
                  -> Axis ca            -- ^ Rules for category axis.
-                 -> Maybe (Atomic vl)  -- ^ Value axis label.
+                 -> AxisLabel          -- ^ Value axis label.
+                 -> List ({..vr}, {..vr}) -- ^ Tick label overrides on value.
                  -> Axis va            -- ^ Rules for value axis.
+                 -> spr sr sa          -- ^ Choose/show series.
                  -> cpr cr ca          -- ^ Choose/show category.
                  -> vpr vr va          -- ^ Choose/show value.
                  -> Field pi id        -- ^ Parent field reference.
                  -> Field ci id        -- ^ Child field reference.
                  -> rel (|..r|)        -- ^ Underlying relation.
                  -> Report f z
-drilldownBarChart title ori catLbl catC datLbl datC cat dat parentId childId fact =
+drilldownBarChart title ori legOpt catLbl catTo catC datLbl datTo datC ser cat dat parentId childId fact =
   Report $ w -> drilldownBarChartW w
       -- XXX pass something other than Nil here for choosing colors
       (axisChartDataW catLbl unit_Fmt True datLbl unit_Fmt True
-                      catC datC title ori defaultChartLegendOptions Nil)
-      (asPresentation cat) (asPresentation dat)
+                      catC datC title ori legOpt Nil)
+      catTo datTo
+      (asPresentation ser) (asPresentation cat) (asPresentation dat)
       (fieldName parentId) (fieldName childId) (relation# fact)
 
 -- | A drilldown bar chart with multiple parent child columns.
-drilldownBarChart2 : forall f cpr cl cr ca vpr vl vr va r2 r z rel .
-                    (exists o . r <- (cr, vr, o),
-                                Has r r2
-                               AsPresentation cpr, AsPresentation vpr, Relational rel)
+drilldownBarChart2 : forall f spr sr sa cpr cr ca vpr vr va r2 r z rel .
+                    (exists o . r <- (sr, cr, vr, o),
+                                Has r r2, AsPresentation spr, AsPresentation cpr,
+                                AsPresentation vpr, Relational rel)
                  => Maybe String       -- ^ Chart title.
                  -> Direction          -- ^ Orientation.
-                 -> Maybe (Atomic cl)  -- ^ Category axis label.
+                 -> AxisLabel          -- ^ Category axis label.
+                 -> List ({..cr}, {..cr}) -- ^ Tick label overrides on category.
                  -> Axis ca            -- ^ Rules for category axis.
-                 -> Maybe (Atomic vl)  -- ^ Value axis label.
+                 -> AxisLabel          -- ^ Value axis label.
+                 -> List ({..vr}, {..vr}) -- ^ Tick label overrides on value.
                  -> Axis va            -- ^ Rules for value axis.
+                 -> spr sr sa          -- ^ Choose/show series.
                  -> cpr cr ca          -- ^ Choose/show category.
                  -> vpr vr va          -- ^ Choose/show value.
                  -> DrilldownList r2   -- ^ Parent/Child column tuples
                  -> rel (|..r|)        -- ^ Underlying relation.
                  -> rel (|..r|)        -- ^ Root nodes of the drilldown tree
                  -> Report f z
-drilldownBarChart2 title ori catLbl catC datLbl datC cat dat parentChildCols fact root =
+drilldownBarChart2 title ori catLbl catTo catC datLbl datTo datC ser cat dat parentChildCols fact root =
   Report $ w -> drilldownBarChart2W w
       -- XXX pass something other than Nil here for choosing colors
       (axisChartDataW catLbl unit_Fmt True datLbl unit_Fmt True
                       catC datC title ori defaultChartLegendOptions Nil)
-      (asPresentation cat) (asPresentation dat)
+      catTo datTo
+      (asPresentation ser) (asPresentation cat) (asPresentation dat)
       (fromDrilldown parentChildCols) (relation# fact) (relation# root)
 
 defaultChartLegendOptions = defaultChartLegendOptions#
 chartLegendOptions = chartLegendOptions#
 chartLegendDefaultLocation = chartLegendOptions chartLegendDefaultLocation#
+chartLegendBelow = chartLegendDefaultLocation
+chartLegendAbove = chartLegendOptions chartLegendAbove#
 chartLegendOverlay = chartLegendOptions chartLegendOverlay#
+chartLegendRightOverlay = chartLegendOptions chartLegendRightOverlay#
+chartLegendRight = chartLegendOptions chartLegendRightNotOverlay#
 chartLegendHidden = chartLegendOptions chartLegendHidden#
 
 -- may want to look into how am adding elements to a record - should at runtime
@@ -1238,6 +1342,8 @@ private
                                maybe (sortBy_SS forward_SS pr) id ss),
                      toSortPriority#_Pri sp)
      in function1 $ npair . vs . unsafeRecordIn# . scalaRecordIn#
+
+  upgradeAxisLabel = maybe NoAxisLabel AxisLabel
 
   lmap = fmap listFunctor
   wf w = writerFunctor w
@@ -1338,8 +1444,8 @@ private
     method "tableDMTL" tableW_ : forall f z . Writer f z -> Maybe# (Legend# String) -> Sort# -> Relation# -> f z
     method "drilldownTableDMTL" drilldownTableW_ : forall f z . Writer f z -> Maybe# (Legend# String) -> String -> String -> String -> Sort# -> Relation# -> f z
     method "drilldownTableDMTL2" drilldownTable2W_ : forall f z . Writer f z -> Maybe# (Legend# String) -> String -> List# (Pair# String String) -> Sort# -> Relation# -> Relation# -> f z
-    method "columnTableDMTL" columnTableW : forall f z .
-      Writer f z -> Table# EAtomic# Relation# -> f z
+    method "columnTableDMTL" columnTableW : forall f z . Writer f z -> Table# EAtomic# Relation# -> f z
+    method "columnTableTransposedDMTL" columnTableTransposedW : forall f z . Writer f z -> Table# EAtomic# Relation# -> f z
     method "style" styleW : forall f z . Writer f z -> String -> z -> z
     method "prefArea" prefA_ : forall f z a . Writer f z -> List# (Pair# (Magnitude a) (Magnitude a)) -> z -> z
     method "prefHeight" prefH_ : forall f z a. Writer f z -> List# (Magnitude a) -> z -> z
@@ -1367,9 +1473,12 @@ private
     method "selector" selectorW: forall f z a b . Writer f z -> SelectorMode# -> Pair# (NonEmpty# PrimExpr# ) a -> Format_Fmt b -> List# (Pair# (NonEmpty# PrimExpr# ) a) ->
                                     Function3 z (SelectorEvent z) (Function2 (SelectorEvent z) (Function1 a (f z)) (f z)) (f z) ->
                                     f z
-    method "textBox" inputW: forall f z a . Writer f z -> String ->
-                                    Function3 z (SelectorEvent z) (Function2 (SelectorEvent z) (Function1 String (f z)) (f z)) (f z) ->
-                                    f z
+    method "textBox" inputW: TextBoxPrim f z
+    method "textArea" inputAreaW: TextBoxPrim f z
+    method "foreignSelector" foreignSelectorW: forall f z a . Writer f z -> String -> a -> Function1 a (f z) -> f z
+
+    method "foreignSink" foreignSinkW: forall f z a . Writer f z -> String -> Function1 (Function1 a (f z)) (f z) -> f z
+
     method "widget" widgetW: forall f z a . Writer f z -> a ->         -- state: S
                                     Function2 a (Function1 a (f z)) (f z) -> -- controls: S => (S => F[HJS]) => F[HJS]
                                     Function1 a (f z) -> f z           -- view: S => F[HJS]

@@ -6,17 +6,15 @@ import scalaz.syntax.order._
 import scalaz.std.option._
 import scalaz.std.set._
 import scalaz.std.string._
-import scalaz.scalacheck.ScalaCheckBinding._
 import scalaz.scalacheck.ScalazProperties._
 import scalaz.scalacheck.ScalazArbitrary.OrderingArbitrary
 
 import org.scalacheck._
-import Prop.{extendedAny => _, _}
+import Prop._
 import Arbitrary.arbitrary
 
 import com.clarifi.reporting.util.PartitionedSet
 
-import Reporting._
 import PrimT.IntT
 
 /*
@@ -69,7 +67,7 @@ object RTagGens {
 }
 
 object TestRTag extends Properties("PrimTs, PrimExprs, Reflexivity") {
-  import com.clarifi.reporting.{TypeTag => H}
+  import Header.sup
   import RTagGens._
   implicit val arbPrimt = Arbitrary(RelationGens.primT)
   implicit val arbHeader = Arbitrary(RelationGens.genVariableHeader)

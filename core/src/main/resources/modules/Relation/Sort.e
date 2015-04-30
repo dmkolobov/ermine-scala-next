@@ -13,7 +13,7 @@ import List
 import Ord
 import Pair
 import Syntax.List
-import Relation.Row hiding { empty; single; append }
+import Relation.Row hiding {empty_Bracket; cons_Bracket; empty; single; append }
 import Function
 import Constraint
 

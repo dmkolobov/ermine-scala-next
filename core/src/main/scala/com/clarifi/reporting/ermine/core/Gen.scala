@@ -1,6 +1,6 @@
 package com.clarifi.reporting.ermine.core
 
-import com.clarifi.reporting.ermine.Monadic
+import scalaparsers.Monadic
 
 sealed abstract class Gen[+A] extends Monadic[Gen,A] with Traversable[A] {
   def self = this

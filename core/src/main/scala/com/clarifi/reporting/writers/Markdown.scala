@@ -3,8 +3,12 @@ package com.clarifi.reporting.writers
 import scala.collection.immutable.List._
 import scala.annotation.tailrec
 
-import scalaz.std.tuple._;
-import scalaz.syntax.bifunctor._;
+import scalaz.std.list._
+import scalaz.std.string._
+import scalaz.std.tuple._
+import scalaz.syntax.bifunctor._
+import scalaz.syntax.foldable._
+import scala.util.matching.Regex
 
 object Markdown {
 
@@ -17,16 +21,30 @@ object Markdown {
     case object MSOutdated extends MStyleType
 
   sealed trait MSyntax
+    case class MPara(content: List[MSyntax]) extends MSyntax
     case class MPlain(content: String) extends MSyntax
     case class MStyle(style: MStyleType, inner: List[MSyntax]) extends MSyntax
     case class MLink(isImage: Boolean, inner: List[MSyntax], destination: String, title: Option[String]) extends MSyntax
     case class MColor(color: String) extends MSyntax
 
 
+  //trivial template substitution engine
+  // stackoverflow.com/questions/6110062/
+  private val tRegex : Regex = """\{\{([^{}]*)\}\}""".r
+  def replaceTemplates(text: String, templates: List[(String, String)]): String =
+    {
+      val tMap : Map[String,String]= templates.toMap
+      tRegex.replaceSomeIn ( text,  { case Regex.Groups(name) => tMap get name } )
+    }
+
+  def parseMarkdown(inp: String): List[MSyntax] = {
+    inp.split("\\n{2,}").map(MPara compose parseMarkdown2).toList
+  }
 
   //Simple recursive descent stack-based parser for our lightweight markdownish syntax
   //GB 11/2012
-  def parseMarkdown(inp: String): List[MSyntax] = {
+  private[this]
+  def parseMarkdown2(inp: String): List[MSyntax] = {
     var cxt: List[String] = List()
 
     @tailrec
@@ -134,12 +152,18 @@ object Markdown {
 
 
     // like span, but consider escape characters
-    def span2(cs: List[Char])(p:Char => Boolean)(isEscape: Char => Boolean) : (List[Char], List[Char]) = cs match {
-      case List() => (List(), List())
-      case List(x) =>  if (p(x)) (List(x), List()) else (List(), List(x))
-      case x :: y :: zs => if( isEscape(x) ) span2(zs)(p)(isEscape).leftMap(y :: _)
-                           else (if (p(x))   span2(y::zs)(p)(isEscape).leftMap(x :: _)
-                                 else        (List(), x :: y :: zs))
+    def span2(cs: List[Char])(p:Char => Boolean)(isEscape: Char => Boolean) : (List[Char], List[Char]) = {
+      @tailrec
+      def realSpan2(ls: List[Char], rs: List[Char]) : (List[Char], List[Char])= rs match {
+        case List() => (ls ,List())
+        case List(x) =>  if (p(x)) (x :: ls, List()) else (ls, List(x))
+        case x :: y :: zs => if (isEscape(x)) realSpan2(y :: ls, zs)
+                             else if (p(x)) realSpan2(x :: ls, y :: zs)
+                                else (ls, x :: y :: zs)
+      }
+
+      realSpan2(List(), cs).leftMap(_.reverse)
+
     }
 
     def parseLink(x: List[Char]): (String, Option[String], List[Char]) = {
@@ -189,6 +213,9 @@ object Markdown {
       }
       case MColor(c) => (MColor(c), n - 1)
       case MPlain(s) => if (s.length > n) (MPlain(s.take(n - 3) + "..."), 0) else (MPlain(s), n - s.length)
+      case MPara(inner) => goList(inner, n) match {
+        case (newInner, newN) => (MPara(newInner), newN)
+      }
     }
 
     def go(nxt: MSyntax, sofar: (List[MSyntax], Int)): (List[MSyntax], Int) = {
@@ -202,6 +229,7 @@ object Markdown {
   }
 
   def markdownToString(m: MSyntax): String = m match {
+    case MPara(inner) => inner.map(markdownToString).mkString + "\n\n"
     case MStyle(MSBold, i) => "__" + i.map(markdownToString).mkString + "__"
     case MStyle(MSItal, i) => "*" + i.map(markdownToString).mkString + "*"
     case MPlain(s) => escapeForMarkdown(s)
@@ -223,16 +251,23 @@ object Markdown {
     case MColor(c) => "#" + c
   }
   def mapMarkdown(f: String => String)(markdown: MSyntax): MSyntax = markdown match {
+    case MPara(i) => MPara(i map (mapMarkdown(f)))
     case MStyle(s, i) => MStyle(s, i.map(mapMarkdown(f)))
     case MPlain(s) => MPlain(f(s))
     case MLink(isimage, i, dest, title) => MLink(isimage, i.map(mapMarkdown(f)), dest, title)
     case MColor(c) => MColor(c)
   }
 
-  def markdownStringToHTML(s: String): String = markdownListToHTML(parseMarkdown(s))
+  def markdownStringToHTML(s: String): String =
+    markdownListToHTML(parseMarkdown(s) match {
+                         case List(MPara(i)) => i
+                         case i => i
+                       })
 
+  private[this]
   def markdownListToHTML(l: List[MSyntax]): String = l.map(markdownToHTML).mkString
 
+  private[this]
   def markdownToHTML(markdown: MSyntax): String = {
     def wrapImgInner(s : String, inner : List[MSyntax]) = {
       val is = markdownListToHTML(inner)
@@ -242,6 +277,7 @@ object Markdown {
     }
     markdown match {
       case MPlain(c) => c // todo escaping
+      case MPara(c) => "<p>" + markdownListToHTML(c) + "</p>"
       case MStyle(MSBold, inner) => "<b>" + markdownListToHTML(inner) + "</b>"
       case MStyle(MSItal, inner) => "<i>" + markdownListToHTML(inner) + "</i>"
       case MLink(isImage, inner, dest, Some(title)) =>
@@ -250,8 +286,28 @@ object Markdown {
       case MLink(isImage, inner, dest, None) =>
         if (isImage) wrapImgInner("<img src=\"" + dest + "\"/>",inner)
         else "<a href=\"" + dest + "\">" + markdownListToHTML(inner) + "</a>"
-      case MColor(color) => "<span style='display:inline-block;height:10px;width:10px;background-color:#" + color + ";'>&nbsp;&nbsp;</span>"
+      case MColor(color) => "<span class='markdown-color-box' style='background-color:#" + color + ";'>&nbsp;&nbsp;</span>"
     }
+  }
+
+  /** Strip markdown formatting from `s`, leaving only the text
+    * content.  For example, "__test__" => "test".
+    */
+  def markdownStringToText(s: String): String =
+    markdownListToText(parseMarkdown(s))
+
+  /** The plain-text content of `s`. */
+  private[this]
+  def markdownListToText(s: List[MSyntax]): String =
+    s foldMap markdownToText
+
+  /** The plain-text content of `s`. */
+  def markdownToText(s: MSyntax): String = s match {
+    case MPlain(content) => content
+    case MPara(inner) => markdownListToText(inner) + "\n\n"
+    case MStyle(_, inner) => markdownListToText(inner)
+    case MLink(_, inner, _, _) => markdownListToText(inner)
+    case MColor(_) => ""
   }
 
   def escapeForMarkdown(s: String): String = {

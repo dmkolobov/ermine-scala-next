@@ -37,6 +37,7 @@ import Syntax.List
 import Unsafe.Coerce
 import Vector hiding {sortBy; traverse; map}
 import Void
+import Native.Bool
 
 
 import Error
@@ -45,13 +46,7 @@ foreign
   data "com.clarifi.reporting.writers.Column$Single"
        Single# (lbl: *) (a: *)
   data "com.clarifi.reporting.writers.Column$Join"
-       Join# (a: *)
-  data "com.clarifi.reporting.writers.Column$Joinee"
-       Joinee# (a: *)
-  data "com.clarifi.reporting.writers.Column$InnerJoin"
-       InnerJoin# (a: *)
-  data "com.clarifi.reporting.writers.Column$OuterJoin"
-       OuterJoin# (a: *)
+       Join# (a: *) (b: *)
   data "com.clarifi.reporting.writers.Column$Table"
        Table# (lbl: *) (a: *)
   -- construction of the above
@@ -60,25 +55,30 @@ foreign
         "MODULE$" singleModule : SingleModule
   method "apply" single# : SingleModule -> a -> lbl -> Presentation r ra
                         -> SortStrategy# r -> Maybe# (Pair# SortOrder# Int)
+                        -> Bool
                         -> Single# lbl a
   data "com.clarifi.reporting.writers.Column$Joinee$"
        JoineeModule
   value "com.clarifi.reporting.writers.Column$Joinee$"
         "MODULE$" joineeModule : JoineeModule
-  method "apply" joinee# : JoineeModule -> a -> Join# a
+  method "apply" joinee# : JoineeModule -> b -> Join# a b
   data "com.clarifi.reporting.writers.Column$InnerJoin$"
        InnerJoinModule
   value "com.clarifi.reporting.writers.Column$InnerJoin$"
         "MODULE$" innerJoinModule : InnerJoinModule
-  method "apply" innerJoin# : InnerJoinModule -> Vector (Join# a) -> Join# a
+  method "apply" innerJoin# : InnerJoinModule -> Vector (Join# a b) -> Join# a b
   data "com.clarifi.reporting.writers.Column$OuterJoin$" OuterJoinModule
   value "com.clarifi.reporting.writers.Column$OuterJoin$"
         "MODULE$" outerJoinModule : OuterJoinModule
-  method "apply" outerJoin# : OuterJoinModule -> Vector (Join# a) -> Join# a
+  method "apply" outerJoin# : OuterJoinModule -> Vector (Join# a b) -> Join# a b
+  data "com.clarifi.reporting.writers.Column$JoinHeading$" JoinHeadingModule
+  value "com.clarifi.reporting.writers.Column$JoinHeading$"
+        "MODULE$" joinHeadingModule : JoinHeadingModule
+  method "apply" joinHeading# : JoinHeadingModule -> a -> Join# a b -> Join# a b
   data "com.clarifi.reporting.writers.Column$Table$" TableModule
   value "com.clarifi.reporting.writers.Column$Table$"
         "MODULE$" tableModule : TableModule
-  method "apply" table# : TableModule -> Join# (Single# lbl a)
+  method "apply" table# : TableModule -> Join# lbl (Single# lbl a)
                        -> Legend# lbl -> PartialSort# lbl
                        -> Maybe# (List# (Pair# (Pair# String String) PrimT))
                        -> Maybe# Relation#
@@ -90,7 +90,7 @@ foreign
 -- understand.  Total for the given phantom bounds.
 column# : Column (n, Bound (Legend k), p, d) k v
        -> Table# EAtomic# Relation#
-column# = finalize . foldColumn single' join' setLegend' setSortPrio' setDrilldown' setDrilldown2'
+column# = finalize . foldColumn single' hc' join' joinGroup' setLegend' setSortPrio' setDrilldown' setDrilldown2'
 
 single' r a p s (sp, kcols) =
   let pr = orElse (foldFromRow (unsafePres . asPresentation) valueCols) p
@@ -101,13 +101,30 @@ single' r a p s (sp, kcols) =
   in (tableBot, singular $ single# singleModule r
         (maybe (eatomic $ singleHeading valueCols) eatomic a) pr
         (sortStrategy# $ maybe (sortBy forward pr) (coerceSortStrategy pr) s)
-        (toSortPriority# sp))
+        (toSortPriority# sp) False)
+
+hc' r (sp, kcols) =
+    let valueCols = Row $ rheader# r |> (Row allcols) ->
+                    removeAll fst allcols kcols
+        pr = foldFromRow (unsafePres . asPresentation) valueCols
+        unsafePres : Presentation r a -> Presentation r b
+        unsafePres = unsafeCoerce
+    in (tableBot, singular $ single# singleModule r (eatomic $ singleHeading valueCols) pr (sortStrategy# (sortBy forward pr)) (toSortPriority# sp) True)
+
+{-
+  method "apply" single# : SingleModule -> a -> lbl -> Presentation r ra
+                        -> SortStrategy# r -> Maybe# (Pair# SortOrder# Int)
+                        -> Single# lbl a
+((SortPriority, List a) -> ((Maybe (Legend r), Maybe ((List (String, String, PrimT))), Maybe (Relation#)), Join# EAtomic# (Single# EAtomic# a1)))
+-}
 
 join' jt zs s =
   let trees = cosequence zs s
   in (foldMap_L (mproduct3 (altMonoid maybeAlt) (altMonoid maybeAlt) (altMonoid maybeAlt))
                 fst trees,
       joinConcat jt (snd <$> trees))
+
+joinGroup' gn z = mapSnd (joinHeading# joinHeadingModule . eatomic ' gn) . z
 
 setLegend' lg z (o, kcols) =
   let saveLg ((_, dd, root), jt) = ((Just $ unsafeLg lg, dd, root), jt)
@@ -130,7 +147,7 @@ setDrilldown2' drilldownList rel z (o, kcols) =
 
 tableBot = (Nothing, Nothing, Nothing)
 
-finalize : forall r a a1 . ((SortPriority, List a) -> ((Maybe (Legend r), Maybe ((List (String, String, PrimT))), Maybe (Relation#)), Join# (Single# EAtomic# a1))) -> Table# EAtomic# a1
+finalize : forall r a a1 . ((SortPriority, List a) -> ((Maybe (Legend r), Maybe ((List (String, String, PrimT))), Maybe (Relation#)), Join# EAtomic# (Single# EAtomic# a1))) -> Table# EAtomic# a1
 finalize st = st (Unsorted, []_L) |> ((Just lg, ddCols, rootRel), cols) ->
   table# tableModule cols
          (fmap legendFunctor# (eatomic . Atomic unit)
@@ -141,7 +158,7 @@ finalize st = st (Unsorted, []_L) |> ((Just lg, ddCols, rootRel), cols) ->
                          ddCols))
          (toMaybe# rootRel)
 
-joinConcat : JoinType -> List (Join# a) -> Join# a
+joinConcat : JoinType -> List (Join# a b) -> Join# a b
 joinConcat Outer = outerJoin# outerJoinModule . vector
 joinConcat Inner = innerJoin# innerJoinModule . vector
 
@@ -162,7 +179,7 @@ private
   removeAll f haystack needles =
     filter_L (a -> and_L ((!=) (f a) <$> needles)) haystack
 
-  singular : Single# l a -> Join# (Single# l a)
+  singular : Single# l a -> Join# g (Single# l a)
   singular = joinee# joineeModule
 
   -- | Make a single heading providing the default heading for a row.

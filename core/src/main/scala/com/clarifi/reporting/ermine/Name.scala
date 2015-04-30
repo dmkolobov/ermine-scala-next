@@ -44,8 +44,21 @@ case class Global(module: String, string: String, fixity: Fixity = Idfix) extend
   }
 }
 
+// useful for printf-debugging the parser,
+case class NameOrdering() extends Ordering[Name] {
+  def compare(n: Name, m:Name) = {
+    (n,m) match {
+      case (g: Global, g2: Global) => (g.module + g.string) compare (g2.module + g2.string)
+      case _ => n.string compare m.string
+    }
+  }
+}
+
 object Name {
   def lib(s: String, f: Fixity = Idfix): Name = Global("Lib", s, f)
   def prelude(s: String, f: Fixity = Idfix): Name = Global("Prelude", s, f)
+  implicit lazy val ord = NameOrdering()
+  lazy val globalOrd = NameOrdering().asInstanceOf[Ordering[Global]]
+  lazy val localOrd = NameOrdering().asInstanceOf[Ordering[Local]]
 }
 

@@ -13,7 +13,6 @@ import com.clarifi.reporting.PrimType._
 import com.clarifi.reporting.{ PrimType, ColumnName, Record, Header, TableName }
 import com.clarifi.reporting.Reporting._
 import com.clarifi.reporting.{Hints,TableHints}
-import com.clarifi.reporting.util.StreamTUtils._
 
 /** Base flattener trait, purely for code reuse - see `RowFlattener` and `TableFlattener`. */
 abstract class Flattener[T[_,-_] , S, -A] {
@@ -25,7 +24,7 @@ abstract class Flattener[T[_,-_] , S, -A] {
   def lens[R](l: Lens[R,S]): T[R, A]
   def trivial[R](implicit witness: Unit === S): T[R, A] = {
     val lwitness: Lens[R,Unit] === Lens[R,S] =
-      Leibniz.lift[⊥, ⊥, ⊤, ⊤, ({type λ[α]=Lens[R,α]})#λ, Unit, S](witness)
+      Leibniz.lift[⊥, ⊥, ⊤, ⊤, Lens[R,?], Unit, S](witness)
     lens(Leibniz.subst(Lens.trivialLens[R])(lwitness))
   }
   def local(implicit Z : Monoid[S]) = localState(zeroState)

@@ -8,10 +8,9 @@ import scalaz._
 import scalaz.effect.IO
 import IO._
 import Kleisli._
-import syntax.applicative._
-import syntax.id._
-import syntax.traverse._
-import syntax.monad.{^ => _, _}
+//
+import syntax.traverse.{ToFunctorOps => _, _}
+import syntax.monad._
 import std.stream._
 
 import scalaz.concurrent.{Strategy,Promise}
@@ -196,14 +195,12 @@ abstract class Backend[M[+_]](implicit mon: Monad[M]) {
   def loadM[A](header: Header, e: M[StreamT[Id,Record]], batchSize: Int = 1000): G[TableName] =
     newRefID flatMap (id => loadM(id, header, e, batchSize))
 
-  import IterV._
-
   def loadRecords[A](h: Header, s: Source): M[(IO[Unit], Iteratee[IO, Record, TableName], IO[Unit])] =
     for {
       i <- newRefID(s)
       ref <- create(i, h, TableHints.empty, Hints.empty)(s)
       imbox <- schemaPopulator(Map(TableName(i.toString) -> (i, h)), s)
-      val (pre, im, post) = imbox
+      (pre, im, post) = imbox
     } yield (pre,
              im.xmap((x: Record) => (TableName(i.toString), x), (x: (TableName, Record)) => x._2).
                 map(_ => ref),

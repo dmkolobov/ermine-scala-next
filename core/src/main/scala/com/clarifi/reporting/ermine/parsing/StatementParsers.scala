@@ -2,26 +2,27 @@ package com.clarifi.reporting.ermine.parsing
 
 import java.util.Date
 import java.text.DecimalFormat
+import scalaparsers._
 import com.clarifi.reporting.ermine.syntax._
 import com.clarifi.reporting.ermine.syntax.Statement.{ gatherBindings, checkBindings }
 import TermNameParsers._
 import TypeParsers._
 import TermParsers._
-import ParseState.Lenses._
+import ErParseState.Lenses._
 import PatternParsers.manyPatterns
 import ModuleParsers.moduleName
 import KindParsers.localKind
 import com.clarifi.reporting.ermine._
-import com.clarifi.reporting.ermine.Diagnostic._
+import scalaparsers.Diagnostic._
 import com.clarifi.reporting.ermine.Type.typeVars
 import com.clarifi.reporting.ermine.Term.termVars
-import com.clarifi.reporting.ermine.HasTypeVars._
-import scalaz.{ Name => _, _ }
 import scalaz.Scalaz._
 import scala.collection.immutable.List
 import scala.collection.mutable.{ HashMap, SynchronizedMap }
 
 object StatementParsers {
+  import SI8862._
+
   private val sig: Parser[(TermVar,Type)] = (TermBindingParsers.termDef << keyOp(":")) ++ typ
   private val dataConSig: Parser[(TermVar,Type)] = (DataConParsers.termDef << keyOp(":")) ++ typ
 
@@ -31,14 +32,16 @@ object StatementParsers {
   val fieldDef: Parser[TypeVar] = for {
     p <- loc
     n <- ident
-    cn <- gets(_.canonicalTypes.get(n)) // does it canonicalize to a global?
-    mod <- gets(_.moduleName)
-    n <- cn match {
-      case Some(g : Global) => raise(p, "error: field definition would shadow global type definition")
-      case Some(l : Local)  => unit(l)
-      case None => unit(n)
-    }
-    val l = typeNames.member(n)
+    cns <- gets(_.s.canonicalTypes.get(n)) // does it canonicalize to a global?
+    mod <- gets(_.s.moduleName)
+    //n <- if (cn.exists( _.isType[Global] )) raise(p, "error: field definition would shadow global type definition")
+    n <- if (cns.exists( _.exists( _.isInstanceOf[Global]) )) raise(p, "error: field definition would shadow global type definition")
+         else cns match {
+           case Some( List(l) )  => unit(l)
+           case None => unit(n)
+           case Some( xs ) => raise(p, "error in fieldDef, expected singleton list, got " + xs)
+         }
+    l = typeNames.member(n)
     m <- gets(l.get(_))
     r <- m match {
       case Some(v) => unit(v)
@@ -53,17 +56,17 @@ object StatementParsers {
     p <- loc
     n <- ident
     id <- freshId
-    val l = typeNames.member(n)
+    l = typeNames.member(n)
     old <- gets(l.get(_))
-    val v = V(p, id, Some(n), Bound, Rho(p.inferred))
+    v = V(p, id, Some(n), Bound, Rho(p.inferred))
     _ <- modify(l.set(_, Some(v)))
   } yield v
 
   def explicit(module: String): Parser[Explicit] = for {
     p <- loc
     isTy <- keyword("type").optional map (_.isDefined)
-    src <- name({ case l => l }).map(_.global(module))
-    on <- (keyword("as") >> name({ case l => l })).optional
+    src <- name({ case l => List(l) }).map(_.global(module))
+    on <- (keyword("as") >> name({ case l => List(l) })).optional
     _ <- on match {
       case Some(rename) if src.fixity.con != rename.fixity.con =>
         raise(p, "error: Renaming to different operator type is not supported.")
@@ -95,7 +98,8 @@ object StatementParsers {
     vs ++ t <- (((TermNameParsers.termName << dot).attempt.many ++ TermNameParsers.termDef).sepBy1(comma) << keyOp(":")).attempt ++ typ
   } yield TableStatement(p, dbName, vs, t)
 
-  def sameLine(p: Pos) = Parser((s,_) => if (s.loc.line == p.line) Pure(()) else Fail())
+  def sameLine(p: Pos) =
+    Parser((s,_) => if (s.loc.line == p.line) Pure(()) else Fail()): Parser[Unit]
 
   // TODO: private class blocks, and private class members
   private val privateBlock = for {
@@ -210,7 +214,7 @@ object StatementParsers {
           case Some(ss) =>
             val (is, sigs) = gatherBindings(ss)
             for {
-              p <- checkBindings[Parser](lw, is, sigs)(parserMonad, parserDiagnostic)
+              p <- checkBindings[Parser](lw, is, sigs)
               _ <- p.distinct(lw)
               _ <- p.unbind // I assume we want to add this here - EDS
             } yield Let(lw, p.extract._1, p.extract._2, body)

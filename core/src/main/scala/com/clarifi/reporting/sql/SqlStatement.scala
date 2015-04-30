@@ -1,7 +1,6 @@
 package com.clarifi.reporting
 package sql
 
-import relational._
 import backends._
 
 import scalaz._
@@ -22,7 +21,9 @@ sealed abstract class SqlStatement {
   }
 }
 
-case class SqlIfNotExists(table : TableName, stats : List[SqlStatement]) extends SqlStatement
+case class SqlCreateIfNotExists(table : TableName, prep : List[SqlStatement],
+                                create : SqlStatement, stats : List[SqlStatement])
+    extends SqlStatement
 
 // DDL Data Types
 case class SqlDrop(table: TableName) extends SqlStatement

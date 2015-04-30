@@ -239,15 +239,12 @@ package ermine
  *    searching for a small set of constraints that imply the others.
  */
 
-import scala.util._
-
 import scalaz._
 import Scalaz._
-import Lens._
-import Foldable._
 import Tags._
+import scalaparsers.{Loc, Located, Supply}
+import scalaparsers.Document._
 
-import com.clarifi.reporting.ermine.Document._
 import com.clarifi.reporting.util._
 import StreamTUtils._
 

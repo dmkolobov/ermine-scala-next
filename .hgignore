@@ -8,6 +8,7 @@ syntax: regexp
 ^project/target
 ^target/
 ^(core|utilJavafx|editor|scalacheck-binding)/(target|bin)
+^(core|utilJavafx|editor|scalacheck-binding)/(target|bin)
 ^project/boot/
 ^lib_managed/
 ^build/
@@ -61,3 +62,9 @@ build.info
 glob:*.log
 glob:*.log.*
 glob:*.diff
+syntax: glob
+.metadata/
+Reporting.ipr
+Reporting.iws
+hs_err_pid6976.mdmp
+proj.deps

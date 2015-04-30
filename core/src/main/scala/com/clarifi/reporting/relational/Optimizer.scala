@@ -2,17 +2,17 @@ package com.clarifi.reporting
 package relational
 
 import sql._
-import ReportingUtils._
 import Op._
 
 import scalaz._
 import Scalaz._
 import std.map.mapKeys
-import syntax.monad._
-import syntax.equal._
-import Equal._
+//import syntax.monad._
+//import syntax.monoid._
+//import syntax.equal._
+//import Equal._
 
-import std.vector._
+//import std.vector._
 
 import com.clarifi.machines._
 
@@ -96,7 +96,7 @@ object Optimizer {
         val nh = Typer.augmentType(h, cur, hist)
         (nh, h, AugmentSM(main, cur, hist))
       case LetM(e, expr) => e match {
-        case sm : ExtSM => optimizeMem(Mem.instantiate(EmbedMem(sm), expr), hr, hm)
+        case sm : ExtSM => optimizeMem(Mem.instantiate(EmbedMem(sm), expr): Mem[R,M], hr, hm)
         case ExtRel(r, db) => optimizeRel(r, hr, hm) match {
           case (h, _, optr) =>
             val (eh, _, optexpr) = optimizeMem[R, Option[M]](Mem.fromScope(expr), hr, {
@@ -156,9 +156,9 @@ object Optimizer {
         val (h, uh, optm) = rec(m)
         optm match {
           case AugmentSM(main, cur, hist) if op.columnReferences.forall(uh.contains(_)) =>
-            (h + c.tuple, uh + c.tuple, AugmentSM(flatProjectM(main, headerProj(uh) + (c -> op)), cur, hist))
+            (h + c.tuple, uh + c.tuple, AugmentSM(flatProjectM(main, Header.proj(uh) + (c -> op)), cur, hist))
           case _ =>
-            (h + c.tuple, h + c.tuple, TrivialAugment(flatProjectM(detrivialize(optm), headerProj(h) + (c -> op))))
+            (h + c.tuple, h + c.tuple, TrivialAugment(flatProjectM(detrivialize(optm), Header.proj(h) + (c -> op))))
         }
       case ExceptM(m, cs) =>
         val (h, uh, optm) = rec(m)
@@ -172,7 +172,7 @@ object Optimizer {
         val uh2 = uh + (c -> newType) - attr.name
 
         if (smField(cur, hist, attr.name)) { // we're renaming an SM column, so we can't move under
-          val smCols = headerProj(h2) + (newAttr -> Op.ColumnValue(attr.name, newType))
+          val smCols = Header.proj(h2) + (newAttr -> Op.ColumnValue(attr.name, newType))
           (h2, h2, TrivialAugment(
                      ProjectM(detrivialize(optm),
                               smCols)))
@@ -181,7 +181,7 @@ object Optimizer {
           (h2, uh2, AugmentSM(
                       flatProjectM(
                         main,
-                        headerProj(uh2) + (newAttr -> Op.ColumnValue(attr.name, newType))),
+                        Header.proj(uh2) + (newAttr -> Op.ColumnValue(attr.name, newType))),
                       cur, hist))
                       }
       case AggregateM(m, c, op) =>
@@ -372,7 +372,7 @@ object Optimizer {
                               prjl ++ prjr,
                               Predicates.all(Seq(filtl, filtr))))
     else (h, h, SelectR(List(impurify(sl, jhl), impurify(sr, jhr)),
-                           headerProj(h),
+                           Header.proj(h),
                            Predicate.Atom(true)))
   }
 
@@ -434,10 +434,10 @@ object Optimizer {
     case s@SelectR(rs, _, _) =>
       (headerOf(s, hr, hm), rs.map(headerOf(_, hr, hm)).foldLeft(Map():Header)(_ ++ _), s)
     case LetR(ExtMem( l@Literal(t,ts)), e) if ts.length <= smallLitSize =>
-      optimizeRel(Relation.instantiate(SmallLit( l.nel ), e), hr, hm)
+      optimizeRel[M,R](Relation.instantiate(SmallLit( l.nel ), e), hr, hm)
     case LetR(r, e) =>
       val (h, r2) = optimizeExt(r, hr, hm)
-      val (h2, _, e2) = optimizeRel(Relation.fromScope(e), (r: Option[R]) => r match {
+      val (h2, _, e2) = optimizeRel[M,Option[R]](Relation.fromScope(e), (r: Option[R]) => r match {
         case None => h
         case Some(x) => hr(x)
       }, hm)
@@ -491,12 +491,12 @@ object Optimizer {
 
 object PureSelect {
   def apply[M, R](r: Relation[M, R], h: Header): SelectR[M, R] =
-    SelectR(List(r), headerProj(h), Predicate.Atom(true))
+    SelectR(List(r), Header.proj(h), Predicate.Atom(true))
 
   def unapply[M, R](rel: Relation[M, R], h: Header) =
     rel match {
       case SelectR(List(innerRel), proj, Predicate.Atom(true))
-      if headerProj(h) == proj => Some(innerRel)
+      if Header.proj(h) == proj => Some(innerRel)
       case _ => None
     }
 

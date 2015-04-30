@@ -3,7 +3,6 @@ package sql
 
 import com.clarifi.reporting.backends._
 import com.clarifi.reporting.util.PimpedLogger._
-import com.clarifi.reporting.Reporting._
 import PrimT._
 import DB._
 
@@ -48,7 +47,6 @@ class SqlExecution(implicit emitter: SqlEmitter) {
         logger trace ("Finished executing query")
         def nextRecord: Record = {
           Range(1, cc + 1).map { x =>
-            import java.sql.Types._
             val columnLabel = md.getColumnLabel(x)
             val columnName = emitter.unemitColumnName(columnLabel)
             val columnType = h(columnName)

@@ -1,12 +1,12 @@
 package com.clarifi.reporting.ermine.parsing
-import ParseState.Lenses._
-import com.clarifi.reporting.ermine.Diagnostic._
+import ErParseState.Lenses._
+import scalaparsers.Diagnostic._
 import TypeParsers.unspecifiedType
 import com.clarifi.reporting.ermine._
 
 trait TermNameParser extends NameParser {
-  def termName: Parser[Name]      = get.flatMap(u => name(u.canonicalTerms))
-  def localTermName: Parser[Name] = get.flatMap(u => localName(u.canonicalTerms))
+  def termName: Parser[Name]      = get.flatMap(u => name(u.s.canonicalTerms))
+  def localTermName: Parser[Name] = get.flatMap(u => localName(u.s.canonicalTerms))
 
   // top level definitions which bind local names
   // ->foo<- : Int
@@ -16,7 +16,7 @@ trait TermNameParser extends NameParser {
     n <- termName
     _ <- if (!n.isInstanceOf[Local]) raise(p, "error: term definition would shadow global definition " + n)
          else unit(())
-    val l =  termNames.member(n)
+    l =  termNames.member(n)
     m <- gets(l.get(_))
     r <- m match {
       case Some(v) =>
@@ -34,9 +34,10 @@ trait TermNameParser extends NameParser {
     for {
       p <- loc
       s <- op
-      Some(n) <- gets(_.canonicalTerms.get(Local(s,fix)))
+      //todo: Fix
+      Some(List(n)) <- gets(_.s.canonicalTerms.get(Local(s,fix)))
       if f(n.fixity) // == fix
-      val l = termNames.member(n)
+      l = termNames.member(n)
       m <- gets(l.get(_))
       r <- m match {
         case Some(v) => unit(v at p)
@@ -63,7 +64,7 @@ trait TermNameParser extends NameParser {
   def termVar: Parser[TermVar] = for {
     p <- loc
     n <- termName
-    val l = termNames.member(n)
+    l = termNames.member(n)
     m <- gets(l.get(_))
     r <- m match {
       case Some(v) => unit(v at p)

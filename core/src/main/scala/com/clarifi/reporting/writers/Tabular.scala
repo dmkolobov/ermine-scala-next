@@ -4,10 +4,9 @@ package writers
 import java.util.Date
 import collection.immutable.{IndexedSeq, SortedSet}
 
-import Reporting._
-import scalaz.Scalaz._
-import scalaz.Monad
-import scalaz.std.vector._
+import scalaz.Scalaz._ // TODO: Remove
+import scalaz.{ContravariantCoyoneda => CtCoyo, Monad, Order}
+//import scalaz.std.vector._
 
 import relational._
 
@@ -24,6 +23,16 @@ abstract class Tabular[F[_],A] extends GenTabular[Tabular, F, A] {
   /** Transform the underlying relation - this should not modify the type of this table. */
   def apply(f: ClosedExt => ClosedExt): Tabular[F,A]
 
+  /** Set a software sort to be applied instead of the relational
+    * sort.
+    */
+  def postSort(postSort: CtCoyo[Order, Record]): Tabular[F, A]
+
+  /** @todo if generic, move to GenTabular */
+  def isTransposed: Boolean
+
+  /** @todo if generic, move to GenTabular */
+  def transpose: Tabular[F, A]
 }
 
 /** Operations supported by Tabular and TreeTabular. */
@@ -67,10 +76,10 @@ abstract class GenTabular[Repr[G[_], B] <: GenTabular[Repr, G, B], F[_], A] {
   def clearOrder: Repr[F,A]
 
   /** Answer self with columns relabeled. */
-  def label(labels: Legend[Label]): Repr[F,A]
+  def label(labels: Legend.U[Label]): Repr[F,A]
 
   /** Rules for displaying relations. */
-  def displayRules: Legend[Label]
+  def displayRules: Legend.U[Label]
 
   /** The two-dimensional view, incorporating presentation.  The
     * resulting sequence is in `columnLabels` order.  Using this
@@ -83,8 +92,8 @@ object GenTabular {
   import scalaz.Functor
 
   implicit def covariant[Repr[G[_], B] <: GenTabular[Repr, G, B],
-                         M[_]]: Functor[({type λ[α] = Repr[M, α]})#λ] =
-    new Functor[({type λ[α] = Repr[M, α]})#λ] {
+                         M[_]]: Functor[Repr[M, ?]] =
+    new Functor[Repr[M, ?]] {
       def map[A, B](fa: Repr[M, A])(f: A => B): Repr[M, B] = fa map f
     }
 }
@@ -95,19 +104,21 @@ object Tabular {
   private val _log = org.apache.log4j.Logger.getLogger(classOf[Tabular[Nothing,Nothing]])
 
   def relationRec[F[_]](r: ClosedExt)(implicit S: Scanner[F]): Tabular[F,Record] =
-    new StrictTabular[F,Record](r, IndexedSeq(), (_,t) => t, None)
+    new StrictTabular[F,Record](r, IndexedSeq(), (_,t) => t, None, None, false)
   def timeSeries[F[_]](r: ClosedExt)(implicit S: Scanner[F]): Tabular[F,(String,Date,Double)] =
     relationRec(r).map(t => (t("Label").extractString, t("Timestamp").extractDate, t("Value").extractDouble))
 
   /** Find a reasonable deterministic default #displayRules for the
     * schema `h`. */
-  def displayRecords(h: Header): Legend[ColumnName] =
+  def displayRecords(h: Header): Legend.U[ColumnName] =
     Legend select (SortedSet(h.keys.toSeq:_*).toIndexedSeq, h)
 }
 
 class StrictTabular[F[_],A](r: ClosedExt, val ordering: IndexedSeq[(Label, SortOrder)],
                             extract: (Set[ColumnName], Record) => A,
-                            labels: Option[Legend[Label]])(
+                            postSort: Option[CtCoyo[Order, Record]],
+                            labels: Option[Legend.U[Label]],
+                            val isTransposed: Boolean)(
   implicit B: Scanner[F]) extends Tabular[F,A] {
   implicit val F = B.M
 
@@ -118,10 +129,14 @@ class StrictTabular[F[_],A](r: ClosedExt, val ordering: IndexedSeq[(Label, SortO
   private def scan: F[IndexedSeq[Record]] =
     records match {
       case Some(ts) => ts.pure[F]
-      case _ => B.scanExt(r.out, Process.wrapping[Record], relationalOrder).map(ts => {
-                  records = Some(ts)
-                  ts
-                })
+      case _ => B.scanExt(r.out, Process.wrapping[Record], relationalOrder).map{ts =>
+        val sts = postSort cata (coy => ts.map(coy.k &&& identity)
+                                   .sortBy(_._1)(coy.fi.toScalaOrdering)
+                                   .map(_._2),
+                                 ts)
+        records = Some(sts)
+        sts
+      }
     }
 
   lazy val columnIds = labels.map(_.columnReferences) | r.header.keySet
@@ -142,21 +157,35 @@ class StrictTabular[F[_],A](r: ClosedExt, val ordering: IndexedSeq[(Label, SortO
   private[this] def relationalOrder =
     labels map (_ deriveSort ordering toList) getOrElse ordering.toList
 
-  def slice(start: Int, stop: Option[Int]): F[IndexedSeq[A]] =
-    scan.map(ts => ts.slice(start, stop.getOrElse(ts.length)).map(extract(columnIds, _)))
+  def slice(start: Int, stop: Option[Int]): F[IndexedSeq[A]] = {
+    val stopVal = stop.flatMap(x => if(x<0) None else Some(x))
+    scan.map(ts => ts.slice(start, stopVal.getOrElse(ts.length)).map(extract(columnIds, _)))
+  }
 
-  def map[B](f: A => B): Tabular[F,B] = new StrictTabular[F,B](r, ordering, (cs,t) => f(extract(cs,t)), labels)
+  def map[B](f: A => B): Tabular[F,B] = copy(extract = (cs,t) => f(extract(cs,t)))
 
   def displayRules = labels | displayRecords(r.header)
 
-  def clearOrder = new StrictTabular[F,A](r, IndexedSeq(), extract, labels)
+  def clearOrder = copy(ordering = IndexedSeq())
   def orderBy(order: IndexedSeq[(Tabular.Label, SortOrder)]) =
-    new StrictTabular[F,A](r, displayRules filterSort order, extract, labels)
+    copy(ordering = displayRules filterSort order)
 
-  def label(labels: Legend[Label]) =
-    new StrictTabular[F,A](r, ordering, extract, Some(labels))
+  def postSort(postSort: CtCoyo[Order, Record]): Tabular[F, A] =
+    copy(postSort = Some(postSort))
 
-  def apply(f: ClosedExt => ClosedExt): Tabular[F,A] =
-    new StrictTabular[F,A](f(r), ordering, extract, labels)
+  def label(labels: Legend.U[Label]) = copy(labels = Some(labels))
+
+  def transpose = copy(isTransposed = true)
+
+  def apply(f: ClosedExt => ClosedExt): Tabular[F,A] = copy(r = f(r))
+
+  private[this]
+  def copy[B](r: ClosedExt = r,
+              ordering: IndexedSeq[(Label, SortOrder)] = ordering,
+              extract: (Set[ColumnName], Record) => B = extract,
+              postSort: Option[CtCoyo[Order, Record]] = postSort,
+              labels: Option[Legend.U[Label]] = labels,
+              isTransposed: Boolean = isTransposed) =
+    new StrictTabular[F, B](r, ordering, extract, postSort, labels, isTransposed)
 }
 

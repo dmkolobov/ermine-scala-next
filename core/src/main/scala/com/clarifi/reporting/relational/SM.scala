@@ -1,8 +1,9 @@
 package com.clarifi.reporting
 package relational
 
-import scalaz._
-import Scalaz._
+import scalaz.Equal
+import scalaz.std.string._
+import scalaz.syntax.equal._
 
 import PrimT.{ StringT, DateT }
 

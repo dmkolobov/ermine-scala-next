@@ -1,7 +1,8 @@
 package com.clarifi.reporting
 package ermine
 
-import Document._
+import scalaparsers.Document._
+import scalaparsers.{Applied, Comonadic, Document, Loc, Located, Supply}
 
 import com.clarifi.reporting.ermine.Relocatable.preserveLoc
 import com.clarifi.reporting.ermine.Term.{ termHasTermVars, subTerm, subTermEx, zipTerms, termVars }
@@ -17,13 +18,9 @@ import com.clarifi.reporting.ermine.syntax.{
   ForeignFunctionStatement, ForeignMethodStatement, ForeignValueStatement, ForeignConstructorStatement, ForeignSubtypeStatement, TableStatement, Module
 }
 import com.clarifi.reporting.ermine.syntax.TypeDef.typeDefComponents
-import com.clarifi.reporting.ermine.parsing.{ ParseState }
 import com.clarifi.reporting.ermine.Pretty.{ prettyKind, prettyType }
 import scala.collection.immutable.List
 import scala.collection.mutable.ListBuffer
-import scalaz._
-import scalaz.Free._
-import scalaz.Trampoline._
 import scalaz.Scalaz._
 import Constraints.{ Partition, RHSConcr, RHS }
 import Constraints.Q.{ PQueue }
@@ -115,8 +112,6 @@ class SubstEnv(
  * an appropriate supply, is part of maintaining the invariant that each distinct
  * variable should have a globally unique id.
  */
-
-case class Death(error: Document, base: Exception = null) extends Exception(error.toString, base)
 
 object Subst {
   implicit def substAlias(e: Type)(implicit su: Supply): Type =

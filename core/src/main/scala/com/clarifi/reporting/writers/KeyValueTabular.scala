@@ -4,22 +4,17 @@ package writers
 
 import scalaz.Id._
 import scalaz.{IterV, Monoid, NonEmptyList, Reducer, State => St, StateT}
-import scalaz.std.tuple._
 import scalaz.std.set._
 import scalaz.std.vector._
 import scalaz.syntax.apply._
 import scalaz.syntax.bifunctor._
-import scalaz.syntax.foldable._
+import scalaz.syntax.traverse.{ToFunctorOps => _, ToFunctorOpsUnapply => _, _}
 import scalaz.syntax.id._
 import scalaz.syntax.monoid._
-import scalaz.syntax.state._
 import scalaz.syntax.std.all.ToTuple2Ops
-import scalaz.syntax.std.option._
 
 import com.clarifi.reporting.relational._
 import ReportingUtils._
-
-import com.clarifi.machines._
 
 /** Relation endomorphisms, with legend reification, that require a
   * scan.  The general operator is `dynamicSchema`; other functions are
@@ -34,15 +29,13 @@ object KeyValueTabular {
   private type Traversing[A] = StateT[Id, (Stream[ColumnName],
                                            Map[ColumnName, ColumnName]), A]
 
-  private type VirtualCol = Untangling[(Vector[ClosedExt], Legend[Record])]
-
   /** Replace column references in `tc` with new references.  Answer
     * the old→new name map and replaced `tc`. */
   private def freshenColumns[TC <: TraversableColumns[TC]](tc: TC):
   Untangling[(Map[ColumnName, ColumnName], TC)] = for {
     start <- St.get[(Set[ColumnName], Stream[ColumnName])]
-    val (disallowed, src) = start
-    val ((newsrc, repls), newtc) = tc.traverseColumns[Traversing]{cn =>
+    (disallowed, src) = start
+    ((newsrc, repls), newtc) = tc.traverseColumns[Traversing]{cn =>
       St{case s@(cns, news) =>
            (news get cn map (s ->)
             getOrElse {val safecns = cns dropWhile disallowed
@@ -73,14 +66,18 @@ object KeyValueTabular {
   /** Apply Mem operations matching the join types throughout `t`, if
     * non-empty.
     */
-  private def joinTree[R, M](t: C.Join[Mem[R, M]]): Option[Mem[R, M]] =
+  private def joinTree[R, M](t: C.Join[_, Mem[R, M]]): Option[Mem[R, M]] =
     t match {
       case C.Joinee(a) => Some(a)
       case C.InnerJoin(a) =>
         binaryReduce(a.view map joinTree collect fromJust)(HashInnerJoin.apply)
       case C.OuterJoin(a) =>
         binaryReduce(a.view map joinTree collect fromJust)(MergeOuterJoin.apply)
+      case C.JoinHeading(_, a) => joinTree(a)
     }
+
+  private def joinLegend[G, L, A](join: C.Join[G, C.Single[L, A]]): Legend[G, L] =
+    join.foldGroups(_.singletonLegend[G])((grp, under) => under columnGroup grp)
 
   /** Represent `e` as a Mem, unconditionally. */
   private def mem[M, R](e: Ext[M, R]): Mem[R, M] = e match {
@@ -91,26 +88,25 @@ object KeyValueTabular {
   /** Extract a relation to scan all of `cjoin`, and a legend to
     * match.
     */
-  private def foldJoin[Lbl](cjoin: C.Join[C.Single[Lbl, ClosedExt]]
-                          ): (Option[ClosedExt], Legend[Lbl]) =
+  private def foldJoin[G, Lbl](cjoin: C.Join[G, C.Single[Lbl, ClosedExt]]
+                              ): (Option[ClosedExt], Legend[G, Lbl]) =
     cjoin.count match {
       case 1 =>
-        val single = cjoin.toStream.head
-        (Some(single.data), single.singletonLegend)
+        (Some(cjoin.toStream.head.data), joinLegend(cjoin))
       case _ =>
-        val freshColumns: C.Join[C.Single[Lbl, Ext[Nothing, Nothing]]] =
+        val freshColumns: C.Join[G, C.Single[Lbl, Ext[Nothing, Nothing]]] =
           (cjoin traverse freshenSingle
            eval ((cjoin foldMap (_.data.header.keySet),
                   Stream from 0 map surrogateColName)))
         (joinTree(freshColumns map (_.data |> mem))
            map (joined => ExtMem(Optimizer optimize joined)),
-         freshColumns foldMap (_.singletonLegend))
+         joinLegend(freshColumns))
     }
 
   /** Extract a relation to scan all of `table`, and a legend to
     * match.
     */
-  def dynamicSchema[Lbl](table: C.Table[Lbl, ClosedExt]): (ClosedExt, Legend[Lbl]) = {
+  def dynamicSchema[Lbl](table: C.Table[Lbl, ClosedExt]): (ClosedExt, Legend.U[Lbl]) = {
     val (oce, lg) = foldJoin(table.columns)
     (oce getOrElse ExtMem(EmptyRel(table typedColumnFoldMap
                                      {(c, p) => Vector((c, p))} toMap)),

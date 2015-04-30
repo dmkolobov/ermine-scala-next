@@ -2,6 +2,7 @@ module Layout.Chart where
 
 export Layout.Chart.Type
 import Control.Functor using fmap
+import Either
 import Function
 import Maybe using maybeFunctor
 import Native
@@ -41,16 +42,22 @@ type ScaledChartMode = forall s x y r sr xr yr sa xa ya rel.
                -> rel (|..r|)   -- ^ underlying relation for above
                -> ChartSeries xa ya
 
+-- | An axis label; a tooltip-only label, or a label suitable for use
+-- in both tooltips and on the axis, or neither.
+data AxisLabel = NoAxisLabel
+               | forall t. TooltipOnlyLabel (Atomic t)
+               | forall t. AxisLabel (Atomic t)
+
 -- | A function that produces `z` for axis value types `xa` and `ya`.
-type ChartOptions xa ya z = forall x y.
+type ChartOptions xa ya z = forall x x' y y'.
            Maybe String            -- ^ Chart title.
         -> Direction               -- ^ Orientation.
         -> ChartLegendOptions#     -- ^ Options for the charts legend.
-        -> Maybe (Atomic x)        -- ^ Category axis label.
+        -> AxisLabel               -- ^ Category axis label.
         -> Format xa               -- ^ How to display category.
         -> Bool                    -- ^ Whether to display category axis ticks.
         -> Axis xa                 -- ^ Scaled/unscaled category config.
-        -> Maybe (Atomic y)        -- ^ Value axis label.
+        -> AxisLabel               -- ^ Value axis label.
         -> Format ya               -- ^ How to display value.
         -> Bool                    -- ^ Whether to display value axis ticks.
         -> Axis ya                 -- ^ Scaled/unscaled value config.
@@ -60,52 +67,79 @@ chartW : forall xa ya.
          ChartOptions xa ya (List (ChartSeries xa ya) -- ^ Liftee.
                              -> AxisChart#)
 chartW title ori legOpts catL catF catAx catCons valL valF valAx valCons series =
-   axisChart# (toList# . map ((ChartSeries _ ncs) -> ncs) $ series) $
+   axisChart# (toList# . map ((ChartSeries _ _ _ ncs) -> ncs) $ series) $
      axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts series
 
 axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts series =
-    let nativeAxis lbl = axis# (toMaybe# $ fmap maybeFunctor atomic# lbl)
-     in axisChartData# (nativeAxis catL catF catCons $ toBool# catAx)
-                       (nativeAxis valL valF valCons $ toBool# valAx)
+    let nativeAxis = axisLabel# axis#
+     in unifyTicks# catCons valCons series |> (catCons', valCons') ->
+        axisChartData# (nativeAxis catL catF catCons' $ toBool# catAx)
+                       (nativeAxis valL valF valCons' $ toBool# valAx)
                        (toMaybe# title) (orientation# ori) legOpts
                        (unifyColors# series)
 
 seriesW : ChartVariant# -> ChartMode
 seriesW vari s x y fact =
-  ChartSeries [] (chartSeries# (asPresentation s) (asOp x) (asOp y)
-                               vari (relation# fact))
+  ChartSeries [] [] [] (chartSeries# (asPresentation s) (asOp x) (asOp y)
+                                     vari (relation# fact))
 
-pieChartW w title color cat =
-  pieChart# w (pieChartData# (toMaybe# $ Just title) (pieColors# cat color)) cat
-drilldownPieChartW w title color cat =
-  drilldownPieChart# w (pieChartData# (toMaybe# $ Just title) (pieColors# cat color)) cat
-drilldownPieChart2W w title color cat pres2 cols =
-  drilldownPieChart2# w (pieChartData# (toMaybe# $ Just title) (pieColors# cat color)) cat pres2 (toList# $ fmap listFunctor toPair# cols)
+pieChartW w title legendOptions color cat =
+  pieChart# w (pieChartData# (toMaybe# $ Just title) legendOptions (pieColors# cat color)) cat
+drilldownPieChartW w title legendOptions color cat =
+  drilldownPieChart# w (pieChartData# (toMaybe# $ Just title) legendOptions (pieColors# cat color)) cat
+drilldownPieChart2W w title legendOptions color cat pres2 cols =
+  drilldownPieChart2# w (pieChartData# (toMaybe# $ Just title) legendOptions (pieColors# cat color)) cat pres2 (toList# $ fmap listFunctor toPair# cols)
 
-drilldownBarChart2W w barData cat pres2 cols =
-  drilldownBarChart2# w barData cat pres2 (toList# $ fmap listFunctor toPair# cols)
+drilldownBarChartW : Writer f a -> AxisChartData# -> List ({..cr}, {..cr}) -> List ({..vr}, {..vr}) -> Presentation sr sa -> Presentation cr ca -> Presentation vr va -> String -> String -> Relation# -> f a
+drilldownBarChartW w barData cov vov s c v pid cid dat = drilldownBarChart# w (drilldownBarAxisChart# s c v dat (toPair# (pid, cid)) (rescopeTicks# c v cov vov barData))
+drilldownBarChart2W : Writer f a -> AxisChartData# -> List ({..cr}, {..cr}) -> List ({..vr}, {..vr}) -> Presentation sr sa -> Presentation cr ca -> Presentation vr va -> List (String, String) -> Relation# -> Relation# -> f a
+drilldownBarChart2W w barData cov vov series cat pres2 cols dat root =
+  drilldownBarChart2# w (drilldownBarAxisChart# series cat pres2 dat (toPair# ((toList# $ fmap listFunctor toPair# cols), root)) (rescopeTicks# cat pres2 cov vov barData))
 
 private
   orientation# : Direction -> PlotOrientation#
   orientation# Horizontal = horizontal#
   orientation# Vertical = vertical#
 
-  srecKeys = toList# . map (toPair# . mapFst (scalaRecord# . record#))
+  axisLabel# (c : some z. forall t t'. (Maybe# (EitherZ# (Atomic# t) (Atomic# t'))) -> z)  = me
+    where me NoAxisLabel = cont Nothing
+          me (TooltipOnlyLabel a) = cont . Just . Left . atomic# $ a
+          me (AxisLabel a) = cont . Just . Right . atomic# $ a
+          cont = c . toMaybe# . fmap maybeFunctor toEitherZ#
+
+  srecKeys part = toList# . map (toPair# . part (scalaRecord# . record#))
 
   unifyColors# : List (ChartSeries xa ya)
               -> Map_NM (NonEmpty# PrimExpr#) Color
   unifyColors# = unifyColors## . toList#
-               . map ((ChartSeries c ncs) -> toPair# (ncs, srecKeys c))
+               . map ((ChartSeries c _ _ ncs) -> toPair# (ncs, srecKeys mapFst c))
 
   pieColors# : Presentation r a
             -> List ({..r}, Color)
             -> Map_NM (NonEmpty# PrimExpr#) Color
-  pieColors# pr = rescopePieColors# pr . srecKeys
+  pieColors# pr = rescopePieColors# pr . srecKeys mapFst
+
+  umap f (a, b) = (f a, f b)
+
+  rescopeTicks# : Presentation xr xa -> Presentation yr ya
+               -> List ({..xr}, {..xr}) -> List ({..yr}, {..yr})
+               -> AxisChartData# -> AxisChartData#
+  rescopeTicks# px py ovx ovy =
+    rescopeTicks## px py (srecKeys umap ovx) (srecKeys umap ovy)
+
+  unifyTicks# : Axis xa -> Axis ya -> List (ChartSeries xa ya) -> (Axis xa, Axis ya)
+  unifyTicks# cc vc series =
+    fromPair# $ unifyTicks## (toList# . map explode $ series) cc vc
+    where explode (ChartSeries _ cts vts ncs) =
+            toPair# (ncs, toPair# (srecKeys umap cts, srecKeys umap vts))
 
 foreign
   method "axisChartDMTL" axisChartW : forall f a. Writer f a -> AxisChart# -> f a
   method "pieChartDMTL" pieChart# : forall f a . Writer f a -> PieChartData# -> Presentation r b -> Presentation s c -> Relation# -> f a
+
+  method "treeMapDMTL" treeMap# : forall f a. Writer f a -> String -> String -> Presentation r b -> Presentation s c -> Presentation t d -> Relation# -> f a
+
   method "drilldownPieChartDMTL" drilldownPieChart# : forall f a . Writer f a -> PieChartData# -> Presentation r b -> Presentation s c -> String -> String -> Relation# -> f a
   method "drilldownPieChartDMTL2" drilldownPieChart2# : forall f a . Writer f a -> PieChartData# -> Presentation r b -> Presentation s c -> List# (Pair# String String) -> Relation# -> Relation# -> f a
-  method "drilldownBarChartDMTL" drilldownBarChartW : forall f a cr ca vr va. Writer f a -> AxisChartData# -> Presentation cr ca -> Presentation vr va -> String -> String -> Relation# -> f a
-  method "drilldownBarChartDMTL2" drilldownBarChart2# : forall f a cr ca vr va. Writer f a -> AxisChartData# -> Presentation cr ca -> Presentation vr va ->  List# (Pair# String String) -> Relation# -> Relation# -> f a
+  method "drilldownBarChartDMTL" drilldownBarChart# : Writer f a -> DrilldownBarAxisChart# (Pair# String String) Relation# -> f a
+  method "drilldownBarChartDMTL2" drilldownBarChart2# : Writer f a -> DrilldownBarAxisChart# (Pair# (List# (Pair# String String)) Relation#) Relation# -> f a

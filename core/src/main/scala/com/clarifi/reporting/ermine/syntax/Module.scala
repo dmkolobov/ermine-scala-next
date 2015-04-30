@@ -3,8 +3,8 @@ package com.clarifi.reporting.ermine.syntax
 import com.clarifi.reporting.ermine._
 import scala.collection.immutable.List
 
-import scalaz.Scalaz._
 import scalaz.Monad
+import scalaparsers.{Located, Pos}
 
 case class Module(
   loc: Pos,
