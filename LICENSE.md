@@ -9,8 +9,8 @@ distribution, along with a list of copyright holders.
 Third-Party Code Incorporated in Ermine Scala
 =============================================
 
-Various third-party code under non-copyleft and weak copyleft licenses
-is included as part of Ermine Scala.
+Various third-party code under non-copyleft and weak copyleft open
+source licenses is included as part of Ermine Scala.
 
 
 Anonymous Pro
