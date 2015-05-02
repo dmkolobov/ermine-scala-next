@@ -76,8 +76,8 @@ formal or detailed question.
 Thanks
 ------
 
-Thank you to all contributors to Ermine Writers, most of whom are
-listed in `CONTRIBUTORS.md` in the distribution.
+Thank you to all contributors to Ermine Scala, most of whom are listed
+in `CONTRIBUTORS.md` in the distribution.
 
 The Ermine Scala project was started and continues to be developed at
 McGraw Hill Financial.
