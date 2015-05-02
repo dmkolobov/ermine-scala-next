@@ -8,6 +8,7 @@ List of contributors to Ermine Scala
 * Edward Kmett <ekmett@spcapitaliq.com>
 * Andrew McDonnell <amcdonne@gmail.com>
 * Mat Morton <mmorton@clarifi.com>
+* McGraw Hill Financial
 * Rúnar Bjarnason <runar@higher-order.com>
 * Daniel Peebles <pumpkin@me.com>
 * Daniel Santa Cruz <dstcruz@gmail.com>
