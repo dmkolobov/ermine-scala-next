@@ -44,10 +44,12 @@ Contribute
 ----------
 
 [Contributions][] and [bug reports][] are welcome!  You can submit
-both through Bitbucket.
+both through Bitbucket.  We provide [build instructions][] on the
+wiki.
 
 [contributions]: https://bitbucket.org/ermine-language/ermine-scala/pull-requests
 [bug reports]: https://bitbucket.org/ermine-language/ermine-scala/issues?status=new&status=open
+[build instructions]: https://bitbucket.org/ermine-language/ermine-scala/wiki/Building
 
 Both the `scala-2.9.2` and `default` branches are under active
 development.  `default` is required to always be a descendant of
