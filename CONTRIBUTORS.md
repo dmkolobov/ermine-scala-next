@@ -1,6 +1,7 @@
 List of contributors to Ermine Scala
 ====================================
 
+* Gershom Bazerman <gbazerman@clarifi.com>
 * Dan Bornside <dbornside@spcapitaliq.com>
 * Stephen Compall <s11@member.fsf.org>
 * Josh Cough <joshcough@gmail.com>
