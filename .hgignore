@@ -8,7 +8,6 @@ syntax: regexp
 ^project/target
 ^target/
 ^(core|utilJavafx|editor|scalacheck-binding)/(target|bin)
-^(core|utilJavafx|editor|scalacheck-binding)/(target|bin)
 ^project/boot/
 ^lib_managed/
 ^build/
