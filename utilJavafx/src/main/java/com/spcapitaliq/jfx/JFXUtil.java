@@ -7,7 +7,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import com.spcapitaliq.jfx.node.NodeTraverser;
-import com.sun.javafx.css.StyleManager;
 import javafx.application.Platform;
 import javafx.beans.InvalidationListener;
 import javafx.beans.Observable;
@@ -669,8 +668,8 @@ public final class JFXUtil
       {
         String cssSource = file.toURI().toURL().toString();
         _log.debug( "Loading CSS from: " + cssSource );
-        scene.getStylesheets().add( cssSource );
-        StyleManager.getInstance().reloadStylesheets( scene );
+        scene.getStylesheets().clear();
+        scene.getStylesheets().add(cssSource);
       }
       catch( MalformedURLException murle )
       {
