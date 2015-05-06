@@ -232,8 +232,10 @@ object Optimizer {
   }
 
   /** Rewrite `outer` to operate in `inner`'s context. */
-  private def flattenProjection(outer: Projection, inner: Projection): Projection =
-    outer.mapValues(_.postReplace[Id](cvAttr(inner)))
+  private def flattenProjection(outer: Projection, inner: Projection): Projection = {
+    lazy val inline = cvAttr(inner)
+    outer.transform{case (_, v) => v.postReplace[Id](inline)}
+  }
 
   // Replaces the column references in the keys with column-valued ops.
   def cvAttr(m: Projection): Op => Op =
