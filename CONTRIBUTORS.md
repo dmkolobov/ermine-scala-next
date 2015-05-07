@@ -8,6 +8,7 @@ List of contributors to Ermine Scala
 * Stephen Compall <s11@member.fsf.org>
 * Josh Cough <joshcough@gmail.com>
 * Dan Doel <ddoel@spcapitaliq.com>
+* Alexei Goriainov <agoriainov@clarifi.com>
 * Edward Kmett <ekmett@spcapitaliq.com>
 * Andrew McDonnell <amcdonne@gmail.com>
 * Mat Morton <mmorton@gmail.com>
