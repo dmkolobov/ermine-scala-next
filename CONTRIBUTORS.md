@@ -17,3 +17,7 @@ List of contributors to Ermine Scala
 * Daniel Santa Cruz <dstcruz@gmail.com>
 * Elliot Stern <eliyahu.ben.miney@gmail.com>
 * Jared Wickman <jwickman@clarifi.com>
+* Barb Wilson <barbara_wilson@capitaliq.com>
+
+More specific details can be found
+[on the wiki](https://bitbucket.org/ermine-language/ermine-scala/wiki/Contributors).
