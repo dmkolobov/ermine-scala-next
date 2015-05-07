@@ -10,10 +10,14 @@ List of contributors to Ermine Scala
 * Dan Doel <ddoel@spcapitaliq.com>
 * Edward Kmett <ekmett@spcapitaliq.com>
 * Andrew McDonnell <amcdonne@gmail.com>
-* Mat Morton <mmorton@clarifi.com>
+* Mat Morton <mmorton@gmail.com>
 * McGraw Hill Financial
 * Rúnar Bjarnason <runar@higher-order.com>
 * Daniel Peebles <pumpkin@me.com>
 * Daniel Santa Cruz <dstcruz@gmail.com>
 * Elliot Stern <eliyahu.ben.miney@gmail.com>
 * Jared Wickman <jwickman@clarifi.com>
+* Barb Wilson <barbara_wilson@capitaliq.com>
+
+More specific details can be found
+[on the wiki](https://bitbucket.org/ermine-language/ermine-scala/wiki/Contributors).

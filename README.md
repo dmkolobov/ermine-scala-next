@@ -51,17 +51,14 @@ wiki.
 [bug reports]: https://bitbucket.org/ermine-language/ermine-scala/issues?status=new&status=open
 [build instructions]: https://bitbucket.org/ermine-language/ermine-scala/wiki/Building
 
-Both the `scala-2.9.2` and `default` branches are under active
-development.  `default` is required to always be a descendant of
-`scala-2.9.2`; that is, `scala-2.9.2` must be fully merged to
-`default`.  New features are developed on one branch or the other, but
-there are somewhat stronger stability requirements for `scala-2.9.2`.
-Please talk to us if you are unsure what branch your fix or feature
-should be developed on.
+We have **two** main development branches, not just one: `scala-2.9.2`
+and `default`.  [Check the wiki][Branches] for details, and advice on
+which to base your contribution on.
 
 Also, this project is developed in sync with [Ermine Writers][].  Any
 changes to this one might require coordinated changes to that one.
 
+[Branches]: https://bitbucket.org/ermine-language/ermine-scala/wiki/Branches
 [Ermine Writers]: https://bitbucket.org/ermine-language/ermine-writers
 
 
@@ -79,7 +76,10 @@ Thanks
 ------
 
 Thank you to all contributors to Ermine Scala, most of whom are listed
-in `CONTRIBUTORS.md` in the distribution.
+in `CONTRIBUTORS.md` in the distribution.  Further details of their
+contributions are listed [on the wiki][Contributors].
+
+[Contributors]: https://bitbucket.org/ermine-language/ermine-scala/wiki/Contributors
 
 The Ermine Scala project was started and continues to be developed at
 McGraw Hill Financial.
