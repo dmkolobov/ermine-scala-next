@@ -11,7 +11,7 @@ import Layout.Column.Unsafe using type Table#; column#
 import Layout.Format as Fmt
 import Layout.Legend using type Legend#; type Legend; legend
                            legend#; initialSort#; empty as emptyLegend
-                           (++) as (++_Legend); fromRow
+                           (++) as (++_Legend); fromRow; legendRow
 import Layout.Presentation using type Presentation; asPresentation; rowUsed; basic
 import Layout.Report.DynamicFulcrum
 import Layout.Report.Atomic
@@ -705,7 +705,9 @@ pivotTabular kr srt ml cols rel = orderedScanner srt (project kr rel) go
        ir = rheader rel ` minus ' kr ` minus ' pivotRow (cols $ head ks)
        idLg = maybe (fromRow ir) id ml
      in tabular (Just (idLg ++_Legend lg)) (pivot fu $ asMem rel)
-   Nothing -> tabular Nothing rel
+   Nothing -> case ml of
+     Just lg -> tabular (Just lg) (project (legendRow lg) rel)
+     Nothing -> tabular Nothing rel
    
 drilldownPivotTabular kr srt ml cols labelCol ddl rootf rel = orderedScanner srt (project kr rel) go
  where
@@ -715,7 +717,10 @@ drilldownPivotTabular kr srt ml cols labelCol ddl rootf rel = orderedScanner srt
        idLg = maybe (fromRow ir) id ml
        pivoted = (pivot fu $ asMem rel)
      in drilldownTable2 (Just (idLg ++_Legend lg)) labelCol ddl pivoted (rootf pivoted)
-   Nothing -> tabular Nothing rel
+   Nothing -> case ml of
+     Just lg -> tabular (Just lg) (project (legendRow lg) rel)
+     Nothing -> tabular Nothing rel
+
 
 drilldownPivotTabular' (DynamicFulcrum row srt pivotCol) lgnd ddl rootf rel = drilldownPivotTabular row srt lgnd pivotCol ddl rootf rel
    
