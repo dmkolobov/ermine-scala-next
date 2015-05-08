@@ -97,6 +97,15 @@ object ReportingBuild extends Build {
     }
   }
 
+  /** Depend on log4j, with appropriate exclusions. */
+  lazy val log4jDependency =
+    ("log4j" % "log4j" % "1.2.15"
+       exclude("com.sun.jdmk", "jmxtools")
+       exclude("com.sun.jmx", "jmxri")
+       exclude("javax.jms", "jms")
+       exclude("javax.mail", "mail")
+       exclude("javax.activation", "activation"))
+
   /** Multiply a setting across Compile, Test, Runtime. */
   def compileTestRuntime[A](f: Configuration => Setting[A]): SettingsDefinition =
     Seq(f(Compile), f(Test), f(Runtime))
