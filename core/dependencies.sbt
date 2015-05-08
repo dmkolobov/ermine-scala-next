@@ -15,15 +15,8 @@ libraryDependencies ++= Seq (
   "clarifi"      %% "machines"    % "8819a4a87d998f2cddda808a8d19ac4fc2772c97",
   // TODO: used in writers package that should move out,
   // but would be an annoying refactoring -- JC 4/27/15
-  "jfree" % "jfreechart" % "1.0.1" excludeAll ExclusionRule(organization = "junit"),
+  "jfree" % "jfreechart" % "1.0.1" exclude("junit", "junit"),
   "org.scalacheck" %% "scalacheck" % "1.10.1" % "test"
 )
 
-libraryDependencies +=
-  "log4j" % "log4j" % "1.2.15" excludeAll(
-    ExclusionRule(organization = "com.sun.jdmk"),
-    ExclusionRule(organization = "com.sun.jmx"),
-    ExclusionRule(organization = "javax.jms"),
-    ExclusionRule(organization = "javax.mail"),
-    ExclusionRule(organization = "javax.activation")
-  )
+libraryDependencies += log4jDependency
