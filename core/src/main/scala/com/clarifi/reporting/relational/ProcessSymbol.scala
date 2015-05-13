@@ -41,21 +41,24 @@ object ProcessSymbols {
           doubleFromPrimExpr(r(v.name)))
         )
     }
-
+ */
   // NB: there is not really a good way to handle the case that we are storing
   // the (None) result of a partial function in a non-nullable field
+  private[this]
   def toDoubleExpr(o: Option[Double], nullable: Boolean): PrimExpr = o match {
     case None => if (nullable) NullExpr(DoubleT(nullable))
                  else DoubleExpr(nullable, Double.NaN)
     case Some(d) => DoubleExpr(nullable, d)
   }
   // returns NaN if PrimExpr is null
+  private[this]
   def doubleFromPrimExpr(p: PrimExpr): Double =
     p match {
       case NullExpr(_) => Double.NaN
       case _ => p.extractDouble
     }
 
+/*
   def toProcess[A,B](f: Fold[A,B]): Process[A,B] =
     f.unbind match {
       case Left(r) => toProcess(r)
