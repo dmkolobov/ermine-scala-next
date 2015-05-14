@@ -1,6 +1,6 @@
 package com.clarifi.reporting.relational
 
-
+import scalaz.{Monoid, Reducer}
 import com.clarifi.machines._
 
 import com.clarifi.reporting._
@@ -70,6 +70,21 @@ object ProcessSymbols {
         doubleFromPrimExpr(r(weight.name)),
         doubleFromPrimExpr(r(v.name)))
       )
+
+  private[this]
+  val sum: Process[Double, Double] = {
+    val plus = (m:Double) => (m + (_: Double))
+    // NB: This monoid is illegal. -SMRC
+    Process.reducer(Reducer(identity[Double], plus, plus)
+                           (Monoid.instance(_ + _, 0)))
+  }
+
+  private[this]
+  val dot: Process[NumTuple2, Double] =
+    // NB: This monoid is illegal. -SMRC
+    Process.reducer(Reducer.unitReducer[NumTuple2, Double]
+                      {case (a, b) => a * b}
+                      (Monoid.instance(_ + _, 0)))
 
   /** Removes NaN values from the input. */
   private[this]
