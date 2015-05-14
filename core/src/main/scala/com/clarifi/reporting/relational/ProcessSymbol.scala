@@ -60,12 +60,12 @@ object ProcessSymbols {
   /** Removes NaN values from the input. */
   private[this]
   def composeFilterNaN[A](f: Process[Double, A]): Process[Double, A] =
-    sys.error("todo")
+    Process.filtered((_:Double).isNaN) andThen f
 
   /** Removes tuples whose second element is NaN. */
   private[this]
   def composeFilterNaNPairs[A](f: Process[NumTuple2, A]): Process[NumTuple2, A] =
-    sys.error("todo")
+    Process.filtered((_:NumTuple2)._2.isNaN) andThen f
 
   // NB: there is not really a good way to handle the case that we are storing
   // the (None) result of a partial function in a non-nullable field
