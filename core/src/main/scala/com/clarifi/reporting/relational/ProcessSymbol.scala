@@ -13,35 +13,60 @@ trait ProcessSymbol {
 }
 
 object ProcessSymbols {
+  /** @todo Maybe special double-pair class? */
+  private[relational]
+  type NumTuple2 = (Double, Double)
+
   case class Median(v: Attribute) extends ProcessSymbol {
-    def compile = sys.error("todo") /* toProcess {
-      Numeric.composeFilterNaN(Numeric.median).
-        map(r => Map(v.name -> toDoubleExpr(r, v.t.nullable))).
+    def compile =
+      composeFilterNaN(medianProcess).
+        outmap(r => Map(v.name -> toDoubleExpr(r, v.t.nullable))).
         comap((r: Record) => doubleFromPrimExpr(r(v.name)))
-   } */
     def outputType(h: Header): Header = Map(v.name -> v.t)
   }
 
+  private[relational]
+  def medianProcess: Process[Double, Option[Double]] =
+    sys.error("todo") // toProcess(Numeric.median)
+
   case class WeightedMean(weight: Attribute, v: Attribute) extends ProcessSymbol {
-    def compile = sys.error("todo") //weightedCalc(weight, v, Numeric.weightedMean)
+    def compile = weightedCalc(weight, v, weightedMeanProcess)
     def outputType(h: Header): Header = Map(v.name -> v.t)
   }
+
+  private[relational]
+  def weightedMeanProcess: Process[NumTuple2, Option[Double]] =
+    sys.error("todo") // toProcess(Numeric.weightedMean)
+
   case class WeightedHarmonicMean(weight: Attribute, v: Attribute) extends ProcessSymbol {
-    def compile = sys.error("todo") //weightedCalc(weight, v, Numeric.weightedHarmonicMean)
+    def compile = weightedCalc(weight, v, weightedHarmonicMeanProcess)
     def outputType(h: Header): Header = Map(v.name -> v.t)
   }
-/*
+
+  private[relational]
+  def weightedHarmonicMeanProcess: Process[NumTuple2, Option[Double]] =
+    sys.error("todo") // toProcess(Numeric.weightedHarmonicMean)
+
+  private[this]
   def weightedCalc(weight: Attribute, v: Attribute,
-                   f: Fold[NumTuple2,Option[Double]]): Process[Record,Record] =
-    toProcess {
-      Numeric.composeFilterNaNPairs(f).
-        map { res => Map(v.name -> toDoubleExpr(res, v.t.nullable)) } .
-        comap((r: Record) => NumTuple(
-          doubleFromPrimExpr(r(weight.name)),
-          doubleFromPrimExpr(r(v.name)))
-        )
-    }
- */
+                   f: Process[NumTuple2,Option[Double]]): Process[Record,Record] =
+    composeFilterNaNPairs(f).
+      outmap { res => Map(v.name -> toDoubleExpr(res, v.t.nullable)) } .
+      comap((r: Record) => (
+        doubleFromPrimExpr(r(weight.name)),
+        doubleFromPrimExpr(r(v.name)))
+      )
+
+  /** Removes NaN values from the input. */
+  private[this]
+  def composeFilterNaN[A](f: Process[Double, A]): Process[Double, A] =
+    sys.error("todo")
+
+  /** Removes tuples whose second element is NaN. */
+  private[this]
+  def composeFilterNaNPairs[A](f: Process[NumTuple2, A]): Process[NumTuple2, A] =
+    sys.error("todo")
+
   // NB: there is not really a good way to handle the case that we are storing
   // the (None) result of a partial function in a non-nullable field
   private[this]
@@ -57,6 +82,16 @@ object ProcessSymbols {
       case NullExpr(_) => Double.NaN
       case _ => p.extractDouble
     }
+
+  private[this]
+  final class processComap[A, B](val _fa: Process[A, B]) {
+    def comap[C](f: C => A): Process[C, B] =
+      _fa.inmap(_ compose f)
+  }
+
+  private[this]
+  implicit def processComap[A, B](_fa: Process[A, B]): processComap[A, B] =
+    new processComap(_fa)
 
 /*
   def toProcess[A,B](f: Fold[A,B]): Process[A,B] =
