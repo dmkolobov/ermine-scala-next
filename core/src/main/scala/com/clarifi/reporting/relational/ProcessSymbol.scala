@@ -26,7 +26,7 @@ object ProcessSymbols {
   }
 
   private[relational]
-  def medianProcess: Process[Double, Option[Double]] =
+  lazy val medianProcess: Process[Double, Option[Double]] =
     Process.wrapping[Double] outmap median_
 
   private[this]
@@ -49,7 +49,7 @@ object ProcessSymbols {
   }
 
   private[relational]
-  def weightedMeanProcess: Process[NumTuple2, Option[Double]] =
+  lazy val weightedMeanProcess: Process[NumTuple2, Option[Double]] =
     sys.error("todo") // toProcess(Numeric.weightedMean)
 
   case class WeightedHarmonicMean(weight: Attribute, v: Attribute) extends ProcessSymbol {
@@ -58,7 +58,7 @@ object ProcessSymbols {
   }
 
   private[relational]
-  def weightedHarmonicMeanProcess: Process[NumTuple2, Option[Double]] =
+  lazy val weightedHarmonicMeanProcess: Process[NumTuple2, Option[Double]] =
     sys.error("todo") // toProcess(Numeric.weightedHarmonicMean)
 
   private[this]
