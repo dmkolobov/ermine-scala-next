@@ -27,7 +27,21 @@ object ProcessSymbols {
 
   private[relational]
   def medianProcess: Process[Double, Option[Double]] =
-    sys.error("todo") // toProcess(Numeric.median)
+    Process.wrapping[Double] outmap median_
+
+  private[this]
+  def median_(vs: Iterable[Double]): Option[Double] = {
+    import scala.util.Sorting.quickSort
+    val a = vs.toStream.toArray
+    quickSort(a)
+    val i = a.size / 2
+    if(a.size % 2 > 0)
+      Some(a(i))
+    else if(a.size > 0)
+      Some((a(i) + a(i-1)) / 2)
+    else
+      None
+  }
 
   case class WeightedMean(weight: Attribute, v: Attribute) extends ProcessSymbol {
     def compile = weightedCalc(weight, v, weightedMeanProcess)
