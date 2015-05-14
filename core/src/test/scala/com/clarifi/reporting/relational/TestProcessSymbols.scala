@@ -132,4 +132,33 @@ object TestProcessSymbols extends Properties("process symbol processes") {
         }}}}}
       )
   }}
+
+  include{new Properties("weightedHarmonicMean") {
+    import ProcessSymbols.{weightedMeanProcess, weightedHarmonicMeanProcess}
+    val posDoubleGen = Gen.choose(0.00000001,1000.0) // arbitrary positive
+    val negDoubleGen = posDoubleGen.map(d => -d)
+    val negWeightedValue = for { w <- negDoubleGen; v <- posDoubleGen } yield (w,v)
+
+    property("""a constant-weighted weighted harmonic mean is the same as a
+       weighted mean whose weights are the reciprocals of the values
+       http://en.wikipedia.org/wiki/Harmonic_mean#Relationship_with_other_means""") =
+      forAll(Gen.listOf1(posDoubleGen)){a =>
+        iffReduced(weightedMeanProcess, a.map(v => (1/v,v))){
+          case Some(wm) => iffReduced(weightedHarmonicMeanProcess,
+                                     a.map(v => (1.0,v))){
+            case Some(whm) => wm ~? whm}}}
+
+    property("""Verify that the arithmetic mean is always greater or equal than the
+        harmonic mean
+        http://en.wikipedia.org/wiki/Pythagorean_means""") =
+      forAll(Gen.listOf1(posDoubleGen)){a =>
+        iffReduced(weightedMeanProcess, a.map(v => (1.0,v))){
+          case Some(wm) => iffReduced(weightedHarmonicMeanProcess, a.map(v => (1.0,v))){
+            case Some(whm) => wm >~ whm}}}
+
+    property("verify that harmonic mean is negative if all weights are negative") =
+      forAll(Gen.listOf1(negWeightedValue)){a =>
+        iffReduced(weightedHarmonicMeanProcess, a){
+          case Some(whm) => 0.0 >~ whm}}
+  }}
 }
