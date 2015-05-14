@@ -3,8 +3,9 @@ package relational
 
 import collection.immutable.LinearSeq
 
-import org.scalacheck.{Arbitrary, Gen, Pretty, Prop, Properties}
-import Prop.{extendedAny => _, _}
+import org.scalacheck.{Arbitrary, Gen, Prop, Properties}
+import org.scalacheck.util.Pretty
+import Prop._
 import com.clarifi.machines._
 
 private[relational]
@@ -21,7 +22,7 @@ object ProcessSymbolAux {
       case IndexedSeq(e) => e iff f
     }
 
-  final class FuzzyDouble(private[this] val v: Double) {
+  implicit final class FuzzyDouble(val v: Double) extends AnyVal {
     def epsilon = .00001
     def epsilonEquals(d: Double): Boolean = { 
       if (this.v.isNaN && d.isNaN) true 
@@ -46,9 +47,6 @@ object ProcessSymbolAux {
     }
   }
 
-  /** @todo use implicit class extends AnyVal in default */
-  implicit def FuzzyDouble(v: Double): FuzzyDouble = new FuzzyDouble(v)
-
   def mean(xs: Seq[Double]): Option[Double] =
     if (xs.isEmpty) None else Some(xs.sum / xs.length)
 
@@ -67,7 +65,7 @@ object TestProcessSymbols extends Properties("process symbol processes") {
 
   property("median") = {
     import ProcessSymbols.medianProcess
-    forAll(Gen.listOf1(Gen.choose(-1000.0,1000.0)))(
+    forAll(Gen.nonEmptyListOf(Gen.choose(-1000.0,1000.0)))(
       ns => iffReduced(medianProcess, ns){
         case Some(m) =>
           val sorted = ns.sortWith(_ < _)
@@ -79,7 +77,7 @@ object TestProcessSymbols extends Properties("process symbol processes") {
                            Double.NaN
           ?=(m, expected)
       }) &&
-    forAll(Gen.listOf1(Gen.choose(-1000.0,1000.0)))(
+    forAll(Gen.nonEmptyListOf(Gen.choose(-1000.0,1000.0)))(
       ns => {
         iffReduced(medianProcess, ns){
           case Some(nsmg) =>
@@ -88,7 +86,7 @@ object TestProcessSymbols extends Properties("process symbol processes") {
             else
               ns.contains(nsmg)
         }}) &&
-    forAll(Gen.listOf1(Gen.choose(-1000.0,1000.0)))(
+    forAll(Gen.nonEmptyListOf(Gen.choose(-1000.0,1000.0)))(
       ns => {
         iffReduced(medianProcess, ns){
           case Some(m) =>
@@ -100,7 +98,7 @@ object TestProcessSymbols extends Properties("process symbol processes") {
     import ProcessSymbols.weightedMeanProcess
     val doubleGen = Gen.choose(-10000.0,10000.0) // arbitrary range here
     val pairs = for {
-      d <- Gen.listOf1(doubleGen)
+      d <- Gen.nonEmptyListOf(doubleGen)
       w <- doubleGen
     } yield d.map((w, _))
 
@@ -142,7 +140,7 @@ object TestProcessSymbols extends Properties("process symbol processes") {
     property("""a constant-weighted weighted harmonic mean is the same as a
        weighted mean whose weights are the reciprocals of the values
        http://en.wikipedia.org/wiki/Harmonic_mean#Relationship_with_other_means""") =
-      forAll(Gen.listOf1(posDoubleGen)){a =>
+      forAll(Gen.nonEmptyListOf(posDoubleGen)){a =>
         iffReduced(weightedMeanProcess, a.map(v => (1/v,v))){
           case Some(wm) => iffReduced(weightedHarmonicMeanProcess,
                                      a.map(v => (1.0,v))){
@@ -151,13 +149,13 @@ object TestProcessSymbols extends Properties("process symbol processes") {
     property("""Verify that the arithmetic mean is always greater or equal than the
         harmonic mean
         http://en.wikipedia.org/wiki/Pythagorean_means""") =
-      forAll(Gen.listOf1(posDoubleGen)){a =>
+      forAll(Gen.nonEmptyListOf(posDoubleGen)){a =>
         iffReduced(weightedMeanProcess, a.map(v => (1.0,v))){
           case Some(wm) => iffReduced(weightedHarmonicMeanProcess, a.map(v => (1.0,v))){
             case Some(whm) => wm >~ whm}}}
 
     property("verify that harmonic mean is negative if all weights are negative") =
-      forAll(Gen.listOf1(negWeightedValue)){a =>
+      forAll(Gen.nonEmptyListOf(negWeightedValue)){a =>
         iffReduced(weightedHarmonicMeanProcess, a){
           case Some(whm) => 0.0 >~ whm}}
   }}
