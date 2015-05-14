@@ -84,14 +84,10 @@ object ProcessSymbols {
     }
 
   private[this]
-  final class processComap[A, B](val _fa: Process[A, B]) {
+  implicit final class processComap[A, B](val _fa: Process[A, B]) extends AnyVal {
     def comap[C](f: C => A): Process[C, B] =
       _fa.inmap(_ compose f)
   }
-
-  private[this]
-  implicit def processComap[A, B](_fa: Process[A, B]): processComap[A, B] =
-    new processComap(_fa)
 
 /*
   def toProcess[A,B](f: Fold[A,B]): Process[A,B] =
