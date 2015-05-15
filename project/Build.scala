@@ -83,7 +83,7 @@ object ReportingBuild extends Build {
                             si: ScalaInstance): ScalaInstance = {
     import sbt.classpath.ClasspathUtilities.{makeLoader, rootLoader}
     val extras = dc.view.map(_.data)
-      .filter(_.getPath endsWith "jline.jar").force
+      .filter(_.getPath matches "(?si).*jline[^\\\\/]*\\.jar$").force
     if (extras.isEmpty) si else {
       // si.loader has an incompatible jline loaded into it, so we
       // use rootLoader instead of si.loader.
