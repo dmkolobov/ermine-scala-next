@@ -28,7 +28,7 @@ foreign
   data "com.clarifi.reporting.writers.ChartVariant" ChartVariant#
   data "com.clarifi.reporting.writers.ChartLegendLocation" ChartLegendLocation#
   data "com.clarifi.reporting.writers.ChartLegendOptions" ChartLegendOptions#
-  data "org.jfree.chart.plot.PlotOrientation" PlotOrientation#
+  data "com.clarifi.reporting.writers.ChartOrientation" PlotOrientation#
 
   value "com.clarifi.reporting.writers.Line$" "MODULE$"
       line# : ChartVariant#
@@ -45,8 +45,8 @@ foreign
   value "com.clarifi.reporting.writers.BoxAndWhiskers$" "MODULE$"
       boxAndWhiskers# : ChartVariant#
 
-  value "org.jfree.chart.plot.PlotOrientation" "HORIZONTAL" horizontal# : PlotOrientation#
-  value "org.jfree.chart.plot.PlotOrientation" "VERTICAL" vertical# : PlotOrientation#
+  value "com.clarifi.reporting.writers.ChartOrientation$Horizontal$" "MODULE$" horizontal# : PlotOrientation#
+  value "com.clarifi.reporting.writers.ChartOrientation$Vertical$" "MODULE$" vertical# : PlotOrientation#
 
   value "com.clarifi.reporting.writers.DefaultLocation$" "MODULE$"
       chartLegendDefaultLocation# : ChartLegendLocation#

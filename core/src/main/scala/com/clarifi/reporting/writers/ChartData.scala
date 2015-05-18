@@ -6,8 +6,8 @@ package com.clarifi.reporting
 package writers
 
 import scalaz.{
-  Applicative, Lens, Monoid, NonEmptyList, Order, Ordering, Tag,
-  Traverse
+  Applicative, Cord, Enum, Lens, Monoid, NonEmptyList, Order,
+  Ordering, Show, Tag, Traverse
 }
 import scalaz.Tags.Disjunction
 import scalaz.std.list._
@@ -19,8 +19,6 @@ import scalaz.syntax.equal._
 import scalaz.syntax.traverse._
 
 import java.awt.Color
-import org.jfree.chart.plot.PlotOrientation
-import PlotOrientation.{HORIZONTAL, VERTICAL}
 
 import ChartDesiderata._
 
@@ -111,8 +109,8 @@ object PieChartData extends ((Option[String], PieColors) => PieChartData) {
   * @param domain The category axis.
   * @param range The value axis.
   * @param title Chart title to display, if present.
-  * @param orientation `VERTICAL` if range should run vertically,
-  *                    `HORIZONTAL` otherwise.
+  * @param orientation `Vertical` if range should run vertically,
+  *                    `Horizontal` otherwise.
   * @param colors How to color values, according to series and
   *               category.  Absent mappings will be automatically
   *               colored.
@@ -120,12 +118,12 @@ object PieChartData extends ((Option[String], PieColors) => PieChartData) {
 case class AxisChartData(domain: Axis,
                          range: Axis,
                          title: Option[String] = None,
-                         orientation: PlotOrientation = VERTICAL,
+                         orientation: ChartOrientation = ChartOrientation.Vertical,
                          legendOptions: ChartLegendOptions = ChartLegendOptions.default,
                          colors: AxisColors = Map.empty)
      extends ChartData
 
-object AxisChartData extends ((Axis, Axis, Option[String], PlotOrientation, ChartLegendOptions,
+object AxisChartData extends ((Axis, Axis, Option[String], ChartOrientation, ChartLegendOptions,
                                AxisColors)
                               => AxisChartData) {
   /** Domain lens. */
@@ -152,6 +150,45 @@ object AxisChartData extends ((Axis, Axis, Option[String], PlotOrientation, Char
     implicit val lastColor = Monoid.instance[AxisColors](_ ++ _, Map.empty)
     series foldMap ((rescopeColors _).tupled)
   }
+}
+
+sealed abstract class ChartOrientation extends Product with Serializable {
+  def flip: ChartOrientation
+  def ?|?(o: ChartOrientation): Ordering
+}
+
+object ChartOrientation {
+  case object Vertical extends ChartOrientation {
+    def flip = Horizontal
+    override def toString = "VERTICAL"
+
+    def ?|?(o: ChartOrientation) = o match {
+      case Vertical => Ordering.EQ
+      case Horizontal => Ordering.LT
+    }
+  }
+  case object Horizontal extends ChartOrientation {
+    def flip = Vertical
+    override def toString = "HORIZONTAL"
+
+    def ?|?(o: ChartOrientation) = o match {
+      case Horizontal => Ordering.EQ
+      case Vertical => Ordering.GT
+    }
+  }
+
+  implicit val instance: Enum[ChartOrientation] with Show[ChartOrientation] =
+    new Enum[ChartOrientation] with Show[ChartOrientation] {
+      def succ(co: ChartOrientation) = co.flip
+      def pred(co: ChartOrientation) = co.flip
+      override def min = some(Vertical)
+      override def max = some(Horizontal)
+      override def equalIsNatural = true
+
+      def order(a: ChartOrientation, b: ChartOrientation) = a ?|? b
+
+      override def show(co: ChartOrientation) = co.toString: Cord
+    }
 }
 
 /** Direction-independent description of an axis. */

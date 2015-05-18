@@ -13,9 +13,6 @@ libraryDependencies ++= Seq (
   //"com.microsoft" % "jdbc4" % "4.0",
   "com.clarifi"  %% "f0" % "1.0.1-2.9.2",
   "clarifi"      %% "machines"    % "8819a4a87d998f2cddda808a8d19ac4fc2772c97",
-  // TODO: used in writers package that should move out,
-  // but would be an annoying refactoring -- JC 4/27/15
-  "jfree" % "jfreechart" % "1.0.1" exclude("junit", "junit"),
   "org.scalacheck" %% "scalacheck" % "1.10.1" % "test"
 )
 
