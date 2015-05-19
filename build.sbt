@@ -16,7 +16,7 @@ parallelExecution in ThisBuild := true
 
 name := "ermine-scala"
 
-organization in ThisBuild := "com.clarifi"
+organization in ThisBuild := "com.clarifi.ermine"
 
 version in ThisBuild := "2.0.0-SNAPSHOT"
 
