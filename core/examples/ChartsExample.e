@@ -366,7 +366,7 @@ timeSeriesData = relation [
 scalingTest = chart_K
   ([yFormat_O := percentage_Fmt]_Opt)
   defaultScaled
-  (scaled Ascending (Just (Some 0.05)) Nothing)
+  (scaled Ascending (Just (Some 0.05)) Nothing Linear)
   [line label startDate value timeSeriesData]
 
 dateRangeAxisTest = chart_K
@@ -395,14 +395,11 @@ boxAndWhiskersExample =
 
 
 barTimeSeriesChart =
-  barChart
-    (Just "Price - Close - Monthly Characteristics")
-    (Just $ val "X Axis Label")
-    (Just $ val "Y Axis Label")
-    label
-    (show_Op startDate)
-    value
-    timeSeriesCharacteristicsTable
+  chart_K ([chartTitle_O := "Price - Close - Monthly Characteristics",
+            xLabel_O := val "X Axis Label",
+            yLabel_O := val "Y Axis Label"]_Opt)
+    defaultScaled defaultScaled
+    [bar label startDate value timeSeriesCharacteristicsTable]
 
 chartExample = vflow [ lineTimeSeriesChart, tabular Nothing timeSeriesCharacteristicsTable]
 
@@ -442,24 +439,20 @@ multiSeriesBar = chart_K
   -- [line label groupingName value (groupValueTable |> [| label == "Total Effect" |]),
   [bar label groupingName value groupValueTable]
 
-barChartExample =
-  barChart
-    (Just "Sector Cumulative Attribution")
-    Nothing
-    Nothing
-    label
-    groupingName
-    value
-    groupValueTable
+barChartExample = chart_K
+  ([chartTitle_O := "Sector Cumulative Attribution"]_Opt)
+  defaultUnscaled defaultScaled
+  [categoryTickLabels [({groupingName = "Information Technology"},
+                        {groupingName = "IT"})]
+                      bar label groupingName value groupValueTable]
 
 longWeightsDrilldownBarChart =
-  drilldownBarChart
-    (Just "Portfolio Weight (Long)")
-    Horizontal
-    Nothing
-    defaultUnscaled
-    Nothing
-    defaultScaled
+  drilldownBarChart_K
+    defaultUnscaled defaultScaled
+    ([titleB_O := "Portfolio Weight (Long)"
+     ,yDirectionB_O := Horizontal
+     ,xTicksB_O := [({groupingName = "Infor[ma](http://ma.gov)tion Technology"},
+                     {groupingName = "IT"})]]_Opt)
     groupingName
     value
     parentGroupingId
