@@ -33,6 +33,7 @@ class SqlExecution(implicit emitter: SqlEmitter) {
       def setup: (Driver[Id, K], () => Unit) = {
         // generate the SQL from the SqlQuery
         val query = sql.emitSql
+        val qStart = System.currentTimeMillis
         logger ltrace ("Executing query " |+| query.run)
 
         val stmt = conn.prepareStatement(query.run)
@@ -45,7 +46,10 @@ class SqlExecution(implicit emitter: SqlEmitter) {
         val gmtCalendar = Calendar.getInstance
         gmtCalendar.setTimeZone(util.YMDTriple.ymdPivotTimeZone)
 
-        logger trace ("Finished executing query")
+        val qEnd = System.currentTimeMillis
+        val qDelta = qEnd - qStart
+        logger trace ("Finished executing query -- took " + qDelta + "ms")
+        logger debug ("Query (" |+| query.run |+| ") took " + qDelta + "ms")
         def nextRecord: Record = {
           Range(1, cc + 1).map { x =>
             import java.sql.Types._
