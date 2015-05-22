@@ -68,16 +68,14 @@ object TestOptimizer extends Properties("SQL relation optimizer") {
     }
   }
 
-  val lit = Literal(NonEmptyList(Map("colAA" -> IntExpr(false, 5), "colCC" -> IntExpr(false, 7)),
-                                 Map("colAA" -> IntExpr(false, 4), "colCC" -> IntExpr(false, 8))))
+  val lit = Literal(NonEmptyList(Map("colAA" -> IntExpr(false, 5), "colCC" -> IntExpr(false, 7))))
 
   val caseLit = If(Eq(ColumnValue("colAA",IntT()),OpLiteral(IntExpr(false,5))),
                    OpLiteral(IntExpr(false,7)),
                    OpLiteral(IntExpr(false,8)))
 
   val filtLit = And(Atom(true),
-                    Or(Eq(ColumnValue("colAA",IntT()),OpLiteral(IntExpr(false, 5))),
-                       Eq(ColumnValue("colAA",IntT()),OpLiteral(IntExpr(false, 4)))))
+                    Eq(ColumnValue("colAA",IntT()),OpLiteral(IntExpr(false, 5))))
 
   property("optimize leaf literal") = secure {
     val r = Join(aabbTable, LetR(ExtMem(lit), VarR(RTop)))
@@ -86,7 +84,7 @@ object TestOptimizer extends Properties("SQL relation optimizer") {
         (rs ?= List(aabbTable)) &&
         (prj ?= Map(Attribute("colAA", IntT()) -> ColumnValue("colAA", IntT()),
                     Attribute("colBB", IntT()) -> ColumnValue("colBB", IntT()),
-                    Attribute("colCC", IntT()) -> caseLit)) &&
+                    Attribute("colCC", IntT()) -> OpLiteral(IntExpr(false,7)))) &&
         (filt ?= filtLit) &&
         (h ?= Map("colAA" -> IntT(), "colBB" -> IntT(), "colCC" -> IntT())) &&
         (jh ?= Map("colAA" -> IntT(), "colBB" -> IntT()))
@@ -100,7 +98,7 @@ object TestOptimizer extends Properties("SQL relation optimizer") {
         (rs ?= List(aabbTable)) &&
         (prj ?= Map(Attribute("colAA", IntT()) -> ColumnValue("colAA", IntT()),
                     Attribute("colBB", IntT()) -> ColumnValue("colBB", IntT()),
-                    Attribute("colCC", IntT()) -> caseLit)) &&
+                    Attribute("colCC", IntT()) -> OpLiteral(IntExpr(false,7)))) &&
         (filt ?= filtLit) &&
         (h ?= Map("colAA" -> IntT(), "colBB" -> IntT(), "colCC" -> IntT())) &&
         (jh ?= Map("colAA" -> IntT(), "colBB" -> IntT()))
