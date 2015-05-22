@@ -266,10 +266,11 @@ object Optimizer {
                             sel: SelectR[M, R]): Option[(Header, Header, SelectR[M, R])] = {
     val SelectR(rs, cs, where) = sel
     val jk = h.keySet & hl.keySet
-    val functional = {
-      val tks = ts map (_ filterKeys jk)
-      tks.length == tks.toSet.length
-    }
+    // val functional = {
+    //   val tks = ts map (_ filterKeys jk)
+    //   tks.length == tks.toSet.length
+    // }
+    val functional = ts.size <= 1
     val hr = h ++ hl
     if (functional) {
       val ps = literalAsPredicate(ts.map(_ filterKeys jk))
