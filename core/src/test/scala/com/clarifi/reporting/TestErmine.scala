@@ -388,6 +388,8 @@ object TestErmineModules extends Properties("Ermine library") with ErmineModules
   lazy val sampleModules =
     List(  file("examples", "SoftRelation")
          , file("examples", "HelloWorld")
+         , file("examples", "ChartsExample")
+         , file("examples", "GridExample")
         ) map {fil =>
       new File(fil.getPath |+| ".e")    // std extension
     }
