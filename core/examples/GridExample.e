@@ -10,7 +10,6 @@ import Layout.Report.Keyed.Syntax
 import Ord using lt
 import Relation.Op as Op
 import DateRange as DR
-import Environment.Dev
 
 field label : String
 field startDate : Date
@@ -51,11 +50,9 @@ step1 = stacked1 step
 bar1 = stacked1 bar
 
 flow1 = hflow[ text "hi", text "there" ]
-span1 = hspan[ (Nothing, (text "hi")), (Nothing, (text "there")) ]
+span1 = hspan[ text "hi", text "there" ]
 
 vflow1 = vflow[ (centered flow1), span1 ]
-
-valueGrid l = grid (map_List ((l, r) -> [hugL(style "fix-width-label" $ atomShown l), hugR r]) l)
 
 grid1 = grid [
     [atomShown "Number of Holdings - Total", atomShown "?"],
@@ -67,5 +64,3 @@ grid1 = grid [
 	[atomShown "Short Value", atomShown "?"],
 	[atomShown "Net Equity Value", atomShown "?"]
   ]
-
-runTest = javaFX . prefA [pixelsA 500 500]
