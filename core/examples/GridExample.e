@@ -64,3 +64,15 @@ grid1 = grid [
 	[atomShown "Short Value", atomShown "?"],
 	[atomShown "Net Equity Value", atomShown "?"]
   ]
+
+formattedTextsGrid = grid [
+    [atomShown "Pi", fmt (round_Fmt 2) pi],
+    [atomShown "e", fmt (integralRound_Fmt 5) (exp 1.0)],
+    [atomShown "just 5", fmt (integralRound_Fmt 2) 5.0],
+    [fmt (markdown_Fmt unit_Fmt) "**Pi** slice of *Pie*",
+     fmt percentage_Fmt (1.0 / (2.0 * pi))],
+    [atomShown "Many words",
+     fmt (truncate_Fmt 10) "Are too much for this box"],
+    [atomShown "Fewer words",
+     fmt (truncate_Fmt 20) "will suffice here"]
+  ]
