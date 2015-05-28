@@ -11,6 +11,7 @@ import Layout.Report.Keyed.Syntax
 import Ord using lt
 import Relation.Op as Op
 import DateRange as DR
+import Syntax.Relation
 
 field label : String
 field startDate : Date
