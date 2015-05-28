@@ -94,7 +94,14 @@ field roundFmtTwo, iRoundFmtFive, pctFmt : Double
 
 -- Like formattedTextsGrid, but for tabular and rearranged a bit to
 -- fit, for comparison.
-tabularEquivalentFTG = tabular Nothing -- [()]_FmtFld_Lg
+tabularEquivalentFTG =
+  tabular $ Just ([(unit_Fmt, plainText),
+                   (round_Fmt 2, roundFmtTwo),
+                   (integralRound_Fmt 5, iRoundFmtFive),
+                   (unit_Fmt, plainText2),
+                   (truncate_Fmt 15, truncText),
+                   (markdown_Fmt unit_Fmt, mdText),
+                   (percentage_Fmt, pctFmt)]_FmtFld_Lg)
   $ mem [{plainText = "Pi", roundFmtTwo = pi, iRoundFmtFive = pi},
          {plainText = "e", roundFmtTwo = exp 1.0, iRoundFmtFive = exp 1.0},
          {plainText = "just 5", roundFmtTwo = 5.0, iRoundFmtFive = 5.0}]
