@@ -107,4 +107,4 @@ tabularEquivalentFTG =
          {plainText = "just 5", roundFmtTwo = 5.0, iRoundFmtFive = 5.0}]
   ** mem [{plainText2 = "Many words", truncText = "Are too much for this box"},
           {plainText2 = "Fewer words", truncText = "will suffice"}]
-  ** mem [{mdText = "**Pi** slice of *Pie*", pctFmt = 1.0 / 2.0 * pi}]
+  ** mem [{mdText = "**Pi** slice of *Pie*", pctFmt = 1.0 / (2.0 * pi)}]
