@@ -350,61 +350,6 @@ public class JFXClipboard
     return clipboardString.toString();
   }
 
-  public static String cellToPlainText( Object cell )
-  {
-    if (cell == null)
-      return "";
-
-    if( cell instanceof Node )
-    {
-      if( cell instanceof Parent )
-      {
-        StringBuilder txt = new StringBuilder();
-        plainTextFromParent((Parent)cell, txt);
-        return txt.toString();
-      }
-      return plainTextFromNode((Node)cell);
-    }
-
-    return cell.toString();
-  }
-
-  private static String plainTextFromNode(Node cell)
-  {
-    if (cell instanceof Text)
-    {
-      return ((Text) cell).getText();
-    }
-    if (cell instanceof Labeled)
-    {
-      return ((Labeled) cell).getText();
-    }
-    if (cell instanceof TextInputControl)
-    {
-      return ((TextInputControl) cell).getText();
-    }
-    if (cell instanceof TextInputControl)
-    {
-      return ((TextInputControl) cell).getText();
-    }
-    return "";
-  }
-
-  private static void plainTextFromParent( Parent node, StringBuilder txt )
-  {
-    for( Node child : node.getChildrenUnmodifiable() )
-    {
-      if( child instanceof Parent )
-      {
-        plainTextFromParent((Parent)child, txt);
-      }
-      else
-      {
-        txt.append(cellToPlainText(child));
-      }
-    }
-  }
-
   /**
    * Some columns, like in a drilldown, express a hierarchy. Such a column
    * must be expanded to "synthetic colunns".
