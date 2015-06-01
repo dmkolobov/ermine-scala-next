@@ -17,6 +17,7 @@ object JFXClipboardS {
 
   def cellToPlainText(cell: Any): String = cell match {
     case null => ""
+    case wpt: WithPlainText => wpt.plainText
     case cell: Parent =>
       val txt = new StringBuilder()
       plainTextFromParent(cell, txt)
