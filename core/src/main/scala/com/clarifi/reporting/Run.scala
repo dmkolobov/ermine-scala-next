@@ -9,3 +9,18 @@ package com.clarifi.reporting
 trait Run[G[_]] {
   def run[A](a: G[A]): A
 }
+
+object Run {
+  import scalaz.{Applicative, Name}
+
+  def runLazyM[G[_]](implicit R: Run[G], G: Applicative[G]): util.Lazy.Monad[G] =
+    new util.Lazy.Monad[G] {
+      def point[A](a: => A): G[A] = G.point(a)
+
+      override def map[A, B](fa: G[A])(f: Name[A] => B): G[B] =
+        point(f(Name(R.run(fa))))
+
+      def flatMap[A, B](fa: G[A])(f: Name[A] => G[B]): G[B] =
+        f(Name(R.run(fa)))
+    }
+}
