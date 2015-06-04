@@ -95,14 +95,19 @@ object DB {
   def next(rs: ResultSet): DB[Boolean] =
     c => rs.next
 
+  /** Root of Run[DB]s. */
+  trait RunDB extends Run[DB] {
+    def lazyM = com.clarifi.reporting.Run.runLazyM(this)
+  }
+
   /**
    * String -> String -> DB[A] -> A
    * Takes a driver string, a connection string, and produces a DB-algebra
    * for executing database actions.
    */
-  def Run(driver: String) = {
+  def Run(driver: String): String => Run[DB] = {
     Class.forName(driver)
-    (url: String) => new Run[DB] {
+    (url: String) => new RunDB {
       def run[A](a: DB[A]): A = {
         val conn = DriverManager.getConnection(url)
         try {
@@ -115,7 +120,7 @@ object DB {
     }
   }
 
-  def ProfileRun(runner : Run[DB]) = new Run[DB] {
+  def ProfileRun(runner : Run[DB]): Run[DB] = new RunDB {
     def run[A](a: DB[A]): A = {
       val start = currentTime
       val res = runner.run(a)
@@ -125,9 +130,9 @@ object DB {
     }
   }
 
-  def RunUser(driver: String) = {
+  def RunUser(driver: String): (String, String, String) => Run[DB] = {
     Class.forName(driver)
-    (url: String, user: String, password: String) => new Run[DB] {
+    (url: String, user: String, password: String) => new RunDB {
       def run[A](a: DB[A]): A = {
         val conn = DriverManager.getConnection(url, user, password)
         try { a(conn) }
