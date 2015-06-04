@@ -11,6 +11,9 @@ trait Run[G[_]] {
 }
 
 object Run {
+  /** Retrieve the implicit `Run[G]`. */
+  @inline def apply[G[_]](implicit G: Run[G]): Run[G] = G
+
   /** Runs over limited resources are still required to satisfy the
     * identity law.  This can help in such cases; it also avoids a
     * great deal of resource allocations, provided that you understand
@@ -24,7 +27,6 @@ object Run {
     * @author SMRC
     */
   abstract class ThreadLocal[G[_]] extends ThreadLocalDC[G] {
-    type Resource
     protected def acquire(): Resource
     protected def release(r: Resource): Unit
 
