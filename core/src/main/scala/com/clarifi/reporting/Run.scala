@@ -24,7 +24,6 @@ object Run {
     * @author SMRC
     */
   abstract class ThreadLocal[G[_]] extends ThreadLocalDC[G] {
-    type Resource
     protected def acquire(): Resource
     protected def release(r: Resource): Unit
 
