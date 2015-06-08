@@ -55,8 +55,6 @@ object Runners {
     DB.Run("net.sourceforge.jtds.jdbc.Driver")(connectUrl)
   }
 
-  import DB.RunDB
-
   def fromConnection(conn: Connection): Run[DB] = new RunDB {
     def run[A](a: DB[A]): A = try a(conn) finally { conn.close }
   }

@@ -95,11 +95,6 @@ object DB {
   def next(rs: ResultSet): DB[Boolean] =
     c => rs.next
 
-  /** Root of Run[DB]s. */
-  trait RunDB extends Run[DB] {
-    def lazyM = com.clarifi.reporting.Run.runLazyM(this)
-  }
-
   /**
    * String -> String -> DB[A] -> A
    * Takes a driver string, a connection string, and produces a DB-algebra
@@ -142,4 +137,9 @@ object DB {
   }
 
   lazy val sqliteTestDB = Run("org.sqlite.JDBC")("jdbc:sqlite::memory:")
+}
+
+/** Root of Run[DB]s. */
+trait RunDB extends Run[DB] {
+  def lazyM = com.clarifi.reporting.Run.runLazyM(this)
 }
