@@ -141,5 +141,6 @@ object DB {
 
 /** Root of Run[DB]s. */
 trait RunDB extends Run[DB] {
-  def lazyM = com.clarifi.reporting.Run.runLazyM(this)
+  def suspend[A](ga: DB[A]): DB[Suspendable.O[A]] =
+    Run.runSuspendGM(this, ga)
 }

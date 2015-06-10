@@ -1,45 +1,66 @@
 package com.clarifi.reporting
 
-import util.Lazy
+/** The ability to suspend the computation of any `A` if it comes from
+  * `G`.
+  *
+  * @note law: suspend(ga) map (_.value) == ga | Functor[G]
+  */
+trait Suspendable[G[_]] {
+  import Suspendable._
+  def suspend[A](a: G[A]): G[O[A]]
+}
 
-/** A G-algebra for "running" a value in G
-  * where G is usually some monad.
+object Suspendable {
+  /** Retrieve the implicit `Suspendable[G]`. */
+  @inline def apply[G[_]](implicit G: Suspendable[G]): Suspendable[G] = G
+
+  /** The suspension representable functor currently in use.  Other
+    * candidates are Function0, Need, Callback, (()) => ?.  Here mainly
+    * to make refactoring easier if we decide `Name` isn't good
+    * enough.
+    */
+  type O[+A] = scalaz.Name[A]
+
+  @inline def O[A](a: => A): O[A] = scalaz.Name(a)
+
+  /** Invoke the `suspend` method on the `Suspendable` instance in
+    * scope.
+    */
+  @inline def suspendG[G[_], A](ga: G[A])(implicit G: Suspendable[G])
+      : G[O[A]] =
+    G suspend ga
+}
+
+/** A G-algebra for "running" a value in G where G is usually some
+  * monad.
+  *
+  * Scala doesn't have DefaultSignatures, but you can usually start
+  * with:
+  *
+  * {{{
+  *   def suspend[A](ga: G[A]): G[Suspendable.O[A]] =
+  *     Run.runSuspendGM(this, ga)
+  * }}}
   *
   * @note identity law: run(fa) == run(run(fa).point[G]) | Applicative[G]
   * @note distributive law: run(f)(run(fa)) == run(fa <*> f) | Apply[G]
   */
-trait Run[G[_]] {
+trait Run[G[_]] extends Suspendable[G] {
   def run[A](a: G[A]): A
-
-  /** A lazy monad that may exploit the `run`.  A good default for
-    * efficient `run` is `Run.runLazyM(this)`.
-    *
-    * NB: If Scala had DefaultSignatures
-    * <https://downloads.haskell.org/~ghc/7.10.1/docs/html/users_guide/type-class-extensions.html#class-default-signatures>
-    * we could default that definition.  Oh well.
-    */
-  def lazyM: Lazy.Monad[G]
 }
 
 object Run {
   /** Retrieve the implicit `Run[G]`. */
   @inline def apply[G[_]](implicit G: Run[G]): Run[G] = G
 
-  import scalaz.{Applicative, Name}
+  import scalaz.Applicative
 
-  /** A default definition for `Run#lazyM` built on `#run` and
+  /** A default definition for `Run#suspend` built on `#run` and
     * `G.point`.
     */
-  def runLazyM[G[_]](R: Run[G])(implicit G: Applicative[G]): Lazy.Monad[G] =
-    new Lazy.Monad[G] {
-      def point[A](a: => A): G[A] = G.point(a)
-
-      override def map[A, B](fa: G[A])(f: Name[A] => B): G[B] =
-        point(f(Name(R.run(fa))))
-
-      def flatMap[A, B](fa: G[A])(f: Name[A] => G[B]): G[B] =
-        f(Name(R.run(fa)))
-    }
+  def runSuspendGM[G[_], A](R: Run[G], ga: G[A])(implicit G: Applicative[G])
+      : G[Suspendable.O[A]] =
+    G.point(Suspendable.O(R.run(ga)))
 
   /** Runs over limited resources are still required to satisfy the
     * identity law.  This can help in such cases; it also avoids a
