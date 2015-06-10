@@ -35,7 +35,7 @@ object Suspendable {
       @inline def suspendG(implicit G: Suspendable[G]): G[O[A]] = G suspend _self
     }
 
-    @inline def `Suspend syntax`[G[_], A](_self: G[A]): `Suspend syntax`[G, A] =
+    @inline implicit def `Suspend syntax`[G[_], A](_self: G[A]): `Suspend syntax`[G, A] =
       new `Suspend syntax`(_self)
   }
 }
