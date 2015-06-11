@@ -1,18 +1,75 @@
 package com.clarifi.reporting
 
-/** A G-algebra for "running" a value in G
-  * where G is usually some monad.
+/** The ability to suspend the computation of any `A` if it comes from
+  * `G`.
+  *
+  * @note law: suspend(ga) map (_.value) == ga | Functor[G]
+  */
+trait Suspendable[G[_]] {
+  import Suspendable._
+  def suspend[A](a: G[A]): G[O[A]]
+}
+
+object Suspendable {
+  /** Retrieve the implicit `Suspendable[G]`. */
+  @inline def apply[G[_]](implicit G: Suspendable[G]): Suspendable[G] = G
+
+  /** The suspension representable functor currently in use.  Other
+    * candidates are Function0, Need, Callback, (()) => ?.  Here mainly
+    * to make refactoring easier if we decide `Name` isn't good
+    * enough.
+    */
+  type O[+A] = scalaz.Name[A]
+
+  @inline def O[A](a: => A): O[A] = scalaz.Name(a)
+
+  /** Invoke the `suspend` method on the `Suspendable` instance in
+    * scope.
+    */
+  @inline def suspendG[G[_], A](ga: G[A])(implicit G: Suspendable[G])
+      : G[O[A]] =
+    G suspend ga
+
+  object Syntax {
+    /* implicit */ final class `Suspend syntax`[G[_], A](val _self: G[A]) /* extends AnyVal */ {
+      @inline def suspendG(implicit G: Suspendable[G]): G[O[A]] = G suspend _self
+    }
+
+    @inline implicit def `Suspend syntax`[G[_], A](_self: G[A]): `Suspend syntax`[G, A] =
+      new `Suspend syntax`(_self)
+  }
+}
+
+/** A G-algebra for "running" a value in G where G is usually some
+  * monad.
+  *
+  * Scala doesn't have DefaultSignatures, but you can usually start
+  * with:
+  *
+  * {{{
+  *   def suspend[A](ga: G[A]): G[Suspendable.O[A]] =
+  *     Run.runSuspendGM(this, ga)
+  * }}}
   *
   * @note identity law: run(fa) == run(run(fa).point[G]) | Applicative[G]
   * @note distributive law: run(f)(run(fa)) == run(fa <*> f) | Apply[G]
   */
-trait Run[G[_]] {
+trait Run[G[_]] extends Suspendable[G] {
   def run[A](a: G[A]): A
 }
 
 object Run {
   /** Retrieve the implicit `Run[G]`. */
   @inline def apply[G[_]](implicit G: Run[G]): Run[G] = G
+
+  import scalaz.Applicative
+
+  /** A default definition for `Run#suspend` built on `#run` and
+    * `G.point`.
+    */
+  def runSuspendGM[G[_], A](R: Run[G], ga: G[A])(implicit G: Applicative[G])
+      : G[Suspendable.O[A]] =
+    G.point(Suspendable.O(R.run(ga)))
 
   /** Runs over limited resources are still required to satisfy the
     * identity law.  This can help in such cases; it also avoids a
