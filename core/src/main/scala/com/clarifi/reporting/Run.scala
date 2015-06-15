@@ -31,12 +31,9 @@ object Suspendable {
     G suspend ga
 
   object Syntax {
-    /* implicit */ final class `Suspend syntax`[G[_], A](val _self: G[A]) /* extends AnyVal */ {
+    implicit final class `Suspend syntax`[G[_], A](val _self: G[A]) extends AnyVal {
       @inline def suspendG(implicit G: Suspendable[G]): G[O[A]] = G suspend _self
     }
-
-    @inline implicit def `Suspend syntax`[G[_], A](_self: G[A]): `Suspend syntax`[G, A] =
-      new `Suspend syntax`(_self)
   }
 }
 
