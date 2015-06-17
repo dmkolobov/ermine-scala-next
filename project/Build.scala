@@ -25,6 +25,11 @@ object ReportingBuild extends Build {
       fullRunInputTask(repl, Compile, "com.clarifi.reporting.ermine.session.Console")
                          )
 
+  lazy val examples = Project( id = "examples"
+    , base = file("core") / "examples"
+    , settings = projectSettings
+  )
+
   lazy val utilJavafx = Project( id = "utilJavafx"
     , base = file("utilJavafx")
     , settings = projectSettings
@@ -45,7 +50,7 @@ object ReportingBuild extends Build {
 
   /** List of projects we actually publish. */
   def publishedProjects[A](implicit bc: Project => A): Seq[A] =
-    Seq(core, utilJavafx, ermineEditor, scalacheckBinding)
+    Seq(core, examples, utilJavafx, ermineEditor, scalacheckBinding)
 
   private[this] def cons[A](a: A, as: Seq[A]) = a +: as // Scala is weird.
 

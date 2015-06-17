@@ -139,19 +139,21 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
   }
 
   lazy val srcRoot =
-    unfold(new File(Thread.currentThread
-                          .getContextClassLoader
-                          .getResource("com/clarifi/reporting/TestErmine$.class")
-                          .toURI)) (
-          (file:File) => Option(file).map(_.getParentFile).map(x => (x,x)))
-     // On the next line, the file it was looking for was build.sbt
-     // However, when building on a Mac, it makes sense to delete your
-     // build.sbt since you need to make some mac specific changes to paths
-     // to network files and change the line endings to unix style and don't want
-     // to accidentally check it into source control.
-     // So, test for the presence of /src instead.  -- EDS
-     .find(new File(_, "/src").exists)
-     .getOrElse(sys.error("not in an SBT tree"))
+    Some(Thread.currentThread
+           .getContextClassLoader
+           .getResource("com/clarifi/reporting/TestErmine$.class")
+           .toURI)
+      .filter(u => "file" equalsIgnoreCase u.getScheme)
+      .flatMap{u =>
+      unfold(new File(u)) (
+        (file:File) => Option(file).map(_.getParentFile).map(x => (x,x)))
+        // On the next line, the file it was looking for was build.sbt
+        // However, when building on a Mac, it makes sense to delete your
+        // build.sbt since you need to make some mac specific changes to paths
+        // to network files and change the line endings to unix style and don't want
+        // to accidentally check it into source control.
+        // So, test for the presence of /src instead.  -- EDS
+        .find(new File(_, "/src").exists)}
 
   def unexceptional(p: => Prop): Prop = try {
     p
@@ -361,9 +363,14 @@ trait ErmineModulesProperties {self: Properties =>
 
   def testModules: Stream[String]
 
-  def sampleModules: List[File]
+  def sampleModules: List[String]
 
-  def sampleRoot: File = srcRoot
+  def sampleRoot: SourceFile.Loader = {
+    import SourceFile._
+    val cl: Loader = classloader("com/clarifi/reporting/examples")
+    srcRoot.map(sr => inOrder(filesystem(new File(sr, "examples").getPath), cl))
+      .getOrElse(cl)
+  }
 
   property("all modules load") =
     sessionProof(implicit s =>
@@ -374,8 +381,11 @@ trait ErmineModulesProperties {self: Properties =>
       loadModules(testModules.toList))
 
   property("all interesting examples load") =
-    sessionProof(implicit s => sampleModules.toStream.map(mod =>
-      Filesystem(new File(sampleRoot.getPath, mod.getPath).getPath)).foreach(load(_)))
+    sessionProof{implicit s =>
+      sampleModules
+        .traverseU(mod => sampleRoot.apply(mod) \/> mod)
+        .fold(mod => false :| ("example " + mod + " not found"),
+              _.foreach(load(_)))}
 }
 
 object TestErmineModules extends Properties("Ermine library") with ErmineModulesProperties {
@@ -394,11 +404,8 @@ object TestErmineModules extends Properties("Ermine library") with ErmineModules
     Stream("Layout.Report.KeyedTest")
 
   lazy val sampleModules =
-    List(  file("examples", "SoftRelation")
-         , file("examples", "HelloWorld")
-         , file("examples", "ChartsExample")
-         , file("examples", "GridExample")
-        ) map {fil =>
-      new File(fil.getPath |+| ".e")    // std extension
-    }
+    List("SoftRelation"
+       , "HelloWorld"
+       , "ChartsExample"
+       , "GridExample")
 }
