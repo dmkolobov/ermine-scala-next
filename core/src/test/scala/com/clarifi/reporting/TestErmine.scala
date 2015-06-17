@@ -376,7 +376,7 @@ trait ErmineModulesProperties {self: Properties =>
     sessionProof{implicit s =>
       sampleModules
         .traverseU(mod => sampleRoot.apply(mod) \/> mod)
-        .fold(mod => false :| ("example " + mod + " not found"),
+        .fold(mod => throw Death("example " + mod + " not found"),
               _.foreach(load(_)))}
 }
 
