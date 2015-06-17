@@ -138,7 +138,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
       .filter(u => "file" equalsIgnoreCase u.getScheme)
       .flatMap{u =>
       unfold(new File(u)) (
-        (file:File) => Option(file).map(_.getParentFile).map(x => (x,x)))
+        (file:File) => Option(file).map(_.getParentFile).fpair)
         // On the next line, the file it was looking for was build.sbt
         // However, when building on a Mac, it makes sense to delete your
         // build.sbt since you need to make some mac specific changes to paths
