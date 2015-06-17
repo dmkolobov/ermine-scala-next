@@ -1,6 +1,5 @@
 scalacOptions ~= (so => (so filterNot Set("-unchecked", "-Xlint"))
-                    ++ Seq("-Ywarn-nullary-override", "-Ywarn-inaccessible",
-                           "-Ydependent-method-types"))
+                    ++ Seq("-Ywarn-nullary-override", "-Ywarn-inaccessible"))
 
 name := "ermine-scala-core"
 
