@@ -4,6 +4,10 @@ scalacOptions ~= (so => (so filterNot Set("-unchecked", "-Xlint"))
 
 name := "ermine-scala-core"
 
+// Include (main) sources from scalacheck-binding in our (test).
+unmanagedSourceDirectories in Test <++=
+  (unmanagedSourceDirectories in Compile in scalacheckBinding)(identity)
+
 //logLevel := Level.Debug
 
 // We're still using scala-iterv; we know, so stop telling us.
