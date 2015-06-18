@@ -4,6 +4,7 @@ import sbt._
 import Keys._
 
 object ReportingBuild extends Build {
+  val clarifiMode         = SettingKey[Boolean]("clarifi-mode", "Set distribution settings for local publication.")
   val goodJavascripts     = TaskKey[Seq[File]]("good-javascripts", "Paths to Javascript sources we should test.")
   val allUnmanagedResourceDirectories = SettingKey[Seq[File]]("all-unmanaged-resource-directories", "unmanaged-resource-directories, transitively.")
   val ensureNoUncommitted = TaskKey[Unit]("ensure-no-uncommitted", "Fails if there are any uncommitted changes")
@@ -74,6 +75,10 @@ object ReportingBuild extends Build {
   /** Multiply a setting across Compile, Test, Runtime. */
   def compileTestRuntime[A](f: Configuration => Setting[A]): SettingsDefinition =
     seq(f(Compile), f(Test), f(Runtime))
+
+  /** Update for local publication. */
+  def withClarifiMode[T](k: SettingKey[T])(f: T => T) =
+    k <<= (k, clarifiMode in ThisBuild)((o, cm) => if (cm) f(o) else o)
 
   /** Filter messages sent through loggers produced by `coreLogMgr`.
     *
