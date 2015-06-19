@@ -5,6 +5,7 @@ import Keys._
 
 object ReportingBuild extends Build {
   val clarifiMode         = SettingKey[Boolean]("clarifi-mode", "Set distribution settings for local publication.")
+  val artifactNameNormalizer = SettingKey[String => String]("artifact-name-normalizer", "Add standard elements to the artifact name")
   val goodJavascripts     = TaskKey[Seq[File]]("good-javascripts", "Paths to Javascript sources we should test.")
   val allUnmanagedResourceDirectories = SettingKey[Seq[File]]("all-unmanaged-resource-directories", "unmanaged-resource-directories, transitively.")
   val ensureNoUncommitted = TaskKey[Unit]("ensure-no-uncommitted", "Fails if there are any uncommitted changes")

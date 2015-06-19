@@ -2,6 +2,15 @@
 
 clarifiMode in ThisBuild := ("true" == System.getProperty("clarifi.mode"))
 
+withClarifiMode(version in ThisBuild){o =>
+  val hash = ("hg id" !!) takeWhile (c => c.isLetter || c.isDigit)
+  hash
+}
+
+withClarifiMode(artifactNameNormalizer in ThisBuild){o =>
+  s => o(s) + "_1.0.0"
+}
+
 withClarifiMode(publishMavenStyle in ThisBuild){o =>
   false
 }

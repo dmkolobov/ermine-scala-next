@@ -1,6 +1,6 @@
 scalacOptions <<= scalacOptions in core
 
-name := "ermine-scala-core-scalacheck-binding"
+name <<= artifactNameNormalizer(_("scala-core-scalacheck-binding"))
 
 //logLevel := Level.Debug
 

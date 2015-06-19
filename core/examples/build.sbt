@@ -1,4 +1,4 @@
-name := "ermine-scala-examples"
+name <<= artifactNameNormalizer(_("scala-examples"))
 
 autoScalaLibrary := false
 
