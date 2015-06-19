@@ -2,10 +2,6 @@
 
 clarifiMode in ThisBuild := ("true" == System.getProperty("clarifi.mode"))
 
-withClarifiMode(crossVersion in ThisBuild){o =>
-  CrossVersion.Disabled
-}
-
 withClarifiMode(version in ThisBuild){o =>
   val hash = ("hg id" !!) takeWhile (c => c.isLetter || c.isDigit)
   hash
