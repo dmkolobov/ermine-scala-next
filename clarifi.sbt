@@ -8,7 +8,7 @@ withClarifiMode(version in ThisBuild){o =>
 }
 
 withClarifiMode(artifactNameNormalizer in ThisBuild){o =>
-  s => o(s) + "_1.0.0"
+  s => o(s) + "_2.0.0"
 }
 
 withClarifiMode(publishMavenStyle in ThisBuild){o =>
