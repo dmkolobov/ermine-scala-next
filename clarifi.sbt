@@ -8,7 +8,11 @@ withClarifiMode(version in ThisBuild){o =>
 }
 
 withClarifiMode(artifactNameNormalizer in ThisBuild){o =>
-  s => o(s) + "_2.0.0"
+  // Don't use dots (.) in the artifact name; these get transformed by
+  // later sbt, presumably because they shouldn't have been allowed.
+  // By convention, we replace all . with -, which is what sbt 0.13.5
+  // does.
+  s => o(s) + "_2-0-0"
 }
 
 withClarifiMode(publishMavenStyle in ThisBuild){o =>
