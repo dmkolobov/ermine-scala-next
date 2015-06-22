@@ -138,23 +138,6 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
     }
   }
 
-  lazy val srcRoot =
-    Some(Thread.currentThread
-           .getContextClassLoader
-           .getResource("com/clarifi/reporting/TestErmine$.class")
-           .toURI)
-      .filter(u => "file" equalsIgnoreCase u.getScheme)
-      .flatMap{u =>
-      unfold(new File(u)) (
-        (file:File) => Option(file).map(_.getParentFile).fpair)
-        // On the next line, the file it was looking for was build.sbt
-        // However, when building on a Mac, it makes sense to delete your
-        // build.sbt since you need to make some mac specific changes to paths
-        // to network files and change the line endings to unix style and don't want
-        // to accidentally check it into source control.
-        // So, test for the presence of /src instead.  -- EDS
-        .find(new File(_, "/src").exists)}
-
   def unexceptional(p: => Prop): Prop = try {
     p
   } catch { case _ => false: Prop }
@@ -367,9 +350,10 @@ trait ErmineModulesProperties {self: Properties =>
 
   def sampleRoot: SourceFile.Loader = {
     import SourceFile._
-    val cl: Loader = classloader("com/clarifi/reporting/examples")
-    srcRoot.map(sr => inOrder(filesystem(new File(sr, "examples").getPath), cl))
-      .getOrElse(cl)
+    val examples = file("core", "examples")
+    assert(examples.exists, "You moved the examples; fix sampleRoot!")
+    inOrder(filesystem(examples.getPath),
+            classloader("com/clarifi/reporting/examples"))
   }
 
   property("all modules load") =
