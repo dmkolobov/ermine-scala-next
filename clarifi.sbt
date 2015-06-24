@@ -3,8 +3,13 @@
 clarifiMode in ThisBuild := ("true" == System.getProperty("clarifi.mode"))
 
 withClarifiMode(version in ThisBuild){o =>
+  // adapted from sbt project/Util.scala generateVersionFile
+  import java.util.{Date, TimeZone}
+  val formatter = new java.text.SimpleDateFormat("yyyyMMdd.HHmmss")
+  formatter.setTimeZone(TimeZone.getTimeZone("GMT"))
+  val timestamp = formatter.format(new Date)
   val hash = ("hg id" !!) takeWhile (c => c.isLetter || c.isDigit)
-  hash
+  timestamp + "." + hash
 }
 
 withClarifiMode(artifactNameNormalizer in ThisBuild){o =>
