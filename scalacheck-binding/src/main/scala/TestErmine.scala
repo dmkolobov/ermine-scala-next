@@ -343,7 +343,6 @@ trait ErmineModulesProperties {self: Properties =>
   def sampleRoot: SourceFile.Loader = {
     import SourceFile._
     val examples = file("core", "examples")
-    assert(examples.exists, "You moved the examples; fix sampleRoot!")
     inOrder(filesystem(examples.getPath),
             classloader("com/clarifi/reporting/examples"))
   }
