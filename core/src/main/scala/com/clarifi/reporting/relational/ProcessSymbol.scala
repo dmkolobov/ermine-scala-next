@@ -131,6 +131,23 @@ object ProcessSymbols {
     new processComap(_fa)
 
   private[this]
+  final class `reducer ***`[C, M](private val _self: Reducer[C, M]) {
+    @inline def ***[D, N](r: Reducer[D, N]): Reducer[(C, D), (M, N)] = {
+      import scalaz.std.tuple._
+      implicit val mm = _self.monoid
+      implicit val mn = r.monoid
+      Reducer.reducer[(C, D), (M, N)](
+        {case (c, d) => (_self.unit(c), r.unit(d))},
+        {case (c, d) => {case (m, n) => (_self.cons(c, m), r.cons(d, n))}},
+        {case (m, n) => {case (c, d) => (_self.snoc(m, c), r.snoc(n, d))}})
+    }
+  }
+
+  @inline private[this]
+  implicit def `reducer ***`[C, M](_self: Reducer[C, M])
+    : `reducer ***`[C, M] = new `reducer ***`(_self)
+
+  private[this]
   implicit def `contravariant Reducer`[M]: Contravariant[({type λ[α] = Reducer[α, M]})#λ] =
     new Contravariant[({type λ[α] = Reducer[α, M]})#λ] {
       def contramap[A, B](fa: Reducer[A, M])(f: B => A): Reducer[B, M] =
