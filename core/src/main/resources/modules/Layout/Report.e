@@ -1250,6 +1250,7 @@ drilldownPieChart : forall d id prl prd r r0 r1 r2 label lv z rel .
 drilldownPieChart title legOpt color labelPres dataPres parentId childId fact = Report $ w ->
   drilldownPieChartW w title legOpt color (asPresentation labelPres) (asPresentation dataPres)
                      (fieldName parentId) (fieldName childId) (relation# fact)
+
 -- | A drilldown bar chart.
 drilldownBarChart : forall f spr sr sa cpr cr ca vpr vr va pi ci id r z rel .
                     (exists o . r <- (sr, cr, vr, pi, ci, o),

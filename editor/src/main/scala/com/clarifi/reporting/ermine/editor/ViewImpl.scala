@@ -1983,6 +1983,8 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
 
     def handleKey[F[_],E,S](editor: Editor[F,E,S,Node])(ke: KeyEvent): Unit =
       KeyBinding(ke) match {
+        case KeyBinding(KeyCode.SPACE,NoModifier) |
+             KeyBinding(KeyCode.ENTER,NoModifier) => doAtCaret(p => editAt(editor)(p))
         case KeyBinding(KeyCode.N,CtrlMod)        => newBinding(editor)
         case KeyBinding(KeyCode.A,Combo(CtrlMod,ShiftMod)) => doAtCaret(p => addArgument(editor)(p))
         case KeyBinding(KeyCode.DOWN,CtrlMod)     => moveCaret(editor)(_.down())
@@ -1991,8 +1993,6 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
         case KeyBinding(KeyCode.RIGHT,NoModifier) => moveCaret(editor)(_.right())
         case KeyBinding(KeyCode.RIGHT,CtrlMod)    => moveCaret(editor)(_.nextHole())
         case KeyBinding(KeyCode.LEFT,CtrlMod)     => moveCaret(editor)(_.prevHole())
-        case KeyBinding(KeyCode.SPACE,NoModifier) |
-             KeyBinding(KeyCode.ENTER,NoModifier) => doAtCaret(p => editAt(editor)(p))
         case KeyBinding(KeyCode.E,CtrlMod)        => doAtCaret(p => evalAt(editor)(p))
         case KeyBinding(KeyCode.DELETE,NoModifier) => doAtCaret(p => clearAt(editor)(p))
         case KeyBinding(KeyCode.I,CtrlMod)        => doAtCaret(p => introduceCalleeAt(editor)(p))

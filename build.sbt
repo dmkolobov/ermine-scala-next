@@ -14,9 +14,9 @@ incOptions in ThisBuild := (incOptions in ThisBuild).value.withNameHashing(true)
 
 parallelExecution in ThisBuild := true
 
-name := "ermine-scala"
+name <<= artifactNameNormalizer(_("scala"))
 
-organization in ThisBuild := "com.clarifi"
+organization in ThisBuild := "com.clarifi.ermine"
 
 version in ThisBuild := "2.0.0-SNAPSHOT"
 
@@ -26,6 +26,8 @@ resolvers in ThisBuild ++= Seq(
   "Bintray JCenter Repo"    at "https://dl.bintray.com/bintray/jcenter",
   "Erik Osheim's Bintray Repo" at "http://dl.bintray.com/non/maven"
 )
+
+artifactNameNormalizer in ThisBuild := ("ermine-" + _)
 
 enableTypeCheck in ThisBuild := {
   System.getProperty("ermine.typeCheck") match {

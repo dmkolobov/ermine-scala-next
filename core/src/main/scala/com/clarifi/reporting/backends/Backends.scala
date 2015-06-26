@@ -41,21 +41,15 @@ object Runners {
 
   def liteDB: Run[DB] = DB.sqliteTestDB
 
-  def cloudDB: Run[DB] = {
-    // lets user supply username and password via system properties, otherwise uses windows authentication
-    val user     = System.getProperty("db.dev.user")
-    val password = System.getProperty("db.dev.password")
-    val url      = System.getProperty("db.dev.ds.url")
-    val pwConnectString = ";user=%s;password=%s".format(user,password)
-    val connectUrl = url + (if (!(user eq null) && !(password eq null)) pwConnectString else "")
-    DB.Run("net.sourceforge.jtds.jdbc.Driver")(connectUrl)
-  }
+  def cloudDB: Run[DB] =
+    // assumes TDS (ms sql) specified by system property
+    DB.Run("net.sourceforge.jtds.jdbc.Driver")(System.getProperty("db.dev.ds.url"))
 
-  def fromConnection(conn: Connection): Run[DB] = new Run[DB] {
+  def fromConnection(conn: Connection): Run[DB] = new RunDB {
     def run[A](a: DB[A]): A = try a(conn) finally { conn.close }
   }
 
-  def fromPersistentConnection(conn: Connection): Run[DB] = new Run[DB] {
+  def fromPersistentConnection(conn: Connection): Run[DB] = new RunDB {
     def run[A](a: DB[A]): A = a(conn)
   }
 

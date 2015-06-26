@@ -7,7 +7,7 @@ syntax: regexp
 ^project/build/target/
 ^project/target
 ^target/
-^(core|utilJavafx|editor|scalacheck-binding)/(target|bin)
+^(core(/examples)?|utilJavafx|editor|scalacheck-binding)/(target|bin)
 ^project/boot/
 ^lib_managed/
 ^build/

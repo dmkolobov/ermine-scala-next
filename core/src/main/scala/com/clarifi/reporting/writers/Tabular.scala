@@ -16,6 +16,8 @@ import scalaz.IterV.collect
 
 import com.clarifi.machines._
 
+import java.lang.ref.SoftReference
+
 /** Interface for access to tabular data - conceptually, a sequence of values of type A.
   * TODO: add support for filtering
   */
@@ -55,7 +57,11 @@ abstract class GenTabular[Repr[G[_], B] <: GenTabular[Repr, G, B], F[_], A] {
   /** Retrieve rows [start,stop), or to the end of this tabular data if no stop index is provided. */
   def slice(start: Int, stop: Option[Int]): F[IndexedSeq[A]]
 
+  /** Returns the entire result set as an IndexedSeq */
   def takeAll: F[IndexedSeq[A]] = slice(0, None)
+
+  /** As `takeAll`, but don't cache results for future calls */
+  def takeAllOnce: F[IndexedSeq[A]] = slice(0, None)
 
   /** Return the relational representation of this table. */
   def relation: ClosedExt
@@ -122,7 +128,18 @@ class StrictTabular[F[_],A](r: ClosedExt, val ordering: IndexedSeq[(Label, SortO
   implicit B: Scanner[F]) extends Tabular[F,A] {
   implicit val F = B.M
 
-  private var records: Option[IndexedSeq[Record]] = None
+  private var _records: SoftReference[IndexedSeq[Record]] = null
+
+  private def records: Option[IndexedSeq[Record]] =
+    if (_records == null) None
+    else _records.get match {
+      case null => None
+      case xs => Some(xs)
+    }
+
+  private def records_=(rs: IndexedSeq[Record]) = {
+    _records = new SoftReference(rs)
+  }
 
   // Relies on the monadic chaining of `scan`.
   // You have to have `run` it once in order for the caching to kick in.
@@ -134,7 +151,7 @@ class StrictTabular[F[_],A](r: ClosedExt, val ordering: IndexedSeq[(Label, SortO
                                    .sortBy(_._1)(coy.fi.toScalaOrdering)
                                    .map(_._2),
                                  ts)
-        records = Some(sts)
+        records = sts
         sts
       }
     }
@@ -187,5 +204,11 @@ class StrictTabular[F[_],A](r: ClosedExt, val ordering: IndexedSeq[(Label, SortO
               labels: Option[Legend.U[Label]] = labels,
               isTransposed: Boolean = isTransposed) =
     new StrictTabular[F, B](r, ordering, extract, postSort, labels, isTransposed)
+
+  override def takeAllOnce: F[IndexedSeq[A]] =
+    records match {
+      case Some(ts) => ts.map(extract(columnIds,_)).pure[F]
+      case _ => B.scanExt(r.out, Process.wrapping[Record], relationalOrder).map(ts => ts.map(extract(columnIds,_)))
+    }
 }
 

@@ -1,6 +1,4 @@
-name := "ermine-javafx-util"
-
-compileOrder := CompileOrder.JavaThenScala
+name <<= artifactNameNormalizer(_("javafx-util"))
 
 javacOptions in (Compile, compile) ++= Seq("-Xlint:unchecked", "-Xlint:rawtypes")
 

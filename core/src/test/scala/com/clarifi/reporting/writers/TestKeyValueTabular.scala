@@ -1,6 +1,7 @@
 package com.clarifi.reporting
 package writers
 
+/*
 import scalaz._
 import scalaz.syntax.std.all.ToTuple2Ops
 import scalaz.std.list._
@@ -16,29 +17,8 @@ import com.clarifi.machines._
 
 import PrimT.IntT
 
-/** A scanner that always yields the same records. */
-class ConstScanner[G[_]: Monad: Distributive](data: Traversable[Record])
-      extends Scanner[G] {
-  def scanRel[A:Monoid](r: Relation[Nothing, Nothing], f: Process[Record, A],
-                        order: List[(String, SortOrder)]): G[A] =
-    f.cap(com.clarifi.machines.Source(data.toList)).foldMap(x => x).pure[G]
-  def scanMem[A:Monoid](r: Mem[Nothing, Nothing], f: Process[Record, A],
-                        order: List[(String, SortOrder)]): G[A] =
-    f.cap(com.clarifi.machines.Source(data.toList)).foldMap(x => x).pure[G]
-  def scanExt[A:Monoid](r: Ext[Nothing, Nothing], f: Process[Record, A],
-                        order: List[(String, SortOrder)]): G[A] =
-    f.cap(com.clarifi.machines.Source(data.toList)).foldMap(x => x).pure[G]
-}
-
-object ConstScanner {
-  /** Traversable scalaz6-iteratee-enumerator. */
-  implicit val travEnum: Enumerator[Traversable] = new Enumerator[Traversable] {
-    def apply[E, A](f: Traversable[E], i: IterV[E, A]) =
-      f.foldLeft(i){(i, elt) => i feed IterV.El(elt)} feed IterV.EOF.apply
-  }
-}
-
 object TestKeyValueTabular extends Properties("tables w/dynamic schema") {
+*/
   /*val tripleBasis = aaPlusBb fold (Combine(aabbTable, _, _))
   val presentB: Set[ColumnName] = Set("colBB")
   val presentC = Presentation unit (NonEmptyList("colCC" -> IntT()))
@@ -117,4 +97,4 @@ object TestKeyValueTabular extends Properties("tables w/dynamic schema") {
          && (header(r) ?= Map("colAA" -> IntT(), gencc1 -> IntT(), gencc2 -> IntT())))
     }) && (capturedKeys ?= Vector(key1, key2))
   }*/
-}
+//}
