@@ -1,4 +1,4 @@
-name := "ermine-javafx-util"
+name <<= artifactNameNormalizer(_("javafx-util"))
 
 javacOptions in (Compile, compile) ++= Seq("-Xlint:unchecked", "-Xlint:rawtypes")
 

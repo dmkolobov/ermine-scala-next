@@ -4,6 +4,8 @@ import sbt._
 import Keys._
 
 object ReportingBuild extends Build {
+  val clarifiMode         = SettingKey[Boolean]("clarifi-mode", "Set distribution settings for local publication.")
+  val artifactNameNormalizer = SettingKey[String => String]("artifact-name-normalizer", "Add standard elements to the artifact name")
   val goodJavascripts     = TaskKey[Seq[File]]("good-javascripts", "Paths to Javascript sources we should test.")
   val allUnmanagedResourceDirectories = SettingKey[Seq[File]]("all-unmanaged-resource-directories", "unmanaged-resource-directories, transitively.")
   val ensureNoUncommitted = TaskKey[Unit]("ensure-no-uncommitted", "Fails if there are any uncommitted changes")
@@ -25,6 +27,11 @@ object ReportingBuild extends Build {
       fullRunInputTask(repl, Compile, "com.clarifi.reporting.ermine.session.Console")
                          )
 
+  lazy val examples = Project( id = "examples"
+    , base = file("core") / "examples"
+    , settings = projectSettings
+  )
+
   lazy val utilJavafx = Project( id = "utilJavafx"
     , base = file("utilJavafx")
     , settings = projectSettings
@@ -44,7 +51,8 @@ object ReportingBuild extends Build {
   )
 
   /** List of projects we actually publish. */
-  def publishedProjects[A](implicit bc: Project => A): Seq[A] = Seq(core, utilJavafx, ermineEditor, scalacheckBinding)
+  def publishedProjects[A](implicit bc: Project => A): Seq[A] =
+    Seq(core, examples, utilJavafx, ermineEditor, scalacheckBinding)
 
   private[this] def cons[A](a: A, as: Seq[A]) = a +: as // Scala is weird.
 
@@ -69,6 +77,10 @@ object ReportingBuild extends Build {
   def compileTestRuntime[A](f: Configuration => Setting[A]): SettingsDefinition =
     seq(f(Compile), f(Test), f(Runtime))
 
+  /** Update for local publication. */
+  def withClarifiMode[T](k: SettingKey[T])(f: T => T) =
+    k <<= (k, clarifiMode in ThisBuild)((o, cm) => if (cm) f(o) else o)
+
   /** Filter messages sent through loggers produced by `coreLogMgr`.
     *
     * @param logf Invoke for each acquired logger; invoke its result
@@ -86,6 +98,27 @@ object ReportingBuild extends Build {
               logfn(level, message)
           }
           case log => log
+        }
+      }
+    }
+
+  // We're still using scala-iterv; we know, so stop telling us.
+  lazy val suppressScalazItervWarnings =
+    logManager in Compile ~= {coreLogMgr =>
+      filterLogs(coreLogMgr){coreLog =>
+        val suppress = new java.util.concurrent.atomic.AtomicInteger(0)
+        def zero(n:Int) = suppress.compareAndSet(n, 0)
+        (level, message) => {
+          suppress.decrementAndGet() match {
+            case n if message endsWith "in package scalaz is deprecated: Scalaz 6 compatibility. Migrate to scalaz.iteratee." =>
+              suppress.compareAndSet(n, 2)
+            case 1 if level == Level.Warn => ()
+            case 0 if level == Level.Warn && (message endsWith "^") => ()
+            case n if coreLog atLevel level =>
+              zero(n)
+              coreLog.log(level, message)
+            case n => zero(n)
+          }
         }
       }
     }

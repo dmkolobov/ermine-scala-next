@@ -6,7 +6,7 @@ import java.util.List;
 
 import javafx.scene.control.TableColumn;
 
-import com.spcapitaliq.jfx.JFXClipboard;
+import com.spcapitaliq.jfx.JFXClipboardS;
 
 /**
  * Trivial implementation that calls {@link TableColumn#getCellData(int)}.
@@ -27,7 +27,7 @@ public class TrivialTableViewDataProvider<S, ST> implements TableViewDataProvide
   @Override
   public List<String> provideCellData(ST data, TableColumn<S, ?> column, int row)
   {
-    return Collections.singletonList(JFXClipboard.cellToPlainText(column.getCellData(row)));
+    return Collections.singletonList(JFXClipboardS.cellToPlainText(column.getCellData(row)));
   }
 
   @Override

@@ -751,7 +751,8 @@ object Console {
     else writeLn("warning: Unable to load lib.")
     e.sessionEnv.loadFile =
       SourceFile inOrder (baseDatabases, e.sessionEnv.loadFile,
-                          SourceFile filesystem Seq("core", "examples").mkString(separator))
+                          SourceFile filesystem Seq("core", "examples").mkString(separator),
+                          SourceFile classloader "com/clarifi/reporting/examples")
     repl
   }
 
