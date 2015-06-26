@@ -96,6 +96,10 @@ object ProcessSymbols {
   def composeFilterNaNPairs[A](f: Process[NumTuple2, A]): Process[NumTuple2, A] =
     Process.filtered((_:NumTuple2)._2.isNaN) andThen f
 
+  private[relational]
+  def ensureNonnegativeWeight(v: NumTuple2) =
+    if (v._1 < 0) (-v._1, -v._2) else v
+
   // NB: there is not really a good way to handle the case that we are storing
   // the (None) result of a partial function in a non-nullable field
   private[this]
