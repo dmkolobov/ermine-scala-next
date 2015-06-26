@@ -1,6 +1,7 @@
 package com.clarifi.reporting.relational
 
-import scalaz.{Monoid, Reducer}
+import scalaz.{Contravariant, Monoid, Reducer}
+import scalaz.syntax.contravariant._
 import com.clarifi.machines._
 
 import com.clarifi.reporting._
@@ -125,6 +126,14 @@ object ProcessSymbols {
   private[this]
   implicit def processComap[A, B](_fa: Process[A, B]): processComap[A, B] =
     new processComap(_fa)
+
+  private[this]
+  implicit def `contravariant Reducer`[M]: Contravariant[({type λ[α] = Reducer[α, M]})#λ] =
+    new Contravariant[({type λ[α] = Reducer[α, M]})#λ] {
+      def contramap[A, B](fa: Reducer[A, M])(f: B => A): Reducer[B, M] =
+        Reducer.reducer[B, M](f andThen fa.unit, b => m => fa.cons(f(b), m),
+                              m => b => fa.snoc(m, f(b)))(fa.monoid)
+    }
 
 /*
   def toProcess[A,B](f: Fold[A,B]): Process[A,B] =
