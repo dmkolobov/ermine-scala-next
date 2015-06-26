@@ -62,8 +62,16 @@ object ProcessSymbols {
   }
 
   private[relational]
-  lazy val weightedHarmonicMeanProcess: Process[NumTuple2, Option[Double]] =
-    sys.error("todo") // toProcess(Numeric.weightedHarmonicMean)
+  lazy val weightedHarmonicMeanProcess: Process[NumTuple2, Option[Double]] = {
+    val sumAbs = sum.contramap[Double](_.abs)
+    val sumQuotients = sum.contramap[(Double,Double)](p => p._1 / p._2)
+    val hm = Process.reducer(
+      (sumAbs *** sumQuotients).contramap[NumTuple2](
+        (ensureNonnegativeWeight(_)).
+          andThen(p => (p._1, (p._1,p._2)))))
+      .outmap(p => if (p._2 != 0.0) Some((p._1/p._2)) else None)
+    Process.filtered{wv: NumTuple2 => wv._2 != 0.0} andThen hm
+  }
 
   private[this]
   def weightedCalc(weight: Attribute, v: Attribute,
