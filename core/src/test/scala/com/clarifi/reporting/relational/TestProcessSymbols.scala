@@ -11,7 +11,7 @@ import com.clarifi.machines._
 private[relational]
 object ProcessSymbolAux {
   import collection.generic.{CanBuildFrom, FilterMonadic}
-  import ProcessSymbols.NumTuple2
+  import ProcessSymbols.{NumTuple2, ensureNonnegativeWeight}
 
   /** Run [[com.clarifi.machines.Process]] like a reducer that emits one
     * result when the input is exhausted.
@@ -54,7 +54,7 @@ object ProcessSymbolAux {
                               (vs: FilterMonadic[NumTuple2, This])
                               (implicit cbf: CanBuildFrom[This, NumTuple2, That])
       : That =
-    vs.map(v => if (v._1 < 0) (-v._1, -v._2) else v)
+    vs.map(ensureNonnegativeWeight)
 }
 
 object TestProcessSymbols extends Properties("process symbol processes") {
