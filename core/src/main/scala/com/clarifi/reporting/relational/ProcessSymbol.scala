@@ -135,7 +135,8 @@ object ProcessSymbols {
   }
 
   private[this]
-  final class `reducer ***`[C, M](private val _self: Reducer[C, M]) {
+  implicit final class `reducer ***`[C, M](private val _self: Reducer[C, M])
+      extends AnyVal {
     @inline def ***[D, N](r: Reducer[D, N]): Reducer[(C, D), (M, N)] = {
       import scalaz.std.tuple._
       implicit val mm = _self.monoid
@@ -146,10 +147,6 @@ object ProcessSymbols {
         {case (m, n) => {case (c, d) => (_self.snoc(m, c), r.snoc(n, d))}})
     }
   }
-
-  @inline private[this]
-  implicit def `reducer ***`[C, M](_self: Reducer[C, M])
-    : `reducer ***`[C, M] = new `reducer ***`(_self)
 
   private[this]
   implicit def `contravariant Reducer`[M]: Contravariant[({type λ[α] = Reducer[α, M]})#λ] =
