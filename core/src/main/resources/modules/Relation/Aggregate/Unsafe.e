@@ -19,3 +19,7 @@ foreign
       stddevModule : Function1 (Op r a) (Aggregate r a)
   value "com.clarifi.reporting.AggFunc$Variance$" "MODULE$"
       varianceModule : Function1 (Op r a) (Aggregate r a)
+  value "com.clarifi.reporting.AggFunc$WMean$" "MODULE$"
+      wmeanModule : (t <- (r, s)) => Function2 (Op r a) (Op s a) (Aggregate t a)
+  value "com.clarifi.reporting.AggFunc$WHMean$" "MODULE$"
+      whmeanModule : (t <- (r, s)) => Function2 (Op r a) (Op s a) (Aggregate t a)
