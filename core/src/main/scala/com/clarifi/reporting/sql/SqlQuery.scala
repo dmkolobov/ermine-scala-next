@@ -37,9 +37,7 @@ sealed abstract class SqlQuery {
       else raw("")) |+|
       (if (groupBy.size > 0)
         raw(" group by ") |+| { if (attrs.size == 0) "*"
-        else (groupBy.toIndexedSeq.sortBy((_: (SqlColumn, SqlExpr))._1)
-              .map(x => // raw("(") |+| x._2.emitSql |+| ") " |+|
-                   emitter.emitColumnName(x._1)).rawMkString(", ")) }
+        else (groupBy.toIndexedSeq.map((x: SqlExpr) => x.emitSql).rawMkString(", ")) }
       else raw("")) |+|
       (if (orderBy.size > 0)
         raw(" order by ") |+| orderBy.map(x => x._1.emitSql |+| " " |+| x._2.emitSql).toIterable.rawMkString(", ")
@@ -78,7 +76,7 @@ case class SqlSelect(options: Set[String] = Set(), // Distinct, all, etc.
                      attrs: Map[SqlColumn, SqlExpr] = Map(), // result attributes
                      tables: Map[TableName, SqlQuery] = Map(), // from clause
                      criteria: List[SqlPredicate] = List(), // where clause
-                     groupBy: Map[SqlColumn, SqlExpr] = Map(), // groupBy clause
+                     groupBy: List[SqlExpr] = List(), // groupBy clause
                      orderBy: List[(SqlExpr, SqlOrder)] = List(),
                      // limit clause (where allowed), inclusive 1-indexed (from, to)
                      limit: (Option[Int], Option[Int]) = (None, None)

@@ -75,11 +75,12 @@ object Typer {
   private def aggregateByGroupType[F[+_]](
     base: Header,
     cols: Map[Attribute, Op],
-    aggs: List[(Attribute,AggFunc)]
+    aggs: List[(Attribute,AggFunc)],
+    grp: List[Op.ColumnValue]
   )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] =
     columnCheck[F, Header](
       base,
-      aggs.flatMap(_._2.columnReferences).toSet ++ cols.keySet.map(_.name),
+      aggs.flatMap(_._2.columnReferences).toSet ++ cols.keySet.map(_.name) ++ grp.flatMap(_.columnReferences).toSet,
       cols.keys.map(_.tuple).toMap ++ aggs.map(_._1.tuple).toMap)
 
   private def naturalJoinType[F[+_]](
@@ -253,9 +254,10 @@ object Typer {
       case Filter(r, p)            => go(r) flatMap (filterType[F](_, p))
       case Project(r, cols)        => go(r) flatMap (projectType[F](_, cols))
       case Except(r, cols)         => go(r) flatMap (exceptType[F](_, cols))
+      case RenameR(r, from, to)    => go(r) flatMap (renameType[F](_, from, to, false))
       case Combine(r, attr, op)    => go(r) flatMap (combineType[F](_, attr, op))
       case Aggregate(r, attr, op)  => go(r) flatMap (aggregateType[F](_, attr, op))
-      case AggregateByGroup(r, cs, aggs)  => go(r) flatMap (aggregateByGroupType[F](_, cs, aggs))
+      case AggregateByGroup(r,cs,aggs,grp) => go(r) flatMap (aggregateByGroupType[F](_, cs, aggs, grp))
       case SelectR(as, proj, filt) => as.traverse(go _) flatMap (selectType[F](_, proj, filt))
       case (r: HardRel)            => r.header.pure[F]
       case MemoR(r) => go(r)

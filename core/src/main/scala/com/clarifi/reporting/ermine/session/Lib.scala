@@ -573,10 +573,11 @@ object Lib {
             case Data(n, arr) => {
               case EmptyRel => EmptyRel
               case Rel(ExtRel(r, db)) =>
+                val groupCols = row.asInstanceOf[List[(String, PrimT)]]
                 Rel(ExtRel(AggregateByGroup( r
-                                    , row.asInstanceOf[List[(String, PrimT)]].map(r => Attribute(r._1, r._2) -> ColumnValue(r._1, r._2)).toMap
+                                    , groupCols.map(r => Attribute(r._1, r._2) -> ColumnValue(r._1, r._2)).toMap
                                     , List((Attribute(n.string,arr(0).extract), aggFun.extract[AggFunc]))
-                                    ), db))
+                                    , groupCols.map(r => ColumnValue(r._1, r._2))), db))
             }
           }
         }
