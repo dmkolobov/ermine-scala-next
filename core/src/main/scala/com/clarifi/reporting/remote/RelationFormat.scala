@@ -397,14 +397,16 @@ object Format {
     p3R(timeUnitR, self, self)(DateDiff),
     p5R(stringR, stringR, listR(stringR), listR(self), primTR)(Funcall)) erase)
 
-  lazy val aggR: Reader[AggFunc, DynamicF] = union7R(
+  lazy val aggR: Reader[AggFunc, DynamicF] = union9R(
     unitR   map (_ => Count),
     opR map (Sum(_)),
     opR map (Avg(_)),
     opR map (Min(_)),
     opR map (Max(_)),
     opR map (Stddev(_)),
-    opR map (Variance(_))) erase
+    opR map (Variance(_)),
+    p2R(opR,opR)(WMean(_,_)),
+    p2R(opR,opR)(WHMean(_,_))) erase
 
   type SortOrderF = BooleanF
   lazy val sortOrderR: Reader[SortOrder, SortOrderF] = booleanR map (x => if (x) Asc else Desc)
@@ -453,8 +455,10 @@ object Format {
       case DateDiff(u, s, e) => datediff(u, s, e)
       case Funcall(n, db, ns, args, ty) => funcall((n, db, ns, args, ty))
     }) erase}
-  lazy val aggW: Writer[AggFunc, DynamicF] = s7W(unitW, opW, opW, opW, opW, opW, opW)(
-    (count, sum, avg, min, max, stddev, variance) => (r:AggFunc) => r(count(()), sum, avg, min, max, stddev, variance)) erase
+  lazy val aggW: Writer[AggFunc, DynamicF] = s9W(unitW, opW, opW, opW, opW, opW, opW, tuple2W(opW,opW), tuple2W(opW,opW))(
+    (count, sum, avg, min, max, stddev, variance, wmean, whmean) =>
+      (r:AggFunc) =>
+        r(count(()), sum, avg, min, max, stddev, variance, Function.untupled(wmean), Function.untupled(whmean))) erase
   lazy val orderedHeaderW: Writer[Header.Ordered, OrderedHeaderF] =
     repeatW(tuple2W(stringW, primTW))
   lazy val headerW: Writer[Header, HeaderF] = orderedHeaderW cmap ((h: Header) =>

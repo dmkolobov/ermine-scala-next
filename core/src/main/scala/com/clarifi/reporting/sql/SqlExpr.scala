@@ -66,6 +66,20 @@ object SqlPredicate {
       and = SqlAnd(_, _),
       isNull = e => SqlIsNull(subop(e)))
   }
+
+  def backSubstituteAux[F[_]:Applicative](pred: SqlPredicate, sub: (TableName, SqlColumn) => F[SqlExpr]): F[SqlPredicate] =
+    pred match {
+      case SqlLt(l, r) => ^(SqlExpr.backSubstituteAux(l,sub),SqlExpr.backSubstituteAux(r,sub))(SqlLt(_,_))
+      case SqlGt(l, r) => ^(SqlExpr.backSubstituteAux(l,sub),SqlExpr.backSubstituteAux(r,sub))(SqlGt(_,_))
+      case SqlEq(l, r) => ^(SqlExpr.backSubstituteAux(l,sub),SqlExpr.backSubstituteAux(r,sub))(SqlEq(_,_))
+      case SqlLte(l, r) => ^(SqlExpr.backSubstituteAux(l,sub),SqlExpr.backSubstituteAux(r,sub))(SqlLte(_,_))
+      case SqlGte(l, r) => ^(SqlExpr.backSubstituteAux(l,sub),SqlExpr.backSubstituteAux(r,sub))(SqlGte(_,_))
+      case SqlNot(p) => backSubstituteAux(p,sub) map (SqlNot(_))
+      case SqlOr(ps@_*) => ps.toList.traverse[F,SqlPredicate](backSubstituteAux(_,sub)) map (SqlOr(_:_*))
+      case SqlAnd(ps@_*) => ps.toList.traverse[F,SqlPredicate](backSubstituteAux(_,sub)) map (SqlAnd(_:_*))
+      case SqlIsNull(e) => SqlExpr.backSubstituteAux(e,sub) map (SqlIsNull(_))
+      case _ => pred.pure[F]
+    }
 }
 
 sealed abstract class SqlExpr {
@@ -178,6 +192,41 @@ object SqlExpr {
     case BooleanExpr(_,b) => LitSqlExpr(SqlBool(b))
     case UuidExpr(_,u) => LitSqlExpr(SqlUuid(u))
     case NullExpr(_) => LitSqlExpr(SqlNull)
+  }
+
+  def backSubstitute(expr: SqlExpr, sub: (TableName, SqlColumn) => SqlExpr): SqlExpr =
+    backSubstituteAux[Id](expr, sub)
+
+  def backSubstituteSingle(expr: SqlExpr, sub: (TableName, SqlColumn) => SqlExpr): Option[SqlExpr] = {
+    def msub(t:TableName,s:SqlColumn) = sub(t, s) match {
+      case s : ColumnSqlExpr => Some(s)
+      case _ => None
+    }
+    backSubstituteAux[Option](expr, msub)
+  }
+
+  def backSubstituteAux[F[_]:Applicative](expr: SqlExpr, sub: (TableName, SqlColumn) => F[SqlExpr]): F[SqlExpr] = {
+    expr match {
+      case ColumnSqlExpr(t, c) => sub(t, c)
+      case BinSqlExpr(f, a, b) =>
+        ^(backSubstituteAux(a, sub), backSubstituteAux(b, sub))(BinSqlExpr(f,_,_))
+      case PrefixSqlExpr(f, a) =>
+        backSubstituteAux(a, sub) map (PrefixSqlExpr(f, _))
+      case PostfixSqlExpr(a, f) => backSubstituteAux(a, sub) map (PostfixSqlExpr(_, f))
+      case FunSqlExpr(f, as) => (as.traverse[F,SqlExpr](backSubstituteAux(_, sub))) map (FunSqlExpr(f, _))
+      case CaseSqlExpr(cs, e) =>
+        val ncs = cs.traverse[F,(SqlPredicate,SqlExpr)] {
+          case (p, e) => ^(SqlPredicate.backSubstituteAux(p, sub), backSubstituteAux(e, sub))((_,_))
+        }
+        ^(ncs, backSubstituteAux(e, sub))(CaseSqlExpr(_,_))
+      case ParensSqlExpr(e) => backSubstituteAux(e, sub) map (ParensSqlExpr(_))
+      case OverSqlExpr(e, over) =>
+        val nover = over.traverse[F,(SqlExpr,SqlOrder)] {
+          case (e, o) => backSubstituteAux(e, sub)map ((_, o))
+        }
+        ^(backSubstituteAux(e, sub), nover)(OverSqlExpr(_,_))
+      case _ => expr.pure[F]
+    }
   }
 }
 

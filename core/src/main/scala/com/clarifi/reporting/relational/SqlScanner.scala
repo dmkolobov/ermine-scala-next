@@ -75,6 +75,16 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     /** @todo MSP - SQLite does not support STDDEV or VAR, work around somehow? */
     case Stddev(x) => emitter.emitStddevPop(compileOp(x, attrs))
     case Variance(x) => emitter.emitVarPop(compileOp(x, attrs))
+    case WMean(x,w) =>
+      val cw = compileOp(w,attrs)
+      val num = FunSqlExpr("SUM", List(BinSqlExpr("*", compileOp(x,attrs), cw)))
+      val den = FunSqlExpr("SUM", List(cw))
+      BinSqlExpr("/", num, den)
+    case WHMean(x,w) =>
+      val cw = compileOp(w,attrs)
+      val num = FunSqlExpr("SUM", List(cw))
+      val den = FunSqlExpr("SUM", List(BinSqlExpr("/", cw, compileOp(x,attrs))))
+      BinSqlExpr("/", num, den)
   }
 
   val exec = new SqlExecution()
@@ -668,26 +678,50 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                                    cols map { case (attr, op) =>
                                      (attr.name -> compileOp(op, as)) }}),
                combineAll(rx, cols))
-      case AggregateByGroup(r,cs, aggs) =>
+      case AggregateByGroup(r,cs,aggs,group) =>
         val rc = compileRel(r, smv, srv)
         val un = freshName
         val SqlPrg(h, p, q, _) = rc
         val groupByCols = columns(h, TableName(un))
-        val groupBys = cs map { case (attr, op) =>
-                        (attr.name -> compileOp(op, groupByCols)) }
+        val groupBys = group map (compileOp(_, groupByCols))
+        val plainCols = cs map { case (attr, op) =>
+                          (attr.name -> compileOp(op, groupByCols)) }
+        def subq =
+          SqlSelect(tables = Map(TableName(un) -> q),
+                    attrs =  plainCols ++ aggs.map {
+                               case (attr, f) =>
+                                 attr.name -> compileAggFunc(attr, f, columns(h, TableName(un)))
+                             }.toMap,
+                    groupBy = groupBys )
         val q2 = q match {
-        // This doesn't work.  TODO: can we make it work?
-        // issue is that we need to tweak the table name that group bys uses in the same way
-        // that compileAggFunc works, since it will refer to a non-existant table.
-        //  case v:SqlSelect if v.limit == (None, None) && !v.options("distinct") =>
-        //    v.copy( attrs = groupBys ++ Map(attr.name -> compileAggFunc(attr, f, v.attrs)),
-        //            groupBy = groupBys )
-          case _ => SqlSelect(tables = Map(TableName(un) -> q),
-                              attrs =  groupBys ++ aggs.map{
-                                                     case (attr, f) =>
-                                                       attr.name -> compileAggFunc(attr, f, columns(h, TableName(un)))
-                                                   }.toMap,
-                              groupBy = groupBys )
+          case v:SqlSelect if v.limit == (None, None) && !v.options("distinct") && v.groupBy.isEmpty =>
+            // Note: this optimization relies on an assumption about aggregations to be correct.
+            // Specifically, we don't want to coalesce two aggregations in sequence. There are two
+            // checks that ensure this. First, we test to see if the underlying SqlSelect's groupBy
+            // is empty. This ensures that it isn't an AggregateByGroup, or at least, not one that
+            // isn't equivalent to an Aggregate. Second, backSubstituteSingle only works if the
+            // groupBy we're optimizing only refers to pure columns in the underlying select's
+            // tables. If it were an Aggregate, the only columns that exist are complex expressions,
+            // so this will fail.
+            //
+            // The remaining case is two consecutive aggregations with no grouping. I think this will
+            // produce bad SQL right now. But there's no reason to do it.
+            groupBys.traverse[Option,SqlExpr] {
+              case e =>
+                SqlExpr.backSubstituteSingle(e, (_, col) => v.attrs(col))
+            } match {
+              case None => subq
+              case Some(groupBysSubbed) =>
+                val newAttrs = cs.map { case (attr, op) =>
+                                 attr.name -> compileOp(op, v.attrs)
+                               } ++
+                               aggs.map {
+                                 case (attr, f) =>
+                                   attr.name -> compileAggFunc(attr, f, v.attrs)
+                               }
+                v.copy( attrs = newAttrs.toMap, groupBy = groupBysSubbed )
+            }
+          case _ => subq
         }
         SqlPrg(cs.map(_._1.tuple) ++ aggs.map(_._1.tuple).toMap, p, q2, ForallTups(aggs.map(_._1.name -> None).toMap, PartitionedSet.zero))
       case Aggregate(r, attr, f) =>
@@ -835,6 +869,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                                       (l, r) = natJoinAtom
                                     } yield SqlEq(ColumnSqlExpr(TableName(l), colName),
                                                   ColumnSqlExpr(TableName(r), colName))).toList), rx2)
+      case RenameR(r, Attribute(from, ty), to) => sys.error("compiling unoptimized RenameR")
     }
   }
 }

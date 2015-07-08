@@ -22,6 +22,16 @@ sealed abstract class AggFunc extends TraversableColumns[AggFunc] {
       case Max(op) => op.traverseColumns(f).map(Max(_))
       case Stddev(op) => op.traverseColumns(f).map(Stddev(_))
       case Variance(op) => op.traverseColumns(f).map(Variance(_))
+      case WMean(op,wt) =>
+        implicitly[Applicative[F]].apply2(
+          op.traverseColumns(f),
+          wt.traverseColumns(f)
+        )(WMean(_,_))
+      case WHMean(op,wt) =>
+        implicitly[Applicative[F]].apply2(
+          op.traverseColumns(f),
+          wt.traverseColumns(f)
+        )(WHMean(_,_))
     }
 
   def typedColumnFoldMap[Z: Monoid](f: (ColumnName, PrimT) => Z): Z =
@@ -33,12 +43,19 @@ sealed abstract class AggFunc extends TraversableColumns[AggFunc] {
       case Max(op) => op typedColumnFoldMap f
       case Stddev(op) => op typedColumnFoldMap f
       case Variance(op) => op typedColumnFoldMap f
+      case WMean(op,wt) =>
+        op.typedColumnFoldMap(f) |+|
+        wt.typedColumnFoldMap(f)
+      case WHMean(op,wt) =>
+        op.typedColumnFoldMap(f) |+|
+        wt.typedColumnFoldMap(f)
     }
 
   /** Fold. */
   def apply[z](count:  => z, sum: (Op) => z, avg: (Op) => z,
                min: (Op) => z, max: (Op) => z,
-               stddev: (Op) => z, variance: (Op) => z): z = this match {
+               stddev: (Op) => z, variance: (Op) => z,
+               wmean: (Op,Op) => z, whmean: (Op,Op) => z): z = this match {
     case Count => count
     case Sum(op) => sum(op)
     case Avg(op) => avg(op)
@@ -46,6 +63,8 @@ sealed abstract class AggFunc extends TraversableColumns[AggFunc] {
     case Max(op) => max(op)
     case Stddev(op) => stddev(op)
     case Variance(op) => variance(op)
+    case WMean(op,wt) => wmean(op,wt)
+    case WHMean(op,wt) => whmean(op,wt)
   }
 }
 
@@ -57,6 +76,8 @@ object AggFunc {
   case class Max(op: Op) extends AggFunc
   case class Stddev(op: Op) extends AggFunc
   case class Variance(op: Op) extends AggFunc
+  case class WMean(op: Op, wt: Op) extends AggFunc // weighted mean
+  case class WHMean(op: Op, wt: Op) extends AggFunc // weighted harmonic mean
 
   implicit val AggFuncEqual: Equal[AggFunc] = Equal.equalA
   implicit val AggFuncShow: Show[AggFunc] = Show.showFromToString
@@ -90,6 +111,22 @@ object AggFunc {
     }
   }
 
+  def wmean(f: Op, wt: Op, t: PrimT): Process[Record, PrimExpr] = {
+    implicit val m = sumMonoid(t)
+    reducer(unitReducer((tup: Record) => {
+      val w = wt.eval(tup)
+      (f.eval(tup) * w, w) : (PrimExpr, PrimExpr)
+    })).outmap(p => p._1 / p._2)
+  }
+
+  def whmean(f: Op, wt: Op, t: PrimT): Process[Record, PrimExpr] = {
+    implicit val m = sumMonoid(t)
+    reducer(unitReducer((tup: Record) => {
+      val w = wt.eval(tup)
+      (w / f.eval(tup), w) : (PrimExpr, PrimExpr)
+    })).outmap(p => p._2 / p._1)
+  }
+
   def stddev(f: Op, t: PrimT): Process[Record, PrimExpr] =
     variance(f, t).outmap(x => mkExpr(math.sqrt(x.extractDouble), t))
 
@@ -109,6 +146,8 @@ object AggFunc {
       case Max(f) => sum(f, maxMonoid(t))
       case Stddev(f) => stddev(f, t)
       case Variance(f) => variance(f, t)
+      case WMean(f,wt) => wmean(f, wt, t)
+      case WHMean(f,wt) => whmean(f, wt, t)
     }
 }
 

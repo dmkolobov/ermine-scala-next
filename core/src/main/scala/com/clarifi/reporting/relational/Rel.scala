@@ -191,15 +191,31 @@ case class Combine[+M, +R](rel: Relation[M, R], attr: Attribute, op: Op) extends
     Combine(rel.unquote(f, g), attr, op)
 }
 
-/* Group by combined with an aggregation */
-case class AggregateByGroup[+M, +R](rel: Relation[M, R], cs: Map[Attribute, Op], aggs: List[(Attribute, AggFunc)]) extends Relation[M, R] {
-  def bimap[N, S](f: M => N, g: R => S) = AggregateByGroup(rel bimap (f, g), cs, aggs)
-  def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = rel bifoldMap (f, g)
-  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = AggregateByGroup(rel subst (f, g), cs, aggs)
+/** RenameR gets optimized away in the Optimizer */
+case class RenameR[+M, +R](rel: Relation[M, R], attr: Attribute, c: ColumnName) extends Relation[M, R] {
+  def bimap[N, S](f: M => N, g: R => S) = RenameR(rel bimap (f, g), attr, c)
+  def bifoldMap[Z:Monoid](f: M => Z, g: R => Z) = rel bifoldMap (f, g)
+  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = RenameR(rel subst (f, g), attr, c)
   def foreach(f: M => Any, g: R => Any) { rel foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
-    AggregateByGroup(rel.unquote(f, g), cs, aggs)
+    RenameR(rel.unquote(f, g), attr, c)
+}
+
+/* Group by combined with an aggregation */
+case class AggregateByGroup[+M, +R](
+  rel: Relation[M, R],
+  cs: Map[Attribute, Op],
+  aggs: List[(Attribute, AggFunc)],
+  group: List[Op.ColumnValue] = List()
+) extends Relation[M, R] {
+  def bimap[N, S](f: M => N, g: R => S) = AggregateByGroup(rel bimap (f, g), cs, aggs, group)
+  def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = rel bifoldMap (f, g)
+  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = AggregateByGroup(rel subst (f, g), cs, aggs, group)
+  def foreach(f: M => Any, g: R => Any) { rel foreach (f, g) }
+  override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
+                                       g: Object => Option[Mem[S, N]]): Relation[N, S] =
+    AggregateByGroup(rel.unquote(f, g), cs, aggs, group)
 }
 
 case class Aggregate[+M, +R](rel: Relation[M, R], attr: Attribute, agg: AggFunc) extends Relation[M, R] {
@@ -344,10 +360,5 @@ object RLevel {
       case _ => false
     }
   }
-}
-
-object RenameR {
-  def apply[M, R](r: Relation[M, R], n1: Attribute, n2: ColumnName): Relation[M, R] =
-    Except(Combine(r, Attribute(n2, n1.t), Op.ColumnValue(n1.name, n1.t)), Set(n1.name))
 }
 

@@ -379,6 +379,49 @@ object Optimizer {
                            Predicate.Atom(true)))
   }
 
+  def renameAggregate[M, R](from: ColumnName, to: ColumnName, agg: AggregateByGroup[M,R]): AggregateByGroup[M, R] = agg match {
+    case AggregateByGroup(under, cs, aggs, group) =>
+      val newCs = cs.mapKeys {
+        case Attribute(n, t) if from == n => Attribute(to, t)
+        case attr => attr
+      }
+      val newAggs = aggs.map {
+        case (Attribute(n, t), fun) if from == n => (Attribute(to, t), fun)
+        case v => v
+      }
+      AggregateByGroup(under, newCs, newAggs, group)
+  }
+
+  // Determines if a set of projections is a simple renaming of columns.
+  def simpleProject(proj: Map[Attribute, Op]): Option[Map[Attribute, ColumnValue]] =
+    proj.toList.traverse[Option,(Attribute, ColumnValue)] {
+      case (to, op) => op match {
+        case from : ColumnValue => Some(to -> from)
+        case _ => None
+      }
+    }.map(_.toMap)
+
+  def projectAggregate[M, R](agg: AggregateByGroup[M, R], proj: Map[Attribute, ColumnValue]) = agg match {
+    case AggregateByGroup(under, cs, aggs, group) =>
+      val (ncp, nap) = proj.partition {
+        case (attr, ColumnValue(nm, _)) => cs.exists{case (Attribute(anm,_), _) => anm == nm }
+      }
+      val aggmap = aggs.map{ case (attr,aggf) => attr.name -> aggf }.toMap
+      val naggs = nap.mapValues((cv: ColumnValue) => aggmap(cv.col)).toList
+      AggregateByGroup(under, flattenProjection(ncp,cs), naggs, group)
+  }
+
+  def exceptAggregate[M, R](agg: AggregateByGroup[M, R], exc: Set[ColumnName]) = agg match {
+    case AggregateByGroup(under, cs, aggs, group) =>
+      AggregateByGroup(under, cs.filterKeys(k => !exc(k.name)), aggs.filter(v => !exc(v._1.name)), group)
+  }
+
+  def whenAggregate[M, R, Z](jh: Header, sel: SelectR[M, R])(f : AggregateByGroup[M, R] => Z)(el: Z): Z =
+    PureSelect.unapply(sel, jh) match {
+      case Some(agg : AggregateByGroup[M,R]) => f(agg)
+      case _ => el
+    }
+
   // first turn every tableproc into a let of a tableproc
   // second lift every let out as far as it can go
   // third join all duplicate lets
@@ -411,25 +454,49 @@ object Optimizer {
       val (h, jh, SelectR(rs, prj, filt)) = optimizeRel(r, hr, hm)
       (h, jh, SelectR(rs, prj, Predicates.simplify(Predicate.And(filt, p.postReplaceOp[Id](cvAttr(prj))))))
     case Project(r, cs) =>
-      val (h, jh, SelectR(rs, prj, filt)) = optimizeRel(r, hr, hm)
-      (cs.map(_._1.tuple), jh, SelectR(rs, flattenProjection(cs, prj), filt))
+      val (h, jh, sel@SelectR(rs, prj, filt)) = optimizeRel(r, hr, hm)
+      val nh = cs.map(_._1.tuple)
+      simpleProject(cs) match {
+        case Some(scs) => 
+          whenAggregate(jh, sel) { agg =>
+            (nh, nh, PureSelect(projectAggregate(agg, scs), nh))
+          } { (nh, jh, SelectR(rs, flattenProjection(cs, prj), filt)) }
+        case None => (nh, jh, SelectR(rs, flattenProjection(cs, prj), filt))
+      }
     case Except(r, cs) =>
-      val (h, jh, SelectR(rs, prj, filt)) = optimizeRel(r, hr, hm)
-      (h -- cs, jh, SelectR(rs, prj -- (cs.map(c => Attribute(c, h(c)))), filt))
+      val (h, jh, sel@SelectR(rs, prj, filt)) = optimizeRel(r, hr, hm)
+      val nh = h -- cs
+      whenAggregate(jh, sel) { agg =>
+        (nh, nh, PureSelect(exceptAggregate(agg, cs), nh))
+      } { (h -- cs, jh, SelectR(rs, prj -- (cs.map(c => Attribute(c, h(c)))), filt)) }
     case Combine(r, attr, op) =>
       val (h, jh, SelectR(rs, prj, filt)) = optimizeRel(r, hr, hm)
       val nh = h + attr.tuple
       (nh, jh, SelectR(rs, prj + (attr -> op.postReplace[Id](cvAttr(prj))), filt))
+    case RenameR(r, Attribute(from, ft), to) =>
+      val (h, jh, sel) = optimizeRel(r, hr, hm)
+      val nh = h mapKeys {
+        case col if col == from => to
+        case col => col
+      }
+      whenAggregate(jh, sel){ agg =>
+        (nh, nh, PureSelect(renameAggregate(from, to, agg), nh))
+      }{ (nh, jh, sel copy (
+                    cs = sel.cs mapKeys {
+                      case Attribute(nm, t) if nm == from => Attribute(to, t)
+                      case attr => attr
+                    }))
+      }
     case Limit(r, start, end, ord) =>
       val (h, jh, or) = optimizeRel(r, hr, hm)
       (start, end) match {
         case (None, None) => (h, jh, or) // We're not actually limiting anything, so we can just pass things up.
         case _ => (h, h, PureSelect(Limit(impurify(or, jh), start, end, ord), h))
       }
-    case AggregateByGroup(r, cs, aggs) =>
+    case AggregateByGroup(r, cs, aggs, grp) =>
       val (_, jh, or) = optimizeRel(r, hr, hm)
-      val h = aggs.map(_._1.tuple).toMap ++ cs.keySet.map(_.tuple)
-      (h,h, PureSelect(AggregateByGroup( impurify(or, jh), cs, aggs ), h))
+      val h = (aggs.map(_._1.tuple).toMap ++ cs.keySet.map(_.tuple))
+      (h,h, PureSelect(AggregateByGroup( impurify(or, jh), cs, aggs, grp ), h))
     case Aggregate(r, attr, aggfunc) =>
       val (_, jh, or) = optimizeRel(r, hr, hm)
       val h = Map(attr.tuple)
