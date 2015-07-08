@@ -81,11 +81,22 @@ runReport w (Report f) = f w
 -- in Ermine, we must go through the writer or do something even worse, like have global mutable state somewhere.
 
 formatDate : Date -> (String -> Report f z) -> Report f z
-formatDate d f = Report $ w2 -> (case f (formatDate_ w2 d) of (Report r) -> r w2)
+formatDate d f = formatDateFn (ds -> f (ds d))
+
+-- | A date-to-string function configured by the report.
+formatDateFn : ((Date -> String) -> Report f z) -> Report f z
+formatDateFn k = Report (w -> case k (formatDate_ w) of (Report r) -> r w)
 
 formatDateAtom d = formatDate d text
 
-formatDateRange (start, stop) k = formatDate start $ d1 -> formatDate stop (d2 -> k $ unwords_String [d1, "-", d2])
+formatDateRange : (Date, Date) -> (String -> Report f z) -> Report f z
+formatDateRange (start, stop) k = formatDateRangeFn $ drs ->
+  k (drs (start, stop))
+
+-- | A daterange-to-string function configured by the report.
+formatDateRangeFn : (((Date, Date) -> String) -> Report f z) -> Report f z
+formatDateRangeFn k = formatDateFn $ df ->
+  k ((start, stop) -> unwords_String [df start, "-", df stop])
 
 ---------------------------------------------------
 -- Simple layout combinators
