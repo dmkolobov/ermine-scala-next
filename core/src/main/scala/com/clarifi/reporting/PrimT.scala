@@ -29,7 +29,7 @@ object PrimT {
   private def nullify(nullable: Boolean, ty: PrimType[_]): PrimType[_] =
     if (nullable) PrimType primOption ty else ty
 
-  case class ByteT(nullable: Boolean = false) extends PrimT {
+  final class ByteT private(val nullable: Boolean = false) extends PrimT {
     type Value = Byte
     def isa(that: PrimT) = that match {
       case ByteT(n) => nullable <= n
@@ -39,12 +39,21 @@ object PrimT {
       case ByteT(n) => Some(ByteT(nullable || n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    def withNull = ByteT.nullableByteT
     def name = "Byte"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
+  object ByteT {
+    private val strictByteT : ByteT = new ByteT(false)
+    private val nullableByteT : ByteT = new ByteT(true)
+    def apply(b: Boolean = false) = if (b) nullableByteT else strictByteT
+    def unapply(pt: PrimT): Option[Boolean] = pt match {
+      case _ : ByteT => Some(pt.nullable)
+      case _ => None
+    }
+  }
 
-  case class ShortT(nullable: Boolean = false) extends PrimT {
+  final class ShortT private(val nullable: Boolean = false) extends PrimT {
     type Value = Short
     def isa(that: PrimT) = that match {
       case ShortT(n) => nullable <= n
@@ -54,12 +63,21 @@ object PrimT {
       case ShortT(n) => Some(ShortT(nullable || n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    def withNull = ShortT.nullableShortT
     def name = "Short"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
+  object ShortT {
+    private val strictShortT : ShortT = new ShortT(false)
+    private val nullableShortT : ShortT = new ShortT(true)
+    def apply(b: Boolean = false) = if (b) nullableShortT else strictShortT
+    def unapply(pt: PrimT): Option[Boolean] = pt match {
+      case _ : ShortT => Some(pt.nullable)
+      case _ => None
+    }
+  }
 
-  case class IntT(nullable: Boolean = false) extends PrimT {
+  final class IntT private(val nullable: Boolean = false) extends PrimT {
     type Value = Int
     def isa(that: PrimT) = that match {
       case IntT(n) => nullable <= n
@@ -69,12 +87,21 @@ object PrimT {
       case IntT(n) => Some(IntT(nullable || n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    def withNull = IntT.nullableIntT
     def name = "Int"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
+  object IntT {
+    private val strictIntT : IntT = new IntT(false)
+    private val nullableIntT : IntT = new IntT(true)
+    def apply(b: Boolean = false) = if (b) nullableIntT else strictIntT
+    def unapply(pt: PrimT): Option[Boolean] = pt match {
+      case _ : IntT => Some(pt.nullable)
+      case _ => None
+    }
+  }
 
-  case class LongT(nullable: Boolean = false) extends PrimT {
+  final class LongT private(val nullable: Boolean = false) extends PrimT {
     type Value = Long
     def isa(that: PrimT) = that match {
       case LongT(n) => nullable <= n
@@ -84,12 +111,21 @@ object PrimT {
       case LongT(n) => Some(LongT(nullable || n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    def withNull = LongT.nullableLongT
     def name = "Long"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
+  object LongT {
+    private val strictLongT : LongT = new LongT(false)
+    private val nullableLongT : LongT = new LongT(true)
+    def apply(b: Boolean = false) = if (b) nullableLongT else strictLongT
+    def unapply(pt: PrimT): Option[Boolean] = pt match {
+      case _ : LongT => Some(pt.nullable)
+      case _ => None
+    }
+  }
 
-  case class StringT(len: Int, nullable: Boolean = false) extends PrimT {
+  final class StringT private(val len: Int, val nullable: Boolean = false) extends PrimT {
     type Value = String
     def isa(that: PrimT) = that match {
       case StringT(l, n) => (len <= l) && (nullable <= n)
@@ -100,12 +136,24 @@ object PrimT {
                                         else len max l, nullable || n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    def withNull = if (nullable) this else StringT(len, true)
     def name = "String"
     def primType = nullify(nullable, PrimType primString len)
   }
+  object StringT {
+    private val strictStringT : StringT = new StringT(0, false)
+    private val nullableStringT : StringT = new StringT(0, true)
+    def apply(len: Int, b: Boolean = false) =
+      if (len == 0)
+        if (b) nullableStringT else strictStringT
+      else new StringT(len, b)
+    def unapply(pt: PrimT): Option[(Int, Boolean)] = pt match {
+      case st : StringT => Some((st.len, st.nullable))
+      case _ => None
+    }
+  }
 
-  case class DateT(nullable: Boolean = false) extends PrimT {
+  final class DateT private(val nullable: Boolean = false) extends PrimT {
     type Value = Date
     def isa(that: PrimT) = that match {
       case DateT(n) => nullable <= n
@@ -115,12 +163,21 @@ object PrimT {
       case DateT(n) => Some(DateT(nullable||n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    def withNull = DateT.nullableDateT
     def name = "Date"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
+  object DateT {
+    private val strictDateT : DateT = new DateT(false)
+    private val nullableDateT : DateT = new DateT(true)
+    def apply(b: Boolean = false) = if (b) nullableDateT else strictDateT
+    def unapply(pt: PrimT): Option[Boolean] = pt match {
+      case _ : DateT => Some(pt.nullable)
+      case _ => None
+    }
+  }
 
-  case class DoubleT(nullable: Boolean = false) extends PrimT {
+  final class DoubleT private(val nullable: Boolean = false) extends PrimT {
     type Value = Double
     def isa(that: PrimT) = that match {
       case DoubleT(n) => nullable <= n
@@ -130,12 +187,21 @@ object PrimT {
       case DoubleT(n) => Some(DoubleT(nullable||n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    def withNull = DoubleT.nullableDoubleT
     def name = "Double"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
+  object DoubleT {
+    private val strictDoubleT : DoubleT = new DoubleT(false)
+    private val nullableDoubleT : DoubleT = new DoubleT(true)
+    def apply(b: Boolean = false) = if (b) nullableDoubleT else strictDoubleT
+    def unapply(pt: PrimT): Option[Boolean] = pt match {
+      case _ : DoubleT => Some(pt.nullable)
+      case _ => None
+    }
+  }
 
-  case class BooleanT(nullable: Boolean = false) extends PrimT {
+  final class BooleanT private(val nullable: Boolean = false) extends PrimT {
     type Value = Boolean
     def isa(that: PrimT) = that match {
       case BooleanT(n) => nullable <= n
@@ -145,12 +211,21 @@ object PrimT {
       case BooleanT(n) => Some(BooleanT(nullable||n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    def withNull = BooleanT.nullableBooleanT
     def name = "Bool"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
   }
+  object BooleanT {
+    private val strictBooleanT : BooleanT = new BooleanT(false)
+    private val nullableBooleanT : BooleanT = new BooleanT(true)
+    def apply(b: Boolean = false) = if (b) nullableBooleanT else strictBooleanT
+    def unapply(pt: PrimT): Option[Boolean] = pt match {
+      case _ : BooleanT => Some(pt.nullable)
+      case _ => None
+    }
+  }
 
-  case class UuidT(nullable: Boolean = false) extends PrimT {
+  final class UuidT private(val nullable: Boolean = false) extends PrimT {
     type Value = UUID
     def isa(that: PrimT) = that match {
       case UuidT(n) => nullable <= n
@@ -160,9 +235,18 @@ object PrimT {
       case UuidT(n) => Some(UuidT(nullable||n))
       case _ => None
     }
-    def withNull = this.copy(nullable = true)
+    def withNull = UuidT.nullableUuidT
     def name = "UUID"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
+  }
+  object UuidT {
+    private val strictUuidT : UuidT = new UuidT(false)
+    private val nullableUuidT : UuidT = new UuidT(true)
+    def apply(b: Boolean = false) = if (b) nullableUuidT else strictUuidT
+    def unapply(pt: PrimT): Option[Boolean] = pt match {
+      case _ : UuidT => Some(pt.nullable)
+      case _ => None
+    }
   }
 
   def withName(s: String): PrimT = s match {
@@ -219,14 +303,14 @@ object PrimT {
     val bool = (word("true") as true) | (word("false") as false)
     val strt : Parser[PrimT] = word("StringT") >> paren(for { n <- nat ; _ <- comma ; b <- bool } yield StringT(n.toInt, b))
     val nstr : Parser[Boolean => PrimT] =
-      ("ByteT"    as ByteT)    |
-      ("ShortT"   as ShortT)   |
-      ("IntT"     as IntT)     |
-      ("LongT"    as LongT)    |
-      ("DoubleT"  as DoubleT)  |
-      ("BooleanT" as BooleanT) |
-      ("DateT"    as DateT)    |
-      ("UuidT"    as UuidT)
+      ("ByteT"    as ByteT.apply _)    |
+      ("ShortT"   as ShortT.apply _)   |
+      ("IntT"     as IntT.apply _)     |
+      ("LongT"    as LongT.apply _)    |
+      ("DoubleT"  as DoubleT.apply _)  |
+      ("BooleanT" as BooleanT.apply _) |
+      ("DateT"    as DateT.apply _)    |
+      ("UuidT"    as UuidT.apply _)
 
     val main : Parser[PrimT] = strt | (for { c <- nstr ; b <- paren(bool) } yield c(b))
 
