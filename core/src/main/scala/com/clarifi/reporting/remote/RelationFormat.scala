@@ -317,7 +317,7 @@ object Format {
              p2R(booleanR, longR)((b, l) => DateExpr(b, new java.util.Date(l))),
              p2R(booleanR, booleanR)(BooleanExpr(_,_)),
              p2R(booleanR, stringR)((b, s) => UuidExpr(b, UUID.fromString(s))),
-             primTR map (NullExpr))
+             primTR map (NullExpr(_)))
 
   lazy val predicateR: Reader[Predicate, DynamicF] = fixR[Predicate, DynamicF](self =>
     union7R(booleanR map (x => Predicate.Atom(x)),
