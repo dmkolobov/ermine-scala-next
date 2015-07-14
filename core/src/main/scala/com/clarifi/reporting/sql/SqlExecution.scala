@@ -50,13 +50,18 @@ class SqlExecution(implicit emitter: SqlEmitter) {
         val qDelta = qEnd - qStart
         logger trace ("Finished executing query -- took " + qDelta + "ms")
         logger debug ("Query (" |+| query.run |+| ") took " + qDelta + "ms")
-        def nextRecord: Record = {
-          Range(1, cc + 1).map { x =>
+
+        val keyCache = Range(0, cc).map { i =>
+          (md.getColumnLabel(i+1), i)
+        }.toMap
+
+        def nextRecord: Record =
+          record.RecordMap.createWithKeyCache(keyCache){ i =>
             import java.sql.Types._
+            val x = i + 1
             val columnLabel = md.getColumnLabel(x)
             val columnName = emitter.unemitColumnName(columnLabel)
             val columnType = h(columnName)
-            val sqlT = md.getColumnType(x)
             val simpleExpr = columnType match {
               case DateT(n) => DateExpr(n, rs.getDate(x, gmtCalendar))
               case DoubleT(n) => DoubleExpr(n, rs.getDouble(x))
@@ -68,14 +73,11 @@ class SqlExecution(implicit emitter: SqlEmitter) {
               case BooleanT(n) => BooleanExpr(n, emitter.getBoolean(rs, x))
               case UuidT(n) => UuidExpr(n, emitter.getUuid(rs, x))
             }
-            val complexExpr =
-              if (rs.wasNull) {
-                if (columnType.nullable) NullExpr(columnType)
-                else sys.error("Unexpected NULL in field of type " + columnType)
-              } else simpleExpr
-            (columnName, complexExpr)
-          }.toMap
-        }
+            if (rs.wasNull) {
+              if (columnType.nullable) NullExpr(columnType)
+              else sys.error("Unexpected NULL in field of type " + columnType)
+            } else simpleExpr
+          }
 
         ( Driver.Id((x: Record => Any) => if (rs.next) Some(x(nextRecord)) else None)
         , () => { rs.close ; stmt.close }
