@@ -49,7 +49,6 @@ class SqlExecution(implicit emitter: SqlEmitter) {
         val qEnd = System.currentTimeMillis
         val qDelta = qEnd - qStart
         logger trace ("Finished executing query -- took " + qDelta + "ms")
-        logger debug ("Query (" |+| query.run |+| ") took " + qDelta + "ms")
         def nextRecord: Record = {
           Range(1, cc + 1).map { x =>
             import java.sql.Types._
