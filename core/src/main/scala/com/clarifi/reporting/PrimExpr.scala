@@ -295,13 +295,13 @@ final class DoubleExpr private(val nullable: Boolean, val value: Double)
 object DoubleExpr {
   private[this] val zero = new DoubleExpr(true, 0.0)
   private[this] val one = new DoubleExpr(true, 1.0)
-  // private[this] val cache =
-  //   new SetAssociativeCache[DoubleExpr]("DoubleExprCache", 15)
+  private[this] val cache =
+    new SetAssociativeCache[DoubleExpr]("DoubleExprCache", 12)
 
   def apply(nullable: Boolean, value: Double): DoubleExpr =
     if (value == 0.0) zero
     else if (value == 1.0) one
-    else new DoubleExpr(nullable, value)
+    else cache.canonicalize(new DoubleExpr(nullable, value))
 
   def unapply(pe: PrimExpr): Option[(Boolean, Double)] = pe match {
     case de : DoubleExpr => Some((de.nullable, de.value))
