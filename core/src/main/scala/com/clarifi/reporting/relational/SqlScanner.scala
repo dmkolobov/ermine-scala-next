@@ -174,6 +174,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   }
 
   import SortOrder._
+  import record.RecordMap
 
   def compileMem[M,R](m: Mem[R, M], smv: M => MemPrg, srv: R => SqlPrg)(implicit sup: Supply): MemPrg =
     m match {
@@ -214,7 +215,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         val MemPrg(h, ps, q, rx) = compileMem(e, smv, srv)
         MemPrg(Map(attr.name -> attr.t),
                ps,
-               _ => q(List()) map (_ andThen reduceProcess(op, attr.t).outmap(p => Map(attr.name -> p))),
+               _ => q(List()) map (_ andThen reduceProcess(op, attr.t).outmap(p => RecordMap(attr.name -> p))),
                ForallTups(Map(attr.name -> None), PartitionedSet.zero))
       case LimitM(m, start, stop, order) =>
         val MemPrg(h, ps, q, rx) = compileMem(m, smv, srv)
@@ -249,8 +250,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
             (q1p, q2p) => q1p.tee(q2p)(Tee.mergeOuterJoin((r: Record) => r filterKeys jk,
                                                           (r: Record) => r filterKeys jk
                                                           )(ord)).map {
-            case This(a) => (h2 map (kv => kv._1 -> NullExpr(kv._2))) ++ a
-            case That(b) => (h1 map (kv => kv._1 -> NullExpr(kv._2))) ++ b
+            case This(a) => RecordMap(h2 map (kv => kv._1 -> NullExpr(kv._2))) ++ a
+            case That(b) => RecordMap(h1 map (kv => kv._1 -> NullExpr(kv._2))) ++ b
             case Both(a, b) => a ++ b
           })
           if (prefix == o) merged else merged map (_ andThen sorting(prefix, o))
@@ -436,8 +437,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     keyMap: Map[Record, (ColumnName, Op, PrimExpr)],
     outer: Boolean
   ): Process[Record, Record] = {
-    val base : Record = if (outer) keyMap.values map { case (col,op,default) => col -> default } toMap
-                        else Map()
+    val base : Record = if (outer) RecordMap(keyMap.values map { case (col,op,default) => col -> default })
+                        else RecordMap()
     def collect(acc: Record, extra: Record): Process[Record, Record] =
       await[Record] flatMap { (r:Record) =>
         val nextra = r -- pKey -- pVals

@@ -34,12 +34,18 @@ sealed abstract class RecordMapLowPriorityImplicits
 }
 
 object RecordMap extends RecordMapLowPriorityImplicits {
-  private[this] type ValueSeq[A] = ArrayBuffer[A]
+  private[this] type ValueSeq[A] = Array[AnyRef]
   private[record] type KeyCache[A] = Map[A, Int]
+
+  private[this]
+  def indexValueSeq[A](vs: ValueSeq[A], i: Int): A = vs(i).asInstanceOf[A]
+
+  private[this]
+  def emptyKeyCache[A] : KeyCache[A] = Map()
 
   override def apply[A, B](elems: (A, B)*): RecordMap[A, B] = {
     val vs = iPromiseToFillThis[B](elems.size)
-    val (ks, fi) = elems.foldLeft((Map.empty: KeyCache[A], 0)){
+    val (ks, fi) = elems.foldLeft((emptyKeyCache[A],0)){
       case (st@(kc, i), (a, b)) =>
         kc get a match {
           case None =>
@@ -51,8 +57,14 @@ object RecordMap extends RecordMapLowPriorityImplicits {
         }
     }
     vs trimEnd(vs.size - fi)
-    new SharingKeySet(ks, vs)
+    SharingKeySet(ks, vs)
   }
+
+  def apply[A, B](other: Map[A, B]): RecordMap[A, B] =
+    fromMap(other)
+
+  def apply[A, B](tr: TraversableOnce[(A, B)]): RecordMap[A, B] =
+    apply(tr.toSeq:_*)
 
   def empty[A, B]: RecordMap[A, B] = EmptyRecMap.asInstanceOf[RecordMap[A, B]]
 
@@ -79,17 +91,17 @@ object RecordMap extends RecordMapLowPriorityImplicits {
       with MoreSpecific {
 
     def apply(): Builder[(A, B), RecordMap[A, B]] =
-      bf() mapResult (new Proxying(_))
+      bf() mapResult (fromMap(_))
 
     def apply(from: Map[A, Any]): Builder[(A, B), RecordMap[A, B]] = from match {
       case sks: SharingKeySet[A, _] =>
         new SameKeyBuilder(sks.keyCache, bf, from)
       case _ =>
-        bf(from) mapResult (new Proxying(_))
+        bf(from) mapResult (fromMap(_))
     }
   }
 
-  private[this] def iPromiseToFillThis[A](n: Int): ValueSeq[A] =
+  private[this] def iPromiseToFillThis[A](n: Int): ArrayBuffer[A] =
     ArrayBuffer.fill(n)(null.asInstanceOf[A])
 
   private[this] final class SameKeyBuilder[A, B]
@@ -98,7 +110,7 @@ object RecordMap extends RecordMapLowPriorityImplicits {
      from: Map[A, Any])
       extends Builder[(A, B), RecordMap[A, B]] {
 
-    private[this] val vals: ValueSeq[B] =
+    private[this] val vals: ArrayBuffer[B] =
       iPromiseToFillThis(keyCache.size)
     private[this] val bitted: BitSet = BitSet()
     private[this] var fallback: Option[Builder[(A, B), Map[A, B]]] = None
@@ -115,8 +127,8 @@ object RecordMap extends RecordMapLowPriorityImplicits {
             vals(i) = elem._2
             bitted += i
         }
-          case Some(fb) =>
-            fb += elem
+        case Some(fb) =>
+          fb += elem
       }
       this
     }
@@ -134,23 +146,23 @@ object RecordMap extends RecordMapLowPriorityImplicits {
     def result(): RecordMap[A, B] = fallback match {
       case None =>
         if (bitted.size == keyCache.size)
-          new SharingKeySet(keyCache, vals)
+          SharingKeySet(keyCache, vals)
         else {
           val fb = bf(from)
           flushTo(fb)
-          new Proxying(fb.result())
+          fromMap(fb.result())
         }
-      case Some(fb) => new Proxying(fb.result())
+      case Some(fb) => fromMap(fb.result())
     }
   }
 
   /** Assumes that the KeyCache provided has entries for 0..keyCache.size */
   def createWithKeyCache[A, B](keyCache: KeyCache[A])(fill: Int => B): RecordMap[A, B] = {
     val vals = iPromiseToFillThis[B](keyCache.size)
-    for (i <- 0 to keyCache.size-1) {
+    for (i <- 0 until keyCache.size) {
       vals(i) = fill(i)
     }
-    new SharingKeySet(keyCache, vals)
+    new SharingKeySet(keyCache, vals.asInstanceOf[ArrayBuffer[AnyRef]]toArray)
   }
 
   private[this] val keyCacheCache: java.util.WeakHashMap[KeyCache[_], java.lang.ref.WeakReference[KeyCache[_]]]
@@ -171,42 +183,49 @@ object RecordMap extends RecordMapLowPriorityImplicits {
     }
 
   private[this]
-  final class SharingKeySet[A, B](private[RecordMap] _keyCache: KeyCache[A],
+  final class SharingKeySet[A, B](private[RecordMap] val keyCache: KeyCache[A],
                                   values: ValueSeq[B])
       extends RecordMap[A, B] {
 
-    val keyCache: KeyCache[A] = canonicalizeKeyCache(_keyCache)
-
-    private[this]
-    def proxying: Map[A, B] = keyCache transform { case (_, i) => values(i) }
-
     def +[B1 >: B](kv: (A, B1)): imm.Map[A, B1] =
       (keyCache get kv._1) match {
-        case None => proxying + kv
+        case None =>
+          SharingKeySet(keyCache updated (kv._1, keyCache.size), values :+ kv._2.asInstanceOf[AnyRef])
         case Some(i) =>
-          new SharingKeySet(keyCache, values updated (i, kv._2))
+          new SharingKeySet(keyCache, values updated (i, kv._2.asInstanceOf[AnyRef]))
       }
 
     def ++[B1 >: B](m: Map[A, B1]): imm.Map[A, B1] = {
-       val vals = iPromiseToFillThis[B1](keyCache.size + m.size)
-       values.copyToBuffer(vals)
-       val (newKeyCache, sz) = m.foldLeft((keyCache, keyCache.size)) {
+       val maxSize = keyCache.size + m.size
+       val vals = iPromiseToFillThis[B1](maxSize)
+       values.copyToBuffer(vals.asInstanceOf[ArrayBuffer[AnyRef]])
+       val (ks, sz) = m.foldLeft((keyCache, keyCache.size)) {
          case (st@(kc, i), (key, v)) => kc get key match {
-           case Some(j) => vals(j) = v ; st
            case None => vals(i) = v ; (kc updated (key, i), i+1)
+           case Some(j) => vals(j) = v ; st
          }
        }
-       vals.trimEnd(vals.size - sz)
-       new SharingKeySet(newKeyCache, vals)
+       vals.trimEnd(maxSize - sz)
+       SharingKeySet(ks, vals)
     }
 
     def -(key: A): RecordMap[A, B] =
-      if (keyCache contains key) new Proxying(proxying - key)
-      else this
+      keyCache get key match {
+        case None => this
+        case Some(i) => rebuild((k,j) => i != j, keyCache, values)
+      }
 
-    def get(key: A): Option[B] = keyCache get key map values
+    def --(keys: Traversable[A]): RecordMap[A, B] = {
+      val subKeyCache = keyCache -- keys
+
+      if (subKeyCache.size == keyCache.size) this
+      else rebuild((k,i) => subKeyCache.contains(k), keyCache, values)
+    }
+
+    def get(key: A): Option[B] = keyCache get key map (indexValueSeq(values,_))
+
     def iterator: Iterator[(A, B)] =
-      keyCache.iterator map { case (k, i) => (k, values(i)) }
+      keyCache.iterator map { case (k, i) => (k, indexValueSeq(values, i)) }
 
     // Optimizations
     override def transform[C, That](f: (A, B) => C)
@@ -216,27 +235,61 @@ object RecordMap extends RecordMapLowPriorityImplicits {
           // The keyset is guaranteed not to change, so we can skip
           // the filling checks in SameKeyBuilder.
           val out = iPromiseToFillThis[C](values.size)
-          keyCache foreach { case (k, i) => out(i) = f(k, values(i)) }
-          new SharingKeySet(keyCache, out): That
+          keyCache foreach { case (k, i) =>
+            out(i) = f(k, indexValueSeq(values, i))
+          }
+          new SharingKeySet(keyCache, out.asInstanceOf[ArrayBuffer[AnyRef]].toArray): That
         case _ => super.transform(f)(bf)
       }
 
     override def mapValues[C](f: B => C): Map[A, C] =
-      new SharingKeySet(keyCache, values map f)
+      new SharingKeySet(keyCache, values map (x => f(x.asInstanceOf[B]).asInstanceOf[AnyRef]))
+
+    override def filterKeys(p: A => Boolean): Map[A, B] =
+      rebuild((key,i) => p(key), keyCache, values)
 
     private[record] def rkeyCache: Option[RecordMap.KeyCache[A]] =
       Some(keyCache)
   }
+  private[this]
+  object SharingKeySet {
+    /* Smart constructor canonicalizes the key cache for reduced memory footprint */
+    def apply[A,B](kc: KeyCache[A], vs: ArrayBuffer[B]): SharingKeySet[A, B] =
+      new SharingKeySet(canonicalizeKeyCache(kc), vs.asInstanceOf[ArrayBuffer[AnyRef]].toArray)
+
+    def apply[A,B](kc: KeyCache[A], vs: ValueSeq[B]): SharingKeySet[A, B] =
+      new SharingKeySet(canonicalizeKeyCache(kc), vs)
+  }
+
 
   private[this]
-  final class Proxying[A, +B](private[RecordMap] val inner: Map[A, B])
-      extends RecordMap[A, B] {
+  def rebuild[A, B](pred: (A, Int) => Boolean,
+                    keyCache: KeyCache[A],
+                    vals: ValueSeq[B]): SharingKeySet[A, B] = {
+    val newVals = iPromiseToFillThis[B](keyCache.size)
 
-    def +[B1 >: B](kv: (A, B1)): imm.Map[A, B1] = inner + kv
-    def -(key: A): RecordMap[A,B] = new Proxying(inner - key)
-    def get(key: A): Option[B] = inner get key
-    def iterator: Iterator[(A, B)] = inner.iterator
+    val (newKeyCache, n) = keyCache.foldLeft((emptyKeyCache[A], 0)) {
+      case (st@(kc, j), (key, i)) =>
+        if(pred(key, i)) {
+          newVals(j) = indexValueSeq(vals,i)
+          (kc updated (key, j), j+1)
+        } else st
+    }
 
-    private[record] def rkeyCache = None
+    newVals.trimEnd(newVals.size - n)
+    SharingKeySet(newKeyCache, newVals)
+  }
+
+  private[this]
+  def fromMap[A,B](other: Map[A, B]): SharingKeySet[A, B] = {
+    val vals = iPromiseToFillThis[B](other.size)
+
+    val (keyCache, _) = other.foldLeft((emptyKeyCache[A], 0)) {
+      case ((kc, i), (k, v)) =>
+        vals(i) = v
+        (kc updated (k, i), i+1)
+    }
+
+    SharingKeySet(keyCache, vals)
   }
 }
