@@ -40,7 +40,7 @@ sealed abstract class SqlQuery {
         else (groupBy.toIndexedSeq.map((x: SqlExpr) => x.emitSql).rawMkString(", ")) }
       else raw("")) |+|
       (if (orderBy.size > 0)
-        raw(" order by ") |+| orderBy.map(x => x._1.emitSql |+| " " |+| x._2.emitSql).toIterable.rawMkString(", ")
+        emitter.emitOrderBy |+| orderBy.map(x => x._1.emitSql |+| " " |+| x._2.emitSql).toIterable.rawMkString(", ")
       else raw("")) |+|
       (limit match { case (from, to) =>
         raw(" ") |+| emitter.emitLimitClause(from, to)})

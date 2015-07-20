@@ -64,6 +64,9 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   def isTransactional: Boolean
   def setConstraints(enable: Boolean, t: Iterable[TableName]): List[RawSql]
 
+
+  def emitOrderBy: RawSql
+
   /**
    * Used at the end of a SELECT...FROM when the list of tables is empty.
    * Returns the empty string by default.
@@ -344,6 +347,16 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
 //////////////////////////////////////////////////////////////////////////////
 // Traits for specific behavior overrides
 
+/** Emitters for which ordering is emitted as straight "ORDER BY" */
+trait EmitOrderBy_Plain extends SqlEmitter {
+  def emitOrderBy: RawSql = raw("order by")
+}
+
+/** Emitters that specify binary-based ordering for order by */
+trait EmitOrderBy_Binary extends SqlEmitter {
+  def emitOrderBy: RawSql = raw("order by binary")
+}
+
 /** Emitters for which there is no suffix after the closing ')' in
   * create table statements.
   */
@@ -600,7 +613,9 @@ trait EmitCheckExists_AlwaysFails extends SqlEmitter {
 class SqliteEmitter extends SqlEmitter
     with EmitCreateTable_NoSuffix
     with EmitNoDropTempTable
-    with EmitUuid_Strings with EmitCheckExists_AlwaysFails {
+    with EmitUuid_Strings
+    with EmitOrderBy_Plain
+    with EmitCheckExists_AlwaysFails {
 
   def isTransactional: Boolean = true
   def setConstraints(enable: Boolean, t: Iterable[TableName]): List[RawSql] =
@@ -659,6 +674,7 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                                       with EmitConcat_MySQL
                                       with EmitUnion
                                       with EmitIntDivOp_MySQL
+                                      with EmitOrderBy_Binary
                                       with EmitUuid_Strings {
   override def emitTableName(tn: TableName): RawSql =
     (tn.schema :+ tn.name) map emitColumnName rawMkString "."
@@ -718,6 +734,7 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitOver_UsingOver
                                       with EmitStddevVar_MsSQL
                                       with EmitUuid_Strings
+                                      with EmitOrderBy_Plain
                                       with EmitName_MsSql {
 
   def isTransactional: Boolean = true
@@ -768,6 +785,7 @@ class VerticaSqlEmitter extends SqlEmitter(false) with EmitFromEmptyTable_FromDu
                                            with EmitExcept_AsJoin
                                            with EmitUnion
                                            with EmitUuid_Strings
+                                           with EmitOrderBy_Plain
                                            with EmitCheckExists_AlwaysFails {
 
   def isTransactional: Boolean = true
@@ -808,6 +826,7 @@ class PostgreSqlEmitter extends SqlEmitter(false)
                         with EmitLimit_AsLimit
                         with EmitUnion
                         with EmitUuid_Strings
+                        with EmitOrderBy_Plain
                         with EmitCheckExists_AlwaysFails {
   import SqlEmitter.nn
 
