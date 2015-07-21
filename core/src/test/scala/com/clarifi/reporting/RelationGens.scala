@@ -62,7 +62,7 @@ object RelationGens {
   private def genIntExpr: Gen[IntExpr] = gen1PrimExpr(IntExpr)
 
   /** A generator for DoubleExpr */
-  private def genDoubleExpr: Gen[DoubleExpr] = gen1PrimExpr(DoubleExpr)
+  private def genDoubleExpr: Gen[DoubleExpr] = gen1PrimExpr(DoubleExpr.apply)
 
   /**
    * A generator for DateExpr for dates between 1/1/1902 and 2/5/2038. These
@@ -75,7 +75,7 @@ object RelationGens {
   /* A generator for BooleanExpr */
   private def genBooleanExpr: Gen[BooleanExpr] = gen1PrimExpr(BooleanExpr)
 
-  private def genNullExpr: Gen[NullExpr] = simplePrimT map (_.withNull |> NullExpr)
+  private def genNullExpr: Gen[NullExpr] = simplePrimT map (_.withNull |> (NullExpr(_)))
 
   val genNumExpr: Gen[PrimExpr] =
     Gen.oneOf(gen1PrimExpr(ByteExpr), gen1PrimExpr(ShortExpr),

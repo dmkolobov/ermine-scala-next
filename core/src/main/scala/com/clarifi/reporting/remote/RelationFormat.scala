@@ -345,15 +345,15 @@ object Format {
   }
   lazy val sourcedR: Reader[Sourced, SourcedF] = tuple2R(listR(sourceR) map (_.toSet), headerR map (_.success))
   lazy val primTR: Reader[PrimT, PrimTF] = union9R(
-    booleanR map (IntT),
-    booleanR map (ByteT),
-    booleanR map (ShortT),
-    booleanR map (LongT),
+    booleanR map (IntT(_)),
+    booleanR map (ByteT(_)),
+    booleanR map (ShortT(_)),
+    booleanR map (LongT(_)),
     p2R(intR, booleanR)(StringT.apply),
-    booleanR map (DateT),
-    booleanR map (DoubleT),
-    booleanR map (BooleanT),
-    booleanR map (UuidT)
+    booleanR map (DateT(_)),
+    booleanR map (DoubleT(_)),
+    booleanR map (BooleanT(_)),
+    booleanR map (UuidT(_))
   )
 
   lazy val primExprR: Reader[PrimExpr, PrimExprF] =
@@ -366,7 +366,7 @@ object Format {
              p2R(booleanR, longR)((b, l) => DateExpr(b, new java.util.Date(l))),
              p2R(booleanR, booleanR)(BooleanExpr(_,_)),
              p2R(booleanR, stringR)((b, s) => UuidExpr(b, UUID.fromString(s))),
-             primTR map (NullExpr))
+             primTR map (NullExpr(_)))
 
   lazy val predicateR: Reader[Predicate, DynamicF] = fixR[Predicate, DynamicF](self =>
     union8R(booleanR map (x => Predicate.Atom(x)),

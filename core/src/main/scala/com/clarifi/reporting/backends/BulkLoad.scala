@@ -96,15 +96,15 @@ object BulkLoad {
   }
 
   def primExprR =
-    union10R( optionR(booleanR) map (liftExprCon(BooleanT(), BooleanExpr))
-            , optionR(byteR) map (liftExprCon(ByteT(), ByteExpr))
-            , optionR(shortR) map (liftExprCon(ShortT(), ShortExpr))
-            , optionR(intR) map (liftExprCon(IntT(), IntExpr))
-            , optionR(longR) map (liftExprCon(LongT(), LongExpr))
-            , optionR(doubleR) map (liftExprCon(DoubleT(), DoubleExpr))
-            , optionR(stringR) map (liftExprCon(StringT(0), StringExpr))
-            , optionR(dateR) map (liftExprCon(DateT(), DateExpr))
-            , optionR(uuidR) map (liftExprCon(UuidT(), UuidExpr))
+    union10R( optionR(booleanR) map (liftExprCon(BooleanT(), BooleanExpr(_,_)))
+            , optionR(byteR) map (liftExprCon(ByteT(), ByteExpr(_,_)))
+            , optionR(shortR) map (liftExprCon(ShortT(), ShortExpr(_,_)))
+            , optionR(intR) map (liftExprCon(IntT(), IntExpr(_,_)))
+            , optionR(longR) map (liftExprCon(LongT(), LongExpr(_,_)))
+            , optionR(doubleR) map (liftExprCon(DoubleT(), DoubleExpr(_,_)))
+            , optionR(stringR) map (liftExprCon(StringT(0), StringExpr(_,_)))
+            , optionR(dateR) map (liftExprCon(DateT(), DateExpr(_,_)))
+            , optionR(uuidR) map (liftExprCon(UuidT(), UuidExpr(_,_)))
             , optionR(unitR) map (_ => NullExpr(IntT(true))) // no way to recover the type information
             )
 
