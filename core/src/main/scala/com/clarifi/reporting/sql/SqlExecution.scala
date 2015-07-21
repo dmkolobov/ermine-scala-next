@@ -49,7 +49,6 @@ class SqlExecution(implicit emitter: SqlEmitter) {
         val qEnd = System.currentTimeMillis
         val qDelta = qEnd - qStart
         logger trace ("Finished executing query -- took " + qDelta + "ms")
-        logger debug ("Query (" |+| query.run |+| ") took " + qDelta + "ms")
 
         val keyCache = Range(0, cc).map { i =>
           (md.getColumnLabel(i+1), i)
