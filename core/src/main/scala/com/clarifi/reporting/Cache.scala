@@ -13,7 +13,7 @@ object Cache {
    * shift specifies the size of the cache: 2^shift
    * identifier is used in logging messages
    */
-  final class SetAssociativeCache[A:ClassManifest](identifier: String, shift: Int) {
+  final class SetAssociativeCache[A:reflect.ClassTag](identifier: String, shift: Int) {
     private[this] val mask: Int = (1 << shift) - 1
     private[this] val vals: Array[Array[A]] = new Array(1 << shift)
 
