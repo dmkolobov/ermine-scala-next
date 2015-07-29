@@ -747,7 +747,10 @@ input       = input_ inputW
 
 
 checkBox : Bool -> (Report f z -> Selector f z Bool -> Report f z) -> Report f z
-checkBox initVal kont = selector CheckBox (x -> case x of True -> "True"; False -> "False") initVal [True, False] kont
+checkBox = checkBox' ""
+
+checkBox' : String -> Bool -> (Report f z -> Selector f z Bool -> Report f z) -> Report f z
+checkBox' label initVal kont = selector CheckBox (const label) initVal [True, False] kont
 
 barHeader ui = pad [pixelsM 4] . style "bar-header" ' ui
 
