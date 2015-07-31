@@ -17,6 +17,15 @@ import scalaz.std.vector._
 package object relational {
   import SortOrder._
 
+  def uniqSorted: Process[Record,Record] = {
+    def filter(now: Record): Process[Record, Record] =
+      Plan.await[Record] flatMap { case r =>
+        if (r == now) filter(now)
+        else Plan.emit(r) >> filter(r)
+      }
+    Plan.await[Record] flatMap { r => Plan.emit(r) >> filter(r) }
+  }
+
   def uniq(sortedBy: Set[String]): Process[Record, Record] = {
     def filter(m: Set[Record], key: Record): Process[Record, Record] =
       Plan.await[Record] flatMap { case r =>
@@ -94,7 +103,7 @@ package object relational {
 
     override def foldLeftM[B >: A, C](initial: C)(f: (C,B) => C): Id[C] =
       withDriver( d => driveLeftId(d.apply _)(machine)(x => x: B)(initial)(f))
-    
+
     def withDriver[R](k: Driver[Id, K] => R): R = {
       val (d, teardown) = setup
       val result = k(d)
@@ -116,6 +125,9 @@ package object relational {
         def setup = self setup
       }
 
+    override def execute[B >: A](implicit B: Monoid[B]): Id[B] =
+      withDriver(d => driveLeftId[K, B, B, B](d.apply _)(machine)(x => x:B)(B.zero)((x,y) => B.append(x,y)))
+
     override def tee[B,C](p: Procedure[Id, B])(t: Tee[A, B, C]): Procedure[Id, C] = p match {
       case ep : EffectfulProcedure[B] => new EffectfulProcedure[C] {
           type K = self.K \/ ep.K
@@ -131,7 +143,7 @@ package object relational {
       case _ => new Procedure[Id, C] {
         type K = self.K \/ p.K
 
-        def machine = Tee.tee(self.machine, p.machine)(t)
+        def machine = tee2(self.machine, p.machine)(t)
 
         def withDriver[R](k: Driver[Id, K] => R): R = {
           val (d1, teardown) = self.setup
