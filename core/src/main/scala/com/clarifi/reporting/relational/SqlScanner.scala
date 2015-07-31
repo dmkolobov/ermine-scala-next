@@ -208,6 +208,20 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   import SortOrder._
   import record.RecordMap
 
+  private[this]
+  def scanAndUniq(sql: SqlQuery,
+                  order: List[(String, SortOrder)],
+                  h: Header)(implicit sup: Supply): DB[Procedure[Id,Record]] = sql match {
+    case sel : SqlSelect if sel.options contains "distinct" =>
+      // do our own distinct in memory, since it's likely faster
+      logger.debug("Memory DISTINCT")
+      val newSel = sel copy (options = sel.options - "distinct")
+      val unsortedCols = h.keySet -- order.map(_._1)
+      val totalOrder = order ++ unsortedCols.toList.map((_,Asc))
+      scanQuery(orderQuery(newSel, totalOrder), h) map (_ andThen uniqSorted)
+    case _ => scanQuery(orderQuery(sql,order), h)
+  }
+
   def compileMem[M,R](m: Mem[R, M], smv: M => MemPrg, srv: R => SqlPrg)(implicit sup: Supply, memoLookup: HashSet[TableName], scopeBuilder : List[() => String]): MemPrg =
     m match {
       case VarM(v) => smv(v)
@@ -226,7 +240,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       case EmbedMem(ExtMem(e)) => compileMem(e, smv, srv)
       case EmbedMem(ExtRel(e, _)) => // TODO: Ditto
         val SqlPrg(h, ps, q, rx) = compileRel(e, smv, srv)
-        MemPrg(h, ps, o => scanQuery(orderQuery(q, o), h), rx)
+        MemPrg(h, ps, o => scanAndUniq(q, o, h), rx)
       case EmbedMem(ExtSM(e)) =>
         val (p, h, rx) = sms(e)
         MemPrg(h, List(), p, rx)
@@ -413,9 +427,14 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
           v => Typer.memTyper(Mem.instantiate(EmptyRel(v), expr).substPrg(srv, smv)).toOption).get
         MemPrg(hdr, p, joined, r.filterKeys(knames.contains))
       case ProcedureCall(args, h, proc, namespace)  => sys.error("TODO")
-      case l@Literal(t,ts) => MemPrg(l.header, List(),
-        so => procedureFromSource(com.clarifi.machines.Source.source(l.mapCollections( xs => sort(xs, so), xs => sort(xs, so)))).point[DB],
-        Reflexivity literalSeq (l.seq))
+      case l@Literal(t,ts) =>
+        def src(rs: Stream[Record]): com.clarifi.machines.Source[Record] = rs match {
+          case r #:: rs => Emit(r, () => src(rs))
+          case _       => Stop
+        }
+        MemPrg(l.header, List(),
+          so => procedureFromSource(src(l.mapCollections( xs => sort(xs, so), xs => sort(xs, so)).toStream)).point[DB],
+          Reflexivity literalSeq (l.seq))
       case EmptyRel(h) => MemPrg(h, List(), _ => procedureFromSource(Machine.stopped).point[DB], KnownEmpty())
       case QuoteMem(n) => sys.error("Cannot scan quotes.")
       case ExceptM(m, cs) =>
@@ -606,12 +625,12 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                       , scopeBuilder: List[() => String]
                       ): SqlPrg = {
 
-    def mkUnion(l: Relation[M, R], r: Relation[M, R], op: (SqlQuery, SqlQuery) => SqlQuery) = {
+    def mkUnion(l: Relation[M, R], r: Relation[M, R]) = {
       val lc = compileRel(l, smv, srv)
       val rc = compileRel(r, smv, srv)
       val SqlPrg(h1, p1, q1, refl1) = lc
       val SqlPrg(h2, p2, q2, refl2) = rc
-      SqlPrg(h1, p1 ++ p2, op(q1, q2), refl1 || refl2)
+      SqlPrg(h1, p1 ++ p2, SqlUnion(q1, q2), refl1 || refl2)
     }
 
     def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
@@ -645,7 +664,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                p1 ++ p2,
                SqlJoinOn((q1, TableName(ul), h1), (q2, TableName(ur), h2), on, TableName(un)),
                refl1 && refl2)
-      case Union(l, r) => mkUnion(l, r, SqlUnion(_, _))
+      case Union(l, r) => mkUnion(l, r)
       case Minus(l, r) =>
         val lc = compileRel(l, smv, srv)
         val rc = compileRel(r, smv, srv)

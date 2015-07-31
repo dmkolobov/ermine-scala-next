@@ -451,7 +451,10 @@ object Mem {
   import com.clarifi.machines.Tee._
   def passL[A]: Tee[A, Any, A] = (awaits(left[A])  flatMap emit).repeatedly
   def passR[A]: Tee[Any, A, A] = (awaits(right[A]) flatMap emit).repeatedly
-  def appendT[A]: Tee[A, A, A] = awaits(left[A]) flatMap (x => emit(x) >> appendT[A]) orElse passR[A]
+  def appendT[A]: Tee[A, A, A] = {
+    lazy val loop : Tee[A, A, A] = awaits(left[A]) flatMap (x => emit(x) >> loop) orElse passR[A]
+    loop
+  }
 
   def append[M[+_],A](p1: Procedure[M, A], p2: => Procedure[M, A]) = {
     p1.tee(p2)(appendT)
