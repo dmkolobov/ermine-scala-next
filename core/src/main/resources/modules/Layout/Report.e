@@ -277,11 +277,17 @@ emptyReport = prefA [pixelsA 0 0, cellsA 0 0] ' Report (w -> unit (wm w) (emptyW
 hflow : List (Report f z) -> Report f z
 hflow = flow Horizontal
 
+hflowStyle : String -> List (Report f z) -> Report f z
+hflowStyle s = style ("hflow@" ++_String s) . hflow
+
 -- | Lay reports out top-to-bottom, each taking up their "natural"
 -- vertical amount of the containing space and 100% of horizontal
 -- space.
 vflow : List (Report f z) -> Report f z
 vflow = flow Vertical
+
+vflowStyle : String -> List (Report f z) -> Report f z
+vflowStyle s = style ("vflow@" ++_String s) . vflow
 
 stackAll : List (Report f z) -> Report f z -> Report f z
 stackAll l r = foldr stack r l
