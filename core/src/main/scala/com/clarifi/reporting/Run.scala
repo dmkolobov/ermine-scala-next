@@ -59,7 +59,7 @@ object Run {
   /** Retrieve the implicit `Run[G]`. */
   @inline def apply[G[_]](implicit G: Run[G]): Run[G] = G
 
-  import scalaz.Applicative
+  import scalaz.{Applicative, Distributive, Functor}
 
   /** A default definition for `Run#suspend` built on `#run` and
     * `G.point`.
@@ -67,6 +67,19 @@ object Run {
   def runSuspendGM[G[_], A](R: Run[G], ga: G[A])(implicit G: Applicative[G])
       : G[Suspendable.O[A]] =
     G.point(Suspendable.O(R.run(ga)))
+
+  /** For all Runs of applicative G, there is a half-legal distributive
+    * instance, that lifts 'run' into the functor and wraps the result
+    * with G.point.  Better that than the Function1 distributive. –SMRC
+    */
+  def impliedDistributive[G[_]](R: Run[G])(implicit G: Applicative[G])
+      : Distributive[G] =
+    new Distributive[G] {
+      override def map[A, B](fa: G[A])(f: A => B) = G.map(fa)(f)
+      override def distributeImpl[H[_], A, B](fa: H[A])(f: A => G[B])
+                                 (implicit H: Functor[H]): G[H[B]] =
+        G.point(H.map(fa)(f andThen R.run))
+    }
 
   /** Runs over limited resources are still required to satisfy the
     * identity law.  This can help in such cases; it also avoids a

@@ -8,7 +8,7 @@ import com.clarifi.machines._
 import scalaz._
 import Scalaz._
 
-abstract class Scanner[G[_]](implicit G: Monad[G], Dist : Distributive[G]) { self =>
+abstract class Scanner[G[_]](implicit G: Monad[G]) { self =>
 
   /** Scan a relation r, iterating over its records by f in the order specified.
     * The order is given by a list of pairs where the first element specifies
@@ -30,5 +30,4 @@ abstract class Scanner[G[_]](implicit G: Monad[G], Dist : Distributive[G]) { sel
     scanExt(r, Process.wrapping[Record], List())
 
   val M = G
-  val D = Dist
 }
