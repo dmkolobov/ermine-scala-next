@@ -14,7 +14,7 @@ import collection.immutable.IndexedSeq
 import compat.Platform.currentTime
 
 object DB {
-  private val Log = org.apache.log4j.Logger.getLogger(DB.getClass)
+  private[backends] val Log = org.apache.log4j.Logger.getLogger(DB.getClass)
 
   def transaction[A](action: DB[A]): DB[A] = (c: Connection) => {
     val oldAutoCommit = c.getAutoCommit
@@ -104,13 +104,11 @@ object DB {
    */
   def Run(driver: String): String => Run[DB] = {
     Class.forName(driver)
-    (url: String) => new RunDB {
-      def run[A](a: DB[A]): A = {
+    (url: String) => new ThreadLocalRunDB {
+      protected def freshResource[A](a: Resource => A): A = {
         val conn = DriverManager.getConnection(url)
         try {
-          val result = a(conn)
-          if (Log.isDebugEnabled) Log.debug(result.toString)
-          result
+          a(conn)
         }
         finally { conn.close }
       }
@@ -129,8 +127,8 @@ object DB {
 
   def RunUser(driver: String): (String, String, String) => Run[DB] = {
     Class.forName(driver)
-    (url: String, user: String, password: String) => new RunDB {
-      def run[A](a: DB[A]): A = {
+    (url: String, user: String, password: String) => new ThreadLocalRunDB {
+      protected def freshResource[A](a: Resource => A): A = {
         val conn = DriverManager.getConnection(url, user, password)
         try { a(conn) }
         finally { conn.close }
@@ -145,4 +143,17 @@ object DB {
 trait RunDB extends Run[DB] {
   def suspend[A](ga: DB[A]): DB[Suspendable.O[A]] =
     Run.runSuspendGM(this, ga)
+}
+
+/** Like RunDB, but only one Connection per thread at a time. */
+trait ThreadLocalRunDB
+    extends com.clarifi.reporting.Run.ThreadLocalDC[DB]
+    with RunDB {
+  type Resource = Connection
+
+  protected def runR[A](a: DB[A], r: Resource): A = {
+    val result = a(r)
+    if (DB.Log.isDebugEnabled) DB.Log.debug(result.toString)
+    result
+  }
 }
