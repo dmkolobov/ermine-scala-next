@@ -56,12 +56,16 @@ object PrimT {
   /** Variant for PrimT companion objects where the companion class only
     * has a `nullable` member.
     */
-  sealed abstract class WithNullableCompanion[PT] extends (Boolean abs_=> PT) {
+  sealed abstract class WithNullableCompanion[PT: reflect.ClassTag]
+      extends (Boolean abs_=> PT) {
     private[PrimT] val strictInstance: PT
     private[PrimT] val nullableInstance: PT
     final def apply(b: Boolean = false): PT =
       if (b) nullableInstance else strictInstance
-    def unapply(pt: PrimT): Option[Boolean]
+    final def unapply(pt: PrimT): Option[Boolean] = pt match {
+      case _ : PT => Some(pt.nullable) // works by virtue of ClassTag & scala 2.10
+      case _ => None
+    }
   }
 
   final class ByteT private(val nullable: Boolean = false)
@@ -74,10 +78,6 @@ object PrimT {
   object ByteT extends WithNullableCompanion[ByteT] {
     private[PrimT] override val strictInstance : ByteT = new ByteT(false)
     private[PrimT] override val nullableInstance : ByteT = new ByteT(true)
-    def unapply(pt: PrimT): Option[Boolean] = pt match {
-      case _ : ByteT => Some(pt.nullable)
-      case _ => None
-    }
   }
 
   final class ShortT private(val nullable: Boolean = false)
@@ -90,10 +90,6 @@ object PrimT {
   object ShortT extends WithNullableCompanion[ShortT] {
     private[PrimT] override val strictInstance : ShortT = new ShortT(false)
     private[PrimT] override val nullableInstance : ShortT = new ShortT(true)
-    def unapply(pt: PrimT): Option[Boolean] = pt match {
-      case _ : ShortT => Some(pt.nullable)
-      case _ => None
-    }
   }
 
   final class IntT private(val nullable: Boolean = false)
@@ -106,10 +102,6 @@ object PrimT {
   object IntT extends WithNullableCompanion[IntT] {
     private[PrimT] override val strictInstance : IntT = new IntT(false)
     private[PrimT] override val nullableInstance : IntT = new IntT(true)
-    def unapply(pt: PrimT): Option[Boolean] = pt match {
-      case _ : IntT => Some(pt.nullable)
-      case _ => None
-    }
   }
 
   final class LongT private(val nullable: Boolean = false)
@@ -122,10 +114,6 @@ object PrimT {
   object LongT extends WithNullableCompanion[LongT] {
     private[PrimT] override val strictInstance : LongT = new LongT(false)
     private[PrimT] override val nullableInstance : LongT = new LongT(true)
-    def unapply(pt: PrimT): Option[Boolean] = pt match {
-      case _ : LongT => Some(pt.nullable)
-      case _ => None
-    }
   }
 
   final class StringT private(val len: Int, val nullable: Boolean = false) extends PrimT {
@@ -171,10 +159,6 @@ object PrimT {
   object DateT extends WithNullableCompanion[DateT] {
     private[PrimT] override val strictInstance : DateT = new DateT(false)
     private[PrimT] override val nullableInstance : DateT = new DateT(true)
-    def unapply(pt: PrimT): Option[Boolean] = pt match {
-      case _ : DateT => Some(pt.nullable)
-      case _ => None
-    }
   }
 
   final class DoubleT private(val nullable: Boolean = false)
@@ -187,10 +171,6 @@ object PrimT {
   object DoubleT extends WithNullableCompanion[DoubleT] {
     private[PrimT] override val strictInstance : DoubleT = new DoubleT(false)
     private[PrimT] override val nullableInstance : DoubleT = new DoubleT(true)
-    def unapply(pt: PrimT): Option[Boolean] = pt match {
-      case _ : DoubleT => Some(pt.nullable)
-      case _ => None
-    }
   }
 
   final class BooleanT private(val nullable: Boolean = false)
@@ -203,10 +183,6 @@ object PrimT {
   object BooleanT extends WithNullableCompanion[BooleanT] {
     private[PrimT] override val strictInstance : BooleanT = new BooleanT(false)
     private[PrimT] override val nullableInstance : BooleanT = new BooleanT(true)
-    def unapply(pt: PrimT): Option[Boolean] = pt match {
-      case _ : BooleanT => Some(pt.nullable)
-      case _ => None
-    }
   }
 
   final class UuidT private(val nullable: Boolean = false)
@@ -219,10 +195,6 @@ object PrimT {
   object UuidT extends WithNullableCompanion[UuidT] {
     private[PrimT] override val strictInstance : UuidT = new UuidT(false)
     private[PrimT] override val nullableInstance : UuidT = new UuidT(true)
-    def unapply(pt: PrimT): Option[Boolean] = pt match {
-      case _ : UuidT => Some(pt.nullable)
-      case _ => None
-    }
   }
 
   def withName(s: String): PrimT = s match {
