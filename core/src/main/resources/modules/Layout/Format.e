@@ -43,19 +43,20 @@ private foreign
 round, roundParens : PrimitiveNum n => Int -> Format n
 round = funcall3# round# (toBool# False) (toBool# False)
 -- | xParens is like x, but displaying negative numbers as (1.7) instead of -1.7
-roundParens = funcall3# round# (toBool# False) (toBool# True)
-roundParensColor = funcall3# round# (toBool# True) (toBool# True)
+roundParens = roundParens' False
+roundParens' doColor = funcall3# round# (toBool# doColor) (toBool# True)
 
 currency = funcall3# currency# (toBool# False) (toBool# False)
-currencyParens = funcall3# currency# (toBool# False) (toBool# True)
-currencyParensColor = funcall3# currency# (toBool# True) (toBool# True)
+currencyParens = currencyParens' False
+currencyParens' doColor = funcall3# currency# (toBool# doColor) (toBool# True)
 
 -- exactly the same as round with one exception:
 --   if a double is the same as it's int value,
 --   then it gets displayed as an int
 --     eg:  6.00 -> 6
 integralRound : PrimitiveNum n => Int -> Format n
-integralRound = funcall3# integralRound# (toBool# False) (toBool# False)
+integralRound = integralRound' False
+integralRound' doColor = funcall3# integralRound# (toBool# doColor) (toBool# False)
 
 -- 0.42 -> "42%"
 percentage : PrimitiveNum n => Format n
@@ -66,9 +67,10 @@ percentageRound n = funcall4# percentage# (toBool# False)(toBool# False) n (toBo
 percentageIntegralRound n = funcall4# percentage# (toBool# False) (toBool# False) n (toBool# False)
 
 percentageRoundParens, percentageIntegralRoundParens : PrimitiveNum n => Int -> Format n
-percentageRoundParens n = funcall4# percentage# (toBool# False) (toBool# True) n (toBool# True)
-percentageIntegralRoundParens n = funcall4# percentage# (toBool# False) (toBool# True) n (toBool# False)
-percentageIntegralRoundParensColor n = funcall4# percentage# (toBool# True) (toBool# True) n (toBool# False)
+percentageRoundParens = percentageRoundParens' False
+percentageRoundParens' doColor n = funcall4# percentage# (toBool# doColor) (toBool# True) n (toBool# True)
+percentageIntegralRoundParens = percentageIntegralRoundParens' False
+percentageIntegralRoundParens' doColor n = funcall4# percentage# (toBool# doColor) (toBool# True) n (toBool# False)
 {--
 truncate examples, truncating at 10 characters
   10 -> "abcdefghijkl" -> "abcdefg..."  -- input length 12,  output length 10
