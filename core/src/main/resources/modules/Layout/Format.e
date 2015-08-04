@@ -41,21 +41,21 @@ private foreign
 
 -- 2 -> 34.7652 -> 34.77
 round, roundParens : PrimitiveNum n => Int -> Format n
-round = funcall2# (toBool# False) round# (toBool# False)
+round = funcall3# round# (toBool# False) (toBool# False)
 -- | xParens is like x, but displaying negative numbers as (1.7) instead of -1.7
-roundParens = funcall2# (toBool# False) round# (toBool# True)
-roundParensColor = funcall2# (toBool# True) round# (toBool# True)
+roundParens = funcall3# round# (toBool# False) (toBool# True)
+roundParensColor = funcall3# round# (toBool# True) (toBool# True)
 
-currency = funcall2# (toBool# False) currency# (toBool# False)
-currencyParens = funcall2# (toBool# False) currency# (toBool# True)
-currencyParensColor = funcall2# (toBool# True) currency# (toBool# True)
+currency = funcall3# currency# (toBool# False) (toBool# False)
+currencyParens = funcall3# currency# (toBool# False) (toBool# True)
+currencyParensColor = funcall3# currency# (toBool# True) (toBool# True)
 
 -- exactly the same as round with one exception:
 --   if a double is the same as it's int value,
 --   then it gets displayed as an int
 --     eg:  6.00 -> 6
 integralRound : PrimitiveNum n => Int -> Format n
-integralRound = funcall2# (toBool# False) integralRound# (toBool# False)
+integralRound = funcall3# integralRound# (toBool# False) (toBool# False)
 
 -- 0.42 -> "42%"
 percentage : PrimitiveNum n => Format n
