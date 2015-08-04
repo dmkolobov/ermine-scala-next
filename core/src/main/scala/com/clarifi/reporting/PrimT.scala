@@ -1,6 +1,7 @@
 package com.clarifi.reporting
 
 import java.util.{Date, UUID}
+import scala.runtime.{AbstractFunction1 => abs_=>}
 
 import scalaz.{@@, Equal, Ordering, Order, Semigroup, Show, Scalaz, Validation}
 import scalaz.Tags.Disjunction
@@ -29,100 +30,97 @@ object PrimT {
   private def nullify(nullable: Boolean, ty: PrimType[_]): PrimType[_] =
     if (nullable) PrimType primOption ty else ty
 
-  final class ByteT private(val nullable: Boolean = false) extends PrimT {
+  /** Variant for PrimT classes that only have a `nullable` member.
+    */
+  sealed abstract class WithNullable[PT <: PrimT] extends PrimT {
+    // NB: always use lazy val for implementers; otherwise, would be
+    // circular
+    private[PrimT] val PTCtor: WithNullableCompanion[PT]
+    final override def isa(that: PrimT) =
+      that match {
+        case PTCtor(n) => nullable <= n
+        case _ => false
+      }
+
+    final override def sup(that: PrimT): Option[PrimT] =
+      that match {
+        case PTCtor(n) => Some(PTCtor(nullable || n))
+        case _ => None
+      }
+
+    final override def withNull: PrimT = PTCtor.nullableInstance
+    final override def toString = name + "T(" + nullable + ")"
+  }
+
+  /** Variant for PrimT companion objects where the companion class only
+    * has a `nullable` member.
+    */
+  sealed abstract class WithNullableCompanion[PT] extends (Boolean abs_=> PT) {
+    private[PrimT] val strictInstance: PT
+    private[PrimT] val nullableInstance: PT
+    final def apply(b: Boolean = false): PT =
+      if (b) nullableInstance else strictInstance
+    def unapply(pt: PrimT): Option[Boolean]
+  }
+
+  final class ByteT private(val nullable: Boolean = false)
+      extends WithNullable[ByteT] {
     type Value = Byte
-    def isa(that: PrimT) = that match {
-      case ByteT(n) => nullable <= n
-      case _ => false
-    }
-    def sup(that: PrimT) = that match {
-      case ByteT(n) => Some(ByteT(nullable || n))
-      case _ => None
-    }
-    def withNull = ByteT.nullableByteT
+    private[PrimT] lazy val PTCtor: WithNullableCompanion[ByteT] = ByteT
     def name = "Byte"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
-    override def toString = name + "T(" + nullable + ")"
   }
-  object ByteT {
-    private val strictByteT : ByteT = new ByteT(false)
-    private val nullableByteT : ByteT = new ByteT(true)
-    def apply(b: Boolean = false) = if (b) nullableByteT else strictByteT
+  object ByteT extends WithNullableCompanion[ByteT] {
+    private[PrimT] override val strictInstance : ByteT = new ByteT(false)
+    private[PrimT] override val nullableInstance : ByteT = new ByteT(true)
     def unapply(pt: PrimT): Option[Boolean] = pt match {
       case _ : ByteT => Some(pt.nullable)
       case _ => None
     }
   }
 
-  final class ShortT private(val nullable: Boolean = false) extends PrimT {
+  final class ShortT private(val nullable: Boolean = false)
+      extends WithNullable[ShortT] {
     type Value = Short
-    def isa(that: PrimT) = that match {
-      case ShortT(n) => nullable <= n
-      case _ => false
-    }
-    def sup(that: PrimT) = that match {
-      case ShortT(n) => Some(ShortT(nullable || n))
-      case _ => None
-    }
-    def withNull = ShortT.nullableShortT
+    private[PrimT] lazy val PTCtor: WithNullableCompanion[ShortT] = ShortT
     def name = "Short"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
-    override def toString = name + "T(" + nullable + ")"
   }
-  object ShortT {
-    private val strictShortT : ShortT = new ShortT(false)
-    private val nullableShortT : ShortT = new ShortT(true)
-    def apply(b: Boolean = false) = if (b) nullableShortT else strictShortT
+  object ShortT extends WithNullableCompanion[ShortT] {
+    private[PrimT] override val strictInstance : ShortT = new ShortT(false)
+    private[PrimT] override val nullableInstance : ShortT = new ShortT(true)
     def unapply(pt: PrimT): Option[Boolean] = pt match {
       case _ : ShortT => Some(pt.nullable)
       case _ => None
     }
   }
 
-  final class IntT private(val nullable: Boolean = false) extends PrimT {
+  final class IntT private(val nullable: Boolean = false)
+      extends WithNullable[IntT] {
     type Value = Int
-    def isa(that: PrimT) = that match {
-      case IntT(n) => nullable <= n
-      case _ => false
-    }
-    def sup(that: PrimT) = that match {
-      case IntT(n) => Some(IntT(nullable || n))
-      case _ => None
-    }
-    def withNull = IntT.nullableIntT
+    private[PrimT] lazy val PTCtor: WithNullableCompanion[IntT] = IntT
     def name = "Int"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
-    override def toString = name + "T(" + nullable + ")"
   }
-  object IntT {
-    private val strictIntT : IntT = new IntT(false)
-    private val nullableIntT : IntT = new IntT(true)
-    def apply(b: Boolean = false) = if (b) nullableIntT else strictIntT
+  object IntT extends WithNullableCompanion[IntT] {
+    private[PrimT] override val strictInstance : IntT = new IntT(false)
+    private[PrimT] override val nullableInstance : IntT = new IntT(true)
     def unapply(pt: PrimT): Option[Boolean] = pt match {
       case _ : IntT => Some(pt.nullable)
       case _ => None
     }
   }
 
-  final class LongT private(val nullable: Boolean = false) extends PrimT {
+  final class LongT private(val nullable: Boolean = false)
+      extends WithNullable[LongT] {
     type Value = Long
-    def isa(that: PrimT) = that match {
-      case LongT(n) => nullable <= n
-      case _ => false
-    }
-    def sup(that: PrimT) = that match {
-      case LongT(n) => Some(LongT(nullable || n))
-      case _ => None
-    }
-    def withNull = LongT.nullableLongT
+    private[PrimT] lazy val PTCtor: WithNullableCompanion[LongT] = LongT
     def name = "Long"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
-    override def toString = name + "T(" + nullable + ")"
   }
-  object LongT {
-    private val strictLongT : LongT = new LongT(false)
-    private val nullableLongT : LongT = new LongT(true)
-    def apply(b: Boolean = false) = if (b) nullableLongT else strictLongT
+  object LongT extends WithNullableCompanion[LongT] {
+    private[PrimT] override val strictInstance : LongT = new LongT(false)
+    private[PrimT] override val nullableInstance : LongT = new LongT(true)
     def unapply(pt: PrimT): Option[Boolean] = pt match {
       case _ : LongT => Some(pt.nullable)
       case _ => None
@@ -161,100 +159,64 @@ object PrimT {
     }
   }
 
-  final class DateT private(val nullable: Boolean = false) extends PrimT {
+  final class DateT private(val nullable: Boolean = false)
+      extends WithNullable[DateT] {
     type Value = Date
-    def isa(that: PrimT) = that match {
-      case DateT(n) => nullable <= n
-      case _ => false
-    }
-    def sup(that: PrimT) = that match {
-      case DateT(n) => Some(DateT(nullable||n))
-      case _ => None
-    }
-    def withNull = DateT.nullableDateT
+    private[PrimT] lazy val PTCtor: WithNullableCompanion[DateT] = DateT
     def name = "Date"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
-    override def toString = name + "T(" + nullable + ")"
   }
-  object DateT {
-    private val strictDateT : DateT = new DateT(false)
-    private val nullableDateT : DateT = new DateT(true)
-    def apply(b: Boolean = false) = if (b) nullableDateT else strictDateT
+  object DateT extends WithNullableCompanion[DateT] {
+    private[PrimT] override val strictInstance : DateT = new DateT(false)
+    private[PrimT] override val nullableInstance : DateT = new DateT(true)
     def unapply(pt: PrimT): Option[Boolean] = pt match {
       case _ : DateT => Some(pt.nullable)
       case _ => None
     }
   }
 
-  final class DoubleT private(val nullable: Boolean = false) extends PrimT {
+  final class DoubleT private(val nullable: Boolean = false)
+      extends WithNullable[DoubleT] {
     type Value = Double
-    def isa(that: PrimT) = that match {
-      case DoubleT(n) => nullable <= n
-      case _ => false
-    }
-    def sup(that: PrimT) = that match {
-      case DoubleT(n) => Some(DoubleT(nullable||n))
-      case _ => None
-    }
-    def withNull = DoubleT.nullableDoubleT
+    private[PrimT] lazy val PTCtor: WithNullableCompanion[DoubleT] = DoubleT
     def name = "Double"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
-    override def toString = name + "T(" + nullable + ")"
   }
-  object DoubleT {
-    private val strictDoubleT : DoubleT = new DoubleT(false)
-    private val nullableDoubleT : DoubleT = new DoubleT(true)
-    def apply(b: Boolean = false) = if (b) nullableDoubleT else strictDoubleT
+  object DoubleT extends WithNullableCompanion[DoubleT] {
+    private[PrimT] override val strictInstance : DoubleT = new DoubleT(false)
+    private[PrimT] override val nullableInstance : DoubleT = new DoubleT(true)
     def unapply(pt: PrimT): Option[Boolean] = pt match {
       case _ : DoubleT => Some(pt.nullable)
       case _ => None
     }
   }
 
-  final class BooleanT private(val nullable: Boolean = false) extends PrimT {
+  final class BooleanT private(val nullable: Boolean = false)
+      extends WithNullable[BooleanT] {
     type Value = Boolean
-    def isa(that: PrimT) = that match {
-      case BooleanT(n) => nullable <= n
-      case _ => false
-    }
-    def sup(that: PrimT) = that match {
-      case BooleanT(n) => Some(BooleanT(nullable||n))
-      case _ => None
-    }
-    def withNull = BooleanT.nullableBooleanT
+    private[PrimT] lazy val PTCtor: WithNullableCompanion[BooleanT] = BooleanT
     def name = "Bool"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
-    override def toString = name + "T(" + nullable + ")"
   }
-  object BooleanT {
-    private val strictBooleanT : BooleanT = new BooleanT(false)
-    private val nullableBooleanT : BooleanT = new BooleanT(true)
-    def apply(b: Boolean = false) = if (b) nullableBooleanT else strictBooleanT
+  object BooleanT extends WithNullableCompanion[BooleanT] {
+    private[PrimT] override val strictInstance : BooleanT = new BooleanT(false)
+    private[PrimT] override val nullableInstance : BooleanT = new BooleanT(true)
     def unapply(pt: PrimT): Option[Boolean] = pt match {
       case _ : BooleanT => Some(pt.nullable)
       case _ => None
     }
   }
 
-  final class UuidT private(val nullable: Boolean = false) extends PrimT {
+  final class UuidT private(val nullable: Boolean = false)
+      extends WithNullable[UuidT] {
     type Value = UUID
-    def isa(that: PrimT) = that match {
-      case UuidT(n) => nullable <= n
-      case _ => false
-    }
-    def sup(that: PrimT) = that match {
-      case UuidT(n) => Some(UuidT(nullable||n))
-      case _ => None
-    }
-    def withNull = UuidT.nullableUuidT
+    private[PrimT] lazy val PTCtor: WithNullableCompanion[UuidT] = UuidT
     def name = "UUID"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
-    override def toString = name + "T(" + nullable + ")"
   }
-  object UuidT {
-    private val strictUuidT : UuidT = new UuidT(false)
-    private val nullableUuidT : UuidT = new UuidT(true)
-    def apply(b: Boolean = false) = if (b) nullableUuidT else strictUuidT
+  object UuidT extends WithNullableCompanion[UuidT] {
+    private[PrimT] override val strictInstance : UuidT = new UuidT(false)
+    private[PrimT] override val nullableInstance : UuidT = new UuidT(true)
     def unapply(pt: PrimT): Option[Boolean] = pt match {
       case _ : UuidT => Some(pt.nullable)
       case _ => None
@@ -314,15 +276,16 @@ object PrimT {
     import ermine.parsing._
     val bool = (word("true") as true) | (word("false") as false)
     val strt : Parser[PrimT] = word("StringT") >> paren(for { n <- nat ; _ <- comma ; b <- bool } yield StringT(n.toInt, b))
+    @inline def w(f: Boolean => PrimT) = f // scala is weird.
     val nstr : Parser[Boolean => PrimT] =
-      ("ByteT"    as ByteT.apply _)    |
-      ("ShortT"   as ShortT.apply _)   |
-      ("IntT"     as IntT.apply _)     |
-      ("LongT"    as LongT.apply _)    |
-      ("DoubleT"  as DoubleT.apply _)  |
-      ("BooleanT" as BooleanT.apply _) |
-      ("DateT"    as DateT.apply _)    |
-      ("UuidT"    as UuidT.apply _)
+      ("ByteT"    as w(ByteT))    |
+      ("ShortT"   as w(ShortT))   |
+      ("IntT"     as w(IntT))     |
+      ("LongT"    as w(LongT))    |
+      ("DoubleT"  as w(DoubleT))  |
+      ("BooleanT" as w(BooleanT)) |
+      ("DateT"    as w(DateT))    |
+      ("UuidT"    as w(UuidT))
 
     val main : Parser[PrimT] = strt | (for { c <- nstr ; b <- paren(bool) } yield c(b))
 
