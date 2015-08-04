@@ -516,17 +516,31 @@ object Format {
   private type NelPe = NonEmptyList[PrimExpr]
   private type NelOp = NonEmptyList[Op]
 
-  private def negParenTransform(doIt: Boolean, fmt : ThreadUnsafeNumberFormat) : ThreadUnsafeNumberFormat = {
-    if(doIt)
-      (fmt match {
-        case df:DecimalFormat => {
-             df.setNegativePrefix("("+df.getPositivePrefix)
-             df.setNegativeSuffix(df.getNegativeSuffix+")")
-             df.setPositiveSuffix(df.getPositiveSuffix+"\u2008")
-             df
-           }
-        case f => f})
-    else fmt
+//add style transform...
+
+  private def negParenTransform(useColor: Boolean, doIt: Boolean, fmt : ThreadUnsafeNumberFormat) : ThreadUnsafeNumberFormat = {
+    var res1 =
+     if(doIt)
+       (fmt match {
+          case df:DecimalFormat => {
+               df.setNegativePrefix("("+df.getPositivePrefix)
+               df.setNegativeSuffix(df.getNegativeSuffix+")")
+               df.setPositiveSuffix(df.getPositiveSuffix+"\u2008")
+               df
+             }
+          case f => f})
+      else fmt
+   if(useColor)
+       (res1 match {
+          case df:DecimalFormat => {
+               df.setNegativePrefix("<span class='negnum'>"+df.getNegativePrefix)
+               df.setNegativeSuffix(df.getNegativeSuffix+"</span>")
+               df.setPositivePrefix("<span class='posnum'>"+df.getPositivePrefix)
+               df.setPositiveSuffix(df.getPositiveSuffix+"</span>")
+               df
+             }
+          case f => f})
+   else res1
   }
 
 
@@ -556,6 +570,7 @@ object Format {
                                Concat(List(OpLiteral(StringExpr(false,"(")),Mul(op,OpLiteral(IntExpr(false,-1))),OpLiteral(StringExpr(false,")")))),
                                op)
 
+
   /** Use whatever the default formatting for the Op type seems to
     * be. */
   case object Default extends Format {
@@ -579,7 +594,7 @@ object Format {
      }
     def devolve(ops: NelOp) = wrapped.devolve(ops)
   }
-  
+
   /** Constant format that always returns a given string. */
   case class Constant(value: String) extends Format {
     val basicEval = (_: NelPe) => StringExpr(false, value)
@@ -587,12 +602,12 @@ object Format {
   }
 
   /** Format as a percentage, where numeric 1 displays as "100%". */
-  case class Percentage(doNegParens: Boolean, places: Int, pad: Boolean) extends Format {
+  case class Percentage(useColor: Boolean, doNegParens: Boolean, places: Int, pad: Boolean) extends Format {
     val basicEval = numberFormatEval(tlv{
       val formatter = ThreadUnsafeNumberFormat.getPercentInstance
       formatter.setMinimumFractionDigits(if (pad) places else 0)
       formatter.setMaximumFractionDigits(places)
-      negParenTransform(doNegParens,formatter)
+      negParenTransform(useColor,doNegParens,formatter)
     })
     //TODO neg parens
     def devolve(ops: NelOp) = {
@@ -615,8 +630,8 @@ object Format {
   /** Format as currency, where 1.15 displays as "$1.15" if `symbol` is
     * `"USD"`.
     */
-  case class Currency(doNegParens: Boolean, symbol: String) extends Format {
-    val basicEval = CurrencyObj.fmt(doNegParens, symbol, java.util.Locale.US)
+  case class Currency(useColor: Boolean, doNegParens: Boolean, symbol: String) extends Format {
+    val basicEval = CurrencyObj.fmt(useColor, doNegParens, symbol, java.util.Locale.US)
     //TODO neg parens
     def devolve(ops: NelOp) = {
       val (sym, places) = CurrencyObj.settings(symbol, java.util.Locale.US)
@@ -648,13 +663,13 @@ object Format {
         .getOrElse((symbol, 2))
 
     private[writers]
-    def fmt(doNegParens: Boolean, symbol: String, locale: Locale): NonEmptyList[PrimExpr] => PrimExpr = {
+    def fmt(useColor : Boolean, doNegParens: Boolean, symbol: String, locale: Locale): NonEmptyList[PrimExpr] => PrimExpr = {
       val (sym, places) = settings(symbol, locale)
       numberFormatEval{tlv{
         val formatter = ThreadUnsafeNumberFormat getInstance locale
         formatter.setMinimumFractionDigits(places)
         formatter.setMaximumFractionDigits(places)
-        negParenTransform(doNegParens,formatter)
+        negParenTransform(useColor, doNegParens,formatter)
       }} andThen (_ match {case StringExpr(n, s) => StringExpr(n, sym |+| s)
                            case pe => pe})
     }
@@ -681,13 +696,13 @@ object Format {
   }
 
   /** Round to `places` after the decimal point. */
-  case class Round(doNegParens: Boolean, places: Int) extends Format {
+  case class Round(useColor: Boolean, doNegParens: Boolean, places: Int) extends Format {
     assert(places >= 0)
     val basicEval = numberFormatEval(tlv {
       val formatter = ThreadUnsafeNumberFormat.getNumberInstance
       formatter setMinimumFractionDigits places
       formatter setMaximumFractionDigits places
-      negParenTransform(doNegParens, formatter)
+      negParenTransform(useColor, doNegParens, formatter)
       })
 
     def devolve(ops: NelOp) = {
@@ -701,12 +716,12 @@ object Format {
   /** As with `Round`, but show integral results with no decimal
     * places.
     */
-  case class IntegralRound(doNegParens:Boolean, places: Int) extends Format {
+  case class IntegralRound(useColor: Boolean, doNegParens:Boolean, places: Int) extends Format {
     assert(places >= 0)
     private val rbe = numberFormatEval(tlv {
       val formatter = ThreadUnsafeNumberFormat.getNumberInstance
       formatter setMaximumFractionDigits places
-      negParenTransform(doNegParens, formatter)
+      negParenTransform(useColor, doNegParens, formatter)
       })
     private val f: NelPe => NelPe = (pes: NelPe) => pes.map( _ match {
       case d@DoubleExpr(n, v) =>

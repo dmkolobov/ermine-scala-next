@@ -22,11 +22,11 @@ foreign
 
 private foreign
   value "com.clarifi.reporting.writers.Format$Percentage$" "MODULE$"
-      percentage# : PrimitiveNum n => Function3 Bool# Int Bool# (Format n)
+      percentage# : PrimitiveNum n => Function4 Bool# Bool# Int Bool# (Format n)
   value "com.clarifi.reporting.writers.Format$Round$" "MODULE$"
-      round# : PrimitiveNum n => Function2 Bool# Int (Format n)
+      round# : PrimitiveNum n => Function3 Bool# Bool# Int (Format n)
   value "com.clarifi.reporting.writers.Format$IntegralRound$" "MODULE$"
-      integralRound# : PrimitiveNum n => Function2 Bool# Int (Format n)
+      integralRound# : PrimitiveNum n => Function3 Bool# Bool# Int (Format n)
   value "com.clarifi.reporting.writers.Format$Truncate$" "MODULE$"
       truncate# : Primitive a => Function1 Int (Format a)
   -- Renders markdown in strings.  e.g. "[**The Best Link EVAR**](bestaddrever.com)" creates a bold link to bestaddr.com.
@@ -35,37 +35,40 @@ private foreign
       markdown# : Unscaled a => Function1 (Format a) (Format a)
   -- 1.5 -> "USD" -> "$1.50"
   value "com.clarifi.reporting.writers.Format$Currency$" "MODULE$"
-      currency# : PrimitiveNum n => Function2 Bool# String (Format n)
+      currency# : PrimitiveNum n => Function3 Bool# Bool# String (Format n)
   value "com.clarifi.reporting.writers.Format$Constant$" "MODULE$"
       constant# : Function1 String (Format a)
 
 -- 2 -> 34.7652 -> 34.77
 round, roundParens : PrimitiveNum n => Int -> Format n
-round = funcall2# round# (toBool# False)
+round = funcall2# (toBool# False) round# (toBool# False)
 -- | xParens is like x, but displaying negative numbers as (1.7) instead of -1.7
-roundParens = funcall2# round# (toBool# True)
+roundParens = funcall2# (toBool# False) round# (toBool# True)
+roundParensColor = funcall2# (toBool# True) round# (toBool# True)
 
-currency = funcall2# currency# (toBool# False)
-currencyParens = funcall2# currency# (toBool# True)
+currency = funcall2# (toBool# False) currency# (toBool# False)
+currencyParens = funcall2# (toBool# False) currency# (toBool# True)
+currencyParensColor = funcall2# (toBool# True) currency# (toBool# True)
 
 -- exactly the same as round with one exception:
 --   if a double is the same as it's int value,
 --   then it gets displayed as an int
 --     eg:  6.00 -> 6
 integralRound : PrimitiveNum n => Int -> Format n
-integralRound = funcall2# integralRound# (toBool# False)
+integralRound = funcall2# (toBool# False) integralRound# (toBool# False)
 
 -- 0.42 -> "42%"
 percentage : PrimitiveNum n => Format n
 percentage = percentageIntegralRound 2
 
 percentageRound, percentageIntegralRound : PrimitiveNum n => Int -> Format n
-percentageRound n = funcall3# percentage# (toBool# False) n (toBool# True)
-percentageIntegralRound n = funcall3# percentage# (toBool# False) n (toBool# False)
+percentageRound n = funcall4# percentage# (toBool# False)(toBool# False) n (toBool# True)
+percentageIntegralRound n = funcall4# percentage# (toBool# False) (toBool# False) n (toBool# False)
 
 percentageRoundParens, percentageIntegralRoundParens : PrimitiveNum n => Int -> Format n
-percentageRoundParens n = funcall3# percentage# (toBool# True) n (toBool# True)
-percentageIntegralRoundParens n = funcall3# percentage# (toBool# True) n (toBool# False)
+percentageRoundParens n = funcall4# percentage# (toBool# False) (toBool# True) n (toBool# True)
+percentageIntegralRoundParens n = funcall4# percentage# (toBool# False) (toBool# True) n (toBool# False)
+percentageIntegralRoundParensColor n = funcall4# percentage# (toBool# True) (toBool# True) n (toBool# False)
 {--
 truncate examples, truncating at 10 characters
   10 -> "abcdefghijkl" -> "abcdefg..."  -- input length 12,  output length 10

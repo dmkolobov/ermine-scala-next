@@ -586,11 +586,11 @@ object Format {
   type WFormatF[A] = S9[UnitF, // Default
                      A, // Markdown
                      StringF, // Constant
-                     BooleanF :: IntF :: BooleanF, // Percent
-                     BooleanF :: StringF, // Currency
+                     BooleanF :: BooleanF :: IntF :: BooleanF, // Percent
+                     BooleanF :: BooleanF :: StringF, // Currency
                      UnitF, // DateRange
-                     BooleanF :: IntF,  // Round
-                     BooleanF :: IntF,  // IntegralRound
+                     BooleanF :: BooleanF :: IntF,  // Round
+                     BooleanF :: BooleanF :: IntF,  // IntegralRound
                      IntF   // Truncate
                    ]
 
@@ -598,25 +598,25 @@ object Format {
     unitR   map (_ => WFormat.Default),
     self map (inner => WFormat.Markdown(inner) ),
     stringR map (s => WFormat.Constant(s)),
-    p3R(booleanR,intR, booleanR)(WFormat.Percentage),
-    p2R(booleanR,stringR)(WFormat.Currency),
+    p4R(booleanR,booleanR,intR, booleanR)(WFormat.Percentage),
+    p3R(booleanR,booleanR,stringR)(WFormat.Currency),
     unitR   map (_ => WFormat.DateRange),
-    p2R(booleanR,intR)(WFormat.Round),
-    p2R(booleanR,intR)(WFormat.IntegralRound),
+    p3R(booleanR,booleanR,intR)(WFormat.Round),
+    p3R(booleanR,booleanR,intR)(WFormat.IntegralRound),
     intR    map (i => WFormat.Truncate(i))
   ))
 
   lazy val wformatW = fixFW[WFormat, WFormatF]( self =>
-    s9W(unitW, self, stringW, tuple3W(booleanW, intW, booleanW), tuple2W(booleanW,stringW), unitW, tuple2W(booleanW,intW), tuple2W(booleanW,intW), intW)(
+    s9W(unitW, self, stringW, tuple4W(booleanW, booleanW, intW, booleanW), tuple3W(booleanW,booleanW,stringW), unitW, tuple3W(booleanW,booleanW,intW), tuple3W(booleanW,booleanW,intW), intW)(
       (d, md, k, p, c, dr, r, sr, t) => (w: WFormat) => w match {
         case WFormat.Default              => d(())
         case WFormat.Markdown(f)          => md(f)
         case WFormat.Constant(s)          => k(s)
-        case WFormat.Percentage(b,r, pad) => p((b,r, pad))
-        case WFormat.Currency(b,s)        => c((b,s))
+        case WFormat.Percentage(b,b1,r, pad) => p((b,b1,r, pad))
+        case WFormat.Currency(b,b1,s)        => c((b,b1,s))
         case WFormat.DateRange            => dr(())
-        case WFormat.Round(b,i)           => r(b,i)
-        case WFormat.IntegralRound(b,i)   => sr(b,i)
+        case WFormat.Round(b,b1,i)           => r(b,b1,i)
+        case WFormat.IntegralRound(b,b1,i)   => sr(b,b1,i)
         case WFormat.Truncate(i)        => t(i)
       }))
 
