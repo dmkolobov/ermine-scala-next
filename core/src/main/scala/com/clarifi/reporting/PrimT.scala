@@ -42,6 +42,7 @@ object PrimT {
     def withNull = ByteT.nullableByteT
     def name = "Byte"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
+    override def toString = name + "T(" + nullable + ")"
   }
   object ByteT {
     private val strictByteT : ByteT = new ByteT(false)
@@ -66,6 +67,7 @@ object PrimT {
     def withNull = ShortT.nullableShortT
     def name = "Short"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
+    override def toString = name + "T(" + nullable + ")"
   }
   object ShortT {
     private val strictShortT : ShortT = new ShortT(false)
@@ -90,6 +92,7 @@ object PrimT {
     def withNull = IntT.nullableIntT
     def name = "Int"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
+    override def toString = name + "T(" + nullable + ")"
   }
   object IntT {
     private val strictIntT : IntT = new IntT(false)
@@ -114,6 +117,7 @@ object PrimT {
     def withNull = LongT.nullableLongT
     def name = "Long"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
+    override def toString = name + "T(" + nullable + ")"
   }
   object LongT {
     private val strictLongT : LongT = new LongT(false)
@@ -139,6 +143,10 @@ object PrimT {
     def withNull = if (nullable) this else StringT(len, true)
     def name = "String"
     def primType = nullify(nullable, PrimType primString len)
+    override def toString = name + "T(" + len + "," + nullable + ")"
+    override def equals(o: Any) = o match {
+      case o: StringT => len == o.len && nullable == o.nullable
+    }
   }
   object StringT {
     private val strictStringT : StringT = new StringT(0, false)
@@ -166,6 +174,7 @@ object PrimT {
     def withNull = DateT.nullableDateT
     def name = "Date"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
+    override def toString = name + "T(" + nullable + ")"
   }
   object DateT {
     private val strictDateT : DateT = new DateT(false)
@@ -190,6 +199,7 @@ object PrimT {
     def withNull = DoubleT.nullableDoubleT
     def name = "Double"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
+    override def toString = name + "T(" + nullable + ")"
   }
   object DoubleT {
     private val strictDoubleT : DoubleT = new DoubleT(false)
@@ -214,6 +224,7 @@ object PrimT {
     def withNull = BooleanT.nullableBooleanT
     def name = "Bool"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
+    override def toString = name + "T(" + nullable + ")"
   }
   object BooleanT {
     private val strictBooleanT : BooleanT = new BooleanT(false)
@@ -238,6 +249,7 @@ object PrimT {
     def withNull = UuidT.nullableUuidT
     def name = "UUID"
     def primType = nullify(nullable, implicitly[PrimType[Value]])
+    override def toString = name + "T(" + nullable + ")"
   }
   object UuidT {
     private val strictUuidT : UuidT = new UuidT(false)
