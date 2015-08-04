@@ -533,10 +533,10 @@ object Format {
    if(useColor)
        (res1 match {
           case df:DecimalFormat => {
-               df.setNegativePrefix("<span class='negnum'>"+df.getNegativePrefix)
-               df.setNegativeSuffix(df.getNegativeSuffix+"</span>")
-               df.setPositivePrefix("<span class='posnum'>"+df.getPositivePrefix)
-               df.setPositiveSuffix(df.getPositiveSuffix+"</span>")
+               df.setNegativePrefix("<NEGATIVE>"+df.getNegativePrefix)
+               df.setNegativeSuffix(df.getNegativeSuffix+"</NEGATIVE>")
+               df.setPositivePrefix("<POSITIVE>"+df.getPositivePrefix)
+               df.setPositiveSuffix(df.getPositiveSuffix+"</POSITIVE>")
                df
              }
           case f => f})
