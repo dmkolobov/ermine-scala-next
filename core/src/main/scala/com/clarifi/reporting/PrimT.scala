@@ -56,16 +56,12 @@ object PrimT {
   /** Variant for PrimT companion objects where the companion class only
     * has a `nullable` member.
     */
-  sealed abstract class WithNullableCompanion[PT: reflect.ClassTag]
-      extends (Boolean abs_=> PT) {
+  sealed abstract class WithNullableCompanion[PT <: PrimT] extends (Boolean abs_=> PT) {
     private[PrimT] val strictInstance: PT
     private[PrimT] val nullableInstance: PT
     final def apply(b: Boolean = false): PT =
       if (b) nullableInstance else strictInstance
-    final def unapply(pt: PrimT): Option[Boolean] = pt match {
-      case _ : PT => Some(pt.nullable) // works by virtue of ClassTag & scala 2.10
-      case _ => None
-    }
+    final def unapply(pt: PT): Some[Boolean] = Some(pt.nullable)
   }
 
   final class ByteT private(val nullable: Boolean = false)
@@ -143,10 +139,8 @@ object PrimT {
       if (len == 0)
         if (b) nullableStringT else strictStringT
       else new StringT(len, b)
-    def unapply(pt: PrimT): Option[(Int, Boolean)] = pt match {
-      case st : StringT => Some((st.len, st.nullable))
-      case _ => None
-    }
+    def unapply(st: StringT): Some[(Int, Boolean)] =
+      Some((st.len, st.nullable))
   }
 
   final class DateT private(val nullable: Boolean = false)

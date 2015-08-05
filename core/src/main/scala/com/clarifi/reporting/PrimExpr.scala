@@ -15,7 +15,7 @@ import PrimT._
 import Cache._
 
 /** Primitive relational expressions */
-sealed abstract class PrimExpr(val typ: PrimT) extends Equals {
+sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable with Equals {
   type Value
   def value: Value
   def nullable: Boolean
@@ -162,6 +162,7 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Equals {
   override def equals(a: Any): Boolean = a match {
     case a: PrimExpr => (a canEqual this) &&
       Order[PrimExpr].equal(this, a)
+    case _ => false
   }
 
   // NullExpr does not compare equal to itself in some contexts (evaluating predicates,
@@ -173,29 +174,50 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Equals {
   override def toString: String = cata(Option(value))(_.toString, "")
 }
 
+sealed abstract class NonNullPrimExpr(typ: PrimT) extends PrimExpr(typ) {self =>
+  protected def Companion: NonNullPrimExprCompanion[Value, This]
+  type This <: NonNullPrimExpr {
+    type This = self.This
+    type Value = self.Value
+  }
+  override def hashCode: Int = (nullable, value).hashCode
+  override def productArity = 2
+  override def productElement(n: Int): Any = n match {
+    case 0 => nullable
+    case 1 => value
+    case _ => throw new IndexOutOfBoundsException(n.toString)
+  }
+  def copy(nullable: Boolean = this.nullable,
+           value: Value = self.value): This =
+    Companion(nullable, value)
+}
+
+sealed abstract class NonNullPrimExprCompanion[Val, PE <: PrimExpr{type Value = Val}]
+    extends scala.runtime.AbstractFunction2[Boolean, Val, PE] {
+  def unapply(pe: PE): Some[(Boolean, Val)] =
+    Some((pe.nullable, pe.value))
+}
+
 case class UuidExpr(nullable: Boolean, value: UUID)
      extends PrimExpr(UuidT(nullable)) {
   type Value = UUID
 }
 
 final class StringExpr private(val nullable: Boolean, val value: String)
-     extends PrimExpr(StringT(0, nullable)) {
+     extends NonNullPrimExpr(StringT(0, nullable)) {
+  type This = StringExpr
   type Value = String
-  override def hashCode: Int = (nullable, value).hashCode
+  protected def Companion = StringExpr
   def canEqual(a: Any) = a match {
     case se : StringExpr => true
     case _ => false
   }
 }
-object StringExpr {
+object StringExpr extends NonNullPrimExprCompanion[String, StringExpr] {
   private[this] val cache = new SetAssociativeCache[StringExpr]("StringExprCache", 14)
   def apply(nullable: Boolean, value: String): StringExpr = Option(value) match {
     case Some(nonNull) => cache.canonicalize(new StringExpr(nullable, nonNull))
     case None => new StringExpr(nullable, value)
-  }
-  def unapply(pe: PrimExpr): Option[(Boolean, String)] = pe match {
-    case se : StringExpr => Some((se.nullable, se.value))
-    case _ => None
   }
 }
 
@@ -220,23 +242,20 @@ case class LongExpr(nullable: Boolean, value: Long)
 }
 
 final class DateExpr private(val nullable: Boolean, val value: Date)
-     extends PrimExpr(DateT(nullable)) {
+     extends NonNullPrimExpr(DateT(nullable)) {
+  type This = DateExpr
   type Value = Date
-  override def hashCode: Int = (nullable, value).hashCode
+  protected def Companion = DateExpr
   def canEqual(a: Any) = a match {
     case _ : DateExpr => true
     case _ => false
   }
 }
-object DateExpr {
+object DateExpr extends NonNullPrimExprCompanion[Date, DateExpr] {
   private[this] val cache = new SetAssociativeCache[DateExpr]("DateExprCache", 10)
   def apply(nullable: Boolean, value: Date): DateExpr = Option(value) match {
     case Some(nonNull) => cache.canonicalize(new DateExpr(nullable, nonNull))
     case None => new DateExpr(nullable, value)
-  }
-  def unapply(pe: PrimExpr): Option[(Boolean, Date)] = pe match {
-    case de : DateExpr => Some((de.nullable, de.value))
-    case _ => None
   }
 }
 
@@ -249,12 +268,17 @@ final class NullExpr private(val t: PrimT) extends PrimExpr(t) {
   type Value = None.type
   override def equals(that: Any): Boolean = false
   override def hashCode: Int = 0
+  override def productArity = 1
+  override def productElement(n: Int) = n match {
+    case 0 => t
+    case _ => throw new IndexOutOfBoundsException(n.toString)
+  }
   def value = None
   def nullable = true
   def canEqual(a: Any) = false
 }
 
-object NullExpr {
+object NullExpr extends scala.runtime.AbstractFunction1[PrimT, NullExpr] {
   private[this] val nullByte = new NullExpr(ByteT(true))
   private[this] val nullShort = new NullExpr(ShortT(true))
   private[this] val nullInt = new NullExpr(IntT(true))
@@ -276,23 +300,21 @@ object NullExpr {
     case StringT(_,_) => nullString
     case UuidT(_) => nullUuid
   }
-  def unapply(pe: PrimExpr): Option[PrimT] = pe match {
-    case ne : NullExpr => Some(ne.t)
-    case _ => None
-  }
+  def unapply(ne: NullExpr): Some[PrimT] = Some(ne.t)
 }
 
 final class DoubleExpr private(val nullable: Boolean, val value: Double)
-     extends PrimExpr(PrimT.DoubleT(nullable)) { dbl =>
+     extends NonNullPrimExpr(PrimT.DoubleT(nullable)) { dbl =>
+  type This = DoubleExpr
   type Value = Double
 
-  override def hashCode = (nullable, value).hashCode
+  protected def Companion = DoubleExpr
   def canEqual(a: Any) = a match {
     case _ : DoubleExpr => true
     case _ => false
   }
 }
-object DoubleExpr {
+object DoubleExpr extends NonNullPrimExprCompanion[Double, DoubleExpr] {
   private[this] val sZero = new DoubleExpr(false, 0.0)
   private[this] val sOne = new DoubleExpr(false, 1.0)
   private[this] val nZero = new DoubleExpr(true, 0.0)
@@ -304,11 +326,6 @@ object DoubleExpr {
     if (value == 0.0) if (nullable) nZero else sZero
     else if (value == 1.0) if (nullable) nOne else sOne
     else cache.canonicalize(new DoubleExpr(nullable, value))
-
-  def unapply(pe: PrimExpr): Option[(Boolean, Double)] = pe match {
-    case de : DoubleExpr => Some((de.nullable, de.value))
-    case _ => None
-  }
 }
 
 object PrimExprs {
