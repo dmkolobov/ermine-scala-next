@@ -162,6 +162,7 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Equals {
   override def equals(a: Any): Boolean = a match {
     case a: PrimExpr => (a canEqual this) &&
       Order[PrimExpr].equal(this, a)
+    case _ => false
   }
 
   // NullExpr does not compare equal to itself in some contexts (evaluating predicates,
