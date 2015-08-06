@@ -38,12 +38,12 @@ object LegendGens {
     * particular should be studied. */
   val formatSamples: Gen[(Format, Gen[NonEmptyList[PrimExpr]])] =
     Gen.oneOf(Gen.const(Format.Default -> (RG.genPrimExpr map (NonEmptyList(_)))),
-              Gen.const(Format.Percentage(false, 2, false) -> (RG.genNumExpr map (NonEmptyList(_)))),
-              Gen.oneOf("USD", "GBP", "INR") map (cc => Format.Currency(false, cc) -> (RG.genNumExpr map (NonEmptyList(_)))),
+              Gen.const(Format.Percentage(false, false, 2, false) -> (RG.genNumExpr map (NonEmptyList(_)))),
+              Gen.oneOf("USD", "GBP", "INR") map (cc => Format.Currency(false, false, cc) -> (RG.genNumExpr map (NonEmptyList(_)))),
               Gen.const(Format.DateRange
                         -> (^(RG.genDateExpr, RG.genDateExpr) (NonEmptyList(_,_)))),
-              Gen.choose(0, 10) map (plc => Format.Round(false, plc) -> (RG.genNumExpr map (NonEmptyList(_)))),
-              Gen.choose(0, 10) map (plc => Format.IntegralRound(false, plc) -> (RG.genNumExpr map (NonEmptyList(_)))),
+              Gen.choose(0, 10) map (plc => Format.Round(false, false, plc) -> (RG.genNumExpr map (NonEmptyList(_)))),
+              Gen.choose(0, 10) map (plc => Format.IntegralRound(false, false, plc) -> (RG.genNumExpr map (NonEmptyList(_)))),
               truncateSamples
     )
 
@@ -142,7 +142,7 @@ object TestLegend extends Properties("Legends & presentations") {
                  (Presentation(Format.Default,
                                NonEmptyList(Op.ColumnValue("lname", StringT(0)))),
                   SortStrategy allForward Seq("lname"), "Name!"),
-                 (Presentation(Format.Percentage(false, 2, false),
+                 (Presentation(Format.Percentage(false, false, 2, false),
                                NonEmptyList(Op.Sub(Op.Sub(Op.OpLiteral(DoubleExpr(false, 0)),
                                                           Op.ColumnValue("qbranch", DoubleT())),
                                                    Op.ColumnValue("rbranch", DoubleT())))),
@@ -205,7 +205,7 @@ object TestLegend extends Properties("Legends & presentations") {
   property("devolved round rounds") = forAll {
     (pe: PrimExpr @@ Number) =>
     math.abs(pe.extractDouble) < 1e13 ==>
-      (Format.Round(false, 2).devolve(NonEmptyList(Op.OpLiteral(pe)))
+      (Format.Round(false, false, 2).devolve(NonEmptyList(Op.OpLiteral(pe)))
          .eval(Map.empty).extractDouble
          ?= (math.round(pe.extractDouble * 100) / 100.0))
   }
