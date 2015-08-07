@@ -81,11 +81,11 @@ abstract class ProfiledWriter[F[_], C](inner: Writer[F, C])(implicit val R: Run[
   override def scrolling(target: C) =
     timed("scrolling", inner scrolling target, Seq(target))
 
-  def horizontalSpan(cs: List[(Option[Int],C)]) =
+  def horizontalSpan(cs: List[(List[Magnitude],C)]) =
     timed("horizontalSpan", inner horizontalSpan cs,
           cs map (_._2))
 
-  def verticalSpan(cs: List[(Option[Int],C)]) =
+  def verticalSpan(cs: List[(List[Magnitude],C)]) =
     timed("verticalSpan", inner verticalSpan cs,
           cs map (_._2))
 

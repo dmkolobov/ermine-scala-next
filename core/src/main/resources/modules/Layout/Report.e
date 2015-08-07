@@ -308,20 +308,28 @@ vsep sep = vflow . intersperse sep
 -- | Horizontal layout which takes up 100% of horizontal space, with
 -- each element in the list receiving equal horizontal space
 hspan : List (Report f z) -> Report f z
-hspan = spanning Horizontal . map (r -> (Nothing, r))
+hspan = spanning Horizontal . map (r -> ([dimensionlessM 1.0], r))
 
 -- | Vertical layout which takes up 100% of vertical space, with
 -- each element in the list receiving equal vertical space
 vspan : List (Report f z) -> Report f z
-vspan = spanning Vertical . map (r -> (Nothing, r))
+vspan = spanning Vertical . map (r -> ([dimensionlessM 1.0], r))
 
 -- | As with hspan, but with relative-weighted widths.
-hspanWeighted : List (Int, Report f z) -> Report f z
-hspanWeighted rs = spanning Horizontal (map ((w,r) -> (Just w, r)) rs)
+hspanWeighted : List (MagnitudeList, Report f z) -> Report f z
+hspanWeighted rs = spanning Horizontal (map ((w,r) -> (w, r)) rs)
 
 -- | As with vspan, but with relative-weighted heights.
-vspanWeighted : List (Int, Report f z) -> Report f z
-vspanWeighted rs = spanning Vertical (map ((w,r) -> (Just w, r)) rs)
+vspanWeighted : List (MagnitudeList, Report f z) -> Report f z
+vspanWeighted rs = spanning Vertical (map ((w,r) -> (w, r)) rs)
+
+-- | As with hspan, but with relative-weighted widths.
+hspanWeighted' : List (Double, Report f z) -> Report f z
+hspanWeighted' rs = spanning Horizontal (map ((w,r) -> ([dimensionlessM w], r)) rs)
+
+-- | As with vspan, but with relative-weighted heights.
+vspanWeighted' : List (Double, Report f z) -> Report f z
+vspanWeighted' rs = spanning Vertical (map ((w,r) -> ([dimensionlessM w], r)) rs)
 
 -- | As with hspan, but adds some padding between each element
 -- hspanPad : MagnitudeList -> (Report f z) -> Report f z
@@ -382,7 +390,7 @@ private
 unweighted : List a -> List (Maybe b, a)
 unweighted = fmap listFunctor ((,) Nothing)
 
-spanning : Direction -> (List (Maybe Int, Report f z)) -> Report f z
+spanning : Direction -> (List (MagnitudeList, Report f z)) -> Report f z
 spanning d xs = Report (w -> liftM (wm w) (spanW d w) $ travLW w (strength (wf w) . mapSnd (runReport w)) xs)
 
 tabbed : List (String, Report f z) -> Report f z
@@ -1423,9 +1431,9 @@ private
   backgroundColorW = backgroundColor_
 
 
-  spanW : Direction -> Writer f z -> List (Maybe Int, z) -> z
-  spanW Horizontal w xs = horizontalSpanW_ w (toList# (lmap (x -> toPair# (mapFst toMaybe# x)) xs))
-  spanW Vertical w xs   = verticalSpanW_ w (toList# (lmap (x -> toPair# (mapFst toMaybe# x)) xs))
+  spanW : Direction -> Writer f z -> List (MagnitudeList, z) -> z
+  spanW Horizontal w xs = horizontalSpanW_ w (toList# (lmap (x -> toPair# (mapFst toMagnitudeList# x)) xs))
+  spanW Vertical w xs   = verticalSpanW_ w (toList# (lmap (x -> toPair# (mapFst toMagnitudeList# x)) xs))
 
   flowW : Direction -> Writer f z -> List z -> z
   flowW Horizontal w l = horizontalFlowW_ w (toList# l)
@@ -1484,8 +1492,8 @@ private
     method "borderColor" borderColor_: forall f z a . Writer f z ->  BorderOptions# Color -> z -> z
     method "foregroundColor" foregroundColor_: forall f z a . Writer f z -> Color -> z -> z
     method "backgroundColor" backgroundColor_: forall f z a . Writer f z -> Color -> z -> z
-    method "horizontalSpan" horizontalSpanW_ : forall f z . Writer f z -> List# (Pair# (Maybe# Int) z) -> z
-    method "verticalSpan" verticalSpanW_ : forall f z . Writer f z -> List# (Pair# (Maybe# Int) z) -> z
+    method "horizontalSpan" horizontalSpanW_ : forall f z a . Writer f z -> List# (Pair# (List# (Magnitude a)) z) -> z
+    method "verticalSpan" verticalSpanW_ : forall f z a . Writer f z     -> List# (Pair# (List# (Magnitude a)) z) -> z
     method "horizontalFlow" horizontalFlowW_ : forall f z . Writer f z -> List# z -> z
     method "verticalFlow" verticalFlowW_ : forall f z . Writer f z -> List# z -> z
     method "collapsible" collapsibleW : forall f z . Writer f z -> Bool# -> String -> z -> z

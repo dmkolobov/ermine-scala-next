@@ -214,10 +214,10 @@ abstract class Writer[F[_],C] { self =>
   def tree(legend: C, t: Tree[C]): C
 
   /** @see Layout.Report.hspan */
-  def horizontalSpan(cs: List[(Option[Int],C)]): C
+  def horizontalSpan(cs: List[(List[Magnitude],C)]): C
 
   /** @see Layout.Report.vspan */
-  def verticalSpan(cs: List[(Option[Int],C)]): C
+  def verticalSpan(cs: List[(List[Magnitude],C)]): C
 
   /** @see Layout.Report.hflow */
   def horizontalFlow(cs: List[C]): C
