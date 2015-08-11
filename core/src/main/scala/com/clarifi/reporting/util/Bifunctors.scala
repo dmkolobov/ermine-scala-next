@@ -1,7 +1,8 @@
 package com.clarifi.reporting.util
 
 import scalaz.{
-  Applicative, Bitraverse, Monoid, Traverse, Unapply
+  Applicative, Bifunctor, Bitraverse, Functor, Monoid, Traverse,
+  Unapply
 }
 
 /** Utilities for scalaz bifunctors. */
@@ -24,6 +25,21 @@ object Bifunctors {
         val G = G0
       }
   }
+
+  /** Every functor is a bifunctor with the left parameter being a
+    * phantom.
+    */
+  def phantomLeft[F[_]](implicit F0: Functor[F]): Bifunctor[λ[(α, β) => F[β]]] =
+    new PhantomLeftBifunctor[F] {
+      val F = F0
+    }
+}
+
+private abstract class PhantomLeftBifunctor[F[_]] extends Bifunctor[λ[(α, β) => F[β]]] {
+  def F: Functor[F]
+
+  override def bimap[A, B, C, D](fa: F[B])(f: A => C, g: B => D) =
+    F.map(fa)(g)
 }
 
 private abstract class TraverseBitraverse[F[_], G[_,_]]
