@@ -31,17 +31,15 @@ import Tee.{ right, left }
 import org.apache.log4j.Logger
 import com.clarifi.reporting.util.PimpedLogger._
 
-case class SqlPrg(h: Header,
-                  prg: List[SqlStatement],
-                  q: SqlQuery,
-                  refl: Reflexivity[ColumnName])
-
-case class MemPrg(h: Header,
-                  prg: List[SqlStatement],
-                  p:  OrderedProcedure[DB, Record],
-                  refl: Reflexivity[ColumnName])
-
 class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[DB] {
+  case class SqlPrg(prg: List[SqlStatement],
+                    q: DistinctiveQuery,
+                    refl: Reflexivity[ColumnName])
+
+  case class MemPrg(h: Header,
+                    prg: List[SqlStatement],
+                    p:  OrderedProcedure[DB, Record],
+                    refl: Reflexivity[ColumnName])
 
   private[this] def logger = Logger getLogger this.getClass
 
@@ -135,9 +133,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                         order: List[(String, SortOrder)] = List()): DB[A] = {
     implicit val sup = Supply.create
     compileRel(Optimizer.optimize(m), (x:Nothing) => x, (x: Nothing) => x) match {
-      case SqlPrg(h, p, q, rx) => for {
+      case SqlPrg(p, q, rx) => for {
 	ts <- sequenceSql(p)
-        a <- scanQuery(orderQuery(q, order), h) map (_ andThen f execute)
+        a <- scanAndUniq(q, order) map (_ andThen f execute)
         _ <- cleanTempTables(ts)
       } yield a
     }
@@ -177,18 +175,17 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   import record.RecordMap
 
   private[this]
-  def scanAndUniq(sql: SqlQuery,
-                  order: List[(String, SortOrder)],
-                  h: Header)(implicit sup: Supply): DB[Procedure[Id,Record]] = sql match {
-    case sel : SqlSelect if sel.options contains "distinct" =>
-      // do our own distinct in memory, since it's likely faster
-      logger.debug("Memory DISTINCT")
-      val newSel = sel copy (options = sel.options - "distinct")
-      val unsortedCols = h.keySet -- order.map(_._1)
-      val totalOrder = order ++ unsortedCols.toList.map((_,Asc))
-      scanQuery(orderQuery(newSel, totalOrder), h) map (_ andThen uniqSorted)
-    case _ => scanQuery(orderQuery(sql,order), h)
-  }
+  def scanAndUniq(dq: DistinctiveQuery,
+                  order: List[(String, SortOrder)])(implicit sup: Supply): DB[Procedure[Id, Record]] =
+    scanQuery(orderQuery(dq.q(true)._2, order), dq.h) /* match {
+      case (d, q) =>
+        if (d) scanQuery(orderQuery(q, order), dq.h) // already distinct
+        else {
+          val unsortedCols = dq.h.keySet -- order.map(_._1)
+          val totalOrder = order ++ unsortedCols.toList.map(c => (c, Asc))
+          scanQuery(orderQuery(q, totalOrder), dq.h) map (_ andThen uniqSorted)
+        }
+    } */
 
   def compileMem[M,R](m: Mem[R, M], smv: M => MemPrg, srv: R => SqlPrg)(implicit sup: Supply): MemPrg =
     m match {
@@ -207,8 +204,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         }
       case EmbedMem(ExtMem(e)) => compileMem(e, smv, srv)
       case EmbedMem(ExtRel(e, _)) => // TODO: Ditto
-        val SqlPrg(h, ps, q, rx) = compileRel(e, smv, srv)
-        MemPrg(h, ps, o => scanAndUniq(q, o, h), rx)
+        val SqlPrg(ps, q, rx) = compileRel(e, smv, srv)
+        MemPrg(q.h, ps, o => scanAndUniq(q, o), rx)
       case EmbedMem(ExtSM(e)) =>
         val (p, h, rx) = sms(e)
         MemPrg(h, List(), p, rx)
@@ -360,8 +357,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         implicit def err(s: String, msgs: String*): Option[Nothing] = None
         val hdr = Typer.accumulateType[Option](
           parentIdCol.toHeader, nodeIdCol.toHeader,
-          v => Typer.memTyper(Mem.instantiate(EmptyRel(v), expr).substPrg(srv, smv)).toOption,
-          Typer.memTyper(l.substPrg(srv,smv)).toOption.get).get
+          v => Typer.memTyper(Mem.instantiate(EmptyRel(v), expr).substPrg(srv andThen (_.q.h), smv andThen (_.h))).toOption,
+          Typer.memTyper(l.substPrg(srv andThen (_.q.h),smv andThen (_.h))).toOption.get).get
         MemPrg(hdr, pt ++ pl, accumProc, rt.filterKeys((k:String) => k == nodeIdCol.name))
       case GroupByM(m, k, expr) =>
         def toOp(a: Attribute) = Op.ColumnValue(a.name, a.t)
@@ -392,7 +389,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         implicit def err(s: String, msgs: String*): Option[Nothing] = None
         val hdr = Typer.groupByType[Option](
           h, k.map(_.tuple).toMap,
-          v => Typer.memTyper(Mem.instantiate(EmptyRel(v), expr).substPrg(srv, smv)).toOption).get
+          v => Typer.memTyper(Mem.instantiate(EmptyRel(v), expr).substPrg(srv andThen (_.q.h), smv andThen (_.h))).toOption).get
         MemPrg(hdr, p, joined, r.filterKeys(knames.contains))
       case ProcedureCall(args, h, proc, namespace)  => sys.error("TODO")
       case l@Literal(t,ts) =>
@@ -592,163 +589,54 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                       smv: M => MemPrg,
                       srv: R => SqlPrg)(implicit sup: Supply): SqlPrg = {
 
-    def mkUnion(l: Relation[M, R], r: Relation[M, R]) = {
-      val lc = compileRel(l, smv, srv)
-      val rc = compileRel(r, smv, srv)
-      val SqlPrg(h1, p1, q1, refl1) = lc
-      val SqlPrg(h2, p2, q2, refl2) = rc
-      SqlPrg(h1, p1 ++ p2, SqlUnion(q1, q2), refl1 || refl2)
+    def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
+
+    def combineBinary(
+      l: Relation[M, R],
+      r: Relation[M,R],
+      f: (DistinctiveQuery, DistinctiveQuery) => DistinctiveQuery,
+      g: (Reflexivity[ColumnName], Reflexivity[ColumnName]) => Reflexivity[ColumnName]) = {
+      val SqlPrg(p1, q1, refl1) = compileRel(l, smv, srv)
+      val SqlPrg(p2, q2, refl2) = compileRel(r, smv, srv)
+      SqlPrg(p1 ++ p2, f(q1, q2), g(refl1, refl2))
     }
 
-    def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
     m match {
       case VarR(v) => srv(v)
       case Join(l, r) =>
-        val SqlPrg(h1, p1, q1, refl1) = compileRel(l, smv, srv)
-        val SqlPrg(h2, p2, q2, refl2) = compileRel(r, smv, srv)
-        val jn = (q1, q2) match {
-          case (SqlJoin(xs, ul), SqlJoin(ys, _)) => SqlJoin(xs append ys, ul)
-          case (SqlJoin(xs, ul), _) =>
-            SqlJoin(xs append NonEmptyList((q2, TableName(freshName), h2)), ul)
-          case (_, SqlJoin(ys, ur)) =>
-            SqlJoin((q1, TableName(freshName), h1) <:: ys, ur)
-          case (_, _) =>
-            val un = freshName
-            val ul = freshName
-            val ur = freshName
-            SqlJoin(NonEmptyList((q1, TableName(ul), h1), (q2, TableName(ur), h2)), TableName(un))
-        }
-        SqlPrg(h1 ++ h2, p1 ++ p2, jn, refl1 && refl2)
+        combineBinary(l, r, _ join _, _ && _)
       case JoinOn(l, r, on) =>
-        val lc = compileRel(l, smv, srv)
-        val rc = compileRel(r, smv, srv)
-        val un = freshName
-        val ul = freshName
-        val ur = freshName
-        val SqlPrg(h1, p1, q1, refl1) = lc
-        val SqlPrg(h2, p2, q2, refl2) = rc
-        SqlPrg(h1 ++ h2,
-               p1 ++ p2,
-               SqlJoinOn((q1, TableName(ul), h1), (q2, TableName(ur), h2), on, TableName(un)),
-               refl1 && refl2)
-      case Union(l, r) => mkUnion(l, r)
+        combineBinary(l, r, _ joinOn (on, _), _ && _)
+      case Union(l, r) =>
+        combineBinary(l, r, _ union _, _ || _)
       case Minus(l, r) =>
-        val lc = compileRel(l, smv, srv)
-        val rc = compileRel(r, smv, srv)
-        val un = freshName
-        val ul = freshName
-        val ur = freshName
-        val SqlPrg(h, p1, q1, refl1) = lc
-        val SqlPrg(_, p2, q2, refl2) = rc
-        SqlPrg(h, p1 ++ p2,
-               SqlExcept(q1, TableName(ul), q2, TableName(ur), h), refl1 || refl2)
+        combineBinary(l, r, _ minus _, _ || _)
       case Filter(r, pred) =>
-        val rc = compileRel(r, smv, srv)
-        val un = freshName
-        val SqlPrg(h, p, q, rx) = rc
+        val SqlPrg(p, q, rx) = compileRel(r, smv, srv)
         val pred1 = simplifyPredicate(pred, rx)
-        SqlPrg(h, p, q match {
-          case v:SqlSelect if (v.limit._1.isEmpty && v.limit._2.isEmpty) =>
-            v.copy(criteria = compilePredicate(pred1, v.attrs) :: v.criteria)
-          case _ => SqlSelect(tables = Map(TableName(un) -> q),
-                              attrs = columns(h, TableName(un)),
-                              criteria = List(compilePredicate(pred1, ColumnSqlExpr(TableName(un), _))))
-        }, filterRx(rx, pred))
+        SqlPrg(p, q.filter(pred1), filterRx(rx, pred))
       case Project(r, cols) =>
-        val rc = compileRel(r, smv, srv)
-        val un = freshName
-        val SqlPrg(h, p, q, rx) = rc
-        SqlPrg(cols.map(_._1.tuple),
-               p,
-               SqlSelect(tables = Map(TableName(un) -> q),
-                         attrs = { val as = columns(h, TableName(un))
-                                   cols map { case (attr, op) =>
-                                     (attr.name -> compileOp(op, as)) }}),
+        val SqlPrg(p, q, rx) = compileRel(r, smv, srv)
+        SqlPrg(p,
+               q project (cols,rx),
                combineAll(rx, cols))
       case AggregateByGroup(r,cs,aggs,group) =>
-        val rc = compileRel(r, smv, srv)
-        val un = freshName
-        val SqlPrg(h, p, q, _) = rc
-        val groupByCols = columns(h, TableName(un))
-        val groupBys = group map (compileOp(_, groupByCols))
-        val plainCols = cs map { case (attr, op) =>
-                          (attr.name -> compileOp(op, groupByCols)) }
-        def subq =
-          SqlSelect(tables = Map(TableName(un) -> q),
-                    attrs =  plainCols ++ aggs.map {
-                               case (attr, f) =>
-                                 attr.name -> compileAggFunc(attr, f, columns(h, TableName(un)))
-                             }.toMap,
-                    groupBy = groupBys )
-        val q2 = q match {
-          case v:SqlSelect if v.limit == (None, None) && !v.options("distinct") && v.groupBy.isEmpty =>
-            // Note: this optimization relies on an assumption about aggregations to be correct.
-            // Specifically, we don't want to coalesce two aggregations in sequence. There are two
-            // checks that ensure this. First, we test to see if the underlying SqlSelect's groupBy
-            // is empty. This ensures that it isn't an AggregateByGroup, or at least, not one that
-            // isn't equivalent to an Aggregate. Second, backSubstituteSingle only works if the
-            // groupBy we're optimizing only refers to pure columns in the underlying select's
-            // tables. If it were an Aggregate, the only columns that exist are complex expressions,
-            // so this will fail.
-            //
-            // The remaining case is two consecutive aggregations with no grouping. I think this will
-            // produce bad SQL right now. But there's no reason to do it.
-            groupBys.traverse[Option,SqlExpr] {
-              case e =>
-                SqlExpr.backSubstituteSingle(e, (_, col) => v.attrs(col))
-            } match {
-              case None => subq
-              case Some(groupBysSubbed) =>
-                val newAttrs = cs.map { case (attr, op) =>
-                                 attr.name -> compileOp(op, v.attrs)
-                               } ++
-                               aggs.map {
-                                 case (attr, f) =>
-                                   attr.name -> compileAggFunc(attr, f, v.attrs)
-                               }
-                v.copy( attrs = newAttrs.toMap, groupBy = groupBysSubbed )
-            }
-          case _ => subq
-        }
-        SqlPrg(cs.map(_._1.tuple) ++ aggs.map(_._1.tuple).toMap, p, q2, ForallTups(aggs.map(_._1.name -> None).toMap, PartitionedSet.zero))
+        val SqlPrg(p, q, _) = compileRel(r, smv, srv)
+        SqlPrg(p, q.aggregateByGroup(cs,aggs,group), ForallTups(aggs.map(_._1.name -> None).toMap, PartitionedSet.zero))
       case Aggregate(r, attr, f) =>
-        val rc = compileRel(r, smv, srv)
-        val un = freshName
-        val SqlPrg(h, p, q, _) = rc
-        SqlPrg(Map(attr.name -> attr.t), p, q match {
-          case v:SqlSelect if v.limit == (None, None) && v.groupBy.isEmpty && !v.options("distinct") =>
-            v.copy(attrs = Map(attr.name -> compileAggFunc(attr, f, v.attrs)))
-          case _ => SqlSelect(tables = Map(TableName(un) -> q),
-                              attrs = Map(attr.name -> compileAggFunc(attr, f, columns(h, TableName(un)))))
-        }, ForallTups(Map(attr.name -> None), PartitionedSet.zero))
+        val SqlPrg(p, q, _) = compileRel(r, smv, srv)
+        SqlPrg(p, q.aggregate(attr, f), ForallTups(Map(attr.name -> None), PartitionedSet.zero))
       case Except(r, cs) =>
-        val rc = compileRel(r, smv, srv)
-        val un = freshName
-        val SqlPrg(h, p, q, rx) = rc
-        SqlPrg(h -- cs, p, SqlSelect(tables = Map(TableName(un) -> q),
-                                     attrs = columns(h, TableName(un)) -- cs),
-                                     rx filterKeys (!cs.contains(_)))
+        val SqlPrg(p, q, rx) = compileRel(r, smv, srv)
+        SqlPrg(p, q except cs, rx filterKeys (!cs.contains(_)))
       case Combine(r, attr, op) =>
-        val rc = compileRel(r, smv, srv)
-        val un = freshName
-        val SqlPrg(h, p, q, rx) = rc
-        SqlPrg(h + attr.tuple, p, SqlSelect(tables = Map(TableName(un) -> q),
-                                            attrs = {
-                                              val as = columns(h, TableName(un))
-                                              as + (attr.name -> compileOp(op, as)) }),
-                                  combineAll(rx, Map(attr -> op), true))
+        val SqlPrg(p, q, rx) = compileRel(r, smv, srv)
+        SqlPrg(p, q combine (attr, op), combineAll(rx, Map(attr -> op), true))
       case Limit(r, from, to, order) =>
-        val rc = compileRel(r, smv, srv)
-        val u1 = freshName
-        val u2 = freshName
-        val SqlPrg(h, p, q, rx) = rc
-        SqlPrg(h, p, emitter.emitLimit(q, h, TableName(u1), from, to, (toNel(order.map {
-          case (k, v) => ColumnSqlExpr(TableName(u1), k) -> v.apply(
-            asc = SqlAsc,
-            desc = SqlDesc
-          )}).map(_.list).getOrElse(
-            h.keys.map(k => (ColumnSqlExpr(TableName(u1), k), SqlAsc)).toList)), TableName(u2)), rx)
-      case Table(h, n) => SqlPrg(h, List(), FromTable(n, h.keys.toList), Reflexivity.zero)
+        val SqlPrg(p, q, rx) = compileRel(r, smv, srv)
+
+        SqlPrg(p, q limit (from, to, order), rx)
+      case Table(h, n) => SqlPrg(List(), DistinctiveQuery.table(h, n), Reflexivity.zero)
       case TableProc(args, oh, src, namespace) =>
         val h = oh.toMap
         val argable = TableProc.argFunctor.map(args){case (typeName, r) =>
@@ -756,105 +644,327 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
            compileRel(r, smv, srv))}
         val un = guidName
         val sink = TableName(un, List(), TableName.Temporary)
-        SqlPrg(h, TableProc.argFoldable.foldMap(argable)(_._2.prg.toIndexedSeq)
+        SqlPrg(TableProc.argFoldable.foldMap(argable)(_._2.prg.toIndexedSeq)
                   :+ SqlCreate(table = sink, header = h)
                   :+ SqlExec(sink, src, namespace,
                              TableProc.argFoldable.foldMap(argable){
-                               case (unt, SqlPrg(ih, _, iq, _)) =>
-                                 fillTable(unt, ih, iq)
+                               case (unt, SqlPrg(_, iq, _)) =>
+                                 fillTable(unt, iq.h, iq.q(true)._2)
                              }, oh map (_._1),
                              argable map (_ bimap (_._1,
                                                    SqlExpr.compileLiteral)))
                  toList,
-               FromTable(sink, h.keys.toList),
+               DistinctiveQuery.table(h, sink),
                Reflexivity.zero)
       case RelEmpty(h) =>
         val un = guidName
-        SqlPrg(h, List(SqlCreate(table = TableName(un, List(), TableName.Temporary),
-                                 header = h)),
-               FromTable(TableName(un, List(), TableName.Temporary), h.keys.toList), KnownEmpty())
+        val n = TableName(un, List(), TableName.Temporary)
+        SqlPrg(List(SqlCreate(table = TableName(un, List(), TableName.Temporary),
+                              header = h)),
+               DistinctiveQuery.table(h, n), KnownEmpty())
       case QuoteR(_) => sys.error("Cannot scan quotes")
       case l@SmallLit(ts) =>
         import com.clarifi.machines.Source
         val h = l.header
         val un = guidName
-        SqlPrg(h,
-               List(SqlCreate(table = TableName(un, List(), TableName.Temporary),
+        val n = TableName(un, List(), TableName.Temporary)
+        SqlPrg(List(SqlCreate(table = TableName(un, List(), TableName.Temporary),
                               header = h),
                     SqlLoad(TableName(un, List(), TableName.Temporary), h, procedureFromSource(Source.source(ts.toList)).point[DB])),
-               FromTable(TableName(un, List(), TableName.Temporary), h.keys.toList),
+               DistinctiveQuery.table(h, n),
                Reflexivity literal ts)
       case MemoR(r) => {
 	val rc = compileRel(r,smv,srv)
 	val relHash = "MemoHash_" + r.##.toString
 	val myTN = TableName(relHash, List(), TableName.Persistent)
-	val fillStat = fillTable(myTN, rc.h, rc.q)
+	val fillStat = fillTable(myTN, rc.q.h, rc.q.q(true)._2)
 	val myPrg = List(SqlIfNotExists(myTN,rc.prg ++ fillStat))
-	SqlPrg(rc.h, myPrg, FromTable(myTN, rc.h.keys.toList), rc.refl)
+	SqlPrg(myPrg, DistinctiveQuery.table(rc.q.h, myTN), rc.refl)
       }
       case LetR(ext, exp) =>
         val un = guidName
+        val tn = TableName(un, List(), TableName.Temporary)
         val tup = ext match {
           case ExtRel(rel, _) => // TODO: Handle namespace
-            val rc = compileRel(rel, smv, srv)
-            val SqlPrg(ih, ip, iq, rx) = rc
-            (ih, rx, ip ++ fillTable(TableName(un, List(), TableName.Temporary),
-                                     ih, iq))
+            val SqlPrg(ip, iq, rx) = compileRel(rel, smv, srv)
+            (iq.h, rx, ip ++ fillTable(tn, iq.h, iq.q(true)._2))
           case ExtSM(sm) =>
             val (pop, h, rx) = sms(sm)
             (h, rx, List(SqlCreate(
-                           table = TableName(un, List(), TableName.Temporary), header = h),
-                         SqlLoad(TableName(un, List(), TableName.Temporary), h, pop(List()))))
+                           table = tn, header = h),
+                         SqlLoad(tn, h, pop(List()))))
           case ExtMem(mem) =>
-            val m =compileMem(mem, smv, srv)
+            val m = compileMem(mem, smv, srv)
             val MemPrg(h, p, pop, rx) = m
-            (h, rx, p ++ List(SqlCreate(table = TableName(un, List(), TableName.Temporary), header = h),
-                              SqlLoad(TableName(un, List(), TableName.Temporary), h, pop(List()))))
+            (h, rx, p ++ List(SqlCreate(table = tn, header = h),
+                              SqlLoad(tn, h, pop(List()))))
         }
         val (ih, rx1, ps) = tup
-        val ec = compileRel(exp, smv, (v: RLevel[M,R]) => v match {
-          case RTop => SqlPrg(ih, List(), FromTable(TableName(un, List(), TableName.Temporary), ih.keys.toList), rx1)
+        val SqlPrg(p, q, rx2) = compileRel(exp, smv, (v: RLevel[M,R]) => v match {
+          case RTop => SqlPrg(List(), DistinctiveQuery.table(ih, tn), rx1)
           case RPop(e) => compileRel(e, smv, srv)
         })
-        val SqlPrg(h, p, q, rx2) = ec
-        SqlPrg(h, ps ++ p, q, rx2)
+        SqlPrg(ps ++ p, q, rx2)
       case SelectR(rs, cs, where) =>
         // Here be dragons.
         val prgs = rs.map(compileRel(_, smv, srv))
-        val (stmts, hs, qs, rx) = prgs.foldRight((List[SqlStatement](),
-                                                  List[Header](),
-                                                  List[SqlQuery](),
-                                                  Reflexivity.zero[ColumnName])) {
-          case (SqlPrg(h, stmts, q, rx), (astmts, hs, qs, rxs)) =>
-            (stmts ++ astmts, h :: hs, q :: qs, rx && rxs)
+        val (stmts, qs, rx) = prgs.foldRight((List[SqlStatement](),
+                                              List[DistinctiveQuery](),
+                                              Reflexivity.zero[ColumnName])) {
+          case (SqlPrg(stmts, q, rx), (astmts, qs, rxs)) =>
+            (stmts ++ astmts, q :: qs, rx && rxs)
           }
-        val hsp = hs.map(h => freshName -> h)
         val rx1 = filterRx(rx, where)
         val rx2 = combineAll(rx1, cs)
-        val columnLocs: Map[ColumnName, List[String]] =
-          hsp.toIterable flatMap {
-            case (subUn, h) => h.keys map (_ -> subUn)
-          } groupBy (_._1) mapValues (_ map (_._2) toList)
-        val lookupColumn = (c:ColumnName) => ColumnSqlExpr(TableName(columnLocs(c).head), c)
-        val h = hs.foldRight(Map():Header)(_ ++ _)
-        SqlPrg(cs.map(_._1.tuple),
-               stmts,
-               SqlSelect(options = distinctness(h, rx1, cs),
-                         attrs = cs.map {
-                           case (attr, op) => attr.name -> compileOp(op, lookupColumn)
-                         },
-                         tables = (hsp zip qs) map {
-                           case ((un, _), q) => TableName(un) -> q
-                         } toMap,
-                         criteria = compilePredicate(simplifyPredicate(where, rx),
-                                                     lookupColumn) :: (for {
-                                      natJoin <- columnLocs
-                                      val (colName, sources) = natJoin
-                                      natJoinAtom <- sources zip sources.tail
-                                      val (l, r) = natJoinAtom
-                                    } yield SqlEq(ColumnSqlExpr(TableName(l), colName),
-                                                  ColumnSqlExpr(TableName(r), colName))).toList), rx2)
+        SqlPrg(stmts, DistinctiveQuery.select(qs, cs, simplifyPredicate(where, rx), rx1), rx2)
       case RenameR(r, Attribute(from, ty), to) => sys.error("compiling unoptimized RenameR")
+    }
+  }
+
+  object DistinctiveQuery {
+    private[DistinctiveQuery]
+    def satisfyDistinct(hasDistinct: Boolean, needDistinct: Boolean, q: SqlQuery)(implicit sup: Supply): (Boolean, SqlQuery) =
+      if(hasDistinct || !needDistinct) (hasDistinct, q)
+      else (true, q match {
+        case sel : SqlSelect => sel copy (options = sel.options + "distinct")
+        case _ =>
+          SqlSelect(options = Set("distinct"),
+                    attrs = Map(), // empty map = select *
+                    tables = Map(TableName(freshName) -> q))
+      })
+
+    def table(h: Header, n: TableName): DistinctiveQuery =
+      DistinctiveQuery(h, _ => (true, FromTable(n, h.keys.toList)))
+
+    def select(
+      dqs: List[DistinctiveQuery],
+      cs: Map[Attribute,Op],
+      where: Predicate,
+      rx: Reflexivity[ColumnName]
+    )(implicit sup: Supply): DistinctiveQuery = {
+      val hs = dqs.map(_.h)
+      val (ds, qs) = dqs.map(_.q(false)).unzip
+      val subDistinct = ds.forall(b => b)
+      val hsp = hs.map(h => freshName -> h)
+      val columnLocs: Map[ColumnName, List[String]] =
+        hsp.toIterable flatMap {
+          case (subUn, h) => h.keys map (_ -> subUn)
+        } groupBy (_._1) mapValues (_ map (_._2) toList)
+      val lookupColumn = (c:ColumnName) => ColumnSqlExpr(TableName(columnLocs(c).head), c)
+      val h = hs.foldRight(Map():Header)(_ ++ _)
+      val distinctnessPreserved = distinctness(h, rx, cs).isEmpty
+      val hasDistinct = subDistinct && distinctnessPreserved
+      DistinctiveQuery(cs.map(_._1.tuple), needDistinct =>
+        satisfyDistinct(hasDistinct, needDistinct,
+          SqlSelect(attrs = cs.map {
+                      case (attr, op) => attr.name -> compileOp(op, lookupColumn)
+                    },
+                    tables = (hsp zip qs) map {
+                      case ((un, _), q) => TableName(un) -> q
+                    } toMap,
+                    criteria = compilePredicate(where,
+                                                lookupColumn) :: (for {
+                                 natJoin <- columnLocs
+                                 val (colName, sources) = natJoin
+                                 natJoinAtom <- sources zip sources.tail
+                                 val (l, r) = natJoinAtom
+                               } yield SqlEq(ColumnSqlExpr(TableName(l), colName),
+                                             ColumnSqlExpr(TableName(r), colName))).toList)))
+    }
+  }
+
+  case class DistinctiveQuery(h: Header, q: Boolean => (Boolean, SqlQuery)) {
+    private[this] def guidName = "t" + sguid
+    private[this] def freshName(implicit sup: Supply) = "t" + sup.fresh
+    private[this] def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
+
+    import DistinctiveQuery.satisfyDistinct
+
+    def union(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery =
+      DistinctiveQuery(h, needDistinct =>
+        (q(false), other.q(false)) match {
+          case ((d1, q1), (d2, q2)) =>
+            satisfyDistinct(false, needDistinct, SqlUnion(q1, q2))
+        })
+
+    def minus(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery = {
+      val ul = freshName
+      val ur = freshName
+      DistinctiveQuery(h, needDistinct =>
+        (q(false), other.q(false)) match {
+          case ((d, q1), (_, q2)) =>
+            // No need for the thing we're subtracting to be distinct
+            satisfyDistinct(d, needDistinct, SqlExcept(q1, TableName(ul), q2, TableName(ur), h))
+        })
+    }
+
+    def join(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery =
+      DistinctiveQuery(h ++ other.h, needDistinct =>
+        (q(false), other.q(false)) match {
+          case ((d1, q1), (d2, q2)) =>
+            satisfyDistinct(d1 && d2, needDistinct,
+              (q1, q2) match {
+                case (SqlJoin(xs, ul), SqlJoin(ys, _)) => SqlJoin(xs append ys, ul)
+                case (SqlJoin(xs, ul), _) =>
+                  SqlJoin(xs append NonEmptyList((q2, TableName(freshName), other.h)), ul)
+                case (_, SqlJoin(ys, ur)) =>
+                  SqlJoin((q1, TableName(freshName), this.h) <:: ys, ur)
+                case (_, _) =>
+                  val un = freshName
+                  val ul = freshName
+                  val ur = freshName
+                  SqlJoin(NonEmptyList((q1, TableName(ul), this.h), (q2, TableName(ur), other.h)), TableName(un))
+               })
+    })
+
+    def joinOn(on: Set[(String, String)], other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery = {
+      val un = freshName
+      val ul = freshName
+      val ur = freshName
+      DistinctiveQuery(h ++ other.h, needDistinct =>
+        (q(false), other.q(false)) match {
+          case ((d1, q1), (d2, q2)) =>
+            satisfyDistinct(d1 && d2, needDistinct,
+              SqlJoinOn(
+                (q1, TableName(ul), this.h),
+                (q2, TableName(ur), other.h),
+                on,
+                TableName(un)))
+        })
+    }
+
+    def filter(pred: Predicate)(implicit sup: Supply): DistinctiveQuery = {
+      val un = freshName
+      DistinctiveQuery(h, needDistinct => q(false) match {
+        case (d, q) => satisfyDistinct(d, needDistinct, q match {
+          case v:SqlSelect if (v.limit._1.isEmpty && v.limit._2.isEmpty) =>
+            v.copy(criteria = compilePredicate(pred, v.attrs) :: v.criteria)
+          case _ => SqlSelect(tables = Map(TableName(un) -> q),
+                              attrs = columns(h, TableName(un)),
+                              criteria = List(compilePredicate(pred, ColumnSqlExpr(TableName(un), _))))
+        })
+      })
+    }
+
+    def aggregate(attr: Attribute, f: AggFunc)(implicit sup: Supply): DistinctiveQuery = {
+      val un = freshName
+      DistinctiveQuery(Map(attr.name -> attr.t), _ => q(true) match {
+        case (_, q) => (true, q match {
+          case v:SqlSelect if v.limit == (None, None) && v.groupBy.isEmpty && !v.options("distinct") =>
+            v.copy(attrs = Map(attr.name -> compileAggFunc(attr, f, v.attrs)))
+          case _ => SqlSelect(tables = Map(TableName(un) -> q),
+                              attrs = Map(attr.name -> compileAggFunc(attr, f, columns(h, TableName(un)))))
+        })
+      })
+    }
+
+    def aggregateByGroup(cs: Map[Attribute,Op],
+                         aggs: List[(Attribute,AggFunc)],
+                         group: List[Op.ColumnValue]
+                        )(implicit sup: Supply): DistinctiveQuery = {
+      val (_, sq) = q(true) // to aggregate, we need distinctness
+      val un = freshName
+      val groupByCols = columns(h, TableName(un))
+      val groupBys = group map (compileOp(_, groupByCols))
+      val plainCols = cs map { case (attr, op) =>
+                        (attr.name -> compileOp(op, groupByCols)) }
+      def subq =
+        SqlSelect(tables = Map(TableName(un) -> sq),
+                  attrs =  plainCols ++ aggs.map {
+                             case (attr, f) =>
+                               attr.name -> compileAggFunc(attr, f, columns(h, TableName(un)))
+                           }.toMap,
+                  groupBy = groupBys )
+      val q2 = sq match {
+        case v:SqlSelect if v.limit == (None, None) && !v.options("distinct") && v.groupBy.isEmpty =>
+          // Note: this optimization relies on an assumption about aggregations to be correct.
+          // Specifically, we don't want to coalesce two aggregations in sequence. There are two
+          // checks that ensure this. First, we test to see if the underlying SqlSelect's groupBy
+          // is empty. This ensures that it isn't an AggregateByGroup, or at least, not one that
+          // isn't equivalent to an Aggregate. Second, backSubstituteSingle only works if the
+          // groupBy we're optimizing only refers to pure columns in the underlying select's
+          // tables. If it were an Aggregate, the only columns that exist are complex expressions,
+          // so this will fail.
+          //
+          // The remaining case is two consecutive aggregations with no grouping. I think this will
+          // produce bad SQL right now. But there's no reason to do it.
+          groupBys.traverse[Option,SqlExpr] {
+            case e =>
+              SqlExpr.backSubstituteSingle(e, (_, col) => v.attrs(col))
+          } match {
+            case None => subq
+            case Some(groupBysSubbed) =>
+              val newAttrs = cs.map { case (attr, op) =>
+                               attr.name -> compileOp(op, v.attrs)
+                             } ++
+                             aggs.map {
+                               case (attr, f) =>
+                                 attr.name -> compileAggFunc(attr, f, v.attrs)
+                             }
+              v.copy( attrs = newAttrs.toMap, groupBy = groupBysSubbed )
+          }
+        case _ => subq
+      }
+      DistinctiveQuery(cs.map(_._1.tuple) ++ aggs.map(_._1.tuple), _ => (true, q2))
+    }
+
+    def project(cols: Map[Attribute,Op], rx: Reflexivity[ColumnName])(implicit sup: Supply): DistinctiveQuery = {
+      def compileCols(as: String => SqlExpr) =
+        cols map { case (attr, op) =>
+          (attr -> compileOp(op, as))
+        }
+      val un = freshName
+      val as = columns(h, TableName(un))
+      val ccols = cols map { case (attr, op) =>
+        attr.name -> compileOp(op, as)
+      }
+      DistinctiveQuery(cols.map(_._1.tuple), needDistinct => q(false) match {
+        case (d, q) =>
+          val hasDistinct = d && distinctness(h, rx, cols).isEmpty
+          satisfyDistinct(hasDistinct, needDistinct,
+            SqlSelect(tables = Map(TableName(un) -> q), attrs = ccols))
+      })
+    }
+
+    def except(cols: Set[ColumnName])(implicit sup: Supply): DistinctiveQuery = {
+      val un = freshName
+      DistinctiveQuery(h -- cols, distinct => q(distinct) match {
+        case (d, q) => // todo: wrong
+          (d, SqlSelect(tables = Map(TableName(un) -> q),
+                        attrs = columns(h, TableName(un)) -- cols))
+      })
+    }
+
+    def combine(attr: Attribute, op: Op)(implicit sup: Supply): DistinctiveQuery = {
+      val un = freshName
+      DistinctiveQuery(h + attr.tuple, distinct => q(distinct) match {
+        case (d, q) =>
+          (d, SqlSelect(tables = Map(TableName(un) -> q),
+                attrs = {
+                  val as = columns(h, TableName(un))
+                  as + (attr.name -> compileOp(op, as))
+                }))
+      })
+    }
+
+    def limit(from: Option[Int], to: Option[Int], order: List[(String,SortOrder)])(implicit sup: Supply): DistinctiveQuery = {
+        val u1 = freshName
+        val u2 = freshName
+        val (makeDistinct, ensuresDistinct) = (from, to) match {
+          case (Some(i), Some(j)) => (j - i > 0, true)
+          case (None, None) => (false, false)
+          case _ => (true, true)
+        }
+        DistinctiveQuery(h, needDistinct => q(makeDistinct) match {
+          case (d, q) =>
+            satisfyDistinct(ensuresDistinct || d, needDistinct,
+              emitter.emitLimit(q, h, TableName(u1), from, to, (toNel(order.map {
+                case (k, v) => ColumnSqlExpr(TableName(u1), k) -> v.apply(
+                  asc = SqlAsc,
+                  desc = SqlDesc
+                )}).map(_.list).getOrElse(
+                  h.keys.map(k => (ColumnSqlExpr(TableName(u1), k), SqlAsc)).toList)), TableName(u2)))
+        })
     }
   }
 }

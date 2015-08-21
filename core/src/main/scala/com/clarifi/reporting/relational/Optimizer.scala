@@ -507,11 +507,11 @@ object Optimizer {
       optimizeRel(Relation.instantiate(SmallLit( l.nel ), e), hr, hm)
     case LetR(r, e) =>
       val (h, r2) = optimizeExt(r, hr, hm)
-      val (h2, _, e2) = optimizeRel(Relation.fromScope(e), (r: Option[R]) => r match {
+      val (h2, jh, e2) = optimizeRel(Relation.fromScope(e), (r: Option[R]) => r match {
         case None => h
         case Some(x) => hr(x)
       }, hm)
-      (h2, h2, PureSelect(LetR(r2, Relation.toScope(e2)), h2))
+      (h2, h2, PureSelect(LetR(r2, Relation.toScope(impurify(e2,jh))), h2))
     case MemoR(r) =>
       val (h, jh, r2) = optimizeRel(r, hr, hm)
       (h, h, PureSelect(MemoR(impurify(r2, jh)), h))
