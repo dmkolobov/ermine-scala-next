@@ -27,7 +27,7 @@ iterate : (a -> a) -> a -> List a
 iterate f a = a :: iterate f (f a)
 
 repeat : a -> List a
-repeat a = a :: t where t = repeat a
+repeat a = t where t = a :: t
 
 replicate : a -> Int -> List a
 replicate x 0 = Nil
