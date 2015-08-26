@@ -34,12 +34,13 @@ object DebugBackend {
 
     def explain(r: ClosedRel): DB[String] = (c: Connection) => {
       val mySqlBackend = Scanners.MySQL(dummySmenv)
+      import mySqlBackend.SqlPrg
       implicit val sup = Supply.create
       implicit val scopeBuilder = List[() => String]()
-      val SqlPrg(_, p, q, _) = mySqlBackend.compileRel(r.out, (x:Nothing) => x, (x:Nothing) => x)
+      val SqlPrg(p, dq, _) = mySqlBackend.compileRel(r.out, (x:Nothing) => x, (x:Nothing) => x)
 
       if (p.isEmpty) {
-        val query = "EXPLAIN EXTENDED " + q.emitSql(mySqlEmitter).run
+        val query = "EXPLAIN EXTENDED " + dq.q(true)._2.emitSql(mySqlEmitter).run
         val resultSet = c.prepareStatement(query).executeQuery
         printRows(resultSet) // only one row returned
       } else "Tide comes in, tide goes out. You can't explain that."
@@ -66,12 +67,13 @@ object DebugBackend {
 
     def explain(r: ClosedRel): DB[String] = (c: Connection) => {
       val verticaBackend = Scanners.Vertica(dummySmenv)
+      import verticaBackend.SqlPrg
       implicit val sup = Supply.create
       implicit val scopeBuilder = List[() => String]()
-      val SqlPrg(_, p, q, _) = verticaBackend.compileRel(r.out, (x:Nothing) => x, (x:Nothing) => x)
+      val SqlPrg(p, dq, _) = verticaBackend.compileRel(r.out, (x:Nothing) => x, (x:Nothing) => x)
 
       if (p.isEmpty) {
-        val query = "EXPLAIN " + q.emitSql(verticaSqlEmitter)
+        val query = "EXPLAIN " + dq.q(true)._2.emitSql(verticaSqlEmitter)
         val resultSet = c.prepareStatement(query).executeQuery
         printParagraph(resultSet)
       } else "Tide comes in, tide goes out. You can't explain that."

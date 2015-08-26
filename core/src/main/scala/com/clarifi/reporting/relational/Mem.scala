@@ -14,9 +14,9 @@ sealed abstract class Mem[+R, +M] {
   def map[N](g: M => N): Mem[R, N] = bimap(x => x, g)
   def mapRel[S](f: R => S): Mem[S, M] = bimap(f, x => x)
   def subst[S, N](f: R => Relation[N, S], g: M => Mem[S, N]): Mem[S, N]
-  def substPrg[S, N](f: R => SqlPrg, g: M => MemPrg): Mem[Nothing,Nothing] =
-    subst(f andThen (sqlPrg => RelEmpty(sqlPrg.h)),
-          g andThen (memPrg => EmptyRel(memPrg.h)))
+  def substPrg[S, N](f: R => Header, g: M => Header): Mem[Nothing,Nothing] =
+    subst(f andThen (sqlHdr => RelEmpty(sqlHdr)),
+          g andThen (memHdr => EmptyRel(memHdr)))
   def flatMap[S >: R, N](f: M => Mem[S, N]): Mem[S, N] = subst(VarR(_), f)
   def flatRel[S, N >: M](f: R => Relation[N, S]): Mem[S, N] = subst(f, VarM(_))
   def bifoldMap[Z: Monoid](f: R => Z, g: M => Z): Z
