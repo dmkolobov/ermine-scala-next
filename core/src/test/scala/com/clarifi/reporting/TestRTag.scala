@@ -104,6 +104,22 @@ object TestRTag extends Properties("PrimTs, PrimExprs, Reflexivity") {
     sup(h, zerostringed) ?= Some(zerostringed)
   }
 
+  property("only equal IntTs are equal") = secure {
+    ((IntT(false): PrimT) ?= (IntT(false): PrimT)) &&
+      ((IntT(true): PrimT) != (IntT(false): PrimT))
+  }
+
+  property("IntT matches IntT, not LongT") = secure {
+    (IntT(false): PrimT) match {
+      case PrimT.LongT(_) => false
+      case IntT(n) => !n
+    }
+  }
+
+  property("StringT equal is total") = secure {
+    (PrimT.StringT(0): PrimT) != (IntT(): PrimT)
+  }
+
   trait FortyTwoExprT
   type FortyTwoExpr = PrimExpr @@ FortyTwoExprT
 
