@@ -132,6 +132,7 @@ object PrimT {
     override def toString = name + "T(" + len + "," + nullable + ")"
     override def equals(o: Any) = o match {
       case o: StringT => len == o.len && nullable == o.nullable
+      case _ => false
     }
   }
   object StringT {
