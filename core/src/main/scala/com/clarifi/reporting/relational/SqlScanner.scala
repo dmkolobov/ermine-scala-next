@@ -177,7 +177,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   private[this]
   def scanAndUniq(dq: DistinctiveQuery,
                   order: List[(String, SortOrder)])(implicit sup: Supply): DB[Procedure[Id, Record]] =
-    scanQuery(orderQuery(dq.q(true)._2, order), dq.h) /* match {
+    dq.q(false) match {
       case (d, q) =>
         if (d) scanQuery(orderQuery(q, order), dq.h) // already distinct
         else {
@@ -185,7 +185,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
           val totalOrder = order ++ unsortedCols.toList.map(c => (c, Asc))
           scanQuery(orderQuery(q, totalOrder), dq.h) map (_ andThen uniqSorted)
         }
-    } */
+    }
 
   def compileMem[M,R](m: Mem[R, M], smv: M => MemPrg, srv: R => SqlPrg)(implicit sup: Supply): MemPrg =
     m match {
