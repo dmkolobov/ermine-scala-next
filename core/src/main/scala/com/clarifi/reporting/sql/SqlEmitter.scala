@@ -64,8 +64,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   def isTransactional: Boolean
   def setConstraints(enable: Boolean, t: Iterable[TableName]): List[RawSql]
 
-
-  def emitOrderBy: RawSql
+  def emitBinaryOrdering(isBinary: Boolean, exp: RawSql): RawSql
 
   /**
    * Used at the end of a SELECT...FROM when the list of tables is empty.
@@ -259,7 +258,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     */
   def emitLimit(query: SqlQuery, queryHeader: Header, unQuery: TableName,
                 from: Option[Int], to: Option[Int],
-                order: List[(SqlExpr, SqlOrder)],
+                order: List[(SqlExpr, SqlOrder, Boolean)],
                 unSurrogate: TableName): SqlQuery = query
 
   /** Emit a `LIMIT` clause for `SELECT`, if supported. */
@@ -347,14 +346,19 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
 //////////////////////////////////////////////////////////////////////////////
 // Traits for specific behavior overrides
 
-/** Emitters for which ordering is emitted as straight "ORDER BY" */
-trait EmitOrderBy_Plain extends SqlEmitter {
-  def emitOrderBy: RawSql = raw("order by")
+/** Emitters that order certain columns as binary.
+ */
+trait EmitBinaryOrdering_AsBinary extends SqlEmitter {
+  def emitBinaryOrdering(isBinary: Boolean, exp: RawSql) =
+    if (isBinary)
+      raw("binary (") |+| exp |+| ")"
+    else exp
 }
 
-/** Emitters that specify binary-based ordering for order by */
-trait EmitOrderBy_Binary extends SqlEmitter {
-  def emitOrderBy: RawSql = raw("order by binary")
+/** Emitters which ignore requests to order columns as binary.
+ */
+trait EmitBinaryOrdering_Ignored extends SqlEmitter {
+  def emitBinaryOrdering(isBinary: Boolean, exp: RawSql) = exp
 }
 
 /** Emitters for which there is no suffix after the closing ')' in
@@ -491,14 +495,14 @@ trait EmitLimit_AsRowNumberOver extends SqlEmitter {
     */
   override def emitLimit(rc: SqlQuery, h: Header, un: TableName,
                          from: Option[Int], to: Option[Int],
-                         order: List[(SqlExpr, SqlOrder)],
+                         order: List[(SqlExpr, SqlOrder, Boolean)],
                          un2: TableName): SqlQuery =
     SqlSelect(attrs = columns(h, un2),  // erase "rownum"
               tables = Map(un2 -> SqlSelect(
                 tables = Map(un -> rc),
                 attrs = (columns(h, un) + // add "rownum"
                          ("rownum" -> OverSqlExpr(FunSqlExpr("row_number", List()),
-                                                  order))))),
+                                                  order.map(p => (p._1,p._2))))))),
               criteria = List(to.map(x => SqlLte(ColumnSqlExpr(un2, "rownum"),
                                                 LitSqlExpr(SqlInt(x)))),
                               from.map(x => SqlGte(ColumnSqlExpr(un2, "rownum"),
@@ -514,7 +518,7 @@ trait EmitLimit_AsLimit extends SqlEmitter {
     */
   override def emitLimit(rc: SqlQuery, h: Header, un: TableName,
                          from: Option[Int], to: Option[Int],
-                         order: List[(SqlExpr, SqlOrder)],
+                         order: List[(SqlExpr, SqlOrder, Boolean)],
                          un2: TableName): SqlQuery =
     SqlSelect(attrs = columns(h, un), tables = Map(un -> rc),
               // reorder and limit RC
@@ -614,7 +618,7 @@ class SqliteEmitter extends SqlEmitter
     with EmitCreateTable_NoSuffix
     with EmitNoDropTempTable
     with EmitUuid_Strings
-    with EmitOrderBy_Plain
+    with EmitBinaryOrdering_Ignored
     with EmitCheckExists_AlwaysFails {
 
   def isTransactional: Boolean = true
@@ -674,7 +678,7 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                                       with EmitConcat_MySQL
                                       with EmitUnion
                                       with EmitIntDivOp_MySQL
-                                      with EmitOrderBy_Binary
+                                      with EmitBinaryOrdering_AsBinary
                                       with EmitUuid_Strings {
   override def emitTableName(tn: TableName): RawSql =
     (tn.schema :+ tn.name) map emitColumnName rawMkString "."
@@ -734,7 +738,7 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitOver_UsingOver
                                       with EmitStddevVar_MsSQL
                                       with EmitUuid_Strings
-                                      with EmitOrderBy_Plain
+                                      with EmitBinaryOrdering_Ignored
                                       with EmitName_MsSql {
 
   def isTransactional: Boolean = true
@@ -785,7 +789,7 @@ class VerticaSqlEmitter extends SqlEmitter(false) with EmitFromEmptyTable_FromDu
                                            with EmitExcept_AsJoin
                                            with EmitUnion
                                            with EmitUuid_Strings
-                                           with EmitOrderBy_Plain
+                                           with EmitBinaryOrdering_Ignored
                                            with EmitCheckExists_AlwaysFails {
 
   def isTransactional: Boolean = true
@@ -826,7 +830,7 @@ class PostgreSqlEmitter extends SqlEmitter(false)
                         with EmitLimit_AsLimit
                         with EmitUnion
                         with EmitUuid_Strings
-                        with EmitOrderBy_Plain
+                        with EmitBinaryOrdering_Ignored
                         with EmitCheckExists_AlwaysFails {
   import SqlEmitter.nn
 
