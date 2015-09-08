@@ -40,7 +40,11 @@ sealed abstract class SqlQuery {
         else (groupBy.toIndexedSeq.map((x: SqlExpr) => x.emitSql).rawMkString(", ")) }
       else raw("")) |+|
       (if (!orderBy.isEmpty)
-        emitter.emitOrderBy |+| orderBy.distinct.map(x => x._1.emitSql |+| " " |+| x._2.emitSql).toIterable.rawMkString(", ")
+        raw(" order by ") |+|
+        orderBy.distinct.map(x =>
+          emitter.emitBinaryOrdering(x._3, x._1.emitSql) |+| " " |+|
+          x._2.emitSql
+        ).toIterable.rawMkString(", ")
       else raw("")) |+|
       (limit match { case (from, to) =>
         raw(" ") |+| emitter.emitLimitClause(from, to)})
@@ -77,7 +81,7 @@ case class SqlSelect(options: Set[String] = Set(), // Distinct, all, etc.
                      tables: Map[TableName, SqlQuery] = Map(), // from clause
                      criteria: List[SqlPredicate] = List(), // where clause
                      groupBy: List[SqlExpr] = List(), // groupBy clause
-                     orderBy: List[(SqlExpr, SqlOrder)] = List(),
+                     orderBy: List[(SqlExpr, SqlOrder, Boolean)] = List(),
                      // limit clause (where allowed), inclusive 1-indexed (from, to)
                      limit: (Option[Int], Option[Int]) = (None, None)
                    ) extends SqlQuery

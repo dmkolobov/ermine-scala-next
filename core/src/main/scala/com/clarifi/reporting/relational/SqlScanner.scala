@@ -184,21 +184,31 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   def guidName = "t" + sguid
   def freshName(implicit sup: Supply) = "t" + sup.fresh
 
-  def orderQuery(sql: SqlQuery, order: List[(String, SortOrder)])(implicit sup: Supply): SqlQuery = sql match {
+  private
+  def isBinaryColumn(h: Header, c: ColumnName) = h.get(c) match {
+    case Some(_ : PrimT.StringT) => true
+    case _ => false
+  }
+
+  def orderQuery(h: Header, sql: SqlQuery, order: List[(String, SortOrder)])(implicit sup: Supply): SqlQuery = sql match {
     case sel : SqlSelect if sel.attrs.size > 0 && sel.limit == (None, None) =>
       sel copy (
         orderBy = order collect {
           case (col, ord) if (sel.attrs.get(col) map (_.deparenthesize) match {
              case None | Some(LitSqlExpr(_)) => false
              case Some(_) => true
-           }) => sel.attrs(col) -> ord(SqlAsc, SqlDesc)
+          }) => (sel.attrs(col), ord(SqlAsc, SqlDesc), isBinaryColumn(h, col))
         }
       )
     case _ if order.nonEmpty =>
       val s = freshName
       SqlSelect(
         tables = Map(TableName(s) -> sql),
-        orderBy = order.map { case (col, ord) => ColumnSqlExpr(TableName(s), col) -> ord(SqlAsc, SqlDesc) }
+        orderBy = order.map { case (col, ord) =>
+          (ColumnSqlExpr(TableName(s), col),
+           ord(SqlAsc, SqlDesc),
+           isBinaryColumn(h, col))
+        }
       )
     case _ => sql
   }
@@ -211,11 +221,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                   order: List[(String, SortOrder)])(implicit sup: Supply): DB[Procedure[Id, Record]] =
     dq.q(false) match {
       case (d, q) =>
-        if (d) scanQuery(orderQuery(q, order), dq.h) // already distinct
+        if (d) scanQuery(orderQuery(dq.h, q, order), dq.h) // already distinct
         else {
           val unsortedCols = dq.h.keySet -- order.map(_._1)
           val totalOrder = order ++ unsortedCols.toList.map(c => (c, Asc))
-          scanQuery(orderQuery(q, totalOrder), dq.h) map (_ andThen uniqSorted)
+          scanQuery(orderQuery(dq.h, q, totalOrder), dq.h) map (_ andThen uniqSorted)
         }
     }
 
@@ -994,11 +1004,16 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
           case (d, q) =>
             satisfyDistinct(ensuresDistinct || d, needDistinct,
               emitter.emitLimit(q, h, TableName(u1), from, to, (toNel(order.map {
-                case (k, v) => ColumnSqlExpr(TableName(u1), k) -> v.apply(
-                  asc = SqlAsc,
-                  desc = SqlDesc
-                )}).map(_.list).getOrElse(
-                  h.keys.map(k => (ColumnSqlExpr(TableName(u1), k), SqlAsc)).toList)), TableName(u2)))
+                case (k, v) =>
+                  (ColumnSqlExpr(TableName(u1), k),
+                   v.apply(
+                     asc = SqlAsc,
+                     desc = SqlDesc
+                   ),
+                   h(k).isInstanceOf[PrimT.StringT]
+                 )
+              }).map(_.list).getOrElse(
+                  h.map{ case (k,t) => (ColumnSqlExpr(TableName(u1), k), SqlAsc, t.isInstanceOf[PrimT.StringT]) }.toList)), TableName(u2)))
         })
     }
   }
