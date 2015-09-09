@@ -9,9 +9,9 @@ withClarifiMode(version in ThisBuild){o =>
   formatter.setTimeZone(TimeZone.getTimeZone("GMT"))
   val timestamp = formatter.format(new Date)
   val hash = ("hg id" !!) takeWhile (c => c.isLetter || c.isDigit)
-  val tags = ("hg id -t" !!).trim
+  val tags = ("hg id -t" !!).trim.split(' ').filterNot(_ == "tip")
   if(tags.isEmpty) timestamp + "." + hash
-  else tags.split(' ').last
+  else tags.last
 }
 
 withClarifiMode(artifactNameNormalizer in ThisBuild){o =>
