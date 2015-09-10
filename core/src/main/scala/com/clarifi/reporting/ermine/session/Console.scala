@@ -344,6 +344,12 @@ object Console {
         }
       }
     },
+    new Action(":fsloader",List(),None,"add a loader from file paths") {
+      def apply(s: String)(implicit e: ConsoleEnv) {
+        e.sessionEnv.loadFile = SourceFile.inOrder(
+          SourceFile.filesystem(s) ,e.sessionEnv.loadFile)
+      }
+    },
     new Action(":mark",List(),Some("[key]"),"save the current session state for later release") {
       def apply(s: String)(implicit e: ConsoleEnv) {
         val m = e.mark
