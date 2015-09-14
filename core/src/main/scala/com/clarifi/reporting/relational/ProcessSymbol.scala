@@ -101,12 +101,12 @@ object ProcessSymbols {
   /** Removes NaN values from the input. */
   private[this]
   def composeFilterNaN[A](f: Process[Double, A]): Process[Double, A] =
-    Process.filtered((_:Double).isNaN) andThen f
+    Process.filtered((d:Double) => !d.isNaN) andThen f
 
   /** Removes tuples whose second element is NaN. */
   private[this]
   def composeFilterNaNPairs[A](f: Process[NumTuple2, A]): Process[NumTuple2, A] =
-    Process.filtered((_:NumTuple2)._2.isNaN) andThen f
+    Process.filtered((p:NumTuple2) => !p._2.isNaN) andThen f
 
   private[relational]
   def ensureNonnegativeWeight(v: NumTuple2) =
