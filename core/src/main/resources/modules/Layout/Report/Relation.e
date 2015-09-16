@@ -67,29 +67,135 @@ cutoffDrilldownRel
   -> Field d String
   -> Relation s
   -> Relation s
-cutoffDrilldownRel valueFld parentFld childFld (cutoffPct : Double) groupFld rel = union largers others
- where
- cutoffs = aggregateByGroup (sum . abs_Op $ valueFld) {parentFld} valueFld rel
-         |> [| cutoff = prim_Op (Some cutoffPct) *_Op valueFld |]
-         |> except {valueFld}
+cutoffDrilldownRel valueFld parentFld childFld (cutoffPct : Double) groupFld rel =
+  union (largers valueFld parentFld cutoffPct rel)
+        (others valueFld parentFld groupFld childFld cutoffPct rel)
 
- largers = rel ** cutoffs
-         |> filter_P (abs_Op valueFld >_P cutoff)
-         |> except {cutoff}
+private 
+  largers
+     : forall v p pt s.
+     ( exists l e
+     . s <- (e, p, v)
+     , l <- ((|cutoff|), s))
+    => Field v (Nullable Double)
+    -> Field p pt
+    -> Double
+    -> Relation s
+    -> Relation s
+  largers valueFld parentFld cutoffPct rel =
+    rel ** cutoffs valueFld parentFld cutoffPct rel
+      |> filter_P (abs_Op valueFld >_P cutoff)
+      |> except {cutoff}
 
- small = rel ** cutoffs
-       |> filter_P (abs_Op valueFld <=_P cutoff)
-       |> except {cutoff}
+  cutoffs
+     : forall v p pt s r.
+     ( exists l e
+     . s <- (e, p, v)
+     , l <- ((|cutoff|), s)
+     , r <- (p, v, (|cutoff|)))
+    => Field v (Nullable Double)
+    -> Field p pt
+    -> Double
+    -> Relation s
+    -> Relation r
+  cutoffs valueFld parentFld (cutoffPct : Double) rel =
+    aggregateByGroup (sum . abs_Op $ valueFld) {parentFld} valueFld rel
+      |> [| cutoff = prim_Op (Some cutoffPct) *_Op valueFld |]
+      |> except {valueFld}
 
- smallsum = aggregateByGroup (sum . abs_Op $ valueFld) {parentFld} valueFld small
- smallcount = aggregateByGroup countAgg {parentFld} cutoffCount small
- smallid = aggregateByGroup (max childFld) {parentFld} cutoffChild small
- smallgroup = aggregateByGroup (max groupFld) {parentFld} cutoffGroup small
+  small
+     : forall v p pt s.
+     ( exists l e
+     . s <- (e, p, v)
+     , l <- ((|cutoff|), s))
+    => Field v (Nullable Double)
+    -> Field p pt
+    -> Double
+    -> Relation s
+    -> Relation s
+  small valueFld parentFld cutoffPct rel =
+    rel ** cutoffs valueFld parentFld cutoffPct rel
+      |> filter_P (abs_Op valueFld <=_P cutoff)
+      |> except {cutoff}
 
- others = smallsum ** smallcount ** smallid ** smallgroup
-        |> [| cutoffCount > 0
-            , groupFld = if_Op (cutoffCount ==_P 1) cutoffGroup "Other"
-            , childFld = if_Op (cutoffCount ==_P 1) cutoffChild (0 -_Op 1)
-           |]
-        |> except {cutoffCount, cutoffGroup, cutoffChild}
+  smallsum
+     : forall v p pt s r.
+     ( exists l e
+     . r <- (p, v)
+     , s <- (p, v, e)
+     , l <- ((|cutoff|), s))
+    => Field v (Nullable Double)
+    -> Field p pt
+    -> Double
+    -> Relation s
+    -> Relation r
+  smallsum valueFld parentFld cutoffPct rel =
+    aggregateByGroup (sum . abs_Op $ valueFld) {parentFld} valueFld
+      (small valueFld parentFld cutoffPct rel)
+
+  smallcount
+     : forall v p pt s r.
+     ( exists l e
+     . r <- (p, (|cutoffCount|))
+     , s <- (p, v, e)
+     , l <- ((|cutoff|), s))
+    => Field v (Nullable Double)
+    -> Field p pt
+    -> Double
+    -> Relation s
+    -> Relation r
+  smallcount valueFld parentFld cutoffPct rel =
+    aggregateByGroup countAgg {parentFld} cutoffCount (small valueFld parentFld cutoffPct rel)
+
+  smallid
+     : forall v p pt s r.
+     ( exists l e
+     . r <- (p, (|cutoffChild|))
+     , s <- (p, v, c, e)
+     , l <- ((|cutoff|), s))
+    => Field v (Nullable Double)
+    -> Field p pt
+    -> Field c Int
+    -> Double
+    -> Relation s
+    -> Relation r
+  smallid valueFld parentFld childFld cutoffPct rel =
+    aggregateByGroup (max childFld) {parentFld} cutoffChild (small valueFld parentFld cutoffPct rel)
+
+  smallgroup
+     : forall v p pt s r d.
+     ( exists l e
+     . r <- (p, (|cutoffGroup|))
+     , s <- (p, v, d, e)
+     , l <- ((|cutoff|), s))
+    => Field v (Nullable Double)
+    -> Field p pt
+    -> Field d String
+    -> Double
+    -> Relation s
+    -> Relation r
+  smallgroup valueFld parentFld groupFld cutoffPct rel =
+    aggregateByGroup (max groupFld) {parentFld} cutoffGroup (small valueFld parentFld cutoffPct rel)
+
+  others
+     : forall v p pt s r d c.
+     ( s <- (p, v, d, c)
+     , l <- ((|cutoff|), s))
+    => Field v (Nullable Double)
+    -> Field p pt
+    -> Field d String
+    -> Field c Int
+    -> Double
+    -> Relation s
+    -> Relation r
+  others valueFld parentFld groupFld childFld cutoffPct rel =
+      smallsum valueFld parentFld cutoffPct rel
+        ** smallcount valueFld parentFld cutoffPct rel 
+        ** smallid valueFld parentFld childFld cutoffPct rel
+        ** smallgroup valueFld parentFld groupFld cutoffPct rel
+         |> [| cutoffCount > 0
+             , groupFld = if_Op (cutoffCount ==_P 1) cutoffGroup "Other"
+             , childFld = if_Op (cutoffCount ==_P 1) cutoffChild (0 -_Op 1)
+            |]
+         |> except {cutoffCount, cutoffGroup, cutoffChild}
 
