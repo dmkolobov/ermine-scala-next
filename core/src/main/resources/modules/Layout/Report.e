@@ -786,13 +786,13 @@ infixl 5 ***
 
 zipSelector : Selector f z a -> Selector f z b -> Selector f z (a, b)
 zipSelector (Selector e1 v1) (Selector e2 v2) =
-  Selector (orEvent e1 e2) $ e go -> v1 e $ a -> v2 live $ b -> go (a,b)
+  Selector (orEvent e1 e2) $ e go -> v1 e $ a -> v2 e $ b -> go (a,b)
 
 selectorFunctor = Functor mapSelector
 
 selectorAp : Ap (Selector f z)
 selectorAp = Ap unitSelector
-                (ff -> mapSelector (uncurry id) . zipSelector ff)
+                (ff -> mapSelector (uncurry ($)) . zipSelector ff)
 
 {- TODO and then, you can use
 sequenceSelector = sequenceA listTraversable selectorAp
@@ -805,7 +805,7 @@ mapSelector f (Selector e av) = Selector e $ mapSource f av
 
 -- | A selector that always yields the given 'a'.
 unitSelector : a -> Selector f z a
-unitSelector = Selector live . const . flip id
+unitSelector x = Selector live (const (k -> k x))
 
 -- | Combine a list of selectors into a single selector producing the
 -- list of all of its values.
