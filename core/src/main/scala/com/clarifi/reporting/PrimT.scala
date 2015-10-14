@@ -52,6 +52,7 @@ object PrimT {
     final override def withNull: PrimT = PTCtor.nullableInstance
     final override def withoutNull: PrimT = PTCtor.strictInstance
     final override def toString = name + "T(" + nullable + ")"
+    final override val hashCode = (name,nullable).hashCode
   }
 
   /** Variant for PrimT companion objects where the companion class only
@@ -134,6 +135,7 @@ object PrimT {
       case o: StringT => len == o.len && nullable == o.nullable
       case _ => false
     }
+    final override val hashCode = (name, len, nullable).hashCode
   }
   object StringT {
     private val strictStringT : StringT = new StringT(0, false)
