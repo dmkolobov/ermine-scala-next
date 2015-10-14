@@ -38,6 +38,8 @@ private foreign
       currency# : PrimitiveNum n => Function3 Bool# Bool# String (Format n)
   value "com.clarifi.reporting.writers.Format$Constant$" "MODULE$"
       constant# : Function1 String (Format a)
+  value "com.clarifi.reporting.writers.Format$Pr1$" "MODULE$"
+      pr1# : Function1 (Format a) (Format (a,b))
 
 -- 2 -> 34.7652 -> 34.77
 round, roundParens : PrimitiveNum n => Int -> Format n
@@ -86,6 +88,9 @@ markdown = funcall1# markdown#
 
 constant : String -> Format a
 constant = funcall1# constant#
+
+pr1 : Format a -> Format (a, b)
+pr1 = funcall1# pr1#
 
 -- Add Nullable to a formatter, as all formatters can format anything.
 nullable : Format a -> Format (Nullable a)

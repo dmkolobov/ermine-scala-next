@@ -675,6 +675,19 @@ object Format {
     }
   }
 
+  /** Given a base format, return a format on pairs that throws out the
+    * second projection. */
+  case class Pr1( fst: Format ) extends Format {
+    val basicEval = (pes: NelPe) => (pes.head, pes.tail) match {
+      case (h, t :: u) => fst.basicEval(NonEmptyList(h, u :_*))
+      case (h, _) => fst.basicEval(NonEmptyList(h))
+    }
+    def devolve(ops: NelOp) = (ops.head, ops.tail) match {
+      case (h, t :: u) => fst.devolve(NonEmptyList(h, u :_*))
+      case (h, _) => fst.devolve(NonEmptyList(h))
+    }
+  }
+  
   /** Meant for two-field displays: format as one field, a date
     * range. */
   case object DateRange extends Format {

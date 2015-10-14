@@ -583,7 +583,7 @@ object Format {
   import writers.{Legend, LegendColumns, Presentation, SortDirection,
                   SortStrategy, Format => WFormat}
 
-  type WFormatF[A] = S9[UnitF, // Default
+  type WFormatF[A] = S10[UnitF, // Default
                      A, // Markdown
                      StringF, // Constant
                      BooleanF :: BooleanF :: IntF :: BooleanF, // Percent
@@ -591,10 +591,11 @@ object Format {
                      UnitF, // DateRange
                      BooleanF :: BooleanF :: IntF,  // Round
                      BooleanF :: BooleanF :: IntF,  // IntegralRound
-                     IntF   // Truncate
+                     IntF,  // Truncate
+                     A  // Pr1
                    ]
 
-  lazy val wformatR = fixFR[WFormat,WFormatF](self => union9R(
+  lazy val wformatR = fixFR[WFormat,WFormatF](self => union10R(
     unitR   map (_ => WFormat.Default),
     self map (inner => WFormat.Markdown(inner) ),
     stringR map (s => WFormat.Constant(s)),
@@ -603,12 +604,13 @@ object Format {
     unitR   map (_ => WFormat.DateRange),
     p3R(booleanR,booleanR,intR)(WFormat.Round),
     p3R(booleanR,booleanR,intR)(WFormat.IntegralRound),
-    intR    map (i => WFormat.Truncate(i))
+    intR    map (i => WFormat.Truncate(i)),
+    self map (inner => WFormat.Pr1(inner) )
   ))
 
   lazy val wformatW = fixFW[WFormat, WFormatF]( self =>
-    s9W(unitW, self, stringW, tuple4W(booleanW, booleanW, intW, booleanW), tuple3W(booleanW,booleanW,stringW), unitW, tuple3W(booleanW,booleanW,intW), tuple3W(booleanW,booleanW,intW), intW)(
-      (d, md, k, p, c, dr, r, sr, t) => (w: WFormat) => w match {
+    s10W(unitW, self, stringW, tuple4W(booleanW, booleanW, intW, booleanW), tuple3W(booleanW,booleanW,stringW), unitW, tuple3W(booleanW,booleanW,intW), tuple3W(booleanW,booleanW,intW), intW, self)(
+      (d, md, k, p, c, dr, r, sr, t, pr1) => (w: WFormat) => w match {
         case WFormat.Default              => d(())
         case WFormat.Markdown(f)          => md(f)
         case WFormat.Constant(s)          => k(s)
@@ -618,6 +620,7 @@ object Format {
         case WFormat.Round(b,b1,i)           => r(b,b1,i)
         case WFormat.IntegralRound(b,b1,i)   => sr(b,b1,i)
         case WFormat.Truncate(i)        => t(i)
+        case WFormat.Pr1(f)             => pr1(f)
       }))
 
   type SortDirF = BooleanF
