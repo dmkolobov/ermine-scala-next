@@ -219,7 +219,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   private[this]
   def scanAndUniq(dq: DistinctiveQuery,
                   order: List[(String, SortOrder)])(implicit sup: Supply): DB[Procedure[Id, Record]] =
-    dq.q(false) match {
+    dq.q(true) match { // TODO: doing distinctness in SQL for now, revisit later
       case (d, q) =>
         if (d) scanQuery(orderQuery(dq.h, q, order), dq.h) // already distinct
         else {
@@ -767,6 +767,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   }
 
   object DistinctiveQuery {
+    // Controls whether we try to delay inserting a distinct
+    // until we know we have to, or do it immediately when we
+    // can't tell that something isn't distinct.
+    private[DistinctiveQuery] def distinctEagerly: Boolean = true
+
     private[DistinctiveQuery]
     def satisfyDistinct(hasDistinct: Boolean, needDistinct: Boolean, q: SqlQuery)(implicit sup: Supply): (Boolean, SqlQuery) =
       if(hasDistinct || !needDistinct) (hasDistinct, q)
@@ -788,7 +793,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       rx: Reflexivity[ColumnName]
     )(implicit sup: Supply): DistinctiveQuery = {
       val hs = dqs.map(_.h)
-      val (ds, qs) = dqs.map(_.q(false)).unzip
+      val (ds, qs) = dqs.map(_.q(distinctEagerly)).unzip
       val subDistinct = ds.forall(b => b)
       val hsp = hs.map(h => freshName -> h)
       val columnLocs: Map[ColumnName, List[String]] =
@@ -823,11 +828,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     private[this] def freshName(implicit sup: Supply) = "t" + sup.fresh
     private[this] def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
 
-    import DistinctiveQuery.satisfyDistinct
+    import DistinctiveQuery.{ satisfyDistinct, distinctEagerly }
 
     def union(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery =
       DistinctiveQuery(h, needDistinct =>
-        (q(false), other.q(false)) match {
+        (q(distinctEagerly), other.q(distinctEagerly)) match {
           case ((d1, q1), (d2, q2)) =>
             satisfyDistinct(false, needDistinct, SqlUnion(q1, q2))
         })
@@ -836,7 +841,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       val ul = freshName
       val ur = freshName
       DistinctiveQuery(h, needDistinct =>
-        (q(false), other.q(false)) match {
+        (q(distinctEagerly), other.q(false)) match {
           case ((d, q1), (_, q2)) =>
             // No need for the thing we're subtracting to be distinct
             satisfyDistinct(d, needDistinct, SqlExcept(q1, TableName(ul), q2, TableName(ur), h))
@@ -845,7 +850,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
     def join(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery =
       DistinctiveQuery(h ++ other.h, needDistinct =>
-        (q(false), other.q(false)) match {
+        (q(distinctEagerly), other.q(distinctEagerly)) match {
           case ((d1, q1), (d2, q2)) =>
             satisfyDistinct(d1 && d2, needDistinct,
               (q1, q2) match {
@@ -867,7 +872,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       val ul = freshName
       val ur = freshName
       DistinctiveQuery(h ++ other.h, needDistinct =>
-        (q(false), other.q(false)) match {
+        (q(distinctEagerly), other.q(distinctEagerly)) match {
           case ((d1, q1), (d2, q2)) =>
             satisfyDistinct(d1 && d2, needDistinct,
               SqlJoinOn(
@@ -880,7 +885,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
     def filter(pred: Predicate)(implicit sup: Supply): DistinctiveQuery = {
       val un = freshName
-      DistinctiveQuery(h, needDistinct => q(false) match {
+      DistinctiveQuery(h, needDistinct => q(distinctEagerly) match {
         case (d, q) => satisfyDistinct(d, needDistinct, q match {
           case v:SqlSelect if (v.limit._1.isEmpty && v.limit._2.isEmpty) =>
             v.copy(criteria = compilePredicate(pred, v.attrs) :: v.criteria)
@@ -963,7 +968,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       val ccols = cols map { case (attr, op) =>
         attr.name -> compileOp(op, as)
       }
-      DistinctiveQuery(cols.map(_._1.tuple), needDistinct => q(false) match {
+      DistinctiveQuery(cols.map(_._1.tuple), needDistinct => q(distinctEagerly) match {
         case (d, q) =>
           val hasDistinct = d && distinctness(h, rx, cols).isEmpty
           satisfyDistinct(hasDistinct, needDistinct,
@@ -1000,7 +1005,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
           case (None, None) => (false, false)
           case _ => (true, true)
         }
-        DistinctiveQuery(h, needDistinct => q(makeDistinct) match {
+        DistinctiveQuery(h, needDistinct => q(makeDistinct || distinctEagerly) match {
           case (d, q) =>
             satisfyDistinct(ensuresDistinct || d, needDistinct,
               emitter.emitLimit(q, h, TableName(u1), from, to, (toNel(order.map {
