@@ -66,6 +66,19 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   def emitBinaryOrdering(isBinary: Boolean, exp: RawSql): RawSql
 
   /**
+   * Controls whether we try to delay inserting a distinct
+   * until we know we have to, or do it immediately when we
+   * can't tell that something isn't distinct.
+   *
+   * NOTE: this also controls whether we do distinctness in
+   * memory or enforce it in SQL on scan out. The presumption
+   * is that if the DB implementation is good enough to do
+   * distincts low down in queries, it is also more efficient
+   * than what we can do while streaming.
+   */
+  def distinctEagerly: Boolean
+
+  /**
    * Used at the end of a SELECT...FROM when the list of tables is empty.
    * Returns the empty string by default.
    */
@@ -338,6 +351,20 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
 
 //////////////////////////////////////////////////////////////////////////////
 // Traits for specific behavior overrides
+
+/** Insert a distinct as soon as we are unable to
+  * determine that the result set automatically will be.
+  */
+trait EagerlyDistinct extends SqlEmitter {
+  val distinctEagerly = true
+}
+
+/** Delay forcing SQL queries to be distinct until
+  * we are certain that we need distinctness.
+  */
+trait LazilyDistinct extends SqlEmitter {
+  val distinctEagerly = false
+}
 
 /** Emitters that order certain columns as binary.
  */
@@ -624,6 +651,7 @@ class SqliteEmitter extends SqlEmitter
     with EmitNoDropTempTable
     with EmitUuid_Strings
     with EmitBinaryOrdering_Ignored
+    with EagerlyDistinct
     with EmitCheckExists_AlwaysFails {
 
   def isTransactional: Boolean = true
@@ -682,6 +710,7 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                                       with EmitLimit_AsLimit
                                       with EmitConcat_MySQL
                                       with EmitUnion
+                                      with LazilyDistinct
                                       with EmitIntDivOp_MySQL
                                       with EmitBinaryOrdering_AsBinary
                                       with EmitUuid_Strings {
@@ -737,6 +766,7 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitCreateTable_NoSuffix
                                       with EmitNoDropTempTable
                                       with EmitUnion
+                                      with EagerlyDistinct
                                       with EmitJoin_MsSql
                                       with EmitConcat_MsSql
                                       with EmitExcept_MsSql
@@ -806,6 +836,7 @@ class VerticaSqlEmitter extends SqlEmitter(false) with EmitFromEmptyTable_FromDu
                                            with EmitNoDropTempTable
                                            with EmitExcept_AsJoin
                                            with EmitUnion
+                                           with EagerlyDistinct
                                            with EmitUuid_Strings
                                            with EmitBinaryOrdering_Ignored
                                            with EmitCheckExists_AlwaysFails {
@@ -847,6 +878,7 @@ class PostgreSqlEmitter extends SqlEmitter(false)
                         with EmitNoDropTempTable
                         with EmitLimit_AsLimit
                         with EmitUnion
+                        with EagerlyDistinct
                         with EmitUuid_Strings
                         with EmitBinaryOrdering_Ignored
                         with EmitCheckExists_AlwaysFails {
