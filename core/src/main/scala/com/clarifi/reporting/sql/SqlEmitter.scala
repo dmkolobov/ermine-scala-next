@@ -219,13 +219,24 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     rs.map(r => raw("select * from ") |+| r.emitSubquery(this))
       .intercalate(raw(" ") |+| op.emit |+| " ")
 
+  private[sql] final def allSubqueryColumns(rs: NonEmptyList[Subquery]): RawSql = {
+    implicit val so = Order[TableName].toScalaOrdering
+
+    rs.foldLeft(Map[ColumnName, TableName]()) {
+      case (m, (_, t, h)) => m ++ h.map(_._1 -> t)
+    }.toList.sorted.map {
+      case (k, v) => emitQualifiedColumnName(v, k)
+    }.rawMkString(", ")
+  }
+
   /**
    * Emit Sql for a natural inner join.
    */
   def emitJoin(rs: NonEmptyList[Subquery],
                      joinName: TableName): RawSql = {
     val (leftP, rightP) = if (aliasParens) ("(", ")") else ("", "")
-    raw("select * from ") |+| (rs.map {
+
+    raw("select ") |+| allSubqueryColumns(rs) |+| " from " |+| (rs.map {
       case (q, t, _) => raw(leftP) |+| q.emitSubquery(this) |+| " " |+| emitTableName(t) |+| rightP
     } intercalate raw(" natural join "))
   }
@@ -455,15 +466,10 @@ trait EmitUnion extends SqlEmitter {
 trait EmitJoin_MsSql extends SqlEmitter {
   override def emitJoin(rs: NonEmptyList[Subquery],
                         joinName: TableName): RawSql = {
-    implicit val so = Order[TableName].toScalaOrdering
     val allPairs =
       ((((x: List[Subquery]) => (y: List[Subquery]) => x zip y) |@|
       ((x: List[Subquery]) => x.tails.toList.tail))((x, y) => y flatMap x)).apply(rs.list)
-    val allCols = rs.foldLeft(Map[ColumnName, TableName]()) {
-      case (m, (_, t, h)) => m ++ h.map(_._1 -> t)
-    }.toList.sorted.map {
-      case (k, v) => emitQualifiedColumnName(v, k)
-    }.rawMkString(", ")
+
     val ons = allPairs flatMap {
       case ((_, t1, h1), (_, t2, h2)) => {
         val is = h1.keySet intersect h2.keySet
@@ -472,7 +478,8 @@ trait EmitJoin_MsSql extends SqlEmitter {
                            emitQualifiedColumnName(t2, c)).rawMkString(" and "))
       }
     }
-    raw("select ") |+| allCols |+| " from " |+| (rs.list.map {
+
+    raw("select ") |+| allSubqueryColumns(rs) |+| " from " |+| (rs.list.map {
       case (q, t, _) => q.emitSubquery(this) |+| " " |+| emitTableName(t)
     }).rawMkString(" , ") |+| " where " |+| (if (ons.isEmpty) "1 = 1" else ons.rawMkString(" and "))
   }
