@@ -489,6 +489,35 @@ object Presentation
   implicit val presentationInstance: Equal[Presentation] = Equal.equalA
 }
 
+/**
+ * Condition:
+ *    a) single conditions: (>, <, =, >=, <=) (PrimExpr)
+ *    b) And conditions*/
+sealed abstract class Condition {
+  def apply(e: PrimExpr): Boolean
+}
+
+object Condition {
+  case class Gt(comparator: PrimExpr) extends Condition {
+    override def apply(e: PrimExpr): Boolean = e > comparator
+  }
+  case class Lt(comparator: PrimExpr) extends Condition {
+    override def apply(e: PrimExpr): Boolean = e < comparator
+  }
+  case class Eq(comparator: PrimExpr) extends Condition {
+    override def apply(e: PrimExpr): Boolean = e == comparator
+  }
+  case class Gte(comparator: PrimExpr) extends Condition {
+    override def apply(e: PrimExpr): Boolean = e >= comparator
+  }
+  case class Lte(comparator: PrimExpr) extends Condition {
+    override def apply(e: PrimExpr): Boolean = e <= comparator
+  }
+  case class And(c1: Condition, c2: Condition) extends Condition {
+    override def apply(e: PrimExpr): Boolean = c1(e) && c2(e)
+  }
+}
+
 /** Fixed, field-independent description of how to format a field. */
 sealed trait Format {
   /** Homomorphism of evaluation results to PrimExprs displayed as
@@ -757,6 +786,16 @@ object Format {
       case StringExpr(n, v) => StringExpr(n, v.take(places) )
       case pe => pe
     }
+
+    def devolve(ops: NelOp) = ops.head
+  }
+
+  case class Conditional(cond: Condition, apply: Format, notApply: Format) extends Format {
+    //val basicEval: NonEmptyList[PrimExpr] => PrimExpr
+    val basicEval = (pes: NelPe) =>
+      if(cond(pes.head))
+        apply.basicEval(pes)
+      else notApply.basicEval(pes)
 
     def devolve(ops: NelOp) = ops.head
   }

@@ -581,9 +581,42 @@ object Format {
     (n:NonEmptyList[A]) => f(n.head, n.tail))
 
   import writers.{Legend, LegendColumns, Presentation, SortDirection,
-                  SortStrategy, Format => WFormat}
+                  SortStrategy, Format => WFormat, Condition => Condition}
 
-  type WFormatF[A] = S10[UnitF, // Default
+  type ConditionF[A] = S6[PrimExprF, // Gt
+    PrimExprF, // Lt
+    PrimExprF, // Eq
+    PrimExprF, // Lte
+    PrimExprF, // Gte
+    A & A // And
+    ]
+
+  lazy val conditionR = fixFR[Condition, ConditionF](self =>
+    union6R(primExprR map (x => Condition.Gt(x)),
+            primExprR map (x => Condition.Lt(x)),
+            primExprR map (x => Condition.Eq(x)),
+            primExprR map (x => Condition.Lte(x)),
+            primExprR map (x => Condition.Gte(x)),
+            p2R(self, self)((a, b) => Condition.And(a, b))) erase)
+
+  lazy val conditionW = fixFW[Condition, ConditionF](self =>
+    s6W(primExprW, // Gt
+        primExprW, // Lt
+        primExprW, // Eq
+        primExprW, // Lte
+        primExprW, // Gte
+        tuple2W(self, self) // And
+       )((gt, lt, eq, lte, gte, and) => (r: Condition) =>
+        r match {
+          case Condition.Gt(x) => gt(x)
+          case Condition.Lt(x) => lt(x)
+          case Condition.Eq(x) => eq(x)
+          case Condition.Lte(x) => lte(x)
+          case Condition.Gte(x) => gte(x)
+          case Condition.And(x,y) => and(x -> y)
+        }) erase)
+
+  type WFormatF[A] = S11[UnitF, // Default
                      A, // Markdown
                      StringF, // Constant
                      BooleanF :: BooleanF :: IntF :: BooleanF, // Percent
@@ -592,10 +625,11 @@ object Format {
                      BooleanF :: BooleanF :: IntF,  // Round
                      BooleanF :: BooleanF :: IntF,  // IntegralRound
                      IntF,  // Truncate
-                     A  // Pr1
+                     A,  // Pr1
+                     FixF[ConditionF[SelfF]] :: A :: A // Conditional
                    ]
 
-  lazy val wformatR = fixFR[WFormat,WFormatF](self => union10R(
+  lazy val wformatR = fixFR[WFormat,WFormatF](self => union11R(
     unitR   map (_ => WFormat.Default),
     self map (inner => WFormat.Markdown(inner) ),
     stringR map (s => WFormat.Constant(s)),
@@ -605,12 +639,13 @@ object Format {
     p3R(booleanR,booleanR,intR)(WFormat.Round),
     p3R(booleanR,booleanR,intR)(WFormat.IntegralRound),
     intR    map (i => WFormat.Truncate(i)),
-    self map (inner => WFormat.Pr1(inner) )
-  ))
+    self map (inner => WFormat.Pr1(inner)),
+    p3R(conditionR,self,self)((c,t,e) => WFormat.Conditional(c,t,e)))
+  )
 
   lazy val wformatW = fixFW[WFormat, WFormatF]( self =>
-    s10W(unitW, self, stringW, tuple4W(booleanW, booleanW, intW, booleanW), tuple3W(booleanW,booleanW,stringW), unitW, tuple3W(booleanW,booleanW,intW), tuple3W(booleanW,booleanW,intW), intW, self)(
-      (d, md, k, p, c, dr, r, sr, t, pr1) => (w: WFormat) => w match {
+    s11W(unitW, self, stringW, tuple4W(booleanW, booleanW, intW, booleanW), tuple3W(booleanW,booleanW,stringW), unitW, tuple3W(booleanW,booleanW,intW), tuple3W(booleanW,booleanW,intW), intW, self, tuple3W(conditionW, self, self))(
+      (d, md, k, p, c, dr, r, sr, t, pr1, cond) => (w: WFormat) => w match {
         case WFormat.Default              => d(())
         case WFormat.Markdown(f)          => md(f)
         case WFormat.Constant(s)          => k(s)
@@ -621,6 +656,7 @@ object Format {
         case WFormat.IntegralRound(b,b1,i)   => sr(b,b1,i)
         case WFormat.Truncate(i)        => t(i)
         case WFormat.Pr1(f)             => pr1(f)
+        case WFormat.Conditional(c,t,e) => cond(c,t,e)
       }))
 
   type SortDirF = BooleanF

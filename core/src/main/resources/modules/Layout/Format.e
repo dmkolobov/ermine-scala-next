@@ -19,6 +19,7 @@ foreign
   -- Format as date range.
   value "com.clarifi.reporting.writers.Format$DateRange$" "MODULE$"
       dateRange : Format (Date, Date)
+  data "com.clarifi.reporting.writers.Condition" Condition (a: *)
 
 private foreign
   value "com.clarifi.reporting.writers.Format$Percentage$" "MODULE$"
@@ -40,6 +41,20 @@ private foreign
       constant# : Function1 String (Format a)
   value "com.clarifi.reporting.writers.Format$Pr1$" "MODULE$"
       pr1# : Function1 (Format a) (Format (a,b))
+  value "com.clarifi.reporting.writers.Format$Conditional$" "MODULE$"
+      conditional# : Function3 (Condition a) (Format a) (Format a) (Format a)
+  value "com.clarifi.reporting.writers.Condition$Gt$" "MODULE$"
+      gt# : Primitive a => Function1 a (Condition a)
+  value "com.clarifi.reporting.writers.Condition$Lt$" "MODULE$"
+      lt# : Primitive a => Function1 a (Condition a)
+  value "com.clarifi.reporting.writers.Condition$Eq$" "MODULE$"
+      eq# : Primitive a => Function1 a (Condition a)
+  value "com.clarifi.reporting.writers.Condition$Gte$" "MODULE$"
+      gte# : Primitive a => Function1 a (Condition a)
+  value "com.clarifi.reporting.writers.Condition$Lte$" "MODULE$"
+      lte# : Primitive a => Function1 a (Condition a)
+  value "com.clarifi.reporting.writers.Condition$And$" "MODULE$"
+      and# : Function2 (Condition a) (Condition a) (Condition a)
 
 -- 2 -> 34.7652 -> 34.77
 round, roundParens : PrimitiveNum n => Int -> Format n
@@ -95,3 +110,16 @@ pr1 = funcall1# pr1#
 -- Add Nullable to a formatter, as all formatters can format anything.
 nullable : Format a -> Format (Nullable a)
 nullable = unsafeCoerce
+
+
+gtCondition : Primitive a => a -> Condition a
+gtCondition = funcall1# gt#
+ltCondition = funcall1# lt#
+eqCondition = funcall1# eq#
+gteCondition = funcall1# gte#
+lteCondition = funcall1# lte#
+andCondition : Condition a -> Condition a -> Condition a
+andCondition = funcall2# and#
+
+conditional : Condition a -> Format a -> Format a -> Format a
+conditional = funcall3# conditional#
