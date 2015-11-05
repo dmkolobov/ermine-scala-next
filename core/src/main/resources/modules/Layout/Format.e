@@ -6,6 +6,7 @@ module Layout.Format where
 import Function using (.); flip
 import Native
 import Unsafe.Coerce
+import Prim
 
 foreign
   -- Non-codata description of how to display fields, so that writers
@@ -44,15 +45,15 @@ private foreign
   value "com.clarifi.reporting.writers.Format$Conditional$" "MODULE$"
       conditional# : Function3 (Condition a) (Format a) (Format a) (Format a)
   value "com.clarifi.reporting.writers.Condition$Gt$" "MODULE$"
-      gt# : Primitive a => Function1 a (Condition a)
+      gt# : Function1 PrimExpr# (Condition a)
   value "com.clarifi.reporting.writers.Condition$Lt$" "MODULE$"
-      lt# : Primitive a => Function1 a (Condition a)
+      lt# : Function1 PrimExpr# (Condition a)
   value "com.clarifi.reporting.writers.Condition$Eq$" "MODULE$"
-      eq# : Primitive a => Function1 a (Condition a)
+      eq# : Function1 PrimExpr# (Condition a)
   value "com.clarifi.reporting.writers.Condition$Gte$" "MODULE$"
-      gte# : Primitive a => Function1 a (Condition a)
+      gte# : Function1 PrimExpr# (Condition a)
   value "com.clarifi.reporting.writers.Condition$Lte$" "MODULE$"
-      lte# : Primitive a => Function1 a (Condition a)
+      lte# : Function1 PrimExpr# (Condition a)
   value "com.clarifi.reporting.writers.Condition$And$" "MODULE$"
       and# : Function2 (Condition a) (Condition a) (Condition a)
 
@@ -116,11 +117,15 @@ nullable = unsafeCoerce
 
 
 gtCondition : Primitive a => a -> Condition a
-gtCondition = funcall1# gt#
-ltCondition = funcall1# lt#
-eqCondition = funcall1# eq#
-gteCondition = funcall1# gte#
-lteCondition = funcall1# lte#
+gtCondition = funcall1# gt# . primExpr#
+ltCondition : Primitive a => a -> Condition a
+ltCondition = funcall1# lt# . primExpr#
+eqCondition : Primitive a => a -> Condition a
+eqCondition = funcall1# eq# . primExpr#
+gteCondition : Primitive a => a -> Condition a
+gteCondition = funcall1# gte# . primExpr#
+lteCondition : Primitive a => a -> Condition a
+lteCondition = funcall1# lte# . primExpr#
 andCondition : Condition a -> Condition a -> Condition a
 andCondition = funcall2# and#
 

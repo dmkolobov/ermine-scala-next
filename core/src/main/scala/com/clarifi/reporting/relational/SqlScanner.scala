@@ -219,7 +219,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   private[this]
   def scanAndUniq(dq: DistinctiveQuery,
                   order: List[(String, SortOrder)])(implicit sup: Supply): DB[Procedure[Id, Record]] =
-    dq.q(true) match { // TODO: doing distinctness in SQL for now, revisit later
+    dq.q(emitter.distinctEagerly) match {
       case (d, q) =>
         if (d) scanQuery(orderQuery(dq.h, q, order), dq.h) // already distinct
         else {
@@ -767,10 +767,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   }
 
   object DistinctiveQuery {
-    // Controls whether we try to delay inserting a distinct
-    // until we know we have to, or do it immediately when we
-    // can't tell that something isn't distinct.
-    private[DistinctiveQuery] def distinctEagerly: Boolean = true
+
+    import emitter.distinctEagerly
 
     private[DistinctiveQuery]
     def satisfyDistinct(hasDistinct: Boolean, needDistinct: Boolean, q: SqlQuery)(implicit sup: Supply): (Boolean, SqlQuery) =
@@ -828,7 +826,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     private[this] def freshName(implicit sup: Supply) = "t" + sup.fresh
     private[this] def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
 
-    import DistinctiveQuery.{ satisfyDistinct, distinctEagerly }
+    import DistinctiveQuery.satisfyDistinct
+    import emitter.distinctEagerly
 
     def union(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery =
       DistinctiveQuery(h, needDistinct =>

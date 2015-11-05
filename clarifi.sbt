@@ -10,7 +10,8 @@ withClarifiMode(version in ThisBuild){o =>
   val timestamp = formatter.format(new Date)
   val hash = ("hg id" !!) takeWhile (c => c.isLetter || c.isDigit)
   val tags = ("hg id -t" !!).trim.split(' ').filterNot(s => s == "tip" || s.isEmpty)
-  if(tags.isEmpty) timestamp + "." + hash
+  val ignoreTags = java.lang.Boolean.getBoolean("sbt.clarifi.ignoreTags")
+  if(tags.isEmpty || ignoreTags) timestamp + "." + hash
   else tags.last
 }
 

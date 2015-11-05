@@ -66,6 +66,19 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   def emitBinaryOrdering(isBinary: Boolean, exp: RawSql): RawSql
 
   /**
+   * Controls whether we try to delay inserting a distinct
+   * until we know we have to, or do it immediately when we
+   * can't tell that something isn't distinct.
+   *
+   * NOTE: this also controls whether we do distinctness in
+   * memory or enforce it in SQL on scan out. The presumption
+   * is that if the DB implementation is good enough to do
+   * distincts low down in queries, it is also more efficient
+   * than what we can do while streaming.
+   */
+  def distinctEagerly: Boolean
+
+  /**
    * Used at the end of a SELECT...FROM when the list of tables is empty.
    * Returns the empty string by default.
    */
@@ -206,13 +219,24 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     rs.map(r => raw("select * from ") |+| r.emitSubquery(this))
       .intercalate(raw(" ") |+| op.emit |+| " ")
 
+  private[sql] final def allSubqueryColumns(rs: NonEmptyList[Subquery]): RawSql = {
+    implicit val so = Order[TableName].toScalaOrdering
+
+    rs.foldLeft(Map[ColumnName, TableName]()) {
+      case (m, (_, t, h)) => m ++ h.map(_._1 -> t)
+    }.toList.sorted.map {
+      case (k, v) => emitQualifiedColumnName(v, k)
+    }.rawMkString(", ")
+  }
+
   /**
    * Emit Sql for a natural inner join.
    */
   def emitJoin(rs: NonEmptyList[Subquery],
                      joinName: TableName): RawSql = {
     val (leftP, rightP) = if (aliasParens) ("(", ")") else ("", "")
-    raw("select * from ") |+| (rs.map {
+
+    raw("select ") |+| allSubqueryColumns(rs) |+| " from " |+| (rs.map {
       case (q, t, _) => raw(leftP) |+| q.emitSubquery(this) |+| " " |+| emitTableName(t) |+| rightP
     } intercalate raw(" natural join "))
   }
@@ -339,6 +363,20 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
 //////////////////////////////////////////////////////////////////////////////
 // Traits for specific behavior overrides
 
+/** Insert a distinct as soon as we are unable to
+  * determine that the result set automatically will be.
+  */
+trait EagerlyDistinct extends SqlEmitter {
+  val distinctEagerly = true
+}
+
+/** Delay forcing SQL queries to be distinct until
+  * we are certain that we need distinctness.
+  */
+trait LazilyDistinct extends SqlEmitter {
+  val distinctEagerly = false
+}
+
 /** Emitters that order certain columns as binary.
  */
 trait EmitBinaryOrdering_AsBinary extends SqlEmitter {
@@ -428,15 +466,10 @@ trait EmitUnion extends SqlEmitter {
 trait EmitJoin_MsSql extends SqlEmitter {
   override def emitJoin(rs: NonEmptyList[Subquery],
                         joinName: TableName): RawSql = {
-    implicit val so = Order[TableName].toScalaOrdering
     val allPairs =
       ((((x: List[Subquery]) => (y: List[Subquery]) => x zip y) |@|
       ((x: List[Subquery]) => x.tails.toList.tail))((x, y) => y flatMap x)).apply(rs.list)
-    val allCols = rs.foldLeft(Map[ColumnName, TableName]()) {
-      case (m, (_, t, h)) => m ++ h.map(_._1 -> t)
-    }.toList.sorted.map {
-      case (k, v) => emitQualifiedColumnName(v, k)
-    }.rawMkString(", ")
+
     val ons = allPairs flatMap {
       case ((_, t1, h1), (_, t2, h2)) => {
         val is = h1.keySet intersect h2.keySet
@@ -445,7 +478,8 @@ trait EmitJoin_MsSql extends SqlEmitter {
                            emitQualifiedColumnName(t2, c)).rawMkString(" and "))
       }
     }
-    raw("select ") |+| allCols |+| " from " |+| (rs.list.map {
+
+    raw("select ") |+| allSubqueryColumns(rs) |+| " from " |+| (rs.list.map {
       case (q, t, _) => q.emitSubquery(this) |+| " " |+| emitTableName(t)
     }).rawMkString(" , ") |+| " where " |+| (if (ons.isEmpty) "1 = 1" else ons.rawMkString(" and "))
   }
@@ -624,6 +658,7 @@ class SqliteEmitter extends SqlEmitter
     with EmitNoDropTempTable
     with EmitUuid_Strings
     with EmitBinaryOrdering_Ignored
+    with EagerlyDistinct
     with EmitCheckExists_AlwaysFails {
 
   def isTransactional: Boolean = true
@@ -682,6 +717,7 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                                       with EmitLimit_AsLimit
                                       with EmitConcat_MySQL
                                       with EmitUnion
+                                      with LazilyDistinct
                                       with EmitIntDivOp_MySQL
                                       with EmitBinaryOrdering_AsBinary
                                       with EmitUuid_Strings {
@@ -737,6 +773,7 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitCreateTable_NoSuffix
                                       with EmitNoDropTempTable
                                       with EmitUnion
+                                      with EagerlyDistinct
                                       with EmitJoin_MsSql
                                       with EmitConcat_MsSql
                                       with EmitExcept_MsSql
@@ -806,6 +843,7 @@ class VerticaSqlEmitter extends SqlEmitter(false) with EmitFromEmptyTable_FromDu
                                            with EmitNoDropTempTable
                                            with EmitExcept_AsJoin
                                            with EmitUnion
+                                           with EagerlyDistinct
                                            with EmitUuid_Strings
                                            with EmitBinaryOrdering_Ignored
                                            with EmitCheckExists_AlwaysFails {
@@ -847,6 +885,7 @@ class PostgreSqlEmitter extends SqlEmitter(false)
                         with EmitNoDropTempTable
                         with EmitLimit_AsLimit
                         with EmitUnion
+                        with EagerlyDistinct
                         with EmitUuid_Strings
                         with EmitBinaryOrdering_Ignored
                         with EmitCheckExists_AlwaysFails {
