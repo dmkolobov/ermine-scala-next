@@ -1,6 +1,8 @@
 package com.clarifi.reporting
 package remote
 
+import javafx.scene.image.WritablePixelFormat
+
 import f0.{Source => _, _}
 import f0.Effects._
 import f0.Formats._
@@ -616,7 +618,7 @@ object Format {
           case Condition.And(x,y) => and(x -> y)
         }) erase)
 
-  type WFormatF[A] = S11[UnitF, // Default
+  type WFormatF[A] = S12[UnitF, // Default
                      A, // Markdown
                      StringF, // Constant
                      BooleanF :: BooleanF :: IntF :: BooleanF, // Percent
@@ -626,10 +628,11 @@ object Format {
                      BooleanF :: BooleanF :: IntF,  // IntegralRound
                      IntF,  // Truncate
                      A,  // Pr1
-                     FixF[ConditionF[SelfF]] :: A :: A // Conditional
+                     FixF[ConditionF[SelfF]] :: A :: A,  // Conditional
+                     IntF :: IntF :: A //Conditional Color
                    ]
 
-  lazy val wformatR = fixFR[WFormat,WFormatF](self => union11R(
+  lazy val wformatR = fixFR[WFormat,WFormatF](self => union12R(
     unitR   map (_ => WFormat.Default),
     self map (inner => WFormat.Markdown(inner) ),
     stringR map (s => WFormat.Constant(s)),
@@ -640,12 +643,16 @@ object Format {
     p3R(booleanR,booleanR,intR)(WFormat.IntegralRound),
     intR    map (i => WFormat.Truncate(i)),
     self map (inner => WFormat.Pr1(inner)),
-    p3R(conditionR,self,self)((c,t,e) => WFormat.Conditional(c,t,e)))
+    p3R(conditionR,self,self)((c,t,e) => WFormat.Conditional(c,t,e)),
+    p3R(colorR,colorR,self)((bg, fg, b) => WFormat.ColorFormat(bg, fg, b))
+
+    )
   )
 
   lazy val wformatW = fixFW[WFormat, WFormatF]( self =>
-    s11W(unitW, self, stringW, tuple4W(booleanW, booleanW, intW, booleanW), tuple3W(booleanW,booleanW,stringW), unitW, tuple3W(booleanW,booleanW,intW), tuple3W(booleanW,booleanW,intW), intW, self, tuple3W(conditionW, self, self))(
-      (d, md, k, p, c, dr, r, sr, t, pr1, cond) => (w: WFormat) => w match {
+    s12W(unitW, self, stringW, tuple4W(booleanW, booleanW, intW, booleanW), tuple3W(booleanW,booleanW,stringW), unitW, tuple3W(booleanW,booleanW,intW),
+    tuple3W(booleanW,booleanW,intW), intW, self, tuple3W(conditionW, self, self), tuple3W(colorW, colorW, self))(
+      (d, md, k, p, c, dr, r, sr, t, pr1, cond, color) => (w: WFormat) => w match {
         case WFormat.Default              => d(())
         case WFormat.Markdown(f)          => md(f)
         case WFormat.Constant(s)          => k(s)
@@ -657,6 +664,7 @@ object Format {
         case WFormat.Truncate(i)        => t(i)
         case WFormat.Pr1(f)             => pr1(f)
         case WFormat.Conditional(c,t,e) => cond(c,t,e)
+        case WFormat.ColorFormat(bg, fg, b) => color(bg, fg, b)
       }))
 
   type SortDirF = BooleanF

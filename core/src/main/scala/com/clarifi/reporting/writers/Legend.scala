@@ -541,6 +541,7 @@ object Format {
     DecimalFormat
   }
   import java.util.{Currency => JCurrency, Locale}
+  import java.awt.Color
 
   private type NelPe = NonEmptyList[PrimExpr]
   private type NelOp = NonEmptyList[Op]
@@ -791,11 +792,16 @@ object Format {
   }
 
   case class Conditional(cond: Condition, apply: Format, notApply: Format) extends Format {
-    //val basicEval: NonEmptyList[PrimExpr] => PrimExpr
     val basicEval = (pes: NelPe) =>
       if(cond(pes.head))
         apply.basicEval(pes)
       else notApply.basicEval(pes)
+
+    def devolve(ops: NelOp) = ops.head
+  }
+
+  case class ColorFormat(backColor: Color, frontColor: Color, base: Format) extends Format{
+    val basicEval = (pes: NelPe) => StringExpr(false,"<COLOR_FORMAT>" + (base.basicEval(pes)).extractNullableString("-") + "</COLOR_FORMAT>")
 
     def devolve(ops: NelOp) = ops.head
   }

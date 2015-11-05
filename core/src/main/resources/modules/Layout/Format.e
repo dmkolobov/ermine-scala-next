@@ -56,6 +56,9 @@ private foreign
   value "com.clarifi.reporting.writers.Condition$And$" "MODULE$"
       and# : Function2 (Condition a) (Condition a) (Condition a)
 
+  value "com.clarifi.reporting.writers.Format$ConditionalColor$" "MODULE$"
+      conditionalColor# : Function3 (Color a) (Color a) (Format a) (Format a)
+
 -- 2 -> 34.7652 -> 34.77
 round, roundParens : PrimitiveNum n => Int -> Format n
 round = funcall3# round# (toBool# False) (toBool# False)
@@ -123,3 +126,6 @@ andCondition = funcall2# and#
 
 conditional : Condition a -> Format a -> Format a -> Format a
 conditional = funcall3# conditional#
+
+conditionlColor : Color a -> Color a -> Format a -> Format a
+conditionlColor = funcall3# conditionalColor#
