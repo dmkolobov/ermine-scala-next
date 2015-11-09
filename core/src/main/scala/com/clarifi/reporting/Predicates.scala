@@ -311,3 +311,169 @@ object Reflexivity {
                PartitionedSet.zero)
 
 }
+
+/*
+ * Tracks functional dependencies of a set of columns (abstractly represented by
+ * a type K). The functional dependencies are stored in reverse, with a map from
+ * each column to the sets of other columns that determine it. So for instance
+ * the functional dependencies:
+ *
+ *    a b -> c ; b c -> d
+ *
+ * may be stored as:
+ *
+ *   Map(c -> Set(Set(a,b)), d -> Set(Set(b,c),Set(a,b)))
+ *
+ * Many operations seem to be simpler with this representation, rather than
+ * the opposite choice of storing maps from sets of columns to sets of other
+ * columns that they determine.
+ *
+ * A few normalizations will be maintained:
+ *
+ * 1) First, a mapping `a -> Set()`is the same as `a` not appearing in the map
+ *    at all, so such entries should be removed. Note that this is distinct from
+ *    `a -> Set(Set())` which represents that `a` is a constant.
+ *
+ * 2) Dependencies of `a` on sets of columns containing `a` are trivial, and
+ *    should also not appear in the map.
+ *
+ * 3) If `a -> b` and `b -> c`, then `a -> c`. Similar rules hold if multiple
+ *    columns appear on the left. When we make use of fundeps, we'll need to
+ *    check things against this transitive closure anyhow, so it makes sense for
+ *    the mappings to store that to begin with.
+ *
+ * 4) The rules `a b c -> d` and `a b -> d` are redundant. The second is strictly
+ *    more powerful, so we may as well just store the minimal sets of columns that
+ *    are known to determine each column.
+ *
+ * Rules for how fundeps are propagated across relational operators will be
+ * explained at their implemenations below.
+ */
+case class Fundepped[K](determiners: Map[K, Set[Set[K]]]) {
+  import Fundepped._
+
+  /*
+   * Adds a fundep to a set of fundeps.
+   *
+   * This may cause significant changes to the set, as various inference
+   * rules will trigger.
+   */
+  def +(fd: (Set[K], K)): Fundepped[K] = fd match {
+    case (det, k) =>
+      val ss = index(determiners, k)
+      Fundepped(normalize(determiners + (k -> (ss + det))))
+  }
+
+  /*
+   * Adds a sequence of fundeps to the set.
+   */
+  def ++(fds: TraversableOnce[(Set[K], K)]) =
+    Fundepped(normalize(accumulateFDs(fds, determiners)))
+
+  /*
+   * Combines two sets of fundeps. This operation is appropriate for
+   * use when joining two relations. The fundeps on a join are the
+   * union of the fundeps of the underlying relations.
+   */
+  def &(other: Fundepped[K]): Fundepped[K] = {
+    val nm = other.determiners.foldLeft(determiners) {
+      case (m, (k, ss)) => m + (k -> index(m,k).union(ss))
+    }
+    Fundepped(normalize(nm))
+  }
+
+  /*
+   * Gives back the set of sets of columns that functionally determine
+   * the given column.
+   */
+  def determinersOf(k: K) = index(determiners,k)
+
+  /*
+   * Returns a sequence of the functional dependencies stored.
+   */
+  def fundeps: Traversable[(Set[K], K)] =
+    determiners.toTraversable flatMap {
+      case (k, ss) => ss.toTraversable map ((_, k))
+    }
+}
+
+object Fundepped {
+  type FDs[K] = Map[K, Set[Set[K]]]
+
+  /*
+   * Indexes into a fundep map to get the set of sets of determining columns.
+   * If a key does not occur in the map, there are no such sets.
+   */
+  private[Fundepped] def index[K](m: FDs[K], k: K): Set[Set[K]] =
+    m.getOrElse(k, Set())
+
+  /*
+   * Removes trivial fundeps (cases 1 and 2 above) from a set of fundeps
+   */
+  private[Fundepped] def removeTrivial[K](m: FDs[K]) =
+    m map {
+      case (k, ss) => k -> ss.filter(!_.contains(k))
+    } filter {
+      case (k, ss) => ss.nonEmpty
+    }
+
+  /*
+   * Removes redundancies (case 3 above) from a set of fundeps.
+   */
+  private[Fundepped] def thin[K](ss: Set[Set[K]]): Set[Set[K]] = {
+    ss.filter {
+      s => ! ss.exists(t => t.subsetOf(s) && s != t)
+    }
+  }
+
+  /*
+   * Generates all sets reachable from dets in one step through fds (for each column).
+   *
+   * Example:
+   *
+   *     dets = Set(x,y,z)
+   *     fds = Map(x -> Set(Set(a)), y -> Set(Set(b)))
+   *     follow(dets,fds) = Set(Set(x,y,z), Set(a,y,z), Set(x,b,z), Set(a,b,z))
+   *
+   * Note that the original set happens to be returned as well.
+   */
+  private[Fundepped] def follow[K](dets: Set[K], fds: FDs[K]): Set[Set[K]] =
+    dets.toList.traverse {
+      k => Set(k) :: index(fds,k).toList
+    } map (_.foldLeft(Set[K]())(_ union _)) toSet
+
+  private[Fundepped] def normalizeStep[K](m: FDs[K]) =
+    removeTrivial(
+      m map {
+        case (k, ss) =>
+          val nss = ss.flatMap {
+            s => follow(s, m)
+          }
+          k -> thin(nss)
+      })
+
+  /*
+   * Normalizes a set of fundeps, recursively applying rules 1-4 above
+   * until they result in no changes to the set.
+   */
+  private[Fundepped] def normalize[K](m: FDs[K]): FDs[K] = {
+    val nm = normalizeStep(m)
+    if (nm == m) nm
+    else normalize(nm)
+  }
+
+  /*
+   * Turns a sequence of functional dependencies specified as
+   * `x, y and z determine w` into a normalized format suitable
+   * for use in Fundepped.
+   */
+  private[Fundepped] def accumulateFDs[K](fds: TraversableOnce[(Set[K], K)], base: FDs[K] = Map[K,Set[Set[K]]]()): FDs[K] =
+    fds.foldLeft(base) {
+      case (m, (s, k)) =>
+        val ss = index(m, k)
+        m + (k -> (ss + s))
+    }
+
+  def apply[K](fds: (Set[K], K)*): Fundepped[K] =
+    Fundepped(normalize(accumulateFDs[K](fds)))
+}
