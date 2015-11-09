@@ -1,8 +1,6 @@
 package com.clarifi.reporting
 package remote
 
-import javafx.scene.image.WritablePixelFormat
-
 import f0.{Source => _, _}
 import f0.Effects._
 import f0.Formats._
