@@ -1,6 +1,7 @@
 package com.clarifi.reporting
 package record
 
+import scala.collection.GenTraversableOnce
 import scala.collection.{immutable => imm, generic => g}
 import g.CanBuildFrom
 import scala.collection.mutable.{ArrayBuffer, BitSet, Builder}
@@ -158,11 +159,12 @@ object RecordMap extends RecordMapLowPriorityImplicits {
 
   /** Assumes that the KeyCache provided has entries for 0..keyCache.size */
   def createWithKeyCache[A, B](keyCache: KeyCache[A])(fill: Int => B): RecordMap[A, B] = {
-    val vals = iPromiseToFillThis[B](keyCache.size)
-    for (i <- 0 until keyCache.size) {
-      vals(i) = fill(i)
+    val n = keyCache.size
+    val vals = new Array[AnyRef](n)
+    for (i <- 0 until n) {
+      vals(i) = fill(i).asInstanceOf[AnyRef]
     }
-    new SharingKeySet(keyCache, vals.asInstanceOf[ArrayBuffer[AnyRef]]toArray)
+    new SharingKeySet(keyCache, vals)
   }
 
   private[this] val keyCacheCache: java.util.WeakHashMap[KeyCache[_], java.lang.ref.WeakReference[KeyCache[_]]]
@@ -186,7 +188,8 @@ object RecordMap extends RecordMapLowPriorityImplicits {
   final class SharingKeySet[A, B](private[RecordMap] val keyCache: KeyCache[A],
                                   values: ValueSeq[B])
       extends RecordMap[A, B] {
-
+    
+    
     def +[B1 >: B](kv: (A, B1)): imm.Map[A, B1] =
       (keyCache get kv._1) match {
         case None =>
@@ -195,18 +198,21 @@ object RecordMap extends RecordMapLowPriorityImplicits {
           new SharingKeySet(keyCache, values updated (i, kv._2.asInstanceOf[AnyRef]))
       }
 
-    def ++[B1 >: B](m: Map[A, B1]): imm.Map[A, B1] = {
-       val maxSize = keyCache.size + m.size
-       val vals = iPromiseToFillThis[B1](maxSize)
-       values.copyToBuffer(vals.asInstanceOf[ArrayBuffer[AnyRef]])
-       val (ks, sz) = m.foldLeft((keyCache, keyCache.size)) {
+    override def ++[B1 >: B](xs: GenTraversableOnce[(A, B1)]): imm.Map[A, B1] ={
+       val maxSize = values.size + xs.size
+       val vals = new Array[AnyRef](maxSize)
+       values.copyToArray(vals)
+
+       val (ks, sz) = xs.foldLeft((keyCache, values.size)) {
          case (st@(kc, i), (key, v)) => kc get key match {
-           case None => vals(i) = v ; (kc updated (key, i), i+1)
-           case Some(j) => vals(j) = v ; st
+           case None => vals(i) = v.asInstanceOf[AnyRef] ; (kc updated (key, i), i+1)
+           case Some(j) => vals(j) = v.asInstanceOf[AnyRef] ; st
          }
        }
-       vals.trimEnd(maxSize - sz)
-       SharingKeySet(ks, vals)
+       
+       val trimmedVals = new Array[AnyRef](sz)
+       vals.copyToArray(trimmedVals)
+       SharingKeySet(ks, trimmedVals)
     }
 
     def -(key: A): RecordMap[A, B] =
@@ -266,17 +272,22 @@ object RecordMap extends RecordMapLowPriorityImplicits {
   def rebuild[A, B](pred: (A, Int) => Boolean,
                     keyCache: KeyCache[A],
                     vals: ValueSeq[B]): SharingKeySet[A, B] = {
-    val newVals = iPromiseToFillThis[B](keyCache.size)
+                    
+    val newSize = keyCache.foldLeft(0) {
+      case (j, (key, i)) =>
+        if (pred(key, i)) j+1
+        else j
+    }    
+    val newVals = new Array[AnyRef](newSize)
 
     val (newKeyCache, n) = keyCache.foldLeft((emptyKeyCache[A], 0)) {
       case (st@(kc, j), (key, i)) =>
         if(pred(key, i)) {
-          newVals(j) = indexValueSeq(vals,i)
+          newVals(j) = vals(i)
           (kc updated (key, j), j+1)
         } else st
     }
 
-    newVals.trimEnd(newVals.size - n)
     SharingKeySet(newKeyCache, newVals)
   }
 
