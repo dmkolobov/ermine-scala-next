@@ -528,6 +528,11 @@ sealed trait Format {
     * homomorphism.
     */
   def devolve(ops: NonEmptyList[Op]): Op
+
+  /** Law: basicEval === recursiveEval(_.basicEval)
+    *
+    */
+  def recursiveEval(rec: Format => NonEmptyList[PrimExpr] => PrimExpr): NonEmptyList[PrimExpr] => PrimExpr = basicEval
 }
 
 object Format {
@@ -613,16 +618,20 @@ object Format {
     * to strings. Markdown is already taken by an object associated with the markdown parser,
     * so call it MarkdownFmt to disambiguate */
   case class Markdown( wrapped: Format ) extends Format {
-    val basicEval = (pes: NelPe) => wrapped match {
-      case Truncate(places) => pes.head match {
-                                 case StringExpr(n, v) => { assert(places >= 0)
-                                                            StringExpr(n,MarkdownParser.truncateMarkdown(v,places))
-                                                          }
-                                 case pe => pe
-                               }
-     case _ => wrapped.basicEval(pes)
-     }
+    val basicEval = recursiveEval(_.basicEval)
+
     def devolve(ops: NelOp) = wrapped.devolve(ops)
+
+    override def recursiveEval(rec: Format => NelPe => PrimExpr) = wrapped match {
+      case Truncate(places) => (pes: NelPe) => pes.head match {
+        case StringExpr(n, v) => {
+          assert(places >= 0)
+          StringExpr(n,MarkdownParser.truncateMarkdown(v,places))
+        }
+        case pe => pe
+      }
+      case _ => rec(wrapped)
+    }
   }
 
   /** Constant format that always returns a given string. */
@@ -708,13 +717,15 @@ object Format {
   /** Given a base format, return a format on pairs that throws out the
     * second projection. */
   case class Pr1( fst: Format ) extends Format {
-    val basicEval = (pes: NelPe) => (pes.head, pes.tail) match {
-      case (h, t :: u) => fst.basicEval(NonEmptyList(h, u :_*))
-      case (h, _) => fst.basicEval(NonEmptyList(h))
-    }
+    val basicEval = recursiveEval(_.basicEval)
     def devolve(ops: NelOp) = (ops.head, ops.tail) match {
       case (h, t :: u) => fst.devolve(NonEmptyList(h, u :_*))
       case (h, _) => fst.devolve(NonEmptyList(h))
+    }
+
+    override def recursiveEval(rec: Format => NelPe => PrimExpr) = (pes: NelPe) => (pes.head, pes.tail) match {
+      case (h, it :: u) => rec(fst)(NonEmptyList(h, u:_*))
+      case (h, _) => rec(fst)(NonEmptyList(h))
     }
   }
   
@@ -792,18 +803,23 @@ object Format {
   }
 
   case class Conditional(cond: Condition, apply: Format, notApply: Format) extends Format {
-    val basicEval = (pes: NelPe) =>
-      if(cond(pes.head))
-        apply.basicEval(pes)
-      else notApply.basicEval(pes)
+    val basicEval = recursiveEval(_.basicEval)
 
     def devolve(ops: NelOp) = ops.head
+
+    override def recursiveEval(rec: Format => NelPe => PrimExpr) = (pes: NelPe) =>
+      if(cond(pes.head))
+        rec(apply)(pes)
+      else rec(notApply)(pes)
   }
 
   case class ColorFormat(backColor: Color, frontColor: Color, base: Format) extends Format{
-    val basicEval = (pes: NelPe) => StringExpr(false,"<COLOR_FORMAT>" + (base.basicEval(pes)).extractNullableString("-") + "</COLOR_FORMAT>")
+    val basicEval = recursiveEval(_.basicEval)
 
     def devolve(ops: NelOp) = ops.head
+
+    override def recursiveEval(rec: Format => NelPe => PrimExpr) = (pes: NelPe) =>
+      StringExpr(false,"<COLOR_FORMAT>" + rec(base)(pes).extractNullableString("-") + "</COLOR_FORMAT>")
   }
 
   implicit val formatInstance: Equal[Format] = Equal.equalA
