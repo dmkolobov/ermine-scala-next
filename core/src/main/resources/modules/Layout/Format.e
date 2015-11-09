@@ -6,6 +6,7 @@ module Layout.Format where
 import Function using (.); flip
 import Native
 import Unsafe.Coerce
+import Layout.Color
 import Prim
 
 foreign
@@ -57,8 +58,8 @@ private foreign
   value "com.clarifi.reporting.writers.Condition$And$" "MODULE$"
       and# : Function2 (Condition a) (Condition a) (Condition a)
 
-  value "com.clarifi.reporting.writers.Format$ConditionalColor$" "MODULE$"
-      conditionalColor# : Function3 (Color a) (Color a) (Format a) (Format a)
+  value "com.clarifi.reporting.writers.Format$ColorFormat$" "MODULE$"
+      colorFormat# : Function3 Color Color (Format a) (Format a)
 
 -- 2 -> 34.7652 -> 34.77
 round, roundParens : PrimitiveNum n => Int -> Format n
@@ -132,5 +133,5 @@ andCondition = funcall2# and#
 conditional : Condition a -> Format a -> Format a -> Format a
 conditional = funcall3# conditional#
 
-conditionlColor : Color a -> Color a -> Format a -> Format a
-conditionlColor = funcall3# conditionalColor#
+colored : Color -> Color -> Format a -> Format a
+colored = funcall3# colorFormat#
