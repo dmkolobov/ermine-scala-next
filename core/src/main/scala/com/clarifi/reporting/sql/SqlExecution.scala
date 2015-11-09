@@ -36,6 +36,14 @@ class SqlExecution(implicit emitter: SqlEmitter) {
         val qStart = System.currentTimeMillis
         logger ltrace ("Executing query " |+| query.run)
 
+        /*  For mySQL connections, to enable streamed resultsets, 
+            stmt = conn.createStatement(java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY);
+            stmt.setFetchSize(Integer.MIN_VALUE);        
+            
+            The combination of a forward-only, read-only result set, with a fetch size of Integer.MIN_VALUE serves 
+            as a signal to the driver to stream result sets row-by-row. After this, any result sets created with the statement will be retrieved row-by-row.
+            
+        */
         val stmt = conn.prepareStatement(query.run)
         logger.debug("prepared statement fetch size: " + stmt.getFetchSize)
         stmt.setFetchSize(10000)
