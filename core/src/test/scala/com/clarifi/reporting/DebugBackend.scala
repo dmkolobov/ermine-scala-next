@@ -34,7 +34,7 @@ object DebugBackend {
       val mySqlBackend = Scanners.MySQL(dummySmenv)
       import mySqlBackend.SqlPrg
       implicit val sup = Supply.create
-      val SqlPrg(p, dq, _) = mySqlBackend.compileRel(r.out, (x:Nothing) => x, (x:Nothing) => x)
+      val SqlPrg(p, dq, _, _) = mySqlBackend.compileRel(r.out, (x:Nothing) => x, (x:Nothing) => x)
 
       if (p.isEmpty) {
         val query = "EXPLAIN EXTENDED " + dq.q(true)._2.emitSql(mySqlEmitter).run
@@ -66,7 +66,7 @@ object DebugBackend {
       val verticaBackend = Scanners.Vertica(dummySmenv)
       import verticaBackend.SqlPrg
       implicit val sup = Supply.create
-      val SqlPrg(p, dq, _) = verticaBackend.compileRel(r.out, (x:Nothing) => x, (x:Nothing) => x)
+      val SqlPrg(p, dq, _, _) = verticaBackend.compileRel(r.out, (x:Nothing) => x, (x:Nothing) => x)
 
       if (p.isEmpty) {
         val query = "EXPLAIN " + dq.q(true)._2.emitSql(verticaSqlEmitter)
