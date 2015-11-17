@@ -375,12 +375,46 @@ case class Fundepped[K](determiners: Map[K, Set[Set[K]]]) {
    * use when joining two relations. The fundeps on a join are the
    * union of the fundeps of the underlying relations.
    */
-  def &(other: Fundepped[K]): Fundepped[K] = {
-    val nm = other.determiners.foldLeft(determiners) {
-      case (m, (k, ss)) => m + (k -> index(m,k).union(ss))
-    }
-    Fundepped(normalize(nm))
+  def &&(other: Fundepped[K]): Fundepped[K] = {
+    Fundepped(normalize(combineFDs(determiners,other.determiners)))
   }
+
+  def --(ks: TraversableOnce[K]): Fundepped[K] = {
+    val remove = ks.toSet
+
+    Fundepped(filterFDs[K](!remove(_), determiners))
+  }
+
+  /*
+   * Applies a function to the columns involved in the functional dependencies.
+   *
+   * If the function is not injective on the columns involved in the fundeps,
+   * the resulting fundeps may not be normalized, or some dependencies may be
+   * erased.
+   */
+  def injectiveMap[L](f: K => L) =
+    Fundepped(mapFDs(f, determiners))
+
+  /*
+   * Applies a partial function to the columns involved in the functional
+   * dependencies. Any dependency involving a column that is not in the
+   * defined domain of the partial function will be removed.
+   *
+   * If the function is not injective on the columns involved in the fundeps,
+   * the resulting dependencies may not be normalized, and some dependencies
+   * may be omitted arbitrarily.
+   */
+  def injectiveCollect[L](f: PartialFunction[K,L]) =
+    Fundepped(collectFDs(f, determiners))
+
+  /*
+   * Filters functional dependencies according to a predicate on columns.
+   *
+   * A fundep is removed completely if any of the columns involved fail
+   * the predicate.
+   */
+  def filter(p: K => Boolean) =
+    Fundepped(filterFDs(p, determiners))
 
   /*
    * Gives back the set of sets of columns that functionally determine
@@ -399,6 +433,54 @@ case class Fundepped[K](determiners: Map[K, Set[Set[K]]]) {
 
 object Fundepped {
   type FDs[K] = Map[K, Set[Set[K]]]
+
+  /*
+   * Maps a function over a set of functional dependencies.
+   *
+   * The assumption is that the function is injective on the set of
+   * columns that are used in the stored fundeps, so that care
+   * need not be taken to unify sets that are mapped to a common key.
+   * If the function does map two columns to the same new column,
+   * an arbitrary set of determining columns will be chosen.
+   */
+  private[Fundepped] def mapFDs[K,L](f : K => L, fds: FDs[K]): FDs[L] =
+    fds.map {
+      case (k, ss) => f(k) -> ss.map(_.map(f))
+    }
+
+  /*
+   * Collects the results of mapping a partial function over a set of
+   * functional dependencies.
+   *
+   * Any functional dependencies that involve failing columns will be
+   * completely removed from the fundepss.
+   *
+   * It is expected that the partial function will be injective on the
+   * columns involved in the fundeps. If this is not the case, then
+   * arbitrary fundeps may be elided.
+   */
+  private[Fundepped] def collectFDs[K,L](f: PartialFunction[K,L], fds: FDs[K]): FDs[L] =
+    removeTrivial(
+      fds.collect {
+        case (k, ss) if f.isDefinedAt(k) =>
+          f(k) -> ss.collect { case s if s.forall(f.isDefinedAt) => s.map(f) }
+      }
+    )
+
+  /*
+   * Filters a set of functional dependencies according to a predicate
+   * on columns.
+   *
+   * Any fundep that mentions a column that fails the predicate is
+   * completely removed.
+   */
+  private[Fundepped] def filterFDs[K](p: K => Boolean, fds: FDs[K]): FDs[K] =
+    removeTrivial(
+      fds.collect {
+        case (k, ss) if p(k) =>
+          k -> ss.filter(_.forall(p))
+      }
+    )
 
   /*
    * Indexes into a fundep map to get the set of sets of determining columns.
@@ -463,9 +545,19 @@ object Fundepped {
   }
 
   /*
+   * Incorporates two internal sets of fundeps. This does not perform
+   * any normalization.
+   */
+  private[Fundepped] def combineFDs[K](fdsl: FDs[K], fdsr: FDs[K]): FDs[K] =
+    fdsr.foldLeft(fdsl) {
+      case (m, (k, ss)) => m + (k -> index(m,k).union(ss))
+    }
+
+  /*
    * Turns a sequence of functional dependencies specified as
-   * `x, y and z determine w` into a normalized format suitable
-   * for use in Fundepped.
+   * `x, y and z determine w` into a format suitable for use in Fundepped.
+   *
+   * This function does not normalize the set.
    */
   private[Fundepped] def accumulateFDs[K](fds: TraversableOnce[(Set[K], K)], base: FDs[K] = Map[K,Set[Set[K]]]()): FDs[K] =
     fds.foldLeft(base) {
@@ -474,6 +566,266 @@ object Fundepped {
         m + (k -> (ss + s))
     }
 
+  private[Fundepped] def accumulateFDs[K](fds: (Set[K], K)*): FDs[K] =
+    accumulateFDs(fds)
+
   def apply[K](fds: (Set[K], K)*): Fundepped[K] =
     Fundepped(normalize(accumulateFDs[K](fds)))
+
+  def empty[K]: Fundepped[K] = Fundepped(Map[K,Set[Set[K]]]())
+
+  private[this]
+  def equate(l: Op, r: Op): Map[ColumnName, Set[Set[ColumnName]]] = {
+    import Op.ColumnValue
+    (l, r) match {
+      case (ColumnValue(cl, _), ColumnValue(cr, _)) =>
+        accumulateFDs(Set(cl) -> cr, Set(cr) -> cl)
+      case (ColumnValue(cl, _), _) =>
+        accumulateFDs(r.columnReferences -> cl)
+      case (_, ColumnValue(cr, _)) =>
+        accumulateFDs(l.columnReferences -> cr)
+      case _ => Map()
+    }
+  }
+
+  private[this]
+  def fromPredNonNormalized(pred: Predicate): Map[ColumnName, Set[Set[ColumnName]]] = {
+    import Predicate._
+
+    // TODO: Try to expand supported predicates.
+    //       Make sure we don't miss something due to negation.
+    pred match {
+      case Eq(left: Op, right: Op) => equate(left, right)
+      case And(left: Predicate, right: Predicate) =>
+        combineFDs(fromPredNonNormalized(left), fromPredNonNormalized(right))
+      case _ => Map()
+    }
+  }
+
+  def fromPredicate(pred: Predicate): Fundepped[ColumnName] =
+    Fundepped(normalize(fromPredNonNormalized(pred)))
+
+  /*
+   * Structure for representing pertinent information about an Op
+   * with respect to functional dependencies. For our purposes,
+   * an Op can either be constant, an injective function of another
+   * column, or merely a function of several other columns.
+   */
+  private[this] sealed abstract class OpInfo[+K] {
+    def map[L](f: K => L): OpInfo[L]
+    def columns: List[K]
+  }
+  private[this] case object Constant extends OpInfo[Nothing] {
+    def map[L](f: Nothing => L) = this
+    def columns = List()
+  }
+  private[this] case class Injective[+K](functionOf: K) extends OpInfo[K] {
+    def map[L](f: K => L): Injective[L] = Injective(f(functionOf))
+    def columns = List(functionOf)
+  }
+  private[this] class Plain[+K](val columns: List[K]) extends OpInfo[K] {
+    def map[L](f: K => L) = Plain(columns.map(f))
+  }
+  private[this] object Plain {
+    def apply[K](cs: List[K]) =
+      if (cs.isEmpty) Constant
+      else new Plain(cs)
+
+    def unapply[K](p: Plain[K]): Some[List[K]] = Some(p.columns)
+  }
+
+
+  private[Fundepped] def opInfo(op: Op): OpInfo[ColumnName] = {
+    def bin(ol: OpInfo[ColumnName], or: OpInfo[ColumnName]): OpInfo[ColumnName] =
+      Plain(ol.columns ++ or.columns)
+
+    def cat(ois: List[OpInfo[ColumnName]]): OpInfo[ColumnName] =
+      Plain(ois.flatMap(_.columns))
+
+    op.apply[OpInfo[ColumnName]](
+      opliteral = _ => Constant,
+      columnvalue = (col, _) => Injective(col),
+      add = {
+        case (Constant, or) => or
+        case (ol, Constant) => ol
+        case (ol, or) => bin(ol, or)
+      },
+      sub = {
+        case (Constant, or) => or
+        case (ol, Constant) => ol
+        case (ol, or) => bin(ol, or)
+      },
+      mul = bin,
+      floordiv = bin,
+      doublediv = bin,
+      pow = bin,
+      abs = oi => Plain(oi.columns),
+      concat = cat,
+      oif = (b,t,f) => Plain(b.columnReferences.toList ++ t.columns ++ f.columns),
+      coalesce = bin(_,_),
+      dateadd = (x, _, _) => x,
+      funcall = (_, _, _, args, _) => cat(args)
+    )
+  }
+
+  private[this] type EC = Either[ColumnName, ColumnName]
+  private[this] def ecr(c: ColumnName): EC = Right(c)
+  private[this] def ecl(c: ColumnName): EC = Left(c)
+
+  /*
+   * Computes the functional dependencies between old and new
+   * columns given a set of column selections. This can be combined
+   * with functional dependencies on the old columns to compute
+   * dependencies for the new columns.
+   *
+   * The convention is for old columns to be promoted to Left, while
+   * new columns are promoted to Right, which allows the same name to
+   * be used in both old and new columns without their being confused.
+   */
+  private[this] def selFDs(sel: Map[Attribute, Op]): List[(Set[EC], EC)] = {
+    sel.toList.flatMap {
+      case (Attribute(c,_), op) => opInfo(op) match {
+        case Injective(k) =>
+          List(Set[EC](ecl(k)) -> ecr(c),
+               Set[EC](ecr(c)) -> ecl(k))
+        case oi => List(oi.columns.map(ecl(_)).toSet -> ecr(c))
+      }
+    }
+  }
+
+  /*
+   * Given a set of selections of new columns in terms of old columns,
+   * and a set of functional dependencies on the old columns, computes
+   * an induced set of functional dependencies on the new columns.
+   */
+  def selections(sel: Map[Attribute, Op], fds: Fundepped[ColumnName]): Fundepped[ColumnName] =
+    (fds.injectiveMap(ecl(_)) ++ selFDs(sel)).injectiveCollect{ case Right(c) => c }
+
+  /*
+   * Computes the induced functional dependencies for an aggregate-by-group.
+   * The supplied fundeps should be those of the relation being aggregated,
+   * and the supplied grouping columns are those of the underlying relation
+   * determining how things will be chunked for the aggregations. The
+   * specified selections and aggregations should explain how the result
+   * columns are computed from the underlying columns.
+   */
+  def aggregations(
+        sel: Map[Attribute, Op],
+        aggs: List[(Attribute,AggFunc)],
+        grps: List[ColumnName],
+        fds: Fundepped[ColumnName]
+      ): Fundepped[ColumnName] = {
+    val grpSet : Set[Set[EC]] = Set(grps.map(ecl(_)).toSet)
+    val grpFDs : Fundepped[EC] = Fundepped(aggs.map {
+      case (Attribute(c, _), _) => ecr(c) -> grpSet
+    } ++ sel.toList.map {
+      case (Attribute(c, _), _) => ecr(c) -> grpSet
+    } toMap)
+
+    val totalFDs =
+      fds.injectiveMap(ecl(_)) &&
+      grpFDs ++
+      selFDs(sel)
+
+    totalFDs.injectiveCollect { case Right(c) => c }
+  }
+
+  /*
+   * Constructs a set of fundeps where all the columns in the Traversable
+   * are constant.
+   */
+  def constants[K](cs: Traversable[K]): Fundepped[K] =
+    Fundepped(cs.map((_,Set[Set[K]]())).toMap)
+
+  /*
+   * Represents accumulating functional dependency info.  Lists of columns are
+   * mapped to the columns they determine, together with the functional mapping
+   * on the values. If a column is not in the right-hand map, it is presumed not
+   * to be determined by the list of columns. Similarly, if a column list is not
+   * in the outer map, it is presumed to not determine any columns. This allows
+   * for pruning of the stored data.
+   */
+  private[this]
+  type Functions[K, V] = Map[List[K], Map[K, Map[List[V], V]]]
+
+  /*
+   * Computes all the functions satisfied by a single row of a relation.  In
+   * reality, this only includes functions of two columns, as that is what we
+   * will take into account when generating fundeps for a literal.  This is used
+   * to control the overall fundep generation for literals, as the existing
+   * functions are used to decide which determining sets to check during
+   * accumulation. If functions of more columns are desired, this function
+   * should be changed.
+   */
+  private[this]
+  def vacuousFunctions[K:Order,V](row: Map[K, V]): Functions[K, V] = {
+    def pairs(l: List[K]): List[List[K]] = l match {
+      case x :: xs => xs.map(List(x,_)) ++ pairs(xs)
+      case Nil => Nil
+    }
+    val kl : List[K] = row.keySet.toList.sortWith(implicitly[Order[K]].lessThan)
+    (List[K]() :: kl.map(List(_)) ++ pairs(kl)).map {
+      ks => ks -> row.collect {
+        case (k, v) if !ks.contains(k) =>
+          k -> Map(ks.map(row(_)) -> v)
+      }
+    } toMap
+  }
+
+  private[this]
+  def prune[K,V](funs: Functions[K, V]): Functions[K, V] =
+    funs.mapValues(_.filter { case (k, f) => f.nonEmpty })
+        .filter { case (ks, fs) => fs.nonEmpty }
+
+  /*
+   * Incorporates a new row into a set of functional data. The resulting data
+   * will contain all relationships that are still functional given the new row
+   * and the old accumulated data.
+   *
+   * It is expected that the row contains every key mentioned in the function
+   * data. Exceptions will result if this is not true.
+   */
+  private[this]
+  def accumulateFunctions[K,V](funs: Functions[K, V], row: Map[K, V]) = {
+    val newFuns : Functions[K, V] = funs.map {
+      case (ks, fs) =>
+        val vs = ks.map(row(_))
+        ks -> fs.map {
+          case (k, f) =>
+            val v = row(k)
+            val nf = f.get(vs) match {
+              case Some(u) => if (u == v) f else Map[List[V], V]()
+              case None => f + (vs -> v)
+            }
+            k -> nf
+        }
+    }
+    prune(newFuns)
+  }
+
+  private[this]
+  def fundepsOf[K,V](funs: Functions[K, V]): Fundepped[K] = {
+    val fds = accumulateFDs(funs.toTraversable.flatMap {
+      case (ks, kfs) => kfs.keySet.map(ks.toSet -> _)
+    })
+    Fundepped(normalize(fds))
+  }
+
+  /*
+   * Computes the functional dependencies satisfied by a literal relation.
+   * It is expected that all the Maps have identical key sets, and each
+   * key maps to values that may be compared sensibly in different Maps
+   * (that is, that the list represents a well formed/typed relation).
+   */
+  def literal[K:Order,V](nel: NonEmptyList[Map[K, V]]): Fundepped[K] = {
+    // Written as an explicit loop for short circuiting
+    def loop(acc: Functions[K, V], l: List[Map[K, V]], cutoff: Int): Fundepped[K] =
+      l match {
+        case Nil => fundepsOf(acc)
+        case r :: rs if cutoff == 0 || acc.isEmpty => Fundepped.empty
+        case r :: rs => loop(accumulateFunctions(acc, r), rs, cutoff-1)
+      }
+
+    loop(vacuousFunctions(nel.head), nel.tail, 100)
+  }
 }
