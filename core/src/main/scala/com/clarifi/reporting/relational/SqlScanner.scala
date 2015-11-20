@@ -653,7 +653,14 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       case Limit(r, from, to, order) =>
         val SqlPrg(p, q, rx, fds) = compileRel(r, smv, srv)
 
-        SqlPrg(p, q limit (from, to, order), rx, fds)
+        // Limiting to one row or less necessarily makes all things constant
+        val (nrx, nfds) = (from, to) match {
+          case (Some(f), Some(t)) if t-f < 2 =>
+            (ForallTups(q.h.map{ case (k, _) => k -> None}, PartitionedSet.zero), Fundepped.constants(q.h.keySet))
+          case _ => (rx, fds)
+        }
+
+        SqlPrg(p, q limit (from, to, order), nrx, nfds)
       case Table(h, n) => SqlPrg(List(), DistinctiveQuery.table(h, n), Reflexivity.zero, Fundepped())
       case TableProc(args, oh, src, namespace) =>
         val h = oh.toMap
