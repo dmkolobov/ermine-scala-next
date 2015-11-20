@@ -58,6 +58,19 @@ object TreeTabular {
     })
   } yield ot)
 
+  /* A dummy tree tabular with no content, useful for debugging.
+   * Likely implements some things in an unexpected way.
+   */
+  def dummy[F[_],A](implicit M: Monad[F]): TreeTabular[F, A] =
+    new TreeTabular[F, A] {
+      def F = M
+      def children = Tabular.dummy[F,(A,TreeTabular[F,A])](M)
+      def relation = {
+        import relational._
+        Closed(ExtRel(RelEmpty(Map()), ""),Map())
+      }
+    }
+
 }
 
 
