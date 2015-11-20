@@ -109,6 +109,27 @@ object Tabular {
     * schema `h`. */
   def displayRecords(h: Header): Legend[ColumnName] =
     Legend select (SortedSet(h.keys.toSeq:_*).toIndexedSeq, h)
+
+  /* A dummy Tabular with no content, useful for debugging purposes.
+   * Likely doesn't implement some methods in the expected way.
+   */
+  def dummy[F[_], A](implicit M: Monad[F]): Tabular[F, A] =
+    new Tabular[F, A] {
+      def F = M
+      def columnIds = Set()
+      def columnLabels = IndexedSeq()
+      def slice(start:Int, stop:Option[Int]) = M.pure(IndexedSeq())
+      def relation = relational.Closed[Ext](ExtRel(RelEmpty(Map()), ""),Map())
+      def apply(f: ClosedExt => ClosedExt) = this
+      def map[B](f: A => B) = dummy[F,B]
+      def size = M.pure(0)
+      def ordering = IndexedSeq()
+      def orderBy(o: IndexedSeq[(com.clarifi.reporting.writers.Tabular.Label,SortOrder)]) = this
+      def clearOrder = this
+      def label(l: com.clarifi.reporting.writers.Legend[com.clarifi.reporting.writers.Tabular.Label]) = this
+      def displayRules = Legend.empty
+    }
+
 }
 
 class StrictTabular[F[_],A](r: ClosedExt, val ordering: IndexedSeq[(Label, SortOrder)],
