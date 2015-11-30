@@ -722,7 +722,7 @@ object Console {
   }
 
   def version     = "v0.4α"
-  def copyright   = "Copyright 2011-2014"
+  def copyright   = "Copyright 2011-2015"
   def allrights   = "S&P Capital IQ"
 
   def logo(n: String, l: List[String])(implicit e: ConsoleEnv): Unit = l match {
@@ -752,7 +752,7 @@ object Console {
     writeLn("        ,/ / ;;  ;;;______;;;  ;;; ::,`    / __/_____ _  ( )__  __")
     writeLn("        /;; _;;   ;;;       ;       ;     / _//`__/  ' \\/ /`_ \\/ -)")
     writeLn("        | :/ / ,;'           ;_ \"\")/     /___/_/ /_/_/_/_/_//_/\\__/ " + version)
-    writeLn("        ; ; / /\"\"\"=            \\;;\\\"\"=  Copyright © 2011-14 S&P Capital IQ")
+    writeLn("        ; ; / /\"\"\"=            \\;;\\\"\"=  Copyright © 2011-15 S&P Capital IQ")
     writeLn("     ;\"\"\"';{::\"\"\"\"\"\"=            \\\"\"\"=")
     writeLn("     \\/\"\"\"")
   }
