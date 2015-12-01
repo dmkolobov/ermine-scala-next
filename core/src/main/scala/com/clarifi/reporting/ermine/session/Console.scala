@@ -110,7 +110,7 @@ class ConsoleEnv(
   completor.setDelimiter(" ")
 
   val loadCompletor = new ArgumentCompletor(List(
-    new SimpleCompletor(":load"),
+    new SimpleCompletor(List(":load", ":fsloader").toArray),
     new FileNameCompletor
   ).toArray)
   loadCompletor.setStrict(true)
@@ -344,7 +344,7 @@ object Console {
         }
       }
     },
-    new Action(":fsloader",List(),None,"add a loader from file paths") {
+    new Action(":fsloader",List(), Some("<directory>"), "add a loader from a given file path") {
       def apply(s: String)(implicit e: ConsoleEnv) {
         e.sessionEnv.loadFile = SourceFile.inOrder(
           SourceFile.filesystem(s) ,e.sessionEnv.loadFile)
