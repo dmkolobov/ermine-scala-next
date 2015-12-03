@@ -381,7 +381,7 @@ object Format {
   lazy val attributeR: Reader[Attribute, AttributeF] =
     p2R(stringR, primTR)(Attribute(_, _))
 
-  lazy val opR: Reader[Op, DynamicF] = fixR[Op, DynamicF](self => union14R(
+  lazy val opR: Reader[Op, DynamicF] = fixR[Op, DynamicF](self => union15R(
     primExprR map OpLiteral,
     p2R(stringR, primTR)(ColumnValue),
     p2R(self, self)((a, b) => Add(a, b)),
@@ -395,8 +395,10 @@ object Format {
     p2R(self, self)(Coalesce),
     p3R(self, intR, timeUnitR)(DateAdd),
     p3R(timeUnitR, self, self)(DateDiff),
-    p5R(stringR, stringR, listR(stringR), listR(self), primTR)(Funcall)) erase)
-
+    p5R(stringR, stringR, listR(stringR), listR(self), primTR)(Funcall),
+    self map (Abs(_))
+  ) erase)
+    
   lazy val aggR: Reader[AggFunc, DynamicF] = union9R(
     unitR   map (_ => Count),
     opR map (Sum(_)),
@@ -432,14 +434,16 @@ object Format {
 
   lazy val opW: Writer[Op, DynamicF] = fixW[Op, DynamicF]{self =>
     lazy val binopW = tuple2W(self, self)
-    s14W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
+    s15W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
          binopW, binopW, binopW, binopW, repeatW(self),
          tuple3W(predicateW, self, self),
          binopW,
          tuple3W(self, intW, timeUnitW),
          tuple3W(timeUnitW, self, self),
-         tuple5W(stringW, stringW, repeatW(stringW), repeatW(self), primTW))(
-    (opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, dateadd, datediff, funcall) => (r: Op) => r match {
+         tuple5W(stringW, stringW, repeatW(stringW), repeatW(self), primTW),
+         self
+         )(
+    (opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, dateadd, datediff, funcall, abs) => (r: Op) => r match {
       case OpLiteral(lit) => opliteral(lit)
       case ColumnValue(cn, ty) => columnvalue(cn -> ty)
       case Add(a, b) => add(a -> b)
@@ -454,6 +458,7 @@ object Format {
       case DateAdd(d, n, u) => dateadd(d, n, u)
       case DateDiff(u, s, e) => datediff(u, s, e)
       case Funcall(n, db, ns, args, ty) => funcall((n, db, ns, args, ty))
+      case Abs(x) => abs(x)
     }) erase}
   lazy val aggW: Writer[AggFunc, DynamicF] = s9W(unitW, opW, opW, opW, opW, opW, opW, tuple2W(opW,opW), tuple2W(opW,opW))(
     (count, sum, avg, min, max, stddev, variance, wmean, whmean) =>
@@ -551,7 +556,7 @@ object Format {
   type BinOpF = FixF[OpF[SelfF]] & FixF[OpF[SelfF]]
   type PredicateF[A] = S7[BooleanF, BinOpF, BinOpF, BinOpF,
                           A, A & A, A & A]
-  type OpF[A] = S11[PrimExprF       , // OpLiteral
+  type OpF[A] = S12[PrimExprF       , // OpLiteral
                     StringF & PrimTF, // ColumnValue
                     A & A           , // Add
                     A & A           , // Sub
@@ -561,7 +566,8 @@ object Format {
                     A & A           , // Pow
                     RepeatF[A]      , // Concat
                     DynamicF & A & A, // If
-                    StringF & StringF & RepeatF[StringF] & RepeatF[A] & PrimTF] // Funcall
+                    StringF & StringF & RepeatF[StringF] & RepeatF[A] & PrimTF, // Funcall
+                    A]                // Abs
   type AggF = S7[UnitF,            // Count
                  FixF[OpF[SelfF]], // Sum
                  FixF[OpF[SelfF]], // Avg
