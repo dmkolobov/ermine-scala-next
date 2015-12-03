@@ -265,7 +265,7 @@ class BackendImpl extends Backend[EditorSession, Option[Document], (Module,Sessi
   def declareTopLevel(name: Option[String], argCount: Int) = for {
     m <- get
     n <- name match {
-      case Some(s) => if(m.implicits.exists(b => b.v.name.map(_ == s).getOrElse(false)))
+      case Some(s) => if(m.implicits.exists(b => b.v.name.map(_ == Local(s)).getOrElse(false)))
                         fail[EditorSession]("Binding with name '" + s + "' exists.")
                       else
                         unit(Some(Local(s)))
