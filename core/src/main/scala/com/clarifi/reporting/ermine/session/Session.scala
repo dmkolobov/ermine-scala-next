@@ -232,6 +232,7 @@ object Session {
       case _: Resource => 10
       case _: Literal => 20
       case _: NotFound => 30
+      case _: Dynamic => 40
       // update sourceFileOrdering if you add more here
     }
 
@@ -247,6 +248,8 @@ object Session {
             Ordering[(String,String)].compare((s1, mn1), (s2, mn2))
           case (NotFound(s1),     NotFound(s2),     _) =>
             Ordering[String].compare(s1,s2)
+          case (Dynamic(_,_,mn1), Dynamic(_,_,mn2), _) =>
+            Ordering[String].compare(mn1,mn2)
           case (_, _, _) => sys.error("missing case: %s, %s" format (x, y))
       }
     }
