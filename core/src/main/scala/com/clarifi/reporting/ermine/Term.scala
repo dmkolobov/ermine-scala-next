@@ -208,6 +208,7 @@ object Term {
       case None    => die("PANIC: eval: unbound variable " + u) // let this escape, don't capture it with Bottom
     }
     case Remember(_, e) => eval(e, env, stk)
+    case Hole(_) => die("PANIC: evaluating a hole")
   }
 
   implicit def termHasTermVars: HasTermVars[Term] = new HasTermVars[Term] {
