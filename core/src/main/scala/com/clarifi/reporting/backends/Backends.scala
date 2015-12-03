@@ -6,7 +6,7 @@ import java.sql.Connection
 import relational._
 
 import com.clarifi.reporting.sql.{ SqlEmitter }
-import SqlMetadata.{Schemata, schemata}
+import SqlMetadata.Schemata
 
 object Backends {
   def MySQLInnoDB            = SqlBackend(SqlEmitter.mySqlInnoDBEmitter)

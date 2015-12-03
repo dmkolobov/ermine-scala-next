@@ -3,7 +3,6 @@ package com.clarifi.reporting.writers.jfx
 import java.util.concurrent.{ ScheduledThreadPoolExecutor, ThreadFactory }
 import scalaz.{Applicative, Monad, Need}
 import scalaz.concurrent.{Promise, Strategy}
-import scalaz.syntax.functor._
 
 import com.clarifi.reporting.Run
 
