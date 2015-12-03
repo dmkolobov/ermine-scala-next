@@ -140,7 +140,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
 
   def unexceptional(p: => Prop): Prop = try {
     p
-  } catch { case _ => false: Prop }
+  } catch { case _ : Throwable => false: Prop }
 
   def no(p: Prop): Prop = p map { r =>
     r.copy(status = r.status match {case False => True; case _ => False},
@@ -373,7 +373,7 @@ trait ErmineModulesProperties {self: Properties =>
 
 object TestErmineModules extends Properties("Ermine library") with ErmineModulesProperties {
   protected lazy val ermineFixture = ErmineFixture()
-  import ermineFixture.{file, mkEnv, modules}
+  import ermineFixture.{mkEnv, modules}
 
   lazy val excludedModules = Set.empty[String]
 
