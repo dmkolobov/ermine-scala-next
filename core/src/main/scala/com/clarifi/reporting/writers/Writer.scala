@@ -229,6 +229,10 @@ abstract class Writer[F[_],C] { self =>
 
   def border(center: Option[C], north: Option[C], south: Option[C], east: Option[C], west: Option[C]): C
 
+  /* djd: TODO: It might be better if this were
+   * List[(String,F[C])] => F[C], for the purpose of delaying things in
+   * JavaFX, for instance. But that is a somewhat invasive change.
+   */
   def tabbed(cs: List[(String,C)]): C
 
   def sideTabbed(cs: List[(String,C)]): C
@@ -308,6 +312,11 @@ abstract class Writer[F[_],C] { self =>
     pieChart(pcd, labelColumn, dataColumn, Tabular.relationRec(r).map(tup =>
       (labelColumn extract tup, dataColumn extract tup)))
 
+  /** A hook that allows postponement of some of the below *DMTL functions
+   *  for the purpose of avoiding early queries in tabbed reports and such.
+   */
+  def postpone(w: F[C]): F[C] = w
+
   final def treeMapDMTL(parentCol: String, childCol: String,
                         labelCol: Presentation, intensityCol: Presentation, sizeCol: Presentation,
                         fact: ClosedExt): F[C] =
@@ -316,50 +325,62 @@ abstract class Writer[F[_],C] { self =>
 
   final def drilldownPieChartDMTL(pcd: PieChartData, labelColumn: Presentation, dataColumn: Presentation,
                                   parentIdColumn: String, childColumn: String, fact: ClosedExt): F[C] =
-    treeTabular(parentIdColumn, childColumn, fact, rootParentId = 1) flatMap (ttab =>
-      drilldownPieChart(pcd, labelColumn, dataColumn, parentIdColumn, childColumn,
-                        ttab.map { tab =>
-                          (labelColumn extract tab, dataColumn extract tab) }))
+    postpone(
+      treeTabular(parentIdColumn, childColumn, fact, rootParentId = 1) flatMap (ttab =>
+        drilldownPieChart(pcd, labelColumn, dataColumn, parentIdColumn, childColumn,
+                          ttab.map { tab =>
+                            (labelColumn extract tab, dataColumn extract tab) }))
+    )
 
   final def drilldownBarChartDMTL(
     chart: DrilldownBarAxisChart[(String, String), ClosedExt]): F[C] = {
     val DrilldownBarAxisChart(_, categoryPres, dataPres, query, (parentCol, childCol), _) = chart
-    treeTabular(parentCol, childCol, query, rootParentId = 1) flatMap (ttab =>
+    postpone(
+      treeTabular(parentCol, childCol, query, rootParentId = 1) flatMap (ttab =>
       drilldownBarChartPC(chart.flattenFormat rightMap
                           (_ => ttab map { tab =>
                              (categoryPres extract tab, dataPres extract tab)})))
+    )
   }
 
   final def drilldownTableDMTL(legend: Option[Legend.U[String]], labelColumn: String, parentIdColumn: String, childColumn: String, order: List[(String, SortOrder)], fact: ClosedExt): F[C] =
-    treeTabular(parentIdColumn, childColumn, fact, rootParentId = 0) flatMap {tab =>
-      drilldownTable(labelColumn, parentIdColumn, childColumn, legend.isEmpty,
-                     legend.map(lg => tab.label(lg)).getOrElse(tab)
-                       .orderBy(order.toIndexedSeq))
-  }
+    postpone(
+      treeTabular(parentIdColumn, childColumn, fact, rootParentId = 0) flatMap {tab =>
+        drilldownTable(labelColumn, parentIdColumn, childColumn, legend.isEmpty,
+                       legend.map(lg => tab.label(lg)).getOrElse(tab)
+                         .orderBy(order.toIndexedSeq))
+      }
+    )
 
   final def drilldownPieChartDMTL2(pcd: PieChartData, labelColumn: Presentation, dataColumn: Presentation,
                                    cols: List[(String, String)], fact: ClosedExt, roots: ClosedExt): F[C] =
-    treeTabular2(cols, fact, roots) flatMap (ttab =>
+    postpone(
+      treeTabular2(cols, fact, roots) flatMap (ttab =>
       drilldownPieChart2(pcd, labelColumn, dataColumn, cols, roots,
                          ttab.map { tab =>
                            (labelColumn extract tab, dataColumn extract tab) }))
+    )
 
   final def drilldownBarChartDMTL2(
     chart: DrilldownBarAxisChart[(List[(String, String)], ClosedExt), ClosedExt]): F[C] = {
     val DrilldownBarAxisChart(_, categoryPres, dataPres, query, (cols, roots), _) = chart
     // TODO ask estern whether the 3rd arg to treeTabular2 makes sense -SMRC
-    treeTabular2(cols, query, roots) flatMap (ttab =>
+    postpone(
+      treeTabular2(cols, query, roots) flatMap (ttab =>
       drilldownBarChart2(chart.flattenFormat rightMap
                            (_ => ttab map { tab =>
                               (categoryPres extract tab, dataPres extract tab)})))
+    )
   }
 
   final def drilldownTableDMTL2(legend: Option[Legend.U[String]], labelColumn: String, cols: List[(String, String)], order: List[(String, SortOrder)], fact: ClosedExt, roots: ClosedExt): F[C] =
-    treeTabular2(cols, fact, roots) flatMap {tab =>
-      drilldownTable2(labelColumn, cols, legend.isEmpty,
-                     legend.map(lg => tab.label(lg)).getOrElse(tab)
-                       .orderBy(order.toIndexedSeq))
-  }
+    postpone(
+      treeTabular2(cols, fact, roots) flatMap {tab =>
+        drilldownTable2(labelColumn, cols, legend.isEmpty,
+                       legend.map(lg => tab.label(lg)).getOrElse(tab)
+                         .orderBy(order.toIndexedSeq))
+      }
+    )
 
   /** Alias for `columnTable`. */
   final def columnTableDMTL(table: Column.Table[Atomic, ClosedExt]): F[C] =
