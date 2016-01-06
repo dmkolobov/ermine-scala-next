@@ -47,7 +47,7 @@ object Markdown {
   }
 
   def parseMarkdown(inp: String): List[MSyntax] = {
-    inp.split("\\n{2,}").map(MPara compose parseMarkdown2).toList.map(makeBullets)
+    inp.split("\\n{2,2}").map(MPara compose parseMarkdown2).toList.map(makeBullets)
   }
 
   //Simple recursive descent stack-based parser for our lightweight markdownish syntax
