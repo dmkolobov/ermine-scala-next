@@ -580,7 +580,14 @@ object Format {
 
 
   /** Adapt a NumberFormat source to a basicEval. */
-  private def numberFormatEval(fmt: ThreadLocal[ThreadUnsafeNumberFormat]): NelPe => PrimExpr =
+  private def numberFormatEval(fmt: ThreadLocal[ThreadUnsafeNumberFormat]): NelPe => PrimExpr = {
+    val myFmt = fmt.get match {
+      case df:DecimalFormat => {
+        df.setRoundingMode(java.math.RoundingMode.HALF_UP);
+        df
+      }
+      case f => f
+    }
     (pes: NelPe) => pes.head match {
       case ByteExpr(n, v)   => StringExpr(n, fmt.get format v)
       case ShortExpr(n, v)  => StringExpr(n, fmt.get format v)
@@ -589,6 +596,7 @@ object Format {
       case DoubleExpr(n, v) => StringExpr(n, fmt.get format v)
       case pe => pe
     }
+  }
 
   /** Round a DoubleT-typed op to `places`. */
   private def roundOp(places: Int, op: Op): Op =
@@ -728,7 +736,7 @@ object Format {
       case (h, _) => rec(fst)(NonEmptyList(h))
     }
   }
-  
+
   /** Meant for two-field displays: format as one field, a date
     * range. */
   case object DateRange extends Format {
