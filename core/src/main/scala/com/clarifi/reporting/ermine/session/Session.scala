@@ -561,6 +561,28 @@ object Session {
     (ty, Term.eval(a, s.env))
   }
 
+  /* This is intended to be a waypoint between eval and evalInContext
+   * If a module with the given moduleName is available to be imported, then
+   * the expression in text is evaluated with said module imported unqualified.
+   * This is equivalent to evalInContext as long as the expression only uses
+   * public exported definitions from the single module, and is slightly easier
+   * to use than eval.
+   *
+   * The main difference from evalInContext is that the expression may not have
+   * access to the contents of modules imported by the context module. Instead,
+   * the module must re-export such content by using an `export` statement
+   * rather than an import. Fortunately, exported names are identical to the
+   * locally available names, so any expression that would work with
+   * evalInContext will also work with evalInNamedModuleContext so long as the
+   * module exports all its dependencies.
+   */
+  def evalInNamedModuleContext(
+    text: String,
+    moduleName: String,
+    source: String = "<remote>"
+  ): (SessionEnv, Supply, Printer) => Runtime =
+    eval(text, Map((moduleName, (None, List(), false))), source)(_, _, _)._2
+
   def evalInContext(
     moduleText: String,
     exprText: String,
