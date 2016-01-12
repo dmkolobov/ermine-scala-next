@@ -14,7 +14,7 @@ import Show._
 
 // ghc's patError
 case class AltException(loc: Loc, runtimes: List[Runtime]) extends DocException(
-  loc.msg("match error"),
+  loc.report("match error: no match for" :+: fillSep(punctuate("," :: line, runtimes.map(prettyRuntime(_))))).toString,
   loc.report("match error: no match for" :+: fillSep(punctuate("," :: line, runtimes.map(prettyRuntime(_)))))
 ) with Located
 
