@@ -727,6 +727,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         val rx1 = filterRx(rx, where)
         val rx2 = combineAll(rx1, cs)
         SqlPrg(stmts, DistinctiveQuery.select(qs, cs, simplifyPredicate(where, rx), rx1), rx2)
+      case Note(_, under) => compileRel(under, smv, srv)
       case RenameR(r, Attribute(from, ty), to) => sys.error("compiling unoptimized RenameR")
     }
   }

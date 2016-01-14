@@ -21,6 +21,12 @@ import scalaz.\/
 import scalaz.Scalaz._
 
 object Format {
+  private case class DynamicWriterWrapper[-A,+F](inner: Writer[A, F]) {
+    def dynamicF: Writer[A, DynamicF] = inner erase
+  }
+  private implicit def dynWriterWrapper[A,F](in: Writer[A, F]): DynamicWriterWrapper[A,F] =
+    DynamicWriterWrapper(in)
+
   def recordW: Writer[Record, RepeatF[StringF & PrimExprF]] =
     repeatW(tuple2W(stringW, primExprW)) cmap ((t: Record) => t.toList)
 
@@ -222,25 +228,26 @@ object Format {
   def relW[M,R](implicit wm: Writer[M, DynamicF],
                          wr: Writer[R, DynamicF]): Writer[Relation[M, R], DynamicF] =
     fixW((self: Writer[Relation[M, R], DynamicF]) =>
-      s18W(wr, // Var
-           tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))), // Limit
-           tuple3W(repeatW(self), mapW(attributeW, opW), predicateW), // Select
-           tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))), // Let
-           tuple2W(self, self), // Join
-           tuple3W(self, self, repeatW(tuple2W(stringW, stringW))), // JoinOn
-           tuple2W(self, self), // Union
-           tuple2W(self, self), // Minus
-           tuple2W(self, predicateW), // Filter
-           tuple2W(self, mapW(attributeW, opW)), // Project
-           tuple2W(self, repeatW(stringW)), // Except
-           tuple3W(self, attributeW, opW), // Combine
-           tuple3W(self, attributeW, aggW), // Aggregate
-           tuple2W(headerW, tuple2W(stringW, repeatW(stringW))), // Table
-           tuple4W(repeatW(W_\/(tuple2W(stringW, self), primExprW)), orderedHeaderW, stringW, repeatW(stringW)), // TableProc
+      s19W(wr, // Var
+           tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))) dynamicF, // Limit
+           tuple3W(repeatW(self), mapW(attributeW, opW), predicateW) dynamicF, // Select
+           tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))) dynamicF, // Let
+           tuple2W(self, self) dynamicF, // Join
+           tuple3W(self, self, repeatW(tuple2W(stringW, stringW))) dynamicF, // JoinOn
+           tuple2W(self, self) dynamicF, // Union
+           tuple2W(self, self) dynamicF, // Minus
+           tuple2W(self, predicateW) dynamicF, // Filter
+           tuple2W(self, mapW(attributeW, opW)) dynamicF, // Project
+           tuple2W(self, repeatW(stringW)) dynamicF, // Except
+           tuple3W(self, attributeW, opW) dynamicF, // Combine
+           tuple3W(self, attributeW, aggW) dynamicF, // Aggregate
+           tuple2W(headerW, tuple2W(stringW, repeatW(stringW))) dynamicF, // Table
+           tuple4W(repeatW(W_\/(tuple2W(stringW, self), primExprW)), orderedHeaderW, stringW, repeatW(stringW)) dynamicF, // TableProc
            headerW, // RelEmpty
-           repeatW(recordW), // SmallLit
-           self
-         )((v, lim, sel, let, join, on, un, min, fil, proj, exc, comb, agg, tab, tabproc, empt, sl, m) =>
+           repeatW(recordW) dynamicF, // SmallLit
+           self,
+           tuple2W(repeatW(stringW), self) dynamicF // Note
+         )((v, lim, sel, let, join, on, un, min, fil, proj, exc, comb, agg, tab, tabproc, empt, sl, m, note) =>
            (r: Relation[M, R]) => r match {
              case VarR(x) => v(x)
              case Limit(a, b, c, d) => lim((a, b, c, d.map(p => (p._1, p._2 == Asc)).toList))
@@ -261,6 +268,7 @@ object Format {
              case SmallLit(ts) => sl(ts.toList)
              case MemoR(r) => m(r)
              case QuoteR(_) => sys.error("Can't serialize a QuoteR! (it has just a raw object in it.)")
+             case Note(ts, under) => note(ts, under)
              // Don't put a catch all here, so we can get compile errors.
            }) erase)
 

@@ -519,6 +519,7 @@ object Optimizer {
       val h = oh.toMap
       val oargs = TableProc.relFunctor(args)(ir => optimizeRel(ir, hr, hm)._3)
       (h, h, PureSelect(TableProc(oargs, oh, fun, ns), h))
+    case Note(tags, under) => optimizeRel(under, hr, hm)
     case r =>
       implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
       val h = Typer.relTyperAux[Id, M, R](r, hr, hm)
