@@ -288,7 +288,7 @@ object Markdown {
       lm match {
         case MBullet(inner) :: xs => if(inListContext) go(xs,true,"<li>"+markdownListToHTML(inner) :: r)
                                      else go(xs,true,"<ul>"+markdownListToHTML(inner) :: r)
-        case x :: xs => if(inListContext) go(xs,false,markdownToHTML(x) + "</ul>" :: r)
+        case x :: xs => if(inListContext) go(xs,false,"</ul>" + markdownToHTML(x):: r)
                         else go(xs,false,markdownToHTML(x)::r)
         case Nil => r.reverse.mkString
       }
