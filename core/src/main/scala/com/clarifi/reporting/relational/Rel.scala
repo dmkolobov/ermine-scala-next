@@ -218,6 +218,11 @@ case class Note[+M,+R](tags: List[String], under: Relation[M,R]) extends Relatio
     Note(tags, under.unquote(f, g))
 }
 
+object Annotated {
+  def apply[M,R](ts: List[String], un: Relation[M, R]): Relation[M,R] =
+    if (ts.isEmpty) un else Note(ts, un)
+}
+
 sealed abstract class HardRel extends Relation[Nothing, Nothing] {
   def bimap[N, S](f: Nothing => N, g: Nothing => S) = this
   def subst[N, S](f: Nothing => Mem[S, N], g: Nothing => Relation[N, S]) = this
