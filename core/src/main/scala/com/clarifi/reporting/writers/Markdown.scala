@@ -287,7 +287,7 @@ object Markdown {
     def go(lm : List[MSyntax], inListContext : Boolean, r : List[String]) : String =
       lm match {
         case MBullet(inner) :: xs => if(inListContext) go(xs,true,"<li>"+markdownListToHTML(inner) :: r)
-                                     else go(xs,true,"<ul>"+markdownListToHTML(inner) :: r)
+                                     else go(xs,true,"<ul><li>"+markdownListToHTML(inner) :: r)
         case x :: xs => if(inListContext) go(xs,false,"</ul>" + markdownToHTML(x):: r)
                         else go(xs,false,markdownToHTML(x)::r)
         case Nil => r.reverse.mkString
