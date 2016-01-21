@@ -141,8 +141,8 @@ object MinusE {
 }
 
 object MemoE {
-  def apply[M, R](r: Ext[M, R]) : Ext[M, R] = r match {
-    case ExtRel(e,db) => ExtRel(MemoR(e), db)
+  def apply[M, R](r: Ext[M, R], pk: List[String] = List()) : Ext[M, R] = r match {
+    case ExtRel(e,db) => ExtRel(MemoR(e, pk), db)
     case e => e
   }
 }

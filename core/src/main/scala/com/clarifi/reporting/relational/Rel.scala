@@ -77,19 +77,19 @@ case class SelectR[+M,+R](
     SelectR(rs.map(_.unquote(f, g)), cs, where)
 }
 
-case class MemoR[+M,+R](r: Relation[M,R]) extends Relation[M,R] {
-  def bimap[N, S](f: M => N, g : R => S) = MemoR(r.bimap(f,g))
-  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = MemoR(r.subst(f,g))
+case class MemoR[+M,+R](r: Relation[M,R], pk: List[String]) extends Relation[M,R] {
+  def bimap[N, S](f: M => N, g : R => S) = MemoR(r.bimap(f,g), pk)
+  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = MemoR(r.subst(f,g), pk)
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = r.bifoldMap(f,g)
   def foreach(f: M => Any, g: R => Any) = r.foreach(f,g)
   override def equals(other: Any) = other match {
-    case MemoR(r2) => r == r2
+    case MemoR(r2, pk2) => r == r2 && pk == pk2
     case _ => false
   }
-  override def hashCode: Int = (r, 1).hashCode
+  override def hashCode: Int = (r, pk, 1).hashCode
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
-    MemoR(r.unquote(f, g))
+    MemoR(r.unquote(f, g), pk)
 }
 
 case class LetR[+M,+R](r: Ext[M,R], expr: Relation[M,RLevel[M, R]]) extends Relation[M,R] {

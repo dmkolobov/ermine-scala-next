@@ -30,6 +30,7 @@ import scalaz.syntax.monad._
 import scalaz.syntax.traverse.{ToFunctorOps => _, _}
 // important for instance resolution.
 import scala.collection.immutable.IndexedSeq
+import scala.collection.immutable.SortedSet
 
 import com.clarifi.machines._
 import Plan.{ await, awaits, emit }
@@ -715,14 +716,22 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                    DistinctiveQuery.table(h, n),
                    Reflexivity literal ts)
         }
-      case MemoR(r) => {
+      case MemoR(r,pk) => {
         val rc = compileRel(r,smv,srv)
         // val relHash = "MemoHash_" + (r, scopeBuilder).##.toString
         val scopeStr : List[String] = scopeBuilder.map(mkstr => mkstr())
         val relHash = "MemoHash_" + java.security.MessageDigest.getInstance("SHA").digest(s"$r\n$scopeStr".getBytes("UTF-8")).map("%02x" format _).mkString
         val myTN = TableName(relHash, List(), TableName.Persistent)
         val create :: fillStat = fillTable(myTN, rc.q.h, rc.q.q(true)._2)
-        val myPrg = List(SqlCreateIfNotExists(myTN, rc.prg, create, fillStat))
+        val createWithKey = if (pk.isEmpty) {
+                              create
+                            } else {
+                              create match {
+                                case c: SqlCreate => c.copy(hints = c.hints.reorder(pk).withPK(SortedSet(pk: _*)))
+                                case _ => sys.error("Panic: The impossible happened: create table statement was not a create table statement")
+                              }
+                            }
+        val myPrg = List(SqlCreateIfNotExists(myTN, rc.prg, createWithKey, fillStat))
 	SqlPrg(myPrg, DistinctiveQuery.table(rc.q.h, myTN), rc.refl)
       }
       case LetR(ext, exp) =>

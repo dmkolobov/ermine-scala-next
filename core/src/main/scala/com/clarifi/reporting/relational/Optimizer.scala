@@ -512,9 +512,9 @@ object Optimizer {
         case Some(x) => hr(x)
       }, hm)
       (h2, h2, PureSelect(LetR(r2, Relation.toScope(impurify(e2,jh))), h2))
-    case MemoR(r) =>
+    case MemoR(r, pk) =>
       val (h, jh, r2) = optimizeRel(r, hr, hm)
-      (h, h, PureSelect(MemoR(impurify(r2, jh)), h))
+      (h, h, PureSelect(MemoR(impurify(r2, jh), pk), h))
     case TableProc(args, oh, fun, ns) =>
       val h = oh.toMap
       val oargs = TableProc.relFunctor(args)(ir => optimizeRel(ir, hr, hm)._3)

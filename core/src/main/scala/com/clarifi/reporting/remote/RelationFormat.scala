@@ -288,7 +288,7 @@ object Format {
            tuple4W(repeatW(W_\/(tuple2W(stringW, self), primExprW)), orderedHeaderW, stringW, repeatW(stringW)), // TableProc
            headerW, // RelEmpty
            repeatW(recordW), // SmallLit
-           self
+           tuple2W(self, repeatW(stringW)) // MemoR
          )((v, lim, sel, let, join, on, un, min, fil, proj, exc, comb, agg, tab, tabproc, empt, sl, m) =>
            (r: Relation[M, R]) => r match {
              case VarR(x) => v(x)
@@ -308,7 +308,7 @@ object Format {
              case TableProc(a, b, c, d) => tabproc((a, b, c, d))
              case RelEmpty(h) => empt(h)
              case SmallLit(ts) => sl(ts.toList)
-             case MemoR(r) => m(r)
+             case MemoR(r, pk) => m(r, pk)
              case QuoteR(_) => sys.error("Can't serialize a QuoteR! (it has just a raw object in it.)")
              // Don't put a catch all here, so we can get compile errors.
            }) erase)
@@ -333,7 +333,7 @@ object Format {
           orderedHeaderR, stringR, listR(stringR))(TableProc(_, _, _, _)),
       headerR.map(RelEmpty(_)),
       listR(recordR).map(xs => SmallLit(xs.toNel.get)),
-      self.map(MemoR(_))
+      p2R(self, listR(stringR))((r, pk) => MemoR(r, pk))
     ) erase)
 
   lazy val orderedHeaderR: Reader[Header.Ordered, OrderedHeaderF] =

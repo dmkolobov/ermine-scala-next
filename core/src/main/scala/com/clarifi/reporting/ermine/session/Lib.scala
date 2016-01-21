@@ -567,6 +567,11 @@ object Lib {
           case EmptyRel => EmptyRel
         }),
       FAR(z => FA(rho ->: star, rel => relationalCombCon(rel) =>: rel(z) ->: rel(z))))
+    primOp(Global("Relation","memoRelWithPK"), fun2("Relation.memoRelWithPK", {
+          case Rel(r) => { case Prim(pk) => Rel(MemoE(r, pk.asInstanceOf[List[String]])) }
+          case EmptyRel => { case _ => EmptyRel }
+        }),
+      FAR(z => FA(rho ->: star, rel => relationalCombCon(rel) =>: rel(z) ->: listH(string) ->: rel(z))))
     primOp(Global("Relation.Aggregate", "aggregateByGroup#"), fun4("Relation.Aggregate.aggregateByGroup#", {
         case aggFun => {
           case Prim(row) => {

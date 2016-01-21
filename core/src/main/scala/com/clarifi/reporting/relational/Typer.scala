@@ -266,7 +266,7 @@ object Typer {
       case AggregateByGroup(r,cs,aggs,grp) => go(r) flatMap (aggregateByGroupType[F](_, cs, aggs, grp))
       case SelectR(as, proj, filt) => as.traverse(go _) flatMap (selectType[F](_, proj, filt))
       case (r: HardRel)            => r.header.pure[F]
-      case MemoR(r) => go(r)
+      case MemoR(r, _) => go(r)
       case LetR(r, expr) => for {
         h1 <- extTyperAux(r, rtype, mtype)
         h2 <- relTyperAux(expr, (r: RLevel[M, R]) => r match {
