@@ -831,7 +831,11 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
     raw("CREATE ") |+| " TABLE " |+| emitTableName(t)
 
   def checkExists(t: TableName, col: ColumnName): (RawSql, SQLException => Boolean) =
-    (raw("select object_id(N'") |+| emitTableName(t)
+    (raw("select object_id(N'") |+| (t.scope match {
+                                       case TableName.Temporary => raw("tempdb.dbo.")
+                                       case _ => raw("")
+                                     })
+       |+| emitTableName(t)
        |+| raw("') ") |+| emitColumnName(col) |+| emitFromEmptyTable,
      e => e.getErrorCode == 2714)
 }
