@@ -295,6 +295,12 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
 
   /** Emit a literal relation */
   def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
+    fallbackEmitLiteral(n)
+
+  /** Emit a literal relation in a compatible way
+    * (it would be on the object like all the others, but it needs 'this')
+    */
+  def fallbackEmitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
     SqlNaryOp(SqlUnion, n.map(t => SqlSelect(options = Set("distinct"), attrs = t):SqlQuery)).emitSql(this)
 
   /** Emit an empty relation */
@@ -654,6 +660,25 @@ trait EmitCheckExists_AlwaysFails extends SqlEmitter {
      Function const false)
 }
 
+/** Emit a literal relation as a TVC */
+trait EmitLiteralTVC extends SqlEmitter {
+  /** @todo Is it possible to avoid this redundant select? */
+  override def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
+    (raw("select * from (values ")
+      |+| n.map(r => r.toIndexedSeq
+                      .sortBy((_: (SqlColumn, SqlExpr))._1)
+                      .map(c => c._2.emitSql(this))
+                      .toList
+                      .rawMkString("(", ", ", ")"))
+           .rawMkString(", ")
+      |+| ") as lit"
+      |+| n.head.toIndexedSeq
+           .sortBy((_: (SqlColumn, SqlExpr))._1)
+           .map(c => this.emitColumnName(c._1))
+           .toList
+           .rawMkString("(", ",", ")"))
+}
+
 //////////////////////////////////////////////////////////////////////////////
 // SQL dialect implementations
 
@@ -787,6 +812,7 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitStddevVar_MsSQL
                                       with EmitUuid_Strings
                                       with EmitBinaryOrdering_Ignored
+                                      with EmitLiteralTVC
                                       with EmitName_MsSql {
 
   def isTransactional: Boolean = true
@@ -999,6 +1025,9 @@ object SqlEmitter {
       case DateT(n)     => nn(n,"datetime")
       case _ => SqlEmitter.fallbackSqlTypeName(p)
     }
+
+    override def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
+      fallbackEmitLiteral(n)
   }
   val verticaSqlEmitter = new VerticaSqlEmitter
 
