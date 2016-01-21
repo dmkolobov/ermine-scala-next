@@ -61,6 +61,7 @@ sealed abstract class SqlQuery {
       cols.toIndexedSeq.sorted.map {(c: ColumnName) => raw("(") |+| emitter.emitColumnName(c) |+| ")"}.rawMkString(", ") |+|
       " from " |+| this.emitSubquery
     case LiteralSqlTable(nel) => emitter.emitLiteral(nel)
+    case SqlEmpty(h) => emitter.emitEmpty(h)
     case _ => sys.error("SQL does not directly support this kind of query: " + this)
   }
 
@@ -127,6 +128,9 @@ case class SqlExcept(left: SqlQuery, unLeft: TableName, right: SqlQuery, unRight
 
 // A table with one row but no columns
 case object SqlOne extends SqlQuery
+
+// A table with no rows
+case class SqlEmpty(h: Header) extends SqlQuery
 
 // Parentheses in SQL query
 case class SqlParens(q: SqlQuery) extends SqlQuery

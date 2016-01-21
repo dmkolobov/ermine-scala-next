@@ -297,6 +297,10 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
     SqlNaryOp(SqlUnion, n.map(t => SqlSelect(options = Set("distinct"), attrs = t):SqlQuery)).emitSql(this)
 
+  /** Emit an empty relation */
+  def emitEmpty(queryHeader: Header): RawSql =
+    SqlSelect(attrs = queryHeader.mapValues(_ => LitSqlExpr(SqlNull)), criteria = List(SqlTruth(false))).emitSql(this)
+
   /**
    * Takes a list of SqlExprs and returns a SqlExpr representing that list
    * concatenated together.  Defers to `emitConcat_helper` for

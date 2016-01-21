@@ -700,22 +700,21 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                DistinctiveQuery.table(h, sink),
                Reflexivity.zero)
       case RelEmpty(h) =>
-        val un = guidName
-        val n = TableName(un, List(), TableName.Temporary)
-        SqlPrg(List(SqlCreate(table = TableName(un, List(), TableName.Temporary),
-                              header = h)),
-               DistinctiveQuery.table(h, n), KnownEmpty())
+        SqlPrg(List(), DistinctiveQuery.empty(h), KnownEmpty())
       case QuoteR(_) => sys.error("Cannot scan quotes")
       case l@SmallLit(ts) =>
-        import com.clarifi.machines.Source
-        val h = l.header
-        val un = guidName
-        val n = TableName(un, List(), TableName.Temporary)
-        SqlPrg(List(SqlCreate(table = TableName(un, List(), TableName.Temporary),
-                              header = h),
-                    SqlLoad(TableName(un, List(), TableName.Temporary), h, procedureFromSource(Source.source(ts.toList)).point[DB])),
-               DistinctiveQuery.table(h, n),
-               Reflexivity literal ts)
+        if (ts.size <= 100) {
+            SqlPrg(List(), DistinctiveQuery.literal(l), Reflexivity literal ts)
+        } else {
+            val h = l.header
+            val un = guidName
+            val n = TableName(un, List(), TableName.Temporary)
+            SqlPrg(List(SqlCreate(table = TableName(un, List(), TableName.Temporary),
+                                  header = h),
+                        SqlLoad(TableName(un, List(), TableName.Temporary), h, procedureFromSource(com.clarifi.machines.Source.source(ts.toList)).point[DB])),
+                   DistinctiveQuery.table(h, n),
+                   Reflexivity literal ts)
+        }
       case MemoR(r) => {
         val rc = compileRel(r,smv,srv)
         // val relHash = "MemoHash_" + (r, scopeBuilder).##.toString
@@ -818,6 +817,14 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                                  (l, r) = natJoinAtom
                                } yield SqlEq(ColumnSqlExpr(TableName(l), colName),
                                              ColumnSqlExpr(TableName(r), colName))).toList)))
+    }
+
+    def literal(l: SmallLit)(implicit sup: Supply): DistinctiveQuery = {
+      DistinctiveQuery(l.header, _ => (true, LiteralSqlTable(l.tups.map(r => r.mapValues(x => SqlExpr.compileLiteral(x))))))
+    }
+
+    def empty(h: Header)(implicit sup: Supply): DistinctiveQuery = {
+      DistinctiveQuery(h, _ => (true, SqlEmpty(h)))
     }
   }
 
