@@ -847,9 +847,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
     def union(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery =
       DistinctiveQuery(h, needDistinct =>
-        (q(distinctEagerly), other.q(distinctEagerly)) match {
+        (q(false), other.q(false)) match {
           case ((d1, q1), (d2, q2)) =>
-            satisfyDistinct(false, needDistinct, SqlUnion(q1, q2))
+            (true, SqlUnion(q1, q2))
         })
 
     def minus(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery = {
