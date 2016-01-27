@@ -228,6 +228,21 @@ case class Aggregate[+M, +R](rel: Relation[M, R], attr: Attribute, agg: AggFunc)
     Aggregate(rel.unquote(f, g), attr, agg)
 }
 
+case class Note[+M,+R](tags: List[String], under: Relation[M,R]) extends Relation[M,R] {
+  def bimap[N, S](f: M => N, g: R => S) = Note(tags, under.bimap(f,g))
+  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Note(tags, under.subst(f,g))
+  def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = under bifoldMap(f, g)
+  def foreach(f: M => Any, g: R => Any) { under foreach (f, g) }
+  override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
+                                       g: Object => Option[Mem[S, N]]): Relation[N, S] =
+    Note(tags, under.unquote(f, g))
+}
+
+object Annotated {
+  def apply[M,R](ts: List[String], un: Relation[M, R]): Relation[M,R] =
+    if (ts.isEmpty) un else Note(ts, un)
+}
+
 sealed abstract class HardRel extends Relation[Nothing, Nothing] {
   def bimap[N, S](f: Nothing => N, g: Nothing => S) = this
   def subst[N, S](f: Nothing => Mem[S, N], g: Nothing => Relation[N, S]) = this

@@ -38,7 +38,7 @@ object TestOptimizer extends Properties("SQL relation optimizer") {
   property("combine followed by project optimized") = secure {
     Optimizer.optimizeRel[Nothing, Nothing](aabbProjComb, (x:Nothing) => x,
                                         (x:Nothing) => x) match {
-      case (h, jh, SelectR(rs, prj, filt)) =>
+      case (_, h, jh, SelectR(rs, prj, filt)) =>
         (rs ?= List(aabbTable)) &&
         (prj ?= Map(Attribute("colAA", IntT()) ->
                     ColumnValue("colAA", IntT()), aaPlusBb)) &&
@@ -53,7 +53,7 @@ object TestOptimizer extends Properties("SQL relation optimizer") {
   property("combine followed by rename optimized") = secure {
     Optimizer.optimizeRel[Nothing, Nothing](aabbRenComb, (x:Nothing) => x,
                                        (x:Nothing) => x) match {
-      case (h, jh, SelectR(rs, prj, filt)) =>
+      case (_, h, jh, SelectR(rs, prj, filt)) =>
         (rs ?= List(aabbTable)) &&
         (prj ?= Map(Attribute("colAA", IntT()) -> ColumnValue("colAA", IntT()),
                     Attribute("colBB", IntT()) -> ColumnValue("colBB", IntT()),
@@ -79,7 +79,7 @@ object TestOptimizer extends Properties("SQL relation optimizer") {
   property("optimize leaf literal") = secure {
     val r = Join(aabbTable, LetR(ExtMem(lit), VarR(RTop)))
     Optimizer.optimizeRel[Nothing, Nothing](r, (x:Nothing) => x, (x:Nothing) => x) match {
-      case (h, jh, SelectR(rs, prj, filt)) =>
+      case (_, h, jh, SelectR(rs, prj, filt)) =>
         (rs ?= List(aabbTable)) &&
         (prj ?= Map(Attribute("colAA", IntT()) -> ColumnValue("colAA", IntT()),
                     Attribute("colBB", IntT()) -> ColumnValue("colBB", IntT()),
@@ -93,7 +93,7 @@ object TestOptimizer extends Properties("SQL relation optimizer") {
   property("optimize inner literal") = secure {
     val r = LetR(ExtMem(lit), Join(VarR(RPop(aabbTable)), VarR(RTop)))
     Optimizer.optimizeRel[Nothing, Nothing](r, (x:Nothing) => x, (x:Nothing) => x) match {
-      case (h, jh, SelectR(rs, prj, filt)) =>
+      case (_, h, jh, SelectR(rs, prj, filt)) =>
         (rs ?= List(aabbTable)) &&
         (prj ?= Map(Attribute("colAA", IntT()) -> ColumnValue("colAA", IntT()),
                     Attribute("colBB", IntT()) -> ColumnValue("colBB", IntT()),

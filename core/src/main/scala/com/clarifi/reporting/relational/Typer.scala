@@ -276,6 +276,7 @@ object Typer {
       } yield h2
       case TableProc(args, h, _, _) =>
         TableProc.relFoldable.traverse_(args)(go(_)) >| h.toMap
+      case Note(_, under) => go(under)
     }
   }
 

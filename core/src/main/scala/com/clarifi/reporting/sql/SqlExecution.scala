@@ -22,7 +22,7 @@ class SqlExecution(implicit emitter: SqlEmitter) {
 
   import Machine.ProcessCategory._
 
-  def scanQuery[A](sql: SqlQuery, h: Header): DB[Procedure[Id,Record]] = conn => {
+  def scanQuery[A](sql: SqlQuery, h: Header, notes: List[String] = List()): DB[Procedure[Id,Record]] = conn => {
     new EffectfulProcedure[Record] {
 
       type K = Record => Any
@@ -34,6 +34,7 @@ class SqlExecution(implicit emitter: SqlEmitter) {
         val query = sql.emitSql
         val qStart = System.currentTimeMillis
         logger ltrace ("Executing query " |+| query.run)
+        notes foreach { n => logger ltrace ("Note: " |+| n) }
 
         /*  For mySQL connections, to enable streamed resultsets, 
             stmt = conn.createStatement(java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY);
