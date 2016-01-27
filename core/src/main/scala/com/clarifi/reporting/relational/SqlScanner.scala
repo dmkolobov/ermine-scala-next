@@ -33,6 +33,7 @@ import com.clarifi.reporting.util.PimpedLogger._
 
 class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[DB] {
   case class SqlPrg(prg: List[SqlStatement],
+                    notes: List[String],
                     q: DistinctiveQuery,
                     refl: Reflexivity[ColumnName])
 
@@ -133,9 +134,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                         order: List[(String, SortOrder)] = List()): DB[A] = {
     implicit val sup = Supply.create
     compileRel(Optimizer.optimize(m), (x:Nothing) => x, (x: Nothing) => x) match {
-      case SqlPrg(p, q, rx) => for {
+      case SqlPrg(p, ns, q, rx) => for {
 	ts <- sequenceSql(p)
-        a <- scanAndUniq(q, order) map (_ andThen f execute)
+        a <- scanAndUniq(q, order, ns) map (_ andThen f execute)
         _ <- cleanTempTables(ts)
       } yield a
     }
@@ -186,14 +187,15 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
   private[this]
   def scanAndUniq(dq: DistinctiveQuery,
-                  order: List[(String, SortOrder)])(implicit sup: Supply): DB[Procedure[Id, Record]] =
+                  order: List[(String, SortOrder)],
+                  notes: List[String])(implicit sup: Supply): DB[Procedure[Id, Record]] =
     dq.q(false) match {
       case (d, q) =>
-        if (d) scanQuery(orderQuery(dq.h, q, order), dq.h) // already distinct
+        if (d) scanQuery(orderQuery(dq.h, q, order), dq.h, notes) // already distinct
         else {
           val unsortedCols = dq.h.keySet -- order.map(_._1)
           val totalOrder = order ++ unsortedCols.toList.map(c => (c, Asc))
-          scanQuery(orderQuery(dq.h, q, totalOrder), dq.h) map (_ andThen uniqSorted)
+          scanQuery(orderQuery(dq.h, q, totalOrder), dq.h, notes) map (_ andThen uniqSorted)
         }
     }
 
@@ -214,8 +216,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         }
       case EmbedMem(ExtMem(e)) => compileMem(e, smv, srv)
       case EmbedMem(ExtRel(e, _)) => // TODO: Ditto
-        val SqlPrg(ps, q, rx) = compileRel(e, smv, srv)
-        MemPrg(q.h, ps, o => scanAndUniq(q, o), rx)
+        val SqlPrg(ps, ns, q, rx) = compileRel(e, smv, srv)
+        MemPrg(q.h, ps, o => scanAndUniq(q, o, ns), rx)
       case EmbedMem(ExtSM(e)) =>
         val (p, h, rx) = sms(e)
         MemPrg(h, List(), p, rx)
@@ -606,9 +608,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       r: Relation[M,R],
       f: (DistinctiveQuery, DistinctiveQuery) => DistinctiveQuery,
       g: (Reflexivity[ColumnName], Reflexivity[ColumnName]) => Reflexivity[ColumnName]) = {
-      val SqlPrg(p1, q1, refl1) = compileRel(l, smv, srv)
-      val SqlPrg(p2, q2, refl2) = compileRel(r, smv, srv)
-      SqlPrg(p1 ++ p2, f(q1, q2), g(refl1, refl2))
+      val SqlPrg(p1, ns1, q1, refl1) = compileRel(l, smv, srv)
+      val SqlPrg(p2, ns2, q2, refl2) = compileRel(r, smv, srv)
+      SqlPrg(p1 ++ p2, ns1 ++ ns2, f(q1, q2), g(refl1, refl2))
     }
 
     m match {
@@ -622,31 +624,32 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       case Minus(l, r) =>
         combineBinary(l, r, _ minus _, _ || _)
       case Filter(r, pred) =>
-        val SqlPrg(p, q, rx) = compileRel(r, smv, srv)
+        val SqlPrg(p, ns, q, rx) = compileRel(r, smv, srv)
         val pred1 = simplifyPredicate(pred, rx)
-        SqlPrg(p, q.filter(pred1), filterRx(rx, pred))
+        SqlPrg(p, ns, q.filter(pred1), filterRx(rx, pred))
       case Project(r, cols) =>
-        val SqlPrg(p, q, rx) = compileRel(r, smv, srv)
+        val SqlPrg(p, ns, q, rx) = compileRel(r, smv, srv)
         SqlPrg(p,
+               ns,
                q project (cols,rx),
                combineAll(rx, cols))
       case AggregateByGroup(r,cs,aggs,group) =>
-        val SqlPrg(p, q, _) = compileRel(r, smv, srv)
-        SqlPrg(p, q.aggregateByGroup(cs,aggs,group), ForallTups(aggs.map(_._1.name -> None).toMap, PartitionedSet.zero))
+        val SqlPrg(p, ns, q, _) = compileRel(r, smv, srv)
+        SqlPrg(p, ns, q.aggregateByGroup(cs,aggs,group), ForallTups(aggs.map(_._1.name -> None).toMap, PartitionedSet.zero))
       case Aggregate(r, attr, f) =>
-        val SqlPrg(p, q, _) = compileRel(r, smv, srv)
-        SqlPrg(p, q.aggregate(attr, f), ForallTups(Map(attr.name -> None), PartitionedSet.zero))
+        val SqlPrg(p, ns, q, _) = compileRel(r, smv, srv)
+        SqlPrg(p, ns, q.aggregate(attr, f), ForallTups(Map(attr.name -> None), PartitionedSet.zero))
       case Except(r, cs) =>
-        val SqlPrg(p, q, rx) = compileRel(r, smv, srv)
-        SqlPrg(p, q except cs, rx filterKeys (!cs.contains(_)))
+        val SqlPrg(p, ns, q, rx) = compileRel(r, smv, srv)
+        SqlPrg(p, ns, q except cs, rx filterKeys (!cs.contains(_)))
       case Combine(r, attr, op) =>
-        val SqlPrg(p, q, rx) = compileRel(r, smv, srv)
-        SqlPrg(p, q combine (attr, op), combineAll(rx, Map(attr -> op), true))
+        val SqlPrg(p, ns, q, rx) = compileRel(r, smv, srv)
+        SqlPrg(p, ns, q combine (attr, op), combineAll(rx, Map(attr -> op), true))
       case Limit(r, from, to, order) =>
-        val SqlPrg(p, q, rx) = compileRel(r, smv, srv)
+        val SqlPrg(p, ns, q, rx) = compileRel(r, smv, srv)
 
-        SqlPrg(p, q limit (from, to, order), rx)
-      case Table(h, n) => SqlPrg(List(), DistinctiveQuery.table(h, n), Reflexivity.zero)
+        SqlPrg(p, ns, q limit (from, to, order), rx)
+      case Table(h, n) => SqlPrg(List(), List(), DistinctiveQuery.table(h, n), Reflexivity.zero)
       case TableProc(args, oh, src, namespace) =>
         val h = oh.toMap
         val argable = TableProc.argFunctor.map(args){case (typeName, r) =>
@@ -658,12 +661,13 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                   :+ SqlCreate(table = sink, header = h)
                   :+ SqlExec(sink, src, namespace,
                              TableProc.argFoldable.foldMap(argable){
-                               case (unt, SqlPrg(_, iq, _)) =>
+                               case (unt, SqlPrg(_, _, iq, _)) => // TODO: notes?
                                  fillTable(unt, iq.h, iq.q(true)._2)
                              }, oh map (_._1),
                              argable map (_ bimap (_._1,
                                                    SqlExpr.compileLiteral)))
                  toList,
+               List(),
                DistinctiveQuery.table(h, sink),
                Reflexivity.zero)
       case RelEmpty(h) =>
@@ -671,6 +675,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         val n = TableName(un, List(), TableName.Temporary)
         SqlPrg(List(SqlCreate(table = TableName(un, List(), TableName.Temporary),
                               header = h)),
+               List[String](),
                DistinctiveQuery.table(h, n), KnownEmpty())
       case QuoteR(_) => sys.error("Cannot scan quotes")
       case l@SmallLit(ts) =>
@@ -681,6 +686,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         SqlPrg(List(SqlCreate(table = TableName(un, List(), TableName.Temporary),
                               header = h),
                     SqlLoad(TableName(un, List(), TableName.Temporary), h, procedureFromSource(Source.source(ts.toList)).point[DB])),
+               List[String](),
                DistinctiveQuery.table(h, n),
                Reflexivity literal ts)
       case MemoR(r) => {
@@ -689,14 +695,14 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 	val myTN = TableName(relHash, List(), TableName.Persistent)
 	val fillStat = fillTable(myTN, rc.q.h, rc.q.q(true)._2)
 	val myPrg = List(SqlIfNotExists(myTN,rc.prg ++ fillStat))
-	SqlPrg(myPrg, DistinctiveQuery.table(rc.q.h, myTN), rc.refl)
+	SqlPrg(myPrg, List(), DistinctiveQuery.table(rc.q.h, myTN), rc.refl)
       }
       case LetR(ext, exp) =>
         val un = guidName
         val tn = TableName(un, List(), TableName.Temporary)
         val tup = ext match {
           case ExtRel(rel, _) => // TODO: Handle namespace
-            val SqlPrg(ip, iq, rx) = compileRel(rel, smv, srv)
+            val SqlPrg(ip, _, iq, rx) = compileRel(rel, smv, srv) // TODO: do something with notes
             (iq.h, rx, ip ++ fillTable(tn, iq.h, iq.q(true)._2))
           case ExtSM(sm) =>
             val (pop, h, rx) = sms(sm)
@@ -710,24 +716,27 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                               SqlLoad(tn, h, pop(List()))))
         }
         val (ih, rx1, ps) = tup
-        val SqlPrg(p, q, rx2) = compileRel(exp, smv, (v: RLevel[M,R]) => v match {
-          case RTop => SqlPrg(List(), DistinctiveQuery.table(ih, tn), rx1)
+        val SqlPrg(p, ns, q, rx2) = compileRel(exp, smv, (v: RLevel[M,R]) => v match {
+          case RTop => SqlPrg(List(), List(), DistinctiveQuery.table(ih, tn), rx1)
           case RPop(e) => compileRel(e, smv, srv)
         })
-        SqlPrg(ps ++ p, q, rx2)
+        SqlPrg(ps ++ p, ns, q, rx2)
       case SelectR(rs, cs, where) =>
         // Here be dragons.
         val prgs = rs.map(compileRel(_, smv, srv))
-        val (stmts, qs, rx) = prgs.foldRight((List[SqlStatement](),
-                                              List[DistinctiveQuery](),
-                                              Reflexivity.zero[ColumnName])) {
-          case (SqlPrg(stmts, q, rx), (astmts, qs, rxs)) =>
-            (stmts ++ astmts, q :: qs, rx && rxs)
+        val (stmts, ns, qs, rx) = prgs.foldRight((List[SqlStatement](),
+                                                  List[String](),
+                                                  List[DistinctiveQuery](),
+                                                  Reflexivity.zero[ColumnName])) {
+          case (SqlPrg(stmts, ns, q, rx), (astmts, notes, qs, rxs)) =>
+            (stmts ++ astmts, ns ++ notes, q :: qs, rx && rxs)
           }
         val rx1 = filterRx(rx, where)
         val rx2 = combineAll(rx1, cs)
-        SqlPrg(stmts, DistinctiveQuery.select(qs, cs, simplifyPredicate(where, rx), rx1), rx2)
-      case Note(_, under) => compileRel(under, smv, srv)
+        SqlPrg(stmts, ns, DistinctiveQuery.select(qs, cs, simplifyPredicate(where, rx), rx1), rx2)
+      case Note(ns, under) =>
+        val SqlPrg(stmts, notes, q, rx) = compileRel(under, smv, srv)
+        SqlPrg(stmts, ns ++ notes, q, rx)
       case RenameR(r, Attribute(from, ty), to) => sys.error("compiling unoptimized RenameR")
     }
   }
