@@ -585,6 +585,15 @@ object Lib {
       FAR(r => FA(a => FAR(f => FAR(s => FAR(u => FAR( t =>
           aggregate(r, a) ->: listH(pairH(string, primt)) ->: field(f, a) ->: relationT(s) ->: relationT(t))))))))
 
+    primOp(Global("Relation","note"), fun2("Relation.note", {
+      case s => {
+        case EmptyRel => EmptyRel
+        case Rel(ExtRel(r, db)) =>
+          Rel(ExtRel(Note(List(s.extract[String]), r), db))
+      }}),
+      FAR(r => string ->: relationT(r) ->: relationT(r))
+    )
+
     primOp(Global("Relation","join"), fun2("Relation.join", {
       case EmptyRel => { case EmptyRel|Rel(_) => EmptyRel }
       case Rel(r1) => {
