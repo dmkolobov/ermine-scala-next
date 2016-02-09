@@ -157,20 +157,20 @@ abstract class Writer[F[_],C] { self =>
     val tablestr = ((_:Atomic)() extractNullableString "") <-: table
     val (ext, lgstr) = KeyValueTabular dynamicSchema tablestr
     val initSort = tablestr.initialSort.toList
-    table.drilldown match {
-      case Some(List(((pid, cid), _))) =>
-        // XXX SMRC We pretend we know what the labelColumn is here.
-        // Specify it with the Legend if you want it to be right.
-        drilldownTableDMTL(Some(lgstr), lgstr.columnReferencesList.head, pid, cid,
-                           initSort, ext)
-      case Some(cols) =>
-        // XXX SMRC We pretend we know what the labelColumn is here.
-        // Specify it with the Legend if you want it to be right.
-        drilldownTableDMTL2(Some(lgstr), lgstr.columnReferencesList.head, cols.map(_._1),
-                           initSort, ext, table.rootNodes.get)
-
-      case None => if(displayTransposed) transposedTableDMTL(Some(lgstr), initSort, ext)
-                   else tableDMTL(Some(lgstr), initSort, ext)
+    
+    (table.rootNodes, table.drilldown) match {
+      case (Some(roots), Some(cols)) =>
+            // XXX SMRC We pretend we know what the labelColumn is here.
+            // Specify it with the Legend if you want it to be right.
+            drilldownTableDMTL2(Some(lgstr), lgstr.columnReferencesList.head, cols.map(_._1),
+                               initSort, ext, roots)
+      case (None, Some(List(((pid, cid), _)))) => 
+            // XXX SMRC We pretend we know what the labelColumn is here.
+            // Specify it with the Legend if you want it to be right.
+            drilldownTableDMTL(Some(lgstr), lgstr.columnReferencesList.head, pid, cid,
+                               initSort, ext)
+      case _ => if (displayTransposed) transposedTableDMTL(Some(lgstr), initSort, ext)
+                else tableDMTL(Some(lgstr), initSort, ext)
     }
   }
 
