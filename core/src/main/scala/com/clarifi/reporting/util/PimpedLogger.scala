@@ -15,8 +15,9 @@ object PimpedLogger{
     /** Lazy debug message. */
     def ldebug(s: => String): Unit = if (log isDebugEnabled) log debug s
   
-  def lstackTrace: Unit = if (log isTraceEnabled) {
-    val t = Thread.currentThread
-    t.getStackTrace.foreach(log trace _)
+    def lstackTrace: Unit = if (log isTraceEnabled) {
+      val t = Thread.currentThread
+      t.getStackTrace.foreach(log trace _)
+    }
   }
 }
