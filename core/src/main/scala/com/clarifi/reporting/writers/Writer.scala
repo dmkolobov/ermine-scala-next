@@ -529,10 +529,18 @@ abstract class Writer[F[_],C] { self =>
             )
       }
 
-      Tabular.relationRec(rootFact).takeAll.flatMap( roots =>
+      Tabular.relationRec(rootFact).takeAll.flatMap( roots => {
+        val parentKeys = roots.map(parentKey).toSet.toIndexedSeq
+
         Tabular.relationRec(qfact).takeAll.map( rel => {
-          go(roots, rel.groupBy(childKey(_)))
-        }))
+          val parentLookup = rel.groupBy(parentKey(_))
+          val rootRecs = parentKeys.flatMap(parentLookup(_))
+          val childLookup = rel.groupBy(childKey(_))
+
+          go(rootRecs, childLookup)
+        })
+      }
+      )
     }
 
     fact match {
