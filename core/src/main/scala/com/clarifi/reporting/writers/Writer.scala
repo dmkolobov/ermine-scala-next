@@ -343,7 +343,12 @@ abstract class Writer[F[_],C] { self =>
     )
   }
 
-  final def drilldownTableDMTL(legend: Option[Legend.U[String]], labelColumn: String, parentIdColumn: String, childColumn: String, order: List[(String, SortOrder)], fact: ClosedExt): F[C] =
+  final def drilldownTableDMTL(legend: Option[Legend.U[String]]
+    , labelColumn: String
+    , parentIdColumn: String
+    , childColumn: String
+    , order: List[(String, SortOrder)]
+    , fact: ClosedExt): F[C] =
     postpone(
       treeTabular(parentIdColumn, childColumn, fact, rootParentId = 0) flatMap {tab =>
         drilldownTable(labelColumn, parentIdColumn, childColumn, legend.isEmpty,

@@ -80,6 +80,7 @@ foreign
         "MODULE$" tableModule : TableModule
   method "apply" table# : TableModule -> Join# lbl (Single# lbl a)
                        -> Legend# lbl -> PartialSort# lbl
+                       -> Maybe# (Pair# String PrimT)
                        -> Maybe# (List# (Pair# (Pair# String String) PrimT))
                        -> Maybe# Relation#
                        -> Table# lbl a
@@ -90,7 +91,7 @@ foreign
 -- understand.  Total for the given phantom bounds.
 column# : Column (n, Bound (Legend k), p, d) k v
        -> Table# EAtomic# Relation#
-column# = finalize . foldColumn single' hc' join' joinGroup' setLegend' setSortPrio' setDrilldown' setDrilldown2'
+column# = finalize . foldColumn single' hc' join' joinGroup' setLegend' setSortPrio' setDrilldown' setDrilldown2' setRowGroups'
 
 single' r a p s (sp, kcols) =
   let pr = orElse (foldFromRow (unsafePres . asPresentation) valueCols) p
@@ -120,39 +121,54 @@ hc' r (sp, kcols) =
 
 join' jt zs s =
   let trees = cosequence zs s
-  in (foldMap_L (mproduct3 (altMonoid maybeAlt) (altMonoid maybeAlt) (altMonoid maybeAlt))
+  in (foldMap_L (mproduct4 (altMonoid maybeAlt) (altMonoid maybeAlt) (altMonoid maybeAlt) (altMonoid maybeAlt))
                 fst trees,
       joinConcat jt (snd <$> trees))
 
 joinGroup' gn z = mapSnd (joinHeading# joinHeadingModule . eatomic ' gn) . z
 
-setLegend' lg z (o, kcols) =
-  let saveLg ((_, dd, root), jt) = ((Just $ unsafeLg lg, dd, root), jt)
-  in saveLg (z (o, (columnsUsed# $ legend# lg) ++_L kcols))
+setLegend' lg z (sp, kcols) =
+  let saveLg ((_, dd, root, rg), jt) = ((Just $ unsafeLg lg, dd, root, rg), jt)
+  in saveLg (z (sp, (columnsUsed# $ legend# lg) ++_L kcols))
 
-setSortPrio' sp z (_, o) = z (sp, o)
+setSortPrio' sp z (_, kcols) = z (sp, kcols)
 
-setDrilldown' pid cid z (o, kcols) =
+setDrilldown' pid cid z (sp, kcols) =
   let pid' = fieldName pid
       cid' = fieldName cid
-      saveDrilldown ((lg, _, _), jt) =
-          ((lg, Just [(pid', cid', prim# $ fieldType cid)]_L, Nothing), jt)
-  in saveDrilldown (z (o, pid' :: cid' :: kcols))
+      saveDrilldown ((lg, _, _, _), jt) =
+          ((lg, Just [(pid', cid', prim# $ fieldType cid)]_L, Nothing, Nothing), jt)
+  in saveDrilldown (z (sp, pid' :: cid' :: kcols))
 
-setDrilldown2' drilldownList rel z (o, kcols) =
+setDrilldown2' drilldownList rel z (sp, kcols) =
   let dd = fromDrilldown drilldownList
       kcols' = foldl_L (xs (pid, cid) -> pid :: cid :: xs) kcols dd
-  in case z (o, kcols') of ((lg, _, _), jt) ->
-                             ((lg, Just $ fromDrilldown' drilldownList, Just rel), jt)
+  in case z (sp, kcols') of ((lg, _, _, _), jt) ->
+                             ((lg, Just $ fromDrilldown' drilldownList, Just rel, Nothing), jt)
 
-tableBot = (Nothing, Nothing, Nothing)
+setRowGroups' : Field pid id -> FinalizeInput r a -> FinalizeInput r a
+setRowGroups' pid z (sp, kcols) = 
+  let pid' = fieldName pid
+      saveRowGroups ((lg, _, _, _), jt) = -- ^ Won't have drilldown and rowgroups
+          ((lg, Nothing, Nothing, Just (pid', prim# $ fieldType pid)), jt)
+  in saveRowGroups (z (sp, pid' :: kcols))
 
-finalize : forall r a a1 . ((SortPriority, List a) -> ((Maybe (Legend r), Maybe ((List (String, String, PrimT))), Maybe (Relation#)), Join# EAtomic# (Single# EAtomic# a1))) -> Table# EAtomic# a1
-finalize st = st (Unsorted, []_L) |> ((Just lg, ddCols, rootRel), cols) ->
+tableBot = (Nothing, Nothing, Nothing, Nothing)
+
+type ColumnKeys r = (Maybe (Legend r) -- ^ Column Legend
+    , Maybe (List (String, String, PrimT)) -- ^ Drilldown list
+    , Maybe Relation# -- ^ Drilldown2 Relation
+    , Maybe (String, PrimT)) -- ^ Row groups
+
+type FinalizeInput r a = (SortPriority, List String) -> (ColumnKeys r, Join# EAtomic# (Single# EAtomic# a))
+
+finalize : forall r a . FinalizeInput r a -> Table# EAtomic# a
+finalize st = st (Unsorted, []_L) |> ((Just lg, ddCols, rootRel, rowGroups), cols) ->
   table# tableModule cols
          (fmap legendFunctor# (eatomic . Atomic unit)
                               (legend# lg))
          (toPartialSort# . map (mapFst (eatomic . Atomic unit)) . partialSort $ lg)
+         (toMaybe# (fmap maybeFunctor toPair# rowGroups))
          (toMaybe# (fmap maybeFunctor  -- toList# . fmap toPair#
                          (toList# . (fmap listFunctor_L ((p,c,ty) -> toPair# (toPair# (p, c), ty))))
                          ddCols))

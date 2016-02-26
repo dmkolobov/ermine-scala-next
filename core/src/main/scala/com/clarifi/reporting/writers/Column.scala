@@ -141,22 +141,26 @@ object Column {
     *       in `columns`.
     * @note Invariant: if drilldown.get.length >= 2, then rootNodes must be defined
     *
+    * @note Invariant: At most one of `groupingColumn` and `drilldown` is defined.
+    *
     * @param drilldown Parent ID column and child ID column, in order,
     *        if and only if this should be a drilldown table.
     */
   case class Table[Lbl, A](columns: Join[Lbl, Single[Lbl, A]],
                            legend: Legend.U[Lbl],
                            initialIdSort: Vector[(Lbl, (SortOrder, Int))],
+                           groupingColumn: Option[(ColumnName, PrimT)],
                            drilldown: Option[List[((ColumnName, ColumnName), PrimT)]],
                            rootNodes: Option[ClosedExt])
        extends TraversableColumns[Table[Lbl, A]] {
     def traverseColumns[F[_]: Applicative
                       ](f: ColumnName => F[ColumnName]): F[Table[Lbl, A]] =
-      ^^(columns bitraverse (_.point[F], _ traverseColumns f),
+      ^^^(columns bitraverse (_.point[F], _ traverseColumns f),
           legend traverseColumns f,
+          groupingColumn traverse (_ bitraverse (f, _.point[F])) : F[Option[(ColumnName, PrimT)]],
            // scala can't infer the innermost bitraverse's type parameters without a bit of help
           drilldown traverse (_ traverse (_ bitraverse (_ bitraverse (f, f), _.point[F]))) : F[Option[List[((ColumnName, ColumnName), PrimT)]]]
-        )(Table(_, _, initialIdSort, _, rootNodes))
+        )(Table(_, _, initialIdSort, _, _, rootNodes))
 
     def typedColumnFoldMap[Z: Monoid](f: (ColumnName, PrimT) => Z): Z =
       ((columns foldMap (_ typedColumnFoldMap f))
@@ -177,7 +181,7 @@ object Column {
         ^^(fab.legend bitraverse (f, f),
            fab.columns bitraverse (f, _ bitraverse (f, g)),
            fab.initialIdSort traverse {case (lbl, soi) => f(lbl) map ((_, soi))}){
-            (l, c, is) => Table(c, l, is, fab.drilldown, fab.rootNodes)
+            (l, c, is) => Table(c, l, is, fab.groupingColumn, fab.drilldown, fab.rootNodes)
         }
     }
   }
