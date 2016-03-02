@@ -80,10 +80,12 @@ foreign
         "MODULE$" tableModule : TableModule
   method "apply" table# : TableModule -> Join# lbl (Single# lbl a)
                        -> Legend# lbl -> PartialSort# lbl
-                       -> Maybe# (Pair# String PrimT)
                        -> Maybe# (List# (Pair# (Pair# String String) PrimT))
                        -> Maybe# Relation#
                        -> Table# lbl a
+
+private foreign
+  method "setGroupingColumn" setGroupingColumn# : Legend# lbl -> Maybe# (Pair# String PrimT) -> Legend# lbl
 
 -- TODO: setDrilldown2'; fix finalize
 
@@ -166,9 +168,9 @@ finalize : forall r a . FinalizeInput r a -> Table# EAtomic# a
 finalize st = st (Unsorted, []_L) |> ((Just lg, ddCols, rootRel, rowGroups), cols) ->
   table# tableModule cols
          (fmap legendFunctor# (eatomic . Atomic unit)
-                              (legend# lg))
+                              (setGroupingColumn# (legend# lg) 
+                                  (toMaybe# (fmap maybeFunctor toPair# rowGroups))))
          (toPartialSort# . map (mapFst (eatomic . Atomic unit)) . partialSort $ lg)
-         (toMaybe# (fmap maybeFunctor toPair# rowGroups))
          (toMaybe# (fmap maybeFunctor  -- toList# . fmap toPair#
                          (toList# . (fmap listFunctor_L ((p,c,ty) -> toPair# (toPair# (p, c), ty))))
                          ddCols))

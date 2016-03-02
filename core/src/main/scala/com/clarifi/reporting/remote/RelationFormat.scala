@@ -701,27 +701,32 @@ object Format {
     {case Presentation(fmt, displayData) => f(fmt, displayData)}
   )
 
+  // Why this alias isn't in f0, I have no idea.
+  type OptionF[F] = S2[UnitF,F]
+
   type LegendColumnsF[F, G] = {
     type λ[A] = RepeatF[S2[A :: F, PresentationF :: SortStrategyF :: G]]
   }
   type LegendHiddenColumns = RepeatF[StringF :: PrimTF :: SortOrderF]
-  type LegendF[F, G] = FixF[LegendColumnsF[F, G]#λ[SelfF]] :: LegendHiddenColumns
+  type LegendF[F, G] = FixF[LegendColumnsF[F, G]#λ[SelfF]] :: LegendHiddenColumns :: OptionF[StringF :: PrimTF]
 
   def legendR[A,B,F,G](implicit ra: Reader[A, F], rb: Reader[B, G]): Reader[Legend[A, B], LegendF[F, G]] =
-    tuple2R(fixFR[LegendColumns[A, B], LegendColumnsF[F, G]#λ](rec =>
+    tuple3R(fixFR[LegendColumns[A, B], LegendColumnsF[F, G]#λ](rec =>
               listR(R_\/(tuple2R(rec, ra),
                          tuple3R(presentationR, sortStrategyR, rb)))
                 map LegendColumns.apply),
-            listR(tuple3R(stringR, primTR, sortOrderR))) map {
-      case (is, hs) => Legend(is, hs)
+            listR(tuple3R(stringR, primTR, sortOrderR)),
+            optionR(tuple2R(stringR, primTR))) map {
+      case (is, hs, gc) => Legend(is, hs, gc)
     }
 
   def legendW[A,B,F,G](implicit wa: Writer[A, F], wb: Writer[B, G]): Writer[Legend[A,B], LegendF[F,G]] =
-    tuple2W(fixFW[LegendColumns[A, B], LegendColumnsF[F, G]#λ](rec =>
+    tuple3W(fixFW[LegendColumns[A, B], LegendColumnsF[F, G]#λ](rec =>
               repeatW(W_\/(tuple2W(rec, wa),
                            tuple3W(presentationW, sortStrategyW, wb)))
                 cmap ((_:LegendColumns[A, B]).inOrder)),
-            repeatW(tuple3W(stringW, primTW, sortOrderW))) cmap {
-      case Legend(cols, hidden) => (cols, hidden)
+            repeatW(tuple3W(stringW, primTW, sortOrderW)),
+            optionW(tuple2W(stringW, primTW))) cmap {
+      case Legend(cols, hidden, gc) => (cols, hidden, gc)
     }
 }
