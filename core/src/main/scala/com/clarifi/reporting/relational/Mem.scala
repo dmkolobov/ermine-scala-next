@@ -328,6 +328,7 @@ class Literal( r:  OneAnd[ ({type F[X] = Coproduct[IndexedSeq, List, X]})#F, Rec
     Coproduct( xs.run.bimap(f,g) )
   }
 
+  override def toString: String = "Literal{ size = " + seq.size + " }"
 }
 
 object Literal {
