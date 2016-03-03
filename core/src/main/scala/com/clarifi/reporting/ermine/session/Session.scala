@@ -847,12 +847,13 @@ object Session {
 
   def perhapsForeign(post: ImportResult, v: => Any): Runtime = post match {
     case Raw => Prim(v)
-    case FF  => Prim(new FFI(v))
+    case FF(arg) => Prim(new FFI(perhapsForeign(arg, v)))
     case BOOL => if (v.asInstanceOf[Boolean]) True else False
-    case IO  => Data(Global("Builtin", "IO"),
+    case UNIT => val u = v ; Runtime.arrUnit
+    case IO(arg) => Data(Global("Builtin", "IO"),
                      Array(Fun((kp: Runtime) =>
                             Fun((kf: Runtime) =>
-                              Fun((ke: Runtime) => kf(kp)(ke)(Prim(new FFI(v))))))))
+                              Fun((ke: Runtime) => kf(kp)(ke)(perhapsForeign(FF(arg), v)))))))
   }
 
   // Legacy marshalling; doesn't take any type information into account.
@@ -880,9 +881,10 @@ object Session {
 
   sealed trait ImportResult
   case object Raw extends ImportResult
-  case object FF  extends ImportResult
-  case object IO  extends ImportResult
   case object BOOL extends ImportResult
+  case object UNIT extends ImportResult
+  case class FF(arg: ImportResult) extends ImportResult
+  case class IO(arg: ImportResult) extends ImportResult
 
   def foreignLift(methName: String,
                   static: Boolean,
@@ -952,6 +954,32 @@ object Session {
       if (static) mk(null) else Fun(x => mk(whnfForeign(x, methName)))
   }
 
+  /**
+   * Calculates the post process marshalling that should be done for a foreign import.
+   * We have special support for importing Boolean and Unit/void result types, which
+   * marshals between the Java representation and the ermine representation. Units will
+   * have any nulls eliminated, as well.
+   *
+   * There is also special support for importing effectful things directly. Importing as
+   * `FFI a` will allow catching exceptions thrown by the import. Importing as `IO a` will
+   * automatically wrap into the continuation passing around `FFI` that we use to represent
+   * I/O actions. Explicitly importing to `FFI/IO Bool/Unit` will also perform the
+   * marshalling in the previous paragraph recursively. But `FFI (FFI a)` and the like will
+   * not wrap multiple times; it is expected that this last case is for Java functions that
+   * actually return FFI.
+   */
+  def computePost(c: Type, higher: Boolean): (Class[_], ImportResult) = c match {
+    case AppT(`io`, a) if higher => computePost(a, false) match {
+      case (cod, arg) => (cod, IO(arg))
+    }
+    case AppT(`ffi`, a) if higher => computePost(a, false) match {
+      case (cod, arg) => (cod, FF(arg))
+    }
+    case `bool`         => (implicitly[ClassTag[Boolean]].runtimeClass, BOOL)
+    case ProductT(_, 0) => (implicitly[ClassTag[Unit]].runtimeClass, UNIT)
+    case _              => (c.foreignLookup, Raw)
+  }
+
   def processForeignCommon(mod: String,
                            methName: String,
                            v: TermVar,
@@ -967,12 +995,7 @@ object Session {
     assertTypeClosed(ty)
     val (clazz, domain, codomain, post) = unfurlType(ty) match {
       case (d, c) =>
-        val (r, p) = c match {
-          case AppT(`io`, a)  => (a.foreignLookup, IO)
-          case AppT(`ffi`, a) => (a.foreignLookup, FF)
-          case `bool`         => (implicitly[ClassTag[Boolean]].runtimeClass, BOOL)
-          case _              => (c.foreignLookup, Raw)
-        }
+        val (r, p) = computePost(c, true)
         staticClazz match {
           case Some(clazz) => (clazz, d, r, p)
           case None        => (d.head.foreignLookup, d.tail, r, p)
@@ -1015,12 +1038,7 @@ object Session {
   )(implicit s: SessionEnv, su: Supply) = fvs match {
     case ForeignValueStatement(loc, v, ty, ForeignClass(_, clazz), ForeignMember(_, valName)) =>
       var typ = subTypeMaps(cm, ty).close
-      val post = typ match {
-        case AppT(`ffi`, _) => FF
-        case AppT(`io`,  _) => IO
-        case `bool`         => BOOL
-        case _              => Raw
-      }
+      val (_, post) = computePost(typ, true)
       typ = subst { implicit hm => {
         implicit val loc: Located = typ
         kindCheck(Nil, typ, Star(typ.loc.inferred)); substType(typ)
@@ -1057,10 +1075,9 @@ object Session {
       } }
       assertTypeClosed(ty)
       val (domain, codomain, post) = unfurlType(ty) match {
-        case (d, AppT(`io`,  a)) => (d, a.foreignLookup, IO)
-        case (d, AppT(`ffi`, a)) => (d, a.foreignLookup, FF)
-        case (d, `bool`)         => (d, implicitly[ClassTag[Boolean]].runtimeClass, BOOL)
-        case (d, c             ) => (d, c.foreignLookup, Raw)
+        case (d, c) =>
+          val (cl, p) = computePost(c, true)
+          (d, cl, p)
       }
       val classDomain = domain.map(_.foreignLookup)
       val ctor = try {
