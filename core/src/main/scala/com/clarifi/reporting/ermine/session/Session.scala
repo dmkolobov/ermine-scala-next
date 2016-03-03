@@ -901,15 +901,15 @@ object Session {
               case e : java.lang.reflect.InvocationTargetException =>
                 val ep = e.getTargetException
                 val ep2 = if (ep != null) ep else e
-                _log.error(ep2.getMessage, ep2)
+                _log.debug(ep2.getMessage, ep2)
                 throw ep2
               case e : Throwable =>
                 println(args.mkString(", "))
                 if( self != null && method != null ) {
-                  _log.error("error invoking foreign function: " + methName + " on object of type " + self.asInstanceOf[AnyRef].getClass + "; expected an object of type " + method.getDeclaringClass , e)
+                  _log.debug("error invoking foreign function: " + methName + " on object of type " + self.asInstanceOf[AnyRef].getClass + "; expected an object of type " + method.getDeclaringClass , e)
                   throw new RuntimeException("error invoking foreign function: " + methName + " on object of type " + self.asInstanceOf[AnyRef].getClass + "; expected an object of type " + method.getDeclaringClass , e)
                 } else {
-                  _log.error("error invokingforeign function: " + methName
+                  _log.debug("error invokingforeign function: " + methName
                             + "on object of type "
                             + Option(self).map( _.asInstanceOf[AnyRef].getClass.toString).getOrElse("null")
                             + "; expected an object of type " + Option(method).map(_.getDeclaringClass).getOrElse(" null") , e)
