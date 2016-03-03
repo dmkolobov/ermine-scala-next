@@ -51,8 +51,7 @@ class Prim(p: Any) extends Runtime {
 object Prim {
   def apply(p: => Any) = try {
     val pForced = p
-    if (pForced == null) Runtime.arrUnit
-    else pForced match {
+    pForced match {
       case r: Runtime => r
       case p => new Prim(p)
     }
@@ -81,8 +80,7 @@ class Box(p: Any) extends Runtime {
 object Box {
   def apply(b: => Any) = try {
     val bForced = b
-    if (bForced == null) Runtime.arrUnit
-    else bForced match {
+    bForced match {
       case r: Runtime => r
       case b => new Box(b)
     }
