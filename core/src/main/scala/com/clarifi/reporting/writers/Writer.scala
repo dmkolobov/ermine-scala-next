@@ -293,7 +293,7 @@ abstract class Writer[F[_],C] { self =>
                       r: ClosedExt): F[C] = {
     val tabular = Tabular.relationRec(r)
     val inp = legend.map(lg => tabular.label(lg)).getOrElse(tabular).orderBy(order.toIndexedSeq)
-    table(if (doTranspose) inp else inp.transpose)
+    if (doTranspose) { table(inp.transpose) } else { table(inp) }
   }
 
   final def axisChartDMTL(chart: AxisChart[ClosedExt]): F[C] =
