@@ -42,6 +42,9 @@ import scalaz.syntax.applicative.{ToFunctorOps => _, ToFunctorOpsUnapply => _, _
   *     Certain operations, like `deriveSort`, expect this to obey
   *     equality and hashing laws.  `orderedPresentations` may contain
   *     duplicates, but this might not mean something you like.
+  *
+  * @note Invariant: If `groupingColumn` is defined, it is among the
+  *     existing columns in `inOrder` and `undisplayed`.
   */
 case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
                             undisplayed: Seq[(ColumnName, PrimT, SortOrder)],
@@ -56,6 +59,12 @@ case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
 
   def setGroupingColumn(gc: Option[(ColumnName, PrimT)]): Legend[Grp, Lbl] =
     Legend(inOrder, undisplayed, gc)
+
+  /** Return index of the grouping column and whether it is displayed. */
+  def groupingColumnIndex: Option[Int] = groupingColumn.flatMap(gc => {
+    val orNeg1 = inOrder.columnReferencesList.indexOf(gc._1)
+    if (orNeg1 < 0) None else Some(orNeg1)
+  })
 
   def labels: Seq[Lbl] = leavesInOrder.view.map(_._3)
   def formats = leavesInOrder.map( _._1.format)
