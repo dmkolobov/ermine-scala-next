@@ -60,11 +60,18 @@ case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
   def setGroupingColumn(gc: Option[(ColumnName, PrimT)]): Legend[Grp, Lbl] =
     Legend(inOrder, undisplayed, gc)
 
+  def sansGroupingColumn: Legend[Grp, Lbl] =
+    groupingColumn.fold(this) { cpt => Legend(inOrder.sansColumn(cpt), undisplayed.filter(cpso => cpso._1 != cpt._1 || cpso._2 != cpt._2), None) }
+
   /** Return index of the grouping column and whether it is displayed. */
   def groupingColumnIndex: Option[Int] = groupingColumn.flatMap(gc => {
     val orNeg1 = inOrder.columnReferencesList.indexOf(gc._1)
     if (orNeg1 < 0) None else Some(orNeg1)
   })
+
+
+  def applyColumnGroups(groups: Option[Seq[Grp]]) : Legend[Grp, Lbl] =
+    Legend(inOrder.applyColumnGroups(groups), undisplayed, groupingColumn)
 
   def labels: Seq[Lbl] = leavesInOrder.view.map(_._3)
   def formats = leavesInOrder.map( _._1.format)
@@ -73,6 +80,8 @@ case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
 
   /** Squash away all groups. */
   def groupless[G]: Legend[G, Lbl] = Legend(inOrder.groupless, undisplayed, groupingColumn)
+
+  def oneDeep: Legend[Grp, Lbl] = Legend(inOrder.oneDeep, undisplayed, groupingColumn)
 
   /** Wrap columns in a single column `group`. */
   def columnGroup(group: Grp): Legend[Grp, Lbl] =
@@ -305,6 +314,31 @@ final case class LegendColumns[Grp, Lbl](
   def leavesInOrder: IndexedSeq[(Presentation, SortStrategy, Lbl)] =
     traverseLeaves[λ[α => IndexedSeq[(Presentation, SortStrategy, Lbl)]],
                    Nothing](IndexedSeq(_))
+
+  def oneDeep: LegendColumns[Grp, Lbl] =
+    LegendColumns(inOrder map (_ bimap ({ case (cs,g) => (cs.groupless[Grp], g) }, identity)))
+
+  def sansColumn(cp: (ColumnName, PrimT)): LegendColumns[Grp,Lbl] =
+  {
+    LegendColumns(inOrder.map(_.bitraverse(g => Some(g.bimap(_.sansColumn(cp), identity)), {case (pr, ss, l) =>
+      if (((pr.typedColumnReferencesList) |+| (ss.typedColumnReferencesList)).any(cpt => cp == cpt))
+        None else Some (pr, ss, l)
+      })).flatten)
+  }
+
+  def flattened: IndexedSeq[((Presentation, SortStrategy, Lbl), Option[Grp])] =
+    inOrder.toIndexedSeq.flatMap(_.fold({case (lcs, g) => lcs.flattened.map{case (psl,_) => (psl, Some(g))}}, {psl => Vector((psl, None))}))
+
+  def applyColumnGroups(groups: Option[Seq[Grp]]) : LegendColumns[Grp, Lbl] =
+    groups.fold(groupless[Grp])((sg: Seq[Grp]) => { 
+      val mappified : Map[Grp, Seq[(Presentation, SortStrategy, Lbl)]] =
+        sg.zip(leavesInOrder).groupBy[Grp](_._1).mapValues(_.map (_._2))
+      val legendified : Seq[(LegendColumns[Grp, Lbl], Grp) \/ (Presentation, SortStrategy, Lbl)] = sg.distinct.map(g => {
+        val ls: Seq[(Presentation, SortStrategy, Lbl)] = mappified(g)
+        \/.left(((LegendColumns[Grp,Lbl](ls map (l => \/.right(l))), g)))
+        }) 
+      LegendColumns(legendified)
+      })
 
   /** Squash away all groups. */
   def groupless[G]: LegendColumns[G, Lbl] =
