@@ -169,8 +169,7 @@ abstract class Writer[F[_],C] { self =>
             // Specify it with the Legend if you want it to be right.
             drilldownTableDMTL(Some(lgstr), lgstr.columnReferencesList.head, pid, cid,
                                initSort, ext)
-      case _ => if (displayTransposed) transposedTableDMTL(Some(lgstr), initSort, ext)
-                else tableDMTL(Some(lgstr), initSort, ext)
+      case _ => tableDMTL(Some(lgstr), initSort, displayTransposed, ext)
     }
   }
 
@@ -290,18 +289,11 @@ abstract class Writer[F[_],C] { self =>
   final def atomWrappedDMTL(s:List[Magnitude], fmt: Format, ps: AnyRef): C = wrapAtom(s,fmt, toPrimExprNel(ps))
   final def atomWrappedFontDMTL(s:List[Magnitude], fonts: List[Font], fontSize: Option[Int], f: Format, ps: AnyRef): C = wrapAtomFont(s,fonts, fontSize, f, toPrimExprNel(ps))
 
-  final def tableDMTL(legend: Option[Legend.U[String]], order: List[(String, SortOrder)],
+  final def tableDMTL(legend: Option[Legend.U[String]], order: List[(String, SortOrder)], doTranspose: java.lang.Boolean,
                       r: ClosedExt): F[C] = {
     val tabular = Tabular.relationRec(r)
-    table(legend.map(lg => tabular.label(lg)).getOrElse(tabular)
-          .orderBy(order.toIndexedSeq))
-  }
-
-  final def transposedTableDMTL(legend: Option[Legend.U[String]], order: List[(String, SortOrder)],
-                      r: ClosedExt): F[C] = {
-    val tabular = Tabular.relationRec(r)
-    val inp = legend.map(lg => tabular.label(lg)).getOrElse(tabular).orderBy(order.toIndexedSeq).transpose
-    table(inp)
+    val inp = legend.map(lg => tabular.label(lg)).getOrElse(tabular).orderBy(order.toIndexedSeq)
+    if (doTranspose) { table(inp.transpose) } else { table(inp) }
   }
 
   final def axisChartDMTL(chart: AxisChart[ClosedExt]): F[C] =
@@ -343,7 +335,12 @@ abstract class Writer[F[_],C] { self =>
     )
   }
 
-  final def drilldownTableDMTL(legend: Option[Legend.U[String]], labelColumn: String, parentIdColumn: String, childColumn: String, order: List[(String, SortOrder)], fact: ClosedExt): F[C] =
+  final def drilldownTableDMTL(legend: Option[Legend.U[String]]
+    , labelColumn: String
+    , parentIdColumn: String
+    , childColumn: String
+    , order: List[(String, SortOrder)]
+    , fact: ClosedExt): F[C] =
     postpone(
       treeTabular(parentIdColumn, childColumn, fact, rootParentId = 0) flatMap {tab =>
         drilldownTable(labelColumn, parentIdColumn, childColumn, legend.isEmpty,

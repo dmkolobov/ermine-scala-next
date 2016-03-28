@@ -46,10 +46,10 @@ object Column {
     def singletonLegend[G]: Legend[G, Lbl] =
       if(isHidden) {
         val nameTypes = display typedColumnFoldMap ((x,y) => List((x,y)))
-        Legend(LegendColumns.empty, (nameTypes map (x => (x._1, x._2, SortOrder.Asc))).toSeq)
+        Legend(LegendColumns.empty, (nameTypes map (x => (x._1, x._2, SortOrder.Asc))).toSeq, None)
       }
       else
-        Legend(LegendColumns flat (Vector((display, relativeSort, heading))), Seq())
+        Legend(LegendColumns flat (Vector((display, relativeSort, heading))), Seq(), None)
   }
 
   object Single {

@@ -659,7 +659,12 @@ columnTable2 col rel = Report $ w -> columnTableW w (column# col)
 tabular : Relational rel => Maybe (Legend r) -> rel (|..r|) -> Report f z
 tabular leg r = Report $ w ->
     tableW w (fmap maybeFunctor legend# leg)
-             (maybe (toList# []) initialSort# leg) (relation# r)
+             (maybe (toList# []) initialSort# leg) false# (relation# r)
+
+tabularTransposed : Relational rel => Maybe (Legend r) -> rel (|..r|) -> Report f z
+tabularTransposed leg r = Report $ w ->
+    tableW w (fmap maybeFunctor legend# leg)
+             (maybe (toList# []) initialSort# leg) true# (relation# r)
 
 titled : Report f z -> Report f z -> Report f z
 titled hdr r = stack (padBottom ``6pixels`` . style "h5" ' hdr ) r
@@ -1451,7 +1456,7 @@ private
   scanRelationW : Writer f z -> Sort# -> Relation# -> (List Record# -> f z) -> f z
   scanRelationW w srt rel f = scanRelationW' w srt rel (function1 (f . fromList#))
 
-  tableW : Writer f z -> Maybe (Legend# String) -> Sort# -> Relation# -> f z
+  tableW : Writer f z -> Maybe (Legend# String) -> Sort# -> Bool# -> Relation# -> f z
   tableW w leg = tableW_ w (toMaybe# leg)
 
   drilldownTableW : Writer f z -> Maybe (Legend# String) -> String -> String -> String
@@ -1475,7 +1480,7 @@ private
     method "dateToString" formatDate_ : forall f z a b . Writer f z -> Date -> String
     method "scrolling" scrollingW : forall f z . Writer f z -> z -> z
     method "empty" emptyW : forall f z . Writer f z -> z
-    method "tableDMTL" tableW_ : forall f z . Writer f z -> Maybe# (Legend# String) -> Sort# -> Relation# -> f z
+    method "tableDMTL" tableW_ : forall f z . Writer f z -> Maybe# (Legend# String) -> Sort# -> Bool# -> Relation# -> f z
     method "drilldownTableDMTL" drilldownTableW_ : forall f z . Writer f z -> Maybe# (Legend# String) -> String -> String -> String -> Sort# -> Relation# -> f z
     method "drilldownTableDMTL2" drilldownTable2W_ : forall f z . Writer f z -> Maybe# (Legend# String) -> String -> List# (Pair# String String) -> Sort# -> Relation# -> Relation# -> f z
     method "columnTableDMTL" columnTableW : forall f z . Writer f z -> Table# EAtomic# Relation# -> f z

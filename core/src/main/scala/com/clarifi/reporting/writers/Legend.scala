@@ -42,16 +42,36 @@ import scalaz.syntax.applicative.{ToFunctorOps => _, ToFunctorOpsUnapply => _, _
   *     Certain operations, like `deriveSort`, expect this to obey
   *     equality and hashing laws.  `orderedPresentations` may contain
   *     duplicates, but this might not mean something you like.
+  *
+  * @note Invariant: If `groupingColumn` is defined, it is among the
+  *     existing columns in `inOrder` and `undisplayed`.
   */
 case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
-                            undisplayed: Seq[(ColumnName, PrimT, SortOrder)])
+                            undisplayed: Seq[(ColumnName, PrimT, SortOrder)],
+                            groupingColumn: Option[(ColumnName, PrimT)])
      extends TraversableColumns[Legend[Grp, Lbl]] {
   assert(leavesInOrder forall {case (pr, sortBy, _) =>
            pr.columnReferences === sortBy.columnReferences},
          "sortBy must completely describe displayData")
 
   def append(right: Legend[Grp, Lbl]): Legend[Grp, Lbl] =
-    Legend(inOrder append right.inOrder, undisplayed ++ right.undisplayed)
+    Legend(inOrder append right.inOrder, undisplayed ++ right.undisplayed, groupingColumn orElse right.groupingColumn)
+
+  def setGroupingColumn(gc: Option[(ColumnName, PrimT)]): Legend[Grp, Lbl] =
+    Legend(inOrder, undisplayed, gc)
+
+  def sansGroupingColumn: Legend[Grp, Lbl] =
+    groupingColumn.fold(this) { cpt => Legend(inOrder.sansColumn(cpt), undisplayed.filter(cpso => cpso._1 != cpt._1 || cpso._2 != cpt._2), None) }
+
+  /** Return index of the grouping column and whether it is displayed. */
+  def groupingColumnIndex: Option[Int] = groupingColumn.flatMap(gc => {
+    val orNeg1 = inOrder.columnReferencesList.indexOf(gc._1)
+    if (orNeg1 < 0) None else Some(orNeg1)
+  })
+
+
+  def applyColumnGroups(groups: Option[Seq[Grp]]) : Legend[Grp, Lbl] =
+    Legend(inOrder.applyColumnGroups(groups), undisplayed, groupingColumn)
 
   def labels: Seq[Lbl] = leavesInOrder.view.map(_._3)
   def formats = leavesInOrder.map( _._1.format)
@@ -59,7 +79,9 @@ case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
   def leavesInOrder: Seq[(Presentation, SortStrategy, Lbl)] = inOrder.leavesInOrder
 
   /** Squash away all groups. */
-  def groupless[G]: Legend[G, Lbl] = Legend(inOrder.groupless, undisplayed)
+  def groupless[G]: Legend[G, Lbl] = Legend(inOrder.groupless, undisplayed, groupingColumn)
+
+  def oneDeep: Legend[Grp, Lbl] = Legend(inOrder.oneDeep, undisplayed, groupingColumn)
 
   /** Wrap columns in a single column `group`. */
   def columnGroup(group: Grp): Legend[Grp, Lbl] =
@@ -74,19 +96,23 @@ case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
     val undisplayedF = undisplayed.toList.traverse {
       case (col, pt, so) => f(col) map (c => (c, pt, so))
     }
-    ^(inOrderF, undisplayedF)(Legend.apply)
+    val groupingColumnF = groupingColumn traverse {
+      case (col, pt) => f(col) map (c => (c, pt))
+    }
+    ^^(inOrderF, undisplayedF, groupingColumnF)(Legend.apply)
   }
 
   def typedColumnFoldMap[Z: Monoid](f: (ColumnName, PrimT) => Z): Z = {
     val inOrderZ = inOrder typedColumnFoldMap f
     val undisplayedZ = undisplayed.toIndexedSeq foldMap {case (col, pt, _) => f(col, pt)}
-    inOrderZ |+| undisplayedZ
+    val groupingColumnZ = groupingColumn foldMap {case (col, pt) => f(col,pt)}
+    inOrderZ |+| undisplayedZ |+| groupingColumnZ
   }
 
   /** Legend is bitraversable. */
   def bitraverse[F[_]: Applicative, C, D](f: Grp => F[C], g: Lbl => F[D])
       : F[Legend[C, D]] =
-    inOrder bitraverse (f, g) map (s => Legend(s, undisplayed))
+    inOrder bitraverse (f, g) map (s => Legend(s, undisplayed, groupingColumn))
 
   private[this] def sortRules: Map[Lbl, List[SortStrategy]] =
     (leavesInOrder groupBy (_._3) mapValues (_ map (_._2) toList))
@@ -194,14 +220,16 @@ object Legend {
   def overPresentation[Grp, Lbl](p: Presentation, label: Lbl): Legend[Grp, Lbl] =
     Legend(LegendColumns flat (IndexedSeq((p, SortStrategy allForward p.columnReferencesList.distinct,
                                            label))),
-           IndexedSeq.empty)
+           IndexedSeq.empty,
+           None)
 
   /** Add a legend to a presentation, with ordering.  Convenient for
     * Ermine. */
   def overPresentation[Grp, Lbl](p: Presentation, sort: List[(ColumnName, SortDirection)],
                             label: Lbl): Legend[Grp, Lbl] =
     Legend(LegendColumns flat (IndexedSeq((p, SortStrategy(sort), label))),
-           IndexedSeq.empty)
+           IndexedSeq.empty,
+           None)
 
   /** Convenient for Ermine. */
   def umap[A, B](lg: U[A])(f: A => B): U[B] = lg umap f
@@ -214,17 +242,18 @@ object Legend {
       sp.map(soi => ss(soi._1)).getOrElse(Nil) collect {
         case (c, so) if typedColRefsMap.contains(c) =>
           (c, typedColRefsMap(c), so)
-      }
+      },
+      None
     )
   }
 
   /** The empty legend. */
-  def empty[Grp, Lbl] = Legend[Grp, Lbl](LegendColumns.empty, IndexedSeq.empty)
+  def empty[Grp, Lbl] = Legend[Grp, Lbl](LegendColumns.empty, IndexedSeq.empty, None)
 
   /** Legend is a bifunctor. */
   implicit val LegendBifunctor: Bifunctor[Legend] = new Bifunctor[Legend] {
     def bimap[A, B, C, D](r: Legend[A, B])(f: A => C, g: B => D) =
-      Legend(r.inOrder bimap (f, g), r.undisplayed)
+      Legend(r.inOrder bimap (f, g), r.undisplayed, r.groupingColumn)
   }
 
   /** Legend is a monoid. */
@@ -234,7 +263,7 @@ object Legend {
   /** Legends can be equal. */
   implicit def LegendEqual[Grp: Equal, Lbl: Equal]: Equal[Legend[Grp, Lbl]] = {
     import scalaz.std.iterable._
-    Equal equalBy (lg => (lg.inOrder, lg.undisplayed))
+    Equal equalBy (lg => (lg.inOrder, lg.undisplayed, lg.groupingColumn))
   }
 
   /** The legend that only picks columns in a particular order. */
@@ -243,7 +272,8 @@ object Legend {
              cols map (c => (Presentation.unit(NonEmptyList(c -> h(c))),
                             SortStrategy allForward IndexedSeq(c),
                             c))),
-           IndexedSeq.empty)
+           IndexedSeq.empty,
+           None)
 
   /** @todo Remove for scalaz 7.1 port. */
   private implicit def tmpMapUnion[A, B](implicit A: Order[A], B: Semigroup[B]): Monoid[A ==>> B] =
@@ -284,6 +314,31 @@ final case class LegendColumns[Grp, Lbl](
   def leavesInOrder: IndexedSeq[(Presentation, SortStrategy, Lbl)] =
     traverseLeaves[λ[α => IndexedSeq[(Presentation, SortStrategy, Lbl)]],
                    Nothing](IndexedSeq(_))
+
+  def oneDeep: LegendColumns[Grp, Lbl] =
+    LegendColumns(inOrder map (_ bimap ({ case (cs,g) => (cs.groupless[Grp], g) }, identity)))
+
+  def sansColumn(cp: (ColumnName, PrimT)): LegendColumns[Grp,Lbl] =
+  {
+    LegendColumns(inOrder.map(_.bitraverse(g => Some(g.bimap(_.sansColumn(cp), identity)), {case (pr, ss, l) =>
+      if (((pr.typedColumnReferencesList) |+| (ss.typedColumnReferencesList)).any(cpt => cp == cpt))
+        None else Some (pr, ss, l)
+      })).flatten)
+  }
+
+  def flattened: IndexedSeq[((Presentation, SortStrategy, Lbl), Option[Grp])] =
+    inOrder.toIndexedSeq.flatMap(_.fold({case (lcs, g) => lcs.flattened.map{case (psl,_) => (psl, Some(g))}}, {psl => Vector((psl, None))}))
+
+  def applyColumnGroups(groups: Option[Seq[Grp]]) : LegendColumns[Grp, Lbl] =
+    groups.fold(groupless[Grp])((sg: Seq[Grp]) => { 
+      val mappified : Map[Grp, Seq[(Presentation, SortStrategy, Lbl)]] =
+        sg.zip(leavesInOrder).groupBy[Grp](_._1).mapValues(_.map (_._2))
+      val legendified : Seq[(LegendColumns[Grp, Lbl], Grp) \/ (Presentation, SortStrategy, Lbl)] = sg.distinct.map(g => {
+        val ls: Seq[(Presentation, SortStrategy, Lbl)] = mappified(g)
+        \/.left(((LegendColumns[Grp,Lbl](ls map (l => \/.right(l))), g)))
+        }) 
+      LegendColumns(legendified)
+      })
 
   /** Squash away all groups. */
   def groupless[G]: LegendColumns[G, Lbl] =
