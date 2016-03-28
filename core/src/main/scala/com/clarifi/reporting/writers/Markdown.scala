@@ -315,10 +315,10 @@ object Markdown {
       case MStyle(MSOutdated, inner) => "<span style='text-color:#999999'>" + markdownListToHTML(inner) + "</span>"
       case MLink(isImage, inner, dest, Some(title)) =>
         if (isImage) wrapImgInner("<img src=\"" + dest + "\" alt=\"" + title + "\"/>", inner)
-        else "<a href=\"" + dest + "\" title=\"" + title + "\">" + markdownListToHTML(inner) + "</a>"
+        else "<a href=\"" + dest + "\" title=\"" + title + "\" target='_blank'>" + markdownListToHTML(inner) + "</a>"
       case MLink(isImage, inner, dest, None) =>
         if (isImage) wrapImgInner("<img src=\"" + dest + "\"/>",inner)
-        else "<a href=\"" + dest + "\">" + markdownListToHTML(inner) + "</a>"
+        else "<a href=\"" + dest + "\" target='_blank'>" + markdownListToHTML(inner) + "</a>"
       case MColor(color) => "<span class='markdown-color-box' style='background-color:#" + color + ";'>&nbsp;&nbsp;</span>"
     }
   }
