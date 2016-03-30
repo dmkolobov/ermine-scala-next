@@ -871,7 +871,7 @@ object Format {
     def devolve(ops: NelOp) = ops.head
 
     override def recursiveEval(rec: Format => NelPe => PrimExpr) = (pes: NelPe) =>
-      if(cond(pes.head))
+      if(!pes.head.isNull && cond(pes.head))
         rec(apply)(pes)
       else rec(notApply)(pes)
   }
