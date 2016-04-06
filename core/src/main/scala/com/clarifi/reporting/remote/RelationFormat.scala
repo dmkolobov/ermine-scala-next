@@ -630,7 +630,7 @@ object Format {
           case Condition.And(x,y) => and(x -> y)
         }) erase)
 
-  type WFormatF[A] = S12[UnitF, // Default
+  type WFormatF[A] = S13[UnitF, // Default
                      A, // Markdown
                      StringF, // Constant
                      BooleanF :: BooleanF :: IntF :: BooleanF, // Percent
@@ -641,10 +641,11 @@ object Format {
                      IntF,  // Truncate
                      A,  // Pr1
                      FixF[ConditionF[SelfF]] :: A :: A,  // Conditional
-                     IntF :: IntF :: A //Conditional Color
+                     IntF :: IntF :: A, //Conditional Color
+                     RepeatF[StringF & StringF] // Alias
                    ]
 
-  lazy val wformatR = fixFR[WFormat,WFormatF](self => union12R(
+  lazy val wformatR = fixFR[WFormat,WFormatF](self => union13R(
     unitR   map (_ => WFormat.Default),
     self map (inner => WFormat.Markdown(inner) ),
     stringR map (s => WFormat.Constant(s)),
@@ -656,15 +657,17 @@ object Format {
     intR    map (i => WFormat.Truncate(i)),
     self map (inner => WFormat.Pr1(inner)),
     p3R(conditionR,self,self)((c,t,e) => WFormat.Conditional(c,t,e)),
-    p3R(colorR,colorR,self)((bg, fg, b) => WFormat.ColorFormat(bg, fg, b))
-
+    p3R(colorR,colorR,self)((bg, fg, b) => WFormat.ColorFormat(bg, fg, b)),
+    listR(tuple2R(stringR, stringR)) map (WFormat.Alias)
     )
   )
 
   lazy val wformatW = fixFW[WFormat, WFormatF]( self =>
-    s12W(unitW, self, stringW, tuple4W(booleanW, booleanW, intW, booleanW), tuple3W(booleanW,booleanW,stringW), unitW, tuple3W(booleanW,booleanW,intW),
-    tuple3W(booleanW,booleanW,intW), intW, self, tuple3W(conditionW, self, self), tuple3W(colorW, colorW, self))(
-      (d, md, k, p, c, dr, r, sr, t, pr1, cond, color) => (w: WFormat) => w match {
+    s13W(unitW, self, stringW, tuple4W(booleanW, booleanW, intW, booleanW),
+         tuple3W(booleanW,booleanW,stringW), unitW, tuple3W(booleanW,booleanW,intW),
+         tuple3W(booleanW,booleanW,intW), intW, self, tuple3W(conditionW, self, self),
+         tuple3W(colorW, colorW, self), repeatW(tuple2W(stringW,stringW)))(
+      (d, md, k, p, c, dr, r, sr, t, pr1, cond, color, alias) => (w: WFormat) => w match {
         case WFormat.Default              => d(())
         case WFormat.Markdown(f)          => md(f)
         case WFormat.Constant(s)          => k(s)
@@ -677,6 +680,7 @@ object Format {
         case WFormat.Pr1(f)             => pr1(f)
         case WFormat.Conditional(c,t,e) => cond(c,t,e)
         case WFormat.ColorFormat(bg, fg, b) => color(bg, fg, b)
+        case WFormat.Alias(als) => alias(als)
       }))
 
   type SortDirF = BooleanF

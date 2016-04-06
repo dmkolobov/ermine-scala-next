@@ -885,5 +885,15 @@ object Format {
       StringExpr(false,"<COLOR_FORMAT>" + rec(base)(pes).extractNullableString("-") + "</COLOR_FORMAT>")
   }
 
+  case class Alias(aliases: List[(String,String)]) extends Format {
+    val aliasMap = aliases.toMap
+    val basicEval = (pes: NelPe) => pes.head match {
+      case StringExpr(n, v) if aliasMap.contains(v) => StringExpr(n, aliasMap(v))
+      case pe => pe
+    }
+
+    def devolve(ops: NelOp) = ops.head
+  }
+
   implicit val formatInstance: Equal[Format] = Equal.equalA
 }

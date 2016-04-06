@@ -5,6 +5,7 @@ module Layout.Format where
 
 import Function using (.); flip
 import Native
+import List using map_List
 import Unsafe.Coerce
 import Layout.Color
 import Prim
@@ -43,6 +44,10 @@ private foreign
       constant# : Function1 String (Format a)
   value "com.clarifi.reporting.writers.Format$Pr1$" "MODULE$"
       pr1# : Function1 (Format a) (Format (a,b))
+
+  value "com.clarifi.reporting.writers.Format$Alias$" "MODULE$"
+      alias# : Function1 (List# (Pair# String String)) (Format String)
+
   value "com.clarifi.reporting.writers.Format$Conditional$" "MODULE$"
       conditional# : Function3 (Condition a) (Format a) (Format a) (Format a)
   value "com.clarifi.reporting.writers.Condition$Gt$" "MODULE$"
@@ -111,6 +116,9 @@ constant = funcall1# constant#
 
 pr1 : Format a -> Format (a, b)
 pr1 = funcall1# pr1#
+
+alias : List (String, String) -> Format String
+alias = funcall1# alias# . toList# . map_List toPair#
 
 -- Add Nullable to a formatter, as all formatters can format anything.
 nullable : Format a -> Format (Nullable a)
