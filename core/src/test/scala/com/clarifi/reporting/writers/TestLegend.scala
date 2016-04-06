@@ -63,7 +63,7 @@ object LegendGens {
     arbitrary[List[((Presentation, SortStrategy), Lbl)]] map {
         curried => Legend(LegendColumns flat (curried map {case ((p, d), lbl) => (p, d, lbl)}
                                                toIndexedSeq)
-                         , IndexedSeq.empty)
+                         , IndexedSeq.empty, None)
     }
   }
 }
@@ -148,7 +148,7 @@ object TestLegend extends Properties("Legends & presentations") {
                                                    Op.ColumnValue("rbranch", DoubleT())))),
                   SortStrategy(Seq("qbranch" -> SortDirection.Reverse,
                                    "rbranch" -> SortDirection.Reverse)),
-                  "What's left?"))), IndexedSeq.empty)
+                  "What's left?"))), IndexedSeq.empty, None)
 
   property("sorting a Lbl once chooses the leftmost") = secure {
     crazyLegend.deriveSort(Seq("Name!" -> SortOrder.Desc)) ?=
