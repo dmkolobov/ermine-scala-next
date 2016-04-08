@@ -131,6 +131,10 @@ val = Atomic unit_Fmt
 fmt : Format_Fmt a -> a -> Report f z
 fmt f a = atom (Atomic f a)
 
+-- List of fonts, with all of them after the first being fallbacks, an optional size, in pts,
+fmt' : List Font -> Maybe Int -> Format_Fmt a -> a -> Report f z
+fmt' fonts size f a = atom' fonts size (Atomic f a)
+
 -- Displays text label, supports markdown for hyperlinks, italics and bold text
 text : String -> Report f z
 text = fmt $ markdown_Fmt unit_Fmt
