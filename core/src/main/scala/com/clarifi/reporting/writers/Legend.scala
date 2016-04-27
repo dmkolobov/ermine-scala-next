@@ -521,6 +521,9 @@ object Presentation
   def unit(cols: NonEmptyList[(ColumnName, PrimT)]): Presentation =
     Presentation(Format.Default, cols map Op.ColumnValue.tupled)
 
+  def verbatim(cols: NonEmptyList[(ColumnName, PrimT)]): Presentation =
+    Presentation(Format.Verbatim, cols map Op.ColumnValue.tupled)
+
   /** Just show `disp` as-is. */
   def constant(disp: PrimExpr): Presentation =
     Presentation(Format.Default, NonEmptyList(Op.OpLiteral(disp)))
@@ -672,6 +675,12 @@ object Format {
   /** Use whatever the default formatting for the Op type seems to
     * be. */
   case object Default extends Format {
+    val basicEval = (_: NelPe).head
+
+    def devolve(ops: NelOp) = ops.head
+  }
+
+  case object Verbatim extends Format {
     val basicEval = (_: NelPe).head
 
     def devolve(ops: NelOp) = ops.head
