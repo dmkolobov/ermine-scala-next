@@ -416,6 +416,16 @@ grid d = Report (w -> liftM (wm w) (gridW w) $ travLW w (travLW w (runReport w))
 gridRow : String -> Report f z -> List (Report f z)
 gridRow l r = [ style "fix-width-label" $ atomShown l, r ]
 
+styleBox : List (Maybe String, List (Maybe String, Report f z)) 
+        -> List (Maybe String, List (Maybe String, Report f z)) 
+        -> Report f z
+styleBox header body =  
+  let 
+    runListReports w f = travLW w (strength (wf w) . mapSnd f)
+    applyFunctor w = runListReports w (runListReports w (runReport w))
+  in
+    Report ( w -> liftA2 (wa w) (styleBoxW w) (applyFunctor w header) (applyFunctor w body))                
+
 wrap : String -> Report f z -> Report f z
 wrap h r = style h ' border (Just r) Nothing Nothing Nothing Nothing
 
@@ -1476,6 +1486,14 @@ private
   gridW : Writer f z -> List (List z) -> z
   gridW w d = gridW_ w (toList# (lmap toList# d))
 
+  styleBoxW : Writer f z -> List (Maybe String, List (Maybe String, z)) -> List (Maybe String, List (Maybe String, z)) -> z
+  styleBoxW w header body = 
+    let 
+      toCell# = toPair# . (mapFst toMaybe#)
+      toRow# = x -> toPair# (toMaybe# (fst x), toList# (lmap toCell# (snd x)))
+    in
+      styleBoxW_ w (toList# $ lmap toRow# header) (toList# $ lmap toRow# body)
+
   foreign
     method "atomDMTL" atomW : forall f z a . Writer f z -> Format_Fmt a -> a -> z
     method "atomFontDMTL" atomW_' : forall f z a . Writer f z -> List# Font -> Maybe# Int -> Format_Fmt a -> a -> z
@@ -1513,6 +1531,10 @@ private
     method "centered" centeredW : forall f z . Writer f z -> z -> z
     method "scanRelationDMTL" scanRelationW' : forall f z . Writer f z -> Sort# -> Relation# -> Function1 (List# Record#) (f z) -> f z
     method "grid" gridW_ : forall f z . Writer f z -> List# (List# z) -> z
+    method "styleBox" styleBoxW_ : forall f z . Writer f z 
+                                            -> List# (Pair# (Maybe# String) (List# (Pair# (Maybe# String) z))) 
+                                            -> List# (Pair# (Maybe# String) (List# (Pair# (Maybe# String) z)))
+                                            -> z
     method "selector" selectorW: forall f z a b . Writer f z -> SelectorMode# -> Pair# (NonEmpty# PrimExpr# ) a -> Format_Fmt b -> List# (Pair# (NonEmpty# PrimExpr# ) a) ->
                                     Function3 z (SelectorEvent z) (Function2 (SelectorEvent z) (Function1 a (f z)) (f z)) (f z) ->
                                     f z
