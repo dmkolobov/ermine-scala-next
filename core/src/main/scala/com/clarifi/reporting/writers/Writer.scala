@@ -151,7 +151,7 @@ abstract class Writer[F[_],C] { self =>
 
   /** A table-like laybout of the reports with table header and table body.      
     * CSSClass can be applied on each row and column  */
-  private def styleWithCSS(css: Option[String], target: C) : C = target
+  private def styleWithCSS(css: Option[String], target: C) : C = css.fold(target)(s => style(s, target))
   
   def styleBox(header: List[(Option[String], List[(Option[String], C)])], body: List[(Option[String], List[(Option[String], C)])]) : C = {
     grid ((header ++ body).map(_._2.map(x => styleWithCSS(x._1, x._2)))) // type: List[  List[  (Option[String], C)  ]  ]
