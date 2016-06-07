@@ -216,8 +216,10 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
    * Emits union to ensure proper grouping of multiple options.
    */
   def emitNaryOp(op: SqlBinOp, rs: NonEmptyList[SqlQuery]): RawSql =
-    rs.map(r => raw("select * from ") |+| r.emitSubquery(this))
-      .intercalate(raw(" ") |+| op.emit |+| " ")
+    raw("(") |+|
+    rs.map(r => r.emitSql(this))
+      .intercalate(raw(") ") |+| op.emit |+| " (") |+|
+    ")"
 
   private[sql] final def allSubqueryColumns(rs: NonEmptyList[Subquery]): RawSql = {
     implicit val so = Order[TableName].toScalaOrdering
@@ -230,37 +232,18 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   }
 
   /**
-   * Emit Sql for a natural inner join.
-   */
-  def emitJoin(rs: NonEmptyList[Subquery],
-                     joinName: TableName): RawSql = {
-    val (leftP, rightP) = if (aliasParens) ("(", ")") else ("", "")
-
-    raw("select ") |+| allSubqueryColumns(rs) |+| " from " |+| (rs.map {
-      case (q, t, _) => raw(leftP) |+| q.emitSubquery(this) |+| " " |+| emitTableName(t) |+| rightP
-    } intercalate raw(" natural join "))
-  }
-
-  /**
    * Emits Sql for an inner join on a specified set of column-pairs.
    * TODO: What is the right behavior when there are duplicate column names?
    *       Previously we would arbitrarily retain the _first_ column with a given name.
    *       But that is definitely wrong.
    */
-  def emitJoinOn(r1: Subquery,
-                 r2: Subquery,
-                 on: Set[(ColumnName, ColumnName)],
-                 joinName: TableName): RawSql = {
-    val rs: NonEmptyList[Subquery] = NonEmptyList(r1, r2)
-    val (leftP, rightP) = if (aliasParens) ("(", ")") else ("", "")
-    raw("select ") |+| rs.toSet.flatMap {
-      case (q, t, h) => h.keySet.map(emitQualifiedColumnName(t, _))
-    }.rawMkString(",") |+|
-    " from " |+| (rs.map {
-      case (q, t, _) => raw(leftP) |+| q.emitSubquery(this) |+| " " |+| emitTableName(t) |+| rightP
-    } intercalate raw(" inner join ")) |+|
+  def emitJoinOn(r1: SqlSource,
+                 r2: SqlSource,
+                 on: Set[((TableName, ColumnName), (TableName, ColumnName))],
+		 op: SqlJoinOp): RawSql = {
+    r1.emitSql(this) |+| raw(" ") |+| op.emit |+| raw(" ") |+| r2.emitSql(this) |+|
     " on (" |+| (on.map {
-      case (c1, c2) => emitQualifiedColumnName(r1._2, c1) |+| " = " |+| emitQualifiedColumnName(r2._2, c2)
+      case (c1, c2) => emitQualifiedColumnName(c1._1, c1._2) |+| " = " |+| emitQualifiedColumnName(c2._1, c2._2)
     } intercalate raw(" and ")) |+| ")"
   }
 
@@ -269,7 +252,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
    * Dialects without "except" will need to override and provide a workaround.
    */
   def emitExcept(left: SqlQuery, unLeft: TableName, right: SqlQuery, unRight: TableName, rheader: Header): RawSql =
-    raw("select * from ") |+| left.emitSubquery(this) |+| " except select * from " |+| right.emitSubquery(this)
+    raw("(") |+| left.emitSql(this) |+| ") except (" |+| right.emitSql(this) |+| ")"
 
   /** Emits SQL for a Transact-SQL-style `OVER` clause.  Default
     * implementation is a compatibility workaround; the MS SQL emitter
@@ -471,31 +454,6 @@ trait EmitUnion extends SqlEmitter {
 }
 
 /**
- * Overrides emitJoin to use an inner join, for dialects (MS SQL) without natural join
- */
-trait EmitJoin_MsSql extends SqlEmitter {
-  override def emitJoin(rs: NonEmptyList[Subquery],
-                        joinName: TableName): RawSql = {
-    val allPairs =
-      ((((x: List[Subquery]) => (y: List[Subquery]) => x zip y) |@|
-      ((x: List[Subquery]) => x.tails.toList.tail))((x, y) => y flatMap x)).apply(rs.list)
-
-    val ons = allPairs flatMap {
-      case ((_, t1, h1), (_, t2, h2)) => {
-        val is = h1.keySet intersect h2.keySet
-        if (is.isEmpty) None else
-          Some(is.map(c => emitQualifiedColumnName(t1, c) |+| " = " |+|
-                           emitQualifiedColumnName(t2, c)).rawMkString(" and "))
-      }
-    }
-
-    raw("select ") |+| allSubqueryColumns(rs) |+| " from " |+| (rs.list.map {
-      case (q, t, _) => q.emitSubquery(this) |+| " " |+| emitTableName(t)
-    }).rawMkString(" , ") |+| " where " |+| (if (ons.isEmpty) "1 = 1" else ons.rawMkString(" and "))
-  }
-}
-
-/**
  * Overrides except to use the 'except' clause provided by the vendor.
  */
 trait EmitExcept_MsSql extends SqlEmitter {
@@ -514,9 +472,9 @@ trait EmitExcept_AsJoin extends SqlEmitter {
       val colnames = rheader.keySet.map(emitColumnName)
       val on = colnames.map(k => emitTableName(unLeft) |+| "." |+| k |+| " = " |+| emitTableName(unRight) |+| "." |+| k).rawMkString(" and ")
       val r0 = emitQualifiedColumnName(unRight, rheader.keys.head)
-      raw("select ") |+| colnames.toList.sorted.map(emitTableName(unLeft) |+| "." |+| _).rawMkString(", ") |+| " from " |+|
-              left.emitSubquery(this) |+| " " |+| emitTableName(unLeft) |+| " left join " |+|
-              right.emitSubquery(this) |+| " " |+| emitTableName(unRight) |+| " on " |+| on |+|
+      raw("select ") |+| colnames.toList.sorted.map(emitTableName(unLeft) |+| "." |+| _).rawMkString(", ") |+| " from (" |+|
+              left.emitSql(this) |+| ") " |+| emitTableName(unLeft) |+| " left join (" |+|
+              right.emitSql(this) |+| ") " |+| emitTableName(unRight) |+| " on " |+| on |+|
               " where " |+| r0 |+| " is null"
     }
   }
@@ -534,16 +492,26 @@ trait EmitLimit_AsRowNumberOver extends SqlEmitter {
                          from: Option[Int], to: Option[Int],
                          order: List[(SqlExpr, SqlOrder, Boolean)],
                          un2: TableName): SqlQuery =
-    SqlSelect(attrs = columns(h, un2),  // erase "rownum"
-              tables = Map(un2 -> SqlSelect(
-                tables = Map(un -> rc),
-                attrs = (columns(h, un) + // add "rownum"
-                         ("rownum" -> OverSqlExpr(FunSqlExpr("row_number", List()),
-                                                  order.map(p => (p._1,p._2))))))),
-              criteria = List(to.map(x => SqlLte(ColumnSqlExpr(un2, "rownum"),
-                                                LitSqlExpr(SqlInt(x)))),
-                              from.map(x => SqlGte(ColumnSqlExpr(un2, "rownum"),
-                                                  LitSqlExpr(SqlInt(x))))).flatten)
+    SqlSelect(
+      attrs = columns(h, un2),  // erase "rownum"
+      sources = SourceList(
+        SqlSubquery(
+          alias = un2,
+          query = SqlSelect(
+            sources = SourceList(SqlSubquery(rc, h.keys.toList, un)),
+            attrs = (columns(h, un) + // add "rownum"
+                      ("rownum" -> OverSqlExpr(FunSqlExpr("row_number", List()),
+                                               order.map(p => (p._1,p._2)))))
+	  ),
+	  cols = h.keys.toList ++ List("rownum")
+        )
+      ),
+      criteria = List(to.map(x => SqlLte(ColumnSqlExpr(un2, "rownum"),
+                                         LitSqlExpr(SqlInt(x)))),
+                      from.map(x => SqlGte(ColumnSqlExpr(un2, "rownum"),
+                                           LitSqlExpr(SqlInt(x))))).flatten,
+      orderBy = List((ColumnSqlExpr(un2, "rownum"), SqlAsc, false))
+    )
 }
 
 /** MySQL and PostgreSQL support `LIMIT`. */
@@ -557,7 +525,8 @@ trait EmitLimit_AsLimit extends SqlEmitter {
                          from: Option[Int], to: Option[Int],
                          order: List[(SqlExpr, SqlOrder, Boolean)],
                          un2: TableName): SqlQuery =
-    SqlSelect(attrs = columns(h, un), tables = Map(un -> rc),
+    SqlSelect(attrs = columns(h, un),
+              sources = SourceList(SqlSubquery(rc, h.keys.toList, un)),
               // reorder and limit RC
               orderBy = order, limit = (from, to))
 
@@ -565,9 +534,9 @@ trait EmitLimit_AsLimit extends SqlEmitter {
     * syntax, which is also supported in MySQL.
     */
   override def emitLimitClause(from: Option[Int], to: Option[Int]): RawSql = (from, to) match {
-    case (Some(x), Some(y)) => "limit %d offset %d" format (y - x + 1, x - 1)
-    case (Some(x), None) => "offset %d" format (x - 1)
-    case (None, Some(y)) => "limit %d" format y
+    case (Some(x), Some(y)) => " limit %d offset %d" format (y - x + 1, x - 1)
+    case (Some(x), None) => " offset %d" format (x - 1)
+    case (None, Some(y)) => " limit %d" format y
     case (None, None) => ""
   }
 }
@@ -803,7 +772,6 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitNoDropTempTable
                                       with EmitUnion
                                       with EagerlyDistinct
-                                      with EmitJoin_MsSql
                                       with EmitConcat_MsSql
                                       with EmitExcept_MsSql
                                       with EmitIntDivOp_MsSql

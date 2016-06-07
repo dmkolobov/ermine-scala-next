@@ -66,24 +66,23 @@ object SqlEmitterGens {
   /** Make FromTables exprs. */
   val fromTables = for {
     n <- nonEmptyAlphaStr
+    a <- nonEmptyAlphaStr
     l <- nonEmptyListOf(nonEmptyAlphaStr)
-  } yield FromTable(TableName(n), l.toSet.toList)
+  } yield FromTable(TableName(n), l.toSet.toList, Some(TableName(a)))
 
   private def trivialHeader(cols: Seq[ColumnName]): Header =
     cols.zip(Stream.continually(PrimT.IntT())).toMap
 
   /** Make `SqlJoinOn`s. */
   val joinOnExprs = for {
-    surrogates <- setOfN(3, nonEmptyAlphaStr)
-    Seq(unLeft, unRight, joinName) = surrogates.toSeq.map(TableName(_))
     left      <- fromTables
     right     <- fromTables
     joinColCt <- choose(1, left.cols.size min right.cols.size)
     joinLCols <- pick(joinColCt, left.cols)
     joinRCols <- pick(joinColCt, right.cols)
-  } yield SqlJoinOn((left, unLeft, trivialHeader(left.cols)),
-                    (right, unRight, trivialHeader(right.cols)),
-                    joinLCols.zip(joinRCols).toSet, joinName)
+  } yield SqlJoinOn(left,
+                    right,
+                    joinLCols.zip(joinRCols).toSet)
 }
 
 object TestSqlEmitters extends Properties("emitSql") {
@@ -108,8 +107,8 @@ object TestSqlEmitters extends Properties("emitSql") {
     (joinOnExpr: SqlJoinOn, emitter: SqlEmitter) =>
       val sql = joinOnExpr.emitSql(emitter)
       (sql.run + " should make sense") |: (joinOnExpr match {
-        case SqlJoinOn((FromTable(ltable, _), _, _),
-                       (FromTable(rtable, _), _, _),
+        case SqlJoinOn(FromTable(ltable, _, _),
+                       FromTable(rtable, _, _),
                        _, _) =>
           Seq(ltable, rtable) forall { tablechoice =>
             danglingTable(tablechoice.name).
@@ -141,11 +140,12 @@ object TestSqlEmitters extends Properties("emitSql") {
              where\s\(\(.dbaquestions.\..n.\)\s=\s\(?1\)?\)\s?"""
           -> SqlSelect(attrs=("nqa".map(_.toString)
                               .map{c=>c->ColumnSqlExpr(TableName("dbaquestions"),c)}.toMap),
-                       tables=Map(TableName("dbaquestions")->FromTable(TableName("dbaquestions"), List("a","n","q"))),
+                       sources=SourceList(FromTable(TableName("dbaquestions"), List("a","n","q"), Some(TableName("dbaquestions")))),
                        criteria=List(SqlEq(ColumnSqlExpr(TableName("dbaquestions"), "n"),
                                            LitSqlExpr(SqlInt(1))))),
-          """(?x)select\s(distinct\s)?\(.yes.\)\sfrom\s.yesiwilltable."""
-          -> FromTable(TableName("yesiwilltable"), List("yes"))).
+          """(?x)select\s(distinct\s)?\(.yesiwilltable.\..yes.\)\s.yes.\sfrom\s.yesiwilltable."""
+          -> SqlSelect(attrs=Map("yes" -> ColumnSqlExpr(TableName("yesiwilltable"), "yes")),
+                       sources = SourceList(FromTable(TableName("yesiwilltable"), List("yes"), None)))).
       map {case (rs, sql) =>
         val r = rs.replaceAll("""(?<!\\)\.""", idq).r // hack out table/column quoting
         matchProp(r, sql.emitSql(emitter).run)
