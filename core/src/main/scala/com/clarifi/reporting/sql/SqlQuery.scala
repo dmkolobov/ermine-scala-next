@@ -1,7 +1,5 @@
 package com.clarifi.reporting.sql
 
-import scala.collection.{AbstractSeq, LinearSeq}
-
 import scalaz._
 import Scalaz._
 import Equal._
