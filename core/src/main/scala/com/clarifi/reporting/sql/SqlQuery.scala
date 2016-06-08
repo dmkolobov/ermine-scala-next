@@ -9,53 +9,6 @@ import Show._
 
 import com.clarifi.reporting.{ Header, TableHints, Hints, TableName }
 
-/*
-package namespace {
-  sealed abstract class Namespace[+T] {
-    protected[namespace] val taken: Set[T]
-
-    private[namespace] type Injects
-
-    class Name protected[namespace](val name: T) {}
-
-    def alloc[U >: T](name: U): Option[SingletonNamespace[U, this.type]] = {
-      if (fresh(name)) {
-        Some(new SingletonNamespace[U, this.type](name, this))
-      } else {
-        None
-      }
-    }
-
-    def fresh[U >: T](name: U): Boolean = { !taken.toSet[U](name) }
-  }
-
-  sealed class RestrictedNamespace[+T] extends Namespace[T] {
-    type Buddy <: Namespace[T]
-    def buddy: Buddy
-  }
-
-  object EmptyNamespace extends RestrictedNamespace[Nothing] {
-    type Buddy = this.type
-    override def buddy = this
-    override val taken = Set()
-  }
-
-  final class SingletonNamespace[+T, B <: Namespace[T]] private[namespace](nm: T, override val buddy: B) extends RestrictedNamespace[T] {
-    type Buddy = B
-    val name: Name = new Name(nm)
-    override val taken = buddy.taken + nm
-  }
-
-  class UnionedNamespace[+T, B <: Namespace[T], L <: RestrictedNamespace[T] { type Buddy = B }] private[namespace](left: L, right: RestrictedNamespace[T] { type Buddy = L }) extends RestrictedNamespace[T] {
-    type Buddy = B
-    override val buddy = left.buddy
-    override val taken = right.taken
-  }
-}
-
-import namespace.{Namespace, EmptyNamespace}
-*/
-
 sealed abstract class SqlQuery {
 
   import RawSql._
