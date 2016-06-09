@@ -790,11 +790,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     private[DistinctiveQuery] def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
     private[DistinctiveQuery] def columns(h: Header, rv: SqlSource) = h.map(x => (x._1, ColumnSqlExpr.tupled(rv.columnMap(x._1))))
 
-    def apply(h: Header, q: Boolean => (Boolean, SqlQuery)) = new DistinctiveQuery(h) {
-        override def q(needDistinct: Boolean)(implicit sup: Supply): (Boolean, SqlQuery) = q(needDistinct)
+    def apply(h: Header, query: Boolean => (Boolean, SqlQuery)) = new DistinctiveQuery(h) {
+        override def q(needDistinct: Boolean)(implicit sup: Supply): (Boolean, SqlQuery) = query(needDistinct)
       }
-    def source(h: Header, s: Boolean => (Boolean, SqlSource)) = new DistinctiveQuery(h) {
-        override def s(needDistinct: Boolean)(implicit sup: Supply): (Boolean, SqlSource) = s(needDistinct)
+    def source(h: Header, src: Boolean => (Boolean, SqlSource)) = new DistinctiveQuery(h) {
+        override def s(needDistinct: Boolean)(implicit sup: Supply): (Boolean, SqlSource) = src(needDistinct)
       }
 
     private[DistinctiveQuery]
