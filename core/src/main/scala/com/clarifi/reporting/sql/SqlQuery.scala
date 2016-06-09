@@ -5,39 +5,29 @@ import Scalaz._
 import Equal._
 import Show._
 
-import com.clarifi.reporting.{ Header, TableHints, Hints, TableName, ColumnName }
+import com.clarifi.reporting.{ Header, TableHints, Hints, TableName }
 
-// A Data Type for SQL Queries
 sealed abstract class SqlQuery {
 
   import RawSql._
   import scalaz.std.iterable._
 
-  /**
-   * Compiles a SqlQuery to a SQL statement that can then be run
-   * The method assumes that all special cases (Sqlone)
-   * have already been handled and thus can be safely ignored.
-   *
-   * @todo rob: groupBy
-   */
   def emitSql(implicit emitter: SqlEmitter): RawSql = this match {
-    case SqlSelect(options, attrs, tables, criteria, groupBy, orderBy, limit) =>
+    case SqlSelect(options, attrs, sources, criteria, groupBy, orderBy, limit) =>
       raw("select ") |+|
       (if (options contains "distinct") raw("distinct ") else raw("")) |+|
       { if (attrs.isEmpty) "*"
         else (attrs.toIndexedSeq.sortBy((_: (SqlColumn, SqlExpr))._1)
               .map(x => raw("(") |+| x._2.emitSql |+| ") " |+|
                    emitter.emitColumnName(x._1)).rawMkString(", ")) } |+|
-      (if (!tables.isEmpty) {
-        raw(" from ") |+| tables.map(x => x._2.emitSubquery |+|
-                                     " " |+| emitter.emitTableName(x._1)).rawMkString(", ")
+      (if (!sources.isEmpty) {
+        raw(" from ") |+| sources.map(x => x.emitSql).toIterable.rawMkString(", ")
                                  } else emitter.emitFromEmptyTable ) |+|
       (if (!criteria.isEmpty)
         raw(" where ") |+| criteria.map(x => raw("(") |+| x.emitSql |+| ")").toIterable.rawMkString(" and ")
       else raw("")) |+|
       (if (!groupBy.isEmpty)
-        raw(" group by ") |+| { if (attrs.isEmpty) "*"
-        else (groupBy.toIndexedSeq.map((x: SqlExpr) => x.emitSql).rawMkString(", ")) }
+        raw(" group by ") |+| (groupBy.toIndexedSeq.map((x: SqlExpr) => x.emitSql).rawMkString(", "))
       else raw("")) |+|
       (if (!orderBy.isEmpty)
         raw(" order by ") |+|
@@ -47,29 +37,14 @@ sealed abstract class SqlQuery {
         ).toIterable.rawMkString(", ")
       else raw("")) |+|
       (limit match { case (from, to) =>
-        raw(" ") |+| emitter.emitLimitClause(from, to)})
+        emitter.emitLimitClause(from, to)})
     case SqlNaryOp(op, rs) =>
       emitter.emitNaryOp(op, rs)
-    case SqlJoin(rs, joinName) =>
-      emitter.emitJoin(rs, joinName)
-    case SqlJoinOn(r1, r2, ons, joinName) =>
-      emitter.emitJoinOn(r1, r2, ons, joinName)
     case SqlExcept(left, unLeft, right, unRight, rheader) =>
       emitter.emitExcept(left, unLeft, right, unRight, rheader)
-    case SqlParens(q) => raw("(") |+| q.emitSql |+| ")"
-    case FromTable(_, cols) => raw("select distinct ") |+|
-      cols.toIndexedSeq.sorted.map {(c: ColumnName) => raw("(") |+| emitter.emitColumnName(c) |+| ")"}.rawMkString(", ") |+|
-      " from " |+| this.emitSubquery
-    case LiteralSqlTable(nel) => emitter.emitLiteral(nel)
     case SqlEmpty(h) => emitter.emitEmpty(h)
-    case _ => sys.error("SQL does not directly support this kind of query: " + this)
+    case LiteralSqlTable(nel) => emitter.emitLiteral(nel)
   }
-
-  def emitSubquery(implicit emitter: SqlEmitter): RawSql = this match {
-    case FromTable(t, _) => emitter.emitTableName(t)
-    case _ => raw("(") |+| this.emitSql |+| raw(")")
-  }
-
 }
 
 object SqlQuery {
@@ -77,15 +52,48 @@ object SqlQuery {
   implicit val SqlQueryEqual: Equal[SqlQuery] = equalA[SqlQuery]
 }
 
-case class SqlSelect(options: Set[String] = Set(), // Distinct, all, etc.
+sealed abstract class SqlSource {
+  import RawSql._
+
+  /**
+   * Gives the fully-qualified name to refer to a virtual column name.
+   */
+  val columnMap: Map[SqlColumn, (TableName, SqlColumn)]
+
+  def emitSql(implicit emitter: SqlEmitter): RawSql = this match {
+    case SqlJoinOn(r1, r2, ons, op) =>
+      emitter.emitJoinOn(r1, r2, ons.map {case (x, y) => (r1.columnMap(x),r2.columnMap(y))}, op)
+    case FromTable(t, _, None) => emitter.emitTableName(t)
+    case FromTable(t, _, Some(alias)) => emitter.emitTableName(t) |+| " " |+| emitter.emitTableName(alias)
+    case SqlSubquery(q, _, alias) => raw("(") |+| q.emitSql |+| ") " |+| emitter.emitTableName(alias)
+  }
+}
+
+object SqlSource {
+  implicit val SqlSourceShow: Show[SqlSource] = showA[SqlSource]
+  implicit val SqlSourceEqual: Equal[SqlSource] = equalA[SqlSource]
+}
+
+final case class SourceList(sources: List[SqlSource]) {
+  lazy val columnMap: Map[SqlColumn, (TableName, SqlColumn)] =
+    sources.foldLeft(Map[SqlColumn, (TableName,SqlColumn)]())((r, x) => x.columnMap ++ r)
+}
+
+object SourceList {
+  implicit def sources(sl : SourceList): List[SqlSource] = sl.sources
+  
+  def apply(sources: SqlSource*): SourceList = SourceList(sources.toList)
+}
+
+case class SqlSelect(options: Set[String] = Set(), // Distinct, all, etc.  FIXME use enum
                      attrs: Map[SqlColumn, SqlExpr] = Map(), // result attributes
-                     tables: Map[TableName, SqlQuery] = Map(), // from clause
+                     sources: SourceList = SourceList(), // from clause
                      criteria: List[SqlPredicate] = List(), // where clause
                      groupBy: List[SqlExpr] = List(), // groupBy clause
                      orderBy: List[(SqlExpr, SqlOrder, Boolean)] = List(),
                      // limit clause (where allowed), inclusive 1-indexed (from, to)
                      limit: (Option[Int], Option[Int]) = (None, None)
-                   ) extends SqlQuery
+                    ) extends SqlQuery
 
 case class LiteralSqlTable(lit: NonEmptyList[Map[SqlColumn, SqlExpr]]) extends SqlQuery
 
@@ -117,24 +125,38 @@ case object SqlIntersect extends SqlBinOp {
 // Union relational operator
 case class SqlNaryOp(op: SqlBinOp, rs: NonEmptyList[SqlQuery]) extends SqlQuery
 
+sealed abstract class SqlJoinOp {
+  def emit: RawSql = this match {
+    case SqlJoinInner => "JOIN"
+    case SqlJoinLeft => "LEFT JOIN"
+    case SqlJoinRight => "RIGHT JOIN"
+    case SqlJoinFull => "FULL JOIN"
+  }
+}
 
-// Operator for join, which has different semantics from a binary operator
-case class SqlJoin(rs: NonEmptyList[Subquery], joinName: TableName) extends SqlQuery
+case object SqlJoinInner extends SqlJoinOp
+case object SqlJoinLeft  extends SqlJoinOp
+case object SqlJoinRight extends SqlJoinOp
+case object SqlJoinFull  extends SqlJoinOp
 
-case class SqlJoinOn(r1: Subquery, r2: Subquery, on: Set[(String, String)], joinName: TableName) extends SqlQuery
+case class SqlJoinOn(r1: SqlSource, r2: SqlSource, on: Set[(SqlColumn, SqlColumn)], op: SqlJoinOp = SqlJoinInner) extends SqlSource {
+  override val columnMap = r2.columnMap ++ r1.columnMap
+}
 
 // Operator for except, which only exists in some dialects and is worked around in others
 case class SqlExcept(left: SqlQuery, unLeft: TableName, right: SqlQuery, unRight: TableName, rheader: Header) extends SqlQuery
 
-// A table with one row but no columns
-case object SqlOne extends SqlQuery
-
 // A table with no rows
 case class SqlEmpty(h: Header) extends SqlQuery
 
-// Parentheses in SQL query
-case class SqlParens(q: SqlQuery) extends SqlQuery
-
 // select from table.  We assume that `cols` lists every column in
 // `table`.
-case class FromTable(table: TableName, cols: List[SqlColumn]) extends SqlQuery
+case class FromTable(table: TableName, cols: List[SqlColumn], alias: Option[TableName]) extends SqlSource {
+  override val columnMap = cols.map(c => c -> (alias.getOrElse(table), c)).toMap
+}
+
+// subquery as a FROM clause element.  We assume that `cols` lists
+// every column in `query`.
+case class SqlSubquery(query: SqlQuery, cols: List[SqlColumn], alias: TableName) extends SqlSource {
+  override val columnMap = cols.map(c => c -> (alias, c)).toMap
+}
