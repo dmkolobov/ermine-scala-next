@@ -509,8 +509,7 @@ trait EmitLimit_AsRowNumberOver extends SqlEmitter {
       criteria = List(to.map(x => SqlLte(ColumnSqlExpr(un2, "rownum"),
                                          LitSqlExpr(SqlInt(x)))),
                       from.map(x => SqlGte(ColumnSqlExpr(un2, "rownum"),
-                                           LitSqlExpr(SqlInt(x))))).flatten,
-      orderBy = List((ColumnSqlExpr(un2, "rownum"), SqlAsc, false))
+                                           LitSqlExpr(SqlInt(x))))).flatten
     )
 }
 
