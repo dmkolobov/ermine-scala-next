@@ -15,6 +15,15 @@ import scalaz.std.vector._
 package object relational {
   import SortOrder._
 
+  sealed abstract class JoinMode
+
+  object JoinMode {
+    case object Inner extends JoinMode
+    case object Left  extends JoinMode
+    case object Right extends JoinMode
+    case object Full  extends JoinMode
+  }
+
   def uniqSorted: Process[Record,Record] = {
     def filter(now: Record): Process[Record, Record] =
       Plan.await[Record] flatMap { case r =>

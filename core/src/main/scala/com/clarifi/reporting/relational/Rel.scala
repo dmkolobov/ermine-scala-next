@@ -109,17 +109,17 @@ case class LetR[+M,+R](r: Ext[M,R], expr: Relation[M,RLevel[M, R]]) extends Rela
          expr.unquote(x => f(x).map(v => VarR(RPop(v))), x => g(x).map(_.mapRel(v => RPop(VarR(v))))))
 }
 
-case class Join[+M, +R](fst: Relation[M, R], snd: Relation[M, R]) extends Relation[M, R] {
-  def bimap[N, S](f: M => N, g: R => S) = Join(fst bimap (f, g), snd bimap (f, g))
-  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Join(fst subst (f, g), snd subst (f, g))
-  def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = fst.bifoldMap(f, g) |+| snd.bifoldMap(f, g)
-  def foreach(f: M => Any, g: R => Any) { fst foreach (f, g) ; snd foreach (f, g) }
-  override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
-                                       g: Object => Option[Mem[S, N]]): Relation[N, S] =
-    Join(fst.unquote(f, g), snd.unquote(f, g))
+object Join {
+  def apply[M, R](fst: Relation[M, R], snd: Relation[M, R]): JoinOn[M, R] =
+    JoinOn(fst, snd, Set())
+  def unapply[M, R](j: JoinOn[M, R]): Option[(Relation[M, R], Relation[M, R])] =
+    j match {
+      case JoinOn(fst, snd, cs, JoinMode.Inner) if cs.isEmpty => Some((fst, snd))
+      case _ => None
+    }
 }
 
-case class JoinOn[+M, +R](fst: Relation[M, R], snd: Relation[M, R], cs: Set[(String, String)]) extends Relation[M, R] {
+case class JoinOn[+M, +R](fst: Relation[M, R], snd: Relation[M, R], cs: Set[(String, String)], mode: JoinMode = JoinMode.Inner) extends Relation[M, R] {
   def bimap[N, S](f: M => N, g: R => S) = JoinOn(fst bimap (f, g), snd bimap (f, g), cs)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = JoinOn(fst subst (f, g), snd subst (f, g), cs)
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = fst.bifoldMap(f, g) |+| snd.bifoldMap(f, g)

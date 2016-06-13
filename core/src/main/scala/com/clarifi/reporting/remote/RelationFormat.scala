@@ -282,7 +282,7 @@ object Format {
            tuple3W(repeatW(self), mapW(attributeW, opW), predicateW) dynamicF, // Select
            tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))) dynamicF, // Let
            tuple2W(self, self) dynamicF, // Join
-           tuple3W(self, self, repeatW(tuple2W(stringW, stringW))) dynamicF, // JoinOn
+           tuple4W(self, self, repeatW(tuple2W(stringW, stringW)), joinModeW) dynamicF, // JoinOn
            tuple2W(self, self) dynamicF, // Union
            tuple2W(self, self) dynamicF, // Minus
            tuple2W(self, predicateW) dynamicF, // Filter
@@ -303,7 +303,7 @@ object Format {
              case SelectR(a, b, c) => sel((a, b, c))
              case LetR(a, b) => let((a, b))
              case Join(a, b) => join((a, b))
-             case JoinOn(a, b, c) => on((a, b, c))
+             case JoinOn(a, b, c, d) => on((a, b, c, d))
              case Union(a, b) => un(a -> b)
              case Minus(a, b) => min(a -> b)
              case Filter(a, b) => fil(a -> b)
@@ -328,7 +328,7 @@ object Format {
       p3R(listR(self), mapR(attributeR, opR), predicateR)(SelectR(_, _, _)),
       p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)),
       p2R(self, self)(Join(_, _)),
-      p3R(self, self, listR(tuple2R(stringR, stringR)) map (_.toSet))(JoinOn(_, _, _)),
+      p4R(self, self, listR(tuple2R(stringR, stringR)) map (_.toSet), joinModeR)(JoinOn(_, _, _, _)),
       p2R(self, self)((a, b) => Union(a, b)),
       p2R(self, self)((a, b) => Minus(a, b)),
       p2R(self, predicateR)((a, b) => Filter(a, b)),
@@ -438,6 +438,20 @@ object Format {
     case TimeUnit.Month => 2
     case TimeUnit.Year => 3
     case TimeUnit.Millisecond => 4
+  }
+
+  type JoinModeF = IntF
+  lazy val joinModeR: Reader[JoinMode, JoinModeF] = intR map {
+    case 0 => JoinMode.Inner
+    case 1 => JoinMode.Left
+    case 2 => JoinMode.Right
+    case 3 => JoinMode.Full
+  }
+  lazy val joinModeW: Writer[JoinMode, JoinModeF] = intW cmap {
+    case JoinMode.Inner => 0
+    case JoinMode.Left  => 1
+    case JoinMode.Right => 2
+    case JoinMode.Full  => 3
   }
 
   lazy val opW: Writer[Op, DynamicF] = fixW[Op, DynamicF]{self =>

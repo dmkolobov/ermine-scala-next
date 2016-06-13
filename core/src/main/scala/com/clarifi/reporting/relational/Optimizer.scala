@@ -439,11 +439,11 @@ object Optimizer {
     // See `joinable` for conditions under which
     // we can combine two selects into one by an
     // associative natural join.
-    case JoinOn(r1, r2, cols) =>
+    case JoinOn(r1, r2, cols, mode) =>
       val (nl, orh1, jh1, rl) = optimizeRel(r1, hr, hm)
       val (nr, orh2, jh2, rr) = optimizeRel(r2, hr, hm)
       val h = orh1 ++ orh2
-      (nl ++ nr, h, h, PureSelect(JoinOn(impurify(rl, jh1), impurify(rr, jh2), cols), h))
+      (nl ++ nr, h, h, PureSelect(JoinOn(impurify(rl, jh1), impurify(rr, jh2), cols, mode), h))
     // Unions can be reinterpreted as a single select if they differ only in filter.
     case Union(r1, r2) =>
       val (nl, h, jh1, rl) = optimizeRel(r1, hr, hm)

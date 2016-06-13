@@ -651,8 +651,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       case VarR(v) => srv(v)
       case Join(l, r) =>
         combineBinary(l, r, _ join _, _ && _)
-      case JoinOn(l, r, on) =>
-        combineBinary(l, r, _ joinOn (on, _), _ && _)
+      case JoinOn(l, r, on, mode) =>
+        combineBinary(l, r, _ joinOn (on, _, mode), _ && _)
       case Union(l, r) =>
         combineBinary(l, r, _ union _, _ || _)
       case Minus(l, r) =>
@@ -914,15 +914,18 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     }
 
     def join(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery = {
-      val on = h.keySet intersect other.h.keySet map {x => (x,x)}
-      joinOn(on, other)
+      joinOn(Set(), other, JoinMode.Inner)
     }
 
-    def joinOn(on: Set[(String, String)], other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery = {
+    def joinOn(on: Set[(String, String)], other: DistinctiveQuery, mode: JoinMode)(implicit sup: Supply): DistinctiveQuery = {
       (s(distinctEagerly), other.s(distinctEagerly)) match {
           case ((d1, s1), (d2, s2)) =>
+            // include duplicately-named columns from the header to match the way Ermine types this
+            //  -- it also matches our smart Join constructor which doesn't have the information
+            //  available to add them.
+            val extraOn = h.keySet intersect other.h.keySet map {x => (x,x)}
             satisfyDistinctSrc(d1 && d2, other.h ++ h,
-              SqlJoinOn(s1, s2, on, SqlJoinInner))
+              SqlJoinOn(s1, s2, on ++ extraOn, SqlJoinInner))
         }
     }
 

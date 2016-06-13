@@ -254,7 +254,7 @@ object Typer {
       case VarR(v)                 => rtype(v)
       case Limit(r, f, t, os)      => go(r) flatMap (limitType[F](_, f, t, os))
       case Join(fst, snd)          => (go(fst) |@| go(snd))(naturalJoinType[F](_, _)).join
-      case JoinOn(fst, snd, _)     => (go(fst) |@| go(snd))(_ ++ _)
+      case JoinOn(fst, snd, _, _)  => (go(fst) |@| go(snd))(_ ++ _)
       case Union(fst, snd)         => (go(fst) |@| go(snd))(unionType[F](_, _, "union")).join
       case Minus(fst, snd)         => (go(fst) |@| go(snd))(unionType[F](_, _, "subtract")).join
       case Filter(r, p)            => go(r) flatMap (filterType[F](_, p))
