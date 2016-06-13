@@ -110,8 +110,21 @@ case class LetR[+M,+R](r: Ext[M,R], expr: Relation[M,RLevel[M, R]]) extends Rela
 }
 
 object Join {
-  def apply[M, R](fst: Relation[M, R], snd: Relation[M, R]): JoinOn[M, R] =
-    JoinOn(fst, snd, Set())
+  def apply[M, R](fst: Relation[M, R], snd: Relation[M, R]): Relation[M, R] =
+    // Ermine only lets us make aggregates with a single aggregate function natively
+    // therefore, we coalesce them when natural-joined.  but make sure none of the
+    // aggregated columns have the same name, because coalescing would then be incorrect
+    // wrt natural join semantics.
+    (fst, snd) match {
+      case (a: AggregateByGroup[M,R], b: AggregateByGroup[M,R])
+        if a.rel == b.rel &&
+           a.cs == b.cs &&
+           a.group == b.group &&
+           (a.aggs.map(_._1.name).toSet intersect b.aggs.map(_._1.name).toSet isEmpty) =>
+          a.copy(aggs = a.aggs ++ b.aggs)
+      case _ =>
+        JoinOn(fst, snd, Set())
+    }
   def unapply[M, R](j: JoinOn[M, R]): Option[(Relation[M, R], Relation[M, R])] =
     j match {
       case JoinOn(fst, snd, cs, JoinMode.Inner) if cs.isEmpty => Some((fst, snd))
