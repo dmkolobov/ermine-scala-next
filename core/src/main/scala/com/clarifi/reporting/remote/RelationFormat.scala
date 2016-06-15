@@ -27,10 +27,10 @@ object Format {
   private implicit def dynWriterWrapper[A,F](in: Writer[A, F]): DynamicWriterWrapper[A,F] =
     DynamicWriterWrapper(in)
 
-  def recordW: Writer[Record, RepeatF[StringF & PrimExprF]] =
+  def recordW: Writer[Record, RepeatF[StringF & primExprRW.F]] =
     repeatW(tuple2W(stringW, primExprW)) cmap ((t: Record) => t.toList)
 
-  def recordR: Reader[Record, RepeatF[StringF & PrimExprF]] =
+  def recordR: Reader[Record, RepeatF[StringF & primExprRW.F]] =
     listR(tuple2R(stringR label "column-name", primExprR label "column-value")
     ) map ((t: List[(String, PrimExpr)]) => t.toMap) label "row"
 
@@ -55,6 +55,7 @@ object Format {
         }
       }
     }
+    implicit val peF = primExprRW.reifiedF
     streamW(recordW).orError.selfDescribing
   }
 
@@ -90,6 +91,7 @@ object Format {
         }
       }
     }
+    implicit val peF = primExprRW.reifiedF
     eitherR(stringR, streamR(recordR)).label("rows").selfDescribing
   }
   unify(rowsW, rowsR)
@@ -364,17 +366,46 @@ object Format {
     booleanR map (UuidT(_))
   )
 
-  lazy val primExprR: Reader[PrimExpr, PrimExprF] =
-    union10R(p2R(booleanR, stringR)(StringExpr(_,_)),
-             p2R(booleanR, doubleR)(DoubleExpr(_,_)),
-             p2R(booleanR, byteR)(ByteExpr(_,_)),
-             p2R(booleanR, shortR)(ShortExpr(_,_)),
-             p2R(booleanR, longR)(LongExpr(_,_)),
-             p2R(booleanR, intR)(IntExpr(_,_)),
-             p2R(booleanR, longR)((b, l) => DateExpr(b, new java.util.Date(l))),
-             p2R(booleanR, booleanR)(BooleanExpr(_,_)),
-             p2R(booleanR, stringR)((b, s) => UuidExpr(b, UUID.fromString(s))),
-             primTR map (NullExpr(_)))
+  lazy val primExprRW: CodecPairDynamic[PrimExpr] = {
+    type PrimExprF = S10[BooleanF & StringF,
+                         BooleanF & DoubleF,
+                         BooleanF & ByteF,
+                         BooleanF & ShortF,
+                         BooleanF & LongF,
+                         BooleanF & IntF,
+                         BooleanF & LongF, // Date
+                         BooleanF & BooleanF,
+                         BooleanF & StringF, // UUID
+                         PrimTF] // Null
+    CodecPair.withSelfDescribing[PrimExpr, PrimExprF]{
+      union10R(p2R(booleanR, stringR)(StringExpr(_,_)),
+               p2R(booleanR, doubleR)(DoubleExpr(_,_)),
+               p2R(booleanR, byteR)(ByteExpr(_,_)),
+               p2R(booleanR, shortR)(ShortExpr(_,_)),
+               p2R(booleanR, longR)(LongExpr(_,_)),
+               p2R(booleanR, intR)(IntExpr(_,_)),
+               p2R(booleanR, longR)((b, l) => DateExpr(b, new java.util.Date(l))),
+               p2R(booleanR, booleanR)(BooleanExpr(_,_)),
+               p2R(booleanR, stringR)((b, s) => UuidExpr(b, UUID.fromString(s))),
+               primTR map (NullExpr(_)))
+    }{
+      s10W(tuple2W(booleanW, stringW), tuple2W(booleanW, doubleW), tuple2W(booleanW, byteW), tuple2W(booleanW, shortW), tuple2W(booleanW, longW), tuple2W(booleanW, intW), tuple2W(booleanW, longW), tuple2W(booleanW, booleanW), tuple2W(booleanW, stringW), primTW)(
+        (str, dbl, byt, sho, lon, i, dt, bool, uuid, nl) => (r: PrimExpr) => r match {
+          case StringExpr(nl, s) => str(nl, s)
+          case DoubleExpr(nl, d) => dbl(nl, d)
+          case ByteExpr(nl, b) => byt(nl, b)
+          case ShortExpr(nl, s) => sho(nl, s)
+          case LongExpr(nl, l) => lon(nl, l)
+          case IntExpr(nl, n) => i(nl, n)
+          case DateExpr(nl, d) => dt(nl, d.getTime)
+          case BooleanExpr(nl, b) => bool(nl, b)
+          case UuidExpr(nl, u) => uuid(nl, u.toString)
+          case NullExpr(t) => nl(t)
+        })
+    }
+  }
+
+  lazy val primExprR: Reader[PrimExpr, primExprRW.F] = primExprRW.R
 
   lazy val predicateR: Reader[Predicate, DynamicF] = fixR[Predicate, DynamicF](self =>
     union8R(booleanR map (x => Predicate.Atom(x)),
@@ -390,7 +421,7 @@ object Format {
     p2R(stringR, primTR)(Attribute(_, _))
 
   lazy val opRW: CodecPair[Op] = {
-    type OpF[A] = S15[PrimExprF       , // OpLiteral
+    type OpF[A] = S15[primExprRW.F       , // OpLiteral
                       StringF & PrimTF, // ColumnValue
                       A & A           , // Add
                       A & A           , // Sub
@@ -546,20 +577,7 @@ object Format {
           case And(x, y) => and(x -> y)
           case IsNull(x) => isNull(x)
         }) erase)
-  lazy val primExprW: Writer[PrimExpr, PrimExprF] =
-    s10W(tuple2W(booleanW, stringW), tuple2W(booleanW, doubleW), tuple2W(booleanW, byteW), tuple2W(booleanW, shortW), tuple2W(booleanW, longW), tuple2W(booleanW, intW), tuple2W(booleanW, longW), tuple2W(booleanW, booleanW), tuple2W(booleanW, stringW), primTW)(
-      (str, dbl, byt, sho, lon, i, dt, bool, uuid, nl) => (r: PrimExpr) => r match {
-        case StringExpr(nl, s) => str(nl, s)
-        case DoubleExpr(nl, d) => dbl(nl, d)
-        case ByteExpr(nl, b) => byt(nl, b)
-        case ShortExpr(nl, s) => sho(nl, s)
-        case LongExpr(nl, l) => lon(nl, l)
-        case IntExpr(nl, n) => i(nl, n)
-        case DateExpr(nl, d) => dt(nl, d.getTime)
-        case BooleanExpr(nl, b) => bool(nl, b)
-        case UuidExpr(nl, u) => uuid(nl, u.toString)
-        case NullExpr(t) => nl(t)
-      })
+  lazy val primExprW: Writer[PrimExpr, primExprRW.F] = primExprRW.W
 
   type PrimTF = S9[BooleanF       , // Int
                    BooleanF       , // Byte
@@ -575,16 +593,6 @@ object Format {
   type HeaderF = OrderedHeaderF
   type SourcedF = RepeatF[SourceF] & HeaderF
   type SourceF = P2[StringF, RepeatF[StringF]]
-  type PrimExprF = S10[BooleanF & StringF,
-                       BooleanF & DoubleF,
-                       BooleanF & ByteF,
-                       BooleanF & ShortF,
-                       BooleanF & LongF,
-                       BooleanF & IntF,
-                       BooleanF & LongF, // Date
-                       BooleanF & BooleanF,
-                       BooleanF & StringF, // UUID
-                       PrimTF] // Null
   type BinStringF = StringF & StringF
   type BinOpF = opRW.F & opRW.F
   type PredicateF[A] = S7[BooleanF, BinOpF, BinOpF, BinOpF,
@@ -610,11 +618,11 @@ object Format {
   import writers.{Legend, LegendColumns, Presentation, SortDirection,
                   SortStrategy, Format => WFormat, Condition => Condition}
 
-  type ConditionF[A] = S6[PrimExprF, // Gt
-    PrimExprF, // Lt
-    PrimExprF, // Eq
-    PrimExprF, // Lte
-    PrimExprF, // Gte
+  type ConditionF[A] = S6[primExprRW.F, // Gt
+    primExprRW.F, // Lt
+    primExprRW.F, // Eq
+    primExprRW.F, // Lte
+    primExprRW.F, // Gte
     A & A // And
     ]
 

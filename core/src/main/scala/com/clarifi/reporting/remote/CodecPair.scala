@@ -21,10 +21,23 @@ sealed abstract class CodecPair[A] {
   val W: Writer[A, F]
 }
 
+sealed abstract class CodecPairDynamic[A] extends CodecPair[A] {
+  val reifiedF: F
+}
+
 object CodecPair {
   def apply[A, F0](r: Reader[A, F0])(w: Writer[A, F0]): CodecPair[A] =
     new CodecPair[A] {
       type F = F0
+      val R = r
+      val W = w
+    }
+
+  def withSelfDescribing[A, F0](r: Reader[A, F0])(w: Writer[A, F0])(implicit F0: F0)
+      : CodecPairDynamic[A] =
+    new CodecPairDynamic[A] {
+      type F = F0
+      val reifiedF = F0
       val R = r
       val W = w
     }
