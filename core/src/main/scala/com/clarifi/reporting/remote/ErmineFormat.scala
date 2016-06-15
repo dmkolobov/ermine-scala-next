@@ -13,7 +13,7 @@ import scalaparsers.{Assoc, AssocL, AssocN, AssocR}
 
 object ErmineFormat {
   type ErminePrimF = S10[StringF, IntF, LongF, BooleanF, DoubleF
-                       , ByteF, ShortF, LongF, StringF, RF.PrimTF
+                       , ByteF, ShortF, LongF, StringF, RF.primTRW.F
                         ]
 
   /** A sampling of data that could reasonably expected to be in Prim or

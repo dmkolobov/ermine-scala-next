@@ -354,17 +354,54 @@ object Format {
     case (a, b) => Source(a, b)
   }
   lazy val sourcedR: Reader[Sourced, SourcedF] = tuple2R(listR(sourceR) map (_.toSet), headerR map (_.success))
-  lazy val primTR: Reader[PrimT, PrimTF] = union9R(
-    booleanR map (IntT(_)),
-    booleanR map (ByteT(_)),
-    booleanR map (ShortT(_)),
-    booleanR map (LongT(_)),
-    p2R(intR, booleanR)(StringT.apply),
-    booleanR map (DateT(_)),
-    booleanR map (DoubleT(_)),
-    booleanR map (BooleanT(_)),
-    booleanR map (UuidT(_))
-  )
+
+  lazy val primTRW: CodecPairDynamic[PrimT] = {
+    type PrimTF = S9[BooleanF       , // Int
+                     BooleanF       , // Byte
+                     BooleanF       , // Short
+                     BooleanF       , // Long
+                     IntF & BooleanF, // String
+                     BooleanF       , // Date
+                     BooleanF       , // Double
+                     BooleanF       , // Boolean
+                     BooleanF]        // UUID
+    CodecPair.withSelfDescribing[PrimT, PrimTF]{
+      union9R(
+        booleanR map (IntT(_)),
+        booleanR map (ByteT(_)),
+        booleanR map (ShortT(_)),
+        booleanR map (LongT(_)),
+        p2R(intR, booleanR)(StringT.apply),
+        booleanR map (DateT(_)),
+        booleanR map (DoubleT(_)),
+        booleanR map (BooleanT(_)),
+        booleanR map (UuidT(_))
+      )
+    }{
+      s9W(booleanW, // Int
+          booleanW, // Byte
+          booleanW, // Short
+          booleanW, // Long
+          tuple2W(intW, booleanW), // String
+          booleanW, // Date
+          booleanW, // Double
+          booleanW, // Boolean
+          booleanW // UUID
+      )((i, b, sh, ln, str, dt, dbl, bool, uuid) => (r: PrimT) => r match {
+          case IntT(n) => i(n)
+          case ByteT(n) => b(n)
+          case ShortT(n) => sh(n)
+          case LongT(n) => ln(n)
+          case StringT(l, n) => str(l -> n)
+          case DateT(n) => dt(n)
+          case DoubleT(n) => dbl(n)
+          case BooleanT(n) => bool(n)
+          case UuidT(n) => uuid(n)
+        })
+    }
+  }
+
+  lazy val primTR: Reader[PrimT, primTRW.F] = primTRW.R
 
   lazy val primExprRW: CodecPairDynamic[PrimExpr] = {
     type PrimExprF = S10[BooleanF & StringF,
@@ -376,7 +413,8 @@ object Format {
                          BooleanF & LongF, // Date
                          BooleanF & BooleanF,
                          BooleanF & StringF, // UUID
-                         PrimTF] // Null
+                         primTRW.F] // Null
+    implicit val primtReified = primTRW.reifiedF
     CodecPair.withSelfDescribing[PrimExpr, PrimExprF]{
       union10R(p2R(booleanR, stringR)(StringExpr(_,_)),
                p2R(booleanR, doubleR)(DoubleExpr(_,_)),
@@ -422,7 +460,7 @@ object Format {
 
   lazy val opRW: CodecPair[Op] = {
     type OpF[A] = S15[primExprRW.F       , // OpLiteral
-                      StringF & PrimTF, // ColumnValue
+                      StringF & primTRW.F, // ColumnValue
                       A & A           , // Add
                       A & A           , // Sub
                       A & A           , // Mul
@@ -434,7 +472,7 @@ object Format {
                       A & A           , // Coalesce
                       A :: IntF :: IntF , // DateAdd
                       IntF :: A :: A    , // DateDiff
-                      StringF :: StringF :: RepeatF[StringF] :: RepeatF[A] :: PrimTF, // Funcall
+                      StringF :: StringF :: RepeatF[StringF] :: RepeatF[A] :: primTRW.F, // Funcall
                       A]                // Abs
     CodecPair[Op, FixF[OpF[SelfF]]]{
       fixFR[Op, OpF]{self =>
@@ -534,29 +572,10 @@ object Format {
     h.toList)
   lazy val sourceW: Writer[Source, SourceF] = tuple2W(stringW, repeatW(stringW)) cmap ((s: Source) =>
     (s.source, s.namespace))
-  lazy val attributeW: Writer[Attribute, StringF & PrimTF] = p2W(stringW, primTW)(f =>
+  lazy val attributeW: Writer[Attribute, StringF & primTRW.F] = p2W(stringW, primTW)(f =>
     (r: Attribute) => f(r.name, r.t))
-  lazy val primTW: Writer[PrimT, PrimTF] =
-    s9W(booleanW, // Int
-        booleanW, // Byte
-        booleanW, // Short
-        booleanW, // Long
-        tuple2W(intW, booleanW), // String
-        booleanW, // Date
-        booleanW, // Double
-        booleanW, // Boolean
-        booleanW // UUID
-       )((i, b, sh, ln, str, dt, dbl, bool, uuid) => (r: PrimT) => r match {
-         case IntT(n) => i(n)
-         case ByteT(n) => b(n)
-         case ShortT(n) => sh(n)
-         case LongT(n) => ln(n)
-         case StringT(l, n) => str(l -> n)
-         case DateT(n) => dt(n)
-         case DoubleT(n) => dbl(n)
-         case BooleanT(n) => bool(n)
-         case UuidT(n) => uuid(n)
-       })
+  lazy val primTW: Writer[PrimT, primTRW.F] = primTRW.W
+
   lazy val predicateW: Writer[Predicate, DynamicF] = fixW[Predicate, DynamicF](self =>
     s8W(booleanW, // Atom
         tuple2W(opW, opW), // Lt
@@ -579,16 +598,7 @@ object Format {
         }) erase)
   lazy val primExprW: Writer[PrimExpr, primExprRW.F] = primExprRW.W
 
-  type PrimTF = S9[BooleanF       , // Int
-                   BooleanF       , // Byte
-                   BooleanF       , // Short
-                   BooleanF       , // Long
-                   IntF & BooleanF, // String
-                   BooleanF       , // Date
-                   BooleanF       , // Double
-                   BooleanF       , // Boolean
-                   BooleanF]        // UUID
-  type AttributeF = StringF & PrimTF
+  type AttributeF = StringF & primTRW.F
   type OrderedHeaderF = RepeatF[AttributeF]
   type HeaderF = OrderedHeaderF
   type SourcedF = RepeatF[SourceF] & HeaderF
@@ -735,8 +745,8 @@ object Format {
   type LegendColumnsF[F, G] = {
     type λ[A] = RepeatF[S2[A :: F, PresentationF :: SortStrategyF :: G]]
   }
-  type LegendHiddenColumns = RepeatF[StringF :: PrimTF :: SortOrderF]
-  type LegendF[F, G] = FixF[LegendColumnsF[F, G]#λ[SelfF]] :: LegendHiddenColumns :: OptionF[StringF :: PrimTF]
+  type LegendHiddenColumns = RepeatF[StringF :: primTRW.F :: SortOrderF]
+  type LegendF[F, G] = FixF[LegendColumnsF[F, G]#λ[SelfF]] :: LegendHiddenColumns :: OptionF[StringF :: primTRW.F]
 
   def legendR[A,B,F,G](implicit ra: Reader[A, F], rb: Reader[B, G]): Reader[Legend[A, B], LegendF[F, G]] =
     tuple3R(fixFR[LegendColumns[A, B], LegendColumnsF[F, G]#λ](rec =>
