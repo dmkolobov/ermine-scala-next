@@ -112,19 +112,37 @@ object Format {
                                 ): Writer[L \/ R, S2[F1, F2]] =
     s2W(l, r)((l, r) => (_ fold (l, r)))
 
-  def extW[M,R](implicit wm: Writer[M, DynamicF],
-                         wr: Writer[R, DynamicF]): Writer[Ext[M, R], DynamicF] =
-    s3W(tuple2W(relW(wm, wr), stringW), memW(wm, wr), smW)((r, m, s) => (ext: Ext[M, R]) => ext match {
-      case ExtRel(rel, db) => r((rel, db))
-      case ExtMem(mem) => m(mem)
-      case ExtSM(sm) => s(sm)
-    }).erase
+  lazy val extRW: CodecPair2[Ext] = {
+    type ExtF[MF, RF] =
+      S3[RelF[MF, RF] & StringF, // ExtRel
+         MemF[RF, MF],           // ExtMem
+         SMF]                    // ExtSM
+    new CodecPair2[Ext] {
+      type F[M, R] = ExtF[M, R]
 
-  def extR[M,R](implicit rm: Reader[M, DynamicF],
-                         rr: Reader[R, DynamicF]): Reader[Ext[M, R], DynamicF] =
-    union3R(p2R(relR[M, R], stringR)(ExtRel(_, _)),
-            memR[R,M].map(ExtMem(_)),
-            smR.map(ExtSM(_))).erase
+      override def W[M, MF, R, RF](wm: Writer[M, MF], wr: Writer[R, RF]) =
+        s3W(tuple2W(relW(wm, wr), stringW), memW(wm, wr), smW)((r, m, s) => (ext: Ext[M, R]) => ext match {
+          case ExtRel(rel, db) => r((rel, db))
+          case ExtMem(mem) => m(mem)
+          case ExtSM(sm) => s(sm)
+        })
+
+      override def R[M, MF, R, RF](rm: Reader[M, MF], rr: Reader[R, RF]) =
+        union3R(p2R(relR(rm, rr), stringR)(ExtRel(_, _)),
+                memR(rm, rr).map(ExtMem(_)),
+                smR.map(ExtSM(_)))
+    }
+  }
+
+  def extW[M, MF, R, RF](implicit wm: Writer[M, MF],
+                         wr: Writer[R, RF]): Writer[Ext[M, R], extRW.F[MF, RF]] =
+    extRW.W(wm, wr)
+
+  def extR[M, MF, R, RF](implicit rm: Reader[M, MF],
+                         rr: Reader[R, RF]): Reader[Ext[M, R], extRW.F[MF, RF]] =
+    extRW.R(rm, rr)
+
+  type SMF = DynamicF // TODO expand
 
   def smW: Writer[SM, DynamicF] =
     s2W(tuple2W(stringW,stringW), tuple2W(stringW,stringW))((look, hist) => (sm: SM) => sm match {
@@ -135,11 +153,13 @@ object Format {
   def smR: Reader[SM, DynamicF] = union2R(p2R(stringR,stringR)(LookupSM(_,_)),
                                           p2R(stringR,stringR)(HistoricalSM(_,_))).erase
 
-  def memR[R,M](implicit rm: Reader[M, DynamicF],
-                         rr: Reader[R, DynamicF]): Reader[Mem[R, M], DynamicF] =
+  type MemF[RF, MF] = DynamicF // TODO existentialize
+
+  def memR[R, RF, M, MF](implicit rm: Reader[M, MF],
+                         rr: Reader[R, RF]): Reader[Mem[R, M], MemF[RF, MF]] =
     fixR((self: Reader[Mem[R, M], DynamicF]) => union19R(
       rm.map(VarM(_)),
-      p2R(extR[M,R], memR[R, MLevel[R, M]](mLevelR, rr))(LetM(_, _)),
+      p2R(extR[M,MF,R,RF], memR[R, RF, MLevel[R, M], MLevelF[RF, MF]](mLevelR, rr))(LetM(_, _)),
       p2R(self, predicateR)(FilterM(_, _)),
       p2R(self, mapR(attributeR, opR))(ProjectM(_, _)),
       p2R(self, listR(stringR))((a, b) => ExceptM(a, b.toSet)),
@@ -147,26 +167,26 @@ object Format {
       p3R(self, attributeR, aggR)(AggregateM(_, _, _)),
       p2R(self, self)(HashInnerJoin(_, _)),
       p2R(self, self)(MergeOuterJoin(_, _)),
-      extR[M,R].map(EmbedMem(_)),
+      extR[M,MF,R,RF].map(EmbedMem(_)),
       p4R(listR(primExprR), headerR, stringR, listR(stringR))(ProcedureCall(_, _, _, _)),
       listR(recordR).map((xs: List[Record]) => Literal(xs.toNel.get)),
       headerR.map(EmptyRel(_)),
-      p3R(self, listR(attributeR), memR[R, MLevel[R, M]](mLevelR, rr))(GroupByM.apply),
+      p3R(self, listR(attributeR), memR[R, RF, MLevel[R, M], MLevelF[RF, MF]](mLevelR, rr))(GroupByM.apply),
       p4R(self, attributeR, stringR, booleanR)(RenameM.apply),
       p2R(self, self)(HashLeftJoin.apply),
-      p5R(attributeR, attributeR, memR[R, MLevel[R,M]](mLevelR, rr), self, self)(AccumulateM.apply),
+      p5R(attributeR, attributeR, memR[R, RF, MLevel[R,M], MLevelF[RF, MF]](mLevelR, rr), self, self)(AccumulateM.apply),
       p2R(processSymbolR, self)(ProcessM.apply),
       p5R(self, listR(stringR), listR(stringR), booleanR, mapR(recordR, tuple3R(stringR, opR, primExprR)))(
         (a,b,c,d,e) => Pivot(a,b.toSet,c.toSet,d,e))
     ).erase)
 
-  def memW[R,M](implicit wm: Writer[M, DynamicF],
-                         wr: Writer[R, DynamicF]): Writer[Mem[R, M], DynamicF] =
+  def memW[R, RF, M, MF](implicit wm: Writer[M, MF],
+                         wr: Writer[R, RF]): Writer[Mem[R, M], MemF[RF, MF]] =
     fixW((self: Writer[Mem[R, M], DynamicF]) => s19W(
       // VarM
       wm
       // LetM
-      , tuple2W(extW[M, R], memW[R,MLevel[R, M]](mLevelW, wr)) erase : Writer[(Ext[M,R],Mem[R,MLevel[R,M]]), DynamicF]
+      , tuple2W(extW[M, MF, R, RF], memW[R,RF,MLevel[R, M], MLevelF[RF, MF]](mLevelW, wr)) erase : Writer[(Ext[M,R],Mem[R,MLevel[R,M]]), DynamicF]
       // FilterM
       , tuple2W(self, predicateW) erase : Writer[(Mem[R,M], Predicate), DynamicF]
       // ProjectM
@@ -182,7 +202,7 @@ object Format {
       // MergeOuterJoin
       , tuple2W(self, self) erase : Writer[(Mem[R,M],Mem[R,M]),DynamicF]
       // EmbedMem
-      , extW[M, R] erase : Writer[Ext[M,R],DynamicF]
+      , extW[M, MF, R, RF] erase : Writer[Ext[M,R],DynamicF]
       // ProcedureCall
       , tuple4W(repeatW(primExprW), headerW, stringW, repeatW(stringW)) erase
           : Writer[(List[PrimExpr],Header,String,List[String]),DynamicF]
@@ -191,14 +211,14 @@ object Format {
       // EmptyRel
       , headerW erase : Writer[Header,DynamicF]
       // GroupByM
-      , tuple3W(self, repeatW(attributeW), memW[R,MLevel[R, M]](mLevelW, wr)) erase
+      , tuple3W(self, repeatW(attributeW), memW[R, RF,MLevel[R, M], MLevelF[RF, MF]](mLevelW, wr)) erase
           : Writer[(Mem[R,M],List[Attribute], Mem[R,MLevel[R,M]]),DynamicF]
       // RenameM
       , tuple4W(self, attributeW, stringW, booleanW) erase : Writer[(Mem[R,M],Attribute,String,Boolean),DynamicF]
       // HashLeftJoin
       , tuple2W(self, self) erase : Writer[(Mem[R,M],Mem[R,M]),DynamicF]
       // AccumulateM
-      , tuple5W(attributeW, attributeW, memW[R,MLevel[R,M]](mLevelW, wr), self, self) erase
+      , tuple5W(attributeW, attributeW, memW[R, RF, MLevel[R,M], MLevelF[RF,MF]](mLevelW, wr), self, self) erase
           : Writer[(Attribute, Attribute,Mem[R,MLevel[R,M]],Mem[R,M],Mem[R,M]),DynamicF]
       // ProcessM
       , tuple2W(processSymbolW, self) erase : Writer[(ProcessSymbol, Mem[R,M]),DynamicF]
@@ -248,36 +268,42 @@ object Format {
       case WeightedHarmonicMean(w,v) => whmean((w,v))
     }) erase
 
-  def rLevelR[M, R](implicit rm: Reader[M, DynamicF],
-                             rr: Reader[R, DynamicF]): Reader[RLevel[M, R], DynamicF] =
-    optionR(relR[M,R]) map {
+  def rLevelR[M, MF, R, RF](implicit rm: Reader[M, MF],
+                             rr: Reader[R, RF]): Reader[RLevel[M, R], DynamicF] =
+    optionR(relR[M, MF, R, RF]) map {
       case None => RTop
       case Some(x) => RPop(x)
     } erase
 
-  def rLevelW[M, R](implicit wm: Writer[M, DynamicF],
-                             wr: Writer[R, DynamicF]): Writer[RLevel[M, R], DynamicF] =
-    optionW(relW[M,R]) cmap ((x: RLevel[M, R]) => x match {
+  type RLevelF[MF, RF] = DynamicF // TODO expand
+
+  def rLevelW[M, MF, R, RF](implicit wm: Writer[M, MF],
+                             wr: Writer[R, RF]): Writer[RLevel[M, R], RLevelF[MF, RF]] =
+    optionW(relW[M,MF,R,RF]) cmap ((x: RLevel[M, R]) => x match {
       case RTop => None
       case RPop(x) => Some(x)
     }) erase
 
-  def mLevelR[R, M](implicit rr: Reader[R, DynamicF],
-                             rm: Reader[M, DynamicF]): Reader[MLevel[R, M], DynamicF] =
-    optionR(memR[R,M]) map {
+  type MLevelF[RF, MF] = DynamicF // TODO expand
+
+  def mLevelR[R, RF, M, MF](implicit rr: Reader[R, RF],
+                             rm: Reader[M, MF]): Reader[MLevel[R, M], MLevelF[RF, MF]] =
+    optionR(memR[R,RF,M,MF]) map {
       case None => MTop
       case Some(x) => MPop(x)
     } erase
 
-  def mLevelW[R, M](implicit wr: Writer[R, DynamicF],
-                             wm: Writer[M, DynamicF]): Writer[MLevel[R, M], DynamicF] =
-    optionW(memW[R,M]) cmap ((x: MLevel[R, M]) => x match {
+  def mLevelW[R, RF, M, MF](implicit wr: Writer[R, RF],
+                             wm: Writer[M, MF]): Writer[MLevel[R, M], MLevelF[RF, MF]] =
+    optionW(memW[R,RF,M,MF]) cmap ((x: MLevel[R, M]) => x match {
       case MTop => None
       case MPop(x) => Some(x)
     }) erase
 
-  def relW[M,R](implicit wm: Writer[M, DynamicF],
-                         wr: Writer[R, DynamicF]): Writer[Relation[M, R], DynamicF] =
+  type RelF[MF, RF] = DynamicF // TODO existentialize
+
+  def relW[M, MF, R, RF](implicit wm: Writer[M, MF],
+                         wr: Writer[R, RF]): Writer[Relation[M, R], RelF[MF, RF]] =
     fixW((self: Writer[Relation[M, R], DynamicF]) =>
       s19W(wr, // Var
            tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))) dynamicF, // Limit
@@ -323,7 +349,7 @@ object Format {
              // Don't put a catch all here, so we can get compile errors.
            }) erase)
 
-  def relR[M, R](implicit rm: Reader[M, DynamicF], rr: Reader[R, DynamicF]): Reader[Relation[M, R], DynamicF] =
+  def relR[M, MF, R, RF](implicit rm: Reader[M, MF], rr: Reader[R, RF]): Reader[Relation[M, R], RelF[MF, RF]] =
     fixR((self: Reader[Relation[M, R], DynamicF]) => union18R(
       rr.map(VarR(_)),
       p4R(self, optionR(intR), optionR(intR), listR(p2R(stringR, sortOrderR)((_, _))))(Limit(_, _, _, _)),

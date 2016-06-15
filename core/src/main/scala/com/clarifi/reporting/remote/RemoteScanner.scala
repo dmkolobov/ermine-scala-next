@@ -37,7 +37,7 @@ class RemoteScanner(makeRequest: Array[Byte] => Array[Byte]) extends Scanner[IO]
   def scanExt[A](r: Ext[Nothing, Nothing],
                  f: Process[Record, A],
                  order: List[(String, SortOrder)])(implicit A: Monoid[A]) = {
-    val w = tuple2W(extW[Nothing, Nothing](nothingW.erase, nothingW.erase), orderByW)
+    val w = tuple2W(extW[Nothing, NothingF, Nothing, NothingF](nothingW, nothingW), orderByW)
     IO(makeRequest(w.toByteArray(r -> order))) map {
       bs => rowsR(bs).fold(sys.error, rs => f.cap(com.clarifi.machines.Source(rs)).foldMap(x => x))
     }

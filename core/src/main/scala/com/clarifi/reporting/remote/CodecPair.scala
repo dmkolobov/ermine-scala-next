@@ -50,7 +50,7 @@ object CodecPair {
   * different `R` and `W` arguments, via introduction of new types
   * like `CodecPair2`.
   */
-sealed abstract class CodecPair2[A[_, _]] {
+abstract class CodecPair2[A[_, _]] {
   type F[L, R]
 
   def R[L, LF, R, RF](l: Reader[L, LF], r: Reader[R, RF])

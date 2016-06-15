@@ -20,7 +20,7 @@ class BackendServer[F[_]](B: Scanner[F])(implicit R: Run[F]) {
   private val Log: Logger = Logger.getLogger(this.getClass.getName)
 
   def apply(bytes: Array[Byte]): Array[Byte] = try {
-    val r = tuple2R(extR[Nothing, Nothing](nothingR.erase, nothingR.erase), orderByR)
+    val r = tuple2R(extR(nothingR.erase, nothingR.erase), orderByR)
     val (rel, ord) = r(bytes)
     Log.info("received data request:\n" +
     "query: " + rel + "\n" +
