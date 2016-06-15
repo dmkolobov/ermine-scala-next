@@ -21,12 +21,6 @@ import scalaz.\/
 import scalaz.Scalaz._
 
 object Format {
-  private case class DynamicWriterWrapper[-A,+F](inner: Writer[A, F]) {
-    def dynamicF: Writer[A, DynamicF] = inner erase
-  }
-  private implicit def dynWriterWrapper[A,F](in: Writer[A, F]): DynamicWriterWrapper[A,F] =
-    DynamicWriterWrapper(in)
-
   def recordW: Writer[Record, RepeatF[StringF & primExprRW.F]] =
     repeatW(tuple2W(stringW, primExprW)) cmap ((t: Record) => t.toList)
 
@@ -148,10 +142,10 @@ object Format {
     s2W(tuple2W(stringW,stringW), tuple2W(stringW,stringW))((look, hist) => (sm: SM) => sm match {
       case LookupSM(fld, attr) => look(fld, attr)
       case HistoricalSM(fld, attr) => hist(fld, attr)
-    }).erase
+    })
 
   def smR: Reader[SM, SMF] = union2R(p2R(stringR,stringR)(LookupSM(_,_)),
-                                          p2R(stringR,stringR)(HistoricalSM(_,_))).erase
+                                          p2R(stringR,stringR)(HistoricalSM(_,_)))
 
   lazy val memRW: CodecPair2[Mem] = {
     type MemF[RF, MF, A] = S19[
@@ -412,7 +406,7 @@ object Format {
                rr.map(VarR(_)),
                p4R(self, optionR(intR), optionR(intR), listR(p2R(stringR, sortOrderR)((_, _))))(Limit(_, _, _, _)),
                p3R(listR(self), mapR(attributeR, opR), predicateR)(SelectR(_, _, _)),
-               p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)) erase,
+               p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)),
                p2R(self, self)(Join(_, _)),
                p3R(self, self, listR(tuple2R(stringR, stringR)) map (_.toSet))(JoinOn(_, _, _)),
                p2R(self, self)((a, b) => Union(a, b)),
@@ -745,7 +739,7 @@ object Format {
             primExprR map (x => Condition.Eq(x)),
             primExprR map (x => Condition.Lte(x)),
             primExprR map (x => Condition.Gte(x)),
-            p2R(self, self)((a, b) => Condition.And(a, b))) erase)
+            p2R(self, self)((a, b) => Condition.And(a, b))))
 
   lazy val conditionW = fixFW[Condition, ConditionF](self =>
     s6W(primExprW, // Gt
@@ -762,7 +756,7 @@ object Format {
           case Condition.Lte(x) => lte(x)
           case Condition.Gte(x) => gte(x)
           case Condition.And(x,y) => and(x -> y)
-        }) erase)
+        }))
 
   lazy val wformatRW: CodecPair[WFormat] = {
     type WFormatF[A] = S14[UnitF, // Default
