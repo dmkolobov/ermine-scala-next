@@ -306,7 +306,7 @@ object Format {
         RF, // Var
         A :: OptionF[IntF] :: OptionF[IntF] :: RepeatF[StringF & BooleanF], // Limit
         RepeatF[A] :: RepeatF[AttributeF & opRW.F] :: predicateRW.F, // Select
-        DynamicF, // Let
+        extRW.F[MF, RF] & relRW.F[MF, RLevelF[MF, RF]], // Let
         A & A,    // Join
         A :: A :: RepeatF[StringF & StringF], // JoinOn
         A & A,    // Union
@@ -331,7 +331,7 @@ object Format {
           s19W(wr, // Var
                tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))), // Limit
                tuple3W(repeatW(self), mapW(attributeW, opW), predicateW), // Select
-               tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))) dynamicF, // Let
+               tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))), // Let
                tuple2W(self, self), // Join
                tuple3W(self, self, repeatW(tuple2W(stringW, stringW))), // JoinOn
                tuple2W(self, self), // Union
