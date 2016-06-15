@@ -302,29 +302,51 @@ object Format {
 
   lazy val relRW: CodecPair2[Relation] =
     new CodecPair2[Relation] {
-      type F[MF, RF] = DynamicF // TODO elaborate
+      type RelF[MF, RF, A] = S19[
+        RF, // Var
+        A :: OptionF[IntF] :: OptionF[IntF] :: RepeatF[StringF & BooleanF], // Limit
+        RepeatF[A] :: RepeatF[AttributeF & opRW.F] :: predicateRW.F, // Select
+        DynamicF, // Let
+        A & A,    // Join
+        A :: A :: RepeatF[StringF & StringF], // JoinOn
+        A & A,    // Union
+        A & A,    // Minus
+        A & predicateRW.F, // Filter
+        A & RepeatF[AttributeF & opRW.F], // Project
+        A & RepeatF[StringF], // Except
+        A :: AttributeF :: opRW.F, // Combine
+        A :: AttributeF :: DynamicF, // Aggregate
+        HeaderF :: StringF :: RepeatF[StringF], // Table
+        RepeatF[S2[StringF & A, primExprRW.F]] :: OrderedHeaderF :: StringF :: RepeatF[StringF], // TableProc
+        HeaderF, // RelEmpty
+        RepeatF[RepeatF[StringF & primExprRW.F]], // SmallLit
+        A & RepeatF[StringF], // MemoR
+        RepeatF[StringF] & A  // Note
+      ]
+
+      type F[MF, RF] = FixF[RelF[MF, RF, SelfF]]
 
       override def W[M, MF, R, RF](wm: Writer[M, MF], wr: Writer[R, RF]) =
-        fixW((self: Writer[Relation[M, R], DynamicF]) =>
+        fixFW[Relation[M, R], RelF[MF, RF, ?]](self =>
           s19W(wr, // Var
-               tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))) dynamicF, // Limit
-               tuple3W(repeatW(self), mapW(attributeW, opW), predicateW) dynamicF, // Select
+               tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))), // Limit
+               tuple3W(repeatW(self), mapW(attributeW, opW), predicateW), // Select
                tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))) dynamicF, // Let
-               tuple2W(self, self) dynamicF, // Join
-               tuple3W(self, self, repeatW(tuple2W(stringW, stringW))) dynamicF, // JoinOn
-               tuple2W(self, self) dynamicF, // Union
-               tuple2W(self, self) dynamicF, // Minus
-               tuple2W(self, predicateW) dynamicF, // Filter
-               tuple2W(self, mapW(attributeW, opW)) dynamicF, // Project
-               tuple2W(self, repeatW(stringW)) dynamicF, // Except
-               tuple3W(self, attributeW, opW) dynamicF, // Combine
-               tuple3W(self, attributeW, aggW) dynamicF, // Aggregate
-               tuple2W(headerW, tuple2W(stringW, repeatW(stringW))) dynamicF, // Table
-               tuple4W(repeatW(W_\/(tuple2W(stringW, self), primExprW)), orderedHeaderW, stringW, repeatW(stringW)) dynamicF, // TableProc
+               tuple2W(self, self), // Join
+               tuple3W(self, self, repeatW(tuple2W(stringW, stringW))), // JoinOn
+               tuple2W(self, self), // Union
+               tuple2W(self, self), // Minus
+               tuple2W(self, predicateW), // Filter
+               tuple2W(self, mapW(attributeW, opW)), // Project
+               tuple2W(self, repeatW(stringW)), // Except
+               tuple3W(self, attributeW, opW), // Combine
+               tuple3W(self, attributeW, aggW), // Aggregate
+               tuple2W(headerW, tuple2W(stringW, repeatW(stringW))), // Table
+               tuple4W(repeatW(W_\/(tuple2W(stringW, self), primExprW)), orderedHeaderW, stringW, repeatW(stringW)), // TableProc
                headerW, // RelEmpty
-               repeatW(recordW) dynamicF, // SmallLit
+               repeatW(recordW), // SmallLit
                tuple2W(self, repeatW(stringW)), // MemoR
-               tuple2W(repeatW(stringW), self) dynamicF // Note
+               tuple2W(repeatW(stringW), self) // Note
           )((v, lim, sel, let, join, on, un, min, fil, proj, exc, comb, agg, tab, tabproc, empt, sl, m, note) =>
             (r: Relation[M, R]) => r match {
               case VarR(x) => v(x)
@@ -348,14 +370,14 @@ object Format {
               case QuoteR(_) => sys.error("Can't serialize a QuoteR! (it has just a raw object in it.)")
               case Note(ts, under) => note(ts, under)
                 // Don't put a catch all here, so we can get compile errors.
-            }) erase)
+            }))
 
       override def R[M, MF, R, RF](rm: Reader[M, MF], rr: Reader[R, RF]) =
-        fixR((self: Reader[Relation[M, R], DynamicF]) => union18R(
+        fixFR[Relation[M, R], RelF[MF, RF, ?]](self => union19R(
                rr.map(VarR(_)),
                p4R(self, optionR(intR), optionR(intR), listR(p2R(stringR, sortOrderR)((_, _))))(Limit(_, _, _, _)),
                p3R(listR(self), mapR(attributeR, opR), predicateR)(SelectR(_, _, _)),
-               p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)),
+               p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)) erase,
                p2R(self, self)(Join(_, _)),
                p3R(self, self, listR(tuple2R(stringR, stringR)) map (_.toSet))(JoinOn(_, _, _)),
                p2R(self, self)((a, b) => Union(a, b)),
@@ -370,8 +392,9 @@ object Format {
                    orderedHeaderR, stringR, listR(stringR))(TableProc(_, _, _, _)),
                headerR.map(RelEmpty(_)),
                listR(recordR).map(xs => SmallLit(xs.toNel.get)),
-               p2R(self, listR(stringR))((r, pk) => MemoR(r, pk))
-             ) erase)
+               p2R(self, listR(stringR))((r, pk) => MemoR(r, pk)),
+               p2R(listR(stringR), self)(Note(_, _))
+             ))
     }
 
   def relW[M, MF, R, RF](implicit wm: Writer[M, MF],
