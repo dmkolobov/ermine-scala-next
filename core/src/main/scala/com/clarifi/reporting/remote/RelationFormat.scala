@@ -250,14 +250,20 @@ object Format {
       }
     ).erase)
 
-  def processSymbolR: Reader[ProcessSymbol, DynamicF] =
+  type ProcessSymbolF = S3[
+    AttributeF,              // Median
+    AttributeF & AttributeF, // WeightedMean
+    AttributeF & AttributeF  // WeightedHarmonicMean
+  ]
+
+  def processSymbolR: Reader[ProcessSymbol, ProcessSymbolF] =
     union3R(
       attributeR.map(Median),
       p2R(attributeR, attributeR)(WeightedMean),
       p2R(attributeR, attributeR)(WeightedHarmonicMean)
-    ) erase
+    )
 
-  def processSymbolW: Writer[ProcessSymbol, DynamicF] =
+  def processSymbolW: Writer[ProcessSymbol, ProcessSymbolF] =
     s3W(
       attributeW,
       tuple2W(attributeW, attributeW),
@@ -266,7 +272,7 @@ object Format {
       case Median(v) => med(v)
       case WeightedMean(w, v) => wmean((w,v))
       case WeightedHarmonicMean(w,v) => whmean((w,v))
-    }) erase
+    })
 
   def rLevelR[M, MF, R, RF](implicit rm: Reader[M, MF],
                              rr: Reader[R, RF]): Reader[RLevel[M, R], DynamicF] =
