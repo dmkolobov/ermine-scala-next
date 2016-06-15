@@ -154,12 +154,34 @@ object Format {
                                           p2R(stringR,stringR)(HistoricalSM(_,_))).erase
 
   lazy val memRW: CodecPair2[Mem] = {
-    // type MemF[RF, MF, A] = 
+    type MemF[RF, MF, A] = S19[
+      MF, // VarM
+      extRW.F[MF, RF] & memRW.F[RF, MLevelF[RF, MF]], // LetM
+      A & predicateRW.F,                // FilterM
+      A & RepeatF[AttributeF & opRW.F], // ProjectM
+      A & RepeatF[StringF],             // ExceptM
+      A :: AttributeF :: opRW.F,        // CombineM
+      A :: AttributeF :: AggF,          // AggregateM
+      A & A,                            // HashInnerJoin
+      A & A,                            // MergeOuterJoin
+      extRW.F[MF, RF],                  // EmbedMem
+      RepeatF[primExprRW.F] :: HeaderF :: StringF :: RepeatF[StringF], // ProcedureCall
+      RepeatF[RepeatF[StringF & primExprRW.F]], // Literal
+      HeaderF, // EmptyRel
+      A :: RepeatF[AttributeF] :: memRW.F[RF, MLevelF[RF, MF]], // GroupByM
+      A :: AttributeF :: StringF :: BooleanF, // RenameM
+      A & A,                               // HashLeftJoin
+      AttributeF :: AttributeF :: memRW.F[RF, MLevelF[RF, MF]] :: A :: A, // AccumulateM
+      ProcessSymbolF & A, // ProcessM
+      A :: RepeatF[StringF] :: RepeatF[StringF] :: BooleanF ::
+        RepeatF[RepeatF[StringF & primExprRW.F] &
+                (StringF :: opRW.F :: primExprRW.F)] // Pivot
+    ]
     new CodecPair2[Mem] {
-      type F[RF, MF] = DynamicF // FixF[MemF[RF, MF, SelfF]]
+      type F[RF, MF] = FixF[MemF[RF, MF, SelfF]]
 
       override def R[R, RF, M, MF](rr: Reader[R, RF], rm: Reader[M, MF]) =
-        fixR((self: Reader[Mem[R, M], DynamicF]) => union19R(
+        fixFR[Mem[R, M], MemF[RF, MF, ?]](self => union19R(
           rm.map(VarM(_)),
           p2R(extR(rm, rr), memR[R, RF, MLevel[R, M], MLevelF[RF, MF]](mLevelR(rr, rm), rr))(LetM(_, _)),
           p2R(self, predicateR)(FilterM(_, _)),
@@ -180,52 +202,48 @@ object Format {
           p2R(processSymbolR, self)(ProcessM.apply),
           p5R(self, listR(stringR), listR(stringR), booleanR, mapR(recordR, tuple3R(stringR, opR, primExprR)))(
             (a,b,c,d,e) => Pivot(a,b.toSet,c.toSet,d,e))
-        ).erase)
+        ))
 
       override def W[R, RF, M, MF](wr: Writer[R, RF], wm: Writer[M, MF]) =
-        fixW((self: Writer[Mem[R, M], DynamicF]) => s19W(
+        fixFW[Mem[R, M], MemF[RF, MF, ?]](self => s19W(
           // VarM
           wm
           // LetM
-          , tuple2W(extW(wm, wr), memW(mLevelW(wr, wm), wr)) erase : Writer[(Ext[M,R],Mem[R,MLevel[R,M]]), DynamicF]
+          , tuple2W(extW(wm, wr), memW(mLevelW(wr, wm), wr))
           // FilterM
-          , tuple2W(self, predicateW) erase : Writer[(Mem[R,M], Predicate), DynamicF]
+          , tuple2W(self, predicateW)
           // ProjectM
-          , tuple2W(self, mapW(attributeW, opW)) erase : Writer[(Mem[R,M],Map[Attribute,Op]),DynamicF]
+          , tuple2W(self, mapW(attributeW, opW))
           // ExceptM
-          , tuple2W(self, repeatW(stringW)) erase : Writer[(Mem[R,M],Set[String]),DynamicF]
+          , tuple2W(self, repeatW(stringW))
           // CombineM
-          , tuple3W(self, attributeW, opW) erase : Writer[(Mem[R,M],Attribute,Op),DynamicF]
+          , tuple3W(self, attributeW, opW)
           // AggregateM
-          , tuple3W(self, attributeW, aggW) erase : Writer[(Mem[R,M],Attribute,AggFunc),DynamicF]
+          , tuple3W(self, attributeW, aggW)
           // HashInnerJoin
-          , tuple2W(self, self) erase : Writer[(Mem[R,M],Mem[R,M]),DynamicF]
+          , tuple2W(self, self)
           // MergeOuterJoin
-          , tuple2W(self, self) erase : Writer[(Mem[R,M],Mem[R,M]),DynamicF]
+          , tuple2W(self, self)
           // EmbedMem
-          , extW(wm, wr) erase : Writer[Ext[M,R],DynamicF]
+          , extW(wm, wr)
           // ProcedureCall
-          , tuple4W(repeatW(primExprW), headerW, stringW, repeatW(stringW)) erase
-              : Writer[(List[PrimExpr],Header,String,List[String]),DynamicF]
+          , tuple4W(repeatW(primExprW), headerW, stringW, repeatW(stringW))
           // Literal
-          , repeatW(recordW) erase : Writer[List[Record],DynamicF]
+          , repeatW(recordW)
           // EmptyRel
-          , headerW erase : Writer[Header,DynamicF]
+          , headerW
           // GroupByM
-          , tuple3W(self, repeatW(attributeW), memW(mLevelW(wr, wm), wr)) erase
-              : Writer[(Mem[R,M],List[Attribute], Mem[R,MLevel[R,M]]),DynamicF]
+          , tuple3W(self, repeatW(attributeW), memW(mLevelW(wr, wm), wr))
           // RenameM
-          , tuple4W(self, attributeW, stringW, booleanW) erase : Writer[(Mem[R,M],Attribute,String,Boolean),DynamicF]
+          , tuple4W(self, attributeW, stringW, booleanW)
           // HashLeftJoin
-          , tuple2W(self, self) erase : Writer[(Mem[R,M],Mem[R,M]),DynamicF]
+          , tuple2W(self, self)
           // AccumulateM
-          , tuple5W(attributeW, attributeW, memW[R, RF, MLevel[R,M], MLevelF[RF,MF]](mLevelW(wr, wm), wr), self, self) erase
-              : Writer[(Attribute, Attribute,Mem[R,MLevel[R,M]],Mem[R,M],Mem[R,M]),DynamicF]
+          , tuple5W(attributeW, attributeW, memW[R, RF, MLevel[R,M], MLevelF[RF,MF]](mLevelW(wr, wm), wr), self, self)
           // ProcessM
-          , tuple2W(processSymbolW, self) erase : Writer[(ProcessSymbol, Mem[R,M]),DynamicF]
+          , tuple2W(processSymbolW, self)
           // Pivot
-          , tuple5W(self, repeatW(stringW), repeatW(stringW), booleanW, mapW(recordW,tuple3W(stringW, opW, primExprW))) erase
-              : Writer[(Mem[R,M],Set[String],Set[String],Boolean,Map[Record,(String,Op,PrimExpr)]),DynamicF]
+          , tuple5W(self, repeatW(stringW), repeatW(stringW), booleanW, mapW(recordW,tuple3W(stringW, opW, primExprW)))
         )((v, let, fil, pro, exc, com, agg, hashIn, mer, emb, proc, lit, emp, grpBy, ren, hashLeft, accum, process, pivot) =>
           (m: Mem[R, M]) => m match {
             case VarM(x) => v(x)
@@ -249,7 +267,7 @@ object Format {
             case Pivot(a,b,c,d,e) => pivot((a,b,c,d,e))
             case QuoteMem(_) => sys.error("Can't serialize a QuoteMem! (it has just a raw object in it.)")
           }
-        ).erase)
+        ))
     }
   }
 
@@ -332,7 +350,7 @@ object Format {
         A & RepeatF[AttributeF & opRW.F], // Project
         A & RepeatF[StringF], // Except
         A :: AttributeF :: opRW.F, // Combine
-        A :: AttributeF :: DynamicF, // Aggregate
+        A :: AttributeF :: AggF, // Aggregate
         HeaderF :: StringF :: RepeatF[StringF], // Table
         RepeatF[S2[StringF & A, primExprRW.F]] :: OrderedHeaderF :: StringF :: RepeatF[StringF], // TableProc
         HeaderF, // RelEmpty
@@ -632,7 +650,7 @@ object Format {
 
   lazy val opR: Reader[Op, opRW.F] = opRW.R
 
-  lazy val aggR: Reader[AggFunc, DynamicF] = union9R(
+  lazy val aggR: Reader[AggFunc, AggF] = union9R(
     unitR   map (_ => Count),
     opR map (Sum(_)),
     opR map (Avg(_)),
@@ -641,7 +659,7 @@ object Format {
     opR map (Stddev(_)),
     opR map (Variance(_)),
     p2R(opR,opR)(WMean(_,_)),
-    p2R(opR,opR)(WHMean(_,_))) erase
+    p2R(opR,opR)(WHMean(_,_)))
 
   type SortOrderF = BooleanF
   lazy val sortOrderR: Reader[SortOrder, SortOrderF] = booleanR map (x => if (x) Asc else Desc)
@@ -667,10 +685,10 @@ object Format {
 
   lazy val opW: Writer[Op, opRW.F] = opRW.W
 
-  lazy val aggW: Writer[AggFunc, DynamicF] = s9W(unitW, opW, opW, opW, opW, opW, opW, tuple2W(opW,opW), tuple2W(opW,opW))(
+  lazy val aggW: Writer[AggFunc, AggF] = s9W(unitW, opW, opW, opW, opW, opW, opW, tuple2W(opW,opW), tuple2W(opW,opW))(
     (count, sum, avg, min, max, stddev, variance, wmean, whmean) =>
       (r:AggFunc) =>
-        r(count(()), sum, avg, min, max, stddev, variance, Function.untupled(wmean), Function.untupled(whmean))) erase
+        r(count(()), sum, avg, min, max, stddev, variance, Function.untupled(wmean), Function.untupled(whmean)))
   lazy val orderedHeaderW: Writer[Header.Ordered, OrderedHeaderF] =
     repeatW(tuple2W(stringW, primTW))
   lazy val headerW: Writer[Header, HeaderF] = orderedHeaderW cmap ((h: Header) =>
@@ -690,13 +708,15 @@ object Format {
   type SourcedF = RepeatF[SourceF] & HeaderF
   type SourceF = P2[StringF, RepeatF[StringF]]
   type BinStringF = StringF & StringF
-  type AggF = S7[UnitF,  // Count
+  type AggF = S9[UnitF,  // Count
                  opRW.F, // Sum
                  opRW.F, // Avg
                  opRW.F, // Min
                  opRW.F, // Max
                  opRW.F, // Stddev
-                 opRW.F] // Variance
+                 opRW.F, // Variance
+                 opRW.F & opRW.F, // WMean
+                 opRW.F & opRW.F] // WHMean
 
   // these should probably be someplace else...
   import scalaz.NonEmptyList
