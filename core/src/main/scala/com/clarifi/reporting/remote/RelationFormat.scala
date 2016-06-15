@@ -142,15 +142,15 @@ object Format {
                          rr: Reader[R, RF]): Reader[Ext[M, R], extRW.F[MF, RF]] =
     extRW.R(rm, rr)
 
-  type SMF = DynamicF // TODO expand
+  type SMF = S2[StringF & StringF, StringF & StringF]
 
-  def smW: Writer[SM, DynamicF] =
+  def smW: Writer[SM, SMF] =
     s2W(tuple2W(stringW,stringW), tuple2W(stringW,stringW))((look, hist) => (sm: SM) => sm match {
       case LookupSM(fld, attr) => look(fld, attr)
       case HistoricalSM(fld, attr) => hist(fld, attr)
     }).erase
 
-  def smR: Reader[SM, DynamicF] = union2R(p2R(stringR,stringR)(LookupSM(_,_)),
+  def smR: Reader[SM, SMF] = union2R(p2R(stringR,stringR)(LookupSM(_,_)),
                                           p2R(stringR,stringR)(HistoricalSM(_,_))).erase
 
   type MemF[RF, MF] = DynamicF // TODO existentialize
