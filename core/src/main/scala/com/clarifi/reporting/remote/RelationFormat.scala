@@ -471,15 +471,45 @@ object Format {
 
   lazy val primExprR: Reader[PrimExpr, primExprRW.F] = primExprRW.R
 
-  lazy val predicateR: Reader[Predicate, DynamicF] = fixR[Predicate, DynamicF](self =>
-    union8R(booleanR map (x => Predicate.Atom(x)),
-            p2R(opR, opR)((a, b) => Lt(a, b)),
-            p2R(opR, opR)((a, b) => Gt(a, b)),
-            p2R(opR, opR)((a, b) => Eq(a, b)),
-            self map (was => Not(was)),
-            p2R(self, self)((a, b) => Or(a, b)),
-            p2R(self, self)((a, b) => And(a, b)),
-            opR map IsNull) erase)
+  lazy val predicateRW: CodecPair[Predicate] = {
+    type BinOpF = opRW.F & opRW.F
+    type PredicateF[A] = S8[BooleanF, BinOpF, BinOpF, BinOpF,
+                            A, A & A, A & A, opRW.F]
+    CodecPair[Predicate, FixF[PredicateF[SelfF]]]{
+      fixFR[Predicate, PredicateF](self =>
+        union8R(booleanR map (x => Predicate.Atom(x)),
+                p2R(opR, opR)((a, b) => Lt(a, b)),
+                p2R(opR, opR)((a, b) => Gt(a, b)),
+                p2R(opR, opR)((a, b) => Eq(a, b)),
+                self map (was => Not(was)),
+                p2R(self, self)((a, b) => Or(a, b)),
+                p2R(self, self)((a, b) => And(a, b)),
+                opR map IsNull))
+    }{
+      fixFW[Predicate, PredicateF](self =>
+        s8W(booleanW, // Atom
+            tuple2W(opW, opW), // Lt
+            tuple2W(opW, opW), // Gt
+            tuple2W(opW, opW), // Eq
+            self, // Not
+            tuple2W(self, self), // Or
+            tuple2W(self, self), // And
+            opW // IsNull
+        )((atom, lt, gt, eq, not, or, and, isNull) => (r: Predicate) =>
+          r match {
+            case Predicate.Atom(x) => atom(x)
+            case Lt(x, y) => lt(x -> y)
+            case Gt(x, y) => gt(x -> y)
+            case Eq(x, y) => eq(x -> y)
+            case Not(x) => not(x)
+            case Or(x, y) => or(x -> y)
+            case And(x, y) => and(x -> y)
+            case IsNull(x) => isNull(x)
+          }))
+    }
+  }
+
+  lazy val predicateR: Reader[Predicate, predicateRW.F] = predicateRW.R
 
   lazy val attributeR: Reader[Attribute, AttributeF] =
     p2R(stringR, primTR)(Attribute(_, _))
@@ -494,7 +524,7 @@ object Format {
                       A & A           , // DoubleDiv
                       A & A           , // Pow
                       RepeatF[A]      , // Concat
-                      DynamicF :: A :: A, // If
+                      predicateRW.F :: A :: A, // If
                       A & A           , // Coalesce
                       A :: IntF :: IntF , // DateAdd
                       IntF :: A :: A    , // DateDiff
@@ -602,26 +632,7 @@ object Format {
     (r: Attribute) => f(r.name, r.t))
   lazy val primTW: Writer[PrimT, primTRW.F] = primTRW.W
 
-  lazy val predicateW: Writer[Predicate, DynamicF] = fixW[Predicate, DynamicF](self =>
-    s8W(booleanW, // Atom
-        tuple2W(opW, opW), // Lt
-        tuple2W(opW, opW), // Gt
-        tuple2W(opW, opW), // Eq
-        self, // Not
-        tuple2W(self, self), // Or
-        tuple2W(self, self), // And
-        opW // IsNull
-       )((atom, lt, gt, eq, not, or, and, isNull) => (r: Predicate) =>
-        r match {
-          case Predicate.Atom(x) => atom(x)
-          case Lt(x, y) => lt(x -> y)
-          case Gt(x, y) => gt(x -> y)
-          case Eq(x, y) => eq(x -> y)
-          case Not(x) => not(x)
-          case Or(x, y) => or(x -> y)
-          case And(x, y) => and(x -> y)
-          case IsNull(x) => isNull(x)
-        }) erase)
+  lazy val predicateW: Writer[Predicate, predicateRW.F] = predicateRW.W
   lazy val primExprW: Writer[PrimExpr, primExprRW.F] = primExprRW.W
 
   type AttributeF = StringF & primTRW.F
@@ -630,9 +641,6 @@ object Format {
   type SourcedF = RepeatF[SourceF] & HeaderF
   type SourceF = P2[StringF, RepeatF[StringF]]
   type BinStringF = StringF & StringF
-  type BinOpF = opRW.F & opRW.F
-  type PredicateF[A] = S7[BooleanF, BinOpF, BinOpF, BinOpF,
-                          A, A & A, A & A]
   type AggF = S7[UnitF,  // Count
                  opRW.F, // Sum
                  opRW.F, // Avg
