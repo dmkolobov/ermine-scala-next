@@ -114,7 +114,7 @@ object Format {
 
   lazy val extRW: CodecPair2[Ext] = {
     type ExtF[MF, RF] =
-      S3[RelF[MF, RF] & StringF, // ExtRel
+      S3[relRW.F[MF, RF] & StringF, // ExtRel
          MemF[RF, MF],           // ExtMem
          SMF]                    // ExtSM
     new CodecPair2[Ext] {
@@ -300,77 +300,86 @@ object Format {
       case MPop(x) => Some(x)
     }) erase
 
-  type RelF[MF, RF] = DynamicF // TODO existentialize
+  lazy val relRW: CodecPair2[Relation] =
+    new CodecPair2[Relation] {
+      type F[MF, RF] = DynamicF // TODO elaborate
+
+      override def W[M, MF, R, RF](wm: Writer[M, MF], wr: Writer[R, RF]) =
+        fixW((self: Writer[Relation[M, R], DynamicF]) =>
+          s19W(wr, // Var
+               tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))) dynamicF, // Limit
+               tuple3W(repeatW(self), mapW(attributeW, opW), predicateW) dynamicF, // Select
+               tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))) dynamicF, // Let
+               tuple2W(self, self) dynamicF, // Join
+               tuple3W(self, self, repeatW(tuple2W(stringW, stringW))) dynamicF, // JoinOn
+               tuple2W(self, self) dynamicF, // Union
+               tuple2W(self, self) dynamicF, // Minus
+               tuple2W(self, predicateW) dynamicF, // Filter
+               tuple2W(self, mapW(attributeW, opW)) dynamicF, // Project
+               tuple2W(self, repeatW(stringW)) dynamicF, // Except
+               tuple3W(self, attributeW, opW) dynamicF, // Combine
+               tuple3W(self, attributeW, aggW) dynamicF, // Aggregate
+               tuple2W(headerW, tuple2W(stringW, repeatW(stringW))) dynamicF, // Table
+               tuple4W(repeatW(W_\/(tuple2W(stringW, self), primExprW)), orderedHeaderW, stringW, repeatW(stringW)) dynamicF, // TableProc
+               headerW, // RelEmpty
+               repeatW(recordW) dynamicF, // SmallLit
+               tuple2W(self, repeatW(stringW)), // MemoR
+               tuple2W(repeatW(stringW), self) dynamicF // Note
+          )((v, lim, sel, let, join, on, un, min, fil, proj, exc, comb, agg, tab, tabproc, empt, sl, m, note) =>
+            (r: Relation[M, R]) => r match {
+              case VarR(x) => v(x)
+              case Limit(a, b, c, d) => lim((a, b, c, d.map(p => (p._1, p._2 == Asc)).toList))
+              case SelectR(a, b, c) => sel((a, b, c))
+              case LetR(a, b) => let((a, b))
+              case Join(a, b) => join((a, b))
+              case JoinOn(a, b, c) => on((a, b, c))
+              case Union(a, b) => un(a -> b)
+              case Minus(a, b) => min(a -> b)
+              case Filter(a, b) => fil(a -> b)
+              case Project(a, b) => proj((a, b.toList))
+              case Except(a, b) => exc((a, b.toList))
+              case Combine(a, b, c) => comb((a, b, c))
+              case Aggregate(a, b, c) => agg((a, b, c))
+              case Table(a, b) => tab((a, (b.name, b.schema)))
+              case TableProc(a, b, c, d) => tabproc((a, b, c, d))
+              case RelEmpty(h) => empt(h)
+              case SmallLit(ts) => sl(ts.toList)
+              case MemoR(r, pk) => m(r, pk)
+              case QuoteR(_) => sys.error("Can't serialize a QuoteR! (it has just a raw object in it.)")
+              case Note(ts, under) => note(ts, under)
+                // Don't put a catch all here, so we can get compile errors.
+            }) erase)
+
+      override def R[M, MF, R, RF](rm: Reader[M, MF], rr: Reader[R, RF]) =
+        fixR((self: Reader[Relation[M, R], DynamicF]) => union18R(
+               rr.map(VarR(_)),
+               p4R(self, optionR(intR), optionR(intR), listR(p2R(stringR, sortOrderR)((_, _))))(Limit(_, _, _, _)),
+               p3R(listR(self), mapR(attributeR, opR), predicateR)(SelectR(_, _, _)),
+               p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)),
+               p2R(self, self)(Join(_, _)),
+               p3R(self, self, listR(tuple2R(stringR, stringR)) map (_.toSet))(JoinOn(_, _, _)),
+               p2R(self, self)((a, b) => Union(a, b)),
+               p2R(self, self)((a, b) => Minus(a, b)),
+               p2R(self, predicateR)((a, b) => Filter(a, b)),
+               p2R(self, mapR(attributeR, opR))(Project(_, _)),
+               p2R(self, listR(stringR))((a, b) => Except(a, b.toSet)),
+               p3R(self, attributeR, opR)(Combine(_, _, _)),
+               p3R(self, attributeR, aggR)(Aggregate(_, _, _)),
+               p2R(headerR, p2R(stringR, listR(stringR))(TableName(_, _)))(Table(_, _)),
+               p4R(listR(R_\/(p2R(stringR, self)((_,_)), primExprR)),
+                   orderedHeaderR, stringR, listR(stringR))(TableProc(_, _, _, _)),
+               headerR.map(RelEmpty(_)),
+               listR(recordR).map(xs => SmallLit(xs.toNel.get)),
+               p2R(self, listR(stringR))((r, pk) => MemoR(r, pk))
+             ) erase)
+    }
 
   def relW[M, MF, R, RF](implicit wm: Writer[M, MF],
-                         wr: Writer[R, RF]): Writer[Relation[M, R], RelF[MF, RF]] =
-    fixW((self: Writer[Relation[M, R], DynamicF]) =>
-      s19W(wr, // Var
-           tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))) dynamicF, // Limit
-           tuple3W(repeatW(self), mapW(attributeW, opW), predicateW) dynamicF, // Select
-           tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))) dynamicF, // Let
-           tuple2W(self, self) dynamicF, // Join
-           tuple3W(self, self, repeatW(tuple2W(stringW, stringW))) dynamicF, // JoinOn
-           tuple2W(self, self) dynamicF, // Union
-           tuple2W(self, self) dynamicF, // Minus
-           tuple2W(self, predicateW) dynamicF, // Filter
-           tuple2W(self, mapW(attributeW, opW)) dynamicF, // Project
-           tuple2W(self, repeatW(stringW)) dynamicF, // Except
-           tuple3W(self, attributeW, opW) dynamicF, // Combine
-           tuple3W(self, attributeW, aggW) dynamicF, // Aggregate
-           tuple2W(headerW, tuple2W(stringW, repeatW(stringW))) dynamicF, // Table
-           tuple4W(repeatW(W_\/(tuple2W(stringW, self), primExprW)), orderedHeaderW, stringW, repeatW(stringW)) dynamicF, // TableProc
-           headerW, // RelEmpty
-           repeatW(recordW) dynamicF, // SmallLit
-           tuple2W(self, repeatW(stringW)), // MemoR
-           tuple2W(repeatW(stringW), self) dynamicF // Note
-         )((v, lim, sel, let, join, on, un, min, fil, proj, exc, comb, agg, tab, tabproc, empt, sl, m, note) =>
-           (r: Relation[M, R]) => r match {
-             case VarR(x) => v(x)
-             case Limit(a, b, c, d) => lim((a, b, c, d.map(p => (p._1, p._2 == Asc)).toList))
-             case SelectR(a, b, c) => sel((a, b, c))
-             case LetR(a, b) => let((a, b))
-             case Join(a, b) => join((a, b))
-             case JoinOn(a, b, c) => on((a, b, c))
-             case Union(a, b) => un(a -> b)
-             case Minus(a, b) => min(a -> b)
-             case Filter(a, b) => fil(a -> b)
-             case Project(a, b) => proj((a, b.toList))
-             case Except(a, b) => exc((a, b.toList))
-             case Combine(a, b, c) => comb((a, b, c))
-             case Aggregate(a, b, c) => agg((a, b, c))
-             case Table(a, b) => tab((a, (b.name, b.schema)))
-             case TableProc(a, b, c, d) => tabproc((a, b, c, d))
-             case RelEmpty(h) => empt(h)
-             case SmallLit(ts) => sl(ts.toList)
-             case MemoR(r, pk) => m(r, pk)
-             case QuoteR(_) => sys.error("Can't serialize a QuoteR! (it has just a raw object in it.)")
-             case Note(ts, under) => note(ts, under)
-             // Don't put a catch all here, so we can get compile errors.
-           }) erase)
+                         wr: Writer[R, RF]): Writer[Relation[M, R], relRW.F[MF, RF]] =
+    relRW.W(wm, wr)
 
-  def relR[M, MF, R, RF](implicit rm: Reader[M, MF], rr: Reader[R, RF]): Reader[Relation[M, R], RelF[MF, RF]] =
-    fixR((self: Reader[Relation[M, R], DynamicF]) => union18R(
-      rr.map(VarR(_)),
-      p4R(self, optionR(intR), optionR(intR), listR(p2R(stringR, sortOrderR)((_, _))))(Limit(_, _, _, _)),
-      p3R(listR(self), mapR(attributeR, opR), predicateR)(SelectR(_, _, _)),
-      p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)),
-      p2R(self, self)(Join(_, _)),
-      p3R(self, self, listR(tuple2R(stringR, stringR)) map (_.toSet))(JoinOn(_, _, _)),
-      p2R(self, self)((a, b) => Union(a, b)),
-      p2R(self, self)((a, b) => Minus(a, b)),
-      p2R(self, predicateR)((a, b) => Filter(a, b)),
-      p2R(self, mapR(attributeR, opR))(Project(_, _)),
-      p2R(self, listR(stringR))((a, b) => Except(a, b.toSet)),
-      p3R(self, attributeR, opR)(Combine(_, _, _)),
-      p3R(self, attributeR, aggR)(Aggregate(_, _, _)),
-      p2R(headerR, p2R(stringR, listR(stringR))(TableName(_, _)))(Table(_, _)),
-      p4R(listR(R_\/(p2R(stringR, self)((_,_)), primExprR)),
-          orderedHeaderR, stringR, listR(stringR))(TableProc(_, _, _, _)),
-      headerR.map(RelEmpty(_)),
-      listR(recordR).map(xs => SmallLit(xs.toNel.get)),
-      p2R(self, listR(stringR))((r, pk) => MemoR(r, pk))
-    ) erase)
+  def relR[M, MF, R, RF](implicit rm: Reader[M, MF], rr: Reader[R, RF]): Reader[Relation[M, R], relRW.F[MF, RF]] =
+    relRW.R(rm, rr)
 
   lazy val orderedHeaderR: Reader[Header.Ordered, OrderedHeaderF] =
     listR(tuple2R(stringR, primTR))
@@ -695,61 +704,68 @@ object Format {
           case Condition.And(x,y) => and(x -> y)
         }) erase)
 
-  type WFormatF[A] = S14[UnitF, // Default
-                     A, // Markdown
-                     StringF, // Constant
-                     BooleanF :: BooleanF :: IntF :: BooleanF, // Percent
-                     BooleanF :: BooleanF :: StringF, // Currency
-                     UnitF, // DateRange
-                     BooleanF :: BooleanF :: IntF,  // Round
-                     BooleanF :: BooleanF :: IntF,  // IntegralRound
-                     IntF,  // Truncate
-                     A,  // Pr1
-                     FixF[ConditionF[SelfF]] :: A :: A,  // Conditional
-                     IntF :: IntF :: A, //Conditional Color
-                     RepeatF[StringF & StringF], // Alias
-                     UnitF
-                   ]
+  lazy val wformatRW: CodecPair[WFormat] = {
+    type WFormatF[A] = S14[UnitF, // Default
+                       A, // Markdown
+                       StringF, // Constant
+                       BooleanF :: BooleanF :: IntF :: BooleanF, // Percent
+                       BooleanF :: BooleanF :: StringF, // Currency
+                       UnitF, // DateRange
+                       BooleanF :: BooleanF :: IntF,  // Round
+                       BooleanF :: BooleanF :: IntF,  // IntegralRound
+                       IntF,  // Truncate
+                       A,  // Pr1
+                       FixF[ConditionF[SelfF]] :: A :: A,  // Conditional
+                       IntF :: IntF :: A, //Conditional Color
+                       RepeatF[StringF & StringF], // Alias
+                       UnitF
+                     ]
+    CodecPair[WFormat, FixF[WFormatF[SelfF]]]{
+      fixFR[WFormat,WFormatF](self => union14R(
+        unitR   map (_ => WFormat.Default),
+        self map (inner => WFormat.Markdown(inner) ),
+        stringR map (s => WFormat.Constant(s)),
+        p4R(booleanR,booleanR,intR, booleanR)(WFormat.Percentage),
+        p3R(booleanR,booleanR,stringR)(WFormat.Currency),
+        unitR   map (_ => WFormat.DateRange),
+        p3R(booleanR,booleanR,intR)(WFormat.Round),
+        p3R(booleanR,booleanR,intR)(WFormat.IntegralRound),
+        intR    map (i => WFormat.Truncate(i)),
+        self map (inner => WFormat.Pr1(inner)),
+        p3R(conditionR,self,self)((c,t,e) => WFormat.Conditional(c,t,e)),
+        p3R(colorR,colorR,self)((bg, fg, b) => WFormat.ColorFormat(bg, fg, b)),
+        listR(tuple2R(stringR, stringR)) map (WFormat.Alias),
+        unitR map (_ => WFormat.Verbatim)
+        )
+      )
+    }{
+      fixFW[WFormat, WFormatF]( self =>
+        s14W(unitW, self, stringW, tuple4W(booleanW, booleanW, intW, booleanW),
+             tuple3W(booleanW,booleanW,stringW), unitW, tuple3W(booleanW,booleanW,intW),
+             tuple3W(booleanW,booleanW,intW), intW, self, tuple3W(conditionW, self, self),
+             tuple3W(colorW, colorW, self), repeatW(tuple2W(stringW,stringW)), unitW)(
+          (d, md, k, p, c, dr, r, sr, t, pr1, cond, color, alias, vbt) => (w: WFormat) => w match {
+            case WFormat.Default              => d(())
+            case WFormat.Markdown(f)          => md(f)
+            case WFormat.Constant(s)          => k(s)
+            case WFormat.Percentage(b,b1,r, pad) => p((b,b1,r, pad))
+            case WFormat.Currency(b,b1,s)        => c((b,b1,s))
+            case WFormat.DateRange            => dr(())
+            case WFormat.Round(b,b1,i)           => r(b,b1,i)
+            case WFormat.IntegralRound(b,b1,i)   => sr(b,b1,i)
+            case WFormat.Truncate(i)        => t(i)
+            case WFormat.Pr1(f)             => pr1(f)
+            case WFormat.Conditional(c,t,e) => cond(c,t,e)
+            case WFormat.ColorFormat(bg, fg, b) => color(bg, fg, b)
+            case WFormat.Alias(als) => alias(als)
+            case WFormat.Verbatim => vbt(())
+          }))
+    }
+  }
 
-  lazy val wformatR = fixFR[WFormat,WFormatF](self => union14R(
-    unitR   map (_ => WFormat.Default),
-    self map (inner => WFormat.Markdown(inner) ),
-    stringR map (s => WFormat.Constant(s)),
-    p4R(booleanR,booleanR,intR, booleanR)(WFormat.Percentage),
-    p3R(booleanR,booleanR,stringR)(WFormat.Currency),
-    unitR   map (_ => WFormat.DateRange),
-    p3R(booleanR,booleanR,intR)(WFormat.Round),
-    p3R(booleanR,booleanR,intR)(WFormat.IntegralRound),
-    intR    map (i => WFormat.Truncate(i)),
-    self map (inner => WFormat.Pr1(inner)),
-    p3R(conditionR,self,self)((c,t,e) => WFormat.Conditional(c,t,e)),
-    p3R(colorR,colorR,self)((bg, fg, b) => WFormat.ColorFormat(bg, fg, b)),
-    listR(tuple2R(stringR, stringR)) map (WFormat.Alias),
-    unitR map (_ => WFormat.Verbatim)
-    )
-  )
+  lazy val wformatR = wformatRW.R
 
-  lazy val wformatW = fixFW[WFormat, WFormatF]( self =>
-    s14W(unitW, self, stringW, tuple4W(booleanW, booleanW, intW, booleanW),
-         tuple3W(booleanW,booleanW,stringW), unitW, tuple3W(booleanW,booleanW,intW),
-         tuple3W(booleanW,booleanW,intW), intW, self, tuple3W(conditionW, self, self),
-         tuple3W(colorW, colorW, self), repeatW(tuple2W(stringW,stringW)), unitW)(
-      (d, md, k, p, c, dr, r, sr, t, pr1, cond, color, alias, vbt) => (w: WFormat) => w match {
-        case WFormat.Default              => d(())
-        case WFormat.Markdown(f)          => md(f)
-        case WFormat.Constant(s)          => k(s)
-        case WFormat.Percentage(b,b1,r, pad) => p((b,b1,r, pad))
-        case WFormat.Currency(b,b1,s)        => c((b,b1,s))
-        case WFormat.DateRange            => dr(())
-        case WFormat.Round(b,b1,i)           => r(b,b1,i)
-        case WFormat.IntegralRound(b,b1,i)   => sr(b,b1,i)
-        case WFormat.Truncate(i)        => t(i)
-        case WFormat.Pr1(f)             => pr1(f)
-        case WFormat.Conditional(c,t,e) => cond(c,t,e)
-        case WFormat.ColorFormat(bg, fg, b) => color(bg, fg, b)
-        case WFormat.Alias(als) => alias(als)
-        case WFormat.Verbatim => vbt(())
-      }))
+  lazy val wformatW = wformatRW.W
 
   type SortDirF = BooleanF
 
@@ -765,11 +781,11 @@ object Format {
   lazy val opNelR: Reader[NonEmptyList[Op], NelF[opRW.F]] = nelR(opR)
   lazy val opNelW: Writer[NonEmptyList[Op], NelF[opRW.F]] = nelW(opW)
 
-  type PresentationF = FixF[WFormatF[SelfF]] :: NelF[opRW.F]
+  type PresentationF = wformatRW.F :: NelF[opRW.F]
   lazy val presentationR: Reader[Presentation, PresentationF] = tuple2R(wformatR, opNelR) map {
     case (f, d) => Presentation(f, d)
   }
-  lazy val presentationW: Writer[Presentation, PresentationF] = p2W[WFormat, FixF[WFormatF[SelfF]], NonEmptyList[Op], NelF[opRW.F], Presentation](wformatW, opNelW)(f =>
+  lazy val presentationW: Writer[Presentation, PresentationF] = p2W[WFormat, wformatRW.F, NonEmptyList[Op], NelF[opRW.F], Presentation](wformatW, opNelW)(f =>
     {case Presentation(fmt, displayData) => f(fmt, displayData)}
   )
 
