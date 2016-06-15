@@ -1,11 +1,7 @@
 package com.clarifi.reporting
 package remote
 
-import f0.{Source => _, _}
-import f0.Effects._
-import f0.Formats._
-import f0.Writers._
-import f0.Readers._
+import f0.{Reader, Writer}
 
 /** A pair of reader and writer with erased format.
   *
