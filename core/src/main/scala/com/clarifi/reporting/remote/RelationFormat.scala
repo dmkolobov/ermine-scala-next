@@ -389,24 +389,75 @@ object Format {
   lazy val attributeR: Reader[Attribute, AttributeF] =
     p2R(stringR, primTR)(Attribute(_, _))
 
-  lazy val opR: Reader[Op, DynamicF] = fixR[Op, DynamicF](self => union15R(
-    primExprR map OpLiteral,
-    p2R(stringR, primTR)(ColumnValue),
-    p2R(self, self)((a, b) => Add(a, b)),
-    p2R(self, self)((a, b) => Sub(a, b)),
-    p2R(self, self)((a, b) => Mul(a, b)),
-    p2R(self, self)((a, b) => FloorDiv(a, b)),
-    p2R(self, self)((a, b) => DoubleDiv(a, b)),
-    p2R(self, self)((a, b) => Pow(a, b)),
-    listR(self) map (x => Concat(x)),
-    p3R(predicateR, self, self)(If),
-    p2R(self, self)(Coalesce),
-    p3R(self, intR, timeUnitR)(DateAdd),
-    p3R(timeUnitR, self, self)(DateDiff),
-    p5R(stringR, stringR, listR(stringR), listR(self), primTR)(Funcall),
-    self map (Abs(_))
-  ) erase)
-    
+  lazy val opRW: CodecPair[Op] = {
+    type OpF[A] = S15[PrimExprF       , // OpLiteral
+                      StringF & PrimTF, // ColumnValue
+                      A & A           , // Add
+                      A & A           , // Sub
+                      A & A           , // Mul
+                      A & A           , // FloorDiv
+                      A & A           , // DoubleDiv
+                      A & A           , // Pow
+                      RepeatF[A]      , // Concat
+                      DynamicF :: A :: A, // If
+                      A & A           , // Coalesce
+                      A :: IntF :: IntF , // DateAdd
+                      IntF :: A :: A    , // DateDiff
+                      StringF :: StringF :: RepeatF[StringF] :: RepeatF[A] :: PrimTF, // Funcall
+                      A]                // Abs
+    CodecPair[Op, FixF[OpF[SelfF]]]{
+      fixFR[Op, OpF]{self =>
+        union15R(
+          primExprR map OpLiteral,
+          p2R(stringR, primTR)(ColumnValue),
+          p2R(self, self)((a, b) => Add(a, b)),
+          p2R(self, self)((a, b) => Sub(a, b)),
+          p2R(self, self)((a, b) => Mul(a, b)),
+          p2R(self, self)((a, b) => FloorDiv(a, b)),
+          p2R(self, self)((a, b) => DoubleDiv(a, b)),
+          p2R(self, self)((a, b) => Pow(a, b)),
+          listR(self) map (x => Concat(x)),
+          p3R(predicateR, self, self)(If),
+          p2R(self, self)(Coalesce),
+          p3R(self, intR, timeUnitR)(DateAdd),
+          p3R(timeUnitR, self, self)(DateDiff),
+          p5R(stringR, stringR, listR(stringR), listR(self), primTR)(Funcall),
+          self map (Abs(_))
+        )
+      }
+    }{
+      fixFW[Op, OpF]{self =>
+        lazy val binopW = tuple2W(self, self)
+        s15W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
+             binopW, binopW, binopW, binopW, repeatW(self),
+             tuple3W(predicateW, self, self),
+             binopW,
+             tuple3W(self, intW, timeUnitW),
+             tuple3W(timeUnitW, self, self),
+             tuple5W(stringW, stringW, repeatW(stringW), repeatW(self), primTW),
+             self
+        )((opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, dateadd, datediff, funcall, abs) => (r: Op) => r match {
+            case OpLiteral(lit) => opliteral(lit)
+            case ColumnValue(cn, ty) => columnvalue(cn -> ty)
+            case Add(a, b) => add(a -> b)
+            case Sub(a, b) => sub(a -> b)
+            case Mul(a, b) => mul(a -> b)
+            case FloorDiv(a, b) => floor(a -> b)
+            case DoubleDiv(a, b) => div(a -> b)
+            case Pow(a, b) => pow(a -> b)
+            case Concat(ss) => cat(ss.toList)
+            case If(test, c, a) => oif((test, c, a))
+            case Coalesce(l, r) => coalesce(l, r)
+            case DateAdd(d, n, u) => dateadd(d, n, u)
+            case DateDiff(u, s, e) => datediff(u, s, e)
+            case Funcall(n, db, ns, args, ty) => funcall((n, db, ns, args, ty))
+            case Abs(x) => abs(x)
+          })}
+    }
+  }
+
+  lazy val opR: Reader[Op, opRW.F] = opRW.R
+
   lazy val aggR: Reader[AggFunc, DynamicF] = union9R(
     unitR   map (_ => Count),
     opR map (Sum(_)),
@@ -440,34 +491,8 @@ object Format {
     case TimeUnit.Millisecond => 4
   }
 
-  lazy val opW: Writer[Op, DynamicF] = fixW[Op, DynamicF]{self =>
-    lazy val binopW = tuple2W(self, self)
-    s15W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
-         binopW, binopW, binopW, binopW, repeatW(self),
-         tuple3W(predicateW, self, self),
-         binopW,
-         tuple3W(self, intW, timeUnitW),
-         tuple3W(timeUnitW, self, self),
-         tuple5W(stringW, stringW, repeatW(stringW), repeatW(self), primTW),
-         self
-         )(
-    (opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, dateadd, datediff, funcall, abs) => (r: Op) => r match {
-      case OpLiteral(lit) => opliteral(lit)
-      case ColumnValue(cn, ty) => columnvalue(cn -> ty)
-      case Add(a, b) => add(a -> b)
-      case Sub(a, b) => sub(a -> b)
-      case Mul(a, b) => mul(a -> b)
-      case FloorDiv(a, b) => floor(a -> b)
-      case DoubleDiv(a, b) => div(a -> b)
-      case Pow(a, b) => pow(a -> b)
-      case Concat(ss) => cat(ss.toList)
-      case If(test, c, a) => oif((test, c, a))
-      case Coalesce(l, r) => coalesce(l, r)
-      case DateAdd(d, n, u) => dateadd(d, n, u)
-      case DateDiff(u, s, e) => datediff(u, s, e)
-      case Funcall(n, db, ns, args, ty) => funcall((n, db, ns, args, ty))
-      case Abs(x) => abs(x)
-    }) erase}
+  lazy val opW: Writer[Op, opRW.F] = opRW.W
+
   lazy val aggW: Writer[AggFunc, DynamicF] = s9W(unitW, opW, opW, opW, opW, opW, opW, tuple2W(opW,opW), tuple2W(opW,opW))(
     (count, sum, avg, min, max, stddev, variance, wmean, whmean) =>
       (r:AggFunc) =>
@@ -561,28 +586,16 @@ object Format {
                        BooleanF & StringF, // UUID
                        PrimTF] // Null
   type BinStringF = StringF & StringF
-  type BinOpF = FixF[OpF[SelfF]] & FixF[OpF[SelfF]]
+  type BinOpF = opRW.F & opRW.F
   type PredicateF[A] = S7[BooleanF, BinOpF, BinOpF, BinOpF,
                           A, A & A, A & A]
-  type OpF[A] = S12[PrimExprF       , // OpLiteral
-                    StringF & PrimTF, // ColumnValue
-                    A & A           , // Add
-                    A & A           , // Sub
-                    A & A           , // Mul
-                    A & A           , // FloorDiv
-                    A & A           , // DoubleDiv
-                    A & A           , // Pow
-                    RepeatF[A]      , // Concat
-                    DynamicF & A & A, // If
-                    StringF & StringF & RepeatF[StringF] & RepeatF[A] & PrimTF, // Funcall
-                    A]                // Abs
-  type AggF = S7[UnitF,            // Count
-                 FixF[OpF[SelfF]], // Sum
-                 FixF[OpF[SelfF]], // Avg
-                 FixF[OpF[SelfF]], // Min
-                 FixF[OpF[SelfF]], // Max
-                 FixF[OpF[SelfF]], // Stddev
-                 FixF[OpF[SelfF]]] // Variance
+  type AggF = S7[UnitF,  // Count
+                 opRW.F, // Sum
+                 opRW.F, // Avg
+                 opRW.F, // Min
+                 opRW.F, // Max
+                 opRW.F, // Stddev
+                 opRW.F] // Variance
 
   // these should probably be someplace else...
   import scalaz.NonEmptyList
@@ -697,14 +710,14 @@ object Format {
   lazy val sortStrategyR: Reader[SortStrategy, SortStrategyF] = listR(tuple2R(stringR, sortDirR)) map SortStrategy
   lazy val sortStrategyW: Writer[SortStrategy, SortStrategyF] = repeatW(tuple2W(stringW, sortDirW)) cmap {case SortStrategy(pri) => pri}
 
-  lazy val opNelR: Reader[NonEmptyList[Op], NelF[DynamicF]] = nelR(opR)
-  lazy val opNelW: Writer[NonEmptyList[Op], NelF[DynamicF]] = nelW(opW)
+  lazy val opNelR: Reader[NonEmptyList[Op], NelF[opRW.F]] = nelR(opR)
+  lazy val opNelW: Writer[NonEmptyList[Op], NelF[opRW.F]] = nelW(opW)
 
-  type PresentationF = FixF[WFormatF[SelfF]] :: NelF[DynamicF]
+  type PresentationF = FixF[WFormatF[SelfF]] :: NelF[opRW.F]
   lazy val presentationR: Reader[Presentation, PresentationF] = tuple2R(wformatR, opNelR) map {
     case (f, d) => Presentation(f, d)
   }
-  lazy val presentationW: Writer[Presentation, PresentationF] = p2W[WFormat, FixF[WFormatF[SelfF]], NonEmptyList[Op], NelF[DynamicF], Presentation](wformatW, opNelW)(f =>
+  lazy val presentationW: Writer[Presentation, PresentationF] = p2W[WFormat, FixF[WFormatF[SelfF]], NonEmptyList[Op], NelF[opRW.F], Presentation](wformatW, opNelW)(f =>
     {case Presentation(fmt, displayData) => f(fmt, displayData)}
   )
 
