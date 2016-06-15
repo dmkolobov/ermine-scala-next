@@ -303,37 +303,37 @@ object Format {
       case WeightedHarmonicMean(w,v) => whmean((w,v))
     })
 
+  type RLevelF[MF, RF] = OptionF[relRW.F[MF, RF]]
+
   def rLevelR[M, MF, R, RF](implicit rm: Reader[M, MF],
-                             rr: Reader[R, RF]): Reader[RLevel[M, R], DynamicF] =
+                             rr: Reader[R, RF]): Reader[RLevel[M, R], RLevelF[MF, RF]] =
     optionR(relR[M, MF, R, RF]) map {
       case None => RTop
       case Some(x) => RPop(x)
-    } erase
-
-  type RLevelF[MF, RF] = DynamicF // TODO expand
+    }
 
   def rLevelW[M, MF, R, RF](implicit wm: Writer[M, MF],
                              wr: Writer[R, RF]): Writer[RLevel[M, R], RLevelF[MF, RF]] =
     optionW(relW[M,MF,R,RF]) cmap ((x: RLevel[M, R]) => x match {
       case RTop => None
       case RPop(x) => Some(x)
-    }) erase
+    })
 
-  type MLevelF[RF, MF] = DynamicF // TODO expand
+  type MLevelF[RF, MF] = OptionF[memRW.F[RF, MF]]
 
   def mLevelR[R, RF, M, MF](implicit rr: Reader[R, RF],
                              rm: Reader[M, MF]): Reader[MLevel[R, M], MLevelF[RF, MF]] =
     optionR(memR[R,RF,M,MF]) map {
       case None => MTop
       case Some(x) => MPop(x)
-    } erase
+    }
 
   def mLevelW[R, RF, M, MF](implicit wr: Writer[R, RF],
                              wm: Writer[M, MF]): Writer[MLevel[R, M], MLevelF[RF, MF]] =
     optionW(memW[R,RF,M,MF]) cmap ((x: MLevel[R, M]) => x match {
       case MTop => None
       case MPop(x) => Some(x)
-    }) erase
+    })
 
   lazy val relRW: CodecPair2[Relation] =
     new CodecPair2[Relation] {
