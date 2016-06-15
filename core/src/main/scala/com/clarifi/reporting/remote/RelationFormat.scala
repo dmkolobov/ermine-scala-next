@@ -115,8 +115,8 @@ object Format {
   lazy val extRW: CodecPair2[Ext] = {
     type ExtF[MF, RF] =
       S3[relRW.F[MF, RF] & StringF, // ExtRel
-         MemF[RF, MF],           // ExtMem
-         SMF]                    // ExtSM
+         memRW.F[RF, MF],           // ExtMem
+         SMF]                       // ExtSM
     new CodecPair2[Ext] {
       type F[M, R] = ExtF[M, R]
 
@@ -153,102 +153,113 @@ object Format {
   def smR: Reader[SM, SMF] = union2R(p2R(stringR,stringR)(LookupSM(_,_)),
                                           p2R(stringR,stringR)(HistoricalSM(_,_))).erase
 
-  type MemF[RF, MF] = DynamicF // TODO existentialize
+  lazy val memRW: CodecPair2[Mem] = {
+    // type MemF[RF, MF, A] = 
+    new CodecPair2[Mem] {
+      type F[RF, MF] = DynamicF // FixF[MemF[RF, MF, SelfF]]
+
+      override def R[R, RF, M, MF](rr: Reader[R, RF], rm: Reader[M, MF]) =
+        fixR((self: Reader[Mem[R, M], DynamicF]) => union19R(
+          rm.map(VarM(_)),
+          p2R(extR(rm, rr), memR[R, RF, MLevel[R, M], MLevelF[RF, MF]](mLevelR(rr, rm), rr))(LetM(_, _)),
+          p2R(self, predicateR)(FilterM(_, _)),
+          p2R(self, mapR(attributeR, opR))(ProjectM(_, _)),
+          p2R(self, listR(stringR))((a, b) => ExceptM(a, b.toSet)),
+          p3R(self, attributeR, opR)(CombineM(_, _, _)),
+          p3R(self, attributeR, aggR)(AggregateM(_, _, _)),
+          p2R(self, self)(HashInnerJoin(_, _)),
+          p2R(self, self)(MergeOuterJoin(_, _)),
+          extR(rm, rr).map(EmbedMem(_)),
+          p4R(listR(primExprR), headerR, stringR, listR(stringR))(ProcedureCall(_, _, _, _)),
+          listR(recordR).map((xs: List[Record]) => Literal(xs.toNel.get)),
+          headerR.map(EmptyRel(_)),
+          p3R(self, listR(attributeR), memR(mLevelR(rr, rm), rr))(GroupByM.apply),
+          p4R(self, attributeR, stringR, booleanR)(RenameM.apply),
+          p2R(self, self)(HashLeftJoin.apply),
+          p5R(attributeR, attributeR, memR(mLevelR(rr, rm), rr), self, self)(AccumulateM.apply),
+          p2R(processSymbolR, self)(ProcessM.apply),
+          p5R(self, listR(stringR), listR(stringR), booleanR, mapR(recordR, tuple3R(stringR, opR, primExprR)))(
+            (a,b,c,d,e) => Pivot(a,b.toSet,c.toSet,d,e))
+        ).erase)
+
+      override def W[R, RF, M, MF](wr: Writer[R, RF], wm: Writer[M, MF]) =
+        fixW((self: Writer[Mem[R, M], DynamicF]) => s19W(
+          // VarM
+          wm
+          // LetM
+          , tuple2W(extW(wm, wr), memW(mLevelW(wr, wm), wr)) erase : Writer[(Ext[M,R],Mem[R,MLevel[R,M]]), DynamicF]
+          // FilterM
+          , tuple2W(self, predicateW) erase : Writer[(Mem[R,M], Predicate), DynamicF]
+          // ProjectM
+          , tuple2W(self, mapW(attributeW, opW)) erase : Writer[(Mem[R,M],Map[Attribute,Op]),DynamicF]
+          // ExceptM
+          , tuple2W(self, repeatW(stringW)) erase : Writer[(Mem[R,M],Set[String]),DynamicF]
+          // CombineM
+          , tuple3W(self, attributeW, opW) erase : Writer[(Mem[R,M],Attribute,Op),DynamicF]
+          // AggregateM
+          , tuple3W(self, attributeW, aggW) erase : Writer[(Mem[R,M],Attribute,AggFunc),DynamicF]
+          // HashInnerJoin
+          , tuple2W(self, self) erase : Writer[(Mem[R,M],Mem[R,M]),DynamicF]
+          // MergeOuterJoin
+          , tuple2W(self, self) erase : Writer[(Mem[R,M],Mem[R,M]),DynamicF]
+          // EmbedMem
+          , extW(wm, wr) erase : Writer[Ext[M,R],DynamicF]
+          // ProcedureCall
+          , tuple4W(repeatW(primExprW), headerW, stringW, repeatW(stringW)) erase
+              : Writer[(List[PrimExpr],Header,String,List[String]),DynamicF]
+          // Literal
+          , repeatW(recordW) erase : Writer[List[Record],DynamicF]
+          // EmptyRel
+          , headerW erase : Writer[Header,DynamicF]
+          // GroupByM
+          , tuple3W(self, repeatW(attributeW), memW(mLevelW(wr, wm), wr)) erase
+              : Writer[(Mem[R,M],List[Attribute], Mem[R,MLevel[R,M]]),DynamicF]
+          // RenameM
+          , tuple4W(self, attributeW, stringW, booleanW) erase : Writer[(Mem[R,M],Attribute,String,Boolean),DynamicF]
+          // HashLeftJoin
+          , tuple2W(self, self) erase : Writer[(Mem[R,M],Mem[R,M]),DynamicF]
+          // AccumulateM
+          , tuple5W(attributeW, attributeW, memW[R, RF, MLevel[R,M], MLevelF[RF,MF]](mLevelW(wr, wm), wr), self, self) erase
+              : Writer[(Attribute, Attribute,Mem[R,MLevel[R,M]],Mem[R,M],Mem[R,M]),DynamicF]
+          // ProcessM
+          , tuple2W(processSymbolW, self) erase : Writer[(ProcessSymbol, Mem[R,M]),DynamicF]
+          // Pivot
+          , tuple5W(self, repeatW(stringW), repeatW(stringW), booleanW, mapW(recordW,tuple3W(stringW, opW, primExprW))) erase
+              : Writer[(Mem[R,M],Set[String],Set[String],Boolean,Map[Record,(String,Op,PrimExpr)]),DynamicF]
+        )((v, let, fil, pro, exc, com, agg, hashIn, mer, emb, proc, lit, emp, grpBy, ren, hashLeft, accum, process, pivot) =>
+          (m: Mem[R, M]) => m match {
+            case VarM(x) => v(x)
+            case LetM(a, b) => let((a, b))
+            case FilterM(a, b) => fil((a, b))
+            case ProjectM(a, b) => pro((a, b))
+            case ExceptM(a, b) => exc((a, b))
+            case RenameM(a, b, c, d) => ren((a,b,c,d))
+            case CombineM(a, b, c) => com((a, b, c))
+            case AggregateM(a, b, c) => agg((a, b, c))
+            case HashInnerJoin(a, b) => hashIn((a, b))
+            case HashLeftJoin(a, b) => hashLeft((a, b))
+            case MergeOuterJoin(a, b) => mer((a, b))
+            case EmbedMem(e) => emb(e)
+            case ProcedureCall(a, b, c, d) => proc((a, b, c, d))
+            case Literal(x, xs) => lit(x :: xs.toList)
+            case EmptyRel(h) => emp(h)
+            case GroupByM(m, k, e) => grpBy((m, k, e))
+            case AccumulateM(a,b,c,d,e) => accum((a,b,c,d,e))
+            case ProcessM(a,b) => process((a,b))
+            case Pivot(a,b,c,d,e) => pivot((a,b,c,d,e))
+            case QuoteMem(_) => sys.error("Can't serialize a QuoteMem! (it has just a raw object in it.)")
+          }
+        ).erase)
+    }
+  }
 
   def memR[R, RF, M, MF](implicit rm: Reader[M, MF],
-                         rr: Reader[R, RF]): Reader[Mem[R, M], MemF[RF, MF]] =
-    fixR((self: Reader[Mem[R, M], DynamicF]) => union19R(
-      rm.map(VarM(_)),
-      p2R(extR[M,MF,R,RF], memR[R, RF, MLevel[R, M], MLevelF[RF, MF]](mLevelR, rr))(LetM(_, _)),
-      p2R(self, predicateR)(FilterM(_, _)),
-      p2R(self, mapR(attributeR, opR))(ProjectM(_, _)),
-      p2R(self, listR(stringR))((a, b) => ExceptM(a, b.toSet)),
-      p3R(self, attributeR, opR)(CombineM(_, _, _)),
-      p3R(self, attributeR, aggR)(AggregateM(_, _, _)),
-      p2R(self, self)(HashInnerJoin(_, _)),
-      p2R(self, self)(MergeOuterJoin(_, _)),
-      extR[M,MF,R,RF].map(EmbedMem(_)),
-      p4R(listR(primExprR), headerR, stringR, listR(stringR))(ProcedureCall(_, _, _, _)),
-      listR(recordR).map((xs: List[Record]) => Literal(xs.toNel.get)),
-      headerR.map(EmptyRel(_)),
-      p3R(self, listR(attributeR), memR[R, RF, MLevel[R, M], MLevelF[RF, MF]](mLevelR, rr))(GroupByM.apply),
-      p4R(self, attributeR, stringR, booleanR)(RenameM.apply),
-      p2R(self, self)(HashLeftJoin.apply),
-      p5R(attributeR, attributeR, memR[R, RF, MLevel[R,M], MLevelF[RF, MF]](mLevelR, rr), self, self)(AccumulateM.apply),
-      p2R(processSymbolR, self)(ProcessM.apply),
-      p5R(self, listR(stringR), listR(stringR), booleanR, mapR(recordR, tuple3R(stringR, opR, primExprR)))(
-        (a,b,c,d,e) => Pivot(a,b.toSet,c.toSet,d,e))
-    ).erase)
+                         rr: Reader[R, RF]): Reader[Mem[R, M], memRW.F[RF, MF]] =
+    memRW.R(rr, rm)
 
   def memW[R, RF, M, MF](implicit wm: Writer[M, MF],
-                         wr: Writer[R, RF]): Writer[Mem[R, M], MemF[RF, MF]] =
-    fixW((self: Writer[Mem[R, M], DynamicF]) => s19W(
-      // VarM
-      wm
-      // LetM
-      , tuple2W(extW[M, MF, R, RF], memW[R,RF,MLevel[R, M], MLevelF[RF, MF]](mLevelW, wr)) erase : Writer[(Ext[M,R],Mem[R,MLevel[R,M]]), DynamicF]
-      // FilterM
-      , tuple2W(self, predicateW) erase : Writer[(Mem[R,M], Predicate), DynamicF]
-      // ProjectM
-      , tuple2W(self, mapW(attributeW, opW)) erase : Writer[(Mem[R,M],Map[Attribute,Op]),DynamicF]
-      // ExceptM
-      , tuple2W(self, repeatW(stringW)) erase : Writer[(Mem[R,M],Set[String]),DynamicF]
-      // CombineM
-      , tuple3W(self, attributeW, opW) erase : Writer[(Mem[R,M],Attribute,Op),DynamicF]
-      // AggregateM
-      , tuple3W(self, attributeW, aggW) erase : Writer[(Mem[R,M],Attribute,AggFunc),DynamicF]
-      // HashInnerJoin
-      , tuple2W(self, self) erase : Writer[(Mem[R,M],Mem[R,M]),DynamicF]
-      // MergeOuterJoin
-      , tuple2W(self, self) erase : Writer[(Mem[R,M],Mem[R,M]),DynamicF]
-      // EmbedMem
-      , extW[M, MF, R, RF] erase : Writer[Ext[M,R],DynamicF]
-      // ProcedureCall
-      , tuple4W(repeatW(primExprW), headerW, stringW, repeatW(stringW)) erase
-          : Writer[(List[PrimExpr],Header,String,List[String]),DynamicF]
-      // Literal
-      , repeatW(recordW) erase : Writer[List[Record],DynamicF]
-      // EmptyRel
-      , headerW erase : Writer[Header,DynamicF]
-      // GroupByM
-      , tuple3W(self, repeatW(attributeW), memW[R, RF,MLevel[R, M], MLevelF[RF, MF]](mLevelW, wr)) erase
-          : Writer[(Mem[R,M],List[Attribute], Mem[R,MLevel[R,M]]),DynamicF]
-      // RenameM
-      , tuple4W(self, attributeW, stringW, booleanW) erase : Writer[(Mem[R,M],Attribute,String,Boolean),DynamicF]
-      // HashLeftJoin
-      , tuple2W(self, self) erase : Writer[(Mem[R,M],Mem[R,M]),DynamicF]
-      // AccumulateM
-      , tuple5W(attributeW, attributeW, memW[R, RF, MLevel[R,M], MLevelF[RF,MF]](mLevelW, wr), self, self) erase
-          : Writer[(Attribute, Attribute,Mem[R,MLevel[R,M]],Mem[R,M],Mem[R,M]),DynamicF]
-      // ProcessM
-      , tuple2W(processSymbolW, self) erase : Writer[(ProcessSymbol, Mem[R,M]),DynamicF]
-      // Pivot
-      , tuple5W(self, repeatW(stringW), repeatW(stringW), booleanW, mapW(recordW,tuple3W(stringW, opW, primExprW))) erase
-          : Writer[(Mem[R,M],Set[String],Set[String],Boolean,Map[Record,(String,Op,PrimExpr)]),DynamicF]
-    )((v, let, fil, pro, exc, com, agg, hashIn, mer, emb, proc, lit, emp, grpBy, ren, hashLeft, accum, process, pivot) =>
-      (m: Mem[R, M]) => m match {
-        case VarM(x) => v(x)
-        case LetM(a, b) => let((a, b))
-        case FilterM(a, b) => fil((a, b))
-        case ProjectM(a, b) => pro((a, b))
-        case ExceptM(a, b) => exc((a, b))
-        case RenameM(a, b, c, d) => ren((a,b,c,d))
-        case CombineM(a, b, c) => com((a, b, c))
-        case AggregateM(a, b, c) => agg((a, b, c))
-        case HashInnerJoin(a, b) => hashIn((a, b))
-        case HashLeftJoin(a, b) => hashLeft((a, b))
-        case MergeOuterJoin(a, b) => mer((a, b))
-        case EmbedMem(e) => emb(e)
-        case ProcedureCall(a, b, c, d) => proc((a, b, c, d))
-        case Literal(x, xs) => lit(x :: xs.toList)
-        case EmptyRel(h) => emp(h)
-        case GroupByM(m, k, e) => grpBy((m, k, e))
-        case AccumulateM(a,b,c,d,e) => accum((a,b,c,d,e))
-        case ProcessM(a,b) => process((a,b))
-        case Pivot(a,b,c,d,e) => pivot((a,b,c,d,e))
-        case QuoteMem(_) => sys.error("Can't serialize a QuoteMem! (it has just a raw object in it.)")
-      }
-    ).erase)
+                         wr: Writer[R, RF]): Writer[Mem[R, M], memRW.F[RF, MF]] =
+    memRW.W(wr, wm)
 
   type ProcessSymbolF = S3[
     AttributeF,              // Median
