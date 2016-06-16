@@ -15,7 +15,15 @@ import scalaz.std.vector._
 package object relational {
   import SortOrder._
 
-  sealed abstract class JoinMode
+  sealed abstract class JoinMode {
+    import JoinMode._
+
+    def reverse = this match {
+      case Left => Right
+      case Right => Left
+      case _ => this
+    }
+  }
 
   object JoinMode {
     case object Inner extends JoinMode

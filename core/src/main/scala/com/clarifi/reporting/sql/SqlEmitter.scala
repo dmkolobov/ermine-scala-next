@@ -233,17 +233,14 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
 
   /**
    * Emits Sql for an inner join on a specified set of column-pairs.
-   * TODO: What is the right behavior when there are duplicate column names?
-   *       Previously we would arbitrarily retain the _first_ column with a given name.
-   *       But that is definitely wrong.
    */
   def emitJoinOn(r1: SqlSource,
                  r2: SqlSource,
-                 on: Set[((TableName, ColumnName), (TableName, ColumnName))],
+                 on: Set[(SqlExpr, SqlExpr)],
 		 op: SqlJoinOp): RawSql = {
     r1.emitSql(this) |+| raw(" ") |+| op.emit |+| raw(" ") |+| r2.emitSql(this) |+|
     " on (" |+| (on.map {
-      case (c1, c2) => emitQualifiedColumnName(c1._1, c1._2) |+| " = " |+| emitQualifiedColumnName(c2._1, c2._2)
+      case (c1, c2) => c1.emitSql(this) |+| " = " |+| c2.emitSql(this)
     } intercalate raw(" and ")) |+| ")"
   }
 
@@ -284,11 +281,11 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     * (it would be on the object like all the others, but it needs 'this')
     */
   def fallbackEmitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
-    SqlNaryOp(SqlUnion, n.map(t => SqlSelect(options = Set("distinct"), attrs = t):SqlQuery)).emitSql(this)
+    SqlNaryOp(SqlUnion, n.map(t => SqlSelect(attrs = t):SqlQuery)).emitSql(this)
 
   /** Emit an empty relation */
   def emitEmpty(queryHeader: Header): RawSql =
-    SqlSelect(attrs = queryHeader.mapValues(_ => LitSqlExpr(SqlNull)), criteria = List(SqlTruth(false))).emitSql(this)
+    SqlSelect(attrs = queryHeader.mapValues(_ => LitSqlExpr(SqlNull)), where = List(SqlTruth(false))).emitSql(this)
 
   /**
    * Takes a list of SqlExprs and returns a SqlExpr representing that list
@@ -506,10 +503,10 @@ trait EmitLimit_AsRowNumberOver extends SqlEmitter {
 	  cols = h.keys.toList ++ List("rownum")
         )
       ),
-      criteria = List(to.map(x => SqlLte(ColumnSqlExpr(un2, "rownum"),
-                                         LitSqlExpr(SqlInt(x)))),
-                      from.map(x => SqlGte(ColumnSqlExpr(un2, "rownum"),
-                                           LitSqlExpr(SqlInt(x))))).flatten,
+      where = List(to.map(x => SqlLte(ColumnSqlExpr(un2, "rownum"),
+                                      LitSqlExpr(SqlInt(x)))),
+                   from.map(x => SqlGte(ColumnSqlExpr(un2, "rownum"),
+                                        LitSqlExpr(SqlInt(x))))).flatten,
       orderBy = List((ColumnSqlExpr(un2, "rownum"), SqlAsc, false))
     )
 }
@@ -525,10 +522,20 @@ trait EmitLimit_AsLimit extends SqlEmitter {
                          from: Option[Int], to: Option[Int],
                          order: List[(SqlExpr, SqlOrder, Boolean)],
                          un2: TableName): SqlQuery =
-    SqlSelect(attrs = columns(h, un),
-              sources = SourceList(SqlSubquery(rc, h.keys.toList, un)),
-              // reorder and limit RC
-              orderBy = order, limit = (from, to))
+    rc match {
+      case v: SqlSelect if !v.isLimited => v.copy(
+        orderBy = order.map {
+          case (e,o,b) => (SqlExpr.backSubstitute(e, {
+            (t, c) => (ColumnSqlExpr.apply _).tupled(if (t == un) v.sources.columnMap(c) else (t,c))
+          }), o, b)
+        },
+        limit = (from, to)
+      )
+      case _ => SqlSelect(attrs = columns(h, un),
+                          sources = SourceList(SqlSubquery(rc, h.keys.toList, un)),
+                          // reorder and limit RC
+                          orderBy = order, limit = (from, to))
+    }
 
   /** Use PostgreSQL's 0-indexed `LIMIT ''length'' OFFSET ''from''`
     * syntax, which is also supported in MySQL.

@@ -26,16 +26,21 @@ object Optimizer {
 
   import PureSelect._
 
-  def optimize(mem: Mem[Nothing, Nothing]): Mem[Nothing, Nothing] =
+  def optimize(mem: Mem[Nothing, Nothing]): Mem[Nothing, Nothing] = {
+    return mem
     TrivialAugment.detrivialize(optimizeMem[Nothing, Nothing](mem, x => x, x => x)._3)
+  }
 
   def optimize(rel: Relation[Nothing, Nothing]): Relation[Nothing, Nothing] = {
+    return rel
     val (ns, h, jh, optr) = optimizeRel[Nothing, Nothing](rel, x => x, x => x)
     Annotated(ns, impurify(optr, jh))
   }
 
-  def optimize(ext: Ext[Nothing, Nothing]): Ext[Nothing, Nothing] =
+  def optimize(ext: Ext[Nothing, Nothing]): Ext[Nothing, Nothing] = {
+    return ext
     optimizeExt[Nothing, Nothing](ext, x => x, x => x)._2
+  }
 
   def optimizeExt[M: Equal, R: Equal](ext: Ext[M, R],
                                       hr: R => Header,

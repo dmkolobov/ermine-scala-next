@@ -13,7 +13,7 @@ sealed abstract class SqlQuery {
   import scalaz.std.iterable._
 
   def emitSql(implicit emitter: SqlEmitter): RawSql = this match {
-    case SqlSelect(options, attrs, sources, criteria, groupBy, orderBy, limit) =>
+    case SqlSelect(options, attrs, sources, where, groupBy, having, orderBy, limit, _) =>
       raw("select ") |+|
       (if (options contains "distinct") raw("distinct ") else raw("")) |+|
       { if (attrs.isEmpty) "*"
@@ -23,11 +23,14 @@ sealed abstract class SqlQuery {
       (if (!sources.isEmpty) {
         raw(" from ") |+| sources.map(x => x.emitSql).toIterable.rawMkString(", ")
                                  } else emitter.emitFromEmptyTable ) |+|
-      (if (!criteria.isEmpty)
-        raw(" where ") |+| criteria.map(x => raw("(") |+| x.emitSql |+| ")").toIterable.rawMkString(" and ")
+      (if (!where.isEmpty)
+        raw(" where ") |+| where.map(x => raw("(") |+| x.emitSql |+| ")").toIterable.rawMkString(" and ")
       else raw("")) |+|
       (if (!groupBy.isEmpty)
         raw(" group by ") |+| (groupBy.toIndexedSeq.map((x: SqlExpr) => x.emitSql).rawMkString(", "))
+      else raw("")) |+|
+      (if (!having.isEmpty)
+        raw(" having ") |+| having.map(x => raw("(") |+| x.emitSql |+| ")").toIterable.rawMkString(" and ")
       else raw("")) |+|
       (if (!orderBy.isEmpty)
         raw(" order by ") |+|
@@ -62,7 +65,7 @@ sealed abstract class SqlSource {
 
   def emitSql(implicit emitter: SqlEmitter): RawSql = this match {
     case SqlJoinOn(r1, r2, ons, op) =>
-      emitter.emitJoinOn(r1, r2, ons.map {case (x, y) => (r1.columnMap(x),r2.columnMap(y))}, op)
+      emitter.emitJoinOn(r1, r2, ons, op)
     case FromTable(t, _, None) => emitter.emitTableName(t)
     case FromTable(t, _, Some(alias)) => emitter.emitTableName(t) |+| " " |+| emitter.emitTableName(alias)
     case SqlSubquery(q, _, alias) => raw("(") |+| q.emitSql |+| ") " |+| emitter.emitTableName(alias)
@@ -77,6 +80,14 @@ object SqlSource {
 final case class SourceList(sources: List[SqlSource]) {
   lazy val columnMap: Map[SqlColumn, (TableName, SqlColumn)] =
     sources.foldLeft(Map[SqlColumn, (TableName,SqlColumn)]())((r, x) => x.columnMap ++ r)
+
+  def asSource: Option[SqlSource] = sources.foldRight[Option[SqlSource]](None) {
+    (x,y) =>
+      y match {
+        case None => Some(x)
+        case Some(yy) => Some(SqlJoinOn(x,yy,Set(),SqlJoinInner))
+      }
+  }
 }
 
 object SourceList {
@@ -88,12 +99,16 @@ object SourceList {
 case class SqlSelect(options: Set[String] = Set(), // Distinct, all, etc.  FIXME use enum
                      attrs: Map[SqlColumn, SqlExpr] = Map(), // result attributes
                      sources: SourceList = SourceList(), // from clause
-                     criteria: List[SqlPredicate] = List(), // where clause
+                     where: List[SqlPredicate] = List(), // where clause
                      groupBy: List[SqlExpr] = List(), // groupBy clause
+                     having: List[SqlPredicate] = List(), // having clause
                      orderBy: List[(SqlExpr, SqlOrder, Boolean)] = List(),
                      // limit clause (where allowed), inclusive 1-indexed (from, to)
-                     limit: (Option[Int], Option[Int]) = (None, None)
-                    ) extends SqlQuery
+                     limit: (Option[Int], Option[Int]) = (None, None),
+                     isAggregated: Boolean = false
+                    ) extends SqlQuery {
+  def isLimited: Boolean = limit != (None, None)
+}
 
 case class LiteralSqlTable(lit: NonEmptyList[Map[SqlColumn, SqlExpr]]) extends SqlQuery
 
@@ -139,7 +154,7 @@ case object SqlJoinLeft  extends SqlJoinOp
 case object SqlJoinRight extends SqlJoinOp
 case object SqlJoinFull  extends SqlJoinOp
 
-case class SqlJoinOn(r1: SqlSource, r2: SqlSource, on: Set[(SqlColumn, SqlColumn)], op: SqlJoinOp = SqlJoinInner) extends SqlSource {
+case class SqlJoinOn(r1: SqlSource, r2: SqlSource, on: Set[(SqlExpr, SqlExpr)], op: SqlJoinOp = SqlJoinInner) extends SqlSource {
   override val columnMap = r2.columnMap ++ r1.columnMap
 }
 
