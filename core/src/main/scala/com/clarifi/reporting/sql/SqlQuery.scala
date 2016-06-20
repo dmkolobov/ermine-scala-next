@@ -58,11 +58,6 @@ object SqlQuery {
 sealed abstract class SqlSource {
   import RawSql._
 
-  /**
-   * Gives the fully-qualified name to refer to a virtual column name.
-   */
-  val columnMap: Map[SqlColumn, (TableName, SqlColumn)]
-
   def emitSql(implicit emitter: SqlEmitter): RawSql = this match {
     case SqlJoinOn(r1, r2, ons, op) =>
       emitter.emitJoinOn(r1, r2, ons, op)
@@ -78,9 +73,6 @@ object SqlSource {
 }
 
 final case class SourceList(sources: List[SqlSource]) {
-  lazy val columnMap: Map[SqlColumn, (TableName, SqlColumn)] =
-    sources.foldLeft(Map[SqlColumn, (TableName,SqlColumn)]())((r, x) => x.columnMap ++ r)
-
   def asSource: Option[SqlSource] = sources.foldRight[Option[SqlSource]](None) {
     (x,y) =>
       y match {
@@ -154,9 +146,7 @@ case object SqlJoinLeft  extends SqlJoinOp
 case object SqlJoinRight extends SqlJoinOp
 case object SqlJoinFull  extends SqlJoinOp
 
-case class SqlJoinOn(r1: SqlSource, r2: SqlSource, on: Set[(SqlExpr, SqlExpr)], op: SqlJoinOp = SqlJoinInner) extends SqlSource {
-  override val columnMap = r2.columnMap ++ r1.columnMap
-}
+case class SqlJoinOn(r1: SqlSource, r2: SqlSource, on: Set[(SqlExpr, SqlExpr)], op: SqlJoinOp = SqlJoinInner) extends SqlSource
 
 // Operator for except, which only exists in some dialects and is worked around in others
 case class SqlExcept(left: SqlQuery, unLeft: TableName, right: SqlQuery, unRight: TableName, rheader: Header) extends SqlQuery
@@ -166,12 +156,8 @@ case class SqlEmpty(h: Header) extends SqlQuery
 
 // select from table.  We assume that `cols` lists every column in
 // `table`.
-case class FromTable(table: TableName, cols: List[SqlColumn], alias: Option[TableName]) extends SqlSource {
-  override val columnMap = cols.map(c => c -> (alias.getOrElse(table), c)).toMap
-}
+case class FromTable(table: TableName, cols: List[SqlColumn], alias: Option[TableName]) extends SqlSource
 
 // subquery as a FROM clause element.  We assume that `cols` lists
 // every column in `query`.
-case class SqlSubquery(query: SqlQuery, cols: List[SqlColumn], alias: TableName) extends SqlSource {
-  override val columnMap = cols.map(c => c -> (alias, c)).toMap
-}
+case class SqlSubquery(query: SqlQuery, cols: List[SqlColumn], alias: TableName) extends SqlSource

@@ -203,11 +203,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         }
       )
     case _ if order.nonEmpty =>
-      val s = freshName
+      val un = TableName(freshName)
       SqlSelect(
-        sources = SourceList(SqlSubquery(sql, h.keys.toList, TableName(s))),
+        sources = SourceList(SqlSubquery(sql, h.keys.toList, un)),
         orderBy = order.map { case (col, ord) =>
-          (ColumnSqlExpr(TableName(s), col),
+          (ColumnSqlExpr(un, col),
            ord(SqlAsc, SqlDesc),
            isBinaryColumn(h, col))
         }
@@ -785,26 +785,12 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     import emitter.distinctEagerly
 
     private[DistinctiveQuery] def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
-    private[DistinctiveQuery] def columns(h: Header, rv: SqlSource) = h.map(x => (x._1, ColumnSqlExpr.tupled(rv.columnMap(x._1))))
 
     private[DistinctiveQuery]
     def selectOps(sel: Map[Attribute,Op], col: String => SqlExpr): Map[ColumnName, SqlExpr] =
       sel map { case (attr, op) =>
         attr.name -> compileOp(op, col)
       }
-
-    def apply(h: Header, query: Boolean => (Boolean, SqlQuery)) = new DistinctiveQuery(h) {
-        override def q(needDistinct: Boolean)(implicit sup: Supply): (Boolean, SqlQuery) = query(needDistinct)
-      }
-    def source(h: Header, src: Boolean => (Boolean, SqlSource)) = new DistinctiveQuery(h) {
-        override def s(needDistinct: Boolean)(implicit sup: Supply): (Boolean, SqlSource) = src(needDistinct)
-      }
-
-    private[DistinctiveQuery]
-    def selectWrap(h: Header, src: SqlSource, options: Set[String] = Set()): SqlQuery =
-      SqlSelect(options = options,
-                attrs = columns(h,src),
-                sources = SourceList(src))
 
     private[DistinctiveQuery]
     def asSelect(h: Header, q: SqlQuery, cond: SqlSelect => Boolean = (_ => true))(implicit sup: Supply): SqlSelect =
@@ -823,24 +809,12 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         case sel => sel copy (options = sel.options + "distinct")
       })
 
-    def satisfyDistinctSrc(hasDistinct: Boolean, h: Header, src: SqlSource): DistinctiveQuery =
-      new DistinctiveQuery(h) {
-        override def q(needDistinct: Boolean)(implicit sup: Supply): (Boolean, SqlQuery) =
-          if (hasDistinct || !needDistinct) (hasDistinct, selectWrap(h, src))
-          else (true, selectWrap(h, src, options = Set("distinct")))
-        override def s(needDistinct: Boolean)(implicit sup: Supply): (Boolean, SqlSource) =
-          if (hasDistinct || !needDistinct) (hasDistinct, src)
-          else {
-            val tn = TableName(freshName)
-            (true, SqlSubquery(cols = h.keys.toList,
-                               alias = tn,
-                               query = selectWrap(h, src, options = Set("distinct"))))
-          }
-      }
-        
-
-    def table(h: Header, n: TableName): DistinctiveQuery =
-      DistinctiveQuery.source(h, _ => (true, FromTable(n, h.keys.toList, None)))
+    def table(h: Header, n: TableName)(implicit sup: Supply): DistinctiveQuery = {
+      val un = TableName(freshName)
+      val src = FromTable(n, h.keys.toList, Some(un))
+      val result = (true, SqlSelect(attrs = columns(h, un), sources = SourceList(src)))
+      DistinctiveQuery(h, _ => result)
+    }
 
     def literal(l: SmallLit)(implicit sup: Supply): DistinctiveQuery = {
       DistinctiveQuery(l.header, _ => (true, LiteralSqlTable(l.tups.map(r => r.mapValues(x => SqlExpr.compileLiteral(x))))))
@@ -852,15 +826,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   }
 
   private[SqlScanner]
-  class DistinctiveQuery(val h: Header) {
-    import DistinctiveQuery.{ selectWrap, selectOps }
-
-    def q(needDistinct: Boolean)(implicit sup: Supply) = s(needDistinct) match {
-      case (hasDistinct, src) => (hasDistinct, selectWrap(h, src))
-    }
-    def s(needDistinct: Boolean)(implicit sup: Supply): (Boolean, SqlSource) = q(needDistinct) match {
-      case (hasDistinct, query) => (hasDistinct, SqlSubquery(query, h.keys.toList, TableName(freshName)))
-    }
+  case class DistinctiveQuery(val h: Header, val q: Boolean => (Boolean, SqlQuery)) {
+    import DistinctiveQuery.{ selectOps }
 
     private[this] def guidName = "t" + sguid
     private[this] def freshName(implicit sup: Supply) = "t" + sup.fresh

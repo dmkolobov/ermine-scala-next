@@ -526,7 +526,7 @@ trait EmitLimit_AsLimit extends SqlEmitter {
       case v: SqlSelect if !v.isLimited => v.copy(
         orderBy = order.map {
           case (e,o,b) => (SqlExpr.backSubstitute(e, {
-            (t, c) => (ColumnSqlExpr.apply _).tupled(if (t == un) v.sources.columnMap(c) else (t,c))
+            (t, c) => if (t == un) v.attrs(c) else ColumnSqlExpr(t,c)
           }), o, b)
         },
         limit = (from, to)
