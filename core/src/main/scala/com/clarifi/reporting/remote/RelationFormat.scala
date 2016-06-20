@@ -135,7 +135,7 @@ object Format {
 
   def memR[R,M](implicit rm: Reader[M, DynamicF],
                          rr: Reader[R, DynamicF]): Reader[Mem[R, M], DynamicF] =
-    fixR((self: Reader[Mem[R, M], DynamicF]) => union19R(
+    fixR((self: Reader[Mem[R, M], DynamicF]) => union20R(
       rm.map(VarM(_)),
       p2R(extR[M,R], memR[R, MLevel[R, M]](mLevelR, rr))(LetM(_, _)),
       p2R(self, predicateR)(FilterM(_, _)),
@@ -155,12 +155,13 @@ object Format {
       p5R(attributeR, attributeR, memR[R, MLevel[R,M]](mLevelR, rr), self, self)(AccumulateM.apply),
       p2R(processSymbolR, self)(ProcessM.apply),
       p5R(self, listR(stringR), listR(stringR), booleanR, mapR(recordR, tuple3R(stringR, opR, primExprR)))(
-        (a,b,c,d,e) => Pivot(a,b.toSet,c.toSet,d,e))
+        (a,b,c,d,e) => Pivot(a,b.toSet,c.toSet,d,e)),
+      self.map(MemoMem(_))
     ).erase)
 
   def memW[R,M](implicit wm: Writer[M, DynamicF],
                          wr: Writer[R, DynamicF]): Writer[Mem[R, M], DynamicF] =
-    fixW((self: Writer[Mem[R, M], DynamicF]) => s19W(
+    fixW((self: Writer[Mem[R, M], DynamicF]) => s20W(
       // VarM
       wm
       // LetM
@@ -203,7 +204,9 @@ object Format {
       // Pivot
       , tuple5W(self, repeatW(stringW), repeatW(stringW), booleanW, mapW(recordW,tuple3W(stringW, opW, primExprW))) erase
           : Writer[(Mem[R,M],Set[String],Set[String],Boolean,Map[Record,(String,Op,PrimExpr)]),DynamicF]
-    )((v, let, fil, pro, exc, com, agg, hashIn, mer, emb, proc, lit, emp, grpBy, ren, hashLeft, accum, process, pivot) =>
+      // MemoMem
+      , self erase : Writer[Mem[R,M],DynamicF]
+    )((v, let, fil, pro, exc, com, agg, hashIn, mer, emb, proc, lit, emp, grpBy, ren, hashLeft, accum, process, pivot, memo) =>
       (m: Mem[R, M]) => m match {
         case VarM(x) => v(x)
         case LetM(a, b) => let((a, b))
@@ -224,6 +227,7 @@ object Format {
         case AccumulateM(a,b,c,d,e) => accum((a,b,c,d,e))
         case ProcessM(a,b) => process((a,b))
         case Pivot(a,b,c,d,e) => pivot((a,b,c,d,e))
+        case MemoMem(m) => memo(m)
         case QuoteMem(_) => sys.error("Can't serialize a QuoteMem! (it has just a raw object in it.)")
       }
     ).erase)
@@ -277,9 +281,8 @@ object Format {
   def relW[M,R](implicit wm: Writer[M, DynamicF],
                          wr: Writer[R, DynamicF]): Writer[Relation[M, R], DynamicF] =
     fixW((self: Writer[Relation[M, R], DynamicF]) =>
-      s19W(wr, // Var
+      s18W(wr, // Var
            tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))) dynamicF, // Limit
-           tuple3W(repeatW(self), mapW(attributeW, opW), predicateW) dynamicF, // Select
            tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))) dynamicF, // Let
            tuple2W(self, self) dynamicF, // Join
            tuple4W(self, self, repeatW(tuple2W(stringW, stringW)), joinModeW) dynamicF, // JoinOn
@@ -296,11 +299,10 @@ object Format {
            repeatW(recordW) dynamicF, // SmallLit
            tuple2W(self, repeatW(stringW)), // MemoR
            tuple2W(repeatW(stringW), self) dynamicF // Note
-         )((v, lim, sel, let, join, on, un, min, fil, proj, exc, comb, agg, tab, tabproc, empt, sl, m, note) =>
+         )((v, lim, let, join, on, un, min, fil, proj, exc, comb, agg, tab, tabproc, empt, sl, m, note) =>
            (r: Relation[M, R]) => r match {
              case VarR(x) => v(x)
              case Limit(a, b, c, d) => lim((a, b, c, d.map(p => (p._1, p._2 == Asc)).toList))
-             case SelectR(a, b, c) => sel((a, b, c))
              case LetR(a, b) => let((a, b))
              case Join(a, b) => join((a, b))
              case JoinOn(a, b, c, d) => on((a, b, c, d))
@@ -325,7 +327,6 @@ object Format {
     fixR((self: Reader[Relation[M, R], DynamicF]) => union18R(
       rr.map(VarR(_)),
       p4R(self, optionR(intR), optionR(intR), listR(p2R(stringR, sortOrderR)((_, _))))(Limit(_, _, _, _)),
-      p3R(listR(self), mapR(attributeR, opR), predicateR)(SelectR(_, _, _)),
       p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)),
       p2R(self, self)(Join(_, _)),
       p4R(self, self, listR(tuple2R(stringR, stringR)) map (_.toSet), joinModeR)(JoinOn(_, _, _, _)),
@@ -341,7 +342,8 @@ object Format {
           orderedHeaderR, stringR, listR(stringR))(TableProc(_, _, _, _)),
       headerR.map(RelEmpty(_)),
       listR(recordR).map(xs => SmallLit(xs.toNel.get)),
-      p2R(self, listR(stringR))((r, pk) => MemoR(r, pk))
+      p2R(self, listR(stringR))((r, pk) => MemoR(r, pk)),
+      p2R(listR(stringR), self)(Note(_,_))
     ) erase)
 
   lazy val orderedHeaderR: Reader[Header.Ordered, OrderedHeaderF] =

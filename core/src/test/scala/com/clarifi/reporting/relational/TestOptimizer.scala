@@ -5,7 +5,6 @@ import org.scalacheck.{Properties, Prop}
 import Prop.{AnyOperators, forAll, propBoolean, secure}
 import PrimT._
 import Op._
-import Predicate._
 
 import scalaz._
 
@@ -35,72 +34,15 @@ object TestOptimizer extends Properties("SQL relation optimizer") {
     }
   }
 
-  property("combine followed by project optimized") = secure {
-    Optimizer.optimizeRel[Nothing, Nothing](aabbProjComb, (x:Nothing) => x,
-                                        (x:Nothing) => x) match {
-      case (_, h, jh, SelectR(rs, prj, filt)) =>
-        (rs ?= List(aabbTable)) &&
-        (prj ?= Map(Attribute("colAA", IntT()) ->
-                    ColumnValue("colAA", IntT()), aaPlusBb)) &&
-        (filt ?= Atom(true)) &&
-        (h ?= Map("colAA" -> IntT(),
-                  "colCC" -> IntT())) &&
-        (jh ?= Map("colAA" -> IntT(),
-                   "colBB" -> IntT()))
-    }
-  }
-
-  property("combine followed by rename optimized") = secure {
-    Optimizer.optimizeRel[Nothing, Nothing](aabbRenComb, (x:Nothing) => x,
-                                       (x:Nothing) => x) match {
-      case (_, h, jh, SelectR(rs, prj, filt)) =>
-        (rs ?= List(aabbTable)) &&
-        (prj ?= Map(Attribute("colAA", IntT()) -> ColumnValue("colAA", IntT()),
-                    Attribute("colBB", IntT()) -> ColumnValue("colBB", IntT()),
-                    Attribute("colDD", IntT()) -> aaPlusBb._2)) &&
-        (filt ?= Atom(true)) &&
-        (h ?= Map("colAA" -> IntT(),
-                  "colBB" -> IntT(),
-                  "colDD" -> IntT())) &&
-        (jh ?= Map("colAA" -> IntT(),
-                   "colBB" -> IntT()))
-    }
-  }
-
   val lit = Literal(NonEmptyList(Map("colAA" -> IntExpr(false, 5), "colCC" -> IntExpr(false, 7))))
 
-  val caseLit = If(Eq(ColumnValue("colAA",IntT()),OpLiteral(IntExpr(false,5))),
-                   OpLiteral(IntExpr(false,7)),
-                   OpLiteral(IntExpr(false,8)))
-
-  val filtLit = And(Atom(true),
-                    Eq(ColumnValue("colAA",IntT()),OpLiteral(IntExpr(false, 5))))
-
   property("optimize leaf literal") = secure {
-    val r = Join(aabbTable, LetR(ExtMem(lit), VarR(RTop)))
+    val r = LetR(ExtMem(lit), VarR(RTop))
     Optimizer.optimizeRel[Nothing, Nothing](r, (x:Nothing) => x, (x:Nothing) => x) match {
-      case (_, h, jh, SelectR(rs, prj, filt)) =>
-        (rs ?= List(aabbTable)) &&
-        (prj ?= Map(Attribute("colAA", IntT()) -> ColumnValue("colAA", IntT()),
-                    Attribute("colBB", IntT()) -> ColumnValue("colBB", IntT()),
-                    Attribute("colCC", IntT()) -> OpLiteral(IntExpr(false,7)))) &&
-        (filt ?= filtLit) &&
-        (h ?= Map("colAA" -> IntT(), "colBB" -> IntT(), "colCC" -> IntT())) &&
-        (jh ?= Map("colAA" -> IntT(), "colBB" -> IntT()))
-    }
-  }
-
-  property("optimize inner literal") = secure {
-    val r = LetR(ExtMem(lit), Join(VarR(RPop(aabbTable)), VarR(RTop)))
-    Optimizer.optimizeRel[Nothing, Nothing](r, (x:Nothing) => x, (x:Nothing) => x) match {
-      case (_, h, jh, SelectR(rs, prj, filt)) =>
-        (rs ?= List(aabbTable)) &&
-        (prj ?= Map(Attribute("colAA", IntT()) -> ColumnValue("colAA", IntT()),
-                    Attribute("colBB", IntT()) -> ColumnValue("colBB", IntT()),
-                    Attribute("colCC", IntT()) -> OpLiteral(IntExpr(false,7)))) &&
-        (filt ?= filtLit) &&
-        (h ?= Map("colAA" -> IntT(), "colBB" -> IntT(), "colCC" -> IntT())) &&
-        (jh ?= Map("colAA" -> IntT(), "colBB" -> IntT()))
+      case (h, SmallLit(rows)) =>
+        (rows ?= lit.nel) &&
+        (h ?= Map("colAA" -> IntT(), "colCC" -> IntT()))
+      case _ => Prop.falsified
     }
   }
 }

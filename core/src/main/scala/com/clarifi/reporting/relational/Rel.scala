@@ -53,30 +53,6 @@ case class Limit[+M,+R](
     Limit(r.unquote(f, g), start, end, order)
 }
 
-/**
- * Intermediate form between Relation and SQL. Provided for (re)writing queries that translate to
- * nicer-looking and faster SQL.
- */
-case class SelectR[+M,+R](
-  rs: List[Relation[M,R]],
-  cs: Map[Attribute, Op],
-  where: Predicate
-) extends Relation[M,R] {
-  def bimap[N, S](f: M => N, g: R => S) = SelectR(rs map (_.bimap(f, g)), cs, where)
-  def subst[N, S](f: M => Mem[S,N], g: R => Relation[N, S]) = SelectR(rs map (_.subst(f, g)), cs, where)
-  def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = rs foldMap (_.bifoldMap(f, g))
-  def foreach(f: M => Any, g: R => Any) = rs foreach (_.foreach(f, g))
-  override def equals(other: Any) = other match {
-    case SelectR(rs2, cs2, where2) =>
-      rs.toSet == rs2.toSet && cs == cs2 && where == where2
-    case _ => false
-  }
-  override def hashCode: Int = (rs.toSet, cs, where).hashCode
-  override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
-                                       g: Object => Option[Mem[S, N]]): Relation[N, S] =
-    SelectR(rs.map(_.unquote(f, g)), cs, where)
-}
-
 case class MemoR[+M,+R](r: Relation[M,R], pk: List[String]) extends Relation[M,R] {
   def bimap[N, S](f: M => N, g : R => S) = MemoR(r.bimap(f,g), pk)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = MemoR(r.subst(f,g), pk)
@@ -123,7 +99,9 @@ object Join {
            (a.aggs.map(_._1.name).toSet intersect b.aggs.map(_._1.name).toSet isEmpty) =>
           a.copy(aggs = a.aggs ++ b.aggs)
       case _ =>
-        JoinOn(fst, snd, Set())
+        Relation.combineFilters(fst, snd) {
+          (l,r) => Predicates.simplify(Predicate.And(l,r))
+        }.getOrElse(JoinOn(fst, snd, Set()))
     }
   def unapply[M, R](j: JoinOn[M, R]): Option[(Relation[M, R], Relation[M, R])] =
     j match {
@@ -152,14 +130,25 @@ case class Union[+M, +R](fst: Relation[M, R], snd: Relation[M, R]) extends Relat
     Union(fst.unquote(f, g), snd.unquote(f, g))
 }
 
-case class Minus[+M, +R](fst: Relation[M, R], snd: Relation[M, R]) extends Relation[M, R] {
-  def bimap[N, S](f: M => N, g: R => S) = Minus(fst bimap (f, g), snd bimap (f, g))
-  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Minus(fst subst (f, g), snd subst (f, g))
+case class MinusI[+M, +R](fst: Relation[M, R], snd: Relation[M, R]) extends Relation[M, R] {
+  def bimap[N, S](f: M => N, g: R => S) = MinusI(fst bimap (f, g), snd bimap (f, g))
+  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = MinusI(fst subst (f, g), snd subst (f, g))
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = fst.bifoldMap(f, g) |+| snd.bifoldMap(f, g)
   def foreach(f: M => Any, g: R => Any) { fst foreach (f, g) ; snd foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
-    Minus(fst.unquote(f, g), snd.unquote(f, g))
+    MinusI(fst.unquote(f, g), snd.unquote(f, g))
+}
+
+// type Minus[+M,+R] = MinusI[M,R]
+// ^- actually exists but lives in package.scala where it must
+
+object Minus {
+  def apply[M,R](fst: Relation[M, R], snd: Relation[M, R]): Relation[M, R] =
+    Relation.combineFilters(fst, snd) {
+      (l, r) => Predicates.simplify(Predicate.And(l, Predicate.Not(r)))
+    }.getOrElse(MinusI[M,R](fst,snd))
+  def unapply[M,R](x: Minus[M,R]): Option[(Relation[M,R],Relation[M,R])] = MinusI.unapply[M,R](x)
 }
 
 case class Filter[+M, +R](rel: Relation[M, R], p: Predicate) extends Relation[M, R] {
@@ -353,6 +342,18 @@ object Relation {
     case RPop(v) => v
   }
 
+  /** If `left` and `right` are the same except in filter, answer a
+    * combination that joins the filters with `bin`, otherwise
+    * None.
+    */
+  def combineFilters[M, R](left: Relation[M, R], right: Relation[M, R])(
+                                         bin: (Predicate, Predicate) => Predicate) =
+    (left, right) match {
+      case (Filter(r1, p1), Filter(r2, p2)) if r1 == r2 =>
+        Some(Filter(r1, bin(p1, p2)))
+      case _ => None
+    }
+
   implicit val relBifoldable: Bifoldable[Relation] = new Bifoldable.FromBifoldMap[Relation] {
     def bifoldMap[A,B,M:Monoid](fa: Relation[A, B])(f: A => M)(g: B => M): M =
       fa bifoldMap (f, g)
@@ -372,7 +373,6 @@ object Relation {
   }
 
   implicit def relEq[M: Equal, R: Equal]: Equal[Relation[M, R]] = Equal.equalA
-
 }
 
 object RLevel {

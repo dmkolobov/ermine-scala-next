@@ -215,4 +215,5 @@ package object relational {
     def setup = (Driver.Id[Nothing](x => x), () => ())
   }
 
+  type Minus[+M,+R] = MinusI[M,R] // XXX it's bizarre this has to go here and not next to MinusI
 }
