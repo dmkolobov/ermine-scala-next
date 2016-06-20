@@ -701,6 +701,19 @@ class SqliteEmitter extends SqlEmitter
 
   def sqlPrimT(x: Int, tn: String, cs: Int) = SqlEmitter.defaultDecodeType(x)
 
+  /* Sqlite has a weird rule where the arguments to a UNION and the like are
+   * not allowed to be parenthesized. This means, it seems, that there is no
+   * way to indicate the precedence of multiple distinct binary operations,
+   * but the precedence matters. So, for sqlite, we wrap the arguments in a
+   * select, which can have a parenthesized subquery.
+   *
+   * We only override this case, because this query structure is not ideal,
+   * but is necessary for sqlite.
+   */
+  override def emitNaryOp(op: SqlBinOp, rs: NonEmptyList[SqlQuery]): RawSql =
+    rs.map(r => raw("select * from (") |+| r.emitSql(this) |+| ")")
+      .intercalate(raw(" ") |+| op.emit |+| " ")
+
   // doesn't use the "on <tablename>" part of the command
   //override def emitDropIndex(t: TableName, indexName: String): Option[String] =
   //  Some("drop index " + indexName)
