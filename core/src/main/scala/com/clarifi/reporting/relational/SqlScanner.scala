@@ -192,28 +192,18 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     case _ => false
   }
 
-  def orderQuery(h: Header, sql: SqlQuery, order: List[(String, SortOrder)])(implicit sup: Supply): SqlQuery = sql match {
-    case sel : SqlSelect if sel.attrs.size > 0 && sel.limit == (None, None) =>
-      sel copy (
-        orderBy = order collect {
-          case (col, ord) if (sel.attrs.get(col) map (_.deparenthesize) match {
-             case None | Some(LitSqlExpr(_)) => false
-             case Some(_) => true
-          }) => (sel.attrs(col), ord(SqlAsc, SqlDesc), isBinaryColumn(h, col))
-        }
-      )
-    case _ if order.nonEmpty =>
-      val un = TableName(freshName)
-      SqlSelect(
-        sources = SourceList(SqlSubquery(sql, h.keys.toList, un)),
-        orderBy = order.map { case (col, ord) =>
-          (ColumnSqlExpr(un, col),
-           ord(SqlAsc, SqlDesc),
-           isBinaryColumn(h, col))
-        }
-      )
-    case _ => sql
-  }
+  def orderQuery(h: Header, sql: SqlQuery.Nestable with SqlQuery.Scannable, order: List[(String, SortOrder)])(implicit sup: Supply): SqlQuery.Scannable =
+    if (order.isEmpty) {
+      sql
+    } else {
+      SqlQuery.orderBy(DistinctiveQuery.asOrderable(h, sql),
+                       order.map { case (col, ord) =>
+                         (col,
+                          ord(SqlAsc, SqlDesc),
+                          isBinaryColumn(h, col))
+                       }
+                      )
+    }
 
   import SortOrder._
   import record.RecordMap
@@ -642,8 +632,6 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                       , scopeBuilder: List[() => String]
                       ): SqlPrg = {
 
-    def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
-
     def combineBinary(
       l: Relation[M, R],
       r: Relation[M,R],
@@ -784,7 +772,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
     import emitter.distinctEagerly
 
-    private[DistinctiveQuery] def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
+    def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
 
     private[DistinctiveQuery]
     def selectOps(sel: Map[Attribute,Op], col: String => SqlExpr): Map[ColumnName, SqlExpr] =
@@ -793,17 +781,28 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       }
 
     private[DistinctiveQuery]
-    def asSelect(h: Header, q: SqlQuery, cond: SqlSelect => Boolean = (_ => true))(implicit sup: Supply): SqlSelect =
+    def selectWrap(h: Header, q: SqlQuery.Nestable)(implicit sup: Supply): SqlSelect = {
+      val un = TableName(freshName)
+      val src = SqlSubquery(q, h.keys.toList, un)
+      SqlSelect(attrs = columns(h, un), sources = SourceList(src))
+    }
+
+    private[DistinctiveQuery]
+    def asSelect(h: Header, q: SqlQuery.Nestable, cond: SqlSelect => Boolean = (_ => true))(implicit sup: Supply): SqlSelect =
       q match {
         case v: SqlSelect if cond(v) => v
-        case _ =>
-          val un = TableName(freshName)
-          val src = SqlSubquery(q, h.keys.toList, un)
-          SqlSelect(attrs = columns(h, un), sources = SourceList(src))
+        case _ => selectWrap(h,q)
+      }
+
+    // not private since it's called from outside
+    def asOrderable(h: Header, q: SqlQuery.Nestable, cond: SqlQuery.Orderable => Boolean = (_ => true))(implicit sup: Supply): SqlQuery.Orderable =
+      q match {
+        case v: SqlQuery.Orderable if cond(v) => v
+        case _ => selectWrap(h,q)
       }
 
     private[DistinctiveQuery]
-    def satisfyDistinct(hasDistinct: Boolean, needDistinct: Boolean, h: Header, q: SqlQuery)(implicit sup: Supply): (Boolean, SqlQuery) =
+    def satisfyDistinct(hasDistinct: Boolean, needDistinct: Boolean, h: Header, q: SqlQuery.Scannable with SqlQuery.Nestable)(implicit sup: Supply): (Boolean, SqlQuery.Scannable with SqlQuery.Nestable) =
       if(hasDistinct || !needDistinct) (hasDistinct, q)
       else (true, asSelect(h,q) match {
         case sel => sel copy (options = sel.options + "distinct")
@@ -826,20 +825,20 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   }
 
   private[SqlScanner]
-  case class DistinctiveQuery(val h: Header, val q: Boolean => (Boolean, SqlQuery)) {
+  case class DistinctiveQuery(val h: Header, val q: Boolean => (Boolean, SqlQuery.Scannable with SqlQuery.Nestable)) {
     import DistinctiveQuery.{ selectOps }
 
     private[this] def guidName = "t" + sguid
     private[this] def freshName(implicit sup: Supply) = "t" + sup.fresh
 
-    import DistinctiveQuery.{satisfyDistinct, columns, asSelect}
+    import DistinctiveQuery.{satisfyDistinct, columns, asSelect, asOrderable}
     import emitter.distinctEagerly
 
     def union(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery =
       DistinctiveQuery(h, needDistinct =>
         (q(false), other.q(false)) match {
           case ((d1, q1), (d2, q2)) =>
-            (true, SqlUnion(q1, q2))
+            (true, SqlUnion(asOrderable(h,q1), asOrderable(h,q2)))
         })
 
     def minus(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery = {
@@ -849,11 +848,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         (q(distinctEagerly), other.q(false)) match {
           case ((d, q1), (_, q2)) =>
             // No need for the thing we're subtracting to be distinct
-            satisfyDistinct(d, needDistinct, h, SqlExcept(q1, TableName(ul), q2, TableName(ur), h))
+            satisfyDistinct(d, needDistinct, h, SqlExcept(asOrderable(h, q1), TableName(ul), asOrderable(h, q2), TableName(ur), h))
         })
     }
 
-    def squashLiteral(attrs: Map[SqlColumn, SqlExpr], h: Header, q: SqlQuery, on: Set[(String,String)], mode: JoinMode)
+    def squashLiteral(attrs: Map[SqlColumn, SqlExpr], h: Header, q: SqlQuery.Scannable with SqlQuery.Nestable, on: Set[(String,String)], mode: JoinMode)
                      (implicit sup: Supply): SqlSelect = {
       val v = asSelect(h,q)
       val preds = on.toList.map {
@@ -882,8 +881,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                 case (LiteralSqlTable(ts)) if ts.tail.isEmpty && mode == JoinMode.Inner =>
                   squashLiteral(ts.head,h,q1,allOn map {_.swap},mode.reverse)
                 case _ =>
-                  val v1 = asSelect(h,q1, v => !v.isAggregated && !v.isLimited && !v.sources.sources.isEmpty)
-                  val v2 = asSelect(h,q2, v => !v.isAggregated && !v.isLimited && !v.sources.sources.isEmpty)
+                  val v1 = asSelect(h,q1, v => !v.isAggregated && !v.sources.sources.isEmpty)
+                  val v2 = asSelect(h,q2, v => !v.isAggregated && !v.sources.sources.isEmpty)
                   v1.copy(sources = SourceList(
                                       SqlJoinOn(
                                         v1.sources.asSource.get,
@@ -906,7 +905,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
     def filter(pred: Predicate)(implicit sup: Supply): DistinctiveQuery = {
       DistinctiveQuery(h, needDistinct => q(distinctEagerly) match {
-        case (d, q) => satisfyDistinct(d, needDistinct, h, asSelect(h,q, !_.isLimited) match {
+        case (d, q) => satisfyDistinct(d, needDistinct, h, asSelect(h,q) match {
           case v =>
             if (v.isAggregated)
               v.copy(having = compilePredicate(pred, v.attrs) :: v.having)
@@ -919,7 +918,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     def aggregate(attr: Attribute, f: AggFunc)(implicit sup: Supply): DistinctiveQuery = {
       DistinctiveQuery(Map(attr.name -> attr.t), _ => q(true) match {
         case (_, q) => (true, {
-          val v = asSelect(h, q, x => !x.isLimited && !x.isAggregated && !x.options("distinct"))
+          val v = asSelect(h, q, x => !x.isAggregated && !x.options("distinct"))
           v.copy(attrs = Map(attr.name -> compileAggFunc(attr, f, v.attrs)),
                  isAggregated = true)
         })
@@ -931,7 +930,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                          group: List[Op.ColumnValue]
                         )(implicit sup: Supply): DistinctiveQuery = {
       val (_, sq) = q(true) // to aggregate, we need distinctness
-      val v = asSelect(h, sq, x => !x.isLimited && !x.isAggregated && !x.options("distinct"))
+      val v = asSelect(h, sq, x => !x.isAggregated && !x.options("distinct"))
       val q2 = v.copy(attrs = cs.map { case (attr, op) =>
                                 attr.name -> compileOp(op, v.attrs)
                               } ++
@@ -1002,9 +1001,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
             case (d, q) => 
               val actualOrder = if (!order.isEmpty) order
                                 else h.map { case (k,t) => (k, SortOrder.Asc) }.toList
-              satisfyDistinct(d || isOneRow, needDistinct, h, emitter.emitLimit(q, h, u1, from, to, actualOrder.map {
+              satisfyDistinct(d || isOneRow, needDistinct, h, emitter.emitLimit(asOrderable(h,q), h, u1, from, to, actualOrder.map {
                 case (k, v) =>
-                  (ColumnSqlExpr(u1, k),
+                  (k,
                    v.apply(
                      asc = SqlAsc,
                      desc = SqlDesc

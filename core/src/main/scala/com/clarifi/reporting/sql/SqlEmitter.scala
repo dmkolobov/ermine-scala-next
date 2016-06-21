@@ -265,10 +265,12 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     *
     * For implementations with no support for this, answer `query`.
     */
-  def emitLimit(query: SqlQuery, queryHeader: Header, unQuery: TableName,
+  def emitLimit(query: SqlQuery.Orderable, queryHeader: Header, unQuery: TableName,
                 from: Option[Int], to: Option[Int],
-                order: List[(SqlExpr, SqlOrder, Boolean)],
-                unSurrogate: TableName): SqlQuery = query
+                order: List[(SqlColumn, SqlOrder, Boolean)],
+                unSurrogate: TableName): SqlQuery.Scannable with SqlQuery.Nestable = query match {
+    case q: SqlQuery.Scannable with SqlQuery.Nestable => q
+  }
 
   /** Emit a `LIMIT` clause for `SELECT`, if supported. */
   def emitLimitClause(from: Option[Int], to: Option[Int]): RawSql = ""
@@ -281,7 +283,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     * (it would be on the object like all the others, but it needs 'this')
     */
   def fallbackEmitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
-    SqlNaryOp(SqlUnion, n.map(t => SqlSelect(attrs = t):SqlQuery)).emitSql(this)
+    SqlNaryOp(SqlUnion, n.map(t => SqlSelect(attrs = t))).emitSql(this)
 
   /** Emit an empty relation */
   def emitEmpty(queryHeader: Header): RawSql =
@@ -485,20 +487,20 @@ trait EmitLimit_AsRowNumberOver extends SqlEmitter {
     * over (order by …) rownum ''rc'' where rownum <= ''to'' and rownum
     * >= ''from''`, then erasing `rownum`.
     */
-  override def emitLimit(rc: SqlQuery, h: Header, un: TableName,
+  override def emitLimit(rc: SqlQuery.Orderable, h: Header, un: TableName,
                          from: Option[Int], to: Option[Int],
-                         order: List[(SqlExpr, SqlOrder, Boolean)],
-                         un2: TableName): SqlQuery =
+                         order: List[(SqlColumn, SqlOrder, Boolean)],
+                         un2: TableName): SqlQuery.Scannable with SqlQuery.Nestable =
     SqlSelect(
       attrs = columns(h, un2),  // erase "rownum"
       sources = SourceList(
         SqlSubquery(
           alias = un2,
           query = SqlSelect(
-            sources = SourceList(SqlSubquery(rc, h.keys.toList, un)),
+            sources = SourceList(SqlSubquery(rc match { case x: SqlQuery.Nestable => x }, h.keys.toList, un)),
             attrs = (columns(h, un) + // add "rownum"
                       ("rownum" -> OverSqlExpr(FunSqlExpr("row_number", List()),
-                                               order.map(p => (p._1,p._2)))))
+                                               order.map(p => (ColumnSqlExpr(un,p._1),p._2)))))
 	  ),
 	  cols = h.keys.toList ++ List("rownum")
         )
@@ -506,8 +508,7 @@ trait EmitLimit_AsRowNumberOver extends SqlEmitter {
       where = List(to.map(x => SqlLte(ColumnSqlExpr(un2, "rownum"),
                                       LitSqlExpr(SqlInt(x)))),
                    from.map(x => SqlGte(ColumnSqlExpr(un2, "rownum"),
-                                        LitSqlExpr(SqlInt(x))))).flatten,
-      orderBy = List((ColumnSqlExpr(un2, "rownum"), SqlAsc, false))
+                                        LitSqlExpr(SqlInt(x))))).flatten
     )
 }
 
@@ -518,24 +519,11 @@ trait EmitLimit_AsLimit extends SqlEmitter {
   /** Wrap the ''rc'' in a select that duplicates ''h'', reorders the
     * relation, and limits according to ''from'' and ''to''.
     */
-  override def emitLimit(rc: SqlQuery, h: Header, un: TableName,
+  override def emitLimit(rc: SqlQuery.Orderable, h: Header, un: TableName,
                          from: Option[Int], to: Option[Int],
-                         order: List[(SqlExpr, SqlOrder, Boolean)],
-                         un2: TableName): SqlQuery =
-    rc match {
-      case v: SqlSelect if !v.isLimited => v.copy(
-        orderBy = order.map {
-          case (e,o,b) => (SqlExpr.backSubstitute(e, {
-            (t, c) => if (t == un) v.attrs(c) else ColumnSqlExpr(t,c)
-          }), o, b)
-        },
-        limit = (from, to)
-      )
-      case _ => SqlSelect(attrs = columns(h, un),
-                          sources = SourceList(SqlSubquery(rc, h.keys.toList, un)),
-                          // reorder and limit RC
-                          orderBy = order, limit = (from, to))
-    }
+                         order: List[(SqlColumn, SqlOrder, Boolean)],
+                         un2: TableName): SqlQuery.Scannable with SqlQuery.Nestable =
+    SqlLimit(SqlQuery.orderBy(rc, order), from, to)
 
   /** Use PostgreSQL's 0-indexed `LIMIT ''length'' OFFSET ''from''`
     * syntax, which is also supported in MySQL.
@@ -639,20 +627,19 @@ trait EmitCheckExists_AlwaysFails extends SqlEmitter {
 /** Emit a literal relation as a TVC */
 trait EmitLiteralTVC extends SqlEmitter {
   /** @todo Is it possible to avoid this redundant select? */
-  override def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
-    (raw("select * from (values ")
-      |+| n.map(r => r.toIndexedSeq
-                      .sortBy((_: (SqlColumn, SqlExpr))._1)
-                      .map(c => c._2.emitSql(this))
-                      .toList
-                      .rawMkString("(", ", ", ")"))
-           .rawMkString(", ")
+  override def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql = {
+    val cols = n.head.toIndexedSeq
+                     .map((_: (SqlColumn, SqlExpr))._1)
+                     .sortBy(x => x)
+                     .toList
+    (raw("select ") |+| cols.map(emitColumnName _).rawMkString(",")
+      |+| " from (values "
+      |+| n.list.map(r => cols.map(c => r(c).emitSql(this))
+                              .rawMkString("(", ", ", ")"))
+                .rawMkString(", ")
       |+| ") as lit"
-      |+| n.head.toIndexedSeq
-           .sortBy((_: (SqlColumn, SqlExpr))._1)
-           .map(c => this.emitColumnName(c._1))
-           .toList
-           .rawMkString("(", ",", ")"))
+      |+| cols.map(emitColumnName _).rawMkString("(", ",", ")"))
+  }
 }
 
 //////////////////////////////////////////////////////////////////////////////
