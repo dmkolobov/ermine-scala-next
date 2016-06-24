@@ -860,10 +860,10 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       }
       if (v.isAggregated)
         v.copy(attrs = v.attrs ++ attrs,
-               where = v.where ++ preds)
+               having = v.having ++ preds)
       else
         v.copy(attrs = v.attrs ++ attrs,
-               having = v.having ++ preds)
+               where = v.where ++ preds)
     }
 
     def joinOn(on: Set[(String, String)], other: DistinctiveQuery, mode: JoinMode)(implicit sup: Supply): DistinctiveQuery = {
