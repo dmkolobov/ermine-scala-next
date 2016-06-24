@@ -882,7 +882,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                   squashLiteral(ts.head,h,q1,allOn map {_.swap},mode.reverse)
                 case _ =>
                   val v1 = asSelect(h,q1, v => !v.isAggregated && !v.sources.sources.isEmpty)
-                  val v2 = asSelect(h,q2, v => !v.isAggregated && !v.sources.sources.isEmpty)
+                  val v2 = asSelect(other.h,q2, v => !v.isAggregated && !v.sources.sources.isEmpty)
                   v1.copy(sources = SourceList(
                                       SqlJoinOn(
                                         v1.sources.asSource.get,
