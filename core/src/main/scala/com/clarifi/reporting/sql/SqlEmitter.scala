@@ -761,6 +761,16 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
        |+| " and " |+| emitColumnName("TABLE_SCHEMA")
        |+| " = " |+| SqlString(t.schema mkString ".").emitSql(this),
      e => e.getErrorCode == 1050)
+
+  /** MySQL requires FROM with WHERE ;_; */
+  override def emitEmpty(queryHeader: Header): RawSql =
+    SqlSelect(attrs = queryHeader.mapValues(_ => LitSqlExpr(SqlNull)),
+              sources = SourceList(
+                SqlSubquery(cols = List("qq"),
+                            alias = TableName("qq"),
+                            query = SqlSelect(attrs = Map("qq" -> LitSqlExpr(SqlNull))))),
+              where = List(SqlTruth(false))
+             ).emitSql(this)
 }
 
 class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
