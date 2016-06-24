@@ -232,7 +232,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   }
 
   /**
-   * Emits Sql for an inner join on a specified set of column-pairs.
+   * Emits Sql for a join on a specified set of column-pairs.
    */
   def emitJoinOn(r1: SqlSource,
                  r2: SqlSource,
