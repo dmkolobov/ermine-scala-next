@@ -238,10 +238,12 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
                  r2: SqlSource,
                  on: Set[(SqlExpr, SqlExpr)],
 		 op: SqlJoinOp): RawSql = {
+    val onExpr = if (on.isEmpty) SqlTruth(true).emitSql(this)
+                 else on.map {
+                   case (c1, c2) => c1.emitSql(this) |+| " = " |+| c2.emitSql(this)
+                 } intercalate raw(" and ")
     r1.emitSql(this) |+| raw(" ") |+| op.emit |+| raw(" ") |+| r2.emitSql(this) |+|
-    " on (" |+| (on.map {
-      case (c1, c2) => c1.emitSql(this) |+| " = " |+| c2.emitSql(this)
-    } intercalate raw(" and ")) |+| ")"
+    " on (" |+| onExpr |+| ")"
   }
 
   /**
