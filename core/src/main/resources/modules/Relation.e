@@ -60,6 +60,10 @@ toMem r = asMem r
 leafRows : r <- (parent,child,t) => Field parent n -> Field child n -> [..r] -> [..r]
 leafRows p i r = difference r (r # {i} ` join ' [| i <- p |] (r # {p}) ` join ' r)
 
+-- unsafeLeftJoin : (RelationalComp rel, r1 <- (r,s), r2 <- (s,t), r3 <- (r,s,t)) => rel r1 -> rel r2 -> rel r3
+
+-- unsafeFullJoin : (RelationalComp rel, r1 <- (r,s), r2 <- (s,t), r3 <- (r,s,t)) => rel r1 -> rel r2 -> rel r3
+
 joinWithDefault : forall extra a r1 r2 r3. (exists c s. r1 <- (c, s), r2 <- (c, extra), r3 <- (c, s, extra), PrimitiveAtom a)
                => Field extra a -> a
                -> Mem r1 -> Mem r2 -> Mem r3

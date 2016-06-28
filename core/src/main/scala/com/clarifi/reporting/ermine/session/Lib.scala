@@ -614,6 +614,38 @@ object Lib {
         relationalCombCon(rel) =>:
         rel(d) ->: rel(e) ->: rel(f)))))))))
 
+    primOp(
+      Global("Relation", "unsafeLeftJoin"),
+      fun2("Relation.unsafeLeftJoin", {
+        case EmptyRel => { case  EmptyRel|Rel(_) => EmptyRel }
+        case r@Rel(inner) => {
+          case EmptyRel           => r
+          case Rel(outer) => Rel(LeftJoinE(inner, outer))
+        }
+      }),
+      FA(rho ->: star, rel => FAR(extra => FAR(r1 => FAR(r2 => FAR(r3 => FAR(s => FAR(t =>
+        List(r1 -> List(s,t), r2 -> List(t, extra), r3 -> List(s, t, extra)) =>:
+        relationalCombCon(rel) =>:
+        rel(r1) ->: rel(r2) ->: rel(r3))))))))
+    )
+
+    primOp(
+      Global("Relation", "unsafeFullJoin"),
+      fun2("Relation.unsafeFullJoin", {
+        case EmptyRel => { case  r@(EmptyRel|Rel(_)) => r }
+        case r@Rel(inner) => {
+          case EmptyRel           => r
+          case Rel(outer) => Rel(FullJoinE(inner, outer))
+        }
+      }),
+      FA(rho ->: star, rel => FAR(extra => FAR(r1 => FAR(r2 => FAR(r3 => FAR(s => FAR(t =>
+        List(r1 -> List(s,t), r2 -> List(t, extra), r3 -> List(s, t, extra)) =>:
+        relationalCombCon(rel) =>:
+        rel(r1) ->: rel(r2) ->: rel(r3))))))))
+    )
+
+    /* old mem-only joins for compatibility */
+    /* XXX hash/merge hints in SQL join?  some databases support them. */
     def mkJoin(fn: String, j: (Mem[Nothing, Nothing], Mem[Nothing, Nothing]) => Mem[Nothing, Nothing]) =
       primOp(Global("Relation", fn), fun2("Relation." + fn, {
         case EmptyRel => { case EmptyRel|Rel(_) => EmptyRel }
