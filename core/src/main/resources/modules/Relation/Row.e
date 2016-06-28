@@ -70,3 +70,5 @@ infixl 5 # -# !*
 (#) = flip project
 (-#) = flip except
 (!*) = flip projectT
+
+-- projectEach :: forall rel r s t. (RelationalComb rel, t <- (r,s)) => (forall a. a -> Op t a -> Op t a) -> Record r -> rel t -> rel t

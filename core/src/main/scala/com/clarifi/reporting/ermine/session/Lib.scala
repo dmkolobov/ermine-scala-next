@@ -547,6 +547,21 @@ object Lib {
       }}),
       FAR(r => FAR(t => FAR(s => (t -> List(r,s)) =>: listH(string) ->: recordT(t) ->: recordT(s)))))
 
+    primOp(Global("Relation.Row","projectEach"), fun3("Relation.Row.projectEach", { case Fun(f) => {
+      case Rec(r) => {
+        case EmptyRel => EmptyRel
+        case Rel(e) => Rel(ProjectE(e, Header.proj(Typer.closedExt(e).header) ++
+            {for {(k, v) <- r} yield {
+              val Fun(g) = f(v).whnf
+              val t = toPrimExpr(v).typ
+              val Prim(result: Op) = g(Prim(Op.ColumnValue(k,t))).whnf
+              Attribute(k,t) -> result
+            }}
+          ))
+      }}}),
+      FAR(r => FAR(s => FAR(t => FA(rho ->: star, rel => (t -> List(r,s)) =>: relationalCombCon(rel) =>:
+        (FA(a => a ->: relOp(t, a) ->: relOp(t, a)) ->: recordT(r) ->: rel(t) ->: rel(t)))))))
+
     val aggregate = addCon(mkCon[AggFunc](Global("Relation.Aggregate.Type", "Aggregate"), rho ->: star ->: star))
 
     primOp(Global("Relation.Aggregate", "aggregate"), fun3("Relation.Aggregate.aggregate", {
