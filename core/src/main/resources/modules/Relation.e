@@ -62,6 +62,9 @@ leafRows p i r = difference r (r # {i} ` join ' [| i <- p |] (r # {p}) ` join ' 
 
 -- unsafeLeftJoin : (RelationalComp rel, r1 <- (r,s), r2 <- (s,t), r3 <- (r,s,t)) => rel r1 -> rel r2 -> rel r3
 
+unsafeRightJoin : (RelationalComp rel, r1 <- (r,s), r2 <- (s,t), r3 <- (r,s,t)) => rel r1 -> rel r2 -> rel r3
+unsafeRightJoin r s = unsafeLeftJoin s r
+
 -- unsafeFullJoin : (RelationalComp rel, r1 <- (r,s), r2 <- (s,t), r3 <- (r,s,t)) => rel r1 -> rel r2 -> rel r3
 
 joinWithDefault : forall extra a r1 r2 r3. (exists c s. r1 <- (c, s), r2 <- (c, extra), r3 <- (c, s, extra), PrimitiveAtom a)
@@ -71,6 +74,13 @@ joinWithDefault ef d min mout = case existentialF "joinWithDefault_tmp" (withNul
   EField fj -> hashLeftJoin fj min (promote ef fj mout)
             |> combine (coalesce fj (prim d)) ef
             |> except {fj}
+
+-- more general join with default -- allows defaults for all non-overlapping rows
+leftJoinOr : (RelationalComb rel, r1 <- (r,s), r2 <- (s,t), r3 <- (r,s,t)) => rel r1 -> rel r2 -> {..t} -> rel r3
+leftJoinOr r s d = projectEach (v o -> coalesce' o (prim v)) d (unsafeLeftJoin r s)
+
+rightJoinOr : (RelationalComb rel, r1 <- (r,s), r2 <- (s,t), r3 <- (r,s,t)) => rel r1 -> rel r2 -> {..r} -> rel r3
+rightJoinOr r s d = projectEach (v o -> coalesce' o (prim v)) d (unsafeRightJoin r s)
 
 -- outer join with swapped arguments for convenience in certain cases
 rightJoinWithDefault : forall extra a r1 r2 r3. (exists c s. r1 <- (c, s), r2 <- (c, extra), r3 <- (c, s, extra), PrimitiveAtom a)
