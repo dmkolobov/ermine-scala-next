@@ -746,6 +746,7 @@ object Lib {
 
     primOp(Global("Native.Relation", "letR"), fun2((x, f) => {
       val ext: Option[Ext[Nothing, Nothing]] = x.whnf match {
+        // XXX EmptyRel case is wrong; might be fields that it's supposed to have but that info has been erased 
         case EmptyRel => Some(ExtMem(relational.EmptyRel(Map())))
         case Rel(e) => Some(e)
         case _ => None
