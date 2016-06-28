@@ -671,7 +671,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         SqlPrg(p, ns, q except (cs, rx), rx filterKeys (!cs.contains(_)))
       case Combine(r, attr, op) =>
         val SqlPrg(p, ns, q, rx) = compileRel(r, smv, srv)
-        SqlPrg(p, ns, q combine (attr, op), combineAll(rx, Map(attr -> op), true))
+        SqlPrg(p, ns, q combine (attr, op, rx), combineAll(rx, Map(attr -> op), true))
       case Limit(r, from, to, order) =>
         val SqlPrg(p, ns, q, rx) = compileRel(r, smv, srv)
 
@@ -976,14 +976,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       })
     }
 
-    def combine(attr: Attribute, op: Op)(implicit sup: Supply): DistinctiveQuery = {
-      DistinctiveQuery(h + attr.tuple, distinct => q(distinct) match {
-        case (d, q) =>
-          val v = asSelect(h, q)
-          val q2 = v.copy(attrs = v.attrs + (attr.name -> compileOp(op, v.attrs)))
-          (d, q2)
-      })
-    }
+    def combine(attr: Attribute, op: Op, rx: Reflexivity[ColumnName])(implicit sup: Supply): DistinctiveQuery =
+      project(Header.proj(h) + (attr -> op), rx)
 
     def limit(from: Option[Int], to: Option[Int], order: List[(String,SortOrder)])(implicit sup: Supply): DistinctiveQuery = {
       val fromn = from.getOrElse(1)
