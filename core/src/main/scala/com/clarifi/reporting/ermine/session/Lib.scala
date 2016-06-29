@@ -906,6 +906,10 @@ object Lib {
            }),
            scalaRec ->: rec)
 
+    primOp(Global("Native.Record", "header#"), Fun("Record.header#", {
+      case Prim(r : Map[String,Runtime]) => Prim(recordHeader(r mapValues (toPrimExpr(_))).toList)
+    }), rec ->: listH(pairH(string, primt)))
+
     primOp(
       Global("Relation.Pivot", "pivot#"),
       fun4("Relation.Pivot.pivot", { case pk => { case pv => { case km => {

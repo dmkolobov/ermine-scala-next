@@ -1,9 +1,12 @@
 module Record where
 
 import Native.Record
+import Native.Pair using fromPair#
+import Native.List using fromList#
 import Native.Ord
 import Function
 import Ord
+import List using map_List as map
 import Relation using rheader; relation
 import Relation.Row
 
@@ -21,4 +24,4 @@ anyRecordOrd : Ord {..r}
 anyRecordOrd = contramap (scalaRecord# . record#) anyRecordOrd#
 
 header : {..r} -> Row r
-header t = rheader (relation [t])
+header = Row . map fromPair# . fromList# . header# . record#
