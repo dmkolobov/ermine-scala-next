@@ -7,7 +7,6 @@ import Native.Ord
 import Function
 import Ord
 import List using map_List as map
-import Relation using rheader; relation
 import Relation.Row
 
 type Record a = {..a}
