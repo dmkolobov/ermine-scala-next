@@ -324,6 +324,15 @@ object Lib {
     primOp(Global("Native.List","mkRelation#"), Fun("Native.List.mkRelation#", {
         case Prim(l : List[Rec]) => buildRelation(l)
       }), FAR(a => listH(recordT(a)) ->: relationT(a)))
+
+    primOp(Global("Native.List","mkRelationWithHeader#"), fun2("Native.List.mkRelationWithHeader#", {
+      case Prim(row : List[(String,PrimT)]) => {
+        case Prim(l : List[Rec]) =>
+          if (l.isEmpty) Rel(ExtRel(RelEmpty(row.toMap), ""))
+          else buildRelation(l)
+      }
+    }), FAR(a => listH(pairH(string, primt)) ->: listH(recordT(a)) ->: relationT(a)))
+
     primOp(Global("Native.List","mkMem#"), Fun("Native.List.mkMem#", {
         case Prim(l : List[Rec]) => buildMem(l)
       }), FAR(a => listH(recordT(a)) ->: mem(a)))
