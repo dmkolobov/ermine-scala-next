@@ -805,7 +805,11 @@ infixl 5 ***
 
 zipSelector : Selector f z a -> Selector f z b -> Selector f z (a, b)
 zipSelector (Selector e1 v1) (Selector e2 v2) =
-  Selector (orEvent e1 e2) $ e go -> v1 e $ a -> v2 e $ b -> go (a,b)
+  -- Selector (orEvent e1 e2) $ e go -> v1 e $ a -> v2 e $ b -> go (a,b)
+  -- | The below is an enormous hack, and will explicitly *not* work when using `on'.
+  -- It's good enough for our purposes for now, but we're going to revisit the entire
+  -- Selector API in the near future.
+  Selector (orEvent e1 e2) $ _ go -> v1 e1 $ a -> v2 e2 $ b -> go (a,b)
 
 selectorFunctor = Functor mapSelector
 
