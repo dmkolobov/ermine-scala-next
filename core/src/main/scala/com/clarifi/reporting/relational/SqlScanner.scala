@@ -470,8 +470,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         MemPrg(cs.map(_._1.tuple), p, nq, combineAll(rx, cs))
       case Pivot(under, pKey, pVals, outer, keyMap) =>
         val MemPrg(h, p, q, rx) = compileMem(under, smv, srv)
-        implicit def err(s: String, msgs: String*): Option[Nothing] = None
-        val nh = Typer.pivotType[Option](h, pKey, pVals, outer, keyMap).get
+        implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
+        val nh = Typer.pivotType[Id](h, pKey, pVals, outer, keyMap)
         val nq: OrderedProcedure[DB, Record] = (ord:List[(ColumnName,SortOrder)]) => {
           val idCols = h.keySet -- pKey -- pVals
           val myOrd = idCols.toList.map(c => (c, Asc))
