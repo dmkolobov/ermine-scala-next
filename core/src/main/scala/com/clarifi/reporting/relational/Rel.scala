@@ -148,7 +148,7 @@ object Minus {
     Relation.combineFilters(fst, snd) {
       (l, r) => Predicates.simplify(Predicate.And(l, Predicate.Not(r)))
     }.getOrElse(MinusI[M,R](fst,snd))
-  def unapply[M,R](x: Minus[M,R]): Option[(Relation[M,R],Relation[M,R])] = MinusI.unapply[M,R](x)
+  def unapply[M,R](x: Minus[M,R]): Some[(Relation[M,R],Relation[M,R])] = Some((x.fst, x.snd)) 
 }
 
 case class Filter[+M, +R](rel: Relation[M, R], p: Predicate) extends Relation[M, R] {
