@@ -63,8 +63,6 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   def isTransactional: Boolean
   def setConstraints(enable: Boolean, t: Iterable[TableName]): List[RawSql]
 
-  def emitBinaryOrdering(isBinary: Boolean, exp: RawSql): RawSql
-
   /**
    * Controls whether we try to delay inserting a distinct
    * until we know we have to, or do it immediately when we
@@ -269,7 +267,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     */
   def emitLimit(query: SqlQuery.Orderable, queryHeader: Header, unQuery: TableName,
                 from: Option[Int], to: Option[Int],
-                order: List[(SqlColumn, SqlOrder, Boolean)],
+                order: List[(SqlColumn, SqlOrder)],
                 unSurrogate: TableName): SqlQuery.Scannable with SqlQuery.Nestable = query match {
     case q: SqlQuery.Scannable with SqlQuery.Nestable => q
   }
@@ -369,12 +367,6 @@ trait EagerlyDistinct extends SqlEmitter {
   */
 trait LazilyDistinct extends SqlEmitter {
   val distinctEagerly = false
-}
-
-/** Emitters which ignore requests to order columns as binary.
- */
-trait EmitBinaryOrdering_Ignored extends SqlEmitter {
-  def emitBinaryOrdering(isBinary: Boolean, exp: RawSql) = exp
 }
 
 /** Emitters for which there is no suffix after the closing ')' in
@@ -482,7 +474,7 @@ trait EmitLimit_AsRowNumberOver extends SqlEmitter {
     */
   override def emitLimit(rc: SqlQuery.Orderable, h: Header, un: TableName,
                          from: Option[Int], to: Option[Int],
-                         order: List[(SqlColumn, SqlOrder, Boolean)],
+                         order: List[(SqlColumn, SqlOrder)],
                          un2: TableName): SqlQuery.Scannable with SqlQuery.Nestable =
     SqlSelect(
       attrs = columns(h, un2),  // erase "rownum"
@@ -514,7 +506,7 @@ trait EmitLimit_AsLimit extends SqlEmitter {
     */
   override def emitLimit(rc: SqlQuery.Orderable, h: Header, un: TableName,
                          from: Option[Int], to: Option[Int],
-                         order: List[(SqlColumn, SqlOrder, Boolean)],
+                         order: List[(SqlColumn, SqlOrder)],
                          un2: TableName): SqlQuery.Scannable with SqlQuery.Nestable =
     SqlLimit(SqlQuery.orderBy(rc, order), from, to)
 
@@ -642,7 +634,6 @@ class SqliteEmitter extends SqlEmitter
     with EmitCreateTable_NoSuffix
     with EmitNoDropTempTable
     with EmitUuid_Strings
-    with EmitBinaryOrdering_Ignored
     with EagerlyDistinct
     with EmitCheckExists_AlwaysFails {
 
@@ -717,7 +708,6 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                                       with EmitUnion
                                       with LazilyDistinct
                                       with EmitIntDivOp_MySQL
-                                      with EmitBinaryOrdering_Ignored
                                       with EmitUuid_Strings {
   override def emitTableName(tn: TableName): RawSql =
     (tn.schema :+ tn.name) map emitColumnName rawMkString "."
@@ -789,7 +779,6 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitOver_UsingOver
                                       with EmitStddevVar_MsSQL
                                       with EmitUuid_Strings
-                                      with EmitBinaryOrdering_Ignored
                                       with EmitLiteralTVC
                                       with EmitName_MsSql {
 
@@ -857,7 +846,6 @@ class VerticaSqlEmitter extends SqlEmitter(false) with EmitFromEmptyTable_FromDu
                                            with EmitUnion
                                            with EagerlyDistinct
                                            with EmitUuid_Strings
-                                           with EmitBinaryOrdering_Ignored
                                            with EmitCheckExists_AlwaysFails {
 
   def isTransactional: Boolean = true
@@ -899,7 +887,6 @@ class PostgreSqlEmitter extends SqlEmitter(false)
                         with EmitUnion
                         with EagerlyDistinct
                         with EmitUuid_Strings
-                        with EmitBinaryOrdering_Ignored
                         with EmitCheckExists_AlwaysFails {
   import SqlEmitter.nn
 

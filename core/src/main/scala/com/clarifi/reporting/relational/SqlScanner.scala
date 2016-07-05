@@ -186,12 +186,6 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   def guidName = "t" + sguid
   def freshName(implicit sup: Supply) = "t" + sup.fresh
 
-  private
-  def isBinaryColumn(h: Header, c: ColumnName) = h.get(c) match {
-    case Some(_ : PrimT.StringT) => true
-    case _ => false
-  }
-
   def orderQuery(h: Header, sql: SqlQuery.Nestable with SqlQuery.Scannable, order: List[(String, SortOrder)])(implicit sup: Supply): SqlQuery.Scannable =
     if (order.isEmpty) {
       sql
@@ -199,8 +193,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       SqlQuery.orderBy(DistinctiveQuery.asOrderable(h, sql),
                        order.map { case (col, ord) =>
                          (col,
-                          ord(SqlAsc, SqlDesc),
-                          isBinaryColumn(h, col))
+                          ord(SqlAsc, SqlDesc))
                        }
                       )
     }
@@ -999,14 +992,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
               val actualOrder = if (!order.isEmpty) order
                                 else h.map { case (k,t) => (k, SortOrder.Asc) }.toList
               satisfyDistinct(d || isOneRow, needDistinct, h, emitter.emitLimit(asOrderable(h,q), h, u1, from, to, actualOrder.map {
-                case (k, v) =>
-                  (k,
-                   v.apply(
-                     asc = SqlAsc,
-                     desc = SqlDesc
-                   ),
-                   h(k).isInstanceOf[PrimT.StringT]
-                 )
+                case (k, v) => (k, v(asc = SqlAsc, desc = SqlDesc))
               }, u2))
         })
       }

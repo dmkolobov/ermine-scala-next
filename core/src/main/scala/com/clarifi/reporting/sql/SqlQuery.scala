@@ -43,7 +43,7 @@ sealed abstract class SqlQuery {
       raw(" order by ") |+|
       (if (orderBy.isEmpty) raw("1 asc")
         else orderBy.distinct.map(x =>
-          emitter.emitBinaryOrdering(x._3, emitter.emitColumnName(x._1)) |+| " " |+|
+          emitter.emitColumnName(x._1) |+| " " |+|
           x._2.emitSql
         ).toIterable.rawMkString(", "))
     case SqlOrderByExpr(q, orderBy) =>
@@ -58,7 +58,7 @@ sealed abstract class SqlQuery {
         }
         if (realOrder.isEmpty) raw("1 asc")
           else realOrder.distinct.map(x =>
-            emitter.emitBinaryOrdering(x._3, x._1.emitSql) |+| " " |+|
+            x._1.emitSql |+| " " |+|
             x._2.emitSql
           ).toIterable.rawMkString(", ")
       }
@@ -80,8 +80,8 @@ object SqlQuery {
   sealed trait Limitable extends SqlQuery
   sealed trait Nestable extends SqlQuery
 
-  def orderBy(q: SqlQuery.Orderable, orderBy: List[(SqlColumn, SqlOrder, Boolean)]) = q match {
-    case sel: SqlSelect => SqlOrderByExpr(sel, orderBy map { case (c,o,b) => (sel.attrs(c),o,b) })
+  def orderBy(q: SqlQuery.Orderable, orderBy: List[(SqlColumn, SqlOrder)]) = q match {
+    case sel: SqlSelect => SqlOrderByExpr(sel, orderBy map { case (c,o) => (sel.attrs(c),o) })
     case unsel => SqlOrderBy(unsel, orderBy)
   }
 }
@@ -160,10 +160,10 @@ case object SqlIntersect extends SqlBinOp {
 case class SqlNaryOp(op: SqlBinOp, rs: NonEmptyList[SqlQuery.Orderable]) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Orderable with SqlQuery.Nestable
 
 case class SqlOrderBy(q: SqlQuery.Orderable,
-                      orderBy: List[(SqlColumn, SqlOrder, Boolean)]) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Limitable
+                      orderBy: List[(SqlColumn, SqlOrder)]) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Limitable
 
 case class SqlOrderByExpr(q: SqlQuery.Orderable,
-                          orderBy: List[(SqlExpr, SqlOrder, Boolean)]) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Limitable
+                          orderBy: List[(SqlExpr, SqlOrder)]) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Limitable
 
 case class SqlLimit(q: SqlQuery.Limitable,
                     from: Option[Int] = None,
