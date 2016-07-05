@@ -4,6 +4,7 @@ import Native.List
 import Native.Pair
 import Native.Relation
 import Function
+import Native.Record as Rec
 export Relation.Sort
 export Relation.Aggregate as Aggregate
 export Relation.Process
@@ -11,6 +12,7 @@ import Relation.Predicate
 import Relation.Row
 import Relation.Op hiding {empty_Bracket; cons_Bracket}
 import List hiding {empty_Bracket; cons_Bracket}
+import List.NonEmpty using (:|) ; type NonEmpty
 import Constraint
 import Field
 import Syntax.List using map
@@ -20,6 +22,16 @@ import Bool as B
 
 relation : List {..r} -> Relation (|..r|)
 relation r = mkRelation# (toList# r)
+
+relationWithHeader : Row r -> List {..r} -> [..r]
+relationWithHeader (Row h) l =
+  mkRelationWithHeader#
+    (toList# . map (toPair#) $ h)
+    (toList# l)
+
+nonEmptyRelation : NonEmpty {..r} -> [..r]
+nonEmptyRelation (r :| rs) =
+  mkRelationWithHeader# (header#_Rec . record#_Rec $ r) (toList# $ r::rs)
 
 mem : List {..r} -> Mem (|..r|)
 mem r = mkMem# (toList# r)

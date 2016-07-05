@@ -174,4 +174,27 @@ object TestSqlEmitters extends Properties("emitSql") {
      + """ else (([bob].[x]) + (3)) end)""") =?
        SqlExpr.compileOp(if023, ColumnSqlExpr(TableName("bob"), _))(e).emitSql(e).run
   }
+
+  val sqliteTestLiteral : SqlQuery =
+    LiteralSqlTable(
+      NonEmptyList(
+        Map( "a" -> LitSqlExpr(SqlInt(1))
+           , "b" -> LitSqlExpr(SqlInt(2))
+           )
+      , Map( "a" -> LitSqlExpr(SqlInt(2))
+           , "b" -> LitSqlExpr(SqlInt(1))
+           )
+      )
+    )
+
+  property("sqlite literal syntax valid") = secure {
+    val e = SqlEmitter.sqliteEmitter
+    val b = Scanners.SQLite(dummySmenv)
+    val r = Runners.SQLite("jdbc:sqlite::memory:")
+
+    val rawQuery = RawSql.raw("explain ") |+| sqliteTestLiteral.emitSql(e)
+
+    r.run(DB.executeQuery(rawQuery))
+    true
+  }
 }
