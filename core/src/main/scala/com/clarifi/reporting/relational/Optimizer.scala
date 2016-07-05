@@ -359,6 +359,11 @@ object Optimizer {
       val (_, ir) = optimizeRel(r, hr, hm)
       val h = Map(attr.tuple)
       (h, Aggregate(ir, attr, aggfunc))
+    case PivotR(r, key, vals, outer, keyMap) =>
+      val (h, ir) = optimizeRel(r, hr, hm)
+      implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
+      val h2 = Typer.pivotType[Id](h, key, vals, outer, keyMap)
+      (h2, PivotR(ir, key, vals, outer, keyMap))
     case LetR(r, e) =>
       r match {
         case ExtMem(l@Literal(t,ts)) if ts.length <= smallLitSize =>

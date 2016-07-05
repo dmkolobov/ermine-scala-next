@@ -281,7 +281,7 @@ object Format {
   def relW[M,R](implicit wm: Writer[M, DynamicF],
                          wr: Writer[R, DynamicF]): Writer[Relation[M, R], DynamicF] =
     fixW((self: Writer[Relation[M, R], DynamicF]) =>
-      s19W(wr, // Var
+      s20W(wr, // Var
            tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))) dynamicF, // Limit
            tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))) dynamicF, // Let
            tuple4W(self, self, repeatW(tuple2W(stringW, stringW)), joinModeW) dynamicF, // JoinOn
@@ -294,13 +294,14 @@ object Format {
            tuple3W(self, attributeW, stringW) dynamicF, // RenameR
            tuple3W(self, attributeW, aggW) dynamicF, // Aggregate
            tuple4W(self, mapW(attributeW, opW), repeatW(tuple2W(attributeW, aggW)), repeatW(p2W(stringW, primTW){f => (x: Op.ColumnValue) => x match {case Op.ColumnValue(a,b) => f(a,b)}})), // AggregateByGroup
+           tuple5W(self, repeatW(stringW), repeatW(stringW), booleanW, mapW(recordW,tuple3W(stringW, opW, primExprW))) dynamicF, // PivotR
            tuple2W(headerW, tuple2W(stringW, repeatW(stringW))) dynamicF, // Table
            tuple4W(repeatW(W_\/(tuple2W(stringW, self), primExprW)), orderedHeaderW, stringW, repeatW(stringW)) dynamicF, // TableProc
            headerW, // RelEmpty
            repeatW(recordW) dynamicF, // SmallLit
            tuple2W(self, repeatW(stringW)), // MemoR
            tuple2W(repeatW(stringW), self) dynamicF // Note
-         )((v, lim, let, on, un, min, fil, proj, exc, comb, ren, agg, group, tab, tabproc, empt, sl, m, note) =>
+         )((v, lim, let, on, un, min, fil, proj, exc, comb, ren, agg, group, pivot, tab, tabproc, empt, sl, m, note) =>
            (r: Relation[M, R]) => r match {
              case VarR(x) => v(x)
              case Limit(a, b, c, d) => lim((a, b, c, d.map(p => (p._1, p._2 == Asc)).toList))
@@ -315,6 +316,7 @@ object Format {
              case RenameR(a, b, c) => ren((a, b, c))
              case Aggregate(a, b, c) => agg((a, b, c))
              case AggregateByGroup(a,b,c,d) => group((a,b,c,d))
+             case PivotR(a,b,c,d,e) => pivot((a,b,c,d,e))
              case Table(a, b) => tab((a, (b.name, b.schema)))
              case TableProc(a, b, c, d) => tabproc((a, b, c, d))
              case RelEmpty(h) => empt(h)
@@ -326,7 +328,7 @@ object Format {
            }) erase)
 
   def relR[M, R](implicit rm: Reader[M, DynamicF], rr: Reader[R, DynamicF]): Reader[Relation[M, R], DynamicF] =
-    fixR((self: Reader[Relation[M, R], DynamicF]) => union19R(
+    fixR((self: Reader[Relation[M, R], DynamicF]) => union20R(
       rr.map(VarR(_)),
       p4R(self, optionR(intR), optionR(intR), listR(p2R(stringR, sortOrderR)((_, _))))(Limit(_, _, _, _)),
       p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)),
@@ -340,6 +342,8 @@ object Format {
       p3R(self, attributeR, stringR)(RenameR(_, _, _)),
       p3R(self, attributeR, aggR)(Aggregate(_, _, _)),
       p4R(self, mapR(attributeR, opR), listR(tuple2R(attributeR, aggR)), listR(p2R(stringR, primTR)(Op.ColumnValue(_,_))))(AggregateByGroup(_,_,_,_)), // AggregateByGroup
+      p5R(self, listR(stringR), listR(stringR), booleanR, mapR(recordR, tuple3R(stringR, opR, primExprR)))(
+        (a,b,c,d,e) => PivotR(a,b.toSet,c.toSet,d,e)),
       p2R(headerR, p2R(stringR, listR(stringR))(TableName(_, _)))(Table(_, _)),
       p4R(listR(R_\/(p2R(stringR, self)((_,_)), primExprR)),
           orderedHeaderR, stringR, listR(stringR))(TableProc(_, _, _, _)),

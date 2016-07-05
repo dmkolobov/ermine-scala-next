@@ -245,6 +245,25 @@ object Annotated {
     if (ts.isEmpty) un else Note(ts, un)
 }
 
+// 'Statically' determined pivot tables. Generates some specified new columns
+// using data in an underlying relation.
+case class PivotR[+M, +R](
+  under: Relation[M, R], // the underlying relation
+  pivotKey: Set[ColumnName], // the columns that determine the pivot key
+  pivotVals: Set[ColumnName], // the columns that determine the pivot values
+  outer: Boolean, // whether NULL is admitted in the output columns of the pivot
+  keyMap: Map[Record,(ColumnName, Op, PrimExpr)] // map from pivotKey records to columns and ways to fill them - the PrimExpr is the default 'missing' element, e.g. 0 or "", to avoid NullExprs.
+) extends Relation[M, R] {
+  def bimap[N, S](f: M => N, g: R => S) =
+    PivotR(under.bimap(f, g), pivotKey, pivotVals, outer, keyMap)
+  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) =
+    PivotR(under.subst(f, g), pivotKey, pivotVals, outer, keyMap)
+  def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = under.bifoldMap(f, g)
+  def foreach(f: M => Any, g: R => Any) = { under.foreach(f, g) }
+  override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]], g: Object => Option[Mem[S, N]]): Relation[N, S] =
+    PivotR(under.unquote(f, g), pivotKey, pivotVals, outer, keyMap)
+}
+
 sealed abstract class HardRel extends Relation[Nothing, Nothing] {
   def bimap[N, S](f: Nothing => N, g: Nothing => S) = this
   def subst[N, S](f: Nothing => Mem[S, N], g: Nothing => Relation[N, S]) = this

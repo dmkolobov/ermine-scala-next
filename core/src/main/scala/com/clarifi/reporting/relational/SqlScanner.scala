@@ -10,7 +10,7 @@ import com.clarifi.reporting.util.PartitionedSet
 import DB._
 import ReportingUtils.simplifyPredicate
 import SqlPredicate._
-import SqlExpr.compileOp
+import SqlExpr.{compileOp, compileLiteral}
 
 import scalaz._
 import scalaz.Coproduct._
@@ -699,6 +699,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                Reflexivity.zero)
       case RelEmpty(h) =>
         SqlPrg(List(), List(), DistinctiveQuery.empty(h), KnownEmpty())
+      case PivotR(under, pKey, pVals, outer, keyMap) =>
+        val SqlPrg(p, ns, q, rx) = compileRel(under, smv, srv)
+        SqlPrg(p, ns, q pivot (pKey, pVals, outer, keyMap), Reflexivity.zero)
       case QuoteR(_) => sys.error("Cannot scan quotes")
       case l@SmallLit(ts) =>
         if (ts.size <= 100) {
@@ -1010,6 +1013,29 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
               }, u2))
         })
       }
+    }
+
+    def pivot(key: Set[ColumnName], vals: Set[ColumnName], outer: Boolean, keyMap: Map[Record, (ColumnName, Op, PrimExpr)])(implicit sup: Supply): DistinctiveQuery = {
+      implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
+      val nh = Typer.pivotType[Id](h, key, vals, outer, keyMap)
+      val sel = asSelect(h, q(false)._2, v => !v.isAggregated)
+      val extra = h -- key -- vals
+      val q2 = sel.copy(isAggregated = true,
+                        groupBy = extra.toList map (x => sel.attrs(x._1)),
+                        options = sel.options - "distinct",
+                        attrs = sel.attrs -- key -- vals ++ keyMap.map {
+                          case (r, (col, op, defval)) => col ->
+                            FunSqlExpr("coalesce", List(
+                              compileAggFunc(Attribute(col, defval.typ), // ignored anyway
+                                             Max(Op.If(Predicate.fromRecord(r),
+                                                       op, 
+                                                       Op.OpLiteral(NullExpr(defval.typ)))),
+                                             sel.attrs
+                                            ),
+                              compileLiteral(defval)
+                            ))
+                        })
+      DistinctiveQuery(nh, _ => (true, q2))
     }
   }
 }
