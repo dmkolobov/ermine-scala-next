@@ -429,7 +429,7 @@ object PrimExpr {
     // right, so we have to fake it
     if (typeorder === EQ)
     (a, b) match {
-      case (StringExpr(_, v1), StringExpr(_, v2)) => v1 ?|? v2
+      case (StringExpr(_, v1), StringExpr(_, v2)) => v1.toLowerCase ?|? v2.toLowerCase
       case (IntExpr(_, v1), IntExpr(_, v2)) => v1 ?|? v2
       // doubleOrdering doesn't follow the Order laws, so we can't use it.
       case (DoubleExpr(_, v1), DoubleExpr(_, v2)) => v1 ?|? v2
