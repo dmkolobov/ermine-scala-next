@@ -281,10 +281,9 @@ object Format {
   def relW[M,R](implicit wm: Writer[M, DynamicF],
                          wr: Writer[R, DynamicF]): Writer[Relation[M, R], DynamicF] =
     fixW((self: Writer[Relation[M, R], DynamicF]) =>
-      s18W(wr, // Var
+      s19W(wr, // Var
            tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))) dynamicF, // Limit
            tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))) dynamicF, // Let
-           tuple2W(self, self) dynamicF, // Join
            tuple4W(self, self, repeatW(tuple2W(stringW, stringW)), joinModeW) dynamicF, // JoinOn
            tuple2W(self, self) dynamicF, // Union
            tuple2W(self, self) dynamicF, // Minus
@@ -292,19 +291,20 @@ object Format {
            tuple2W(self, mapW(attributeW, opW)) dynamicF, // Project
            tuple2W(self, repeatW(stringW)) dynamicF, // Except
            tuple3W(self, attributeW, opW) dynamicF, // Combine
+           tuple3W(self, attributeW, stringW) dynamicF, // RenameR
            tuple3W(self, attributeW, aggW) dynamicF, // Aggregate
+           tuple4W(self, mapW(attributeW, opW), repeatW(tuple2W(attributeW, aggW)), repeatW(p2W(stringW, primTW){f => (x: Op.ColumnValue) => x match {case Op.ColumnValue(a,b) => f(a,b)}})), // AggregateByGroup
            tuple2W(headerW, tuple2W(stringW, repeatW(stringW))) dynamicF, // Table
            tuple4W(repeatW(W_\/(tuple2W(stringW, self), primExprW)), orderedHeaderW, stringW, repeatW(stringW)) dynamicF, // TableProc
            headerW, // RelEmpty
            repeatW(recordW) dynamicF, // SmallLit
            tuple2W(self, repeatW(stringW)), // MemoR
            tuple2W(repeatW(stringW), self) dynamicF // Note
-         )((v, lim, let, join, on, un, min, fil, proj, exc, comb, agg, tab, tabproc, empt, sl, m, note) =>
+         )((v, lim, let, on, un, min, fil, proj, exc, comb, ren, agg, group, tab, tabproc, empt, sl, m, note) =>
            (r: Relation[M, R]) => r match {
              case VarR(x) => v(x)
              case Limit(a, b, c, d) => lim((a, b, c, d.map(p => (p._1, p._2 == Asc)).toList))
              case LetR(a, b) => let((a, b))
-             case Join(a, b) => join((a, b))
              case JoinOn(a, b, c, d) => on((a, b, c, d))
              case Union(a, b) => un(a -> b)
              case Minus(a, b) => min(a -> b)
@@ -312,7 +312,9 @@ object Format {
              case Project(a, b) => proj((a, b.toList))
              case Except(a, b) => exc((a, b.toList))
              case Combine(a, b, c) => comb((a, b, c))
+             case RenameR(a, b, c) => ren((a, b, c))
              case Aggregate(a, b, c) => agg((a, b, c))
+             case AggregateByGroup(a,b,c,d) => group((a,b,c,d))
              case Table(a, b) => tab((a, (b.name, b.schema)))
              case TableProc(a, b, c, d) => tabproc((a, b, c, d))
              case RelEmpty(h) => empt(h)
@@ -324,11 +326,10 @@ object Format {
            }) erase)
 
   def relR[M, R](implicit rm: Reader[M, DynamicF], rr: Reader[R, DynamicF]): Reader[Relation[M, R], DynamicF] =
-    fixR((self: Reader[Relation[M, R], DynamicF]) => union18R(
+    fixR((self: Reader[Relation[M, R], DynamicF]) => union19R(
       rr.map(VarR(_)),
       p4R(self, optionR(intR), optionR(intR), listR(p2R(stringR, sortOrderR)((_, _))))(Limit(_, _, _, _)),
       p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)),
-      p2R(self, self)(Join(_, _)),
       p4R(self, self, listR(tuple2R(stringR, stringR)) map (_.toSet), joinModeR)(JoinOn(_, _, _, _)),
       p2R(self, self)((a, b) => Union(a, b)),
       p2R(self, self)((a, b) => Minus(a, b)),
@@ -336,7 +337,9 @@ object Format {
       p2R(self, mapR(attributeR, opR))(Project(_, _)),
       p2R(self, listR(stringR))((a, b) => Except(a, b.toSet)),
       p3R(self, attributeR, opR)(Combine(_, _, _)),
+      p3R(self, attributeR, stringR)(RenameR(_, _, _)),
       p3R(self, attributeR, aggR)(Aggregate(_, _, _)),
+      p4R(self, mapR(attributeR, opR), listR(tuple2R(attributeR, aggR)), listR(p2R(stringR, primTR)(Op.ColumnValue(_,_))))(AggregateByGroup(_,_,_,_)), // AggregateByGroup
       p2R(headerR, p2R(stringR, listR(stringR))(TableName(_, _)))(Table(_, _)),
       p4R(listR(R_\/(p2R(stringR, self)((_,_)), primExprR)),
           orderedHeaderR, stringR, listR(stringR))(TableProc(_, _, _, _)),
