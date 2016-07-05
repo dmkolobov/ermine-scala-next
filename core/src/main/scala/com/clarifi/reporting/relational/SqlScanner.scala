@@ -919,7 +919,10 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       DistinctiveQuery(Map(attr.name -> attr.t), _ => q(true) match {
         case (_, q) => (true, {
           val v = asSelect(h, q, x => !x.isAggregated && !x.options("distinct"))
-          v.copy(attrs = Map(attr.name -> compileAggFunc(attr, f, v.attrs)),
+          v.copy(attrs = Map(attr.name -> 
+                                            
+                                              
+          compileAggFunc(attr, f, v.attrs)),
                  isAggregated = true)
         })
       })
