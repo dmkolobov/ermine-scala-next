@@ -170,3 +170,11 @@ object MemoE {
     case e => e
   }
 }
+
+object PivotE {
+  def apply[M, R](r: Ext[M,R], pivotKey: Set[ColumnName], pivotVals: Set[ColumnName], outer: Boolean, keyMap: Map[Record,(ColumnName, Op, PrimExpr)]) = r match {
+    case ExtRel(e,db) => ExtRel(PivotR(e, pivotKey, pivotVals, outer, keyMap), db)
+    case ExtMem(e) => ExtMem(Pivot(e, pivotKey, pivotVals, outer, keyMap))
+    case e => ExtMem(Pivot(EmbedMem(e), pivotKey, pivotVals, outer, keyMap))
+  }
+}

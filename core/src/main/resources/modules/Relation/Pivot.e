@@ -65,11 +65,11 @@ nilFulcrum (Row ks) (Row vs) = Fulcrum (map_List fst ks) (map_List fst vs) []
 consFulcrum : (p' <- (f, p)) => Field f a -> Op v a -> {..k} -> Fulcrum k v p -> Fulcrum k v p'
 consFulcrum f o r (Fulcrum ks vs m) = Fulcrum ks vs ((record# r, (fieldName f, UnsafeOp o)) :: m)
 
-pivot : (r <- (k, v, i), s <- (i, p)) => Fulcrum k v p -> Mem r -> Mem s
+pivot : (RelationalComb rel, r <- (k, v, i), s <- (i, p)) => Fulcrum k v p -> rel r -> rel s
 pivot (Fulcrum ks vs m) = pivot# (toList# ks) (toList# vs) (toList# m')
  where m' = map_List $ ((r,(s,op)) -> pair# $ scalaRecord# r $ (pair# s $ pair# op (primExpr# $ Null Double)))  $ m
 
-pivotWithDefault : (r <- (k, v, i), s <- (i, p)) => FulcrumWithDefault k v p -> Mem r -> Mem s
+pivotWithDefault : (RelationalComb rel, r <- (k, v, i), s <- (i, p)) => FulcrumWithDefault k v p -> rel r -> rel s
 pivotWithDefault (FulcrumWithDefault ks vs m) = pivot# (toList# ks) (toList# vs) (toList# m')
  where m' = map_List $ ((r,(s,op,pe)) -> pair# (scalaRecord# r) (pair# s (pair# op pe))) $ m
 

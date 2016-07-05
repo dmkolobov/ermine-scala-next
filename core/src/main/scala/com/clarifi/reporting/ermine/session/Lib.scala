@@ -958,16 +958,17 @@ object Lib {
       Global("Relation.Pivot", "pivot#"),
       fun4("Relation.Pivot.pivot", { case pk => { case pv => { case km => {
         case EmptyRel => EmptyRel
-        case Rel(ExtMem(m)) =>
-          Rel(ExtMem(
-            Pivot(m, pk.extract[List[String]].toSet,
-                     pv.extract[List[String]].toSet,
-                     true,
-                     km.extract[List[(Record,(String,(Op,PrimExpr)))]].map({case (rec, (str, (op, pe))) => (rec,(str,op,pe)) }).toMap)
-          ))
+        case Rel(e) =>
+          Rel(
+            PivotE(e, pk.extract[List[String]].toSet,
+                      pv.extract[List[String]].toSet,
+                      true,
+                      km.extract[List[(Record,(String,(Op,PrimExpr)))]].map({case (rec, (str, (op, pe))) => (rec,(str,op,pe)) }).toMap)
+          )
       }}}}),
-    FAR(r => FAR(s =>
-          listH(string) ->: listH(string) ->: listH(pairH(scalaRec,pairH(string,pairH(unsafeOp,primExpr)))) ->: mem(r) ->: mem(s))))
+    FA(rho ->: star, rel => FAR(r => FAR(s =>
+          relationalCombCon(rel) =>:
+          listH(string) ->: listH(string) ->: listH(pairH(scalaRec,pairH(string,pairH(unsafeOp,primExpr)))) ->: rel(r) ->: rel(s)))))
 
     import backends.DB
 
