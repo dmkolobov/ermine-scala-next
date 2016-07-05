@@ -370,15 +370,6 @@ trait LazilyDistinct extends SqlEmitter {
   val distinctEagerly = false
 }
 
-/** Emitters that order certain columns as binary.
- */
-trait EmitBinaryOrdering_AsBinary extends SqlEmitter {
-  def emitBinaryOrdering(isBinary: Boolean, exp: RawSql) =
-    if (isBinary)
-      raw("binary (") |+| exp |+| ")"
-    else exp
-}
-
 /** Emitters which ignore requests to order columns as binary.
  */
 trait EmitBinaryOrdering_Ignored extends SqlEmitter {
@@ -729,7 +720,7 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                                       with EmitUnion
                                       with LazilyDistinct
                                       with EmitIntDivOp_MySQL
-                                      with EmitBinaryOrdering_AsBinary
+                                      with EmitBinaryOrdering_Ignored
                                       with EmitUuid_Strings {
   override def emitTableName(tn: TableName): RawSql =
     (tn.schema :+ tn.name) map emitColumnName rawMkString "."
