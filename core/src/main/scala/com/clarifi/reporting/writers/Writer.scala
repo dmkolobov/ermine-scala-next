@@ -280,6 +280,8 @@ abstract class Writer[F[_],C] { self =>
   def selector[A](mode: SelectorMode, default: (NonEmptyList[PrimExpr],A), fmt: Format, values: List[(NonEmptyList[PrimExpr],A)],
                    f: (A => C, SelectorEvent, Signal[A]) => F[C]
                   ) : F[C]
+  // Given a `SelectorEvent` and a report, update the report whenever the event fires.
+  def onEvent(evt: SelectorEvent, inner: F[C]) : F[C] = inner
 
   def button(name: NonEmptyList[PrimExpr], fmt: Format, f: (C, SelectorEvent) => F[C]) : F[C]
 
