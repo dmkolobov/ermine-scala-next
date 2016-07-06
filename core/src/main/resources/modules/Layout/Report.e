@@ -789,13 +789,26 @@ barHeader ui = pad [pixelsM 4] . style "bar-header" ' ui
 
 -- f is monad of the report. z is the underlying object of the report. a is the value we produce.
 
-data Selector f z a = Selector (SelectorEvent z) (SelectorEvent z -> (a -> Report f z) -> Report f z)
+type Signal f z a = (a -> Report f z) -> Report f z
+
+mapSignal : (a -> b) -> Signal f z a -> Signal f z b
+mapSignal f sigA kb = sigA (kb . f)
+
+zipSignal : Signal f z a -> Signal f z b -> Signal f z (a, b)
+zipSignal sig1 sig2 kab = sig1 $ a -> sig2 $ b -> kab (a,b)
+
+
+data Selector f z a = Selector (SelectorEvent z) (Signal f z a)
+
+-- | Given an event, update the inner report whenever the event fires.
+onEvent : SelectorEvent z -> Report f z -> Report f z
+onEvent s r = Report $ w -> onEventW w s (runReport w r)
 
 on : SelectorEvent z -> Selector f z a -> (a -> Report f z) -> Report f z
-on e (Selector _ v) go = v e go
+on e (Selector _ v) = using (Selector e v)
 
 using : Selector f z a -> (a -> Report f z) -> Report f z
-using (Selector e v) go = v e go
+using (Selector e v) go = onEvent e (v go)
 
 infixr 5 ||
 (||) e1 e2 = orEvent e1 e2
@@ -805,11 +818,7 @@ infixl 5 ***
 
 zipSelector : Selector f z a -> Selector f z b -> Selector f z (a, b)
 zipSelector (Selector e1 v1) (Selector e2 v2) =
-  -- Selector (orEvent e1 e2) $ e go -> v1 e $ a -> v2 e $ b -> go (a,b)
-  -- | The below is an enormous hack, and will explicitly *not* work when using `on'.
-  -- It's good enough for our purposes for now, but we're going to revisit the entire
-  -- Selector API in the near future.
-  Selector (orEvent e1 e2) $ _ go -> v1 e1 $ a -> v2 e2 $ b -> go (a,b)
+  Selector (orEvent e1 e2) (zipSignal v1 v2)
 
 selectorFunctor = Functor mapSelector
 
@@ -822,13 +831,11 @@ sequenceSelector = sequenceA listTraversable selectorAp
 -}
 
 mapSelector : (a -> b) -> Selector f z a -> Selector f z b
-mapSelector f (Selector e av) = Selector e $ mapSource f av
-  where mapSource: (a -> b) -> (SelectorEvent z -> (a -> Report f z) -> Report f z) -> SelectorEvent z -> (b -> Report f z) -> Report f z
-        mapSource aToB sel evt bToReport = sel evt $ a -> bToReport (aToB a)
+mapSelector f (Selector e av) = Selector e (mapSignal f av)
 
 -- | A selector that always yields the given 'a'.
 unitSelector : a -> Selector f z a
-unitSelector x = Selector live (const (k -> k x))
+unitSelector x = Selector live (k -> k x)
 
 -- | Combine a list of selectors into a single selector producing the
 -- list of all of its values.
@@ -947,22 +954,21 @@ private
   lit z = Report $ w -> unit (wm w) z
 
   --selector : SelectorMode -> (a -> String) -> a -> List a -> (Report f z -> Selector f z a -> Report f z) -> Report f z
-  selector mode showf default as f = Report $ w ->
-    selectorW w (selectorMode# mode) (toPair# ((toPrimExprNel . showf $ default), default)) unit_Fmt (toList# (lmap (a -> toPair# ((toPrimExprNel . showf $ a),a)) as)) (function3 $ sel evt src ->
-      runReport w $ (f (lit sel) (Selector evt $ e f2 -> Report $ w -> funcall2# src e (function1 $ runReport w . f2))))
+  selector mode showf default as f = selector' mode showf default unit_Fmt as f
 
+  selector' : SelectorMode -> (a -> String) -> a -> Format_Fmt -> List a -> (Report f z -> Selector f z a -> Report f z) -> Report f z
   selector' mode showf default fmt as f = Report $ w ->
     selectorW w (selectorMode# mode) (toPair# ((toPrimExprNel . showf $ default), default)) fmt (toList# (lmap (a -> toPair# ((toPrimExprNel . showf $ a),a)) as)) (function3 $ sel evt src ->
-      runReport w $ (f (lit sel) (Selector evt $ e f2 -> Report $ w -> funcall2# src e (function1 $ runReport w . f2))))
+      runReport w $ (f (lit sel) (Selector evt $ f2 -> Report $ w -> funcall1# src (function1 $ runReport w . f2))))
 
   type TextBoxPrim f z = Writer f z -> String ->
-                         Function3 z (SelectorEvent z) (Function2 (SelectorEvent z) (Function1 String (f z)) (f z)) (f z) ->
+                         Function3 z (SelectorEvent z) (Function1 (Function1 String (f z)) (f z)) (f z) ->
                          f z
 
   input_ : (TextBoxPrim f z) -> String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
   input_ primf default f = Report $ w ->
     primf w default (function3 $ sel evt src ->
-      runReport w $ (f (lit sel) (Selector evt $ e f2 -> Report $ w -> funcall2# src e (function1 $ runReport w . f2))))
+      runReport w $ (f (lit sel) (Selector evt $ f2 -> Report $ w -> funcall1# src (function1 $ runReport w . f2))))
 
 
 
@@ -1540,8 +1546,9 @@ private
                                             -> List# (Pair# (Maybe# String) (List# (Pair# (Maybe# String) z)))
                                             -> z
     method "selector" selectorW: forall f z a b . Writer f z -> SelectorMode# -> Pair# (NonEmpty# PrimExpr# ) a -> Format_Fmt b -> List# (Pair# (NonEmpty# PrimExpr# ) a) ->
-                                    Function3 z (SelectorEvent z) (Function2 (SelectorEvent z) (Function1 a (f z)) (f z)) (f z) ->
+                                    Function3 z (SelectorEvent z) (Function1 (Function1 a (f z)) (f z)) (f z) ->
                                     f z
+    method "onEvent" onEventW: forall f z. Writer f z -> SelectorEvent z -> f z -> f z
     method "textBox" inputW: TextBoxPrim f z
     method "textArea" inputAreaW: TextBoxPrim f z
     method "foreignSelector" foreignSelectorW: forall f z a . Writer f z -> String -> a -> Function1 a (f z) -> f z
