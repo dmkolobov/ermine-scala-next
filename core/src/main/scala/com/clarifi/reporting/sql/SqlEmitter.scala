@@ -255,7 +255,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     * implementation is a compatibility workaround; the MS SQL emitter
     * should use `OVER` directly.
     */
-  def emitOver(e: SqlExpr, over: List[(SqlExpr, SqlOrder)]): RawSql =
+  def emitOver(e: SqlExpr, over: SqlOver): RawSql =
     "TODO I don't yet know how to play %s over %s".
       format (e.emitSql(this), over)
 
@@ -485,7 +485,7 @@ trait EmitLimit_AsRowNumberOver extends SqlEmitter {
             sources = SourceList(SqlSubquery(rc match { case x: SqlQuery.Nestable => x }, h.keys.toList, un)),
             attrs = (columns(h, un) + // add "rownum"
                       ("rownum" -> OverSqlExpr(FunSqlExpr("row_number", List()),
-                                               order.map(p => (ColumnSqlExpr(un,p._1),p._2)))))
+                                               SqlOver(List(), order.map(p => (ColumnSqlExpr(un,p._1),p._2)), None, None))))
 	  ),
 	  cols = h.keys.toList ++ List("rownum")
         )
@@ -522,10 +522,33 @@ trait EmitLimit_AsLimit extends SqlEmitter {
 }
 
 trait EmitOver_UsingOver extends SqlEmitter {
-  override def emitOver(e: SqlExpr, over: List[(SqlExpr, SqlOrder)]): RawSql =
-    e.emitSql(this) |+| " over (order by " |+|
-      over.map(x => x._1.emitSql(this) |+| " "
-                   |+| x._2.emitSql).rawMkString(", ") |+| ")"
+  override def emitOver(e: SqlExpr, over: SqlOver): RawSql = over match {
+    case SqlOver(partition, order, frameBegin, frameEnd) =>
+      def frameIndex(i: Int) =
+        if (i < 0) (-i).toString + " preceding"
+        else if (i > 0) i.toString + " following"
+        else "current row"
+
+      def frameEx(oi: Option[Int], pos: String) = oi.map(frameIndex).getOrElse("unbounded " + pos)
+
+      val rawPart = raw("partition by ") |+| partition.map(_ emitSql(this)).rawMkString(", ")
+      val rawOrder = raw("order by ") |+| order.map{ case (e, o) => e.emitSql(this) |+| o.emitSql }.rawMkString(", ")
+      val rawFrame = raw("rows between ") |+|
+                     frameEx(frameBegin, "preceding") |+|
+                     " and " |+|
+                     frameEx(frameEnd, "following")
+
+      if (order.isEmpty && !(frameBegin.isEmpty && frameEnd.isEmpty))
+        sys.error("Window frames may only be used with ordered window functions.")
+      else {
+        e.emitSql(this) |+| " over (" |+|
+        (if (partition.isEmpty) raw("") else rawPart |+| " ") |+|
+        (if (order.isEmpty) raw("") else rawOrder |+| " " |+| rawFrame) |+|
+        ")"
+      }
+
+
+  }
 }
 
 /**

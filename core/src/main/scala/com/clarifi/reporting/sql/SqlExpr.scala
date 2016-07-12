@@ -49,24 +49,6 @@ case class SqlIsNull(expr: SqlExpr) extends SqlPredicate
 case class ExistsSqlExpr(query: SqlQuery) extends SqlPredicate
 
 object SqlPredicate {
-  /** Compile a `predicate`, delegating column reference expression
-    * compilation to `lookupColumn`.
-    */
-  def compilePredicate(predicate: Predicate,
-                       lookupColumn: String => SqlExpr)(
-                       implicit emitter: SqlEmitter): SqlPredicate = {
-    def subop(op: Op) = SqlExpr.compileOp(op, lookupColumn)
-    predicate.apply[SqlPredicate](
-      atom = b => SqlTruth(b),
-      lt = (s1, s2) => SqlLt(subop(s1), subop(s2)),
-      gt = (s1, s2) => SqlGt(subop(s1), subop(s2)),
-      eq = (s1, s2) => SqlEq(subop(s1), subop(s2)),
-      not = e => SqlNot(e),
-      or = SqlOr(_, _),
-      and = SqlAnd(_, _),
-      isNull = e => SqlIsNull(subop(e)))
-  }
-
   def backSubstituteAux[F[_]:Applicative](pred: SqlPredicate, sub: (TableName, SqlColumn) => F[SqlExpr]): F[SqlPredicate] =
     pred match {
       case SqlLt(l, r) => ^(SqlExpr.backSubstituteAux(l,sub),SqlExpr.backSubstituteAux(r,sub))(SqlLt(_,_))
@@ -109,6 +91,15 @@ sealed abstract class SqlExpr {
     case e => e
   }
 }
+
+case class SqlOver(
+  partition: List[SqlExpr],
+  order: List[(SqlExpr, SqlOrder)],
+  frameBegin: Option[Int],
+  frameEnd: Option[Int]
+)
+
+
 case class ColumnSqlExpr(table: TableName, column: SqlColumn) extends SqlExpr
 case class BinSqlExpr(f: String, a: SqlExpr, b: SqlExpr) extends SqlExpr
 case class PrefixSqlExpr(f: String, arg: SqlExpr) extends SqlExpr
@@ -119,67 +110,12 @@ case class LitSqlExpr(get: SqlLiteral) extends SqlExpr
 case class CaseSqlExpr(clauses: NonEmptyList[(SqlPredicate, SqlExpr)],
                        otherwise: SqlExpr) extends SqlExpr
 case class ParensSqlExpr(get: SqlExpr) extends SqlExpr
-case class OverSqlExpr(e: SqlExpr, over: List[(SqlExpr, SqlOrder)]) extends SqlExpr
+case class OverSqlExpr(e: SqlExpr, over: SqlOver) extends SqlExpr
 case class Verbatim(sql: String) extends SqlExpr
 
 object SqlExpr {
   def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
   def columns(h: List[String], rv: TableName) = h.map(x => (x, ColumnSqlExpr(rv, x))).toMap
-
-  /** Compile an `op`, delegating column reference expression
-    * compilation to `lookupColumn`.
-    */
-  def compileOp(op: Op, lookupColumn: String => SqlExpr)(implicit emitter: SqlEmitter): SqlExpr = {
-    import Op._
-    def rec(op: Op): SqlExpr = op match {
-      case OpLiteral(lit) => compileLiteral(lit)
-      case ColumnValue(cn, _) => lookupColumn(cn)
-      case Add(a, b) =>
-        BinSqlExpr("+", rec(a), rec(b))
-      case Sub(a, b) =>
-        BinSqlExpr("-", rec(a), rec(b))
-      case Mul(a, b) =>
-        BinSqlExpr("*", rec(a), rec(b))
-      case FloorDiv(a, b) =>
-        emitter.emitIntegerDivision(rec(a), rec(b))
-      case DoubleDiv(a, b) =>
-        BinSqlExpr("/", rec(a), rec(b))
-      case Pow(a, b) =>
-        /**
-         * @todo MSP - SQLite does not support POWER, work around somehow?
-         *
-         * SMB: No. I doubt we'll be using sqlite beyond test cases,
-         * and there are already things with it that bust. I am of the
-         * opinion we should just not sweat it.
-         */
-        FunSqlExpr("POWER", List(rec(a), rec(b)))
-      case Abs(a) => FunSqlExpr("ABS", List(rec(a)))
-      case Concat(as) =>
-        emitter.emitConcat(as.map(rec))
-      case If(test, conseq, altern) => (rec(conseq), rec(altern)) match {
-        case (cConseq, CaseSqlExpr(clauses, oth)) =>
-          CaseSqlExpr((SqlPredicate.compilePredicate(test, lookupColumn),
-                       cConseq) <:: clauses, oth)
-        case (CaseSqlExpr(clauses, oth), cAltern) =>
-          CaseSqlExpr((SqlPredicate.compilePredicate(Predicate.Not(test), lookupColumn),
-                       cAltern) <:: clauses, oth)
-        case (cConseq, cAltern) =>
-          CaseSqlExpr(NonEmptyList((SqlPredicate.compilePredicate(test, lookupColumn),
-                                    cConseq)),
-                      ParensSqlExpr(cAltern))
-      }
-      case Coalesce(l, r) =>
-        FunSqlExpr("coalesce", List(rec(l),rec(r)))
-      case DateAdd(d, n, u) =>
-        FunSqlExpr(emitter.emitDateAddName, List(IntervalExpr(n, u), rec(d)))
-      case DateDiff(u, s, e) =>
-        FunSqlExpr("datediff", List(Verbatim(u.toString.toLowerCase), rec(s), rec(e)))
-      case Funcall(name, db, ns, args, _) =>
-        FunSqlExpr(emitter emitProcedureName (name, ns) run,
-                   args map rec)
-    }
-    rec(op)
-  }
 
   def compileLiteral(e: PrimExpr): SqlExpr = e match {
     case StringExpr(_,s) => LitSqlExpr(SqlString(s))
@@ -221,12 +157,19 @@ object SqlExpr {
         ^(ncs, backSubstituteAux(e, sub))(CaseSqlExpr(_,_))
       case ParensSqlExpr(e) => backSubstituteAux(e, sub) map (ParensSqlExpr(_))
       case OverSqlExpr(e, over) =>
-        val nover = over.traverse[F,(SqlExpr,SqlOrder)] {
-          case (e, o) => backSubstituteAux(e, sub)map ((_, o))
-        }
-        ^(backSubstituteAux(e, sub), nover)(OverSqlExpr(_,_))
+        ^(backSubstituteAux(e, sub), backSubstituteOver(over, sub))(OverSqlExpr(_,_))
       case _ => expr.pure[F]
     }
+  }
+
+  private def backSubstituteOver[F[_]:Applicative](
+    over: SqlOver,
+    sub: (TableName, SqlColumn) => F[SqlExpr]): F[SqlOver] = over match {
+      case SqlOver(part, ord, begin, end) =>
+        (part.traverse(backSubstituteAux(_, sub)) |@|
+         ord.traverse {
+           case (e, o) => backSubstituteAux(e, sub) map ((_, o))
+         })(SqlOver(_, _, begin, end))
   }
 }
 

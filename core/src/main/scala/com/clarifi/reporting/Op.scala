@@ -13,66 +13,34 @@ import com.clarifi.reporting.ReportingUtils.splitWith
 /** An expression to be evaluated in the environment of a record. */
 sealed abstract class Op extends TraversableColumns[Op] {
   import Op._
-
-  /** Fold. */
-  def apply[z](opliteral: (PrimExpr) => z,
-               columnvalue: (ColumnName, PrimT) => z,
-               add: (z, z) => z,
-               sub: (z, z) => z,
-               mul: (z, z) => z,
-               floordiv: (z, z) => z,
-               doublediv: (z, z) => z,
-               pow: (z, z) => z,
-               abs: z => z,
-               concat: (List[z]) => z,
-               oif: (Predicate, => z, => z) => z, // lazy makes sense for If
-               coalesce: (z, => z) => z,
-               dateadd: (z, Int, TimeUnit) => z,
-               datediff: (TimeUnit, z, z) => z,
-               funcall: (String, String, List[String], List[z], PrimT) => z): z = {
-    def rec(o: Op): z = o match {
-      case OpLiteral(lit) => opliteral(lit)
-      case ColumnValue(col, pt) => columnvalue(col, pt)
-      case Add(l, r) => add(rec(l), rec(r))
-      case Sub(l, r) => sub(rec(l), rec(r))
-      case Mul(l, r) => mul(rec(l), rec(r))
-      case FloorDiv(l, r) => floordiv(rec(l), rec(r))
-      case DoubleDiv(l, r) => doublediv(rec(l), rec(r))
-      case Pow(l, r) => pow(rec(l), rec(r))
-      case Abs(x) => abs(rec(x))
-      case Concat(cs) => concat(cs map rec)
-      case If(t, c, a) => oif(t, rec(c), rec(a))
-      case Coalesce(l, r) => coalesce(rec(l), rec(r))
-      case DateAdd(o, n, u) => dateadd(rec(o), n, u)
-      case DateDiff(u, s, e) => datediff(u, rec(s), rec(e))
-      case Funcall(n, d, spc, args, ty) => funcall(n, d, spc, args map rec, ty)
-    }
-    rec(this)
-  }
-
   /** Evaluate this op in the environment `t`.  Throws if a column is
     * missing or there is a type mismatch.
     */
-  def eval(t: Record): PrimExpr = apply[PrimExpr](
-    opliteral = (lit) => lit,
-    columnvalue = (n, _) => t.getOrElse(n, sys.error("missing column: " + n + " in " + t.keySet)),
-    add = (_ + _),
-    sub = (_ - _),
-    mul = (_ * _),
-    floordiv = (_ floordiv _),
-    doublediv = (_ / _),
-    pow = (_ pow _),
-    abs = _ abs,
-    concat = xs => StringExpr(false, xs.map(_ extractNullableString "").concatenate),
-    oif = (test, c, a) => if (test eval t) c else a,
-    coalesce = (l, r) => l match { case NullExpr(_) => r ; case _ => l },
-    dateadd = (d, n, u) => d match {
-      case NullExpr(_) => d
-      case _ => DateExpr(false, u.increment(d.extractDate, n))
-    },
-    datediff = (u, s, e) => if(u == TimeUnit.Millisecond) IntExpr(false, (e.extractDate.getTime - s.extractDate.getTime).toInt) else sys error "datediff is meant to be used from SQL; built-in Java date subtraction is limited to milliseconds",
-    funcall = (n, _, _, _, _) =>
-                 sys error ("Can't invoke %s outside a database" format n))
+  def eval(t: Record): PrimExpr = this match {
+    case OpLiteral(l) => l
+    case ColumnValue(n, _) => t.getOrElse(n, sys.error("missing column: " + n + " in " + t.keySet))
+    case Add(l, r) => l.eval(t) + r.eval(t)
+    case Sub(l, r) => l.eval(t) - r.eval(t)
+    case Mul(l, r) => l.eval(t) * r.eval(t)
+    case FloorDiv(l,r) => l.eval(t) floordiv r.eval(t)
+    case DoubleDiv(l,r) => l.eval(t) / r.eval(t)
+    case Pow(l,r) => l.eval(t) pow r.eval(t)
+    case Abs(o) => o.eval(t) abs
+    case Concat(l) => StringExpr(false, l map (_.eval(t) extractNullableString "") concatenate)
+    case If(test,c,a) => if (test eval t) c eval t else a eval t
+    case Coalesce(l,r) => l.eval(t) match { case NullExpr(_) => r.eval(t) ; case e => e }
+    case DateAdd(d,n,u) => d.eval(t) match {
+      case n : NullExpr => n
+      case dt => DateExpr(false, u.increment(dt.extractDate, n))
+    }
+    case DateDiff(u,s,e) =>
+      if(u == TimeUnit.Millisecond)
+        IntExpr(false, (e.eval(t).extractDate.getTime - s.eval(t).extractDate.getTime).toInt)
+      else
+        sys error "datediff is meant to be used from SQL; built-in Java date subtraction is limited to milliseconds"
+    case Funcall(n,_,_,_,_) => sys error ("Can't invoke %s outside of a databse" format n)
+    case Windowed(_, _) => sys error ("Can't evaluate window functions outside of a database")
+  }
 
   def simplify(t: Map[ColumnName, Op]): Op = {
     def pnum(id: Byte)(p: PrimExpr) = p match {
@@ -86,51 +54,53 @@ sealed abstract class Op extends TraversableColumns[Op] {
     }
     def opbin(unsimpl: (Op, Op) => Op, simpl: (PrimExpr, PrimExpr) => PrimExpr,
               lident: PrimExpr => Boolean, rident: PrimExpr => Boolean
-            )(l: Op, r: Op) = (l, r) match {
+            )(l: Op, r: Op) = (simp(l), simp(r)) match {
       case (OpLiteral(l), OpLiteral(r)) => OpLiteral(simpl(l, r))
       case (OpLiteral(l), r) if lident(l) => r
       case (l, OpLiteral(r)) if rident(r) => l
       case (l, r) => unsimpl(l, r)
     }
-    apply[Op](opliteral = OpLiteral,
-              columnvalue = (n, ty) =>
-                t get n map (_ simplify t) getOrElse ColumnValue(n, ty),
-              add = opbin(Add, (_ + _), pnum(0), pnum(0)),
-              sub = opbin(Sub, (_ - _), Function const false, pnum(0)),
-              mul = opbin(Mul, (_ * _), pnum(1), pnum(1)),
-              floordiv = opbin(FloorDiv, (_ floordiv _),
-                               Function const false, Function const false),
-              doublediv = opbin(DoubleDiv, (_ / _),
-                                Function const false, pnum(1)),
-              pow = opbin(Pow, (_ pow _), Function const false, pnum(1)),
-              abs = x => x match {
-                case OpLiteral(y) => OpLiteral(y.abs)
-                case _ => Abs(x)
-              },
-              concat = {xs =>
-                splitWith(xs map {case OpLiteral(lit) => Left(lit)
-                                  case op => Right(op)})(_.isLeft).toList flatMap {
-                  case lits@(Left(_) :: _) =>
-                    List(OpLiteral(StringExpr(
-                      false, lits.map(_.left.get extractNullableString "").suml)))
-                  case unsimpl => unsimpl flatMap (_.right.toSeq)
-                } filter {case OpLiteral(StringExpr(_, "")) => false
-                          case _ => true} match {
-                  case List() => OpLiteral(StringExpr(false, ""))
-                  case List(lit@OpLiteral(StringExpr(_, _))) => lit
-                  // one-arg concat is not an identity for non-strings
-                  // case List(lit@OpLiteral(_)) => lit
-                  case unsimpl => Concat(unsimpl)
-                }},
-              oif = ((test, c, a) =>
-                Predicates simplify (test liftOp (_ simplify t: Id[Op])) match {
-                  case Predicate.Atom(b) => if (b) c else a
-                  case pr => If(pr, c, a)
-              }),
-              coalesce = (l, r) => Coalesce(l, r),
-              dateadd = DateAdd,
-              datediff = DateDiff,
-              funcall = Funcall)
+    def simp(op: Op): Op = op match {
+      case o : OpLiteral => o
+      case ColumnValue(n, ty) =>
+        t get n map simp getOrElse ColumnValue(n, ty)
+      case Add(l,r) => opbin(Add, (_ + _), pnum(0), pnum(0))(l,r)
+      case Sub(l,r) => opbin(Sub, (_ - _), Function const false, pnum(0))(l,r)
+      case Mul(l,r) => opbin(Mul, (_ * _), pnum(1), pnum(1))(l,r)
+      case FloorDiv(l,r) =>
+        opbin(FloorDiv, (_ floordiv _), Function const false, Function const false)(l,r)
+      case DoubleDiv(l,r) => opbin(DoubleDiv, (_ / _), Function const false, pnum(1))(l,r)
+      case Pow(l,r) => opbin(Pow, (_ pow _), Function const false, pnum(1))(l,r)
+      case Abs(x) => simp(x) match {
+          case OpLiteral(y) => OpLiteral(y.abs)
+          case _ => Abs(x)
+        }
+      case Concat(xs) =>
+        splitWith(xs.map(simp)){case lit : OpLiteral => lit}.toList flatMap {
+          case Left(lits) =>
+            val newS = lits.toList.map(_.lit extractNullableString "").suml
+            if (newS == "") List()
+            else List(OpLiteral(StringExpr(false, newS)))
+          case Right(l) => l
+        } match {
+          case List() => OpLiteral(StringExpr(false, ""))
+          // Note: even though Concat on a non-string isn't the identity,
+          // we've turned everything into a StringExpr by this point.
+          case List(l : OpLiteral) => l
+          case l => Concat(l)
+        }
+      case If(test, c, a) =>
+        Predicates simplify (test liftOp (simp(_) : Id[Op])) match {
+          case Predicate.Atom(b) => if (b) c else a
+          case pr => If(pr, c, a)
+        }
+      case Coalesce(l, r) => Coalesce(simp(l), simp(r))
+      case DateAdd(d,n,u) => DateAdd(simp(d),n,u)
+      case DateDiff(u,s,e) => DateDiff(u,simp(s),simp(e))
+      case Funcall(nm,db,ns,args,typ) => Funcall(nm,db,ns,args.map(simp(_)),typ)
+      case Windowed(agg, w) => Windowed(agg.simplify(t), w.simplify(t))
+    }
+    simp(this)
   }
 
   def guessTypeUnsafe: PrimT =
@@ -141,89 +111,87 @@ sealed abstract class Op extends TraversableColumns[Op] {
   def guessType: ValidationNel[String, PrimT] = {
     import PrimT._
     type M[A] = ValidationNel[String, A]
-    def numRank(t: PrimT): Option[Int] = t match {
-      case ByteT(_) => Some(10)
-      case ShortT(_) => Some(20)
-      case IntT(_) => Some(30)
-      case LongT(_) => Some(40)
-      case DoubleT(_) => Some(50)
-      case _ => None
+    import Op.numbin
+
+    this match {
+      case OpLiteral(x) => x.typ.success
+      case ColumnValue(_, typ) => typ.success
+      case Add(l,r) => numbin(l guessType, r guessType)
+      case Sub(l,r) => numbin(l guessType, r guessType)
+      case Mul(l,r) => numbin(l guessType, r guessType)
+      case FloorDiv(l,r) => numbin(l guessType, r guessType)
+      case DoubleDiv(l,r) => numbin(l guessType, r guessType)
+      case Pow(l,r) => numbin(l guessType, r guessType)
+      case Abs(o) => o guessType
+      case Concat(xs) => xs.traverse_[M](x => x.guessType >| (())) map (_ => StringT(0, false))
+      case If(_, t, f) =>
+        (t.guessType |@| f.guessType)(_ -> _) flatMap {
+          case (c, a) =>
+            c sup a map (_.success) getOrElse
+              ("Unmatched if branches %s and %s" format (c, a) failureNel)
+        }
+      case Coalesce(e, t) =>
+        (e.guessType |@| t.guessType)(_ -> _) flatMap {
+          case (e, t) =>
+            e.withoutNull sup t map (_.success) getOrElse
+            ("Unmatched coalesce branches %s and %s" format (e, t) failureNel)
+        }
+      case DateAdd(d, _, _) => d guessType
+      case DateDiff(_, _, _) => IntT().success
+      case Funcall(nm,db,ns,args,ty) => args.traverse_[M](x => x.guessType >| (())) >| ty
+      case Windowed(agg, _) => agg guessType
     }
-    // Autopromoting numeric type unification.
-    def numbin(mleft: M[PrimT], mright: M[PrimT]): M[PrimT] =
-      (mleft |@| mright)(_ -> _) flatMap {case (left, right) =>
-        (numRank(left), numRank(right), left sup right) match {
-          case (None, _, _) => ("Nonnumeric type " + left).failureNel
-          case (_, None, _) => ("Nonnumeric type " + right).failureNel
-          case (_, _, Some(t)) => t.success
-          case (Some(rkl), Some(rkr), _) =>
-            (if (rkl < rkr) right else left).success
-      }}
-    apply[M[PrimT]](
-      opliteral = x => x.typ |> (_.success),
-      columnvalue = (_, typ) => typ.success,
-      add = numbin,
-      sub = numbin,
-      mul = numbin,
-      floordiv = numbin,
-      doublediv = numbin,
-      pow = numbin,
-      abs = x => x,
-      concat = xs => xs.sequence map (Function const StringT(0, false)),
-      oif = (_, mc, ma) => (mc |@| ma)(_ -> _) flatMap {case (c, a) =>
-        c sup a map (_.success) getOrElse
-        ("Unmatched if branches %s and %s" format (c, a) failureNel)},
-      coalesce = (e, t) => (e |@| t)(_ -> _) flatMap {case (e, t) =>
-        e.withoutNull sup t map (_.success) getOrElse
-        ("Unmatched coalesce branches %s and %s" format (e, t) failureNel)},
-      dateadd = (d, _, _) => d, // type of date arithmetic is always a date
-      datediff = (_, _, _) => IntT().success,
-      funcall = (name, db, ns, args, ty) => args.sequence >| ty)
   }
 
   /** Post-order replace the expression tree, with traversal. */
   def postReplace[F[_]: Monad](f: Op => F[Op]): F[Op] = {
     def binop(b: (Op, Op) => Op) =
       (fl: F[Op], fr: F[Op]) => b.lift[F].apply(fl, fr) >>= f
-    apply[F[Op]](
-      opliteral = f compose OpLiteral,
-      columnvalue = (n, t) => f(ColumnValue(n, t)),
-      add = binop(Add),
-      sub = binop(Sub),
-      mul = binop(Mul),
-      floordiv = binop(FloorDiv),
-      doublediv = binop(DoubleDiv),
-      pow = binop(Pow),
-      abs = _.map(Abs(_)) >>= f,
-      concat = _.sequence flatMap (f compose Concat),
-      oif = (t, c, a) => ((t postReplaceOp f) |@| c |@| a)(If) >>= f,
-      coalesce = (l, r) => binop(Coalesce)(l, r),
-      dateadd = (d, n, u) => d.flatMap(d => f(DateAdd(d,n,u))),
-      datediff = (u, sF, eF) => binop((s, e) => DateDiff(u, s, e))(sF, eF),
-      funcall = (name, db, ns, args, ty) => args.sequence flatMap (args =>
-                  f(Funcall(name, db, ns, args, ty))))
+
+    this match {
+      case l : OpLiteral => f(l)
+      case c : ColumnValue => f(c)
+      case Add(l,r) => binop(Add)(l postReplace f, r postReplace f)
+      case Sub(l,r) => binop(Sub)(l postReplace f, r postReplace f)
+      case Mul(l,r) => binop(Mul)(l postReplace f, r postReplace f)
+      case FloorDiv(l,r) => binop(FloorDiv)(l postReplace f, r postReplace f)
+      case DoubleDiv(l,r) => binop(DoubleDiv)(l postReplace f, r postReplace f)
+      case Pow(l,r) => binop(Pow)(l postReplace f, r postReplace f)
+      case Abs(o) => o.postReplace(f) flatMap (x => f(Abs(x)))
+      case Concat(xs) => xs.traverse(_ postReplace f) flatMap (f compose Concat)
+      case If(b,y,n) => (b.postReplaceOp(f) |@| y.postReplace(f) |@| n.postReplace(f))(If) flatMap f
+      case Coalesce(l,r) => binop(Coalesce)(l postReplace f, r postReplace f)
+      case DateAdd(d, n, u) => d.postReplace(f) flatMap { nd => f(DateAdd(nd,n,u)) }
+      case DateDiff(u, st, en) => binop(DateDiff(u,_,_))(st postReplace f, en postReplace f)
+      case Funcall(nm, db, ns, args, ty) =>
+        args.traverse(_ postReplace f) flatMap {
+          nargs => f(Funcall(nm, db, ns, nargs, ty))
+        }
+      case Windowed(agg, w) => (agg.postReplaceOp(f) |@| w.postReplaceOp(f))(Windowed)
+    }
   }
 
   /** Traverse the column references in an `Op`. */
   def traverseColumns[F[_]: Applicative](f: ColumnName => F[ColumnName]): F[Op] = {
-    def binop[A](liftee: (A, A) => A) = liftee.lift[F]
-    apply[F[Op]](
-      opliteral = (lit) => (OpLiteral(lit): Op).pure[F],
-      columnvalue = (c, ty) => f(c) map (ColumnValue(_, ty)),
-      add = binop(Add(_, _)),
-      sub = binop(Sub(_, _)),
-      mul = binop(Mul(_, _)),
-      floordiv = binop(FloorDiv(_, _)),
-      doublediv = binop(DoubleDiv(_, _)),
-      pow = binop(Pow(_, _)),
-      abs = _.map(Abs(_)),
-      concat = {cl => cl.sequence map (Concat(_))},
-      oif = (test, c, a) => ((test traverseColumns f) |@| c |@| a)(If),
-      coalesce = (l, r) => (l |@| r)(Coalesce),
-      dateadd = (d, n, u) => d.map(DateAdd(_,n,u)),
-      datediff = (u, sF, eF) => binop[Op]((s, e) => DateDiff(u, s, e))(sF, eF),
-      funcall = ((name, db, ns, args, ty) =>
-                 args.sequence map (Funcall(name, db, ns, _, ty))))
+    def binop(liftee: (Op, Op) => Op) = liftee.lift[F]
+    this match {
+      case l : OpLiteral => (l : Op).pure[F]
+      case ColumnValue(c, ty) => f(c) map (ColumnValue(_, ty))
+      case Add(l,r) => binop(Add(_,_))(l traverseColumns f, r traverseColumns f)
+      case Sub(l,r) => binop(Sub(_,_))(l traverseColumns f, r traverseColumns f)
+      case Mul(l,r) => binop(Mul(_,_))(l traverseColumns f, r traverseColumns f)
+      case FloorDiv(l,r) => binop(FloorDiv(_,_))(l traverseColumns f, r traverseColumns f)
+      case DoubleDiv(l,r) => binop(DoubleDiv(_,_))(l traverseColumns f, r traverseColumns f)
+      case Pow(l,r) => binop(Pow(_,_))(l traverseColumns f, r traverseColumns f)
+      case Abs(o) => o.traverseColumns(f).map(Abs)
+      case Concat(xs) => xs.traverse(_ traverseColumns f).map(Concat)
+      case If(b,y,n) => (b.traverseColumns(f) |@| y.traverseColumns(f) |@| n.traverseColumns(f))(If)
+      case Coalesce(l,r) => (l.traverseColumns(f) |@| r.traverseColumns(f))(Coalesce)
+      case DateAdd(d,n,u) => d.traverseColumns(f) map(DateAdd(_,n,u))
+      case DateDiff(u,s,e) => binop(DateDiff(u,_,_))(s.traverseColumns(f), e.traverseColumns(f))
+      case Funcall(nm,db,ns,args,ty) => args.traverse(_ traverseColumns f) map (Funcall(nm,db,ns,_,ty))
+      case Windowed(agg, w) => (agg.traverseColumns(f) |@| w.traverseColumns(f))(Windowed)
+    }
   }
 
   def typedColumnFoldMap[Z: Monoid](f: (ColumnName, PrimT) => Z): Z = {
@@ -288,6 +256,30 @@ object Ops {
   def coalesce(l: Op, r: Op): Op = Op.Coalesce(l, r)
 }
 
+case class Frame(preceding: Option[Int], following: Option[Int])
+case class Window(
+  partition: List[Op],
+  order: List[(Op, SortOrder)],
+  frame: Frame
+) extends TraversableColumns[Window] {
+  def traverseColumns[F[_]: Applicative](f: ColumnName => F[ColumnName]): F[Window] = {
+    val fPart = partition.traverse(_.traverseColumns(f))
+    val fOrd = order.traverse { case (o, so) => o.traverseColumns(f).map(_ -> so) }
+    ^(fPart, fOrd)(Window(_,_,frame))
+  }
+
+  def typedColumnFoldMap[Z: Monoid](f: (ColumnName, PrimT) => Z): Z =
+    partition.foldMap(_.typedColumnFoldMap(f)) |+|
+    order.foldMap(_._1.typedColumnFoldMap(f))
+
+  def postReplaceOp[F[_]:Monad](f: Op => F[Op]) =
+    (partition.traverse(_ postReplace f) |@|
+     order.traverse{ case (o, s) => o.postReplace(f) map ((_,s)) })(Window(_,_,frame))
+
+  def simplify(f: Map[ColumnName, Op]) =
+    Window(partition.map(_ simplify f), order.map{ case (x, y) => (x simplify f, y) }, frame)
+}
+
 object Op {
   case class OpLiteral(lit: PrimExpr) extends Op
   case class ColumnValue(col: ColumnName, typ: PrimT) extends Op
@@ -305,8 +297,29 @@ object Op {
   case class DateDiff(units: TimeUnit, start: Op, end: Op) extends Op
   case class Funcall(name: String, database: String, namespace: List[String],
                      args: List[Op], typ: PrimT) extends Op
+  case class Windowed(agg: AggFunc, window: Window) extends Op
 
   implicit val OpEqual: Equal[Op] = equalA
   implicit val OpShow: Show[Op] = showFromToString
+
+  import PrimT._
+  private def numRank(t: PrimT): Option[Int] = t match {
+    case ByteT(_) => Some(10)
+    case ShortT(_) => Some(20)
+    case IntT(_) => Some(30)
+    case LongT(_) => Some(40)
+    case DoubleT(_) => Some(50)
+    case _ => None
+  }
+  // Autopromoting numeric type unification.
+  def numbin(mleft: ValidationNel[String,PrimT], mright: ValidationNel[String,PrimT]): ValidationNel[String,PrimT] =
+    (mleft |@| mright)(_ -> _) flatMap {case (left, right) =>
+      (numRank(left), numRank(right), left sup right) match {
+        case (None, _, _) => ("Nonnumeric type " + left).failureNel
+        case (_, None, _) => ("Nonnumeric type " + right).failureNel
+        case (_, _, Some(t)) => t.success
+        case (Some(rkl), Some(rkr), _) =>
+          (if (rkl < rkr) right else left).success
+    }}
 }
 

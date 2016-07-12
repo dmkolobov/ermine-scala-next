@@ -57,11 +57,7 @@ object SqlEmitterGens {
   /** Make `OverSqlExpr`s. */
   val overSqlExprs = for {
     i <- sqlInts map (LitSqlExpr(_))
-    l <- nonEmptyListOf(for {
-           b <- sqlBools map (LitSqlExpr(_))
-           o <- sqlOrders
-         } yield (b, o))
-  } yield OverSqlExpr(i, l)
+  } yield OverSqlExpr(i, SqlOver(Nil, Nil, None, None))
 
   /** Make FromTables exprs. */
   val fromTables = for {
@@ -172,7 +168,7 @@ object TestSqlEmitters extends Properties("emitSql") {
      + """ when ([bob].[x]) = (2) then 2"""
      + """ when ([bob].[x]) = (3) then 3"""
      + """ else (([bob].[x]) + (3)) end)""") =?
-       SqlExpr.compileOp(if023, ColumnSqlExpr(TableName("bob"), _))(e).emitSql(e).run
+       b.compileOp(if023, ColumnSqlExpr(TableName("bob"), _))(e).emitSql(e).run
   }
 
   val sqliteTestLiteral : SqlQuery =

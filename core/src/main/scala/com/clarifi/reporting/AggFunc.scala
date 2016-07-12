@@ -1,11 +1,16 @@
 package com.clarifi.reporting
 
-import scalaz.{Applicative, Equal, Foldable, IterV, Monoid, Reducer, Show}
+import scalaz.{
+  Applicative, Equal, Foldable, IterV, Monoid,
+  Reducer, Show, Monad,
+  ValidationNel
+}
 import Reducer.unitReducer
 import scalaz.std.anyVal._
 import scalaz.std.tuple._
 import scalaz.syntax.applicative._
 import scalaz.syntax.monoid._
+import scalaz.syntax.validation._
 
 import com.clarifi.machines._
 import com.clarifi.machines.Source._
@@ -51,20 +56,40 @@ sealed abstract class AggFunc extends TraversableColumns[AggFunc] {
         wt.typedColumnFoldMap(f)
     }
 
-  /** Fold. */
-  def apply[z](count:  => z, sum: (Op) => z, avg: (Op) => z,
-               min: (Op) => z, max: (Op) => z,
-               stddev: (Op) => z, variance: (Op) => z,
-               wmean: (Op,Op) => z, whmean: (Op,Op) => z): z = this match {
-    case Count => count
-    case Sum(op) => sum(op)
-    case Avg(op) => avg(op)
-    case Min(op) => min(op)
-    case Max(op) => max(op)
-    case Stddev(op) => stddev(op)
-    case Variance(op) => variance(op)
-    case WMean(op,wt) => wmean(op,wt)
-    case WHMean(op,wt) => whmean(op,wt)
+  def guessType: ValidationNel[String, PrimT] = this match {
+    case Count => PrimT.IntT(false).success
+    case Sum(op) => op guessType
+    case Avg(op) => op guessType
+    case Min(op) => op guessType
+    case Max(op) => op guessType
+    case Stddev(op) => op guessType
+    case Variance(op) => op guessType
+    case WMean(op,wt) => Op.numbin(op guessType, wt guessType)
+    case WHMean(op,wt) => Op.numbin(op guessType, wt guessType)
+  }
+
+  def simplify(t: Map[ColumnName,Op]) = this match {
+    case Count => Count
+    case Sum(op) => Sum(op simplify t)
+    case Avg(op) => Avg(op simplify t)
+    case Min(op) => Min(op simplify t)
+    case Max(op) => Max(op simplify t)
+    case Stddev(op) => Stddev(op simplify t)
+    case Variance(op) => Variance(op simplify t)
+    case WMean(op,wt) => WMean(op simplify t, wt simplify t)
+    case WHMean(op,wt) => WHMean(op simplify t, wt simplify t)
+  }
+
+  def postReplaceOp[F[_]:Monad](f: Op => F[Op]) = this match {
+    case Count => Count.pure[F]
+    case Sum(op) => op.postReplace(f).map(Sum)
+    case Avg(op) => op.postReplace(f).map(Avg)
+    case Min(op) => op.postReplace(f).map(Min)
+    case Max(op) => op.postReplace(f).map(Max)
+    case Stddev(op) => op.postReplace(f).map(Stddev)
+    case Variance(op) => op.postReplace(f).map(Variance)
+    case WMean(op,wt) => (op.postReplace(f) |@| wt.postReplace(f))(WMean)
+    case WHMean(op,wt) => (op.postReplace(f) |@| wt.postReplace(f))(WHMean)
   }
 }
 

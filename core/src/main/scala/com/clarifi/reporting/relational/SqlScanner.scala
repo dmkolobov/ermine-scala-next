@@ -9,8 +9,7 @@ import com.clarifi.reporting.backends._
 import com.clarifi.reporting.util.PartitionedSet
 import DB._
 import ReportingUtils.simplifyPredicate
-import SqlPredicate._
-import SqlExpr.{compileOp, compileLiteral}
+import SqlExpr._
 
 import scalaz._
 import scalaz.Coproduct._
@@ -65,8 +64,77 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     List(c, SqlInsert(table, c.hints.sortColumns(header.keySet), from))
   }
 
-  // `attr`: The codomain attribute
-  def compileAggFunc(attr: Attribute, f: AggFunc, attrs: String => SqlExpr): SqlExpr = f match {
+  /** Compile an `op`, delegating column reference expression
+    * compilation to `lookupColumn`.
+    */
+  def compileOp(op: Op, lookupColumn: String => SqlExpr)(implicit emitter: SqlEmitter): SqlExpr = {
+    import Op._
+    def rec(op: Op): SqlExpr = op match {
+      case OpLiteral(lit) => compileLiteral(lit)
+      case ColumnValue(cn, _) => lookupColumn(cn)
+      case Add(a, b) =>
+        BinSqlExpr("+", rec(a), rec(b))
+      case Sub(a, b) =>
+        BinSqlExpr("-", rec(a), rec(b))
+      case Mul(a, b) =>
+        BinSqlExpr("*", rec(a), rec(b))
+      case FloorDiv(a, b) =>
+        emitter.emitIntegerDivision(rec(a), rec(b))
+      case DoubleDiv(a, b) =>
+        BinSqlExpr("/", rec(a), rec(b))
+      case Pow(a, b) =>
+        /**
+         * @todo MSP - SQLite does not support POWER, work around somehow?
+         *
+         * SMB: No. I doubt we'll be using sqlite beyond test cases,
+         * and there are already things with it that bust. I am of the
+         * opinion we should just not sweat it.
+         */
+        FunSqlExpr("POWER", List(rec(a), rec(b)))
+      case Abs(a) => FunSqlExpr("ABS", List(rec(a)))
+      case Concat(as) =>
+        emitter.emitConcat(as.map(rec))
+      case If(test, conseq, altern) => (rec(conseq), rec(altern)) match {
+        case (cConseq, CaseSqlExpr(clauses, oth)) =>
+          CaseSqlExpr((compilePredicate(test, lookupColumn),
+                       cConseq) <:: clauses, oth)
+        case (CaseSqlExpr(clauses, oth), cAltern) =>
+          CaseSqlExpr((compilePredicate(Predicate.Not(test), lookupColumn),
+                       cAltern) <:: clauses, oth)
+        case (cConseq, cAltern) =>
+          CaseSqlExpr(NonEmptyList((compilePredicate(test, lookupColumn),
+                                    cConseq)),
+                      ParensSqlExpr(cAltern))
+      }
+      case Coalesce(l, r) =>
+        FunSqlExpr("coalesce", List(rec(l),rec(r)))
+      case DateAdd(d, n, u) =>
+        FunSqlExpr(emitter.emitDateAddName, List(IntervalExpr(n, u), rec(d)))
+      case DateDiff(u, s, e) =>
+        FunSqlExpr("datediff", List(Verbatim(u.toString.toLowerCase), rec(s), rec(e)))
+      case Funcall(name, db, ns, args, _) =>
+        FunSqlExpr(emitter emitProcedureName (name, ns) run,
+                   args map rec)
+      case Windowed(agg, over) =>
+        OverSqlExpr(compileAggFunc(agg, lookupColumn), compileWindow(over, lookupColumn))
+    }
+    rec(op)
+  }
+
+  private def compileOrder(ord: SortOrder): SqlOrder =
+    ord(SqlAsc, SqlDesc)
+
+  private def compileWindow(over: Window, attrs: String => SqlExpr): SqlOver = over match {
+    case Window(part, ord, frame) =>
+      SqlOver(
+        part.map(compileOp(_, attrs)),
+        ord.map{ case (e, o) => (compileOp(e, attrs), compileOrder(o)) },
+        frame.preceding,
+        frame.following
+      )
+  }
+
+  def compileAggFunc(f: AggFunc, attrs: String => SqlExpr): SqlExpr = f match {
     case Count => FunSqlExpr("COUNT", List(Verbatim("*")))
     case Sum(x) => FunSqlExpr("SUM", List(compileOp(x, attrs)))
     case Avg(x) => FunSqlExpr("AVG", List(compileOp(x, attrs)))
@@ -86,6 +154,25 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       val den = FunSqlExpr("SUM", List(BinSqlExpr("/", cw, compileOp(x,attrs))))
       BinSqlExpr("/", num, den)
   }
+
+  /** Compile a `predicate`, delegating column reference expression
+    * compilation to `lookupColumn`.
+    */
+  def compilePredicate(predicate: Predicate,
+                       lookupColumn: String => SqlExpr)(
+                       implicit emitter: SqlEmitter): SqlPredicate = {
+    def subop(op: Op) = compileOp(op, lookupColumn)
+    predicate.apply[SqlPredicate](
+      atom = b => SqlTruth(b),
+      lt = (s1, s2) => SqlLt(subop(s1), subop(s2)),
+      gt = (s1, s2) => SqlGt(subop(s1), subop(s2)),
+      eq = (s1, s2) => SqlEq(subop(s1), subop(s2)),
+      not = e => SqlNot(e),
+      or = SqlOr(_, _),
+      and = SqlAnd(_, _),
+      isNull = e => SqlIsNull(subop(e)))
+  }
+
 
   val exec = new SqlExecution()
   import exec._
@@ -915,7 +1002,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       DistinctiveQuery(Map(attr.name -> attr.t), _ => q(true) match {
         case (_, q) => (true, {
           val v = asSelect(h, q, x => !x.isAggregated && !x.options("distinct"))
-          v.copy(attrs = Map(attr.name -> compileAggFunc(attr, f, v.attrs)),
+          v.copy(attrs = Map(attr.name -> compileAggFunc(f, v.attrs)),
                  isAggregated = true)
         })
       })
@@ -932,7 +1019,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                               } ++
                               aggs.map {
                                 case (attr, f) =>
-                                  attr.name -> compileAggFunc(attr, f, v.attrs)
+                                  attr.name -> compileAggFunc(f, v.attrs)
                               }.toMap,
                       groupBy = group map (compileOp(_, v.attrs)),
                       isAggregated = true )
@@ -1009,9 +1096,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                         attrs = sel.attrs -- key -- vals ++ keyMap.map {
                           case (r, (col, op, defval)) => col ->
                             FunSqlExpr("coalesce", List(
-                              compileAggFunc(Attribute(col, defval.typ), // ignored anyway
-                                             Max(Op.If(Predicate.fromRecord(r),
-                                                       op, 
+                              compileAggFunc(Max(Op.If(Predicate.fromRecord(r),
+                                                       op,
                                                        Op.OpLiteral(NullExpr(defval.typ)))),
                                              sel.attrs
                                             ),

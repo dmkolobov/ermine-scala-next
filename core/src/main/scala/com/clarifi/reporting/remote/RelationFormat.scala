@@ -398,7 +398,7 @@ object Format {
   lazy val attributeR: Reader[Attribute, AttributeF] =
     p2R(stringR, primTR)(Attribute(_, _))
 
-  lazy val opR: Reader[Op, DynamicF] = fixR[Op, DynamicF](self => union15R(
+  lazy val opR: Reader[Op, DynamicF] = fixR[Op, DynamicF](self => union16R(
     primExprR map OpLiteral,
     p2R(stringR, primTR)(ColumnValue),
     p2R(self, self)((a, b) => Add(a, b)),
@@ -413,7 +413,8 @@ object Format {
     p3R(self, intR, timeUnitR)(DateAdd),
     p3R(timeUnitR, self, self)(DateDiff),
     p5R(stringR, stringR, listR(stringR), listR(self), primTR)(Funcall),
-    self map (Abs(_))
+    self map (Abs(_)),
+    p2R(aggR, windowR)(Windowed)
   ) erase)
     
   lazy val aggR: Reader[AggFunc, DynamicF] = union9R(
@@ -463,18 +464,34 @@ object Format {
     case JoinMode.Full  => 3
   }
 
+  type FrameF = P2[OptionF[IntF], OptionF[IntF]]
+  private val frameW: Writer[Frame, FrameF] =
+    p2W(optionW(intW), optionW(intW))(w => { case Frame(b, e) => w(b, e) })
+  private val frameR: Reader[Frame, FrameF] =
+    p2R(optionR(intR), optionR(intR))(Frame)
+
+  type WindowF = RepeatF[DynamicF] :: RepeatF[P2[DynamicF,SortOrderF]] :: FrameF
+
+  private val windowW: Writer[Window, WindowF] =
+    p3W(repeatW(opW), repeatW(tuple2W(opW, sortOrderW)), frameW)(w => {
+      case Window(part, ord, frame) => w(part, ord, frame)
+    })
+  private val windowR: Reader[Window, WindowF] =
+    p3R(listR(opR), listR(tuple2R(opR, sortOrderR)), frameR)(Window)
+
   lazy val opW: Writer[Op, DynamicF] = fixW[Op, DynamicF]{self =>
     lazy val binopW = tuple2W(self, self)
-    s15W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
+    s16W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
          binopW, binopW, binopW, binopW, repeatW(self),
          tuple3W(predicateW, self, self),
          binopW,
          tuple3W(self, intW, timeUnitW),
          tuple3W(timeUnitW, self, self),
          tuple5W(stringW, stringW, repeatW(stringW), repeatW(self), primTW),
-         self
+         self,
+         tuple2W(aggW, windowW)
          )(
-    (opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, dateadd, datediff, funcall, abs) => (r: Op) => r match {
+    (opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, dateadd, datediff, funcall, abs, win) => (r: Op) => r match {
       case OpLiteral(lit) => opliteral(lit)
       case ColumnValue(cn, ty) => columnvalue(cn -> ty)
       case Add(a, b) => add(a -> b)
@@ -490,11 +507,21 @@ object Format {
       case DateDiff(u, s, e) => datediff(u, s, e)
       case Funcall(n, db, ns, args, ty) => funcall((n, db, ns, args, ty))
       case Abs(x) => abs(x)
+      case Windowed(o, w) => win((o, w))
     }) erase}
   lazy val aggW: Writer[AggFunc, DynamicF] = s9W(unitW, opW, opW, opW, opW, opW, opW, tuple2W(opW,opW), tuple2W(opW,opW))(
-    (count, sum, avg, min, max, stddev, variance, wmean, whmean) =>
-      (r:AggFunc) =>
-        r(count(()), sum, avg, min, max, stddev, variance, Function.untupled(wmean), Function.untupled(whmean))) erase
+    (count, sum, avg, min, max, stddev, variance, wmean, whmean) => (agg : AggFunc) => agg match {
+      case Count => count(())
+      case Sum(e) => sum(e)
+      case Avg(e) => avg(e)
+      case Min(e) => min(e)
+      case Max(e) => max(e)
+      case Stddev(e) => stddev(e)
+      case Variance(e) => variance(e)
+      case WMean(w,e) => wmean(w, e)
+      case WHMean(w,e) => whmean(w, e)
+    }) erase
+
   lazy val orderedHeaderW: Writer[Header.Ordered, OrderedHeaderF] =
     repeatW(tuple2W(stringW, primTW))
   lazy val headerW: Writer[Header, HeaderF] = orderedHeaderW cmap ((h: Header) =>
