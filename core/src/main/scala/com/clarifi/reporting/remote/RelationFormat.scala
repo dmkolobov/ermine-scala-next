@@ -389,7 +389,7 @@ object Format {
   lazy val attributeR: Reader[Attribute, AttributeF] =
     p2R(stringR, primTR)(Attribute(_, _))
 
-  lazy val opR: Reader[Op, DynamicF] = fixR[Op, DynamicF](self => union15R(
+  lazy val opR: Reader[Op, DynamicF] = fixR[Op, DynamicF](self => union17R(
     primExprR map OpLiteral,
     p2R(stringR, primTR)(ColumnValue),
     p2R(self, self)((a, b) => Add(a, b)),
@@ -404,7 +404,9 @@ object Format {
     p3R(self, intR, timeUnitR)(DateAdd),
     p3R(timeUnitR, self, self)(DateDiff),
     p5R(stringR, stringR, listR(stringR), listR(self), primTR)(Funcall),
-    self map (Abs(_))
+    self map (Abs(_)),
+    self map (Upper(_)),
+    self map (Lower(_))
   ) erase)
     
   lazy val aggR: Reader[AggFunc, DynamicF] = union9R(
@@ -442,16 +444,18 @@ object Format {
 
   lazy val opW: Writer[Op, DynamicF] = fixW[Op, DynamicF]{self =>
     lazy val binopW = tuple2W(self, self)
-    s15W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
+    s17W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
          binopW, binopW, binopW, binopW, repeatW(self),
          tuple3W(predicateW, self, self),
          binopW,
          tuple3W(self, intW, timeUnitW),
          tuple3W(timeUnitW, self, self),
          tuple5W(stringW, stringW, repeatW(stringW), repeatW(self), primTW),
-         self
+         self,
+         self, // this is for uppercase
+         self  // this is for lowercase
          )(
-    (opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, dateadd, datediff, funcall, abs) => (r: Op) => r match {
+    (opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, dateadd, datediff, funcall, abs, upper, lower) => (r: Op) => r match {
       case OpLiteral(lit) => opliteral(lit)
       case ColumnValue(cn, ty) => columnvalue(cn -> ty)
       case Add(a, b) => add(a -> b)
@@ -467,6 +471,8 @@ object Format {
       case DateDiff(u, s, e) => datediff(u, s, e)
       case Funcall(n, db, ns, args, ty) => funcall((n, db, ns, args, ty))
       case Abs(x) => abs(x)
+      case Upper(x) => upper(x)
+      case Lower(x) => lower(x)
     }) erase}
   lazy val aggW: Writer[AggFunc, DynamicF] = s9W(unitW, opW, opW, opW, opW, opW, opW, tuple2W(opW,opW), tuple2W(opW,opW))(
     (count, sum, avg, min, max, stddev, variance, wmean, whmean) =>

@@ -145,6 +145,16 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case _ => sys.error(this.toString + " does not support absolute value.")
   }
 
+  def upper = this match {
+    case StringExpr(b, s) => StringExpr(b, s.toUpperCase)
+    case _ => this
+  }
+
+  def lower = this match {
+    case StringExpr(b, s) => StringExpr(b, s.toLowerCase)
+    case _ => this
+  }
+
   /** Change type to nullable, if not already. */
   def withNull: PrimExpr = if (this nullable) this else (this match {
     case x: UuidExpr => x.copy(nullable=true)

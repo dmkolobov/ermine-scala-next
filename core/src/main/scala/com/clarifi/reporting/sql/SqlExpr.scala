@@ -154,6 +154,8 @@ object SqlExpr {
          */
         FunSqlExpr("POWER", List(rec(a), rec(b)))
       case Abs(a) => FunSqlExpr("ABS", List(rec(a)))
+      case Upper(s) => FunSqlExpr("UPPER", List(rec(s)))
+      case Lower(s) => FunSqlExpr("LOWER", List(rec(s)))
       case Concat(as) =>
         emitter.emitConcat(as.map(rec))
       case If(test, conseq, altern) => (rec(conseq), rec(altern)) match {
