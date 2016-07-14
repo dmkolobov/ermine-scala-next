@@ -77,6 +77,12 @@ type OpUn v = forall a b op. (exists c. b <- (a, c), AsOp op) => op a v -> Op b 
 abs : PrimitivieNum => OpUn n
 abs x = funcall1# absModule (asOp x)
 
+upper : AsOp op => op r String -> Op r String 
+upper x = funcall1# upperModule (asOp x)
+
+lower : AsOp op => op r String -> Op r String 
+lower x = funcall1# lowerModule (asOp x)
+
 negate x = (prim $ Some 0.0 ) - x
 
 fromNumericOp : (PrimitiveNum n, PrimitiveNum n2, AsOp op) => op r n -> Op r n2

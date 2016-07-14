@@ -40,6 +40,8 @@ sealed abstract class Op extends TraversableColumns[Op] {
         sys error "datediff is meant to be used from SQL; built-in Java date subtraction is limited to milliseconds"
     case Funcall(n,_,_,_,_) => sys error ("Can't invoke %s outside of a databse" format n)
     case Windowed(_, _) => sys error ("Can't evaluate window functions outside of a database")
+    case Upper(o) => o.eval(t).upper
+    case Lower(o) => o.eval(t).lower
   }
 
   def simplify(t: Map[ColumnName, Op]): Op = {
@@ -99,6 +101,14 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case DateDiff(u,s,e) => DateDiff(u,simp(s),simp(e))
       case Funcall(nm,db,ns,args,typ) => Funcall(nm,db,ns,args.map(simp(_)),typ)
       case Windowed(agg, w) => Windowed(agg.simplify(t), w.simplify(t))
+      case Upper(o) => simp(o) match {
+        case OpLiteral(pe) => OpLiteral(pe upper)
+        case no => Upper(no)
+      }
+      case Lower(o) => simp(o) match {
+        case OpLiteral(pe) => OpLiteral(pe lower)
+        case no => Lower(no)
+      }
     }
     simp(this)
   }
@@ -140,6 +150,8 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case DateDiff(_, _, _) => IntT().success
       case Funcall(nm,db,ns,args,ty) => args.traverse_[M](x => x.guessType >| (())) >| ty
       case Windowed(agg, _) => agg guessType
+      case Upper(o) => o.guessType map (t => StringT(0, t.nullable))
+      case Lower(o) => o.guessType map (t => StringT(0, t.nullable))
     }
   }
 
@@ -168,6 +180,8 @@ sealed abstract class Op extends TraversableColumns[Op] {
           nargs => f(Funcall(nm, db, ns, nargs, ty))
         }
       case Windowed(agg, w) => (agg.postReplaceOp(f) |@| w.postReplaceOp(f))(Windowed)
+      case Upper(o) => o.postReplace(f) flatMap { x => f(Upper(x)) }
+      case Lower(o) => o.postReplace(f) flatMap { x => f(Lower(x)) }
     }
   }
 
@@ -191,6 +205,8 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case DateDiff(u,s,e) => binop(DateDiff(u,_,_))(s.traverseColumns(f), e.traverseColumns(f))
       case Funcall(nm,db,ns,args,ty) => args.traverse(_ traverseColumns f) map (Funcall(nm,db,ns,_,ty))
       case Windowed(agg, w) => (agg.traverseColumns(f) |@| w.traverseColumns(f))(Windowed)
+      case Upper(o) => o traverseColumns f map Upper
+      case Lower(o) => o traverseColumns f map Lower
     }
   }
 
@@ -298,6 +314,8 @@ object Op {
   case class Funcall(name: String, database: String, namespace: List[String],
                      args: List[Op], typ: PrimT) extends Op
   case class Windowed(agg: AggFunc, window: Window) extends Op
+  case class Upper(op: Op) extends Op
+  case class Lower(op: Op) extends Op
 
   implicit val OpEqual: Equal[Op] = equalA
   implicit val OpShow: Show[Op] = showFromToString

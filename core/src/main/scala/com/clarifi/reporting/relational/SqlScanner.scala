@@ -117,6 +117,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                    args map rec)
       case Windowed(agg, over) =>
         OverSqlExpr(compileAggFunc(agg, lookupColumn), compileWindow(over, lookupColumn))
+      case Upper(s) => FunSqlExpr("UPPER", List(rec(s)))
+      case Lower(s) => FunSqlExpr("LOWER", List(rec(s)))
     }
     rec(op)
   }
