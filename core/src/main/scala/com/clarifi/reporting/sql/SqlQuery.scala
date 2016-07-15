@@ -13,7 +13,7 @@ sealed abstract class SqlQuery {
   import scalaz.std.iterable._
 
   def emitSql(implicit emitter: SqlEmitter): RawSql = this match {
-    case SqlSelect(options, attrs, sources, where, groupBy, having, _) =>
+    case SqlSelect(options, attrs, sources, where, groupBy, having, _, _) =>
       raw("select ") |+|
       (if (options contains "distinct") raw("distinct ") else raw("")) |+|
       { if (attrs.isEmpty) "*"
@@ -126,8 +126,11 @@ case class SqlSelect(options: Set[String] = Set(), // Distinct, all, etc.  FIXME
                      groupBy: List[SqlExpr] = List(), // groupBy clause
                      having: List[SqlPredicate] = List(), // having clause
                      // limit clause (where allowed), inclusive 1-indexed (from, to)
-                     isAggregated: Boolean = false
-                    ) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Orderable with SqlQuery.Nestable
+                     isAggregated: Boolean = false,
+                     windowColumns: Set[SqlColumn] = Set()
+                    ) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Orderable with SqlQuery.Nestable {
+  def isWindowed = windowColumns.nonEmpty
+}
 
 case class LiteralSqlTable(lit: NonEmptyList[Map[SqlColumn, SqlExpr]]) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Orderable with SqlQuery.Nestable
 

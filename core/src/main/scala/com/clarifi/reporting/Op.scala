@@ -217,6 +217,26 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case it => it.point[WM]
     }.written
   }
+
+  final def isWindowed: Boolean = this match {
+    case Windowed(_, _) => true
+    case Add(l,r) => l.isWindowed || r.isWindowed
+    case Sub(l,r) => l.isWindowed || r.isWindowed
+    case Mul(l,r) => l.isWindowed || r.isWindowed
+    case FloorDiv(l,r) => l.isWindowed || r.isWindowed
+    case DoubleDiv(l,r) => l.isWindowed || r.isWindowed
+    case Pow(l,r) => l.isWindowed || r.isWindowed
+    case Abs(e) => e isWindowed
+    case Concat(xs) => xs.exists(_ isWindowed)
+    case If(_, t,f) => t.isWindowed || f.isWindowed
+    case Coalesce(l,r) => l.isWindowed || r.isWindowed
+    case DateAdd(d,_,_) => d.isWindowed
+    case DateDiff(_,s,e) => s.isWindowed || e.isWindowed
+    case Funcall(_,_,_,args,_) => args.exists(_ isWindowed)
+    case Upper(s) => s isWindowed
+    case Lower(s) => s isWindowed
+    case _ => false
+  }
 }
 
 trait TimeUnit {

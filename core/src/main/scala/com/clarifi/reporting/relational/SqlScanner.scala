@@ -866,6 +866,16 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       }
 
     private[DistinctiveQuery]
+    def selectWindows(sel: Map[Attribute,Op], subWindows: Set[SqlColumn]): Set[SqlColumn] = {
+      sel.toList.flatMap {
+        case (attr,op) =>
+          if (op.isWindowed || (op.columnReferences intersect subWindows).nonEmpty)
+            List(attr.name)
+          else List()
+      } toSet
+    }
+
+    private[DistinctiveQuery]
     def selectWrap(h: Header, q: SqlQuery.Nestable)(implicit sup: Supply): SqlSelect = {
       val un = TableName(freshName)
       val src = SqlSubquery(q, h.keys.toList, un)
@@ -911,7 +921,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
   private[SqlScanner]
   case class DistinctiveQuery(val h: Header, val q: Boolean => (Boolean, SqlQuery.Scannable with SqlQuery.Nestable)) {
-    import DistinctiveQuery.{ selectOps }
+    import DistinctiveQuery.{ selectOps, selectWindows }
 
     private[this] def guidName = "t" + sguid
     private[this] def freshName(implicit sup: Supply) = "t" + sup.fresh
@@ -966,8 +976,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                 case (LiteralSqlTable(ts)) if ts.tail.isEmpty && mode == JoinMode.Inner =>
                   squashLiteral(ts.head,h,q1,allOn map {_.swap},mode.reverse)
                 case _ =>
-                  val v1 = asSelect(h,q1, v => !v.isAggregated && !v.sources.sources.isEmpty)
-                  val v2 = asSelect(other.h,q2, v => !v.isAggregated && !v.sources.sources.isEmpty)
+                  val v1 = asSelect(h,q1, v => !v.isAggregated && !v.sources.sources.isEmpty && !v.isWindowed)
+                  val v2 = asSelect(other.h,q2, v => !v.isAggregated && !v.sources.sources.isEmpty && !v.isWindowed)
                   v1.copy(sources = SourceList(
                                       SqlJoinOn(
                                         v1.sources.asSource.get,
@@ -990,7 +1000,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
     def filter(pred: Predicate)(implicit sup: Supply): DistinctiveQuery = {
       DistinctiveQuery(h, needDistinct => q(distinctEagerly) match {
-        case (d, q) => satisfyDistinct(d, needDistinct, h, asSelect(h,q) match {
+        case (d, q) => satisfyDistinct(d, needDistinct, h, asSelect(h,q, v => !v.isWindowed) match {
           case v =>
             if (v.isAggregated)
               v.copy(having = compilePredicate(pred, v.attrs) :: v.having)
@@ -1003,7 +1013,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     def aggregate(attr: Attribute, f: AggFunc)(implicit sup: Supply): DistinctiveQuery = {
       DistinctiveQuery(Map(attr.name -> attr.t), _ => q(true) match {
         case (_, q) => (true, {
-          val v = asSelect(h, q, x => !x.isAggregated && !x.options("distinct"))
+          val v = asSelect(h, q, x => !x.isAggregated && !x.options("distinct") && !x.isWindowed)
           v.copy(attrs = Map(attr.name -> compileAggFunc(f, v.attrs)),
                  isAggregated = true)
         })
@@ -1015,7 +1025,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                          group: List[Op.ColumnValue]
                         )(implicit sup: Supply): DistinctiveQuery = {
       val (_, sq) = q(true) // to aggregate, we need distinctness
-      val v = asSelect(h, sq, x => !x.isAggregated && !x.options("distinct"))
+      val v = asSelect(h, sq, x => !x.isAggregated && !x.options("distinct") && !x.isWindowed)
       val q2 = v.copy(attrs = cs.map { case (attr, op) =>
                                 attr.name -> compileOp(op, v.attrs)
                               } ++
@@ -1034,7 +1044,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       DistinctiveQuery(resultHeader, needDistinct => q(preservesDistinct && distinctEagerly) match {
         case (d, q) =>
           val q2 = asSelect(h,q) match {
-            case v => v.copy(attrs = selectOps(cols, v.attrs))
+            case v => v.copy(attrs = selectOps(cols, v.attrs),
+                             windowColumns = selectWindows(cols, v.windowColumns))
           }
           satisfyDistinct(d && preservesDistinct, needDistinct, resultHeader, q2)
       })
@@ -1045,7 +1056,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       DistinctiveQuery(resultHeader, distinct => q(distinct) match {
         case (d, q) =>
           val q2 = asSelect(h,q)
-          (d, q2.copy(attrs = q2.attrs - attr.name + (to -> q2.attrs(attr.name))))
+          val nattrs = q2.attrs - attr.name + (to -> q2.attrs(attr.name))
+          val nwinCs = if (q2.windowColumns.contains(attr.name))
+                         q2.windowColumns - attr.name + to
+                       else q2.windowColumns
+          (d, q2.copy(attrs = nattrs, windowColumns = nwinCs))
       })
     }
 
@@ -1056,7 +1071,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       DistinctiveQuery(resultHeader, needDistinct => q(preservesDistinct && distinctEagerly) match {
         case (d, q) =>
           val v = asSelect(h,q)
-          val q2 = v.copy(attrs = v.attrs -- cols)
+          val q2 = v.copy(attrs = v.attrs -- cols, windowColumns = v.windowColumns -- cols)
           satisfyDistinct(d && preservesDistinct, needDistinct, resultHeader, q2)
       })
     }
@@ -1090,7 +1105,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     def pivot(key: Set[ColumnName], vals: Set[ColumnName], outer: Boolean, keyMap: Map[Record, (ColumnName, Op, PrimExpr)])(implicit sup: Supply): DistinctiveQuery = {
       implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
       val nh = Typer.pivotType[Id](h, key, vals, outer, keyMap)
-      val sel = asSelect(h, q(false)._2, v => !v.isAggregated)
+      val sel = asSelect(h, q(false)._2, v => !v.isAggregated && !v.isWindowed)
       val extra = h -- key -- vals
       val q2 = sel.copy(isAggregated = true,
                         groupBy = extra.toList map (x => sel.attrs(x._1)),

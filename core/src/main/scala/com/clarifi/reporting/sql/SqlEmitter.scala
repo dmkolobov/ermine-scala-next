@@ -485,7 +485,8 @@ trait EmitLimit_AsRowNumberOver extends SqlEmitter {
             sources = SourceList(SqlSubquery(rc match { case x: SqlQuery.Nestable => x }, h.keys.toList, un)),
             attrs = (columns(h, un) + // add "rownum"
                       ("rownum" -> OverSqlExpr(FunSqlExpr("row_number", List()),
-                                               SqlOver(List(), order.map(p => (ColumnSqlExpr(un,p._1),p._2)), None, None))))
+                                               SqlOver(List(), order.map(p => (ColumnSqlExpr(un,p._1),p._2)), None, None)))),
+            windowColumns = Set("rownum")
 	  ),
 	  cols = h.keys.toList ++ List("rownum")
         )
