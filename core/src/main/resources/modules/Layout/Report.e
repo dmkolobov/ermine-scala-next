@@ -896,7 +896,10 @@ makeSelectorsLateBinding flow f sss k = msGo sss Nil Nil
 makeSelectors' : (List b -> Report f z)
                -> (a ->     (b          -> Selector f z a        -> Report f z) -> Report f z)
                -> List a -> (Report f z -> Selector f z (List a) -> Report f z) -> Report f z
-makeSelectors' flow f sss k = makeSelectorsLateBinding flow (a k' -> f a (b s -> k' (const b) s)) sss (i s -> k (i sss) s)
+makeSelectors' flow f sss k = makeSelectorsLateBinding flow f' sss kWithDef
+    where
+      f' a k' = f a (k' . const)
+      kWithDef i s = k (i sss) s
 
 makeSelectors = makeSelectors' vflow
 gridSelectors = makeSelectors' grid
@@ -905,20 +908,38 @@ gridSelectorsH hdr = makeSelectors' (rs -> grid (hdr::rs))
 parseInput : (String -> Maybe a) -> String -> (Report f z -> Selector f z (Maybe a) -> Report f z) -> Report f z
 parseInput parse default f = simpleInput_ inputW default $ t s -> f t $ mapSelector parse s
 
+parseInputLateBinding : (String -> Maybe a) -> String -> ((String -> Report f z) -> Selector f z (Maybe a) -> Report f z) -> Report f z
+parseInputLateBinding parse default f = input_ inputW default $ t s -> f t $ mapSelector parse s
+
 parseInputV : (String -> Either String a) -> String -> (Report f z -> Selector f z (Either String a) -> Report f z) -> Report f z
 parseInputV parse default f = simpleInput_ inputW default $ t s -> f t $ mapSelector parse s
 
+parseInputVLateBinding : (String -> Either String a) -> String -> ((String -> Report f z) -> Selector f z (Either String a) -> Report f z) -> Report f z
+parseInputVLateBinding parse default f = input_ inputW default $ t s -> f t $ mapSelector parse s
+
 stringInput : String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
 stringInput s f = simpleInput_ inputW s $ t s -> f t s
+
+stringInputLateBinding : String -> ((String -> Report f z) -> Selector f z String -> Report f z) -> Report f z
+stringInputLateBinding s f = input_ inputW s $ t s -> f t s
 
 --| create a multi line text input selector
 stringAreaInput : String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
 stringAreaInput s f = simpleInput_ inputAreaW s $ t s -> f t s
 
+stringAreaInputLateBinding : String -> ((String -> Report f z) -> Selector f z String -> Report f z) -> Report f z
+stringAreaInputLateBinding s f = input_ inputAreaW s $ t s -> f t s
+
+intInput : Int -> (Report f z -> Selector f z (Maybe Int) -> Report f z) -> Report f z
 intInput default k =
   parseInput (parseInt 10) (toString default) (r s -> k (prefW [pixelsM 30] r) s)
 doubleInput = parseInput parseDouble
 dateInput   = parseInput parseDate
+
+intInputLateBinding : Int -> ((Int -> Report f z) -> Selector f z (Maybe Int) -> Report f z) -> Report f z
+intInputLateBinding default k = parseInputLateBinding (parseInt 10) (toString default) (r s -> k (prefW [pixelsM 30] . r . toString) s)
+doubleInputLateBinding = parseInputLateBinding parseDouble
+dateInputLateBinding = parseInputLateBinding parseDate
 
 stackSelector : (Report f z -> Report f z)
              -> ((Report f z -> Selector f z a -> Report f z) -> Report f z)
@@ -999,12 +1020,12 @@ private
   lit : forall f z. z -> Report f z
   lit z = Report $ w -> unit (wm w) z
 
-  simpleSelector mode showf default as f = simpleSelector' mode showf default unit_Fmt as f
+  simpleSelector mode showf default as f = selector mode showf default as (inp sel -> f (inp default) sel)
   simpleSelector' mode showf default fmt as f = selector' mode showf default fmt as (inp sel -> f (inp default) sel)
 
+  selector : forall a f z. SelectorMode -> (a -> String) -> a -> List a -> ((a -> Report f z) -> Selector f z a -> Report f z) -> Report f z
   selector mode showf default as f = selector' mode showf default unit_Fmt as f
 
-  selector' : forall a f z. SelectorMode -> (a -> String) -> a -> Format_Fmt a -> List a -> ((a -> Report f z) -> Selector f z a -> Report f z) -> Report f z
   selector' mode showf default fmt as f = Report $ w ->
     selectorW w (selectorMode# mode) (toPair# ((toPrimExprNel . showf $ default), default)) fmt (toList# (lmap (a -> toPair# ((toPrimExprNel . showf $ a),a)) as)) (function3 $ selGen evt src ->
       runReport w $ (f (lit . funcall1# selGen) (Selector evt $ f2 -> Report $ w -> funcall1# src (function1 $ runReport w . f2))))
