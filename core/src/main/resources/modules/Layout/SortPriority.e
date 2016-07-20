@@ -60,7 +60,7 @@ prioritize = map ((s, (o, i)) -> (s, o, i))
 
 -- | Produce the initial sort for a set of logical columns.
 toSort# : List (String, SortPriority) -> Sort#_R
-toSort# = toSort#_R . Sort_R . map ((s, o, i) -> (s, o)) . prioritize
+toSort# = toList# . map ((s, o, i) -> pair# s $ toSortOrder#_R o) . prioritize
 
 -- | As with `toSort#', but don't throw away the ints needed to merge
 -- priorities.

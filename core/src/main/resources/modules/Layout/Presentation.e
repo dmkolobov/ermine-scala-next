@@ -83,7 +83,7 @@ extractScalar pr = let pr' = asPresentation pr
 
 -- | Build a sort, left-to-right, on a presentation's columns.
 ordering : AsPresentation pr => SortOrder -> pr r a -> Sort r
-ordering so pr = Sort $ zip (columnsUsed pr) (fix $ (::) so)
+ordering so pr = Sort $ zipWith ((a,b) c -> (a,b,c)) (case rowUsed pr of Row l -> l) (fix $ (::) so)
 
 -- | Answer all unique columns referenced in a presentation, in order.
 columnsUsed : AsPresentation pr => pr r a -> List String
