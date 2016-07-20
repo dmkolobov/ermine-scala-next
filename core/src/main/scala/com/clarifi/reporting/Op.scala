@@ -316,6 +316,12 @@ case class Window(
     Window(partition.map(_ simplify f), order.map{ case (x, y) => (x simplify f, y) }, frame)
 }
 
+object Window extends Function3[List[Op], List[(Op, SortOrder)], Frame, Window] {
+  import Op.ColumnValue
+  def simple(part: List[(ColumnName, PrimT)], ord: List[((ColumnName, PrimT), SortOrder)], frame: Frame) =
+    Window(part.map(ColumnValue.tupled), ord.map{ case ((c,t),s) => (ColumnValue(c,t), s) }, frame)
+}
+
 object Op {
   case class OpLiteral(lit: PrimExpr) extends Op
   case class ColumnValue(col: ColumnName, typ: PrimT) extends Op
