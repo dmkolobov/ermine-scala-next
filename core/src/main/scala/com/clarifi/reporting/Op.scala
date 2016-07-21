@@ -29,7 +29,9 @@ sealed abstract class Op extends TraversableColumns[Op] {
                coalesce: (z, => z) => z,
                dateadd: (z, Int, TimeUnit) => z,
                datediff: (TimeUnit, z, z) => z,
-               funcall: (String, String, List[String], List[z], PrimT) => z): z = {
+               funcall: (String, String, List[String], List[z], PrimT) => z,
+               upper: z => z,
+               lower: z => z ): z = {
     def rec(o: Op): z = o match {
       case OpLiteral(lit) => opliteral(lit)
       case ColumnValue(col, pt) => columnvalue(col, pt)
@@ -46,6 +48,8 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case DateAdd(o, n, u) => dateadd(rec(o), n, u)
       case DateDiff(u, s, e) => datediff(u, rec(s), rec(e))
       case Funcall(n, d, spc, args, ty) => funcall(n, d, spc, args map rec, ty)
+      case Upper(o) => upper(rec(o))
+      case Lower(o) => lower(rec(o))
     }
     rec(this)
   }
@@ -63,6 +67,8 @@ sealed abstract class Op extends TraversableColumns[Op] {
     doublediv = (_ / _),
     pow = (_ pow _),
     abs = _ abs,
+    upper = _ upper,
+    lower = _ lower,
     concat = xs => StringExpr(false, xs.map(_ extractNullableString "").concatenate),
     oif = (test, c, a) => if (test eval t) c else a,
     coalesce = (l, r) => l match { case NullExpr(_) => r ; case _ => l },
@@ -106,6 +112,14 @@ sealed abstract class Op extends TraversableColumns[Op] {
               abs = x => x match {
                 case OpLiteral(y) => OpLiteral(y.abs)
                 case _ => Abs(x)
+              },
+              upper = x => x match {
+                case OpLiteral(s) => OpLiteral(s.upper)
+                case _ => Upper(x)
+              },
+              lower = x => x match {
+                case OpLiteral(s) => OpLiteral(s.lower)
+                case _ => Lower(x)
               },
               concat = {xs =>
                 splitWith(xs map {case OpLiteral(lit) => Left(lit)
@@ -169,6 +183,8 @@ sealed abstract class Op extends TraversableColumns[Op] {
       doublediv = numbin,
       pow = numbin,
       abs = x => x,
+      upper = x => x,
+      lower = x => x,
       concat = xs => xs.sequence map (Function const StringT(0, false)),
       oif = (_, mc, ma) => (mc |@| ma)(_ -> _) flatMap {case (c, a) =>
         c sup a map (_.success) getOrElse
@@ -178,7 +194,8 @@ sealed abstract class Op extends TraversableColumns[Op] {
         ("Unmatched coalesce branches %s and %s" format (e, t) failureNel)},
       dateadd = (d, _, _) => d, // type of date arithmetic is always a date
       datediff = (_, _, _) => IntT().success,
-      funcall = (name, db, ns, args, ty) => args.sequence >| ty)
+      funcall = (name, db, ns, args, ty) => args.sequence >| ty
+      )
   }
 
   /** Post-order replace the expression tree, with traversal. */
@@ -195,13 +212,16 @@ sealed abstract class Op extends TraversableColumns[Op] {
       doublediv = binop(DoubleDiv),
       pow = binop(Pow),
       abs = _.map(Abs(_)) >>= f,
+      upper = _.map(Upper(_)) >>= f,
+      lower = _.map(Lower(_)) >>= f,
       concat = _.sequence flatMap (f compose Concat),
       oif = (t, c, a) => ((t postReplaceOp f) |@| c |@| a)(If) >>= f,
       coalesce = (l, r) => binop(Coalesce)(l, r),
       dateadd = (d, n, u) => d.flatMap(d => f(DateAdd(d,n,u))),
       datediff = (u, sF, eF) => binop((s, e) => DateDiff(u, s, e))(sF, eF),
       funcall = (name, db, ns, args, ty) => args.sequence flatMap (args =>
-                  f(Funcall(name, db, ns, args, ty))))
+                  f(Funcall(name, db, ns, args, ty)))     
+      )
   }
 
   /** Traverse the column references in an `Op`. */
@@ -217,13 +237,16 @@ sealed abstract class Op extends TraversableColumns[Op] {
       doublediv = binop(DoubleDiv(_, _)),
       pow = binop(Pow(_, _)),
       abs = _.map(Abs(_)),
+      upper = _.map(Upper(_)),
+      lower = _.map(Lower(_)),
       concat = {cl => cl.sequence map (Concat(_))},
       oif = (test, c, a) => ((test traverseColumns f) |@| c |@| a)(If),
       coalesce = (l, r) => (l |@| r)(Coalesce),
       dateadd = (d, n, u) => d.map(DateAdd(_,n,u)),
       datediff = (u, sF, eF) => binop[Op]((s, e) => DateDiff(u, s, e))(sF, eF),
       funcall = ((name, db, ns, args, ty) =>
-                 args.sequence map (Funcall(name, db, ns, _, ty))))
+                 args.sequence map (Funcall(name, db, ns, _, ty)))            
+      )
   }
 
   def typedColumnFoldMap[Z: Monoid](f: (ColumnName, PrimT) => Z): Z = {
@@ -305,6 +328,8 @@ object Op {
   case class DateDiff(units: TimeUnit, start: Op, end: Op) extends Op
   case class Funcall(name: String, database: String, namespace: List[String],
                      args: List[Op], typ: PrimT) extends Op
+  case class Upper(op: Op) extends Op
+  case class Lower(op: Op) extends Op
 
   implicit val OpEqual: Equal[Op] = equalA
   implicit val OpShow: Show[Op] = showFromToString

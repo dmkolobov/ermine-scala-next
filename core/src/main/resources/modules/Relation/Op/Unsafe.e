@@ -35,6 +35,10 @@ foreign
       powModule : OpBin# a
   value "com.clarifi.reporting.Op$Abs$" "MODULE$"
       absModule : OpUn# a
+  value "com.clarifi.reporting.Op$Upper$" "MODULE$"
+      upperModule : OpUn# String
+  value "com.clarifi.reporting.Op$Lower$" "MODULE$"
+      lowerModule : OpUn# String
   value "com.clarifi.reporting.Op$Concat$" "MODULE$"
       concatModule : Function1 (List# Op#) (Op r a)
   value "com.clarifi.reporting.Op$If$" "MODULE$"

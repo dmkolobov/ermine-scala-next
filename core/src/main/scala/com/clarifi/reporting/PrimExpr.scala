@@ -145,6 +145,16 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case _ => sys.error(this.toString + " does not support absolute value.")
   }
 
+  def upper = this match {
+    case StringExpr(b, s) => StringExpr(b, s.toUpperCase)
+    case _ => this
+  }
+
+  def lower = this match {
+    case StringExpr(b, s) => StringExpr(b, s.toLowerCase)
+    case _ => this
+  }
+
   /** Change type to nullable, if not already. */
   def withNull: PrimExpr = if (this nullable) this else (this match {
     case x: UuidExpr => x.copy(nullable=true)
@@ -429,7 +439,7 @@ object PrimExpr {
     // right, so we have to fake it
     if (typeorder === EQ)
     (a, b) match {
-      case (StringExpr(_, v1), StringExpr(_, v2)) => v1 ?|? v2
+      case (StringExpr(_, v1), StringExpr(_, v2)) => v1.toLowerCase ?|? v2.toLowerCase
       case (IntExpr(_, v1), IntExpr(_, v2)) => v1 ?|? v2
       // doubleOrdering doesn't follow the Order laws, so we can't use it.
       case (DoubleExpr(_, v1), DoubleExpr(_, v2)) => v1 ?|? v2
