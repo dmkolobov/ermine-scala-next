@@ -90,6 +90,8 @@ abstract class Writer[F[_],C] { self =>
   implicit def B: Scanner[F]
   implicit def F: Monad[F] = B.M
 
+  type Signal[A] = (A => F[C]) => F[C]
+
   /** The empty component - should be an identity for all types of composition. */
   def empty: C
 
@@ -269,15 +271,17 @@ abstract class Writer[F[_],C] { self =>
    * starting view, before the user has made any selection.
    */
 
-  def textBox(default:String, f: (C, SelectorEvent, ((SelectorEvent, String => F[C]) => F[C])) => F[C]) : F[C] =
+  def textBox(default:String, f: (String => C, SelectorEvent, Signal[String]) => F[C]) : F[C] =
     selector(TextBox,(NonEmptyList(StringExpr(false, default)),default),Format.Default,List(),f)
 
-  def textArea(default:String, f: (C, SelectorEvent, ((SelectorEvent, String => F[C]) => F[C])) => F[C]) : F[C] =
+  def textArea(default:String, f: (String => C, SelectorEvent, Signal[String]) => F[C]) : F[C] =
     selector(TextArea,(NonEmptyList(StringExpr(false, default)),default),Format.Default,List(),f)
 
   def selector[A](mode: SelectorMode, default: (NonEmptyList[PrimExpr],A), fmt: Format, values: List[(NonEmptyList[PrimExpr],A)],
-                   f: (C, SelectorEvent, ((SelectorEvent, A => F[C]) => F[C])) => F[C]
+                   f: (A => C, SelectorEvent, Signal[A]) => F[C]
                   ) : F[C]
+  // Given a `SelectorEvent` and a report, update the report whenever the event fires.
+  def onEvent(evt: SelectorEvent, inner: F[C]) : F[C] = inner
 
   def button(name: NonEmptyList[PrimExpr], fmt: Format, f: (C, SelectorEvent) => F[C]) : F[C]
 
@@ -287,8 +291,8 @@ abstract class Writer[F[_],C] { self =>
                               // todo: do we want to take in a Nel[PrimExpr] and format?
     selector(ForeignMode(nm),(NonEmptyList(StringExpr(false, default.toString)),default),Format.Default,List(),
              {
-               case (_,e,k) => k(e,f)
-             } : (C, SelectorEvent, ((SelectorEvent, A => F[C]) => F[C])) => F[C])
+               case (_,_,k) => k(f)
+             } : (A => C, SelectorEvent, Signal[A]) => F[C])
 
   def foreignSink[A](nm: String, f : (A => F[C]) => F[C]) : F[C]
 

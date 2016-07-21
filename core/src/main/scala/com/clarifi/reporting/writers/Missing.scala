@@ -162,6 +162,6 @@ object WDefault {
 
   trait TextAreaToTextBox[F[_], C] { self: Writer[F, C] =>
     final override
-    def textArea(default: String , f: (C, SelectorEvent, ((SelectorEvent, String => F[C]) => F[C])) => F[C]): F[C] = textBox(default, f)
+    def textArea(default: String , f: (String => C, SelectorEvent, ((String => F[C]) => F[C])) => F[C]): F[C] = textBox(default, f)
   }
 }
