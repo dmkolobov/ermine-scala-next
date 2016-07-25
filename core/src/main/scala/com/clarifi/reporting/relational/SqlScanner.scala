@@ -969,12 +969,12 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
           //  available to add them.
           val allOn = on ++ (h.keySet intersect other.h.keySet map {x => (x,x)})
           val q3 = q1 match {
-            case (LiteralSqlTable(ts)) if ts.tail.isEmpty && mode == JoinMode.Inner =>
-              squashLiteral(ts.head,other.h,q2,allOn,mode)
+            case (SqlSingle(row)) if mode == JoinMode.Inner =>
+              squashLiteral(row,other.h,q2,allOn,mode)
             case _ =>
               q2 match {
-                case (LiteralSqlTable(ts)) if ts.tail.isEmpty && mode == JoinMode.Inner =>
-                  squashLiteral(ts.head,h,q1,allOn map {_.swap},mode.reverse)
+                case (SqlSingle(row)) if mode == JoinMode.Inner =>
+                  squashLiteral(row,h,q1,allOn map {_.swap},mode.reverse)
                 case _ =>
                   val v1 = asSelect(h,q1, v => !v.isAggregated && !v.sources.sources.isEmpty && !v.isWindowed)
                   val v2 = asSelect(other.h,q2, v => !v.isAggregated && !v.sources.sources.isEmpty && !v.isWindowed)

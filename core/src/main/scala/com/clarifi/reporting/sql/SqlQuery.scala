@@ -111,6 +111,7 @@ final case class SourceList(sources: List[SqlSource]) {
         case Some(yy) => Some(SqlJoinOn(x,yy,Set(),SqlJoinInner))
       }
   }
+  def isEmpty = sources.isEmpty
 }
 
 object SourceList {
@@ -132,7 +133,23 @@ case class SqlSelect(options: Set[String] = Set(), // Distinct, all, etc.  FIXME
   def isWindowed = windowColumns.nonEmpty
 }
 
-case class LiteralSqlTable(lit: NonEmptyList[Map[SqlColumn, SqlExpr]]) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Orderable with SqlQuery.Nestable
+object SqlSingle {
+  type SqlRecord = Map[SqlColumn, LitSqlExpr]
+  def apply(r: SqlRecord) = SqlSelect(attrs = r)
+  def unapply(q: SqlQuery): Option[SqlRecord] = q match {
+    case sel : SqlSelect =>
+      if(sel.sources.isEmpty && sel.where.isEmpty && !sel.isAggregated)
+        sel.attrs.foldLeft(Some(Map()):Option[SqlRecord]) {
+          case (r, (c, e : LitSqlExpr)) => r.map(_ + (c -> e))
+          case _ => None
+        }
+      else None
+    case LiteralSqlTable(NonEmptyList(h, t)) if t.isEmpty => Some(h)
+    case _ => None
+  }
+}
+
+case class LiteralSqlTable(lit: NonEmptyList[Map[SqlColumn, LitSqlExpr]]) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Orderable with SqlQuery.Nestable
 
 sealed abstract class SqlBinOp {
   def emit: RawSql = this match {

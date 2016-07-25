@@ -117,7 +117,7 @@ object SqlExpr {
   def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
   def columns(h: List[String], rv: TableName) = h.map(x => (x, ColumnSqlExpr(rv, x))).toMap
 
-  def compileLiteral(e: PrimExpr): SqlExpr = e match {
+  def compileLiteral(e: PrimExpr): LitSqlExpr = e match {
     case StringExpr(_,s) => LitSqlExpr(SqlString(s))
     case ByteExpr(_,b) => LitSqlExpr(SqlByte(b))
     case ShortExpr(_,s) => LitSqlExpr(SqlShort(s))
