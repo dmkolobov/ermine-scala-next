@@ -1095,7 +1095,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
             case (d, q) => 
               val actualOrder = if (!order.isEmpty) order
                                 else h.map { case (k,t) => (k, SortOrder.Asc) }.toList
-              satisfyDistinct(d || isOneRow, needDistinct, h, emitter.emitLimit(asOrderable(h,q), h, u1, from, to, actualOrder.map {
+              satisfyDistinct(d || isOneRow, needDistinct, h, emitter.implementLimit(asOrderable(h,q), h, u1, from, to, actualOrder.map {
                 case (k, v) => (k, v(asc = SqlAsc, desc = SqlDesc))
               }, u2))
         })

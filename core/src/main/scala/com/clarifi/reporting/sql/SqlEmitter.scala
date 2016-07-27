@@ -265,15 +265,15 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     *
     * For implementations with no support for this, answer `query`.
     */
-  def emitLimit(query: SqlQuery.Orderable, queryHeader: Header, unQuery: TableName,
+  def implementLimit(query: SqlQuery.Orderable, queryHeader: Header, unQuery: TableName,
                 from: Option[Int], to: Option[Int],
                 order: List[(SqlColumn, SqlOrder)],
                 unSurrogate: TableName): SqlQuery.Scannable with SqlQuery.Nestable = query match {
     case q: SqlQuery.Scannable with SqlQuery.Nestable => q
   }
 
-  /** Emit a `LIMIT` clause for `SELECT`, if supported. */
-  def emitLimitClause(from: Option[Int], to: Option[Int]): RawSql = ""
+  /** Emit a SqlLimit in a way appropriate for the backend */
+  def emitLimit(from: Option[Int], to: Option[Int]): RawSql = ""
 
   /** Emit a literal relation */
   def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
@@ -465,14 +465,14 @@ trait EmitExcept_AsJoin extends SqlEmitter {
 }
 
 /** MS SQL supports `OVER`, and we can abuse that to do limiting. */
-trait EmitLimit_AsRowNumberOver extends SqlEmitter {
+trait ImplementLimit_AsRowNumberOver extends SqlEmitter {
   import SqlExpr.columns
 
   /** Simulate `LIMIT` clauses by wrapping `rc` with `row_number()
     * over (order by …) rownum ''rc'' where rownum <= ''to'' and rownum
     * >= ''from''`, then erasing `rownum`.
     */
-  override def emitLimit(rc: SqlQuery.Orderable, h: Header, un: TableName,
+  override def implementLimit(rc: SqlQuery.Orderable, h: Header, un: TableName,
                          from: Option[Int], to: Option[Int],
                          order: List[(SqlColumn, SqlOrder)],
                          un2: TableName): SqlQuery.Scannable with SqlQuery.Nestable =
@@ -499,26 +499,42 @@ trait EmitLimit_AsRowNumberOver extends SqlEmitter {
 }
 
 /** MySQL and PostgreSQL support `LIMIT`. */
-trait EmitLimit_AsLimit extends SqlEmitter {
+trait ImplementLimit_AsLimit extends SqlEmitter {
   import SqlExpr.columns
 
   /** Wrap the ''rc'' in a select that duplicates ''h'', reorders the
     * relation, and limits according to ''from'' and ''to''.
     */
-  override def emitLimit(rc: SqlQuery.Orderable, h: Header, un: TableName,
+  override def implementLimit(rc: SqlQuery.Orderable, h: Header, un: TableName,
                          from: Option[Int], to: Option[Int],
                          order: List[(SqlColumn, SqlOrder)],
                          un2: TableName): SqlQuery.Scannable with SqlQuery.Nestable =
     SqlLimit(SqlQuery.orderBy(rc, order), from, to)
+}
 
+trait EmitLimit_AsLimit extends SqlEmitter {
   /** Use PostgreSQL's 0-indexed `LIMIT ''length'' OFFSET ''from''`
     * syntax, which is also supported in MySQL.
     */
-  override def emitLimitClause(from: Option[Int], to: Option[Int]): RawSql = (from, to) match {
+  override def emitLimit(from: Option[Int], to: Option[Int]): RawSql = (from, to) match {
     case (Some(x), Some(y)) => " limit %d offset %d" format (y - x + 1, x - 1)
     case (Some(x), None) => " offset %d" format (x - 1)
     case (None, Some(y)) => " limit %d" format y
     case (None, None) => ""
+  }
+}
+
+trait EmitLimit_AsOffsetFetch extends SqlEmitter {
+  /** Standard SQL syntax for limited queries. Supported in new enough MS TSQL
+    */
+  override def emitLimit(from: Option[Int], to: Option[Int]): RawSql = {
+    val o = from.map(_ - 1).getOrElse(0)
+    val off = " offset %d rows" format o
+    val lim = to match {
+      case Some(t) => " fetch next %d rows only" format (t - o)
+      case None => ""
+    }
+    off + lim
   }
 }
 
@@ -727,6 +743,7 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                                       with EmitCreateTable_NoSuffix
                                       with EmitDropTemporaryTable
                                       with EmitExcept_AsJoin
+                                      with ImplementLimit_AsLimit
                                       with EmitLimit_AsLimit
                                       with EmitConcat_MySQL
                                       with EmitUnion
@@ -799,7 +816,8 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitConcat_MsSql
                                       with EmitExcept_MsSql
                                       with EmitIntDivOp_MsSql
-                                      with EmitLimit_AsRowNumberOver
+                                      with ImplementLimit_AsLimit
+                                      with EmitLimit_AsOffsetFetch
                                       with EmitOver_UsingOver
                                       with EmitStddevVar_MsSQL
                                       with EmitUuid_Strings
@@ -907,6 +925,7 @@ class PostgreSqlEmitter extends SqlEmitter(false)
                         with EmitSqlColumns_Typed
                         with EmitCreateTable_NoSuffix
                         with EmitNoDropTempTable
+                        with ImplementLimit_AsLimit
                         with EmitLimit_AsLimit
                         with EmitUnion
                         with EagerlyDistinct

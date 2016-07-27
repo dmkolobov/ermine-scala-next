@@ -65,8 +65,8 @@ sealed abstract class SqlQuery {
     case SqlLimit(q, from, to) =>
       (from, to) match {
         // always emit a limit clause even if it's trivial; this affects parsing.
-        case (None, None) => q.emitSql |+| emitter.emitLimitClause(Some(1), None)
-        case _ =>            q.emitSql |+| emitter.emitLimitClause(from, to)
+        case (None, None) => q.emitSql |+| emitter.emitLimit(Some(1), None)
+        case _ =>            q.emitSql |+| emitter.emitLimit(from, to)
       }
   }
 }
