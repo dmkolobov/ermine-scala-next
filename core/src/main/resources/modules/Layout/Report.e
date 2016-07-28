@@ -771,31 +771,81 @@ drilldownPivotTabular' (DynamicFulcrum row srt pivotCol) lgnd ddl rootf rel = dr
 ---------------------------------------------------
 -- Selector functions
 ---------------------------------------------------
-dropdown    = selector DropDown
-dropdown'    = selector' DropDown
-radioButton = selector RadioButton
-slider      = selector Slider
+dropdown    = simpleSelector DropDown
+dropdown'   = simpleSelector' DropDown
+radioButton = simpleSelector RadioButton
+slider      = simpleSelector Slider
 button      = button_
-input       = input_ inputW
-
+input       = simpleInput_ inputW
 
 checkBox : Bool -> (Report f z -> Selector f z Bool -> Report f z) -> Report f z
 checkBox = checkBox' ""
 
 checkBox' : String -> Bool -> (Report f z -> Selector f z Bool -> Report f z) -> Report f z
-checkBox' label initVal kont = selector CheckBox (const label) initVal [True, False] kont
+checkBox' label initVal kont = checkBoxLateBinding label initVal (i s -> kont (i initVal) s)
+
+---------------------------------------------------
+-- With the newer (as of 2016-07) selector API, we can now support "Late Binding" selectors.
+-- These differ from the selectors above in that, in addition to taking a "default signal" value
+-- when the selector is constructed, the inputs take an initial value when they are *used*.
+-- For example, with the old selectors:
+-- ```
+--    dropdown id "Hi" ["Hi", "Bye"] $ inp sel ->
+--      vflow [ inp
+--            , using sel $ msg -> text msg ]
+-- ```
+-- would become:
+-- ```
+--    dropdownLateBinding id "Hi" ["Hi", "Bye"] $ inp sel ->
+--      vflow [ inp "Hi"
+--            , using sel $ msg -> text msg ]
+-- ```
+-- This allows us to do some wacky things, such as:
+-- ```
+--    dropdownLateBinding id "Hi" ["Hi", "Bye"] $ inp sel ->
+--      using sel $ msg ->
+--        vflow [ inp msg
+--              , text msg ]
+-- ```
+-- Which sets the initial signal to "Hi", then has the input box for the signal *inside* the region
+-- that gets rerendered whenever the input fires its event, and always be updated to the correct value;
+-- whereas `dropdown` will misbehave badly in this scenario.
+-- This also allows you to do things like set the default value of an input to the result of another selector,
+-- etc.
+---------------------------------------------------
+dropdownLateBinding    = selector DropDown
+dropdownLateBinding'   = selector' DropDown
+radioButtonLateBinding = selector RadioButton
+sliderLateBinding      = selector Slider
+inputLateBinding       = input_ inputW
+
+checkBoxLateBinding : String -> Bool -> ((Bool -> Report f z) -> Selector f z Bool -> Report f z) -> Report f z
+checkBoxLateBinding label initVal kont = selector CheckBox (const label) initVal [True, False] kont
 
 barHeader ui = pad [pixelsM 4] . style "bar-header" ' ui
 
 -- f is monad of the report. z is the underlying object of the report. a is the value we produce.
 
-data Selector f z a = Selector (SelectorEvent z) (SelectorEvent z -> (a -> Report f z) -> Report f z)
+type Signal f z a = (a -> Report f z) -> Report f z
+
+mapSignal : (a -> b) -> Signal f z a -> Signal f z b
+mapSignal f sigA kb = sigA (kb . f)
+
+zipSignal : Signal f z a -> Signal f z b -> Signal f z (a, b)
+zipSignal sig1 sig2 kab = sig1 $ a -> sig2 $ b -> kab (a,b)
+
+
+data Selector f z a = Selector (SelectorEvent z) (Signal f z a)
+
+-- | Given an event, update the inner report whenever the event fires.
+onEvent : SelectorEvent z -> Report f z -> Report f z
+onEvent s r = Report $ w -> onEventW w s (runReport w r)
 
 on : SelectorEvent z -> Selector f z a -> (a -> Report f z) -> Report f z
-on e (Selector _ v) go = v e go
+on e (Selector _ v) = using (Selector e v)
 
 using : Selector f z a -> (a -> Report f z) -> Report f z
-using (Selector e v) go = v e go
+using (Selector e v) go = onEvent e (v go)
 
 infixr 5 ||
 (||) e1 e2 = orEvent e1 e2
@@ -805,11 +855,7 @@ infixl 5 ***
 
 zipSelector : Selector f z a -> Selector f z b -> Selector f z (a, b)
 zipSelector (Selector e1 v1) (Selector e2 v2) =
-  -- Selector (orEvent e1 e2) $ e go -> v1 e $ a -> v2 e $ b -> go (a,b)
-  -- | The below is an enormous hack, and will explicitly *not* work when using `on'.
-  -- It's good enough for our purposes for now, but we're going to revisit the entire
-  -- Selector API in the near future.
-  Selector (orEvent e1 e2) $ _ go -> v1 e1 $ a -> v2 e2 $ b -> go (a,b)
+  Selector (orEvent e1 e2) (zipSignal v1 v2)
 
 selectorFunctor = Functor mapSelector
 
@@ -822,13 +868,11 @@ sequenceSelector = sequenceA listTraversable selectorAp
 -}
 
 mapSelector : (a -> b) -> Selector f z a -> Selector f z b
-mapSelector f (Selector e av) = Selector e $ mapSource f av
-  where mapSource: (a -> b) -> (SelectorEvent z -> (a -> Report f z) -> Report f z) -> SelectorEvent z -> (b -> Report f z) -> Report f z
-        mapSource aToB sel evt bToReport = sel evt $ a -> bToReport (aToB a)
+mapSelector f (Selector e av) = Selector e (mapSignal f av)
 
 -- | A selector that always yields the given 'a'.
 unitSelector : a -> Selector f z a
-unitSelector x = Selector live (const (k -> k x))
+unitSelector x = Selector live (k -> k x)
 
 -- | Combine a list of selectors into a single selector producing the
 -- list of all of its values.
@@ -840,33 +884,62 @@ sequenceSelector (s :: ss) = seqSel ss $ mapSelector singleton s
     where seqSel (t :: ts) acc = seqSel ts $ mapSelector ((x,y) -> x :: y) (zipSelector t acc)
           seqSel Nil acc = acc
 
-makeSelectors' : (List b -> Report f z) -> (a -> (b -> Selector f z a -> Report f z) -> Report f z) -> List a -> (Report f z -> Selector f z (List a) -> Report f z) -> Report f z
-makeSelectors' flow f sss k = msGo sss Nil Nil
+makeSelectorsLateBinding :
+      (List b -> Report f z)
+   -> (a ->     ((a -> b)               -> Selector f z a        -> Report f z) -> Report f z)
+   -> List a -> ((List a -> Report f z) -> Selector f z (List a) -> Report f z) -> Report f z
+makeSelectorsLateBinding flow f sss k = msGo sss Nil Nil
     where
       msGo (s :: ss) iacc selacc = f s $ i sel -> msGo ss (i :: iacc) (sel :: selacc)
-      msGo Nil iacc selacc = k (flow $ reverse iacc) (sequenceSelector $ selacc)
+      msGo Nil iacc selacc = k (flow . zipWith ($) (reverse iacc)) (sequenceSelector selacc)
+
+makeSelectors' : (List b -> Report f z)
+               -> (a ->     (b          -> Selector f z a        -> Report f z) -> Report f z)
+               -> List a -> (Report f z -> Selector f z (List a) -> Report f z) -> Report f z
+makeSelectors' flow f sss k = makeSelectorsLateBinding flow f' sss kWithDef
+    where
+      f' a k' = f a (k' . const)
+      kWithDef i s = k (i sss) s
 
 makeSelectors = makeSelectors' vflow
 gridSelectors = makeSelectors' grid
 gridSelectorsH hdr = makeSelectors' (rs -> grid (hdr::rs))
 
 parseInput : (String -> Maybe a) -> String -> (Report f z -> Selector f z (Maybe a) -> Report f z) -> Report f z
-parseInput parse default f = input_ inputW default $ t s -> f t $ mapSelector parse s
+parseInput parse default f = simpleInput_ inputW default $ t s -> f t $ mapSelector parse s
+
+parseInputLateBinding : (String -> Maybe a) -> String -> ((String -> Report f z) -> Selector f z (Maybe a) -> Report f z) -> Report f z
+parseInputLateBinding parse default f = input_ inputW default $ t s -> f t $ mapSelector parse s
 
 parseInputV : (String -> Either String a) -> String -> (Report f z -> Selector f z (Either String a) -> Report f z) -> Report f z
-parseInputV parse default f = input_ inputW default $ t s -> f t $ mapSelector parse s
+parseInputV parse default f = simpleInput_ inputW default $ t s -> f t $ mapSelector parse s
+
+parseInputVLateBinding : (String -> Either String a) -> String -> ((String -> Report f z) -> Selector f z (Either String a) -> Report f z) -> Report f z
+parseInputVLateBinding parse default f = input_ inputW default $ t s -> f t $ mapSelector parse s
 
 stringInput : String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
-stringInput s f = input_ inputW s $ t s -> f t s
+stringInput s f = simpleInput_ inputW s $ t s -> f t s
+
+stringInputLateBinding : String -> ((String -> Report f z) -> Selector f z String -> Report f z) -> Report f z
+stringInputLateBinding s f = input_ inputW s $ t s -> f t s
 
 --| create a multi line text input selector
 stringAreaInput : String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
-stringAreaInput s f = input_ inputAreaW s $ t s -> f t s
+stringAreaInput s f = simpleInput_ inputAreaW s $ t s -> f t s
 
+stringAreaInputLateBinding : String -> ((String -> Report f z) -> Selector f z String -> Report f z) -> Report f z
+stringAreaInputLateBinding s f = input_ inputAreaW s $ t s -> f t s
+
+intInput : Int -> (Report f z -> Selector f z (Maybe Int) -> Report f z) -> Report f z
 intInput default k =
   parseInput (parseInt 10) (toString default) (r s -> k (prefW [pixelsM 30] r) s)
 doubleInput = parseInput parseDouble
 dateInput   = parseInput parseDate
+
+intInputLateBinding : Int -> ((Int -> Report f z) -> Selector f z (Maybe Int) -> Report f z) -> Report f z
+intInputLateBinding default k = parseInputLateBinding (parseInt 10) (toString default) (r s -> k (prefW [pixelsM 30] . r . toString) s)
+doubleInputLateBinding = parseInputLateBinding parseDouble
+dateInputLateBinding = parseInputLateBinding parseDate
 
 stackSelector : (Report f z -> Report f z)
              -> ((Report f z -> Selector f z a -> Report f z) -> Report f z)
@@ -944,30 +1017,35 @@ remoteSelectionDescending r sortField default reportFn = scanRelation r $ ts -> 
 
 -- private functions for selectors
 private
+  lit : forall f z. z -> Report f z
   lit z = Report $ w -> unit (wm w) z
 
-  --selector : SelectorMode -> (a -> String) -> a -> List a -> (Report f z -> Selector f z a -> Report f z) -> Report f z
-  selector mode showf default as f = Report $ w ->
-    selectorW w (selectorMode# mode) (toPair# ((toPrimExprNel . showf $ default), default)) unit_Fmt (toList# (lmap (a -> toPair# ((toPrimExprNel . showf $ a),a)) as)) (function3 $ sel evt src ->
-      runReport w $ (f (lit sel) (Selector evt $ e f2 -> Report $ w -> funcall2# src e (function1 $ runReport w . f2))))
+  simpleSelector mode showf default as f = selector mode showf default as (inp sel -> f (inp default) sel)
+  simpleSelector' mode showf default fmt as f = selector' mode showf default fmt as (inp sel -> f (inp default) sel)
+
+  selector : forall a f z. SelectorMode -> (a -> String) -> a -> List a -> ((a -> Report f z) -> Selector f z a -> Report f z) -> Report f z
+  selector mode showf default as f = selector' mode showf default unit_Fmt as f
 
   selector' mode showf default fmt as f = Report $ w ->
-    selectorW w (selectorMode# mode) (toPair# ((toPrimExprNel . showf $ default), default)) fmt (toList# (lmap (a -> toPair# ((toPrimExprNel . showf $ a),a)) as)) (function3 $ sel evt src ->
-      runReport w $ (f (lit sel) (Selector evt $ e f2 -> Report $ w -> funcall2# src e (function1 $ runReport w . f2))))
+    selectorW w (selectorMode# mode) (toPair# ((toPrimExprNel . showf $ default), default)) fmt (toList# (lmap (a -> toPair# ((toPrimExprNel . showf $ a),a)) as)) (function3 $ selGen evt src ->
+      runReport w $ (f (lit . funcall1# selGen) (Selector evt $ f2 -> Report $ w -> funcall1# src (function1 $ runReport w . f2))))
 
   type TextBoxPrim f z = Writer f z -> String ->
-                         Function3 z (SelectorEvent z) (Function2 (SelectorEvent z) (Function1 String (f z)) (f z)) (f z) ->
+                         Function3 (Function1 String z) (SelectorEvent z) (Function1 (Function1 String (f z)) (f z)) (f z) ->
                          f z
 
-  input_ : (TextBoxPrim f z) -> String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
+  simpleInput_ : (TextBoxPrim f z) -> String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
+  simpleInput_ primf default f = input_ primf default (i s -> f (i default) s)
+
+  input_ : (TextBoxPrim f z) -> String -> ((String -> Report f z) -> Selector f z String -> Report f z) -> Report f z
   input_ primf default f = Report $ w ->
-    primf w default (function3 $ sel evt src ->
-      runReport w $ (f (lit sel) (Selector evt $ e f2 -> Report $ w -> funcall2# src e (function1 $ runReport w . f2))))
+    primf w default (function3 $ selGen evt src ->
+      runReport w $ (f (lit . funcall1# selGen) (Selector evt $ f2 -> Report $ w -> funcall1# src (function1 $ runReport w . f2))))
 
 
 
   --button_ : Primitive a => a -> Format a -> (Report f z -> SelectorEvent z -> Report f z) -> Report f z
-  button_ name f = Report $ w -> buttonW w (toPrimExprNel name) unit_Fmt (function2 $ button evt -> runReport w $ f (lit button) evt)
+  button_ name f = button'_ name unit_Fmt f
   button'_ name fmt f = Report $ w -> buttonW w (toPrimExprNel  name) fmt (function2 $ button evt -> runReport w $ f (lit button) evt)
 
 widget: a -> (a -> Report f z) -> (a -> (a -> Report f z) -> Report f z) -> Report f z
@@ -1540,8 +1618,9 @@ private
                                             -> List# (Pair# (Maybe# String) (List# (Pair# (Maybe# String) z)))
                                             -> z
     method "selector" selectorW: forall f z a b . Writer f z -> SelectorMode# -> Pair# (NonEmpty# PrimExpr# ) a -> Format_Fmt b -> List# (Pair# (NonEmpty# PrimExpr# ) a) ->
-                                    Function3 z (SelectorEvent z) (Function2 (SelectorEvent z) (Function1 a (f z)) (f z)) (f z) ->
+                                    Function3 (Function1 a z) (SelectorEvent z) (Function1 (Function1 a (f z)) (f z)) (f z) ->
                                     f z
+    method "onEvent" onEventW: forall f z. Writer f z -> SelectorEvent z -> f z -> f z
     method "textBox" inputW: TextBoxPrim f z
     method "textArea" inputAreaW: TextBoxPrim f z
     method "foreignSelector" foreignSelectorW: forall f z a . Writer f z -> String -> a -> Function1 a (f z) -> f z

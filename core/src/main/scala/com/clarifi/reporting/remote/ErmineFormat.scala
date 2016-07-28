@@ -13,7 +13,7 @@ import scalaparsers.{Assoc, AssocL, AssocN, AssocR}
 
 object ErmineFormat {
   type ErminePrimF = S10[StringF, IntF, LongF, BooleanF, DoubleF
-                       , ByteF, ShortF, LongF, StringF, RF.PrimTF
+                       , ByteF, ShortF, LongF, StringF, RF.primTRW.F
                         ]
 
   /** A sampling of data that could reasonably expected to be in Prim or
@@ -91,13 +91,13 @@ object ErmineFormat {
   }
 
   type RuntimeF[A] = S7[ErminePrimF, ErminePrimF
-                      , DynamicF
+                      , RF.extRW.F[NothingF, NothingF]
                       , UnitF, RepeatF[A]
                       , GlobalF :: RepeatF[A], RepeatF[StringF :: A]]
 
   def runtimeW = fixFW[Runtime, RuntimeF]{self =>
     s7W(erminePrimW, erminePrimW,
-        RF.extW[Nothing, Nothing](nothingW.erase, nothingW.erase),
+        RF.extW[Nothing, NothingF, Nothing, NothingF](nothingW, nothingW),
         unitW, repeatW(self),
         tuple2W(globalW, repeatW(self)), RF.mapW(stringW, self)
     ){(prim, box,
@@ -120,7 +120,7 @@ object ErmineFormat {
     val arrself = listR(self) map (_.toArray)
     union7R(erminePrimR map (Prim(_)),
             erminePrimR map (Box(_)),
-            RF.extR[Nothing, Nothing](nothingR.erase, nothingR.erase) map (Rel(_)),
+            RF.extR[Nothing, NothingF, Nothing, NothingF](nothingR, nothingR) map (Rel(_)),
             unitR map (_ => EmptyRel),
             arrself map Arr,
             p2R(globalR, arrself)(Data),

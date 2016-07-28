@@ -171,11 +171,11 @@ abstract class ProfiledWriter[F[_], C](inner: Writer[F, C])(implicit val R: Run[
   def foreignSink[A](nm: String, f : (A => F[C]) => F[C]) =
     timedF("foreignSink", inner foreignSink (nm, f))
 
-  override def textBox(default: String, f: (C, SelectorEvent, ((SelectorEvent, String => F[C]) => F[C])) => F[C]) : F[C] =
+  override def textBox(default: String, f: (String => C, SelectorEvent, ((String => F[C]) => F[C])) => F[C]) : F[C] =
     timedF("selector", inner textBox (default, f))
 
   override def selector[A](mode: SelectorMode, default: (NonEmptyList[PrimExpr],A), fmt: Format, values: List[(NonEmptyList[PrimExpr],A)],
-                  f: (C, SelectorEvent, ((SelectorEvent, A => F[C]) => F[C])) => F[C]
+                  f: (A => C, SelectorEvent, ((A => F[C]) => F[C])) => F[C]
                    ) : F[C] = timedF("selector", inner selector (mode, default, fmt,  values, f))
 
   def run(c: C) = inner run c
