@@ -162,35 +162,34 @@ object Format {
                                           p2R(stringR,stringR)(HistoricalSM(_,_)))
 
   lazy val memRW: CodecPair2[Mem] = {
-    type MemF[RF, MF, A] = S20[
-      MF, // VarM
-      extRW.F[MF, RF] & memRW.F[RF, MLevelF[RF, MF]], // LetM
-      A & PredicateF,                // FilterM
-      A & ProjectionF,                  // ProjectM
-      A & RepeatF[StringF],             // ExceptM
-      A :: AttributeF :: opRW.F,        // CombineM
-      A :: AttributeF :: AggF,          // AggregateM
-      A & A,                            // HashInnerJoin
-      A & A,                            // MergeOuterJoin
-      extRW.F[MF, RF],                  // EmbedMem
-      RepeatF[PrimExprF] :: HeaderF :: StringF :: RepeatF[StringF], // ProcedureCall
-      RepeatF[RepeatF[StringF & PrimExprF]], // Literal
-      HeaderF, // EmptyRel
-      A :: RepeatF[AttributeF] :: memRW.F[RF, MLevelF[RF, MF]], // GroupByM
-      A :: AttributeF :: StringF :: BooleanF, // RenameM
-      A & A,                               // HashLeftJoin
-      AttributeF :: AttributeF :: memRW.F[RF, MLevelF[RF, MF]] :: A :: A, // AccumulateM
-      ProcessSymbolF & A, // ProcessM
-      A :: RepeatF[StringF] :: RepeatF[StringF] :: BooleanF ::
-        RepeatF[RepeatF[StringF & PrimExprF] &
-                (StringF :: opRW.F :: PrimExprF)], // Pivot
-      A // MemoMem
-    ]
-    new CodecPair2[Mem] {
-      type F[RF, MF] = FixF[MemF[RF, MF, SelfF]]
+    new CodecShape2[Mem] {
+      type Shape[RF, MF, A] = S20[
+        MF, // VarM
+        extRW.F[MF, RF] & memRW.F[RF, MLevelF[RF, MF]], // LetM
+        A & PredicateF,                // FilterM
+        A & ProjectionF,                  // ProjectM
+        A & RepeatF[StringF],             // ExceptM
+        A :: AttributeF :: opRW.F,        // CombineM
+        A :: AttributeF :: AggF,          // AggregateM
+        A & A,                            // HashInnerJoin
+        A & A,                            // MergeOuterJoin
+        extRW.F[MF, RF],                  // EmbedMem
+        RepeatF[PrimExprF] :: HeaderF :: StringF :: RepeatF[StringF], // ProcedureCall
+        RepeatF[RepeatF[StringF & PrimExprF]], // Literal
+        HeaderF, // EmptyRel
+        A :: RepeatF[AttributeF] :: memRW.F[RF, MLevelF[RF, MF]], // GroupByM
+        A :: AttributeF :: StringF :: BooleanF, // RenameM
+        A & A,                               // HashLeftJoin
+        AttributeF :: AttributeF :: memRW.F[RF, MLevelF[RF, MF]] :: A :: A, // AccumulateM
+        ProcessSymbolF & A, // ProcessM
+        A :: RepeatF[StringF] :: RepeatF[StringF] :: BooleanF ::
+          RepeatF[RepeatF[StringF & PrimExprF] &
+                  (StringF :: opRW.F :: PrimExprF)], // Pivot
+        A // MemoMem
+      ]
 
-      override def R[R, RF, M, MF](rr: Reader[R, RF], rm: Reader[M, MF]) =
-        fixFR[Mem[R, M], MemF[RF, MF, ?]](self => union20R(
+      override def readShape[R, RF, M, MF, Z](rr: Reader[R, RF], rm: Reader[M, MF]) = { self =>
+        union20R(
           rm.map(VarM(_)),
           p2R(extR(rm, rr), memR[R, RF, MLevel[R, M], MLevelF[RF, MF]](mLevelR(rr, rm), rr))(LetM(_, _)),
           p2R(self, predicateR)(FilterM(_, _)),
@@ -212,10 +211,11 @@ object Format {
           p5R(self, listR(stringR), listR(stringR), booleanR, mapR(recordR, tuple3R(stringR, opR, primExprR)))(
             (a,b,c,d,e) => Pivot(a,b.toSet,c.toSet,d,e)),
           self.map(MemoMem.apply)
-        ))
+        )
+      }
 
-      override def W[R, RF, M, MF](wr: Writer[R, RF], wm: Writer[M, MF]) =
-        fixFW[Mem[R, M], MemF[RF, MF, ?]](self => s20W(
+      override def writeShape[R, RF, M, MF, Z](wr: Writer[R, RF], wm: Writer[M, MF]) = { self =>
+        s20W(
           // VarM
           wm
           // LetM
@@ -280,8 +280,9 @@ object Format {
             case MemoMem(m) => memo(m)
             case QuoteMem(_) => sys.error("Can't serialize a QuoteMem! (it has just a raw object in it.)")
           }
-        ))
-    }
+        )
+      }
+    }.codec2
   }
 
   def memR[R, RF, M, MF](implicit rm: Reader[M, MF],
@@ -321,21 +322,31 @@ object Format {
   def processSymbolR: Reader[ProcessSymbol, ProcessSymbolF] = processSymbolRW.R
   def processSymbolW: Writer[ProcessSymbol, ProcessSymbolF] = processSymbolRW.W
 
-  type RLevelF[MF, RF] = OptionF[relRW.F[MF, RF]]
+  lazy val rLevelRW : CodecPair2[RLevel] =
+    new CodecPair2[RLevel] {
+      type F[MF, RF] = OptionF[relRW.F[MF, RF]]
+
+      override def W[M, MF, R, RF](wm: Writer[M, MF], wr: Writer[R, RF]) =
+        optionW(relW[M,MF,R,RF](wm,wr)) cmap ((x: RLevel[M, R]) => x match {
+          case RTop => None
+          case RPop(x) => Some(x)
+        })
+
+      override def R[M, MF, R, RF](rm: Reader[M, MF], rr: Reader[R, RF]) =
+        optionR(relR[M, MF, R, RF](rm,rr)) map {
+          case None => RTop
+          case Some(x) => RPop(x)
+        }
+    }
+  type RLevelF[MF, RF] = rLevelRW.F[MF,RF]
 
   def rLevelR[M, MF, R, RF](implicit rm: Reader[M, MF],
                              rr: Reader[R, RF]): Reader[RLevel[M, R], RLevelF[MF, RF]] =
-    optionR(relR[M, MF, R, RF]) map {
-      case None => RTop
-      case Some(x) => RPop(x)
-    }
+    rLevelRW.R(rm, rr)
 
   def rLevelW[M, MF, R, RF](implicit wm: Writer[M, MF],
                              wr: Writer[R, RF]): Writer[RLevel[M, R], RLevelF[MF, RF]] =
-    optionW(relW[M,MF,R,RF]) cmap ((x: RLevel[M, R]) => x match {
-      case RTop => None
-      case RPop(x) => Some(x)
-    })
+    rLevelRW.W(wm, wr)
 
   type MLevelF[RF, MF] = OptionF[memRW.F[RF, MF]]
 
@@ -353,12 +364,15 @@ object Format {
       case MPop(x) => Some(x)
     })
 
-  val groupByRW : CodecPair[List[Op.ColumnValue]] =
+  private val groupByRW : CodecPair[List[Op.ColumnValue]] =
     CodecPair[List[Op.ColumnValue],RepeatF[StringF & PrimTF]](
       listR(p2R(stringR,primTR)(Op.ColumnValue(_,_)))
     )(
       repeatW(p2W(stringW, primTW)(f => (x : Op.ColumnValue) => x match { case Op.ColumnValue(c,v) => f(c,v) }))
     )
+  private type GroupByF = groupByRW.F
+  private val groupByW = groupByRW.W
+  private val groupByR = groupByRW.R
 
   private type Fulcrum = Map[Record,(String,Op,PrimExpr)]
   lazy val fulcrumRW : CodecPair[Fulcrum] = {
@@ -373,8 +387,8 @@ object Format {
   val fulcrumW : Writer[Fulcrum,FulcrumF] = fulcrumRW.W
 
   lazy val relRW: CodecPair2[Relation] =
-    new CodecPair2[Relation] {
-      type RelF[MF, RF, A] = S20[
+    new CodecShape2[Relation] {
+      type Shape[MF, RF, A] = S20[
         RF, // Var
         A :: OptionF[IntF] :: OptionF[IntF] :: RepeatF[StringF & BooleanF], // Limit
         extRW.F[MF, RF] & relRW.F[MF, RLevelF[MF, RF]], // Let
@@ -397,82 +411,81 @@ object Format {
         RepeatF[StringF] & A  // Note
       ]
 
-      type F[MF, RF] = FixF[RelF[MF, RF, SelfF]]
+      override def writeShape[M, MF, R, RF, Z](wm: Writer[M, MF], wr: Writer[R, RF]) = { self =>
+        s20W(wr, // Var
+             tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))), // Limit
+             tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))), // Let
+             tuple4W(self, self, repeatW(tuple2W(stringW, stringW)), joinModeW), // JoinOn
+             tuple2W(self, self), // Union
+             tuple2W(self, self), // Minus
+             tuple2W(self, predicateW), // Filter
+             tuple2W(self, projectionW), // Project
+             tuple2W(self, repeatW(stringW)), // Except
+             tuple3W(self, attributeW, opW), // Combine
+             tuple3W(self, attributeW, stringW), // RenameR
+             tuple3W(self, attributeW, aggW), // Aggregate
+             tuple4W(self, projectionW, aggProjectionRW.W, groupByRW.W), // AggregateByGroup
+             tuple5W(self, repeatW(stringW), repeatW(stringW), booleanW, fulcrumW), // PivotR
+             tuple2W(headerW, tuple2W(stringW, repeatW(stringW))), // Table
+             tuple4W(repeatW(W_\/(tuple2W(stringW, self), primExprW)), orderedHeaderW, stringW, repeatW(stringW)), // TableProc
+             headerW, // RelEmpty
+             repeatW(recordW), // SmallLit
+             tuple2W(self, repeatW(stringW)), // MemoR
+             tuple2W(repeatW(stringW), self) // Note
+        )((v, lim, let, on, un, min, fil, proj, exc, comb, ren, agg, group, pivot, tab, tabproc, empt, sl, m, note) =>
+          (r: Relation[M, R]) => r match {
+            case VarR(x) => v(x)
+            case Limit(a, b, c, d) => lim((a, b, c, d.map(p => (p._1, p._2 == Asc)).toList))
+            case LetR(a, b) => let((a, b))
+            case JoinOn(a, b, c, d) => on((a, b, c, d))
+            case Union(a, b) => un(a -> b)
+            case Minus(a, b) => min(a -> b)
+            case Filter(a, b) => fil(a -> b)
+            case Project(a, b) => proj((a, b))
+            case Except(a, b) => exc((a, b.toList))
+            case Combine(a, b, c) => comb((a, b, c))
+            case RenameR(a, b, c) => ren((a, b, c))
+            case Aggregate(a, b, c) => agg((a, b, c))
+            case AggregateByGroup(a,b,c,d) => group((a,b,c,d))
+            case PivotR(a,b,c,d,e) => pivot((a,b,c,d,e))
+            case Table(a, b) => tab((a, (b.name, b.schema)))
+            case TableProc(a, b, c, d) => tabproc((a, b, c, d))
+            case RelEmpty(h) => empt(h)
+            case SmallLit(ts) => sl(ts.toList)
+            case MemoR(r, pk) => m(r, pk)
+            case QuoteR(_) => sys.error("Can't serialize a QuoteR! (it has just a raw object in it.)")
+            case Note(ts, under) => note(ts, under)
+              // Don't put a catch all here, so we can get compile errors.
+          })
+      }
 
-      override def W[M, MF, R, RF](wm: Writer[M, MF], wr: Writer[R, RF]) =
-        fixFW[Relation[M, R], RelF[MF, RF, ?]](self =>
-          s20W(wr, // Var
-               tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))), // Limit
-               tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))), // Let
-               tuple4W(self, self, repeatW(tuple2W(stringW, stringW)), joinModeW), // JoinOn
-               tuple2W(self, self), // Union
-               tuple2W(self, self), // Minus
-               tuple2W(self, predicateW), // Filter
-               tuple2W(self, projectionW), // Project
-               tuple2W(self, repeatW(stringW)), // Except
-               tuple3W(self, attributeW, opW), // Combine
-               tuple3W(self, attributeW, stringW), // RenameR
-               tuple3W(self, attributeW, aggW), // Aggregate
-               tuple4W(self, projectionW, aggProjectionRW.W, groupByRW.W), // AggregateByGroup
-               tuple5W(self, repeatW(stringW), repeatW(stringW), booleanW, fulcrumW), // PivotR
-               tuple2W(headerW, tuple2W(stringW, repeatW(stringW))), // Table
-               tuple4W(repeatW(W_\/(tuple2W(stringW, self), primExprW)), orderedHeaderW, stringW, repeatW(stringW)), // TableProc
-               headerW, // RelEmpty
-               repeatW(recordW), // SmallLit
-               tuple2W(self, repeatW(stringW)), // MemoR
-               tuple2W(repeatW(stringW), self) // Note
-          )((v, lim, let, on, un, min, fil, proj, exc, comb, ren, agg, group, pivot, tab, tabproc, empt, sl, m, note) =>
-            (r: Relation[M, R]) => r match {
-              case VarR(x) => v(x)
-              case Limit(a, b, c, d) => lim((a, b, c, d.map(p => (p._1, p._2 == Asc)).toList))
-              case LetR(a, b) => let((a, b))
-              case JoinOn(a, b, c, d) => on((a, b, c, d))
-              case Union(a, b) => un(a -> b)
-              case Minus(a, b) => min(a -> b)
-              case Filter(a, b) => fil(a -> b)
-              case Project(a, b) => proj((a, b))
-              case Except(a, b) => exc((a, b.toList))
-              case Combine(a, b, c) => comb((a, b, c))
-              case RenameR(a, b, c) => ren((a, b, c))
-              case Aggregate(a, b, c) => agg((a, b, c))
-              case AggregateByGroup(a,b,c,d) => group((a,b,c,d))
-              case PivotR(a,b,c,d,e) => pivot((a,b,c,d,e))
-              case Table(a, b) => tab((a, (b.name, b.schema)))
-              case TableProc(a, b, c, d) => tabproc((a, b, c, d))
-              case RelEmpty(h) => empt(h)
-              case SmallLit(ts) => sl(ts.toList)
-              case MemoR(r, pk) => m(r, pk)
-              case QuoteR(_) => sys.error("Can't serialize a QuoteR! (it has just a raw object in it.)")
-              case Note(ts, under) => note(ts, under)
-                // Don't put a catch all here, so we can get compile errors.
-            }))
-
-      override def R[M, MF, R, RF](rm: Reader[M, MF], rr: Reader[R, RF]) =
-        fixFR[Relation[M, R], RelF[MF, RF, ?]](self => union20R(
-               rr.map(VarR(_)),
-               p4R(self, optionR(intR), optionR(intR), listR(p2R(stringR, sortOrderR)((_, _))))(Limit(_, _, _, _)),
-               p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)),
-               p4R(self, self, listR(tuple2R(stringR, stringR)) map (_.toSet), joinModeR)(JoinOn(_, _, _, _)),
-               p2R(self, self)((a, b) => Union(a, b)),
-               p2R(self, self)((a, b) => Minus(a, b)),
-               p2R(self, predicateR)((a, b) => Filter(a, b)),
-               p2R(self, projectionR)(Project(_, _)),
-               p2R(self, listR(stringR))((a, b) => Except(a, b.toSet)),
-               p3R(self, attributeR, opR)(Combine(_, _, _)),
-               p3R(self, attributeR, stringR)(RenameR(_, _, _)),
-               p3R(self, attributeR, aggR)(Aggregate(_, _, _)),
-               p4R(self, projectionR, aggProjectionRW.R, groupByRW.R)(AggregateByGroup(_,_,_,_)),
-               p5R(self, listR(stringR), listR(stringR), booleanR, fulcrumR)(
-                 (a,b,c,d,e) => PivotR(a,b.toSet,c.toSet,d,e)),
-               p2R(headerR, p2R(stringR, listR(stringR))(TableName(_, _)))(Table(_, _)),
-               p4R(listR(R_\/(p2R(stringR, self)((_,_)), primExprR)),
-                   orderedHeaderR, stringR, listR(stringR))(TableProc(_, _, _, _)),
-               headerR.map(RelEmpty(_)),
-               listR(recordR).map(xs => SmallLit(xs.toNel.get)),
-               p2R(self, listR(stringR))((r, pk) => MemoR(r, pk)),
-               p2R(listR(stringR), self)(Note(_, _))
-             ))
-    }
+      override def readShape[M, MF, R, RF, Z](rm: Reader[M, MF], rr: Reader[R, RF]) = { self =>
+        union20R(
+          rr.map(VarR(_)),
+          p4R(self, optionR(intR), optionR(intR), listR(p2R(stringR, sortOrderR)((_, _))))(Limit(_, _, _, _)),
+          p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)),
+          p4R(self, self, listR(tuple2R(stringR, stringR)) map (_.toSet), joinModeR)(JoinOn(_, _, _, _)),
+          p2R(self, self)((a, b) => Union(a, b)),
+          p2R(self, self)((a, b) => Minus(a, b)),
+          p2R(self, predicateR)((a, b) => Filter(a, b)),
+          p2R(self, projectionR)(Project(_, _)),
+          p2R(self, listR(stringR))((a, b) => Except(a, b.toSet)),
+          p3R(self, attributeR, opR)(Combine(_, _, _)),
+          p3R(self, attributeR, stringR)(RenameR(_, _, _)),
+          p3R(self, attributeR, aggR)(Aggregate(_, _, _)),
+          p4R(self, projectionR, aggProjectionRW.R, groupByRW.R)(AggregateByGroup(_,_,_,_)),
+          p5R(self, listR(stringR), listR(stringR), booleanR, fulcrumR)(
+            (a,b,c,d,e) => PivotR(a,b.toSet,c.toSet,d,e)),
+          p2R(headerR, p2R(stringR, listR(stringR))(TableName(_, _)))(Table(_, _)),
+          p4R(listR(R_\/(p2R(stringR, self)((_,_)), primExprR)),
+              orderedHeaderR, stringR, listR(stringR))(TableProc(_, _, _, _)),
+          headerR.map(RelEmpty(_)),
+          listR(recordR).map(xs => SmallLit(xs.toNel.get)),
+          p2R(self, listR(stringR))((r, pk) => MemoR(r, pk)),
+          p2R(listR(stringR), self)(Note(_, _))
+        )
+      }
+    }.codec2
 
   def relW[M, MF, R, RF](implicit wm: Writer[M, MF],
                          wr: Writer[R, RF]): Writer[Relation[M, R], relRW.F[MF, RF]] =
