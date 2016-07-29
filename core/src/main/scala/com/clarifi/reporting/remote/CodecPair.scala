@@ -39,6 +39,19 @@ object CodecPair {
     }
 }
 
+/** A descrition that can be used to define a fixed-point codec.
+ *
+ * The Shape gives the format functor that corresponds to A's shape
+ * functor, and readShape and writeShape describe how to do one
+ * step of the fixed point definition of the codec. The actual A
+ * codec can be extracted using the codec method.
+ *
+ * The polymorphism in read/writeShape cause smaller errors to be
+ * reported when something is wrong with their definition. fixFR/W
+ * involves terms with Shape[X] where X also involves Shape, and if
+ * Shape is large, this creates annoyingly large types. The
+ * definitions here only involve a single use of Shape.
+ */
 abstract class CodecShape[A] {
   type Shape[Z]
 
@@ -75,6 +88,9 @@ abstract class CodecPair2[A[_, _]] {
     CodecPair(R(lr, rr))(W(lw, rw))
 }
 
+/** See CodecShape. This class provides the same benefits, but for
+ * CodecPair2 definitions.
+ */
 abstract class CodecShape2[A[_, _]] {
   type Shape[LF, RF, Z]
 
