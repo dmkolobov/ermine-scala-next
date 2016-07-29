@@ -92,7 +92,7 @@ object Format {
 
   private type Projection = Map[Attribute,Op]
   private val projectionRW : CodecPair[Projection] =
-    CodecPair[Projection,RepeatF[AttributeF & opRW.F]](mapR(attributeR,opR))(mapW(attributeW,opW))
+    CodecPair[Projection,RepeatF[AttributeF & OpF]](mapR(attributeR,opR))(mapW(attributeW,opW))
   private type ProjectionF = projectionRW.F
   private val projectionR : Reader[Projection,ProjectionF] = projectionRW.R
   private val projectionW : Writer[Projection,ProjectionF] = projectionRW.W
@@ -169,7 +169,7 @@ object Format {
         A & PredicateF,                // FilterM
         A & ProjectionF,                  // ProjectM
         A & RepeatF[StringF],             // ExceptM
-        A :: AttributeF :: opRW.F,        // CombineM
+        A :: AttributeF :: OpF,        // CombineM
         A :: AttributeF :: AggF,          // AggregateM
         A & A,                            // HashInnerJoin
         A & A,                            // MergeOuterJoin
@@ -184,7 +184,7 @@ object Format {
         ProcessSymbolF & A, // ProcessM
         A :: RepeatF[StringF] :: RepeatF[StringF] :: BooleanF ::
           RepeatF[RepeatF[StringF & PrimExprF] &
-                  (StringF :: opRW.F :: PrimExprF)], // Pivot
+                  (StringF :: OpF :: PrimExprF)], // Pivot
         A // MemoMem
       ]
 
@@ -376,7 +376,7 @@ object Format {
 
   private type Fulcrum = Map[Record,(String,Op,PrimExpr)]
   lazy val fulcrumRW : CodecPair[Fulcrum] = {
-    CodecPair[Fulcrum,RepeatF[RecordF :: (StringF :: opRW.F :: PrimExprF)]](
+    CodecPair[Fulcrum,RepeatF[RecordF :: (StringF :: OpF :: PrimExprF)]](
       mapR(recordR, tuple3R(stringR, opR, primExprR))
     )(
       mapW(recordW,tuple3W(stringW, opW, primExprW))
@@ -398,7 +398,7 @@ object Format {
         A & PredicateF, // Filter
         A & ProjectionF, // Project
         A & RepeatF[StringF], // Except
-        A :: AttributeF :: opRW.F, // Combine
+        A :: AttributeF :: OpF, // Combine
         A :: AttributeF :: StringF, // RenameR
         A :: AttributeF :: AggF, // Aggregate
         A :: ProjectionF :: aggProjectionRW.F :: groupByRW.F, // AggregateByGroup
@@ -595,11 +595,11 @@ object Format {
   lazy val primExprR: Reader[PrimExpr, PrimExprF] = primExprRW.R
 
   lazy val predicateRW: CodecPair[Predicate] = {
-    type BinOpF = opRW.F & opRW.F
-    type PredicateF[A] = S8[BooleanF, BinOpF, BinOpF, BinOpF,
-                            A, A & A, A & A, opRW.F]
-    CodecPair[Predicate, FixF[PredicateF[SelfF]]]{
-      fixFR[Predicate, PredicateF](self =>
+    type BinOpF = OpF & OpF
+    new CodecShape[Predicate] {
+      type Shape[A] = S8[BooleanF, BinOpF, BinOpF, BinOpF,
+                            A, A & A, A & A, OpF]
+      override def readShape[Z] = { self =>
         union8R(booleanR map (x => Predicate.Atom(x)),
                 p2R(opR, opR)((a, b) => Lt(a, b)),
                 p2R(opR, opR)((a, b) => Gt(a, b)),
@@ -607,9 +607,10 @@ object Format {
                 self map (was => Not(was)),
                 p2R(self, self)((a, b) => Or(a, b)),
                 p2R(self, self)((a, b) => And(a, b)),
-                opR map IsNull))
-    }{
-      fixFW[Predicate, PredicateF](self =>
+                opR map IsNull)
+      }
+
+      override def writeShape[Z] = { self =>
         s8W(booleanW, // Atom
             tuple2W(opW, opW), // Lt
             tuple2W(opW, opW), // Gt
@@ -628,35 +629,36 @@ object Format {
             case Or(x, y) => or(x -> y)
             case And(x, y) => and(x -> y)
             case IsNull(x) => isNull(x)
-          }))
-    }
+          })
+      }
+    }.codec
   }
   type PredicateF = predicateRW.F
 
   lazy val predicateR: Reader[Predicate, PredicateF] = predicateRW.R
 
-  lazy val opRW: CodecPair[Op] = {
-    type OpF[A] = S18[PrimExprF       , // OpLiteral
-                      StringF & PrimTF, // ColumnValue
-                      A & A           , // Add
-                      A & A           , // Sub
-                      A & A           , // Mul
-                      A & A           , // FloorDiv
-                      A & A           , // DoubleDiv
-                      A & A           , // Pow
-                      RepeatF[A]      , // Concat
-                      PredicateF :: A :: A, // If
-                      A & A           , // Coalesce
-                      A :: IntF :: IntF , // DateAdd
-                      IntF :: A :: A    , // DateDiff
-                      StringF :: StringF :: RepeatF[StringF] :: RepeatF[A] :: PrimTF, // Funcall
-                      A                 , // Abs
-                      AggF & WindowF , // Windowed
-                      A                 , // Upper
-                      A                   // Lower
-                     ]
-    CodecPair[Op, FixF[OpF[SelfF]]]{
-      fixFR[Op, OpF]{self =>
+  lazy val opRW: CodecPair[Op] =
+    new CodecShape[Op] {
+      type Shape[A] = S18[PrimExprF       , // OpLiteral
+                          StringF & PrimTF, // ColumnValue
+                          A & A           , // Add
+                          A & A           , // Sub
+                          A & A           , // Mul
+                          A & A           , // FloorDiv
+                          A & A           , // DoubleDiv
+                          A & A           , // Pow
+                          RepeatF[A]      , // Concat
+                          PredicateF :: A :: A, // If
+                          A & A           , // Coalesce
+                          A :: IntF :: IntF , // DateAdd
+                          IntF :: A :: A    , // DateDiff
+                          StringF :: StringF :: RepeatF[StringF] :: RepeatF[A] :: PrimTF, // Funcall
+                          A                 , // Abs
+                          AggF & WindowF , // Windowed
+                          A                 , // Upper
+                          A                   // Lower
+                         ]
+      override def readShape[Z] = { self =>
         union18R(
           primExprR map OpLiteral,
           p2R(stringR, primTR)(ColumnValue),
@@ -678,8 +680,8 @@ object Format {
           self map (Lower(_))
         )
       }
-    }{
-      fixFW[Op, OpF]{self =>
+
+      override def writeShape[Z] = { self =>
         lazy val binopW = tuple2W(self, self)
         s18W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
              binopW, binopW, binopW, binopW, repeatW(self),
@@ -712,10 +714,11 @@ object Format {
             case Upper(x) => upper(x)
             case Lower(x) => lower(x)
           })}
-    }
-  }
+    }.codec
 
-  lazy val opR: Reader[Op, opRW.F] = opRW.R
+  type OpF = opRW.F
+  lazy val opR: Reader[Op, OpF] = opRW.R
+  lazy val opW: Writer[Op, OpF] = opRW.W
 
   type SortOrderF = BooleanF
   lazy val sortOrderR: Reader[SortOrder, SortOrderF] = booleanR map (x => if (x) Asc else Desc)
@@ -764,7 +767,7 @@ object Format {
   private val frameR: Reader[Frame, FrameF] = frameRW.R
 
   private val windowRW =
-    CodecPair[Window, RepeatF[opRW.F] :: RepeatF[P2[opRW.F,SortOrderF]] :: FrameF] {
+    CodecPair[Window, RepeatF[OpF] :: RepeatF[P2[OpF,SortOrderF]] :: FrameF] {
       p3R(listR(opR), listR(tuple2R(opR, sortOrderR)), frameR)(Window)
     }{
       p3W(repeatW(opW), repeatW(tuple2W(opW, sortOrderW)), frameW)(w => {
@@ -774,8 +777,6 @@ object Format {
   private type WindowF = windowRW.F
   private val windowW: Writer[Window, WindowF] = windowRW.W
   private val windowR: Reader[Window, WindowF] = windowRW.R
-
-  lazy val opW: Writer[Op, opRW.F] = opRW.W
 
   lazy val orderedHeaderW: Writer[Header.Ordered, OrderedHeaderF] =
     repeatW(tuple2W(stringW,primTW))
@@ -809,14 +810,14 @@ object Format {
   lazy val aggRW : CodecPair[AggFunc] = {
     type InternalF =
       S9[UnitF,  // Count
-         opRW.F, // Sum
-         opRW.F, // Avg
-         opRW.F, // Min
-         opRW.F, // Max
-         opRW.F, // Stddev
-         opRW.F, // Variance
-         opRW.F & opRW.F, // WMean
-         opRW.F & opRW.F] // WHMean
+         OpF, // Sum
+         OpF, // Avg
+         OpF, // Min
+         OpF, // Max
+         OpF, // Stddev
+         OpF, // Variance
+         OpF & OpF, // WMean
+         OpF & OpF] // WHMean
 
     CodecPair[AggFunc,InternalF] {
       union9R(
@@ -861,41 +862,50 @@ object Format {
   import writers.{Legend, LegendColumns, Presentation, SortDirection,
                   SortStrategy, Format => WFormat, Condition => Condition}
 
-  type ConditionF[A] = S6[PrimExprF, // Gt
-    PrimExprF, // Lt
-    PrimExprF, // Eq
-    PrimExprF, // Lte
-    PrimExprF, // Gte
-    A & A // And
-    ]
+  lazy val conditionRW =
+    new CodecShape[Condition] {
+      type Shape[A] =
+        S6[PrimExprF, // Gt
+           PrimExprF, // Lt
+           PrimExprF, // Eq
+           PrimExprF, // Lte
+           PrimExprF, // Gte
+           A & A // And
+          ]
 
-  lazy val conditionR = fixFR[Condition, ConditionF](self =>
-    union6R(primExprR map (x => Condition.Gt(x)),
-            primExprR map (x => Condition.Lt(x)),
-            primExprR map (x => Condition.Eq(x)),
-            primExprR map (x => Condition.Lte(x)),
-            primExprR map (x => Condition.Gte(x)),
-            p2R(self, self)((a, b) => Condition.And(a, b))))
+      override def readShape[Z] = { self =>
+        union6R(primExprR map (x => Condition.Gt(x)),
+                primExprR map (x => Condition.Lt(x)),
+                primExprR map (x => Condition.Eq(x)),
+                primExprR map (x => Condition.Lte(x)),
+                primExprR map (x => Condition.Gte(x)),
+                p2R(self, self)((a, b) => Condition.And(a, b)))
+      }
 
-  lazy val conditionW = fixFW[Condition, ConditionF](self =>
-    s6W(primExprW, // Gt
-        primExprW, // Lt
-        primExprW, // Eq
-        primExprW, // Lte
-        primExprW, // Gte
-        tuple2W(self, self) // And
-       )((gt, lt, eq, lte, gte, and) => (r: Condition) =>
-        r match {
-          case Condition.Gt(x) => gt(x)
-          case Condition.Lt(x) => lt(x)
-          case Condition.Eq(x) => eq(x)
-          case Condition.Lte(x) => lte(x)
-          case Condition.Gte(x) => gte(x)
-          case Condition.And(x,y) => and(x -> y)
-        }))
+      override def writeShape[Z] = { self =>
+        s6W(primExprW, // Gt
+            primExprW, // Lt
+            primExprW, // Eq
+            primExprW, // Lte
+            primExprW, // Gte
+            tuple2W(self, self) // And
+           )((gt, lt, eq, lte, gte, and) => (r: Condition) =>
+            r match {
+              case Condition.Gt(x) => gt(x)
+              case Condition.Lt(x) => lt(x)
+              case Condition.Eq(x) => eq(x)
+              case Condition.Lte(x) => lte(x)
+              case Condition.Gte(x) => gte(x)
+              case Condition.And(x,y) => and(x -> y)
+            })
+      }
+    }.codec
+  type ConditionF = conditionRW.F
+  lazy val conditionR = conditionRW.R
+  lazy val conditionW = conditionRW.W
 
-  lazy val wformatRW: CodecPair[WFormat] = {
-    type WFormatF[A] = S14[UnitF, // Default
+  lazy val wformatRW: CodecPair[WFormat] = new CodecShape[WFormat] {
+    type Shape[A] = S14[UnitF, // Default
                        A, // Markdown
                        StringF, // Constant
                        BooleanF :: BooleanF :: IntF :: BooleanF, // Percent
@@ -905,13 +915,13 @@ object Format {
                        BooleanF :: BooleanF :: IntF,  // IntegralRound
                        IntF,  // Truncate
                        A,  // Pr1
-                       FixF[ConditionF[SelfF]] :: A :: A,  // Conditional
+                       ConditionF :: A :: A,  // Conditional
                        IntF :: IntF :: A, //Conditional Color
                        RepeatF[StringF & StringF], // Alias
                        UnitF
                      ]
-    CodecPair[WFormat, FixF[WFormatF[SelfF]]]{
-      fixFR[WFormat,WFormatF](self => union14R(
+    override def readShape[Z] = { self =>
+      union14R(
         unitR   map (_ => WFormat.Default),
         self map (inner => WFormat.Markdown(inner) ),
         stringR map (s => WFormat.Constant(s)),
@@ -927,9 +937,9 @@ object Format {
         listR(tuple2R(stringR, stringR)) map (WFormat.Alias),
         unitR map (_ => WFormat.Verbatim)
         )
-      )
-    }{
-      fixFW[WFormat, WFormatF]( self =>
+    }
+
+    override def writeShape[Z] = { self =>
         s14W(unitW, self, stringW, tuple4W(booleanW, booleanW, intW, booleanW),
              tuple3W(booleanW,booleanW,stringW), unitW, tuple3W(booleanW,booleanW,intW),
              tuple3W(booleanW,booleanW,intW), intW, self, tuple3W(conditionW, self, self),
@@ -949,9 +959,9 @@ object Format {
             case WFormat.ColorFormat(bg, fg, b) => color(bg, fg, b)
             case WFormat.Alias(als) => alias(als)
             case WFormat.Verbatim => vbt(())
-          }))
+          })
     }
-  }
+  }.codec
 
   lazy val wformatR = wformatRW.R
 
@@ -968,14 +978,14 @@ object Format {
   lazy val sortStrategyR: Reader[SortStrategy, SortStrategyF] = listR(tuple2R(stringR, sortDirR)) map SortStrategy
   lazy val sortStrategyW: Writer[SortStrategy, SortStrategyF] = repeatW(tuple2W(stringW, sortDirW)) cmap {case SortStrategy(pri) => pri}
 
-  lazy val opNelR: Reader[NonEmptyList[Op], NelF[opRW.F]] = nelR(opR)
-  lazy val opNelW: Writer[NonEmptyList[Op], NelF[opRW.F]] = nelW(opW)
+  lazy val opNelR: Reader[NonEmptyList[Op], NelF[OpF]] = nelR(opR)
+  lazy val opNelW: Writer[NonEmptyList[Op], NelF[OpF]] = nelW(opW)
 
-  type PresentationF = wformatRW.F :: NelF[opRW.F]
+  type PresentationF = wformatRW.F :: NelF[OpF]
   lazy val presentationR: Reader[Presentation, PresentationF] = tuple2R(wformatR, opNelR) map {
     case (f, d) => Presentation(f, d)
   }
-  lazy val presentationW: Writer[Presentation, PresentationF] = p2W[WFormat, wformatRW.F, NonEmptyList[Op], NelF[opRW.F], Presentation](wformatW, opNelW)(f =>
+  lazy val presentationW: Writer[Presentation, PresentationF] = p2W[WFormat, wformatRW.F, NonEmptyList[Op], NelF[OpF], Presentation](wformatW, opNelW)(f =>
     {case Presentation(fmt, displayData) => f(fmt, displayData)}
   )
 
