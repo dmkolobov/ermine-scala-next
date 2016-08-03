@@ -53,30 +53,6 @@ case class Limit[+M,+R](
     Limit(r.unquote(f, g), start, end, order)
 }
 
-/**
- * Intermediate form between Relation and SQL. Provided for (re)writing queries that translate to
- * nicer-looking and faster SQL.
- */
-case class SelectR[+M,+R](
-  rs: List[Relation[M,R]],
-  cs: Map[Attribute, Op],
-  where: Predicate
-) extends Relation[M,R] {
-  def bimap[N, S](f: M => N, g: R => S) = SelectR(rs map (_.bimap(f, g)), cs, where)
-  def subst[N, S](f: M => Mem[S,N], g: R => Relation[N, S]) = SelectR(rs map (_.subst(f, g)), cs, where)
-  def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = rs foldMap (_.bifoldMap(f, g))
-  def foreach(f: M => Any, g: R => Any) = rs foreach (_.foreach(f, g))
-  override def equals(other: Any) = other match {
-    case SelectR(rs2, cs2, where2) =>
-      rs.toSet == rs2.toSet && cs == cs2 && where == where2
-    case _ => false
-  }
-  override def hashCode: Int = (rs.toSet, cs, where).hashCode
-  override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
-                                       g: Object => Option[Mem[S, N]]): Relation[N, S] =
-    SelectR(rs.map(_.unquote(f, g)), cs, where)
-}
-
 case class MemoR[+M,+R](r: Relation[M,R], pk: List[String]) extends Relation[M,R] {
   def bimap[N, S](f: M => N, g : R => S) = MemoR(r.bimap(f,g), pk)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = MemoR(r.subst(f,g), pk)
@@ -109,17 +85,32 @@ case class LetR[+M,+R](r: Ext[M,R], expr: Relation[M,RLevel[M, R]]) extends Rela
          expr.unquote(x => f(x).map(v => VarR(RPop(v))), x => g(x).map(_.mapRel(v => RPop(VarR(v))))))
 }
 
-case class Join[+M, +R](fst: Relation[M, R], snd: Relation[M, R]) extends Relation[M, R] {
-  def bimap[N, S](f: M => N, g: R => S) = Join(fst bimap (f, g), snd bimap (f, g))
-  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Join(fst subst (f, g), snd subst (f, g))
-  def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = fst.bifoldMap(f, g) |+| snd.bifoldMap(f, g)
-  def foreach(f: M => Any, g: R => Any) { fst foreach (f, g) ; snd foreach (f, g) }
-  override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
-                                       g: Object => Option[Mem[S, N]]): Relation[N, S] =
-    Join(fst.unquote(f, g), snd.unquote(f, g))
+object Join {
+  def apply[M, R](fst: Relation[M, R], snd: Relation[M, R]): Relation[M, R] =
+    // Ermine only lets us make aggregates with a single aggregate function natively
+    // therefore, we coalesce them when natural-joined.  but make sure none of the
+    // aggregated columns have the same name, because coalescing would then be incorrect
+    // wrt natural join semantics.
+    (fst, snd) match {
+      case (a: AggregateByGroup[M,R], b: AggregateByGroup[M,R])
+        if a.rel == b.rel &&
+           a.cs == b.cs &&
+           a.group == b.group &&
+           (a.aggs.map(_._1.name).toSet intersect b.aggs.map(_._1.name).toSet isEmpty) =>
+          a.copy(aggs = a.aggs ++ b.aggs)
+      case _ =>
+        Relation.combineFilters(fst, snd) {
+          (l,r) => Predicates.simplify(Predicate.And(l,r))
+        }.getOrElse(JoinOn(fst, snd, Set()))
+    }
+  def unapply[M, R](j: JoinOn[M, R]): Option[(Relation[M, R], Relation[M, R])] =
+    j match {
+      case JoinOn(fst, snd, cs, JoinMode.Inner) if cs.isEmpty => Some((fst, snd))
+      case _ => None
+    }
 }
 
-case class JoinOn[+M, +R](fst: Relation[M, R], snd: Relation[M, R], cs: Set[(String, String)]) extends Relation[M, R] {
+case class JoinOn[+M, +R](fst: Relation[M, R], snd: Relation[M, R], cs: Set[(String, String)], mode: JoinMode = JoinMode.Inner) extends Relation[M, R] {
   def bimap[N, S](f: M => N, g: R => S) = JoinOn(fst bimap (f, g), snd bimap (f, g), cs)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = JoinOn(fst subst (f, g), snd subst (f, g), cs)
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = fst.bifoldMap(f, g) |+| snd.bifoldMap(f, g)
@@ -139,14 +130,25 @@ case class Union[+M, +R](fst: Relation[M, R], snd: Relation[M, R]) extends Relat
     Union(fst.unquote(f, g), snd.unquote(f, g))
 }
 
-case class Minus[+M, +R](fst: Relation[M, R], snd: Relation[M, R]) extends Relation[M, R] {
-  def bimap[N, S](f: M => N, g: R => S) = Minus(fst bimap (f, g), snd bimap (f, g))
-  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Minus(fst subst (f, g), snd subst (f, g))
+case class MinusI[+M, +R](fst: Relation[M, R], snd: Relation[M, R]) extends Relation[M, R] {
+  def bimap[N, S](f: M => N, g: R => S) = MinusI(fst bimap (f, g), snd bimap (f, g))
+  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = MinusI(fst subst (f, g), snd subst (f, g))
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = fst.bifoldMap(f, g) |+| snd.bifoldMap(f, g)
   def foreach(f: M => Any, g: R => Any) { fst foreach (f, g) ; snd foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
-    Minus(fst.unquote(f, g), snd.unquote(f, g))
+    MinusI(fst.unquote(f, g), snd.unquote(f, g))
+}
+
+// type Minus[+M,+R] = MinusI[M,R]
+// ^- actually exists but lives in package.scala where it must
+
+object Minus {
+  def apply[M,R](fst: Relation[M, R], snd: Relation[M, R]): Relation[M, R] =
+    Relation.combineFilters(fst, snd) {
+      (l, r) => Predicates.simplify(Predicate.And(l, Predicate.Not(r)))
+    }.getOrElse(MinusI[M,R](fst,snd))
+  def unapply[M,R](x: Minus[M,R]): Some[(Relation[M,R],Relation[M,R])] = Some((x.fst, x.snd)) 
 }
 
 case class Filter[+M, +R](rel: Relation[M, R], p: Predicate) extends Relation[M, R] {
@@ -241,6 +243,25 @@ case class Note[+M,+R](tags: List[String], under: Relation[M,R]) extends Relatio
 object Annotated {
   def apply[M,R](ts: List[String], un: Relation[M, R]): Relation[M,R] =
     if (ts.isEmpty) un else Note(ts, un)
+}
+
+// 'Statically' determined pivot tables. Generates some specified new columns
+// using data in an underlying relation.
+case class PivotR[+M, +R](
+  under: Relation[M, R], // the underlying relation
+  pivotKey: Set[ColumnName], // the columns that determine the pivot key
+  pivotVals: Set[ColumnName], // the columns that determine the pivot values
+  outer: Boolean, // whether NULL is admitted in the output columns of the pivot
+  keyMap: Map[Record,(ColumnName, Op, PrimExpr)] // map from pivotKey records to columns and ways to fill them - the PrimExpr is the default 'missing' element, e.g. 0 or "", to avoid NullExprs.
+) extends Relation[M, R] {
+  def bimap[N, S](f: M => N, g: R => S) =
+    PivotR(under.bimap(f, g), pivotKey, pivotVals, outer, keyMap)
+  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) =
+    PivotR(under.subst(f, g), pivotKey, pivotVals, outer, keyMap)
+  def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = under.bifoldMap(f, g)
+  def foreach(f: M => Any, g: R => Any) = { under.foreach(f, g) }
+  override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]], g: Object => Option[Mem[S, N]]): Relation[N, S] =
+    PivotR(under.unquote(f, g), pivotKey, pivotVals, outer, keyMap)
 }
 
 sealed abstract class HardRel extends Relation[Nothing, Nothing] {
@@ -340,6 +361,18 @@ object Relation {
     case RPop(v) => v
   }
 
+  /** If `left` and `right` are the same except in filter, answer a
+    * combination that joins the filters with `bin`, otherwise
+    * None.
+    */
+  def combineFilters[M, R](left: Relation[M, R], right: Relation[M, R])(
+                                         bin: (Predicate, Predicate) => Predicate) =
+    (left, right) match {
+      case (Filter(r1, p1), Filter(r2, p2)) if r1 == r2 =>
+        Some(Filter(r1, bin(p1, p2)))
+      case _ => None
+    }
+
   implicit val relBifoldable: Bifoldable[Relation] = new Bifoldable.FromBifoldMap[Relation] {
     def bifoldMap[A,B,M:Monoid](fa: Relation[A, B])(f: A => M)(g: B => M): M =
       fa bifoldMap (f, g)
@@ -359,7 +392,6 @@ object Relation {
   }
 
   implicit def relEq[M: Equal, R: Equal]: Equal[Relation[M, R]] = Equal.equalA
-
 }
 
 object RLevel {

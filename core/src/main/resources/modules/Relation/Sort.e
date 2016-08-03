@@ -19,15 +19,17 @@ import Constraint
 
 data SortOrder = Ascending | Descending
 
-data Sort (r:row) = Sort (List (String, SortOrder))
+data Sort (r:row) = Sort (List (String, PrimT, SortOrder))
 
 type Sort# = List# (Pair# String SortOrder#)
+
+type TypedSort# = List# (Pair# (Pair# String PrimT) SortOrder)
 
 empty : Sort (| |)
 empty = Sort []
 
 ordering : Row r -> Sort r
-ordering (Row r) = Sort (map ((t, _) -> (t, Ascending)) r)
+ordering (Row r) = Sort (map ((t, pt) -> (t, pt, Ascending)) r)
 
 -- | Advance and rewrite priorities as needed.  For softRelations,
 -- you'll need to try reorderSome instead.
@@ -71,8 +73,8 @@ reorderSplit (Sort r) (Sort s) = (Sort $ intersect s r, Sort $ minusS r s)
 
 invert : Sort r -> Sort r
 invert (Sort r) = Sort (map invertPair r) where
-  invertPair (n, Ascending) = (n, Descending)
-  invertPair (n, Descending) = (n, Ascending)
+  invertPair (n, t, Ascending) = (n, t, Descending)
+  invertPair (n, t, Descending) = (n, t, Ascending)
 
 isAscending : SortOrder -> Bool
 isAscending Ascending = True
@@ -92,7 +94,10 @@ recordOrd = partialRecordOrd
 
 -- | Nativize a sort.
 toSort# : Sort r -> Sort#
-toSort# (Sort o) = toList# $ map ((f,o) -> toPair# (f,toSortOrder# o)) o
+toSort# (Sort o) = toList# $ map ((f,_,o) -> toPair# (f,toSortOrder# o)) o
+
+toTypedSort# : Sort r -> TypedSort#
+toTypedSort# (Sort o) = toList# $ map ((f,t,o) -> pair# (pair# f t) o) o
 
 -- | Nativize a sort order.
 toSortOrder# : SortOrder -> SortOrder#
@@ -126,7 +131,7 @@ private
   minusS = pairwiseFilt and (!=)
   intersect = pairwiseFilt or (==)
   pairwiseFilt comb bin a b =
-    filter ((ai, _) -> comb $ ((bi, _) -> bin ai bi) <$> b) a
+    filter ((ai, _, _) -> comb $ ((bi, _, _) -> bin ai bi) <$> b) a
 
 -- builtin
 --   foreign data "com.clarifi.reporting.SortOrder" SortOrder#

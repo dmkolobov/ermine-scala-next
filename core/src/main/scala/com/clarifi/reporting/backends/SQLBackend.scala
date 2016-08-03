@@ -24,8 +24,7 @@ import com.clarifi.reporting.backends.DB._
 import com.clarifi.reporting.PrimT._
 
 import com.clarifi.reporting.sql._
-import SqlExpr.{ columns, compileOp, compileLiteral }
-import SqlPredicate.compilePredicate
+import SqlExpr.{ columns, compileLiteral }
 
 class SqlBackend(implicit emitter: SqlEmitter) extends Backend[DB] {
   import RawSql.raw

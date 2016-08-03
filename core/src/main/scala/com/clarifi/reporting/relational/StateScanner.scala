@@ -123,7 +123,7 @@ class StateScanner(sms: SM => BS[StateEntry]) extends Scanner[BS] {
       ssnd <- scanRel(snd, smv, srv)
       jk = sfst.header.keySet intersect ssnd.header.keySet
     } yield joinOnH(sfst, ssnd, jk map (x => (x, x)))
-    case JoinOn(fst, snd, cols) => for {
+    case JoinOn(fst, snd, cols, JoinMode.Inner) => for {
       sfst <- scanRel(fst, smv, srv)
       ssnd <- scanRel(snd, smv, srv)
     } yield joinOnH(sfst, ssnd, cols)

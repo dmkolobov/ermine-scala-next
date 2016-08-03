@@ -72,18 +72,30 @@ toMem r = asMem r
 leafRows : r <- (parent,child,t) => Field parent n -> Field child n -> [..r] -> [..r]
 leafRows p i r = difference r (r # {i} ` join ' [| i <- p |] (r # {p}) ` join ' r)
 
-joinWithDefault : forall extra a r1 r2 r3. (exists c s. r1 <- (c, s), r2 <- (c, extra), r3 <- (c, s, extra), PrimitiveAtom a)
+-- unsafeLeftJoin : (RelationalComp rel, r1 <- (r,s), r2 <- (s,t), r3 <- (r,s,t)) => rel r1 -> rel r2 -> rel r3
+
+unsafeRightJoin : (RelationalComp rel, r1 <- (r,s), r2 <- (s,t), r3 <- (r,s,t)) => rel r1 -> rel r2 -> rel r3
+unsafeRightJoin r s = unsafeLeftJoin s r
+
+-- unsafeFullJoin : (RelationalComp rel, r1 <- (r,s), r2 <- (s,t), r3 <- (r,s,t)) => rel r1 -> rel r2 -> rel r3
+
+-- general join with default -- allows defaults for all non-overlapping rows
+leftJoinOr : (RelationalComb rel, r1 <- (r,s), r2 <- (s,t), r3 <- (r,s,t)) => rel r1 -> rel r2 -> {..t} -> rel r3
+leftJoinOr r s d = projectEach (v o -> coalesce' o (prim v)) d (unsafeLeftJoin r s)
+
+rightJoinOr : (RelationalComb rel, r1 <- (r,s), r2 <- (s,t), r3 <- (r,s,t)) => rel r1 -> rel r2 -> {..r} -> rel r3
+rightJoinOr r s d = projectEach (v o -> coalesce' o (prim v)) d (unsafeRightJoin r s)
+
+-- left outer join with default for a single row -- mostly for backward compatibility
+joinWithDefault : forall rel extra a r1 r2 r3. (exists c s. r1 <- (c, s), r2 <- (c, extra), r3 <- (c, s, extra), PrimitiveAtom a, RelationalComb rel)
                => Field extra a -> a
-               -> Mem r1 -> Mem r2 -> Mem r3
-joinWithDefault ef d min mout = case existentialF "joinWithDefault_tmp" (withNull (typeOfOp ef)) of
-  EField fj -> hashLeftJoin fj min (promote ef fj mout)
-            |> combine (coalesce fj (prim d)) ef
-            |> except {fj}
+               -> rel r1 -> rel r2 -> rel r3
+joinWithDefault ef d min mout = leftJoinOr min mout {ef = d}
 
 -- outer join with swapped arguments for convenience in certain cases
-rightJoinWithDefault : forall extra a r1 r2 r3. (exists c s. r1 <- (c, s), r2 <- (c, extra), r3 <- (c, s, extra), PrimitiveAtom a)
+rightJoinWithDefault : forall rel extra a r1 r2 r3. (exists c s. r1 <- (c, s), r2 <- (c, extra), r3 <- (c, s, extra), PrimitiveAtom a, RelationalComb rel)
                => Field extra a -> a
-               -> Mem r2 -> Mem r1 -> Mem r3
+               -> rel r2 -> rel r1 -> rel r3
 rightJoinWithDefault ef d mout min = joinWithDefault ef d min mout
 
 -- lookup based on the columns that intersect, then replace base with extra
@@ -91,27 +103,25 @@ rightJoinWithDefault ef d mout min = joinWithDefault ef d min mout
 -- partialLookup : (s | extra, key <- (base, t), r1 <- (key, s), r2 <- (key, extra), PrimitiveAtom a)
 --             => Field base a -> Field extra a
 --             -> Mem r2 -> Mem r1 -> Mem r1
-partialLookup : (PrimitiveAtom a, kv <- (key,val), r <- (key,base))
+partialLookup : (RelationalComb rel, PrimitiveAtom a, kv <- (key,val), r <- (key,base))
              => Field key a
              -> Field val a
-             -> Mem kv
-             -> Mem r
-             -> Mem r
+             -> rel kv
+             -> rel r
+             -> rel r
 partialLookup bf ef mout min =
   partialLookup' bf ef mout min
   |> except {bf}
   |> rename ef bf
 
-partialLookup' : (PrimitiveAtom a, kv <- (key,val), r <- (key,base), r2 <- (key,val,base))
+partialLookup' : (RelationalComb rel, PrimitiveAtom a, kv <- (key,val), r <- (key,base), r2 <- (key,val,base))
              => Field key a
              -> Field val a
-             -> Mem kv
-             -> Mem r
-             -> Mem r2
-partialLookup' bf ef mout min = case existentialF "partialLookup_tmp" (withNull (typeOfOp bf)) of
-  EField fj -> hashLeftJoin fj min (promote ef fj mout)
-            |> combine (coalesce fj bf) ef
-            |> except {fj}
+             -> rel kv
+             -> rel r
+             -> rel r2
+partialLookup' bf ef mout min = 
+               unsafeLeftJoin min mout |> combine (coalesce' ef bf) ef
 
 groupBy : (Relational rel, kv <- (k,v), kv2 <- (k,v2))
        => Row k -> (Mem v -> Mem v2) -> rel kv -> Mem kv2

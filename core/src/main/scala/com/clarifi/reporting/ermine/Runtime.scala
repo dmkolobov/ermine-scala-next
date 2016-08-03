@@ -343,12 +343,20 @@ object Runtime {
     if (n == 0) Data(name, vals.reverse.toArray)
     else Fun(v => accumData(name, v :: vals, n - 1))
 
+  def recAsRecord(r: Rec): Record = r match {
+    case Rec(tup) => tup.map(a => a._1 -> toPrimExpr(a._2))
+  }
+
+  object RecAsRecord {
+    def unapply(r: Rec): Some[Record] = Some(recAsRecord(r))
+  }
+
   def buildRelation(ts: List[Runtime]): Runtime = ts match {
     case Nil => EmptyRel
     case (_ :: _) => {
       try {
         Rel(ExtRel(SmallLit(ts.map(x => x.nf match {
-          case Rec(tup) => tup.map(a => a._1 -> toPrimExpr(a._2))
+          case RecAsRecord(r) => r
           case o => die("Panic: buildRelation: Expected a record. Found: " + o)
         }).toNel.get), ""))
       } catch { case NonFatal(e) => Bottom(throw e) }
@@ -360,7 +368,7 @@ object Runtime {
     case (_ :: _) => {
       try {
         Rel(ExtMem( Literal.toLit(ts.map(x => x.nf match {
-          case Rec(tup) => tup.map(a => a._1 -> toPrimExpr(a._2))
+          case RecAsRecord(r) => r
           case o => die("Panic: buildRelation: Expected a record. Found: " + o)
         })).get))
       } catch { case NonFatal(e) => Bottom(throw e) }

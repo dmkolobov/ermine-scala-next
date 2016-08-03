@@ -116,6 +116,30 @@ object JoinE {
   }
 }
 
+object LeftJoinE {
+  def apply[M, R](r1: Ext[M, R], r2: Ext[M, R]): Ext[M, R] = (r1, r2) match {
+    case (ExtRel(e1, db1), ExtRel(e2, db2)) =>
+      if (true) ExtRel(JoinOn(e1, e2, Set(), JoinMode.Left), db1) else ExtRel(LetR(ExtRel(e1, db1), JoinOn(VarR(RTop), VarR(RPop(e2)), Set(), JoinMode.Left)), db2)
+    case (ExtMem(e1), ExtMem(e2)) => ExtMem(HashLeftJoin(e1, e2))
+    case (ExtRel(e1, db), ExtMem(e2)) => ExtRel(LetR(ExtMem(e2), JoinOn(VarR(RPop(e1)), VarR(RTop), Set(), JoinMode.Left)), db)
+    case (ExtMem(e1), ExtRel(e2, db)) => ExtRel(LetR(ExtMem(e1), JoinOn(VarR(RTop), VarR(RPop(e2)), Set(), JoinMode.Left)), db)
+    case (ExtSM(sm), e) => apply(ExtMem(EmbedMem(ExtSM(sm))), e)
+    case (e, ExtSM(sm)) => apply(e, ExtMem(EmbedMem(ExtSM(sm))))
+  }
+}
+
+object FullJoinE {
+  def apply[M, R](r1: Ext[M, R], r2: Ext[M, R]): Ext[M, R] = (r1, r2) match {
+    case (ExtRel(e1, db1), ExtRel(e2, db2)) =>
+      if (true) ExtRel(JoinOn(e1, e2, Set(), JoinMode.Full), db1) else ExtRel(LetR(ExtRel(e1, db1), JoinOn(VarR(RTop), VarR(RPop(e2)), Set(), JoinMode.Full)), db2)
+    case (ExtMem(e1), ExtMem(e2)) => ExtMem(MergeOuterJoin(e1, e2))
+    case (ExtRel(e1, db), ExtMem(e2)) => ExtRel(LetR(ExtMem(e2), JoinOn(VarR(RPop(e1)), VarR(RTop), Set(), JoinMode.Full)), db)
+    case (ExtMem(e1), ExtRel(e2, db)) => ExtRel(LetR(ExtMem(e1), JoinOn(VarR(RTop), VarR(RPop(e2)), Set(), JoinMode.Full)), db)
+    case (ExtSM(sm), e) => apply(ExtMem(EmbedMem(ExtSM(sm))), e)
+    case (e, ExtSM(sm)) => apply(e, ExtMem(EmbedMem(ExtSM(sm))))
+  }
+}
+
 object FilterE {
   def apply[M, R](r: Ext[M, R], p: Predicate): Ext[M, R] = r match {
     case ExtRel(e, db) => ExtRel(Filter(e, p), db)
@@ -144,5 +168,13 @@ object MemoE {
   def apply[M, R](r: Ext[M, R], pk: List[String] = List()) : Ext[M, R] = r match {
     case ExtRel(e,db) => ExtRel(MemoR(e, pk), db)
     case e => e
+  }
+}
+
+object PivotE {
+  def apply[M, R](r: Ext[M,R], pivotKey: Set[ColumnName], pivotVals: Set[ColumnName], outer: Boolean, keyMap: Map[Record,(ColumnName, Op, PrimExpr)]) = r match {
+    case ExtRel(e,db) => ExtRel(PivotR(e, pivotKey, pivotVals, outer, keyMap), db)
+    case ExtMem(e) => ExtMem(Pivot(e, pivotKey, pivotVals, outer, keyMap))
+    case e => ExtMem(Pivot(EmbedMem(e), pivotKey, pivotVals, outer, keyMap))
   }
 }

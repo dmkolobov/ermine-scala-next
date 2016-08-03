@@ -82,15 +82,19 @@ object ReportingUtils {
 
   /** Partition contiguous sequences of `xs` values with equal `kf`
     * results. */
-  def splitWith[A, B: Equal](xs: Seq[A])(kf: A => B) = {
-    def rec(xs: Seq[A]): Seq[Seq[A]] = xs match {
-      case Seq() => Seq()
-      case _ =>
-        val k = kf(xs.head)
-        xs.tail span (e => k === kf(e)) fold
-          ((sp, br) => (xs.head +: sp) +: rec(br))
+  def splitWith[A, B](xs: Seq[A])(pf: PartialFunction[A,B]): Seq[Either[Seq[B], Seq[A]]] = {
+    @annotation.tailrec
+    def loop(acc: Vector[Either[Seq[B], Seq[A]]], s: Seq[A]): Seq[Either[Seq[B], Seq[A]]] = {
+      if (s.isEmpty) acc
+      else if (pf.isDefinedAt(s.head)) {
+        val (pre, post) = s.span(pf.isDefinedAt)
+        loop(acc :+ Left(pre.map(pf)), post)
+      } else {
+        val (pre, post) = s.span(!pf.isDefinedAt(_))
+        loop(acc :+ Right(pre), post)
+      }
     }
-    rec(xs)
+    loop(Vector(), xs)
   }
 
   /** The entirely safe reduction of `xs`. */

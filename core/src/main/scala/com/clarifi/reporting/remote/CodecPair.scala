@@ -1,7 +1,7 @@
 package com.clarifi.reporting
 package remote
 
-import f0.{Reader, Writer}
+import f0.{Reader, Readers, Writer, Writers, FixF, SelfF}
 
 /** A pair of reader and writer with erased format.
   *
@@ -39,6 +39,33 @@ object CodecPair {
     }
 }
 
+/** A descrition that can be used to define a fixed-point codec.
+ *
+ * The Shape gives the format functor that corresponds to A's shape
+ * functor, and readShape and writeShape describe how to do one
+ * step of the fixed point definition of the codec. The actual A
+ * codec can be extracted using the codec method.
+ *
+ * The polymorphism in read/writeShape cause smaller errors to be
+ * reported when something is wrong with their definition. fixFR/W
+ * involves terms with Shape[X] where X also involves Shape, and if
+ * Shape is large, this creates annoyingly large types. The
+ * definitions here only involve a single use of Shape.
+ */
+abstract class CodecShape[A] {
+  type Shape[Z]
+
+  def readShape[Z]: Reader[A,Z] => Reader[A, Shape[Z]]
+  def writeShape[Z]: Writer[A,Z] => Writer[A, Shape[Z]]
+
+  def codec: CodecPair[A] =
+    CodecPair {
+      Readers.fixFR(readShape[FixF[Shape[SelfF]]])
+    }{
+      Writers.fixFW(writeShape[FixF[Shape[SelfF]]])
+    }
+}
+
 /** Example for erasing the F type for a generic codec.  The only real
   * important thing is to make the definition a `val` or `lazy val`
   * instead of a `def` and exclude `type F` from the `val`'s
@@ -59,4 +86,28 @@ abstract class CodecPair2[A[_, _]] {
                       lw: Writer[L, LF], rw: Writer[R, RF])
       : CodecPair[A[L, R]] =
     CodecPair(R(lr, rr))(W(lw, rw))
+}
+
+/** See CodecShape. This class provides the same benefits, but for
+ * CodecPair2 definitions.
+ */
+abstract class CodecShape2[A[_, _]] {
+  type Shape[LF, RF, Z]
+
+  def readShape[L, LF, R, RF, Z](l: Reader[L, LF], r: Reader[R, RF])
+      : Reader[A[L, R], Z] => Reader[A[L, R], Shape[LF, RF, Z]]
+
+  def writeShape[L, LF, R, RF, Z](l: Writer[L, LF], r: Writer[R, RF])
+      : Writer[A[L, R], Z] => Writer[A[L, R], Shape[LF, RF, Z]]
+
+  def codec2: CodecPair2[A] =
+    new CodecPair2[A] {
+      type F[LF, RF] = FixF[Shape[LF, RF, SelfF]]
+
+      override def R[L, LF, R, RF](l: Reader[L, LF], r: Reader[R, RF])
+        = Readers.fixFR[A[L,R], Shape[LF,RF,?]](readShape(l, r))
+
+      override def W[L, LF, R, RF](l: Writer[L, LF], r: Writer[R, RF])
+        = Writers.fixFW[A[L,R], Shape[LF,RF,?]](writeShape(l, r))
+    }
 }

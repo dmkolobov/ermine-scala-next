@@ -5,9 +5,9 @@ import PrimT._
 
 import scalaz.{Monad, NonEmptyList, Show, Validation}
 import scalaz.std.either._
-import scalaz.std.list._
+// import scalaz.std.list._
 import scalaz.syntax.monad._
-import scalaz.syntax.traverse.{ToFunctorOps => _, ToFunctorOpsUnapply => _, _}
+// import scalaz.syntax.traverse.{ToFunctorOps => _, ToFunctorOpsUnapply => _, _}
 import scalaz.syntax.validation._
 
 case class Closed[F[_, _]](out: F[Nothing, Nothing], header: Header) {
@@ -143,15 +143,6 @@ object Typer {
     }
   }
 
-  private def selectType[F[+_]](
-    bases: List[Header],
-    cols: Map[Attribute, Op],
-    pred: Predicate
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] =
-    bases.foldLeftM(Map() : Header)(naturalJoinType[F](_,_)) flatMap
-      (filterType[F](_, pred)) flatMap
-      (projectType[F](_, cols))
-
   private def limitType[F[+_]](
     base: Header,
     start: Option[Int],
@@ -221,6 +212,7 @@ object Typer {
       case ProcedureCall(_, h, _, _)  => h.pure[F]
       case AugmentSM(m, cur, hist)    => memTyperAux(m, rtype, mtype) map (augmentType(_, cur, hist))
       case RenameM(m, attr, col, p)   => go(m) flatMap (renameType[F](_, attr, col, p))
+      case MemoMem(m)                 => go(m)
       case (h:HardMem)                => h.header.pure[F]
       case LetM(r, expr) =>
         val h = extTyperAux(r, rtype, mtype)
@@ -254,7 +246,7 @@ object Typer {
       case VarR(v)                 => rtype(v)
       case Limit(r, f, t, os)      => go(r) flatMap (limitType[F](_, f, t, os))
       case Join(fst, snd)          => (go(fst) |@| go(snd))(naturalJoinType[F](_, _)).join
-      case JoinOn(fst, snd, _)     => (go(fst) |@| go(snd))(_ ++ _)
+      case JoinOn(fst, snd, _, _)  => (go(fst) |@| go(snd))(_ ++ _)
       case Union(fst, snd)         => (go(fst) |@| go(snd))(unionType[F](_, _, "union")).join
       case Minus(fst, snd)         => (go(fst) |@| go(snd))(unionType[F](_, _, "subtract")).join
       case Filter(r, p)            => go(r) flatMap (filterType[F](_, p))
@@ -264,7 +256,6 @@ object Typer {
       case Combine(r, attr, op)    => go(r) flatMap (combineType[F](_, attr, op))
       case Aggregate(r, attr, op)  => go(r) flatMap (aggregateType[F](_, attr, op))
       case AggregateByGroup(r,cs,aggs,grp) => go(r) flatMap (aggregateByGroupType[F](_, cs, aggs, grp))
-      case SelectR(as, proj, filt) => as.traverse(go _) flatMap (selectType[F](_, proj, filt))
       case (r: HardRel)            => r.header.pure[F]
       case MemoR(r, _) => go(r)
       case LetR(r, expr) => for {

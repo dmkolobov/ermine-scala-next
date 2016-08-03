@@ -57,11 +57,7 @@ object SqlEmitterGens {
   /** Make `OverSqlExpr`s. */
   val overSqlExprs = for {
     i <- sqlInts map (LitSqlExpr(_))
-    l <- nonEmptyListOf(for {
-           b <- sqlBools map (LitSqlExpr(_))
-           o <- sqlOrders
-         } yield (b, o))
-  } yield OverSqlExpr(i, l)
+  } yield OverSqlExpr(i, SqlOver(Nil, Nil, None, None))
 
   /** Make FromTables exprs. */
   val fromTables = for {
@@ -82,7 +78,9 @@ object SqlEmitterGens {
     joinRCols <- pick(joinColCt, right.cols)
   } yield SqlJoinOn(left,
                     right,
-                    joinLCols.zip(joinRCols).toSet)
+                    joinLCols.map(c => ColumnSqlExpr(left.alias.getOrElse(left.table),c)).zip(
+                        joinRCols.map(c => ColumnSqlExpr(left.alias.getOrElse(left.table),c))
+                      ).toSet)
 }
 
 object TestSqlEmitters extends Properties("emitSql") {
@@ -141,7 +139,7 @@ object TestSqlEmitters extends Properties("emitSql") {
           -> SqlSelect(attrs=("nqa".map(_.toString)
                               .map{c=>c->ColumnSqlExpr(TableName("dbaquestions"),c)}.toMap),
                        sources=SourceList(FromTable(TableName("dbaquestions"), List("a","n","q"), Some(TableName("dbaquestions")))),
-                       criteria=List(SqlEq(ColumnSqlExpr(TableName("dbaquestions"), "n"),
+                       where=List(SqlEq(ColumnSqlExpr(TableName("dbaquestions"), "n"),
                                            LitSqlExpr(SqlInt(1))))),
           """(?x)select\s(distinct\s)?\(.yesiwilltable.\..yes.\)\s.yes.\sfrom\s.yesiwilltable."""
           -> SqlSelect(attrs=Map("yes" -> ColumnSqlExpr(TableName("yesiwilltable"), "yes")),
@@ -170,7 +168,7 @@ object TestSqlEmitters extends Properties("emitSql") {
      + """ when ([bob].[x]) = (2) then 2"""
      + """ when ([bob].[x]) = (3) then 3"""
      + """ else (([bob].[x]) + (3)) end)""") =?
-       SqlExpr.compileOp(if023, ColumnSqlExpr(TableName("bob"), _))(e).emitSql(e).run
+       b.compileOp(if023, ColumnSqlExpr(TableName("bob"), _))(e).emitSql(e).run
   }
 
   val sqliteTestLiteral : SqlQuery =

@@ -24,18 +24,18 @@ object Optimizer {
   // The largest size for a literal to be considered small enough to turn into a predicate.
   private val smallLitSize = 30
 
-  import PureSelect._
-
-  def optimize(mem: Mem[Nothing, Nothing]): Mem[Nothing, Nothing] =
+  def optimize(mem: Mem[Nothing, Nothing]): Mem[Nothing, Nothing] = {
     TrivialAugment.detrivialize(optimizeMem[Nothing, Nothing](mem, x => x, x => x)._3)
-
-  def optimize(rel: Relation[Nothing, Nothing]): Relation[Nothing, Nothing] = {
-    val (ns, h, jh, optr) = optimizeRel[Nothing, Nothing](rel, x => x, x => x)
-    Annotated(ns, impurify(optr, jh))
   }
 
-  def optimize(ext: Ext[Nothing, Nothing]): Ext[Nothing, Nothing] =
+  def optimize(rel: Relation[Nothing, Nothing]): Relation[Nothing, Nothing] = {
+    val (h, optr) = optimizeRel[Nothing, Nothing](rel, x => x, x => x)
+    optr
+  }
+
+  def optimize(ext: Ext[Nothing, Nothing]): Ext[Nothing, Nothing] = {
     optimizeExt[Nothing, Nothing](ext, x => x, x => x)._2
+  }
 
   def optimizeExt[M: Equal, R: Equal](ext: Ext[M, R],
                                       hr: R => Header,
@@ -44,8 +44,8 @@ object Optimizer {
       val (h, _, optm) = optimizeMem(e, hr, hm)
       (h, ExtMem(TrivialAugment.detrivialize(optm)))
     case ExtRel(r, ns) =>
-      val (notes, h, jh, r2) = optimizeRel(r, hr, hm)
-      (h, ExtRel(Annotated(notes, impurify(r2, jh)), ns))
+      val (h, r2) = optimizeRel(r, hr, hm)
+      (h, ExtRel(r2, ns))
     case ExtSM(sm) => (sm.header, ext)
   }
 
@@ -98,12 +98,12 @@ object Optimizer {
       case LetM(e, expr) => e match {
         case sm : ExtSM => optimizeMem(Mem.instantiate(EmbedMem(sm), expr): Mem[R,M], hr, hm)
         case ExtRel(r, db) => optimizeRel(r, hr, hm) match {
-          case (ns, h, _, optr) =>
+          case (h, optr) =>
             val (eh, _, optexpr) = optimizeMem[R, Option[M]](Mem.fromScope(expr), hr, {
                                      case None => h
                                      case Some(ep) => hm(ep)
                                    })
-            (eh, eh, TrivialAugment(LetM(ExtRel(Annotated(ns, optr), db), Mem.toScope(detrivialize(optexpr)))))
+            (eh, eh, TrivialAugment(LetM(ExtRel(optr, db), Mem.toScope(detrivialize(optexpr)))))
         }
         case ExtMem(m) => val (h1, _, oe) = rec(m)
                           val (h2, _, oexpr) = optimizeMem[R, Option[M]](Mem.fromScope(expr)
@@ -219,11 +219,14 @@ object Optimizer {
       case EmbedMem(ext) => ext match {
         case ExtMem(m) => rec(m)
         case ExtRel(r, db) => optimizeRel(r, hr, hm) match {
-          case (ns, h, jh, e) => (h, h, TrivialAugment(EmbedMem(ExtRel(Annotated(ns, impurify(e, jh)), db))))
+          case (h, e) => (h, h, TrivialAugment(EmbedMem(ExtRel(e, db))))
         }
         case ExtSM(sm) => (sm.header, sm.header, TrivialAugment(EmbedMem(ext)))
       }
       case QuoteMem(token) => sys.error("Panic: the optimizer found a QuoteMem: " + token)
+      case MemoMem(m) =>
+        val (h, _, m2) = optimizeMem(m, hr, hm)
+        (h, h, TrivialAugment(MemoMem(m2)))
       case x : HardMem =>
         implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
         val h = Typer.memTyperAux[Id, R, M](x, hr, hm)
@@ -259,44 +262,6 @@ object Optimizer {
     } toMap
   }
 
-  def coalesceLiteral[M, R](hl: Header,
-                            h: Header,
-                            jh: Header,
-                            ts: NonEmptyList[Record],
-                            sel: SelectR[M, R]): Option[(Header, Header, SelectR[M, R])] = {
-    val SelectR(rs, cs, where) = sel
-    val jk = h.keySet & hl.keySet
-    // val functional = {
-    //   val tks = ts map (_ filterKeys jk)
-    //   tks.length == tks.toSet.length
-    // }
-    val functional = ts.size <= 1
-    val hr = h ++ hl
-    if (functional) {
-      val ps = literalAsPredicate(ts.map(_ filterKeys jk))
-      val cases = literalAsCases(jk, ts)
-      Some((hr,
-            jh,
-            SelectR(rs, cs ++ flattenProjection(cases, cs),
-                    Predicate.And(where, ps.postReplaceOp[Id](cvAttr(cs))))))
-    } else {
-      None
-    }
-  }
-
-  def coalesceLiterals[M, R](lits: List[(Header, NonEmptyList[Record])],
-                             hhs: (Header, Header, SelectR[M, R])):
-      (List[(Header, NonEmptyList[Record])], (Header, Header, SelectR[M, R])) = {
-    val (work, newLits, newhhs) = lits.foldRight((false, List[(Header, NonEmptyList[Record])](), hhs)) {
-      case (p@(hl, ts), (b, l, (hr, jhr, sel))) =>
-        coalesceLiteral(hl, hr, jhr, ts, sel) match {
-          case Some(osel) => (true, l, osel)
-          case None       => (b, p :: l, (hr, jhr, sel))
-        }
-    }
-    if(work) coalesceLiterals(newLits, newhhs) else (newLits, newhhs)
-  }
-
   def collectJoin[M, R](rel: Relation[M, R]): List[Relation[M, R]] = rel match {
     case Join(l, r) => collectJoin(l) ++ collectJoin(r)
     case _          => List(rel)
@@ -307,84 +272,6 @@ object Optimizer {
       capL(com.clarifi.machines.Source(ts1)).cap(com.clarifi.machines.Source(ts2)).foldMap {
         case (x, y) => Vector(x ++ y)
       }.toList
-
-  def optimizeAggregates[M, R](rs: List[(List[String], Header, Header, SelectR[M, R])])
-      : (List[String], List[(Header, Header, SelectR[M, R])]) = {
-    type HH[X] = (Header, Header, X)
-    val base = (List[String](), List[(Header, AggregateByGroup[M,R])](), List[HH[SelectR[M,R]]]())
-    val (nss, aggs, other) = rs.foldRight(base) {
-      case ((ns, h, jh, r), (nss, ag, ot)) => PureSelect.unapply(r, jh) match {
-        case Some(a : AggregateByGroup[M, R]) => (ns ++ nss, (h, a) :: ag, ot)
-        case _                          => (ns ++ nss, ag, (h, jh, r) :: ot)
-      }
-    }
-    val agmap = aggs.groupBy(ag => (ag._2.rel, ag._2.cs))
-
-    (nss,
-    agmap.values.map {
-      case Nil => sys.error("optimizeAggregates: Impossible: empty group")
-      case List((h, r)) => (h, h, PureSelect(r, h))
-      case base :: ags =>
-        val (nh, r) = ags.foldRight(base) {
-          case ((hl, result), (hr, e)) => (hl ++ hr, result.copy(aggs = result.aggs ++ e.aggs))
-        }
-        (nh, nh, PureSelect(r, nh))
-    }.toList ++ other)
-  }
-
-  def optimizeJoin[M, R](rs0: List[(List[String], Header, Header, SelectR[M, R])]):
-        (List[String], Header, Header, SelectR[M, R]) = {
-    type HH[X] = (Header, Header, X)
-    val (notes, rs) = optimizeAggregates(rs0)
-    val base = (List[HH[NonEmptyList[Record]]](), List[HH[SelectR[M, R]]]())
-    val (lits, cx) = rs.foldRight(base) {
-      case (p@(h, jh, r), (l, c)) => PureSelect.unapply(r, jh) match {
-        case Some(SmallLit(ts)) => ((h, jh, ts) :: l, c)
-        case _                  => (l, p :: c)
-      }
-    }
-    val (h, jh, s) = cx match {
-      case s :: ss =>
-        val oss = ss.foldRight(s) {
-          case ((hl, jhl, sl), (hr, jhr, sr)) => joinSelect(hl, jhl, sl, hr, jhr, sr)
-        }
-        val (un, css) = coalesceLiterals(lits map { case (x, _, y) => (x, y) }, oss)
-        un match {
-          case Nil => css
-          case (x,y) :: tss =>
-            val (h, jh, sel) = css
-            val (hun, biglit) = tss.foldRight((x,y.list)) {
-              case ((hl, tsl), (hr, tsr)) => (hl ++ hr, joinLiterals(hl.keySet & hr.keySet, tsl.list, tsr))
-            }
-            def hd = h ++ hun
-            def mpt = (hd, hd, PureSelect(RelEmpty(hd), hd))
-            biglit.toNel.map(nel => joinSelect(hun, hun, PureSelect(SmallLit(nel), hun), h, jh, sel)).getOrElse(mpt)
-        }
-      case Nil => lits match {
-        case (h, _, ts) :: ls =>
-          val (rh, rts) = ls.foldRight(h -> ts.list) {
-            case ((hl, _, tsl), (hr, tsr)) => (hl ++ hr, joinLiterals(hl.keySet & hr.keySet, tsl.list, tsr))
-          }
-          rts.toNel.map(nel => (rh, rh, PureSelect(SmallLit(nel), rh))).getOrElse((rh, rh, PureSelect(RelEmpty(rh), rh)))
-        case _ => sys.error("Panic: The impossible happened: optimizing empty joins")
-      }
-    }
-    (notes, h, jh, s)
-  }
-
-  def joinSelect[M, R](hl: Header, jhl: Header, sl: SelectR[M, R],
-                       hr: Header, jhr: Header, sr: SelectR[M, R]): (Header, Header, SelectR[M, R]) = {
-    val SelectR(rsl, prjl, filtl) = sl
-    val SelectR(rsr, prjr, filtr) = sr
-    val h = hl ++ hr
-    if (joinable(jhl.keySet & jhr.keySet, prjl, prjr))
-      (h, jhl ++ jhr, SelectR(rsl ++ rsr,
-                              prjl ++ prjr,
-                              Predicates.all(Seq(filtl, filtr))))
-    else (h, h, SelectR(List(impurify(sl, jhl), impurify(sr, jhr)),
-                           Header.proj(h),
-                           Predicate.Atom(true)))
-  }
 
   def renameAggregate[M, R](from: ColumnName, to: ColumnName, agg: AggregateByGroup[M,R]): AggregateByGroup[M, R] = agg match {
     case AggregateByGroup(under, cs, aggs, group) =>
@@ -423,116 +310,86 @@ object Optimizer {
       AggregateByGroup(under, cs.filterKeys(k => !exc(k.name)), aggs.filter(v => !exc(v._1.name)), group)
   }
 
-  def whenAggregate[M, R, Z](jh: Header, sel: SelectR[M, R])(f : AggregateByGroup[M, R] => Z)(el: Z): Z =
-    PureSelect.unapply(sel, jh) match {
-      case Some(agg : AggregateByGroup[M,R]) => f(agg)
-      case _ => el
-    }
-
-  // first turn every tableproc into a let of a tableproc
-  // second lift every let out as far as it can go
-  // third join all duplicate lets
   def optimizeRel[M: Equal, R: Equal](rel: Relation[M, R],
                                       hr: R => Header,
-                                      hm: M => Header): (List[String], Header, Header, SelectR[M, R]) = rel match {
-    case Join(l, r) => optimizeJoin((collectJoin(l) ++ collectJoin(r)).map(optimizeRel(_, hr, hm)))
-    // See `joinable` for conditions under which
-    // we can combine two selects into one by an
-    // associative natural join.
-    case JoinOn(r1, r2, cols) =>
-      val (nl, orh1, jh1, rl) = optimizeRel(r1, hr, hm)
-      val (nr, orh2, jh2, rr) = optimizeRel(r2, hr, hm)
-      val h = orh1 ++ orh2
-      (nl ++ nr, h, h, PureSelect(JoinOn(impurify(rl, jh1), impurify(rr, jh2), cols), h))
-    // Unions can be reinterpreted as a single select if they differ only in filter.
+                                      hm: M => Header): (Header, Relation[M, R]) = rel match {
+    case VarR(x) =>
+      (hr(x), rel)
+    case JoinOn(r1, r2, cols, mode) =>
+      val (orh1, rl) = optimizeRel(r1, hr, hm)
+      val (orh2, rr) = optimizeRel(r2, hr, hm)
+      val h = orh2 ++ orh1
+      (h, JoinOn(rl, rr, cols, mode))
     case Union(r1, r2) =>
-      val (nl, h, jh1, rl) = optimizeRel(r1, hr, hm)
-      val (nr, _, jh2, rr) = optimizeRel(r2, hr, hm)
-      (nl ++ nr, h, h, combineFilters(rl, rr){ (l, r) =>
-        Predicates.simplify(Predicate.Or(l, r))
-      } getOrElse PureSelect(Union(impurify(rl, jh1), impurify(rr, jh2)), h))
-    case Minus(r1, r2) =>
-      val (nl, h, jh1, rl) = optimizeRel(r1, hr, hm)
-      val (nr, _, jh2, rr) = optimizeRel(r2, hr, hm)
-      (nl ++ nr, h, h, combineFilters(rl, rr){ (l, r) =>
-        Predicates.simplify(Predicate.And(l, Predicate.Not(r)))
-      } getOrElse PureSelect(Minus(impurify(rl, jh1), impurify(rr, jh2)), h))
+      val (h, rl) = optimizeRel(r1, hr, hm)
+      val (_, rr) = optimizeRel(r2, hr, hm)
+      (h, Union(rl, rr))
+    case MinusI(r1, r2) =>
+      val (h, rl) = optimizeRel(r1, hr, hm)
+      val (_, rr) = optimizeRel(r2, hr, hm)
+      (h, Minus(rl, rr))
     case Filter(r, p) =>
-      val (ns, h, jh, SelectR(rs, prj, filt)) = optimizeRel(r, hr, hm)
-      (ns, h, jh, SelectR(rs, prj, Predicates.simplify(Predicate.And(filt, p.postReplaceOp[Id](cvAttr(prj))))))
+      val (h, ir) = optimizeRel(r, hr, hm)
+      (h, Filter(ir, p))
     case Project(r, cs) =>
-      val (ns, h, jh, sel@SelectR(rs, prj, filt)) = optimizeRel(r, hr, hm)
+      val (h, ir) = optimizeRel(r, hr, hm)
       val nh = cs.map(_._1.tuple)
-      simpleProject(cs) match {
-        case Some(scs) => 
-          whenAggregate(jh, sel) { agg =>
-            (ns, nh, nh, PureSelect(projectAggregate(agg, scs), nh))
-          } { (ns, nh, jh, SelectR(rs, flattenProjection(cs, prj), filt)) }
-        case None => (ns, nh, jh, SelectR(rs, flattenProjection(cs, prj), filt))
-      }
+      (nh, Project(ir, cs))
     case Except(r, cs) =>
-      val (ns, h, jh, sel@SelectR(rs, prj, filt)) = optimizeRel(r, hr, hm)
-      val nh = h -- cs
-      whenAggregate(jh, sel) { agg =>
-        (ns, nh, nh, PureSelect(exceptAggregate(agg, cs), nh))
-      } { (ns, h -- cs, jh, SelectR(rs, prj -- (cs.map(c => Attribute(c, h(c)))), filt)) }
+      val (h, ir) = optimizeRel(r, hr, hm)
+      (h -- cs, Except(ir, cs))
     case Combine(r, attr, op) =>
-      val (ns, h, jh, SelectR(rs, prj, filt)) = optimizeRel(r, hr, hm)
-      val nh = h + attr.tuple
-      (ns, nh, jh, SelectR(rs, prj + (attr -> op.postReplace[Id](cvAttr(prj))), filt))
+      val (h, ir) = optimizeRel(r, hr, hm)
+      (h + attr.tuple, Combine(ir, attr, op))
     case RenameR(r, Attribute(from, ft), to) =>
-      val (ns, h, jh, sel) = optimizeRel(r, hr, hm)
+      val (h, ir) = optimizeRel(r, hr, hm)
       val nh = h mapKeys {
         case col if col == from => to
         case col => col
       }
-      whenAggregate(jh, sel){ agg =>
-        (ns, nh, nh, PureSelect(renameAggregate(from, to, agg), nh))
-      }{ (ns, nh, jh, sel copy (
-                    cs = sel.cs mapKeys {
-                      case Attribute(nm, t) if nm == from => Attribute(to, t)
-                      case attr => attr
-                    }))
-      }
+      (nh, RenameR(ir, Attribute(from, ft), to))
     case Limit(r, start, end, ord) =>
-      val (ns, h, jh, or) = optimizeRel(r, hr, hm)
-      (start, end) match {
-        case (None, None) => (ns, h, jh, or) // We're not actually limiting anything, so we can just pass things up.
-        case _ => (ns, h, h, PureSelect(Limit(impurify(or, jh), start, end, ord), h))
-      }
+      val (h, ir) = optimizeRel(r, hr, hm)
+      (h, Limit(ir, start, end, ord))
     case AggregateByGroup(r, cs, aggs, grp) =>
-      val (ns, _, jh, or) = optimizeRel(r, hr, hm)
+      val (_, ir) = optimizeRel(r, hr, hm)
       val h = (aggs.map(_._1.tuple).toMap ++ cs.keySet.map(_.tuple))
-      (ns, h,h, PureSelect(AggregateByGroup( impurify(or, jh), cs, aggs, grp ), h))
+      (h, AggregateByGroup(ir, cs, aggs, grp))
     case Aggregate(r, attr, aggfunc) =>
-      val (ns, _, jh, or) = optimizeRel(r, hr, hm)
+      val (_, ir) = optimizeRel(r, hr, hm)
       val h = Map(attr.tuple)
-      (ns, h, h, PureSelect(Aggregate(impurify(or, jh), attr, aggfunc), h))
-    case s@SelectR(rs, _, _) =>
-      (List(), headerOf(s, hr, hm), rs.map(headerOf(_, hr, hm)).foldLeft(Map():Header)(_ ++ _), s)
-    case LetR(ExtMem( l@Literal(t,ts)), e) if ts.length <= smallLitSize =>
-      optimizeRel[M,R](Relation.instantiate(SmallLit( l.nel ), e), hr, hm)
+      (h, Aggregate(ir, attr, aggfunc))
+    case PivotR(r, key, vals, outer, keyMap) =>
+      val (h, ir) = optimizeRel(r, hr, hm)
+      implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
+      val h2 = Typer.pivotType[Id](h, key, vals, outer, keyMap)
+      (h2, PivotR(ir, key, vals, outer, keyMap))
     case LetR(r, e) =>
-      val (h, r2) = optimizeExt(r, hr, hm)
-      val (ns, h2, jh, e2) = optimizeRel[M,Option[R]](Relation.fromScope(e), (r: Option[R]) => r match {
-        case None => h
-        case Some(x) => hr(x)
-      }, hm)
-      (ns, h2, h2, PureSelect(LetR(r2, Relation.toScope(impurify(e2,jh))), h2))
+      r match {
+        case ExtMem(l@Literal(t,ts)) if ts.length <= smallLitSize =>
+          optimizeRel[M,R](Relation.instantiate(SmallLit( l.nel ), e), hr, hm)
+        case _ =>  
+          val (h, r2) = optimizeExt(r, hr, hm)
+          val (h2, e2) = optimizeRel[M,Option[R]](Relation.fromScope(e), (r: Option[R]) => r match {
+            case None => h
+            case Some(x) => hr(x)
+          }, hm)
+          (h2, LetR(r2, Relation.toScope(e2)))
+      }
     case MemoR(r, pk) =>
-      val (ns, h, jh, r2) = optimizeRel(r, hr, hm)
-      (ns, h, h, PureSelect(MemoR(impurify(r2, jh), pk), h))
+      val (h, r2) = optimizeRel(r, hr, hm)
+      (h, MemoR(r2, pk))
     case TableProc(args, oh, fun, ns) =>
       val h = oh.toMap
-      val oargs = TableProc.relFunctor(args)(ir => optimizeRel(ir, hr, hm)._4)
-      (List(), h, h, PureSelect(TableProc(oargs, oh, fun, ns), h))
+      val oargs = TableProc.relFunctor(args)(ir => optimizeRel(ir, hr, hm)._2)
+      (h, TableProc(oargs, oh, fun, ns))
     case Note(tags, under) =>
-      val (ns, h, jh, r) = optimizeRel(under, hr, hm)
-      (tags ++ ns, h, jh, r)
-    case r =>
+      val (h, r) = optimizeRel(under, hr, hm)
+      (h, Note(tags, r))
+    case r: HardRel =>
       implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
       val h = Typer.relTyperAux[Id, M, R](r, hr, hm)
-      (List(), h, h, PureSelect(r, h))
+      (h, r)
   }
 
   def headerOf[M, R](r: Relation[M, R], hr: R => Header, hm: M => Header): Header = {
@@ -555,37 +412,6 @@ object Optimizer {
       case _ => false
     }}) && ((prj1.keySet & prj2.keySet) forall { k => prj1(k) === prj2(k) })
 
-  /** If `left` and `right` are the same except in filter, answer a
-    * combination that joins the filters with `bin`, otherwise
-    * None.
-    */
-  private def combineFilters[M: Equal, R: Equal](left: => SelectR[M, R], right: => SelectR[M, R])(
-                                                 bin: (=> Predicate, => Predicate) => Predicate) =
-    (left, right) match {
-      case (SelectR(rs1, prj1, filt1), SelectR(rs2, prj2, filt2))
-      if prj1 == prj2 && rs1 == rs2 =>
-        Some(SelectR(rs1, prj1, bin(filt1, filt2)))
-      case _ => None
-    }
-}
-
-object PureSelect {
-  def apply[M, R](r: Relation[M, R], h: Header): SelectR[M, R] =
-    SelectR(List(r), Header.proj(h), Predicate.Atom(true))
-
-  def unapply[M, R](rel: Relation[M, R], h: Header) =
-    rel match {
-      case SelectR(List(innerRel), proj, Predicate.Atom(true))
-      if Header.proj(h) == proj => Some(innerRel)
-      case _ => None
-    }
-
-  /** Strip all selects that don't do anything from `rel`. */
-  def impurify[M, R](rel: Relation[M, R], h: Header) = {
-    def recur(rel: Relation[M, R]): Relation[M, R] =
-      unapply(rel, h) cata (recur, rel)
-    recur(rel)
-  }
 }
 
 object TrivialAugment {

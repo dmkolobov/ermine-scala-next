@@ -63,8 +63,6 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   def isTransactional: Boolean
   def setConstraints(enable: Boolean, t: Iterable[TableName]): List[RawSql]
 
-  def emitBinaryOrdering(isBinary: Boolean, exp: RawSql): RawSql
-
   /**
    * Controls whether we try to delay inserting a distinct
    * until we know we have to, or do it immediately when we
@@ -232,19 +230,18 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   }
 
   /**
-   * Emits Sql for an inner join on a specified set of column-pairs.
-   * TODO: What is the right behavior when there are duplicate column names?
-   *       Previously we would arbitrarily retain the _first_ column with a given name.
-   *       But that is definitely wrong.
+   * Emits Sql for a join on a specified set of column-pairs.
    */
   def emitJoinOn(r1: SqlSource,
                  r2: SqlSource,
-                 on: Set[((TableName, ColumnName), (TableName, ColumnName))],
+                 on: Set[(SqlExpr, SqlExpr)],
 		 op: SqlJoinOp): RawSql = {
+    val onExpr = if (on.isEmpty) SqlTruth(true).emitSql(this)
+                 else on.map {
+                   case (c1, c2) => c1.emitSql(this) |+| " = " |+| c2.emitSql(this)
+                 } intercalate raw(" and ")
     r1.emitSql(this) |+| raw(" ") |+| op.emit |+| raw(" ") |+| r2.emitSql(this) |+|
-    " on (" |+| (on.map {
-      case (c1, c2) => emitQualifiedColumnName(c1._1, c1._2) |+| " = " |+| emitQualifiedColumnName(c2._1, c2._2)
-    } intercalate raw(" and ")) |+| ")"
+    " on (" |+| onExpr |+| ")"
   }
 
   /**
@@ -258,7 +255,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     * implementation is a compatibility workaround; the MS SQL emitter
     * should use `OVER` directly.
     */
-  def emitOver(e: SqlExpr, over: List[(SqlExpr, SqlOrder)]): RawSql =
+  def emitOver(e: SqlExpr, over: SqlOver): RawSql =
     "TODO I don't yet know how to play %s over %s".
       format (e.emitSql(this), over)
 
@@ -268,13 +265,15 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     *
     * For implementations with no support for this, answer `query`.
     */
-  def emitLimit(query: SqlQuery, queryHeader: Header, unQuery: TableName,
+  def implementLimit(query: SqlQuery.Orderable, queryHeader: Header, unQuery: TableName,
                 from: Option[Int], to: Option[Int],
-                order: List[(SqlExpr, SqlOrder, Boolean)],
-                unSurrogate: TableName): SqlQuery = query
+                order: List[(SqlColumn, SqlOrder)],
+                unSurrogate: TableName): SqlQuery.Scannable with SqlQuery.Nestable = query match {
+    case q: SqlQuery.Scannable with SqlQuery.Nestable => q
+  }
 
-  /** Emit a `LIMIT` clause for `SELECT`, if supported. */
-  def emitLimitClause(from: Option[Int], to: Option[Int]): RawSql = ""
+  /** Emit a SqlLimit in a way appropriate for the backend */
+  def emitLimit(from: Option[Int], to: Option[Int]): RawSql = ""
 
   /** Emit a literal relation */
   def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
@@ -284,11 +283,11 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     * (it would be on the object like all the others, but it needs 'this')
     */
   def fallbackEmitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
-    SqlNaryOp(SqlUnion, n.map(t => SqlSelect(options = Set("distinct"), attrs = t):SqlQuery)).emitSql(this)
+    SqlNaryOp(SqlUnion, n.map(t => SqlSelect(attrs = t))).emitSql(this)
 
   /** Emit an empty relation */
   def emitEmpty(queryHeader: Header): RawSql =
-    SqlSelect(attrs = queryHeader.mapValues(_ => LitSqlExpr(SqlNull)), criteria = List(SqlTruth(false))).emitSql(this)
+    SqlSelect(attrs = queryHeader.mapValues(_ => LitSqlExpr(SqlNull)), where = List(SqlTruth(false))).emitSql(this)
 
   /**
    * Takes a list of SqlExprs and returns a SqlExpr representing that list
@@ -368,12 +367,6 @@ trait EagerlyDistinct extends SqlEmitter {
   */
 trait LazilyDistinct extends SqlEmitter {
   val distinctEagerly = false
-}
-
-/** Emitters which ignore requests to order columns as binary.
- */
-trait EmitBinaryOrdering_Ignored extends SqlEmitter {
-  def emitBinaryOrdering(isBinary: Boolean, exp: RawSql) = exp
 }
 
 /** Emitters for which there is no suffix after the closing ')' in
@@ -472,58 +465,58 @@ trait EmitExcept_AsJoin extends SqlEmitter {
 }
 
 /** MS SQL supports `OVER`, and we can abuse that to do limiting. */
-trait EmitLimit_AsRowNumberOver extends SqlEmitter {
+trait ImplementLimit_AsRowNumberOver extends SqlEmitter {
   import SqlExpr.columns
 
   /** Simulate `LIMIT` clauses by wrapping `rc` with `row_number()
     * over (order by …) rownum ''rc'' where rownum <= ''to'' and rownum
     * >= ''from''`, then erasing `rownum`.
     */
-  override def emitLimit(rc: SqlQuery, h: Header, un: TableName,
+  override def implementLimit(rc: SqlQuery.Orderable, h: Header, un: TableName,
                          from: Option[Int], to: Option[Int],
-                         order: List[(SqlExpr, SqlOrder, Boolean)],
-                         un2: TableName): SqlQuery =
+                         order: List[(SqlColumn, SqlOrder)],
+                         un2: TableName): SqlQuery.Scannable with SqlQuery.Nestable =
     SqlSelect(
       attrs = columns(h, un2),  // erase "rownum"
       sources = SourceList(
         SqlSubquery(
           alias = un2,
           query = SqlSelect(
-            sources = SourceList(SqlSubquery(rc, h.keys.toList, un)),
+            sources = SourceList(SqlSubquery(rc match { case x: SqlQuery.Nestable => x }, h.keys.toList, un)),
             attrs = (columns(h, un) + // add "rownum"
                       ("rownum" -> OverSqlExpr(FunSqlExpr("row_number", List()),
-                                               order.map(p => (p._1,p._2)))))
+                                               SqlOver(List(), order.map(p => (ColumnSqlExpr(un,p._1),p._2)), None, None)))),
+            windowColumns = Set("rownum")
 	  ),
 	  cols = h.keys.toList ++ List("rownum")
         )
       ),
-      criteria = List(to.map(x => SqlLte(ColumnSqlExpr(un2, "rownum"),
-                                         LitSqlExpr(SqlInt(x)))),
-                      from.map(x => SqlGte(ColumnSqlExpr(un2, "rownum"),
-                                           LitSqlExpr(SqlInt(x))))).flatten
+      where = List(to.map(x => SqlLte(ColumnSqlExpr(un2, "rownum"),
+                                      LitSqlExpr(SqlInt(x)))),
+                   from.map(x => SqlGte(ColumnSqlExpr(un2, "rownum"),
+                                        LitSqlExpr(SqlInt(x))))).flatten
     )
 }
 
 /** MySQL and PostgreSQL support `LIMIT`. */
-trait EmitLimit_AsLimit extends SqlEmitter {
+trait ImplementLimit_AsLimit extends SqlEmitter {
   import SqlExpr.columns
 
   /** Wrap the ''rc'' in a select that duplicates ''h'', reorders the
     * relation, and limits according to ''from'' and ''to''.
     */
-  override def emitLimit(rc: SqlQuery, h: Header, un: TableName,
+  override def implementLimit(rc: SqlQuery.Orderable, h: Header, un: TableName,
                          from: Option[Int], to: Option[Int],
-                         order: List[(SqlExpr, SqlOrder, Boolean)],
-                         un2: TableName): SqlQuery =
-    SqlSelect(attrs = columns(h, un),
-              sources = SourceList(SqlSubquery(rc, h.keys.toList, un)),
-              // reorder and limit RC
-              orderBy = order, limit = (from, to))
+                         order: List[(SqlColumn, SqlOrder)],
+                         un2: TableName): SqlQuery.Scannable with SqlQuery.Nestable =
+    SqlLimit(SqlQuery.orderBy(rc, order), from, to)
+}
 
+trait EmitLimit_AsLimit extends SqlEmitter {
   /** Use PostgreSQL's 0-indexed `LIMIT ''length'' OFFSET ''from''`
     * syntax, which is also supported in MySQL.
     */
-  override def emitLimitClause(from: Option[Int], to: Option[Int]): RawSql = (from, to) match {
+  override def emitLimit(from: Option[Int], to: Option[Int]): RawSql = (from, to) match {
     case (Some(x), Some(y)) => " limit %d offset %d" format (y - x + 1, x - 1)
     case (Some(x), None) => " offset %d" format (x - 1)
     case (None, Some(y)) => " limit %d" format y
@@ -531,11 +524,48 @@ trait EmitLimit_AsLimit extends SqlEmitter {
   }
 }
 
+trait EmitLimit_AsOffsetFetch extends SqlEmitter {
+  /** Standard SQL syntax for limited queries. Supported in new enough MS TSQL
+    */
+  override def emitLimit(from: Option[Int], to: Option[Int]): RawSql = {
+    val o = from.map(_ - 1).getOrElse(0)
+    val off = " offset %d rows" format o
+    val lim = to match {
+      case Some(t) => " fetch next %d rows only" format (t - o)
+      case None => ""
+    }
+    off + lim
+  }
+}
+
 trait EmitOver_UsingOver extends SqlEmitter {
-  override def emitOver(e: SqlExpr, over: List[(SqlExpr, SqlOrder)]): RawSql =
-    e.emitSql(this) |+| " over (order by " |+|
-      over.map(x => x._1.emitSql(this) |+| " "
-                   |+| x._2.emitSql).rawMkString(", ") |+| ")"
+  override def emitOver(e: SqlExpr, over: SqlOver): RawSql = over match {
+    case SqlOver(partition, order, frameBegin, frameEnd) =>
+      def frameIndex(i: Int) =
+        if (i < 0) (-i).toString + " preceding"
+        else if (i > 0) i.toString + " following"
+        else "current row"
+
+      def frameEx(oi: Option[Int], pos: String) = oi.map(frameIndex).getOrElse("unbounded " + pos)
+
+      val rawPart = raw("partition by ") |+| partition.map(_ emitSql(this)).rawMkString(", ")
+      val rawOrder = raw("order by ") |+| order.map{ case (e, o) => e.emitSql(this) |+| o.emitSql }.rawMkString(", ")
+      val rawFrame = raw("rows between ") |+|
+                     frameEx(frameBegin, "preceding") |+|
+                     " and " |+|
+                     frameEx(frameEnd, "following")
+
+      if (order.isEmpty && !(frameBegin.isEmpty && frameEnd.isEmpty))
+        sys.error("Window frames may only be used with ordered window functions.")
+      else {
+        e.emitSql(this) |+| " over (" |+|
+        (if (partition.isEmpty) raw("") else rawPart |+| " ") |+|
+        (if (order.isEmpty) raw("") else rawOrder |+| " " |+| rawFrame) |+|
+        ")"
+      }
+
+
+  }
 }
 
 /**
@@ -622,20 +652,19 @@ trait EmitCheckExists_AlwaysFails extends SqlEmitter {
 /** Emit a literal relation as a TVC */
 trait EmitLiteralTVC extends SqlEmitter {
   /** @todo Is it possible to avoid this redundant select? */
-  override def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
-    (raw("select * from (values ")
-      |+| n.map(r => r.toIndexedSeq
-                      .sortBy((_: (SqlColumn, SqlExpr))._1)
-                      .map(c => c._2.emitSql(this))
-                      .toList
-                      .rawMkString("(", ", ", ")"))
-           .rawMkString(", ")
+  override def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql = {
+    val cols = n.head.toIndexedSeq
+                     .map((_: (SqlColumn, SqlExpr))._1)
+                     .sortBy(x => x)
+                     .toList
+    (raw("select ") |+| cols.map(emitColumnName _).rawMkString(",")
+      |+| " from (values "
+      |+| n.list.map(r => cols.map(c => r(c).emitSql(this))
+                              .rawMkString("(", ", ", ")"))
+                .rawMkString(", ")
       |+| ") as lit"
-      |+| n.head.toIndexedSeq
-           .sortBy((_: (SqlColumn, SqlExpr))._1)
-           .map(c => this.emitColumnName(c._1))
-           .toList
-           .rawMkString("(", ",", ")"))
+      |+| cols.map(emitColumnName _).rawMkString("(", ",", ")"))
+  }
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -645,7 +674,6 @@ class SqliteEmitter extends SqlEmitter
     with EmitCreateTable_NoSuffix
     with EmitNoDropTempTable
     with EmitUuid_Strings
-    with EmitBinaryOrdering_Ignored
     with EagerlyDistinct
     with EmitCheckExists_AlwaysFails {
 
@@ -715,12 +743,12 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                                       with EmitCreateTable_NoSuffix
                                       with EmitDropTemporaryTable
                                       with EmitExcept_AsJoin
+                                      with ImplementLimit_AsLimit
                                       with EmitLimit_AsLimit
                                       with EmitConcat_MySQL
                                       with EmitUnion
                                       with LazilyDistinct
                                       with EmitIntDivOp_MySQL
-                                      with EmitBinaryOrdering_Ignored
                                       with EmitUuid_Strings {
   override def emitTableName(tn: TableName): RawSql =
     (tn.schema :+ tn.name) map emitColumnName rawMkString "."
@@ -768,6 +796,16 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
        |+| " and " |+| emitColumnName("TABLE_SCHEMA")
        |+| " = " |+| SqlString(t.schema mkString ".").emitSql(this),
      e => e.getErrorCode == 1050)
+
+  /** MySQL requires FROM with WHERE ;_; */
+  override def emitEmpty(queryHeader: Header): RawSql =
+    SqlSelect(attrs = queryHeader.mapValues(_ => LitSqlExpr(SqlNull)),
+              sources = SourceList(
+                SqlSubquery(cols = List("qq"),
+                            alias = TableName("qq"),
+                            query = SqlSelect(attrs = Map("qq" -> LitSqlExpr(SqlNull))))),
+              where = List(SqlTruth(false))
+             ).emitSql(this)
 }
 
 class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
@@ -778,11 +816,11 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitConcat_MsSql
                                       with EmitExcept_MsSql
                                       with EmitIntDivOp_MsSql
-                                      with EmitLimit_AsRowNumberOver
+                                      with ImplementLimit_AsLimit
+                                      with EmitLimit_AsOffsetFetch
                                       with EmitOver_UsingOver
                                       with EmitStddevVar_MsSQL
                                       with EmitUuid_Strings
-                                      with EmitBinaryOrdering_Ignored
                                       with EmitLiteralTVC
                                       with EmitName_MsSql {
 
@@ -850,7 +888,6 @@ class VerticaSqlEmitter extends SqlEmitter(false) with EmitFromEmptyTable_FromDu
                                            with EmitUnion
                                            with EagerlyDistinct
                                            with EmitUuid_Strings
-                                           with EmitBinaryOrdering_Ignored
                                            with EmitCheckExists_AlwaysFails {
 
   def isTransactional: Boolean = true
@@ -888,11 +925,11 @@ class PostgreSqlEmitter extends SqlEmitter(false)
                         with EmitSqlColumns_Typed
                         with EmitCreateTable_NoSuffix
                         with EmitNoDropTempTable
+                        with ImplementLimit_AsLimit
                         with EmitLimit_AsLimit
                         with EmitUnion
                         with EagerlyDistinct
                         with EmitUuid_Strings
-                        with EmitBinaryOrdering_Ignored
                         with EmitCheckExists_AlwaysFails {
   import SqlEmitter.nn
 

@@ -15,6 +15,23 @@ import scalaz.std.vector._
 package object relational {
   import SortOrder._
 
+  sealed abstract class JoinMode {
+    import JoinMode._
+
+    def reverse = this match {
+      case Left => Right
+      case Right => Left
+      case _ => this
+    }
+  }
+
+  object JoinMode {
+    case object Inner extends JoinMode
+    case object Left  extends JoinMode
+    case object Right extends JoinMode
+    case object Full  extends JoinMode
+  }
+
   def uniqSorted: Process[Record,Record] = {
     def filter(now: Record): Process[Record, Record] =
       Plan.await[Record] flatMap { case r =>
@@ -198,4 +215,5 @@ package object relational {
     def setup = (Driver.Id[Nothing](x => x), () => ())
   }
 
+  type Minus[+M,+R] = MinusI[M,R] // XXX it's bizarre this has to go here and not next to MinusI
 }

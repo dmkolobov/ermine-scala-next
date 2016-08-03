@@ -556,6 +556,21 @@ object Lib {
       }}),
       FAR(r => FAR(t => FAR(s => (t -> List(r,s)) =>: listH(string) ->: recordT(t) ->: recordT(s)))))
 
+    primOp(Global("Relation.Row","projectEach"), fun3("Relation.Row.projectEach", { case Fun(f) => {
+      case Rec(r) => {
+        case EmptyRel => EmptyRel
+        case Rel(e) => Rel(ProjectE(e, Header.proj(Typer.closedExt(e).header) ++
+            {for {(k, v) <- r} yield {
+              val Fun(g) = f(v).whnf
+              val t = toPrimExpr(v).typ
+              val Prim(result: Op) = g(Prim(Op.ColumnValue(k,t))).whnf
+              Attribute(k,t) -> result
+            }}
+          ))
+      }}}),
+      FAR(r => FAR(s => FAR(t => FA(rho ->: star, rel => (t -> List(r,s)) =>: relationalCombCon(rel) =>:
+        (FA(a => a ->: relOp(t, a) ->: relOp(t, a)) ->: recordT(r) ->: rel(t) ->: rel(t)))))))
+
     val aggregate = addCon(mkCon[AggFunc](Global("Relation.Aggregate.Type", "Aggregate"), rho ->: star ->: star))
 
     primOp(Global("Relation.Aggregate", "aggregate"), fun3("Relation.Aggregate.aggregate", {
@@ -623,6 +638,38 @@ object Lib {
         relationalCombCon(rel) =>:
         rel(d) ->: rel(e) ->: rel(f)))))))))
 
+    primOp(
+      Global("Relation", "unsafeLeftJoin"),
+      fun2("Relation.unsafeLeftJoin", {
+        case EmptyRel => { case  EmptyRel|Rel(_) => EmptyRel }
+        case r@Rel(inner) => {
+          case EmptyRel           => r
+          case Rel(outer) => Rel(LeftJoinE(inner, outer))
+        }
+      }),
+      FA(rho ->: star, rel => FAR(extra => FAR(r1 => FAR(r2 => FAR(r3 => FAR(s => FAR(t =>
+        List(r1 -> List(s,t), r2 -> List(t, extra), r3 -> List(s, t, extra)) =>:
+        relationalCombCon(rel) =>:
+        rel(r1) ->: rel(r2) ->: rel(r3))))))))
+    )
+
+    primOp(
+      Global("Relation", "unsafeFullJoin"),
+      fun2("Relation.unsafeFullJoin", {
+        case EmptyRel => { case  r@(EmptyRel|Rel(_)) => r }
+        case r@Rel(inner) => {
+          case EmptyRel           => r
+          case Rel(outer) => Rel(FullJoinE(inner, outer))
+        }
+      }),
+      FA(rho ->: star, rel => FAR(extra => FAR(r1 => FAR(r2 => FAR(r3 => FAR(s => FAR(t =>
+        List(r1 -> List(s,t), r2 -> List(t, extra), r3 -> List(s, t, extra)) =>:
+        relationalCombCon(rel) =>:
+        rel(r1) ->: rel(r2) ->: rel(r3))))))))
+    )
+
+    /* old mem-only joins for compatibility */
+    /* XXX hash/merge hints in SQL join?  some databases support them. */
     def mkJoin(fn: String, j: (Mem[Nothing, Nothing], Mem[Nothing, Nothing]) => Mem[Nothing, Nothing]) =
       primOp(Global("Relation", fn), fun2("Relation." + fn, {
         case EmptyRel => { case EmptyRel|Rel(_) => EmptyRel }
@@ -755,6 +802,7 @@ object Lib {
 
     primOp(Global("Native.Relation", "letR"), fun2((x, f) => {
       val ext: Option[Ext[Nothing, Nothing]] = x.whnf match {
+        // XXX EmptyRel case is wrong; might be fields that it's supposed to have but that info has been erased 
         case EmptyRel => Some(ExtMem(relational.EmptyRel(Map())))
         case Rel(e) => Some(e)
         case _ => None
@@ -923,16 +971,17 @@ object Lib {
       Global("Relation.Pivot", "pivot#"),
       fun4("Relation.Pivot.pivot", { case pk => { case pv => { case km => {
         case EmptyRel => EmptyRel
-        case Rel(ExtMem(m)) =>
-          Rel(ExtMem(
-            Pivot(m, pk.extract[List[String]].toSet,
-                     pv.extract[List[String]].toSet,
-                     true,
-                     km.extract[List[(Record,(String,(Op,PrimExpr)))]].map({case (rec, (str, (op, pe))) => (rec,(str,op,pe)) }).toMap)
-          ))
+        case Rel(e) =>
+          Rel(
+            PivotE(e, pk.extract[List[String]].toSet,
+                      pv.extract[List[String]].toSet,
+                      true,
+                      km.extract[List[(Record,(String,(Op,PrimExpr)))]].map({case (rec, (str, (op, pe))) => (rec,(str,op,pe)) }).toMap)
+          )
       }}}}),
-    FAR(r => FAR(s =>
-          listH(string) ->: listH(string) ->: listH(pairH(scalaRec,pairH(string,pairH(unsafeOp,primExpr)))) ->: mem(r) ->: mem(s))))
+    FA(rho ->: star, rel => FAR(r => FAR(s =>
+          relationalCombCon(rel) =>:
+          listH(string) ->: listH(string) ->: listH(pairH(scalaRec,pairH(string,pairH(unsafeOp,primExpr)))) ->: rel(r) ->: rel(s)))))
 
     import backends.DB
 
