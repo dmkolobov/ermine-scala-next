@@ -155,8 +155,11 @@ abstract class Writer[F[_],C] { self =>
     * CSSClass can be applied on each row and column  */
   private def styleWithCSS(css: Option[String], target: C) : C = css.fold(target)(s => style(s, target))
 
-  def styleBox(header: List[(Option[String], List[(Option[String], C)])], body: List[(Option[String], List[(Option[String], C)])]) : C = {
-    grid ((header ++ body).map(_._2.map(x => styleWithCSS(x._1, x._2)))) // type: List[  List[  (Option[String], C)  ]  ]
+  def styleBox(header: List[(Option[String], List[(Option[String], C)])], body: List[(Option[String], List[(Option[String], (C, C))])]) : C = {
+    var h : List[List[C]] = header.map(_._2.map(x => styleWithCSS(x._1, x._2)))
+    var b : List[List[C]] = body.map(_._2.map(x => List (styleWithCSS(x._1, x._2._1), styleWithCSS(x._1, x._2._2))).flatten) // ignore the click on event 
+    // SOMETHING TO DO 
+    grid (h ++ b) 
   }
 
   /** A table described by a `Column.Table` structure.  The default
