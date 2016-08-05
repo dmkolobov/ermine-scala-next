@@ -40,6 +40,7 @@ object DB {
     c => {
       val stmt = c.prepareStatement(s.run)
       stmt.setFetchSize(10000)
+      stmt.setQueryTimeout(300) // 5 minutes
       stmt
     }
 

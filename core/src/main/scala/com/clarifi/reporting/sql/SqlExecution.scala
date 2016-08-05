@@ -47,6 +47,7 @@ class SqlExecution(implicit emitter: SqlEmitter) {
         val stmt = conn.prepareStatement(query.run)
         logger.debug("prepared statement fetch size: " + stmt.getFetchSize)
         stmt.setFetchSize(10000)
+        stmt.setQueryTimeout(300) // 5 minutes
         val rs = stmt.executeQuery
         val md = rs.getMetaData
 
