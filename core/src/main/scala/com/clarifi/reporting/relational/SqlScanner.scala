@@ -539,7 +539,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         val generalOpsStr = generalOps map {case (a, o) => (a.name, o)}
         val mapRecord = (ops: Map[Attribute, Op]) => (proc:Procedure[scalaz.Id.Id, Record]) => proc.map((t: Record) => ops.map { case (attr, op) => attr.name -> op.eval(t) })
 
-        val needUniq = distinctness(h, rx, cs).exists(_ => true)
+        val needUniq = !preservesDistinctness(h, rx, cs)
 
         def nq(so: List[(String, SortOrder)]) = {
           val nonOpOrder = so.filter( s => renamesStr.contains(s._1) )
@@ -687,22 +687,40 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   private def filterRx(rx: Reflexivity[ColumnName], p: Predicate) =
       rx && Predicates.constancies(p)
 
-  private def distinctness(h: Header, rx: Reflexivity[ColumnName], cols: Map[Attribute, Op]): Set[String] =
-    rx match {
-      case KnownEmpty() => Set()
-      case ForallTups(_, _) =>
-        if ((h.keySet diff rx.consts.keySet) forall (c =>
-             cols exists {
-               case (_, op) => preservesDistinctness(rx, op, c)
-             })) Set() else Set("distinct")
+  // Uses Reflexivity to determine if a projection preserves distinctness
+  private def preservesDistinctness(h: Header, rx: Reflexivity[ColumnName], cols: Map[Attribute, Op]): Boolean = {
+
+    /** @todo SMRC Since this was written, the op language has changed
+      *       such that this answers true too often.
+      */
+    def columnDistinctness(rx: Reflexivity[ColumnName], op: Op, col: ColumnName): Boolean = {
+      val ms = op.foldMap((c: ColumnName) => Map(c -> 1))
+      ms.get(col).map(_ == 1).getOrElse(false) && ms.keySet.forall(c => c == col || rx.consts.isDefinedAt(c))
     }
 
-  /** @todo SMRC Since this was written, the op language has changed
-    *       such that this answers true too often.
-    */
-  private def preservesDistinctness(rx: Reflexivity[ColumnName], op: Op, col: ColumnName): Boolean = {
-    val ms = op.foldMap((c: ColumnName) => Map(c -> 1))
-    ms.get(col).map(_ == 1).getOrElse(false) && ms.keySet.forall(c => c == col || rx.consts.isDefinedAt(c))
+    rx match {
+      case KnownEmpty() => true
+      case ForallTups(_, _) =>
+        (h.keySet diff rx.consts.keySet) forall (c =>
+            cols exists {
+              case (_, op) => columnDistinctness(rx, op, c)
+            })
+    }
+  }
+
+  // Uses both reflexivity and fundeps to test if we think a projection preserves distinctness.
+  // Only says 'yes' if both tests do so.
+  private def megaDistinctness(h: Header, rx: Reflexivity[ColumnName], fds: Fundepped[ColumnName], cols: Map[Attribute, Op]) = {
+    val rxPreserves = preservesDistinctness(h, rx, cols)
+    val fdPreserves = Fundepped.preservesDistinctness(h, fds, cols)
+    if (rxPreserves != fdPreserves)
+      logger.debug {
+        "reflexivity and fundeps gave different distinctness answers:\n" +
+        "  reflexivity: " + rxPreserves.toString + "\n" +
+        "      fundeps: " + fdPreserves.toString + "\n"
+      }
+
+    rxPreserves && fdPreserves
   }
 
   private def combineAll(rx: Reflexivity[ColumnName],
@@ -743,7 +761,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         val SqlPrg(p, ns, q, rx, fds) = compileRel(r, smv, srv)
         SqlPrg(p,
                ns,
-               q project (cols,rx),
+               q project (cols,rx, fds),
                combineAll(rx, cols),
                Fundepped.selections(cols, fds))
       case AggregateByGroup(r,cs,aggs,group) =>
@@ -758,12 +776,12 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
           Fundepped.constants(List(attr.name)))
       case Except(r, cs) =>
         val SqlPrg(p, ns, q, rx, fds) = compileRel(r, smv, srv)
-        SqlPrg(p, ns, q except (cs, rx), rx filterKeys (!cs.contains(_)), fds -- cs)
+        SqlPrg(p, ns, q except (cs, rx, fds), rx filterKeys (!cs.contains(_)), fds -- cs)
       case Combine(r, attr, op) =>
         val SqlPrg(p, ns, q, rx, fds) = compileRel(r, smv, srv)
-        SqlPrg(p, ns, q combine (attr, op, rx),
+        SqlPrg(p, ns, q combine (attr, op, rx, fds),
           combineAll(rx, Map(attr -> op), true),
-          fds + (op.columnReferences -> attr.name))
+          Fundepped.selections(Header.proj(q.h) + (attr -> op), fds))
       case Limit(r, from, to, order) =>
         val SqlPrg(p, ns, q, rx, fds) = compileRel(r, smv, srv)
 
@@ -1062,9 +1080,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       DistinctiveQuery(cs.map(_._1.tuple) ++ aggs.map(_._1.tuple), _ => (true, q2))
     }
 
-    def project(cols: Map[Attribute,Op], rx: Reflexivity[ColumnName])(implicit sup: Supply): DistinctiveQuery = {
+    def project(cols: Map[Attribute,Op], rx: Reflexivity[ColumnName], fds: Fundepped[ColumnName])(implicit sup: Supply): DistinctiveQuery = {
       val resultHeader = cols.map(_._1.tuple)
-      val preservesDistinct = distinctness(h, rx, cols).isEmpty
+      val preservesDistinct = megaDistinctness(h, rx, fds, cols)
       DistinctiveQuery(resultHeader, needDistinct => q(preservesDistinct && distinctEagerly) match {
         case (d, q) =>
           val q2 = asSelect(h,q) match {
@@ -1088,10 +1106,10 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       })
     }
 
-    def except(cols: Set[ColumnName], rx: Reflexivity[ColumnName])(implicit sup: Supply): DistinctiveQuery = {
+    def except(cols: Set[ColumnName], rx: Reflexivity[ColumnName], fds: Fundepped[ColumnName])(implicit sup: Supply): DistinctiveQuery = {
       val resultHeader = h -- cols
       val colOps = resultHeader map { case (c,t) => Attribute(c,t) -> Op.ColumnValue(c,t) }
-      val preservesDistinct = distinctness(h, rx, colOps).isEmpty
+      val preservesDistinct = megaDistinctness(h, rx, fds, colOps)
       DistinctiveQuery(resultHeader, needDistinct => q(preservesDistinct && distinctEagerly) match {
         case (d, q) =>
           val v = asSelect(h,q)
@@ -1100,8 +1118,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       })
     }
 
-    def combine(attr: Attribute, op: Op, rx: Reflexivity[ColumnName])(implicit sup: Supply): DistinctiveQuery =
-      project(Header.proj(h) + (attr -> op), rx)
+    def combine(attr: Attribute, op: Op, rx: Reflexivity[ColumnName], fds: Fundepped[ColumnName])(implicit sup: Supply): DistinctiveQuery =
+      project(Header.proj(h) + (attr -> op), rx, fds)
 
     def limit(from: Option[Int], to: Option[Int], order: List[(String,SortOrder)])(implicit sup: Supply): DistinctiveQuery = {
       val fromn = from.getOrElse(1)

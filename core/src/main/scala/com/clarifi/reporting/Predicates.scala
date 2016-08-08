@@ -866,4 +866,27 @@ object Fundepped {
 
     loop(vacuousFunctions(nel.head), nel.tail, 100)
   }
+
+  /*
+   * Checks if a selection will preserve distinctness, given the known
+   * fundeps about the old columns (which are given by the Header).
+   */
+  def preservesDistinctness(old: Header, fds: Fundepped[ColumnName], sel: Map[Attribute, Op]): Boolean = {
+    val Fundepped(synthesis) = fds.injectiveMap(ecl) ++ selFDs(sel)
+
+    /* for all old columns 'col'
+     *   there exists a set 'S' of determining columns for 'col'
+     *     such that all members of 'S' are new columns
+     *
+     * This means that the old rows are functions of the new rows,
+     * so if new1 = new2, then f(new1) = f(new2). Since old rows
+     * were distinct, this means that we cannot have two identical
+     * new rows.
+     */
+    old forall { case (col, _) =>
+      synthesis(Left(col)) exists {
+        _ forall { case Right(_) => true ; case Left(_) => false }
+      }
+    }
+  }
 }
