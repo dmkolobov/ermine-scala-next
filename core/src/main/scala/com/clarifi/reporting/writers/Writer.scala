@@ -154,12 +154,11 @@ abstract class Writer[F[_],C] { self =>
   /** A table-like laybout of the reports with table header and table body.
     * CSSClass can be applied on each row and column  */
   private def styleWithCSS(css: Option[String], target: C) : C = css.fold(target)(s => style(s, target))
+  private def styleListWithCSS(css: Option[String], target: List[C]) : List[C] = target.map(x => styleWithCSS(css, x))
 
-  def styleBox(header: List[(Option[String], List[(Option[String], C)])], body: List[(Option[String], List[(Option[String], (C, C))])]) : C = {
-    var h : List[List[C]] = header.map(_._2.map(x => styleWithCSS(x._1, x._2)))
-    var b : List[List[C]] = body.map(_._2.map(x => List (styleWithCSS(x._1, x._2._1), styleWithCSS(x._1, x._2._2))).flatten) // ignore the click on event 
-    // SOMETHING TO DO 
-    grid (h ++ b) 
+  def styleBox[A](header: StyleGrid[C], body: StyleGrid[A], showInCell: A => C, showInPopup: A => Option[C]) : C = { 
+    val target : StyleGrid[C] = header.append(body.map(showInCell))  // ignore showInPopup function
+    grid (target.applyStyle(styleListWithCSS)(styleWithCSS)) 
   }
 
   /** A table described by a `Column.Table` structure.  The default
