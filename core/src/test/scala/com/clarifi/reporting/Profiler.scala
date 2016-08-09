@@ -507,15 +507,13 @@ object ReportingProfiling {
       // a relation may contain multiple refs to the same table, so ignore exceptions
       // about how a table doesn't exist (may have already been dropped)
       case Table(_, refID) => try { r.run(backend.destroy(refID)) } catch { case _ => () }
-      case Join(r1, r2) => { dropTables(r1, r, backend); dropTables(r2, r, backend) }
-      case JoinOn(r1, r2, _) => { dropTables(r1, r, backend); dropTables(r2, r, backend) }
+      case JoinOn(r1, r2, _, _) => { dropTables(r1, r, backend); dropTables(r2, r, backend) }
       case Union(r1, r2) => { dropTables(r1, r, backend); dropTables(r2, r, backend) }
       case Minus(r1, r2) => { dropTables(r1, r, backend); dropTables(r2, r, backend) }
       case Filter(rel, _) => dropTables(rel, r, backend)
       case Project(rel, _) => dropTables(rel, r, backend)
       case Aggregate(rel, _, _) => dropTables(rel, r, backend)
       case Rename(rel, _, _) => dropTables(rel, r, backend)
-      case _ => ()
     }
   }
 
