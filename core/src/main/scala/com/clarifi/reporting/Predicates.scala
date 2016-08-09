@@ -884,7 +884,7 @@ object Fundepped {
      * new rows.
      */
     old forall { case (col, _) =>
-      synthesis(Left(col)) exists {
+      synthesis.getOrElse(Left(col), Set()) exists {
         _ forall { case Right(_) => true ; case Left(_) => false }
       }
     }
