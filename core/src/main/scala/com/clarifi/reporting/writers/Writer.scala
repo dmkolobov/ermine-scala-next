@@ -156,9 +156,15 @@ abstract class Writer[F[_],C] { self =>
   private def styleWithCSS(css: Option[String], target: C) : C = css.fold(target)(s => style(s, target))
   private def styleListWithCSS(css: Option[String], target: List[C]) : List[C] = target.map(x => styleWithCSS(css, x))
 
-  def styleBox[A](header: StyleGrid[C], body: StyleGrid[A], showInCell: A => C, showInPopup: A => Option[C]) : C = { 
-    val target : StyleGrid[C] = header.append(body.map(showInCell))  // ignore showInPopup function
-    grid (target.applyStyle(styleListWithCSS)(styleWithCSS)) 
+  import scalaz.syntax.traverse._
+  def styleBox[A](header: StyleGrid[F[C]], body: StyleGrid[A], showInCell: A => F[C], showInPopup: A => Option[F[C]]) : F[C] = { 
+    def helper(header: StyleGrid[C], body: StyleGrid[C]) : C = {
+      val target : StyleGrid[C] = header.append(body)  
+      grid (target.applyStyle(styleListWithCSS)(styleWithCSS)) 
+    }
+    header.sequence.flatMap(h =>
+      body.traverse(showInCell).map(helper(h, _)))
+     // ignore showInPopup function
   }
 
   /** A table described by a `Column.Table` structure.  The default

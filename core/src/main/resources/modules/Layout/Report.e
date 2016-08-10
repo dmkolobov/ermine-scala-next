@@ -8,6 +8,7 @@ import Field
 import Layout.Color
 import Layout.Column using type Column; formatK; keys; drilldown; drilldown2
 import Layout.Column.Unsafe using type Table#; column#
+import Layout.Report.StyleGrid
 import Layout.Format as Fmt
 import Layout.Legend using type Legend#; type Legend; legend
                            legend#; initialSort#; empty as emptyLegend
@@ -145,7 +146,6 @@ textNoMarkdown = fmt unit_Fmt
 -- Escape string so that "text" and "atomShown" do not try to interpret the markdown markers
 foreign
   function "com.clarifi.reporting.writers.Markdown" "escapeForMarkdown" escapeMarkdown : String -> String
-
 
 
 wrappedText' width fonts fontsize = wrapped' width fonts fontsize . Atomic unit_Fmt
@@ -370,8 +370,6 @@ border : Maybe (Report f z) ->
 border center top' right' bottom' left' = Report (wr ->
   liftA5 (wa wr) (borderW wr)
     (fMA wr center) (fMA wr top') (fMA wr bottom') (fMA wr right') (fMA wr left'))
--- fMA : Writer f z -> Maybe (Report f z) -> f (Maybe z)
---  fMA w mr = seqMW w (fmap maybeFunctor (runReport w) mr)
 
 stack : Report f z -> Report f z -> Report f z
 stack top' center' = border (Just center') (Just top') Nothing Nothing Nothing
@@ -418,20 +416,15 @@ grid d = Report (w -> liftM (wm w) (gridW w) $ travLW w (travLW w (runReport w))
 gridRow : String -> Report f z -> List (Report f z)
 gridRow l r = [ style "fix-width-label" $ atomShown l, r ]
 
-private
-  travPW : Writer f a -> (b -> f c) -> (b, b) -> f (c, c)
-  travPW w f (x,y) = liftA2 (wa w) (,) (f x) (f y)
-
-styleBox : List (Maybe String, List (Maybe String, Report f z))
-        -> List (Maybe String, List (Maybe String, (Report f z, Report f z)))
+-- This is for StyleBox
+styleBox : StyleGrid (Report f z)
+        -> StyleGrid a
+        -> (a -> Report f z)
+        -> (a -> Maybe (Report f z))
         -> Report f z
-styleBox header body =
-  let
-    runListReports w f = travLW w (strength (wf w) . mapSnd f)
-    applyFunctor w f = runListReports w (runListReports w f)
-  in
-    Report ( w -> liftA2 (wa w) (styleBoxW w) (applyFunctor w (runReport w) header) (applyFunctor w (travPW w (runReport w)) body))
-
+styleBox header body showinCell showinPopup =
+    Report ( w -> styleBoxW w (mapStyleGrid (runReport w) header) body (runReport w . showinCell) (fmap maybeFunctor (runReport w) . showinPopup) )
+ 
 wrap : String -> Report f z -> Report f z
 wrap h r = style h ' border (Just r) Nothing Nothing Nothing Nothing
 
@@ -1574,14 +1567,9 @@ private
   gridW : Writer f z -> List (List z) -> z
   gridW w d = gridW_ w (toList# (lmap toList# d))
 
-  styleBoxW : Writer f z -> List (Maybe String, List (Maybe String, z)) -> List (Maybe String, List (Maybe String, (z, z))) -> z
-  styleBoxW w header body =
-    let
-      toHeaderCell# = toPair# . (mapFst toMaybe#)
-      toBodyCell# = x -> toPair# (toMaybe# (fst x), toPair# (snd x))
-      toRow# toCellf= x -> toPair# (toMaybe# (fst x), toList# (lmap toCellf (snd x)))
-    in
-      styleBoxW_ w (toList# $ lmap (toRow# toHeaderCell#) header) (toList# $ lmap (toRow# toBodyCell#) body)
+  styleBoxW : Writer f z -> StyleGrid (f z) -> StyleGrid a -> (a -> f z) -> (a -> Maybe (f z)) -> f z
+  styleBoxW w header body showinCell showinPopup =
+      styleBoxW_ w (toStyleGrid# header) (toStyleGrid# body) (function1 showinCell) (function1 (toMaybe# . showinPopup))
 
   foreign
     method "atomDMTL" atomW : forall f z a . Writer f z -> Format_Fmt a -> a -> z
@@ -1621,9 +1609,11 @@ private
     method "scanRelationDMTL" scanRelationW' : forall f z . Writer f z -> Sort# -> Relation# -> Function1 (List# Record#) (f z) -> f z
     method "grid" gridW_ : forall f z . Writer f z -> List# (List# z) -> z
     method "styleBox" styleBoxW_ : forall f z . Writer f z
-                                            -> List# (Pair# (Maybe# String) (List# (Pair# (Maybe# String) z)))
-                                            -> List# (Pair# (Maybe# String) (List# (Pair# (Maybe# String) (Pair# z z))))
-                                            -> z
+                                            -> StyleGrid# (f z)
+                                            -> StyleGrid# a
+                                            -> Function1 a (f z)
+                                            -> Function1 a (Maybe# (f z))
+                                            -> f z
     method "selector" selectorW: forall f z a b . Writer f z -> SelectorMode# -> Pair# (NonEmpty# PrimExpr# ) a -> Format_Fmt b -> List# (Pair# (NonEmpty# PrimExpr# ) a) ->
                                     Function3 (Function1 a z) (SelectorEvent z) (Function1 (Function1 a (f z)) (f z)) (f z) ->
                                     f z
