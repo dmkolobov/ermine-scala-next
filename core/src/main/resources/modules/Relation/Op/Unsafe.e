@@ -47,6 +47,14 @@ foreign
       coalesceModule : Function2 (Op s (Nullable a)) (Op t a) (Op u a)
   value "com.clarifi.reporting.Op$Funcall$" "MODULE$"
       funcallModule : Function5 String String (List# String) (List# Op#) (Prim a) (Op r a)
+  value "com.clarifi.reporting.Op$Log$" "MODULE$"
+      logModule : OpUn# a
+  value "com.clarifi.reporting.Op$Log10$" "MODULE$"
+      log10Module : OpUn# a
+  value "com.clarifi.reporting.Op$Exp$" "MODULE$"
+      expModule : OpUn# a
+  value "com.clarifi.reporting.Op$LogBase$" "MODULE$"
+      logBaseModule : OpBin# a
 
   method "guessTypeUnsafe" typeOfOp# : Op r a -> Prim a
 

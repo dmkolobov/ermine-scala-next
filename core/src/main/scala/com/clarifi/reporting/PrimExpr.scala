@@ -42,7 +42,9 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
 
   def extractString: String = extractNullableString(sys.error("Could not extract a string value from null of type: " + typ))
 
-  def extractDouble: Double = this match {
+  def extractDouble: Double = extractDoubleWithMsg("Could not extract a double value from " + this)
+
+  private def extractDoubleWithMsg(s: => String) = this match {
     case StringExpr(_, s) => s.toDouble
     case DoubleExpr(_, d) => d
     case ByteExpr(_, i) => i.toDouble
@@ -50,7 +52,7 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case IntExpr(_, i) => i.toDouble
     case LongExpr(_, i) => i.toDouble
     case DateExpr(_, d) => d.getTime.toDouble
-    case _ => sys.error("Could not extract a double value from " + this)
+    case _ => sys.error(s)
   }
 
   def extractDate: Date = this match {
@@ -154,6 +156,40 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case StringExpr(b, s) => StringExpr(b, s.toLowerCase)
     case _ => this
   }
+
+  def log = this match {
+    case n : NullExpr => n
+    case _ =>
+      val x = this.extractDoubleWithMsg(this.toString + " does not support log.")
+      DoubleExpr(this.nullable, math.log(x))
+  }
+
+  def log10 = this match {
+    case n : NullExpr => n
+    case _ =>
+      val x = this.extractDoubleWithMsg(this.toString + " does not support log10.")
+      DoubleExpr(this.nullable, math.log10(x))
+  }
+
+  def exp = this match {
+    case n : NullExpr => n
+    case _ =>
+      val x = this.extractDoubleWithMsg(this.toString + " does not support exp.")
+      DoubleExpr(this.nullable, math.exp(x))
+  }
+
+  def logBase(pe: PrimExpr) = this match {
+    case n : NullExpr => n
+    case _ => pe match {
+      case n : NullExpr => n
+      case _ =>
+        def msg = "Bad logBase arguments: (" + this.toString + "," + pe.toString + ")"
+        val a = this.extractDoubleWithMsg(msg)
+        val b = pe.extractDoubleWithMsg(msg)
+        DoubleExpr(this.nullable || pe.nullable, math.log(a) / math.log(b))
+    }
+  }
+
 
   /** Change type to nullable, if not already. */
   def withNull: PrimExpr = if (this nullable) this else (this match {

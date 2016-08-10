@@ -119,6 +119,10 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         OverSqlExpr(compileAggFunc(agg, lookupColumn), compileWindow(over, lookupColumn))
       case Upper(s) => FunSqlExpr("UPPER", List(rec(s)))
       case Lower(s) => FunSqlExpr("LOWER", List(rec(s)))
+      case Log(s) => FunSqlExpr("LOG", List(rec(s)))
+      case Log10(s) => FunSqlExpr("LOG10", List(rec(s)))
+      case Exp(s) => FunSqlExpr("EXP", List(rec(s)))
+      case LogBase(s,t) => FunSqlExpr("LOG", List(rec(s), rec(t)))
     }
     rec(op)
   }

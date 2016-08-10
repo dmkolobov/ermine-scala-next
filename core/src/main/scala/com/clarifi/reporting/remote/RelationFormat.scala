@@ -639,7 +639,7 @@ object Format {
 
   lazy val opRW: CodecPair[Op] =
     new CodecShape[Op] {
-      type Shape[A] = S18[PrimExprF       , // OpLiteral
+      type Shape[A] = S22[PrimExprF       , // OpLiteral
                           StringF & PrimTF, // ColumnValue
                           A & A           , // Add
                           A & A           , // Sub
@@ -656,10 +656,14 @@ object Format {
                           A                 , // Abs
                           AggF & WindowF , // Windowed
                           A                 , // Upper
-                          A                   // Lower
+                          A                 , // Lower
+                          A                 , // Log
+                          A                 , // Log10
+                          A                 , // Exp
+                          A & A               // LogBase
                          ]
       override def readShape[Z] = { self =>
-        union18R(
+        union22R(
           primExprR map OpLiteral,
           p2R(stringR, primTR)(ColumnValue),
           p2R(self, self)((a, b) => Add(a, b)),
@@ -677,13 +681,17 @@ object Format {
           self map (Abs(_)),
           p2R(aggR, windowR)(Windowed(_,_)),
           self map (Upper(_)),
-          self map (Lower(_))
+          self map (Lower(_)),
+          self map (Log),
+          self map (Log10),
+          self map (Exp),
+          p2R(self, self)(LogBase)
         )
       }
 
       override def writeShape[Z] = { self =>
         lazy val binopW = tuple2W(self, self)
-        s18W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
+        s22W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
              binopW, binopW, binopW, binopW, repeatW(self),
              tuple3W(predicateW, self, self),
              binopW,
@@ -693,8 +701,12 @@ object Format {
              self,
              tuple2W(aggW, windowW),
              self,
-             self
-        )((opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, dateadd, datediff, funcall, abs, windowed, upper, lower) => (r: Op) => r match {
+             self,
+             self,
+             self,
+             self,
+             tuple2W(self,self)
+        )((opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, dateadd, datediff, funcall, abs, windowed, upper, lower, log, log10, exp, logBase) => (r: Op) => r match {
             case OpLiteral(lit) => opliteral(lit)
             case ColumnValue(cn, ty) => columnvalue(cn -> ty)
             case Add(a, b) => add(a -> b)
@@ -713,6 +725,10 @@ object Format {
             case Windowed(x,y) => windowed((x,y))
             case Upper(x) => upper(x)
             case Lower(x) => lower(x)
+            case Log(x) => log(x)
+            case Log10(x) => log10(x)
+            case Exp(x) => exp(x)
+            case LogBase(a,b) => logBase((a,b))
           })}
     }.codec
 

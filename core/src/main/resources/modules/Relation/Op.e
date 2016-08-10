@@ -64,13 +64,19 @@ type OpBin v = forall a b c opl opr.
                        AsOp opl, AsOp opr)
                => opl a v -> opr b v -> Op c v
 
-(+), (-), (*), (//), (/), pow : PrimitiveNum n => OpBin n
+(+), (-), (*), (//), (/), pow, logBase : PrimitiveNum n => OpBin n
 (+) = opBin $ funcall2# addModule
 (-) = opBin $ funcall2# subModule
 (*) = opBin $ funcall2# mulModule
 (//) = opBin $ funcall2# floorDivModule
 (/) = opBin $ funcall2# doubleDivModule
 pow = opBin $ funcall2# powModule
+logBase = opBin $ funcall2# logBaseModule
+
+log, log10, exp : PrimitiveNum n  => OpUn n
+log x = funcall1# logModule (asOp x)
+log10 x = funcall1# log10Module (asOp x)
+exp x = funcall1# expModule (asOp x)
 
 type OpUn v = forall a b op. (exists c. b <- (a, c), AsOp op) => op a v -> Op b v
 

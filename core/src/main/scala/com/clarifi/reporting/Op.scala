@@ -42,6 +42,10 @@ sealed abstract class Op extends TraversableColumns[Op] {
     case Windowed(_, _) => sys error ("Can't evaluate window functions outside of a database")
     case Upper(o) => o.eval(t).upper
     case Lower(o) => o.eval(t).lower
+    case Log(o) => o.eval(t).log
+    case LogBase(o,b) => o.eval(t).logBase(b.eval(t))
+    case Log10(o) => o.eval(t).log10
+    case Exp(o) => o.eval(t).exp
   }
 
   def simplify(t: Map[ColumnName, Op]): Op = {
@@ -109,6 +113,19 @@ sealed abstract class Op extends TraversableColumns[Op] {
         case OpLiteral(pe) => OpLiteral(pe lower)
         case no => Lower(no)
       }
+      case Log(l) => simp(l) match {
+        case OpLiteral(pe) => OpLiteral(pe log)
+        case no => Log(no)
+      }
+      case Log10(l) => simp(l) match {
+        case OpLiteral(pe) => OpLiteral(pe log10)
+        case no => Log10(no)
+      }
+      case LogBase(l,b) => opbin(LogBase, (_ logBase _), Function const false, Function const false)(l,b)
+      case Exp(e) => simp(e) match {
+        case OpLiteral(pe) => OpLiteral(pe exp)
+        case no => Exp(no)
+      }
     }
     simp(this)
   }
@@ -152,6 +169,10 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case Windowed(agg, _) => agg guessType
       case Upper(o) => o.guessType map (t => StringT(0, t.nullable))
       case Lower(o) => o.guessType map (t => StringT(0, t.nullable))
+      case Log(l) => l.guessType map (t => DoubleT(t.nullable))
+      case Log10(l) => l.guessType map (t => DoubleT(t.nullable))
+      case Exp(l) => l.guessType map (t => DoubleT(t.nullable))
+      case LogBase(l,b) => (l.guessType |@| b.guessType) ((t,u) => DoubleT(t.nullable || u.nullable))
     }
   }
 
@@ -182,6 +203,10 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case Windowed(agg, w) => (agg.postReplaceOp(f) |@| w.postReplaceOp(f))(Windowed)
       case Upper(o) => o.postReplace(f) flatMap { x => f(Upper(x)) }
       case Lower(o) => o.postReplace(f) flatMap { x => f(Lower(x)) }
+      case Log(o) => o.postReplace(f) flatMap { x => f(Log(x)) }
+      case Log10(o) => o.postReplace(f) flatMap { x => f(Log10(x)) }
+      case Exp(o) => o.postReplace(f) flatMap { x => f(Exp(x)) }
+      case LogBase(o,b) => binop(LogBase)(o postReplace f, b postReplace f)
     }
   }
 
@@ -207,6 +232,10 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case Windowed(agg, w) => (agg.traverseColumns(f) |@| w.traverseColumns(f))(Windowed)
       case Upper(o) => o traverseColumns f map Upper
       case Lower(o) => o traverseColumns f map Lower
+      case Log(o) => o traverseColumns f map Log
+      case Log10(o) => o traverseColumns f map Log10
+      case Exp(o) => o traverseColumns f map Exp
+      case LogBase(o,b) => binop(LogBase)(o traverseColumns f, b traverseColumns f)
     }
   }
 
@@ -235,6 +264,10 @@ sealed abstract class Op extends TraversableColumns[Op] {
     case Funcall(_,_,_,args,_) => args.exists(_ isWindowed)
     case Upper(s) => s isWindowed
     case Lower(s) => s isWindowed
+    case Log(o) => o isWindowed
+    case Log10(o) => o isWindowed
+    case Exp(o) => o isWindowed
+    case LogBase(o,b) => o.isWindowed || b.isWindowed
     case _ => false
   }
 }
@@ -342,6 +375,10 @@ object Op {
   case class Windowed(agg: AggFunc, window: Window) extends Op
   case class Upper(op: Op) extends Op
   case class Lower(op: Op) extends Op
+  case class Log(l: Op) extends Op
+  case class LogBase(l: Op, b: Op) extends Op
+  case class Log10(l: Op) extends Op
+  case class Exp(l: Op) extends Op
 
   implicit val OpEqual: Equal[Op] = equalA
   implicit val OpShow: Show[Op] = showFromToString
