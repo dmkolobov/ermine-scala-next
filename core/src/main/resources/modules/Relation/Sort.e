@@ -23,7 +23,7 @@ data Sort (r:row) = Sort (List (String, PrimT, SortOrder))
 
 type Sort# = List# (Pair# String SortOrder#)
 
-type TypedSort# = List# (Pair# (Pair# String PrimT) SortOrder)
+type TypedSort# = List# (Pair# (Pair# String PrimT) SortOrder#)
 
 empty : Sort (| |)
 empty = Sort []
@@ -97,7 +97,7 @@ toSort# : Sort r -> Sort#
 toSort# (Sort o) = toList# $ map ((f,_,o) -> toPair# (f,toSortOrder# o)) o
 
 toTypedSort# : Sort r -> TypedSort#
-toTypedSort# (Sort o) = toList# $ map ((f,t,o) -> pair# (pair# f t) o) o
+toTypedSort# (Sort o) = toList# $ map ((f,t,o) -> pair# (pair# f t) (toSortOrder# o)) o
 
 -- | Nativize a sort order.
 toSortOrder# : SortOrder -> SortOrder#
