@@ -69,6 +69,17 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     */
   def compileOp(op: Op, lookupColumn: String => SqlExpr)(implicit emitter: SqlEmitter): SqlExpr = {
     import Op._
+    def compileBuiltin(b: Builtin) = b match {
+      case Upper => "UPPER"
+      case Lower => "LOWER"
+      case Log => "LOG"
+      case Log10 => "LOG10"
+      case Exp => "EXP"
+      case LogBase => "LOG"
+      case Abs => "ABS"
+      case Pow => "POWER"
+    }
+
     def rec(op: Op): SqlExpr = op match {
       case OpLiteral(lit) => compileLiteral(lit)
       case ColumnValue(cn, _) => lookupColumn(cn)
@@ -82,16 +93,6 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         emitter.emitIntegerDivision(rec(a), rec(b))
       case DoubleDiv(a, b) =>
         BinSqlExpr("/", rec(a), rec(b))
-      case Pow(a, b) =>
-        /**
-         * @todo MSP - SQLite does not support POWER, work around somehow?
-         *
-         * SMB: No. I doubt we'll be using sqlite beyond test cases,
-         * and there are already things with it that bust. I am of the
-         * opinion we should just not sweat it.
-         */
-        FunSqlExpr("POWER", List(rec(a), rec(b)))
-      case Abs(a) => FunSqlExpr("ABS", List(rec(a)))
       case Concat(as) =>
         emitter.emitConcat(as.map(rec))
       case If(test, conseq, altern) => (rec(conseq), rec(altern)) match {
@@ -117,12 +118,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                    args map rec)
       case Windowed(agg, over) =>
         OverSqlExpr(compileAggFunc(agg, lookupColumn), compileWindow(over, lookupColumn))
-      case Upper(s) => FunSqlExpr("UPPER", List(rec(s)))
-      case Lower(s) => FunSqlExpr("LOWER", List(rec(s)))
-      case Log(s) => FunSqlExpr("LOG", List(rec(s)))
-      case Log10(s) => FunSqlExpr("LOG10", List(rec(s)))
-      case Exp(s) => FunSqlExpr("EXP", List(rec(s)))
-      case LogBase(s,t) => FunSqlExpr("LOG", List(rec(s), rec(t)))
+      case BuiltinCall(b,args) => FunSqlExpr(compileBuiltin(b), args.map(rec))
+      case Cast(o, ty) => CastSqlExpr(rec(o), ty)
     }
     rec(op)
   }

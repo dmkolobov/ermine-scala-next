@@ -20,6 +20,9 @@ object OpGens {
   def genOpLiteral(t: PrimT): Gen[Op] =
     RelationGens.simplePrimExpr(t) map OpLiteral
 
+
+  private def pow(x: Op, y: Op) = BuiltinCall(Pow, List(x,y))
+
   /**
    * Creates an operation based on the given type and column names.
    */
@@ -32,7 +35,7 @@ object OpGens {
             case StringT(_,_) => oneBinOp({(l, r) => Concat(List(l, r))})
             case IntT(_) => oneBinOp(Add, Sub, Mul, FloorDiv,
                                     If(Atom(true), _, _), If(Atom(false), _, _))
-            case DoubleT(_) => oneBinOp(Add, Sub, Mul, DoubleDiv, Pow)
+            case DoubleT(_) => oneBinOp(Add, Sub, Mul, DoubleDiv, pow)
             case DateT(_) => oneBinOp(Add, Sub)
             case BooleanT(_) => sys.error("Booleans do not support any ops")
             case _ => sys.error("Unrecognized type: " + t)
