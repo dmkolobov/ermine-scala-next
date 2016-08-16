@@ -135,6 +135,9 @@ abstract class ProfiledWriter[F[_], C](inner: Writer[F, C])(implicit val R: Run[
                data: Tabular[F,(NonEmptyList[PrimExpr],NonEmptyList[PrimExpr])]) =
     timedF("pieChart", inner pieChart (pcd, labelcol, datacol, data))
 
+  def styleBox(xLabel: String, yLabel: String, rowLables: List[String], columnLabels: List[String], xPositionField:String, yPositionField:String, rel: ClosedExt) = 
+    timedF("styleBox", inner styleBox (xLabel, yLabel, rowLables, columnLabels, xPositionField, yPositionField, rel))
+
   def drilldownPieChart(pcd: PieChartData, labelColumn: Presentation,
                         dataCol : Presentation, parentCol: String,
                         childCol: String,

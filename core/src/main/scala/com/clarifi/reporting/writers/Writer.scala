@@ -151,22 +151,6 @@ abstract class Writer[F[_],C] { self =>
     * and that rows elements become columns */
   def grid(data: List[List[C]]): C
 
-  /** A table-like laybout of the reports with table header and table body.
-    * CSSClass can be applied on each row and column  */
-  private def styleWithCSS(css: Option[String], target: C) : C = css.fold(target)(s => style(s, target))
-  private def styleListWithCSS(css: Option[String], target: List[C]) : List[C] = target.map(x => styleWithCSS(css, x))
-
-  import scalaz.syntax.traverse._
-  def styleBox[A](header: StyleGrid[F[C]], body: StyleGrid[A], showInCell: A => F[C], showInPopup: A => Option[F[C]]) : F[C] = { 
-    def helper(header: StyleGrid[C], body: StyleGrid[C]) : C = {
-      val target : StyleGrid[C] = header.append(body)  
-      grid (target.applyStyle(styleListWithCSS)(styleWithCSS)) 
-    }
-    header.sequence.flatMap(h =>
-      body.traverse(showInCell).map(helper(h, _)))
-     // ignore showInPopup function
-  }
-
   /** A table described by a `Column.Table` structure.  The default
     * exploits equivalence with `table` and `drilldownTable`; you are
     * free to reinterpret it.
@@ -213,6 +197,9 @@ abstract class Writer[F[_],C] { self =>
 
   /** @note Invariant: _2.head of data elements is PrimitiveNum. */
   def pieChart(pcd: PieChartData, labelcol: Presentation, datacol: Presentation, data: Tabular[F,(NonEmptyList[PrimExpr],NonEmptyList[PrimExpr])]): F[C]
+  
+  /** Create a drilldown styleBox  */
+  def styleBox(xLabel: String, yLabel: String, rowLables: List[String], columnLabels: List[String], xPositionField: String, yPositionField: String, rel: ClosedExt) : F[C]
 
   /** @note Invariant: _2.head of data elements is PrimitiveNum.
     * @param data Tabular of (label, value) pairs. */

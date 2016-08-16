@@ -416,15 +416,6 @@ grid d = Report (w -> liftM (wm w) (gridW w) $ travLW w (travLW w (runReport w))
 gridRow : String -> Report f z -> List (Report f z)
 gridRow l r = [ style "fix-width-label" $ atomShown l, r ]
 
--- This is for StyleBox
-styleBox : StyleGrid (Report f z)
-        -> StyleGrid a
-        -> (a -> Report f z)
-        -> (a -> Maybe (Report f z))
-        -> Report f z
-styleBox header body showinCell showinPopup =
-    Report ( w -> styleBoxW w (mapStyleGrid (runReport w) header) body (runReport w . showinCell) (fmap maybeFunctor (runReport w) . showinPopup) )
- 
 wrap : String -> Report f z -> Report f z
 wrap h r = style h ' border (Just r) Nothing Nothing Nothing Nothing
 
@@ -700,6 +691,19 @@ keyValueTabular softr@(SoftRelation ks _ _) lg r =
                                  (defaultLg ks))
   in scanRelation (project (rowUsed ks) r) byKeys
 
+
+styleBox : forall tx ty px py other rel .
+          (r <-(tx, ty, px, py, other), Relational rel)
+        => Field tx a
+        -> Field ty a
+        -> List String 
+        -> List String 
+        -> Field px Int
+        -> Field py Int
+        -> rel(|..r|)
+        -> Report f z
+styleBox xLabel yLabel rowLabels columnLabels xPositionField yPositionField r = 
+  Report $ w -> styleboxW w (fieldName xLabel) (fieldName yLabel) rowLabels columnLabels (fieldName xPositionField) (fieldName yPositionField) (relation# r)
 
 
 private
@@ -1333,9 +1337,9 @@ treemapChart : forall d id l labels prl pri prs r r1 r2 ivalue svalue z rel.
              rel (|..r|) -> Report f z
 treemapChart parentId childId labelPres intensityPres sizePres rel = Report $ w -> treeMap# w (fieldName parentId) (fieldName childId) (asPresentation labelPres) (asPresentation intensityPres) (asPresentation sizePres) (relation# rel)
 
-pieChart : forall d l labels prl prv r value z rel .
-           (exists o . r <- (labels, value, o), PrimitiveNum d,
-                      AsPresentation prl, AsPresentation prv, Relational rel)
+pieChart : forall l labels r value z rel .
+           (exists o . r <- (labels, value, o),
+                       Relational rel)
         => String               -- ^ Title.
         -> ChartLegendOptions#      -- ^ Options for the charts legend.
         -> List ({..labels}, Color) -- ^ Color selections.
@@ -1567,9 +1571,9 @@ private
   gridW : Writer f z -> List (List z) -> z
   gridW w d = gridW_ w (toList# (lmap toList# d))
 
-  styleBoxW : Writer f z -> StyleGrid (f z) -> StyleGrid a -> (a -> f z) -> (a -> Maybe (f z)) -> f z
-  styleBoxW w header body showinCell showinPopup =
-      styleBoxW_ w (toStyleGrid# header) (toStyleGrid# body) (function1 showinCell) (function1 (toMaybe# . showinPopup))
+  styleboxW : Writer f z -> String -> String -> List String -> List String -> String -> String -> Relation# -> f z
+  styleboxW w xLabel yLabel rowLabels columnLabels xPositionField yPositionField rel = 
+    styleboxW_ w xLabel yLabel (toList# rowLabels) (toList# columnLabels) xPositionField yPositionField rel
 
   foreign
     method "atomDMTL" atomW : forall f z a . Writer f z -> Format_Fmt a -> a -> z
@@ -1608,12 +1612,8 @@ private
     method "centered" centeredW : forall f z . Writer f z -> z -> z
     method "scanRelationDMTL" scanRelationW' : forall f z . Writer f z -> Sort# -> Relation# -> Function1 (List# Record#) (f z) -> f z
     method "grid" gridW_ : forall f z . Writer f z -> List# (List# z) -> z
-    method "styleBox" styleBoxW_ : forall f z . Writer f z
-                                            -> StyleGrid# (f z)
-                                            -> StyleGrid# a
-                                            -> Function1 a (f z)
-                                            -> Function1 a (Maybe# (f z))
-                                            -> f z
+    method "styleBox" styleboxW_ : forall f z . Writer f z -> String -> String -> List# String -> List# String -> String -> String -> Relation# -> f z
+    
     method "selector" selectorW: forall f z a b . Writer f z -> SelectorMode# -> Pair# (NonEmpty# PrimExpr# ) a -> Format_Fmt b -> List# (Pair# (NonEmpty# PrimExpr# ) a) ->
                                     Function3 (Function1 a z) (SelectorEvent z) (Function1 (Function1 a (f z)) (f z)) (f z) ->
                                     f z
@@ -1628,4 +1628,4 @@ private
                                     Function2 a (Function1 a (f z)) (f z) -> -- controls: S => (S => F[HJS]) => F[HJS]
                                     Function1 a (f z) -> f z           -- view: S => F[HJS]
     method "button" buttonW : forall f z a . Writer f z -> NonEmpty# PrimExpr# -> Format_Fmt a -> Function2 z (SelectorEvent z) (f z) -> f z
-    method "image" imageW : forall f z a . Writer f z -> String -> Maybe# String -> z -- TODO : is this right?
+    method "image" imageW : forall f z a . Writer f z -> String -> Maybe# String -> z -- TODO : is this right?   

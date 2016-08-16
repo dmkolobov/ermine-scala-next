@@ -70,6 +70,19 @@ object AggregateE {
   }
 }
 
+object AggregateByGroupE {
+  def apply[M, R](
+    r: Ext[M, R], 
+    cs: Map[Attribute, Op],  // non-aggregate columns 
+    aggs: List[(Attribute, AggFunc)], 
+    group: List[Op.ColumnValue] = List() // the target columns
+  ): Ext[M, R] = r match {
+    case ExtRel(e, db) => ExtRel(AggregateByGroup(e, cs, aggs, group), db)
+    case ExtMem(e) => sys.error("AggregateByGroupE for MEM not supported for now......")
+    case e => AggregateByGroupE(e, cs, aggs, group)
+  }
+}
+
 object ProjectE {
   def apply[M, R](r: Ext[M, R], cols: Map[Attribute, Op]): Ext[M, R] = r match {
     case ExtRel(e, db) => ExtRel(Project(e, cols), db)
