@@ -10,10 +10,10 @@ import Native.List using toList#; fromList#
 import Native.Pair
 import Native.Record
 import Pair
-import Relation.Op hiding empty_Bracket ; cons_Bracket
+import Relation.Op hiding empty_Bracket ; cons_Bracket ; (++)
 import Prim
 import Date
-import Record
+import Record hiding (++)
 import Relation.Op.Unsafe
 import Relation.Row hiding empty_Bracket ; cons_Bracket ; single_Brace ; snoc_Brace
 import Layout.Presentation using rowUsed
@@ -64,6 +64,12 @@ nilFulcrum (Row ks) (Row vs) = Fulcrum (map_List fst ks) (map_List fst vs) []
 
 consFulcrum : (p' <- (f, p)) => Field f a -> Op v a -> {..k} -> Fulcrum k v p -> Fulcrum k v p'
 consFulcrum f o r (Fulcrum ks vs m) = Fulcrum ks vs ((record# r, (fieldName f, UnsafeOp o)) :: m)
+
+catFulcrum : (p <- (p1, p2))
+          => Fulcrum k v p1
+          -> Fulcrum k v p2
+          -> Fulcrum k v p
+catFulcrum (Fulcrum ks vs l1) (Fulcrum _ _ l2) = Fulcrum ks vs (l1 ++ l2)
 
 pivot : (RelationalComb rel, r <- (k, v, i), s <- (i, p)) => Fulcrum k v p -> rel r -> rel s
 pivot (Fulcrum ks vs m) = pivot# (toList# ks) (toList# vs) (toList# m')
