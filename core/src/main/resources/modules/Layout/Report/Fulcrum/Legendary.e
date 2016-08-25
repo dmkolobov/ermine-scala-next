@@ -41,3 +41,9 @@ infixr 5 <>
     -> LegendaryFulcrum k v s
     -> LegendaryFulcrum k v t
 (<>) (LF ful1 lg1) (LF ful2 lg2) = LF (catFulcrum_Piv ful1 ful2) (lg1 ++_Lg lg2)
+
+data MythicalFulcrum k v = forall p. MF (LegendaryFulcrum k v p)
+  
+infixr 5 ><
+(><) : MythicalFulcrum k v -> MythicalFulcrum k v -> MythicalFulcrum k v
+(><) (MF l1) (MF l2) = MF (l1 <> l2)
