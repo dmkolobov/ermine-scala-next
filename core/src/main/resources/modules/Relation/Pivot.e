@@ -54,22 +54,29 @@ single_Brace (f, op, k) = Fulcrum (map_List fst ks) (map_List fst vs) [(record# 
 
 single_Brace_ = single_Brace
 
-snoc_Brace : (p' <- (p, f)) => Fulcrum k v p -> (Field f a, Op v a, {..k}) -> Fulcrum k v p'
-snoc_Brace (Fulcrum ks vs m) (f, o, k) = Fulcrum ks vs ((record# k, (fieldName f, UnsafeOp o)) :: m)
+snoc_Brace : (p' <- (p, f), RUnion2 v3 v2 v1)
+          => Fulcrum k v1 p
+          -> (Field f a, Op v2 a, {..k})
+          -> Fulcrum k v3 p'
+snoc_Brace (Fulcrum ks vs m) (f, o, k) = Fulcrum ks (vs ++ vs') ((record# k, (fieldName f, UnsafeOp o)) :: m)
+ where
+ vs' = case rowUsed o of Row x -> map_List fst x
 
 snoc_Brace_ = snoc_Brace
 
-nilFulcrum : Row k -> Row v -> Fulcrum k v (||)
-nilFulcrum (Row ks) (Row vs) = Fulcrum (map_List fst ks) (map_List fst vs) []
+nilFulcrum : Row k -> Fulcrum k (||) (||)
+nilFulcrum (Row ks) = Fulcrum (map_List fst ks) [] []
 
-consFulcrum : (p' <- (f, p)) => Field f a -> Op v a -> {..k} -> Fulcrum k v p -> Fulcrum k v p'
-consFulcrum f o r (Fulcrum ks vs m) = Fulcrum ks vs ((record# r, (fieldName f, UnsafeOp o)) :: m)
+consFulcrum : (p' <- (f, p), RUnion2 v3 v2 v1) => Field f a -> Op v1 a -> {..k} -> Fulcrum k v2 p -> Fulcrum k v3 p'
+consFulcrum f o r (Fulcrum ks vs m) = Fulcrum ks (vs ++ vs') ((record# r, (fieldName f, UnsafeOp o)) :: m)
+ where
+ vs' = case rowUsed o of Row x -> map_List fst x
 
-catFulcrum : (p <- (p1, p2))
-          => Fulcrum k v p1
-          -> Fulcrum k v p2
-          -> Fulcrum k v p
-catFulcrum (Fulcrum ks vs l1) (Fulcrum _ _ l2) = Fulcrum ks vs (l1 ++ l2)
+catFulcrum : (p <- (p1, p2), RUnion2 v3 v2 v1)
+          => Fulcrum k v1 p1
+          -> Fulcrum k v2 p2
+          -> Fulcrum k v3 p
+catFulcrum (Fulcrum ks vs l1) (Fulcrum _ vs' l2) = Fulcrum ks (vs ++ vs') (l1 ++ l2)
 
 pivot : (RelationalComb rel, r <- (k, v, i), s <- (i, p)) => Fulcrum k v p -> rel r -> rel s
 pivot (Fulcrum ks vs m) = pivot# (toList# ks) (toList# vs) (toList# m')

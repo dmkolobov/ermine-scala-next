@@ -1,6 +1,8 @@
 
 module Layout.Report.Fulcrum.Legendary where
 
+import Constraint
+
 import Field
 
 import List
@@ -20,10 +22,10 @@ data LegendaryFulcrum k v p
 single_Brace : (Field f a, Presentation f a, Op v a, {..k}) -> LegendaryFulcrum k v f
 single_Brace (f, pr, o, k) = LF (single_Brace_Piv (f,o,k)) ([(pr, fieldName f)]_Simple_Lg)
 
-snoc_Brace : (s <- (f,p))
-  => LegendaryFulcrum k v p
-  -> (Field f a, Presentation f a, Op v a, {..k})
-  -> LegendaryFulcrum k v s
+snoc_Brace : (s <- (f,p), RUnion2 v3 v2 v1)
+  => LegendaryFulcrum k v1 p
+  -> (Field f a, Presentation f a, Op v2 a, {..k})
+  -> LegendaryFulcrum k v3 s
 snoc_Brace (LF ful lg) (f, pr, o, k)
   = LF (snoc_Brace_Piv ful (f,o,k)) (cons_Bracket_Simple_Lg (pr, fieldName f) lg)
 
@@ -36,14 +38,23 @@ fulcrumGroup s = mapLegend (legendGroup_Lg s)
 
 infixr 5 <>
 
-(<>) : (t <- (p, s))
-    => LegendaryFulcrum k v p
-    -> LegendaryFulcrum k v s
-    -> LegendaryFulcrum k v t
+(<>) : (t <- (p, s), RUnion2 v3 v2 v1)
+    => LegendaryFulcrum k v1 p
+    -> LegendaryFulcrum k v2 s
+    -> LegendaryFulcrum k v3 t
 (<>) (LF ful1 lg1) (LF ful2 lg2) = LF (catFulcrum_Piv ful1 ful2) (lg1 ++_Lg lg2)
 
 data MythicalFulcrum k v = forall p. MF (LegendaryFulcrum k v p)
   
 infixr 5 ><
-(><) : MythicalFulcrum k v -> MythicalFulcrum k v -> MythicalFulcrum k v
+(><) : (RUnion2 v3 v2 v1)
+    => MythicalFulcrum k v1
+    -> MythicalFulcrum k v2
+    -> MythicalFulcrum k v3
 (><) (MF l1) (MF l2) = MF (l1 <> l2)
+
+mapLegendary : (forall p. LegendaryFulcrum k v p -> LegendaryFulcrum k v p)
+            -> MythicalFulcrum k v -> MythicalFulcrum k v
+mapLegendary
+  (f : some k v. forall p. LegendaryFulcrum k v p -> LegendaryFulcrum k v p)
+  (MF l) = MF (f l)
