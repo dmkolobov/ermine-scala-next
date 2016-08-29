@@ -64,8 +64,11 @@ snoc_Brace (Fulcrum ks vs m) (f, o, k) = Fulcrum ks (vs ++ vs') ((record# k, (fi
 
 snoc_Brace_ = snoc_Brace
 
-nilFulcrum : Row k -> Fulcrum k (||) (||)
-nilFulcrum (Row ks) = Fulcrum (map_List fst ks) [] []
+nilFulcrum' : Row k -> Fulcrum k (||) (||)
+nilFulcrum' (Row ks) = Fulcrum (map_List fst ks) [] []
+
+nilFulcrum : Row k -> Row v -> Fulcrum k v (||)
+nilFulcrum (Row ks) (Row vs) = Fulcrum (map_List fst ks) (map_List fst vs) []
 
 consFulcrum : (p' <- (f, p), RUnion2 v3 v2 v1) => Field f a -> Op v1 a -> {..k} -> Fulcrum k v2 p -> Fulcrum k v3 p'
 consFulcrum f o r (Fulcrum ks vs m) = Fulcrum ks (vs ++ vs') ((record# r, (fieldName f, UnsafeOp o)) :: m)
