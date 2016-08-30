@@ -4,6 +4,7 @@ package writers
 import java.util.Date
 import collection.immutable.{IndexedSeq, SortedSet}
 
+import scalaz.{Bifunctor, NonEmptyList}
 import scalaz.Scalaz._ // TODO: Remove
 import scalaz.{ContravariantCoyoneda => CtCoyo, Monad, Order}
 //import scalaz.std.vector._
@@ -141,6 +142,77 @@ object Tabular {
       def postSort(ps: CtCoyo[Order, Record]) = this
       def transpose = this
     }
+
+  def buildTranspose[F[_]](displayRules: Legend.U[String]
+                          , relationHeader: Header
+                          , seqRows: IndexedSeq[IndexedSeq[PrimExpr]])
+                          (implicit S: Scanner[F]): Tabular[F,Record] = {
+    // Nested colgroups ==> top level + list for sublevels.
+    val lg1: Legend.U[String] = displayRules.oneDeep // The orginal legend, collapsed to 1 deep
+    val lg2: Legend.U[String] = lg1.sansGroupingColumn // Legend without grouping column
+
+    // if we have new row groups but not old ones, fake a column name.
+    val rgColName: ColumnName = lg1.groupingColumn.fold("__dummy_name_for_row_group_column__")(_._1)
+    val rgColHeader: String = lg1.groupingColumnIndex.fold("")(i => lg1.labels.toIndexedSeq(i))
+
+    val colNameForRow : Int => ColumnName = i => "__dummy_name_row_" + i.toString
+
+    // Figure out the new list of column/row groups
+    val newColumnGroups: Option[IndexedSeq[String]] =
+      lg1.groupingColumnIndex map (i => seqRows map (x => x(i).toString))
+    val newRowGroups_ = lg2.inOrder.flattened.tail.map(_._2)
+    val newRowGroups: Option[IndexedSeq[String]] =
+      if (newRowGroups_.forall(_.isEmpty)) None else Some(newRowGroups_.map(_.getOrElse("")))
+
+    // Remove the row group column, if it exists
+    val seqRows2: IndexedSeq[IndexedSeq[PrimExpr]] = lg1.groupingColumnIndex.fold(seqRows) { i => seqRows map (x => x.patch(i, Nil, 1)) }
+
+    // Take the legend, turn the labels into the first column
+    val firstColHeader: String = lg2.labels.head
+    val newRows: IndexedSeq[PrimExpr] = lg2.labels.tail.map(x => StringExpr(false, x)).toIndexedSeq
+    // Take the first value of each row, turn it into the new column names
+    val newColumnNames : IndexedSeq[ColumnName] = seqRows2.zipWithIndex.map{ case (_, i) => colNameForRow(i) }
+    val newColumns: IndexedSeq[String] = seqRows2 map (x => x(0).toString)
+    // Add the new first column, and transpose
+    val tblVals: IndexedSeq[IndexedSeq[PrimExpr]] = (newRows +: seqRows2.map((_.tail))).transpose
+    // Convert each row back into a record, using the new column names for keys
+    val tblRecordVals: IndexedSeq[Record] = tblVals.map(tblRow => (firstColHeader +: newColumnNames).zip(tblRow).toMap)
+    // Attach the new rowgrouping column
+    val tblRecordVals2: IndexedSeq[Record] = newRowGroups.fold(tblRecordVals) {
+      _.zip(tblRecordVals) map {
+        case (rgName, rec) => rec + (rgColName -> StringExpr(false, rgName))
+      }
+    }
+
+    // Make it a literal mem.
+    val tblRecordHardMem: HardMem = Literal.toLit(tblRecordVals2).getOrElse(EmptyRel(relationHeader))
+
+    val newLegend: Legend.U[String] = {
+      val newGroupingColumn = newRowGroups map { _ => (rgColName, PrimT.StringT(0, false)) }
+
+      // Legend for the row grouping column
+      val rgLeg = newGroupingColumn.fold(Legend.empty[String, String])(gc =>
+        implicitly[Bifunctor[Legend]].bimap(
+          Legend.select[String](Vector(rgColName), _ => gc._2)
+        )(identity, _ => rgColHeader).setGroupingColumn(newGroupingColumn)
+      )
+      // Legend for the new 'row' column
+      val rowLeg = Legend.select[String](Vector(firstColHeader), _ => PrimT.StringT(0, true))
+      // Legend for everything else
+      val valsLeg = implicitly[Bifunctor[Legend]].bimap(
+        Legend[String,String](
+          LegendColumns flat (
+            newColumnNames.map (c => (Presentation.verbatim(NonEmptyList(c -> PrimT.DoubleT(true))),
+                                 SortStrategy allForward IndexedSeq(c),
+                                 c))),
+            IndexedSeq.empty,
+            None)
+      )(identity, cName => newColumns(newColumnNames.indexOf(cName)))
+      val restLeg = valsLeg.applyColumnGroups(newColumnGroups)
+      rgLeg.append(rowLeg).append(restLeg)
+    }
+    relationRec(ExtMem(tblRecordHardMem)).label(newLegend)
+  }
 
 }
 
