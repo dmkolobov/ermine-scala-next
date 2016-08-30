@@ -692,10 +692,10 @@ keyValueTabular softr@(SoftRelation ks _ _) lg r =
   in scanRelation (project (rowUsed ks) r) byKeys
 
 
-styleBox : forall tx ty px py other rel .
-          (r <-(tx, ty, px, py, other), Relational rel)
-        => Field tx a
-        -> Field ty a
+styleBox : forall px py other rel .
+          (r <-(px, py, other), Relational rel)
+        => String -- xAxis Label
+        -> String -- yAxis Label 
         -> List String 
         -> List String 
         -> Field px Int
@@ -703,7 +703,7 @@ styleBox : forall tx ty px py other rel .
         -> rel(|..r|)
         -> Report f z
 styleBox xLabel yLabel rowLabels columnLabels xPositionField yPositionField r = 
-  Report $ w -> styleboxW w (fieldName xLabel) (fieldName yLabel) rowLabels columnLabels (fieldName xPositionField) (fieldName yPositionField) (relation# r)
+  Report $ w -> styleboxW w xLabel yLabel rowLabels columnLabels (fieldName xPositionField) (fieldName yPositionField) (relation# r)
 
 
 private
