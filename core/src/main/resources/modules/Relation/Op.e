@@ -59,29 +59,38 @@ coalesce' : (r <- (r1,r2), AsOp opc, AsOp opa)
         -> Op r a
 coalesce' l r = coalesce# (asOp l) (asOp r)
 
+cast : (AsOp op) => op s a -> Prim b -> Op s b
+cast o p = funcall2# castModule (asOp o) p
+
 type OpBin v = forall a b c opl opr.
                (exists d e f. a <- (e, d), b <- (f, e), c <- (f, e, d),
                        AsOp opl, AsOp opr)
                => opl a v -> opr b v -> Op c v
 
-(+), (-), (*), (//), (/), pow : PrimitiveNum n => OpBin n
+(+), (-), (*), (//), (/), pow, logBase : PrimitiveNum n => OpBin n
 (+) = opBin $ funcall2# addModule
 (-) = opBin $ funcall2# subModule
 (*) = opBin $ funcall2# mulModule
 (//) = opBin $ funcall2# floorDivModule
 (/) = opBin $ funcall2# doubleDivModule
-pow = opBin $ funcall2# powModule
+pow = opBin $ builtin2 powBuiltin
+logBase = opBin $ builtin2 logBaseBuiltin
+
+log, log10, exp : PrimitiveNum n  => OpUn n
+log x = builtin1 logBuiltin (asOp x)
+log10 x = builtin1 log10Builtin (asOp x)
+exp x = builtin1 expBuiltin (asOp x)
 
 type OpUn v = forall a b op. (exists c. b <- (a, c), AsOp op) => op a v -> Op b v
 
 abs : PrimitivieNum => OpUn n
-abs x = funcall1# absModule (asOp x)
+abs x = builtin1 absBuiltin (asOp x)
 
 upper : AsOp op => op r String -> Op r String 
-upper x = funcall1# upperModule (asOp x)
+upper x = builtin1 upperBuiltin (asOp x)
 
 lower : AsOp op => op r String -> Op r String 
-lower x = funcall1# lowerModule (asOp x)
+lower x = builtin1 lowerBuiltin (asOp x)
 
 negate x = (prim $ Some 0.0 ) - x
 

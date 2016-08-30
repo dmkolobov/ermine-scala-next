@@ -42,7 +42,9 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
 
   def extractString: String = extractNullableString(sys.error("Could not extract a string value from null of type: " + typ))
 
-  def extractDouble: Double = this match {
+  def extractDouble: Double = extractDoubleWithMsg("Could not extract a double value from " + this)
+
+  private def extractDoubleWithMsg(s: => String) = this match {
     case StringExpr(_, s) => s.toDouble
     case DoubleExpr(_, d) => d
     case ByteExpr(_, i) => i.toDouble
@@ -50,7 +52,7 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case IntExpr(_, i) => i.toDouble
     case LongExpr(_, i) => i.toDouble
     case DateExpr(_, d) => d.getTime.toDouble
-    case _ => sys.error("Could not extract a double value from " + this)
+    case _ => sys.error(s)
   }
 
   def extractDate: Date = this match {
@@ -65,6 +67,64 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case StringExpr(_, s) => UUID.fromString(s)
     case UuidExpr(_, s) => s
     case _ => sys.error("Could not extract a UUID value from " + this)
+  }
+
+  def extractByte: Byte = this match {
+    case ByteExpr(_, b) => b
+    case StringExpr(_, s) => s.toByte
+    case LongExpr(_, i) => i.toByte
+    case IntExpr(_, i) => i.toByte
+    case ShortExpr(_, i) => i.toByte
+    case DoubleExpr(_, d) => d.toByte
+    case BooleanExpr(_, b) => if(b) 1 else 0
+    case _ => sys.error("Could not extract a Byte value from " + this)
+  }
+
+  def extractShort: Short = this match {
+    case ShortExpr(_, s) => s
+    case StringExpr(_, s) => s.toShort
+    case LongExpr(_, i) => i.toShort
+    case IntExpr(_, i) => i.toShort
+    case ByteExpr(_, i) => i.toShort
+    case DoubleExpr(_, d) => d.toShort
+    case BooleanExpr(_, b) => if(b) 1 else 0
+    case _ => sys.error("Could not extract a Short value from " + this)
+  }
+
+  def extractInt: Int = this match {
+    case IntExpr(_, i) => i
+    case StringExpr(_, s) => s.toInt
+    case LongExpr(_, i) => i.toInt
+    case ByteExpr(_, i) => i.toInt
+    case ShortExpr(_, i) => i.toInt
+    case DoubleExpr(_, d) => d.toInt
+    case BooleanExpr(_, b) => if(b) 1 else 0
+    case _ => sys.error("Could not extract an Int value from " + this)
+  }
+
+  def extractLong: Long = this match {
+    case LongExpr(_, i) => i
+    case StringExpr(_, s) => s.toLong
+    case IntExpr(_, i) => i.toLong
+    case ByteExpr(_, i) => i.toLong
+    case ShortExpr(_, i) => i.toLong
+    case DoubleExpr(_, d) => d.toLong
+    case BooleanExpr(_, b) => if(b) 1 else 0
+    case _ => sys.error("Could not extract a Long value from " + this)
+  }
+
+  def extractBool: Boolean = this match {
+    case BooleanExpr(_, b) => b
+    case StringExpr(_, s) =>
+      if(s.toLowerCase == "false") false
+      else if(s.toLowerCase == "true") true
+      else s.toLong != 0
+    case LongExpr(_, i) => i != 0
+    case IntExpr(_, i) => i != 0
+    case ShortExpr(_, i) => i != 0
+    case ByteExpr(_, i) => i != 0
+    case DoubleExpr(_, d) => d != 0
+    case _ => sys.error("Could not extract a Long value from " + this)
   }
 
   /** Minimally total catamorphism that preserves most value structure. */
@@ -153,6 +213,52 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
   def lower = this match {
     case StringExpr(b, s) => StringExpr(b, s.toLowerCase)
     case _ => this
+  }
+
+  def log = this match {
+    case n : NullExpr => n
+    case _ =>
+      val x = this.extractDoubleWithMsg(this.toString + " does not support log.")
+      DoubleExpr(this.nullable, math.log(x))
+  }
+
+  def log10 = this match {
+    case n : NullExpr => n
+    case _ =>
+      val x = this.extractDoubleWithMsg(this.toString + " does not support log10.")
+      DoubleExpr(this.nullable, math.log10(x))
+  }
+
+  def exp = this match {
+    case n : NullExpr => n
+    case _ =>
+      val x = this.extractDoubleWithMsg(this.toString + " does not support exp.")
+      DoubleExpr(this.nullable, math.exp(x))
+  }
+
+  def logBase(pe: PrimExpr) = this match {
+    case n : NullExpr => n
+    case _ => pe match {
+      case n : NullExpr => n
+      case _ =>
+        def msg = "Bad logBase arguments: (" + this.toString + "," + pe.toString + ")"
+        val a = this.extractDoubleWithMsg(msg)
+        val b = pe.extractDoubleWithMsg(msg)
+        DoubleExpr(this.nullable || pe.nullable, math.log(a) / math.log(b))
+    }
+  }
+
+  def cast(ty: PrimT) = (this, ty) match {
+    case (n : NullExpr, _) => n
+    case (e, StringT(_,n)) => StringExpr(n, e.extractString)
+    case (e, UuidT(n)) => UuidExpr(n, e.extractUuid)
+    case (e, DateT(n)) => DateExpr(n, e.extractDate)
+    case (e, LongT(n)) => LongExpr(n, e.extractLong)
+    case (e, IntT(n)) => IntExpr(n, e.extractInt)
+    case (e, ShortT(n)) => ShortExpr(n, e.extractShort)
+    case (e, ByteT(n)) => ShortExpr(n, e.extractShort)
+    case (e, BooleanT(n)) => BooleanExpr(n, e.extractBool)
+    case (e, DoubleT(n)) => DoubleExpr(n, e.extractDouble)
   }
 
   /** Change type to nullable, if not already. */

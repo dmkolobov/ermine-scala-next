@@ -19,7 +19,7 @@ import Layout.Report.Keyed.OptionTypes
 import Layout.Report as R
 import Layout.Report.SoftRelation using type SoftRelation
 import Layout.Report.Keyed.Options
-import Layout.Report.DynamicFulcrum
+import Layout.Report.Fulcrum.Dynamic
 import Either
 import Maybe
 import Ord using lt

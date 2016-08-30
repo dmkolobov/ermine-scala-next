@@ -83,6 +83,8 @@ sealed abstract class SqlExpr {
     case ParensSqlExpr(e1) => raw("(") |+| e1.emitSql(emitter) |+| ")"
     case OverSqlExpr(e1, over) => emitter.emitOver(e1, over)
     case Verbatim(s) => s
+    case CastSqlExpr(e, ty) =>
+      raw("cast(") |+| e.emitSql |+| " as " |+| emitter.sqlTypeName(ty) |+| ")"
   }
 
   @annotation.tailrec
@@ -111,6 +113,7 @@ case class CaseSqlExpr(clauses: NonEmptyList[(SqlPredicate, SqlExpr)],
                        otherwise: SqlExpr) extends SqlExpr
 case class ParensSqlExpr(get: SqlExpr) extends SqlExpr
 case class OverSqlExpr(e: SqlExpr, over: SqlOver) extends SqlExpr
+case class CastSqlExpr(e: SqlExpr, ty: PrimT) extends SqlExpr
 case class Verbatim(sql: String) extends SqlExpr
 
 object SqlExpr {

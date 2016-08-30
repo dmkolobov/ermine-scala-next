@@ -24,9 +24,13 @@ data EField a = forall r . EField (Field r a)
 existentialF : String -> Prim a -> EField a
 existentialF s p = EField (existentialF# s p)
 
+uniqExistentialF : Prim a -> EField a
+uniqExistentialF p =
+  let i = guidString ' unsafePerformIO guid
+  in existentialF i p
+
 ecopyF : Field r a -> EField a
-ecopyF f = let i = guidString ' unsafePerformIO guid
-           in existentialF i (fieldType f)
+ecopyF f = uniqExistentialF (fieldType f)
 
 withFieldCopy : Field r a -> (forall r . Field r a -> b) -> b
 withFieldCopy f (cont : some a b . forall r . Field r a -> b) =

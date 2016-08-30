@@ -14,6 +14,12 @@ type OpBin# v = forall a b c.
 
 type OpUn# v = forall a b. (exists c. b <- (a, c)) => Function1 (Op a v) (Op b v)
 
+builtin1 : Builtin -> Op r a -> Op s b
+builtin1 bi o = funcall2# builtinCallModule bi (UnsafeOp o ::# Nil#)
+
+builtin2 : Builtin -> Op r a -> Op s b -> Op t c
+builtin2 bi o1 o2 = funcall2# builtinCallModule bi (UnsafeOp o1 ::# UnsafeOp o2 ::# Nil#)
+
 foreign
   -- Op erasure
   subtype UnsafeOp : Op r a -> Op#
@@ -31,14 +37,6 @@ foreign
       floorDivModule : OpBin# a
   value "com.clarifi.reporting.Op$DoubleDiv$" "MODULE$"
       doubleDivModule : OpBin# a
-  value "com.clarifi.reporting.Op$Pow$" "MODULE$"
-      powModule : OpBin# a
-  value "com.clarifi.reporting.Op$Abs$" "MODULE$"
-      absModule : OpUn# a
-  value "com.clarifi.reporting.Op$Upper$" "MODULE$"
-      upperModule : OpUn# String
-  value "com.clarifi.reporting.Op$Lower$" "MODULE$"
-      lowerModule : OpUn# String
   value "com.clarifi.reporting.Op$Concat$" "MODULE$"
       concatModule : Function1 (List# Op#) (Op r a)
   value "com.clarifi.reporting.Op$If$" "MODULE$"
@@ -47,8 +45,23 @@ foreign
       coalesceModule : Function2 (Op s (Nullable a)) (Op t a) (Op u a)
   value "com.clarifi.reporting.Op$Funcall$" "MODULE$"
       funcallModule : Function5 String String (List# String) (List# Op#) (Prim a) (Op r a)
+  value "com.clarifi.reporting.Op$BuiltinCall$" "MODULE$"
+      builtinCallModule : Function2 Builtin (List# Op#) (Op r a)
+  value "com.clarifi.reporting.Op$Cast$" "MODULE$"
+      castModule : Function2 (Op s a) (Prim b) (Op s b)
 
   method "guessTypeUnsafe" typeOfOp# : Op r a -> Prim a
+
+  data "com.clarifi.reporting.Op$Builtin" Builtin
+
+  value "com.clarifi.reporting.Op$Upper$" "MODULE$" upperBuiltin : Builtin
+  value "com.clarifi.reporting.Op$Lower$" "MODULE$" lowerBuiltin : Builtin
+  value "com.clarifi.reporting.Op$Log$" "MODULE$" logBuiltin : Builtin
+  value "com.clarifi.reporting.Op$Log10$" "MODULE$" log10Builtin : Builtin
+  value "com.clarifi.reporting.Op$LogBase$" "MODULE$" logBaseBuiltin : Builtin
+  value "com.clarifi.reporting.Op$Exp$" "MODULE$" expBuiltin : Builtin
+  value "com.clarifi.reporting.Op$Abs$" "MODULE$" absBuiltin : Builtin
+  value "com.clarifi.reporting.Op$Pow$" "MODULE$" powBuiltin : Builtin
 
 -- builtin
 --   data "com.clarifi.reporting.Op" Op#

@@ -637,29 +637,56 @@ object Format {
 
   lazy val predicateR: Reader[Predicate, PredicateF] = predicateRW.R
 
+  lazy val builtinRW: CodecPair[Builtin] =
+    CodecPair[Builtin,IntF]{
+      intR map {
+        case 0 => Upper
+        case 1 => Lower
+        case 2 => Log
+        case 3 => Log10
+        case 4 => LogBase
+        case 5 => Exp
+        case 6 => Abs
+        case 7 => Pow
+      }
+    } {
+      intW cmap ((b: Builtin) => b match {
+        case Upper => 0
+        case Lower => 1
+        case Log => 2
+        case Log10 => 3
+        case LogBase => 4
+        case Exp => 5
+        case Abs => 6
+        case Pow => 7
+      })
+    }
+
+  type BuiltinF = builtinRW.F
+  lazy val builtinR = builtinRW.R
+  lazy val builtinW = builtinRW.W
+
   lazy val opRW: CodecPair[Op] =
     new CodecShape[Op] {
-      type Shape[A] = S18[PrimExprF       , // OpLiteral
+      type Shape[A] = S16[PrimExprF       , // OpLiteral
                           StringF & PrimTF, // ColumnValue
                           A & A           , // Add
                           A & A           , // Sub
                           A & A           , // Mul
                           A & A           , // FloorDiv
                           A & A           , // DoubleDiv
-                          A & A           , // Pow
                           RepeatF[A]      , // Concat
                           PredicateF :: A :: A, // If
                           A & A           , // Coalesce
                           A :: IntF :: IntF , // DateAdd
                           IntF :: A :: A    , // DateDiff
                           StringF :: StringF :: RepeatF[StringF] :: RepeatF[A] :: PrimTF, // Funcall
-                          A                 , // Abs
                           AggF & WindowF , // Windowed
-                          A                 , // Upper
-                          A                   // Lower
+                          BuiltinF & RepeatF[A], // BuiltinCall
+                          A & PrimTF          // Cast
                          ]
       override def readShape[Z] = { self =>
-        union18R(
+        union16R(
           primExprR map OpLiteral,
           p2R(stringR, primTR)(ColumnValue),
           p2R(self, self)((a, b) => Add(a, b)),
@@ -667,34 +694,31 @@ object Format {
           p2R(self, self)((a, b) => Mul(a, b)),
           p2R(self, self)((a, b) => FloorDiv(a, b)),
           p2R(self, self)((a, b) => DoubleDiv(a, b)),
-          p2R(self, self)((a, b) => Pow(a, b)),
           listR(self) map (x => Concat(x)),
           p3R(predicateR, self, self)(If),
           p2R(self, self)(Coalesce),
           p3R(self, intR, timeUnitR)(DateAdd),
           p3R(timeUnitR, self, self)(DateDiff),
           p5R(stringR, stringR, listR(stringR), listR(self), primTR)(Funcall),
-          self map (Abs(_)),
           p2R(aggR, windowR)(Windowed(_,_)),
-          self map (Upper(_)),
-          self map (Lower(_))
+          p2R(builtinR,listR(self))(BuiltinCall),
+          p2R(self, primTR)(Cast)
         )
       }
 
       override def writeShape[Z] = { self =>
         lazy val binopW = tuple2W(self, self)
-        s18W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
-             binopW, binopW, binopW, binopW, repeatW(self),
+        s16W(primExprW, tuple2W(stringW, primTW), binopW, binopW,
+             binopW, binopW, binopW, repeatW(self),
              tuple3W(predicateW, self, self),
              binopW,
              tuple3W(self, intW, timeUnitW),
              tuple3W(timeUnitW, self, self),
              tuple5W(stringW, stringW, repeatW(stringW), repeatW(self), primTW),
-             self,
              tuple2W(aggW, windowW),
-             self,
-             self
-        )((opliteral, columnvalue, add, sub, mul, floor, div, pow, cat, oif, coalesce, dateadd, datediff, funcall, abs, windowed, upper, lower) => (r: Op) => r match {
+             tuple2W(builtinW, repeatW(self)),
+             tuple2W(self,primTW)
+        )((opliteral, columnvalue, add, sub, mul, floor, div, cat, oif, coalesce, dateadd, datediff, funcall, windowed, builtin, cast) => (r: Op) => r match {
             case OpLiteral(lit) => opliteral(lit)
             case ColumnValue(cn, ty) => columnvalue(cn -> ty)
             case Add(a, b) => add(a -> b)
@@ -702,17 +726,15 @@ object Format {
             case Mul(a, b) => mul(a -> b)
             case FloorDiv(a, b) => floor(a -> b)
             case DoubleDiv(a, b) => div(a -> b)
-            case Pow(a, b) => pow(a -> b)
             case Concat(ss) => cat(ss.toList)
             case If(test, c, a) => oif((test, c, a))
             case Coalesce(l, r) => coalesce(l, r)
             case DateAdd(d, n, u) => dateadd(d, n, u)
             case DateDiff(u, s, e) => datediff(u, s, e)
             case Funcall(n, db, ns, args, ty) => funcall((n, db, ns, args, ty))
-            case Abs(x) => abs(x)
             case Windowed(x,y) => windowed((x,y))
-            case Upper(x) => upper(x)
-            case Lower(x) => lower(x)
+            case BuiltinCall(b,xs) => builtin((b,xs))
+            case Cast(a,b) => cast((a,b))
           })}
     }.codec
 

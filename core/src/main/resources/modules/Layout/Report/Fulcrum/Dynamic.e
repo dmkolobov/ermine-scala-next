@@ -1,4 +1,4 @@
-module Layout.Report.DynamicFulcrum where
+module Layout.Report.Fulcrum.Dynamic where
 
 import Layout.Presentation using type Presentation
 import Ord using {type Ord; fromLess}
