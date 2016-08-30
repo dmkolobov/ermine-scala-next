@@ -22,29 +22,29 @@ data LegendaryFulcrum k v p
 
 single_Brace
   : forall f a v k
-  . (Field f a, Presentation f a, Op v a, {..k})
+  . (Field f a, Legend_Lg f, Op v a, {..k})
  -> LegendaryFulcrum k v f
-single_Brace (f, pr, o, k) = LF (single_Brace_Piv (f,o,k)) ([(pr, fieldName f)]_Simple_Lg)
+single_Brace (f, lg, o, k) = LF (single_Brace_Piv (f,o,k)) lg
 
 snoc_Brace
    : forall s f p v3 v2 v1 a k
    . (s <- (f,p), RUnion2 v3 v2 v1)
   => LegendaryFulcrum k v1 p
-  -> (Field f a, Presentation f a, Op v2 a, {..k})
+  -> (Field f a, Legend_Lg f, Op v2 a, {..k})
   -> LegendaryFulcrum k v3 s
-snoc_Brace (LF ful lg) (f, pr, o, k)
-  = LF (snoc_Brace_Piv ful (f,o,k)) (cons_Bracket_Simple_Lg (pr, fieldName f) lg)
+snoc_Brace (LF ful lg) (f, lg', o, k)
+  = LF (snoc_Brace_Piv ful (f,o,k)) (lg ++_Lg lg')
 
 singleRow
   : forall f a v v' k
   . (exists e. v <- (v',e))
  => Row_R v
  -> Field f a
- -> Presentation f a
+ -> Legend_Lg f
  -> Op v' a
  -> {..k}
  -> LegendaryFulcrum k v f
-singleRow r f p o k = LF (consFulcrum_Piv f o k $ nilFulcrum_Piv (header k) r) ([(p, fieldName f)]_Simple_Lg)
+singleRow r f lg o k = LF (consFulcrum_Piv f o k $ nilFulcrum_Piv (header k) r) lg
 
 mapLegend : forall p k v
           . (Legend_Lg p -> Legend_Lg p)
