@@ -30,7 +30,7 @@ infixr 5 ++
 infixl 6 + -
 infixl 7 * / //
 
-prim : Primitive a => a -> Op (| |) a
+prim : forall a. Primitive a => a -> Op (| |) a
 prim = funcall1# opLiteralModule . primExpr#
 
 col : Field r a -> Op r a

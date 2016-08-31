@@ -8,6 +8,7 @@ import Field
 import Layout.Color
 import Layout.Column using type Column; formatK; keys; drilldown; drilldown2
 import Layout.Column.Unsafe using type Table#; column#
+import Layout.Report.StyleGrid
 import Layout.Format as Fmt
 import Layout.Legend using type Legend#; type Legend; legend
                            legend#; initialSort#; empty as emptyLegend
@@ -145,7 +146,6 @@ textNoMarkdown = fmt unit_Fmt
 -- Escape string so that "text" and "atomShown" do not try to interpret the markdown markers
 foreign
   function "com.clarifi.reporting.writers.Markdown" "escapeForMarkdown" escapeMarkdown : String -> String
-
 
 
 wrappedText' width fonts fontsize = wrapped' width fonts fontsize . Atomic unit_Fmt
@@ -415,16 +415,6 @@ grid d = Report (w -> liftM (wm w) (gridW w) $ travLW w (travLW w (runReport w))
 
 gridRow : String -> Report f z -> List (Report f z)
 gridRow l r = [ style "fix-width-label" $ atomShown l, r ]
-
-styleBox : List (Maybe String, List (Maybe String, Report f z))
-        -> List (Maybe String, List (Maybe String, Report f z))
-        -> Report f z
-styleBox header body =
-  let
-    runListReports w f = travLW w (strength (wf w) . mapSnd f)
-    applyFunctor w = runListReports w (runListReports w (runReport w))
-  in
-    Report ( w -> liftA2 (wa w) (styleBoxW w) (applyFunctor w header) (applyFunctor w body))
 
 wrap : String -> Report f z -> Report f z
 wrap h r = style h ' border (Just r) Nothing Nothing Nothing Nothing
@@ -701,6 +691,19 @@ keyValueTabular softr@(SoftRelation ks _ _) lg r =
                                  (defaultLg ks))
   in scanRelation (project (rowUsed ks) r) byKeys
 
+
+styleBox : forall px py other rel .
+          (r <-(px, py, other), Relational rel)
+        => String -- xAxis Label
+        -> String -- yAxis Label 
+        -> List String 
+        -> List String 
+        -> Field px Int
+        -> Field py Int
+        -> rel(|..r|)
+        -> Report f z
+styleBox xLabel yLabel rowLabels columnLabels xPositionField yPositionField r = 
+  Report $ w -> styleboxW w xLabel yLabel rowLabels columnLabels (fieldName xPositionField) (fieldName yPositionField) (relation# r)
 
 
 private
@@ -1334,9 +1337,9 @@ treemapChart : forall d id l labels prl pri prs r r1 r2 ivalue svalue z rel.
              rel (|..r|) -> Report f z
 treemapChart parentId childId labelPres intensityPres sizePres rel = Report $ w -> treeMap# w (fieldName parentId) (fieldName childId) (asPresentation labelPres) (asPresentation intensityPres) (asPresentation sizePres) (relation# rel)
 
-pieChart : forall d l labels prl prv r value z rel .
-           (exists o . r <- (labels, value, o), PrimitiveNum d,
-                      AsPresentation prl, AsPresentation prv, Relational rel)
+pieChart : forall l labels r value z rel .
+           (exists o . r <- (labels, value, o),
+                       Relational rel)
         => String               -- ^ Title.
         -> ChartLegendOptions#      -- ^ Options for the charts legend.
         -> List ({..labels}, Color) -- ^ Color selections.
@@ -1568,13 +1571,9 @@ private
   gridW : Writer f z -> List (List z) -> z
   gridW w d = gridW_ w (toList# (lmap toList# d))
 
-  styleBoxW : Writer f z -> List (Maybe String, List (Maybe String, z)) -> List (Maybe String, List (Maybe String, z)) -> z
-  styleBoxW w header body =
-    let
-      toCell# = toPair# . (mapFst toMaybe#)
-      toRow# = x -> toPair# (toMaybe# (fst x), toList# (lmap toCell# (snd x)))
-    in
-      styleBoxW_ w (toList# $ lmap toRow# header) (toList# $ lmap toRow# body)
+  styleboxW : Writer f z -> String -> String -> List String -> List String -> String -> String -> Relation# -> f z
+  styleboxW w xLabel yLabel rowLabels columnLabels xPositionField yPositionField rel = 
+    styleboxW_ w xLabel yLabel (toList# rowLabels) (toList# columnLabels) xPositionField yPositionField rel
 
   foreign
     method "atomDMTL" atomW : forall f z a . Writer f z -> Format_Fmt a -> a -> z
@@ -1613,10 +1612,8 @@ private
     method "centered" centeredW : forall f z . Writer f z -> z -> z
     method "scanRelationDMTL" scanRelationW' : forall f z . Writer f z -> Sort# -> Relation# -> Function1 (List# Record#) (f z) -> f z
     method "grid" gridW_ : forall f z . Writer f z -> List# (List# z) -> z
-    method "styleBox" styleBoxW_ : forall f z . Writer f z
-                                            -> List# (Pair# (Maybe# String) (List# (Pair# (Maybe# String) z)))
-                                            -> List# (Pair# (Maybe# String) (List# (Pair# (Maybe# String) z)))
-                                            -> z
+    method "styleBox" styleboxW_ : forall f z . Writer f z -> String -> String -> List# String -> List# String -> String -> String -> Relation# -> f z
+    
     method "selector" selectorW: forall f z a b . Writer f z -> SelectorMode# -> Pair# (NonEmpty# PrimExpr# ) a -> Format_Fmt b -> List# (Pair# (NonEmpty# PrimExpr# ) a) ->
                                     Function3 (Function1 a z) (SelectorEvent z) (Function1 (Function1 a (f z)) (f z)) (f z) ->
                                     f z
@@ -1631,4 +1628,4 @@ private
                                     Function2 a (Function1 a (f z)) (f z) -> -- controls: S => (S => F[HJS]) => F[HJS]
                                     Function1 a (f z) -> f z           -- view: S => F[HJS]
     method "button" buttonW : forall f z a . Writer f z -> NonEmpty# PrimExpr# -> Format_Fmt a -> Function2 z (SelectorEvent z) (f z) -> f z
-    method "image" imageW : forall f z a . Writer f z -> String -> Maybe# String -> z -- TODO : is this right?
+    method "image" imageW : forall f z a . Writer f z -> String -> Maybe# String -> z -- TODO : is this right?   
