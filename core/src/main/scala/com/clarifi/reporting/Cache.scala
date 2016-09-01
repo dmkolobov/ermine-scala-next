@@ -30,7 +30,7 @@ object Cache {
                   cached(1) = c0
                   c1
                 case _ =>
-                  logger.debug(identifier + " ejecting: " + cached(1))
+                  logger.trace(identifier + " ejecting: " + cached(1))
                   cached(0) = v
                   cached(1) = c0
                   v

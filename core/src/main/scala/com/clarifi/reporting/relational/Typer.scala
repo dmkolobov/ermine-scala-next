@@ -89,19 +89,20 @@ object Typer {
       aggs.flatMap(_._2.columnReferences).toSet ++ cols.keySet.map(_.name) ++ grp.flatMap(_.columnReferences).toSet,
       cols.keys.map(_.tuple).toMap ++ aggs.map(_._1.tuple).toMap)
 
-  private def naturalJoinType[F[+_]](
+  private def joinType[F[+_]](
     left: Header,
-    right: Header
+    right: Header,
+    extras: Set[(ColumnName, ColumnName)] = Set()
   )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] = {
-    val joinKey = left.keySet intersect right.keySet
+    val joinKey = (left.keySet intersect right.keySet map {x => (x,x)} toSet) ++ extras
     val badCols = joinKey collect {
-      case name if left(name) != right(name) => name -> (left(name), right(name))
+      case (lname,rname) if left(lname) != right(rname) => (lname, rname) -> (left(lname), right(rname))
     }
     if(badCols isEmpty) (left ++ right).pure[F]
     else {
       val msgs = badCols.toList.map({
-        case (n, (l, r)) =>
-          "Join of relations with mismatching column types: (%s, %s, %s)" format (n, l.toString, r.toString)
+        case ((ln, rn), (l, r)) =>
+          "Join of relations with mismatching column types: (%s, %s, %s, %s)" format (ln, l.toString, rn, r.toString)
       })
       err(msgs.head, msgs.tail:_*)
     }
@@ -195,8 +196,8 @@ object Typer {
       case AggregateM(e, attr, op)    => go(e) flatMap (aggregateType[F](_, attr, op))
       case UnionM(m1, m2)             => (go(m1) |@| go(m2))(unionType[F](_, _, "unionM")).join
       case DifferenceM(m1, m2)        => (go(m1) |@| go(m2))(unionType[F](_, _, "differenceM")).join
-      case HashInnerJoin(e1, e2)      => (go(e1) |@| go(e2))(naturalJoinType[F](_,_)).join
-      case HashLeftJoin(inner, outer) => (go(inner) |@| go(outer))(naturalJoinType[F](_,_)).join // check nullability?
+      case HashInnerJoin(e1, e2)      => (go(e1) |@| go(e2))(joinType[F](_,_)).join
+      case HashLeftJoin(inner, outer) => (go(inner) |@| go(outer))(joinType[F](_,_)).join // check nullability?
       case AccumulateM(pid, nid, expr, leaves, _) =>
                                          go(leaves) flatMap { hvnid => accumulateType(
                                            pid.toHeader,
@@ -207,7 +208,7 @@ object Typer {
       case GroupByM(m, k, expr)       => go(m) flatMap (hvk => groupByType(
                                            hvk, k.map(_.tuple).toMap,
                                            (hv: Header) => go(Mem.instantiate(EmptyRel(hv), expr))))
-      case MergeOuterJoin(e1, e2)     => (go(e1) |@| go(e2))(naturalJoinType[F](_,_)).join
+      case MergeOuterJoin(e1, e2)     => (go(e1) |@| go(e2))(joinType[F](_,_)).join
       case EmbedMem(e)                => extTyperAux(e, rtype, mtype)
       case ProcedureCall(_, h, _, _)  => h.pure[F]
       case AugmentSM(m, cur, hist)    => memTyperAux(m, rtype, mtype) map (augmentType(_, cur, hist))
@@ -245,8 +246,7 @@ object Typer {
     rel match {
       case VarR(v)                 => rtype(v)
       case Limit(r, f, t, os)      => go(r) flatMap (limitType[F](_, f, t, os))
-      case Join(fst, snd)          => (go(fst) |@| go(snd))(naturalJoinType[F](_, _)).join
-      case JoinOn(fst, snd, _, _)  => (go(fst) |@| go(snd))(_ ++ _)
+      case JoinOn(fst, snd, k, _)  => (go(fst) |@| go(snd))(joinType[F](_, _, k)).join
       case Union(fst, snd)         => (go(fst) |@| go(snd))(unionType[F](_, _, "union")).join
       case Minus(fst, snd)         => (go(fst) |@| go(snd))(unionType[F](_, _, "subtract")).join
       case Filter(r, p)            => go(r) flatMap (filterType[F](_, p))
@@ -256,6 +256,8 @@ object Typer {
       case Combine(r, attr, op)    => go(r) flatMap (combineType[F](_, attr, op))
       case Aggregate(r, attr, op)  => go(r) flatMap (aggregateType[F](_, attr, op))
       case AggregateByGroup(r,cs,aggs,grp) => go(r) flatMap (aggregateByGroupType[F](_, cs, aggs, grp))
+      case PivotR(under, pKey, pVals, outer, km) =>
+        go(under) flatMap { h => pivotType[F](h, pKey, pVals, outer, km) }
       case (r: HardRel)            => r.header.pure[F]
       case MemoR(r, _) => go(r)
       case LetR(r, expr) => for {
