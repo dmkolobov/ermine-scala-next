@@ -621,6 +621,9 @@ trait EmitName_MsSql extends SqlEmitter {
     }
     ((s.schema map emitColumnName) :+ name) rawMkString "."
   }
+  override def emitProcedureName(s: String, namespace: List[String]): RawSql =
+    if (namespace.isEmpty) raw(s) else
+      emitTableName(TableName(s, namespace))
 }
 
 trait EmitIntDivOp_MsSql extends SqlEmitter {
