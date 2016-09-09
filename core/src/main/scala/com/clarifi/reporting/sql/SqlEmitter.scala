@@ -500,8 +500,6 @@ trait ImplementLimit_AsRowNumberOver extends SqlEmitter {
 
 /** MySQL and PostgreSQL support `LIMIT`. */
 trait ImplementLimit_AsLimit extends SqlEmitter {
-  import SqlExpr.columns
-
   /** Wrap the ''rc'' in a select that duplicates ''h'', reorders the
     * relation, and limits according to ''from'' and ''to''.
     */

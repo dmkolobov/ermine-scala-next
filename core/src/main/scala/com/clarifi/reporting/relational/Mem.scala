@@ -443,6 +443,7 @@ object Mem {
                                                  , request
                                                  , () => Mem.concat(failure())
                                                  )
+      case Return(x) => x   // shut up warnings
     }
   }
 

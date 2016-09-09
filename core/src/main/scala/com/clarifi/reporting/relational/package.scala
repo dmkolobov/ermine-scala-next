@@ -104,6 +104,7 @@ package object relational {
                         .getOrElse(failure())
           , z
           )
+      case Return(x) => x  // shut up warning
       }
     go(m, initial)
   }
@@ -196,6 +197,7 @@ package object relational {
             Await(g andThen ((m: Machine[A, AA]) => tee2(m, mb)(t)),
                 \/.left(kg),
                 () => tee2(fg(), mb)(t))
+          case Return(x) => x  // shut up warning
         }
         case \/-(kr) => mb match {
           case Stop => annihilate(ma, mb, f())
@@ -204,8 +206,10 @@ package object relational {
             Await(g andThen ((m: Machine[B, BB]) => tee2(ma, m)(t)),
             \/.right(kg),
             () => tee2(ma, fg())(t))
+          case Return(x) => x  // shut up warning
         }
       }
+      case Return(x) => x  // shut up warning
     }
     annihilate(ma, mb, t)
   }

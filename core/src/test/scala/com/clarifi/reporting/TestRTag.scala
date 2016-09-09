@@ -111,6 +111,7 @@ object TestRTag extends Properties("PrimTs, PrimExprs, Reflexivity") {
     (IntT(false): PrimT) match {
       case PrimT.LongT(_) => false
       case IntT(n) => !n
+      case _ => false
     }
   }
 
