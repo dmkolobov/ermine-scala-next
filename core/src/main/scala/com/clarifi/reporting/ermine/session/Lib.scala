@@ -801,19 +801,22 @@ object Lib {
            FA(rho ->: star, r => FAR(a => relationalCon(r) =>: r(a) ->: rel)))
 
     primOp(Global("Native.Relation", "letR"), fun2((x, f) => {
-      val ext: Option[Ext[Nothing, Nothing]] = x.whnf match {
+      val ext: \/[Bottom, Ext[Nothing, Nothing]] = x.whnf match {
         // XXX EmptyRel case is wrong; might be fields that it's supposed to have but that info has been erased 
-        case EmptyRel => Some(ExtMem(relational.EmptyRel(Map())))
-        case Rel(e) => Some(e)
-        case _ => None
+        case EmptyRel => \/-(ExtMem(relational.EmptyRel(Map())))
+        case Rel(e) => \/-(e)
+        case x: Bottom => -\/(x)
+        case _ => -\/(Bottom(throw new RuntimeException("Expected a relation in a bound variable: Native.Relation.letR")))
       }
       val unique = new Object
       f.whnfMatch("Native.Relation.letR") {
         case Fun(g) => g(Rel(ExtRel(QuoteR(unique), ""))).whnfMatch("Native.Relation.letR") {
           case EmptyRel => EmptyRel
-          case Rel(ExtRel(r, db)) => ext map (v => Rel(ExtRel(LetR(v, r.unquoteR(x =>
-            if (x eq unique) Some(VarR(RTop)) else None)), db))) getOrElse
-              Bottom(throw new RuntimeException("Expected a relation in a bound variable: Native.Relation.letR"))
+          case Rel(ExtRel(r, db)) => ext match {
+            case \/-(v) => Rel(ExtRel(LetR(v, r.unquoteR(x =>
+              if (x eq unique) Some(VarR(RTop)) else None)), db))
+            case -\/(v) => v
+          }
         }
       }
     }), FA(rho ->: star, r => FAR(a => FAR(b =>
