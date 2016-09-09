@@ -697,14 +697,15 @@ styleBox : forall px py xv yv a b other rel .
            l <-(xv, yv, other),
            Relational rel)
         => (Legend l, Field xv a, Field yv b)
+        -> Bool
         -> List String 
         -> List String 
         -> Field px Int
         -> Field py Int
         -> rel(|..r|)
         -> Report f z
-styleBox (lgnd, xFld, yFld) rowLabels columnLabels xPositionField yPositionField r = 
-  Report $ w -> styleboxW w (legend# lgnd) (fieldName xFld) (fieldName yFld) rowLabels columnLabels (fieldName xPositionField) (fieldName yPositionField) (relation# r)
+styleBox (lgnd, xFld, yFld) showNumber rowLabels columnLabels xPositionField yPositionField r = 
+  Report $ w -> styleboxW w (legend# lgnd) (toBool# showNumber) (fieldName xFld) (fieldName yFld) rowLabels columnLabels (fieldName xPositionField) (fieldName yPositionField) (relation# r)
 
 
 private
@@ -1572,9 +1573,9 @@ private
   gridW : Writer f z -> List (List z) -> z
   gridW w d = gridW_ w (toList# (lmap toList# d))
 
-  styleboxW : Writer f z -> Legend# String -> String -> String -> List String -> List String -> String -> String -> Relation# -> f z
-  styleboxW w lgnd xFld yFld rowLabels columnLabels xPositionField yPositionField rel = 
-    styleboxW_ w lgnd xFld yFld (toList# rowLabels) (toList# columnLabels) xPositionField yPositionField rel
+  styleboxW : Writer f z -> Legend# String -> Bool# -> String -> String -> List String -> List String -> String -> String -> Relation# -> f z
+  styleboxW w lgnd showNumber xFld yFld rowLabels columnLabels xPositionField yPositionField rel = 
+    styleboxW_ w lgnd showNumber xFld yFld (toList# rowLabels) (toList# columnLabels) xPositionField yPositionField rel
 
   foreign
     method "atomDMTL" atomW : forall f z a . Writer f z -> Format_Fmt a -> a -> z
@@ -1613,7 +1614,7 @@ private
     method "centered" centeredW : forall f z . Writer f z -> z -> z
     method "scanRelationDMTL" scanRelationW' : forall f z . Writer f z -> Sort# -> Relation# -> Function1 (List# Record#) (f z) -> f z
     method "grid" gridW_ : forall f z . Writer f z -> List# (List# z) -> z
-    method "styleBox" styleboxW_ : forall f z . Writer f z -> Legend# String -> String -> String-> List# String -> List# String -> String -> String -> Relation# -> f z
+    method "styleBox" styleboxW_ : forall f z . Writer f z -> Legend# String -> Bool# -> String -> String-> List# String -> List# String -> String -> String -> Relation# -> f z
     
     method "selector" selectorW: forall f z a b . Writer f z -> SelectorMode# -> Pair# (NonEmpty# PrimExpr# ) a -> Format_Fmt b -> List# (Pair# (NonEmpty# PrimExpr# ) a) ->
                                     Function3 (Function1 a z) (SelectorEvent z) (Function1 (Function1 a (f z)) (f z)) (f z) ->

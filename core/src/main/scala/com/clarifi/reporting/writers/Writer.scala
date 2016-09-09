@@ -199,7 +199,7 @@ abstract class Writer[F[_],C] { self =>
   def pieChart(pcd: PieChartData, labelcol: Presentation, datacol: Presentation, data: Tabular[F,(NonEmptyList[PrimExpr],NonEmptyList[PrimExpr])]): F[C]
   
   /** Create a drilldown styleBox  */
-  def styleBox(lgnd: Legend.U[String], xFld: ColumnName, yFld: ColumnName, rowLables: List[String], columnLabels: List[String], xPositionField: String, yPositionField: String, rel: ClosedExt) : F[C]
+  def styleBox(lgnd: Legend.U[String], showNumber: java.lang.Boolean, xFld: ColumnName, yFld: ColumnName, rowLables: List[String], columnLabels: List[String], xPositionField: String, yPositionField: String, rel: ClosedExt) : F[C]
 
   /** @note Invariant: _2.head of data elements is PrimitiveNum.
     * @param data Tabular of (label, value) pairs. */
