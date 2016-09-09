@@ -1140,6 +1140,16 @@ object Lib {
       addInstance(primitiveNum, primInstance(primitiveNum, nullable(t), d.withNull))
     }
 
+    // class PrimitiveString a | Primitive a
+    val primitiveString = {
+      val a = freshType(star)
+      val con = addCon(mkClassCon(Global("Builtin","PrimitiveString")))
+      addClass(Loc.builtin, con, List(a), List(primitive(VarT(a))), List(_))
+    }
+
+    addInstance(primitiveString, primInstance(primitiveString,string,PrimT.StringT(0)))
+    addInstance(primitiveString, primInstance(primitiveString,nullable(string),PrimT.StringT(0).withNull))
+
     // class PrimitiveAtom a | Primitive a where
     //   nullable :: Prim (Nullable a)
     {

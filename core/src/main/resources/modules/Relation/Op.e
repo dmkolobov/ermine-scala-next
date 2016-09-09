@@ -97,10 +97,13 @@ negate x = (prim $ Some 0.0 ) - x
 fromNumericOp : (PrimitiveNum n, PrimitiveNum n2, AsOp op) => op r n -> Op r n2
 fromNumericOp = unsafeCoerce . asOp
 
-(++) : OpBin String
+annul : (AsOp op, PrimitiveAtom a) => op r a -> Op r (Nullable a)
+annul = unsafeCoerce . asOp
+
+(++) : PrimitiveString s => OpBin s
 (++) x y = funcall1# concatModule $ UnsafeOp (asOp x) ::# UnsafeOp (asOp y) ::# Nil#
 
-show : AsOp op => op r a -> Op r String
+show : PrimitiveString s => AsOp op => op r a -> Op r s
 show x = funcall1# concatModule $ UnsafeOp (asOp x) ::# Nil#
 
 -- dateRange : (AsOp o1, AsOp o2) .  r <- (r1,r2) => o1 r1 Date -> o2 r2 Date -> Op r String
