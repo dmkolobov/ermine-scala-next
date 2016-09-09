@@ -19,6 +19,8 @@ case object SqlAsc extends SqlOrder
 case object SqlDesc extends SqlOrder
 
 sealed abstract class SqlPredicate {
+  import scalaz.std.iterable._
+
   /** Emit a predicate for a where clause */
   def emitSql(implicit emitter: SqlEmitter): RawSql = this match {
     case SqlTruth(t) => if (t) "'A' = 'A'" else "'A' = 'B'"
@@ -34,6 +36,7 @@ sealed abstract class SqlPredicate {
       a |+| " and " |+| b.emitSql(emitter)) |+| raw(")")
     case SqlIsNull(e) => raw("(") |+| e.emitSql(emitter) |+| ") is null"
     case ExistsSqlExpr(query) => raw("exists ") |+| query.emitSql(emitter)
+    case SqlFun(fn, args) => raw(fn) |+| "(" |+| args.map(_.emitSql(emitter)).toIterable.rawMkString(", ") |+| ")"
   }
 }
 case class SqlTruth(truth: Boolean) extends SqlPredicate
@@ -47,6 +50,7 @@ case class SqlOr(ps: SqlPredicate*) extends SqlPredicate
 case class SqlAnd(ps: SqlPredicate*) extends SqlPredicate
 case class SqlIsNull(expr: SqlExpr) extends SqlPredicate
 case class ExistsSqlExpr(query: SqlQuery) extends SqlPredicate
+case class SqlFun(f: String, args: List[SqlExpr]) extends SqlPredicate
 
 object SqlPredicate {
   def backSubstituteAux[F[_]:Applicative](pred: SqlPredicate, sub: (TableName, SqlColumn) => F[SqlExpr]): F[SqlPredicate] =
@@ -60,6 +64,7 @@ object SqlPredicate {
       case SqlOr(ps@_*) => ps.toList.traverse[F,SqlPredicate](backSubstituteAux(_,sub)) map (SqlOr(_:_*))
       case SqlAnd(ps@_*) => ps.toList.traverse[F,SqlPredicate](backSubstituteAux(_,sub)) map (SqlAnd(_:_*))
       case SqlIsNull(e) => SqlExpr.backSubstituteAux(e,sub) map (SqlIsNull(_))
+      case SqlFun(f, as) => (as.traverse[F,SqlExpr](SqlExpr.backSubstituteAux(_, sub))) map (SqlFun(f, _))
       case _ => pred.pure[F]
     }
 }

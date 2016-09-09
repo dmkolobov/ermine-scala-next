@@ -21,7 +21,8 @@ object Predicates {
     not = p2 => (t: Record) => !p2.apply(t),
     or = (a, b) => (t: Record) => a.apply(t) || b.apply(t),
     and = (a, b) => (t: Record) => a.apply(t) && b.apply(t),
-    isNull = e => (t: Record) => e.eval(t).isNull)
+    isNull = e => (t: Record) => e.eval(t).isNull,
+    funtest = (n,_,_,_) => sys error ("Can't invoke %s outside of a database" format n) )
 
   /** Answer things known to be true about every row in
     * `∀r. Filter(r, p)`.
@@ -50,7 +51,8 @@ object Predicates {
         case ((taut1, contra1), (taut2, contra2)) =>
           ((taut1 && taut2), (contra1 && contra2))
       },
-      isNull = e => nothing
+      isNull = e => nothing,
+      funtest = (_,_,_,_) => nothing
     )._1
   }
 
