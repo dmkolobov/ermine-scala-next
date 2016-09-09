@@ -9,7 +9,7 @@ import scalaz.{ Show, Equal }
 import scalaz.Scalaz._
 import scalaparsers.{Document, Loc, Located, Supply}
 import scala.collection.immutable.List
-import java.util.Date
+import java.util.{Date, UUID}
 import Kind._
 import Type._
 import Show._
@@ -540,6 +540,7 @@ object Type {
   val double    = mkPrimCon[Double](Global("Builtin","Double"))
   val byte      = mkPrimCon[Byte](Global("Builtin","Byte"))
   val date      = mkCon[Date](Global("Builtin","Date"))
+  val uuid      = mkCon[UUID](Global("Builtin","GUID"))
   val short     = mkPrimCon[Short](Global("Builtin","Short"))
   val field     = mkRuntimeCon(Global("Builtin","Field",Idfix), rho ->: star ->: star, false)
   val nullable  = mkRuntimeCon(Global("Builtin","Nullable",Idfix), star ->: star, false)

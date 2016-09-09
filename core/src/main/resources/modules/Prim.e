@@ -20,16 +20,13 @@ primExpr# = primExpr##
 unsafePrimExprIn# : Primitive a => PrimExpr# -> a
 unsafePrimExprIn# = unsafePrimExprIn##
 
-primCata int nullInt string nullString bool nullBool double nullDouble byte nullByte short nullShort long nullLong date nullDate primt =
-  let prim x = toMaybe# (toMaybe x)
-  in primCata# int (prim nullInt) string (prim nullString) bool (prim nullBool) double (prim nullDouble) byte (prim nullByte) short (prim nullShort) long (prim nullLong) date (prim nullDate) primt 
-
 {-
 builtin
-primCata : Int -> Maybe# Int -> String -> Maybe# String
-      -> Bool -> Maybe# Bool -> Double -> Maybe# Double
-      -> Byte -> Maybe# Byte -> Short -> Maybe# Short
-      -> Long -> Maybe# Long -> Date -> Maybe# Date
+primCata : Int -> Nullable Int -> String -> Nullable String
+      -> Bool -> Nullable Bool -> Double -> Nullable Double
+      -> Byte -> Nullable Byte -> Short -> Nullable Short
+      -> Long -> Nullable Long -> Date -> Nullable Date
+      -> GUID => Nullable GUID
       -> PrimT -> PrimExpr#
 
 
@@ -38,6 +35,7 @@ to add to builtin?
       -> Bool -> Nullable Bool -> Double -> Nullable Double
       -> Byte -> Nullable Byte -> Short -> Nullable Short
       -> Long -> Nullable Long -> Date -> Nullable Date
+      -> GUID -> Nullable GUID
       -> Prim a -> a
 
 cataNonnull : Int -> String -> Bool -> Double

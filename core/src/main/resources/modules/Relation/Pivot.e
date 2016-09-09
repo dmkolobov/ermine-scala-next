@@ -13,6 +13,7 @@ import Pair
 import Relation.Op hiding empty_Bracket ; cons_Bracket ; (++)
 import Prim
 import Date
+import GUID
 import Record hiding (++)
 import Relation.Op.Unsafe
 import Relation.Row hiding empty_Bracket ; cons_Bracket ; single_Brace ; snoc_Brace
@@ -44,7 +45,7 @@ defaultFulcrumWithDefault (Row p) val key =
                      (map_List ((fname,ftype) -> (record# {key = fname}, (fname, UnsafeOp $ asOp val, defaultValue ftype))) p)
 
 
-defaultValue t = primCata 0 (Some 0) "" (Some "") True (Null Bool) 0.0 (Some 0.0) 0b (Some 0b) 0s (Some 0s) 0l (Some 0l)(dateFromLong 0l) (Null Date) t
+defaultValue t = primCata 0 (Some 0) "" (Some "") True (Null Bool) 0.0 (Some 0.0) 0b (Some 0b) 0s (Some 0s) 0l (Some 0l)(dateFromLong 0l) (Null Date) (stringGuid "00000000-0000-0000-0000-000000000000") (Null GUID) t
 
 single_Brace : (Field f a, Op v a, {..k}) -> Fulcrum k v p
 single_Brace (f, op, k) = Fulcrum (map_List fst ks) (map_List fst vs) [(record# k, (fieldName f, UnsafeOp op))]
