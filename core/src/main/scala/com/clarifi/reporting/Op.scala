@@ -36,7 +36,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
         IntExpr(false, (e.eval(t).extractDate.getTime - s.eval(t).extractDate.getTime).toInt)
       else
         sys error "datediff is meant to be used from SQL; built-in Java date subtraction is limited to milliseconds"
-    case Funcall(n,_,_,_,_) => sys error ("Can't invoke %s outside of a databse" format n)
+    case Funcall(n,_,_,_,_) => sys error ("Can't invoke %s outside of a database" format n)
     case Windowed(_, _) => sys error ("Can't evaluate window functions outside of a database")
     case BuiltinCall(b, args) => builtinEval(b, args.map(_ eval t))
     case Cast(o, ty) => o.eval(t).cast(ty)

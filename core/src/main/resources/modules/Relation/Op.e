@@ -45,7 +45,7 @@ if : forall a r s t v op1 op2. (RUnion3 v r s t,
 if p c a = funcall3# ifModule p (asOp c) (asOp a)
 
 private foreign
-  function "com.clarifi.reporting.Ops" "coalesce" coalesce# : r <- (r1,r2) => Op r1 a -> Op r2 a -> Op r a
+  function "com.clarifi.reporting.Ops" "coalesce" coalesce# : RUnion r r1 r2 => Op r1 a -> Op r2 a -> Op r a
 
 coalesce : forall opc s a opa t v. (RUnion2 v s t, AsOp opc, AsOp opa)
         => opc s (Nullable a)
@@ -53,7 +53,7 @@ coalesce : forall opc s a opa t v. (RUnion2 v s t, AsOp opc, AsOp opa)
         -> Op v a
 coalesce l r = funcall2# coalesceModule (asOp l) (asOp r)
 
-coalesce' : (r <- (r1,r2), AsOp opc, AsOp opa)
+coalesce' : (RUnion2 r r1 r2, AsOp opc, AsOp opa)
         => opc r1 a
         -> opa r2 a
         -> Op r a
@@ -97,10 +97,13 @@ negate x = (prim $ Some 0.0 ) - x
 fromNumericOp : (PrimitiveNum n, PrimitiveNum n2, AsOp op) => op r n -> Op r n2
 fromNumericOp = unsafeCoerce . asOp
 
-(++) : OpBin String
+annul : (AsOp op, PrimitiveAtom a) => op r a -> Op r (Nullable a)
+annul = unsafeCoerce . asOp
+
+(++) : PrimitiveString s => OpBin s
 (++) x y = funcall1# concatModule $ UnsafeOp (asOp x) ::# UnsafeOp (asOp y) ::# Nil#
 
-show : AsOp op => op r a -> Op r String
+show : PrimitiveString s => AsOp op => op r a -> Op r s
 show x = funcall1# concatModule $ UnsafeOp (asOp x) ::# Nil#
 
 -- dateRange : (AsOp o1, AsOp o2) .  r <- (r1,r2) => o1 r1 Date -> o2 r2 Date -> Op r String

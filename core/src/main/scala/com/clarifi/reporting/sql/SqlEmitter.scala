@@ -500,8 +500,6 @@ trait ImplementLimit_AsRowNumberOver extends SqlEmitter {
 
 /** MySQL and PostgreSQL support `LIMIT`. */
 trait ImplementLimit_AsLimit extends SqlEmitter {
-  import SqlExpr.columns
-
   /** Wrap the ''rc'' in a select that duplicates ''h'', reorders the
     * relation, and limits according to ''from'' and ''to''.
     */
@@ -623,6 +621,9 @@ trait EmitName_MsSql extends SqlEmitter {
     }
     ((s.schema map emitColumnName) :+ name) rawMkString "."
   }
+  override def emitProcedureName(s: String, namespace: List[String]): RawSql =
+    if (namespace.isEmpty) raw(s) else
+      emitTableName(TableName(s, namespace))
 }
 
 trait EmitIntDivOp_MsSql extends SqlEmitter {

@@ -597,29 +597,32 @@ object Format {
   lazy val predicateRW: CodecPair[Predicate] = {
     type BinOpF = OpF & OpF
     new CodecShape[Predicate] {
-      type Shape[A] = S8[BooleanF, BinOpF, BinOpF, BinOpF,
-                            A, A & A, A & A, OpF]
+      type Shape[A] = S9[BooleanF, BinOpF, BinOpF, BinOpF,
+                            A, A & A, A & A, OpF,
+                            StringF :: StringF :: RepeatF[StringF] :: RepeatF[OpF]] // Funtest
       override def readShape[Z] = { self =>
-        union8R(booleanR map (x => Predicate.Atom(x)),
+        union9R(booleanR map (x => Predicate.Atom(x)),
                 p2R(opR, opR)((a, b) => Lt(a, b)),
                 p2R(opR, opR)((a, b) => Gt(a, b)),
                 p2R(opR, opR)((a, b) => Eq(a, b)),
                 self map (was => Not(was)),
                 p2R(self, self)((a, b) => Or(a, b)),
                 p2R(self, self)((a, b) => And(a, b)),
-                opR map IsNull)
+                opR map IsNull,
+                p4R(stringR, stringR, listR(stringR), listR(opR))(Funtest))
       }
 
       override def writeShape[Z] = { self =>
-        s8W(booleanW, // Atom
+        s9W(booleanW, // Atom
             tuple2W(opW, opW), // Lt
             tuple2W(opW, opW), // Gt
             tuple2W(opW, opW), // Eq
             self, // Not
             tuple2W(self, self), // Or
             tuple2W(self, self), // And
-            opW // IsNull
-        )((atom, lt, gt, eq, not, or, and, isNull) => (r: Predicate) =>
+            opW, // IsNull
+            tuple4W(stringW, stringW, repeatW(stringW), repeatW(opW)) // Funtest
+        )((atom, lt, gt, eq, not, or, and, isNull, funtest) => (r: Predicate) =>
           r match {
             case Predicate.Atom(x) => atom(x)
             case Lt(x, y) => lt(x -> y)
@@ -629,6 +632,7 @@ object Format {
             case Or(x, y) => or(x -> y)
             case And(x, y) => and(x -> y)
             case IsNull(x) => isNull(x)
+            case Funtest(n, db, ns, args) => funtest((n, db, ns, args))
           })
       }
     }.codec

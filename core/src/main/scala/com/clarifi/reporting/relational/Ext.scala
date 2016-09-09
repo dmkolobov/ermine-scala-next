@@ -166,6 +166,10 @@ object UnionE {
     case (ExtRel(e1, db1), ExtRel(e2, db2)) =>
       ExtRel(Union(e1, e2), db1)
     case (ExtMem(e1), ExtMem(e2)) => ExtMem(UnionM(e1, e2))
+    case (ExtRel(e1, db), ExtMem(e2)) => ExtRel(LetR(ExtMem(e2), Union(VarR(RPop(e1)), VarR(RTop))), db)
+    case (ExtMem(e1), ExtRel(e2, db)) => ExtRel(LetR(ExtMem(e1), Union(VarR(RTop), VarR(RPop(e2)))), db)
+    case (ExtSM(sm), e) => apply(ExtMem(EmbedMem(ExtSM(sm))), e)
+    case (e, ExtSM(sm)) => apply(e, ExtMem(EmbedMem(ExtSM(sm))))
   }
 }
 
@@ -174,6 +178,10 @@ object MinusE {
     case (ExtRel(e1, db1), ExtRel(e2, db2)) =>
       ExtRel(Minus(e1, e2), db1)
     case (ExtMem(e1), ExtMem(e2)) => ExtMem(DifferenceM(e1, e2))
+    case (ExtRel(e1, db), ExtMem(e2)) => ExtRel(LetR(ExtMem(e2), Minus(VarR(RPop(e1)), VarR(RTop))), db)
+    case (ExtMem(e1), ExtRel(e2, db)) => ExtRel(LetR(ExtMem(e1), Minus(VarR(RTop), VarR(RPop(e2)))), db)
+    case (ExtSM(sm), e) => apply(ExtMem(EmbedMem(ExtSM(sm))), e)
+    case (e, ExtSM(sm)) => apply(e, ExtMem(EmbedMem(ExtSM(sm))))
   }
 }
 

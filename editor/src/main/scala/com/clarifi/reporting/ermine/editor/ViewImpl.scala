@@ -140,7 +140,7 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
       case (a,i) => (b.v, i, patternCell(b.v, i, a.patterns.map(pattern(_))), bindingTerm(a.body))
     }
 
-  def patternCell(bv: TermVar, ai: Int, ps: List[CellN]): Option[CellN] = if (ps.isEmpty) None else Some(delimited((bv,ai), ()=>lbl(""), lbl(""), lbl(""))(ps))
+  def patternCell(bv: TermVar, ai: Int, ps: List[CellN]): Option[CellN] = if (ps.isEmpty) None else Some(delimited(PatternDelim(bv,ai), ()=>lbl(""), lbl(""), lbl(""))(ps))
 
   //TODO JWW: Is this right? It's not REALLY an App... but just doing this for now to compile
   def prepend(n: Node, e: CellN) = Cell(AppCell(LeafCell(n), IndexedSeq[CellN](e)))
@@ -297,34 +297,34 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
   {
     //TODO JWW: grouping terms with parens too
     //TODO JWW: link the open and closet brackets, allow for different renderings, etc.
-    commaDelimited(listVar, openBracket, closeBracket)(items.map(terml(_)))
+    commaDelimited(BracketDelim(listVar), openBracket, closeBracket)(items.map(terml(_)))
   }
 
   def rowWitness(rowWitVar: Var, items: List[Term]): CellN = {
     //TODO JWW: grouping terms with parens too
     //TODO JWW: link the open and closet brackets, allow for different renderings, etc.
-    commaDelimited(rowWitVar, openBrace, closeBrace)(items.map(terml(_)))
+    commaDelimited(BracketDelim(rowWitVar), openBrace, closeBrace)(items.map(terml(_)))
   }
 
   def unorderedList(listVar: Var, items: List[(Term,Term)]): CellN = {
     //TODO JWW: grouping terms with parens too
     //TODO JWW: link the open and closet brackets, allow for different renderings, etc.
-    commaDelimited(listVar, openBrace, closeBrace)(items.map {
+    commaDelimited(BracketDelim(listVar), openBrace, closeBrace)(items.map {
       case (a,b) => binaryCell(Infix(-1, AssocN), LeafCell(equals), terml(a), terml(b))
     })
   }
 
   //calls "d" to generate Nodes to insert between elements in "as" (e.g. comma delimited list)
   //"t" is the type of the delimited... e.g. Product, or a Var with the proper cons, etc.
-  def delimited[T](t: T, d: ()=>Node, start: Node, stop: Node)(as: List[CellN]): CellN = {
+  def delimited[T <: DelimitedType](t: T, d: ()=>Node, start: Node, stop: Node)(as: List[CellN]): CellN = {
     val args = as.toIndexedSeq
     val delims = args.tail.map(_ => d())
     Cell(DelimitedCell(t, args, start, stop, delims, d))
   }
 
-  def commaDelimited(t: Term, start: Node, stop: Node) = delimited(t, ()=>comma, start, stop) _
+  def commaDelimited[T <: DelimitedType](t: T, start: Node, stop: Node) = delimited(t, ()=>comma, start, stop) _
 
-  def prod(p: Product, args: List[CellN]) : CellN = commaDelimited(p, openParen, closeParen)(args)
+  def prod(p: Product, args: List[CellN]) : CellN = commaDelimited(TupleDelim(p), openParen, closeParen)(args)
 
   def genParens : (Node,Node) = {
     val op = openParen
@@ -526,8 +526,14 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
     case c => OperatorChain(fx, Delimited(c, op, exp))
   })
 
+  sealed trait DelimitedType
+
+  case class PatternDelim(bindVar: TermVar, altIndex: Int) extends DelimitedType
+  case class TupleDelim(p: Product) extends DelimitedType
+  case class BracketDelim(v: Var) extends DelimitedType
+
   object CellF {
-    case class DelimitedCell[R,T](t: T, args: IndexedSeq[R], start: Node, stop: Node, delims: IndexedSeq[Node], delimGen: ()=>Node) extends CellF[R]
+    case class DelimitedCell[R,T <: DelimitedType](t: T, args: IndexedSeq[R], start: Node, stop: Node, delims: IndexedSeq[Node], delimGen: ()=>Node) extends CellF[R]
     case class AppCell[R](head: R, args: IndexedSeq[R]) extends CellF[R]
     case class OperatorChain[+R](fx: Fixity, chain: Delimited[R,R]) extends CellF[R]
     case class UnaryCell[R](fx: Fixity, op: R, exp: R) extends CellF[R]
@@ -565,7 +571,7 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
     case class ChainOp(fx: Fixity, opIndex: Int, numElements: Int) extends CellPathElement     // 0 <= opIndex < numElements - 1
     case object ApFn extends CellPathElement
     case class ApArg(index: Int, of: Int) extends CellPathElement
-    case class DelimitedArg[T](t: T, index: Int, of: Int) extends CellPathElement
+    case class DelimitedArg[T <: DelimitedType](t: T, index: Int, of: Int) extends CellPathElement
   }
 
   type CellPath = IndexedSeq[CellPathElement]
@@ -1532,8 +1538,8 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
     case ApFn => Cursors.Terms.Fn
     case ApArg(i,n) => fnPath(n - 1 - i) ++ Cursors.Terms.Arg
     case DelimitedArg(t,i,n) => t match {
-      case Product(_,k) => fnPath(n - 1 - i) ++ Cursors.Terms.Arg
-      case Var(vt) => vt.name.get match {
+      case TupleDelim(Product(_,k)) => fnPath(n - 1 - i) ++ Cursors.Terms.Arg
+      case BracketDelim(Var(vt)) => vt.name.get match {
         case Global("List","cons_Bracket",_) | Global("Layout.Legend","cons_Bracket",_) =>
           argPath(i) ++ Cursors.Terms.Fn ++ Cursors.Terms.Arg
         case Global("Relation.Row","snoc_Brace",_) | Global("Relation.Row","single_Brace",_) =>
@@ -1542,8 +1548,7 @@ class ViewImpl[F[_],E,S](val B: Backend[F,E,S], val de: Nat[List, Omnibox, OBIte
           argPath(i) ++ Cursors.Terms.Fn
         case _ => sys.error("Unexpected TermVar in Cell to Cursor translation: " + vt)
       }
-      case (v:TermVar,ai:Int) => Empty():Cursor[Term,Term]   //TODO JWW: Binding args pattern
-      case x => sys.error("Bad delimited arg: " + x)
+      case PatternDelim(v:TermVar,ai:Int) => Empty():Cursor[Term,Term]   //TODO JWW: Binding args pattern
     }
   }
 

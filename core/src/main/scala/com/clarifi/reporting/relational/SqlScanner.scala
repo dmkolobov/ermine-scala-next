@@ -173,7 +173,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       not = e => SqlNot(e),
       or = SqlOr(_, _),
       and = SqlAnd(_, _),
-      isNull = e => SqlIsNull(subop(e)))
+      isNull = e => SqlIsNull(subop(e)),
+      funtest = (name, db, ns, args) => SqlFun(emitter emitProcedureName (name, ns) run, args map subop)
+    )
   }
 
 

@@ -135,8 +135,8 @@ abstract class ProfiledWriter[F[_], C](inner: Writer[F, C])(implicit val R: Run[
                data: Tabular[F,(NonEmptyList[PrimExpr],NonEmptyList[PrimExpr])]) =
     timedF("pieChart", inner pieChart (pcd, labelcol, datacol, data))
 
-  def styleBox(lgnd: Legend.U[String], xFld: ColumnName, yFld: ColumnName, rowLables: List[String], columnLabels: List[String], rowBins: List[(Double, Double)], columnBins: List[(Double, Double)], xPositionField:String, yPositionField:String, rel: ClosedExt) = 
-    timedF("styleBox", inner styleBox (lgnd, xFld, yFld, rowLables, columnLabels, rowBins, columnBins, xPositionField, yPositionField, rel))
+  def styleBox(lgnd: Legend.U[String], showNumber: java.lang.Boolean, xFld: ColumnName, yFld: ColumnName, rowLables: List[String], columnLabels: List[String], rowBins: List[(Double, Double)], columnBins: List[(Double, Double)], xPositionField:String, yPositionField:String, rel: ClosedExt) = 
+    timedF("styleBox", inner styleBox (lgnd, showNumber, xFld, yFld, rowLables, columnLabels, rowBins, columnBins, xPositionField, yPositionField, rel))
 
   def drilldownPieChart(pcd: PieChartData, labelColumn: Presentation,
                         dataCol : Presentation, parentCol: String,

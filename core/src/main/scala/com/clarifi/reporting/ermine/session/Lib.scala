@@ -13,7 +13,7 @@ import com.clarifi.reporting.ermine.Pretty.{ ppType, ppName }
 import scalaparsers.Document.{ text, nest, group }
 import com.clarifi.reporting.ermine.session.Session._
 import com.clarifi.reporting.relational.{EmptyRel => _, _}
-import java.util.Date
+import java.util.{Date, UUID}
 import java.lang.Math
 import scala.util.control.NonFatal
 import scala.Predef.{error => _, _ }
@@ -206,7 +206,7 @@ object Lib {
   def cons(implicit s: SessionEnv, su: Supply) =
     for(c <- List(
       Type.int, Type.long, Type.char, Type.string, Type.float, Type.double,
-      Type.field, Type.byte, Type.date, Type.short, Type.ffi
+      Type.field, Type.byte, Type.date, Type.uuid, Type.short, Type.ffi
     )) addCon(c)
 
   def simple(implicit s: SessionEnv, su: Supply) {
@@ -801,19 +801,22 @@ object Lib {
            FA(rho ->: star, r => FAR(a => relationalCon(r) =>: r(a) ->: rel)))
 
     primOp(Global("Native.Relation", "letR"), fun2((x, f) => {
-      val ext: Option[Ext[Nothing, Nothing]] = x.whnf match {
+      val ext: \/[Bottom, Ext[Nothing, Nothing]] = x.whnf match {
         // XXX EmptyRel case is wrong; might be fields that it's supposed to have but that info has been erased 
-        case EmptyRel => Some(ExtMem(relational.EmptyRel(Map())))
-        case Rel(e) => Some(e)
-        case _ => None
+        case EmptyRel => \/-(ExtMem(relational.EmptyRel(Map())))
+        case Rel(e) => \/-(e)
+        case x: Bottom => -\/(x)
+        case _ => -\/(Bottom(throw new RuntimeException("Expected a relation in a bound variable: Native.Relation.letR")))
       }
       val unique = new Object
       f.whnfMatch("Native.Relation.letR") {
         case Fun(g) => g(Rel(ExtRel(QuoteR(unique), ""))).whnfMatch("Native.Relation.letR") {
           case EmptyRel => EmptyRel
-          case Rel(ExtRel(r, db)) => ext map (v => Rel(ExtRel(LetR(v, r.unquoteR(x =>
-            if (x eq unique) Some(VarR(RTop)) else None)), db))) getOrElse
-              Bottom(throw new RuntimeException("Expected a relation in a bound variable: Native.Relation.letR"))
+          case Rel(ExtRel(r, db)) => ext match {
+            case \/-(v) => Rel(ExtRel(LetR(v, r.unquoteR(x =>
+              if (x eq unique) Some(VarR(RTop)) else None)), db))
+            case -\/(v) => v
+          }
         }
       }
     }), FA(rho ->: star, r => FAR(a => FAR(b =>
@@ -1083,7 +1086,7 @@ object Lib {
            (Global("Prim","String"), PrimT.StringT(0,true), prim(string), false),
            // (Global("Prim","Float"),  PrimT.FloatT(true),    prim(float),  true)
            (Global("Prim","Bool"),   PrimT.BooleanT(true),  prim(bool),   false),
-           // (Global("Prim","Uuid"),   PrimT.UuidT(true),     prim(uuid),   false)
+           (Global("Prim","GUID"),   PrimT.UuidT(true),     prim(uuid),   false),
            (Global("Prim","Double"), PrimT.DoubleT(true),   prim(double), true),
            (Global("Prim","Byte"),   PrimT.ByteT(true),     prim(byte),   true),
            (Global("Prim","Short"),  PrimT.ShortT(true),    prim(short),  true),
@@ -1139,6 +1142,16 @@ object Lib {
       addInstance(primitiveNum, primInstance(primitiveNum,t,d))
       addInstance(primitiveNum, primInstance(primitiveNum, nullable(t), d.withNull))
     }
+
+    // class PrimitiveString a | Primitive a
+    val primitiveString = {
+      val a = freshType(star)
+      val con = addCon(mkClassCon(Global("Builtin","PrimitiveString")))
+      addClass(Loc.builtin, con, List(a), List(primitive(VarT(a))), List(_))
+    }
+
+    addInstance(primitiveString, primInstance(primitiveString,string,PrimT.StringT(0)))
+    addInstance(primitiveString, primInstance(primitiveString,nullable(string),PrimT.StringT(0).withNull))
 
     // class PrimitiveAtom a | Primitive a where
     //   nullable :: Prim (Nullable a)
@@ -1227,52 +1240,40 @@ object Lib {
                Fun(_.whnfMatch("Prim.primExpr##"){
                  case Prim(x: PrimExpr) => Prim(fromPrimExpr(x))}),
                FA(a => primExpr ->: a))
-    primOp(Global("Prim", "primCata#"),
+    def primCond(nullable: Boolean, v: Runtime, nullv: Runtime): Runtime =
+      if (nullable) {
+        Prim(Runtime.toPrimExpr(nullv, true))
+      } else {
+        Prim(Runtime.toPrimExpr(v, false))
+      }
+    def primCataImpl(int : Runtime, nullInt : Runtime, string: Runtime, nullString: Runtime,
+                     bool: Runtime, nullBool: Runtime, double: Runtime, nullDouble: Runtime,
+                     byte: Runtime, nullByte: Runtime, short : Runtime, nullShort : Runtime,
+                     long: Runtime, nullLong: Runtime, date  : Runtime, nullDate  : Runtime,
+                     uuid: Runtime, nullUuid: Runtime, p: PrimT): Runtime =
+      p match {
+        case IntT    (   nullable) => primCond(nullable, int   , nullInt   )
+        case StringT (_, nullable) => primCond(nullable, string, nullString)
+        case BooleanT(   nullable) => primCond(nullable, bool  , nullBool  )
+        case DoubleT (   nullable) => primCond(nullable, double, nullDouble)
+        case ByteT   (   nullable) => primCond(nullable, byte  , nullByte  )
+        case ShortT  (   nullable) => primCond(nullable, short , nullShort )
+        case LongT   (   nullable) => primCond(nullable, long  , nullLong  )
+        case DateT   (   nullable) => primCond(nullable, date  , nullDate  )
+        case UuidT   (   nullable) => primCond(nullable, uuid  , nullUuid  )
+      }
+
+    primOp(Global("Prim", "primCata"),
             Fun(int => Fun(nullInt => Fun(string => Fun(nullString => Fun(bool => Fun(nullBool => Fun(double => 
               Fun(nullDouble => Fun(byte => Fun(nullByte => Fun(short => Fun(nullShort => Fun(long => Fun(nullLong =>
-                Fun(date => Fun(nullDate => Fun(p =>  { 
-                val primt = p.extract[PrimT]
-                primt match {
-                  case IntT(false) => Prim(IntExpr(false, int.extract))
-                  case IntT(true) => nullInt.nf.extract[Option[Int]] match { case None => Prim(NullExpr(primt))
-                                                                             case Some(i) => Prim(IntExpr(true, i))
-                                                                           }
-                  case StringT(x, false) => Prim(StringExpr(false, string.extract))
-                  case StringT(x, true) => nullString.nf.extract[Option[String]] match { case None => Prim(NullExpr(primt))
-                                                                             case Some(i) => Prim(StringExpr(true, i))
-                                                                           }
-                  case BooleanT(false) => Prim(BooleanExpr(false, bool.extract))
-                  case BooleanT(true) => nullBool.nf.extract[Option[Boolean]] match { case None => Prim(NullExpr(primt))
-                                                                             case Some(i) => Prim(BooleanExpr(true, i))
-                                                                           }
-                  case DoubleT(false) => Prim(DoubleExpr(false, double.extract))
-                  case DoubleT(true) => nullDouble.extract[Option[Double]] match { case None => Prim(NullExpr(primt))
-                                                                   case Some(d) => Prim(DoubleExpr(true, d))
-                                                                   }
-                  case ByteT(false) => Prim(ByteExpr(false, byte.extract))
-                  case ByteT(true) => nullByte.nf.extract[Option[Byte]] match { case None => Prim(NullExpr(primt))
-                                                                             case Some(i) => Prim(ByteExpr(true, i))
-                                                                           }
-
-                  case ShortT(false) => Prim(ShortExpr(false, short.extract))
-                  case ShortT(true) => nullShort.nf.extract[Option[Short]] match { case None => Prim(NullExpr(primt))
-                                                                             case Some(i) => Prim(ShortExpr(true, i))
-                                                                           }
-
-                  case LongT(false) => Prim(LongExpr(false, long.extract))
-                  case LongT(true) => nullLong.nf.extract[Option[Long]] match { case None => Prim(NullExpr(primt))
-                                                                             case Some(i) => Prim(LongExpr(true, i))
-                                                                           }
-
-                  case DateT(false) => Prim(DateExpr(false, date.extract))
-                  case DateT(true) => nullDate.nf.extract[Option[Date]] match { case None => Prim(NullExpr(primt))
-                                                                             case Some(i) => Prim(DateExpr(true, i))
-                                                                           }
-
-                 }}))))))))))))))))),
-                 int ->: maybeH(int) ->: string ->: maybeH(string) ->: bool ->: maybeH(bool) ->: 
-                   double ->: maybeH(double) ->: byte ->: maybeH(byte) ->: short ->: maybeH(short) ->: long ->: maybeH(long) ->:
-                     date ->: maybeH(date) ->: primt ->: primExpr
+                Fun(date => Fun(nullDate => Fun(uuid => Fun(nullUuid => Fun(p =>  { 
+                  val primt = p.extract[PrimT]
+		  primCataImpl(int, nullInt, string, nullString, bool, nullBool, double, nullDouble, byte, nullByte,
+		               short, nullShort, long, nullLong, date, nullDate, uuid, nullUuid, primt)
+                }))))))))))))))))))),
+                 int ->: nullable(int) ->: string ->: nullable(string) ->: bool ->: nullable(bool) ->: 
+                   double ->: nullable(double) ->: byte ->: nullable(byte) ->: short ->: nullable(short) ->: long ->: nullable(long) ->:
+                     date ->: nullable(date) ->: uuid ->: nullable(uuid) ->: primt ->: primExpr
             )
   }
 

@@ -17,7 +17,8 @@ sealed abstract class Predicate extends TraversableColumns[Predicate] {
                not: (z) => z,
                or: (z, z) => z,
                and: (z, z) => z,
-               isNull: Op => z): z = {
+               isNull: Op => z,
+	       funtest: (String, String, List[String], List[Op]) => z): z = {
     def rec(p: => Predicate): z = p match {
       case Atom(truth) => atom(truth)
       case Lt(left, right) => lt(left, right)
@@ -27,6 +28,7 @@ sealed abstract class Predicate extends TraversableColumns[Predicate] {
       case Or(left, right) => or(rec(left), rec(right))
       case And(left, right) => and(rec(left), rec(right))
       case IsNull(op) => isNull(op)
+      case Funtest(name, database, namespace, args) => funtest(name, database, namespace, args)
     }
     rec(this)
   }
@@ -46,7 +48,8 @@ sealed abstract class Predicate extends TraversableColumns[Predicate] {
       not = (_ map Not),
       or = (l, r) => ^(l, r)(Or),
       and = (l, r) => ^(l, r)(And),
-      isNull = (o => f(o) map (IsNull)))
+      isNull = (o => f(o) map (IsNull)),
+      funtest = (n,d,ns,a) => a.traverse(f) map (Funtest(n,d,ns,_)))
   }
 
   def traverseColumns[F[_]: Applicative](f: ColumnName => F[ColumnName]): F[Predicate] =
@@ -71,6 +74,9 @@ object Predicate {
   case class Or(left: Predicate, right: Predicate) extends Predicate
   case class And(left: Predicate, right: Predicate) extends Predicate
   case class IsNull(expr: Op) extends Predicate // sql fail
+  case class Funtest(name: String, database: String, namespace: List[String],
+                     args: List[Op]) extends Predicate
+
 
   implicit val PredicateEqual: Equal[Predicate] = equalA
   implicit val PredicateShow: Show[Predicate] = showFromToString
