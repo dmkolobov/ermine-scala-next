@@ -6,9 +6,13 @@ import Native.Function
 import Vector
 import Native.Record
 import Relation
+import Relation.Sort
+import Native.Relation
+import Native.List
 
 foreign
   data "com.clarifi.reporting.relational.Scanner" Scanner (f: * -> *)
+  method "dumpClosed" dumpQuery# : Scanner f -> Relation# -> Sort# -> IO String 
 
   private
     data "com.clarifi.reporting.backends.Scanners$" ScannersModule
@@ -30,3 +34,9 @@ vertica = vertica# scannersModule
 sqlite = sqlite# scannersModule
 sqlServer = sqlServer# scannersModule
 sqlServer2005 = sqlServer2005# scannersModule
+
+dumpQueryInOrder : (Relational rel) => Scanner f -> rel r -> Sort r -> IO String
+dumpQueryInOrder s r o = dumpQuery# s (relation# r) (toSort# o)
+
+dumpQuery : (Relational rel) => Scanner f -> rel r -> IO String
+dumpQuery s r = dumpQuery# s (relation# r) (toList# Nil)

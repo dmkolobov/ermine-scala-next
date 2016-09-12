@@ -267,6 +267,22 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     }
   }
 
+  override def dumpRel(m: Relation[Nothing, Nothing],
+                       order: List[(String, SortOrder)] = List()): String = {
+    implicit val sup = Supply.create
+    implicit val memoLookup = new HashSet[TableName]()
+    implicit val scopeBuilder = List()
+    compileRel(Optimizer.optimize(m), (x: Nothing) => x, (x: Nothing) => x) match {
+      case SqlPrg(prg, notes, dq, _) =>
+        val stmts = prg.distinct.map(x => x.emitSql(emitter).run)
+        val query = dq.q(emitter.distinctEagerly) match {
+          case (d, q) =>
+            orderQuery(dq.h,q, order).emitSql(emitter).run
+        }
+        ((stmts :+ query) ++ notes.map("-- " + _)).mkString("\n")
+    }
+  }
+
   def scanExt[A:Monoid](m: Ext[Nothing, Nothing],
                         f: Process[Record, A],
                         order: List[(String, SortOrder)] = List()): DB[A] = m match {
