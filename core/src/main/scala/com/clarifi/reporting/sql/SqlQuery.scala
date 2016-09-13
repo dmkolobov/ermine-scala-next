@@ -144,7 +144,7 @@ object SqlSingle {
           case _ => None
         }
       else None
-    case LiteralSqlTable(NonEmptyList(h, t)) if t.isEmpty => Some(h)
+    case LiteralSqlTable(nel) if nel.tail.isEmpty => Some(nel.head)
     case _ => None
   }
 }
