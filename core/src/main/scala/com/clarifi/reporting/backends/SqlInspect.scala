@@ -18,6 +18,7 @@ import ermine.parsing.inverseStringLiteral
 import ermine.session.{Lib => ELib, Session}
 import ermine.session.Session.SourceFile
 import ermine.syntax.Explicit
+import ermine.Global
 
 import sql.{ SqlColumn, SqlEmitter }
 
@@ -87,7 +88,7 @@ object SqlErmine {
     def ermineCode: PP
   }
 
-  private val usualModules: Map[String, (Option[String], List[Explicit], Boolean)] =
+  private val usualModules: Map[String, (Option[String], List[Explicit[Global]], Boolean)] =
     (ELib.primBindings.map(_._1.module).toSet[String]
      zip (Stream continually ((None, List.empty, false))) toMap)
 
@@ -104,7 +105,7 @@ object SqlErmine {
   }
 
   case class ModuleHead(name: String,
-                        imports: Map[String, (Option[String], List[Explicit], Boolean)])
+                        imports: Map[String, (Option[String], List[Explicit[Global]], Boolean)])
        extends ErmineGen {
     def ermineCode = "module" :+: name :+: PP.text("where") above
        PP.vsep(imports.view map {case (modname, (as, explicits, usingp)) =>

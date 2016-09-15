@@ -48,7 +48,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
     res
   }
 
-  type ImportSpec = (Option[String], List[Explicit], Boolean)
+  type ImportSpec = (Option[String], List[Explicit[Global]], Boolean)
 
   val all: ImportSpec = (None, List(), false)
   val imps = Map("Int" -> all, "Builtin" -> all, "Test" -> all)

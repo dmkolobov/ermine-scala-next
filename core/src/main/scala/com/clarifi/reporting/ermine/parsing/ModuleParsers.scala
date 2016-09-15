@@ -1,5 +1,6 @@
 package com.clarifi.reporting.ermine.parsing
 
+import com.clarifi.reporting.ermine.{Local, Global}
 import com.clarifi.reporting.ermine.syntax._
 import com.clarifi.reporting.ermine.syntax.Statement._
 
@@ -24,7 +25,7 @@ case class ModuleHeader(
         _ <- (right >> eof) attempt "end of explicit layout"
       } yield ss
     else statements
-  def imports: Map[String, (Option[String], List[Explicit], Boolean)] = {
+  def imports: Map[String, (Option[String], List[Explicit[Global]], Boolean)] = {
     val counts = importExports.foldLeft(Map[String,Int]()) {
       case (m, i) => m.get(i.module) match {
         case Some(n) => m + (i.module -> (n+1))
@@ -37,7 +38,7 @@ case class ModuleHeader(
           "\n\tModule: " + name +
           "\n\tImports: " + counts.keySet.mkString(", "))
 
-    val all : (Option[String], List[Explicit], Boolean) = (None, List(), false)
+    val all : (Option[String], List[Explicit[Global]], Boolean) = (None, List(), false)
     Map("Builtin" -> all, name -> all) ++ importExports.map {
       i => i.module -> (i.as, i.explicits, i.using)
     }
@@ -56,10 +57,10 @@ object ModuleParsers {
     case _ => (acc.reverse, xs)
   }
 
-  def explicit(module: String): Parser[Explicit] = for {
+  def explicit: Parser[Explicit[Local]] = for {
     p <- loc
     isTy <- keyword("type").optional map (_.isDefined)
-    src <- TermNameParsers.name({ case l => List(l) }).map(_.global(module))
+    src <- TermNameParsers.name({ case l => List(l) })
     on <- (keyword("as") >> TermNameParsers.name({ case l => List(l) })).optional
     _ <- on match {
       case Some(rename) if src.fixity.con != rename.fixity.con =>
@@ -78,7 +79,7 @@ object ModuleParsers {
     as <- (keyword("as") >> TermNameParsers.ident.map(_.string)).optional
     opt <- (for {
       using <- keyword("using").as(true) | keyword("hiding").as(false)
-      exps <- laidout("explicit imports", explicit(src))
+      exps <- laidout("explicit imports", explicit.map(_.map(_.global(src))))
     } yield (using, exps)).optional
   } yield opt match {
     case Some((using, exps)) => ImportExportStatement(p, export, src, as, exps, using)

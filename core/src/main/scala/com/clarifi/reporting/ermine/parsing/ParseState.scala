@@ -26,7 +26,7 @@ case class ErParseState(
 ) {
   def importing( sessionTerms: Map[Global,TermVar]
                , cons: Set[Global]
-               , m: Map[String, (Option[String], List[Explicit], Boolean)]
+               , m: Map[String, (Option[String], List[Explicit[Global]], Boolean)]
                , sessionTermOrigins: Map[Global, List[Global]] // current global map of origins from the session env
                , sessionTypeOrigins: Map[Global, List[Global]] // "
                ) = {
@@ -126,7 +126,7 @@ object ErParseState {
         extends AnyVal {
       def importing( sessionTerms: Map[Global,TermVar]
                    , cons: Set[Global]
-                   , m: Map[String, (Option[String], List[Explicit], Boolean)]
+                   , m: Map[String, (Option[String], List[Explicit[Global]], Boolean)]
                    , sessionTermOrigins: Map[Global, List[Global]]
                    , sessionTypeOrigins: Map[Global, List[Global]]) =
         erpsLens mod (_.importing(sessionTerms, cons, m, sessionTermOrigins, sessionTypeOrigins), _value)

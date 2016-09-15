@@ -44,7 +44,7 @@ import syntax.{Renaming, Explicit, Statement, ImportExportStatement, ImportExpor
 
 import com.clarifi.reporting.backends.{ SqlErmine, Runners }
 
-case class Mark(currentResult: Int, imports: Map[String, (Option[String],List[Explicit],Boolean)], sessionEnv: SessionEnv)
+case class Mark(currentResult: Int, imports: Map[String, (Option[String],List[Explicit[Global]],Boolean)], sessionEnv: SessionEnv)
 
 case class ConsoleException(msg: Option[Document] = None) extends Exception(msg.getOrElse(text("error")).toString)
 
@@ -137,7 +137,7 @@ class ConsoleEnv(
     )
   )
 
-  var imports: Map[String, (Option[String],List[Explicit],Boolean)] = Map() // module -> affix
+  var imports: Map[String, (Option[String],List[Explicit[Global]],Boolean)] = Map() // module -> affix
 
   def asImported(g: Name): Name = g match {
     case g : Global => imports.get(g.module) match {
@@ -174,7 +174,7 @@ class ConsoleEnv(
     }
   }
 
-  def importing(m: String, affix: Option[String], exp: List[Explicit], using: Boolean) { imports = imports + (m -> (affix, exp, using)) }
+  def importing(m: String, affix: Option[String], exp: List[Explicit[Global]], using: Boolean) { imports = imports + (m -> (affix, exp, using)) }
 
   updateCompletor
 

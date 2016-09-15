@@ -21,15 +21,20 @@ sealed trait Statement extends Located {
   def definedTypes: Set[TypeVar] = Set()
 }
 
-sealed trait Explicit {
-  def global: Global
+sealed trait Explicit[G] {
+  def global: G
   def isType: Boolean
+  def map[H](f: G => H): Explicit[H]
 }
-case class Single(global: Global, isType: Boolean) extends Explicit
-case class Renaming(global: Global, l: Local, isType: Boolean) extends Explicit
+case class Single[G](global: G, isType: Boolean) extends Explicit[G] {
+  override def map[H](f: G => H): Single[H] = copy(global = f(global))
+}
+case class Renaming[G](global: G, l: Local, isType: Boolean) extends Explicit[G] {
+  def map[H](f: G => H): Renaming[H] = copy(global = f(global))
+}
 
 object Explicit {
-  def lookup(g: Global, l: List[Explicit]): Option[Local] = l collect { case Renaming(n,l,_) if n == g => l} headOption
+  def lookup[G](g: G, l: List[Explicit[G]]): Option[Local] = l collect { case Renaming(n,l,_) if n == g => l} headOption
 }
 
 // header statements
@@ -39,7 +44,7 @@ case class ImportExportStatement(
   export: Boolean,
   module: String,
   as: Option[String],
-  explicits: List[Explicit] = List(),
+  explicits: List[Explicit[Global]] = List(),
   using: Boolean = false
 ) {
   def exported(ty: Boolean, g: Global): Boolean =

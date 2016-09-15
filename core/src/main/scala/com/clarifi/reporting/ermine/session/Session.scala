@@ -262,7 +262,7 @@ object Session {
     }
   }
 
-  private val all: (Option[String],List[Explicit],Boolean) = (None, List(), false)
+  private val all: (Option[String],List[Explicit[Global]],Boolean) = (None, List(), false)
 
   def dep(file: SourceFile, making: List[SourceFile] = Nil, expectedName: Option[String] = None)(implicit su: Supply): Dep = {
     acyclic(file, making)
@@ -552,7 +552,7 @@ object Session {
   // evaluate an expression given by text, in the context of a set of imported modules
   def eval(
     text: String,
-    importedModules: Map[String, (Option[String], List[Explicit], Boolean)],
+    importedModules: Map[String, (Option[String], List[Explicit[Global]], Boolean)],
     source: String = "<interactive>"
   )(implicit s: SessionEnv, su: Supply, con: Printer): (Type, Runtime) = {
     loadModules(importedModules.keySet.toList)
