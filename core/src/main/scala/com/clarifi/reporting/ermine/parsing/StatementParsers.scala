@@ -62,35 +62,6 @@ object StatementParsers {
     _ <- modify(l.set(_, Some(v)))
   } yield v
 
-  def explicit(module: String): Parser[Explicit] = for {
-    p <- loc
-    isTy <- keyword("type").optional map (_.isDefined)
-    src <- name({ case l => List(l) }).map(_.global(module))
-    on <- (keyword("as") >> name({ case l => List(l) })).optional
-    _ <- on match {
-      case Some(rename) if src.fixity.con != rename.fixity.con =>
-        raise(p, "error: Renaming to different operator type is not supported.")
-      case _ => unit(())
-    }
-  } yield on match {
-      case Some(rename) => Renaming(src, rename, isTy)
-      case None         => Single(src, isTy)
-    }
-
-  val importExportStatement: Parser[ImportExportStatement] = (for {
-    p <- loc
-    export <- keyword("import").as(false) | keyword("export").as(true)
-    src <- moduleName // stringLiteral
-    as <- (keyword("as") >> ident.map(_.string)).optional
-    opt <- (for {
-      using <- keyword("using").as(true) | keyword("hiding").as(false)
-      exps <- laidout("explicit imports", explicit(src))
-    } yield (using, exps)).optional
-  } yield opt match {
-    case Some((using, exps)) => ImportExportStatement(p, export, src, as, exps, using)
-    case None                => ImportExportStatement(p, export, src, as)
-  }) scope "import/export statement"
-
   /**   table foo, bar : baz
     or: table dbo.foo, sys.dbo.bar : baz */
   private def tableStatement(dbName: String) = for {

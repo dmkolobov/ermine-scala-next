@@ -4,6 +4,7 @@ import com.clarifi.reporting.ermine.syntax._
 import com.clarifi.reporting.ermine.syntax.Statement._
 
 import scalaparsers.{++, Located, Pos}
+import scalaparsers.Diagnostic.raise
 import com.clarifi.reporting.ermine.{ ImplicitBinding, Term }
 import scala.collection.immutable.List
 import StatementParsers._
@@ -54,6 +55,35 @@ object ModuleParsers {
     case (b: BindingStatement) :: ys => bindingSpan(ys, b :: acc)
     case _ => (acc.reverse, xs)
   }
+
+  def explicit(module: String): Parser[Explicit] = for {
+    p <- loc
+    isTy <- keyword("type").optional map (_.isDefined)
+    src <- TermNameParsers.name({ case l => List(l) }).map(_.global(module))
+    on <- (keyword("as") >> TermNameParsers.name({ case l => List(l) })).optional
+    _ <- on match {
+      case Some(rename) if src.fixity.con != rename.fixity.con =>
+        raise(p, "error: Renaming to different operator type is not supported.")
+      case _ => unit(())
+    }
+  } yield on match {
+      case Some(rename) => Renaming(src, rename, isTy)
+      case None         => Single(src, isTy)
+    }
+
+  val importExportStatement: Parser[ImportExportStatement] = (for {
+    p <- loc
+    export <- keyword("import").as(false) | keyword("export").as(true)
+    src <- moduleName // stringLiteral
+    as <- (keyword("as") >> TermNameParsers.ident.map(_.string)).optional
+    opt <- (for {
+      using <- keyword("using").as(true) | keyword("hiding").as(false)
+      exps <- laidout("explicit imports", explicit(src))
+    } yield (using, exps)).optional
+  } yield opt match {
+    case Some((using, exps)) => ImportExportStatement(p, export, src, as, exps, using)
+    case None                => ImportExportStatement(p, export, src, as)
+  }) scope "import/export statement"
 
   // parse leading import statements, leaving the remainder of the input untouched
   def moduleHeader(defaultName: String): Parser[ModuleHeader] = (
