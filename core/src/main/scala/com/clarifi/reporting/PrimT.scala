@@ -244,26 +244,29 @@ object PrimT {
     case _ => false
   }
 
+  private object Parsing extends scalaparsers.Parsing[Unit]
+
   def read(s: String): PrimT = {
-    import scalaparsers.{ParseState, Pos, Supply}
-    import ermine.parsing._
+    import scalaparsers.{ParseState, Pos}
+    import Parsing.{word, token, paren, ch, nat, parserMonad, Parser}
+
+    val comma = token(ch(','))
     val bool = (word("true") as true) | (word("false") as false)
     val strt : Parser[PrimT] = word("StringT") >> paren(for { n <- nat ; _ <- comma ; b <- bool } yield StringT(n.toInt, b))
-    @inline def w(f: Boolean => PrimT) = f // scala is weird.
     val nstr : Parser[Boolean => PrimT] =
-      ("ByteT"    as w(ByteT))    |
-      ("ShortT"   as w(ShortT))   |
-      ("IntT"     as w(IntT))     |
-      ("LongT"    as w(LongT))    |
-      ("DoubleT"  as w(DoubleT))  |
-      ("BooleanT" as w(BooleanT)) |
-      ("DateT"    as w(DateT))    |
-      ("UuidT"    as w(UuidT))
+      ("ByteT"    as (ByteT))    |
+      ("ShortT"   as (ShortT))   |
+      ("IntT"     as (IntT))     |
+      ("LongT"    as (LongT))    |
+      ("DoubleT"  as (DoubleT))  |
+      ("BooleanT" as (BooleanT)) |
+      ("DateT"    as (DateT))    |
+      ("UuidT"    as (UuidT))
 
     val main : Parser[PrimT] = strt | (for { c <- nstr ; b <- paren(bool) } yield c(b))
 
-    // this is ugly
-    main.run(ParseState(Pos("","",0,0,false), s, s = ErParseState("")), Supply.create) match {
+    // this is ugly; using a null as a supply is better than creating a supply here though
+    main.run(ParseState(Pos("","",0,0,false), s, s = ()), null) match {
       case Right((_, x)) => x
       case _             => sys.error("Failed to read PrimT: \"" + s + "\"")
     }
