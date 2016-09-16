@@ -64,6 +64,9 @@ infixr 5 <>
     -> LegendaryFulcrum k v3 t
 (<>) (LF ful1 lg1) (LF ful2 lg2) = LF (catFulcrum_Piv ful1 ful2) (lg1 ++_Lg lg2)
 
+emptyLF : forall k v. Row_R k -> Row_R v -> LegendaryFulcrum k v (||)
+emptyLF kr vr = LF (nilFulcrum_Piv kr vr) (empty_Lg)
+
 data MythicalFulcrum k v = forall p. MF (LegendaryFulcrum k v p)
   
 infixr 5 ><
@@ -80,3 +83,6 @@ mapLegendary : forall k v
 mapLegendary
   (f : some k v. forall p. LegendaryFulcrum k v p -> LegendaryFulcrum k v p)
   (MF l) = MF (f l)
+
+emptyMF : forall k v. Row_R k -> Row_R v -> MythicalFulcrum k v
+emptyMF kr vr = MF $ emptyLF kr vr
