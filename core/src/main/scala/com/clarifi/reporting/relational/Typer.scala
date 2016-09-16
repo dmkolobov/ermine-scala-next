@@ -40,7 +40,7 @@ object Typer {
   )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] = {
     def prm(ty: PrimT) = if(promote) ty.withNull else ty
     base.lift(attr.name) match {
-      case Some(t) if t == attr.t => (base + (newCol -> prm(t)) - attr.name).pure[F]
+      case Some(t) if t == attr.t => (base -attr.name + (newCol -> prm(t))).pure[F]
       case Some(_)                => err("Inconsistent type for attribute renaming.")
       case None                   => err("Renaming non-existent attribute")
     }
