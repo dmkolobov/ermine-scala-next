@@ -97,6 +97,21 @@ sealed abstract class SqlExpr {
     case ParensSqlExpr(e) => e.deparenthesize
     case e => e
   }
+
+  final def isConstant: Boolean = this match {
+    case l : LitSqlExpr => true
+    case i : IntervalExpr => true
+    case ParensSqlExpr(e) => e.isConstant
+    case CastSqlExpr(e,_) => e.isConstant
+    case BinSqlExpr(_, e1, e2) => e1.isConstant && e2.isConstant
+    case PrefixSqlExpr(_, e) => e.isConstant
+    case PostfixSqlExpr(e, _) => e.isConstant
+    case FunSqlExpr(_, args) => args.forall(_.isConstant)
+    case v : Verbatim => false
+    case o : OverSqlExpr => false
+    case c : CaseSqlExpr => false
+    case c : ColumnSqlExpr => false
+  }
 }
 
 case class SqlOver(

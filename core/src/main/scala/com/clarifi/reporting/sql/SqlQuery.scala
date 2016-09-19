@@ -27,7 +27,7 @@ sealed abstract class SqlQuery {
         raw(" where ") |+| where.map(x => raw("(") |+| x.emitSql |+| ")").toIterable.rawMkString(" and ")
       else raw("")) |+|
       (if (!groupBy.isEmpty)
-        raw(" group by ") |+| (groupBy.toIndexedSeq.map((x: SqlExpr) => x.emitSql).rawMkString(", "))
+        raw(" group by ") |+| (groupBy.filter(!_.isConstant).toIndexedSeq.map((x: SqlExpr) => x.emitSql).rawMkString(", "))
       else raw("")) |+|
       (if (!having.isEmpty)
         raw(" having ") |+| having.map(x => raw("(") |+| x.emitSql |+| ")").toIterable.rawMkString(" and ")
