@@ -167,9 +167,9 @@ object Typer {
     pKey: Set[ColumnName],
     pVals: Set[ColumnName],
     outer: Boolean,
-    keyMap: Map[Record, (ColumnName, Op, PrimExpr)]
+    colMap: Map[ColumnName, (Record, Op, PrimExpr)]
   )(implicit f: Monad[F], err: (String, String*) => F[Nothing]): F[Header] = {
-    val pivCols = keyMap.values map { case (c,o,d) => c -> o.guessTypeUnsafe } toMap
+    val pivCols = colMap mapValues { case (k,o,d) => o.guessTypeUnsafe }
     val passCols = hunder -- pKey -- pVals
     val overlap = passCols.keySet intersect pivCols.keySet
 

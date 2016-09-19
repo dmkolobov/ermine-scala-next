@@ -252,16 +252,16 @@ case class PivotR[+M, +R](
   pivotKey: Set[ColumnName], // the columns that determine the pivot key
   pivotVals: Set[ColumnName], // the columns that determine the pivot values
   outer: Boolean, // whether NULL is admitted in the output columns of the pivot
-  keyMap: Map[Record,(ColumnName, Op, PrimExpr)] // map from pivotKey records to columns and ways to fill them - the PrimExpr is the default 'missing' element, e.g. 0 or "", to avoid NullExprs.
+  colMap: Map[ColumnName,(Record, Op, PrimExpr)] // association from column names to ways to fill them - the PrimExpr is the default 'missing' element, e.g. 0 or "", to avoid NullExprs.
 ) extends Relation[M, R] {
   def bimap[N, S](f: M => N, g: R => S) =
-    PivotR(under.bimap(f, g), pivotKey, pivotVals, outer, keyMap)
+    PivotR(under.bimap(f, g), pivotKey, pivotVals, outer, colMap)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) =
-    PivotR(under.subst(f, g), pivotKey, pivotVals, outer, keyMap)
+    PivotR(under.subst(f, g), pivotKey, pivotVals, outer, colMap)
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = under.bifoldMap(f, g)
   def foreach(f: M => Any, g: R => Any) = { under.foreach(f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]], g: Object => Option[Mem[S, N]]): Relation[N, S] =
-    PivotR(under.unquote(f, g), pivotKey, pivotVals, outer, keyMap)
+    PivotR(under.unquote(f, g), pivotKey, pivotVals, outer, colMap)
 }
 
 sealed abstract class HardRel extends Relation[Nothing, Nothing] {

@@ -254,16 +254,16 @@ case class Pivot[+R, +M](
   pivotKey: Set[ColumnName], // the columns that determine the pivot key
   pivotVals: Set[ColumnName], // the columns that determine the pivot values
   outer: Boolean, // whether NULL is admitted in the output columns of the pivot
-  keyMap: Map[Record,(ColumnName, Op, PrimExpr)] // map from pivotKey records to columns and ways to fill them - the PrimExpr is the default 'missing' element, e.g. 0 or "", to avoid NullExprs.
+  colMap: Map[ColumnName,(Record, Op, PrimExpr)] // map from column names to ways to fill them - the PrimExpr is the default 'missing' element, e.g. 0 or "", to avoid NullExprs.
 ) extends Mem[R, M] {
   def bimap[S, N](f: R => S, g: M => N) =
-    Pivot(under.bimap(f, g), pivotKey, pivotVals, outer, keyMap)
+    Pivot(under.bimap(f, g), pivotKey, pivotVals, outer, colMap)
   def subst[S, N](f: R => Relation[N, S], g: M => Mem[S, N]) =
-    Pivot(under.subst(f, g), pivotKey, pivotVals, outer, keyMap)
+    Pivot(under.subst(f, g), pivotKey, pivotVals, outer, colMap)
   def bifoldMap[Z: Monoid](f: R => Z, g: M => Z) = under.bifoldMap(f, g)
   def foreach(f: R => Any, g: M => Any) = { under.foreach(f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Mem[S, N]], g: Object => Option[Relation[N, S]]): Mem[S, N] =
-    Pivot(under.unquote(f, g), pivotKey, pivotVals, outer, keyMap)
+    Pivot(under.unquote(f, g), pivotKey, pivotVals, outer, colMap)
 }
 
 // `main` is the query, and `cur` and `hist` are SM tables being joined against `main`

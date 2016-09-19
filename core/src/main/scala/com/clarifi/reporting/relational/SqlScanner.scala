@@ -569,15 +569,15 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         }
 
         MemPrg(cs.map(_._1.tuple), p, nq, combineAll(rx, cs))
-      case Pivot(under, pKey, pVals, outer, keyMap) =>
+      case Pivot(under, pKey, pVals, outer, colMap) =>
         val MemPrg(h, p, q, rx) = compileMem(under, smv, srv)
         implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
-        val nh = Typer.pivotType[Id](h, pKey, pVals, outer, keyMap)
+        val nh = Typer.pivotType[Id](h, pKey, pVals, outer, colMap)
         val nq: OrderedProcedure[DB, Record] = (ord:List[(ColumnName,SortOrder)]) => {
           val idCols = h.keySet -- pKey -- pVals
           val myOrd = idCols.toList.map(c => (c, Asc))
           q(myOrd) map { p =>
-            val pp = p.andThen(pivot(pKey,pVals,keyMap,outer)).andThen(sorting(myOrd, ord))
+            val pp = p.andThen(pivot(pKey,pVals,colMap,outer)).andThen(sorting(myOrd, ord))
             if(ord isEmpty) pp.andThen(uniq(idCols))
             else pp.andThen(uniq(ord.map(_._1).toSet))
           }
@@ -593,21 +593,20 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   private def pivot(
     pKey: Set[ColumnName],
     pVals: Set[ColumnName],
-    keyMap: Map[Record, (ColumnName, Op, PrimExpr)],
+    colMap: Map[ColumnName, (Record, Op, PrimExpr)],
     outer: Boolean
   ): Process[Record, Record] = {
-    val base : Record = if (outer) RecordMap(keyMap.values map { case (col,op,default) => col -> default })
-                        else RecordMap()
     def collect(acc: Record, extra: Record): Process[Record, Record] =
       await[Record] flatMap { (r:Record) =>
         val nextra = r -- pKey -- pVals
         if (nextra == extra) { // we're on the same pivot row
           val kr = r filterKeys pKey
           val vr = r filterKeys pVals
-          keyMap.get(kr) match {
-            case None => collect(acc, extra)
-            case Some((c, op, d)) => collect(acc + (c -> op.eval(vr)), extra)
+          val newCols = colMap collect {
+            case (c, (k,o,d)) if kr == k =>
+              c -> o.eval(vr)
           }
+          collect(acc ++ newCols, extra)
         } else {
           // TODO: check outer
           emit(extra ++ acc) flatMap { _ => prime(r) }
@@ -616,11 +615,14 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
     def prime(r: Record): Process[Record, Record] = {
       val extra = r -- pKey -- pVals
-      val acc : Record = keyMap.get(r filterKeys pKey) match {
-        case Some((c, op, default)) => base + (c -> op.eval(r))
-        case None          => base
+      val kr = r filterKeys pKey
+      val bootstrap : Record = colMap map {
+        case (c, (k,o,d)) =>
+          if (kr == k) c -> o.eval(r)
+          else c -> d
       }
-      collect(acc, extra)
+
+      collect(bootstrap, extra)
     }
 
     await[Record] flatMap prime
@@ -830,10 +832,10 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                Reflexivity.zero)
       case RelEmpty(h) =>
         SqlPrg(List(), List(), DistinctiveQuery.empty(h), KnownEmpty())
-      case PivotR(under, pKey, pVals, outer, keyMap) =>
+      case PivotR(under, pKey, pVals, outer, colMap) =>
         val SqlPrg(p, ns, q, rx) = compileRel(under, smv, srv)
         val preCols = q.h.keySet -- pKey -- pVals
-        SqlPrg(p, ns, q pivot (pKey, pVals, outer, keyMap), Reflexivity.zero)
+        SqlPrg(p, ns, q pivot (pKey, pVals, outer, colMap), Reflexivity.zero)
       case QuoteR(_) => sys.error("Cannot scan quotes")
       case l@SmallLit(ts) =>
         if (ts.size <= 100) {
@@ -1154,16 +1156,16 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       }
     }
 
-    def pivot(key: Set[ColumnName], vals: Set[ColumnName], outer: Boolean, keyMap: Map[Record, (ColumnName, Op, PrimExpr)])(implicit sup: Supply): DistinctiveQuery = {
+    def pivot(key: Set[ColumnName], vals: Set[ColumnName], outer: Boolean, colMap: Map[ColumnName, (Record, Op, PrimExpr)])(implicit sup: Supply): DistinctiveQuery = {
       implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
-      val nh = Typer.pivotType[Id](h, key, vals, outer, keyMap)
+      val nh = Typer.pivotType[Id](h, key, vals, outer, colMap)
       val sel = asSelect(h, q(false)._2, v => !v.isAggregated && !v.isWindowed)
       val extra = h -- key -- vals
       val q2 = sel.copy(isAggregated = true,
                         groupBy = extra.toList map (x => sel.attrs(x._1)),
                         options = sel.options - "distinct",
-                        attrs = sel.attrs -- key -- vals ++ keyMap.map {
-                          case (r, (col, op, defval)) => col ->
+                        attrs = sel.attrs -- key -- vals ++ colMap.mapValues {
+                          case (r, op, defval) =>
                             FunSqlExpr("coalesce", List(
                               compileAggFunc(Max(Op.If(Predicate.fromRecord(r),
                                                        op,

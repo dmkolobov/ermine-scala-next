@@ -979,7 +979,7 @@ object Lib {
             PivotE(e, pk.extract[List[String]].toSet,
                       pv.extract[List[String]].toSet,
                       true,
-                      km.extract[List[(Record,(String,(Op,PrimExpr)))]].map({case (rec, (str, (op, pe))) => (rec,(str,op,pe)) }).toMap)
+                      km.extract[List[(Record,(String,(Op,PrimExpr)))]].map({case (rec, (str, (op, pe))) => (str,(rec,op,pe)) }).toMap)
           )
       }}}}),
     FA(rho ->: star, rel => FAR(r => FAR(s =>

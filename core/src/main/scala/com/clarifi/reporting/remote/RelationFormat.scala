@@ -182,9 +182,7 @@ object Format {
         A & A,                               // HashLeftJoin
         AttributeF :: AttributeF :: memRW.F[RF, MLevelF[RF, MF]] :: A :: A, // AccumulateM
         ProcessSymbolF & A, // ProcessM
-        A :: RepeatF[StringF] :: RepeatF[StringF] :: BooleanF ::
-          RepeatF[RepeatF[StringF & PrimExprF] &
-                  (StringF :: OpF :: PrimExprF)], // Pivot
+        A :: RepeatF[StringF] :: RepeatF[StringF] :: BooleanF :: FulcrumF, // Pivot
         A // MemoMem
       ]
 
@@ -208,7 +206,7 @@ object Format {
           p2R(self, self)(HashLeftJoin.apply),
           p5R(attributeR, attributeR, memR(mLevelR(rr, rm), rr), self, self)(AccumulateM.apply),
           p2R(processSymbolR, self)(ProcessM.apply),
-          p5R(self, listR(stringR), listR(stringR), booleanR, mapR(recordR, tuple3R(stringR, opR, primExprR)))(
+          p5R(self, listR(stringR), listR(stringR), booleanR, fulcrumR)(
             (a,b,c,d,e) => Pivot(a,b.toSet,c.toSet,d,e)),
           self.map(MemoMem.apply)
         )
@@ -253,7 +251,7 @@ object Format {
           // ProcessM
           , tuple2W(processSymbolW, self)
           // Pivot
-          , tuple5W(self, repeatW(stringW), repeatW(stringW), booleanW, mapW(recordW,tuple3W(stringW, opW, primExprW)))
+          , tuple5W(self, repeatW(stringW), repeatW(stringW), booleanW, fulcrumW)
           // MemoMem
           , self
         )((v, let, fil, pro, exc, com, agg, hashIn, mer, emb, proc, lit, emp, grpBy, ren, hashLeft, accum, process, pivot, memo) =>
@@ -374,12 +372,12 @@ object Format {
   private val groupByW = groupByRW.W
   private val groupByR = groupByRW.R
 
-  private type Fulcrum = Map[Record,(String,Op,PrimExpr)]
+  private type Fulcrum = Map[String,(Record,Op,PrimExpr)]
   lazy val fulcrumRW : CodecPair[Fulcrum] = {
-    CodecPair[Fulcrum,RepeatF[RecordF :: (StringF :: OpF :: PrimExprF)]](
-      mapR(recordR, tuple3R(stringR, opR, primExprR))
+    CodecPair[Fulcrum,RepeatF[StringF :: (RecordF :: OpF :: PrimExprF)]](
+      mapR(stringR, tuple3R(recordR, opR, primExprR))
     )(
-      mapW(recordW,tuple3W(stringW, opW, primExprW))
+      mapW(stringW,tuple3W(recordW, opW, primExprW))
     )
   }
   type FulcrumF = fulcrumRW.F
