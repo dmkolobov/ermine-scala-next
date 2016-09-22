@@ -708,8 +708,8 @@ styleBox : forall px py xv yv a b other rel .
         -> Field py Int
         -> rel(|..r|)
         -> Report f z
-styleBox (lgnd, xFld, yFld) showNumber rowLabels columnLabels rowBins columnBins xPositionField yPositionField r = 
-  Report $ w -> styleboxW w (legend# lgnd) (toBool# showNumber) (fieldName xFld) (fieldName yFld) rowLabels columnLabels rowBins columnBins (fieldName xPositionField) (fieldName yPositionField) (relation# r)
+styleBox (lgnd, xFld, yFld) showNumber rowLabels columnLabels xBins yBins xPositionField yPositionField r = 
+  Report $ w -> styleboxW w (legend# lgnd) (toBool# showNumber) (fieldName xFld) (fieldName yFld) rowLabels columnLabels xBins yBins (fieldName xPositionField) (fieldName yPositionField) (relation# r)
 
 
 private
@@ -1578,8 +1578,8 @@ private
   gridW w d = gridW_ w (toList# (lmap toList# d))
 
   styleboxW : Writer f z -> Legend# String -> Bool# -> String -> String -> List String -> List String -> List# (Pair# Double Double) -> List# (Pair# Double Double) -> String -> String -> Relation# -> f z
-  styleboxW w lgnd showNumber xFld yFld rowLabels columnLabels rowBins columnBins xPositionField yPositionField rel = 
-    styleboxW_ w lgnd showNumber xFld yFld (toList# rowLabels) (toList# columnLabels) rowBins columnBins xPositionField yPositionField rel
+  styleboxW w lgnd showNumber xFld yFld rowLabels columnLabels xBins yBins xPositionField yPositionField rel = 
+    styleboxW_ w lgnd showNumber xFld yFld (toList# rowLabels) (toList# columnLabels) xBins yBins xPositionField yPositionField rel
 
   foreign
     method "atomDMTL" atomW : forall f z a . Writer f z -> Format_Fmt a -> a -> z
