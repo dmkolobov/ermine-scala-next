@@ -748,6 +748,28 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                          keepOld: Boolean = false) =
     rx combineAll (mapKeys(comb)(_.name), {case x => x}, identity, keepOld)
 
+  private def joinReflexivity(rxl: Reflexivity[ColumnName],
+                              rxr: Reflexivity[ColumnName],
+                              mode: JoinMode): Reflexivity[ColumnName] = mode match {
+    case JoinMode.Inner => rxl && rxr
+    case JoinMode.Left => rxl
+    case JoinMode.Right => rxr
+    case JoinMode.Full => Reflexivity.zero
+  }
+
+  private def joinAttrs(lattrs: Map[SqlColumn, SqlExpr],
+                        rattrs: Map[SqlColumn, SqlExpr],
+                        mode: JoinMode): Map[SqlColumn, SqlExpr] = mode match {
+    case JoinMode.Inner | JoinMode.Left => rattrs ++ lattrs
+    case JoinMode.Right => lattrs ++ rattrs
+    case JoinMode.Full =>
+      val inter = lattrs collect {
+            case (col, lexp) if rattrs.isDefinedAt(col) =>
+              col -> FunSqlExpr("coalesce", List(lexp, rattrs(col)))
+          }
+      lattrs ++ rattrs ++ inter
+  }
+
   def compileRel[M,R](m: Relation[M, R], smv: M => MemPrg,
                       srv: R => SqlPrg)(implicit sup: Supply, memoLookup: HashSet[TableName]
                       , scopeBuilder: List[() => String]
@@ -766,7 +788,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     m match {
       case VarR(v) => srv(v)
       case JoinOn(l, r, on, mode) =>
-        combineBinary(l, r, _ joinOn (on, _, mode), _ && _) // TODO: verify
+        combineBinary(l, r, _ joinOn (on, _, mode), joinReflexivity(_, _, mode)) // TODO: verify
       case Union(l, r) =>
          // TODO: be smarter about fundeps if possible
         combineBinary(l, r, _ union _, _ || _)
@@ -1041,7 +1063,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                                         compileJoinMode(mode)
                                       )
                                     ),
-                          attrs = v2.attrs ++ v1.attrs,
+                          attrs = joinAttrs(v1.attrs, v2.attrs, mode),
                           options = v2.options ++ v1.options, // XXX assumes distinct is the
                                                               // only option!
                           where = v1.where ++ v2.where
