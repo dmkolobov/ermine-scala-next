@@ -1052,8 +1052,20 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                 case (SqlSingle(row)) if mode == JoinMode.Inner =>
                   squashLiteral(row,h,q1,allOn map {_.swap},mode.reverse)
                 case _ =>
-                  val v1 = asSelect(h,q1, v => !v.isAggregated && !v.sources.sources.isEmpty && !v.isWindowed)
-                  val v2 = asSelect(other.h,q2, v => !v.isAggregated && !v.sources.sources.isEmpty && !v.isWindowed)
+                  val v1 = asSelect(h,q1, v => !v.isAggregated
+                                            && !v.sources.sources.isEmpty
+                                            && !v.isWindowed
+                                            && (mode match {
+                                                 case JoinMode.Right | JoinMode.Full => v.where.isEmpty
+                                                 case _ => true
+                                               }))
+                  val v2 = asSelect(other.h,q2, v => !v.isAggregated
+                                                  && !v.sources.sources.isEmpty
+                                                  && !v.isWindowed
+                                                  && (mode match {
+                                                       case JoinMode.Left | JoinMode.Full => v.where.isEmpty
+                                                       case _ => true
+                                                     }))
                   v1.copy(sources = SourceList(
                                       SqlJoinOn(
                                         v1.sources.asSource.get,
