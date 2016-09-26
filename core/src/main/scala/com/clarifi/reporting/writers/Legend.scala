@@ -83,6 +83,8 @@ case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
 
   def oneDeep: Legend[Grp, Lbl] = Legend(inOrder.oneDeep, undisplayed, groupingColumn)
 
+  def equalDepth(defaultGroup: Grp): Legend[Grp, Lbl] = Legend(inOrder.equalDepth(defaultGroup), undisplayed, groupingColumn)
+
   /** Wrap columns in a single column `group`. */
   def columnGroup(group: Grp): Legend[Grp, Lbl] =
     copy(inOrder = LegendColumns(Vector(-\/(inOrder, group))))
@@ -317,6 +319,20 @@ final case class LegendColumns[Grp, Lbl](
 
   def oneDeep: LegendColumns[Grp, Lbl] =
     LegendColumns(inOrder map (_ bimap ({ case (cs,g) => (cs.groupless[Grp], g) }, identity)))
+
+  def depth: Int = {
+    inOrder.map(_ fold (_._1.depth + 1, _ => 1)).max
+  }
+
+  def equalDepth(defaultGroup: Grp): LegendColumns[Grp, Lbl] = {
+    def equalDepthHelp(d : Int, cols: LegendColumns[Grp, Lbl]) : LegendColumns[Grp, Lbl] = {
+      if (d == 1) cols else LegendColumns(cols.inOrder.map {
+        case -\/((cs,g)) => -\/((equalDepthHelp(d-1, cs), g))
+        case \/-(l) => -\/((equalDepthHelp(d-1, LegendColumns(Seq(\/-(l)))), defaultGroup))
+      })
+    }
+    equalDepthHelp(depth, this)
+  }
 
   def sansColumn(cp: (ColumnName, PrimT)): LegendColumns[Grp,Lbl] =
   {
