@@ -1195,6 +1195,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       val nh = Typer.pivotType[Id](h, key, vals, outer, colMap)
       val sel = asSelect(h, q(false)._2, v => !v.isAggregated && !v.isWindowed)
       val extra = h -- key -- vals
+      val allKeys = colMap.values.map(_._1).toSet
       val q2 = sel.copy(isAggregated = true,
                         groupBy = extra.toList map (x => sel.attrs(x._1)),
                         options = sel.options - "distinct",
@@ -1208,7 +1209,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                                             ),
                               compileLiteral(defval)
                             ))
-                        })
+                        },
+                        where = SqlPredicate.fromLiteral(sel.attrs, allKeys.toList) ++ sel.where)
       DistinctiveQuery(nh, _ => (true, q2))
     }
   }

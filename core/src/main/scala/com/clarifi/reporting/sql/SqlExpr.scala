@@ -67,6 +67,17 @@ object SqlPredicate {
       case SqlFun(f, as) => (as.traverse[F,SqlExpr](SqlExpr.backSubstituteAux(_, sub))) map (SqlFun(f, _))
       case _ => pred.pure[F]
     }
+
+  def fromLiteral(attrs: Map[SqlColumn, SqlExpr], lit: List[Record]): List[SqlPredicate] = lit match {
+    case Nil => List()
+    case _ =>
+      val preds = lit map {
+        r => SqlAnd(r.toList.map{
+          case (c,pe) => SqlEq(attrs(c), SqlExpr.compileLiteral(pe))
+        } :_*)
+      }
+      List(SqlOr(preds:_*))
+  }
 }
 
 sealed abstract class SqlExpr {
