@@ -19,6 +19,8 @@ import Relation.Op.Unsafe
 import Relation.Row hiding empty_Bracket ; cons_Bracket ; single_Brace ; snoc_Brace
 import Layout.Presentation using rowUsed
 
+-- XXX should a Fulcrum have a Prim# for each field?  Should the Record# and/or Op# just be Record and/or Op?
+
 data Fulcrum k v p = Fulcrum (List String) -- field names of key row
                              (List String) -- field names of value row
                              (List (Record#, -- filters the overall relation to just the rows that should have this new field
@@ -81,6 +83,18 @@ catFulcrum : (p <- (p1, p2), RUnion2 v3 v2 v1)
           -> Fulcrum k v2 p2
           -> Fulcrum k v3 p
 catFulcrum (Fulcrum ks vs l1) (Fulcrum _ vs' l2) = Fulcrum ks (vs ++ vs') (l1 ++ l2)
+
+mapFulcrum : (forall f r a. Field f a -> Op r a -> {..k} -> (Op r a, {..k})) -> Fulcrum k v p -> Fulcrum k v p
+mapFulcrum (g: some k v. forall f r a. Field f a -> Op r a -> {..k} -> (Op r a, {..k})) (Fulcrum ks vs l) = Fulcrum ks vs $
+  map_List ((r,(n,o)) -> case o of
+              UnsafeOp o1 -> case existentialF n (typeOfOp o1) of
+                EField f -> case g f o1 $ unsafeRecordIn# r of
+		  (PhantomOp o2, r2) -> (record# r2,(n,o2)))
+           l
+
+mapFulcrumKeys : ({..k} -> {..k}) -> Fulcrum k v p -> Fulcrum k v p
+mapFulcrumKeys (g : some k. {..k} -> {..k}) (Fulcrum ks vs l) = Fulcrum ks vs $
+  map_List ((r,(n,o)) -> (record# . g . unsafeRecordIn# $ r,(n,o))) l
 
 pivot : (RelationalComb rel, r <- (k, v, i), s <- (i, p)) => Fulcrum k v p -> rel r -> rel s
 pivot (Fulcrum ks vs m) = pivot# (toList# ks) (toList# vs) (toList# m')
