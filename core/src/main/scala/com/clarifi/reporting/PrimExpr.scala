@@ -452,9 +452,13 @@ object PrimExprs {
                 ar.getCalendar.setTimeZone(tz)
                 ar}
 
-  val dateFormatter =
-    dateFormatterTLV(DateFormat.getDateInstance(DateFormat.SHORT, Locale.ENGLISH))
+  val dateFormatter = dateFormatterTLV(dateFormatTemplate)
 
+  private var _dateFormatTemplate = DateFormat.getDateInstance(DateFormat.SHORT, Locale.ENGLISH)
+  
+  private def dateFormatTemplate = _dateFormatTemplate
+  def assignUserDefinedDateFormat(s: String) = {_dateFormatTemplate = new SimpleDateFormat(s)}
+  
   def userDefinedDateFormat(s: String)(d: Date): String = dateFormatterTLV(new SimpleDateFormat(s)).get.format(d)
 
 
