@@ -32,13 +32,12 @@ object SqlEmitterGens {
   def stdGen[T](implicit ev: Arbitrary[T]): Gen[T] = ev.arbitrary
 
   private val allScanners = Seq(Scanners.MySQLInnoDB(dummySmenv), Scanners.MySQL(dummySmenv),
-                                Scanners.MicrosoftSQLServer2005(dummySmenv),
                                 Scanners.MicrosoftSQLServer(dummySmenv),
                                 Scanners.Postgres(dummySmenv),
                                 Scanners.Vertica(dummySmenv), Scanners.SQLite(dummySmenv))
   private val allEmitters = {
     import SqlEmitter._
-    Seq(mySqlInnoDBEmitter, mySqlEmitter, msSqlEmitter2005, msSqlEmitter,
+    Seq(mySqlInnoDBEmitter, mySqlEmitter, msSqlEmitter,
         postgreSqlEmitter, verticaSqlEmitter, sqliteEmitter)
   }
 

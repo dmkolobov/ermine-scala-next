@@ -1013,16 +1013,6 @@ object SqlEmitter {
   val mySqlEmitter = new MySqlEmitter(false)
   val msSqlEmitter = new MsSqlEmitter
 
-  val msSqlEmitter2005 = new MsSqlEmitter {
-    override def sqlTypeName(p: PrimT): RawSql = p match {
-      case StringT(l,n) => nn(n,"nvarchar(" |+| (if (l == 0) "1000" else l.toString) |+| ")")
-      case DateT(n)     => nn(n,"datetime")
-      case _ => SqlEmitter.fallbackSqlTypeName(p)
-    }
-
-    override def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
-      fallbackEmitLiteral(n)
-  }
   val verticaSqlEmitter = new VerticaSqlEmitter
 
   val postgreSqlEmitter = new PostgreSqlEmitter

@@ -25,7 +25,6 @@ foreign
   method "Vertica" vertica#: ScannersModule -> SMEnv f -> Scanner f
   method "SQLite" sqlite#: ScannersModule -> SMEnv f -> Scanner f
   method "MicrosoftSQLServer" sqlServer#: ScannersModule -> SMEnv f -> Scanner f
-  method "MicrosoftSQLServer2005" sqlServer2005#: ScannersModule -> SMEnv f -> Scanner f
 
 mySqlInnoDB = mySqlInnoDB# scannersModule
 mySql = mySql# scannersModule
@@ -33,7 +32,6 @@ postgres = postgres# scannersModule
 vertica = vertica# scannersModule
 sqlite = sqlite# scannersModule
 sqlServer = sqlServer# scannersModule
-sqlServer2005 = sqlServer2005# scannersModule
 
 dumpQueryInOrder : (Relational rel) => Scanner f -> rel r -> Sort r -> IO String
 dumpQueryInOrder s r o = dumpQuery# s (relation# r) (toSort# o)
