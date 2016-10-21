@@ -637,7 +637,7 @@ object Console {
       case Right((ps, ImportExportCommand(ImportExportStatement(loc, true, module, as, explicits, using)))) =>
         writeLn("Ignoring export command")
 
-      case Right((ps, ModuleCommand(m))) => e.session(implicit s => loadModule(ps,m))
+      case Right((ps, ModuleCommand(m))) => e.session(implicit s => loadModule(ps,m, None))
       case Right((_, EmptyCommand)) => ()
       case Right((psp, ExpressionCommand(a))) =>
         // val at = Type.subType(e.conMap(ps), a).close

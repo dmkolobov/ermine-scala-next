@@ -73,7 +73,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
     val (sps,m) = parse(moduleBody(ModuleHeader(spsz.loc,"Test",false,imports.toList.map {
       case (k,(as,explicits,using)) => ImportExportStatement(spsz.loc, false, k, as, explicits, using)
     })),spsz)
-    loadModule(sps, m)
+    loadModule(sps, m, None)
   }
 
   def testParse[A](p: Parser[A], e: String, m: Map[String,ImportSpec] = imps)(implicit s: SessionEnv): (ParseState, A) = {

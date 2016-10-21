@@ -264,7 +264,18 @@ object Session {
 
   private val all: (Option[String],List[Explicit[Global]],Boolean) = (None, List(), false)
 
-  def dep(file: SourceFile, making: List[SourceFile] = Nil, expectedName: Option[String] = None)(implicit su: Supply): Dep = {
+  /**
+   * Used when running in untyped mode. Answers the question of, 'do we know
+   * the type of this variable,' always in the affirmative, with type
+   * 'forall a. a'.
+   */
+  private def untyped(implicit su: Supply): PartialFunction[TermVar, TermVar] = {
+    case v =>
+        val a = fresh(v.loc, None, Bound, Star(v.loc))
+        v.as(Forall(v.loc, List(), List(a), Exists.unit, VarT(a)))
+    }
+
+  def dep(file: SourceFile, making: List[SourceFile] = Nil, expectedName: Option[String] = None)(implicit s: SessionEnv, su: Supply): Dep = {
     acyclic(file, making)
     cacheDep(file, file :: making, expectedName) {
       val start = nanoTime
@@ -273,6 +284,8 @@ object Session {
       val expTys = mh.importExports.flatMap { ie => ie.explicits.collect { case e if e.isType => e.global } }
       val expTms = mh.importExports.flatMap { ie => ie.explicits.collect { case e if !e.isType => e.global } }
       val exports = nanoTime
+      val preCk = if(!s.typeCheck) Some(untyped) else None
+
       profile(file.defaultModuleName + " dep", start, "header parse" -> mhParse, "export handling" -> exports)
       Dep(
         mh.loc,
@@ -295,7 +308,8 @@ object Session {
             Some(r)
         },
         expTys,
-        expTms
+        expTms,
+        preCk
       )
     }
   }
@@ -313,7 +327,7 @@ object Session {
     else {
       val nds = m.toList.map {
         case (mn,making) => fork {
-          case (_, sup) => dep(SourceFile.forModule(mn), making, Some(mn))(sup)
+          case (sp, sup) => dep(SourceFile.forModule(mn), making, Some(mn))(sp, sup)
         }
       }
       val ndsp = joins(nds)
@@ -336,7 +350,8 @@ object Session {
     making: List[SourceFile],
     read: (SessionEnv, Supply) => Option[(ParseState, Module)],
     typeReqs: List[Global],
-    termReqs: List[Global]
+    termReqs: List[Global],
+    preChecked: Option[PartialFunction[TermVar, TermVar]]
   ) extends Located {
     def --(xs: Traversable[String]) = copy(imports = imports -- xs)
     // @throws Death
@@ -345,7 +360,7 @@ object Session {
       read(s,su) match {
         case None => ()
         case Some((ps, m)) =>
-          loadModule(ps, m)
+          loadModule(ps, m, preChecked)
           s.loadedFiles = s.loadedFiles + (file -> m.name)
           s.loadedModules = s.loadedModules + m.name
       }
@@ -600,7 +615,7 @@ object Session {
     val h2 = h.copy(name = "Remote")
     val psz2 = psz.copy(s = psz.s.copy(moduleName = "Remote")).importing(snap.termNames, snap.cons.keySet, hImports, snap.termNameOrigins, snap.consOrigins)
     val (ps, m) = parse(moduleBody(h2), psz2)
-    val maps = loadModule(ps, m)
+    val maps = loadModule(ps, m, None)
     val (_, tm) = parse(phrase(term), ps copy (loc = Pos.start(fileName, exprText),
                                                offset = 0,
                                                input = exprText))
@@ -705,7 +720,7 @@ object Session {
         f.foldRight(con(ts.map(VarT(_)):_*))(Arrow(loc.inferred,_,_))))
 
   // assumes the binding group has had its cons replaced
-  def loadModule(ps: ParseState, m: Module)(implicit s: SessionEnv, su: Supply): Maps = {
+  def loadModule(ps: ParseState, m: Module, preChecked: Option[PartialFunction[TermVar,TermVar]])(implicit s: SessionEnv, su: Supply): Maps = {
     val prior = nanoTime
     var maps = (Type.conMap(m.name, ps.s.typeNames, s.cons), Map(): Map[TermVar,TermVar])
     val mod = m.name
@@ -730,8 +745,8 @@ object Session {
     assertTermClosed(bs, env.keySet ++ bs.map(_.v))
     assertTypeClosed(bs)
     val closureTime = nanoTime
-    val (_, ds, terms) =
-      if (s.typeCheck)
+    val (_, ds, varAnn) = preChecked match {
+      case None =>
         subst { implicit hm =>
           val r = inferBindingGroupTypes(m.loc, Nil, is, es, true)
           if (!hm.remembered.isEmpty) {
@@ -745,27 +760,32 @@ object Session {
           // do something with hm here, which is a SubstEnv
           r
         }
-      else {
-        val vs = bs.map({ case b =>
-            val a = fresh(b.loc, None, Bound, Star(b.loc))
-            b.v -> b.v.as(Forall(b.loc, List(), List(a), Exists.unit, VarT(a)))
-          }).toMap
-        (List(), List(), vs)
-      }
+      case Some(remap) =>
+        (List(), List(), remap)
+    }
     for (d <- ds)
       if (!d.isTrivialConstraint)
         d.die("non-trivial top level constraint")
     val bgTime = nanoTime
-    val mp = m.subTerm(terms)
+    val mp = m.subTerm(varAnn)
     val pts = mp.privateTerms
     val buf = new ListBuffer[(Global,TermVar)]()
-    terms.foreach {
-      case (k,v) if !pts.contains(v) =>
+    val tmbuf = new ListBuffer[(TermVar, TermVar)]()
+    bs.foreach {
+      case b if pts.contains(b.v) =>
+        if (varAnn.isDefinedAt(b.v))
+          tmbuf += (b.v -> varAnn(b.v))
+        else ()
+      case b if !varAnn.isDefinedAt(b.v) =>
+        b.die("pre-checked types failed to handle exported definition")
+      case b =>
+        val v = varAnn(b.v)
         val g = global(mp.name, v)
         buf += (g -> v.copy(name = Some(g)))
-      case _ => ()
+        tmbuf += (b.v -> v)
     }
     val tm = buf.toMap
+    val terms = tmbuf.toMap
     val substTime = nanoTime
 
     val exports = m.importExports.filter(_.export)

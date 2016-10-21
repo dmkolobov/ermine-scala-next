@@ -20,7 +20,7 @@ case class Module(
   privateTerms : Set[TermVar] = Set(),
   privateTypes : Set[TypeVar] = Set()
 ) extends Located {
-  def subTerm(m: Map[TermVar, TermVar]): Module = {
+  def subTerm(m: PartialFunction[TermVar, TermVar]): Module = {
     this copy (implicits = Term.subTerm(m, this.implicits), explicits = Term.subTerm(m, this.explicits))
   }
 }
