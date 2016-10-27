@@ -105,6 +105,8 @@ object Session {
     /** Whether loaded from some non-`SourceFile.Loader` source. */
     def exotic: Boolean = false
     def lastModified: Option[Long]
+    def interfaceContents: Option[String]
+    def interfaceWriteback(s: String): Unit = ()
   }
 
   case class Filesystem(fileName: String, override val exotic: Boolean = false)
@@ -128,6 +130,29 @@ object Session {
       (sections.init ++ List(sections.last.split('.')(0))).mkString(".") // strip off any file extension
     }
     override def toString = fileName
+
+    private val interfaceFileName = 
+      if(fileName.endsWith(".e")) fileName + "i"
+      else fileName + ".ei"
+
+    def interfaceContents =
+      try {
+        val source = scala.io.Source.fromFile(interfaceFileName)
+        val str = source.mkString
+        source.close
+        Some(str)
+      } catch {
+        case e : java.io.IOException => None
+      }
+
+    override def interfaceWriteback(s: String) =
+      try {
+        val wr = new java.io.PrintWriter(interfaceFileName)
+        wr.println(s)
+        wr.close
+      } catch {
+        case e : java.io.IOException => ()
+      }
   }
 
   case class Resource(module: String, url: URL) extends SourceFile {
@@ -140,6 +165,23 @@ object Session {
     def defaultModuleName: String = module
     def lastModified = Some(0)
     override def toString = url.toString
+
+    private val interfaceURL = {
+      val str = url.toString
+      if (str endsWith ".e") Some(new URL(str + "i"))
+      else None
+    }
+
+    def interfaceContents = interfaceURL flatMap { u =>
+      try {
+        val source = scala.io.Source.fromURL(u, "UTF-8")
+        val str = source.mkString
+        source.close
+        Some(str)
+      } catch {
+        case e : java.io.IOException => None
+      }
+    }
   }
 
   case class Literal(contents: String, defaultModuleName: String) extends SourceFile {
@@ -154,6 +196,7 @@ object Session {
       case o@Literal(_, dmn) if o canEqual this => dmn == defaultModuleName
       case _ => false
     }
+    def interfaceContents = None
   }
 
   // like a literal, but contents can change
@@ -169,12 +212,14 @@ object Session {
       case o@Dynamic(_, _, dmn) if o canEqual this => dmn == defaultModuleName
       case _ => false
     }
+    def interfaceContents = None
   }
 
   case class NotFound(module: String) extends SourceFile {
     def contents = die("Module not found: '" + module + "'")
     def defaultModuleName: String = module
     def lastModified = None
+    def interfaceContents = None
   }
 
   object SourceFile {
@@ -309,7 +354,8 @@ object Session {
         },
         expTys,
         expTms,
-        preCk
+        preCk,
+        file.interfaceWriteback
       )
     }
   }
@@ -351,8 +397,15 @@ object Session {
     read: (SessionEnv, Supply) => Option[(ParseState, Module)],
     typeReqs: List[Global],
     termReqs: List[Global],
-    preChecked: Option[PartialFunction[TermVar, TermVar]]
+    preChecked: Option[PartialFunction[TermVar, TermVar]],
+    writeInterfaceString: String => Unit
   ) extends Located {
+    private def writeInterface(defs: List[TermVar]): Unit = {
+      val w = new java.io.StringWriter()
+      vsep(defs.map(Pretty.prettyVarHasType)).format(1000000, w)
+      writeInterfaceString(w.toString)
+    }
+
     def --(xs: Traversable[String]) = copy(imports = imports -- xs)
     // @throws Death
     def make(implicit s: SessionEnv, su: Supply) {
@@ -360,7 +413,7 @@ object Session {
       read(s,su) match {
         case None => ()
         case Some((ps, m)) =>
-          loadModule(ps, m, preChecked)
+          loadModule(ps, m, preChecked, writeInterface)
           s.loadedFiles = s.loadedFiles + (file -> m.name)
           s.loadedModules = s.loadedModules + m.name
       }
@@ -720,7 +773,12 @@ object Session {
         f.foldRight(con(ts.map(VarT(_)):_*))(Arrow(loc.inferred,_,_))))
 
   // assumes the binding group has had its cons replaced
-  def loadModule(ps: ParseState, m: Module, preChecked: Option[PartialFunction[TermVar,TermVar]])(implicit s: SessionEnv, su: Supply): Maps = {
+  def loadModule(
+    ps: ParseState,
+    m: Module,
+    preChecked: Option[PartialFunction[TermVar,TermVar]],
+    writeInterface: List[TermVar] => Unit = (_ => ())
+  )(implicit s: SessionEnv, su: Supply): Maps = {
     val prior = nanoTime
     var maps = (Type.conMap(m.name, ps.s.typeNames, s.cons), Map(): Map[TermVar,TermVar])
     val mod = m.name
@@ -748,7 +806,7 @@ object Session {
     val (_, ds, varAnn) = preChecked match {
       case None =>
         subst { implicit hm =>
-          val r = inferBindingGroupTypes(m.loc, Nil, is, es, true)
+          val r@(_, ty, ms) = inferBindingGroupTypes(m.loc, Nil, is, es, true)
           if (!hm.remembered.isEmpty) {
             println("\nRemembered terms:\n")
             hm.remembered.values.toSeq
@@ -757,6 +815,7 @@ object Session {
                 println(loc.report(Pretty.prettyType(typ)))
             }
           }
+          writeInterface(ms.values.toList)
           // do something with hm here, which is a SubstEnv
           r
         }

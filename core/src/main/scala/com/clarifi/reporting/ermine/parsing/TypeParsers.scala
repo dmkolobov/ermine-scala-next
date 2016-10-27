@@ -13,6 +13,10 @@ import scala.collection.immutable.List
 
 import Type.{recordT, relationT}
 
+import scalaz.std.list._
+import scalaz.std.option._
+import scalaz.syntax.traverse._
+
 object TypeParsers {
   import SI8862._
 
@@ -216,6 +220,32 @@ object TypeParsers {
       case None     => nf(t)
     }
   } scope "type")
+
+  /**
+   * A version of typ that ensures that all variables are quantified.
+   */
+  def qtyp: Parser[Type] = {
+    // Predicate to avoid quantifying things that were in an outer scope.
+    def p[A](m: Map[Name,V[A]]): V[A] => Option[(V[A], Option[V[A]])] = v =>
+      v.name match {
+        case None => Some((v, None))
+        case Some(n) if n.string.charAt(0).isLower => m.get(n) match {
+          case Some(ov) if v != ov => Some((v, Some(ov)))
+          case None => Some((v, None))
+          case _ => None
+        }
+        case _ => None
+      }
+
+    for {
+      st <- gets(_.s)
+      ty <- typ
+      utvs = Type.allTypeVars(ty).collect(Function.unlift(p(st.typeNames))).toList
+      _ <- utvs traverse_[Parser] { case (tv, otv) =>
+        tv.name traverse_[Parser] { n => modify(typeNames.member(n).set(_,otv)) }
+      }
+    } yield Forall.mk(ty.loc, List(), utvs.map(_._1), Exists.unit, ty)
+  }
 
   def exists = for {
     l <- loc
