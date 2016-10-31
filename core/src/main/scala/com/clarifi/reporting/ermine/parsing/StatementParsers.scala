@@ -223,11 +223,13 @@ object StatementParsers {
     t <- typ
   } yield FieldStatement(p,vs,t)
 
+  private val typeStatementBody = closed(qtyp | exists)
+
   private val typeStatement = for {
     p <- loc << keyword("type")
     v <- typeDef
     lks <- brace(manyDistinct(localKind)).orElse(Localized(List()))
-    r <- localTypes(vs => keyOp("=") >> anyTyp.map(TypeStatement(p,v,lks.extract,vs,_)))
+    r <- localTypes(vs => keyOp("=") >> typeStatementBody.map(TypeStatement(p,v,lks.extract,vs,_)))
     _ <- lks.unbind
   } yield r
 

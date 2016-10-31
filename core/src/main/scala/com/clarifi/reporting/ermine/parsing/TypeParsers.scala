@@ -254,6 +254,17 @@ object TypeParsers {
     body <- lxs.distinct(l) >> typL2.sepBy1(comma) << lxs.unbind
   } yield Exists(l, lxs.extract, body)
 
+  def closed[A](p: Parser[A]): Parser[A] = for {
+    pos <- loc
+    preSt <- gets(_.s)
+    result <- p
+    postSt <- gets(_.s)
+    _ <- postSt.typeNames.toList.traverse_ { case (n, v) =>
+           if (n.string.charAt(0).isUpper || preSt.typeNames.get(n) == Some(v)) unit(())
+           else raise(pos, v.report("improperly quantified variable"))
+         }
+  } yield result
+
   def anyTyp = exists | typ
 
   def annot: Parser[Annot] = for {
