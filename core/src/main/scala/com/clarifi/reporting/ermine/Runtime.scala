@@ -27,7 +27,7 @@ sealed abstract class Runtime {
     val myWhnf = whnf
     p.lift(myWhnf).getOrElse(myWhnf.err(caller))
   }
-  override def toString = Pretty.ppRuntime(this).runAp.toString
+  override def toString = Pretty.ppRuntime(this)(Pretty.Unqualified).runAp.toString
 }
 
 class Prim(p: Any) extends Runtime {

@@ -54,6 +54,10 @@ object Pretty {
 
   import scalaparsers.Document._
 
+  sealed abstract class Qualification
+    case object Unqualified extends Qualification
+    case object FullyQualified extends Qualification
+
   // precedence reader
   def apply[A](f : Int => A) : Pretty[A] = new Pretty[A] {
     def apply(t: Set[Name], c: Map[V[Any],Name], s: Seq[Local], p: Int) = (t,c,s,f(p))
@@ -77,15 +81,21 @@ object Pretty {
     _ <- Pretty((t,c,s,p) => (t -- ns, c -- vs, s, ()))
   } yield r
 
-  def ppName(n: Name): Pretty[Document] = n match {
+  private def qualifiedGlobal(m: String, n: String)(implicit q: Qualification): String =
+    q match {
+      case Unqualified => n
+      case FullyQualified => m + "." + n
+    }
+
+  def ppName(n: Name)(implicit q: Qualification): Pretty[Document] = n match {
     case Local(n,Idfix)          => unit(n)
     case Local(n,Prefix(_))      => parens(unit("prefix " + n))
     case Local(n,Postfix(_))     => parens(unit("postfix " + n))
     case Local(n,Infix(_,_))     => parens(unit(n))
-    case Global(m,n,Idfix)       => unit(n) // + "_" + m)
-    case Global(m,n,Prefix(_))   => parens(unit("prefix " + n)) // + "_" + m))
-    case Global(m,n,Postfix(_))  => parens(unit("postfix " + n)) // + "_" + m))
-    case Global(m,n,Infix(_,_))  => parens(unit(n)) // + "_" + m))
+    case Global(m,n,Idfix)       => unit(qualifiedGlobal(m,n))
+    case Global(m,n,Prefix(_))   => parens(unit("prefix " + qualifiedGlobal(m,n)))
+    case Global(m,n,Postfix(_))  => parens(unit("postfix " + qualifiedGlobal(m,n)))
+    case Global(m,n,Infix(_,_))  => parens(unit(qualifiedGlobal(m,n)))
   }
 
   def lookupVar(v: V[Any]) : Pretty[Option[Name]] = Pretty((t,c,s,p) => (t,c,s,c get v))
@@ -93,7 +103,7 @@ object Pretty {
     case Some(n) => n.pure[Pretty]
     case None => fresh(v)
   }
-  def ppVar(v: V[Any]): Pretty[Document] = for {
+  def ppVar(v: V[Any])(implicit q: Qualification): Pretty[Document] = for {
     n <- lookupFresh(v)
     d <- ppName(n) map ((if(v.ty == Skolem) text("!") else empty) :: _)
   } yield d
@@ -188,32 +198,32 @@ object Pretty {
       foldrPP(xs, none, reduce) map (y => y getOrElse empty)
     }
 
-  def formatRho(t: Type) : Pretty[Document] = t match {
+  def formatRho(t: Type)(implicit q: Qualification) : Pretty[Document] = t match {
     case ConcreteRho(_,fields) => fields.toList.traverse(n => unit(n.toString)) map (l => vcat(punctuate(text(","), l)))
     case _ => ppType(t) map (text("..") :: _)
   }
 
-  def ppKindSchema(ks: KindSchema): Pretty[Document] = for {
+  def ppKindSchema(ks: KindSchema)(implicit q: Qualification): Pretty[Document] = for {
     kds <- ks.forall.traverse[Pretty,Document](ppVar(_))
     p <- getPrec
     r <- localPrec(-1, ppKind(ks.body))
   } yield wrapIf(p >= 0, "(", ")", if (ks.forall.isEmpty) r else text("forall") :+: fillSep(kds) :: text(".") :+: r)
 
-  def ppExists(xs: List[TypeVar], cs: List[Type]) = if(cs.isEmpty) empty.pure[Pretty] else
+  def ppExists(xs: List[TypeVar], cs: List[Type])(implicit q: Qualification) = if(cs.isEmpty) empty.pure[Pretty] else
     for {
       p <- getPrec
       xds <- xs.traverse[Pretty,Document](ppTypeVarBinder(_))
       qd <- separated[Type](cs, text(",") :: line, c => localPrec(-1, ppType(c)))
     } yield wrapIf(p >= 0, "(", ")", if (xs.isEmpty) qd else text("exists") :+: fillSep(xds) :: text(".") :+: qd)
 
-  def ppConstraints(cs: Type, t: Type): Pretty[Document] = for {
+  def ppConstraints(cs: Type, t: Type)(implicit q: Qualification): Pretty[Document] = for {
     p <- getPrec
     dcs <- localPrec(0, ppType(cs)) map { case DocNil => DocNil ; case d => d :+: text("=>") :: line }
     td <- localPrec(-1, ppType(t))
   } yield wrapIf(p >= 0, "(", ")", dcs :: nest(2, td))
 
   // forall {a b c} (d: a -> b) (e: c) (f: rho). (exists (g: a -> b -> c) (h: rho). f <- Foo h, Blah d g) => Bar d e f
-  def ppForall(ks: List[KindVar], ts: List[TypeVar], q: Type, t: Type): Pretty[Document] = scope(ks ++ ts, for {
+  def ppForall(ks: List[KindVar], ts: List[TypeVar], q: Type, t: Type)(implicit qual: Qualification): Pretty[Document] = scope(ks ++ ts, for {
     kds <- ks.traverse[Pretty,Document](ppVar(_))
     tds <- ts.traverse[Pretty,Document](ppTypeVarBinder(_))
     p <- getPrec
@@ -242,7 +252,7 @@ object Pretty {
     case x :: xs => x :: break :: breakDocs(xs)
   }
 
-  def ppTypeVarBinder(v: TypeVar): Pretty[Document] =
+  def ppTypeVarBinder(v: TypeVar)(implicit q: Qualification): Pretty[Document] =
     for {
       d <- ppVar(v)
       k <- ppKind(v.extract)
@@ -251,10 +261,10 @@ object Pretty {
       case _ => "(" :: d :: text(":") :+: k :: ")"
     }
 
-  def ppRho(m: Type): Pretty[Document] = delimited(text("(|"),text("|)"),formatRho(m))
+  def ppRho(m: Type)(implicit q: Qualification): Pretty[Document] = delimited(text("(|"),text("|)"),formatRho(m))
   def braces(m: Pretty[Document]): Pretty[Document] = delimited(text("{"),text("}"), m)
-  def ppRecordT(m: Type): Pretty[Document] = braces(formatRho(m))
-  def ppRecord(t : Map[String, Runtime]) : Pretty[Document] = {
+  def ppRecordT(m: Type)(implicit q: Qualification): Pretty[Document] = braces(formatRho(m))
+  def ppRecord(t : Map[String, Runtime])(implicit q: Qualification) : Pretty[Document] = {
     def helper (t : List[(String, Runtime)], z : Document) : Pretty[Document] = t match {
       case List ((n, v)) => ppRuntime(v) map (z :: n :: " = " :: _)
       case (t, v) :: ts => for {
@@ -268,9 +278,10 @@ object Pretty {
   def brackets(m : Pretty[Document]): Pretty[Document] = delimited(text("["),text("]"), m)
   def parens(m : Pretty[Document]): Pretty[Document] = delimited(text("("),text(")"), m)
   def parenPrec(m: Pretty[Document]): Pretty[Document] = getPrec.flatMap(p => if (p >= 0) parens(m) else m)
-  def ppRelationT(m: Type): Pretty[Document] = brackets(formatRho(m))
-  def appT(e: Pretty[Document], stack: List[Type]) = stack.foldLeft(e)((b,a) => prec(10, AssocL, softline, b, ppType(a)))
-  def ppAppNT(n: Name, stack: List[Type]): Pretty[Document] = (n, stack) match {
+  def ppRelationT(m: Type)(implicit q: Qualification): Pretty[Document] = brackets(formatRho(m))
+  def appT(e: Pretty[Document], stack: List[Type])(implicit q: Qualification) =
+    stack.foldLeft(e)((b,a) => prec(10, AssocL, softline, b, ppType(a)))
+  def ppAppNT(n: Name, stack: List[Type])(implicit q: Qualification): Pretty[Document] = (n, stack) match {
     case (Global(m,n, Prefix(p)), x::xs)     => appT(prec(p, AssocN, n :: "_" :: m :: space, unit(""), ppType(x)), xs)
     case (Global(m,n, Postfix(p)), x::xs)    => appT(prec(p, AssocN, space :: n :: "_" :: text(m), ppType(x), unit("")), xs)
     case (Global(m,n, Infix(p,a)), x::y::xs) => appT(prec(p, a, space :: n :: "_" :: m :: softline, ppType(x), ppType(y)), xs)
@@ -279,7 +290,7 @@ object Pretty {
     case (Local(n, Infix(p,a)), x::y::xs) => appT(prec(p, a, space :: n :: softline, ppType(x), ppType(y)), xs)
     case _                               => appT(ppName(n), stack)
   }
-  def ppAppT(e: Type, stack: List[Type]): Pretty[Document] = (e, stack) match {
+  def ppAppT(e: Type, stack: List[Type])(implicit q: Qualification): Pretty[Document] = (e, stack) match {
     case (Arrow(_), a::b::xs) => appT(prec(0, AssocR, space :: "->" :: line, ppType(a), ppType(b)), xs)
     case (ProductT(_,n), xs) if xs.length >= n => {
       val (l,r) = xs.splitAt(n)
@@ -291,8 +302,9 @@ object Pretty {
     case (x, xs)           => appT(ppType(x), xs)
   }
 
-  def appR(e: Pretty[Document], stack: List[Runtime]) = stack.foldLeft(e)((b,a) => prec(10, AssocL, softline, b, ppRuntime(a)))
-  def ppAppNR(n: Name, stack: List[Runtime]): Pretty[Document] = (n, stack) match {
+  def appR(e: Pretty[Document], stack: List[Runtime])(implicit q: Qualification) =
+    stack.foldLeft(e)((b,a) => prec(10, AssocL, softline, b, ppRuntime(a)))
+  def ppAppNR(n: Name, stack: List[Runtime])(implicit q: Qualification): Pretty[Document] = (n, stack) match {
     case (Local(n, Prefix(p)), x::xs)      => appR(prec(p, AssocN, n :: space, unit(""), ppRuntime(x)), xs)
     case (Local(n, Postfix(p)), x::xs)     => appR(prec(p, AssocN, space :: text(n), ppRuntime(x), unit("")), xs)
     case (Local(n, Infix(p,a)), x::y::xs)  => appR(prec(p, a, space :: n :: softline, ppRuntime(x), ppRuntime(y)), xs)
@@ -310,7 +322,7 @@ object Pretty {
   }
 
 
-  def ppKind(k: Kind): Pretty[Document] = k match {
+  def ppKind(k: Kind)(implicit q: Qualification): Pretty[Document] = k match {
     case Rho(_)        => unit("ρ") // rho
     case Star(_)       => unit("*")
     case Field(_)      => unit("φ") // phi
@@ -319,7 +331,7 @@ object Pretty {
     case VarK(v)       => ppVar(v)
   }
 
-  def ppType(t: Type): Pretty[Document] = t match {
+  def ppType(t: Type)(implicit qual: Qualification): Pretty[Document] = t match {
     case Forall(_,ks,ts,q,t) => ppForall(ks,ts,q,t)
     case Exists(_,xs,cs)     => ppExists(xs, cs)
     case Memory(_, t)        => ppType(t)
@@ -335,7 +347,7 @@ object Pretty {
     } yield dl :+: text("<-") :+: dr
   }
 
-  def ppRuntime(e: Runtime, d: Int = 0) : Pretty[Document] = if (d > 10) unit("...") else e match {
+  def ppRuntime(e: Runtime, d: Int = 0)(implicit q: Qualification) : Pretty[Document] = if (d > 10) unit("...") else e match {
     case Prim(p) if p.isInstanceOf[String] => wrap("\"","\"", text(p.toString)).pure[Pretty]
     case Prim(p)     => unit(p.toString)
     case Thunk(t)    => ppRuntime(t, d + 1)
@@ -357,30 +369,33 @@ object Pretty {
   def varSupply : Seq[Local] = Stream.from(0) map (i => (new PrettyLocal(Local((i % 26 + 'a'.toInt).toChar.toString,Idfix), i / 26)).pretty)
 
   // public API
-  def prettyKind(k: Kind, p: Int = 11): Document       = ppKind(k).runPrec(p)
-  def prettyType(t: Type, p: Int = 11): Document       = ppType(t).runPrec(p)
-  def prettyRuntime(e: Runtime, p: Int = 11): Document = ppRuntime(e).runPrec(p)
+  def prettyKind(k: Kind, p: Int = 11, q: Qualification = Unqualified): Document =
+    ppKind(k)(q).runPrec(p)
+  def prettyType(t: Type, p: Int = 11, q: Qualification = Unqualified): Document =
+    ppType(t)(q).runPrec(p)
+  def prettyRuntime(e: Runtime, p: Int = 11, q: Qualification = Unqualified): Document =
+    ppRuntime(e)(q).runPrec(p)
 
   // fancy display
-  def prettyVarHasType(v: TermVar) = (for {
-    dtm <- ppVar(v)
-    dty <- ppType(v.extract)
+  def prettyVarHasType(v: TermVar, q: Qualification = Unqualified) = (for {
+    dtm <- ppVar(v)(q)
+    dty <- ppType(v.extract)(q)
   } yield (dtm :+: text(":") :+: dty)).run
 
   // fancy display
-  def prettyVarHasKind(v: TypeVar) = (for {
-    dtm <- ppVar(v)
-    dty <- ppKind(v.extract)
+  def prettyVarHasKind(v: TypeVar, q: Qualification = Unqualified) = (for {
+    dtm <- ppVar(v)(q)
+    dty <- ppKind(v.extract)(q)
   } yield (dtm :+: text(":") :+: dty)).run
 
-  def prettyTypeHasKindSchema(ty: Type, ki: KindSchema) = (for {
-    dty <- ppType(ty)
-    dki <- ppKindSchema(ki)
+  def prettyTypeHasKindSchema(ty: Type, ki: KindSchema, q: Qualification = Unqualified) = (for {
+    dty <- ppType(ty)(q)
+    dki <- ppKindSchema(ki)(q)
   } yield (dty :+: text(":") :+: dki)).run
 
-  def prettyConHasKindSchema(v: Local, ks: KindSchema) = (for {
-    dty <- ppName(v)
-    dki <- ppKindSchema(ks)
+  def prettyConHasKindSchema(v: Local, ks: KindSchema, q: Qualification = Unqualified) = (for {
+    dty <- ppName(v)(q)
+    dki <- ppKindSchema(ks)(q)
   } yield (dty :+: text(":") :+: dki)).run
 
 /*

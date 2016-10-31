@@ -42,9 +42,9 @@ case class ClassDef(
     }
   }
   def pp: Pretty[Document] = for {
-    nameDoc <- ppName(name)
-    argDocs <- args.traverse(ppVar(_))
-    supDocs <- sups.traverse(ppType(_))
+    nameDoc <- ppName(name)(Pretty.Unqualified)
+    argDocs <- args.traverse(ppVar(_)(Pretty.Unqualified))
+    supDocs <- sups.traverse(ppType(_)(Pretty.Unqualified))
   } yield if (sups.isEmpty) "class" :+: nameDoc :+: fillSep(argDocs)
           else              "class" :+: nameDoc :+: fillSep(argDocs) :+: nest(4, group(vcat(text("|") :: supDocs)))
   def pretty: Document = vsep(pp.run :: instances.values.flatMap(_.pretty).toList.sortBy(_.toString))

@@ -402,7 +402,7 @@ object Session {
   ) extends Located {
     private def writeInterface(defs: List[TermVar]): Unit = {
       val w = new java.io.StringWriter()
-      vsep(defs.map(Pretty.prettyVarHasType)).format(1000000, w)
+      vsep(defs.map(Pretty.prettyVarHasType(_, Pretty.FullyQualified))).format(1000000, w)
       writeInterfaceString(w.toString)
     }
 
@@ -872,21 +872,21 @@ object Session {
     if (!overwrites.isEmpty)
       mp.die("error: loading would overwrite" :+:
         ordinal(overwrites.length,"existing global:", "existing globals:") :+:
-        fillSep(punctuate("," :: line, overwrites.toList.map(Pretty.ppName(_).run)))
+        fillSep(punctuate("," :: line, overwrites.toList.map(Pretty.ppName(_)(Pretty.Unqualified).run)))
       )
 
     val overwrites2 = etcs.keySet.intersect(cs.keySet).toList
     if (!overwrites2.isEmpty)
       mp.die("error: loading would overwrite" :+:
         ordinal(overwrites2.length,"existing type constructor:", "existing type constructors:") :+:
-        fillSep(punctuate("," :: line, overwrites2.toList.map(Pretty.ppName(_).run)))
+        fillSep(punctuate("," :: line, overwrites2.toList.map(Pretty.ppName(_)(Pretty.Unqualified).run)))
       )
 
     val overwrites3 = tm.values.toSet.intersect(env.keySet).toList
     if (!overwrites3.isEmpty)
       mp.die("error: loading would overwrite" :+:
         ordinal(overwrites3.length,"existing global", "existing globals") :+: "in the environment:" :+:
-        fillSep(punctuate("," :: line, overwrites3.toList.map(Pretty.ppVar(_).run)))
+        fillSep(punctuate("," :: line, overwrites3.toList.map(Pretty.ppVar(_)(Pretty.Unqualified).run)))
       )
 
     val overwriteCheckTime = nanoTime
