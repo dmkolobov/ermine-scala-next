@@ -323,7 +323,7 @@ object Pretty {
 
 
   def ppKind(k: Kind)(implicit q: Qualification): Pretty[Document] = k match {
-    case Rho(_)        => unit("ρ") // rho
+    case Rho(_)        => unit("rho") // rho
     case Star(_)       => unit("*")
     case Field(_)      => unit("φ") // phi
     case Constraint(_) => unit("Γ") // Gamma
