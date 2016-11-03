@@ -76,6 +76,7 @@ object TypeParsers {
       Some(n) <- gets(_.s.canonicalTypes.get(Local(s,fix))) flatMap {
         case Some(List(n)) => unit( Some(n) )
         case Some(ns) => fail[Parser]("ambiguous type operator or identifier: " + s + ", " + ns)
+        case None => unit(None)
         }
       if f(n.fixity)
       l = typeNames.member(n)
