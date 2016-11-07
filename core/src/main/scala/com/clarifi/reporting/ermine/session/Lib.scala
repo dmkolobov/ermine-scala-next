@@ -206,7 +206,8 @@ object Lib {
   def cons(implicit s: SessionEnv, su: Supply) =
     for(c <- List(
       Type.int, Type.long, Type.char, Type.string, Type.float, Type.double,
-      Type.field, Type.byte, Type.date, Type.uuid, Type.short, Type.ffi
+      Type.field, Type.byte, Type.date, Type.uuid, Type.short, Type.ffi,
+      Type.recordT, Type.relationT
     )) addCon(c)
 
   def simple(implicit s: SessionEnv, su: Supply) {

@@ -9,8 +9,6 @@ import Ord
 import List using map_List as map
 import Relation.Row
 
-type Record a = {..a}
-
 appendR : c <- (a,b) => {..a} -> {..b} -> {..c}
 appendR = appendRec#
 

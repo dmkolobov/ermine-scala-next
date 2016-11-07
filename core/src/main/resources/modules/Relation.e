@@ -39,8 +39,6 @@ mem r = mkMem# (toList# r)
 row : {..r} -> Relation (|..r|)
 row r = relation [r]
 
-type Relation a = [..a]
-
 rheader : Relational rel => rel a -> Row a
 rheader = rheader# . relation#
 
