@@ -20,6 +20,9 @@ builtin1 bi o = funcall2# builtinCallModule bi (UnsafeOp o ::# Nil#)
 builtin2 : Builtin -> Op r a -> Op s b -> Op t c
 builtin2 bi o1 o2 = funcall2# builtinCallModule bi (UnsafeOp o1 ::# UnsafeOp o2 ::# Nil#)
 
+builtin3 : Builtin -> Op r a -> Op s b -> Op t c -> Op u d
+builtin3 bi o1 o2 o3 = funcall2# builtinCallModule bi (UnsafeOp o1 ::# UnsafeOp o2 ::# UnsafeOp o3 ::# Nil#)
+
 foreign
   -- Op erasure
   subtype UnsafeOp : Op r a -> Op#
@@ -62,6 +65,7 @@ foreign
   value "com.clarifi.reporting.Op$Exp$" "MODULE$" expBuiltin : Builtin
   value "com.clarifi.reporting.Op$Abs$" "MODULE$" absBuiltin : Builtin
   value "com.clarifi.reporting.Op$Pow$" "MODULE$" powBuiltin : Builtin
+  value "com.clarifi.reporting.Op$Replace$" "MODULE$" replaceBuiltin: Builtin
 
 -- builtin
 --   data "com.clarifi.reporting.Op" Op#

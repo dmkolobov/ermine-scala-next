@@ -67,6 +67,18 @@ type OpBin v = forall a b c opl opr.
                        AsOp opl, AsOp opr)
                => opl a v -> opr b v -> Op c v
 
+type OpTri a1 a2 a3 r =
+  forall op1 op2 op3 r1 r2 r3 rr.
+  (exists r12 r13 r23 r123 r1e r2e r3e
+         . r1 <- (r12, r13, r123, r1e)
+         , r2 <- (r12, r23, r123, r2e)
+         , r3 <- (r13, r23, r123, r3e)
+         , rr <- (r12, r13, r23, r123, r1e, r2e, r3e)
+         , AsOp op1
+         , AsOp op2
+         , AsOp op3)
+  => op1 r1 a1 -> op2 r2 a2 -> op3 r3 a3 -> Op rr r
+
 (+), (-), (*), (//), (/), pow, logBase : PrimitiveNum n => OpBin n
 (+) = opBin $ funcall2# addModule
 (-) = opBin $ funcall2# subModule
@@ -91,6 +103,9 @@ upper x = builtin1 upperBuiltin (asOp x)
 
 lower : AsOp op => op r String -> Op r String 
 lower x = builtin1 lowerBuiltin (asOp x)
+
+replace : OpTri a b c String
+replace x y z = builtin3 replaceBuiltin (asOp x) (asOp y) (asOp z)
 
 negate x = (prim $ Some 0.0 ) - x
 

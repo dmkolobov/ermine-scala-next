@@ -56,6 +56,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
     case (Log10, List(e)) => Some(e log10)
     case (LogBase, List(e,b)) => Some(e logBase b)
     case (Exp, List(e)) => Some(e exp)
+    case (Replace, List(e, a, b)) => Some(e replace (a, b))
     case _ => None
   }
 
@@ -151,7 +152,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
   def guessBuiltinType(b: Builtin)(args: List[PrimT]) = {
     import PrimT._
     b match {
-      case Upper | Lower => StringT(0, args.head.nullable)
+      case Upper | Lower | Replace => StringT(0, args.head.nullable)
       case Abs => args.head
       case Log | Log10 | LogBase | Exp | Pow => DoubleT(args.exists(_ nullable))
     }
@@ -365,6 +366,7 @@ object Op {
     case object Exp extends Builtin
     case object Abs extends Builtin
     case object Pow extends Builtin
+    case object Replace extends Builtin
 
   case class OpLiteral(lit: PrimExpr) extends Op
   case class ColumnValue(col: ColumnName, typ: PrimT) extends Op

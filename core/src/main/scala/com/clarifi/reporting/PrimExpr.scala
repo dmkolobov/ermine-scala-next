@@ -215,6 +215,15 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case _ => this
   }
 
+  def replace(target: PrimExpr, replacement: PrimExpr) = this match {
+    case n: NullExpr => n
+    case _ => (target, replacement) match {  
+      case (tn: NullExpr, _) => tn
+      case (_, rn: NullExpr) => rn   
+      case _ => StringExpr(this.nullable, this.extractString.replace(target.extractString, replacement.extractString))
+    }
+  }
+
   def log = this match {
     case n : NullExpr => n
     case _ =>

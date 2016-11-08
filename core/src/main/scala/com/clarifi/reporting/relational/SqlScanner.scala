@@ -78,6 +78,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       case LogBase => "LOG"
       case Abs => "ABS"
       case Pow => "POWER"
+      case Replace => "REPLACE"
     }
 
     def rec(op: Op): SqlExpr = op match {

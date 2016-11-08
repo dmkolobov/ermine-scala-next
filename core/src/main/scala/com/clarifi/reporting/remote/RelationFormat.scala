@@ -650,6 +650,7 @@ object Format {
         case 5 => Exp
         case 6 => Abs
         case 7 => Pow
+        case 8 => Replace
       }
     } {
       intW cmap ((b: Builtin) => b match {
@@ -661,6 +662,7 @@ object Format {
         case Exp => 5
         case Abs => 6
         case Pow => 7
+        case Replace => 8
       })
     }
 
