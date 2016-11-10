@@ -137,12 +137,16 @@ object Session {
       if(fileName.endsWith(".e")) fileName + "i"
       else fileName + ".ei"
 
+    private def interfaceFile = new File(interfaceFileName)
+
     def interfaceContents =
       try {
-        val source = scala.io.Source.fromFile(interfaceFileName)
-        val str = source.mkString
-        source.close
-        Some(str)
+        if (lastModified.map(interfaceFile.lastModified > _).getOrElse(false)) {
+          val source = scala.io.Source.fromFile(interfaceFileName)
+          val str = source.mkString
+          source.close
+          Some(str)
+        } else None
       } catch {
         case e : java.io.IOException => None
       }
