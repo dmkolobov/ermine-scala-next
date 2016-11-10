@@ -34,6 +34,7 @@ import com.clarifi.reporting.ermine.parsing.{
 }
 import ErParseState.Implicits._
 import com.clarifi.reporting.ermine.parsing.ModuleParsers._
+import com.clarifi.reporting.ermine.parsing.InterfaceParsers.interfaceFile
 import com.clarifi.reporting.ermine.parsing.TermParsers.term
 import com.clarifi.reporting.relational._
 
@@ -112,6 +113,7 @@ object Session {
   case class Filesystem(fileName: String, override val exotic: Boolean = false)
       extends SourceFile {
     private val file = new File(fileName)
+
     def exists = file.exists
     def lastModified = if (exists) Some(file.lastModified) else None
     def contents =
@@ -131,7 +133,7 @@ object Session {
     }
     override def toString = fileName
 
-    private val interfaceFileName = 
+    private val interfaceFileName =
       if(fileName.endsWith(".e")) fileName + "i"
       else fileName + ".ei"
 
@@ -329,7 +331,19 @@ object Session {
       val expTys = mh.importExports.flatMap { ie => ie.explicits.collect { case e if e.isType => e.global } }
       val expTms = mh.importExports.flatMap { ie => ie.explicits.collect { case e if !e.isType => e.global } }
       val exports = nanoTime
-      val preCk = if(!s.typeCheck) Some(untyped) else None
+      val preCk : (Map[Global,Type.Con], Supply, ParseState) => Option[PartialFunction[TermVar,TermVar]] =
+        if(!s.typeCheck) ((_,_,_) => Some(untyped))
+        else (gcs, su, ps) => file.interfaceContents flatMap { intf =>
+           _log.trace("Interface contents: " + intf)
+           val newPs = scalaparsers.ParseState.mk(file.toString + "i", intf, ps.s.copy(recognizedCons = gcs))
+           interfaceFile.run(newPs,su.split) match {
+             case Left(err) =>
+               _log.debug("Error parsing interface file:")
+               _log.debug(err)
+               None
+             case Right((_,pf)) => Some(pf)
+           }
+        }
 
       profile(file.defaultModuleName + " dep", start, "header parse" -> mhParse, "export handling" -> exports)
       Dep(
@@ -397,7 +411,7 @@ object Session {
     read: (SessionEnv, Supply) => Option[(ParseState, Module)],
     typeReqs: List[Global],
     termReqs: List[Global],
-    preChecked: Option[PartialFunction[TermVar, TermVar]],
+    readInterface: (Map[Global,Type.Con], Supply, ParseState) => Option[PartialFunction[TermVar, TermVar]],
     writeInterfaceString: String => Unit
   ) extends Located {
     private def writeInterface(defs: List[TermVar]): Unit = {
@@ -413,6 +427,7 @@ object Session {
       read(s,su) match {
         case None => ()
         case Some((ps, m)) =>
+          def preChecked(lcs: Map[Global,Type.Con]) = readInterface(s.cons ++ s.privateCons ++ lcs, su, ps)
           loadModule(ps, m, preChecked, writeInterface)
           s.loadedFiles = s.loadedFiles + (file -> m.name)
           s.loadedModules = s.loadedModules + m.name
@@ -668,7 +683,7 @@ object Session {
     val h2 = h.copy(name = "Remote")
     val psz2 = psz.copy(s = psz.s.copy(moduleName = "Remote")).importing(snap.termNames, snap.cons.keySet, hImports, snap.termNameOrigins, snap.consOrigins)
     val (ps, m) = parse(moduleBody(h2), psz2)
-    val maps = loadModule(ps, m, None)
+    val maps = loadModule(ps, m, _ => None)
     val (_, tm) = parse(phrase(term), ps copy (loc = Pos.start(fileName, exprText),
                                                offset = 0,
                                                input = exprText))
@@ -776,7 +791,7 @@ object Session {
   def loadModule(
     ps: ParseState,
     m: Module,
-    preChecked: Option[PartialFunction[TermVar,TermVar]],
+    preChecked: Map[Global,Type.Con] => Option[PartialFunction[TermVar,TermVar]],
     writeInterface: List[TermVar] => Unit = (_ => ())
   )(implicit s: SessionEnv, su: Supply): Maps = {
     val prior = nanoTime
@@ -803,7 +818,11 @@ object Session {
     assertTermClosed(bs, env.keySet ++ bs.map(_.v))
     assertTypeClosed(bs)
     val closureTime = nanoTime
-    val (_, ds, varAnn) = preChecked match {
+    val localCons: Map[Global,Con] = maps._1 collect {
+      case (V(_, _, Some(g : Global), _, _), t : Type.Con) => g -> t
+      case (V(_, _, Some(l : Local), _, _), t : Type.Con) => l.global(m.name) -> t
+    }
+    val (_, ds, varAnn) = preChecked(localCons) match {
       case None =>
         subst { implicit hm =>
           val r@(_, ty, ms) = inferBindingGroupTypes(m.loc, Nil, is, es, true)
@@ -892,7 +911,7 @@ object Session {
     val overwriteCheckTime = nanoTime
 
     val gptms = mp.privateTerms.map(global(mp.name, _)).toList
-    val gptys = mp.privateTypes.map(global(mp.name, _)).toList
+    val gptys = mp.privateTypes.map(global(mp.name, _)).toSet
 
     val mpbs = subTermMaps(maps, (mp.implicits ++ mp.explicits) : List[Binding]).map(_.close)
 
@@ -901,7 +920,14 @@ object Session {
 
     s.env = envp -- pts
     s.termNames = (tmp ++ s.termNames) -- gptms
-    s.cons = (etcs ++ s.cons) -- gptys
+
+    val (exCons, hiCons) = (etcs ++ s.cons) partition {
+      case (g, v) if g.module == mp.name => !gptys(g)
+      case _ => true
+    }
+
+    s.cons = exCons
+    s.privateCons = (hiCons ++ s.privateCons)
 
     s.termNameOrigins = s.termNameOrigins ++ ps.s.termOrigins
     s.consOrigins = s.consOrigins ++ ps.s.typeOrigins

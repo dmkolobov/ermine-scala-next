@@ -83,12 +83,16 @@ object Pretty {
 
   private def qualifiedGlobal(m: String, n: String)(implicit q: Qualification): String =
     q match {
-      case Unqualified => n
+      case Unqualified => quoteAbnormalName(n)
       case FullyQualified => m + "." + n
     }
 
+  private def quoteAbnormalName(s: String): String =
+    if(s.charAt(0).isLetter) s
+    else "``" + s + "``"
+
   def ppName(n: Name)(implicit q: Qualification): Pretty[Document] = n match {
-    case Local(n,Idfix)          => unit(n)
+    case Local(n,Idfix)          => unit(quoteAbnormalName(n))
     case Local(n,Prefix(_))      => parens(unit("prefix " + n))
     case Local(n,Postfix(_))     => parens(unit("postfix " + n))
     case Local(n,Infix(_,_))     => parens(unit(n))
@@ -199,7 +203,7 @@ object Pretty {
     }
 
   def formatRho(t: Type)(implicit q: Qualification) : Pretty[Document] = t match {
-    case ConcreteRho(_,fields) => fields.toList.traverse(n => unit(n.toString)) map (l => vcat(punctuate(text(","), l)))
+    case ConcreteRho(_,fields) => fields.toList.traverse(n => ppName(n)) map (l => vcat(punctuate(text(","), l)))
     case _ => ppType(t) map (text("..") :: _)
   }
 
@@ -282,6 +286,7 @@ object Pretty {
   def appT(e: Pretty[Document], stack: List[Type])(implicit q: Qualification) =
     stack.foldLeft(e)((b,a) => prec(10, AssocL, softline, b, ppType(a)))
   def ppAppNT(n: Name, stack: List[Type])(implicit q: Qualification): Pretty[Document] = (n, stack) match {
+    case (g : Global, _) if q == FullyQualified => appT(ppName(g), stack)
     case (Global(m,n, Prefix(p)), x::xs)     => appT(prec(p, AssocN, n :: "_" :: m :: space, unit(""), ppType(x)), xs)
     case (Global(m,n, Postfix(p)), x::xs)    => appT(prec(p, AssocN, space :: n :: "_" :: text(m), ppType(x), unit("")), xs)
     case (Global(m,n, Infix(p,a)), x::y::xs) => appT(prec(p, a, space :: n :: "_" :: m :: softline, ppType(x), ppType(y)), xs)

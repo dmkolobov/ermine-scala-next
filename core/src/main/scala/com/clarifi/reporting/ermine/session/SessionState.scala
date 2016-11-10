@@ -71,6 +71,7 @@ class SessionEnv(
   var termNames:       Map[Global,V[Type]]            = Map(),
   var termNameOrigins: Map[Global, List[Global]]      = Map(), // Control.Monad.Functor => Control.Functor.Functor
   var cons:            Map[Global,Type.Con]           = Map(),
+  var privateCons:     Map[Global,Type.Con]           = Map(),
   var consOrigins:     Map[Global,List[Global]]       = Map(),
   var loadFile:        Session.SourceFile.Loader      = Session.SourceFile.defaultLoader,
   var loadedFiles:     Map[Session.SourceFile,String] = Map(), // filenames that have been loaded already
@@ -79,7 +80,7 @@ class SessionEnv(
   var classOrigins:    Map[Global, List[Global]]      = Map(),
      _typeCheck:       Option[Boolean]                = None
 ) { that =>
-  def copy = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck))
+  def copy = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck))
 
   val typeCheck : Boolean = _typeCheck.getOrElse(java.lang.Boolean.getBoolean("ermine.typeCheck"))
 
@@ -88,6 +89,7 @@ class SessionEnv(
     termNames       = termNames ++ sp.termNames
     termNameOrigins = termNameOrigins ++ sp.termNameOrigins
     cons            = cons ++ sp.cons
+    privateCons     = privateCons ++ sp.privateCons
     consOrigins     = consOrigins ++ sp.consOrigins
     // no loadFile union, so skip
     loadedFiles     = loadedFiles ++ sp.loadedFiles
@@ -103,6 +105,7 @@ class SessionEnv(
     termNames = s.termNames
     termNameOrigins = termNameOrigins ++ s.termNameOrigins
     cons = s.cons
+    privateCons = s.privateCons
     consOrigins = consOrigins ++ s.consOrigins
     loadFile = s.loadFile
     loadedFiles = s.loadedFiles

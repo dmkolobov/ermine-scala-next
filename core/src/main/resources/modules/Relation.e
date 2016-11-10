@@ -57,8 +57,7 @@ lastBy f r = join r (bottomK f 1 (project f r))
 rheader# : Relation# -> Row a
 rheader# = Row . map fromPair# . fromList# . header#
 
-setColumn f op r = case existentialF "combine_tmp" (fieldType f) of
-  EField ft -> rename ft f (except (single f) (combine op ft r))
+setColumn f op r = [| f = op |] r
 
 memoRelWithPK : Has r k => Row k -> Relation r -> Relation r
 memoRelWithPK (Row r) rel = memoRelWithPK# (toList# (map_List toPair# r)) rel
