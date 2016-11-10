@@ -694,7 +694,10 @@ object Session {
     val h2 = h.copy(name = "Remote")
     val psz2 = psz.copy(s = psz.s.copy(moduleName = "Remote")).importing(snap.termNames, snap.cons.keySet, hImports, snap.termNameOrigins, snap.consOrigins)
     val (ps, m) = parse(moduleBody(h2), psz2)
-    val maps = loadModule(ps, m, _ => None)._2
+    val ck : Map[Global,Type.Con] => Option[PartialFunction[TermVar,TermVar]] =
+          if(!s.typeCheck) (_ => Some(untyped))
+          else (_ => None)
+    val maps = loadModule(ps, m, ck)._2
     val (_, tm) = parse(phrase(term), ps copy (loc = Pos.start(fileName, exprText),
                                                offset = 0,
                                                input = exprText))
