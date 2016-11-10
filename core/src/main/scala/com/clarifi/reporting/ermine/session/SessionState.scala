@@ -90,11 +90,14 @@ class SessionEnv(
   var loadedModules:   Map[String, CheckMethod]       = Map("Builtin" -> CheckMethod.Interface),
   var classes:         Map[Global,ClassDef]           = Map(),
   var classOrigins:    Map[Global, List[Global]]      = Map(),
-     _typeCheck:       Option[Boolean]                = None
+     _typeCheck:       Option[Boolean]                = None,
+     _useInterface:    Option[Boolean]                = None
 ) { that =>
-  def copy = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck))
+  def copy = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck),Some(that.useInterface))
 
   val typeCheck : Boolean = _typeCheck.getOrElse(java.lang.Boolean.getBoolean("ermine.typeCheck"))
+  val useInterface : Boolean =
+    _useInterface.getOrElse(java.lang.Boolean.parseBoolean(System.getProperty("ermine.useInterface","true")))
 
   def +=(sp: SessionEnv) {
     env             = env ++ sp.env

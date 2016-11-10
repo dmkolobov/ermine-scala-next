@@ -337,6 +337,7 @@ object Session {
       val exports = nanoTime
       val preCk : (Map[Global,Type.Con], Supply, ParseState) => Option[PartialFunction[TermVar,TermVar]] =
         if(!s.typeCheck) ((_,_,_) => Some(untyped))
+        else if(!s.useInterface) ((_,_,_) => None)
         else (gcs, su, ps) => file.interfaceContents flatMap { intf =>
            _log.trace("Interface contents: " + intf)
            val newPs = scalaparsers.ParseState.mk(file.toString + "i", intf, ps.s.copy(recognizedCons = gcs))
