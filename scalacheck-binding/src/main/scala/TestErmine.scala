@@ -8,7 +8,7 @@ import parsing.{ phrase, ErParseState, Parser, ParseState, ModuleHeader }
 import parsing.ModuleParsers.moduleBody
 import parsing.TermParsers.term
 import parsing.TypeParsers.typ
-import session.{ Lib, SessionEnv, Printer, Session }
+import session.{ Lib, SessionEnv, Printer, Session, CheckMethod }
 import session.Session.{loadModules => _, _}
 import syntax.{ ImportExportStatement, Explicit }
 import ErParseState.Implicits._
@@ -31,7 +31,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
   lazy val baseEnv: SessionEnv = {
     implicit val e : SessionEnv = new SessionEnv(_typeCheck = Some(true))
     Lib.preamble
-    e.loadedModules = e.loadedModules + "Test"
+    e.loadedModules = e.loadedModules + ("Test" -> CheckMethod.Interface)
     prepBaseEnv(e)
     e
   }

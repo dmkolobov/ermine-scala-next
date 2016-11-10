@@ -398,7 +398,7 @@ object Session {
   // @throws Death
   def deps(modules: Set[String])(implicit s: SessionEnv, su: Supply): List[Dep] = {
     val ds = modules.map(m => dep(SourceFile.forModule(m), List(), Some(m))).toList
-    ds ++ depsPrime(s.loadedModules, s.loadedFiles)(ds)
+    ds ++ depsPrime(s.loadedModules.keySet, s.loadedFiles)(ds)
   }
 
   case class Dep(
@@ -427,10 +427,16 @@ object Session {
       read(s,su) match {
         case None => ()
         case Some((ps, m)) =>
-          def preChecked(lcs: Map[Global,Type.Con]) = readInterface(s.cons ++ s.privateCons ++ lcs, su, ps)
-          loadModule(ps, m, preChecked, writeInterface)
+          def preChecked(lcs: Map[Global,Type.Con]) =
+            if(imports.forall(im => s.loadedModules.get(im) == Some(CheckMethod.Interface)))
+              readInterface(s.cons ++ s.privateCons ++ lcs, su, ps)
+            else {
+              _log.debug("Rechecking '" + moduleName + "' due to lack of (valid) interface for dependency")
+              None
+            }
+          val (tc, _) = loadModule(ps, m, preChecked, writeInterface)
           s.loadedFiles = s.loadedFiles + (file -> m.name)
-          s.loadedModules = s.loadedModules + m.name
+          s.loadedModules = s.loadedModules + (m.name -> tc)
       }
     }
     // @throws Death
@@ -502,7 +508,7 @@ object Session {
   def loadModules(moduleNames: List[String])(implicit s: SessionEnv, su: Supply, con: Printer): Set[String] = {
     val x = first
     val t0 = nanoTime
-    val loaded = s.loadedModules
+    val loaded = s.loadedModules.keySet
     val ds = deps(moduleNames.toSet &~ loaded).map(_ -- loaded)
     val needed = ds.map(_.moduleName).toSet &~ loaded
     val n = needed.size
@@ -586,7 +592,7 @@ object Session {
       case (n@Global(m,_,_),_) => !scrubbing(m) || builtinEnv.cons.contains(n)
     }
     sessionEnv.loadedFiles = oldState.loadedFiles.filter { case (k,v) => !scrubbing(v) }
-    sessionEnv.loadedModules = oldState.loadedModules &~ scrubbing
+    sessionEnv.loadedModules = oldState.loadedModules -- scrubbing
     val died = if (simpleDirtyModules.isEmpty && manualDirtyFiles.isEmpty) {
       sayLn("No modules have changed.")
       None
@@ -626,7 +632,7 @@ object Session {
   def readModule(fileName: String)(implicit s: SessionEnv, su: Supply, con: Printer): Module = {
     val file = Filesystem(fileName)
     val d = dep(file)
-    val ms = s.loadedModules
+    val ms = s.loadedModules.keySet
     for (m <- d.imports &~ ms)
       load(SourceFile.forModule(m), Some(m), List(file))
     d.read(s,su).get._2
@@ -683,7 +689,7 @@ object Session {
     val h2 = h.copy(name = "Remote")
     val psz2 = psz.copy(s = psz.s.copy(moduleName = "Remote")).importing(snap.termNames, snap.cons.keySet, hImports, snap.termNameOrigins, snap.consOrigins)
     val (ps, m) = parse(moduleBody(h2), psz2)
-    val maps = loadModule(ps, m, _ => None)
+    val maps = loadModule(ps, m, _ => None)._2
     val (_, tm) = parse(phrase(term), ps copy (loc = Pos.start(fileName, exprText),
                                                offset = 0,
                                                input = exprText))
@@ -710,7 +716,7 @@ object Session {
       val d = dep(file, making)
       if (expectedModuleName.isDefined && expectedModuleName.get != d.moduleName)
         d.die("expected a module named " + expectedModuleName.get)
-      for (m <- d.imports &~ s.loadedModules)
+      for (m <- d.imports &~ s.loadedModules.keySet)
         load(SourceFile.forModule(m), Some(m), file :: making)
       d.make
       d.moduleName
@@ -793,7 +799,7 @@ object Session {
     m: Module,
     preChecked: Map[Global,Type.Con] => Option[PartialFunction[TermVar,TermVar]],
     writeInterface: List[TermVar] => Unit = (_ => ())
-  )(implicit s: SessionEnv, su: Supply): Maps = {
+  )(implicit s: SessionEnv, su: Supply): (CheckMethod, Maps) = {
     val prior = nanoTime
     var maps = (Type.conMap(m.name, ps.s.typeNames, s.cons), Map(): Map[TermVar,TermVar])
     val mod = m.name
@@ -822,7 +828,7 @@ object Session {
       case (V(_, _, Some(g : Global), _, _), t : Type.Con) => g -> t
       case (V(_, _, Some(l : Local), _, _), t : Type.Con) => l.global(m.name) -> t
     }
-    val (_, ds, varAnn) = preChecked(localCons) match {
+    val (tcm, (_, ds, varAnn)) = preChecked(localCons) match {
       case None =>
         subst { implicit hm =>
           val r@(_, ty, ms) = inferBindingGroupTypes(m.loc, Nil, is, es, true)
@@ -836,10 +842,10 @@ object Session {
           }
           writeInterface(ms.values.toList)
           // do something with hm here, which is a SubstEnv
-          r
+          (CheckMethod.Full, r)
         }
       case Some(remap) =>
-        (List(), List(), remap)
+        (CheckMethod.Interface, (List(), List(), remap))
     }
     for (d <- ds)
       if (!d.isTrivialConstraint)
@@ -938,7 +944,7 @@ object Session {
     val endTime = nanoTime
     // _ <- profile(mp.name + " loadModule", prior, "misc" -> miscStatementTime, "closure" -> closureTime, "binding" -> bgTime, "rest" -> endTime)
     profile(mp.name + " loadModule", prior, "misc" -> miscStatementTime, "closure" -> closureTime, "binding" -> bgTime, "misc" -> preEnv, "environment" -> endTime)
-    msFinal
+    (tcm, msFinal)
   }
 
   def unfurlType: Type => (List[Type], Type) = {

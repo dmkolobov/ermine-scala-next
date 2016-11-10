@@ -66,6 +66,18 @@ case class Instantiation(
   def loc = instance.loc
 }
 
+sealed trait CheckMethod {
+  import CheckMethod._
+  def <>(c: CheckMethod): CheckMethod = (this, c) match {
+    case (Interface,Interface) => Interface
+    case _ => Full
+  }
+}
+object CheckMethod {
+  case object Interface extends CheckMethod
+  case object Full extends CheckMethod
+}
+
 class SessionEnv(
   var env:             Map[V[Type],Runtime]           = Map(), // vars here are all for global names
   var termNames:       Map[Global,V[Type]]            = Map(),
@@ -75,7 +87,7 @@ class SessionEnv(
   var consOrigins:     Map[Global,List[Global]]       = Map(),
   var loadFile:        Session.SourceFile.Loader      = Session.SourceFile.defaultLoader,
   var loadedFiles:     Map[Session.SourceFile,String] = Map(), // filenames that have been loaded already
-  var loadedModules:   Set[String]                    = Set("Builtin"),
+  var loadedModules:   Map[String, CheckMethod]       = Map("Builtin" -> CheckMethod.Interface),
   var classes:         Map[Global,ClassDef]           = Map(),
   var classOrigins:    Map[Global, List[Global]]      = Map(),
      _typeCheck:       Option[Boolean]                = None
@@ -93,7 +105,7 @@ class SessionEnv(
     consOrigins     = consOrigins ++ sp.consOrigins
     // no loadFile union, so skip
     loadedFiles     = loadedFiles ++ sp.loadedFiles
-    loadedModules   = loadedModules | sp.loadedModules
+    loadedModules   = loadedModules ++ sp.loadedModules
     classes         = classes ++ sp.classes ++
       (classes.keySet.intersect(sp.classes.keySet).map {
         k => k -> (classes(k) ++ sp.classes(k).instances)

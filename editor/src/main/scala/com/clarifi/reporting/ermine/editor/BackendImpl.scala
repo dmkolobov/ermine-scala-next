@@ -240,7 +240,7 @@ class BackendImpl extends Backend[EditorSession, Option[Document], (Module,Sessi
     }
   }
 
-  def listImports = session { _.loadedModules.toList }
+  def listImports = session { _.loadedModules.keySet.toList }
 
   def addImport(module: String) = supply flatMap (su =>
     session(implicit se =>

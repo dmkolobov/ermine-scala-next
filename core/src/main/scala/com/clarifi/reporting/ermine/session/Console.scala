@@ -426,7 +426,7 @@ object Console {
              case (k,v) => text(k.toString) :+: "=>" :+: text(v)
            }))))
         )
-        writeLn("Modules:" :+: nest(2, fillSep(punctuate(",", e.sessionEnv.loadedModules.toList.sorted.map(text(_))))))
+        writeLn("Modules:" :+: nest(2, fillSep(punctuate(",", e.sessionEnv.loadedModules.keySet.toList.sorted.map(text(_))))))
       }
     },
     new Action(":source", List(), Some("<module>"), "Show a module's Ermine source code") {
