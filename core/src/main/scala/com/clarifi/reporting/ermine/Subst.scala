@@ -496,14 +496,17 @@ object Subst {
       }
       case Exists(l,xs,ts) =>
         val nxs = refreshList(Ambiguous(Skolem), l, xs)
-        for (c <- subType(zipTypes(xs,nxs), ts)) kindCheck(d, substType(c), Constraint(li))
+        val kxs = nxs.map(_.extract)
+        for (c <- subType(zipTypes(xs,nxs), ts)) kindCheck(kxs ++ d, substType(c), Constraint(li))
         restrictTypes(nxs)
         Constraint(li).schema
       case Forall(l,ks,ts,q,tp) =>
         val km = zipKinds(ks, refreshList(Skolem, l, ks))
-        val tm = zipTypes(ts, refreshList(Skolem, l, subKind(km, ts)))
-        kindCheck(d, tp.subst(km, tm), Star(li))
-        kindCheck(d, q.subst(km, tm), Constraint(li))
+        val sts = refreshList(Skolem, l, subKind(km, ts))
+        val tks = sts.map(_.extract)
+        val tm = zipTypes(ts, sts)
+        kindCheck(tks ++ d, tp.subst(km, tm), Star(li))
+        kindCheck(tks ++ d, q.subst(km, tm), Constraint(li))
         Star(li).schema
       case Con(_,_,_,s) => s
     }
