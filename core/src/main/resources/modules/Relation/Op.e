@@ -105,7 +105,7 @@ lower : AsOp op => op r String -> Op r String
 lower x = builtin1 lowerBuiltin (asOp x)
 
 replace : OpTri a b c String
-replace x y z = builtin3 replaceBuiltin (asOp x) (asOp y) (asOp z)
+replace target replacement x = builtin3 replaceBuiltin (asOp x) (asOp target) (asOp replacement)
 
 negate x = (prim $ Some 0.0 ) - x
 
