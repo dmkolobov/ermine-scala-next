@@ -28,7 +28,6 @@ object Markdown {
     case class MLink(isImage: Boolean, inner: List[MSyntax], destination: String, title: Option[String]) extends MSyntax
     case class MColor(color: String) extends MSyntax
 
-
   //trivial template substitution engine
   // stackoverflow.com/questions/6110062/
   private val tRegex : Regex = """\{\{([^{}]*)\}\}""".r
@@ -153,6 +152,11 @@ object Markdown {
           if (color.map(x => (x >= '0' && x <= '9') || (x >= 'A' && x <= 'F')).reduce(_ && _))
             (MColor(color.mkString), rest)
           else parseToken(cs, '#' :: res)
+        }
+        case '`' :: cs => {
+          val tokenEnd = cs.indexOf('`')
+          if (tokenEnd > 0) (MPlain(cs.slice(0, tokenEnd).mkString), cs.slice(tokenEnd + 1, cs.length))
+          else parseToken(cs, '`' :: res)
         }
         case Nil => (MPlain(res.reverse.mkString), List())
         case c :: cs => parseToken(cs, c :: res)
@@ -345,7 +349,7 @@ object Markdown {
   }
 
   def escapeForMarkdown(s: String): String = {
-    val charsToEscape = List("\\","*", "_", "(", ")", "[", "]","#","-")
+    val charsToEscape = List("\\","*", "_", "(", ")", "[", "]","#","-", "`")
     charsToEscape.foldLeft(s){ case (acc, old) => acc.replace(old, "\\" + old) }
   }
 
