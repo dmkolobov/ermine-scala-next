@@ -29,7 +29,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
   implicit val con = Printer.ignore
 
   lazy val baseEnv: SessionEnv = {
-    implicit val e : SessionEnv = new SessionEnv(_typeCheck = Some(true))
+    implicit val e : SessionEnv = new SessionEnv(_typeCheck = Some(true), _useInterface = Some(false))
     Lib.preamble
     e.loadedModules = e.loadedModules + ("Test" -> CheckMethod.Interface)
     prepBaseEnv(e)
