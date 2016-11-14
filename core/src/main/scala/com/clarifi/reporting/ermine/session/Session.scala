@@ -34,6 +34,7 @@ import com.clarifi.reporting.ermine.parsing.{
 }
 import ErParseState.Implicits._
 import com.clarifi.reporting.ermine.parsing.ModuleParsers._
+import com.clarifi.reporting.ermine.parsing.InterfaceParsers.interfaceFile
 import com.clarifi.reporting.ermine.parsing.TermParsers.term
 import com.clarifi.reporting.relational._
 
@@ -105,11 +106,14 @@ object Session {
     /** Whether loaded from some non-`SourceFile.Loader` source. */
     def exotic: Boolean = false
     def lastModified: Option[Long]
+    def interfaceContents: Option[String]
+    def interfaceWriteback(s: String): Unit = ()
   }
 
   case class Filesystem(fileName: String, override val exotic: Boolean = false)
       extends SourceFile {
     private val file = new File(fileName)
+
     def exists = file.exists
     def lastModified = if (exists) Some(file.lastModified) else None
     def contents =
@@ -128,6 +132,33 @@ object Session {
       (sections.init ++ List(sections.last.split('.')(0))).mkString(".") // strip off any file extension
     }
     override def toString = fileName
+
+    private val interfaceFileName =
+      if(fileName.endsWith(".e")) fileName + "i"
+      else fileName + ".ei"
+
+    private def interfaceFile = new File(interfaceFileName)
+
+    def interfaceContents =
+      try {
+        if (lastModified.map(interfaceFile.lastModified > _).getOrElse(false)) {
+          val source = scala.io.Source.fromFile(interfaceFileName)
+          val str = source.mkString
+          source.close
+          Some(str)
+        } else None
+      } catch {
+        case e : java.io.IOException => None
+      }
+
+    override def interfaceWriteback(s: String) =
+      try {
+        val wr = new java.io.PrintWriter(interfaceFileName)
+        wr.println(s)
+        wr.close
+      } catch {
+        case e : java.io.IOException => ()
+      }
   }
 
   case class Resource(module: String, url: URL) extends SourceFile {
@@ -140,6 +171,23 @@ object Session {
     def defaultModuleName: String = module
     def lastModified = Some(0)
     override def toString = url.toString
+
+    private val interfaceURL = {
+      val str = url.toString
+      if (str endsWith ".e") Some(new URL(str + "i"))
+      else None
+    }
+
+    def interfaceContents = interfaceURL flatMap { u =>
+      try {
+        val source = scala.io.Source.fromURL(u, "UTF-8")
+        val str = source.mkString
+        source.close
+        Some(str)
+      } catch {
+        case e : java.io.IOException => None
+      }
+    }
   }
 
   case class Literal(contents: String, defaultModuleName: String) extends SourceFile {
@@ -154,6 +202,7 @@ object Session {
       case o@Literal(_, dmn) if o canEqual this => dmn == defaultModuleName
       case _ => false
     }
+    def interfaceContents = None
   }
 
   // like a literal, but contents can change
@@ -169,12 +218,14 @@ object Session {
       case o@Dynamic(_, _, dmn) if o canEqual this => dmn == defaultModuleName
       case _ => false
     }
+    def interfaceContents = None
   }
 
   case class NotFound(module: String) extends SourceFile {
     def contents = die("Module not found: '" + module + "'")
     def defaultModuleName: String = module
     def lastModified = None
+    def interfaceContents = None
   }
 
   object SourceFile {
@@ -264,7 +315,18 @@ object Session {
 
   private val all: (Option[String],List[Explicit[Global]],Boolean) = (None, List(), false)
 
-  def dep(file: SourceFile, making: List[SourceFile] = Nil, expectedName: Option[String] = None)(implicit su: Supply): Dep = {
+  /**
+   * Used when running in untyped mode. Answers the question of, 'do we know
+   * the type of this variable,' always in the affirmative, with type
+   * 'forall a. a'.
+   */
+  private def untyped(implicit su: Supply): PartialFunction[TermVar, TermVar] = {
+    case v =>
+        val a = fresh(v.loc, None, Bound, Star(v.loc))
+        v.as(Forall(v.loc, List(), List(a), Exists.unit, VarT(a)))
+    }
+
+  def dep(file: SourceFile, making: List[SourceFile] = Nil, expectedName: Option[String] = None)(implicit s: SessionEnv, su: Supply): Dep = {
     acyclic(file, making)
     cacheDep(file, file :: making, expectedName) {
       val start = nanoTime
@@ -273,6 +335,21 @@ object Session {
       val expTys = mh.importExports.flatMap { ie => ie.explicits.collect { case e if e.isType => e.global } }
       val expTms = mh.importExports.flatMap { ie => ie.explicits.collect { case e if !e.isType => e.global } }
       val exports = nanoTime
+      val preCk : (Map[Global,Type.Con], Supply, ParseState) => Option[PartialFunction[TermVar,TermVar]] =
+        if(!s.typeCheck) ((_,_,_) => Some(untyped))
+        else if(!s.useInterface) ((_,_,_) => None)
+        else (gcs, su, ps) => file.interfaceContents flatMap { intf =>
+           _log.trace("Interface contents: " + intf)
+           val newPs = scalaparsers.ParseState.mk(file.toString + "i", intf, ps.s.copy(recognizedCons = gcs))
+           interfaceFile.run(newPs,su.split) match {
+             case Left(err) =>
+               _log.debug("Error parsing interface file:")
+               _log.debug(err)
+               None
+             case Right((_,pf)) => Some(pf)
+           }
+        }
+
       profile(file.defaultModuleName + " dep", start, "header parse" -> mhParse, "export handling" -> exports)
       Dep(
         mh.loc,
@@ -295,7 +372,9 @@ object Session {
             Some(r)
         },
         expTys,
-        expTms
+        expTms,
+        preCk,
+        file.interfaceWriteback
       )
     }
   }
@@ -313,7 +392,7 @@ object Session {
     else {
       val nds = m.toList.map {
         case (mn,making) => fork {
-          case (_, sup) => dep(SourceFile.forModule(mn), making, Some(mn))(sup)
+          case (sp, sup) => dep(SourceFile.forModule(mn), making, Some(mn))(sp, sup)
         }
       }
       val ndsp = joins(nds)
@@ -324,7 +403,7 @@ object Session {
   // @throws Death
   def deps(modules: Set[String])(implicit s: SessionEnv, su: Supply): List[Dep] = {
     val ds = modules.map(m => dep(SourceFile.forModule(m), List(), Some(m))).toList
-    ds ++ depsPrime(s.loadedModules, s.loadedFiles)(ds)
+    ds ++ depsPrime(s.loadedModules.keySet, s.loadedFiles)(ds)
   }
 
   case class Dep(
@@ -336,8 +415,16 @@ object Session {
     making: List[SourceFile],
     read: (SessionEnv, Supply) => Option[(ParseState, Module)],
     typeReqs: List[Global],
-    termReqs: List[Global]
+    termReqs: List[Global],
+    readInterface: (Map[Global,Type.Con], Supply, ParseState) => Option[PartialFunction[TermVar, TermVar]],
+    writeInterfaceString: String => Unit
   ) extends Located {
+    private def writeInterface(defs: List[TermVar]): Unit = {
+      val w = new java.io.StringWriter()
+      vsep(defs.map(Pretty.prettyVarHasType(_, Pretty.FullyQualified))).format(1000000, w)
+      writeInterfaceString(w.toString)
+    }
+
     def --(xs: Traversable[String]) = copy(imports = imports -- xs)
     // @throws Death
     def make(implicit s: SessionEnv, su: Supply) {
@@ -345,9 +432,16 @@ object Session {
       read(s,su) match {
         case None => ()
         case Some((ps, m)) =>
-          loadModule(ps, m)
+          def preChecked(lcs: Map[Global,Type.Con]) =
+            if(imports.forall(im => s.loadedModules.get(im) == Some(CheckMethod.Interface)))
+              readInterface(s.cons ++ s.privateCons ++ lcs, su, ps)
+            else {
+              _log.debug("Rechecking '" + moduleName + "' due to lack of (valid) interface for dependency")
+              None
+            }
+          val (tc, _) = loadModule(ps, m, preChecked, writeInterface)
           s.loadedFiles = s.loadedFiles + (file -> m.name)
-          s.loadedModules = s.loadedModules + m.name
+          s.loadedModules = s.loadedModules + (m.name -> tc)
       }
     }
     // @throws Death
@@ -419,7 +513,7 @@ object Session {
   def loadModules(moduleNames: List[String])(implicit s: SessionEnv, su: Supply, con: Printer): Set[String] = {
     val x = first
     val t0 = nanoTime
-    val loaded = s.loadedModules
+    val loaded = s.loadedModules.keySet
     val ds = deps(moduleNames.toSet &~ loaded).map(_ -- loaded)
     val needed = ds.map(_.moduleName).toSet &~ loaded
     val n = needed.size
@@ -503,7 +597,7 @@ object Session {
       case (n@Global(m,_,_),_) => !scrubbing(m) || builtinEnv.cons.contains(n)
     }
     sessionEnv.loadedFiles = oldState.loadedFiles.filter { case (k,v) => !scrubbing(v) }
-    sessionEnv.loadedModules = oldState.loadedModules &~ scrubbing
+    sessionEnv.loadedModules = oldState.loadedModules -- scrubbing
     val died = if (simpleDirtyModules.isEmpty && manualDirtyFiles.isEmpty) {
       sayLn("No modules have changed.")
       None
@@ -543,7 +637,7 @@ object Session {
   def readModule(fileName: String)(implicit s: SessionEnv, su: Supply, con: Printer): Module = {
     val file = Filesystem(fileName)
     val d = dep(file)
-    val ms = s.loadedModules
+    val ms = s.loadedModules.keySet
     for (m <- d.imports &~ ms)
       load(SourceFile.forModule(m), Some(m), List(file))
     d.read(s,su).get._2
@@ -600,7 +694,10 @@ object Session {
     val h2 = h.copy(name = "Remote")
     val psz2 = psz.copy(s = psz.s.copy(moduleName = "Remote")).importing(snap.termNames, snap.cons.keySet, hImports, snap.termNameOrigins, snap.consOrigins)
     val (ps, m) = parse(moduleBody(h2), psz2)
-    val maps = loadModule(ps, m)
+    val ck : Map[Global,Type.Con] => Option[PartialFunction[TermVar,TermVar]] =
+          if(!s.typeCheck) (_ => Some(untyped))
+          else (_ => None)
+    val maps = loadModule(ps, m, ck)._2
     val (_, tm) = parse(phrase(term), ps copy (loc = Pos.start(fileName, exprText),
                                                offset = 0,
                                                input = exprText))
@@ -627,7 +724,7 @@ object Session {
       val d = dep(file, making)
       if (expectedModuleName.isDefined && expectedModuleName.get != d.moduleName)
         d.die("expected a module named " + expectedModuleName.get)
-      for (m <- d.imports &~ s.loadedModules)
+      for (m <- d.imports &~ s.loadedModules.keySet)
         load(SourceFile.forModule(m), Some(m), file :: making)
       d.make
       d.moduleName
@@ -705,7 +802,12 @@ object Session {
         f.foldRight(con(ts.map(VarT(_)):_*))(Arrow(loc.inferred,_,_))))
 
   // assumes the binding group has had its cons replaced
-  def loadModule(ps: ParseState, m: Module)(implicit s: SessionEnv, su: Supply): Maps = {
+  def loadModule(
+    ps: ParseState,
+    m: Module,
+    preChecked: Map[Global,Type.Con] => Option[PartialFunction[TermVar,TermVar]],
+    writeInterface: List[TermVar] => Unit = (_ => ())
+  )(implicit s: SessionEnv, su: Supply): (CheckMethod, Maps) = {
     val prior = nanoTime
     var maps = (Type.conMap(m.name, ps.s.typeNames, s.cons), Map(): Map[TermVar,TermVar])
     val mod = m.name
@@ -730,10 +832,14 @@ object Session {
     assertTermClosed(bs, env.keySet ++ bs.map(_.v))
     assertTypeClosed(bs)
     val closureTime = nanoTime
-    val (_, ds, terms) =
-      if (s.typeCheck)
+    val localCons: Map[Global,Con] = maps._1 collect {
+      case (V(_, _, Some(g : Global), _, _), t : Type.Con) => g -> t
+      case (V(_, _, Some(l : Local), _, _), t : Type.Con) => l.global(m.name) -> t
+    }
+    val (tcm, (_, ds, varAnn)) = preChecked(localCons) match {
+      case None =>
         subst { implicit hm =>
-          val r = inferBindingGroupTypes(m.loc, Nil, is, es, true)
+          val r@(_, ty, ms) = inferBindingGroupTypes(m.loc, Nil, is, es, true)
           if (!hm.remembered.isEmpty) {
             println("\nRemembered terms:\n")
             hm.remembered.values.toSeq
@@ -742,30 +848,36 @@ object Session {
                 println(loc.report(Pretty.prettyType(typ)))
             }
           }
+          writeInterface(ms.values.toList)
           // do something with hm here, which is a SubstEnv
-          r
+          (CheckMethod.Full, r)
         }
-      else {
-        val vs = bs.map({ case b =>
-            val a = fresh(b.loc, None, Bound, Star(b.loc))
-            b.v -> b.v.as(Forall(b.loc, List(), List(a), Exists.unit, VarT(a)))
-          }).toMap
-        (List(), List(), vs)
-      }
+      case Some(remap) =>
+        (CheckMethod.Interface, (List(), List(), remap))
+    }
     for (d <- ds)
       if (!d.isTrivialConstraint)
         d.die("non-trivial top level constraint")
     val bgTime = nanoTime
-    val mp = m.subTerm(terms)
+    val mp = m.subTerm(varAnn)
     val pts = mp.privateTerms
     val buf = new ListBuffer[(Global,TermVar)]()
-    terms.foreach {
-      case (k,v) if !pts.contains(v) =>
+    val tmbuf = new ListBuffer[(TermVar, TermVar)]()
+    bs.foreach {
+      case b if pts.contains(b.v) =>
+        if (varAnn.isDefinedAt(b.v))
+          tmbuf += (b.v -> varAnn(b.v))
+        else ()
+      case b if !varAnn.isDefinedAt(b.v) =>
+        b.die("pre-checked types failed to handle exported definition")
+      case b =>
+        val v = varAnn(b.v)
         val g = global(mp.name, v)
         buf += (g -> v.copy(name = Some(g)))
-      case _ => ()
+        tmbuf += (b.v -> v)
     }
     val tm = buf.toMap
+    val terms = tmbuf.toMap
     val substTime = nanoTime
 
     val exports = m.importExports.filter(_.export)
@@ -793,27 +905,27 @@ object Session {
     if (!overwrites.isEmpty)
       mp.die("error: loading would overwrite" :+:
         ordinal(overwrites.length,"existing global:", "existing globals:") :+:
-        fillSep(punctuate("," :: line, overwrites.toList.map(Pretty.ppName(_).run)))
+        fillSep(punctuate("," :: line, overwrites.toList.map(Pretty.ppName(_)(Pretty.Unqualified).run)))
       )
 
     val overwrites2 = etcs.keySet.intersect(cs.keySet).toList
     if (!overwrites2.isEmpty)
       mp.die("error: loading would overwrite" :+:
         ordinal(overwrites2.length,"existing type constructor:", "existing type constructors:") :+:
-        fillSep(punctuate("," :: line, overwrites2.toList.map(Pretty.ppName(_).run)))
+        fillSep(punctuate("," :: line, overwrites2.toList.map(Pretty.ppName(_)(Pretty.Unqualified).run)))
       )
 
     val overwrites3 = tm.values.toSet.intersect(env.keySet).toList
     if (!overwrites3.isEmpty)
       mp.die("error: loading would overwrite" :+:
         ordinal(overwrites3.length,"existing global", "existing globals") :+: "in the environment:" :+:
-        fillSep(punctuate("," :: line, overwrites3.toList.map(Pretty.ppVar(_).run)))
+        fillSep(punctuate("," :: line, overwrites3.toList.map(Pretty.ppVar(_)(Pretty.Unqualified).run)))
       )
 
     val overwriteCheckTime = nanoTime
 
     val gptms = mp.privateTerms.map(global(mp.name, _)).toList
-    val gptys = mp.privateTypes.map(global(mp.name, _)).toList
+    val gptys = mp.privateTypes.map(global(mp.name, _)).toSet
 
     val mpbs = subTermMaps(maps, (mp.implicits ++ mp.explicits) : List[Binding]).map(_.close)
 
@@ -822,7 +934,14 @@ object Session {
 
     s.env = envp -- pts
     s.termNames = (tmp ++ s.termNames) -- gptms
-    s.cons = (etcs ++ s.cons) -- gptys
+
+    val (exCons, hiCons) = (etcs ++ s.cons) partition {
+      case (g, v) if g.module == mp.name => !gptys(g)
+      case _ => true
+    }
+
+    s.cons = exCons
+    s.privateCons = (hiCons ++ s.privateCons)
 
     s.termNameOrigins = s.termNameOrigins ++ ps.s.termOrigins
     s.consOrigins = s.consOrigins ++ ps.s.typeOrigins
@@ -833,7 +952,7 @@ object Session {
     val endTime = nanoTime
     // _ <- profile(mp.name + " loadModule", prior, "misc" -> miscStatementTime, "closure" -> closureTime, "binding" -> bgTime, "rest" -> endTime)
     profile(mp.name + " loadModule", prior, "misc" -> miscStatementTime, "closure" -> closureTime, "binding" -> bgTime, "misc" -> preEnv, "environment" -> endTime)
-    msFinal
+    (tcm, msFinal)
   }
 
   def unfurlType: Type => (List[Type], Type) = {

@@ -48,7 +48,6 @@ import Relation.Pivot using type Fulcrum; snoc_Brace as snoc_Fulcrum ; single_Br
 import Relation.Row using project; except; minus; single_Brace; snoc_Brace; type Row; append as appendR
                           empty as emptyRow
 import Relation.Sort
-import Record using type Record
 import Syntax.Do hiding unit
 import Syntax.List
 import Syntax.IO hiding map

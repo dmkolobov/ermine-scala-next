@@ -22,7 +22,8 @@ case class ErParseState(
   /* Note - a given global *can* have two origins.  For example, if Foo exports Bar.bar and Baz.bar, Foo.bar itself
      is ambiguous.  This should probably be an error at module definition time.*/
   termOrigins:    Map[Global, List[Global]] = Map(), // e.g. Control.Monad.Functor => List(Control.Functor.Functor)
-  typeOrigins:    Map[Global, List[Global]] = Map()  // "
+  typeOrigins:    Map[Global, List[Global]] = Map(), // "
+  recognizedCons: Map[Global, Type.Con] = Map() // for interface file parsing
 ) {
   def importing( sessionTerms: Map[Global,TermVar]
                , cons: Set[Global]

@@ -13,6 +13,10 @@ import scala.collection.immutable.List
 
 import Type.{recordT, relationT}
 
+import scalaz.std.list._
+import scalaz.std.option._
+import scalaz.syntax.traverse._
+
 object TypeParsers {
   import SI8862._
 
@@ -72,6 +76,7 @@ object TypeParsers {
       Some(n) <- gets(_.s.canonicalTypes.get(Local(s,fix))) flatMap {
         case Some(List(n)) => unit( Some(n) )
         case Some(ns) => fail[Parser]("ambiguous type operator or identifier: " + s + ", " + ns)
+        case None => unit(None)
         }
       if f(n.fixity)
       l = typeNames.member(n)
@@ -154,11 +159,53 @@ object TypeParsers {
         v <- typeVar(Some(Rho(lp.inferred)))
       } yield VarT(v)
     ) |
-    gets(_.s.moduleName).flatMap( mod =>
-      typeName.sepBy(comma).map(xs => ConcreteRho(l,xs.map(f(mod)).toSet))
-    )
+    gets(_.s).flatMap { (u: ErParseState) =>
+      val mod = u.moduleName
+      val nm : Parser[Name] =
+        if (u.recognizedCons.nonEmpty)
+           dottedName.attempt | typeName
+        else typeName
+      nm.sepBy(comma).map(xs => ConcreteRho(l,xs.map(f(mod)).toSet))
+    }
   } scope "row type"
 
+  private def upperName : Parser[Unit] = upper >> tailChar.skipMany
+  private def opName : Parser[Unit] = opChar.skipSome
+
+  private val logger = org.apache.log4j.Logger.getLogger(this.getClass)
+  private def dottedName: Parser[Global] = {
+    def grab : Parser[(String,String)] =
+      (upperName >> (ch('.') >> upperName).skipSome).slice map { s =>
+        val n = s.lastIndexOf('.')
+        val (mod, nm) = s.splitAt(n)
+        (mod, nm.tail)
+      }
+
+    grab map { case (mod,nm) => Global(mod, nm) }
+  }
+
+  private def dottedOpName: Parser[Global] = {
+    def grab : Parser[(String,String)] =
+      (upperName >> ch('.')).skipSome.slice ++ opName.slice
+
+    paren(_fixity ++ grab map { case (fx, (mod,op)) => Global(mod.init,op,fx) }).attempt
+  }
+
+  private def _fixity: Parser[Fixity] =
+    token((rawWord("pre").attempt.as(Prefix(11)) | rawWord("post").attempt.as(Postfix(11))) << "fix") | unit(Infix(11,AssocL))
+
+
+  private def interfaceCon: Parser[Type] = (for {
+    rcons <- gets(_.s.recognizedCons)
+    if rcons.size > 0
+    glob <- token(dottedName | dottedOpName)
+    if {
+      if (rcons.isDefinedAt(glob))
+        logger.trace(glob + " " + true)
+      else logger.debug(glob + " " + false)
+      rcons.isDefinedAt(glob)
+    }
+  } yield rcons(glob)).attempt("constructor")
 
   def typL0: Parser[Type] = loc.flatMap(l =>
     banana(rho(l)) |
@@ -168,6 +215,7 @@ object TypeParsers {
       keyOp("->").as(Arrow(l)) |
       comma.many.map(xs => if (xs.length == 0) ProductT(l, 0) else ProductT(l, xs.length + 1))
     ).attempt |
+    interfaceCon |
     typeVar().map(VarT(_)) |
     paren(anyTyp.sepBy1(comma)).map(xs => if (xs.length == 1) xs.head else ProductT(l, xs.length)(xs :_ *))
   ) scope "type atom"
@@ -217,12 +265,49 @@ object TypeParsers {
     }
   } scope "type")
 
+  /**
+   * A version of typ that ensures that all variables are quantified.
+   */
+  def qtyp: Parser[Type] = {
+    // Predicate to avoid quantifying things that were in an outer scope.
+    def p[A](m: Map[Name,V[A]]): V[A] => Option[(V[A], Option[V[A]])] = v =>
+      v.name match {
+        case None => Some((v, None))
+        case Some(n) if n.string.charAt(0).isLower => m.get(n) match {
+          case Some(ov) if v != ov => Some((v, Some(ov)))
+          case None => Some((v, None))
+          case _ => None
+        }
+        case _ => None
+      }
+
+    for {
+      st <- gets(_.s)
+      ty <- typ
+      utvs = Type.allTypeVars(ty).collect(Function.unlift(p(st.typeNames))).toList
+      _ <- utvs traverse_[Parser] { case (tv, otv) =>
+        tv.name traverse_[Parser] { n => modify(typeNames.member(n).set(_,otv)) }
+      }
+    } yield Forall.mk(ty.loc, List(), utvs.map(_._1), Exists.unit, ty)
+  }
+
   def exists = for {
     l <- loc
     xs <- keyword("exists") >> localType().many << keyOp(".")
     lxs = dist(xs)
     body <- lxs.distinct(l) >> typL2.sepBy1(comma) << lxs.unbind
   } yield Exists(l, lxs.extract, body)
+
+  def closed[A](p: Parser[A]): Parser[A] = for {
+    pos <- loc
+    preSt <- gets(_.s)
+    result <- p
+    postSt <- gets(_.s)
+    _ <- postSt.typeNames.toList.traverse_ { case (n, v) =>
+           if (n.string.charAt(0).isUpper || preSt.typeNames.get(n) == Some(v)) unit(())
+           else raise(pos, v.report("improperly quantified variable"))
+         }
+  } yield result
 
   def anyTyp = exists | typ
 

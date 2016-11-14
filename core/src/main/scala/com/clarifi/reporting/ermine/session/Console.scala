@@ -426,7 +426,7 @@ object Console {
              case (k,v) => text(k.toString) :+: "=>" :+: text(v)
            }))))
         )
-        writeLn("Modules:" :+: nest(2, fillSep(punctuate(",", e.sessionEnv.loadedModules.toList.sorted.map(text(_))))))
+        writeLn("Modules:" :+: nest(2, fillSep(punctuate(",", e.sessionEnv.loadedModules.keySet.toList.sorted.map(text(_))))))
       }
     },
     new Action(":source", List(), Some("<module>"), "Show a module's Ermine source code") {
@@ -637,7 +637,7 @@ object Console {
       case Right((ps, ImportExportCommand(ImportExportStatement(loc, true, module, as, explicits, using)))) =>
         writeLn("Ignoring export command")
 
-      case Right((ps, ModuleCommand(m))) => e.session(implicit s => loadModule(ps,m))
+      case Right((ps, ModuleCommand(m))) => e.session(implicit s => loadModule(ps,m, _ => None))
       case Right((_, EmptyCommand)) => ()
       case Right((psp, ExpressionCommand(a))) =>
         // val at = Type.subType(e.conMap(ps), a).close

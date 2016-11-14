@@ -26,9 +26,6 @@ import Syntax.Relation
 import Relation.Aggregate as Agg
 
 private
-  type Record a = Record_R a
-
-private
   sumVals valueFld = sum' . map (abs . getOrElse 0.0 . getF valueFld)
   numOrZero test x = if (test x 0.0) x 0.0
   sumPosVals valueFld = sum' . map (numOrZero (>) . getOrElse 0.0 . getF valueFld)

@@ -17,7 +17,7 @@ object Ermine {
   def runReport[F[_], C](w: Writer[F, C], report: Runtime
                        )(implicit s: SessionEnv): F[C] = {
     assume(s.termNames isDefinedAt Global("Layout.Report", "runReport"))
-    assume(s.loadedModules("Control.Monad.State"))
+    assume(s.loadedModules.isDefinedAt("Control.Monad.State"))
     def getv(mod: String, dfn: String) = Global(mod, dfn) |> s.termNames |> s.env
     report.whnfMatch("Writer.runErmineReport"){
       case Data(Global("Layout.Report", "Renderable", _), _) =>

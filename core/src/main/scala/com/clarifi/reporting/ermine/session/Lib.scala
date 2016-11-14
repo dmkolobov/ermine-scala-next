@@ -182,7 +182,7 @@ object Lib {
       case _         => None
     }
     def build(ds: List[Runtime]): Runtime = Prim(()) // no dictionary to build
-    def pretty = List(("instance " + name) :+: ppType(t).runAp)
+    def pretty = List(("instance " + name) :+: ppType(t)(Pretty.Unqualified).runAp)
   }
 
   def unfurledEqInstance(c: Con, n: Int)(implicit su: Supply) = new Instance(su.fresh) {
@@ -197,8 +197,8 @@ object Lib {
     def build(ds: List[Runtime]): Runtime = Prim(()) // no dictionary to build
     // assumes one argument for now, since we only ever use this with one argument
     def pretty = n match {
-      case 1 => List("instance Eq (" :: ppName(c.name).runAp :+: "a" :: ")" :+: nest(4, group("|" :/: "Eq" :+: text("a"))))
-      case 2 => List("instance Eq (" :: ppName(c.name).runAp :+: "a" :+: "b" :: ")" :+: nest(4, group ("|" :/: "Eq" :+: "a," :/: "Eq" :+: text("b"))))
+      case 1 => List("instance Eq (" :: ppName(c.name)(Pretty.Unqualified).runAp :+: "a" :: ")" :+: nest(4, group("|" :/: "Eq" :+: text("a"))))
+      case 2 => List("instance Eq (" :: ppName(c.name)(Pretty.Unqualified).runAp :+: "a" :+: "b" :: ")" :+: nest(4, group ("|" :/: "Eq" :+: "a," :/: "Eq" :+: text("b"))))
       case _ => sys.error("TODO: rewrite unfurledEqInstance.pretty")
     }
   }
@@ -206,7 +206,8 @@ object Lib {
   def cons(implicit s: SessionEnv, su: Supply) =
     for(c <- List(
       Type.int, Type.long, Type.char, Type.string, Type.float, Type.double,
-      Type.field, Type.byte, Type.date, Type.uuid, Type.short, Type.ffi
+      Type.field, Type.byte, Type.date, Type.uuid, Type.short, Type.ffi,
+      Type.recordT, Type.relationT
     )) addCon(c)
 
   def simple(implicit s: SessionEnv, su: Supply) {
@@ -1106,7 +1107,7 @@ object Lib {
       }
       def build(ds: List[Runtime]): Runtime = Prim(d)
       def pp = for {
-        tDoc <- ppType(AppT(cls,t))
+        tDoc <- ppType(AppT(cls,t))(Pretty.Unqualified)
       } yield "instance" :+: tDoc
       def pretty = List(pp.run)
     }
