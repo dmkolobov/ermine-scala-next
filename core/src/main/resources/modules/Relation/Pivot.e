@@ -49,7 +49,7 @@ defaultFulcrumWithDefault (Row p) val key =
 
 defaultValue t = primCata 0 (Some 0) "" (Some "") True (Null Bool) 0.0 (Some 0.0) 0b (Some 0b) 0s (Some 0s) 0l (Some 0l)(dateFromLong 0l) (Null Date) (stringGuid "00000000-0000-0000-0000-000000000000") (Null GUID) t
 
-single_Brace : (Field f a, Op v a, {..k}) -> Fulcrum k v p
+single_Brace : (Field p a, Op v a, {..k}) -> Fulcrum k v p
 single_Brace (f, op, k) = Fulcrum (map_List fst ks) (map_List fst vs) [(record# k, (fieldName f, UnsafeOp op))]
  where
  vs = case rowUsed op of Row x -> x
@@ -89,7 +89,7 @@ mapFulcrum (g: some k v. forall f r a. Field f a -> Op r a -> {..k} -> (Op r a, 
   map_List ((r,(n,o)) -> case o of
               UnsafeOp o1 -> case existentialF n (typeOfOp o1) of
                 EField f -> case g f o1 $ unsafeRecordIn# r of
-		  (PhantomOp o2, r2) -> (record# r2,(n,o2)))
+                  (PhantomOp o2, r2) -> (record# r2,(n,o2)))
            l
 
 mapFulcrumKeys : ({..k} -> {..k}) -> Fulcrum k v p -> Fulcrum k v p
