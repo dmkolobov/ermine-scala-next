@@ -155,7 +155,7 @@ object Markdown {
         }
         case '`' :: cs => {
           val tokenEnd = cs.indexOf('`')
-          if (tokenEnd > 0) (MPlain(cs.slice(0, tokenEnd).mkString), cs.slice(tokenEnd + 1, cs.length))
+          if (tokenEnd >= 0) (MPlain(cs.slice(0, tokenEnd).mkString), cs.slice(tokenEnd + 1, cs.length))
           else parseToken(cs, '`' :: res)
         }
         case Nil => (MPlain(res.reverse.mkString), List())
