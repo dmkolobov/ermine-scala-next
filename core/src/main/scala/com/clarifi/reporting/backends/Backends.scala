@@ -14,8 +14,6 @@ object Backends {
   def Postgres               = SqlBackend(SqlEmitter.postgreSqlEmitter)
   def Vertica                = SqlBackend(SqlEmitter.verticaSqlEmitter)
   def SQLite                 = SqlBackend(SqlEmitter.sqliteEmitter)
-  /** Pre 2008, SQL server did not have a separate date type, only datetime. */
-  def MicrosoftSQLServer2005 = SqlBackend(SqlEmitter.msSqlEmitter2005)
   def MicrosoftSQLServer     = SqlBackend(SqlEmitter.msSqlEmitter)
 }
 
@@ -25,11 +23,9 @@ object Scanners {
   def Postgres(sms: SMEnv[DB])               = new SqlScanner(sms)(SqlEmitter.postgreSqlEmitter)
   def Vertica(sms: SMEnv[DB])                = new SqlScanner(sms)(SqlEmitter.verticaSqlEmitter)
   def SQLite(sms: SMEnv[DB])                 = new SqlScanner(sms)(SqlEmitter.sqliteEmitter)
-  /** Pre 2008, SQL server did not have a separate date type, only datetime. */
-  def MicrosoftSQLServer2005(sms: SMEnv[DB]) = new SqlScanner(sms)(SqlEmitter.msSqlEmitter2005)
   def MicrosoftSQLServer(sms: SMEnv[DB])     = new SqlScanner(sms)(SqlEmitter.msSqlEmitter)
 
-  def cloudScanner(sms: SMEnv[DB]): Scanner[DB] = MicrosoftSQLServer2005(sms)
+  def cloudScanner(sms: SMEnv[DB]): Scanner[DB] = MicrosoftSQLServer(sms)
 }
 
 object Runners {

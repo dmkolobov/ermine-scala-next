@@ -567,24 +567,9 @@ trait EmitOver_UsingOver extends SqlEmitter {
 }
 
 /**
- * Overrides emitConcat to use the + operator instead of the ||
- * operator, and coerce to string.
+ * Overrides emitConcat to use the CONCAT(arg1, ... argn) function
  */
-trait EmitConcat_MsSql extends SqlEmitter {
-  // SQL Server 2012 supports CONCAT with the correct semantics.  But
-  // we need to support 2008, which lacks concat, so we do a really
-  // hacky thing with replicate(x, 1), which is a string coercion.
-  override protected def emitConcat_helper(terms: NonEmptyList[SqlExpr]): SqlExpr =
-    terms.map{
-      case t@LitSqlExpr(SqlString(_)) => t
-      case t => FunSqlExpr("replicate", List(t, LitSqlExpr(SqlInt(1))))
-    }.foldLeft1(BinSqlExpr("+", _, _))
-}
-
-/**
- * Overrides emitConcat to use the CONCAT(arg1, ... argn) function present in MySQL
- */
-trait EmitConcat_MySQL extends SqlEmitter {
+trait EmitConcat_AsConcat extends SqlEmitter {
   override protected def emitConcat_helper(terms: NonEmptyList[SqlExpr]): SqlExpr =
     FunSqlExpr("Concat", terms.list)
 }
@@ -746,7 +731,7 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                                       with EmitExcept_AsJoin
                                       with ImplementLimit_AsLimit
                                       with EmitLimit_AsLimit
-                                      with EmitConcat_MySQL
+                                      with EmitConcat_AsConcat
                                       with EmitUnion
                                       with LazilyDistinct
                                       with EmitIntDivOp_MySQL
@@ -814,7 +799,7 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitNoDropTempTable
                                       with EmitUnion
                                       with EagerlyDistinct
-                                      with EmitConcat_MsSql
+                                      with EmitConcat_AsConcat
                                       with EmitExcept_MsSql
                                       with EmitIntDivOp_MsSql
                                       with ImplementLimit_AsLimit
@@ -1028,16 +1013,6 @@ object SqlEmitter {
   val mySqlEmitter = new MySqlEmitter(false)
   val msSqlEmitter = new MsSqlEmitter
 
-  val msSqlEmitter2005 = new MsSqlEmitter {
-    override def sqlTypeName(p: PrimT): RawSql = p match {
-      case StringT(l,n) => nn(n,"nvarchar(" |+| (if (l == 0) "1000" else l.toString) |+| ")")
-      case DateT(n)     => nn(n,"datetime")
-      case _ => SqlEmitter.fallbackSqlTypeName(p)
-    }
-
-    override def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
-      fallbackEmitLiteral(n)
-  }
   val verticaSqlEmitter = new VerticaSqlEmitter
 
   val postgreSqlEmitter = new PostgreSqlEmitter
