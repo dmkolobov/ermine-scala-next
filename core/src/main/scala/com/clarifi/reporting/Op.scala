@@ -103,6 +103,12 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case (l, r) => unsimpl(l, r)
     }
 
+    // When simplifying a Concat, remove nested Concats
+    def simpConcat(op: Op): List[Op] = simp(op) match {
+      case Concat(xs) => xs
+      case o => List(o)
+    }
+
     def simp(op: Op): Op = op match {
       case o : OpLiteral => o
       case ColumnValue(n, ty) =>
@@ -114,7 +120,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
         opbin(FloorDiv, (_ floordiv _), Function const false, Function const false)(l,r)
       case DoubleDiv(l,r) => opbin(DoubleDiv, (_ / _), Function const false, pnum(1))(l,r)
       case Concat(xs) =>
-        splitWith(xs.map(simp)){case lit : OpLiteral => lit}.toList flatMap {
+        splitWith(xs.flatMap(simpConcat)){case lit : OpLiteral => lit}.toList flatMap {
           case Left(lits) =>
             val newS = lits.toList.map(_.lit extractNullableString "").suml
             if (newS == "") List()
