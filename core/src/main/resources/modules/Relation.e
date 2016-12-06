@@ -144,6 +144,11 @@ unionAll : List (Relation r) -> Relation r
 unionAll (h::t) = foldl union h t
 unionAll [] = relation []
 
+-- A version of unionAll that is safer in the empty case
+unionAllWithHeader : Row r -> List (Relation r) -> Relation r
+unionAllWithHeader r [] = relationWithHeader r []
+unionAllWithHeader _ (h :: t) = foldl union h t
+
 -- | Removes `f2`, then renames `f1` to `f2`
 rename' f1 f2 = rename f1 f2 . except { f2 }
 
