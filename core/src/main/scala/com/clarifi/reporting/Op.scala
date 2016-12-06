@@ -135,8 +135,8 @@ sealed abstract class Op extends TraversableColumns[Op] {
         }
       case If(test, c, a) =>
         Predicates simplify (test liftOp (simp(_) : Id[Op])) match {
-          case Predicate.Atom(b) => if (b) c else a
-          case pr => If(pr, c, a)
+          case Predicate.Atom(b) => if (b) simp(c) else simp(a)
+          case pr => If(pr, simp(c), simp(a))
         }
       case Coalesce(l, r) => Coalesce(simp(l), simp(r))
       case DateAdd(d,n,u) => DateAdd(simp(d),n,u)
