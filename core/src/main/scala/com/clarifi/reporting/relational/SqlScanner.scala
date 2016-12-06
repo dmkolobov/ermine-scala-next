@@ -122,7 +122,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       case BuiltinCall(b,args) => FunSqlExpr(compileBuiltin(b), args.map(rec))
       case Cast(o, ty) => CastSqlExpr(rec(o), ty)
     }
-    rec(op)
+    rec(op.simplify(Map()))
   }
 
   private def compileOrder(ord: SortOrder): SqlOrder =
