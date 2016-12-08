@@ -865,6 +865,9 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
      e => e.getErrorCode == 2714)
 }
 
+class MsSqlNonTransactionalEmitter extends MsSqlEmitter {
+  override def isTransactional: Boolean = false
+}
 
 class VerticaSqlEmitter extends SqlEmitter(false) with EmitFromEmptyTable_FromDual
                                            with EmitSqlColumns_Typed
@@ -1012,6 +1015,7 @@ object SqlEmitter {
   val mySqlInnoDBEmitter = new MySqlEmitter(true)
   val mySqlEmitter = new MySqlEmitter(false)
   val msSqlEmitter = new MsSqlEmitter
+  val msSqlNonTransactionalEmitter = new MsSqlNonTransactionalEmitter
 
   val verticaSqlEmitter = new VerticaSqlEmitter
 
