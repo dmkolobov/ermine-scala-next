@@ -11,7 +11,6 @@ import javafx.scene.control.Label;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.SplitPane.Divider;
 import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.BorderPaneBuilder;
 import org.apache.log4j.Logger;
 
 import com.spcapitaliq.jfx.node.NodeWrap;
@@ -104,7 +103,7 @@ public final class FlexibleSplitAreaModel
     int numContents = _contents.size();
     if( numContents == 0 )
     {
-      return BorderPaneBuilder.create().center(new Label("??")).build();
+      return new BorderPane(new Label("??"));
     }
     else
     {

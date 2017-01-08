@@ -6,11 +6,10 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.*;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonBuilder;
-import javafx.scene.control.LabelBuilder;
-import javafx.scene.layout.BorderPaneBuilder;
-import javafx.scene.layout.HBoxBuilder;
-import javafx.scene.layout.VBoxBuilder;
+import javafx.scene.control.Label;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
 import javafx.stage.*;
 
 import org.apache.log4j.Logger;
@@ -33,30 +32,26 @@ public class DialogFactory
 
   public static Parent buildBodyWithConsole(Node body, Node... console)
   {
-    final Parent root = VBoxBuilder.create()
-      .padding(new Insets(4))
-      .spacing(4)
-      .children(
-        body,
-        HBoxBuilder.create()
-          .alignment(Pos.CENTER)
-          .spacing(4)
-          .children(console)
-          .build()
-      )
-      .build();
+    final HBox inside = new HBox(console);
+    inside.setAlignment(Pos.CENTER);
+    inside.setSpacing(4);
+
+    final VBox root = new VBox(body, inside);
+    root.setPadding(new Insets(4));
+    root.setSpacing(4);
+
     return root;
   }
 
   public static void showAny( final DialogControl control, final String title, final Node body )
   {
-    final Parent root = body instanceof Parent ? (Parent)body : BorderPaneBuilder.create().center(body).build();
+    final Parent root = body instanceof Parent ? (Parent)body : new BorderPane(body);
     JFXUtil.runSafe(new Runnable()
     {
       @Override
       public void run()
       {
-        Scene scene = SceneBuilder.create().root( root ).build();
+        Scene scene = new Scene( root );
         final Stage stage = new Stage( StageStyle.UTILITY );
         stage.initModality( Modality.APPLICATION_MODAL );
         stage.setResizable(false);
@@ -80,8 +75,7 @@ public class DialogFactory
 
   public static void showAny( final DialogControl control, final String title, String message, Node... console )
   {
-    Parent body = buildBodyWithConsole(
-      LabelBuilder.create().text(message).build(), console);
+    Parent body = buildBodyWithConsole(new Label(message), console);
     showAny(control, title, body);
   }
 
@@ -89,15 +83,15 @@ public class DialogFactory
   {
     final DialogControl control = new DialogControl(anchor);
 
-    Button buttonOK = ButtonBuilder.create().text("OK")
-      .onAction(new EventHandler<ActionEvent>()
+    Button buttonOK = new Button("OK");
+    buttonOK.setOnAction(new EventHandler<ActionEvent>()
       {
         @Override
         public void handle(ActionEvent ae)
         {
           control.close();
         }
-      }).build();
+      });
 
     showAny( control, title, message, buttonOK );
   }

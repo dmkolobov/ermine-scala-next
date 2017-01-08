@@ -207,24 +207,20 @@ public class JFXDebug
 
   public static Parent overlayDebugTools( final Node content )
   {
-    Button button = ButtonBuilder.create()
-        .text("?")
-        .tooltip(new Tooltip("debug node structure"))
-        .opacity(.5)
-        .onAction(new EventHandler<ActionEvent>()
+    Button button = new Button("?");
+    button.setTooltip(new Tooltip("debug node structure"));
+    button.setOpacity(.5);
+    button.setOnAction(new EventHandler<ActionEvent>()
         {
           @Override
           public void handle(ActionEvent ae)
           {
             Log.info("Node Structure:\n" + formatStructure(content));
           }
-        })
-        .build();
+        });
     StackPane.setAlignment(button, Pos.BOTTOM_LEFT);
 
-    return StackPaneBuilder.create()
-        .children(content, button)
-        .build();
+    return new StackPane(content, button);
   }
 
   /**
