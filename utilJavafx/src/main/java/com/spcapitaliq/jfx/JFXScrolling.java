@@ -112,7 +112,7 @@ public class JFXScrolling
       @Override
       public void run()
       {
-        final VirtualFlow vf = JFXTraverser.breadthFirstSearch(table, new JFXTraverser.InstanceOfStrategy<VirtualFlow>(
+        final Node vf = JFXTraverser.breadthFirstSearch(table, new JFXTraverser.InstanceOfStrategy<Node>(
             VirtualFlow.class));
         if (null == vf)
         {
