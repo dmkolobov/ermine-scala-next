@@ -413,6 +413,11 @@ public final class JFXUtil
       _response = response;
     }
 
+    public int hashCode()
+    {
+      return 4; // random number
+    }
+
     @Override
     public void changed( ObservableValue<? extends Bounds> obsVal, Bounds oldVal, Bounds newVal )
     {
@@ -454,6 +459,11 @@ public final class JFXUtil
       if(equals)
         _log.debug("SetOnFirstSizedSlayer activated");
       return equals;
+    }
+
+    public int hashCode()
+    {
+      return 4; // random number
     }
   }
 
