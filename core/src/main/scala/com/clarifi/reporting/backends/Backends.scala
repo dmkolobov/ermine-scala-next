@@ -24,6 +24,7 @@ object Scanners {
   def Vertica(sms: SMEnv[DB])                = new SqlScanner(sms)(SqlEmitter.verticaSqlEmitter)
   def SQLite(sms: SMEnv[DB])                 = new SqlScanner(sms)(SqlEmitter.sqliteEmitter)
   def MicrosoftSQLServer(sms: SMEnv[DB])     = new SqlScanner(sms)(SqlEmitter.msSqlEmitter)
+  def MicrosoftSQLServerNoTransactions(sms: SMEnv[DB])     = new SqlScanner(sms)(SqlEmitter.msSqlNonTransactionalEmitter)
 
   def cloudScanner(sms: SMEnv[DB]): Scanner[DB] = MicrosoftSQLServer(sms)
 }
