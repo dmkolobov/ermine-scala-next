@@ -60,7 +60,10 @@ coalesce' : (RUnion2 r r1 r2, AsOp opc, AsOp opa)
 coalesce' l r = coalesce# (asOp l) (asOp r)
 
 cast : (AsOp op) => op s a -> Prim b -> Op s b
-cast o p = funcall2# castModule (asOp o) p
+cast o p = funcall3# castModule (asOp o) p false#
+
+tryCast : (PrimitiveAtom b, AsOp op) => op s a -> Prim b -> Op s (Nullable b)
+tryCast o p = funcall3# castModule (asOp o) p true#
 
 type OpBin v = forall a b c opl opr.
                (exists d e f. a <- (e, d), b <- (f, e), c <- (f, e, d),

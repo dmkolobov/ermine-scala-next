@@ -668,7 +668,7 @@ object Fundepped {
       case Funcall(_, _, _, args, _) => cat(args.map(opInfo))
       case BuiltinCall(_, args) => cat(args.map(opInfo))
       case Windowed(a,w) => Plain(a.columnReferences.toList ++ w.columnReferences.toList)
-      case Cast(x, _) => opInfo(x)
+      case Cast(x, _, _) => opInfo(x)
     }
   }
 

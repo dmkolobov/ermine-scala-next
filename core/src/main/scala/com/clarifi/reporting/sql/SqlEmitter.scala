@@ -259,6 +259,13 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     "TODO I don't yet know how to play %s over %s".
       format (e.emitSql(this), over)
 
+  /** Emits SQL for the opening of a Transact-SQL `CAST` or `TRY_CAST` expression.
+    * If `nullIfFail` is true, emits a cast that returns null if fail.
+    */
+  def emitTryCast(nullIfFail: Boolean): RawSql =
+    if (nullIfFail) { "TODO I don't yet know how to write try_cast" }
+    else raw("cast(")
+
   /** Build a query that chooses a range of rows in `query` by
     * ordering them according to `order` and choosing the rows
     * numbered `from` to `to`, one-indexed and inclusive.
@@ -582,6 +589,11 @@ trait EmitUuid_Strings extends SqlEmitter {
     stmt.setString(i, u.toString)
 }
 
+trait EmitTryCast_MsSQL extends SqlEmitter {
+  override def emitTryCast(nullIfFail: Boolean): RawSql =
+    if (nullIfFail) { raw("TRY_CAST(") } else { raw("cast(") }
+}
+
 /**
  * Overrides the standard deviation and variance (sample and population) aggregation
  * functions for SQL Server.
@@ -808,7 +820,8 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitStddevVar_MsSQL
                                       with EmitUuid_Strings
                                       with EmitLiteralTVC
-                                      with EmitName_MsSql {
+                                      with EmitName_MsSql
+                                      with EmitTryCast_MsSQL {
 
   def isTransactional: Boolean = true
   def setConstraints(enable: Boolean, t: Iterable[TableName]): List[RawSql] =

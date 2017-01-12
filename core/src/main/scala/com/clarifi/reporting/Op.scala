@@ -39,7 +39,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
     case Funcall(n,_,_,_,_) => sys error ("Can't invoke %s outside of a database" format n)
     case Windowed(_, _) => sys error ("Can't evaluate window functions outside of a database")
     case BuiltinCall(b, args) => builtinEval(b, args.map(_ eval t))
-    case Cast(o, ty) => o.eval(t).cast(ty)
+    case Cast(o, ty, nullIfFail) => if (nullIfFail) o.eval(t).tryCast(ty) else o.eval(t).cast(ty)
   }
 
   def builtinEval(b: Builtin, args: List[PrimExpr]): PrimExpr = builtinEvalMaybe(b, args) match {
@@ -144,9 +144,9 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case Funcall(nm,db,ns,args,typ) => Funcall(nm,db,ns,args.map(simp(_)),typ)
       case Windowed(agg, w) => Windowed(agg.simplify(t), w.simplify(t))
       case BuiltinCall(b, args) => builtinSimplify(b, args.map(simp))
-      case Cast(e,ty) => simp(e) match {
-        case OpLiteral(pe) => OpLiteral(pe cast ty)
-        case no => Cast(no, ty)
+      case Cast(e,ty,nullIfFail) => simp(e) match {
+        case OpLiteral(pe) => OpLiteral(if (nullIfFail) (pe tryCast ty) else pe cast ty)
+        case no => Cast(no, ty, nullIfFail)
       }
     }
     simp(this)
@@ -197,7 +197,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case Funcall(nm,db,ns,args,ty) => args.traverse_[M](x => x.guessType >| (())) >| ty
       case Windowed(agg, _) => agg guessType
       case BuiltinCall(b, args) => args.traverse[M,PrimT](_ guessType).map(guessBuiltinType(b))
-      case Cast(e, ty) => e.guessType.map(_ => ty)
+      case Cast(e, ty, _) => e.guessType.map(_ => ty)
     }
   }
 
@@ -225,7 +225,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
         }
       case Windowed(agg, w) => (agg.postReplaceOp(f) |@| w.postReplaceOp(f))(Windowed)
       case BuiltinCall(b,args) => args.traverse(_ postReplace f).map(BuiltinCall(b,_))
-      case Cast(o, ty) => o.postReplace(f).map(Cast(_,ty))
+      case Cast(o, ty, nullIfFail) => o.postReplace(f).map(Cast(_,ty,nullIfFail))
     }
   }
 
@@ -248,7 +248,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case Funcall(nm,db,ns,args,ty) => args.traverse(_ traverseColumns f) map (Funcall(nm,db,ns,_,ty))
       case Windowed(agg, w) => (agg.traverseColumns(f) |@| w.traverseColumns(f))(Windowed)
       case BuiltinCall(b,args) => args.traverse(_ traverseColumns f).map(BuiltinCall(b,_))
-      case Cast(o, ty) => o.traverseColumns(f).map(Cast(_,ty))
+      case Cast(o, ty, nullIfFail) => o.traverseColumns(f).map(Cast(_,ty,nullIfFail))
     }
   }
 
@@ -274,7 +274,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
     case DateDiff(_,s,e) => s.isWindowed || e.isWindowed
     case Funcall(_,_,_,args,_) => args.exists(_ isWindowed)
     case BuiltinCall(_, args) => args.exists(_ isWindowed)
-    case Cast(o, _) => o isWindowed
+    case Cast(o, _, _) => o isWindowed
     case _ => false
   }
 }
@@ -390,7 +390,7 @@ object Op {
                      args: List[Op], typ: PrimT) extends Op
   case class Windowed(agg: AggFunc, window: Window) extends Op
   case class BuiltinCall(fun: Builtin, args: List[Op]) extends Op
-  case class Cast(l: Op, ty: PrimT) extends Op
+  case class Cast(l: Op, ty: PrimT, nullIfFail: Boolean) extends Op
 
   implicit val OpEqual: Equal[Op] = equalA
   implicit val OpShow: Show[Op] = showFromToString

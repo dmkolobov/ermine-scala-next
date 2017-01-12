@@ -687,7 +687,7 @@ object Format {
                           StringF :: StringF :: RepeatF[StringF] :: RepeatF[A] :: PrimTF, // Funcall
                           AggF & WindowF , // Windowed
                           BuiltinF & RepeatF[A], // BuiltinCall
-                          A & PrimTF          // Cast
+                          A :: PrimTF :: BooleanF  // Cast
                          ]
       override def readShape[Z] = { self =>
         union16R(
@@ -706,7 +706,7 @@ object Format {
           p5R(stringR, stringR, listR(stringR), listR(self), primTR)(Funcall),
           p2R(aggR, windowR)(Windowed(_,_)),
           p2R(builtinR,listR(self))(BuiltinCall),
-          p2R(self, primTR)(Cast)
+          p3R(self, primTR, booleanR)(Cast)
         )
       }
 
@@ -721,7 +721,7 @@ object Format {
              tuple5W(stringW, stringW, repeatW(stringW), repeatW(self), primTW),
              tuple2W(aggW, windowW),
              tuple2W(builtinW, repeatW(self)),
-             tuple2W(self,primTW)
+             tuple3W(self,primTW,booleanW)
         )((opliteral, columnvalue, add, sub, mul, floor, div, cat, oif, coalesce, dateadd, datediff, funcall, windowed, builtin, cast) => (r: Op) => r match {
             case OpLiteral(lit) => opliteral(lit)
             case ColumnValue(cn, ty) => columnvalue(cn -> ty)
@@ -738,7 +738,7 @@ object Format {
             case Funcall(n, db, ns, args, ty) => funcall((n, db, ns, args, ty))
             case Windowed(x,y) => windowed((x,y))
             case BuiltinCall(b,xs) => builtin((b,xs))
-            case Cast(a,b) => cast((a,b))
+            case Cast(a,b,c) => cast((a,b,c))
           })}
     }.codec
 

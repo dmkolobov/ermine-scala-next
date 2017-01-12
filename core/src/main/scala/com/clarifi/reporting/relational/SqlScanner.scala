@@ -120,7 +120,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       case Windowed(agg, over) =>
         OverSqlExpr(compileAggFunc(agg, lookupColumn), compileWindow(over, lookupColumn))
       case BuiltinCall(b,args) => FunSqlExpr(compileBuiltin(b), args.map(rec))
-      case Cast(o, ty) => CastSqlExpr(rec(o), ty)
+      case Cast(o, ty, nullIfFail) => CastSqlExpr(rec(o), ty, nullIfFail)
     }
     rec(op.simplify(Map()))
   }
