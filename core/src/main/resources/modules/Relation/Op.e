@@ -63,7 +63,7 @@ cast : (AsOp op) => op s a -> Prim b -> Op s b
 cast o p = funcall3# castModule (asOp o) p false#
 
 tryCast : (PrimitiveAtom b, AsOp op) => op s a -> Prim b -> Op s (Nullable b)
-tryCast o p = funcall3# castModule (asOp o) p true#
+tryCast o p = funcall3# castModule (asOp o) (withNull p) true#
 
 type OpBin v = forall a b c opl opr.
                (exists d e f. a <- (e, d), b <- (f, e), c <- (f, e, d),

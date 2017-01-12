@@ -51,7 +51,7 @@ foreign
   value "com.clarifi.reporting.Op$BuiltinCall$" "MODULE$"
       builtinCallModule : Function2 Builtin (List# Op#) (Op r a)
   value "com.clarifi.reporting.Op$Cast$" "MODULE$"
-      castModule : Function3 (Op s a) (Prim b) Bool# (Op s (Nullable b))
+      castModule : Function3 (Op s a) (Prim b) Bool# (Op s b)
 
   method "guessTypeUnsafe" typeOfOp# : Op r a -> Prim a
 
