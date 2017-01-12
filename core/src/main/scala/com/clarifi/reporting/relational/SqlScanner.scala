@@ -187,6 +187,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   def explainSQLException(e: SQLException): String =
     s"ErrorCode=`${e.getErrorCode}' SQLState=`${e.getSQLState}' class=`${e.getClass}' msg=`${e.getMessage}'"
 
+  private[this]
+  def transaction[A](act: DB[A]) = 
+    if (emitter.isTransactional) DB.transaction(act)
+    else act
+  
   /** Execute `p` statements, returning the list of `TableName`s that were
     * created.
     */
@@ -200,7 +205,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
             val tecol = "tableExists"
             val (sql, errorMeansExists) = emitter.checkExists(tn, tecol)
             logger ltrace ("Executing sql: " + sql.run)
-            DB.transaction(withResultSet(sql, rs => {
+            transaction(withResultSet(sql, rs => {
               rs.next() && (rs.getObject(tecol) ne null)
             }.point[DB]).flatMap(b =>
               if (!b) ^(sequenceSql(pre),
