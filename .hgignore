@@ -48,6 +48,7 @@ build.info
 \.skolem_history
 \.ermine_history
 \.cache
+\.ei
 
 .*\.class
 .*\.swp
