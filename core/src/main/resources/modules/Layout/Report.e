@@ -698,7 +698,7 @@ styleBox : forall px py xv yv a b other rel .
            l <-(xv, yv, other),
            Relational rel)
         => (Legend l, Field xv a, Field yv b)
-	-> Bool
+        -> Bool
         -> List String 
         -> List String 
         -> List# (Pair# Double Double)
