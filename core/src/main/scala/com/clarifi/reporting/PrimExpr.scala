@@ -270,6 +270,8 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case (e, DoubleT(n)) => DoubleExpr(n, e.extractDouble)
   }
 
+  def tryCast(ty: PrimT): PrimExpr = try { this.cast(ty) } catch { case e: RuntimeException => NullExpr(ty) }
+
   /** Change type to nullable, if not already. */
   def withNull: PrimExpr = if (this nullable) this else (this match {
     case x: UuidExpr => x.copy(nullable=true)

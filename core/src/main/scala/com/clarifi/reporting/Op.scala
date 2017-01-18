@@ -29,7 +29,10 @@ sealed abstract class Op extends TraversableColumns[Op] {
     case Coalesce(l,r) => l.eval(t) match { case NullExpr(_) => r.eval(t) ; case e => e }
     case DateAdd(d,n,u) => d.eval(t) match {
       case n : NullExpr => n
-      case dt => DateExpr(false, u.increment(dt.extractDate, n))
+      case dt => n.eval(t) match {
+        case v : NullExpr => v
+        case m => DateExpr(false, u.increment(dt.extractDate, m.extractInt))
+      }
     }
     case DateDiff(u,s,e) =>
       if(u == TimeUnit.Millisecond)
@@ -39,7 +42,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
     case Funcall(n,_,_,_,_) => sys error ("Can't invoke %s outside of a database" format n)
     case Windowed(_, _) => sys error ("Can't evaluate window functions outside of a database")
     case BuiltinCall(b, args) => builtinEval(b, args.map(_ eval t))
-    case Cast(o, ty) => o.eval(t).cast(ty)
+    case Cast(o, ty, nullIfFail) => if (nullIfFail) o.eval(t).tryCast(ty) else o.eval(t).cast(ty)
   }
 
   def builtinEval(b: Builtin, args: List[PrimExpr]): PrimExpr = builtinEvalMaybe(b, args) match {
@@ -139,14 +142,14 @@ sealed abstract class Op extends TraversableColumns[Op] {
           case pr => If(pr, simp(c), simp(a))
         }
       case Coalesce(l, r) => Coalesce(simp(l), simp(r))
-      case DateAdd(d,n,u) => DateAdd(simp(d),n,u)
+      case DateAdd(d,n,u) => DateAdd(simp(d),simp(n),u)
       case DateDiff(u,s,e) => DateDiff(u,simp(s),simp(e))
       case Funcall(nm,db,ns,args,typ) => Funcall(nm,db,ns,args.map(simp(_)),typ)
       case Windowed(agg, w) => Windowed(agg.simplify(t), w.simplify(t))
       case BuiltinCall(b, args) => builtinSimplify(b, args.map(simp))
-      case Cast(e,ty) => simp(e) match {
-        case OpLiteral(pe) => OpLiteral(pe cast ty)
-        case no => Cast(no, ty)
+      case Cast(e,ty,nullIfFail) => simp(e) match {
+        case OpLiteral(pe) => OpLiteral(if (nullIfFail) (pe tryCast ty) else pe cast ty)
+        case no => Cast(no, ty, nullIfFail)
       }
     }
     simp(this)
@@ -197,7 +200,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case Funcall(nm,db,ns,args,ty) => args.traverse_[M](x => x.guessType >| (())) >| ty
       case Windowed(agg, _) => agg guessType
       case BuiltinCall(b, args) => args.traverse[M,PrimT](_ guessType).map(guessBuiltinType(b))
-      case Cast(e, ty) => e.guessType.map(_ => ty)
+      case Cast(e, ty, _) => e.guessType.map(_ => ty)
     }
   }
 
@@ -217,7 +220,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case Concat(xs) => xs.traverse(_ postReplace f) flatMap (f compose Concat)
       case If(b,y,n) => (b.postReplaceOp(f) |@| y.postReplace(f) |@| n.postReplace(f))(If) flatMap f
       case Coalesce(l,r) => binop(Coalesce)(l postReplace f, r postReplace f)
-      case DateAdd(d, n, u) => d.postReplace(f) flatMap { nd => f(DateAdd(nd,n,u)) }
+      case DateAdd(d, n, u) => binop(DateAdd(_,_,u))(d postReplace f, n postReplace f)
       case DateDiff(u, st, en) => binop(DateDiff(u,_,_))(st postReplace f, en postReplace f)
       case Funcall(nm, db, ns, args, ty) =>
         args.traverse(_ postReplace f) flatMap {
@@ -225,7 +228,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
         }
       case Windowed(agg, w) => (agg.postReplaceOp(f) |@| w.postReplaceOp(f))(Windowed)
       case BuiltinCall(b,args) => args.traverse(_ postReplace f).map(BuiltinCall(b,_))
-      case Cast(o, ty) => o.postReplace(f).map(Cast(_,ty))
+      case Cast(o, ty, nullIfFail) => o.postReplace(f).map(Cast(_,ty,nullIfFail))
     }
   }
 
@@ -243,12 +246,12 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case Concat(xs) => xs.traverse(_ traverseColumns f).map(Concat)
       case If(b,y,n) => (b.traverseColumns(f) |@| y.traverseColumns(f) |@| n.traverseColumns(f))(If)
       case Coalesce(l,r) => (l.traverseColumns(f) |@| r.traverseColumns(f))(Coalesce)
-      case DateAdd(d,n,u) => d.traverseColumns(f) map(DateAdd(_,n,u))
+      case DateAdd(d,n,u) => binop(DateAdd(_,_,u))(d.traverseColumns(f), n.traverseColumns(f))
       case DateDiff(u,s,e) => binop(DateDiff(u,_,_))(s.traverseColumns(f), e.traverseColumns(f))
       case Funcall(nm,db,ns,args,ty) => args.traverse(_ traverseColumns f) map (Funcall(nm,db,ns,_,ty))
       case Windowed(agg, w) => (agg.traverseColumns(f) |@| w.traverseColumns(f))(Windowed)
       case BuiltinCall(b,args) => args.traverse(_ traverseColumns f).map(BuiltinCall(b,_))
-      case Cast(o, ty) => o.traverseColumns(f).map(Cast(_,ty))
+      case Cast(o, ty, nullIfFail) => o.traverseColumns(f).map(Cast(_,ty,nullIfFail))
     }
   }
 
@@ -270,11 +273,11 @@ sealed abstract class Op extends TraversableColumns[Op] {
     case Concat(xs) => xs.exists(_ isWindowed)
     case If(_, t,f) => t.isWindowed || f.isWindowed
     case Coalesce(l,r) => l.isWindowed || r.isWindowed
-    case DateAdd(d,_,_) => d.isWindowed
+    case DateAdd(d,n,_) => d.isWindowed || n.isWindowed
     case DateDiff(_,s,e) => s.isWindowed || e.isWindowed
     case Funcall(_,_,_,args,_) => args.exists(_ isWindowed)
     case BuiltinCall(_, args) => args.exists(_ isWindowed)
-    case Cast(o, _) => o isWindowed
+    case Cast(o, _, _) => o isWindowed
     case _ => false
   }
 }
@@ -325,7 +328,7 @@ object TimeUnits {
 
 // for easier foreign importing by Ermine
 object Ops {
-  def dateAdd(n: Int, units: TimeUnit, date: Op): Op =
+  def dateAdd(n: Op, units: TimeUnit, date: Op): Op =
     Op.DateAdd(date, n, units)
   def dateDiff(units: TimeUnit, start: Op, end: Op): Op =
     Op.DateDiff(units, start, end)
@@ -384,13 +387,13 @@ object Op {
   case class Concat(cs: List[Op]) extends Op
   case class If(test: Predicate, consequent: Op, alternate: Op) extends Op
   case class Coalesce(l: Op, r: Op) extends Op
-  case class DateAdd(date: Op, n: Int, units: TimeUnit) extends Op
+  case class DateAdd(date: Op, n: Op, units: TimeUnit) extends Op
   case class DateDiff(units: TimeUnit, start: Op, end: Op) extends Op
   case class Funcall(name: String, database: String, namespace: List[String],
                      args: List[Op], typ: PrimT) extends Op
   case class Windowed(agg: AggFunc, window: Window) extends Op
   case class BuiltinCall(fun: Builtin, args: List[Op]) extends Op
-  case class Cast(l: Op, ty: PrimT) extends Op
+  case class Cast(l: Op, ty: PrimT, nullIfFail: Boolean) extends Op
 
   implicit val OpEqual: Equal[Op] = equalA
   implicit val OpShow: Show[Op] = showFromToString

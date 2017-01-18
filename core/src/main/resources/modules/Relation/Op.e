@@ -60,7 +60,10 @@ coalesce' : (RUnion2 r r1 r2, AsOp opc, AsOp opa)
 coalesce' l r = coalesce# (asOp l) (asOp r)
 
 cast : (AsOp op) => op s a -> Prim b -> Op s b
-cast o p = funcall2# castModule (asOp o) p
+cast o p = funcall3# castModule (asOp o) p false#
+
+tryCast : (PrimitiveAtom b, AsOp op) => op s a -> Prim b -> Op s (Nullable b)
+tryCast o p = funcall3# castModule (asOp o) (withNull p) true#
 
 type OpBin v = forall a b c opl opr.
                (exists d e f. a <- (e, d), b <- (f, e), c <- (f, e, d),
@@ -138,7 +141,10 @@ combine op f = combine# f (UnsafeOp $ asOp op)
 growthOf10k returns = prim (Some 10000.0) * (returns + (prim (Some 1.0))) -- todo: find better home for this
 
 dateAdd : AsOp op => Int -> TimeUnit -> op r Date -> Op r Date
-dateAdd n u o = dateAdd# n u (asOp o)
+dateAdd n u o = dateAdd# (prim n) u (asOp o)
+
+dateAdd' : (AsOp op1, AsOp op2, RUnion2 t r s) => op1 r Int -> TimeUnit -> op2 s Date -> Op t Date
+dateAdd' n u o = dateAdd# (asOp n) u (asOp o)
 
 --dateDiff : forall r r1 r2 .  AsOp op1 op2 => TimeUnit -> op1 r Date -> op2 r1 Date -> Op r2 Long
 dateDiff u s e = dateDiff# u (asOp s) (asOp e)
@@ -167,7 +173,7 @@ private
           (Op r a -> Op s b -> z) -> (opl r a -> opr s b -> z)
   opBin f x y = f (asOp x) (asOp y)
 
-foreign function "com.clarifi.reporting.Ops" "dateAdd" dateAdd# : Int -> TimeUnit -> Op r Date -> Op r Date
+foreign function "com.clarifi.reporting.Ops" "dateAdd" dateAdd# : Op r Int -> TimeUnit -> Op r1 Date -> Op r2 Date
 foreign function "com.clarifi.reporting.Ops" "dateDiff" dateDiff# : TimeUnit -> Op r Date -> Op r1 Date -> Op r2 Int
 
 weaken : r <- (x,y) => Op x b -> Op r b

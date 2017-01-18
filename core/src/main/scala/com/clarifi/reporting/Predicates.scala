@@ -663,12 +663,12 @@ object Fundepped {
       case Concat(xs) => cat(xs.map(opInfo))
       case If(b,t,f) => Plain(b.columnReferences.toList ++ opInfo(t).columns ++ opInfo(f).columns)
       case Coalesce(l, r) => bin(opInfo(l), opInfo(r))
-      case DateAdd(x, _, _) => opInfo(x)
+      case DateAdd(x, y, _) => bin(opInfo(x), opInfo(y))
       case DateDiff(_, x, y) => bin(opInfo(x), opInfo(y))
       case Funcall(_, _, _, args, _) => cat(args.map(opInfo))
       case BuiltinCall(_, args) => cat(args.map(opInfo))
       case Windowed(a,w) => Plain(a.columnReferences.toList ++ w.columnReferences.toList)
-      case Cast(x, _) => opInfo(x)
+      case Cast(x, _, _) => opInfo(x)
     }
   }
 

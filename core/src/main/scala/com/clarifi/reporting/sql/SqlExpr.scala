@@ -99,8 +99,8 @@ sealed abstract class SqlExpr {
     case ParensSqlExpr(e1) => raw("(") |+| e1.emitSql(emitter) |+| ")"
     case OverSqlExpr(e1, over) => emitter.emitOver(e1, over)
     case Verbatim(s) => s
-    case CastSqlExpr(e, ty) =>
-      raw("cast(") |+| e.emitSql |+| " as " |+| emitter.sqlTypeName(ty) |+| ")"
+    case CastSqlExpr(e, ty, nullIfFail) =>
+      emitter.emitTryCast(nullIfFail) |+| e.emitSql |+| " as " |+| emitter.sqlTypeName(ty) |+| ")"
   }
 
   @annotation.tailrec
@@ -111,9 +111,9 @@ sealed abstract class SqlExpr {
 
   final def isConstant: Boolean = this match {
     case l : LitSqlExpr => true
-    case i : IntervalExpr => true
+    case IntervalExpr(e, _) => e.isConstant
     case ParensSqlExpr(e) => e.isConstant
-    case CastSqlExpr(e,_) => e.isConstant
+    case CastSqlExpr(e,_,_) => e.isConstant
     case BinSqlExpr(_, e1, e2) => e1.isConstant && e2.isConstant
     case PrefixSqlExpr(_, e) => e.isConstant
     case PostfixSqlExpr(e, _) => e.isConstant
@@ -138,13 +138,13 @@ case class BinSqlExpr(f: String, a: SqlExpr, b: SqlExpr) extends SqlExpr
 case class PrefixSqlExpr(f: String, arg: SqlExpr) extends SqlExpr
 case class PostfixSqlExpr(arg: SqlExpr, f: String) extends SqlExpr
 case class FunSqlExpr(f: String, args: List[SqlExpr]) extends SqlExpr
-case class IntervalExpr(n: Int, units: TimeUnit) extends SqlExpr
+case class IntervalExpr(n: SqlExpr, units: TimeUnit) extends SqlExpr
 case class LitSqlExpr(get: SqlLiteral) extends SqlExpr
 case class CaseSqlExpr(clauses: NonEmptyList[(SqlPredicate, SqlExpr)],
                        otherwise: SqlExpr) extends SqlExpr
 case class ParensSqlExpr(get: SqlExpr) extends SqlExpr
 case class OverSqlExpr(e: SqlExpr, over: SqlOver) extends SqlExpr
-case class CastSqlExpr(e: SqlExpr, ty: PrimT) extends SqlExpr
+case class CastSqlExpr(e: SqlExpr, ty: PrimT, nullIfFail: Boolean) extends SqlExpr
 case class Verbatim(sql: String) extends SqlExpr
 
 object SqlExpr {

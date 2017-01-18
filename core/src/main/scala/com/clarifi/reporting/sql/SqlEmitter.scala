@@ -200,7 +200,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   }
   def emitDateAddName: String
 
-  def emitInterval(n: Int, u: TimeUnit): RawSql
+  def emitInterval(n: SqlExpr, u: TimeUnit): RawSql
 
   val formatter = {
     val fmt = new java.text.SimpleDateFormat("yyyy-MM-dd")
@@ -258,6 +258,13 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   def emitOver(e: SqlExpr, over: SqlOver): RawSql =
     "TODO I don't yet know how to play %s over %s".
       format (e.emitSql(this), over)
+
+  /** Emits SQL for the opening of a Transact-SQL `CAST` or `TRY_CAST` expression.
+    * If `nullIfFail` is true, emits a cast that returns null if fail.
+    */
+  def emitTryCast(nullIfFail: Boolean): RawSql =
+    if (nullIfFail) { "TODO I don't yet know how to write try_cast" }
+    else raw("cast(")
 
   /** Build a query that chooses a range of rows in `query` by
     * ordering them according to `order` and choosing the rows
@@ -582,6 +589,11 @@ trait EmitUuid_Strings extends SqlEmitter {
     stmt.setString(i, u.toString)
 }
 
+trait EmitTryCast_MsSQL extends SqlEmitter {
+  override def emitTryCast(nullIfFail: Boolean): RawSql =
+    if (nullIfFail) { raw("TRY_CAST(") } else { raw("cast(") }
+}
+
 /**
  * Overrides the standard deviation and variance (sample and population) aggregation
  * functions for SQL Server.
@@ -677,7 +689,7 @@ class SqliteEmitter extends SqlEmitter
   override def emitDate(d: Date): RawSql = d.getTime.toString
 
   def emitDateAddName = sys.error("todo - sqlite dateadd function")
-  def emitInterval(n: Int, u: TimeUnit) =
+  def emitInterval(n: SqlExpr, u: TimeUnit) =
     sys.error("todo - sqlite dateadd function")
 
   def sqlTypeId(p: PrimT): Int = p match {
@@ -752,8 +764,8 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
   def emitBoolean(stmt: PreparedStatement, i: Int, b: Boolean): Unit = stmt.setInt(i, if (b) 1 else 0)
 
   def emitDateAddName = "date_add"
-  def emitInterval(n: Int, u: TimeUnit) =
-    raw("interval ") |+| raw(n.toString) |+| raw(" " + u.toString)
+  def emitInterval(n: SqlExpr, u: TimeUnit) =
+    raw("interval ") |+| n.emitSql(this) |+| raw(" " + u.toString)
 
   import SqlEmitter.nn
 
@@ -808,7 +820,8 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitStddevVar_MsSQL
                                       with EmitUuid_Strings
                                       with EmitLiteralTVC
-                                      with EmitName_MsSql {
+                                      with EmitName_MsSql
+                                      with EmitTryCast_MsSQL {
 
   def isTransactional: Boolean = true
   def setConstraints(enable: Boolean, t: Iterable[TableName]): List[RawSql] =
@@ -836,8 +849,8 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
   }
 
   def emitDateAddName = "dateadd"
-  def emitInterval(n: Int, u: TimeUnit) =
-    raw(u.toString.toLowerCase) |+| raw(", " + n.toString)
+  def emitInterval(n: SqlExpr, u: TimeUnit) =
+    raw(u.toString.toLowerCase) |+| raw(", ") |+| n.emitSql(this)
 
   def sqlPrimT(x: Int, tn: String, cs: Int) = tn match {
     case "date" | "datetime" => Some(DateT()) // jtds gives x = varchar for dates
@@ -890,7 +903,7 @@ class VerticaSqlEmitter extends SqlEmitter(false) with EmitFromEmptyTable_FromDu
   def emitBoolean(b: Boolean): RawSql = if (b) "TRUE" else "FALSE"
   def emitBoolean(stmt: PreparedStatement, i: Int, b: Boolean): Unit = stmt.setBoolean(i, b)
   def emitDateAddName = sys.error("todo - vertica dateadd function")
-  def emitInterval(n: Int, u: TimeUnit) =
+  def emitInterval(n: SqlExpr, u: TimeUnit) =
     sys.error("todo - vertica dateadd function")
 
   import SqlEmitter.nn
@@ -939,7 +952,7 @@ class PostgreSqlEmitter extends SqlEmitter(false)
   def emitBoolean(b: Boolean): RawSql = if (b) "TRUE" else "FALSE"
   def emitBoolean(stmt: PreparedStatement, i: Int, b: Boolean): Unit = stmt.setBoolean(i, b)
   def emitDateAddName = sys.error("todo - postgres dateadd function")
-  def emitInterval(n: Int, u: TimeUnit) =
+  def emitInterval(n: SqlExpr, u: TimeUnit) =
     sys.error("todo - postgres dateadd function")
 
   // PG doesn't play fast & loose with string→date coercion

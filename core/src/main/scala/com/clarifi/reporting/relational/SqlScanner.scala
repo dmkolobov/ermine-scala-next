@@ -111,7 +111,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       case Coalesce(l, r) =>
         FunSqlExpr("coalesce", List(rec(l),rec(r)))
       case DateAdd(d, n, u) =>
-        FunSqlExpr(emitter.emitDateAddName, List(IntervalExpr(n, u), rec(d)))
+        FunSqlExpr(emitter.emitDateAddName, List(IntervalExpr(rec(n), u), rec(d)))
       case DateDiff(u, s, e) =>
         FunSqlExpr("datediff", List(Verbatim(u.toString.toLowerCase), rec(s), rec(e)))
       case Funcall(name, db, ns, args, _) =>
@@ -120,7 +120,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       case Windowed(agg, over) =>
         OverSqlExpr(compileAggFunc(agg, lookupColumn), compileWindow(over, lookupColumn))
       case BuiltinCall(b,args) => FunSqlExpr(compileBuiltin(b), args.map(rec))
-      case Cast(o, ty) => CastSqlExpr(rec(o), ty)
+      case Cast(o, ty, nullIfFail) => CastSqlExpr(rec(o), ty, nullIfFail)
     }
     rec(op.simplify(Map()))
   }
