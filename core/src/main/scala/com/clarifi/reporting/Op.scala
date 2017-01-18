@@ -29,7 +29,10 @@ sealed abstract class Op extends TraversableColumns[Op] {
     case Coalesce(l,r) => l.eval(t) match { case NullExpr(_) => r.eval(t) ; case e => e }
     case DateAdd(d,n,u) => d.eval(t) match {
       case n : NullExpr => n
-      case dt => DateExpr(false, u.increment(dt.extractDate, n))
+      case dt => n.eval(t) match {
+        case v : NullExpr => v
+        case m => DateExpr(false, u.increment(dt.extractDate, m.extractInt))
+      }
     }
     case DateDiff(u,s,e) =>
       if(u == TimeUnit.Millisecond)
@@ -139,7 +142,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
           case pr => If(pr, simp(c), simp(a))
         }
       case Coalesce(l, r) => Coalesce(simp(l), simp(r))
-      case DateAdd(d,n,u) => DateAdd(simp(d),n,u)
+      case DateAdd(d,n,u) => DateAdd(simp(d),simp(n),u)
       case DateDiff(u,s,e) => DateDiff(u,simp(s),simp(e))
       case Funcall(nm,db,ns,args,typ) => Funcall(nm,db,ns,args.map(simp(_)),typ)
       case Windowed(agg, w) => Windowed(agg.simplify(t), w.simplify(t))
@@ -217,7 +220,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case Concat(xs) => xs.traverse(_ postReplace f) flatMap (f compose Concat)
       case If(b,y,n) => (b.postReplaceOp(f) |@| y.postReplace(f) |@| n.postReplace(f))(If) flatMap f
       case Coalesce(l,r) => binop(Coalesce)(l postReplace f, r postReplace f)
-      case DateAdd(d, n, u) => d.postReplace(f) flatMap { nd => f(DateAdd(nd,n,u)) }
+      case DateAdd(d, n, u) => binop(DateAdd(_,_,u))(d postReplace f, n postReplace f)
       case DateDiff(u, st, en) => binop(DateDiff(u,_,_))(st postReplace f, en postReplace f)
       case Funcall(nm, db, ns, args, ty) =>
         args.traverse(_ postReplace f) flatMap {
@@ -243,7 +246,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case Concat(xs) => xs.traverse(_ traverseColumns f).map(Concat)
       case If(b,y,n) => (b.traverseColumns(f) |@| y.traverseColumns(f) |@| n.traverseColumns(f))(If)
       case Coalesce(l,r) => (l.traverseColumns(f) |@| r.traverseColumns(f))(Coalesce)
-      case DateAdd(d,n,u) => d.traverseColumns(f) map(DateAdd(_,n,u))
+      case DateAdd(d,n,u) => binop(DateAdd(_,_,u))(d.traverseColumns(f), n.traverseColumns(f))
       case DateDiff(u,s,e) => binop(DateDiff(u,_,_))(s.traverseColumns(f), e.traverseColumns(f))
       case Funcall(nm,db,ns,args,ty) => args.traverse(_ traverseColumns f) map (Funcall(nm,db,ns,_,ty))
       case Windowed(agg, w) => (agg.traverseColumns(f) |@| w.traverseColumns(f))(Windowed)
@@ -270,7 +273,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
     case Concat(xs) => xs.exists(_ isWindowed)
     case If(_, t,f) => t.isWindowed || f.isWindowed
     case Coalesce(l,r) => l.isWindowed || r.isWindowed
-    case DateAdd(d,_,_) => d.isWindowed
+    case DateAdd(d,n,_) => d.isWindowed || n.isWindowed
     case DateDiff(_,s,e) => s.isWindowed || e.isWindowed
     case Funcall(_,_,_,args,_) => args.exists(_ isWindowed)
     case BuiltinCall(_, args) => args.exists(_ isWindowed)
@@ -325,7 +328,7 @@ object TimeUnits {
 
 // for easier foreign importing by Ermine
 object Ops {
-  def dateAdd(n: Int, units: TimeUnit, date: Op): Op =
+  def dateAdd(n: Op, units: TimeUnit, date: Op): Op =
     Op.DateAdd(date, n, units)
   def dateDiff(units: TimeUnit, start: Op, end: Op): Op =
     Op.DateDiff(units, start, end)
@@ -384,7 +387,7 @@ object Op {
   case class Concat(cs: List[Op]) extends Op
   case class If(test: Predicate, consequent: Op, alternate: Op) extends Op
   case class Coalesce(l: Op, r: Op) extends Op
-  case class DateAdd(date: Op, n: Int, units: TimeUnit) extends Op
+  case class DateAdd(date: Op, n: Op, units: TimeUnit) extends Op
   case class DateDiff(units: TimeUnit, start: Op, end: Op) extends Op
   case class Funcall(name: String, database: String, namespace: List[String],
                      args: List[Op], typ: PrimT) extends Op

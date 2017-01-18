@@ -111,7 +111,7 @@ sealed abstract class SqlExpr {
 
   final def isConstant: Boolean = this match {
     case l : LitSqlExpr => true
-    case i : IntervalExpr => true
+    case IntervalExpr(e, _) => e.isConstant
     case ParensSqlExpr(e) => e.isConstant
     case CastSqlExpr(e,_,_) => e.isConstant
     case BinSqlExpr(_, e1, e2) => e1.isConstant && e2.isConstant
@@ -138,7 +138,7 @@ case class BinSqlExpr(f: String, a: SqlExpr, b: SqlExpr) extends SqlExpr
 case class PrefixSqlExpr(f: String, arg: SqlExpr) extends SqlExpr
 case class PostfixSqlExpr(arg: SqlExpr, f: String) extends SqlExpr
 case class FunSqlExpr(f: String, args: List[SqlExpr]) extends SqlExpr
-case class IntervalExpr(n: Int, units: TimeUnit) extends SqlExpr
+case class IntervalExpr(n: SqlExpr, units: TimeUnit) extends SqlExpr
 case class LitSqlExpr(get: SqlLiteral) extends SqlExpr
 case class CaseSqlExpr(clauses: NonEmptyList[(SqlPredicate, SqlExpr)],
                        otherwise: SqlExpr) extends SqlExpr

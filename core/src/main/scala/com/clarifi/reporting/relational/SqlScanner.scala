@@ -111,7 +111,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       case Coalesce(l, r) =>
         FunSqlExpr("coalesce", List(rec(l),rec(r)))
       case DateAdd(d, n, u) =>
-        FunSqlExpr(emitter.emitDateAddName, List(IntervalExpr(n, u), rec(d)))
+        FunSqlExpr(emitter.emitDateAddName, List(IntervalExpr(rec(n), u), rec(d)))
       case DateDiff(u, s, e) =>
         FunSqlExpr("datediff", List(Verbatim(u.toString.toLowerCase), rec(s), rec(e)))
       case Funcall(name, db, ns, args, _) =>

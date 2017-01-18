@@ -682,7 +682,7 @@ object Format {
                           RepeatF[A]      , // Concat
                           PredicateF :: A :: A, // If
                           A & A           , // Coalesce
-                          A :: IntF :: IntF , // DateAdd
+                          A :: A :: IntF , // DateAdd
                           IntF :: A :: A    , // DateDiff
                           StringF :: StringF :: RepeatF[StringF] :: RepeatF[A] :: PrimTF, // Funcall
                           AggF & WindowF , // Windowed
@@ -701,7 +701,7 @@ object Format {
           listR(self) map (x => Concat(x)),
           p3R(predicateR, self, self)(If),
           p2R(self, self)(Coalesce),
-          p3R(self, intR, timeUnitR)(DateAdd),
+          p3R(self, self, timeUnitR)(DateAdd),
           p3R(timeUnitR, self, self)(DateDiff),
           p5R(stringR, stringR, listR(stringR), listR(self), primTR)(Funcall),
           p2R(aggR, windowR)(Windowed(_,_)),
@@ -716,7 +716,7 @@ object Format {
              binopW, binopW, binopW, repeatW(self),
              tuple3W(predicateW, self, self),
              binopW,
-             tuple3W(self, intW, timeUnitW),
+             tuple3W(self, self, timeUnitW),
              tuple3W(timeUnitW, self, self),
              tuple5W(stringW, stringW, repeatW(stringW), repeatW(self), primTW),
              tuple2W(aggW, windowW),
