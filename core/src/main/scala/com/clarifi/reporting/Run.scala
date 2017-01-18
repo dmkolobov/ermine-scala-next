@@ -138,7 +138,7 @@ trait Run[G[_]] extends Suspendable[G] {
 }
 
 trait BGSuspendableGen[A] {
-  def create(=> A): Suspendable.O[A]
+  def create(a: => A): Suspendable.O[A] = Suspendable.O(a)
 }
 
 object Run {
@@ -149,15 +149,19 @@ object Run {
 
   type BGO[A] = (=> A) => Suspendable.O[A]
   
-  var bgSuspendableO: Option[BGO[A]]
+  var bgSuspendableGen: Any = null
   
   /** A default definition for `Run#suspend` built on `#run` and
     * `G.point`.
     */
   def runSuspendGM[G[_], A](R: Run[G], ga: G[A])(implicit G: Applicative[G])
-      : G[Suspendable.O[A]] =
-    G.point(Suspendable.O(R.run(ga)))
-
+      : G[Suspendable.O[A]] = {
+    if (bgSuspendableGen == null) G.point(Suspendable.O(R.run(ga)))
+    else {
+      val bgGen = bgSuspendableGen.asInstanceOf[BGSuspendableGen[A]]
+      G.point(bgGen.create(R.run(ga)))
+    }
+  }
     
   
   /** For all Runs of applicative G, there is a half-legal distributive
