@@ -10,6 +10,32 @@ trait Suspendable[G[_]] {
   def suspend[A](a: G[A]): G[O[A]]
 }
 
+/**
+* Taken from scalaz.Name, except it is not sealed to allow sub-classing
+*/
+abstract class LazyRef[+A] {
+
+  def value: A
+  def >>=[B](f: A => B) : B = f(value)
+  def flatMap[B](f: A => B) : B = f(value)
+  def map[B](f: A => B): LazyRef[B] = LazyRef(f(value))
+}
+
+object LazyRef {
+  def apply[A](a: => A) = new LazyRef[A] {
+    def value = a
+  }  
+  
+  def unapply[A](v: LazyRef[A]): Option[A] = Some(v.value)
+
+  implicit val lazyRefMonad: scalaz.Monad[LazyRef] = new scalaz.Monad[LazyRef] {
+    def bind[A,B](v: LazyRef[A])(f: A => LazyRef[B]): LazyRef[B] = 
+      f(v.value)
+    def point[A](a: => A) = LazyRef(a)
+  }
+
+}
+
 object Suspendable {
   /** Retrieve the implicit `Suspendable[G]`. */
   @inline def apply[G[_]](implicit G: Suspendable[G]): Suspendable[G] = G
@@ -19,10 +45,11 @@ object Suspendable {
     * to make refactoring easier if we decide `Name` isn't good
     * enough.
     */
-  type O[+A] = scalaz.Name[A]
+  type O[+A] = LazyRef[A]
 
-  @inline def O[A](a: => A): O[A] = scalaz.Name(a)
-
+  def O[A](a: => A): O[A] = LazyRef(a)
+    
+    
   /** Invoke the `suspend` method on the `Suspendable` instance in
     * scope.
     */
@@ -55,19 +82,31 @@ trait Run[G[_]] extends Suspendable[G] {
   def run[A](a: G[A]): A
 }
 
+trait LazyRefGen[A] {
+  def create(a: => A): Suspendable.O[A] = Suspendable.O(a)
+}
+
 object Run {
   /** Retrieve the implicit `Run[G]`. */
   @inline def apply[G[_]](implicit G: Run[G]): Run[G] = G
 
   import scalaz.{Applicative, Distributive, Functor}
 
+  var lazyRefGenOverride: Any = null
+  
   /** A default definition for `Run#suspend` built on `#run` and
     * `G.point`.
     */
   def runSuspendGM[G[_], A](R: Run[G], ga: G[A])(implicit G: Applicative[G])
-      : G[Suspendable.O[A]] =
-    G.point(Suspendable.O(R.run(ga)))
-
+      : G[Suspendable.O[A]] = {
+    if (lazyRefGenOverride == null) G.point(Suspendable.O(R.run(ga)))
+    else {
+      val lzGen = lazyRefGenOverride.asInstanceOf[LazyRefGen[A]]
+      G.point(lzGen.create(R.run(ga)))
+    }
+  }
+    
+  
   /** For all Runs of applicative G, there is a half-legal distributive
     * instance, that lifts 'run' into the functor and wraps the result
     * with G.point.  Better that than the Function1 distributive. –SMRC
