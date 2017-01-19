@@ -374,7 +374,7 @@ object Session {
         expTys,
         expTms,
         preCk,
-        file.interfaceWriteback
+        if (s.useInterface) file.interfaceWriteback else (_ => ())
       )
     }
   }
