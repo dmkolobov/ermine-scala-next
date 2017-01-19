@@ -11,76 +11,28 @@ trait Suspendable[G[_]] {
   def background[A](a: G[A]): G[O[A]] = suspend(a)
 }
 
-abstract class InstrumentedName[+A] {
-  val creationTime = System.nanoTime
-  val instanceNumber = InstrumentedName.numInstances
-/*  
-  if (
-       instanceNumber == 14 ||
-       instanceNumber == 295 ||
-       instanceNumber == 30 ||
-       instanceNumber == 359 ||
-       instanceNumber == 71 ||
-       instanceNumber == 366 ||
-       instanceNumber == 87 ||
-       instanceNumber == 390 ||
-       instanceNumber == 103 ||
-       instanceNumber == 199 ||
-       instanceNumber == 217 ||
-       instanceNumber == 846 ||
-      false) {
-      println("InstrumentedName.init with DB access: " + instanceNumber)
-      java.lang.Thread.dumpStack
-  }
-
-  if (instanceNumber == 2 || instanceNumber == 20 || instanceNumber == 200) {
-      println("InstrumentedName.init NO DB access: " + instanceNumber)
-      java.lang.Thread.dumpStack
-  }     
-*/  
-  var accessTime: Long = 0
+/**
+* Taken from scalaz.Name, except it is not sealed to allow sub-classing
+*/
+abstract class LazyRef[+A] {
 
   def value: A
   def >>=[B](f: A => B) : B = f(value)
   def flatMap[B](f: A => B) : B = f(value)
-  def map[B](f: A => B): InstrumentedName[B] = InstrumentedName(f(value))
-
-  def delayTimeNano: Long = {
-    val t = if (accessTime == 0) 0
-            else (accessTime - creationTime)
-//    println(">> delayTimeNano[" + instanceNumber + "] = " + t + " ns")
-    t
-  }
+  def map[B](f: A => B): LazyRef[B] = LazyRef(f(value))
 }
 
-object InstrumentedName {
-  var accumulatedAccessDelay: Long = 0
-  var numInstances: Long = 0
-  var currentObjectDelay: Long = 0
-  var currentObjectNumber: Long = 0
+object LazyRef {
+  def apply[A](a: => A) = new LazyRef[A] {
+    def value = a
+  }  
   
-  def apply[A](a: => A) = {
-    numInstances = numInstances + 1
-    new InstrumentedName[A] {
-      def value = {
-        if (accessTime == 0) {
-          accessTime = System.nanoTime
-          accumulatedAccessDelay = accumulatedAccessDelay + delayTimeNano
-        }
-        currentObjectDelay = delayTimeNano
-        currentObjectNumber = instanceNumber
-        
-        a
-      }
-    }
-  }
-  
-  def unapply[A](v: InstrumentedName[A]): Option[A] = Some(v.value)
+  def unapply[A](v: LazyRef[A]): Option[A] = Some(v.value)
 
-  implicit val nameMonad: scalaz.Monad[InstrumentedName] = new scalaz.Monad[InstrumentedName] {
-    def bind[A,B](v: InstrumentedName[A])(f: A => InstrumentedName[B]): InstrumentedName[B] = 
+  implicit val lazyRefMonad: scalaz.Monad[LazyRef] = new scalaz.Monad[LazyRef] {
+    def bind[A,B](v: LazyRef[A])(f: A => LazyRef[B]): LazyRef[B] = 
       f(v.value)
-    def point[A](a: => A) = InstrumentedName(a)
+    def point[A](a: => A) = LazyRef(a)
   }
 
 }
@@ -94,15 +46,9 @@ object Suspendable {
     * to make refactoring easier if we decide `Name` isn't good
     * enough.
     */
-  type O[+A] = InstrumentedName[A]
+  type O[+A] = LazyRef[A]
 
-  var i: Int = 0
-  
-  def O[A](a: => A): O[A] = {
-//    if (i % 10 == 0) java.lang.Thread.dumpStack
-    i = i + 1
-    InstrumentedName(a)
-  }
+  def O[A](a: => A): O[A] = LazyRef(a)
     
     
   /** Invoke the `suspend` method on the `Suspendable` instance in
@@ -137,7 +83,7 @@ trait Run[G[_]] extends Suspendable[G] {
   def run[A](a: G[A]): A
 }
 
-trait BGSuspendableGen[A] {
+trait LazyRefGen[A] {
   def create(a: => A): Suspendable.O[A] = Suspendable.O(a)
 }
 
@@ -147,19 +93,17 @@ object Run {
 
   import scalaz.{Applicative, Distributive, Functor}
 
-  type BGO[A] = (=> A) => Suspendable.O[A]
-  
-  var bgSuspendableGen: Any = null
+  var lazyRefGenOverride: Any = null
   
   /** A default definition for `Run#suspend` built on `#run` and
     * `G.point`.
     */
   def runSuspendGM[G[_], A](R: Run[G], ga: G[A])(implicit G: Applicative[G])
       : G[Suspendable.O[A]] = {
-    if (bgSuspendableGen == null) G.point(Suspendable.O(R.run(ga)))
+    if (lazyRefGenOverride == null) G.point(Suspendable.O(R.run(ga)))
     else {
-      val bgGen = bgSuspendableGen.asInstanceOf[BGSuspendableGen[A]]
-      G.point(bgGen.create(R.run(ga)))
+      val lzGen = lazyRefGenOverride.asInstanceOf[LazyRefGen[A]]
+      G.point(lzGen.create(R.run(ga)))
     }
   }
     
