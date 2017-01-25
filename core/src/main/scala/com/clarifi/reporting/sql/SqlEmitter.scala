@@ -578,7 +578,7 @@ trait EmitOver_UsingOver extends SqlEmitter {
  */
 trait EmitConcat_AsConcat extends SqlEmitter {
   override protected def emitConcat_helper(terms: NonEmptyList[SqlExpr]): SqlExpr =
-    FunSqlExpr("Concat", terms.list)
+    FunSqlExpr("Concat", if (terms.tail.isEmpty) List(terms.head, LitSqlExpr(SqlString(""))) else terms.list) // CONCAT must take at least 2 args.
 }
 
 /** Pretend UUIDS are strings. */
