@@ -573,19 +573,29 @@ sealed abstract class Condition {
 
 object Condition {
   case class Gt(comparator: PrimExpr) extends Condition {
-    override def apply(e: PrimExpr): Boolean = e > comparator
+    override def apply(e: PrimExpr): Boolean = 
+      if (comparator.isNull || e.isNull) false
+      else e > comparator
   }
   case class Lt(comparator: PrimExpr) extends Condition {
-    override def apply(e: PrimExpr): Boolean = e < comparator
+    override def apply(e: PrimExpr): Boolean = 
+      if (comparator.isNull || e.isNull) false
+      else e < comparator
   }
   case class Eq(comparator: PrimExpr) extends Condition {
-    override def apply(e: PrimExpr): Boolean = e == comparator
+    override def apply(e: PrimExpr): Boolean = 
+      if (comparator.isNull || e.isNull) false
+      else e == comparator
   }
   case class Gte(comparator: PrimExpr) extends Condition {
-    override def apply(e: PrimExpr): Boolean = e >= comparator
+    override def apply(e: PrimExpr): Boolean =
+      if (comparator.isNull || e.isNull) false
+      else e >= comparator
   }
   case class Lte(comparator: PrimExpr) extends Condition {
-    override def apply(e: PrimExpr): Boolean = e <= comparator
+    override def apply(e: PrimExpr): Boolean =
+      if (comparator.isNull || e.isNull) false
+      else e <= comparator
   }
   case class And(c1: Condition, c2: Condition) extends Condition {
     override def apply(e: PrimExpr): Boolean = c1(e) && c2(e)
