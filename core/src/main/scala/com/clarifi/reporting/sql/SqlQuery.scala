@@ -26,9 +26,11 @@ sealed abstract class SqlQuery {
       (if (!where.isEmpty)
         raw(" where ") |+| where.map(x => raw("(") |+| x.emitSql |+| ")").toIterable.rawMkString(" and ")
       else raw("")) |+|
-      (if (!groupBy.isEmpty)
-        raw(" group by ") |+| (groupBy.filter(!_.isConstant).toIndexedSeq.map((x: SqlExpr) => x.emitSql).rawMkString(", "))
-      else raw("")) |+|
+      { val fGroupBy = groupBy.filter(!_.isConstant).toIndexedSeq
+        if (!fGroupBy.isEmpty)
+        raw(" group by ") |+| (fGroupBy.map((x: SqlExpr) => x.emitSql).rawMkString(", "))
+      else raw("")
+      } |+|
       (if (!having.isEmpty)
         raw(" having ") |+| having.map(x => raw("(") |+| x.emitSql |+| ")").toIterable.rawMkString(" and ")
       else raw(""))
