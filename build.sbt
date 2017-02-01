@@ -75,6 +75,8 @@ ensureNoUncommitted in ThisBuild <<= streams map { s =>
   }
 }
 
+excludeFilter in ThisBuild := HiddenFileFilter || FileFilter.globFilter("*.ei")
+
 publishLocal in ThisBuild <<= (computeRevision, publishLocal.task) flatMap { case (_,p) => p }
 
 publish in ThisBuild <<= (computeRevision, ensureNoUncommitted, publish.task) flatMap { case (_,_,p) => p }
