@@ -289,7 +289,6 @@ object TermParsers {
   def remember: Parser[Term] = token("?") *> ((freshId map2 bracket(term))(Remember))
 
   def termL0: Parser[Term] = (
-    lam                 | // x -> ...
     hole                |
     remember            |
     literal             | // 1234 "hello" 'h' 12.0
@@ -306,7 +305,7 @@ object TermParsers {
   } yield xs.reduceLeft(App.apply)
 
   // foo 5 [1,2,x]
-  def termL1 = caseTerm | let | doMonad | termL0s
+  def termL1 = caseTerm | let | doMonad | lam | termL0s
 
   def termL2 = Op.shuntingYard(
     for {
