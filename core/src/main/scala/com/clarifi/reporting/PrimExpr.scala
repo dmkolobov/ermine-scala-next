@@ -543,16 +543,16 @@ object PrimExpr {
   implicit val PrimExprShow: Show[PrimExpr] = showFromToString[PrimExpr]
 
   private def ctorOrder(a: PrimExpr) = a match {
-    case StringExpr(_, _)  => 0
-    case DoubleExpr(_, _)  => 1
-    case ByteExpr(_, _)    => 2
-    case ShortExpr(_, _)   => 3
-    case LongExpr(_, _)    => 4
-    case IntExpr(_, _)     => 5
-    case DateExpr(_, _)    => 6
-    case BooleanExpr(_, _) => 7
-    case UuidExpr(_, _)    => 8
-    case NullExpr(_)       => 9
+    case StringExpr(_, _)  => 1
+    case DoubleExpr(_, _)  => 2
+    case ByteExpr(_, _)    => 3
+    case ShortExpr(_, _)   => 4
+    case LongExpr(_, _)    => 5
+    case IntExpr(_, _)     => 6
+    case DateExpr(_, _)    => 7
+    case BooleanExpr(_, _) => 8
+    case UuidExpr(_, _)    => 9
+    case NullExpr(_)       => 0 // let NULLS to compare before (less than) any non-null values
   }
   implicit val PrimExprOrder: Order[PrimExpr] = order((a, b) => {
     val typeorder = ctorOrder(a) ?|? ctorOrder(b)
