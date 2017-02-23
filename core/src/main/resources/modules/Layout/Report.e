@@ -1184,8 +1184,9 @@ coloredSeries : (s sr sa -> xa' -> ya' -> relr -> ChartSeries xa ya)
              -> ya'
              -> relr
              -> ChartSeries xa ya
-coloredSeries comb colors s x y r = comb s x y r |> (ChartSeries _ ct vt ncs) ->
-  ChartSeries colors ct vt ncs
+coloredSeries comb colors s x y r =
+  comb s x y r |> (ChartSeries _ ct vt a b c d e f g) ->
+  ChartSeries colors ct vt a b c d e f g
 
 -- | Label some category ticks specially.  Stacks with 'coloredSeries'
 -- et al.
@@ -1193,8 +1194,9 @@ categoryTickLabels : Unscaled xa
                   => List ({..xr}, {..xr})
                   -> (sa' -> x xr xa -> ya' -> relr -> ChartSeries xa ya)
                   -> (sa' -> x xr xa -> ya' -> relr -> ChartSeries xa ya)
-categoryTickLabels ct comb s x y r = comb s x y r |> (ChartSeries colors _ vt ncs) ->
-  ChartSeries colors ct vt ncs
+categoryTickLabels ct comb s x y r =
+  comb s x y r |> (ChartSeries colors _ vt a b c d e f g) ->
+  ChartSeries colors ct vt a b c d e f g
 
 -- | Label some value ticks specially.  Stacks with 'coloredSeries',
 -- 'categoryTickLabels', et al.
@@ -1202,8 +1204,31 @@ valueTickLabels : Unscaled ya
                => List ({..yr}, {..yr})
                -> (sa' -> xa' -> y yr ya -> relr -> ChartSeries xa ya)
                -> (sa' -> xa' -> y yr ya -> relr -> ChartSeries xa ya)
-valueTickLabels vt comb s x y r = comb s x y r |> (ChartSeries colors ct _ ncs) ->
-  ChartSeries colors ct vt ncs
+valueTickLabels vt comb s x y r =
+  comb s x y r |> (ChartSeries colors ct _ a b c d e f g) ->
+  ChartSeries colors ct vt a b c d e f g
+
+-- | Construct value tool tips using different information than that
+-- used to plot the values.
+valueTooltipLabels
+  : (Has r ytr)
+  => Presentation ytr yta
+  -> (sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya)
+  -> (sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya)
+valueTooltipLabels ytp comb s x y r =
+  comb s x y r |> (ChartSeries a b c d e f g _ h i) ->
+  ChartSeries a b c d e f g (Just ytp) h i
+
+-- | Construct the domain tool tips using different information than
+-- is actually plotted on the axis.
+domainTooltipLabels
+  : (Has r xtr)
+  => Presentation xtr xta
+  -> (sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya)
+  -> (sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya)
+domainTooltipLabels xtp comb s x y r =
+  comb s x y r |> (ChartSeries a b c d e f _ g h i) ->
+  ChartSeries a b c d e f (Just xtp) g h i
 
 -- | Collect multiple ChartSeries into a chart.
 chart : forall xa ya .

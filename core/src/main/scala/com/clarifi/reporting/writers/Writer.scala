@@ -333,7 +333,7 @@ abstract class Writer[F[_],C] { self =>
 
   final def drilldownBarChartDMTL(
     chart: DrilldownBarAxisChart[(String, String), ClosedExt]): F[C] = {
-    val DrilldownBarAxisChart(_, categoryPres, dataPres, query, (parentCol, childCol), _) = chart
+    val DrilldownBarAxisChart(_, categoryPres, dataPres, _, _, query, (parentCol, childCol), _) = chart
     postpone(
       treeTabular(parentCol, childCol, query, rootParentId = 1) flatMap (ttab =>
       drilldownBarChartPC(chart.flattenFormat rightMap
@@ -367,7 +367,7 @@ abstract class Writer[F[_],C] { self =>
 
   final def drilldownBarChartDMTL2(
     chart: DrilldownBarAxisChart[(List[(String, String)], ClosedExt), ClosedExt]): F[C] = {
-    val DrilldownBarAxisChart(_, categoryPres, dataPres, query, (cols, roots), _) = chart
+    val DrilldownBarAxisChart(_, categoryPres, dataPres, _, _, query, (cols, roots), _) = chart
     // TODO ask estern whether the 3rd arg to treeTabular2 makes sense -SMRC
     postpone(
       treeTabular2(cols, query, roots) flatMap (ttab =>

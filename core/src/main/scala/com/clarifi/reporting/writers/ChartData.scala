@@ -344,12 +344,16 @@ case class UnscaledConstraints(sort: SortOrder \/ Order[PrimExpr],
   * @param selSeries Selection and display of series from `dataSource`.
   * @param selCategory Selection and display of domain from `dataSource`.
   * @param selValue Selection and display of range from `dataSource`.
+  * @param selCatTooltips Selection and display of category axis tooltips from `dataSource`.
+  * @param selValTooltips Selection and display of value axis tooltips from `dataSource`.
   * @param variant Chart-style-specific options.
   * @param dataSource From whence triples shall come.
   */
 case class ChartSeries[Data](selSeries: Presentation,
                              selCategory: Op,
                              selValue: Op,
+                             selCatTooltips: Option[Presentation],
+                             selValTooltips: Option[Presentation],
                              variant: ChartVariant,
                              dataSource: Data) {
   def categoryType: PrimT =
@@ -415,6 +419,8 @@ final case class DrilldownBarAxisChart[DD, Data](
   selSeries: Presentation,
   selCategory: Presentation,
   selValue: Presentation,
+  selCatTooltips: Option[Presentation],
+  selValTooltips: Option[Presentation],
   dataSource: Data,
   drilldownCols: DD,
   meta: AxisChartData) {
@@ -425,6 +431,7 @@ final case class DrilldownBarAxisChart[DD, Data](
     AxisChart(List(ChartSeries(selSeries,
                                selCategory.displayData.head,
                                selValue.displayData.head,
+                               selCatTooltips, selValTooltips,
                                Bar, dataSource)),
               meta)
 
