@@ -28,7 +28,7 @@ import Date
 
 infixr 5 ++
 infixl 6 + -
-infixl 7 * / //
+infixl 7 * / // %
 
 prim : forall a. Primitive a => a -> Op (| |) a
 prim = funcall1# opLiteralModule . primExpr#
@@ -82,12 +82,13 @@ type OpTri a1 a2 a3 r =
          , AsOp op3)
   => op1 r1 a1 -> op2 r2 a2 -> op3 r3 a3 -> Op rr r
 
-(+), (-), (*), (//), (/), pow, logBase : PrimitiveNum n => OpBin n
+(+), (-), (*), (//), (/), (%), pow, logBase : PrimitiveNum n => OpBin n
 (+) = opBin $ funcall2# addModule
 (-) = opBin $ funcall2# subModule
 (*) = opBin $ funcall2# mulModule
 (//) = opBin $ funcall2# floorDivModule
 (/) = opBin $ funcall2# doubleDivModule
+(%) a b = a - (b * (a // b))
 pow = opBin $ builtin2 powBuiltin
 logBase = opBin $ builtin2 logBaseBuiltin
 
