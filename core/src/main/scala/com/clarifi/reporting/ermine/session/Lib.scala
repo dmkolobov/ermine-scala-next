@@ -206,8 +206,8 @@ object Lib {
   def cons(implicit s: SessionEnv, su: Supply) =
     for(c <- List(
       Type.int, Type.long, Type.char, Type.string, Type.float, Type.double,
-      Type.field, Type.byte, Type.date, Type.uuid, Type.short, Type.ffi,
-      Type.recordT, Type.relationT
+      Type.field, Type.byte, Type.date, Type.uuid, Type.timestamp, Type.short,
+      Type.ffi, Type.recordT, Type.relationT
     )) addCon(c)
 
   def simple(implicit s: SessionEnv, su: Supply) {
@@ -221,7 +221,7 @@ object Lib {
     primOp(Global("Native.Object","!==", InfixN(4)), fun2((a,b) => liftBool(a.extract[AnyRef] ne b.extract[AnyRef])), FA(a => a ->: a ->: bool))
 
     for (t <- List(Type.int, Type.long, Type.char, Type.string, Type.float,
-                   Type.double, Type.byte, Type.date, Type.short))
+                   Type.double, Type.byte, Type.date, Type.uuid, Type.timestamp, Type.short))
       addInstance(eqCon, mkSimpleInstance(t, "Eq"))
 
     // the field instance
@@ -1092,7 +1092,8 @@ object Lib {
            (Global("Prim","Byte"),   PrimT.ByteT(true),     prim(byte),   true),
            (Global("Prim","Short"),  PrimT.ShortT(true),    prim(short),  true),
            (Global("Prim","Long"),   PrimT.LongT(true),     prim(long),   true),
-           (Global("Prim","Date"),   PrimT.DateT(true),     prim(date),   true))
+           (Global("Prim","Date"),   PrimT.DateT(true),     prim(date),   true),
+           (Global("Prim","Timestamp"), PrimT.TimestampT(true), prim(timestamp), true))
 
   def prims(implicit s: SessionEnv, su: Supply) {
     addCon(prim)
@@ -1154,6 +1155,18 @@ object Lib {
     addInstance(primitiveString, primInstance(primitiveString,string,PrimT.StringT(0)))
     addInstance(primitiveString, primInstance(primitiveString,nullable(string),PrimT.StringT(0).withNull))
 
+    // class PrimitiveTemporal a | Primitive a, Scaled a
+    val primitiveTemporal = {
+      val a = freshType(star)
+      val con = addCon(mkClassCon(Global("Builtin","PrimitiveTemporal")))
+      addClass(Loc.builtin, con, List(a), List(primitive(VarT(a)), scaled(VarT(a))), List(_))
+    }
+
+    for ((t,d) <- primDateTypes) {
+      addInstance(primitiveTemporal, primInstance(primitiveTemporal,t,d))
+      addInstance(primitiveTemporal, primInstance(primitiveTemporal,nullable(t),d.withNull))
+    }
+
     // class PrimitiveAtom a | Primitive a where
     //   nullable :: Prim (Nullable a)
     {
@@ -1196,6 +1209,17 @@ object Lib {
 
     for ((t,d) <- primNumTypes) {
       addInstance(num, primInstance(num,t,d))
+    }
+
+    // class Temporal a | PrimitiveTemporal a
+    val temporal = {
+      val a = freshType(star)
+      val con = addCon(mkClassCon(Global("Builtin","Temporal")))
+      addClass(Loc.builtin, con, List(a), List(primitiveTemporal(VarT(a))), _ => List())
+    }
+
+    for ((t,d) <- primDateTypes) {
+      addInstance(temporal, primInstance(temporal,t,d))
     }
   }
 
@@ -1251,7 +1275,8 @@ object Lib {
                      bool: Runtime, nullBool: Runtime, double: Runtime, nullDouble: Runtime,
                      byte: Runtime, nullByte: Runtime, short : Runtime, nullShort : Runtime,
                      long: Runtime, nullLong: Runtime, date  : Runtime, nullDate  : Runtime,
-                     uuid: Runtime, nullUuid: Runtime, p: PrimT): Runtime =
+                     uuid: Runtime, nullUuid: Runtime, tstamp: Runtime, nullTstamp: Runtime,
+                     p: PrimT): Runtime =
       p match {
         case IntT    (   nullable) => primCond(nullable, int   , nullInt   )
         case StringT (_, nullable) => primCond(nullable, string, nullString)
@@ -1262,19 +1287,20 @@ object Lib {
         case LongT   (   nullable) => primCond(nullable, long  , nullLong  )
         case DateT   (   nullable) => primCond(nullable, date  , nullDate  )
         case UuidT   (   nullable) => primCond(nullable, uuid  , nullUuid  )
+        case TimestampT (nullable) => primCond(nullable, tstamp, nullTstamp)
       }
 
     primOp(Global("Prim", "primCata"),
             Fun(int => Fun(nullInt => Fun(string => Fun(nullString => Fun(bool => Fun(nullBool => Fun(double => 
               Fun(nullDouble => Fun(byte => Fun(nullByte => Fun(short => Fun(nullShort => Fun(long => Fun(nullLong =>
-                Fun(date => Fun(nullDate => Fun(uuid => Fun(nullUuid => Fun(p =>  { 
+                Fun(date => Fun(nullDate => Fun(uuid => Fun(nullUuid => Fun(timestamp => Fun(nullTimestamp => Fun(p =>  { 
                   val primt = p.extract[PrimT]
-		  primCataImpl(int, nullInt, string, nullString, bool, nullBool, double, nullDouble, byte, nullByte,
-		               short, nullShort, long, nullLong, date, nullDate, uuid, nullUuid, primt)
-                }))))))))))))))))))),
+                  primCataImpl(int, nullInt, string, nullString, bool, nullBool, double, nullDouble, byte, nullByte,
+                               short, nullShort, long, nullLong, date, nullDate, uuid, nullUuid, timestamp, nullTimestamp, primt)
+                }))))))))))))))))))))),
                  int ->: nullable(int) ->: string ->: nullable(string) ->: bool ->: nullable(bool) ->: 
                    double ->: nullable(double) ->: byte ->: nullable(byte) ->: short ->: nullable(short) ->: long ->: nullable(long) ->:
-                     date ->: nullable(date) ->: uuid ->: nullable(uuid) ->: primt ->: primExpr
+                     date ->: nullable(date) ->: uuid ->: nullable(uuid) ->: timestamp ->: nullable(timestamp) ->: primt ->: primExpr
             )
   }
 

@@ -10,6 +10,7 @@ import scalaz.Scalaz._
 import scalaparsers.{Document, Loc, Located, Supply}
 import scala.collection.immutable.List
 import java.util.{Date, UUID}
+import java.sql.Timestamp
 import Kind._
 import Type._
 import Show._
@@ -541,6 +542,7 @@ object Type {
   val byte      = mkPrimCon[Byte](Global("Builtin","Byte"))
   val date      = mkCon[Date](Global("Builtin","Date"))
   val uuid      = mkCon[UUID](Global("Builtin","GUID"))
+  val timestamp = mkCon[Timestamp](Global("Builtin","Timestamp"))
   val short     = mkPrimCon[Short](Global("Builtin","Short"))
   val field     = mkRuntimeCon(Global("Builtin","Field",Idfix), rho ->: star ->: star, false)
   val nullable  = mkRuntimeCon(Global("Builtin","Nullable",Idfix), star ->: star, false)
@@ -681,10 +683,15 @@ object Type {
     short  -> PrimT.ShortT()
   )
 
-  val primTypes : Map[Type,PrimT] = primNumTypes ++ Map(
+  val primDateTypes : Map[Type,PrimT] = Map(
+    date -> PrimT.DateT(),
+    timestamp -> PrimT.TimestampT()
+  )
+
+  val primTypes : Map[Type,PrimT] = primNumTypes ++ primDateTypes ++ Map(
     string -> PrimT.StringT(0),
-    date   -> PrimT.DateT(),
-    bool   -> PrimT.BooleanT()
+    bool   -> PrimT.BooleanT(),
+    uuid   -> PrimT.UuidT()
 //    char   -> PrimT.CharT(),
   )
 }

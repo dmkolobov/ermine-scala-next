@@ -502,17 +502,18 @@ object Format {
   lazy val sourcedR: Reader[Sourced, SourcedF] = tuple2R(listR(sourceR) map (_.toSet), headerR map (_.success))
 
   lazy val primTRW: CodecPairDynamic[PrimT] = {
-    type PrimTF = S9[BooleanF       , // Int
-                     BooleanF       , // Byte
-                     BooleanF       , // Short
-                     BooleanF       , // Long
-                     IntF & BooleanF, // String
-                     BooleanF       , // Date
-                     BooleanF       , // Double
-                     BooleanF       , // Boolean
-                     BooleanF]        // UUID
+    type PrimTF = S10[BooleanF       , // Int
+                      BooleanF       , // Byte
+                      BooleanF       , // Short
+                      BooleanF       , // Long
+                      IntF & BooleanF, // String
+                      BooleanF       , // Date
+                      BooleanF       , // Double
+                      BooleanF       , // Boolean
+                      BooleanF       , // UUID
+                      BooleanF]        // Timestamp
     CodecPair.withSelfDescribing[PrimT, PrimTF]{
-      union9R(
+      union10R(
         booleanR map (IntT(_)),
         booleanR map (ByteT(_)),
         booleanR map (ShortT(_)),
@@ -521,10 +522,11 @@ object Format {
         booleanR map (DateT(_)),
         booleanR map (DoubleT(_)),
         booleanR map (BooleanT(_)),
-        booleanR map (UuidT(_))
+        booleanR map (UuidT(_)),
+        booleanR map (TimestampT(_))
       )
     }{
-      s9W(booleanW, // Int
+      s10W(booleanW, // Int
           booleanW, // Byte
           booleanW, // Short
           booleanW, // Long
@@ -532,8 +534,9 @@ object Format {
           booleanW, // Date
           booleanW, // Double
           booleanW, // Boolean
-          booleanW // UUID
-      )((i, b, sh, ln, str, dt, dbl, bool, uuid) => (r: PrimT) => r match {
+          booleanW, // UUID
+          booleanW // Timestamp
+      )((i, b, sh, ln, str, dt, dbl, bool, uuid, ts) => (r: PrimT) => r match {
           case IntT(n) => i(n)
           case ByteT(n) => b(n)
           case ShortT(n) => sh(n)
@@ -543,6 +546,7 @@ object Format {
           case DoubleT(n) => dbl(n)
           case BooleanT(n) => bool(n)
           case UuidT(n) => uuid(n)
+          case TimestampT(n) => ts(n)
         })
     }
   }
@@ -550,7 +554,7 @@ object Format {
   lazy val primTR: Reader[PrimT, PrimTF] = primTRW.R
 
   lazy val primExprRW: CodecPairDynamic[PrimExpr] = {
-    type PrimExprF = S10[BooleanF & StringF,
+    type PrimExprF = S11[BooleanF & StringF,
                          BooleanF & DoubleF,
                          BooleanF & ByteF,
                          BooleanF & ShortF,
@@ -559,10 +563,11 @@ object Format {
                          BooleanF & LongF, // Date
                          BooleanF & BooleanF,
                          BooleanF & StringF, // UUID
+                         BooleanF & LongF, // Timestamp
                          PrimTF] // Null
     implicit val primtReified = primTRW.reifiedF
     CodecPair.withSelfDescribing[PrimExpr, PrimExprF]{
-      union10R(p2R(booleanR, stringR)(StringExpr(_,_)),
+      union11R(p2R(booleanR, stringR)(StringExpr(_,_)),
                p2R(booleanR, doubleR)(DoubleExpr(_,_)),
                p2R(booleanR, byteR)(ByteExpr(_,_)),
                p2R(booleanR, shortR)(ShortExpr(_,_)),
@@ -571,10 +576,11 @@ object Format {
                p2R(booleanR, longR)((b, l) => DateExpr(b, new java.util.Date(l))),
                p2R(booleanR, booleanR)(BooleanExpr(_,_)),
                p2R(booleanR, stringR)((b, s) => UuidExpr(b, UUID.fromString(s))),
+               p2R(booleanR, longR)((b, l) => TimestampExpr(b, new java.sql.Timestamp(l))),
                primTR map (NullExpr(_)))
     }{
-      s10W(tuple2W(booleanW, stringW), tuple2W(booleanW, doubleW), tuple2W(booleanW, byteW), tuple2W(booleanW, shortW), tuple2W(booleanW, longW), tuple2W(booleanW, intW), tuple2W(booleanW, longW), tuple2W(booleanW, booleanW), tuple2W(booleanW, stringW), primTW)(
-        (str, dbl, byt, sho, lon, i, dt, bool, uuid, nl) => (r: PrimExpr) => r match {
+      s11W(tuple2W(booleanW, stringW), tuple2W(booleanW, doubleW), tuple2W(booleanW, byteW), tuple2W(booleanW, shortW), tuple2W(booleanW, longW), tuple2W(booleanW, intW), tuple2W(booleanW, longW), tuple2W(booleanW, booleanW), tuple2W(booleanW, stringW), tuple2W(booleanW, longW), primTW)(
+        (str, dbl, byt, sho, lon, i, dt, bool, uuid, ts, nl) => (r: PrimExpr) => r match {
           case StringExpr(nl, s) => str(nl, s)
           case DoubleExpr(nl, d) => dbl(nl, d)
           case ByteExpr(nl, b) => byt(nl, b)
@@ -584,6 +590,7 @@ object Format {
           case DateExpr(nl, d) => dt(nl, d.getTime)
           case BooleanExpr(nl, b) => bool(nl, b)
           case UuidExpr(nl, u) => uuid(nl, u.toString)
+          case TimestampExpr(nl, t) => ts(nl, t.getTime)
           case NullExpr(t) => nl(t)
         })
     }

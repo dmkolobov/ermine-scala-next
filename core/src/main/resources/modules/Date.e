@@ -9,15 +9,23 @@ import Maybe as M
 import String as S
 
 -- builtin data "java.util.Date" Date
+-- builtin data "java.sql.Timestamp" Timestamp
+
+-- Despite the fact that Ermine uses java.util.Date as the backing type
+-- for its `Date` type, an Ermine Date is morally a year-month-day triple,
+-- the same as the DATE type in SQL.
+-- A `Timestamp` is a Date+Time, corresponding to a SQL TIMESTAMP value
+-- (or DATETIME2 in MS-SQL). Timestamps are assumed to be in UTC for the
+-- purposes of treating a Date+Time as an actual moment in time.
 
 parseDate : String -> Maybe Date
 parseDate = fromMaybe# . parseDate#
 
 foreign
-  constructor now : IO Date
-  constructor ddmmyy : Int -> Int -> Int -> Date
-  constructor dateFromLong : Long -> Date
-  -- constructor dateFromString : String -> Date
+-- Construct a date given a year, month, and day.
+-- e.g. `yyyymmdd 1970 1 1` -> January 1, 1970
+  function "com.clarifi.reporting.util.YMDTriple" "apply" yyyymmdd : Int -> Int -> Int -> Date
+
   function "com.clarifi.reporting.PrimExprs" "parseDate" parseDate# : String -> Maybe# Date
   function "com.clarifi.reporting.PrimExprs" "formatDate" unsafeFormatDate : Date -> String
   function "com.clarifi.reporting.PrimExprs" "formatMonthYear" formatMonthYear : Date -> String
@@ -29,9 +37,10 @@ foreign
   method "getDate" getDate       : Date -> Int
   method "getMonth" getMonth     : Date -> Int
   method "getYear" getYear       : Date -> Int
-  method "getHours" getHours     : Date -> Int
-  method "getMinutes" getMinutes : Date -> Int
   method "before" before : Date -> Date -> Bool
+
+foreign
+  constructor timestampFromLong : Long -> Timestamp
 
 formatExcelDate d =
   spaced_S ' [
@@ -75,3 +84,4 @@ foreign
 
 private foreign
   method "increment" incrementDate# : TimeUnit -> Date -> Int -> Date
+  method "incrementTimestamp" incrementTimestamp# : TimeUnit -> Timestamp -> Int -> Timestamp

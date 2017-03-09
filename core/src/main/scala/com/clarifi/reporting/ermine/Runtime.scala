@@ -308,17 +308,19 @@ object Runtime {
     })
 
   def toPrimExpr(rt: Runtime, nullable: Boolean = false): PrimExpr = rt.nf match {
-    case Prim(s: String) => StringExpr(nullable, s) // PrimType.toPrim(s: String)
-    case Prim(i: Int) => PrimType.toPrim(i)
-    case Prim(d: java.util.Date) => PrimType.toPrim(d)
-    case Prim(b: Boolean) => PrimType.toPrim(b)
-    case `True` => PrimType.toPrim(true)
-    case `False` => PrimType.toPrim(false)
-    case Prim(d: Double) => PrimType.toPrim(d)
-    case Prim(b: Byte) => PrimType.toPrim(b)
-    case Prim(s: Short) => PrimType.toPrim(s)
-    case Prim(l: Long) => PrimType.toPrim(l)
-    case Prim(u: java.util.UUID) => PrimType.toPrim(u)
+    case Prim(s: String) => StringExpr(nullable, s)
+    case Prim(i: Int) => IntExpr(nullable, i)
+    // java.sql.Timestamp <: java.util.Date, so check Timestamp first
+    case Prim(t: java.sql.Timestamp) => TimestampExpr(nullable, t)
+    case Prim(d: java.util.Date) => DateExpr(nullable, d)
+    case Prim(b: Boolean) => BooleanExpr(nullable, b)
+    case `True` => BooleanExpr(nullable, true)
+    case `False` => BooleanExpr(nullable, false)
+    case Prim(d: Double) => DoubleExpr(nullable, d)
+    case Prim(b: Byte) => ByteExpr(nullable, b)
+    case Prim(s: Short) => ShortExpr(nullable, s)
+    case Prim(l: Long) => LongExpr(nullable, l)
+    case Prim(u: java.util.UUID) => UuidExpr(nullable, u)
     case NullableValue(Right(rt2)) => toPrimExpr(rt2, true).withNull
     case NullableValue(Left(pt)) => NullExpr(pt)
     // may need to add some smarts here to create a NullExpr

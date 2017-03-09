@@ -72,7 +72,7 @@ object PrimT {
     type Value = Byte
     private[PrimT] lazy val PTCtor: WithNullableCompanion[ByteT] = ByteT
     def name = "Byte"
-    def primType = nullify(nullable, implicitly[PrimType[Value]])
+    def primType = nullify(nullable, PrimType primByte)
   }
   object ByteT extends WithNullableCompanion[ByteT] {
     private[PrimT] override val strictInstance : ByteT = new ByteT(false)
@@ -84,7 +84,7 @@ object PrimT {
     type Value = Short
     private[PrimT] lazy val PTCtor: WithNullableCompanion[ShortT] = ShortT
     def name = "Short"
-    def primType = nullify(nullable, implicitly[PrimType[Value]])
+    def primType = nullify(nullable, PrimType primShort)
   }
   object ShortT extends WithNullableCompanion[ShortT] {
     private[PrimT] override val strictInstance : ShortT = new ShortT(false)
@@ -96,7 +96,7 @@ object PrimT {
     type Value = Int
     private[PrimT] lazy val PTCtor: WithNullableCompanion[IntT] = IntT
     def name = "Int"
-    def primType = nullify(nullable, implicitly[PrimType[Value]])
+    def primType = nullify(nullable, PrimType primInt)
   }
   object IntT extends WithNullableCompanion[IntT] {
     private[PrimT] override val strictInstance : IntT = new IntT(false)
@@ -108,7 +108,7 @@ object PrimT {
     type Value = Long
     private[PrimT] lazy val PTCtor: WithNullableCompanion[LongT] = LongT
     def name = "Long"
-    def primType = nullify(nullable, implicitly[PrimType[Value]])
+    def primType = nullify(nullable, PrimType primLong)
   }
   object LongT extends WithNullableCompanion[LongT] {
     private[PrimT] override val strictInstance : LongT = new LongT(false)
@@ -153,11 +153,23 @@ object PrimT {
     type Value = Date
     private[PrimT] lazy val PTCtor: WithNullableCompanion[DateT] = DateT
     def name = "Date"
-    def primType = nullify(nullable, implicitly[PrimType[Value]])
+    def primType = nullify(nullable, PrimType primDate)
   }
   object DateT extends WithNullableCompanion[DateT] {
     private[PrimT] override val strictInstance : DateT = new DateT(false)
     private[PrimT] override val nullableInstance : DateT = new DateT(true)
+  }
+
+  final class TimestampT private(val nullable: Boolean = false)
+      extends WithNullable[TimestampT] {
+    type Value = Date
+    private[PrimT] lazy val PTCtor: WithNullableCompanion[TimestampT] = TimestampT
+    def name = "Timestamp"
+    def primType = nullify(nullable, PrimType primTimestamp)
+  }
+  object TimestampT extends WithNullableCompanion[TimestampT] {
+    private[PrimT] override val strictInstance : TimestampT = new TimestampT(false)
+    private[PrimT] override val nullableInstance : TimestampT = new TimestampT(true)
   }
 
   final class DoubleT private(val nullable: Boolean = false)
@@ -165,7 +177,7 @@ object PrimT {
     type Value = Double
     private[PrimT] lazy val PTCtor: WithNullableCompanion[DoubleT] = DoubleT
     def name = "Double"
-    def primType = nullify(nullable, implicitly[PrimType[Value]])
+    def primType = nullify(nullable, PrimType primDouble)
   }
   object DoubleT extends WithNullableCompanion[DoubleT] {
     private[PrimT] override val strictInstance : DoubleT = new DoubleT(false)
@@ -177,7 +189,7 @@ object PrimT {
     type Value = Boolean
     private[PrimT] lazy val PTCtor: WithNullableCompanion[BooleanT] = BooleanT
     def name = "Bool"
-    def primType = nullify(nullable, implicitly[PrimType[Value]])
+    def primType = nullify(nullable, PrimType primBoolean)
   }
   object BooleanT extends WithNullableCompanion[BooleanT] {
     private[PrimT] override val strictInstance : BooleanT = new BooleanT(false)
@@ -189,7 +201,7 @@ object PrimT {
     type Value = UUID
     private[PrimT] lazy val PTCtor: WithNullableCompanion[UuidT] = UuidT
     def name = "UUID"
-    def primType = nullify(nullable, implicitly[PrimType[Value]])
+    def primType = nullify(nullable, PrimType primUuid)
   }
   object UuidT extends WithNullableCompanion[UuidT] {
     private[PrimT] override val strictInstance : UuidT = new UuidT(false)
@@ -197,15 +209,16 @@ object PrimT {
   }
 
   def withName(s: String): PrimT = s match {
-    case "Int"    => IntT  (false)
-    case "Byte"   => ByteT (false)
-    case "Short"  => ShortT(false)
-    case "Long"   => LongT(false)
-    case "String" => StringT(0, false)
-    case "Date"   => DateT(false)
-    case "Double" => DoubleT(false)
-    case "Bool"   => BooleanT(false)
-    case "UUID"   => UuidT(false)
+    case "Int"       => IntT  (false)
+    case "Byte"      => ByteT (false)
+    case "Short"     => ShortT(false)
+    case "Long"      => LongT(false)
+    case "String"    => StringT(0, false)
+    case "Date"      => DateT(false)
+    case "Double"    => DoubleT(false)
+    case "Bool"      => BooleanT(false)
+    case "UUID"      => UuidT(false)
+    case "Timestamp" => TimestampT(false)
   }
 
   def coerce(p:PrimT, s: String): Validation[Throwable, Any] = Validation.fromTryCatch(p match {
@@ -220,6 +233,7 @@ object PrimT {
      * otherwise equality turns really dumb
      */
     case DateT(_)      => new java.text.SimpleDateFormat("YYYY/mm/dd").parse(s)
+    case TimestampT(_) => new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").parse(s)
     case DoubleT(_)    => s.toDouble
     case BooleanT(_)   => s.toBoolean
     case UuidT(_)      => java.util.UUID.fromString(s)
@@ -254,14 +268,15 @@ object PrimT {
     val bool = (word("true") as true) | (word("false") as false)
     val strt : Parser[PrimT] = word("StringT") >> paren(for { n <- nat ; _ <- comma ; b <- bool } yield StringT(n.toInt, b))
     val nstr : Parser[Boolean => PrimT] =
-      ("ByteT"    as (ByteT))    |
-      ("ShortT"   as (ShortT))   |
-      ("IntT"     as (IntT))     |
-      ("LongT"    as (LongT))    |
-      ("DoubleT"  as (DoubleT))  |
-      ("BooleanT" as (BooleanT)) |
-      ("DateT"    as (DateT))    |
-      ("UuidT"    as (UuidT))
+      ("ByteT"      as (ByteT))      |
+      ("ShortT"     as (ShortT))     |
+      ("IntT"       as (IntT))       |
+      ("LongT"      as (LongT))      |
+      ("DoubleT"    as (DoubleT))    |
+      ("BooleanT"   as (BooleanT))   |
+      ("DateT"      as (DateT))      |
+      ("TimestampT" as (TimestampT)) |
+      ("UuidT"      as (UuidT))
 
     val main : Parser[PrimT] = strt | (for { c <- nstr ; b <- paren(bool) } yield c(b))
 

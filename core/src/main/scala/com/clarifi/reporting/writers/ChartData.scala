@@ -268,7 +268,7 @@ object AxisConstraints {
     * UnscaledConstraints otherwise. */
   def primitiveScaled(t: PrimT): Boolean = t match {
     case _: ByteT | _: ShortT | _: IntT | _: LongT
-       | _: DateT | _: DoubleT => true
+       | _: DateT | _: DoubleT | _: TimestampT => true
     case _: StringT | _: BooleanT | _: UuidT => false
   }
 

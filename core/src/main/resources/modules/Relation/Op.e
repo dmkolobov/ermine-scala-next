@@ -140,10 +140,10 @@ combine op f = combine# f (UnsafeOp $ asOp op)
 -- Computed as: 10k * (1 + r)
 growthOf10k returns = prim (Some 10000.0) * (returns + (prim (Some 1.0))) -- todo: find better home for this
 
-dateAdd : AsOp op => Int -> TimeUnit -> op r Date -> Op r Date
+dateAdd : (AsOp op, PrimitiveTemporal d) => Int -> TimeUnit -> op r d -> Op r d
 dateAdd n u o = dateAdd# (prim n) u (asOp o)
 
-dateAdd' : (AsOp op1, AsOp op2, RUnion2 t r s) => op1 r Int -> TimeUnit -> op2 s Date -> Op t Date
+dateAdd' : (AsOp op1, AsOp op2, RUnion2 t r s, PrimitiveTemporal d) => op1 r Int -> TimeUnit -> op2 s d -> Op t d
 dateAdd' n u o = dateAdd# (asOp n) u (asOp o)
 
 --dateDiff : forall r r1 r2 .  AsOp op1 op2 => TimeUnit -> op1 r Date -> op2 r1 Date -> Op r2 Long
@@ -173,8 +173,8 @@ private
           (Op r a -> Op s b -> z) -> (opl r a -> opr s b -> z)
   opBin f x y = f (asOp x) (asOp y)
 
-foreign function "com.clarifi.reporting.Ops" "dateAdd" dateAdd# : Op r Int -> TimeUnit -> Op r1 Date -> Op r2 Date
-foreign function "com.clarifi.reporting.Ops" "dateDiff" dateDiff# : TimeUnit -> Op r Date -> Op r1 Date -> Op r2 Int
+foreign function "com.clarifi.reporting.Ops" "dateAdd" dateAdd# : (PrimitiveTemporal d) => Op r Int -> TimeUnit -> Op r1 d -> Op r2 d
+foreign function "com.clarifi.reporting.Ops" "dateDiff" dateDiff# : (PrimitiveTemporal d) => TimeUnit -> Op r d -> Op r1 d -> Op r2 Int
 
 weaken : r <- (x,y) => Op x b -> Op r b
 weaken = PhantomOp . UnsafeOp

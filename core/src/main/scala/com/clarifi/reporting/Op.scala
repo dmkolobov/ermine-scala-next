@@ -2,6 +2,7 @@ package com.clarifi.reporting
 
 import java.util.Calendar
 import java.util.Date
+import java.sql.Timestamp
 
 import scalaz._
 import scalaz.Scalaz._
@@ -31,12 +32,12 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case n : NullExpr => n
       case dt => n.eval(t) match {
         case v : NullExpr => v
-        case m => DateExpr(false, u.increment(dt.extractDate, m.extractInt))
+        case m => dt.mapDate(u.incrementTimestamp(_, m.extractInt))
       }
     }
     case DateDiff(u,s,e) =>
       if(u == TimeUnit.Millisecond)
-        IntExpr(false, (e.eval(t).extractDate.getTime - s.eval(t).extractDate.getTime).toInt)
+        IntExpr(false, (e.eval(t).extractTimestamp.getTime - s.eval(t).extractTimestamp.getTime).toInt)
       else
         sys error "datediff is meant to be used from SQL; built-in Java date subtraction is limited to milliseconds"
     case Funcall(n,_,_,_,_) => sys error ("Can't invoke %s outside of a database" format n)
@@ -70,7 +71,7 @@ sealed abstract class Op extends TraversableColumns[Op] {
     case LongExpr(_, d) => d === id
     case DoubleExpr(_, d) => d === id
     case _: StringExpr | _: DateExpr | _: BooleanExpr | _: UuidExpr
-       | _: NullExpr => false
+       | _: NullExpr | _:TimestampExpr => false
   }
 
   private def asNum(v: Byte)(p: PrimExpr) = p match {
@@ -285,6 +286,23 @@ sealed abstract class Op extends TraversableColumns[Op] {
 trait TimeUnit {
   import TimeUnit._ // constructors
 
+  def incrementTimestamp(t: Timestamp, n: Int): Timestamp = {
+    def go(t: Timestamp, untypedJavaCalendarUnits: Int, n: Int): Timestamp = {
+      val cal = Calendar.getInstance
+      cal.setTime(t)
+      cal.add(untypedJavaCalendarUnits, n)
+      new Timestamp(cal.getTimeInMillis)
+    }
+    val (units, n2) = this match {
+      case Millisecond => (Calendar.MILLISECOND, n)
+      case Day => (Calendar.DATE, n)
+      case Week => (Calendar.DATE, n*7)
+      case Month => (Calendar.MONTH, n)
+      case Year => (Calendar.YEAR, n)
+    }
+    go(t, units, n2)
+  }
+
   /**
    * Increment `d` by `n` units. Example: `Day.increment(1/1/2013, 10)`
    * yields `1/11/2013`.
@@ -297,7 +315,7 @@ trait TimeUnit {
       cal.getTime
     }
     val (units, n2) = this match {
-      case Millisecond => (Calendar.MILLISECOND, n)
+      case Millisecond => sys.error("Cannot increment Date by milliseconds; Dates represent year/month/day triples")
       case Day => (Calendar.DATE, n)
       case Week => (Calendar.DATE, n*7)
       case Month => (Calendar.MONTH, n)

@@ -11,6 +11,7 @@ import Scalaz._
 import java.sql.{PreparedStatement,ResultSet,SQLException,Types}
 import java.util.Date
 import java.util.UUID
+import java.util.Calendar
 
 import scalaz._
 import Scalaz._
@@ -196,19 +197,38 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
    * Emits a date value from the given Long.
    */
   def emitDate(d: Date): RawSql = {
-    raw("'") |+| formatter.format(d) |+| "'"
+    raw("'") |+| dateFormatter.format(d) |+| "'"
   }
+
+  def emitTimestamp(t: java.sql.Timestamp): RawSql = {
+    raw("'") |+| timestampFormatter.format(t) |+| "'"
+  }
+
   def emitDateAddName: String
 
   def emitInterval(n: SqlExpr, u: TimeUnit): RawSql
 
-  val formatter = {
+  val dateFormatter = {
     val fmt = new java.text.SimpleDateFormat("yyyy-MM-dd")
     fmt setTimeZone util.YMDTriple.ymdPivotTimeZone
     fmt
   }
-  def emitDateStatement(stmt: java.sql.PreparedStatement, index: Int, date: Date): Unit =
-    stmt.setDate(index, new java.sql.Date(date.getTime))
+  val timestampFormatter = {
+    val fmt = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
+    fmt setTimeZone util.YMDTriple.ymdPivotTimeZone
+    fmt
+  }
+
+  def emitDateStatement(stmt: java.sql.PreparedStatement, index: Int, date: Date): Unit = {
+    val gmtCalendar = Calendar.getInstance
+    gmtCalendar.setTimeZone(util.YMDTriple.ymdPivotTimeZone)
+    stmt.setDate(index, new java.sql.Date(date.getTime), gmtCalendar)
+  }
+  def emitTimestampStatement(stmt: java.sql.PreparedStatement, index: Int, timestamp: java.sql.Timestamp): Unit = {
+    val gmtCalendar = Calendar.getInstance
+    gmtCalendar.setTimeZone(util.YMDTriple.ymdPivotTimeZone)
+    stmt.setTimestamp(index, timestamp, gmtCalendar)
+  }
 
   /**
    * Emits union to ensure proper grouping of multiple options.
@@ -688,6 +708,7 @@ class SqliteEmitter extends SqlEmitter
 
   override def emitDate(d: Date): RawSql = d.getTime.toString
 
+
   def emitDateAddName = sys.error("todo - sqlite dateadd function")
   def emitInterval(n: SqlExpr, u: TimeUnit) =
     sys.error("todo - sqlite dateadd function")
@@ -701,6 +722,7 @@ class SqliteEmitter extends SqlEmitter
     case LongT(_) => Types.INTEGER
     case DoubleT(_) => Types.REAL
     case DateT(_) => Types.INTEGER
+    case TimestampT(_) => Types.INTEGER
     case BooleanT(_) => Types.INTEGER
   }
 
@@ -713,6 +735,7 @@ class SqliteEmitter extends SqlEmitter
     case LongT(n)       => "integer"
     case DoubleT(n)     => "real"
     case DateT(n)       => "integer"
+    case TimestampT(n)  => "integer"
     case BooleanT(n)    => "integer"
   }
 
@@ -833,13 +856,15 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
   def getBoolean(rs: ResultSet, i: Int): Boolean = rs.getInt(i) != 0
   def emitBoolean(b: Boolean): RawSql = if (b) "1" else "0"
   def emitBoolean(stmt: PreparedStatement, i: Int, b: Boolean): Unit = stmt.setInt(i, if (b) 1 else 0)
-  override def emitDateStatement(stmt: PreparedStatement, index: Int, d: Date): Unit =
-    stmt.setDate(index, new java.sql.Date(d.getTime - java.util.TimeZone.getDefault.getRawOffset))
+  override def emitTimestamp(t: java.sql.Timestamp): RawSql = {
+    raw("CAST('") |+| timestampFormatter.format(t) |+| raw("' AS DATETIME2)")
+  }
 
   private def nn(n: Boolean, s: String): RawSql = if (n) s else (s |+| " not null")
 
   def sqlTypeName(p: PrimT): RawSql = p match {
     case StringT(l,n) => nn(n,"nvarchar(" |+| (if (l == 0) "1000" else l.toString) |+| ")")
+    case TimestampT(n) => nn(n,"datetime2")
     case _ => SqlEmitter.fallbackSqlTypeName(p)
   }
 
@@ -853,7 +878,8 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
     raw(u.toString.toLowerCase) |+| raw(", ") |+| n.emitSql(this)
 
   def sqlPrimT(x: Int, tn: String, cs: Int) = tn match {
-    case "date" | "datetime" => Some(DateT()) // jtds gives x = varchar for dates
+    case "date" => Some(DateT()) // jtds gives x = varchar for dates
+    case "datetime" | "datetime2" => Some(TimestampT())
     case _ => SqlEmitter.defaultDecodeType(x)
   }
 
@@ -957,7 +983,10 @@ class PostgreSqlEmitter extends SqlEmitter(false)
 
   // PG doesn't play fast & loose with string→date coercion
   override def emitDate(d: Date): RawSql =
-    raw("date '") |+| formatter.format(d) |+| "'"
+    raw("date '") |+| dateFormatter.format(d) |+| "'"
+
+  override def emitTimestamp(t: java.sql.Timestamp): RawSql =
+    raw("timestamp '") |+| timestampFormatter.format(t) |+| "'"
 
   def sqlTypeName(p: PrimT): RawSql = p match {
     // PG has `uuid' but harder to access from JDBC.
@@ -988,8 +1017,8 @@ object SqlEmitter {
       case T.BIT | T.BOOLEAN => BooleanT()
       case T.CHAR | T.VARCHAR | T.NCHAR | T.NVARCHAR
          | T.LONGVARCHAR | T.LONGNVARCHAR => StringT(0)
-      case T.DATE => DateT()            // TODO date-without-time
-      case T.TIME | T.TIMESTAMP => DateT()
+      case T.DATE => DateT()
+      case T.TIMESTAMP => TimestampT()
       case T.FLOAT | T.DOUBLE | T.REAL | T.DECIMAL => DoubleT()
       case T.BIGINT => LongT()
       case T.INTEGER => IntT()
@@ -1010,6 +1039,7 @@ object SqlEmitter {
     case DoubleT(n)   => nn(n,"float")
     case DateT(n)     => nn(n,"date")
     case BooleanT(n)  => nn(n,"bit")
+    case TimestampT(n)=> nn(n,"timestamp")
   }
 
   def fallbackSqlTypeId(p: PrimT): Int = p match {
@@ -1022,6 +1052,7 @@ object SqlEmitter {
     case DoubleT(_) => Types.FLOAT
     case DateT(_) => Types.DATE
     case BooleanT(_) => Types.BIT
+    case TimestampT(_) => Types.TIMESTAMP
   }
 
   val sqliteEmitter = new SqliteEmitter

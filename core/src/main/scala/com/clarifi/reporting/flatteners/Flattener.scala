@@ -52,46 +52,49 @@ object Flatteners {
 
   // RowFlattener for non-nullable primitives -
   //   these RowFlatteners do not have their columns added to the PK of the table
-  def byte(colName: ColumnName) = primitive[Byte](colName)
-  def short(colName: ColumnName) = primitive[Short](colName)
-  def int(colName: ColumnName) = primitive[Int](colName)
-  def long(colName: ColumnName) = primitive[Long](colName)
-  def boolean(colName: ColumnName) = primitive[Boolean](colName)
-  def date(colName: ColumnName) = primitive[Date](colName)
-  def double(colName: ColumnName) = primitive[Double](colName)
-  def string(colName: ColumnName, len: Int = defaultLen) = primitive[String](colName)(primString(len))
-  def uuid(colName: ColumnName) = primitive[UUID](colName)
+  def byte(colName: ColumnName) = primitive(primByte)(colName)
+  def short(colName: ColumnName) = primitive(primShort)(colName)
+  def int(colName: ColumnName) = primitive(primInt)(colName)
+  def long(colName: ColumnName) = primitive(primLong)(colName)
+  def boolean(colName: ColumnName) = primitive(primBoolean)(colName)
+  def date(colName: ColumnName) = primitive(primDate)(colName)
+  def timestamp(colName: ColumnName) = primitive(primTimestamp)(colName)
+  def double(colName: ColumnName) = primitive(primDouble)(colName)
+  def string(colName: ColumnName, len: Int = defaultLen) = primitive(primString(len))(colName)
+  def uuid(colName: ColumnName) = primitive(primUuid)(colName)
 
   // RowFlatteners for nullable primitives - None gets mapped to Null in the DB
   //   these RowFlatteners do not have their columns added to the PK of the table
-  def byteOption(colName: ColumnName) = primitive[Option[Byte]](colName)
-  def shortOption(colName: ColumnName) = primitive[Option[Short]](colName)
-  def intOption(colName: ColumnName) = primitive[Option[Int]](colName)
-  def longOption(colName: ColumnName) = primitive[Option[Long]](colName)
-  def booleanOption(colName: ColumnName) = primitive[Option[Boolean]](colName)
-  def dateOption(colName: ColumnName) = primitive[Option[Date]](colName)
-  def doubleOption(colName: ColumnName) = primitive[Option[Double]](colName)
-  def stringOption(colName: ColumnName, len: Int = defaultLen) = primitive[Option[String]](colName)(primOption(primString(len)))
-  def uuidOption(colName: ColumnName) = primitive[Option[UUID]](colName)
+  def byteOption(colName: ColumnName) = primitive(primOption(primByte))(colName)
+  def shortOption(colName: ColumnName) = primitive(primOption(primShort))(colName)
+  def intOption(colName: ColumnName) = primitive(primOption(primInt))(colName)
+  def longOption(colName: ColumnName) = primitive(primOption(primLong))(colName)
+  def booleanOption(colName: ColumnName) = primitive(primOption(primBoolean))(colName)
+  def dateOption(colName: ColumnName) = primitive(primOption(primDate))(colName)
+  def timestampOption(colName: ColumnName) = primitive(primOption(primTimestamp))(colName)
+  def doubleOption(colName: ColumnName) = primitive(primOption(primDouble))(colName)
+  def stringOption(colName: ColumnName, len: Int = defaultLen) = primitive(primOption(primString(len)))(colName)
+  def uuidOption(colName: ColumnName) = primitive(primOption(primUuid))(colName)
 
   // RowFlatteners for non-nullable primitives -
   //   these RowFlatteners get their columns added to the PK of the table
-  def byteKey(colName: ColumnName) = primitiveKey[Byte](colName)
-  def shortKey(colName: ColumnName) = primitiveKey[Short](colName)
-  def intKey(colName: ColumnName) = primitiveKey[Int](colName)
-  def longKey(colName: ColumnName) = primitiveKey[Long](colName)
-  def booleanKey(colName: ColumnName) = primitiveKey[Boolean](colName)
-  def dateKey(colName: ColumnName) = primitiveKey[Date](colName)
-  def stringKey(colName: ColumnName, len: Int = defaultLen) = primitiveKey[String](colName)(primString(len))
-  def uuidKey(colName: ColumnName) = primitiveKey[UUID](colName)
+  def byteKey(colName: ColumnName) = primitiveKey(primByte)(colName)
+  def shortKey(colName: ColumnName) = primitiveKey(primShort)(colName)
+  def intKey(colName: ColumnName) = primitiveKey(primInt)(colName)
+  def longKey(colName: ColumnName) = primitiveKey(primLong)(colName)
+  def booleanKey(colName: ColumnName) = primitiveKey(primBoolean)(colName)
+  def dateKey(colName: ColumnName) = primitiveKey(primDate)(colName)
+  def timestampKey(colName: ColumnName) = primitiveKey(primTimestamp)(colName)
+  def stringKey(colName: ColumnName, len: Int = defaultLen) = primitiveKey(primString(len))(colName)
+  def uuidKey(colName: ColumnName) = primitiveKey(primUuid)(colName)
 
-  def primitive[A](colName: ColumnName)(implicit pt: PrimType[A]): RowFlattener[Unit,A] =
+  def primitive[A](pt: PrimType[A])(colName: ColumnName): RowFlattener[Unit,A] =
     raw(
       Map(colName -> pt.typ),
       TableHints.empty.withPK(SortedSet[ColumnName]())
     ).contramap((a:A) => Map(colName -> pt.expr(a)))
 
-  def primitiveKey[A](colName: ColumnName)(implicit pt: PrimType[A]): RowFlattener[Unit,A] =
+  def primitiveKey[A](pt: PrimType[A])(colName: ColumnName): RowFlattener[Unit,A] =
     raw(
       Map(colName -> pt.typ),
       TableHints.empty.withPK(SortedSet(colName))

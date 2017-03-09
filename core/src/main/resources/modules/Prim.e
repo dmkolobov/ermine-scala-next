@@ -26,7 +26,7 @@ primCata : Int -> Nullable Int -> String -> Nullable String
       -> Bool -> Nullable Bool -> Double -> Nullable Double
       -> Byte -> Nullable Byte -> Short -> Nullable Short
       -> Long -> Nullable Long -> Date -> Nullable Date
-      -> GUID => Nullable GUID
+      -> GUID -> Nullable GUID -> Timestamp -> Nullable Timestamp
       -> PrimT -> PrimExpr#
 
 

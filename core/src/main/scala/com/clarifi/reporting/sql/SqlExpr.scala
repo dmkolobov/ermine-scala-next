@@ -161,6 +161,7 @@ object SqlExpr {
     case DateExpr(_,d) => LitSqlExpr(SqlDate(d))
     case BooleanExpr(_,b) => LitSqlExpr(SqlBool(b))
     case UuidExpr(_,u) => LitSqlExpr(SqlUuid(u))
+    case TimestampExpr(_,t) => LitSqlExpr(SqlTimestamp(t))
     case NullExpr(_) => LitSqlExpr(SqlNull)
   }
 
@@ -218,6 +219,7 @@ sealed abstract class SqlLiteral {
     case SqlShort(s) => s.toString
     case SqlDate(d) => emitter.emitDate(d)
     case SqlUuid(u) => emitter.emitUuid(u)
+    case SqlTimestamp(t) => emitter.emitTimestamp(t)
     case SqlNull => emitter.emitNull
   }
 }
@@ -230,5 +232,6 @@ case class SqlLong(get: Long) extends SqlLiteral
 case class SqlDouble(get: Double) extends SqlLiteral
 case class SqlDate(get: Date) extends SqlLiteral
 case class SqlUuid(get: UUID) extends SqlLiteral
+case class SqlTimestamp(get: java.sql.Timestamp) extends SqlLiteral
 case object SqlNull extends SqlLiteral
 

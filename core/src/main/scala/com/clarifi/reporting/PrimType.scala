@@ -2,6 +2,7 @@ package com.clarifi.reporting
 
 import java.util.Date
 import java.util.UUID
+import java.sql.Timestamp
 
 import Reporting._
 import com.clarifi.reporting.PrimT._
@@ -80,14 +81,17 @@ object PrimType {
     case e => sys.error("Not a Date expression: " + e.shows)
   })
 
+  implicit val primTimestamp : PrimType[Timestamp] = PrimType[Timestamp](TimestampT(), x => TimestampExpr(false, x), {
+    case TimestampExpr(_, t) => t
+    case e => sys.error("Not a Timestmap expression: " + e.shows)
+  })
+
   implicit val primUuid : PrimType[UUID] = PrimType[UUID](UuidT(), x => UuidExpr(false, x), {
     case UuidExpr(_,u) => u
     case e => sys.error("Not a Uuid expression: " + e.shows)
   })
 
-  // this should ideally only be instantiated for Option[T] for some SimplePrimType[T]
-  // but this implicit is more convenient to work with.
-  implicit def primOption[T](implicit T: PrimType[T]) = PrimType[Option[T]](T.nullTyp, {
+  def primOption[T](T: PrimType[T]) = PrimType[Option[T]](T.nullTyp, {
     case Some(e) => T.expr(e)
     case None    => NullExpr(T.nullTyp)
   }, {
@@ -99,7 +103,7 @@ object PrimType {
    * Converts a primitive scala value of some type to the corresponding
    * expression in the relational type system.
    */
-  implicit def toPrim[A](a: A)(implicit t: PrimType[A]): PrimExpr = t.expr(a)
+  def toPrim[A](a: A)(implicit t: PrimType[A]): PrimExpr = t.expr(a)
 
   /**
    * Converts a primitive relational expression of some type to the

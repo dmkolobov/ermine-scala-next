@@ -14,6 +14,7 @@ import com.clarifi.reporting.PrimT._
 import com.clarifi.reporting.Reporting.{SimpleDataSet}
 import scalaz.StreamT
 import java.util.{UUID, Date}
+import java.sql.Timestamp
 import org.apache.log4j.Logger
 import util.{IOUtils, StreamTUtils}
 import java.io.{FileInputStream, File, InputStream, OutputStream}
@@ -66,8 +67,10 @@ object BulkLoad {
   val dateR = longR map (l => new Date((l - 621355968000000000L)/10000L))
   val uuidW = stringW.cmap((uid: UUID) => uid.toString)
   val uuidR = stringR map (UUID.fromString(_))
+  val timestampW = longW.cmap((t: Timestamp) => 621355968000000000L+t.getTime*10000L)
+  val timestampR = longR map (l => new Timestamp((l - 621355968000000000L)/10000L))
 
-  def primExprW = s10W(
+  def primExprW = s11W(
     optionW(booleanW),
     optionW(byteW),
     optionW(shortW),
@@ -77,17 +80,19 @@ object BulkLoad {
     optionW(stringW),
     optionW(dateW),
     optionW(uuidW),
-    optionW(unitW))((a,b,c,d,e,f,g,h,i,j) => (p:PrimExpr) => p match {
-    case BooleanExpr(n, x) => a(Some(x))
-    case ByteExpr(n, x)    => b(Some(x))
-    case ShortExpr(n, x)   => c(Some(x))
-    case IntExpr(n, x)     => d(Some(x))
-    case LongExpr(n, x)    => e(Some(x))
-    case DoubleExpr(n, x)  => f(Some(x))
-    case StringExpr(n, x)  => g(Some(x))
-    case DateExpr(n, x)    => h(Some(x))
-    case UuidExpr(n, x)    => i(Some(x))
-    case NullExpr(x)       => j(None)
+    optionW(timestampW),
+    optionW(unitW))((a,b,c,d,e,f,g,h,i,j,k) => (p:PrimExpr) => p match {
+    case BooleanExpr(n, x)   => a(Some(x))
+    case ByteExpr(n, x)      => b(Some(x))
+    case ShortExpr(n, x)     => c(Some(x))
+    case IntExpr(n, x)       => d(Some(x))
+    case LongExpr(n, x)      => e(Some(x))
+    case DoubleExpr(n, x)    => f(Some(x))
+    case StringExpr(n, x)    => g(Some(x))
+    case DateExpr(n, x)      => h(Some(x))
+    case UuidExpr(n, x)      => i(Some(x))
+    case TimestampExpr(n, x) => j(Some(x))
+    case NullExpr(x)         => k(None)
   })
 
   def liftExprCon[A](t: PrimT, con: (Boolean, A) => PrimExpr)(oa: Option[A]) = oa match {
@@ -96,7 +101,7 @@ object BulkLoad {
   }
 
   def primExprR =
-    union10R( optionR(booleanR) map (liftExprCon(BooleanT(), BooleanExpr(_,_)))
+    union11R( optionR(booleanR) map (liftExprCon(BooleanT(), BooleanExpr(_,_)))
             , optionR(byteR) map (liftExprCon(ByteT(), ByteExpr(_,_)))
             , optionR(shortR) map (liftExprCon(ShortT(), ShortExpr(_,_)))
             , optionR(intR) map (liftExprCon(IntT(), IntExpr(_,_)))
@@ -105,6 +110,7 @@ object BulkLoad {
             , optionR(stringR) map (liftExprCon(StringT(0), StringExpr(_,_)))
             , optionR(dateR) map (liftExprCon(DateT(), DateExpr(_,_)))
             , optionR(uuidR) map (liftExprCon(UuidT(), UuidExpr(_,_)))
+            , optionR(timestampR) map (liftExprCon(TimestampT(), TimestampExpr(_,_)))
             , optionR(unitR) map (_ => NullExpr(IntT(true))) // no way to recover the type information
             )
 

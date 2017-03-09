@@ -7,6 +7,7 @@ import Ordering._
 import Order._
 
 import java.util.{Date,Locale,UUID}
+import java.sql.Timestamp
 
 import java.text.{SimpleDateFormat,DateFormat,ParseException}
 
@@ -37,6 +38,7 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case DateExpr(_, d) => PrimExprs.dateFormatter.get.format(d)
     case BooleanExpr(_, b) => b.toString
     case UuidExpr(_, u) => u.toString
+    case TimestampExpr(_, t) => PrimExprs.timestampFormatter.get.format(t)
     case NullExpr(pt) => ifNull
   }
 
@@ -52,6 +54,7 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case IntExpr(_, i) => i.toDouble
     case LongExpr(_, i) => i.toDouble
     case DateExpr(_, d) => d.getTime.toDouble
+    case TimestampExpr(_, t) => t.getTime.toDouble
     case _ => sys.error(s)
   }
 
@@ -60,7 +63,22 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case DoubleExpr(_, d) => new Date(d.toLong)
     case IntExpr(_, i) => new Date(i)
     case DateExpr(_, d) => d
+    case TimestampExpr(_, t) => t
     case _ => sys.error("Could not extract a date value from " + this)
+  }
+
+  def mapDate(f: Timestamp => Timestamp): PrimExpr = this match {
+    case TimestampExpr(n, t) => TimestampExpr(n, f(t))
+    case dt => DateExpr(dt.nullable, f(dt.extractTimestamp))
+  }
+
+  def extractTimestamp: Timestamp = this match {
+    case StringExpr(_, s) => new Timestamp(PrimExprs.timestampFormatter.get.parse(s).getTime)
+    case DoubleExpr(_, d) => new Timestamp(d.toLong)
+    case IntExpr(_, i) => new Timestamp(i)
+    case DateExpr(_, d) => new Timestamp(d.getTime)
+    case TimestampExpr(_, t) => t
+    case _ => sys.error("Could not extract a timestamp value from " + this)
   }
 
   def extractUuid: UUID = this match {
@@ -133,7 +151,7 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case StringExpr(_, s) => string(s)
     case _: DoubleExpr | _: ByteExpr | _: ShortExpr | _: IntExpr
        | _: LongExpr => double(extractDouble)
-    case DateExpr(_, d) => date(d)
+    case _: DateExpr | _: TimestampExpr => date(extractDate)
     case BooleanExpr(_, b) => bool(b)
     case UuidExpr(_, u) => uuid(u)
     case NullExpr(_) => nul
@@ -162,7 +180,6 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
   def *(p: PrimExpr) =
     nonpromotingBinOp(_ * _, _ * _, _ * _, _ * _ toShort,
                       _ * _ toByte).orElse[(PrimExpr, PrimExpr), PrimExpr]{
-      case (DateExpr(b1, x), DateExpr(b2, y)) => DateExpr(b1 || b2, new Date(x.getTime * y.getTime))
       case (n@NullExpr(_), y) => n
       case (y, n@NullExpr(_)) => n
       case _ => sys.error(this.toString + " and " + p + " do not support multiplication.")
@@ -262,6 +279,7 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case (e, StringT(_,n)) => StringExpr(n, e.extractString)
     case (e, UuidT(n)) => UuidExpr(n, e.extractUuid)
     case (e, DateT(n)) => DateExpr(n, e.extractDate)
+    case (e, TimestampT(n)) => TimestampExpr(n, e.extractTimestamp)
     case (e, LongT(n)) => LongExpr(n, e.extractLong)
     case (e, IntT(n)) => IntExpr(n, e.extractInt)
     case (e, ShortT(n)) => ShortExpr(n, e.extractShort)
@@ -282,6 +300,7 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case x: LongExpr => x.copy(nullable=true)
     case x: DoubleExpr => DoubleExpr(true, x.value)
     case x: DateExpr => DateExpr(true, x.value)
+    case x: TimestampExpr => TimestampExpr(true, x.value)
     case x: BooleanExpr => x.copy(nullable=true)
     case _: NullExpr => this
   })
@@ -386,6 +405,24 @@ object DateExpr extends NonNullPrimExprCompanion[Date, DateExpr] {
   }
 }
 
+final class TimestampExpr private(val nullable: Boolean, val value: Timestamp)
+     extends NonNullPrimExpr(TimestampT(nullable)) {
+  type This = TimestampExpr
+  type Value = Timestamp
+  protected def Companion = TimestampExpr
+  def canEqual(a: Any) = a match {
+    case _ : TimestampExpr => true
+    case _ => false
+  }
+}
+object TimestampExpr extends NonNullPrimExprCompanion[Timestamp, TimestampExpr] {
+  private[this] val cache = new SetAssociativeCache[TimestampExpr]("TimestampExprCache", 10)
+  def apply(nullable: Boolean, value: Timestamp): TimestampExpr = Option(value) match {
+    case Some(nonNull) => cache.canonicalize(new TimestampExpr(nullable, nonNull))
+    case None => new TimestampExpr(nullable, value)
+  }
+}
+
 case class BooleanExpr(nullable: Boolean, value: Boolean)
      extends PrimExpr(BooleanT(nullable)) {
   type Value = Boolean
@@ -415,6 +452,7 @@ object NullExpr extends scala.runtime.AbstractFunction1[PrimT, NullExpr] {
   private[this] val nullBoolean = new NullExpr(BooleanT(true))
   private[this] val nullString = new NullExpr(StringT(0, true))
   private[this] val nullUuid = new NullExpr(UuidT(true))
+  private[this] val nullTimestamp = new NullExpr(TimestampT(true))
 
   def apply(pt: PrimT) = pt match {
     case ByteT(_) => nullByte
@@ -426,6 +464,7 @@ object NullExpr extends scala.runtime.AbstractFunction1[PrimT, NullExpr] {
     case BooleanT(_) => nullBoolean
     case StringT(_,_) => nullString
     case UuidT(_) => nullUuid
+    case TimestampT(_) => nullTimestamp
   }
   def unapply(ne: NullExpr): Some[PrimT] = Some(ne.t)
 }
@@ -464,6 +503,8 @@ object PrimExprs {
                 ar}
 
   val dateFormatter = dateFormatterTLV(dateFormatTemplate)
+
+  val timestampFormatter = dateFormatterTLV(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z"))
 
   private var _dateFormatTemplate = DateFormat.getDateInstance(DateFormat.SHORT, Locale.ENGLISH)
   
@@ -543,16 +584,17 @@ object PrimExpr {
   implicit val PrimExprShow: Show[PrimExpr] = showFromToString[PrimExpr]
 
   private def ctorOrder(a: PrimExpr) = a match {
-    case StringExpr(_, _)  => 1
-    case DoubleExpr(_, _)  => 2
-    case ByteExpr(_, _)    => 3
-    case ShortExpr(_, _)   => 4
-    case LongExpr(_, _)    => 5
-    case IntExpr(_, _)     => 6
-    case DateExpr(_, _)    => 7
-    case BooleanExpr(_, _) => 8
-    case UuidExpr(_, _)    => 9
-    case NullExpr(_)       => 0 // let NULLS to compare before (less than) any non-null values
+    case StringExpr(_, _)    => 1
+    case DoubleExpr(_, _)    => 2
+    case ByteExpr(_, _)      => 3
+    case ShortExpr(_, _)     => 4
+    case LongExpr(_, _)      => 5
+    case IntExpr(_, _)       => 6
+    case DateExpr(_, _)      => 7
+    case BooleanExpr(_, _)   => 8
+    case UuidExpr(_, _)      => 9
+    case TimestampExpr(_, _) => 10
+    case NullExpr(_)         => 0 // let NULLS to compare before (less than) any non-null values
   }
   implicit val PrimExprOrder: Order[PrimExpr] = order((a, b) => {
     val typeorder = ctorOrder(a) ?|? ctorOrder(b)
@@ -570,6 +612,7 @@ object PrimExpr {
       case (DateExpr(_, v1), DateExpr(_, v2)) => v1.getTime ?|? v2.getTime
       case (BooleanExpr(_, v1), BooleanExpr(_, v2)) => v1 ?|? v2
       case (UuidExpr(_, v1), UuidExpr(_, v2)) => v1 ?|? v2
+      case (TimestampExpr(_, v1), TimestampExpr(_, v2)) => v1.getTime ?|? v2.getTime
       case (NullExpr(t1), NullExpr(t2)) => t1 ?|? t2
       case (a, b) => sys.error("Error in PrimExpr ordering: cannot compare " + a.shows + " with " + b.shows)
     }
@@ -587,6 +630,7 @@ object PrimExpr {
     case DateT(n) => DateExpr(n, new Date(i)) // Hack
     case BooleanT(n) => BooleanExpr(n, i != 0)
     case UuidT(n) => UuidExpr(n, new UUID(i, i)) // Hack
+    case TimestampT(n) => TimestampExpr(n, new Timestamp(i)) // Hack
   }
 
   def mkExpr(d: Double, t: PrimT) = t match {
@@ -599,6 +643,7 @@ object PrimExpr {
     case DateT(n) => DateExpr(n, new Date(d.toLong)) // Hack
     case BooleanT(n) => BooleanExpr(n, d != 0.0)
     case UuidT(n) => UuidExpr(n, new UUID(d.toLong, d.toLong)) // Hack
+    case TimestampT(n) => TimestampExpr(n, new Timestamp(d.toLong)) // Hack
   }
 
   def sumMonoid(t: PrimT) = new Monoid[PrimExpr] {
@@ -617,6 +662,8 @@ object PrimExpr {
       case (DoubleExpr(n, a), DoubleExpr(m, b)) => DoubleExpr(m && n, a min b)
       case (DateExpr(n, a), DateExpr(m, b)) => DateExpr(m && n, if (a before b) a else b)
       case (BooleanExpr(n, a), BooleanExpr(m, b)) => BooleanExpr(m && n, a && b)
+      case (UuidExpr(n, a), UuidExpr(m, b)) => UuidExpr(m && n, a min b)
+      case (TimestampExpr(n, a), TimestampExpr(m, b)) => TimestampExpr(m && n, if (a before b) a else b)
       case (NullExpr(t), e) => e.withNull
       case (e, NullExpr(t)) => e.withNull
       case (_, _) => sys.error("Type mismatch: " + x.typ + " is not " + y.typ)
@@ -634,6 +681,8 @@ object PrimExpr {
       case (DoubleExpr(n, a), DoubleExpr(m, b)) => DoubleExpr(m && n, a max b)
       case (DateExpr(n, a), DateExpr(m, b)) => DateExpr(m && n, if (a after b) a else b)
       case (BooleanExpr(n, a), BooleanExpr(m, b)) => BooleanExpr(m && n, a || b)
+      case (UuidExpr(n, a), UuidExpr(m, b)) => UuidExpr(m && n, a max b)
+      case (TimestampExpr(n, a), TimestampExpr(m, b)) => TimestampExpr(m && n, if (a after b) a else b)
       case (NullExpr(t), e) => e.withNull
       case (e, NullExpr(t)) => e.withNull
       case (_, _) => sys.error("Type mismatch: " + x.typ + " is not " + y.typ)

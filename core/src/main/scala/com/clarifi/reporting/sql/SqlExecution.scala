@@ -79,6 +79,7 @@ class SqlExecution(implicit emitter: SqlEmitter) {
               case StringT(l, n) => StringExpr(n, rs.getString(x))
               case BooleanT(n) => BooleanExpr(n, emitter.getBoolean(rs, x))
               case UuidT(n) => UuidExpr(n, emitter.getUuid(rs, x))
+              case TimestampT(n) => TimestampExpr(n, rs.getTimestamp(x, gmtCalendar))
             }
             if (rs.wasNull) {
               if (columnType.nullable) NullExpr(columnType)
@@ -138,6 +139,7 @@ class SqlExecution(implicit emitter: SqlEmitter) {
     case LongExpr(_, l) => stmt.setLong(k, l)
     case ShortExpr(_, s) => stmt.setShort(k, s)
     case UuidExpr(_, u) => stmt.setString(k, u.toString)
+    case TimestampExpr(_, t) => emitter.emitTimestampStatement(stmt, k, t)
     case NullExpr(t) => stmt.setNull(k, emitter.sqlTypeId(t))
   }
 

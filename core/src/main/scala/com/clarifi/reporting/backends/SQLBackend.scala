@@ -118,6 +118,7 @@ class SqlBackend(implicit emitter: SqlEmitter) extends Backend[DB] {
               case LongExpr(_, l) => stmt.setLong(k, l)
               case ShortExpr(_, s) => stmt.setShort(k, s)
               case UuidExpr(_, u) => stmt.setString(k, u.toString)
+              case TimestampExpr(_, t) => emitter.emitTimestampStatement(stmt, k, t)
               case NullExpr(t) => stmt.setNull(k, emitter.sqlTypeId(t))
             }
             tt._2.foreach { case (k, v) => set(indexOf(hdr, k), v) }
