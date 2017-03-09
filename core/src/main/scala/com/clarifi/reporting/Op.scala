@@ -295,6 +295,7 @@ trait TimeUnit {
     }
     val (units, n2) = this match {
       case Millisecond => (Calendar.MILLISECOND, n)
+      case Second => (Calendar.SECOND, n)
       case Day => (Calendar.DATE, n)
       case Week => (Calendar.DATE, n*7)
       case Month => (Calendar.MONTH, n)
@@ -315,7 +316,7 @@ trait TimeUnit {
       cal.getTime
     }
     val (units, n2) = this match {
-      case Millisecond => sys.error("Cannot increment Date by milliseconds; Dates represent year/month/day triples")
+      case Millisecond | Second => sys.error("Cannot increment Date by milliseconds; Dates represent year/month/day triples")
       case Day => (Calendar.DATE, n)
       case Week => (Calendar.DATE, n*7)
       case Month => (Calendar.MONTH, n)
@@ -327,7 +328,7 @@ trait TimeUnit {
 
 object TimeUnit {
   case object Millisecond extends TimeUnit
-  // case object Second extends TimeUnit
+  case object Second extends TimeUnit
   case object Day extends TimeUnit
   case object Week extends TimeUnit
   case object Month extends TimeUnit
@@ -337,6 +338,7 @@ object TimeUnit {
 
 object TimeUnits {
   val Millisecond = TimeUnit.Millisecond
+  val Second = TimeUnit.Second
   val Day = TimeUnit.Day
   val Week = TimeUnit.Week
   val Month = TimeUnit.Month

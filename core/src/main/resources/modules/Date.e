@@ -77,6 +77,7 @@ decrementDate n = incrementDate (-n)
 foreign
   data "com.clarifi.reporting.TimeUnit" TimeUnit
   function "com.clarifi.reporting.TimeUnits" "Millisecond" milliseconds : TimeUnit
+  function "com.clarifi.reporting.TimeUnits" "Second" seconds : TimeUnit
   function "com.clarifi.reporting.TimeUnits" "Day" days : TimeUnit
   function "com.clarifi.reporting.TimeUnits" "Week" weeks : TimeUnit
   function "com.clarifi.reporting.TimeUnits" "Month" months : TimeUnit
