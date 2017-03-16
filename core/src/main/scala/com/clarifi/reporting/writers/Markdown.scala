@@ -318,8 +318,8 @@ object Markdown {
       case MStyle(MSStrike, inner) => "<s>" + markdownListToHTML(inner) + "</s>"
       case MStyle(MSOutdated, inner) => "<span style='text-color:#999999'>" + markdownListToHTML(inner) + "</span>"
       case MLink(isImage, inner, dest, Some(title)) =>
-        if (isImage) wrapImgInner("<img src=\"" + dest + "\" alt=\"" + title + "\"/>", inner)
-        else "<a href=\"" + dest + "\" title=\"" + title + "\" target='_blank'>" + markdownListToHTML(inner) + "</a>"
+        if (isImage) wrapImgInner("<img src=\"" + dest + "\" alt=\"" + title.replaceAll("\"", "&quot;") + "\"/>", inner)
+        else "<a href=\"" + dest + "\" title=\"" + title.replaceAll("\"", "&quot;") + "\" target='_blank'>" + markdownListToHTML(inner) + "</a>"
       case MLink(isImage, inner, dest, None) =>
         if (isImage) wrapImgInner("<img src=\"" + dest + "\"/>",inner)
         else "<a href=\"" + dest + "\" target='_blank'>" + markdownListToHTML(inner) + "</a>"
