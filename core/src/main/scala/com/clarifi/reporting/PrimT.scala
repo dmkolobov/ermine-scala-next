@@ -162,7 +162,7 @@ object PrimT {
 
   final class TimestampT private(val nullable: Boolean = false)
       extends WithNullable[TimestampT] {
-    type Value = Date
+    type Value = java.sql.Timestamp
     private[PrimT] lazy val PTCtor: WithNullableCompanion[TimestampT] = TimestampT
     def name = "Timestamp"
     def primType = nullify(nullable, PrimType primTimestamp)
