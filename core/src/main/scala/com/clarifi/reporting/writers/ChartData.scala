@@ -50,6 +50,20 @@ case class AxisChart[Data](series: List[ChartSeries[Data]],
                    else Seq("%s doesn't support %s"
                             format (s.variant, meta.range.constraints))))
       } getOrElse Seq("All series must have same category/value types")
+
+  def augmentSeries: AxisChart[Data] = meta match {
+    case AxisChartData(domain, range, _, _, _, _) =>
+      def augment(fmt: Format, op: Op, opres: Option[Presentation]) : Option[Presentation] =
+        opres match {
+          case None => Some(Presentation(fmt, NonEmptyList(op)))
+          case e => e
+        }
+      val newSeries = series map {
+        case ChartSeries(ss, sx, sy, xtt, ytt, v, data) =>
+          ChartSeries(ss, sx, sy, augment(domain.format, sx, xtt), augment(range.format, sy, ytt), v, data)
+      }
+      AxisChart(newSeries, meta)
+  }
 }
 
 object AxisChart {
