@@ -169,10 +169,10 @@ object TestFlatteners extends Properties("Flatteners") {
   val indexField = "Index"
 
   class StateProperties[S](name: String = "state") extends Properties(name) {
-    def prim[T: PrimType] = primitive[T](primField)
-    def prim2[T: PrimType] = primitive[T](primField2)
-    def prim3[T: PrimType] = primitive[T](primField3)
-    def prim4[T: PrimType] = primitive[T](primField4)
+    def prim[T: PrimType] = primitive[T](implicitly[PrimType[T]])(primField)
+    def prim2[T: PrimType] = primitive[T](implicitly[PrimType[T]])(primField2)
+    def prim3[T: PrimType] = primitive[T](implicitly[PrimType[T]])(primField3)
+    def prim4[T: PrimType] = primitive[T](implicitly[PrimType[T]])(primField4)
   }
 
   class MonoidProperties[S: Monoid](name: String = "zero") extends StateProperties[S](name) {
