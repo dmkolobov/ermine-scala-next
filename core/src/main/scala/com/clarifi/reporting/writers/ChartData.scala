@@ -50,6 +50,20 @@ case class AxisChart[Data](series: List[ChartSeries[Data]],
                    else Seq("%s doesn't support %s"
                             format (s.variant, meta.range.constraints))))
       } getOrElse Seq("All series must have same category/value types")
+
+  def augmentSeries: AxisChart[Data] = meta match {
+    case AxisChartData(domain, range, _, _, _, _) =>
+      def augment(fmt: Format, op: Op, opres: Option[Presentation]) : Option[Presentation] =
+        opres match {
+          case None => Some(Presentation(fmt, NonEmptyList(op)))
+          case e => e
+        }
+      val newSeries = series map {
+        case ChartSeries(ss, sx, sy, xtt, ytt, v, data) =>
+          ChartSeries(ss, sx, sy, augment(domain.format, sx, xtt), augment(range.format, sy, ytt), v, data)
+      }
+      AxisChart(newSeries, meta)
+  }
 }
 
 object AxisChart {
@@ -344,12 +358,16 @@ case class UnscaledConstraints(sort: SortOrder \/ Order[PrimExpr],
   * @param selSeries Selection and display of series from `dataSource`.
   * @param selCategory Selection and display of domain from `dataSource`.
   * @param selValue Selection and display of range from `dataSource`.
+  * @param selCatTooltips Selection and display of category axis tooltips from `dataSource`.
+  * @param selValTooltips Selection and display of value axis tooltips from `dataSource`.
   * @param variant Chart-style-specific options.
   * @param dataSource From whence triples shall come.
   */
 case class ChartSeries[Data](selSeries: Presentation,
                              selCategory: Op,
                              selValue: Op,
+                             selCatTooltips: Option[Presentation],
+                             selValTooltips: Option[Presentation],
                              variant: ChartVariant,
                              dataSource: Data) {
   def categoryType: PrimT =
@@ -415,6 +433,8 @@ final case class DrilldownBarAxisChart[DD, Data](
   selSeries: Presentation,
   selCategory: Presentation,
   selValue: Presentation,
+  selCatTooltips: Option[Presentation],
+  selValTooltips: Option[Presentation],
   dataSource: Data,
   drilldownCols: DD,
   meta: AxisChartData) {
@@ -425,6 +445,7 @@ final case class DrilldownBarAxisChart[DD, Data](
     AxisChart(List(ChartSeries(selSeries,
                                selCategory.displayData.head,
                                selValue.displayData.head,
+                               selCatTooltips, selValTooltips,
                                Bar, dataSource)),
               meta)
 

@@ -26,7 +26,6 @@ foreign
   data "com.clarifi.reporting.writers.PieChartData" PieChartData#
   data "com.clarifi.reporting.writers.AxisChartData" AxisChartData#
   data "com.clarifi.reporting.writers.Axis" Axis#
-  data "com.clarifi.reporting.writers.ChartVariant" ChartVariant#
   data "com.clarifi.reporting.writers.ChartLegendLocation" ChartLegendLocation#
   data "com.clarifi.reporting.writers.ChartLegendOptions" ChartLegendOptions#
   data "com.clarifi.reporting.writers.DrilldownBarAxisChart" DrilldownBarAxisChart# (dd: *) (q: *)
@@ -124,12 +123,12 @@ private foreign
   data "com.clarifi.reporting.writers.ChartSeries$" ChartSeriesModule#
   value "com.clarifi.reporting.writers.ChartSeries$" "MODULE$"
       chartSeriesModule : ChartSeriesModule#
-  method "apply" chartSeriesApply# : ChartSeriesModule# -> Presentation sr sa -> Op xr xa -> Op yr ya -> ChartVariant# -> z -> ChartSeries# xa ya
+  method "apply" chartSeriesApply# : ChartSeriesModule# -> Presentation sr sa -> Op xr xa -> Op yr ya -> Maybe# (Presentation xtr xta) -> Maybe# (Presentation ytr yta) -> ChartVariant# -> z -> ChartSeries# xa ya
 
   data "com.clarifi.reporting.writers.DrilldownBarAxisChart$" DrilldownBarAxisChartModule#
   value "com.clarifi.reporting.writers.DrilldownBarAxisChart$" "MODULE$"
       drilldownBarAxisChartModule : DrilldownBarAxisChartModule#
-  method "apply" drilldownBarAxisChartApply# : DrilldownBarAxisChartModule# -> Presentation sr sa -> Presentation xr xa -> Presentation yr ya -> q -> dd -> AxisChartData# -> DrilldownBarAxisChart# dd q
+  method "apply" drilldownBarAxisChartApply# : DrilldownBarAxisChartModule# -> Presentation sr sa -> Presentation xr xa -> Presentation yr ya -> Maybe# (Presentation xtr xta) -> Maybe# (Presentation ytr yta) -> q -> dd -> AxisChartData# -> DrilldownBarAxisChart# dd q
 
 axisChart# = axisChartApply# axisChartModule
 axisChartData# = funcall6# axisChartDataModule
@@ -140,3 +139,6 @@ unscaledConstraints# = funcall2# unscaledConstraintsModule
 chartSeries# = chartSeriesApply# chartSeriesModule
 chartLegendOptions# = funcall1# chartLegendOptionsModule
 drilldownBarAxisChart# = drilldownBarAxisChartApply# drilldownBarAxisChartModule
+
+toChartSeries# (ChartSeries c xti yti so xo yo xto yto cv r) =
+  chartSeries# so xo yo (toMaybe# xto) (toMaybe# yto) cv r
