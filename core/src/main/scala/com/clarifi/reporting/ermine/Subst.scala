@@ -550,7 +550,7 @@ object Subst {
         e1.report("t2")
       )))
     // tml.die("error: escaping Skolem variables: " + escs.mkString(", "), e1.toString, e2.report(e2.toString))
-    (q,Exists(pz.loc, pxs, ds))
+    (q,mkSimplified(pz.loc, pxs, ds))
   }
 
   /**
