@@ -745,7 +745,7 @@ object Lib {
     val unsafeOp = addCon(mkCon[Op](Global("Relation.Op.Unsafe", "Op#"), star))
     asOp
 
-    primOp(Global("Relation.Op.Unsafe", "combine#"), fun3("Relation.Op.Unsafe", {
+    primOp(Global("Relation.Op.Unsafe", "combine#"), fun3("Relation.Op.Unsafe.combine#", {
       case Data(frid, Array(pt)) => {
         case Prim(colval: Op) => {
           case er@EmptyRel => er
