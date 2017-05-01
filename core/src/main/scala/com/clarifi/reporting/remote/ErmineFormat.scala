@@ -112,7 +112,7 @@ object ErmineFormat {
         case Data(n, a) => data((n, a))
         case Rec(t) => rec(t)
         case Fun(_) => sys error "Ermine functions cannot be serialized"
-        case Bottom(_) => sys error "Ermine errors cannot be serialized"
+        case Bottom(exn) => exn()
         case e => sys error ("Unrecognized Ermine data %s" format e)
       }}}
 
