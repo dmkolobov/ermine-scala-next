@@ -189,6 +189,12 @@ find : forall a. (a -> Bool) -> List a -> Maybe a
 find _ [] = Nothing
 find p (x::xs) = if (p x) (Just x) (find p xs)
 
+findIndex : forall a. (a -> Bool) -> List a -> Maybe Int
+findIndex p = loop 0
+ where
+ loop !n [] = Nothing
+ loop !n (x :: xs) = if (p x) (Just n) (loop (n+1) xs)
+
 take : Int -> List a -> List a
 take n [] = Nil
 take n (x :: xs) = if (n == 0) Nil (x :: (take (n - 1) xs))
