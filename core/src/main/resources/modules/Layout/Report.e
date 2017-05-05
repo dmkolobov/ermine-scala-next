@@ -699,15 +699,15 @@ styleBox : forall px py xv yv a b other rel .
            Relational rel)
         => (Legend l, Field xv a, Field yv b, Field av c)
         -> Bool
-        -> List String 
-        -> List String 
+        -> List String
+        -> List String
         -> List# (Pair# Double Double)
         -> List# (Pair# Double Double)
         -> Field px Int
         -> Field py Int
         -> rel(|..r|)
         -> Report f z
-styleBox (lgnd, xFld, yFld, aFld) showNumber rowLabels columnLabels xBins yBins xPositionField yPositionField r = 
+styleBox (lgnd, xFld, yFld, aFld) showNumber rowLabels columnLabels xBins yBins xPositionField yPositionField r =
   Report $ w ->
     styleboxW w
       (legend# lgnd)
@@ -1615,7 +1615,7 @@ private
   gridW w d = gridW_ w (toList# (lmap toList# d))
 
   styleboxW : Writer f z -> Legend# String -> Bool# -> String -> String -> String -> List String -> List String -> List# (Pair# Double Double) -> List# (Pair# Double Double) -> String -> String -> Relation# -> f z
-  styleboxW w lgnd showNumber xFld yFld aFld rowLabels columnLabels xBins yBins xPositionField yPositionField rel = 
+  styleboxW w lgnd showNumber xFld yFld aFld rowLabels columnLabels xBins yBins xPositionField yPositionField rel =
     styleboxW_ w lgnd showNumber xFld yFld aFld (toList# rowLabels) (toList# columnLabels) xBins yBins xPositionField yPositionField rel
 
   foreign
@@ -1656,7 +1656,7 @@ private
     method "scanRelationDMTL" scanRelationW' : forall f z . Writer f z -> Sort# -> Relation# -> Function1 (List# Record#) (f z) -> f z
     method "grid" gridW_ : forall f z . Writer f z -> List# (List# z) -> z
     method "styleBox" styleboxW_ : forall f z . Writer f z -> Legend# String -> Bool# -> String -> String -> String-> List# String -> List# String -> List# (Pair# Double Double) -> List# (Pair# Double Double) -> String -> String -> Relation# -> f z
-    
+
     method "selector" selectorW: forall f z a b . Writer f z -> SelectorMode# -> Pair# (NonEmpty# PrimExpr# ) a -> Format_Fmt b -> List# (Pair# (NonEmpty# PrimExpr# ) a) ->
                                     Function3 (Function1 a z) (SelectorEvent z) (Function1 (Function1 a (f z)) (f z)) (f z) ->
                                     f z
@@ -1671,4 +1671,4 @@ private
                                     Function2 a (Function1 a (f z)) (f z) -> -- controls: S => (S => F[HJS]) => F[HJS]
                                     Function1 a (f z) -> f z           -- view: S => F[HJS]
     method "button" buttonW : forall f z a . Writer f z -> NonEmpty# PrimExpr# -> Format_Fmt a -> Function2 z (SelectorEvent z) (f z) -> f z
-    method "image" imageW : forall f z a . Writer f z -> String -> Maybe# String -> z -- TODO : is this right?   
+    method "image" imageW : forall f z a . Writer f z -> String -> Maybe# String -> z -- TODO : is this right?
