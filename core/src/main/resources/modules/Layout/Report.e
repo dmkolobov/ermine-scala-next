@@ -694,7 +694,7 @@ keyValueTabular softr@(SoftRelation ks _ _) lg r =
 
 
 styleBox : forall px py xv yv a b other rel .
-          (r <-(px, py, xv, yv, other),
+          (r <-(px, py, xv, yv, av, other),
            l <-(xv, yv, av, other),
            Relational rel)
         => (Legend l, Field xv a, Field yv b, Field av c)
