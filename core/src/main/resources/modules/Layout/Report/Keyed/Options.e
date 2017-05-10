@@ -251,27 +251,33 @@ legendOpts legOpts (ChartOptions title dir _ xlbl xfmt xax ylbl yfmt yax) =
 
 -- | Set the pie chart title.
 pieTitle : String
-        -> PieChartOptions (Unbound t', l', c', dd') lbl r1 r2 id
-        -> PieChartOptions (Bound String, l', c', dd') lbl r1 r2 id
-pieTitle s (PieChartOptions _ lo cs dd) = PieChartOptions s lo cs dd
+        -> PieChartOptions (Unbound t', nm', l', c', dd') lbl r1 r2 id
+        -> PieChartOptions (Bound String, nm', l', c', dd') lbl r1 r2 id
+pieTitle s (PieChartOptions _ nm lo cs dd) = PieChartOptions s nm lo cs dd
+
+pieSeriesName
+   : Atomic nm
+  -> PieChartOptions (t', Unbound nm', l', c', dd') lbl r1 r2 id
+  -> PieChartOptions (t', Bound nm, l', c', dd') lbl r1 r2 id
+pieSeriesName nm (PieChartOptions t _ lo cs dd) = PieChartOptions t (Just nm) lo cs dd
 
 pieLegendOpts : ChartLegendOptions#
-             -> PieChartOptions (t', Unbound l', c', dd') lbl r1 r2 id
-             -> PieChartOptions (t', Bound ChartLegendOptions#, c', dd') lbl r1 r2 id
-pieLegendOpts lo (PieChartOptions s _ cs dd) = PieChartOptions s lo cs dd
+             -> PieChartOptions (t', nm', Unbound l', c', dd') lbl r1 r2 id
+             -> PieChartOptions (t', nm', Bound ChartLegendOptions#, c', dd') lbl r1 r2 id
+pieLegendOpts lo (PieChartOptions s nm _ cs dd) = PieChartOptions s nm lo cs dd
 
 -- | Set colors.
 pieColors : List ({..label}, Color)
-         -> PieChartOptions (t', l', Unbound c', dd') lbl r1 r2 id
-         -> PieChartOptions (t', l', Bound {..label}, dd') label r1 r2 id
-pieColors cs (PieChartOptions s lo _ dd) = PieChartOptions s lo cs dd
+         -> PieChartOptions (t', nm', l', Unbound c', dd') lbl r1 r2 id
+         -> PieChartOptions (t', nm', l', Bound {..label}, dd') label r1 r2 id
+pieColors cs (PieChartOptions s nm lo _ dd) = PieChartOptions s nm lo cs dd
 
 -- | Permit drilling down.
 pieDrilldown : (r <- (pid, cid))
             => (Field pid id, Field cid id)
-            -> PieChartOptions (t', l', lbl', Unbound dd') lbl r1 r2 id'
-            -> PieChartOptions (t', l', lbl', Bound (Field r id)) lbl pid cid id
-pieDrilldown dd (PieChartOptions s lo cs _) = PieChartOptions s lo cs (Just dd)
+            -> PieChartOptions (t', l', nm', lbl', Unbound dd') lbl r1 r2 id'
+            -> PieChartOptions (t', l', nm', lbl', Bound (Field r id)) lbl pid cid id
+pieDrilldown dd (PieChartOptions s nm lo cs _) = PieChartOptions s nm lo cs (Just dd)
 
 -- drilldownBarChart options
 

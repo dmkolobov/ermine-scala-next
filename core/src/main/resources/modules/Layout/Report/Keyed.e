@@ -106,9 +106,9 @@ pieChart : (r <- (label, value, r1, r2, o), PrimitiveNum d,
         -> prv value d
         -> rel (|..r|)
         -> Report_R f z
-pieChart oa label value = oa pieChartDefaults |> (PieChartOptions title lo color dd) ->
-  maybe (pieChart_R title lo color label value)
-        (uncurry (drilldownPieChart_R title lo color label value))
+pieChart oa label value = oa pieChartDefaults |> (PieChartOptions title nm lo color dd) ->
+  maybe (pieChart_R title nm lo color label value)
+        (uncurry (drilldownPieChart_R title nm lo color label value))
         dd
 
 drilldownBarChart : (exists o. r <- (sr, cr, vr, pi, ci, o),

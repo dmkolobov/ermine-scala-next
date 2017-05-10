@@ -100,7 +100,7 @@ private foreign
   method "apply" axisChartApply# : AxisChartModule# -> List# (ChartSeries# x y) -> AxisChartData# -> AxisChart#
 
   value "com.clarifi.reporting.writers.PieChartData$" "MODULE$"
-      pieChartDataModule : Function3 (Maybe# String) ChartLegendOptions# PieColors#
+      pieChartDataModule : Function4 (Maybe# String) (Maybe# (Atomic# nm)) ChartLegendOptions# PieColors#
                                      PieChartData#
 
   value "com.clarifi.reporting.writers.ChartLegendOptions$" "MODULE$"
@@ -132,7 +132,7 @@ private foreign
 
 axisChart# = axisChartApply# axisChartModule
 axisChartData# = funcall6# axisChartDataModule
-pieChartData# = funcall3# pieChartDataModule
+pieChartData# = funcall4# pieChartDataModule
 axis# = funcall4# axisModule
 scaledConstraints# = funcall4# scaledConstraintsModule
 unscaledConstraints# = funcall2# unscaledConstraintsModule

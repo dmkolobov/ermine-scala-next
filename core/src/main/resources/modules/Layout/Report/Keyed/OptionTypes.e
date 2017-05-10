@@ -29,7 +29,9 @@ import Layout.Color using type Color
 import Layout.Format as Fmt
 import Layout.Legend using type Legend
 import Layout.Presentation using type Presentation; asPresentation
-import Layout.Report using {type Report; type DisplayScale; Linear; chartLegendDefaultLocation}
+import Layout.Report using
+  type Report; type DisplayScale
+  Linear; chartLegendDefaultLocation; val
 import Layout.Report.Atomic
 import Layout.Report.Direction
 import Layout.SortPriority using {type SortPriorityAnnotated; unsorted}
@@ -121,11 +123,17 @@ chartDefaults = ChartOptions Nothing Vertical defaultChartLegendOptions#
 
 -- | pieChart and drilldownPieChart
 data PieChartOptions ph lbl r1 r2 id =
-  PieChartOptions String ChartLegendOptions# (List ({..lbl}, Color))
-                  (Maybe (Field r1 id, Field r2 id))
+  forall mt.
+    PieChartOptions
+      String -- chart title
+      (Maybe (Atomic mt)) -- series designation (for tool tip)
+      ChartLegendOptions#
+      (List ({..lbl}, Color)) -- color specifications
+      (Maybe (Field r1 id, Field r2 id))
+
 type PieChartDefaults ph lbl = PieChartOptions ph lbl (| |) (| |) Void
 pieChartDefaults : PieChartDefaults ph lbl
-pieChartDefaults = PieChartOptions "" chartLegendDefaultLocation Nil Nothing
+pieChartDefaults = PieChartOptions "" Nothing chartLegendDefaultLocation Nil Nothing
 
 -- | drilldownBarChart
 data DrilldownBarChartOptions tdlocv sr sa cr vr {-title' logOpts' dir' cl' vl'-} =

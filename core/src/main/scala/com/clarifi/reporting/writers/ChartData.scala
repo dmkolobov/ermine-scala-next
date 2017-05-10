@@ -114,12 +114,13 @@ sealed trait ChartData {
   *               colored.
   */
 case class PieChartData(title: Option[String] = None,
+                        seriesName: Option[Atomic] = None,
                         legendOptions: ChartLegendOptions = ChartLegendOptions.default,
                         colors: PieColors
                           = Map.empty)
     extends ChartData
 
-object PieChartData extends ((Option[String], ChartLegendOptions, PieColors) => PieChartData) {
+object PieChartData extends ((Option[String], Option[Atomic], ChartLegendOptions, PieColors) => PieChartData) {
   def rescopeColors(cat: Presentation, colors: List[(Record, Color)]
                    ): Map[NonEmptyList[PrimExpr], Color] =
     colors.view.map{case (rec, color) => (cat extract rec, color)}.toMap

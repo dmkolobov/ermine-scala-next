@@ -4,9 +4,10 @@ export Layout.Chart.Type
 import Control.Functor using fmap
 import Either
 import Function
-import Maybe using maybeFunctor
+import Maybe using maybeFunctor; maybe
 import Native
 import Native.Map as NM
+import Native.Maybe using Just# ; Nothing#
 import Native.NonEmpty using type NonEmpty#
 import Native.Ord
 import Native.Record
@@ -82,12 +83,16 @@ seriesW : ChartVariant# -> ChartMode
 seriesW vari s x y fact =
   ChartSeries [] [] [] (asPresentation s) (asOp x) (asOp y) Nothing Nothing vari (relation# fact)
 
-pieChartW w title legendOptions color cat =
-  pieChart# w (pieChartData# (toMaybe# $ Just title) legendOptions (pieColors# cat color)) cat
-drilldownPieChartW w title legendOptions color cat =
-  drilldownPieChart# w (pieChartData# (toMaybe# $ Just title) legendOptions (pieColors# cat color)) cat
-drilldownPieChart2W w title legendOptions color cat pres2 cols =
-  drilldownPieChart2# w (pieChartData# (toMaybe# $ Just title) legendOptions (pieColors# cat color)) cat pres2 (toList# $ fmap listFunctor toPair# cols)
+private
+  atomize : Maybe (Atomic nm) -> Maybe# (Atomic# nm)
+  atomize = maybe Nothing# (Just# . atomic#)
+
+pieChartW w title nm legendOptions color cat =
+  pieChart# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color)) cat
+drilldownPieChartW w title nm legendOptions color cat =
+  drilldownPieChart# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color)) cat
+drilldownPieChart2W w title nm legendOptions color cat pres2 cols =
+  drilldownPieChart2# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color)) cat pres2 (toList# $ fmap listFunctor toPair# cols)
 
 drilldownBarChartW : Writer f a -> AxisChartData# -> List ({..cr}, {..cr}) -> List ({..vr}, {..vr}) -> Presentation sr sa -> Presentation cr ca -> Presentation vr va -> String -> String -> Relation# -> f a
 drilldownBarChartW w barData cov vov s c v pid cid dat =
