@@ -155,7 +155,7 @@ class StateScanner(sms: SM => BS[StateEntry]) extends Scanner[BS] {
       case StateEntry(h, ts) => StateEntry(Map(attr.name -> attr.t),
           List(Map(attr.name -> AggFunc.reduce[List](agg, attr.t).apply(ts))))
     }
-    case LetR(ext, exp) => for {
+    case LetR(ext, _, exp) => for {
       memo <- ext match {
         case ExtRel(rel, _) => scanRel(rel, smv, srv) // TODO: Handle database name somehow
         case ExtMem(mem) => scanMemAux(mem, smv, srv)

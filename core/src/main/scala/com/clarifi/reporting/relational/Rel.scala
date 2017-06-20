@@ -68,20 +68,20 @@ case class MemoR[+M,+R](r: Relation[M,R], pk: List[String]) extends Relation[M,R
     MemoR(r.unquote(f, g), pk)
 }
 
-case class LetR[+M,+R](r: Ext[M,R], expr: Relation[M,RLevel[M, R]]) extends Relation[M,R] {
-  def bimap[N, S](f: M => N, g: R => S) = LetR(r.bimap(f, g), expr.bimap(f, (_.bimap(f, g))))
+case class LetR[+M,+R](r: Ext[M,R], pk: List[String], expr: Relation[M,RLevel[M, R]]) extends Relation[M,R] {
+  def bimap[N, S](f: M => N, g: R => S) = LetR(r.bimap(f, g), pk, expr.bimap(f, (_.bimap(f, g))))
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) =
-    LetR(r subst (f, g), expr subst (v => f(v).mapRel(x => RPop(VarR(x))), l => VarR(l subst (f, g))))
+    LetR(r subst (f, g), pk, expr subst (v => f(v).mapRel(x => RPop(VarR(x))), l => VarR(l subst (f, g))))
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = r.bifoldMap(f, g) |+| expr.bifoldMap(f, (_.bifoldMap(f, g)))
   def foreach(f: M => Any, g: R => Any) = { r.foreach(f, g) ; expr.foreach(f, (_.foreach(f, g))) }
   override def equals(other: Any) = other match {
-     case LetR(r2, e2) => r == r2 && Relation.fromScope(expr) == Relation.fromScope(e2)
+     case LetR(r2, pk2, e2) => r == r2 && pk == pk2 && Relation.fromScope(expr) == Relation.fromScope(e2)
      case _ => false
   }
-  override def hashCode: Int = (r, Relation.fromScope(expr)).hashCode
+  override def hashCode: Int = (r, pk, Relation.fromScope(expr)).hashCode
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
-    LetR(r.unquote(g, f),
+    LetR(r.unquote(g, f), pk,
          expr.unquote(x => f(x).map(v => VarR(RPop(v))), x => g(x).map(_.mapRel(v => RPop(VarR(v))))))
 }
 

@@ -364,7 +364,7 @@ object Optimizer {
       implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
       val h2 = Typer.pivotType[Id](h, key, vals, outer, keyMap)
       (h2, PivotR(ir, key, vals, outer, keyMap))
-    case LetR(r, e) =>
+    case LetR(r, pk, e) =>
       r match {
         case ExtMem(l@Literal(t,ts)) if ts.length <= smallLitSize =>
           optimizeRel[M,R](Relation.instantiate(SmallLit( l.nel ), e), hr, hm)
@@ -374,7 +374,7 @@ object Optimizer {
             case None => h
             case Some(x) => hr(x)
           }, hm)
-          (h2, LetR(r2, Relation.toScope(e2)))
+          (h2, LetR(r2, pk, Relation.toScope(e2)))
       }
     case MemoR(r, pk) =>
       val (h, r2) = optimizeRel(r, hr, hm)

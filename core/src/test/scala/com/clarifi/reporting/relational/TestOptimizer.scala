@@ -37,7 +37,7 @@ object TestOptimizer extends Properties("SQL relation optimizer") {
   val lit = Literal(NonEmptyList(Map("colAA" -> IntExpr(false, 5), "colCC" -> IntExpr(false, 7))))
 
   property("optimize leaf literal") = secure {
-    val r = LetR(ExtMem(lit), VarR(RTop))
+    val r = LetR(ExtMem(lit), List(), VarR(RTop))
     Optimizer.optimizeRel[Nothing, Nothing](r, (x:Nothing) => x, (x:Nothing) => x) match {
       case (h, SmallLit(rows)) =>
         (rows ?= lit.nel) &&
