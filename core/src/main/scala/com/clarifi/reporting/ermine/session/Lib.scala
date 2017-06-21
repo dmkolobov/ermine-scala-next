@@ -829,16 +829,18 @@ object Lib {
         case EmptyRel => \/-(ExtMem(relational.EmptyRel(Map())))
         case Rel(e) => \/-(e)
         case x: Bottom => -\/(x)
-        case _ => -\/(Bottom(throw new RuntimeException("Expected a relation in a bound variable: Native.Relation.letR")))
+        case _ => -\/(Bottom(throw new RuntimeException("Expected a relation in a bound variable: Native.Relation.letRWithPK#")))
       }
       val unique = new Object
-      f.whnfMatch("Native.Relation.letRWithPK#") {
-        case Fun(g) => g(Rel(ExtRel(QuoteR(unique), ""))).whnfMatch("Native.Relation.letRWithPK#") {
-          case EmptyRel => EmptyRel
-          case Rel(ExtRel(r, db)) => ext match {
-            case \/-(v) => Rel(ExtRel(LetR(v, pk.asInstanceOf[List[(String, PrimT)]].map(_._1), r.unquoteR(x =>
-              if (x eq unique) Some(VarR(RTop)) else None)), db))
-            case -\/(v) => v
+      pk.whnfMatch("Native.Relation.letRWithPK#") {
+        case Prim(pk) => f.whnfMatch("Native.Relation.letRWithPK#") {
+          case Fun(g) => g(Rel(ExtRel(QuoteR(unique), ""))).whnfMatch("Native.Relation.letRWithPK#") {
+            case EmptyRel => EmptyRel
+            case Rel(ExtRel(r, db)) => ext match {
+              case \/-(v) => Rel(ExtRel(LetR(v, pk.asInstanceOf[List[(String, PrimT)]].map(_._1), r.unquoteR(x =>
+                if (x eq unique) Some(VarR(RTop)) else None)), db))
+              case -\/(v) => v
+            }
           }
         }
       }
