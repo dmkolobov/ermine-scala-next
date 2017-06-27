@@ -260,7 +260,7 @@ object Typer {
         go(under) flatMap { h => pivotType[F](h, pKey, pVals, outer, km) }
       case (r: HardRel)            => r.header.pure[F]
       case MemoR(r, _) => go(r)
-      case LetR(r, expr) => for {
+      case LetR(r, _, expr) => for {
         h1 <- extTyperAux(r, rtype, mtype)
         h2 <- relTyperAux(expr, (r: RLevel[M, R]) => r match {
           case RTop => h1.pure[F]

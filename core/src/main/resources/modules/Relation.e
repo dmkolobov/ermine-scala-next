@@ -62,6 +62,10 @@ setColumn f op r = [| f = op |] r
 memoRelWithPK : Has r k => Row k -> Relation r -> Relation r
 memoRelWithPK (Row r) rel = memoRelWithPK# (toList# (map_List toPair# r)) rel
 
+letRWithPK : (Relational rel, Has a k) => Row k -> rel a -> (Relation a -> Relation b) -> Relation b
+letRWithPK (Row r) rel f = letRWithPK# (toList# (map_List toPair# r)) rel f
+
+materializeWithPK row r = letRWithPK row r id
 materialize r = letR r id
 toMem r = asMem r
 

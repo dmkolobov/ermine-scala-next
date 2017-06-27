@@ -814,7 +814,7 @@ object Lib {
         case Fun(g) => g(Rel(ExtRel(QuoteR(unique), ""))).whnfMatch("Native.Relation.letR") {
           case EmptyRel => EmptyRel
           case Rel(ExtRel(r, db)) => ext match {
-            case \/-(v) => Rel(ExtRel(LetR(v, r.unquoteR(x =>
+            case \/-(v) => Rel(ExtRel(LetR(v, List(), r.unquoteR(x =>
               if (x eq unique) Some(VarR(RTop)) else None)), db))
             case -\/(v) => v
           }
@@ -822,6 +822,30 @@ object Lib {
       }
     }), FA(rho ->: star, r => FAR(a => FAR(b =>
             relationalCon(r) =>: r(a) ->: (relationT(a) ->: relationT(b)) ->: relationT(b)))))
+
+    primOp(Global("Native.Relation", "letRWithPK#"), fun3((pk, x, f) => {
+      val ext: \/[Bottom, Ext[Nothing, Nothing]] = x.whnf match {
+        // XXX EmptyRel case is wrong; might be fields that it's supposed to have but that info has been erased 
+        case EmptyRel => \/-(ExtMem(relational.EmptyRel(Map())))
+        case Rel(e) => \/-(e)
+        case x: Bottom => -\/(x)
+        case _ => -\/(Bottom(throw new RuntimeException("Expected a relation in a bound variable: Native.Relation.letRWithPK#")))
+      }
+      val unique = new Object
+      pk.whnfMatch("Native.Relation.letRWithPK#") {
+        case Prim(pk) => f.whnfMatch("Native.Relation.letRWithPK#") {
+          case Fun(g) => g(Rel(ExtRel(QuoteR(unique), ""))).whnfMatch("Native.Relation.letRWithPK#") {
+            case EmptyRel => EmptyRel
+            case Rel(ExtRel(r, db)) => ext match {
+              case \/-(v) => Rel(ExtRel(LetR(v, pk.asInstanceOf[List[(String, PrimT)]].map(_._1), r.unquoteR(x =>
+                if (x eq unique) Some(VarR(RTop)) else None)), db))
+              case -\/(v) => v
+            }
+          }
+        }
+      }
+    }), FA(rho ->: star, r => FAR(a => FAR(b =>
+            relationalCon(r) =>: listH(pairH(string,primt)) ->: r(a) ->: (relationT(a) ->: relationT(b)) ->: relationT(b)))))
 
     primOp(Global("Native.Relation", "letM"), fun2((x, f) => {
       val ext: Option[Ext[Nothing, Nothing]] = x.whnf match {

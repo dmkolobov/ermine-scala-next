@@ -58,9 +58,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
   import AggFunc._
 
-  private[this] def fillTable(table: TableName, header: Header, from: SqlQuery
+  private[this] def fillTable(table: TableName, header: Header, from: SqlQuery, hints: TableHints = TableHints.empty
                              ): List[SqlStatement] = {
-    val c = SqlCreate(table = table, header = header)
+    val c = SqlCreate(table = table, header = header, hints = hints)
     List(c, SqlInsert(table, c.hints.sortColumns(header.keySet), from))
   }
 
@@ -885,36 +885,30 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         val scopeStr : List[String] = scopeBuilder.map(mkstr => mkstr())
         val relHash = "MemoHash_" + java.security.MessageDigest.getInstance("SHA").digest(s"$r\n$scopeStr".getBytes("UTF-8")).map("%02x" format _).mkString
         val myTN = TableName(relHash, List(), TableName.Persistent)
-        val create :: fillStat = fillTable(myTN, rc.q.h, rc.q.q(true)._2)
-        val createWithKey = if (pk.isEmpty) {
-                              create
-                            } else {
-                              create match {
-                                case c: SqlCreate => c.copy(hints = c.hints.reorder(pk).withPK(SortedSet(pk: _*)))
-                                case _ => sys.error("Panic: The impossible happened: create table statement was not a create table statement")
-                              }
-                            }
+        val myHints = if (pk.isEmpty) { TableHints.empty } else { TableHints.empty.reorder(pk).withPK(SortedSet(pk: _*)) }
+        val createWithKey :: fillStat = fillTable(myTN, rc.q.h, rc.q.q(true)._2, myHints)
         val myPrg = List(SqlCreateIfNotExists(myTN, rc.prg, createWithKey, fillStat))
-	SqlPrg(myPrg, List(), DistinctiveQuery.table(rc.q.h, myTN), rc.refl)
+        SqlPrg(myPrg, List(), DistinctiveQuery.table(rc.q.h, myTN), rc.refl)
       }
-      case LetR(ext, exp) =>
+      case LetR(ext, pk, exp) =>
         val un = guidName
         val tn = TableName(un, List(), TableName.Temporary)
+        val hnt = if (pk.isEmpty) { TableHints.empty } else { TableHints.empty.reorder(pk).withPK(SortedSet(pk: _*)) }
         val tup = ext match {
           case ExtRel(rel, _) => // TODO: Handle namespace
             val SqlPrg(ip, _, iq, rx) = compileRel(rel, smv, srv) // TODO: do something with notes
-            (iq.h, rx, ip ++ fillTable(tn, iq.h, iq.q(true)._2))
+            (iq.h, rx, ip ++ fillTable(tn, iq.h, iq.q(true)._2, hnt))
           case ExtSM(sm) =>
             val (pop, h, rx) = sms(sm)
             (h, rx,
               List(SqlCreate(
-                     table = tn, header = h),
+                     table = tn, header = h, hints = hnt),
                    SqlLoad(tn, h, pop(List()))))
           case ExtMem(mem) =>
             val m = compileMem(mem, smv, srv)
             val MemPrg(h, p, pop, rx) = m
             (h, rx,
-              p ++ List(SqlCreate(table = tn, header = h),
+              p ++ List(SqlCreate(table = tn, header = h, hints = hnt),
                         SqlLoad(tn, h, pop(List()))))
         }
         val (ih, rx1, ps) = tup

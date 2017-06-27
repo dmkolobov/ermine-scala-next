@@ -389,7 +389,7 @@ object Format {
       type Shape[MF, RF, A] = S20[
         RF, // Var
         A :: OptionF[IntF] :: OptionF[IntF] :: RepeatF[StringF & BooleanF], // Limit
-        extRW.F[MF, RF] & relRW.F[MF, RLevelF[MF, RF]], // Let
+        extRW.F[MF, RF] :: RepeatF[StringF] :: relRW.F[MF, RLevelF[MF, RF]], // Let
         A :: A :: RepeatF[StringF & StringF] :: JoinModeF, // JoinOn
         A & A,    // Union
         A & A,    // Minus
@@ -412,7 +412,7 @@ object Format {
       override def writeShape[M, MF, R, RF, Z](wm: Writer[M, MF], wr: Writer[R, RF]) = { self =>
         s20W(wr, // Var
              tuple4W(self, optionW(intW), optionW(intW), repeatW(tuple2W(stringW, booleanW))), // Limit
-             tuple2W(extW(wm, wr), relW(wm, rLevelW(wm, wr))), // Let
+             tuple3W(extW(wm, wr), repeatW(stringW), relW(wm, rLevelW(wm, wr))), // Let
              tuple4W(self, self, repeatW(tuple2W(stringW, stringW)), joinModeW), // JoinOn
              tuple2W(self, self), // Union
              tuple2W(self, self), // Minus
@@ -434,7 +434,7 @@ object Format {
           (r: Relation[M, R]) => r match {
             case VarR(x) => v(x)
             case Limit(a, b, c, d) => lim((a, b, c, d.map(p => (p._1, p._2 == Asc)).toList))
-            case LetR(a, b) => let((a, b))
+            case LetR(a, b, c) => let((a, b, c))
             case JoinOn(a, b, c, d) => on((a, b, c, d))
             case Union(a, b) => un(a -> b)
             case Minus(a, b) => min(a -> b)
@@ -461,7 +461,7 @@ object Format {
         union20R(
           rr.map(VarR(_)),
           p4R(self, optionR(intR), optionR(intR), listR(p2R(stringR, sortOrderR)((_, _))))(Limit(_, _, _, _)),
-          p2R(extR(rm, rr), relR(rm, rLevelR(rm, rr)))(LetR(_, _)),
+          p3R(extR(rm, rr), listR(stringR), relR(rm, rLevelR(rm, rr)))(LetR(_, _, _)),
           p4R(self, self, listR(tuple2R(stringR, stringR)) map (_.toSet), joinModeR)(JoinOn(_, _, _, _)),
           p2R(self, self)((a, b) => Union(a, b)),
           p2R(self, self)((a, b) => Minus(a, b)),

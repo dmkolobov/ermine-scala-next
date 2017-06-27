@@ -637,6 +637,6 @@ object RelationGens {
     for {
       n <- Gen.choose(minRecords, maxRecords)
       l <- Gen.listOfN(n, genrecord)
-    } yield LetR(ExtMem(Literal(l.toNel.get)), VarR(RTop))
+    } yield LetR(ExtMem(Literal(l.toNel.get)), List(), VarR(RTop))
   }
 }
