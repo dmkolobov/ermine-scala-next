@@ -12,7 +12,7 @@ libraryDependencies ++= Seq (
   "org.xerial"    % "sqlite-jdbc" % "3.7.2",
   //"com.microsoft" % "jdbc4" % "4.0",
   "com.clarifi"  %% "f0" % "1.1.2",
-  "scala-parsers" %% "scala-parsers" % "0.2.2",
+  "scala-parsers" %% "scala-parsers" % "0.2.3",
   "machines"      %% "machines"    % "1.1",
   "org.scalacheck" %% "scalacheck" % "1.11.3" % "test"
 )
