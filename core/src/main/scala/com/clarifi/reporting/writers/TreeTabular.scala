@@ -58,6 +58,29 @@ object TreeTabular {
     })
   } yield ot)
 
+  def toObservableTree3[F[_], A](tt: TreeTabular[F, A], level: Int = 0)(implicit r: Run[F]): ObservableTree[A] = {
+    def mkEntry(v: A, ttt: TreeTabular[F,A]): TreeEntry[A] = {
+      val childNodes = toObservableTree3(ttt, level + 1)(r)
+      TreeEntry(false, level, childNodes.size, v, () => childNodes)
+    }
+	
+    val ch1: F[IndexedSeq[(A,TreeTabular[F,A])]] = tt.children.slice(0, none)	
+    val ch2: IndexedSeq[(A,TreeTabular[F,A])] = r.run(ch1)
+	
+    var i = 0
+    var result = Vector[TreeEntry[A]]()
+    val n = ch2.size
+    while (i < n) {
+      val (v, ttt) = ch2(i)
+      val te = mkEntry(v, ttt)
+
+      result = result :+ te
+      i = i + 1
+    }
+	
+    result
+  }
+
   /* A dummy tree tabular with no content, useful for debugging.
    * Likely implements some things in an unexpected way.
    */
@@ -99,7 +122,9 @@ abstract class TreeTabular[F[_], A] extends GenTabular[TreeTabular, F, A] { self
   def map[B](f: A => B): TreeTabular[F,B] = new TreeTabular[F,B] {
     implicit def F = self.F
     def relation = self.relation
-    def children = self.children.map { case (a, t) => (f(a), t map f) }
+    def children = mapChildren
+	
+    private def mapChildren = self.children.map { case (a, t) => (f(a), t map f) }
   }
 
   /** A collection of a few useful catamorphisms */
@@ -114,7 +139,7 @@ abstract class TreeTabular[F[_], A] extends GenTabular[TreeTabular, F, A] { self
     TreeTabular.toObservableTree2(self).map(_.map(_.foldTreeEntry(f))).map(vec => concat(vec))
 
   def scanr3[B](f: A => Vector[B] => B)(concat: Vector[B] => B)(implicit r: Run[F]) : B = {
-    val vec = TreeTabular.toObservableTree(self).map(_.foldTreeEntry(f))
+    val vec = TreeTabular.toObservableTree3(self).map(_.foldTreeEntry(f))
     concat(vec)
   }
 
@@ -179,7 +204,9 @@ abstract class TreeTabular[F[_], A] extends GenTabular[TreeTabular, F, A] { self
     new TreeTabular[F,A] {
       implicit def F = self.F
       def relation = self.relation
-      def children = f(self.children.map {case (p1, p2) => p1 -> p2.transTabulars(f)})
+      lazy val children = transTabularsChildren2
+	  
+      private def transTabularsChildren2 = f(self.children.map {case (p1, p2) => p1 -> p2.transTabulars(f)})
     }
 
   def ordering = children.ordering
