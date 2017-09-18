@@ -313,7 +313,7 @@ final case class LegendColumns[Grp, Lbl](
     traverseGroupsLeaves(_.point[F], f)
 
   /** `traverseLeaves` with the const applicative. */
-  def leavesInOrder: IndexedSeq[(Presentation, SortStrategy, Lbl)] =
+  lazy val leavesInOrder: IndexedSeq[(Presentation, SortStrategy, Lbl)] =
     traverseLeaves[λ[α => IndexedSeq[(Presentation, SortStrategy, Lbl)]],
                    Nothing](IndexedSeq(_))
 
