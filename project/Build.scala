@@ -52,7 +52,7 @@ object ReportingBuild extends Build {
 
   /** List of projects we actually publish. */
   def publishedProjects[A](implicit bc: Project => A): Seq[A] =
-    Seq(core, examples, utilJavafx, ermineEditor, scalacheckBinding)
+    Seq(core, examples, scalacheckBinding)
 
   private[this] def cons[A](a: A, as: Seq[A]) = a +: as // Scala is weird.
 
