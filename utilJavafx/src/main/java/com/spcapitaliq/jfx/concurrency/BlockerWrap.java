@@ -11,13 +11,13 @@ import javafx.event.EventHandler;
 import javafx.geometry.Pos;
 import javafx.scene.Cursor;
 import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonBuilder;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.StackPane;
-import javafx.scene.layout.VBoxBuilder;
+import javafx.scene.layout.VBox;
 import javafx.scene.text.Text;
 import org.apache.log4j.Logger;
 
@@ -98,24 +98,21 @@ public final class BlockerWrap extends NodeWrap<StackPane>
 
     private Overlay()
     {
-      setCenter( VBoxBuilder.create()
-          .alignment(Pos.CENTER)
-          .spacing(4)
-          .children(
-              _cancel = ButtonBuilder.create()
-                .text("Cancel")
-                .onAction(new EventHandler<ActionEvent>()
-                {
-                  @Override
-                  public void handle(ActionEvent ae)
-                  {
-                    _worker.cancel(_worker.doesCancelInterrupt);
-                  }
-                })
-                .build(),
-              _progress = new ProgressBar(),
-              _text = new Text())
-          .build() );
+      _cancel = new Button("Cancel");
+      _cancel.setOnAction(new EventHandler<ActionEvent>()
+      {
+        @Override
+        public void handle(ActionEvent ae)
+        {
+          _worker.cancel(_worker.doesCancelInterrupt);
+        }
+      });
+      _progress = new ProgressBar();
+      _text = new Text();
+      VBox center = new VBox(_cancel, _progress, _text);
+      center.setAlignment(Pos.CENTER);
+      center.setSpacing(4);
+      setCenter(center);
       setCursor(Cursor.WAIT);
       reset();
     }

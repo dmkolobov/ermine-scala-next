@@ -16,7 +16,6 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Polygon;
-import javafx.scene.shape.PolygonBuilder;
 import org.apache.log4j.Logger;
 
 import com.spcapitaliq.jfx.node.NodeWrap;
@@ -109,7 +108,9 @@ public final class FlexibleSplitArea extends StackPane
   
   private Polygon buildPolygon( final Direction direction )
   {
-    final Polygon target = PolygonBuilder.create().fill(AWARE_COLOR).build();
+    final Polygon target = new Polygon();
+
+    target.setFill(AWARE_COLOR);
     
     // drag enter
     target.setOnDragEntered(new EventHandler<DragEvent>()

@@ -97,7 +97,7 @@ public class MouseCursorInTable
           {
             final NestedTableColumnHeader nestedHeader = (NestedTableColumnHeader) headerNode;
 
-            ObservableList<Node> headerChildren = nestedHeader.getChildren();
+            ObservableList<Node> headerChildren = nestedHeader.getChildrenUnmodifiable();
             removeHandler(headerChildren);
           }
         }
@@ -140,7 +140,7 @@ public class MouseCursorInTable
           {
             final NestedTableColumnHeader nestedHeader = (NestedTableColumnHeader) headerNode;
 
-            ObservableList<Node> headerChildren = nestedHeader.getChildren();
+            ObservableList<Node> headerChildren = nestedHeader.getChildrenUnmodifiable();
             changeHandler(tableView, headerChildren);
             headerChildren.addListener(new ListChangeListener<Node>()
             {

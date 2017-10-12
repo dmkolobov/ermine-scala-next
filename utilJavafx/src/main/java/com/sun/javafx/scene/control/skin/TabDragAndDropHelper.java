@@ -6,10 +6,8 @@ import java.util.IdentityHashMap;
 
 import javafx.event.EventHandler;
 import javafx.scene.Scene;
-import javafx.scene.SceneBuilder;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
-import javafx.scene.control.TabPaneBuilder;
 import javafx.scene.input.*;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
@@ -112,12 +110,10 @@ public class TabDragAndDropHelper
           Window ownerWindow = node.getScene().getWindow();
           tab.getTabPane().getTabs().remove(tab);
           
-          TabPane newTabs = TabPaneBuilder.create()
-            .tabs(tab)
-            .build();
+          TabPane newTabs = new TabPane(tab);
           newTabs.setPrefSize(_tabs.getWidth(), _tabs.getHeight());
           
-          Scene scene = SceneBuilder.create().root( newTabs ).build();
+          Scene scene = new Scene( newTabs );
           Stage stage = new Stage( StageStyle.DECORATED );
 //          stage.initModality( Modality.APPLICATION_MODAL );
           stage.setTitle("Child Window");

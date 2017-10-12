@@ -4,7 +4,6 @@ import javafx.event.ActionEvent;
 import javafx.event.EventHandler;
 import javafx.scene.Node;
 import javafx.scene.control.MenuItem;
-import javafx.scene.control.MenuItemBuilder;
 
 /**
  *
@@ -36,10 +35,8 @@ public abstract class AbstractJFXAction<N extends Node> implements EventHandler<
   public final MenuItem wrapInMenuItem(N node)
   {
     _node = node;
-    MenuItem item = MenuItemBuilder.create()
-      .text(defineActionText())
-      .onAction(this)
-      .build();
+    MenuItem item = new MenuItem(defineActionText());
+    item.setOnAction(this);
     wrapInMenuItemInit(item);
     return item;
   }

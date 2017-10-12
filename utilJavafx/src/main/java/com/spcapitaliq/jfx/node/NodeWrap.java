@@ -5,7 +5,6 @@ import java.util.List;
 
 import javafx.scene.Node;
 import javafx.scene.control.Tab;
-import javafx.scene.control.TabBuilder;
 
 /**
  * Wraps an actual {@link Node}, building it on demand at runtime.
@@ -36,10 +35,7 @@ public abstract class NodeWrap<N extends Node>
   {
     List<Tab> tabs = new ArrayList<Tab>( wraps.length );
     for( NodeWrap<?> wrap : wraps )
-      tabs.add( TabBuilder.create()
-        .text(wrap.defineName())
-        .content(wrap.peekNode())
-        .build() );
+      tabs.add(new Tab(wrap.defineName(), wrap.peekNode()));
     return tabs;
   }
 

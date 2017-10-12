@@ -37,9 +37,9 @@ public final class JFXTraverser
 
   public static class InstanceOfStrategy<C extends Node> implements Strategy<C>
   {
-    private final Class<C> _clazz;
+    private final Class<? extends C> _clazz;
 
-    public InstanceOfStrategy(Class<C> clazz)
+    public InstanceOfStrategy(Class<? extends C> clazz)
     {
       _clazz = clazz;
     }
