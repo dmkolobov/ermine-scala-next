@@ -8,7 +8,7 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Scene;
-import javafx.scene.layout.BorderPaneBuilder;
+import javafx.scene.layout.BorderPane;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 import org.apache.log4j.Logger;
@@ -88,7 +88,7 @@ public class JFXAppLifecycle
 
     public static Scene buildVanillaScene(Node node)
     {
-      return new Scene(BorderPaneBuilder.create().center(node).build());
+      return new Scene(new BorderPane(node));
     }
 
     public void cleanup()

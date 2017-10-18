@@ -135,7 +135,9 @@ public class JFXContextMenu
    */
   private static MenuItem buildPlaceholder()
   {
-    return MenuItemBuilder.create().text("<placeholder>").disable(true).build();
+    final MenuItem placeholder = new MenuItem("<placeholder>");
+    placeholder.setDisable(true);
+    return placeholder;
   }
 
   public static List<MenuItem> safeProvideContextMenuItems(Node node, PrintImageHandler printHandler)

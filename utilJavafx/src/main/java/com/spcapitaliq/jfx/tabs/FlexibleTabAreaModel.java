@@ -6,7 +6,6 @@ import java.util.List;
 import com.sun.javafx.scene.control.skin.TabDragAndDropHelper;
 import javafx.collections.ObservableList;
 import javafx.scene.control.Tab;
-import javafx.scene.control.TabBuilder;
 import javafx.scene.control.TabPane;
 
 import com.spcapitaliq.jfx.node.NodeWrap;
@@ -65,10 +64,7 @@ public final class FlexibleTabAreaModel
     int numTabs = _tabNames.size();
     for(int i = 0; i < numTabs; i++)
     {
-      Tab tab = TabBuilder.create()
-          .text(_tabNames.get(i))
-          .content(_nodes.get(i).peekNode())
-          .build();
+      Tab tab = new Tab(_tabNames.get(i), _nodes.get(i).peekNode());
       
       tabs.add(tab);
     }

@@ -8,12 +8,11 @@ import javafx.beans.value.ChangeListener;
 import javafx.concurrent.Worker.State;
 import javafx.scene.Node;
 import javafx.scene.Parent;
-import javafx.scene.SceneBuilder;
-import javafx.scene.layout.BorderPaneBuilder;
+import javafx.scene.Scene;
+import javafx.scene.layout.BorderPane;
 import javafx.scene.text.Text;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
-import javafx.stage.StageBuilder;
 import org.apache.log4j.Logger;
 
 /**
@@ -43,18 +42,13 @@ public final class BlockerModal extends AbstractBlocker
   private Stage buildStage( Node anchor )
   {
     _text = new Text("Please wait...");
-    Parent root = BorderPaneBuilder.create()
-        .center(_text)
-        .prefWidth(200)
-        .prefHeight(40)
-        .build();
+    BorderPane root = new BorderPane(_text);
+    root.setPrefWidth(200);
+    root.setPrefHeight(40);
 
-    Stage stage = StageBuilder.create()
-      .title("Please wait...")
-      .scene(SceneBuilder.create()
-        .root(root)
-        .build())
-      .build();
+    Stage stage = new Stage();
+    stage.setTitle("Please wait...");
+    stage.setScene(new Scene(root));
 
     stage.initModality(Modality.APPLICATION_MODAL);
     stage.initOwner(anchor.getScene().getWindow());

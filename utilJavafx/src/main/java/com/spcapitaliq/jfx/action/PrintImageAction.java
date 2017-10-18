@@ -8,8 +8,7 @@ import javafx.event.EventHandler;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonBuilder;
-import javafx.scene.layout.HBoxBuilder;
+import javafx.scene.layout.HBox;
 
 import org.apache.log4j.Logger;
 
@@ -92,24 +91,15 @@ public class PrintImageAction extends AbstractJFXAction<Node>
 
     private Parent buildBody()
     {
-      Parent body = HBoxBuilder.create()
-        .children(
-          ButtonBuilder.create()
-            .text("Page Layout...")
-            .onAction(new PrintSetupAction())
-            .build(),
-          ButtonBuilder.create()
-            .text("Print...")
-            .onAction(new PrintAction())
-            .build()
-        )
-        .build();
+      Button bSetup = new Button("Page Layout...");
+      bSetup.setOnAction(new PrintSetupAction());
+      Button bPrint = new Button("Print...");
+      bPrint.setOnAction(new PrintAction());
+      Parent body = new HBox(bSetup, bPrint);
       _blocker.pokeContent(body);
 
-      Button bCancel = ButtonBuilder.create()
-        .text("Cancel")
-        .onAction(_control.buildSimpleCloseAction())
-        .build();
+      Button bCancel = new Button("Cancel");
+      bCancel.setOnAction(_control.buildSimpleCloseAction());
 
       return DialogFactory.buildBodyWithConsole(_blocker.peekNode(), bCancel);
     }
