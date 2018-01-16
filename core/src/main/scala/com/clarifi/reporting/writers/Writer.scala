@@ -538,7 +538,7 @@ abstract class Writer[F[_],C] { self =>
 
         Tabular.relationRec(qfact).takeAll.map( rel => {
           val parentLookup = rel.groupBy(parentKey(_))
-          val rootRecs = parentKeys.flatMap(parentLookup(_))
+          val rootRecs = parentKeys.flatMap(ks => parentLookup.getOrElse(ks, IndexedSeq()))
           val childLookup = rel.groupBy(childKey(_))
 
           go(rootRecs, childLookup)
