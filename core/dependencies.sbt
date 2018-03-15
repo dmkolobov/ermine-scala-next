@@ -8,7 +8,7 @@ libraryDependencies ++= Seq (
   "commons-codec" % "commons-codec" % "1.4",
    // database connectors
   "mysql"         % "mysql-connector-java" % "5.1.6",
-  "net.sourceforge.jtds" % "jtds" % "1.2.8",
+  "net.sourceforge.jtds" % "jtds" % "1.3.3",
   "org.xerial"    % "sqlite-jdbc" % "3.7.2",
   //"com.microsoft" % "jdbc4" % "4.0",
   "com.clarifi"  %% "f0" % "1.1.2",
