@@ -234,10 +234,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
    * Emits union to ensure proper grouping of multiple options.
    */
   def emitNaryOp(op: SqlBinOp, rs: NonEmptyList[SqlQuery]): RawSql =
-    raw("(") |+|
-    rs.map(r => r.emitSql(this))
-      .intercalate(raw(") ") |+| op.emit |+| " (") |+|
-    ")"
+    rs.map(_.emitSql(this)).rawMkString( " " + op.emit.run + " ")
 
   private[sql] final def allSubqueryColumns(rs: NonEmptyList[Subquery]): RawSql = {
     implicit val so = Order[TableName].toScalaOrdering
@@ -263,13 +260,6 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     r1.emitSql(this) |+| raw(" ") |+| op.emit |+| raw(" ") |+| r2.emitSql(this) |+|
     " on (" |+| onExpr |+| ")"
   }
-
-  /**
-   * Emits SQL for an except clause.  Default implementation uses "except".
-   * Dialects without "except" will need to override and provide a workaround.
-   */
-  def emitExcept(left: SqlQuery, unLeft: TableName, right: SqlQuery, unRight: TableName, rheader: Header): RawSql =
-    raw("(") |+| left.emitSql(this) |+| ") except (" |+| right.emitSql(this) |+| ")"
 
   /** Emits SQL for a Transact-SQL-style `OVER` clause.  Default
     * implementation is a compatibility workaround; the MS SQL emitter
@@ -298,6 +288,9 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
                 unSurrogate: TableName): SqlQuery.Scannable with SqlQuery.Nestable = query match {
     case q: SqlQuery.Scannable with SqlQuery.Nestable => q
   }
+
+  def implementSubquery(q: SqlQuery.Nestable, h: Header, un: TableName) : SqlSubquery =
+    SqlSubquery(q, h.keys.toList, un)
 
   /** Emit a SqlLimit in a way appropriate for the backend */
   def emitLimit(from: Option[Int], to: Option[Int]): RawSql = ""
@@ -455,74 +448,38 @@ trait EmitSqlColumns_Typed extends SqlEmitter {
       map(t => emitColumnName(t._1) |+| " " |+| sqlTypeName(t._2)).rawMkString(", ")
 }
 
-/**
- * Override emitBBin to simply group the binary operations, instead
- * of needing to do a 'select' from them.
- */
-trait EmitUnion extends SqlEmitter {
-  override def emitNaryOp(op: SqlBinOp, rs: NonEmptyList[SqlQuery]): RawSql =
-    rs.map(_.emitSql(this)).rawMkString(" " + op.emit.run + " ")
-}
-
-/**
- * Overrides except to use the 'except' clause provided by the vendor.
- */
-trait EmitExcept_MsSql extends SqlEmitter {
-  override def emitExcept(left: SqlQuery, unLeft: TableName, right: SqlQuery, unRight: TableName, rheader: Header): RawSql =
-    raw("(") |+| left.emitSql(this) |+| ") except (" |+| right.emitSql(this) |+| ")"
-}
-
-/**
- * Overrides emitExcept to use a left join, for dialects where "except" is not supported
- */
-trait EmitExcept_AsJoin extends SqlEmitter {
-  override def emitExcept(left: SqlQuery, unLeft: TableName, right: SqlQuery, unRight: TableName, rheader: Header): RawSql = {
-    if (rheader.isEmpty)
-      left.emitSql(this)
-    else {
-      val colnames = rheader.keySet.map(emitColumnName)
-      val on = colnames.map(k => emitTableName(unLeft) |+| "." |+| k |+| " = " |+| emitTableName(unRight) |+| "." |+| k).rawMkString(" and ")
-      val r0 = emitQualifiedColumnName(unRight, rheader.keys.head)
-      raw("select ") |+| colnames.toList.sorted.map(emitTableName(unLeft) |+| "." |+| _).rawMkString(", ") |+| " from (" |+|
-              left.emitSql(this) |+| ") " |+| emitTableName(unLeft) |+| " left join (" |+|
-              right.emitSql(this) |+| ") " |+| emitTableName(unRight) |+| " on " |+| on |+|
-              " where " |+| r0 |+| " is null"
-    }
+trait EmitNary_ExceptAsJoin extends SqlEmitter {
+  override def emitNaryOp(op: SqlBinOp, rs: NonEmptyList[SqlQuery]):RawSql = op match {
+    case SqlExcept(ur, rh) =>
+      if (rh.isEmpty)
+        rs.head.emitSql(this)
+      else {
+        val cs = rh.keySet // column names
+        val cq = rh.keys.head  // primary column ( used to exclude right results )
+        val t0 = emitTableName(ur)
+        val rts = rs.tail.zipWithIndex map { case (r, i) => (r, ur.copy(name = ur.name + "d" + i.toString))}
+   
+        val cols = cs.toList.sorted.map(t0 |+| "." |+| _).rawMkString(", ")
+   
+        val joins = (rts map { case (r, ut) =>
+          raw("left join (") |+| r.emitSql(this) |+| raw(") ") |+| emitTableName(ut) |+| 
+          raw(" on ") |+| ( cs.map(emitQualifiedColumnName(ur,_))
+                          , cs.map(emitQualifiedColumnName(ut,_))).zipped
+                                                                  .map({case (cl, cr) => cl |+| raw("=") |+| cr})
+                                                                  .rawMkString(" and ")
+        }).rawMkString(" ")
+   
+        val preds = (rts map { case (_, ut) => 
+          emitQualifiedColumnName(ut, cq) |+| " is null"
+        }).rawMkString(" and ")
+   
+        List( raw("select"), cols
+            , raw("from"), raw("(") |+| rs.head.emitSql(this) |+| raw(")"), t0
+            , joins
+            , raw("where"), preds ).rawMkString(" ")
+      }
+    case _ => super.emitNaryOp(op, rs) 
   }
-}
-
-/** MS SQL supports `OVER`, and we can abuse that to do limiting. */
-trait ImplementLimit_AsRowNumberOver extends SqlEmitter {
-  import SqlExpr.columns
-
-  /** Simulate `LIMIT` clauses by wrapping `rc` with `row_number()
-    * over (order by …) rownum ''rc'' where rownum <= ''to'' and rownum
-    * >= ''from''`, then erasing `rownum`.
-    */
-  override def implementLimit(rc: SqlQuery.Orderable, h: Header, un: TableName,
-                         from: Option[Int], to: Option[Int],
-                         order: List[(SqlColumn, SqlOrder)],
-                         un2: TableName): SqlQuery.Scannable with SqlQuery.Nestable =
-    SqlSelect(
-      attrs = columns(h, un2),  // erase "rownum"
-      sources = SourceList(
-        SqlSubquery(
-          alias = un2,
-          query = SqlSelect(
-            sources = SourceList(SqlSubquery(rc match { case x: SqlQuery.Nestable => x }, h.keys.toList, un)),
-            attrs = (columns(h, un) + // add "rownum"
-                      ("rownum" -> OverSqlExpr(FunSqlExpr("row_number", List()),
-                                               SqlOver(List(), order.map(p => (ColumnSqlExpr(un,p._1),p._2)), None, None)))),
-            windowColumns = Set("rownum")
-	  ),
-	  cols = h.keys.toList ++ List("rownum")
-        )
-      ),
-      where = List(to.map(x => SqlLte(ColumnSqlExpr(un2, "rownum"),
-                                      LitSqlExpr(SqlInt(x)))),
-                   from.map(x => SqlGte(ColumnSqlExpr(un2, "rownum"),
-                                        LitSqlExpr(SqlInt(x))))).flatten
-    )
 }
 
 /** MySQL and PostgreSQL support `LIMIT`. */
@@ -531,10 +488,24 @@ trait ImplementLimit_AsLimit extends SqlEmitter {
     * relation, and limits according to ''from'' and ''to''.
     */
   override def implementLimit(rc: SqlQuery.Orderable, h: Header, un: TableName,
-                         from: Option[Int], to: Option[Int],
-                         order: List[(SqlColumn, SqlOrder)],
-                         un2: TableName): SqlQuery.Scannable with SqlQuery.Nestable =
+                              from: Option[Int], to: Option[Int],
+                              order: List[(SqlColumn, SqlOrder)],
+                              un2: TableName): SqlQuery.Scannable with SqlQuery.Nestable =
     SqlLimit(SqlQuery.orderBy(rc, order), from, to)
+}
+
+trait ImplementSubquery_MS extends SqlEmitter {
+  override def implementSubquery(q: SqlQuery.Nestable, h: Header,
+                                 un: TableName) : SqlSubquery = q match {
+    case SqlLimit(SqlOrderBy(SqlNaryOp(op,rs), ord), from, to) => 
+      val unInner = un.copy(name = un.name + "inner")
+      val sel = SqlSelect(
+        attrs = h.map(x => (x._1, ColumnSqlExpr(unInner, x._1))),
+        sources = SourceList(super.implementSubquery(SqlNaryOp(op,rs), h, unInner))
+      )
+      super.implementSubquery(SqlLimit(SqlQuery.orderBy(sel, ord), from, to), h, un)
+    case _ => super.implementSubquery(q, h, un)
+  }
 }
 
 trait EmitLimit_AsLimit extends SqlEmitter {
@@ -692,6 +663,8 @@ class SqliteEmitter extends SqlEmitter
     with EmitCreateTable_NoSuffix
     with EmitNoDropTempTable
     with EmitUuid_Strings
+    with ImplementLimit_AsLimit
+    with EmitLimit_AsLimit
     with EagerlyDistinct
     with EmitCheckExists_AlwaysFails {
 
@@ -763,11 +736,10 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                                       with EmitSqlColumns_Typed
                                       with EmitCreateTable_NoSuffix
                                       with EmitDropTemporaryTable
-                                      with EmitExcept_AsJoin
+                                      with EmitNary_ExceptAsJoin
                                       with ImplementLimit_AsLimit
                                       with EmitLimit_AsLimit
                                       with EmitConcat_AsConcat
-                                      with EmitUnion
                                       with LazilyDistinct
                                       with EmitIntDivOp_MySQL
                                       with EmitUuid_Strings {
@@ -832,12 +804,11 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
 class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitCreateTable_NoSuffix
                                       with EmitNoDropTempTable
-                                      with EmitUnion
                                       with EagerlyDistinct
                                       with EmitConcat_AsConcat
-                                      with EmitExcept_MsSql
                                       with EmitIntDivOp_MsSql
                                       with ImplementLimit_AsLimit
+                                      with ImplementSubquery_MS
                                       with EmitLimit_AsOffsetFetch
                                       with EmitOver_UsingOver
                                       with EmitStddevVar_MsSQL
@@ -912,8 +883,7 @@ class VerticaSqlEmitter extends SqlEmitter(false) with EmitFromEmptyTable_FromDu
                                            with EmitSqlColumns_Typed
                                            with EmitCreateTable_NoSuffix
                                            with EmitNoDropTempTable
-                                           with EmitExcept_AsJoin
-                                           with EmitUnion
+                                           with EmitNary_ExceptAsJoin
                                            with EagerlyDistinct
                                            with EmitUuid_Strings
                                            with EmitCheckExists_AlwaysFails {
@@ -955,7 +925,6 @@ class PostgreSqlEmitter extends SqlEmitter(false)
                         with EmitNoDropTempTable
                         with ImplementLimit_AsLimit
                         with EmitLimit_AsLimit
-                        with EmitUnion
                         with EagerlyDistinct
                         with EmitUuid_Strings
                         with EmitCheckExists_AlwaysFails {

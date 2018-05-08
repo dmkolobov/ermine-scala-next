@@ -36,8 +36,6 @@ sealed abstract class SqlQuery {
       else raw(""))
     case SqlNaryOp(op, rs) =>
       emitter.emitNaryOp(op, rs)
-    case SqlExcept(left, unLeft, right, unRight, rheader) =>
-      emitter.emitExcept(left, unLeft, right, unRight, rheader)
     case SqlEmpty(h) => emitter.emitEmpty(h)
     case LiteralSqlTable(nel) => emitter.emitLiteral(nel)
     case SqlOrderBy(q, orderBy) =>
@@ -155,8 +153,9 @@ case class LiteralSqlTable(lit: NonEmptyList[Map[SqlColumn, LitSqlExpr]]) extend
 
 sealed abstract class SqlBinOp {
   def emit: RawSql = this match {
-    case SqlUnion => "UNION"
-    case SqlIntersect => "INTERSECT"
+    case SqlUnion       => "UNION"
+    case SqlIntersect   => "INTERSECT"
+    case SqlExcept(_,_) => "EXCEPT"
   }
 }
 case object SqlUnion extends SqlBinOp {
@@ -175,6 +174,15 @@ case object SqlIntersect extends SqlBinOp {
     case (SqlNaryOp(SqlIntersect, xs), _) => SqlNaryOp(SqlIntersect, xs append NonEmptyList(r2))
     case (_, SqlNaryOp(SqlIntersect, ys)) => SqlNaryOp(SqlIntersect, r1 <:: ys)
     case _ => SqlNaryOp(SqlIntersect, NonEmptyList(r1, r2))
+  }
+}
+
+case class SqlExcept(ur: TableName, rh: Header) extends SqlBinOp
+
+case object SqlDifference {
+  def apply(ur: TableName, rh: Header, r1: SqlQuery.Orderable, r2: SqlQuery.Orderable) = (r1, r2) match {
+    case (SqlNaryOp(SqlExcept(_, _), rs), _) => SqlNaryOp(SqlExcept(ur, rh), rs append NonEmptyList(r2))
+    case _                                   => SqlNaryOp(SqlExcept(ur, rh), NonEmptyList(r1,r2))
   }
 }
 
@@ -206,9 +214,6 @@ case object SqlJoinRight extends SqlJoinOp
 case object SqlJoinFull  extends SqlJoinOp
 
 case class SqlJoinOn(r1: SqlSource, r2: SqlSource, on: Set[(SqlExpr, SqlExpr)], op: SqlJoinOp = SqlJoinInner) extends SqlSource
-
-// Operator for except, which only exists in some dialects and is worked around in others
-case class SqlExcept(left: SqlQuery.Orderable, unLeft: TableName, right: SqlQuery.Orderable, unRight: TableName, rheader: Header) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Orderable with SqlQuery.Nestable
 
 // A table with no rows
 case class SqlEmpty(h: Header) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Orderable with SqlQuery.Nestable

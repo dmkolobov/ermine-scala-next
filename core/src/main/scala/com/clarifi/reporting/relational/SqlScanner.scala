@@ -954,7 +954,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     private[DistinctiveQuery]
     def selectWrap(h: Header, q: SqlQuery.Nestable)(implicit sup: Supply): SqlSelect = {
       val un = TableName(freshName)
-      val src = SqlSubquery(q, h.keys.toList, un)
+      val src = emitter.implementSubquery(q, h, un)
       SqlSelect(attrs = columns(h, un), sources = SourceList(src))
     }
 
@@ -1013,13 +1013,12 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         })
 
     def minus(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery = {
-      val ul = freshName
       val ur = freshName
       DistinctiveQuery(h, needDistinct =>
         (q(distinctEagerly), other.q(false)) match {
           case ((d, q1), (_, q2)) =>
             // No need for the thing we're subtracting to be distinct
-            satisfyDistinct(d, needDistinct, h, SqlExcept(asOrderable(h, q1), TableName(ul), asOrderable(h, q2), TableName(ur), h))
+            satisfyDistinct(d, needDistinct, h, SqlDifference(TableName(ur), h, asOrderable(h, q1), asOrderable(h, q2)))
         })
     }
 
