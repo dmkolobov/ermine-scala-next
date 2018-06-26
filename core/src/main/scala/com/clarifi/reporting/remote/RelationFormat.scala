@@ -689,10 +689,10 @@ object Format {
                           RepeatF[A]      , // Concat
                           PredicateF :: A :: A, // If
                           A & A           , // Coalesce
-                          A :: A :: IntF , // DateAdd
-                          IntF :: A :: A    , // DateDiff
+                          A :: A :: IntF  , // DateAdd
+                          IntF :: A :: A  , // DateDiff
                           StringF :: StringF :: RepeatF[StringF] :: RepeatF[A] :: PrimTF, // Funcall
-                          AggF & WindowF , // Windowed
+                          WindowFuncF & WindowF, // Windowed
                           BuiltinF & RepeatF[A], // BuiltinCall
                           A :: PrimTF :: BooleanF  // Cast
                          ]
@@ -711,7 +711,7 @@ object Format {
           p3R(self, self, timeUnitR)(DateAdd),
           p3R(timeUnitR, self, self)(DateDiff),
           p5R(stringR, stringR, listR(stringR), listR(self), primTR)(Funcall),
-          p2R(aggR, windowR)(Windowed(_,_)),
+          p2R(windowFuncR, windowR)(Windowed(_,_)),
           p2R(builtinR,listR(self))(BuiltinCall),
           p3R(self, primTR, booleanR)(Cast)
         )
@@ -726,7 +726,7 @@ object Format {
              tuple3W(self, self, timeUnitW),
              tuple3W(timeUnitW, self, self),
              tuple5W(stringW, stringW, repeatW(stringW), repeatW(self), primTW),
-             tuple2W(aggW, windowW),
+             tuple2W(windowFuncW, windowW),
              tuple2W(builtinW, repeatW(self)),
              tuple3W(self,primTW,booleanW)
         )((opliteral, columnvalue, add, sub, mul, floor, div, cat, oif, coalesce, dateadd, datediff, funcall, windowed, builtin, cast) => (r: Op) => r match {
@@ -881,6 +881,38 @@ object Format {
   type AggF = aggRW.F
   lazy val aggR: Reader[AggFunc, AggF] = aggRW.R
   lazy val aggW: Writer[AggFunc, AggF] = aggRW.W
+
+  lazy val windowFuncRW: CodecPair[WindowFunc] = {
+    type InternalF =
+      S5[
+        AggF, // AggWindowFunc
+        UnitF, // Rank
+        UnitF, // DenseRank
+        UnitF, // RowNumber
+        OpF] // NTile
+
+    CodecPair[WindowFunc, InternalF] {
+      union5R(
+        aggR map AggWindowFunc,
+        unitR map (_ => Rank),
+        unitR map (_ => DenseRank),
+        unitR map (_ => RowNumber),
+        opR map (NTile(_)))
+    } {
+      s5W(aggW, unitW, unitW, unitW, opW)(
+        (aggWriter, rank, denseRank, rowNumber, nTile) => (windowFunc: WindowFunc) => windowFunc match {
+          case AggWindowFunc(agg) => aggWriter(agg)
+          case Rank => rank(())
+          case DenseRank => denseRank(())
+          case RowNumber => rowNumber(())
+          case NTile(e) => nTile(e)
+        }
+      )
+    }
+  }
+  type WindowFuncF = windowFuncRW.F
+  lazy val windowFuncR: Reader[WindowFunc, WindowFuncF] = windowFuncRW.R
+  lazy val windowFuncW: Writer[WindowFunc, WindowFuncF] = windowFuncRW.W
 
   // these should probably be someplace else...
   import scalaz.NonEmptyList

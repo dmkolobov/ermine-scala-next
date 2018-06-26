@@ -1,10 +1,10 @@
 
-module Relation.Aggregate.Windowed where
+module Relation.Windowed where
 
 import Function
 import List using map_List
 
-import Relation.Aggregate
+import Relation.WindowFunc
 import Relation.Row
 import Relation.Op
 import Relation.Op.Unsafe
@@ -25,7 +25,7 @@ data Window (s : rho) =
 window : (t <- (r, s)) => Row r -> Sort s -> Frame -> Window t
 window (Row ps) s f = W ps s f
 
-windowed : (t <- (r, s)) => Aggregate r a -> Window s -> Op t a
+windowed : (t <- (r, s)) => WindowFunc r a -> Window s -> Op t a
 windowed agg (W p s (F b e)) = funcall2# windowedModule agg w
  where
  f = funcall2# frameModule (unbound b) (unbound e)
@@ -64,4 +64,4 @@ private foreign
                -> Window#
 
   value "com.clarifi.reporting.Op$Windowed$" "MODULE$"
-      windowedModule : (t <- (s,r)) => Function2 (Aggregate r a) Window# (Op t a)
+      windowedModule : (t <- (s,r)) => Function2 (WindowFunc r a) Window# (Op t a)
