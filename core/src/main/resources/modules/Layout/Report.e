@@ -144,6 +144,10 @@ text = fmt $ markdown_Fmt unit_Fmt
 textNoMarkdown : String -> Report f z
 textNoMarkdown = fmt unit_Fmt
 
+-- Text, shown "as is" (i.e., no "&nbsp;" in place of spaces, so that it can wrap)
+textVerbatim : String -> Report f z
+textVerbatim = fmt verbatim_Fmt
+
 -- Escape string so that "text" and "atomShown" do not try to interpret the markdown markers
 foreign
   function "com.clarifi.reporting.writers.Markdown" "escapeForMarkdown" escapeMarkdown : String -> String

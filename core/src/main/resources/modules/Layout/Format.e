@@ -22,6 +22,8 @@ foreign
   -- Format as date range.
   value "com.clarifi.reporting.writers.Format$DateRange$" "MODULE$"
       dateRange : Format (Date, Date)
+  value "com.clarifi.reporting.writers.Format$Verbatim$" "MODULE$"
+      verbatim : Format String
   data "com.clarifi.reporting.writers.Condition" Condition (a: *)
 
 private foreign
