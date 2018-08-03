@@ -3,41 +3,35 @@ package relational
 
 import java.sql.SQLException
 
-import com.clarifi.reporting._
-import com.clarifi.reporting.sql._
+import com.clarifi.reporting.ReportingUtils.simplifyPredicate
+import com.clarifi.reporting.backends.DB._
 import com.clarifi.reporting.backends._
+import com.clarifi.reporting.sql.SqlExpr._
+import com.clarifi.reporting.sql._
 import com.clarifi.reporting.util.PartitionedSet
-import DB._
-import ReportingUtils.simplifyPredicate
-import SqlExpr._
-
-import scalaz._
 import scalaz.Coproduct._
-import scalaz.IterV._
 import scalaz.Id._
-//import Scalaz.{^ => _, _}
-import scalaz.std.indexedSeq.{toNel => _, _}
-import scalaz.std.vector.{toNel => _, _}
-import scalaz.std.map._
-import scalaz.std.function._
-import scalaz.std.option._
-import scalaz.std.list._
-import scalaz.std.string._
+import scalaz._
 import scalaz.std.anyVal._
-
+import scalaz.std.function._
+import scalaz.std.indexedSeq.{toNel => _, _}
+import scalaz.std.list._
+import scalaz.std.map._
+import scalaz.std.option._
+import scalaz.std.string._
+import scalaz.std.vector.{toNel => _, _}
 import scalaz.syntax.monad._
 import scalaz.syntax.traverse.{ToFunctorOps => _, _}
+import com.clarifi.machines.Plan.{await, awaits, emit}
+import com.clarifi.machines.Tee.{left, right}
+import com.clarifi.machines._
+import com.clarifi.reporting.util.PimpedLogger._
+import org.apache.log4j.Logger
+import scalaparsers.Supply
+
 // important for instance resolution.
 import scala.collection.immutable.IndexedSeq
 import scala.collection.immutable.SortedSet
-
-import com.clarifi.machines._
-import Plan.{ await, awaits, emit }
-import Tee.{ right, left }
-
-import scalaparsers.Supply
-import org.apache.log4j.Logger
-import com.clarifi.reporting.util.PimpedLogger._
 import scala.collection.mutable.HashSet
 
 //TODO: switch to a dumber supply that is onyl locally unique instead of globally so.
@@ -118,7 +112,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         FunSqlExpr(emitter emitProcedureName (name, ns) run,
                    args map rec)
       case Windowed(agg, over) =>
-        OverSqlExpr(compileAggFunc(agg, lookupColumn), compileWindow(over, lookupColumn))
+        OverSqlExpr(compileWindowFunc(agg, lookupColumn), compileWindow(over, lookupColumn))
       case BuiltinCall(b,args) => FunSqlExpr(compileBuiltin(b), args.map(rec))
       case Cast(o, ty, nullIfFail) => CastSqlExpr(rec(o), ty, nullIfFail)
     }
@@ -159,6 +153,14 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       BinSqlExpr("/", num, den)
   }
 
+  def compileWindowFunc(f: WindowFunc, attrs: String => SqlExpr): SqlExpr = f match {
+    case AggWindowFunc(agg) => compileAggFunc(agg, attrs)
+    case Rank => FunSqlExpr("RANK", List())
+    case DenseRank => FunSqlExpr("DENSE_RANK", List())
+    case RowNumber => FunSqlExpr("ROW_NUMBER", List())
+    case NTile(op) => FunSqlExpr("NTILE", List(compileOp(op, attrs)))
+  }
+
   /** Compile a `predicate`, delegating column reference expression
     * compilation to `lookupColumn`.
     */
@@ -188,10 +190,10 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     s"ErrorCode=`${e.getErrorCode}' SQLState=`${e.getSQLState}' class=`${e.getClass}' msg=`${e.getMessage}'"
 
   private[this]
-  def transaction[A](act: DB[A]) = 
+  def transaction[A](act: DB[A]) =
     if (emitter.isTransactional) DB.transaction(act)
     else act
-  
+
   /** Execute `p` statements, returning the list of `TableName`s that were
     * created.
     */

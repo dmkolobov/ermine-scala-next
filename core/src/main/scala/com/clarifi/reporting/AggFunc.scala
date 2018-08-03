@@ -1,19 +1,13 @@
 package com.clarifi.reporting
 
-import scalaz.{
-  Applicative, Equal, Foldable, IterV, Monoid,
-  Reducer, Show, Monad,
-  ValidationNel
-}
-import Reducer.unitReducer
+import com.clarifi.machines.Source._
+import com.clarifi.machines._
 import scalaz.std.anyVal._
 import scalaz.std.tuple._
 import scalaz.syntax.applicative._
 import scalaz.syntax.monoid._
 import scalaz.syntax.validation._
-
-import com.clarifi.machines._
-import com.clarifi.machines.Source._
+import scalaz.{Applicative, Equal, Foldable, Monad, Monoid, Reducer, Show, ValidationNel}
 
 sealed abstract class AggFunc extends TraversableColumns[AggFunc] {
   import AggFunc._
@@ -68,7 +62,7 @@ sealed abstract class AggFunc extends TraversableColumns[AggFunc] {
     case WHMean(op,wt) => Op.numbin(op guessType, wt guessType)
   }
 
-  def simplify(t: Map[ColumnName,Op]) = this match {
+  def simplify(t: Map[ColumnName,Op]) : AggFunc = this match {
     case Count => Count
     case Sum(op) => Sum(op simplify t)
     case Avg(op) => Avg(op simplify t)
@@ -80,8 +74,8 @@ sealed abstract class AggFunc extends TraversableColumns[AggFunc] {
     case WHMean(op,wt) => WHMean(op simplify t, wt simplify t)
   }
 
-  def postReplaceOp[F[_]:Monad](f: Op => F[Op]) = this match {
-    case Count => Count.pure[F]
+  def postReplaceOp[F[_]:Monad](f: Op => F[Op]) : F[AggFunc] = this match {
+    case Count => (Count: AggFunc).pure[F]
     case Sum(op) => op.postReplace(f).map(Sum)
     case Avg(op) => op.postReplace(f).map(Avg)
     case Min(op) => op.postReplace(f).map(Min)
@@ -108,8 +102,6 @@ object AggFunc {
   implicit val AggFuncShow: Show[AggFunc] = Show.showFromToString
 
   import PrimExpr._
-  import java.util.{Date, UUID}
-
   import Reducer._
 
   def reduce[F[_]](a: AggFunc, t: PrimT)(implicit F: Foldable[F]): F[Record] => PrimExpr =

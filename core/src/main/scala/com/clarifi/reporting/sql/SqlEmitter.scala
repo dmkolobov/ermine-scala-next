@@ -556,7 +556,9 @@ trait EmitOver_UsingOver extends SqlEmitter {
       else {
         e.emitSql(this) |+| " over (" |+|
         (if (partition.isEmpty) raw("") else rawPart |+| " ") |+|
-        (if (order.isEmpty) raw("") else rawOrder |+| " " |+| rawFrame) |+|
+        (if (order.isEmpty) raw("")
+          else if (frameBegin.isEmpty && frameEnd.isEmpty) rawOrder
+          else rawOrder |+| " " |+| rawFrame) |+|
         ")"
       }
 
