@@ -18,6 +18,7 @@ import java.sql.Timestamp
 import org.apache.log4j.Logger
 import util.{IOUtils, StreamTUtils}
 import java.io.{FileInputStream, File, InputStream, OutputStream}
+import java.util.zip.GZIPOutputStream
 import com.clarifi.reporting.util.PimpedLogger._
 import Reporting._
 import scalaz.std.anyVal._
@@ -210,16 +211,22 @@ object BulkLoad {
     readResult(in)
   }
 
-  def bulkLoadToWebHandler(input: File, webHandlerURL: String): Either[Exception, Results] = {
+  def bulkLoadToWebHandler(input: File, webHandlerURL: String, useGzipCompression: Boolean = false): Either[Exception, Results] = {
     // send the data to the web handler and read the result when it's finished
     Log.timed("streaming data from: " + input + " to: " + webHandlerURL) {
     
-      try Right(StreamingWebRequest.streamWith(webHandlerURL, 
-        (out => {
+      try Right(StreamingWebRequest.streamWith(webHandlerURL,
+        (conn => {
+          if (useGzipCompression)
+            conn.addRequestProperty("Content-Encoding", "gzip")
+        }))
+        (conn => {
           // write all the data from the input stream to the web stream
           val inStream = new FileInputStream(input)
-          try IOUtils.copy(inStream, out) finally inStream.close()
-        }))
+          val out = conn.getOutputStream
+          val outStream = if (useGzipCompression) new GZIPOutputStream(out) else out
+          try IOUtils.copy(inStream, outStream) finally { inStream.close(); outStream.close() }
+        })
         (in => BulkLoad.readResult(in)) // read the result
       )
       catch { case NonFatal(e) => Left(new Exception("Error processing bulk loading response", e)) }
@@ -278,7 +285,7 @@ object StreamingWebRequest {
     finally conn.getInputStream.close()
   }
   
-  def streamWith[T](url:String, sendData: (OutputStream => Unit)) (readResponse: ((=> InputStream) => T)) = {   //(f: (OutputStream, => InputStream) => T) = {
+  def streamWith[T](url:String, setupConnection: (HttpURLConnection => Unit)) (sendData: (HttpURLConnection => Unit)) (readResponse: ((=> InputStream) => T))  = {   //(f: (OutputStream, => InputStream) => T) = {
     val conn = new URL(url).openConnection().asInstanceOf[HttpURLConnection]
     // enables chunked transfer with default chunk size
     conn.setChunkedStreamingMode(0)
@@ -286,9 +293,10 @@ object StreamingWebRequest {
     conn.setDoOutput(true)
     conn.setRequestMethod("PUT")
     conn.setReadTimeout(1000 * 60 * 10) // 10 minutes)
+    setupConnection(conn)
     conn.connect()
     try {
-      sendData(conn.getOutputStream)
+      sendData(conn)
       val errContent = conn.getErrorStream
       val responseCode = conn.getResponseCode()
 
