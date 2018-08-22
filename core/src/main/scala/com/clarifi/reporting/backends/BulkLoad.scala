@@ -218,7 +218,7 @@ object BulkLoad {
       try Right(StreamingWebRequest.streamWith(webHandlerURL,
         (conn => {
           if (useGzipCompression)
-            conn.addRequestProperty("Content-Encoding", "gzip")
+            conn.addRequestProperty("Writeback-Encoding", "gzip")
         }))
         (conn => {
           // write all the data from the input stream to the web stream
