@@ -523,6 +523,10 @@ object PrimExprs {
     try { Some(dateFormatter.get.parse(s)) }
     catch { case e: ParseException => None }
 
+  //changing formatDate so as to be able to pass dateFormatTemplate as required by csv-writer
+  def formatDate(d: Date, template : DateFormat): String =
+    dateFormatterTLV(template).get.format(d)
+
   def formatDate(d: Date): String =
     dateFormatter.get.format(d)
 
