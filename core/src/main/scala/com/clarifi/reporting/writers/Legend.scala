@@ -522,6 +522,16 @@ final case class Presentation(format: Format,
     displayData foldMap (_ typedColumnFoldMap f)
 }
 
+case class PresRow( presented : List[Presentation] ){
+
+  def cons( p : Presentation ) = this.copy( presented = p :: presented )
+}
+
+object PresRow {
+
+  def empty : PresRow = PresRow(List()) 
+}
+
 object Presentation
        extends ((Format, NonEmptyList[Op]) => Presentation) {
   /** Alias, more convenient to call from DMTL. */
