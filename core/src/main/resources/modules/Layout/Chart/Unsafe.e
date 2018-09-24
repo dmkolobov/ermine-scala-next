@@ -4,6 +4,7 @@ import Layout.Chart.Type
 import Layout.Color using type Color
 import Layout.Format using type Format
 import Layout.Presentation using type Presentation
+import Layout.PresRow using type PresRow
 import Layout.Report.Atomic
 import Native.Map as NM
 import Native.Bool
@@ -123,7 +124,7 @@ private foreign
   data "com.clarifi.reporting.writers.ChartSeries$" ChartSeriesModule#
   value "com.clarifi.reporting.writers.ChartSeries$" "MODULE$"
       chartSeriesModule : ChartSeriesModule#
-  method "apply" chartSeriesApply# : ChartSeriesModule# -> Presentation sr sa -> Op xr xa -> Op yr ya -> Maybe# (Presentation xtr xta) -> Maybe# (Presentation ytr yta) -> ChartVariant# -> z -> ChartSeries# xa ya
+  method "apply" chartSeriesApply# : ChartSeriesModule# -> Presentation sr sa -> Op xr xa -> Op yr ya -> Maybe# (Presentation xtr xta) -> Maybe# (Presentation ytr yta) -> ChartVariant# -> PresRow er -> z -> ChartSeries# xa ya
 
   data "com.clarifi.reporting.writers.DrilldownBarAxisChart$" DrilldownBarAxisChartModule#
   value "com.clarifi.reporting.writers.DrilldownBarAxisChart$" "MODULE$"
@@ -140,5 +141,5 @@ chartSeries# = chartSeriesApply# chartSeriesModule
 chartLegendOptions# = funcall1# chartLegendOptionsModule
 drilldownBarAxisChart# = drilldownBarAxisChartApply# drilldownBarAxisChartModule
 
-toChartSeries# (ChartSeries c xti yti so xo yo xto yto cv r) =
-  chartSeries# so xo yo (toMaybe# xto) (toMaybe# yto) cv r
+toChartSeries# (ChartSeries c xti yti so xo yo xto yto cv ex r) =
+  chartSeries# so xo yo (toMaybe# xto) (toMaybe# yto) cv ex r

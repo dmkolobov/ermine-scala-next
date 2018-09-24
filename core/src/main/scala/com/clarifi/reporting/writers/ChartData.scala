@@ -59,8 +59,8 @@ case class AxisChart[Data](series: List[ChartSeries[Data]],
           case e => e
         }
       val newSeries = series map {
-        case ChartSeries(ss, sx, sy, xtt, ytt, v, data) =>
-          ChartSeries(ss, sx, sy, augment(domain.format, sx, xtt), augment(range.format, sy, ytt), v, data)
+        case ChartSeries(ss, sx, sy, xtt, ytt, v, extra, data) =>
+          ChartSeries(ss, sx, sy, augment(domain.format, sx, xtt), augment(range.format, sy, ytt), v, extra, data)
       }
       AxisChart(newSeries, meta)
   }
@@ -370,6 +370,7 @@ case class ChartSeries[Data](selSeries: Presentation,
                              selCatTooltips: Option[Presentation],
                              selValTooltips: Option[Presentation],
                              variant: ChartVariant,
+                             extra: PresRow,
                              dataSource: Data) {
   def categoryType: PrimT =
     selCategory.guessType fold (sys error _.head, identity)
@@ -447,7 +448,7 @@ final case class DrilldownBarAxisChart[DD, Data](
                                selCategory.displayData.head,
                                selValue.displayData.head,
                                selCatTooltips, selValTooltips,
-                               Bar, dataSource)),
+                               Bar, PresRow.empty, dataSource)),
               meta)
 
   /** Make the `meta` formats the semigroup sum of the category/value

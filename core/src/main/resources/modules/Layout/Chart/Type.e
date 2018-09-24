@@ -2,6 +2,7 @@ module Layout.Chart.Type where
 
 import Layout.Color using type Color
 import Layout.Presentation using type Presentation
+import Layout.PresRow using type PresRow
 import Relation.Op using type Op
 import Prim using type PrimExpr#
 
@@ -12,7 +13,7 @@ foreign
 
 -- | Description of a chart series.
 data ChartSeries xa ya =
-  forall r s t sr sa xr yr xtr xta ytr yta rel.
+  forall r s t sr sa xr yr xtr xta ytr yta er rel.
     ChartSeries (List ({..r}, Color))
                 (List ({..s}, {..s}))
                 (List ({..t}, {..t}))
@@ -22,5 +23,6 @@ data ChartSeries xa ya =
                 (Maybe (Presentation xtr xta))
                 (Maybe (Presentation ytr yta))
                 ChartVariant#
+                (PresRow er)
                 rel
                 -- (ChartSeries# xa ya)
