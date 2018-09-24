@@ -1150,6 +1150,10 @@ step = seriesW step#
 scatter : ChartMode
 scatter = seriesW scatter#
 
+-- | Build a bubble series 
+bubble : ExtraMode 
+bubble = seriesWE bubble#
+
 -- | Build a stacked bar chart series.
 stackedBar : ScaledChartMode
 stackedBar = seriesW stackedBar#

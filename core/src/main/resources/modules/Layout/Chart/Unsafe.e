@@ -43,7 +43,9 @@ foreign
   value "com.clarifi.reporting.writers.Step$" "MODULE$"
       step# : ChartVariant#
   value "com.clarifi.reporting.writers.Scatter$" "MODULE$"
-      scatter# : ChartVariant#
+      scatter# : ChartVariant# 
+  value "com.clarifi.reporting.writers.Bubble$" "MODULE$"
+      bubble# : ChartVariant#
   value "com.clarifi.reporting.writers.StackedBar$" "MODULE$"
       stackedBar# : ChartVariant#
   value "com.clarifi.reporting.writers.StackedArea$" "MODULE$"
