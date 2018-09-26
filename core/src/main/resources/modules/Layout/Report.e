@@ -1151,8 +1151,8 @@ scatter : ChartMode
 scatter = seriesW scatter#
 
 -- | Build a bubble series 
-bubble : ExtraMode 
-bubble = seriesWE bubble#
+bubble : Atomic String -> ExtraMode 
+bubble zlabel = seriesWE $ bubble# (atomic# zlabel)
 
 -- | Build a stacked bar chart series.
 stackedBar : ScaledChartMode

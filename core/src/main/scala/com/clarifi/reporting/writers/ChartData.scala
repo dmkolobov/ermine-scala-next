@@ -412,7 +412,9 @@ case object Line extends ChartVariant
 case object Bar extends ChartVariant
 case object Step extends ChartVariant
 case object Scatter extends ChartVariant
-case object Bubble extends ChartVariant
+
+case class Bubble(zlabel : Atomic) extends ChartVariant
+
 case object StackedBar extends ScaledChartVariant
 case object StackedArea extends ScaledChartVariant
 case object BoxAndWhiskers extends ScaledChartVariant
