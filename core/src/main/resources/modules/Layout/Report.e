@@ -1150,6 +1150,10 @@ step = seriesW step#
 scatter : ChartMode
 scatter = seriesW scatter#
 
+-- | Build a bubble series 
+bubble : Atomic String -> ExtraMode 
+bubble zlabel = seriesWE $ bubble# (atomic# zlabel)
+
 -- | Build a stacked bar chart series.
 stackedBar : ScaledChartMode
 stackedBar = seriesW stackedBar#
@@ -1202,8 +1206,8 @@ coloredSeries : (s sr sa -> xa' -> ya' -> relr -> ChartSeries xa ya)
              -> relr
              -> ChartSeries xa ya
 coloredSeries comb colors s x y r =
-  comb s x y r |> (ChartSeries _ ct vt a b c d e f g) ->
-  ChartSeries colors ct vt a b c d e f g
+  comb s x y r |> (ChartSeries _ ct vt a b c d e f g h) ->
+  ChartSeries colors ct vt a b c d e f g h
 
 -- | Label some category ticks specially.  Stacks with 'coloredSeries'
 -- et al.
@@ -1212,8 +1216,8 @@ categoryTickLabels : Unscaled xa
                   -> (sa' -> x xr xa -> ya' -> relr -> ChartSeries xa ya)
                   -> (sa' -> x xr xa -> ya' -> relr -> ChartSeries xa ya)
 categoryTickLabels ct comb s x y r =
-  comb s x y r |> (ChartSeries colors _ vt a b c d e f g) ->
-  ChartSeries colors ct vt a b c d e f g
+  comb s x y r |> (ChartSeries colors _ vt a b c d e f g h) ->
+  ChartSeries colors ct vt a b c d e f g h
 
 -- | Label some value ticks specially.  Stacks with 'coloredSeries',
 -- 'categoryTickLabels', et al.
@@ -1222,8 +1226,8 @@ valueTickLabels : Unscaled ya
                -> (sa' -> xa' -> y yr ya -> relr -> ChartSeries xa ya)
                -> (sa' -> xa' -> y yr ya -> relr -> ChartSeries xa ya)
 valueTickLabels vt comb s x y r =
-  comb s x y r |> (ChartSeries colors ct _ a b c d e f g) ->
-  ChartSeries colors ct vt a b c d e f g
+  comb s x y r |> (ChartSeries colors ct _ a b c d e f g h) ->
+  ChartSeries colors ct vt a b c d e f g h
 
 -- | Construct value tool tips using different information than that
 -- used to plot the values.
@@ -1233,8 +1237,8 @@ valueTooltipLabels
   -> (sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya)
   -> (sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya)
 valueTooltipLabels ytp comb s x y r =
-  comb s x y r |> (ChartSeries a b c d e f g _ h i) ->
-  ChartSeries a b c d e f g (Just ytp) h i
+  comb s x y r |> (ChartSeries a b c d e f g _ h i j) ->
+  ChartSeries a b c d e f g (Just ytp) h i j
 
 -- | Construct the domain tool tips using different information than
 -- is actually plotted on the axis.
@@ -1244,8 +1248,8 @@ domainTooltipLabels
   -> (sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya)
   -> (sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya)
 domainTooltipLabels xtp comb s x y r =
-  comb s x y r |> (ChartSeries a b c d e f _ g h i) ->
-  ChartSeries a b c d e f (Just xtp) g h i
+  comb s x y r |> (ChartSeries a b c d e f _ g h i j) ->
+  ChartSeries a b c d e f (Just xtp) g h i j
 
 -- | Collect multiple ChartSeries into a chart.
 chart : forall xa ya .

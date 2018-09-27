@@ -15,6 +15,7 @@ import Layout.Chart.Unsafe
 import Layout.Color using type Color
 import Layout.Format
 import Layout.Presentation
+import Layout.PresRow as PR
 import Layout.Report.Atomic
 import Layout.Report.Direction
 import Layout.Writer
@@ -42,6 +43,15 @@ type ScaledChartMode = forall s x y r sr xr yr sa xa ya rel.
                -> y yr ya       -- ^ select value
                -> rel (|..r|)   -- ^ underlying relation for above
                -> ChartSeries xa ya
+
+type ExtraMode = forall s x y r sr xr yr sa xa er rel.
+                 (exists o. AsPresentation s, AsOp x, AsOp y, r <- (sr, xr, yr, o), Has r er, Relational rel)
+                 => s sr sa       -- ^ select the series identifier
+                 -> x xr xa       -- ^ select category
+                 -> y yr ya       -- ^ select value
+                 -> PresRow_PR er
+                 -> rel (|..r|)   -- ^ underlying relation for above
+                 -> ChartSeries xa ya
 
 -- | An axis label; a tooltip-only label, or a label suitable for use
 -- in both tooltips and on the axis, or neither.
@@ -81,7 +91,11 @@ axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts
 
 seriesW : ChartVariant# -> ChartMode
 seriesW vari s x y fact =
-  ChartSeries [] [] [] (asPresentation s) (asOp x) (asOp y) Nothing Nothing vari (relation# fact)
+  ChartSeries [] [] [] (asPresentation s) (asOp x) (asOp y) Nothing Nothing vari empty#_PR (relation# fact)
+
+seriesWE : ChartVariant# -> ExtraMode 
+seriesWE vari s x y extra fact = 
+  ChartSeries [] [] [] (asPresentation s) (asOp x) (asOp y) Nothing Nothing vari extra (relation# fact)
 
 private
   atomize : Maybe (Atomic nm) -> Maybe# (Atomic# nm)
@@ -167,7 +181,7 @@ private
   unifyColors# : List (ChartSeries xa ya)
               -> Map_NM (NonEmpty# PrimExpr#) Color
   unifyColors# = unifyColors## . toList#
-               . map (cs@(ChartSeries c _ _ _ _ _ _ _ _ _) -> toPair# (toChartSeries# cs, srecKeys mapFst c))
+               . map (cs@(ChartSeries c _ _ _ _ _ _ _ _ _ _) -> toPair# (toChartSeries# cs, srecKeys mapFst c))
 
   pieColors# : Presentation r a
             -> List ({..r}, Color)
@@ -185,7 +199,7 @@ private
   unifyTicks# : Axis xa -> Axis ya -> List (ChartSeries xa ya) -> (Axis xa, Axis ya)
   unifyTicks# cc vc series =
     fromPair# $ unifyTicks## (toList# . map explode $ series) cc vc
-    where explode cs@(ChartSeries _ cts vts _ _ _ _ _ _ _) =
+    where explode cs@(ChartSeries _ cts vts _ _ _ _ _ _ _ _) =
             toPair# (toChartSeries# cs, toPair# (srecKeys umap cts, srecKeys umap vts))
 
 foreign
