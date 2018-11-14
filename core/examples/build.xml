@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!-- We don't do anything with this; it is just here to satisfy CI. -->
+<project name="ermine-scala" default="build" basedir="." xmlns:ivy="antlib:org.apache.ivy.ant">
+  <target name="bootstrap-sbt">
+  </target>
+  <target name="retrieve">
+  </target>
+  <target name="clean">
+  </target>
+  <target name="publish">
+  </target>
+</project>

@@ -1,0 +1,133 @@
+<?xml version="1.0"?>
+<project name="Ermine-Scala" default="build" basedir="." xmlns:ivy="antlib:org.apache.ivy.ant">
+  <property environment="env"/>
+  <property file="build.properties"/>
+
+  <property name="sbt.ivy.home"       location="${env.USERPROFILE}/.ivy2"/>
+  <property name="http.proxyUser"     value="${env.PROXY_USER}"/>
+  <property name="http.proxyPassword" value="${env.PROXY_PASSWORD}"/>
+
+  <!--
+    DP: location to ivysettings.location should be defined as:
+          ivy.settings.location = file:/C:/myfolder/ivysettings.xml
+         or
+          ivy.settings.location = http://mercurial.ciqdev.com:8080/ivysettings.xml
+    !!> you may use build.properties to override these settings.
+    !!> look inside of ivysettings.xml for actual location of ivy repositories.
+  -->
+  <property name="dev.unlock" value="C:/devUnlock.sig"/>
+
+  <condition property="rev" value="${revision}">
+    <isset property="revision"/>
+  </condition>
+
+<!--
+  DP: please add user system environment variables to allow sbt to access thirdparty ivy repositories:
+      PROXY_USER=<your_intranet_username>
+      PROXY_PASSWORD=<your_intranet_password>
+      SBT_OPTS=-Dsbt.ivy.home=%USERPROFILE%/.ivy2/ -Dhttp.proxyHost=corp-proxy.mhc -Dhttp.proxyPort=8080 -Dhttp.proxyUser=%PROXY_USER% -Dhttp.proxyPassword=%PROXY_PASSWORD%
+-->
+
+<!-- 
+  DP: conditionally set and pass value of clarifi.publish.resolver to sbt via java commandline jvm args.
+      if clarifi.publish.resolver has not been set in ant, nothing will be passes, thus sbt should decide.
+-->
+  <condition property="publish-resolver-property" value="-Dclarifi.publish.resolver=${clarifi.publish.resolver}">
+    <isset property="clarifi.publish.resolver"/>
+  </condition>
+  <property name="publish-resolver-property" value=""/>
+
+  <macrodef name="sbt">
+    <attribute name="command"/>
+    <element name="jvm-arguments" optional="true"/>
+    <sequential>                
+      <java jar="${basedir}\sbt-launch.jar" fork="true" failonerror="true">
+        <jvmarg value="-Dsbt.ivy.home=${sbt.ivy.home}"/>
+        <jvmarg value="${publish-resolver-property}"/>
+
+        <jvmarg value="-Dhttp.proxyHost=corp-proxy.mhc"/>
+        <jvmarg value="-Dhttp.proxyPort=8080"/>
+        <jvmarg value="-Dhttp.proxyUser=${http.proxyUser}"/>
+        <jvmarg value="-Dhttp.proxyPassword=${http.proxyPassword}"/>
+        <jvmarg value="-Divy.settings.location=${ivy.settings.location}"/>
+
+        <jvmarg value="-Xmx1024m"/>
+        <jvmarg value="-Dfile.encoding=UTF-8"/>
+        <jvmarg value="-Xss5M"/>
+        <jvmarg value="-XX:MaxPermSize=256M"/>
+        <jvmarg value="-XX:NewSize=128M"/>
+        <jvmarg value="-XX:NewRatio=3"/>
+        <jvm-arguments/>
+        <arg value="@{command}"/>
+      </java>
+    </sequential>
+  </macrodef>
+
+  <target name="get-sbt-launcher">
+    <copy file="\\mercurial.ciqdev.com\sbt\sbt-launch-0.13.5.jar" tofile="${basedir}\sbt-launch.jar"/>
+  </target>
+
+  <target name="build" depends="get-sbt-launcher">
+    <sbt command="package"/>
+  </target>
+
+  <target name="build-test" depends="get-sbt-launcher">
+    <sbt command="test:compile"/>
+  </target>
+
+  <target name="clean" depends="get-sbt-launcher">
+    <sbt command="clean"/>
+  </target>
+
+<!-- === Publish block: ============================ -->
+
+  <target name="-publish-revision" depends="get-sbt-launcher" if="revision">
+    <sbt command="; clean; update; publish">
+      <jvm-arguments>
+        <jvmarg value="-Dpublish-revision=${revision}"/>
+      </jvm-arguments>
+    </sbt>
+  </target>
+
+  <target name="-publish-norevision" depends="get-sbt-launcher" unless="revision">
+    <sbt command="; clean; update; publish"/>
+  </target>
+
+  <target name="publish" depends="-publish-revision, -publish-norevision"/>
+
+<!-- =============================================== -->
+  <target name="publish-local" depends="build">
+    <sbt command=";update; publish-local"/>
+  </target>
+
+  <target name="test" depends="get-sbt-launcher">
+    <sbt command="test">
+      <jvm-arguments>
+        <jvmarg value="-DDevUnlock=${dev.unlock}"/>
+      </jvm-arguments>
+    </sbt> 
+  </target>
+
+<!-- === Retrieve block: =========================== -->
+
+  <target name="-retrieve-norevision" depends="get-sbt-launcher" unless="revision">
+    <sbt command="update"/>
+  </target>
+
+  <target name="-retrieve-revision" depends="get-sbt-launcher" if="retrieve-revision">
+    <sbt command="update">
+      <jvm-arguments>
+        <jvmarg value="-Dretrieve-revision=${retrieve-revision}"/>
+      </jvm-arguments>
+    </sbt> 
+  </target>
+
+  <target name="retrieve" depends="-retrieve-revision, -retrieve-norevision"/>
+
+<!-- =============================================== -->
+
+  <target name="rebuild"          depends="clean, build"/>
+  <target name="retrieve-build"   depends="retrieve, build"/>
+  <target name="retrieve-rebuild" depends="clean, retrieve, build"/>
+
+</project>

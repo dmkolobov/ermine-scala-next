@@ -1,0 +1,8 @@
+<ivy-module version="2.0">
+  <!-- This is a stub.  We only publish it so CI knows how to build ermine-scala. -->
+  <info organisation="com.clarifi.ermine" module="ermine-scala-core_2-0-0_2.11" revision="${publish.revision}">
+  </info>
+  <configurations/>
+  <publications/>
+  <dependencies/>
+</ivy-module>
