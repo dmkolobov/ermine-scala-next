@@ -268,6 +268,16 @@ object Console {
     }
   }
 
+  def loadProject(s: String)(implicit e: ConsoleEnv) {
+    import e.{con,supply}
+    benchmark(session(implicit se => load(Filesystem(s, exotic=true)))) {
+      case Some(n) =>
+        importing(n)
+        "Importing module '" + n + "'"
+      case None    => "Unable to load module"
+    }
+  }
+
   val actions: List[Action] = List(
     new Action(":help", List("help",":?"), None, "print this message") {
       def apply(s: String)(implicit e: ConsoleEnv) { writeLn(text(header) above vsep(actions.map(_.doc))) }
@@ -387,13 +397,7 @@ object Console {
     },
     new Action(":load", List(), Some("<filename>"), "Load a module from a source file") {
       def apply(s: String)(implicit e: ConsoleEnv) {
-        import e.{con,supply}
-        benchmark(session(implicit se => load(Filesystem(s, exotic=true)))) {
-          case Some(n) =>
-            importing(n)
-            "Importing module '" + n + "'"
-          case None    => "Unable to load module"
-        }
+        loadProject(s)
       }
     },
 
@@ -721,6 +725,10 @@ object Console {
     else writeLn("Unable to load" :/+: oxford("and", xs.map(text(_))))
   }
 
+  def loadArgs(xs: Array[String])(implicit e: ConsoleEnv) {
+    xs.foreach(loadProject)
+  }
+
   def version     = "v0.4α"
   def copyright   = "Copyright 2011-2015"
   def allrights   = "S&P Capital IQ"
@@ -757,7 +765,7 @@ object Console {
     writeLn("     \\/\"\"\"")
   }
 
-  def rock(implicit e: ConsoleEnv) {
+  def rock(args: Array[String])(implicit e: ConsoleEnv) {
     import e.supply
     fancyLogo
     writeLn("")
@@ -768,6 +776,10 @@ object Console {
     marked("lib")
     if (lib.isDefined) loadAll(prelude)
     else writeLn("warning: Unable to load lib.")
+
+    // load files passed in the args
+    loadArgs(args)
+
     e.sessionEnv.loadFile =
       SourceFile inOrder (baseDatabases, e.sessionEnv.loadFile,
                           SourceFile filesystem Seq("core", "examples").mkString(separator),
@@ -781,7 +793,7 @@ object Console {
     try {
       implicit val env = new ConsoleEnv(new SessionEnv)
       env.reader.getHistory.setHistoryFile(new java.io.File(".ermine_history"))
-      rock
+      rock(args)
     } catch {
       case e : Throwable =>
         println("panic: " + e.getMessage)
