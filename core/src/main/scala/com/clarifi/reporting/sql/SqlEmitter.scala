@@ -187,11 +187,8 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
 
   def emitInterval(n: Int, u: TimeUnit): RawSql
 
-  val formatter = {
-    val fmt = new java.text.SimpleDateFormat("yyyy-MM-dd")
-    fmt setTimeZone util.YMDTriple.ymdPivotTimeZone
-    fmt
-  }
+  val formatter = new java.text.SimpleDateFormat("yyyy-MM-dd-HH:mm:ss")
+  
   def emitDateStatement(stmt: java.sql.PreparedStatement, index: Int, date: Date): Unit =
     stmt.setDate(index, new java.sql.Date(date.getTime))
 
