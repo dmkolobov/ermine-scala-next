@@ -498,9 +498,7 @@ object PrimExprs {
   import util.YMDTriple.{ymdPivotTimeZone => tz}
 
   private[reporting] def dateFormatterTLV[A <: DateFormat](a: => A): ThreadLocal[A] =
-    threadLocal{val ar = a
-                ar.getCalendar.setTimeZone(tz)
-                ar}
+    threadLocal{ a } // Alexei: removed forced GNT timezone to fix date shift in PA reports
 
   val dateFormatter = dateFormatterTLV(dateFormatTemplate)
 
