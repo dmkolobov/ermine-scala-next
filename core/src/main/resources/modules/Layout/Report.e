@@ -16,7 +16,6 @@ import Layout.Legend using type Legend#; type Legend; legend
                            legend#; initialSort#; empty as emptyLegend
                            (++) as (++_Legend); fromRow; legendRow
 import Layout.Presentation using type Presentation; asPresentation; rowUsed; basic
-import Layout.PresRow as PR
 import Layout.Report.Fulcrum.Dynamic
 import Layout.Report.Atomic
 import Layout.Report.SoftRelation
