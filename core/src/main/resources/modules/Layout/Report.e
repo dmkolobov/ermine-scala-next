@@ -1134,6 +1134,18 @@ defaultUnscaled = unscaled $ Left Ascending
 
 unscaledDateRange = unscaled $ Right ltStringDateRange
 
+data SeriesStructure
+  = SimpleStructure
+  | ComplexStructure (List (Int, Int)) (List (Int, Int))
+
+private
+  toSeriesStructure# : SeriesStructure -> SeriesStructure#
+  toSeriesStructure# SimpleStructure = simpleStructure#
+  toSeriesStructure# (ComplexStructure tr mp)
+    = complexStructure# (scalafy tr) (scalafy mp)
+    where scalafy : List (Int, Int) -> List# (Pair# Int Int)
+          scalafy = toList# . map toPair#
+
 -- | Build a bar chart series.
 bar : ChartMode
 bar = seriesW (bar# simpleStructure#)
@@ -1142,9 +1154,17 @@ bar = seriesW (bar# simpleStructure#)
 bar' : ExtraMode
 bar' = seriesWE (bar# simpleStructure#)
 
+-- | Bar chart series with possible drill down or color mapping structure.
+structuredBar : SeriesStructure -> ExtraMode
+structuredBar = seriesWE . bar# . toSeriesStructure#
+
 -- | Build a line chart series.
 line : ChartMode
 line = seriesW (line# simpleStructure#)
+
+-- | Line chart series with possible drill down or color mapping structure.
+structuredLine : SeriesStructure -> ChartMode
+structuredLine = seriesW . line# . toSeriesStructure#
 
 -- | Build a step chart series.
 step : ChartMode
