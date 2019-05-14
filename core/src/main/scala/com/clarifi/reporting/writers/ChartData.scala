@@ -11,6 +11,7 @@ import scalaz.{
   Traverse
 }
 import scalaz.Tags.Disjunction
+import scalaz.Tree
 import scalaz.std.list._
 import scalaz.std.option._
 import scalaz.syntax.apply._
@@ -387,6 +388,8 @@ case class ChartSeries[Data](selSeries: Presentation,
                        v.unExpr(selValue.eval(tu))),
          c, v)
     }
+  def testVariant(f : PartialFunction[ChartVariant,Unit]): Boolean =
+    f.isDefinedAt(variant)
 }
 
 object ChartSeries {
@@ -408,8 +411,43 @@ sealed abstract class ScaledChartVariant extends ChartVariant {
   }
 }
 
-case object Line extends ChartVariant
-case object Bar extends ChartVariant
+// Additional structure for bar/line chart series.
+// Simple is the (as of this comment) current behavior of treating multiple
+// series in a single data set as multiple distinct lines (or series of bars).
+// In Complex mode, the tree structure specifies drilldown relationships between
+// multiple series contained in the data set, and the correllation gives a means
+// of correllating with series in other data sets (for coloring, for instance).
+sealed abstract class SeriesStructure
+object SeriesStructure {
+  type Forest[A] = Stream[Tree[A]]
+
+  // Given a set of child->parent relationships, creates a tree.
+  def mkForest[A](mapping : List[(A,A)]) : Forest[A] = {
+    val m : Map[A,A] = mapping.toMap
+    val cm : Map[A, Set[A]] =
+      mapping groupBy {
+        case (c , p) => p
+      } mapValues {
+        cps => cps map (_._1) toSet
+      }
+    val roots : Set[A] = mapping collect { case (_, p) if !m.contains(p) => p } toSet
+    def mk(s : Set[A]) : Forest[A] =
+      s.toStream map { p => Tree.node(p, cm get p map { s => mk(s) } getOrElse Stream.empty) }
+    mk(roots)
+  }
+
+  case object Simple extends SeriesStructure
+  case class Complex(
+    drill : List[(Int, Int)],
+    correlation : List[(Int, Int)]
+  ) extends SeriesStructure {
+    val trees : Forest[Int] = mkForest(drill)
+    val correlationMap : Map[Int, Int] = correlation toMap
+  }
+}
+
+case class Line(structure : SeriesStructure) extends ChartVariant
+case class Bar(structure : SeriesStructure) extends ChartVariant
 case object Step extends ChartVariant
 case object Scatter extends ChartVariant
 
@@ -451,7 +489,7 @@ final case class DrilldownBarAxisChart[DD, Data](
                                selCategory.displayData.head,
                                selValue.displayData.head,
                                selCatTooltips, selValTooltips,
-                               Bar, PresRow.empty, dataSource)),
+                               Bar(SeriesStructure.Simple), PresRow.empty, dataSource)),
               meta)
 
   /** Make the `meta` formats the semigroup sum of the category/value

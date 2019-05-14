@@ -36,10 +36,19 @@ foreign
   value "com.clarifi.reporting.writers.DisplayScale$Linear$" "MODULE$" linear# : DisplayScale#
   value "com.clarifi.reporting.writers.DisplayScale$Logarithmic$" "MODULE$" logarithmic# : DisplayScale#
 
+  data "com.clarifi.reporting.writers.SeriesStructure" SeriesStructure#
+
+  value "com.clarifi.reporting.writers.SeriesStructure$Simple$" "MODULE$"
+    simpleStructure# : SeriesStructure#
+
+  value "com.clarifi.reporting.writers.SeriesStructure$Complex$" "MODULE$"
+    complexStructure#
+      : List# (Pair# Int Int) -> List# (Pair# Int Int) -> SeriesStructure#
+
   value "com.clarifi.reporting.writers.Line$" "MODULE$"
-      line# : ChartVariant#
+      line# : SeriesStructure# -> ChartVariant#
   value "com.clarifi.reporting.writers.Bar$" "MODULE$"
-      bar# : ChartVariant#
+      bar# : SeriesStructure# -> ChartVariant#
   value "com.clarifi.reporting.writers.Step$" "MODULE$"
       step# : ChartVariant#
   value "com.clarifi.reporting.writers.Scatter$" "MODULE$"

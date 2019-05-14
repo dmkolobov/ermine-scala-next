@@ -1136,15 +1136,15 @@ unscaledDateRange = unscaled $ Right ltStringDateRange
 
 -- | Build a bar chart series.
 bar : ChartMode
-bar = seriesW bar#
+bar = seriesW (bar# simpleStructure#)
 
 -- | Build a bar chart series having extra data per point (e.g. group identifiers).
 bar' : ExtraMode
-bar' = seriesWE bar#
+bar' = seriesWE (bar# simpleStructure#)
 
 -- | Build a line chart series.
 line : ChartMode
-line = seriesW line#
+line = seriesW (line# simpleStructure#)
 
 -- | Build a step chart series.
 step : ChartMode
