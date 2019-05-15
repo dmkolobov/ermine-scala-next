@@ -811,8 +811,11 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                  else on.map {
                    case (c1, c2) => c1.emitSql(this) |+| " = " |+| c2.emitSql(this)
                  } intercalate raw(" and ")
-    r1.emitSql(this) |+| raw(" ") |+| op.emit |+| raw("(") |+| r2.emitSql(this) |+|
-    ") on (" |+| onExpr |+| ")"
+    val r2IsJoin = r2 match { case _ : SqlJoinOn => true ; case _ => false }
+    val preR2 = if (r2IsJoin) raw("(") else raw(" ")
+    val postR2 = if (r2IsJoin) raw(") on (") else raw(" on (")
+    r1.emitSql(this) |+| raw(" ") |+| op.emit |+| preR2 |+| r2.emitSql(this) |+|
+    postR2 |+| onExpr |+| ")"
   }
 }
 
