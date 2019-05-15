@@ -382,16 +382,16 @@ lineTimeSeriesChart =
     ylabel = Just (val "Y Axis Label")
   in timeSeriesChart title xlabel ylabel line label startDate value timeSeriesCharacteristicsTable
 
-boxAndWhiskersExample =
-  timeSeriesChart
-    (Just "Price - Close - Monthly Characteristics")
-    (Just $ val "X Axis Label")
-    (Just $ val "Y Axis Label")
-    boxAndWhiskers
-    label
-    startDate
-    value
-    boxAndWhiskery
+-- boxAndWhiskersExample =
+--   timeSeriesChart
+--     (Just "Price - Close - Monthly Characteristics")
+--     (Just $ val "X Axis Label")
+--     (Just $ val "Y Axis Label")
+--     boxAndWhiskers
+--     label
+--     startDate
+--     value
+--     boxAndWhiskery
 
 
 barTimeSeriesChart =
