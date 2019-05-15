@@ -37,22 +37,14 @@ object Markdown {
       tRegex.replaceSomeIn ( text,  { case Regex.Groups(name) => tMap get name } )
     }
 
-  def makeBullets(ms : MSyntax) : MSyntax = {
-    ms match {
-//      case MPara(MPlain('-' :: cs) :: xs) => MBullet(MPlain(cs) :: xs)
-      case MPara(MPlain(cs) :: xs) if cs.startsWith("-") => MBullet(MPlain(cs.tail) :: xs)
-      case xs => xs
-    }
-  }
-
   def parseMarkdown(inp: String): List[MSyntax] = {
-    inp.split("\\n{2,}").map(MPara compose parseMarkdown2).toList.map(makeBullets)
+    inp.split("\\n{2,}").map(parseMarkdown2).toList
   }
 
   //Simple recursive descent stack-based parser for our lightweight markdownish syntax
   //GB 11/2012
   private[this]
-  def parseMarkdown2(inp: String): List[MSyntax] = {
+  def parseMarkdown2(inp: String): MSyntax = {
     var cxt: List[String] = List()
 
     @tailrec
@@ -213,7 +205,11 @@ object Markdown {
         }
       }
     }
-    parseManyToken(inp.toList, List())._1
+    if (inp.headOption == Some('-')) {
+      MBullet(parseManyToken(inp.toList.tail, List())._1)
+    } else {
+      MPara(parseManyToken(inp.toList, List())._1)
+    }
   }
 
   def truncateMarkdown(s: String, len: Int): String = {
