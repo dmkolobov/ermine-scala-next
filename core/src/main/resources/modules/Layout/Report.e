@@ -1178,6 +1178,10 @@ scatter = seriesW scatter#
 bubble : Atomic String -> ExtraMode 
 bubble zlabel = seriesWE $ bubble# (atomic# zlabel)
 
+-- | Build a box-and-whiskers chart series.
+boxAndWhiskers : ExtraMode
+boxAndWhiskers = seriesWE boxAndWhiskers#
+
 -- | Build a stacked bar chart series.
 stackedBar : ScaledChartMode
 stackedBar = seriesW stackedBar#
@@ -1186,9 +1190,6 @@ stackedBar = seriesW stackedBar#
 stackedArea : ScaledChartMode
 stackedArea = seriesW stackedArea#
 
--- | Build a box-and-whiskers chart series.
-boxAndWhiskers : ScaledChartMode
-boxAndWhiskers = seriesW boxAndWhiskers#
 
 -- | Deprecated; Use chart from Layout.Report.Keyed instead, with the
 -- 'bar' series function.

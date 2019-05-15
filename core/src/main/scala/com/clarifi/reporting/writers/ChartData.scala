@@ -452,10 +452,10 @@ case object Step extends ChartVariant
 case object Scatter extends ChartVariant
 
 case class Bubble(zlabel : Atomic) extends ChartVariant
+case object BoxAndWhiskers extends ChartVariant
 
 case object StackedBar extends ScaledChartVariant
 case object StackedArea extends ScaledChartVariant
-case object BoxAndWhiskers extends ScaledChartVariant
 
 object ChartDesiderata {
   type AxisColors = Map[NonEmptyList[PrimExpr], Color]
