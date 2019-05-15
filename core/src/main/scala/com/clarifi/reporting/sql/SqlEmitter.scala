@@ -801,6 +801,19 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                             query = SqlSelect(attrs = Map("qq" -> LitSqlExpr(SqlNull))))),
               where = List(SqlTruth(false))
              ).emitSql(this)
+
+  override
+  def emitJoinOn(r1: SqlSource,
+                 r2: SqlSource,
+                 on: Set[(SqlExpr, SqlExpr)],
+		 op: SqlJoinOp): RawSql = {
+    val onExpr = if (on.isEmpty) SqlTruth(true).emitSql(this)
+                 else on.map {
+                   case (c1, c2) => c1.emitSql(this) |+| " = " |+| c2.emitSql(this)
+                 } intercalate raw(" and ")
+    r1.emitSql(this) |+| raw(" ") |+| op.emit |+| raw("(") |+| r2.emitSql(this) |+|
+    ") on (" |+| onExpr |+| ")"
+  }
 }
 
 class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
