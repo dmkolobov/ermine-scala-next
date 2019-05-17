@@ -48,7 +48,7 @@ foreign
   method "apply" mkComplexStructure# :
     MkComplexStructure#
       -> List# (Pair# Int Int)
-      -> Int
+      -> Maybe# String
       -> SeriesStructure#
 
 complexStructure# = mkComplexStructure# complexStructureMkr#

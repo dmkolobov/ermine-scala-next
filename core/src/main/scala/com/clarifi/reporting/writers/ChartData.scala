@@ -439,7 +439,7 @@ object SeriesStructure {
   case object Simple extends SeriesStructure
   case class Complex(
     drill : List[(Int, Int)],
-    correlation : Int
+    correlation : Option[String]
   ) extends SeriesStructure {
     val trees : Forest[Int] = mkForest(drill)
   }
