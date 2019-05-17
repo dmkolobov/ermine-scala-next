@@ -1136,13 +1136,13 @@ unscaledDateRange = unscaled $ Right ltStringDateRange
 
 data SeriesStructure
   = SimpleStructure
-  | ComplexStructure (List (Int, Int)) (List (Int, Int))
+  | ComplexStructure (List (Int, Int)) Int
 
 private
   toSeriesStructure# : SeriesStructure -> SeriesStructure#
   toSeriesStructure# SimpleStructure = simpleStructure#
-  toSeriesStructure# (ComplexStructure tr mp)
-    = complexStructure# (scalafy tr) (scalafy mp)
+  toSeriesStructure# (ComplexStructure tr co)
+    = complexStructure# (scalafy tr) co
     where scalafy : List (Int, Int) -> List# (Pair# Int Int)
           scalafy = toList# . map toPair#
 

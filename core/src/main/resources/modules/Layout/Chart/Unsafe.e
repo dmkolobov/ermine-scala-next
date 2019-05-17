@@ -41,10 +41,19 @@ foreign
   value "com.clarifi.reporting.writers.SeriesStructure$Simple$" "MODULE$"
     simpleStructure# : SeriesStructure#
 
+  data "com.clarifi.reporting.writers.SeriesStructure$Complex$" MkComplexStructure#
   value "com.clarifi.reporting.writers.SeriesStructure$Complex$" "MODULE$"
-    complexStructure#
-      : List# (Pair# Int Int) -> List# (Pair# Int Int) -> SeriesStructure#
+    complexStructureMkr# : MkComplexStructure#
 
+  method "apply" mkComplexStructure# :
+    MkComplexStructure#
+      -> List# (Pair# Int Int)
+      -> Int
+      -> SeriesStructure#
+
+complexStructure# = mkComplexStructure# complexStructureMkr#
+
+foreign
   value "com.clarifi.reporting.writers.Line$" "MODULE$"
       line# : SeriesStructure# -> ChartVariant#
   value "com.clarifi.reporting.writers.Bar$" "MODULE$"
