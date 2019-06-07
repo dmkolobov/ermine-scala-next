@@ -88,6 +88,7 @@ axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts
                        (nativeAxis valL valF valCons' $ toBool# valAx)
                        (toMaybe# title) (orientation# ori) legOpts
                        (unifyColors# series)
+                       defaultChartRenderHints#
 
 seriesW : ChartVariant# -> ChartMode
 seriesW vari s x y fact =
@@ -101,12 +102,12 @@ private
   atomize : Maybe (Atomic nm) -> Maybe# (Atomic# nm)
   atomize = maybe Nothing# (Just# . atomic#)
 
-pieChartW w title nm legendOptions color cat =
-  pieChart# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color)) cat
-drilldownPieChartW w title nm legendOptions color cat =
-  drilldownPieChart# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color)) cat
-drilldownPieChart2W w title nm legendOptions color cat pres2 cols =
-  drilldownPieChart2# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color)) cat pres2 (toList# $ fmap listFunctor toPair# cols)
+pieChartW w title nm legendOptions color hints cat =
+  pieChart# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color) hints) cat
+drilldownPieChartW w title nm legendOptions color hints cat =
+  drilldownPieChart# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color) hints) cat
+drilldownPieChart2W w title nm legendOptions color hints cat pres2 cols =
+  drilldownPieChart2# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color) hints) cat pres2 (toList# $ fmap listFunctor toPair# cols)
 
 drilldownBarChartW : Writer f a -> AxisChartData# -> List ({..cr}, {..cr}) -> List ({..vr}, {..vr}) -> Presentation sr sa -> Presentation cr ca -> Presentation vr va -> String -> String -> Relation# -> f a
 drilldownBarChartW w barData cov vov s c v pid cid dat =

@@ -1420,12 +1420,13 @@ pieChart : forall l labels r value z rel .
         -> Maybe (Atomic nm) -- ^ series name (for tooltip)
         -> ChartLegendOptions#      -- ^ Options for the charts legend.
         -> List ({..labels}, Color) -- ^ Color selections.
+        -> ChartRenderHints#        -- ^ Misc. options for the chart that may or may not be adhered to, depending on the writer (e.g. data labels)
         -> prl labels l
         -> prv value d          -- ^ Chart values.
         -> rel (|..r|)
         -> Report f z
-pieChart title nm legOpt color labelPres valuePres rel = Report $ w ->
-    pieChartW w title nm legOpt color (asPresentation labelPres) (asPresentation valuePres)
+pieChart title nm legOpt color hints labelPres valuePres rel = Report $ w ->
+    pieChartW w title nm legOpt color hints (asPresentation labelPres) (asPresentation valuePres)
               (relation# rel)
 {-
 drilldownPieChart2 : forall d prl prd r r0 r1 label lv z rel .
@@ -1436,13 +1437,14 @@ drilldownPieChart2 : forall d prl prd r r0 r1 label lv z rel .
                  -> Maybe (Atomic nm) -- ^ series name (for tooltip)
                  -> ChartLegendOptions#     -- ^ Options for the charts legend.
                  -> List ({..label}, Color) -- ^ Color selections.
+                 -> ChartRenderHints#       -- ^ Misc. options for the chart that may or may not be adhered to, depending on the writer (e.g. data labels)
                  -> prl label lv
                  -> prd r0 d
                  -> DrilldownList r1
                  -> rel (|..r|)
                  -> Report f z -}
-drilldownPieChart2 title nm legOpt color labelPres dataPres parentChildCols fact roots = Report $ w ->
-  drilldownPieChart2W w title nm legOpt color (asPresentation labelPres) (asPresentation dataPres)
+drilldownPieChart2 title nm legOpt color hints labelPres dataPres parentChildCols fact roots = Report $ w ->
+  drilldownPieChart2W w title nm legOpt color hints (asPresentation labelPres) (asPresentation dataPres)
                     (fromDrilldown parentChildCols) (relation# fact) (relation# roots)
 
 drilldownPieChart : forall d id prl prd r r0 r1 r2 label lv z rel .
@@ -1452,14 +1454,15 @@ drilldownPieChart : forall d id prl prd r r0 r1 r2 label lv z rel .
                  -> Maybe (Atomic nm) -- ^ series name (for tooltip)
                  -> ChartLegendOptions#     -- ^ Options for the charts legend.
                  -> List ({..label}, Color) -- ^ Color selections.
+                 -> ChartRenderHints#       -- ^ Misc. options for the chart that may or may not be adhered to, depending on the writer (e.g. data labels)
                  -> prl label lv
                  -> prd r0 d
                  -> Field r1 id
                  -> Field r2 id
                  -> rel (|..r|)
                  -> Report f z
-drilldownPieChart title nm legOpt color labelPres dataPres parentId childId fact = Report $ w ->
-  drilldownPieChartW w title nm legOpt color (asPresentation labelPres) (asPresentation dataPres)
+drilldownPieChart title nm legOpt color hints labelPres dataPres parentId childId fact = Report $ w ->
+  drilldownPieChartW w title nm legOpt color hints (asPresentation labelPres) (asPresentation dataPres)
                      (fieldName parentId) (fieldName childId) (relation# fact)
 
 -- | A drilldown bar chart.
@@ -1529,7 +1532,10 @@ chartLegendAbove = chartLegendOptions chartLegendAbove#
 chartLegendOverlay = chartLegendOptions chartLegendOverlay#
 chartLegendRightOverlay = chartLegendOptions chartLegendRightOverlay#
 chartLegendRight = chartLegendOptions chartLegendRightNotOverlay#
+chartLegendRightTable = chartLegendOptions chartLegendRightTable#
 chartLegendHidden = chartLegendOptions chartLegendHidden#
+
+chartRenderHints enableDataLabels = chartRenderHints# (toBool# enableDataLabels)
 
 -- may want to look into how am adding elements to a record - should at runtime
 -- check to see if its null and return a NullExpr if that's the case

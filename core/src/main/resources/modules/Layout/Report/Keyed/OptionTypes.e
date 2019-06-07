@@ -129,11 +129,12 @@ data PieChartOptions ph lbl r1 r2 id =
       (Maybe (Atomic mt)) -- series designation (for tool tip)
       ChartLegendOptions#
       (List ({..lbl}, Color)) -- color specifications
+      ChartRenderHints#       -- ^ Misc. options for the chart that may or may not be adhered to, depending on the writer (e.g. data labels)
       (Maybe (Field r1 id, Field r2 id))
 
 type PieChartDefaults ph lbl = PieChartOptions ph lbl (| |) (| |) Void
 pieChartDefaults : PieChartDefaults ph lbl
-pieChartDefaults = PieChartOptions "" Nothing chartLegendDefaultLocation Nil Nothing
+pieChartDefaults = PieChartOptions "" Nothing chartLegendDefaultLocation Nil defaultChartRenderHints# Nothing
 
 -- | drilldownBarChart
 data DrilldownBarChartOptions tdlocv sr sa cr vr {-title' logOpts' dir' cl' vl'-} =

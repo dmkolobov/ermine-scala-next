@@ -20,6 +20,7 @@ foreign
   data "scala.Function4" Function4 a b c d e
   data "scala.Function5" Function5 a b c d e f
   data "scala.Function6" Function6 a b c d e f g
+  data "scala.Function7" Function7 a b c d e f g h
   method "apply" funcall1# : Function1 a b -> (a -> b)
   method "apply" impureFuncall1# : Function1 a b -> (a -> IO b)
   method "apply" funcall2# : Function2 a b c -> (a -> b -> c)
@@ -32,3 +33,5 @@ foreign
   method "apply" impureFuncall5# : Function5 a b c d e f -> (a -> b -> c -> d -> e -> IO f)
   method "apply" funcall6# : Function6 a b c d e f g -> (a -> b -> c -> d -> e -> f -> g)
   method "apply" impureFuncall6# : Function6 a b c d e f g -> (a -> b -> c -> d -> e -> f -> IO g)
+  method "apply" funcall7# : Function7 a b c d e f g h -> (a -> b -> c -> d -> e -> f -> g -> h)
+  method "apply" impureFuncall7# : Function7 a b c d e f g h -> (a -> b -> c -> d -> e -> f -> g -> IO h)
