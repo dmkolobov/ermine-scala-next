@@ -64,6 +64,7 @@ type ChartOptions xa ya z = forall x x' y y'.
            Maybe String            -- ^ Chart title.
         -> Direction               -- ^ Orientation.
         -> ChartLegendOptions#     -- ^ Options for the charts legend.
+        -> ChartRenderHints#       -- ^ Misc. options for the chart that may or may not be adhered to, depending on the writer (e.g. data labels)
         -> AxisLabel               -- ^ Category axis label.
         -> Format xa               -- ^ How to display category.
         -> Bool                    -- ^ Whether to display category axis ticks.
@@ -77,18 +78,18 @@ type ChartOptions xa ya z = forall x x' y y'.
 chartW : forall xa ya.
          ChartOptions xa ya (List (ChartSeries xa ya) -- ^ Liftee.
                              -> AxisChart#)
-chartW title ori legOpts catL catF catAx catCons valL valF valAx valCons series =
+chartW title ori legOpts hints catL catF catAx catCons valL valF valAx valCons series =
    axisChart# (toList# . map toChartSeries# $ series) $
-     axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts series
+     axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts hints series
 
-axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts series =
+axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts hints series =
     let nativeAxis = axisLabel# axis#
      in unifyTicks# catCons valCons series |> (catCons', valCons') ->
         axisChartData# (nativeAxis catL catF catCons' $ toBool# catAx)
                        (nativeAxis valL valF valCons' $ toBool# valAx)
                        (toMaybe# title) (orientation# ori) legOpts
                        (unifyColors# series)
-                       defaultChartRenderHints#
+                       hints
 
 seriesW : ChartVariant# -> ChartMode
 seriesW vari s x y fact =

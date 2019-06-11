@@ -1095,7 +1095,7 @@ timeSeriesChart : forall x y a r1 r2 r3 r v z rel .
         -> rel (|..r|)
         -> Report f z
 timeSeriesChart t xl yl series s x y r =
-    chart t Vertical defaultChartLegendOptions
+    chart t Vertical defaultChartLegendOptions defaultChartRenderHints#
       (upgradeAxisLabel xl) unit_Fmt True (scaled Ascending Nothing Nothing Linear)
       (upgradeAxisLabel yl) unit_Fmt True (scaled Ascending Nothing Nothing Linear)
       [series s x y r]
@@ -1205,7 +1205,7 @@ barChart : forall x y d e r1 r2 r3 r v z rel .
         -> rel (|..r|)
         -> Report f z
 barChart t xl yl s x y r =
-    chart t Vertical defaultChartLegendOptions
+    chart t Vertical defaultChartLegendOptions defaultChartRenderHints#
       (upgradeAxisLabel xl) unit_Fmt True (unscaled $ Left Ascending)
       (upgradeAxisLabel yl) unit_Fmt True (scaled Ascending Nothing Nothing Linear)
       [bar s x y r]
@@ -1281,8 +1281,8 @@ chart : forall xa ya .
         ChartOptions xa ya
                      (List (ChartSeries xa ya) -- ^ Series data.
                       -> Report f z)
-chart title ori legOpt catL catF catAx catCons valL valF valAx valCons series =
-    Report $ flip axisChartW (chartW title ori legOpt catL catF catAx catCons
+chart title ori legOpt hints catL catF catAx catCons valL valF valAx valCons series =
+    Report $ flip axisChartW (chartW title ori legOpt hints catL catF catAx catCons
                                      valL valF valAx valCons series)
 
 drilldownTable : forall r r1 r2 id z v label rel .
@@ -1473,6 +1473,7 @@ drilldownBarChart : forall f spr sr sa cpr cr ca vpr vr va pi ci id r z rel .
                  => Maybe String       -- ^ Chart title.
                  -> Direction          -- ^ Orientation.
                  -> ChartLegendOptions# -- ^ Options for the charts legend.
+                 -> ChartRenderHints#       -- ^ Misc. options for the chart that may or may not be adhered to, depending on the writer (e.g. data labels)
                  -> AxisLabel           -- ^ Category axis label.
                  -> List ({..cr}, {..cr}) -- ^ Tick label overrides on category.
                  -> Axis ca            -- ^ Rules for category axis.
@@ -1486,11 +1487,11 @@ drilldownBarChart : forall f spr sr sa cpr cr ca vpr vr va pi ci id r z rel .
                  -> Field ci id        -- ^ Child field reference.
                  -> rel (|..r|)        -- ^ Underlying relation.
                  -> Report f z
-drilldownBarChart title ori legOpt catLbl catTo catC datLbl datTo datC ser cat dat parentId childId fact =
+drilldownBarChart title ori legOpt hints catLbl catTo catC datLbl datTo datC ser cat dat parentId childId fact =
   Report $ w -> drilldownBarChartW w
       -- XXX pass something other than Nil here for choosing colors
       (axisChartDataW catLbl unit_Fmt True datLbl unit_Fmt True
-                      catC datC title ori legOpt Nil)
+                      catC datC title ori legOpt hints Nil)
       catTo datTo
       (asPresentation ser) (asPresentation cat) (asPresentation dat)
       (fieldName parentId) (fieldName childId) (relation# fact)
@@ -1519,7 +1520,7 @@ drilldownBarChart2 title ori catLbl catTo catC datLbl datTo datC ser cat dat par
   Report $ w -> drilldownBarChart2W w
       -- XXX pass something other than Nil here for choosing colors
       (axisChartDataW catLbl unit_Fmt True datLbl unit_Fmt True
-                      catC datC title ori defaultChartLegendOptions Nil)
+                      catC datC title ori defaultChartLegendOptions defaultChartRenderHints# Nil)
       catTo datTo
       (asPresentation ser) (asPresentation cat) (asPresentation dat)
       (fromDrilldown parentChildCols) (relation# fact) (relation# root)

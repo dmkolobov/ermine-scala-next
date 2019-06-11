@@ -111,13 +111,13 @@ unscaledDefaults = UnscaledOptions $ Left Ascending
 
 -- | chart
 data ChartOptions tdloxlxfylyf xa ya {-title' dir' legOpts' xlbl' xfmt' xax' ylbl' yfmt' yax'-} =
-  ChartOptions (Maybe String) Direction ChartLegendOptions#
+  ChartOptions (Maybe String) Direction ChartLegendOptions# ChartRenderHints#
                AxisLabel (Format_Fmt xa) Bool
                AxisLabel (Format_Fmt ya) Bool
 -- defaults here are a little more complicated; see the term
 type ChartDefaults u1 xa ya = ChartOptions u1 xa ya
 chartDefaults : (Primitive xa, Primitive ya) => ChartDefaults u1 xa ya
-chartDefaults = ChartOptions Nothing Vertical defaultChartLegendOptions#
+chartDefaults = ChartOptions Nothing Vertical defaultChartLegendOptions# defaultChartRenderHints#
                              NoAxisLabel unit_Fmt True
                              NoAxisLabel unit_Fmt True
 
@@ -138,12 +138,12 @@ pieChartDefaults = PieChartOptions "" Nothing chartLegendDefaultLocation Nil def
 
 -- | drilldownBarChart
 data DrilldownBarChartOptions tdlocv sr sa cr vr {-title' logOpts' dir' cl' vl'-} =
-  DrilldownBarChartOptions (Maybe String) Direction ChartLegendOptions#
+  DrilldownBarChartOptions (Maybe String) Direction ChartLegendOptions# ChartRenderHints#
                            AxisLabel AxisLabel
                            (Presentation sr sa)
                            (List ({..cr}, {..cr})) (List ({..vr}, {..vr}))
 type DrilldownBarChartDefaults u1 cr vr = DrilldownBarChartOptions u1 (||) String cr vr
 drilldownBarChartDefaults : DrilldownBarChartDefaults u1 cr vr
 drilldownBarChartDefaults =
-  DrilldownBarChartOptions Nothing Vertical defaultChartLegendOptions# NoAxisLabel NoAxisLabel
+  DrilldownBarChartOptions Nothing Vertical defaultChartLegendOptions# defaultChartRenderHints# NoAxisLabel NoAxisLabel
                            (asPresentation ' prim "") Nil Nil

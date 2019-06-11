@@ -174,78 +174,85 @@ arbitraryOrder = const . UnscaledOptions . Right
 
 -- | Set the chart title.
 chartTitle : String
-          -> ChartOptions (Unbound title', dir', legOpts', xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
-          -> ChartOptions (Bound String, dir', legOpts', xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
-chartTitle title (ChartOptions _ dir legOpts xlbl xfmt xax ylbl yfmt yax) =
-  ChartOptions (Just title) dir legOpts xlbl xfmt xax ylbl yfmt yax
+          -> ChartOptions (Unbound title', dir', legOpts', rh', xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
+          -> ChartOptions (Bound String, dir', legOpts', rh', xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
+chartTitle title (ChartOptions _ dir legOpts rh xlbl xfmt xax ylbl yfmt yax) =
+  ChartOptions (Just title) dir legOpts rh xlbl xfmt xax ylbl yfmt yax
 
 -- | Display direction; Vertical means the value (Y) axis points up,
 -- Horizontal that it points right.
 yDirection : Direction
-          -> ChartOptions (title', Unbound dir', legOpts', xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
-          -> ChartOptions (title', Bound Direction, legOpts', xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
-yDirection dir (ChartOptions title _ legOpts xlbl xfmt xax ylbl yfmt yax) =
-  ChartOptions title dir legOpts xlbl xfmt xax ylbl yfmt yax
+          -> ChartOptions (title', Unbound dir', legOpts', rh', xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
+          -> ChartOptions (title', Bound Direction, legOpts', rh', xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
+yDirection dir (ChartOptions title _ legOpts rh xlbl xfmt xax ylbl yfmt yax) =
+  ChartOptions title dir legOpts rh xlbl xfmt xax ylbl yfmt yax
 
 -- | Label for the category (x) axis.
 xLabel : Atomic xr
-      -> ChartOptions (title', dir', legOpts', Unbound xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
-      -> ChartOptions (title', dir', legOpts', Bound (Atomic x), xfmt', xax', ylbl', yfmt', yax') xa ya
-xLabel xlbl (ChartOptions title dir legOpts _ xfmt xax ylbl yfmt yax) =
-  ChartOptions title dir legOpts (AxisLabel xlbl) xfmt xax ylbl yfmt yax
+      -> ChartOptions (title', dir', legOpts', rh', Unbound xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
+      -> ChartOptions (title', dir', legOpts', rh', Bound (Atomic x), xfmt', xax', ylbl', yfmt', yax') xa ya
+xLabel xlbl (ChartOptions title dir legOpts rh _ xfmt xax ylbl yfmt yax) =
+  ChartOptions title dir legOpts rh (AxisLabel xlbl) xfmt xax ylbl yfmt yax
 
 -- | Label for the category (x) axis, but only for tooltips.
 xTooltipLabel : Atomic xr
-      -> ChartOptions (title', dir', legOpts', Unbound xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
-      -> ChartOptions (title', dir', legOpts', Bound (Atomic x), xfmt', xax', ylbl', yfmt', yax') xa ya
-xTooltipLabel xlbl (ChartOptions title dir legOpts _ xfmt xax ylbl yfmt yax) =
-  ChartOptions title dir legOpts (TooltipOnlyLabel xlbl) xfmt xax ylbl yfmt yax
+      -> ChartOptions (title', dir', legOpts', rh', Unbound xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
+      -> ChartOptions (title', dir', legOpts', rh', Bound (Atomic x), xfmt', xax', ylbl', yfmt', yax') xa ya
+xTooltipLabel xlbl (ChartOptions title dir legOpts rh _ xfmt xax ylbl yfmt yax) =
+  ChartOptions title dir legOpts rh (TooltipOnlyLabel xlbl) xfmt xax ylbl yfmt yax
 
 -- | Scalar format for the category (x) axis.
 xFormat : Format xa
-       -> ChartOptions (title', dir', legOpts', xlbl', Unbound xfmt', xax', ylbl', yfmt', yax') xa' ya
-       -> ChartOptions (title', dir', legOpts', xlbl', Bound (Format xa), xax', ylbl', yfmt', yax') xa ya
-xFormat xfmt (ChartOptions title dir legOpts xlbl _ xax ylbl yfmt yax) =
-  ChartOptions title dir legOpts xlbl xfmt xax ylbl yfmt yax
+       -> ChartOptions (title', dir', legOpts', rh', xlbl', Unbound xfmt', xax', ylbl', yfmt', yax') xa' ya
+       -> ChartOptions (title', dir', legOpts', rh', xlbl', Bound (Format xa), xax', ylbl', yfmt', yax') xa ya
+xFormat xfmt (ChartOptions title dir legOpts rh xlbl _ xax ylbl yfmt yax) =
+  ChartOptions title dir legOpts rh xlbl xfmt xax ylbl yfmt yax
 
 showXTicks : Bool
-          -> ChartOptions (title', dir', legOpts', xlbl', xfmt', Unbound xax', ylbl', yfmt', yax') xa ya
-          -> ChartOptions (title', dir', legOpts', xlbl', xfmt', Bound Bool, ylbl', yfmt', yax') xa ya
-showXTicks xax (ChartOptions title dir legOpts xlbl xfmt _ ylbl yfmt yax) =
-  ChartOptions title dir legOpts xlbl xfmt xax ylbl yfmt yax
+          -> ChartOptions (title', dir', legOpts', rh', xlbl', xfmt', Unbound xax', ylbl', yfmt', yax') xa ya
+          -> ChartOptions (title', dir', legOpts', rh', xlbl', xfmt', Bound Bool, ylbl', yfmt', yax') xa ya
+showXTicks xax (ChartOptions title dir legOpts rh xlbl xfmt _ ylbl yfmt yax) =
+  ChartOptions title dir legOpts rh xlbl xfmt xax ylbl yfmt yax
 
 -- | Label for the value (y) axis.
 yLabel : Atomic yr
-      -> ChartOptions (title', dir', legOpts', xlbl', xfmt', xax', Unbound ylbl', yfmt', yax') xa ya
-      -> ChartOptions (title', dir', legOpts', xlbl', xfmt', xax', Bound (Atomic y), yfmt', yax') xa ya
-yLabel ylbl (ChartOptions title dir legOpts xlbl xfmt xax _ yfmt yax) =
-  ChartOptions title dir legOpts xlbl xfmt xax (AxisLabel ylbl) yfmt yax
+      -> ChartOptions (title', dir', legOpts', rh', xlbl', xfmt', xax', Unbound ylbl', yfmt', yax') xa ya
+      -> ChartOptions (title', dir', legOpts', rh', xlbl', xfmt', xax', Bound (Atomic y), yfmt', yax') xa ya
+yLabel ylbl (ChartOptions title dir legOpts rh xlbl xfmt xax _ yfmt yax) =
+  ChartOptions title dir legOpts rh xlbl xfmt xax (AxisLabel ylbl) yfmt yax
 
 -- | Label for the value (y) axis, but only for tooltips.
 yTooltipLabel : Atomic yr
-      -> ChartOptions (title', dir', legOpts', xlbl', xfmt', xax', Unbound ylbl', yfmt', yax') xa ya
-      -> ChartOptions (title', dir', legOpts', xlbl', xfmt', xax', Bound (Atomic y), yfmt', yax') xa ya
-yTooltipLabel ylbl (ChartOptions title dir legOpts xlbl xfmt xax _ yfmt yax) =
-  ChartOptions title dir legOpts xlbl xfmt xax (TooltipOnlyLabel ylbl) yfmt yax
+      -> ChartOptions (title', dir', legOpts', rh', xlbl', xfmt', xax', Unbound ylbl', yfmt', yax') xa ya
+      -> ChartOptions (title', dir', legOpts', rh', xlbl', xfmt', xax', Bound (Atomic y), yfmt', yax') xa ya
+yTooltipLabel ylbl (ChartOptions title dir legOpts rh xlbl xfmt xax _ yfmt yax) =
+  ChartOptions title dir legOpts rh xlbl xfmt xax (TooltipOnlyLabel ylbl) yfmt yax
 
 -- | Scalar format for the value (y) axis.
 yFormat : Format ya
-       -> ChartOptions (title', dir', legOpts', xlbl', xfmt', xax', ylbl', Unbound yfmt', yax') xa ya'
-       -> ChartOptions (title', dir', legOpts', xlbl', xfmt', xax', ylbl', Bound (Format ya), yax') xa ya
-yFormat yfmt (ChartOptions title dir legOpts xlbl xfmt xax ylbl _ yax) =
-  ChartOptions title dir legOpts xlbl xfmt xax ylbl yfmt yax
+       -> ChartOptions (title', dir', legOpts', rh', xlbl', xfmt', xax', ylbl', Unbound yfmt', yax') xa ya'
+       -> ChartOptions (title', dir', legOpts', rh', xlbl', xfmt', xax', ylbl', Bound (Format ya), yax') xa ya
+yFormat yfmt (ChartOptions title dir legOpts rh xlbl xfmt xax ylbl _ yax) =
+  ChartOptions title dir legOpts rh xlbl xfmt xax ylbl yfmt yax
 
 showYTicks : Bool
-          -> ChartOptions (title', dir', legOpts', xlbl', xfmt', xax', ylbl', yfmt', Unbound yax') xa ya
-          -> ChartOptions (title', dir', legOpts', xlbl', xfmt', xax', ylbl', yfmt', Bound Bool) xa ya
-showYTicks yax (ChartOptions title dir legOpts xlbl xfmt xax ylbl yfmt _) =
-  ChartOptions title dir legOpts xlbl xfmt xax ylbl yfmt yax
+          -> ChartOptions (title', dir', legOpts', rh', xlbl', xfmt', xax', ylbl', yfmt', Unbound yax') xa ya
+          -> ChartOptions (title', dir', legOpts', rh', xlbl', xfmt', xax', ylbl', yfmt', Bound Bool) xa ya
+showYTicks yax (ChartOptions title dir legOpts rh xlbl xfmt xax ylbl yfmt _) =
+  ChartOptions title dir legOpts rh xlbl xfmt xax ylbl yfmt yax
 
 legendOpts : ChartLegendOptions#
-          -> ChartOptions (title', dir', Unbound legOpts',          xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
-          -> ChartOptions (title', dir', Bound ChartLegendOptions#, xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
-legendOpts legOpts (ChartOptions title dir _ xlbl xfmt xax ylbl yfmt yax) =
-  ChartOptions title dir legOpts xlbl xfmt xax ylbl yfmt yax
+          -> ChartOptions (title', dir', Unbound legOpts',          rh', xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
+          -> ChartOptions (title', dir', Bound ChartLegendOptions#, rh', xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
+legendOpts legOpts (ChartOptions title dir _ rh xlbl xfmt xax ylbl yfmt yax) =
+  ChartOptions title dir legOpts rh xlbl xfmt xax ylbl yfmt yax
+
+-- | Set render hints
+renderHints : ChartRenderHints#
+           -> ChartOptions (title', dir', legOpts', Unbound rh',             xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
+           -> ChartOptions (title', dir', legOpts', Bound ChartRenderHints#, xlbl', xfmt', xax', ylbl', yfmt', yax') xa ya
+renderHints rh (ChartOptions title dir legOpts _ xlbl xfmt xax ylbl yfmt yax) =
+  ChartOptions title dir legOpts rh xlbl xfmt xax ylbl yfmt yax
 
 -- pieChart options
 
@@ -289,77 +296,83 @@ pieDrilldown dd (PieChartOptions s nm lo cs rh _) = PieChartOptions s nm lo cs r
 
 -- | Set the chart title.
 titleB : String
-      -> DrilldownBarChartOptions (Unbound title', dir', legOpts', cl', vl', prs', cov', vov') sr sa cr vr
-      -> DrilldownBarChartOptions (Bound String, dir', legOpts', cl', vl', prs', cov', vov') sr sa cr vr
-titleB title (DrilldownBarChartOptions _ dir lo cl vl prs cov vov) =
-  DrilldownBarChartOptions (Just title) dir lo cl vl prs cov vov
+      -> DrilldownBarChartOptions (Unbound title', dir', legOpts', rh', cl', vl', prs', cov', vov') sr sa cr vr
+      -> DrilldownBarChartOptions (Bound String, dir', legOpts', rh', cl', vl', prs', cov', vov') sr sa cr vr
+titleB title (DrilldownBarChartOptions _ dir lo rh cl vl prs cov vov) =
+  DrilldownBarChartOptions (Just title) dir lo rh cl vl prs cov vov
 
 -- | Display direction; Vertical means the value (Y) axis points up,
 -- Horizontal that it points right.
 yDirectionB : Direction
-           -> DrilldownBarChartOptions (title', Unbound dir', legOpts', cl', vl', prs', cov', vov') sr sa cr vr
-           -> DrilldownBarChartOptions (title', Bound Direction, legOpts', cl', vl', prs', cov', vov') sr sa cr vr
-yDirectionB dir (DrilldownBarChartOptions title _ lo cl vl prs cov vov) =
-  DrilldownBarChartOptions title dir lo cl vl prs cov vov
+           -> DrilldownBarChartOptions (title', Unbound dir', legOpts', rh', cl', vl', prs', cov', vov') sr sa cr vr
+           -> DrilldownBarChartOptions (title', Bound Direction, legOpts', rh', cl', vl', prs', cov', vov') sr sa cr vr
+yDirectionB dir (DrilldownBarChartOptions title _ lo rh cl vl prs cov vov) =
+  DrilldownBarChartOptions title dir lo rh cl vl prs cov vov
 
 -- | Label for the category (x) axis.
 xLabelB : Atomic cl
-       -> DrilldownBarChartOptions (title', dir', legOpts', Unbound cl', vl', prs', cov', vov') sr sa cr vr
-       -> DrilldownBarChartOptions (title', dir', legOpts', Bound (Atomic cl), vl', prs', cov', vov') sr sa cr vr
-xLabelB cl (DrilldownBarChartOptions title dir lo _ vl prs cov vov) =
-  DrilldownBarChartOptions title dir lo (AxisLabel cl) vl prs cov vov
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', Unbound cl', vl', prs', cov', vov') sr sa cr vr
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', Bound (Atomic cl), vl', prs', cov', vov') sr sa cr vr
+xLabelB cl (DrilldownBarChartOptions title dir lo rh _ vl prs cov vov) =
+  DrilldownBarChartOptions title dir lo rh (AxisLabel cl) vl prs cov vov
 
 -- | Label for the category (x) axis, but only for tooltips.
 xTooltipLabelB : Atomic cl
-       -> DrilldownBarChartOptions (title', dir', legOpts', Unbound cl', vl', prs', cov', vov') sr sa cr vr
-       -> DrilldownBarChartOptions (title', dir', legOpts', Bound (Atomic cl), vl', prs', cov', vov') sr sa cr vr
-xTooltipLabelB cl (DrilldownBarChartOptions title dir lo _ vl prs cov vov) =
-  DrilldownBarChartOptions title dir lo (TooltipOnlyLabel cl) vl prs cov vov
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', Unbound cl', vl', prs', cov', vov') sr sa cr vr
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', Bound (Atomic cl), vl', prs', cov', vov') sr sa cr vr
+xTooltipLabelB cl (DrilldownBarChartOptions title dir lo rh _ vl prs cov vov) =
+  DrilldownBarChartOptions title dir lo rh (TooltipOnlyLabel cl) vl prs cov vov
 
 -- | Label for the value (y) axis.
 yLabelB : Atomic vl
-       -> DrilldownBarChartOptions (title', dir', legOpts', cl', Unbound vl', prs', cov', vov') sr sa cr vr
-       -> DrilldownBarChartOptions (title', dir', legOpts', cl', Bound (Atomic vl), prs', cov', vov') sr sa cr vr
-yLabelB vl (DrilldownBarChartOptions title dir lo cl _ prs cov vov) =
-  DrilldownBarChartOptions title dir lo cl (AxisLabel vl) prs cov vov
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', cl', Unbound vl', prs', cov', vov') sr sa cr vr
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', cl', Bound (Atomic vl), prs', cov', vov') sr sa cr vr
+yLabelB vl (DrilldownBarChartOptions title dir lo rh cl _ prs cov vov) =
+  DrilldownBarChartOptions title dir lo rh cl (AxisLabel vl) prs cov vov
 
 -- | Label for the value (y) axis, but only for tooltips.
 yTooltipLabelB : Atomic vl
-       -> DrilldownBarChartOptions (title', dir', legOpts', cl', Unbound vl', prs', cov', vov') sr sa cr vr
-       -> DrilldownBarChartOptions (title', dir', legOpts', cl', Bound (Atomic vl), prs', cov', vov') sr sa cr vr
-yTooltipLabelB vl (DrilldownBarChartOptions title dir lo cl _ prs cov vov) =
-  DrilldownBarChartOptions title dir lo cl (TooltipOnlyLabel vl) prs cov vov
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', cl', Unbound vl', prs', cov', vov') sr sa cr vr
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', cl', Bound (Atomic vl), prs', cov', vov') sr sa cr vr
+yTooltipLabelB vl (DrilldownBarChartOptions title dir lo rh cl _ prs cov vov) =
+  DrilldownBarChartOptions title dir lo rh cl (TooltipOnlyLabel vl) prs cov vov
 
 -- | The selection and display rules for the series dimension.
 seriesB : AsPresentation pr
        => pr sr sa
-       -> DrilldownBarChartOptions (title', dir', legOpts', cl', vl', Unbound prs', cov', vov') sro sao cr vr
-       -> DrilldownBarChartOptions (title', dir', legOpts', cl', vl', Bound (Presentation sr sa), cov', vov')
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', cl', vl', Unbound prs', cov', vov') sro sao cr vr
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', cl', vl', Bound (Presentation sr sa), cov', vov')
                                    sr sa cr vr
-seriesB prs (DrilldownBarChartOptions title dir lo cl vl _ cov vov) =
-  DrilldownBarChartOptions title dir lo cl vl (asPresentation prs) cov vov
+seriesB prs (DrilldownBarChartOptions title dir lo rh cl vl _ cov vov) =
+  DrilldownBarChartOptions title dir lo rh cl vl (asPresentation prs) cov vov
 
 -- | Overrides to show as tick labels on the category axis.
 xTicksB : List ({..cr}, {..cr})
-       -> DrilldownBarChartOptions (title', dir', legOpts', cl', vl', prs', Unbound cov', vov')
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', cl', vl', prs', Unbound cov', vov')
                                    sr sa cr vr
-       -> DrilldownBarChartOptions (title', dir', legOpts', cl', vl', prs', Bound {..cr}, vov')
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', cl', vl', prs', Bound {..cr}, vov')
                                    sr sa cr vr
-xTicksB cov (DrilldownBarChartOptions title dir lo cl vl prs _ vov) =
-  DrilldownBarChartOptions title dir lo cl vl prs cov vov
+xTicksB cov (DrilldownBarChartOptions title dir lo rh cl vl prs _ vov) =
+  DrilldownBarChartOptions title dir lo rh cl vl prs cov vov
 
 -- | Overrides to show as tick labels on the value axis.
 yTicksB : List ({..vr}, {..vr})
-       -> DrilldownBarChartOptions (title', dir', legOpts', cl', vl', prs', cov', Unbound vov')
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', cl', vl', prs', cov', Unbound vov')
                                    sr sa cr vr
-       -> DrilldownBarChartOptions (title', dir', legOpts', cl', vl', prs', cov', Bound {..vr})
+       -> DrilldownBarChartOptions (title', dir', legOpts', rh', cl', vl', prs', cov', Bound {..vr})
                                    sr sa cr vr
-yTicksB vov (DrilldownBarChartOptions title dir lo cl vl prs cov _) =
-  DrilldownBarChartOptions title dir lo cl vl prs cov vov
+yTicksB vov (DrilldownBarChartOptions title dir lo rh cl vl prs cov _) =
+  DrilldownBarChartOptions title dir lo rh cl vl prs cov vov
 
 legendOptsB : ChartLegendOptions#
-           -> DrilldownBarChartOptions (title', dir', Unbound legOpts', cl', vl', prs', cov', vov') sr sa cr vr
-           -> DrilldownBarChartOptions (title', dir', Bound ChartLegendOptions#, cl', vl', prs', cov', vov') sr sa cr vr
-legendOptsB lo (DrilldownBarChartOptions title dir _ cl vl prs cov vov) =
-  DrilldownBarChartOptions title dir lo cl vl prs cov vov
+           -> DrilldownBarChartOptions (title', dir', Unbound legOpts', rh', cl', vl', prs', cov', vov') sr sa cr vr
+           -> DrilldownBarChartOptions (title', dir', Bound ChartLegendOptions#, rh', cl', vl', prs', cov', vov') sr sa cr vr
+legendOptsB lo (DrilldownBarChartOptions title dir _ rh cl vl prs cov vov) =
+  DrilldownBarChartOptions title dir lo rh cl vl prs cov vov
 
+-- | Set render hints
+renderHintsB : ChartRenderHints#
+            -> DrilldownBarChartOptions (title', dir', legOpts', Unbound rh', cl', vl', prs', cov', vov') sr sa cr vr
+            -> DrilldownBarChartOptions (title', dir', legOpts', Bound ChartRenderHints#, cl', vl', prs', cov', vov') sr sa cr vr
+renderHintsB rh (DrilldownBarChartOptions title dir lo _ cl vl prs cov vov) =
+  DrilldownBarChartOptions title dir lo rh cl vl prs cov vov
