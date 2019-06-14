@@ -18,7 +18,7 @@ name <<= artifactNameNormalizer(_("scala"))
 
 organization in ThisBuild := "com.clarifi.ermine"
 
-version in ThisBuild := "2.0.0-SNAPSHOT"
+version in ThisBuild := "2.14-SNAPSHOT"
 
 initialCommands in ThisBuild := ""
 
@@ -38,13 +38,19 @@ enableTypeCheck in ThisBuild := {
 }
 
 computeRevision in ThisBuild <<= streams map { s =>
+  import java.util.{Date, TimeZone}
+  val formatter = new java.text.SimpleDateFormat("yyyyMMdd.HHmmss")
+  formatter.setTimeZone(TimeZone.getTimeZone("GMT"))
+  val timestamp = formatter.format(new Date)
   val hash = ("hg id" !!) takeWhile (c => c.isLetter || c.isDigit)
-  val branch = ("hg branch" !!).trim
+  val revision = timestamp + "." + hash
+  val branch = ("hg id -b" !!).trim
   val tags = ("hg id -t" !!).trim
   s.log.info("computing revision")
   s.log.info("hash: " + hash)
   s.log.info("branch: " + branch)
   s.log.info("tags: " + tags)
+  s.log.info("timestamp: " + timestamp)
   System.getProperties.setProperty("mercurial.id", hash)
   System.getProperties.setProperty("mercurial.branch", branch)
   System.getProperties.setProperty("mercurial.tags", tags)
@@ -52,7 +58,7 @@ computeRevision in ThisBuild <<= streams map { s =>
   val pubRev = (Seq("publish-revision", "revision")
                   collectFirst (Function unlift (s => Option(System getProperty s))))
   pubRev foreach (System.setProperty("rev", _))
-  System.setProperty("publish.revision", pubRev getOrElse hash)
+  System.setProperty("publish.revision", pubRev getOrElse revision)
   System.setProperty("publish.branch", branch)
 }
 
