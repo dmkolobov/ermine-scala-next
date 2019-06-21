@@ -226,8 +226,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
     case x =>
       val sql = x.emitSql(emitter)
+      val sStart = System.currentTimeMillis
       logger ltrace ("Executing sql: " + sql.run)
       DB.executeUpdate(sql) as {
+        val sDelta = System.currentTimeMillis - sStart
+        logger ltrace (s"Finished executing statement -- took $sDelta ms")
         x match {case sc: SqlCreate => List(sc.table)
                  case _ => List()}
       }
