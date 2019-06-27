@@ -95,8 +95,8 @@ chart : (Primitive xa', Primitive ya')
      -> Axis ya
      -> List (ChartSeries xa ya)
      -> Report_R f z
-chart oa ax ay = oa chartDefaults |> (ChartOptions title dir legOpts xlbl xfmt xax ylbl yfmt yax) ->
-  chart_R title dir legOpts xlbl xfmt xax ax ylbl yfmt yax ay
+chart oa ax ay = oa chartDefaults |> (ChartOptions title dir legOpts hints xlbl xfmt xax ylbl yfmt yax) ->
+  chart_R title dir legOpts hints xlbl xfmt xax ax ylbl yfmt yax ay
 
 pieChart : (r <- (label, value, r1, r2, o), PrimitiveNum d,
             AsPresentation prl, AsPresentation prv, Relational rel)
@@ -106,9 +106,9 @@ pieChart : (r <- (label, value, r1, r2, o), PrimitiveNum d,
         -> prv value d
         -> rel (|..r|)
         -> Report_R f z
-pieChart oa label value = oa pieChartDefaults |> (PieChartOptions title nm lo color dd) ->
-  maybe (pieChart_R title nm lo color label value)
-        (uncurry (drilldownPieChart_R title nm lo color label value))
+pieChart oa label value = oa pieChartDefaults |> (PieChartOptions title nm lo color hints dd) ->
+  maybe (pieChart_R title nm lo color hints label value)
+        (uncurry (drilldownPieChart_R title nm lo color hints label value))
         dd
 
 drilldownBarChart : (exists o. r <- (sr, cr, vr, pi, ci, o),
@@ -125,5 +125,5 @@ drilldownBarChart : (exists o. r <- (sr, cr, vr, pi, ci, o),
                  -> rel r
                  -> Report_R f z
 drilldownBarChart cax vax oa = oa drilldownBarChartDefaults
-  |> (DrilldownBarChartOptions title dir lo clbl vlbl spr cov vov) ->
-    drilldownBarChart_R title dir lo clbl cov cax vlbl vov vax spr
+  |> (DrilldownBarChartOptions title dir lo hints clbl vlbl spr cov vov) ->
+    drilldownBarChart_R title dir lo hints clbl cov cax vlbl vov vax spr

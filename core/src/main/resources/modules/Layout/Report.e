@@ -1095,7 +1095,7 @@ timeSeriesChart : forall x y a r1 r2 r3 r v z rel .
         -> rel (|..r|)
         -> Report f z
 timeSeriesChart t xl yl series s x y r =
-    chart t Vertical defaultChartLegendOptions
+    chart t Vertical defaultChartLegendOptions defaultChartRenderHints#
       (upgradeAxisLabel xl) unit_Fmt True (scaled Ascending Nothing Nothing Linear)
       (upgradeAxisLabel yl) unit_Fmt True (scaled Ascending Nothing Nothing Linear)
       [series s x y r]
@@ -1205,7 +1205,7 @@ barChart : forall x y d e r1 r2 r3 r v z rel .
         -> rel (|..r|)
         -> Report f z
 barChart t xl yl s x y r =
-    chart t Vertical defaultChartLegendOptions
+    chart t Vertical defaultChartLegendOptions defaultChartRenderHints#
       (upgradeAxisLabel xl) unit_Fmt True (unscaled $ Left Ascending)
       (upgradeAxisLabel yl) unit_Fmt True (scaled Ascending Nothing Nothing Linear)
       [bar s x y r]
@@ -1281,8 +1281,8 @@ chart : forall xa ya .
         ChartOptions xa ya
                      (List (ChartSeries xa ya) -- ^ Series data.
                       -> Report f z)
-chart title ori legOpt catL catF catAx catCons valL valF valAx valCons series =
-    Report $ flip axisChartW (chartW title ori legOpt catL catF catAx catCons
+chart title ori legOpt hints catL catF catAx catCons valL valF valAx valCons series =
+    Report $ flip axisChartW (chartW title ori legOpt hints catL catF catAx catCons
                                      valL valF valAx valCons series)
 
 drilldownTable : forall r r1 r2 id z v label rel .
@@ -1420,12 +1420,13 @@ pieChart : forall l labels r value z rel .
         -> Maybe (Atomic nm) -- ^ series name (for tooltip)
         -> ChartLegendOptions#      -- ^ Options for the charts legend.
         -> List ({..labels}, Color) -- ^ Color selections.
+        -> ChartRenderHints#        -- ^ Misc. options for the chart that may or may not be adhered to, depending on the writer (e.g. data labels)
         -> prl labels l
         -> prv value d          -- ^ Chart values.
         -> rel (|..r|)
         -> Report f z
-pieChart title nm legOpt color labelPres valuePres rel = Report $ w ->
-    pieChartW w title nm legOpt color (asPresentation labelPres) (asPresentation valuePres)
+pieChart title nm legOpt color hints labelPres valuePres rel = Report $ w ->
+    pieChartW w title nm legOpt color hints (asPresentation labelPres) (asPresentation valuePres)
               (relation# rel)
 {-
 drilldownPieChart2 : forall d prl prd r r0 r1 label lv z rel .
@@ -1436,13 +1437,14 @@ drilldownPieChart2 : forall d prl prd r r0 r1 label lv z rel .
                  -> Maybe (Atomic nm) -- ^ series name (for tooltip)
                  -> ChartLegendOptions#     -- ^ Options for the charts legend.
                  -> List ({..label}, Color) -- ^ Color selections.
+                 -> ChartRenderHints#       -- ^ Misc. options for the chart that may or may not be adhered to, depending on the writer (e.g. data labels)
                  -> prl label lv
                  -> prd r0 d
                  -> DrilldownList r1
                  -> rel (|..r|)
                  -> Report f z -}
-drilldownPieChart2 title nm legOpt color labelPres dataPres parentChildCols fact roots = Report $ w ->
-  drilldownPieChart2W w title nm legOpt color (asPresentation labelPres) (asPresentation dataPres)
+drilldownPieChart2 title nm legOpt color hints labelPres dataPres parentChildCols fact roots = Report $ w ->
+  drilldownPieChart2W w title nm legOpt color hints (asPresentation labelPres) (asPresentation dataPres)
                     (fromDrilldown parentChildCols) (relation# fact) (relation# roots)
 
 drilldownPieChart : forall d id prl prd r r0 r1 r2 label lv z rel .
@@ -1452,14 +1454,15 @@ drilldownPieChart : forall d id prl prd r r0 r1 r2 label lv z rel .
                  -> Maybe (Atomic nm) -- ^ series name (for tooltip)
                  -> ChartLegendOptions#     -- ^ Options for the charts legend.
                  -> List ({..label}, Color) -- ^ Color selections.
+                 -> ChartRenderHints#       -- ^ Misc. options for the chart that may or may not be adhered to, depending on the writer (e.g. data labels)
                  -> prl label lv
                  -> prd r0 d
                  -> Field r1 id
                  -> Field r2 id
                  -> rel (|..r|)
                  -> Report f z
-drilldownPieChart title nm legOpt color labelPres dataPres parentId childId fact = Report $ w ->
-  drilldownPieChartW w title nm legOpt color (asPresentation labelPres) (asPresentation dataPres)
+drilldownPieChart title nm legOpt color hints labelPres dataPres parentId childId fact = Report $ w ->
+  drilldownPieChartW w title nm legOpt color hints (asPresentation labelPres) (asPresentation dataPres)
                      (fieldName parentId) (fieldName childId) (relation# fact)
 
 -- | A drilldown bar chart.
@@ -1470,6 +1473,7 @@ drilldownBarChart : forall f spr sr sa cpr cr ca vpr vr va pi ci id r z rel .
                  => Maybe String       -- ^ Chart title.
                  -> Direction          -- ^ Orientation.
                  -> ChartLegendOptions# -- ^ Options for the charts legend.
+                 -> ChartRenderHints#       -- ^ Misc. options for the chart that may or may not be adhered to, depending on the writer (e.g. data labels)
                  -> AxisLabel           -- ^ Category axis label.
                  -> List ({..cr}, {..cr}) -- ^ Tick label overrides on category.
                  -> Axis ca            -- ^ Rules for category axis.
@@ -1483,11 +1487,11 @@ drilldownBarChart : forall f spr sr sa cpr cr ca vpr vr va pi ci id r z rel .
                  -> Field ci id        -- ^ Child field reference.
                  -> rel (|..r|)        -- ^ Underlying relation.
                  -> Report f z
-drilldownBarChart title ori legOpt catLbl catTo catC datLbl datTo datC ser cat dat parentId childId fact =
+drilldownBarChart title ori legOpt hints catLbl catTo catC datLbl datTo datC ser cat dat parentId childId fact =
   Report $ w -> drilldownBarChartW w
       -- XXX pass something other than Nil here for choosing colors
       (axisChartDataW catLbl unit_Fmt True datLbl unit_Fmt True
-                      catC datC title ori legOpt Nil)
+                      catC datC title ori legOpt hints Nil)
       catTo datTo
       (asPresentation ser) (asPresentation cat) (asPresentation dat)
       (fieldName parentId) (fieldName childId) (relation# fact)
@@ -1516,7 +1520,7 @@ drilldownBarChart2 title ori catLbl catTo catC datLbl datTo datC ser cat dat par
   Report $ w -> drilldownBarChart2W w
       -- XXX pass something other than Nil here for choosing colors
       (axisChartDataW catLbl unit_Fmt True datLbl unit_Fmt True
-                      catC datC title ori defaultChartLegendOptions Nil)
+                      catC datC title ori defaultChartLegendOptions defaultChartRenderHints# Nil)
       catTo datTo
       (asPresentation ser) (asPresentation cat) (asPresentation dat)
       (fromDrilldown parentChildCols) (relation# fact) (relation# root)
@@ -1529,7 +1533,10 @@ chartLegendAbove = chartLegendOptions chartLegendAbove#
 chartLegendOverlay = chartLegendOptions chartLegendOverlay#
 chartLegendRightOverlay = chartLegendOptions chartLegendRightOverlay#
 chartLegendRight = chartLegendOptions chartLegendRightNotOverlay#
+chartLegendRightTable = chartLegendOptions chartLegendRightTable#
 chartLegendHidden = chartLegendOptions chartLegendHidden#
+
+chartRenderHints enableDataLabels = chartRenderHints# (toBool# enableDataLabels)
 
 -- may want to look into how am adding elements to a record - should at runtime
 -- check to see if its null and return a NullExpr if that's the case

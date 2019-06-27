@@ -64,6 +64,7 @@ type ChartOptions xa ya z = forall x x' y y'.
            Maybe String            -- ^ Chart title.
         -> Direction               -- ^ Orientation.
         -> ChartLegendOptions#     -- ^ Options for the charts legend.
+        -> ChartRenderHints#       -- ^ Misc. options for the chart that may or may not be adhered to, depending on the writer (e.g. data labels)
         -> AxisLabel               -- ^ Category axis label.
         -> Format xa               -- ^ How to display category.
         -> Bool                    -- ^ Whether to display category axis ticks.
@@ -77,17 +78,18 @@ type ChartOptions xa ya z = forall x x' y y'.
 chartW : forall xa ya.
          ChartOptions xa ya (List (ChartSeries xa ya) -- ^ Liftee.
                              -> AxisChart#)
-chartW title ori legOpts catL catF catAx catCons valL valF valAx valCons series =
+chartW title ori legOpts hints catL catF catAx catCons valL valF valAx valCons series =
    axisChart# (toList# . map toChartSeries# $ series) $
-     axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts series
+     axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts hints series
 
-axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts series =
+axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts hints series =
     let nativeAxis = axisLabel# axis#
      in unifyTicks# catCons valCons series |> (catCons', valCons') ->
         axisChartData# (nativeAxis catL catF catCons' $ toBool# catAx)
                        (nativeAxis valL valF valCons' $ toBool# valAx)
                        (toMaybe# title) (orientation# ori) legOpts
                        (unifyColors# series)
+                       hints
 
 seriesW : ChartVariant# -> ChartMode
 seriesW vari s x y fact =
@@ -101,12 +103,12 @@ private
   atomize : Maybe (Atomic nm) -> Maybe# (Atomic# nm)
   atomize = maybe Nothing# (Just# . atomic#)
 
-pieChartW w title nm legendOptions color cat =
-  pieChart# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color)) cat
-drilldownPieChartW w title nm legendOptions color cat =
-  drilldownPieChart# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color)) cat
-drilldownPieChart2W w title nm legendOptions color cat pres2 cols =
-  drilldownPieChart2# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color)) cat pres2 (toList# $ fmap listFunctor toPair# cols)
+pieChartW w title nm legendOptions color hints cat =
+  pieChart# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color) hints) cat
+drilldownPieChartW w title nm legendOptions color hints cat =
+  drilldownPieChart# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color) hints) cat
+drilldownPieChart2W w title nm legendOptions color hints cat pres2 cols =
+  drilldownPieChart2# w (pieChartData# (Just# title) (atomize nm) legendOptions (pieColors# cat color) hints) cat pres2 (toList# $ fmap listFunctor toPair# cols)
 
 drilldownBarChartW : Writer f a -> AxisChartData# -> List ({..cr}, {..cr}) -> List ({..vr}, {..vr}) -> Presentation sr sa -> Presentation cr ca -> Presentation vr va -> String -> String -> Relation# -> f a
 drilldownBarChartW w barData cov vov s c v pid cid dat =

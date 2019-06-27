@@ -29,6 +29,7 @@ foreign
   data "com.clarifi.reporting.writers.Axis" Axis#
   data "com.clarifi.reporting.writers.ChartLegendLocation" ChartLegendLocation#
   data "com.clarifi.reporting.writers.ChartLegendOptions" ChartLegendOptions#
+  data "com.clarifi.reporting.writers.ChartRenderHints" ChartRenderHints#
   data "com.clarifi.reporting.writers.DrilldownBarAxisChart" DrilldownBarAxisChart# (dd: *) (q: *)
   data "com.clarifi.reporting.writers.ChartOrientation" PlotOrientation#
 
@@ -86,9 +87,14 @@ foreign
         chartLegendRightNotOverlay# : ChartLegendLocation#
   value "com.clarifi.reporting.writers.ChartLegendLocation$Hidden$" "MODULE$"
       chartLegendHidden# : ChartLegendLocation#
+  value "com.clarifi.reporting.writers.ChartLegendLocation$RightTable$" "MODULE$"
+      chartLegendRightTable# : ChartLegendLocation#
 
   function "com.clarifi.reporting.writers.ChartLegendOptions" "default"
       defaultChartLegendOptions# : ChartLegendOptions#
+
+  function "com.clarifi.reporting.writers.ChartRenderHints" "default"
+      defaultChartRenderHints# : ChartRenderHints#
 
   function "com.clarifi.reporting.writers.PieChartData" "rescopeColors"
     rescopePieColors# : Presentation r a
@@ -120,17 +126,21 @@ private foreign
       axisChartModule : AxisChartModule#
   method "apply" axisChartApply# : AxisChartModule# -> List# (ChartSeries# x y) -> AxisChartData# -> AxisChart#
 
+  value "com.clarifi.reporting.writers.ChartRenderHints$" "MODULE$"
+      chartRenderHintsModule : Function1 Bool# ChartRenderHints#
+
   value "com.clarifi.reporting.writers.PieChartData$" "MODULE$"
-      pieChartDataModule : Function4 (Maybe# String) (Maybe# (Atomic# nm)) ChartLegendOptions# PieColors#
+      pieChartDataModule : Function5 (Maybe# String) (Maybe# (Atomic# nm)) ChartLegendOptions# PieColors# ChartRenderHints#
                                      PieChartData#
 
   value "com.clarifi.reporting.writers.ChartLegendOptions$" "MODULE$"
       chartLegendOptionsModule : Function1 ChartLegendLocation# ChartLegendOptions#
 
   value "com.clarifi.reporting.writers.AxisChartData$" "MODULE$"
-      axisChartDataModule : Function6 Axis# Axis# (Maybe# String) PlotOrientation#
+      axisChartDataModule : Function7 Axis# Axis# (Maybe# String) PlotOrientation#
                                       ChartLegendOptions#
-                                      AxisColors# AxisChartData#
+                                      AxisColors#
+                                      ChartRenderHints# AxisChartData#
 
   value "com.clarifi.reporting.writers.Axis$" "MODULE$"
       axisModule : Function4 (Maybe# (EitherZ# (Atomic# l) (Atomic# l'))) (Format p) (Axis p) Bool# Axis#
@@ -152,13 +162,14 @@ private foreign
   method "apply" drilldownBarAxisChartApply# : DrilldownBarAxisChartModule# -> Presentation sr sa -> Presentation xr xa -> Presentation yr ya -> Maybe# (Presentation xtr xta) -> Maybe# (Presentation ytr yta) -> q -> dd -> AxisChartData# -> DrilldownBarAxisChart# dd q
 
 axisChart# = axisChartApply# axisChartModule
-axisChartData# = funcall6# axisChartDataModule
-pieChartData# = funcall4# pieChartDataModule
+axisChartData# = funcall7# axisChartDataModule
+pieChartData# = funcall5# pieChartDataModule
 axis# = funcall4# axisModule
 scaledConstraints# = funcall4# scaledConstraintsModule
 unscaledConstraints# = funcall2# unscaledConstraintsModule
 chartSeries# = chartSeriesApply# chartSeriesModule
 chartLegendOptions# = funcall1# chartLegendOptionsModule
+chartRenderHints# = funcall1# chartRenderHintsModule
 drilldownBarAxisChart# = drilldownBarAxisChartApply# drilldownBarAxisChartModule
 
 toChartSeries# (ChartSeries c xti yti so xo yo xto yto cv ex r) =

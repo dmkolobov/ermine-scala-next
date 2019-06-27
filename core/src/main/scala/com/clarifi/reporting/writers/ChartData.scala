@@ -53,7 +53,7 @@ case class AxisChart[Data](series: List[ChartSeries[Data]],
       } getOrElse Seq("All series must have same category/value types")
 
   def augmentSeries: AxisChart[Data] = meta match {
-    case AxisChartData(domain, range, _, _, _, _) =>
+    case AxisChartData(domain, range, _, _, _, _, _) =>
       def augment(fmt: Format, op: Op, opres: Option[Presentation]) : Option[Presentation] =
         opres match {
           case None => Some(Presentation(fmt, NonEmptyList(op)))
@@ -91,12 +91,18 @@ object ChartLegendLocation {
   case object Overlay extends ChartLegendLocation
   case object RightOverlay extends ChartLegendLocation
   case object RightNotOverlay extends ChartLegendLocation
+  case object RightTable extends ChartLegendLocation
   case object Hidden extends ChartLegendLocation
 }
 
 
 case class ChartLegendOptions(location: ChartLegendLocation)
 
+object ChartRenderHints extends ((Boolean) => ChartRenderHints) {
+  val default = ChartRenderHints()
+}
+
+case class ChartRenderHints(enableDataLabels: Boolean = false)
 
 /**
  * Encapsulates non-datapoint information relevant to rendering charts.
@@ -117,11 +123,11 @@ sealed trait ChartData {
 case class PieChartData(title: Option[String] = None,
                         seriesName: Option[Atomic] = None,
                         legendOptions: ChartLegendOptions = ChartLegendOptions.default,
-                        colors: PieColors
-                          = Map.empty)
+                        colors: PieColors = Map.empty,
+                        renderHints: ChartRenderHints = ChartRenderHints.default)
     extends ChartData
 
-object PieChartData extends ((Option[String], Option[Atomic], ChartLegendOptions, PieColors) => PieChartData) {
+object PieChartData extends ((Option[String], Option[Atomic], ChartLegendOptions, PieColors, ChartRenderHints) => PieChartData) {
   def rescopeColors(cat: Presentation, colors: List[(Record, Color)]
                    ): Map[NonEmptyList[PrimExpr], Color] =
     colors.view.map{case (rec, color) => (cat extract rec, color)}.toMap
@@ -142,11 +148,12 @@ case class AxisChartData(domain: Axis,
                          title: Option[String] = None,
                          orientation: ChartOrientation = ChartOrientation.Vertical,
                          legendOptions: ChartLegendOptions = ChartLegendOptions.default,
-                         colors: AxisColors = Map.empty)
+                         colors: AxisColors = Map.empty,
+                         renderHints: ChartRenderHints = ChartRenderHints.default)
      extends ChartData
 
 object AxisChartData extends ((Axis, Axis, Option[String], ChartOrientation, ChartLegendOptions,
-                               AxisColors)
+                               AxisColors, ChartRenderHints)
                               => AxisChartData) {
   /** Domain lens. */
   val domainL: Lens[AxisChartData, Axis] =
