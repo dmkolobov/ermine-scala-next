@@ -3,19 +3,19 @@ package com.spcapitaliq.jfx.table;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.log4j.Logger;
+
 import com.spcapitaliq.jfx.JFXUtil;
 import com.sun.javafx.scene.control.skin.NestedTableColumnHeader;
 import com.sun.javafx.scene.control.skin.TableHeaderRow;
 import com.sun.javafx.scene.control.skin.TableViewSkin;
+import javafx.application.Platform;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
-import javafx.event.EventHandler;
 import javafx.scene.Cursor;
 import javafx.scene.Node;
 import javafx.scene.control.TableView;
-import javafx.scene.input.MouseEvent;
 import javafx.scene.shape.Rectangle;
-import org.apache.log4j.Logger;
 
 /**
  * Hack for introducing the resize cursor in between table columns. This is necessary in the current iteration of
@@ -41,23 +41,9 @@ public class MouseCursorInTable
       _log.trace("Adding handlers for: " + node);
 
       final Rectangle rect = (Rectangle) node;
-      rect.setOnMouseEntered(new EventHandler<MouseEvent>()
-      {
-        @Override
-        public void handle(MouseEvent mouseEvent)
-        {
-          tableView.setCursor(Cursor.W_RESIZE);
-        }
-      });
+      rect.setOnMouseEntered( mouseEvent -> tableView.setCursor(Cursor.W_RESIZE) );
 
-      rect.setOnMouseExited(new EventHandler<MouseEvent>()
-      {
-        @Override
-        public void handle(MouseEvent mouseEvent)
-        {
-          tableView.setCursor(Cursor.DEFAULT);
-        }
-      });
+      rect.setOnMouseExited( mouseEvent -> tableView.setCursor(Cursor.DEFAULT) );
     }
   }
 
@@ -105,18 +91,11 @@ public class MouseCursorInTable
     }
   }
 
-  public static void fixCursorInPanel(final TableView<?> tableView, boolean delay )
+  public static void fixCursorInPanel(TableView<?> tableView, boolean delay )
   {
     if( delay )
     {
-      JFXUtil.setOnFirstSized(tableView, new Runnable() {
-
-        @Override
-        public void run()
-        {
-          fixCursorInPanel(tableView, false);
-        }
-      });
+      JFXUtil.setOnFirstSized(tableView, () -> fixCursorInPanel(tableView, false) );
       return;
     }
 
@@ -125,7 +104,12 @@ public class MouseCursorInTable
     TableViewSkin<?> skin = (TableViewSkin<?>) tableView.getSkin();
 
     if(null == skin)
-      throw new NullPointerException("Skin not present yet, try calling again with delay set to true");
+    {
+      _log.debug("Null skin, queuing fixCursorInPanel...");
+      Platform.runLater(() -> fixCursorInPanel( tableView, false ) );
+
+      return;
+    }
 
     for (Node skinNode : skin.getChildren())
     {
@@ -142,22 +126,17 @@ public class MouseCursorInTable
 
             ObservableList<Node> headerChildren = nestedHeader.getChildrenUnmodifiable();
             changeHandler(tableView, headerChildren);
-            headerChildren.addListener(new ListChangeListener<Node>()
-            {
-              @Override
-              public void onChanged(Change<? extends Node> change)
-              {
-                _log.trace("Header nodes changed.");
+            headerChildren.addListener( (ListChangeListener<Node>)change -> {
+              _log.trace("Header nodes changed.");
 
-              while (change.next())
+            while (change.next())
+            {
+              if (change.wasAdded())
               {
-                if (change.wasAdded())
-                {
-                  changeHandler(tableView, new ArrayList<>(change.getList()));
-                }
+                changeHandler(tableView, new ArrayList<>(change.getList()));
               }
-              }
-            });
+            }
+            } );
           }
         }
       }
