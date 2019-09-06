@@ -1105,19 +1105,28 @@ object Lib {
              pr => FAR(r => FA(a => asPresCon(pr) =>: pr(r, a) ->: presentation(r, a)))))
   }
 
+  sealed abstract class Scaling(val scaled: Boolean, val unscaled: Boolean)
+  object Scaling {
+    case object Scaled extends Scaling(true, false)
+    case object Unscaled extends Scaling(false, true)
+    case object Both extends Scaling(true, true)
+  }
+
   /** Builtin bindings of `Prim *` values.  */
-  val primBindings: Iterable[(Global, PrimT, Type, Boolean /* scaled? */)] =
-    Vector((Global("Prim","Int"),    PrimT.IntT(true),      prim(int),    true),
-           (Global("Prim","String"), PrimT.StringT(0,true), prim(string), false),
+  val primBindings: Iterable[(Global, PrimT, Type, Scaling)] = {
+    import Scaling._
+    Vector((Global("Prim","Int"),    PrimT.IntT(true),      prim(int),    Both),
+           (Global("Prim","String"), PrimT.StringT(0,true), prim(string), Unscaled),
            // (Global("Prim","Float"),  PrimT.FloatT(true),    prim(float),  true)
-           (Global("Prim","Bool"),   PrimT.BooleanT(true),  prim(bool),   false),
-           (Global("Prim","GUID"),   PrimT.UuidT(true),     prim(uuid),   false),
-           (Global("Prim","Double"), PrimT.DoubleT(true),   prim(double), true),
-           (Global("Prim","Byte"),   PrimT.ByteT(true),     prim(byte),   true),
-           (Global("Prim","Short"),  PrimT.ShortT(true),    prim(short),  true),
-           (Global("Prim","Long"),   PrimT.LongT(true),     prim(long),   true),
-           (Global("Prim","Date"),   PrimT.DateT(true),     prim(date),   true),
-           (Global("Prim","Timestamp"), PrimT.TimestampT(true), prim(timestamp), true))
+           (Global("Prim","Bool"),   PrimT.BooleanT(true),  prim(bool),   Unscaled),
+           (Global("Prim","GUID"),   PrimT.UuidT(true),     prim(uuid),   Unscaled),
+           (Global("Prim","Double"), PrimT.DoubleT(true),   prim(double), Both),
+           (Global("Prim","Byte"),   PrimT.ByteT(true),     prim(byte),   Both),
+           (Global("Prim","Short"),  PrimT.ShortT(true),    prim(short),  Both),
+           (Global("Prim","Long"),   PrimT.LongT(true),     prim(long),   Both),
+           (Global("Prim","Date"),   PrimT.DateT(true),     prim(date),   Scaled),
+           (Global("Prim","Timestamp"), PrimT.TimestampT(true), prim(timestamp), Scaled))
+  }
 
   def prims(implicit s: SessionEnv, su: Supply) {
     addCon(prim)
@@ -1218,11 +1227,37 @@ object Lib {
                List(a), List(), List(_))
     }
     for (b <- primBindings) {
-      val (_, d, AppT(_, t), scaledp) = b
-      val cla = if (scaledp) scaled else unscaled
-      addInstance(cla, primInstance(cla, t, d))
-      addInstance(cla, primInstance(cla, nullable(t), d.withNull))
+      val (_, d, AppT(_, t), scaling) = b
+      if (scaling.scaled) {
+        addInstance(scaled, primInstance(scaled, t, d))
+        addInstance(scaled, primInstance(scaled, nullable(t), d.withNull))
+      }
+      if (scaling.unscaled) {
+        addInstance(unscaled, primInstance(unscaled, t, d))
+        addInstance(unscaled, primInstance(unscaled, nullable(t), d.withNull))
+      }
     }
+
+    // construct a magic instance that covers products
+    addInstance(unscaled, new Instance(su.fresh) {
+      def loc = Loc.builtin
+      def reqs(p: List[Type]): Option[List[Type]] = p match {
+        case List(t) =>
+          def go(t: Type, as: List[Type] = List()): Option[List[Type]] = t match {
+            case AppT(f,a)    => go(f,a::as)
+            case _ : ProductT if as.length > 0
+              => Some(as.map(unscaled(_)) ++ as.map(primitive(_)))
+            case _            => None
+          }
+          go(t,List())
+        case _ => None
+      }
+      def build(ds: List[Runtime]): Runtime = Prim(())
+      def pretty = List(
+        text("instance Unscaled (a .. z) | Unscaled a .. Unscaled z"),
+        text("instance Eq {..r}")
+      )
+    })
 
     // class Num a | PrimitiveNum a
     val num = {

@@ -13,7 +13,9 @@ signature, that argument may be filled in by `defaults` or any
 
 import Control.Functor using fmap
 import Function
+import List.NonEmpty as NE
 import Layout.Chart.Type
+import Layout.Chart.Unsafe using unscaledConstraints#
 import Layout.Presentation
 import Layout.Report.Keyed.OptionTypes
 import Layout.Report as R
@@ -24,6 +26,8 @@ import Either
 import Maybe
 import Ord using lt
 import Pair
+import Native.Map as NM
+import Native.NonEmpty using toNel#
 import Relation.Sort hiding ordering
 export Layout.Report.Keyed.Syntax
 -- export Layout.Report hiding prefS
@@ -85,8 +89,10 @@ scaled oa = oa scaledDefaults |> (ScaledOptions so low up ds) ->
 unscaled : Unscaled a
         => (Options (UnscaledOptions u1 a) (UnscaledDefaults u1' a))
         -> Axis a
-unscaled oa = oa unscaledDefaults |> (UnscaledOptions so) ->
-  unscaled_R (fmap eitherFunctor lt so)
+unscaled oa
+  =  oa unscaledDefaults
+  |> (UnscaledOptions so)
+  -> unscaledConstraints# (toNel# $ map_NE toSortOrder# so) empty#_NM
 
 chart : (Primitive xa', Primitive ya')
      => (Options (ChartOptions tdxfyf xa ya)
@@ -116,7 +122,7 @@ drilldownBarChart : (exists o. r <- (sr, cr, vr, pi, ci, o),
                                Relational rel)
                  => Axis ca
                  -> Axis va
-                 -> (Options (DrilldownBarChartOptions tdlocv sr sa cr vr)
+                 -> (Options (DrilldownBarChartOptions tdlocv sr sa cr vr cs)
                              (DrilldownBarChartDefaults tdlocv' cr vr))
                  -> cpr cr ca
                  -> vpr vr va
@@ -124,6 +130,6 @@ drilldownBarChart : (exists o. r <- (sr, cr, vr, pi, ci, o),
                  -> Field ci id
                  -> rel r
                  -> Report_R f z
-drilldownBarChart cax vax oa = oa drilldownBarChartDefaults
-  |> (DrilldownBarChartOptions title dir lo hints clbl vlbl spr cov vov) ->
-    drilldownBarChart_R title dir lo hints clbl cov cax vlbl vov vax spr
+drilldownBarChart cax vax oa cat val = oa drilldownBarChartDefaults
+  |> (DrilldownBarChartOptions title dir lo hints clbl vlbl spr cov vov cs) ->
+    drilldownBarChart'_R title dir lo hints clbl cov cax vlbl vov vax spr cat val cs

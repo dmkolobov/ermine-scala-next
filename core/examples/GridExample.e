@@ -29,7 +29,7 @@ stackedTable = relation [
 
 stackedChart opts v s x y r =
     chart_K opts
-      (unscaled $ Right ltStringDateRange_DR)
+      (unscaled Ascending)
       defaultScaled
       [v s x y r]
 

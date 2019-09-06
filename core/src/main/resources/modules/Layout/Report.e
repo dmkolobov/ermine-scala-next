@@ -43,7 +43,7 @@ import Control.Monad
 import Control.Monad.Cont
 import Control.Traversable
 import Relation using rheader; asMem; relation
-import Relation.Op using prim; typeOfOp; type Op
+import Relation.Op using prim; typeOfOp; asOp; type Op
 import Relation.Pivot using type Fulcrum; snoc_Brace as snoc_Fulcrum ; single_Brace as single_Fulcrum; pivot
 import Relation.Row using project; except; minus; single_Brace; snoc_Brace; type Row; append as appendR
                           empty as emptyRow
@@ -1121,18 +1121,25 @@ defaultScaled : forall a . Scaled a => Axis a
 defaultScaled = scaled Ascending Nothing Nothing Linear
 
 -- | Axis information for an Unscaled axis.
-unscaled : Unscaled a
-        => Either SortOrder (a -> a -> Bool) -- ^ Natural or computed (less-than) sort.
+unscaled : (Primitive a, Unscaled a)
+        => SortOrder -- ^ Natural or computed (less-than) sort.
         -> Axis a
-unscaled = flip unscaledConstraints# empty#_NM . toEitherZ#
-         . either (Left . toSortOrder#) (Right . ord# . peify . fromLess)
-    where peify f l r = f (unsafePrimExprIn# l) (unsafePrimExprIn# r)
+unscaled s = unscaledConstraints# (nel# (toSortOrder# s) Nil#) empty#_NM
+
+unscaled'
+  :  (Unscaled (a, b))
+  => SortOrder -> SortOrder
+  -> Axis (a, b)
+unscaled' sa sb
+  = unscaledConstraints#
+      (nel# (toSortOrder# sa) (toSortOrder# sb ::# Nil#))
+      empty#_NM
 
 -- | The default axis for discrete data, sorting natural ascending.
 defaultUnscaled : forall a . Unscaled a => Axis a
-defaultUnscaled = unscaled $ Left Ascending
+defaultUnscaled = unscaled Ascending
 
-unscaledDateRange = unscaled $ Right ltStringDateRange
+-- unscaledDateRange = unscaled $ Right ltStringDateRange
 
 data SeriesStructure
   = SimpleStructure
@@ -1206,7 +1213,7 @@ barChart : forall x y d e r1 r2 r3 r v z rel .
         -> Report f z
 barChart t xl yl s x y r =
     chart t Vertical defaultChartLegendOptions defaultChartRenderHints#
-      (upgradeAxisLabel xl) unit_Fmt True (unscaled $ Left Ascending)
+      (upgradeAxisLabel xl) unit_Fmt True (unscaled Ascending)
       (upgradeAxisLabel yl) unit_Fmt True (scaled Ascending Nothing Nothing Linear)
       [bar s x y r]
 
@@ -1496,6 +1503,41 @@ drilldownBarChart title ori legOpt hints catLbl catTo catC datLbl datTo datC ser
       (asPresentation ser) (asPresentation cat) (asPresentation dat)
       (fieldName parentId) (fieldName childId) (relation# fact)
 
+-- | Enchanced interface for drilldown bar charts.
+drilldownBarChart'
+  :  forall f spr sr sa cpr cr ca vpr vr va pi ci id r z rel csr cs.
+     (exists o . r <- (sr, cr, vr, pi, ci, o),
+       AsPresentation spr, AsPresentation cpr,
+       AsPresentation vpr, AsPresentation dpr,
+       Relational rel)
+  => Maybe String       -- ^ Chart title.
+  -> Direction          -- ^ Orientation.
+  -> ChartLegendOptions# -- ^ Options for the charts legend.
+  -> ChartRenderHints#       -- ^ Misc. options for the chart that may or may not be adhered to, depending on the writer (e.g. data labels)
+  -> AxisLabel           -- ^ Category axis label.
+  -> List ({..cr}, {..cr}) -- ^ Tick label overrides on category.
+  -> Axis ca            -- ^ Rules for category axis.
+  -> AxisLabel          -- ^ Value axis label.
+  -> List ({..vr}, {..vr}) -- ^ Tick label overrides on value.
+  -> Axis va            -- ^ Rules for value axis.
+  -> spr sr sa          -- ^ Choose/show series.
+  -> cpr cr ca          -- ^ Choose/show category.
+  -> vpr vr va          -- ^ Choose/show value.
+  -> Maybe (dpr xdr xda)-- ^ Display category as...
+  -> Field pi id        -- ^ Parent field reference.
+  -> Field ci id        -- ^ Child field reference.
+  -> rel (|..r|)        -- ^ Underlying relation.
+  -> Report f z
+drilldownBarChart' title ori legOpt hints catLbl catTo catC datLbl datTo datC ser cat dat xd parentId childId fact =
+  Report $ w -> drilldownBarChartW' w
+      -- XXX pass something other than Nil here for choosing colors
+      (axisChartDataW catLbl unit_Fmt True datLbl unit_Fmt True
+                      catC datC title ori legOpt hints Nil)
+      catTo datTo
+      (asPresentation ser) (asPresentation cat) (asPresentation dat)
+      (fmap maybeFunctor asPresentation xd)
+      Nothing Nothing
+      (fieldName parentId) (fieldName childId) (relation# fact)
 -- | A drilldown bar chart with multiple parent child columns.
 drilldownBarChart2 : forall f spr sr sa cpr cr ca vpr vr va r2 r z rel .
                     (exists o . r <- (sr, cr, vr, o),

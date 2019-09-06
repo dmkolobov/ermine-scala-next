@@ -46,6 +46,8 @@ private foreign
       constant# : Function1 String (Format a)
   value "com.clarifi.reporting.writers.Format$Pr1$" "MODULE$"
       pr1# : Function1 (Format a) (Format (a,b))
+  value "com.clarifi.reporting.writers.Format$Pr2$" "MODULE$"
+      pr2# : Function1 (Format b) (Format (a,b))
 
   value "com.clarifi.reporting.writers.Format$Alias$" "MODULE$"
       alias# : Function1 (List# (Pair# String String)) (Format String)
@@ -118,6 +120,9 @@ constant = funcall1# constant#
 
 pr1 : Format a -> Format (a, b)
 pr1 = funcall1# pr1#
+
+pr2 : Format b -> Format (a, b)
+pr2 = funcall1# pr2#
 
 alias : List (String, String) -> Format String
 alias = funcall1# alias# . toList# . map_List toPair#

@@ -837,6 +837,20 @@ object Format {
     }
   }
 
+  case class Pr2(fst : Format) extends Format {
+    val basicEval = recursiveEval(_.basicEval)
+    def devolve(ops: NelOp) = ops.tail match {
+      case (x :: xs) => fst.devolve(NonEmptyList(x, xs:_*))
+      case _ => fst.devolve(ops) // should be impossible, throw an error instead?
+    }
+
+    override def recursiveEval(rec : Format => NelPe => PrimExpr) =
+      (pes : NelPe) => pes.tail match {
+        case x :: xs => rec(fst)(NonEmptyList(x, xs:_*))
+        case _ => rec(fst)(pes) // again, error?
+      }
+  }
+
   /** Meant for two-field displays: format as one field, a date
     * range. */
   case object DateRange extends Format {

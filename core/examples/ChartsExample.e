@@ -369,11 +369,11 @@ scalingTest = chart_K
   (scaled Ascending (Just (Some 0.05)) Nothing Linear)
   [line label startDate value timeSeriesData]
 
-dateRangeAxisTest = chart_K
-  ([yFormat_O := percentage_Fmt]_Opt)
-  unscaledDateRange
-  defaultScaled
-  [line label (dateRange_Op startDate startDate) value timeSeriesData]
+-- dateRangeAxisTest = chart_K
+--   ([yFormat_O := percentage_Fmt]_Opt)
+--   unscaledDateRange
+--   defaultScaled
+--   [line label (dateRange_Op startDate startDate) value timeSeriesData]
 
 lineTimeSeriesChart =
   let
@@ -470,7 +470,7 @@ stacked1Table = relation [
 
 dateRangeBarChart opts s x y r =
     chart_K opts
-      (unscaled $ Right ltStringDateRange_DR)
+      (unscaled Ascending)
       defaultScaled
       [bar s x y r]
 
@@ -490,7 +490,7 @@ stacked2Table = relation [
 
 stackedPair opts s x y r1 r2=
     chart_K opts
-      (unscaled $ Right ltStringDateRange_DR)
+      (unscaled Ascending)
       defaultScaled
       [bar s x y r1, line s x y r2]
 
