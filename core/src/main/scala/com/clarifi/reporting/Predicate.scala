@@ -83,7 +83,7 @@ object Predicate {
   implicit val PredicateAndMonoid: Monoid[Predicate @@ Tags.Conjunction] = Tag.subst(Monoid.instance( And(_,_), Atom(true)))
 
   /** A predicate that requires the subject be a superset of `tup`. */
-  def fromRecord(tup: Record): Predicate = Predicates all (tup map {
+  def fromRecord(tup: Record): Predicate = Predicates all (tup.toSeq map {
     case (cn, cv) => Eq(Op.ColumnValue(cn, cv.typ), Op.OpLiteral(cv))
   })
 }

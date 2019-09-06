@@ -237,7 +237,17 @@ object RecordMap extends RecordMapLowPriorityImplicits {
     override def transform[C, That](f: (A, B) => C)
                           (implicit bf: CanBuildFrom[RecordMap[A, B], (A, C), That]): That =
       bf match {
+        case bfm: MapCanBuildFrom[A, C] =>
+          // The keyset is guaranteed not to change, so we can skip
+          // the filling checks in SameKeyBuilder.
+          val out = iPromiseToFillThis[C](values.size)
+          keyCache foreach { case (k, i) =>
+            out(i) = f(k, indexValueSeq(values, i))
+          }
+          new SharingKeySet(keyCache, out.asInstanceOf[ArrayBuffer[AnyRef]].toArray): That
         case bfr: MayShareKeys[A, C] =>
+          // Alexei: this branch does not seem to work, calls always come in with MapCanBuildFrom[A,C]
+          
           // The keyset is guaranteed not to change, so we can skip
           // the filling checks in SameKeyBuilder.
           val out = iPromiseToFillThis[C](values.size)
@@ -247,9 +257,16 @@ object RecordMap extends RecordMapLowPriorityImplicits {
           new SharingKeySet(keyCache, out.asInstanceOf[ArrayBuffer[AnyRef]].toArray): That
         case _ => super.transform(f)(bf)
       }
-
+    
     override def mapValues[C](f: B => C): Map[A, C] =
       new SharingKeySet(keyCache, values map (x => f(x.asInstanceOf[B]).asInstanceOf[AnyRef]))
+
+/*  A trap to weed out sub-optimal calls  
+    override def map[C, That](f: ((A, B)) => C)(implicit bf: CanBuildFrom[RecordMap[A,B],C,That]): That =
+      println("SharingKeySet: map: bf.class = " + bf.getClass.getName)
+      sys.error("SharingKeySet: map: Not implemented")
+    }
+*/
 
     override def filterKeys(p: A => Boolean): Map[A, B] =
       rebuild((key,i) => p(key), keyCache, values)
