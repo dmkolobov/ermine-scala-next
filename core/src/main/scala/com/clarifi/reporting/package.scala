@@ -31,7 +31,7 @@ package object reporting {
   //   implicitly[Order[IndexedSeq[(ColumnName, PrimExpr)]]].contramap((r:Record) =>
   //    r.toIndexedSeq.sortBy((p: (ColumnName, PrimExpr)) => p._1))
 
-  def recordHeader(t: Record): Header = t map { case (k, v) => k -> v.typ }
+  def recordHeader(t: Record): Header = t.mapValues( _.typ )
 
   type TypeError = List[String]
 

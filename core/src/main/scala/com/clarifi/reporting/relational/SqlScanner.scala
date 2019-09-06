@@ -377,10 +377,16 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
             }
           }, rx combineAll(Map(attr.name -> op), { case x => x }, x => x))
       case AggregateM(e, attr, op) =>
+        def mkRecord(n: ColumnName)(p: PrimExpr) = RecordMap(n -> p)
+        def aggregateOrderedProc(q: OrderedProcedure[DB, Record])(l: List[(String, SortOrder)]): DB[Procedure[scalaz.Id.Id, Record]] = {
+          val qq: DB[Procedure[scalaz.Id.Id, Record]] = q(List())
+          qq map ((x: Procedure[scalaz.Id.Id, Record]) => x andThen reduceProcess(op, attr.t).outmap( mkRecord(attr.name) ))
+        }
+        
         val MemPrg(h, ps, q, rx) = compileMem(e, smv, srv)
         MemPrg(Map(attr.name -> attr.t),
                ps,
-               _ => q(List()) map (_ andThen reduceProcess(op, attr.t).outmap(p => RecordMap(attr.name -> p))),
+               aggregateOrderedProc(q),
                ForallTups(Map(attr.name -> None), PartitionedSet.zero))
       case LimitM(m, start, stop, order) =>
         val MemPrg(h, ps, q, rx) = compileMem(m, smv, srv)
@@ -938,7 +944,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
     import emitter.distinctEagerly
 
-    def columns(h: Header, rv: TableName) = h.map(x => (x._1, ColumnSqlExpr(rv, x._1)))
+    def columns(h: Header, rv: TableName) = h.transform((k,v) => ColumnSqlExpr(rv, k))
 
     private[DistinctiveQuery]
     def selectOps(sel: Map[Attribute,Op], col: String => SqlExpr): Map[ColumnName, SqlExpr] =

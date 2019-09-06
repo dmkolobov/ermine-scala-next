@@ -160,7 +160,7 @@ object Bottom {
 
 class Rec(val t: Map[String, Runtime]) extends Runtime {
   def extract[A] = this.asInstanceOf[A]
-  override def nf = Rec(t.map({ case (k, v) => (k, v.nf)}).toMap)
+  override def nf = Rec( t.mapValues( _.nf ) )
 
   override def equals(v: Any) = v match {
     case (rv : Runtime) => rv.whnf match {
@@ -346,7 +346,7 @@ object Runtime {
     else Fun(v => accumData(name, v :: vals, n - 1))
 
   def recAsRecord(r: Rec): Record = r match {
-    case Rec(tup) => tup.map(a => a._1 -> toPrimExpr(a._2))
+    case Rec(tup) => tup.mapValues( toPrimExpr(_, false) )
   }
 
   object RecAsRecord {
@@ -357,10 +357,13 @@ object Runtime {
     case Nil => EmptyRel
     case (_ :: _) => {
       try {
-        Rel(ExtRel(SmallLit(ts.map(x => x.nf match {
-          case RecAsRecord(r) => r
-          case o => die("Panic: buildRelation: Expected a record. Found: " + o)
-        }).toNel.get), ""))
+        val rs = ts.map(x => {
+          x.nf match {
+            case RecAsRecord(r) => r
+            case o => die("Panic: buildRelation: Expected a record. Found: " + o)
+          }
+        })
+        Rel(ExtRel(SmallLit(rs.toNel.get), ""))
       } catch { case NonFatal(e) => Bottom(throw e) }
     }
   }
