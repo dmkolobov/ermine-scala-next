@@ -122,7 +122,7 @@ drilldownBarChart : (exists o. r <- (sr, cr, vr, pi, ci, o),
                                Relational rel)
                  => Axis ca
                  -> Axis va
-                 -> (Options (DrilldownBarChartOptions tdlocv sr sa cr vr cs)
+                 -> (Options (DrilldownBarChartOptions tdlocv sr sa cr vr)
                              (DrilldownBarChartDefaults tdlocv' cr vr))
                  -> cpr cr ca
                  -> vpr vr va
@@ -131,5 +131,5 @@ drilldownBarChart : (exists o. r <- (sr, cr, vr, pi, ci, o),
                  -> rel r
                  -> Report_R f z
 drilldownBarChart cax vax oa cat val = oa drilldownBarChartDefaults
-  |> (DrilldownBarChartOptions title dir lo hints clbl vlbl spr cov vov cs) ->
-    drilldownBarChart'_R title dir lo hints clbl cov cax vlbl vov vax spr cat val cs
+  |> (DrilldownBarChartOptions title dir lo hints clbl vlbl spr cov vov) ->
+    drilldownBarChart'_R title dir lo hints clbl cov cax vlbl vov vax spr cat val

@@ -1523,19 +1523,17 @@ drilldownBarChart'
   -> spr sr sa          -- ^ Choose/show series.
   -> cpr cr ca          -- ^ Choose/show category.
   -> vpr vr va          -- ^ Choose/show value.
-  -> Maybe (dpr xdr xda)-- ^ Display category as...
   -> Field pi id        -- ^ Parent field reference.
   -> Field ci id        -- ^ Child field reference.
   -> rel (|..r|)        -- ^ Underlying relation.
   -> Report f z
-drilldownBarChart' title ori legOpt hints catLbl catTo catC datLbl datTo datC ser cat dat xd parentId childId fact =
+drilldownBarChart' title ori legOpt hints catLbl catTo catC datLbl datTo datC ser cat dat parentId childId fact =
   Report $ w -> drilldownBarChartW' w
       -- XXX pass something other than Nil here for choosing colors
       (axisChartDataW catLbl unit_Fmt True datLbl unit_Fmt True
                       catC datC title ori legOpt hints Nil)
       catTo datTo
       (asPresentation ser) (asPresentation cat) (asPresentation dat)
-      (fmap maybeFunctor asPresentation xd)
       Nothing Nothing
       (fieldName parentId) (fieldName childId) (relation# fact)
 -- | A drilldown bar chart with multiple parent child columns.

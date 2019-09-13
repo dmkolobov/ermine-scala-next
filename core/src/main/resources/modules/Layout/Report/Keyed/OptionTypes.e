@@ -138,14 +138,12 @@ pieChartDefaults : PieChartDefaults ph lbl
 pieChartDefaults = PieChartOptions "" Nothing chartLegendDefaultLocation Nil defaultChartRenderHints# Nothing
 
 -- | drilldownBarChart
-data DrilldownBarChartOptions tdlocv sr sa cr vr dc {-title' logOpts' dir' cl' vl'-} =
-  forall dt.
+data DrilldownBarChartOptions tdlocv sr sa cr vr {-title' logOpts' dir' cl' vl'-} =
   DrilldownBarChartOptions (Maybe String) Direction ChartLegendOptions# ChartRenderHints#
                            AxisLabel AxisLabel
                            (Presentation sr sa)
                            (List ({..cr}, {..cr})) (List ({..vr}, {..vr}))
-                           (Maybe (Presentation dc dt))
-type DrilldownBarChartDefaults u1 cr vr = DrilldownBarChartOptions u1 (||) String cr vr (||)
+type DrilldownBarChartDefaults u1 cr vr = DrilldownBarChartOptions u1 (||) String cr vr
 drilldownBarChartDefaults : DrilldownBarChartDefaults u1 cr vr
 drilldownBarChartDefaults
   = DrilldownBarChartOptions
@@ -158,4 +156,3 @@ drilldownBarChartDefaults
       (asPresentation ' prim "")
       Nil
       Nil
-      Nothing
