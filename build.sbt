@@ -18,7 +18,7 @@ name <<= artifactNameNormalizer(_("scala"))
 
 organization in ThisBuild := "com.clarifi.ermine"
 
-version in ThisBuild := "2.15.0"
+version in ThisBuild := "2.15.1"
 
 initialCommands in ThisBuild := ""
 
