@@ -572,7 +572,10 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         val rename = (s: String) => renamesStr.get(s).map( _.asInstanceOf[Op.ColumnValue].col ).getOrElse(s)
         val generalOps = cs -- renames.keys
         val generalOpsStr = generalOps map {case (a, o) => (a.name, o)}
-        val mapRecord = (ops: Map[Attribute, Op]) => (proc:Procedure[scalaz.Id.Id, Record]) => proc.map((t: Record) => ops.map { case (attr, op) => attr.name -> op.eval(t) })
+        val mapRecord = (ops: Map[Attribute, Op]) => (proc:Procedure[scalaz.Id.Id, Record]) => proc.map(
+          // Alexei: using RecordMap here for lesser memory footprint
+          (t: Record) => RecordMap(ops.toSeq.map { case (attr, op) => attr.name -> op.eval(t) })
+        )
 
         val needUniq = !preservesDistinctness(h, rx, cs)
 
@@ -705,7 +708,20 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     def build(m: Map[Record, Vector[Record]]): Plan[T[Record, Record], Nothing, Map[Record, Vector[Record]]] =
       awaits(right[Record]) flatMap { rr =>
         val k = rr filterKeys jk
-        build(m.updated(k, m.getOrElse(k, Vector.empty) :+ rr))
+        val v = m.getOrElse(k, Vector.empty)
+        /* Alexei: short-circuit a degenerate case of adding the same record to the vector over and over again
+                   otherwise memory use by issue browser tables explodes even in simple PA reports
+        */
+        val rr2 = if (v.isEmpty) Vector(rr)
+        else {
+          val last = v.last
+          if (last == rr) v
+          else v :+ rr
+        }  
+        
+        val u = m.updated(k, rr2)
+        
+        build(u)
       } orElse Return(m)
     def augments(m: Map[Record, Vector[Record]], r: Record): Vector[Record] = m.lift(r filterKeys jk) match {
       case None => Vector(r ++ nulls)

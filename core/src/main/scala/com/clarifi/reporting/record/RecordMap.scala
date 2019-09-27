@@ -76,6 +76,9 @@ object RecordMap extends RecordMapLowPriorityImplicits {
       Map(kv)
     def -(key: Any): RecordMap[Any, Nothing] = this
 
+    override def updated[B1 >: Nothing](key: Any, value: B1): Map[Any, B1] = 
+      RecordMap((key, value))
+
     private[record] def rkeyCache = None
   }
 
@@ -261,13 +264,21 @@ object RecordMap extends RecordMapLowPriorityImplicits {
     override def mapValues[C](f: B => C): Map[A, C] =
       new SharingKeySet(keyCache, values map (x => f(x.asInstanceOf[B]).asInstanceOf[AnyRef]))
 
-/*  A trap to weed out sub-optimal calls  
-    override def map[C, That](f: ((A, B)) => C)(implicit bf: CanBuildFrom[RecordMap[A,B],C,That]): That =
+    override def updated[B1 >: B](key: A, value: B1): Map[A, B1] = {
+      (keyCache get key) match {
+        case None =>
+          SharingKeySet(keyCache updated (key, keyCache.size), values :+ value.asInstanceOf[AnyRef])
+        case Some(i) =>
+          new SharingKeySet(keyCache, values updated (i, value.asInstanceOf[AnyRef]))
+      }
+    }
+    
+/*  Trap to weed out suboptimal code paths
+    override def map[C, That](f: ((A, B)) => C)(implicit bf: CanBuildFrom[RecordMap[A,B],C,That]): That = {
       println("SharingKeySet: map: bf.class = " + bf.getClass.getName)
       sys.error("SharingKeySet: map: Not implemented")
     }
 */
-
     override def filterKeys(p: A => Boolean): Map[A, B] =
       rebuild((key,i) => p(key), keyCache, values)
 
