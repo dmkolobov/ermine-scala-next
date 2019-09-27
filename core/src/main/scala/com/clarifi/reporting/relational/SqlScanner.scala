@@ -569,7 +569,10 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         val rename = (s: String) => renamesStr.get(s).map( _.asInstanceOf[Op.ColumnValue].col ).getOrElse(s)
         val generalOps = cs -- renames.keys
         val generalOpsStr = generalOps map {case (a, o) => (a.name, o)}
-        val mapRecord = (ops: Map[Attribute, Op]) => (proc:Procedure[scalaz.Id.Id, Record]) => proc.map((t: Record) => ops.map { case (attr, op) => attr.name -> op.eval(t) })
+        val mapRecord = (ops: Map[Attribute, Op]) => (proc:Procedure[scalaz.Id.Id, Record]) => proc.map(
+          // Alexei: using RecordMap here for lesser memory footprint
+          (t: Record) => RecordMap(ops.toSeq.map { case (attr, op) => attr.name -> op.eval(t) })
+        )
 
         val needUniq = !preservesDistinctness(h, rx, cs)
 
