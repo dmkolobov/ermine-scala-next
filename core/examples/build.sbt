@@ -9,7 +9,7 @@ crossVersion := CrossVersion.Disabled
 resourceDirectory in Compile <<= baseDirectory(identity)
 
 excludeFilter in (Compile, unmanagedResources) ~=
-  (_ || "*.sbt" || "*.md" || "src" || "target")
+  (_ || "*.sbt" || "*.md" || "src" || "target" || "ivy.xml" || "build.xml")
 
 classDirectory in Compile ~= (_ / "com" / "clarifi" / "reporting" / "examples")
 
