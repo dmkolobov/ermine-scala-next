@@ -15,3 +15,9 @@ cons a (b :| bs) = a :| b :: bs
 toList (a :| as) = (a :: as)
 
 map f (x :| xs) = f x :| map_List_List f xs
+
+singleton : a -> NonEmpty a
+singleton x = x :| []_List
+
+doubleton : a -> a -> NonEmpty a
+doubleton x y = x :| [y]_List

@@ -8,16 +8,34 @@ import Native.Record
 import Control.Functor using fmap
 import Bool
 import Eq
+import Field
 import Int
 import List
 import Ord
 import Pair
+import Prim using prim#
 import Syntax.List
-import Relation.Row hiding {empty_Bracket; cons_Bracket; empty; single; append }
+import Relation.Row hiding empty_Bracket; cons_Bracket; empty; single; append
 import Function
 import Constraint
 
 data SortOrder = Ascending | Descending
+
+private
+  data MultiSortOrder#
+    = SingleSort SortOrder
+    | DualSort SortOrder SortOrder
+
+type MultiSortOrder a = MultiSortOrder#
+
+singleSort : Primitive a => SortOrder -> MultiSortOrder a
+singleSort = SingleSort
+
+dualSort
+  :  (Primitive a, Primitive b)
+  => SortOrder -> SortOrder
+  -> MultiSortOrder (a, b)
+dualSort = DualSort
 
 data Sort (r:row) = Sort (List (String, PrimT, SortOrder))
 
@@ -30,6 +48,9 @@ empty = Sort []
 
 ordering : Row r -> Sort r
 ordering (Row r) = Sort (map ((t, pt) -> (t, pt, Ascending)) r)
+
+single : (Field f a, SortOrder) -> Sort f
+single (f, s) = Sort $ [(fieldName f, prim# $ fieldType f, s)]
 
 -- | Advance and rewrite priorities as needed.  For softRelations,
 -- you'll need to try reorderSome instead.

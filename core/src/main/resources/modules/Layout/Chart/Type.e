@@ -3,6 +3,7 @@ module Layout.Chart.Type where
 import Layout.Color using type Color
 import Layout.Presentation using type Presentation
 import Layout.PresRow using type PresRow
+import List.NonEmpty using type NonEmpty
 import Relation.Op using type Op
 import Prim using type PrimExpr#
 
@@ -18,7 +19,7 @@ data ChartSeries xa ya =
                 (List ({..s}, {..s}))
                 (List ({..t}, {..t}))
                 (Presentation sr sa)
-                (Op xr xa)
+                (NonEmpty (Op xr xa))
                 (Op yr ya)
                 (Maybe (Presentation xtr xta))
                 (Maybe (Presentation ytr yta))

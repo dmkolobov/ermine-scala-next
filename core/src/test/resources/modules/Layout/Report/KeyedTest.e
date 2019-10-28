@@ -34,9 +34,9 @@ scaled1 = scaled_K ([numericOrder_O := whatever,
                      lowerBound_O := 0,
                      upperBound_O := 42]_Opt)
 
-unscaled1 = unscaled_K ([stringOrder_O := whatever]_Opt)
+unscaled1 = unscaled_K ([singleOrder_O := whatever]_Opt)
 
-unscaled2 = unscaled_K ([arbitraryOrder_O := whatever]_Opt)
+-- unscaled2 = unscaled_K ([arbitraryOrder_O := whatever]_Opt)
 
 chart1 = chart_K ([chartTitle_O := "hi there",
                    yDirection_O := whatever,

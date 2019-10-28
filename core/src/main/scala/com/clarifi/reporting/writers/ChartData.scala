@@ -33,35 +33,40 @@ import ChartDesiderata._
   */
 case class AxisChart[Data](series: List[ChartSeries[Data]],
                            meta: AxisChartData) {
-  def categoryType: Option[PrimT] =
-    Tag.unsubst(series.foldMap(s => some(Disjunction(some(s.categoryType))))).join
+  // def categoryType: Option[PrimT] =
+  //   Tag.unsubst(series.foldMap(s => some(Disjunction(some(s.categoryType))))).join
 
   def valueType: Option[PrimT] =
     Tag.unsubst(series.foldMap(s => some(Disjunction(some(s.valueType))))).join
 
-  def invariantFailures: Seq[String] = if (series.isEmpty) Seq.empty else
-    ^(categoryType, valueType){(catT, valT) =>
-      (Seq((AxisConstraints primitiveScaled catT, meta.domain.constraints),
-           (AxisConstraints primitiveScaled valT, meta.range.constraints)) flatMap {
-             case (true, _: ScaledConstraints) => Seq.empty
-             case (false, _: UnscaledConstraints) => Seq.empty
-             case _ => Seq("Scalability of category/value type must match axis constraint")
-           }) ++ (series flatMap (s =>
-                   if (s.variant permitsConstraint meta.range.constraints) Seq.empty
-                   else Seq("%s doesn't support %s"
-                            format (s.variant, meta.range.constraints))))
-      } getOrElse Seq("All series must have same category/value types")
+  // def invariantFailures: Seq[String] = if (series.isEmpty) Seq.empty else
+  //   ^(categoryType, valueType){(catT, valT) =>
+  //     (Seq((AxisConstraints primitiveScaled catT, meta.domain.constraints),
+  //          (AxisConstraints primitiveScaled valT, meta.range.constraints)) flatMap {
+  //            case (true, _: ScaledConstraints) => Seq.empty
+  //            case (false, _: UnscaledConstraints) => Seq.empty
+  //            case _ => Seq("Scalability of category/value type must match axis constraint")
+  //          }) ++ (series flatMap (s =>
+  //                  if (s.variant permitsConstraint meta.range.constraints) Seq.empty
+  //                  else Seq("%s doesn't support %s"
+  //                           format (s.variant, meta.range.constraints))))
+  //     } getOrElse Seq("All series must have same category/value types")
 
   def augmentSeries: AxisChart[Data] = meta match {
     case AxisChartData(domain, range, _, _, _, _, _) =>
       def augment(fmt: Format, op: Op, opres: Option[Presentation]) : Option[Presentation] =
-        opres match {
-          case None => Some(Presentation(fmt, NonEmptyList(op)))
-          case e => e
-        }
+        augments(fmt, NonEmptyList(op), opres)
+      def augments(
+        fmt: Format,
+        ops: NonEmptyList[Op],
+        opres: Option[Presentation]
+      ): Option[Presentation] = opres match {
+        case None => Some(Presentation(fmt, ops))
+        case _ => opres
+      }
       val newSeries = series map {
         case ChartSeries(ss, sx, sy, xtt, ytt, v, extra, data) =>
-          ChartSeries(ss, sx, sy, augment(domain.format, sx, xtt), augment(range.format, sy, ytt), v, extra, data)
+          ChartSeries(ss, sx, sy, augments(domain.format, sx, xtt), augment(range.format, sy, ytt), v, extra, data)
       }
       AxisChart(newSeries, meta)
   }
@@ -270,31 +275,22 @@ sealed abstract class AxisConstraints {
   def constraining[Z](e: PrimExpr)(scaled: ScaledConstraints => Z,
                                    unscaled: UnscaledConstraints => Z,
                                    error: => Z = sys error ("%s cannot constrain %s" format (this, e))): Z =
-    (AxisConstraints primitiveScaled e.typ, this) match {
-      case (true, c: ScaledConstraints) => scaled(c)
-      case (false, c: UnscaledConstraints) => unscaled(c)
+    this match {
+      case c: ScaledConstraints if AxisConstraints primitiveScaled e.typ => scaled(c)
+      case c: UnscaledConstraints => unscaled(c)
       case _ => error
     }
-
-  /** Build an alternative ordering of `A`s using my relative
-    * reordering rules.
-    *
-    * @param asPe Isomorphism.
-    * @param usualOA Natural ordering of `A`s to be transformed.
-    * @returns `usualOA`, but suited to `A`s constrained by myself. */
-  def transformOrder[A](asPe: A => PrimExpr)(implicit usualOA: Order[A]): Order[A]
+  def sortOrders: NonEmptyList[SortOrder]
 }
 
 object AxisConstraints {
   import PrimT._
-  /** Answer whether `t` requires a ScaledConstraints; it requires
-    * UnscaledConstraints otherwise. */
+  /** Answer whether `t` admits a ScaledConstraints. */
   def primitiveScaled(t: PrimT): Boolean = t match {
     case _: ByteT | _: ShortT | _: IntT | _: LongT
        | _: DateT | _: DoubleT | _: TimestampT => true
     case _: StringT | _: BooleanT | _: UuidT => false
   }
-
 
   /** Lift record-based tick label overrides into one tick label
     * specification for the whole chart.  Has a weird signature that's
@@ -313,7 +309,7 @@ object AxisConstraints {
           AxisChartData.rescopeTicks(f(lsts))(op(s).eval)})
       case _: ScaledConstraints => on
     }
-    (xf(_.selCategory, _._1, catc), xf(_.selValue, _._2, valc))
+    (xf(_.selCategory.head, _._1, catc), xf(_.selValue, _._2, valc))
   }
 }
 
@@ -336,11 +332,7 @@ case class ScaledConstraints(sortOrder: SortOrder,
                              upper: Option[PrimExpr],
                              displayScale: DisplayScale
                            ) extends AxisConstraints {
-  def transformOrder[A](asPe: A => PrimExpr)(implicit usualOA: Order[A]): Order[A] =
-    sortOrder match {
-      case SortOrder.Asc => usualOA
-      case SortOrder.Desc => usualOA.reverseOrder
-    }
+  def sortOrders: NonEmptyList[SortOrder] = NonEmptyList(sortOrder)
 }
 
 /** Constraints on an axis of Unscaled values.
@@ -350,15 +342,10 @@ case class ScaledConstraints(sortOrder: SortOrder,
   * @param tickOverrides Different values to show at ticks along the
   *                      axis, formatted with the same format.
   */
-case class UnscaledConstraints(sort: SortOrder \/ Order[PrimExpr],
+case class UnscaledConstraints(sorts: NonEmptyList[SortOrder],
                                tickOverrides: PrimExpr ==>> PrimExpr = ==>>.empty)
      extends AxisConstraints {
-  def transformOrder[A](asPe: A => PrimExpr)(implicit usualOA: Order[A]): Order[A] =
-    sort match {
-      case -\/(SortOrder.Asc) => usualOA
-      case -\/(SortOrder.Desc) => usualOA.reverseOrder
-      case \/-(o) => o contramap asPe
-    }
+ def sortOrders: NonEmptyList[SortOrder] = sorts
 }
 
 /** A set of series in a chart, described by `Data`.
@@ -373,28 +360,29 @@ case class UnscaledConstraints(sort: SortOrder \/ Order[PrimExpr],
   * @param dataSource From whence triples shall come.
   */
 case class ChartSeries[Data](selSeries: Presentation,
-                             selCategory: Op,
+                             selCategory: NonEmptyList[Op],
                              selValue: Op,
+                             // selCatDisplay: Option[Presentation],
                              selCatTooltips: Option[Presentation],
                              selValTooltips: Option[Presentation],
                              variant: ChartVariant,
                              extra: PresRow,
                              dataSource: Data) {
-  def categoryType: PrimT =
-    selCategory.guessType fold (sys error _.head, identity)
+  def categoryType: NonEmptyList[PrimT] =
+    selCategory map (_.guessType fold (sys error _.head, identity))
 
   def valueType: PrimT =
     selValue.guessType fold (sys error _.head, identity)
 
-  def basicEval: (Record => (PrimExpr, C, V), PrimType[C], PrimType[V])
-                 forSome {type C; type V} =
-    (categoryType.primType, valueType.primType) match {
-      case (c, v) =>
-        ((tu:Record) => (selSeries.basicEval(tu),
-                       c.unExpr(selCategory.eval(tu)),
-                       v.unExpr(selValue.eval(tu))),
-         c, v)
-    }
+  // def basicEval: (Record => (PrimExpr, C, V), PrimType[C], PrimType[V])
+  //                forSome {type C; type V} =
+  //   (categoryType.primType, valueType.primType) match {
+  //     case (c, v) =>
+  //       ((tu:Record) => (selSeries.basicEval(tu),
+  //                      c.unExpr(selCategory.eval(tu)),
+  //                      v.unExpr(selValue.eval(tu))),
+  //        c, v)
+  //   }
   def testVariant(f : PartialFunction[ChartVariant,Unit]): Boolean =
     f.isDefinedAt(variant)
 }
@@ -482,6 +470,7 @@ final case class DrilldownBarAxisChart[DD, Data](
   selSeries: Presentation,
   selCategory: Presentation,
   selValue: Presentation,
+  // selCatDisplay: Option[Presentation],
   selCatTooltips: Option[Presentation],
   selValTooltips: Option[Presentation],
   dataSource: Data,
@@ -492,8 +481,9 @@ final case class DrilldownBarAxisChart[DD, Data](
     */
   def asAxisChart: AxisChart[Data] =
     AxisChart(List(ChartSeries(selSeries,
-                               selCategory.displayData.head,
+                               selCategory.displayData,
                                selValue.displayData.head,
+                               // selCatDisplay,
                                selCatTooltips, selValTooltips,
                                Bar(SeriesStructure.Simple), PresRow.empty, dataSource)),
               meta)

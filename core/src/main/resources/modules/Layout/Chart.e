@@ -19,7 +19,8 @@ import Layout.PresRow as PR
 import Layout.Report.Atomic
 import Layout.Report.Direction
 import Layout.Writer
-import List
+import List hiding singleton
+import List.NonEmpty using singleton
 import Pair
 import Prim using type PrimExpr#
 import Relation.Op using asOp; type Op
@@ -93,11 +94,17 @@ axisChartDataW catL catF catAx valL valF valAx catCons valCons title ori legOpts
 
 seriesW : ChartVariant# -> ChartMode
 seriesW vari s x y fact =
-  ChartSeries [] [] [] (asPresentation s) (asOp x) (asOp y) Nothing Nothing vari empty#_PR (relation# fact)
+  ChartSeries
+    [] [] []
+    (asPresentation s) (singleton $ asOp x) (asOp y)
+    Nothing Nothing vari empty#_PR (relation# fact)
 
 seriesWE : ChartVariant# -> ExtraMode 
 seriesWE vari s x y extra fact = 
-  ChartSeries [] [] [] (asPresentation s) (asOp x) (asOp y) Nothing Nothing vari extra (relation# fact)
+  ChartSeries
+    [] [] []
+    (asPresentation s) (singleton $ asOp x) (asOp y)
+    Nothing Nothing vari extra (relation# fact)
 
 private
   atomize : Maybe (Atomic nm) -> Maybe# (Atomic# nm)

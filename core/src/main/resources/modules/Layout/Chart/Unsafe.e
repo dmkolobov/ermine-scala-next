@@ -149,17 +149,34 @@ private foreign
       scaledConstraintsModule : Function4 SortOrder# (Maybe# PrimExpr#) (Maybe# PrimExpr#) DisplayScale# (Axis a)
 
   value "com.clarifi.reporting.writers.UnscaledConstraints$" "MODULE$"
-      unscaledConstraintsModule : Function2 (EitherZ# SortOrder# (Ord# PrimExpr#)) (MapZ#_NM PrimExpr# PrimExpr#) (Axis a)
+      unscaledConstraintsModule : Function2 (NonEmpty# SortOrder#) (MapZ#_NM PrimExpr# PrimExpr#) (Axis a)
 
   data "com.clarifi.reporting.writers.ChartSeries$" ChartSeriesModule#
   value "com.clarifi.reporting.writers.ChartSeries$" "MODULE$"
       chartSeriesModule : ChartSeriesModule#
-  method "apply" chartSeriesApply# : ChartSeriesModule# -> Presentation sr sa -> Op xr xa -> Op yr ya -> Maybe# (Presentation xtr xta) -> Maybe# (Presentation ytr yta) -> ChartVariant# -> PresRow er -> z -> ChartSeries# xa ya
+  method "apply" chartSeriesApply#
+    :  ChartSeriesModule#
+    -> Presentation sr sa
+    -> NonEmpty# (Op xr xa)
+    -> Op yr ya
+    -> Maybe# (Presentation xtr xta)
+    -> Maybe# (Presentation ytr yta)
+    -> ChartVariant#
+    -> PresRow er -> z -> ChartSeries# xa ya
 
   data "com.clarifi.reporting.writers.DrilldownBarAxisChart$" DrilldownBarAxisChartModule#
   value "com.clarifi.reporting.writers.DrilldownBarAxisChart$" "MODULE$"
       drilldownBarAxisChartModule : DrilldownBarAxisChartModule#
-  method "apply" drilldownBarAxisChartApply# : DrilldownBarAxisChartModule# -> Presentation sr sa -> Presentation xr xa -> Presentation yr ya -> Maybe# (Presentation xtr xta) -> Maybe# (Presentation ytr yta) -> q -> dd -> AxisChartData# -> DrilldownBarAxisChart# dd q
+  method "apply" drilldownBarAxisChartApply#
+    :  DrilldownBarAxisChartModule#
+    -> Presentation sr sa
+    -> Presentation xr xa
+    -> Presentation yr ya
+    -> Maybe# (Presentation xtr xta)
+    -> Maybe# (Presentation ytr yta)
+    -> q -> dd
+    -> AxisChartData#
+    -> DrilldownBarAxisChart# dd q
 
 axisChart# = axisChartApply# axisChartModule
 axisChartData# = funcall7# axisChartDataModule
@@ -173,4 +190,4 @@ chartRenderHints# = funcall1# chartRenderHintsModule
 drilldownBarAxisChart# = drilldownBarAxisChartApply# drilldownBarAxisChartModule
 
 toChartSeries# (ChartSeries c xti yti so xo yo xto yto cv ex r) =
-  chartSeries# so xo yo (toMaybe# xto) (toMaybe# yto) cv ex r
+  chartSeries# so (toNel# xo) yo (toMaybe# xto) (toMaybe# yto) cv ex r

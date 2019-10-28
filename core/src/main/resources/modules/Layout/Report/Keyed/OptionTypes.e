@@ -23,6 +23,7 @@ import Function
 import Int
 import Maybe
 import List
+import List.NonEmpty as NE
 import Layout.Chart using type AxisLabel; NoAxisLabel
 import Layout.Chart.Unsafe
 import Layout.Color using type Color
@@ -37,7 +38,7 @@ import Layout.Report.Direction
 import Layout.SortPriority using {type SortPriorityAnnotated; unsorted}
 import Layout.SortStrategy as SS
 import Layout.Magnitude
-import Relation.Op using prim
+import Relation.Op using prim; type Op
 import Ord using type Ord
 import Relation.Sort using {type Sort; type SortOrder; Ascending}
 import Void
@@ -104,10 +105,10 @@ scaledDefaults : ScaledDefaults u1 a
 scaledDefaults = ScaledOptions Ascending Nothing Nothing Linear
 
 -- | unscaled
-data UnscaledOptions sort a = UnscaledOptions (Either SortOrder (Ord a))
+data UnscaledOptions sort a = UnscaledOptions (NonEmpty_NE SortOrder)
 type UnscaledDefaults u1 a = UnscaledOptions u1 a
 unscaledDefaults : UnscaledDefaults u1 a
-unscaledDefaults = UnscaledOptions $ Left Ascending
+unscaledDefaults = UnscaledOptions (doubleton_NE Ascending Ascending)
 
 -- | chart
 data ChartOptions tdloxlxfylyf xa ya {-title' dir' legOpts' xlbl' xfmt' xax' ylbl' yfmt' yax'-} =
@@ -144,6 +145,14 @@ data DrilldownBarChartOptions tdlocv sr sa cr vr {-title' logOpts' dir' cl' vl'-
                            (List ({..cr}, {..cr})) (List ({..vr}, {..vr}))
 type DrilldownBarChartDefaults u1 cr vr = DrilldownBarChartOptions u1 (||) String cr vr
 drilldownBarChartDefaults : DrilldownBarChartDefaults u1 cr vr
-drilldownBarChartDefaults =
-  DrilldownBarChartOptions Nothing Vertical defaultChartLegendOptions# defaultChartRenderHints# NoAxisLabel NoAxisLabel
-                           (asPresentation ' prim "") Nil Nil
+drilldownBarChartDefaults
+  = DrilldownBarChartOptions
+      Nothing
+      Vertical
+      defaultChartLegendOptions#
+      defaultChartRenderHints#
+      NoAxisLabel
+      NoAxisLabel
+      (asPresentation ' prim "")
+      Nil
+      Nil
