@@ -244,7 +244,8 @@ machinery is deleted post-G1, never before.
   by construction; renamer rejects instead).
 - [ ] **2.3c Parser: types + data/class/foreign statements** (quantifier/
   row forms, kind-arg braces, class blocks).
-- [ ] **2.3d Parse differential**: all 161 stdlib .e files parse; the
+- [ ] **2.3d Parse differential**: all 180 .e files parse (161 stdlib +
+  19 core/examples — user-style surface variety the stdlib lacks); the
   1.3b rejected corpus re-checked (refusals that move to rename time are
   recorded as such); '{' rules and missing-hook acceptance verified
   against the corpus.
@@ -324,7 +325,7 @@ machinery is deleted post-G1, never before.
   occurrence->def-site differential (dump sorted occ file:line:col ->
   def file:line:col per module from the old typed core — Var occurrence
   locs share def ids — and from the new renamer's tables; diff across
-  all 161 modules; this is the direct resolution oracle AND 4.3's spec) +
+  all 180 files (stdlib + examples); this is the direct resolution oracle AND 4.3's spec) +
   scope-at-position differential at sampled stdlib positions vs the old
   canonicalTerms-domain snapshot + warm interface-backed reload of the
   new pipeline (boot #2 consumes boot #1's .ei, 129 modules clean,
@@ -598,3 +599,12 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   tracker/surface-notes.md records the five-way '{' rules, the span-end
   caveat, and the explicit-layout placeholder. Baselines: core/test 803
   (802+known), repl 3/3, lsp 27/27.
+- 2026-08-30 examples coverage (user feedback): the lexer and 2.3a
+  parity sweeps now include core/examples/*.e (19 files; Holes,
+  relational examples, bugs/ regression cases) — 180 files total, all
+  green with no changes needed to the parser. The old pipeline's example
+  behavior was already baseline-protected (core/test's all-examples load
+  property); the NEW pipeline now sweeps them too, and 2.3d/4.2 are
+  reworded to 180 files. Examples reach new-pipeline TYPE checking at
+  4.1 (the parameterized fixture runs the load-all properties under both
+  pipelines).

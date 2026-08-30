@@ -40,7 +40,9 @@ object TestSurfaceLexer extends Properties("Surface lexer parity") {
     def walk(f: File): List[File] =
       if (f.isDirectory) f.listFiles.toList.sortBy(_.getName).flatMap(walk)
       else if (f.getName endsWith ".e") List(f) else Nil
-    walk(new File("core/src/main/resources/modules"))
+    // stdlib AND the user-style example programs (Holes, the relational
+    // examples, bugs/ regression cases) — different surface variety
+    walk(new File("core/src/main/resources/modules")) ++ walk(new File("core/examples"))
   }
 
   private def read(f: File): String = {

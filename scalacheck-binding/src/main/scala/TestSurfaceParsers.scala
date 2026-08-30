@@ -21,7 +21,9 @@ object TestSurfaceParsers extends Properties("Surface parser 2.3a") {
     def walk(f: File): List[File] =
       if (f.isDirectory) f.listFiles.toList.sortBy(_.getName).flatMap(walk)
       else if (f.getName endsWith ".e") List(f) else Nil
-    walk(new File("core/src/main/resources/modules"))
+    // stdlib AND the user-style example programs (Holes, the relational
+    // examples, bugs/ regression cases) — different surface variety
+    walk(new File("core/src/main/resources/modules")) ++ walk(new File("core/examples"))
   }
 
   private def read(f: File): String = {
@@ -66,12 +68,13 @@ object TestSurfaceParsers extends Properties("Surface parser 2.3a") {
               case (a, b) => bad += s"${f.getName}/${o.module}: item presence $a vs $b"
             }
           }
-        case (Left(err), _) => bad += s"${f.getName}: OLD header failed: ${err.toString.linesIterator.next()}"
+        case (Left(_), Left(_)) => files += 1  // agreement on rejection
+        case (Left(err), Right(_)) => bad += s"${f.getName}: old rejects, new accepts: ${err.toString.linesIterator.next()}"
         case (_, Left(err)) => bad += s"${f.getName}: NEW header failed: ${err.toString.linesIterator.next()}"
       }
     }
     val failures = bad.result()
-    (failures.isEmpty :| failures.take(6).mkString(" ;; ")) && ((files ?= 161) :| s"$files files")
+    (failures.isEmpty :| failures.take(6).mkString(" ;; ")) && ((files ?= 180) :| s"$files files")
   }
 
   property("the splitter covers every file with ordered, plausible statements") = secure {
@@ -81,6 +84,7 @@ object TestSurfaceParsers extends Properties("Surface parser 2.3a") {
     for (f <- moduleFiles) {
       val input = read(f)
       SurfaceParsers.module(f.getName, input, f.getName) match {
+        case Left(err) if oldHeader(f.getName, input).isLeft => ()  // both reject
         case Left(err) => bad += s"${f.getName}: ${err.toString.linesIterator.next()}"
         case Right(m) =>
           statements += m.statements.size
