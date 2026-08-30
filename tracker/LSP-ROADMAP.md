@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 0 in progress — 0.4 done · Seeded 2026-08-30 (session that shipped the
+Status: Stage 0 in progress — 0.5 done · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -38,6 +38,11 @@ scoping fix, commits f9cf42a / 41b13cc).
 4. **stdout is the protocol channel.** All logging to stderr or a file —
    the resident Session's Printer must not write to stdout (Console's
    banner/progress printing must be suppressed or redirected).
+5. **The whole server runs useInterface=false** (added at 0.5; boot went
+   ~7s -> ~13s, once). Checks: a stale .ei lets loadModule skip body
+   inference (missed errors) and writebacks litter workspaces (found at
+   0.4). Navigation: interface-loaded modules carry .ei-text locs, so
+   stdlib jumps would land in interface files instead of sources.
 
 ## Stage 0 — diagnostics-on-save server with best-effort navigation
 
@@ -72,7 +77,7 @@ Checklist (each item ≈ one loop iteration):
   assert one diagnostic with the right line, shutdown. Wire into the
   repl-smoke pattern (PASS/FAIL lines). This is the regression harness
   for everything after.
-- [ ] **0.5 Go-to-definition (same file, then imports)**: keep the parsed
+- [x] **0.5 Go-to-definition (same file, then imports)**: keep the parsed
   Module + typed bindings per open document; hit-test Var occurrence
   Locs against the request position; answer the V's loc — termDef
   relocates each V to its actual definition site already
@@ -161,3 +166,16 @@ flowing mid-keystroke; then incremental reuse per unchanged statement.
   interfaces for warm speed); harness asserts no .ei droppings. lsp-smoke
   is now a baseline: run it alongside core/test + repl-smoke from here on.
   Baselines: 761/762, smoke 3/3, lsp-smoke 17/17 twice.
+- 2026-08-30 0.5 done: lsp/Definitions.scala + checkFile re-parse. The
+  parser already resolves names: references are `v at occurrencePos` (same
+  id as the def; termVar/termOp), termNames Vs sit at true def sites
+  (globalTermDef), pattern binders share ids (mkLocalPatternVar) — so the
+  index is one tree walk (occurrences by position + local def targets)
+  over env.termNames globals, and definition = hit-test + two map lookups.
+  Module AST comes from re-parsing the body after the check load, seeded
+  with the module's own globals filtered out (first attempt self-shadowed
+  every definition: "would shadow global definition Good.answer").
+  Decision 5 added: whole server interface-free, else stdlib def locs
+  point into .ei text. Misses answer null. lsp-smoke +6 checks: same-file
+  equation, pattern binder, sibling Good.e, stdlib Bool.e (&&), miss, all
+  green. Baselines: 761/762, repl 3/3, lsp 23/23.

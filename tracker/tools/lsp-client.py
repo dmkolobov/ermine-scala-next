@@ -139,6 +139,34 @@ def main():
     open_doc("Sib.e")
     check("Sib.e sibling import clean", client.diagnostics_for(uri("Sib.e")) == [])
 
+    # --- go-to-definition (0.5) ---
+    open_doc("Nav.e")
+    check("Nav.e clean", client.diagnostics_for(uri("Nav.e")) == [])
+
+    def definition(name, line, char):
+        rid = client.request("textDocument/definition", {
+            "textDocument": {"uri": uri(name)},
+            "position": {"line": line, "character": char}})
+        return client.response(rid).get("result")
+
+    r = definition("Nav.e", 6, 6)  # "twice" in `use = twice answer`
+    check("def twice -> its equation", r is not None
+          and r["uri"] == uri("Nav.e")
+          and r["range"]["start"] == {"line": 5, "character": 0}, repr(r))
+    r = definition("Nav.e", 5, 10)  # body "x" in `twice x = x`
+    check("def x -> pattern binder", r is not None
+          and r["uri"] == uri("Nav.e")
+          and r["range"]["start"] == {"line": 5, "character": 6}, repr(r))
+    r = definition("Nav.e", 6, 12)  # "answer" imported from sibling Good.e
+    check("def answer -> Good.e", r is not None
+          and r["uri"] == uri("Good.e")
+          and r["range"]["start"]["line"] == 2, repr(r))
+    r = definition("Nav.e", 7, 12)  # "&&" imported from stdlib Bool
+    check("def && -> Bool.e", r is not None
+          and r["uri"].endswith("/Bool.e")
+          and r["range"]["start"]["line"] in (6, 7), repr(r))
+    check("def miss -> null", definition("Nav.e", 1, 0) is None)
+
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Bad.e")}})
     check("Bad.e cleared on close", client.diagnostics_for(uri("Bad.e")) == [])
 

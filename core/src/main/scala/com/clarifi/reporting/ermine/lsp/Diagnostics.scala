@@ -12,23 +12,23 @@ import scalaparsers.Death
   */
 object Diagnostics {
 
-  def install(server: Server, ermine: Resident, log: String => Unit): Unit = {
+  def install(server: Server, ermine: Resident, docs: Definitions.Docs, log: String => Unit): Unit = {
     def uriOf(params: Json): Option[String] =
       params / "textDocument" flatMap (_ / "uri") flatMap (_.str)
 
     def check(what: String)(params: Json): Unit =
-      uriOf(params) foreach { uri => run(server, ermine, log, what, uri) }
+      uriOf(params) foreach { uri => run(server, ermine, docs, log, what, uri) }
 
     server.onNotification("textDocument/didOpen")(check("didOpen"))
     server.onNotification("textDocument/didSave")(check("didSave"))
     // The squiggles should not outlive the buffer.
     server.onNotification("textDocument/didClose") { params =>
-      uriOf(params) foreach { uri => publish(server, uri, Nil) }
+      uriOf(params) foreach { uri => docs drop uri; publish(server, uri, Nil) }
     }
   }
 
-  private def run(server: Server, ermine: Resident, log: String => Unit,
-                  what: String, uri: String): Unit =
+  private def run(server: Server, ermine: Resident, docs: Definitions.Docs,
+                  log: String => Unit, what: String, uri: String): Unit =
     pathFor(uri) match {
       case None =>
         log("diagnostics: ignoring non-file uri " + uri)
@@ -37,8 +37,13 @@ object Diagnostics {
       case Some(path) =>
         val t0 = System.nanoTime
         val ds =
-          try { ermine.checkFile(path); Nil }
-          catch {
+          try {
+            val (env, module) = ermine.checkFile(path)
+            // A clean check refreshes navigation; a failed one keeps the
+            // last good index (stale hits beat none, misses answer null).
+            docs.put(uri, Definitions.index(path.toString, env, module))
+            Nil
+          } catch {
             case Death(err, _) => List(fromReport(err.toString, path))
             case scala.util.control.NonFatal(e) =>
               log("diagnostics: internal error on " + path + ": " + Rpc.stackTrace(e))

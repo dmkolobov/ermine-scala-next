@@ -41,6 +41,7 @@ object Main {
       val wire   = new Wire(System.in, stealStdout(), log)
       val server = new Server(wire, log)
       val ermine = new Resident(log)
+      val docs   = new Definitions.Docs
       var shutdownSeen = false
 
       def logMessage(messageType: Int, message: String): Unit =
@@ -84,7 +85,8 @@ object Main {
         }
       }
 
-      Diagnostics.install(server, ermine, log)
+      Diagnostics.install(server, ermine, docs, log)
+      Definitions.install(server, docs, log)
 
       server.onRequest("shutdown") { _ =>
         log("shutdown received")
