@@ -1012,13 +1012,34 @@ object Session {
                   post: ImportResult,
                   dom: List[Type],
                   method: java.lang.reflect.Method): Runtime = {
+      /** Re-resolve `method` against the receiver when it does not implement the
+        * declaring class.
+        *
+        * A `.e` foreign declaration names the method on an *interface*, e.g.
+        * `method "apply" funcall2# : Function2 a b c -> (a -> b -> c)`, and
+        * passes a case class companion for it. In Scala 2 those companions
+        * extended `FunctionN` so the interface method applied directly; Scala 3
+        * dropped that, so the same `apply` has to be found on the companion's
+        * own class instead. Same method, same arity — only the reflective
+        * handle differs.
+        */
+      def resolve(self: Any): java.lang.reflect.Method =
+        if (self == null || method.getDeclaringClass.isInstance(self)) method
+        else {
+          val cls = self.asInstanceOf[AnyRef].getClass
+          val n = method.getParameterCount
+          cls.getMethods.find(m => m.getName == method.getName && m.getParameterCount == n)
+             .map { m => m.setAccessible(true); m }
+             .getOrElse(method)
+        }
+
       def mk(self: => Any) : Runtime = try {
         import scala.compat.{Platform => Pform}
         import com.clarifi.reporting.Profile
         val f = (args: Array[AnyRef]) => {
           val time = Pform.currentTime
           try {
-            method.invoke(self, args:_*)
+            resolve(self).invoke(self, args:_*)
           } catch {
               case d : Death => throw d // Don't catch ermine panics as a side effect of foreign interface
               case e : java.lang.reflect.InvocationTargetException =>

@@ -85,10 +85,13 @@ lazy val core = (project in file("core"))
     ),
     Compile / unmanagedSources := portedSources(
       (Compile / scalaSource).value, unportedSources.value),
-    // The 2.11 test suite is not ported yet; see tracker/06-tests.md.
-    // `sbt core/Test/compile` with this line removed shows what is left.
-//    Test / unmanagedSources := Seq.empty,
+    // The scalacheck-binding module's sources are part of core's tests, as they
+    // were in the sbt 0.13 build.
     Test / unmanagedSourceDirectories += (ThisBuild / baseDirectory).value / "scalacheck-binding" / "src" / "main" / "scala",
+    // Not forked: the module-loading properties resolve `core/examples`
+    // relative to the build root, and ErmineFixture already turns type
+    // checking on for its own sessions.
+    Test / fork := false,
     libraryDependencies ++= Seq(
       "org.scalaz"    %% "scalaz-core"       % scalazVersion,
       "org.scalaz"    %% "scalaz-effect"     % scalazVersion,
