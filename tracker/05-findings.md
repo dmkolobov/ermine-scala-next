@@ -1,14 +1,22 @@
 # Findings while testing
 
-Two things behave surprisingly. **Both are pre-existing in the 2.11 source, not
-migration regressions** — I checked the original at `8de8010` in each case. I
-have left them alone: a migration should not quietly change behaviour. They are
+Two things behave surprisingly. **Neither is a migration regression.** I have
+left them alone: a migration should not quietly change behaviour. They are
 written up here so you can decide.
 
-I could not run the 2.11 build to confirm empirically — its dependencies
-(`scala-parsers`, `f0`, `machines`) are no longer resolvable, which is what
-started this whole exercise — so "pre-existing" here means "the code that
-produces it is byte-identical to the original".
+- The second one is a **known bug already filed in this repo**, under
+  `core/examples/bugs/` — the diagnosis below is the upstream author's, and it
+  reproduces on this branch exactly as their report describes.
+- For the first, `Term.scala` is byte-identical to the original at `8de8010`
+  (`git diff 8de8010 --ignore-cr-at-eol -- .../Term.scala` is empty), so the
+  code producing it is unchanged. I could not run the 2.11 build to confirm the
+  *behaviour* empirically — its dependencies (`scala-parsers`, `f0`,
+  `machines`) are no longer resolvable, which is what started this whole
+  exercise.
+
+`core/examples/bugs/` holds two reports, both runnable. Their current status on
+this branch: `variableShadow.e` still reproduces (finding 2 below);
+`variableCapture.e` does **not** — see the end of this file.
 
 ---
 
@@ -41,25 +49,44 @@ discarded when a `let` appears in function position. The fix is one word:
 (`git diff 8de8010 --ignore-cr-at-eol -- .../Term.scala` is empty), so this is
 upstream. I have not applied the fix.
 
-## 2. A name exported by the Prelude cannot be used as a pattern variable
+## 2. A pattern variable may not shadow a global — already reported upstream
 
 ```
 f (a :: t) = a     -- fine
 f (h :: t) = h     -- error: ill-formed expression, expected ')', name, ...
 ```
 
-...but only when `Prelude` (or `Layout`) is imported. `Layout/Report.e:248`
-defines
+...but only when `Prelude` (or `Layout`) is imported. The cause is not the
+`::` pattern, which is what the message suggests. Written without the
+parentheses the compiler says what it actually means:
 
 ```
-h : Int -> String -> Report f z
+f h = h
+      ^ error: pattern variable shadows global binding Prelude.h
 ```
 
-an HTML-heading helper, so with the Prelude in scope `h` resolves to that
-binding and the pattern parser will not take it as a fresh variable. Any
-single-letter name the Prelude happens to export behaves the same way.
+`Layout/Report.e:248` defines `h : Int -> String -> Report f z`, an HTML-heading
+helper, and a pattern variable is not allowed to shadow a global binding. Any
+name the Prelude happens to export behaves the same way; the parenthesised and
+infix pattern paths just report it as a parse error instead of a shadowing one.
 
-This is why the bundled example `core/examples/guide/HelloWorld.e` does not
+**This is a known bug, filed in this repo**: `core/examples/bugs/variableShadow.e`
+
+```
+-- this fails because fmt in the definition of foo isn't allowed
+-- to shadow fmt in the global scope.
+-- Load this file (i.e. into the repl using import) in order to see the bug.
+module Foo where
+import Layout
+foo fmt = 1
+```
+
+It still reproduces on this branch, with the error it documents
+(`pattern variable shadows global binding Layout.fmt`) — so the behaviour is
+unchanged by the migration, and the diagnosis is the upstream author's, not
+mine.
+
+This is also why the bundled example `core/examples/guide/HelloWorld.e` does not
 load: its `sum` uses `go (h::t) acc`. Renaming `h`/`t` gets past it (I verified
 the rest of that example — literal relations, field declarations, row types —
 works; see `tracker/repl-tests/Relations.e`, which is that example's language
@@ -72,3 +99,19 @@ Two further things in that same example are also unrelated to the migration:
   itself carries a commented-out alternative on the next line.
 
 The example looks like it predates the current Prelude.
+
+## The other filed bug no longer reproduces
+
+`core/examples/bugs/variableCapture.e` reports that the type checker wrongly
+unifies two `x`s bound in separate `let` clauses:
+
+```
+{-  For some reason, the type checker tries to unify both x's together, even
+    though they're in separate let clauses.
+  To replicate, load in repl.  Should receive "error: failed to unify type
+  String with type Int"  -}
+```
+
+On this branch it loads cleanly, with type checking on — so whatever caused it
+was fixed at some point before this migration. Worth knowing before anyone
+chases it.
