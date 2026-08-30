@@ -245,10 +245,10 @@ object TestLegend extends Properties("Legends & presentations") {
   implicit val arbSS: Arbitrary[SortStrategy] =
     implicitly[Arbitrary[List[(ColumnName, SortDirection)]]] map SortStrategy.apply
 
-  property("format equal") = equal.laws[Format]
-  property("presentation equal") = equal.laws[Presentation]
-  property("sortstrategy order") = order.laws[SortStrategy]
-  property("sortdirection order") = order.laws[SortDirection]
+  include(equal.laws[Format], "format equal.")
+  include(equal.laws[Presentation], "presentation equal.")
+  include(order.laws[SortStrategy], "sortstrategy order.")
+  include(order.laws[SortDirection], "sortdirection order.")
   property("legend equal") = equal.laws[Legend.U[String]]
 }
 

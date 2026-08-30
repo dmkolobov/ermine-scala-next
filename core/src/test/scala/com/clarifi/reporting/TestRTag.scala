@@ -84,7 +84,7 @@ object TestRTag extends Properties("PrimTs, PrimExprs, Reflexivity") {
     (t1 sup t2 flatMap (_ sup t3)) ?= (t2 sup t3 flatMap (t1 sup _))
   }
 
-  property("type order") = order.laws[PrimT]
+  include(order.laws[PrimT], "type order.")
 
   property("column equivalence required") = forAll {(h1: Header, h2: Header) =>
     (h1.keySet /== h2.keySet) ==> (sup(h1, h2) ?= None)
@@ -139,7 +139,7 @@ object TestRTag extends Properties("PrimTs, PrimExprs, Reflexivity") {
       if (x == y) (x.typ sup y.typ).isDefined else true
   }
 
-  property("primexpr order") = order.laws[PrimExpr]
+  include(order.laws[PrimExpr], "primexpr order.")
 
   property("reflexivity union (AND) is reflexive") = forAll {
     (rx: Reflexivity[ColumnName]) =>
@@ -153,19 +153,19 @@ object TestRTag extends Properties("PrimTs, PrimExprs, Reflexivity") {
 
   property("reflexivity union prefers known values") = forAll {
     (rx: Reflexivity[ColumnName]) =>
-      (rx && rx.varyConsts(_ mapValues (Function const None))) ?= rx
+      (rx && rx.varyConsts(m => (m mapValues (Function const None)).toMap)) ?= rx
   }
 
   property("reflexivity value disagreement is erased in intersections") = forAll {
     (rx: Reflexivity[ColumnName], uniq: Option[PrimExpr]) =>
       (!rx.consts.values.exists(_ === uniq)) ==> {
-        val disagreed = rx.varyConsts(_ mapValues (Function const uniq))
+        val disagreed = rx.varyConsts(m => (m mapValues (Function const uniq)).toMap)
         (rx || disagreed) ?= Reflexivity.zero[ColumnName]
       }
   }
 
   private def stringTup(tup: Map[ColumnName, String]): Record =
-    tup mapValues (StringExpr(false, _))
+    (tup mapValues (StringExpr(false, _))).toMap
 
 /*
   private def litrel[H](tups: NonEmptyList[Map[ColumnName, String]]

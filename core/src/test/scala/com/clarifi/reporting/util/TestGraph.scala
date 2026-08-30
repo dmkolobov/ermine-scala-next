@@ -41,8 +41,8 @@ object TestGraph extends Properties("graph types") {
   property("clique order") = order.laws[Clique[Short]]
   property("clique monoid") = monoid.laws[Clique[Short]]
 
-  property("PS equal") = equal.laws[PSS]
-  property("PS monoid") = monoid.laws[PSS]
+  include(equal.laws[PSS], "PS equal.")
+  include(monoid.laws[PSS], "PS monoid.")
 
   property("PS== reflexive") = forAll {(a: PSS) =>
     (a ?= a)

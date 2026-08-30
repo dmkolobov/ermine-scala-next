@@ -192,7 +192,7 @@ object TestFlatteners extends Properties("Flatteners") {
   }
 
   trait Check {
-    def check[T:PrimType:Arbitrary](name: String)
+    def check[T:PrimType:Arbitrary](name: String): Unit
     check[Boolean]("Boolean")
     check[Date]("Date")
     check[Double]("Double")
@@ -209,7 +209,7 @@ object TestFlatteners extends Properties("Flatteners") {
         }
       }
     }
-    def check2[S:PrimType:Arbitrary, T:PrimType:Arbitrary](s: String, t: String)
+    def check2[S:PrimType:Arbitrary, T:PrimType:Arbitrary](s: String, t: String): Unit
   }
 
   include(new StateObliviousProperties[Int])
