@@ -1,0 +1,24 @@
+:type id
+:type reverse
+:type length
+:type (+)
+:type map_List
+:type Just
+:type fst
+1 + 2
+3 * 7 - 1
+[1,2,3]
+reverse [1,2,3]
+foldl (+) 0 [1,2,3,4,5]
+length [1,2,3,4]
+Just 3
+[Just 1, Nothing]
+(1, "two", True)
+fst (1, "two")
+foldr (::) [] [1,2,3]
+filter (\x -> x > 2) [1,2,3,4,5]
+concat [[1,2],[3],[4,5]]
+"a" :: []
+(\x -> \y -> x) 1 2
+:type (let f x = x in f)
+:quit

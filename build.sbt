@@ -2,6 +2,11 @@ ThisBuild / scalaVersion  := "3.3.8"
 ThisBuild / organization  := "com.clarifi.ermine"
 ThisBuild / version       := "3.0.0-SNAPSHOT"
 
+// Ermine writes `.ei` interface files next to the modules it type-checks, as a
+// cache. They must never be packaged (the sbt 0.13 build excluded them the same
+// way) or a stale interface ships with the jar.
+ThisBuild / excludeFilter := HiddenFileFilter || "*.ei"
+
 ThisBuild / scalacOptions ++= Seq(
   "-encoding", "UTF-8",
   "-deprecation",

@@ -1,0 +1,23 @@
+forall a. a -> a
+forall a. List a -> List a
+forall a. List a -> Int
+forall n. Num n => n -> n -> n
+forall a b. (a -> b) -> List a -> List b
+forall a. a -> Maybe a
+forall a b. (a, b) -> a
+res0 : Int = 3
+res1 : Int = 20
+res2 : List Int = [1,2,3]
+res3 : List Int = [3,2,1]
+res4 : Int = 15
+res5 : Int = 4
+res6 : Maybe Int = (Just 3)
+res7 : List (Maybe Int) = [Just 1,Nothing]
+res8 : (Int, String, Bool) = (1,"two",True)
+res9 : Int = 1
+res10 : List Int = [1,2,3]
+res11 : List Int = [3,4,5]
+res12 : List Int = [1,2,3,4,5]
+res13 : List String = ["a"]
+res14 : Int = 1
+forall a. a -> a
