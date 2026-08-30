@@ -2,7 +2,7 @@ package com.clarifi.reporting
 
 import scalaparsers.Loc
 import scalaz.{ Lens }
-import scalaparsers._
+import scalaparsers.{Parser => _, ParseState => _, _}
 import scala.collection.immutable.List
 import Lens._
 

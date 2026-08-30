@@ -158,10 +158,10 @@ object BulkLoad {
   }
 
   private def flattenerStreamW(orders: Map[String,List[(String,PrimT)]]) = // Writer[DataSet, _]
-    danglingUnfoldW(rowInTableW(orders.toMap.mapValues(_.toList.map(_._1))))((d: SimpleDataSet) => StreamTUtils.unconsId(d))
+    danglingUnfoldW(rowInTableW(orders.toMap.mapValues(_.toList.map(_._1)).toMap))((d: SimpleDataSet) => StreamTUtils.unconsId(d))
 
   def flattenerStreamR(orders: Map[String, List[(String, PrimT)]]) =
-    streamR(rowInTableR(orders.mapValues(_.map(_._1))))
+    streamR(rowInTableR(orders.mapValues(_.map(_._1)).toMap))
 
   def schemaW = repeatW(tuple2W(stringW, repeatW(tuple2W(stringW,stringW)))).cmap(
     (schema: Map[String,Header]) => schema.mapValues(_.mapValues(_.toString).toList).toList)
@@ -181,7 +181,7 @@ object BulkLoad {
     withLastW(tuple2W(
                 metadataW,
                 schemaW)){ case (_,s) =>
-                terminatorW(flattenerStreamW(s.mapValues(_.toList))) }
+                terminatorW(flattenerStreamW(s.mapValues(_.toList).toMap)) }
 
   def schemaRowsR =
     tuple2R(metadataR, preschemaR) flatMap {
@@ -256,7 +256,7 @@ object BulkLoad {
       val sch = f.schema.map { case (k,v) => (k.name, v) }
       schemaW.bind(sink)(sch)
       val res = body { a =>
-        flattenerStreamW(sch.mapValues(_.toList)).bind(sink)(
+        flattenerStreamW(sch.mapValues(_.toList).toMap).bind(sink)(
           StreamTUtils.runStreamT(f(a).map { case (x, y) => (x.name, y) })
         )
       }

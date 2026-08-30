@@ -3,7 +3,7 @@ package com.clarifi.reporting.ermine.parsing
 import scalaz.{Name => _, _}
 import Scalaz.{modify => _, _}
 
-import scalaparsers._
+import scalaparsers.{Parser => _, ParseState => _, _}
 import scalaparsers.Diagnostic._
 import scalaparsers.Document.text
 import com.clarifi.reporting.ermine._

@@ -4,7 +4,7 @@ import com.clarifi.reporting.ermine.Type.mkCon
 import scalaparsers.Document.text
 import com.clarifi.reporting.ermine._
 import scalaparsers.Diagnostic._
-import scalaparsers._
+import scalaparsers.{Parser => _, ParseState => _, _}
 import scala.collection.immutable.List
 import Name.{ lib, prelude }
 import Type.{ subType, ftvs }

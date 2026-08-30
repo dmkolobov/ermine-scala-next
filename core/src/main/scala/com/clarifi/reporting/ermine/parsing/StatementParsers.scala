@@ -2,7 +2,7 @@ package com.clarifi.reporting.ermine.parsing
 
 import java.util.Date
 import java.text.DecimalFormat
-import scalaparsers._
+import scalaparsers.{Parser => _, ParseState => _, _}
 import com.clarifi.reporting.ermine.syntax._
 import com.clarifi.reporting.ermine.syntax.Statement.{ gatherBindings, checkBindings }
 import TermNameParsers._

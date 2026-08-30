@@ -9,7 +9,7 @@ import scala.util.matching.Regex
 import scala.collection.immutable.List
 import scalaz.{Arrow => _, Forall => _, Name => _, _}
 import scalaz.Scalaz._
-import scalaparsers._
+import scalaparsers.{Parser => _, ParseState => _, _}
 
 
 /** Pretty printing for DMTL types

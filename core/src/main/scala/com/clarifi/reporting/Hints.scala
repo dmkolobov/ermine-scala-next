@@ -180,7 +180,7 @@ case class TableHints private(
   def rename(f: ColumnName => ColumnName): TableHints = 
     TableHints(primaryKey = this.primaryKey map (_ map f),
                indices = this.indices.map(p => (p._1 map f, p._2)),
-               foreignKeys = this.foreignKeys.mapValues(fks => fks map (_ map (ab => (f(ab._1), ab._2)))),
+               foreignKeys = this.foreignKeys.mapValues(fks => fks map (_ map (ab => (f(ab._1), ab._2)))).toMap,
                sortOrder = this.sortOrder map { case (a,b) => (f(a), f(b)) })
 
   def renameTable(from: TableName, to: TableName): TableHints = 

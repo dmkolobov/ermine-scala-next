@@ -1,6 +1,6 @@
 package com.clarifi.reporting.ermine
 
-import scalaparsers._
+import scalaparsers.{Parser => _, ParseState => _, _}
 
 object Relocatable {
   def preserveLoc[A <: Located, B<:Located:Relocatable](sub: Map[A,B]): PartialFunction[A,B] = {

@@ -171,7 +171,7 @@ abstract class Backend[M[+_]](implicit mon: Monad[M]) {
   G[Map[TableName,(RefID,Header)]] = {
     reverseTopSort[TableName](headers.keys.toStream)(tn => headers(tn)._2.foreignKeys.keys.toStream).map(tname => {
       val (hdr,hints) = headers(tname)
-      val tbl: G[RefID] = create(toRefID(tname), hdr, hints, Hints(headers.mapValues(_._2)))
+      val tbl: G[RefID] = create(toRefID(tname), hdr, hints, Hints(headers.mapValues(_._2).toMap))
       tbl.map(rid => (tname, (rid, hdr))): G[(TableName, (RefID, Header))]
     }).sequence[KS, (TableName,(RefID, Header))].map(kvs => Map(kvs: _*))
   }

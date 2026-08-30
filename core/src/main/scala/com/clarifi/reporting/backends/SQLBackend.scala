@@ -78,11 +78,11 @@ class SqlBackend(implicit emitter: SqlEmitter) extends Backend[DB] {
 
   private def populateSchemaImpl(schema: Map[TableName,(RefID,Header)], batchSize: Int = 5000): DB[Iteratee[IO, (TableName, Record), Unit]] = {
     val keysList: Map[TableName,List[ColumnName]] =
-      schema.mapValues(v => v._2.keys.toList) // commit to an order of columns
+      schema.mapValues(v => v._2.keys.toList).toMap // commit to an order of columns
 
     // 1-based indexing because prepared statement has 1-based indexing for setting variables
     val keys: Map[TableName, Map[ColumnName,Int]] =
-      keysList.mapValues(ks => ks.zip(Stream.from(1)).toMap)
+      keysList.mapValues(ks => ks.zip(Stream.from(1)).toMap).toMap
 
     def indexOf(cols: Map[ColumnName,Int], columnName: ColumnName) = {
       cols.getOrElse(columnName, sys.error("column not mentioned in header"))

@@ -160,7 +160,7 @@ object Bottom {
 
 class Rec(val t: Map[String, Runtime]) extends Runtime {
   def extract[A] = this.asInstanceOf[A]
-  override def nf = Rec( t.mapValues( _.nf ) )
+  override def nf = Rec( t.mapValues( _.nf ).toMap )
 
   override def equals(v: Any) = v match {
     case (rv : Runtime) => rv.whnf match {
@@ -346,7 +346,7 @@ object Runtime {
     else Fun(v => accumData(name, v :: vals, n - 1))
 
   def recAsRecord(r: Rec): Record = r match {
-    case Rec(tup) => tup.mapValues( toPrimExpr(_, false) )
+    case Rec(tup) => tup.mapValues( toPrimExpr(_, false) ).toMap
   }
 
   object RecAsRecord {

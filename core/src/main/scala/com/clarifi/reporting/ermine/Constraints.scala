@@ -239,7 +239,8 @@ package ermine
  *    searching for a small set of constraints that imply the others.
  */
 
-import scalaz._
+// scalaz's Name and Free shadow ermine's own (Name.scala, Vars.scala)
+import scalaz.{Name => _, Free => _, _}
 import Scalaz._
 import Tags._
 import scalaparsers.{Loc, Located, Supply}
