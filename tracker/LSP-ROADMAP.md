@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 2.2 done (op lexer parity); next item 2.3a (parser: header+statements+layout) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 2.3a done (header parity 161/161 + splitter); next item 2.3b (terms+patterns) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -233,7 +233,7 @@ machinery is deleted post-G1, never before.
   double-backtick literal idents; keep DataConParsers' ':'-lexeme split —
   lexical, safe); property-test against the old `op` parser over all
   stdlib sources.
-- [ ] **2.3a Parser: header + statements + layout** onto the surface AST —
+- [x] **2.3a Parser: header + statements + layout** onto the surface AST —
   no name maps, no insert-on-miss, no LocalBlocks, no mid-parse fixity;
   statement order preserved verbatim; the five-way '{' disambiguation
   rules (record vs brace-list via '=', kind-arg blocks, row types,
@@ -582,3 +582,19 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   alternatives always swallow it — that is why 1.3b could not reproduce
   it and why users see layout errors instead. Baselines: core/test 801
   (800+known), repl 3/3, lsp 27/27.
+- 2026-08-30 2.3a done: surface/SurfaceParsers.scala — Parsing[Unit]
+  instantiation (same generic layout engine as the fused pipeline, no
+  state for name maps to hide in); full header grammar (module/import/
+  export, as-aliases, using/hiding items with renames); fixity
+  statements parsed for real; every other statement captured by the
+  per-char offside splitter as a classified placeholder with exact
+  extent (the splitter IS Stage 2's recovery primitive). Two bugs found
+  by the parity tests: the offside check must never fire on leading
+  whitespace (continuation lines broke at col 1), and the test's own
+  fixity regex counted a declaration inside Eq.e's block comment.
+  TestSurfaceParsers: headers agree with ModuleParsers across all 161
+  files (names, imports, aliases, flags, item sets); splitter covers
+  every file, fixity counts match an independent regex, spans ordered.
+  tracker/surface-notes.md records the five-way '{' rules, the span-end
+  caveat, and the explicit-layout placeholder. Baselines: core/test 803
+  (802+known), repl 3/3, lsp 27/27.
