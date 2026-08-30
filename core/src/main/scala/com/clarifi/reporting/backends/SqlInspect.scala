@@ -49,7 +49,7 @@ object SqlMetadata {
            (rs getString "COLUMN_NAME", ty))
 
   private def deriveSchemata(cols: Traversable[ColumnInfo]): Schemata =
-    cols groupBy (_._1) mapValues (_.view map (_._2) toMap)
+    (cols groupBy (_._1) mapValues (_.view map (_._2) toMap)).toMap
 
   private def columnMetaData(catalog: Option[String],
                              schemaPattern: Option[String],

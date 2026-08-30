@@ -54,13 +54,13 @@ case class ErParseState(
         val g2: List[Global] = origins.applyOrElse(g, (x: Global) => List(x))
         if (g2 == List(g)) g2 else g2.flatMap(greatestAncestors(_))
       }
-      m mapValues {
+      (m mapValues {
         case List(x) => List(x)
         case xs => {
           val collapse = xs.flatMap(x => greatestAncestors(toGlobal(x))).toSet.toList
           collapse
         }
-      }}
+      }).toMap}
     def localImportsToGlobals(m: Map[Local, List[Name]]) : Map[Global, List[Global]] = {
       m.collect( {
         case (l, xs) => (toGlobal(l), xs.map(toGlobal(_)))

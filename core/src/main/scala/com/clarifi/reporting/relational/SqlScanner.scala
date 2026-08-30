@@ -533,7 +533,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
              // fine, since we are guarded by a function
              val rows: Procedure[scalaz.Id.Id, Record] = Mem.join { q(kord)(db).
                andThen(
-                 Process.groupingBy((r: Record) => r.filterKeys(knames.contains))).
+                 Process.groupingBy((r: Record) => r.filterKeys(knames.contains).toMap)).
                map { case (key, recs) =>
                  val x = Literal(recs.head, recs.tail)
                  val subquery = Mem.instantiate(x, expr)

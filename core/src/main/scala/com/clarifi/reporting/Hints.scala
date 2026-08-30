@@ -60,7 +60,7 @@ class Hints private(val tables: Map[TableName,TableHints]) {
     Hints(tbls.toSet.foldLeft(tables)((tables,t) => tables + (t -> f(t,tables(t)))))
 
   def rename(from: TableName, to: TableName): Hints = 
-    Hints(tables - from ++ tables.get(from).map((to,_)) mapValues (_.renameTable(from, to)))
+    Hints((tables - from ++ tables.get(from).map((to,_)) mapValues (_.renameTable(from, to))).toMap)
   
   def drop(t: TableName): Hints = Hints(tables - t)
 

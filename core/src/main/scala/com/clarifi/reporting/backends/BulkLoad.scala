@@ -169,7 +169,7 @@ object BulkLoad {
   def preschemaR = listR(tuple2R(stringR, listR(tuple2R(stringR, stringR)))) map {
     l => l map { case (k, h) => k -> (h map { case (col, pt) => col -> PrimT.read(pt) })} toMap
   }
-  def toSchema(m: Map[String, List[(String, PrimT)]]): Map[String, Header] = m.mapValues(_ toMap)
+  def toSchema(m: Map[String, List[(String, PrimT)]]): Map[String, Header] = m.mapValues(_ toMap).toMap
 
   def metadataW = p5W(stringW, optionW(stringW), optionW(stringW), optionW(stringW), optionW(stringW))(f => (md:Metadata) =>
     f(md.databaseName, md.before, md.onSuccess, md.onError, md.after))

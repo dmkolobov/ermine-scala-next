@@ -304,12 +304,12 @@ object Reflexivity {
   def literal(atoms: NonEmptyList[Record]): Reflexivity[ColumnName] =
     ForallTups(atoms.tail.foldLeft(atoms.head){(consts, rec) =>
                  consts filter {case (k, v) => rec(k) === v}
-               }.mapValues(some),
+               }.mapValues(some).toMap,
                PartitionedSet.zero)
   def literalSeq(atoms: Seq[Record]): Reflexivity[ColumnName] =
     ForallTups(atoms.tail.foldLeft(atoms.head){(consts, rec) =>
                  consts filter {case (k, v) => rec(k) === v}
-               }.mapValues(some),
+               }.mapValues(some).toMap,
                PartitionedSet.zero)
 
 }

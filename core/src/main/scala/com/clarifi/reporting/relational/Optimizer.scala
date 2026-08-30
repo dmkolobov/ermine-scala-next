@@ -259,7 +259,7 @@ object Optimizer {
     Predicates.any(litrel.map(Predicate.fromRecord).list)
 
   private def literalAsCases(jk: Set[ColumnName], litrel: NonEmptyList[Record]): Map[Attribute, Op] = {
-    val preds = litrel.map(_ filterKeys jk).map(Predicate.fromRecord)
+    val preds = litrel.map((r: Record) => (r filterKeys jk).toMap).map(Predicate.fromRecord)
     (litrel.head.keySet -- jk).map {
       n => Attribute(n, litrel.head(n).typ) -> ((preds zip litrel).foldRight(None : Option[Op]) {
         case ((a, b), Some(r)) => Some(If(a, OpLiteral(b(n)), r))
@@ -274,7 +274,7 @@ object Optimizer {
   }
 
   def joinLiterals(jk: Set[String], ts1: List[Record], ts2: List[Record]): List[Record] =
-    Tee.hashJoin[Record, Record, Record](_ filterKeys jk, _ filterKeys jk).
+    Tee.hashJoin[Record, Record, Record]((r: Record) => (r filterKeys jk).toMap, (r: Record) => (r filterKeys jk).toMap).
       capL(com.clarifi.machines.Source(ts1)).cap(com.clarifi.machines.Source(ts2)).foldMap {
         case (x, y) => Vector(x ++ y)
       }.toList
@@ -313,7 +313,7 @@ object Optimizer {
 
   def exceptAggregate[M, R](agg: AggregateByGroup[M, R], exc: Set[ColumnName]) = agg match {
     case AggregateByGroup(under, cs, aggs, group) =>
-      AggregateByGroup(under, cs.filterKeys(k => !exc(k.name)), aggs.filter(v => !exc(v._1.name)), group)
+      AggregateByGroup(under, cs.filterKeys(k => !exc(k.name)).toMap, aggs.filter(v => !exc(v._1.name)), group)
   }
 
   def optimizeRel[M: Equal, R: Equal](rel: Relation[M, R],

@@ -228,7 +228,7 @@ object TableFlattener {
       _ <- backend.populateSchema(schema, StreamT.runStreamT(f(a), ()), batchSize)
       _ <- backend.createIndices(schema, f.hints)
       src <- ask[G, Source]
-    } yield schema mapValues { case (ridr,hdr) => hdr }
+    } yield (schema mapValues { case (ridr,hdr) => hdr }).toMap
   }
 
 }

@@ -92,8 +92,8 @@ case class CCase[+A](loc: Loc, expr: Core[A], alts: List[CAlt[A]]) extends Core[
 }
 
 case class CLet[+A](bindings: Map[TermVar,Core[A]], body: Core[A]) extends Core[A] {
-  def flatMap[B](f: A => Core[B]) = CLet(bindings.mapValues(_.flatMap(f)), body.flatMap(f))
-  def map[B](f: A => B) = CLet(bindings.mapValues(_.map(f)), body.map(f))
+  def flatMap[B](f: A => Core[B]) = CLet(bindings.mapValues(_.flatMap(f)).toMap, body.flatMap(f))
+  def map[B](f: A => B) = CLet(bindings.mapValues(_.map(f)).toMap, body.map(f))
   def foreach[U](f: A => U): Unit = { for (p <- bindings) p._2.foreach(f); body.foreach(f) }
 }
 
