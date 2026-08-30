@@ -1,0 +1,6 @@
+Imports: Builtin, Layout, Prelude, REPL, Relations
+res0 : String = "Hello world!"
+res1 : Int = 120
+res2 : Int = 60
+Relation (|FavoriteColor, ID, Name|)
+res3 : Relation (|FavoriteColor, ID, Name|) =

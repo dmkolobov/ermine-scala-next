@@ -1,0 +1,8 @@
+:load tracker/repl-tests/Relations.e
+:import Relations
+msg
+factorial 5
+sum2 [10,20,30]
+:type employees
+employees
+:quit

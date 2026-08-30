@@ -1,28 +1,40 @@
 #!/usr/bin/env bash
-# Feed tracker/repl-tests/smoke.in to the REPL and diff against smoke.expected.
+# Run every tracker/repl-tests/*.in through the REPL and diff its answers
+# against the matching *.expected.
 #
-#   sbt 'export core/fullClasspath' > /dev/null   # once, after a build
+#   sbt -batch 'export core/fullClasspath' | tail -1 > tracker/repl-classpath.txt
 #   tracker/tools/repl-smoke.sh
 #
-# Interface caching is off so the run always exercises real inference;
-# with it on, the second run answers from the .ei files instead.
+# Interface caching is off so each run exercises real inference; with it on the
+# second run answers from the cached .ei files instead, which prints types in a
+# more explicit (but equivalent) form.
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$here"
 : "${JAVA_HOME:=$HOME/.local/ermine-toolchain/jdk-21.0.12.1+1}"
 cp="$(tr -d '\n' < tracker/repl-classpath.txt)"
 
-actual=$(
-  "$JAVA_HOME/bin/java" -Dermine.typeCheck=true -Dermine.useInterface=false -cp "$cp" \
-    com.clarifi.reporting.ermine.session.Console < tracker/repl-tests/smoke.in 2>&1 |
-  sed -n '/Loaded [0-9]* modules/,$p' |          # drop banner + module list
-  tail -n +2 |                                   # drop the "Loaded N modules" line
-  sed 's/^>> //; s/^>>$//' |                     # strip prompts
-  grep -v '^$'
-)
-if diff -u tracker/repl-tests/smoke.expected <(printf '%s\n' "$actual"); then
-  echo "REPL smoke test: PASS ($(grep -c . tracker/repl-tests/smoke.expected) checks)"
-else
-  echo "REPL smoke test: FAIL"
-  exit 1
-fi
+fail=0
+for input in tracker/repl-tests/*.in; do
+  name=$(basename "$input" .in)
+  expected="tracker/repl-tests/$name.expected"
+  actual=$(
+    "$JAVA_HOME/bin/java" -Dermine.typeCheck=true -Dermine.useInterface=false \
+      -cp "$cp" com.clarifi.reporting.ermine.session.Console < "$input" 2>&1 |
+    sed -n '/Loaded [0-9]* modules/,$p' |   # drop banner and startup module list
+    tail -n +2 |                            # drop the "Loaded N modules" line
+    grep -v '^  ' |                         # drop :import's module listing
+    grep -v 'Importing module\|Loaded module' |  # timing varies run to run
+    grep -v '^Imports:\|^Files:\|^Modules:' |   # :import's session summary
+    sed 's/^>> //; s/^>>$//' |              # strip prompts
+    grep -v '^$'
+  )
+  if diff -u "$expected" <(printf '%s\n' "$actual") > /tmp/repl-smoke-$name.diff 2>&1; then
+    echo "  PASS  $name ($(grep -c . "$expected") checks)"
+  else
+    echo "  FAIL  $name"
+    cat /tmp/repl-smoke-$name.diff
+    fail=1
+  fi
+done
+exit $fail
