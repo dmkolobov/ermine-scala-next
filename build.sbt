@@ -109,7 +109,9 @@ lazy val core = (project in file("core"))
     // 0.13 build set it from an `enable-type-checking` task wired into
     // `compile`. Without it every module binding is loaded as `forall a. a`.
     Compile / run / javaOptions += "-Dermine.typeCheck=true",
-    outputStrategy := Some(StdoutOutput)
+    // Give the forked REPL the terminal directly, so jline sees a real tty.
+    outputStrategy := Some(StdoutOutput),
+    Compile / run / outputStrategy := Some(StdoutOutput)
   )
 
 lazy val root = (project in file("."))

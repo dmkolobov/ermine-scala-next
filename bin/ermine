@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Start the Ermine REPL.
+#
+#   bin/ermine                 # interactive
+#   bin/ermine < script.e      # batch
+#
+# Builds the classpath with sbt on first run and caches it in
+# target/ermine-classpath; delete that file after changing dependencies.
+# Extra JVM flags can be passed in ERMINE_JAVA_OPTS.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$here"
+cache=target/ermine-classpath
+
+if [[ ! -s $cache ]] || [[ build.sbt -nt $cache ]]; then
+  mkdir -p target
+  sbt -batch 'export core/fullClasspath' 2>/dev/null |
+    grep -v '^\[' | grep -v '^$' | tail -1 | tr -d '\n' > "$cache"
+fi
+
+opts=( -Dermine.typeCheck=true )
+[[ -n ${ERMINE_JAVA_OPTS:-} ]] && read -r -a extra <<< "$ERMINE_JAVA_OPTS" && opts+=( "${extra[@]}" )
+
+exec java "${opts[@]}" -cp "$(cat "$cache")" \
+  com.clarifi.reporting.ermine.session.Console "$@"
