@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Start the Ermine language server (LSP over stdio).
+#
+# stdout carries the protocol; point ERMINE_LSP_LOG at a file for
+# server-side logging. Builds the classpath with sbt on first run and
+# caches it in target/ermine-classpath, like bin/ermine.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$here"
+cache=target/ermine-classpath
+
+if [[ ! -s $cache ]] || [[ build.sbt -nt $cache ]]; then
+  mkdir -p target
+  sbt -batch 'export core/fullClasspath' 2>/dev/null |
+    grep -v '^\[' | grep -v '^$' | tail -1 | tr -d '\n' > "$cache"
+fi
+
+opts=( )
+[[ -n ${ERMINE_LSP_LOG:-} ]] && opts+=( -Dermine.lsp.log="$ERMINE_LSP_LOG" )
+[[ -n ${ERMINE_JAVA_OPTS:-} ]] && read -r -a extra <<< "$ERMINE_JAVA_OPTS" && opts+=( "${extra[@]}" )
+
+: "${JAVA_HOME:=$HOME/.local/ermine-toolchain/jdk-21.0.12.1+1}"
+exec "$JAVA_HOME/bin/java" "${opts[@]}" -cp "$(cat "$cache")" \
+  com.clarifi.reporting.ermine.lsp.Main "$@"

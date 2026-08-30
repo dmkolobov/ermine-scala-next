@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 0 in progress — 0.6 done · Seeded 2026-08-30 (session that shipped the
+Status: Stage 0 COMPLETE, awaiting G0 sign-off (loop stopped) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -88,7 +88,7 @@ Checklist (each item ≈ one loop iteration):
   type from the session env (the :type machinery in Console is the
   reference); top-level and imported names only — local binder types are
   Stage-1+ territory (see perf ticket before promising type-at-point).
-- [ ] **0.7 Editor wiring + demo**: a 10-line VS Code/eglot config snippet
+- [x] **0.7 Editor wiring + demo**: a 10-line VS Code/eglot config snippet
   in docs/ or the ticket; record a full demo transcript (the 0.4 client
   run) below under "Gate evidence".
 
@@ -117,11 +117,28 @@ flowing mid-keystroke; then incremental reuse per unchanged statement.
 
 ## Blocked / Awaiting
 
-(empty)
+- G0 sign-off: Stage 0 is done and demoed (evidence below). Next loop
+  iteration should not start Stage 1 without a human OK; when given,
+  expand Stage 1 into a checklist first.
 
-## Gate evidence
+## Gate evidence (G0, recorded 2026-08-30)
 
-(empty)
+Demo = the 0.4 scripted client run (`tracker/tools/lsp-smoke.sh`), 27/27:
+server booted via the same entry point `bin/ermine-lsp` wires into editors
+(docs/lsp.md has the eglot/VS Code snippets). Protocol excerpts, uris
+abbreviated:
+
+- initialize -> `{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":{"openClose":true,"change":0,"save":true},"definitionProvider":true,"hoverProvider":true},"serverInfo":{"name":"ermine-lsp","version":"0.1"}}`
+- boot (interface-free): `session: ready — 129 modules in 12.8s`
+- didOpen Bad.e -> `{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:…/lsp-tests/Bad.e","diagnostics":[{"range":{"start":{"line":3,"character":0},"end":{"line":3,"character":0}},"severity":1,"source":"ermine","message":"…/lsp-tests/Bad.e:4:1: error: failed to unify type Int with type St…`
+- definition of `&&` (Nav.e) -> `{"jsonrpc":"2.0","id":5,"result":{"uri":"file:…/classes/modules/Bool.e","range":{"start":{"line":7,"character":0},"end":{"line":7,"character":2}}`
+- hover on `twice` -> `{"jsonrpc":"2.0","id":9,"result":{"contents":{"kind":"plaintext","value":"Nav.twice : forall a. a -> a"}}}`
+- misses answer null; didClose clears; no .ei written next to fixtures.
+
+Baselines at gate: core/test 761/762 (known Constraints failure only),
+repl-smoke 3/3, lsp-smoke 27/27. Commits f0ba9b4 (0.1), 0f3a12c (0.2),
+d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
+(0.7). Stage 0 complete — loop stopped for sign-off per the gate.
 
 ## Iteration log
 
@@ -189,3 +206,10 @@ flowing mid-keystroke; then incremental reuse per unchanged statement.
   "Good.answer : Int", "Nav.twice : forall a. a -> a"; && labels as
   Prelude.&& (re-export; termNameOrigins could refine — polish, not now).
   lsp-smoke 27/27; baselines 761/762, repl 3/3.
+- 2026-08-30 0.7 done: bin/ermine-lsp launcher (classpath cache like
+  bin/ermine, JAVA_HOME defaulted to the toolchain — bare `java` isn't on
+  editor PATHs), docs/lsp.md (server description, eglot mode+wiring,
+  VS Code thin-client snippet, harness pointer), launcher smoke-tested by
+  handshake, demo transcript recorded under Gate evidence. Baselines:
+  761/762, repl 3/3, lsp 27/27. STAGE 0 COMPLETE — stopping the loop at
+  gate G0 for sign-off.
