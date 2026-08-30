@@ -66,7 +66,9 @@ class ConsoleEnv(
   _sessionEnv: SessionEnv,
   val in: InputStream = new FileInputStream(FileDescriptor.in),
   val out: PrintWriter = new PrintWriter(new OutputStreamWriter(System.out)),
-  val terminal: Terminal = TerminalBuilder.builder().system(true).build()
+  // `dumb` lets the REPL still run when stdin is not a tty (a pipe, a test
+  // harness, CI); jline 3 otherwise refuses to build a system terminal.
+  val terminal: Terminal = TerminalBuilder.builder().system(true).dumb(true).build()
 ) {
   implicit val supply: Supply = Supply.create
   implicit val con: Printer = new Printer {

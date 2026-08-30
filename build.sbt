@@ -100,6 +100,10 @@ lazy val core = (project in file("core"))
     Compile / run / mainClass := Some("com.clarifi.reporting.ermine.session.Console"),
     Compile / run / fork := true,
     Compile / run / connectInput := true,
+    // The session type-checks module bindings only when this is set; the sbt
+    // 0.13 build set it from an `enable-type-checking` task wired into
+    // `compile`. Without it every module binding is loaded as `forall a. a`.
+    Compile / run / javaOptions += "-Dermine.typeCheck=true",
     outputStrategy := Some(StdoutOutput)
   )
 
