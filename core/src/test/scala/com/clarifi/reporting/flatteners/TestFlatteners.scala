@@ -41,7 +41,8 @@ object TestFlatteners extends Properties("Flatteners") {
     property("complies-with-header") = tuple.forall(ab => ab._2.typ.isa(header(ab._1)))
   }
 
-  def checkHeader(record: Record, header: Header): Prop = new CheckHeader(record, header)
+  def checkHeader(record: Record, header: Header): Prop =
+    Prop.all(new CheckHeader(record, header).properties.map(_._2).toSeq: _*)
 
   /** Answer duplicates in `xs` according to some `key`. */
   def duplicates[A, B](xs: Traversable[A])(key: A => B = identity _): Iterable[A] =
@@ -77,14 +78,14 @@ object TestFlatteners extends Properties("Flatteners") {
       // referenceable.
       private val foreignReferencees =
         (f.hints.tables.values
-         .map(_.foreignKeys.mapValues(_.map(_.toList.map(_._2))))
+         .map(_.foreignKeys.mapValues(_.map(_.toList.map(_._2))).toMap)
          .foldLeft(Map.empty[TableName, Set[List[ColumnName]]]) {
             (m, m2) => std.map.unionWith(m, m2)(_ ++ _)
          })
 
       property("foreign key references are resolvable") =
         (((foreignReferencees.mapValues
-           (_.toIterable.map(fk => (fk, Set.empty[List[PrimExpr]])).toMap),
+           (_.toIterable.map(fk => (fk, Set.empty[List[PrimExpr]])).toMap).toMap,
            (true: Prop)))
          /: output) {
           (state, row) =>
@@ -94,17 +95,17 @@ object TestFlatteners extends Properties("Flatteners") {
             val availReferencees =
               updateIn1(pastReferencees, tableName)(Map.empty) (
                 _.map {case (fk, refs) => (fk, refs + fk.toList.map(record apply _))})
-          (availReferencees,
-           Prop.all(errors +: (for {
-             fkPerTable <- fks(tableName).getOrElse(Map.empty)
-             (ftabName, fks) = fkPerTable
-             availfrs = availReferencees.get(ftabName).getOrElse(Map.empty)
-             oneFkSet <- fks
-             oneFk = oneFkSet.toList
-           } yield (availfrs(oneFk.map(_._2))
-                    contains oneFk.map(record apply _._1)) :|
-                          "Foreign reference %s required by %s".format(oneFk, record))
-                    .toSeq:_*))
+            (availReferencees,
+             Prop.all(errors +: (for {
+               fkPerTable <- fks(tableName).getOrElse(Map.empty)
+               (ftabName, fks) = fkPerTable
+               availfrs = availReferencees.get(ftabName).getOrElse(Map.empty)
+               oneFkSet <- fks
+               oneFk = oneFkSet.toList
+             } yield (availfrs(oneFk.map(_._2))
+                      contains oneFk.map(record apply _._1)) :|
+                            "Foreign reference %s required by %s".format(oneFk, record))
+                      .toSeq:_*))
        }._2
     }
 
@@ -117,7 +118,7 @@ object TestFlatteners extends Properties("Flatteners") {
 
     case class Ctx(value: A, finalState: S, testEnum: DS)
 
-    def all(test: Ctx => Prop) = forAll (Arbitrary.arbitrary[A].map(a => {
+    def all(test: Ctx => Prop): Prop = forAll (Arbitrary.arbitrary[A].map(a => {
       val (finalState, testEnum) = dataset(f, a, initialState)
       Ctx(a, finalState, testEnum)
     }))(test)
