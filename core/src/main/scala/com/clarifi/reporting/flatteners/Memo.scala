@@ -19,7 +19,7 @@ import NonEmptyList._
 case class Indexee[K](counter: Int, content: Map[K, Int])
 
 object Indexee {
-  implicit def indexeeMonoid[K] = new Monoid[Indexee[K]] {
+  implicit def indexeeMonoid[K]: Monoid[Indexee[K]] = new Monoid[Indexee[K]] {
     val zero = Indexee[K](0, Map())
     def append(x: Indexee[K], y: => Indexee[K]) =
       Indexee(x.counter + y.counter, x.content |+| y.content)
@@ -39,7 +39,7 @@ object ConsIndexee {
   type :::[K,S] = ConsIndexee[K,S]
   type :++[S,K] = ConsIndexee[K,S]
   type ::+[S,K] = ConsIndexee[K,Indexee[S]]
-  implicit def consIndexeeMonoid[K,S: Monoid] = new Monoid[ConsIndexee[K,S]] {
+  implicit def consIndexeeMonoid[K,S: Monoid]: Monoid[ConsIndexee[K,S]] = new Monoid[ConsIndexee[K,S]] {
     val zero = ConsIndexee[K,S](mzero[Indexee[K]], mzero[S])
     def append(x: ConsIndexee[K, S], y: => ConsIndexee[K, S]) =
       ConsIndexee(x.head |+| y.head, x.tail |+| y.tail)

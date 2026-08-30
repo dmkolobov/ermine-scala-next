@@ -104,7 +104,7 @@ object Column {
         }
     }
 
-    implicit def rightCovariant[L]: Traverse[Join[L, ?]] =
+    implicit def rightCovariant[L]: Traverse[[x] =>> Join[L, x]] =
       joinCovariant.rightTraverse
   }
 

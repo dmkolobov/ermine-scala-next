@@ -285,7 +285,7 @@ object TypeParsers {
       st <- gets(_.s)
       ty <- typ
       utvs = Type.allTypeVars(ty).collect(Function.unlift(p(st.typeNames))).toList
-      _ <- utvs traverse_[Parser] { case (tv, otv) =>
+      _ <- utvs.traverse_[Parser] { case (tv, otv) =>
         tv.name traverse_[Parser] { n => modify(typeNames.member(n).set(_,otv)) }
       }
     } yield Forall.mk(ty.loc, List(), utvs.map(_._1), Exists.unit, ty)

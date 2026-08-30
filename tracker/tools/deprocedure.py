@@ -7,7 +7,7 @@ multiple parameter lists, and defs with no parameter list at all.
 """
 import re, sys
 
-DEF = re.compile(r'^(\s*)((?:(?:override|final|private|protected|implicit|lazy|abstract|sealed|@\w+)\s+)*)def\s+([A-Za-z_$][A-Za-z0-9_$]*|[^\s(\[]+)')
+DEF = re.compile(r'^(\s*)((?:(?:override|final|private|protected|implicit|lazy|abstract|sealed|@\w+)\s+)*)def\s+([A-Za-z_$][A-Za-z0-9_$]*=?|[^\s(\[]+)')
 
 def transform(text):
     lines = text.split('\n')

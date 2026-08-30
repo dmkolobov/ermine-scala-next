@@ -253,7 +253,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   def emitJoinOn(r1: SqlSource,
                  r2: SqlSource,
                  on: Set[(SqlExpr, SqlExpr)],
-		 op: SqlJoinOp): RawSql = {
+                 op: SqlJoinOp): RawSql = {
     val onExpr = if (on.isEmpty) SqlTruth(true).emitSql(this)
                  else on.map {
                    case (c1, c2) => c1.emitSql(this) |+| " = " |+| c2.emitSql(this)
@@ -807,7 +807,7 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
   def emitJoinOn(r1: SqlSource,
                  r2: SqlSource,
                  on: Set[(SqlExpr, SqlExpr)],
-		 op: SqlJoinOp): RawSql = {
+                 op: SqlJoinOp): RawSql = {
     val onExpr = if (on.isEmpty) SqlTruth(true).emitSql(this)
                  else on.map {
                    case (c1, c2) => c1.emitSql(this) |+| " = " |+| c2.emitSql(this)

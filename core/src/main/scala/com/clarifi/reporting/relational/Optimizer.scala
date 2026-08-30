@@ -19,7 +19,7 @@ import com.clarifi.machines._
 object Optimizer {
   private type JoinKey = Set[SqlColumn]
 
-  private[this] implicit val boteq = Equal.equalA[Nothing]
+  private[this] implicit val boteq: Equal[Nothing] = Equal.equalA[Nothing]
 
   // The largest size for a literal to be considered small enough to turn into a predicate.
   private val smallLitSize = 30
@@ -91,7 +91,9 @@ object Optimizer {
     mem match {
       case VarM(v) => (hm(v), hm(v), TrivialAugment(VarM(v)))
       case AugmentSM(main, cur, hist) =>
-        implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
+        implicit val iderr: Typer.Errs[Id] = new Typer.Errs[Id] {
+          def apply(x: String, xs: String*): Nothing = sys.error((x::xs.toList).mkString("\n"))
+        }
         val h = Typer.memTyperAux[Id, R, M](main, hr, hm)
         val nh = Typer.augmentType(h, cur, hist)
         (nh, h, AugmentSM(main, cur, hist))
@@ -208,7 +210,9 @@ object Optimizer {
         (ch, ch, TrivialAugment(UnionM(detrivialize(o1), detrivialize(o2))))
       case Pivot(under, ks, vs, outer, km) =>
         val (hu, uhu, omu) = rec(under)
-        implicit def err(s: String, ss: String*): Option[Nothing] = None
+        implicit val err: Typer.Errs[Option] = new Typer.Errs[Option] {
+          def apply(s: String, ss: String*): Option[Nothing] = None
+        }
         val nh = Typer.pivotType[Option](hu, ks, vs, outer, km).get
         (nh, nh, TrivialAugment(Pivot(detrivialize(omu), ks, vs, outer, km)))
       case DifferenceM(m1, m2) =>
@@ -228,7 +232,9 @@ object Optimizer {
         val (h, _, m2) = optimizeMem(m, hr, hm)
         (h, h, TrivialAugment(MemoMem(m2)))
       case x : HardMem =>
-        implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
+        implicit val iderr: Typer.Errs[Id] = new Typer.Errs[Id] {
+          def apply(x: String, xs: String*): Nothing = sys.error((x::xs.toList).mkString("\n"))
+        }
         val h = Typer.memTyperAux[Id, R, M](x, hr, hm)
         (h, h, TrivialAugment(x))
     }
@@ -361,7 +367,9 @@ object Optimizer {
       (h, Aggregate(ir, attr, aggfunc))
     case PivotR(r, key, vals, outer, keyMap) =>
       val (h, ir) = optimizeRel(r, hr, hm)
-      implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
+      implicit val iderr: Typer.Errs[Id] = new Typer.Errs[Id] {
+          def apply(x: String, xs: String*): Nothing = sys.error((x::xs.toList).mkString("\n"))
+        }
       val h2 = Typer.pivotType[Id](h, key, vals, outer, keyMap)
       (h2, PivotR(ir, key, vals, outer, keyMap))
     case LetR(r, pk, e) =>
@@ -387,13 +395,17 @@ object Optimizer {
       val (h, r) = optimizeRel(under, hr, hm)
       (h, Note(tags, r))
     case r: HardRel =>
-      implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
+      implicit val iderr: Typer.Errs[Id] = new Typer.Errs[Id] {
+          def apply(x: String, xs: String*): Nothing = sys.error((x::xs.toList).mkString("\n"))
+        }
       val h = Typer.relTyperAux[Id, M, R](r, hr, hm)
       (h, r)
   }
 
   def headerOf[M, R](r: Relation[M, R], hr: R => Header, hm: M => Header): Header = {
-    implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
+    implicit val iderr: Typer.Errs[Id] = new Typer.Errs[Id] {
+          def apply(x: String, xs: String*): Nothing = sys.error((x::xs.toList).mkString("\n"))
+        }
     Typer.relTyperAux[Id, M, R](r, hr, hm)
   }
 

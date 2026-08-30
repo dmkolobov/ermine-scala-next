@@ -99,8 +99,8 @@ object GenTabular {
   import scalaz.Functor
 
   implicit def covariant[Repr[G[_], B] <: GenTabular[Repr, G, B],
-                         M[_]]: Functor[Repr[M, ?]] =
-    new Functor[Repr[M, ?]] {
+                         M[_]]: Functor[[x] =>> Repr[M, x]] =
+    new Functor[[x] =>> Repr[M, x]] {
       def map[A, B](fa: Repr[M, A])(f: A => B): Repr[M, B] = fa map f
     }
 }

@@ -287,7 +287,7 @@ object Session {
       // update sourceFileOrdering if you add more here
     }
 
-    implicit def sourceFileOrdering = new Ordering[SourceFile] {
+    implicit def sourceFileOrdering: Ordering[SourceFile] = new Ordering[SourceFile] {
       def compare(x: SourceFile, y: SourceFile) =
         (x, y, sourceFileTypeScore(x) - sourceFileTypeScore(y)) match {
           case (_, _, n) if n /== 0                => n

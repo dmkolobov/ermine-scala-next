@@ -18,7 +18,7 @@ import com.clarifi.reporting.ermine.Type.typeVars
 import com.clarifi.reporting.ermine.Term.termVars
 import scalaz.Scalaz._
 import scala.collection.immutable.List
-import scala.collection.mutable.{ HashMap, SynchronizedMap }
+import scala.jdk.CollectionConverters._
 
 object StatementParsers {
   import SI8862._
@@ -253,7 +253,10 @@ object StatementParsers {
   } yield r
 
   // global cache used because the classLoader doesn't seem to cache these across threads
-  val classMap = new HashMap[String, Class[T] forSome {type T}] with SynchronizedMap[String, Class[T] forSome {type T}]
+  // was: mutable.HashMap[String, Class[T] forSome {type T}] with SynchronizedMap.
+  // Existentials are gone in Scala 3, SynchronizedMap in 2.13; a concurrent map
+  // gives the same thread-safe caching.
+  val classMap = new java.util.concurrent.ConcurrentHashMap[String, Class[?]]().asScala
   def classLookup(p: Pos, s: String): Either[Exception,ForeignClass] = {
     // val then = System.nanoTime
     classMap.get(s) match {

@@ -181,7 +181,7 @@ object TableFlattener {
   def persistExistingS[G[+_], S, A](backend:Backend[G], f: TableFlattener[S,A], batchSize: Int = 5000)(a: A, s0: S): Kleisli[G, Source, S] = {
     implicit val M = backend.M
     for {
-      ran <- Kleisli{_: Source => M.point(runStreamTOut(f(a), s0))}
+      ran <- Kleisli{ (_: Source) => M.point(runStreamTOut(f(a), s0))}
       (scary, statefree) = ran
       _ <- backend.populateSchema(f.schema.transform((tn,hdr) => (RefID(tn.name),hdr)),
                                  statefree, batchSize)

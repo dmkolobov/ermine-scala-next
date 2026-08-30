@@ -24,7 +24,7 @@ abstract class Flattener[T[_,-_] , S, -A] {
   def lens[R](l: Lens[R,S]): T[R, A]
   def trivial[R](implicit witness: Unit === S): T[R, A] = {
     val lwitness: Lens[R,Unit] === Lens[R,S] =
-      Leibniz.lift[⊥, ⊥, ⊤, ⊤, Lens[R,?], Unit, S](witness)
+      Leibniz.lift[⊥, ⊥, ⊤, ⊤, [x] =>> Lens[R,x], Unit, S](witness)
     lens(Leibniz.subst(Lens.trivialLens[R])(lwitness))
   }
   def local(implicit Z : Monoid[S]) = localState(zeroState)

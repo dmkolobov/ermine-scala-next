@@ -16,7 +16,7 @@ case class RawSql(private[RawSql] val contents: Vector[String]) {
 
 object RawSql {
   /** Produce a raw given some SQL. */
-  implicit def raw(v: String) = RawSql(Vector(v))
+  implicit def raw(v: String): RawSql = RawSql(Vector(v))
   def raw[F[_]: Foldable](vs: F[String]) = RawSql(vs.foldLeft(Vector[String]())((a, b) => a :+ b))
 
   /** Raw is a monoid, can be shown, and can be ordered with respect to

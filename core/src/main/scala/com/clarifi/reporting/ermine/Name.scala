@@ -57,7 +57,7 @@ case class NameOrdering() extends Ordering[Name] {
 object Name {
   def lib(s: String, f: Fixity = Idfix): Name = Global("Lib", s, f)
   def prelude(s: String, f: Fixity = Idfix): Name = Global("Prelude", s, f)
-  implicit lazy val ord = NameOrdering()
+  implicit lazy val ord: NameOrdering = NameOrdering()
   lazy val globalOrd = NameOrdering().asInstanceOf[Ordering[Global]]
   lazy val localOrd = NameOrdering().asInstanceOf[Ordering[Local]]
 }

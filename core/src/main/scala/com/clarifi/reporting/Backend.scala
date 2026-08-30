@@ -46,7 +46,7 @@ abstract class Backend[M[+_]](implicit mon: Monad[M]) {
 
   def populateSchemaM(schema: Map[TableName,(RefID,Header)], records: M[DataSet], batchSize: Int = 5000): G[Unit] =
     Kleisli(s => ^(schemaPopulator(schema, s, batchSize), records){(iv, tups) =>
-      applyIOIteratee(tups, batchSize)(iv._1, iv._2, iv._3).unsafePerformIO
+      applyIOIteratee(tups, batchSize)(iv._1, iv._2, iv._3).unsafePerformIO()
     })
 
   def populateSchemaConcurrently(
@@ -114,7 +114,7 @@ abstract class Backend[M[+_]](implicit mon: Monad[M]) {
   }
 
   private val iodetrans: IO ~> Id = new ~>[IO, Id] {
-    def apply[A](x: IO[A]): A = x.unsafePerformIO
+    def apply[A](x: IO[A]): A = x.unsafePerformIO()
   }
 
   /** Chunk `xs` by Vectors of `batchSize/4` and yield it all in another

@@ -108,7 +108,7 @@ class SqlBackend(implicit emitter: SqlEmitter) extends Backend[DB] {
             def set(k: Int, v: PrimExpr): Unit = v match {
               case IntExpr(_, l) => stmt.setInt(k, l)
               case DoubleExpr(_, d) =>
-			    if (!d.isInfinity && !d.isNaN) stmt.setDouble(k, d)
+                            if (!d.isInfinity && !d.isNaN) stmt.setDouble(k, d)
               case DateExpr(_, d) => emitter.emitDateStatement(stmt, k, d)
               case StringExpr(_, s) =>
                 val l = v.typ.asInstanceOf[StringT].len

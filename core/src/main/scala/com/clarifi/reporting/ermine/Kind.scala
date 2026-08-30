@@ -89,7 +89,7 @@ object Kind {
   def fkvs[A](a: A)(implicit A:HasKindVars[A]): Traversable[V[Unit]] = A.vars(a).filter(_.ty == Free)
   def subKind[A](m: PartialFunction[V[Unit],Kind], a: A)(implicit A:HasKindVars[A]) = A.sub(m, a)
 
-  implicit def kindHasKindVars = new HasKindVars[Kind] {
+  implicit def kindHasKindVars: HasKindVars[Kind] = new HasKindVars[Kind] {
     def vars(k: Kind) = k.vars
     def sub(m: PartialFunction[KindVar, Kind], a: Kind) = a.subst(m)
   }

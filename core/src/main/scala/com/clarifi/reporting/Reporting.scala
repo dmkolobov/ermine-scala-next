@@ -46,7 +46,7 @@ object Reporting {
   // Pattern for non-empty lists
   object NEL { def unapply[A](n: NonEmptyList[A]): Option[(A, List[A])] = Some((n.head, n.tail)) }
 
-  type RefHandler[M[_]] = λ[x => (RefID, IterV[Record, x])] ~> λ[x => M[IterV[Record, x]]]
+  type RefHandler[M[_]] = ([x] =>> (RefID, IterV[Record, x])) ~> ([x] =>> M[IterV[Record, x]])
 
   // Show, Equal, and Order instances
   implicit val RefIDShow: Show[RefID] = showFromToString[String] contramap (_.toString)
@@ -55,9 +55,9 @@ object Reporting {
   implicit val DynEqual: Equal[Dyn] = equalA[Any] contramap (x => x : Any)
   implicit val AttributeEqual: Equal[Attribute] = equal((a, b) => a.name === b.name && a.t == b.t)
   implicit val AttributeShow: Show[Attribute] = show(a => (a.name, a.t).show)
-  implicit def MapShow[K,V] = Show.showFromToString[Map[K,V]]
+  implicit def MapShow[K,V]: Show[Map[K,V]] = Show.showFromToString[Map[K,V]]
 
-  implicit val DateShow = Show.showFromToString[Date]
+  implicit val DateShow: Show[Date] = Show.showFromToString[Date]
   implicit val DateOrder: Order[Date] = new Order[Date] {
     override def equalIsNatural = true
     override def equal(a: Date, b: Date) = a == b
@@ -66,8 +66,8 @@ object Reporting {
   implicit val DateOrdering: SOrdering[Date] =
     DateOrder.toScalaOrdering
 
-  implicit val UuidShow = showFromToString[UUID]
-  implicit val UuidEqual = equalA[UUID]
+  implicit val UuidShow: Show[UUID] = showFromToString[UUID]
+  implicit val UuidEqual: Equal[UUID] = equalA[UUID]
   implicit val UuidOrdering: SOrdering[UUID] = SOrdering.ordered
   implicit val UuidOrder: Order[UUID] = Order.fromScalaOrdering
 

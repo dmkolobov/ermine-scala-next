@@ -105,9 +105,9 @@ abstract class CodecShape2[A[_, _]] {
       type F[LF, RF] = FixF[Shape[LF, RF, SelfF]]
 
       override def R[L, LF, R, RF](l: Reader[L, LF], r: Reader[R, RF])
-        = Readers.fixFR[A[L,R], Shape[LF,RF,?]](readShape(l, r))
+        = Readers.fixFR[A[L,R], [x] =>> Shape[LF,RF,x]](readShape(l, r))
 
       override def W[L, LF, R, RF](l: Writer[L, LF], r: Writer[R, RF])
-        = Writers.fixFW[A[L,R], Shape[LF,RF,?]](writeShape(l, r))
+        = Writers.fixFW[A[L,R], [x] =>> Shape[LF,RF,x]](writeShape(l, r))
     }
 }

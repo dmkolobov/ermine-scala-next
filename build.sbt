@@ -35,6 +35,22 @@ lazy val parsers = (project in file("parsers"))
     libraryDependencies += "org.scalaz" %% "scalaz-core" % scalazVersion
   )
 
+// scalaz 7.0's `scalaz-iterv`, vendored: the Scalaz 6 compatibility iteratees
+// were removed in scalaz 7.1 and this code still uses them. See scalaz-iterv/README.md.
+lazy val scalazIterv = (project in file("scalaz-iterv"))
+  .settings(
+    name := "ermine-scalaz-iterv",
+    libraryDependencies += "org.scalaz" %% "scalaz-core" % scalazVersion
+  )
+
+// ermine-language/f0, vendored: the published com.clarifi %% f0 is gone from
+// Maven Central. Used by the `backends` and `remote` layers.
+lazy val f0 = (project in file("f0"))
+  .settings(
+    name := "ermine-f0",
+    libraryDependencies += "org.scalaz" %% "scalaz-core" % scalazVersion
+  )
+
 // ermine-language/scala-machines, vendored for the same reason.
 lazy val machines = (project in file("machines"))
   .settings(
@@ -49,7 +65,7 @@ lazy val machines = (project in file("machines"))
   )
 
 lazy val core = (project in file("core"))
-  .dependsOn(parsers, machines)
+  .dependsOn(parsers, machines, scalazIterv, f0)
   .settings(
     name := "ermine-core",
     unportedSources := Seq(
@@ -82,7 +98,7 @@ lazy val core = (project in file("core"))
   )
 
 lazy val root = (project in file("."))
-  .aggregate(parsers, machines, core)
+  .aggregate(parsers, machines, scalazIterv, f0, core)
   .settings(
     name := "ermine",
     publish / skip := true

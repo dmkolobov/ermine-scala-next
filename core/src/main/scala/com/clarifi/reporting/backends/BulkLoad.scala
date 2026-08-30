@@ -27,7 +27,7 @@ object BulkLoad {
 
   val Log = Logger.getLogger(this.getClass)
 
-  def main(args: Array[String]) {
+  def main(args: Array[String]): Unit = {
     import java.io.PrintWriter
     if(args.length < 1)
       println("Need a file name to deserialize.")

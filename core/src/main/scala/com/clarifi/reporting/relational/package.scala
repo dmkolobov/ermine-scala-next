@@ -72,11 +72,11 @@ package object relational {
   type ClosedRel = Closed[Relation]
   type ClosedMem = Closed[Mem]
 
-  implicit def memClosedMem(mem: Mem[Nothing, Nothing]) = Typer.closedMem(mem)
+  implicit def memClosedMem(mem: Mem[Nothing, Nothing]): Closed[Mem] = Typer.closedMem(mem)
 
-  implicit def relClosedRel(rel: Relation[Nothing, Nothing]) = Typer.closedRel(rel)
+  implicit def relClosedRel(rel: Relation[Nothing, Nothing]): Closed[Relation] = Typer.closedRel(rel)
 
-  implicit def extClosedExt(ext: Ext[Nothing, Nothing]) = Typer.closedExt(ext)
+  implicit def extClosedExt(ext: Ext[Nothing, Nothing]): Closed[Ext] = Typer.closedExt(ext)
 
   /** Ordering on records that have all columns in `ord`. */
   def recordOrd(ord: List[(String, SortOrder)]): Order[Record] =

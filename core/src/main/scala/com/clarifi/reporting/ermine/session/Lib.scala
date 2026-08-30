@@ -85,10 +85,18 @@ object Lib {
     case (a: Double) => double(a)
   }
 
+  /** A function accepting a numeric value of any type together with its
+    * `Numeric` instance.
+    *
+    * Replaces `((N, Numeric[N]) forSome {type N}) => Z`: Scala 3 has no
+    * existential types, and the correlation between the value and its
+    * `Numeric` cannot be expressed with a wildcard.
+    */
+  trait NumUnFn[Z] { def apply[N](a: N, ev: Numeric[N]): Z }
+
   /** Dynamically call a generic numeric function. a -> z. */
-  def numUn[Z](f: ((N, Numeric[N]) forSome {type N}) => Z
-             )(a: AnyVal): Z = {
-    def fi[N](a: N)(implicit ev: Numeric[N]) = f((a, ev))
+  def numUn[Z](f: NumUnFn[Z])(a: AnyVal): Z = {
+    def fi[N](a: N)(implicit ev: Numeric[N]) = f(a, ev)
     numUn(fi(_), fi(_), fi(_), fi(_), fi(_), fi(_))(a)
   }
 
@@ -107,10 +115,12 @@ object Lib {
       case (a: Double, b: Double) => double(a, b)
     }
 
+  /** Binary counterpart of [[NumUnFn]]. */
+  trait NumBinFn[Z] { def apply[N](a: N, b: N, ev: Numeric[N]): Z }
+
   /** Dynamically call a generic numeric function. a -> a -> z. */
-  def numBin[Z](f: ((N, N, Numeric[N]) forSome {type N}) => Z
-              )(a: AnyVal, b: AnyVal): Z = {
-    def fi[N](a: N, b: N)(implicit ev: Numeric[N]) = f((a, b, ev))
+  def numBin[Z](f: NumBinFn[Z])(a: AnyVal, b: AnyVal): Z = {
+    def fi[N](a: N, b: N)(implicit ev: Numeric[N]) = f(a, b, ev)
     numBin(fi(_, _), fi(_, _), fi(_, _), fi(_, _), fi(_, _), fi(_, _))(a, b)
   }
 

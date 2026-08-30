@@ -114,7 +114,7 @@ case class JoinOn[+M, +R](fst: Relation[M, R], snd: Relation[M, R], cs: Set[(Str
   def bimap[N, S](f: M => N, g: R => S) = JoinOn(fst bimap (f, g), snd bimap (f, g), cs)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = JoinOn(fst subst (f, g), snd subst (f, g), cs)
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = fst.bifoldMap(f, g) |+| snd.bifoldMap(f, g)
-  def foreach(f: M => Any, g: R => Any) { fst foreach (f, g) ; snd foreach (f, g) }
+  def foreach(f: M => Any, g: R => Any): Unit = { fst foreach (f, g) ; snd foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
     JoinOn(fst.unquote(f, g), snd.unquote(f, g), cs)
@@ -124,7 +124,7 @@ case class Union[+M, +R](fst: Relation[M, R], snd: Relation[M, R]) extends Relat
   def bimap[N, S](f: M => N, g: R => S) = Union(fst bimap (f, g), snd bimap (f, g))
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Union(fst subst (f, g), snd subst (f, g))
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = fst.bifoldMap(f, g) |+| snd.bifoldMap(f, g)
-  def foreach(f: M => Any, g: R => Any) { fst foreach (f, g) ; snd foreach (f, g) }
+  def foreach(f: M => Any, g: R => Any): Unit = { fst foreach (f, g) ; snd foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
     Union(fst.unquote(f, g), snd.unquote(f, g))
@@ -134,7 +134,7 @@ case class MinusI[+M, +R](fst: Relation[M, R], snd: Relation[M, R]) extends Rela
   def bimap[N, S](f: M => N, g: R => S) = MinusI(fst bimap (f, g), snd bimap (f, g))
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = MinusI(fst subst (f, g), snd subst (f, g))
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = fst.bifoldMap(f, g) |+| snd.bifoldMap(f, g)
-  def foreach(f: M => Any, g: R => Any) { fst foreach (f, g) ; snd foreach (f, g) }
+  def foreach(f: M => Any, g: R => Any): Unit = { fst foreach (f, g) ; snd foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
     MinusI(fst.unquote(f, g), snd.unquote(f, g))
@@ -155,7 +155,7 @@ case class Filter[+M, +R](rel: Relation[M, R], p: Predicate) extends Relation[M,
   def bimap[N, S](f: M => N, g: R => S) = Filter(rel bimap (f, g), p)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Filter(rel subst (f, g), p)
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = rel bifoldMap (f, g)
-  def foreach(f: M => Any, g: R => Any) { rel foreach (f, g) }
+  def foreach(f: M => Any, g: R => Any): Unit = { rel foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
     Filter(rel.unquote(f, g), p)
@@ -165,7 +165,7 @@ case class Project[+M, +R](rel: Relation[M, R], cs: Map[Attribute, Op]) extends 
   def bimap[N, S](f: M => N, g: R => S) = Project(rel bimap (f, g), cs)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Project(rel subst (f, g), cs)
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = rel bifoldMap (f, g)
-  def foreach(f: M => Any, g: R => Any) { rel foreach (f, g) }
+  def foreach(f: M => Any, g: R => Any): Unit = { rel foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
     Project(rel.unquote(f, g), cs)
@@ -176,7 +176,7 @@ case class Except[+M, +R](rel: Relation[M, R], cs: Set[ColumnName]) extends Rela
   def bimap[N, S](f: M => N, g: R => S) = Except(rel bimap (f, g), cs)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Except(rel subst (f, g), cs)
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = rel bifoldMap (f, g)
-  def foreach(f: M => Any, g: R => Any) { rel foreach (f, g) }
+  def foreach(f: M => Any, g: R => Any): Unit = { rel foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
     Except(rel.unquote(f, g), cs)
@@ -187,7 +187,7 @@ case class Combine[+M, +R](rel: Relation[M, R], attr: Attribute, op: Op) extends
   def bimap[N, S](f: M => N, g: R => S) = Combine(rel bimap (f, g), attr, op)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Combine(rel subst (f, g), attr, op)
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = rel bifoldMap (f, g)
-  def foreach(f: M => Any, g: R => Any) { rel foreach (f, g) }
+  def foreach(f: M => Any, g: R => Any): Unit = { rel foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
     Combine(rel.unquote(f, g), attr, op)
@@ -198,7 +198,7 @@ case class RenameR[+M, +R](rel: Relation[M, R], attr: Attribute, c: ColumnName) 
   def bimap[N, S](f: M => N, g: R => S) = RenameR(rel bimap (f, g), attr, c)
   def bifoldMap[Z:Monoid](f: M => Z, g: R => Z) = rel bifoldMap (f, g)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = RenameR(rel subst (f, g), attr, c)
-  def foreach(f: M => Any, g: R => Any) { rel foreach (f, g) }
+  def foreach(f: M => Any, g: R => Any): Unit = { rel foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
     RenameR(rel.unquote(f, g), attr, c)
@@ -214,7 +214,7 @@ case class AggregateByGroup[+M, +R](
   def bimap[N, S](f: M => N, g: R => S) = AggregateByGroup(rel bimap (f, g), cs, aggs, group)
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = rel bifoldMap (f, g)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = AggregateByGroup(rel subst (f, g), cs, aggs, group)
-  def foreach(f: M => Any, g: R => Any) { rel foreach (f, g) }
+  def foreach(f: M => Any, g: R => Any): Unit = { rel foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
     AggregateByGroup(rel.unquote(f, g), cs, aggs, group)
@@ -224,7 +224,7 @@ case class Aggregate[+M, +R](rel: Relation[M, R], attr: Attribute, agg: AggFunc)
   def bimap[N, S](f: M => N, g: R => S) = Aggregate(rel bimap (f, g), attr, agg)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Aggregate(rel subst (f, g), attr, agg)
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = rel bifoldMap (f, g)
-  def foreach(f: M => Any, g: R => Any) { rel foreach (f, g) }
+  def foreach(f: M => Any, g: R => Any): Unit = { rel foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
     Aggregate(rel.unquote(f, g), attr, agg)
@@ -234,7 +234,7 @@ case class Note[+M,+R](tags: List[String], under: Relation[M,R]) extends Relatio
   def bimap[N, S](f: M => N, g: R => S) = Note(tags, under.bimap(f,g))
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Note(tags, under.subst(f,g))
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = under bifoldMap(f, g)
-  def foreach(f: M => Any, g: R => Any) { under foreach (f, g) }
+  def foreach(f: M => Any, g: R => Any): Unit = { under foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
     Note(tags, under.unquote(f, g))
@@ -379,7 +379,7 @@ object Relation {
   }
 
   implicit def relTraversable[M, R](r: Relation[M,R]): Traversable[R] =
-    new Traversable[R] { def foreach[U](f: R => U) { r foreach (x => (), f) } }
+    new Traversable[R] { def foreach[U](f: R => U): Unit = { r foreach (x => (), f) } }
 
   def toScope[M, R](mem: Relation[M, Option[R]]): RScope[M, R] = mem map {
     case None => RTop

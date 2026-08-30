@@ -70,7 +70,7 @@ object ProcessSymbols {
         (ensureNonnegativeWeight(_)).
           andThen(p => (p._1, (p._1,p._2)))))
       .outmap(p => if (p._2 != 0.0) Some((p._1/p._2)) else None)
-    Process.filtered{wv: NumTuple2 => wv._2 != 0.0} andThen hm
+    Process.filtered{ (wv: NumTuple2) => wv._2 != 0.0 } andThen hm
   }
 
   private[this]

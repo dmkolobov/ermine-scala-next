@@ -14,7 +14,7 @@ import scalaz.Id._
 import scalaz._
 import scalaz.std.anyVal._
 import scalaz.std.function._
-import scalaz.std.indexedSeq.{toNel => _, _}
+import scalaz.std.vector.{toNel => _, _}
 import scalaz.std.list._
 import scalaz.std.map._
 import scalaz.std.option._
@@ -1171,9 +1171,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         case (d, q) =>
           val q2 = asSelect(h,q)
           val nattrs = q2.attrs - attr.name + (to -> q2.attrs(attr.name))
-          val nwinCs = if (q2.windowColumns.contains(attr.name))
-                         q2.windowColumns - attr.name + to
-                       else q2.windowColumns
+          val nwinCs =
+            if (q2.windowColumns.contains(attr.name)) q2.windowColumns - attr.name + to
+            else q2.windowColumns
           (d, q2.copy(attrs = nattrs, windowColumns = nwinCs))
       })
     }

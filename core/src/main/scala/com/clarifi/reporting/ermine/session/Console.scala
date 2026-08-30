@@ -96,7 +96,7 @@ class ConsoleEnv(
   var currentResult: Int = 0
 
   def mark = Mark(currentResult, imports, sessionEnv.copy)
-  def mark_=(m: Mark) {
+  def mark_=(m: Mark): Unit = {
     currentResult = m.currentResult
     imports = m.imports
     sessionEnv_=(m.sessionEnv)
@@ -178,7 +178,7 @@ class ConsoleEnv(
 
   updateCompletor
 
-  def sessionEnv_=(s: SessionEnv) {
+  def sessionEnv_=(s: SessionEnv): Unit = {
     sessionEnv := s
     updateCompletor
   }

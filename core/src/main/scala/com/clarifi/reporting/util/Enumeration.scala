@@ -177,7 +177,7 @@ object Enumeration {
   /** Return an infinitiely incrementing enumeration where the first value is z. */
   def from(z: Int):Enumeration[Int] = new Enumeration[Int] { def uncons = some( (z, from(z+1)) ) }
 
-  implicit def Equal[A](implicit eqA: Equal[A]) = new Equal[Enumeration[A]] {
+  implicit def Equal[A](implicit eqA: scalaz.Equal[A]): scalaz.Equal[Enumeration[A]] = new scalaz.Equal[Enumeration[A]] {
     def equal(e1: Enumeration[A], e2: Enumeration[A]): Boolean = {
       (e1.uncons, e2.uncons) match {
         case (None, None) => true

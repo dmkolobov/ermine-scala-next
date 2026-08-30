@@ -16,7 +16,7 @@ import State.state
 import scalaz.WriterT.writerMonad
 import scalaz.std.anyVal._
       ,scalaz.std.function.fix
-      ,scalaz.std.indexedSeq._
+      ,scalaz.std.vector._
       ,scalaz.std.list._
       ,scalaz.std.option._
       ,scalaz.std.set._
@@ -174,7 +174,7 @@ case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
     *
     * @note ∀s. `deriveSort(filterSort(s.toSeq))` ≡ `deriveSort(s)` */
   def filterSort(viewSort: Seq[(Lbl, SortOrder)]): IndexedSeq[(Lbl, SortOrder)] =
-    Vector(viewSort:_*).filterM[State[Map[Lbl, Int], ?]]{case (lbl, _) =>
+    Vector(viewSort:_*).filterM[[x] =>> State[Map[Lbl, Int], x]]{case (lbl, _) =>
       val clbl = mapVLens[Lbl, Int](lbl).xmapB(identity)((_:Option[Int]) filter (0<))
       clbl flatMap (_ >| ((clbl %= (_ map (_-1))) >| true) | state(false))
     } eval sortRules.mapValues(_.size)

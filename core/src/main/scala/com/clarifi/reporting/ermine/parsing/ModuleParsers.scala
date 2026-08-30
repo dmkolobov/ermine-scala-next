@@ -74,16 +74,16 @@ object ModuleParsers {
 
   val importExportStatement: Parser[ImportExportStatement] = (for {
     p <- loc
-    export <- keyword("import").as(false) | keyword("export").as(true)
+    isExport <- keyword("import").as(false) | keyword("export").as(true)
     src <- moduleName // stringLiteral
     as <- (keyword("as") >> TermNameParsers.ident.map(_.string)).optional
     opt <- (for {
-      using <- keyword("using").as(true) | keyword("hiding").as(false)
+      isUsing <- keyword("using").as(true) | keyword("hiding").as(false)
       exps <- laidout("explicit imports", explicit.map(_.map(_.global(src))))
-    } yield (using, exps)).optional
+    } yield (isUsing, exps)).optional
   } yield opt match {
-    case Some((using, exps)) => ImportExportStatement(p, export, src, as, exps, using)
-    case None                => ImportExportStatement(p, export, src, as)
+    case Some((isUsing, exps)) => ImportExportStatement(p, isExport, src, as, exps, isUsing)
+    case None                  => ImportExportStatement(p, isExport, src, as)
   }) scope "import/export statement"
 
   // parse leading import statements, leaving the remainder of the input untouched

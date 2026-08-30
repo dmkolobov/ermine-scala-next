@@ -106,7 +106,7 @@ case class ProcessM[+R, +M](transducer: ProcessSymbol, m: Mem[R, M]) extends Mem
   def bimap[S, N](f: R => S, g: M => N) = ProcessM(transducer, m bimap (f, g))
   def subst[S, N](f: R => Relation[N, S], g: M => Mem[S, N]) = ProcessM(transducer, m subst (f, g))
   def bifoldMap[Z: Monoid](f: R => Z, g: M => Z) = m bifoldMap (f, g)
-  def foreach(f: R => Any, g: M => Any) { m foreach (f, g) }
+  def foreach(f: R => Any, g: M => Any): Unit = { m foreach (f, g) }
   // default hashcode and equals are fine
   override def unquote[S >: R, N >: M](f: Object => Option[Mem[S, N]], g: Object => Option[Relation[N, S]]) =
     ProcessM(transducer, m.unquote(f, g))
@@ -118,7 +118,7 @@ case class LetM[+R, +M](r: Ext[M, R], expr: Mem[R, MLevel[R, M]]) extends Mem[R,
     LetM(r subst (g, f), expr subst (v => f(v).mapMem(x => MPop(VarM(x))), l => VarM(l subst (f, g))))
   def bifoldMap[Z: Monoid](f: R => Z, g: M => Z) =
     r.bifoldMap(g, f) |+| expr.bifoldMap(f, _ bifoldMap (f, g))
-  def foreach(f: R => Any, g: M => Any) { r foreach (g, f) ; expr foreach (f, _ foreach (f, g)) }
+  def foreach(f: R => Any, g: M => Any): Unit = { r foreach (g, f) ; expr foreach (f, _ foreach (f, g)) }
   override def equals(other: Any) = other match {
      case LetM(r2, e2) => r == r2 && Mem.fromScope(expr) == Mem.fromScope(e2)
      case _ => false
@@ -165,7 +165,7 @@ case class ExceptM[+R, +M](rel: Mem[R, M], cs: Set[ColumnName]) extends Mem[R, M
   def bimap[S, N](f: R => S, g: M => N) = ExceptM(rel bimap (f, g), cs)
   def subst[S, N](f: R => Relation[N, S], g: M => Mem[S, N]) = ExceptM(rel subst (f, g), cs)
   def bifoldMap[Z: Monoid](f: R => Z, g: M => Z) = rel.bifoldMap(f, g)
-  def foreach(f: R => Any, g: M => Any) { rel foreach (f, g) }
+  def foreach(f: R => Any, g: M => Any): Unit = { rel foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Mem[S, N]], g: Object => Option[Relation[N, S]]): Mem[S, N] =
     ExceptM(rel.unquote(f, g), cs)
 }
@@ -175,7 +175,7 @@ case class RenameM[+R, +M](rel: Mem[R, M], attr: Attribute, c: ColumnName, promo
   def bimap[S, N](f: R => S, g: M => N) = RenameM(rel bimap (f, g), attr, c, promote)
   def subst[S, N](f: R => Relation[N, S], g: M => Mem[S, N]) = RenameM(rel subst (f, g), attr, c, promote)
   def bifoldMap[Z: Monoid](f: R => Z, g: M => Z) = rel bifoldMap (f, g)
-  def foreach(f: R => Any, g: M => Any) { rel foreach (f, g) }
+  def foreach(f: R => Any, g: M => Any): Unit = { rel foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Mem[S, N]], g: Object => Option[Relation[N, S]]): Mem[S, N] =
     RenameM(rel.unquote(f, g), attr, c, promote)
 }
@@ -185,7 +185,7 @@ case class CombineM[+R, +M](rel: Mem[R, M], attr: Attribute, op: Op) extends Mem
   def bimap[S, N](f: R => S, g: M => N) = CombineM(rel bimap (f, g), attr, op)
   def subst[S, N](f: R => Relation[N, S], g: M => Mem[S, N]) = CombineM(rel subst (f, g), attr, op)
   def bifoldMap[Z: Monoid](f: R => Z, g: M => Z) = rel bifoldMap (f, g)
-  def foreach(f: R => Any, g: M => Any) { rel foreach (f, g) }
+  def foreach(f: R => Any, g: M => Any): Unit = { rel foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Mem[S, N]], g: Object => Option[Relation[N, S]]): Mem[S, N] =
     CombineM(rel.unquote(f, g), attr, op)
 }
@@ -281,7 +281,7 @@ case class MemoMem[+R, +M](rel: Mem[R, M]) extends Mem[R, M] {
   var memo : List[Record] = List()
   def bimap[S, N](f: R => S, g: M => N) = MemoMem(rel bimap (f, g))
   def subst[S, N](f: R => Relation[N, S], g: M => Mem[S, N]) = MemoMem(rel subst (f, g))
-  def foreach(f: R => Any, g: M => Any) { rel foreach (f, g) }
+  def foreach(f: R => Any, g: M => Any): Unit = { rel foreach (f, g) }
   def bifoldMap[Z: Monoid](f: R => Z, g: M => Z) = rel.bifoldMap(f, g)
   override def unquote[S >: R, N >: M](f: Object => Option[Mem[S, N]], g: Object => Option[Relation[N, S]]): Mem[S, N] =
     MemoMem(rel.unquote(f, g))
@@ -334,10 +334,10 @@ class Literal( r:  OneAnd[ ({type F[X] = Coproduct[IndexedSeq, List, X]})#F, Rec
 object Literal {
   // type Coproduct f g a = Either (f a) (g a)
   // so this is an Either[IndexedSeq[A],List[A]]
-  type ListOrIndexedSeq[X] = Coproduct[IndexedSeq, List, ?][X]
+  type ListOrIndexedSeq[X] = Coproduct[IndexedSeq, List, X]
   type NonEmptyListOrIndexedSeq = OneAnd[ ListOrIndexedSeq, Record]
   
-  implicit def listOrIndexedSeqFoldable( implicit f: Foldable[Coproduct[IndexedSeq, List, ?]]) = f
+  implicit def listOrIndexedSeqFoldable(implicit f: Foldable[[x] =>> Coproduct[IndexedSeq, List, x]]): Foldable[[x] =>> Coproduct[IndexedSeq, List, x]] = f
 
   def toLit(seq: IndexedSeq[Record] ): Option[Literal] = seq.headOption match {
     case None => None
@@ -420,7 +420,7 @@ object Mem {
   }
 
   implicit def memTraversable[R,M](r: Mem[R, M]): Traversable[M] =
-    new Traversable[M] { def foreach[U](f: M => U) { r foreach (x => (), f) } }
+    new Traversable[M] { def foreach[U](f: M => U): Unit = { r foreach (x => (), f) } }
 
   def fromScope[M, R](mem: MScope[R, M]): Mem[R, Option[M]] = mem flatMap {
     case MTop => VarM(None)

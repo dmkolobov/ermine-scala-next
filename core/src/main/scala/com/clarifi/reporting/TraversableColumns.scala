@@ -35,7 +35,7 @@ trait TraversableColumns[E <: TraversableColumns[E]] {self: E =>
     traverseColumns[Id](f)
 
   def foldMap[M: Monoid](f: ColumnName => M): M =
-    traverseColumns[λ[α => M]](f)
+    traverseColumns[[α] =>> M](f)
 
   /** Column traversals can be sequenced. */
   def columnsProduct[OE <: TraversableColumns[OE]](other: OE):

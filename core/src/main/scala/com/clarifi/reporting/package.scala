@@ -41,7 +41,7 @@ package object reporting {
   type Sourced = SourceWith[TypeTag]
 
   import IterV._
-  implicit val StreamEnumerator = new Enumerator[Stream] {
+  implicit val StreamEnumerator: Enumerator[Stream] = new Enumerator[Stream] {
     @annotation.tailrec
     def apply[E, A](e: Stream[E], i: IterV[E, A]): IterV[E, A] = e match {
       case Stream() => i

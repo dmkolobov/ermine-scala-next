@@ -17,7 +17,17 @@ case class Closed[F[_, _]](out: F[Nothing, Nothing], header: Header) {
 
 
 object Typer {
-  private def badColumns[F[+_]](cols: List[String])(implicit err: (String, String*) => F[Nothing]): F[Nothing] = {
+  /** The error-reporting capability the typer is parameterised over.
+    *
+    * This was `Errs[F]`, but Scala 3 does not allow a
+    * repeated parameter in a function type; a trait keeps every call site
+    * (`err(msg)`, `err(head, tail: _*)`) exactly as it was.
+    */
+  trait Errs[F[+_]] {
+    def apply(msg: String, msgs: String*): F[Nothing]
+  }
+
+  private def badColumns[F[+_]](cols: List[String])(implicit err: Errs[F]): F[Nothing] = {
     val errs = cols.map("Operation refers to nonexistent column (%s) in header." format _)
     err(errs.head, errs.tail:_*)
   }
@@ -27,7 +37,7 @@ object Typer {
     base: Header,
     cols: Set[ColumnName],
     z: Z
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Z] = {
+  )(implicit F: Monad[F], err: Errs[F]): F[Z] = {
     val freeRefs = cols -- base.keys
     if(freeRefs.isEmpty) z.pure[F] else badColumns(freeRefs.toList)
   }
@@ -37,7 +47,7 @@ object Typer {
     attr: Attribute,
     newCol: ColumnName,
     promote: Boolean
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] = {
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] = {
     def prm(ty: PrimT) = if(promote) ty.withNull else ty
     base.lift(attr.name) match {
       case Some(t) if t == attr.t => (base -attr.name + (newCol -> prm(t))).pure[F]
@@ -49,33 +59,33 @@ object Typer {
   private def exceptType[F[+_]](
     base: Header,
     cols: Set[ColumnName]
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] =
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] =
     columnCheck[F, Header](base, cols, base -- cols)
 
   private def filterType[F[+_]](
     base: Header,
     pred: Predicate
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] =
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] =
     columnCheck[F, Header](base, pred.columnReferences, base)
 
   private def combineType[F[+_]](
     base: Header,
     attr: Attribute,
     op: Op
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] =
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] =
     columnCheck[F, Header](base, op.columnReferences, base + attr.tuple)
 
   private def projectType[F[+_]](
     base: Header,
     cols: Map[Attribute, Op]
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] =
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] =
     columnCheck[F, Header](base, cols flatMap { case (attr, op) => op.columnReferences } toSet, cols.map(_._1.tuple))
 
   private def aggregateType[F[+_]](
     base: Header,
     attr: Attribute,
     agg: AggFunc
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] =
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] =
     columnCheck[F, Header](base, agg.columnReferences, Map(attr.tuple))
 
   private def aggregateByGroupType[F[+_]](
@@ -83,7 +93,7 @@ object Typer {
     cols: Map[Attribute, Op],
     aggs: List[(Attribute,AggFunc)],
     grp: List[Op.ColumnValue]
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] =
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] =
     columnCheck[F, Header](
       base,
       aggs.flatMap(_._2.columnReferences).toSet ++ cols.keySet.map(_.name) ++ grp.flatMap(_.columnReferences).toSet,
@@ -93,7 +103,7 @@ object Typer {
     left: Header,
     right: Header,
     extras: Set[(ColumnName, ColumnName)] = Set()
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] = {
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] = {
     val joinKey = (left.keySet intersect right.keySet map {x => (x,x)} toSet) ++ extras
     val badCols = joinKey collect {
       case (lname,rname) if left(lname) != right(rname) => (lname, rname) -> (left(lname), right(rname))
@@ -109,7 +119,7 @@ object Typer {
   }
 
   def accumulateType[F[+_]](pid: Header, nid: Header, expr: Header => F[Header], leaves: Header)
-                    (implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] = {
+                    (implicit F: Monad[F], err: Errs[F]): F[Header] = {
     val v = leaves -- nid.keySet
     val v2 = expr(v)
     v2.flatMap { v2 =>
@@ -121,7 +131,7 @@ object Typer {
   }
 
   def groupByType[F[+_]](m: Header, key: Header, expr: Header => F[Header])(
-                         implicit F: Monad[F], err: (String,String*) => F[Nothing]): F[Header] = {
+                         implicit F: Monad[F], err: Errs[F]): F[Header] = {
     val v = m -- key.keySet
     val v2 = expr(v)
     v2.flatMap { v2 =>
@@ -136,7 +146,7 @@ object Typer {
     top: Header,
     bottom: Header,
     operation: String
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] = {
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] = {
     if(top == bottom) top.pure[F]
     else {
       val msg = "Cannot %s columns: expected `" + top.toString + "', found `" + bottom.toString + "'."
@@ -149,7 +159,7 @@ object Typer {
     start: Option[Int],
     end: Option[Int],
     order: List[(String, SortOrder)]
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] = {
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] = {
     val badBounds = for {
       from <- start
       to <- end
@@ -168,7 +178,7 @@ object Typer {
     pVals: Set[ColumnName],
     outer: Boolean,
     colMap: Map[ColumnName, (Record, Op, PrimExpr)]
-  )(implicit f: Monad[F], err: (String, String*) => F[Nothing]): F[Header] = {
+  )(implicit f: Monad[F], err: Errs[F]): F[Header] = {
     val pivCols = colMap mapValues { case (k,o,d) => o.guessTypeUnsafe }
     val passCols = hunder -- pKey -- pVals
     val overlap = passCols.keySet intersect pivCols.keySet
@@ -183,7 +193,7 @@ object Typer {
     m: Mem[R, M],
     rtype: R => F[Header],
     mtype: M => F[Header]
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] = {
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] = {
     def go(m: Mem[R, M]): F[Header] = memTyperAux(m, rtype, mtype)
     m match {
       case VarM(v)                    => mtype(v)
@@ -230,7 +240,7 @@ object Typer {
     e: Ext[M, R],
     rtype: R => F[Header],
     mtype: M => F[Header]
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] =
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] =
     e match {
       case ExtSM(sm) => sm.header.pure[F]
       case ExtMem(mem) => memTyperAux(mem, rtype, mtype)
@@ -241,7 +251,7 @@ object Typer {
     rel: Relation[M, R],
     rtype: R => F[Header],
     mtype: M => F[Header]
-  )(implicit F: Monad[F], err: (String, String*) => F[Nothing]): F[Header] = {
+  )(implicit F: Monad[F], err: Errs[F]): F[Header] = {
     def go(rel: Relation[M, R]): F[Header] = relTyperAux(rel, rtype, mtype)
     rel match {
       case VarR(v)                 => rtype(v)
@@ -290,8 +300,10 @@ object Typer {
 
   type TT[+A] = Either[NonEmptyList[String], A]
 
-  private implicit def eerr(x: String, xs: String*): Either[NonEmptyList[String], Nothing] =
-    Left(NonEmptyList.nel(x, xs.toList))
+  private implicit val eerr: Errs[TT] = new Errs[TT] {
+    def apply(x: String, xs: String*): Either[NonEmptyList[String], Nothing] =
+      Left(NonEmptyList.nel(x, xs.toList))
+  }
 
   def memTyper(mem: Mem[Nothing, Nothing]): TypeTag =
     Validation.fromEither(memTyperAux[TT, Nothing, Nothing](mem, x => x, x => x))
