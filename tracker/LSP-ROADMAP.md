@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 2.3a done (header parity 161/161 + splitter); next item 2.3b (terms+patterns) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 2.3b done (terms+patterns, 2929 real stmts); next item 2.3c (types+statements) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -239,7 +239,7 @@ machinery is deleted post-G1, never before.
   rules (record vs brace-list via '=', kind-arg blocks, row types,
   explicit layout) as an explicit documented deliverable; skip-to-layout-
   boundary recovery primitive designed (activation is Stage 2).
-- [ ] **2.3b Parser: terms + patterns** (flat chains, sugar nodes,
+- [x] **2.3b Parser: terms + patterns** (flat chains, sugar nodes,
   BraceLit accepts zero elements — the fieldList empty-brace crash dies
   by construction; renamer rejects instead).
 - [ ] **2.3c Parser: types + data/class/foreign statements** (quantifier/
@@ -608,3 +608,23 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   reworded to 180 files. Examples reach new-pipeline TYPE checking at
   4.1 (the parameterized fixture runs the load-all properties under both
   pipelines).
+- 2026-08-30 2.3b done: full term + pattern grammars in SurfaceParsers —
+  flat chains via adjacency-classified OpOccs, whole-chain SNeg, do/let/
+  case/lambda, list/brace/record literals (record-vs-brace by '=' after
+  first item, per surface-notes), relational envelopes with per-arrow
+  kinds, holes/?[..], literal idents (``x``), paren-op references (.),
+  as-patterns/strict/lazy/list patterns, ':'-chains; sigs and term/pattern
+  annotations capture their type extents raw (comment- and string-aware
+  scanner; pattern sigs stop at top-level '->' only OUTSIDE parens).
+  Debug trail worth keeping: opTok slice over-grab broke 0.0/0.0; the
+  '|'-before-']' lexer guard needs the REAL stream, not the slice (broke
+  every [| |] envelope); col-1 comment lines are whitespace to the
+  splitter; stale bol after block-comment whitespace; trailing-comment
+  commit needed item-level attempt. Sweep: 180 files, ZERO file failures,
+  2929 statements parse for real, zero binding placeholders outside two
+  legacy files the OLD pipeline also rejects (Sample.e, guide/HelloWorld.e
+  — verified via parseModule; exemptions documented in the test).
+  Remaining placeholders are 2.3c's statements (private/data/type/field/
+  foreign). Shape properties added (chain classes, neg, do, rec/brace,
+  arrow kinds, nested pattern sig). Baselines: 804 (803+known), repl 3/3,
+  lsp 27/27.

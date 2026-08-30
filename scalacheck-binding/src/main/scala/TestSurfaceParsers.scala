@@ -104,6 +104,13 @@ object TestSurfaceParsers extends Properties("Surface parser 2.3a") {
           m.statements foreach {
             case SErrorStatement(_, msg) if !(msg startsWith "unparsed:") =>
               bad += s"${f.getName}: unexpected error statement $msg"
+            case SErrorStatement(loc, "unparsed:binding")
+                if !f.getPath.endsWith("examples/Sample.e") &&
+                   !f.getPath.endsWith("guide/HelloWorld.e") =>
+              // 2.3b: every binding on an old-parseable file parses for real;
+              // the two exempted files are legacy syntax the fused pipeline
+              // rejects too (verified via Session.parseModule 2026-08-30)
+              bad += s"${f.getName}:${loc.span.startLine}: binding fell back to placeholder"
             case _ => ()
           }
       }
@@ -113,4 +120,41 @@ object TestSurfaceParsers extends Properties("Surface parser 2.3a") {
     ((fixities > 30) :| s"only $fixities fixity statements found — sweep broken?") &&
     ((statements > 1000) :| s"only $statements statements")
   }
+
+  property("2.3b term and pattern shapes parse as written") = secure {
+    def stmts(body: String) =
+      SurfaceParsers.module("t", "module T where\n" + body, "T")
+        .toOption.map(_.statements).getOrElse(Nil)
+
+    val chain = stmts("v = 1 + !! x") match {
+      case List(SEquation(_, _, _, SChain(c), _)) =>
+        (c.items.collect { case Right(o) => (o.name.spelling, o.posClass) }
+          ?= List(("+", PostOperandPos), ("!!", OperandPos))) :| "chain ops"
+      case other => falsified :| ("chain: " + other)
+    }
+    val neg = stmts("f q = -q + 1") match {
+      case List(SEquation(_, _, _, SNeg(_, _, SChain(_)), _)) => proved
+      case other => falsified :| ("neg: " + other)
+    }
+    val doTree = stmts("g = do w <- liftDo (Just 1); unit w") match {
+      case List(SEquation(_, _, _, SDo(_, List(_: SDoBind, _: SDoExpr)), _)) => proved
+      case other => falsified :| ("do: " + other)
+    }
+    val recVsBrace = (stmts("r = {f = 1, g = 2}"), stmts("b = {1, 2}_M")) match {
+      case (List(SEquation(_, _, _, _: SRecordLit, _)),
+            List(SEquation(_, _, _, SBraceLit(_, _, Some("M")), _))) => proved
+      case other => falsified :| ("rec/brace: " + other)
+    }
+    val envl = stmts("s f op r = [| f = op, r > 1, p <- i |] r") match {
+      case List(SEquation(_, _, _, SApp(SRelEnvelope(_, arrows), _), _)) =>
+        (arrows.map(_.getClass.getSimpleName) ?= List("SCombineArrow", "SFilterArrow", "SRenameArrow")) :| "arrow kinds"
+      case other => falsified :| ("envelope: " + other)
+    }
+    val pat = stmts("h (a@(x :: y) : Int) = a") match {
+      case List(SEquation(_, _, List(SPParen(_, SPSig(_, SPAs(_, _, SPParen(_, SPChain(_))), _))), _, _)) => proved
+      case other => falsified :| ("pattern: " + other)
+    }
+    chain && neg && doTree && recVsBrace && envl && pat
+  }
 }
+

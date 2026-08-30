@@ -99,6 +99,7 @@ final case class SChain(chain: Chain[STerm]) extends STerm { def loc: SLoc = cha
 final case class SNeg(loc: SLoc, minus: Span, operand: STerm)       extends STerm
 final case class SParen(loc: SLoc, inner: STerm)                    extends STerm
 final case class STuple(loc: SLoc, elems: List[STerm])              extends STerm
+final case class STupleSection(loc: SLoc, arity: Int)               extends STerm  // (,,)
 final case class SCase(loc: SLoc, scrutinee: STerm, alts: List[SAlt]) extends STerm
 final case class SLet(loc: SLoc, statements: List[SStatement], body: STerm) extends STerm
 final case class SDo(loc: SLoc, stmts: List[SDoStmt])               extends STerm
@@ -148,6 +149,7 @@ final case class SPChain(chain: Chain[SPat]) extends SPat { def loc: SLoc = chai
 final case class SPParen(loc: SLoc, inner: SPat)                    extends SPat
 final case class SPTuple(loc: SLoc, elems: List[SPat])              extends SPat
 final case class SPList(loc: SLoc, elems: List[SPat])               extends SPat  // [p, q] sugar node
+final case class SPAs(loc: SLoc, binder: SName, inner: SPat)        extends SPat  // v@p
 final case class SPStrict(loc: SLoc, inner: SPat)                   extends SPat  // !p
 final case class SPLazy(loc: SLoc, inner: SPat)                     extends SPat  // ~p
 final case class SPSig(loc: SLoc, inner: SPat, annot: STy)          extends SPat
