@@ -39,9 +39,14 @@ So the language+REPL is separable from the reporting/SQL/charting stack.
 - jline 1.0 → jline 3 (Console.scala uses ConsoleReader/Terminal/completors)
 
 ## Staging
-1. Toolchain + branch + tracker  ✅
-2. Vendor + port `scalaparsers` to Scala 3 (foundational, self-contained)
-3. Port ermine language core to Scala 3
-4. Port `session` + `Console`, get REPL to start
-5. Load Prelude; expand ported surface (relational etc.) as far as needed
-6. Tests
+1. Toolchain + branch + tracker ✅
+2. Vendor + port `scalaparsers` to Scala 3 ✅ (`01-parsers.md`)
+3. Port ermine language core to Scala 3 ✅ (`03-core-progress.md`)
+4. Port `session` + `Console`, get REPL to start ✅ (`04-repl-working.md`)
+5. Load Prelude; expand ported surface as far as needed ✅ — the whole of
+   `core` compiles, and all 129 Prelude/Layout modules load and type-check
+6. Tests ✅ (`06-tests.md`) — 733/734 properties pass
+
+In the end nothing had to be held out of the build except
+`writers/jfx/Process.scala`, which needs `scalaz.concurrent.Promise` on a
+JavaFX path the REPL never touches.

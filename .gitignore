@@ -4,3 +4,5 @@ project/project/
 .bsp/
 *.class
 *.ei
+.ermine_history
+target/ermine-classpath
