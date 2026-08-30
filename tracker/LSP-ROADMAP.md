@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 0 in progress — 0.2 done · Seeded 2026-08-30 (session that shipped the
+Status: Stage 0 in progress — 0.3 done · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -54,7 +54,7 @@ Checklist (each item ≈ one loop iteration):
   ~6-12s, during `initialize` — report readiness via window/logMessage).
   Copy-per-request like ErmineFixture's `mkEnv` so a failed load never
   poisons the resident env. Printer must not touch stdout (Decision 4).
-- [ ] **0.3 Diagnostics on open/save**: didOpen/didSave of a `.e` file →
+- [x] **0.3 Diagnostics on open/save**: didOpen/didSave of a `.e` file →
   parse+typecheck it against a session copy (Session.loadModule path; see
   also Console.scala:369 reloadChangedModules for the reload-on-change
   shape). Map Death/parse failures to LSP Diagnostic: scalaparsers
@@ -139,3 +139,13 @@ flowing mid-keystroke; then incremental reuse per unchanged statement.
   Verified from $HOME (cwd-independent, classpath loader): stdout pure
   frames, "ready: 129 modules in 6.7s" logMessage, exit 0. Baselines:
   761/762 (no TestMarkdown flake this run), smoke 3/3, 129 modules.
+- 2026-08-30 0.3 done: lsp/Diagnostics.scala + Resident.checkFile —
+  didOpen/didSave/.e-gated: Session.load(Filesystem(path, exotic)) against
+  a fresh env copy with SourceFile.filesystem(fileDir) prepended to the
+  loader chain, so workspace-sibling imports resolve (no stdlib-only
+  fallback needed). Death's rendered report leads "file:line:col:" —
+  regexed back out, 1-based→0-based, end=start, caret text kept in the
+  message; other-file/positionless reports anchor 0:0; didClose clears.
+  Verified by transcript: type error Bad.e 4:1→(3,0), parse error Ugly.e
+  3:5→(2,4) via didSave, Sib→Good sibling import clean, clear-on-close,
+  ~0.0s per warm check. Baselines: 761/762, smoke 3/3.

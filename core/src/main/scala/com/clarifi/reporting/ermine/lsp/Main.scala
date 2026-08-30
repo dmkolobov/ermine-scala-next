@@ -84,6 +84,8 @@ object Main {
         }
       }
 
+      Diagnostics.install(server, ermine, log)
+
       server.onRequest("shutdown") { _ =>
         log("shutdown received")
         shutdownSeen = true

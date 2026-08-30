@@ -46,4 +46,17 @@ final class Resident(log: String => Unit) {
 
   /** Run f against a fresh copy of the resident env (booting on demand). */
   def withEnv[A](f: SessionEnv => A): A = f(boot().env.copy)
+
+  /** Parse and typecheck one file against a fresh env copy, resolving
+    * imports first against the file's own directory (workspace siblings),
+    * then the resident loader (the stdlib).  Throws Death on any parse or
+    * type error; the copy — and whatever the failed load dragged into it —
+    * is discarded either way (roadmap 0.3). */
+  def checkFile(path: java.nio.file.Path): Unit = withEnv { env =>
+    implicit val e: SessionEnv = env
+    val dir = Option(path.getParent) map (_.toString) getOrElse "."
+    e.loadFile = Session.SourceFile.inOrder(Session.SourceFile.filesystem(dir) _, e.loadFile)
+    Session.load(Session.Filesystem(path.toString, exotic = true))
+    ()
+  }
 }
