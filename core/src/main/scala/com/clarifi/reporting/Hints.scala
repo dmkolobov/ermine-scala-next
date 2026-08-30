@@ -6,7 +6,7 @@ import scala.util.control.NonFatal
 import Reporting._
 import Reporting.alignMap
 import scalaz.syntax.apply._
-import scalaz.std.vector._
+import scalaz.std.indexedSeq._
 import scalaz.std.option._
 
 /** Type aliases and utility functions for building Hints. */

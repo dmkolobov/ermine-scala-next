@@ -14,7 +14,7 @@ import scalaz.Id._
 import scalaz._
 import scalaz.std.anyVal._
 import scalaz.std.function._
-import scalaz.std.vector.{toNel => _, _}
+import scalaz.std.indexedSeq.{toNel => _, _}
 import scalaz.std.list._
 import scalaz.std.map._
 import scalaz.std.option._

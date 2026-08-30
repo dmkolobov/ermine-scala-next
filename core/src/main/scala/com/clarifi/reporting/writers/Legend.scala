@@ -16,7 +16,7 @@ import State.state
 import scalaz.WriterT.writerMonad
 import scalaz.std.anyVal._
       ,scalaz.std.function.fix
-      ,scalaz.std.vector._
+      ,scalaz.std.indexedSeq._
       ,scalaz.std.list._
       ,scalaz.std.option._
       ,scalaz.std.set._
