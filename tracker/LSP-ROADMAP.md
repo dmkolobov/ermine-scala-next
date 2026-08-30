@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — GROUNDWORK COMPLETE (1.1-1.4); next item 2.1 (surface AST) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 2.1 done (surface AST); next item 2.2 (tokenizer parity) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -215,7 +215,7 @@ machinery is deleted post-G1, never before.
 
 ### 2.x Surface syntax
 
-- [ ] **2.1 Surface AST** (new package surface/): header nodes (imports
+- [x] **2.1 Surface AST** (new package surface/): header nodes (imports
   participate in layout; duplicate-import die() covered); the 10
   top-level statement forms + 6 foreign sub-forms + FixityStatement KEPT
   + where as its own node + ErrorStatement(span, diag); terms/patterns/
@@ -551,3 +551,18 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   confirmed in force. GROUNDWORK (1.x) COMPLETE: oracle validated both
   ways, 34 spec pins, importing goldens, hook spec. Next: 2.1 surface
   AST — the build phase begins.
+- 2026-08-30 2.1 done: surface/Surface.scala — the full what-was-written
+  AST: Span (half-open, 1-based, hit-testable) + Real/Synth SLoc per
+  Decision (h); SName keeps spelling-as-written (incl. _Module affix)
+  with NameForm (Plain/ParenOp/(prefix op)/(postfix op)/(infixl 5 op)
+  binder) and the syntactic fixity bucket; generic flat Chain[A] of
+  operand|OpOcc with syntactic PosClass (used by term, pattern, and type
+  chains — ->/=>/<- ride the type chains as pseudo-ops); all sugar as
+  nodes (SDo/SListLit+suffix/SBraceLit/SRecordLit/SRelEnvelope with
+  per-arrow kinds/SNeg/SHole/SRemember); error nodes in all four ADTs;
+  statements mirror the 10+6 core forms with SFixity KEPT in-tree, SWhere
+  as its own node attached to equations/alts, foreign forms carrying
+  class-name strings+spans only; SModule preserves statement order
+  verbatim. TestSurface (3 structural props) locks Span arithmetic and
+  composability; field adjustments as 2.3's parser meets reality are
+  expected. Baselines: core/test 799 (798+known), repl 3/3, lsp 27/27.
