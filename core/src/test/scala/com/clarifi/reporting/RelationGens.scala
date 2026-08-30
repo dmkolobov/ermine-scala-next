@@ -260,10 +260,13 @@ object RelationGens {
       r1 <- _genRelationAnyNestedWithHeader(h1, NoRelationLevel, minRecords, maxRecords)
       r2 <- _genRelationAnyNestedWithHeader(h2, NoRelationLevel, minRecords, maxRecords)
       // (\ d i -> fmap (\ f -> f >>= \ e -> e) (Data.Traversable.traverse d i))
-      ch <- Gen.sequence[List, Stream[(String, String)]](
-        (h1.toStream |@| h2.toStream)((_, _)) map {
-          case ((k1, v1), (k2, v2)) => Gen.oneOf(true, false) map (b =>
-            if (b && (v1 == v2)) Stream((k1, k2)) else Stream())})
+      // was Gen.sequence, whose Buildable scalacheck 1.15 will not infer here
+      ch <- ((h1.toStream |@| h2.toStream)((_, _)) map {
+              case ((k1, v1), (k2, v2)) => Gen.oneOf(true, false) map (b =>
+                if (b && (v1 == v2)) Stream((k1, k2)) else Stream())
+            }).foldRight(Gen.const(List.empty[Stream[(String, String)]])) {
+              (g, acc) => for { x <- g ; xs <- acc } yield x :: xs
+            }
     } yield (r1, r2, ch.flatten.toMap.map(_.swap).map(_.swap).toSet)
 
   /**

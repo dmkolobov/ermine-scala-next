@@ -295,7 +295,7 @@ object TestErmine extends Properties("Ermine") {
     implicit val arbEmit: Arbitrary[SqlEmitter] =
       Arbitrary(Gen.oneOf(SqlEmitter.mySqlInnoDBEmitter,
                           SqlEmitter.msSqlEmitter))
-    implicit val arbCal = Arbitrary(Arbitrary.arbitrary[java.util.Date] map {d =>
+    implicit val arbCal: Arbitrary[Cal] = Arbitrary(Arbitrary.arbitrary[java.util.Date] map {(d: java.util.Date) =>
       val c = Cal.getInstance
       c setTimeInMillis d.getTime
       c
@@ -304,7 +304,7 @@ object TestErmine extends Properties("Ermine") {
       val y = dat get Cal.YEAR
       val m = (dat get Cal.MONTH) + 1
       val d = dat get Cal.DAY_OF_MONTH
-      assert(1 to 12 contains m,
+      assert((1 to 12) contains m,
              "because I can't keep track of all the off-by-oneness")
       sessionProp(implicit s => testParse(phrase(term), "@%d/%d/%d" format (y, m, d), Map.empty)._2 match {
         case LitDate(_, ermineDate) => (emit emitDate ermineDate run) ?= ("'%d-%02d-%02d'" format (y, m, d))
@@ -335,7 +335,14 @@ object TestErmine extends Properties("Ermine") {
 }
 
 trait ErmineModulesProperties {self: Properties =>
-  protected val ermineFixture: ErmineFixture
+  // Concrete and lazy, rather than abstract and overridden in the one
+  // implementor: it must be lazy (the properties below run while that object is
+  // still being constructed), Scala 3 will not let a lazy val implement a
+  // strict val, and an abstract member is not a stable enough path to import
+  // from.
+  // `final` so it is a legal import path: Scala 3 rejects importing from a
+  // non-final lazy value.
+  protected final lazy val ermineFixture: ErmineFixture = ErmineFixture()
   import ermineFixture._
 
   /** Modules to leave out of the load test, because they don't
@@ -366,13 +373,12 @@ trait ErmineModulesProperties {self: Properties =>
   property("all interesting examples load") =
     sessionProof{implicit s =>
       sampleModules
-        .traverseU(mod => sampleRoot.apply(mod) \/> mod)
+        .traverse[[a] =>> String \/ a, SourceFile](mod => sampleRoot.apply(mod) \/> mod)
         .fold(mod => throw Death("example " + mod + " not found"),
               _.foreach(load(_)))}
 }
 
 object TestErmineModules extends Properties("Ermine library") with ErmineModulesProperties {
-  protected lazy val ermineFixture = ErmineFixture()
   import ermineFixture.{mkEnv, modules}
 
   lazy val excludedModules = Set.empty[String]

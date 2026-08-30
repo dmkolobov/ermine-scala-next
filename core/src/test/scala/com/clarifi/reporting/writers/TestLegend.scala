@@ -130,7 +130,8 @@ object TestLegend extends Properties("Legends & presentations") {
 
   property("overflow labels filter out") = forAll {
     (l: Legend.U[String]) =>
-      val stdsort = l.orderedPresentations.view map (_._2 -> SortOrder.Asc)
+      val stdsort: Seq[(String, SortOrder)] =
+        (l.orderedPresentations.view map (p => (p._2, SortOrder.Asc: SortOrder))).toSeq
       l.filterSort(stdsort) ?= l.filterSort(stdsort ++ stdsort)
   }
 

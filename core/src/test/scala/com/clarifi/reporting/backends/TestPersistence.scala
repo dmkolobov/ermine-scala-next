@@ -62,7 +62,8 @@ object TestPersistence extends org.scalacheck.Properties("Persistence via backen
 
   val fIntPairs = (F.int("a") ++ F.int("b")) iterable TableName("sometbl")
 
-  property("can flatten large datasets") = forAll {(xs: LargeList[(Int, Int)]) =>
+  property("can flatten large datasets") = forAll {(xsTagged: LargeList[(Int, Int)]) =>
+    val xs: List[(Int, Int)] = Tag.unwrap(xsTagged)
     val persist = new FakePersister
     val writeAction = (TableFlattener.persistExisting
                        (persist, fIntPairs.local)(xs)(Source()))

@@ -125,7 +125,7 @@ object TestFlatteners extends Properties("Flatteners") {
 
     def dataset(flattener: T[S,A], a: A, s: S): (S, DS)
 
-    property("sane")           = all (s => sanityCheck[T,S,A](f, s.testEnum.toStream))
+    property("sane")           = all (s => Prop.all(sanityCheck[T,S,A](f, s.testEnum.toStream).properties.map(_._2).toSeq: _*))
     property("final-state-ok") = all (s => checkFinalState(s.finalState))
   }
 

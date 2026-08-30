@@ -10,8 +10,7 @@ import com.clarifi.machines._
 
 private[relational]
 object ProcessSymbolAux {
-  import collection.generic.{CanBuildFrom, FilterMonadic}
-  import ProcessSymbols.{NumTuple2, ensureNonnegativeWeight}
+    import ProcessSymbols.{NumTuple2, ensureNonnegativeWeight}
 
   /** Run [[com.clarifi.machines.Process]] like a reducer that emits one
     * result when the input is exhausted.
@@ -50,10 +49,7 @@ object ProcessSymbolAux {
   def mean(xs: Seq[Double]): Option[Double] =
     if (xs.isEmpty) None else Some(xs.sum / xs.length)
 
-  def ensureNonnegativeWeights[This, That]
-                              (vs: FilterMonadic[NumTuple2, This])
-                              (implicit cbf: CanBuildFrom[This, NumTuple2, That])
-      : That =
+  def ensureNonnegativeWeights(vs: List[NumTuple2]): List[NumTuple2] =
     vs.map(ensureNonnegativeWeight)
 }
 
@@ -69,12 +65,10 @@ object TestProcessSymbols extends Properties("process symbol processes") {
       ns => iffReduced(medianProcess, ns){
         case Some(m) =>
           val sorted = ns.sortWith(_ < _)
-          val expected = if(ns.size % 2 > 0)
-                           sorted(ns.size/2)
-                         else if(ns.size > 0)
-                           (sorted(ns.size/2) + sorted(ns.size/2 - 1))/2
-                         else
-                           Double.NaN
+          val expected =
+            if (ns.size % 2 > 0) sorted(ns.size/2)
+            else if (ns.size > 0) (sorted(ns.size/2) + sorted(ns.size/2 - 1))/2
+            else Double.NaN
           ?=(m, expected)
       }) &&
     forAll(Gen.nonEmptyListOf(Gen.choose(-1000.0,1000.0)))(
