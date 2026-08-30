@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 1.3b done (34 pins + importing goldens); next item 1.4 · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — GROUNDWORK COMPLETE (1.1-1.4); next item 2.1 (surface AST) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -206,7 +206,7 @@ machinery is deleted post-G1, never before.
   synthetic corpus (multi-alias same-module, hiding+rename, using {},
   duplicate-import die()); the differential assertion against the new
   pure function executes in 3.1.
-- [ ] **1.4 Hook table + roadmap bookkeeping**: write and commit
+- [x] **1.4 Hook table + roadmap bookkeeping**: write and commit
   tracker/desugar-hooks.md — every desugar hook (name, fixity, _Module
   suffix rule, source module, resolution channel: alias-sensitive /
   loaded-global / relArrows-region) per the desugaring inventory; the
@@ -542,3 +542,12 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   extra reds (a stage1 pin + a TestScopes property, exception flavor);
   clean 795/796 on immediate re-run — concurrency flake, second sighting.
   Protocol added to Baselines. The commit's code was green.
+- 2026-08-30 1.4 done: tracker/desugar-hooks.md committed — every hook
+  verified against the code (not the reports): channels A/G/R, the exact
+  relArrows rebinding sets with forced fixities, and the grammar-level
+  proof that the R-region wraps combine/filter arms only (relArrow
+  :137-141 applies bindingPredCombs/bindingOpCombs to those two
+  alternatives; rename parses outside the wrap). Decisions block
+  confirmed in force. GROUNDWORK (1.x) COMPLETE: oracle validated both
+  ways, 34 spec pins, importing goldens, hook spec. Next: 2.1 surface
+  AST — the build phase begins.
