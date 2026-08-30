@@ -246,7 +246,7 @@ object PrimT {
   /** `sup` forms a semigroup. */
   implicit val PrimTUnion: Semigroup[Union] = new Semigroup[Union] {
     def append(l: Union, r: => Union): Union =
-      Disjunction(^(l, r)(_ sup _)(optionInstance).join)
+      Disjunction(^(scalaz.Tag.unwrap(l), scalaz.Tag.unwrap(r))(_ sup _)(optionInstance).join)
   }
 
   def isNumeric(p:PrimT): Boolean = p match {

@@ -169,7 +169,7 @@ object Memo {
     v: RowFlattener[T,V]): TableFlattener[(ConsIndexee[(Int,K),S], T),LabelTree[K,V]]
   =
     path(dimensionTable, parentId, nodeId, k) orthogonalJoin v iterable factTable contramap (
-      (lt: LabelTree[K,V]) => lt.asPathList.map { case (path,v) => (nel(path.head, path.tail),v) }
+      (lt: LabelTree[K,V]) => lt.asPathList.map { case (path,v) => (nel(path.head, IList.fromList(path.tail)),v) }
     )
 }
 

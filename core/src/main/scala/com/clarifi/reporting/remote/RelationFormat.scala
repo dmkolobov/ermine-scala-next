@@ -50,8 +50,8 @@ object Format {
         }
       }
     }
-    implicit val peF = primExprRW.reifiedF
-    streamW(recordW).orError.selfDescribing
+    val peF = primExprRW.reifiedF
+    streamW(recordW).orError.selfDescribing(peF)
   }
 
   /**

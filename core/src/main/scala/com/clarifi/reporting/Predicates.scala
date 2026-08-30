@@ -812,7 +812,7 @@ object Fundepped {
 
   private[this]
   def prune[K,V](funs: Functions[K, V]): Functions[K, V] =
-    funs.mapValues(_.filter { case (k, f) => f.nonEmpty })
+    funs.mapValues(_.filter { case (k, f) => f.nonEmpty }).toMap
         .filter { case (ks, fs) => fs.nonEmpty }
 
   /*

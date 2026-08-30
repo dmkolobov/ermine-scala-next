@@ -36,7 +36,7 @@ object PrimType {
   // TODO: move this somewhere else?
   def refLen = 80
 
-  implicit val primRefID : PrimType[RefID] = PrimType[RefID](StringT(refLen), StringExpr(false, _), {
+  implicit val primRefID : PrimType[RefID] = PrimType[RefID](StringT(refLen), (r: RefID) => StringExpr(false, Tag.unwrap(r)), {
     case StringExpr(_,s) => RefID(s)
     case e => sys.error("Not a RefID: " + e.shows)
   })

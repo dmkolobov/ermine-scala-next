@@ -481,7 +481,7 @@ object MLevel {
   implicit def rLevelEq[R: Equal, M: Equal]: Equal[MLevel[R, M]] = new Equal[MLevel[R, M]] {
     def equal(r1: MLevel[R, M], r2: MLevel[R, M]) = (r1, r2) match {
       case (MTop, MTop) => true
-      case (MPop(v1), MPop(v2)) => v1 === v2
+      case (MPop(v1), MPop(v2)) => Equal[Mem[R, M]].equal(v1, v2)
       case _ => false
     }
   }

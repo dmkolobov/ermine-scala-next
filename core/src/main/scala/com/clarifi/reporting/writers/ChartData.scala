@@ -420,11 +420,11 @@ object SeriesStructure {
   def mkForest[A](mapping : List[(A,A)]) : Forest[A] = {
     val m : Map[A,A] = mapping.toMap
     val cm : Map[A, Set[A]] =
-      mapping groupBy {
+      (mapping groupBy {
         case (c , p) => p
       } mapValues {
         cps => cps map (_._1) toSet
-      }
+      }).toMap
     val roots : Set[A] = mapping collect { case (_, p) if !m.contains(p) => p } toSet
     def mk(s : Set[A]) : Forest[A] =
       s.toStream map { p => Tree.node(p, cm get p map { s => mk(s) } getOrElse Stream.empty) }

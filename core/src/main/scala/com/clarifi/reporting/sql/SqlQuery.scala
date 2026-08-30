@@ -35,9 +35,9 @@ sealed abstract class SqlQuery {
         raw(" having ") |+| having.map(x => raw("(") |+| x.emitSql |+| ")").toIterable.rawMkString(" and ")
       else raw(""))
     case SqlNaryOp(op, rs) =>
-      emitter.emitNaryOp(op, rs)
+      emitter.emitNaryOp(op, rs.map(q => q: SqlQuery))
     case SqlEmpty(h) => emitter.emitEmpty(h)
-    case LiteralSqlTable(nel) => emitter.emitLiteral(nel)
+    case LiteralSqlTable(nel) => emitter.emitLiteral(nel.map(m => m.map { case (k, v) => (k, v: SqlExpr) }))
     case SqlOrderBy(q, orderBy) =>
       q.emitSql |+|
       raw(" order by ") |+|

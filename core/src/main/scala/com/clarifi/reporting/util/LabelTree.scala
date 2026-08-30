@@ -19,7 +19,7 @@ case class LabelTree[K, V](value: V, children: Map[K, LabelTree[K, V]]) {
   }
 
   def asPathNonEmptyList(rootName: K): Stream[(NonEmptyList[K], V)] = 
-    asPathList map (p => (nel(rootName, p._1), p._2))
+    asPathList map (p => (nel(rootName, scalaz.IList.fromList(p._1)), p._2))
   
   @deprecated("Replace with StreamT version", "55bb867cc040")
   def fromPathList(pathList: Enumeration[(List[K], V)]): LabelTree[K,V] = {

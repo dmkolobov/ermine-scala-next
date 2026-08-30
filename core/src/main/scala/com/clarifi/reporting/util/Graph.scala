@@ -10,6 +10,7 @@ import scalaz.syntax.show._
 import scalaz.syntax.std.all.ToTuple2Ops
 import scalaz.std.map.mapKeys
 import scalaz.std.option._
+import scalaz.std.anyVal._
 import scalaz.std.set._
 
 

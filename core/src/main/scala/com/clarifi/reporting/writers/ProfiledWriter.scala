@@ -24,7 +24,7 @@ abstract class ProfiledWriter[F[_], C](inner: Writer[F, C])(implicit val R: Run[
     val start = currentTime
     val c2 = c
     val delta = currentTime - start
-    spitTime(desc, delta, c2, subs.toIndexedSeq)
+    spitTime(desc, delta, c2, subs.toVector)
     c2
   }
 

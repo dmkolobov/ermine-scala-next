@@ -19,7 +19,7 @@ object RemoteScanner {
   val IO = implicitly[Monad[IO]]
   implicit val Dist : Distributive[IO] = new Distributive[IO] {
     def distributeImpl[G[_],A,B](fa: G[A])(f: A => IO[B])(implicit G : Functor[G]): IO[G[B]] =
-      IO.pure(G.map(fa)(x => f(x).unsafePerformIO))
+      IO.pure(G.map(fa)(x => f(x).unsafePerformIO()))
     def map[A,B](fa : IO[A])(f : A => B) = fa.map(f)
   }
 }

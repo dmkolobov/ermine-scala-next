@@ -11,7 +11,7 @@ class FontName(name: String) extends Font() {
   def getFont = Option(name)
 }
 class FontByGenre(genre: FontGenre) extends Font() {
-  def getFont = genre.getAvailableFont
+  def getFont = genre.getAvailableFont()
 }
 
 sealed abstract class FontGenre{

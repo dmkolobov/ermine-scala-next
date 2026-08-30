@@ -111,7 +111,7 @@ object Optimizer {
                           val (h2, _, oexpr) = optimizeMem[R, Option[M]](Mem.fromScope(expr)
                                                                         , hr
                                                                         , {case None => h1
-                                                                           case Some(ep) => hm(ep)})
+                                                                           case Some(ep) => hm(ep)});
                           (h2, h2, TrivialAugment(LetM( ExtMem(detrivialize(oe)), Mem.toScope(detrivialize(oexpr)) )))
       }
       case ProcessM(f, m) =>

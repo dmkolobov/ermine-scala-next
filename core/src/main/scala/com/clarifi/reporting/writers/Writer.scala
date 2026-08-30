@@ -489,7 +489,7 @@ abstract class Writer[F[_],C] { self =>
                                                            Predicate.Eq( ColumnValue(parentColumn, typ),
                                                                          OpLiteral(curValue)))
                 })(PredicateAndMonoid)})
-                .foldLeft(Atom(false) : Predicate)( Or(_,_) )
+                .map(Tag.unwrap[Predicate, Tags.Conjunction]).foldLeft(Atom(false) : Predicate)( Or(_,_) )
 
           val query: ClosedExt =
             qfact.map(FilterE(_, predicate))

@@ -37,18 +37,18 @@ object StreamTUtils {
   /** Partition into `n`-sized chunks, each chunk represented with an
     * arbitrary strict Scala iterable.
     */
-  def chunk[A, C <: Iterable[Any], M[+_]](n: Int, s: StreamT[Id, A]
-          )(implicit cbf: collection.generic.CanBuildFrom[Nothing, A, C],
+  def chunk[A, C <: Iterable[Any], M[_]](n: Int, s: StreamT[Id, A]
+          )(implicit cbf: scala.collection.Factory[A, C],
             M: Applicative[M]
           ): StreamT[M, C] = {
-    def take(acc: collection.mutable.Builder[A, C], n: Int, s: StreamT[Id, A]
+    def take(acc: scala.collection.mutable.Builder[A, C], n: Int, s: StreamT[Id, A]
             ): (C, StreamT[Id, A]) =
       if (n <= 0) (acc.result(), s)
       else unconsId(s) match {
         case Some((a, s)) => take(acc += a, n - 1, s)
         case None => (acc.result(), s)
       }
-    StreamT.unfoldM(s){s => take(cbf(), n, s).point[M] map {
+    StreamT.unfoldM(s){s => take(cbf.newBuilder, n, s).point[M] map {
                          case r if !r._1.isEmpty => Some(r)
                          case _ => None
                        }}
