@@ -19,6 +19,7 @@ bin/ermine       # the REPL: 129 modules load and type-check
 | [04-repl-working.md](04-repl-working.md) | getting the REPL up: jline 3, foreign declarations, `ermine.typeCheck` |
 | [05-findings.md](05-findings.md) | two pre-existing bugs found while testing (not migration regressions) |
 | [06-tests.md](06-tests.md) | porting the 2.11 test suite, and the real regression it caught |
+| [07-ffi-verification.md](07-ffi-verification.md) | what actually verifies the `.e` FFI surface, and the one blind spot |
 
 ## What the branch contains
 
