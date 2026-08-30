@@ -25,7 +25,7 @@ trait DebugBackend[DB[_]] {
 }
 
 object DebugBackend {
-  implicit val memoLookup = new HashSet[TableName]()
+  implicit val memoLookup: HashSet[TableName] = new HashSet[TableName]()
   val mySqlDebug = new DebugBackend[DB] {
     def flush: DB[Unit] = (c: Connection) => {
       c.prepareStatement("FLUSH TABLES").executeUpdate

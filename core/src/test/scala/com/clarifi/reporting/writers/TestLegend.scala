@@ -71,12 +71,12 @@ object LegendGens {
 object TestLegend extends Properties("Legends & presentations") {
   import LegendGens._
 
-  implicit def impLegends[Lbl: Arbitrary] =
+  implicit def impLegends[Lbl: Arbitrary]: Arbitrary[Legend[Grp, Lbl]] =
     Arbitrary(legends(arbitrary[Lbl]))
 
-  implicit val formats = Arbitrary(formatSamples map (_._1))
+  implicit val formats: Arbitrary[Format] = Arbitrary(formatSamples map (_._1))
 
-  implicit val primExprs = Arbitrary(RG.genPrimExpr)
+  implicit val primExprs: Arbitrary[PrimExpr] = Arbitrary(RG.genPrimExpr)
 
   sealed trait Interesting
   val Interesting = Tag.of[Interesting]
@@ -240,9 +240,9 @@ object TestLegend extends Properties("Legends & presentations") {
 
   property("legend monoid") = monoid.laws[Legend.U[String]]
 
-  implicit val arbPres = Arbitrary(presentations)
-  implicit val arbSD = Arbitrary(directions)
-  implicit val arbSS =
+  implicit val arbPres: Arbitrary[Presentation] = Arbitrary(presentations)
+  implicit val arbSD: Arbitrary[SortDirection] = Arbitrary(directions)
+  implicit val arbSS: Arbitrary[SortStrategy] =
     implicitly[Arbitrary[List[(ColumnName, SortDirection)]]] map SortStrategy.apply
 
   property("format equal") = equal.laws[Format]

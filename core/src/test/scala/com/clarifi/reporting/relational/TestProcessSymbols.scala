@@ -61,7 +61,7 @@ object TestProcessSymbols extends Properties("process symbol processes") {
   import ProcessSymbolAux._
 
   implicit val doubles: Arbitrary[Double] = Arbitrary(Gen.choose(-1000.0,1000.0))
-  implicit val smallishInt = Arbitrary(Gen.choose(-500,500))
+  implicit val smallishInt: Arbitrary[Int] = Arbitrary(Gen.choose(-500,500))
 
   property("median") = {
     import ProcessSymbols.medianProcess

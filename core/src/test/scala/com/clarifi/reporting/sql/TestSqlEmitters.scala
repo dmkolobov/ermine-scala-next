@@ -86,8 +86,8 @@ object TestSqlEmitters extends Properties("emitSql") {
   import Prop._
   import SqlEmitterGens._
 
-  implicit val overSqlExprArb = Arbitrary(overSqlExprs)
-  implicit val joinOnExprArb = Arbitrary(joinOnExprs)
+  implicit val overSqlExprArb: Arbitrary[SqlExpr] = Arbitrary(overSqlExprs)
+  implicit val joinOnExprArb: Arbitrary[SqlExpr] = Arbitrary(joinOnExprs)
 
   property("only MS emitters use literal `over'") = forAll {
     (emitter: SqlEmitter, overexpr: OverSqlExpr) =>

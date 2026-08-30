@@ -23,7 +23,7 @@ import Scalaz.{ gets => _, _ }
 /** I am not thread-safe, so use a separate one of me per `Properties`
   * instance.  Importing my symbols unqualified works quite well.
   */
-final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
+final case class ErmineFixture((prepBaseEnv: SessionEnv) => Unit
                                = Function const (())) {
   implicit val supply = Supply.create
   implicit val con = Printer.ignore
@@ -62,7 +62,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
   def loadStatements(
     stmts: String,
     imports: Map[String,ImportSpec] = imps
-  )(implicit s: SessionEnv) {
+  )(implicit s: SessionEnv): Unit = {
     loadModules(imports.keySet.toList)
     val spsz = ErParseState.mk("<test statements>", stmts, "Test").importing( s.termNames
                                                                             , s.cons.keySet
@@ -334,7 +334,7 @@ object TestErmine extends Properties("Ermine") {
   property("circular.lambda") = circular("v = x -> v x", "v")
 }
 
-trait ErmineModulesProperties {self: Properties =>
+trait ErmineModulesProperties {(self: Properties) =>
   protected val ermineFixture: ErmineFixture
   import ermineFixture._
 

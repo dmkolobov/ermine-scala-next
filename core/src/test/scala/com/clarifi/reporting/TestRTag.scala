@@ -58,7 +58,7 @@ object TaggedRelations {
 */
 
 object RTagGens {
-  implicit val arbExpr = Arbitrary(RelationGens.genPrimExpr)
+  implicit val arbExpr: Arbitrary[PrimExpr] = Arbitrary(RelationGens.genPrimExpr)
 
   /** @todo S11 perhaps include equivalence tests */
   implicit def arbReflexivity[K: Arbitrary: Equal]: Arbitrary[Reflexivity[K]] =
@@ -69,10 +69,10 @@ object RTagGens {
 object TestRTag extends Properties("PrimTs, PrimExprs, Reflexivity") {
   import Header.sup
   import RTagGens._
-  implicit val arbPrimt = Arbitrary(RelationGens.primT)
-  implicit val arbHeader = Arbitrary(RelationGens.genVariableHeader)
+  implicit val arbPrimt: Arbitrary[PrimT] = Arbitrary(RelationGens.primT)
+  implicit val arbHeader: Arbitrary[Header] = Arbitrary(RelationGens.genVariableHeader)
 
-  property("type reflexivity") = forAll { h: Header =>
+  property("type reflexivity") = forAll { (h: Header) =>
     sup(h, h) ?= Some(h)
   }
 
@@ -90,12 +90,12 @@ object TestRTag extends Properties("PrimTs, PrimExprs, Reflexivity") {
     (h1.keySet /== h2.keySet) ==> (sup(h1, h2) ?= None)
   }
 
-  property("nullable variants unify up") = forAll {h: Header =>
+  property("nullable variants unify up") = forAll {(h: Header) =>
     val nulled = h.mapValues(_.withNull)
     sup(h, nulled) ?= Some(nulled)
   }
 
-  property("0-len string is root string type") = forAll {h: Header =>
+  property("0-len string is root string type") = forAll {(h: Header) =>
     val zerostringed =
       h.mapValues{case PrimT.StringT(l, n) => PrimT.StringT(0, n)
                   case x => x}

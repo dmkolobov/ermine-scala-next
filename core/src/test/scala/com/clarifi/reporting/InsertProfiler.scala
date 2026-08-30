@@ -88,7 +88,7 @@ package com.clarifi.reporting
 //  }
 //  
 //  
-//  def profile[A, B](numTrials: Int)(setup: => A)(block1: A => B, block2: A => Unit)(teardown: B => Any): (Stats,Stats) = {
+//  def profile[A, B](numTrials: Int)(setup: => A)((block1: A) => B, block2: A => Unit)((teardown: B) => Any): (Stats,Stats) = {
 //    
 //    val stats1 = new Stats
 //	val stats2 = new Stats

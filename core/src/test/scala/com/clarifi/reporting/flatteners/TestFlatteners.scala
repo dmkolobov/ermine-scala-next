@@ -202,7 +202,7 @@ object TestFlatteners extends Properties("Flatteners") {
   }
 
   trait Check2 extends Check { outer =>
-    def check[S:PrimType:Arbitrary](s: String) {
+    def check[S:PrimType:Arbitrary](s: String): Unit = {
       new Check {
         def check[T: PrimType:Arbitrary](t: String) = {
           outer.check2[S,T](s,t)

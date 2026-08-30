@@ -85,7 +85,10 @@ lazy val core = (project in file("core"))
     ),
     Compile / unmanagedSources := portedSources(
       (Compile / scalaSource).value, unportedSources.value),
-    Test / unmanagedSources := Seq.empty,
+    // The 2.11 test suite is not ported yet; see tracker/06-tests.md.
+    // `sbt core/Test/compile` with this line removed shows what is left.
+//    Test / unmanagedSources := Seq.empty,
+    Test / unmanagedSourceDirectories += (ThisBuild / baseDirectory).value / "scalacheck-binding" / "src" / "main" / "scala",
     libraryDependencies ++= Seq(
       "org.scalaz"    %% "scalaz-core"       % scalazVersion,
       "org.scalaz"    %% "scalaz-effect"     % scalazVersion,
@@ -100,7 +103,9 @@ lazy val core = (project in file("core"))
       // JDBC drivers, refreshed from the 2014-era pins.
       "com.mysql"            % "mysql-connector-j" % "9.5.0",
       "net.sourceforge.jtds" % "jtds"              % "1.3.1",
-      "org.xerial"           % "sqlite-jdbc"       % "3.51.1.0"
+      "org.xerial"           % "sqlite-jdbc"       % "3.51.1.0",
+      "org.scalacheck" %% "scalacheck" % "1.15.4" % Test,
+      "org.scalaz"     %% "scalaz-scalacheck-binding" % "7.2.36-scalacheck-1.15" % Test
     ),
     Compile / run / mainClass := Some("com.clarifi.reporting.ermine.session.Console"),
     Compile / run / fork := true,

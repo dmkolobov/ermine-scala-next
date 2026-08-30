@@ -34,8 +34,8 @@ object TestGraph extends Properties("graph types") {
 
   private type PSS = PartitionedSet[Short]
 
-  implicit def cliqueArb[A: Arbitrary] = Arbitrary(cliques(arbitrary[A]))
-  implicit def partitionedSetArb[A: Arbitrary] =
+  implicit def cliqueArb[A: Arbitrary]: Arbitrary[Clique[A]] = Arbitrary(cliques(arbitrary[A]))
+  implicit def partitionedSetArb[A: Arbitrary]: Arbitrary[PartitionedSet[A]] =
     Arbitrary(partitionedSets(arbitrary[A]))
 
   property("clique order") = order.laws[Clique[Short]]
