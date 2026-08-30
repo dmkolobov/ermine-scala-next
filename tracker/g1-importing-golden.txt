@@ -1,0 +1,346 @@
+module Bool terms=31 types=37 sha256=2c61728fa9baba5358bbe22becb20c7b08f47e21d8c5e9632f1fe0a55789dc8d
+module Byte terms=25 types=37 sha256=ad0d79fb806d265d2e7a468a61b8fcf931b201153cdf6fb860aa538391247e89
+module Constraint terms=25 types=43 sha256=bffa159278ac301604012842ce066ecd1b75f182865be033def46d77625cc479
+module Control.Alt terms=51 types=42 sha256=da6e82a796ea1063ffa83e18dccc3fd9ca5ef1c9e23a0d65c40eb3ff411d7049
+module Control.Ap terms=40 types=40 sha256=f3791aa07422885d27b0ca5ac240d489eca08b30965be1d30bcab3bd2fd9bd97
+module Control.Category terms=35 types=39 sha256=e10caefc4508279dc418bc425c37e37f1f864a15f17872c67cbec4e4106b7e7b
+module Control.Comonad terms=54 types=43 sha256=d22c5c328c93322781fc68ba8f3114e80ad768e3a1b80c534fdd3e87144e4ff0
+module Control.Functor terms=29 types=39 sha256=ed7099d8a030fb93c9300cceba3d2036cc5452641661dab0cfbaae716608fea8
+module Control.Monad terms=74 types=42 sha256=25c734e9cea2e708bd763e1852dc906336f4c42441b84f5ddd613e2c21e8f05b
+module Control.Monad.Cont terms=79 types=43 sha256=92bbc3fdf748c9d6fe694a22817c5409cb007135ad7b51b95e4c6b7614ddb71f
+module Control.Monad.State terms=60 types=43 sha256=767a2d1f578ca3aab679c57e48165faf453cf09bb486bb05adc2879d11408771
+module Control.Monoid terms=31 types=38 sha256=5ea579d9228fdd98673ad3b931b5a1e4ca7de993910775ab4cc1795d725faaa7
+module Control.Traversable terms=73 types=44 sha256=234a2b966d14970ad75137037bcc4617740aed266f5ab445ba6ced9727981a8d
+module Date terms=327 types=70 sha256=8e641f031d4017f4fbd38b04daf1a0dba32fa419b43d3c1b0db92e61ff077134
+module DateRange terms=250 types=44 sha256=171f7849b99ee7a4c4a1b74fb9447727acada72d984b419b79560e61951cb015
+module DB terms=25 types=38 sha256=b3ba02e9c00a1f28993a4eb3ff7739a96a14ab3170ad201b1d88b29b0644dcc6
+module Double terms=26 types=37 sha256=7879e9e64900fe9e141397fa050594465c77aa51ca27283154a4fcd1ead73a83
+module DrilldownList terms=182 types=45 sha256=e87750b90e1d875a6d62e7aeea39bf0e45fa7db9ebfe0c69f9f4d652f0de4cc7
+module Either terms=145 types=42 sha256=d6a2d95cc88da85fbc2c8b5197830270d67a528d247a6478ff815e6bb0583470
+module Eq terms=27 types=37 sha256=f4934ce7c163ba94b163ac1067ef017e89bf4236c58c269f4b70c9801d5c0274
+module Error terms=29 types=37 sha256=d09c7de18ba0cfb1bd78178a45e35dc865ba88dfd5601033a9af2c4aa7fae468
+module Field terms=90 types=40 sha256=561992dc35fa15dceb8668798f36b8b5d1bb536a758f095b0086f8010b3eb644
+module Field.Type terms=25 types=37 sha256=ad0d79fb806d265d2e7a468a61b8fcf931b201153cdf6fb860aa538391247e89
+module Float terms=44 types=37 sha256=5e1eae7146e190d0bd7de02e27d434c453a8f9d84671105267f766f295e762e0
+module Function terms=49 types=39 sha256=bc72b51a28f1092d690ac5de1a1cf796e02786ff53fad69fff771ff34af2851d
+module Function.Endo terms=32 types=39 sha256=417471edaa249df9c134f9a40c9c77fb483cec903db28386ea8d3b1ab0391b25
+module GUID terms=28 types=37 sha256=4fbb19f2b1c3290c755b1651b7ce955de3fab5a030661f214d004eaef4c07994
+module Int terms=37 types=37 sha256=6ad1ef7f23bbbdb23d6892a3face7561838583d4989212d57da608568e40fbec
+module Internal.SMEnv terms=31 types=39 sha256=d2f8e7c334e6af5e086efbe40f6e56465708c3dc3965000766b35ff3587c73d9
+module IO terms=142 types=48 sha256=de1138df5172db1c303d7a9fa5d30bc21b0bef60fa3d42589b60ff54faed0245
+module IO.Unsafe terms=71 types=40 sha256=a9099e2e2bd836fa1572b13f7eb712957418620b5727ef452beea39ce6fa0915
+module Layout terms=450 types=65 sha256=f665b9ba4fe6cbdc93b4c62bbfd13e741d4f36b0e3e3136ce61dc6c4eb406f86
+module Layout.BorderOptions terms=53 types=40 sha256=449a1bd4e041669fc0a52575b7c7dbf4d971574fe91d5509b91083cd2ce94c87
+module Layout.Chart terms=388 types=108 sha256=1dc06f171cb30aa3ddf6e40e973cb28e12e98f3ad0f6bfc7d00c36bc9089c98c
+module Layout.Chart.Type terms=26 types=47 sha256=bfe90c57e3ecfa66569fb879ac96bbc120ed9d934322fa0431fab53e37c5175c
+module Layout.Chart.Unsafe terms=123 types=83 sha256=3658309a0af83752df1ac0062970093ece89d9772f620ebf8662942e460a8df3
+module Layout.Color terms=258 types=46 sha256=702db768dd4b078303003ff2f9e788334848dc6aec27225284a76c085fb793e8
+module Layout.Column terms=287 types=66 sha256=ae823759c23736f1490f4cfc93ed1f30a378e652d87f900b10468033a946eb19
+module Layout.Column.Unsafe terms=418 types=92 sha256=c8cbcfd65f9f948b173c3c7298aba1f8626dab43c0297860ee45adb5fdcf07d3
+module Layout.Font terms=86 types=40 sha256=d21f94a30f7c38be728a0967dde5689a90c09f3d39510e9753a0860e3c84cd49
+module Layout.Format terms=202 types=70 sha256=4fcb112cbfc84d373c35da5a213c74ac3fae0a0d3d135eb1b0f755909129b3a5
+module Layout.Legend terms=356 types=86 sha256=e2a68f37b8c13cb28e3f9cdef08f5e84021e8efa6d575d8199bec8f8a6a80f6c
+module Layout.Magnitude terms=117 types=41 sha256=18c45439d80aa2ea6062a8a1aa37d29142028de1d3cd8a69cca540dffa9550b5
+module Layout.Presentation terms=345 types=81 sha256=fc9a44f4eb80fd1cf2e8a29dc18345f0dbd1554bb8a063f91d80c121adec7f55
+module Layout.PresRow terms=32 types=45 sha256=a303d539953511e1ec5b4a08d8ed885015bf841ac7f23fe6b8bb9776aedb783e
+module Layout.Report terms=1097 types=158 sha256=692a2fa2c5eb74e9bbc7e5347446c4c66605cd7a13b23fcdfb9de9f43bcd84ad
+module Layout.Report.Atomic terms=88 types=52 sha256=bf1b535062491850f78894ea8678dc1d8c882a1a13814c04cf3b146da7f9a2b1
+module Layout.Report.Direction terms=27 types=38 sha256=4a02b29c1cd1de26c62f3ad1b8f1c5cc335b9237da0bcac239c20b63768117a5
+module Layout.Report.Fulcrum.Dynamic terms=102 types=52 sha256=1600d1c38c0c0453b941c9bb0bb7a95d478ee5667fddd07994f5606b0ef14020
+module Layout.Report.SelectorMode terms=32 types=39 sha256=b85daccee4e4e9ba5ddb744e577c2e0b62fe52372da8ca66673fdf870922893c
+module Layout.Report.SoftRelation terms=228 types=61 sha256=210a8b1fd01f0beee69c9718f3043ebf79c48eff5a13a304a29ef4b9ea0c4023
+module Layout.Report.StyleGrid terms=232 types=69 sha256=3137d172acb8a6fdd27fa328f2d3941ac4ec75bdd75634b8d3a022a2806ab3ef
+module Layout.SortPriority terms=304 types=57 sha256=5d96c8064feec611509af21960949135b3db7f5debdea9683a71b58244b6fae9
+module Layout.SortStrategy terms=229 types=70 sha256=f3611ac5f3448a5731e0e47854a1af380300c959fafa20a8d89e56a537c78aac
+module Layout.SortStrategy.Unsafe terms=75 types=43 sha256=af79dd91254f8baad5f81553cc2ffe944b9c48f2d20542c5eb656b58c7162394
+module Layout.Writer terms=256 types=73 sha256=fffc427a7f92c674a862411e9327c243b74c67e276991b230d2e46d23202c883
+module List terms=228 types=48 sha256=e0929845374a2898079f4f60333485f7bb2f0d72fc1ef5f6bb3706d5dbf0edba
+module List.NonEmpty terms=111 types=38 sha256=d76500dc1bda8b67d6c39bbe9f8074c6afa5189d582ba5ff84851dfa559066b8
+module List.Stream terms=204 types=47 sha256=27c8e11e1bd676dff14d0e4539b69e5b51c3a3b9c7b05a0e64e021884d1d8886
+module List.Util terms=345 types=43 sha256=b3c39681084274ebcf3f7231b9b9a69733df658e3c2588acd3005ca7a21cbe5c
+module Long terms=28 types=37 sha256=0a9cb868052623f3df045203cc675c16fad012351d4cf867afcde03dab1e7eda
+module Map terms=338 types=62 sha256=cf840ab682d1c50e6326c1cc9ae726e50840319bbdc93a62847d94786714ac9e
+module Math terms=91 types=37 sha256=83ec60307ce5c4941a0da654a34e71c43cc94e66920c66e63f988ddf2cbf67bc
+module Maybe terms=125 types=48 sha256=aacb7151f1d6596e7c093c780f5775cadb4cf54865e31bce1081985e0343bf46
+module Native terms=129 types=66 sha256=56ffdc75690ae14cb5658ce3bc3407b2261d9c75742281bc982424e81eacb4ea
+module Native.Bool terms=34 types=38 sha256=9c8c81f60966160dd2bad4c4b1f6db3a0d69dfd5a265b41f11d6494e4b20e94a
+module Native.BorderOptions terms=44 types=42 sha256=92f4595afc61a7a8ae2b48e7b2b4c5f2730a6bda852d5e0c507ed52d85d283b1
+module Native.Class terms=32 types=38 sha256=277614d6bd6e8a9404ffc1e7c7e42522acdd65d6e6e576e2407149bb4edae869
+module Native.Either terms=39 types=40 sha256=efa5dfe9c8ab5954855d5a74b3eb8327e6a287827de75f844f878950ae68c511
+module Native.Error terms=41 types=40 sha256=8c14371d3164756683dca1d99c988626162c0fdbd73d51a25d1fbbf609493045
+module Native.Exception terms=38 types=39 sha256=f4dca8517a4820522b6b5d712c87a3f5c2b5bb18381926fca575b0a706f4440a
+module Native.Function terms=44 types=45 sha256=080d718fd598ddd510049a0e350da77f95e34edddd7e3e5888dc336f5f7cc06e
+module Native.List terms=131 types=39 sha256=3ab784d5df048d0ff2c9f683040ded7122055db1d25f1bad4d4bed51475c13f9
+module Native.Magnitude terms=156 types=46 sha256=98cd780212125e5ab430b0b4a6ad21c7b9da6b0dd8bc055ebad4b9c5a60a65b9
+module Native.Map terms=31 types=39 sha256=3dc5eb4a873fa6138353434a0d2510b06d61703ccf6430b61cd790b7ca90125e
+module Native.Maybe terms=45 types=38 sha256=76fa36010bf0e820685c888920992606632b33eb24a460a1f931bbbace1e0ed6
+module Native.NonEmpty terms=63 types=41 sha256=1fbe93c4f90e2048787e2a6d04b6168fb0c424a5aa39b69a99789cc95da5c00a
+module Native.Object terms=36 types=38 sha256=afd82986a121f681720fa3a3bb16f8193d4662d15b7dae32b6193fe7800c67bd
+module Native.Ord terms=118 types=52 sha256=ba2e186ac17ef7f06e4109e1d704b34c84fa47e15f057f13af83c802adf47d1c
+module Native.Pair terms=30 types=38 sha256=a6fa06a8c5b9b45ff8358e75fce5c0e703d4087561408d67670cf49a2a8fbf0a
+module Native.Record terms=58 types=43 sha256=a74a3a005cb55a16eb806a967ca36e8610e3d3040622f08bb74cbdfb8127223a
+module Native.Relation terms=32 types=38 sha256=1244f99e9c5e28a49540c04a66437ac3d0029700bb6d423c3599a674cffd1e24
+module Native.Serializable terms=31 types=39 sha256=286915d9858be5f92b336252baf3ec31a0a0c74185f2468e2ea7a7eb973d8980
+module Native.Stream terms=120 types=54 sha256=eec905c2384da1f14e34792d71bb3e91492b2beb96b8b87602d925d8c7681057
+module Native.Throwable terms=52 types=41 sha256=786514bad6c287b1339115f75405f917c135d7a343ba2f9064ac2429a62a9fec
+module Native.TraversableColumns terms=112 types=43 sha256=83d6c5fd15204194b0213a552f1f85f0e857e03e58a488fcf6ff157824263176
+module Nullable terms=45 types=37 sha256=a2302a3a8d648dfedcd7450b94f308887579c94df9bc5206877f4512b0216eea
+module Num terms=53 types=38 sha256=df5412844e2cb75d256ff155122703b1590da98fb5f1ba98576c208a056ec6c7
+module Ord terms=78 types=41 sha256=a31d8d3b94cad7dd7e1ccc8ffdd48d52922af689b408845eaa6be1f4cf1c3c27
+module Pair terms=29 types=37 sha256=66eaef048a3048c3b6f49eba9fdbb7772a51ef5aeb4884c5d4734127761def1b
+module Parse terms=162 types=47 sha256=787afb5fb07f14532da2d9c2314ce91014b9f9d825116812757ffc01250a5db6
+module Prelude terms=1252 types=127 sha256=b270b5ce150716bfe84d336b146e20e89649f41e89bae7ebfab981687cdd7cd2
+module Prim terms=66 types=39 sha256=0504e07d9b60cb0d94d1e1329417bc8a36d18588981d3544df330bf77d5bb7c1
+module Primitive terms=38 types=37 sha256=9af33f79907b97fe1ad753d029ef2ee73332e3cbcf671980b0dc6a62b7b4dbe5
+module Record terms=111 types=45 sha256=5ba94458ec5856eba901f767480b7a67865e04a33f7589eaebe5f08c5133fede
+module Relation terms=406 types=66 sha256=499c4509bc24e12e65d12c7812fd76691c1b1c7a6afa6c91b087e8140aef4ef6
+module Relation.Aggregate terms=154 types=53 sha256=8644d92fb532557945f5b1378b697262db1f3b550f1f942846047c0f4acef51d
+module Relation.Aggregate.Type terms=25 types=38 sha256=633d4de037bc77a780fb4b79822b8605e890b7f8ef44598e169bdf1578f809e3
+module Relation.Aggregate.Unsafe terms=138 types=68 sha256=7167584e2a277df6b3e6a876ec52d06063f606bfbf1cf754565da05247aa93b0
+module Relation.Op terms=385 types=85 sha256=cedf72fb1750efdc5d0618b99f9c38669d90fb0224c32b1f755666fba1d4e1f0
+module Relation.Op.Type terms=25 types=38 sha256=ae6be100048e7242ec83a5b15f43939dea61f83a2eeffdae01483e6b55d3cd63
+module Relation.Op.Unsafe terms=157 types=72 sha256=4ec2247b9e5797e2b64f9e6ed66db137c71847acab27dfe5e6add46e2491a7b6
+module Relation.Pivot terms=347 types=60 sha256=9ca9d4eaea0f24a3f4d536413da017263cc7c4fe88625185608ce56b0322bc8c
+module Relation.Predicate terms=86 types=55 sha256=ed2e2b9c323c683b9fcbb403d8aa2329972ae17d108143ca5c349bb28620eeb9
+module Relation.Predicate.Type terms=25 types=37 sha256=ad0d79fb806d265d2e7a468a61b8fcf931b201153cdf6fb860aa538391247e89
+module Relation.Process terms=73 types=41 sha256=7708471d2b16789e8310031a1bac1653e31117d95ec922cf8824bbf74d0ca4c0
+module Relation.Row terms=254 types=52 sha256=8ab2ce47fbfcbf2f724f89187b411251902ef10d04eee1abe256036a0743df41
+module Relation.Scan terms=361 types=55 sha256=1a18be5a4337ca325b6ea7c4ff4a826ddf9d73773991d27982039dc798722f6d
+module Relation.Sort terms=272 types=62 sha256=def2fcafee5ad90108746543927ecf2c49147b5d00b4fed61173d73ecb3d9236
+module Relation.UnifyFields terms=170 types=46 sha256=986c53ca2f61e9fa6c3ea357230c3fe934ca9dd6b519612c76b804f9ab2c4c22
+module Ring terms=70 types=39 sha256=f5c936416081390dd4d2021e1c9681df5014e3dd6743c714e9d1b90066de57a2
+module Runners terms=32 types=39 sha256=ff14b103e3252ef28e01d656a09238f7ff5e65be14a92853eb94036362e26a76
+module Scanners terms=232 types=61 sha256=5b7e81a0f392890a6fbafee1ee85bca46b7c824c71028d2d0fa1ae6a5e4eec84
+module Short terms=25 types=37 sha256=ad0d79fb806d265d2e7a468a61b8fcf931b201153cdf6fb860aa538391247e89
+module String terms=204 types=43 sha256=6d2b8f2c55bae177e8ae0e12ec09e209f26c376c0f407e8d46821fe76dd57c7b
+module StringManip terms=170 types=44 sha256=e5ac6da1a0fc323ec564a537a62018bf778ce9d40f25cede938404602249d632
+module Syntax.Do terms=53 types=41 sha256=4edb4aa255b022aa74de28af0a3792f10d42960e55855741b0108e0440068f92
+module Syntax.Either terms=69 types=42 sha256=4ab4b3a9de3d445da34adab53db0f9cca4e15ac3d14d26e9b51ac461927eb2a1
+module Syntax.IO terms=73 types=42 sha256=b47b943064d66511fc87c157ad373788777ec96747c44ea71c0ddfb7de3c05f8
+module Syntax.List terms=133 types=41 sha256=e708d5af1edd798f6d5b92f939b9b75b29c590a0f461991004b40a70780e4bbc
+module Syntax.Maybe terms=73 types=41 sha256=55dbca4da5e53a4fd961f4131fa8ea97a89044af87b218cd06e68fe86bc4e601
+module Syntax.Relation terms=256 types=46 sha256=276f96d6b824a66c722e1e50f6bf40acf13024f63dbba4830989e33b80f5906c
+module Tree terms=521 types=74 sha256=61fabdeda1937413dd7ec982f7ef796387efef5eb681d3a8a815c2a091f281dd
+module Type.Cast terms=74 types=39 sha256=27c8f6a9cb29b859e7355fda0b7bfcca8c04f11e1d389925a14cef7ba578fac9
+module Type.Eq terms=30 types=38 sha256=a8bbb5e28f8fcc1fea839ec21788e2af3757e2af3cab59f5adf08e29165add74
+module Unsafe.Coerce terms=26 types=37 sha256=8cb25a148a119235a33b7e1656809092e719b9e04f13fe9579ecf04753b0b73a
+module Validation terms=243 types=43 sha256=9866d78bbcd0a6962648016f89ad15ae46d639a44100b168fafa9beebedb5cd4
+module Vector terms=236 types=54 sha256=0d9d9613161ab7cc074347af8d4e65ff88ac7ae8ed76935b1a85d61bdb3c0a17
+module Void terms=26 types=40 sha256=7706e462c3d520184435e9f6be9bdc3a4b4bdf206c11804061112147ca74a2f3
+== synthetic SynMultiAlias
+DIES: SynMultiAlias:1:1: Duplicate module imports not correctly handled: 
+== synthetic SynAliasPlain
+DIES: SynAliasPlain:1:1: Duplicate module imports not correctly handled: 
+== synthetic SynUsing
+T :: -> Builtin.(::)
+T False -> Builtin.False
+T IO -> Builtin.IO
+T Just -> Builtin.Just
+T Nil -> Builtin.Nil
+T Nothing -> Builtin.Nothing
+T Null -> Builtin.Null
+T Some -> Builtin.Some
+T True -> Builtin.True
+T head -> List.head
+T primAbs# -> Builtin.primAbs#
+T primDiv# -> Builtin.primDiv#
+T primGt# -> Builtin.primGt#
+T primGte# -> Builtin.primGte#
+T primLt# -> Builtin.primLt#
+T primLte# -> Builtin.primLte#
+T primMinus# -> Builtin.primMinus#
+T primNeg -> Builtin.primNeg
+T primNeg# -> Builtin.primNeg#
+T primPlus# -> Builtin.primPlus#
+T primPow# -> Builtin.primPow#
+T primTimes# -> Builtin.primTimes#
+T primToDouble# -> Builtin.primToDouble#
+T primToInt# -> Builtin.primToInt#
+T primToLong# -> Builtin.primToLong#
+T tail -> List.tail
+T withNull -> Builtin.withNull
+Y Bool -> Builtin.Bool
+Y Byte -> Builtin.Byte
+Y Char -> Builtin.Char
+Y Date -> Builtin.Date
+Y Double -> Builtin.Double
+Y Eq -> Builtin.Eq
+Y FFI -> Builtin.FFI
+Y Field -> Builtin.Field
+Y Float -> Builtin.Float
+Y GUID -> Builtin.GUID
+Y IO -> Builtin.IO
+Y Int -> Builtin.Int
+Y List -> Builtin.List
+Y Long -> Builtin.Long
+Y Maybe -> Builtin.Maybe
+Y Mem -> Builtin.Mem
+Y Nullable -> Builtin.Nullable
+Y Num -> Builtin.Num
+Y Predicate -> Builtin.Predicate
+Y Prim -> Builtin.Prim
+Y PrimT -> Builtin.PrimT
+Y Primitive -> Builtin.Primitive
+Y PrimitiveAtom -> Builtin.PrimitiveAtom
+Y PrimitiveNum -> Builtin.PrimitiveNum
+Y PrimitiveString -> Builtin.PrimitiveString
+Y PrimitiveTemporal -> Builtin.PrimitiveTemporal
+Y Record -> Builtin.Record
+Y Relation -> Builtin.Relation
+Y Relational -> Builtin.Relational
+Y RelationalComb -> Builtin.RelationalComb
+Y SM -> Builtin.SM
+Y Scaled -> Builtin.Scaled
+Y Short -> Builtin.Short
+Y String -> Builtin.String
+Y Temporal -> Builtin.Temporal
+Y Timestamp -> Builtin.Timestamp
+Y Unscaled -> Builtin.Unscaled
+== synthetic SynHiding
+T $ -> Function.($)
+T $! -> Function.($!)
+T &&& -> Function.(&&&)
+T ' -> Function.(')
+T -| -> Function.(-|)
+T . -> Function.(.)
+T :: -> Builtin.(::)
+T <| -> Function.(<|)
+T False -> Builtin.False
+T IO -> Builtin.IO
+T Just -> Builtin.Just
+T Nil -> Builtin.Nil
+T Nothing -> Builtin.Nothing
+T Null -> Builtin.Null
+T Some -> Builtin.Some
+T True -> Builtin.True
+T ` -> Function.(`)
+T const -> Function.const
+T curry -> Function.curry
+T endoMonoid -> Function.endoMonoid
+T fCategory -> Function.fCategory
+T fix -> Function.fix
+T flip -> Function.flip
+T primAbs# -> Builtin.primAbs#
+T primDiv# -> Builtin.primDiv#
+T primGt# -> Builtin.primGt#
+T primGte# -> Builtin.primGte#
+T primLt# -> Builtin.primLt#
+T primLte# -> Builtin.primLte#
+T primMinus# -> Builtin.primMinus#
+T primNeg -> Builtin.primNeg
+T primNeg# -> Builtin.primNeg#
+T primPlus# -> Builtin.primPlus#
+T primPow# -> Builtin.primPow#
+T primTimes# -> Builtin.primTimes#
+T primToDouble# -> Builtin.primToDouble#
+T primToInt# -> Builtin.primToInt#
+T primToLong# -> Builtin.primToLong#
+T seq -> Function.seq
+T uncurry -> Function.uncurry
+T withNull -> Builtin.withNull
+T | -> Function.(|)
+T |- -> Function.(|-)
+T |> -> Function.(|>)
+Y Bool -> Builtin.Bool
+Y Byte -> Builtin.Byte
+Y Char -> Builtin.Char
+Y Date -> Builtin.Date
+Y Double -> Builtin.Double
+Y Endo -> Function.Endo
+Y Eq -> Builtin.Eq
+Y FFI -> Builtin.FFI
+Y Field -> Builtin.Field
+Y Float -> Builtin.Float
+Y GUID -> Builtin.GUID
+Y IO -> Builtin.IO
+Y Int -> Builtin.Int
+Y List -> Builtin.List
+Y Long -> Builtin.Long
+Y Maybe -> Builtin.Maybe
+Y Mem -> Builtin.Mem
+Y Nullable -> Builtin.Nullable
+Y Num -> Builtin.Num
+Y Predicate -> Builtin.Predicate
+Y Prim -> Builtin.Prim
+Y PrimT -> Builtin.PrimT
+Y Primitive -> Builtin.Primitive
+Y PrimitiveAtom -> Builtin.PrimitiveAtom
+Y PrimitiveNum -> Builtin.PrimitiveNum
+Y PrimitiveString -> Builtin.PrimitiveString
+Y PrimitiveTemporal -> Builtin.PrimitiveTemporal
+Y Record -> Builtin.Record
+Y Relation -> Builtin.Relation
+Y Relational -> Builtin.Relational
+Y RelationalComb -> Builtin.RelationalComb
+Y SM -> Builtin.SM
+Y Scaled -> Builtin.Scaled
+Y Short -> Builtin.Short
+Y String -> Builtin.String
+Y Temporal -> Builtin.Temporal
+Y Timestamp -> Builtin.Timestamp
+Y Unscaled -> Builtin.Unscaled
+== synthetic SynUsingEmpty
+T :: -> Builtin.(::)
+T False -> Builtin.False
+T IO -> Builtin.IO
+T Just -> Builtin.Just
+T Nil -> Builtin.Nil
+T Nothing -> Builtin.Nothing
+T Null -> Builtin.Null
+T Some -> Builtin.Some
+T True -> Builtin.True
+T primAbs# -> Builtin.primAbs#
+T primDiv# -> Builtin.primDiv#
+T primGt# -> Builtin.primGt#
+T primGte# -> Builtin.primGte#
+T primLt# -> Builtin.primLt#
+T primLte# -> Builtin.primLte#
+T primMinus# -> Builtin.primMinus#
+T primNeg -> Builtin.primNeg
+T primNeg# -> Builtin.primNeg#
+T primPlus# -> Builtin.primPlus#
+T primPow# -> Builtin.primPow#
+T primTimes# -> Builtin.primTimes#
+T primToDouble# -> Builtin.primToDouble#
+T primToInt# -> Builtin.primToInt#
+T primToLong# -> Builtin.primToLong#
+T withNull -> Builtin.withNull
+Y Bool -> Builtin.Bool
+Y Byte -> Builtin.Byte
+Y Char -> Builtin.Char
+Y Date -> Builtin.Date
+Y Double -> Builtin.Double
+Y Eq -> Builtin.Eq
+Y FFI -> Builtin.FFI
+Y Field -> Builtin.Field
+Y Float -> Builtin.Float
+Y GUID -> Builtin.GUID
+Y IO -> Builtin.IO
+Y Int -> Builtin.Int
+Y List -> Builtin.List
+Y Long -> Builtin.Long
+Y Maybe -> Builtin.Maybe
+Y Mem -> Builtin.Mem
+Y Nullable -> Builtin.Nullable
+Y Num -> Builtin.Num
+Y Predicate -> Builtin.Predicate
+Y Prim -> Builtin.Prim
+Y PrimT -> Builtin.PrimT
+Y Primitive -> Builtin.Primitive
+Y PrimitiveAtom -> Builtin.PrimitiveAtom
+Y PrimitiveNum -> Builtin.PrimitiveNum
+Y PrimitiveString -> Builtin.PrimitiveString
+Y PrimitiveTemporal -> Builtin.PrimitiveTemporal
+Y Record -> Builtin.Record
+Y Relation -> Builtin.Relation
+Y Relational -> Builtin.Relational
+Y RelationalComb -> Builtin.RelationalComb
+Y SM -> Builtin.SM
+Y Scaled -> Builtin.Scaled
+Y Short -> Builtin.Short
+Y String -> Builtin.String
+Y Temporal -> Builtin.Temporal
+Y Timestamp -> Builtin.Timestamp
+Y Unscaled -> Builtin.Unscaled
+== synthetic SynDupImport
+DIES: SynDupImport:1:1: Duplicate module imports not correctly handled: 

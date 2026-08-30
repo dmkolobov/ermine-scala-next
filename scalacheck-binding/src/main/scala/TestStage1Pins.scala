@@ -152,6 +152,88 @@ object TestStage1Pins extends Properties("Ermine stage1 pins") {
   property("interleaved equations of one name are refused") =
     failsMatching("f 0 = 1\ng 0 = 2\nf 1 = 3", ".")
 
+  // -- operator family (1.3b): the stdlib has ZERO prefix/postfix
+  // witnesses, so these pins are the only spec for the re-associator ------
+
+  val minimalImps: Map[String, ImportSpec] =
+    Map("Builtin" -> all, "Test" -> all, "Primitive" -> all)
+
+  property("a prefix operator applies to its operand inside a chain") =
+    forAll(small) { x =>
+      defAndEval(s"prefix 9 !!\n(prefix !!) q = 0 - q\nv = 1 + !! $x",
+                 "v", imps).extract[Int] ?= 1 - x }
+
+  property("prefix operators stack only with parentheses") =
+    forAll(small) { x =>
+      defAndEval(s"prefix 9 !!\n(prefix !!) q = 0 - q\nv = !! (!! $x)",
+                 "v", imps).extract[Int] ?= x }
+
+  property("bare prefix stacking is a parse error") =
+    failsMatching("prefix 9 !!\n(prefix !!) q = 0 - q\nv = !! !! 5",
+                  "expected whitespace")
+
+  property("a postfix operator binds by its precedence inside a chain") =
+    forAll(small) { x =>
+      defAndEval(s"postfix 9 %%\n(%%) q = q + 1\nv = 1 + $x %%",
+                 "v", imps).extract[Int] ?= x + 2 }
+
+  property("unary minus negates the ENTIRE chain, not the nearest operand") =
+    // Haskell would read -q + 1 as (-q) + 1; Ermine applies primNeg to the
+    // whole re-associated chain (TermParsers.termL2_) — preserve for G1
+    forAll(small) { x =>
+      defAndEval("f q = -q + 1", s"f $x", imps).extract[Int] ?= -(x + 1) }
+
+  property("a block binder's inline fixity does not govern earlier siblings") =
+    failsMatching("v = let a = 1 :%: 2\n        (infixl 5 :%:) x y = x - y\n    in a",
+                  "end of layout")
+
+  property("a block binder's inline fixity governs later siblings") =
+    defAndEval("v = let (infixl 5 :%:) x y = x - y\n        a = 8 :%: 3\n    in a",
+               "v", imps).extract[Int] ?= 5
+
+  property("equal precedence with mixed associativity is ambiguous") =
+    failsMatching(
+      "infixl 5 <%>\ninfixr 5 <^>\n(<%>) x y = x\n(<^>) x y = y\nv = 1 <%> 2 <^> 3",
+      "ambiguous operator of precedence")
+
+  property("redeclaring an imported operator's fixity is refused") =
+    failsMatching("infixr 3 &&", "Multiple fixity definitions")
+
+  property("an operator used before its fixity declaration is a parse error") =
+    // (the codebase has no live "forward reference to an operator with
+    // unknown precedence" path we could reach; reality is a layout error)
+    failsMatching("v = 1 :%: 2\ninfixl 5 :%:\n(:%:) x y = x + y", "end of layout")
+
+  property("an unknown operator kills the chain as a layout error") =
+    failsMatching("v = 1 %%% 2", "end of layout")
+
+  property("one lexeme cannot be both infix and postfix (shared bucket)") =
+    failsMatching("infixl 5 :%:\npostfix 5 :%:\n(:%:) x y = x",
+                  "Multiple fixity definitions")
+
+  // -- rejected corpus: resolution failures steer today's grammar ----------
+
+  property("a bracket literal without hooks in scope is refused") =
+    failsMatching("v = [1, 2]", "expected '_' or whitespace", minimalImps)
+
+  property("a loaded-but-unimported global is undefined at typecheck") =
+    secure {
+      try {
+        session { implicit s =>
+          loadModules(List("List"))          // in the session...
+          loadStatements("v = head", minimalImps)  // ...but not imported
+        }
+        falsified :| "loaded; expected refusal"
+      } catch {
+        case d: Death =>
+          if ("undefined term".r.findFirstIn(d.getMessage).isDefined) proved
+          else falsified :| d.getMessage.linesIterator.next().take(120)
+      }
+    }
+
+  property("an unknown identifier parses; it dies later as undefined term") =
+    failsMatching("v = frobnicate", "undefined term")
+
   // -- error anchors inside desugared forms --------------------------------
 
   property("a type error inside a list literal anchors on its line") =

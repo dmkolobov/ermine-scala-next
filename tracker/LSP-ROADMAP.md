@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 1.3a done (19 spec pins); next item 1.3b · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 1.3b done (34 pins + importing goldens); next item 1.4 · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -182,7 +182,7 @@ machinery is deleted post-G1, never before.
   floating vs missing/duplicate errors); error-in-sugar anchors (one type
   error inside each of do, list literal, record, relArrows — anchor
   parity or a Decision noting the accepted delta).
-- [ ] **1.3b Spec pins: operators + rejected corpus + importing golden**:
+- [x] **1.3b Spec pins: operators + rejected corpus + importing golden**:
   prefix/postfix chains (incl. trailing postfix); block-binder fixity
   textual-order; ambiguous imported operator (silent at term level, loud
   at type level); unary minus over the whole chain; equal-prec
@@ -512,3 +512,23 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   right line inside list literals and do blocks. Error-in-sugar anchors
   for records and relArrows ride 1.3b with their fixtures. core/test now
   781 (780 green + known Constraints failure); repl 3/3; lsp 27/27.
+- 2026-08-30 1.3b done: TestStage1Pins grows to 34 (all green; core/test
+  796). Operator family pinned by probe-then-pin: prefix ops need the
+  `(prefix op)` binder form and stack only parenthesized; postfix binds
+  by precedence incl. trailing; unary minus CONFIRMED whole-chain by
+  value (f q = -q + 1; f 5 = -6); block-binder inline fixity refuses
+  earlier siblings / governs later ones; "ambiguous operator of
+  precedence" and "Multiple fixity definitions" verbatim; op-before-
+  fixity and unknown-op die as layout errors (the reader-cited "forward
+  reference to an operator with unknown precedence" message was NOT
+  reproducible — noted in the pin). Corpus: missing bracket hooks
+  ("expected '_' or whitespace"), loaded-but-unimported global and
+  unknown identifier both parse then die "undefined term" (placeholder
+  tolerance pinned). G1Importing tool + tracker/g1-importing-golden.txt:
+  per-module sha256 of sorted canonicalTerms/Types over all 129 headers
+  (deterministic across runs) + full dumps for synthetic using/hiding/
+  using-{} headers. Discovery: importing one module twice — even under
+  different aliases — is REFUSED ("Duplicate module imports not correctly
+  handled"), so multi-name visibility arises only via re-exports; the
+  refusal is part of the golden. Deferred: record/relArrows error anchors
+  (ride 3.4 fixtures), improperly-quantified trigger still unfound.
