@@ -418,8 +418,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
           val preo = prefix ++ jk.view.filterNot(prefix.toMap.contains).map(_ -> Asc)
           val ord: Order[Record] = recordOrd(preo)
           val merged = ^(q1(preo), q2(preo))(
-            (q1p, q2p) => q1p.tee(q2p)(Tee.mergeOuterJoin((r: Record) => r filterKeys jk,
-                                                          (r: Record) => r filterKeys jk
+            (q1p, q2p) => q1p.tee(q2p)(Tee.mergeOuterJoin((r: Record) => (r filterKeys jk).toMap,
+                                                          (r: Record) => (r filterKeys jk).toMap
                                                           )(ord)).map {
             case This(a) => RecordMap(h2 map (kv => kv._1 -> NullExpr(kv._2))) ++ a
             case That(b) => RecordMap(h1 map (kv => kv._1 -> NullExpr(kv._2))) ++ b
@@ -626,8 +626,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       await[Record] flatMap { (r:Record) =>
         val nextra = r -- pKey -- pVals
         if (nextra == extra) { // we're on the same pivot row
-          val kr = r filterKeys pKey
-          val vr = r filterKeys pVals
+          val kr = (r filterKeys pKey).toMap
+          val vr = (r filterKeys pVals).toMap
           val newCols = colMap collect {
             case (c, (k,o,d)) if kr == k =>
               c -> o.eval(vr)
@@ -713,7 +713,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                            nulls: Record): DB[Procedure[Id, Record]] = {
     def build(m: Map[Record, Vector[Record]]): Plan[T[Record, Record], Nothing, Map[Record, Vector[Record]]] =
       awaits(right[Record]) flatMap { rr =>
-        val k = rr filterKeys jk
+        val k = (rr filterKeys jk).toMap
         val v = m.getOrElse(k, Vector.empty)
         /* Alexei: short-circuit a degenerate case of adding the same record to the vector over and over again
                    otherwise memory use by issue browser tables explodes even in simple PA reports
@@ -729,7 +729,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         
         build(u)
       } orElse Return(m)
-    def augments(m: Map[Record, Vector[Record]], r: Record): Vector[Record] = m.lift(r filterKeys jk) match {
+    def augments(m: Map[Record, Vector[Record]], r: Record): Vector[Record] = m.lift((r filterKeys jk).toMap) match {
       case None => Vector(r ++ nulls)
       case Some(v) => v map (r ++ _)
     }

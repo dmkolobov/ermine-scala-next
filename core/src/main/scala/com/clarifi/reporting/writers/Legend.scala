@@ -73,7 +73,7 @@ case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
   def applyColumnGroups(groups: Option[Seq[Grp]]) : Legend[Grp, Lbl] =
     Legend(inOrder.applyColumnGroups(groups), undisplayed, groupingColumn)
 
-  def labels: Seq[Lbl] = leavesInOrder.view.map(_._3)
+  def labels: Seq[Lbl] = leavesInOrder.view.map(_._3).toSeq
   def formats = leavesInOrder.map( _._1.format)
 
   def leavesInOrder: Seq[(Presentation, SortStrategy, Lbl)] = inOrder.leavesInOrder
@@ -90,7 +90,7 @@ case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
     copy(inOrder = LegendColumns(Vector(-\/(inOrder, group))))
 
   def orderedPresentations: Seq[(Presentation, Lbl)] =
-    leavesInOrder.view map {case (p, _, l) => (p, l)}
+    (leavesInOrder.view map {case (p, _, l) => (p, l)}).toSeq
 
   /** In-order traversal of columns described by this legend. */
   def traverseColumns[F[_]: Applicative](f: ColumnName => F[ColumnName]): F[Legend[Grp, Lbl]] = {
@@ -545,10 +545,10 @@ object Presentation
   /** The presentation that does nothing.  Use `basicPresentation` in
     * DMTL instead. */
   def unit(cols: NonEmptyList[(ColumnName, PrimT)]): Presentation =
-    Presentation(Format.Default, cols map Op.ColumnValue.tupled)
+    Presentation(Format.Default, cols map (Op.ColumnValue.apply _).tupled)
 
   def verbatim(cols: NonEmptyList[(ColumnName, PrimT)]): Presentation =
-    Presentation(Format.Verbatim, cols map Op.ColumnValue.tupled)
+    Presentation(Format.Verbatim, cols map (Op.ColumnValue.apply _).tupled)
 
   /** Just show `disp` as-is. */
   def constant(disp: PrimExpr): Presentation =
@@ -826,12 +826,12 @@ object Format {
     * second projection. */
   case class Pr1( fst: Format ) extends Format {
     val basicEval = recursiveEval(_.basicEval)
-    def devolve(ops: NelOp) = (ops.head, ops.tail) match {
+    def devolve(ops: NelOp) = (ops.head, ops.tail.toList) match {
       case (h, t :: u) => fst.devolve(NonEmptyList(h, u :_*))
       case (h, _) => fst.devolve(NonEmptyList(h))
     }
 
-    override def recursiveEval(rec: Format => NelPe => PrimExpr) = (pes: NelPe) => (pes.head, pes.tail) match {
+    override def recursiveEval(rec: Format => NelPe => PrimExpr) = (pes: NelPe) => (pes.head, pes.tail.toList) match {
       case (h, it :: u) => rec(fst)(NonEmptyList(h, u:_*))
       case (h, _) => rec(fst)(NonEmptyList(h))
     }
@@ -839,13 +839,13 @@ object Format {
 
   case class Pr2(fst : Format) extends Format {
     val basicEval = recursiveEval(_.basicEval)
-    def devolve(ops: NelOp) = ops.tail match {
+    def devolve(ops: NelOp) = ops.tail.toList match {
       case (x :: xs) => fst.devolve(NonEmptyList(x, xs:_*))
       case _ => fst.devolve(ops) // should be impossible, throw an error instead?
     }
 
     override def recursiveEval(rec : Format => NelPe => PrimExpr) =
-      (pes : NelPe) => pes.tail match {
+      (pes : NelPe) => pes.tail.toList match {
         case x :: xs => rec(fst)(NonEmptyList(x, xs:_*))
         case _ => rec(fst)(pes) // again, error?
       }
@@ -860,14 +860,15 @@ object Format {
       case (pe, _) => pe
     }
 
-    def devolve(ops: NelOp) = ops match {
-      case NonEmptyList(s, e, _*) =>
+    def devolve(ops: NelOp) = ops.list.toList match {
+      case s :: e :: _ =>
         (s.guessType.toOption, e.guessType.toOption) match {
           case (Some(DateT(_)), Some(DateT(_))) =>
             Concat(List(s, OpLiteral(StringExpr(false, "–")), e))
           case _ => s
         }
-      case NonEmptyList(o, _*) => o
+      case o :: _ => o
+      case Nil => sys.error("impossible: empty NonEmptyList")
     }
   }
 
