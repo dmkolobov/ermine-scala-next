@@ -14,7 +14,7 @@ object StreamTUtils {
   def wrapEffect[M[+_]:Functor,A](m: M[StreamT[M,A]]): StreamT[M,A] =
     StreamT[M,A](m map { Skip[StreamT[M,A]](_) })
 
-  def concatMapIterable[M[+_],A,B](m: Iterable[A])(f: A => StreamT[M,B])(implicit M: Applicative[M]): StreamT[M, B] =
+  def concatMapIterable[M[_],A,B](m: Iterable[A])(f: A => StreamT[M,B])(implicit M: Applicative[M]): StreamT[M, B] =
     StreamT[M,B](
       if (m isEmpty) M.pure(Done)
       else M.pure(Skip(f(m.head) ++ concatMapIterable[M,A,B](m.tail)(f)))

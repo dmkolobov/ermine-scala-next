@@ -2,7 +2,7 @@ package com.clarifi.reporting.ermine.core
 
 import scalaparsers.Monadic
 
-sealed abstract class Gen[+A] extends Monadic[Gen,A] with Traversable[A] {
+sealed abstract class Gen[+A] extends Monadic[Gen,A] {
   def self = this
   implicit def lift[B](v: Gen[B]) = v
   def flatMap[B](f: A => Gen[B]): Gen[B]

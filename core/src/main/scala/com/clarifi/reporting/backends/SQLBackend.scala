@@ -32,7 +32,7 @@ class SqlBackend(implicit emitter: SqlEmitter) extends Backend[DB] {
   import syntax.kleisli._
 
   type S = Int
-  type SqlState[+A] = State[S, A]
+  type SqlState[A] = State[S, A]
 
   private[this] def logger = Logger getLogger classOf[SqlBackend]
 

@@ -514,9 +514,9 @@ object Constraints {
       rhs.viewl.fold(none, (p, rest) => some((p, lhs <++> rest)))
     }
 
-    class PQueue(val q: PSQI, graph: TypeVarGraph) extends Traversable[Partition] {
+    class PQueue(val q: PSQI, graph: TypeVarGraph) extends ForeachIterable[Partition] {
 
-      def foreach[U](f: Partition => U): Unit = q.foreach(x => { f(x) ; () })
+      override def foreach[U](f: Partition => U): Unit = q.foreach(x => { f(x) ; () })
 
       // Inserts a partition into the queue without any processing
       def +(p: Partition): PQueue = {

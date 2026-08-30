@@ -420,7 +420,7 @@ object Mem {
   }
 
   implicit def memTraversable[R,M](r: Mem[R, M]): Traversable[M] =
-    new Traversable[M] { def foreach[U](f: M => U): Unit = { r foreach (x => (), f) } }
+    new com.clarifi.reporting.ermine.ForeachIterable[M] { override def foreach[U](f: M => U): Unit = { r foreach (x => (), f) } }
 
   def fromScope[M, R](mem: MScope[R, M]): Mem[R, Option[M]] = mem flatMap {
     case MTop => VarM(None)

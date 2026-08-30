@@ -88,7 +88,7 @@ package object relational {
   def sort[R](ts: SeqLike[Record, R], order: List[(String, SortOrder)]): R =
     ts sorted recordOrd(order).toScalaOrdering
 
-  type OrderedProcedure[M[+_], +A] = List[(String, SortOrder)] => M[Procedure[scalaz.Id.Id, A]]
+  type OrderedProcedure[M[_], A] = List[(String, SortOrder)] => M[Procedure[scalaz.Id.Id, A]]
 
   def driveLeftId[K, A, B, C](drv: K => Option[Any])(m: Machine[K, A])(g: A => B)(initial: C)(f: (C, B) => C): C = {
     @annotation.tailrec

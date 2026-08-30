@@ -10,7 +10,7 @@ import scalaparsers.{Comonadic, Loc, Located}
  * value. It is designed to avoid duplicates, keep variables in order of appearance
  * and provide for the filtering out of bound variables, all efficiently.
  */
-abstract class Vars[+K] extends Traversable[V[K]] { that =>
+abstract class Vars[+K] extends ForeachIterable[V[K]] { that =>
   def apply[J >: K](s: Set[V[J]], f: V[K] => Unit): Set[V[J]]
 
   def ![J >: K](s: Set[V[J]]): List[V[K]] = {
@@ -25,13 +25,13 @@ abstract class Vars[+K] extends Traversable[V[K]] { that =>
 
   def ::[J >: K](w: V[J]): Vars[J] = Vars(w) ++ that
 
-  def --[J >: K](w: Traversable[V[J]]): Vars[J] = new Vars[J] {
+  def --[J >: K](w: Iterable[V[J]]): Vars[J] = new Vars[J] {
     val t = w.toSet // Set[V[J]]
     def apply[I >: J](s: Set[V[I]], f: V[J] => Unit): Set[V[I]] =
       (that(s ++ t, f) -- t) ++ (t.map(x => x:V[I]) intersect s)
   }
 
-  def foreach[U](f: V[K] => U) = this(Set[V[K]](), { v => f(v); () }) // !@*)#* scala
+  override def foreach[U](f: V[K] => U): Unit = this(Set[V[K]](), { v => f(v); () }) // !@*)#* scala
 
   /** if you are going to use this over and over again, convert to a Set first! */
   def contains(v: V[Any]) = exists(_ == v)
@@ -46,7 +46,7 @@ object Vars {
       if (s(v)) s
       else { f(v); s + v }
   }
-  def apply[K](vs: Traversable[V[K]]) = new Vars[K] {
+  def apply[K](vs: Iterable[V[K]]) = new Vars[K] {
     def apply[J >: K](s: Set[V[J]], f: V[K] => Unit) = {
       vs.foreach(v => if(s(v)) () else f(v))
       s ++ vs
@@ -108,7 +108,7 @@ object V {
   implicit val vComonad: scalaz.Comonad[V] = new scalaz.Comonad[V] {
     def copoint[A](v: V[A]) = v.extract
     def map[A,B](v: V[A])(f: A => B) = v.map(f)
-    def cojoin[A](v: V[A]) = V(v.loc,v.id,v.name,v.ty,v)
+    override def cojoin[A](v: V[A]) = V(v.loc,v.id,v.name,v.ty,v)
     def cobind[A,B](v: V[A])(f: V[A] => B) = map(cojoin(v))(f)
   }
 

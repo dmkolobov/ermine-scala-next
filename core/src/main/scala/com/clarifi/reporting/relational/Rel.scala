@@ -379,7 +379,7 @@ object Relation {
   }
 
   implicit def relTraversable[M, R](r: Relation[M,R]): Traversable[R] =
-    new Traversable[R] { def foreach[U](f: R => U): Unit = { r foreach (x => (), f) } }
+    new com.clarifi.reporting.ermine.ForeachIterable[R] { override def foreach[U](f: R => U): Unit = { r foreach (x => (), f) } }
 
   def toScope[M, R](mem: Relation[M, Option[R]]): RScope[M, R] = mem map {
     case None => RTop

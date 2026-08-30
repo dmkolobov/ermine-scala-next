@@ -74,7 +74,7 @@ object Reporting {
   implicit def refIDToTableName(r: RefID): TableName =
     TableName(r.toString, Nil)
 
-  type DataSetT[M[+_]] = StreamT[M, (TableName, Record)]
+  type DataSetT[M[_]] = StreamT[M, (TableName, Record)]
   type DataSetS[S] = DataSetT[[a] =>> State[S, a]]
   type DataSet = DataSetT[Id]
   type SimpleDataSet = StreamT[Id, (String, Record)]

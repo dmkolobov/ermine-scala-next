@@ -8,7 +8,7 @@ import Runtime.Thunk
 
 class OpenException extends Exception
 
-sealed abstract class Core[+A] extends Monadic[Core,A] with Traversable[A] {
+sealed abstract class Core[+A] extends Monadic[Core,A] {
   def flatMap[B](f: A => Core[B]): Core[B]
   def map[B](f: A => B): Core[B]
   def foreach[U](f: A => U): Unit
@@ -18,9 +18,12 @@ sealed abstract class Core[+A] extends Monadic[Core,A] with Traversable[A] {
   def when(b: Boolean): Core[Unit] = if (b) skip else CGoal(())
 
   // check for unresolved goals
-  def close: Option[Core[Nothing]] =
-    if (forall(_ => false)) Some(this.asInstanceOf[Core[Nothing]])
-    else None
+  // (was `forall(_ => false)` from Traversable, i.e. "has no goals")
+  def close: Option[Core[Nothing]] = {
+    var any = false
+    foreach(_ => any = true)
+    if (any) None else Some(this.asInstanceOf[Core[Nothing]])
+  }
 }
 
 object Core {
@@ -79,7 +82,7 @@ case class CLam[+A](loc: Loc, pat: Pattern, body: Core[A]) extends Core[A] with 
   def foreach[U](f: A => U): Unit = { body.foreach(f) }
 }
 
-case class CAlt[+A](loc: Loc, patterns: List[Pattern], body: Core[A]) extends Located with Traversable[A] {
+case class CAlt[+A](loc: Loc, patterns: List[Pattern], body: Core[A]) extends Located {
   def flatMap[B](f: A => Core[B]) = CAlt(loc, patterns, body.flatMap(f))
   def map[B](f: A => B): CAlt[B] = CAlt(loc, patterns, body.map[B](f))
   def foreach[U](f: A => U): Unit = { body.foreach(f) }
