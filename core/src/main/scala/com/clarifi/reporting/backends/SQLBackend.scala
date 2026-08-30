@@ -168,7 +168,7 @@ class SqlBackend(implicit emitter: SqlEmitter) extends Backend[DB] {
       val tables = hints.tables
       tables.foreach { case (tableName, tableHints) =>
         tableHints.indices.zipWithIndex foreach { case ((columnGroup, isCandidateKey),i) =>
-          emitter.emitCreateIndex(tableName, tableHints, tableName+"_index"+i, columnGroup, isCandidateKey).
+          emitter.emitCreateIndex(tableName, tableHints, tableName.toString+"_index"+i, columnGroup, isCandidateKey).
           foreach(executeUpdate)
         }}}.pure[G]
 }

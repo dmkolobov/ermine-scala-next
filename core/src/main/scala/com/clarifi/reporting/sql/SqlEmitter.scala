@@ -238,7 +238,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     rs.map(_.emitSql(this)).rawMkString( " " + op.emit.run + " ")
 
   private[sql] final def allSubqueryColumns(rs: NonEmptyList[Subquery]): RawSql = {
-    implicit val so = Order[TableName].toScalaOrdering
+    implicit val so: scala.math.Ordering[TableName] = Order[TableName].toScalaOrdering
 
     rs.foldLeft(Map[ColumnName, TableName]()) {
       case (m, (_, t, h)) => m ++ h.map(_._1 -> t)
@@ -572,7 +572,7 @@ trait EmitOver_UsingOver extends SqlEmitter {
  */
 trait EmitConcat_AsConcat extends SqlEmitter {
   override protected def emitConcat_helper(terms: NonEmptyList[SqlExpr]): SqlExpr =
-    FunSqlExpr("Concat", if (terms.tail.isEmpty) List(terms.head, LitSqlExpr(SqlString(""))) else terms.list) // CONCAT must take at least 2 args.
+    FunSqlExpr("Concat", if (terms.tail.isEmpty) List(terms.head, LitSqlExpr(SqlString(""))) else terms.list.toList) // CONCAT must take at least 2 args.
 }
 
 /** Pretend UUIDS are strings. */

@@ -295,14 +295,14 @@ object Typer {
 
   private def nonexistentColumns(cols: List[String]) = {
     val errs = cols.map("Operation refers to nonexistent column (%s) in header." format _)
-    NonEmptyList.nel(errs.head, errs.tail).failure
+    NonEmptyList.nel(errs.head, IList.fromList(errs.tail)).failure
   }
 
   type TT[+A] = Either[NonEmptyList[String], A]
 
   private implicit val eerr: Errs[TT] = new Errs[TT] {
     def apply(x: String, xs: String*): Either[NonEmptyList[String], Nothing] =
-      Left(NonEmptyList.nel(x, xs.toList))
+      Left(NonEmptyList.nel(x, IList.fromList(xs.toList)))
   }
 
   def memTyper(mem: Mem[Nothing, Nothing]): TypeTag =

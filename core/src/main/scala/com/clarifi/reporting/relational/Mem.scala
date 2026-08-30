@@ -319,9 +319,9 @@ class Literal( r:  OneAnd[ ({type F[X] = Coproduct[IndexedSeq, List, X]})#F, Rec
                      }
 
   def nel: NonEmptyList[Record] = NonEmptyList.nel( r.head
-                                                  , r.tail.run match { case -\/(xs) => xs.toList
-                                                                       case \/-(xs) => xs
-                                                                     }
+                                                  , IList.fromList(r.tail.run match { case -\/(xs) => xs.toList
+                                                                                     case \/-(xs) => xs
+                                                                                   })
                                                   )
   def mapCollections[B](f: IndexedSeq[Record] => IndexedSeq[B], g: List[Record] => List[B]) : Literal.ListOrIndexedSeq[B] = {
     val xs = listOrIndexedSeq
@@ -345,11 +345,11 @@ object Literal {
   }
   def toLit(seq: List[Record] ): Option[Literal] = seq.headOption match {
     case None => None
-    case Some(h) => Some( Literal( nel(h, seq.tail)))
+    case Some(h) => Some( Literal( nel(h, IList.fromList(seq.tail))))
   }
 
   def apply(rs: NonEmptyList[Record]) =
-    new Literal( OneAnd(rs.head, (rightc(rs.tail) : ListOrIndexedSeq[Record] ))) 
+    new Literal( OneAnd(rs.head, (rightc(rs.tail.toList) : ListOrIndexedSeq[Record] ))) 
   
   def apply(r: Record, rs: IndexedSeq[Record]) =
     new Literal( OneAnd(r, (leftc(rs) : ListOrIndexedSeq[Record] )))

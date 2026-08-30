@@ -256,7 +256,7 @@ object Optimizer {
     * relations into a containing Amalgamation with _other_ relations.
     */
   private def literalAsPredicate(litrel: NonEmptyList[Record]): Predicate =
-    Predicates.any(litrel.map(Predicate.fromRecord).list)
+    Predicates.any(litrel.map(Predicate.fromRecord).list.toList)
 
   private def literalAsCases(jk: Set[ColumnName], litrel: NonEmptyList[Record]): Map[Attribute, Op] = {
     val preds = litrel.map((r: Record) => (r filterKeys jk).toMap).map(Predicate.fromRecord)

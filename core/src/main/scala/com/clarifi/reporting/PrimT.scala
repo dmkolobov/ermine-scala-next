@@ -241,7 +241,7 @@ object PrimT {
 
   implicit val PrimTEqual: Equal[PrimT] = equalA[PrimT]
   implicit val PrimTShow: Show[PrimT] = showA
-  implicit val PrimTOrder: Order[PrimT] = implicitly[Order[String]].contramap(_.shows)
+  implicit val PrimTOrder: Order[PrimT] = scalaz.std.string.stringInstance.contramap(_.shows)
 
   /** `sup` forms a semigroup. */
   implicit val PrimTUnion: Semigroup[Union] = new Semigroup[Union] {

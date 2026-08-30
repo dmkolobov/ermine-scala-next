@@ -607,9 +607,9 @@ object Writer {
     case v           => NonEmptyList(StringExpr(false, v.toString))
   }
 
-  def fromPrimExprNel(n:NonEmptyList[PrimExpr]): Runtime = n.tail match {
+  def fromPrimExprNel(n:NonEmptyList[PrimExpr]): Runtime = n.tail.toList match {
     case Nil => Runtime.fromPrimExpr(n.head)
-    case xs => Arr(n.list.view.map(x => Runtime.fromPrimExpr(x)).toArray)
+    case xs => Arr(n.list.toList.view.map(x => Runtime.fromPrimExpr(x)).toArray)
   }
 
   def mkLiteral(h: Header, v: Vector[Record]): ClosedExt = Closed(ExtMem(v.headOption match {

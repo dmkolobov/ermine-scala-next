@@ -864,7 +864,7 @@ object Fundepped {
         case r :: rs => loop(accumulateFunctions(acc, r), rs, cutoff-1)
       }
 
-    loop(vacuousFunctions(nel.head), nel.tail, 100)
+    loop(vacuousFunctions(nel.head), nel.tail.toList, 100)
   }
 
   /*

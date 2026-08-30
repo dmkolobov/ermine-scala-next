@@ -922,7 +922,7 @@ object Format {
   }
 
   def nelW[A, F](w: Writer[A, F]): Writer[NonEmptyList[A], NelF[F]] = p2W(w, repeatW(w))(f =>
-    (n:NonEmptyList[A]) => f(n.head, n.tail))
+    (n:NonEmptyList[A]) => f(n.head, n.tail.toList))
 
   import writers.{Legend, LegendColumns, Presentation, SortDirection,
                   SortStrategy, Format => WFormat, Condition => Condition}
