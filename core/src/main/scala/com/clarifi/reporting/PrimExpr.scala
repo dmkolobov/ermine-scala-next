@@ -624,7 +624,7 @@ object PrimExpr {
     }
     else typeorder
   })
-  implicit val PrimOrdering: Ordering[PrimExpr] = PrimExprOrder.toScalaOrdering
+  implicit val PrimOrdering: scala.math.Ordering[PrimExpr] = PrimExprOrder.toScalaOrdering
 
   def mkExpr(i: Int, t: PrimT) = t match {
     case StringT(l,n) => StringExpr(n, i.toString)

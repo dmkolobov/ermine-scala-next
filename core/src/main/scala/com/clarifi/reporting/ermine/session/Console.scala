@@ -4,7 +4,11 @@ package session
 
 import scala.io.{ Source }
 
-import jline.{ ConsoleReader, Terminal, SimpleCompletor, ArgumentCompletor, MultiCompletor, FileNameCompletor }
+import org.jline.reader.{ EndOfFileException, LineReader, LineReaderBuilder, UserInterruptException }
+import org.jline.reader.impl.completer.{ AggregateCompleter, ArgumentCompleter, FileNameCompleter, StringsCompleter }
+import org.jline.terminal.{ Terminal, TerminalBuilder }
+import org.jline.utils.InfoCmp.Capability
+import scala.jdk.CollectionConverters._
 import java.awt.Toolkit
 import java.awt.datatransfer.{Clipboard, DataFlavor}
 
@@ -62,13 +66,13 @@ class ConsoleEnv(
   _sessionEnv: SessionEnv,
   val in: InputStream = new FileInputStream(FileDescriptor.in),
   val out: PrintWriter = new PrintWriter(new OutputStreamWriter(System.out)),
-  val terminal: Terminal = Terminal.getTerminal
+  val terminal: Terminal = TerminalBuilder.builder().system(true).build()
 ) {
   implicit val supply: Supply = Supply.create
-  implicit val con = new Printer {
+  implicit val con: Printer = new Printer {
     def apply(s: String): Unit = {
-      reader.printString(s)
-      out.flush
+      terminal.writer.print(s)
+      terminal.writer.flush()
     }
   }
 
@@ -103,39 +107,50 @@ class ConsoleEnv(
   }
 
   // repl and autocomplete
-  val reader = new ConsoleReader(in, out, null, terminal)
+  //
+  // jline 1's SimpleCompletor was mutable (`setCandidateStrings`); jline 3's
+  // StringsCompleter instead reads its candidates from a supplier on each
+  // completion, so `updateCompletor` just swaps the collection below.
+  @volatile private var candidateStrings: java.util.Collection[String] =
+    new java.util.ArrayList[String]()
 
-  // auto-completor (sic)
-  val completor = new SimpleCompletor("")
-  completor.setDelimiter(" ")
+  val completor: StringsCompleter =
+    new StringsCompleter(() => candidateStrings)
 
-  val loadCompletor = new ArgumentCompletor(List(
-    new SimpleCompletor(List(":load", ":fsloader").toArray),
-    new FileNameCompletor
-  ).toArray)
+  val loadCompletor: ArgumentCompleter = new ArgumentCompleter(
+    new StringsCompleter(":load", ":fsloader"),
+    new FileNameCompleter
+  )
   loadCompletor.setStrict(true)
 
-  val argCompletor = new ArgumentCompletor(
-    List(
-      new MultiCompletor(
-        List(
-          new SimpleCompletor((Console.actions.flatMap(a => a.name :: a.alts) ++ startingKeywords).toArray),
-          completor
-        ).toArray : Array[jline.Completor]
-      ),
+  val argCompletor: ArgumentCompleter = new ArgumentCompleter(
+    new AggregateCompleter(
+      new StringsCompleter(
+        (Console.actions.flatMap(a => a.name :: a.alts) ++ startingKeywords).asJava),
       completor
-    ).toArray
+    ),
+    completor
   )
   argCompletor.setStrict(false)
 
-  reader.addCompletor(
-    new MultiCompletor(
-      List(
-        loadCompletor,
-        argCompletor
-      ).toArray : Array[jline.Completor]
-    )
-  )
+  val reader: LineReader = LineReaderBuilder.builder()
+    .terminal(terminal)
+    .completer(new AggregateCompleter(loadCompletor, argCompletor))
+    .variable(LineReader.BELL_STYLE, "none")
+    .build()
+
+  /** jline 1 masked input with a reader-level echo character; jline 3 takes the
+    * mask per `readLine`, so the toggle lives here.
+    */
+  var echoCharacter: java.lang.Character = null
+
+  /** jline 1 returned null at end of input; jline 3 throws. */
+  def readLine(prompt: String): String =
+    try reader.readLine(prompt, echoCharacter)
+    catch {
+      case _: EndOfFileException   => null
+      case _: UserInterruptException => ""
+    }
 
   var imports: Map[String, (Option[String],List[Explicit[Global]],Boolean)] = Map() // module -> affix
 
@@ -150,7 +165,7 @@ class ConsoleEnv(
   def updateCompletor: Unit = {
     val ps = parseState("")
     val names = otherKeywords ++ (ps.s.termNames.keySet ++ ps.s.typeNames.keySet ++ ps.s.kindNames.keySet).map(_.string)
-    completor.setCandidateStrings(names.toArray)
+    candidateStrings = new java.util.ArrayList[String](names.asJava)
   }
 
   def assumeClosed(t: Term)(doIt: => Unit): Unit = {
@@ -247,6 +262,10 @@ object Console {
 
   /** Partially reverse `sbt.JLine.fixTerminalProperty` (as of 0.13.0),
     * which might work for scala REPL, but not for us.
+    *
+    * This is a jline 1 property; jline 3 reads `org.jline.terminal.dumb`
+    * instead, so it only matters when something else in the JVM still uses
+    * jline 1.
     */
   private[reporting]
   def unfixSbtTerminalProperty(): Unit = {
@@ -452,7 +471,7 @@ object Console {
         // HACK: strip out term names for this module if it's already loaded, otherwise
         // get errors
         val e2Env = e.sessionEnv.copy
-        e2Env.termNames = e.sessionEnv.termNames.filterKeys(g => g.module != s)
+        e2Env.termNames = e.sessionEnv.termNames.filterKeys(g => g.module != s).toMap
         e2Env.loadedFiles.find(_._2 == s) map { case (mod, modName) =>
           Session.parseModule(modName, mod.contents, modName)(e.sessionEnv, e.supply) match {
             case Left(err) => writeLn(err.toString)
@@ -467,8 +486,9 @@ object Console {
     },
     new Action(":clear", List(), None, "Clear the screen") {
       def apply(s: String)(implicit e: ConsoleEnv) =
-        if (!e.reader.clearScreen())
-          writeLn("\n"*e.terminal.getTerminalHeight) // can't clear the screen? come on
+        if (!e.terminal.puts(Capability.clear_screen))
+          writeLn("\n"*e.terminal.getHeight) // can't clear the screen? come on
+        else e.terminal.flush()
     },
     new Action(":type", List(), Some("<expr>"), "Infer the type of an expression") {
       def apply(s: String)(implicit e: ConsoleEnv): Unit = {
@@ -539,12 +559,12 @@ object Console {
     },
     new Action(":echo", List(), None, "Toggle character echo (for compatibility with some terminals)") {
       def apply(s: String)(implicit e: ConsoleEnv): Unit = {
-        if (e.reader.getEchoCharacter != null) {
-          e.reader.setEchoCharacter(null)
+        if (e.echoCharacter != null) {
+          e.echoCharacter = null
           writeLn("Echo is on")
         }
         else {
-          e.reader.setEchoCharacter(new java.lang.Character(0))
+          e.echoCharacter = java.lang.Character.valueOf(0)
           writeLn("Echo is off")
         }
       }
@@ -608,7 +628,7 @@ object Console {
     val needMoar = StatementParsers.multiline.run(e.parseState(x), e.supply).isRight
     val verbose = Set("case","let","where")
     while ((needMoar || (balanced(input) == Unbalanced) || verbose.exists(input.contains(_))) && !blank) {
-      val last = e.reader.readLine("|> ", e.reader.getEchoCharacter)
+      val last = e.readLine("|> ")
       blank = last == ""
       if (!blank) { input = input + "\n" + last }
     }
@@ -691,10 +711,8 @@ object Console {
   private val command = "\\s*(\\S*)\\s*(.*)".r
   // of course with all this we don't really need the trampoline
   def repl(implicit e: ConsoleEnv): Unit = {
-    e.reader.setBellEnabled(false)
-    e.reader.setDefaultPrompt(">> ")
     var line: String = null
-    while (!e.quit && { line = e.reader.readLine(">> ", e.reader.getEchoCharacter); line != null }) {
+    while (!e.quit && { line = e.readLine(">> "); line != null }) {
       e.handling(
         line match {
           case command(name, arg) if name.length > 1 =>
@@ -792,7 +810,7 @@ object Console {
     unfixSbtTerminalProperty()
     try {
       implicit val env = new ConsoleEnv(new SessionEnv)
-      env.reader.getHistory.setHistoryFile(new java.io.File(".ermine_history"))
+      env.reader.setVariable(LineReader.HISTORY_FILE, java.nio.file.Paths.get(".ermine_history"))
       rock(args)
     } catch {
       case e : Throwable =>

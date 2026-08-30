@@ -16,7 +16,7 @@ import com.clarifi.reporting.relational.{EmptyRel => _, _}
 import java.util.{Date, UUID}
 import java.lang.Math
 import scala.util.control.NonFatal
-import scala.Predef.{error => _, _ }
+import scala.Predef._
 import scalaz.{Forall => _, Arrow => _, _}
 import scalaz.Scalaz._
 import scala.collection.immutable.List
