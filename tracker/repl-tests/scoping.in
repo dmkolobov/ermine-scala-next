@@ -1,0 +1,6 @@
+:load core/examples/bugs/variableShadow.e
+(h -> h) 1
+(fmt -> fmt) 2
+:type (fmt -> fmt)
+:type (w -> (let w = "s" in w))
+:quit

@@ -15,7 +15,8 @@ import KindParsers.localKind
 import com.clarifi.reporting.ermine.{freshId => _, _}
 import scalaparsers.Diagnostic._
 import com.clarifi.reporting.ermine.Type.typeVars
-import com.clarifi.reporting.ermine.Term.termVars
+import com.clarifi.reporting.ermine.Term.{ termVars, subTerm }
+import com.clarifi.reporting.ermine.parsing.LocalBlocks
 import scalaz.Scalaz.{gets => _, modify => _, _}
 import scala.collection.immutable.List
 import scala.jdk.CollectionConverters._
@@ -179,7 +180,7 @@ object StatementParsers {
       pats => for {
         body <- keyOp("=") >> term
         lw <- loc
-        clause <- (keyword("where") >> laidout("binding statement", bindingStatement)).optional
+        clause <- (keyword("where") >> LocalBlocks.open >> laidout("binding statement", bindingStatement)).optional
         r <- clause match {
           case None => unit(body)
           case Some(ss) =>
@@ -187,8 +188,16 @@ object StatementParsers {
             for {
               p <- checkBindings[Parser](lw, is, sigs)
               _ <- p.distinct(lw)
-              _ <- p.unbind // I assume we want to add this here - EDS
-            } yield Let(lw, p.extract._1, p.extract._2, body)
+              // the body parsed before the where clause, so its references to
+              // the where-bound names point at outer variables or forward
+              // reference placeholders: rewrite them to the block's variables,
+              // and likewise in the bindings themselves (letrec scoping)
+              sh0 <- LocalBlocks.shadows
+              sh <- LocalBlocks.checkShadows(lw, sh0,
+                      termVars(p.extract._1) ++ termVars(p.extract._2) ++ termVars(body))
+              _ <- LocalBlocks.close // restore what the where-bound names meant outside
+            } yield if (sh.isEmpty) Let(lw, p.extract._1, p.extract._2, body)
+                    else Let(lw, subTerm(sh, p.extract._1), subTerm(sh, p.extract._2), subTerm(sh, body))
         }
       } yield TermStatement(p, v, pats, r)
     }

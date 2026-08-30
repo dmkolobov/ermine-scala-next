@@ -12,10 +12,23 @@ import com.clarifi.reporting.ermine.syntax.{Renaming, Single, Explicit}
   * @author EAK
   */
 
+/** One open `let`/`where` binding block. Records the term maps as they stood
+  * when the block opened, which names the block has bound so far, and which
+  * outer variables those bindings shadow (outer -> block variable), so the
+  * block's bindings can be rewritten to refer to each other letrec-style and
+  * the maps restored when the block closes. */
+case class LocalBlock(
+  openTerms:      Map[Name, V[Type]],
+  openCanonicals: Map[Local, List[Name]],
+  bound:          Set[Local] = Set(),
+  shadowed:       Map[TermVar, TermVar] = Map()
+)
+
 case class ErParseState(
   moduleName:     String,
   canonicalTerms: Map[Local, List[Name]] = Map(), // used to patch up fixity and to globalize local names
   canonicalTypes: Map[Local, List[Name]] = Map(), // "
+  localBlocks:    List[LocalBlock] = List(),      // innermost open `let`/`where` block first
   termNames:      Map[Name, V[Type]] = Map(),
   typeNames:      Map[Name, V[Kind]] = Map(),
   kindNames:      Map[Name, V[Unit]] = Map(),
@@ -113,6 +126,7 @@ object ErParseState {
   private def termNamesLens = Lens[ErParseState, Map[Name, V[Type]]](s => Store(n => s.copy (termNames = n), s.termNames))
   private def canonicalTermsLens = Lens[ErParseState, Map[Local, List[Name]]](s => Store(n => s.copy (canonicalTerms = n), s.canonicalTerms))
   private def canonicalTypesLens = Lens[ErParseState, Map[Local, List[Name]]](s => Store(n => s.copy (canonicalTypes = n), s.canonicalTypes))
+  private def localBlocksLens = Lens[ErParseState, List[LocalBlock]](s => Store(n => s.copy (localBlocks = n), s.localBlocks))
   object Lenses {
     def moduleName     = inParseState(moduleNameLens)
     def kindNames      = inParseState(kindNamesLens)
@@ -120,6 +134,7 @@ object ErParseState {
     def termNames      = inParseState(termNamesLens)
     def canonicalTerms = inParseState(canonicalTermsLens)
     def canonicalTypes = inParseState(canonicalTypesLens)
+    def localBlocks    = inParseState(localBlocksLens)
   }
 
   object Implicits {

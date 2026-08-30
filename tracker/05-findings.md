@@ -86,6 +86,26 @@ It still reproduces on this branch, with the error it documents
 unchanged by the migration, and the diagnosis is the upstream author's, not
 mine.
 
+**Update (2026-08-30): fixed on this branch**, in a change separate from the
+migration. Name resolution happens at parse time against a flat module-wide
+environment (`canonicalTerms`); binders shadowed `termNames` but never that
+map, so a binder colliding with an import was rejected — and `let` "unbound"
+its names by deleting them instead of restoring, so
+`f w = (let w = 10 in w) + w` lost the outer `w`. Binders (pattern variables
+and `let`/`where` bindings) now shadow both maps with save/restore
+(`LocalBlocks` in `parsing/TermNameParsers.scala`), and a block's bindings are
+rewritten letrec-style where an earlier sibling referenced the shadowed outer
+variable. Top-level definitions still may not shadow an import; a
+block binding whose shadowed import is in scope under several names (import
+aliases) is refused when a reference would be captured, `?[...]` references
+rebind like plain ones, and data-constructor operators stay unshadowable —
+see tracker/TICKET-scoping-renamer.md for the review that drove these and the
+eventual renamer design. Covered by the
+"Ermine scoping" properties (`scalacheck-binding/src/main/scala/TestScopes.scala`)
+and `tracker/repl-tests/scoping.in`; `variableShadow.e` and this section's
+examples now load, and `core/examples/guide/HelloWorld.e`'s `go (h::t)` parses
+(that example still has the unrelated issues below).
+
 This is also why the bundled example `core/examples/guide/HelloWorld.e` does not
 load: its `sum` uses `go (h::t) acc`. Renaming `h`/`t` gets past it (I verified
 the rest of that example — literal relations, field declarations, row types —
