@@ -21,6 +21,9 @@ import com.clarifi.reporting._
  */
 abstract class TableFlattener[S,-A] extends Flattener[TableFlattener,S,A] {
   type M[+X] = State[S,X]
+  // Scala 3 will not unify scalaz's IndexedStateT instances through this
+  // alias on its own, so name the monad explicitly.
+  implicit val MMonad: Monad[M] = StateT.stateMonad[S]
   def apply(a: A): DataSetS[S]
   def schema: Map[TableName, Header]
   def roots: Set[TableName]

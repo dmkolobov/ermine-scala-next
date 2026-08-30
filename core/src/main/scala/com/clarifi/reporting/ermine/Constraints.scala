@@ -454,7 +454,7 @@ object Constraints {
     }
 
     def heapify(q: PSQI, graph: TypeVarGraph): PSQI = {
-      implicit def r = pr(graph)
+      implicit def r: Reducer[Partition, PSQK] = pr(graph)
 
       // I think this should replace the reducer
       q.foldRight(FingerTree.empty)(_ +: _)
@@ -549,14 +549,14 @@ object Constraints {
         pop(q, graph) map (_ :-> (new PQueue(_, graph)))
 
       override def filter(pred: Partition => Boolean): PQueue = {
-        implicit def r = pr(graph)
+        implicit def r: Reducer[Partition, PSQK] = pr(graph)
         val nq = q.foldRight(FingerTree.empty)((e,r) => if(pred(e)) e +: r else r)
 
         new PQueue(nq, graph)
       }
 
       override def partition(pred: Partition => Boolean): (Set[Partition], PQueue) = {
-        implicit def r = pr(graph)
+        implicit def r: Reducer[Partition, PSQK] = pr(graph)
         val (ps, nq) = q.foldRight((Set[Partition](),FingerTree.empty)){
           case (e, (l, r)) => if(pred(e)) (l + e, r) else (l, e +: r)
         }
@@ -622,7 +622,7 @@ object Constraints {
 
     object PQueue {
       private def empty: PQueue = {
-        implicit def r = pr(TypeVarGraph.empty)
+        implicit def r: Reducer[Partition, PSQK] = pr(TypeVarGraph.empty)
         new PQueue(FingerTree.empty, TypeVarGraph.empty)
       }
 
@@ -719,7 +719,8 @@ object Constraints {
     ps.filter(p => !(cs contains p))
 
   def findRHS(ps: PQueue, cs: PQueue, s: Set[Partition])(rhs: RHS): Option[TypeVar] =
-    (First(cs.findRHS(rhs)) |+| First(ps.findRHS(rhs)) |+| First(s.find(_._2 == rhs).map(_._1)))
+    // scalaz 7.0 unwrapped @@ tags implicitly; 7.1+ needs Tag.unwrap
+    Tag.unwrap(First(cs.findRHS(rhs)) |+| First(ps.findRHS(rhs)) |+| First(s.find(_._2 == rhs).map(_._1)))
 
   /* Merges a well-formed constraint into cs.
    *

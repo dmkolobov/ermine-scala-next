@@ -30,6 +30,9 @@ import com.clarifi.reporting.util.StreamTUtils
 abstract class RowFlattener[S, -A] extends Flattener[RowFlattener, S, A] {
 
   type M[+B] = State[S,B]
+  // Scala 3 will not unify scalaz's IndexedStateT instances through this
+  // alias on its own, so name the monad explicitly.
+  implicit val MMonad: Monad[M] = StateT.stateMonad[S]
 
   def apply(a: A): State[S, (Record, DataSetS[S])]
 
