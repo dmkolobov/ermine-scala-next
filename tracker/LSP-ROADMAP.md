@@ -21,6 +21,12 @@ scoping fix, commits f9cf42a / 41b13cc).
 - `tracker/tools/lsp-smoke.sh`: all checks PASS (27 as of Stage 0)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
+- KNOWN FLAKE: core/test suites run concurrently in one JVM and rarely
+  interfere (seen 2026-08-30 twice: TestMarkdown errored at 0.1;
+  TestStage1Pins+TestScopes at 1.3b — different suites each time, always
+  green on re-run and in isolation). Protocol: a red that is not the
+  known Constraints failure gets ONE re-run before diagnosis; if it
+  reproduces, it is real — do not commit.
 
 ## Decisions (pre-made; overridable with a note here, not silently)
 
@@ -532,3 +538,7 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   handled"), so multi-name visibility arises only via re-exports; the
   refusal is part of the golden. Deferred: record/relArrows error anchors
   (ride 3.4 fixtures), improperly-quantified trigger still unfound.
+- 2026-08-30 flake note: the 1.3b commit's full-suite run showed 2
+  extra reds (a stage1 pin + a TestScopes property, exception flavor);
+  clean 795/796 on immediate re-run — concurrency flake, second sighting.
+  Protocol added to Baselines. The commit's code was green.
