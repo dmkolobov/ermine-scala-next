@@ -1,6 +1,6 @@
 package com.clarifi.reporting.ermine.parsing
 
-import com.clarifi.reporting.ermine._
+import com.clarifi.reporting.ermine.{freshId => _, _}
 import scalaparsers.Diagnostic._
 import scalaparsers.Document.text
 import scalaparsers.{Parser => _, ParseState => _, _}

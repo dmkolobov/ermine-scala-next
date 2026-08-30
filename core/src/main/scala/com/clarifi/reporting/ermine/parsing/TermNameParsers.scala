@@ -2,7 +2,7 @@ package com.clarifi.reporting.ermine.parsing
 import ErParseState.Lenses._
 import scalaparsers.Diagnostic._
 import TypeParsers.unspecifiedType
-import com.clarifi.reporting.ermine._
+import com.clarifi.reporting.ermine.{freshId => _, _}
 
 trait TermNameParser extends NameParser {
   def termName: Parser[Name]      = get.flatMap(u => name(u.s.canonicalTerms))

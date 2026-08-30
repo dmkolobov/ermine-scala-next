@@ -185,13 +185,13 @@ sealed abstract class Op extends TraversableColumns[Op] {
       case DoubleDiv(l,r) => numbin(l guessType, r guessType)
       case Concat(xs) => xs.traverse_[M](x => x.guessType >| (())) map (_ => StringT(0, false))
       case If(_, t, f) =>
-        (t.guessType |@| f.guessType)(_ -> _) flatMap {
+        (t.guessType |@| f.guessType)(_ -> _) andThen {
           case (c, a) =>
             c sup a map (_.success) getOrElse
               ("Unmatched if branches %s and %s" format (c, a) failureNel)
         }
       case Coalesce(e, t) =>
-        (e.guessType |@| t.guessType)(_ -> _) flatMap {
+        (e.guessType |@| t.guessType)(_ -> _) andThen {
           case (e, t) =>
             e.withoutNull sup t map (_.success) getOrElse
             ("Unmatched coalesce branches %s and %s" format (e, t) failureNel)
@@ -429,7 +429,7 @@ object Op {
   }
   // Autopromoting numeric type unification.
   def numbin(mleft: ValidationNel[String,PrimT], mright: ValidationNel[String,PrimT]): ValidationNel[String,PrimT] =
-    (mleft |@| mright)(_ -> _) flatMap {case (left, right) =>
+    (mleft |@| mright)(_ -> _) andThen {case (left, right) =>
       (numRank(left), numRank(right), left sup right) match {
         case (None, _, _) => ("Nonnumeric type " + left).failureNel
         case (_, None, _) => ("Nonnumeric type " + right).failureNel

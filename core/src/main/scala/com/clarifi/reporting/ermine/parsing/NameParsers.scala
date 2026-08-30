@@ -1,12 +1,12 @@
 package com.clarifi.reporting.ermine.parsing
 
 import scalaz.{Name => _, _}
-import Scalaz.{modify => _, _}
+import Scalaz.{modify => _, gets => _, _}
 
 import scalaparsers.{Parser => _, ParseState => _, _}
 import scalaparsers.Diagnostic._
 import scalaparsers.Document.text
-import com.clarifi.reporting.ermine._
+import com.clarifi.reporting.ermine.{freshId => _, _}
 import ErParseState.Lenses._
 
 /** Parsers for dealing with DMTL identifiers and keywords

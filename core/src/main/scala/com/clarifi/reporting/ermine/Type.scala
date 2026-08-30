@@ -233,7 +233,7 @@ case class VarT(v: TypeVar) extends Type with Variable[Kind] {
  */
 class Exists(val loc: Loc, val xs: List[TypeVar] = List(), val constraints: List[Type] = List()) extends Type {
   override def map(f: Kind => Kind) = new Exists(loc, xs.map(_.map(f)), constraints.map { _ map f })
-  override def toString = "Exists(%s, [%s],[%s])".format(loc, xs.mkString(", "), constraints.mkString(", "))
+  override def toString = s"""Exists($loc, [${xs.mkString(", ")}],[${constraints.mkString(", ")}])"""
   override def nfWith(stk: List[Type])(implicit su: Supply) = Exists.mk(loc,xs,constraints.map(_.nf)).apply(stk:_*)
   override def subst(km: PartialFunction[KindVar,Kind], tm: PartialFunction[TypeVar,Type]) =
     Exists(loc, xs.map {_ map {_ subst km}}, constraints.map(_.subst(km,tm)))
@@ -300,7 +300,7 @@ object Exists {
  */
 class Forall(val loc: Loc, val ks: List[KindVar], val ts: List[TypeVar], val constraints: Type, val body: Type) extends Type {
   override def map(f: Kind => Kind) = new Forall(loc, ks, ts.map(_.map(f)), constraints.map(f), body.map(f))
-  override def toString = "Forall(%s,[%s],[%s],%s,%s)".format(loc, ks.mkString(", "), ts.mkString(", "), constraints.toString, body.toString)
+  override def toString = s"""Forall($loc,[${ks.mkString(", ")}],[${ts.mkString(", ")}],${constraints.toString},${body.toString})"""
   override def nfWith(stk: List[Type])(implicit supply: Supply) =
     Forall.mk(loc,ks,ts,constraints.nf(supply),body.nf(supply)).apply(stk:_*)
   override def foreignLookup = body.foreignLookup

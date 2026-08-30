@@ -79,8 +79,8 @@ object StreamTUtils {
   }
 
   @deprecated("Prefer scalaz.StreamT.runStreamT", "Cantor_47")
-  def runStreamT_[S,A](as: StreamT[State[S,+?], A])(s: S) = StreamT.runStreamT(as,s)
-  def runStreamT[S:Monoid,A](as: StreamT[State[S,+?], A]) = StreamT.runStreamT(as,mzero[S])
+  def runStreamT_[S,A](as: StreamT[[a] =>> State[S, a], A])(s: S) = StreamT.runStreamT(as,s)
+  def runStreamT[S:Monoid,A](as: StreamT[[a] =>> State[S,a], A]) = StreamT.runStreamT(as,mzero[S])
 
   /** A variant of [[scalaz.StreamT]]`#runStreamT` that delivers the
     * final state to the resulting promise.
@@ -98,10 +98,10 @@ object StreamTUtils {
     * @author SMRC
     */
   private[reporting]
-  def runStreamTOut[S,A](stream : StreamT[State[S,+?],A], s0: S)
+  def runStreamTOut[S,A](stream : StreamT[[a] =>> State[S, a],A], s0: S)
                         : (Promise[S], StreamT[Id,A]) = {
     val scary = Promise.emptyPromise[S](Strategy.Sequential)
-    def rec(stream: StreamT[State[S,+?],A], s0: S): StreamT[Id, A] =
+    def rec(stream: StreamT[[a] =>> State[S, a],A], s0: S): StreamT[Id, A] =
       StreamT[Id,A]{
         val (s1, sa) = stream.step(s0)
         sa((a, as) => Yield(a, rec(as, s1)),
@@ -128,7 +128,7 @@ object StreamTUtils {
                bs <- chop(us)
              } yield node(v,as) #:: bs
       } yield a
-    case _ => Stream().pure[State[Set[A],+?]]
+    case _ => Stream().pure[[a] =>> State[Set[A], a]]
   }
 
   def prune[A](forest: Forest[A]): Forest[A] = chop(forest) eval Set()

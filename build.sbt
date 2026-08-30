@@ -35,12 +35,17 @@ lazy val parsers = (project in file("parsers"))
     libraryDependencies += "org.scalaz" %% "scalaz-core" % scalazVersion
   )
 
-// scalaz 7.0's `scalaz-iterv`, vendored: the Scalaz 6 compatibility iteratees
-// were removed in scalaz 7.1 and this code still uses them. See scalaz-iterv/README.md.
-lazy val scalazIterv = (project in file("scalaz-iterv"))
+// scalaz APIs this code uses that were removed after 7.0, vendored from the
+// 7.0.7 sources: the Scalaz 6 compatibility iteratees (`IterV` & friends,
+// dropped in 7.1) and `concurrent.Promise` (also dropped in 7.1).
+// See scalaz-compat/README.md.
+lazy val scalazCompat = (project in file("scalaz-compat"))
   .settings(
-    name := "ermine-scalaz-iterv",
-    libraryDependencies += "org.scalaz" %% "scalaz-core" % scalazVersion
+    name := "ermine-scalaz-compat",
+    libraryDependencies ++= Seq(
+      "org.scalaz" %% "scalaz-core"       % scalazVersion,
+      "org.scalaz" %% "scalaz-concurrent" % scalazVersion
+    )
   )
 
 // ermine-language/f0, vendored: the published com.clarifi %% f0 is gone from
@@ -65,7 +70,7 @@ lazy val machines = (project in file("machines"))
   )
 
 lazy val core = (project in file("core"))
-  .dependsOn(parsers, machines, scalazIterv, f0)
+  .dependsOn(parsers, machines, scalazCompat, f0)
   .settings(
     name := "ermine-core",
     unportedSources := Seq(
@@ -79,6 +84,7 @@ lazy val core = (project in file("core"))
     libraryDependencies ++= Seq(
       "org.scalaz"    %% "scalaz-core"       % scalazVersion,
       "org.scalaz"    %% "scalaz-effect"     % scalazVersion,
+      "org.scalaz"    %% "scalaz-concurrent" % scalazVersion,
       "org.scalaz"    %% "scalaz-iteratee"   % scalazVersion,
       "org.jline"      % "jline"             % "3.30.9",
       "commons-codec"  % "commons-codec"     % "1.19.0",
@@ -98,7 +104,7 @@ lazy val core = (project in file("core"))
   )
 
 lazy val root = (project in file("."))
-  .aggregate(parsers, machines, scalazIterv, f0, core)
+  .aggregate(parsers, machines, scalazCompat, f0, core)
   .settings(
     name := "ermine",
     publish / skip := true

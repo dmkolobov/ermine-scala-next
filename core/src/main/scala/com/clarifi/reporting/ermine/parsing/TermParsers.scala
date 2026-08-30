@@ -1,6 +1,6 @@
 package com.clarifi.reporting.ermine.parsing
 
-import com.clarifi.reporting.ermine._
+import com.clarifi.reporting.ermine.{freshId => _, _}
 import scalaparsers.{Parser => _, ParseState => _, _}
 import scalaparsers.Diagnostic._
 import scalaparsers.Document.text
@@ -15,7 +15,7 @@ import com.clarifi.reporting.ermine.parsing.StatementParsers.{ bindingStatement 
 import com.clarifi.reporting.ermine.parsing.TypeParsers._
 import com.clarifi.reporting.ermine.parsing.ErParseState.Lenses._
 import scala.collection.immutable.List
-import scalaz.Scalaz._
+import scalaz.Scalaz.{gets => _, _}
 
 
 object TermParsers {

@@ -75,7 +75,7 @@ object Reporting {
     TableName(r.toString, Nil)
 
   type DataSetT[M[+_]] = StreamT[M, (TableName, Record)]
-  type DataSetS[S] = DataSetT[State[S, +?]]
+  type DataSetS[S] = DataSetT[[a] =>> State[S, a]]
   type DataSet = DataSetT[Id]
   type SimpleDataSet = StreamT[Id, (String, Record)]
 
