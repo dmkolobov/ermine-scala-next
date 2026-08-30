@@ -1,0 +1,8 @@
+bind' : forall r a a1. Control.Monad.Cont.Cont r a -> (a -> Control.Monad.Cont.Cont r a1) -> Control.Monad.Cont.Cont r a1
+contAp : forall r. Control.Ap.Ap (Control.Monad.Cont.Cont r)
+contFunctor : forall r. Control.Functor.Functor (Control.Monad.Cont.Cont r)
+contMonad : forall r. Control.Monad.Monad (Control.Monad.Cont.Cont r)
+mapCont : forall r a. (r -> r) -> Control.Monad.Cont.Cont r a -> Control.Monad.Cont.Cont r a
+runCont : forall r a. Control.Monad.Cont.Cont r a -> (a -> r) -> r
+unit' : forall a b. a -> Control.Monad.Cont.Cont b a
+withCont : forall b r a. ((b -> r) -> a -> r) -> Control.Monad.Cont.Cont r a -> Control.Monad.Cont.Cont r b

@@ -1,0 +1,4 @@
+comonadFunctor : forall (f: * -> *). Control.Comonad.Comonad f -> Control.Functor.Functor f
+extend : forall (f: * -> *) a b. Control.Comonad.Comonad f -> (f a -> b) -> f a -> f b
+extract : forall (f: * -> *) a. Control.Comonad.Comonad f -> f a -> a
+liftW : forall (f: * -> *) a b. Control.Comonad.Comonad f -> (a -> b) -> f a -> f b

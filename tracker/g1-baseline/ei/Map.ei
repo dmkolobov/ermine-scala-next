@@ -1,0 +1,28 @@
+(!) : forall k v. Map.Map k v -> k -> v
+delete : forall k v. k -> Map.Map k v -> Map.Map k v
+empty : forall k v. (k -> k -> Ord.Ordering) -> Map.Map k v
+firstEntry : forall k v. Map.Map k v -> Builtin.Maybe (k, v)
+firstKey : forall k v. Map.Map k v -> Builtin.Maybe k
+firstKeyOr : forall k v. k -> Map.Map k v -> k
+firstValue : forall k v. Map.Map k v -> Builtin.Maybe v
+fromAssocList : forall k v. (k -> k -> Ord.Ordering) -> Builtin.List (k, v) -> Map.Map k v
+groupBy : forall k a. (k -> k -> Ord.Ordering) -> (a -> k) -> Vector.Vector a -> Map.Map k (Vector.Vector a)
+insert : forall k v. k -> v -> Map.Map k v -> Map.Map k v
+lookup : forall k v. k -> Map.Map k v -> Builtin.Maybe v
+lookupOr : forall v k. v -> k -> Map.Map k v -> v
+lookupOr' : forall v k. v -> Map.Map k v -> k -> v
+mapKeys : forall k2 k v. (k2 -> k2 -> Ord.Ordering) -> (k -> k2) -> Map.Map k v -> Map.Map k2 v
+map_IO : forall a b. (a -> b) -> Builtin.IO a -> Builtin.IO b
+maybeFirstKey : forall a k v. a -> (k -> a) -> Map.Map k v -> a
+member : forall k v. k -> Map.Map k v -> Builtin.Bool
+orderList : forall a. (a -> a -> Ord.Ordering) -> Builtin.List a -> Map.Map a Builtin.Int
+pure_IO : forall a. a -> Builtin.IO a
+toAssocList : forall k v. Map.Map k v -> Builtin.List (k, v)
+toFunc : forall k v. Map.Map k v -> k -> v
+toOrd : forall k v. Map.Map k v -> k -> k -> Ord.Ordering
+toOrdering# : forall a. (a -> a -> Ord.Ordering) -> Native.Ord.OrdScala# a
+union : forall k v. Map.Map k v -> Map.Map k v -> Map.Map k v
+unionWith : forall v k. (v -> v -> v) -> Map.Map k v -> Map.Map k v -> Map.Map k v
+valueFunctor : forall k. Control.Functor.Functor (Map.Map k)
+valueMonoid : forall k v. (k -> k -> Ord.Ordering) -> (v -> v -> v) -> Control.Monoid.Monoid (Map.Map k v)
+values : forall k v. Map.Map k v -> Builtin.List v

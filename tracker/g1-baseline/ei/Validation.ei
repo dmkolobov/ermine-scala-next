@@ -1,0 +1,29 @@
+(>=>) : forall a b c. (a -> Either.Either Builtin.String b) -> (b -> Either.Either Builtin.String c) -> a -> Either.Either Builtin.String c
+always : forall b a. b -> a -> Either.Either Builtin.String b
+arr : forall a b. (a -> b) -> a -> Either.Either Builtin.String b
+choice : forall a c b. (a -> Either.Either Builtin.String c) -> (b -> Either.Either Builtin.String c) -> Either.Either a b -> Either.Either Builtin.String c
+combineErrors : forall a b c. (a -> b -> c) -> Builtin.String -> Either.Either Builtin.String a -> Either.Either (Builtin.List (Builtin.String, Builtin.String)) b -> Either.Either (Builtin.List (Builtin.String, Builtin.String)) c
+composeValidators : forall a b c. (a -> Either.Either Builtin.String b) -> (b -> Either.Either Builtin.String c) -> a -> Either.Either Builtin.String c
+consV : forall (r: rho) a (s: rho) (t: rho). t <- (r, s) => Builtin.Field r a -> (Builtin.Maybe Builtin.String -> Either.Either Builtin.String a) -> (Map.Map Builtin.String Builtin.String -> Either.Either (Builtin.List Validation.Err) (Builtin.Record s)) -> Map.Map Builtin.String Builtin.String -> Either.Either (Builtin.List Validation.Err) (Builtin.Record t)
+cons_Bracket : forall (r: rho) a (s: rho) (t: rho). t <- (r, s) => (Builtin.Field r a, Builtin.Maybe Builtin.String -> Either.Either Builtin.String a) -> (Map.Map Builtin.String Builtin.String -> Either.Either (Builtin.List Validation.Err) (Builtin.Record s)) -> Map.Map Builtin.String Builtin.String -> Either.Either (Builtin.List Validation.Err) (Builtin.Record t)
+empty_Bracket : Map.Map Builtin.String Builtin.String -> Either.Either (Builtin.List Validation.Err) (Builtin.Record (||))
+forgive : forall a b. (a -> Either.Either Builtin.String b) -> a -> Either.Either Builtin.String (Either.Either Builtin.String b)
+lookupBool : Builtin.Maybe Builtin.String -> Either.Either Builtin.String Builtin.Bool
+lookupDouble : Builtin.Maybe Builtin.String -> Either.Either Builtin.String Builtin.Double
+lookupForm : Builtin.Maybe Builtin.String -> Either.Either Builtin.String Builtin.String
+lookupInt : Builtin.Maybe Builtin.String -> Either.Either Builtin.String Builtin.Int
+lookupString : Builtin.Maybe Builtin.String -> Either.Either Builtin.String Builtin.String
+lookupStringDef : Builtin.String -> Builtin.Maybe Builtin.String -> Either.Either Builtin.String Builtin.String
+nilV : Map.Map Builtin.String Builtin.String -> Either.Either (Builtin.List Validation.Err) (Builtin.Record (||))
+orTry : forall a b. (a -> Either.Either Builtin.String b) -> (a -> Either.Either Builtin.String b) -> a -> Either.Either Builtin.String b
+pass : forall a. a -> Either.Either Builtin.String a
+someify : forall a. a -> Either.Either Builtin.String (Builtin.Nullable a)
+unnullify : forall a. Builtin.Nullable a -> Either.Either Builtin.String (Either.Either () a)
+validate : forall (r: rho). (Map.Map Builtin.String Builtin.String -> Either.Either (Builtin.List Validation.Err) (Builtin.Record r)) -> Map.Map Builtin.String Builtin.String -> Either.Either (Builtin.List (Builtin.String, Builtin.String)) (Builtin.Record r)
+validateBool : Builtin.String -> Either.Either Builtin.String Builtin.Bool
+validateBoolM : Builtin.String -> Builtin.String -> Either.Either Builtin.String Builtin.Bool
+validateDouble : Builtin.String -> Either.Either Builtin.String Builtin.Double
+validateDoubleM : Builtin.String -> Builtin.String -> Either.Either Builtin.String Builtin.Double
+validateInt : Builtin.String -> Either.Either Builtin.String Builtin.Int
+validateIntM : Builtin.String -> Builtin.String -> Either.Either Builtin.String Builtin.Int
+within : forall b a. Builtin.List b -> (b -> b -> Builtin.Bool) -> (a -> Either.Either Builtin.String b) -> a -> Either.Either Builtin.String b

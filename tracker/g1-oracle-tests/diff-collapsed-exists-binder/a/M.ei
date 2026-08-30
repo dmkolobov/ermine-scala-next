@@ -1,0 +1,1 @@
+w : forall (a: rho) (c: rho) (d: rho) (e: rho). (exists (f: rho). c <- (f, a), e <- (f, d)) => Builtin.Record c -> Builtin.Record e -> Builtin.Int

@@ -1,0 +1,42 @@
+adapt : forall z. Relation.Scan.RunScan Builtin.List z -> Relation.Scan.RunScan Vector.Vector z
+apScan : forall z a b. Relation.Scan.Scan z (a -> b) -> Relation.Scan.Scan z a -> Relation.Scan.Scan z b
+avgBy : forall z (op: rho -> * -> *) (r: rho) a c (a1: rho). (exists (AsOp: (rho -> * -> *) -> b) (c1: rho). AsOp op, a1 <- (r, c1), Builtin.PrimitiveNum a, Relation.Op.AsOp op) => Relation.Scan.RunScan Builtin.List z -> op r a -> Relation.Scan.Scan z (c, Builtin.Relation a1) -> Relation.Scan.Scan z (c, a)
+avgBy' : forall (op: rho -> * -> *) (r: rho) n (r2: rho) z k. (Builtin.PrimitiveNum n, AsOp op, r <- (h, t)) => op r n -> Builtin.Field r2 n -> Relation.Scan.Scan z (k, Builtin.Relation r) -> Relation.Scan.Scan z (k, Builtin.Relation r2)
+bindScan : forall z a b. Relation.Scan.Scan z a -> (a -> Relation.Scan.Scan z b) -> Relation.Scan.Scan z b
+consume : forall a b z. (Vector.Vector a -> b) -> Relation.Scan.Scan z a -> Control.Monad.Cont.Cont z b
+count : forall z k (r: rho). r <- (h, t) => Relation.Scan.RunScan Builtin.List z -> Relation.Scan.Scan z (k, Builtin.Relation r) -> Relation.Scan.Scan z (k, Builtin.Int)
+count' : forall (r2: rho) n z k (r: rho). (Builtin.PrimitiveNum n, r <- (h, t)) => Builtin.Field r2 n -> Relation.Scan.Scan z (k, Builtin.Relation r) -> Relation.Scan.Scan z (k, Builtin.Relation r2)
+deriveFromK : forall k v z. Builtin.Eq k => Builtin.Int -> k -> k -> (v -> v) -> Relation.Scan.Scan z (k, v) -> Relation.Scan.Scan z (k, v)
+filterK : forall k z v. (k -> Builtin.Bool) -> Relation.Scan.Scan z (k, v) -> Relation.Scan.Scan z (k, v)
+filterV : forall v z k. (v -> Builtin.Bool) -> Relation.Scan.Scan z (k, v) -> Relation.Scan.Scan z (k, v)
+fromList : forall a z. Builtin.List a -> Relation.Scan.Scan z a
+fromRelation : forall z (f: rho -> *) (r: rho). Builtin.Relational f => Relation.Scan.RunScan Builtin.List z -> f r -> Relation.Scan.Scan z (Builtin.Record r)
+fromVector : forall a z. Vector.Vector a -> Relation.Scan.Scan z a
+groupBy : forall z (h: rho) (r: rho) (t: rho). r <- (h, t) => Relation.Scan.RunScan Builtin.List z -> Relation.Row.Row h -> Builtin.Relation r -> Relation.Scan.Scan z (Builtin.Record h, Builtin.Relation t)
+groupBy' : forall z (h: rho) (r: rho). r <- (h, t) => Relation.Scan.RunScan Builtin.List z -> Relation.Row.Row h -> Builtin.Relation r -> Relation.Scan.Scan z (Builtin.Record h, Builtin.Relation r)
+groupBy1 : forall z (h: rho) k (r: rho) (t: rho). r <- (h, t) => Relation.Scan.RunScan Builtin.List z -> Builtin.Field h k -> Builtin.Relation r -> Relation.Scan.Scan z (k, Builtin.Relation t)
+groupBy1' : forall z (h: rho) k (r: rho). r <- (h, t) => Relation.Scan.RunScan Builtin.List z -> Builtin.Field h k -> Builtin.Relation r -> Relation.Scan.Scan z (k, Builtin.Relation r)
+mapK : forall k k2 z v. (k -> k2) -> Relation.Scan.Scan z (k, v) -> Relation.Scan.Scan z (k2, v)
+mapScan : forall a b z. (a -> b) -> Relation.Scan.Scan z a -> Relation.Scan.Scan z b
+mapV : forall v v2 z k. (v -> v2) -> Relation.Scan.Scan z (k, v) -> Relation.Scan.Scan z (k, v2)
+map_L : forall a b. (a -> b) -> Builtin.List a -> Builtin.List b
+multiply : forall z (t: rho) a k. Relation.Scan.RunScan Builtin.List z -> (Builtin.Record t -> a) -> Relation.Scan.Scan z (k, Builtin.Relation t) -> Relation.Scan.Scan z (k, a)
+pick : forall v z. Builtin.List (v -> Builtin.Bool) -> Relation.Scan.Scan z v -> Relation.Scan.Scan z v
+pickBy : forall v k z. Builtin.Eq k => (v -> k) -> Builtin.List k -> Relation.Scan.Scan z v -> Relation.Scan.Scan z v
+pickByK : forall k k2 z v. Builtin.Eq k => (k -> k2) -> Builtin.List k2 -> Relation.Scan.Scan z (k, v) -> Relation.Scan.Scan z (k, v)
+pickK : forall k z v. Builtin.Eq k => Builtin.List k -> Relation.Scan.Scan z (k, v) -> Relation.Scan.Scan z (k, v)
+removeBy : forall v k z. Builtin.Eq k => (v -> k) -> k -> Relation.Scan.Scan z v -> Relation.Scan.Scan z v
+removeK : forall k z v. Builtin.Eq k => k -> Relation.Scan.Scan z (k, v) -> Relation.Scan.Scan z (k, v)
+runScan : forall z a. Relation.Scan.Scan z a -> (Vector.Vector a -> z) -> z
+scan : forall z (f: rho -> *) (r: rho). Builtin.Relational f => Relation.Scan.RunScan Vector.Vector z -> f r -> Relation.Scan.Scan z (Builtin.Record r)
+scanAp : forall z. Control.Ap.Ap (Relation.Scan.Scan z)
+scanFunctor : forall z. Control.Functor.Functor (Relation.Scan.Scan z)
+scanMonad : forall z. Control.Monad.Monad (Relation.Scan.Scan z)
+sort : forall v z. (v -> v -> Ord.Ordering) -> Relation.Scan.Scan z v -> Relation.Scan.Scan z v
+sortK : forall k z v. (k -> k -> Ord.Ordering) -> Relation.Scan.Scan z (k, v) -> Relation.Scan.Scan z (k, v)
+sortV : forall v z k. (v -> v -> Ord.Ordering) -> Relation.Scan.Scan z (k, v) -> Relation.Scan.Scan z (k, v)
+sumBy : forall z (op: rho -> * -> *) (r: rho) n k. (Builtin.PrimitiveNum n, AsOp op, r <- (h, t)) => Relation.Scan.RunScan Builtin.List z -> op r n -> Relation.Scan.Scan z (k, Builtin.Relation r) -> Relation.Scan.Scan z (k, n)
+sumBy' : forall (op: rho -> * -> *) (r: rho) n (r2: rho) z k. (Builtin.PrimitiveNum n, AsOp op, r <- (h, t)) => op r n -> Builtin.Field r2 n -> Relation.Scan.Scan z (k, Builtin.Relation r) -> Relation.Scan.Scan z (k, Builtin.Relation r2)
+transform : forall v v2 z. (Vector.Vector v -> Vector.Vector v2) -> Relation.Scan.Scan z v -> Relation.Scan.Scan z v2
+unitScan : forall a z. a -> Relation.Scan.Scan z a
+updateK : forall k v z. Builtin.Eq k => k -> (v -> v) -> Relation.Scan.Scan z (k, v) -> Relation.Scan.Scan z (k, v)

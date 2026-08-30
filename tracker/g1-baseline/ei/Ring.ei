@@ -1,0 +1,9 @@
+add : forall a. Ring.Ring a -> a -> a -> a
+doubleRing : Ring.Ring Builtin.Double
+fromInt : forall a. Ring.Ring a -> Builtin.Int -> a
+intRing : Ring.Ring Builtin.Int
+negate : forall a. Ring.Ring a -> a -> a
+one : forall a. Ring.Ring a -> a
+subtract : forall a. Ring.Ring a -> a -> a -> a
+times : forall a. Ring.Ring a -> a -> a -> a
+zero : forall a. Ring.Ring a -> a

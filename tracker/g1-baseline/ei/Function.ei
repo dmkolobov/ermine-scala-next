@@ -1,0 +1,19 @@
+($) : forall a b. (a -> b) -> a -> b
+($!) : forall a b. (a -> b) -> a -> b
+(&&&) : forall a b c. (a -> b) -> (a -> c) -> a -> (b, c)
+(') : forall a b. (a -> b) -> a -> b
+(-|) : forall a b. a -> (a -> b) -> b
+(.) : forall b c a. (b -> c) -> (a -> b) -> a -> c
+(<|) : forall a b. (a -> b) -> a -> b
+(`) : forall a b. a -> (a -> b) -> b
+const : forall a b. a -> b -> a
+curry : forall a b c. ((a, b) -> c) -> a -> b -> c
+fCategory : Control.Category.Category (->)
+fix : forall a. (a -> a) -> a
+flip : forall a b c. (a -> b -> c) -> b -> a -> c
+id : forall a. a -> a
+seq : forall a b. a -> b -> b
+uncurry : forall a b c. (a -> b -> c) -> (a, b) -> c
+(|) : forall a b c. (a -> b) -> (b -> c) -> a -> c
+(|-) : forall a b. (a -> b) -> a -> b
+(|>) : forall a b. a -> (a -> b) -> b

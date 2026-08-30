@@ -1,0 +1,8 @@
+bind' : forall a a1 a2. Control.Monad.State.State a a1 -> (a1 -> Control.Monad.State.State a a2) -> Control.Monad.State.State a a2
+get : forall s. Control.Monad.State.State s s
+put : forall s. s -> Control.Monad.State.State s ()
+return' : forall a b. a -> Control.Monad.State.State b a
+runState : forall s a. Control.Monad.State.State s a -> s -> (a, s)
+runStateT : forall s (m: * -> *) a. Control.Monad.State.StateT s m a -> s -> m (a, s)
+stateMonad : forall s. Control.Monad.Monad (Control.Monad.State.State s)
+stateTMonad : forall (m: * -> *) s. Control.Monad.Monad m -> Control.Monad.Monad (Control.Monad.State.StateT s m)

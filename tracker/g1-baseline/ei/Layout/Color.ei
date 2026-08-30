@@ -1,0 +1,11 @@
+boundi : forall a. Builtin.Num a => a -> a -> a -> a
+hexread : Builtin.String -> Builtin.Maybe (Builtin.Int, Builtin.Int, Builtin.Int)
+on3 : forall a b b1. (a -> a -> a -> b) -> (b1 -> a) -> b1 -> b1 -> b1 -> b
+paRed : Layout.Color.Color
+rgb : Builtin.Int -> Builtin.Int -> Builtin.Int -> Layout.Color.Color
+rgbRead : Builtin.String -> Builtin.Maybe Layout.Color.Color
+rgba : Builtin.Int -> Builtin.Int -> Builtin.Int -> Builtin.Int -> Layout.Color.Color
+sanergb : Builtin.Int -> Builtin.Int
+standardColors : Map.Map Builtin.String Layout.Color.Color
+uncurry3 : forall a b c d. (a -> b -> c -> d) -> (a, b, c) -> d
+underlineColor : Layout.Color.Color

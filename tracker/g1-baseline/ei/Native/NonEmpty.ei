@@ -1,0 +1,6 @@
+fromNel# : forall a. Native.NonEmpty.NonEmpty# a -> List.NonEmpty.NonEmpty a
+ilistFromList# : forall a. Native.List.List# a -> Native.NonEmpty.IList# a
+listNel# : forall a. Native.NonEmpty.NonEmpty# a -> Builtin.List a
+nel# : forall a. a -> Native.List.List# a -> Native.NonEmpty.NonEmpty# a
+tail# : forall a. Native.NonEmpty.NonEmpty# a -> Native.List.List# a
+toNel# : forall a. List.NonEmpty.NonEmpty a -> Native.NonEmpty.NonEmpty# a

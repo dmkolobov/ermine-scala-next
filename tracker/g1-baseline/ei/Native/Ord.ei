@@ -1,0 +1,5 @@
+f2map : forall b c a a1. (b -> c) -> (a -> a1 -> b) -> a -> a1 -> c
+fromOrd# : forall a. Native.Ord.Ord# a -> a -> a -> Ord.Ordering
+fromOrdering# : Native.Ord.Ordering# -> Ord.Ordering
+ord# : forall a. (a -> a -> Ord.Ordering) -> Native.Ord.Ord# a
+ordering# : Ord.Ordering -> Native.Ord.Ordering#

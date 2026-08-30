@@ -1,0 +1,2 @@
+toEither# : forall a b. Either.Either a b -> Native.Either.Either# a b
+toEitherZ# : forall a b. Either.Either a b -> Native.Either.EitherZ# a b

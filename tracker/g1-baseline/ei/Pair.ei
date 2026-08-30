@@ -1,0 +1,4 @@
+fst : forall a b. (a, b) -> a
+mapFst : forall a b c. (a -> b) -> (a, c) -> (b, c)
+mapSnd : forall a b c. (a -> b) -> (c, a) -> (c, b)
+snd : forall a b. (a, b) -> b

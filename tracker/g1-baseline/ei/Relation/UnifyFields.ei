@@ -1,0 +1,1 @@
+unify1 : forall (f1: rho) a (f2: rho) (r: rho) (r2: rho). (r2 <- (h, f2, t), r <- (h, f, t)) => Builtin.Field f1 a -> Builtin.Field f2 a -> Builtin.Relation r -> Builtin.Relation r2 -> Builtin.Relation r

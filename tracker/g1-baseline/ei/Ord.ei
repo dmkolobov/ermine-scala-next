@@ -1,0 +1,18 @@
+argmax : forall b a. (b -> b -> Ord.Ordering) -> (a -> b) -> a -> a -> a
+argmin : forall b a. (b -> b -> Ord.Ordering) -> (a -> b) -> a -> a -> a
+contramap : forall b a. (b -> a) -> (a -> a -> Ord.Ordering) -> b -> b -> Ord.Ordering
+eq : forall a. (a -> a -> Ord.Ordering) -> a -> a -> Builtin.Bool
+fromCompare : forall a. (a -> a -> Builtin.Int) -> a -> a -> Ord.Ordering
+fromLess : forall a. (a -> a -> Builtin.Bool) -> a -> a -> Ord.Ordering
+ge : forall a. (a -> a -> Ord.Ordering) -> a -> a -> Builtin.Bool
+gt : forall a. (a -> a -> Ord.Ordering) -> a -> a -> Builtin.Bool
+inverse : forall a. (a -> a -> Ord.Ordering) -> a -> a -> Ord.Ordering
+le : forall a. (a -> a -> Ord.Ordering) -> a -> a -> Builtin.Bool
+lt : forall a. (a -> a -> Ord.Ordering) -> a -> a -> Builtin.Bool
+max : forall a. (a -> a -> Ord.Ordering) -> a -> a -> a
+min : forall a. (a -> a -> Ord.Ordering) -> a -> a -> a
+neq : forall a. (a -> a -> Ord.Ordering) -> a -> a -> Builtin.Bool
+nullableOrd : forall a. (a -> a -> Ord.Ordering) -> Builtin.Nullable a -> Builtin.Nullable a -> Ord.Ordering
+ordMonoid : forall a. Control.Monoid.Monoid (a -> a -> Ord.Ordering)
+ord_Bool : Builtin.Bool -> Builtin.Bool -> Ord.Ordering
+orderingMonoid : Control.Monoid.Monoid Ord.Ordering

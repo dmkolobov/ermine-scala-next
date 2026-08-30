@@ -1,0 +1,24 @@
+(++) : forall (r: rho) (s: rho) (t: rho). t <- (r, s) => Layout.Legend.Legend r -> Layout.Legend.Legend s -> Layout.Legend.Legend t
+columnsUsed# : forall lbl. Layout.Legend.Legend# lbl -> Builtin.List Builtin.String
+cons_Bracket : forall (op: rho -> * -> *) (r1: rho) a (r2: rho) (r: rho). (AsOp op, r <- (r1, r2)) => (op r1 a, Layout.Format.Format a, op r1 a -> Layout.SortStrategy.SortStrategy r1, Builtin.String) -> Layout.Legend.Legend r2 -> Layout.Legend.Legend r
+cons_Bracket_Simple : forall (pr: rho -> * -> *) (r: rho) a (s: rho) (t: rho). (Layout.Presentation.AsPresentation pr, t <- (r, s)) => (pr r a, Builtin.String) -> Layout.Legend.Legend s -> Layout.Legend.Legend t
+cons_Bracket_Sorted : forall (pr: rho -> * -> *) (r: rho) a (s: rho) (t: rho). (Layout.Presentation.AsPresentation pr, t <- (r, s)) => ((pr r a, Builtin.String), Layout.SortPriority.SortPriority) -> Layout.Legend.Legend s -> Layout.Legend.Legend t
+empty : Layout.Legend.Legend (||)
+empty_Bracket : Layout.Legend.Legend (||)
+empty_Bracket_Simple : Layout.Legend.Legend (||)
+empty_Bracket_Sorted : Layout.Legend.Legend (||)
+exoticHidden : forall (op: rho -> * -> *) (r: rho) a. AsOp op => op r a -> Layout.SortStrategy.SortStrategy r -> Layout.SortPriority.SortPriority -> Layout.Legend.Legend r
+exoticLegend : forall (pr: rho -> * -> *) (r: rho) a. Layout.Presentation.AsPresentation pr => pr r a -> Layout.SortStrategy.SortStrategy r -> Layout.SortPriority.SortPriority -> Builtin.String -> Layout.Legend.Legend r
+fromField : forall (r: rho) a. Builtin.Field r a -> Layout.Legend.Legend r
+fromRow : forall (r: rho). Relation.Row.Row r -> Layout.Legend.Legend r
+fromRowWithDisplayFunc : forall (r: rho). (Builtin.String -> Builtin.String) -> Relation.Row.Row r -> Layout.Legend.Legend r
+fromRowWithFormat : forall a (r: rho). Layout.Format.Format a -> Relation.Row.Row r -> Layout.Legend.Legend r
+hidden : forall (op: rho -> * -> *) (r: rho) a. AsOp op => (op r a, Layout.SortPriority.SortPriority) -> Layout.Legend.Legend r
+initialSort# : forall (r: rho). Layout.Legend.Legend r -> Native.List.List# (Native.Pair.Pair# Builtin.String Relation.Sort.SortOrder#)
+legend : forall (pr: rho -> * -> *) (r: rho) a. Layout.Presentation.AsPresentation pr => pr r a -> Builtin.String -> Layout.Legend.Legend r
+legend# : forall (r: rho). Layout.Legend.Legend r -> Layout.Legend.Legend# Builtin.String
+legendFunctor# : Control.Functor.Functor Layout.Legend.Legend#
+legendGroup : forall (r: rho). Builtin.String -> Layout.Legend.Legend r -> Layout.Legend.Legend r
+legendRow : forall (r: rho). Layout.Legend.Legend r -> Relation.Row.Row r
+partialSort : forall (r: rho). Layout.Legend.Legend r -> Builtin.List (Builtin.String, Layout.SortPriority.SortPriority)
+reprioritizeLabel : forall (r: rho). Builtin.String -> Layout.SortPriority.SortPriority -> Layout.Legend.Legend r -> Layout.Legend.Legend r

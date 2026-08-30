@@ -1,0 +1,7 @@
+dashed : Native.BorderOptions.LineStyle
+dotted : Native.BorderOptions.LineStyle
+medium : Native.BorderOptions.LineThickness
+solid : Native.BorderOptions.LineStyle
+thick : Native.BorderOptions.LineThickness
+thin : Native.BorderOptions.LineThickness
+toBorderOptions# : forall a. Layout.BorderOptions.BorderOptions a -> Native.BorderOptions.BorderOptions# a

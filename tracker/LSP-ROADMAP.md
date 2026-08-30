@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 OPEN — checklist expanded 2026-08-30; next item 1.1 · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 1.1 done; next item 1.2 · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -141,7 +141,7 @@ machinery is deleted post-G1, never before.
 
 ### 1.x Gate and spec groundwork (no pipeline code before these)
 
-- [ ] **1.1 G1 oracle harness**: one-line patch sorting Dep.writeInterface
+- [x] **1.1 G1 oracle harness**: one-line patch sorting Dep.writeInterface
   lines by name (Session.scala:424-427; parse-back is order-insensitive).
   tracker/tools/g1-diff.sh PARAMETERIZED old|new: delete every .ei under
   classes/modules, one full-inference bin/ermine boot (writes .ei, dumps
@@ -471,3 +471,21 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   closed implicit quantification and relArrows region boundaries pinned
   as spec tests before any pipeline code. Baselines section made
   delta-tolerant (was stale at 17/17). Loop resumes at 1.1.
+- 2026-08-30 1.1 done: writeInterface sorted by name; G1Compare (boots for
+  the type parser, parses both sides via a new InterfaceParsers.interfaceSigs
+  with all-module importing + cons++privateCons recognizedCons, alpha-eq
+  with positional forall binders / search-matched exists+Part multisets);
+  G1Groups (dedicated SCC dump — REPL :groups can't re-parse most loaded
+  modules; own-global-filtered re-parse works for 124/129, the 5 stubborn
+  ones — Field, Native.List, String, Type.Eq, Relation — are deterministic
+  PARSE-ERROR markers, gap documented, covered by 4.2's occ->def oracle);
+  g1-diff.sh run/compare + g1-normalize (browse wrap-joining) +
+  g1-validate + 7 mutation fixtures (incl. eq-reordered-forall: Forall.mk
+  canonicalizes binder order — presentation, not semantics). Found en
+  route: parallel makes give thread-timing Supply draws that reach .ei
+  bytes through the solver's id-hash queue as genuinely non-alpha-equiv
+  residual constraints (lookbackJoin) — added -Dermine.loadInSeries gate
+  (default off) and the oracle runs serial. Validation: fixtures 7/7,
+  double-run self-agreement 129/129 EQUIVALENT (1447 sigs, 1672 browse
+  entries, groups identical). Baseline committed to tracker/g1-baseline/.
+  Baselines: 761/762, repl 3/3, lsp 27/27.

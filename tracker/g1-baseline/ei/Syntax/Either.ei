@@ -1,0 +1,9 @@
+(<$) : forall a e b. a -> Either.Either e b -> Either.Either e a
+(<$>) : forall a b e. (a -> b) -> Either.Either e a -> Either.Either e b
+(<*>) : forall e a b. Either.Either e (a -> b) -> Either.Either e a -> Either.Either e b
+(<<) : forall e a b. Either.Either e a -> Either.Either e b -> Either.Either e a
+(>>) : forall e a b. Either.Either e a -> Either.Either e b -> Either.Either e b
+(>>=) : forall e a b. Either.Either e a -> (a -> Either.Either e b) -> Either.Either e b
+map : forall a b e. (a -> b) -> Either.Either e a -> Either.Either e b
+return : forall a e. a -> Either.Either e a
+(|) : forall e a. Either.Either e a -> Either.Either e a -> Either.Either e a

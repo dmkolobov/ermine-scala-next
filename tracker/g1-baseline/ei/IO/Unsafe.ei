@@ -1,0 +1,3 @@
+runIO : forall a r. Builtin.IO a -> (a -> r) -> (forall i. (i -> r) -> (Native.Throwable.Throwable -> r) -> Builtin.FFI i -> r) -> (Native.Throwable.Throwable -> r) -> r
+unsafeFFI : forall a. Builtin.FFI a -> Either.Either Native.Throwable.Throwable a
+unsafePerformIO : forall a. Builtin.IO a -> a

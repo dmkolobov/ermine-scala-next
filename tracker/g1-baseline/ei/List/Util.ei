@@ -1,0 +1,6 @@
+distinct : forall a. (a -> a -> Ord.Ordering) -> Builtin.List a -> Builtin.List a
+ensureNonnegativeWeights : Builtin.List (Builtin.Double, Builtin.Double) -> Builtin.List (Builtin.Double, Builtin.Double)
+median : Builtin.List Builtin.Double -> Builtin.Maybe Builtin.Double
+sort : forall a. (a -> a -> Ord.Ordering) -> Builtin.List a -> Builtin.List a
+weightedHarmonicMean : Builtin.List (Builtin.Double, Builtin.Double) -> Builtin.Maybe Builtin.Double
+weightedMean : Builtin.List (Builtin.Double, Builtin.Double) -> Builtin.Maybe Builtin.Double

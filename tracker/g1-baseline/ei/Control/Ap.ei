@@ -1,0 +1,10 @@
+ap : forall (f: * -> *) a b. Control.Ap.Ap f -> f (a -> b) -> f a -> f b
+apFunctor : forall (f: * -> *). Control.Ap.Ap f -> Control.Functor.Functor f
+liftA : forall (f: * -> *) a b. Control.Ap.Ap f -> (a -> b) -> f a -> f b
+liftA2 : forall (f: * -> *) a b c. Control.Ap.Ap f -> (a -> b -> c) -> f a -> f b -> f c
+liftA3 : forall (f: * -> *) a b c d. Control.Ap.Ap f -> (a -> b -> c -> d) -> f a -> f b -> f c -> f d
+liftA4 : forall (f: * -> *) a b c d e. Control.Ap.Ap f -> (a -> b -> c -> d -> e) -> f a -> f b -> f c -> f d -> f e
+liftA5 : forall (f: * -> *) a b c d e g. Control.Ap.Ap f -> (a -> b -> c -> d -> e -> g) -> f a -> f b -> f c -> f d -> f e -> f g
+liftA6 : forall (f: * -> *) a b c d e g h. Control.Ap.Ap f -> (a -> b -> c -> d -> e -> g -> h) -> f a -> f b -> f c -> f d -> f e -> f g -> f h
+pure : forall (f: * -> *) a. Control.Ap.Ap f -> a -> f a
+tupleA2 : forall (f: * -> *) a b. Control.Ap.Ap f -> f a -> f b -> f (a, b)

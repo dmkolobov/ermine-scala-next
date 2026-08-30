@@ -1,0 +1,3 @@
+bind : forall (f: * -> *) a b. (Control.Monad.Monad f -> f a) -> (a -> Control.Monad.Monad f -> f b) -> Control.Monad.Monad f -> f b
+liftDo : forall (f: * -> *) a. f a -> Control.Monad.Monad f -> f a
+unit : forall a (f: * -> *). a -> Control.Monad.Monad f -> f a

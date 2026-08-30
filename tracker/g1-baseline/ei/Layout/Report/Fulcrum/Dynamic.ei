@@ -1,0 +1,1 @@
+pivotColumn : forall (v: rho) a. Relation.Op.Type.Op v a -> Builtin.String -> (forall (f: rho). Builtin.Field f a -> Layout.Presentation.Presentation f a) -> Layout.Report.Fulcrum.Dynamic.PivotColumn v

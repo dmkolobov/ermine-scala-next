@@ -1,0 +1,5 @@
+live : forall z. Layout.Writer.SelectorEvent z
+orEvent : forall z. Layout.Writer.SelectorEvent z -> Layout.Writer.SelectorEvent z -> Layout.Writer.SelectorEvent z
+writerAp : forall (f: * -> *) a. Layout.Writer.Writer f a -> Control.Ap.Ap f
+writerFunctor : forall (f: * -> *) a. Layout.Writer.Writer f a -> Control.Functor.Functor f
+writerMonad : forall (f: * -> *) a. Layout.Writer.Writer f a -> Control.Monad.Monad f

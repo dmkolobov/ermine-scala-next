@@ -1,0 +1,4 @@
+alt : forall (f: * -> *) a. Control.Alt.Alt f -> f a -> f a -> f a
+altAp : forall (f: * -> *). Control.Alt.Alt f -> Control.Ap.Ap f
+altMonoid : forall (f: * -> *) a. Control.Alt.Alt f -> Control.Monoid.Monoid (f a)
+empty : forall (f: * -> *) a. Control.Alt.Alt f -> f a

@@ -1,0 +1,3 @@
+builtin1 : forall (r: rho) a (s: rho) b. Relation.Op.Unsafe.Builtin -> Relation.Op.Type.Op r a -> Relation.Op.Type.Op s b
+builtin2 : forall (r: rho) a (s: rho) b (t: rho) c. Relation.Op.Unsafe.Builtin -> Relation.Op.Type.Op r a -> Relation.Op.Type.Op s b -> Relation.Op.Type.Op t c
+builtin3 : forall (r: rho) a (s: rho) b (t: rho) c (u: rho) d. Relation.Op.Unsafe.Builtin -> Relation.Op.Type.Op r a -> Relation.Op.Type.Op s b -> Relation.Op.Type.Op t c -> Relation.Op.Type.Op u d

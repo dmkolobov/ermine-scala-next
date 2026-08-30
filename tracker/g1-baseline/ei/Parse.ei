@@ -1,0 +1,8 @@
+numberFormat : forall a. Builtin.FFI a -> Builtin.Maybe a
+parseBool : Builtin.String -> Builtin.Maybe Builtin.Bool
+parseByte : Builtin.Int -> Builtin.String -> Builtin.Maybe Builtin.Byte
+parseDouble : Builtin.String -> Builtin.Maybe Builtin.Double
+parseFloat : Builtin.String -> Builtin.Maybe Builtin.Float
+parseInt : Builtin.Int -> Builtin.String -> Builtin.Maybe Builtin.Int
+parseLong : Builtin.Int -> Builtin.String -> Builtin.Maybe Builtin.Long
+parseShort : Builtin.Int -> Builtin.String -> Builtin.Maybe Builtin.Short

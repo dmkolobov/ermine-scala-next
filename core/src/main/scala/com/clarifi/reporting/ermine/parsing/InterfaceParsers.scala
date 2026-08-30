@@ -12,6 +12,11 @@ object InterfaceParsers {
   private def interfaceSig: Parser[(Name, Type)] =
     (TermNameParsers.name[Local]{case x => List(x)} << keyOp(":")) ++ qtyp
 
+  /** The (name, type) pairs of an interface file, as data.  The G1
+    * differential oracle reads interfaces back through the language's own
+    * parser (tracker/LSP-ROADMAP.md, Stage 1 item 1.1). */
+  def interfaceSigs: Parser[List[(Name, Type)]] = laidout("interface", interfaceSig)
+
   def interfaceFile: Parser[PartialFunction[TermVar, TermVar]] = {
     def remap(tys: Map[Name, Type])(v: TermVar): Option[TermVar] = {
       v.name flatMap {

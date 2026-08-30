@@ -1,0 +1,27 @@
+aggregate : forall n a. (n -> n -> n) -> (a -> n) -> Tree.Tree a -> Tree.Tree (n, a)
+aggregateLeaves : forall n a. (n -> n -> n) -> (a -> Builtin.Maybe n) -> Tree.Tree a -> Tree.Tree (n, a)
+fillZero : forall n a. Tree.Tree (Builtin.Maybe n, a) -> Tree.Tree (n, a)
+fold : forall a b. (a -> Builtin.List b -> b) -> Tree.Tree a -> b
+fromRel : forall z n (pid: rho) (cid: rho) (rel: rho -> *) (t: rho) (h: rho). (t <- (pid, cid, h), Builtin.Relational rel, Builtin.Primitive n) => Relation.Scan.RunScan Builtin.List z -> n -> Builtin.Field pid n -> Builtin.Field cid n -> rel t -> Control.Monad.Cont.Cont z (Tree.Tree (Builtin.Record h))
+identify : forall b a. List.Stream.Stream b -> Tree.Tree a -> Tree.Tree (b, a)
+join : forall (a1: rho) (b1: rho) (c1: rho). c1 <- (a1, b1) => Tree.Tree (Builtin.Record a1) -> Tree.Tree (Builtin.Record b1) -> Tree.Tree (Builtin.Record c1)
+map : forall a b. (a -> b) -> Tree.Tree a -> Tree.Tree b
+map_Maybe : forall a b. (a -> b) -> Builtin.Maybe a -> Builtin.Maybe b
+maxA : forall a n. Builtin.PrimitiveNum n => (a -> n) -> Tree.Tree a -> Tree.Tree (n, a)
+maxLeaves : forall a n. Builtin.PrimitiveNum n => (a -> Builtin.Maybe n) -> Tree.Tree a -> Tree.Tree (n, a)
+minA : forall a n. Builtin.PrimitiveNum n => (a -> n) -> Tree.Tree a -> Tree.Tree (n, a)
+minLeaves : forall a n. Builtin.PrimitiveNum n => (a -> Builtin.Maybe n) -> Tree.Tree a -> Tree.Tree (n, a)
+node : forall a. a -> Builtin.List (Tree.Tree a) -> Tree.Tree a
+scan : forall a b. (a -> Builtin.List b -> b) -> Tree.Tree a -> Tree.Tree b
+sequence_S : forall (f: * -> *) a. Control.Ap.Ap f -> Native.Stream.Stream (f a) -> f (Native.Stream.Stream a)
+sum : forall a n. Builtin.PrimitiveNum n => (a -> n) -> Tree.Tree a -> Tree.Tree (n, a)
+sumLeaves : forall a n. Builtin.PrimitiveNum n => (a -> Builtin.Maybe n) -> Tree.Tree a -> Tree.Tree (n, a)
+toRel : forall n (pid: rho) (cid: rho) (r: rho) (s: rho). s <- (pid, cid, r) => n -> Builtin.Field pid n -> Builtin.Field cid n -> Tree.Tree (n, Builtin.Record r) -> Builtin.Relation s
+toRootedRel : forall n (pid: rho) (cid: rho) (r: rho) (s: rho). (Builtin.PrimitiveNum n, s <- (pid, cid, r)) => n -> (n -> n) -> Builtin.Field pid n -> Builtin.Field cid n -> Tree.Tree (Builtin.Record r) -> Builtin.Relation s
+toString' : forall a. Tree.Tree a -> Builtin.String
+trav : forall (f: * -> *) a b. Control.Ap.Ap f -> (a -> f b) -> Tree.Tree a -> f (Tree.Tree b)
+traversable : Control.Traversable.Traversable Tree.Tree
+traverse_S : forall (f: * -> *) a b. Control.Ap.Ap f -> (a -> f b) -> Native.Stream.Stream a -> f (Native.Stream.Stream b)
+unfold : forall b a. (b -> (a, Builtin.List b)) -> b -> Tree.Tree a
+zip : forall a b. Tree.Tree a -> Tree.Tree b -> Tree.Tree (a, b)
+zipWith : forall a b c. (a -> b -> c) -> Tree.Tree a -> Tree.Tree b -> Tree.Tree c

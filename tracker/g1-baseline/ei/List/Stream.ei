@@ -1,0 +1,15 @@
+(<:>) : forall a. a -> List.Stream.Stream a -> List.Stream.Stream a
+ap : Control.Ap.Ap List.Stream.Stream
+append : forall a. Builtin.List a -> List.Stream.Stream a -> List.Stream.Stream a
+cycle : forall a. Builtin.List a -> List.Stream.Stream a
+drop : forall a. Builtin.Int -> List.Stream.Stream a -> List.Stream.Stream a
+dropWhile : forall a. (a -> Builtin.Bool) -> List.Stream.Stream a -> List.Stream.Stream a
+filter : forall a. (a -> Builtin.Bool) -> List.Stream.Stream a -> List.Stream.Stream a
+foldr : forall a b. (a -> b -> b) -> List.Stream.Stream a -> b
+functor : Control.Functor.Functor List.Stream.Stream
+iterate : forall a. (a -> a) -> a -> List.Stream.Stream a
+repeat : forall a. a -> List.Stream.Stream a
+take : forall a. Builtin.Int -> List.Stream.Stream a -> Builtin.List a
+toList : forall a. List.Stream.Stream a -> Builtin.List a
+unfoldr : forall s a. (s -> (a, s)) -> s -> List.Stream.Stream a
+zipWith : forall (tr: * -> *) a b c. Control.Traversable.Traversable tr -> (a -> b -> c) -> List.Stream.Stream a -> tr b -> tr c

@@ -1,0 +1,5 @@
+attr : forall (a: rho) b. Builtin.Field a b -> Relation.Process.Attribute
+medianBy : forall (v: rho) n (rel: rho -> *) (r: rho). (r <- (v, t), Builtin.Relational rel, Builtin.PrimitiveNum n) => Builtin.Field v n -> rel r -> Builtin.Mem v
+toMem : forall (a: rho -> *) (b: rho). Builtin.Relational a => a b -> Builtin.Mem b
+weightedHarmonicMeanBy : forall (w: rho) n (v: rho) (rel: rho -> *) (r: rho). (r <- (w, v, t), Builtin.Relational rel, Builtin.PrimitiveNum n) => Builtin.Field w n -> Builtin.Field v n -> rel r -> Builtin.Mem v
+weightedMeanBy : forall (w: rho) n (v: rho) (rel: rho -> *) (r: rho). (r <- (w, v, t), Builtin.Relational rel, Builtin.PrimitiveNum n) => Builtin.Field w n -> Builtin.Field v n -> rel r -> Builtin.Mem v

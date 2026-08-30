@@ -1,0 +1,1 @@
+endoMonoid : forall a. Control.Monoid.Monoid (a -> a)

@@ -1,0 +1,6 @@
+(&&) : Builtin.Bool -> Builtin.Bool -> Builtin.Bool
+(==>) : Builtin.Bool -> Builtin.Bool -> Builtin.Bool
+if : forall a. Builtin.Bool -> a -> a -> a
+not : Builtin.Bool -> Builtin.Bool
+otherwise : Builtin.Bool
+(||) : Builtin.Bool -> Builtin.Bool -> Builtin.Bool

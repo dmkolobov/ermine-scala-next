@@ -1,0 +1,1 @@
+anyRecordOrd# : Native.Record.ScalaRecord# -> Native.Record.ScalaRecord# -> Ord.Ordering

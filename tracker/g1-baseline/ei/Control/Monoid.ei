@@ -1,0 +1,5 @@
+mappend : forall m. Control.Monoid.Monoid m -> m -> m -> m
+mempty : forall m. Control.Monoid.Monoid m -> m
+mproduct : forall m n. Control.Monoid.Monoid m -> Control.Monoid.Monoid n -> Control.Monoid.Monoid (m, n)
+mproduct3 : forall a b c. Control.Monoid.Monoid a -> Control.Monoid.Monoid b -> Control.Monoid.Monoid c -> Control.Monoid.Monoid (a, b, c)
+mproduct4 : forall a b c d. Control.Monoid.Monoid a -> Control.Monoid.Monoid b -> Control.Monoid.Monoid c -> Control.Monoid.Monoid d -> Control.Monoid.Monoid (a, b, c, d)

@@ -1,0 +1,4 @@
+mapM : forall (t: * -> *) (f: * -> *) a b. Control.Traversable.Traversable t -> Control.Monad.Monad f -> (a -> f b) -> t a -> f (t b)
+sequence : forall (t: * -> *) (f: * -> *) a. Control.Traversable.Traversable t -> Control.Monad.Monad f -> t (f a) -> f (t a)
+sequenceA : forall (t: * -> *) (f: * -> *) a. Control.Traversable.Traversable t -> Control.Ap.Ap f -> t (f a) -> f (t a)
+traverse : forall (t: * -> *) (f: * -> *) a b. Control.Traversable.Traversable t -> Control.Ap.Ap f -> (a -> f b) -> t a -> f (t b)

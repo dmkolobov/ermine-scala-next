@@ -1,0 +1,377 @@
+(***) : forall (f: * -> *) z a b. Layout.Report.Selector f z a -> Layout.Report.Selector f z b -> Layout.Report.Selector f z (a, b)
+``12pixels`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``16pixels`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``1cell`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``1pixel`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``20pixels`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``2cell`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``2pixels`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``3cell`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``4cell`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``4pixels`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``5cell`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``6cell`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``6pixels`` : Builtin.List Native.Magnitude.ErasedMagnitude
+``8pixels`` : Builtin.List Native.Magnitude.ErasedMagnitude
+atom : forall a (f: * -> *) z. Layout.Report.Atomic.Atomic a -> Layout.Report.Report f z
+atom' : forall a (f: * -> *) z. Builtin.List Layout.Font.Font -> Builtin.Maybe Builtin.Int -> Layout.Report.Atomic.Atomic a -> Layout.Report.Report f z
+atomShown : forall a (f: * -> *) z. Builtin.Primitive a => a -> Layout.Report.Report f z
+atomShown' : forall a (f: * -> *) z. Builtin.Primitive a => Builtin.List Layout.Font.Font -> Builtin.Maybe Builtin.Int -> a -> Layout.Report.Report f z
+atomW' : forall (f: * -> *) z a. Layout.Writer.Writer f z -> Builtin.List Layout.Font.Font -> Builtin.Maybe Builtin.Int -> Layout.Format.Format a -> a -> z
+backgroundColor : forall (f: * -> *) z. Layout.Color.Color -> Layout.Report.Report f z -> Layout.Report.Report f z
+backgroundColorW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Layout.Color.Color -> z -> z
+bar : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, Layout.Presentation.AsPresentation s, r <- (o, yr, xr, sr), Builtin.Relational rel, AsOp x) => s sr sa -> x xr xa -> y yr ya -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+bar' : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (er: rho) (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, Layout.Presentation.AsPresentation s, AsOp x, r <- (o, yr, xr, sr), Builtin.Relational rel, Has r er) => s sr sa -> x xr xa -> y yr ya -> Layout.PresRow.PresRow er -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+barChart : forall x y (pr1: rho -> * -> *) (r1: rho) d (op2: rho -> * -> *) (r2: rho) e (op3: rho -> * -> *) (r3: rho) v (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (t: rho). AsOp op2, r <- (r1, r2, r3, t), AsOp op3, Builtin.Unscaled e, AsPresentation pr1, Builtin.Relational rel, Builtin.Scaled v) => Builtin.Maybe Builtin.String -> Builtin.Maybe (Layout.Report.Atomic.Atomic x) -> Builtin.Maybe (Layout.Report.Atomic.Atomic y) -> pr1 r1 d -> op2 r2 e -> op3 r3 v -> rel r -> Layout.Report.Report f z
+barHeader : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+border : forall (f: * -> *) z. Builtin.Maybe (Layout.Report.Report f z) -> Builtin.Maybe (Layout.Report.Report f z) -> Builtin.Maybe (Layout.Report.Report f z) -> Builtin.Maybe (Layout.Report.Report f z) -> Builtin.Maybe (Layout.Report.Report f z) -> Layout.Report.Report f z
+borderColor : forall (f: * -> *) a. Layout.Color.Color -> Layout.Report.Report f a -> Layout.Report.Report f a
+borderColor' : forall a (f: * -> *) b. (Layout.BorderOptions.BorderOptions a -> Layout.BorderOptions.BorderOptions Layout.Color.Color) -> Layout.Report.Report f b -> Layout.Report.Report f b
+borderColorBottom : forall (f: * -> *) a. Layout.Color.Color -> Layout.Report.Report f a -> Layout.Report.Report f a
+borderColorLeft : forall (f: * -> *) a. Layout.Color.Color -> Layout.Report.Report f a -> Layout.Report.Report f a
+borderColorRight : forall (f: * -> *) a. Layout.Color.Color -> Layout.Report.Report f a -> Layout.Report.Report f a
+borderColorTop : forall (f: * -> *) a. Layout.Color.Color -> Layout.Report.Report f a -> Layout.Report.Report f a
+borderColorW : forall (f: * -> *) a b. Layout.Writer.Writer f a -> (Layout.BorderOptions.BorderOptions b -> Layout.BorderOptions.BorderOptions Layout.Color.Color) -> a -> a
+borderSize : forall (f: * -> *) z. Native.BorderOptions.LineStyle -> Native.BorderOptions.LineThickness -> Layout.Report.Report f z -> Layout.Report.Report f z
+borderSize' : forall (f: * -> *) z. (Layout.BorderOptions.BorderOptions (Native.BorderOptions.LineStyle, Native.BorderOptions.LineThickness) -> Layout.BorderOptions.BorderOptions (Native.BorderOptions.LineStyle, Native.BorderOptions.LineThickness)) -> Layout.Report.Report f z -> Layout.Report.Report f z
+borderSizeBottom : forall (f: * -> *) z. Native.BorderOptions.LineStyle -> Native.BorderOptions.LineThickness -> Layout.Report.Report f z -> Layout.Report.Report f z
+borderSizeLeft : forall (f: * -> *) z. Native.BorderOptions.LineStyle -> Native.BorderOptions.LineThickness -> Layout.Report.Report f z -> Layout.Report.Report f z
+borderSizeRight : forall (f: * -> *) z. Native.BorderOptions.LineStyle -> Native.BorderOptions.LineThickness -> Layout.Report.Report f z -> Layout.Report.Report f z
+borderSizeTop : forall (f: * -> *) z. Native.BorderOptions.LineStyle -> Native.BorderOptions.LineThickness -> Layout.Report.Report f z -> Layout.Report.Report f z
+borderSizeW : forall (f: * -> *) z. Layout.Writer.Writer f z -> (Layout.BorderOptions.BorderOptions (Native.BorderOptions.LineStyle, Native.BorderOptions.LineThickness) -> Layout.BorderOptions.BorderOptions (Native.BorderOptions.LineStyle, Native.BorderOptions.LineThickness)) -> z -> z
+borderW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.Maybe z -> Builtin.Maybe z -> Builtin.Maybe z -> Builtin.Maybe z -> Builtin.Maybe z -> z
+box : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+boxAndWhiskers : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (er: rho) (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, r <- (o, yr, xr, sr), Layout.Presentation.AsPresentation s, Builtin.Relational rel, AsOp x, Has r er) => s sr sa -> x xr xa -> y yr ya -> Layout.PresRow.PresRow er -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+bubble : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (er: rho) (rel: rho -> *) (r: rho). (exists (o: rho). Layout.Presentation.AsPresentation s, AsOp x, AsOp y, Builtin.Relational rel, Has r er, r <- (o, yr, xr, sr)) => Layout.Report.Atomic.Atomic Builtin.String -> s sr sa -> x xr xa -> y yr ya -> Layout.PresRow.PresRow er -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+button : forall a (f: * -> *) b (f1: * -> *). a -> (Layout.Report.Report f b -> Layout.Writer.SelectorEvent b -> Layout.Report.Report f1 b) -> Layout.Report.Report f1 b
+button'_ : forall a a1 (f: * -> *) b (f1: * -> *). a -> Layout.Format.Format a1 -> (Layout.Report.Report f b -> Layout.Writer.SelectorEvent b -> Layout.Report.Report f1 b) -> Layout.Report.Report f1 b
+button_ : forall a (f: * -> *) b (f1: * -> *). a -> (Layout.Report.Report f b -> Layout.Writer.SelectorEvent b -> Layout.Report.Report f1 b) -> Layout.Report.Report f1 b
+categoryTickLabels : forall (xr: rho) sa' (x: rho -> * -> *) xa ya' relr ya. Builtin.Unscaled xa => Builtin.List (Builtin.Record xr, Builtin.Record xr) -> (sa' -> x xr xa -> ya' -> relr -> Layout.Chart.Type.ChartSeries xa ya) -> sa' -> x xr xa -> ya' -> relr -> Layout.Chart.Type.ChartSeries xa ya
+centered : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+chart : forall xa ya (f: * -> *) z. Builtin.Maybe Builtin.String -> Layout.Report.Direction.Direction -> Layout.Chart.Unsafe.ChartLegendOptions# -> Layout.Chart.Unsafe.ChartRenderHints# -> Layout.Chart.AxisLabel -> Layout.Format.Format xa -> Builtin.Bool -> Layout.Chart.Type.Axis xa -> Layout.Chart.AxisLabel -> Layout.Format.Format ya -> Builtin.Bool -> Layout.Chart.Type.Axis ya -> Builtin.List (Layout.Chart.Type.ChartSeries xa ya) -> Layout.Report.Report f z
+chartLegendAbove : Layout.Chart.Unsafe.ChartLegendOptions#
+chartLegendBelow : Layout.Chart.Unsafe.ChartLegendOptions#
+chartLegendDefaultLocation : Layout.Chart.Unsafe.ChartLegendOptions#
+chartLegendHidden : Layout.Chart.Unsafe.ChartLegendOptions#
+chartLegendOptions : Layout.Chart.Unsafe.ChartLegendLocation# -> Layout.Chart.Unsafe.ChartLegendOptions#
+chartLegendOverlay : Layout.Chart.Unsafe.ChartLegendOptions#
+chartLegendRight : Layout.Chart.Unsafe.ChartLegendOptions#
+chartLegendRightOverlay : Layout.Chart.Unsafe.ChartLegendOptions#
+chartLegendRightTable : Layout.Chart.Unsafe.ChartLegendOptions#
+chartRenderHints : Builtin.Bool -> Layout.Chart.Unsafe.ChartRenderHints#
+checkBox : forall (f: * -> *) z. Builtin.Bool -> (Layout.Report.Report f z -> Layout.Report.Selector f z Builtin.Bool -> Layout.Report.Report f z) -> Layout.Report.Report f z
+checkBox' : forall (f: * -> *) z. Builtin.String -> Builtin.Bool -> (Layout.Report.Report f z -> Layout.Report.Selector f z Builtin.Bool -> Layout.Report.Report f z) -> Layout.Report.Report f z
+checkBoxLateBinding : forall (f: * -> *) z. Builtin.String -> Builtin.Bool -> ((Builtin.Bool -> Layout.Report.Report f z) -> Layout.Report.Selector f z Builtin.Bool -> Layout.Report.Report f z) -> Layout.Report.Report f z
+collapsible : forall (f: * -> *) z. Builtin.Bool -> Builtin.String -> Layout.Report.Report f z -> Layout.Report.Report f z
+coloredSeries : forall (s: rho -> a -> *) (sr: rho) (sa: a) xa' ya' relr xa ya. (s sr sa -> xa' -> ya' -> relr -> Layout.Chart.Type.ChartSeries xa ya) -> Builtin.List (Builtin.Record sr, Layout.Color.Color) -> s sr sa -> xa' -> ya' -> relr -> Layout.Chart.Type.ChartSeries xa ya
+columnTable : forall a (k: rho) p d (v: a1) (f: * -> *) z. Layout.Column.Column (a, Void.Bound (Layout.Legend.Legend k), p, d) k v -> Layout.Report.Report f z
+columnTable2 : forall a (k: rho) p d (v: a1) (f: * -> *) z. Layout.Column.Column (a, Void.Bound (Layout.Legend.Legend k), p, d) k v -> a -> Layout.Report.Report f z
+columnTableTransposed : forall a (k: rho) p d (v: a1) (f: * -> *) z. Layout.Column.Column (a, Void.Bound (Layout.Legend.Legend k), p, d) k v -> Layout.Report.Report f z
+currency : forall (f: * -> *) z. Builtin.String -> Builtin.Double -> Layout.Report.Report f z
+dateInput : forall (f: * -> *) z. Builtin.String -> (Layout.Report.Report f z -> Layout.Report.Selector f z (Builtin.Maybe Builtin.Date) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+dateInputLateBinding : forall (f: * -> *) z. Builtin.String -> ((Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Selector f z (Builtin.Maybe Builtin.Date) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+dateRange : forall (f: * -> *) z. Builtin.Date -> Builtin.Date -> Layout.Report.Report f z
+defaultChartLegendOptions : Layout.Chart.Unsafe.ChartLegendOptions#
+defaultScaled : forall a. Builtin.Scaled a => Layout.Chart.Type.Axis a
+defaultUnscaled : forall a. Builtin.Unscaled a => Layout.Chart.Type.Axis a
+domainTooltipLabels : forall (xtr: rho) xta sa' xa' ya' (rel: rho -> *) (r: rho) xa ya. Has r xtr => Layout.Presentation.Presentation xtr xta -> (sa' -> xa' -> ya' -> rel r -> Layout.Chart.Type.ChartSeries xa ya) -> sa' -> xa' -> ya' -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+doubleInput : forall (f: * -> *) z. Builtin.String -> (Layout.Report.Report f z -> Layout.Report.Selector f z (Builtin.Maybe Builtin.Double) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+doubleInputLateBinding : forall (f: * -> *) z. Builtin.String -> ((Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Selector f z (Builtin.Maybe Builtin.Double) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+drilldownBarChart : forall (cr: rho) ca (vr: rho) va (spr: rho -> * -> *) (sr: rho) sa (cpr: rho -> * -> *) (vpr: rho -> * -> *) (pi: rho) id (ci: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). r <- (sr, cr, vr, pi, ci, o), Builtin.Relational rel, AsPresentation spr, AsPresentation vpr, AsPresentation cpr) => Builtin.Maybe Builtin.String -> Layout.Report.Direction.Direction -> Layout.Chart.Unsafe.ChartLegendOptions# -> Layout.Chart.Unsafe.ChartRenderHints# -> Layout.Chart.AxisLabel -> Builtin.List (Builtin.Record cr, Builtin.Record cr) -> Layout.Chart.Type.Axis ca -> Layout.Chart.AxisLabel -> Builtin.List (Builtin.Record vr, Builtin.Record vr) -> Layout.Chart.Type.Axis va -> spr sr sa -> cpr cr ca -> vpr vr va -> Builtin.Field pi id -> Builtin.Field ci id -> rel r -> Layout.Report.Report f z
+drilldownBarChart' : forall (cr: rho) ca (vr: rho) va (spr: rho -> * -> *) (sr: rho) sa (cpr: rho -> * -> *) (vpr: rho -> * -> *) (pi: rho) id (ci: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). AsPresentation dpr, AsPresentation cpr, AsPresentation spr, AsPresentation vpr, r <- (sr, cr, vr, pi, ci, o), Builtin.Relational rel) => Builtin.Maybe Builtin.String -> Layout.Report.Direction.Direction -> Layout.Chart.Unsafe.ChartLegendOptions# -> Layout.Chart.Unsafe.ChartRenderHints# -> Layout.Chart.AxisLabel -> Builtin.List (Builtin.Record cr, Builtin.Record cr) -> Layout.Chart.Type.Axis ca -> Layout.Chart.AxisLabel -> Builtin.List (Builtin.Record vr, Builtin.Record vr) -> Layout.Chart.Type.Axis va -> spr sr sa -> cpr cr ca -> vpr vr va -> Builtin.Field pi id -> Builtin.Field ci id -> rel r -> Layout.Report.Report f z
+drilldownBarChart2 : forall (cr: rho) ca (vr: rho) va (spr: rho -> * -> *) (sr: rho) sa (cpr: rho -> * -> *) (vpr: rho -> * -> *) (r2: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Builtin.Relational rel, AsPresentation vpr, AsPresentation cpr, AsPresentation spr, r <- (sr, cr, vr, o), Has r r2) => Builtin.Maybe Builtin.String -> Layout.Report.Direction.Direction -> Layout.Chart.AxisLabel -> Builtin.List (Builtin.Record cr, Builtin.Record cr) -> Layout.Chart.Type.Axis ca -> Layout.Chart.AxisLabel -> Builtin.List (Builtin.Record vr, Builtin.Record vr) -> Layout.Chart.Type.Axis va -> spr sr sa -> cpr cr ca -> vpr vr va -> DrilldownList.DrilldownList r2 -> rel r -> rel r -> Layout.Report.Report f z
+drilldownKeyValueDateTable : forall a b (k: rho) (v: rho) (i: rho) (lbl: rho) (p: rho) id (c: rho) (d: rho) x (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Builtin.Relational rel, i <- (lbl, o), r <- (k, v, p, c, i)) => Layout.Report.SoftRelation.SoftRelation a b k v -> Builtin.Maybe (Layout.Legend.Legend i) -> Builtin.Field lbl Builtin.String -> Builtin.Field p id -> Builtin.Field c id -> Builtin.Field d x -> rel r -> Layout.Report.Report f z
+drilldownKeyValueTable : forall a b (k: rho) (v: rho) (i: rho) (lbl: rho) (p: rho) id (c: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Builtin.Relational rel, i <- (lbl, o), r <- (k, v, p, c, i)) => Layout.Report.SoftRelation.SoftRelation a b k v -> Builtin.Maybe (Layout.Legend.Legend i) -> Builtin.Field lbl Builtin.String -> Builtin.Field p id -> Builtin.Field c id -> rel r -> Layout.Report.Report f z
+drilldownKeyValueTable2 : forall a b (k: rho) (v: rho) (i: rho) a1 (r: rho) (rel: rho -> *) (a2: rho) (rel1: rho -> *) (r2: rho) (f: * -> *) z. (exists (s: rho) (i1: rho). a2 <- (k, v, i, r), s <- (v, k, i), Builtin.Relational rel1, Builtin.RelationalComb rel, a2 <- (r, i, k, v), i1 <- (i, r), a2 <- (i, r, k, v)) => Layout.Report.SoftRelation.SoftRelation a b k v -> Builtin.Maybe (Layout.Legend.Legend i) -> a1 -> DrilldownList.DrilldownList r -> rel a2 -> rel1 r2 -> Layout.Report.Report f z
+drilldownPieChart : forall nm (label: rho) (prl: rho -> * -> *) lv (prd: rho -> * -> *) (r0: rho) d (r1: rho) id (r2: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (t: rho). AsPresentation prd, Builtin.Relational rel, Builtin.PrimitiveNum d, r <- (r0, r1, r2, label, t), AsPresentation prl) => Builtin.String -> Builtin.Maybe (Layout.Report.Atomic.Atomic nm) -> Layout.Chart.Unsafe.ChartLegendOptions# -> Builtin.List (Builtin.Record label, Layout.Color.Color) -> Layout.Chart.Unsafe.ChartRenderHints# -> prl label lv -> prd r0 d -> Builtin.Field r1 id -> Builtin.Field r2 id -> rel r -> Layout.Report.Report f z
+drilldownPieChart2 : forall nm (a: rho) (b: rho -> * -> *) c (d: rho -> * -> *) (e: rho) f (r: rho) (g: rho -> *) (h: rho) (i: rho -> *) (j: rho) (f1: * -> *) a1. (Builtin.Relational g, Layout.Presentation.AsPresentation d, Layout.Presentation.AsPresentation b, Builtin.Relational i) => Builtin.String -> Builtin.Maybe (Layout.Report.Atomic.Atomic nm) -> Layout.Chart.Unsafe.ChartLegendOptions# -> Builtin.List (Builtin.Record a, Layout.Color.Color) -> Layout.Chart.Unsafe.ChartRenderHints# -> b a c -> d e f -> DrilldownList.DrilldownList r -> g h -> i j -> Layout.Report.Report f1 a1
+drilldownPivotTabular : forall (k: rho) (i: rho) (v: rho) (label: rho) (r1: rho) (s: rho) (s1: rho) (a: rho -> *) (t: rho) (f: * -> *) z. (exists (Has: rho -> b) (t1: rho) (o: rho) (t2: rho). t <- (k, v, i), Builtin.RelationalComb a, t <- (k, i, v), t2 <- (v, i), t <- (v, i, k), Has s1 t1, t1 <- (o, label), t <- (i, v, k), Has s1 r1) => Relation.Row.Row k -> Either.Either (Relation.Sort.Sort k) (Builtin.Record k -> Builtin.Record k -> Ord.Ordering) -> Builtin.Maybe (Layout.Legend.Legend i) -> (Builtin.Record k -> Layout.Report.Fulcrum.Dynamic.PivotColumn v) -> Builtin.Field label Builtin.String -> DrilldownList.DrilldownList r1 -> (Builtin.Mem s -> Builtin.Mem s1) -> a t -> Layout.Report.Report f z
+drilldownPivotTabular' : forall (k: rho) (v: rho) (i: rho) (label: rho) (r1: rho) (s: rho) (s1: rho) (a: rho -> *) (t: rho) (f: * -> *) z. (exists (t1: rho) (t2: rho) (o: rho) (Has: rho -> b). t <- (k, i, v), t <- (k, v, i), Builtin.RelationalComb a, Has s1 t2, t2 <- (o, label), Has s1 r1, t <- (v, i, k), t1 <- (v, i), t <- (i, v, k)) => Layout.Report.Fulcrum.Dynamic.DynamicFulcrum k v -> Builtin.Maybe (Layout.Legend.Legend i) -> Builtin.Field label Builtin.String -> DrilldownList.DrilldownList r1 -> (Builtin.Mem s -> Builtin.Mem s1) -> a t -> Layout.Report.Report f z
+drilldownTable : forall (v: rho) (label: rho) (r1: rho) id (r2: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Builtin.Relational rel, v <- (label, o), r <- (r1, r2, v)) => Builtin.Maybe (Layout.Legend.Legend v) -> Builtin.Field label Builtin.String -> Builtin.Field r1 id -> Builtin.Field r2 id -> rel r -> Layout.Report.Report f z
+drilldownTable2 : forall (v: rho) (label: rho) (r1: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Builtin.Relational rel, v <- (label, o), Has r v, Has r r1) => Builtin.Maybe (Layout.Legend.Legend v) -> Builtin.Field label Builtin.String -> DrilldownList.DrilldownList r1 -> rel r -> rel r -> Layout.Report.Report f z
+drilldownTable2W : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.Maybe (Layout.Legend.Legend# Builtin.String) -> Builtin.String -> Builtin.List (Builtin.String, Builtin.String) -> Native.List.List# (Native.Pair.Pair# Builtin.String Relation.Sort.SortOrder#) -> Native.Relation.Relation# -> Native.Relation.Relation# -> f z
+drilldownTableW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.Maybe (Layout.Legend.Legend# Builtin.String) -> Builtin.String -> Builtin.String -> Builtin.String -> Native.List.List# (Native.Pair.Pair# Builtin.String Relation.Sort.SortOrder#) -> Native.Relation.Relation# -> f z
+dropdown : forall a (f: * -> *) z. (a -> Builtin.String) -> a -> Builtin.List a -> (Layout.Report.Report f z -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+dropdown' : forall a a1 b (f: * -> *) z (f1: * -> *). (a -> a1) -> a -> Layout.Format.Format b -> Builtin.List a -> (Layout.Report.Report f z -> Layout.Report.Selector f1 z a -> Layout.Report.Report f1 z) -> Layout.Report.Report f1 z
+dropdownLateBinding : forall a (f: * -> *) z. (a -> Builtin.String) -> a -> Builtin.List a -> ((a -> Layout.Report.Report f z) -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+dropdownLateBinding' : forall a a1 b (f: * -> *) z (f1: * -> *). (a -> a1) -> a -> Layout.Format.Format b -> Builtin.List a -> ((a -> Layout.Report.Report f z) -> Layout.Report.Selector f1 z a -> Layout.Report.Report f1 z) -> Layout.Report.Report f1 z
+dynamicPivot : forall (k: rho) (v: rho). Builtin.List (Builtin.Record k) -> (Builtin.Record k -> Layout.Report.Fulcrum.Dynamic.PivotColumn v) -> Builtin.Maybe (Layout.Report.PivotSpec k v)
+dynamicPivot' : forall (k: rho) (v: rho). Builtin.List (Builtin.Record k) -> (Builtin.Record k -> Layout.Report.Fulcrum.Dynamic.PivotColumn v) -> Layout.Report.PivotSpec k v
+emptyReport : forall (f: * -> *) z. Layout.Report.Report f z
+fMA : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.Maybe (Layout.Report.Report f z) -> f (Builtin.Maybe z)
+fixW : forall (f: * -> *) z. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Report f z -> Layout.Report.Report f z
+floatSides : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+flow : forall (f: * -> *) z. Layout.Report.Direction.Direction -> Builtin.List (Layout.Report.Report f z) -> Layout.Report.Report f z
+flowW : forall (f: * -> *) z. Layout.Report.Direction.Direction -> Layout.Writer.Writer f z -> Builtin.List z -> z
+fmt : forall a (f: * -> *) z. Layout.Format.Format a -> a -> Layout.Report.Report f z
+fmt' : forall a (f: * -> *) z. Builtin.List Layout.Font.Font -> Builtin.Maybe Builtin.Int -> Layout.Format.Format a -> a -> Layout.Report.Report f z
+foregroundColor : forall (f: * -> *) z. Layout.Color.Color -> Layout.Report.Report f z -> Layout.Report.Report f z
+foregroundColorW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Layout.Color.Color -> z -> z
+formatDate : forall (f: * -> *) z. Builtin.Date -> (Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Report f z
+formatDateAtom : forall (f: * -> *) z. Builtin.Date -> Layout.Report.Report f z
+formatDateFn : forall (f: * -> *) z. ((Builtin.Date -> Builtin.String) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+formatDateRange : forall (f: * -> *) z. (Builtin.Date, Builtin.Date) -> (Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Report f z
+formatDateRangeFn : forall (f: * -> *) z. (((Builtin.Date, Builtin.Date) -> Builtin.String) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+grid : forall (f: * -> *) z. Builtin.List (Builtin.List (Layout.Report.Report f z)) -> Layout.Report.Report f z
+gridRow : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z -> Builtin.List (Layout.Report.Report f z)
+gridSelectors : forall a (f: * -> *) z. (a -> (Builtin.List (Layout.Report.Report f z) -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z) -> Builtin.List a -> (Layout.Report.Report f z -> Layout.Report.Selector f z (Builtin.List a) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+gridSelectorsH : forall (f: * -> *) z a. Builtin.List (Layout.Report.Report f z) -> (a -> (Builtin.List (Layout.Report.Report f z) -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z) -> Builtin.List a -> (Layout.Report.Report f z -> Layout.Report.Selector f z (Builtin.List a) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+gridW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.List (Builtin.List z) -> z
+h : forall (f: * -> *) z. Builtin.Int -> Builtin.String -> Layout.Report.Report f z
+h1 : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z
+h2 : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z
+h3 : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z
+h4 : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z
+h5 : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z
+header : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z -> Layout.Report.Report f z
+header' : forall a (f: * -> *) z. Layout.Format.Format a -> a -> Layout.Report.Report f z -> Layout.Report.Report f z
+headerDR : forall (f: * -> *) z. (Builtin.Date, Builtin.Date) -> Layout.Report.Report f z -> Layout.Report.Report f z
+headerScroll : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z -> Layout.Report.Report f z
+hflow : forall (f: * -> *) z. Builtin.List (Layout.Report.Report f z) -> Layout.Report.Report f z
+hflowLabeled : forall (f: * -> *) z. Builtin.List (Builtin.String, Layout.Report.Report f z) -> Layout.Report.Report f z
+hflowPad : forall (f: * -> *) a. Builtin.List Native.Magnitude.ErasedMagnitude -> Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+hflowPad1 : forall (f: * -> *) a. Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+hflowPad2 : forall (f: * -> *) a. Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+hflowPad3 : forall (f: * -> *) a. Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+hflowStyle : forall (f: * -> *) z. Builtin.String -> Builtin.List (Layout.Report.Report f z) -> Layout.Report.Report f z
+hline : forall (f: * -> *) z. Layout.Report.Report f z
+hpad1 : forall (f: * -> *) z. Layout.Report.Report f z
+hpad2 : forall (f: * -> *) z. Layout.Report.Report f z
+hsep : forall (f: * -> *) z. Layout.Report.Report f z -> Builtin.List (Layout.Report.Report f z) -> Layout.Report.Report f z
+hspace1 : forall (f: * -> *) z. Layout.Report.Report f z
+hspace2 : forall (f: * -> *) z. Layout.Report.Report f z
+hspace3 : forall (f: * -> *) z. Layout.Report.Report f z
+hspace3' : forall (f: * -> *) z. Layout.Report.Report f z
+hspace4 : forall (f: * -> *) z. Layout.Report.Report f z
+hspan : forall (f: * -> *) z. Builtin.List (Layout.Report.Report f z) -> Layout.Report.Report f z
+hspanPad : forall (f: * -> *) a. Builtin.List Native.Magnitude.ErasedMagnitude -> Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+hspanPad1 : forall (f: * -> *) a. Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+hspanPad2 : forall (f: * -> *) a. Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+hspanPad3 : forall (f: * -> *) a. Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+hspanWeighted : forall (f: * -> *) z. Builtin.List (Builtin.List Native.Magnitude.ErasedMagnitude, Layout.Report.Report f z) -> Layout.Report.Report f z
+hspanWeighted' : forall (f: * -> *) z. Builtin.List (Builtin.Double, Layout.Report.Report f z) -> Layout.Report.Report f z
+hstrut : forall (f: * -> *) z. Layout.Report.Report f z
+hstrutWide : forall (f: * -> *) z. Layout.Report.Report f z
+hugBottom : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+hugE : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+hugL : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+hugLeft : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+hugN : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+hugR : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+hugRight : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+hugS : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+hugTop : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+hugW : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+img : forall (f: * -> *) a. Builtin.String -> Builtin.Maybe Builtin.String -> Layout.Report.Report f a
+input : forall (f: * -> *) z. Builtin.String -> (Layout.Report.Report f z -> Layout.Report.Selector f z Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Report f z
+inputLateBinding : forall (f: * -> *) z. Builtin.String -> ((Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Selector f z Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Report f z
+input_ : forall (f: * -> *) z. (Layout.Writer.Writer f z -> Builtin.String -> Native.Function.Function3 (Native.Function.Function1 Builtin.String z) (Layout.Writer.SelectorEvent z) (Native.Function.Function1 (Native.Function.Function1 Builtin.String (f z)) (f z)) (f z) -> f z) -> Builtin.String -> ((Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Selector f z Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Report f z
+intInput : forall (f: * -> *) z. Builtin.Int -> (Layout.Report.Report f z -> Layout.Report.Selector f z (Builtin.Maybe Builtin.Int) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+intInputLateBinding : forall (f: * -> *) z. Builtin.Int -> ((Builtin.Int -> Layout.Report.Report f z) -> Layout.Report.Selector f z (Builtin.Maybe Builtin.Int) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+intInputSection : forall (f: * -> *) z. Builtin.Int -> (Layout.Report.Report f z -> Layout.Report.Report f z) -> (Builtin.Int -> Layout.Report.Report f z) -> Layout.Report.Report f z
+intInputSectionV : forall (f: * -> *) z. Builtin.Int -> (Builtin.String -> Either.Either Builtin.String Builtin.Int) -> (Layout.Report.Report f z -> Layout.Report.Report f z) -> (Builtin.Int -> Layout.Report.Report f z) -> Layout.Report.Report f z
+intInputV : forall a a1 (f: * -> *) z. a -> (Builtin.String -> Either.Either Builtin.String a1) -> (Layout.Report.Report f z -> Layout.Report.Selector f z (Either.Either Builtin.String a1) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+keyValueTabular : forall a b (k: rho) (v: rho) (i: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (Builtin.Relational rel, r <- (k, v, i)) => Layout.Report.SoftRelation.SoftRelation a b k v -> Builtin.Maybe (Layout.Legend.Legend i) -> rel r -> Layout.Report.Report f z
+keyedDrilldown : forall (p: rho) id (c: rho) (k: rho) a (pr2: rho -> * -> *) (v: rho) b (r: rho) (rel: rho -> *) (r1: rho) (f: * -> *) z. (exists (AsPresentation: (rho -> * -> *) -> a1) (o: rho). r1 <- (k, v, p, c, r), r <- (r), Builtin.Relational rel, o <- (v, k), AsPresentation Builtin.Field, AsPresentation pr2) => Builtin.Field p id -> Builtin.Field c id -> Builtin.Field k a -> pr2 v b -> (Builtin.String, Builtin.Field r Builtin.String) -> rel r1 -> Layout.Report.Report f z
+labeled : forall (f: * -> *) z. Builtin.String -> Builtin.String -> Layout.Report.Report f z
+lightGrayUnderline : forall (f: * -> *) a. Layout.Report.Report f a -> Layout.Report.Report f a
+line : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). Layout.Presentation.AsPresentation s, r <- (o, yr, xr, sr), AsOp x, AsOp y, Builtin.Relational rel) => s sr sa -> x xr xa -> y yr ya -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+link : forall (f: * -> *) z. Builtin.String -> Builtin.String -> Layout.Report.Report f z
+linkText : Builtin.String -> Builtin.String -> Builtin.String
+lit : forall z (f: * -> *). z -> Layout.Report.Report f z
+lmap : forall a b. (a -> b) -> Builtin.List a -> Builtin.List b
+majorPadding : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+makeSelectors : forall a (f: * -> *) z. (a -> (Layout.Report.Report f z -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z) -> Builtin.List a -> (Layout.Report.Report f z -> Layout.Report.Selector f z (Builtin.List a) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+makeSelectors' : forall b (f: * -> *) z a. (Builtin.List b -> Layout.Report.Report f z) -> (a -> (b -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z) -> Builtin.List a -> (Layout.Report.Report f z -> Layout.Report.Selector f z (Builtin.List a) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+makeSelectorsLateBinding : forall b (f: * -> *) z a. (Builtin.List b -> Layout.Report.Report f z) -> (a -> ((a -> b) -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z) -> Builtin.List a -> ((Builtin.List a -> Layout.Report.Report f z) -> Layout.Report.Selector f z (Builtin.List a) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+mapSelector : forall a b (f: * -> *) z. (a -> b) -> Layout.Report.Selector f z a -> Layout.Report.Selector f z b
+mapSignal : forall a b (f: * -> *) z. (a -> b) -> ((a -> Layout.Report.Report f z) -> Layout.Report.Report f z) -> (b -> Layout.Report.Report f z) -> Layout.Report.Report f z
+markdownShown : forall a (f: * -> *) z. (Builtin.Primitive a, Builtin.Unscaled a) => a -> Layout.Report.Report f z
+maxA : forall (f: * -> *) z. Builtin.List Native.Magnitude.Area -> Layout.Report.Report f z -> Layout.Report.Report f z
+maxAreaW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.List Native.Magnitude.Area -> z -> z
+maxH : forall (f: * -> *) z. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Report f z -> Layout.Report.Report f z
+maxHeightW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.List Native.Magnitude.ErasedMagnitude -> z -> z
+maxW : forall (f: * -> *) z. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Report f z -> Layout.Report.Report f z
+maxWidthW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.List Native.Magnitude.ErasedMagnitude -> z -> z
+noTablePagination : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+noTableScrolling : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+normalFont : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+number : forall a (f: * -> *) z. Builtin.PrimitiveNum a => a -> Layout.Report.Report f z
+on : forall z (f: * -> *) a. Layout.Writer.SelectorEvent z -> Layout.Report.Selector f z a -> (a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+onEvent : forall z (f: * -> *). Layout.Writer.SelectorEvent z -> Layout.Report.Report f z -> Layout.Report.Report f z
+orderedScanner : forall (k: rho) (rel: rho -> *) (f: * -> *) z. Either.Either (Relation.Sort.Sort k) (Builtin.Record k -> Builtin.Record k -> Ord.Ordering) -> rel k -> (Builtin.List (Builtin.Record k) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+pad : forall (f: * -> *) a. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Report f a -> Layout.Report.Report f a
+pad' : forall a (f: * -> *) b. (Layout.BorderOptions.BorderOptions a -> Layout.BorderOptions.BorderOptions (Builtin.List Native.Magnitude.ErasedMagnitude)) -> Layout.Report.Report f b -> Layout.Report.Report f b
+pad1 : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+pad2 : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+pad3 : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+pad4 : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+padBottom : forall (f: * -> *) a. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Report f a -> Layout.Report.Report f a
+padLeft : forall (f: * -> *) a. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Report f a -> Layout.Report.Report f a
+padRight : forall (f: * -> *) a. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Report f a -> Layout.Report.Report f a
+padSides : forall (f: * -> *) a. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Report f a -> Layout.Report.Report f a
+padTop : forall (f: * -> *) a. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Report f a -> Layout.Report.Report f a
+padW : forall (f: * -> *) a b. Layout.Writer.Writer f a -> (Layout.BorderOptions.BorderOptions b -> Layout.BorderOptions.BorderOptions (Builtin.List Native.Magnitude.ErasedMagnitude)) -> a -> a
+parseInput : forall a (f: * -> *) z. (Builtin.String -> Builtin.Maybe a) -> Builtin.String -> (Layout.Report.Report f z -> Layout.Report.Selector f z (Builtin.Maybe a) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+parseInputLateBinding : forall a (f: * -> *) z. (Builtin.String -> Builtin.Maybe a) -> Builtin.String -> ((Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Selector f z (Builtin.Maybe a) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+parseInputV : forall a (f: * -> *) z. (Builtin.String -> Either.Either Builtin.String a) -> Builtin.String -> (Layout.Report.Report f z -> Layout.Report.Selector f z (Either.Either Builtin.String a) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+parseInputVLateBinding : forall a (f: * -> *) z. (Builtin.String -> Either.Either Builtin.String a) -> Builtin.String -> ((Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Selector f z (Either.Either Builtin.String a) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+percent : forall a (f: * -> *) z. Builtin.PrimitiveNum a => a -> Layout.Report.Report f z
+pieChart : forall nm (labels: rho) (prl: rho -> * -> *) l (prv: rho -> * -> *) (value: rho) d (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Builtin.Relational rel, r <- (labels, value, o)) => Builtin.String -> Builtin.Maybe (Layout.Report.Atomic.Atomic nm) -> Layout.Chart.Unsafe.ChartLegendOptions# -> Builtin.List (Builtin.Record labels, Layout.Color.Color) -> Layout.Chart.Unsafe.ChartRenderHints# -> prl labels l -> prv value d -> rel r -> Layout.Report.Report f z
+pivotRow : forall (v: rho). Layout.Report.Fulcrum.Dynamic.PivotColumn v -> Relation.Row.Row v
+pivotTabular : forall (k: rho) (i: rho) (v: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (r <- (k, v, i), Builtin.Relational rel) => Relation.Row.Row k -> Either.Either (Relation.Sort.Sort k) (Builtin.Record k -> Builtin.Record k -> Ord.Ordering) -> Builtin.Maybe (Layout.Legend.Legend i) -> (Builtin.Record k -> Layout.Report.Fulcrum.Dynamic.PivotColumn v) -> rel r -> Layout.Report.Report f z
+pivotTabular' : forall (k: rho) (v: rho) (i: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (r <- (k, v, i), Builtin.Relational rel) => Layout.Report.Fulcrum.Dynamic.DynamicFulcrum k v -> Builtin.Maybe (Layout.Legend.Legend i) -> rel r -> Layout.Report.Report f z
+prefA : forall (f: * -> *) z. Builtin.List Native.Magnitude.Area -> Layout.Report.Report f z -> Layout.Report.Report f z
+prefAreaW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.List Native.Magnitude.Area -> z -> z
+prefH : forall (f: * -> *) z. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Report f z -> Layout.Report.Report f z
+prefHeightW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.List Native.Magnitude.ErasedMagnitude -> z -> z
+prefW : forall (f: * -> *) z. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Report f z -> Layout.Report.Report f z
+prefWidthW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.List Native.Magnitude.ErasedMagnitude -> z -> z
+radioButton : forall a (f: * -> *) z. (a -> Builtin.String) -> a -> Builtin.List a -> (Layout.Report.Report f z -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+radioButtonLateBinding : forall a (f: * -> *) z. (a -> Builtin.String) -> a -> Builtin.List a -> ((a -> Layout.Report.Report f z) -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+remoteSelection : forall (rel: rho -> *) (a: rho) (b: rho) c (f: * -> *) z. (exists (d: rho). a <- (b, d), Builtin.Relational rel) => rel a -> Builtin.Field b c -> Layout.Report.Report f z -> (Builtin.List (Builtin.Record a) -> Builtin.Record a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+remoteSelectionDescending : forall (rel: rho -> *) (a: rho) (b: rho) c (f: * -> *) z. (exists (d: rho). a <- (b, d), Builtin.Relational rel) => rel a -> Builtin.Field b c -> Layout.Report.Report f z -> (Builtin.List (Builtin.Record a) -> Builtin.Record a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+reportEndo : forall (f: * -> *) z a. (Layout.Writer.Writer f z -> a -> z -> z) -> a -> Layout.Report.Report f z -> Layout.Report.Report f z
+rounded : forall a (f: * -> *) z. Builtin.PrimitiveNum a => Builtin.Int -> a -> Layout.Report.Report f z
+runReport : forall (f: * -> *) z. Layout.Writer.Writer f z -> Layout.Report.Report f z -> f z
+runScan : forall r (f: * -> *) z. (Control.Monad.Monad (Control.Monad.Cont.Cont r) -> Control.Monad.Cont.Cont (Layout.Report.Report f z) (Layout.Report.Report f z)) -> Layout.Report.Report f z
+scaled : forall a. Builtin.Scaled a => Relation.Sort.SortOrder -> Builtin.Maybe a -> Builtin.Maybe a -> Layout.Report.DisplayScale -> Layout.Chart.Type.Axis a
+scan : forall (rel: rho -> *) (r: rho) monad (f: * -> *) z. Builtin.Relational rel => rel r -> monad -> Control.Monad.Cont.Cont (Layout.Report.Report f z) (Builtin.List (Builtin.Record r))
+scanInOrder : forall (s: a) (rel: rho -> *) (r: rho) monad (f: * -> *) z. (Builtin.Relational rel, Has r s) => Relation.Sort.Sort s -> rel r -> monad -> Control.Monad.Cont.Cont (Layout.Report.Report f z) (Builtin.List (Builtin.Record r))
+scanRelation : forall (rel: rho -> *) (r: rho) (f: * -> *) z. Builtin.Relational rel => rel r -> (Builtin.List (Builtin.Record r) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+scanRelationInOrder : forall (s: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (Builtin.Relational rel, Has r s) => Relation.Sort.Sort s -> rel r -> (Builtin.List (Builtin.Record r) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+scanRelationW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Native.List.List# (Native.Pair.Pair# Builtin.String Relation.Sort.SortOrder#) -> Native.Relation.Relation# -> (Builtin.List Native.Record.Record# -> f z) -> f z
+scatter : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp x, AsOp y, r <- (o, yr, xr, sr), Builtin.Relational rel, Layout.Presentation.AsPresentation s) => s sr sa -> x xr xa -> y yr ya -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+scroll : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+scrollSection : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+scrollUnpadded : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+section : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+sectionContent : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+sectionHeader : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+sectionHeaderAny : forall (f: * -> *) z. Layout.Report.Report f z -> (Layout.Report.Report f z -> Layout.Report.Report f z) -> Layout.Report.Report f z
+sectionHeaderMajor : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+sectionHeaderNew : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+sectionRibbon : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+sectionUnderlined : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+sectionUnderlinedMajor : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+selector : forall a (f: * -> *) z. Layout.Report.SelectorMode.SelectorMode -> (a -> Builtin.String) -> a -> Builtin.List a -> ((a -> Layout.Report.Report f z) -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+selector' : forall a a1 b (f: * -> *) z (f1: * -> *). Layout.Report.SelectorMode.SelectorMode -> (a -> a1) -> a -> Layout.Format.Format b -> Builtin.List a -> ((a -> Layout.Report.Report f z) -> Layout.Report.Selector f1 z a -> Layout.Report.Report f1 z) -> Layout.Report.Report f1 z
+selectorAp : forall (f: * -> *) z. Control.Ap.Ap (Layout.Report.Selector f z)
+selectorFunctor : forall (f: * -> *) z. Control.Functor.Functor (Layout.Report.Selector f z)
+selectorSection : forall (f: * -> *) z a. ((Layout.Report.Report f z -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z) -> (Layout.Report.Report f z -> Layout.Report.Report f z) -> (a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+selectorSectionMajor : forall (f: * -> *) z a. ((Layout.Report.Report f z -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z) -> (Layout.Report.Report f z -> Layout.Report.Report f z) -> (a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+seqLW : forall (f: * -> *) a b. Layout.Writer.Writer f a -> Builtin.List (f b) -> f (Builtin.List b)
+seqMW : forall (f: * -> *) a b. Layout.Writer.Writer f a -> Builtin.Maybe (f b) -> f (Builtin.Maybe b)
+sequenceSelector : forall (f: * -> *) z a. Builtin.List (Layout.Report.Selector f z a) -> Layout.Report.Selector f z (Builtin.List a)
+series : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, r <- (sr, xr, yr, o), Builtin.Relational rel, AsOp x, AsPresentation s) => (s sr sa -> x xr xa -> y yr ya -> rel r -> Layout.Chart.Type.ChartSeries xa ya) -> s sr sa -> x xr xa -> y yr ya -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+showingValues : forall (pr: rho -> * -> *) (v: rho) b. AsPresentation pr => pr v b -> ((pr v b, Builtin.Maybe (Layout.SortStrategy.SortStrategy v)), Layout.SortPriority.SortPriority)
+sideTabbed : forall (f: * -> *) z. Builtin.List (Builtin.String, Layout.Report.Report f z) -> Layout.Report.Report f z
+sideTabbedW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.List (Builtin.String, z) -> z
+simpleInput_ : forall (f: * -> *) z. (Layout.Writer.Writer f z -> Builtin.String -> Native.Function.Function3 (Native.Function.Function1 Builtin.String z) (Layout.Writer.SelectorEvent z) (Native.Function.Function1 (Native.Function.Function1 Builtin.String (f z)) (f z)) (f z) -> f z) -> Builtin.String -> (Layout.Report.Report f z -> Layout.Report.Selector f z Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Report f z
+simpleSelector : forall a (f: * -> *) z. Layout.Report.SelectorMode.SelectorMode -> (a -> Builtin.String) -> a -> Builtin.List a -> (Layout.Report.Report f z -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+simpleSelector' : forall a a1 b (f: * -> *) z (f1: * -> *). Layout.Report.SelectorMode.SelectorMode -> (a -> a1) -> a -> Layout.Format.Format b -> Builtin.List a -> (Layout.Report.Report f z -> Layout.Report.Selector f1 z a -> Layout.Report.Report f1 z) -> Layout.Report.Report f1 z
+slider : forall a (f: * -> *) z. (a -> Builtin.String) -> a -> Builtin.List a -> (Layout.Report.Report f z -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+sliderLateBinding : forall a (f: * -> *) z. (a -> Builtin.String) -> a -> Builtin.List a -> ((a -> Layout.Report.Report f z) -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+softKeySort# : forall (k: rho). Either.Either (Relation.Sort.Sort k) (Builtin.Record k -> Builtin.Record k -> Builtin.Bool) -> Native.Either.Either# (Native.List.List# (Native.Pair.Pair# Builtin.String Relation.Sort.SortOrder#)) (Native.Function.Function2 Native.Record.ScalaRecord# Native.Record.ScalaRecord# Native.Bool.Bool#)
+softRelation : forall (pr1: rho -> * -> *) (k: rho) a (pr2: rho -> * -> *) (v: rho) b. (exists (o: rho). AsPresentation pr2, AsPresentation pr1, o <- (k, v)) => pr1 k a -> Either.Either (Relation.Sort.Sort k) (Builtin.Record k -> Builtin.Record k -> Ord.Ordering) -> (Builtin.Record k -> ((pr2 v b, Builtin.Maybe (Layout.SortStrategy.SortStrategy v)), Layout.SortPriority.SortPriority)) -> Layout.Report.SoftRelation.SoftRelation a b k v
+softValueCtor# : forall (k: rho) (v: rho) b. (Builtin.Record k -> ((Layout.Presentation.Presentation v b, Builtin.Maybe (Layout.SortStrategy.SortStrategy v)), Layout.SortPriority.SortPriority)) -> Native.Function.Function1 Native.Record.ScalaRecord# (Native.Pair.Pair# (Native.Pair.Pair# (Layout.Presentation.Presentation v b) (Layout.SortStrategy.Unsafe.SortStrategy# v)) Layout.SortPriority.SortPriority#)
+space : forall (f: * -> *) z. Layout.Report.Report f z
+space2 : forall (f: * -> *) z. Layout.Report.Report f z
+space3 : forall (f: * -> *) z. Layout.Report.Report f z
+spanW : forall (f: * -> *) z. Layout.Report.Direction.Direction -> Layout.Writer.Writer f z -> Builtin.List (Builtin.List Native.Magnitude.ErasedMagnitude, z) -> z
+spanning : forall (f: * -> *) z. Layout.Report.Direction.Direction -> Builtin.List (Builtin.List Native.Magnitude.ErasedMagnitude, Layout.Report.Report f z) -> Layout.Report.Report f z
+stack : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+stackAll : forall (f: * -> *) z. Builtin.List (Layout.Report.Report f z) -> Layout.Report.Report f z -> Layout.Report.Report f z
+stackAllPadded : forall (f: * -> *) z. Builtin.List Native.Magnitude.ErasedMagnitude -> Builtin.List (Layout.Report.Report f z) -> Layout.Report.Report f z -> Layout.Report.Report f z
+stackIntInput : forall (f: * -> *) z. (Layout.Report.Report f z -> Layout.Report.Report f z) -> Builtin.Int -> (Layout.Report.Report f z -> Layout.Report.Report f z) -> (Builtin.Int -> Layout.Report.Report f z) -> Layout.Report.Report f z
+stackIntInputH5 : forall (f: * -> *) z. Builtin.Int -> (Layout.Report.Report f z -> Layout.Report.Report f z) -> (Builtin.Int -> Layout.Report.Report f z) -> Layout.Report.Report f z
+stackIntInputH5V : forall (f: * -> *) z. Builtin.Int -> (Builtin.String -> Either.Either Builtin.String Builtin.Int) -> (Layout.Report.Report f z -> Layout.Report.Report f z) -> (Builtin.Int -> Layout.Report.Report f z) -> Layout.Report.Report f z
+stackIntInputV : forall (f: * -> *) z. (Layout.Report.Report f z -> Layout.Report.Report f z) -> (Builtin.String -> Layout.Report.Report f z) -> Builtin.Int -> (Builtin.String -> Either.Either Builtin.String Builtin.Int) -> (Layout.Report.Report f z -> Layout.Report.Report f z) -> (Builtin.Int -> Layout.Report.Report f z) -> Layout.Report.Report f z
+stackLeft : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+stackPad1 : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+stackPad2 : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+stackPad3 : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+stackPadded : forall (f: * -> *) z. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+stackRight : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+stackSelector : forall (f: * -> *) z a. (Layout.Report.Report f z -> Layout.Report.Report f z) -> ((Layout.Report.Report f z -> Layout.Report.Selector f z a -> Layout.Report.Report f z) -> Layout.Report.Report f z) -> (Layout.Report.Report f z -> Layout.Report.Report f z) -> (a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+stackedArea : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). Builtin.Scaled ya, AsOp y, Layout.Presentation.AsPresentation s, AsOp x, r <- (o, yr, xr, sr), Builtin.Relational rel) => s sr sa -> x xr xa -> y yr ya -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+stackedBar : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). Layout.Presentation.AsPresentation s, Builtin.Relational rel, Builtin.Scaled ya, AsOp y, r <- (o, yr, xr, sr), AsOp x) => s sr sa -> x xr xa -> y yr ya -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+step : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, r <- (o, yr, xr, sr), Builtin.Relational rel, AsOp x, Layout.Presentation.AsPresentation s) => s sr sa -> x xr xa -> y yr ya -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+stringAreaInput : forall (f: * -> *) z. Builtin.String -> (Layout.Report.Report f z -> Layout.Report.Selector f z Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Report f z
+stringAreaInputLateBinding : forall (f: * -> *) z. Builtin.String -> ((Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Selector f z Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Report f z
+stringInput : forall (f: * -> *) z. Builtin.String -> (Layout.Report.Report f z -> Layout.Report.Selector f z Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Report f z
+stringInputLateBinding : forall (f: * -> *) z. Builtin.String -> ((Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Selector f z Builtin.String -> Layout.Report.Report f z) -> Layout.Report.Report f z
+structuredBar : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (er: rho) (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, Layout.Presentation.AsPresentation s, Builtin.Relational rel, Has r er, AsOp x, r <- (o, yr, xr, sr)) => Layout.Report.SeriesStructure -> s sr sa -> x xr xa -> y yr ya -> Layout.PresRow.PresRow er -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+structuredLine : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, Layout.Presentation.AsPresentation s, AsOp x, Builtin.Relational rel, r <- (o, yr, xr, sr)) => Layout.Report.SeriesStructure -> s sr sa -> x xr xa -> y yr ya -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+style : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z -> Layout.Report.Report f z
+styleBox : forall (l: rho) (xv: rho) a (yv: rho) b (av: rho) c (px: rho) (py: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (Builtin.Relational rel, l <- (xv, yv, av, other), r <- (px, py, xv, yv, av, other)) => (Layout.Legend.Legend l, Builtin.Field xv a, Builtin.Field yv b, Builtin.Field av c) -> Builtin.Bool -> Builtin.List Builtin.String -> Builtin.List Builtin.String -> Native.List.List# (Native.Pair.Pair# Builtin.Double Builtin.Double) -> Native.List.List# (Native.Pair.Pair# Builtin.Double Builtin.Double) -> Builtin.Field px Builtin.Int -> Builtin.Field py Builtin.Int -> rel r -> Layout.Report.Report f z
+styleboxW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Layout.Legend.Legend# Builtin.String -> Native.Bool.Bool# -> Builtin.String -> Builtin.String -> Builtin.String -> Builtin.List Builtin.String -> Builtin.List Builtin.String -> Native.List.List# (Native.Pair.Pair# Builtin.Double Builtin.Double) -> Native.List.List# (Native.Pair.Pair# Builtin.Double Builtin.Double) -> Builtin.String -> Builtin.String -> Native.Relation.Relation# -> f z
+summaryDetail : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+surround : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+tabbed : forall (f: * -> *) z. Builtin.List (Builtin.String, Layout.Report.Report f z) -> Layout.Report.Report f z
+tabbedW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.List (Builtin.String, z) -> z
+tableW : forall (f: * -> *) z. Layout.Writer.Writer f z -> Builtin.Maybe (Layout.Legend.Legend# Builtin.String) -> Native.List.List# (Native.Pair.Pair# Builtin.String Relation.Sort.SortOrder#) -> Native.Bool.Bool# -> Native.Relation.Relation# -> f z
+tabular : forall (r: rho) (rel: rho -> *) (f: * -> *) z. Builtin.Relational rel => Builtin.Maybe (Layout.Legend.Legend r) -> rel r -> Layout.Report.Report f z
+tabularTransposed : forall (r: rho) (rel: rho -> *) (f: * -> *) z. Builtin.Relational rel => Builtin.Maybe (Layout.Legend.Legend r) -> rel r -> Layout.Report.Report f z
+text : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z
+textNoMarkdown : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z
+textVerbatim : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z
+timeSeriesChart : forall x y (pr1: rho -> * -> *) (r1: rho) a (op2: rho -> * -> *) (r2: rho) d (op3: rho -> * -> *) (r3: rho) v (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (t: rho). AsOp op2, Builtin.Relational rel, Builtin.Scaled v, Builtin.Scaled d, AsOp op3, r <- (r1, r2, r3, t), AsPresentation pr1) => Builtin.Maybe Builtin.String -> Builtin.Maybe (Layout.Report.Atomic.Atomic x) -> Builtin.Maybe (Layout.Report.Atomic.Atomic y) -> (pr1 r1 a -> op2 r2 d -> op3 r3 v -> rel r -> Layout.Chart.Type.ChartSeries d v) -> pr1 r1 a -> op2 r2 d -> op3 r3 v -> rel r -> Layout.Report.Report f z
+titled : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+toDisplayScale : Layout.Report.DisplayScale -> Layout.Chart.Unsafe.DisplayScale#
+toSeriesStructure# : Layout.Report.SeriesStructure -> Layout.Chart.Unsafe.SeriesStructure#
+topSection : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z -> Layout.Report.Report f z
+travLW : forall (f: * -> *) a b c. Layout.Writer.Writer f a -> (b -> f c) -> Builtin.List b -> f (Builtin.List c)
+travTW : forall (f: * -> *) a b c. Layout.Writer.Writer f a -> (b -> f c) -> Tree.Tree b -> f (Tree.Tree c)
+tree : forall (f: * -> *) z. Layout.Report.Report f z -> Tree.Tree (Layout.Report.Report f z) -> Layout.Report.Report f z
+treemapChart : forall (r1: rho) id (r2: rho) (prl: rho -> * -> *) (labels: rho) l (pri: rho -> * -> *) (ivalue: rho) d (prs: rho -> * -> *) (svalue: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). AsPresentation pri, AsPresentation prl, r <- (labels, ivalue, svalue, r1, r2, o), AsPresentation prv, Builtin.PrimitiveNum d, Builtin.Relational rel) => Builtin.Field r1 id -> Builtin.Field r2 id -> prl labels l -> pri ivalue d -> prs svalue d -> rel r -> Layout.Report.Report f z
+unitSelector : forall a (f: * -> *) z. a -> Layout.Report.Selector f z a
+unscaled : forall a. (Builtin.Unscaled a, Builtin.Primitive a) => Relation.Sort.SortOrder -> Layout.Chart.Type.Axis a
+unscaled' : forall a b. Builtin.Unscaled (a, b) => Relation.Sort.SortOrder -> Relation.Sort.SortOrder -> Layout.Chart.Type.Axis (a, b)
+unweighted : forall a b. Builtin.List a -> Builtin.List (Builtin.Maybe b, a)
+upgradeAxisLabel : forall t. Builtin.Maybe (Layout.Report.Atomic.Atomic t) -> Layout.Chart.AxisLabel
+using : forall (f: * -> *) z a. Layout.Report.Selector f z a -> (a -> Layout.Report.Report f z) -> Layout.Report.Report f z
+val : forall a. Builtin.Primitive a => a -> Layout.Report.Atomic.Atomic a
+valueGrid : forall (f: * -> *) z. Builtin.List (Builtin.String, Layout.Report.Report f z) -> Layout.Report.Report f z
+valueGrid' : forall (f: * -> *) z. Builtin.List (Builtin.String, Layout.Report.Report f z) -> Layout.Report.Report f z
+valueGridN : forall (f: * -> *) z. Builtin.List (Builtin.List (Builtin.String, Layout.Report.Report f z)) -> Layout.Report.Report f z
+valueGridNPad : forall (f: * -> *) a b c. Builtin.List (Builtin.List (Builtin.String, Layout.Report.Report f a)) -> b -> c -> Layout.Report.Report f a
+valueGridR : forall (f: * -> *) z. Builtin.List (Layout.Report.Report f z, Layout.Report.Report f z) -> Layout.Report.Report f z
+valueTickLabels : forall (yr: rho) sa' xa' (y: rho -> * -> *) ya relr xa. Builtin.Unscaled ya => Builtin.List (Builtin.Record yr, Builtin.Record yr) -> (sa' -> xa' -> y yr ya -> relr -> Layout.Chart.Type.ChartSeries xa ya) -> sa' -> xa' -> y yr ya -> relr -> Layout.Chart.Type.ChartSeries xa ya
+valueTooltipLabels : forall (ytr: rho) yta sa' xa' ya' (rel: rho -> *) (r: rho) xa ya. Has r ytr => Layout.Presentation.Presentation ytr yta -> (sa' -> xa' -> ya' -> rel r -> Layout.Chart.Type.ChartSeries xa ya) -> sa' -> xa' -> ya' -> rel r -> Layout.Chart.Type.ChartSeries xa ya
+vflow : forall (f: * -> *) z. Builtin.List (Layout.Report.Report f z) -> Layout.Report.Report f z
+vflowPad : forall (f: * -> *) a. Builtin.List Native.Magnitude.ErasedMagnitude -> Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+vflowPad1 : forall (f: * -> *) a. Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+vflowPad2 : forall (f: * -> *) a. Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+vflowPad3 : forall (f: * -> *) a. Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+vflowPad4 : forall (f: * -> *) a. Builtin.List (Layout.Report.Report f a) -> Layout.Report.Report f a
+vflowStyle : forall (f: * -> *) z. Builtin.String -> Builtin.List (Layout.Report.Report f z) -> Layout.Report.Report f z
+vline : forall (f: * -> *) z. Layout.Report.Report f z
+vpad1 : forall (f: * -> *) z. Layout.Report.Report f z
+vpad2 : forall (f: * -> *) z. Layout.Report.Report f z
+vsep : forall (f: * -> *) z. Layout.Report.Report f z -> Builtin.List (Layout.Report.Report f z) -> Layout.Report.Report f z
+vsepScroll : forall (f: * -> *) z. Layout.Report.Report f z -> Builtin.List (Layout.Report.Report f z) -> Layout.Report.Report f z
+vspace1 : forall (f: * -> *) z. Layout.Report.Report f z
+vspace2 : forall (f: * -> *) z. Layout.Report.Report f z
+vspace3 : forall (f: * -> *) z. Layout.Report.Report f z
+vspace4 : forall (f: * -> *) z. Layout.Report.Report f z
+vspan : forall (f: * -> *) z. Builtin.List (Layout.Report.Report f z) -> Layout.Report.Report f z
+vspanWeighted : forall (f: * -> *) z. Builtin.List (Builtin.List Native.Magnitude.ErasedMagnitude, Layout.Report.Report f z) -> Layout.Report.Report f z
+vspanWeighted' : forall (f: * -> *) z. Builtin.List (Builtin.Double, Layout.Report.Report f z) -> Layout.Report.Report f z
+vstrut : forall (f: * -> *) z. Layout.Report.Report f z
+vstrutWide : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+wa : forall (f: * -> *) a. Layout.Writer.Writer f a -> Control.Ap.Ap f
+wf : forall (f: * -> *) a. Layout.Writer.Writer f a -> Control.Functor.Functor f
+wholeNumber : forall a (f: * -> *) z. Builtin.PrimitiveNum a => a -> Layout.Report.Report f z
+widget : forall a (f: * -> *) z. a -> (a -> Layout.Report.Report f z) -> (a -> (a -> Layout.Report.Report f z) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+wm : forall (f: * -> *) a. Layout.Writer.Writer f a -> Control.Monad.Monad f
+wrap : forall (f: * -> *) z. Builtin.String -> Layout.Report.Report f z -> Layout.Report.Report f z
+wrapId : forall (f: * -> *) z. Layout.Report.Report f z -> Layout.Report.Report f z
+wrapped : forall a (f: * -> *) z. Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Report.Atomic.Atomic a -> Layout.Report.Report f z
+wrapped' : forall a (f: * -> *) z. Builtin.List Native.Magnitude.ErasedMagnitude -> Builtin.List Layout.Font.Font -> Builtin.Maybe Builtin.Int -> Layout.Report.Atomic.Atomic a -> Layout.Report.Report f z
+wrappedText' : forall a (f: * -> *) z. Builtin.Primitive a => Builtin.List Native.Magnitude.ErasedMagnitude -> Builtin.List Layout.Font.Font -> Builtin.Maybe Builtin.Int -> a -> Layout.Report.Report f z
+wrappedW : forall (f: * -> *) z a. Layout.Writer.Writer f z -> Builtin.List Native.Magnitude.ErasedMagnitude -> Layout.Format.Format a -> a -> z
+wrappedW' : forall (f: * -> *) z a. Layout.Writer.Writer f z -> Builtin.List Native.Magnitude.ErasedMagnitude -> Builtin.List Layout.Font.Font -> Builtin.Maybe Builtin.Int -> Layout.Format.Format a -> a -> z
+zipSelector : forall (f: * -> *) z a b. Layout.Report.Selector f z a -> Layout.Report.Selector f z b -> Layout.Report.Selector f z (a, b)
+zipSignal : forall a (f: * -> *) z b. ((a -> Layout.Report.Report f z) -> Layout.Report.Report f z) -> ((b -> Layout.Report.Report f z) -> Layout.Report.Report f z) -> ((a, b) -> Layout.Report.Report f z) -> Layout.Report.Report f z
+(||) : forall z. Layout.Writer.SelectorEvent z -> Layout.Writer.SelectorEvent z -> Layout.Writer.SelectorEvent z

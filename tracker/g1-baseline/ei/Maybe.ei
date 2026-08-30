@@ -1,0 +1,21 @@
+ap' : forall a b. Builtin.Maybe (a -> b) -> Builtin.Maybe a -> Builtin.Maybe b
+bind' : forall a b. Builtin.Maybe a -> (a -> Builtin.Maybe b) -> Builtin.Maybe b
+catMaybes : forall a. Builtin.List (Builtin.Maybe a) -> Builtin.List a
+getJust : forall a. Builtin.String -> Builtin.Maybe a -> a
+isJust : forall a. Builtin.Maybe a -> Builtin.Bool
+isNothing : forall a. Builtin.Maybe a -> Builtin.Bool
+listToMaybe : forall a. Builtin.List a -> Builtin.Maybe a
+map' : forall a b. (a -> b) -> Builtin.Maybe a -> Builtin.Maybe b
+maybe : forall a b. a -> (b -> a) -> Builtin.Maybe b -> a
+maybeAlt : Control.Alt.Alt Builtin.Maybe
+maybeAp : Control.Ap.Ap Builtin.Maybe
+maybeFunctor : Control.Functor.Functor Builtin.Maybe
+maybeMonad : Control.Monad.Monad Builtin.Maybe
+maybeToList : forall a. Builtin.Maybe a -> Builtin.List a
+maybeTraversable : Control.Traversable.Traversable Builtin.Maybe
+orElse : forall a. a -> Builtin.Maybe a -> a
+orMaybe : forall a. Builtin.Maybe a -> Builtin.Maybe a -> Builtin.Maybe a
+ord : forall a. (a -> a -> Ord.Ordering) -> Builtin.Maybe a -> Builtin.Maybe a -> Ord.Ordering
+plus' : forall a. Builtin.Maybe a -> Builtin.Maybe a -> Builtin.Maybe a
+semigroupMonoid : forall a. (a -> a -> a) -> Control.Monoid.Monoid (Builtin.Maybe a)
+traverse' : forall (f: * -> *) a b. Control.Ap.Ap f -> (a -> f b) -> Builtin.Maybe a -> f (Builtin.Maybe b)

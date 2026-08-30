@@ -1,0 +1,8 @@
+(<$) : forall a b. a -> Builtin.List b -> Builtin.List a
+(<$>) : forall a b. (a -> b) -> Builtin.List a -> Builtin.List b
+(<*>) : forall a b. Builtin.List (a -> b) -> Builtin.List a -> Builtin.List b
+(<<) : forall a b. Builtin.List a -> Builtin.List b -> Builtin.List a
+(>>) : forall a b. Builtin.List a -> Builtin.List b -> Builtin.List b
+(>>=) : forall a b. Builtin.List a -> (a -> Builtin.List b) -> Builtin.List b
+map : forall a b. (a -> b) -> Builtin.List a -> Builtin.List b
+return : forall a. a -> Builtin.List a

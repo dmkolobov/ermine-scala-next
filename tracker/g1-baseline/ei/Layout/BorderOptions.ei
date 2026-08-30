@@ -1,0 +1,7 @@
+bottom : forall a. a -> Layout.BorderOptions.BorderOptions a -> Layout.BorderOptions.BorderOptions a
+defaultBorderOptions : forall a. Layout.BorderOptions.BorderOptions a
+left : forall a. a -> Layout.BorderOptions.BorderOptions a -> Layout.BorderOptions.BorderOptions a
+overAllBorders : forall a b. (a -> b) -> Layout.BorderOptions.BorderOptions a -> Layout.BorderOptions.BorderOptions b
+right : forall a. a -> Layout.BorderOptions.BorderOptions a -> Layout.BorderOptions.BorderOptions a
+setAllBorders : forall a a1. a -> Layout.BorderOptions.BorderOptions a1 -> Layout.BorderOptions.BorderOptions a
+top : forall a. a -> Layout.BorderOptions.BorderOptions a -> Layout.BorderOptions.BorderOptions a

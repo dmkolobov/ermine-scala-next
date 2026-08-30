@@ -1,0 +1,1672 @@
+(!) : forall (a: rho) (b: rho) c. (exists (d: rho). a <- (d, b)) => Record a -> Field b c -> c
+(!*) : forall (r: rho) (h: rho). (exists (t: rho). r <- (h, t)) => Record r -> Row h -> Record h
+(!+_Vector) : forall a. Vector a -> a -> Vector a
+(!=) : forall a. Eq a => a -> a -> Bool
+(!==) : forall a. a -> a -> Bool
+(!=_Predicate) : forall {a} (opl: rho -> a -> *) (a1: rho) (v: a) (opr: rho ->
+(!_Map) : forall k v. Map k v -> k -> v
+(#) : forall (rel: rho -> *) (r: rho) (r1: rho). (exists (c: rho). r <- (r1, c), RelationalComb rel) => rel r -> Row r1 -> rel r1
+($!) : forall a b. (a -> b) -> a -> b
+($) : forall a b. (a -> b) -> a -> b
+(%_Op) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho)
+(&&&) : forall a b c. (a -> b) -> (a -> c) -> a -> (b, c)
+(&&) : Bool -> Bool -> Bool
+(&&_Predicate) : forall (r: rho) (s: rho) (t: rho). RUnion2 t r s => Predicate r -> Predicate s -> Predicate t
+(&'_Mem_Relation) : forall (a: rho) (r: rho). a <- (r, o) => Mem a -> Record r -> Mem a
+(&'_Relation) : forall (a: rho) (r: rho). a <- (r, o) => Relation a -> Record r -> Relation a
+(&_Mem_Relation) : forall (a: rho) (r: rho) (b: rho). (exists (c: rho) (d: rho) (e: rho). a <- (d, c), r <- (e, d), b <- (e, d, c)) => Mem a -> Record r -> Mem b
+(&_Relation) : forall (a: rho) (r: rho) (b: rho). (exists (c: rho) (d: rho) (e: rho). a <- (d, c), r <- (e, d), b <- (e, d, c)) => Relation a -> Record r -> Relation b
+(') : forall a b. (a -> b) -> a -> b
+(*) : forall n. Num n => n -> n -> n
+(**'_Relation) : forall (rel: rho -> *) (a: rho) (r: rho). (relalComb rel, a <- (r, o)) => rel a -> rel r -> rel a
+(***) : forall (f: * -> *) z a b. Selector f z a -> Selector f z b -> Selector f z (a, b)
+(**_Relation) : forall (a: rho -> *) (b: rho) (c: rho) (d: rho). (exists (e: rho) (f: rho) (g: rho). b <- (f, e), c <- (g, f), d <- (g, f, e), RelationalComb a) => a b -> a c -> a d
+(*_Op) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho)
+(*_Primitive) : forall n. PrimitiveNum n => n -> n -> n
+(+) : forall n. Num n => n -> n -> n
+(++) : forall a. List a -> List a -> List a
+(++_Op) : forall (opl: rho -> * -> *) (a: rho) s (opr: rho -> * -> *) (b: rho)
+(++_Record) : forall (a: rho) (b: rho) (c: rho). c <- (a, b) => Record a -> Record b -> Record c
+(++_String) : String -> String -> String
+(++_Vector) : forall a. Vector a -> Vector a -> Vector a
+(+_Op) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho)
+(+_Primitive) : forall n. PrimitiveNum n => n -> n -> n
+(-#) : forall (rel: rho -> *) (r: rho) (r1: rho) (r2: rho). (r <- (r2, r1), RelationalComb rel) => rel r -> Row r1 -> rel r2
+(-) : forall n. Num n => n -> n -> n
+(-_Op) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho)
+(-_Primitive) : forall n. PrimitiveNum n => n -> n -> n
+(-|) : forall a b. a -> (a -> b) -> b
+(.) : forall b c a. (b -> c) -> (a -> b) -> a -> c
+(/) : forall n. Num n => n -> n -> n
+(//_Op) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho)
+(/_Op) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho)
+(/_Primitive) : forall n. PrimitiveNum n => n -> n -> n
+(::#) : forall a. a -> List# a -> List# a
+(::) : forall a. a -> List a -> List a
+(<$>_Either) : forall a b e. (a -> b) -> Either e a -> Either e b
+(<$>_IO) : forall a b. (a -> b) -> IO a -> IO b
+(<$>_List) : forall a b. (a -> b) -> List a -> List b
+(<$>_Maybe) : forall a b. (a -> b) -> Maybe a -> Maybe b
+(<$_Either) : forall a e b. a -> Either e b -> Either e a
+(<$_IO) : forall a b. a -> IO b -> IO a
+(<$_List) : forall a b. a -> List b -> List a
+(<$_Maybe) : forall a b. a -> Maybe b -> Maybe a
+(<) : forall a. Primitive a => a -> a -> Bool
+(<*>_Either) : forall e a b. Either e (a -> b) -> Either e a -> Either e b
+(<*>_IO) : forall a b. IO (a -> b) -> IO a -> IO b
+(<*>_List) : forall a b. List (a -> b) -> List a -> List b
+(<*>_Maybe) : forall a b. Maybe (a -> b) -> Maybe a -> Maybe b
+(<<_Either) : forall e a b. Either e a -> Either e b -> Either e a
+(<<_IO) : forall a b. IO a -> IO b -> IO a
+(<<_List) : forall a b. List a -> List b -> List a
+(<<_Maybe) : forall a b. Maybe a -> Maybe b -> Maybe a
+(<=) : forall a. Primitive a => a -> a -> Bool
+(<=_Predicate) : forall {a} (opl: rho -> a -> *) (a1: rho) (v: a) (opr: rho ->
+(<=_Primitive) : forall a. Primitive a => a -> a -> Bool
+(<_Predicate) : forall (opl: rho -> * -> *) (a: rho) v (opr: rho -> * -> *)
+(<_Primitive) : forall a. Primitive a => a -> a -> Bool
+(<|) : forall a b. (a -> b) -> a -> b
+(==) : forall a. Eq a => a -> a -> Bool
+(===) : forall a. a -> a -> Bool
+(==>) : Bool -> Bool -> Bool
+(==_Predicate) : forall (opl: rho -> * -> *) (a: rho) v (opr: rho -> * -> *)
+(>) : forall a. Primitive a => a -> a -> Bool
+(>=) : forall a. Primitive a => a -> a -> Bool
+(>=_Predicate) : forall {a} (opl: rho -> a -> *) (a1: rho) (v: a) (opr: rho ->
+(>=_Primitive) : forall a. Primitive a => a -> a -> Bool
+(>>=_Either) : forall e a b. Either e a -> (a -> Either e b) -> Either e b
+(>>=_IO) : forall a b. IO a -> (a -> IO b) -> IO b
+(>>=_List) : forall a b. List a -> (a -> List b) -> List b
+(>>=_Maybe) : forall a b. Maybe a -> (a -> Maybe b) -> Maybe b
+(>>_Either) : forall e a b. Either e a -> Either e b -> Either e b
+(>>_IO) : forall a b. IO a -> IO b -> IO b
+(>>_List) : forall a b. List a -> List b -> List b
+(>>_Maybe) : forall a b. Maybe a -> Maybe b -> Maybe b
+(>_Predicate) : forall (opl: rho -> * -> *) (a: rho) v (opr: rho -> * -> *)
+(>_Primitive) : forall a. Primitive a => a -> a -> Bool
+(\) : forall (a: rho) (b: rho) c (d: rho). a <- (d, b) => Record a -> Field b c -> Record d
+(`) : forall a b. a -> (a -> b) -> b
+(b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, AsOp opr, PrimitiveNum n, c <- (d, e, f), b <- (e, f), a <- (d, e)) => opl a n -> opr b n -> Op c n
+(b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, c <- (f, e, d), a <- (e, d), PrimitiveString s, AsOp opr, b <- (f, e)) => opl a s -> opr b s -> Op c s
+(b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opr, b <- (e, f), a <- (d, e), c <- (d, e, f), AsOp opl) => opl a v -> opr b v -> Predicate c
+(b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). b <- (e, f), c <- (d, e, f), AsOp opr, AsOp opl, a <- (d, e)) => opl a v -> opr b v -> Predicate c
+(b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). c <- (d, e, f), b <- (e, f), AsOp opr, AsOp opl, a <- (d, e)) => opl a v -> opr b v -> Predicate c
+(c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opr, c <- (d, e, f), AsOp opl, PrimitiveNum n, b <- (e, f), a <- (d, e)) => opl a n -> opr b n -> Op c n
+(c: rho). (exists (d: rho) (e: rho) (f: rho). a <- (d, e), PrimitiveNum n, b <- (e, f), c <- (d, e, f), AsOp opr, AsOp opl) => opl a n -> opr b n -> Op c n
+(c: rho). (exists (d: rho) (e: rho) (f: rho). a <- (d, e), b <- (e, f), PrimitiveNum n, AsOp opr, c <- (d, e, f), AsOp opl) => opl a n -> opr b n -> Op c n
+(c: rho). (exists (d: rho) (e: rho) (f: rho). a <- (d, e), c <- (d, e, f), PrimitiveNum n, b <- (e, f), AsOp opl, AsOp opr) => opl a n -> opr b n -> Op c n
+(c: rho). (exists (d: rho) (e: rho) (f: rho). b <- (e, f), AsOp opr, c <- (d, e, f), AsOp opl, a <- (d, e), PrimitiveNum n) => opl a n -> opr b n -> Op c n
+(c: rho). (exists (d: rho) (e: rho) (f: rho). c <- (d, e, f), PrimitiveNum n, a <- (d, e), b <- (e, f), AsOp opr, AsOp opl) => opl a n -> opr b n -> Op c n
+(c: rho). (exists (d: rho) (e: rho) (f: rho). c <- (d, e, f), b <- (e, f), AsOp opr, AsOp opl, a <- (d, e), PrimitiveString s) => opl a s -> opr b s -> Op c s
+(c: rho). (exists (d: rho) (e: rho) (f: rho). c <- (d, e, f), b <- (e, f), PrimitiveNum n, a <- (d, e), AsOp opr, AsOp opl) => opl a n -> opr b n -> Op c n
+(e: rho) (t: rho). (t <- (e, b), AsOp d, AsOp a) => a b c -> d e c -> Aggregate t c
+(e: rho) f (r: rho) (g: rho -> *) (h: rho) (i: rho -> *) (j: rho) (f1: * -> *)
+(f: * -> *) z. (Relational rel, r <- (k, v, i)) => SoftRelation a b k v -> Maybe (Legend i) -> rel r -> Report f z
+(f: * -> *) z. (exists (t: rho). AsOp op2, Relational rel, Scaled v, Scaled d, AsOp op3, r <- (r1, r2, r3, t), AsPresentation pr1) => Maybe String -> Maybe (Atomic x) -> Maybe (Atomic y) -> (pr1 r1 a -> op2 r2 d -> op3 r3 v -> rel r -> ChartSeries d v) -> pr1 r1 a -> op2 r2 d -> op3 r3 v -> rel r -> Report f z
+(f: * -> *) z. (r <- (k, v, i), Relational rel) => DynamicFulcrum k v -> Maybe (Legend i) -> rel r -> Report f z
+(f: * -> *) z. (r <- (k, v, i), Relational rel) => Row k -> Either (Sort k) (Record k -> Record k -> Ordering) -> Maybe (Legend i) -> (Record k -> PivotColumn v) -> rel r -> Report f z
+(h: rho). (exists (i: rho). f <- (d, c), h <- (e, c), g <- (i, c, a)) => Field a b -> Field c b -> (Mem d -> Mem e) -> Mem f -> Mem g -> Mem h
+(kv2: rho). (kv2 <- (k, v2), kv <- (k, v), Relational rel) => Row k -> (Mem v -> Mem v2) -> rel kv -> Mem kv2
+(p: rho) id (c: rho) (d: rho) x (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Relational rel, i <- (lbl, o), r <- (k, v, p, c, i)) => SoftRelation a b k v -> Maybe (Legend i) -> Field lbl String -> Field p id -> Field c id -> Field d x -> rel r -> Report f z
+(p: rho) id (c: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Relational rel, i <- (lbl, o), r <- (k, v, p, c, i)) => SoftRelation a b k v -> Maybe (Legend i) -> Field lbl String -> Field p id -> Field c id -> rel r -> Report f z
+(py: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (Relational rel, l <- (xv, yv, av, other), r <- (px, py, xv, yv, av, other)) => (Legend l, Field xv a, Field yv b, Field av c) -> Bool -> List String -> List String -> List# (Pair# Double Double) -> List# (Pair# Double Double) -> Field px Int -> Field py Int -> rel r -> Report f z
+(r1: rho) (s: rho) (s1: rho) (a: rho -> *) (t: rho) (f: * -> *) z. (exists (t1: rho) (t2: rho) (o: rho) (Has: rho -> b). t <- (k, i, v), t <- (k, v, i), RelationalComb a, Has s1 t2, t2 <- (o, label), Has s1 r1, t <- (v, i, k), t1 <- (v, i), t <- (i, v, k)) => DynamicFulcrum k v -> Maybe (Legend i) -> Field label String -> DrilldownList r1 -> (Mem s -> Mem s1) -> a t -> Report f z
+(r1: rho) a1 (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp op, r1 <- (r1), r <- (e, d), r1 <- (f, e), c <- (f, e, d), AsOp op1) => op r a -> op1 r1 a1 -> Op c String
+(r2: rho) (r: rho). (exists (ro: rho) (so: rho) (rs: rho). r2 <- (so, rs), r1 <- (ro, rs), AsOp opa, r <- (ro, so, rs), AsOp opc) => opc r1 a -> opa r2 a -> Op r a
+(r2: rho) b (op3: rho -> * -> *) (r3: rho) c (rr: rho). (exists (r3e: rho) (r2e: rho) (r1e: rho) (r123: rho) (r23: rho) (r13: rho) (r12: rho). AsOp op3, r2 <- (r2e, r123, r23, r12), AsOp op1, r3 <- (r3e, r123, r23, r13), AsOp op2, r1 <- (r1e, r123, r13, r12), rr <- (r3e, r2e, r1e, r123, r23, r13, r12)) => op1 r1 a -> op2 r2 b -> op3 r3 c -> Op rr String
+(r2: rho) e (op3: rho -> * -> *) (r3: rho) v (rel: rho -> *) (r: rho) (f: * ->
+(r2: rho). (AsOp d, PrimitiveTemporal c, AsOp a) => TimeUnit -> a b c -> d e c -> Op r2 Int
+(r3: rho). (exists (c: rho) (s: rho). r1 <- (c, s), r3 <- (c, s, extra), RelationalComb rel, r2 <- (c, extra), PrimitiveAtom a) => Field extra a -> a -> rel r1 -> rel r2 -> rel r3
+(r3: rho). (exists (c: rho) (s: rho). r2 <- (c, extra), RelationalComb rel, PrimitiveAtom a, r3 <- (c, s, extra), r1 <- (c, s)) => Field extra a -> a -> rel r2 -> rel r1 -> rel r3
+(r: rho) (f: * -> *) z. (exists (o: rho). Relational rel, AsPresentation vpr, AsPresentation cpr, AsPresentation spr, r <- (sr, cr, vr, o), Has r r2) => Maybe String -> Direction -> AxisLabel -> List (Record cr, Record cr) -> Axis ca -> AxisLabel -> List (Record vr, Record vr) -> Axis va -> spr sr sa -> cpr cr ca -> vpr vr va -> DrilldownList r2 -> rel r -> rel r -> Report f z
+(r: rho) (f: * -> *) z. (exists (o: rho). Relational rel, v <- (label, o), Has r v, Has r r1) => Maybe (Legend v) -> Field label String -> DrilldownList r1 -> rel r -> rel r -> Report f z
+(r: rho) (r2: rho). (r2 <- (key, val, base), r <- (key, base), RelationalComb rel, kv <- (key, val), PrimitiveAtom a) => Field key a -> Field val a -> rel kv -> rel r -> rel r2
+(r: rho) (t: rho). (exists (o: rho) (ro: rho) (so: rho) (rs: rho). AsOp op, RelationalComb rel, r <- (s, o), t <- (ro, so, rs), c <- (so, rs), r <- (ro, rs)) => op s a -> Field c a -> rel r -> rel t
+(r: rho) (t: rho). (exists (o: rho) (rs: rho) (ro: rho) (so: rho). t <- (ro, so, rs), RelationalComb rel, AsOp op, r <- (ro, rs), r <- (s, o), c <- (so, rs)) => Field c a -> op s a -> rel r -> rel t
+(r: rho). (r <- (h, t), Relational rel, AsOp op) => op h a -> rel r -> rel r
+(r: rho). (r <- (h, t), Relational rel, AsOp op) => op h a -> rel r -> rel r
+(r: rho). (r <- (key, base), kv <- (key, val), PrimitiveAtom a, RelationalComb rel) => Field key a -> Field val a -> rel kv -> rel r -> rel r
+(rel: rho -> *) (a2: rho) (rel1: rho -> *) (r2: rho) (f: * -> *) z. (exists (s: rho) (i1: rho). a2 <- (k, v, i, r), s <- (v, k, i), Relational rel1, RelationalComb rel, a2 <- (r, i, k, v), i1 <- (i, r), a2 <- (i, r, k, v)) => SoftRelation a b k v -> Maybe (Legend i) -> a1 -> DrilldownList r -> rel a2 -> rel1 r2 -> Report f z
+(rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). AsPresentation dpr, AsPresentation cpr, AsPresentation spr, AsPresentation vpr, r <- (sr, cr, vr, pi, ci, o), Relational rel) => Maybe String -> Direction -> ChartLegendOptions# -> ChartRenderHints# -> AxisLabel -> List (Record cr, Record cr) -> Axis ca -> AxisLabel -> List (Record vr, Record vr) -> Axis va -> spr sr sa -> cpr cr ca -> vpr vr va -> Field pi id -> Field ci id -> rel r -> Report f z
+(rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). AsPresentation pri, AsPresentation prl, r <- (labels, ivalue, svalue, r1, r2, o), AsPresentation prv, PrimitiveNum d, Relational rel) => Field r1 id -> Field r2 id -> prl labels l -> pri ivalue d -> prs svalue d -> rel r -> Report f z
+(rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Relational rel, v <- (label, o), r <- (r1, r2, v)) => Maybe (Legend v) -> Field label String -> Field r1 id -> Field r2 id -> rel r -> Report f z
+(rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). r <- (sr, cr, vr, pi, ci, o), Relational rel, AsPresentation spr, AsPresentation vpr, AsPresentation cpr) => Maybe String -> Direction -> ChartLegendOptions# -> ChartRenderHints# -> AxisLabel -> List (Record cr, Record cr) -> Axis ca -> AxisLabel -> List (Record vr, Record vr) -> Axis va -> spr sr sa -> cpr cr ca -> vpr vr va -> Field pi id -> Field ci id -> rel r -> Report f z
+(s: rho) (s1: rho) (a: rho -> *) (t: rho) (f: * -> *) z. (exists (Has: rho -> b) (t1: rho) (o: rho) (t2: rho). t <- (k, v, i), RelationalComb a, t <- (k, i, v), t2 <- (v, i), t <- (v, i, k), Has s1 t1, t1 <- (o, label), t <- (i, v, k), Has s1 r1) => Row k -> Either (Sort k) (Record k -> Record k -> Ordering) -> Maybe (Legend i) -> (Record k -> PivotColumn v) -> Field label String -> DrilldownList r1 -> (Mem s -> Mem s1) -> a t -> Report f z
+(sr: rho) sa (cpr: rho -> * -> *) (vpr: rho -> * -> *) (pi: rho) id (ci: rho)
+(sr: rho) sa (cpr: rho -> * -> *) (vpr: rho -> * -> *) (pi: rho) id (ci: rho)
+(sr: rho) sa (cpr: rho -> * -> *) (vpr: rho -> * -> *) (r2: rho) (rel: rho -> *)
+(t: rho) (v: rho). (exists (ro: rho) (so: rho) (rs: rho). AsOp opc, t <- (so, rs), s <- (ro, rs), AsOp opa, v <- (ro, so, rs)) => opc s (Nullable a) -> opa t a -> Op v a
+(t: rho) (v: rho). (exists (ro: rho) (so: rho) (to: rho) (rs: rho) (rt: rho) (st: rho) (rst: rho). r <- (ro, rs, rt, rst), s <- (so, rs, st, rst), AsOp opa, t <- (to, rt, st, rst), AsOp opc, v <- (ro, so, to, rs, rt, st, rst)) => Predicate r -> opc s a -> opa t a -> Op v a
+(t: rho). (t <- (f, b), Has s r) => Aggregate r a -> Row b -> Field f a -> Relation s -> Relation t
+(v: rho) b (r: rho) (rel: rho -> *) (r1: rho) (f: * -> *) z. (exists (AsPresentation: (rho -> * -> *) -> a1) (o: rho). r1 <- (k, v, p, c, r), r <- (r), Relational rel, o <- (v, k), AsPresentation Field, AsPresentation pr2) => Field p id -> Field c id -> Field k a -> pr2 v b -> (String, Field r String) -> rel r1 -> Report f z
+(v: rho) b. (exists (o: rho). AsPresentation pr2, AsPresentation pr1, o <- (k, v)) => pr1 k a -> Either (Sort k) (Record k -> Record k -> Ordering) -> (Record k -> ((pr2 v b, Maybe (SortStrategy v)), SortPriority)) -> SoftRelation a b k v
+(value: rho) d (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Relational rel, r <- (labels, value, o)) => String -> Maybe (Atomic nm) -> ChartLegendOptions# -> List (Record labels, Color) -> ChartRenderHints# -> prl labels l -> prv value d -> rel r -> Report f z
+(xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (er: rho) (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, AsPresentation s, Relational rel, Has r er, AsOp x, r <- (o, yr, xr, sr)) => SeriesStructure -> s sr sa -> x xr xa -> y yr ya -> PresRow er -> rel r -> ChartSeries xa ya
+(xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (er: rho) (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, r <- (o, yr, xr, sr), AsPresentation s, Relational rel, AsOp x, Has r er) => s sr sa -> x xr xa -> y yr ya -> PresRow er -> rel r -> ChartSeries xa ya
+(xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, AsPresentation s, AsOp x, Relational rel, r <- (o, yr, xr, sr)) => SeriesStructure -> s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
+(xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). Scaled ya, AsOp y, AsPresentation s, AsOp x, r <- (o, yr, xr, sr), Relational rel) => s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
+(y: rho -> * -> *) (yr: rho) ya (er: rho) (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, AsPresentation s, AsOp x, r <- (o, yr, xr, sr), Relational rel, Has r er) => s sr sa -> x xr xa -> y yr ya -> PresRow er -> rel r -> ChartSeries xa ya
+(y: rho -> * -> *) (yr: rho) ya (er: rho) (rel: rho -> *) (r: rho). (exists (o: rho). AsPresentation s, AsOp x, AsOp y, Relational rel, Has r er, r <- (o, yr, xr, sr)) => Atomic String -> s sr sa -> x xr xa -> y yr ya -> PresRow er -> rel r -> ChartSeries xa ya
+(y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp x, AsOp y, r <- (o, yr, xr, sr), Relational rel, AsPresentation s) => s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
+(y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, AsOp x, Relational rel, AsPresentation s, r <- (o, yr, xr, sr)) => ChartVariant# -> s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
+(y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, AsPresentation s, r <- (o, yr, xr, sr), Relational rel, AsOp x) => s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
+(y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, r <- (o, yr, xr, sr), Relational rel, AsOp x, AsPresentation s) => s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
+(y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp y, r <- (sr, xr, yr, o), Relational rel, AsOp x, AsPresentation s) => (s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya) -> s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
+(y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsPresentation s, r <- (o, yr, xr, sr), AsOp x, AsOp y, Relational rel) => s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
+(yr: rho) ya (xtr: rho) xta (ytr: rho) yta (er: rho) rel. List (Record r, Color) -> List (Record s, Record s) -> List (Record t, Record t) -> Presentation sr sa -> NonEmpty (Op xr xa) -> Op yr ya -> Maybe (Presentation xtr xta) -> Maybe (Presentation ytr yta) -> ChartVariant# -> PresRow er -> rel -> ChartSeries xa ya
+(|) : forall a b c. (a -> b) -> (b -> c) -> a -> c
+(|-) : forall a b. (a -> b) -> a -> b
+(|>) : forall a b. a -> (a -> b) -> b
+(|_Either) : forall e a. Either e a -> Either e a -> Either e a
+(|_Maybe) : forall a. Maybe a -> Maybe a -> Maybe a
+(||_Predicate) : forall (r: rho) (s: rho) (t: rho). RUnion2 t r s => Predicate r -> Predicate s -> Predicate t
+* -> *) (e: rho) (t: rho). (t <- (e, b), AsOp d, AsOp a) => a b c -> d e c -> Aggregate t c
+* -> *) (r0: rho) d (r1: rho) id (r2: rho) (rel: rho -> *) (r: rho) (f: * -> *)
+*) (r2: rho) d (op3: rho -> * -> *) (r3: rho) v (rel: rho -> *) (r: rho)
+*) z. (exists (d: rho). a <- (b, d), Relational rel) => rel a -> Field b c -> Report f z -> (List (Record a) -> Record a -> Report f z) -> Report f z
+*) z. (exists (t: rho). AsOp op2, r <- (r1, r2, r3, t), AsOp op3, Unscaled e, AsPresentation pr1, Relational rel, Scaled v) => Maybe String -> Maybe (Atomic x) -> Maybe (Atomic y) -> pr1 r1 d -> op2 r2 e -> op3 r3 v -> rel r -> Report f z
+-- imported via Builtin
+-- imported via Builtin
+-- imported via Layout
+-- imported via Layout
+-- imported via Layout.Report
+-- imported via Layout.Report
+-- imported via Layout.Report.Direction
+-- imported via Layout.Report.Direction
+-- imported via Layout.Report.SelectorMode
+-- imported via Layout.Report.SelectorMode
+-- imported via Layout.Writer
+-- imported via Prelude
+-- imported via Prelude
+Alt : forall (f: * -> *). (forall a. f a) -> (forall a. f a -> f a -> f a) -> Ap f -> Alt f
+Ap : forall (f: * -> *). (forall a. a -> f a) -> (forall a b. f (a -> b) -> f a -> f b) -> Ap f
+Area : forall a. Magnitude a -> Magnitude a -> Area
+Ascending : SortOrder
+Atomic : forall a. Format a -> a -> Atomic a
+AtomicExistentially# : forall (a: a1). Atomic# a -> EAtomic#
+AxisLabel : forall t. Atomic t -> AxisLabel
+Bool ->
+Bool : Prim Bool
+Byte ->
+Byte : Prim Byte
+ChartSeries : forall (r: rho) (s: rho) (t: rho) (sr: rho) sa (xr: rho) xa
+CheckBox : SelectorMode
+Comonad : forall (f: * -> *). (forall a. f a -> a) -> (forall a b. (f a -> b) -> f a -> f b) -> Comonad f
+ComplexStructure : List (Int, Int) -> Maybe String -> SeriesStructure
+Cont : forall a r. ((a -> r) -> r) -> Cont r a
+Count : Field (|Count|) Int
+Date ->
+Date : Prim Date
+Descending : SortOrder
+Double ->
+Double : Prim Double
+DropDown : SelectorMode
+EField : forall (r: rho) a. Field r a -> EField a
+EQ : Ordering
+EmptyException : EmptyException -> Exception
+Error : Error -> Exception
+Exception : Exception -> Throwable
+False : Bool
+Functor : forall (f: * -> *). (forall a b. (a -> b) -> f a -> f b) -> Functor f
+GT : Ordering
+GUID -> Nullable GUID -> Timestamp -> Nullable Timestamp -> PrimT -> PrimExpr#
+GUID : Prim GUID
+Horizontal : Direction
+IO : forall a. (forall b. (a -> b) -> (forall c. (c -> b) -> (Throwable -> b) -> FFI c -> b) -> (Throwable -> b) -> b) -> IO a
+Int : Prim Int
+Just : forall a. a -> Maybe a
+Just# : forall a. a -> Maybe# a
+LT : Ordering
+Left : forall a b. a -> Either a b
+Linear : DisplayScale
+Logarithmic : DisplayScale
+Long ->
+Long : Prim Long
+Nil : forall a. List a
+Nil# : forall a. List# a
+NoAxisLabel : AxisLabel
+Nothing : forall a. Maybe a
+Nothing# : forall a. Maybe# a
+Null : forall a. Prim a -> Nullable a
+Nullable Bool ->
+Nullable Byte ->
+Nullable Date ->
+Nullable Double ->
+Nullable Int ->
+Nullable Long ->
+Nullable Short ->
+Nullable String ->
+RadioButton : SelectorMode
+Refl_Type : forall {a} (b: a). b ==_Type.Eq b
+Report : forall (f: * -> *) z. (Writer f z -> f z) -> Report f z
+Right : forall b a. b -> Either a b
+Ring : forall a. (a -> a -> a) -> (a -> a) -> (a -> a -> a) -> (Int -> a) -> Ring a
+Row : forall (r: rho). List (String, PrimT) -> Row r
+Selector : forall z a (f: * -> *). SelectorEvent z -> ((a -> Report f z) -> Report f z) -> Selector f z a
+Short ->
+Short : Prim Short
+SimpleStructure : SeriesStructure
+Slider : SelectorMode
+Some : forall a. a -> Nullable a
+Sort : forall (r: row). List (String, PrimT, SortOrder) -> Sort r
+SortOrder -> SortOrder -> MultiSortOrder#
+String ->
+String : Prim String
+TextArea : SelectorMode
+TextBox : SelectorMode
+Throwable : Throwable -> Object
+ThrowableSerializable : Throwable -> Serializable
+Timestamp : Prim Timestamp
+TooltipOnlyLabel : forall t. Atomic t -> AxisLabel
+Traversable : forall (t: * -> *). (forall (f: * -> *) a b. Ap f -> (a -> f b) -> t a -> f (t b)) -> Traversable t
+True : Bool
+Vertical : Direction
+Volume : forall a. Magnitude a -> Magnitude a -> Magnitude a -> Volume
+``12pixels`` : List ErasedMagnitude
+``16pixels`` : List ErasedMagnitude
+``1cell`` : List ErasedMagnitude
+``1pixel`` : List ErasedMagnitude
+``20pixels`` : List ErasedMagnitude
+``2cell`` : List ErasedMagnitude
+``2pixels`` : List ErasedMagnitude
+``3cell`` : List ErasedMagnitude
+``4cell`` : List ErasedMagnitude
+``4pixels`` : List ErasedMagnitude
+``5cell`` : List ErasedMagnitude
+``6cell`` : List ErasedMagnitude
+``6pixels`` : List ErasedMagnitude
+``8pixels`` : List ErasedMagnitude
+a -> *) (b: rho) (c: rho). (exists (f: rho) (e: rho) (d: rho) (AsOp: (rho -> a -> *) -> b1). a1 <- (d, e), b <- (e, f), AsOp opr, AsOp opl, c <- (d, e, f)) => opl a1 v -> opr b v -> Predicate c
+a -> *) (b: rho) (t: rho). (exists (c: rho) (rs: rho) (ro: rho) (e: rho) (d: rho) (c1: rho) (so: rho) (f: rho) (AsOp: (rho -> a -> *) -> b1) (f1: rho) (e1: rho) (d1: rho) (AsOp1: (rho -> a -> *) -> b1). c <- (ro, rs), t <- (ro, so, rs), b <- (e1, f1), a1 <- (d1, e1), b <- (e, f), AsOp1 opl, AsOp1 opr, AsOp opl, a1 <- (d, e), c1 <- (d, e, f), AsOp opr, c <- (d1, e1, f1), c1 <- (so, rs)) => opl a1 v -> opr b v -> Predicate t
+a -> *) (b: rho) (t: rho). (exists (c: rho) (rs: rho) (ro: rho) (f: rho) (e: rho) (AsOp: (rho -> a -> *) -> b1) (f1: rho) (e1: rho) (d: rho) (c1: rho) (so: rho) (AsOp1: (rho -> a -> *) -> b1) (d1: rho). c <- (ro, rs), c1 <- (so, rs), a1 <- (d1, e), AsOp1 opr, AsOp1 opl, b <- (e1, f1), t <- (ro, so, rs), c <- (d, e1, f1), a1 <- (d, e1), c1 <- (d1, e, f), AsOp opl, b <- (e, f), AsOp opr) => opl a1 v -> opr b v -> Predicate t
+a1. (Relational g, AsPresentation d, AsPresentation b, Relational i) => String -> Maybe (Atomic nm) -> ChartLegendOptions# -> List (Record a, Color) -> ChartRenderHints# -> b a c -> d e f -> DrilldownList r -> g h -> i j -> Report f1 a1
+abs : forall n. Num n => n -> n
+abs_Float : Float -> Float
+abs_Long : Long -> Long
+abs_Op : forall (op: rho -> * -> *) (a: rho) n (b: rho). (exists (c: rho). b <- (c, a), AsOp op, PrimitivieNum) => op a n -> Op b n
+abs_Primitive : forall n. PrimitiveNum n => n -> n
+absurd : forall a. Void -> a
+accumulate : forall (a: rho) b (c: rho) (d: rho) (e: rho) (f: rho) (g: rho)
+acos : Double -> Double
+add : forall a. Ring a -> a -> a -> a
+aggregateByGroup#_Aggregate : forall (a: rho) b (c: rho) (d: rho) (e: rho). Aggregate a b -> List# (Pair# String PrimT) -> Field c b -> Relation d -> Relation e
+aggregateByGroup_Aggregate : forall (r: rho) a (b: rho) (f: rho) (s: rho)
+aggregateBy_Aggregate : forall (h: rho) n (rel: rho -> *) (r: rho). (r <- (h, t), Relational rel) => (Field h n -> Aggregate h n) -> Field h n -> rel r -> rel h
+aggregate_Aggregate : forall (a: rho) b (c: rho) (d: rho -> *) (e: rho). (exists (f: rho). e <- (f, a), RelationalComb d) => Aggregate a b -> Field c b -> d e -> d c
+all_Predicate : forall (r: rho). Record r -> Predicate r
+alt : forall (f: * -> *) a. Alt f -> f a -> f a -> f a
+altAp : forall (f: * -> *). Alt f -> Ap f
+altMonoid : forall (f: * -> *) a. Alt f -> Monoid (f a)
+and : List Bool -> Bool
+annul_Op : forall (op: rho -> * -> *) (r: rho) a. (PrimitiveAtom a, AsOp op) => op r a -> Op r (Nullable a)
+any : forall a. (a -> Bool) -> List a -> Bool
+anyRecordOrd# : ScalaRecord# -> ScalaRecord# -> Ordering
+anyRecordOrd_Record : forall (r: rho). Record r -> Record r -> Ordering
+ap : forall (f: * -> *) a b. Ap f -> f (a -> b) -> f a -> f b
+apFunctor : forall (f: * -> *). Ap f -> Functor f
+ap_Vector : Ap Vector
+append : forall (r1: rho) (r2: rho) (r: rho). r <- (r1, r2) => Sort r1 -> Sort r2 -> Sort r
+appendR_Record : forall (a: rho) (b: rho) (c: rho). c <- (a, b) => Record a -> Record b -> Record c
+appendRec# : forall (a: rho) (b: rho) (c: rho). Record a -> Record b -> Record c
+append_Vector : forall a. Vector a -> Vector a -> Vector a
+argmax : forall b a. (b -> b -> Ordering) -> (a -> b) -> a -> a -> a
+argmin : forall b a. (b -> b -> Ordering) -> (a -> b) -> a -> a -> a
+asMem : forall (a: rho -> *) (b: rho). Relational a => a b -> Mem b
+asOp_Op : forall (a: rho -> * -> *) (b: rho) c. AsOp a => a b c -> Op b c
+asin : Double -> Double
+at : forall a. Int -> List a -> Maybe a
+at_Vector : forall a. Int -> Vector a -> a
+atan : Double -> Double
+atan2 : Double -> Double -> Double
+atom : forall a (f: * -> *) z. Atomic a -> Report f z
+atom' : forall a (f: * -> *) z. List Font -> Maybe Int -> Atomic a -> Report f z
+atomShown : forall a (f: * -> *) z. Primitive a => a -> Report f z
+atomShown' : forall a (f: * -> *) z. Primitive a => List Font -> Maybe Int -> a -> Report f z
+atomic# : forall a. Atomic a -> Atomic# a
+avg_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (exists (AsOp: (rho -> * -> *) -> a). AsOp op, PrimitiveNum n) => op r n -> Aggregate r n
+axisChartDataW : forall p p1. AxisLabel -> Format p -> Bool -> AxisLabel -> Format p1 -> Bool -> Axis p -> Axis p1 -> Maybe String -> Direction -> ChartLegendOptions# -> ChartRenderHints# -> List (ChartSeries p p1) -> AxisChartData#
+axisChartW : forall (f: * -> *) a. Writer f a -> AxisChart# -> f a
+backgroundColor : forall (f: * -> *) z. Color -> Report f z -> Report f z
+bar : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa
+bar' : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa
+barChart : forall x y (pr1: rho -> * -> *) (r1: rho) d (op2: rho -> * -> *)
+barHeader : forall (f: * -> *) z. Report f z -> Report f z
+before : Date -> Date -> Bool
+binaryString_Int : Int -> String
+bind : forall (f: * -> *) a b. (Monad f -> f a) -> (a -> Monad f -> f b) -> Monad f -> f b
+black : Color
+blue : Color
+border : forall (f: * -> *) z. Maybe (Report f z) -> Maybe (Report f z) -> Maybe (Report f z) -> Maybe (Report f z) -> Maybe (Report f z) -> Report f z
+borderColor : forall (f: * -> *) a. Color -> Report f a -> Report f a
+borderColor' : forall a (f: * -> *) b. (BorderOptions a -> BorderOptions Color) -> Report f b -> Report f b
+borderColorBottom : forall (f: * -> *) a. Color -> Report f a -> Report f a
+borderColorLeft : forall (f: * -> *) a. Color -> Report f a -> Report f a
+borderColorRight : forall (f: * -> *) a. Color -> Report f a -> Report f a
+borderColorTop : forall (f: * -> *) a. Color -> Report f a -> Report f a
+borderSize : forall (f: * -> *) z. LineStyle -> LineThickness -> Report f z -> Report f z
+borderSize' : forall (f: * -> *) z. (BorderOptions (LineStyle, LineThickness) -> BorderOptions (LineStyle, LineThickness)) -> Report f z -> Report f z
+borderSizeBottom : forall (f: * -> *) z. LineStyle -> LineThickness -> Report f z -> Report f z
+borderSizeLeft : forall (f: * -> *) z. LineStyle -> LineThickness -> Report f z -> Report f z
+borderSizeRight : forall (f: * -> *) z. LineStyle -> LineThickness -> Report f z -> Report f z
+borderSizeTop : forall (f: * -> *) z. LineStyle -> LineThickness -> Report f z -> Report f z
+bottomK : forall (h: rho) (rel: rho -> *) (r: rho). (exists (c: rho). r <- (h, c), RelationalComb rel) => Row h -> Int -> rel r -> rel r
+bottomKBy : forall (h: rho) (k: rho) (rel: rho -> *) (kv2: rho). (exists (c: rho) (r: rho). r <- (c, h), kv2 <- (h, c, k), Relational rel) => Row h -> Row k -> Int -> rel kv2 -> Mem kv2
+box : forall (f: * -> *) z. Report f z -> Report f z
+boxAndWhiskers : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *)
+break : forall a. (a -> Bool) -> List a -> (List a, List a)
+bubble : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa
+button : forall a (f: * -> *) b (f1: * -> *). a -> (Report f b -> SelectorEvent b -> Report f1 b) -> Report f1 b
+cast_Op : forall (op: rho -> * -> *) (s: rho) a b. AsOp op => op s a -> Prim b -> Op s b
+catMaybes : forall a. List (Maybe a) -> List a
+catch : forall a. IO a -> (Throwable -> IO a) -> IO a
+categoryTickLabels : forall (xr: rho) sa' (x: rho -> * -> *) xa ya' relr ya. Unscaled xa => List (Record xr, Record xr) -> (sa' -> x xr xa -> ya' -> relr -> ChartSeries xa ya) -> sa' -> x xr xa -> ya' -> relr -> ChartSeries xa ya
+cbrt : Double -> Double
+ceil : Double -> Double
+cells : Int -> Magnitude CellT
+cellsA : Int -> Int -> Area
+cellsM : Int -> ErasedMagnitude
+centered : forall (f: * -> *) z. Report f z -> Report f z
+chart : forall xa ya (f: * -> *) z. Maybe String -> Direction -> ChartLegendOptions# -> ChartRenderHints# -> AxisLabel -> Format xa -> Bool -> Axis xa -> AxisLabel -> Format ya -> Bool -> Axis ya -> List (ChartSeries xa ya) -> Report f z
+chartLegendAbove : ChartLegendOptions#
+chartLegendBelow : ChartLegendOptions#
+chartLegendDefaultLocation : ChartLegendOptions#
+chartLegendHidden : ChartLegendOptions#
+chartLegendOptions : ChartLegendLocation# -> ChartLegendOptions#
+chartLegendOverlay : ChartLegendOptions#
+chartLegendRight : ChartLegendOptions#
+chartLegendRightOverlay : ChartLegendOptions#
+chartLegendRightTable : ChartLegendOptions#
+chartRenderHints : Bool -> ChartRenderHints#
+chartW : forall xa ya. Maybe String -> Direction -> ChartLegendOptions# -> ChartRenderHints# -> AxisLabel -> Format xa -> Bool -> Axis xa -> AxisLabel -> Format ya -> Bool -> Axis ya -> List (ChartSeries xa ya) -> AxisChart#
+checkBox : forall (f: * -> *) z. Bool -> (Report f z -> Selector f z Bool -> Report f z) -> Report f z
+checkBox' : forall (f: * -> *) z. String -> Bool -> (Report f z -> Selector f z Bool -> Report f z) -> Report f z
+checkBoxLateBinding : forall (f: * -> *) z. String -> Bool -> ((Bool -> Report f z) -> Selector f z Bool -> Report f z) -> Report f z
+class AsOp a
+class Eq a
+class Num a | PrimitiveNum a
+class Primitive a
+class PrimitiveAtom a | Primitive a
+class PrimitiveNum a | Primitive a Scaled a
+class PrimitiveString a | Primitive a
+class PrimitiveTemporal a | Primitive a Scaled a
+class Relational a
+class RelationalComb a | Relational a
+class Scaled a
+class Temporal a | PrimitiveTemporal a
+class Unscaled a
+coalesce'_Op : forall (opc: rho -> * -> *) (r1: rho) a (opa: rho -> * -> *)
+coalesce_Op : forall (opc: rho -> * -> *) (s: rho) a (opa: rho -> * -> *)
+col_Op : forall (r: rho) a. Field r a -> Op r a
+collapsible : forall (f: * -> *) z. Bool -> String -> Report f z -> Report f z
+collect : forall a b. (a -> Maybe b) -> List a -> List b
+coloredSeries : forall (s: rho -> a -> *) (sr: rho) (sa: a) xa' ya' relr xa ya. (s sr sa -> xa' -> ya' -> relr -> ChartSeries xa ya) -> List (Record sr, Color) -> s sr sa -> xa' -> ya' -> relr -> ChartSeries xa ya
+columnTable : forall a (k: rho) p d (v: a1) (f: * -> *) z. Column (a, Bound (Legend k), p, d) k v -> Report f z
+columnTable2 : forall a (k: rho) p d (v: a1) (f: * -> *) z. Column (a, Bound (Legend k), p, d) k v -> a -> Report f z
+columnTableTransposed : forall a (k: rho) p d (v: a1) (f: * -> *) z. Column (a, Bound (Legend k), p, d) k v -> Report f z
+combine_Op : forall (op: rho -> * -> *) (s: rho) a (c: rho) (rel: rho -> *)
+comonadFunctor : forall (f: * -> *). Comonad f -> Functor f
+compare#_Map : forall k v. Map k v -> k -> k -> Int
+concat : forall a. List (List a) -> List a
+concatMap : forall a b. (a -> List b) -> List a -> List b
+concatMap_Vector : forall a b. (a -> Vector b) -> Vector a -> Vector b
+concat_String : List String -> String
+cons : forall (a: rho) b (c: rho) (d: rho). d <- (c, a) => Field a b -> b -> Record c -> Record d
+cons_Bracket : forall a. a -> List a -> List a
+cons_Bracket_Op : forall (opl: rho -> * -> *) (a: rho) s (opr: rho -> * -> *)
+cons_Bracket_Vector : forall a. a -> Vector a -> Vector a
+cons_Vector : forall a. a -> Vector a -> Vector a
+const : forall a b. a -> b -> a
+contAp : forall r. Ap (Cont r)
+contFunctor : forall r. Functor (Cont r)
+contMonad : forall r. Monad (Cont r)
+contains : forall a. Eq a => a -> List a -> Bool
+contramap : forall b a. (b -> a) -> (a -> a -> Ordering) -> b -> b -> Ordering
+copyColumn : forall (r1: rho) a (r2: rho) (rel: rho -> *) (ri: rho) (ro: rho). (Relational rel, ro <- (r1, r2, t), ri <- (r1, t)) => Field r1 a -> Field r2 a -> rel ri -> rel ro
+copyF : forall (a: rho) b (c: rho) (d: rho) (e: rho). (exists (f: rho). c <- (f, a), e <- (a, d)) => Field a b -> Record c -> Record d -> Record e
+copySign : Double -> Double -> Double
+copySign_Float : Float -> Float -> Float
+cos : Double -> Double
+cosh : Double -> Double
+count : forall (a: rho -> *) (b: rho). (b <- (b), RelationalComb a) => a b -> a (|Count|)
+countAgg_Aggregate : forall n. PrimitiveNum n => Aggregate (||) n
+count_Aggregate : forall (a: rho -> *) (b: rho). (b <- (b), RelationalComb a) => a b -> a (|Count|)
+currency : forall (f: * -> *) z. String -> Double -> Report f z
+curry : forall a b c. ((a, b) -> c) -> a -> b -> c
+cyan : Color
+cycle_List : forall a. List a -> List a
+d (t: rho). (exists (ro: rho) (so: rho) (rs: rho). r <- (ro, rs), s <- (so, rs), t <- (ro, so, rs), AsOp op2, AsOp op1, PrimitiveTemporal d) => op1 r Int -> TimeUnit -> op2 s d -> Op t d
+darkGray : Color
+dashed : LineStyle
+data (==_Type) : forall a. a -> a -> *
+data Aggregate_Aggregate : rho -> * -> *
+data Alt : (* -> *) -> *
+data Ap : (* -> *) -> *
+data Area : *
+data Atomic : * -> *
+data Atomic# : * -> *
+data Axis : * -> *
+data AxisLabel : *
+data Bool : *
+data Bool# : *
+data BorderOptions# : * -> *
+data Bound : forall a. a -> *
+data ChartSeries : * -> * -> *
+data ChartSeries# : * -> * -> *
+data ChartVariant# : *
+data Color : *
+data Comonad : (* -> *) -> *
+data Cont : * -> * -> *
+data DB : * -> *
+data Date : *
+data Direction : *
+data DisplayScale : *
+data EAtomic# : *
+data EField : * -> *
+data Either : * -> * -> *
+data Either# : * -> * -> *
+data EitherZ# : * -> * -> *
+data EmptyException : *
+data Error : *
+data Exception : *
+data FFI : * -> *
+data Field : rho -> * -> *
+data Function0 : * -> *
+data Function1 : * -> * -> *
+data Function2 : * -> * -> * -> *
+data Function3 : * -> * -> * -> * -> *
+data Function4 : * -> * -> * -> * -> * -> *
+data Function5 : * -> * -> * -> * -> * -> * -> *
+data Function6 : * -> * -> * -> * -> * -> * -> * -> *
+data Function7 : * -> * -> * -> * -> * -> * -> * -> * -> *
+data Functor : (* -> *) -> *
+data GUID : *
+data IO : * -> *
+data LineStyle : *
+data LineThickness : *
+data List : * -> *
+data List# : * -> *
+data Magnitude : * -> *
+data Map_Map : * -> * -> *
+data Maybe : * -> *
+data Maybe# : * -> *
+data Mem : rho -> *
+data NonEmpty# : * -> *
+data Nullable : * -> *
+data Object : *
+data Op_Op : rho -> * -> *
+data Ordering : *
+data Pair# : * -> * -> *
+data Predicate : rho -> *
+data Prim : * -> *
+data PrimExpr# : *
+data PrimT : *
+data Record : rho -> *
+data Record# : *
+data Relation : rho -> *
+data Relation# : *
+data Report : (* -> *) -> * -> *
+data Ring : * -> *
+data Row : rho -> *
+data Runner_Runners : (* -> *) -> *
+data SM : rho -> *
+data ScalaRecord# : *
+data Scanner_Scanners : (* -> *) -> *
+data Selector : (* -> *) -> * -> * -> *
+data SelectorEvent : * -> *
+data SelectorMode : *
+data SelectorMode# : *
+data SeriesStructure : *
+data Sort : forall row. row -> *
+data SortOrder : *
+data SortOrder# : *
+data String : *
+data Throwable : *
+data TimeUnit : *
+data Timestamp : *
+data Traversable : (* -> *) -> *
+data Unbound : forall a. a -> *
+data UnifyFields : rho -> rho -> *
+data Vector_Vector : * -> *
+data Void : *
+data Volume : *
+data Writer : (* -> *) -> * -> *
+dateAdd#_Op : forall (r: rho) (r1: rho) d (r2: rho). PrimitiveTemporal d => Op r Int -> TimeUnit -> Op r1 d -> Op r2 d
+dateAdd'_Op : forall (op1: rho -> * -> *) (r: rho) (op2: rho -> * -> *) (s: rho)
+dateAdd_Op : forall (op: rho -> * -> *) (r: rho) d. (PrimitiveTemporal d, AsOp op) => Int -> TimeUnit -> op r d -> Op r d
+dateDiff#_Op : forall (r: rho) d (r1: rho) (r2: rho). PrimitiveTemporal d => TimeUnit -> Op r d -> Op r1 d -> Op r2 Int
+dateDiff_Op : forall (a: rho -> * -> *) (b: rho) c (d: rho -> * -> *) (e: rho)
+dateInput : forall (f: * -> *) z. String -> (Report f z -> Selector f z (Maybe Date) -> Report f z) -> Report f z
+dateInputLateBinding : forall (f: * -> *) z. String -> ((String -> Report f z) -> Selector f z (Maybe Date) -> Report f z) -> Report f z
+dateRange : forall (f: * -> *) z. Date -> Date -> Report f z
+dateRange_Op : forall (op: rho -> * -> *) (r: rho) a (op1: rho -> * -> *)
+days : TimeUnit
+decrementDate : Int -> TimeUnit -> Date -> Date
+defaultChartLegendOptions : ChartLegendOptions#
+defaultScaled : forall a. Scaled a => Axis a
+defaultUnscaled : forall a. Unscaled a => Axis a
+delay : forall a. a -> Function0 a
+delete_Map : forall k v. k -> Map k v -> Map k v
+difference : forall (a: rho -> *) (b: rho). RelationalComb a => a b -> a b -> a b
+dimensionless : Double -> Magnitude DimensionlessT
+dimensionlessM : Double -> ErasedMagnitude
+domainTooltipLabels : forall (xtr: rho) xta sa' xa' ya' (rel: rho -> *) (r: rho)
+dotted : LineStyle
+doubleInput : forall (f: * -> *) z. String -> (Report f z -> Selector f z (Maybe Double) -> Report f z) -> Report f z
+doubleInputLateBinding : forall (f: * -> *) z. String -> ((String -> Report f z) -> Selector f z (Maybe Double) -> Report f z) -> Report f z
+doubleRing : Ring Double
+drilldownBarChart : forall (cr: rho) ca (vr: rho) va (spr: rho -> * -> *)
+drilldownBarChart# : forall (f: * -> *) a. Writer f a -> DrilldownBarAxisChart# (Pair# String String) Relation# -> f a
+drilldownBarChart' : forall (cr: rho) ca (vr: rho) va (spr: rho -> * -> *)
+drilldownBarChart2 : forall (cr: rho) ca (vr: rho) va (spr: rho -> * -> *)
+drilldownBarChart2# : forall (f: * -> *) a. Writer f a -> DrilldownBarAxisChart# (Pair# (List# (Pair# String String)) Relation#) Relation# -> f a
+drilldownBarChart2W : forall (f: * -> *) a (cr: rho) (vr: rho) (sr: rho) sa ca
+drilldownBarChart2W' : forall (f: * -> *) a (cr: rho) (vr: rho) (sr: rho) sa ca
+drilldownBarChartW : forall (f: * -> *) a (cr: rho) (vr: rho) (sr: rho) sa ca
+drilldownBarChartW' : forall (f: * -> *) a (cr: rho) (vr: rho) (sr: rho) sa ca
+drilldownKeyValueDateTable : forall a b (k: rho) (v: rho) (i: rho) (lbl: rho)
+drilldownKeyValueTable : forall a b (k: rho) (v: rho) (i: rho) (lbl: rho)
+drilldownKeyValueTable2 : forall a b (k: rho) (v: rho) (i: rho) a1 (r: rho)
+drilldownPieChart : forall nm (label: rho) (prl: rho -> * -> *) lv (prd: rho ->
+drilldownPieChart# : forall (f: * -> *) a (r: rho) b (s: rho) c. Writer f a -> PieChartData# -> Presentation r b -> Presentation s c -> String -> String -> Relation# -> f a
+drilldownPieChart2 : forall nm (a: rho) (b: rho -> * -> *) c (d: rho -> * -> *)
+drilldownPieChart2# : forall (f: * -> *) a (r: rho) b (s: rho) c. Writer f a -> PieChartData# -> Presentation r b -> Presentation s c -> List# (Pair# String String) -> Relation# -> Relation# -> f a
+drilldownPieChart2W : forall (f: * -> *) a nm (r: rho) a1 (s: rho) c. Writer f a -> String -> Maybe (Atomic nm) -> ChartLegendOptions# -> List (Record r, Color) -> ChartRenderHints# -> Presentation r a1 -> Presentation s c -> List (String, String) -> Relation# -> Relation# -> f a
+drilldownPieChartW : forall (f: * -> *) a nm (r: rho) a1 (s: rho) c. Writer f a -> String -> Maybe (Atomic nm) -> ChartLegendOptions# -> List (Record r, Color) -> ChartRenderHints# -> Presentation r a1 -> Presentation s c -> String -> String -> Relation# -> f a
+drilldownPivotTabular : forall (k: rho) (i: rho) (v: rho) (label: rho) (r1: rho)
+drilldownPivotTabular' : forall (k: rho) (v: rho) (i: rho) (label: rho)
+drilldownTable : forall (v: rho) (label: rho) (r1: rho) id (r2: rho)
+drilldownTable2 : forall (v: rho) (label: rho) (r1: rho) (rel: rho -> *)
+drop : forall a. Int -> List a -> List a
+drop_String : Int -> String -> String
+drop_Vector : forall a. Int -> Vector a -> Vector a
+dropdown : forall a (f: * -> *) z. (a -> String) -> a -> List a -> (Report f z -> Selector f z a -> Report f z) -> Report f z
+dropdown' : forall a a1 b (f: * -> *) z (f1: * -> *). (a -> a1) -> a -> Format b -> List a -> (Report f z -> Selector f1 z a -> Report f1 z) -> Report f1 z
+dropdownLateBinding : forall a (f: * -> *) z. (a -> String) -> a -> List a -> ((a -> Report f z) -> Selector f z a -> Report f z) -> Report f z
+dropdownLateBinding' : forall a a1 b (f: * -> *) z (f1: * -> *). (a -> a1) -> a -> Format b -> List a -> ((a -> Report f z) -> Selector f1 z a -> Report f1 z) -> Report f1 z
+dualSort : (Primitive b, Primitive a) =>
+dumpQuery#_Scanners : forall (f: * -> *). Scanner f -> Relation# -> List# (Pair# String SortOrder#) -> IO String
+dumpQueryInOrder_Scanners : forall (f: * -> *) (rel: rho -> *) (r: rho). Relational rel => Scanner f -> rel r -> Sort r -> IO String
+dumpQuery_Scanners : forall (f: * -> *) (rel: rho -> *) (r: rho). Relational rel => Scanner f -> rel r -> IO String
+ecopyF : forall (r: rho) a. Field r a -> EField a
+either : forall a c b. (a -> c) -> (b -> c) -> Either a b -> c
+eitherAp : forall e. Ap (Either e)
+eitherFunctor : forall e. Functor (Either e)
+eitherMaybe : forall a b. Either a b -> Maybe b
+eitherMonad : forall e. Monad (Either e)
+elem : forall a. Eq a => a -> List a -> Bool
+elemBy : forall a. (a -> a -> Bool) -> a -> List a -> Bool
+empty : Sort (||)
+emptyReport : forall (f: * -> *) z. Report f z
+empty_Bracket : forall a. List a
+empty_Bracket_Op : Op (||) String
+empty_Bracket_Vector : forall a. Vector a
+empty_Map : forall k v. (k -> k -> Ordering) -> Map k v
+empty_Vector : forall a. Vector a
+endoMonoid : forall a. Monoid (a -> a)
+ensureNonnegativeWeight : (Double, Double) -> (Double, Double)
+epsilon_Double : Double
+epsilon_Float : Float
+eq : forall a. (a -> a -> Ordering) -> a -> a -> Bool
+err : String -> Error
+errWithCause : String -> Throwable -> Error
+error : forall a. String -> a
+escapeMarkdown : String -> String
+eval : forall a b. (a -> b) -> (Throwable -> b) -> FFI a -> b
+every : forall a. (a -> Bool) -> List a -> Bool
+except : forall (r1: rho) (rel: rho -> *) (r: rho) (r2: rho). (RelationalComb rel, r <- (r1, r2)) => Row r1 -> rel r -> rel r2
+except# : forall (a: rho -> *) (b: rho) (c: rho). (exists (d: rho). b <- (c, d), RelationalComb a) => List# (Pair# String PrimT) -> a b -> a c
+exceptT : forall (h: rho) (r: rho) (t: rho). r <- (h, t) => Row h -> Record r -> Record t
+exceptT# : forall (a: rho) (b: rho). (exists (c: rho). a <- (b, c)) => List# String -> Record a -> Record b
+exception : String -> Exception
+exceptionWithCause : String -> Throwable -> Exception
+existentialF : forall a. String -> Prim a -> EField a
+existentialF# : forall a (b: rho). String -> Prim a -> Field b a
+exp : Double -> Double
+exp_Op : forall (op: rho -> * -> *) (a: rho) n (b: rho). (exists (c: rho). b <- (c, a), AsOp op, PrimitiveNum n) => op a n -> Op b n
+expm1 : Double -> Double
+extend : forall (f: * -> *) a b. Comonad f -> (f a -> b) -> f a -> f b
+extract : forall (f: * -> *) a. Comonad f -> f a -> a
+fCategory : Category (->)
+false# : Bool#
+fenceposts : forall a. List (a, a) -> List a
+field Count : φ
+fieldName : forall (a: rho) b. Field a b -> String
+fieldType : forall (a: rho) b. Field a b -> Prim b
+filter : forall a. (a -> Bool) -> List a -> List a
+filterAll : forall (r: rho) (a: rho -> *) (b: rho). (exists (c: rho). b <- (c, r), RelationalComb a) => Record r -> a b -> a b
+filterEq : forall (c: rho) a (r: rho). (exists (c1: rho). r <- (c, c1)) => Field c a -> a -> Relation r -> Relation r
+filterNEq : forall (c: rho) a (r: rho). (exists (c1: rho). r <- (c, c1)) => Field c a -> a -> Relation r -> Relation r
+filter_Predicate : forall (a: rho) (b: rho -> *) (c: rho). (exists (d: rho). c <- (d, a), RelationalComb b) => Predicate a -> b c -> b c
+filter_Vector : forall a. (a -> Bool) -> Vector a -> Vector a
+find : forall a. (a -> Bool) -> List a -> Maybe a
+findIndex : forall a. (a -> Bool) -> List a -> Maybe Int
+find_Vector : forall a. (a -> Bool) -> Vector a -> Maybe a
+firstBy : forall (h: rho) (r: rho). (exists (c: rho). r <- (h, c)) => Row h -> Relation r -> Relation r
+firstEntry_Map : forall k v. Map k v -> Maybe (k, v)
+firstK : forall (r: rho). Int -> Relation r -> Relation r
+firstKeyOr_Map : forall k v. k -> Map k v -> k
+firstKey_Map : forall k v. Map k v -> Maybe k
+firstValue_Map : forall k v. Map k v -> Maybe v
+fix : forall a. (a -> a) -> a
+fixIO : forall a. (a -> IO a) -> IO a
+fixW : forall (f: * -> *) z. List ErasedMagnitude -> Report f z -> Report f z
+flip : forall a b c. (a -> b -> c) -> b -> a -> c
+floatSides : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+floor : Double -> Double
+fmap : forall (f: * -> *) a b. Functor f -> (a -> b) -> f a -> f b
+fmt : forall a (f: * -> *) z. Format a -> a -> Report f z
+fmt' : forall a (f: * -> *) z. List Font -> Maybe Int -> Format a -> a -> Report f z
+foldFromRow_Op : forall (r: rho) z. (forall a. Op r a -> z) -> Row r -> z
+foldMap : forall b a. Monoid b -> (a -> b) -> List a -> b
+foldl : forall b a. (b -> a -> b) -> b -> List a -> b
+foldl1 : forall a. (a -> a -> a) -> List a -> Maybe a
+foldl_Vector : forall b a. (b -> a -> b) -> b -> Vector a -> b
+foldr : forall a b. (a -> b -> b) -> b -> List a -> b
+foldr1 : forall a. (a -> a -> a) -> List a -> Maybe a
+force : forall a. Function0 a -> a
+foregroundColor : forall (f: * -> *) z. Color -> Report f z -> Report f z
+formatDate : forall (f: * -> *) z. Date -> (String -> Report f z) -> Report f z
+formatDateAtom : forall (f: * -> *) z. Date -> Report f z
+formatDateFn : forall (f: * -> *) z. ((Date -> String) -> Report f z) -> Report f z
+formatDateRange : forall (f: * -> *) z. (Date, Date) -> (String -> Report f z) -> Report f z
+formatDateRangeFn : forall (f: * -> *) z. (((Date, Date) -> String) -> Report f z) -> Report f z
+formatDay : Date -> String
+formatExcelDate : Date -> String
+formatExcelPeriod_DateRange : (Date, Date) -> String
+formatMonth : Date -> String
+formatMonthYear : Date -> String
+formatPeriodOr_DateRange : String -> (Date, Date) -> String
+formatPeriod_DateRange : ((Date, Date) -> String) -> (Date, Date) -> String
+formatQuarter : Date -> String
+formatYear : Date -> String
+from : Int -> List Int
+fromAssocList_Map : forall k v. (k -> k -> Ordering) -> List (k, v) -> Map k v
+fromCompare : forall a. (a -> a -> Int) -> a -> a -> Ordering
+fromInt : forall a. Ring a -> Int -> a
+fromLess : forall a. (a -> a -> Bool) -> a -> a -> Ordering
+fromList# : forall a. List# a -> List a
+fromList_Vector : forall a. List a -> Vector a
+fromMaybe# : forall a. Maybe# a -> Maybe a
+fromMaybe_Nullable : forall a. Prim a -> Maybe a -> Nullable a
+fromNel# : forall a. NonEmpty# a -> NonEmpty a
+fromNumericOp_Op : forall (op: rho -> * -> *) (r: rho) n n2. (AsOp op, PrimitiveNum n2, PrimitiveNum n) => op r n -> Op r n2
+fromPair# : forall a b. Pair# a b -> (a, b)
+fst : forall a b. (a, b) -> a
+fst# : forall a b. Pair# a b -> a
+funcall1# : forall a b. Function1 a b -> a -> b
+funcall2# : forall a b c. Function2 a b c -> a -> b -> c
+funcall3# : forall a b c d. Function3 a b c d -> a -> b -> c -> d
+funcall4# : forall a b c d e. Function4 a b c d e -> a -> b -> c -> d -> e
+funcall5# : forall a b c d e f. Function5 a b c d e f -> a -> b -> c -> d -> e -> f
+funcall6# : forall a b c d e f g. Function6 a b c d e f g -> a -> b -> c -> d -> e -> f -> g
+funcall7# : forall a b c d e f g h. Function7 a b c d e f g h -> a -> b -> c -> d -> e -> f -> g -> h
+function1 : forall a b. (a -> b) -> Function1 a b
+function2 : forall a b c. (a -> b -> c) -> Function2 a b c
+function3 : forall a b c d. (a -> b -> c -> d) -> Function3 a b c d
+ge : forall a. (a -> a -> Ordering) -> a -> a -> Bool
+getCause : Throwable -> Maybe Throwable
+getCause' : Throwable -> Throwable
+getDate : Date -> Int
+getExponent : Double -> Int
+getExponent_Float : Float -> Int
+getF : forall (h: rho) a (r: rho). r <- (h, t) => Field h a -> Record r -> a
+getF2 : forall (a: rho) b (c: rho) d (e: rho). (exists (f: rho) (g: rho). e <- (g, c), e <- (f, a)) => Field a b -> Field c d -> Record e -> (b, d)
+getFieldOr : forall a (h: rho) (r: rho). r <- (h, t) => a -> Field h (Nullable a) -> Record r -> a
+getJust : forall a. String -> Maybe a -> a
+getMessage : Throwable -> String
+getMonth : Date -> Int
+getOrElse_Nullable : forall a. a -> Nullable a -> a
+getTime : Date -> Long
+getYear : Date -> Int
+gray : Color
+green : Color
+grid : forall (f: * -> *) z. List (List (Report f z)) -> Report f z
+gridRow : forall (f: * -> *) z. String -> Report f z -> List (Report f z)
+gridSelectors : forall a (f: * -> *) z. (a -> (List (Report f z) -> Selector f z a -> Report f z) -> Report f z) -> List a -> (Report f z -> Selector f z (List a) -> Report f z) -> Report f z
+gridSelectorsH : forall (f: * -> *) z a. List (Report f z) -> (a -> (List (Report f z) -> Selector f z a -> Report f z) -> Report f z) -> List a -> (Report f z -> Selector f z (List a) -> Report f z) -> Report f z
+groupBy : forall (k: rho) (v: rho) (v2: rho) (rel: rho -> *) (kv: rho)
+groupBy# : forall (a: rho) (b: rho) (c: rho) (d: rho). List# (Pair# String PrimT) -> (Mem a -> Mem b) -> Mem c -> Mem d
+groupBy_List : forall a. (a -> a -> Bool) -> List a -> List (List a)
+groupBy_Map : forall k a. (k -> k -> Ordering) -> (a -> k) -> Vector a -> Map k (Vector a)
+growthOf10k_Op : forall (opl: rho -> * -> *) (a: rho). (a <- (a), AsOp opl) => opl a (Nullable Double) -> Op a (Nullable Double)
+gt : forall a. (a -> a -> Ordering) -> a -> a -> Bool
+h : forall (f: * -> *) z. Int -> String -> Report f z
+h1 : forall (f: * -> *) z. String -> Report f z
+h2 : forall (f: * -> *) z. String -> Report f z
+h3 : forall (f: * -> *) z. String -> Report f z
+h4 : forall (f: * -> *) z. String -> Report f z
+h5 : forall (f: * -> *) z. String -> Report f z
+harmonicQuotientSum : Double -> (Double, Double) -> Double
+harness : forall (f: * -> *) z. (SMEnv DB -> Scanner f) -> Runner f -> (Scanner f -> Runner f -> Writer f z) -> Report f z -> IO ()
+harness' : forall (f: * -> *) z. (SMEnv DB -> Scanner f) -> Runner f -> (Scanner f -> Runner f -> Writer f z) -> Report f z -> IO z
+harnessNoSM : forall (f: * -> *) z. (SMEnv DB -> Scanner f) -> Runner f -> (Scanner f -> Runner f -> Writer f z) -> Report f z -> IO ()
+harnessNoSM' : forall (f: * -> *) z. (SMEnv DB -> Scanner f) -> Runner f -> (Scanner f -> Runner f -> Writer f z) -> Report f z -> IO z
+hashJoin : forall (a: rho) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). a <- (e, f), b <- (d, e), c <- (d, e, f)) => Mem a -> Mem b -> Mem c
+hashLeftJoin : forall (a: rho) b (c: rho) (d: rho) (e: rho). (exists (f: rho) (g: rho). c <- (f, g), d <- (a, f), e <- (a, f, g)) => Field a (Nullable b) -> Mem c -> Mem d -> Mem e
+head : forall a. List a -> a
+head# : forall a. List# a -> a
+headDef : forall a. a -> List a -> a
+headFieldOr : forall a (h: rho) (r: rho). (exists (t: rho). r <- (t, h)) => a -> Field h (Nullable a) -> List (Record r) -> a
+headOption : forall a. List a -> Maybe a
+headOrElse : forall a. List a -> a -> a
+header : forall (f: * -> *) z. String -> Report f z -> Report f z
+header# : Relation# -> List# (Pair# String PrimT)
+header' : forall a (f: * -> *) z. Format a -> a -> Report f z -> Report f z
+headerDR : forall (f: * -> *) z. (Date, Date) -> Report f z -> Report f z
+headerScroll : forall (f: * -> *) z. String -> Report f z -> Report f z
+header_Record : forall (r: rho). Record r -> Row r
+hexString_Int : Int -> String
+hflow : forall (f: * -> *) z. List (Report f z) -> Report f z
+hflowLabeled : forall (f: * -> *) z. List (String, Report f z) -> Report f z
+hflowPad : forall (f: * -> *) a. List ErasedMagnitude -> List (Report f a) -> Report f a
+hflowPad1 : forall (f: * -> *) a. List (Report f a) -> Report f a
+hflowPad2 : forall (f: * -> *) a. List (Report f a) -> Report f a
+hflowPad3 : forall (f: * -> *) a. List (Report f a) -> Report f a
+hflowStyle : forall (f: * -> *) z. String -> List (Report f z) -> Report f z
+highestOneBit_Int : Int -> Int
+hline : forall (f: * -> *) z. Report f z
+hpad1 : forall (f: * -> *) z. Report f z
+hpad2 : forall (f: * -> *) z. Report f z
+hsep : forall (f: * -> *) z. Report f z -> List (Report f z) -> Report f z
+hspace1 : forall (f: * -> *) z. Report f z
+hspace2 : forall (f: * -> *) z. Report f z
+hspace3 : forall (f: * -> *) z. Report f z
+hspace3' : forall (f: * -> *) z. Report f z
+hspace4 : forall (f: * -> *) z. Report f z
+hspan : forall (f: * -> *) z. List (Report f z) -> Report f z
+hspanPad : forall (f: * -> *) a. List ErasedMagnitude -> List (Report f a) -> Report f a
+hspanPad1 : forall (f: * -> *) a. List (Report f a) -> Report f a
+hspanPad2 : forall (f: * -> *) a. List (Report f a) -> Report f a
+hspanPad3 : forall (f: * -> *) a. List (Report f a) -> Report f a
+hspanWeighted : forall (f: * -> *) z. List (List ErasedMagnitude, Report f z) -> Report f z
+hspanWeighted' : forall (f: * -> *) z. List (Double, Report f z) -> Report f z
+hstrut : forall (f: * -> *) z. Report f z
+hstrutWide : forall (f: * -> *) z. Report f z
+hugBottom : forall (f: * -> *) z. Report f z -> Report f z
+hugE : forall (f: * -> *) z. Report f z -> Report f z
+hugL : forall (f: * -> *) z. Report f z -> Report f z
+hugLeft : forall (f: * -> *) z. Report f z -> Report f z
+hugN : forall (f: * -> *) z. Report f z -> Report f z
+hugR : forall (f: * -> *) z. Report f z -> Report f z
+hugRight : forall (f: * -> *) z. Report f z -> Report f z
+hugS : forall (f: * -> *) z. Report f z -> Report f z
+hugTop : forall (f: * -> *) z. Report f z -> Report f z
+hugW : forall (f: * -> *) z. Report f z -> Report f z
+hypot : Double -> Double -> Double
+id : forall a. a -> a
+ieeeRemainder : Double -> Double -> Double
+if : forall a. Bool -> a -> a -> a
+if_Op : forall (r: rho) (opc: rho -> * -> *) (s: rho) a (opa: rho -> * -> *)
+ilistFromList# : forall a. List# a -> IList# a
+img : forall (f: * -> *) a. String -> Maybe String -> Report f a
+impureFuncall1# : forall a b. Function1 a b -> a -> IO b
+impureFuncall2# : forall a b c. Function2 a b c -> a -> b -> IO c
+impureFuncall3# : forall a b c d. Function3 a b c d -> a -> b -> c -> IO d
+impureFuncall4# : forall a b c d e. Function4 a b c d e -> a -> b -> c -> d -> IO e
+impureFuncall5# : forall a b c d e f. Function5 a b c d e f -> a -> b -> c -> d -> e -> IO f
+impureFuncall6# : forall a b c d e f g. Function6 a b c d e f g -> a -> b -> c -> d -> e -> f -> IO g
+impureFuncall7# : forall a b c d e f g h. Function7 a b c d e f g h -> a -> b -> c -> d -> e -> f -> g -> IO h
+incrementDate : Int -> TimeUnit -> Date -> Date
+indexOf_String : String -> String -> Int
+indices : forall a. List a -> List Int
+infinity : Double
+infinity_Float : Float
+init : forall a. List a -> List a
+inits : forall a. List a -> List (List a)
+input : forall (f: * -> *) z. String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
+inputLateBinding : forall (f: * -> *) z. String -> ((String -> Report f z) -> Selector f z String -> Report f z) -> Report f z
+insert_Map : forall k v. k -> v -> Map k v -> Map k v
+insert_Vector : forall a. Int -> a -> Vector a -> Vector a
+instance Eq (Field (r : ρ) a)
+instance Eq (List a) | Eq a
+instance Eq (List# a) | Eq a
+instance Eq (Maybe a) | Eq a
+instance Eq (Maybe# a) | Eq a
+instance Eq (Nullable a) | Eq a
+instance Eq (Pair# a b) | Eq a, Eq b
+instance Eq (a .. z) | Eq a .. Eq z
+instance Eq Bool
+instance Eq Byte
+instance Eq Char
+instance Eq Date
+instance Eq Double
+instance Eq Float
+instance Eq GUID
+instance Eq Int
+instance Eq Long
+instance Eq Short
+instance Eq String
+instance Eq Timestamp
+instance Eq {..r}
+instance Eq {..r}
+instance Num Byte
+instance Num Double
+instance Num Int
+instance Num Long
+instance Num Short
+instance Op Field
+instance Op Op
+instance Primitive (Nullable Bool)
+instance Primitive (Nullable Byte)
+instance Primitive (Nullable Date)
+instance Primitive (Nullable Double)
+instance Primitive (Nullable GUID)
+instance Primitive (Nullable Int)
+instance Primitive (Nullable Long)
+instance Primitive (Nullable Short)
+instance Primitive (Nullable String)
+instance Primitive (Nullable Timestamp)
+instance Primitive Bool
+instance Primitive Byte
+instance Primitive Date
+instance Primitive Double
+instance Primitive GUID
+instance Primitive Int
+instance Primitive Long
+instance Primitive Short
+instance Primitive String
+instance Primitive Timestamp
+instance PrimitiveAtom Bool
+instance PrimitiveAtom Byte
+instance PrimitiveAtom Date
+instance PrimitiveAtom Double
+instance PrimitiveAtom GUID
+instance PrimitiveAtom Int
+instance PrimitiveAtom Long
+instance PrimitiveAtom Short
+instance PrimitiveAtom String
+instance PrimitiveAtom Timestamp
+instance PrimitiveNum (Nullable Byte)
+instance PrimitiveNum (Nullable Double)
+instance PrimitiveNum (Nullable Int)
+instance PrimitiveNum (Nullable Long)
+instance PrimitiveNum (Nullable Short)
+instance PrimitiveNum Byte
+instance PrimitiveNum Double
+instance PrimitiveNum Int
+instance PrimitiveNum Long
+instance PrimitiveNum Short
+instance PrimitiveString (Nullable String)
+instance PrimitiveString String
+instance PrimitiveTemporal (Nullable Date)
+instance PrimitiveTemporal (Nullable Timestamp)
+instance PrimitiveTemporal Date
+instance PrimitiveTemporal Timestamp
+instance Relational Mem
+instance Relational Relation
+instance Relational SM
+instance RelationalComb Mem
+instance RelationalComb Relation
+instance Scaled (Nullable Byte)
+instance Scaled (Nullable Date)
+instance Scaled (Nullable Double)
+instance Scaled (Nullable Int)
+instance Scaled (Nullable Long)
+instance Scaled (Nullable Short)
+instance Scaled (Nullable Timestamp)
+instance Scaled Byte
+instance Scaled Date
+instance Scaled Double
+instance Scaled Int
+instance Scaled Long
+instance Scaled Short
+instance Scaled Timestamp
+instance Temporal Date
+instance Temporal Timestamp
+instance Unscaled (Nullable Bool)
+instance Unscaled (Nullable Byte)
+instance Unscaled (Nullable Double)
+instance Unscaled (Nullable GUID)
+instance Unscaled (Nullable Int)
+instance Unscaled (Nullable Long)
+instance Unscaled (Nullable Short)
+instance Unscaled (Nullable String)
+instance Unscaled (a .. z) | Unscaled a .. Unscaled z
+instance Unscaled Bool
+instance Unscaled Byte
+instance Unscaled Double
+instance Unscaled GUID
+instance Unscaled Int
+instance Unscaled Long
+instance Unscaled Short
+instance Unscaled String
+intInput : forall (f: * -> *) z. Int -> (Report f z -> Selector f z (Maybe Int) -> Report f z) -> Report f z
+intInputLateBinding : forall (f: * -> *) z. Int -> ((Int -> Report f z) -> Selector f z (Maybe Int) -> Report f z) -> Report f z
+intInputSection : forall (f: * -> *) z. Int -> (Report f z -> Report f z) -> (Int -> Report f z) -> Report f z
+intInputSectionV : forall (f: * -> *) z. Int -> (String -> Either String Int) -> (Report f z -> Report f z) -> (Int -> Report f z) -> Report f z
+intInputV : forall a a1 (f: * -> *) z. a -> (String -> Either String a1) -> (Report f z -> Selector f z (Either String a1) -> Report f z) -> Report f z
+intRing : Ring Int
+intersection : forall (r: rho) (r1: rho) (r2: rho). Row r -> Row r1 -> Row r2
+intersperse : forall a. a -> List a -> List a
+inverse : forall a. (a -> a -> Ordering) -> a -> a -> Ordering
+invert : forall (r: a). Sort r -> Sort r
+ioAlt : Alt IO
+ioAp : Ap IO
+ioEmpty : forall a. IO a
+ioFunctor : Functor IO
+ioMonad : Monad IO
+isAscending : SortOrder -> Bool
+isEmpty : forall a. List a -> Bool
+isEmpty_Vector : forall a. Vector a -> Bool
+isInfinite : Double -> Bool
+isInfinite_Float : Float -> Bool
+isJust : forall a. Maybe a -> Bool
+isNaN : Double -> Bool
+isNaN_Float : Float -> Bool
+isNothing : forall a. Maybe a -> Bool
+isNull : forall a. a -> Bool
+isNull_Predicate : forall (r: rho) a. Op r a -> Predicate r
+iterate : forall a. (a -> a) -> a -> List a
+join : forall (a: rho -> *) (b: rho) (c: rho) (d: rho). (exists (e: rho) (f: rho) (g: rho). b <- (f, g), c <- (e, f), d <- (e, f, g), RelationalComb a) => a b -> a c -> a d
+join1 : forall (k: rho) a (rel: rho -> *) (ra: rho) (rb: rho) (r: rho). (Relational rel, r <- (k, r1, r2), rb <- (k, r2), ra <- (k, r1)) => Field k a -> rel ra -> rel rb -> rel r
+joinBy : forall (k: rho) (rel: rho -> *) (r1: rho) (r2: rho) (r: rho). (Relational rel, r <- (k, t1, t2), r2 <- (k, t2), r1 <- (k, t1)) => Row k -> rel r1 -> rel r2 -> rel r
+joinBy' : forall (kh: rho) (rel: rho -> *) (r1: rho) (r2: rho) (r: rho). (Relational rel, r <- (kh, kt, t1, t2), r2 <- (kh, kt, t2), r1 <- (kh, kt, t1)) => Row kh -> rel r1 -> rel r2 -> rel r
+joinOn : forall (a: rho) (b: rho) (c: rho) (d: rho) (e: rho). (exists (f: rho) (g: rho) (h: rho) (i: rho) (j: rho). d <- (f, b), a <- (g, h), c <- (i, a), e <- (j, f, c), b <- (j, g)) => UnifyFields a b -> Relation c -> Relation d -> Relation e
+joinWithDefault : forall (extra: rho) a (rel: rho -> *) (r1: rho) (r2: rho)
+keyValueTabular : forall a b (k: rho) (v: rho) (i: rho) (rel: rho -> *) (r: rho)
+keyedDrilldown : forall (p: rho) id (c: rho) (k: rho) a (pr2: rho -> * -> *)
+l (pri: rho -> * -> *) (ivalue: rho) d (prs: rho -> * -> *) (svalue: rho)
+labeled : forall (f: * -> *) z. String -> String -> Report f z
+lastBy : forall (h: rho) (r: rho). (exists (c: rho). r <- (h, c)) => Row h -> Relation r -> Relation r
+le : forall a. (a -> a -> Ordering) -> a -> a -> Bool
+leafRows : forall (parent: rho) n (child: rho) (r: rho). r <- (parent, child, t) => Field parent n -> Field child n -> Relation r -> Relation r
+leftJoinOr : forall (rel: rho -> *) (r1: rho) (r2: rho) (t: rho) (r3: rho). (r3 <- (r, s, t), r2 <- (s, t), r1 <- (r, s), RelationalComb rel) => rel r1 -> rel r2 -> Record t -> rel r3
+lefts : forall a b. List (Either a b) -> List a
+length : forall a. List a -> Int
+length_String : String -> Int
+length_Vector : forall a. Vector a -> Int
+letM : forall (a: rho -> *) (b: rho) (c: rho). Relational a => a b -> (Mem b -> Mem c) -> Mem c
+letR : forall (a: rho -> *) (b: rho) (c: rho). Relational a => a b -> (Relation b -> Relation c) -> Relation c
+letRWithPK : forall (k: rho) (rel: rho -> *) (a: rho) (b: rho). (exists (c: rho). a <- (k, c), Relational rel) => Row k -> rel a -> (Relation a -> Relation b) -> Relation b
+letRWithPK# : forall (a: rho -> *) (b: rho) (c: rho). Relational a => List# (Pair# String PrimT) -> a b -> (Relation b -> Relation c) -> Relation c
+liftA : forall (f: * -> *) a b. Ap f -> (a -> b) -> f a -> f b
+liftA2 : forall (f: * -> *) a b c. Ap f -> (a -> b -> c) -> f a -> f b -> f c
+liftA3 : forall (f: * -> *) a b c d. Ap f -> (a -> b -> c -> d) -> f a -> f b -> f c -> f d
+liftA4 : forall (f: * -> *) a b c d e. Ap f -> (a -> b -> c -> d -> e) -> f a -> f b -> f c -> f d -> f e
+liftA5 : forall (f: * -> *) a b c d e g. Ap f -> (a -> b -> c -> d -> e -> g) -> f a -> f b -> f c -> f d -> f e -> f g
+liftA6 : forall (f: * -> *) a b c d e g h. Ap f -> (a -> b -> c -> d -> e -> g -> h) -> f a -> f b -> f c -> f d -> f e -> f g -> f h
+liftDo : forall (f: * -> *) a. f a -> Monad f -> f a
+liftNull : forall a. a -> Maybe a
+liftW : forall (f: * -> *) a b. Comonad f -> (a -> b) -> f a -> f b
+lightGray : Color
+lightGrayUnderline : forall (f: * -> *) a. Report f a -> Report f a
+limit : forall (h: rho) (rel: rho -> *) (r: rho). (exists (c: rho). r <- (h, c), RelationalComb rel) => Sort h -> Maybe Int -> Maybe Int -> rel r -> rel r
+limit# : forall (a: rho -> *) (b: rho). RelationalComb a => List# (Pair# String SortOrder#) -> Maybe# Int -> Maybe# Int -> a b -> a b
+line : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa
+lines_String : String -> List String
+link : forall (f: * -> *) z. String -> String -> Report f z
+linkText : String -> String -> String
+listAlt : Alt List
+listAp : Ap List
+listFunctor : Functor List
+listLt : forall a. (a -> a -> Bool) -> List a -> List a -> Bool
+listMonad : Monad List
+listNel# : forall a. NonEmpty# a -> List a
+listToMaybe : forall a. List a -> Maybe a
+listTraversable : Traversable List
+live : forall z. SelectorEvent z
+log : Double -> Double
+log10 : Double -> Double
+log10_Op : forall (op: rho -> * -> *) (a: rho) n (b: rho). (exists (c: rho). b <- (c, a), AsOp op, PrimitiveNum n) => op a n -> Op b n
+log1p : Double -> Double
+logBase_Op : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *)
+log_Op : forall (op: rho -> * -> *) (a: rho) n (b: rho). (exists (c: rho). b <- (c, a), AsOp op, PrimitiveNum n) => op a n -> Op b n
+lookbackJoin : forall (r: rho) (r1: rho) (a: rho) (b: rho). (exists (t: rho) (c: rho) (d: rho) (e: rho) (f: rho) (g: rho) (h: rho) (i: rho) (c1: rho) (j: rho) (k: rho) (l: rho) (m: rho). r1 <- (r, c1), r <- (r), h <- (i, c), a <- (k, g), l <- (m, j), t <- (d, r, c), t <- (c, d, r), a <- (i, r), e <- (g, f), l <- (r, c), h <- (c, i), b <- (k, g, f), t <- (j, c1, r), t <- (d, m, j), r1 <- (d, m)) => (Field r Date -> Op r Date) -> Field r Date -> Relation r1 -> Relation a -> Relation b
+lookupLatest : forall (h: rho) (r: rho). r <- (h, t) => Field h Date -> Relation h -> Relation r -> Relation r
+lookupLatest' : forall (keys: rho) (r: rho). r <- (keys, t) => (Date -> Relation keys -> Relation r) -> Date -> Date -> Relation keys -> Relation r
+lookupLatest1 : forall (h: rho) (r: rho). r <- (h, t) => Field h Date -> Date -> Relation r -> Relation r
+lookupLatestWithin : forall (h: rho) (r: rho). r <- (h, t) => (Field h Date -> Op h Date) -> Field h Date -> Relation h -> Relation r -> Relation r
+lookupLatestWithin1 : forall (h: rho) (r: rho). r <- (h, t) => (Field h Date -> Op h Date) -> Field h Date -> Date -> Relation r -> Relation r
+lookupOr'_Map : forall v k. v -> Map k v -> k -> v
+lookupOr_Map : forall v k. v -> k -> Map k v -> v
+lookup_Map : forall k v. k -> Map k v -> Maybe v
+lower_Op : forall (op: rho -> * -> *) (r: rho). AsOp op => op r String -> Op r String
+lowestoneBit_Int : Int -> Int
+lt : forall a. (a -> a -> Ordering) -> a -> a -> Bool
+ltStringDateRange_DateRange : String -> String -> Bool
+magenta : Color
+makeSelectors : forall a (f: * -> *) z. (a -> (Report f z -> Selector f z a -> Report f z) -> Report f z) -> List a -> (Report f z -> Selector f z (List a) -> Report f z) -> Report f z
+makeSelectors' : forall b (f: * -> *) z a. (List b -> Report f z) -> (a -> (b -> Selector f z a -> Report f z) -> Report f z) -> List a -> (Report f z -> Selector f z (List a) -> Report f z) -> Report f z
+makeSelectorsLateBinding : forall b (f: * -> *) z a. (List b -> Report f z) -> (a -> ((a -> b) -> Selector f z a -> Report f z) -> Report f z) -> List a -> ((List a -> Report f z) -> Selector f z (List a) -> Report f z) -> Report f z
+mapCont : forall r a. (r -> r) -> Cont r a -> Cont r a
+mapFst : forall a b c. (a -> b) -> (a, c) -> (b, c)
+mapKeys_Map : forall k2 k v. (k2 -> k2 -> Ordering) -> (k -> k2) -> Map k v -> Map k2 v
+mapM : forall (t: * -> *) (f: * -> *) a b. Traversable t -> Monad f -> (a -> f b) -> t a -> f (t b)
+mapSelector : forall a b (f: * -> *) z. (a -> b) -> Selector f z a -> Selector f z b
+mapSignal : forall a b (f: * -> *) z. (a -> b) -> ((a -> Report f z) -> Report f z) -> (b -> Report f z) -> Report f z
+mapSnd : forall a b c. (a -> b) -> (c, a) -> (c, b)
+map_Either : forall a b e. (a -> b) -> Either e a -> Either e b
+map_IO : forall a b. (a -> b) -> IO a -> IO b
+map_IO_Map : forall a b. (a -> b) -> IO a -> IO b
+map_List : forall a b. (a -> b) -> List a -> List b
+map_Maybe : forall a b. (a -> b) -> Maybe a -> Maybe b
+map_Nullable : forall b a. Prim b -> (a -> b) -> Nullable a -> Nullable b
+map_Vector : forall a b. (a -> b) -> Vector a -> Vector b
+mapply : forall (f: * -> *) a b. Functor f -> f (a -> b) -> a -> f b
+markdownShown : forall a (f: * -> *) z. (Primitive a, Unscaled a) => a -> Report f z
+materialize : forall (a: rho -> *) (b: rho). Relational a => a b -> Relation b
+materializeWithPK : forall (k: rho) (rel: rho -> *) (a: rho). (exists (c: rho). a <- (c, k), Relational rel) => Row k -> rel a -> Relation a
+max : forall a. (a -> a -> Ordering) -> a -> a -> a
+maxA : forall (f: * -> *) z. List Area -> Report f z -> Report f z
+maxBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Primitive n, Relational rel) => Field r n -> rel r1 -> rel r
+maxBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Relational rel, Primitive n) => Field r n -> rel r1 -> rel r
+maxExponent : Int
+maxExponent_Float : Int
+maxH : forall (f: * -> *) z. List ErasedMagnitude -> Report f z -> Report f z
+maxPositive : Double
+maxPositive_Float : Float
+maxRowBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (a: rho). r1 <- (a, r), r <- (r), Primitive n, RelationalComb rel) => Field r n -> rel r1 -> rel r1
+maxW : forall (f: * -> *) z. List ErasedMagnitude -> Report f z -> Report f z
+max_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, Primitive n) => op r n -> Aggregate r n
+max_Long : Long -> Long -> Long
+maybe : forall a b. a -> (b -> a) -> Maybe b -> a
+maybeAlt : Alt Maybe
+maybeAp : Ap Maybe
+maybeEither : forall e a. e -> Maybe a -> Either e a
+maybeFirstKey_Map : forall a k v. a -> (k -> a) -> Map k v -> a
+maybeFunctor : Functor Maybe
+maybeHead : forall b a. b -> (a -> b) -> List a -> b
+maybeMonad : Monad Maybe
+maybeToList : forall a. Maybe a -> List a
+maybeTraversable : Traversable Maybe
+meanBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Relational rel, PrimitiveNum n) => Field r n -> rel r1 -> rel r
+meanBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), PrimitiveNum n, Relational rel) => Field r n -> rel r1 -> rel r
+mean_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, PrimitiveNum n) => op r n -> Aggregate r n
+medianBy : forall (v: rho) n (rel: rho -> *) (r: rho). (r <- (v, t), Relational rel, PrimitiveNum n) => Field v n -> rel r -> Mem v
+medium : LineThickness
+mem : forall (r: rho). List (Record r) -> Mem r
+member_Map : forall k v. k -> Map k v -> Bool
+memoRel : forall (a: rho -> *) (b: rho). RelationalComb a => a b -> a b
+memoRelWithPK : forall (k: rho) (r: rho). (exists (c: rho). r <- (k, c)) => Row k -> Relation r -> Relation r
+memoRelWithPK# : forall (a: rho -> *) (b: rho). RelationalComb a => List# (Pair# String PrimT) -> a b -> a b
+mergeJoin : forall (a: rho) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). a <- (e, f), b <- (d, e), c <- (d, e, f)) => Mem a -> Mem b -> Mem c
+milliseconds : TimeUnit
+min : forall a. (a -> a -> Ordering) -> a -> a -> a
+minBy : forall a b. Primitive b => (a -> b) -> List a -> Maybe a
+minBy_A : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Primitive n, Relational rel) => Field r n -> rel r1 -> rel r
+minBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Relational rel, Primitive n) => Field r n -> rel r1 -> rel r
+minExponent : Int
+minExponent_Float : Int
+minNormal : Double
+minNormal_Float : Float
+minPositive : Double
+minPositive_Float : Float
+minRowBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (a: rho). r1 <- (a, r), r <- (r), Primitive n, RelationalComb rel) => Field r n -> rel r1 -> rel r1
+min_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, Primitive n) => op r n -> Aggregate r n
+min_Long : Long -> Long -> Long
+minfinity : Double
+minfinity_Float : Float
+minus : forall (t: rho) (r: rho) (s: rho). t <- (r, s) => Row t -> Row r -> Row s
+mkMem# : forall (a: rho). List# (Record a) -> Mem a
+mkRelation# : forall (a: rho). List# (Record a) -> Relation a
+mkRelationWithHeader# : forall (a: rho). List# (Pair# String PrimT) -> List# (Record a) -> Relation a
+modify : forall (h: rho) a (r: rho). r <- (h, t) => Field h a -> (a -> a) -> Record r -> Record r
+monad_Vector : Monad Vector
+monthNames : List String
+months : TimeUnit
+mySql#_Scanners : forall (f: * -> *). ScannersModule -> SMEnv f -> Scanner f
+mySqlInnoDB#_Scanners : forall (f: * -> *). ScannersModule -> SMEnv f -> Scanner f
+mySqlInnoDB_Scanners : forall (f: * -> *). SMEnv f -> Scanner f
+mySql_Runners : String -> Runner DB
+mySql_Scanners : forall (f: * -> *). SMEnv f -> Scanner f
+naN : Double
+naN_Float : Float
+nan : Double
+nearestDate : forall (rsparse: rho) (rfine: rho) (r: rho). r <- (rfine, rsparse) => Field rsparse Date -> Relation rsparse -> Field rfine Date -> Relation rfine -> Relation r
+nearestDateWithin : forall (rsparse: rho) (rfine: rho) (r: rho). r <- (rfine, rsparse) => (Field rsparse Date -> Op rsparse Date) -> Field rsparse Date -> Relation rsparse -> Field rfine Date -> Relation rfine -> Relation r
+neg : forall n. Num n => n -> n
+neg_Primitive : forall n. PrimitiveNum n => n -> n
+negate : forall a. Ring a -> a -> a
+negate_Op : forall (opr: rho -> * -> *) (b: rho). (b <- (b), AsOp opr) => opr b (Nullable Double) -> Op b (Nullable Double)
+nel# : forall a. a -> List# a -> NonEmpty# a
+neq : forall a. (a -> a -> Ordering) -> a -> a -> Bool
+nextAfter : Double -> Double -> Double
+nextAfter_Float : Float -> Double -> Float
+nextUp : Double -> Double
+nextUp_Float : Float -> Float
+noTablePagination : forall (f: * -> *) z. Report f z -> Report f z
+noTableScrolling : forall (f: * -> *) z. Report f z -> Report f z
+nonEmptyRelation : forall (r: rho). NonEmpty (Record r) -> Relation r
+normalFont : forall (f: * -> *) z. Report f z -> Report f z
+not : Bool -> Bool
+not_Predicate : forall (r: rho). Predicate r -> Predicate r
+note : forall (a: rho). String -> Relation a -> Relation a
+nub : forall a. Eq a => List a -> List a
+nubBy : forall a. (a -> a -> Bool) -> List a -> List a
+null : forall a. List a -> Bool
+nullableOrd : forall a. (a -> a -> Ordering) -> Nullable a -> Nullable a -> Ordering
+numOrd : forall n. Num n => n -> n -> Ordering
+number : forall a (f: * -> *) z. PrimitiveNum a => a -> Report f z
+numberOfLeadingZeros_Int : Int -> Int
+octalString_Int : Int -> String
+on : forall z (f: * -> *) a. SelectorEvent z -> Selector f z a -> (a -> Report f z) -> Report f z
+onEvent : forall z (f: * -> *). SelectorEvent z -> Report f z -> Report f z
+one : forall a. Ring a -> a
+only : forall (r: rho) (s: rho). (exists (c: rho). r <- (s, c)) => Sort r -> Sort s -> Sort s
+onlySome : forall (r: rho) (s: rho) (rs: rho). (exists (c: rho) (c1: rho). s <- (rs, c1), r <- (rs, c)) => Sort r -> Sort s -> Sort rs
+or : List Bool -> Bool
+orEither : forall a b. Either a b -> Either a b -> Either a b
+orElse : forall a. a -> Maybe a -> a
+orEvent : forall z. SelectorEvent z -> SelectorEvent z -> SelectorEvent z
+orMaybe : forall a. Maybe a -> Maybe a -> Maybe a
+orange : Color
+ord : forall a. (a -> a -> Ordering) -> List a -> List a -> Ordering
+ordMonoid : forall a. Monoid (a -> a -> Ordering)
+ord_Bool : Bool -> Bool -> Ordering
+ord_DateRange : (Date, Date) -> (Date, Date) -> Ordering
+ord_String : forall a. Primitive a => a -> a -> Ordering
+orderList_Map : forall a. (a -> a -> Ordering) -> List a -> Map a Int
+ordering : forall (r: rho). Row r -> Sort r
+orderingMonoid : Monoid Ordering
+otherwise : Bool
+paRed : Color
+pad : forall (f: * -> *) a. List ErasedMagnitude -> Report f a -> Report f a
+pad' : forall a (f: * -> *) b. (BorderOptions a -> BorderOptions (List ErasedMagnitude)) -> Report f b -> Report f b
+pad1 : forall (f: * -> *) z. Report f z -> Report f z
+pad2 : forall (f: * -> *) z. Report f z -> Report f z
+pad3 : forall (f: * -> *) z. Report f z -> Report f z
+pad4 : forall (f: * -> *) z. Report f z -> Report f z
+padBottom : forall (f: * -> *) a. List ErasedMagnitude -> Report f a -> Report f a
+padLeft : forall (f: * -> *) a. List ErasedMagnitude -> Report f a -> Report f a
+padRight : forall (f: * -> *) a. List ErasedMagnitude -> Report f a -> Report f a
+padSides : forall (f: * -> *) a. List ErasedMagnitude -> Report f a -> Report f a
+padTop : forall (f: * -> *) a. List ErasedMagnitude -> Report f a -> Report f a
+pair# : forall a b. a -> b -> Pair# a b
+parseBool : String -> Maybe Bool
+parseByte : Int -> String -> Maybe Byte
+parseDate : String -> Maybe Date
+parseDate# : String -> Maybe# Date
+parseDateRange_DateRange : String -> Maybe (Date, Date)
+parseDouble : String -> Maybe Double
+parseFloat : String -> Maybe Float
+parseInput : forall a (f: * -> *) z. (String -> Maybe a) -> String -> (Report f z -> Selector f z (Maybe a) -> Report f z) -> Report f z
+parseInputLateBinding : forall a (f: * -> *) z. (String -> Maybe a) -> String -> ((String -> Report f z) -> Selector f z (Maybe a) -> Report f z) -> Report f z
+parseInputV : forall a (f: * -> *) z. (String -> Either String a) -> String -> (Report f z -> Selector f z (Either String a) -> Report f z) -> Report f z
+parseInputVLateBinding : forall a (f: * -> *) z. (String -> Either String a) -> String -> ((String -> Report f z) -> Selector f z (Either String a) -> Report f z) -> Report f z
+parseInt : Int -> String -> Maybe Int
+parseLong : Int -> String -> Maybe Long
+parseShort : Int -> String -> Maybe Short
+partialLookup : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho)
+partialLookup' : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho)
+partialRecordOrd : forall (r: rho) (s: rho). s <- (r, o) => Sort r -> Record s -> Record s -> Ordering
+partition : forall a. List a -> (a -> Bool) -> (List a, List a)
+partitionEithers : forall a b. List (Either a b) -> (List a, List b)
+percent : forall a (f: * -> *) z. PrimitiveNum a => a -> Report f z
+pi : Double
+pick : forall a. List Int -> List a -> List a
+pick_Vector : forall a. List (a -> Bool) -> Vector a -> Vector a
+pieChart : forall nm (labels: rho) (prl: rho -> * -> *) l (prv: rho -> * -> *)
+pieChart# : forall (f: * -> *) a (r: rho) b (s: rho) c. Writer f a -> PieChartData# -> Presentation r b -> Presentation s c -> Relation# -> f a
+pieChartW : forall (f: * -> *) a nm (r: rho) a1 (s: rho) c. Writer f a -> String -> Maybe (Atomic nm) -> ChartLegendOptions# -> List (Record r, Color) -> ChartRenderHints# -> Presentation r a1 -> Presentation s c -> Relation# -> f a
+pink : Color
+pipe# : forall (a: rho) b (c: rho). Mem a -> b -> Mem c
+pivotTabular : forall (k: rho) (i: rho) (v: rho) (rel: rho -> *) (r: rho)
+pivotTabular' : forall (k: rho) (v: rho) (i: rho) (rel: rho -> *) (r: rho)
+pixels : Int -> Magnitude PixelT
+pixelsA : Int -> Int -> Area
+pixelsM : Int -> ErasedMagnitude
+postgres#_Scanners : forall (f: * -> *). ScannersModule -> SMEnv f -> Scanner f
+postgres_Runners : String -> Runner DB
+postgres_Scanners : forall (f: * -> *). SMEnv f -> Scanner f
+pow : forall n. Num n => n -> n -> n
+pow_Op : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho)
+pow_Primitive : forall n. PrimitiveNum n => n -> n -> n
+powerslice : forall a. List a -> List (List a)
+prefA : forall (f: * -> *) z. List Area -> Report f z -> Report f z
+prefH : forall (f: * -> *) z. List ErasedMagnitude -> Report f z -> Report f z
+prefW : forall (f: * -> *) z. List ErasedMagnitude -> Report f z -> Report f z
+prependToAll : forall a. a -> List a -> List a
+prim# : forall a. Prim a -> PrimT
+primAbs# : forall a. a -> a
+primCata : Int ->
+primDiv# : forall a. a -> a -> a
+primExpr# : forall a. Primitive a => a -> PrimExpr#
+primExpr## : forall a. a -> PrimExpr#
+primGt# : forall a. a -> a -> Bool
+primGte# : forall a. a -> a -> Bool
+primLt# : forall a. a -> a -> Bool
+primLte# : forall a. a -> a -> Bool
+primMinus# : forall a. a -> a -> a
+primNeg : forall a. Num a => a -> a
+primNeg# : forall a. a -> a
+primOrd_Primitive : forall a. Primitive a => a -> a -> Ordering
+primPlus# : forall a. a -> a -> a
+primPow# : forall a. a -> a -> a
+primTimes# : forall a. a -> a -> a
+primToDouble# : forall a. a -> Double
+primToInt# : forall a. a -> Int
+primToLong# : forall a. a -> Long
+prim_Op : forall a. Primitive a => a -> Op (||) a
+primitive Byte : *
+primitive Char : *
+primitive Double : *
+primitive Float : *
+primitive Int : *
+primitive Long : *
+primitive Short : *
+printLn : String -> IO ()
+product : List Int -> Int
+profileRun_Runners : forall (f: * -> *). Runner f -> Runner f
+project : forall (r1: rho) (rel: rho -> *) (r: rho). (exists (c: rho). r <- (r1, c), RelationalComb rel) => Row r1 -> rel r -> rel r1
+project# : forall (a: rho -> *) (b: rho) (c: rho). (exists (d: rho). b <- (d, c), RelationalComb a) => List# (Pair# String PrimT) -> a b -> a c
+projectEach : forall (a: rho) (b: rho) (c: rho -> *). (exists (d: rho). a <- (d, b), RelationalComb c) => (forall e. e -> Op a e -> Op a e) -> Record b -> c a -> c a
+projectT : forall (h: rho) (r: rho). r <- (h, t) => Row h -> Record r -> Record h
+projectT# : forall (a: rho) (b: rho). (exists (c: rho). a <- (c, b)) => List# String -> Record a -> Record b
+promote : forall (a: rho) b (c: rho) (d: rho) (e: rho). (exists (f: rho). d <- (f, a), e <- (f, c), PrimitiveAtom b) => Field a b -> Field c (Nullable b) -> Mem d -> Mem e
+pure : forall (f: * -> *) a. Ap f -> a -> f a
+pure_IO_Map : forall a. a -> IO a
+quarter : Date -> Int
+quarterNames : List String
+radioButton : forall a (f: * -> *) z. (a -> String) -> a -> List a -> (Report f z -> Selector f z a -> Report f z) -> Report f z
+radioButtonLateBinding : forall a (f: * -> *) z. (a -> String) -> a -> List a -> ((a -> Report f z) -> Selector f z a -> Report f z) -> Report f z
+radixString_Int : Int -> Int -> String
+raise : forall a. Throwable -> a
+random : IO Double
+range : Int -> Int -> List Int
+ratioA : Double -> Double -> Area
+readLn : IO String
+record# : forall (a: rho). Record a -> Record#
+recordOrd : forall (r: rho). Sort r -> Record r -> Record r -> Ordering
+red : Color
+reduce_Vector : forall a. a -> (a -> a -> a) -> Vector a -> a
+refl_Type : forall {k} (a: k). a ==_Type.Eq a
+relation : forall (r: rho). List (Record r) -> Relation r
+relation# : forall (a: rho -> *) (b: rho). Relational a => a b -> Relation#
+relationWithHeader : forall (r: rho). Row r -> List (Record r) -> Relation r
+remoteSelection : forall (rel: rho -> *) (a: rho) (b: rho) c (f: * -> *) z. (exists (d: rho). a <- (b, d), Relational rel) => rel a -> Field b c -> Report f z -> (List (Record a) -> Record a -> Report f z) -> Report f z
+remoteSelectionDescending : forall (rel: rho -> *) (a: rho) (b: rho) c (f: * ->
+rename : forall (a: rho) b (c: rho) (d: rho -> *) (e: rho) (f: rho). (exists (g: rho). e <- (g, a), f <- (g, c), RelationalComb d) => Field a b -> Field c b -> d e -> d f
+rename' : forall (a: rho) b (c: rho) (rel: rho -> *) (r: rho) (d: rho). (exists (e: rho) (r2: rho). d <- (c, e), r2 <- (a, e), r <- (e, a, c), RelationalComb rel) => Field a b -> Field c b -> rel r -> rel d
+reorder : forall (r: rho) (s: rho). (exists (c: rho). r <- (s, c)) => Sort r -> Sort s -> Sort r
+reorderSome : forall (r: rho) (s: rho). Sort r -> Sort s -> Sort r
+reorderSplit : forall (r: rho) (s: rho) (rs: rho) (ro: rho). (exists (c: rho). s <- (rs, c), r <- (rs, ro)) => Sort r -> Sort s -> (Sort rs, Sort ro)
+repeat : forall a. a -> List a
+replaceAll_String : String -> String -> String -> String
+replaceColumn : forall (r: rho) a (rel: rho -> *) (ra: rho) (rb: rho) (r2: rho). (exists (r1: rho) (r3: rho) (r21: rho). rb <- (r, r21), RelationalComb rel, ra <- (r, r1), r3 <- (r2, r), r3 <- (r, r1, r21)) => Field r a -> rel ra -> rel rb -> rel r2
+replace_Op : forall (op1: rho -> * -> *) (r1: rho) a (op2: rho -> * -> *)
+replace_String : Char -> Char -> String -> String
+replicate : forall a. a -> Int -> List a
+reportEndo : forall (f: * -> *) z a. (Writer f z -> a -> z -> z) -> a -> Report f z -> Report f z
+return_Either : forall a e. a -> Either e a
+return_IO : forall a. a -> IO a
+return_List : forall a. a -> List a
+return_Maybe : forall a. a -> Maybe a
+reverse : forall a. List a -> List a
+reverseBits_Int : Int -> Int
+reverseBytes_Int : Int -> Int
+rgb : Int -> Int -> Int -> Color
+rgbRead : String -> Maybe Color
+rgba : Int -> Int -> Int -> Int -> Color
+rheader : forall (rel: rho -> *) (a: rho). Relational rel => rel a -> Row a
+rheader# : forall (a: rho). Relation# -> Row a
+rightJoinOr : forall (rel: rho -> *) (r1: rho) (r2: rho) (r: rho) (r3: rho). (r3 <- (r, s, t), r2 <- (s, t), r1 <- (r, s), RelationalComb rel) => rel r1 -> rel r2 -> Record r -> rel r3
+rightJoinWithDefault : forall (extra: rho) a (rel: rho -> *) (r2: rho) (r1: rho)
+rights : forall a b. List (Either a b) -> List b
+rint : Double -> Double
+rotateLeft_Int : Int -> Int -> Int
+rotateRight_Int : Int -> Int -> Int
+round : Double -> Long
+rounded : forall a (f: * -> *) z. PrimitiveNum a => Int -> a -> Report f z
+row : forall (r: rho). Record r -> Relation r
+rowUsed# : forall (r: rho). TraversableColumns# r -> Row r
+runCont : forall r a. Cont r a -> (a -> r) -> r
+runFFI : forall i. FFI i -> IO i
+runIO : forall a r. IO a -> (a -> r) -> (forall i. (i -> r) -> (Throwable -> r) -> FFI i -> r) -> (Throwable -> r) -> r
+runRelation : forall (a: * -> *) (b: rho -> *) (c: rho). Relational b => Scanner a -> b c -> a (Vector (Record c))
+runReport : forall (f: * -> *) z. Writer f z -> Report f z -> f z
+runScan : forall r (f: * -> *) z. (Monad (Cont r) -> Cont (Report f z) (Report f z)) -> Report f z
+runW : forall (f: * -> *) a. Writer f a -> a -> IO ()
+run_Runners : forall (f: * -> *) a. Runner f -> f a -> IO a
+scalaRecord# : Record# -> ScalaRecord#
+scalaRecordIn# : ScalaRecord# -> Record#
+scalb : Double -> Int -> Double
+scalb_Float : Float -> Int -> Float
+scaled : forall a. Scaled a => SortOrder -> Maybe a -> Maybe a -> DisplayScale -> Axis a
+scan : forall (rel: rho -> *) (r: rho) monad (f: * -> *) z. Relational rel => rel r -> monad -> Cont (Report f z) (List (Record r))
+scanInOrder : forall (s: a) (rel: rho -> *) (r: rho) monad (f: * -> *) z. (Relational rel, Has r s) => Sort s -> rel r -> monad -> Cont (Report f z) (List (Record r))
+scanRelation : forall (rel: rho -> *) (r: rho) (f: * -> *) z. Relational rel => rel r -> (List (Record r) -> Report f z) -> Report f z
+scanRelationInOrder : forall (s: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (Relational rel, Has r s) => Sort s -> rel r -> (List (Record r) -> Report f z) -> Report f z
+scanl : forall b a. (b -> a -> b) -> b -> List a -> List b
+scanl' : forall b a. (b -> a -> b) -> b -> List a -> List b
+scatter : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa
+scroll : forall (f: * -> *) z. Report f z -> Report f z
+scrollSection : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+scrollUnpadded : forall (f: * -> *) z. Report f z -> Report f z
+seconds : TimeUnit
+section : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+sectionContent : forall (f: * -> *) z. Report f z -> Report f z
+sectionHeader : forall (f: * -> *) z. Report f z -> Report f z
+sectionHeaderMajor : forall (f: * -> *) z. Report f z -> Report f z
+sectionHeaderNew : forall (f: * -> *) z. Report f z -> Report f z
+sectionRibbon : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+sectionUnderlined : forall (f: * -> *) z. Report f z -> Report f z
+sectionUnderlinedMajor : forall (f: * -> *) z. Report f z -> Report f z
+selectNotNulls_Predicate : forall (op: rho -> * -> *) (h: rho) a (rel: rho -> *)
+selectNulls_Predicate : forall (op: rho -> * -> *) (h: rho) a (rel: rho -> *)
+selectorAp : forall (f: * -> *) z. Ap (Selector f z)
+selectorFunctor : forall (f: * -> *) z. Functor (Selector f z)
+selectorMode# : SelectorMode -> SelectorMode#
+selectorSection : forall (f: * -> *) z a. ((Report f z -> Selector f z a -> Report f z) -> Report f z) -> (Report f z -> Report f z) -> (a -> Report f z) -> Report f z
+selectorSectionMajor : forall (f: * -> *) z a. ((Report f z -> Selector f z a -> Report f z) -> Report f z) -> (Report f z -> Report f z) -> (a -> Report f z) -> Report f z
+semigroupMonoid : forall a. (a -> a -> a) -> Monoid (Maybe a)
+seq : forall a b. a -> b -> b
+sequence : forall (t: * -> *) (f: * -> *) a. Traversable t -> Monad f -> t (f a) -> f (t a)
+sequenceA : forall (t: * -> *) (f: * -> *) a. Traversable t -> Ap f -> t (f a) -> f (t a)
+sequenceSelector : forall (f: * -> *) z a. List (Selector f z a) -> Selector f z (List a)
+series : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa
+seriesW : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa
+seriesWE : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho)
+setColumn : forall (c: rho) a (op: rho -> * -> *) (s: rho) (rel: rho -> *)
+shortMonthNames : List String
+show_Op : forall (op: rho -> * -> *) (r: rho) a s. (AsOp op, PrimitiveString s) => op r a -> Op r s
+showingValues : forall (pr: rho -> * -> *) (v: rho) b. AsPresentation pr => pr v b -> ((pr v b, Maybe (SortStrategy v)), SortPriority)
+sideTabbed : forall (f: * -> *) z. List (String, Report f z) -> Report f z
+signum : Double -> Double
+signum_Float : Float -> Float
+signum_Int : Int -> Int
+sin : Double -> Double
+single : forall (f: rho) a. (Field f a, SortOrder) -> Sort f
+singleSort : Primitive a => SortOrder -> MultiSortOrder#
+single_Brace : forall (r: rho) a. Field r a -> Row r
+singleton : forall a. a -> List a
+singleton_Vector : forall a. a -> Vector a
+sinh : Double -> Double
+size_Map : forall k v. Map k v -> Int
+slider : forall a (f: * -> *) z. (a -> String) -> a -> List a -> (Report f z -> Selector f z a -> Report f z) -> Report f z
+sliderLateBinding : forall a (f: * -> *) z. (a -> String) -> a -> List a -> ((a -> Report f z) -> Selector f z a -> Report f z) -> Report f z
+snd : forall a b. (a, b) -> b
+snd# : forall a b. Pair# a b -> b
+snoc : forall (r1: rho) (r2: rho) a (r: rho). r <- (r1, r2) => Row r1 -> Field r2 a -> Row r
+snoc_Brace : forall (r1: rho) (r2: rho) a (r: rho). r <- (r1, r2) => Row r1 -> Field r2 a -> Row r
+snoc_Vector : forall a. a -> Vector a -> Vector a
+softRelation : forall (pr1: rho -> * -> *) (k: rho) a (pr2: rho -> * -> *)
+solid : LineStyle
+sortBy_Vector : forall a k. (a -> k) -> (k -> k -> Ordering) -> Vector a -> Vector a
+sort_Vector : forall a. (a -> a -> Ordering) -> Vector a -> Vector a
+space : forall (f: * -> *) z. Report f z
+space2 : forall (f: * -> *) z. Report f z
+space3 : forall (f: * -> *) z. Report f z
+spaced_String : List String -> String
+span : forall a. (a -> Bool) -> List a -> (List a, List a)
+spanM : forall (m: * -> *) a. Monad m -> (a -> m Bool) -> List a -> m (List a, List a)
+spanT : forall (h: rho) (r: rho) (t: rho). r <- (h, t) => Row h -> Record r -> (Record h, Record t)
+spanning : forall (f: * -> *) z. Direction -> List (List ErasedMagnitude, Report f z) -> Report f z
+split#_String : String -> Char -> List# String
+splitAt : forall a. Int -> List a -> (List a, List a)
+splitCamelCase_String : String -> String
+split_String : Char -> String -> List String
+sqlServer#_Scanners : forall (f: * -> *). ScannersModule -> SMEnv f -> Scanner f
+sqlServer_Runners : String -> Runner DB
+sqlServer_Scanners : forall (f: * -> *). SMEnv f -> Scanner f
+sqlite#_Scanners : forall (f: * -> *). ScannersModule -> SMEnv f -> Scanner f
+sqlite_Runners : String -> Runner DB
+sqlite_Scanners : forall (f: * -> *). SMEnv f -> Scanner f
+sqrt : Double -> Double
+stack : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+stackAll : forall (f: * -> *) z. List (Report f z) -> Report f z -> Report f z
+stackAllPadded : forall (f: * -> *) z. List ErasedMagnitude -> List (Report f z) -> Report f z -> Report f z
+stackIntInput : forall (f: * -> *) z. (Report f z -> Report f z) -> Int -> (Report f z -> Report f z) -> (Int -> Report f z) -> Report f z
+stackIntInputH5 : forall (f: * -> *) z. Int -> (Report f z -> Report f z) -> (Int -> Report f z) -> Report f z
+stackIntInputH5V : forall (f: * -> *) z. Int -> (String -> Either String Int) -> (Report f z -> Report f z) -> (Int -> Report f z) -> Report f z
+stackIntInputV : forall (f: * -> *) z. (Report f z -> Report f z) -> (String -> Report f z) -> Int -> (String -> Either String Int) -> (Report f z -> Report f z) -> (Int -> Report f z) -> Report f z
+stackLeft : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+stackPad1 : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+stackPad2 : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+stackPad3 : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+stackPadded : forall (f: * -> *) z. List ErasedMagnitude -> Report f z -> Report f z -> Report f z
+stackRight : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+stackSelector : forall (f: * -> *) z a. (Report f z -> Report f z) -> ((Report f z -> Selector f z a -> Report f z) -> Report f z) -> (Report f z -> Report f z) -> (a -> Report f z) -> Report f z
+stackedArea : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *)
+stackedBar : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho)
+standardColors : Map String Color
+standardDeviationBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), PrimitiveNum n, Relational rel) => Field r n -> rel r1 -> rel r
+standardDeviationBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Relational rel, PrimitiveNum n) => Field r n -> rel r1 -> rel r
+stddev_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, PrimitiveNum n) => op r n -> Aggregate r n
+step : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa
+strength : forall (f: * -> *) x y. Functor f -> (x, f y) -> f (x, y)
+stringAreaInput : forall (f: * -> *) z. String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
+stringAreaInputLateBinding : forall (f: * -> *) z. String -> ((String -> Report f z) -> Selector f z String -> Report f z) -> Report f z
+stringInput : forall (f: * -> *) z. String -> (Report f z -> Selector f z String -> Report f z) -> Report f z
+stringInputLateBinding : forall (f: * -> *) z. String -> ((String -> Report f z) -> Selector f z String -> Report f z) -> Report f z
+stringMonoid_String : Monoid String
+structuredBar : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *)
+structuredLine : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *)
+style : forall (f: * -> *) z. String -> Report f z -> Report f z
+styleBox : forall (l: rho) (xv: rho) a (yv: rho) b (av: rho) c (px: rho)
+subst_Type : forall {a} (b: a) (c: a) (d: a -> *). b ==_Type.Eq c -> d b -> d c
+substringFrom_String : Int -> String -> String
+substringTo_String : Int -> String -> String
+substring_String : Int -> Int -> String -> String
+subtract : forall a. Ring a -> a -> a -> a
+sum : List Int -> Int
+sum' : List Double -> Double
+sumBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), PrimitiveNum n, Relational rel) => Field r n -> rel r1 -> rel r
+sumBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Relational rel, PrimitiveNum n) => Field r n -> rel r1 -> rel r
+sum_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, PrimitiveNum n) => op r n -> Aggregate r n
+summaryDetail : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+surround : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+symm_Type : forall (a: a1) (b: a1). a ==_Type.Eq b -> b ==_Type.Eq a
+tabbed : forall (f: * -> *) z. List (String, Report f z) -> Report f z
+tabular : forall (r: rho) (rel: rho -> *) (f: * -> *) z. Relational rel => Maybe (Legend r) -> rel r -> Report f z
+tabularTransposed : forall (r: rho) (rel: rho -> *) (f: * -> *) z. Relational rel => Maybe (Legend r) -> rel r -> Report f z
+tail : forall a. List a -> List a
+tail# : forall a. NonEmpty# a -> List# a
+tails : forall a. List a -> List (List a)
+take : forall a. Int -> List a -> List a
+take_String : Int -> String -> String
+take_Vector : forall a. Int -> Vector a -> Vector a
+tan : Double -> Double
+tanh : Double -> Double
+text : forall (f: * -> *) z. String -> Report f z
+textNoMarkdown : forall (f: * -> *) z. String -> Report f z
+textVerbatim : forall (f: * -> *) z. String -> Report f z
+thick : LineThickness
+thin : LineThickness
+throw : forall a. Throwable -> IO a
+throwable : String -> Throwable
+throwableObject : Throwable <:_Type.Cast Object
+throwableSerializable : Throwable <:_Type.Cast Serializable
+throwableWithCause : String -> Throwable -> Throwable
+timeSeriesChart : forall x y (pr1: rho -> * -> *) (r1: rho) a (op2: rho -> * ->
+times : forall a. Ring a -> a -> a -> a
+timestampFromLong : Long -> Timestamp
+titled : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+toArea# : Area -> Pair# (Magnitude ErasedT) (Magnitude ErasedT)
+toAssocList_Map : forall k v. Map k v -> List (k, v)
+toBool# : Bool -> Bool#
+toBorderOptions# : forall a. BorderOptions a -> BorderOptions# a
+toDegrees : Double -> Double
+toDisplayScale : DisplayScale -> DisplayScale#
+toDouble : forall n. Num n => n -> Double
+toEither# : forall a b. Either a b -> Either# a b
+toEitherZ# : forall a b. Either a b -> EitherZ# a b
+toFunc_Map : forall k v. Map k v -> k -> v
+toInt : forall n. Num n => n -> Int
+toList# : forall a. List a -> List# a
+toListArea# : List Area -> List# (Pair# (Magnitude ErasedT) (Magnitude ErasedT))
+toListMagnitude# : forall a. List a -> List# a
+toList_Vector : forall a. Vector a -> List a
+toMagnitudeList# : List ErasedMagnitude -> List# (Magnitude ErasedT)
+toMaybe# : forall a. Maybe a -> Maybe# a
+toMaybe_Nullable : forall a. Nullable a -> Maybe a
+toMem : forall (a: rho -> *) (b: rho). Relational a => a b -> Mem b
+toNel# : forall a. NonEmpty a -> NonEmpty# a
+toOrd_Map : forall k v. Map k v -> k -> k -> Ordering
+toPair# : forall a b. (a, b) -> Pair# a b
+toPrimExprNel : forall a. a -> NonEmpty# PrimExpr#
+toRadians : Double -> Double
+toSort# : forall (r: a). Sort r -> List# (Pair# String SortOrder#)
+toSortOrder# : SortOrder -> SortOrder#
+toString : forall a. a -> String
+toTypedSort# : forall (r: a). Sort r -> List# (Pair# (Pair# String PrimT) SortOrder#)
+todo : forall a. a
+todoWith : forall a. String -> a
+topK : forall (h: rho) (rel: rho -> *) (r: rho). (exists (c: rho). r <- (h, c), RelationalComb rel) => Row h -> Int -> rel r -> rel r
+topKBy : forall (h: rho) (k: rho) (rel: rho -> *) (kv: rho). (exists (c: rho) (r: rho). r <- (c, h), kv <- (h, c, k), Relational rel) => Row h -> Row k -> Int -> rel kv -> Mem kv
+topSection : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
+trace : forall a. String -> a -> a
+traceBy : forall a b. (a -> b) -> a -> a
+traceShow : forall a. a -> a
+traceShowS : forall a. String -> a -> a
+trans_Type : forall {k} (b: k) (c: k) (a: k). b ==_Type.Eq c -> a ==_Type.Eq b -> a ==_Type.Eq c
+traversable_Vector : Traversable Vector
+traverse : forall (t: * -> *) (f: * -> *) a b. Traversable t -> Ap f -> (a -> f b) -> t a -> f (t b)
+traverse_Vector : forall (f: * -> *) a b. Ap f -> (a -> f b) -> Vector a -> f (Vector b)
+tree : forall (f: * -> *) z. Report f z -> Tree (Report f z) -> Report f z
+treeMap# : forall (f: * -> *) a (r: rho) b (s: rho) c (t: rho) d. Writer f a -> String -> String -> Presentation r b -> Presentation s c -> Presentation t d -> Relation# -> f a
+treemapChart : forall (r1: rho) id (r2: rho) (prl: rho -> * -> *) (labels: rho)
+trim_String : String -> String
+true# : Bool#
+tryCast_Op : forall (op: rho -> * -> *) (s: rho) a b. (AsOp op, PrimitiveAtom b) => op s a -> Prim b -> Op s (Nullable b)
+tryIO : forall a. IO a -> IO a -> IO a
+tupleA2 : forall (f: * -> *) a b. Ap f -> f a -> f b -> f (a, b)
+type (|) : rho -> rho -> Γ
+type ChartMode : *
+type ChartOptions : * -> * -> * -> *
+type Endo : * -> *
+type Extend : (* -> *) -> *
+type ExtraMode : *
+type Extract : (* -> *) -> *
+type FunctorMap : (* -> *) -> *
+type Has : rho -> rho -> Γ
+type Intersection : (rho -> *) -> rho -> rho -> *
+type MagnitudeList : *
+type MultiSortOrder : forall a. a -> *
+type OpBin_Op : * -> *
+type OpTri_Op : * -> * -> * -> * -> *
+type OpUn_Op : * -> *
+type Ord : * -> *
+type Ord_Vector : * -> *
+type RUnion2 : rho -> rho -> rho -> Γ
+type RUnion3 : rho -> rho -> rho -> rho -> Γ
+type Runner : (* -> *) -> *
+type ScaledChartMode : *
+type Scanner : (* -> *) -> *
+type Signal : (* -> *) -> * -> * -> *
+type Sort# : *
+type Traversal : (* -> *) -> *
+type TypedSort# : *
+type Union : (rho -> *) -> rho -> rho -> *
+typeOfOp_Op : forall (op: rho -> * -> *) (r: rho) n. AsOp op => op r n -> Prim n
+ulp : Double -> Double
+ulp_Float : Float -> Float
+uncons : forall a. List a -> Maybe (a, List a)
+uncurry : forall a b c. (a -> b -> c) -> (a, b) -> c
+undefined : forall a. a
+underlineColor : Color
+unfoldr : forall b a. (b -> Maybe (a, b)) -> b -> List a
+unify1 : forall (f1: rho) a (f2: rho) (r: rho) (r2: rho). (r2 <- (h, f2, t), r <- (h, f, t)) => Field f1 a -> Field f2 a -> Relation r -> Relation r2 -> Relation r
+unifyCons : forall (a: rho) b (c: rho) (d: rho) (e: rho) (f: rho) (g: rho). (f <- (d, a), g <- (e, c)) => Field a b -> Field c b -> UnifyFields d e -> UnifyFields f g
+unifyEmpty : UnifyFields (||) (||)
+union : forall (a: rho -> *) (b: rho). RelationalComb a => a b -> a b -> a b
+unionAll : forall (r: rho). List (Relation r) -> Relation r
+unionAllWithHeader : forall (r: rho). Row r -> List (Relation r) -> Relation r
+unionWith_Map : forall v k. (v -> v -> v) -> Map k v -> Map k v -> Map k v
+union_Map : forall k v. Map k v -> Map k v -> Map k v
+uniqExistentialF : forall a. Prim a -> EField a
+unit : forall a (f: * -> *). a -> Monad f -> f a
+unitSelector : forall a (f: * -> *) z. a -> Selector f z a
+unsafeCoerce : forall a b. a -> b
+unsafeFFI : forall a. FFI a -> Either Throwable a
+unsafeFormatDate : Date -> String
+unsafeFormatDateRange_DateRange : (Date, Date) -> String
+unsafeFullJoin : forall (a: rho -> *) (b: rho) (c: rho) (d: rho). (exists (e: rho) (f: rho) (g: rho). b <- (f, g), c <- (e, f), d <- (e, f, g), RelationalComb a) => a b -> a c -> a d
+unsafeLeftJoin : forall (a: rho -> *) (b: rho) (c: rho) (d: rho). (exists (e: rho) (f: rho) (g: rho). b <- (f, g), c <- (e, f), d <- (e, f, g), RelationalComb a) => a b -> a c -> a d
+unsafePerformIO : forall a. IO a -> a
+unsafePrim# : forall a. Primitive a => PrimT -> Prim a
+unsafePrimExprIn# : forall a. Primitive a => PrimExpr# -> a
+unsafePrimExprIn## : forall a. PrimExpr# -> a
+unsafeRecordIn# : forall (a: rho). Record# -> Record a
+unsafeRightJoin : forall (rel: rho -> *) (r1: rho) (r2: rho) (r3: rho). (r3 <- (r, s, t), r2 <- (s, t), r1 <- (r, s), RelationalComp rel) => rel r1 -> rel r2 -> rel r3
+unscaled : forall a. (Unscaled a, Primitive a) => SortOrder -> Axis a
+unscaled' : forall a b. Unscaled (a, b) => SortOrder -> SortOrder -> Axis (a, b)
+unsplit_String : Char -> List String -> String
+unweighted : forall a b. List a -> List (Maybe b, a)
+unwords_String : List String -> String
+update : forall (h: rho) a (r: rho). r <- (h, t) => Field h a -> a -> Record r -> Record r
+upper_Op : forall (op: rho -> * -> *) (r: rho). AsOp op => op r String -> Op r String
+uppercaseFirstLetter_String : String -> String
+uppercase_String : String -> String
+using : forall (f: * -> *) z a. Selector f z a -> (a -> Report f z) -> Report f z
+va (xtr: rho) xta (ytr: rho) yta. Writer f a -> AxisChartData# -> List (Record cr, Record cr) -> List (Record vr, Record vr) -> Presentation sr sa -> Presentation cr ca -> Presentation vr va -> Maybe (Presentation xtr xta) -> Maybe (Presentation ytr yta) -> List (String, String) -> Relation# -> Relation# -> f a
+va (xtr: rho) xta (ytr: rho) yta. Writer f a -> AxisChartData# -> List (Record cr, Record cr) -> List (Record vr, Record vr) -> Presentation sr sa -> Presentation cr ca -> Presentation vr va -> Maybe (Presentation xtr xta) -> Maybe (Presentation ytr yta) -> String -> String -> Relation# -> f a
+va. Writer f a -> AxisChartData# -> List (Record cr, Record cr) -> List (Record vr, Record vr) -> Presentation sr sa -> Presentation cr ca -> Presentation vr va -> List (String, String) -> Relation# -> Relation# -> f a
+va. Writer f a -> AxisChartData# -> List (Record cr, Record cr) -> List (Record vr, Record vr) -> Presentation sr sa -> Presentation cr ca -> Presentation vr va -> String -> String -> Relation# -> f a
+val : forall a. Primitive a => a -> Atomic a
+valueFunctor_Map : forall k. Functor (Map k)
+valueGrid : forall (f: * -> *) z. List (String, Report f z) -> Report f z
+valueGrid' : forall (f: * -> *) z. List (String, Report f z) -> Report f z
+valueGridN : forall (f: * -> *) z. List (List (String, Report f z)) -> Report f z
+valueGridNPad : forall (f: * -> *) a b c. List (List (String, Report f a)) -> b -> c -> Report f a
+valueGridR : forall (f: * -> *) z. List (Report f z, Report f z) -> Report f z
+valueMonoid_Map : forall k v. (k -> k -> Ordering) -> (v -> v -> v) -> Monoid (Map k v)
+valueTickLabels : forall (yr: rho) sa' xa' (y: rho -> * -> *) ya relr xa. Unscaled ya => List (Record yr, Record yr) -> (sa' -> xa' -> y yr ya -> relr -> ChartSeries xa ya) -> sa' -> xa' -> y yr ya -> relr -> ChartSeries xa ya
+valueTooltipLabels : forall (ytr: rho) yta sa' xa' ya' (rel: rho -> *) (r: rho)
+values_Map : forall k v. Map k v -> List v
+varianceBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), PrimitiveNum n, Relational rel) => Field r n -> rel r1 -> rel r
+varianceBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Relational rel, PrimitiveNum n) => Field r n -> rel r1 -> rel r
+variance_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, PrimitiveNum n) => op r n -> Aggregate r n
+vector_Vector : forall a. List a -> Vector a
+vertica#_Scanners : forall (f: * -> *). ScannersModule -> SMEnv f -> Scanner f
+vertica_Runners : String -> Runner DB
+vertica_Scanners : forall (f: * -> *). SMEnv f -> Scanner f
+vflow : forall (f: * -> *) z. List (Report f z) -> Report f z
+vflowPad : forall (f: * -> *) a. List ErasedMagnitude -> List (Report f a) -> Report f a
+vflowPad1 : forall (f: * -> *) a. List (Report f a) -> Report f a
+vflowPad2 : forall (f: * -> *) a. List (Report f a) -> Report f a
+vflowPad3 : forall (f: * -> *) a. List (Report f a) -> Report f a
+vflowPad4 : forall (f: * -> *) a. List (Report f a) -> Report f a
+vflowStyle : forall (f: * -> *) z. String -> List (Report f z) -> Report f z
+vline : forall (f: * -> *) z. Report f z
+vpad1 : forall (f: * -> *) z. Report f z
+vpad2 : forall (f: * -> *) z. Report f z
+vsep : forall (f: * -> *) z. Report f z -> List (Report f z) -> Report f z
+vsepScroll : forall (f: * -> *) z. Report f z -> List (Report f z) -> Report f z
+vspace1 : forall (f: * -> *) z. Report f z
+vspace2 : forall (f: * -> *) z. Report f z
+vspace3 : forall (f: * -> *) z. Report f z
+vspace4 : forall (f: * -> *) z. Report f z
+vspan : forall (f: * -> *) z. List (Report f z) -> Report f z
+vspanWeighted : forall (f: * -> *) z. List (List ErasedMagnitude, Report f z) -> Report f z
+vspanWeighted' : forall (f: * -> *) z. List (Double, Report f z) -> Report f z
+vstrut : forall (f: * -> *) z. Report f z
+vstrutWide : forall (f: * -> *) z. Report f z -> Report f z
+weaken_Op : forall (x: rho) b (r: rho). r <- (x, y) => Op x b -> Op r b
+weeks : TimeUnit
+weightedHarmonicMeanBy : forall (w: rho) n (v: rho) (rel: rho -> *) (r: rho). (r <- (w, v, t), Relational rel, PrimitiveNum n) => Field w n -> Field v n -> rel r -> Mem v
+weightedHarmonicMean_Aggregate : forall (a: rho -> * -> *) (b: rho) c (d: rho ->
+weightedMeanBy : forall (w: rho) n (v: rho) (rel: rho -> *) (r: rho). (r <- (w, v, t), Relational rel, PrimitiveNum n) => Field w n -> Field v n -> rel r -> Mem v
+weightedMean_Aggregate : forall (a: rho -> * -> *) (b: rho) c (d: rho -> * -> *)
+weightedSum : Double -> (Double, Double) -> Double
+white : Color
+wholeNumber : forall a (f: * -> *) z. PrimitiveNum a => a -> Report f z
+widget : forall a (f: * -> *) z. a -> (a -> Report f z) -> (a -> (a -> Report f z) -> Report f z) -> Report f z
+withCont : forall b r a. ((b -> r) -> a -> r) -> Cont r a -> Cont r b
+withFieldCopy : forall (r: rho) a b. Field r a -> (forall (r1: rho). Field r1 a -> b) -> b
+withNull : forall a. PrimitiveAtom a => Prim a -> Prim (Nullable a)
+words_String : String -> List String
+wrap : forall (f: * -> *) z. String -> Report f z -> Report f z
+wrapId : forall (f: * -> *) z. Report f z -> Report f z
+wrapped : forall a (f: * -> *) z. List ErasedMagnitude -> Atomic a -> Report f z
+wrapped' : forall a (f: * -> *) z. List ErasedMagnitude -> List Font -> Maybe Int -> Atomic a -> Report f z
+wrappedText' : forall a (f: * -> *) z. Primitive a => List ErasedMagnitude -> List Font -> Maybe Int -> a -> Report f z
+writerAp : forall (f: * -> *) a. Writer f a -> Ap f
+writerFunctor : forall (f: * -> *) a. Writer f a -> Functor f
+writerMonad : forall (f: * -> *) a. Writer f a -> Monad f
+xa (y: rho -> * -> *) (yr: rho) ya (er: rho) (rel: rho -> *) (r: rho). (exists (o: rho). Relational rel, AsOp y, r <- (o, yr, xr, sr), AsPresentation s, Has r er, AsOp x) => ChartVariant# -> s sr sa -> x xr xa -> y yr ya -> PresRow er -> rel r -> ChartSeries xa ya
+xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsPresentation s, Relational rel, Scaled ya, AsOp y, r <- (o, yr, xr, sr), AsOp x) => s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
+xa ya. Has r xtr => Presentation xtr xta -> (sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya) -> sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya
+xa ya. Has r ytr => Presentation ytr yta -> (sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya) -> sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya
+years : TimeUnit
+yellow : Color
+yyyymmdd : Int -> Int -> Int -> Date
+z. (exists (t: rho). AsPresentation prd, Relational rel, PrimitiveNum d, r <- (r0, r1, r2, label, t), AsPresentation prl) => String -> Maybe (Atomic nm) -> ChartLegendOptions# -> List (Record label, Color) -> ChartRenderHints# -> prl label lv -> prd r0 d -> Field r1 id -> Field r2 id -> rel r -> Report f z
+zero : forall a. Ring a -> a
+zip : forall a b. List a -> List b -> List (a, b)
+zipIndex : forall a. List a -> List (Int, a)
+zipSelector : forall (f: * -> *) z a b. Selector f z a -> Selector f z b -> Selector f z (a, b)
+zipSignal : forall a (f: * -> *) z b. ((a -> Report f z) -> Report f z) -> ((b -> Report f z) -> Report f z) -> ((a, b) -> Report f z) -> Report f z
+zipWith : forall a b c. (a -> b -> c) -> List a -> List b -> List c
+zipWith_Vector : forall a b c. (a -> b -> c) -> Vector a -> Vector b -> Vector c
+zip_Vector : forall a b. Vector a -> Vector b -> Vector (a, b)
+π : Double

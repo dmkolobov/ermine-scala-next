@@ -1,0 +1,21 @@
+coerceSortStrategy : forall (r: rho) a (s: a1). Layout.Presentation.Presentation r a -> Layout.SortStrategy.SortStrategy s -> Layout.SortStrategy.SortStrategy r
+column# : forall n (k: rho) p d (v: a). Layout.Column.Column (n, Void.Bound (Layout.Legend.Legend k), p, d) k v -> Layout.Column.Unsafe.Table# Layout.Report.Atomic.EAtomic# Native.Relation.Relation#
+cosequence : forall rv a. Builtin.List (rv -> a) -> rv -> Builtin.List a
+eatomic : forall a. Layout.Report.Atomic.Atomic a -> Layout.Report.Atomic.EAtomic#
+finalize : forall (r: rho) a. ((Layout.SortPriority.SortPriority, Builtin.List Builtin.String) -> (Layout.Column.Unsafe.ColumnKeys r, Layout.Column.Unsafe.Join# Layout.Report.Atomic.EAtomic# (Layout.Column.Unsafe.Single# Layout.Report.Atomic.EAtomic# a))) -> Layout.Column.Unsafe.Table# Layout.Report.Atomic.EAtomic# a
+hc' : forall a b c d g. Native.Relation.Relation# -> (Layout.SortPriority.SortPriority, Builtin.List Builtin.String) -> ((Builtin.Maybe a, Builtin.Maybe b, Builtin.Maybe c, Builtin.Maybe d), Layout.Column.Unsafe.Join# g (Layout.Column.Unsafe.Single# Layout.Report.Atomic.EAtomic# Native.Relation.Relation#))
+intersects : forall a. Builtin.Eq a => Builtin.List a -> Builtin.List a -> Builtin.Bool
+join' : forall a a1 a2 a3 a4 a5 b. Layout.Column.JoinType -> Builtin.List (a -> ((Builtin.Maybe a1, Builtin.Maybe a2, Builtin.Maybe a3, Builtin.Maybe a4), Layout.Column.Unsafe.Join# a5 b)) -> a -> ((Builtin.Maybe a1, Builtin.Maybe a2, Builtin.Maybe a3, Builtin.Maybe a4), Layout.Column.Unsafe.Join# a5 b)
+joinConcat : forall a b. Layout.Column.JoinType -> Builtin.List (Layout.Column.Unsafe.Join# a b) -> Layout.Column.Unsafe.Join# a b
+joinGroup' : forall a a1 c b. Layout.Report.Atomic.Atomic a -> (a1 -> (c, Layout.Column.Unsafe.Join# Layout.Report.Atomic.EAtomic# b)) -> a1 -> (c, Layout.Column.Unsafe.Join# Layout.Report.Atomic.EAtomic# b)
+removeAll : forall a b. Builtin.Eq b => (a -> b) -> Builtin.List a -> Builtin.List b -> Builtin.List a
+setDrilldown' : forall (a: rho) b (c: rho) d e f g h i j k l. Builtin.Field a b -> Builtin.Field c d -> ((e, Builtin.List Builtin.String) -> ((f, g, h, i), j)) -> (e, Builtin.List Builtin.String) -> ((f, Builtin.Maybe (Builtin.List (Builtin.String, Builtin.String, Builtin.PrimT)), Builtin.Maybe k, Builtin.Maybe l), j)
+setDrilldown2' : forall (r: rho) a b c d e f g h. DrilldownList.DrilldownList r -> a -> ((b, Builtin.List Builtin.String) -> ((c, d, e, f), g)) -> (b, Builtin.List Builtin.String) -> ((c, Builtin.Maybe (Builtin.List (Builtin.String, Builtin.String, Builtin.PrimT)), Builtin.Maybe a, Builtin.Maybe h), g)
+setLegend' : forall (r: rho) a b c d e f (s: rho). Layout.Legend.Legend r -> ((a, Builtin.List Builtin.String) -> ((b, c, d, e), f)) -> (a, Builtin.List Builtin.String) -> ((Builtin.Maybe (Layout.Legend.Legend s), c, d, e), f)
+setRowGroups' : forall (pid: rho) id (r: rho) a. Builtin.Field pid id -> ((Layout.SortPriority.SortPriority, Builtin.List Builtin.String) -> (Layout.Column.Unsafe.ColumnKeys r, Layout.Column.Unsafe.Join# Layout.Report.Atomic.EAtomic# (Layout.Column.Unsafe.Single# Layout.Report.Atomic.EAtomic# a))) -> (Layout.SortPriority.SortPriority, Builtin.List Builtin.String) -> (Layout.Column.Unsafe.ColumnKeys r, Layout.Column.Unsafe.Join# Layout.Report.Atomic.EAtomic# (Layout.Column.Unsafe.Single# Layout.Report.Atomic.EAtomic# a))
+setSortPrio' : forall a b c d. a -> ((a, b) -> c) -> (d, b) -> c
+single' : forall {a} a1 (r: rho) b (s: a) b1 c d e g. Native.Relation.Relation# -> Builtin.Maybe (Layout.Report.Atomic.Atomic a1) -> Builtin.Maybe (Layout.Presentation.Presentation r b) -> Builtin.Maybe (Layout.SortStrategy.SortStrategy s) -> (Layout.SortPriority.SortPriority, Builtin.List Builtin.String) -> ((Builtin.Maybe b1, Builtin.Maybe c, Builtin.Maybe d, Builtin.Maybe e), Layout.Column.Unsafe.Join# g (Layout.Column.Unsafe.Single# Layout.Report.Atomic.EAtomic# Native.Relation.Relation#))
+singleHeading : forall (r: rho). Relation.Row.Row r -> Layout.Report.Atomic.Atomic Builtin.String
+singular : forall l a g. Layout.Column.Unsafe.Single# l a -> Layout.Column.Unsafe.Join# g (Layout.Column.Unsafe.Single# l a)
+tableBot : forall a b c d. (Builtin.Maybe a, Builtin.Maybe b, Builtin.Maybe c, Builtin.Maybe d)
+unsafeLg : forall (r: rho) (s: rho). Layout.Legend.Legend r -> Layout.Legend.Legend s

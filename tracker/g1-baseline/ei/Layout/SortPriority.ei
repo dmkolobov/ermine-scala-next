@@ -1,0 +1,13 @@
+(^) : forall a. a -> Builtin.Int -> (a, Layout.SortPriority.SortPriority)
+(^!) : forall a. a -> Builtin.Int -> (a, Layout.SortPriority.SortPriority)
+(^') : forall (h: rho) a. Builtin.Field h a -> Builtin.Int -> ((Builtin.Field h a, Builtin.String), Layout.SortPriority.SortPriority)
+(^*) : forall a b c. (a, a -> b, c) -> Builtin.Int -> ((b, c), Layout.SortPriority.SortPriority)
+(^.) : forall (a: rho) b c. (Builtin.Field a b -> c, Builtin.Field a b) -> Builtin.Int -> ((c, Builtin.String), Layout.SortPriority.SortPriority)
+(^..) : forall (a: rho) b c. (Builtin.Field a b, Builtin.Field a b -> c) -> Builtin.Int -> ((c, Builtin.String), Layout.SortPriority.SortPriority)
+ascending : Builtin.Int -> Layout.SortPriority.SortPriority
+descending : Builtin.Int -> Layout.SortPriority.SortPriority
+prioritize : forall a. Builtin.List (a, Layout.SortPriority.SortPriority) -> Builtin.List (a, Relation.Sort.SortOrder, Builtin.Int)
+toPartialSort# : forall a. Builtin.List (a, Layout.SortPriority.SortPriority) -> Vector.Vector (Native.Pair.Pair# a (Native.Pair.Pair# Relation.Sort.SortOrder# Builtin.Int))
+toSort# : Builtin.List (Builtin.String, Layout.SortPriority.SortPriority) -> Native.List.List# (Native.Pair.Pair# Builtin.String Relation.Sort.SortOrder#)
+toSortPriority# : Layout.SortPriority.SortPriority -> Native.Maybe.Maybe# (Native.Pair.Pair# Relation.Sort.SortOrder# Builtin.Int)
+unsorted : forall a. a -> (a, Layout.SortPriority.SortPriority)

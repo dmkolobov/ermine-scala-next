@@ -1,0 +1,9 @@
+(<$) : forall a b. a -> Builtin.Maybe b -> Builtin.Maybe a
+(<$>) : forall a b. (a -> b) -> Builtin.Maybe a -> Builtin.Maybe b
+(<*>) : forall a b. Builtin.Maybe (a -> b) -> Builtin.Maybe a -> Builtin.Maybe b
+(<<) : forall a b. Builtin.Maybe a -> Builtin.Maybe b -> Builtin.Maybe a
+(>>) : forall a b. Builtin.Maybe a -> Builtin.Maybe b -> Builtin.Maybe b
+(>>=) : forall a b. Builtin.Maybe a -> (a -> Builtin.Maybe b) -> Builtin.Maybe b
+map : forall a b. (a -> b) -> Builtin.Maybe a -> Builtin.Maybe b
+return : forall a. a -> Builtin.Maybe a
+(|) : forall a. Builtin.Maybe a -> Builtin.Maybe a -> Builtin.Maybe a

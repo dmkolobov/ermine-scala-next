@@ -1,0 +1,4 @@
+prim# : forall a. Builtin.Prim a -> Builtin.PrimT
+primExpr# : forall a. Builtin.Primitive a => a -> Prim.PrimExpr#
+unsafePrim# : forall a. Builtin.Primitive a => Builtin.PrimT -> Builtin.Prim a
+unsafePrimExprIn# : forall a. Builtin.Primitive a => Prim.PrimExpr# -> a

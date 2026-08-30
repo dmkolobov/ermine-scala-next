@@ -1,0 +1,20 @@
+(<*>) : forall a b. Builtin.IO (a -> b) -> Builtin.IO a -> Builtin.IO b
+(>>=) : forall a a1. Builtin.IO a -> (a -> Builtin.IO a1) -> Builtin.IO a1
+catch : forall a. Builtin.IO a -> (Native.Throwable.Throwable -> Builtin.IO a) -> Builtin.IO a
+fixIO : forall a. (a -> Builtin.IO a) -> Builtin.IO a
+ioAlt : Control.Alt.Alt Builtin.IO
+ioAp : Control.Ap.Ap Builtin.IO
+ioEmpty : forall a. Builtin.IO a
+ioFunctor : Control.Functor.Functor Builtin.IO
+ioMap : forall a b. (a -> b) -> Builtin.IO a -> Builtin.IO b
+ioMonad : Control.Monad.Monad Builtin.IO
+ioReturn : forall a. a -> Builtin.IO a
+printLn : Builtin.String -> Builtin.IO ()
+readLn : Builtin.IO Builtin.String
+runFFI : forall i. Builtin.FFI i -> Builtin.IO i
+throw : forall a. Native.Throwable.Throwable -> Builtin.IO a
+trace : forall a. Builtin.String -> a -> a
+traceBy : forall a b. (a -> b) -> a -> a
+traceShow : forall a. a -> a
+traceShowS : forall a. Builtin.String -> a -> a
+tryIO : forall a. Builtin.IO a -> Builtin.IO a -> Builtin.IO a

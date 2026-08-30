@@ -1,0 +1,3 @@
+ensureNonnegativeWeight : (Builtin.Double, Builtin.Double) -> (Builtin.Double, Builtin.Double)
+harmonicQuotientSum : Builtin.Double -> (Builtin.Double, Builtin.Double) -> Builtin.Double
+weightedSum : Builtin.Double -> (Builtin.Double, Builtin.Double) -> Builtin.Double

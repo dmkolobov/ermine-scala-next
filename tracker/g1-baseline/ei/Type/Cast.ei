@@ -1,0 +1,4 @@
+downcast : forall a b. (Type.Cast.<:) a b -> b -> Builtin.Maybe a
+refl : forall a. (Type.Cast.<:) a a
+trans : forall b c a. (Type.Cast.<:) b c -> (Type.Cast.<:) a b -> (Type.Cast.<:) a c
+upcast : forall a b. (Type.Cast.<:) a b -> a -> b

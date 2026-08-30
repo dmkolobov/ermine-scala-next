@@ -1,0 +1,1 @@
+copyF : forall (a: rho) b (c: rho) (d: rho) (e: rho). (exists (f: rho). c <- (f, a), e <- (a, d)) => Builtin.Field a b -> Builtin.Record c -> Builtin.Record d -> Builtin.Record e

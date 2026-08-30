@@ -1,0 +1,2 @@
+(++) : forall (r: rho) (s: rho) (t: rho). t <- (r, s) => Layout.SortStrategy.SortStrategy r -> Layout.SortStrategy.SortStrategy s -> Layout.SortStrategy.SortStrategy t
+sortBy : forall (pr: rho -> * -> *) (r: rho) a. Layout.Presentation.AsPresentation pr => Layout.SortStrategy.SortDirection -> pr r a -> Layout.SortStrategy.SortStrategy r

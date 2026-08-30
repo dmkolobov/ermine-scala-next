@@ -1,0 +1,2 @@
+allMatches : Builtin.String -> Builtin.String -> Builtin.List Builtin.String
+templateSubstitute : Builtin.String -> Builtin.List (Builtin.String, Builtin.String) -> Builtin.String

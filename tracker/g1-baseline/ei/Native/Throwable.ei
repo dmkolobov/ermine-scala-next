@@ -1,0 +1,3 @@
+getCause : Native.Throwable.Throwable -> Builtin.Maybe Native.Throwable.Throwable
+throwableObject : (Type.Cast.<:) Native.Throwable.Throwable Native.Object.Object
+throwableSerializable : (Type.Cast.<:) Native.Throwable.Throwable Native.Serializable.Serializable

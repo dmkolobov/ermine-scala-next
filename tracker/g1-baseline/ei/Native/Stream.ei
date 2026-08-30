@@ -1,0 +1,11 @@
+(#::) : forall a. a -> Native.Stream.Stream a -> Native.Stream.Stream a
+concatMap : forall a b. (a -> Native.Stream.Stream b) -> Native.Stream.Stream a -> Native.Stream.Stream b
+cons : forall a. a -> Native.Stream.Stream a -> Native.Stream.Stream a
+filter : forall a. (a -> Native.Bool.Bool#) -> Native.Stream.Stream a -> Native.Stream.Stream a
+foldr : forall a b. (a -> b -> b) -> b -> Native.Stream.Stream a -> b
+fromList : forall a. Builtin.List a -> Native.Stream.Stream a
+map : forall a b. (a -> b) -> Native.Stream.Stream a -> Native.Stream.Stream b
+toList : forall a. Native.Stream.Stream a -> Builtin.List a
+traversable : Control.Traversable.Traversable Native.Stream.Stream
+traverse' : forall (f: * -> *) a b. Control.Ap.Ap f -> (a -> f b) -> Native.Stream.Stream a -> f (Native.Stream.Stream b)
+zipWith : forall a b c d. a -> (b -> c -> d) -> Native.Stream.Stream b -> Native.Stream.Stream c -> Native.Stream.Stream d

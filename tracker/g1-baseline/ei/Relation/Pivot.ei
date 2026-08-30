@@ -1,0 +1,15 @@
+catFulcrum : forall (k: a) (v1: b) (p1: rho) (v2: b) (p2: rho) (v3: c) (p: rho). (RUnion2 v3 v2 v1, p <- (p1, p2)) => Relation.Pivot.Fulcrum k v1 p1 -> Relation.Pivot.Fulcrum k v2 p2 -> Relation.Pivot.Fulcrum k v3 p
+consFulcrum : forall (f: rho) a (v1: rho) (k: rho) (v2: a1) (p: rho) (v3: b) (p': rho). (RUnion2 v3 v2 v1, p' <- (f, p)) => Builtin.Field f a -> Relation.Op.Type.Op v1 a -> Builtin.Record k -> Relation.Pivot.Fulcrum k v2 p -> Relation.Pivot.Fulcrum k v3 p'
+defaultFulcrum : forall (p: rho) (v: rho) a (k: rho). Relation.Row.Row p -> Builtin.Field v a -> Builtin.Field k Builtin.String -> Relation.Pivot.Fulcrum k v p
+defaultFulcrumWithDefault : forall (p: rho) (v: rho) a (k: rho). Relation.Row.Row p -> Builtin.Field v a -> Builtin.Field k Builtin.String -> Relation.Pivot.FulcrumWithDefault k v p
+defaultValue : Builtin.PrimT -> Prim.PrimExpr#
+mapFulcrum : forall (k: rho) (v: a) (p: b). (forall (f: rho) a1 (r: rho). Builtin.Field f a1 -> Relation.Op.Type.Op r a1 -> Builtin.Record k -> (Relation.Op.Type.Op r a1, Builtin.Record k)) -> Relation.Pivot.Fulcrum k v p -> Relation.Pivot.Fulcrum k v p
+mapFulcrumKeys : forall (k: rho) (v: a) (p: b). (Builtin.Record k -> Builtin.Record k) -> Relation.Pivot.Fulcrum k v p -> Relation.Pivot.Fulcrum k v p
+nilFulcrum : forall (k: rho) (v: rho). Relation.Row.Row k -> Relation.Row.Row v -> Relation.Pivot.Fulcrum k v (||)
+nilFulcrum' : forall (k: rho). Relation.Row.Row k -> Relation.Pivot.Fulcrum k (||) (||)
+pivot : forall (k: rho) (v: rho) (p: rho) (rel: rho -> *) (r: rho) (s: rho). (s <- (i, p), r <- (k, v, i), Builtin.RelationalComb rel) => Relation.Pivot.Fulcrum k v p -> rel r -> rel s
+pivotWithDefault : forall (k: rho) (v: rho) (p: rho) (rel: rho -> *) (r: rho) (s: rho). (s <- (i, p), r <- (k, v, i), Builtin.RelationalComb rel) => Relation.Pivot.FulcrumWithDefault k v p -> rel r -> rel s
+single_Brace : forall (p: rho) a (v: rho) (k: rho). (Builtin.Field p a, Relation.Op.Type.Op v a, Builtin.Record k) -> Relation.Pivot.Fulcrum k v p
+single_Brace_ : forall (p: rho) a (v: rho) (k: rho). (Builtin.Field p a, Relation.Op.Type.Op v a, Builtin.Record k) -> Relation.Pivot.Fulcrum k v p
+snoc_Brace : forall (k: rho) (v1: a1) (p: rho) (f: rho) a (v2: rho) (v3: b) (p': rho). (RUnion2 v3 v2 v1, p' <- (p, f)) => Relation.Pivot.Fulcrum k v1 p -> (Builtin.Field f a, Relation.Op.Type.Op v2 a, Builtin.Record k) -> Relation.Pivot.Fulcrum k v3 p'
+snoc_Brace_ : forall {a b} (k: rho) (v1: a) (p: rho) (f: rho) a1 (v2: rho) (v3: b) (p': rho). (exists (RUnion2: b -> c). RUnion2 v3 v2 v1, p' <- (p, f)) => Relation.Pivot.Fulcrum k v1 p -> (Builtin.Field f a1, Relation.Op.Type.Op v2 a1, Builtin.Record k) -> Relation.Pivot.Fulcrum k v3 p'

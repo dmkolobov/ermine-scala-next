@@ -1,0 +1,8 @@
+(++) : forall a. List.NonEmpty.NonEmpty a -> List.NonEmpty.NonEmpty a -> List.NonEmpty.NonEmpty a
+cons : forall a. a -> List.NonEmpty.NonEmpty a -> List.NonEmpty.NonEmpty a
+doubleton : forall a. a -> a -> List.NonEmpty.NonEmpty a
+head : forall a. List.NonEmpty.NonEmpty a -> a
+map : forall a a1. (a -> a1) -> List.NonEmpty.NonEmpty a -> List.NonEmpty.NonEmpty a1
+singleton : forall a. a -> List.NonEmpty.NonEmpty a
+tail : forall a. List.NonEmpty.NonEmpty a -> Builtin.List a
+toList : forall a. List.NonEmpty.NonEmpty a -> Builtin.List a

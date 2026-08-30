@@ -1,0 +1,2 @@
+mapStyleGrid : forall a b. (a -> b) -> Builtin.List (Builtin.Maybe Builtin.String, Builtin.List (Builtin.Maybe Builtin.String, a)) -> Builtin.List (Builtin.Maybe Builtin.String, Builtin.List (Builtin.Maybe Builtin.String, b))
+toStyleGrid# : forall a. Builtin.List (Builtin.Maybe Builtin.String, Builtin.List (Builtin.Maybe Builtin.String, a)) -> Layout.Report.StyleGrid.StyleGrid# a

@@ -1,0 +1,12 @@
+(*) : forall n. Builtin.PrimitiveNum n => n -> n -> n
+(+) : forall n. Builtin.PrimitiveNum n => n -> n -> n
+(-) : forall n. Builtin.PrimitiveNum n => n -> n -> n
+(/) : forall n. Builtin.PrimitiveNum n => n -> n -> n
+(<) : forall a. Builtin.Primitive a => a -> a -> Builtin.Bool
+(<=) : forall a. Builtin.Primitive a => a -> a -> Builtin.Bool
+(>) : forall a. Builtin.Primitive a => a -> a -> Builtin.Bool
+(>=) : forall a. Builtin.Primitive a => a -> a -> Builtin.Bool
+abs : forall n. Builtin.PrimitiveNum n => n -> n
+neg : forall n. Builtin.PrimitiveNum n => n -> n
+pow : forall n. Builtin.PrimitiveNum n => n -> n -> n
+primOrd : forall a. Builtin.Primitive a => a -> a -> Ord.Ordering

@@ -1,0 +1,9 @@
+decrementDate : Builtin.Int -> Date.TimeUnit -> Builtin.Date -> Builtin.Date
+formatExcelDate : Builtin.Date -> Builtin.String
+formatQuarter : Builtin.Date -> Builtin.String
+incrementDate : Builtin.Int -> Date.TimeUnit -> Builtin.Date -> Builtin.Date
+monthNames : Builtin.List Builtin.String
+parseDate : Builtin.String -> Builtin.Maybe Builtin.Date
+quarter : Builtin.Date -> Builtin.Int
+quarterNames : Builtin.List Builtin.String
+shortMonthNames : Builtin.List Builtin.String

@@ -1,0 +1,30 @@
+alias : Builtin.List (Builtin.String, Builtin.String) -> Layout.Format.Format Builtin.String
+andCondition : forall a. Layout.Format.Condition a -> Layout.Format.Condition a -> Layout.Format.Condition a
+colored : forall a. Layout.Color.Color -> Layout.Color.Color -> Layout.Format.Format a -> Layout.Format.Format a
+conditional : forall a. Layout.Format.Condition a -> Layout.Format.Format a -> Layout.Format.Format a -> Layout.Format.Format a
+constant : forall a. Builtin.String -> Layout.Format.Format a
+currency : forall n. Builtin.PrimitiveNum n => Builtin.String -> Layout.Format.Format n
+currencyParens : forall n. Builtin.PrimitiveNum n => Builtin.String -> Layout.Format.Format n
+currencyParens' : forall n. Builtin.PrimitiveNum n => Builtin.Bool -> Builtin.String -> Layout.Format.Format n
+eqCondition : forall a. Builtin.Primitive a => a -> Layout.Format.Condition a
+gtCondition : forall a. Builtin.Primitive a => a -> Layout.Format.Condition a
+gteCondition : forall a. Builtin.Primitive a => a -> Layout.Format.Condition a
+integralRound : forall n. Builtin.PrimitiveNum n => Builtin.Int -> Layout.Format.Format n
+integralRound' : forall n. Builtin.PrimitiveNum n => Builtin.Bool -> Builtin.Int -> Layout.Format.Format n
+ltCondition : forall a. Builtin.Primitive a => a -> Layout.Format.Condition a
+lteCondition : forall a. Builtin.Primitive a => a -> Layout.Format.Condition a
+markdown : forall a. Builtin.Unscaled a => Layout.Format.Format a -> Layout.Format.Format a
+nullable : forall a. Layout.Format.Format a -> Layout.Format.Format (Builtin.Nullable a)
+percentage : forall n. Builtin.PrimitiveNum n => Layout.Format.Format n
+percentageIntegralRound : forall n. Builtin.PrimitiveNum n => Builtin.Int -> Layout.Format.Format n
+percentageIntegralRoundParens : forall n. Builtin.PrimitiveNum n => Builtin.Int -> Layout.Format.Format n
+percentageIntegralRoundParens' : forall n. Builtin.PrimitiveNum n => Builtin.Bool -> Builtin.Int -> Layout.Format.Format n
+percentageRound : forall n. Builtin.PrimitiveNum n => Builtin.Int -> Layout.Format.Format n
+percentageRoundParens : forall n. Builtin.PrimitiveNum n => Builtin.Int -> Layout.Format.Format n
+percentageRoundParens' : forall n. Builtin.PrimitiveNum n => Builtin.Bool -> Builtin.Int -> Layout.Format.Format n
+pr1 : forall a b. Layout.Format.Format a -> Layout.Format.Format (a, b)
+pr2 : forall b a. Layout.Format.Format b -> Layout.Format.Format (a, b)
+round : forall n. Builtin.PrimitiveNum n => Builtin.Int -> Layout.Format.Format n
+roundParens : forall n. Builtin.PrimitiveNum n => Builtin.Int -> Layout.Format.Format n
+roundParens' : forall n. Builtin.PrimitiveNum n => Builtin.Bool -> Builtin.Int -> Layout.Format.Format n
+truncate : forall a. Builtin.Unscaled a => Builtin.Int -> Layout.Format.Format a

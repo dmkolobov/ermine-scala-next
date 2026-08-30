@@ -1,0 +1,24 @@
+(!+) : forall a. Vector.Vector a -> a -> Vector.Vector a
+(++) : forall a. Vector.Vector a -> Vector.Vector a -> Vector.Vector a
+ap : Control.Ap.Ap Vector.Vector
+concatMap : forall a b. (a -> Vector.Vector b) -> Vector.Vector a -> Vector.Vector b
+cons_Bracket : forall a. a -> Vector.Vector a -> Vector.Vector a
+empty_Bracket : forall a. Vector.Vector a
+filter : forall a. (a -> Builtin.Bool) -> Vector.Vector a -> Vector.Vector a
+find : forall a. (a -> Builtin.Bool) -> Vector.Vector a -> Builtin.Maybe a
+foldl : forall b a. (b -> a -> b) -> b -> Vector.Vector a -> b
+fromList : forall a. Builtin.List a -> Vector.Vector a
+insert : forall a. Builtin.Int -> a -> Vector.Vector a -> Vector.Vector a
+map : forall a b. (a -> b) -> Vector.Vector a -> Vector.Vector b
+monad : Control.Monad.Monad Vector.Vector
+pick : forall a. Builtin.List (a -> Builtin.Bool) -> Vector.Vector a -> Vector.Vector a
+reduce : forall a. a -> (a -> a -> a) -> Vector.Vector a -> a
+singleton : forall a. a -> Vector.Vector a
+sort : forall a. (a -> a -> Ord.Ordering) -> Vector.Vector a -> Vector.Vector a
+sortBy : forall a k. (a -> k) -> (k -> k -> Ord.Ordering) -> Vector.Vector a -> Vector.Vector a
+toList : forall a. Vector.Vector a -> Builtin.List a
+traversable : Control.Traversable.Traversable Vector.Vector
+traverse : forall (f: * -> *) a b. Control.Ap.Ap f -> (a -> f b) -> Vector.Vector a -> f (Vector.Vector b)
+vector : forall a. Builtin.List a -> Vector.Vector a
+zip : forall a b. Vector.Vector a -> Vector.Vector b -> Vector.Vector (a, b)
+zipWith : forall a b c. (a -> b -> c) -> Vector.Vector a -> Vector.Vector b -> Vector.Vector c

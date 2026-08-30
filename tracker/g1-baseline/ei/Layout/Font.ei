@@ -1,0 +1,19 @@
+arial : Layout.Font.Font
+dejaVuSans : Layout.Font.Font
+didone : Layout.Font.Font
+fontGenre : Layout.Font.FontGenre -> Layout.Font.Font
+fontName : Builtin.String -> Layout.Font.Font
+geometric : Layout.Font.Font
+gillSans : Layout.Font.Font
+grotesque : Layout.Font.Font
+humanist : Layout.Font.Font
+monospaced : Layout.Font.Font
+neoGrotesque : Layout.Font.Font
+oldStyle : Layout.Font.Font
+sansSerif : Layout.Font.Font
+serif : Layout.Font.Font
+slabSerif : Layout.Font.Font
+timesNewRoman : Layout.Font.Font
+transitional : Layout.Font.Font
+unicode : Layout.Font.Font
+verdana : Layout.Font.Font

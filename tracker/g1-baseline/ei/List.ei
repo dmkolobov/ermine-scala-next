@@ -1,0 +1,82 @@
+(++) : forall a. Builtin.List a -> Builtin.List a -> Builtin.List a
+and : Builtin.List Builtin.Bool -> Builtin.Bool
+any : forall a. (a -> Builtin.Bool) -> Builtin.List a -> Builtin.Bool
+ap' : forall a b. Builtin.List (a -> b) -> Builtin.List a -> Builtin.List b
+at : forall a. Builtin.Int -> Builtin.List a -> Builtin.Maybe a
+break : forall a. (a -> Builtin.Bool) -> Builtin.List a -> (Builtin.List a, Builtin.List a)
+collect : forall a b. (a -> Builtin.Maybe b) -> Builtin.List a -> Builtin.List b
+concat : forall a. Builtin.List (Builtin.List a) -> Builtin.List a
+concatMap : forall a b. (a -> Builtin.List b) -> Builtin.List a -> Builtin.List b
+cons_Bracket : forall a. a -> Builtin.List a -> Builtin.List a
+contains : forall a. Builtin.Eq a => a -> Builtin.List a -> Builtin.Bool
+cycle : forall a. Builtin.List a -> Builtin.List a
+cycle_List : forall a. Builtin.List a -> Builtin.List a
+drop : forall a. Builtin.Int -> Builtin.List a -> Builtin.List a
+elem : forall a. Builtin.Eq a => a -> Builtin.List a -> Builtin.Bool
+elemBy : forall a. (a -> a -> Builtin.Bool) -> a -> Builtin.List a -> Builtin.Bool
+empty_Bracket : forall a. Builtin.List a
+every : forall a. (a -> Builtin.Bool) -> Builtin.List a -> Builtin.Bool
+fenceposts : forall a. Builtin.List (a, a) -> Builtin.List a
+filter : forall a. (a -> Builtin.Bool) -> Builtin.List a -> Builtin.List a
+find : forall a. (a -> Builtin.Bool) -> Builtin.List a -> Builtin.Maybe a
+findIndex : forall a. (a -> Builtin.Bool) -> Builtin.List a -> Builtin.Maybe Builtin.Int
+foldMap : forall b a. Control.Monoid.Monoid b -> (a -> b) -> Builtin.List a -> b
+foldl : forall b a. (b -> a -> b) -> b -> Builtin.List a -> b
+foldl1 : forall a. (a -> a -> a) -> Builtin.List a -> Builtin.Maybe a
+foldr : forall a b. (a -> b -> b) -> b -> Builtin.List a -> b
+foldr1 : forall a. (a -> a -> a) -> Builtin.List a -> Builtin.Maybe a
+from : Builtin.Int -> Builtin.List Builtin.Int
+groupBy : forall a. (a -> a -> Builtin.Bool) -> Builtin.List a -> Builtin.List (Builtin.List a)
+groupBy_List : forall a. (a -> a -> Builtin.Bool) -> Builtin.List a -> Builtin.List (Builtin.List a)
+head : forall a. Builtin.List a -> a
+headDef : forall a. a -> Builtin.List a -> a
+headOption : forall a. Builtin.List a -> Builtin.Maybe a
+headOrElse : forall a. Builtin.List a -> a -> a
+indices : forall a. Builtin.List a -> Builtin.List Builtin.Int
+init : forall a. Builtin.List a -> Builtin.List a
+inits : forall a. Builtin.List a -> Builtin.List (Builtin.List a)
+intersperse : forall a. a -> Builtin.List a -> Builtin.List a
+isEmpty : forall a. Builtin.List a -> Builtin.Bool
+iterate : forall a. (a -> a) -> a -> Builtin.List a
+length : forall a. Builtin.List a -> Builtin.Int
+listAlt : Control.Alt.Alt Builtin.List
+listAp : Control.Ap.Ap Builtin.List
+listFunctor : Control.Functor.Functor Builtin.List
+listLt : forall a. (a -> a -> Builtin.Bool) -> Builtin.List a -> Builtin.List a -> Builtin.Bool
+listMonad : Control.Monad.Monad Builtin.List
+listTraversable : Control.Traversable.Traversable Builtin.List
+map : forall a b. (a -> b) -> Builtin.List a -> Builtin.List b
+map_List : forall a b. (a -> b) -> Builtin.List a -> Builtin.List b
+maybeHead : forall b a. b -> (a -> b) -> Builtin.List a -> b
+minBy : forall a b. Builtin.Primitive b => (a -> b) -> Builtin.List a -> Builtin.Maybe a
+nub : forall a. Builtin.Eq a => Builtin.List a -> Builtin.List a
+nubBy : forall a. (a -> a -> Builtin.Bool) -> Builtin.List a -> Builtin.List a
+null : forall a. Builtin.List a -> Builtin.Bool
+or : Builtin.List Builtin.Bool -> Builtin.Bool
+ord : forall a. (a -> a -> Ord.Ordering) -> Builtin.List a -> Builtin.List a -> Ord.Ordering
+partition : forall a. Builtin.List a -> (a -> Builtin.Bool) -> (Builtin.List a, Builtin.List a)
+pick : forall a. Builtin.List Builtin.Int -> Builtin.List a -> Builtin.List a
+powerslice : forall a. Builtin.List a -> Builtin.List (Builtin.List a)
+prependToAll : forall a. a -> Builtin.List a -> Builtin.List a
+product : Builtin.List Builtin.Int -> Builtin.Int
+range : Builtin.Int -> Builtin.Int -> Builtin.List Builtin.Int
+repeat : forall a. a -> Builtin.List a
+replicate : forall a. a -> Builtin.Int -> Builtin.List a
+reverse : forall a. Builtin.List a -> Builtin.List a
+scanl : forall b a. (b -> a -> b) -> b -> Builtin.List a -> Builtin.List b
+scanl' : forall b a. (b -> a -> b) -> b -> Builtin.List a -> Builtin.List b
+singleton : forall a. a -> Builtin.List a
+span : forall a. (a -> Builtin.Bool) -> Builtin.List a -> (Builtin.List a, Builtin.List a)
+spanM : forall (m: * -> *) a. Control.Monad.Monad m -> (a -> m Builtin.Bool) -> Builtin.List a -> m (Builtin.List a, Builtin.List a)
+splitAt : forall a. Builtin.Int -> Builtin.List a -> (Builtin.List a, Builtin.List a)
+sum : Builtin.List Builtin.Int -> Builtin.Int
+sum' : Builtin.List Builtin.Double -> Builtin.Double
+tail : forall a. Builtin.List a -> Builtin.List a
+tails : forall a. Builtin.List a -> Builtin.List (Builtin.List a)
+take : forall a. Builtin.Int -> Builtin.List a -> Builtin.List a
+traverse' : forall (f: * -> *) a b. Control.Ap.Ap f -> (a -> f b) -> Builtin.List a -> f (Builtin.List b)
+uncons : forall a. Builtin.List a -> Builtin.Maybe (a, Builtin.List a)
+unfoldr : forall b a. (b -> Builtin.Maybe (a, b)) -> b -> Builtin.List a
+zip : forall a b. Builtin.List a -> Builtin.List b -> Builtin.List (a, b)
+zipIndex : forall a. Builtin.List a -> Builtin.List (Builtin.Int, a)
+zipWith : forall a b c. (a -> b -> c) -> Builtin.List a -> Builtin.List b -> Builtin.List c

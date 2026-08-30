@@ -1,0 +1,15 @@
+(*) : forall n. Builtin.Num n => n -> n -> n
+(+) : forall n. Builtin.Num n => n -> n -> n
+(-) : forall n. Builtin.Num n => n -> n -> n
+(/) : forall n. Builtin.Num n => n -> n -> n
+(<) : forall a. Builtin.Primitive a => a -> a -> Builtin.Bool
+(<=) : forall a. Builtin.Primitive a => a -> a -> Builtin.Bool
+(>) : forall a. Builtin.Primitive a => a -> a -> Builtin.Bool
+(>=) : forall a. Builtin.Primitive a => a -> a -> Builtin.Bool
+abs : forall n. Builtin.Num n => n -> n
+nan : Builtin.Double
+neg : forall n. Builtin.Num n => n -> n
+numOrd : forall n. Builtin.Num n => n -> n -> Ord.Ordering
+pow : forall n. Builtin.Num n => n -> n -> n
+toDouble : forall n. Builtin.Num n => n -> Builtin.Double
+toInt : forall n. Builtin.Num n => n -> Builtin.Int

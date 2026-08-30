@@ -1,0 +1,5 @@
+cons_Bracket : forall (f1: rho) id (f2: rho) (r: rho) (rout: rho). (Has rout r, Has rout f2, Has rout f1) => (Builtin.Field f1 id, Builtin.Field f2 id) -> DrilldownList.DrilldownList r -> DrilldownList.DrilldownList rout
+empty_Bracket : DrilldownList.DrilldownList (||)
+fromDrilldown : forall (r: rho). DrilldownList.DrilldownList r -> Builtin.List (Builtin.String, Builtin.String)
+fromDrilldown' : forall (r: rho). DrilldownList.DrilldownList r -> Builtin.List (Builtin.String, Builtin.String, Builtin.PrimT)
+toRow : forall (r: rho). DrilldownList.DrilldownList r -> Relation.Row.Row r

@@ -1,0 +1,4 @@
+fromMaybe : forall a. Builtin.Prim a -> Builtin.Maybe a -> Builtin.Nullable a
+getOrElse : forall a. a -> Builtin.Nullable a -> a
+map : forall b a. Builtin.Prim b -> (a -> b) -> Builtin.Nullable a -> Builtin.Nullable b
+toMaybe : forall a. Builtin.Nullable a -> Builtin.Maybe a

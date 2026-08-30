@@ -1,0 +1,7 @@
+formatExcelPeriod : (Builtin.Date, Builtin.Date) -> Builtin.String
+formatPeriod : ((Builtin.Date, Builtin.Date) -> Builtin.String) -> (Builtin.Date, Builtin.Date) -> Builtin.String
+formatPeriodOr : Builtin.String -> (Builtin.Date, Builtin.Date) -> Builtin.String
+ltStringDateRange : Builtin.String -> Builtin.String -> Builtin.Bool
+ord : (Builtin.Date, Builtin.Date) -> (Builtin.Date, Builtin.Date) -> Ord.Ordering
+parseDateRange : Builtin.String -> Builtin.Maybe (Builtin.Date, Builtin.Date)
+unsafeFormatDateRange : (Builtin.Date, Builtin.Date) -> Builtin.String

@@ -1,0 +1,13 @@
+ap' : forall e a b. Either.Either e (a -> b) -> Either.Either e a -> Either.Either e b
+bind' : forall e a b. Either.Either e a -> (a -> Either.Either e b) -> Either.Either e b
+either : forall a c b. (a -> c) -> (b -> c) -> Either.Either a b -> c
+eitherAp : forall e. Control.Ap.Ap (Either.Either e)
+eitherFunctor : forall e. Control.Functor.Functor (Either.Either e)
+eitherMaybe : forall a b. Either.Either a b -> Builtin.Maybe b
+eitherMonad : forall e. Control.Monad.Monad (Either.Either e)
+lefts : forall a b. Builtin.List (Either.Either a b) -> Builtin.List a
+map' : forall a b e. (a -> b) -> Either.Either e a -> Either.Either e b
+maybeEither : forall e a. e -> Builtin.Maybe a -> Either.Either e a
+orEither : forall a b. Either.Either a b -> Either.Either a b -> Either.Either a b
+partitionEithers : forall a b. Builtin.List (Either.Either a b) -> (Builtin.List a, Builtin.List b)
+rights : forall a b. Builtin.List (Either.Either a b) -> Builtin.List b

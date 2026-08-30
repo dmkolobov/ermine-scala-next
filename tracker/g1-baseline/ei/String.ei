@@ -1,0 +1,18 @@
+concat : Builtin.List Builtin.String -> Builtin.String
+drop : Builtin.Int -> Builtin.String -> Builtin.String
+lines : Builtin.String -> Builtin.List Builtin.String
+ord : forall a. Builtin.Primitive a => a -> a -> Ord.Ordering
+replace : Builtin.Char -> Builtin.Char -> Builtin.String -> Builtin.String
+replaceAll : Builtin.String -> Builtin.String -> Builtin.String -> Builtin.String
+spaced : Builtin.List Builtin.String -> Builtin.String
+split : Builtin.Char -> Builtin.String -> Builtin.List Builtin.String
+splitCamelCase : Builtin.String -> Builtin.String
+stringMonoid : Control.Monoid.Monoid Builtin.String
+substring : Builtin.Int -> Builtin.Int -> Builtin.String -> Builtin.String
+substringFrom : Builtin.Int -> Builtin.String -> Builtin.String
+substringTo : Builtin.Int -> Builtin.String -> Builtin.String
+take : Builtin.Int -> Builtin.String -> Builtin.String
+unsplit : Builtin.Char -> Builtin.List Builtin.String -> Builtin.String
+unwords : Builtin.List Builtin.String -> Builtin.String
+uppercaseFirstLetter : Builtin.String -> Builtin.String
+words : Builtin.String -> Builtin.List Builtin.String

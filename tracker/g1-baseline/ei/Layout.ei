@@ -1,0 +1,4 @@
+harness : forall (f: * -> *) z. (Internal.SMEnv.SMEnv DB.DB -> Scanners.Scanner f) -> Runners.Runner f -> (Scanners.Scanner f -> Runners.Runner f -> Layout.Writer.Writer f z) -> Layout.Report.Report f z -> Builtin.IO ()
+harness' : forall (f: * -> *) z. (Internal.SMEnv.SMEnv DB.DB -> Scanners.Scanner f) -> Runners.Runner f -> (Scanners.Scanner f -> Runners.Runner f -> Layout.Writer.Writer f z) -> Layout.Report.Report f z -> Builtin.IO z
+harnessNoSM : forall (f: * -> *) z. (Internal.SMEnv.SMEnv DB.DB -> Scanners.Scanner f) -> Runners.Runner f -> (Scanners.Scanner f -> Runners.Runner f -> Layout.Writer.Writer f z) -> Layout.Report.Report f z -> Builtin.IO ()
+harnessNoSM' : forall (f: * -> *) z. (Internal.SMEnv.SMEnv DB.DB -> Scanners.Scanner f) -> Runners.Runner f -> (Scanners.Scanner f -> Runners.Runner f -> Layout.Writer.Writer f z) -> Layout.Report.Report f z -> Builtin.IO z

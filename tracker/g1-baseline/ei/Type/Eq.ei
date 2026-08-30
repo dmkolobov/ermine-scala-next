@@ -1,0 +1,4 @@
+flop : forall (p: a1 -> b1 -> *) (a: b1) (b: a1). Type.Eq.Flip p a b -> p b a
+refl : forall {k} (a: k). (Type.Eq.==) a a
+symm : forall (a: a1) (b: a1). (Type.Eq.==) a b -> (Type.Eq.==) b a
+trans : forall {k} (b: k) (c: k) (a: k). (Type.Eq.==) b c -> (Type.Eq.==) a b -> (Type.Eq.==) a c

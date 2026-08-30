@@ -1,0 +1,8 @@
+(<$) : forall a b. a -> Builtin.IO b -> Builtin.IO a
+(<$>) : forall a b. (a -> b) -> Builtin.IO a -> Builtin.IO b
+(<*>) : forall a b. Builtin.IO (a -> b) -> Builtin.IO a -> Builtin.IO b
+(<<) : forall a b. Builtin.IO a -> Builtin.IO b -> Builtin.IO a
+(>>) : forall a b. Builtin.IO a -> Builtin.IO b -> Builtin.IO b
+(>>=) : forall a b. Builtin.IO a -> (a -> Builtin.IO b) -> Builtin.IO b
+map : forall a b. (a -> b) -> Builtin.IO a -> Builtin.IO b
+return : forall a. a -> Builtin.IO a

@@ -1,0 +1,1 @@
+atomic# : forall a. Layout.Report.Atomic.Atomic a -> Layout.Report.Atomic.Atomic# a

@@ -423,7 +423,12 @@ object Session {
   ) extends Located {
     private def writeInterface(defs: List[TermVar]): Unit = {
       val w = new java.io.StringWriter()
-      vsep(defs.map(Pretty.prettyVarHasType(_, Pretty.FullyQualified))).format(1000000, w)
+      // Sorted by name so interface bytes do not depend on HashMap-over-id
+      // iteration order (ids are timing-dependent across runs); parse-back
+      // is order-insensitive (InterfaceParsers sigs.toMap).  G1 oracle,
+      // tracker/LSP-ROADMAP.md item 1.1.
+      val sorted = defs.sortBy(_.name.map(_.toString) getOrElse "")
+      vsep(sorted.map(Pretty.prettyVarHasType(_, Pretty.FullyQualified))).format(1000000, w)
       writeInterfaceString(w.toString)
     }
 
@@ -513,6 +518,13 @@ object Session {
     }
 
   def loadModules(moduleNames: List[String])(implicit s: SessionEnv, su: Supply, con: Printer): Set[String] = {
+    // The G1 oracle needs deterministic fresh-id draws: parallel makes give
+    // thread-timing-dependent Supply order, which reaches interface bytes
+    // through the constraint solver's id-hash queue (item 1.1).  Default off.
+    if (java.lang.Boolean.getBoolean("ermine.loadInSeries")) {
+      loadModulesInSeries(moduleNames)
+      return moduleNames.toSet
+    }
     val x = first
     val t0 = nanoTime
     val loaded = s.loadedModules.keySet

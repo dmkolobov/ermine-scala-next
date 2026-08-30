@@ -1,0 +1,14 @@
+cells : Builtin.Int -> Native.Magnitude.Magnitude Native.Magnitude.CellT
+cellsA : Builtin.Int -> Builtin.Int -> Native.Magnitude.Area
+cellsM : Builtin.Int -> Native.Magnitude.ErasedMagnitude
+dimensionless : Builtin.Double -> Native.Magnitude.Magnitude Native.Magnitude.DimensionlessT
+dimensionlessM : Builtin.Double -> Native.Magnitude.ErasedMagnitude
+erasePhantom : forall a. Native.Magnitude.Magnitude a -> Native.Magnitude.Magnitude Native.Magnitude.ErasedT
+pixels : Builtin.Int -> Native.Magnitude.Magnitude Native.Magnitude.PixelT
+pixelsA : Builtin.Int -> Builtin.Int -> Native.Magnitude.Area
+pixelsM : Builtin.Int -> Native.Magnitude.ErasedMagnitude
+ratioA : Builtin.Double -> Builtin.Double -> Native.Magnitude.Area
+toArea# : Native.Magnitude.Area -> Native.Pair.Pair# (Native.Magnitude.Magnitude Native.Magnitude.ErasedT) (Native.Magnitude.Magnitude Native.Magnitude.ErasedT)
+toListArea# : Builtin.List Native.Magnitude.Area -> Native.List.List# (Native.Pair.Pair# (Native.Magnitude.Magnitude Native.Magnitude.ErasedT) (Native.Magnitude.Magnitude Native.Magnitude.ErasedT))
+toListMagnitude# : forall a. Builtin.List a -> Native.List.List# a
+toMagnitudeList# : Builtin.List Native.Magnitude.ErasedMagnitude -> Native.List.List# (Native.Magnitude.Magnitude Native.Magnitude.ErasedT)
