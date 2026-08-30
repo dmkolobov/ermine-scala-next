@@ -394,14 +394,17 @@ object Lib {
       liftBool(toPrimExpr(a) >= toPrimExpr(b))
     ), FA(a => a ->: a ->: bool))
 
-    primOp(Global("Builtin", "primPlus#"), primBinOp("Builtin.primPlus#")(numBin{
-      case (a, b, num) => Prim(num plus (a, b))}), FA(a => a ->: a ->: a))
+    primOp(Global("Builtin", "primPlus#"), primBinOp("Builtin.primPlus#")(numBin(new NumBinFn[Runtime] {
+      def apply[N](a: N, b: N, num: Numeric[N]): Runtime = Prim(num.plus(a, b))
+    })), FA(a => a ->: a ->: a))
 
-    primOp(Global("Builtin", "primMinus#"), primBinOp("Builtin.primMinus#")(numBin{
-      case (a, b, num) => Prim(num minus (a, b))}), FA(a => a ->: a ->: a))
+    primOp(Global("Builtin", "primMinus#"), primBinOp("Builtin.primMinus#")(numBin(new NumBinFn[Runtime] {
+      def apply[N](a: N, b: N, num: Numeric[N]): Runtime = Prim(num.minus(a, b))
+    })), FA(a => a ->: a ->: a))
 
-    primOp(Global("Builtin", "primTimes#"), primBinOp("Builtin.primTimes#")(numBin{
-      case (a, b, num) => Prim(num times (a, b))}), FA(a => a ->: a ->: a))
+    primOp(Global("Builtin", "primTimes#"), primBinOp("Builtin.primTimes#")(numBin(new NumBinFn[Runtime] {
+      def apply[N](a: N, b: N, num: Numeric[N]): Runtime = Prim(num.times(a, b))
+    })), FA(a => a ->: a ->: a))
 
     primOp(Global("Builtin", "primDiv#"),
            primBinOp("Builtin.primDiv#"){(a, b) =>
@@ -410,22 +413,31 @@ object Lib {
            FA(a => a ->: a ->: a))
 
     primOp(Global("Builtin", "primToInt#"), Fun(a =>
-      Prim(numUn{case (a, num) => num toInt a}(a.extract))), FA(a => a ->: int))
+      Prim(numUn(new NumUnFn[Int] {
+        def apply[N](a: N, num: Numeric[N]): Int = num.toInt(a)
+      })(a.extract))), FA(a => a ->: int))
 
     primOp(Global("Builtin", "primToDouble#"), Fun(a =>
-      Prim(numUn{case (a, num) => num toDouble a}(a.extract))), FA(a => a ->: double))
+      Prim(numUn(new NumUnFn[Double] {
+        def apply[N](a: N, num: Numeric[N]): Double = num.toDouble(a)
+      })(a.extract))), FA(a => a ->: double))
 
     primOp(Global("Builtin", "primToLong#"), Fun(a =>
-      Prim(numUn{case (a, num) => num toLong a}(a.extract))), FA(a => a ->: long))
+      Prim(numUn(new NumUnFn[Long] {
+        def apply[N](a: N, num: Numeric[N]): Long = num.toLong(a)
+      })(a.extract))), FA(a => a ->: long))
 
-    primOp(Global("Builtin", "primNeg"), primUnOp("Builtin.primNeg")(numUn{
-      case (a, num) => Prim(num negate a)}), FA(a => numCon(a) =>: a ->: a))
+    primOp(Global("Builtin", "primNeg"), primUnOp("Builtin.primNeg")(numUn(new NumUnFn[Runtime] {
+      def apply[N](a: N, num: Numeric[N]): Runtime = Prim(num.negate(a))
+    })), FA(a => numCon(a) =>: a ->: a))
 
-    primOp(Global("Builtin", "primNeg#"), primUnOp("Builtin.primNeg#")(numUn{
-      case (a, num) => Prim(num negate a)}), FA(a => a ->: a))
+    primOp(Global("Builtin", "primNeg#"), primUnOp("Builtin.primNeg#")(numUn(new NumUnFn[Runtime] {
+      def apply[N](a: N, num: Numeric[N]): Runtime = Prim(num.negate(a))
+    })), FA(a => a ->: a))
 
-    primOp(Global("Builtin", "primAbs#"), primUnOp("Builtin.primAbs#")(numUn{
-      case (a, num) => Prim(num abs a)}), FA(a => a ->: a))
+    primOp(Global("Builtin", "primAbs#"), primUnOp("Builtin.primAbs#")(numUn(new NumUnFn[Runtime] {
+      def apply[N](a: N, num: Numeric[N]): Runtime = Prim(num.abs(a))
+    })), FA(a => a ->: a))
 
     primOp(Global("Builtin", "primPow#"), primBinOp("Builtin.primPow#")((a,b) =>
              Prim(numBin((a: Byte, b) => math.pow(a, b).toByte,
@@ -559,7 +571,7 @@ object Lib {
     primOp(Global("Relation.Row","projectT#"), fun2("Relation.Row.project#", { case Prim(h) => {
       case Rec(r) =>
         val ks = h.asInstanceOf[List[String]].toSet
-        Rec(r.filterKeys(ks(_)))
+        Rec(r.filterKeys(ks(_)).toMap)
       }}),
       FAR(r => FAR(t => FAR(s => (t -> List(r,s)) =>: listH(string) ->: recordT(t) ->: recordT(r)))))
     primOp(Global("Relation.Row","exceptT#"), fun2("Relation.Row.except#", { case Prim(h) => {
@@ -919,7 +931,7 @@ object Lib {
                                              // and use only the functor instance S.M
           rel.whnfMatch("Native.Relation.runRelation") {
             case Rel(r) => Prim { S.M.map(S.collect(r)) { rows =>
-              rows map (rec => Rec(rec.mapValues(v => Prim(v))))
+              rows map (rec => Rec(rec.mapValues(v => Prim(v)).toMap))
             }}
           }
         }
@@ -1002,7 +1014,7 @@ object Lib {
            scalaRec ->: rec)
 
     primOp(Global("Native.Record", "header#"), Fun("Record.header#", {
-      case Prim(r : Map[String,Runtime]) => Prim(recordHeader(r mapValues (toPrimExpr(_))).toList)
+      case Prim(r : Map[String,Runtime]) => Prim(recordHeader((r mapValues (toPrimExpr(_))).toMap).toList)
     }), rec ->: listH(pairH(string, primt)))
 
     primOp(

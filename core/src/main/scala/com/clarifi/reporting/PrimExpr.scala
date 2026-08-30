@@ -14,6 +14,7 @@ import java.text.{SimpleDateFormat,DateFormat,ParseException}
 import ReportingUtils.threadLocal
 import PrimT._
 import Cache._
+import Reporting.UuidOrder
 
 /** Primitive relational expressions */
 sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable with Equals {
@@ -569,7 +570,7 @@ object PrimExpr {
                         int: (Int, Int) => Int,
                         short: (Short, Short) => Short,
                         byte: (Byte, Byte) => Byte)
-      : (PrimExpr, PrimExpr) PartialFunction PrimExpr = uncurryPF{
+      : (PrimExpr, PrimExpr) PartialFunction PrimExpr = uncurryPF[PrimExpr, PrimExpr, PrimExpr]{
     case DoubleExpr(b1, x) => {
       case DoubleExpr(b2, y) => DoubleExpr(b1 || b2, double(x, y))
     }

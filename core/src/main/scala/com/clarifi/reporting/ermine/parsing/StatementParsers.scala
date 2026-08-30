@@ -70,7 +70,7 @@ object StatementParsers {
   } yield TableStatement(p, dbName, vs, t)
 
   def sameLine(p: Pos) =
-    Parser((s,_) => if (s.loc.line == p.line) Pure(()) else Fail()): Parser[Unit]
+    scalaparsers.Parser((s,_) => if (s.loc.line == p.line) Pure(()) else Fail()): Parser[Unit]
 
   // TODO: private class blocks, and private class members
   private val privateBlock = for {

@@ -201,8 +201,8 @@ object TypeParsers {
     glob <- token(dottedName | dottedOpName)
     if {
       if (rcons.isDefinedAt(glob))
-        logger.trace(glob + " " + true)
-      else logger.debug(glob + " " + false)
+        logger.trace(glob.toString + " " + true)
+      else logger.debug(glob.toString + " " + false)
       rcons.isDefinedAt(glob)
     }
   } yield rcons(glob)).attempt("constructor")
@@ -256,7 +256,7 @@ object TypeParsers {
 
   def uQuant: Parser[Localized[(List[KindVar], List[TypeVar])]] = kQuant(keyword("forall"))
 
-  def nf(t: Type): Parser[Type] = Parser((st, su) => Pure(t.nf(su)))
+  def nf(t: Type): Parser[Type] = scalaparsers.Parser((st, su) => Pure(t.nf(su)))
 
   def typ: Parser[Type] = (loc ++ uQuant.optional ++ typL2 flatMap {
     case l ++ q ++ t => q match {
@@ -286,7 +286,7 @@ object TypeParsers {
       ty <- typ
       utvs = Type.allTypeVars(ty).collect(Function.unlift(p(st.typeNames))).toList
       _ <- utvs.traverse_[Parser] { case (tv, otv) =>
-        tv.name traverse_[Parser] { n => modify(typeNames.member(n).set(_,otv)) }
+        tv.name.traverse_[Parser] { n => modify(typeNames.member(n).set(_,otv)) }
       }
     } yield Forall.mk(ty.loc, List(), utvs.map(_._1), Exists.unit, ty)
   }

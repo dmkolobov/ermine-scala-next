@@ -41,7 +41,7 @@ object Explicit {
 // group 1)
 case class ImportExportStatement(
   loc: Pos,
-  export: Boolean,
+  isExport: Boolean,
   module: String,
   as: Option[String],
   explicits: List[Explicit[Global]] = List(),

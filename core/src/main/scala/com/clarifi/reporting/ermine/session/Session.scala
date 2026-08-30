@@ -43,7 +43,8 @@ import scalaz.Scalaz._
 import scalaz.Monad
 import scalaz.Free.{ suspend, Return }
 
-import scala.collection.mutable.{HashMap, SynchronizedMap, ListBuffer}
+import scala.collection.mutable.ListBuffer
+import scala.jdk.CollectionConverters._
 import scala.collection.immutable.List
 
 import com.clarifi.reporting.util.PimpedLogger._
@@ -97,7 +98,8 @@ object Session {
     die("error: circular dependency" above nest(2, fillSep(punctuate(" => ", cycle))))
   }
 
-  val depCache = new HashMap[SourceFile, (Long, Dep)] with SynchronizedMap[SourceFile, (Long, Dep)]
+  // was HashMap with SynchronizedMap, which 2.13 removed
+  val depCache = new java.util.concurrent.ConcurrentHashMap[SourceFile, (Long, Dep)]().asScala
 
   sealed abstract class SourceFile extends scala.Product with Serializable {
     // @throws Death
@@ -301,7 +303,7 @@ object Session {
             Ordering[String].compare(s1,s2)
           case (Dynamic(_,_,mn1), Dynamic(_,_,mn2), _) =>
             Ordering[String].compare(mn1,mn2)
-          case (_, _, _) => sys.error("missing case: %s, %s" format (x, y))
+          case (_, _, _) => sys.error(s"missing case: $x, $y")
       }
     }
   }
@@ -880,7 +882,7 @@ object Session {
     val terms = tmbuf.toMap
     val substTime = nanoTime
 
-    val exports = m.importExports.filter(_.export)
+    val exports = m.importExports.filter(_.isExport)
     // re-exported terms
     val ess = for {
       (k,v) <- s.termNames

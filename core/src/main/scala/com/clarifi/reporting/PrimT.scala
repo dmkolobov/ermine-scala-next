@@ -221,7 +221,7 @@ object PrimT {
     case "Timestamp" => TimestampT(false)
   }
 
-  def coerce(p:PrimT, s: String): Validation[Throwable, Any] = Validation.fromTryCatch(p match {
+  def coerce(p:PrimT, s: String): Validation[Throwable, Any] = Validation.fromTryCatchNonFatal(p match {
     case IntT(_)       => s.toInt
     case ByteT(_)      => s.toByte
     case ShortT(_)     => s.toShort
