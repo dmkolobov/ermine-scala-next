@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 0 not started · Seeded 2026-08-30 (session that shipped the
+Status: Stage 0 in progress — 0.1 done · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -42,7 +42,7 @@ scoping fix, commits f9cf42a / 41b13cc).
 
 Checklist (each item ≈ one loop iteration):
 
-- [ ] **0.1 Scaffold**: `lsp/Rpc.scala` — minimal JSON model + parser +
+- [x] **0.1 Scaffold**: `lsp/Rpc.scala` — minimal JSON model + parser +
   printer, Content-Length framing over stdio, request/notification
   dispatch loop, `initialize`/`initialized`/`shutdown`/`exit` handshake
   advertising: textDocumentSync (save + open), definitionProvider,
@@ -120,3 +120,11 @@ flowing mid-keystroke; then incremental reuse per unchanged statement.
 ## Iteration log
 
 - 2026-08-30 seeded; no LSP code exists yet.
+- 2026-08-30 0.1 done: lsp/Rpc.scala (hand-rolled JSON model+parser+printer,
+  Content-Length framing, single-threaded dispatch) + lsp/Main.scala
+  (initialize advertises openClose/save sync + definition + hover; shutdown
+  gates later requests; exit codes per spec). Verified with a framed printf
+  transcript: capabilities, -32601, -32700 resync, post-shutdown -32600,
+  exit 0. Baselines: 761/762, smoke 3/3, 129 modules 5.8s. (First core/test
+  run also errored TestMarkdown; gone on re-run and alone — flake, watching.)
+  Note for 0.2: bin/ermine's progress bar writes to stdout — must be muted.
