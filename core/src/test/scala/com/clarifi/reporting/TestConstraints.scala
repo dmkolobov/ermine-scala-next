@@ -478,7 +478,7 @@ object TestConstraints extends Properties("Constraints") {
   property("disjunction sound") =
     forAll (disjunctionGen) { case (p1@(Partition(_,r1,_)), p2@(Partition(_,r2,_)), p3@(Partition(_,r3,_)), f) =>
       satisfies(f, Set(p1, p2, p3)) ==>
-      soundness(f)(_ => disjunction(r1, r2, r3))
+      soundness(f)(_ => Constraints.disjunction(r1, r2, r3))
     }
 /*
   property("incorporateAll sound") =

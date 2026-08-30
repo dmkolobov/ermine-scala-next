@@ -14,7 +14,7 @@ import com.clarifi.reporting.relational._
 
 
 object SqlEmitterGens {
-  import Gen.{value=>_, _}
+  import Gen.{const=>_, _}
 
   /** Like `Gen.listOfN` but guarantee unique elements.  Will not
     * terminate if `elts` won't produce `n` unique elements!

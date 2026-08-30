@@ -51,7 +51,7 @@ object LegendGens {
     opCount <- Gen.choose(1, 2)
     ops <- Gen.listOfN(opCount, underlyingOps)
   } yield Presentation(Format.Default,
-                       NonEmptyList.nel(ops.head, ops.tail))
+                       NonEmptyList.nel(ops.head, scalaz.IList.fromList(ops.tail)))
 
   def legends[Lbl](lbls: Gen[Lbl]): Gen[Legend.U[Lbl]] = {
     implicit val pd = Arbitrary(for {
@@ -71,7 +71,7 @@ object LegendGens {
 object TestLegend extends Properties("Legends & presentations") {
   import LegendGens._
 
-  implicit def impLegends[Lbl: Arbitrary]: Arbitrary[Legend[Grp, Lbl]] =
+  implicit def impLegends[Lbl: Arbitrary]: Arbitrary[Legend.U[Lbl]] =
     Arbitrary(legends(arbitrary[Lbl]))
 
   implicit val formats: Arbitrary[Format] = Arbitrary(formatSamples map (_._1))
@@ -80,7 +80,7 @@ object TestLegend extends Properties("Legends & presentations") {
 
   sealed trait Interesting
   val Interesting = Tag.of[Interesting]
-  def uninteresting[A,B](ab: (A,B) @@ Interesting): (A,B) = ab
+  def uninteresting[A,B](ab: (A,B) @@ Interesting): (A,B) = Tag.unwrap(ab)
   type InterestingFormat = (Format, NonEmptyList[PrimExpr]) @@ Interesting
 
   implicit val formatsWithArgs: Arbitrary[InterestingFormat] =
@@ -124,7 +124,7 @@ object TestLegend extends Properties("Legends & presentations") {
 
   property("overflow labels are harmless") = forAll {
     (l: Legend.U[String]) =>
-      val stdsort = l.orderedPresentations.view map (_._2 -> SortOrder.Asc)
+      val stdsort = (l.orderedPresentations.view map (_._2 -> SortOrder.Asc)).toSeq
       l.deriveSort(stdsort) ?= l.deriveSort(stdsort ++ stdsort)
   }
 
@@ -204,10 +204,10 @@ object TestLegend extends Properties("Legends & presentations") {
 
   property("devolved round rounds") = forAll {
     (pe: PrimExpr @@ Number) =>
-    math.abs(pe.extractDouble) < 1e13 ==>
-      (Format.Round(false, false, 2).devolve(NonEmptyList(Op.OpLiteral(pe)))
+    math.abs(Tag.unwrap(pe).extractDouble) < 1e13 ==>
+      (Format.Round(false, false, 2).devolve(NonEmptyList(Op.OpLiteral(Tag.unwrap(pe))))
          .eval(Map.empty).extractDouble
-         ?= (math.round(pe.extractDouble * 100) / 100.0))
+         ?= (math.round(Tag.unwrap(pe).extractDouble * 100) / 100.0))
   }
 
   property("truncate truncates") = forAll {
@@ -238,7 +238,7 @@ object TestLegend extends Properties("Legends & presentations") {
     (Equal[SortDirection].equalIsNatural: Prop)
   }
 
-  property("legend monoid") = monoid.laws[Legend.U[String]]
+  include(monoid.laws[Legend.U[String]], "legend monoid.")
 
   implicit val arbPres: Arbitrary[Presentation] = Arbitrary(presentations)
   implicit val arbSD: Arbitrary[SortDirection] = Arbitrary(directions)
@@ -249,7 +249,7 @@ object TestLegend extends Properties("Legends & presentations") {
   include(equal.laws[Presentation], "presentation equal.")
   include(order.laws[SortStrategy], "sortstrategy order.")
   include(order.laws[SortDirection], "sortdirection order.")
-  property("legend equal") = equal.laws[Legend.U[String]]
+  include(equal.laws[Legend.U[String]], "legend equal.")
 }
 
 object TestErmineLegends extends Properties("Ermine legends") {
