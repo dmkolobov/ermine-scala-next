@@ -35,8 +35,12 @@ object PrimT {
   sealed abstract class WithNullable[PT <: PrimT] extends PrimT {
     // NB: always use lazy val for implementers; otherwise, would be
     // circular
-    private[PrimT] val PTCtor: WithNullableCompanion[PT]
-    import PTCtor.ptClassTag
+    // A `def`, not a `val`: implementers must stay lazy (see above), and Scala 3
+    // will not let a lazy val implement a strict val. That in turn means
+    // `PTCtor` is not a stable path, so the ClassTag is forwarded explicitly
+    // rather than imported from it.
+    private[PrimT] def PTCtor: WithNullableCompanion[PT]
+    private implicit def ptClassTag: reflect.ClassTag[PT] = PTCtor.ptClassTag
     final override def isa(that: PrimT) =
       that match {
         case PTCtor(n) => nullable <= n
@@ -74,7 +78,7 @@ object PrimT {
     def name = "Byte"
     def primType = nullify(nullable, PrimType primByte)
   }
-  object ByteT extends WithNullableCompanion[ByteT] {
+  object ByteT extends WithNullableCompanion[ByteT](using reflect.ClassTag(classOf[ByteT])) {
     private[PrimT] override val strictInstance : ByteT = new ByteT(false)
     private[PrimT] override val nullableInstance : ByteT = new ByteT(true)
   }
@@ -86,7 +90,7 @@ object PrimT {
     def name = "Short"
     def primType = nullify(nullable, PrimType primShort)
   }
-  object ShortT extends WithNullableCompanion[ShortT] {
+  object ShortT extends WithNullableCompanion[ShortT](using reflect.ClassTag(classOf[ShortT])) {
     private[PrimT] override val strictInstance : ShortT = new ShortT(false)
     private[PrimT] override val nullableInstance : ShortT = new ShortT(true)
   }
@@ -98,7 +102,7 @@ object PrimT {
     def name = "Int"
     def primType = nullify(nullable, PrimType primInt)
   }
-  object IntT extends WithNullableCompanion[IntT] {
+  object IntT extends WithNullableCompanion[IntT](using reflect.ClassTag(classOf[IntT])) {
     private[PrimT] override val strictInstance : IntT = new IntT(false)
     private[PrimT] override val nullableInstance : IntT = new IntT(true)
   }
@@ -110,7 +114,7 @@ object PrimT {
     def name = "Long"
     def primType = nullify(nullable, PrimType primLong)
   }
-  object LongT extends WithNullableCompanion[LongT] {
+  object LongT extends WithNullableCompanion[LongT](using reflect.ClassTag(classOf[LongT])) {
     private[PrimT] override val strictInstance : LongT = new LongT(false)
     private[PrimT] override val nullableInstance : LongT = new LongT(true)
   }
@@ -155,7 +159,7 @@ object PrimT {
     def name = "Date"
     def primType = nullify(nullable, PrimType primDate)
   }
-  object DateT extends WithNullableCompanion[DateT] {
+  object DateT extends WithNullableCompanion[DateT](using reflect.ClassTag(classOf[DateT])) {
     private[PrimT] override val strictInstance : DateT = new DateT(false)
     private[PrimT] override val nullableInstance : DateT = new DateT(true)
   }
@@ -167,7 +171,7 @@ object PrimT {
     def name = "Timestamp"
     def primType = nullify(nullable, PrimType primTimestamp)
   }
-  object TimestampT extends WithNullableCompanion[TimestampT] {
+  object TimestampT extends WithNullableCompanion[TimestampT](using reflect.ClassTag(classOf[TimestampT])) {
     private[PrimT] override val strictInstance : TimestampT = new TimestampT(false)
     private[PrimT] override val nullableInstance : TimestampT = new TimestampT(true)
   }
@@ -179,7 +183,7 @@ object PrimT {
     def name = "Double"
     def primType = nullify(nullable, PrimType primDouble)
   }
-  object DoubleT extends WithNullableCompanion[DoubleT] {
+  object DoubleT extends WithNullableCompanion[DoubleT](using reflect.ClassTag(classOf[DoubleT])) {
     private[PrimT] override val strictInstance : DoubleT = new DoubleT(false)
     private[PrimT] override val nullableInstance : DoubleT = new DoubleT(true)
   }
@@ -191,7 +195,7 @@ object PrimT {
     def name = "Bool"
     def primType = nullify(nullable, PrimType primBoolean)
   }
-  object BooleanT extends WithNullableCompanion[BooleanT] {
+  object BooleanT extends WithNullableCompanion[BooleanT](using reflect.ClassTag(classOf[BooleanT])) {
     private[PrimT] override val strictInstance : BooleanT = new BooleanT(false)
     private[PrimT] override val nullableInstance : BooleanT = new BooleanT(true)
   }
@@ -203,7 +207,7 @@ object PrimT {
     def name = "UUID"
     def primType = nullify(nullable, PrimType primUuid)
   }
-  object UuidT extends WithNullableCompanion[UuidT] {
+  object UuidT extends WithNullableCompanion[UuidT](using reflect.ClassTag(classOf[UuidT])) {
     private[PrimT] override val strictInstance : UuidT = new UuidT(false)
     private[PrimT] override val nullableInstance : UuidT = new UuidT(true)
   }

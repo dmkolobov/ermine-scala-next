@@ -43,8 +43,6 @@ object RecordMap extends scala.collection.MapFactory[RecordMap] {
   private[this]
   def emptyKeyCache[A]: KeyCache[A] = Map()
 
-  def apply[A, B](elems: (A, B)*): RecordMap[A, B] = fromSeq(elems)
-
   def apply[A, B](other: Map[A, B]): RecordMap[A, B] = fromMap(other)
 
   def apply[A, B](tr: IterableOnce[(A, B)]): RecordMap[A, B] = fromSeq(tr.iterator.toSeq)

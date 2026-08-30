@@ -854,7 +854,7 @@ object Format {
   /** Meant for two-field displays: format as one field, a date
     * range. */
   case object DateRange extends Format {
-    val basicEval = (pes: NelPe) => (pes.head, pes.tail) match {
+    val basicEval = (pes: NelPe) => (pes.head, pes.tail.toList) match {
       case (DateExpr(n1, startRange), DateExpr(n2, endRange) :: _) =>
         StringExpr(n1 || n2, formatDate(startRange) |+| "–" |+| formatDate(endRange))
       case (pe, _) => pe

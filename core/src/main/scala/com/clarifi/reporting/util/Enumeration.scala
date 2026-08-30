@@ -144,7 +144,7 @@ import IterV._
 
     def length: Int = {
       var i = 0;
-      foreach { _ => i = i + 1; Unit }
+      foreach { _ => i = i + 1; () }
       i
     }
  }

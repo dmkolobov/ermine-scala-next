@@ -112,8 +112,8 @@ package object relational {
   abstract class EffectfulProcedure[A] extends Procedure[Id, A] { self =>
     def setup: (Driver[Id, K], () => Unit)
 
-    override def foldLeftM[B >: A, C](initial: C)(f: (C,B) => C): Id[C] =
-      withDriver( d => driveLeftId(d.apply _)(machine)(x => x: B)(initial)(f))
+    override def foldLeftM[C](initial: C)(f: (C,A) => C): Id[C] =
+      withDriver( d => driveLeftId(d.apply _)(machine)(x => x: A)(initial)(f))
 
     def withDriver[R](k: Driver[Id, K] => R): R = {
       val (d, teardown) = setup
@@ -136,8 +136,8 @@ package object relational {
         def setup = self setup
       }
 
-    override def execute[B >: A](implicit B: Monoid[B]): Id[B] =
-      withDriver(d => driveLeftId[K, B, B, B](d.apply _)(machine)(x => x:B)(B.zero)((x,y) => B.append(x,y)))
+    override def execute(implicit A: Monoid[A]): Id[A] =
+      withDriver(d => driveLeftId[K, A, A, A](d.apply _)(machine)(x => x:A)(A.zero)((x,y) => A.append(x,y)))
 
     override def tee[B,C](p: Procedure[Id, B])(t: Tee[A, B, C]): Procedure[Id, C] = p match {
       case ep : EffectfulProcedure[B] => new EffectfulProcedure[C] {
