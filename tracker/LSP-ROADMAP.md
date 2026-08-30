@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 1.1 done; next item 1.2 · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 1.3a done (19 spec pins); next item 1.3b · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -159,15 +159,16 @@ machinery is deleted post-G1, never before.
   asserts 129 .ei files and ~1473 lines per side and full-inference
   evidence (wall >10s) before any diff counts. Baseline snapshot commits
   to tracker/g1-baseline/ as a DRIFT TRIPWIRE only (see 4.2).
-- [ ] **1.2 Reword gate G1** (edit the GATE line below into the roadmap):
-  normalized .ei equivalence + :browse + :groups (binding-group SCCs) +
+- [x] **1.2 Reword gate G1** (edit the GATE line below into the roadmap):
+  normalized .ei equivalence + :browse + :groups (binding-group SCCs;
+  124/129 via G1Groups, 5 deterministic PARSE-ERROR markers per 1.1) +
   occurrence->def-site differential (see 4.2 — the direct resolution
   oracle) + AST-level desugar differentials (3.4) + value-level eval
   fixtures (4.1/4.2) + rejected-program corpus + 1.3 property corpus
   under BOTH pipelines + the 32 non-boot modules via core/test's
   all-modules property + relArrows modules and Math.e asserted
   specifically + one warm interface-backed reload of the new pipeline.
-- [ ] **1.3a Spec pins: scoping quirks** (properties against the OLD
+- [x] **1.3a Spec pins: scoping quirks** (properties against the OLD
   pipeline, in scalacheck-binding behind a pipeline-parameterized fixture
   so they re-run under the new one at 4.1): class-body scoping incl.
   classPrivateBlock/localTypes kind-arg/context scoping and the
@@ -489,3 +490,25 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   double-run self-agreement 129/129 EQUIVALENT (1447 sigs, 1672 browse
   entries, groups identical). Baseline committed to tracker/g1-baseline/.
   Baselines: 761/762, repl 3/3, lsp 27/27.
+- 2026-08-30 1.2 done (bookkeeping): the reworded gate shipped with the
+  checklist expansion; layer list updated for 1.1's findings (serial-load
+  oracle runs, groups 124/129 + 5 markers). All oracle mechanics live in
+  tracker/tools/g1-*.
+- 2026-08-30 1.3a done: TestStage1Pins.scala, 19 properties pinning the
+  fused pipeline where the stdlib differential is blind. Discoveries worth
+  the item on their own: (1) CLASS BODIES ARE DEAD — every member sig/
+  default and every context dies in loadModule with "undefined type";
+  only bare `class C a` / `class C {a}` load (no stdlib witness ever
+  existed; pins record refusal as the spec — resurrecting classes is not
+  Stage-1 business); (2) `data D = MkD a` LOADS but the constructor is
+  unusable (rigid skolem !a refuses MkD 5), and `type T = a` loads too —
+  the "improperly quantified variable" diagnostic has no trigger we could
+  find (1.3b corpus TODO); (3) witnessed the ambiguous-operator silent
+  term-level failure live (`+` under Prelude+Primitive dies as a layout
+  error) and pinned it. Also pinned: do-binder unbind-before-rhs (by
+  value, via maybeMonad) and rebind-after (by type, both directions),
+  where-body repair, pattern-binder alias survival, per-sig implicit
+  quantification, interleaved-equation refusal, error anchors on the
+  right line inside list literals and do blocks. Error-in-sugar anchors
+  for records and relArrows ride 1.3b with their fixtures. core/test now
+  781 (780 green + known Constraints failure); repl 3/3; lsp 27/27.
