@@ -39,7 +39,7 @@ object Gens {
   def date: Gen[Date] = Gen.choose(MinDate, MaxDate).map(new Date(_))
 
   /** A generator that draws a random positive number of elements from a non-empty list. */
-  def atLeastOneOf[T](l: NonEmptyList[T]) = Gen.choose(1,l.list.size) flatMap (Gen.pick(_,l.list))
+  def atLeastOneOf[T](l: NonEmptyList[T]) = Gen.choose(1,l.list.toList.size) flatMap (Gen.pick(_,l.list.toList))
   
   def choose(lower: Int, upper: Int): Gen[Int] = {
     if (lower > upper) sys.error("Empty choose bounds: [" + lower + ", "+ upper + "]")

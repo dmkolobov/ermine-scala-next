@@ -7,6 +7,10 @@ import Lens._
 import scalaz.scalacheck.ScalazArbitrary._
 
 object TestLenses extends Properties("Lenses") {
+  /** scalacheck's `Properties` is not a `Prop`, so a nested one generated per
+    * sample has to be flattened by hand. */
+  private def asProp(ps: Properties): Prop = Prop.all(ps.properties.map(_._2).toSeq: _*)
+
   class LensProperties[A: Arbitrary,B: Arbitrary](name: String, lens: Lens[A,B]) extends Properties(name) {
     property("law1") = forAll ((a: A) => lens.set(a, lens.get(a)) == a)
     property("law2") = forAll ((a: A) => forAll ((b: B) => lens.get(lens.set(a, b)) == b))
@@ -25,7 +29,7 @@ object TestLenses extends Properties("Lenses") {
   })
 
   include(new Properties("Member") {
-    property("map") = forAll ((key: Boolean) => new LensProperties[Map[Boolean, Int], Option[Int]](key.toString, lensId[Map[Boolean,Int]].member(key)))
-    property("set") = forAll ((key: Char) => new LensProperties[Set[Char], Boolean](key.toString, lensId[Set[Char]].contains(key)))
+    property("map") = forAll ((key: Boolean) => asProp(new LensProperties[Map[Boolean, Int], Option[Int]](key.toString, lensId[Map[Boolean,Int]].member(key))))
+    property("set") = forAll ((key: Char) => asProp(new LensProperties[Set[Char], Boolean](key.toString, lensId[Set[Char]].contains(key))))
   })
 }

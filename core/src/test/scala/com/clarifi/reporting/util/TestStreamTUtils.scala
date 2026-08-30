@@ -16,8 +16,7 @@ object TestStreamTUtils extends Properties("StreamT utilities") {
 
   property("runStreamTOut trampolines long streams") = forAll{(n: Short) =>
     val len = (n:Int) - java.lang.Short.MIN_VALUE
-    // XXX remove + in "+α" in scalaz 7.1
-    val sstream = StreamT.unfoldM[State[Int, +?], Unit, Int](len){n =>
+    val sstream = StreamT.unfoldM[[a] =>> State[Int, a], Unit, Int](len){n =>
       if (n <= 0) state(None)
       else modify((_:Int) + 2) as Some(((), n - 1))
     }

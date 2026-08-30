@@ -91,14 +91,14 @@ object TestRTag extends Properties("PrimTs, PrimExprs, Reflexivity") {
   }
 
   property("nullable variants unify up") = forAll {(h: Header) =>
-    val nulled = h.mapValues(_.withNull)
+    val nulled = h.mapValues(_.withNull).toMap
     sup(h, nulled) ?= Some(nulled)
   }
 
   property("0-len string is root string type") = forAll {(h: Header) =>
     val zerostringed =
       h.mapValues{case PrimT.StringT(l, n) => PrimT.StringT(0, n)
-                  case x => x}
+                  case x => x}.toMap
     sup(h, zerostringed) ?= Some(zerostringed)
   }
 
@@ -129,7 +129,7 @@ object TestRTag extends Properties("PrimTs, PrimExprs, Reflexivity") {
 
   property("42-value equivalence is just type unification") = forAll {
     (x: FortyTwoExpr, y: FortyTwoExpr) =>
-      (x ?= y) == ((x.typ sup y.typ).isDefined: Prop)
+      (x ?= y) == ((Tag.unwrap(x).typ sup Tag.unwrap(y).typ).isDefined: Prop)
   }
 
   property("value equivalence presupposes type unification") = forAll {

@@ -260,7 +260,7 @@ object RelationGens {
       r1 <- _genRelationAnyNestedWithHeader(h1, NoRelationLevel, minRecords, maxRecords)
       r2 <- _genRelationAnyNestedWithHeader(h2, NoRelationLevel, minRecords, maxRecords)
       // (\ d i -> fmap (\ f -> f >>= \ e -> e) (Data.Traversable.traverse d i))
-      ch <- Gen.sequence[Stream, Stream[(String, String)]](
+      ch <- Gen.sequence[List, Stream[(String, String)]](
         (h1.toStream |@| h2.toStream)((_, _)) map {
           case ((k1, v1), (k2, v2)) => Gen.oneOf(true, false) map (b =>
             if (b && (v1 == v2)) Stream((k1, k2)) else Stream())})

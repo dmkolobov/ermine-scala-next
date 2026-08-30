@@ -58,7 +58,7 @@ object LegendGens {
       p <- presentations
       cols = p.columnReferences
       dirs <- Gen.listOfN(cols.size, directions)
-    } yield p -> SortStrategy(cols.toSeq zip dirs))
+    } yield (p, SortStrategy(cols.toSeq zip dirs)))
     implicit val l = Arbitrary(lbls)
     arbitrary[List[((Presentation, SortStrategy), Lbl)]] map {
         curried => Legend(LegendColumns flat (curried map {case ((p, d), lbl) => (p, d, lbl)}

@@ -1,6 +1,7 @@
 package com.clarifi.reporting.util
 
 import scalaz.Scalaz.mzero
+import scalaz.std.anyVal._
 import scalaz.scalacheck.ScalazProperties._
 import scalaz.scalacheck.ScalazArbitrary.OrderingArbitrary
 
@@ -38,8 +39,8 @@ object TestGraph extends Properties("graph types") {
   implicit def partitionedSetArb[A: Arbitrary]: Arbitrary[PartitionedSet[A]] =
     Arbitrary(partitionedSets(arbitrary[A]))
 
-  property("clique order") = order.laws[Clique[Short]]
-  property("clique monoid") = monoid.laws[Clique[Short]]
+  include(order.laws[Clique[Short]], "clique order.")
+  include(monoid.laws[Clique[Short]], "clique monoid.")
 
   include(equal.laws[PSS], "PS equal.")
   include(monoid.laws[PSS], "PS monoid.")
