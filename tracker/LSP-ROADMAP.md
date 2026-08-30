@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 0 in progress — 0.1 done · Seeded 2026-08-30 (session that shipped the
+Status: Stage 0 in progress — 0.2 done · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -49,7 +49,7 @@ Checklist (each item ≈ one loop iteration):
   hoverProvider. `lsp/Main.scala` entry point. Log file via system
   property. Verify with a hand-fed transcript (printf piped in), the way
   tracker/repl-tests does it.
-- [ ] **0.2 Resident session**: boot a SessionEnv the way ErmineFixture
+- [x] **0.2 Resident session**: boot a SessionEnv the way ErmineFixture
   and Console do (Lib.preamble; typeCheck on; load Prelude+Layout once,
   ~6-12s, during `initialize` — report readiness via window/logMessage).
   Copy-per-request like ErmineFixture's `mkEnv` so a failed load never
@@ -128,3 +128,14 @@ flowing mid-keystroke; then incremental reuse per unchanged statement.
   exit 0. Baselines: 761/762, smoke 3/3, 129 modules 5.8s. (First core/test
   run also errored TestMarkdown; gone on re-run and alone — flake, watching.)
   Note for 0.2: bin/ermine's progress bar writes to stdout — must be muted.
+- 2026-08-30 0.2 done: lsp/Resident.scala — SessionEnv(_typeCheck=Some(true))
+  + Lib.preamble + loadModules(Prelude,Layout), booted on `initialized` on
+  the dispatch thread (initialize answers fast; queued requests wait behind
+  boot); withEnv runs each request on a baseEnv.copy (mkEnv idiom); boot
+  failure logs + window/logMessage type 1 and leaves it unbooted for retry.
+  Session Printer feeds the log (progress bar split on \r), and Main steals
+  System.out — protocol keeps the real fd, stray prints land in the log
+  (covers Logging.initializeLogging's println and log4j console appender).
+  Verified from $HOME (cwd-independent, classpath loader): stdout pure
+  frames, "ready: 129 modules in 6.7s" logMessage, exit 0. Baselines:
+  761/762 (no TestMarkdown flake this run), smoke 3/3, 129 modules.

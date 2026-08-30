@@ -19,11 +19,33 @@ object Main {
         s => w.println(java.time.LocalTime.now.format(fmt) + " " + s)
     }
 
+  /** The real stdout, reserved for the protocol.  Everything else that
+    * tries to print — library code, log4j's console appender, the one
+    * stray println — lands in the log instead (decision 4). */
+  private def stealStdout(): java.io.OutputStream = {
+    val protocol = System.out
+    System.setOut(new java.io.PrintStream(new java.io.OutputStream {
+      private val line = new java.lang.StringBuilder
+      override def write(b: Int): Unit =
+        if (b == '\n' || b == '\r') flushLine() else line.append(b.toChar)
+      override def write(b: Array[Byte], off: Int, len: Int): Unit =
+        new String(b, off, len, java.nio.charset.StandardCharsets.UTF_8) foreach (c => write(c.toInt))
+      private def flushLine(): Unit =
+        if (line.length > 0) { log("stdout: " + line); line.setLength(0) }
+    }, true))
+    protocol
+  }
+
   def main(args: Array[String]): Unit =
     try {
-      val wire   = new Wire(System.in, System.out, log)
+      val wire   = new Wire(System.in, stealStdout(), log)
       val server = new Server(wire, log)
+      val ermine = new Resident(log)
       var shutdownSeen = false
+
+      def logMessage(messageType: Int, message: String): Unit =
+        server.notify("window/logMessage",
+          Json.obj("type" -> Json.num(messageType), "message" -> Json.Str(message)))
 
       // After shutdown the client may only send exit; answer anything else
       // with InvalidRequest, per the protocol.
@@ -48,7 +70,19 @@ object Main {
             "version" -> Json.Str("0.1")))
       }
 
-      server.onNotification("initialized") { _ => log("client initialized") }
+      // Boot the resident session right after the handshake, on the one
+      // dispatch thread: initialize answers fast, and anything the client
+      // sends during the ~6-12s boot just queues on the stream behind it.
+      server.onNotification("initialized") { _ =>
+        try {
+          val r = ermine.boot()
+          logMessage(3, f"Ermine session ready: ${r.modules} modules in ${r.seconds}%.1fs")
+        } catch {
+          case e: Throwable =>
+            log("boot failed: " + Rpc.stackTrace(e))
+            logMessage(1, "Ermine session failed to boot: " + e.getMessage)
+        }
+      }
 
       server.onRequest("shutdown") { _ =>
         log("shutdown received")
