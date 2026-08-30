@@ -1,8 +1,9 @@
 package com.clarifi.reporting.ermine.lsp
 
 import com.clarifi.reporting.ermine.{
-  Alt, App, Case, ExplicitBinding, ImplicitBinding, Lam, Let, Pattern, Remember,
-  Rigid, Sig, Term, V, Var, VarP, StrictP, LazyP, ConP }
+  Alt, App, Case, ExplicitBinding, Global, ImplicitBinding, Lam, Let, Local,
+  Pattern, Pretty, Remember, Rigid, Sig, Term, Type, V, Var, VarP, StrictP,
+  LazyP, ConP }
 import com.clarifi.reporting.ermine.session.SessionEnv
 import com.clarifi.reporting.ermine.syntax.Module
 import scalaparsers.{ Loc, Pos }
@@ -23,7 +24,8 @@ object Definitions {
 
   final case class Target(loc: Loc, len: Int)
   final case class Occ(line: Int, startCol: Int, len: Int, id: Int)
-  final case class DocIndex(occs: List[Occ], defs: Map[Int, Target])
+  final case class DocIndex(occs: List[Occ], defs: Map[Int, Target],
+                            types: Map[Int, (String, Type)])
 
   /** Per-document indexes, kept across failed checks (stale navigation
     * beats none) and dropped on didClose.  Single-threaded, like all
@@ -35,20 +37,38 @@ object Definitions {
     def get(uri: String): Option[DocIndex] = m get uri
   }
 
-  def install(server: Server, docs: Docs, log: String => Unit): Unit =
+  def install(server: Server, docs: Docs, log: String => Unit): Unit = {
     server.onRequest("textDocument/definition") { params =>
       val answer = for {
-        uri  <- params / "textDocument" flatMap (_ / "uri") flatMap (_.str)
-        pos  <- params / "position"
-        line <- pos / "line" flatMap (_.int)
-        chr  <- pos / "character" flatMap (_.int)
-        idx  <- docs get uri
-        occ  <- hit(idx, line + 1, chr + 1)  // LSP is 0-based, Pos 1-based
-        tgt  <- idx.defs get occ.id
-        loc  <- location(tgt)
+        occ <- occurrenceAt(docs, params)
+        tgt <- occ._1.defs get occ._2.id
+        loc <- location(tgt)
       } yield loc
       answer getOrElse Json.Null
     }
+
+    // Hover: the inferred type from the session env, top-level and imported
+    // names only — local binder types are Stage-1+ territory (roadmap 0.6).
+    server.onRequest("textDocument/hover") { params =>
+      val answer = for {
+        occ <- occurrenceAt(docs, params)
+        lt  <- occ._1.types get occ._2.id
+      } yield Json.obj("contents" -> Json.obj(
+        "kind"  -> Json.Str("plaintext"),
+        "value" -> Json.Str(lt._1 + " : " + Pretty.prettyType(lt._2, -1).toString)))
+      answer getOrElse Json.Null
+    }
+  }
+
+  private def occurrenceAt(docs: Docs, params: Json): Option[(DocIndex, Occ)] =
+    for {
+      uri  <- params / "textDocument" flatMap (_ / "uri") flatMap (_.str)
+      pos  <- params / "position"
+      line <- pos / "line" flatMap (_.int)
+      chr  <- pos / "character" flatMap (_.int)
+      idx  <- docs get uri
+      occ  <- hit(idx, line + 1, chr + 1)  // LSP is 0-based, Pos 1-based
+    } yield (idx, occ)
 
   private def hit(idx: DocIndex, line: Int, col: Int): Option[Occ] =
     idx.occs
@@ -74,8 +94,21 @@ object Definitions {
     // Globals — imports and everything the load pulled in — resolve through
     // the env; the file's own re-parsed binders overlay them afterwards.
     val globals = env.termNames.valuesIterator.map(v => v.id -> target(v)).toMap
-    DocIndex(w.occs.result(), globals ++ w.defs.result())
+    val globalTypes = env.termNames.iterator.map { case (g, v) =>
+      v.id -> (label(g), v.extract)
+    }.toMap
+    // The file's own top-levels re-parsed under fresh ids; their inferred
+    // types live in termNames under Local.global(moduleName) — bridge by name.
+    val ownTypes = (m.implicits.map(_.v) ++ m.explicits.map(_.v)).flatMap { v =>
+      for {
+        l  <- v.name collect { case l: Local => l }
+        tv <- env.termNames get (l global m.name)
+      } yield v.id -> (label(l global m.name), tv.extract)
+    }.toMap
+    DocIndex(w.occs.result(), globals ++ w.defs.result(), globalTypes ++ ownTypes)
   }
+
+  private def label(g: Global): String = g.module + "." + g.string
 
   private def nameLen[A](v: V[A]): Int =
     v.name map (_.string.length) getOrElse 1

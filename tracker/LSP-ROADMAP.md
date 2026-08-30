@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 0 in progress — 0.5 done · Seeded 2026-08-30 (session that shipped the
+Status: Stage 0 in progress — 0.6 done · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -84,7 +84,7 @@ Checklist (each item ≈ one loop iteration):
   (TermNameParsers.scala globalTermDef comment). For imported globals,
   answer the defining module's file+loc via the session's module map
   (SourceFile knows filenames). Misses answer null, never error.
-- [ ] **0.6 Hover**: for a resolved name at position, show the inferred
+- [x] **0.6 Hover**: for a resolved name at position, show the inferred
   type from the session env (the :type machinery in Console is the
   reference); top-level and imported names only — local binder types are
   Stage-1+ territory (see perf ticket before promising type-at-point).
@@ -179,3 +179,13 @@ flowing mid-keystroke; then incremental reuse per unchanged statement.
   point into .ei text. Misses answer null. lsp-smoke +6 checks: same-file
   equation, pattern binder, sibling Good.e, stdlib Bool.e (&&), miss, all
   green. Baselines: 761/762, repl 3/3, lsp 23/23.
+- 2026-08-30 0.6 done: hover in lsp/Definitions.scala off the same index —
+  DocIndex gains id -> (label, Type): termNames Vs carry their inferred
+  type as the V payload (extract), rendered per request with
+  Pretty.prettyType(ty, -1) as plaintext "Module.name : type"; the file's
+  own top-levels (fresh re-parse ids) bridge by name via
+  Local.global(moduleName) into termNames. Locals answer null (Stage-1
+  per roadmap; perf ticket gates type-at-point). Rendered samples:
+  "Good.answer : Int", "Nav.twice : forall a. a -> a"; && labels as
+  Prelude.&& (re-export; termNameOrigins could refine — polish, not now).
+  lsp-smoke 27/27; baselines 761/762, repl 3/3.

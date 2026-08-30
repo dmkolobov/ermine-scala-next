@@ -167,6 +167,25 @@ def main():
           and r["range"]["start"]["line"] in (6, 7), repr(r))
     check("def miss -> null", definition("Nav.e", 1, 0) is None)
 
+    # --- hover (0.6) ---
+    def hover(name, line, char):
+        rid = client.request("textDocument/hover", {
+            "textDocument": {"uri": uri(name)},
+            "position": {"line": line, "character": char}})
+        return client.response(rid).get("result")
+
+    r = hover("Nav.e", 6, 12)  # "answer"
+    check("hover answer : Int", r is not None
+          and "Good.answer" in r["contents"]["value"]
+          and "Int" in r["contents"]["value"], repr(r))
+    r = hover("Nav.e", 7, 12)  # "&&"
+    check("hover && : Bool", r is not None
+          and "Bool" in r["contents"]["value"], repr(r))
+    r = hover("Nav.e", 6, 6)  # "twice", own top-level via the name bridge
+    check("hover twice has arrow", r is not None
+          and "->" in r["contents"]["value"], repr(r))
+    check("hover local x -> null", hover("Nav.e", 5, 10) is None)
+
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Bad.e")}})
     check("Bad.e cleared on close", client.diagnostics_for(uri("Bad.e")) == [])
 
