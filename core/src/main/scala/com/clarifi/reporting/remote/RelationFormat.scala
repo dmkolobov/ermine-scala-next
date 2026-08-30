@@ -50,8 +50,10 @@ object Format {
         }
       }
     }
-    val peF = primExprRW.reifiedF
-    streamW(recordW).orError.selfDescribing(peF)
+    implicit val peF = primExprRW.reifiedF
+    val w: Writer[Either[Throwable, TraversableOnce[Record]], S2[StringF, StreamF[RecordF]]] =
+      streamW[Record, RecordF](recordW).orError
+    w.selfDescribing
   }
 
   /**

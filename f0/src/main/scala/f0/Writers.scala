@@ -22,11 +22,23 @@ abstract class Writer[-A,+F] { self =>
   /** Erases the format type */
   def erase: Writer[A,Nothing] = this.asInstanceOf[Writer[A,Nothing]]
   def |[A0<:A,F0>:F,B,F2,R](w: Writer[B,F2]) = Writers.s2W[A0,F0,B,F2,R](self, w) _
-  def selfDescribing[F2>:F](implicit f: F2): Writer[A,P2[StringF,F2]] = Writers.selfDescribing[A,F2](self)
   def orError: Writer[Either[Throwable,A],S2[StringF,F]] = Writers.orError(this)
 }
 
 object Writer {
+  /** Prepend a description of this writer's format to its output.
+    *
+    * This was a member `selfDescribing[F2>:F](implicit f: F2)`, but Scala 3
+    * will not run an implicit search whose type is an abstract type parameter.
+    * As an extension, `F` is concrete at the call site (and invariant here), so
+    * the format can be assembled by the usual implicit `Formats` machinery -
+    * exactly as `Reader#selfDescribing`, which keeps `F` concrete, already does.
+    */
+  implicit class SelfDescribingWriter[A, F](val self: Writer[A, F]) extends AnyVal {
+    def selfDescribing(implicit f: F): Writer[A, P2[StringF, F]] =
+      Writers.selfDescribing[A, F](self)(f)
+  }
+
   // was an anonymous structural refinement; Scala 3 needs a named type here
   // (structural selection would otherwise require Selectable/reflectiveCalls).
   final class WithLast[A,F](w: Writer[A,F]) {
