@@ -40,6 +40,44 @@ check out its `LICENSE.md` before doing anything important with it.
 [ermine-writers]: https://bitbucket.org/ermine-language/ermine-writers
 
 
+Building and running
+--------------------
+
+This branch (`scala3-migration`) builds on **Scala 3** with **sbt 1.x** and a
+**JDK 17+**.
+
+```
+sbt compile          # all modules
+bin/ermine           # start the REPL
+```
+
+`bin/ermine` caches the classpath in `target/ermine-classpath`; delete that
+file after changing dependencies. `sbt core/run` starts the same REPL.
+
+```
+>> :type reverse
+forall a. List a -> List a
+>> 1 + 2
+res0 : Int = 3
+```
+
+The session only type-checks module bindings when `ermine.typeCheck` is set;
+both `bin/ermine` and `sbt core/run` set it for you. Without it every module
+binding loads as `forall a. a`.
+
+To run the REPL tests:
+
+```
+sbt -batch 'export core/fullClasspath' | tail -1 > tracker/repl-classpath.txt
+tracker/tools/repl-smoke.sh
+```
+
+`tracker/` documents the migration from Scala 2.11: what changed and why, the
+three libraries that had to be vendored because they are no longer published
+(`scalaparsers`, `machines`, `f0`) plus the scalaz APIs removed after 7.0, and
+two pre-existing bugs found while testing.
+
+
 Contribute
 ----------
 
