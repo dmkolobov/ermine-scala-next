@@ -8,15 +8,17 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 0 COMPLETE, awaiting G0 sign-off (loop stopped) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 OPEN — checklist expanded 2026-08-30; next item 1.1 · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
 
-- `sbt -batch core/test`: 761/762 (Constraints.disjunction sound is the
-  known pre-existing failure, tracker/06-tests.md)
-- `tracker/tools/repl-smoke.sh`: 3/3 suites
-- `tracker/tools/lsp-smoke.sh`: 17/17 checks (from 0.4 on)
+- `sbt -batch core/test`: all green except `Constraints.disjunction sound`
+  (the one known pre-existing failure, tracker/06-tests.md) — 761/762 as of
+  Stage 0; suites GROW, so a commit that adds tests updates the count in
+  its iteration-log line, and green-except-the-known-one is the invariant
+- `tracker/tools/repl-smoke.sh`: all suites PASS (3 as of Stage 0)
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (27 as of Stage 0)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 
@@ -97,16 +99,261 @@ loop and summarize for sign-off before Stage 1.
 
 ## Stage 1 — parse/rename separation, LSP-shaped surface AST
 
-Do not start before G0 sign-off. Plan of record in
-tracker/TICKET-scoping-renamer.md; sizing discussion from the review
-session: surface AST (spans everywhere, error/hole nodes designed in, flat
-op chains), renamer with occurrence->binder tables + scope-at-position as
-first-class outputs, fixity re-association incl. prefix/postfix, desugaring
-relocation (do-notation, list literals, relational sugar — the hard part).
-Differential gate G1: typed ASTs byte-identical across all 129 stdlib
-modules vs the old pipeline (.ei artifacts as oracle) + baselines + the 28
-TestScopes properties, with the alias-refusal tests flipped to positive
-Haskell-semantics tests. Expand into a checklist when opened.
+G0 signed off 2026-08-30. Plan of record: tracker/TICKET-scoping-renamer.md.
+Checklist expanded 2026-08-30 from a 6-reader code sweep + 3-critic
+adversarial review (workflows wf_f1abd102 / wf_acc10f56; full reports in
+the session tool-results). Pipeline of record:
+parse (resolution-free, spans, flat chains, sugar kept as nodes)
+-> rename (occurrence->binder/def-site tables + scope-at-position)
+-> fixity re-association (positional env, region overrides)
+-> desugar -> typecheck (Session.loadModule contract frozen).
+Old and new pipelines COEXIST until after G1 (Decision d below); the fused
+machinery is deleted post-G1, never before.
+
+### Stage-1 Decisions (append-only; override with a note, not silently)
+
+- (a) Block-binder fixity keeps today's textual-order asymmetry through G1
+  (a binder's `(infixl 5 op)` groups only uses parsed after it). Whole-block
+  Haskell semantics is tracked post-G1 debt.
+- (b) Import-bypassing global-mode desugar resolution (Syntax.Do.bind,
+  Field.cons, Builtin.primNeg/Nil/::, Relation.*, Function.id/.) is
+  reproduced as-is for G1; revisit after.
+- (c) Top-level shadow refusal stays negative (TestScopes #17 guards it).
+- (d) REPL/eval/Remote stay on the fused pipeline through G1. The new
+  pipeline is reachable via a module-load switch (-Dermine.pipeline=new,
+  built in 4.1); cutover + machinery deletion are post-G1 items.
+- (e) Module-level fixityStatements replay in textual order for G1 parity
+  ("Multiple fixity definitions" and "forward reference to an operator
+  with unknown precedence" must fire exactly as today; Vector.e-style
+  as-affix workarounds must keep parsing). Whole-module pre-scan: post-G1.
+- (f) Rejection-vs-acceptance parity is GATE-HARD; error text/position
+  parity is gate-hard only where lsp-smoke or the Diagnostics regex
+  depends on it ("ill-formed expression", the "file:line:col:" prefix);
+  other message/anchor drift is recorded in the iteration log, not red
+  (commit points move when resolution mutations leave the parser).
+- (g) Interface-backed loading under the new pipeline is out of Stage-1
+  scope; one warm interface-backed reload layer runs at 4.2, and the full
+  round-trip is a precondition of the post-G1 REPL cutover.
+- (h) Synthesized-node locs use Synthesized(originSpan), never borrowed
+  locs; 3.4 preserves expansion SHAPE bit-for-bit, locs follow this
+  policy (the oracle layers are loc-insensitive). Death reports over
+  synthesized locs must still render "file:line:col:" for the regex.
+
+### 1.x Gate and spec groundwork (no pipeline code before these)
+
+- [ ] **1.1 G1 oracle harness**: one-line patch sorting Dep.writeInterface
+  lines by name (Session.scala:424-427; parse-back is order-insensitive).
+  tracker/tools/g1-diff.sh PARAMETERIZED old|new: delete every .ei under
+  classes/modules, one full-inference bin/ermine boot (writes .ei, dumps
+  :browse and :groups), normalize, compare. Comparator: parsed-type
+  alpha-equivalence for ALL lines via InterfaceParsers (byte-equal as fast
+  path only; constraint sets compared as multisets under one consistent
+  variable bijection — never string-sort, never scalaz Equal[Type]);
+  the same normalization applies to the :browse dump. Validation BOTH
+  ways: (i) old-pipeline double-run must self-agree 129/129 THROUGH the
+  comparator with zero file skips (the 5 order-churn files +
+  Relation/Predicate.ei are its acceptance tests, not exemptions; use
+  -Dermine.loadInSeries if churn defeats it); (ii) mutation tests — a
+  dropped constraint, Int->Long, inconsistently renamed exists binder,
+  reordered quantifiers, a missing line must each flag red. The script
+  asserts 129 .ei files and ~1473 lines per side and full-inference
+  evidence (wall >10s) before any diff counts. Baseline snapshot commits
+  to tracker/g1-baseline/ as a DRIFT TRIPWIRE only (see 4.2).
+- [ ] **1.2 Reword gate G1** (edit the GATE line below into the roadmap):
+  normalized .ei equivalence + :browse + :groups (binding-group SCCs) +
+  occurrence->def-site differential (see 4.2 — the direct resolution
+  oracle) + AST-level desugar differentials (3.4) + value-level eval
+  fixtures (4.1/4.2) + rejected-program corpus + 1.3 property corpus
+  under BOTH pipelines + the 32 non-boot modules via core/test's
+  all-modules property + relArrows modules and Math.e asserted
+  specifically + one warm interface-backed reload of the new pipeline.
+- [ ] **1.3a Spec pins: scoping quirks** (properties against the OLD
+  pipeline, in scalacheck-binding behind a pipeline-parameterized fixture
+  so they re-run under the new one at 4.1): class-body scoping incl.
+  classPrivateBlock/localTypes kind-arg/context scoping and the
+  OMGWTFPolarBear silent-discard branch (record: keep or diagnose);
+  do-binder unbind-before-rhs/rebind-after; where-body-parsed-first;
+  ?[...]/Remember occurrence visibility; qtyp/closed implicit type
+  quantification (TypeParsers.scala:271-310: which vars quantify, the
+  snapshot boundaries, "improperly quantified variable" refusal, same
+  type-var name across two sigs); pattern binders shadowing both maps;
+  interleaved-equations adjacency (gatherBindings grouping vs sig
+  floating vs missing/duplicate errors); error-in-sugar anchors (one type
+  error inside each of do, list literal, record, relArrows — anchor
+  parity or a Decision noting the accepted delta).
+- [ ] **1.3b Spec pins: operators + rejected corpus + importing golden**:
+  prefix/postfix chains (incl. trailing postfix); block-binder fixity
+  textual-order; ambiguous imported operator (silent at term level, loud
+  at type level); unary minus over the whole chain; equal-prec
+  mixed-assoc "ambiguous operator of precedence"; "Multiple fixity
+  definitions" vs imports; forward-reference-unknown-precedence;
+  postfix+infix bucket collision. Rejected corpus (acceptance parity is
+  gate-hard per Decision f): unknown op in chain, ambiguous reference,
+  "would shadow global definition", ':'-constructor binder, alias-capture
+  refusals (flip at 4.4), loaded-but-not-imported global reference
+  (typecheck-time failure today — the termNames-superset leak test),
+  unknown plain identifier (placeholder tolerance), missing bracket/brace
+  hooks (today: warn + backtrackable failure other alternatives can mask
+  — record actual acceptance). importing(): capture harness + golden
+  outputs of ErParseState.importing over all 129 module headers PLUS a
+  synthetic corpus (multi-alias same-module, hiding+rename, using {},
+  duplicate-import die()); the differential assertion against the new
+  pure function executes in 3.1.
+- [ ] **1.4 Hook table + roadmap bookkeeping**: write and commit
+  tracker/desugar-hooks.md — every desugar hook (name, fixity, _Module
+  suffix rule, source module, resolution channel: alias-sensitive /
+  loaded-global / relArrows-region) per the desugaring inventory; the
+  relArrows override applies to combine/filter sub-expressions ONLY,
+  never rename arrows. Confirm the Decisions block above is in force.
+
+### 2.x Surface syntax
+
+- [ ] **2.1 Surface AST** (new package surface/): header nodes (imports
+  participate in layout; duplicate-import die() covered); the 10
+  top-level statement forms + 6 foreign sub-forms + FixityStatement KEPT
+  + where as its own node + ErrorStatement(span, diag); terms/patterns/
+  types mirroring core's 20/15/10 plus sugar-only nodes (DoExpr,
+  ListLit/BraceLit with _Module suffix, RecordLit, RelEnvelope with
+  per-arrow kind, Neg, Hole, RememberBracket, sections, Paren, flat
+  OpChain = interleaved operand|op-occurrence with lexeme-as-written +
+  span + syntactic position-class); type-level ->/=>/<- as chain ops
+  (pseudo-fixities 0R/0R/1N), row/quantifier forms. Spans everywhere;
+  occurrences carry surface spelling incl. alias affix and
+  paren-operator form; foreign sub-forms carry the class-name STRING +
+  span only (Class.forName leaves parsing — resolution moves to 3.2b).
+- [ ] **2.2 Tokenizer parity**: port the op lexer byte-for-byte (3 guards,
+  maximal munch, `_Module` affix as one token, backtick/apostrophe ops vs
+  double-backtick literal idents; keep DataConParsers' ':'-lexeme split —
+  lexical, safe); property-test against the old `op` parser over all
+  stdlib sources.
+- [ ] **2.3a Parser: header + statements + layout** onto the surface AST —
+  no name maps, no insert-on-miss, no LocalBlocks, no mid-parse fixity;
+  statement order preserved verbatim; the five-way '{' disambiguation
+  rules (record vs brace-list via '=', kind-arg blocks, row types,
+  explicit layout) as an explicit documented deliverable; skip-to-layout-
+  boundary recovery primitive designed (activation is Stage 2).
+- [ ] **2.3b Parser: terms + patterns** (flat chains, sugar nodes,
+  BraceLit accepts zero elements — the fieldList empty-brace crash dies
+  by construction; renamer rejects instead).
+- [ ] **2.3c Parser: types + data/class/foreign statements** (quantifier/
+  row forms, kind-arg braces, class blocks).
+- [ ] **2.3d Parse differential**: all 161 stdlib .e files parse; the
+  1.3b rejected corpus re-checked (refusals that move to rename time are
+  recorded as such); '{' rules and missing-hook acceptance verified
+  against the corpus.
+
+### 3.x Rename, re-associate, desugar
+
+- [ ] **3.1 Module scope as a pure function**: replicate importing()
+  (using/hiding, localized rename-then-affix, |+| alias merge,
+  collapseNames incl. singleton-skip, origins); the 1.3b golden
+  differential goes green HERE. Distinguish real scope (canonicalTerms
+  domain) from the session-global termNames superset — scope-at-position
+  must not leak loaded-but-unimported globals (1.3b corpus asserts).
+- [ ] **3.2a Renamer: module-level terms**: binder heads collected before
+  rhs resolution; id-unification classes preserved (sig+forwards+
+  equations share one id; one id per pattern binder shared with term
+  refs); outputs: occurrence->binder, binder->def-site with spans,
+  scope-at-position, each occurrence recording resolved binder + import
+  path + origin global (collapseNames only collapses multi-alias names —
+  hover labels need origin); unresolved names keep placeholder tolerance.
+- [ ] **3.2b Renamer: local scopes + diagnostics**: let/where/do/class/
+  patterns per the 1.3a pins (LocalBlocks/checkShadows/subTerm repair
+  made unnecessary by construction — but NOT deleted, Decision d);
+  classLookup/Class.forName relocated here (error text/position
+  preserved; classMap global-state dependency noted); failures are Death
+  with "file:line:col:" rendering (Diagnostics regex + no(...)/
+  sessionProof compatibility).
+- [ ] **3.2c Renamer: types + kinds**: canonicalTypes/typeNames/kindNames
+  tables; qtyp/closed quantification-set computation reproduced exactly,
+  asserted by the 1.3a pins; kindOf/kindAfter twin lands with it.
+- [ ] **3.3 Fixity re-association**: port shuntingYard from
+  ParsingUtil.scala:385-440 (Op.scala is a commented-out duplicate — do
+  not port it) as a pure pass over flat chains, exact clear/finish
+  semantics and "ambiguous operator of precedence" verbatim; positional
+  fixity env (imports via Name, fixity statements per Decision e, block
+  binders at textual position per Decision a, relArrows override set);
+  prefix/postfix by recorded position class; unary minus = primNeg over
+  the ENTIRE re-associated chain; type-level pseudo-fixities with
+  Forall/Part/flattenConstraints construction moved to desugar; decide
+  sys.error("termL2...") -> diagnostic; "ill-formed expression" message +
+  anchor preserved as a design constraint (lsp-client update happens at
+  4.3, not here).
+- [ ] **3.4a Desugar after rename: literals/negation/list-patterns/
+  records** — per tracker/desugar-hooks.md channels; expansion SHAPE
+  bit-for-bit (foldRight lists/records/list-patterns, EmptyRecord at
+  open-brace loc), locs per Decision h; AST-level differential per sugar:
+  revive TestRelations.scala:193-214's tnodes-equality shape — old fused
+  desugar output vs new post-rename output, id/loc-insensitive.
+- [ ] **3.4b Desugar: bracket/brace hooks + do** (alias-sensitive channel
+  with _Module suffixes; reverse-foldLeft do, Lam(WildcardP) effect
+  statements, last-statement-is-expression; missing-hook acceptance per
+  1.3b corpus); tnodes differentials for both.
+- [ ] **3.4c Desugar: relArrows** — region-scoped referent+fixity
+  override on combine/filter sub-expressions ONLY (never rename arrows;
+  1.3b fixtures place a rebound op and `not` in each arrow kind and
+  adjacent to the envelope); col/prim rewrite keyed on renamed binders,
+  descent-stop set preserved exactly; Function.id for empty envelopes.
+
+### 4.x Integration, convergence, LSP rebase
+
+- [ ] **4.1 Typecheck integration + pipeline switch + fixture twins**: new
+  pipeline feeds Session.loadModule's frozen contract incl. the type/kind
+  side (ps.s.typeNames consumption, Session.scala:812-816); a module-load
+  switch (-Dermine.pipeline=new) reachable from bin/ermine routes module
+  loading through the new pipeline while REPL command parsing stays fused
+  (Decision d) — this is what makes g1-diff.sh old|new real; ErmineFixture
+  parameterized over pipelines; testParse gets a differently-typed twin
+  (callers pattern-match core nodes). TestScopes + TestErmine + the 1.3
+  corpus green under BOTH pipelines EXCEPT TestScopes :130/:133, which
+  are expected-fail (accepted, not refused) under the new pipeline until
+  4.4 — listed exemption, not a regression. Value-level eval fixtures for
+  each relocated sugar land here (they need eval through the new
+  pipeline).
+- [ ] **4.2 Differential convergence**: SAME-COMMIT dual boots (old + new,
+  ~28s) are the primary comparison; tracker/g1-baseline is a drift
+  tripwire only (old-vs-baseline mismatch STOPS the loop for explanation,
+  never a silent re-cut). Layers: normalized .ei + :browse + :groups +
+  occurrence->def-site differential (dump sorted occ file:line:col ->
+  def file:line:col per module from the old typed core — Var occurrence
+  locs share def ids — and from the new renamer's tables; diff across
+  all 161 modules; this is the direct resolution oracle AND 4.3's spec) +
+  scope-at-position differential at sampled stdlib positions vs the old
+  canonicalTerms-domain snapshot + warm interface-backed reload of the
+  new pipeline (boot #2 consumes boot #1's .ei, 129 modules clean,
+  Decision g) + eval fixtures + rejected corpus. Iterate until dry.
+- [ ] **4.3 LSP rebase onto the renamer**: Definitions.index +
+  Resident.checkFile rebuilt on occurrence->binder/def-site tables
+  (delete the re-parse and the self-global filter, Resident.scala:83-96);
+  real spans replace point+len hit-tests; add a positive local
+  goto-DEFINITION check (newly enabled); hover on locals STAYS null —
+  local binder types are gated on tracker/TICKET-perf-type-inference.md,
+  not on the renamer; "ill-formed expression" checks updated in the same
+  commit if the message moved (Decision f); all lsp-smoke checks green
+  (count grows; update Baselines note per its rule).
+- [ ] **4.4 Flip the alias-refusal tests (new pipeline only)**: TestScopes
+  :130/:133 -> positive Haskell semantics under the new-pipeline
+  parameterization (old-pipeline run keeps refusal expectations for
+  exactly these two); add the combined-capture property (id_F untouched
+  AND plain id captured, one program) and the positive
+  letrec-early-reference-through-plain-name case. NO machinery deletion,
+  NO scoping.in edit here (post-G1).
+
+**GATE G1**: every 1.2 layer green; 1.3 corpus + TestScopes(+flips) green
+per the 4.1 exemption rule; baselines green (delta-tolerant per the
+Baselines section); old pipeline still serving REPL. STOP the loop and
+summarize for sign-off before Stage 2.
+
+**Post-G1 tracked debt** (not Stage 1; do not start without sign-off):
+REPL/eval/Remote cutover to the new pipeline (precondition: interface
+round-trip test per Decision g) -> scoping.in aliased-shadow line -> delete
+LocalBlocks/checkShadows/rewriteShadowed/insert-on-miss/Localized threading
+(Localized removal is its own item — it threads through every binder
+production) -> fold bindingName/localName -> block-binder whole-block
+fixity + module-level pre-scan flips (Decisions a, e) -> statement-extent
+scanner for Stage 2 (columns/strings/comments/bracket+let-in/case-of
+closers; flag the virtualLeftBrace col-max-depth merge corner) -> revisit
+import-bypassing desugar resolution (Decision b).
 
 ## Stage 2 — error-tolerant parsing feeding the same surface AST
 
@@ -117,9 +364,7 @@ flowing mid-keystroke; then incremental reuse per unchanged statement.
 
 ## Blocked / Awaiting
 
-- G0 sign-off: Stage 0 is done and demoed (evidence below). Next loop
-  iteration should not start Stage 1 without a human OK; when given,
-  expand Stage 1 into a checklist first.
+(empty — G0 signed off 2026-08-30, user: “keep going”)
 
 ## Gate evidence (G0, recorded 2026-08-30)
 
@@ -213,3 +458,16 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   handshake, demo transcript recorded under Gate evidence. Baselines:
   761/762, repl 3/3, lsp 27/27. STAGE 0 COMPLETE — stopping the loop at
   gate G0 for sign-off.
+- 2026-08-30 Stage 1 expanded into 24 items via 6-reader sweep +
+  3-critic adversarial review (~1M tokens of workflow evidence). Headline
+  corrections vs the seed sketch: G1 "byte-identical .ei" is unachievable
+  (ids thread-timing-dependent; 6/129 files churn between identical runs)
+  -> normalized alpha-equivalence + layered oracles incl. a direct
+  occurrence->def-site resolution differential; resolution failures steer
+  today's grammar -> rejected-program corpus is gate-hard; the fused
+  machinery CANNOT be deleted pre-G1 (old pipeline serves REPL + oracle)
+  -> deletion moved to post-G1 debt; a -Dermine.pipeline switch (4.1) is
+  what makes the oracle able to measure the new pipeline at all; qtyp/
+  closed implicit quantification and relArrows region boundaries pinned
+  as spec tests before any pipeline code. Baselines section made
+  delta-tolerant (was stale at 17/17). Loop resumes at 1.1.
