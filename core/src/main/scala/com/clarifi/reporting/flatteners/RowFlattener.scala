@@ -29,10 +29,9 @@ import com.clarifi.reporting.util.StreamTUtils
  */
 abstract class RowFlattener[S, -A] extends Flattener[RowFlattener, S, A] {
 
-  type M[+B] = State[S,B]
-  // Scala 3 will not unify scalaz's IndexedStateT instances through this
-  // alias on its own, so name the monad explicitly.
-  implicit val MMonad: Monad[M] = StateT.stateMonad[S]
+  // NB: no variance annotation - `M[+B]` would stop scalaz's State instances
+  // resolving for `Monad[M]` in Scala 3, and nothing here needs it.
+  type M[B] = State[S,B]
 
   def apply(a: A): State[S, (Record, DataSetS[S])]
 
@@ -51,7 +50,7 @@ abstract class RowFlattener[S, -A] extends Flattener[RowFlattener, S, A] {
 
   /** Modify the state type of this flattener using the given lens. */
   def lens[T](l: Lens[T,S]): RowFlattener[T,A] = {
-    type N[+X] = State[T, X]
+    type N[X] = State[T, X]
     RowFlattener[T,A](
       (a: A) => State[T, (Record, DataSetS[T])](t => {
         val (td1, td2) = l.lifts(apply(a)).apply(t)
@@ -150,7 +149,7 @@ abstract class RowFlattener[S, -A] extends Flattener[RowFlattener, S, A] {
 
   /** Convert this `Flattener` to a pure flattener by binding the initial state argument. */
   def localState(s0: S): RowFlattener[Unit, A] = {
-    type N[+X] = State[Unit, X]
+    type N[X] = State[Unit, X]
     val tau = new (Id ~> N) {
       def apply[C](c: C) = State((u:Unit) => (u,c))
     }

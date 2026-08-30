@@ -129,7 +129,7 @@ import IterV._
     def partition(pred: A => Boolean): (Enumeration[A], Enumeration[A]) = (filter(pred), filter(!pred(_)))
 
     def unzipMap[K](keys: Map[K,A => Boolean]): Map[K,Enumeration[A]] =
-      keys.mapValues(filter)
+      keys.mapValues(filter).toMap
 
     def foreach(f: A => Unit): Unit = {
       var cur = this

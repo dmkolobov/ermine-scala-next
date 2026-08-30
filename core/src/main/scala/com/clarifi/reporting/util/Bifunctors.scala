@@ -13,13 +13,13 @@ object Bifunctors {
     def bitraverseU[A, B, MC, MD, M[_]](fa: F[A, B])(f: A => MC, g: B => MD)
                    (implicit U1: UnapplyAux[Applicative, MC, M],
                     U2: UnapplyAux[Applicative, MD, M]): M[F[U1.A, U2.A]] =
-      (F.bitraverse(fa)(U1.leibniz.subst[A => ?](f))
-                   (U2.leibniz.subst[B => ?](g))(U1.TC))
+      (F.bitraverse(fa)(U1.leibniz.subst[[x] =>> A => x](f))
+                   (U2.leibniz.subst[[x] =>> B => x](g))(U1.TC))
   }
 
   implicit class OnTraverseOps[F[_]](val self: Traverse[F]) {
     /** @todo Use version from scalaz 7.1 instead. */
-    def bicompose[G[_,_]](implicit G0: Bitraverse[G]): Bitraverse[λ[(α, β) => F[G[α, β]]]] =
+    def bicompose[G[_,_]](implicit G0: Bitraverse[G]): Bitraverse[[α, β] =>> F[G[α, β]]] =
       new TraverseBitraverse[F, G] {
         val F = self
         val G = G0
@@ -29,13 +29,13 @@ object Bifunctors {
   /** Every functor is a bifunctor with the left parameter being a
     * phantom.
     */
-  def phantomLeft[F[_]](implicit F0: Functor[F]): Bifunctor[λ[(α, β) => F[β]]] =
+  def phantomLeft[F[_]](implicit F0: Functor[F]): Bifunctor[[α, β] =>> F[β]] =
     new PhantomLeftBifunctor[F] {
       val F = F0
     }
 }
 
-private abstract class PhantomLeftBifunctor[F[_]] extends Bifunctor[λ[(α, β) => F[β]]] {
+private abstract class PhantomLeftBifunctor[F[_]] extends Bifunctor[[α, β] =>> F[β]] {
   def F: Functor[F]
 
   override def bimap[A, B, C, D](fa: F[B])(f: A => C, g: B => D) =
@@ -43,7 +43,7 @@ private abstract class PhantomLeftBifunctor[F[_]] extends Bifunctor[λ[(α, β) 
 }
 
 private abstract class TraverseBitraverse[F[_], G[_,_]]
-    extends Bitraverse[λ[(α, β) => F[G[α, β]]]] {
+    extends Bitraverse[[α, β] =>> F[G[α, β]]] {
   def F: Traverse[F]
   def G: Bitraverse[G]
 

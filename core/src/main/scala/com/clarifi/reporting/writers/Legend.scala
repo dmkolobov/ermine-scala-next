@@ -117,7 +117,7 @@ case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
     inOrder bitraverse (f, g) map (s => Legend(s, undisplayed, groupingColumn))
 
   private[this] def sortRules: Map[Lbl, List[SortStrategy]] =
-    (leavesInOrder groupBy (_._3) mapValues (_ map (_._2) toList))
+    (leavesInOrder groupBy (_._3) mapValues (_ map (_._2) toList)).toMap
 
   /** As with `deriveSort`, but don't flatten the results to relational
     * columns.  This doesn't exclude any presentation sorts based on
@@ -177,7 +177,7 @@ case class Legend[Grp, Lbl](inOrder: LegendColumns[Grp, Lbl],
     Vector(viewSort:_*).filterM[[x] =>> State[Map[Lbl, Int], x]]{case (lbl, _) =>
       val clbl = mapVLens[Lbl, Int](lbl).xmapB(identity)((_:Option[Int]) filter (0<))
       clbl flatMap (_ >| ((clbl %= (_ map (_-1))) >| true) | state(false))
-    } eval sortRules.mapValues(_.size)
+    } eval sortRules.mapValues(_.size).toMap
 
   /** Answer a default sort of all columns, left to right. */
   def leftToRightSort: IndexedSeq[(Lbl, SortOrder)] =
@@ -314,7 +314,7 @@ final case class LegendColumns[Grp, Lbl](
 
   /** `traverseLeaves` with the const applicative. */
   lazy val leavesInOrder: IndexedSeq[(Presentation, SortStrategy, Lbl)] =
-    traverseLeaves[λ[α => IndexedSeq[(Presentation, SortStrategy, Lbl)]],
+    traverseLeaves[[α] =>> IndexedSeq[(Presentation, SortStrategy, Lbl)],
                    Nothing](IndexedSeq(_))
 
   def oneDeep: LegendColumns[Grp, Lbl] =
@@ -348,7 +348,7 @@ final case class LegendColumns[Grp, Lbl](
   def applyColumnGroups(groups: Option[Seq[Grp]]) : LegendColumns[Grp, Lbl] =
     groups.fold(groupless[Grp])((sg: Seq[Grp]) => { 
       val mappified : Map[Grp, Seq[(Presentation, SortStrategy, Lbl)]] =
-        sg.zip(leavesInOrder).groupBy[Grp](_._1).mapValues(_.map (_._2))
+        sg.zip(leavesInOrder).groupBy[Grp](_._1).mapValues(_.map (_._2)).toMap
       val legendified : Seq[(LegendColumns[Grp, Lbl], Grp) \/ (Presentation, SortStrategy, Lbl)] = sg.distinct.map(g => {
         val ls: Seq[(Presentation, SortStrategy, Lbl)] = mappified(g)
         \/.left(((LegendColumns[Grp,Lbl](ls map (l => \/.right(l))), g)))

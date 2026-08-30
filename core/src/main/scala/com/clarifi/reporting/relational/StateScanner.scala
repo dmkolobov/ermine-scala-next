@@ -60,11 +60,11 @@ class StateScanner(sms: SM => BS[StateEntry]) extends Scanner[BS] {
     }
     case ExceptM(m, cs) => scanMemAux(m, smv, srv) map {
       case StateEntry(h, ts) =>
-      StateEntry(h -- cs, ts.map(_ filterKeys (x => !cs(x))))
+      StateEntry(h -- cs, ts.map(r => (r filterKeys (x => !cs(x))).toMap))
     }
     case ProjectM(m, cs) => scanMemAux(m, smv, srv) map {
       case StateEntry(h, ts) =>
-      StateEntry(h filterKeys (x => cs.keySet.map(_.name).contains(x)), ts.map(_ filterKeys cs.keySet.map(_.name)))
+      StateEntry((h filterKeys (x => cs.keySet.map(_.name).contains(x))).toMap, ts.map(r => (r filterKeys cs.keySet.map(_.name)).toMap))
     }
     case CombineM(m, c, op) => scanMemAux(m, smv, srv) map {
       case StateEntry(h, ts) =>
@@ -90,7 +90,7 @@ class StateScanner(sms: SM => BS[StateEntry]) extends Scanner[BS] {
       ssnd <- scanMemAux(snd, smv, srv)
       jk = sfst.header.keySet intersect ssnd.header.keySet
     } yield StateEntry(sfst.header ++ ssnd.header,
-              Tee.mergeOuterJoin[Record, Record, Record](_ filterKeys jk, _ filterKeys jk).
+              Tee.mergeOuterJoin[Record, Record, Record]((r: Record) => (r filterKeys jk).toMap, (r: Record) => (r filterKeys jk).toMap).
                 capL(source(sort(sfst.records, jk.toList.map(x => x -> Asc)))).
                 cap( source(sort(ssnd.records, jk.toList.map(x => x -> Asc)))).foldMap {
                   case This(a) => List(ssnd.header.map(p => p._1 -> NullExpr(p._2)) ++ a)

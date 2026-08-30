@@ -30,7 +30,7 @@ class PartitionedSet[A](private val posns: Map[A, Long],
   assert(tick <= maxTick)
 
   private lazy val byId: Map[Long, Set[A]] =
-    posns.toIterable groupBy (_._2) mapValues (_ map (_._1) toSet)
+    (posns.toIterable groupBy (_._2) mapValues (_ map (_._1) toSet)).toMap
 
   /** Answer my elements in no particular order. */
   def elements: Set[A] = posns.keySet
@@ -65,14 +65,14 @@ class PartitionedSet[A](private val posns: Map[A, Long],
 
   /** Filter my `A`s. */
   override def filterKeys(p: A => Boolean) =
-    PartitionedSet(posns filterKeys p, tick)
+    PartitionedSet((posns filterKeys p).toMap, tick)
 
   /** Regroup.
     *
     * @note `fa <|*|> fb` must form an injection. */
   def group[B, C](fb: A => B)(fc: A => C): Map[B, PartitionedSet[C]] =
     (posns groupBy (_._1 |> fb)
-     mapValues {ss => PartitionedSet(mapKeys(ss)(fc), tick)})
+     mapValues {ss => PartitionedSet(mapKeys(ss)(fc), tick)}).toMap
 
   /** Answer whether xs is a subclique. */
   def contains(xs: Iterable[A]): Boolean = {
@@ -135,7 +135,7 @@ class PartitionedSet[A](private val posns: Map[A, Long],
       val joiningIds = common map posns
       val joinedId = joiningIds.head
       PartitionedSet(posns.mapValues{case j if joiningIds(j) => joinedId
-                                     case nj => nj}
+                                     case nj => nj}.toMap
                      ++ c.value.toIterable.map(_ -> joinedId), tick)
     case _ => PartitionedSet(posns ++ c.value.toIterable.map(_ -> tick),
                             tick + 1)
@@ -205,7 +205,7 @@ object PartitionedSet {
       case _ => rec(rewrite, tick + 1, here + 1, there)
     }
     rec(Map.empty, 0, 0, nums.size - 1) fold {(renum, tick) =>
-      (posns mapValues (renum withDefault identity), tick)
+      ((posns mapValues (renum withDefault identity)).toMap, tick)
     }
   }
 
@@ -298,7 +298,7 @@ object Edge {
   /** Build a bidirectional graph from an edge set. */
   def undirectedGraph[A](eds: Traversable[Edge[A]]): Map[A, Set[A]] =
     (eds flatMap {case e@Product2(a, b) => Seq(e, (b -> a))}
-     groupBy (_._1) mapValues (_ map (_._2) toSet))
+     groupBy (_._1) mapValues (_ map (_._2) toSet)).toMap
 }
 
 object Graph {

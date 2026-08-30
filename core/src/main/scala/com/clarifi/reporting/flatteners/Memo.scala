@@ -214,8 +214,7 @@ class PathMemo[S, K](
     }
   }
   type T = (S, List[(Int, Int, K)], Int, Int) // S, Map from (parentId,k) -> childId, parentId, nodeId
-  type N[+X] = State[T, X]
-  implicit val NMonad: Monad[N] = StateT.stateMonad[T]
+  type N[X] = State[T, X]
   def freshen(k: K): State[T, Unit] = for {
     t <- init[T]
     (s, freshIds, _, parentId) = t

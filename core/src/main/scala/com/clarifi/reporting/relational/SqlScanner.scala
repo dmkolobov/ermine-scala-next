@@ -1020,7 +1020,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     }
 
     def literal(l: SmallLit)(implicit sup: Supply): DistinctiveQuery = {
-      DistinctiveQuery(l.header, _ => (true, LiteralSqlTable(l.tups.map(r => r.mapValues(x => SqlExpr.compileLiteral(x))))))
+      DistinctiveQuery(l.header, _ => (true, LiteralSqlTable(l.tups.map(r => r.mapValues(x => SqlExpr.compileLiteral(x)).toMap))))
     }
 
     def empty(h: Header)(implicit sup: Supply): DistinctiveQuery = {

@@ -308,7 +308,7 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
 
   /** Emit an empty relation */
   def emitEmpty(queryHeader: Header): RawSql =
-    SqlSelect(attrs = queryHeader.mapValues(_ => LitSqlExpr(SqlNull)), where = List(SqlTruth(false))).emitSql(this)
+    SqlSelect(attrs = queryHeader.mapValues(_ => LitSqlExpr(SqlNull)).toMap, where = List(SqlTruth(false))).emitSql(this)
 
   /**
    * Takes a list of SqlExprs and returns a SqlExpr representing that list
@@ -795,7 +795,7 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
 
   /** MySQL requires FROM with WHERE ;_; */
   override def emitEmpty(queryHeader: Header): RawSql =
-    SqlSelect(attrs = queryHeader.mapValues(_ => LitSqlExpr(SqlNull)),
+    SqlSelect(attrs = queryHeader.mapValues(_ => LitSqlExpr(SqlNull)).toMap,
               sources = SourceList(
                 SqlSubquery(cols = List("qq"),
                             alias = TableName("qq"),

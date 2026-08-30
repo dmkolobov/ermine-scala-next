@@ -36,8 +36,7 @@ object Flatteners {
   /** Create a Flatten accepting records matching a Header to be put in a named table. */
   // Combinators
   def raw[S](h: Header, th : TableHints = TableHints.empty): RowFlattener[S, Record] = {
-    type M[+X] = State[S,X]
-    implicit val MMonad: Monad[M] = StateT.stateMonad[S]
+    type M[X] = State[S,X]
     RowFlattener(
       a => State[S, (Record, DataSetS[S])](
         s => (s, (a, StreamT.empty[M,(TableName,Record)]))

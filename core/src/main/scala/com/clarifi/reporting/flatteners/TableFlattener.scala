@@ -20,10 +20,8 @@ import com.clarifi.reporting._
  * defined.
  */
 abstract class TableFlattener[S,-A] extends Flattener[TableFlattener,S,A] {
-  type M[+X] = State[S,X]
-  // Scala 3 will not unify scalaz's IndexedStateT instances through this
-  // alias on its own, so name the monad explicitly.
-  implicit val MMonad: Monad[M] = StateT.stateMonad[S]
+  // NB: no variance annotation - see RowFlattener
+  type M[X] = State[S,X]
   def apply(a: A): DataSetS[S]
   def schema: Map[TableName, Header]
   def roots: Set[TableName]
@@ -53,7 +51,7 @@ abstract class TableFlattener[S,-A] extends Flattener[TableFlattener,S,A] {
   )
 
   def lens[T](l: Lens[T,S]): TableFlattener[T,A] = {
-    type N[+X] = State[T, X]
+    type N[X] = State[T, X]
     TableFlattener[T,A](
       (a: A) => this(a).trans[N](l.liftsNT),
       schema,
@@ -80,7 +78,7 @@ abstract class TableFlattener[S,-A] extends Flattener[TableFlattener,S,A] {
   }
 
   def localState(s0: S) : TableFlattener[Unit, A] = {
-    type N[+X] = State[Unit, X]
+    type N[X] = State[Unit, X]
     val tau = new (Id ~> N) {
       def apply[C](c: C) = State((u:Unit) => (u,c))
     }
