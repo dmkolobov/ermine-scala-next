@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 2.1 done (surface AST); next item 2.2 (tokenizer parity) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 2.2 done (op lexer parity); next item 2.3a (parser: header+statements+layout) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -228,7 +228,7 @@ machinery is deleted post-G1, never before.
   occurrences carry surface spelling incl. alias affix and
   paren-operator form; foreign sub-forms carry the class-name STRING +
   span only (Class.forName leaves parsing — resolution moves to 3.2b).
-- [ ] **2.2 Tokenizer parity**: port the op lexer byte-for-byte (3 guards,
+- [x] **2.2 Tokenizer parity**: port the op lexer byte-for-byte (3 guards,
   maximal munch, `_Module` affix as one token, backtick/apostrophe ops vs
   double-backtick literal idents; keep DataConParsers' ':'-lexeme split —
   lexical, safe); property-test against the old `op` parser over all
@@ -566,3 +566,19 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   verbatim. TestSurface (3 structural props) locks Span arithmetic and
   composability; field adjustments as 2.3's parser meets reality are
   expected. Baselines: core/test 799 (798+known), repl 3/3, lsp 27/27.
+- 2026-08-30 2.2 done: surface/Lexer.scala — the op lexer as a pure
+  function, character classes verbatim (opChars/nonopChars/unicode punct
+  classes), affix-in-lexeme, three guards, the three op-start flavors
+  (term/datacon-':'-only/patvar-non-':'), and one deliberate quirk kept:
+  '_' after op chars with no tail char fails the WHOLE op (the fused
+  parser commits into the affix group; skipOptional cannot rewind).
+  TestSurfaceLexer: stdlib sweep (every op-char offset of all 161
+  sources x 3 flavors, old-success => same-new-lexeme, >10k comparisons)
+  + crafted corners both directions (affixes, dead underscore, |], key
+  ops, dash-comment threshold, unicode MATH_SYMBOL, backtick/apostrophe
+  ops). All green first run. Bonus find while reading NameParsers: the
+  "forward reference to an operator with unknown precedence" message
+  DOES exist (opName) but is raised via backtrackable fail(), so
+  alternatives always swallow it — that is why 1.3b could not reproduce
+  it and why users see layout errors instead. Baselines: core/test 801
+  (800+known), repl 3/3, lsp 27/27.
