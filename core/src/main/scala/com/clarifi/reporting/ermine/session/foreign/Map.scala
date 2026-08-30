@@ -13,7 +13,7 @@ object SortedMap {
   type FD[K, +V] = SM[K, V]
 
   def map[K, A, B](fa: FD[K, A])(f: A => B): FD[K, B] = {
-    import fa.ordering
+    implicit val ord: SOrder[K] = fa.ordering
     // XXX can we walk the FD to avoid ordering?
     fa map {case (k, v) => (k, f(v))}
   }
@@ -30,6 +30,7 @@ object SortedMap {
 
   def unionWith[K, A](l: FD[K, A], r: FD[K, A])(b: (A, A) => A): FD[K, A] = {
     // Try to do fewer comparisons, while preserving call order of `b`.
+    implicit val ord: SOrder[K] = l.ordering
     val (sm, big, f) = if (l.size < r.size) (l, r, b) else (r, l, b.flip)
     big ++ sm.map {case (smk, smv) =>
         (smk, if (big isDefinedAt smk) f(smv, big(smk))

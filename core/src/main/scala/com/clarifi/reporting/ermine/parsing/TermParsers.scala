@@ -15,7 +15,7 @@ import com.clarifi.reporting.ermine.parsing.StatementParsers.{ bindingStatement 
 import com.clarifi.reporting.ermine.parsing.TypeParsers._
 import com.clarifi.reporting.ermine.parsing.ErParseState.Lenses._
 import scala.collection.immutable.List
-import scalaz.Scalaz.{gets => _, _}
+import scalaz.Scalaz.{gets => _, modify => _, _}
 
 
 object TermParsers {
@@ -121,7 +121,7 @@ object TermParsers {
       }
 
   private def bindBinOps(ts: List[V[Type]]): Parser[Parser[Unit]] =
-    (ts traverseU (v => (bindFixity(v.name.get.local, false)
+    (ts.traverse[Parser, Parser[Unit]](v => (bindFixity(v.name.get.local, false)
                         ++ bindName(v.name.get.local, v, termNames))
                        map {case (unfix, unmap) => unmap >> unfix})
         map (_.reverse.traverse_[Parser](identity)))

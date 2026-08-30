@@ -514,7 +514,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
             }.foldLeft(Mem.zeroProcedure[Record])((p1,p2) => Mem.append(p1,p2)).
               andThen(sorting(List(), ord) andThen uniq(ord.map(_._1).toSet))
         }
-        implicit def err(s: String, msgs: String*): Option[Nothing] = None
+        implicit val err: Typer.Errs[Option] = new Typer.Errs[Option] {
+          def apply(s: String, msgs: String*): Option[Nothing] = None
+        }
         val hdr = Typer.accumulateType[Option](
           parentIdCol.toHeader, nodeIdCol.toHeader,
           v => Typer.memTyper(Mem.instantiate(EmptyRel(v), expr).substPrg(srv andThen (_.q.h), smv andThen (_.h))).toOption,
@@ -546,7 +548,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
              }
              rows andThen sorting(kord ++ v2ord, ord) andThen uniq(ord.map(_._1).toSet)
         }
-        implicit def err(s: String, msgs: String*): Option[Nothing] = None
+        implicit val err: Typer.Errs[Option] = new Typer.Errs[Option] {
+          def apply(s: String, msgs: String*): Option[Nothing] = None
+        }
         val hdr = Typer.groupByType[Option](
           h, k.map(_.tuple).toMap,
           v => Typer.memTyper(Mem.instantiate(EmptyRel(v), expr).substPrg(srv andThen (_.q.h), smv andThen (_.h))).toOption).get
@@ -591,7 +595,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         MemPrg(cs.map(_._1.tuple), p, nq, combineAll(rx, cs))
       case Pivot(under, pKey, pVals, outer, colMap) =>
         val MemPrg(h, p, q, rx) = compileMem(under, smv, srv)
-        implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
+        implicit val iderr: Typer.Errs[Id] = new Typer.Errs[Id] {
+          def apply(x: String, xs: String*): Nothing = sys.error((x::xs.toList).mkString("\n"))
+        }
         val nh = Typer.pivotType[Id](h, pKey, pVals, outer, colMap)
         val nq: OrderedProcedure[DB, Record] = (ord:List[(ColumnName,SortOrder)]) => {
           val idCols = h.keySet -- pKey -- pVals
@@ -1217,7 +1223,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     }
 
     def pivot(key: Set[ColumnName], vals: Set[ColumnName], outer: Boolean, colMap: Map[ColumnName, (Record, Op, PrimExpr)])(implicit sup: Supply): DistinctiveQuery = {
-      implicit def iderr(x: String, xs: String*) = sys.error((x::xs.toList).mkString("\n"))
+      implicit val iderr: Typer.Errs[Id] = new Typer.Errs[Id] {
+          def apply(x: String, xs: String*): Nothing = sys.error((x::xs.toList).mkString("\n"))
+        }
       val nh = Typer.pivotType[Id](h, key, vals, outer, colMap)
       val sel = asSelect(h, q(false)._2, v => !v.isAggregated && !v.isWindowed)
       val extra = h -- key -- vals

@@ -921,10 +921,10 @@ object Lib {
     }), FAR(v => FAR(v2 => FAR(kv => FAR(kv2 =>
             listH(pairH(string, primt)) ->: (mem(v) ->: mem(v2)) ->: mem(kv) ->: mem(kv2))))))
 
-    val scanner = mkCon[Scanner[Any]](Global("Scanners","Scanner"), (star ->: star) ->: star)
+    val scanner = mkCon[Scanner[[a] =>> Any]](Global("Scanners","Scanner"), (star ->: star) ->: star)
     primOp(Global("Native.Relation", "runRelation"), fun2((scanner,rel) => {
       scanner.whnfMatch("Native.Relation.runRelation") {
-        case Prim(s) if s.isInstanceOf[Scanner[Any]] =>
+        case Prim(s) if s.isInstanceOf[Scanner[[a] =>> Any]] =>
           type f[x] = Int => x
           val S = s.asInstanceOf[Scanner[f]] // `f` is an arbitrary concrete type ctor
                                              // we are really polymorphic in this ctor,

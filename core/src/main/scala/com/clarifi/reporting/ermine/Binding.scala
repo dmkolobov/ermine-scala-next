@@ -65,7 +65,7 @@ case class ExplicitBinding(loc: Loc, v: TermVar, ty: Annot, alts: List[Alt], rem
   def vars = Vars(v) ++ termVars(alts)
   def typeVars = /*Type.typeVars(v) ++ */ Type.typeVars(ty) ++ Type.typeVars(alts)
   def allTypeVars = Type.allTypeVars(ty) ++ Type.allTypeVars(alts)
-  def close(implicit supply: Supply) = ExplicitBinding(loc, v, ty.close(supply), alts.map(_.close(supply)))
+  def close(implicit supply: Supply): ExplicitBinding = ExplicitBinding(loc, v, ty.close(supply), alts.map(_.close(supply)))
   def forgetSignature: ImplicitBinding = ImplicitBinding(loc, v, alts, remember)
 }
 
@@ -87,7 +87,7 @@ case class ImplicitBinding(loc: Loc, v: TermVar, alts: List[Alt], remember: Opti
   def vars = Vars(v) ++ termVars(alts)
   def typeVars = /* Type.typeVars(v) ++ */ Type.typeVars(alts)
   def allTypeVars = Type.allTypeVars(alts)
-  def close(implicit supply: Supply) = ImplicitBinding(loc, v, alts.map(_.close(supply)))
+  def close(implicit supply: Supply): ImplicitBinding = ImplicitBinding(loc, v, alts.map(_.close(supply)))
 }
 
 object ImplicitBinding {

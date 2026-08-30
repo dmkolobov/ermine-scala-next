@@ -14,8 +14,8 @@ object Printer {
     def apply(s: String) = f(s)
   }
   def say(msg: String)(implicit con: Printer): Unit = { con(msg) }
-  def warn(msg: Document)(implicit con: Printer): Unit = { con(msg + "\n") }
-  def info(msg: Document)(implicit con: Printer): Unit = { con(msg + "\n") }
+  def warn(msg: Document)(implicit con: Printer): Unit = { con(msg.toString + "\n") }
+  def info(msg: Document)(implicit con: Printer): Unit = { con(msg.toString + "\n") }
   def sayLn(msg: String)(implicit con: Printer): Unit = { con(msg + "\n") }
   def sayLn(msg: Document)(implicit con: Printer): Unit = { con(msg.toString + "\n") }
 

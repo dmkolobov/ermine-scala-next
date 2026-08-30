@@ -81,7 +81,7 @@ case class CLam[+A](loc: Loc, pat: Pattern, body: Core[A]) extends Core[A] with 
 
 case class CAlt[+A](loc: Loc, patterns: List[Pattern], body: Core[A]) extends Located with Traversable[A] {
   def flatMap[B](f: A => Core[B]) = CAlt(loc, patterns, body.flatMap(f))
-  def map[B](f: A => B) = CAlt(loc, patterns, body.map[B](f))
+  def map[B](f: A => B): CAlt[B] = CAlt(loc, patterns, body.map[B](f))
   def foreach[U](f: A => U): Unit = { body.foreach(f) }
 }
 

@@ -16,7 +16,7 @@ import com.clarifi.reporting.ermine.{freshId => _, _}
 import scalaparsers.Diagnostic._
 import com.clarifi.reporting.ermine.Type.typeVars
 import com.clarifi.reporting.ermine.Term.termVars
-import scalaz.Scalaz.{gets => _, _}
+import scalaz.Scalaz.{gets => _, modify => _, _}
 import scala.collection.immutable.List
 import scala.jdk.CollectionConverters._
 

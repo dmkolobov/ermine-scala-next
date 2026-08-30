@@ -213,12 +213,12 @@ object Runtime {
 
   @annotation.tailrec
   def swhnf(r: Runtime, chain: List[Thunk] = Nil): Runtime = {
-    import collection.JavaConversions._
+    import scala.jdk.CollectionConverters._
     r match {
       case t : Thunk => t.state match {
         case Evaluated(e) => writeback(e, chain)
         case Whitehole => {
-          if (t.pending.isEmpty || !t.pending.exists(_.getId == Thread.currentThread.getId)) {
+          if (t.pending.isEmpty || !t.pending.asScala.exists(_.getId == Thread.currentThread.getId)) {
             t.latch.await
             swhnf(t, chain)
           } else writeback(Whitehole.result, t :: chain)
