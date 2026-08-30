@@ -87,7 +87,7 @@ firstEntry m = case firstKey m of
   _ -> Nothing
 
 insert : k -> v -> Map k v -> Map k v
-insert k v m = insert# m k v
+insert k v m = MapIsObject (insert# m k v)
 
 -- | Remove by key, if present.
 delete : k -> Map k v -> Map k v
@@ -99,7 +99,7 @@ mapKeys : Ord k2 -> (k -> k2) -> Map k v -> Map k2 v
 mapKeys o f m = fromAssocList o . map (mapFst f) . toAssocList $ m
 
 empty : Ord k -> Map k v
-empty = empty# sortedMapModule . toOrdering#
+empty = MapIsObject . empty# sortedMapModule . toOrdering#
 
 groupBy : Ord k -> (a -> k) -> Vector_V a -> Map k (Vector_V a)
 groupBy o kf xs = groupBy# xs (function1 kf) (toOrdering# o)
@@ -129,8 +129,10 @@ private foreign
   data "scala.collection.immutable.SortedMap$" SortedMapModule
   value "scala.collection.immutable.SortedMap$" "MODULE$"
       sortedMapModule : SortedMapModule
-  method "empty" empty# : SortedMapModule -> OrdScala# k -> Map k v
-  method "updated" insert# : Map k v -> k -> v -> Map k v
+  -- 2.13 erases SortedMap.empty's return type to Object, as it already did
+  -- for `-`, so both come back through MapIsObject.
+  method "empty" empty# : SortedMapModule -> OrdScala# k -> Object
+  method "updated" insert# : Map k v -> k -> v -> Object
   method "$minus" delete# : Map k v -> k -> Object -- scala.collection is weird
   method "firstKey" firstKey# : Map k v -> IO k
   method "get" lookup# : Map k v -> k -> Maybe# v

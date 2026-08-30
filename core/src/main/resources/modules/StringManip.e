@@ -13,7 +13,7 @@ import Native.Pair
 
 private foreign
   data "java.lang.CharSequence" CharSequence#
-  data "scala.collection.immutable.StringOps" ScalaStringOps#
+  data "scala.collection.StringOps" ScalaStringOps#
   data "scala.util.matching.Regex" Regex#
   data "scala.util.matching.Regex$MatchIterator" MatchIterator#
   subtype StringIsCS : String -> CharSequence#
