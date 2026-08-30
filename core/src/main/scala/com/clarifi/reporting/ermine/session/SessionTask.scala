@@ -1,31 +1,44 @@
 package com.clarifi.reporting
 package ermine.session
 
-import scalaparsers.{Success, Failure, Document, Death, Supply}
+import scalaparsers.{Document, Death, Supply}
 import scalaparsers.Document.{ text, vsep }
-import scalaz.concurrent.{ Promise, Strategy }
-import scalaz.concurrent.Strategy._
+import java.util.concurrent.{ Callable, ExecutorService, Executors, Future }
 import java.util.Date
 import scalaz.Scalaz._
 
-case class SessionTask[A](env: SessionEnv, promise: Promise[Either[Death,A]])
+/** A forked session evaluation.
+  *
+  * This used to sit on `scalaz.concurrent.Promise`, which scalaz dropped after
+  * 7.0 and which has no Scala 3 build; the pool below reproduces the same
+  * semantics (evaluate on another thread, block on `get`).
+  */
+case class SessionTask[A](env: SessionEnv, future: Future[Either[Death,A]])
 
 object SessionTask {
+  private val pool: ExecutorService =
+    Executors.newCachedThreadPool { (r: Runnable) =>
+      val t = new Thread(r, "ermine-session-task")
+      t.setDaemon(true)
+      t
+    }
+
   def fork[A](p: (SessionEnv, Supply) => A)(implicit s: SessionEnv, vs: Supply): SessionTask[A] = {
     val sp = s.copy
     val vsp = vs.split
     SessionTask(
       sp,
-      Promise(
-        try { Right(p(sp,vsp)) }
-        catch { case r : Death => Left(r) }
-      )
+      pool.submit(new Callable[Either[Death,A]] {
+        def call: Either[Death,A] =
+          try { Right(p(sp,vsp)) }
+          catch { case r : Death => Left(r) }
+      })
     )
   }
 
   // @throws Death
   def join[A](task: SessionTask[A])(implicit s: SessionEnv): A =
-    task.promise.get match {
+    task.future.get match {
       case Left(e)  => throw Death(e.error, e)
       case Right(a) =>
         s += task.env
@@ -33,7 +46,7 @@ object SessionTask {
     }
 
   def joins[A](tasks: List[SessionTask[A]])(implicit s: SessionEnv): List[A] = {
-    val (failures, successes) = tasks.map(t => (t.promise.get, t.env)).partition { _._1.isLeft }
+    val (failures, successes) = tasks.map(t => (t.future.get, t.env)).partition { _._1.isLeft }
     if (failures.isEmpty)
       successes.foldRight(List[A]()) {
         case ((Right(x), sp), xs) =>
@@ -49,4 +62,3 @@ object SessionTask {
     }
   }
 }
-

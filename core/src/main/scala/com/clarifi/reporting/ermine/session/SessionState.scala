@@ -99,7 +99,7 @@ class SessionEnv(
   val useInterface : Boolean =
     _useInterface.getOrElse(java.lang.Boolean.parseBoolean(System.getProperty("ermine.useInterface","true")))
 
-  def +=(sp: SessionEnv) {
+  def +=(sp: SessionEnv): Unit = {
     env             = env ++ sp.env
     termNames       = termNames ++ sp.termNames
     termNameOrigins = termNameOrigins ++ sp.termNameOrigins
@@ -115,7 +115,7 @@ class SessionEnv(
       })
     classOrigins    = classOrigins ++ sp.classOrigins // is this enough, or do we need the keySet.intersect?
   }
-  def :=(s: SessionEnv) {
+  def :=(s: SessionEnv): Unit = {
     env = s.env
     termNames = s.termNames
     termNameOrigins = termNameOrigins ++ s.termNameOrigins

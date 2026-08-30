@@ -391,7 +391,7 @@ object Subst {
     (ds, (rs.toSet -- ambs.flatMap(_.preds)).toList)
   }
 
-  def entail(p: Type, q: Type)(implicit hm: SubstEnv, su: Supply) {
+  def entail(p: Type, q: Type)(implicit hm: SubstEnv, su: Supply): Unit = {
     val (vs, ps) = unbindExists(Free,p)
     val (us, qs) = unbindExists(Free,q)
     for (q <- qs)
@@ -402,7 +402,7 @@ object Subst {
         )
   }
 
-  def bientail(p: Type, q: Type)(implicit hm: SubstEnv, su: Supply) {
+  def bientail(p: Type, q: Type)(implicit hm: SubstEnv, su: Supply): Unit = {
     entail(p,q)
     entail(q,p)
   }
@@ -630,7 +630,7 @@ object Subst {
    * Ensures that a term e has a type compatible with t, in context g.
    * Specifically, t must be subsumed by the inferred type of e.
    */
-  def typeCheck(g: Gamma, e: Term, tz: Type)(implicit hm: SubstEnv, su: Supply) {
+  def typeCheck(g: Gamma, e: Term, tz: Type)(implicit hm: SubstEnv, su: Supply): Unit = {
     val et = inferType(g, e)
     val t = substType(tz)
     implicit val tml: Located = e
@@ -644,7 +644,7 @@ object Subst {
    * Checks that the given type for an explicit bindings is subsumed by the
    * inferred type, analogously to typeCheck.
    */
-  def typeCheckExplicitBinding(g: Gamma, binding: ExplicitBinding)(implicit hm: SubstEnv, su: Supply) {
+  def typeCheckExplicitBinding(g: Gamma, binding: ExplicitBinding)(implicit hm: SubstEnv, su: Supply): Unit = {
     val li = binding.loc.inferred
     implicit val tml: Located = binding
     val (kvs, tvs, ty) = unbindAnnot(g, binding.ty)
@@ -1234,19 +1234,19 @@ object Subst {
   }
 
   // @throws Death
-  def assertTermClosed[A:HasTermVars](t: A, ex: Set[TermVar] = Set()) {
+  def assertTermClosed[A:HasTermVars](t: A, ex: Set[TermVar] = Set()): Unit = {
     val ftmvs = termVars(t) -- ex
     if (ftmvs nonEmpty) die(vsep(ftmvs.map(v => v.report("error: undefined term")).toList))
   }
 
   // @throws Death
-  def assertTypeClosed[A:HasTypeVars](t: A, ex: Set[TypeVar] = Set()) {
+  def assertTypeClosed[A:HasTypeVars](t: A, ex: Set[TypeVar] = Set()): Unit = {
     val ftvs = typeVars(t) -- ex
     if (ftvs nonEmpty) die(vsep(ftvs.map(v => v.report("error: undefined type")).toList))
   }
 
   // @throws Death
-  def assertKindClosed[A:HasKindVars](t: A, ex: Set[KindVar] = Set()) {
+  def assertKindClosed[A:HasKindVars](t: A, ex: Set[KindVar] = Set()): Unit = {
     val fkvs = implicitly[HasKindVars[A]].vars(t) -- ex
     if (fkvs nonEmpty) die(vsep(fkvs.map(v => v.report("error: undefined kind")).toList))
   }

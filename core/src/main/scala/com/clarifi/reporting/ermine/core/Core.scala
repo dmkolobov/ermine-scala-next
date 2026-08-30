@@ -64,56 +64,56 @@ object Core {
 case class CGoal[+A](a: A) extends Core[A] {
   def flatMap[B](f: A => Core[B]) = f(a)
   def map[B](f: A => B): Core[B] = CGoal(f(a))
-  def foreach[U](f: A => U) { f(a) }
+  def foreach[U](f: A => U): Unit = { f(a) }
 }
 
 case class CApp[+A](e1: Core[A], e2: Core[A]) extends Core[A] {
   def flatMap[B](f: A => Core[B]) = CApp(e1.flatMap(f),e2.flatMap(f))
   def map[B](f: A => B): Core[B] = CApp(e1.map(f),e2.map(f))
-  def foreach[U](f: A => U) { e1.foreach(f); e2.foreach(f) }
+  def foreach[U](f: A => U): Unit = { e1.foreach(f); e2.foreach(f) }
 }
 
 case class CLam[+A](loc: Loc, pat: Pattern, body: Core[A]) extends Core[A] with Located {
   def flatMap[B](f: A => Core[B]) = CLam(loc, pat, body.flatMap(f))
   def map[B](f: A => B): Core[B] = CLam(loc, pat, body.map(f))
-  def foreach[U](f: A => U) { body.foreach(f) }
+  def foreach[U](f: A => U): Unit = { body.foreach(f) }
 }
 
 case class CAlt[+A](loc: Loc, patterns: List[Pattern], body: Core[A]) extends Located with Traversable[A] {
   def flatMap[B](f: A => Core[B]) = CAlt(loc, patterns, body.flatMap(f))
   def map[B](f: A => B) = CAlt(loc, patterns, body.map[B](f))
-  def foreach[U](f: A => U) { body.foreach(f) }
+  def foreach[U](f: A => U): Unit = { body.foreach(f) }
 }
 
 case class CCase[+A](loc: Loc, expr: Core[A], alts: List[CAlt[A]]) extends Core[A] with Located {
   def flatMap[B](f: A => Core[B]) = CCase(loc, expr.flatMap(f), alts.map(_.flatMap(f)))
   def map[B](f: A => B) = CCase(loc, expr.map(f), alts.map(_.map(f)))
-  def foreach[U](f: A => U) { expr.foreach(f); for (a <- alts) a.foreach(f) }
+  def foreach[U](f: A => U): Unit = { expr.foreach(f); for (a <- alts) a.foreach(f) }
 }
 
 case class CLet[+A](bindings: Map[TermVar,Core[A]], body: Core[A]) extends Core[A] {
   def flatMap[B](f: A => Core[B]) = CLet(bindings.mapValues(_.flatMap(f)), body.flatMap(f))
   def map[B](f: A => B) = CLet(bindings.mapValues(_.map(f)), body.map(f))
-  def foreach[U](f: A => U) { for (p <- bindings) p._2.foreach(f); body.foreach(f) }
+  def foreach[U](f: A => U): Unit = { for (p <- bindings) p._2.foreach(f); body.foreach(f) }
 }
 
 case class CVar(v: TermVar) extends Core[Nothing] with Located {
   def loc = v.loc
   def flatMap[B](f: Nothing => Core[B]) = this
   def map[B](f: Nothing => B) = this
-  def foreach[U](f: Nothing => U) {}
+  def foreach[U](f: Nothing => U): Unit = {}
 }
 
 case object CEval extends Core[Nothing] {
   def flatMap[B](f: Nothing => Core[B]) = this
   def map[B](f: Nothing => B) = this
-  def foreach[U](f: Nothing => U) {}
+  def foreach[U](f: Nothing => U): Unit = {}
 }
 
 sealed class Hardcore(val eval: Runtime) extends Core[Nothing] {
   def flatMap[B](f: Nothing => Core[B]) = this
   def map[B](f: Nothing => B) = this
-  def foreach[U](f: Nothing => U) {}
+  def foreach[U](f: Nothing => U): Unit = {}
 }
 
 case class CInt(value: Int) extends Hardcore(Prim(value))

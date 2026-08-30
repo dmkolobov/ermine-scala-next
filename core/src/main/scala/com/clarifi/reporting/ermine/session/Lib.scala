@@ -50,7 +50,7 @@ object Lib {
   def addInstance(
     tyCon: Con,
     inst: Instance
-  )(implicit s: SessionEnv) {
+  )(implicit s: SessionEnv): Unit = {
     val n = tyCon.name
     s.classes.get(n) match {
       case None    => tyCon.die("adding instance to a non-existant class")
@@ -210,7 +210,7 @@ object Lib {
       Type.ffi, Type.recordT, Type.relationT
     )) addCon(c)
 
-  def simple(implicit s: SessionEnv, su: Supply) {
+  def simple(implicit s: SessionEnv, su: Supply): Unit = {
     freshType(star) match { case a =>
       addCon(eqCon)
       addClass(Loc.builtin, eqCon, List(a), List(), _ => List())
@@ -446,7 +446,7 @@ object Lib {
       FA(d => FA(e => FA(f => FA(a => FA(b => FA(c =>
         List(d -> List(a,b), e -> List(b,c), f -> List(a,b,c)) =>: predicate(d) ->: predicate(e) ->: predicate(f))))))))
 
-  def relations(implicit s: SessionEnv, su: Supply) {
+  def relations(implicit s: SessionEnv, su: Supply): Unit = {
     primOp(Global("Field","cons"), fieldFun(s => Fun(v => Fun("Field.cons", { case Rec(m) => Rec(m + (s -> v))}))),
       FAR(r => FA(a => FAR(s => FAR(t => (t -> List(r,s)) =>: field(r, a) ->: a ->: recordT(s) ->: recordT(t))))))
     primOp(Global("Field","!", InfixR(5)), Fun(e => fieldFun(s => e.whnfMatch("!") { case Rec(m) => m(s) })),
@@ -1016,7 +1016,7 @@ object Lib {
     val dbCon = addCon(mkCon[DB[Any]](Global("DB", "DB"), star ->: star))
   }
 
-  def securitymaster(implicit s: SessionEnv, su: Supply) {
+  def securitymaster(implicit s: SessionEnv, su: Supply): Unit = {
     val issueId = Global("SM", "issueId")
     val date = Global("SM", "date")
     primOp(Global("SM", "current#"), Fun(attr => fieldFun(f => Rel(ExtSM(LookupSM(f, attr.extract))))),
@@ -1027,7 +1027,7 @@ object Lib {
         (r -> List(f, ConcreteRho(Loc.builtin, Set(issueId, date))) =>: string ->: field(f, string) ->: smaster(r)))))
   }
 
-  private def asOp(implicit s: SessionEnv, su: Supply) {
+  private def asOp(implicit s: SessionEnv, su: Supply): Unit = {
     val opMod = "Relation.Op"
     val opKind = rho ->: star ->: star
     // class AsOp (a: ρ -> * -> *)
@@ -1064,7 +1064,7 @@ object Lib {
 
   /** Typeclasses for Layout.* packages, and anything they need
     * bootstrapping first. */
-  def reports(implicit s: SessionEnv, su: Supply) {
+  def reports(implicit s: SessionEnv, su: Supply): Unit = {
     import com.clarifi.reporting.writers.Presentation
     val presentationMod = "Layout.Presentation"
     val presentationKind = rho ->: star ->: star
@@ -1128,7 +1128,7 @@ object Lib {
            (Global("Prim","Timestamp"), PrimT.TimestampT(true), prim(timestamp), Scaled))
   }
 
-  def prims(implicit s: SessionEnv, su: Supply) {
+  def prims(implicit s: SessionEnv, su: Supply): Unit = {
     addCon(prim)
     for (b <- primBindings; (name, primt, typ, _) = b)
       primOp(name, Prim(primt), typ)
@@ -1283,7 +1283,7 @@ object Lib {
   }
 
   // primitive IO support
-  def interop(implicit s: SessionEnv, su: Supply) {
+  def interop(implicit s: SessionEnv, su: Supply): Unit = {
     addCon(io)
     val throwable = addCon(mkCon[Throwable](Global("Native.Throwable","Throwable")))
     primOp(Global("IO.Unsafe","eval"), fun3((t,c,e) => try {
@@ -1363,7 +1363,7 @@ object Lib {
             )
   }
 
-  def refl(implicit s: SessionEnv, su: Supply) {
+  def refl(implicit s: SessionEnv, su: Supply): Unit = {
     val eq = freshKind match { case a =>
       addCon(mkConEx[AnyRef](Global("Type.Eq","==",InfixN(4)),KindSchema(builtin, List(a), VarK(a) ->: VarK(a) ->: star)))
     }
@@ -1383,7 +1383,7 @@ object Lib {
     })
   }
 
-  def preamble(implicit s: SessionEnv, su: Supply) {
+  def preamble(implicit s: SessionEnv, su: Supply): Unit = {
     cons; simple; relations; securitymaster; reports; prims; interop; refl
   }
 }

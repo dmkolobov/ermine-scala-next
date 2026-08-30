@@ -22,7 +22,7 @@ object SCC {
     var output : List[Set[Int]] = List()
     var stack: List[Component] = List()
     var ix:    Int = 0
-    def connect(v: Component) {
+    def connect(v: Component): Unit = {
       v.index = Some(ix)
       v.lowlink = ix
       ix = ix + 1

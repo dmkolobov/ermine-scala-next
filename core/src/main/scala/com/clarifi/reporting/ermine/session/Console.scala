@@ -66,7 +66,7 @@ class ConsoleEnv(
 ) {
   implicit val supply: Supply = Supply.create
   implicit val con = new Printer {
-    def apply(s: String) {
+    def apply(s: String): Unit = {
       reader.printString(s)
       out.flush
     }
@@ -78,7 +78,7 @@ class ConsoleEnv(
 
   var quit: Boolean = false
   var helpHinted: Boolean = false
-  def helpHint {
+  def helpHint: Unit = {
     if (!helpHinted) {
       sayLn("Use \":help\" to see a list of commands")
       helpHinted = true
@@ -87,7 +87,7 @@ class ConsoleEnv(
 
   // mark/release
   var marks: List[Mark] = List()
-  def sayLnMarks {
+  def sayLnMarks: Unit = {
     val n = marks.length
     sayLn(Ordinal(n, "entry", "entries") :+: text("in the mark stack."))
   }
@@ -147,13 +147,13 @@ class ConsoleEnv(
     case _ => g
   }
 
-  def updateCompletor {
+  def updateCompletor: Unit = {
     val ps = parseState("")
     val names = otherKeywords ++ (ps.s.termNames.keySet ++ ps.s.typeNames.keySet ++ ps.s.kindNames.keySet).map(_.string)
     completor.setCandidateStrings(names.toArray)
   }
 
-  def assumeClosed(t: Term)(doIt: => Unit) {
+  def assumeClosed(t: Term)(doIt: => Unit): Unit = {
     val env = sessionEnv.env
     val undefinedTerms = (termVars(t) -- env.keySet).toList
     val undefinedTypes = typeVars(t).toList
@@ -165,7 +165,7 @@ class ConsoleEnv(
 
   }
 
-  def eval(t: Term)(k: Runtime => Unit) {
+  def eval(t: Term)(k: Runtime => Unit): Unit = {
     assumeClosed(t) {
       Term.eval(t, sessionEnv.env) match {
         case b : Bottom => b.inspect
@@ -174,7 +174,7 @@ class ConsoleEnv(
     }
   }
 
-  def importing(m: String, affix: Option[String], exp: List[Explicit[Global]], using: Boolean) { imports = imports + (m -> (affix, exp, using)) }
+  def importing(m: String, affix: Option[String], exp: List[Explicit[Global]], using: Boolean): Unit = { imports = imports + (m -> (affix, exp, using)) }
 
   updateCompletor
 
@@ -204,7 +204,7 @@ class ConsoleEnv(
   def subst[A](s: SubstEnv => A): Option[A] = session(implicit hm => Session.subst(s))
 
   var stackHinted: Boolean = false
-  def stackHint {
+  def stackHint: Unit = {
     if (!stackHinted) {
       sayLn("Use \":stack\" to see a stack trace")
       stackHinted = true
@@ -263,12 +263,12 @@ object Console {
     <statement>               evaluate <statement>"""
 
   val help = new Action(":help", List("help",":?"), None, "print this message") {
-    def apply(s: String)(implicit e: ConsoleEnv) {
+    def apply(s: String)(implicit e: ConsoleEnv): Unit = {
       writeLn(text(header) above vsep(actions.map(_.doc)))
     }
   }
 
-  def loadProject(s: String)(implicit e: ConsoleEnv) {
+  def loadProject(s: String)(implicit e: ConsoleEnv): Unit = {
     import e.{con,supply}
     benchmark(session(implicit se => load(Filesystem(s, exotic=true)))) {
       case Some(n) =>
@@ -280,10 +280,10 @@ object Console {
 
   val actions: List[Action] = List(
     new Action(":help", List("help",":?"), None, "print this message") {
-      def apply(s: String)(implicit e: ConsoleEnv) { writeLn(text(header) above vsep(actions.map(_.doc))) }
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = { writeLn(text(header) above vsep(actions.map(_.doc))) }
     },
     new Action(":paste", List(), None, "Parse Ermine statements or expressions from the clipboard") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         val clipboard = Toolkit.getDefaultToolkit.getSystemClipboard
         val content = clipboard.getData(DataFlavor.stringFlavor)
         val str = content.toString
@@ -292,16 +292,16 @@ object Console {
       }
     },
     new Action(":quit", List("quit",":exit","exit"), None, "end this session") {
-      def apply(s: String)(implicit e: ConsoleEnv) { e.quit = true }
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = { e.quit = true }
     },
     new Action(":stack", List(), None, "print the stack trace of the last error") {
-      def apply(s: String)(implicit e: ConsoleEnv) { e.stackHandler() }
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = { e.stackHandler() }
     },
     new Action(":crash",List(),None,"crash") {
-      def apply(s: String)(implicit e: ConsoleEnv) { 1/0; () }
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = { 1/0; () }
     },
     new Action(":slowload",List(),None, "reload all of the modules for the current session (slowly and incorrectly)") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         import e.{con,supply}
         val prior = new Date()
         val old = e.mark
@@ -320,7 +320,7 @@ object Console {
       }
     },
     new Action(":slowerload",List(),None, "reload all of the modules for the current session (slowly and incorrectly)") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         import e.{con,supply}
         val prior = new Date()
         val old = e.mark
@@ -339,7 +339,7 @@ object Console {
       }
     },
     new Action(":reload",List(),None, "reload all of the modules for the current session (intelligently)") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         val prior = new Date();
         val old = e.mark
         val lib = e.namedMarks("lib")
@@ -355,13 +355,13 @@ object Console {
       }
     },
     new Action(":fsloader",List(), Some("<directory>"), "add a loader from a given file path") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         e.sessionEnv.loadFile = SourceFile.inOrder(
           SourceFile.filesystem(s) ,e.sessionEnv.loadFile)
       }
     },
     new Action(":mark",List(),Some("[key]"),"save the current session state for later release") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         val m = e.mark
         e.marks = m :: e.marks
         if (!s.isEmpty) {
@@ -372,7 +372,7 @@ object Console {
       }
     },
     new Action(":history",List(), None, "show the list of named marks") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         e.sayLnMarks
         e.namedMarks.keySet.toList match {
           case List() => writeLn("No named marks")
@@ -381,7 +381,7 @@ object Console {
       }
     },
     new Action(":release", List(), Some("[key]"), "restore to a given session state") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         if (s.isEmpty) e.marks match {
           case List() => writeLn("No marks!")
           case List(a) => e.mark = a
@@ -396,14 +396,14 @@ object Console {
       }
     },
     new Action(":load", List(), Some("<filename>"), "Load a module from a source file") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         loadProject(s)
       }
     },
 
     // parse and load
     new Action(":parse", List(), Some("<expr>"), "Parse and pretty print an expression") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         phrase(TermParsers.term).run(e.parseState(s), e.supply) match {
           case Left(err)      => writeLn(err.pretty)
           case Right((ps, a)) => writeLn(e.fixCons(ps, a).toString)
@@ -411,7 +411,7 @@ object Console {
       }
     },
     new Action(":eval", List(), Some("<expr>"), "Evaluate an expression") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         phrase(TermParsers.term).run(e.parseState(s), e.supply) match {
           case Left(err)     => writeLn(err.pretty)
           case Right((_, a)) => e.eval(a) { r => writeLn(prettyRuntime(r)) }
@@ -419,7 +419,7 @@ object Console {
       }
     },
     new Action(":imports", List(), None, "Summarize the currently imports") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         val modules = e.imports.toList.sortWith((p,q) => p._1 < q._1).map({
           case (k,(None,_,_))    => text(k)
           case (k,(Some(a),_,_)) => text(k) :+: "as" :+: text(a)
@@ -471,7 +471,7 @@ object Console {
           writeLn("\n"*e.terminal.getTerminalHeight) // can't clear the screen? come on
     },
     new Action(":type", List(), Some("<expr>"), "Infer the type of an expression") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         phrase(term).run(e.parseState(s), e.supply) match {
           case Left(err)       => writeLn(err.pretty)
           case Right((ps, tm)) =>
@@ -490,7 +490,7 @@ object Console {
       }
     },
     new Action(":uglytype", List(), Some("<expr>"), "Infer the type of an expression, dumping the raw syntax") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         phrase(term).run(e.parseState(s), e.supply) match {
           case Left(err)       => writeLn(err.pretty)
           case Right((ps, tm)) =>
@@ -503,7 +503,7 @@ object Console {
       }
     },
     new Action(":browse", List(), Some("[substring]"), "Show the types of all known terms (optionally filtered)") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         val ps = e.parseState("")
         val (types, terms) = describeEnvironment(ps, e.sessionEnv, s)
         def render(ts: Iterable[(Local, (Option[String], Document))]) =
@@ -519,7 +519,7 @@ object Console {
       }
     },
     new Action(":kind", List(), Some("<type>"), "Infer the kind of a type") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         phrase(typ).run(e.parseState(s), e.supply) match {
           case Left(err)       => writeLn(err.pretty)
           case Right((ps, ty)) =>
@@ -538,7 +538,7 @@ object Console {
       }
     },
     new Action(":echo", List(), None, "Toggle character echo (for compatibility with some terminals)") {
-      def apply(s: String)(implicit e: ConsoleEnv) {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         if (e.reader.getEchoCharacter != null) {
           e.reader.setEchoCharacter(null)
           writeLn("Echo is on")
@@ -574,11 +574,11 @@ object Console {
     (types, terms)
   }
 
-  def marked(s: String)(implicit e: ConsoleEnv) {
+  def marked(s: String)(implicit e: ConsoleEnv): Unit = {
     e.namedMarks = e.namedMarks + (s -> e.mark)
   }
 
-  def pushMark(implicit e: ConsoleEnv) {
+  def pushMark(implicit e: ConsoleEnv): Unit = {
     e.marks = e.mark :: e.marks
   }
 
@@ -601,7 +601,7 @@ object Console {
     }
 
   // parse an expression or statement
-  def other(x: String)(implicit e: ConsoleEnv) {
+  def other(x: String)(implicit e: ConsoleEnv): Unit = {
     import e.{con,supply}
     var input = x
     var blank = false
@@ -656,7 +656,7 @@ object Console {
               case AppT(Type.Con(_,Global("Builtin","IO",Idfix),_,_), _) => (true, false)
               case _ => (false, false)
             }
-            def remember {
+            def remember: Unit = {
               e.session(implicit s => primOp(ps.loc, v, r, ty))
               writeLn(nest(2, v.string :/+: ":" :/+: prettyType(ty, -1) :/+: "=" :/+: prettyRuntime(r)))
               e.currentResult = e.currentResult + 1
@@ -690,7 +690,7 @@ object Console {
 
   private val command = "\\s*(\\S*)\\s*(.*)".r
   // of course with all this we don't really need the trampoline
-  def repl(implicit e: ConsoleEnv) {
+  def repl(implicit e: ConsoleEnv): Unit = {
     e.reader.setBellEnabled(false)
     e.reader.setDefaultPrompt(">> ")
     var line: String = null
@@ -718,14 +718,14 @@ object Console {
 
   def prelude = List[String]("Prelude","Layout")
 
-  def loadAll(xs: List[String])(implicit e: ConsoleEnv) {
+  def loadAll(xs: List[String])(implicit e: ConsoleEnv): Unit = {
     import e.{con,supply}
     if (session(implicit s => benchmark(loadModules(xs)) { ss => "Loaded" :+: ordinal(ss.size, "module","modules") }).isDefined)
       xs.foreach(importing(_))
     else writeLn("Unable to load" :/+: oxford("and", xs.map(text(_))))
   }
 
-  def loadArgs(xs: Array[String])(implicit e: ConsoleEnv) {
+  def loadArgs(xs: Array[String])(implicit e: ConsoleEnv): Unit = {
     xs.foreach(loadProject)
   }
 
@@ -750,7 +750,7 @@ object Console {
     """/___/_/ /_/_/_/_/_//_/\__/ """
   ))
 
-  def fancyLogo(implicit e: ConsoleEnv) {
+  def fancyLogo(implicit e: ConsoleEnv): Unit = {
     writeLn("")
     writeLn("                                    _,-/\"---,")
     writeLn("             ;\"\"\"\"\"\"\"\"\"\";         _`;; \"\"  «@`---v")
@@ -765,7 +765,7 @@ object Console {
     writeLn("     \\/\"\"\"")
   }
 
-  def rock(args: Array[String])(implicit e: ConsoleEnv) {
+  def rock(args: Array[String])(implicit e: ConsoleEnv): Unit = {
     import e.supply
     fancyLogo
     writeLn("")
@@ -787,7 +787,7 @@ object Console {
     repl
   }
 
-  def main(args: Array[String]) {
+  def main(args: Array[String]): Unit = {
     com.clarifi.reporting.util.Logging.initializeLogging
     unfixSbtTerminalProperty()
     try {

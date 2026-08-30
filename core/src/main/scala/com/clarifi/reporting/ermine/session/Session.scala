@@ -427,7 +427,7 @@ object Session {
 
     def --(xs: Traversable[String]) = copy(imports = imports -- xs)
     // @throws Death
-    def make(implicit s: SessionEnv, su: Supply) {
+    def make(implicit s: SessionEnv, su: Supply): Unit = {
       checkNames
       read(s,su) match {
         case None => ()
@@ -445,7 +445,7 @@ object Session {
       }
     }
     // @throws Death
-    def checkNames(implicit s: SessionEnv) {
+    def checkNames(implicit s: SessionEnv): Unit = {
       for (n <- expectedName)
         if (moduleName != n)
           loc.die("expected a module named " + n)
@@ -1299,7 +1299,7 @@ object Session {
    * during checking.
    */
   // @throws Death
-  def loadFieldStatement(fs: FieldStatement, tmv: Name => TermVar)(implicit s: SessionEnv, su: Supply) {
+  def loadFieldStatement(fs: FieldStatement, tmv: Name => TermVar)(implicit s: SessionEnv, su: Supply): Unit = {
     val ty = fs.ty
     val ptyp = ty match {
       case Nullable(typ) => primTypes(typ).withNull
@@ -1346,7 +1346,7 @@ object Session {
         case None => List()
       })
     }
-    def go(c: Con) {
+    def go(c: Con): Unit = {
       for (cp <- step(c))
         if (cp.name == cls.name) c.die("cyclic class hierarchy")
         else go(cp)

@@ -19,9 +19,9 @@ import Supply._
   */
 abstract class Parser[S, +A] extends MonadicPlus[[a] =>> Parser[S,a], A] { that =>
   def self = that
-  // scalaz 7.0's Free was covariant in its result; 7.3's is invariant. The
-  // trampoline is only ever produced here, never consumed, so keeping Parser
-  // covariant in A (as the original was) stays sound.
+  // scalaz 7.0's Free was covariant in its result type; it became invariant in
+  // 7.1. The trampoline is only ever produced here, never consumed, so keeping
+  // Parser covariant in A (as the original was) stays sound.
   def apply(s: ParseState[S], vs: Supply): Trampoline[ParseResult[S, A @uncheckedVariance]]
   def run(s: ParseState[S], vs: Supply): Either[Err, (ParseState[S], A)] = apply(s,vs).run match {
     case Pure(a,_)      => Right((s,a))

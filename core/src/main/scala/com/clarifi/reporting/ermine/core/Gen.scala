@@ -16,13 +16,13 @@ case class Bound(i: Int) extends Gen[Nothing] {
   def flatMap[B](f: Nothing => Gen[B]) = this
   def map[B](f: Nothing => B) = this
   def fold[B](bd: Int => B, unbd: Nothing => B) = bd(i)
-  def foreach[U](f: Nothing => U) {}
+  def foreach[U](f: Nothing => U): Unit = {}
 }
 
 case class Unbound[+A](a: A) extends Gen[A] {
   def flatMap[B](f: A => Gen[B]) = f(a)
   def map[B](f: A => B) = Unbound(f(a))
   def fold[B](bd: Int => B, unbd: A => B) = unbd(a)
-  def foreach[U](f: A => U) { f(a) }
+  def foreach[U](f: A => U): Unit = { f(a) }
 }
 
