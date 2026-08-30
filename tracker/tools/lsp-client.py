@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Scripted LSP client for the Ermine language server (roadmap 0.4).
+
+Speaks Content-Length framing over the server's stdio in binary mode
+(Content-Length counts bytes; never let text-mode IO near the stream),
+runs the smoke scenario against the fixtures in tracker/lsp-tests/, and
+prints repl-smoke-style "  PASS/FAIL  lsp (N checks)" lines.
+
+Usage: lsp-client.py <java> <args...>   (the full server command line)
+"""
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+FIXTURES = HERE.parent / "lsp-tests"
+LOG = os.environ.get("LSP_SMOKE_LOG", "/tmp/lsp-smoke.log")
+
+checks = 0
+failures = []
+
+
+def check(name, cond, detail=""):
+    global checks
+    checks += 1
+    if not cond:
+        failures.append(name + ("" if not detail else ": " + detail))
+
+
+class Client:
+    def __init__(self, cmd):
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.next_id = 0
+        self.seen = []  # notifications observed while waiting for something else
+
+    def send(self, msg):
+        body = json.dumps(msg).encode("utf-8")
+        self.proc.stdin.write(b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+        self.proc.stdin.flush()
+
+    def request(self, method, params):
+        self.next_id += 1
+        self.send({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params})
+        return self.next_id
+
+    def notify(self, method, params):
+        self.send({"jsonrpc": "2.0", "method": method, "params": params})
+
+    def read_message(self):
+        length = None
+        while True:
+            line = self.proc.stdout.readline()
+            if not line:
+                raise EOFError("server closed stdout")
+            if line in (b"\r\n", b"\n"):
+                break
+            if line.lower().startswith(b"content-length:"):
+                length = int(line.split(b":", 1)[1].strip())
+        if length is None:
+            raise IOError("headers without Content-Length")
+        body = b""
+        while len(body) < length:
+            chunk = self.proc.stdout.read(length - len(body))
+            if not chunk:
+                raise EOFError("server closed mid-body")
+            body += chunk
+        return json.loads(body.decode("utf-8"))
+
+    def wait_for(self, pred, what):
+        """Read until pred matches; anything else is stashed in self.seen."""
+        for _ in range(50):
+            msg = self.read_message()
+            if pred(msg):
+                return msg
+            self.seen.append(msg)
+        raise AssertionError("gave up waiting for " + what)
+
+    def response(self, rid):
+        return self.wait_for(lambda m: m.get("id") == rid, "response %d" % rid)
+
+    def diagnostics_for(self, uri):
+        m = self.wait_for(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == uri,
+            "diagnostics for " + uri)
+        return m["params"]["diagnostics"]
+
+
+def uri(name):
+    return (FIXTURES / name).as_uri()
+
+
+def main():
+    client = Client(sys.argv[1:])
+
+    r = client.response(client.request("initialize", {"capabilities": {}}))
+    caps = r.get("result", {}).get("capabilities", {})
+    check("initialize.definitionProvider", caps.get("definitionProvider") is True)
+    check("initialize.hoverProvider", caps.get("hoverProvider") is True)
+    sync = caps.get("textDocumentSync", {})
+    check("initialize.sync", sync.get("openClose") is True and sync.get("save") is True)
+
+    client.notify("initialized", {})
+    ready = client.wait_for(
+        lambda m: m.get("method") == "window/logMessage"
+        and "ready" in m["params"]["message"], "readiness logMessage")
+    check("boot.reports 129 modules", "129 modules" in ready["params"]["message"],
+          ready["params"]["message"])
+
+    def open_doc(name):
+        client.notify("textDocument/didOpen", {"textDocument": {
+            "uri": uri(name), "languageId": "ermine", "version": 1,
+            "text": (FIXTURES / name).read_text()}})
+
+    open_doc("Good.e")
+    check("Good.e clean", client.diagnostics_for(uri("Good.e")) == [])
+
+    open_doc("Bad.e")
+    ds = client.diagnostics_for(uri("Bad.e"))
+    check("Bad.e one diagnostic", len(ds) == 1, repr(ds))
+    if len(ds) == 1:
+        d = ds[0]
+        check("Bad.e line", d["range"]["start"] == {"line": 3, "character": 0}, repr(d["range"]))
+        check("Bad.e severity", d["severity"] == 1)
+        check("Bad.e message", "failed to unify" in d["message"], d["message"])
+
+    # didSave goes through the same check; use it for the parse error.
+    client.notify("textDocument/didSave", {"textDocument": {"uri": uri("Ugly.e")}})
+    ds = client.diagnostics_for(uri("Ugly.e"))
+    check("Ugly.e one diagnostic", len(ds) == 1, repr(ds))
+    if len(ds) == 1:
+        d = ds[0]
+        check("Ugly.e line", d["range"]["start"] == {"line": 2, "character": 4}, repr(d["range"]))
+        check("Ugly.e message", "ill-formed expression" in d["message"], d["message"])
+
+    # Sibling import: Sib.e imports Good.e from the fixtures directory.
+    open_doc("Sib.e")
+    check("Sib.e sibling import clean", client.diagnostics_for(uri("Sib.e")) == [])
+
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Bad.e")}})
+    check("Bad.e cleared on close", client.diagnostics_for(uri("Bad.e")) == [])
+
+    # Checks must neither read nor write interface files (a stale .ei would
+    # let type errors through unreported, and writebacks litter workspaces).
+    check("no .ei droppings", not list(FIXTURES.glob("*.ei")),
+          repr(list(FIXTURES.glob("*.ei"))))
+
+    r = client.response(client.request("shutdown", None))
+    check("shutdown null", r.get("result") is None and "error" not in r)
+    client.notify("exit", {})
+    check("exit code 0", client.proc.wait(timeout=30) == 0)
+
+    if failures:
+        print("  FAIL  lsp")
+        for f in failures:
+            print("      " + f)
+        print("      server log: " + LOG)
+        return 1
+    print("  PASS  lsp (%d checks)" % checks)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 0 in progress — 0.3 done · Seeded 2026-08-30 (session that shipped the
+Status: Stage 0 in progress — 0.4 done · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -16,6 +16,7 @@ scoping fix, commits f9cf42a / 41b13cc).
 - `sbt -batch core/test`: 761/762 (Constraints.disjunction sound is the
   known pre-existing failure, tracker/06-tests.md)
 - `tracker/tools/repl-smoke.sh`: 3/3 suites
+- `tracker/tools/lsp-smoke.sh`: 17/17 checks (from 0.4 on)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 
@@ -64,7 +65,7 @@ Checklist (each item ≈ one loop iteration):
   files: resolve imports against the file's directory (Console's
   loadArgs/fsloader machinery) — if this turns rabbit-hole, ship
   stdlib-imports-only first and note it here.
-- [ ] **0.4 Scripted client + smoke test**: `tracker/tools/lsp-smoke.sh` +
+- [x] **0.4 Scripted client + smoke test**: `tracker/tools/lsp-smoke.sh` +
   a small python client speaking the framing; scenario: initialize, open
   a good file (no diagnostics), open a file with the variableShadow-style
   error pre-fix era... use a type error (e.g. `f : Int` / `f = "s"`),
@@ -149,3 +150,14 @@ flowing mid-keystroke; then incremental reuse per unchanged statement.
   Verified by transcript: type error Bad.e 4:1→(3,0), parse error Ugly.e
   3:5→(2,4) via didSave, Sib→Good sibling import clean, clear-on-close,
   ~0.0s per warm check. Baselines: 761/762, smoke 3/3.
+- 2026-08-30 0.4 done: tracker/tools/lsp-smoke.sh + lsp-client.py (binary
+  framing; fixtures tracker/lsp-tests/{Good,Bad,Ugly,Sib}.e) — 17 checks:
+  capabilities, 129-module readiness, clean/type-error/parse-error lines,
+  didSave path, sibling import, clear-on-close, shutdown/exit. Found and
+  fixed a real 0.3 bug en route: checks ran with useInterface on, so a
+  Foo.ei newer than Foo.e made loadModule skip body inference (missed
+  errors after e.g. git checkout) and writebacks littered the workspace —
+  Resident.checkEnv now pins useInterface off for checks (boot keeps
+  interfaces for warm speed); harness asserts no .ei droppings. lsp-smoke
+  is now a baseline: run it alongside core/test + repl-smoke from here on.
+  Baselines: 761/762, smoke 3/3, lsp-smoke 17/17 twice.

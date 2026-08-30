@@ -52,11 +52,25 @@ final class Resident(log: String => Unit) {
     * then the resident loader (the stdlib).  Throws Death on any parse or
     * type error; the copy — and whatever the failed load dragged into it —
     * is discarded either way (roadmap 0.3). */
-  def checkFile(path: java.nio.file.Path): Unit = withEnv { env =>
-    implicit val e: SessionEnv = env
+  def checkFile(path: java.nio.file.Path): Unit = {
+    implicit val e: SessionEnv = checkEnv()
     val dir = Option(path.getParent) map (_.toString) getOrElse "."
     e.loadFile = Session.SourceFile.inOrder(Session.SourceFile.filesystem(dir) _, e.loadFile)
     Session.load(Session.Filesystem(path.toString, exotic = true))
     ()
+  }
+
+  // A diagnostics check must never trust or produce .ei interface files:
+  // with useInterface on, a Foo.ei newer than Foo.e makes loadModule skip
+  // body inference entirely (errors go unreported — mtimes lie after e.g.
+  // a git checkout), and writebacks litter the user's workspace.  The boot
+  // env keeps interfaces for warm-start speed; checks run on a copy with
+  // useInterface pinned off.  Mirrors SessionEnv.copy, which cannot
+  // override the flag.
+  private def checkEnv(): SessionEnv = {
+    val b = boot().env
+    new SessionEnv(b.env, b.termNames, b.termNameOrigins, b.cons, b.privateCons,
+      b.consOrigins, b.loadFile, b.loadedFiles, b.loadedModules, b.classes,
+      b.classOrigins, Some(b.typeCheck), Some(false))
   }
 }
