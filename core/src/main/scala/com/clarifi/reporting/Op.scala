@@ -382,7 +382,7 @@ case class Window(
 object Window extends Function3[List[Op], List[(Op, SortOrder)], Frame, Window] {
   import Op.ColumnValue
   def simple(part: List[(ColumnName, PrimT)], ord: List[((ColumnName, PrimT), SortOrder)], frame: Frame) =
-    Window(part.map(ColumnValue.tupled), ord.map{ case ((c,t),s) => (ColumnValue(c,t), s) }, frame)
+    Window(part.map((ColumnValue.apply _).tupled), ord.map{ case ((c,t),s) => (ColumnValue(c,t), s) }, frame)
 }
 
 object Op {

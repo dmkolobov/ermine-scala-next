@@ -300,7 +300,7 @@ object AxisConstraints {
                                                    List[(Record, Record)]))],
                     catc: AxisConstraints, valc: AxisConstraints)
       : (AxisConstraints, AxisConstraints) = {
-    implicit val lastTick = Monoid.instance[PrimExpr ==>> PrimExpr](_ union _, ==>>.empty)
+    implicit val lastTick: Monoid[PrimExpr ==>> PrimExpr] = Monoid.instance[PrimExpr ==>> PrimExpr](_ union _, ==>>.empty)
     def xf(op: ChartSeries[A] => Op,
            f: ((List[(Record, Record)], List[(Record, Record)]))
              => List[(Record, Record)], on: AxisConstraints) = on match {

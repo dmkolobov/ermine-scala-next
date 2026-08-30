@@ -250,7 +250,7 @@ abstract class Writer[F[_],C] { self =>
 
   // DMTL hooks
   final def scanRelationDMTL(order: List[(String, SortOrder)], r: ClosedExt, f: List[Map[String,Runtime]] => F[C]): F[C] =
-    scanRelation(r.out, (ts: List[Record]) => f(ts.map(_.mapValues(Runtime fromPrimExpr _))), order)
+    scanRelation(r.out, (ts: List[Record]) => f(ts.map(_.mapValues(Runtime fromPrimExpr _).toMap)), order)
 
   /**
    * TODO: review this comment - JC 6/12/12

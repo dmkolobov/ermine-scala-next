@@ -40,7 +40,7 @@ object Cache {
               v
           }
         case None =>
-          val cached = new Array(2)
+          val cached = new Array[A](2)
           vals(bucket) = cached
           cached(0) = v
           v

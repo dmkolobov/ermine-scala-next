@@ -149,7 +149,7 @@ object SqlErmine {
     * @param scm Schemata read from, say `SqlMetadata.schemata`. */
   def databaseModule(moduleName: String, database: String,
                      scm: Schemata): Module = {
-    val fieldDecl = Function tupled FieldDecl
+    val fieldDecl = (FieldDecl.apply _).tupled
     Module(ModuleHead(moduleName, usualModules),
            scm.view flatMap (_._2 map fieldDecl) toSet,
            DatabaseBlock(database, scm.view map {case (TableName(dname, dscm, _), cs) =>

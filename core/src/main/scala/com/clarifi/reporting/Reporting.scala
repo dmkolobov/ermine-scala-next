@@ -44,7 +44,7 @@ object Reporting {
   def Dyn(value: Any): Dyn = Tag[Any, DynT](value)
 
   // Pattern for non-empty lists
-  object NEL { def unapply[A](n: NonEmptyList[A]): Option[(A, List[A])] = Some((n.head, n.tail)) }
+  object NEL { def unapply[A](n: NonEmptyList[A]): Option[(A, List[A])] = Some((n.head, n.tail.toList)) }
 
   type RefHandler[M[_]] = ([x] =>> (RefID, IterV[Record, x])) ~> ([x] =>> M[IterV[Record, x]])
 

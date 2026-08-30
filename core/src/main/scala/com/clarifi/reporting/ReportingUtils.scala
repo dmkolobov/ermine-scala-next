@@ -99,7 +99,7 @@ object ReportingUtils {
 
   /** The entirely safe reduction of `xs`. */
   def foldNel[X](xs: NonEmptyList[X])(f: (X, X) => X) =
-    xs.tail.fold(xs.head)(f)
+    xs.tail.foldLeft(xs.head)(f)
 
   /** Reduce with log₂n append depth. */
   def binaryReduce[X](xs: Iterable[X])(f: (X, X) => X): Option[X] =

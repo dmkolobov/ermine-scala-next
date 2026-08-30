@@ -319,7 +319,7 @@ class Literal( r:  OneAnd[ ({type F[X] = Coproduct[IndexedSeq, List, X]})#F, Rec
                      }
 
   def nel: NonEmptyList[Record] = NonEmptyList.nel( r.head
-                                                  , IList.fromList(r.tail.run match { case -\/(xs) => xs.toList
+                                                  , scalaz.IList.fromList(r.tail.run match { case -\/(xs) => xs.toList
                                                                                      case \/-(xs) => xs
                                                                                    })
                                                   )
@@ -345,7 +345,7 @@ object Literal {
   }
   def toLit(seq: List[Record] ): Option[Literal] = seq.headOption match {
     case None => None
-    case Some(h) => Some( Literal( nel(h, IList.fromList(seq.tail))))
+    case Some(h) => Some( Literal( nel(h, scalaz.IList.fromList(seq.tail))))
   }
 
   def apply(rs: NonEmptyList[Record]) =

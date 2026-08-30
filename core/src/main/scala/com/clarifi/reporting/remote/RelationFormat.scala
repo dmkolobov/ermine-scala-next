@@ -1067,7 +1067,7 @@ object Format {
     tuple3R(fixFR[LegendColumns[A, B], LegendColumnsF[F, G]#λ](rec =>
               listR(R_\/(tuple2R(rec, ra),
                          tuple3R(presentationR, sortStrategyR, rb)))
-                map (LegendColumns.apply)),
+                .map(LegendColumns.apply)),
             listR(tuple3R(stringR, primTR, sortOrderR)),
             optionR(tuple2R(stringR, primTR))) map {
       case (is, hs, gc) => Legend(is, hs, gc)
@@ -1077,7 +1077,7 @@ object Format {
     tuple3W(fixFW[LegendColumns[A, B], LegendColumnsF[F, G]#λ](rec =>
               repeatW(W_\/(tuple2W(rec, wa),
                            tuple3W(presentationW, sortStrategyW, wb)))
-                cmap ((_:LegendColumns[A, B]).inOrder)),
+                .cmap((_:LegendColumns[A, B]).inOrder)),
             repeatW(tuple3W(stringW, primTW, sortOrderW)),
             optionW(tuple2W(stringW, primTW))) cmap {
       case Legend(cols, hidden, gc) => (cols, hidden, gc)

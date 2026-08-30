@@ -81,7 +81,7 @@ abstract class Backend[M[+_]](implicit mon: Monad[M]) {
         runner.run {
           schemaPopulator(schema, s, batchSize) map {
             case (pre, iter, post) =>
-              (pre *> iter.lower(iodetrans).map(body(_)) ensuring post).unsafePerformIO
+              (pre *> iter.lower(iodetrans).map(body(_)) ensuring post).unsafePerformIO()
           }
         }
       }

@@ -54,7 +54,7 @@ object RawSql {
       * including enough directives to consume all `raws` are not
       * nice.
       */
-    def formatRaws(raws: RawSql*) = raw(value format ((raws map (_.stringValue)): _*))
+    def formatRaws(raws: RawSql*) = raw(value.format((raws map (_.stringValue)): _*))
   }
 
   /** Scala compatibility. */

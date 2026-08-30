@@ -12,7 +12,7 @@ case class TableName(name: String, schema: List[String] = Nil,
 object TableName {
   implicit object TableNameOrder extends Order[TableName] {
     def order(x: TableName, y: TableName) =
-      (x.name ?|? y.name) |+| (x.schema ?|? y.schema)
+      (scalaz.std.string.stringInstance.order(x.name, y.name)) |+| (x.schema ?|? y.schema)
   }
 
   sealed trait Scope

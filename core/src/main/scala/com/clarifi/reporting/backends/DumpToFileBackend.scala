@@ -9,6 +9,7 @@ import scalaz.Kleisli
 import Kleisli.kleisliApplicative
 import scalaz.syntax.applicative._
 import scalaz.std.function._
+import scalaz.Applicative
 
 class DumpToFileBackend(outputFile:String="tables.bin") extends SqlBackend()(SqlEmitter.msSqlEmitter) {
   val Log = Logger.getLogger(this.getClass)

@@ -24,5 +24,5 @@ object Header {
   /**
    * Converts a TypeTag to a Header.
    */
-  def fromTypeTag(t: TypeTag): Header = t.fold(e => sys.error(e.list.mkString("\n")), s => s)
+  def fromTypeTag(t: TypeTag): Header = t.fold(e => sys.error(e.list.toList.mkString("\n")), s => s)
 }
