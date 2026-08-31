@@ -186,9 +186,10 @@ object TestStage1Pins extends Properties("Ermine stage1 pins") {
     forAll(small) { x =>
       defAndEval("f q = -q + 1", s"f $x", imps).extract[Int] ?= -(x + 1) }
 
-  property("a block binder's inline fixity does not govern earlier siblings") =
-    failsMatching("v = let a = 1 :%: 2\n        (infixl 5 :%:) x y = x - y\n    in a",
-                  "unknown operator")
+  property("a block binder's inline fixity governs the WHOLE block (D6 flip)") =
+    forAll(small, small) { (x, y) =>
+      defAndEval(s"v = let a = $x :%: $y\n        (infixl 5 :%:) p q = p - q\n    in a",
+                 "v", imps).extract[Int] ?= x - y }
 
   property("a block binder's inline fixity governs later siblings") =
     defAndEval("v = let (infixl 5 :%:) x y = x - y\n        a = 8 :%: 3\n    in a",
@@ -202,9 +203,9 @@ object TestStage1Pins extends Properties("Ermine stage1 pins") {
   property("redeclaring an imported operator's fixity is refused") =
     failsMatching("infixr 3 &&", "Multiple fixity definitions")
 
-  property("an operator used before its fixity declaration is refused") =
-    // positional FixityEnv: the use site precedes the declaration
-    failsMatching("v = 1 :%: 2\ninfixl 5 :%:\n(:%:) x y = x + y", "unknown operator")
+  property("a fixity declaration governs uses before it (D6 flip)") =
+    forAll(small, small) { (x, y) =>
+      defAndEval(s"v = $x :%: $y\ninfixl 5 :%:\n(:%:) p q = p + q", "v", imps).extract[Int] ?= x + y }
 
   property("an unknown operator is refused by name") =
     failsMatching("v = 1 %%% 2", "unknown operator")

@@ -364,15 +364,19 @@ summarize for sign-off before Stage 2.
   change (alias-capture programs now legal).
 - [x] **D3 delete fused scoping machinery**: LocalBlocks, checkShadows,
   rewriteShadowed, insert-on-miss placeholders.
-- [ ] **D4 Localized threading removal** (its own item — it threads
-  through every binder production).
+- [x] **D4 Localized threading removal** (resolved by the D3 deletion:
+  every TERM binder production died; Localized survives only inside the
+  kept interface-type/kind grammar, where it is load-bearing and inert).
 - [x] **D5 fold bindingName/localName** (moot: deleted with the grammar).
-- [ ] **D6 whole-block fixity + module-level pre-scan flips**
+- [x] **D6 whole-block fixity + module-level pre-scan flips**
   (Decisions a, e).
 - [ ] **D7 statement-extent scanner for Stage 2** (columns/strings/
   comments/bracket+let-in/case-of closers; flag the virtualLeftBrace
   col-max-depth merge corner).
-- [ ] **D8 revisit import-bypassing desugar resolution** (Decision b).
+- [x] **D8 revisit import-bypassing desugar resolution** (Decision b:
+  bypass RETAINED by design — the stdlib is written against it; the
+  desugar target module must simply be loaded in-session, which
+  dependency loading guarantees).
 
 ## Stage 2 — error-tolerant parsing feeding the same surface AST
 
@@ -1133,3 +1137,17 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   statementsViaNew flag and testParse are gone — loadStatements IS the
   Literal path.  Suite 869 (868+known), repl 4, lsp 31/31, boot 129.
   D5 (fold bindingName/localName) is MOOT — both died with the files.
+
+- 2026-08-31 (D4/D6/D8): D4 resolved by the deletion (Localized remains
+  only in the kept interface-type grammar).  D6 SHIPPED: a fixity
+  declaration now governs its WHOLE scope — block or module — in both
+  buckets; the fused textual-order asymmetry (uses before the decl were
+  unknown operators) retired with one line in FixityEnv.lookup.
+  "Multiple fixity definitions" still refuses duplicates.  Four pins
+  flipped to the positive semantics (two in TestStage1Pins, two in
+  TestReassoc).  D8 decided: import-bypassing desugar resolution stays
+  — it is the language contract the stdlib is written against.
+  gatherBindings/checkBindings/implicitBindingSpan deleted from
+  syntax/Statement.scala (orphaned by D3).  Suite 869 (868+known),
+  repl 4, lsp 31/31, boot 129.  REMAINING DEBT: D7 statement-extent
+  scanner — the Stage 2 prerequisite.

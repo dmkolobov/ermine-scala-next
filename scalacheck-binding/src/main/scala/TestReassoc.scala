@@ -71,9 +71,9 @@ object TestReassoc extends Properties("Reassoc 3.3") {
     ds.exists(_.message contains "unknown operator %%%") :| ds.toString
   }
 
-  property("ledger flip: an operator used before its declaration is unknown there") = secure {
+  property("a declaration governs earlier uses too (D6 flip)") = secure {
     val (_, ds) = reassoc("v = 1 :%: 2\ninfixl 5 :%:")
-    ds.exists(_.message contains "unknown operator :%:") :| ds.toString
+    (ds ?= Nil) :| ds.toString
   }
 
   property("a declaration governs later uses") = secure {
@@ -114,12 +114,12 @@ object TestReassoc extends Properties("Reassoc 3.3") {
     (r(t) ?= "((-> a) ((-> b) c))") :| s"${r(t)} $ds"
   }
 
-  property("a block binder's inline fixity governs later siblings only") = secure {
+  property("a block binder's inline fixity governs the whole block (D6 flip)") = secure {
     val (m, env, _) = prep("v = let (infixl 5 :%:) x y = x\n        a = 8 :%: 3\n    in a\nu = let b = 1 :%: 2\n        (infixl 5 :%:) x y = x\n    in b")
     val (_, okDs)  = Reassoc.term(bodyOf(m, "v"), env)
-    val (_, badDs) = Reassoc.term(bodyOf(m, "u"), env)
+    val (_, alsoOk) = Reassoc.term(bodyOf(m, "u"), env)
     ((okDs ?= Nil) :| s"after decl: $okDs") &&
-    (badDs.exists(_.message contains "unknown operator :%:") :| s"before decl: $badDs")
+    ((alsoOk ?= Nil) :| s"before decl: $alsoOk")
   }
 }
 

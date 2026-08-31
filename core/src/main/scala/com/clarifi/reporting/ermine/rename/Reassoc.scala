@@ -96,9 +96,13 @@ object Reassoc {
       overrides: Map[(String, Int), Fixity] = Map()) {  // channel-R region, beats all
 
     def lookup(spelling: String, bucket: Int, line: Int, col: Int): Option[Fixity] = {
+      // post-G1 D6 (Decisions a+e flipped): a fixity declaration governs
+      // its WHOLE scope, block or module — the fused textual-order
+      // asymmetry retired with the grammar.  (line, col) stay in the
+      // signature for diagnostics; "Multiple fixity definitions" still
+      // refuses duplicates at declare().
       overrides.get((spelling, bucket)) orElse {
         val declared = decls.getOrElse((spelling, bucket), Nil)
-          .filter(d => d.line < line || (d.line == line && d.col < col))
           .sortBy(d => (d.line, d.col)).lastOption.map(_.fixity)
         declared orElse imports.get((spelling, bucket))
       }

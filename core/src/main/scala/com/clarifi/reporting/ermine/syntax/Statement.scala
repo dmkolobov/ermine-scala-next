@@ -270,55 +270,6 @@ object Statement {
     }
   }
 
-  def implicitBindingSpan(
-    l: Loc,
-    v: TermVar,
-    alts: List[Alt],
-    ss: List[BindingStatement]
-  ): (ImplicitBinding, List[BindingStatement]) = ss match {
-    case TermStatement(lp, vp, pats, body) :: ss if v == vp =>
-      implicitBindingSpan(l,v, Alt(lp, pats, body) :: alts, ss)
-    case _ => (ImplicitBinding(l, v, alts.reverse), ss)
-  }
-
-  def gatherBindings(ss: List[BindingStatement], is: List[ImplicitBinding] = List(), sigs: List[SigStatement] = List()): (List[ImplicitBinding], List[SigStatement]) = ss match {
-    case TermStatement(l, v, pats, body) :: ss =>
-      val (i, xs) = implicitBindingSpan(l, v, List(Alt(l, pats, body)), ss)
-      gatherBindings(xs, i :: is, sigs)
-    case (s : SigStatement)   :: ss => gatherBindings(ss, is, s :: sigs)
-    case List() => (is, sigs)
-  }
-
-  def checkBindings[M[+_]:Monad:Diagnostic](
-    l: Pos,
-    is: List[ImplicitBinding],
-    ss: List[SigStatement]): M[Localized[(List[ImplicitBinding], List[ExplicitBinding])]] = {
-    val im = is.map(i => i.v -> i).toMap // Map[TermVar,ImplicitBinding]
-    val sl = for { s <- ss ; v <- s.vs } yield v -> s // List[(TermVar, SigStatement)]
-    // we need to check that the variables we've sigged are distinct.
-    for {
-      es <- sl.traverse[M,ExplicitBinding] { case (v, s) =>
-        for {
-          i <- im.get(v) match {
-            case Some(i) => i.pure[M]
-            case None    => raise[M](s.loc, "missing definition")
-          }
-        } yield ExplicitBinding(i.loc, i.v, Annot.plain(i.loc, s.ty), i.alts)
-      }
-      /*
-      // Stolen from KindParsers and TypeParsers@125
-      n <- // need to figure this out
-      id <- // and this
-      val l = termNames.member()
-      val v = V(l, id, Some(n), Bound, ()) // todo: check this.
-      val r = for {old <- gets(l.get(_))
-                     _ <- modify(l.set(_, Some(v)))
-                  } yield modify(l.set(_, old))
-      u <- r
-      */
-      _ <- Localized((), es.map(_.v.name.get.local)).distinct(l) // check that the explicits are distinct
-    } yield Localized( ((im -- es.map(_.v)).values.toList,es)
-                     , is.map(_.v.name.get.local)
-                     )
-  }
+  // (implicitBindingSpan/gatherBindings/checkBindings retired with
+  // the fused grammar, post-G1 D3 — NewPipeline.assemble owns grouping)
 }
