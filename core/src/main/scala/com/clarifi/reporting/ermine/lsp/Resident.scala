@@ -89,12 +89,19 @@ final class Resident(log: String => Unit) {
     * read is clean: with diagnostics outstanding it would just re-report
     * the earliest of them.  Death here — a header that will not parse,
     * an import that will not load — propagates; Diagnostics turns it
-    * into the single diagnostic it has always been. */
-  def checkFile(path: java.nio.file.Path): Checked = withEnv { env =>
+    * into the single diagnostic it has always been.
+    *
+    * Since 5.3 the text comes from the OPEN BUFFER when there is one,
+    * for this file and for its workspace siblings alike: a cross-file
+    * check has to see a sibling's unsaved edits, or the editor reports
+    * errors about text nobody is looking at. */
+  def checkFile(path: java.nio.file.Path, docs: Documents): Checked = withEnv { env =>
     implicit val e: SessionEnv = env
     val dir = Option(path.getParent) map (_.toString) getOrElse "."
-    e.loadFile = Session.SourceFile.inOrder(Session.SourceFile.filesystem(dir) _, e.loadFile)
-    val file = Session.Filesystem(path.toString, exotic = true)
+    e.loadFile = Session.SourceFile.inOrder(
+      docs.loaderFor(dir), Session.SourceFile.filesystem(dir) _, e.loadFile)
+    val file: Session.SourceFile = docs.byPath(path.toString).map(_.source) getOrElse
+      Session.Filesystem(path.toString, exotic = true)
     val contents = file.contents
     val (_, mh) = Session.parse(
       ModuleParsers.moduleHeader(file.defaultModuleName),

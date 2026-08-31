@@ -16,27 +16,89 @@ import scalaparsers.Death
   * even when the file is broken.  Only the two unrecoverable cases (a
   * header that will not parse, an import that will not load) still arrive
   * as a Death with nothing but a rendered report to go on.
+  *
+  * Since 5.3 checks run on the BUFFER, not the saved file.  didOpen and
+  * didSave are deliberate acts and check at once; didChange is a
+  * keystroke and only queues, so the check fires when the client stops
+  * typing (Server.onIdle, ~300ms of quiet on the input stream — a queue
+  * check on the one dispatch thread, not a race).
   */
 object Diagnostics {
 
-  def install(server: Server, ermine: Resident, docs: Definitions.Docs, log: String => Unit): Unit = {
+  /** How long the input stream must be quiet before a queued check runs. */
+  private val DebounceMillis = 300
+
+  def install(server: Server, ermine: Resident, docs: Documents, log: String => Unit): Unit = {
     def uriOf(params: Json): Option[String] =
       params / "textDocument" flatMap (_ / "uri") flatMap (_.str)
+    def versionOf(params: Json): Long =
+      (params / "textDocument" flatMap (_ / "version") flatMap (_.int) map (_.toLong)) getOrElse 0L
 
-    def check(what: String)(params: Json): Unit =
-      uriOf(params) foreach { uri => run(server, ermine, docs, log, what, uri) }
+    // uri -> the version whose check is owed.  One entry per uri: a
+    // second keystroke replaces the first rather than queueing behind it.
+    val queued = scala.collection.mutable.LinkedHashMap.empty[String, Long]
 
-    server.onNotification("textDocument/didOpen")(check("didOpen"))
-    server.onNotification("textDocument/didSave")(check("didSave"))
+    server.onNotification("textDocument/didOpen") { params =>
+      for {
+        td   <- params / "textDocument"
+        uri  <- td / "uri" flatMap (_.str)
+        text <- td / "text" flatMap (_.str)
+      } {
+        docs.put(uri, text, versionOf(params))
+        queued -= uri
+        run(server, ermine, docs, log, "didOpen", uri)
+      }
+    }
+
+    server.onNotification("textDocument/didChange") { params =>
+      for {
+        uri  <- uriOf(params)
+        // TextDocumentSync FULL: each change carries the whole document,
+        // so the last one wins outright (incremental deltas are a later
+        // optimization — the capability says which we speak).
+        text <- params / "contentChanges" flatMap (_.arr) flatMap
+                  (_.lastOption) flatMap (_ / "text") flatMap (_.str)
+      } {
+        val v = versionOf(params)
+        docs.put(uri, text, v)
+        queued += uri -> v
+      }
+    }
+
+    // A save is an act, not a keystroke: check it now, and drop whatever
+    // keystroke check was owed for the same text.
+    server.onNotification("textDocument/didSave") { params =>
+      uriOf(params) foreach { uri =>
+        queued -= uri
+        run(server, ermine, docs, log, "didSave", uri)
+      }
+    }
+
     // The squiggles should not outlive the buffer.
     server.onNotification("textDocument/didClose") { params =>
-      uriOf(params) foreach { uri => docs drop uri; publish(server, uri, Nil) }
+      uriOf(params) foreach { uri =>
+        queued -= uri
+        docs drop uri
+        publish(server, uri, Nil)
+      }
+    }
+
+    server.onIdle(DebounceMillis)(queued.nonEmpty) {
+      val due = queued.toList
+      queued.clear()
+      due foreach { case (uri, v) =>
+        // Versioned drop.  Dispatch is single-threaded, so this can only
+        // fire if a newer edit was handled while an earlier check ran;
+        // it is the guard that keeps that from publishing stale results.
+        if (docs.get(uri).exists(_.version == v)) run(server, ermine, docs, log, "didChange", uri)
+        else log(s"diagnostics: dropping superseded check for $uri v$v")
+      }
     }
   }
 
-  private def run(server: Server, ermine: Resident, docs: Definitions.Docs,
+  private def run(server: Server, ermine: Resident, docs: Documents,
                   log: String => Unit, what: String, uri: String): Unit =
-    pathFor(uri) match {
+    docs.pathFor(uri) match {
       case None =>
         log("diagnostics: ignoring non-file uri " + uri)
       case Some(path) if !(path.toString endsWith ".e") =>
@@ -45,11 +107,11 @@ object Diagnostics {
         val t0 = System.nanoTime
         val ds =
           try {
-            val checked = ermine.checkFile(path)
+            val checked = ermine.checkFile(path, docs)
             // The index is rebuilt from the SAME parse that produced the
             // diagnostics, broken file or not: navigation on a file's
             // healthy statements no longer decays to the last good save.
-            docs.put(uri, Definitions.index(path.toString, checked))
+            docs.putIndex(uri, Definitions.index(path.toString, checked))
             checked.diags.map(fromDiag) :::
               checked.typeError.toList.map(fromReport(_, path))
           } catch {
@@ -65,12 +127,6 @@ object Diagnostics {
   private def publish(server: Server, uri: String, ds: List[Json]): Unit =
     server.notify("textDocument/publishDiagnostics",
       Json.obj("uri" -> Json.Str(uri), "diagnostics" -> Json.Arr(ds)))
-
-  private def pathFor(uri: String): Option[Path] =
-    try {
-      val u = new java.net.URI(uri)
-      if (u.getScheme == "file") Some(java.nio.file.Paths.get(u)) else None
-    } catch { case _: Exception => None }
 
   // A Death only carries the rendered report, but Pos.report always leads
   // with "fileName:line:column: ...", so recover the position from the

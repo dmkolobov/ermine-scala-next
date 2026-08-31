@@ -162,6 +162,30 @@ object Session {
       }
   }
 
+  /** An OPEN EDITOR BUFFER (roadmap 5.3): text the language server holds
+    * for a file whose saved contents may be older, or which has never
+    * been saved at all.
+    *
+    * Identity is content-bearing, and `lastModified` is the document
+    * VERSION.  Both matter, because depCache is process-global and
+    * mtime-guarded: keying off the module name the way Literal and
+    * Dynamic do would let one editor's text replay into every other
+    * session's load of that name, and serving a buffer through a
+    * Filesystem dep would hand back the dep built from the SAVED text,
+    * whose on-disk mtime does not move when the buffer changes.  That is
+    * the poisoning class fixed at D0 and D3 part 3b; this subclass exists
+    * so the editor path cannot re-open it. */
+  case class Buffer(fileName: String, contents: String, version: Long) extends SourceFile {
+    override def exotic = true
+    def lastModified = Some(version)
+    def defaultModuleName: String = Filesystem(fileName).defaultModuleName
+    def interfaceContents = None
+    // toString is the FILE NAME threaded into parse states and every Pos
+    // built from them: decorating it would break the "file:line:col:"
+    // contract the Diagnostics regex and definition locations rest on.
+    override def toString = fileName
+  }
+
   case class Resource(module: String, url: URL) extends SourceFile {
     def contents = {
       val source = scala.io.Source.fromURL(url, "UTF-8")
@@ -281,6 +305,7 @@ object Session {
 
     private def sourceFileTypeScore(sf: SourceFile) = sf match {
       case _: Filesystem => 0
+      case _: Buffer => 5
       case _: Resource => 10
       case _: Literal => 20
       case _: NotFound => 30
@@ -294,6 +319,8 @@ object Session {
           case (_, _, n) if n /== 0                => n
           case (Filesystem(fn1, e1),  Filesystem(fn2, e2),  _) =>
             Ordering[(String, Boolean)].compare((fn1,e1),(fn2,e2))
+          case (Buffer(fn1, _, v1), Buffer(fn2, _, v2), _) =>
+            Ordering[(String, Long)].compare((fn1,v1),(fn2,v2))
           case (Resource(m1, u1), Resource(m2,u2),  _) =>
             Ordering[(String,String)].compare((m1,u1.toString), (m2,u2.toString))
           case (Literal(s1, mn1), Literal(s2, mn2), _) =>

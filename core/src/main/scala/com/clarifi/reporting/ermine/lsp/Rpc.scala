@@ -289,6 +289,20 @@ final class Wire(in: InputStream, out: OutputStream, log: String => Unit) {
     }
   }
 
+  /** Whether input is already waiting, giving it up to `millis` to turn
+    * up.  The dispatch loop uses this to notice a QUIET stream, which is
+    * how a debounced check fires without a second thread or a queue
+    * (roadmap decision 3: one request at a time, no exceptions). */
+  def ready(millis: Int): Boolean = {
+    val deadline = System.nanoTime + millis * 1000000L
+    var n = in.available()
+    while (n <= 0 && System.nanoTime < deadline) {
+      Thread.sleep(5)
+      n = in.available()
+    }
+    n > 0
+  }
+
   def send(msg: Json): Unit = {
     val body = Json.print(msg).getBytes(UTF_8)
     out.write(("Content-Length: " + body.length + "\r\n\r\n").getBytes(US_ASCII))
@@ -324,8 +338,23 @@ final class Server(wire: Wire, log: String => Unit) {
   private var notifications = Map.empty[String, Json => Unit]
   private var exitCode      = Option.empty[Int]
 
+  private var idleQuietMs: Int          = 0
+  private var idlePending: () => Boolean = () => false
+  private var idleWork:    () => Unit    = () => ()
+
   def onRequest(method: String)(h: Json => Json): Unit      = requests += method -> h
   def onNotification(method: String)(h: Json => Unit): Unit = notifications += method -> h
+
+  /** Deferred work: when `pending` says there is some AND the input
+    * stream has been quiet for `quietMillis`, `work` runs on the
+    * dispatch thread, between messages.  With nothing pending the loop
+    * blocks on the stream exactly as before, so this costs no latency
+    * on ordinary traffic. */
+  def onIdle(quietMillis: Int)(pending: => Boolean)(work: => Unit): Unit = {
+    idleQuietMs = quietMillis
+    idlePending = () => pending
+    idleWork    = () => work
+  }
 
   /** End the run() loop after the current message. */
   def stop(code: Int): Unit = exitCode = Some(code)
@@ -344,7 +373,10 @@ final class Server(wire: Wire, log: String => Unit) {
   def run(): Option[Int] = {
     var open = true
     while (open && exitCode.isEmpty)
-      wire.receive() match {
+      if (idlePending() && !wire.ready(idleQuietMs))
+        try idleWork()
+        catch { case e: Throwable => log("rpc: idle work crashed: " + stackTrace(e)) }
+      else wire.receive() match {
         case None       => open = false
         case Some(text) => handle(text)
       }

@@ -41,7 +41,7 @@ object Main {
       val wire   = new Wire(System.in, stealStdout(), log)
       val server = new Server(wire, log)
       val ermine = new Resident(log)
-      val docs   = new Definitions.Docs
+      val docs   = new Documents
       var shutdownSeen = false
 
       def logMessage(messageType: Int, message: String): Unit =
@@ -62,7 +62,7 @@ object Main {
           "capabilities" -> Json.obj(
             "textDocumentSync" -> Json.obj(
               "openClose" -> Json.Bool(true),
-              "change"    -> Json.num(0),      // no didChange bodies yet: diagnostics run on open/save
+              "change"    -> Json.num(1),      // FULL: didChange carries the whole document (5.3)
               "save"      -> Json.Bool(true)),
             "definitionProvider" -> Json.Bool(true),
             "hoverProvider"      -> Json.Bool(true)),

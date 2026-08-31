@@ -8,11 +8,11 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 2 OPEN (signed off 2026-08-31). 5.1, 5.2 and 5.2b done — the
-read path is error-tolerant end to end, reports every phase's diagnostics,
-blames syntax errors where the parser actually gave up, and the splitter is
-TOTAL (no input shape loses the whole module any more).
-NEXT: 5.3 (in-memory documents + didChange) · Seeded 2026-08-30 (session that shipped the
+Status: STAGE 2 OPEN (signed off 2026-08-31). 5.1, 5.2, 5.2b and 5.3 done —
+the read path is error-tolerant end to end, reports every phase's
+diagnostics, blames syntax errors where the parser actually gave up, the
+splitter is TOTAL, and checking runs on open BUFFERS as they are typed.
+NEXT: 5.4 (tolerant type checking) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -22,7 +22,7 @@ scoping fix, commits f9cf42a / 41b13cc).
   Stage 0; suites GROW, so a commit that adds tests updates the count in
   its iteration-log line, and green-except-the-known-one is the invariant
 - `tracker/tools/repl-smoke.sh`: all suites PASS (4 as of D2)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (47 as of 5.2b)
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (57 as of 5.3)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 - KNOWN FLAKE: core/test suites run concurrently in one JVM and rarely
@@ -474,7 +474,7 @@ STAGE-2 INVARIANTS (hard):
   unchanged; TestStatementExtents and TestSurfaceParsers are the
   oracles) and the REPL goldens in the same commit.
 
-- [ ] **5.3 In-memory documents + didChange**.  Today the server reads
+- [x] **5.3 In-memory documents + didChange**.  Today the server reads
   the SAVED file (sync kind 0; no didChange registered — Main.scala:65)
   so mid-keystroke anything is impossible.  Add: TextDocumentSync FULL
   (full-text didChange bodies; incremental deltas are a later
@@ -1469,3 +1469,46 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   shape the module with their healthy neighbours intact, and the
   prefix parse is blamed at the leftover.
   Suite 882 (881+known), repl 4, lsp 47/47, boot 129.
+
+- 2026-08-31 (5.3 — in-memory documents): the server checks the BUFFER
+  now, not the saved file.  TextDocumentSync is FULL (change: 1), and
+  lsp/Documents.scala is the per-uri record — text, version, and the
+  navigation index folded together, because a check, a definition
+  request and the sibling loader all have to agree on what the file
+  currently says.  Definitions.Docs is gone into it.
+  `Session.Buffer(fileName, contents, version)` is the new SourceFile,
+  per the review's requirement: identity is CONTENT-BEARING and
+  lastModified IS the document version.  Both halves matter, and the
+  suite pins both — Literal's module-name keying would replay one
+  editor's text into every other session's load of that name, and a
+  Filesystem dep's mtime does not move when a buffer changes, so the
+  dep built from the SAVED text would be served back (the D0/D3-part-3b
+  poisoning class).  Superseded buffers are evicted from depCache on
+  each edit; that is hygiene, the mtime guard is the correctness.
+  ONE TRAP FOUND THE HARD WAY: SourceFile.toString is the fileName
+  threaded into every ParseState and every Pos built from one, so
+  decorating it ("Bad.e<buffer 1>") silently broke both the Diagnostics
+  position regex and every definition location — TestEditorBuffers pins
+  it now.
+  checkFile resolves through open buffers FIRST (`docs.loaderFor(dir)`
+  ahead of the filesystem loader), so a cross-file check sees a
+  sibling's unsaved edits; the buffer loader does not require the file
+  to exist, which is exactly the never-saved-module case the filesystem
+  loader cannot serve.
+  Debounce without a second thread or a queue: `Server.onIdle` runs
+  deferred work when `pending` says there is some AND the input stream
+  has been quiet (`Wire.ready`, ~300ms).  With nothing pending the loop
+  blocks on the stream exactly as before, so ordinary traffic pays no
+  latency.  didOpen and didSave are acts and check at once; didChange
+  is a keystroke and only queues, one entry per uri, with the versioned
+  drop guarding the case where a newer edit was handled while an
+  earlier check ran.  Measured in the smoke log: didChange 15.085 ->
+  check 15.396, 311ms.
+  lsp-smoke +10 (57): sync asserts change == 1; a new Edit.e fixture is
+  broken and fixed through didChange alone with diagnostics appearing
+  and clearing and NO save (and the file on disk verified untouched); a
+  definition that moves down a line is found at its new position; and
+  the SIBLING check — Good.e's buffer moves `answer` down a line and
+  goto-definition from Edit.e lands on the new line, in text that was
+  never written to disk.  New suite TestEditorBuffers (6).
+  Suite 888 (887+known), repl 4, lsp 57/57, boot 129.

@@ -100,7 +100,9 @@ def main():
     check("initialize.definitionProvider", caps.get("definitionProvider") is True)
     check("initialize.hoverProvider", caps.get("hoverProvider") is True)
     sync = caps.get("textDocumentSync", {})
-    check("initialize.sync", sync.get("openClose") is True and sync.get("save") is True)
+    # 5.3: TextDocumentSync FULL — didChange carries the whole document
+    check("initialize.sync", sync.get("openClose") is True and sync.get("save") is True
+          and sync.get("change") == 1, repr(sync))
 
     client.notify("initialized", {})
     ready = client.wait_for(
@@ -262,6 +264,56 @@ def main():
     check("hover sig sq : Int", r is not None
           and "Int" in r["contents"]["value"], repr(r))
     check("hover local x -> null", hover("Nav.e", 5, 10) is None)
+
+    # --- 5.3: didChange drives everything, with no save at all ---------
+    def change(name, text, version):
+        client.notify("textDocument/didChange", {
+            "textDocument": {"uri": uri(name), "version": version},
+            "contentChanges": [{"text": text}]})
+
+    edit_src = (FIXTURES / "Edit.e").read_text()
+    good_src = (FIXTURES / "Good.e").read_text()
+
+    open_doc("Edit.e")
+    check("Edit.e clean on open", client.diagnostics_for(uri("Edit.e")) == [])
+
+    change("Edit.e", edit_src.replace("v = answer", "v = = answer"), 2)
+    ds = client.diagnostics_for(uri("Edit.e"))
+    check("Edit.e didChange reports without a save", len(ds) == 1, repr(ds))
+
+    change("Edit.e", edit_src, 3)
+    check("Edit.e didChange clears without a save",
+          client.diagnostics_for(uri("Edit.e")) == [])
+    check("Edit.e on disk untouched by the buffer edits",
+          (FIXTURES / "Edit.e").read_text() == edit_src)
+
+    # A definition that MOVES is found at its new position, still no save.
+    r = definition("Edit.e", 5, 4)  # `v` in `w = v`
+    check("def v -> line 4 before the edit", r is not None
+          and r["range"]["start"] == {"line": 4, "character": 0}, repr(r))
+    change("Edit.e", edit_src.replace("\nv = answer", "\n\nv = answer"), 4)
+    check("Edit.e still clean after the insert",
+          client.diagnostics_for(uri("Edit.e")) == [])
+    r = definition("Edit.e", 6, 4)  # `v` in `w = v`, now one line down
+    check("def v -> line 5 after the edit, no save", r is not None
+          and r["range"]["start"] == {"line": 5, "character": 0}, repr(r))
+
+    # A SIBLING's unsaved edit is seen by the importing file's next check:
+    # move Good.answer down a line in ITS buffer and re-check Edit.e.
+    change("Good.e", good_src.replace("\nanswer = 42", "\n\nanswer = 42"), 2)
+    client.diagnostics_for(uri("Good.e"))
+    change("Edit.e", edit_src, 5)
+    check("Edit.e clean against the edited sibling",
+          client.diagnostics_for(uri("Edit.e")) == [])
+    r = definition("Edit.e", 4, 4)  # `answer`, imported from the Good.e BUFFER
+    check("def answer -> the sibling buffer's new line", r is not None
+          and r["uri"] == uri("Good.e")
+          and r["range"]["start"]["line"] == 3, repr(r))
+    change("Good.e", good_src, 3)
+    client.diagnostics_for(uri("Good.e"))
+
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Edit.e")}})
+    check("Edit.e cleared on close", client.diagnostics_for(uri("Edit.e")) == [])
 
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Bad.e")}})
     check("Bad.e cleared on close", client.diagnostics_for(uri("Bad.e")) == [])

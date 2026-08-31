@@ -24,17 +24,11 @@ object Definitions {
                        target: Option[Target], hover: Option[(String, Type)])
   final case class DocIndex(occs: List[Occ])
 
-  /** Per-document indexes, kept across failed checks (stale navigation
-    * beats none) and dropped on didClose.  Single-threaded, like all
-    * request handling. */
-  final class Docs {
-    private var m = Map.empty[String, DocIndex]
-    def put(uri: String, idx: DocIndex): Unit = m += uri -> idx
-    def drop(uri: String): Unit = m -= uri
-    def get(uri: String): Option[DocIndex] = m get uri
-  }
+  // The per-document indexes live in Documents alongside the buffer text
+  // and version (roadmap 5.3): a definition request and the check that
+  // built the index must agree on what the file currently says.
 
-  def install(server: Server, docs: Docs, log: String => Unit): Unit = {
+  def install(server: Server, docs: Documents, log: String => Unit): Unit = {
     server.onRequest("textDocument/definition") { params =>
       val answer = for {
         occ <- occurrenceAt(docs, params)
@@ -55,13 +49,13 @@ object Definitions {
     }
   }
 
-  private def occurrenceAt(docs: Docs, params: Json): Option[Occ] =
+  private def occurrenceAt(docs: Documents, params: Json): Option[Occ] =
     for {
       uri  <- params / "textDocument" flatMap (_ / "uri") flatMap (_.str)
       pos  <- params / "position"
       line <- pos / "line" flatMap (_.int)
       chr  <- pos / "character" flatMap (_.int)
-      idx  <- docs get uri
+      idx  <- docs index uri
       occ  <- hit(idx, line + 1, chr + 1)  // LSP is 0-based, Pos/Span 1-based
     } yield occ
 
