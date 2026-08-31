@@ -9,9 +9,13 @@ tracker/TICKET-perf-type-inference.md.  Editor-path measurements and the
 machinery they came from: tracker/LSP-ROADMAP.md, Stage 2 (item 5.5 and the
 G2 gate evidence).
 
-Status: P1 DONE (2026-08-31).  G3-0 signed off; the harness exists and the
-BASELINE OF RECORD is measured (see Baselines).  Nothing is optimized yet and
-nothing may be until P2 (fresh profiles for both targets) reports.  NEXT: P2.
+Status: P1, P2 and P5(a) DONE (2026-08-31).  G3-0 signed off.  The harness
+exists, the BASELINE OF RECORD is measured, both targets are freshly profiled,
+and the first optimization has landed — with the loop's most useful finding so
+far being that the profile over-attributes a tight loop 3.5x, so every share
+quoted here is an upper bound.  NEITHER TARGET HAS MOVED MEASURABLY YET.
+NEXT: P3 (free-variable collection, on the batch target — the one whose ~1%
+noise floor can verify a modest win).
 
 ## The two targets
 
@@ -420,11 +424,27 @@ that grounds: both profiles now exist, and the editor one found a QUADRATIC —
 `StatementExtents.offsetOf` re-walks the file from offset 0 on every call, ~630
 times per keystroke.  P2's own clause in this checklist says "the next item
 chosen is whichever P3-P7 those tables point at", and the tables point at
-P5(a) first.  ORDER FROM HERE: **P5(a) offsetOf, then P5(b) `Fail.++`, then
-P3** — cheapest first, and the first two are defects with a profile behind them
-rather than tuning knobs.  P3 remains the biggest single prize on [B] (33.0%)
-and is not being dropped, only queued behind two smaller and much cheaper wins.
-Say the word if [B] should stay first regardless.
+P5(a) first.  ORDER FROM HERE, as of P2: P5(a), then P5(b), then P3.
+
+**REVISED AGAIN AFTER P5(a) — and it lands back on what G3-0 signed off.**
+P5(a) measured the two targets' NOISE FLOORS, which nobody had:
+
+| target             | run-to-run spread | as % of the target | smallest visible win |
+|--------------------|-------------------|--------------------|----------------------|
+| [B] batch cold     | 0.11s on 11.46s   | ~1%                | ~0.15s               |
+| [E] editor total   | ~0.05s on 1.62s   | ~3%                | ~0.05s               |
+| [E] editor read    | ±0.045s on 0.82s  | ~5.5%              | ~0.05s               |
+
+[B] resolves 1%; [E] cannot see anything under ~50ms, and after the 3.5x
+over-attribution correction most remaining [E] candidates are plausibly in that
+range — P5(a) certainly was, at 17ms.  So the editor path can only be moved by
+something big (P5(c), the trampoline, which is architectural and needs its own
+design), while the batch path can VERIFY a modest win.  **NEXT IS P3**, which
+is the biggest single leaf family (33.0%, upper bound) on the target that can
+actually measure it — which is the ordering G3-0 signed off in the first place,
+now with evidence rather than convenience behind it.  P5(b) stays queued: worth
+doing, but microbenchmark `Fail.++` FIRST, because if it is another sub-floor
+17ms it should be judged as one.
 
 Known forks that will land in this section when reached: P7's design; P8's scope
 if the DAG has real width; the `Free`-trampoline question inside P5(c), which is
@@ -620,5 +640,5 @@ deferred by LSP 5.5).
   Baselines: core/test **904** total (901+known was 902; +2 are this item's own
   properties), 903 pass, 1 fail (`Constraints.disjunction sound`, the known
   one); repl-smoke 4 suites; lsp-smoke 82 checks; boot 129; npm test PASS.
-  NEXT: P5(b) `Fail.++` — but microbenchmark the merge before investing, per
-  the calibration above.
+  NEXT: P3 — see the revised ordering note in Blocked/Awaiting; P5(a)'s
+  noise-floor numbers put the measurable prize back on the batch target.
