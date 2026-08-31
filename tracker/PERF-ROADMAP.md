@@ -362,8 +362,9 @@ any change, then the cheapest change with the largest profiled share, then the
   5.3 picked.  Cheap, but LAST among the [E] items: shortening it while a check
   costs 1.27s just queues more work.
 
-- [ ] **P7 [B] Substitution representation** (ticket candidate 3) — composing
-  substitutions, or mutable metavariables with levels.  BIG.  DESIGN FIRST:
+- [ ] **P7 [B] Substitution representation** (ticket candidate 3) — PROMOTED
+  2026-08-31 ahead of P3 on the `instantiateType` evidence.  **DESIGN WRITTEN,
+  see "P7 DESIGN" below.**  Original framing kept for the record:
   write the design into this file (what replaces `HasTypeVars.sub`'s whole-tree
   rebuild, what happens to `Subst`'s existing structure, how `.ei` output stays
   byte-identical) and take it to Blocked/Awaiting for sign-off BEFORE writing
@@ -393,6 +394,146 @@ any change, then the cheapest change with the largest profiled share, then the
   Report.e's largest definition), say so in the log with the number — that turns
   a gated feature into an available one and is a hand-off to the LSP roadmap,
   not work done here.
+
+
+## P7 DESIGN (written 2026-08-31; awaiting sign-off before any code)
+
+### The measured problem
+
+`instantiateType` (Subst.scala:182-188) rewrites the ENTIRE substitution map on
+every variable instantiation, and maps `remembered` too.  The class comment
+above `SubstEnv` states why (Subst.scala:87-92): *"We maintain the invariant
+that all the types/kinds in the map are always fully substituted, so we never
+need to further substitute something that we look up."*  It is a deliberate
+design decision, not an oversight, and everything below is about what depends
+on it.
+
+Measured: `instantiateType` is the nearest enclosing driver for **42% of
+ftv/substitution samples on a record/chart-heavy example and 44% on the stdlib
+batch**, `subsumeType` second at 27%/33%.  A SECOND quadratic sits beside it —
+`instantiateKind` (Subst.scala:176) also rewrites the whole TYPE map, and is
+reached from inside every `unifyType` variable case via `kindCheck`
+(Subst.scala:236).  It is NOT inside the 42-44% figure; `kindCheck` completes
+before `instantiateType` is entered.
+
+### Step 0 — THE GATE (done; it was the blocking prerequisite)
+
+Decision 6 makes `g1-validate.sh` mandatory for exactly this change class, and
+**it had not worked since post-G1 D3.**  Four breakages, all now fixed:
+`run old` (retired in 80df1eb, exits 2); `tools.G1Importing` (deleted in
+9ad5909, ClassNotFoundException); an assertion of exactly 5 group parse-errors
+(it is 3 — Stage 1's split pipeline re-parses two modules the fused one could
+not, so the gate reported an IMPROVEMENT as a failure); and
+`tracker/g1-baseline`, committed at G1 as a drift tripwire and referenced by
+nothing in tracker/tools, never once checked.
+It failed loudly (exit 1) rather than passing silently, so nobody was misled —
+it simply had not been run since D3.
+**Re-established at HEAD: double run, 129 files, 1447 signatures, EQUIVALENT.**
+
+**GATE QUESTION FOR SIGN-OFF — re-record `tracker/g1-baseline`?**  On its first
+arming the tripwire reported 1447 signatures with exactly ONE differing:
+`lookbackJoin`, the documented solver-order-sensitive residual.  1446/1447 are
+alpha-identical to the G1 baseline; browse/groups differ because Stage 1
+replaced the pipeline.  So the baseline is STALE, not the tree drifted.  It is
+left ADVISORY rather than re-recorded, because re-recording a golden is a
+Decision 9 act.  Re-record it and the tripwire becomes a real gate for P7; do
+not, and P7 has only the double-run self-agreement, which proves determinism
+but not stability against the pre-P7 tree.
+
+### Step 1 — two representation-neutral wins, FIRST
+
+Neither touches the invariant and neither can move a `.ei` byte; both are
+measurable on [B], whose noise floor is ~1%.  Do these before any
+representation change, so P7's own number is measured against a clean floor.
+  (a) `Kind.subKind` (Kind.scala:90) has NO empty-map fast path, unlike
+  `Type.subType` (Type.scala:606-607 `case m if m.isEmpty => a`).  And
+  `AppT.subst`/`AppT.map` (Type.scala:213, :209) allocate a fresh node even
+  when both children are unchanged.  Adding the guard and a physical-equality
+  short-circuit makes the CURRENT eager rewrite cheaper and produces `eq`
+  trees.  One stated side effect: more node sharing means
+  `AppT.memoizedKindSchema` (Type.scala:214) survives rewrites more often —
+  only closed schemas are cached (Subst.scala:495), so it should be safe, but
+  it is a behaviour change to kind-inference caching, not a pure allocation
+  win, and the commit must say so.
+  (b) `Vars.contains` (Vars.scala:37) is `exists(_ == v)`, and `Vars` overrides
+  only `foreach`, so `exists` goes through `ForeachIterable.iterator`
+  (ForeachIterable.scala:17-21), which materialises the WHOLE variable Vector
+  with no early exit.  That is paid by every occurs check (Type.scala:667,
+  reached from Subst.scala:203/206/235/238 — every unification variable case)
+  and by `ts partition (tvs contains _)` at Subst.scala:1089.  `Vars.scala:36`
+  carries the author's own warning about exactly this.
+
+### Step 2 — instrument BEFORE choosing a representation
+
+Three counts, each cheap, each decisive.  No design survives without them:
+  (i) **Does `restrictTypes` ever re-open the boundness guard?**
+  `hm.types.get(v)` (Subst.scala:182) is the ONLY guard against double
+  instantiation, and `restrictTypes` DELETES keys (Subst.scala:153), so after a
+  restrict a second `instantiateType` on the same variable legally succeeds and
+  binds it to something different.  Any scheme that RETAINS bindings so chains
+  can be chased turns that into the panic at Subst.scala:183.  Count it over
+  the 129 modules.  **If it ever fires, mutable cells are off the table in
+  their simple form.**
+  (ii) **`instantiateKind` (line 176) vs `instantiateType` (line 186)** — how
+  many whole-map rewrites each, and how many bytes each rebuilds.  Most kinds
+  are `Star` and fall through `case _ if (e1 == e2)` at Subst.scala:211, so
+  `instantiateKind` may fire rarely; nothing currently knows.
+  (iii) **How large does `hm.types` actually get** on the per-module env
+  (Session.scala:858) versus the editor's per-SCC envs (TolerantCheck.scala:246
+  already creates a fresh SubstEnv per component)?  M is the term in M^2.
+
+### Step 3 — the representation, conditional on Step 2
+
+NOT "mutable metavariables with levels".  Levels are refused for now: nothing
+in the tree LOWERS levels on binding, `Gamma` demonstrably contains live
+metavariables (Subst.scala:781, :874, :958), and `generalize` runs at App and
+Lam nodes rather than let-nodes — so a level predicate would silently
+over-generalize.  Levels need their own measurement showing where
+"free in Gamma" and the level test disagree on the corpus.
+
+The candidate is **lazy resolution with value write-back**:
+stop the eager sweep at Subst.scala:186, resolve on read, and WRITE THE
+RESOLVED VALUE BACK into the map so the invariant is re-established lazily and
+the cost amortises.  Write-back — not union-find path compression — is what
+stops the quadratic reappearing: the dominant cost is resolving STRUCTURE, not
+walking variable chains.  Two things this requires that a naive version misses:
+the read must RECURSIVELY resolve what it returns (`VarT.subst`, Type.scala:225,
+returns the looked-up value verbatim and never re-descends), and every site that
+MATCHES on type shape must walk first — `unifyType`, `matchFunType`,
+`occursCheckType` (Type.scala:665-667, whose `case VarT(_) => false` is sound
+only because a residual VarT is known unbound), and the predicate machinery
+`pnf`/`isPNF` (Subst.scala:330-331).
+
+`restrictTypes` must be SPLIT, not removed: keep every binding for RESOLUTION,
+and give restrict a second, smaller LIVE KEY SET which is what the escape scans
+iterate (Subst.scala:286, :543 via :100-101).  Making it a no-op instead would
+reject currently-accepted programs at Subst.scala:537-543 AND change ftv(Gamma)
+at :793-794, hence which variables generalize, hence the inferred scheme.
+
+### Named silent-divergence sites — the ones that change a TYPE, not crash
+
+Every one of these must be argued individually in the implementing commit:
+Subst.scala:793-794 (restrict-then-`substGamma`, changes ftv(Gamma) hence
+generalization); :182 (the boundness guard re-opening); :537-543 (subsumption
+escape scan — `tts` are e2's LEGITIMATE instantiations and deleting them is
+what stops them reading as escapes); :286 (masked skolem escape — must
+zonk-through-masked-keys THEN mask); constraint discharge (`entails` compares
+with raw `==` at :314, `pnf` treats any residual VarT as head-normal at :330,
+`Ambiguity.simple` at :360 — an unwalked bound VarT makes a discharged
+constraint look undischarged, adding a residual constraint, which DOES trip the
+.ei oracle at G1Compare.scala:74); the structural fallbacks `case _ if
+(e1 == e2)` at :269 and :211 (Forall and Exists have no `equals` override, so
+that branch is REFERENCE equality); and `substAlias` at :220-221 with
+`unifyType`'s AppT case recursing on an unsubstituted head at :242.
+
+### Verification, beyond the existing oracles
+
+The suite mostly catches crashes; these changes produce wrong TYPES.  So:
+the repaired `g1-validate.sh` double run; the baseline tripwire once
+re-recorded; REPL goldens byte-unchanged; and a differential the tree does not
+have yet — **dump the fully-resolved type at every `generalize` (Subst.scala:1114)
+over the 180-file corpus and diff before/after.**  That is the only instrument
+that sees a changed inferred type that still renders alpha-equal.
 
 **GATE G3**: stop the loop for sign-off when either target has moved enough to
 be worth reviewing, or when the remaining candidates all need design decisions.
@@ -834,3 +975,50 @@ deferred by LSP 5.5).
   NEXT, ahead of P3.  Not doing it unilaterally: it reverses a stated ordering
   twice over and P7's own entry requires a written design and a gate.
   No Scala touched; last full baseline run stands.
+
+- 2026-08-31 (P7 PROMOTED; DESIGN WRITTEN; AND THE GATE WAS BROKEN).
+  No Scala touched.  Two deliverables: a repaired correctness gate, and the P7
+  design (in full above, under "P7 DESIGN").
+
+  THE GATE HAD NOT WORKED SINCE POST-G1 D3, which matters more than the design,
+  because Decision 6 names it as mandatory for exactly this change class.  Four
+  breakages: `g1-validate.sh:34` called `g1-diff.sh run old`, retired in
+  80df1eb (exits 2); it ran `tools.G1Importing`, deleted in 9ad5909
+  (ClassNotFoundException); `g1-diff.sh` asserted exactly 5 group parse-errors
+  when it is now 3, because Stage 1's split pipeline re-parses two modules the
+  fused one could not — the gate was reporting an IMPROVEMENT as a failure; and
+  `tracker/g1-baseline`, committed at G1 as a drift tripwire, was referenced by
+  NOTHING in tracker/tools and had never been checked.  It failed loudly (exit
+  1) rather than passing silently, so nobody was misled — it had simply not
+  been run since D3, which fits: G1 was signed off before D3 landed.
+  **Repaired, and the number is re-established at HEAD: double run, 129 files,
+  1447 signatures, EQUIVALENT, exit 0.**
+
+  THE TRIPWIRE EARNED ITS KEEP ON ITS FIRST ARMING: 1447 signatures, exactly
+  ONE differing — `lookbackJoin`, the documented solver-order-sensitive
+  residual.  1446/1447 alpha-identical to the G1 baseline.  So the baseline is
+  STALE (it predates Stage 1's pipeline replacement), not the tree drifted.
+  Left ADVISORY rather than re-recorded: re-recording a golden is a Decision 9
+  act and needs sign-off.  **That is the open gate question.**
+
+  THE DESIGN, one line each.  Step 1: two representation-neutral wins
+  (`Kind.subKind` has no empty-map fast path; `Vars.contains` materialises the
+  whole variable vector on every occurs check) that cannot move a .ei byte and
+  are measurable on [B]'s 1% floor.  Step 2: three counts that must precede any
+  representation change — above all whether `restrictTypes` ever re-opens
+  `instantiateType`'s boundness guard, because if it does, mutable cells are
+  off the table in their simple form.  Step 3: lazy resolution with VALUE
+  WRITE-BACK (not union-find path compression — the dominant cost is resolving
+  structure, not walking chains), with `restrictTypes` SPLIT into a resolution
+  set and a live scan set rather than removed.
+  LEVELS ARE REFUSED for now, with a reason: nothing in the tree lowers levels
+  on binding, Gamma demonstrably contains live metavariables, and `generalize`
+  runs at App/Lam nodes rather than let-nodes, so a level predicate would
+  silently over-generalize.
+  Eight named sites would change an inferred TYPE rather than crash; each must
+  be argued in the implementing commit.
+  A SECOND QUADRATIC was found and is NOT inside the 42-44% figure:
+  `instantiateKind` (Subst.scala:176) also rewrites the whole type map, reached
+  from every `unifyType` variable case via `kindCheck` — Step 2(ii) counts it
+  before anyone budgets for it.
+  NEXT: Step 1, once the baseline gate question is answered.
