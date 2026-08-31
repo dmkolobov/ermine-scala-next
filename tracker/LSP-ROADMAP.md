@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 4.2 IN PROGRESS: .ei ORACLE AT 1447/1447 SIGS with ONE known delta (lookbackJoin residual constraints — the documented solver-order case); next: remaining oracle layers (groups, importing goldens, warm reload, eval fixtures, rejected corpus, 180-file corpus under both pipelines) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 4.2 IN PROGRESS: layers dry so far — .ei (1 known delta: lookbackJoin), browse (known-delta noise), groups, importing goldens, warm reload (full matrix), eval (repl-smoke 3/3 new-pipeline + parallel loader), examples sweep (1 moved refusal, in ledger); next: occurrence->def-site differential (the direct resolution oracle, 180 files), then scope-at-position sampling + 1.3 corpus parameterization · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -883,3 +883,22 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   as browse KNOWN-DELTA with the .ei comparator as authority.
   Baselines: 866 (865+known), repl 3/3, lsp 27/27; the Legend flake
   re-ran green (6th sighting).
+
+- 2026-08-30 (4.2 batch 3, verification-only): five more oracle layers
+  run dry with NO code changes. :groups dumps byte-identical old|new
+  (compare's diff was already silent). G1Importing verify: 129 modules
+  + 6 synthetics ALL MATCH under BOTH pipelines. Warm interface-backed
+  reload: full matrix (old|new pipeline x old|new .ei) boots 129
+  modules warm (~6s) and compiles fresh examples through the interface
+  remap path cleanly (Accumulate.e, GroupBy.e). Eval layer: repl-smoke
+  3/3 (33 checks) under the new pipeline WITH THE PARALLEL LOADER —
+  first proof the new pipeline is safe without loadInSeries (note: a
+  loadInSeries console boot prints "Loaded two modules", which the
+  smoke filter's `Loaded [0-9]*` regex drops — flag left off).
+  Examples sweep (the 19-file half of the 180-file rule): 18/19
+  identical outcomes; guide/HelloWorld.e is a MOVED REFUSAL (fused
+  parse-time "unmatched '{'" 43:42 -> new typecheck "undefined term"
+  48:21 at the t2 reference), recorded in the surface-notes ledger.
+  Remaining 4.2 layers: occurrence->def-site differential (the big
+  one — also 4.3's spec), scope-at-position sampling, 1.3 corpus/
+  TestScopes pipeline parameterization, 32 non-boot modules under new.

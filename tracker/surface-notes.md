@@ -75,3 +75,10 @@ disposition when it lands:
 - 3.2/3.4: missing bracket hooks, empty brace literal.
 Still parse-time: bare prefix stacking, dead-underscore affix (lexer
 parity, 2.2).
+
+4.2 corpus sweep moved refusal (2026-08-30): core/examples/guide/
+HelloWorld.e (malformed relational envelope, line 43) — fused refuses at
+parse ("unmatched '{'" 43:42); the new pipeline parses the brace
+tolerantly and refuses at typecheck ("undefined term" 48:21, pointing at
+the reference to the failed binding t2).  Both pipelines reject the
+file; the other 18 example files load/fail identically under both.
