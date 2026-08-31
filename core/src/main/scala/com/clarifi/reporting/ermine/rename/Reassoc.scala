@@ -2,6 +2,7 @@ package com.clarifi.reporting.ermine.rename
 
 import com.clarifi.reporting.ermine.{
   Fixity, Idfix, Infix, InfixN, InfixR, Local, Postfix, Prefix }
+import com.clarifi.reporting.ermine.{ Infix => CoreInfix }
 import scalaparsers.{ Assoc, AssocL, AssocN, AssocR }
 import com.clarifi.reporting.ermine.surface._
 import Renamer.Diag
@@ -197,12 +198,12 @@ object Reassoc {
           case Left(d)    => diags += d; SErrorTerm(c.loc, d.message)
         }
       case SApp(f, a) => SApp(go(f), go(a))
-      case SLam(l, ps, b) => SLam(l, ps, go(b))
+      case SLam(l, ps, b) => SLam(l, ps.map(pat), go(b))
       case SSig(l, tm, ann) => SSig(l, go(tm), ann)
       case SNeg(l, m, o) => SNeg(l, m, go(o))
       case SParen(l, i) => SParen(l, go(i))
       case STuple(l, es) => STuple(l, es.map(go))
-      case SCase(l, e, alts) => SCase(l, go(e), alts.map(a => a.copy(body = go(a.body))))
+      case SCase(l, e, alts) => SCase(l, go(e), alts.map(a => a.copy(pattern = pat(a.pattern), body = go(a.body))))
       case SLet(l, ss, b) =>
         val saved = env
         env = blockDecls(ss, env, diags)
@@ -210,7 +211,7 @@ object Reassoc {
         env = saved
         r
       case SDo(l, ds) => SDo(l, ds.map {
-        case SDoBind(bl, p, ar, r) => SDoBind(bl, p, ar, go(r))
+        case SDoBind(bl, p, ar, r) => SDoBind(bl, pat(p), ar, go(r))
         case SDoExpr(e) => SDoExpr(go(e))
       })
       case SListLit(l, es, sfx) => SListLit(l, es.map(go), sfx)
@@ -225,16 +226,46 @@ object Reassoc {
       case other => other
     }
 
+    def pat(p0: SPat): SPat = p0 match {
+      case SPChain(c) =>
+        val items = c.items.map {
+          case Left(q)   => Right(pat(q)): Either[YOp[SPat], SPat]
+          case Right(op) =>
+            val b = 3  // ':' constructor ops live in the infix bucket
+            env.lookup(op.name.spelling, b, op.name.span.startLine, op.name.span.startCol) match {
+              case Some(Infix(prec, a)) => Left(YOp[SPat](op.name.span, prec, a, unary = false,
+                { case (x: SPat) :: (y: SPat) :: xs => Some((SPApp(op.name, List(y, x)): SPat) :: xs); case _ => None }))
+              case _ =>
+                diags += Diag(op.name.span, s"error: unknown operator ${op.name.spelling}")
+                Right(SPError(Real(op.name.span), "unknown operator"))
+            }
+        }
+        yard(items) match {
+          case Right(r) => r
+          case Left(d)  => diags += d; SPError(c.loc, d.message)
+        }
+      case SPParen(l, i)  => SPParen(l, pat(i))
+      case SPTuple(l, es) => SPTuple(l, es.map(pat))
+      case SPList(l, es)  => SPList(l, es.map(pat))
+      case SPStrict(l, i) => SPStrict(l, pat(i))
+      case SPLazy(l, i)   => SPLazy(l, pat(i))
+      case SPAs(l, n, i)  => SPAs(l, n, pat(i))
+      case SPSig(l, i, t) => SPSig(l, pat(i), t)
+      case SPApp(n, as)   => SPApp(n, as.map(pat))
+      case other => other
+    }
+
     def stmt(s: SStatement): SStatement = s match {
       case eq: SEquation =>
-        val whRewritten = eq.where.map { w =>
+        val eqp = eq.copy(args = eq.args.map(pat))
+        val whRewritten = eqp.where.map { w =>
           val saved = env
           env = blockDecls(w.statements, env, diags)
           val r = w.copy(statements = w.statements.map(stmt))
           env = saved
           r
         }
-        eq.copy(body = go(eq.body), where = whRewritten)
+        eqp.copy(body = go(eqp.body), where = whRewritten)
       case other => other
     }
 

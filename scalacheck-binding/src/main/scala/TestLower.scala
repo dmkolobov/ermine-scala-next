@@ -16,6 +16,10 @@ import Prop._
 object TestLower extends Properties("Lower 3.4a") {
   private val fx = ErmineFixture()
   import fx._
+  // the fixture writes loaded modules back into its baseEnv ("kind of
+  // evil"); different import families get their own fixtures so one
+  // family's transitive loads cannot shadow-poison another's reloads
+  private val fxAlt = ErmineFixture()
 
   private val im: Map[String, ImportSpec] =
     Map("Builtin" -> all, "Test" -> all, "Primitive" -> all,
@@ -23,20 +27,22 @@ object TestLower extends Properties("Lower 3.4a") {
         "List" -> all, "Bool" -> all)
 
   /** Old side: the fused pipeline's term parse (resolution + desugar). */
-  private def oldTerm(src: String): Term =
-    session { implicit s =>
-      loadModules(im.keySet.toList)
+  private def oldTerm(src: String, imps: Map[String, ImportSpec] = im,
+                      f: ErmineFixture = fx): Term =
+    f.session { implicit s =>
+      f.loadModules(imps.keySet.toList)
       val ps = ErParseState.mk("<test>", src, "Test")
-        .importing(s.termNames, s.cons.keySet, im, s.termNameOrigins, s.consOrigins)
+        .importing(s.termNames, s.cons.keySet, imps, s.termNameOrigins, s.consOrigins)
       com.clarifi.reporting.ermine.session.Session.parse(phrase(TermParsers.term), ps)._2
     }
 
   /** New side: surface -> rename -> reassociate -> lower. */
-  private def newTerm(src: String): Term =
-    session { implicit s =>
-      loadModules(im.keySet.toList)
+  private def newTerm(src: String, imps: Map[String, ImportSpec] = im,
+                      f: ErmineFixture = fx): Term =
+    f.session { implicit s =>
+      f.loadModules(imps.keySet.toList)
       val ps = ErParseState.mk("<scope>", "", "Test")
-        .importing(s.termNames, s.cons.keySet, im, s.termNameOrigins, s.consOrigins)
+        .importing(s.termNames, s.cons.keySet, imps, s.termNameOrigins, s.consOrigins)
       val scope = ModuleScope.Scope(ps.s.canonicalTerms, ps.s.canonicalTypes,
         ps.s.termNames, ps.s.termOrigins, ps.s.typeOrigins)
       val m = SurfaceParsers.module("t", "module T where\nw = " + src, "T")
@@ -46,7 +52,11 @@ object TestLower extends Properties("Lower 3.4a") {
       val body = m.statements.collectFirst { case SEquation(_, n, _, b, _) if n.spelling == "w" => b }.get
       val (re, ds) = Reassoc.term(body, env)
       if ((envDs ++ ds).nonEmpty) sys.error("reassoc diags: " + (envDs ++ ds))
-      Lower.term(re, Lower(r, "t", s.termNames))
+      val ctx = Lower(r, "t", s.termNames, scope)
+      val out = Lower.term(re, ctx)
+      val lds = ctx.diags.result()
+      if (lds.nonEmpty) sys.error("lower diags: " + lds)
+      out
     }
 
   // ---- structural equality modulo ids and locs --------------------------
@@ -113,9 +123,10 @@ object TestLower extends Properties("Lower 3.4a") {
     case _ => None
   }
 
-  private def diff(src: String): Prop = secure {
-    val o = oldTerm(src)
-    val n = newTerm(src)
+  private def diff(src: String, imps: Map[String, ImportSpec] = im,
+                   f: ErmineFixture = fx): Prop = secure {
+    val o = oldTerm(src, imps, f)
+    val n = newTerm(src, imps, f)
     alphaEq(o, n, Map()).isDefined :| s"OLD: ${o.toString.take(300)}\nNEW: ${n.toString.take(300)}"
   }
 
@@ -125,4 +136,32 @@ object TestLower extends Properties("Lower 3.4a") {
   property("case with constructor patterns") = diff("(m -> case m of\n  Just q -> q\n  Nothing -> 0)")
   property("tuples and sections are Product spines") = diff("(1, \"two\", (,))")
   property("let groups adjacent equations into one binding") = diff("let f 0 = 1; f q = q in f 2")
+
+  // ---- 3.4b: channel-A hooks (custom bracket syntax), do-notation -------
+
+  property("plain bracket literal folds the List hooks") = diff("[1, 2, 3]")
+
+  property("alias-suffixed bracket literal resolves _L hooks (DateRange shape)") = {
+    val aliased: Map[String, ImportSpec] =
+      Map("Builtin" -> all, "Test" -> all, "Primitive" -> all,
+          "Function" -> all, "List" -> ((Some("L"), List[com.clarifi.reporting.ermine.syntax.Explicit[Global]](), false)))
+    diff("[1, 2]_L", aliased, fxAlt)
+  }
+
+  property("a custom hook provider serves plain brackets (Vector shape)") = {
+    import com.clarifi.reporting.ermine.syntax.Single
+    val hideL: List[com.clarifi.reporting.ermine.syntax.Explicit[Global]] =
+      List(Single(Global("List", "empty_Bracket"), false), Single(Global("List", "cons_Bracket"), false))
+    val vectorish: Map[String, ImportSpec] =
+      Map("Builtin" -> all, "Test" -> all, "Primitive" -> all,
+          "Function" -> all, "Vector" -> all, "List" -> ((None, hideL, false)))
+    diff("[1, 2]", vectorish, fxAlt)
+  }
+
+  property("do-notation folds Syntax.Do.bind from the last statement back") =
+    diff("do q <- liftDo (Just 1); liftDo (Just 2); unit q", im + ("Syntax.Do" -> all), fxAlt)
+
+  property("pattern cons chains re-associate and lower (h :: t)") =
+    diff("((h :: t) -> h)")
 }
+

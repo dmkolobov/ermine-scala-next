@@ -35,7 +35,30 @@ object Lower {
       resolutions: Map[Span, Resolution],
       globals: Map[Global, V[Type]],
       binderSites: Map[Int, Span],
-      siteToBinder: Map[Span, Int]) {
+      siteToBinder: Map[Span, Int],
+      scope: ModuleScope.Scope) {
+
+    val diags = List.newBuilder[Renamer.Diag]
+
+    /** Channel A (tracker/desugar-hooks.md): an alias-sensitive Local
+      * hook — the _Module suffix is part of the name — resolved through
+      * the canonical scope at the literal's position.  A missing or
+      * ambiguous hook is diagnosed (the ledger's moved refusal) and a
+      * dead placeholder V keeps the tree shaped. */
+    def hookVar(base: String, suffix: Option[String], at: Span): V[Type] = {
+      val name = base + suffix.map("_" + _).getOrElse("")
+      scope.canonicalTerms.get(Local(name)) match {
+        case Some(List(g: Global)) => global(g, at)
+        case Some(Nil) | None =>
+          diags += Renamer.Diag(at, s"error: bracket/brace hook $name is not in scope")
+          V(pos(at), freshHookId(), Some(Local(name)), Bound, (null: Type))
+        case Some(ns) =>
+          diags += Renamer.Diag(at, s"error: bracket/brace hook $name is ambiguous: $ns")
+          V(pos(at), freshHookId(), Some(Local(name)), Bound, (null: Type))
+      }
+    }
+    private var hookN = -100000
+    private def freshHookId(): Int = { hookN -= 1; hookN }
 
     private var vars = Map.empty[Int, V[Type]]      // renamer binder id -> core V
     private var nextMeta = -1                        // fresh negative ids: never
@@ -79,12 +102,14 @@ object Lower {
     def freshRememberId(): Int = { nextMeta -= 1; nextMeta }
   }
 
-  def apply(r: Renamer.Result, file: String, globals: Map[Global, V[Type]]): Ctx =
+  def apply(r: Renamer.Result, file: String, globals: Map[Global, V[Type]],
+            scope: ModuleScope.Scope = ModuleScope.Scope.empty): Ctx =
     new Ctx(file,
       r.occurrences.map(o => o.span -> o.resolution).toMap,
       globals,
       r.binders.map { case (id, b) => id -> b.defSite },
-      r.binders.map { case (id, b) => b.defSite -> id })
+      r.binders.map { case (id, b) => b.defSite -> id },
+      scope)
 
   // ---------------------------------------------------------------- terms
 
@@ -121,9 +146,51 @@ object Lower {
       Let(c.pos(l.span), implicits, Nil, term(b, c))
     case SSig(l, tm, _)     => term(tm, c)  // annotations lower at 4.1
     case SChain(_)          => throw Unsupported("un-reassociated chain", t.loc.span)
-    case x: SListLit        => throw Unsupported("bracket literal (3.4b)", x.loc.span)
-    case x: SBraceLit       => throw Unsupported("brace literal (3.4b)", x.loc.span)
-    case x: SDo             => throw Unsupported("do (3.4b)", x.loc.span)
+    case SListLit(l, es, suffix) =>
+      // foldRight onto empty_Bracket[_M] with cons_Bracket[_M] (channel A)
+      val nil  = c.hookVar("empty_Bracket", suffix, l.span)
+      val cons = c.hookVar("cons_Bracket", suffix, l.span)
+      es.foldRight(Var(nil): Term)((e, acc) => App(App(Var(cons), term(e, c)), acc))
+    case SBraceLit(l, es, suffix) =>
+      // xs.tail.foldLeft(single(xs.head))(snoc) — the fused shape; {} is
+      // the crash the old race masked, diagnosed here (ledger)
+      es match {
+        case Nil =>
+          c.diags += Renamer.Diag(l.span, "error: empty brace literal has no meaning")
+          Remember(c.freshRememberId(), Hole(c.pos(l.span)))
+        case hd :: tl =>
+          val single = c.hookVar("single_Brace", suffix, l.span)
+          val snoc   = c.hookVar("snoc_Brace", suffix, l.span)
+          tl.foldLeft(App(Var(single), term(hd, c)): Term)((acc, e) =>
+            App(App(Var(snoc), acc), term(e, c)))
+      }
+    case SDo(l, stmts) =>
+      // reverse foldLeft over Syntax.Do.bind (channel G); the last
+      // statement must be an expression, a do must be non-empty — the
+      // fused parser's refusals, diagnosed here
+      val bind = c.global(Global("Syntax.Do", "bind"), l.span)
+      stmts.reverse match {
+        case Nil =>
+          c.diags += Renamer.Diag(l.span, "error: empty do expression")
+          Remember(c.freshRememberId(), Hole(c.pos(l.span)))
+        case last :: earlier =>
+          last match {
+            case SDoBind(bl, _, _, _) =>
+              c.diags += Renamer.Diag(bl.span, "error: last statement in `do' must be expression")
+              Remember(c.freshRememberId(), Hole(c.pos(l.span)))
+            case SDoExpr(e0) =>
+              earlier.foldLeft(term(e0, c)) { (tailAct, bform) =>
+                val (mv, mf) = bform match {
+                  case SDoExpr(e) =>
+                    val et = term(e, c)
+                    (et, Lam(tailAct.loc, com.clarifi.reporting.ermine.WildcardP(et.loc), tailAct))
+                  case SDoBind(bl2, p, _, rhs) =>
+                    (term(rhs, c), Lam(c.pos(bl2.span), pattern(p, c), tailAct))
+                }
+                App(App(Var(bind), mv), mf)
+              }
+          }
+      }
     case x: SRelEnvelope    => throw Unsupported("relational envelope (3.4c)", x.loc.span)
     case x: SErrorTerm      => throw Unsupported("error node", x.loc.span)
   }

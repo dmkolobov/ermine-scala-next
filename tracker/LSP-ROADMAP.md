@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 3.4a done (lowering + tnodes diff 6/6); next item 3.4b (hooks + do) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 3.4b done (custom brackets verified, 11/11); next item 3.4c (relArrows) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -293,7 +293,7 @@ machinery is deleted post-G1, never before.
   open-brace loc), locs per Decision h; AST-level differential per sugar:
   revive TestRelations.scala:193-214's tnodes-equality shape — old fused
   desugar output vs new post-rename output, id/loc-insensitive.
-- [ ] **3.4b Desugar: bracket/brace hooks + do** (alias-sensitive channel
+- [x] **3.4b Desugar: bracket/brace hooks + do** (alias-sensitive channel
   with _Module suffixes; reverse-foldLeft do, Lam(WildcardP) effect
   statements, last-statement-is-expression; missing-hook acceptance per
   1.3b corpus); tnodes differentials for both.
@@ -736,3 +736,18 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   table's def-site spans). Deferred notes: pattern-CHAIN re-association
   to 3.4b; sig/annotation lowering to 4.1. Baselines: 843 (842+known),
   repl 3/3, lsp 27/27.
+- 2026-08-30 3.4b done (user asked "is custom bracket syntax properly
+  handled?" — answer now VERIFIED yes): channel-A hook lowering — the
+  _Module/_alias suffix is part of the Local looked up through the
+  canonical scope; missing/ambiguous hooks and the empty brace are
+  diagnosed (ledger flips); expansion shapes exact (foldRight brackets
+  from empty_Bracket, foldLeft braces from single_Brace, reverse-fold do
+  over Syntax.Do.bind with Lam(WildcardP) effect statements and the
+  last-must-be-expression/non-empty refusals). Pattern-chain
+  re-association landed in Reassoc (con-ops through the yard, InfixR(5)
+  ::). Differentials cover ALL THREE stdlib witness shapes: plain [1,2,3]
+  via List hooks; [1,2]_L alias-suffixed (the DateRange.e/Date.e idiom);
+  Vector.e as a custom hook PROVIDER with List's hooks hidden (the
+  Relation.e idiom) — old-vs-new alpha-equal. Also: separate fixtures
+  per import family (baseEnv write-back pollution). TestLower 11/11.
+  Baselines: 848 (847+known), repl 3/3, lsp 27/27.
