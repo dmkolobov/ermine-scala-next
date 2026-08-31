@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 3.1 done (ModuleScope ALL MATCH 129+6); next item 3.2a (renamer: module-level terms) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 3.2a done (term renamer, 10 props); next item 3.2b (diagnostics wiring + local-scope pins under renamer) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -258,7 +258,7 @@ machinery is deleted post-G1, never before.
   differential goes green HERE. Distinguish real scope (canonicalTerms
   domain) from the session-global termNames superset — scope-at-position
   must not leak loaded-but-unimported globals (1.3b corpus asserts).
-- [ ] **3.2a Renamer: module-level terms**: binder heads collected before
+- [x] **3.2a Renamer: module-level terms**: binder heads collected before
   rhs resolution; id-unification classes preserved (sig+forwards+
   equations share one id; one id per pattern binder shared with term
   refs); outputs: occurrence->binder, binder->def-site with spans,
@@ -667,3 +667,20 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   message text): ALL MATCH on the first run. g1-validate.sh now runs the
   differential as a standing layer. Baselines: 806 (805+known), repl 3/3,
   lsp 27/27.
+- 2026-08-30 3.2a done: rename/Renamer.scala — the TERM-SIDE RENAMER,
+  and more than the item asked: with the surface AST in hand, whole-block
+  scoping is a pure tree operation, so let/where/do/case/lambda frames
+  shipped alongside module-level terms (binder heads collected before any
+  rhs — LocalBlocks/checkShadows/subTerm have no reason to exist in this
+  pipeline). Resolution: frames -> own top-levels -> canonical scope
+  (fixity-bucket probes for operators; NEVER the termNames superset);
+  ToGlobal carries importedAs + origin (hover labels); unresolved names
+  tolerated per the pin; sig+equations share one binder with def-site =
+  LAST equation (globalTermDef relocation parity). Outputs: occurrences,
+  binder table with def-site spans + kinds, frames with scopeAt query.
+  Ledger refusals recorded as diagnostics: top-level import shadow +
+  ':'-constructor binders (both binder paths). TestRenamer: 10 properties
+  incl. do unbind-before-rhs/rebind-after, where-shadows-argument, alias
+  non-capture by construction, scope-at-position. Ledger dispositions
+  flip when Death wiring lands (3.2b). Baselines: 816 (815+known),
+  repl 3/3, lsp 27/27.
