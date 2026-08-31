@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: post-G1 debt — D0, D1 DONE (eval on the split pipeline; bin/ermine + bin/ermine-lsp cut over); next: D2 scoping.in line, then D3 fused-machinery deletion · Seeded 2026-08-30 (session that shipped the
+Status: POST-G1 DEBT COMPLETE (D0-D8, commits e9f72c7..HEAD). One pipeline, one grammar; the statement-extent scanner is in place. NEXT: expand Stage 2 (error-tolerant parsing) into a checklist — needs sign-off to open · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -370,7 +370,7 @@ summarize for sign-off before Stage 2.
 - [x] **D5 fold bindingName/localName** (moot: deleted with the grammar).
 - [x] **D6 whole-block fixity + module-level pre-scan flips**
   (Decisions a, e).
-- [ ] **D7 statement-extent scanner for Stage 2** (columns/strings/
+- [x] **D7 statement-extent scanner for Stage 2** (columns/strings/
   comments/bracket+let-in/case-of closers; flag the virtualLeftBrace
   col-max-depth merge corner).
 - [x] **D8 revisit import-bypassing desugar resolution** (Decision b:
@@ -1151,3 +1151,18 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   syntax/Statement.scala (orphaned by D3).  Suite 869 (868+known),
   repl 4, lsp 31/31, boot 129.  REMAINING DEBT: D7 statement-extent
   scanner — the Stage 2 prerequisite.
+
+- 2026-08-31 (D7 — DEBT COMPLETE): surface/StatementExtents.scala — the
+  pure lexical statement-extent scanner (Stage 2's recovery primitive).
+  Handles line/block comments as whitespace anywhere, string and char
+  literals (a lone quote is the (') operator), explicit-bracket depth
+  keeping items open across dedents, and the let-in closer (an `in` for
+  an open `let` continues the item even at the layout column —
+  Report.e:1004 found it immediately).  The virtualLeftBrace
+  col-max-depth merge corner is documented in the header: an inner
+  block at exactly the top column reads as a new item, same as the
+  parser's own per-character-offside splitter.  Differential vs the
+  surface parser across all 180 corpus files: starts agree exactly
+  (1000+ statements), scanner ends sit within the parsed span and
+  before the next statement.  Suite 871 (870+known), repl 4, lsp 31/31.
+  THE POST-G1 DEBT LIST IS DONE.

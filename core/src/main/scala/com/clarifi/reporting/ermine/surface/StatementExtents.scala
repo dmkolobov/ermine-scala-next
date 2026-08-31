@@ -1,0 +1,148 @@
+package com.clarifi.reporting.ermine.surface
+
+/** The statement-extent SCANNER (post-G1 D7; Stage 2's recovery
+  * primitive).  A pure lexical pass over module source that computes
+  * every top-level layout item's extent -- no parser state, so an
+  * editor-side recovery can ask "where does the broken statement end,
+  * where does the next begin" without a live parse.
+  *
+  * Statement extents are lexically determined (the same fact the
+  * block-re-parse correctness argument rested on): a top-level item
+  * starts at the layout column fixed by the FIRST item after the
+  * module header, and runs until the next line whose first significant
+  * character sits at (or left of) that column.  The scanner knows just
+  * enough lexical structure to not be fooled:
+  *
+  *  - line comments (-- to end of line) and nested block comments are
+  *    whitespace, wherever they start;
+  *  - string literals consume to their closing quote (escapes
+  *    respected), so braces and dashes inside them are inert;
+  *  - explicit bracket depth ((), [], curly) keeps an item open across
+  *    dedented lines;
+  *  - let/case/do/where open INNER layout blocks whose contents are
+  *    deeper than the top column, so plain offside covers them here
+  *    (their in/dedent closers matter for the NESTED extents Stage 2
+  *    adds on this same chassis).
+  *
+  * KNOWN CORNER (flagged by the D7 spec): scalaparsers' virtualLeftBrace
+  * merges equal-column layout contexts (the col-max-depth merge), so an
+  * inner block opened at exactly the top-level column reads as a new
+  * top-level item to a pure scanner -- the surface parser's own
+  * splitter has the same per-character-offside view, which is what the
+  * differential test pins.
+  */
+object StatementExtents {
+
+  /** 1-based; end = the position just past the last significant char. */
+  final case class Extent(startLine: Int, startCol: Int,
+                          endLine: Int, endCol: Int, headWord: String)
+
+  final case class Scan(layoutCol: Int, items: List[Extent])
+
+  def scan(contents: String): Scan = {
+    val n = contents.length
+    var i = 0
+    var line = 1; var col = 1
+
+    def peek(k: Int = 0): Char = if (i + k < n) contents.charAt(i + k) else ' '
+    def advance(): Unit = {
+      if (contents.charAt(i) == '\n') { line += 1; col = 1 } else col += 1
+      i += 1
+    }
+
+    def skipWsUnit(): Boolean = {
+      val c = peek()
+      if (c == ' ' || c == '\t' || c == '\r' || c == '\n') { advance(); true }
+      else if (c == '-' && peek(1) == '-') {
+        while (i < n && peek() != '\n') advance()
+        true
+      }
+      else if (c == '{' && peek(1) == '-') {
+        advance(); advance()
+        var depth = 1
+        while (i < n && depth > 0) {
+          if (peek() == '{' && peek(1) == '-') { advance(); advance(); depth += 1 }
+          else if (peek() == '-' && peek(1) == '}') { advance(); advance(); depth -= 1 }
+          else advance()
+        }
+        true
+      }
+      else false
+    }
+    def skipWs(): Unit = { while (i < n && skipWsUnit()) () }
+
+    def step(): Int = peek() match {
+      case '"' =>
+        advance()
+        while (i < n && peek() != '"') { if (peek() == '\\') advance(); if (i < n) advance() }
+        if (i < n) advance()
+        0
+      case q if q == '\'' && ((peek(1) == '\\' && peek(3) == '\'') || (peek(1) != '\'' && peek(1) != ' ' && peek(2) == '\'')) =>
+        // char literal; a lone quote is the (') operator
+        val len = if (peek(1) == '\\') 4 else 3
+        var k = 0; while (k < len && i < n) { advance(); k += 1 }
+        0
+      case '(' | '[' | '{' => advance(); 1
+      case ')' | ']' | '}' => advance(); -1
+      case _ => advance(); 0
+    }
+
+    skipWs()
+    def wordAt(): String = {
+      var k = i
+      while (k < n && (contents.charAt(k).isLetter || contents.charAt(k) == '#' ||
+                       contents.charAt(k) == '.' || contents.charAt(k).isDigit)) k += 1
+      contents.substring(i, k)
+    }
+    if (wordAt() == "module") {
+      var done = false
+      while (i < n && !done) {
+        if (!skipWsUnit()) {
+          if (wordAt() == "where") { var k = 0; while (k < 5) { advance(); k += 1 }; done = true }
+          else advance()
+        }
+      }
+    }
+    skipWs()
+    if (i >= n) return Scan(1, Nil)
+
+    val layoutCol = col
+    val items = List.newBuilder[Extent]
+
+    // one identifier-ish word consumed wholesale (so let/in are visible)
+    def stepWord(): String = {
+      val w = wordAt()
+      if (w.nonEmpty) { var k = 0; while (k < w.length) { advance(); k += 1 }; w }
+      else { step(); "" }
+    }
+
+    while (i < n) {
+      val sl = line; val sc = col
+      val head = wordAt()
+      var depth = 0
+      var lets = 0                       // open `let`s awaiting their `in`
+      var endLine = line; var endCol = col
+      var open = true
+      while (i < n && open) {
+        val before = peek()
+        if (before == '(' || before == '[' || before == '{' ) depth += step()
+        else if (before == ')' || before == ']' || before == '}') depth += step()
+        else stepWord() match {
+          case "let" => lets += 1
+          case "in"  => if (lets > 0) lets -= 1
+          case _     => ()
+        }
+        endLine = line; endCol = col
+        skipWs()
+        if (i >= n) open = false
+        else if (depth <= 0 && col <= layoutCol && line != sl) {
+          // the let-in closer: an `in` for an OPEN let continues the
+          // item even at (or left of) the layout column (Report.e:1004)
+          if (!(lets > 0 && wordAt() == "in")) open = false
+        }
+      }
+      items += Extent(sl, sc, endLine, endCol, head)
+    }
+    Scan(layoutCol, items.result())
+  }
+}
