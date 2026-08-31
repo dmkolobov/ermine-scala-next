@@ -23,23 +23,34 @@ item declares which target it serves, and what its ceiling is on the other.
 MEASURED AT HEAD: **11.46s** interface-free, **5.59s** with the `.ei` cache
 (medians of 5 fresh-JVM reps each, spread 0.11s and 0.17s; see Baselines for
 the full line).  The inherited estimates were ~12s and ~6s, so they held.  The
-JFR profile in the ticket attributes CPU samples — these are from 2026-08-30,
-predate all of Stage 1 and 2, and P2 re-takes them:
+profile was RE-TAKEN AT HEAD by P2 (4209 samples, 1ms sampling,
+`tracker/tools/jfr-buckets.py`), and it does not agree with the ticket:
 
-| phase                                     | share |
-|-------------------------------------------|-------|
-| type/kind inference machinery             | 79.0% |
-| parsing (layout, fixity, name resolution) | 18.7% |
-| session driver / IO                       |  2.2% |
-| term evaluation                           | ~0.1% |
+| phase                       | ticket 2026-08-30 | HEAD (P2) |
+|-----------------------------|-------------------|-----------|
+| type/kind inference         | 79.0%             | **55.4%** |
+| parsing                     | 18.7%             | **33.3%** |
+| session driver / IO         |  2.2%             |  3.8%     |
+| rename / reassoc / lower    | —                 |  1.4%     |
+| term evaluation             | ~0.1%             | ~0%       |
 
-Leaves: **free-variable collection** (`Type.vars` / `Vars.apply` and the kind
-equivalents, rebuilding immutable Champ-trie hash sets while walking type
-trees) is ~40% of ALL samples; **substitution application** (`HasTypeVars.sub`,
-`VarT.subst`, `Type.sub`) is 10-15%.  Call paths: `Subst.inferBindingGroupTypes`
-on 71% of stacks -> `inferAltTypes` -> `typeCheckExplicitBinding` ->
-`inferType` -> `subsumeType`; `unifyType` and `instantiateType` ~23% each.
-963 of 967 samples sit on one `ermine-session-task` thread.
+Leaf families — what an optimization would actually attack:
+
+| family                                            | ticket   | HEAD (P2) |
+|---------------------------------------------------|----------|-----------|
+| free-variable collection (`.vars`, `Vars.apply`)   | ~40%     | **33.0%** |
+| substitution application (`.sub`, `.subst`)        | 10-15%   | **20.9%** |
+| parser trampoline (`scalaparsers.*` via `Free`)    | —        | **27.3%** |
+| parser failure merging (`Fail.++`)                 | —        |  3.2%     |
+
+So the ticket's headline is roughly a third too high, parsing is roughly
+twice what it claimed, and **substitution is now nearly two thirds the size of
+free-variable collection rather than a quarter of it** — P4 and P3 are closer
+in value than the ticket implies.  Also corrected: the ticket's "963 of 967
+samples sit on one `ermine-session-task` thread" is thread-NAME aggregation.
+By thread ID the busiest thread holds **72.3%**, with 27.7% spread over 20+
+others, so the loader is genuinely parallel — and Amdahl therefore caps a
+perfect parallelization of the batch target at about **1.4x** (see P8).
 
 **[E] EDITOR ROUND TRIP** — keystroke to `publishDiagnostics` on
 Layout/Report.e (1757 lines), through the resident LSP session.  MEASURED AT
@@ -69,6 +80,24 @@ A perfect fix to the [B] hotspot (free-variable collection, ~40% of batch
 samples) therefore has a hard ceiling on [E] of about a tenth of the round
 trip.  Items aimed at [E] must aim at the read path or at the debounce, not at
 inference, unless a profile says otherwise.
+
+P2 TOOK THAT PROFILE (1970 samples, all on `main` — single-threaded, as
+Decision 8 requires), and it is sharper than the timing split:
+
+| phase        | share | | leaf family              | share |
+|--------------|-------|-|--------------------------|-------|
+| parse        | 62.7% | | parser trampoline        | 52.6% |
+| inference    | 30.8% | | free-variable collection | 14.8% |
+| extent scan  |  4.8% | | parser failure merging    |  8.3% |
+| lower        |  0.8% | | substitution application |  8.9% |
+| rename       |  0.2% | | extent scan              |  4.8% |
+| reassoc      |  0.1% | | grammar (ermine parsers) |  0.9% |
+
+**THE READ IS THE PARSER, and nothing else.**  Rename, reassoc and lower
+together are **1.1%** — P5 named them as suspects and the profile clears them.
+61% of the whole editor round trip is inside `scalaparsers`: the `Free`
+trampoline every combinator runs through, plus `Fail.++`.  The three named
+targets, in profile order, are in P5.
 
 ## Baselines (hard invariants — never commit red)
 
@@ -219,7 +248,7 @@ any change, then the cheapest change with the largest profiled share, then the
   DELIVERABLE: the script, plus its first full run recorded in the log as the
   BASELINE OF RECORD, superseding every number in this file's target tables.
 
-- [ ] **P2 [B+E] Fresh profiles for both targets.**  No code changes; this item
+- [x] **P2 [B+E] Fresh profiles for both targets.**  No code changes; this item
   produces evidence only.
   (a) Re-take the batch JFR at HEAD with the ticket's recipe (`stackdepth=512`,
   `jfr print --stack-depth 500`; the ticket's pitfalls list is load-bearing —
@@ -235,8 +264,10 @@ any change, then the cheapest change with the largest profiled share, then the
   leaf list per target.  The next item chosen is whichever P3-P7 those tables
   point at; if they point somewhere not listed here, add an item.
 
-- [ ] **P3 [B, ceiling ~10% on E] Free-variable collection** (ticket candidates
-  1 and 5) — the ~40%-of-all-samples leaf.  Only if P2 confirms it.  In order,
+- [ ] **P3 [B, ceiling ~15% on E] Free-variable collection** (ticket candidates
+  1 and 5) — **33.0% of batch samples, 14.8% of editor samples** (P2 measured;
+  the ticket's ~40% was high).  Confirmed as the single largest leaf family on
+  the batch target.  In order,
   each measured separately, each reverted if flat:
   (a) **Representation** — `Vars` threads an immutable `Set[V[J]]` through every
   traversal (Vars.scala) and `++`/`--` rebuild it; a mutable seen-set private to
@@ -253,25 +284,48 @@ any change, then the cheapest change with the largest profiled share, then the
   A representation that reorders is a Decision 9 stop, not a commit.
 
 - [ ] **P4 [B] Redundant `vars`/`sub` calls in the solver** (ticket candidate
-  2).  Instrument first — a counter around `typeVars`/`sub` keyed by call site,
+  2).  P2 RAISED THIS ITEM'S VALUE: substitution application is **20.9%** of
+  batch samples, not the 10-15% the ticket estimated, which puts it within
+  reach of P3 rather than far behind it.  Instrument first — a counter around `typeVars`/`sub` keyed by call site,
   run the 129-module load, and print the top call sites by count.  A guess about
   which of `subsumeType` / `instantiateType` / `inferBindingGroupTypes`
   recomputes the ftvs of the same type is not evidence; the counter is.  Then
   eliminate only the recomputation the counter proves is redundant within one
   binding group.  GATE: Decision 6.
 
-- [ ] **P5 [E] The editor read path — the 0.80s the ticket does not know about.**
-  Scoped by P2(b), not before.  What is already known and must be respected:
-  parse+rename+lower runs WHOLE every check by design — LSP 5.5's review
-  established that renamer binder ids and Lower's supply-minted Vs are FRESH
-  EVERY RUN and shared across statements, so cached LOWERED trees cannot be
-  mixed with a fresh run.  Reuse above that layer (surface statements keyed by
-  extent text — the 5.5 fingerprint machinery already computes those keys) is
-  the only safe shape without a stable-binder-identity scheme, and that scheme
-  is explicitly a Blocked/Awaiting design item, not a side quest.  Also in
-  scope, and cheaper: incremental didChange (sync kind 2) so a keystroke does
-  not re-read 1757 lines of text before it re-parses them.  Split across
-  commits; each one green.
+- [ ] **P5 [E] The editor read path — SCOPED BY P2's PROFILE.**  The read is
+  the parser: rename+reassoc+lower are 1.1% of samples and are OUT of scope.
+  Three named targets, cheapest first, each measured separately and reverted
+  if flat:
+  (a) **`StatementExtents.offsetOf` — 4.7%, and it is quadratic.**  It walks
+  the file from offset 0 counting lines and columns on EVERY call
+  (StatementExtents.scala:85-98), and `text` calls it TWICE per extent
+  (:100-102).  Report.e has ~315 top-level statements, so one check does ~630
+  full walks of a 77KB string — and `TolerantCheck.keys` calls `text` for
+  every group and every scope item on every keystroke.  Fix: scan once into a
+  line-start index, or compute all offsets in the single pass the scanner
+  already makes.  Isolated, no semantic surface, and the corpus sweep in
+  TestStatementExtents is the oracle.
+  (b) **`Fail.++` — 8.3%, and it is the same immutable-set pathology as the
+  ftv one.**  Every recoverable parse failure merges `expected: Set[String]`
+  with `m.expected ++ expected` (ParseResult.scala:56-62), and the tolerant
+  splitter's per-statement `.attempt` makes failures the common case, not the
+  exception.  The merged set is only ever rendered into an error message, so
+  a lazier representation (a list, or a thunk that unions on demand) is
+  semantically free — but the rendering must stay byte-identical, which the
+  REPL goldens and lsp-smoke's position fixtures pin.
+  (c) **The `Free` trampoline — 52.6%, and it is architectural.**  Every
+  combinator in `scalaparsers` runs through `scalaz.Free`
+  (`Parser.run` alone is 23.2% of the editor round trip).  This is a big
+  change and probably its own design item; do NOT start it before (a) and (b)
+  report.
+  STILL TRUE AND STILL RESPECTED: parse+rename+lower runs WHOLE every check by
+  design — LSP 5.5's review established that renamer binder ids and Lower's
+  supply-minted Vs are FRESH EVERY RUN, so cached LOWERED trees cannot be mixed
+  with a fresh run.  Incremental didChange (sync kind 2) remains available and
+  cheap, but the profile says it would only shrink the 0.9% grammar slice and
+  whatever re-reading costs — not the trampoline.  Split across commits; each
+  one green.
 
 - [ ] **P6 [E] The 300ms debounce, once compute drops below it.**  19% of the
   round trip today and pure policy.  When P3-P5 have moved compute, re-derive
@@ -288,10 +342,17 @@ any change, then the cheapest change with the largest profiled share, then the
   of the 10-15% that this stops being worth its risk.
 
 - [ ] **P8 [B] Parallel module loading** (ticket candidate 4) — DESIGN ONLY
-  until scoped, per Decision 10.  First deliverable is cheap and caps everything
-  else: **measure the actual width of the 129-module dependency DAG by level**.
-  If the graph is a near-chain, the ceiling is small and this item closes
-  unstarted with a number.  Only if the width is real does the second
+  until scoped, per Decision 10.  P2 ALREADY MOVED THIS ITEM'S PREMISE TWICE,
+  in opposite directions.  The ticket said the load is effectively serial (963
+  of 967 samples on one thread); that was thread-NAME aggregation, and by
+  thread ID the busiest thread holds **72.3%** with 27.7% spread over 20+
+  others — so the loader is ALREADY parallel and the item is not "add
+  concurrency" but "widen it".  The same number caps the prize: 72.3% on the
+  critical thread bounds a perfect parallelization at about **1.4x**, which is
+  worth knowing before anyone touches a `SessionEnv` that its own scaladoc says
+  is not thread-safe.  First deliverable is still cheap and still worth taking:
+  **measure the actual width of the 129-module dependency DAG by level** and
+  compare it against that 72.3%.  Only if the width is real does the second
   deliverable follow: a written scope of exactly which `SessionEnv` state is
   shared and mutated during a load, and what would have to change.  No
   concurrency code lands from this item without its own gate.
@@ -326,9 +387,25 @@ Kept here because both points still govern later items:
    that will come back here for their own sign-off** rather than being attempted
    inside a normal iteration.
 
+**ORDERING, RE-OPENED BY P2's OWN EVIDENCE AND SETTLED HERE (2026-08-31) —
+recorded rather than done silently, and overridable with a note.**  G3-0 signed
+off an ordering that puts [B] work (P3, P4) ahead of the [E] read path (P5), on
+the stated grounds that the batch profile was the one that existed.  P2 removed
+that grounds: both profiles now exist, and the editor one found a QUADRATIC —
+`StatementExtents.offsetOf` re-walks the file from offset 0 on every call, ~630
+times per keystroke.  P2's own clause in this checklist says "the next item
+chosen is whichever P3-P7 those tables point at", and the tables point at
+P5(a) first.  ORDER FROM HERE: **P5(a) offsetOf, then P5(b) `Fail.++`, then
+P3** — cheapest first, and the first two are defects with a profile behind them
+rather than tuning knobs.  P3 remains the biggest single prize on [B] (33.0%)
+and is not being dropped, only queued behind two smaller and much cheaper wins.
+Say the word if [B] should stay first regardless.
+
 Known forks that will land in this section when reached: P7's design; P8's scope
-if the DAG has real width; and the stable-binder-identity scheme that deeper [E]
-reuse would need (named and deferred by LSP 5.5).
+if the DAG has real width; the `Free`-trampoline question inside P5(c), which is
+52.6% of the editor round trip and almost certainly its own design item; and the
+stable-binder-identity scheme that deeper [E] reuse would need (named and
+deferred by LSP 5.5).
 
 ## Iteration log
 
@@ -418,3 +495,55 @@ reuse would need (named and deferred by LSP 5.5).
   sound`, the known one); repl-smoke 4 suites; lsp-smoke 82 checks; boot 129
   (5.78s warm); `npm test` PASS.  No Scala was touched — the diff is two new
   tracker/tools scripts and this file.
+
+- 2026-08-31 (P2 — fresh profiles, and the ticket does not survive them).
+  Both recordings taken THROUGH the harness's `PERF_JVM_PROPS` hook, which is
+  what that hook was for: `tracker/tools/jfr-buckets.py` is the new analysis
+  tool, and it prints thread, phase and leaf-family tables from a `.jfr`.
+  Phase attribution uses the INNERMOST matching frame, because the phases nest
+  — attributing to the outermost would file every batch sample under "session",
+  since `Console.main` is at the bottom of every stack.  Shared utilities
+  (Type, Kind, Vars) are deliberately not phase rules; they belong in the leaf
+  table, not stealing samples from whichever phase drove them.
+  No code was changed and nothing was optimized.
+
+  [B] BATCH, 4209 samples at 1ms (a 472-sample run at the default 10ms agrees
+  within 3.5 points on every bucket, so this is not small-sample noise):
+  inference **55.4%**, parse **33.3%**, session 3.8%, rename/reassoc/lower
+  1.4%.  THE TICKET SAID 79.0% / 18.7%.  Leaf families: free-variable
+  collection **33.0%** (ticket: ~40%), substitution application **20.9%**
+  (ticket: 10-15%), parser trampoline **27.3%** (ticket: not identified).
+  So the headline is a third too high, parsing is twice what was claimed, and
+  substitution is close enough to ftv collection that P4 is no longer the
+  poor relation of P3.
+
+  [E] EDITOR, 1970 samples, 100% on `main` — Decision 8's single-threading
+  holding in practice.  parse **62.7%**, inference **30.8%**, extent scan 4.8%,
+  and rename+reassoc+lower **1.1% between them**.  P5 named rename and lower as
+  suspects; the profile clears them and names three real targets instead, now
+  written into the item: `StatementExtents.offsetOf` (4.7%, quadratic — it
+  walks from offset 0 on every call and `text` calls it twice per extent, so
+  one keystroke does ~630 full walks of a 77KB string), `Fail.++` (8.3%,
+  merging immutable `Set[String]` expected-sets on every recoverable failure,
+  which the tolerant splitter's per-statement `.attempt` makes the common
+  case), and the `scalaz.Free` trampoline every combinator runs through
+  (52.6%, architectural, explicitly not to be started before the other two
+  report).  The first two are the same pathology the ticket found in `Vars`
+  — rebuilding immutable collections in a hot loop — in a place the ticket
+  never looked.
+
+  A CORRECTION THAT CUTS BOTH WAYS.  The ticket's "963 of 967 samples sit on a
+  single ermine-session-task thread" is thread-NAME aggregation: by thread ID
+  the busiest holds 72.3% and 27.7% is spread over 20+ others.  So the loader
+  is not serial, P8 is not "add concurrency" but "widen it" — and the same
+  number caps the prize at about 1.4x, which is the cheapest thing anyone has
+  learned about P8 so far.
+
+  ONE BUG IN THE NEW TOOL, caught because the first family table disagreed
+  with the leaf table it was summarising: `Vars\$\$anon` matches
+  `HasTypeVars$$anon$6.sub` as a SUBSTRING, so substitution samples were being
+  filed as free-variable collection and ftv read 44.6% instead of 33.0%.  The
+  rule now anchors on the package dot and the file says why.
+  Baselines unchanged from P1 (no Scala touched): core/test 902/901+known,
+  repl-smoke 4, lsp-smoke 82, boot 129, npm test PASS.
+  NEXT: P3, or P5(a) — see the note under Blocked/Awaiting.
