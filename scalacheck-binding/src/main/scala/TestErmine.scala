@@ -62,7 +62,16 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
     * evil, but makes things faster. */
   def loadModules(moduleNames: List[String])(implicit s: SessionEnv) = {
     val res = Session.loadModules(moduleNames)
-    envLock.synchronized { baseEnv := s }
+    envLock.synchronized {
+      // NEVER capture a session holding the dynamic Test module: its
+      // Literal is NAME-keyed, so a written-back loadedFiles entry
+      // short-circuits every later property's Test load (kindAfter
+      // poisoned the whole suite this way)
+      if (s.loadedFiles.keys.exists(_.defaultModuleName == "Test"))
+        sys.error("fixture writeback would capture the dynamic Test module — " +
+                  "use Session.loadModules directly after loadStatements")
+      baseEnv := s
+    }
     res
   }
 
@@ -126,7 +135,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
 
   def testParse[A](p: Parser[A], e: String, m: Map[String,ImportSpec] = imps)(implicit s: SessionEnv): (ParseState, A) = {
     import ErParseState.Implicits._
-    loadModules(m.keySet.toList)
+    Session.loadModules(m.keySet.toList)  // no writeback: may run after a Test literal load
     val epsz = ErParseState.mk("<test>", e, "Test").importing(s.termNames, s.cons.keySet, m, s.termNameOrigins, s.consOrigins)
     parse(p, epsz)
   }
@@ -211,7 +220,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
 }
 
 object TestErmine extends Properties("Ermine") {
-  private val ermineFixture = ErmineFixture()
+  private val ermineFixture = ErmineFixture(statementsViaNew = true)
   import ermineFixture._
 
   property("Occurs.fun") = no(sessionProof(implicit s => typeOf("a -> a a")))

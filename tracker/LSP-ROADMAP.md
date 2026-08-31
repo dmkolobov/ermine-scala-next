@@ -1099,3 +1099,20 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   wrapper line offset.  Two REPL goldens updated for the chain-start
   change (still refusals, same positions, better messages).  Suite 871
   (870+known), repl 4, lsp 31/31.
+
+- 2026-08-31 (D3 part 3b): TestErmine's main suite CONVERTED (27/27 on
+  the pipeline statement path — circular definitions, ill-kinded
+  data/type refusals, := naming all green).  The conversion exposed a
+  vicious fixture bug: kindAfter runs loadStatements (the Test Literal
+  loads) and then kindOf -> testParse -> the FIXTURE's loadModules,
+  whose baseEnv WRITEBACK captured the session WITH the dynamic Test
+  module — and since Literal equality is name-keyed, the written-back
+  loadedFiles entry short-circuited every later property's Test load
+  (ill-kinded modules 'loaded' by not loading at all; := resolving
+  to a stale module).  testParse now loads via Session.loadModules (no
+  writeback), and the writeback itself fails LOUDLY if the session
+  holds a dynamic Test module.  Remaining fused-grammar consumers:
+  kindOf/testParse (fused type parser) and the fixture legacy branch
+  (now unused?) — next: convert kindOf, drop the legacy branch, DELETE
+  the fused term/statement machinery.  Suite 871 (870+known), repl 4,
+  lsp 31/31.
