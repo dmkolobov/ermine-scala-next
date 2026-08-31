@@ -2,7 +2,7 @@ package com.clarifi.reporting
 
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.rename.NewPipeline
-import com.clarifi.reporting.ermine.session.{ Session => S, SessionEnv }
+import com.clarifi.reporting.ermine.session.{ Session => S, SessionEnv, TolerantCheck }
 import com.clarifi.reporting.ermine.surface.{ SErrorStatement, SurfaceParsers }
 
 import org.scalacheck._
@@ -61,18 +61,29 @@ object TestTolerantRead extends Properties("Tolerant read") {
     * rendered refusal, if any; `tolerant` is every diagnostic. */
   private def both(fileName: String, defaultName: String, src: String)
                   (implicit s: SessionEnv, su: Supply)
-      : (Option[String], Either[String, List[NewPipeline.Diag]]) = {
+      : (Option[String], Either[String, List[NewPipeline.Diag]]) =
+    withRead(fileName, defaultName, src) match { case (a, b, _) => (a, b) }
+
+  /** As `both`, keeping the tolerant Read so the caller can type check it. */
+  private def withRead(fileName: String, defaultName: String, src: String)
+                      (implicit s: SessionEnv, su: Supply)
+      : (Option[String], Either[String, List[NewPipeline.Diag]], Option[NewPipeline.Read]) = {
     val (_, mh) = S.parse(ModuleParsers.moduleHeader(defaultName),
                           ErParseState.mk(fileName, src, defaultName))
     val strict =
       try { NewPipeline.readModule(fileName, src, mh); None }
       catch { case Death(e, _) => Some(e.toString) }
-    val tolerant =
-      try Right(NewPipeline.readModuleTolerant(fileName, src, mh).diagnostics)
-      catch { case Death(e, _) => Left(e.toString) }   // a module body the
-                                                       // splitter cannot even
-                                                       // shape: both readers die
-    (strict, tolerant)
+    val read =
+      try Some(NewPipeline.readModuleTolerant(fileName, src, mh))
+      catch { case Death(_, _) => None }   // a module body the splitter cannot
+                                            // even shape: both readers die
+    val tolerant = read match {
+      case Some(r) => Right(r.diagnostics)
+      case None    =>
+        try { NewPipeline.readModuleTolerant(fileName, src, mh); Right(Nil) }
+        catch { case Death(e, _) => Left(e.toString) }
+    }
+    (strict, tolerant, read)
   }
 
   private def agree(name: String, src: String, strict: Option[String],
@@ -125,11 +136,22 @@ object TestTolerantRead extends Properties("Tolerant read") {
         val (ready, rest) = pending.partition(satisfied)
         progress = ready.nonEmpty
         ready.foreach { it =>
-          val (strict, tol) = both(it.f.getPath, it.defaultName, it.src)
+          val (strict, tol, read) = withRead(it.f.getPath, it.defaultName, it.src)
           props ::= agree(it.f.getPath, it.src, strict, tol)
           swept += 1
           tol match {
-            case Right(Nil) => clean += 1
+            case Right(Nil) =>
+              clean += 1
+              // 5.4: the editor's type checker must be SILENT on code the
+              // batch loader accepts, or every good file lights up.  It
+              // mutates the session it checks in (cons, foreign classes),
+              // so it gets a copy — the same discipline the LSP uses.
+              read foreach { r =>
+                val notes = TolerantCheck.check(r.ps, r.module)(s.copy, su).notes
+                if (notes.nonEmpty)
+                  noisy += (it.f.getName + " (type check): " +
+                    notes.map(n => n.report.linesIterator.take(1).mkString).take(2).mkString(" ;; "))
+              }
             case Right(ds)  => noisy += (it.f.getName + ": " +
               ds.map(d => (d.phase.name, d.span.startLine, d.message)).take(2).mkString)
             case Left(msg)  => noisy += (it.f.getName + " (unshapeable): " +

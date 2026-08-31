@@ -113,7 +113,7 @@ object Diagnostics {
             // healthy statements no longer decays to the last good save.
             docs.putIndex(uri, Definitions.index(path.toString, checked))
             checked.diags.map(fromDiag) :::
-              checked.typeError.toList.map(fromReport(_, path))
+              checked.notes.map(n => fromReport(n.report, path, n.severity))
           } catch {
             case Death(err, _) => List(fromReport(err.toString, path))
             case scala.util.control.NonFatal(e) =>
@@ -152,23 +152,24 @@ object Diagnostics {
     range(sl, sc, endLine, endCol, d.message)
   }
 
-  private def fromReport(report: String, path: Path): Json =
+  private def fromReport(report: String, path: Path, severity: Int = 1): Json =
     (report.linesIterator.toSeq.headOption getOrElse "") match {
       case PosPrefix(file, l, c) if new java.io.File(file).getName == path.getFileName.toString =>
-        diagnostic(0 max (l.toInt - 1), 0 max (c.toInt - 1), report)
+        range(0 max (l.toInt - 1), 0 max (c.toInt - 1),
+              0 max (l.toInt - 1), 0 max (c.toInt - 1), report, severity)
       case _ =>
-        diagnostic(0, 0, report)
+        range(0, 0, 0, 0, report, severity)
     }
 
   private def diagnostic(line: Int, character: Int, message: String): Json =
     range(line, character, line, character, message)
 
-  private def range(sl: Int, sc: Int, el: Int, ec: Int, message: String): Json =
+  private def range(sl: Int, sc: Int, el: Int, ec: Int, message: String, severity: Int = 1): Json =
     Json.obj(
       "range"    -> Json.obj(
         "start" -> Json.obj("line" -> Json.num(sl), "character" -> Json.num(sc)),
         "end"   -> Json.obj("line" -> Json.num(el), "character" -> Json.num(ec))),
-      "severity" -> Json.num(1),
+      "severity" -> Json.num(severity),
       "source"   -> Json.Str("ermine"),
       "message"  -> Json.Str(message))
 }

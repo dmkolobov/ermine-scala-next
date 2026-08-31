@@ -1,10 +1,12 @@
 package com.clarifi.reporting.ermine.lsp
 
+import com.clarifi.reporting.ermine.Type
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.parsing.ErParseState.Implicits._
 import com.clarifi.reporting.ermine.rename.{ NewPipeline, Renamer }
-import com.clarifi.reporting.ermine.session.{ Lib, Printer, Session, SessionEnv }
-import com.clarifi.reporting.ermine.surface.SModule
+import com.clarifi.reporting.ermine.session.{ Lib, Printer, Session, SessionEnv, TolerantCheck }
+import com.clarifi.reporting.ermine.surface.{ SErrorStatement, SModule, SStatement,
+  SDatabaseBlock, SPrivateBlock, StatementExtents }
 import scalaparsers.{ Death, Supply }
 
 /** The resident Ermine session (roadmap 0.2): booted once — Lib.preamble
@@ -63,13 +65,15 @@ final class Resident(log: String => Unit) {
     * sites), the surface module, and the renamer's occurrence/binder
     * tables — REAL SPANS, resolution included (roadmap 4.3; the
     * G1Resolution differential is the spec these tables passed) — plus
-    * the diagnostics the tolerant read collected and, when the read was
-    * clean enough to typecheck, the type error's rendered report
-    * (roadmap 5.1). */
+    * the diagnostics the tolerant read collected (5.1), the type-level
+    * notes (5.4), and the types checking gave the module's own top-level
+    * bindings — which is what hover reads now that the editor path runs
+    * TolerantCheck instead of a real load. */
   final case class Checked(env: SessionEnv, name: String,
                            module: SModule, renamed: Renamer.Result,
                            diags: List[NewPipeline.Diag],
-                           typeError: Option[String])
+                           notes: List[TolerantCheck.Note],
+                           types: Map[String, Type])
 
   /** Check one file against a fresh env copy, resolving imports first
     * against the file's own directory (workspace siblings), then the
@@ -85,11 +89,12 @@ final class Resident(log: String => Unit) {
     * reader sees (own globals absent — with them present every top-level
     * head would draw a bogus "would shadow global definition").
     *
-    * Type checking is still the strict Session.load, run only when the
-    * read is clean: with diagnostics outstanding it would just re-report
-    * the earliest of them.  Death here — a header that will not parse,
-    * an import that will not load — propagates; Diagnostics turns it
-    * into the single diagnostic it has always been.
+    * Since 5.4 type checking is TolerantCheck, not Session.load: the
+    * healthy definitions of a broken file get checked, and independent
+    * errors are all reported instead of just the first.  Death here — a
+    * header that will not parse, an import that will not load —
+    * propagates; Diagnostics turns it into the single diagnostic it has
+    * always been.
     *
     * Since 5.3 the text comes from the OPEN BUFFER when there is one,
     * for this file and for its workspace siblings alike: a cross-file
@@ -113,10 +118,47 @@ final class Resident(log: String => Unit) {
     val missing = (mh.importExports.map(_.module).toSet &~ e.loadedModules.keySet).toList
     if (missing.nonEmpty) Session.loadModules(missing.sorted)
     val r = NewPipeline.readModuleTolerant(file.toString, contents, mh)
-    val typeError =
-      if (r.diagnostics.nonEmpty) None
-      else try { Session.load(file); None }
-           catch { case Death(err, _) => Some(err.toString) }
-    Checked(e, mh.name, r.surface, r.renamed, r.diagnostics, typeError)
+
+    // Dep.checkNames' import-list requirements, which the editor path no
+    // longer gets for free from Session.load.
+    val reqs = {
+      def req(g: com.clarifi.reporting.ermine.Global, what: String) =
+        TolerantCheck.Note(mh.loc.report(scalaparsers.Document.text(
+          s"Module '${g.module}' does not export $what '${g.string}'.")).toString,
+          TolerantCheck.Error)
+      val ex = mh.importExports.flatMap(_.explicits)
+      ex.collect { case x if x.isType && !e.cons.contains(x.global) => req(x.global, "type") } ++
+      ex.collect { case x if !x.isType && !e.termNames.contains(x.global) => req(x.global, "term") }
+    }
+
+    val checked = TolerantCheck.check(r.ps, r.module)
+
+    // A statement the splitter could not parse defines nothing, so every
+    // reference to its head word is an undefined term — one syntax error
+    // would otherwise light up the whole file.  Match by spelling: it is
+    // the REFERRING statements that mint those placeholder Vs.  When no
+    // head word can be recovered (an error nested inside a block, which
+    // the top-level extent scan does not see) suppress undefined-term
+    // notes outright while syntax errors stand.
+    val broken = errorStatements(r.surface.statements)
+    val notes =
+      if (broken.isEmpty) reqs ++ checked.notes
+      else {
+        val starts = broken.map(x => (x.loc.span.startLine, x.loc.span.startCol)).toSet
+        val heads  = StatementExtents.scan(contents).items
+          .filter(x => starts((x.startLine, x.startCol)))
+          .map(_.headWord).filter(_.nonEmpty).toSet
+        reqs ++ checked.notes.filterNot(n =>
+          n.spelling.isDefined && (heads.isEmpty || n.spelling.exists(heads)))
+      }
+
+    Checked(e, mh.name, r.surface, r.renamed, r.diagnostics, notes, checked.types)
+  }
+
+  private def errorStatements(ss: List[SStatement]): List[SErrorStatement] = ss.flatMap {
+    case x: SErrorStatement        => List(x)
+    case SPrivateBlock(_, ss2)     => errorStatements(ss2)
+    case SDatabaseBlock(_, _, ss2) => errorStatements(ss2)
+    case _                         => Nil
   }
 }

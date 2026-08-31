@@ -98,8 +98,11 @@ object Definitions {
             val d = b.defSite
             val tgt = Target(Pos(fileName, "", d.startLine, d.startCol, false), spanLen(d))
             val hover =
+              // 5.4: the module's own types come from the tolerant check,
+              // not from the session — the editor path no longer runs a
+              // real load to put them there.
               if (b.kind == Renamer.TopLevel)
-                env.termNames.get(ownGlobal(b.spelling)).map(v => (label(ownGlobal(b.spelling)), v.extract))
+                c.types.get(b.spelling).map(t => (label(ownGlobal(b.spelling)), t))
               else None  // local binder types: perf-ticket territory
             Occ(sp.startLine, sp.startCol, spanLen(sp), Some(tgt), hover)
           }

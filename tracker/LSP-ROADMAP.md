@@ -8,11 +8,12 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 2 OPEN (signed off 2026-08-31). 5.1, 5.2, 5.2b and 5.3 done —
-the read path is error-tolerant end to end, reports every phase's
-diagnostics, blames syntax errors where the parser actually gave up, the
-splitter is TOTAL, and checking runs on open BUFFERS as they are typed.
-NEXT: 5.4 (tolerant type checking) · Seeded 2026-08-30 (session that shipped the
+Status: STAGE 2 OPEN (signed off 2026-08-31). 5.1-5.4 done — the read path
+is error-tolerant end to end, reports every phase's diagnostics, blames
+syntax errors where the parser actually gave up, the splitter is TOTAL,
+checking runs on open BUFFERS as they are typed, and TYPE checking reports
+every independent error including in the healthy part of a broken file.
+NEXT: 5.5 (incremental re-inference per unchanged SCC) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -22,7 +23,7 @@ scoping fix, commits f9cf42a / 41b13cc).
   Stage 0; suites GROW, so a commit that adds tests updates the count in
   its iteration-log line, and green-except-the-known-one is the invariant
 - `tracker/tools/repl-smoke.sh`: all suites PASS (4 as of D2)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (57 as of 5.3)
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (68 as of 5.4)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 - KNOWN FLAKE: core/test suites run concurrently in one JVM and rarely
@@ -495,7 +496,7 @@ STAGE-2 INVARIANTS (hard):
   fixed text asserting diagnostics appear and clear WITHOUT didSave,
   and after a didChange that moves a definition down a line,
   goto-definition answers at the NEW position without a save.
-- [ ] **5.4 Tolerant type checking** (diagnostics for the healthy part
+- [x] **5.4 Tolerant type checking** (diagnostics for the healthy part
   of a broken file).  An editor-path variant of the load phases with
   per-unit error capture, structured per review: EACH BINDING SCC
   INFERS IN ITS OWN subst BLOCK (a Death mid-component inside one
@@ -1512,3 +1513,56 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   goto-definition from Edit.e lands on the new line, in text that was
   never written to disk.  New suite TestEditorBuffers (6).
   Suite 888 (887+known), repl 4, lsp 57/57, boot 129.
+
+- 2026-08-31 (5.4 — tolerant type checking):
+  session/TolerantCheck.scala is the editor-path variant of
+  loadModule's phases — a NEW entry point beside it, never a flag
+  inside it, and it installs nothing (the caller checks a session copy
+  that is thrown away).  The statement phases (fields, foreignData,
+  typeDefs, foreigns, tables) run one unit at a time under a catcher.
+  THE STRUCTURAL POINT, per the review: EACH BINDING SCC INFERS IN ITS
+  OWN SubstEnv.  A Death part-way through a component leaves its
+  half-solved metas bound on module-wide shared placeholder Vs, and
+  every later component would then be inferred against them — reporting
+  consequences of the first error instead of its own.  Only the
+  generalized `subs` crosses a component boundary, which is the
+  structure inferBindingGroupTypes already had; the explicits loop
+  likewise checks each binding in its own SubstEnv.
+  A component that fails, and TRANSITIVELY any component depending on
+  a failed or skipped one, is reported "unchecked: depends on a broken
+  definition" (LSP severity 3, Information — it is not an error, and
+  one broken definition can gray out half a file).  They are never
+  inferred against unconstrained metas: they would typecheck to lies,
+  and `types` deliberately omits them.  Undefined terms are one note
+  per name instead of assertTermClosed's single vsep'd Death, and each
+  carries its SPELLING — which is what Resident matches against the
+  head word of every statement the splitter could not parse, so one
+  syntax error does not light up every reference to the name it was
+  going to define.  A binding that mentions an undefined term is failed
+  SILENTLY (the undefined term is the explanation); its dependents
+  still say unchecked.
+  The editor path no longer runs Session.load at all, so two things
+  moved with it: hover on the module's own top-levels now reads
+  TolerantCheck's `types` (which also means a broken file's healthy
+  definitions keep their hovers), and Dep.checkNames' import-list
+  requirements are re-done in checkFile — dropping them silently would
+  have lost a diagnostic class.
+  SILENCE ON GOOD CODE is the property that matters most and it is
+  pinned where it cannot rot: TestTolerantRead's 180-file sweep now
+  type checks every module it reads clean and requires zero notes
+  (176/176; the sweep went 40s -> 51s).  TestTolerantCheck (7) covers
+  what needs broken input: two independent errors both reported, an
+  earlier failure leaving a later independent component alone,
+  transitive unchecked with no types minted, undefined-term spelling,
+  no second note on a silently-failed binding, and the healthy part of
+  a broken file still checked.
+  DO-ANCHOR GAP: still pinned as-is.  The blame lands on the bind rhs
+  because the checker infers the continuation lambda independently and
+  clashes at the subsume — nothing about per-SCC ordering makes that
+  cheaper to fix, so it stays Stage-3 diagnostics debt.
+  lsp-smoke +11 (68): TwoErr.e publishes BOTH type errors (loadModule
+  would report only the first); Cascade.e publishes its syntax error
+  and the healthy definition's type error with NO undefined-term
+  cascade; Chain.e publishes one error and two Information "unchecked"
+  notes, the second of them transitive.
+  Suite 895 (894+known), repl 4, lsp 68/68, boot 129.

@@ -265,6 +265,46 @@ def main():
           and "Int" in r["contents"]["value"], repr(r))
     check("hover local x -> null", hover("Nav.e", 5, 10) is None)
 
+    # --- 5.4: tolerant type checking -----------------------------------
+    # loadModule stops at the first Death; the editor checker reports
+    # every independent problem.
+    open_doc("TwoErr.e")
+    ds = client.diagnostics_for(uri("TwoErr.e"))
+    check("TwoErr.e publishes BOTH independent type errors", len(ds) == 2, repr(ds))
+    if len(ds) == 2:
+        check("TwoErr.e first error on its own binding",
+              ds[0]["range"]["start"]["line"] == 3, repr(ds[0]["range"]))
+        check("TwoErr.e second error on its own binding",
+              ds[1]["range"]["start"]["line"] == 6, repr(ds[1]["range"]))
+        check("TwoErr.e both are unification errors",
+              all("failed to unify" in d["message"] for d in ds), repr(ds))
+
+    # The healthy definitions of a BROKEN file are still type checked,
+    # and the undefined-term cascade from the broken statement is gone.
+    open_doc("Cascade.e")
+    ds = client.diagnostics_for(uri("Cascade.e"))
+    check("Cascade.e syntax error plus the healthy type error", len(ds) == 2, repr(ds))
+    check("Cascade.e suppresses the undefined-term cascade",
+          not any("undefined term" in d["message"] for d in ds), repr(ds))
+    check("Cascade.e checks the healthy definition",
+          any("failed to unify" in d["message"] and d["range"]["start"]["line"] == 6
+              for d in ds), repr(ds))
+
+    # What depends on a broken definition is reported unchecked —
+    # transitively — never inferred against unconstrained metas.
+    open_doc("Chain.e")
+    ds = client.diagnostics_for(uri("Chain.e"))
+    check("Chain.e one error and two unchecked", len(ds) == 3, repr(ds))
+    if len(ds) == 3:
+        check("Chain.e blames the broken definition",
+              ds[0]["severity"] == 1 and ds[0]["range"]["start"]["line"] == 4, repr(ds[0]))
+        check("Chain.e direct dependent is unchecked (information)",
+              ds[1]["severity"] == 3 and "unchecked" in ds[1]["message"]
+              and ds[1]["range"]["start"]["line"] == 5, repr(ds[1]))
+        check("Chain.e TRANSITIVE dependent is unchecked too",
+              ds[2]["severity"] == 3 and "unchecked" in ds[2]["message"]
+              and ds[2]["range"]["start"]["line"] == 6, repr(ds[2]))
+
     # --- 5.3: didChange drives everything, with no save at all ---------
     def change(name, text, version):
         client.notify("textDocument/didChange", {
