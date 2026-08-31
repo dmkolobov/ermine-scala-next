@@ -2,6 +2,16 @@
 
 Status: open · Filed: 2026-08-30 · Prior session: scoping fix + first JFR profile
 
+WORK ON THIS TICKET IS DRIVEN BY tracker/PERF-ROADMAP.md (seeded
+2026-08-31), which is the loop-state file: the checklist, the decisions,
+the correctness gates and the iteration log all live there.  Two
+corrections this ticket does not contain:
+  - Its "Baselines to hold" are STALE (753 props; it is 902 now).
+  - It describes ONE target.  There are two: batch load (this profile)
+    and the LSP editor round trip, where after LSP-ROADMAP 5.5's per-SCC
+    inference reuse, inference is 35% of compute and parse+rename+lower
+    is 63% -- so "inference dominates" is false on that path.
+
 ## Problem
 
 Loading the 129 stdlib modules with full type inference (`-Dermine.useInterface=false`)
