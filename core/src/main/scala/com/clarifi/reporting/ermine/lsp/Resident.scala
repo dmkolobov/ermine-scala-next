@@ -7,6 +7,7 @@ import com.clarifi.reporting.ermine.rename.{ NewPipeline, Renamer }
 import com.clarifi.reporting.ermine.session.{ Lib, Printer, Session, SessionEnv, TolerantCheck }
 import com.clarifi.reporting.ermine.surface.{ SErrorStatement, SModule, SStatement,
   SDatabaseBlock, SPrivateBlock, StatementExtents }
+
 import scalaparsers.{ Death, Supply }
 
 /** The resident Ermine session (roadmap 0.2): booted once — Lib.preamble
@@ -22,7 +23,7 @@ import scalaparsers.{ Death, Supply }
   * loaded module's definition locations would point into .ei text instead
   * of the real source.  Cost: boot is ~13s instead of ~7s, once.
   */
-final class Resident(log: String => Unit) {
+final class Resident(val log: String => Unit) {
 
   final case class Ready(env: SessionEnv, modules: Int, seconds: Double)
 
@@ -141,7 +142,9 @@ final class Resident(log: String => Unit) {
     // and it is what boot already uses).
     val missing = (mh.importExports.map(_.module).toSet &~ e.loadedModules.keySet).toList
     if (missing.nonEmpty) Session.loadModules(missing.sorted)
+    val tRead0 = System.nanoTime
     val r = NewPipeline.readModuleTolerant(file.toString, contents, mh)
+    val tRead = System.nanoTime
 
     // Dep.checkNames' import-list requirements, which the editor path no
     // longer gets for free from Session.load.
@@ -155,7 +158,23 @@ final class Resident(log: String => Unit) {
       ex.collect { case x if !x.isType && !e.termNames.contains(x.global) => req(x.global, "term") }
     }
 
-    val checked = TolerantCheck.check(r.ps, r.module)
+    // --- 5.5: what an SCC's inference depends on, split in two.
+    // `groups` is one top-level spelling's own source, sig and equations
+    // together (the invalidation unit), with start lines in it so a
+    // reused result can never carry drifted positions.  `scopeKey` is
+    // everything else: imports, the scope-bearing statements, the head
+    // set, and the other open buffers' versions.
+    val (groups, scopeKey) = TolerantCheck.keys(
+      contents, mh.name, mh.imports.toList.sortBy(_._1).toString,
+      docs.otherVersions(path.toString))
+
+    val (checked, cache) =
+      TolerantCheck.checkWith(r.ps, r.module, groups, scopeKey, docs.cacheFor(path.toString))
+    docs.putCache(path.toString, cache)
+    val tCheck = System.nanoTime
+    log(f"check: ${mh.name} read ${(tRead - tRead0) / 1e9}%.2fs, " +
+        f"typecheck ${(tCheck - tRead) / 1e9}%.2fs " +
+        f"(reused ${checked.reused} of ${checked.components} components)")
 
     // A statement the splitter could not parse defines nothing, so every
     // reference to its head word is an undefined term — one syntax error

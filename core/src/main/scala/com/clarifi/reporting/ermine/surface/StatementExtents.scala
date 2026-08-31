@@ -80,6 +80,27 @@ object StatementExtents {
     (i, line, col)
   }
 
+  /** The char offset of a 1-based (line, column), counted the way
+    * scalaparsers' Pos.bump counts (tab to the next multiple of 8). */
+  def offsetOf(contents: String, line: Int, col: Int): Int = {
+    val n = contents.length
+    var i = 0; var l = 1; var c = 1
+    while (i < n && (l < line || (l == line && c < col))) {
+      contents.charAt(i) match {
+        case '\n' => l += 1; c = 1
+        case '\t' => c += 8 - c % 8
+        case _     => c += 1
+      }
+      i += 1
+    }
+    i
+  }
+
+  /** The source an extent covers. */
+  def text(contents: String, e: Extent): String =
+    contents.substring(offsetOf(contents, e.startLine, e.startCol),
+                       offsetOf(contents, e.endLine, e.endCol))
+
   def scan(contents: String): Scan = {
     val n = contents.length
     var i = 0

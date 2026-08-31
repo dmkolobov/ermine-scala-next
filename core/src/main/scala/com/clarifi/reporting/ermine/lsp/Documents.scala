@@ -1,6 +1,6 @@
 package com.clarifi.reporting.ermine.lsp
 
-import com.clarifi.reporting.ermine.session.Session
+import com.clarifi.reporting.ermine.session.{ Session, TolerantCheck }
 
 import java.io.File
 import java.nio.file.{ Path, Paths }
@@ -17,7 +17,8 @@ import java.nio.file.{ Path, Paths }
 final class Documents {
 
   final case class Doc(uri: String, path: Path, text: String, version: Long,
-                       index: Option[Definitions.DocIndex]) {
+                       index: Option[Definitions.DocIndex],
+                       cache: TolerantCheck.Cache = TolerantCheck.Cache.empty) {
     /** The SourceFile a load should see for this document. */
     def source: Session.Buffer = Session.Buffer(path.toString, text, version)
   }
@@ -41,7 +42,13 @@ final class Documents {
       docs.get(uri) foreach { old => Session.depCache -= old.source }
       // The index is kept across the edit on purpose: navigation on a
       // stale index beats none while the next check runs.
-      val d = Doc(uri, path, text, version, docs.get(uri).flatMap(_.index))
+      // The index AND the inference cache survive the edit: the index
+      // because stale navigation beats none while the next check runs,
+      // the cache because its own scopeKey/fingerprints decide what of
+      // it still applies (roadmap 5.5).
+      val prev = docs.get(uri)
+      val d = Doc(uri, path, text, version, prev.flatMap(_.index),
+                  prev.map(_.cache) getOrElse TolerantCheck.Cache.empty)
       docs += uri -> d
       d
     }
@@ -54,6 +61,20 @@ final class Documents {
   /** The buffer for a path, if that file is open. */
   def byPath(fileName: String): Option[Doc] =
     docs.valuesIterator.find(_.path.toString == fileName)
+
+  def cacheFor(fileName: String): TolerantCheck.Cache =
+    byPath(fileName).map(_.cache) getOrElse TolerantCheck.Cache.empty
+
+  def putCache(fileName: String, c: TolerantCheck.Cache): Unit =
+    byPath(fileName) foreach { d => docs += d.uri -> d.copy(cache = c) }
+
+  /** The versions of every OTHER open buffer, for a check's scope key: a
+    * sibling's unsaved edit changes what this file's imports mean, and
+    * its own version must NOT be in there or typing would invalidate
+    * its own cache on every keystroke (roadmap 5.5). */
+  def otherVersions(fileName: String): String =
+    docs.valuesIterator.filter(_.path.toString != fileName)
+      .map(d => d.path.toString + "@" + d.version).toList.sorted.mkString(",")
 
   /** A loader that answers from open buffers, resolving module names the
     * way SourceFile.filesystem does (dots are directories) but WITHOUT

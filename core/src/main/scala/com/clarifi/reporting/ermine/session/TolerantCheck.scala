@@ -9,6 +9,7 @@ import com.clarifi.reporting.ermine.Subst.{
   assertTypeClosed, inferImplicitBindingTypes, toGamma, typeCheckExplicitBinding, unbindAnnot }
 import com.clarifi.reporting.ermine.syntax._
 import com.clarifi.reporting.ermine.syntax.TypeDef.typeDefComponents
+import com.clarifi.reporting.ermine.surface.StatementExtents
 import com.clarifi.reporting.ermine.parsing.ParseState
 import scalaparsers.{ Death, Document, Supply }
 
@@ -54,9 +55,76 @@ object TolerantCheck {
     * gave it — inferred for implicits, declared for explicits.  It is
     * what hover reads now that the editor path no longer runs a real
     * load to put the module in the session. */
-  final case class Result(notes: List[Note], types: Map[String, Type])
+  final case class Result(notes: List[Note], types: Map[String, Type],
+                          reused: Int = 0, components: Int = 0)
 
-  def check(ps: ParseState, m: Module)(implicit s: SessionEnv, su: Supply): Result = {
+  /** Per-uri inference reuse (roadmap 5.5).  `scopeKey` covers
+    * everything an SCC's inference depends on beyond its own text: the
+    * imports, the scope-bearing statements, the top-level head set, and
+    * the versions of the OTHER open buffers (a sibling's unsaved edit
+    * changes what an import means).  When it moves, the whole map goes:
+    * conservative and correct beats clever.
+    *
+    * `entries` is keyed by an SCC fingerprint — its bindings' source
+    * text INCLUDING their start lines, plus the fingerprints of the
+    * module-local groups it references.  Fingerprints rather than
+    * inferred types because they are alpha-invariant by construction:
+    * every V in a fresh run has a fresh id, so a type rendering would
+    * be a moving target.  Start lines are in the key so a REUSED entry
+    * can never carry a note or a type whose Locs have drifted; note-
+    * bearing components are not cached at all, for the same reason. */
+  final case class Cache(scopeKey: String, entries: Map[String, Map[String, Type]]) {
+    def isEmpty: Boolean = entries.isEmpty
+    def size: Int = entries.size
+  }
+  object Cache { val empty = Cache("", Map()) }
+
+  /** Statement heads whose EDIT changes what every other statement
+    * means, so the whole per-uri cache goes.  `private` and `database`
+    * are here because their bodies are not top-level items, so nothing
+    * inside one can be fingerprinted on its own. */
+  private val ScopeWords = Set(
+    "import", "export", "type", "data", "class", "instance", "field", "table",
+    "foreign", "private", "database", "abstract",
+    "infixl", "infixr", "infix", "prefix", "postfix")
+
+  /** The two fingerprint inputs, derived from the source: the per-group
+    * texts and the scope key.  A group is one top-level spelling's own
+    * statements, sig and equations together — the invalidation unit,
+    * since they pair module-wide by shared V — with START LINES in the
+    * text, so a reused result can never carry positions that have
+    * drifted.  `workspaceKey` is the caller's business: the LSP puts
+    * the OTHER open buffers' versions in it, because a sibling's
+    * unsaved edit changes what an import means. */
+  def keys(contents: String, moduleName: String, importsKey: String,
+           workspaceKey: String): (Map[String, String], String) = {
+    val scan = StatementExtents.scan(contents)
+    val (scopeItems, bindItems) = scan.items partition (x => ScopeWords(x.headWord))
+    val groups = bindItems.filter(_.headWord.nonEmpty).groupBy(_.headWord).map {
+      case (w, xs) => w -> xs.map(x =>
+        x.startLine + ":" + StatementExtents.text(contents, x)).mkString("\u0000")
+    }
+    val scopeKey = fingerprint(
+      moduleName, importsKey,
+      scopeItems.map(StatementExtents.text(contents, _)).mkString("\u0000"),
+      bindItems.map(_.headWord).sorted.mkString(","),
+      workspaceKey)
+    (groups, scopeKey)
+  }
+
+  def check(ps: ParseState, m: Module)(implicit s: SessionEnv, su: Supply): Result =
+    checkWith(ps, m, Map(), "", Cache.empty)._1
+
+  /** As `check`, reusing (and rebuilding) per-SCC inference results.
+    * `groups` maps a top-level spelling to the source text of its
+    * statements — sig and equations together, since they are one
+    * invalidation unit (module-wide pairing by shared V: a sig edit
+    * changes its group's ExplicitBinding without touching the head
+    * set).  A spelling missing from `groups` — an operator, anything
+    * the extent scanner cannot name — is simply never cached. */
+  def checkWith(ps: ParseState, m: Module,
+                groups: Map[String, String], scopeKey: String, cache: Cache)
+               (implicit s: SessionEnv, su: Supply): (Result, Cache) = {
     val notes = scala.collection.mutable.ListBuffer.empty[Note]
 
     def guard[A](sev: Int)(body: => A): Option[A] =
@@ -120,27 +188,77 @@ object TolerantCheck {
     val esp = es.map(e => e.subst(Map(), Map(), em))
     val isp = is.map(i => i.subst(Map(), Map(), em))
 
+    // --- per-SCC reuse (5.5) -------------------------------------------
+    // A group's fingerprint is its own text plus the fingerprints of the
+    // module-local groups it references, so a change anywhere upstream
+    // reaches everything downstream.  Explicit bindings are groups too:
+    // their annotation is what their dependents were inferred against.
+    def spelling(v: TermVar): Option[String] = v.name.map(_.string)
+    val localFp = scala.collection.mutable.Map.empty[String, String]
+    es.foreach { e =>
+      for (sp <- spelling(e.v); text <- groups.get(sp)) localFp += sp -> fingerprint("sig", sp, text)
+    }
+    def fpOf(comp: List[ImplicitBinding], refs: Set[TermVar]): Option[String] = {
+      val sps = comp.flatMap(b => spelling(b.v))
+      if (sps.size != comp.size) None
+      else {
+        val texts = sps.map(groups.get)
+        if (texts.exists(_.isEmpty)) None
+        else {
+          val upstream = refs.toList.flatMap(spelling).flatMap(localFp.get).sorted
+          Some(fingerprint(("scc" :: sps.sorted ::: texts.flatten ::: upstream): _*))
+        }
+      }
+    }
+
+    val reusable = cache.scopeKey == scopeKey && scopeKey.nonEmpty
+    val fresh = scala.collection.mutable.Map.empty[String, Map[String, Type]]
+    var reused = 0
+
     var subs: Map[TermVar, TermVar] = Map()
+    var components = 0
     implicitBindingComponents(isp) foreach { comp =>
       val vs   = comp.map(_.v).toSet
       val refs = comp.flatMap(b => termVars(b.alts).toList).toSet
+      val fp   = fpOf(comp, refs)
+      components += 1
+      fp foreach { f => comp.foreach(b => spelling(b.v) foreach (localFp += _ -> f)) }
+
+      def hit: Option[Map[String, Type]] =
+        if (!reusable) None else fp.flatMap(cache.entries.get)
+
       if ((refs & failed).nonEmpty || (vs & preFailed).nonEmpty) {
         if ((vs & preFailed).isEmpty) comp.foreach(unchecked)
         failed = failed ++ vs
-      } else
-        // A FRESH SubstEnv per component (see the class comment).
-        guard(Error) {
-          Session.subst { implicit hm =>
-            val (ds, sub) = inferImplicitBindingTypes(m.loc, toGamma(subs),
-                                                      Term.subTerm(subs, comp), true)
-            for (d <- ds) if (!d.isTrivialConstraint) d.die("non-trivial top level constraint")
-            sub
+      } else hit match {
+        case Some(tys) if comp.forall(b => spelling(b.v).exists(tys.contains)) =>
+          // Only NOTE-FREE components are ever cached, so a hit adds
+          // nothing to report and nothing whose Locs could have drifted.
+          comp foreach { b => spelling(b.v) foreach { sp => subs = subs + (b.v -> b.v.as(tys(sp))) } }
+          fp foreach { f => fresh += f -> tys }
+          reused += 1
+        case _ =>
+          val before = notes.length
+          // A FRESH SubstEnv per component (see the class comment).
+          guard(Error) {
+            Session.subst { implicit hm =>
+              val (ds, sub) = inferImplicitBindingTypes(m.loc, toGamma(subs),
+                                                        Term.subTerm(subs, comp), true)
+              for (d <- ds) if (!d.isTrivialConstraint) d.die("non-trivial top level constraint")
+              sub
+            }
+          } match {
+            case Some(sub) =>
+              subs = subs ++ sub
+              if (notes.length == before) fp foreach { f =>
+                fresh += f -> comp.flatMap(b => spelling(b.v).flatMap(sp =>
+                  sub.get(b.v).map(sp -> _.extract))).toMap
+              }
+            case None => failed = failed ++ vs
           }
-        } match {
-          case Some(sub) => subs = subs ++ sub
-          case None      => failed = failed ++ vs
-        }
+      }
     }
+
 
     // The explicits check per binding, each in its own SubstEnv too.
     esp foreach { e =>
@@ -157,6 +275,12 @@ object TolerantCheck {
     val types =
       (subs.flatMap { case (v, v2) => v.name.map(_.string -> v2.extract) } ++
        etm.flatMap  { case (v, t)  => v.name.map(_.string -> t) }).toMap
-    Result(notes.toList, types)
+    (Result(notes.toList, types, reused, components), Cache(scopeKey, fresh.toMap))
+  }
+
+  def fingerprint(parts: String*): String = {
+    val md = java.security.MessageDigest.getInstance("SHA-1")
+    parts foreach { p => md.update(p.getBytes("UTF-8")); md.update(0: Byte) }
+    md.digest().map("%02x".format(_)).mkString
   }
 }

@@ -2,6 +2,7 @@ package com.clarifi.reporting
 
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.rename.NewPipeline
+import com.clarifi.reporting.ermine.Pretty
 import com.clarifi.reporting.ermine.session.{ Session => S, TolerantCheck }
 
 import org.scalacheck._
@@ -20,7 +21,7 @@ import scalaparsers.Supply
   * sweep (the editor checker must find nothing the batch loader
   * accepts); these are the behaviours that need broken input.
   */
-object TestTolerantCheck extends Properties("Tolerant check 5.4") {
+object TestTolerantCheck extends Properties("Tolerant check") {
   private val fx = ErmineFixture()
 
   private def header(body: String) =
@@ -92,6 +93,76 @@ object TestTolerantCheck extends Properties("Tolerant check 5.4") {
     val r = check("v = nosuchthing\nw = v\n")
     ((errors(r).size == 1) :| errors(r).map(_.report).toString) &&
       ((infos(r).size == 1) :| infos(r).map(_.report.linesIterator.take(1).mkString).toString)
+  }
+
+  // ---- 5.5: per-SCC reuse --------------------------------------------
+  // The cache must be invisible: whatever it hands back must equal what
+  // a cold check of the same text would have said.
+
+  private def run(body: String, cache: TolerantCheck.Cache)
+      : (TolerantCheck.Result, TolerantCheck.Cache) =
+    fx.session { implicit s =>
+      implicit val su: Supply = fx.supply
+      implicit val con = fx.con
+      S.loadModules(List("Function", "List", "Primitive"))
+      val src = header(body)
+      val (_, mh) = S.parse(ModuleParsers.moduleHeader("TC"), ErParseState.mk("TC", src, "TC"))
+      val r = NewPipeline.readModuleTolerant("TC", src, mh)
+      val (groups, scopeKey) =
+        TolerantCheck.keys(src, mh.name, mh.imports.toList.sortBy(_._1).toString, "")
+      TolerantCheck.checkWith(r.ps, r.module, groups, scopeKey, cache)
+    }
+
+  private def rendered(r: TolerantCheck.Result): Map[String, String] =
+    r.types.map { case (k, t) => k -> Pretty.prettyType(t, -1).toString }
+
+  /** Check `before`, then check `after` twice — once carrying the cache
+    * `before` produced, once cold — and require the two to agree. */
+  private def invisible(what: String, before: String, after: String,
+                        expectReuse: Boolean = true): Prop = {
+    val (_, cache) = run(before, TolerantCheck.Cache.empty)
+    val (warm, _)  = run(after, cache)
+    val (cold, _)  = run(after, TolerantCheck.Cache.empty)
+    ((warm.notes.map(n => (n.severity, n.report)) ?= cold.notes.map(n => (n.severity, n.report)))
+       :| s"$what: notes differ") &&
+    ((rendered(warm) ?= rendered(cold)) :| s"$what: types differ") &&
+    (if (expectReuse) (warm.reused > 0) :| s"$what: nothing was reused (vacuous)"
+     else (warm.reused == 0) :| s"$what: reused ${warm.reused}, expected a full drop")
+  }
+
+  private val base =
+    "one = 1\ntwo = one\nthree : Int\nthree = two\nfour = three\n"
+
+  property("reuse is invisible: an edit inside one definition") =
+    invisible("body edit", base, base.replace("two = one", "two =  one"))
+
+  property("reuse is invisible: an edit that INTRODUCES an error") =
+    invisible("break", base, base.replace("one = 1", "one = 1 True"))
+
+  property("reuse is invisible: an edit that FIXES an error") =
+    invisible("fix", base.replace("one = 1", "one = 1 True"), base)
+
+  property("reuse is invisible: a signature edit") =
+    // the sig and its equations are ONE invalidation unit
+    invisible("sig edit", base, base.replace("three : Int", "three : Integer"))
+
+  property("a new top-level definition drops the whole cache") =
+    // the head set is part of the scope key
+    invisible("head set", base, base + "five = four\n", expectReuse = false)
+
+  property("a new import drops the whole cache") =
+    fx.session { _ =>
+      val (_, c1) = run(base, TolerantCheck.Cache.empty)
+      val (warm, _) = run(base, c1.copy(scopeKey = c1.scopeKey + "!"))
+      (warm.reused == 0) :| s"reused ${warm.reused} across a scope-key change"
+    }
+
+  property("a clean module reuses nearly all of its components") = {
+    val (_, cache) = run(base, TolerantCheck.Cache.empty)
+    val (warm, _)  = run(base, cache)
+    ((warm.components >= 3) :| s"only ${warm.components} components") &&
+      ((warm.reused == warm.components) :|
+        s"reused ${warm.reused} of ${warm.components} on an UNCHANGED module")
   }
 
   property("a broken statement does not stop the healthy ones being checked") = {

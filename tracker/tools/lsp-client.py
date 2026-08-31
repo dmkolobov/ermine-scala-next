@@ -357,6 +357,19 @@ def main():
     check("def v -> line 5 after the edit, no save", r is not None
           and r["range"]["start"] == {"line": 5, "character": 0}, repr(r))
 
+    # 5.5: breaking an UPSTREAM definition must reach its dependents
+    # through the per-SCC cache, not be masked by a stale entry.
+    change("Edit.e", edit_src.replace("v = answer", "v = answer True"), 10)
+    ds = client.diagnostics_for(uri("Edit.e"))
+    check("breaking v reports it and unchecks w", len(ds) == 2, repr(ds))
+    if len(ds) == 2:
+        check("breaking v: the error is on v",
+              ds[0]["severity"] == 1 and ds[0]["range"]["start"]["line"] == 4, repr(ds[0]))
+        check("breaking v: w goes unchecked",
+              ds[1]["severity"] == 3 and "unchecked" in ds[1]["message"], repr(ds[1]))
+    change("Edit.e", edit_src, 11)
+    check("fixing v clears both", client.diagnostics_for(uri("Edit.e")) == [])
+
     # A SIBLING's unsaved edit is seen by the importing file's next check:
     # move Good.answer down a line in ITS buffer and re-check Edit.e.
     change("Good.e", good_src.replace("\nanswer = 42", "\n\nanswer = 42"), 2)

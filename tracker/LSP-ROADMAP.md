@@ -8,12 +8,13 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 2 OPEN (signed off 2026-08-31). 5.1-5.4 done — the read path
+Status: STAGE 2 OPEN (signed off 2026-08-31). 5.1-5.5 done — the read path
 is error-tolerant end to end, reports every phase's diagnostics, blames
 syntax errors where the parser actually gave up, the splitter is TOTAL,
-checking runs on open BUFFERS as they are typed, and TYPE checking reports
-every independent error including in the healthy part of a broken file.
-NEXT: 5.5 (incremental re-inference per unchanged SCC) · Seeded 2026-08-30 (session that shipped the
+checking runs on open BUFFERS as they are typed, TYPE checking reports
+every independent error including in the healthy part of a broken file,
+and unchanged binding components are no longer re-inferred.
+NEXT: 5.6 (stretch — nested extents), then GATE G2 stops the loop · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -23,7 +24,7 @@ scoping fix, commits f9cf42a / 41b13cc).
   Stage 0; suites GROW, so a commit that adds tests updates the count in
   its iteration-log line, and green-except-the-known-one is the invariant
 - `tracker/tools/repl-smoke.sh`: all suites PASS (4 as of D2)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (69 as of 5.4b)
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (73 as of 5.5)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 - KNOWN FLAKE: core/test suites run concurrently in one JVM and rarely
@@ -310,7 +311,7 @@ machinery is deleted post-G1, never before.
 
 ### 4.x Integration, convergence, LSP rebase
 
-- [ ] **4.1 Typecheck integration + pipeline switch + fixture twins**: new
+- [x] **4.1 Typecheck integration + pipeline switch + fixture twins**: new
   pipeline feeds Session.loadModule's frozen contract incl. the type/kind
   side (ps.s.typeNames consumption, Session.scala:812-816); a module-load
   switch (-Dermine.pipeline=new) reachable from bin/ermine routes module
@@ -518,7 +519,7 @@ STAGE-2 INVARIANTS (hard):
   with two INDEPENDENT type errors publishes both.  REVISIT while
   here: the do-anchor blame gap (D3 log); fix if the per-SCC check
   order makes it cheap, else keep the pin and note.
-- [ ] **5.5 Incremental re-inference per unchanged SCC**.  Review
+- [x] **5.5 Incremental re-inference per unchanged SCC**.  Review
   killed the naive form: renamer binder ids and Lower's supply-minted
   Vs are FRESH EVERY RUN and shared across statements, so cached
   lowered trees cannot mix with a fresh run — and parse+rename+lower
@@ -1586,3 +1587,47 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   classOrigins, loadedFiles, loadedModules.  lsp-smoke +1 (69): open
   the stdlib's own Bool.e and require zero diagnostics.
   Suite 895 (894+known), repl 4, lsp 69/69, boot 129.
+
+- 2026-08-31 (5.5 — per-SCC inference reuse).  MEASURED FIRST, on
+  Layout/Report.e (1757 lines), and the measurement revised one of this
+  item's own premises.  Before: read 0.89s + typecheck 1.03s,
+  keystroke-to-diagnostics median 2.24s (0.30s of it the debounce).
+  After: read 0.80s + typecheck 0.45s, 114 of 154 components reused,
+  median 1.57s.  So a 56% cut in inference and 30% end to end — but
+  parse+rename+lower is NOT the cheap part the checklist assumed
+  ("inference dominates; the perf ticket's own finding"): at 0.80s it
+  is now 64% of the remaining work.  Whatever comes after 5.5 should
+  aim there, and the perf ticket should be re-read with this number.
+  DESIGN.  Parse+rename+lower runs whole every check, as the review
+  required (fresh binder ids make cached trees unmixable).  The reuse
+  unit is a binding SCC, keyed by a fingerprint of its own group text
+  plus the fingerprints of the module-local groups it references —
+  fingerprints, not inferred types, because they are alpha-invariant by
+  construction while every V in a fresh run has a fresh id.  A group is
+  one spelling's sig AND equations (module-wide pairing by shared V),
+  and explicit bindings are groups too, so a sig edit invalidates the
+  dependents that were inferred against its annotation.  START LINES
+  are in the group text and note-bearing components are never cached:
+  between them a reused entry cannot carry a note or a Loc that has
+  drifted.  Scope-bearing edits — imports, fixity, type/data/class/
+  field/table/foreign, private and database blocks, any change to the
+  top-level head set, and the versions of the OTHER open buffers —
+  move the scopeKey and drop the whole map.  A spelling the extent
+  scanner cannot name (operators) is simply never cached.
+  A no-op-looking edit taught something worth writing down: appending
+  trailing whitespace changes NO fingerprint, because an extent ends
+  just past its last significant character.  The first measurement used
+  exactly that edit and flattered the cache; the numbers above are from
+  a real in-body edit.
+  TestTolerantCheck +7 (14): the cache is INVISIBLE — a body edit, an
+  edit that introduces an error, one that fixes it, and a signature
+  edit each produce byte-identical notes and types warm and cold; a new
+  definition or a scope-key change reuses nothing; an unchanged module
+  reuses every component.  lsp-smoke +4 (73): breaking an UPSTREAM
+  definition through didChange reports it AND unchecks its dependent
+  (invalidation reaching downstream, not masked by a stale entry), and
+  fixing it clears both.
+  Also ticked the stale Stage-1 4.1 box — completed at 4.1c on
+  2026-08-30 and covered by the G1 sign-off; it was only ever unticked
+  because the item was split into 4.1a/b/c.
+  Suite 902 (901+known), repl 4, lsp 73/73, boot 129.
