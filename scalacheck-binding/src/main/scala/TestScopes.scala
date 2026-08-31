@@ -140,6 +140,33 @@ trait ScopesProperties { self: Properties =>
       no(typeChecks("v = let a = id_F 5\n        id x = 99\n    in a", "v", aliasImps))
   }
 
+  // 4.4: under the new pipeline the SAME programs are fine — plain
+  // Haskell scoping: a local binder shadows only its own spelling, so a
+  // reference through the module-affixed alias still reaches the import.
+  // No Primitive import here: with Prelude too it would make `+`
+  // ambiguous (the operator-imported-twice pin).
+  val flipImps: Map[String, ImportSpec] =
+    Map("Builtin" -> all, "Test" -> all,
+        "Prelude" -> all, "Function" -> ((Some("F"), List[Explicit[Global]](), false)))
+
+  if (viaNew) {
+    property("an alias-affixed reference survives a plain-name shadow (where)") =
+      forAll(small) { x =>
+        defAndEval(s"v = id_F $x where id q = 99", "v", flipImps).extract[Int] ?= x }
+
+    property("an alias-affixed reference survives a plain-name shadow (let)") =
+      forAll(small) { x =>
+        defAndEval(s"v = let a = id_F $x\n        id q = 99\n    in a", "v", flipImps).extract[Int] ?= x }
+
+    property("combined capture: id_F untouched AND plain id captured, one program") =
+      forAll(small, small) { (x, y) =>
+        defAndEval(s"v = id_F $x + id $y where id q = q + 90", "v", flipImps).extract[Int] ?= x + y + 90 }
+
+    property("letrec: an early plain-name reference binds the block's shadowing binding") =
+      forAll(small) { x =>
+        defAndEval(s"v = let a = id $x\n        id q = q + 7\n    in a", "v", flipImps).extract[Int] ?= x + 7 }
+  }
+
   property("shadowing an aliased import is fine when no reference is captured") =
     forAll(small) { x =>
       defAndEval(s"v = let id = $x in id", "v", aliasImps).extract[Int] ?= x }

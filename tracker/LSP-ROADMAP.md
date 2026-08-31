@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 4.3 DONE (LSP navigation runs on the renamer tables; lsp-smoke 31 checks); next: 4.4 alias-refusal flips, then GATE G1 sign-off · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — ALL ITEMS DONE (4.4 flips landed; suite 900); AT GATE G1 — awaiting sign-off · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -339,7 +339,7 @@ machinery is deleted post-G1, never before.
   not on the renamer; "ill-formed expression" checks updated in the same
   commit if the message moved (Decision f); all lsp-smoke checks green
   (count grows; update Baselines note per its rule).
-- [ ] **4.4 Flip the alias-refusal tests (new pipeline only)**: TestScopes
+- [x] **4.4 Flip the alias-refusal tests (new pipeline only)**: TestScopes
   :130/:133 -> positive Haskell semantics under the new-pipeline
   parameterization (old-pipeline run keeps refusal expectations for
   exactly these two); add the combined-capture property (id_F untouched
@@ -967,3 +967,18 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   sig-mention hover — all pass first run.  Type-level names inside the
   file now navigate too (TyDef binder spans), for free.  Baselines:
   896 (895+known), repl 3/3, lsp 31/31.
+
+- 2026-08-30 (4.4): ALIAS-REFUSAL FLIPS LANDED. Under the new-pipeline
+  parameterization only, four positive properties assert plain Haskell
+  scoping: an alias-affixed reference (id_F) survives a plain-name
+  shadow in where and in let; the combined-capture program (id_F
+  untouched AND plain id captured, one expression); and the letrec
+  early-plain-name-reference case binding the block's shadowing
+  binding.  The old-pipeline suite keeps the two capture REFUSALS
+  verbatim (:130/:133) — no machinery deletion, no scoping.in edit
+  (post-G1 debt).  The flip properties import Prelude WITHOUT Primitive
+  (flipImps): with both, `+` is ambiguous by design (the
+  operator-imported-twice pin), which is a corpus-authoring constraint,
+  not a pipeline bug.  Suite: 900 (899 green + known disjunction);
+  repl 3/3, lsp 31/31.  STAGE 1 CHECKLIST COMPLETE — stopping at GATE
+  G1 for sign-off.
