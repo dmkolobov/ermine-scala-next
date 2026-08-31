@@ -200,7 +200,7 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
     * the (infixl 5 op) declaring form (NameParsers.bindingName). */
   def defName: Parser[SName] =
     (spanned(identTok) | spanned(literalIdentTok)).map(n => SName(n._1, Plain, Idfix, n._2)) |
-    token(paren(
+    token(spanned(paren(
       (keyword("prefix") >> precTok.optional ++ spanned(opTok))
         .map { case n ++ o => SName(o._1, n.map(p => ParenFixityBinder(Prefix(p)): NameForm).getOrElse(ParenPrefixOp), Idfix, o._2) } |
       (keyword("postfix") >> precTok.optional ++ spanned(opTok))
@@ -212,11 +212,12 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
       (keyword("infix") >> precTok ++ spanned(opTok))
         .map { case n ++ o => SName(o._1, ParenFixityBinder(InfixN(n)), Idfix, o._2) } |
       spanned(opTok).map(o => SName(o._1, ParenOp, Idfix, o._2))
-    ).attempt("binder name"))
+      // the fused loc for a (op) form is taken at the OPEN PAREN
+    )).map { case (n, sp) => n.copy(span = sp) }.attempt("binder name"))
 
   def refName: Parser[SName] =
     spanned(identTok).map(n => SName(n._1, Plain, Idfix, n._2)) |
-    token(paren(spanned(opTok)).map(o => SName(o._1, ParenOp, Idfix, o._2)).attempt("(operator)"))
+    token(spanned(paren(spanned(opTok))).map { case (o, sp) => SName(o._1, ParenOp, Idfix, sp) }.attempt("(operator)"))
 
   // ------------------------------------------------------------- patterns
 
@@ -369,7 +370,7 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
       .map(n => SVar(SName(n._1, Plain, Idfix, n._2)))
 
   def parenOpRef: Parser[STerm] =
-    token(paren(spanned(opTok)).map(o => SVar(SName(o._1, ParenOp, Idfix, o._2)): STerm).attempt("(operator)"))
+    token(spanned(paren(spanned(opTok))).map { case (o, sp) => SVar(SName(o._1, ParenOp, Idfix, sp)): STerm }.attempt("(operator)"))
 
   def termL0: Parser[STerm] = (
     holeTerm       |

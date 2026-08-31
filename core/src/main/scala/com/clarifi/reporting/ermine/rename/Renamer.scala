@@ -160,18 +160,32 @@ object Renamer {
 
   // ------------------------------------------------------------ binder heads
 
-  /** One binder per unique name over sigs+equations; def-site = LAST
-    * equation's name span (globalTermDef relocation parity), else the
-    * (last) sig mention. */
+  /** One binder per unique name over sigs+equations.  Def-site parity
+    * with the fused relocation, OBSERVED where the fused pipeline
+    * observes it: top level reads the post-parse termNames end-state,
+    * so the LAST def-like mention (sig or equation, file order) wins;
+    * a let/where binding captures its V when the group is built, so
+    * the FIRST def-like mention wins (G1Resolution differential). */
   private def collectHeads(sts: List[SStatement], kind: BinderKind, s: S): Map[String, Int] = {
     val sites = scala.collection.mutable.LinkedHashMap[String, Span]()
-    sts foreach {
-      case SSigStatement(_, ns, _) =>
-        ns.foreach(n => if (!sites.contains(n.spelling)) sites(n.spelling) = n.span)
+    val lastWins = kind == TopLevel
+    // locals: the binding captures its V at the FIRST EQUATION (a sig
+    // binds only when no equation follows); top level: the termNames
+    // end-state = the LAST def-like mention, private groups included
+    val sigSites = scala.collection.mutable.LinkedHashMap[String, Span]()
+    def walkHeads(ss: List[SStatement]): Unit = ss foreach {
+      case SSigStatement(_, ns, _) => ns.foreach { n =>
+        if (lastWins) sites(n.spelling) = n.span
+        else if (!sigSites.contains(n.spelling)) sigSites(n.spelling) = n.span
+      }
       case SEquation(_, n, _, _, _) =>
-        sites(n.spelling) = n.span  // last equation wins
+        if (lastWins || !sites.contains(n.spelling)) sites(n.spelling) = n.span
+      case SPrivateBlock(_, ss2)     => walkHeads(ss2)
+      case SDatabaseBlock(_, _, ss2) => walkHeads(ss2)
       case _ => ()
     }
+    walkHeads(sts)
+    for ((sp, span) <- sigSites; if !sites.contains(sp)) sites(sp) = span
     sites.flatMap { case (sp, site) =>
       // ledger: a ':'-operator binder naming an imported constructor is
       // refused wherever it binds (localTermDef parity)

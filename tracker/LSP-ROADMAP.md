@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 4.2 IN PROGRESS: layers dry so far — .ei (1 known delta: lookbackJoin), browse (known-delta noise), groups, importing goldens, warm reload (full matrix), eval (repl-smoke 3/3 new-pipeline + parallel loader), examples sweep (1 moved refusal, in ledger); next: occurrence->def-site differential (the direct resolution oracle, 180 files), then scope-at-position sampling + 1.3 corpus parameterization · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 4.2 NEARLY DRY: .ei (1 known delta), browse (noise, .ei authoritative), groups, importing goldens, warm reload matrix, eval, examples sweep, and the occurrence->def-site differential (G1Resolution: 8223/8223 shared occurrences agree, 0 mismatches, 136 files); remaining: scope-at-position sampling, 1.3 corpus/TestScopes parameterization under new, 32 non-boot modules · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -902,3 +902,25 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   Remaining 4.2 layers: occurrence->def-site differential (the big
   one — also 4.3's spec), scope-at-position sampling, 1.3 corpus/
   TestScopes pipeline parameterization, 32 non-boot modules under new.
+
+- 2026-08-30 (4.2 batch 4): OCCURRENCE->DEF-SITE DIFFERENTIAL BUILT AND
+  DRY (tools/G1Resolution.scala — also 4.3's spec). Old side: fused
+  moduleBody re-parse (own-module globals filtered from seeding, the
+  0.5 nav trick) walking Var/ConP occurrences to binder locs by V id,
+  with the POST-PARSE termNames end-state as the def-site authority;
+  new side: renamer occurrence table (ToBinder -> defSite, ToGlobal ->
+  session V loc). RESULT: 136 files, 8223 shared occurrences, ZERO
+  mismatches. It caught and fixed TWO real parity bugs first: (1)
+  collectHeads def-sites — a LET/WHERE binding captures its V at the
+  FIRST EQUATION (sig binds only when no equation follows), while the
+  top level keeps the last def-like mention IN FILE ORDER including
+  inside private groups (collectHeads now descends SPrivateBlock/
+  SDatabaseBlock — Native.Magnitude's `private erasePhantom =` case);
+  (2) ParenOp binder/reference SName spans now START AT THE OPEN PAREN
+  (fused loc convention; was the op token). One-way occurrences are
+  explained noise (new-side def-like mentions and type-level names;
+  old-side desugar-minted and class-body vars); skips = the 5
+  documented own-export re-parse modules + examples needing imports
+  beyond the tool's boot (covered end-to-end by the :load sweep) +
+  Sample.e (both sides refuse). Baselines: 866 (865+known), .ei
+  differential still 1 known delta, repl 3/3, lsp 27/27.
