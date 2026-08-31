@@ -17,7 +17,7 @@ scoping fix, commits f9cf42a / 41b13cc).
   (the one known pre-existing failure, tracker/06-tests.md) — 761/762 as of
   Stage 0; suites GROW, so a commit that adds tests updates the count in
   its iteration-log line, and green-except-the-known-one is the invariant
-- `tracker/tools/repl-smoke.sh`: all suites PASS (3 as of Stage 0)
+- `tracker/tools/repl-smoke.sh`: all suites PASS (4 as of D2)
 - `tracker/tools/lsp-smoke.sh`: all checks PASS (31 as of 4.3)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
@@ -378,12 +378,154 @@ summarize for sign-off before Stage 2.
   desugar target module must simply be loaded in-session, which
   dependency loading guarantees).
 
-## Stage 2 — error-tolerant parsing feeding the same surface AST
+## Stage 2 — error-tolerant checking in the editor (checklist, planned 2026-08-31; adversarially reviewed by two critics, findings integrated)
 
-After G1. Sketch only: recovery at layout boundaries (statement extents
-are lexically determined — same fact the block-re-parse correctness
-argument rests on), error nodes into the Stage-1 AST, diagnostics keep
-flowing mid-keystroke; then incremental reuse per unchanged statement.
+GOAL: the LSP keeps producing diagnostics and navigation while the file
+is broken and while it is being typed; then unchanged code stops being
+re-inferred.  Foundations in place: the surface parser is statement-
+tolerant (per-item `.attempt` + rawStatement -> SErrorStatement with
+exact extents), and surface/StatementExtents is the pure lexical extent
+scanner (D7, verified over 180 files).
+
+STAGE-2 INVARIANTS (hard):
+- BATCH SEMANTICS ARE FROZEN.  `Session.load`/loadModule keep strict
+  refusals byte-for-byte (repl-smoke suites + the TestReplDifferential
+  goldens are the tripwire).  Error tolerance is an EDITOR-PATH
+  feature: new tolerant entry points live beside, never inside, the
+  strict ones.
+- The resident LSP session stays interface-free (Decision 5) and
+  single-threaded (decision 3).  Hover on locals stays null until the
+  perf ticket closes (tracker/TICKET-perf-type-inference.md).
+- Every sweep covers stdlib AND core/examples (the 180-file rule).
+- lsp-smoke's check count GROWS with each item: update the Baselines
+  note in the same commit (it is 31 today).
+
+- [ ] **5.1 Tolerant read path + full diagnostics collection**.
+  NewPipeline grows `readModuleTolerant(fileName, contents, mh)`
+  returning (core Module, SModule, ParseState, Renamer.Result,
+  List[Diag]) — the SModule must come along: Definitions.index's
+  fixity bridge reads it (Resident.Checked keeps carrying it).  Diags
+  collect from EVERY phase: each SErrorStatement (syntax), every
+  renamer diagnostic, every Reassoc diagnostic, every assemble
+  refusal, every Lower diagnostic.  Tolerant assemble/lowering runs
+  PER STATEMENT under a catcher for Death AND Lower.Unsupported AND
+  RuntimeException — Reassoc leaves SErrorTerm/SPError/STyError nodes
+  in the tree and Lower/TyLower throw non-Death exceptions on them
+  (Lower.scala Unsupported sites; TyLower sys.error panics), so a
+  Death-only collector would crash the editor path.  Enumerated
+  assemble Deaths to convert in tolerant mode: interleaved equations
+  (fix its cross-block case first: it currently reports Span(0,0,0,0),
+  an invalid LSP position — give it the colliding equation's span),
+  missing-definition sig pairing, and the class-body refusal.
+  `readModule` (strict) becomes a thin wrapper that dies on the first
+  diag of the EARLIEST PHASE, each phase preserving its own emission
+  order (parse Err -> first SErrorStatement -> renamer walk order ->
+  reassoc -> assemble in statement order -> lower) — this is today's
+  throw order, NEVER a position-sorted merge; the strict rendering
+  must stay byte-identical (goldens + repl smoke verify).
+  Resident.checkFile switches to the tolerant entry: navigation and
+  syntax diagnostics come from the same parse, and a broken file gets
+  a FRESH index for its healthy statements instead of a stale one.
+  Type checking still runs strict Session.load in this item; its
+  single Death becomes one more diagnostic.  lsp-smoke grows: a
+  fixture with TWO broken statements publishes two syntax diagnostics;
+  goto-definition answers on the healthy statements of a broken file.
+- [ ] **5.2 Precise in-statement syntax positions** (repay the Ugly.e
+  coarsening, D3 log).  The splitter's `.attempt` discards the real
+  failure; recover it by re-running the `statement` grammar over the
+  broken statement's extent with a repositioned ParseState
+  (`ps copy (loc = Pos(file, startLine, startCol), input = slice)` —
+  the evalInContext precedent).  TWO REQUIREMENTS from review:
+  (a) seed the layoutStack with IndentedLayout(layoutCol, ...) — the
+  default is column 1 and inner vsemi decisions drift for indented
+  module bodies; (b) the re-parse may SUCCEED where the splitter
+  rejected (context the slice lacks — the committed trailing-comment/
+  vsemi interplay in the splitter history): fall back to the
+  statement-start position when no Err is harvested.  lsp-smoke:
+  Ugly.e's diagnostic returns to line 3 col 5 with an expectation
+  message; add a continuation-line-error fixture asserting the
+  position lands mid-statement.
+- [ ] **5.3 In-memory documents + didChange**.  Today the server reads
+  the SAVED file (sync kind 0; no didChange registered — Main.scala:65)
+  so mid-keystroke anything is impossible.  Add: TextDocumentSync FULL
+  (full-text didChange bodies; incremental deltas are a later
+  optimization) — and update lsp-client.py's initialize.sync check to
+  assert `change == 1` in the same commit; a per-uri document store
+  (text + version) maintained by didOpen/didChange/didClose — consider
+  folding it with Definitions.Docs into one per-uri record; checkFile
+  and the workspace-sibling loader prefer open buffers over disk so
+  cross-file checks see unsaved edits.  BUFFER SOURCEFILES ARE A NEW
+  SUBCLASS with content-bearing identity and lastModified = document
+  version: reusing Session.Literal (module-name-keyed equality) or
+  serving buffers through mtime-keyed Filesystem deps re-opens the
+  process-global depCache poisoning class fixed at D0/D3 part 3b —
+  add a smoke check that a didChange to a SIBLING module is seen by
+  the importing file's next check.  Debounce (~300ms) with versioned
+  drop of stale checks (single-threaded dispatch makes this a queue
+  check, not a race).  lsp-smoke drives didChange with broken-then-
+  fixed text asserting diagnostics appear and clear WITHOUT didSave,
+  and after a didChange that moves a definition down a line,
+  goto-definition answers at the NEW position without a save.
+- [ ] **5.4 Tolerant type checking** (diagnostics for the healthy part
+  of a broken file).  An editor-path variant of the load phases with
+  per-unit error capture, structured per review: EACH BINDING SCC
+  INFERS IN ITS OWN subst BLOCK (a Death mid-component inside one
+  shared SubstEnv leaves partial meta bindings on module-wide shared
+  placeholder Vs, spuriously constraining later components; fresh
+  SubstEnv per component threads only the generalized `subs` — the
+  structure inferBindingGroupTypes already has); the per-binding
+  explicits loop captures per binding.  SCCs that fail — and,
+  TRANSITIVELY, SCCs depending on failed or skipped ones — are
+  reported "unchecked: depends on a broken definition", never
+  silently inferred against unconstrained metas (they would typecheck
+  to lies).  When the file has syntax errors, suppress undefined-term
+  diags whose spelling matches a broken statement's head word
+  (StatementExtents.headWord / first token of the extent) — the
+  REFERRING statements mint the placeholders, so match by spelling,
+  or fall back to suppressing undefined-term diags entirely while
+  syntax errors exist.  The session copy is discarded either way;
+  partial results never enter a real session.  lsp-smoke: a fixture
+  with two INDEPENDENT type errors publishes both.  REVISIT while
+  here: the do-anchor blame gap (D3 log); fix if the per-SCC check
+  order makes it cheap, else keep the pin and note.
+- [ ] **5.5 Incremental re-inference per unchanged SCC**.  Review
+  killed the naive form: renamer binder ids and Lower's supply-minted
+  Vs are FRESH EVERY RUN and shared across statements, so cached
+  lowered trees cannot mix with a fresh run — and parse+rename+lower
+  are cheap (inference dominates; the perf ticket's own finding).
+  Therefore: parse+rename+lower the WHOLE module every check;
+  the reuse target is PER-SCC INFERENCE RESULTS, keyed by an
+  alpha-invariant fingerprint of the SCC's lowered terms plus the
+  types of the globals it references, retained per uri in the doc
+  store (surface module, extents, per-SCC results — bounded by
+  open-document count).  The invalidation unit GROUPS sig+equations
+  (module-wide pairing by shared V — a sig edit changes its group's
+  ExplicitBinding without touching the head set).  Scope-bearing
+  edits (import/export, fixity, type/data/class/field/table/foreign,
+  any change to the top-level head set) drop the whole cache —
+  conservative and correct beats clever.  If a stable-binder-identity
+  scheme looks necessary for deeper reuse, STOP: that is its own
+  design item for the Blocked/Awaiting section, not a side quest.
+  Measure keystroke-to-diagnostics on Layout/Report.e (1400 lines)
+  before and after; record the numbers in the log.
+- [ ] **5.6 (stretch) Nested extents**: extend StatementExtents with a
+  per-block mode (let/where/do bodies, case alternatives) so 5.2's
+  re-parse and 5.5's invalidation can work INSIDE a long where-block;
+  differential oracle = the surface parser's block statement spans.
+  Defer without guilt if 5.1-5.5 land first.
+
+KNOWN PRE-EXISTING DIVERGENCE (out of Stage-2 scope, tracked here so it
+is not rediscovered): assemble ignores bare SClassStatements entirely,
+so nothing registers in s.classes for bare class declarations — the
+fused pipeline registered the class head.  Worth its own item when
+classes matter.
+
+**GATE G2**: lsp-smoke green with the new fixtures (multi-diagnostic
+broken files, didChange without save incl. the sibling-buffer check,
+positions per 5.2, both type errors per 5.4, nav-after-didChange, and
+a timing line from 5.5); core/test, repl smoke suites and the REPL
+goldens BYTE-UNCHANGED (batch strictness frozen); boot 129.  STOP the
+loop and summarize for sign-off before any Stage 3 planning.
 
 ## Blocked / Awaiting
 
