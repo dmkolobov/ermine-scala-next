@@ -153,11 +153,7 @@ object Renamer {
   def rename(m: SModule, scope: ModuleScope.Scope): Result = {
     val s = new S(scope)
 
-    val top = collectHeads(m.statements, TopLevel, s)
-    // ledger: a top-level binder may not shadow an import
-    for ((sp, _) <- top; if s.resolveGlobal(sp, None).exists(_.isInstanceOf[ToGlobal]))
-      s.diags += Diag(s.binders.result()(top(sp)).defSite,
-                      s"term definition would shadow global definition ($sp)")
+    val top = topLevelHeads(m.statements, s)
     val env: Env = List(top)
     val moduleSpan = m.statements.headOption
       .map(st => st.loc.span to m.statements.last.loc.span)
@@ -165,8 +161,60 @@ object Renamer {
     s.frames += Frame(moduleSpan, top)
 
     m.statements.foreach(statement(_, env, s))
+    m.statements.foreach(foreignClasses(_, m.file, "", s))
 
     Result(s.occs.result(), s.binders.result(), s.frames.result(), s.diags.result())
+  }
+
+  /** Rename; on the first diagnostic, throw Death rendered the way
+    * Pos.report renders - "file:line:col:" + source line + caret - so the
+    * LSP Diagnostics regex and no(...)/sessionProof keep working when
+    * refusals move here from parse time (roadmap 3.2b, Decision f). */
+  def renameOrDie(m: SModule, scope: ModuleScope.Scope, source: String): Result = {
+    val r = rename(m, scope)
+    r.diagnostics.headOption foreach { d =>
+      val lineText = source.linesIterator.drop(d.span.startLine - 1)
+        .nextOption().getOrElse("").replaceAll("\r$", "")
+      val pos = scalaparsers.Pos(m.file, lineText, d.span.startLine, d.span.startCol, false)
+      throw scalaparsers.Death(pos.report(scalaparsers.Document.text("error: " + d.message)))
+    }
+    r
+  }
+
+  /** Module-level and class-body binder heads share the globalTermDef
+    * discipline: one binder per name, and the shadow-an-import refusal
+    * (ledger). */
+  private def topLevelHeads(sts: List[SStatement], s: S): Map[String, Int] = {
+    val heads = collectHeads(sts, TopLevel, s)
+    for ((sp, id) <- heads; if s.resolveGlobal(sp, None).exists(_.isInstanceOf[ToGlobal]))
+      s.diags += Diag(s.binders.result()(id).defSite,
+                      s"term definition would shadow global definition ($sp)")
+    heads
+  }
+
+  private def foreignClasses(st: SStatement, file: String, source: String, s: S): Unit = {
+    def check(items: List[SForeign]): Unit = items foreach {
+      case f: SForeignData     => lookup(f.className, f.classSpan)
+      case f: SForeignFunction => lookup(f.className, f.classSpan)
+      case f: SForeignValue    => lookup(f.className, f.classSpan)
+      case f: SForeignPrivate  => check(f.statements)
+      case _ => ()
+    }
+    // Class.forName leaves parsing (roadmap 3.2b); the classMap cache is
+    // shared with the fused pipeline deliberately - one process-wide
+    // global, same as before.
+    def lookup(name: String, span: Span): Unit = {
+      val pos = scalaparsers.Pos(file, "", span.startLine, span.startCol, false)
+      com.clarifi.reporting.ermine.parsing.StatementParsers.classLookup(pos, name) match {
+        case Left(e)  => s.diags += Diag(span, s"error loading '$name'")
+        case Right(_) => ()
+      }
+    }
+    st match {
+      case SForeignBlock(_, items) => check(items)
+      case SPrivateBlock(_, ss)    => ss.foreach(foreignClasses(_, file, source, s))
+      case _ => ()
+    }
   }
 
   private def statement(st: SStatement, env: Env, s: S): Unit = st match {
@@ -193,7 +241,14 @@ object Renamer {
     case SSigStatement(_, _, _) => ()  // types are 3.2c
     case SPrivateBlock(_, ss)      => ss.foreach(statement(_, env, s))
     case SDatabaseBlock(_, _, ss)  => ss.foreach(statement(_, env, s))
-    case SClassStatement(_, _, _, _, _, body) => body.foreach(statement(_, env, s))
+    case SClassStatement(loc, _, _, _, _, body) =>
+      // class bodies bind through the globalTermDef path (no LocalBlock);
+      // members resolve like top-levels and refuse import shadowing.
+      // (Their TYPE processing is dead in the fused pipeline - pinned -
+      // and stays a typecheck-time matter, not a rename refusal.)
+      val heads = topLevelHeads(body, s)
+      if (heads.nonEmpty) s.frames += Frame(loc.span, heads)
+      body.foreach(statement(_, heads :: env, s))
     case _ => ()  // fixity/data/type/field/table/foreign carry no term rhss
   }
 

@@ -117,4 +117,35 @@ object TestRenamer extends Properties("Renamer 3.2a") {
     ((!(outside contains "deep")) :| s"outside: $outside") &&
     ((outside contains "after") :| "top-level visible")
   }
+
+  // ------------------------------------------------------------- 3.2b
+
+  property("Death rendering carries file:line:col plus the caret line") = secure {
+    val source = "module T where\nok = 1\nid = 2\n"
+    val m = SurfaceParsers.module("t", source, "T").getOrElse(sys.error("parse"))
+    try { Renamer.renameOrDie(m, scope, source); falsified :| "expected Death" }
+    catch {
+      case d: scalaparsers.Death =>
+        val msg = d.getMessage
+        ((msg.linesIterator.next() startsWith "t:3:1: error: term definition would shadow") :| msg.take(90)) &&
+        ((msg.linesIterator.toList.lift(1) ?= Some("id = 2")) :| "source line for the caret") &&
+        ((msg.linesIterator.toList.lift(2).exists(_.trim == "^")) :| "caret")
+    }
+  }
+
+  property("class members bind like top-levels and refuse import shadowing") = secure {
+    val ok = renamed("class Frob a where\n  frob q = frub q\n  frub q = q")
+    val frubRes = resOf(ok, "frub").collect { case ToBinder(i) => ok.binders(i).kind }
+    val shadow = renamed("class Frob a where\n  id q = q")
+    ((frubRes.distinct ?= List(Renamer.TopLevel: BinderKind)) :| s"member cross-ref: $frubRes") &&
+    (shadow.diagnostics.exists(_.message contains "would shadow global definition") :| shadow.diagnostics.toString)
+  }
+
+  property("foreign class names resolve at rename; failures are diagnosed") = secure {
+    val good = renamed("foreign\n  data \"java.lang.String\" JStr")
+    val bad  = renamed("foreign\n  data \"com.nope.Missing\" Gone")
+    ((good.diagnostics ?= Nil) :| good.diagnostics.toString) &&
+    (bad.diagnostics.exists(_.message contains "error loading 'com.nope.Missing'") :| bad.diagnostics.toString)
+  }
 }
+

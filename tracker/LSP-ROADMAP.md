@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 3.2a done (term renamer, 10 props); next item 3.2b (diagnostics wiring + local-scope pins under renamer) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 3.2b done (Death wiring, classLookup, class bodies); next item 3.2c (types+kinds) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -265,7 +265,7 @@ machinery is deleted post-G1, never before.
   scope-at-position, each occurrence recording resolved binder + import
   path + origin global (collapseNames only collapses multi-alias names —
   hover labels need origin); unresolved names keep placeholder tolerance.
-- [ ] **3.2b Renamer: local scopes + diagnostics**: let/where/do/class/
+- [x] **3.2b Renamer: local scopes + diagnostics**: let/where/do/class/
   patterns per the 1.3a pins (LocalBlocks/checkShadows/subTerm repair
   made unnecessary by construction — but NOT deleted, Decision d);
   classLookup/Class.forName relocated here (error text/position
@@ -684,3 +684,14 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   non-capture by construction, scope-at-position. Ledger dispositions
   flip when Death wiring lands (3.2b). Baselines: 816 (815+known),
   repl 3/3, lsp 27/27.
+- 2026-08-30 3.2b done (local scopes already shipped in 3.2a):
+  renameOrDie throws Death with Pos.report rendering (asserted:
+  "t:3:1: error: ..." + source line + caret — Diagnostics regex and
+  no(...)/sessionProof compatible); classLookup relocated to a rename
+  pass (StatementParsers.classLookup reused with its process-global
+  classMap cache, dependency noted; failures diagnosed at the class-name
+  span, "error loading '...'"); class bodies bind through the
+  topLevelHeads path (member cross-refs resolve, import shadowing
+  refused; their dead type processing stays a typecheck matter per the
+  pins). TestRenamer 13/13. Baselines: 819 (818+known), repl 3/3,
+  lsp 27/27.
