@@ -302,6 +302,8 @@ object Reassoc {
     diags ++= envDs
     def reTy(t: STy): STy = { val (r, ds) = ty(t, env); diags ++= ds; r }
     def reTerm(t: STerm): STerm = { val (r, ds) = term(t, env); diags ++= ds; r }
+    // binder KINDS are types too — `(f : * -> *)` parses as a chain
+    def reBinder(b: SBinder): SBinder = b.copy(kind = b.kind.map(reTy))
     def go(st: SStatement): SStatement = st match {
       case eq: SEquation =>
         reTerm(SLet(eq.loc, List(eq), SHole(eq.loc))) match {
@@ -311,11 +313,13 @@ object Reassoc {
       case s: SSigStatement   => s.copy(annot = reTy(s.annot))
       case s: SFieldStatement => s.copy(ty = reTy(s.ty))
       case s: STableStatement => s.copy(ty = reTy(s.ty))
-      case s: STypeAlias      => s.copy(body = reTy(s.body))
+      case s: STypeAlias      => s.copy(typeArgs = s.typeArgs.map(reBinder), body = reTy(s.body))
       case s: SDataStatement  =>
-        s.copy(constructors = s.constructors.map(c => c.copy(fields = c.fields.map(reTy))))
+        s.copy(typeArgs = s.typeArgs.map(reBinder),
+               constructors = s.constructors.map(c => c.copy(exists = c.exists.map(reBinder),
+                                                             fields = c.fields.map(reTy))))
       case s: SClassStatement =>
-        s.copy(context = s.context.map(reTy), body = s.body.map(go))
+        s.copy(typeArgs = s.typeArgs.map(reBinder), context = s.context.map(reTy), body = s.body.map(go))
       case s: SPrivateBlock   => s.copy(statements = s.statements.map(go))
       case s: SDatabaseBlock  => s.copy(statements = s.statements.map(go))
       case s: SForeignBlock   =>
@@ -326,7 +330,7 @@ object Reassoc {
           case x: SForeignConstructor => x.copy(ty = reTy(x.ty))
           case x: SForeignSubtype     => x.copy(ty = reTy(x.ty))
           case x: SForeignPrivate     => x.copy(statements = x.statements.map(fgo))
-          case other => other
+          case x: SForeignData        => x.copy(args = x.args.map(reBinder))
         }
         s.copy(statements = s.statements.map(fgo))
       case other => other
@@ -361,6 +365,7 @@ object Reassoc {
       }
     }
 
+    def goB(b: SBinder): SBinder = b.copy(kind = b.kind.map(go))
     def go(t: STy): STy = t match {
       case STyChain(c) =>
         val items = c.items.map {
@@ -383,9 +388,9 @@ object Reassoc {
       case STyRowBrace(l, d, i)   => STyRowBrace(l, d, i.map(go))
       case STyRowBracket(l, d, i) => STyRowBracket(l, d, i.map(go))
       case STyBanana(l, d, i)     => STyBanana(l, d, i.map(go))
-      case STyForall(l, ks, bs, b) => STyForall(l, ks, bs, go(b))
-      case STyExists(l, bs, b)     => STyExists(l, bs, b.map(go))
-      case STySome(l, ks, bs, b)   => STySome(l, ks, bs, go(b))
+      case STyForall(l, ks, bs, b) => STyForall(l, ks, bs.map(goB), go(b))
+      case STyExists(l, bs, b)     => STyExists(l, bs.map(goB), b.map(go))
+      case STySome(l, ks, bs, b)   => STySome(l, ks, bs.map(goB), go(b))
       case other => other
     }
 

@@ -39,7 +39,13 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
   /** ``literal ident`` — anything between double backticks; spelling
     * kept as written, backticks included (renamer strips). */
   def literalIdentTok: Parser[String] =
-    token((rawWord("``") >> ((rawSatisfy(c => c != '`' && c != '\\') | (rawCh('\\') >> rawSatisfy(_ => true))).skipMany) >> rawWord("``")).slice.attempt("literal identifier"))
+    // the SPELLING is the middle with escapes processed (NameParsers
+    // yields Local(i.mkString) — no backticks)
+    token((for {
+      _ <- rawWord("``")
+      i <- ((rawSatisfy(c => c != '`' && c != '\\') | (rawCh('\\') >> rawSatisfy(_ => true))).skipMany).slice
+      _ <- rawWord("``")
+    } yield i.replaceAll("(?s)\\\\(.)", "$1")).attempt("literal identifier"))
 
   def identTok: Parser[String] =
     token(((setBol(false) >> letter >> identTail).slice).filter(!keywords(_)).attempt("identifier"))

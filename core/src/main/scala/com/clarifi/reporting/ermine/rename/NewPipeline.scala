@@ -111,6 +111,7 @@ object NewPipeline {
             case None           => (v, List(alt))
           }
         case SSigStatement(l, ns, t) =>
+          tctx.resetKindScope()
           val ty = TyLower.annot(t, tctx).body
           ns.foreach { n =>
             val v = lctx.binderAtSite(n) getOrElse lctx.varFor(n)
@@ -164,15 +165,19 @@ object NewPipeline {
       sts0 match {
         case Nil => ()
         case st :: more =>
+          tctx.resetKindScope()  // named kind vars scope per statement
           st match {
             case SFieldStatement(l, ns, t) =>
               val ty = TyLower.annot(t, tctx).body
-              fields ::= FieldStatement(lctx.pos(l.span),
-                ns.map(n => ownTypeVar(n)), ty)
+              val fvs = ns.map(n => ownTypeVar(n))
+              fields ::= FieldStatement(lctx.pos(l.span), fvs, ty)
+              if (intoPrivate)
+                privateTypes = privateTypes ++ ns.map(n => ownTypeNames(tctx.localTypeName(n.spelling)))
             case STableStatement(l, db, ns, t) =>
               val ty = TyLower.annot(t, tctx).body
-              tables ::= TableStatement(lctx.pos(l.span), db.getOrElse(""),
-                ns.map(n => (List.empty[Name], lctx.varFor(n))), ty)
+              val tvs2 = ns.map(n => (List.empty[Name], lctx.varFor(n)))
+              tables ::= TableStatement(lctx.pos(l.span), db.getOrElse(""), tvs2, ty)
+              if (intoPrivate) privateTerms = privateTerms ++ tvs2.map(_._2)
             case STypeAlias(l, n, ks, bs, body) =>
               val kvs = ks.map(k => tctx.kindVar(tctx.binderIdAt(k.span).getOrElse(-1 - k.span.startCol), k.spelling, k.span))
               val tvs = bs.map(b => tctx.tyVar(tctx.binderIdAt(b.name.span).getOrElse(-2 - b.name.span.startCol * 7),
@@ -191,17 +196,24 @@ object NewPipeline {
                  cdef.fields.map(TyLower.ty(_, tctx)))
               }
               dataStmts ::= DataStatement(lctx.pos(l.span), ownTypeVar(n), kvs, tvs, dcons)
-              if (intoPrivate) privateTypes = privateTypes + ownTypeNames(tctx.localTypeName(n.spelling))
+              if (intoPrivate) {
+                privateTypes = privateTypes + ownTypeNames(tctx.localTypeName(n.spelling))
+                privateTerms = privateTerms ++ dcons.map(_._2)  // constructors go private too
+              }
             case SForeignBlock(_, items) =>
               def privTerm(priv: Boolean, v: V[Type]): V[Type] = {
                 if (priv) privateTerms = privateTerms + v
                 v
               }
-              def fgo(f: SForeign, priv: Boolean): Unit = f match {
+              def fgo(f: SForeign, priv: Boolean): Unit = { tctx.resetKindScope(); f match {
                 case x: SForeignData =>
+                  // foreignData's localTypes defaults unannotated arg
+                  // kinds to Star — no body ever pins them
                   foreignData ::= ForeignDataStatement(lctx.pos(x.loc.span), ownTypeVar(x.name),
                     x.args.map(b => tctx.tyVar(tctx.binderIdAt(b.name.span).getOrElse(-6 - b.name.span.startCol * 19),
-                                               b.name.spelling, b.name.span, None)),
+                                               b.name.spelling, b.name.span,
+                                               b.kind.map(TyLower.kind(_, tctx))
+                                                 .orElse(Some(com.clarifi.reporting.ermine.Star(lctx.pos(b.name.span)))))),
                     foreignClass(x.className, x.classSpan))
                   if (priv) privateTypes = privateTypes + ownTypeNames(tctx.localTypeName(x.name.spelling))
                 case x: SForeignFunction =>
@@ -223,7 +235,7 @@ object NewPipeline {
                     TyLower.annot(x.ty, tctx).body)
                 case x: SForeignPrivate =>
                   x.statements.foreach(fgo(_, priv = true))
-              }
+              } }
               items.foreach(fgo(_, intoPrivate))
             case SPrivateBlock(_, ss)    => walk(ss, intoPrivate = true)
             case SDatabaseBlock(_, _, ss) => walk(ss, intoPrivate)
@@ -260,7 +272,7 @@ object NewPipeline {
       canonicalTerms = scope.canonicalTerms,
       canonicalTypes = scope.canonicalTypes,
       termNames = scope.termNames ++ lctx.placeholderNames,
-      typeNames = tctx.typeNames ++ ownTypeNames,
+      typeNames = tctx.typeNames ++ tctx.placeholderTypeNames ++ ownTypeNames,
       termOrigins = scope.termOrigins,
       typeOrigins = scope.typeOrigins)
     (module, scalaparsers.ParseState.mk(fileName, contents, er))

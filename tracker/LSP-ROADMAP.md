@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 4.2 IN PROGRESS: THE FULL STDLIB BOOTS through the new pipeline (Prelude+Layout, 129 modules, typechecked); next: the differential oracle stack (same-commit old|new g1-diff .ei/browse/groups, eval fixtures, corpus under both pipelines) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 4.2 IN PROGRESS: .ei ORACLE AT 1447/1447 SIGS with ONE known delta (lookbackJoin residual constraints — the documented solver-order case); next: remaining oracle layers (groups, importing goldens, warm reload, eval fixtures, rejected corpus, 180-file corpus under both pipelines) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -851,3 +851,35 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   green in isolation — the concurrency-flake protocol caught it);
   tests now set _pipelineNew on their own session copy. Baselines:
   866 (865+known disjunction), repl 3/3, lsp 27/27.
+
+- 2026-08-30 (4.2 batch 2): THE .ei DIFFERENTIAL RUNS DRY, one known
+  delta. Same-commit dual boots (g1-diff.sh run old|new) compared: six
+  more divergences fixed. (1) literalIdentTok kept the ``..`` marks and
+  raw escapes in the SPELLING — NameParsers yields the middle,
+  unescaped. (2) Unresolved TYPE spellings now share one V module-wide
+  in TyLower (typeNames insert-on-miss parity) — `(AsOp opl, AsOp opr)`
+  under a term-only import bound TWO constraint vars (the AsOp1 rename
+  in Layout/Presentation). (3) Reassoc now rewrites BINDER KINDS
+  everywhere (data/alias/class args, foreign-data args, forall/exists/
+  some binders): `(f : * -> *)` parsed as a chain and TyLower.kind
+  silently minted a meta (now a loud error). (4) Foreign-data arg kinds
+  default to Star (localTypes' explicit default — no body ever pins
+  them); Vector/Scanner/SMEnv kinds were generalizing into {a}.
+  (5) An UNKNOWN kind name is a NAMED kind variable scoped to its
+  statement (KindParsers kindVar — `data Sort (r:row)` schema-
+  quantifies row), and conFor INSTANTIATES kind schemas per reference
+  rather than sharing the quantified vars. (6) private data
+  constructors, private fields/tables mark privateTerms/Types (five
+  constructors were leaking into :browse). Verdict: G1Compare says
+  1447/1447 signatures alpha-equal except lookbackJoin's residual
+  constraint set — the documented solver-order-sensitive case (the
+  reason -Dermine.loadInSeries exists); recorded as G1 KNOWN-DELTA.
+  Browse layer: g1-normalize.py now joins wrapped entries and sorts
+  exists-block binders/atoms; residue is 14 signature pairs of
+  alpha-renaming / constraint-order / kind-meta-rendering noise, all
+  ruled equal by the .ei comparator (kind-meta rendering entropy is
+  INVERTED between the pipelines for scanInOrder: old .ei pins s:rho
+  where new keeps s:a, and the browse shows the opposite) — recorded
+  as browse KNOWN-DELTA with the .ei comparator as authority.
+  Baselines: 866 (865+known), repl 3/3, lsp 27/27; the Legend flake
+  re-ran green (6th sighting).

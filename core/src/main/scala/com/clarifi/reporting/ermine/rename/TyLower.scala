@@ -83,11 +83,47 @@ object TyLower {
         v
       }) at pos(at))
 
-    private def schemaKind(ks: KindSchema, at: Span): Kind = ks.body
+    private def schemaKind(ks: KindSchema, at: Span): Kind =
+      // instantiate the schema's quantified kind vars per REFERENCE —
+      // using the body verbatim would share them across every use site
+      // (∀row. row -> * must not let one rho use pin the rest)
+      if (ks.forall.isEmpty) ks.body
+      else {
+        val m = ks.forall.map(v => v -> (VarK(V(pos(at).inferred, fresh(), None,
+          com.clarifi.reporting.ermine.Free, ())): Kind)).toMap
+        ks.body.subst(m)
+      }
 
     /** The named type variables this lowering minted, keyed by Global —
       * the typeNames map 4.1c hands to loadModule. */
     def typeNames: Map[Name, V[Kind]] = conVars.map { case (g, v) => (g: Name) -> v }
+
+    // Unresolved type spellings SHARE one V module-wide (the fused
+    // typeNames insert-on-miss); generalization still binds the free
+    // var per signature, which is where `exists (Has: ...)` comes from.
+    private var tyPlaceholders = Map.empty[String, V[Kind]]
+    def placeholderTyVar(sp: String, at: Span): V[Kind] =
+      tyPlaceholders.getOrElse(sp, {
+        val v = V(pos(at), fresh(), Some(localTypeName(sp): Name), Bound, freshKind(at))
+        tyPlaceholders += sp -> v
+        v
+      }) at pos(at)
+    def placeholderTypeNames: Map[Name, V[Kind]] =
+      tyPlaceholders.map { case (sp, v) => (localTypeName(sp): Name) -> v }
+
+    // KindParsers has no `row`-style atoms: an unknown kind name is a
+    // NAMED kind variable (kindVar), scoped to its statement — `data
+    // Sort (r: row)` schema-quantifies row, it does not pin rho
+    private var kindPlaceholders = Map.empty[String, V[Unit]]
+    /** The fused kindVar is Localized: statement boundaries drop it
+      * (type placeholders stay module-wide, like typeNames). */
+    def resetKindScope(): Unit = kindPlaceholders = Map.empty
+    def placeholderKindVar(sp: String, at: Span): V[Unit] =
+      kindPlaceholders.getOrElse(sp, {
+        val v = V(pos(at), fresh(), Some(Local(sp): Name), Bound, ())
+        kindPlaceholders += sp -> v
+        v
+      })
 
     def nf(t: Type): Type = t.nf(supply)
   }
@@ -122,12 +158,14 @@ object TyLower {
       case "constraint" | "Γ" => Constraint(c.pos(n.span))
       case sp => c.resolve(n) match {
         case ToBinder(id) => VarK(c.kindVar(id, sp, n.span))
-        case _            => c.freshKind(n.span)
+        case _            => VarK(c.placeholderKindVar(sp, n.span))
       }
     }
     case STyApp(STyApp(STyName(ar), a), b) if ar.spelling == "->" =>
       ArrowK(c.pos(ar.span), kind(a, c), kind(b, c))
     case STyParen(_, i) => kind(i, c)
+    case ch: STyChain => sys.error("tylower: un-reassociated kind chain at " +
+      c.file + ":" + ch.loc.span.startLine + ":" + ch.loc.span.startCol)
     case other => c.freshKind(other.loc.span)
   }
 
@@ -166,7 +204,7 @@ object TyLower {
           val cut = sp.lastIndexOf('.')
           c.conFor(Global(sp.substring(0, cut), sp.substring(cut + 1)), n.span)
         case _ =>
-          VarT(c.tyVar(-n.span.startLine * 100000 - n.span.startCol, sp, n.span, None))
+          VarT(c.placeholderTyVar(sp, n.span))
       }
     }
     case STyApp(f, a)   => AppT(ty(f, c), ty(a, c))
