@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — ALL ITEMS DONE (4.4 flips landed; suite 900); AT GATE G1 — awaiting sign-off · Seeded 2026-08-30 (session that shipped the
+Status: G1 SIGNED OFF 2026-08-30 ("keep going"; both known deltas accepted). Post-G1 debt phase open — next: D1 REPL/eval/Remote cutover (precondition: interface round-trip test, Decision g) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -352,16 +352,27 @@ per the 4.1 exemption rule; baselines green (delta-tolerant per the
 Baselines section); old pipeline still serving REPL. STOP the loop and
 summarize for sign-off before Stage 2.
 
-**Post-G1 tracked debt** (not Stage 1; do not start without sign-off):
-REPL/eval/Remote cutover to the new pipeline (precondition: interface
-round-trip test per Decision g) -> scoping.in aliased-shadow line -> delete
-LocalBlocks/checkShadows/rewriteShadowed/insert-on-miss/Localized threading
-(Localized removal is its own item — it threads through every binder
-production) -> fold bindingName/localName -> block-binder whole-block
-fixity + module-level pre-scan flips (Decisions a, e) -> statement-extent
-scanner for Stage 2 (columns/strings/comments/bracket+let-in/case-of
-closers; flag the virtualLeftBrace col-max-depth merge corner) -> revisit
-import-bypassing desugar resolution (Decision b).
+**Post-G1 debt checklist** (G1 signed off 2026-08-30; do in order):
+- [ ] **D0 Interface round-trip test** (Decision g precondition): a
+  repeatable test — new-pipeline load with useInterface on writes .ei
+  into a temp workspace, a FRESH session warm-loads from them, and the
+  warm session's types/env answers match the cold session's.
+- [ ] **D1 REPL/eval/Remote cutover**: Session.eval (expressions) and
+  the statement paths route through SurfaceParsers+Renamer+Reassoc+
+  Lower against session scope; Console commands keep their own parsers.
+- [ ] **D2 scoping.in aliased-shadow line**: document the semantics
+  change (alias-capture programs now legal).
+- [ ] **D3 delete fused scoping machinery**: LocalBlocks, checkShadows,
+  rewriteShadowed, insert-on-miss placeholders.
+- [ ] **D4 Localized threading removal** (its own item — it threads
+  through every binder production).
+- [ ] **D5 fold bindingName/localName**.
+- [ ] **D6 whole-block fixity + module-level pre-scan flips**
+  (Decisions a, e).
+- [ ] **D7 statement-extent scanner for Stage 2** (columns/strings/
+  comments/bracket+let-in/case-of closers; flag the virtualLeftBrace
+  col-max-depth merge corner).
+- [ ] **D8 revisit import-bypassing desugar resolution** (Decision b).
 
 ## Stage 2 — error-tolerant parsing feeding the same surface AST
 
@@ -996,3 +1007,7 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   not a pipeline bug.  Suite: 900 (899 green + known disjunction);
   repl 3/3, lsp 31/31.  STAGE 1 CHECKLIST COMPLETE — stopping at GATE
   G1 for sign-off.
+
+- 2026-08-30 (G1 SIGN-OFF): user accepted both known deltas ("keep
+  going").  Post-G1 debt phase opened as checklist D0-D8; the loop
+  resumes on D0.
