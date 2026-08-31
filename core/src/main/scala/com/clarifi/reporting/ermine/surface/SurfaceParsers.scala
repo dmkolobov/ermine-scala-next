@@ -822,19 +822,97 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
     SErrorStatement(Real(span2(p1, p2)), s"unparsed:$kind")
   }
 
+  /** The statement grammar proper: every real alternative, WITHOUT the
+    * extent-capturing fallback.  The binding alternative is a parameter
+    * because the splitter and the editor's recovery want different
+    * things from it — see `statement` and `statementFailure` (5.2). */
+  private def statementAlts(binding: => Parser[SStatement]): Parser[SStatement] =
+    fixityStatement       |
+    fieldStatementP       |
+    tableStatementP(None) |
+    typeAliasP            |
+    dataStatementP        |
+    foreignBlockP         |
+    privateBlockP         |
+    databaseBlockP        |
+    classStatementP       |
+    binding
+
   def statement: Parser[SStatement] =
     optionalSpace.skipOptional >>
-    (fixityStatement       |
-     fieldStatementP       |
-     tableStatementP(None) |
-     typeAliasP            |
-     dataStatementP        |
-     foreignBlockP         |
-     privateBlockP         |
-     databaseBlockP        |
-     classStatementP       |
-     bindingStatement.attempt |
-     rawStatement)
+    // `.attempt` so a statement the binding grammar commits to and then
+    // rejects still reaches the extent capture — which is exactly the
+    // failure statementFailure has to go back and recover
+    (statementAlts(bindingStatement.attempt) | rawStatement)
+
+  /** The char offset of a 1-based (line, column), counted the way
+    * Pos.bump counts: '\n' starts a line, '\t' jumps to the next
+    * multiple of 8, everything else (including a CRLF's '\r') is one
+    * column. */
+  private def offsetOf(contents: String, line: Int, col: Int): Int = {
+    var i = 0; var l = 1; var c = 1
+    while (i < contents.length && (l < line || (l == line && c < col))) {
+      contents.charAt(i) match {
+        case '\n' => l += 1; c = 1
+        case '\t' => c += 8 - c % 8
+        case _     => c += 1
+      }
+      i += 1
+    }
+    i
+  }
+
+  /** Why one statement did not parse (5.2).  The tolerant splitter's
+    * `.attempt` throws the real failure away and hands back an
+    * SErrorStatement covering the whole extent, so the only position
+    * left is the statement's start.  Re-run the real grammar over just
+    * that extent to get the failure back with its true position.
+    *
+    * The slice starts at the beginning of the statement's FIRST LINE
+    * (so the caret line reads whole, indentation included) with the
+    * offset moved to the statement itself, and it ends at the extent's
+    * end — which bounds the re-parse: a statement that opens a bracket
+    * and never closes it reports running out of input here instead of
+    * chasing the rest of the file.  The layout stack is seeded at the
+    * statement's OWN column, which is its block's layout column
+    * (scalaparsers' default is 1, and inner vsemi decisions drift for
+    * anything more indented than that).
+    *
+    * None means the re-parse SUCCEEDED: the slice can lack context the
+    * whole file had (the committed trailing-comment/vsemi interplay),
+    * so the caller keeps the statement-start position. */
+  def statementFailure(fileName: String, contents: String,
+                       startLine: Int, startCol: Int,
+                       endLine: Int, endCol: Int): Option[Err] = {
+    val lineStart = offsetOf(contents, startLine, 1)
+    val start     = offsetOf(contents, startLine, startCol)
+    val end       = offsetOf(contents, endLine, endCol)
+    if (end <= start) None
+    else {
+      val slice = contents.substring(lineStart, end)
+      val nl    = contents.indexOf('\n', lineStart)
+      val first = contents.substring(lineStart, if (nl < 0) contents.length else nl)
+      val ps = scalaparsers.ParseState[Unit](
+        loc         = Pos(fileName, first, startLine, startCol, false),
+        input       = slice,
+        offset      = start - lineStart,
+        s           = (),
+        layoutStack = List(scalaparsers.IndentedLayout[Unit](startCol, "statement"),
+                           scalaparsers.IndentedLayout[Unit](1, "top level")),
+        bol         = false)
+      // No `.attempt` on the binding alternative here: that is the whole
+      // point — a committed failure inside it carries the position the
+      // splitter discarded.  And the extent must parse ENTIRELY, or the
+      // leftover is itself the error (the splitter rejected the extent,
+      // so a prefix of it parsing is not the statement parsing).
+      val p = optionalSpace.skipOptional >> statementAlts(bindingStatement) <<
+              optionalSpace.skipOptional << eof
+      p.run(ps, Supply.create.split) match {
+        case Left(err) => Some(err)
+        case Right(_)  => None
+      }
+    }
+  }
 
   def module(fileName: String, contents: String, defaultName: String = "Surface"): Either[Err, SModule] = {
     val p = for {

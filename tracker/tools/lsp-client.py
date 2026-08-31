@@ -132,15 +132,11 @@ def main():
     check("Ugly.e one diagnostic", len(ds) == 1, repr(ds))
     if len(ds) == 1:
         d = ds[0]
-        # D3: refusal moved from the fused parser's in-statement position
-        # to the tolerant splitter's statement START; Stage 2's
-        # error-tolerant parse restores precise positions
-        check("Ugly.e line", d["range"]["start"] == {"line": 2, "character": 0}, repr(d["range"]))
-        check("Ugly.e message", "unparseable statement" in d["message"], d["message"])
-        # 5.1: the range is the statement's extent (D7's scanner end), not
-        # a zero-width caret at its start
-        check("Ugly.e range covers the statement",
-              d["range"]["end"] == {"line": 2, "character": 7}, repr(d["range"]))
+        # 5.2 repaid the D3 coarsening: the position is the parser's own
+        # again (`f = = 3`, the second `=`), not the statement start
+        check("Ugly.e line", d["range"]["start"] == {"line": 2, "character": 4}, repr(d["range"]))
+        check("Ugly.e message is an expectation", "expected" in d["message"], d["message"])
+        check("Ugly.e message names a term", "term atom" in d["message"], d["message"])
 
     # --- 5.1: a file with TWO broken statements reports both, and its
     # healthy statements still navigate (the index is rebuilt from the
@@ -149,15 +145,27 @@ def main():
     ds = client.diagnostics_for(uri("Broken.e"))
     check("Broken.e two diagnostics", len(ds) == 2, repr(ds))
     if len(ds) == 2:
-        check("Broken.e first at line 5",
-              ds[0]["range"]["start"] == {"line": 5, "character": 0}, repr(ds[0]["range"]))
-        check("Broken.e second at line 7",
-              ds[1]["range"]["start"] == {"line": 7, "character": 0}, repr(ds[1]["range"]))
+        # 5.2: each lands on the offending token, not on its line's start
+        check("Broken.e first at the second = of `bad1 = = 3`",
+              ds[0]["range"]["start"] == {"line": 5, "character": 7}, repr(ds[0]["range"]))
+        check("Broken.e second at the ) of `bad2 = ) 3`",
+              ds[1]["range"]["start"] == {"line": 7, "character": 7}, repr(ds[1]["range"]))
         check("Broken.e both are syntax diagnostics",
-              all("unparseable statement" in d["message"] for d in ds), repr(ds))
+              all("expected" in d["message"] for d in ds), repr(ds))
         check("Broken.e ranges are non-empty",
               all(d["range"]["end"]["character"] > d["range"]["start"]["character"]
                   for d in ds), repr(ds))
+
+    # --- 5.2: an error on a CONTINUATION line is blamed there, not at
+    # the statement's head, and the statements around it stay healthy.
+    open_doc("Cont.e")
+    ds = client.diagnostics_for(uri("Cont.e"))
+    check("Cont.e one diagnostic", len(ds) == 1, repr(ds))
+    if len(ds) == 1:
+        d = ds[0]
+        check("Cont.e blames the continuation line, not the head",
+              d["range"]["start"] == {"line": 5, "character": 2}, repr(d["range"]))
+        check("Cont.e message is an expectation", "expected" in d["message"], d["message"])
 
     # Sibling import: Sib.e imports Good.e from the fixtures directory.
     open_doc("Sib.e")
@@ -199,6 +207,10 @@ def main():
           and r["range"]["start"] == {"line": 4, "character": 0}, repr(r))
     r = definition("Broken.e", 4, 8)  # `answer` in `good1 = answer`
     check("broken file: def answer -> Good.e", r is not None
+          and r["uri"] == uri("Good.e")
+          and r["range"]["start"]["line"] == 2, repr(r))
+    r = definition("Cont.e", 7, 7)  # `answer` in `fine = answer`
+    check("continuation-error file: def answer -> Good.e", r is not None
           and r["uri"] == uri("Good.e")
           and r["range"]["start"]["line"] == 2, repr(r))
 

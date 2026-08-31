@@ -8,9 +8,10 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 2 OPEN (signed off 2026-08-31). 5.1 done — the read path is
-error-tolerant end to end and the LSP reports every phase's diagnostics.
-NEXT: 5.2 (precise in-statement syntax positions) · Seeded 2026-08-30 (session that shipped the
+Status: STAGE 2 OPEN (signed off 2026-08-31). 5.1 and 5.2 done — the read
+path is error-tolerant end to end, reports every phase's diagnostics, and
+blames syntax errors where the parser actually gave up.
+NEXT: 5.2b (the splitter's prefix-parse hole, found by 5.2), then 5.3 · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -20,7 +21,7 @@ scoping fix, commits f9cf42a / 41b13cc).
   Stage 0; suites GROW, so a commit that adds tests updates the count in
   its iteration-log line, and green-except-the-known-one is the invariant
 - `tracker/tools/repl-smoke.sh`: all suites PASS (4 as of D2)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (39 as of 5.1)
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (43 as of 5.2)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 - KNOWN FLAKE: core/test suites run concurrently in one JVM and rarely
@@ -433,7 +434,7 @@ STAGE-2 INVARIANTS (hard):
   single Death becomes one more diagnostic.  lsp-smoke grows: a
   fixture with TWO broken statements publishes two syntax diagnostics;
   goto-definition answers on the healthy statements of a broken file.
-- [ ] **5.2 Precise in-statement syntax positions** (repay the Ugly.e
+- [x] **5.2 Precise in-statement syntax positions** (repay the Ugly.e
   coarsening, D3 log).  The splitter's `.attempt` discards the real
   failure; recover it by re-running the `statement` grammar over the
   broken statement's extent with a repositioned ParseState
@@ -448,6 +449,30 @@ STAGE-2 INVARIANTS (hard):
   Ugly.e's diagnostic returns to line 3 col 5 with an expectation
   message; add a continuation-line-error fixture asserting the
   position lands mid-statement.
+- [ ] **5.2b The splitter's PREFIX-PARSE hole** (found building 5.2's
+  continuation-line fixture; the roadmap did not anticipate it).  The
+  tolerant splitter only recovers when the statement grammar FAILS.
+  When it SUCCEEDS on a proper prefix of the extent and leaves junk
+  behind — `total a b =\n  a\n  ) b`, or a chain ending in a trailing
+  operator followed by a new-looking line — `statement` returns that
+  prefix, the leftover has no home, and the whole `sepEndBy(semi)` /
+  virtualRightBrace driver dies: `SurfaceParsers.module` returns Left,
+  so the file gets NO SErrorStatement, no per-statement diagnostics and
+  no navigation (it falls back to the one Death diagnostic, correctly
+  positioned, which is why this was invisible until now).  Half-typed
+  code is full of prefix-parseable statements, so 5.3 makes this
+  common.  FIX: `statement` must require the real alternatives to
+  consume the WHOLE extent — a statement-boundary lookahead (next
+  significant character at or left of the layout depth, or end of
+  input) after the real alternatives, with the pair attempted so a
+  failure falls through to `rawStatement`.  The lookahead must be
+  purely lexical (StatementExtents already has the scanner; `layout`
+  itself pops layout contexts and must not be used for peeking).
+  RISK: this changes what `SurfaceParsers.module` returns for every
+  file, so it needs the 180-file differential (statement starts
+  unchanged; TestStatementExtents and TestSurfaceParsers are the
+  oracles) and the REPL goldens in the same commit.
+
 - [ ] **5.3 In-memory documents + didChange**.  Today the server reads
   the SAVED file (sync kind 0; no didChange registered — Main.scala:65)
   so mid-keystroke anything is impossible.  Add: TextDocumentSync FULL
@@ -1360,3 +1385,44 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   non-empty ranges, and goto-definition on that broken file answers for
   both a same-file binder and a sibling-module global.
   Suite 879 (878+known), repl 4, lsp 39/39, boot 129.
+
+- 2026-08-31 (5.2 — precise in-statement syntax positions): the D3
+  coarsening is repaid.  `SurfaceParsers.statement` is factored into
+  `statementAlts(binding) | rawStatement`, and the new
+  `statementFailure(file, contents, extent)` re-runs the real grammar
+  over one broken statement's extent to recover the failure the
+  splitter's `.attempt` threw away.  Three things make it land right:
+  the recovery runs the binding alternative WITHOUT `.attempt` (that is
+  the whole point — the committed failure is what carries the
+  position); the slice starts at the beginning of the statement's first
+  LINE with `offset` moved to the statement, so the caret line reads
+  whole and every later position is already absolute; and the layout
+  stack is seeded at the statement's OWN column (its block's layout
+  column) over the top-level context, since scalaparsers defaults to 1
+  and inner vsemi decisions drift for anything more indented.  The
+  extent must parse ENTIRELY (`<< eof` on the slice), so a prefix
+  parsing is not mistaken for the statement parsing; a re-parse that
+  still succeeds falls back to the extent and the coarse message, per
+  the review's requirement (b).  `offsetOf` counts columns the way
+  Pos.bump does (tab to the next multiple of 8, CRLF's '\r' an
+  ordinary column), so CRLF sources map correctly.
+  Positions moved for BATCH refusals too, deliberately: Decision (f)
+  makes error text/anchor drift a log entry, not a gate, and the D3
+  entry promised "Stage 2 restores in-statement precision" for exactly
+  this refusal.  One code path, so TestTolerantRead's strict/tolerant
+  byte-identity property still holds.  Ugly.e is back at 3:5 with
+  "expected ... term atom ..." instead of "unparseable statement" at
+  3:1.  Cost is zero on clean loads — the re-parse only runs when an
+  SErrorStatement exists.
+  FOUND, NOT FIXED: the splitter's prefix-parse hole — filed as 5.2b
+  above and next in the queue.  It is why the obvious continuation-line
+  fixture (`a +` / `b +` / `= answer`) could not be used: the statement
+  parses as a prefix, the leftover has no home, and the whole module
+  parse dies before any SErrorStatement exists.
+  lsp-smoke +4 (43): Ugly.e at line 2 char 4 with an expectation
+  message, Broken.e's two diagnostics on their offending tokens (the
+  second `=`, the `)`), and a new Cont.e fixture whose error is blamed
+  on the continuation line while `fine = answer` below it still
+  navigates to Good.e.  TestTolerantRead +1 (9): the two syntax pins
+  now assert the precise column, one of them on a continuation line.
+  Suite 880 (879+known), repl 4, lsp 43/43, boot 129.

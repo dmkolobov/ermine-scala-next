@@ -165,7 +165,16 @@ object TestTolerantRead extends Properties("Tolerant read 5.1") {
 
   property("syntax: an unparseable statement") =
     phasePin("syntax", "f = = 3\n") { ds =>
-      (ds.head.phase == NewPipeline.Phase.Syntax) :| ds.head.phase.name }
+      ((ds.head.phase == NewPipeline.Phase.Syntax) :| ds.head.phase.name) &&
+      // 5.2: the position is the parser's own — the second `=`, column 5
+      // of the body line — not the statement's start
+      ((ds.head.span.startLine == 6 && ds.head.span.startCol == 5) :| s"span ${ds.head.span}") &&
+      ((ds.head.message contains "expected") :| ds.head.message) }
+
+  property("syntax: an error on a continuation line is blamed there") =
+    phasePin("syntax", "total a =\n  = a\n") { ds =>
+      ((ds.head.span.startLine == 7 && ds.head.span.startCol == 3) :| s"span ${ds.head.span}") &&
+      ((ds.head.message contains "expected") :| ds.head.message) }
 
   property("rename: shadowing an imported global") =
     phasePin("rename", "id = 1\n") { ds =>

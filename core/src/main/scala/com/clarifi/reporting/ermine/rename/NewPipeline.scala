@@ -113,8 +113,22 @@ object NewPipeline {
         .toMap
       errs.foreach { e =>
         val sp = e.loc.span
-        ds += Diag(Phase.Syntax, ends.getOrElse((sp.startLine, sp.startCol), sp),
-                   "error: unparseable statement (" + e.message + ")")
+        val extent = ends.getOrElse((sp.startLine, sp.startCol), sp)
+        // 5.2: the splitter's `.attempt` threw the real failure away and
+        // left only the statement's start.  Re-run the real grammar over
+        // the extent to get it back, so the squiggle lands where the
+        // parser actually gave up.  A re-parse that SUCCEEDS (the slice
+        // can lack context the whole file had) keeps the coarse form.
+        SurfaceParsers.statementFailure(fileName, contents,
+            extent.startLine, extent.startCol, extent.endLine, extent.endCol) match {
+          case Some(err) =>
+            val l = err.loc.line
+            val c = err.loc.column
+            ds += Diag(Phase.Syntax, Span(l, c, l, c + 1), "error: " + err.message.toString)
+          case None =>
+            ds += Diag(Phase.Syntax, extent,
+                       "error: unparseable statement (" + e.message + ")")
+        }
       }
     }
     checkpoint()
