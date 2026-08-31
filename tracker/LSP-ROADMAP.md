@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 3.3 done (re-association, 5 ledger flips); next item 3.4a (desugar: literals) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 3.4a done (lowering + tnodes diff 6/6); next item 3.4b (hooks + do) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -287,7 +287,7 @@ machinery is deleted post-G1, never before.
   sys.error("termL2...") -> diagnostic; "ill-formed expression" message +
   anchor preserved as a design constraint (lsp-client update happens at
   4.3, not here).
-- [ ] **3.4a Desugar after rename: literals/negation/list-patterns/
+- [x] **3.4a Desugar after rename: literals/negation/list-patterns/
   records** — per tracker/desugar-hooks.md channels; expansion SHAPE
   bit-for-bit (foldRight lists/records/list-patterns, EmptyRecord at
   open-brace loc), locs per Decision h; AST-level differential per sugar:
@@ -721,4 +721,18 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   for 3.4); '*'-at-operand-position becomes the star atom. ALL FIVE
   ledger dispositions FLIPPED to re-associator diagnostics (asserted;
   surface-notes updated). TestReassoc 13/13. Baselines: 837 (836+known),
+  repl 3/3, lsp 27/27.
+- 2026-08-30 3.4a done: rename/Lower.scala — surface->core lowering for
+  the structural cases + this slice's G-channel sugars: whole-chain
+  primNeg, Field.cons foldRight onto EmptyRecord, Builtin.Nil/:: list
+  patterns (:: carries InfixR(5) IN THE GLOBAL — Name equality includes
+  the bucket; the hook table already said so and the differential caught
+  the miss), Product spines for tuples/sections, Remember(Hole).
+  Un-reassociated chains and 3.4b/c sugars are loud Unsupported.
+  TestLower revives the tnodes shape for real: OLD fused testParse output
+  vs NEW parse->rename->reassoc->lower, alpha-compared modulo ids/locs
+  over a booted fixture — 6/6 after fixing the binder-site join (pattern
+  binders are sites, not occurrences; Lower joins through the binder
+  table's def-site spans). Deferred notes: pattern-CHAIN re-association
+  to 3.4b; sig/annotation lowering to 4.1. Baselines: 843 (842+known),
   repl 3/3, lsp 27/27.
