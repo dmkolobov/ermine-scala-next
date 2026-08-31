@@ -190,6 +190,54 @@ object TestSurfaceParsers extends Properties("Surface parser 2.3a") {
     }
     fa && ex && sm && row
   }
+
+  /** 2.3d: the 1.3b rejected corpus, re-checked under the new parser.
+    * Decision (f): rejection-vs-acceptance parity is gate-hard, but a
+    * refusal may legitimately MOVE to a later pass — each moved case is
+    * recorded here with its owing pass, and that pass's item must flip
+    * the disposition to a refusal when it lands. */
+  property("2.3d rejected-corpus dispositions") = secure {
+    sealed trait Disp
+    case class ParsesNow(owedBy: String) extends Disp   // refusal moves to the named pass
+    case object StillRejects extends Disp
+    val corpus: List[(String, String, Disp)] = List(
+      ("unknown op in chain",      "v = 1 %%% 2",                          ParsesNow("3.3 re-associate: no fixity for %%%")),
+      ("op before its fixity",     "v = 1 :%: 2\ninfixl 5 :%:\n(:%:) x y = x", ParsesNow("3.3 re-associate: positional fixity env")),
+      ("mixed assoc equal prec",   "infixl 5 <%>\ninfixr 5 <^>\n(<%>) x y = x\n(<^>) x y = y\nv = 1 <%> 2 <^> 3", ParsesNow("3.3 re-associate: ambiguous operator")),
+      ("refix imported operator",  "infixr 3 &&",                          ParsesNow("3.3 fixity env: Multiple fixity definitions")),
+      ("postfix+infix collision",  "infixl 5 :%:\npostfix 5 :%:\n(:%:) x y = x", ParsesNow("3.3 fixity env: shared bucket")),
+      ("top-level import shadow",  "id = 1",                               ParsesNow("3.2 rename: would shadow global definition")),
+      ("data-con operator binder", "v = let (::) a b = 7 in 1",            ParsesNow("3.2 rename: constructor binder refusal")),
+      ("missing bracket hooks",    "v = [1, 2]",                           ParsesNow("3.4 desugar: empty_Bracket/cons_Bracket unresolved")),
+      ("empty brace literal",      "v = {}",                               ParsesNow("3.2/3.4: renamer rejects {} (old crashes masked by race)")),
+      ("bare prefix stacking",     "prefix 9 !!\n(prefix !!) q = 0 - q\nv = !! !! 5", StillRejects),
+      ("dead underscore affix",    "v = 1 +_ 2",                           StillRejects))
+    val bad = List.newBuilder[String]
+    for ((label, body, want) <- corpus) {
+      val r = SurfaceParsers.module(label, "module T where\n" + body, "T")
+      val placeholderFree = r match {
+        case Right(m) =>
+          def ok(s: SStatement): Boolean = s match {
+            case _: SErrorStatement => false
+            case SPrivateBlock(_, ss) => ss.forall(ok)
+            case _ => true
+          }
+          m.statements.forall(ok)
+        case Left(_) => false
+      }
+      (want, placeholderFree) match {
+        case (ParsesNow(_), true)  => ()
+        case (StillRejects, false) => ()
+        case (ParsesNow(owed), false) =>
+          bad += s"$label: expected to parse (refusal owed by $owed) but was rejected/placeholdered"
+        case (StillRejects, true) =>
+          bad += s"$label: expected a parse rejection but it parsed"
+      }
+    }
+    val failures = bad.result()
+    failures.isEmpty :| failures.mkString(" ;; ")
+  }
 }
+
 
 

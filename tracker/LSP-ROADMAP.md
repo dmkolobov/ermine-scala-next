@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 2.3c done (FULL surface grammar, 3654 stmts); next item 2.3d (parse differential) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — PHASE 2.x COMPLETE (surface syntax); next item 3.1 (module scope pure function) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -244,7 +244,7 @@ machinery is deleted post-G1, never before.
   by construction; renamer rejects instead).
 - [x] **2.3c Parser: types + data/class/foreign statements** (quantifier/
   row forms, kind-arg braces, class blocks).
-- [ ] **2.3d Parse differential**: all 180 .e files parse (161 stdlib +
+- [x] **2.3d Parse differential**: all 180 .e files parse (161 stdlib +
   19 core/examples — user-style surface variety the stdlib lacks); the
   1.3b rejected corpus re-checked (refusals that move to rename time are
   recorded as such); '{' rules and missing-hook acceptance verified
@@ -647,3 +647,13 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   corner made concrete). Test now asserts zero unparsed:* of ANY kind on
   non-legacy files + type-shape properties. Baselines: 805 (804+known;
   one flake, 4th sighting, cleared on re-run), repl 3/3, lsp 27/27.
+- 2026-08-30 2.3d done: the 180-file differential was already standing in
+  TestSurfaceParsers (parse + agreement-on-rejection); the new piece is
+  the rejected-corpus DISPOSITION table — each 1.3b refusal re-checked
+  under the new parser and pinned as either still-parse-time (bare
+  prefix stacking, dead underscore) or parses-now-with-the-refusal-owed
+  (5 cases owed by 3.3's fixity env/re-associator, 2 by 3.2's renamer,
+  2 by 3.2/3.4) — the ledger is in surface-notes and asserted in the
+  suite, so each owing item must flip its dispositions when it lands.
+  PHASE 2.x (surface syntax) COMPLETE. Baselines: 806 (805+known),
+  repl 3/3, lsp 27/27.

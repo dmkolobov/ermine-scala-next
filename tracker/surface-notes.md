@@ -60,3 +60,17 @@ the virtual block closes). Whether the fused pipeline reads the same
 shape as empty-or-merged (virtualLeftBrace records col max depth) is
 exactly the col-max-depth corner — the G1 groups/renamer differential
 must confirm agreement on Error.e's privateTerms.
+
+## 2.3d disposition ledger (owed refusals)
+
+The rejected-corpus cases that now PARSE (flat chains, no resolution)
+each owe a refusal to a later pass — asserted in TestSurfaceParsers
+("2.3d rejected-corpus dispositions"); the owing item must flip the
+disposition when it lands:
+- 3.3 re-associator: unknown op, op-before-fixity, mixed-assoc ambiguity,
+  refixed imported op ("Multiple fixity definitions"), postfix+infix
+  bucket collision.
+- 3.2 renamer: top-level import shadow, data-con operator binder.
+- 3.2/3.4: missing bracket hooks, empty brace literal.
+Still parse-time: bare prefix stacking, dead-underscore affix (lexer
+parity, 2.2).
