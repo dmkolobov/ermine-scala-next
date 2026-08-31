@@ -45,6 +45,7 @@ object Renamer {
   case object TyParam    extends BinderKind  // forall/exists/some, data/type/class args
   case object TyImplicit extends BinderKind  // per-annotation auto-quantified var
   case object KindParam  extends BinderKind  // {k} kind-brace binders
+  case object TyDef      extends BinderKind  // module-level type definitions
 
   final case class BinderInfo(id: Int, spelling: String, defSite: Span, kind: BinderKind)
   final case class Occurrence(span: Span, spelling: String, resolution: Resolution)
@@ -55,7 +56,8 @@ object Renamer {
     occurrences: List[Occurrence],
     binders: Map[Int, BinderInfo],
     frames: List[Frame],
-    diagnostics: List[Diag]) {
+    diagnostics: List[Diag],
+    moduleTerms: Map[String, Int] = Map()) {
 
     def binderAt(line: Int, col: Int): Option[BinderInfo] =
       occurrences.find(o => o.span.contains(line, col)).flatMap(_.resolution match {
@@ -144,6 +146,18 @@ object Renamer {
   private def lookup(env: Env, spelling: String): Option[Int] =
     env.collectFirst { case m if m.contains(spelling) => m(spelling) }
 
+  /** NameParsers.opName: a bare `(op)` reference probes the infix/postfix
+    * bucket; `(prefix op)`/`(postfix op)` select their declared bucket. */
+  private def refPos(n: SName): Option[PosClass] = n.form match {
+    case ParenOp                  => Some(PostOperandPos)
+    case ParenFixityBinder(f)     => f match {
+      case Prefix(_) => Some(OperandPos)
+      case Idfix     => None
+      case _         => Some(PostOperandPos)
+    }
+    case _                        => None
+  }
+
   // ------------------------------------------------------------ binder heads
 
   /** One binder per unique name over sigs+equations; def-site = LAST
@@ -182,10 +196,11 @@ object Renamer {
     s.frames += Frame(moduleSpan, top)
 
     m.statements.foreach(statement(_, env, s))
-    m.statements.foreach(statementTypes(_, s))   // 3.2c: the type/kind side
+    val tyDefs = collectTypeDefs(m.statements, s)
+    m.statements.foreach(statementTypes(_, s, tyDefs))   // 3.2c: the type/kind side
     m.statements.foreach(foreignClasses(_, m.file, "", s))
 
-    Result(s.occs.result(), s.binders.result(), s.frames.result(), s.diags.result())
+    Result(s.occs.result(), s.binders.result(), s.frames.result(), s.diags.result(), top)
   }
 
   /** Rename; on the first diagnostic, throw Death rendered the way
@@ -252,8 +267,34 @@ object Renamer {
 
   private val kindAtoms = Set("*", "rho", "ρ", "phi", "φ", "constraint", "Γ")
 
-  private final class TyCtx(val s: S) {
-    var frames: List[Map[String, Int]] = Nil       // explicit binders
+  /** Module-level TYPE definition names (data/type/class/field/foreign
+    * data) — the outermost type frame, so sigs can reference the
+    * module's own types (Control/Monoid.e's `Monoid (m, n)`). */
+  private def collectTypeDefs(sts: List[SStatement], s: S): Map[String, Int] = {
+    val out = scala.collection.mutable.LinkedHashMap[String, Int]()
+    def add(n: SName): Unit =
+      if (!out.contains(n.spelling)) out(n.spelling) = s.addBinder(n.spelling, n.span, TyDef)
+    def fgo(f: SForeign): Unit = f match {
+      case x: SForeignData    => add(x.name)
+      case x: SForeignPrivate => x.statements.foreach(fgo)
+      case _ => ()
+    }
+    def go(st: SStatement): Unit = st match {
+      case x: SDataStatement    => add(x.name)
+      case x: STypeAlias        => add(x.name)
+      case x: SClassStatement   => add(x.name); x.body.foreach(go)
+      case x: SFieldStatement   => x.names.foreach(add)
+      case SForeignBlock(_, is) => is.foreach(fgo)
+      case SPrivateBlock(_, ss)     => ss.foreach(go)
+      case SDatabaseBlock(_, _, ss) => ss.foreach(go)
+      case _ => ()
+    }
+    sts.foreach(go)
+    out.toMap
+  }
+
+  private final class TyCtx(val s: S, base: Map[String, Int] = Map()) {
+    var frames: List[Map[String, Int]] = if (base.isEmpty) Nil else List(base)
     var implicits = Map.empty[String, Int]         // per-annotation set
 
     def push(m: Map[String, Int]): Unit = frames = m :: frames
@@ -288,7 +329,7 @@ object Renamer {
   private def ty(t: STy, ctx: TyCtx): Unit = t match {
     case STyName(n) =>
       val res = if (kindAtoms(n.spelling)) ToGlobal(Global("Builtin", n.spelling), Local(n.spelling), Global("Builtin", n.spelling))
-                else ctx.resolve(n, None)
+                else ctx.resolve(n, refPos(n))
       ctx.s.occur(n, res)
     case STyApp(f, a) => ty(f, ctx); ty(a, ctx)
     case STyChain(c) => c.items.foreach {
@@ -322,26 +363,27 @@ object Renamer {
   }
 
   /** One annotation = one implicit-quantification scope. */
-  private def annot(t: STy, s: S): Unit = { ty(t, new TyCtx(s)) }
+  private def annot(t: STy, s: S, base: Map[String, Int]): Unit = { ty(t, new TyCtx(s, base)) }
 
   /** Declaration heads (data/type/class): kindArgs + typeArgs scope over
     * the declaration's types. */
-  private def declTypes(ks: List[SName], bs: List[SBinder], tys: List[STy], s: S): Unit = {
-    val ctx = new TyCtx(s)
+  private def declTypes(ks: List[SName], bs: List[SBinder], tys: List[STy], s: S,
+                        base: Map[String, Int]): Unit = {
+    val ctx = new TyCtx(s, base)
     ctx.push(kindFrame(ks, ctx))
     ctx.push(tyBinderFrame(bs, TyParam, ctx))
     tys.foreach(ty(_, ctx))
     ctx.pop(); ctx.pop()
   }
 
-  private def statementTypes(st: SStatement, s: S): Unit = st match {
-    case SSigStatement(_, _, t)         => annot(t, s)
-    case SFieldStatement(_, _, t)       => annot(t, s)
-    case STableStatement(_, _, _, t)    => annot(t, s)
-    case STypeAlias(_, _, ks, bs, body) => declTypes(ks, bs, List(body), s)
+  private def statementTypes(st: SStatement, s: S, base: Map[String, Int]): Unit = st match {
+    case SSigStatement(_, _, t)         => annot(t, s, base)
+    case SFieldStatement(_, _, t)       => annot(t, s, base)
+    case STableStatement(_, _, _, t)    => annot(t, s, base)
+    case STypeAlias(_, _, ks, bs, body) => declTypes(ks, bs, List(body), s, base)
     case SDataStatement(_, _, ks, bs, cons) =>
       // per-constructor foralls nest inside the declaration frame
-      val ctx = new TyCtx(s)
+      val ctx = new TyCtx(s, base)
       ctx.push(kindFrame(ks, ctx))
       ctx.push(tyBinderFrame(bs, TyParam, ctx))
       cons.foreach { c =>
@@ -350,61 +392,61 @@ object Renamer {
       }
       ctx.pop(); ctx.pop()
     case SClassStatement(_, _, ks, bs, context, body) =>
-      val ctx = new TyCtx(s)
+      val ctx = new TyCtx(s, base)
       ctx.push(kindFrame(ks, ctx))
       ctx.push(tyBinderFrame(bs, TyParam, ctx))
       context.foreach(ty(_, ctx))
       ctx.pop(); ctx.pop()
-      body.foreach(statementTypes(_, s))
+      body.foreach(statementTypes(_, s, base))
     case SForeignBlock(_, items) =>
       def go(f: SForeign): Unit = f match {
-        case x: SForeignData        => declTypes(Nil, x.args, Nil, s)
-        case x: SForeignFunction    => annot(x.ty, s)
-        case x: SForeignMethod      => annot(x.ty, s)
-        case x: SForeignValue       => annot(x.ty, s)
-        case x: SForeignConstructor => annot(x.ty, s)
-        case x: SForeignSubtype     => annot(x.ty, s)
+        case x: SForeignData        => declTypes(Nil, x.args, Nil, s, base)
+        case x: SForeignFunction    => annot(x.ty, s, base)
+        case x: SForeignMethod      => annot(x.ty, s, base)
+        case x: SForeignValue       => annot(x.ty, s, base)
+        case x: SForeignConstructor => annot(x.ty, s, base)
+        case x: SForeignSubtype     => annot(x.ty, s, base)
         case x: SForeignPrivate     => x.statements.foreach(go)
       }
       items.foreach(go)
-    case SPrivateBlock(_, ss)     => ss.foreach(statementTypes(_, s))
-    case SDatabaseBlock(_, _, ss) => ss.foreach(statementTypes(_, s))
+    case SPrivateBlock(_, ss)     => ss.foreach(statementTypes(_, s, base))
+    case SDatabaseBlock(_, _, ss) => ss.foreach(statementTypes(_, s, base))
     case SEquation(_, _, args, body, wh) =>
-      args.foreach(patternTypes(_, s))
-      termTypes(body, s)
-      wh.foreach(_.statements.foreach(statementTypes(_, s)))
+      args.foreach(patternTypes(_, s, base))
+      termTypes(body, s, base)
+      wh.foreach(_.statements.foreach(statementTypes(_, s, base)))
     case _ => ()
   }
 
-  private def patternTypes(p: SPat, s: S): Unit = p match {
-    case SPSig(_, i, t)  => annot(t, s); patternTypes(i, s)
-    case SPParen(_, i)   => patternTypes(i, s)
-    case SPTuple(_, es)  => es.foreach(patternTypes(_, s))
-    case SPList(_, es)   => es.foreach(patternTypes(_, s))
-    case SPStrict(_, i)  => patternTypes(i, s)
-    case SPLazy(_, i)    => patternTypes(i, s)
-    case SPAs(_, _, i)   => patternTypes(i, s)
-    case SPApp(_, args)  => args.foreach(patternTypes(_, s))
-    case SPChain(c)      => c.items.foreach { case Left(q) => patternTypes(q, s); case _ => () }
+  private def patternTypes(p: SPat, s: S, base: Map[String, Int]): Unit = p match {
+    case SPSig(_, i, t)  => annot(t, s, base); patternTypes(i, s, base)
+    case SPParen(_, i)   => patternTypes(i, s, base)
+    case SPTuple(_, es)  => es.foreach(patternTypes(_, s, base))
+    case SPList(_, es)   => es.foreach(patternTypes(_, s, base))
+    case SPStrict(_, i)  => patternTypes(i, s, base)
+    case SPLazy(_, i)    => patternTypes(i, s, base)
+    case SPAs(_, _, i)   => patternTypes(i, s, base)
+    case SPApp(_, args)  => args.foreach(patternTypes(_, s, base))
+    case SPChain(c)      => c.items.foreach { case Left(q) => patternTypes(q, s, base); case _ => () }
     case _ => ()
   }
 
-  private def termTypes(t: STerm, s: S): Unit = t match {
-    case SSig(_, tm, ann) => annot(ann, s); termTypes(tm, s)
-    case SApp(f, a) => termTypes(f, s); termTypes(a, s)
-    case SLam(_, ps, b) => ps.foreach(patternTypes(_, s)); termTypes(b, s)
-    case SChain(c) => c.items.foreach { case Left(o) => termTypes(o, s); case _ => () }
-    case SNeg(_, _, o) => termTypes(o, s)
-    case SParen(_, i) => termTypes(i, s)
-    case STuple(_, es) => es.foreach(termTypes(_, s))
-    case SCase(_, e, alts) => termTypes(e, s); alts.foreach(a => { patternTypes(a.pattern, s); termTypes(a.body, s) })
-    case SLet(_, ss, b) => ss.foreach(statementTypes(_, s)); termTypes(b, s)
-    case SDo(_, ds) => ds.foreach { case SDoBind(_, p, _, r) => patternTypes(p, s); termTypes(r, s); case SDoExpr(e) => termTypes(e, s) }
-    case SListLit(_, es, _) => es.foreach(termTypes(_, s))
-    case SBraceLit(_, es, _) => es.foreach(termTypes(_, s))
-    case SRecordLit(_, fs) => fs.foreach { case (k, v) => termTypes(k, s); termTypes(v, s) }
-    case SRelEnvelope(_, as) => as.foreach { case SCombineArrow(_, _, e) => termTypes(e, s); case SFilterArrow(e) => termTypes(e, s); case _ => () }
-    case SRemember(_, i) => termTypes(i, s)
+  private def termTypes(t: STerm, s: S, base: Map[String, Int]): Unit = t match {
+    case SSig(_, tm, ann) => annot(ann, s, base); termTypes(tm, s, base)
+    case SApp(f, a) => termTypes(f, s, base); termTypes(a, s, base)
+    case SLam(_, ps, b) => ps.foreach(patternTypes(_, s, base)); termTypes(b, s, base)
+    case SChain(c) => c.items.foreach { case Left(o) => termTypes(o, s, base); case _ => () }
+    case SNeg(_, _, o) => termTypes(o, s, base)
+    case SParen(_, i) => termTypes(i, s, base)
+    case STuple(_, es) => es.foreach(termTypes(_, s, base))
+    case SCase(_, e, alts) => termTypes(e, s, base); alts.foreach(a => { patternTypes(a.pattern, s, base); termTypes(a.body, s, base) })
+    case SLet(_, ss, b) => ss.foreach(statementTypes(_, s, base)); termTypes(b, s, base)
+    case SDo(_, ds) => ds.foreach { case SDoBind(_, p, _, r) => patternTypes(p, s, base); termTypes(r, s, base); case SDoExpr(e) => termTypes(e, s, base) }
+    case SListLit(_, es, _) => es.foreach(termTypes(_, s, base))
+    case SBraceLit(_, es, _) => es.foreach(termTypes(_, s, base))
+    case SRecordLit(_, fs) => fs.foreach { case (k, v) => termTypes(k, s, base); termTypes(v, s, base) }
+    case SRelEnvelope(_, as) => as.foreach { case SCombineArrow(_, _, e) => termTypes(e, s, base); case SFilterArrow(e) => termTypes(e, s, base); case _ => () }
+    case SRemember(_, i) => termTypes(i, s, base)
     case _ => ()
   }
 
@@ -508,7 +550,7 @@ object Renamer {
   }
 
   private def term(t: STerm, env: Env, s: S, rel: Boolean = false): Unit = t match {
-    case SVar(n) => reference(n, None, env, s, rel)
+    case SVar(n) => reference(n, refPos(n), env, s, rel)
     case SApp(f, a) => term(f, env, s, rel); term(a, env, s, rel)
     case SLam(loc, ps, body) =>
       val b = ps.flatMap(patternBinders(_, Arg, s)).toMap

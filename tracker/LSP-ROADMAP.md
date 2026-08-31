@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 4.1c done (WHOLE MODULE LOADS through the new pipeline; switch live); next: 4.2 convergence (first divergence: Control/Monoid.e:11:36) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 4.2 IN PROGRESS: THE FULL STDLIB BOOTS through the new pipeline (Prelude+Layout, 129 modules, typechecked); next: the differential oracle stack (same-commit old|new g1-diff .ei/browse/groups, eval fixtures, corpus under both pipelines) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -817,3 +817,37 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   ("undefined type" — `Monoid (m, n)` tuple-of-vars in a sig result) —
   4.2's convergence loop opens there. Baselines (old path untouched):
   866 (865+known), repl 3/3, lsp 27/27.
+
+- 2026-08-30 (4.2 batch 1): CONVERGENCE TO FULL BOOT. Nine divergences
+  fixed, in boot order: (1) Lower/TyLower minted V ids from per-module
+  negative counters — module N+1's ids collided with module N's Vs
+  living in s.env (V equality is id-only), tripping loadModule's
+  overwrites3 "would overwrite existing global in the environment";
+  both now mint from the session Supply, like the fused parser.
+  (2) Stale .ei files sent loadModule down the interface remap path
+  ("pre-checked types failed"): convergence boots now clean *.ei first
+  (the interface layer gets its own oracle pass later). (3) Fixity
+  declarations are part of declared NAMES: binder Vs, constructor
+  placeholders and `infix type` type names now carry the declared
+  fixity (Function.e exported `.` as Idfix; List.NonEmpty's (:|)).
+  (4) ParenOp references probe the infix/postfix canonical bucket, per
+  NameParsers.opName — Num.e's (+_P) affixed paren-op refs. (5) Sig
+  pairing is module-wide by shared V (a `private sig` group pairs with
+  equations outside it — List.e's `private map`); let/where pairing
+  stays block-local. (6) hookVar falls back to the module's own
+  bindings (internalVar parity — List.e defines and uses
+  empty_Bracket). (7) Term and pattern sig ANNOTATIONS lower for real
+  (Sig node; the annot rides the pattern var's extract per
+  mkLocalPatternVar) — IO.e's rank-2 `(kf : some r. K r)`; Reassoc now
+  rewrites sig types inside let/where blocks and pattern sigs.
+  (8) private foreign members are marked private (Vector.toList# was
+  leaking and made Scanners' toList# ambiguous). (9) `{}` is the empty
+  record (fused rec production), not an empty brace literal. RESULT:
+  `-Dermine.pipeline=new` boots Prelude+Layout — all 129 modules parse,
+  rename, reassociate, lower, and TYPECHECK. Also: the pipeline switch
+  became session-level (SessionEnv.pipelineNew) because the JVM
+  property is process-global and concurrently-running test properties
+  saw each other's flag (three suites falsified under the full run,
+  green in isolation — the concurrency-flake protocol caught it);
+  tests now set _pipelineNew on their own session copy. Baselines:
+  866 (865+known disjunction), repl 3/3, lsp 27/27.

@@ -91,13 +91,20 @@ class SessionEnv(
   var classes:         Map[Global,ClassDef]           = Map(),
   var classOrigins:    Map[Global, List[Global]]      = Map(),
      _typeCheck:       Option[Boolean]                = None,
-     _useInterface:    Option[Boolean]                = None
+     _useInterface:    Option[Boolean]                = None,
+     _pipelineNew:     Option[Boolean]                = None
 ) { that =>
-  def copy = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck),Some(that.useInterface))
+  def copy = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck),Some(that.useInterface),Some(that.pipelineNew))
 
   val typeCheck : Boolean = _typeCheck.getOrElse(java.lang.Boolean.getBoolean("ermine.typeCheck"))
   val useInterface : Boolean =
     _useInterface.getOrElse(java.lang.Boolean.parseBoolean(System.getProperty("ermine.useInterface","true")))
+
+  /** Route module loads through rename.NewPipeline (roadmap 4.1c).  The
+    * session-level override exists for tests: the JVM property is
+    * process-global, and a concurrent test's loads would see it. */
+  val pipelineNew : Boolean =
+    _pipelineNew.getOrElse("new" == System.getProperty("ermine.pipeline"))
 
   def +=(sp: SessionEnv): Unit = {
     env             = env ++ sp.env

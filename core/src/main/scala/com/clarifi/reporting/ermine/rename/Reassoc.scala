@@ -202,7 +202,10 @@ object Reassoc {
         }
       case SApp(f, a) => SApp(go(f), go(a))
       case SLam(l, ps, b) => SLam(l, ps.map(pat), go(b))
-      case SSig(l, tm, ann) => SSig(l, go(tm), ann)
+      case SSig(l, tm, ann) =>
+        val (annp, annDs) = ty(ann, env)
+        diags ++= annDs
+        SSig(l, go(tm), annp)
       case SNeg(l, m, o) => SNeg(l, m, go(o))
       case SParen(l, i) => SParen(l, go(i))
       case STuple(l, es) => STuple(l, es.map(go))
@@ -262,7 +265,10 @@ object Reassoc {
       case SPStrict(l, i) => SPStrict(l, pat(i))
       case SPLazy(l, i)   => SPLazy(l, pat(i))
       case SPAs(l, n, i)  => SPAs(l, n, pat(i))
-      case SPSig(l, i, t) => SPSig(l, pat(i), t)
+      case SPSig(l, i, t) =>
+        val (tp, tds) = ty(t, env)
+        diags ++= tds
+        SPSig(l, pat(i), tp)
       case SPApp(n, as)   => SPApp(n, as.map(pat))
       case other => other
     }
@@ -278,6 +284,10 @@ object Reassoc {
           r
         }
         eqp.copy(body = go(eqp.body), where = whRewritten)
+      case sg: SSigStatement =>
+        val (annp, annDs) = ty(sg.annot, env)
+        diags ++= annDs
+        sg.copy(annot = annp)
       case other => other
     }
 

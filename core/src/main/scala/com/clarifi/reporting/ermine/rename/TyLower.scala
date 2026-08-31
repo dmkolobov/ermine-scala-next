@@ -3,7 +3,7 @@ package com.clarifi.reporting.ermine.rename
 import com.clarifi.reporting.ermine.{
   Annot, AppT, Arrow, Bound, ConcreteRho, Constraint, Exists, Field, Forall,
   Free, Global, Kind, KindSchema, Local, Name, Part, ProductT, Rho, Star, Type,
-  V, VarT, ArrowK, VarK }
+  V, VarT, ArrowK, VarK, Fixity, Idfix }
 import com.clarifi.reporting.ermine.surface._
 import Renamer.{ Resolution, ToBinder, ToGlobal, Unresolved, Ambiguous }
 import scalaparsers.Supply
@@ -32,20 +32,26 @@ object TyLower {
       binderInfo: Map[Int, Renamer.BinderInfo],
       cons: Map[Global, Type.Con],
       val moduleName: String,
-      supply: Supply) {
+      supply: Supply,
+      typeFixities: Map[String, Fixity]) {
 
     private var tyVars = Map.empty[Int, V[Kind]]
     private var kindVars = Map.empty[Int, V[Unit]]
-    private var nextId = -1000000
-    private def fresh(): Int = { nextId -= 1; nextId }
+    // session-Supply ids: per-module counters collide across loads (s.cons
+    // and interface types keep these Vs alive between modules)
+    private def fresh(): Int = supply.fresh
 
     def pos(sp: Span) = scalaparsers.Pos(file, "", sp.startLine, sp.startCol, false)
 
     def freshKind(sp: Span): Kind = VarK(V(pos(sp).inferred, fresh(), None, Free, ()))
 
+    /** `infix type` declarations are part of a type binder's name,
+      * as at the term level. */
+    def localTypeName(sp: String): Local = Local(sp, typeFixities.getOrElse(sp, Idfix))
+
     def tyVar(id: Int, spelling: String, sp: Span, kind: Option[Kind]): V[Kind] =
       tyVars.getOrElse(id, {
-        val v = V(pos(sp), fresh(), Some(Local(spelling): Name), Bound,
+        val v = V(pos(sp), fresh(), Some(localTypeName(spelling): Name), Bound,
                   kind getOrElse freshKind(sp))
         tyVars += id -> v
         v
@@ -87,11 +93,12 @@ object TyLower {
   }
 
   def apply(r: Renamer.Result, file: String, moduleName: String,
-            cons: Map[Global, Type.Con], supply: Supply): TCtx =
+            cons: Map[Global, Type.Con], supply: Supply,
+            typeFixities: Map[String, Fixity] = Map()): TCtx =
     new TCtx(file,
       r.occurrences.map(o => o.span -> o.resolution).toMap,
       r.binders.map { case (id, b) => b.defSite -> id },
-      r.binders, cons, moduleName, supply)
+      r.binders, cons, moduleName, supply, typeFixities)
 
   private val kindAtomNames = Set("*", "rho", "ρ", "phi", "φ", "constraint", "Γ")
 
@@ -181,7 +188,8 @@ object TyLower {
     case STySome(_, _, _, body) => ty(body, c)  // `some` lives on the Annot
     case STyList(_, _) | _: STyError =>
       VarT(V(c.pos(t.loc.span), -1, None, Free, c.freshKind(t.loc.span)))
-    case STyChain(_) => sys.error("tylower: un-reassociated type chain")
+    case STyChain(ch) => sys.error("tylower: un-reassociated type chain at " +
+      c.file + ":" + t.loc.span.startLine + ":" + t.loc.span.startCol)
   }
 
   private def rho(l: SLoc, dots: Boolean, inner: List[STy], c: TCtx): Type =

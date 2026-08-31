@@ -39,8 +39,16 @@ object NewPipeline {
       throw Death(mkPos(fileName, contents, d.span).report(Document.text(d.message)))
     }
 
-    val lctx = Lower(renamed, fileName, s.termNames, scope)
-    val tctx = TyLower(renamed, fileName, mh.name, s.cons ++ s.privateCons, su)
+    // fixity declarations are part of the declared NAMES (binders and
+    // exported Globals carry them); no block-level decls exist in the corpus
+    val termFix = sm.statements.collect {
+      case SFixity(_, f, false, ops) => ops.map(_.spelling -> f) }.flatten.toMap
+    val typeFix = sm.statements.collect {
+      case SFixity(_, f, true, ops) => ops.map(_.spelling -> f) }.flatten.toMap
+
+    val lctx = Lower(renamed, fileName, s.termNames, scope, termFix)
+    val tctx = TyLower(renamed, fileName, mh.name, s.cons ++ s.privateCons, su, typeFix)
+    lctx.lowerAnnot = (t: STy) => TyLower.annot(t, tctx)
 
     val (module, ps) = assemble(mh, restatements, lctx, tctx, fileName, contents, scope)
     lctx.diags.result().headOption.foreach { d =>
@@ -75,9 +83,15 @@ object NewPipeline {
     var privateTypes = Set.empty[V[Kind]]
     var ownTypeNames = Map.empty[Name, V[Kind]]
 
-    // binding statements group per adjacency block; collect (spelling ->
-    // (V, alts)) then pair sigs by the SAME V
-    def bindingBlock(bs: List[SStatement], intoPrivate: Boolean): Unit = {
+    // binding statements group per adjacency block (adjacent equations of
+    // one spelling are one binding's alts); sigs pair MODULE-WIDE by the
+    // shared V, as the fused termNames memo does — a `private` group is a
+    // privacy marker, not a pairing scope (List.e: `private map : t` with
+    // the equations outside the group)
+    val topGroups = scala.collection.mutable.LinkedHashMap[V[Type], ImplicitBinding]()
+    val topSigs   = List.newBuilder[(V[Type], Type, Span)]
+
+    def collectBlock(bs: List[SStatement]): (List[(V[Type], ImplicitBinding)], List[(V[Type], Type, Span)]) = {
       val grouped = scala.collection.mutable.LinkedHashMap[String, (V[Type], List[Alt])]()
       val sigs = List.newBuilder[(V[Type], Type, Span)]
       bs foreach {
@@ -104,24 +118,42 @@ object NewPipeline {
           }
         case _ => ()
       }
-      val im = grouped.values.map { case (v, as) => v -> ImplicitBinding(v.loc, v, as) }.toMap
-      val es = sigs.result().map { case (v, ty, sp) =>
+      (grouped.values.toList.map { case (v, as) => v -> ImplicitBinding(v.loc, v, as) },
+       sigs.result())
+    }
+
+    def pairSigs(im: collection.Map[V[Type], ImplicitBinding],
+                 sigs: List[(V[Type], Type, Span)]): (List[ImplicitBinding], List[ExplicitBinding]) = {
+      val es = sigs.map { case (v, ty, sp) =>
         im.get(v) match {
           case Some(i) => ExplicitBinding(i.loc, i.v, Annot.plain(i.loc, ty), i.alts)
           case None => throw Death(mkPos(fileName, contents, sp)
             .report(Document.text("missing definition")))
         }
       }
-      val is = (im -- es.map(_.v)).values.toList
-      implicits = implicits ++ is
-      explicits = explicits ++ es
-      if (intoPrivate) privateTerms = privateTerms ++ is.map(_.v) ++ es.map(_.v)
+      ((im -- es.map(_.v)).values.toList, es)
+    }
+
+    def bindingBlock(bs: List[SStatement], intoPrivate: Boolean): Unit = {
+      val (groups, sigs) = collectBlock(bs)
+      groups.foreach { case (v, b) =>
+        topGroups(v) = topGroups.get(v) match {
+          case Some(b0) => ImplicitBinding(b0.loc, b0.v, b0.alts ++ b.alts)
+          case None     => b
+        }
+      }
+      topSigs ++= sigs
+      if (intoPrivate)
+        privateTerms = privateTerms ++ groups.map(_._1) ++ sigs.map(_._1)
     }
 
     def ownTypeVar(n: SName): V[Kind] = {
-      val v = V(lctx.pos(n.span), -(n.span.startLine * 1000 + n.span.startCol) - 5000000,
-                Some(Local(n.spelling): Name), Bound, tctx.freshKind(n.span))
-      ownTypeNames += (Local(n.spelling): Name) -> v
+      // join the renamer's TyDef binder so sig references to the module's
+      // own types share this V (Control/Monoid.e's `Monoid (m, n)`)
+      val v = tctx.tyVar(
+        tctx.binderIdAt(n.span).getOrElse(-(n.span.startLine * 1000 + n.span.startCol) - 5000000),
+        n.spelling, n.span, None)
+      ownTypeNames += (tctx.localTypeName(n.spelling): Name) -> v
       v
     }
 
@@ -147,7 +179,7 @@ object NewPipeline {
                                                b.name.spelling, b.name.span, b.kind.map(TyLower.kind(_, tctx))))
               types ::= TypeStatement(lctx.pos(l.span), ownTypeVar(n), kvs, tvs,
                 TyLower.ty(body, tctx))
-              if (intoPrivate) privateTypes = privateTypes + ownTypeNames(Local(n.spelling))
+              if (intoPrivate) privateTypes = privateTypes + ownTypeNames(tctx.localTypeName(n.spelling))
             case SDataStatement(l, n, ks, bs, cons) =>
               val kvs = ks.map(k => tctx.kindVar(tctx.binderIdAt(k.span).getOrElse(-3 - k.span.startCol * 11), k.spelling, k.span))
               val tvs = bs.map(b => tctx.tyVar(tctx.binderIdAt(b.name.span).getOrElse(-4 - b.name.span.startCol * 13),
@@ -159,36 +191,40 @@ object NewPipeline {
                  cdef.fields.map(TyLower.ty(_, tctx)))
               }
               dataStmts ::= DataStatement(lctx.pos(l.span), ownTypeVar(n), kvs, tvs, dcons)
-              if (intoPrivate) privateTypes = privateTypes + ownTypeNames(Local(n.spelling))
+              if (intoPrivate) privateTypes = privateTypes + ownTypeNames(tctx.localTypeName(n.spelling))
             case SForeignBlock(_, items) =>
-              def fgo(f: SForeign): Unit = f match {
+              def privTerm(priv: Boolean, v: V[Type]): V[Type] = {
+                if (priv) privateTerms = privateTerms + v
+                v
+              }
+              def fgo(f: SForeign, priv: Boolean): Unit = f match {
                 case x: SForeignData =>
                   foreignData ::= ForeignDataStatement(lctx.pos(x.loc.span), ownTypeVar(x.name),
                     x.args.map(b => tctx.tyVar(tctx.binderIdAt(b.name.span).getOrElse(-6 - b.name.span.startCol * 19),
                                                b.name.spelling, b.name.span, None)),
                     foreignClass(x.className, x.classSpan))
+                  if (priv) privateTypes = privateTypes + ownTypeNames(tctx.localTypeName(x.name.spelling))
                 case x: SForeignFunction =>
-                  foreigns ::= ForeignFunctionStatement(lctx.pos(x.loc.span), sigV(x.name),
+                  foreigns ::= ForeignFunctionStatement(lctx.pos(x.loc.span), privTerm(priv, sigV(x.name)),
                     TyLower.annot(x.ty, tctx).body, foreignClass(x.className, x.classSpan),
                     ForeignMember(lctx.pos(x.memberSpan), x.member))
                 case x: SForeignMethod =>
-                  foreigns ::= ForeignMethodStatement(lctx.pos(x.loc.span), sigV(x.name),
+                  foreigns ::= ForeignMethodStatement(lctx.pos(x.loc.span), privTerm(priv, sigV(x.name)),
                     TyLower.annot(x.ty, tctx).body, ForeignMember(lctx.pos(x.memberSpan), x.member))
                 case x: SForeignValue =>
-                  foreigns ::= ForeignValueStatement(lctx.pos(x.loc.span), sigV(x.name),
+                  foreigns ::= ForeignValueStatement(lctx.pos(x.loc.span), privTerm(priv, sigV(x.name)),
                     TyLower.annot(x.ty, tctx).body, foreignClass(x.className, x.classSpan),
                     ForeignMember(lctx.pos(x.memberSpan), x.member))
                 case x: SForeignConstructor =>
-                  foreigns ::= ForeignConstructorStatement(lctx.pos(x.loc.span), sigV(x.name),
+                  foreigns ::= ForeignConstructorStatement(lctx.pos(x.loc.span), privTerm(priv, sigV(x.name)),
                     TyLower.annot(x.ty, tctx).body)
                 case x: SForeignSubtype =>
-                  foreigns ::= ForeignSubtypeStatement(lctx.pos(x.loc.span), sigV(x.name),
+                  foreigns ::= ForeignSubtypeStatement(lctx.pos(x.loc.span), privTerm(priv, sigV(x.name)),
                     TyLower.annot(x.ty, tctx).body)
                 case x: SForeignPrivate =>
-                  // members of a private group are marked private
-                  x.statements.foreach(fgo)  // TODO privateTerms for these (4.2)
+                  x.statements.foreach(fgo(_, priv = true))
               }
-              items.foreach(fgo)
+              items.foreach(fgo(_, intoPrivate))
             case SPrivateBlock(_, ss)    => walk(ss, intoPrivate = true)
             case SDatabaseBlock(_, _, ss) => walk(ss, intoPrivate)
             case _: SFixity | _: SClassStatement | _: SErrorStatement => ()
@@ -201,15 +237,17 @@ object NewPipeline {
     def sigV(n: SName): V[Type] = lctx.binderAtSite(n) getOrElse lctx.varFor(n)
 
     def lowerLet(ss: List[SStatement]): (List[ImplicitBinding], List[ExplicitBinding]) = {
-      val savedI = implicits; val savedE = explicits
-      implicits = Nil; explicits = Nil
-      bindingBlock(ss, intoPrivate = false)
-      val r = (implicits, explicits)
-      implicits = savedI; explicits = savedE
-      r
+      val (groups, sigs) = collectBlock(ss)
+      pairSigs(scala.collection.mutable.LinkedHashMap(groups: _*), sigs)
     }
 
     walk(sts, intoPrivate = false)
+
+    locally {
+      val (is, es) = pairSigs(topGroups, topSigs.result())
+      implicits = is
+      explicits = es
+    }
 
     val module = Module(mkPos(fileName, contents, Span(1, 1, 1, 1)), mh.name,
       mh.importExports,

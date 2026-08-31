@@ -8,8 +8,9 @@ import com.clarifi.reporting.ermine.{
   ConP, LazyP, LitIntP, LitLongP, LitByteP, LitShortP, LitStringP, LitCharP,
   LitFloatP, LitDoubleP, LitDateP, ProductP, StrictP, VarP, WildcardP, AsP }
 import com.clarifi.reporting.ermine.surface._
-import com.clarifi.reporting.ermine.{ Lit, Rigid }
+import com.clarifi.reporting.ermine.{ Lit, Rigid, Fixity, Idfix }
 import Renamer.{ Resolution, ToBinder, ToGlobal, Unresolved, Ambiguous }
+import scalaparsers.Supply
 
 /** Surface -> core lowering, slice one (tracker/LSP-ROADMAP.md 3.4a):
   * the structural cases plus the G-channel sugars of this slice —
@@ -37,7 +38,10 @@ object Lower {
       globals: Map[Global, V[Type]],
       binderSites: Map[Int, Span],
       siteToBinder: Map[Span, Int],
-      scope: ModuleScope.Scope) {
+      scope: ModuleScope.Scope,
+      supply: Supply,
+      fixities: Map[String, Fixity],
+      moduleTerms: Map[String, Int]) {
 
     val diags = List.newBuilder[Renamer.Diag]
 
@@ -51,29 +55,41 @@ object Lower {
       scope.canonicalTerms.get(Local(name)) match {
         case Some(List(g: Global)) => global(g, at)
         case Some(Nil) | None =>
-          diags += Renamer.Diag(at, s"error: bracket/brace hook $name is not in scope")
-          V(pos(at), freshHookId(), Some(Local(name)), Bound, (null: Type))
+          // internalVar: a canonicalTerms miss falls through to termNames,
+          // which holds the module's OWN bindings (List.e defines
+          // empty_Bracket and uses [] itself)
+          moduleTerms.get(name) match {
+            case Some(id) => binderV(id, name) at pos(at)
+            case None =>
+              diags += Renamer.Diag(at, s"error: bracket/brace hook $name is not in scope")
+              V(pos(at), freshHookId(), Some(Local(name)), Bound, (null: Type))
+          }
         case Some(ns) =>
           diags += Renamer.Diag(at, s"error: bracket/brace hook $name is ambiguous: $ns")
           V(pos(at), freshHookId(), Some(Local(name)), Bound, (null: Type))
       }
     }
-    private var hookN = -100000
-    private def freshHookId(): Int = { hookN -= 1; hookN }
+    private def freshHookId(): Int = supply.fresh
 
     private var vars = Map.empty[Int, V[Type]]      // renamer binder id -> core V
-    private var nextMeta = -1                        // fresh negative ids: never
-    private def freshId(): Int = { nextMeta -= 1; nextMeta }  // collide with session ids
+    // ids come from the session Supply: module loads accumulate their Vs in
+    // s.env/s.termNames, so a per-module counter would collide across loads
+    private def freshId(): Int = supply.fresh
 
     def pos(sp: Span) = scalaparsers.Pos(file, "", sp.startLine, sp.startCol, false)
 
     private def unspecified(sp: Span): Type =
       VarT(V(pos(sp).inferred, freshId(), None, Free, Star(pos(sp).inferred)))
 
+    /** Module fixity declarations are part of a binder's NAME — the
+      * fused termDef binds the canonical Local, whose fixity the decl
+      * set, and globalization copies it onto the exported Global. */
+    def localName(sp: String): Local = Local(sp, fixities.getOrElse(sp, Idfix))
+
     def binderV(id: Int, spelling: String): V[Type] =
       vars.getOrElse(id, {
         val site = binderSites.getOrElse(id, Span(0, 0, 0, 0))
-        val v = V(pos(site), freshId(), Some(Local(spelling)), Bound, unspecified(site))
+        val v = V(pos(site), freshId(), Some(localName(spelling)), Bound, unspecified(site))
         vars += id -> v
         v
       })
@@ -105,7 +121,7 @@ object Lower {
         // parity: occurrences of one unknown spelling SHARE the placeholder
         // (the fused termVar inserts it into termNames module-wide)
         placeholders.getOrElse(n.spelling, {
-          val v = V(pos(n.span), freshId(), Some(Local(n.spelling)), Bound, unspecified(n.span))
+          val v = V(pos(n.span), freshId(), Some(localName(n.spelling)), Bound, unspecified(n.span))
           placeholders += n.spelling -> v
           v
         }) at pos(n.span)
@@ -115,17 +131,26 @@ object Lower {
       globals.get(g).map(_ at pos(at))
         .getOrElse(V(pos(at), freshId(), Some(g), Bound, unspecified(at)))
 
-    def freshRememberId(): Int = { nextMeta -= 1; nextMeta }
+    def freshRememberId(): Int = supply.fresh
+
+    /** Annotation lowering, wired to the module's TCtx by NewPipeline
+      * (Lower cannot depend on TyLower's context directly). */
+    var lowerAnnot: STy => com.clarifi.reporting.ermine.Annot =
+      t => sys.error("Lower.Ctx.lowerAnnot: annotation lowering not wired")
   }
 
   def apply(r: Renamer.Result, file: String, globals: Map[Global, V[Type]],
-            scope: ModuleScope.Scope = ModuleScope.Scope.empty): Ctx =
+            scope: ModuleScope.Scope = ModuleScope.Scope.empty,
+            fixities: Map[String, Fixity] = Map())(implicit su: Supply): Ctx =
     new Ctx(file,
       r.occurrences.map(o => o.span -> o.resolution).toMap,
       globals,
       r.binders.map { case (id, b) => id -> b.defSite },
       r.binders.map { case (id, b) => b.defSite -> id },
-      scope)
+      scope,
+      su,
+      fixities,
+      r.moduleTerms)
 
   // ---------------------------------------------------------------- terms
 
@@ -160,7 +185,7 @@ object Lower {
     case SLet(l, ss, b)     =>
       val (implicits, _) = bindings(ss, c)
       Let(c.pos(l.span), implicits, Nil, term(b, c))
-    case SSig(l, tm, _)     => term(tm, c)  // annotations lower at 4.1
+    case SSig(l, tm, t)     => Sig(c.pos(l.span), term(tm, c), c.lowerAnnot(t))
     case SChain(_)          => throw Unsupported("un-reassociated chain", t.loc.span)
     case SListLit(l, es, suffix) =>
       // foldRight onto empty_Bracket[_M] with cons_Bracket[_M] (channel A)
@@ -171,6 +196,9 @@ object Lower {
       // xs.tail.foldLeft(single(xs.head))(snoc) — the fused shape; {} is
       // the crash the old race masked, diagnosed here (ledger)
       es match {
+        case Nil if suffix.isEmpty =>
+          // the fused rec production: `{}` is the EMPTY RECORD
+          EmptyRecord(c.pos(l.span))
         case Nil =>
           c.diags += Renamer.Diag(l.span, "error: empty brace literal has no meaning")
           Remember(c.freshRememberId(), Hole(c.pos(l.span)))
@@ -316,7 +344,17 @@ object Lower {
       // means :: style cons — fold pairwise left-to-right is not defined
       // for arbitrary shapes, so require pre-reassociated input
       throw Unsupported("un-reassociated pattern chain", p.loc.span)
-    case SPSig(_, i, _)    => pattern(i, c)  // annotations at 4.1
+    case SPSig(l, i, t)    => i match {
+      // signedLocalPatternVar: the annot IS the pattern var's extract;
+      // body references pick the typed var up via inferAltTypes' subTerm
+      case SPVar(n) =>
+        val v = c.binderAtSite(n) getOrElse c.varFor(n)
+        VarP(v.map(_ => c.lowerAnnot(t)))
+      case _ =>
+        // signedLocalPatternVar: the fused grammar signs VARS only
+        // (core SigP is commented out)
+        throw Unsupported("non-variable pattern signature", l.span)
+    }
     case x: SPError        => throw Unsupported("error pattern", x.loc.span)
   }
 

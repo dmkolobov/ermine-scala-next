@@ -16,6 +16,7 @@ import scalaparsers.Supply
 object TestNewPipeline extends Properties("NewPipeline 4.1c") {
   private val fx = ErmineFixture()
   import fx._
+  private val fxChain = ErmineFixture()
 
   private val src =
     """module NPT where
@@ -62,4 +63,22 @@ object TestNewPipeline extends Properties("NewPipeline 4.1c") {
     }.foldLeft(proved: Prop)(_ && _)
     sameKeys && sameTypes
   }
+
+  property("chained modules load through the live switch") = secure {
+    val srcA = "module NPA where\nimport Primitive\n\nvalA : Int\nvalA = 1\n\ndata Wrap q = MkWrap q\nunwrap (MkWrap q) = q\n"
+    val srcB = "module NPB where\nimport NPA\nimport Primitive\n\nvalB = valA + unwrap (MkWrap 2)\n"
+    val r = fxChain.session { implicit s0 =>
+      fxChain.loadModules(List("Primitive"))(s0)
+      implicit val s: SessionEnv = new SessionEnv(
+        s0.env, s0.termNames, s0.termNameOrigins, s0.cons, s0.privateCons,
+        s0.consOrigins, s0.loadFile, s0.loadedFiles, s0.loadedModules,
+        s0.classes, s0.classOrigins, Some(s0.typeCheck), Some(s0.useInterface),
+        _pipelineNew = Some(true))
+      S.load(Literal(srcA, "NPA"))
+      S.load(Literal(srcB, "NPB"))
+      s.termNames.keys.filter(g => g.module == "NPA" || g.module == "NPB").map(_.string).toSet
+    }
+    (r ?= Set("valA", "unwrap", "MkWrap", "valB")) :| r.toString
+  }
 }
+

@@ -367,8 +367,7 @@ object Session {
             // -Dermine.pipeline=new routes MODULE loading through the
             // split pipeline (parse -> rename -> reassociate -> lower);
             // REPL command parsing stays fused (roadmap Decision d).
-            val r = if (java.lang.Boolean.getBoolean("ermine.pipeline.new") ||
-                        "new" == System.getProperty("ermine.pipeline"))
+            val r = if (s.pipelineNew)
               com.clarifi.reporting.ermine.rename.NewPipeline.readModule(
                 file.toString, file.contents, mh)(s, su)
             else
