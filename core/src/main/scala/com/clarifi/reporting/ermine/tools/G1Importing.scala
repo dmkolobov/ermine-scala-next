@@ -3,6 +3,7 @@ package com.clarifi.reporting.ermine.tools
 import java.security.MessageDigest
 
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
+import com.clarifi.reporting.ermine.rename.ModuleScope
 import com.clarifi.reporting.ermine.parsing.ErParseState.Implicits._
 import com.clarifi.reporting.ermine.session.{ Lib, Printer, Session, SessionEnv }
 import scalaparsers.{ Death, Supply }
@@ -58,7 +59,50 @@ object G1Importing {
       MessageDigest.getInstance("SHA-256").digest(s.getBytes("UTF-8"))
         .map("%02x".format(_)).mkString
 
+    def verifyOne(name: String, contents: String): List[String] = {
+      val diffs = List.newBuilder[String]
+      try {
+        val (ps, mh) = Session.parse(
+          ModuleParsers.moduleHeader(name),
+          ErParseState.mk(name, contents, name))
+        val ips = ps.importing(env.termNames, env.cons.keySet, mh.imports,
+                               env.termNameOrigins, env.consOrigins)
+        val prior = ModuleScope.Scope(
+          ps.s.canonicalTerms, ps.s.canonicalTypes, ps.s.termNames,
+          ps.s.termOrigins, ps.s.typeOrigins)
+        val nw = ModuleScope.importing(name, prior, env.termNames, env.cons.keySet,
+                                       mh.imports, env.termNameOrigins, env.consOrigins)
+        // value-list ORDER only feeds ambiguity-message text; compare sorted
+        def canon(cm: Map[com.clarifi.reporting.ermine.Local, List[com.clarifi.reporting.ermine.Name]]) =
+          cm.map { case (k, vs) => k.toString -> vs.map(_.toString).sorted }
+        def origins(om: Map[com.clarifi.reporting.ermine.Global, List[com.clarifi.reporting.ermine.Global]]) =
+          om.map { case (k, vs) => k.toString -> vs.map(_.toString).sorted }
+        if (canon(nw.canonicalTerms) != canon(ips.s.canonicalTerms)) diffs += "canonicalTerms"
+        if (canon(nw.canonicalTypes) != canon(ips.s.canonicalTypes)) diffs += "canonicalTypes"
+        if (nw.termNames.map { case (k, v) => k.toString -> v.id } !=
+            ips.s.termNames.map { case (k, v) => k.toString -> v.id }) diffs += "termNames"
+        if (origins(nw.termOrigins) != origins(ips.s.termOrigins)) diffs += "termOrigins"
+        if (origins(nw.typeOrigins) != origins(ips.s.typeOrigins)) diffs += "typeOrigins"
+      } catch { case d: Death => () }  // header dies identically either way (dup imports)
+      diffs.result()
+    }
+
     args.toList match {
+      case "verify" :: Nil =>
+        val mods = scala.io.Source.fromFile("tracker/tools/g1-modules.txt").getLines().toList
+        var bad = 0
+        for (m <- mods) {
+          val contents = env.loadFile(m).map(_.contents) getOrElse sys.error("no source for " + m)
+          val ds = verifyOne(m, contents)
+          if (ds.nonEmpty) { bad += 1; println(s"DIFF $m: ${ds.mkString(", ")}") }
+        }
+        for ((n, src) <- synthetics) {
+          val ds = verifyOne(n, src)
+          if (ds.nonEmpty) { bad += 1; println(s"DIFF synthetic $n: ${ds.mkString(", ")}") }
+        }
+        println(s"g1-importing verify: ${mods.size} modules + ${synthetics.size} synthetics, " +
+                (if (bad == 0) "ALL MATCH" else s"$bad differ"))
+        System.exit(if (bad == 0) 0 else 1)
       case "--dump" :: m :: Nil =>
         val contents = env.loadFile(m).map(_.contents) getOrElse sys.error("no source for " + m)
         dump(m, contents) match {

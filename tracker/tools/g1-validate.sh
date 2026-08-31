@@ -23,6 +23,13 @@ for d in tracker/g1-oracle-tests/*/; do
   fi
 done
 
+echo "-- ModuleScope vs importing() differential (item 3.1) --"
+if "$JAVA_HOME/bin/java" -cp "$cp" com.clarifi.reporting.ermine.tools.G1Importing verify > /tmp/g1-importing-verify.log 2>&1; then
+  echo "  PASS  importing differential ($(tail -1 /tmp/g1-importing-verify.log))"
+else
+  echo "  FAIL  importing differential"; tail -8 /tmp/g1-importing-verify.log; fail=1
+fi
+
 echo "-- old-pipeline double run (2 full-inference boots + compare) --"
 tracker/tools/g1-diff.sh run old /tmp/g1-selfA && \
 tracker/tools/g1-diff.sh run old /tmp/g1-selfB && \

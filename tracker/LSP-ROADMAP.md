@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — PHASE 2.x COMPLETE (surface syntax); next item 3.1 (module scope pure function) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 3.1 done (ModuleScope ALL MATCH 129+6); next item 3.2a (renamer: module-level terms) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -252,7 +252,7 @@ machinery is deleted post-G1, never before.
 
 ### 3.x Rename, re-associate, desugar
 
-- [ ] **3.1 Module scope as a pure function**: replicate importing()
+- [x] **3.1 Module scope as a pure function**: replicate importing()
   (using/hiding, localized rename-then-affix, |+| alias merge,
   collapseNames incl. singleton-skip, origins); the 1.3b golden
   differential goes green HERE. Distinguish real scope (canonicalTerms
@@ -657,3 +657,13 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   suite, so each owing item must flip its dispositions when it lands.
   PHASE 2.x (surface syntax) COMPLETE. Baselines: 806 (805+known),
   repl 3/3, lsp 27/27.
+- 2026-08-30 3.1 done: rename/ModuleScope.scala — importing() as a pure
+  function (using/hiding, localized rename-then-affix, list-concat alias
+  merge, collapseNames with the singleton-skip quirk, both origins
+  fixups), with the termNames-superset-vs-canonical-scope distinction
+  documented on the Scope type per the leak pin. G1Importing gains a
+  `verify` mode comparing old-vs-new IN PROCESS over all 129 headers +
+  6 synthetics (value lists compared sorted — order only feeds ambiguity
+  message text): ALL MATCH on the first run. g1-validate.sh now runs the
+  differential as a standing layer. Baselines: 806 (805+known), repl 3/3,
+  lsp 27/27.
