@@ -202,6 +202,18 @@ class ConsoleEnv(
 
   def parseState(s: String) = ErParseState.mk("<interactive>", s, "REPL").importing(sessionEnv.termNames, sessionEnv.cons.keySet, imports, sessionEnv.termNameOrigins, sessionEnv.consOrigins)
 
+  /** The console's import scope over the split pipeline (D3: command
+    * ARGUMENTS parse there; the ':' command grammar itself stays). */
+  def importScope: com.clarifi.reporting.ermine.rename.ModuleScope.Scope =
+    com.clarifi.reporting.ermine.rename.ModuleScope.importing("REPL",
+      com.clarifi.reporting.ermine.rename.ModuleScope.Scope.empty,
+      sessionEnv.termNames, sessionEnv.cons.keySet, imports,
+      sessionEnv.termNameOrigins, sessionEnv.consOrigins)
+  def pipelineTerm(s: String): Term =
+    com.clarifi.reporting.ermine.rename.NewPipeline.replTerm("<interactive>", s, imports)(sessionEnv, supply)
+  def pipelineType(s: String): Type =
+    com.clarifi.reporting.ermine.rename.NewPipeline.replType("<interactive>", s, imports)(sessionEnv, supply)
+
 
   def session[A](s: SessionEnv => A): Option[A] = {
     val envp = sessionEnv.copy
@@ -424,20 +436,12 @@ object Console {
 
     // parse and load
     new Action(":parse", List(), Some("<expr>"), "Parse and pretty print an expression") {
-      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
-        phrase(TermParsers.term).run(e.parseState(s), e.supply) match {
-          case Left(err)      => writeLn(err.pretty)
-          case Right((ps, a)) => writeLn(e.fixCons(ps, a).toString)
-        }
-      }
+      def apply(s: String)(implicit e: ConsoleEnv): Unit =
+        writeLn(e.pipelineTerm(s).toString)
     },
     new Action(":eval", List(), Some("<expr>"), "Evaluate an expression") {
-      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
-        phrase(TermParsers.term).run(e.parseState(s), e.supply) match {
-          case Left(err)     => writeLn(err.pretty)
-          case Right((_, a)) => e.eval(a) { r => writeLn(prettyRuntime(r)) }
-        }
-      }
+      def apply(s: String)(implicit e: ConsoleEnv): Unit =
+        e.eval(e.pipelineTerm(s)) { r => writeLn(prettyRuntime(r)) }
     },
     new Action(":imports", List(), None, "Summarize the currently imports") {
       def apply(s: String)(implicit e: ConsoleEnv): Unit = {
@@ -494,40 +498,31 @@ object Console {
     },
     new Action(":type", List(), Some("<expr>"), "Infer the type of an expression") {
       def apply(s: String)(implicit e: ConsoleEnv): Unit = {
-        phrase(term).run(e.parseState(s), e.supply) match {
-          case Left(err)       => writeLn(err.pretty)
-          case Right((ps, tm)) =>
-            val tmp = e.fixCons(ps, tm).close(e.supply)
-            e.assumeClosed(tmp) {
-              import e.supply
-              e.subst(implicit hm => inferType(List(), tmp, true)) match {
-                case Some(ty) =>
-                  val ftvs = Type.typeVars(tmp).toList
-                  if (ftvs.isEmpty) writeLn(prettyType(ty, -1))
-                  else for (v <- ftvs) writeLn(v.report("unresolved type variable"))
-                case None     => ()
-              }
-            }
+        val tmp = e.pipelineTerm(s).close(e.supply)
+        e.assumeClosed(tmp) {
+          import e.supply
+          e.subst(implicit hm => inferType(List(), tmp, true)) match {
+            case Some(ty) =>
+              val ftvs = Type.typeVars(tmp).toList
+              if (ftvs.isEmpty) writeLn(prettyType(ty, -1))
+              else for (v <- ftvs) writeLn(v.report("unresolved type variable"))
+            case None     => ()
+          }
         }
       }
     },
     new Action(":uglytype", List(), Some("<expr>"), "Infer the type of an expression, dumping the raw syntax") {
       def apply(s: String)(implicit e: ConsoleEnv): Unit = {
-        phrase(term).run(e.parseState(s), e.supply) match {
-          case Left(err)       => writeLn(err.pretty)
-          case Right((ps, tm)) =>
-            import e.supply
-            e.subst(implicit hm => inferType(List(), e.fixCons(ps, tm), true)) match {
-              case Some(ty) => writeLn(ty.toString)
-              case None     => ()
-            }
+        import e.supply
+        e.subst(implicit hm => inferType(List(), e.pipelineTerm(s), true)) match {
+          case Some(ty) => writeLn(ty.toString)
+          case None     => ()
         }
       }
     },
     new Action(":browse", List(), Some("[substring]"), "Show the types of all known terms (optionally filtered)") {
       def apply(s: String)(implicit e: ConsoleEnv): Unit = {
-        val ps = e.parseState("")
-        val (types, terms) = describeEnvironment(ps, e.sessionEnv, s)
+        val (types, terms) = describeEnvironment(e.importScope, e.sessionEnv, s)
         def render(ts: Iterable[(Local, (Option[String], Document))]) =
           ((ts groupBy (_._2._1)
             mapValues (_.toSeq sortBy (_._1.string))).toSeq sortBy (_._1)
@@ -542,20 +537,16 @@ object Console {
     },
     new Action(":kind", List(), Some("<type>"), "Infer the kind of a type") {
       def apply(s: String)(implicit e: ConsoleEnv): Unit = {
-        phrase(typ).run(e.parseState(s), e.supply) match {
-          case Left(err)       => writeLn(err.pretty)
-          case Right((ps, ty)) =>
-            val fty = e.fixCons(ps, ty).close(e.supply)
-            val danglingTypes = typeVars(fty).toList
-            if (danglingTypes.isEmpty) {
-              import e.supply
-              e.subst(implicit hm => inferKind(List(), fty)) match {
-                case Some(ki) => writeLn(prettyTypeHasKindSchema(fty, ki))
-                case None     => ()
-              }
-            } else {
-              danglingTypes.foreach(t => writeLn(t.report("error: undefined type")))
-            }
+        val fty = e.pipelineType(s).close(e.supply)
+        val danglingTypes = typeVars(fty).toList
+        if (danglingTypes.isEmpty) {
+          import e.supply
+          e.subst(implicit hm => inferKind(List(), fty)) match {
+            case Some(ki) => writeLn(prettyTypeHasKindSchema(fty, ki))
+            case None     => ()
+          }
+        } else {
+          danglingTypes.foreach(t => writeLn(t.report("error: undefined type")))
         }
       }
     },
@@ -574,24 +565,25 @@ object Console {
   )
 
   /** Browse available types and terms prettily. */
-  private def describeEnvironment(ps: ParseState, ss: SessionEnv,
+  private def describeEnvironment(scope: com.clarifi.reporting.ermine.rename.ModuleScope.Scope,
+                                  ss: SessionEnv,
                                   filt: String):
                               (Map[Local, (Option[String], Document)],
                                Map[Local, (Option[String], Document)]) = {
     val types = for {
-      (tn, List(cn: Global) ) <- ps.s.canonicalTypes.filter(_._1.string.contains(filt))
+      (tn: Local, List(cn: Global)) <- scope.canonicalTypes.filter(_._1.string.contains(filt))
       c <- ss.cons.get(cn).toList
     } yield ss.classes.get(c.name) match {
       case Some(cls) => (tn, Some(cn.module) -> cls.pretty)
       case None =>      (tn, Some(cn.module) -> (c.decl.desc :+: prettyConHasKindSchema(tn, c.schema)))
     }
     val terms = for {
-      (tn,List(cn)) <- ps.s.canonicalTerms.filter(_._1.string.contains(filt))
+      (tn: Local, List(cn)) <- scope.canonicalTerms.filter(_._1.string.contains(filt))
       mod = cn match {
         case Global(m, _, _) => Some(m)
         case _: Local => None
       }
-      v <- ps.s.termNames.get(cn).toList
+      v <- scope.termNames.get(cn) match { case Some(x) => List(x); case None => Nil }
     } yield (tn, mod -> prettyVarHasType(v copy (name = Some(tn))))
     (types, terms)
   }
@@ -627,26 +619,41 @@ object Console {
     import e.{con,supply}
     var input = x
     var blank = false
-    val needMoar = StatementParsers.multiline.run(e.parseState(x), e.supply).isRight
+    // D3: the fused StatementParsers.multiline probe is gone; a line
+    // that ends mid-definition keeps the |> continuation heuristics
+    val needMoar = x.trim.endsWith("=") || x.trim.endsWith("->") || x.trim.endsWith("do")
     val verbose = Set("case","let","where")
     while ((needMoar || (balanced(input) == Unbalanced) || verbose.exists(input.contains(_))) && !blank) {
       val last = e.readLine("|> ")
       blank = last == ""
       if (!blank) { input = input + "\n" + last }
     }
-    val ps = e.parseState(input)
+    val startLoc = scalaparsers.Pos.start("<interactive>", input)
 
     val mh = ModuleHeader(
-      ps.loc,
+      startLoc,
       "REPL",
       false,
       e.imports.map({
-        case (m,(as, explicits, using)) => ImportExportStatement(ps.loc, false, m, as, explicits, using)
+        case (m,(as, explicits, using)) => ImportExportStatement(startLoc, false, m, as, explicits, using)
       }).toList
     )
-    // now we have input
-    ModuleParsers.command(mh).run(ps, e.supply.split) match {
-      case Right((ps, ImportExportCommand(ImportExportStatement(loc, false, module, as, explicits, using)))) =>
+    // now we have input: import/export lines parse with the (kept)
+    // header grammar; expressions and statement pastes ride the split
+    // pipeline (expression tried first — `f = 3` fails it and falls
+    // through to the module-statement load)
+    def dispatch: syntax.Command =
+      (ModuleParsers.importExportStatement << eof).run(e.parseState(input), e.supply.split) match {
+        case Right((_, ie2)) => ImportExportCommand(ie2)
+        case Left(_) if input.trim.isEmpty => EmptyCommand
+        case Left(_) =>
+          com.clarifi.reporting.ermine.surface.SurfaceParsers.expression("<interactive>", input) match {
+            case Right(_) => ExpressionCommand(null)  // parsed; replTerm below re-parses with resolution
+            case Left(_)  => ModuleCommand(null)
+          }
+      }
+    dispatch match {
+      case ImportExportCommand(ImportExportStatement(loc, false, module, as, explicits, using)) =>
         val oldSessionState = e.sessionEnv
         if (e.sessionEnv.loadedModules.contains(module)) e.importing(module, as, explicits, using)
         else {
@@ -660,14 +667,17 @@ object Console {
           }
         }
 
-      case Right((ps, ImportExportCommand(ImportExportStatement(loc, true, module, as, explicits, using)))) =>
+      case ImportExportCommand(ImportExportStatement(loc, true, module, as, explicits, using)) =>
         writeLn("Ignoring export command")
 
-      case Right((ps, ModuleCommand(m))) => e.session(implicit s => loadModule(ps,m, _ => None))
-      case Right((_, EmptyCommand)) => ()
-      case Right((psp, ExpressionCommand(a))) =>
-        // val at = Type.subType(e.conMap(ps), a).close
-        val at = e.fixCons(psp,a).close(e.supply)
+      case ModuleCommand(_) => e.session { implicit s =>
+        val (psNew, m) = com.clarifi.reporting.ermine.rename.NewPipeline.readModule(
+          "<interactive>", input, mh)(s, e.supply)
+        loadModule(psNew, m, _ => None)
+      }
+      case EmptyCommand => ()
+      case ExpressionCommand(_) =>
+        val at = e.pipelineTerm(input).close(e.supply)
         e.subst(implicit hm => inferType(List(), at)) match {
           case Some(ty) => e.eval(at) { case r =>
             val n = e.currentResult
@@ -679,7 +689,7 @@ object Console {
               case _ => (false, false)
             }
             def remember: Unit = {
-              e.session(implicit s => primOp(ps.loc, v, r, ty))
+              e.session(implicit s => primOp(startLoc, v, r, ty))
               writeLn(nest(2, v.string :/+: ":" :/+: prettyType(ty, -1) :/+: "=" :/+: prettyRuntime(r)))
               e.currentResult = e.currentResult + 1
             }
@@ -706,7 +716,6 @@ object Console {
           }
           case None => ()
         }
-      case Left(err) => writeLn(err.pretty)
     }
   }
 

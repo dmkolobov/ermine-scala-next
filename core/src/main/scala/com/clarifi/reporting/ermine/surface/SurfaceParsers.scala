@@ -856,6 +856,15 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
     }
   }
 
+  /** A bare TYPE expression (kindOf and friends, post-G1 D3). */
+  def typeExpr(source: String, contents: String): Either[Err, STy] = {
+    val ps = scalaparsers.ParseState.mk(source, contents, ())
+    phrase(typ(kindMode = false)).run(ps, Supply.create.split) match {
+      case Left(err)     => Left(err)
+      case Right((_, t)) => Right(t)
+    }
+  }
+
   /** A REPL expression: the whole input is one term (post-G1 D1 —
     * Session.eval's phrase(term) over the resolution-free grammar). */
   def expression(source: String, contents: String): Either[Err, STerm] = {

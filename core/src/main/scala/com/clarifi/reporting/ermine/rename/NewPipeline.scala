@@ -71,6 +71,30 @@ object NewPipeline {
     (ps, module)
   }
 
+  /** A bare TYPE against the session (kindOf, post-G1 D3): parse,
+    * rename, re-associate, lower, substitute cons. */
+  def replType(source: String, contents: String,
+               imports: Map[String, (Option[String], List[Explicit[Global]], Boolean)])
+              (implicit s: SessionEnv, su: Supply): Type = {
+    def die(sp: Span, msg: String): Nothing =
+      throw Death(mkPos(source, contents, sp).report(Document.text(msg)))
+    val t0 = SurfaceParsers.typeExpr(source, contents) match {
+      case Right(t)  => t
+      case Left(err) => throw Death(err.pretty)
+    }
+    val scope = ModuleScope.importing("REPL", ModuleScope.Scope.empty,
+      s.termNames, s.cons.keySet, imports, s.termNameOrigins, s.consOrigins)
+    val renamed = Renamer.renameType(t0, scope)
+    renamed.diagnostics.headOption.foreach(d => die(d.span, "error: " + d.message))
+    val fenv = Reassoc.FixityEnv(Reassoc.importFixities(scope), Map())
+    val (re, reDs) = Reassoc.ty(t0, fenv)
+    reDs.headOption.foreach(d => die(d.span, d.message))
+    val tctx = TyLower(renamed, source, "REPL", s.cons ++ s.privateCons, su)
+    val ty = TyLower.ty(re, tctx)
+    val cm = Type.conMap("REPL", tctx.typeNames, s.cons)
+    com.clarifi.reporting.ermine.Subst.subTypeMaps((cm, Map.empty[V[Type], V[Type]]), ty)
+  }
+
   /** The REPL expression path (post-G1 D1): surface-parse one term,
     * rename it against the session imports, re-associate, lower, and
     * substitute cons — the core Term Session.eval infers and evaluates.

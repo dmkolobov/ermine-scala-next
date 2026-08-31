@@ -1377,8 +1377,11 @@ object Session {
   }
 
   def parseModule(filename: String, content: String, module: String)(implicit s: SessionEnv, v: Supply): Either[Err, Module] =
+    // post-G1 D3: the split pipeline reads the module (Death from the
+    // renamer/lowering surfaces as a Left the way parse errors did)
     moduleHeader(module).run(ErParseState.mk(filename, content, module), v).right flatMap {
-      case (ps, mh) => moduleBody(mh).run(ps.importing(s.termNames, s.cons.keySet, mh.imports, s.termNameOrigins, s.consOrigins), v).
-                                      right.map(_._2)
+      case (_, mh) =>
+        try Right(com.clarifi.reporting.ermine.rename.NewPipeline.readModule(filename, content, mh)(s, v)._2)
+        catch { case d: Death => Left(Err.report(Pos.start(filename, content), Some(scalaparsers.Document.text(d.getMessage)), Nil)) }
     }
 }

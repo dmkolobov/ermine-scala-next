@@ -164,8 +164,8 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
   }
 
   def kindOf(e: String, m: Map[String, ImportSpec] = imps)(implicit s: SessionEnv): KindSchema = {
-    val (ps, tz) = testParse(phrase(typ), e, m)
-    val t = subType(conMap("Test", ps.s.typeNames, s.cons), tz)
+    Session.loadModules(m.keySet.toList)
+    val t = com.clarifi.reporting.ermine.rename.NewPipeline.replType("<test type>", e, m)
     assertTypeClosed(t)
     subst { implicit hm => inferKind(Nil,t.close) }
   }
@@ -363,10 +363,12 @@ object TestErmine extends Properties("Ermine") {
       val d = dat get Cal.DAY_OF_MONTH
       assert((1 to 12) contains m,
              "because I can't keep track of all the off-by-oneness")
-      sessionProp(implicit s => testParse(phrase(term), "@%d/%d/%d" format (y, m, d), Map.empty)._2 match {
-        case LitDate(_, ermineDate) => (emit emitDate ermineDate run) ?= ("'%d-%02d-%02d'" format (y, m, d))
-        case fs => die("another day")
-      })
+      sessionProp(implicit s =>
+        com.clarifi.reporting.ermine.surface.SurfaceParsers.expression("<date>", "@%d/%d/%d" format (y, m, d)) match {
+          case Right(com.clarifi.reporting.ermine.surface.SLitDate(_, ermineDate)) =>
+            (emit emitDate ermineDate run) ?= ("'%d-%02d-%02d'" format (y, m, d))
+          case fs => die("another day")
+        })
     }
   }
 
