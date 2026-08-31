@@ -184,6 +184,20 @@ def main():
     r = hover("Nav.e", 6, 6)  # "twice", own top-level via the name bridge
     check("hover twice has arrow", r is not None
           and "->" in r["contents"]["value"], repr(r))
+
+    # --- 4.3: renamer-table navigation (sig mentions, where-locals) ---
+    r = definition("Nav.e", 8, 0)  # the SIG name `sq` jumps to its equation
+    check("def sig sq -> its equation", r is not None
+          and r["uri"] == uri("Nav.e")
+          and r["range"]["start"] == {"line": 9, "character": 0}, repr(r))
+    r = definition("Nav.e", 9, 5)  # `local1` body ref -> the where binder
+    check("def where-local -> binder", r is not None
+          and r["uri"] == uri("Nav.e")
+          and r["range"]["start"] == {"line": 9, "character": 18}, repr(r))
+    check("hover where-local -> null (perf ticket)", hover("Nav.e", 9, 5) is None)
+    r = hover("Nav.e", 8, 0)  # sig mention hovers via the same binder
+    check("hover sig sq : Int", r is not None
+          and "Int" in r["contents"]["value"], repr(r))
     check("hover local x -> null", hover("Nav.e", 5, 10) is None)
 
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Bad.e")}})

@@ -2,9 +2,10 @@ package com.clarifi.reporting.ermine.lsp
 
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.parsing.ErParseState.Implicits._
+import com.clarifi.reporting.ermine.rename.{ ModuleScope, Renamer }
 import com.clarifi.reporting.ermine.session.{ Lib, Printer, Session, SessionEnv }
-import com.clarifi.reporting.ermine.syntax.Module
-import scalaparsers.Supply
+import com.clarifi.reporting.ermine.surface.{ SModule, SurfaceParsers }
+import scalaparsers.{ Death, Supply }
 
 /** The resident Ermine session (roadmap 0.2): booted once — Lib.preamble
   * plus the Prelude/Layout closure, the way ErmineFixture and Console do —
@@ -57,40 +58,44 @@ final class Resident(log: String => Unit) {
   /** Run f against a fresh copy of the resident env (booting on demand). */
   def withEnv[A](f: SessionEnv => A): A = f(boot().env.copy)
 
-  /** Parse and typecheck one file against a fresh env copy, resolving
-    * imports first against the file's own directory (workspace siblings),
-    * then the resident loader (the stdlib).  Throws Death on any parse or
-    * type error; the copy — and whatever the failed load dragged into it —
-    * is discarded on failure (roadmap 0.3).
+  /** Everything textDocument/definition and hover need from one check:
+    * the post-load env (termNames carry inferred types and true def
+    * sites), the surface module, and the renamer's occurrence/binder
+    * tables — REAL SPANS, resolution included (roadmap 4.3; the
+    * G1Resolution differential is the spec these tables passed). */
+  final case class Checked(env: SessionEnv, name: String,
+                           module: SModule, renamed: Renamer.Result)
+
+  /** Parse, rename, and typecheck one file against a fresh env copy,
+    * resolving imports first against the file's own directory (workspace
+    * siblings), then the resident loader (the stdlib).  Throws Death on
+    * any parse or type error; the copy — and whatever the failed load
+    * dragged into it — is discarded on failure (roadmap 0.3).
     *
-    * On success, returns the env (its termNames now hold every global
-    * relocated to its true definition site — globalTermDef's "actual
-    * definition location" update) and the module AST re-parsed for
-    * navigation: Session.load does not expose the Module it parsed, so
-    * the body is parsed once more, the way Session.dep and ErmineFixture's
-    * testParse do (roadmap 0.5).  The re-parse binds fresh ids for the
-    * file's own top-level definitions; they are consistent with the
-    * occurrences inside the same tree, which is all hit-testing needs. */
-  def checkFile(path: java.nio.file.Path): (SessionEnv, Module) = withEnv { env =>
+    * The navigation tables come from the Stage-1 renamer over the
+    * resolution-free surface parse, built AFTER the load so sibling
+    * imports are in termNames.  The module's own globals being in scope
+    * is harmless here — the renamer's top-level binder frame shadows
+    * them for references, and its shadow diagnostics go unused (the
+    * load already reported real errors).  That retires both the fused
+    * re-parse and its self-global filter (roadmap 4.3). */
+  def checkFile(path: java.nio.file.Path): Checked = withEnv { env =>
     implicit val e: SessionEnv = env
     val dir = Option(path.getParent) map (_.toString) getOrElse "."
     e.loadFile = Session.SourceFile.inOrder(Session.SourceFile.filesystem(dir) _, e.loadFile)
     val file = Session.Filesystem(path.toString, exotic = true)
-    Session.load(file)
-    val (ps, mh) = Session.parse(
+    val contents = file.contents
+    val (_, mh) = Session.parse(
       ModuleParsers.moduleHeader(file.defaultModuleName),
-      ErParseState.mk(file.toString, file.contents, file.defaultModuleName))
-    // Seed the re-parse the way dep's body parse saw the world: before the
-    // module itself was loaded.  With its own globals in scope, every
-    // definition in the file would refuse to "shadow" itself.
-    val (_, m) = Session.parse(
-      ModuleParsers.moduleBody(mh),
-      ps.importing(
-        e.termNames.filterNot { case (g, _) => g.module == mh.name },
-        e.cons.keySet.filterNot(_.module == mh.name),
-        mh.imports,
-        e.termNameOrigins.filterNot { case (g, _) => g.module == mh.name },
-        e.consOrigins.filterNot { case (g, _) => g.module == mh.name }))
-    (e, m)
+      ErParseState.mk(file.toString, contents, file.defaultModuleName))
+    Session.load(file)
+    val sm = SurfaceParsers.module(file.toString, contents, mh.name) match {
+      case Right(m)  => m
+      case Left(err) => throw Death(err.pretty)
+    }
+    val scope = ModuleScope.importing(mh.name, ModuleScope.Scope.empty,
+      e.termNames, e.cons.keySet, mh.imports, e.termNameOrigins, e.consOrigins)
+    val renamed = Renamer.rename(sm, scope)
+    Checked(e, mh.name, sm, renamed)
   }
 }

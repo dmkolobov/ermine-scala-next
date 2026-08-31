@@ -38,10 +38,10 @@ object Diagnostics {
         val t0 = System.nanoTime
         val ds =
           try {
-            val (env, module) = ermine.checkFile(path)
+            val checked = ermine.checkFile(path)
             // A clean check refreshes navigation; a failed one keeps the
             // last good index (stale hits beat none, misses answer null).
-            docs.put(uri, Definitions.index(path.toString, env, module))
+            docs.put(uri, Definitions.index(path.toString, checked))
             Nil
           } catch {
             case Death(err, _) => List(fromReport(err.toString, path))

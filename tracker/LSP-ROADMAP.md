@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 4.2 COMPLETE pending sign-off of its two known deltas; every oracle layer dry (see 4.2 log entries, batches 1-5); next: 4.3 LSP rebase onto the renamer tables · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 4.3 DONE (LSP navigation runs on the renamer tables; lsp-smoke 31 checks); next: 4.4 alias-refusal flips, then GATE G1 sign-off · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -18,7 +18,7 @@ scoping fix, commits f9cf42a / 41b13cc).
   Stage 0; suites GROW, so a commit that adds tests updates the count in
   its iteration-log line, and green-except-the-known-one is the invariant
 - `tracker/tools/repl-smoke.sh`: all suites PASS (3 as of Stage 0)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (27 as of Stage 0)
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (31 as of 4.3)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 - KNOWN FLAKE: core/test suites run concurrently in one JVM and rarely
@@ -330,7 +330,7 @@ machinery is deleted post-G1, never before.
   canonicalTerms-domain snapshot + warm interface-backed reload of the
   new pipeline (boot #2 consumes boot #1's .ei, 129 modules clean,
   Decision g) + eval fixtures + rejected corpus. Iterate until dry.
-- [ ] **4.3 LSP rebase onto the renamer**: Definitions.index +
+- [x] **4.3 LSP rebase onto the renamer**: Definitions.index +
   Resident.checkFile rebuilt on occurrence->binder/def-site tables
   (delete the re-parse and the self-global filter, Resident.scala:83-96);
   real spans replace point+len hit-tests; add a positive local
@@ -948,3 +948,22 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   (inverted between pipelines for scanInOrder-class sigs; .ei
   comparator is the authority). Suite grows to 896 (895 green + known
   disjunction); repl 3/3, lsp 27/27.
+
+- 2026-08-30 (4.3): LSP REBASED ONTO THE RENAMER TABLES.
+  Resident.checkFile now returns Checked(env, name, surface module,
+  Renamer.Result): after Session.load (so sibling imports are in
+  termNames), the file goes through SurfaceParsers + ModuleScope +
+  Renamer.rename — the fused re-parse AND its self-global filter are
+  deleted (the top-level binder frame shadows the module's own loaded
+  globals; the renamer's shadow diags go unused for navigation).
+  Definitions.index flattens the occurrence table: each occurrence
+  carries its REAL SPAN, a Target (ToBinder -> the binder's def-site
+  span in-file; ToGlobal -> the session V's relocated loc), and a hover
+  payload (ToGlobal, or the TopLevel-binder bridge through
+  Local(spelling, declared fixity).global(name) — hover on locals stays
+  null per the perf ticket).  The point+len hit test over walked core
+  Vs is gone.  lsp-smoke grows 27 -> 31: sig-name mention jumps to the
+  equation, where-local goto-definition, hover-on-where-local null, and
+  sig-mention hover — all pass first run.  Type-level names inside the
+  file now navigate too (TyDef binder spans), for free.  Baselines:
+  896 (895+known), repl 3/3, lsp 31/31.
