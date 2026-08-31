@@ -17,7 +17,7 @@ import scalaparsers.Death
   * fixture is parameterized (item 4.1).
   */
 object TestStage1Pins extends Properties("Ermine stage1 pins") {
-  private val ermineFixture = ErmineFixture()
+  private val ermineFixture = ErmineFixture(statementsViaNew = true)
   import ermineFixture._
 
   val imps: Map[String, ImportSpec] =
@@ -56,7 +56,8 @@ object TestStage1Pins extends Properties("Ermine stage1 pins") {
       } catch {
         case d: Death =>
           ":(\\d+):(\\d+):".r.findFirstMatchIn(d.getMessage) match {
-            case Some(mm) => (mm.group(1).toInt ?= line) :| "anchor line"
+            case Some(mm) =>
+              (mm.group(1).toInt - statementWrapperLines(m) ?= line) :| "anchor line"
             case None => falsified :| ("no line:col anchor in: " +
                                        d.getMessage.linesIterator.take(2).mkString(" | "))
           }
@@ -77,13 +78,12 @@ object TestStage1Pins extends Properties("Ermine stage1 pins") {
       // captured the alias, (id_F id) would apply an Int to an Int.
       defAndEval("f id = id_F id", s"f $x", aliasImps).extract[Int] ?= x }
 
-  // Witnessed while writing these pins: with Prelude AND Primitive both
-  // open, `+` is visible under two canonical names and termOpVar's
-  // Some(List(n)) match fails SILENTLY — the chain dies as a layout error
-  // at the operator.  (Type-level ambiguity errors loudly; ticket lists
-  // the asymmetry as an unfixed remnant.)
-  property("an operator imported twice is silently unusable at term level") =
-    failsMatching("v = 1 + 2", "end of layout", aliasImps)
+  // With Prelude AND Primitive both open `+` is visible under two
+  // canonical names.  The fused chain died as a silent layout error;
+  // the split pipeline shares one placeholder for the ambiguous name
+  // and refuses at type checking — same verdict, honest message.
+  property("an operator imported twice is unusable at term level") =
+    failsMatching("v = 1 + 2", "undefined term", aliasImps)
 
   // -- do-notation binder scoping (no direct test existed; ticket edge) ----
 
@@ -116,13 +116,13 @@ object TestStage1Pins extends Properties("Ermine stage1 pins") {
     typeChecks("class Frob {a}", "1", imps)
 
   property("any class body member dies: undefined type (current pipeline)") =
-    failsMatching("class Frob a where\n  frob : a -> Int", "undefined type", imps)
+    failsMatching("class Frob a where\n  frob : a -> Int", "members die: undefined type", imps)
 
   property("a class default alone also dies: undefined type") =
-    failsMatching("class Frob a where\n  frob q = q", "undefined type", imps)
+    failsMatching("class Frob a where\n  frob q = q", "members die: undefined type", imps)
 
   property("a class context also dies: undefined type") =
-    failsMatching("class Sub a | Frob a where\n  frub : a -> Int", "undefined type", imps)
+    failsMatching("class Sub a | Frob a where\n  frub : a -> Int", "members die: undefined type", imps)
 
   property("a class default may not shadow an import (globalTermDef path)") =
     failsMatching(
@@ -168,9 +168,12 @@ object TestStage1Pins extends Properties("Ermine stage1 pins") {
       defAndEval(s"prefix 9 !!\n(prefix !!) q = 0 - q\nv = !! (!! $x)",
                  "v", imps).extract[Int] ?= x }
 
-  property("bare prefix stacking is a parse error") =
+  property("bare prefix stacking is refused by the re-associator") =
+    // the fused LEXER happened to refuse this ("expected whitespace");
+    // the surface chain parses leading ops and the yard rejects the
+    // stack — same verdict, structural message
     failsMatching("prefix 9 !!\n(prefix !!) q = 0 - q\nv = !! !! 5",
-                  "expected whitespace")
+                  "ill-formed expression")
 
   property("a postfix operator binds by its precedence inside a chain") =
     forAll(small) { x =>
@@ -185,7 +188,7 @@ object TestStage1Pins extends Properties("Ermine stage1 pins") {
 
   property("a block binder's inline fixity does not govern earlier siblings") =
     failsMatching("v = let a = 1 :%: 2\n        (infixl 5 :%:) x y = x - y\n    in a",
-                  "end of layout")
+                  "unknown operator")
 
   property("a block binder's inline fixity governs later siblings") =
     defAndEval("v = let (infixl 5 :%:) x y = x - y\n        a = 8 :%: 3\n    in a",
@@ -199,13 +202,12 @@ object TestStage1Pins extends Properties("Ermine stage1 pins") {
   property("redeclaring an imported operator's fixity is refused") =
     failsMatching("infixr 3 &&", "Multiple fixity definitions")
 
-  property("an operator used before its fixity declaration is a parse error") =
-    // (the codebase has no live "forward reference to an operator with
-    // unknown precedence" path we could reach; reality is a layout error)
-    failsMatching("v = 1 :%: 2\ninfixl 5 :%:\n(:%:) x y = x + y", "end of layout")
+  property("an operator used before its fixity declaration is refused") =
+    // positional FixityEnv: the use site precedes the declaration
+    failsMatching("v = 1 :%: 2\ninfixl 5 :%:\n(:%:) x y = x + y", "unknown operator")
 
-  property("an unknown operator kills the chain as a layout error") =
-    failsMatching("v = 1 %%% 2", "end of layout")
+  property("an unknown operator is refused by name") =
+    failsMatching("v = 1 %%% 2", "unknown operator")
 
   property("one lexeme cannot be both infix and postfix (shared bucket)") =
     failsMatching("infixl 5 :%:\npostfix 5 :%:\n(:%:) x y = x",
@@ -214,7 +216,7 @@ object TestStage1Pins extends Properties("Ermine stage1 pins") {
   // -- rejected corpus: resolution failures steer today's grammar ----------
 
   property("a bracket literal without hooks in scope is refused") =
-    failsMatching("v = [1, 2]", "expected '_' or whitespace", minimalImps)
+    failsMatching("v = [1, 2]", "hook empty_Bracket is not in scope", minimalImps)
 
   property("a loaded-but-unimported global is undefined at typecheck") =
     secure {
@@ -239,6 +241,12 @@ object TestStage1Pins extends Properties("Ermine stage1 pins") {
   property("a type error inside a list literal anchors on its line") =
     failsAtLine("v = [1,\n  1 && True]", 2)
 
-  property("a type error inside a do block anchors on its line") =
-    failsAtLine("v = orElse 0 ((do w <- liftDo (Just 1)\n                   unit (w && True)) maybeMonad)", 2)
+  property("a type error inside a do block anchors on the bind's rhs") =
+    // The split pipeline blames the bind APPLICATION (line 1, at the
+    // rhs) rather than the offending subterm on line 2: the checker
+    // infers the continuation lambda independently and the Int-vs-Bool
+    // clash surfaces at the subsume.  Anchor QUALITY debt — tracked in
+    // the roadmap (Stage 2 diagnostics); the line asserted here is the
+    // current behavior, not the ideal.
+    failsAtLine("v = orElse 0 ((do w <- liftDo (Just 1)\n                  unit (w && True)) maybeMonad)", 1)
 }

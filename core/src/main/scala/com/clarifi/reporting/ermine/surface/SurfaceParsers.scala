@@ -447,12 +447,18 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
       unit(acc)
     for {
       p1    <- loc
-      first <- termL1
-      rest  <- more(prevOperand = true, Nil)
+      // a chain may OPEN with a prefix operator (`!! x`, stacked
+      // included) — but only where no operand parses (else `?[w]`'s
+      // `?` would be eaten); the re-associator's OperandPos bucket
+      // judges the ops' legality
+      first <- termL1.attempt.map(t => Left(t): Either[STerm, OpOcc]) |
+               spanned(opTok).map(o => Right(OpOcc(SName(o._1, Plain, Idfix, o._2),
+                 OperandPos)): Either[STerm, OpOcc])
+      rest  <- more(prevOperand = first.isLeft, Nil)
       p2    <- loc
-    } yield rest match {
-      case Nil   => first
-      case items => SChain(Chain(Real(span2(p1, p2)), Left(first) :: items.reverse))
+    } yield (first, rest) match {
+      case (Left(t), Nil) => t
+      case (_, items)     => SChain(Chain(Real(span2(p1, p2)), first :: items.reverse))
     }
   }
 

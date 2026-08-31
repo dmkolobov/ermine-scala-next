@@ -311,6 +311,12 @@ object NewPipeline {
               items.foreach(fgo(_, intoPrivate))
             case SPrivateBlock(_, ss)    => walk(ss, intoPrivate = true)
             case SDatabaseBlock(_, _, ss) => walk(ss, intoPrivate)
+            case c: SClassStatement if c.body.nonEmpty || c.context.nonEmpty =>
+              // class bodies are dead code: every member or context died
+              // in the fused type processing with "undefined type" —
+              // refusing the statement keeps that contract explicit
+              throw Death(mkPos(fileName, contents, c.loc.span).report(Document.text(
+                "error: class bodies are not supported (members die: undefined type)")))
             case _: SFixity | _: SClassStatement | _: SErrorStatement => ()
             case _ => ()
           }

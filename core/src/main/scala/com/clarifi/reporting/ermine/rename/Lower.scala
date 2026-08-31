@@ -231,7 +231,10 @@ object Lower {
                   case SDoBind(bl2, p, _, rhs) =>
                     (term(rhs, c), Lam(c.pos(bl2.span), pattern(p, c), tailAct))
                 }
-                App(App(Var(bind), mv), mf)
+                // Appable parity: internal() relocated each minted
+                // application to its FIRST ARGUMENT's loc, so type
+                // errors blame the statement, not the whole do
+                App(App(Var(bind at mv.loc), mv), mf)
               }
           }
       }

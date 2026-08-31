@@ -28,9 +28,9 @@ object TestReplDifferential extends Properties("REPL eval goldens") {
     "id 42"                     -> "OK|Int|42",
     "id_F 42"                   -> "OK|Int|42",                  // alias affix
     "(+) 1 2"                   -> "OK|Int|3",                   // paren-op ref
-    "(+ 1) 5"                   -> "REFUSED|@:1:2: expected \"-\", ')', case, do, let, pattern atom, or term atom",
+    "(+ 1) 5"                   -> "REFUSED|@:1:2: error: unknown operator +",
     "(1 +) 5"                   -> "REFUSED|@:1:4: error: ill-formed expression",
-    "- 5 + 8"                   -> "REFUSED|@:1:2: expected case, do, let, pattern atom, or term atom",
+    "- 5 + 8"                   -> "REFUSED|@:1:2: expected case, do, let, operator, pattern atom, or term atom",
     "let q = 4 in q + 1"        -> "OK|Int|5",
     "let f x = x * 2\n    g y = f y + 1\nin g 5" -> "OK|Int|11", // fused never parsed this (D1 relaxation)
     "case Just 3 of\n  Just n -> n\n  Nothing -> 0" -> "OK|Int|3",

@@ -210,7 +210,9 @@ object TestSurfaceParsers extends Properties("Surface parser 2.3a") {
       ("data-con operator binder", "v = let (::) a b = 7 in 1",            ParsesNow("3.2 rename: constructor binder refusal")),
       ("missing bracket hooks",    "v = [1, 2]",                           ParsesNow("3.4 desugar: empty_Bracket/cons_Bracket unresolved")),
       ("empty brace literal",      "v = {}",                               ParsesNow("3.2/3.4: renamer rejects {} (old crashes masked by race)")),
-      ("bare prefix stacking",     "prefix 9 !!\n(prefix !!) q = 0 - q\nv = !! !! 5", StillRejects),
+      // [FLIPPED 2026-08-31, D3: chains open with prefix ops; the yard
+      // refuses the stack ("ill-formed expression")]
+      ("bare prefix stacking",     "prefix 9 !!\n(prefix !!) q = 0 - q\nv = !! !! 5", ParsesNow("re-associate: yard refuses the prefix stack (ill-formed expression)")),
       ("dead underscore affix",    "v = 1 +_ 2",                           StillRejects))
     val bad = List.newBuilder[String]
     for ((label, body, want) <- corpus) {

@@ -1079,3 +1079,23 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   (D3 part 3) — TestStage1Pins and several TestErmine props still pin
   fused behaviors through it.  Suite 871 (870+known; twins removed),
   repl 4 suites, lsp 31/31.
+
+- 2026-08-31 (D3 part 3a): TestStage1Pins CONVERTED to the pipeline
+  statement path (34/34).  Real fixes shaken out: (1) term chains can
+  OPEN with prefix operators — operand tried first, so ?[w] keeps its
+  lexeme (the fused-only paren-stacked-prefix pin exposed the gap; bare
+  stacking now parses and the YARD refuses it, ledger flipped to
+  ParsesNow); (2) class statements with a body or context REFUSE at
+  assemble (the fused type processing died with undefined type; the
+  split pipeline was silently IGNORING bodies); (3) do-desugar bind
+  applications relocate to their first argument (Appable parity) so
+  errors blame the statement; the residual do-anchor QUALITY gap —
+  blame lands on the bind rhs (line 1) where fused reached the inner
+  subterm (line 2), because the checker infers the continuation lambda
+  independently and clashes at the subsume — is pinned as-is and
+  tracked as Stage-2 diagnostics debt.  Moved-refusal message updates
+  per Decision f (unknown operator / undefined term / hook not in
+  scope / unparseable statement); failsAtLine learned the module-
+  wrapper line offset.  Two REPL goldens updated for the chain-start
+  change (still refusals, same positions, better messages).  Suite 871
+  (870+known), repl 4, lsp 31/31.

@@ -77,6 +77,11 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
     catch { case Death(d,_) => Failure(Some(d),Nil) }
   }
 
+  /** Lines the `module Test` wrapper prepends before the statements
+    * (positions in refusals from loadStatements are offset by this). */
+  def statementWrapperLines(imports: Map[String,ImportSpec] = imps): Int =
+    2 + imports.count(_._1 != "Test")
+
   def loadStatements(
     stmts: String,
     imports: Map[String,ImportSpec] = imps
