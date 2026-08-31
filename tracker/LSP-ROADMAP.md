@@ -1040,3 +1040,21 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   the evaluated values.  The legacy REPL_PIPELINE=old override skips
   aliasing.in by design — those programs are refusals under the fused
   pipeline until D3 retires it.  Smoke: 4 suites new, 3 legacy.
+
+- 2026-08-31 (D3 part 1): the fused REPL surface is gone. Session.eval
+  has no fused branch (every expression rides replTerm; parity was
+  pinned first); evalInContext (fused module-text eval, zero users) is
+  deleted; TestReplDifferential became the REPL eval GOLDEN corpus (22
+  entries with exact type/value/refusal pins; one unify-message golden
+  is a pattern because type-var NAMES follow supply draws).  Two
+  root-cause fixes landed on the way: (1) Dep closures no longer bake
+  their creation session s typeCheck/useInterface — the gate moved to
+  make() with the live session, ending cross-suite dep-cache poisoning
+  (the Interface round-trip flake); (2) ErmineFixture supplies are
+  per-thread (Supply is documented single-threaded; the shared instance
+  raced lo under ScalaCheck pool and handed two threads the same id —
+  the recurring eval:unbound flake class, 7+ sightings, now
+  root-caused).  Next: D3 part 2 — retire the fused MODULE path
+  (dep read branch, pipelineNew flag collapse, test-twin merge), then
+  delete the grammar itself.  Suite 902 (901+known), repl 4 suites,
+  lsp 31/31.

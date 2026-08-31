@@ -32,7 +32,13 @@ object ErmineFixture {
 final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
                                = Function const (()),
                                statementsViaNew: Boolean = false) {
-  implicit val supply: Supply = Supply.create
+  // Supply is documented single-threaded; ScalaCheck runs properties on
+  // a pool, so a shared instance races `lo` and hands two threads the
+  // same id (the recurring eval:unbound-variable flake).  Per-thread
+  // supplies draw from the synchronized global block allocator, so ids
+  // stay globally unique.
+  private val tlSupply = ThreadLocal.withInitial[Supply](() => Supply.create)
+  implicit def supply: Supply = tlSupply.get
   implicit val con: Printer = Printer.ignore
 
   lazy val baseEnv: SessionEnv = {

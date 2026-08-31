@@ -337,10 +337,12 @@ object Session {
       val expTys = mh.importExports.flatMap { ie => ie.explicits.collect { case e if e.isType => e.global } }
       val expTms = mh.importExports.flatMap { ie => ie.explicits.collect { case e if !e.isType => e.global } }
       val exports = nanoTime
+      // ALWAYS the real interface-reading closure: deps are cached
+      // process-wide and outlive this session — typeCheck/useInterface
+      // gate at CALL time in make, with the live session (a dep cached
+      // by a useInterface=false suite must not poison a =true one)
       val preCk : (Map[Global,Type.Con], Supply, ParseState) => Option[PartialFunction[TermVar,TermVar]] =
-        if(!s.typeCheck) ((_,_,_) => Some(untyped))
-        else if(!s.useInterface) ((_,_,_) => None)
-        else (gcs, su, ps) => file.interfaceContents flatMap { intf =>
+        (gcs, su, ps) => file.interfaceContents flatMap { intf =>
            _log.trace("Interface contents: " + intf)
            val newPs = scalaparsers.ParseState.mk(file.toString + "i", intf, ps.s.copy(recognizedCons = gcs))
            interfaceFile.run(newPs,su.split) match {
@@ -447,7 +449,9 @@ object Session {
         case None => ()
         case Some((ps, m)) =>
           def preChecked(lcs: Map[Global,Type.Con]) =
-            if(imports.forall(im => s.loadedModules.get(im) == Some(CheckMethod.Interface)))
+            if (!s.typeCheck) Some(untyped)
+            else if (!s.useInterface) None
+            else if(imports.forall(im => s.loadedModules.get(im) == Some(CheckMethod.Interface)))
               readInterface(s.cons ++ s.privateCons ++ lcs, su, ps)
             else {
               _log.debug("Rechecking '" + moduleName + "' due to lack of (valid) interface for dependency")
@@ -671,14 +675,11 @@ object Session {
     source: String = "<interactive>"
   )(implicit s: SessionEnv, su: Supply, con: Printer): (Type, Runtime) = {
     loadModules(importedModules.keySet.toList)
-    // post-G1 D1: expressions ride the split pipeline when the session
-    // does; REPL COMMAND parsing stays fused (Decision d covers ':'
-    // commands, not the term grammar)
-    val a =
-      if (s.pipelineNew)
-        com.clarifi.reporting.ermine.rename.NewPipeline.replTerm(source, text, importedModules)
-      else
-        parse(phrase(term), ErParseState.mk(source,text, "REPL").importing(s.termNames, s.cons.keySet, importedModules, s.termNameOrigins, s.consOrigins))._2
+    // post-G1 D3: expressions ride the split pipeline unconditionally
+    // (parity pinned by TestReplDifferential's corpus and repl-smoke);
+    // REPL COMMAND parsing stays fused (Decision d covers ':' commands,
+    // not the term grammar)
+    val a = com.clarifi.reporting.ermine.rename.NewPipeline.replTerm(source, text, importedModules)
     val ty = subst { implicit hm => inferType(Nil,a.close) }
     (ty, Term.eval(a, s.env))
   }
@@ -704,37 +705,6 @@ object Session {
     source: String = "<remote>"
   ): (SessionEnv, Supply, Printer) => Runtime =
     eval(text, Map((moduleName, (None, List(), false))), source)(_, _, _)._2
-
-  def evalInContext(
-    moduleText: String,
-    exprText: String,
-    source: String = "<remote>"
-  ): (SessionEnv, Supply, Printer) => Runtime = (s: SessionEnv, su: Supply, con: Printer) => {
-    implicit val is : SessionEnv = s
-    implicit val isu : Supply = su
-    implicit val icon : Printer = con
-    val fileName = "Remote.m" // Remote.e!
-    val (psz, h) = parse(moduleHeader("Remote.m"), ErParseState.mk(source, moduleText, "Remote"))
-    loadModules(h.importExports.map(_.module))
-    val snap = s.copy
-    //So we don't get another version of ourselves from the env
-    val hImports = h.imports - psz.s.moduleName
-    val h2 = h.copy(name = "Remote")
-    val psz2 = psz.copy(s = psz.s.copy(moduleName = "Remote")).importing(snap.termNames, snap.cons.keySet, hImports, snap.termNameOrigins, snap.consOrigins)
-    val (ps, m) = parse(moduleBody(h2), psz2)
-    val ck : Map[Global,Type.Con] => Option[PartialFunction[TermVar,TermVar]] =
-          if(!s.typeCheck) (_ => Some(untyped))
-          else (_ => None)
-    val maps = loadModule(ps, m, ck)._2
-    val (_, tm) = parse(phrase(term), ps copy (loc = Pos.start(fileName, exprText),
-                                               offset = 0,
-                                               input = exprText))
-    val tmp = subTermMaps(maps, tm).close
-    val ty = subst { implicit hm => inferType(Nil, tmp) }
-    val env = s.env
-    s := snap
-    Term.eval(tm, env).nf
-  }
 
   // load a module from a file. optionally checking to see if the name is what you expected
   // and/or passing a list of modules we're currently building for circular dependency checking
