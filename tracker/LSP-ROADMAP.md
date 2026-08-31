@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 3.2c done (type/kind renaming); next item 3.3 (fixity re-association) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 3.3 done (re-association, 5 ledger flips); next item 3.4a (desugar: literals) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -275,7 +275,7 @@ machinery is deleted post-G1, never before.
 - [x] **3.2c Renamer: types + kinds**: canonicalTypes/typeNames/kindNames
   tables; qtyp/closed quantification-set computation reproduced exactly,
   asserted by the 1.3a pins; kindOf/kindAfter twin lands with it.
-- [ ] **3.3 Fixity re-association**: port shuntingYard from
+- [x] **3.3 Fixity re-association**: port shuntingYard from
   ParsingUtil.scala:385-440 (Op.scala is a commented-out duplicate — do
   not port it) as a pure pass over flat chains, exact clear/finish
   semantics and "ambiguous operator of precedence" verbatim; positional
@@ -708,3 +708,17 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   field/table/foreign types wired. kindOf/kindAfter fixture twins
   DEFERRED to 4.1 (they need typecheck integration to produce Kinds).
   TestRenamer 18/18. Baselines: 824 (823+known), repl 3/3, lsp 27/27.
+- 2026-08-30 3.3 done: rename/Reassoc.scala — ParsingUtil's shuntingYard
+  ported as a pure pass (exact clear/finish: LT pops, EQ L/L reduces,
+  EQ R/R shifts, mixed EQ = "ambiguous operator of precedence" verbatim;
+  unary keeps AssocL; "ill-formed expression" for arity failures);
+  positional FixityEnv (imports from canonical keys, module fixity
+  statements textually, block ParenFixityBinder declarations extending
+  the env inside their let/where per Decision a, "Multiple fixity
+  definitions" on duplicate buckets incl. the postfix/infix share);
+  unary-minus SNeg wrapper survives around the re-associated chain;
+  type arrows as pseudo-ops (0R/0R/1N; Forall/Part construction stays
+  for 3.4); '*'-at-operand-position becomes the star atom. ALL FIVE
+  ledger dispositions FLIPPED to re-associator diagnostics (asserted;
+  surface-notes updated). TestReassoc 13/13. Baselines: 837 (836+known),
+  repl 3/3, lsp 27/27.

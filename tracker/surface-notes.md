@@ -69,7 +69,8 @@ each owe a refusal to a later pass — asserted in TestSurfaceParsers
 disposition when it lands:
 - 3.3 re-associator: unknown op, op-before-fixity, mixed-assoc ambiguity,
   refixed imported op ("Multiple fixity definitions"), postfix+infix
-  bucket collision.
+  bucket collision.  [FLIPPED 2026-08-30: all five diagnosed by
+  Reassoc — TestReassoc "ledger flip" properties.]
 - 3.2 renamer: top-level import shadow, data-con operator binder.
 - 3.2/3.4: missing bracket hooks, empty brace literal.
 Still parse-time: bare prefix stacking, dead-underscore affix (lexer
