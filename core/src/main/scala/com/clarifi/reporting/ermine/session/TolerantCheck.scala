@@ -99,14 +99,18 @@ object TolerantCheck {
   def keys(contents: String, moduleName: String, importsKey: String,
            workspaceKey: String): (Map[String, String], String) = {
     val scan = StatementExtents.scan(contents)
+    // One index for the whole run.  This makes two position lookups per
+    // top-level statement, and each of them used to re-walk the file from
+    // offset 0 -- 4.7% of the editor round trip (roadmap P5(a)).
+    val off = new StatementExtents.Offsets(contents)
     val (scopeItems, bindItems) = scan.items partition (x => ScopeWords(x.headWord))
     val groups = bindItems.filter(_.headWord.nonEmpty).groupBy(_.headWord).map {
       case (w, xs) => w -> xs.map(x =>
-        x.startLine + ":" + StatementExtents.text(contents, x)).mkString("\u0000")
+        x.startLine + ":" + off.text(x)).mkString("\u0000")
     }
     val scopeKey = fingerprint(
       moduleName, importsKey,
-      scopeItems.map(StatementExtents.text(contents, _)).mkString("\u0000"),
+      scopeItems.map(off.text).mkString("\u0000"),
       bindItems.map(_.headWord).sorted.mkString(","),
       workspaceKey)
     (groups, scopeKey)

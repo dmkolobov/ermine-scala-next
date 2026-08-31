@@ -80,26 +80,69 @@ object StatementExtents {
     (i, line, col)
   }
 
-  /** The char offset of a 1-based (line, column), counted the way
-    * scalaparsers' Pos.bump counts (tab to the next multiple of 8). */
-  def offsetOf(contents: String, line: Int, col: Int): Int = {
-    val n = contents.length
-    var i = 0; var l = 1; var c = 1
-    while (i < n && (l < line || (l == line && c < col))) {
-      contents.charAt(i) match {
-        case '\n' => l += 1; c = 1
-        case '\t' => c += 8 - c % 8
-        case _     => c += 1
-      }
-      i += 1
+  /** A line-start index over ONE source string, so a run of position
+    * lookups costs a single pass plus a walk of each target line --
+    * rather than a walk from offset 0 per lookup.
+    *
+    * `TolerantCheck.keys` makes two lookups per top-level statement on
+    * every keystroke (~630 of them on Layout/Report.e, each previously
+    * scanning all 77KB), which the P2 profile measured at 4.7% of the
+    * editor round trip: 93 of 1970 samples, every one of them under
+    * `text` under `keys`.  See tracker/PERF-ROADMAP.md P5(a).
+    *
+    * The per-line walk STAYS, because a column is not an offset:
+    * columns are counted the way scalaparsers' Pos.bump counts them,
+    * tab to the next multiple of 8.  That walk is character-for-
+    * character the tail of the original loop, so it keeps the original's
+    * behaviour in the corner that matters -- when `col` overshoots the
+    * line, the '\n' IS consumed, the line counter passes `line`, and the
+    * answer is the offset just past the newline.  TestStatementExtents
+    * pins the agreement against a naive reference over all 180 files.
+    */
+  final class Offsets(contents: String) {
+    private val n = contents.length
+    private val starts: Array[Int] = {
+      val b = Array.newBuilder[Int]
+      b += 0
+      var i = 0
+      while (i < n) { if (contents.charAt(i) == '\n') b += i + 1; i += 1 }
+      b.result()
     }
-    i
+
+    def offsetOf(line: Int, col: Int): Int = {
+      var i = 0
+      var l = 1
+      if (line > 1) {
+        if (line - 1 >= starts.length) return n
+        i = starts(line - 1); l = line
+      }
+      var c = 1
+      while (i < n && (l < line || (l == line && c < col))) {
+        contents.charAt(i) match {
+          case '\n' => l += 1; c = 1
+          case '\t' => c += 8 - c % 8
+          case _     => c += 1
+        }
+        i += 1
+      }
+      i
+    }
+
+    /** The source an extent covers. */
+    def text(e: Extent): String =
+      contents.substring(offsetOf(e.startLine, e.startCol),
+                         offsetOf(e.endLine, e.endCol))
   }
 
-  /** The source an extent covers. */
+  /** The char offset of a 1-based (line, column), counted the way
+    * scalaparsers' Pos.bump counts (tab to the next multiple of 8).
+    * One-shot; build an `Offsets` for a run of lookups over one string. */
+  def offsetOf(contents: String, line: Int, col: Int): Int =
+    new Offsets(contents).offsetOf(line, col)
+
+  /** The source an extent covers.  One-shot; see `Offsets.text`. */
   def text(contents: String, e: Extent): String =
-    contents.substring(offsetOf(contents, e.startLine, e.startCol),
-                       offsetOf(contents, e.endLine, e.endCol))
+    new Offsets(contents).text(e)
 
   def scan(contents: String): Scan = {
     val n = contents.length

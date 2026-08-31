@@ -80,4 +80,67 @@ object TestStatementExtents extends Properties("Statement extents") {
     val failures = bad.result()
     failures.isEmpty :| failures.take(8).mkString(" ;; ")
   }
+
+  /** The pre-P5(a) implementation, written out as the oracle: walk from
+    * offset 0, counting lines and columns the way scalaparsers' Pos.bump
+    * counts them.  StatementExtents.Offsets must agree with this
+    * EVERYWHERE, including where `col` overshoots its line -- there the
+    * walk consumes the newline and lands just past it, and an index that
+    * clamped to the line end instead would silently shift every
+    * fingerprint TolerantCheck.keys computes. */
+  private def naiveOffsetOf(contents: String, line: Int, col: Int): Int = {
+    val n = contents.length
+    var i = 0; var l = 1; var c = 1
+    while (i < n && (l < line || (l == line && c < col))) {
+      contents.charAt(i) match {
+        case '\n' => l += 1; c = 1
+        case '\t' => c += 8 - c % 8
+        case _     => c += 1
+      }
+      i += 1
+    }
+    i
+  }
+
+  property("indexed offsets agree with the naive walk (180 files)") = secure {
+    val bad = List.newBuilder[String]
+    var probes = 0
+    for (f <- moduleFiles) {
+      val src = new String(java.nio.file.Files.readAllBytes(f.toPath), "UTF-8")
+      val off = new StatementExtents.Offsets(src)
+      val lines = src.count(_ == '\n') + 1
+      for (line <- 0 to lines + 2) {
+        val len = src.split("\n", -1).lift(line - 1).map(_.length).getOrElse(0)
+        // 1 and 2 cover the start; len and len+1 the exact end; len+9 the
+        // OVERSHOOT case; 0 and negative the degenerate ones.
+        for (col <- List(-1, 0, 1, 2, 8, len / 2, len, len + 1, len + 9)) {
+          probes += 1
+          val want = naiveOffsetOf(src, line, col)
+          val got  = off.offsetOf(line, col)
+          if (want != got) bad += s"${f.getName}:$line:$col want $want got $got"
+        }
+      }
+    }
+    val failures = bad.result()
+    (failures.isEmpty :| failures.take(8).mkString(" ;; ")) &&
+      (probes > 100000) :| s"only $probes probes"
+  }
+
+  property("extent text is unchanged by the index (180 files)") = secure {
+    val bad = List.newBuilder[String]
+    var extents = 0
+    for (f <- moduleFiles) {
+      val src = new String(java.nio.file.Files.readAllBytes(f.toPath), "UTF-8")
+      val off = new StatementExtents.Offsets(src)
+      for (e <- StatementExtents.scan(src).items) {
+        extents += 1
+        val want = src.substring(naiveOffsetOf(src, e.startLine, e.startCol),
+                                 naiveOffsetOf(src, e.endLine, e.endCol))
+        if (off.text(e) != want) bad += s"${f.getName}:${e.startLine} ${e.headWord}"
+      }
+    }
+    val failures = bad.result()
+    (failures.isEmpty :| failures.take(8).mkString(" ;; ")) &&
+      (extents > 1000) :| s"only $extents extents"
+  }
 }

@@ -43,6 +43,14 @@ Leaf families — what an optimization would actually attack:
 | parser trampoline (`scalaparsers.*` via `Free`)    | —        | **27.3%** |
 | parser failure merging (`Fail.++`)                 | —        |  3.2%     |
 
+**READ EVERY PERCENTAGE IN THIS SECTION AS AN UPPER BOUND.**  P5(a) measured
+one of them directly and JFR had over-attributed it **3.5x**: the profile put
+`StatementExtents.offsetOf` at 4.7% of the editor round trip (~66ms), and a
+direct microbenchmark of the identical pass put it at 18.8ms.  Tight loops with
+a safepoint poll at the back edge are sample magnets.  Before investing in any
+item below on the strength of its share, MEASURE THE PASS DIRECTLY — the share
+tells you where to look, not what you will get.
+
 So the ticket's headline is roughly a third too high, parsing is roughly
 twice what it claimed, and **substitution is now nearly two thirds the size of
 free-variable collection rather than a quarter of it** — P4 and P3 are closer
@@ -189,6 +197,16 @@ The ticket's own "Baselines to hold" section is STALE (it says 753 props; it is
 4. **A change that does not measurably help is REVERTED**, and the negative
    result is written into the iteration log.  Negative results are the most
    valuable output of this loop — they stop the next session retrying them.
+   AMENDED 2026-08-31 (P5(a) forced the question): "measurably" cannot mean
+   only "visible in the harness's end-to-end median", because that median has a
+   NOISE FLOOR of about **50ms** on the editor round trip run-to-run (read
+   wanders ±45ms across JVM instances, typecheck ±15ms, and typecheck is the
+   stable one).  A change smaller than the floor may be KEPT only when a DIRECT,
+   repeatable measurement of the work it removes is recorded in the log — a
+   microbenchmark of the exact pass, before and after.  A change justified only
+   by a profile percentage, with no direct measurement, is still reverted.  The
+   harness stays the measurement of record for CLAIMS about the targets; this
+   clause only governs whether a sub-floor change earns its place in the tree.
 5. **Every item declares its target** ([B], [E], or both) and the ceiling it
    expects on the other.  A [B] win that does nothing for [E] is still a win;
    claiming otherwise is what this rule prevents.
@@ -297,7 +315,14 @@ any change, then the cheapest change with the largest profiled share, then the
   the parser: rename+reassoc+lower are 1.1% of samples and are OUT of scope.
   Three named targets, cheapest first, each measured separately and reverted
   if flat:
-  (a) **`StatementExtents.offsetOf` — 4.7%, and it is quadratic.**  It walks
+  (a) **DONE 2026-08-31 — `StatementExtents.offsetOf`, and the profile was
+  3.5x wrong about it.**  Fixed (one line-start index per `keys` call): the
+  pass goes **18.80ms -> 1.64ms** on Layout/Report.e, 11.5x, directly measured
+  over 50 reps after 20 warm-up reps.  That is 17ms of a 1.6s round trip —
+  **1.1%, under the harness's ~50ms noise floor**, so the end-to-end median did
+  NOT move and the profile's 4.7% (~66ms) was an over-attribution.  Kept under
+  the amended Decision 4, on the direct measurement.  The original reasoning,
+  which was right about the defect and wrong about its size:  It walks
   the file from offset 0 counting lines and columns on EVERY call
   (StatementExtents.scala:85-98), and `text` calls it TWICE per extent
   (:100-102).  Report.e has ~315 top-level statements, so one check does ~630
@@ -547,3 +572,53 @@ deferred by LSP 5.5).
   Baselines unchanged from P1 (no Scala touched): core/test 902/901+known,
   repl-smoke 4, lsp-smoke 82, boot 129, npm test PASS.
   NEXT: P3, or P5(a) — see the note under Blocked/Awaiting.
+
+- 2026-08-31 (P5(a) — the quadratic is real, the profile's number was not).
+  `StatementExtents.Offsets`: one line-start index per source string, so a run
+  of position lookups costs one pass plus a per-line walk instead of a walk
+  from offset 0 per lookup.  The per-line walk STAYS, because a column is not
+  an offset — tabs advance to the next multiple of 8 — and it is
+  character-for-character the tail of the original loop, so it keeps the
+  original's behaviour in the corner that matters: when `col` overshoots its
+  line the newline IS consumed and the answer lands just past it.  An index
+  that clamped to the line end instead would have shifted every fingerprint
+  `TolerantCheck.keys` computes, silently.  `keys` now builds one index and
+  uses it for all ~1182 lookups (591 extents x 2) instead of 1182 full walks
+  of a 77KB string.
+
+  THE NUMBER, AND WHY IT IS NOT AN END-TO-END NUMBER.  Direct measurement of
+  the identical pass, 50 reps after 20 warm-up reps: **18.80ms -> 1.64ms**,
+  11.5x.  The harness's editor median did NOT move (1.616s before, 1.674s
+  after; typecheck 0.515s before, 0.515s after) because 17ms is 1.1% of the
+  round trip and the run-to-run noise floor is about 50ms — read alone wanders
+  ±45ms between JVM instances.  So this is a KEPT change under an amended
+  Decision 4, not a claimed speedup: the roadmap now distinguishes a sub-floor
+  change with a direct repeatable measurement (may be kept, measurement
+  recorded) from one justified only by a profile share (still reverted).
+
+  THE FINDING THAT MATTERS MORE THAN THE FIX.  The P2 profile put this loop at
+  4.7% of the editor round trip, which is ~66ms; it is 18.8ms.  **JFR
+  over-attributed it 3.5x.**  A re-profile after the fix confirms the work
+  really is gone — extent scan 4.8% -> 0.1%, `offsetOf` off the leaf table
+  entirely — while the wall clock stayed put, which is exactly the signature of
+  sample bias rather than of a fix that did not work.  Tight loops with a
+  safepoint poll at the back edge are sample magnets.  Every remaining share in
+  this roadmap is therefore an UPPER BOUND: P5(b)'s 8.3%, P5(c)'s 52.6% and
+  P3's 33.0% say where to look, not what they will pay.  The two-targets
+  section now says so at the top, and the next item to touch any of them must
+  microbenchmark the pass before investing in it.
+
+  THE ORACLE.  TestStatementExtents +2 (4): the pre-P5(a) walk is written out
+  as a naive reference, and the indexed version must agree with it at every
+  probed position over all 180 corpus files — including the degenerate columns
+  (-1, 0) and the overshoot (len+1, len+9) — 1.06M probes; and every extent's
+  `text` must be byte-identical, 12k extents.  Both proved.
+  NOT TOUCHED: SurfaceParsers has its own private `offsetOf` with the same
+  shape (SurfaceParsers.scala:872), used only by the 5.2 statement-failure
+  re-parse.  It drew ZERO samples in either profile — broken statements are
+  rare — so no profile points at it and it stays as it is.
+  Baselines: core/test **904** total (901+known was 902; +2 are this item's own
+  properties), 903 pass, 1 fail (`Constraints.disjunction sound`, the known
+  one); repl-smoke 4 suites; lsp-smoke 82 checks; boot 129; npm test PASS.
+  NEXT: P5(b) `Fail.++` — but microbenchmark the merge before investing, per
+  the calibration above.
