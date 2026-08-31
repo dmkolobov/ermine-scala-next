@@ -9,9 +9,9 @@ tracker/TICKET-perf-type-inference.md.  Editor-path measurements and the
 machinery they came from: tracker/LSP-ROADMAP.md, Stage 2 (item 5.5 and the
 G2 gate evidence).
 
-Status: SEEDED 2026-08-31 — AWAITING GATE G3-0 SIGN-OFF.  Nothing is
-optimized yet and nothing may be until P1 (the harness) and P2 (fresh
-profiles for both targets) exist.  NEXT: P1.
+Status: P1 DONE (2026-08-31).  G3-0 signed off; the harness exists and the
+BASELINE OF RECORD is measured (see Baselines).  Nothing is optimized yet and
+nothing may be until P2 (fresh profiles for both targets) reports.  NEXT: P2.
 
 ## The two targets
 
@@ -19,10 +19,12 @@ The ticket knows about one of these.  Stage 2 of the LSP work produced the
 other, and it does not obey the ticket's headline finding.  EVERY checklist
 item declares which target it serves, and what its ceiling is on the other.
 
-**[B] BATCH LOAD** — `bin/ermine` loading the 129 stdlib modules.
-~12s interface-free, ~6s with the `.ei` cache (2026-08-30, this hardware,
-UNVERIFIED at HEAD — see Baselines).  The JFR profile in the ticket
-attributes CPU samples:
+**[B] BATCH LOAD** — loading the 129 stdlib modules with full inference.
+MEASURED AT HEAD: **11.46s** interface-free, **5.59s** with the `.ei` cache
+(medians of 5 fresh-JVM reps each, spread 0.11s and 0.17s; see Baselines for
+the full line).  The inherited estimates were ~12s and ~6s, so they held.  The
+JFR profile in the ticket attributes CPU samples — these are from 2026-08-30,
+predate all of Stage 1 and 2, and P2 re-takes them:
 
 | phase                                     | share |
 |-------------------------------------------|-------|
@@ -40,23 +42,33 @@ on 71% of stacks -> `inferAltTypes` -> `typeCheckExplicitBinding` ->
 963 of 967 samples sit on one `ermine-session-task` thread.
 
 **[E] EDITOR ROUND TRIP** — keystroke to `publishDiagnostics` on
-Layout/Report.e (1757 lines), through the resident LSP session.  Measured at
-LSP 5.5 (2026-08-31):
+Layout/Report.e (1757 lines), through the resident LSP session.  MEASURED AT
+HEAD by the harness (median of rounds 2..15, round 1 discarded as JIT
+warm-up); the LSP 5.5 column is the inherited ad-hoc number:
 
-| segment                    | before 5.5 | after 5.5 | share of after |
-|----------------------------|------------|-----------|----------------|
-| read (parse/rename/lower)  | 0.89s      | 0.80s     | 51%            |
-| typecheck (inference)      | 1.03s      | 0.45s     | 29%            |
-| debounce (policy, not work)| 0.30s      | 0.30s     | 19%            |
-| **median round trip**      | **2.24s**  | **1.57s** | —              |
+| segment                     | before 5.5 | after 5.5 | HARNESS @HEAD | share |
+|-----------------------------|------------|-----------|---------------|-------|
+| read (parse/rename/lower)   | 0.89s      | 0.80s     | **0.770s**    | 48%   |
+| typecheck (inference)       | 1.03s      | 0.45s     | **0.515s**    | 32%   |
+| debounce (policy, not work) | 0.30s      | 0.30s     | **0.300s**    | 19%   |
+| residual (env copy, scrub…) | —          | —         | **0.017s**    |  1%   |
+| **median round trip**       | **2.24s**  | **1.57s** | **1.616s**    | —     |
 
-**"Inference dominates" is FALSE on this path.**  Of the 1.27s of actual
-compute, parse+rename+lower is 63% and inference is 35% — after 5.5's per-SCC
-reuse (114 of 154 components reused on an in-body edit).  A perfect fix to the
-[B] hotspot (free-variable collection) therefore has a hard ceiling on [E] of
-roughly a third of a third of the round trip.  Items aimed at [E] must aim at
-the read path or at the debounce, not at inference, unless a profile says
-otherwise.
+NOT DIRECTLY COMPARABLE to 5.5's 1.57s, and the reason is worth carrying:
+the harness's pinned edit invalidates more than 5.5's did — **97 of 154**
+components reused where 5.5 got 114 of 154 — so it does more inference per
+round on purpose.  From here on the harness number is the baseline; 5.5's is
+history.
+
+**"Inference dominates" is FALSE on this path.**  Of the 1.302s of actual
+compute, parse+rename+lower is **59%** and inference **40%**, with the whole
+rest of the round trip — session env copy, the nine-pass self-scrub, header
+parse, extent scan, `Definitions.index`, protocol write — measuring 0.017s,
+which closes the question of whether the `check:` line was hiding anything.
+A perfect fix to the [B] hotspot (free-variable collection, ~40% of batch
+samples) therefore has a hard ceiling on [E] of about a tenth of the round
+trip.  Items aimed at [E] must aim at the read path or at the debounce, not at
+inference, unless a profile says otherwise.
 
 ## Baselines (hard invariants — never commit red)
 
@@ -81,11 +93,40 @@ Green before EVERY commit:
   before diagnosis; if it reproduces, it is real — do not commit.  New flakes
   get root causes, not retries-forever (LSP-ROADMAP's log has worked examples).
 
-PERFORMANCE NUMBERS ARE NOT YET BASELINED.  Everything quoted under "The two
-targets" is inherited from 2026-08-30 (batch) and 2026-08-31 (editor) and was
-taken with ad-hoc timing, not with the harness.  The ticket's own "Baselines to
-hold" section is STALE (it says 753 props; it is 902).  **P1 establishes the
-numbers of record; until it lands, no item may claim a speedup.**
+### BASELINE OF RECORD (P1, 2026-08-31, commit 5d17377 + the harness itself)
+
+Machine: dmitry-Z370P-D3, 12 cores, 15.6GB, JDK 21.0.12.1+1, default max heap
+3984MB, 1-minute load average below 1.0 at every start.  Reproduce with
+`tracker/tools/perf-bench.sh both -n 5 -k 15` and
+`tracker/tools/perf-bench.sh batch --warm -n 5`.
+
+| target                          | median  | min   | max   | reps |
+|---------------------------------|---------|-------|-------|------|
+| [B] batch cold (interface-free) | 11.46s  | 11.41 | 11.52 | 5    |
+| [B] batch warm (`.ei` cache)    |  5.59s  |  5.57 |  5.74 | 5    |
+| [E] editor round trip           |  1.616s | 1.548 | 1.754 | 14   |
+| [E] editor read                 |  0.770s | —     | —     | 14   |
+| [E] editor typecheck            |  0.515s | —     | —     | 14   |
+| [E] LSP boot (interface-free)   | 11.90s  | —     | —     | 1    |
+| [E] first check after didOpen   |  1.993s | —     | —     | 1    |
+
+The [B] figures are the ones the program computes for ITSELF ("Loaded 129
+modules (X.XX seconds)"); process wall time was 12.27s cold and 6.42s warm and
+is NOT comparable across commits, because it also folds in JVM startup, the
+logo and `Lib.preamble`.  The [E] figures are a client-side monotonic clock for
+the round trip and the server's own `%.2f` split for read/typecheck.
+
+WHAT IS COMPARABLE ACROSS COMMITS, and what is not — quote accordingly:
+- COMPARABLE: the [B] in-process medians on this machine at this heap and this
+  `.ei` state; the [E] read/typecheck pair; and `reused A of B`, which is a
+  pure counting statistic and load-independent.
+- NOT COMPARABLE: any wall-clock figure; anything across machines (the
+  classpath file holds absolute paths and the heap is RAM-derived); cold
+  against warm; editor round 1 against rounds 2..K; and any run whose
+  `reused/components` ratio differs from its comparison run.
+
+The ticket's own "Baselines to hold" section is STALE (it says 753 props; it is
+902) and is superseded by this section.
 
 ## Correctness oracles (inference changes are silent; the suite alone will not catch them)
 
@@ -153,7 +194,7 @@ Ordering rationale: the harness before any measurement, fresh profiles before
 any change, then the cheapest change with the largest profiled share, then the
 [E] read path, then the two big design items last.
 
-- [ ] **P1 [B+E] The harness — `tracker/tools/perf-bench.sh`.**  Everything
+- [x] **P1 [B+E] The harness — `tracker/tools/perf-bench.sh`.**  Everything
   after this measures with it.  Requirements:
   (a) **batch mode**: N repetitions of an interface-free load of the 129 modules
   (`-Dermine.useInterface=false`, `.ei` cleared first and asserted absent
@@ -270,11 +311,12 @@ tried and REVERTED, and what the profile says the next bottleneck is.
 
 ## Blocked / Awaiting
 
-**GATE G3-0 — awaiting sign-off on this roadmap (2026-08-31).**  Iteration 1
-turned the ticket plus the Stage-2 editor measurements into the checklist above.
-The loop is stopped here by its own instructions: nothing is optimized until
-this plan is signed off.  Two things in it are worth an explicit yes or no,
-because they shape everything after:
+**(empty — G3-0 signed off 2026-08-31, user: "Keep going".)**
+
+**GATE G3-0 — SIGNED OFF 2026-08-31.**  Iteration 1 turned the ticket plus the
+Stage-2 editor measurements into the checklist above and stopped for sign-off;
+the answer was to proceed, so the ordering below stands as written and P1 ran.
+Kept here because both points still govern later items:
 
 1. **Item ordering puts [B] work (P3, P4) before the [E] read path (P5)**, on
    the grounds that the batch profile is the one that exists and P2 will confirm
@@ -304,3 +346,75 @@ reuse would need (named and deferred by LSP 5.5).
   and parse+rename+lower is 63%.  Every checklist item is therefore labeled with
   the target it serves, and P2 must take an editor-path profile — none has ever
   been taken.  Loop stopped for G3-0.
+
+- 2026-08-31 (P1 — the harness, and the first numbers of record).
+  `tracker/tools/perf-bench.sh` + `tracker/tools/perf-client.py`.  Both targets,
+  a machine-readable `PERFBENCH` line, per-rep artifacts under `$PERF_OUT`, and
+  a `PERF_JVM_PROPS` hook so P2 can hang JFR flags off the harness instead of
+  hand-rolling a command line and quietly ceasing to be the measurement of
+  record.  BASELINE OF RECORD is in the Baselines section; the headline figures
+  are [B] cold **11.46s**, [B] warm **5.59s** (medians of 5 fresh-JVM reps,
+  spreads 0.11s and 0.17s) and [E] **1.616s** (median of rounds 2..15, spread
+  0.206s).  The inherited estimates — ~12s, ~6s, 1.57s — all held.
+
+  WHAT THE HARNESS HAD TO DEFEND AGAINST, because each of these produces a
+  plausible-looking wrong number rather than an error:
+  `ermine.useInterface` DEFAULTS TO TRUE while `ermine.typeCheck` DEFAULTS TO
+  FALSE (SessionState.scala:98-100), so the natural command line measures a
+  warm load of untyped modules; a cold rep under the default writes all 129
+  `.ei` back and contaminates every rep after it (which is why cold runs pass
+  `useInterface=false`, and the run asserts 0 `.ei` afterwards).  The "Loaded
+  … modules" text does NOT start a line — the progress bar emits `\r` frames
+  with no newline — and `ordinal()` spells small counts as WORDS, so a rep is
+  validated on the captured count being exactly 129 and never on the exit code,
+  which is 0 even after a panic (Console.scala:815-827).  Decimal separators
+  come from the default FORMAT locale on BOTH sides, so both JVMs are pinned to
+  en_US, the shell to LC_ALL=C, and every capture accepts `[0-9.,]`.  And the
+  `.ei` delete is scoped to the module tree: `find . -name '*.ei' -delete` from
+  the repo root would destroy 143 TRACKED files — the whole G1 golden baseline
+  and the comparator fixtures — so the script cross-checks that it and
+  g1-diff.sh agree on the directory before deleting anything.
+
+  THE EDIT IS THE EXPERIMENT, and it is pinned and asserted (perf-client.py):
+  one digit of an integer literal inside `emptyReport`'s body, Report.e:281.
+  It satisfies all four constraints the reuse machinery imposes — changes a
+  fingerprint (interior, not trailing: an extent ends just past its last
+  significant character, which is why the 5.5 measurement was invalidated by a
+  whitespace edit), moves no scope key, changes no line count, lands in a named
+  definition — and `emptyReport` is referenced 14 times elsewhere in the file,
+  so the invalidation is a real transitive closure rather than one leaf.  It
+  invalidates MORE than 5.5's edit did: **97 of 154** components reused where
+  5.5 got 114 of 154.  So 1.616s is not comparable to 5.5's 1.57s, and the
+  Baselines section says which figures are comparable across commits at all.
+
+  ONE PREMISE CONFIRMED, ONE SHARPENED.  Confirmed: on the editor path
+  parse+rename+lower is **59%** of compute and inference **40%** — the roadmap
+  said 63/35 from 5.5's lighter edit, and the direction is what matters.
+  Sharpened: the residual — everything the server's `check:` line does not
+  cover but the round trip pays, i.e. the env copy, the nine-pass self-scrub,
+  the header parse, the extent scan, `Definitions.index` and the protocol
+  write — measures **0.017s**, 1% of the round trip.  That closes a real
+  question (the survey flagged the gap as "not obviously small") and means P5
+  can aim at the read path without hunting for hidden overhead first.
+
+  TWO BUGS IN MY OWN HARNESS, both caught by its output rather than by review,
+  and both worth recording because they are the shape of measurement error:
+  (1) the stale-build guard cried stale on a current tree — sbt's resource copy
+  PRESERVES the source mtime but truncates it to milliseconds, so a fresh copy
+  reads microseconds OLDER than its source; fixed with 2s of slack.  (2) The
+  first editor run reported a NEGATIVE residual for the didOpen round, because
+  I subtracted the 300ms debounce from a check that does not pay it — didOpen
+  checks immediately.  The steady-state numbers were unaffected, but the editor
+  half was re-measured after the fix so the recorded baseline comes from the
+  committed code.  Same discipline for the batch half: after a late shell-side
+  locale pin the script was re-run and reproduces — 11.33s over 3 reps against
+  the recorded 11.46s over 5, 1.1% apart, inside run-to-run variation.
+  Also verified as a positive control: an editor run leaves the 129 `.ei`
+  untouched, which is the interface-free invariant (Decision 8) holding in
+  practice and not just in the Resident's constructor.
+
+  NO OPTIMIZATION WAS ATTEMPTED and none may be until P2 reports.
+  Baselines: core/test 902 total, 901 pass, 1 fail (`Constraints.disjunction
+  sound`, the known one); repl-smoke 4 suites; lsp-smoke 82 checks; boot 129
+  (5.78s warm); `npm test` PASS.  No Scala was touched — the diff is two new
+  tracker/tools scripts and this file.
