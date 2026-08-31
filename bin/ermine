@@ -18,7 +18,7 @@ if [[ ! -s $cache ]] || [[ build.sbt -nt $cache ]]; then
     grep -v '^\[' | grep -v '^$' | tail -1 | tr -d '\n' > "$cache"
 fi
 
-opts=( -Dermine.typeCheck=true )
+opts=( -Dermine.typeCheck=true -Dermine.pipeline=new )  # post-G1 D1 cutover
 [[ -n ${ERMINE_JAVA_OPTS:-} ]] && read -r -a extra <<< "$ERMINE_JAVA_OPTS" && opts+=( "${extra[@]}" )
 
 exec java "${opts[@]}" -cp "$(cat "$cache")" \

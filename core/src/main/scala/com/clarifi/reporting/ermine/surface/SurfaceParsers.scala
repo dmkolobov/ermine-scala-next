@@ -849,4 +849,14 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
       case Right((_, m))  => Right(m)
     }
   }
+
+  /** A REPL expression: the whole input is one term (post-G1 D1 —
+    * Session.eval's phrase(term) over the resolution-free grammar). */
+  def expression(source: String, contents: String): Either[Err, STerm] = {
+    val ps = scalaparsers.ParseState.mk(source, contents, ())
+    phrase(term).run(ps, Supply.create.split) match {
+      case Left(err)     => Left(err)
+      case Right((_, t)) => Right(t)
+    }
+  }
 }

@@ -671,7 +671,14 @@ object Session {
     source: String = "<interactive>"
   )(implicit s: SessionEnv, su: Supply, con: Printer): (Type, Runtime) = {
     loadModules(importedModules.keySet.toList)
-    val (eps,a) = parse(phrase(term), ErParseState.mk(source,text, "REPL").importing(s.termNames, s.cons.keySet, importedModules, s.termNameOrigins, s.consOrigins))
+    // post-G1 D1: expressions ride the split pipeline when the session
+    // does; REPL COMMAND parsing stays fused (Decision d covers ':'
+    // commands, not the term grammar)
+    val a =
+      if (s.pipelineNew)
+        com.clarifi.reporting.ermine.rename.NewPipeline.replTerm(source, text, importedModules)
+      else
+        parse(phrase(term), ErParseState.mk(source,text, "REPL").importing(s.termNames, s.cons.keySet, importedModules, s.termNameOrigins, s.consOrigins))._2
     val ty = subst { implicit hm => inferType(Nil,a.close) }
     (ty, Term.eval(a, s.env))
   }

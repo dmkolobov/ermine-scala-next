@@ -217,6 +217,16 @@ object Renamer {
     Result(s.occs.result(), s.binders.result(), s.frames.result(), s.diags.result(), top)
   }
 
+  /** Rename one bare TERM against a scope — the REPL expression entry
+    * (post-G1 D1).  No module frame: every free name resolves through
+    * the import canonicals or becomes a shared placeholder downstream. */
+  def renameTerm(t: STerm, scope: ModuleScope.Scope): Result = {
+    val s = new S(scope)
+    term(t, Nil, s)
+    termTypes(t, s, Map())
+    Result(s.occs.result(), s.binders.result(), s.frames.result(), s.diags.result(), Map())
+  }
+
   /** Rename; on the first diagnostic, throw Death rendered the way
     * Pos.report renders - "file:line:col:" + source line + caret - so the
     * LSP Diagnostics regex and no(...)/sessionProof keep working when

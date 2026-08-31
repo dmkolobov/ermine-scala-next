@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: G1 SIGNED OFF 2026-08-30 ("keep going"; both known deltas accepted). Post-G1 debt phase open — next: D1 REPL/eval/Remote cutover (precondition: interface round-trip test, Decision g) · Seeded 2026-08-30 (session that shipped the
+Status: post-G1 debt — D0, D1 DONE (eval on the split pipeline; bin/ermine + bin/ermine-lsp cut over); next: D2 scoping.in line, then D3 fused-machinery deletion · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -357,7 +357,7 @@ summarize for sign-off before Stage 2.
   repeatable test — new-pipeline load with useInterface on writes .ei
   into a temp workspace, a FRESH session warm-loads from them, and the
   warm session's types/env answers match the cold session's.
-- [ ] **D1 REPL/eval/Remote cutover**: Session.eval (expressions) and
+- [x] **D1 REPL/eval/Remote cutover**: Session.eval (expressions) and
   the statement paths route through SurfaceParsers+Renamer+Reassoc+
   Lower against session scope; Console commands keep their own parsers.
 - [ ] **D2 scoping.in aliased-shadow line**: document the semantics
@@ -1011,3 +1011,25 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
 - 2026-08-30 (G1 SIGN-OFF): user accepted both known deltas ("keep
   going").  Post-G1 debt phase opened as checklist D0-D8; the loop
   resumes on D0.
+
+- 2026-08-30 (D1): REPL/EVAL CUTOVER. Session.eval routes expressions
+  through the split pipeline when the session does: new
+  SurfaceParsers.expression (phrase(term) over the resolution-free
+  grammar), Renamer.renameTerm (bare-term entry, no module frame),
+  NewPipeline.replTerm (rename -> Reassoc.term under import fixities ->
+  Lower with annot wiring -> conMap substitution).  Unlike a module
+  load, nothing links a REPL term later, so replTerm refuses any free
+  variable left after lowering ("undefined term" at its position) —
+  without this, unresolved names and missing desugar primitives reached
+  eval as PANICs (caught by the new TestReplDifferential corpus, 21
+  expressions evaluated through BOTH paths, agreement required).  One
+  intentional relaxation documented there: the fused phrase(term) never
+  parsed multi-equation let blocks in one expression ("end of layout
+  not found"); the surface grammar does.  evalInNamedModuleContext
+  rides eval; evalInContext has no users and stays fused until D3
+  deletes it or ports it.  bin/ermine and bin/ermine-lsp now pass
+  -Dermine.pipeline=new (the shipped cutover); repl-smoke.sh defaults
+  to the new pipeline with REPL_PIPELINE=-Dermine.pipeline=old as the
+  old-path override — 3/3 under BOTH.  Corpus-authoring note repeated:
+  importing Primitive and Prelude together makes + ambiguous (the
+  operator-imported-twice pin).  Suite 902 (901+known); lsp 31/31.

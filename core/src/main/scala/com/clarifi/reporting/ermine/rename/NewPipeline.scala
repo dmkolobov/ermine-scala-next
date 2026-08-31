@@ -11,7 +11,7 @@ import com.clarifi.reporting.ermine.syntax.{
   ForeignConstructorStatement, ForeignDataStatement, ForeignFunctionStatement,
   ForeignMember, ForeignMethodStatement, ForeignSubtypeStatement,
   ForeignTermDef, ForeignValueStatement, Module, PrivateBlock, SigStatement,
-  Statement, TableStatement, TermStatement, TypeStatement }
+  Statement, TableStatement, TermStatement, TypeStatement, Explicit }
 import scalaparsers.{ Death, Document, Pos, Supply }
 
 /** The new pipeline's module reader (Stage 1 item 4.1c): surface parse ->
@@ -55,6 +55,52 @@ object NewPipeline {
       throw Death(mkPos(fileName, contents, d.span).report(Document.text(d.message)))
     }
     (ps, module)
+  }
+
+  /** The REPL expression path (post-G1 D1): surface-parse one term,
+    * rename it against the session imports, re-associate, lower, and
+    * substitute cons — the core Term Session.eval infers and evaluates.
+    * Death positions render over `source` like the fused phrase(term). */
+  def replTerm(source: String, contents: String,
+               imports: Map[String, (Option[String], List[Explicit[Global]], Boolean)])
+              (implicit s: SessionEnv, su: Supply): com.clarifi.reporting.ermine.Term = {
+    def die(sp: Span, msg: String): Nothing =
+      throw Death(mkPos(source, contents, sp).report(Document.text(msg)))
+
+    val e0 = SurfaceParsers.expression(source, contents) match {
+      case Right(t)  => t
+      case Left(err) => throw Death(err.pretty)
+    }
+    val scope = ModuleScope.importing("REPL", ModuleScope.Scope.empty,
+      s.termNames, s.cons.keySet, imports, s.termNameOrigins, s.consOrigins)
+    val renamed = Renamer.renameTerm(e0, scope)
+    renamed.diagnostics.headOption.foreach(d => die(d.span, "error: " + d.message))
+
+    val fenv = Reassoc.FixityEnv(Reassoc.importFixities(scope), Map())
+    val (re, reDs) = Reassoc.term(e0, fenv)
+    reDs.headOption.foreach(d => die(d.span, d.message))
+
+    val lctx = Lower(renamed, source, s.termNames, scope)
+    val tctx = TyLower(renamed, source, "REPL", s.cons ++ s.privateCons, su)
+    lctx.lowerAnnot = (t: com.clarifi.reporting.ermine.surface.STy) => TyLower.annot(t, tctx)
+    val tm = Lower.term(re, lctx)
+    lctx.diags.result().headOption.foreach(d => die(d.span, d.message))
+
+    val cm = Type.conMap("REPL", tctx.typeNames, s.cons)
+    val out = com.clarifi.reporting.ermine.Subst.subTermMaps((cm, Map.empty[V[Type], V[Type]]), tm)
+
+    // Unlike a module load, nothing links a REPL term later: every free
+    // variable must already be bound in the session env, or this is the
+    // fused parse-time refusal moved here (undefined names, ambiguous
+    // imports, missing desugar primitives — Decision f rendering)
+    val unbound = scala.collection.mutable.ListBuffer.empty[V[Type]]
+    com.clarifi.reporting.ermine.Term.termVars(out).foreach { v =>
+      if (!s.env.contains(v)) unbound += v
+    }
+    unbound.headOption.foreach { v =>
+      throw Death(v.report(Document.text("error: undefined term")))
+    }
+    out
   }
 
   private def mkPos(file: String, contents: String, sp: Span): Pos = {

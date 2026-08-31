@@ -20,6 +20,7 @@ for input in tracker/repl-tests/*.in; do
   expected="tracker/repl-tests/$name.expected"
   actual=$(
     "$JAVA_HOME/bin/java" -Dermine.typeCheck=true -Dermine.useInterface=false \
+      ${REPL_PIPELINE:--Dermine.pipeline=new} \
       -cp "$cp" com.clarifi.reporting.ermine.session.Console < "$input" 2>&1 |
     sed -n '/Loaded [0-9]* modules/,$p' |   # drop banner and startup module list
     tail -n +2 |                            # drop the "Loaded N modules" line

@@ -73,9 +73,12 @@ object TestInterfaceRoundTrip extends Properties("Interface round-trip") {
     implicit val printer: Printer = Printer.ignore
     val dir = workspace()
 
-    // the module-name dep cache is process-global and name-keyed
+    // the dep cache is process-global; deps cached by OTHER suites carry
+    // their sessions' useInterface baked into the read closures (a
+    // useInterface=false dep answers readInterface with None forever),
+    // which breaks the interface hash chain for our warm load — clear it
     ErmineFixture.literalLock.synchronized {
-      Session.depCache.keys.filter(k => k.defaultModuleName.startsWith("Rt")).foreach(Session.depCache -= _)
+      Session.depCache.clear()
 
       val cold = session(dir, pipelineNew = true)
       Session.loadModules(List("RtB"))(cold, su, printer)
@@ -84,13 +87,13 @@ object TestInterfaceRoundTrip extends Properties("Interface round-trip") {
       val eiA = Files.exists(dir.resolve("RtA.ei"))
       val eiB = Files.exists(dir.resolve("RtB.ei"))
 
-      Session.depCache.keys.filter(k => k.defaultModuleName.startsWith("Rt")).foreach(Session.depCache -= _)
+      Session.depCache.clear()
       val warm = session(dir, pipelineNew = true)
       Session.loadModules(List("RtB"))(warm, su, printer)
       val warmMethod = warm.loadedModules.get("RtB")
       val warmAns = answers(warm)
 
-      Session.depCache.keys.filter(k => k.defaultModuleName.startsWith("Rt")).foreach(Session.depCache -= _)
+      Session.depCache.clear()
       val old = session(dir, pipelineNew = false)
       Session.loadModules(List("RtB"))(old, su, printer)
       val oldMethod = old.loadedModules.get("RtB")
