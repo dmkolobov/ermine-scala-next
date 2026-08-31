@@ -50,3 +50,13 @@ re-arms; whitespace never decides; anything else must be onside). Stage 2
 error recovery = catch a statement-parser failure, splitter-consume the
 extent, emit SErrorStatement — the mechanism 2.3a already uses for
 not-yet-implemented statement kinds.
+
+## Bare `private` (Error.e) — open parity question for G1
+
+`private` with no indented block, followed by a col-1 comment and col-1
+statements: the surface parser yields an EMPTY SPrivateBlock and keeps
+the following statements top-level (comment-only raw extents fail, so
+the virtual block closes). Whether the fused pipeline reads the same
+shape as empty-or-merged (virtualLeftBrace records col max depth) is
+exactly the col-max-depth corner — the G1 groups/renamer differential
+must confirm agreement on Error.e's privateTerms.

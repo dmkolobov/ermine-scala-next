@@ -66,6 +66,9 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
     token(satisfy(Lexer.isOpChar).skipSome.slice.filter(_ == s).skip.attempt("'" + s + "'"))
 
   def comma: Parser[Char] = token(ch(','))
+  def ellipsis: Parser[Unit] =
+    token(satisfy(Lexer.isOpChar).skipSome.slice.filter(_ == "..").skip.attempt("'..'"))
+  def doubleArrowTok: Parser[Unit] = keyOp("=>")
 
   def rawKeyword(s: String): Parser[Unit] =
     (stillOnside >> rawLetter >> rawIdentTail).slice.filter(_ == s).skip.attempt("raw " + s)
@@ -284,7 +287,7 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
     p1    <- loc
     first <- patternL1
     rest  <- (spanned(conOpTok) ++ patternL1).many
-    sig   <- (keyOp(":") >> rawTypeText(stopArrow)).optional
+    sig   <- (keyOp(":") >> annotTy).optional
     p2    <- loc
   } yield {
     val base =
@@ -459,12 +462,291 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
   def term: Parser[STerm] = for {
     p1 <- loc
     tm <- termNeg
-    r  <- (keyOp(":") >> rawTypeText(stopArrow = false)).optional
+    r  <- (keyOp(":") >> annotTy).optional
     p2 <- loc
   } yield r match {
     case None    => tm
     case Some(t) => SSig(Real(span2(p1, p2)), tm, t)
   }
+
+  // ---------------------------------------------------------------- types
+  // The real type grammar (2.3c), replacing the raw-extent scaffold.
+  // kindMode adds the kind atoms (*, rho/ρ, phi/φ, constraint/Γ) that the
+  // fused pipeline parses with a separate kind grammar; everything else is
+  // shared, mirroring TypeParsers typL0/typL1/typL2/typ.
+
+  private def kindKeywordAtom: Parser[STy] =
+    (spanned(keyword("rho").as("rho") | keyword("ρ").as("ρ") |
+             keyword("phi").as("phi") | keyword("φ").as("φ") |
+             keyword("constraint").as("constraint") | keyword("Γ").as("Γ"))
+       .map(s => STyName(SName(s._1, Plain, Idfix, s._2)): STy)) |
+    spanned(token(rawCh('*'))).map(s => STyName(SName("*", Plain, Idfix, s._2)): STy)
+
+  private def tyName: Parser[SName] =
+    (spanned(identTok) | spanned(moduleQualCon) | spanned(qualDottedName))
+      .map(n => SName(n._1, Plain, Idfix, n._2))
+
+  /** Module.Sub.name — qualified references to lowercase names too. */
+  private def qualDottedName: Parser[String] =
+    token((((upper >> identTail).slice << rawCh('.')).some.map(_.toList) ++
+           (letter >> identTail).slice)
+      .map { case ms ++ n => ms.mkString(".") + "." + n }.attempt("qualified name"))
+
+  private def rowInner(mk: (SLoc, Boolean, List[STy]) => STy, open: Parser[Any]): Parser[STy] = for {
+    s <- spanned(for {
+      _ <- open
+      r <- (ellipsis >> tyName.map(n => (true, List(STyName(n): STy)))) |
+           tyName.map(n => STyName(n): STy).sepBy(comma).map(ts => (false, ts.toList))
+      _ <- right
+    } yield r)
+  } yield mk(Real(s._2), s._1._1, s._1._2)
+
+  def tyAtom(kindMode: Boolean): Parser[STy] = (
+    rowInner(STyBanana.apply, leftBanana) |
+    rowInner(STyRowBrace.apply, leftBrace) |
+    rowInner(STyRowBracket.apply, leftBracket) |
+    (if (kindMode) kindKeywordAtom else fail("kind atom")) |
+    spanned(token(paren(keyOp("->")))).map(s => STyName(SName("->", ParenOp, Idfix, s._2)): STy).attempt |
+    spanned(token(paren(comma.some))).map(s => STyTuple(Real(s._2), Nil): STy).attempt |
+    tyName.map(n => STyName(n): STy) |
+    (for { s <- spanned(paren(typ(kindMode) sepBy comma)) }
+       yield (s._1 match {
+         case List(one) => STyParen(Real(s._2), one)
+         case xs        => STyTuple(Real(s._2), xs)
+       }): STy)
+  ) scope "type atom"
+
+  def tyApp(kindMode: Boolean): Parser[STy] =
+    tyAtom(kindMode).some.map(_.toList.reduceLeft(STyApp.apply))
+
+  private def tyArrowOcc: Parser[OpOcc] =
+    (spanned(keyOp("->")).map(s => OpOcc(SName("->", Plain, Idfix, s._2), PostOperandPos)) |
+     spanned(doubleArrowTok).map(s => OpOcc(SName("=>", Plain, Idfix, s._2), PostOperandPos)) |
+     spanned(keyOp("<-")).map(s => OpOcc(SName("<-", Plain, Idfix, s._2), PostOperandPos)))
+
+  def tyChain(kindMode: Boolean): Parser[STy] = {
+    def more(prevOperand: Boolean, acc: List[Either[STy, OpOcc]]): Parser[List[Either[STy, OpOcc]]] =
+      ((if (prevOperand) tyArrowOcc | spanned(opTok).map(o => OpOcc(SName(o._1, Plain, Idfix, o._2), PostOperandPos))
+        else spanned(opTok).map(o => OpOcc(SName(o._1, Plain, Idfix, o._2), OperandPos)))
+         .map(Right(_): Either[STy, OpOcc])
+         .flatMap(i => more(prevOperand = false, i :: acc))) |
+      (if (prevOperand) unit(acc)
+       else tyApp(kindMode).map(t => Left(t): Either[STy, OpOcc]).flatMap(i => more(prevOperand = true, i :: acc))) |
+      unit(acc)
+    for {
+      p1    <- loc
+      first <- tyApp(kindMode)
+      rest  <- more(prevOperand = true, Nil)
+      p2    <- loc
+    } yield rest match {
+      case Nil   => first
+      case items => STyChain(Chain(Real(span2(p1, p2)), Left(first) :: items.reverse))
+    }
+  }
+
+  /** `a` or `(a : kind)` binder. */
+  def tyBinder: Parser[SBinder] =
+    spanned(identTok).map(n => SBinder(SName(n._1, Plain, Idfix, n._2), None)) |
+    token(paren(for {
+      n <- spanned(identTok)
+      _ <- keyOp(":")
+      k <- tyChain(kindMode = true)
+    } yield SBinder(SName(n._1, Plain, Idfix, n._2), Some(k))).attempt("kinded binder"))
+
+  private def kindBraceGroup: Parser[List[SName]] =
+    token(brace(spanned(identTok).map(n => SName(n._1, Plain, Idfix, n._2)).many.map(_.toList)))
+      .attempt.orElse(Nil)
+
+  def existsTy: Parser[STy] = for {
+    p1 <- loc
+    _  <- keyword("exists")
+    bs <- tyBinder.many
+    _  <- keyOp(".")
+    cs <- tyChain(kindMode = false).sepBy1(comma)
+    p2 <- loc
+  } yield STyExists(Real(span2(p1, p2)), bs.toList, cs.toList)
+
+  def typ(kindMode: Boolean): Parser[STy] = (for {
+    p1 <- loc
+    q  <- (for {
+            _   <- keyword("forall")
+            ks  <- kindBraceGroup
+            bs  <- tyBinder.many
+            _   <- keyOp(".")
+          } yield (ks, bs.toList)).attempt.optional
+    t  <- existsTy | tyChain(kindMode)
+    p2 <- loc
+  } yield q match {
+    case None           => t
+    case Some((ks, bs)) => STyForall(Real(span2(p1, p2)), ks, bs, t)
+  }) scope "type"
+
+  /** Signature/annotation types: optional `some` quantifier, then typ
+    * (TypeParsers.annot). */
+  def annotTy: Parser[STy] = for {
+    p1 <- loc
+    q  <- (for {
+            _  <- keyword("some")
+            ks <- kindBraceGroup
+            bs <- tyBinder.many
+            _  <- keyOp(".")
+          } yield (ks, bs.toList)).attempt.optional
+    t  <- typ(kindMode = false)
+    p2 <- loc
+  } yield q match {
+    case None           => t
+    case Some((ks, bs)) => STySome(Real(span2(p1, p2)), ks, bs, t)
+  }
+
+  // --------------------------------------------- remaining statement kinds
+
+  private def stringLit: Parser[(String, Span)] = spanned(stringLiteral)
+
+  def fieldStatementP: Parser[SStatement] = for {
+    p1 <- loc
+    _  <- keyword("field")
+    vs <- spanned(identTok).map(n => SName(n._1, Plain, Idfix, n._2)).sepBy1(comma)
+    _  <- keyOp(":")
+    t  <- typ(kindMode = false)
+    p2 <- loc
+  } yield SFieldStatement(Real(span2(p1, p2)), vs.toList, t)
+
+  private def dottedDefName: Parser[SName] = for {
+    n <- spanned((((letter >> identTail).slice << rawCh('.')).attempt.many.map(_.toList) ++
+                  (letter >> identTail).slice)
+           .map { case ms ++ n => (ms :+ n).mkString(".") })
+  } yield SName(n._1, Plain, Idfix, n._2)
+
+  def tableStatementP(dbName: Option[String]): Parser[SStatement] = (for {
+    p1 <- loc
+    _  <- keyword("table")
+    vs <- token(dottedDefName).sepBy1(comma)
+    _  <- keyOp(":")
+    t  <- typ(kindMode = false)
+    p2 <- loc
+  } yield STableStatement(Real(span2(p1, p2)), dbName, vs.toList, t): SStatement).attempt("table statement")
+
+  def typeAliasP: Parser[SStatement] = for {
+    p1 <- loc
+    _  <- keyword("type")
+    v  <- defName
+    ks <- kindBraceGroup
+    bs <- tyBinder.many
+    _  <- keyOp("=")
+    t  <- existsTy | typ(kindMode = false)
+    p2 <- loc
+  } yield STypeAlias(Real(span2(p1, p2)), v, ks, bs.toList, t)
+
+  private def dataConDef: Parser[SConDef] = for {
+    p1 <- loc
+    ex <- (keyword("forall") >> tyBinder.many << keyOp(".")).attempt.map(_.toList).orElse(Nil)
+    n  <- defName
+    fs <- tyAtom(kindMode = false).many
+    p2 <- loc
+  } yield SConDef(Real(span2(p1, p2)), ex, n, fs.toList)
+
+  def dataStatementP: Parser[SStatement] = for {
+    p1  <- loc
+    _   <- keyword("data")
+    v   <- defName
+    ks  <- kindBraceGroup
+    bs  <- tyBinder.many
+    cs  <- (keyOp("=") >> dataConDef.sepBy1(keyOp("|"))).optional
+    p2  <- loc
+  } yield SDataStatement(Real(span2(p1, p2)), v, ks, bs.toList, cs.map(_.toList).getOrElse(Nil))
+
+  def classStatementP: Parser[SStatement] = for {
+    p1  <- loc
+    _   <- keyword("class")
+    v   <- defName
+    ks  <- kindBraceGroup
+    bs  <- tyBinder.many
+    ctx <- (keyOp("|") >> tyChain(kindMode = false).sepBy1(comma)).map(_.toList).orElse(Nil)
+    bod <- (keyword("where") >>
+             (classPrivateP | bindingStatement).attempt.sepEndBy(semi)
+               .between(virtualLeftBrace("class body"), virtualRightBrace)).map(_.toList).orElse(Nil)
+    p2  <- loc
+  } yield SClassStatement(Real(span2(p1, p2)), v, ks, bs.toList, ctx, bod)
+
+  private def classPrivateP: Parser[SStatement] = for {
+    p1 <- loc
+    _  <- keyword("private")
+    ss <- laidout("class private statement", bindingStatement)
+    p2 <- loc
+  } yield SPrivateBlock(Real(span2(p1, p2)), ss)
+
+  private def foreignStatementP: Parser[SForeign] = {
+    def sigPart: Parser[(SName, STy)] = for {
+      v <- defName
+      _ <- keyOp(":")
+      t <- typ(kindMode = false)
+    } yield (v, t)
+    (for {
+      p1 <- loc; _ <- keyword("data"); c <- stringLit; v <- defName; bs <- tyBinder.many; p2 <- loc
+    } yield SForeignData(Real(span2(p1, p2)), v, bs.toList, c._1, c._2): SForeign) |
+    (for {
+      p1 <- loc; _ <- keyword("method"); m <- stringLit; vt <- sigPart; p2 <- loc
+    } yield SForeignMethod(Real(span2(p1, p2)), vt._1, vt._2, m._1, m._2): SForeign) |
+    (for {
+      p1 <- loc; _ <- keyword("function"); c <- stringLit; m <- stringLit; vt <- sigPart; p2 <- loc
+    } yield SForeignFunction(Real(span2(p1, p2)), vt._1, vt._2, c._1, c._2, m._1, m._2): SForeign) |
+    (for {
+      p1 <- loc; _ <- keyword("value"); c <- stringLit; m <- stringLit; vt <- sigPart; p2 <- loc
+    } yield SForeignValue(Real(span2(p1, p2)), vt._1, vt._2, c._1, c._2, m._1, m._2): SForeign) |
+    (for {
+      p1 <- loc; _ <- keyword("constructor"); vt <- sigPart; p2 <- loc
+    } yield SForeignConstructor(Real(span2(p1, p2)), vt._1, vt._2): SForeign) |
+    (for {
+      p1 <- loc; _ <- keyword("subtype"); vt <- sigPart; p2 <- loc
+    } yield SForeignSubtype(Real(span2(p1, p2)), vt._1, vt._2): SForeign) |
+    (for {
+      p1 <- loc; _ <- keyword("private")
+      ss <- laidout("foreign private statement", foreignStatementP)
+      p2 <- loc
+    } yield SForeignPrivate(Real(span2(p1, p2)), ss): SForeign)
+  }
+
+  private def sameLine(p: Pos): Parser[Unit] =
+    new Parser[Unit] {
+      def apply(s: ParseState, sup: Supply) =
+        scalaz.Trampoline.done(
+          if (s.loc.line == p.line) scalaparsers.Pure(())
+          else scalaparsers.Fail(None, List(), Set()))
+    }
+
+  def foreignBlockP: Parser[SStatement] = for {
+    p1     <- loc
+    _      <- keyword("foreign")
+    privat <- (sameLine(p1) >> keyword("private")).as(true).orElse(false)
+    ss     <- laidout("foreign statement", foreignStatementP)
+    p2     <- loc
+  } yield {
+    val blk = SForeignBlock(Real(span2(p1, p2)), ss)
+    if (privat) SPrivateBlock(Real(span2(p1, p2)), List(blk)) else blk
+  }
+
+  def privateBlockP: Parser[SStatement] = for {
+    p1      <- loc
+    _       <- keyword("private")
+    foreign <- (sameLine(p1) >> keyword("foreign")).as(true).orElse(false)
+    r <- if (foreign) for {
+           ss <- laidout("private foreign statement", foreignStatementP)
+           p2 <- loc
+         } yield SPrivateBlock(Real(span2(p1, p2)), List(SForeignBlock(Real(span2(p1, p2)), ss)))
+         else for {
+           ss <- statement.attempt.sepEndBy(semi)
+                   .between(virtualLeftBrace("private statement"), virtualRightBrace)
+           p2 <- loc
+         } yield SPrivateBlock(Real(span2(p1, p2)), ss.toList)
+  } yield r
+
+  def databaseBlockP: Parser[SStatement] = for {
+    p1 <- loc
+    _  <- keyword("database")
+    db <- stringLit
+    ss <- laidout("database statement", tableStatementP(Some(db._1)))
+    p2 <- loc
+  } yield SDatabaseBlock(Real(span2(p1, p2)), db._1, ss)
 
   // ---------------------------------------------------- binding statements
 
@@ -472,7 +754,7 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
     p1 <- loc
     vs <- defName.sepBy1(comma)
     _  <- keyOp(":")
-    t  <- rawTypeText(stopArrow = false)
+    t  <- annotTy
     p2 <- loc
   } yield SSigStatement(Real(span2(p1, p2)), vs.toList, t): SStatement).attempt("signature")
 
@@ -515,6 +797,10 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
     // the vsemi decision was already made; clear stale begin-of-line state
     // the same way token parsers do before their first character
     text <- (setBol(false) >> rawStatementChar.skipSome).slice
+              .filter(t => !t.linesIterator.forall(l => l.trim.isEmpty || (l.trim startsWith "--")))
+              .attempt("statement text")  // comment-only extents are whitespace,
+                                          // not statements (bare `private` + a
+                                          // col-1 comment, Error.e)
     p2   <- loc
     _    <- optionalSpace.skipOptional
   } yield {
@@ -525,7 +811,17 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
 
   def statement: Parser[SStatement] =
     optionalSpace.skipOptional >>
-    (fixityStatement | bindingStatement.attempt | rawStatement)
+    (fixityStatement       |
+     fieldStatementP       |
+     tableStatementP(None) |
+     typeAliasP            |
+     dataStatementP        |
+     foreignBlockP         |
+     privateBlockP         |
+     databaseBlockP        |
+     classStatementP       |
+     bindingStatement.attempt |
+     rawStatement)
 
   def module(fileName: String, contents: String, defaultName: String = "Surface"): Either[Err, SModule] = {
     val p = for {

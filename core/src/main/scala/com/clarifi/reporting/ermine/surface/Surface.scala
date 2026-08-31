@@ -173,9 +173,11 @@ final case class STyTuple(loc: SLoc, elems: List[STy])              extends STy
 final case class STyList(loc: SLoc, elem: Option[STy])              extends STy  // [a] / []
 final case class STyRowBrace(loc: SLoc, dots: Boolean, inner: List[STy]) extends STy  // {..r} / {a, b}
 final case class STyRowBracket(loc: SLoc, dots: Boolean, inner: List[STy]) extends STy // [..r]
-final case class STyBanana(loc: SLoc, inner: List[STy])             extends STy  // (| ... |)
+final case class STyBanana(loc: SLoc, dots: Boolean, inner: List[STy]) extends STy  // (| ... |)
 final case class STyForall(loc: SLoc, kindBinders: List[SName], typeBinders: List[SBinder], body: STy) extends STy
 final case class STyExists(loc: SLoc, binders: List[SBinder], body: List[STy]) extends STy
+/** Annotation-level `some a b.` quantifier (TypeParsers.annot). */
+final case class STySome(loc: SLoc, kindBinders: List[SName], binders: List[SBinder], body: STy) extends STy
 final case class STyError(loc: SLoc, message: String)               extends STy
 
 /** `(a : kind)` or bare `a` in binder position. */
@@ -214,6 +216,9 @@ final case class SForeignMethod(loc: SLoc, name: SName, ty: STy, member: String,
 final case class SForeignValue(loc: SLoc, name: SName, ty: STy, className: String, classSpan: Span, member: String, memberSpan: Span) extends SForeign
 final case class SForeignConstructor(loc: SLoc, name: SName, ty: STy) extends SForeign
 final case class SForeignSubtype(loc: SLoc, name: SName, ty: STy) extends SForeign
+/** `private <foreign statements>` inside a foreign block (per-item or
+  * laid-out group; the old grammar reads both through one laidout). */
+final case class SForeignPrivate(loc: SLoc, statements: List[SForeign]) extends SForeign
 
 final case class SSigStatement(loc: SLoc, names: List[SName], annot: STy) extends SStatement
 /** One equation: `f p1 p2 = body [where ...]`.  Adjacent equations of one

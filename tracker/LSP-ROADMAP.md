@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 2.3b done (terms+patterns, 2929 real stmts); next item 2.3c (types+statements) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 2.3c done (FULL surface grammar, 3654 stmts); next item 2.3d (parse differential) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -242,7 +242,7 @@ machinery is deleted post-G1, never before.
 - [x] **2.3b Parser: terms + patterns** (flat chains, sugar nodes,
   BraceLit accepts zero elements — the fieldList empty-brace crash dies
   by construction; renamer rejects instead).
-- [ ] **2.3c Parser: types + data/class/foreign statements** (quantifier/
+- [x] **2.3c Parser: types + data/class/foreign statements** (quantifier/
   row forms, kind-arg braces, class blocks).
 - [ ] **2.3d Parse differential**: all 180 .e files parse (161 stdlib +
   19 core/examples — user-style surface variety the stdlib lacks); the
@@ -628,3 +628,22 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   foreign). Shape properties added (chain classes, neg, do, rec/brace,
   arrow kinds, nested pattern sig). Baselines: 804 (803+known), repl 3/3,
   lsp 27/27.
+- 2026-08-30 2.3c done: the full type grammar (row types with dots forms
+  incl. banana, forall/exists/some quantifiers with kind-brace groups and
+  kinded binders, ->/=>/<- as chain pseudo-ops, kind-mode atoms */rho/phi/
+  constraint incl. unicode spellings, qualified dotted names) replaced
+  every raw type capture; plus field/table(dotted names, database form)/
+  type-alias/data(per-con foralls)/class(context+body)/foreign(6 forms +
+  per-item private wrapper, class names as strings)/private/database
+  statements. THE WHOLE SURFACE GRAMMAR NOW STANDS: 3654 statements
+  parse for real across 178 old-parseable files, zero placeholders, zero
+  failures; the two legacy files the fused pipeline also rejects now fail
+  cleanly (agreement on rejection, exemptions in the test). Found en
+  route: per-item `private` inside foreign blocks (Font.e — new
+  SForeignPrivate node); pattern sigs need the `some` annot quantifier
+  (Field.e/Chart.e); bare `private` + col-1 comment must yield an EMPTY
+  private block (comment-only raw extents are whitespace — Error.e;
+  recorded in surface-notes as a G1 parity question, the col-max-depth
+  corner made concrete). Test now asserts zero unparsed:* of ANY kind on
+  non-legacy files + type-shape properties. Baselines: 805 (804+known;
+  one flake, 4th sighting, cleared on re-run), repl 3/3, lsp 27/27.
