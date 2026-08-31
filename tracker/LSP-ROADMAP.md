@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 4.1a done (eval-level integration 21/21); next: 4.1b (type lowering + module assembly + pipeline switch) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 4.1b done (type lowering 28/28); next: 4.1c (module assembly + loadModule + switch) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -782,3 +782,19 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   Session.loadModule's contract, the -Dermine.pipeline switch, fixture
   twins (testParse/kindOf), dual-pipeline suite runs with the :130/:133
   exemption. Baselines: 858 (857+known), repl 3/3, lsp 27/27.
+- 2026-08-30 4.1b done: rename/TyLower.scala — surface->core type/kind/
+  annotation lowering mirroring TypeParsers exactly: -> as Arrow apps;
+  => flattening Product-packed constraints into Forall(Nil,Nil,Exists.mk,
+  body); <- as Part(l.inferred, lhs, flattened); rows applying recordT/
+  relationT to ConcreteRho (unresolved field names localize to the
+  module) or the dotted row var; explicit forall/exists with written
+  binders and kinded-binder kinds; implicit sig vars stay FREE metas
+  shared per TyImplicit binder; `some` becomes the Annot existentials;
+  results .nf-normalized. KEY CONTRACT FIND (differential caught it):
+  the fused pipeline lowers type REFERENCES to named VarTs — one shared
+  V per Global, substituted to Cons later by loadModule's Type.conMap —
+  so TyLower mints the same and exposes its conVars as the typeNames map
+  4.1c will hand loadModule. Seven type differentials vs TypeParsers.typ
+  via the G1 comparator (arrows/forall/implicits/getF partition shape/
+  rows/tuples/kinded binders): all green. TestLower 28/28. Baselines:
+  865 (864+known), repl 3/3, lsp 27/27.

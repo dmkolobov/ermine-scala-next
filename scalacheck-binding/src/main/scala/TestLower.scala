@@ -5,7 +5,7 @@ import com.clarifi.reporting.ermine.Subst.inferType
 import com.clarifi.reporting.ermine.session.{ Session => S, SessionEnv }
 import com.clarifi.reporting.ermine.parsing.{ phrase, ErParseState, TermParsers }
 import com.clarifi.reporting.ermine.parsing.ErParseState.Implicits._
-import com.clarifi.reporting.ermine.rename.{ Lower, ModuleScope, Reassoc, Renamer }
+import com.clarifi.reporting.ermine.rename.{ Lower, ModuleScope, Reassoc, Renamer, TyLower }
 import com.clarifi.reporting.ermine.surface.{ SEquation, SurfaceParsers }
 
 import org.scalacheck._
@@ -241,7 +241,51 @@ object TestLower extends Properties("Lower 3.4a") {
   property("EVAL: do-notation over Maybe") =
     evalDiff("orElse 0 ((do q <- liftDo (Just 20); unit (q + 1)) maybeMonad)",
              im + ("Syntax.Do" -> all), fxAlt)
+
+  // ---- 4.1b: type lowering vs TypeParsers.typ ---------------------------
+
+  private def tyDiff(src: String, imps: Map[String, ImportSpec] = im,
+                     f: ErmineFixture = fx): Prop = secure {
+    import com.clarifi.reporting.ermine.tools.G1Compare
+    val oldTy: Type = f.session { implicit s =>
+      f.loadModules(imps.keySet.toList)
+      val ps = ErParseState.mk("<test>", src, "Test")
+        .importing(s.termNames, s.cons.keySet, imps, s.termNameOrigins, s.consOrigins)
+      S.parse(phrase(com.clarifi.reporting.ermine.parsing.TypeParsers.typ), ps)._2
+    }
+    val newTy: Type = f.session { implicit s =>
+      f.loadModules(imps.keySet.toList)
+      val ps = ErParseState.mk("<scope>", "", "Test")
+        .importing(s.termNames, s.cons.keySet, imps, s.termNameOrigins, s.consOrigins)
+      val scope = ModuleScope.Scope(ps.s.canonicalTerms, ps.s.canonicalTypes,
+        ps.s.termNames, ps.s.termOrigins, ps.s.typeOrigins)
+      val m = SurfaceParsers.module("t", "module T where\nf : " + src, "T")
+        .getOrElse(sys.error("surface parse failed for: " + src))
+      val r = Renamer.rename(m, scope)
+      val (env, _) = Reassoc.moduleEnv(m, scope)
+      val ann = m.statements.collectFirst {
+        case com.clarifi.reporting.ermine.surface.SSigStatement(_, _, t) => t }.get
+      val (re, ds) = Reassoc.ty(ann, env)
+      if (ds.nonEmpty) sys.error("reassoc diags: " + ds)
+      val ctx = TyLower(r, "t", "Test", s.cons ++ s.privateCons, fixtureSupply(f))
+      TyLower.annot(re, ctx).body
+    }
+    G1Compare.alphaEq(oldTy, newTy, G1Compare.Bij.empty).isDefined :|
+      s"OLD: ${oldTy.toString.take(250)}\nNEW: ${newTy.toString.take(250)}"
+  }
+
+  private def fixtureSupply(f: ErmineFixture): scalaparsers.Supply = f.supply
+
+  property("TY: arrows chain right with cons") = tyDiff("Int -> String -> Int")
+  property("TY: explicit forall with body") = tyDiff("forall a b. a -> b -> a")
+  property("TY: implicit sig variables stay free metas") = tyDiff("a -> a")
+  property("TY: partition and constraint arrows (Field.e getF shape)") =
+    tyDiff("r <- (h,t) => Field h a -> {..r} -> a", im)
+  property("TY: rows concrete and dotted") = tyDiff("Record {..q} -> Relation [Wibble, Wobble]")
+  property("TY: tuple types are Product spines") = tyDiff("(a, b) -> a")
+  property("TY: kinded binders in forall") = tyDiff("forall (m: rho -> *) (a: rho). m a")
 }
+
 
 
 
