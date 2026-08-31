@@ -20,11 +20,18 @@ import java.io.File
 import scalaz.{ Failure => _, Success => _, _ }
 import Scalaz.{ gets => _, _ }
 
+object ErmineFixture {
+  /** Serializes dynamic `Literal` loads: their dep-cache key is the
+    * module name, shared across every fixture in the process. */
+  val literalLock = new Object
+}
+
 /** I am not thread-safe, so use a separate one of me per `Properties`
   * instance.  Importing my symbols unqualified works quite well.
   */
 final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
-                               = Function const (())) {
+                               = Function const (()),
+                               statementsViaNew: Boolean = false) {
   implicit val supply: Supply = Supply.create
   implicit val con: Printer = Printer.ignore
 
@@ -36,7 +43,15 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
     e
   }
 
-  def mkEnv = baseEnv.copy
+  /** baseEnv writeback and copy are field-by-field; without the lock a
+    * concurrent property's copy can see termNames from one load and env
+    * from another (torn copy -> "eval: unbound variable"). */
+  private val envLock = new Object
+
+  def mkEnv = envLock.synchronized {
+    val e = baseEnv.copy
+    if (statementsViaNew) e.withPipelineNew(true) else e
+  }
 
   def session[A](f: SessionEnv => A): A = f(mkEnv)
 
@@ -44,7 +59,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
     * evil, but makes things faster. */
   def loadModules(moduleNames: List[String])(implicit s: SessionEnv) = {
     val res = Session.loadModules(moduleNames)
-    baseEnv := s
+    envLock.synchronized { baseEnv := s }
     res
   }
 
@@ -62,7 +77,29 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
   def loadStatements(
     stmts: String,
     imports: Map[String,ImportSpec] = imps
-  )(implicit s: SessionEnv): Unit = {
+  )(implicit s: SessionEnv): Unit = if (statementsViaNew) {
+    // 4.2: the same statements as a whole module through the LIVE
+    // pipeline switch (imports rendered to source; the corpus uses only
+    // plain and `as` forms)
+    loadModules(imports.keySet.toList)
+    val importLines = imports.toList.collect {
+      case (m, spec) if m != "Test" => spec match {
+        case (Some(a), _, _) => s"import $m as $a"
+        case _               => s"import $m"
+      }
+    }.mkString("\n")
+    val src = "module Test where\n" + importLines + "\n\n" + stmts + "\n"
+    val file = Session.Literal(src, "Test")
+    // Literal equality keys off the module NAME (see its equals); the
+    // process-global depCache would replay the first "Test" forever,
+    // and a concurrent property's freshly-cached dep must not be
+    // observed between our evict and load
+    ErmineFixture.literalLock.synchronized {
+      Session.depCache -= file
+      Session.load(file)
+      Session.depCache -= file
+    }
+  } else {
     loadModules(imports.keySet.toList)
     val spsz = ErParseState.mk("<test statements>", stmts, "Test").importing( s.termNames
                                                                             , s.cons.keySet
@@ -335,6 +372,9 @@ object TestErmine extends Properties("Ermine") {
 }
 
 trait ErmineModulesProperties {self: Properties =>
+  /** true re-runs the module corpus through rename.NewPipeline (4.2:
+    * the 32 non-boot modules and examples under the new pipeline). */
+  protected def pipelineNew: Boolean = false
   // Concrete and lazy, rather than abstract and overridden in the one
   // implementor: it must be lazy (the properties below run while that object is
   // still being constructed), Scala 3 will not let a lazy val implement a
@@ -362,23 +402,26 @@ trait ErmineModulesProperties {self: Properties =>
             classloader("com/clarifi/reporting/examples"))
   }
 
+  private def proofIn(v: SessionEnv => Any): Prop =
+    sessionProof(s => v(if (pipelineNew) s.withPipelineNew(true) else s))
+
   property("all modules load") =
-    sessionProof(implicit s =>
+    proofIn(implicit s =>
       loadModules(libraryModules.filterNot(excludedModules).toList))
 
   property("interesting test modules load") =
-    sessionProof(implicit s =>
+    proofIn(implicit s =>
       loadModules(testModules.toList))
 
   property("all interesting examples load") =
-    sessionProof{implicit s =>
+    proofIn{implicit s =>
       sampleModules
         .traverse[[a] =>> String \/ a, SourceFile](mod => sampleRoot.apply(mod) \/> mod)
         .fold(mod => throw Death("example " + mod + " not found"),
               _.foreach(load(_)))}
 }
 
-object TestErmineModules extends Properties("Ermine library") with ErmineModulesProperties {
+trait StdErmineModules { self: ErmineModulesProperties with Properties =>
   import ermineFixture.{mkEnv, modules}
 
   lazy val excludedModules = Set.empty[String]
@@ -397,4 +440,14 @@ object TestErmineModules extends Properties("Ermine library") with ErmineModules
        , "HelloWorld"
        , "ChartsExample"
        , "GridExample")
+}
+
+object TestErmineModules extends Properties("Ermine library")
+  with ErmineModulesProperties with StdErmineModules
+
+/** The same corpus through rename.NewPipeline: the 161 library modules
+  * (129 boot + 32 non-boot), the test module, and the examples. */
+object TestErmineModulesNewPipeline extends Properties("Ermine library (new pipeline)")
+  with ErmineModulesProperties with StdErmineModules {
+  override protected def pipelineNew = true
 }

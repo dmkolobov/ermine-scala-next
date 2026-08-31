@@ -106,6 +106,12 @@ class SessionEnv(
   val pipelineNew : Boolean =
     _pipelineNew.getOrElse("new" == System.getProperty("ermine.pipeline"))
 
+  /** The same session state with the pipeline switch pinned (tests). */
+  def withPipelineNew(b: Boolean): SessionEnv =
+    new SessionEnv(env, termNames, termNameOrigins, cons, privateCons,
+      consOrigins, loadFile, loadedFiles, loadedModules, classes,
+      classOrigins, Some(typeCheck), Some(useInterface), Some(b))
+
   def +=(sp: SessionEnv): Unit = {
     env             = env ++ sp.env
     termNames       = termNames ++ sp.termNames

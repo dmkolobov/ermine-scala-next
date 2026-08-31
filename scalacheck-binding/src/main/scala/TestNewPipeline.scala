@@ -69,11 +69,7 @@ object TestNewPipeline extends Properties("NewPipeline 4.1c") {
     val srcB = "module NPB where\nimport NPA\nimport Primitive\n\nvalB = valA + unwrap (MkWrap 2)\n"
     val r = fxChain.session { implicit s0 =>
       fxChain.loadModules(List("Primitive"))(s0)
-      implicit val s: SessionEnv = new SessionEnv(
-        s0.env, s0.termNames, s0.termNameOrigins, s0.cons, s0.privateCons,
-        s0.consOrigins, s0.loadFile, s0.loadedFiles, s0.loadedModules,
-        s0.classes, s0.classOrigins, Some(s0.typeCheck), Some(s0.useInterface),
-        _pipelineNew = Some(true))
+      implicit val s: SessionEnv = s0.withPipelineNew(true)
       S.load(Literal(srcA, "NPA"))
       S.load(Literal(srcB, "NPB"))
       s.termNames.keys.filter(g => g.module == "NPA" || g.module == "NPB").map(_.string).toSet

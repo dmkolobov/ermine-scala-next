@@ -16,8 +16,11 @@ import Prop.{ Result => _, _ }
   * (a pattern variable could not shadow a global) and the related loss of a
   * shadowed outer binding after a `let`.
   */
-object TestScopes extends Properties("Ermine scoping") {
-  private val ermineFixture = ErmineFixture()
+trait ScopesProperties { self: Properties =>
+  /** true routes each property's statements through rename.NewPipeline
+    * (the fixture wraps them in a module and S.loads a Literal). */
+  protected def viaNew: Boolean = false
+  private lazy val ermineFixture = ErmineFixture(statementsViaNew = viaNew)
   import ermineFixture._
 
   /** Function and List are imported so their exports are the globals we
@@ -127,11 +130,15 @@ object TestScopes extends Properties("Ermine scoping") {
     Map("Builtin" -> all, "Test" -> all, "Primitive" -> all,
         "Prelude" -> all, "Function" -> ((Some("F"), List[Explicit[Global]](), false)))
 
-  property("shadowing may not capture references through another alias (where)") =
-    no(typeChecks("v = id_F 5 where id x = 99", "v", aliasImps))
+  // 4.4 flips these two to POSITIVE Haskell semantics under the new
+  // pipeline; until then they run (as refusals) on the old path only
+  if (!viaNew) {
+    property("shadowing may not capture references through another alias (where)") =
+      no(typeChecks("v = id_F 5 where id x = 99", "v", aliasImps))
 
-  property("shadowing may not capture references through another alias (let)") =
-    no(typeChecks("v = let a = id_F 5\n        id x = 99\n    in a", "v", aliasImps))
+    property("shadowing may not capture references through another alias (let)") =
+      no(typeChecks("v = let a = id_F 5\n        id x = 99\n    in a", "v", aliasImps))
+  }
 
   property("shadowing an aliased import is fine when no reference is captured") =
     forAll(small) { x =>
@@ -165,4 +172,11 @@ object TestScopes extends Properties("Ermine scoping") {
   property("a let inside a where clause shadows and restores independently") =
     forAll(small, small) { (x, y) =>
       defAndEval(s"f w = q + w where q = let w = $x in w", s"f $y", imps).extract[Int] ?= x + y }
+}
+
+object TestScopes extends Properties("Ermine scoping") with ScopesProperties
+
+/** The scoping corpus through the live pipeline switch (roadmap 4.2). */
+object TestScopesNewPipeline extends Properties("Ermine scoping (new pipeline)") with ScopesProperties {
+  override protected def viaNew = true
 }

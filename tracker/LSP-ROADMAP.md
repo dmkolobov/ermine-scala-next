@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 4.2 NEARLY DRY: .ei (1 known delta), browse (noise, .ei authoritative), groups, importing goldens, warm reload matrix, eval, examples sweep, and the occurrence->def-site differential (G1Resolution: 8223/8223 shared occurrences agree, 0 mismatches, 136 files); remaining: scope-at-position sampling, 1.3 corpus/TestScopes parameterization under new, 32 non-boot modules · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 4.2 COMPLETE pending sign-off of its two known deltas; every oracle layer dry (see 4.2 log entries, batches 1-5); next: 4.3 LSP rebase onto the renamer tables · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -318,7 +318,7 @@ machinery is deleted post-G1, never before.
   4.4 — listed exemption, not a regression. Value-level eval fixtures for
   each relocated sugar land here (they need eval through the new
   pipeline).
-- [ ] **4.2 Differential convergence**: SAME-COMMIT dual boots (old + new,
+- [x] **4.2 Differential convergence**: SAME-COMMIT dual boots (old + new,
   ~28s) are the primary comparison; tracker/g1-baseline is a drift
   tripwire only (old-vs-baseline mismatch STOPS the loop for explanation,
   never a silent re-cut). Layers: normalized .ei + :browse + :groups +
@@ -924,3 +924,27 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   beyond the tool's boot (covered end-to-end by the :load sweep) +
   Sample.e (both sides refuse). Baselines: 866 (865+known), .ei
   differential still 1 known delta, repl 3/3, lsp 27/27.
+
+- 2026-08-30 (4.2 batch 5 — 4.2 COMPLETE): the last corpus layers run
+  under the new pipeline. (a) TestErmineModulesNewPipeline: all 161
+  library modules (129 boot + the 32 non-boot), Layout.Report.KeyedTest
+  and the sample examples load through the live switch, 3/3.
+  (b) TestScopesNewPipeline: the whole 1.3 scoping corpus (26 props)
+  through the switch — ErmineFixture(statementsViaNew = true) wraps
+  each property's statements in a `module Test` Literal and S.loads it;
+  the two alias-capture refusals are gated old-only per the 4.4
+  exemption (they flip to positive there). Three harness traps found on
+  the way, all fixed in the fixture: the baseEnv writeback/copy tear
+  (envLock), and Session.Literal's name-keyed equality making the
+  process-global depCache replay the first "Test" module forever
+  (evict under ErmineFixture.literalLock, serialized because the key is
+  name-global). (c) scope-at-position layer: SUBSUMED by G1Resolution —
+  it samples resolution at all 8223 real occurrence positions, denser
+  than any sampled-position probe; the residual gap (scope domains at
+  NON-occurrence positions, i.e. completion) is deferred to 4.3 where a
+  consumer exists. 4.2's KNOWN DELTAS for the G1 sign-off: (1)
+  lookbackJoin's residual constraint set (.ei; solver-order, documented
+  pre-existing sensitivity); (2) browse kind-meta rendering entropy
+  (inverted between pipelines for scanInOrder-class sigs; .ei
+  comparator is the authority). Suite grows to 896 (895 green + known
+  disjunction); repl 3/3, lsp 27/27.
