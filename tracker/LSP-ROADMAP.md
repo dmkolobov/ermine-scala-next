@@ -23,7 +23,7 @@ scoping fix, commits f9cf42a / 41b13cc).
   Stage 0; suites GROW, so a commit that adds tests updates the count in
   its iteration-log line, and green-except-the-known-one is the invariant
 - `tracker/tools/repl-smoke.sh`: all suites PASS (4 as of D2)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (68 as of 5.4)
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (69 as of 5.4b)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 - KNOWN FLAKE: core/test suites run concurrently in one JVM and rarely
@@ -1566,3 +1566,23 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   cascade; Chain.e publishes one error and two Information "unchecked"
   notes, the second of them transitive.
   Suite 895 (894+known), repl 4, lsp 68/68, boot 129.
+
+- 2026-08-31 (5.4b — a module must not be in scope while it is checked):
+  found while taking 5.5's baseline measurement, which is the only
+  reason it was found at all: opening Layout/Report.e in the editor
+  published 329 diagnostics, every one of them "term definition would
+  shadow global definition".  CAUSE: every module implicitly imports
+  ITSELF (ModuleParsers.scala:34, `Map("Builtin" -> all, name -> all)`),
+  and the resident session holds the whole Prelude/Layout closure — so
+  for any of those 129 modules, checkFile's scope contained the
+  module's own globals and topLevelHeads refused every head.  5.1's
+  import hoist stopped US from loading the module under check; it could
+  do nothing about the module the BOOT had already loaded.  (Latent
+  before 5.1, which is when renamer diagnostics started being
+  published rather than discarded — so: my regression, ~15 hours old.)
+  FIX: scrub the module out of the check COPY first, exactly the way
+  Session.reloadChangedModules' scrubber does — env, termNames,
+  termNameOrigins, cons, privateCons, consOrigins, classes,
+  classOrigins, loadedFiles, loadedModules.  lsp-smoke +1 (69): open
+  the stdlib's own Bool.e and require zero diagnostics.
+  Suite 895 (894+known), repl 4, lsp 69/69, boot 129.

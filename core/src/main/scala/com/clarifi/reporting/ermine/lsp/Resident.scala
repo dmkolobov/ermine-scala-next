@@ -1,6 +1,6 @@
 package com.clarifi.reporting.ermine.lsp
 
-import com.clarifi.reporting.ermine.Type
+import com.clarifi.reporting.ermine.{ Global, Type }
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.parsing.ErParseState.Implicits._
 import com.clarifi.reporting.ermine.rename.{ NewPipeline, Renamer }
@@ -111,6 +111,30 @@ final class Resident(log: String => Unit) {
     val (_, mh) = Session.parse(
       ModuleParsers.moduleHeader(file.defaultModuleName),
       ErParseState.mk(file.toString, contents, file.defaultModuleName))
+    // EVERY module implicitly imports ITSELF (ModuleParsers.scala:34),
+    // and the resident session holds the whole Prelude/Layout closure —
+    // so checking a stdlib file that is already loaded would put its own
+    // globals in its own scope and draw "term definition would shadow
+    // global definition" on every top-level head (329 of them on
+    // Layout/Report.e).  Scrub the module out of the COPY first, the way
+    // :reload's scrubber does (Session.reloadChangedModules).
+    if (e.loadedModules contains mh.name) {
+      def mine(g: Global) = g.module == mh.name
+      e.env = e.env filter { case (v, _) => v.name match {
+        case Some(g: Global) => !mine(g)
+        case _               => true
+      } }
+      e.termNames       = e.termNames       filterNot { case (g, _) => mine(g) }
+      e.termNameOrigins = e.termNameOrigins filterNot { case (g, _) => mine(g) }
+      e.cons            = e.cons            filterNot { case (g, _) => mine(g) }
+      e.privateCons     = e.privateCons     filterNot { case (g, _) => mine(g) }
+      e.consOrigins     = e.consOrigins     filterNot { case (g, _) => mine(g) }
+      e.classes         = e.classes         filterNot { case (g, _) => mine(g) }
+      e.classOrigins    = e.classOrigins    filterNot { case (g, _) => mine(g) }
+      e.loadedFiles     = e.loadedFiles     filterNot { case (_, n) => n == mh.name }
+      e.loadedModules   = e.loadedModules - mh.name
+    }
+
     // Session.load's own import step (Session.scala:718), hoisted so the
     // tolerant read runs between it and `make` (SourceFile.forModule is
     // private[Session]; loadModules is the same closure by module name,

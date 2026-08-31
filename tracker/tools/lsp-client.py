@@ -92,6 +92,12 @@ def uri(name):
     return (FIXTURES / name).as_uri()
 
 
+def repo(rel):
+    """A path in the repo, for opening files the resident session already
+    holds (the stdlib closure)."""
+    return HERE.parent.parent / rel
+
+
 def main():
     client = Client(sys.argv[1:])
 
@@ -184,6 +190,19 @@ def main():
     # Sibling import: Sib.e imports Good.e from the fixtures directory.
     open_doc("Sib.e")
     check("Sib.e sibling import clean", client.diagnostics_for(uri("Sib.e")) == [])
+
+    # A module the RESIDENT session already holds must still check clean.
+    # Every module implicitly imports itself, so without scrubbing it out
+    # of the check copy first, its own globals arrive as imports and every
+    # top-level head draws "would shadow global definition".
+    stdlib = repo("core/src/main/resources/modules/Bool.e")
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": stdlib.as_uri(), "languageId": "ermine", "version": 1,
+        "text": stdlib.read_text()}})
+    ds = client.diagnostics_for(stdlib.as_uri())
+    check("an already-loaded stdlib module checks clean", ds == [], repr(ds[:2]))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": stdlib.as_uri()}})
+    client.diagnostics_for(stdlib.as_uri())
 
     # --- go-to-definition (0.5) ---
     open_doc("Nav.e")
