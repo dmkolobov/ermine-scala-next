@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 3.4b done (custom brackets verified, 11/11); next item 3.4c (relArrows) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — PHASE 3.x COMPLETE (rename/reassoc/desugar); next item 4.1 (typecheck integration) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -297,7 +297,7 @@ machinery is deleted post-G1, never before.
   with _Module suffixes; reverse-foldLeft do, Lam(WildcardP) effect
   statements, last-statement-is-expression; missing-hook acceptance per
   1.3b corpus); tnodes differentials for both.
-- [ ] **3.4c Desugar: relArrows** — region-scoped referent+fixity
+- [x] **3.4c Desugar: relArrows** — region-scoped referent+fixity
   override on combine/filter sub-expressions ONLY (never rename arrows;
   1.3b fixtures place a rebound op and `not` in each arrow kind and
   adjacent to the envelope); col/prim rewrite keyed on renamed binders,
@@ -751,3 +751,21 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   Relation.e idiom) — old-vs-new alpha-equal. Also: separate fixtures
   per import family (baseEnv write-back pollution). TestLower 11/11.
   Baselines: 848 (847+known), repl 3/3, lsp 27/27.
+- 2026-08-30 3.4c done — THE HARD ONE, and PHASE 3.x IS COMPLETE.
+  Channel R implemented across all three passes: the renamer rebinds the
+  15-op set + `not` to Relation.Predicate/Op globals inside combine/
+  filter arms only (never rename; override beats every scope layer, as
+  bindName did); Reassoc applies the forced fixities via an overrides
+  layer that outranks textual declarations; Lower ports desugarRelArrows
+  exactly — Function.id empty case, catafy with the column set evolving
+  by SPELLING from empty (combine adds `as`, rename swaps from->to),
+  col-wrapping of in-column Vars and prim-wrapping of literals with the
+  precise descent-stop set, combine(op, Var as), rename(Var from, Var
+  to), later arrows composing LEFT via Function.(.) InfixR(9). Five
+  differentials (each arm kind, rebound ops, `not`, column evolution,
+  full composition) alpha-equal vs the fused output. En route:
+  insert-on-miss PARITY for placeholders — occurrences of one unknown
+  spelling share one V module-wide, as the fused termVar's termNames
+  insertion does (the column-evolution diff caught per-occurrence
+  minting). TestLower 16/16. Baselines: 853 (852+known), repl 3/3,
+  lsp 27/27.

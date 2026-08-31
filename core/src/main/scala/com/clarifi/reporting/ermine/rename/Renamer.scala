@@ -473,29 +473,53 @@ object Renamer {
     s.occur(n, s.resolveGlobal(n.spelling, opPos) getOrElse Unresolved(n.spelling))
   }
 
-  private def reference(n: SName, opPos: Option[PosClass], env: Env, s: S): Unit = {
-    val res = lookup(env, n.spelling).map(ToBinder.apply)
-      .orElse(s.resolveGlobal(n.spelling, opPos))
-      .getOrElse(Unresolved(n.spelling))
+  /** Channel R (tracker/desugar-hooks.md): inside [| |] combine/filter
+    * arms these spellings are REBOUND — referent and fixity — to the
+    * relational combinators, beating every scope layer (the fused
+    * parser's bindName rebinding did the same).  Never rename arms. */
+  val relOverrides: Map[String, Global] = Map(
+    "<=" -> Global("Relation.Predicate", "<=", InfixN(4)),
+    ">=" -> Global("Relation.Predicate", ">=", InfixN(4)),
+    "<"  -> Global("Relation.Predicate", "<", InfixN(4)),
+    "==" -> Global("Relation.Predicate", "==", InfixN(4)),
+    "!=" -> Global("Relation.Predicate", "!=", InfixN(4)),
+    ">"  -> Global("Relation.Predicate", ">", InfixN(4)),
+    "not" -> Global("Relation.Predicate", "not", Idfix),
+    "&&" -> Global("Relation.Predicate", "&&", com.clarifi.reporting.ermine.InfixR(3)),
+    "||" -> Global("Relation.Predicate", "||", com.clarifi.reporting.ermine.InfixR(2)),
+    "+"  -> Global("Relation.Op", "+", com.clarifi.reporting.ermine.InfixL(6)),
+    "-"  -> Global("Relation.Op", "-", com.clarifi.reporting.ermine.InfixL(6)),
+    "*"  -> Global("Relation.Op", "*", com.clarifi.reporting.ermine.InfixL(7)),
+    "/"  -> Global("Relation.Op", "/", com.clarifi.reporting.ermine.InfixL(7)),
+    "//" -> Global("Relation.Op", "//", com.clarifi.reporting.ermine.InfixL(7)),
+    "++" -> Global("Relation.Op", "++", com.clarifi.reporting.ermine.InfixL(5)))
+
+  private def reference(n: SName, opPos: Option[PosClass], env: Env, s: S,
+                        rel: Boolean = false): Unit = {
+    val res =
+      (if (rel) relOverrides.get(n.spelling).map(g => ToGlobal(g, g, g)) else None)
+        .orElse(lookup(env, n.spelling).map(ToBinder.apply))
+        .orElse(s.resolveGlobal(n.spelling, opPos))
+        .getOrElse(Unresolved(n.spelling))
     s.occur(n, res)
   }
 
-  private def term(t: STerm, env: Env, s: S): Unit = t match {
-    case SVar(n) => reference(n, None, env, s)
-    case SApp(f, a) => term(f, env, s); term(a, env, s)
+  private def term(t: STerm, env: Env, s: S, rel: Boolean = false): Unit = t match {
+    case SVar(n) => reference(n, None, env, s, rel)
+    case SApp(f, a) => term(f, env, s, rel); term(a, env, s, rel)
     case SLam(loc, ps, body) =>
       val b = ps.flatMap(patternBinders(_, Arg, s)).toMap
       if (b.nonEmpty) s.frames += Frame(loc.span, b)
       term(body, b :: env, s)
-    case SSig(_, tm, _) => term(tm, env, s)
+    case SSig(_, tm, _) => term(tm, env, s, rel)
     case SChain(c) =>
       c.items.foreach {
-        case Left(operand) => term(operand, env, s)
-        case Right(op)     => reference(op.name, Some(op.posClass), env, s)
+        case Left(operand) => term(operand, env, s, rel)
+        case Right(op)     => reference(op.name, Some(op.posClass), env, s, rel)
       }
-    case SNeg(_, _, operand) => term(operand, env, s)
-    case SParen(_, i) => term(i, env, s)
-    case STuple(_, es) => es.foreach(term(_, env, s))
+    case SNeg(_, _, operand) => term(operand, env, s, rel)
+    case SParen(_, i) => term(i, env, s, rel)
+    case STuple(_, es) => es.foreach(term(_, env, s, rel))
     case SCase(_, scrut, alts) =>
       term(scrut, env, s)
       alts.foreach { a =>
@@ -524,9 +548,10 @@ object Renamer {
     case SBraceLit(_, es, _) => es.foreach(term(_, env, s))
     case SRecordLit(_, fs)   => fs.foreach { case (k, v) => term(k, env, s); term(v, env, s) }
     case SRelEnvelope(_, arrows) => arrows.foreach {
+      // combine/filter arms carry the channel-R override; rename never
       case SRenameArrow(_, to, from) => reference(to, None, env, s); reference(from, None, env, s)
-      case SCombineArrow(_, as, e)   => reference(as, None, env, s); term(e, env, s)
-      case SFilterArrow(e)           => term(e, env, s)
+      case SCombineArrow(_, as, e)   => reference(as, None, env, s); term(e, env, s, rel = true)
+      case SFilterArrow(e)           => term(e, env, s, rel = true)
     }
     case SRemember(_, i) => term(i, env, s)
     case _ => ()  // literals, holes, sections, errors

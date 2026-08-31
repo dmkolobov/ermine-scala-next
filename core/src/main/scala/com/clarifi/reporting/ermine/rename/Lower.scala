@@ -8,6 +8,7 @@ import com.clarifi.reporting.ermine.{
   ConP, LazyP, LitIntP, LitLongP, LitByteP, LitShortP, LitStringP, LitCharP,
   LitFloatP, LitDoubleP, LitDateP, ProductP, StrictP, VarP, WildcardP, AsP }
 import com.clarifi.reporting.ermine.surface._
+import com.clarifi.reporting.ermine.{ Lit, Rigid }
 import Renamer.{ Resolution, ToBinder, ToGlobal, Unresolved, Ambiguous }
 
 /** Surface -> core lowering, slice one (tracker/LSP-ROADMAP.md 3.4a):
@@ -86,13 +87,22 @@ object Lower {
     def binderAtSite(n: SName): Option[V[Type]] =
       siteToBinder.get(n.span).map(binderV(_, n.spelling))
 
+    private var placeholders = Map.empty[String, V[Type]]
+
     def varFor(n: SName): V[Type] = resolve(n) match {
       case ToBinder(id)       => binderV(id, n.spelling) at pos(n.span)
       case ToGlobal(g, _, _)  => globals.get(g)
         .map(_ at pos(n.span))
         .getOrElse(V(pos(n.span), freshId(), Some(g), Bound, unspecified(n.span)))
-      case _ =>  // Unresolved/Ambiguous: placeholder tolerance (termVar parity)
-        V(pos(n.span), freshId(), Some(Local(n.spelling)), Bound, unspecified(n.span))
+      case _ =>
+        // Unresolved/Ambiguous: placeholder tolerance — and insert-on-miss
+        // parity: occurrences of one unknown spelling SHARE the placeholder
+        // (the fused termVar inserts it into termNames module-wide)
+        placeholders.getOrElse(n.spelling, {
+          val v = V(pos(n.span), freshId(), Some(Local(n.spelling)), Bound, unspecified(n.span))
+          placeholders += n.spelling -> v
+          v
+        }) at pos(n.span)
     }
 
     def global(g: Global, at: Span): V[Type] =
@@ -191,7 +201,47 @@ object Lower {
               }
           }
       }
-    case x: SRelEnvelope    => throw Unsupported("relational envelope (3.4c)", x.loc.span)
+    case SRelEnvelope(l, arrows) =>
+      // desugarRelArrows ported: an empty envelope is Function.id; each
+      // arrow catafies with an evolving column set (by SPELLING, starting
+      // empty per the fused call site); later arrows compose LEFT via
+      // Function.(.) at InfixR(9)
+      if (arrows.isEmpty) Var(c.global(Global("Function", "id"), l.span))
+      else {
+        def rewrite(t0: Term, cols: Set[String]): Term = {
+          def rec(t: Term): Term = t match {
+            case Var(tv) if tv.name.exists(n => cols(n.string)) =>
+              App(Var(c.global(Global("Relation.Op", "col"), l.span)), t)
+            case lit: com.clarifi.reporting.ermine.Lit[_] =>
+              App(Var(c.global(Global("Relation.Op", "prim"), l.span)), lit)
+            case App(f, x) => App(rec(f), rec(x))
+            case Sig(sl, st, a) => Sig(sl, rec(st), a)
+            case com.clarifi.reporting.ermine.Rigid(rt) => com.clarifi.reporting.ermine.Rigid(rec(rt))
+            case other => other  // descent stops: records, products, lams,
+                                 // vars, case, let, holes, remembers
+          }
+          rec(t0)
+        }
+        def catafy(arr: SRelArrow, cols: Set[String]): (Term, Set[String]) = arr match {
+          case SFilterArrow(p) =>
+            (App(Var(c.global(Global("Relation.Predicate", "filter"), l.span)),
+                 rewrite(term(p, c), cols)), cols)
+          case SRenameArrow(_, to, from) =>
+            (App(App(Var(c.global(Global("Relation", "rename"), l.span)),
+                     Var(c.varFor(from))), Var(c.varFor(to))),
+             cols - from.spelling + to.spelling)
+          case SCombineArrow(_, as, opExpr) =>
+            (App(App(Var(c.global(Global("Relation.Op", "combine"), l.span)),
+                     rewrite(term(opExpr, c), cols)), Var(c.varFor(as))),
+             cols + as.spelling)
+        }
+        val comp = c.global(Global("Function", ".", com.clarifi.reporting.ermine.InfixR(9)), l.span)
+        arrows.tail.foldLeft(catafy(arrows.head, Set.empty[String])) { (st, arr) =>
+          val (acc, cols) = st
+          val (t2, cols2) = catafy(arr, cols)
+          (App(App(Var(comp), t2), acc), cols2)
+        }._1
+      }
     case x: SErrorTerm      => throw Unsupported("error node", x.loc.span)
   }
 

@@ -92,13 +92,16 @@ object Reassoc {
 
   final case class FixityEnv(
       imports: Map[(String, Int), Fixity],       // (spelling, bucket) -> declared fixity
-      decls: Map[(String, Int), List[Decl]]) {   // textual declarations, any scope
+      decls: Map[(String, Int), List[Decl]],     // textual declarations, any scope
+      overrides: Map[(String, Int), Fixity] = Map()) {  // channel-R region, beats all
 
     def lookup(spelling: String, bucket: Int, line: Int, col: Int): Option[Fixity] = {
-      val declared = decls.getOrElse((spelling, bucket), Nil)
-        .filter(d => d.line < line || (d.line == line && d.col < col))
-        .sortBy(d => (d.line, d.col)).lastOption.map(_.fixity)
-      declared orElse imports.get((spelling, bucket))
+      overrides.get((spelling, bucket)) orElse {
+        val declared = decls.getOrElse((spelling, bucket), Nil)
+          .filter(d => d.line < line || (d.line == line && d.col < col))
+          .sortBy(d => (d.line, d.col)).lastOption.map(_.fixity)
+        declared orElse imports.get((spelling, bucket))
+      }
     }
 
     def declare(spelling: String, bucket: Int, d: Decl): (FixityEnv, Option[String]) = {
@@ -217,11 +220,20 @@ object Reassoc {
       case SListLit(l, es, sfx) => SListLit(l, es.map(go), sfx)
       case SBraceLit(l, es, sfx) => SBraceLit(l, es.map(go), sfx)
       case SRecordLit(l, fs) => SRecordLit(l, fs.map { case (k, v) => (go(k), go(v)) })
-      case SRelEnvelope(l, as) => SRelEnvelope(l, as.map {
-        case SCombineArrow(al, n, e) => SCombineArrow(al, n, go(e))
-        case SFilterArrow(e) => SFilterArrow(go(e))
-        case r => r
-      })
+      case SRelEnvelope(l, as) =>
+        // channel R: combine/filter arms re-associate under the forced
+        // relational fixities; rename arms carry no expressions
+        val saved = env
+        env = env.copy(overrides = env.overrides ++
+          Renamer.relOverrides.collect { case (sp, g) if g.fixity != Idfix =>
+            (sp, bucket(g.fixity)) -> g.fixity })
+        val r = SRelEnvelope(l, as.map {
+          case SCombineArrow(al, n, e) => SCombineArrow(al, n, go(e))
+          case SFilterArrow(e) => SFilterArrow(go(e))
+          case other => other
+        })
+        env = saved
+        r
       case SRemember(l, i) => SRemember(l, go(i))
       case other => other
     }

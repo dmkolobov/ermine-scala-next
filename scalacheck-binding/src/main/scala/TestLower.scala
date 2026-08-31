@@ -20,6 +20,7 @@ object TestLower extends Properties("Lower 3.4a") {
   // evil"); different import families get their own fixtures so one
   // family's transitive loads cannot shadow-poison another's reloads
   private val fxAlt = ErmineFixture()
+  private val fxRel = ErmineFixture()
 
   private val im: Map[String, ImportSpec] =
     Map("Builtin" -> all, "Test" -> all, "Primitive" -> all,
@@ -163,5 +164,27 @@ object TestLower extends Properties("Lower 3.4a") {
 
   property("pattern cons chains re-associate and lower (h :: t)") =
     diff("((h :: t) -> h)")
+
+  // ---- 3.4c: relArrows (the hard relocation) ----------------------------
+
+  private val relImps: Map[String, ImportSpec] =
+    Map("Builtin" -> all, "Test" -> all, "Primitive" -> all,
+        "Function" -> all, "Relation" -> all)
+
+  property("combine arm: rebound + and prim-wrapped literal") =
+    diff("(f op r -> [| f = op + 1 |] r)", relImps, fxRel)
+
+  property("filter arm: rebound > with prim") =
+    diff("(p r -> [| p > 1 |] r)", relImps, fxRel)
+
+  property("rename arm: Relation.rename(from, to)") =
+    diff("(p i r -> [| p <- i |] r)", relImps, fxRel)
+
+  property("column set evolves left to right (col wrapping)") =
+    diff("(g r -> [| f = g + 1, f > 2 |] r)", relImps, fxRel)
+
+  property("all three arms compose via Function.(.) with not rebound") =
+    diff("(f op p i r -> [| f = op, not p, i <- f |] r)", relImps, fxRel)
 }
+
 
