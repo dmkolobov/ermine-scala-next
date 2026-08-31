@@ -284,6 +284,46 @@ object Reassoc {
     (go(t), diags.result())
   }
 
+  /** Re-associate every chain in a whole module: term bodies via term(),
+    * every type position via ty().  Returns the rewritten statements. */
+  def module(m: SModule, scope: ModuleScope.Scope): (List[SStatement], List[Diag]) = {
+    val (env, envDs) = moduleEnv(m, scope)
+    val diags = List.newBuilder[Diag]
+    diags ++= envDs
+    def reTy(t: STy): STy = { val (r, ds) = ty(t, env); diags ++= ds; r }
+    def reTerm(t: STerm): STerm = { val (r, ds) = term(t, env); diags ++= ds; r }
+    def go(st: SStatement): SStatement = st match {
+      case eq: SEquation =>
+        reTerm(SLet(eq.loc, List(eq), SHole(eq.loc))) match {
+          case SLet(_, List(eq2: SEquation), _) => eq2
+          case _ => eq
+        }
+      case s: SSigStatement   => s.copy(annot = reTy(s.annot))
+      case s: SFieldStatement => s.copy(ty = reTy(s.ty))
+      case s: STableStatement => s.copy(ty = reTy(s.ty))
+      case s: STypeAlias      => s.copy(body = reTy(s.body))
+      case s: SDataStatement  =>
+        s.copy(constructors = s.constructors.map(c => c.copy(fields = c.fields.map(reTy))))
+      case s: SClassStatement =>
+        s.copy(context = s.context.map(reTy), body = s.body.map(go))
+      case s: SPrivateBlock   => s.copy(statements = s.statements.map(go))
+      case s: SDatabaseBlock  => s.copy(statements = s.statements.map(go))
+      case s: SForeignBlock   =>
+        def fgo(f: SForeign): SForeign = f match {
+          case x: SForeignFunction    => x.copy(ty = reTy(x.ty))
+          case x: SForeignMethod      => x.copy(ty = reTy(x.ty))
+          case x: SForeignValue       => x.copy(ty = reTy(x.ty))
+          case x: SForeignConstructor => x.copy(ty = reTy(x.ty))
+          case x: SForeignSubtype     => x.copy(ty = reTy(x.ty))
+          case x: SForeignPrivate     => x.copy(statements = x.statements.map(fgo))
+          case other => other
+        }
+        s.copy(statements = s.statements.map(fgo))
+      case other => other
+    }
+    (m.statements.map(go), diags.result())
+  }
+
   /** Re-associate a type chain: arrows carry builtin pseudo-fixities
     * (0R, 0R, 1N); kind atoms at operand position ARE operands. */
   def ty(t0: STy, env: FixityEnv): (STy, List[Diag]) = {

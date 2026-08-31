@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 4.1b done (type lowering 28/28); next: 4.1c (module assembly + loadModule + switch) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 4.1c done (WHOLE MODULE LOADS through the new pipeline; switch live); next: 4.2 convergence (first divergence: Control/Monoid.e:11:36) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -798,3 +798,22 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   via the G1 comparator (arrows/forall/implicits/getF partition shape/
   rows/tuples/kinded binders): all green. TestLower 28/28. Baselines:
   865 (864+known), repl 3/3, lsp 27/27.
+- 2026-08-30 4.1c done — THE INTEGRATION MILESTONE: NewPipeline.scala
+  assembles a core Module (moduleBody-parity bucketing, adjacency
+  binding blocks, checkBindings-parity sig pairing by shared V with
+  Annot.plain and "missing definition" preserved, data/type/field/
+  table/foreign lowering, private tracking) plus the ParseState contract
+  (canonical maps, termNames+placeholders, TyLower conVars + own type
+  defs as typeNames) — and a WHOLE MODULE (sigs, equations, polymorphic
+  data + constructor use, tuples) LOADS AND TYPECHECKS through
+  Session.loadModule with every exported type alpha-equal to the old
+  load. Fixes en route: sig names are now binder OCCURRENCES (also gives
+  the LSP goto-def from signatures); declaration type/kind args join the
+  renamer's binder ids so constructor fields share their Vs (the rigid-
+  skolem unification failure caught it). The -Dermine.pipeline=new
+  switch is LIVE in Session.dep's read closure (Decision d: REPL command
+  parsing stays fused). First full-boot attempt under the new pipeline
+  runs deep into the stdlib and dies at Control/Monoid.e:11:36
+  ("undefined type" — `Monoid (m, n)` tuple-of-vars in a sig result) —
+  4.2's convergence loop opens there. Baselines (old path untouched):
+  866 (865+known), repl 3/3, lsp 27/27.

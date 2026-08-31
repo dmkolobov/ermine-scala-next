@@ -429,7 +429,10 @@ object Renamer {
           term(body, env3, s)
           ws.foreach(statement(_, env3, s))
       }
-    case SSigStatement(_, _, _) => ()  // types are 3.2c
+    case SSigStatement(_, ns, _) =>
+      // sig names are occurrences of the shared binder (goto-def from a
+      // signature; and Lower's sig pairing joins through it)
+      ns.foreach(n => lookup(env, n.spelling).foreach(id => s.occur(n, ToBinder(id))))
     case SPrivateBlock(_, ss)      => ss.foreach(statement(_, env, s))
     case SDatabaseBlock(_, _, ss)  => ss.foreach(statement(_, env, s))
     case SClassStatement(loc, _, _, _, _, body) =>

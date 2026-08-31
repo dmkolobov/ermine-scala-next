@@ -364,11 +364,19 @@ object Session {
           case Some(_) => None // we were already loaded
           case None    =>
             val before = nanoTime
-            val r = parse(moduleBody(mh), ps.importing( s.termNames
-                                                      , s.cons.keySet
-                                                      , mh.imports
-                                                      , s.termNameOrigins
-                                                      , s.consOrigins))(su)
+            // -Dermine.pipeline=new routes MODULE loading through the
+            // split pipeline (parse -> rename -> reassociate -> lower);
+            // REPL command parsing stays fused (roadmap Decision d).
+            val r = if (java.lang.Boolean.getBoolean("ermine.pipeline.new") ||
+                        "new" == System.getProperty("ermine.pipeline"))
+              com.clarifi.reporting.ermine.rename.NewPipeline.readModule(
+                file.toString, file.contents, mh)(s, su)
+            else
+              parse(moduleBody(mh), ps.importing( s.termNames
+                                                , s.cons.keySet
+                                                , mh.imports
+                                                , s.termNameOrigins
+                                                , s.consOrigins))(su)
             val after = nanoTime
             profile(mh.name + " parse module", before, "parsed" -> after)
             Some(r)

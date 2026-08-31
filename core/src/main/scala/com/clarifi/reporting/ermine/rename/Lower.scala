@@ -89,6 +89,12 @@ object Lower {
 
     private var placeholders = Map.empty[String, V[Type]]
 
+    /** Reference placeholders keyed as Locals — merged into the
+      * constructed parse state's termNames (insert-on-miss parity, read
+      * by e.g. processFieldStatement). */
+    def placeholderNames: Map[Name, V[Type]] =
+      placeholders.map { case (sp, v) => (Local(sp): Name) -> v }
+
     def varFor(n: SName): V[Type] = resolve(n) match {
       case ToBinder(id)       => binderV(id, n.spelling) at pos(n.span)
       case ToGlobal(g, _, _)  => globals.get(g)
