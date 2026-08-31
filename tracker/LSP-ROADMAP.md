@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — 3.2b done (Death wiring, classLookup, class bodies); next item 3.2c (types+kinds) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 3.2c done (type/kind renaming); next item 3.3 (fixity re-association) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -272,7 +272,7 @@ machinery is deleted post-G1, never before.
   preserved; classMap global-state dependency noted); failures are Death
   with "file:line:col:" rendering (Diagnostics regex + no(...)/
   sessionProof compatibility).
-- [ ] **3.2c Renamer: types + kinds**: canonicalTypes/typeNames/kindNames
+- [x] **3.2c Renamer: types + kinds**: canonicalTypes/typeNames/kindNames
   tables; qtyp/closed quantification-set computation reproduced exactly,
   asserted by the 1.3a pins; kindOf/kindAfter twin lands with it.
 - [ ] **3.3 Fixity re-association**: port shuntingYard from
@@ -695,3 +695,16 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   refused; their dead type processing stays a typecheck matter per the
   pins). TestRenamer 13/13. Baselines: 819 (818+known), repl 3/3,
   lsp 27/27.
+- 2026-08-30 3.2c done: type/kind renaming — references through binder
+  frames then canonicalTypes (fixity-bucket probes for type ops; arrows
+  and kind atoms builtin, incl. '*'-as-chain-op awareness the 3.3
+  re-associator will need); per-ANNOTATION implicit quantification
+  (first free lowercase var binds, later share — matching the pinned
+  per-signature independence; mechanism-level equivalence with the fused
+  typeNames-persistence+generalization is 4.1's differential obligation,
+  noted in code); forall/exists/some frames with kind braces visible to
+  binder kinds (push-order bug caught by the props); data/type/class
+  declaration heads scope their types incl. per-constructor foralls;
+  field/table/foreign types wired. kindOf/kindAfter fixture twins
+  DEFERRED to 4.1 (they need typecheck integration to produce Kinds).
+  TestRenamer 18/18. Baselines: 824 (823+known), repl 3/3, lsp 27/27.

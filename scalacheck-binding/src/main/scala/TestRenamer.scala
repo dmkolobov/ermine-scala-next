@@ -147,5 +147,54 @@ object TestRenamer extends Properties("Renamer 3.2a") {
     ((good.diagnostics ?= Nil) :| good.diagnostics.toString) &&
     (bad.diagnostics.exists(_.message contains "error loading 'com.nope.Missing'") :| bad.diagnostics.toString)
   }
+
+  // ------------------------------------------------------------- 3.2c
+
+  private def tyOccs(r: Renamer.Result, spelling: String) =
+    r.occurrences.filter(_.spelling == spelling)
+
+  property("sig type variables quantify per annotation, independently") = secure {
+    val r = renamed("f : a -> a\ng : a -> b")
+    val aIds = tyOccs(r, "a").map(_.resolution).collect { case ToBinder(i) => i }.distinct
+    val kinds = aIds.map(r.binders(_).kind).distinct
+    ((aIds.size ?= 2) :| s"two independent implicit binders for a, got $aIds") &&
+    ((kinds ?= List(Renamer.TyImplicit: BinderKind)) :| kinds.toString) &&
+    ((tyOccs(r, "a").size ?= 3) :| "three occurrences of a (2 in f, 1 in g)")
+  }
+
+  property("forall binders capture; kind braces bind kind vars") = secure {
+    val r = renamed("h : forall {k} (a: k) b. a -> b")
+    val aRes = tyOccs(r, "a").map(_.resolution).collect { case ToBinder(i) => r.binders(i).kind }.distinct
+    val kRes = tyOccs(r, "k").map(_.resolution).collect { case ToBinder(i) => r.binders(i).kind }.distinct
+    ((aRes ?= List(Renamer.TyParam: BinderKind)) :| s"a: $aRes") &&
+    ((kRes ?= List(Renamer.KindParam: BinderKind)) :| s"k: $kRes")
+  }
+
+  property("data declaration args scope over constructor fields") = secure {
+    val r = renamed("data D {k} (a: k) b = MkD a b")
+    val fieldRefs = tyOccs(r, "a").map(_.resolution) ++ tyOccs(r, "b").map(_.resolution)
+    fieldRefs.forall {
+      case ToBinder(i) => r.binders(i).kind == Renamer.TyParam
+      case _ => false
+    } :| fieldRefs.toString
+  }
+
+  property("kind atoms and arrows are builtin; unknown constructors tolerated") = secure {
+    val r = renamed("w : forall (m: rho -> *). Wibble m")
+    val star = tyOccs(r, "*").map(_.resolution)
+    val wib  = tyOccs(r, "Wibble").map(_.resolution)
+    (star.forall { case ToGlobal(g, _, _) => g.module == "Builtin"; case _ => false } :| star.toString) &&
+    ((wib ?= List(Unresolved("Wibble"))) :| wib.toString)
+  }
+
+  property("partition constraints share the annotation's implicit vars") = secure {
+    val r = renamed("q : exists c. r <- (h, c)")
+    // r and h are annotation-implicit; c is the exists binder
+    val cKind = tyOccs(r, "c").map(_.resolution).collect { case ToBinder(i) => r.binders(i).kind }.distinct
+    val rKind = tyOccs(r, "r").map(_.resolution).collect { case ToBinder(i) => r.binders(i).kind }.distinct
+    ((cKind ?= List(Renamer.TyParam: BinderKind)) :| s"c: $cKind") &&
+    ((rKind ?= List(Renamer.TyImplicit: BinderKind)) :| s"r: $rKind")
+  }
 }
+
 

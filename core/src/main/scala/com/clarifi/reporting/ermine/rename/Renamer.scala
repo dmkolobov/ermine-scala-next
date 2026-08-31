@@ -42,6 +42,9 @@ object Renamer {
   case object WhereBound extends BinderKind
   case object DoBound  extends BinderKind
   case object CaseBound extends BinderKind
+  case object TyParam    extends BinderKind  // forall/exists/some, data/type/class args
+  case object TyImplicit extends BinderKind  // per-annotation auto-quantified var
+  case object KindParam  extends BinderKind  // {k} kind-brace binders
 
   final case class BinderInfo(id: Int, spelling: String, defSite: Span, kind: BinderKind)
   final case class Occurrence(span: Span, spelling: String, resolution: Resolution)
@@ -106,6 +109,24 @@ object Renamer {
       chase(g, 0)
     }
 
+    def resolveType(spelling: String, opPos: Option[PosClass]): Option[Resolution] =
+      scope.canonicalTypes.get(probe(spelling, opPos)) map {
+        case List(n) =>
+          val g = n match { case g: Global => g; case l: Local => l global "" }
+          ToGlobal(g, n, originOfTy(g))
+        case ns => Ambiguous(spelling, ns)
+      }
+
+    def originOfTy(g: Global): Global = {
+      def chase(x: Global, depth: Int): Global =
+        if (depth > 32) x
+        else scope.typeOrigins.get(x) match {
+          case Some(List(y)) if y != x => chase(y, depth + 1)
+          case _ => x
+        }
+      chase(g, 0)
+    }
+
     def resolveGlobal(spelling: String, opPos: Option[PosClass]): Option[Resolution] =
       scope.canonicalTerms.get(probe(spelling, opPos)) map {
         case List(n) =>
@@ -161,6 +182,7 @@ object Renamer {
     s.frames += Frame(moduleSpan, top)
 
     m.statements.foreach(statement(_, env, s))
+    m.statements.foreach(statementTypes(_, s))   // 3.2c: the type/kind side
     m.statements.foreach(foreignClasses(_, m.file, "", s))
 
     Result(s.occs.result(), s.binders.result(), s.frames.result(), s.diags.result())
@@ -215,6 +237,175 @@ object Renamer {
       case SPrivateBlock(_, ss)    => ss.foreach(foreignClasses(_, file, source, s))
       case _ => ()
     }
+  }
+
+  // ------------------------------------------------------------ type side
+  // (3.2c) Type references resolve through binder frames, then the
+  // canonical type scope; UNBOUND lowercase names are per-annotation
+  // implicit variables — the first occurrence binds, later ones share
+  // (per-signature quantification, as pinned: "bare sig type variables
+  // quantify per signature, independently").  The fused pipeline reaches
+  // the same effective semantics through module-wide typeNames insertion
+  // plus binding-group generalization; equivalence is 4.1's differential
+  // obligation.  Kind atoms (*, rho/phi/constraint and unicode forms)
+  // are builtin; {k} binders bind kind variables per declaration head.
+
+  private val kindAtoms = Set("*", "rho", "ρ", "phi", "φ", "constraint", "Γ")
+
+  private final class TyCtx(val s: S) {
+    var frames: List[Map[String, Int]] = Nil       // explicit binders
+    var implicits = Map.empty[String, Int]         // per-annotation set
+
+    def push(m: Map[String, Int]): Unit = frames = m :: frames
+    def pop(): Unit = frames = frames.tail
+
+    def resolve(n: SName, opPos: Option[PosClass]): Resolution =
+      frames.collectFirst { case f if f.contains(n.spelling) => f(n.spelling) }
+        .map(ToBinder.apply)
+        .orElse(s.resolveType(n.spelling, opPos))
+        .getOrElse {
+          if (n.spelling.headOption.exists(_.isLower) && !kindAtoms(n.spelling)) {
+            val id = implicits.getOrElse(n.spelling, {
+              val i = s.addBinder(n.spelling, n.span, TyImplicit)
+              implicits += n.spelling -> i
+              i
+            })
+            ToBinder(id)
+          } else Unresolved(n.spelling)  // unknown constructors die at typecheck
+        }
+  }
+
+  private def tyBinderFrame(bs: List[SBinder], kind: BinderKind, ctx: TyCtx): Map[String, Int] = {
+    val m = bs.map(b => b.name.spelling -> ctx.s.addBinder(b.name.spelling, b.name.span, kind)).toMap
+    // binder kinds resolve in the enclosing context (before this frame)
+    bs.foreach(_.kind.foreach(ty(_, ctx)))
+    m
+  }
+
+  private def kindFrame(ks: List[SName], ctx: TyCtx): Map[String, Int] =
+    ks.map(k => k.spelling -> ctx.s.addBinder(k.spelling, k.span, KindParam)).toMap
+
+  private def ty(t: STy, ctx: TyCtx): Unit = t match {
+    case STyName(n) =>
+      val res = if (kindAtoms(n.spelling)) ToGlobal(Global("Builtin", n.spelling), Local(n.spelling), Global("Builtin", n.spelling))
+                else ctx.resolve(n, None)
+      ctx.s.occur(n, res)
+    case STyApp(f, a) => ty(f, ctx); ty(a, ctx)
+    case STyChain(c) => c.items.foreach {
+      case Left(operand) => ty(operand, ctx)
+      case Right(op) =>
+        // '*' lexes as an operator at operand position but IS the star
+        // kind atom (3.3's re-associator needs the same awareness)
+        val res = if (Set("->", "=>", "<-")(op.name.spelling) || kindAtoms(op.name.spelling))
+          ToGlobal(Global("Builtin", op.name.spelling), Local(op.name.spelling), Global("Builtin", op.name.spelling))
+        else ctx.resolve(op.name, Some(op.posClass))
+        ctx.s.occur(op.name, res)
+    }
+    case STyParen(_, i) => ty(i, ctx)
+    case STyTuple(_, es) => es.foreach(ty(_, ctx))
+    case STyList(_, e) => e.foreach(ty(_, ctx))
+    case STyRowBrace(_, _, inner)   => inner.foreach(ty(_, ctx))
+    case STyRowBracket(_, _, inner) => inner.foreach(ty(_, ctx))
+    case STyBanana(_, _, inner)     => inner.foreach(ty(_, ctx))
+    case STyForall(_, ks, bs, body) =>
+      ctx.push(kindFrame(ks, ctx))              // binder kinds see {k}
+      val bf = tyBinderFrame(bs, TyParam, ctx)
+      ctx.push(bf); ty(body, ctx); ctx.pop(); ctx.pop()
+    case STyExists(_, bs, body) =>
+      val bf = tyBinderFrame(bs, TyParam, ctx)
+      ctx.push(bf); body.foreach(ty(_, ctx)); ctx.pop()
+    case STySome(_, ks, bs, body) =>
+      ctx.push(kindFrame(ks, ctx))
+      val bf = tyBinderFrame(bs, TyParam, ctx)
+      ctx.push(bf); ty(body, ctx); ctx.pop(); ctx.pop()
+    case _: STyError => ()
+  }
+
+  /** One annotation = one implicit-quantification scope. */
+  private def annot(t: STy, s: S): Unit = { ty(t, new TyCtx(s)) }
+
+  /** Declaration heads (data/type/class): kindArgs + typeArgs scope over
+    * the declaration's types. */
+  private def declTypes(ks: List[SName], bs: List[SBinder], tys: List[STy], s: S): Unit = {
+    val ctx = new TyCtx(s)
+    ctx.push(kindFrame(ks, ctx))
+    ctx.push(tyBinderFrame(bs, TyParam, ctx))
+    tys.foreach(ty(_, ctx))
+    ctx.pop(); ctx.pop()
+  }
+
+  private def statementTypes(st: SStatement, s: S): Unit = st match {
+    case SSigStatement(_, _, t)         => annot(t, s)
+    case SFieldStatement(_, _, t)       => annot(t, s)
+    case STableStatement(_, _, _, t)    => annot(t, s)
+    case STypeAlias(_, _, ks, bs, body) => declTypes(ks, bs, List(body), s)
+    case SDataStatement(_, _, ks, bs, cons) =>
+      // per-constructor foralls nest inside the declaration frame
+      val ctx = new TyCtx(s)
+      ctx.push(kindFrame(ks, ctx))
+      ctx.push(tyBinderFrame(bs, TyParam, ctx))
+      cons.foreach { c =>
+        val ef = tyBinderFrame(c.exists, TyParam, ctx)
+        ctx.push(ef); c.fields.foreach(ty(_, ctx)); ctx.pop()
+      }
+      ctx.pop(); ctx.pop()
+    case SClassStatement(_, _, ks, bs, context, body) =>
+      val ctx = new TyCtx(s)
+      ctx.push(kindFrame(ks, ctx))
+      ctx.push(tyBinderFrame(bs, TyParam, ctx))
+      context.foreach(ty(_, ctx))
+      ctx.pop(); ctx.pop()
+      body.foreach(statementTypes(_, s))
+    case SForeignBlock(_, items) =>
+      def go(f: SForeign): Unit = f match {
+        case x: SForeignData        => declTypes(Nil, x.args, Nil, s)
+        case x: SForeignFunction    => annot(x.ty, s)
+        case x: SForeignMethod      => annot(x.ty, s)
+        case x: SForeignValue       => annot(x.ty, s)
+        case x: SForeignConstructor => annot(x.ty, s)
+        case x: SForeignSubtype     => annot(x.ty, s)
+        case x: SForeignPrivate     => x.statements.foreach(go)
+      }
+      items.foreach(go)
+    case SPrivateBlock(_, ss)     => ss.foreach(statementTypes(_, s))
+    case SDatabaseBlock(_, _, ss) => ss.foreach(statementTypes(_, s))
+    case SEquation(_, _, args, body, wh) =>
+      args.foreach(patternTypes(_, s))
+      termTypes(body, s)
+      wh.foreach(_.statements.foreach(statementTypes(_, s)))
+    case _ => ()
+  }
+
+  private def patternTypes(p: SPat, s: S): Unit = p match {
+    case SPSig(_, i, t)  => annot(t, s); patternTypes(i, s)
+    case SPParen(_, i)   => patternTypes(i, s)
+    case SPTuple(_, es)  => es.foreach(patternTypes(_, s))
+    case SPList(_, es)   => es.foreach(patternTypes(_, s))
+    case SPStrict(_, i)  => patternTypes(i, s)
+    case SPLazy(_, i)    => patternTypes(i, s)
+    case SPAs(_, _, i)   => patternTypes(i, s)
+    case SPApp(_, args)  => args.foreach(patternTypes(_, s))
+    case SPChain(c)      => c.items.foreach { case Left(q) => patternTypes(q, s); case _ => () }
+    case _ => ()
+  }
+
+  private def termTypes(t: STerm, s: S): Unit = t match {
+    case SSig(_, tm, ann) => annot(ann, s); termTypes(tm, s)
+    case SApp(f, a) => termTypes(f, s); termTypes(a, s)
+    case SLam(_, ps, b) => ps.foreach(patternTypes(_, s)); termTypes(b, s)
+    case SChain(c) => c.items.foreach { case Left(o) => termTypes(o, s); case _ => () }
+    case SNeg(_, _, o) => termTypes(o, s)
+    case SParen(_, i) => termTypes(i, s)
+    case STuple(_, es) => es.foreach(termTypes(_, s))
+    case SCase(_, e, alts) => termTypes(e, s); alts.foreach(a => { patternTypes(a.pattern, s); termTypes(a.body, s) })
+    case SLet(_, ss, b) => ss.foreach(statementTypes(_, s)); termTypes(b, s)
+    case SDo(_, ds) => ds.foreach { case SDoBind(_, p, _, r) => patternTypes(p, s); termTypes(r, s); case SDoExpr(e) => termTypes(e, s) }
+    case SListLit(_, es, _) => es.foreach(termTypes(_, s))
+    case SBraceLit(_, es, _) => es.foreach(termTypes(_, s))
+    case SRecordLit(_, fs) => fs.foreach { case (k, v) => termTypes(k, s); termTypes(v, s) }
+    case SRelEnvelope(_, as) => as.foreach { case SCombineArrow(_, _, e) => termTypes(e, s); case SFilterArrow(e) => termTypes(e, s); case _ => () }
+    case SRemember(_, i) => termTypes(i, s)
+    case _ => ()
   }
 
   private def statement(st: SStatement, env: Env, s: S): Unit = st match {
