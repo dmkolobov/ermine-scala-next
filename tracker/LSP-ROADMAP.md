@@ -8,7 +8,7 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: Stage 1 — PHASE 3.x COMPLETE (rename/reassoc/desugar); next item 4.1 (typecheck integration) · Seeded 2026-08-30 (session that shipped the
+Status: Stage 1 — 4.1a done (eval-level integration 21/21); next: 4.1b (type lowering + module assembly + pipeline switch) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -769,3 +769,16 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   insertion does (the column-evolution diff caught per-occurrence
   minting). TestLower 16/16. Baselines: 853 (852+known), repl 3/3,
   lsp 27/27.
+- 2026-08-30 4.1a done (first slice of 4.1): EVAL-LEVEL INTEGRATION —
+  lowered terms run through the REAL inference (Session.subst +
+  Subst.inferType) and the REAL evaluator (Term.eval against the session
+  env; global Vs share ids with the session so the eval env resolves
+  directly), producing values identical to the fused pipeline for all
+  five relocated sugars: whole-chain negation (-6, not -4), bracket
+  literals through List hooks, pattern cons destructuring, grouped let
+  equations, do over Maybe. The checklist's value-level eval fixtures
+  are hereby landed. TestLower 21/21. Remaining in 4.1 (next
+  iteration(s)): type/annotation lowering, module assembly feeding
+  Session.loadModule's contract, the -Dermine.pipeline switch, fixture
+  twins (testParse/kindOf), dual-pipeline suite runs with the :130/:133
+  exemption. Baselines: 858 (857+known), repl 3/3, lsp 27/27.

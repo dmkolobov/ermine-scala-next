@@ -1,6 +1,8 @@
 package com.clarifi.reporting
 
 import com.clarifi.reporting.ermine._
+import com.clarifi.reporting.ermine.Subst.inferType
+import com.clarifi.reporting.ermine.session.{ Session => S, SessionEnv }
 import com.clarifi.reporting.ermine.parsing.{ phrase, ErParseState, TermParsers }
 import com.clarifi.reporting.ermine.parsing.ErParseState.Implicits._
 import com.clarifi.reporting.ermine.rename.{ Lower, ModuleScope, Reassoc, Renamer }
@@ -185,6 +187,61 @@ object TestLower extends Properties("Lower 3.4a") {
 
   property("all three arms compose via Function.(.) with not rebound") =
     diff("(f op p i r -> [| f = op, not p, i <- f |] r)", relImps, fxRel)
+
+  // ---- 4.1a: eval-level integration — the lowered terms typecheck and
+  // ---- evaluate to the same VALUES through the real inference + evaluator
+
+  private def lowered(src: String, imps: Map[String, ImportSpec], f: ErmineFixture)
+                     (implicit s: SessionEnv): Term = {
+    val ps = ErParseState.mk("<scope>", "", "Test")
+      .importing(s.termNames, s.cons.keySet, imps, s.termNameOrigins, s.consOrigins)
+    val scope = ModuleScope.Scope(ps.s.canonicalTerms, ps.s.canonicalTypes,
+      ps.s.termNames, ps.s.termOrigins, ps.s.typeOrigins)
+    val m = SurfaceParsers.module("t", "module T where\nw = " + src, "T")
+      .getOrElse(sys.error("surface parse failed for: " + src))
+    val r = Renamer.rename(m, scope)
+    val (env, envDs) = Reassoc.moduleEnv(m, scope)
+    val body = m.statements.collectFirst {
+      case com.clarifi.reporting.ermine.surface.SEquation(_, n, _, b, _) if n.spelling == "w" => b }.get
+    val (re, ds) = Reassoc.term(body, env)
+    if ((envDs ++ ds).nonEmpty) sys.error("reassoc diags: " + (envDs ++ ds))
+    val ctx = Lower(r, "t", s.termNames, scope)
+    val out = Lower.term(re, ctx)
+    if (ctx.diags.result().nonEmpty) sys.error("lower diags: " + ctx.diags.result())
+    out
+  }
+
+  private def evalDiff(src: String, imps: Map[String, ImportSpec] = im,
+                       f: ErmineFixture = fx): Prop = secure {
+    val oldV = f.session { implicit s =>
+      f.loadModules(imps.keySet.toList)
+      S.eval(src, imps)._2.nf.extract[Int]
+    }
+    val newV = f.session { implicit s =>
+      f.loadModules(imps.keySet.toList)
+      val tm = lowered(src, imps, f)
+      S.subst { implicit hm => inferType(Nil, tm) }  // must typecheck
+      Term.eval(tm, s.env).nf.extract[Int]
+    }
+    (oldV ?= newV) :| s"old=$oldV new=$newV"
+  }
+
+  property("EVAL: whole-chain negation computes the same value") =
+    evalDiff("(q -> -q + 1) 5")   // -6, not -4
+
+  property("EVAL: bracket literal through List hooks") =
+    evalDiff("head [7, 8, 9]")
+
+  property("EVAL: pattern cons chain destructures") =
+    evalDiff("((h :: t) -> h) [7, 8]")
+
+  property("EVAL: let with grouped equations") =
+    evalDiff("let f 0 = 1; f q = q in f 9")
+
+  property("EVAL: do-notation over Maybe") =
+    evalDiff("orElse 0 ((do q <- liftDo (Just 20); unit (q + 1)) maybeMonad)",
+             im + ("Syntax.Do" -> all), fxAlt)
 }
+
 
 
