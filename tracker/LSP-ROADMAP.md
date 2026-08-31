@@ -360,7 +360,7 @@ summarize for sign-off before Stage 2.
 - [x] **D1 REPL/eval/Remote cutover**: Session.eval (expressions) and
   the statement paths route through SurfaceParsers+Renamer+Reassoc+
   Lower against session scope; Console commands keep their own parsers.
-- [ ] **D2 scoping.in aliased-shadow line**: document the semantics
+- [x] **D2 scoping.in aliased-shadow line**: document the semantics
   change (alias-capture programs now legal).
 - [ ] **D3 delete fused scoping machinery**: LocalBlocks, checkShadows,
   rewriteShadowed, insert-on-miss placeholders.
@@ -1033,3 +1033,10 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   old-path override — 3/3 under BOTH.  Corpus-authoring note repeated:
   importing Primitive and Prelude together makes + ambiguous (the
   operator-imported-twice pin).  Suite 902 (901+known); lsp 31/31.
+
+- 2026-08-30 (D2): the aliased-shadow semantics change is now a smoke
+  suite: tracker/repl-tests/aliasing.in loads Aliasing.e (id_F survives
+  a plain-name where-shadow; the combined-capture program) and asserts
+  the evaluated values.  The legacy REPL_PIPELINE=old override skips
+  aliasing.in by design — those programs are refusals under the fused
+  pipeline until D3 retires it.  Smoke: 4 suites new, 3 legacy.

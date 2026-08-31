@@ -1,0 +1,4 @@
+:load tracker/repl-tests/Aliasing.e
+viaAlias
+combined
+:quit

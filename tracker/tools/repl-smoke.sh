@@ -17,6 +17,9 @@ cp="$(tr -d '\n' < tracker/repl-classpath.txt)"
 fail=0
 for input in tracker/repl-tests/*.in; do
   name=$(basename "$input" .in)
+  # aliasing.in documents the post-G1 scoping change (D2); the legacy
+  # old-pipeline override refuses those programs by design
+  [[ $name == aliasing && ${REPL_PIPELINE:-} == *old* ]] && continue
   expected="tracker/repl-tests/$name.expected"
   actual=$(
     "$JAVA_HOME/bin/java" -Dermine.typeCheck=true -Dermine.useInterface=false \
