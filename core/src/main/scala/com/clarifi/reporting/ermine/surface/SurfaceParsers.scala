@@ -838,12 +838,32 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
     classStatementP       |
     binding
 
+  /** A non-consuming check that the next significant character opens a
+    * new layout item: it sits at or left of the current layout depth, or
+    * input has run out, or it is an explicit separator/closer.  Purely
+    * lexical on purpose — `layout` itself POPS layout contexts, so it
+    * cannot be used to peek.
+    *
+    * This is what makes the splitter total (5.2b).  Without it, a
+    * statement that parses as a proper PREFIX of its extent — `f a =`
+    * over three lines with junk on the last, or a chain ending in a
+    * trailing operator — returns that prefix, the leftover has no home,
+    * and the whole sepEndBy/virtualRightBrace driver dies, so the file
+    * yields no SErrorStatement and the editor gets nothing. */
+  def atLayoutBoundary: Parser[Unit] = get flatMap { st =>
+    val (i, _, col) = StatementExtents.skipTrivia(st.input, st.offset, st.loc.line, st.loc.column)
+    if (i >= st.input.length || col <= st.depth ||
+        st.input.charAt(i) == ';' || st.input.charAt(i) == '}') unit(())
+    else fail[Parser]("statement does not fill its layout item")
+  }
+
   def statement: Parser[SStatement] =
     optionalSpace.skipOptional >>
-    // `.attempt` so a statement the binding grammar commits to and then
-    // rejects still reaches the extent capture — which is exactly the
-    // failure statementFailure has to go back and recover
-    (statementAlts(bindingStatement.attempt) | rawStatement)
+    // `.attempt` around the WHOLE real grammar, not just the binding
+    // alternative: any committed failure — a broken `data` head as much
+    // as a broken equation — must still reach the extent capture, which
+    // is exactly the failure statementFailure goes back and recovers.
+    ((statementAlts(bindingStatement) << atLayoutBoundary).attempt | rawStatement)
 
   /** The char offset of a 1-based (line, column), counted the way
     * Pos.bump counts: '\n' starts a line, '\t' jumps to the next

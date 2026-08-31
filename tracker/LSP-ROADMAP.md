@@ -8,10 +8,11 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 2 OPEN (signed off 2026-08-31). 5.1 and 5.2 done — the read
-path is error-tolerant end to end, reports every phase's diagnostics, and
-blames syntax errors where the parser actually gave up.
-NEXT: 5.2b (the splitter's prefix-parse hole, found by 5.2), then 5.3 · Seeded 2026-08-30 (session that shipped the
+Status: STAGE 2 OPEN (signed off 2026-08-31). 5.1, 5.2 and 5.2b done — the
+read path is error-tolerant end to end, reports every phase's diagnostics,
+blames syntax errors where the parser actually gave up, and the splitter is
+TOTAL (no input shape loses the whole module any more).
+NEXT: 5.3 (in-memory documents + didChange) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -21,7 +22,7 @@ scoping fix, commits f9cf42a / 41b13cc).
   Stage 0; suites GROW, so a commit that adds tests updates the count in
   its iteration-log line, and green-except-the-known-one is the invariant
 - `tracker/tools/repl-smoke.sh`: all suites PASS (4 as of D2)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (43 as of 5.2)
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (47 as of 5.2b)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 - KNOWN FLAKE: core/test suites run concurrently in one JVM and rarely
@@ -449,7 +450,7 @@ STAGE-2 INVARIANTS (hard):
   Ugly.e's diagnostic returns to line 3 col 5 with an expectation
   message; add a continuation-line-error fixture asserting the
   position lands mid-statement.
-- [ ] **5.2b The splitter's PREFIX-PARSE hole** (found building 5.2's
+- [x] **5.2b The splitter's PREFIX-PARSE hole** (found building 5.2's
   continuation-line fixture; the roadmap did not anticipate it).  The
   tolerant splitter only recovers when the statement grammar FAILS.
   When it SUCCEEDS on a proper prefix of the extent and leaves junk
@@ -1426,3 +1427,45 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   navigates to Good.e.  TestTolerantRead +1 (9): the two syntax pins
   now assert the precise column, one of them on a continuation line.
   Suite 880 (879+known), repl 4, lsp 43/43, boot 129.
+
+- 2026-08-31 (5.2b — the splitter is TOTAL): `statement` becomes
+  `((statementAlts(bindingStatement) << atLayoutBoundary).attempt |
+  rawStatement)`, closing both ways the splitter used to lose a whole
+  module.  (1) PREFIX PARSE: the real grammar succeeded on a proper
+  prefix of the extent and the leftover had no home, so
+  `sepEndBy(semi)`/virtualRightBrace died — `atLayoutBoundary` now
+  requires the next significant character to open a new layout item
+  (at or left of the layout depth, or end of input, or an explicit
+  `;`/`}`), and a statement that does not fill its item falls through
+  to the extent capture.  (2) COMMITTED FAILURE OUTSIDE the binding
+  alternative: `|` short-circuits on an Err, so a broken `data` head
+  or sig never reached `rawStatement` at all — the `.attempt` moved
+  from the binding alternative to the WHOLE real grammar.  Since 5.2
+  recovers the committed failure by re-parsing, nothing is lost by
+  capturing first and asking later: positions stay the parser's own.
+  `atLayoutBoundary` is purely lexical (StatementExtents.skipTrivia,
+  new) BECAUSE `layout` pops layout contexts and so cannot be used to
+  peek.
+  Corpus differential clean: TestStatementExtents' 180-file
+  start/end agreement, TestSurfaceParsers' splitter coverage and
+  rejected-corpus dispositions, and the tolerant sweep's 176/180 all
+  unchanged — no clean file's shaping moves.
+  ROOT-CAUSED A NEW FLAKE rather than re-running it: the corpus sweep
+  failed about one full-suite run in three with "159 of 180 read
+  clean" and a parade of "would shadow global definition".  Cause:
+  ErmineFixture.loadModules writes its result back into baseEnv, and
+  ScalaCheck runs a Properties object's properties CONCURRENTLY, so
+  the sweep's session inherited whatever the pin properties had
+  already loaded — and a module read while itself loaded sees its own
+  globals as imports.  Fix: the sweep gets its own ErmineFixture (the
+  fixture's scaladoc says one per Properties instance; a writeback-
+  shared baseEnv needs one per PROPERTY), plus a precondition guard
+  that names the cause instead of leaving a confusing count.  Four
+  consecutive full-suite runs green after the fix.
+  lsp-smoke +4 (47): a new Prefix.e fixture — the `a +` / `b +` /
+  `= answer` shape 5.2 could not use — publishes one diagnostic blamed
+  on its leftover, and `fine = answer` below it still navigates to
+  Good.e.  TestTolerantRead +2 (11): five broken shapes all still
+  shape the module with their healthy neighbours intact, and the
+  prefix parse is blamed at the leftover.
+  Suite 882 (881+known), repl 4, lsp 47/47, boot 129.

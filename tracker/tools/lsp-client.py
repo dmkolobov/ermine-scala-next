@@ -167,6 +167,18 @@ def main():
               d["range"]["start"] == {"line": 5, "character": 2}, repr(d["range"]))
         check("Cont.e message is an expectation", "expected" in d["message"], d["message"])
 
+    # --- 5.2b: a statement that parses as a PREFIX of its extent and
+    # leaves junk behind used to kill the whole module parse, so the file
+    # got no per-statement diagnostics and no navigation at all.
+    open_doc("Prefix.e")
+    ds = client.diagnostics_for(uri("Prefix.e"))
+    check("Prefix.e one diagnostic", len(ds) == 1, repr(ds))
+    if len(ds) == 1:
+        d = ds[0]
+        check("Prefix.e blames the leftover, not the head",
+              d["range"]["start"] == {"line": 7, "character": 2}, repr(d["range"]))
+        check("Prefix.e message is an expectation", "expected" in d["message"], d["message"])
+
     # Sibling import: Sib.e imports Good.e from the fixtures directory.
     open_doc("Sib.e")
     check("Sib.e sibling import clean", client.diagnostics_for(uri("Sib.e")) == [])
@@ -211,6 +223,10 @@ def main():
           and r["range"]["start"]["line"] == 2, repr(r))
     r = definition("Cont.e", 7, 7)  # `answer` in `fine = answer`
     check("continuation-error file: def answer -> Good.e", r is not None
+          and r["uri"] == uri("Good.e")
+          and r["range"]["start"]["line"] == 2, repr(r))
+    r = definition("Prefix.e", 9, 7)  # `answer` in `fine = answer`
+    check("prefix-parse file: def answer -> Good.e", r is not None
           and r["uri"] == uri("Good.e")
           and r["range"]["start"]["line"] == 2, repr(r))
 

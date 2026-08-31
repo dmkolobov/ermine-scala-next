@@ -3,6 +3,7 @@ package com.clarifi.reporting
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.rename.NewPipeline
 import com.clarifi.reporting.ermine.session.{ Session => S, SessionEnv }
+import com.clarifi.reporting.ermine.surface.{ SErrorStatement, SurfaceParsers }
 
 import org.scalacheck._
 import Prop._
@@ -27,9 +28,23 @@ import java.io.File
   *    definition" for every head), which is exactly why the LSP's
   *    checkFile hoists the import load out of Session.load.
   */
-object TestTolerantRead extends Properties("Tolerant read 5.1") {
+object TestTolerantRead extends Properties("Tolerant read") {
   private val fx = ErmineFixture()
   import fx._
+
+  /** The corpus sweep gets its OWN fixture.  ErmineFixture's loadModules
+    * writes its result back into baseEnv to make later sessions fast, and
+    * ScalaCheck runs a Properties object's properties concurrently — so
+    * sharing `fx` with the pins below means the sweep's session may or
+    * may not already hold part of the stdlib, depending on which
+    * property won the race.  A module read while ITSELF loaded sees its
+    * own globals arrive as imports and every top-level head draws "would
+    * shadow global definition"; that is the whole point of the sweep's
+    * dependency ordering, and it made this property fail about one run
+    * in three.  (The fixture's own scaladoc says one per Properties
+    * instance; one per PROPERTY is what a writeback-shared baseEnv
+    * actually needs.) */
+  private val sweepFx = ErmineFixture()
 
   private val stdlibRoot = new File("core/src/main/resources/modules")
 
@@ -78,8 +93,12 @@ object TestTolerantRead extends Properties("Tolerant read 5.1") {
 
   property("strict and tolerant agree, and the tolerant read is silent, over the corpus") = secure {
     val files = corpusFiles
-    session { implicit s =>
-      implicit val su: Supply = supply
+    sweepFx.session { implicit s =>
+      implicit val su: Supply = sweepFx.supply
+      // Guard the precondition rather than trusting it: a preloaded
+      // corpus module would silently turn the sweep into a shadow-
+      // diagnostic parade instead of failing where the cause is.
+      val preloaded = s.loadedModules.keySet & corpusFiles.map(_.getName.stripSuffix(".e")).toSet
       val items = files.flatMap { f =>
         val src = slurp(f)
         val dn = f.getName.stripSuffix(".e")
@@ -121,6 +140,7 @@ object TestTolerantRead extends Properties("Tolerant read 5.1") {
         pending = rest
       }
       val bad = noisy.result()
+      (preloaded.isEmpty :| s"session came preloaded with corpus modules: $preloaded") &&
       ((files.size >= 180) :| s"only ${files.size} corpus files") &&
       ((pending.isEmpty) :| s"never became ready: ${pending.map(_.f.getName).take(6)}") &&
       ((swept >= 180) :| s"only $swept files swept") &&
@@ -208,6 +228,49 @@ object TestTolerantRead extends Properties("Tolerant read 5.1") {
       ((ds.size == 2) :| s"got ${ds.size}: ${ds.map(d => (d.phase.name, d.span, d.message))}") &&
       (ds.forall(_.phase == NewPipeline.Phase.Syntax) :| ds.map(_.phase.name).toString) &&
       ((ds.map(_.span.startLine) == List(7, 9)) :| ds.map(_.span).toString)
+  }
+
+  // ---- 5.2b: the splitter is TOTAL ----------------------------------
+  // Every one of these used to make SurfaceParsers.module return Left, so
+  // the file yielded no SErrorStatement, no per-statement diagnostics and
+  // no navigation at all.  The first two parse as a proper PREFIX of
+  // their extent and leave junk behind; the third commits inside a
+  // non-binding alternative, which `|` short-circuits on.
+
+  private val brokenShapes: List[(String, String)] = List(
+    "prefix parse, trailing operator" -> "total a b =\n  a +\n  b +\n  = 3\n",
+    "prefix parse, leftover token"    -> "total a b =\n  a\n  ) b\n",
+    "committed failure in `data`"     -> "data D = \n",
+    "committed failure in a sig"      -> "g : \n",
+    "a broken equation"               -> "f = = 3\n")
+
+  property("the splitter is total: every broken shape still shapes the module") = secure {
+    brokenShapes.map { case (what, body) =>
+      val src = "module TR where\n\ngood1 = 1\n" + body + "good2 = 2\n"
+      SurfaceParsers.module("TR", src, "TR") match {
+        case Left(err) =>
+          falsified :| s"$what: the splitter gave up: " +
+            err.pretty.toString.linesIterator.take(1).mkString
+        case Right(m) =>
+          val kinds = m.statements.map {
+            case _: SErrorStatement => "error"
+            case _                  => "ok"
+          }
+          ((kinds.count(_ == "error") >= 1) :| s"$what: no error statement: $kinds") &&
+          ((kinds.headOption.contains("ok") && kinds.lastOption.contains("ok")) :|
+            s"$what: healthy neighbours lost: $kinds")
+      }
+    }.foldLeft(proved: Prop)(_ && _)
+  }
+
+  property("a prefix parse is blamed at the leftover, not at the head") = {
+    val src = header("total a b =\n  a +\n  b +\n  = 3\n")
+    val (strict, ds) = pin(src)
+    (strict.isDefined :| "strict reader accepted it") &&
+      (ds.nonEmpty :| "tolerant reader found nothing") &&
+      agree("TR", src, strict, Right(ds)) &&
+      // the statement starts at line 6; the junk is on line 9
+      ((ds.head.span.startLine == 9 && ds.head.span.startCol == 3) :| s"span ${ds.head.span}")
   }
 
   property("a broken statement does not cost its healthy neighbours") = {

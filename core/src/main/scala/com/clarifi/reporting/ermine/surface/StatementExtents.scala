@@ -39,6 +39,47 @@ object StatementExtents {
 
   final case class Scan(layoutCol: Int, items: List[Extent])
 
+  /** Skip whitespace and comments from `from`, whose 1-based position is
+    * (`fromLine`, `fromCol`), and answer where the next significant
+    * character sits: (offset, line, column).  Columns advance the way
+    * scalaparsers' Pos.bump advances them (tab to the next multiple of
+    * 8), so the result can be compared against a layout depth.
+    *
+    * The splitter's statement-boundary check runs on this (5.2b); it is
+    * the same lexical view `scan` takes, `--` treated as a comment
+    * wherever it starts included.
+    */
+  def skipTrivia(s: String, from: Int, fromLine: Int, fromCol: Int): (Int, Int, Int) = {
+    val n = s.length
+    var i = from; var line = fromLine; var col = fromCol
+    def peek(k: Int): Char = if (i + k < n) s.charAt(i + k) else ' '
+    def advance(): Unit = {
+      s.charAt(i) match {
+        case '\n' => line += 1; col = 1
+        case '\t' => col += 8 - col % 8
+        case _     => col += 1
+      }
+      i += 1
+    }
+    var more = true
+    while (more && i < n) {
+      val c = s.charAt(i)
+      if (c == ' ' || c == '\t' || c == '\r' || c == '\n') advance()
+      else if (c == '-' && peek(1) == '-') { while (i < n && s.charAt(i) != '\n') advance() }
+      else if (c == '{' && peek(1) == '-') {
+        advance(); advance()
+        var depth = 1
+        while (i < n && depth > 0) {
+          if (peek(0) == '{' && peek(1) == '-') { advance(); advance(); depth += 1 }
+          else if (peek(0) == '-' && peek(1) == '}') { advance(); advance(); depth -= 1 }
+          else advance()
+        }
+      }
+      else more = false
+    }
+    (i, line, col)
+  }
+
   def scan(contents: String): Scan = {
     val n = contents.length
     var i = 0
