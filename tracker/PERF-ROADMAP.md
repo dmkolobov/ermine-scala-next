@@ -642,3 +642,66 @@ deferred by LSP 5.5).
   one); repl-smoke 4 suites; lsp-smoke 82 checks; boot 129; npm test PASS.
   NEXT: P3 — see the revised ordering note in Blocked/Awaiting; P5(a)'s
   noise-floor numbers put the measurable prize back on the batch target.
+
+- 2026-08-31 (ROW-CONSTRAINT SOLVING — investigated on a user's recollection
+  that it was historically one of the slowest parts of Ermine.  NEGATIVE
+  RESULT for perf, and a REAL ROBUSTNESS FINDING.  No code changed.)
+  The recollection is corroborated by an unmerged upstream commit: **04c2308,
+  Dan Doel, 2018-08-27, "Bail out of row constraint solving if it takes too
+  long"**, on branch `features/limit-row-solving`, verified NOT an ancestor of
+  HEAD.  It adds a 50,000-step countdown to `incorporateAll` and an exception
+  named **`Eternity`**, and on catching it returns the constraint set unsolved.
+  So the historical fear was RUNAWAY SATURATION / NON-TERMINATION, not
+  steady-state slowness.  `Constraints.scala` has been touched five times ever
+  and never optimized.
+
+  MEASURED, and it does not reproduce here.  Constraint solving is now its own
+  phase in jfr-buckets.py (it was folded into `inference`, which is why it was
+  invisible): **0.4%** of samples on Layout/Report.e, **0.4%** on
+  Relation/Op.e — the densest row module in the repo at 0.32 constraints/line,
+  10x Report.e — and **1.2%** of the batch load.  A dedicated editor run on
+  Relation/Op.e typechecks in 20ms with 6 components.
+
+  WHY IT IS QUIET, WHICH IS NOT "THE BENCHMARK MISSES IT".  The heavy row
+  modules are all INSIDE the boot closure (Relation.e and Layout/Report.e rank
+  1 and 2 of all 161; everything outside the closure is lighter), so there is
+  nothing heavier to load.  The residual sets the solver actually produces are
+  tiny: of 1474 signatures in the 129-module interface tree, 105 of 129 modules
+  produce ZERO partition constraints, 126 constrained signatures carry exactly
+  one, and **the global maximum is 15** (`lookbackJoin`, Relation.e:206).  An
+  all-pairs saturation over n<=15 cannot be hot.  There is also a STRUCTURAL
+  reason it stays small: row constraints are legal only in strictly positive
+  positions (Subst.scala:862, Type.scala:201), so they cannot accumulate across
+  a higher-order boundary.
+
+  THE ALGORITHM IS STILL THE SHAPE YOU WOULD WORRY ABOUT.  `incorporateAll`
+  (Constraints.scala:743) is forward-chaining saturation with an all-pairs
+  comparison per worklist step (`learnPartitions`, :805), and FOUR rules mint
+  FRESH variables that re-enter the queue (splitConcrete :795, resolution
+  :1021, commonSubexpression :1076, disjunction :1105) with NO step budget.
+  The cubic rule is one uncomment away: `disjunction`'s call sites at :814-818
+  and :823-831 are commented out, making it dead code in production.  The
+  file's own header predicts this at :208-212 ("one would probably expect an
+  algorithm using the rules above to not perform very well").
+
+  THE ACTIONABLE PART IS NOT PERF.  An unbounded saturation loop inside the
+  resident LSP is a HANG risk: the server is single-threaded by decision, so a
+  pathological input does not slow the editor down, it stops answering
+  forever.  Batch at least dies with a REPL prompt still alive.  Upstream
+  already wrote the fix and never merged it.  This belongs to the LSP roadmap's
+  robustness debt, not here — flagged, not scheduled.
+  ALSO WORTH KNOWING BEFORE ANYONE TOUCHES THE SOLVER: `lookbackJoin`'s
+  15-constraint residual contains `r <- (r)` (vacuous) and prints
+  `t <- (d, r, c)` AND `t <- (c, d, r)` — the same constraint, since RHS is a
+  Set — so the saturation is non-confluent and under-trimmed, which is the
+  real content of the `-Dermine.loadInSeries` trap and Decision 9.  And the
+  whole-loop soundness property `incorporateAll sound` is COMMENTED OUT in
+  TestConstraints.scala:483-489; only the individual rules are tested.  That
+  is the missing net.
+
+  NO ITEM IS ADDED TO THIS CHECKLIST.  Nothing in this repo can be loaded to
+  reproduce the 2018 behaviour; it would have to be AUTHORED — a synthetic
+  module chaining 20-50 join/rename/except calls across many distinct row
+  variables, extrapolating from lookbackJoin's 6 chained calls -> 13 fresh
+  existentials.  Recorded so the next session does not re-run this
+  investigation from the same recollection.

@@ -134,12 +134,24 @@ class Client:
                 die("server failed to boot: " + msg["params"]["message"])
 
 
-def variant(lines, digit):
-    """The pinned edit: one digit, same line, same line count, same length."""
-    line = lines[EDIT_LINE - 1]
-    i = line.index(EDIT_ANCHOR) + len(EDIT_ANCHOR)
+def variant(lines, lineno, anchor, mode, k):
+    """The pinned edit.  Same line, same line count, no scope word, inside a
+    named definition, with significant characters still after it.
+
+    `digit` substitutes one character of an integer literal -- identical
+    length, type-neutral, 10 distinct states.  `space` doubles the space just
+    after the anchor, which is the portable form: it is provably type-neutral
+    on any line, and layout is decided by the column of a line's FIRST token,
+    which a mid-line space cannot move.  Two states is enough, because the
+    cache is rebuilt from each run's own components -- only round N vs N-1
+    matters (TolerantCheck.scala:278)."""
+    line = lines[lineno - 1]
+    i = line.index(anchor) + len(anchor)
     out = list(lines)
-    out[EDIT_LINE - 1] = line[:i] + str(digit) + line[i + 1:]
+    if mode == "digit":
+        out[lineno - 1] = line[:i] + str(k % 10) + line[i + 1:]
+    else:
+        out[lineno - 1] = line[:i] + " " * (k % 2) + line[i:]
     return "\n".join(out)
 
 
@@ -154,6 +166,9 @@ def median(xs):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=15)
+    ap.add_argument("--line", type=int, default=EDIT_LINE)
+    ap.add_argument("--anchor", default=EDIT_ANCHOR)
+    ap.add_argument("--mode", choices=["digit", "space"], default="digit")
     ap.add_argument("--file", required=True)
     ap.add_argument("--log", required=True)
     ap.add_argument("--out", required=True)
@@ -172,9 +187,19 @@ def main():
     # fingerprint at once (PERF-ROADMAP Decision 12).
     src = path.read_bytes().decode("utf-8")
     lines = src.split("\n")
-    if len(lines) < EDIT_LINE or lines[EDIT_LINE - 1] != EDIT_EXPECT:
-        die("the pinned edit site moved: %s:%d is %r, expected %r"
-            % (path, EDIT_LINE, lines[EDIT_LINE - 1:EDIT_LINE], EDIT_EXPECT))
+    if len(lines) < a.line:
+        die("%s has %d lines; --line %d is past the end" % (path, len(lines), a.line))
+    # The default site is pinned to its exact text.  A caller-chosen site is
+    # checked for an unambiguous anchor instead -- and CRLF files keep their
+    # \r, since the split/join above is byte-preserving (Decision 12).
+    if a.line == EDIT_LINE and a.anchor == EDIT_ANCHOR:
+        if lines[EDIT_LINE - 1] != EDIT_EXPECT:
+            die("the pinned edit site moved: %s:%d is %r, expected %r"
+                % (path, EDIT_LINE, lines[EDIT_LINE - 1:EDIT_LINE], EDIT_EXPECT))
+    elif lines[a.line - 1].count(a.anchor) != 1:
+        die("anchor %r occurs %d times on %s:%d (%r); it must occur exactly once"
+            % (a.anchor, lines[a.line - 1].count(a.anchor), path, a.line,
+               lines[a.line - 1]))
     uri = path.as_uri()
 
     client = Client(cmd, a.stderr or (a.out + ".stderr"))
@@ -226,7 +251,7 @@ def main():
     print("  round 0 (didOpen, cold cache): %.3fs, %d diagnostic(s)" % (dt, n))
 
     for r in range(1, a.rounds + 1):
-        dt, n = one(variant(lines, r % 10), r + 1, "didChange")
+        dt, n = one(variant(lines, a.line, a.anchor, a.mode, r), r + 1, "didChange")
         print("  round %d: %.3fs, %d diagnostic(s)" % (r, dt, n))
 
     rid = client.request("shutdown", {})

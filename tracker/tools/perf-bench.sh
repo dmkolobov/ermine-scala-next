@@ -230,9 +230,16 @@ if [ "$MODE" = editor ] || [ "$MODE" = both ]; then
    match the module its importers resolve to; run 'sbt -batch core/compile'"
   fi
   log="$OUT/editor-lsp.log"; : > "$log"   # the server opens it in APPEND mode
+  # Edit-site overrides, for benching a file other than the pinned default
+  # (PERF_EDIT_MODE=space is the portable edit: doubling a mid-line space is
+  # type-neutral on any line, and layout only reads a line's FIRST column).
+  edit=()
+  [ -n "${PERF_EDIT_LINE:-}" ]   && edit+=(--line "$PERF_EDIT_LINE")
+  [ -n "${PERF_EDIT_ANCHOR:-}" ] && edit+=(--anchor "$PERF_EDIT_ANCHOR")
+  [ -n "${PERF_EDIT_MODE:-}" ]   && edit+=(--mode "$PERF_EDIT_MODE")
   python3 tracker/tools/perf-client.py \
     --rounds "$ROUNDS" --file "$TARGET_FILE" --log "$log" \
-    --out "$OUT/editor.json" --stderr "$OUT/editor-server.stderr" \
+    --out "$OUT/editor.json" --stderr "$OUT/editor-server.stderr" "${edit[@]}" \
     -- "$JAVA_HOME/bin/java" -Dermine.lsp.log="$log" "${LOCALE_PROPS[@]}" \
        ${PERF_JVM_PROPS:-} -cp "$cp" com.clarifi.reporting.ermine.lsp.Main \
     | tee "$OUT/editor.txt"

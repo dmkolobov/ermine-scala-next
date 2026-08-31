@@ -36,7 +36,12 @@ import sys
 # Innermost match wins.  Order matters only where one rule's classes sit inside
 # another's package (extents before the general surface/parsing rule).
 PHASE_RULES = [
-    ("inference",    r"ermine\.Subst\$|ermine\.session\.TolerantCheck\$|ermine\.Constraints"),
+    # Constraint solving is split OUT of inference deliberately: folded in, it
+    # is invisible, and "how much of inference is row-constraint solving" is a
+    # standing question about this language.  Ordered first so a stack that
+    # reaches the solver is attributed to it rather than to its Subst caller.
+    ("constraint solving", r"ermine\.Constraints\$|ermine\.Subst\$NormalPart"),
+    ("inference",    r"ermine\.Subst\$|ermine\.session\.TolerantCheck\$"),
     ("lower",        r"ermine\.rename\.(Lower|TyLower)\$"),
     ("reassoc",      r"ermine\.rename\.Reassoc\$"),
     ("rename",       r"ermine\.rename\.Renamer\$"),
