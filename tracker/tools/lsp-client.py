@@ -324,6 +324,22 @@ def main():
               ds[2]["severity"] == 3 and "unchecked" in ds[2]["message"]
               and ds[2]["range"]["start"]["line"] == 6, repr(ds[2]))
 
+    # A syntax error NESTED in a where-block is blamed inside the block,
+    # not at the statement head: the recovery re-parse commits its way in
+    # (5.2).  This is the evidence for deferring 5.6 — the nested-extent
+    # scanner it proposed would not improve this position.
+    open_doc("Nested.e")
+    ds = client.diagnostics_for(uri("Nested.e"))
+    check("Nested.e two diagnostics", len(ds) == 2, repr(ds))
+    if len(ds) == 2:
+        check("Nested.e blames INSIDE the where-block",
+              ds[0]["range"]["start"] == {"line": 5, "character": 16}, repr(ds[0]["range"]))
+        check("Nested.e still type checks the healthy definition",
+              "failed to unify" in ds[1]["message"]
+              and ds[1]["range"]["start"]["line"] == 9, repr(ds[1]))
+        check("Nested.e no undefined-term cascade from the broken block",
+              not any("undefined term" in d["message"] for d in ds), repr(ds))
+
     # --- 5.3: didChange drives everything, with no save at all ---------
     def change(name, text, version):
         client.notify("textDocument/didChange", {

@@ -8,13 +8,14 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 2 OPEN (signed off 2026-08-31). 5.1-5.5 done — the read path
+Status: STAGE 2 COMPLETE — AWAITING GATE G2 SIGN-OFF (2026-08-31).
+5.1-5.5 done; 5.6 DEFERRED with evidence (see its entry).  The read path
 is error-tolerant end to end, reports every phase's diagnostics, blames
 syntax errors where the parser actually gave up, the splitter is TOTAL,
 checking runs on open BUFFERS as they are typed, TYPE checking reports
 every independent error including in the healthy part of a broken file,
 and unchanged binding components are no longer re-inferred.
-NEXT: 5.6 (stretch — nested extents), then GATE G2 stops the loop · Seeded 2026-08-30 (session that shipped the
+NEXT: nothing — the loop stopped at G2.  Say the word to open Stage 3. · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -24,7 +25,7 @@ scoping fix, commits f9cf42a / 41b13cc).
   Stage 0; suites GROW, so a commit that adds tests updates the count in
   its iteration-log line, and green-except-the-known-one is the invariant
 - `tracker/tools/repl-smoke.sh`: all suites PASS (4 as of D2)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (73 as of 5.5)
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (77 as of G2)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 - KNOWN FLAKE: core/test suites run concurrently in one JVM and rarely
@@ -539,11 +540,29 @@ STAGE-2 INVARIANTS (hard):
   design item for the Blocked/Awaiting section, not a side quest.
   Measure keystroke-to-diagnostics on Layout/Report.e (1400 lines)
   before and after; record the numbers in the log.
-- [ ] **5.6 (stretch) Nested extents**: extend StatementExtents with a
-  per-block mode (let/where/do bodies, case alternatives) so 5.2's
-  re-parse and 5.5's invalidation can work INSIDE a long where-block;
-  differential oracle = the surface parser's block statement spans.
-  Defer without guilt if 5.1-5.5 land first.
+- [ ] **5.6 (stretch) Nested extents** — **DEFERRED 2026-08-31, with
+  evidence, per this item's own "defer without guilt if 5.1-5.5 land
+  first".**  Both of its stated motivations were checked and neither
+  survived:
+  (a) "so 5.2's re-parse can work inside a long where-block" — it
+  already does.  statementFailure re-runs the real grammar with the
+  binding alternative COMMITTING, so the failure it recovers is
+  whatever committed deepest, block or no block.  Nested.e's error
+  inside a `where` is blamed at 6:17, the second `=` in the block, not
+  at the statement head; lsp-smoke pins it.
+  (b) "so 5.5's invalidation can work inside a long where-block" — it
+  cannot, and nested extents would not help.  The invalidation unit is
+  a binding SCC, and implicitBindingComponents runs over m.implicits,
+  which is TOP-LEVEL bindings only: a where-block's bindings are
+  lowered into a Let inside their owner's alt and are never a component
+  of their own.  Finer extents would give nothing finer to invalidate.
+  What nested extents would still buy is narrow: the undefined-term
+  head-word suppression falls back to "suppress all" when the broken
+  statement sits inside a private/database block (not a top-level
+  item), and the syntax diagnostic's END would come from a scanner
+  rather than the parsed span in the case where statementFailure
+  recovers nothing.  Neither is worth the differential a new scanner
+  mode would need.  Reopen if a real editor session shows otherwise.
 
 KNOWN PRE-EXISTING DIVERGENCE (out of Stage-2 scope, tracked here so it
 is not rediscovered): assemble ignores bare SClassStatements entirely,
@@ -1631,3 +1650,71 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   2026-08-30 and covered by the G1 sign-off; it was only ever unticked
   because the item was split into 4.1a/b/c.
   Suite 902 (901+known), repl 4, lsp 73/73, boot 129.
+
+## Gate evidence (G2, recorded 2026-08-31)
+
+Stage 2 shipped in seven commits, b401325..HEAD, on branch
+scala3-migration.  Every one of them was green on all four baselines
+before it landed.
+
+BATCH STRICTNESS FROZEN — the gate's hard half.  Across the whole
+stage (`git diff f7aaed6..HEAD`), the only batch-path file touched is
+Session.scala, at **27 insertions and 0 deletions**: the `Buffer`
+SourceFile subclass plus its two cases in sourceFileTypeScore /
+sourceFileOrdering.  Nothing was removed or altered.  The REPL golden
+corpus (tracker/repl-tests/*.expected) is byte-unchanged, and
+repl-smoke's four suites pass unmodified.  Error tolerance lives
+entirely in new entry points — NewPipeline.readModuleTolerant beside
+readModule, TolerantCheck beside loadModule — never in a flag inside a
+strict one.  TestTolerantRead's agreement property is the standing
+tripwire: over all 180 corpus files, the strict reader is silent
+exactly when the tolerant one is, and when it dies it dies with the
+tolerant reader's first diagnostic rendered byte-for-byte.
+
+BASELINES AT GATE
+- core/test: 902 total, 901 pass, 1 fail — `Constraints.disjunction
+  sound`, the one known pre-existing failure (tracker/06-tests.md).
+  Was 871 when the stage opened; +31 are this stage's own pins.
+- tracker/tools/repl-smoke.sh: 4 suites PASS (aliasing 2, relations 6,
+  scoping 4, smoke 23).
+- tracker/tools/lsp-smoke.sh: 77 checks PASS (31 when the stage
+  opened).
+- bin/ermine: Loaded 129 modules, 6.0s warm.
+- No .ei droppings in tracker/lsp-tests.
+
+WHAT THE GATE ASKED FOR, AND WHERE IT IS CHECKED
+- multi-diagnostic broken files: Broken.e publishes two syntax
+  diagnostics on their offending tokens; TwoErr.e publishes BOTH
+  independent type errors, which loadModule structurally cannot do.
+- didChange without save, including the sibling-buffer check: Edit.e is
+  broken and fixed through didChange alone with the file on disk
+  verified untouched; Good.e's buffer moves `answer` down a line and
+  goto-definition from Edit.e lands on the new line, in text never
+  written to disk.
+- positions per 5.2: Ugly.e is back at 3:5 with an expectation message;
+  Cont.e is blamed on its continuation line; Prefix.e on its leftover;
+  Nested.e inside its where-block.
+- both type errors per 5.4: TwoErr.e, plus Cascade.e (a broken file's
+  healthy definition still checked, no undefined-term cascade) and
+  Chain.e (one error, two transitive "unchecked" notes).
+- nav after didChange: a definition that moves down a line is found at
+  its new position without a save.
+- a timing line from 5.5: Layout/Report.e, 1757 lines —
+  keystroke-to-diagnostics median **2.24s before, 1.57s after**;
+  inference 1.03s -> 0.45s, 114 of 154 components reused.
+
+TWO THINGS FOUND THAT THE CHECKLIST DID NOT ANTICIPATE, both fixed and
+pinned: the splitter's prefix-parse hole (5.2b — a statement parsing as
+a proper prefix of its extent killed the whole module parse, so the
+file got no diagnostics at all) and a module being in its own scope
+while checked (5.4b — every module implicitly imports itself, so any of
+the 129 already-loaded stdlib modules drew a shadow refusal on every
+top-level head; 329 of them on Report.e).
+
+ONE NUMBER WORTH CARRYING FORWARD: after 5.5, parse+rename+lower is
+0.80s of the 1.57s round trip — 64%, not the rounding error the
+checklist's "inference dominates" assumed.  tracker/TICKET-perf-type-
+inference.md should be re-read against that before Stage 3 picks a
+target.
+
+STOP.  The loop is stopped for sign-off, per the gate.
