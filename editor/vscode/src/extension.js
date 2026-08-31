@@ -187,17 +187,26 @@ async function startClient(context) {
     }
   );
 
-  context.subscriptions.push({ dispose: () => client && client.stop() });
+  context.subscriptions.push({ dispose: () => stopQuietly(client) });
+}
+
+/**
+ * stop() throws if the client never reached `running` — which is exactly the
+ * case after a failed start, and exactly when teardown still has to work.
+ */
+async function stopQuietly(c) {
+  if (!c) return;
+  try {
+    await c.stop();
+  } catch (err) {
+    log(`stop skipped (${err && err.message ? err.message : err})`);
+  }
 }
 
 async function restart(context) {
   if (client) {
     log("restarting…");
-    try {
-      await client.stop();
-    } catch (err) {
-      log(`stop failed, continuing: ${err}`);
-    }
+    await stopQuietly(client);
     client = undefined;
   }
   await startClient(context);
@@ -254,7 +263,7 @@ async function activate(context) {
 }
 
 function deactivate() {
-  return client ? client.stop() : undefined;
+  return stopQuietly(client);
 }
 
 module.exports = { activate, deactivate };

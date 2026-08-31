@@ -5,16 +5,28 @@
   "version": "0.1.0",
   "publisher": "clarifi",
   "license": "SEE LICENSE IN ../../LICENSE",
-  "engines": { "vscode": "^1.75.0" },
-  "categories": ["Programming Languages", "Linters"],
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
   "main": "./src/extension.js",
-  "activationEvents": ["onLanguage:ermine"],
+  "activationEvents": [
+    "onLanguage:ermine"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "ermine",
-        "aliases": ["Ermine", "ermine"],
-        "extensions": [".e"],
+        "aliases": [
+          "Ermine",
+          "ermine"
+        ],
+        "extensions": [
+          ".e"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -41,7 +53,7 @@
         "ermine.logFile": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Server-side log file (sets `ERMINE_LSP_LOG`). Empty disables server logging. The server never writes to stdout — that is the protocol channel."
+          "markdownDescription": "Server-side log file (sets `ERMINE_LSP_LOG`). Empty disables server logging. The server never writes to stdout \u2014 that is the protocol channel."
         },
         "ermine.warmClasspathOnStart": {
           "type": "boolean",
@@ -50,16 +62,29 @@
         },
         "ermine.trace.server": {
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
           "description": "Trace the LSP traffic in the Ermine output channel."
         }
       }
     },
     "commands": [
-      { "command": "ermine.restartServer", "title": "Ermine: Restart Language Server" },
-      { "command": "ermine.toggleFastMode", "title": "Ermine: Toggle Fast Mode" },
-      { "command": "ermine.showOutput", "title": "Ermine: Show Language Server Output" }
+      {
+        "command": "ermine.restartServer",
+        "title": "Ermine: Restart Language Server"
+      },
+      {
+        "command": "ermine.toggleFastMode",
+        "title": "Ermine: Toggle Fast Mode"
+      },
+      {
+        "command": "ermine.showOutput",
+        "title": "Ermine: Show Language Server Output"
+      }
     ]
   },
   "dependencies": {
@@ -69,6 +94,9 @@
     "@types/vscode": "^1.75.0"
   },
   "scripts": {
+    "test": "node test/load-test.js && python3 test/grammar-test.py",
+    "test:load": "node test/load-test.js",
+    "test:grammar": "python3 test/grammar-test.py",
     "package": "vsce package"
   }
 }

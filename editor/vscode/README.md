@@ -103,14 +103,33 @@ is in the `_readme` key at the top of `syntaxes/ermine.tmLanguage.json`.
 Server-side changes are covered by `tracker/tools/lsp-smoke.sh`, which includes
 fast-mode checks. Run it with `core/test` and `repl-smoke.sh` before committing.
 
-## Testing the grammar without VS Code
+## Tests
 
 ```sh
-python3 editor/vscode/test/grammar-test.py
+npm test           # both of the below
+npm run test:load  # loads and activates the extension, then talks to the server
+npm run test:grammar
 ```
 
-A small TextMate tokenizer (context stack, begin/end, patterns in order) run
-over the 180-file corpus. It pins the rules that differ from Haskell intuition
-— `--` unconditional, `if` as a function, `'` and `` ` `` as ordinary
-operators, `_Module` affixes as single tokens — and checks that no regex can
-match empty, which would hang the real tokenizer.
+Neither needs VS Code.
+
+**`test/load-test.js`** stubs the `vscode` module in the loader and calls
+`activate()` exactly as the editor would, then checks that every command
+package.json contributes is registered, that activation returns without
+waiting on the server, and that `deactivate()` is safe after a failed start.
+
+Its last step is live: it waits for the status bar to carry the server's own
+`session ready: 129 modules in …s`, which only `Main.scala` can produce. That
+one assertion covers the whole chain — the client spawned `bin/ermine-lsp`,
+the handshake completed, the session booted, and `window/logMessage` came back
+through `vscode-languageclient` into this extension's handler. It skips itself
+if `target/ermine-classpath` is missing, and takes ~15s when it runs.
+
+**`test/grammar-test.py`** is a small TextMate tokenizer (context stack,
+begin/end, ordered patterns) run over the 180-file corpus. It pins the rules
+that differ from Haskell intuition — `--` unconditional, `if` as a function,
+`'` and `` ` `` as ordinary operators, `_Module` affixes as single tokens — and
+checks that no regex can match empty, which would hang the real tokenizer.
+
+Node was not previously a dependency of this repo. `npm test` needs it; nothing
+else here does.
