@@ -353,7 +353,7 @@ Baselines section); old pipeline still serving REPL. STOP the loop and
 summarize for sign-off before Stage 2.
 
 **Post-G1 debt checklist** (G1 signed off 2026-08-30; do in order):
-- [ ] **D0 Interface round-trip test** (Decision g precondition): a
+- [x] **D0 Interface round-trip test** (Decision g precondition): a
   repeatable test — new-pipeline load with useInterface on writes .ei
   into a temp workspace, a FRESH session warm-loads from them, and the
   warm session's types/env answers match the cold session's.
