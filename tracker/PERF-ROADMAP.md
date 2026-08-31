@@ -705,3 +705,72 @@ deferred by LSP 5.5).
   variables, extrapolating from lookbackJoin's 6 chained calls -> 13 fresh
   existentials.  Recorded so the next session does not re-run this
   investigation from the same recollection.
+
+- 2026-08-31 (THE ROW-CONSTRAINT CLIFF — found, bracketed and confirmed; and
+  the examples corpus measured for the first time).  Follows the negative
+  result above, which was right about this corpus and wrong to leave it there.
+
+  THE CLIFF IS REAL AND IT IS AT EIGHT.  `tracker/tools/gen-row-stress.py`
+  emits N left-nested `join`s in ONE UNANNOTATED definition (`join` contributes
+  three partitions and three fresh existentials per call; left-nesting feeds
+  each output into the next input so the RHS sets overlap without being
+  identical, which is what fires `resolution` and `commonSubexpression`).  One
+  JVM per N, interface-free:
+
+  | N chained joins | solve  |          | N | solve                |
+  |-----------------|--------|----------|---|----------------------|
+  | 2               | 0.02s  |          | 6 | 0.79s                |
+  | 3               | 0.03s  |          | 7 | **10.94s**           |
+  | 4               | 0.03s  |          | 8 | **>138s, killed**    |
+  | 5               | 0.13s  |          |   |                      |
+
+  Step ratios 4.3x -> 6.1x -> 13.8x: the ratio itself grows, so this is worse
+  than exponential, which is what an unbounded worklist that MINTS NEW WORK
+  looks like.  A JFR profile of N=7 settles what is burning: **98.4% of samples
+  in constraint solving**, split **59.7% priority-queue maintenance** (`Q.append`
+  17.1%, `Q.part` 12.3%, `RHS.hashCode` 11.7%, `findRHS` 8.8%, `foldLeft` 5.2%)
+  and **38.3% the rules** (`commonSubexpression` 16.3%, `cancellation` 8.6%).
+  `commonSubexpression` is one of the four fresh-variable minters: it invents a
+  variable, the variable re-enters the queue, the queue rebuilds and re-hashes,
+  and every processed partition is compared against it again.
+
+  WHY NOTHING IN THE REPO HITS IT — and how close it gets.  `lookbackJoin`
+  (Relation.e:206), the corpus's worst real case, has SIX chained
+  row-constrained calls.  The synthetic at N=6 solves in 0.79s.  **The corpus
+  stops one step short of the knee.**  That is why every profile said 0.4-1.2%
+  and why the 2018 `Eternity` budget (04c2308, never merged) would never have
+  fired here.
+  Note also `RHS.hashCode` at 11.7%: the queue key is `(rhs.hashCode,
+  lhs.hashCode)` and a TypeVar's hash is its Supply-drawn id — so the SAME
+  design decision produces both this cost and the residual non-determinism that
+  forced `-Dermine.loadInSeries` into existence (Decision 9).
+
+  THE EXAMPLES CORPUS, WHICH NO PROFILE IN THIS REPO HAD EVER TYPE-CHECKED.
+  The boot closure is Prelude+Layout; Console appends the examples loader only
+  afterwards, and every measurement in this file passed no arguments.  So the
+  inferred-relational corpus was never in any of it.  Measured now, per file:
+  ChartsExample 2.72s, GridExample 0.84s, PieChartLegend 0.65s, GroupBy 0.20s,
+  SoftRelation 0.17s, PivotTest 0.12s, everything else <=0.09s.
+  THE RELATIONAL EXAMPLES ARE THE CHEAP ONES.  PivotTest carries the most
+  inferred row constraints of any example and costs 0.12s.  The expensive ones
+  are the CHART/LAYOUT files, and a profile of ChartsExample says why: **82.8%
+  inference, 1.7% constraint solving**, and by leaf family **35.2%
+  free-variable collection + 31.6% substitution**.  That is P3 and P4 territory
+  exactly, now confirmed on real user-shaped code and not just on the stdlib
+  boot — which STRENGTHENS the current ordering rather than changing it.
+  Incidental: four example files do not parse at all (Sample.e, Interp.e,
+  Yahoo.e, guide/HelloWorld.e — e.g. `Sample.e:12:1: panic: trailing virtual
+  semicolon`).  Pre-existing, unrelated, and noted so it is not rediscovered.
+
+  WHAT THIS CHANGES.  Still NO perf item for the solver: nothing reachable in
+  this repo is slow, and the fix for code that IS slow is a step budget, not an
+  optimization.  What it does change is that the robustness flag now has a
+  number behind it — **eight chained inferred row operations in one definition
+  hangs the compiler**, and inside the single-threaded resident LSP that is an
+  unrecoverable hang, not a slow save.  Porting 04c2308's budget (and reporting
+  the unsolved set as a diagnostic rather than spinning) is the fix, and it
+  belongs to LSP robustness debt.  A user writing a 10-way join would meet this
+  on their first save.
+  Reproduce: `tracker/tools/gen-row-stress.py --out /tmp/rowstress --to 8`.
+  No Scala touched; the last full baseline run stands (core/test 904, repl 4,
+  lsp 82, boot 129, npm PASS).

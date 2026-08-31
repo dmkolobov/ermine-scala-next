@@ -67,6 +67,11 @@ FAMILY_RULES = [
     ("parser failure merging",   r"^scalaparsers\.Fail"),
     ("parser trampoline",        r"^scalaparsers\."),
     ("extent scan",              r"\.StatementExtents\$\."),
+    # Split so the solver's own cost is legible when it IS hot: on an
+    # adversarial input it is 98% of samples, and reading that as "other"
+    # would waste the measurement.
+    ("row-constraint queue",     r"\.Constraints\$(Q|RHS)"),
+    ("row-constraint rules",     r"\.Constraints\$"),
     ("grammar (ermine parsers)", r"\.ermine\.(parsing|surface)\."),
 ]
 FAMILIES = [(name, re.compile(pat)) for name, pat in FAMILY_RULES]
