@@ -31,6 +31,20 @@ object NewPipeline {
       case Right(m)  => m
       case Left(err) => throw Death(err.pretty)
     }
+    // batch loads REFUSE unparseable statements (the tolerant splitter
+    // keeps their extent as SErrorStatement for editor flows; a module
+    // load must not silently drop them — D3, Ugly.e)
+    def firstError(ss: List[SStatement]): Option[SErrorStatement] = ss.collectFirst(Function.unlift {
+      case e: SErrorStatement          => Some(e)
+      case SPrivateBlock(_, ss2)       => firstError(ss2)
+      case SDatabaseBlock(_, _, ss2)   => firstError(ss2)
+      case _                           => None
+    })
+    firstError(sm.statements).foreach { e =>
+      throw Death(mkPos(fileName, contents, e.loc.span)
+        .report(Document.text("error: unparseable statement (" + e.message + ")")))
+    }
+
     val scope = ModuleScope.importing(mh.name, ModuleScope.Scope.empty,
       s.termNames, s.cons.keySet, mh.imports, s.termNameOrigins, s.consOrigins)
     val renamed = Renamer.renameOrDie(sm, scope, contents)
@@ -140,8 +154,16 @@ object NewPipeline {
     def collectBlock(bs: List[SStatement]): (List[(V[Type], ImplicitBinding)], List[(V[Type], Type, Span)]) = {
       val grouped = scala.collection.mutable.LinkedHashMap[String, (V[Type], List[Alt])]()
       val sigs = List.newBuilder[(V[Type], Type, Span)]
+      // equations of one name must be consecutive among equations —
+      // gatherBindings parity (an interleaved equation silently merging
+      // into an earlier group was a 4.2 regression, caught by the pin)
+      var lastEq: Option[String] = None
       bs foreach {
         case SEquation(l, n, args, body, wh) =>
+          if (grouped.contains(n.spelling) && !lastEq.contains(n.spelling))
+            throw Death(mkPos(fileName, contents, n.span)
+              .report(Document.text(s"error: interleaved equations for ${n.spelling}")))
+          lastEq = Some(n.spelling)
           val v = grouped.get(n.spelling).map(_._1).getOrElse {
             lctx.binderAtSite(n) getOrElse lctx.varFor(n)
           }
@@ -184,9 +206,13 @@ object NewPipeline {
     def bindingBlock(bs: List[SStatement], intoPrivate: Boolean): Unit = {
       val (groups, sigs) = collectBlock(bs)
       groups.foreach { case (v, b) =>
-        topGroups(v) = topGroups.get(v) match {
-          case Some(b0) => ImplicitBinding(b0.loc, b0.v, b0.alts ++ b.alts)
-          case None     => b
+        topGroups.get(v) match {
+          case Some(_) =>
+            // a later adjacency block re-opening a name: refused, as above
+            throw Death(mkPos(fileName, contents, Span(0, 0, 0, 0))
+              .report(Document.text("error: interleaved equations for " +
+                b.v.name.map(_.string).getOrElse("?"))))
+          case None => topGroups(v) = b
         }
       }
       topSigs ++= sigs

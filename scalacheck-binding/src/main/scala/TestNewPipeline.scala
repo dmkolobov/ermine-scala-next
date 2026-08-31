@@ -67,9 +67,8 @@ object TestNewPipeline extends Properties("NewPipeline 4.1c") {
   property("chained modules load through the live switch") = secure {
     val srcA = "module NPA where\nimport Primitive\n\nvalA : Int\nvalA = 1\n\ndata Wrap q = MkWrap q\nunwrap (MkWrap q) = q\n"
     val srcB = "module NPB where\nimport NPA\nimport Primitive\n\nvalB = valA + unwrap (MkWrap 2)\n"
-    val r = fxChain.session { implicit s0 =>
-      fxChain.loadModules(List("Primitive"))(s0)
-      implicit val s: SessionEnv = s0.withPipelineNew(true)
+    val r = fxChain.session { implicit s =>
+      fxChain.loadModules(List("Primitive"))(s)
       S.load(Literal(srcA, "NPA"))
       S.load(Literal(srcB, "NPB"))
       s.termNames.keys.filter(g => g.module == "NPA" || g.module == "NPB").map(_.string).toSet

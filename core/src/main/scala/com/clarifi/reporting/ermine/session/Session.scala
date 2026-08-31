@@ -366,18 +366,11 @@ object Session {
           case Some(_) => None // we were already loaded
           case None    =>
             val before = nanoTime
-            // -Dermine.pipeline=new routes MODULE loading through the
-            // split pipeline (parse -> rename -> reassociate -> lower);
-            // REPL command parsing stays fused (roadmap Decision d).
-            val r = if (s.pipelineNew)
-              com.clarifi.reporting.ermine.rename.NewPipeline.readModule(
-                file.toString, file.contents, mh)(s, su)
-            else
-              parse(moduleBody(mh), ps.importing( s.termNames
-                                                , s.cons.keySet
-                                                , mh.imports
-                                                , s.termNameOrigins
-                                                , s.consOrigins))(su)
+            // post-G1 D3: the split pipeline (parse -> rename ->
+            // reassociate -> lower) is the only module reader; the
+            // fused moduleBody path is retired
+            val r = com.clarifi.reporting.ermine.rename.NewPipeline.readModule(
+              file.toString, file.contents, mh)(s, su)
             val after = nanoTime
             profile(mh.name + " parse module", before, "parsed" -> after)
             Some(r)

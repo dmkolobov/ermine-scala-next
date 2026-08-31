@@ -1058,3 +1058,24 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   (dep read branch, pipelineNew flag collapse, test-twin merge), then
   delete the grammar itself.  Suite 902 (901+known), repl 4 suites,
   lsp 31/31.
+
+- 2026-08-31 (D3 part 2): THE FUSED MODULE PATH IS RETIRED.  Session.dep
+  reads every module through NewPipeline unconditionally; the
+  SessionEnv.pipelineNew switch, withPipelineNew, the -Dermine.pipeline
+  property, the bin-script flags, repl-smoke's REPL_PIPELINE override,
+  and g1-diff run-old are all gone (g1-diff old fails fast with a
+  retirement note).  The old/new test twins merged: ONE TestScopes
+  (statements via Literal loads; the fused capture refusals deleted,
+  the 4.4 flips unconditional), ONE TestErmineModules, the round-trip
+  test drops its fused cross-read phase.  Two regressions surfaced and
+  fixed: (1) interleaved equations of one name were silently MERGED by
+  the 4.2 pairing rewrite — now refused (gatherBindings parity, caught
+  by the Stage-1 pin); (2) batch module loads silently DROPPED
+  unparseable statements (the tolerant splitter feeds editor flows) —
+  readModule now refuses the first SErrorStatement; the Ugly.e refusal
+  message/position moved per Decision f (statement start; Stage 2
+  restores in-statement precision).  The fused STATEMENT path survives
+  ONLY in the test fixture legacy branch, pending pin-by-pin conversion
+  (D3 part 3) — TestStage1Pins and several TestErmine props still pin
+  fused behaviors through it.  Suite 871 (870+known; twins removed),
+  repl 4 suites, lsp 31/31.

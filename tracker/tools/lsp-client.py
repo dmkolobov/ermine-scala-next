@@ -132,8 +132,11 @@ def main():
     check("Ugly.e one diagnostic", len(ds) == 1, repr(ds))
     if len(ds) == 1:
         d = ds[0]
-        check("Ugly.e line", d["range"]["start"] == {"line": 2, "character": 4}, repr(d["range"]))
-        check("Ugly.e message", "ill-formed expression" in d["message"], d["message"])
+        # D3: refusal moved from the fused parser's in-statement position
+        # to the tolerant splitter's statement START; Stage 2's
+        # error-tolerant parse restores precise positions
+        check("Ugly.e line", d["range"]["start"] == {"line": 2, "character": 0}, repr(d["range"]))
+        check("Ugly.e message", "unparseable statement" in d["message"], d["message"])
 
     # Sibling import: Sib.e imports Good.e from the fixtures directory.
     open_doc("Sib.e")

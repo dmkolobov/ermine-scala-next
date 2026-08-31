@@ -31,8 +31,10 @@ case "${1:-}" in
     echo "$(wc -l < "$MODLIST") modules -> $MODLIST";;
   run)
     pipe="${2:?old|new}"; out="${3:?outdir}"
-    G1_PROPS=""
-    [[ $pipe == new ]] && G1_PROPS="-Dermine.pipeline=new"  # wired at item 4.1
+    # post-G1 D3: the fused pipeline is retired — there is only one
+    # pipeline to boot, and 'old' would silently collect the same data
+    [[ $pipe == old ]] && { echo "g1-diff: 'old' retired at D3 (fused pipeline removed)" >&2; exit 2; }
+    G1_PROPS=
     export G1_PROPS
     [[ -s $MODLIST ]] || { echo "run 'g1-diff.sh refresh-modules' first" >&2; exit 2; }
     mkdir -p "$out"; out="$(cd "$out" && pwd)"; rm -rf "$out/ei"

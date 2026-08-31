@@ -14,8 +14,8 @@ import java.nio.file.{ Files, Path }
   * useInterface ON writes .ei files into a temp workspace; a FRESH
   * session over the same workspace warm-loads from those interfaces
   * (CheckMethod.Interface — no body inference) and must answer evals
-  * identically.  A third session proves the OLD pipeline reads the
-  * new-written interfaces too (mixed-version workspaces).
+  * identically.  (The fused-pipeline cross-read phase retired with the
+  * fused module path at D3.)
   */
 object TestInterfaceRoundTrip extends Properties("Interface round-trip") {
 
@@ -51,11 +51,10 @@ object TestInterfaceRoundTrip extends Properties("Interface round-trip") {
     d
   }
 
-  private def session(dir: Path, pipelineNew: Boolean)(implicit su: scalaparsers.Supply): SessionEnv = {
+  private def session(dir: Path)(implicit su: scalaparsers.Supply): SessionEnv = {
     implicit val printer: Printer = Printer.ignore
     implicit val e: SessionEnv = new SessionEnv(
-      _typeCheck = Some(true), _useInterface = Some(true),
-      _pipelineNew = Some(pipelineNew))
+      _typeCheck = Some(true), _useInterface = Some(true))
     Lib.preamble
     e.loadFile = SourceFile.inOrder(SourceFile.filesystem(dir.toString) _, e.loadFile)
     e
@@ -80,7 +79,7 @@ object TestInterfaceRoundTrip extends Properties("Interface round-trip") {
     ErmineFixture.literalLock.synchronized {
       Session.depCache.clear()
 
-      val cold = session(dir, pipelineNew = true)
+      val cold = session(dir)
       Session.loadModules(List("RtB"))(cold, su, printer)
       val coldMethod = cold.loadedModules.get("RtB")
       val coldAns = answers(cold)
@@ -88,23 +87,15 @@ object TestInterfaceRoundTrip extends Properties("Interface round-trip") {
       val eiB = Files.exists(dir.resolve("RtB.ei"))
 
       Session.depCache.clear()
-      val warm = session(dir, pipelineNew = true)
+      val warm = session(dir)
       Session.loadModules(List("RtB"))(warm, su, printer)
       val warmMethod = warm.loadedModules.get("RtB")
       val warmAns = answers(warm)
-
-      Session.depCache.clear()
-      val old = session(dir, pipelineNew = false)
-      Session.loadModules(List("RtB"))(old, su, printer)
-      val oldMethod = old.loadedModules.get("RtB")
-      val oldAns = answers(old)
 
       (coldMethod ?= Some(CheckMethod.Full))          :| s"cold method $coldMethod" &&
       (eiA && eiB)                                    :| "interfaces written" &&
       (warmMethod ?= Some(CheckMethod.Interface))     :| s"warm method $warmMethod" &&
       (warmAns ?= coldAns)                            :| s"warm $warmAns vs cold $coldAns" &&
-      (oldMethod ?= Some(CheckMethod.Interface))      :| s"old-warm method $oldMethod" &&
-      (oldAns ?= coldAns)                             :| s"old-warm $oldAns vs cold $coldAns" &&
       (coldAns._2 ?= 16)                              :| s"value ${coldAns._2}"
     }
   }

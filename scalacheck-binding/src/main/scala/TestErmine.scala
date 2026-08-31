@@ -54,10 +54,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
     * from another (torn copy -> "eval: unbound variable"). */
   private val envLock = new Object
 
-  def mkEnv = envLock.synchronized {
-    val e = baseEnv.copy
-    if (statementsViaNew) e.withPipelineNew(true) else e
-  }
+  def mkEnv = envLock.synchronized { baseEnv.copy }
 
   def session[A](f: SessionEnv => A): A = f(mkEnv)
 
@@ -84,9 +81,9 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
     stmts: String,
     imports: Map[String,ImportSpec] = imps
   )(implicit s: SessionEnv): Unit = if (statementsViaNew) {
-    // 4.2: the same statements as a whole module through the LIVE
-    // pipeline switch (imports rendered to source; the corpus uses only
-    // plain and `as` forms)
+    // statements load as a whole `module Test` Literal through the
+    // pipeline (imports rendered to source; the corpus uses only plain
+    // and `as` forms)
     loadModules(imports.keySet.toList)
     val importLines = imports.toList.collect {
       case (m, spec) if m != "Test" => spec match {
@@ -106,6 +103,9 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
       Session.depCache -= file
     }
   } else {
+    // LEGACY (dies with the fused grammar, D3 part 3): the fused
+    // statement parse feeding loadModule directly.  Kept while the
+    // Stage-1 pins and fused-behavior props are converted one by one.
     loadModules(imports.keySet.toList)
     val spsz = ErParseState.mk("<test statements>", stmts, "Test").importing( s.termNames
                                                                             , s.cons.keySet
@@ -378,9 +378,7 @@ object TestErmine extends Properties("Ermine") {
 }
 
 trait ErmineModulesProperties {self: Properties =>
-  /** true re-runs the module corpus through rename.NewPipeline (4.2:
-    * the 32 non-boot modules and examples under the new pipeline). */
-  protected def pipelineNew: Boolean = false
+
   // Concrete and lazy, rather than abstract and overridden in the one
   // implementor: it must be lazy (the properties below run while that object is
   // still being constructed), Scala 3 will not let a lazy val implement a
@@ -408,8 +406,7 @@ trait ErmineModulesProperties {self: Properties =>
             classloader("com/clarifi/reporting/examples"))
   }
 
-  private def proofIn(v: SessionEnv => Any): Prop =
-    sessionProof(s => v(if (pipelineNew) s.withPipelineNew(true) else s))
+  private def proofIn(v: SessionEnv => Any): Prop = sessionProof(v)
 
   property("all modules load") =
     proofIn(implicit s =>
@@ -451,9 +448,3 @@ trait StdErmineModules { self: ErmineModulesProperties with Properties =>
 object TestErmineModules extends Properties("Ermine library")
   with ErmineModulesProperties with StdErmineModules
 
-/** The same corpus through rename.NewPipeline: the 161 library modules
-  * (129 boot + 32 non-boot), the test module, and the examples. */
-object TestErmineModulesNewPipeline extends Properties("Ermine library (new pipeline)")
-  with ErmineModulesProperties with StdErmineModules {
-  override protected def pipelineNew = true
-}

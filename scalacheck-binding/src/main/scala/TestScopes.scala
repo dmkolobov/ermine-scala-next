@@ -16,11 +16,8 @@ import Prop.{ Result => _, _ }
   * (a pattern variable could not shadow a global) and the related loss of a
   * shadowed outer binding after a `let`.
   */
-trait ScopesProperties { self: Properties =>
-  /** true routes each property's statements through rename.NewPipeline
-    * (the fixture wraps them in a module and S.loads a Literal). */
-  protected def viaNew: Boolean = false
-  private lazy val ermineFixture = ErmineFixture(statementsViaNew = viaNew)
+object TestScopes extends Properties("Ermine scoping") {
+  private lazy val ermineFixture = ErmineFixture(statementsViaNew = true)
   import ermineFixture._
 
   /** Function and List are imported so their exports are the globals we
@@ -130,26 +127,17 @@ trait ScopesProperties { self: Properties =>
     Map("Builtin" -> all, "Test" -> all, "Primitive" -> all,
         "Prelude" -> all, "Function" -> ((Some("F"), List[Explicit[Global]](), false)))
 
-  // 4.4 flips these two to POSITIVE Haskell semantics under the new
-  // pipeline; until then they run (as refusals) on the old path only
-  if (!viaNew) {
-    property("shadowing may not capture references through another alias (where)") =
-      no(typeChecks("v = id_F 5 where id x = 99", "v", aliasImps))
-
-    property("shadowing may not capture references through another alias (let)") =
-      no(typeChecks("v = let a = id_F 5\n        id x = 99\n    in a", "v", aliasImps))
-  }
-
-  // 4.4: under the new pipeline the SAME programs are fine — plain
-  // Haskell scoping: a local binder shadows only its own spelling, so a
-  // reference through the module-affixed alias still reaches the import.
+  // Post-G1 semantics (4.4/D3): plain Haskell scoping — a local binder
+  // shadows only its own spelling, so a reference through the
+  // module-affixed alias still reaches the import.  (The fused
+  // pipeline's capture refusals retired with it.)
   // No Primitive import here: with Prelude too it would make `+`
   // ambiguous (the operator-imported-twice pin).
   val flipImps: Map[String, ImportSpec] =
     Map("Builtin" -> all, "Test" -> all,
         "Prelude" -> all, "Function" -> ((Some("F"), List[Explicit[Global]](), false)))
 
-  if (viaNew) {
+  locally {
     property("an alias-affixed reference survives a plain-name shadow (where)") =
       forAll(small) { x =>
         defAndEval(s"v = id_F $x where id q = 99", "v", flipImps).extract[Int] ?= x }
@@ -201,9 +189,3 @@ trait ScopesProperties { self: Properties =>
       defAndEval(s"f w = q + w where q = let w = $x in w", s"f $y", imps).extract[Int] ?= x + y }
 }
 
-object TestScopes extends Properties("Ermine scoping") with ScopesProperties
-
-/** The scoping corpus through the live pipeline switch (roadmap 4.2). */
-object TestScopesNewPipeline extends Properties("Ermine scoping (new pipeline)") with ScopesProperties {
-  override protected def viaNew = true
-}
