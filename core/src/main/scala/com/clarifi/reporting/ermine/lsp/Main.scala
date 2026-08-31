@@ -56,8 +56,22 @@ object Main {
           h(params)
         }
 
-      request("initialize") { _ =>
+      // `ermine.fastMode` may arrive two ways: in initializationOptions
+      // at startup, or in a settings push at any time.  Both land here.
+      def applyFastMode(v: Option[Boolean], how: String): Unit = v foreach { b =>
+        if (b != ermine.fastMode) {
+          ermine.fastMode = b
+          log(s"fast mode ${if (b) "ON — type checking skipped" else "OFF"} ($how)")
+          logMessage(3, if (b) "Ermine: fast mode on — diagnostics are syntax-only"
+                        else "Ermine: fast mode off — full type checking")
+        }
+      }
+
+      request("initialize") { params =>
         log("initialize received")
+        applyFastMode(
+          params / "initializationOptions" flatMap (_ / "fastMode") flatMap (_.bool),
+          "initializationOptions")
         Json.obj(
           "capabilities" -> Json.obj(
             "textDocumentSync" -> Json.obj(
@@ -74,6 +88,10 @@ object Main {
       // Boot the resident session right after the handshake, on the one
       // dispatch thread: initialize answers fast, and anything the client
       // sends during the ~6-12s boot just queues on the stream behind it.
+      // Let the session speak to the client, not just to the log file: a
+      // silent 13s is indistinguishable from a hang.
+      ermine.announce = (m: String) => logMessage(3, m)
+
       server.onNotification("initialized") { _ =>
         try {
           val r = ermine.boot()
@@ -81,12 +99,30 @@ object Main {
         } catch {
           case e: Throwable =>
             log("boot failed: " + Rpc.stackTrace(e))
-            logMessage(1, "Ermine session failed to boot: " + e.getMessage)
+            // Remember it, so later checks fail fast instead of each
+            // spending another ~13s failing the same way.
+            ermine.bootFailedWith(e)
+            logMessage(1, "Ermine session failed to boot: " + e.getMessage +
+                          " — run 'Ermine: Restart Language Server' after fixing it")
         }
       }
 
+      // A settings push can arrive at any time; VS Code sends one on
+      // every configuration change.  Nothing here blocks — it flips a
+      // var that the NEXT check reads.
+      server.onNotification("workspace/didChangeConfiguration") { params =>
+        // Clients disagree about whether the section name is included in the
+        // payload, so accept both {settings:{ermine:{fastMode}}} and
+        // {settings:{fastMode}} rather than silently ignoring one of them.
+        val settings = params / "settings"
+        applyFastMode(
+          (settings flatMap (_ / "ermine") flatMap (_ / "fastMode") flatMap (_.bool)) orElse
+            (settings flatMap (_ / "fastMode") flatMap (_.bool)),
+          "didChangeConfiguration")
+      }
+
       Diagnostics.install(server, ermine, docs, log)
-      Definitions.install(server, docs, log)
+      Definitions.install(server, ermine, docs, log)
 
       server.onRequest("shutdown") { _ =>
         log("shutdown received")

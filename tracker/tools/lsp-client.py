@@ -403,6 +403,30 @@ def main():
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Edit.e")}})
     check("Edit.e cleared on close", client.diagnostics_for(uri("Edit.e")) == [])
 
+    # --- fast mode: skip the type check, keep everything the read gives -
+    def set_fast(on):
+        client.notify("workspace/didChangeConfiguration",
+                      {"settings": {"ermine": {"fastMode": on}}})
+
+    set_fast(True)
+    client.notify("textDocument/didSave", {"textDocument": {"uri": uri("Bad.e")}})
+    check("fast mode drops the type error", client.diagnostics_for(uri("Bad.e")) == [])
+    client.notify("textDocument/didSave", {"textDocument": {"uri": uri("Ugly.e")}})
+    ds = client.diagnostics_for(uri("Ugly.e"))
+    check("fast mode KEEPS syntax diagnostics", len(ds) == 1, repr(ds))
+    check("fast mode keeps their precise positions",
+          len(ds) == 1 and ds[0]["range"]["start"] == {"line": 2, "character": 4}, repr(ds))
+    # navigation is a read-phase product, so it survives fast mode
+    r = definition("Nav.e", 6, 12)
+    check("fast mode keeps go-to-definition", r is not None
+          and r["uri"] == uri("Good.e"), repr(r))
+
+    set_fast(False)
+    client.notify("textDocument/didSave", {"textDocument": {"uri": uri("Bad.e")}})
+    ds = client.diagnostics_for(uri("Bad.e"))
+    check("leaving fast mode restores the type error", len(ds) == 1
+          and "failed to unify" in ds[0]["message"], repr(ds))
+
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Bad.e")}})
     check("Bad.e cleared on close", client.diagnostics_for(uri("Bad.e")) == [])
 

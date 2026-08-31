@@ -1,0 +1,325 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Ermine",
+  "scopeName": "source.ermine",
+  "fileTypes": [
+    "e"
+  ],
+  "_readme": [
+    "Derived from the implementation, not from Haskell intuition. The rules that",
+    "differ from what you would guess, each verified against a source file:",
+    "",
+    "  * `--` starts a line comment UNCONDITIONALLY (ParsingUtil.scala:133 \u2014",
+    "    `rawWord(\"--\") >> rawSatisfy(_ != '\\n').skipMany`, with a standing TODO",
+    "    about operators that start with --). So `-->` is a COMMENT here, not an",
+    "    operator, unlike Haskell. StatementExtents.scala says the same thing",
+    "    independently. Comments therefore match before operators, on purpose.",
+    "  * Block comments NEST (ParsingUtil.scala:134-139).",
+    "  * `'` is three things: a char-literal delimiter, an operator character",
+    "    (Lexer.opCharSet), and an identifier tail character (Lexer.isTailChar) \u2014",
+    "    so `foo'` is one identifier. Identifiers match before char literals, and",
+    "    the char rule has a lookbehind so it cannot start mid-identifier.",
+    "  * `#` is also both an operator char and a tail char, and one keyword",
+    "    (`prj#`) ends in it \u2014 hence the explicit (?![A-Za-z0-9_'#]) guards",
+    "    instead of \\b everywhere.",
+    "  * An operator may carry a module affix that is PART OF THE LEXEME:",
+    "    `++_L` is one token (Lexer.scala header).",
+    "  * Three keywords are Greek letters: phi/\u03c6, rho/\u03c1, constraint/\u0393.",
+    "  * `if` is a FUNCTION, not a keyword (Bool.e:23-25), and there is no `then`/`else` at all. `'` and `` ` `` are ordinary infix operators (Function.e: infixl 0 ' and infixl 0 `), so the char-literal rule matches only a single character between quotes and never spans.",
+    "  * An identifier cannot start with `_` (identTok = letter >> identTail, and `letter` is Character.isLetter); bare `_` is the hole/wildcard. Escapes are \\\\b \\\\f \\\\n \\\\r \\\\t \\\\\\\\ \\\\\" \\\\' and \\\\^X control escapes \u2014 there are NO numeric escapes. Strings may span lines."
+  ],
+  "patterns": [
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#literal"
+    },
+    {
+      "include": "#moduleHeader"
+    },
+    {
+      "include": "#importExport"
+    },
+    {
+      "include": "#fixity"
+    },
+    {
+      "include": "#declarationHead"
+    },
+    {
+      "include": "#keyword"
+    },
+    {
+      "include": "#constructor"
+    },
+    {
+      "include": "#definitionName"
+    },
+    {
+      "include": "#operator"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        {
+          "include": "#blockComment"
+        },
+        {
+          "name": "comment.line.double-dash.ermine",
+          "match": "--.*$"
+        }
+      ]
+    },
+    "blockComment": {
+      "name": "comment.block.ermine",
+      "begin": "\\{-",
+      "end": "-\\}",
+      "patterns": [
+        {
+          "include": "#blockComment"
+        }
+      ]
+    },
+    "literal": {
+      "patterns": [
+        {
+          "include": "#literalIdentifier"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#date"
+        },
+        {
+          "include": "#char"
+        },
+        {
+          "include": "#number"
+        }
+      ]
+    },
+    "literalIdentifier": {
+      "name": "entity.name.function.backtick.ermine",
+      "begin": "``",
+      "end": "``",
+      "patterns": [
+        {
+          "name": "constant.character.escape.control.ermine",
+          "match": "\\\\\\^[A-Z]"
+        },
+        {
+          "name": "constant.character.escape.ermine",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "string": {
+      "name": "string.quoted.double.ermine",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.control.ermine",
+          "match": "\\\\\\^[A-Z]"
+        },
+        {
+          "name": "constant.character.escape.ermine",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "char": {
+      "name": "string.quoted.single.ermine",
+      "match": "(?<![A-Za-z0-9_'#])'(\\\\.|[^\\\\'])'"
+    },
+    "date": {
+      "name": "constant.other.date.ermine",
+      "match": "@[0-9]+/[0-9]{1,2}/[0-9]{1,2}"
+    },
+    "number": {
+      "patterns": [
+        {
+          "comment": "double/float: digits then a fraction and/or an exponent, optional F suffix",
+          "name": "constant.numeric.float.ermine",
+          "match": "(?<![A-Za-z0-9_'#])[0-9]+(\\.[0-9]*(e[0-9]+)?|e[0-9]+)[Ff]?"
+        },
+        {
+          "comment": "integer with an optional width suffix: L long, B byte, S short",
+          "name": "constant.numeric.integer.ermine",
+          "match": "(?<![A-Za-z0-9_'#])[0-9]+[LlBbSs]?(?![A-Za-z0-9_'#])"
+        }
+      ]
+    },
+    "moduleHeader": {
+      "begin": "^\\s*(module)\\s+([A-Z][A-Za-z0-9_'#]*(?:\\.[A-Z][A-Za-z0-9_'#]*)*)",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.control.module.ermine"
+        },
+        "2": {
+          "name": "entity.name.namespace.ermine"
+        }
+      },
+      "end": "(where)|$",
+      "endCaptures": {
+        "1": {
+          "name": "keyword.control.module.ermine"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comment"
+        }
+      ]
+    },
+    "importExport": {
+      "begin": "^\\s*(import|export)(?![A-Za-z0-9_'#])",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.control.import.ermine"
+        }
+      },
+      "end": "$",
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "name": "keyword.control.import.ermine",
+          "match": "(?<![A-Za-z0-9_'#])(as|using|hiding|type)(?![A-Za-z0-9_'#])"
+        },
+        {
+          "name": "entity.name.namespace.ermine",
+          "match": "[A-Z][A-Za-z0-9_'#]*(?:\\.[A-Z][A-Za-z0-9_'#]*)*"
+        },
+        {
+          "include": "#operator"
+        },
+        {
+          "include": "#punctuation"
+        }
+      ]
+    },
+    "fixity": {
+      "match": "^\\s*(infixl|infixr|infix|prefix|postfix)\\s+([0-9]+)",
+      "captures": {
+        "1": {
+          "name": "storage.modifier.fixity.ermine"
+        },
+        "2": {
+          "name": "constant.numeric.integer.ermine"
+        }
+      }
+    },
+    "declarationHead": {
+      "patterns": [
+        {
+          "comment": "type-introducing statements: the head word plus the name it binds",
+          "match": "^\\s*(data|type|class|instance|field|table|database)(?![A-Za-z0-9_'#])(\\s+([A-Za-z_][A-Za-z0-9_'#]*))?",
+          "captures": {
+            "1": {
+              "name": "storage.type.ermine"
+            },
+            "3": {
+              "name": "entity.name.type.ermine"
+            }
+          }
+        },
+        {
+          "name": "storage.modifier.ermine",
+          "match": "^\\s*(foreign|private|abstract)(?![A-Za-z0-9_'#])"
+        }
+      ]
+    },
+    "keyword": {
+      "patterns": [
+        {
+          "comment": "control flow and binding forms. NOT if/then/else: `if` is an ordinary 3-argument function (Bool.e:23) and then/else do not exist in the language (SurfaceParsers.keywords is the authority)",
+          "name": "keyword.control.ermine",
+          "match": "(?<![A-Za-z0-9_'#])(case|of|esac|let|in|do|where)(?![A-Za-z0-9_'#])"
+        },
+        {
+          "comment": "type-level keywords. prj# ends in #, so no \\b; three are Greek",
+          "name": "keyword.other.type.ermine",
+          "match": "(?<![A-Za-z0-9_'#])(forall|exists|constructor|subtype|constraint|rho|phi|prj#|Eval|hole)(?![A-Za-z0-9_'#])|(?<![A-Za-z0-9_'#])[\\u03c1\\u03c6\\u0393]"
+        },
+        {
+          "name": "storage.modifier.ermine",
+          "match": "(?<![A-Za-z0-9_'#])(foreign|private|abstract|import|export|module|table|field|database|class|instance|data|type)(?![A-Za-z0-9_'#])"
+        }
+      ]
+    },
+    "constructor": {
+      "comment": "constructors, type names and dotted module paths all start upper",
+      "name": "entity.name.type.ermine",
+      "match": "(?<![A-Za-z0-9_'#.])[A-Z][A-Za-z0-9_'#]*(?:\\.[A-Z][A-Za-z0-9_'#]*)*"
+    },
+    "definitionName": {
+      "patterns": [
+        {
+          "comment": "a parenthesised operator definition: (++), (prefix !), (postfix !)",
+          "match": "^\\s*(\\()\\s*(prefix|postfix)?\\s*([:!#$%&*+./<=>?@\\\\^|~'`-]+(?:_[A-Za-z0-9_'#]+)?)\\s*(\\))",
+          "captures": {
+            "1": {
+              "name": "punctuation.section.parens.ermine"
+            },
+            "2": {
+              "name": "storage.modifier.fixity.ermine"
+            },
+            "3": {
+              "name": "entity.name.function.operator.ermine"
+            },
+            "4": {
+              "name": "punctuation.section.parens.ermine"
+            }
+          }
+        },
+        {
+          "comment": "a top-level equation or signature head. NOT [a-z_]: identTok is `letter >> identTail` with letter = Character.isLetter, so an identifier cannot START with '_' (bare `_` is the hole/wildcard)",
+          "name": "entity.name.function.ermine",
+          "match": "^[a-z][A-Za-z0-9_'#]*(?![A-Za-z0-9_'#])"
+        }
+      ]
+    },
+    "operator": {
+      "patterns": [
+        {
+          "comment": "reserved operators the grammar gives meaning to (Lexer.keyOps)",
+          "name": "keyword.operator.reserved.ermine",
+          "match": "(?<![:!#$%&*+./<=>?@\\\\^|~'`-])(->|=>|<-|\\.\\.|=|:|~)(?![:!#$%&*+./<=>?@\\\\^|~'`-])"
+        },
+        {
+          "comment": "a user operator, with its optional _Module affix (`++_L` is ONE token)",
+          "name": "keyword.operator.ermine",
+          "match": "[:!#$%&*+./<=>?@\\\\^|~'`-]+(?:_[A-Za-z0-9_'#]+)?"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.section.parens.ermine",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.section.brackets.ermine",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.section.braces.ermine",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.separator.ermine",
+          "match": "[,;]"
+        }
+      ]
+    }
+  }
+}

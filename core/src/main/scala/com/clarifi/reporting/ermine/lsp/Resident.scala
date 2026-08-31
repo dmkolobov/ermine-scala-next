@@ -29,6 +29,14 @@ final class Resident(val log: String => Unit) {
 
   implicit val supply: Supply = Supply.create
 
+  /** Set by Main so the session can tell the CLIENT what it is doing.
+    * Without it the "booting" line reaches only the log file, and a
+    * ~13s startup is indistinguishable from a hung server. */
+  var announce: String => Unit = _ => ()
+
+  /** Record a boot failure so it is not retried on every later check. */
+  def bootFailedWith(e: Throwable): Unit = bootFailure = Some(e)
+
   // All Session chatter (progress bars, load timings) arrives here; it must
   // never reach stdout, the protocol channel (roadmap decision 4).  The
   // progress bar redraws with '\r' and never sends '\n', so split on both.
@@ -40,13 +48,48 @@ final class Resident(val log: String => Unit) {
   }
 
   private var booted = Option.empty[Ready]
+  private var bootFailure = Option.empty[Throwable]
 
   def ready: Boolean = booted.isDefined
+
+  /** Why boot failed, if it did.  A failed boot is NOT retried on the
+    * next keystroke: boot() memoizes only on success, and every check
+    * goes through it, so an env that cannot load would spend ~13s
+    * failing again on every didOpen and didChange — a hang that repeats
+    * rather than one that ends.  The restart command spawns a fresh
+    * process, which is the honest way back. */
+  def failed: Option[Throwable] = bootFailure
+
+  /** FAST MODE: skip type checking, keep everything the read gives.
+    *
+    * The read (parse -> rename -> re-associate -> assemble) and the type
+    * check are roughly half the cost each — measured on Layout/Report.e,
+    * 1757 lines: read 0.80s, typecheck 0.45s warm and 1.12s cold
+    * (roadmap 5.5).  Fast mode drops the second half.
+    *
+    * KEPT: every syntax, shadowing, unknown-operator, interleaved-
+    * equation and lowering diagnostic, plus go-to-definition and hover
+    * on IMPORTED names (their types come from the resident session, not
+    * from checking this file).
+    * LOST: every type error, the "unchecked" notes, the import-list
+    * export requirements, and hover on this module's OWN top-level
+    * names — nothing computes those but the check.
+    *
+    * Set through `initializationOptions.fastMode` at startup or
+    * `workspace/didChangeConfiguration` at any time; single-threaded
+    * dispatch makes it a plain var, not a race. */
+  var fastMode: Boolean = false
 
   /** Boot if not yet booted.  Failures propagate (and leave this
     * un-booted, so a later call retries). */
   def boot(): Ready = booted getOrElse {
+    bootFailure foreach { e =>
+      throw new IllegalStateException(
+        "the Ermine session failed to boot and will not be retried automatically: " +
+        e.getMessage, e)
+    }
     log("session: booting (Lib.preamble + Prelude/Layout, interface-free)")
+    announce("Ermine: loading the session (129 modules, ~13s)…")
     val t0 = System.nanoTime
     implicit val env: SessionEnv =
       new SessionEnv(_typeCheck = Some(true), _useInterface = Some(false))
@@ -54,6 +97,7 @@ final class Resident(val log: String => Unit) {
     val loaded = Session.loadModules(List("Prelude", "Layout"))
     val r = Ready(env, loaded.size, (System.nanoTime - t0) / 1e9)
     booted = Some(r)
+    bootFailure = None
     log(f"session: ready — ${r.modules} modules in ${r.seconds}%.1fs")
     r
   }
@@ -169,12 +213,16 @@ final class Resident(val log: String => Unit) {
       docs.otherVersions(path.toString))
 
     val (checked, cache) =
-      TolerantCheck.checkWith(r.ps, r.module, groups, scopeKey, docs.cacheFor(path.toString))
+      if (fastMode) (TolerantCheck.Result(Nil, Map()), docs.cacheFor(path.toString))
+      else TolerantCheck.checkWith(r.ps, r.module, groups, scopeKey, docs.cacheFor(path.toString))
+    // In fast mode the cache is carried forward untouched, so switching
+    // back does not start cold.
     docs.putCache(path.toString, cache)
     val tCheck = System.nanoTime
     log(f"check: ${mh.name} read ${(tRead - tRead0) / 1e9}%.2fs, " +
-        f"typecheck ${(tCheck - tRead) / 1e9}%.2fs " +
-        f"(reused ${checked.reused} of ${checked.components} components)")
+        (if (fastMode) "typecheck SKIPPED (fast mode)"
+         else f"typecheck ${(tCheck - tRead) / 1e9}%.2fs " +
+              f"(reused ${checked.reused} of ${checked.components} components)"))
 
     // A statement the splitter could not parse defines nothing, so every
     // reference to its head word is an undefined term — one syntax error
@@ -195,7 +243,8 @@ final class Resident(val log: String => Unit) {
           n.spelling.isDefined && (heads.isEmpty || n.spelling.exists(heads)))
       }
 
-    Checked(e, mh.name, r.surface, r.renamed, r.diagnostics, notes, checked.types)
+    Checked(e, mh.name, r.surface, r.renamed, r.diagnostics,
+            if (fastMode) Nil else notes, checked.types)
   }
 
   private def errorStatements(ss: List[SStatement]): List[SErrorStatement] = ss.flatMap {

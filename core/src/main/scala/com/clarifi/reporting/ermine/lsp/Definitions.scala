@@ -28,17 +28,25 @@ object Definitions {
   // and version (roadmap 5.3): a definition request and the check that
   // built the index must agree on what the file currently says.
 
-  def install(server: Server, docs: Documents, log: String => Unit): Unit = {
-    server.onRequest("textDocument/definition") { params =>
+  def install(server: Server, ermine: Resident, docs: Documents, log: String => Unit): Unit = {
+    // Dispatch is single-threaded by design (roadmap decision 3), so a
+    // request that arrives during the ~13s boot would sit behind it and
+    // read to the editor as a hang.  Navigation has nothing to say until
+    // the session is up, so say it AT ONCE rather than in 13 seconds.
+    def ifReady(answer: => Json): Json =
+      if (ermine.ready) answer
+      else { log("navigation: answering null, session still booting"); Json.Null }
+
+    server.onRequest("textDocument/definition") { params => ifReady {
       val answer = for {
         occ <- occurrenceAt(docs, params)
         tgt <- occ.target
         loc <- location(tgt)
       } yield loc
       answer getOrElse Json.Null
-    }
+    } }
 
-    server.onRequest("textDocument/hover") { params =>
+    server.onRequest("textDocument/hover") { params => ifReady {
       val answer = for {
         occ <- occurrenceAt(docs, params)
         lt  <- occ.hover
@@ -46,7 +54,7 @@ object Definitions {
         "kind"  -> Json.Str("plaintext"),
         "value" -> Json.Str(lt._1 + " : " + Pretty.prettyType(lt._2, -1).toString)))
       answer getOrElse Json.Null
-    }
+    } }
   }
 
   private def occurrenceAt(docs: Documents, params: Json): Option[Occ] =
