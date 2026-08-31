@@ -372,6 +372,20 @@ flowing mid-keystroke; then incremental reuse per unchanged statement.
 
 ## Blocked / Awaiting
 
+**GATE G1 — awaiting sign-off (2026-08-30).** Stage 1 checklist complete
+(commits 8b1e07f..b42d132).  Every gate layer ran dry: .ei 1447/1447
+alpha-equal, browse/groups/importing goldens, G1Resolution 8223/8223,
+warm-reload matrix, eval + scoping corpus under both pipelines, 4.4
+flips.  TWO KNOWN DELTAS need explicit acceptance: (1) lookbackJoin's
+residual constraint set in Relation.ei — the documented solver-order
+sensitivity (the reason -Dermine.loadInSeries exists); logically
+equivalent, textually different constraint hypergraphs.  (2) browse
+kind-meta rendering entropy (scanInOrder-class sigs render s: rho vs a
+kind var, INVERTED between the pipelines' .ei/browse outputs); the .ei
+alpha-eq comparator is the authority and accepts them.  Post-G1 debt
+list unchanged below.  Say the word to open Stage 2 (fused-machinery
+deletion + the debt list).
+
 (empty — G0 signed off 2026-08-30, user: “keep going”)
 
 ## Gate evidence (G0, recorded 2026-08-30)
