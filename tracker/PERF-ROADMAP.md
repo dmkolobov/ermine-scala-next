@@ -774,3 +774,63 @@ deferred by LSP 5.5).
   Reproduce: `tracker/tools/gen-row-stress.py --out /tmp/rowstress --to 8`.
   No Scala touched; the last full baseline run stands (core/test 904, repl 4,
   lsp 82, boot 129, npm PASS).
+
+- 2026-08-31 (RECORDS ARE ROWS — a correction to the entry above, and the
+  root cause of P3/P4 found).  Prompted by the observation that "record-heavy
+  IS relational, records have a row type".  Correct about the type system, and
+  chasing it down moved the roadmap's centre of gravity.
+
+  RECORD ROWS ARE FREE IN ftv AND subst, which kills my implied mechanism.
+  `ConcreteRho` holds `Set[Name]` — field LABELS, not type variables — so
+  `typeHasTypeVars.vars` falls to `case _ => Vars()` (Type.scala:651) and never
+  looks inside, and `ConcreteRho` does not override `subst`, inheriting
+  `def subst(...) = this` (Type.scala:56).  **O(1) both ways.**  So the 35.2%
+  ftv + 31.6% substitution in ChartsExample is NOT rows being walked.
+  Row WIDTH does cost, but through a different door: `ConcreteRho.hashCode =
+  fields.hashCode * 111` (Type.scala:146) is uncached and O(N), recomputed on
+  every `Exists.apply` (Type.scala:277 does `p.toSet.toList`), and
+  `equals` is O(N) from `unifyType`'s fallthrough.  In this corpus rows are
+  never wider than 4 fields, so that term is small — but it is the term that
+  would bite a wide record, and it is quadratic in width.
+
+  WHAT ACTUALLY MAKES ChartsExample EXPENSIVE — and it does support the
+  "operations on relations, when their types are inferred" framing, just not
+  via literals.  Record count ANTI-correlates with cost (PivotTest: 93 record
+  fields, 0.12s; PieChartLegend: 6 fields, 0.65s).  Chart-combinator
+  applications correlate almost perfectly: 28 -> 2.72s, 10 -> 0.84s, 1 ->
+  0.65s, 0 -> 0.12-0.20s.  And `ChartMode` (Layout/Chart.e:30-36), the type of
+  `line`/`bar`/`scatter`, is a type ALIAS carrying ten universals, four class
+  constraints and a **four-way ABSTRACT partition** `r <- (sr, xr, yr, o)` —
+  `abstr.size >= 2`, so `splitConcrete` fires and mints fresh variables — and
+  being an alias it is re-expanded at every occurrence.  So the expensive thing
+  is applying wide constrained-polymorphic combinators in unannotated code.
+  That is row work in inferred relational code; it just never saturates,
+  because the residual sets stay small (see the cliff entry above).
+
+  THE ROOT CAUSE, AND IT IS THE BIGGEST FINDING OF THIS LOOP SO FAR.
+  `instantiateType` (Subst.scala:182-188) rewrites the ENTIRE substitution map
+  on EVERY variable instantiation:
+
+      hm.types = subType(Map(v -> e), hm.types) + (v -> e)
+      hm.remembered = hm.remembered.map { case (k,(g,t,loc)) =>
+        (k, (subType(Map(v -> e), g), subType(Map(v -> e), t), loc)) }
+
+  `hm.types` is one SubstEnv per module binding group, so M instantiations cost
+  O(M^2 x type size) — and each of those rewrites is exactly a `vars`/`sub`
+  traversal.  Measured: `instantiateType` is the nearest enclosing driver for
+  **42% of ftv/subst samples in ChartsExample and 44% in the stdlib batch**,
+  with `subsumeType` second at 27%/33%.  THE SAME TWO DOMINATE BOTH WORKLOADS.
+  This is the mechanism BEHIND the ticket's "40% free-variable collection,
+  10-15% substitution": those are the symptom, and the whole-map rewrite is the
+  cause.
+
+  CONSEQUENCE FOR THE CHECKLIST.  P3 (cheaper ftv representation) treats the
+  symptom; P4 (redundant vars/sub in instantiateType/subsumeType) and P7
+  (substitution representation — mutable metavariables with levels, or
+  union-find, so instantiation is O(1) instead of a map rewrite) are the SAME
+  problem, and P7 is where the win is.  P7 was queued last as "big, do not
+  start before P3 and P4 report".  P4 has now effectively reported, via this
+  measurement, and it points at P7.  Recommend promoting P7 to a design item
+  NEXT, ahead of P3.  Not doing it unilaterally: it reverses a stated ordering
+  twice over and P7's own entry requires a written design and a gate.
+  No Scala touched; last full baseline run stands.
