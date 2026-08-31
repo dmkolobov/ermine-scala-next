@@ -9,8 +9,16 @@ import TypeParsers._
 object InterfaceParsers {
   private val logger = org.apache.log4j.Logger.getLogger(this.getClass)
 
+  // the fused TermNameParsers object retired (D3); interfaces only
+  // need the generic name grammar with the same character classes
+  private object SigNames extends NameParser {
+    def identStart = letter
+    override def ident = super.ident | literalIdent
+    def opStart = opChar
+  }
+
   private def interfaceSig: Parser[(Name, Type)] =
-    (TermNameParsers.name[Local]{case x => List(x)} << keyOp(":")) ++ qtyp
+    (SigNames.name[Local]{case x => List(x)} << keyOp(":")) ++ qtyp
 
   /** The (name, type) pairs of an interface file, as data.  The G1
     * differential oracle reads interfaces back through the language's own

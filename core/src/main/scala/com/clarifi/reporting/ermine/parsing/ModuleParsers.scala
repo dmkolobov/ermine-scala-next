@@ -8,7 +8,6 @@ import scalaparsers.{++, Located, Pos}
 import scalaparsers.Diagnostic.raise
 import com.clarifi.reporting.ermine.{ ImplicitBinding, Term }
 import scala.collection.immutable.List
-import StatementParsers._
 
 case class ModuleHeader(
   loc: Pos,
@@ -18,13 +17,6 @@ case class ModuleHeader(
 ) extends Located {
   import SI8862._
 
-  def topLayout: Parser[List[Statement]] =
-    if (explicitLayout)
-      for {
-        ss <- statement.sepBy(token(";"))
-        _ <- (right >> eof) attempt "end of explicit layout"
-      } yield ss
-    else statements
   def imports: Map[String, (Option[String], List[Explicit[Global]], Boolean)] = {
     val counts = importExports.foldLeft(Map[String,Int]()) {
       case (m, i) => m.get(i.module) match {
@@ -48,20 +40,28 @@ case class ModuleHeader(
 object ModuleParsers {
   import SI8862._
 
+  // the fused name-parser objects retired (D3); the header grammar keeps
+  // small local equivalents with the same character classes
+  private object HeaderNames extends NameParser {
+    def identStart = letter
+    override def ident = super.ident | literalIdent
+    def opStart = opChar
+  }
+  private object HeaderCons extends NameParser {
+    def identStart = upper
+    def opStart = ch(':')
+  }
+
   def moduleName: Parser[String] = for {
-    ns <- DataConParsers.ident.sepBy(keyOp(".")) scope "module name"
+    ns <- HeaderCons.ident.sepBy(keyOp(".")) scope "module name"
   } yield ns.mkString(".")
 
-  def bindingSpan(xs: List[Statement], acc: List[BindingStatement] = List()): (List[BindingStatement], List[Statement]) = xs match {
-    case (b: BindingStatement) :: ys => bindingSpan(ys, b :: acc)
-    case _ => (acc.reverse, xs)
-  }
 
   def explicit: Parser[Explicit[Local]] = for {
     p <- loc
     isTy <- keyword("type").optional map (_.isDefined)
-    src <- TermNameParsers.name({ case l => List(l) })
-    on <- (keyword("as") >> TermNameParsers.name({ case l => List(l) })).optional
+    src <- HeaderNames.name({ case l => List(l) })
+    on <- (keyword("as") >> HeaderNames.name({ case l => List(l) })).optional
     _ <- on match {
       case Some(rename) if src.fixity.con != rename.fixity.con =>
         raise(p, "error: Renaming to different operator type is not supported.")
@@ -76,7 +76,7 @@ object ModuleParsers {
     p <- loc
     isExport <- keyword("import").as(false) | keyword("export").as(true)
     src <- moduleName // stringLiteral
-    as <- (keyword("as") >> TermNameParsers.ident.map(_.string)).optional
+    as <- (keyword("as") >> HeaderNames.ident.map(_.string)).optional
     opt <- (for {
       isUsing <- keyword("using").as(true) | keyword("hiding").as(false)
       exps <- laidout("explicit imports", explicit.map(_.map(_.global(src))))
@@ -97,62 +97,9 @@ object ModuleParsers {
     } yield ModuleHeader(p, name, explicit, importExports)
   ) scope "module definition"
 
-  // resume parsing after we've loaded the definitions required by the module header
-  def moduleBody(header: ModuleHeader): Parser[Module] = {
-    def go(ss: List[Statement], sigs: List[SigStatement], m: Module): (List[SigStatement], Module) = ss match {
-      case List() => (sigs, m)
-      case s :: ss => s match {
-        case t : ForeignTermDef       => go(ss, sigs, m.copy(foreigns = t :: m.foreigns))
-        case t : FieldStatement       => go(ss, sigs, m.copy(fields = t :: m.fields))
-        case t : TableStatement       => go(ss, sigs, m.copy(tables = t :: m.tables))
-        case t : ForeignDataStatement => go(ss, sigs, m.copy(foreignData = t :: m.foreignData))
-        case _ : FixityStatement      => go(ss, sigs, m)
-        case t : TypeDef              => go(ss, sigs, m.copy(types = t :: m.types, privateTerms = t.privateTerms ++ m.privateTerms))
-        case t : BindingStatement     =>
-          val (bs, xs) = bindingSpan(ss)
-          val (is, signatures) = gatherBindings(t :: bs)
-          go(xs, signatures ++ sigs, m.copy(implicits = is ++ m.implicits))
-        case t : PrivateBlock => {
-          val (ns, nm) = go(t.statements,
-                            sigs,
-                            m.copy(privateTerms = t.definedTerms ++ m.privateTerms,
-                                   privateTypes = t.definedTypes ++ m.privateTypes)
-                           )
-          go(ss, ns, nm)
-        }
-        case t : DatabaseBlock => {
-          val (ns, nm) = go(t.statements, sigs, m)
-          go(ss, ns, nm)
-        }
-        case t : ForeignBlock => {
-          val (ns, nm) = go(t.statements, sigs, m)
-          go(ss, ns, nm)
-        }
-      }
-    }
-    for {
-      pos <- loc
-      stmts <- header.topLayout scope "statements"
-      (sigs, mod) = go(stmts, List(), Module(header.loc, header.name, header.importExports))
-      p <- checkBindings(pos, mod.implicits, sigs)
-      _ <- p.distinct(pos)
-    } yield mod.copy( // reversing just so we get errors roughly in order
-      foreigns = mod.foreigns.reverse,
-      fields = mod.fields.reverse,
-      tables = mod.tables.reverse,
-      foreignData = mod.foreignData.reverse,
-      implicits = p.extract._1,
-      explicits = p.extract._2
-    )
-  }
-
-  def command(mh: ModuleHeader) : Parser[Command] = simpleSpace.skipMany >> (
-    (importExportStatement << eof).map(ImportExportCommand(_)) |
-    eof.as(EmptyCommand) |
-    ModuleParsers.moduleBody(mh).map(ModuleCommand(_))
-  ).race(
-    nakedTerm.map(ExpressionCommand(_))
-  )
+  // (moduleBody and the command grammar retired with the fused
+  // pipeline, post-G1 D3; the header and import/export statements
+  // remain the shared front door)
 }
 
 // vim: set ts=4 sw=4 et:

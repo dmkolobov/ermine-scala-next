@@ -273,7 +273,7 @@ object Renamer {
     // global, same as before.
     def lookup(name: String, span: Span): Unit = {
       val pos = scalaparsers.Pos(file, "", span.startLine, span.startCol, false)
-      com.clarifi.reporting.ermine.parsing.StatementParsers.classLookup(pos, name) match {
+      com.clarifi.reporting.ermine.parsing.ForeignClasses.classLookup(pos, name) match {
         case Left(e)  => s.diags += Diag(span, s"error loading '$name'")
         case Right(_) => ()
       }

@@ -24,13 +24,9 @@ import com.clarifi.reporting.ermine.parsing.{
   phrase, semi, eof,
   startingKeywords, otherKeywords,
   ParseState, ErParseState,
-  TermParsers, StatementParsers,
   ModuleHeader, ModuleParsers
 }
 import ErParseState.Implicits._
-
-import com.clarifi.reporting.ermine.parsing.TermParsers.term
-import com.clarifi.reporting.ermine.parsing.TypeParsers.typ
 import com.clarifi.reporting.ermine._
 import scalaparsers.{Death, DocException, Document, Supply}
 import scalaparsers.Document._

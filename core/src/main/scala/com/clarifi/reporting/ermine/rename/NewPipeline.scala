@@ -382,7 +382,7 @@ object NewPipeline {
 
   private def foreignClass(name: String, sp: Span)(implicit s: SessionEnv): ForeignClass = {
     val pos = Pos("<foreign>", "", sp.startLine, sp.startCol, false)
-    com.clarifi.reporting.ermine.parsing.StatementParsers.classLookup(pos, name) match {
+    com.clarifi.reporting.ermine.parsing.ForeignClasses.classLookup(pos, name) match {
       case Right(c) => c
       case Left(e)  => throw Death(pos.report(Document.text(s"error loading '$name'")))
     }

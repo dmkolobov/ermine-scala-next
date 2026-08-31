@@ -17,7 +17,7 @@ import scalaparsers.Death
   * fixture is parameterized (item 4.1).
   */
 object TestStage1Pins extends Properties("Ermine stage1 pins") {
-  private val ermineFixture = ErmineFixture(statementsViaNew = true)
+  private val ermineFixture = ErmineFixture()
   import ermineFixture._
 
   val imps: Map[String, ImportSpec] =

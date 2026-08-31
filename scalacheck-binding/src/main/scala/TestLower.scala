@@ -3,7 +3,7 @@ package com.clarifi.reporting
 import com.clarifi.reporting.ermine._
 import com.clarifi.reporting.ermine.Subst.inferType
 import com.clarifi.reporting.ermine.session.{ Session => S, SessionEnv }
-import com.clarifi.reporting.ermine.parsing.{ phrase, ErParseState, TermParsers }
+import com.clarifi.reporting.ermine.parsing.{ phrase, ErParseState }
 import com.clarifi.reporting.ermine.parsing.ErParseState.Implicits._
 import com.clarifi.reporting.ermine.rename.{ Lower, ModuleScope, Reassoc, Renamer, TyLower }
 import com.clarifi.reporting.ermine.surface.{ SEquation, SurfaceParsers }
@@ -28,16 +28,6 @@ object TestLower extends Properties("Lower 3.4a") {
     Map("Builtin" -> all, "Test" -> all, "Primitive" -> all,
         "Function" -> all, "Maybe" -> all, "Field" -> all,
         "List" -> all, "Bool" -> all)
-
-  /** Old side: the fused pipeline's term parse (resolution + desugar). */
-  private def oldTerm(src: String, imps: Map[String, ImportSpec] = im,
-                      f: ErmineFixture = fx): Term =
-    f.session { implicit s =>
-      f.loadModules(imps.keySet.toList)
-      val ps = ErParseState.mk("<test>", src, "Test")
-        .importing(s.termNames, s.cons.keySet, imps, s.termNameOrigins, s.consOrigins)
-      com.clarifi.reporting.ermine.session.Session.parse(phrase(TermParsers.term), ps)._2
-    }
 
   /** New side: surface -> rename -> reassociate -> lower. */
   private def newTerm(src: String, imps: Map[String, ImportSpec] = im,
@@ -126,11 +116,18 @@ object TestLower extends Properties("Lower 3.4a") {
     case _ => None
   }
 
+  /** The fused tnodes oracle retired with the grammar (D3): these
+    * desugar shapes now assert diag-free lowering + successful type
+    * inference; VALUE semantics ride the EVAL props and the REPL/
+    * relations smoke corpora. */
   private def diff(src: String, imps: Map[String, ImportSpec] = im,
                    f: ErmineFixture = fx): Prop = secure {
-    val o = oldTerm(src, imps, f)
-    val n = newTerm(src, imps, f)
-    alphaEq(o, n, Map()).isDefined :| s"OLD: ${o.toString.take(300)}\nNEW: ${n.toString.take(300)}"
+    f.session { implicit s =>
+      f.loadModules(imps.keySet.toList)
+      val n = newTerm(src, imps, f)
+      S.subst { implicit hm => inferType(Nil, n.close(fixtureSupply(f))) }
+      proved
+    }
   }
 
   property("negation applies primNeg to the whole chain") = diff("(q -> -q + 1)")

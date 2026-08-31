@@ -362,11 +362,11 @@ summarize for sign-off before Stage 2.
   Lower against session scope; Console commands keep their own parsers.
 - [x] **D2 scoping.in aliased-shadow line**: document the semantics
   change (alias-capture programs now legal).
-- [ ] **D3 delete fused scoping machinery**: LocalBlocks, checkShadows,
+- [x] **D3 delete fused scoping machinery**: LocalBlocks, checkShadows,
   rewriteShadowed, insert-on-miss placeholders.
 - [ ] **D4 Localized threading removal** (its own item — it threads
   through every binder production).
-- [ ] **D5 fold bindingName/localName**.
+- [x] **D5 fold bindingName/localName** (moot: deleted with the grammar).
 - [ ] **D6 whole-block fixity + module-level pre-scan flips**
   (Decisions a, e).
 - [ ] **D7 statement-extent scanner for Stage 2** (columns/strings/
@@ -1116,3 +1116,20 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   (now unused?) — next: convert kindOf, drop the legacy branch, DELETE
   the fused term/statement machinery.  Suite 871 (870+known), repl 4,
   lsp 31/31.
+
+- 2026-08-31 (D3 COMPLETE — the deletion): TermParsers, PatternParsers,
+  TermNameParsers (LocalBlocks, checkShadows, rewriteShadowed, the
+  insert-on-miss termDef machinery), StatementParsers, moduleBody and
+  the command grammar are DELETED; G1Resolution and G1Importing retired
+  (their differentials completed their purpose); TestSurfaceLexer
+  (pure fused-vs-surface differential) deleted with its oracle.  Kept:
+  the header/import grammar (ModuleParsers with small local name
+  parsers), TypeParsers/KindParsers/NameParsers (the interface reader
+  parses .ei types through them; TestLower tyDiff still differentials
+  against them), classLookup extracted to parsing/ForeignClasses.
+  Conversions: TestLower term diff props assert diag-free lowering +
+  inference (the tnodes oracle died with the grammar; values ride
+  evalDiff and the smoke corpora); the fixture legacy branch,
+  statementsViaNew flag and testParse are gone — loadStatements IS the
+  Literal path.  Suite 869 (868+known), repl 4, lsp 31/31, boot 129.
+  D5 (fold bindingName/localName) is MOOT — both died with the files.

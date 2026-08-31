@@ -17,7 +17,7 @@ import Prop.{ Result => _, _ }
   * shadowed outer binding after a `let`.
   */
 object TestScopes extends Properties("Ermine scoping") {
-  private lazy val ermineFixture = ErmineFixture(statementsViaNew = true)
+  private lazy val ermineFixture = ErmineFixture()
   import ermineFixture._
 
   /** Function and List are imported so their exports are the globals we

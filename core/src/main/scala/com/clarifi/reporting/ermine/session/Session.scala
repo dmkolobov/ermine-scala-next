@@ -35,7 +35,6 @@ import com.clarifi.reporting.ermine.parsing.{
 import ErParseState.Implicits._
 import com.clarifi.reporting.ermine.parsing.ModuleParsers._
 import com.clarifi.reporting.ermine.parsing.InterfaceParsers.interfaceFile
-import com.clarifi.reporting.ermine.parsing.TermParsers.term
 import com.clarifi.reporting.relational._
 
 import scala.reflect._

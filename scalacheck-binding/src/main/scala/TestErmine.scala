@@ -4,10 +4,7 @@ import com.clarifi.reporting.ermine._
 import Subst.{ inferType, inferKind, assertTypeClosed }
 import Type.{ int, subType, conMap, typeVars }
 import scalaparsers._
-import parsing.{ phrase, ErParseState, Parser, ParseState, ModuleHeader }
-import parsing.ModuleParsers.moduleBody
-import parsing.TermParsers.term
-import parsing.TypeParsers.typ
+import parsing.{ ErParseState, Parser, ParseState }
 import session.{ Lib, SessionEnv, Printer, Session, CheckMethod }
 import session.Session.{loadModules => _, _}
 import syntax.{ ImportExportStatement, Explicit }
@@ -30,8 +27,7 @@ object ErmineFixture {
   * instance.  Importing my symbols unqualified works quite well.
   */
 final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
-                               = Function const (()),
-                               statementsViaNew: Boolean = false) {
+                               = Function const (())) {
   // Supply is documented single-threaded; ScalaCheck runs properties on
   // a pool, so a shared instance races `lo` and hands two threads the
   // same id (the recurring eval:unbound-variable flake).  Per-thread
@@ -94,10 +90,9 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
   def loadStatements(
     stmts: String,
     imports: Map[String,ImportSpec] = imps
-  )(implicit s: SessionEnv): Unit = if (statementsViaNew) {
-    // statements load as a whole `module Test` Literal through the
-    // pipeline (imports rendered to source; the corpus uses only plain
-    // and `as` forms)
+  )(implicit s: SessionEnv): Unit = {
+    // statements load as one `module Test` Literal through the pipeline
+    // (imports rendered to source; the corpus uses plain and `as` forms)
     loadModules(imports.keySet.toList)
     val importLines = imports.toList.collect {
       case (m, spec) if m != "Test" => spec match {
@@ -116,29 +111,9 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
       Session.load(file)
       Session.depCache -= file
     }
-  } else {
-    // LEGACY (dies with the fused grammar, D3 part 3): the fused
-    // statement parse feeding loadModule directly.  Kept while the
-    // Stage-1 pins and fused-behavior props are converted one by one.
-    loadModules(imports.keySet.toList)
-    val spsz = ErParseState.mk("<test statements>", stmts, "Test").importing( s.termNames
-                                                                            , s.cons.keySet
-                                                                            , imports
-                                                                            , s.termNameOrigins
-                                                                            , s.consOrigins
-                                                                            )
-    val (sps,m) = parse(moduleBody(ModuleHeader(spsz.loc,"Test",false,imports.toList.map {
-      case (k,(as,explicits,using)) => ImportExportStatement(spsz.loc, false, k, as, explicits, using)
-    })),spsz)
-    loadModule(sps, m, _ => None)
   }
 
-  def testParse[A](p: Parser[A], e: String, m: Map[String,ImportSpec] = imps)(implicit s: SessionEnv): (ParseState, A) = {
-    import ErParseState.Implicits._
-    Session.loadModules(m.keySet.toList)  // no writeback: may run after a Test literal load
-    val epsz = ErParseState.mk("<test>", e, "Test").importing(s.termNames, s.cons.keySet, m, s.termNameOrigins, s.consOrigins)
-    parse(p, epsz)
-  }
+
 
   def typeOf(e: String, m : Map[String,ImportSpec] = imps)(implicit s: SessionEnv): Type =
     Session.eval(e,m)._1
@@ -220,7 +195,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
 }
 
 object TestErmine extends Properties("Ermine") {
-  private val ermineFixture = ErmineFixture(statementsViaNew = true)
+  private val ermineFixture = ErmineFixture()
   import ermineFixture._
 
   property("Occurs.fun") = no(sessionProof(implicit s => typeOf("a -> a a")))
