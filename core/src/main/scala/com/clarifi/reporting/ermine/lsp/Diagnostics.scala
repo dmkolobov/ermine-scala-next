@@ -1,6 +1,7 @@
 package com.clarifi.reporting.ermine.lsp
 
 import java.nio.file.Path
+import com.clarifi.reporting.ermine.rename.NewPipeline
 import scalaparsers.Death
 
 /** didOpen/didSave -> parse+typecheck -> publishDiagnostics (roadmap 0.3).
@@ -9,6 +10,12 @@ import scalaparsers.Death
   * (Resident.checkFile), so there is no reload or cache-invalidation
   * story: a didSave re-checks the file and its workspace imports from
   * scratch, and a failed load poisons nothing.
+  *
+  * Since 5.1 a check reports ALL of the read's diagnostics, each with the
+  * real span the phase found it at, and the navigation index is rebuilt
+  * even when the file is broken.  Only the two unrecoverable cases (a
+  * header that will not parse, an import that will not load) still arrive
+  * as a Death with nothing but a rendered report to go on.
   */
 object Diagnostics {
 
@@ -39,10 +46,12 @@ object Diagnostics {
         val ds =
           try {
             val checked = ermine.checkFile(path)
-            // A clean check refreshes navigation; a failed one keeps the
-            // last good index (stale hits beat none, misses answer null).
+            // The index is rebuilt from the SAME parse that produced the
+            // diagnostics, broken file or not: navigation on a file's
+            // healthy statements no longer decays to the last good save.
             docs.put(uri, Definitions.index(path.toString, checked))
-            Nil
+            checked.diags.map(fromDiag) :::
+              checked.typeError.toList.map(fromReport(_, path))
           } catch {
             case Death(err, _) => List(fromReport(err.toString, path))
             case scala.util.control.NonFatal(e) =>
@@ -71,6 +80,22 @@ object Diagnostics {
   // and it keeps the caret rendering (end = start is fine, roadmap 0.3).
   private val PosPrefix = """^(.*?):(\d+):(\d+):.*""".r
 
+  /** A structured diagnostic keeps its whole extent, so a broken
+    * statement squiggles as far as the splitter took it instead of
+    * pointing at one character.  Spans are 1-based and their end is
+    * already one past the last character — LSP wants 0-based with an
+    * exclusive end, so both ends lose one. */
+  private def fromDiag(d: NewPipeline.Diag): Json = {
+    val sp = d.span
+    val sl = 0 max (sp.startLine - 1)
+    val sc = 0 max (sp.startCol - 1)
+    val el = 0 max (sp.endLine - 1)
+    val ec = 0 max (sp.endCol - 1)
+    val (endLine, endCol) =
+      if (el > sl || (el == sl && ec > sc)) (el, ec) else (sl, sc)
+    range(sl, sc, endLine, endCol, d.message)
+  }
+
   private def fromReport(report: String, path: Path): Json =
     (report.linesIterator.toSeq.headOption getOrElse "") match {
       case PosPrefix(file, l, c) if new java.io.File(file).getName == path.getFileName.toString =>
@@ -79,12 +104,15 @@ object Diagnostics {
         diagnostic(0, 0, report)
     }
 
-  private def diagnostic(line: Int, character: Int, message: String): Json = {
-    val pos = Json.obj("line" -> Json.num(line), "character" -> Json.num(character))
+  private def diagnostic(line: Int, character: Int, message: String): Json =
+    range(line, character, line, character, message)
+
+  private def range(sl: Int, sc: Int, el: Int, ec: Int, message: String): Json =
     Json.obj(
-      "range"    -> Json.obj("start" -> pos, "end" -> pos),
+      "range"    -> Json.obj(
+        "start" -> Json.obj("line" -> Json.num(sl), "character" -> Json.num(sc)),
+        "end"   -> Json.obj("line" -> Json.num(el), "character" -> Json.num(ec))),
       "severity" -> Json.num(1),
       "source"   -> Json.Str("ermine"),
       "message"  -> Json.Str(message))
-  }
 }

@@ -32,8 +32,12 @@ object Reassoc {
   final case class YOp[A](span: Span, prec: Int, assoc: Assoc, unary: Boolean,
                           build: List[A] => Option[List[A]])
 
-  /** Left = the resolved operator; Right = an operand. */
-  def yard[A](items: List[Either[YOp[A], A]]): Either[Diag, A] = {
+  /** Left = the resolved operator; Right = an operand.  `at` is the
+    * enclosing chain's span: the fallback for the two refusals that have
+    * no operator to blame (a leftover operand stack).  It used to be
+    * Span(0,0,0,0), which is not a position an editor can show — the
+    * same defect 5.1 fixed in assemble's cross-block refusal. */
+  def yard[A](items: List[Either[YOp[A], A]], at: Span): Either[Diag, A] = {
 
     def clear(p: YOp[A], rators: List[YOp[A]], rands: List[A],
               rest: List[Either[YOp[A], A]]): Either[Diag, A] = rators match {
@@ -61,9 +65,7 @@ object Reassoc {
       }
       case Nil => rands match {
         case List(x) => Right(x)
-        case _ =>
-          val sp = Span(0, 0, 0, 0)
-          Left(Diag(sp, "error: ill-formed expression"))
+        case _       => Left(Diag(at, "error: ill-formed expression"))
       }
     }
 
@@ -78,7 +80,7 @@ object Reassoc {
                  rest: List[Either[YOp[A], A]]): Either[Diag, A] = rest match {
       case Left(op) :: more => clear(op, rators, rands, more)  // infix or postfix
       case Nil              => finish(rators, rands)
-      case Right(r) :: _    => Left(Diag(Span(0, 0, 0, 0), "error: ill-formed expression"))
+      case Right(r) :: _    => Left(Diag(at, "error: ill-formed expression"))
     }
 
     postRator(Nil, Nil, items)
@@ -200,7 +202,7 @@ object Reassoc {
             case Left(d)  => diags += d; Right(SErrorTerm(Real(op.name.span), d.message))
           }
         }
-        yard(items) match {
+        yard(items, c.loc.span) match {
           case Right(res) => res
           case Left(d)    => diags += d; SErrorTerm(c.loc, d.message)
         }
@@ -259,7 +261,7 @@ object Reassoc {
                 Right(SPError(Real(op.name.span), "unknown operator"))
             }
         }
-        yard(items) match {
+        yard(items, c.loc.span) match {
           case Right(r) => r
           case Left(d)  => diags += d; SPError(c.loc, d.message)
         }
@@ -381,7 +383,7 @@ object Reassoc {
             case Left(d)  => diags += d; Right(STyError(Real(op.name.span), d.message))
           }
         }
-        yard(items) match {
+        yard(items, c.loc.span) match {
           case Right(res) => res
           case Left(d)    => diags += d; STyError(c.loc, d.message)
         }

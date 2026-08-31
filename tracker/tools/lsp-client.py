@@ -137,6 +137,27 @@ def main():
         # error-tolerant parse restores precise positions
         check("Ugly.e line", d["range"]["start"] == {"line": 2, "character": 0}, repr(d["range"]))
         check("Ugly.e message", "unparseable statement" in d["message"], d["message"])
+        # 5.1: the range is the statement's extent (D7's scanner end), not
+        # a zero-width caret at its start
+        check("Ugly.e range covers the statement",
+              d["range"]["end"] == {"line": 2, "character": 7}, repr(d["range"]))
+
+    # --- 5.1: a file with TWO broken statements reports both, and its
+    # healthy statements still navigate (the index is rebuilt from the
+    # same tolerant parse, not left stale from the last clean save).
+    open_doc("Broken.e")
+    ds = client.diagnostics_for(uri("Broken.e"))
+    check("Broken.e two diagnostics", len(ds) == 2, repr(ds))
+    if len(ds) == 2:
+        check("Broken.e first at line 5",
+              ds[0]["range"]["start"] == {"line": 5, "character": 0}, repr(ds[0]["range"]))
+        check("Broken.e second at line 7",
+              ds[1]["range"]["start"] == {"line": 7, "character": 0}, repr(ds[1]["range"]))
+        check("Broken.e both are syntax diagnostics",
+              all("unparseable statement" in d["message"] for d in ds), repr(ds))
+        check("Broken.e ranges are non-empty",
+              all(d["range"]["end"]["character"] > d["range"]["start"]["character"]
+                  for d in ds), repr(ds))
 
     # Sibling import: Sib.e imports Good.e from the fixtures directory.
     open_doc("Sib.e")
@@ -169,6 +190,17 @@ def main():
           and r["uri"].endswith("/Bool.e")
           and r["range"]["start"]["line"] in (6, 7), repr(r))
     check("def miss -> null", definition("Nav.e", 1, 0) is None)
+
+    # 5.1: navigation on the HEALTHY statements of the broken file — a
+    # same-file binder and a sibling-module global.
+    r = definition("Broken.e", 6, 8)  # `good1` in `good2 = good1`
+    check("broken file: def good1 -> its equation", r is not None
+          and r["uri"] == uri("Broken.e")
+          and r["range"]["start"] == {"line": 4, "character": 0}, repr(r))
+    r = definition("Broken.e", 4, 8)  # `answer` in `good1 = answer`
+    check("broken file: def answer -> Good.e", r is not None
+          and r["uri"] == uri("Good.e")
+          and r["range"]["start"]["line"] == 2, repr(r))
 
     # --- hover (0.6) ---
     def hover(name, line, char):

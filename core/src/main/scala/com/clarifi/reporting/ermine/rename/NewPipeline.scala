@@ -24,34 +24,112 @@ import scalaparsers.{ Death, Document, Pos, Supply }
   */
 object NewPipeline {
 
+  /** The phase a diagnostic came from.  Strict reading dies on the first
+    * diagnostic of the EARLIEST phase, each phase keeping its own
+    * emission order — that is today's throw order, and it is NOT a
+    * position-sorted merge (Stage 2 item 5.1). */
+  sealed abstract class Phase(val name: String)
+  object Phase {
+    case object Syntax   extends Phase("syntax")
+    case object Rename   extends Phase("rename")
+    case object Reassoc  extends Phase("reassoc")
+    case object Assemble extends Phase("assemble")
+    case object Lower    extends Phase("lower")
+  }
+
+  /** One diagnostic, kept STRUCTURALLY: the span in the file plus the
+    * message the strict reader renders at it.  The editor path wants a
+    * real range; the batch path renders it through mkPos exactly as it
+    * used to. */
+  final case class Diag(phase: Phase, span: Span, message: String)
+
+  /** Everything one read produces: the (ParseState, Module) pair the
+    * loader contract wants, plus — for the editor — the surface module
+    * (Definitions' fixity bridge reads it), the renamer tables
+    * (navigation) and every phase's diagnostics. */
+  final case class Read(module: Module, ps: scalaparsers.ParseState[ErParseState],
+                        surface: SModule, renamed: Renamer.Result,
+                        diagnostics: List[Diag])
+
+  /** An assemble refusal with its position kept structurally, so the
+    * strict path renders it exactly as before and the tolerant path can
+    * make a diagnostic of it without regexing a report back apart. */
+  private final case class Refusal(span: Span, message: String)
+    extends RuntimeException(message) with scala.util.control.NoStackTrace
+
   def readModule(fileName: String, contents: String, mh: ModuleHeader)
                 (implicit s: SessionEnv, su: Supply): (scalaparsers.ParseState[ErParseState], Module) = {
+    val r = read(fileName, contents, mh, tolerant = false)
+    (r.ps, r.module)
+  }
 
+  /** The EDITOR read (Stage 2 item 5.1): every phase runs and every
+    * phase's diagnostics come back, so a file with two broken statements
+    * gets two squiggles and its healthy statements still get an index.
+    * BATCH SEMANTICS ARE UNTOUCHED: readModule is the same traversal
+    * with tolerance off, dying byte-for-byte where it died before —
+    * with tolerance off no statement is ever guarded and no phase runs
+    * after one that produced a diagnostic. */
+  def readModuleTolerant(fileName: String, contents: String, mh: ModuleHeader)
+                        (implicit s: SessionEnv, su: Supply): Read =
+    read(fileName, contents, mh, tolerant = true)
+
+  private def read(fileName: String, contents: String, mh: ModuleHeader, tolerant: Boolean)
+                  (implicit s: SessionEnv, su: Supply): Read = {
+
+    // A module whose header does not parse leaves nothing to be tolerant
+    // WITH; both modes die here, identically.
     val sm = SurfaceParsers.module(fileName, contents, mh.name) match {
       case Right(m)  => m
       case Left(err) => throw Death(err.pretty)
     }
-    // batch loads REFUSE unparseable statements (the tolerant splitter
-    // keeps their extent as SErrorStatement for editor flows; a module
-    // load must not silently drop them — D3, Ugly.e)
-    def firstError(ss: List[SStatement]): Option[SErrorStatement] = ss.collectFirst(Function.unlift {
-      case e: SErrorStatement          => Some(e)
-      case SPrivateBlock(_, ss2)       => firstError(ss2)
-      case SDatabaseBlock(_, _, ss2)   => firstError(ss2)
-      case _                           => None
-    })
-    firstError(sm.statements).foreach { e =>
-      throw Death(mkPos(fileName, contents, e.loc.span)
-        .report(Document.text("error: unparseable statement (" + e.message + ")")))
-    }
 
+    val ds = scala.collection.mutable.ListBuffer.empty[Diag]
+    def checkpoint(): Unit =
+      if (!tolerant) ds.headOption.foreach { d => throw Death(render(fileName, contents, d)) }
+
+    // --- syntax.  batch loads REFUSE unparseable statements (the
+    // tolerant splitter keeps their extent as SErrorStatement for editor
+    // flows; a module load must not silently drop them — D3, Ugly.e)
+    def errors(ss: List[SStatement]): List[SErrorStatement] = ss.flatMap {
+      case e: SErrorStatement          => List(e)
+      case SPrivateBlock(_, ss2)       => errors(ss2)
+      case SDatabaseBlock(_, _, ss2)   => errors(ss2)
+      case _                           => Nil
+    }
+    val errs = errors(sm.statements)
+    if (errs.nonEmpty) {
+      // The splitter's span runs to wherever the offside rule stopped —
+      // trailing blank lines included.  D7's scanner ends just past the
+      // last significant character, and its starts agree with the
+      // splitter's exactly (the 180-file differential), so match by start
+      // and prefer its end: a broken statement squiggles over itself and
+      // not over the whitespace after it.  Only the position the strict
+      // reader renders (start) is shared, so this changes no batch
+      // output.  Statements nested in a private/database block are not in
+      // a top-level scan and keep the parsed span (5.6's business).
+      val ends = StatementExtents.scan(contents).items.iterator
+        .map(x => (x.startLine, x.startCol) -> Span(x.startLine, x.startCol, x.endLine, x.endCol))
+        .toMap
+      errs.foreach { e =>
+        val sp = e.loc.span
+        ds += Diag(Phase.Syntax, ends.getOrElse((sp.startLine, sp.startCol), sp),
+                   "error: unparseable statement (" + e.message + ")")
+      }
+    }
+    checkpoint()
+
+    // --- rename
     val scope = ModuleScope.importing(mh.name, ModuleScope.Scope.empty,
       s.termNames, s.cons.keySet, mh.imports, s.termNameOrigins, s.consOrigins)
-    val renamed = Renamer.renameOrDie(sm, scope, contents)
+    val renamed = Renamer.rename(sm, scope)
+    renamed.diagnostics.foreach(d => ds += Diag(Phase.Rename, d.span, "error: " + d.message))
+    checkpoint()
+
+    // --- re-associate
     val (restatements, reDiags) = Reassoc.module(sm, scope)
-    reDiags.headOption.foreach { d =>
-      throw Death(mkPos(fileName, contents, d.span).report(Document.text(d.message)))
-    }
+    reDiags.foreach(d => ds += Diag(Phase.Reassoc, d.span, d.message))
+    checkpoint()
 
     // fixity declarations are part of the declared NAMES (binders and
     // exported Globals carry them); no block-level decls exist in the corpus
@@ -64,11 +142,17 @@ object NewPipeline {
     val tctx = TyLower(renamed, fileName, mh.name, s.cons ++ s.privateCons, su, typeFix)
     lctx.lowerAnnot = (t: STy) => TyLower.annot(t, tctx)
 
-    val (module, ps) = assemble(mh, restatements, lctx, tctx, fileName, contents, scope)
-    lctx.diags.result().headOption.foreach { d =>
-      throw Death(mkPos(fileName, contents, d.span).report(Document.text(d.message)))
-    }
-    (ps, module)
+    // --- assemble (Lower/TyLower run inside it, statement by statement)
+    val (module, ps) =
+      try assemble(mh, restatements, lctx, tctx, fileName, contents, scope, tolerant, ds)
+      catch { case r: Refusal =>
+        throw Death(render(fileName, contents, Diag(Phase.Assemble, r.span, r.message))) }
+
+    // --- lower.  assemble's own refusals precede these, as they do today
+    lctx.diags.result().foreach(d => ds += Diag(Phase.Lower, d.span, d.message))
+    checkpoint()
+
+    Read(module, ps, sm, renamed, ds.toList)
   }
 
   /** A bare TYPE against the session (kindOf, post-G1 D3): parse,
@@ -141,6 +225,13 @@ object NewPipeline {
     out
   }
 
+  /** How the strict reader renders a diagnostic: the refusal batch loads
+    * have always produced, "file:line:col:" + source line + caret.  The
+    * tolerant/strict differential (TestTolerantRead) compares against
+    * this, so the two paths cannot drift apart silently. */
+  def render(fileName: String, contents: String, d: Diag): Document =
+    mkPos(fileName, contents, d.span).report(Document.text(d.message))
+
   private def mkPos(file: String, contents: String, sp: Span): Pos = {
     val line = contents.linesIterator.drop(sp.startLine - 1).nextOption().getOrElse("").replaceAll("\\r$", "")
     Pos(file, line, sp.startLine, sp.startCol, false)
@@ -152,8 +243,30 @@ object NewPipeline {
 
   private def assemble(mh: ModuleHeader, sts: List[SStatement],
                        lctx: Lower.Ctx, tctx: TyLower.TCtx,
-                       fileName: String, contents: String, scope: ModuleScope.Scope)
+                       fileName: String, contents: String, scope: ModuleScope.Scope,
+                       tolerant: Boolean,
+                       sink: scala.collection.mutable.ListBuffer[Diag])
                       (implicit s: SessionEnv, su: Supply): (Module, scalaparsers.ParseState[ErParseState]) = {
+
+    // With tolerance OFF this is `Some(a)` and nothing is caught: the
+    // strict reader keeps dying where it died.  With it ON, one statement
+    // failing costs that statement only — and Death is not enough to
+    // catch, because Reassoc leaves SErrorTerm/SPError/STyError nodes for
+    // Lower.Unsupported to throw on and TyLower panics with sys.error
+    // (Stage 2 item 5.1).
+    def guard[A](sp: Span)(a: => A): Option[A] =
+      if (!tolerant) Some(a)
+      else try Some(a) catch {
+        case Refusal(rsp, msg) =>
+          sink += Diag(Phase.Assemble, rsp, msg); None
+        case Lower.Unsupported(what, usp) =>
+          sink += Diag(Phase.Assemble, usp, "error: " + what); None
+        case Death(err, _) =>
+          sink += Diag(Phase.Assemble, sp, err.toString); None
+        case scala.util.control.NonFatal(e) =>
+          sink += Diag(Phase.Assemble, sp,
+                       "error: " + Option(e.getMessage).getOrElse(e.toString)); None
+      }
 
     var fields      = List.empty[FieldStatement]
     var tables      = List.empty[TableStatement]
@@ -175,18 +288,20 @@ object NewPipeline {
     val topGroups = scala.collection.mutable.LinkedHashMap[V[Type], ImplicitBinding]()
     val topSigs   = List.newBuilder[(V[Type], Type, Span)]
 
-    def collectBlock(bs: List[SStatement]): (List[(V[Type], ImplicitBinding)], List[(V[Type], Type, Span)]) = {
-      val grouped = scala.collection.mutable.LinkedHashMap[String, (V[Type], List[Alt])]()
+    def collectBlock(bs: List[SStatement]): (List[(V[Type], ImplicitBinding, Span)], List[(V[Type], Type, Span)]) = {
+      // the group's Span is its FIRST equation's head — the position a
+      // later re-opening of the name collides with (5.1; the cross-block
+      // refusal used to report Span(0,0,0,0), not a position at all)
+      val grouped = scala.collection.mutable.LinkedHashMap[String, (V[Type], List[Alt], Span)]()
       val sigs = List.newBuilder[(V[Type], Type, Span)]
       // equations of one name must be consecutive among equations —
       // gatherBindings parity (an interleaved equation silently merging
       // into an earlier group was a 4.2 regression, caught by the pin)
       var lastEq: Option[String] = None
-      bs foreach {
+      bs foreach { st => guard(st.loc.span) { st match {
         case SEquation(l, n, args, body, wh) =>
           if (grouped.contains(n.spelling) && !lastEq.contains(n.spelling))
-            throw Death(mkPos(fileName, contents, n.span)
-              .report(Document.text(s"error: interleaved equations for ${n.spelling}")))
+            throw Refusal(n.span, s"error: interleaved equations for ${n.spelling}")
           lastEq = Some(n.spelling)
           val v = grouped.get(n.spelling).map(_._1).getOrElse {
             lctx.binderAtSite(n) getOrElse lctx.varFor(n)
@@ -199,8 +314,8 @@ object NewPipeline {
           }
           val alt = Alt(lctx.pos(l.span), args.map(Lower.pattern(_, lctx)), bodyT)
           grouped(n.spelling) = grouped.get(n.spelling) match {
-            case Some((v0, as)) => (v0, as :+ alt)
-            case None           => (v, List(alt))
+            case Some((v0, as, sp0)) => (v0, as :+ alt, sp0)
+            case None                => (v, List(alt), n.span)
           }
         case SSigStatement(l, ns, t) =>
           tctx.resetKindScope()
@@ -210,35 +325,33 @@ object NewPipeline {
             sigs += ((v, ty, n.span))
           }
         case _ => ()
-      }
-      (grouped.values.toList.map { case (v, as) => v -> ImplicitBinding(v.loc, v, as) },
+      } } }
+      (grouped.values.toList.map { case (v, as, sp) => (v, ImplicitBinding(v.loc, v, as), sp) },
        sigs.result())
     }
 
     def pairSigs(im: collection.Map[V[Type], ImplicitBinding],
                  sigs: List[(V[Type], Type, Span)]): (List[ImplicitBinding], List[ExplicitBinding]) = {
-      val es = sigs.map { case (v, ty, sp) =>
+      val es = sigs.flatMap { case (v, ty, sp) => guard(sp) {
         im.get(v) match {
           case Some(i) => ExplicitBinding(i.loc, i.v, Annot.plain(i.loc, ty), i.alts)
-          case None => throw Death(mkPos(fileName, contents, sp)
-            .report(Document.text("missing definition")))
+          case None    => throw Refusal(sp, "missing definition")
         }
-      }
+      } }
       ((im -- es.map(_.v)).values.toList, es)
     }
 
     def bindingBlock(bs: List[SStatement], intoPrivate: Boolean): Unit = {
       val (groups, sigs) = collectBlock(bs)
-      groups.foreach { case (v, b) =>
+      groups.foreach { case (v, b, sp) => guard(sp) {
         topGroups.get(v) match {
           case Some(_) =>
             // a later adjacency block re-opening a name: refused, as above
-            throw Death(mkPos(fileName, contents, Span(0, 0, 0, 0))
-              .report(Document.text("error: interleaved equations for " +
-                b.v.name.map(_.string).getOrElse("?"))))
+            throw Refusal(sp, "error: interleaved equations for " +
+              b.v.name.map(_.string).getOrElse("?"))
           case None => topGroups(v) = b
         }
-      }
+      } }
       topSigs ++= sigs
       if (intoPrivate)
         privateTerms = privateTerms ++ groups.map(_._1) ++ sigs.map(_._1)
@@ -263,6 +376,11 @@ object NewPipeline {
         case st :: more =>
           tctx.resetKindScope()  // named kind vars scope per statement
           st match {
+            // blocks recurse OUTSIDE the guard: one bad statement inside
+            // a private/database block must not cost the whole block
+            case SPrivateBlock(_, ss)     => walk(ss, intoPrivate = true)
+            case SDatabaseBlock(_, _, ss) => walk(ss, intoPrivate)
+            case _ => guard(st.loc.span) { st match {
             case SFieldStatement(l, ns, t) =>
               val ty = TyLower.annot(t, tctx).body
               val fvs = ns.map(n => ownTypeVar(n))
@@ -333,16 +451,15 @@ object NewPipeline {
                   x.statements.foreach(fgo(_, priv = true))
               } }
               items.foreach(fgo(_, intoPrivate))
-            case SPrivateBlock(_, ss)    => walk(ss, intoPrivate = true)
-            case SDatabaseBlock(_, _, ss) => walk(ss, intoPrivate)
             case c: SClassStatement if c.body.nonEmpty || c.context.nonEmpty =>
               // class bodies are dead code: every member or context died
               // in the fused type processing with "undefined type" —
               // refusing the statement keeps that contract explicit
-              throw Death(mkPos(fileName, contents, c.loc.span).report(Document.text(
-                "error: class bodies are not supported (members die: undefined type)")))
+              throw Refusal(c.loc.span,
+                "error: class bodies are not supported (members die: undefined type)")
             case _: SFixity | _: SClassStatement | _: SErrorStatement => ()
             case _ => ()
+            } }
           }
           walk(more, intoPrivate)
       }
@@ -352,7 +469,7 @@ object NewPipeline {
 
     def lowerLet(ss: List[SStatement]): (List[ImplicitBinding], List[ExplicitBinding]) = {
       val (groups, sigs) = collectBlock(ss)
-      pairSigs(scala.collection.mutable.LinkedHashMap(groups: _*), sigs)
+      pairSigs(scala.collection.mutable.LinkedHashMap(groups.map { case (v, b, _) => v -> b }: _*), sigs)
     }
 
     walk(sts, intoPrivate = false)

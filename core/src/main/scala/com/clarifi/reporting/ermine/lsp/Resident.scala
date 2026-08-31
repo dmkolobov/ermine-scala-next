@@ -2,9 +2,9 @@ package com.clarifi.reporting.ermine.lsp
 
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.parsing.ErParseState.Implicits._
-import com.clarifi.reporting.ermine.rename.{ ModuleScope, Renamer }
+import com.clarifi.reporting.ermine.rename.{ NewPipeline, Renamer }
 import com.clarifi.reporting.ermine.session.{ Lib, Printer, Session, SessionEnv }
-import com.clarifi.reporting.ermine.surface.{ SModule, SurfaceParsers }
+import com.clarifi.reporting.ermine.surface.SModule
 import scalaparsers.{ Death, Supply }
 
 /** The resident Ermine session (roadmap 0.2): booted once — Lib.preamble
@@ -62,23 +62,34 @@ final class Resident(log: String => Unit) {
     * the post-load env (termNames carry inferred types and true def
     * sites), the surface module, and the renamer's occurrence/binder
     * tables — REAL SPANS, resolution included (roadmap 4.3; the
-    * G1Resolution differential is the spec these tables passed). */
+    * G1Resolution differential is the spec these tables passed) — plus
+    * the diagnostics the tolerant read collected and, when the read was
+    * clean enough to typecheck, the type error's rendered report
+    * (roadmap 5.1). */
   final case class Checked(env: SessionEnv, name: String,
-                           module: SModule, renamed: Renamer.Result)
+                           module: SModule, renamed: Renamer.Result,
+                           diags: List[NewPipeline.Diag],
+                           typeError: Option[String])
 
-  /** Parse, rename, and typecheck one file against a fresh env copy,
-    * resolving imports first against the file's own directory (workspace
-    * siblings), then the resident loader (the stdlib).  Throws Death on
-    * any parse or type error; the copy — and whatever the failed load
-    * dragged into it — is discarded on failure (roadmap 0.3).
+  /** Check one file against a fresh env copy, resolving imports first
+    * against the file's own directory (workspace siblings), then the
+    * resident loader (the stdlib).  The copy — and whatever a failed
+    * load dragged into it — is discarded afterwards (roadmap 0.3).
     *
-    * The navigation tables come from the Stage-1 renamer over the
-    * resolution-free surface parse, built AFTER the load so sibling
-    * imports are in termNames.  The module's own globals being in scope
-    * is harmless here — the renamer's top-level binder frame shadows
-    * them for references, and its shadow diagnostics go unused (the
-    * load already reported real errors).  That retires both the fused
-    * re-parse and its self-global filter (roadmap 4.3). */
+    * Since 5.1 the read is the TOLERANT one: parse, rename, re-associate
+    * and assemble all run and all report, so a file with several broken
+    * statements gets a diagnostic for each and its healthy statements
+    * still yield navigation tables.  The ordering matters and is the
+    * strict reader's own: the imports go in FIRST and the module itself
+    * is not loaded yet, so the read sees exactly the env Session.load's
+    * reader sees (own globals absent — with them present every top-level
+    * head would draw a bogus "would shadow global definition").
+    *
+    * Type checking is still the strict Session.load, run only when the
+    * read is clean: with diagnostics outstanding it would just re-report
+    * the earliest of them.  Death here — a header that will not parse,
+    * an import that will not load — propagates; Diagnostics turns it
+    * into the single diagnostic it has always been. */
   def checkFile(path: java.nio.file.Path): Checked = withEnv { env =>
     implicit val e: SessionEnv = env
     val dir = Option(path.getParent) map (_.toString) getOrElse "."
@@ -88,14 +99,17 @@ final class Resident(log: String => Unit) {
     val (_, mh) = Session.parse(
       ModuleParsers.moduleHeader(file.defaultModuleName),
       ErParseState.mk(file.toString, contents, file.defaultModuleName))
-    Session.load(file)
-    val sm = SurfaceParsers.module(file.toString, contents, mh.name) match {
-      case Right(m)  => m
-      case Left(err) => throw Death(err.pretty)
-    }
-    val scope = ModuleScope.importing(mh.name, ModuleScope.Scope.empty,
-      e.termNames, e.cons.keySet, mh.imports, e.termNameOrigins, e.consOrigins)
-    val renamed = Renamer.rename(sm, scope)
-    Checked(e, mh.name, sm, renamed)
+    // Session.load's own import step (Session.scala:718), hoisted so the
+    // tolerant read runs between it and `make` (SourceFile.forModule is
+    // private[Session]; loadModules is the same closure by module name,
+    // and it is what boot already uses).
+    val missing = (mh.importExports.map(_.module).toSet &~ e.loadedModules.keySet).toList
+    if (missing.nonEmpty) Session.loadModules(missing.sorted)
+    val r = NewPipeline.readModuleTolerant(file.toString, contents, mh)
+    val typeError =
+      if (r.diagnostics.nonEmpty) None
+      else try { Session.load(file); None }
+           catch { case Death(err, _) => Some(err.toString) }
+    Checked(e, mh.name, r.surface, r.renamed, r.diagnostics, typeError)
   }
 }

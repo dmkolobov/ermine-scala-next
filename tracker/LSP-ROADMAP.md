@@ -8,7 +8,9 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: POST-G1 DEBT COMPLETE (D0-D8, commits e9f72c7..HEAD). One pipeline, one grammar; the statement-extent scanner is in place. NEXT: expand Stage 2 (error-tolerant parsing) into a checklist — needs sign-off to open · Seeded 2026-08-30 (session that shipped the
+Status: STAGE 2 OPEN (signed off 2026-08-31). 5.1 done — the read path is
+error-tolerant end to end and the LSP reports every phase's diagnostics.
+NEXT: 5.2 (precise in-statement syntax positions) · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
@@ -18,7 +20,7 @@ scoping fix, commits f9cf42a / 41b13cc).
   Stage 0; suites GROW, so a commit that adds tests updates the count in
   its iteration-log line, and green-except-the-known-one is the invariant
 - `tracker/tools/repl-smoke.sh`: all suites PASS (4 as of D2)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (31 as of 4.3)
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (39 as of 5.1)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 - KNOWN FLAKE: core/test suites run concurrently in one JVM and rarely
@@ -398,9 +400,10 @@ STAGE-2 INVARIANTS (hard):
   perf ticket closes (tracker/TICKET-perf-type-inference.md).
 - Every sweep covers stdlib AND core/examples (the 180-file rule).
 - lsp-smoke's check count GROWS with each item: update the Baselines
-  note in the same commit (it is 31 today).
+  note in the same commit (it was 31 at the start of the stage; 39 after
+  5.1).
 
-- [ ] **5.1 Tolerant read path + full diagnostics collection**.
+- [x] **5.1 Tolerant read path + full diagnostics collection**.
   NewPipeline grows `readModuleTolerant(fileName, contents, mh)`
   returning (core Module, SModule, ParseState, Renamer.Result,
   List[Diag]) — the SModule must come along: Definitions.index's
@@ -1308,3 +1311,52 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   (1000+ statements), scanner ends sit within the parsed span and
   before the next statement.  Suite 871 (870+known), repl 4, lsp 31/31.
   THE POST-G1 DEBT LIST IS DONE.
+
+- 2026-08-31 (5.1 — the tolerant read path): NewPipeline grew
+  `readModuleTolerant`, and `readModule` is now the SAME traversal with
+  tolerance off.  Diagnostics are structural (`Diag(phase, span,
+  message)`) and collected from every phase; `render` is the one
+  renderer both paths use, so the batch refusal text cannot drift.
+  Strict mode short-circuits at a phase boundary and guards nothing, so
+  it dies exactly where it died before — including on raw crashes.
+  Tolerant mode guards EACH statement (collectBlock, walk, pairSigs)
+  against Refusal, Lower.Unsupported, Death and any other NonFatal, per
+  the review finding that a Death-only collector would crash the editor
+  path on the SErrorTerm/STyError nodes Reassoc leaves behind.  Two
+  invalid LSP positions fixed on the way: assemble's cross-block
+  interleaved-equations refusal (was Span(0,0,0,0), now the colliding
+  equation's head) and Reassoc.yard's two operand-stack refusals (were
+  Span(0,0,0,0), now the enclosing chain's span — found by the new
+  corpus sweep, on Interp.e).  Syntax diagnostics take their END from
+  D7's StatementExtents (matched to the SErrorStatement by start), so a
+  broken statement squiggles over itself instead of over the blank lines
+  after it; the START, which is all the strict path renders, is
+  unchanged.
+  LSP: `Resident.checkFile` now hoists Session.load's OWN import step
+  (Session.scala:718) out in front of the tolerant read, so the read
+  sees the env the strict reader sees inside `Session.load` — imports
+  in, the module's own globals NOT.  That ordering is load-bearing, not
+  cosmetic: re-reading an already-loaded module makes its own globals
+  arrive as imports and every top-level head draws "would shadow global
+  definition" (137 of 180 corpus files, measured).  Type checking is
+  still strict `Session.load`, run only when the read is clean — with
+  diagnostics outstanding it would merely re-report the earliest of
+  them.  The navigation index is now rebuilt from the same parse that
+  produced the diagnostics, so a broken file's healthy statements
+  navigate instead of decaying to the last clean save.  Diagnostics
+  publishes real RANGES now (start..end), not zero-width carets.
+  New suite TestTolerantRead (8 properties): the 180-file sweep runs in
+  DEPENDENCY ORDER (each module read with its imports loaded and itself
+  not) and asserts both agreement — strict is silent exactly when
+  tolerant is, and its refusal is byte-identical to `render` of
+  tolerant's FIRST diagnostic — and silence, 176/180 clean.  The four
+  that are not are exactly the examples "all interesting examples load"
+  leaves out: Sample.e (explicit layout, unshapeable by the splitter —
+  both readers die identically), HelloWorld.e, Interp.e, Yahoo.e.  Plus
+  per-phase pins (syntax/rename/reassoc/assemble), the cross-block span,
+  two broken statements giving two diagnostics, and healthy neighbours
+  surviving.  lsp-smoke +8 (39): Ugly.e's range covers its statement,
+  Broken.e publishes two syntax diagnostics at the right lines with
+  non-empty ranges, and goto-definition on that broken file answers for
+  both a same-file binder and a sibling-module global.
+  Suite 879 (878+known), repl 4, lsp 39/39, boot 129.
