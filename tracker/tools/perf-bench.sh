@@ -121,8 +121,16 @@ staler_than "$res_t" "$mod_t" && fail \
 
 # Another live ermine JVM writes .ei into the same tree with a truncating
 # PrintWriter, which corrupts a warm rep and false-fails the cold assertion.
-pgrep -f com.clarifi.reporting.ermine >/dev/null 2>&1 && fail \
-  "another ermine JVM is running (pgrep -f com.clarifi.reporting.ermine)"
+# NOTE THE ESCAPED DOTS.  Unescaped, `com.clarifi.reporting.ermine` is a regex
+# whose dots match the SLASHES in the source path
+# core/src/main/scala/com/clarifi/reporting/ermine/Type.scala -- so ANY process
+# merely naming a source file (an editor, a build, or this harness's own paired
+# before/after script, which lists those paths in a variable) matched, and the
+# run was silently refused.  It cost two measurement runs before the message was
+# read carefully.  Requiring a java invocation as well means a shell that only
+# mentions the class does not count either.
+ermine_jvm="$(pgrep -af 'com\.clarifi\.reporting\.ermine\.' 2>/dev/null | grep '/java ' | head -1)"
+[ -n "$ermine_jvm" ] && fail "another ermine JVM is running: $ermine_jvm"
 pgrep -f 'sbt-launch|xsbt\.boot' >/dev/null 2>&1 && fail "an sbt build is running"
 
 load_before="$(cut -d' ' -f1 /proc/loadavg)"

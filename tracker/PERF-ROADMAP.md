@@ -1063,10 +1063,14 @@ deferred by LSP 5.5).
   the gate is what said so rather than a later session.
 
   NUMBERS.  Batch cold **11.50s** (5 reps, range 11.39-11.61) -> **11.14s**
-  (10 reps, range 10.96-11.27).  The ranges do not overlap — every after-rep
-  beat every before-rep — so ~3.1%, above the ~1-2% floor.  Weakness stated:
-  the two arms were not interleaved, and a strictly paired 10-vs-10 run was
-  attempted and killed mid-flight.
+  (10 reps, range 10.96-11.27); ranges disjoint, ~3.1%.
+  CONFIRMED BY A PAIRED 10-vs-10 in one run, HEAD~1 against HEAD, each arm
+  compiled and measured in sequence on the same machine: **11.51s ->
+  11.14s = 0.37s, 3.2%**.  Two independent measurements agreeing to within a
+  tenth of a point.  The paired arms' RANGES overlap (11.23-11.94 vs
+  10.85-11.47) because the machine was far noisier by then — spreads 0.71/0.62
+  against 0.22 in the morning — which is exactly why the harness reports
+  MEDIANS and why Decision 3 says to say which statistic is being quoted.
   GATE: double run 1447 signatures EQUIVALENT, and no drift from the
   re-recorded baseline — exit 0.
   BASELINES: core/test 904 total, 903 pass, 1 fail (the known
@@ -1075,6 +1079,19 @@ deferred by LSP 5.5).
   concurrent-suite flake.  I did not capture the transient's name — my own
   grep filtered it — which is a gap worth not repeating.
   repl-smoke 4, lsp-smoke 82, boot 129, npm PASS.
+
+  THIRD HARNESS BUG OF THE SESSION, found by the paired run refusing twice:
+  perf-bench's concurrent-JVM guard was `pgrep -f com.clarifi.reporting.ermine`,
+  and THE DOTS ARE UNESCAPED REGEX WILDCARDS — they match the SLASHES in
+  `core/src/main/scala/com/clarifi/reporting/ermine/Type.scala`, so any process
+  merely NAMING a source file trips it, including the paired script itself,
+  which lists those paths in a variable.  It refused silently (no median in the
+  output) rather than loudly.  Now escaped, and additionally required to match a
+  `/java ` invocation so a shell that only mentions the class does not count.
+  Companion to the stale-build guard that cried stale on a current tree (P5(a))
+  and the negative debounce residual (P1): all three were guards or derived
+  fields I added for good reasons that then produced false readings, and all
+  three were caught by output that looked wrong rather than by an error.
 
   OPEN, AND IT IS A DECISION 9 QUESTION: make `Part.apply` ORDER-STABLE so the
   parity dependence disappears.  It is a latent fragility — the printed order of
