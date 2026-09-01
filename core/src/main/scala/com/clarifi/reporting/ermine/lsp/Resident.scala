@@ -147,15 +147,35 @@ final class Resident(val log: String => Unit) {
     * errors about text nobody is looking at. */
   def checkFile(path: java.nio.file.Path, docs: Documents): Checked = withEnv { env =>
     implicit val e: SessionEnv = env
-    val dir = Option(path.getParent) map (_.toString) getOrElse "."
-    e.loadFile = Session.SourceFile.inOrder(
-      docs.loaderFor(dir), Session.SourceFile.filesystem(dir) _, e.loadFile)
     val file: Session.SourceFile = docs.byPath(path.toString).map(_.source) getOrElse
       Session.Filesystem(path.toString, exotic = true)
     val contents = file.contents
     val (_, mh) = Session.parse(
       ModuleParsers.moduleHeader(file.defaultModuleName),
       ErParseState.mk(file.toString, contents, file.defaultModuleName))
+    // The header is parsed BEFORE the loader is built, because the module's own
+    // name determines where its siblings live.  `SourceFile.filesystem(root)`
+    // appends the whole dotted path, so a module `A.B.C` at `<root>/A/B/C.e`
+    // resolves `import A.B.D` against <root> -- NOT against its own directory,
+    // which would look for `<root>/A/B/A/B/D.e`.  Walk up one level per extra
+    // name segment.  Without this, no project with a module hierarchy can resolve
+    // its own imports in the editor; the file's own directory happens to work
+    // only for single-segment module names.
+    val dir = Option(path.getParent) map (_.toString) getOrElse "."
+    val root = {
+      var d = Option(path.getParent)
+      var i = mh.name.split('.').length - 1
+      while (i > 0 && d.isDefined) { d = Option(d.get.getParent); i -= 1 }
+      d map (_.toString) getOrElse dir
+    }
+    e.loadFile =
+      if (root == dir)
+        Session.SourceFile.inOrder(
+          docs.loaderFor(dir), Session.SourceFile.filesystem(dir) _, e.loadFile)
+      else
+        Session.SourceFile.inOrder(
+          docs.loaderFor(dir),  Session.SourceFile.filesystem(dir) _,
+          docs.loaderFor(root), Session.SourceFile.filesystem(root) _, e.loadFile)
     // EVERY module implicitly imports ITSELF (ModuleParsers.scala:34),
     // and the resident session holds the whole Prelude/Layout closure —
     // so checking a stdlib file that is already loaded would put its own
