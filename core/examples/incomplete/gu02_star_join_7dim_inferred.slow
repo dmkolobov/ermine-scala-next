@@ -1,0 +1,36 @@
+module Incomplete.Gu02 where
+
+{- INFERENCE GIVES UP WHERE CHECKING SUCCEEDS -- 2 of 4: over the cliff.
+
+   THE SCENARIO.  Gu01's denormalised order-line view, with one more dimension.
+   Finance asked which tax treatment each line was booked under, so `taxDim`
+   joins on after `currencyDim`.  A one-word change to a working query.
+
+   WHAT A COMPETENT USER EXPECTS.  One more join on a chain that already
+   compiled: slightly slower, still a save-and-reload.
+
+   WHAT ACTUALLY HAPPENS, measured on this file, one JVM, nothing else running:
+
+     $ ERMINE_JAVA_OPTS=-Dermine.useInterface=false bin/ermine \
+         core/examples/incomplete/gu02_star_join_7dim_inferred.e </dev/null
+     Importing module 'Incomplete.Gu02' (329.58 seconds)
+
+   Five and a half minutes.  The module DOES compile -- this is not a hang and
+   not an error.  Gu01, the same definition one dimension shorter, is 11.21s.
+   Adding `taxDim` cost 29x.
+
+   THE INCOMPLETENESS.  The answer the solver finally returns is 21 partition
+   constraints, three per `join`, and it is structurally the same answer it was
+   handed: the super-exponential search is discarded wholesale when the residual
+   is trimmed.  Nothing about the query got harder to describe between Gu01 and
+   Gu02; only the search did.  Gu04 checks eight dimensions -- one MORE than
+   this file -- in 1.97s, given the signature.
+-}
+
+import Prelude
+import Relation
+import Syntax.Relation
+
+wideOrderLines orderLine productDim regionDim channelDim calendarDim customerDim currencyDim taxDim =
+  orderLine ** productDim ** regionDim ** channelDim ** calendarDim
+            ** customerDim ** currencyDim ** taxDim

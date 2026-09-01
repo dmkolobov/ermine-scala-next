@@ -22,7 +22,7 @@ object TestSurfaceParsers extends Properties("Surface parser 2.3a") {
       if (f.isDirectory) f.listFiles.toList.sortBy(_.getName).flatMap(walk)
       else if (f.getName endsWith ".e") List(f) else Nil
     // stdlib AND the user-style example programs (Holes, the relational
-    // examples, bugs/ regression cases) — different surface variety
+    // examples, bugs/ regression cases, examples/Ai/) — different surface variety
     walk(new File("core/src/main/resources/modules")) ++ walk(new File("core/examples"))
   }
 
@@ -78,7 +78,7 @@ object TestSurfaceParsers extends Properties("Surface parser 2.3a") {
       }
     }
     val failures = bad.result()
-    (failures.isEmpty :| failures.take(6).mkString(" ;; ")) && ((files ?= 180) :| s"$files files")
+    (failures.isEmpty :| failures.take(6).mkString(" ;; ")) && ((files ?= 271) :| s"$files files")
   }
 
   property("the splitter covers every file with ordered, plausible statements") = secure {

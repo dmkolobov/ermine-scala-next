@@ -1,0 +1,48 @@
+module Incomplete.Gu09 where
+
+{- INFERENCE GIVES UP WHERE CHECKING SUCCEEDS -- the refactor that does not
+   help.
+
+   THE SCENARIO.  A user who has hit Gu03 does the obvious thing: the definition
+   is too big, so split it.  Four dimensions make a "core" order-line view; the
+   other four are the finance-side attributes bolted on afterwards.  This is
+   good practice independent of any compiler -- `coreOrderLines` is a useful
+   thing to have by name, since half the reports only need that much.
+
+       coreOrderLines orderLine productDim regionDim channelDim calendarDim
+       wideOrderLines ... = coreOrderLines ... ** customerDim ** ...
+
+   WHAT A COMPETENT USER EXPECTS.  Each half is a four-dimension star join, and
+   Gu01's ladder puts a four-dimension join at 0.14s.  Two of those plus one
+   application should be well under a second.  Splitting a definition in two is
+   the standard way to make a type checker's life easier.
+
+   WHAT ACTUALLY HAPPENS.  It does not come back -- see the family notes for the
+   measurement.  Gu10 is these SAME TWO DEFINITIONS with the call removed, and
+   it compiles in under half a second.  So neither half is expensive.  Composing
+   them is.
+
+   THE INCOMPLETENESS.  The blow-up is not a property of a long expression that
+   could be broken up; it is a property of the constraint system, and naming an
+   intermediate does not shrink it.  `coreOrderLines` generalises to a scheme of
+   twelve partition constraints over nine row variables, and the caller
+   instantiates all twelve at once and then adds twelve more -- the same system
+   Gu03 has, arrived at by a different route.  The user's instinct (break it up)
+   and the compiler's actual requirement (write the constraints down, Gu04) are
+   different actions, and nothing in the error -- there is no error -- tells
+   them which they need.
+-}
+
+import Prelude
+import Relation
+import Syntax.Relation
+
+-- The order-line view most reports need.
+coreOrderLines orderLine productDim regionDim channelDim calendarDim =
+  orderLine ** productDim ** regionDim ** channelDim ** calendarDim
+
+-- ...and the finance attributes the quarterly pack adds on top.
+wideOrderLines orderLine productDim regionDim channelDim calendarDim
+               customerDim currencyDim taxDim promoDim =
+  coreOrderLines orderLine productDim regionDim channelDim calendarDim
+    ** customerDim ** currencyDim ** taxDim ** promoDim

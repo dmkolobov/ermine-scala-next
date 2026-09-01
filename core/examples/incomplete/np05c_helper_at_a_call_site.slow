@@ -1,0 +1,43 @@
+module Incomplete.Np05c where
+
+{- NO BEST TYPE (5/5), companion -- COMPILES, IN 527 SECONDS.  Named `.slow`,
+   not `.e`, so a sweep over core/examples/**/*.e does not appear to hang.  To
+   reproduce, copy to np05c_helper_at_a_call_site.e and run:
+
+     ERMINE_JAVA_OPTS=-Dermine.useInterface=false timeout 900 \\
+       bin/ermine core/examples/incomplete/np05c_helper_at_a_call_site.e </dev/null
+
+   OBSERVED 2026-09-01: "Importing module 'Incomplete.Np05c' (526.99 seconds)".
+   Under a 300s timeout it looks like a hang; it is not.
+
+   This is np05b_helper_signature_only.e -- which checks in 0.17 s -- plus ONE
+   application of the helper it defines.  The signature is cheap; instantiating
+   it is not.  Compare np05_label_column_no_escape.e, which writes the two
+   concrete headers instead and checks in 1.18 s.  See np05.
+-}
+
+import Prelude
+import Constraint
+import Relation.Op as Op
+import Relation.Predicate as Pred
+import Syntax.Relation
+
+field orderId : Int
+field productName, channelName, isDirect, displayName : String
+
+sales : [orderId, productName, channelName, isDirect]
+sales = relation [
+  { orderId = 5001, productName = "Desk Lamp", channelName = "Direct", isDirect = "yes" }
+]
+
+labelRow : forall v r s t c a rr tt rel opc opa.
+           (exists o. RUnion3 v r s t, RUnion2 tt rr c, rr <- (v, o),
+            AsOp opc, AsOp opa, RelationalComb rel)
+        => Predicate r -> opc s a -> opa t a -> Field c a -> rel rr -> rel tt
+labelRow cond yes no fld rel = combine_Op (if_Op cond yes no) fld rel
+
+labelled = labelRow (col_Op isDirect ==_Pred prim_Op "yes")
+                    (col_Op productName)
+                    (col_Op productName ++_Op prim_Op " via " ++_Op col_Op channelName)
+                    displayName
+                    sales

@@ -52,7 +52,18 @@ object TestTolerantRead extends Properties("Tolerant read") {
     if (f.isDirectory) f.listFiles.toList.sortBy(_.getName).flatMap(walk)
     else if (f.getName endsWith ".e") List(f) else Nil
 
-  private def corpusFiles: List[File] = walk(stdlibRoot) ++ walk(new File("core/examples"))
+  /** Directories under `core/examples` that are deliberately NOT good code, and so
+    * do not belong in a sweep whose property is "good code reads silently":
+    * `shouldfail/` is 40 modules that must be REJECTED (their dispositions are
+    * checked by `TestSurfaceParsers`'s 2.3d property instead), and `incomplete/`
+    * exhibits row-inference failures — several of its modules are unsatisfiable and
+    * some do not terminate at all, which is why the slowest carry a `.slow`
+    * extension rather than `.e`.  See `core/examples/incomplete/README.md`. */
+  private val notGoodCode = Set("shouldfail", "shouldfail-controls", "incomplete")
+
+  private def corpusFiles: List[File] =
+    (walk(stdlibRoot) ++ walk(new File("core/examples")))
+      .filterNot(f => Option(f.getParentFile).exists(d => notGoodCode(d.getName)))
 
   private def slurp(f: File): String =
     new String(java.nio.file.Files.readAllBytes(f.toPath), "UTF-8")

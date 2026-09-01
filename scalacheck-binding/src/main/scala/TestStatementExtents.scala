@@ -8,7 +8,7 @@ import Prop._
 import java.io.File
 
 /** Post-G1 D7: the statement-extent scanner vs the surface parser's own
-  * statement spans, across the 180-file corpus (stdlib + examples —
+  * statement spans, across the 271-file corpus (stdlib + examples —
   * the standing sweep rule).  The scanner is pure and lexical; the
   * parser is the oracle.  Starts must agree exactly; the scanner's end
   * must not be before the parser's span end (token parsers eat trailing
@@ -25,7 +25,7 @@ object TestStatementExtents extends Properties("Statement extents") {
 
   private val headerWords = Set("import", "export")
 
-  property("scanner starts agree with parsed statement spans (180 files)") = secure {
+  property("scanner starts agree with parsed statement spans (271 files)") = secure {
     val bad = List.newBuilder[String]
     var files = 0; var stmts = 0
     for (f <- moduleFiles) {
@@ -102,7 +102,7 @@ object TestStatementExtents extends Properties("Statement extents") {
     i
   }
 
-  property("indexed offsets agree with the naive walk (180 files)") = secure {
+  property("indexed offsets agree with the naive walk (271 files)") = secure {
     val bad = List.newBuilder[String]
     var probes = 0
     for (f <- moduleFiles) {
@@ -126,7 +126,7 @@ object TestStatementExtents extends Properties("Statement extents") {
       (probes > 100000) :| s"only $probes probes"
   }
 
-  property("extent text is unchanged by the index (180 files)") = secure {
+  property("extent text is unchanged by the index (271 files)") = secure {
     val bad = List.newBuilder[String]
     var extents = 0
     for (f <- moduleFiles) {

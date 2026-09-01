@@ -1,0 +1,68 @@
+module Incomplete.Gu07 where
+
+{- INFERENCE GIVES UP WHERE CHECKING SUCCEEDS -- the library author's version,
+   2 of 3: the caller that does not.
+
+   THE SCENARIO.  Gu06's `withLabel` helper, used once, for exactly the reason
+   it was written: SalesByRegion's rule that a direct sale is labelled with the
+   product name and a partner sale with "product via channel".  This is
+   core/examples/ai/SalesByRegion.e's `labelled` binding, routed through the
+   shared helper instead of spelled out.
+
+   WHAT A COMPETENT USER EXPECTS.  One call to a helper that compiles, against
+   three literal tables with fully known columns.  Nothing here is polymorphic
+   at the call site at all -- every row is concrete.
+
+   WHAT ACTUALLY HAPPENS.  See this file's measurement in the family notes; the
+   compile does not come back.  The identical query written WITHOUT the helper
+   is Gu08, and it compiles.
+
+   THE INCOMPLETENESS.  The definition/call-site asymmetry.  Checking `withLabel`
+   against its signature (Gu06) is cheap.  Instantiating that signature is not:
+   the caller gets `RUnion3`'s four constraints and `RUnion2`'s three plus the
+   remainder, all sharing row variables, all at once, and that is the
+   overlapping-RHS shape the solver's `commonSubexpression` rule mints fresh
+   variables against.  Nothing about the USER's query is hard -- Gu08 proves it
+   -- and nothing about the HELPER is hard -- Gu06 proves it.  The two together
+   are.  Which means row-polymorphic abstraction, the whole point of the row
+   system, is the thing that is not usable.
+-}
+
+import Prelude
+import Relation
+import Relation.Op as Op
+import Relation.Predicate as Pred
+import Syntax.Relation
+
+field orderId, productId, channelId : Int
+field units : Double
+field productName, channelName, isDirect, displayName : String
+
+orderLine = relation [
+  { orderId = 5001, productId = 1, channelId = 1, units = 120.0 },
+  { orderId = 5002, productId = 2, channelId = 2, units =  40.0 } ]
+
+productDim = relation [
+  { productId = 1, productName = "Desk Lamp" },
+  { productId = 2, productName = "Office Chair" } ]
+
+channelDim = relation [
+  { channelId = 1, channelName = "Direct",  isDirect = "yes" },
+  { channelId = 2, channelName = "Partner", isDirect = "no" } ]
+
+sales = orderLine ** productDim ** channelDim
+
+-- The one call the helper was written for.
+labelled =
+  withLabel (col_Op isDirect ==_Pred prim_Op "yes")
+            (col_Op productName)
+            (col_Op productName ++_Op prim_Op " via " ++_Op col_Op channelName)
+            displayName
+            sales
+
+-- Same helper as Gu06, repeated here so this module stands alone.
+withLabel : forall a c v pr tr er inrow outrow rel opc opa.
+            ( exists o. RUnion3 v pr tr er, RUnion2 outrow inrow c,
+              inrow <- (v, o), AsOp opc, AsOp opa, RelationalComb rel )
+         => Predicate pr -> opc tr a -> opa er a -> Field c a -> rel inrow -> rel outrow
+withLabel p whenTrue whenFalse fld = combine_Op (if_Op p whenTrue whenFalse) fld

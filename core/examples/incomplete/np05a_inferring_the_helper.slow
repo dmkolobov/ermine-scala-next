@@ -1,0 +1,49 @@
+module Incomplete.Np05a where
+
+{- NO BEST TYPE (5/5), companion -- COMPILES, IN 280 SECONDS.  Named `.slow`,
+   not `.e`, so a sweep over core/examples/**/*.e does not appear to hang.  To
+   reproduce, copy to np05a_inferring_the_helper.e and run:
+
+     ERMINE_JAVA_OPTS=-Dermine.useInterface=false timeout 600 \\
+       bin/ermine core/examples/incomplete/np05a_inferring_the_helper.e </dev/null
+
+   OBSERVED 2026-09-01: "Importing module 'Incomplete.Np05a' (280.65 seconds)"
+   for the single binding below.  A 300s timeout is not enough margin; earlier
+   runs of this corpus recorded it as non-terminating and were wrong.
+
+   The binding is the obvious factoring of the `displayName` column that every
+   report in core/examples/ai writes out by hand.  Asking the compiler for its
+   type -- the constrained type covering all of that expression's incomparable
+   concrete typings -- is what costs the four and a half minutes.
+
+   The answer it eventually gives, `:browse labelRow` (continuation lines
+   joined), eleven partitions over twelve existential row variables:
+
+     labelRow : forall (r: rho) (opc: rho -> * -> *) (s: rho) a
+       (opa: rho -> * -> *) (t: rho) (c: rho) (rel: rho -> *) (r1: rho)
+       (t1: rho).
+       (exists (so rs st rst ro rt rs1 ro1 to o so1 v: rho).
+        AsOp opa, RelationalComb rel,
+        t1 <- (ro1, so1, rs1),
+        AsOp opc,
+        v <- (rst, st, rt, rs, to, so, ro),
+        r1 <- (ro1, rs1),
+        s <- (rst, st, rs, so),
+        t <- (rst, st, rt, to),
+        c <- (so1, rs1),
+        r <- (rst, rt, rs, ro),
+        r1 <- (rs, so, rst, ro, to, rt, st, o)) =>
+       Predicate r -> opc s a -> opa t a -> Field c a -> rel r1 -> rel t1
+
+   `c <- (so1, rs1)` is the same "add or overwrite" existential as np01: the
+   column being written is split into the part already in the row and the part
+   newly added, and neither half is decided.  That is the complete set of
+   typings, correctly computed, at a price nobody will pay.  See np05.
+-}
+
+import Prelude
+import Relation.Op as Op
+import Relation.Predicate as Pred
+import Syntax.Relation
+
+labelRow cond yes no fld rel = combine_Op (if_Op cond yes no) fld rel

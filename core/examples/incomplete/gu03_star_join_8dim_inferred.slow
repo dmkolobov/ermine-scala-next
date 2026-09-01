@@ -1,0 +1,28 @@
+module Incomplete.Gu03 where
+
+{- INFERENCE GIVES UP WHERE CHECKING SUCCEEDS -- 3 of 4: the wall.
+
+   THE SCENARIO.  Gu02's order-line view plus the last two dimensions the
+   warehouse has: the tax treatment the line was booked under and the promotion
+   it was sold on.  Eight dimensions round a fact table is a small star schema;
+   real ones have twenty.
+
+   WHAT A COMPETENT USER EXPECTS.  To reload the module and get on with the
+   report.
+
+   WHAT ACTUALLY HAPPENS.  See the header of this file's own measurement below.
+   Compile it and nothing comes back.
+
+   THE INCOMPLETENESS.  Same as Gu01/Gu02, one rung further out.  The step
+   ratios measured on this definition -- 1.7x, 2.8x, 6.1x, 13.2x, 29.4x as
+   dimensions go 2..7 -- put eight dimensions somewhere near two hours, and the
+   ratio is still climbing.  Gu04 is THIS EXACT DEFINITION with a signature.
+-}
+
+import Prelude
+import Relation
+import Syntax.Relation
+
+wideOrderLines orderLine productDim regionDim channelDim calendarDim customerDim currencyDim taxDim promoDim =
+  orderLine ** productDim ** regionDim ** channelDim ** calendarDim
+            ** customerDim ** currencyDim ** taxDim ** promoDim
