@@ -118,6 +118,63 @@ abstract class Parser[S, +A] extends MonadicPlus[[a] =>> Parser[S,a], A] { that 
       case r => scalaz.Trampoline.delay(r)
     }
   }
+  /** LOOPED REPETITION.  The generic definitions in Monadic's `Alternating`
+    * trait are mutually recursive -- `many = some orElse Nil`,
+    * `some = map2(many)(_::_)` -- so their depth is the REPETITION COUNT, i.e.
+    * proportional to input length rather than to grammar nesting, and each
+    * iteration allocates a fresh Parser plus a Free bind.  These run the element
+    * parser's own trampoline once per iteration and drive it from a while loop:
+    * constant depth, and no per-iteration parser.
+    *
+    * THE ACCUMULATION RULE IS INHERITED EXACTLY, and it is the subtle part.
+    * Tracing flatMap: a Commit whose continuation also Commits falls through
+    * `case r => r`, DISCARDING the outer `expected` set.  So only the LAST
+    * iteration's expected set survives, unioned with the terminating failure's.
+    * A loop that accumulated all of them would silently enlarge every error
+    * message in the language.  TestParserLoops pins this against the recursive
+    * definitions, including the committed-failure (Err) path.
+    *
+    * An element parser that succeeds WITHOUT consuming (Pure) makes the
+    * recursive form spin at the same state forever.  The loop reproduces that
+    * faithfully rather than "fixing" it, because fixing it would not be
+    * transparent; see the note in TestParserLoops. */
+  private def repeat(s: ParseState[S], vs: Supply, keep: Boolean, need: Boolean)
+      : ParseResult[S, List[A @uncheckedVariance]] = {
+    var st = s
+    val acc = List.newBuilder[A @uncheckedVariance]
+    var lastXs: Set[String] = Set()
+    var any = false
+    var out: ParseResult[S, List[A @uncheckedVariance]] = null
+    while (out eq null) {
+      that(st, vs).run match {
+        case c: Commit[S @unchecked, A @unchecked] =>
+          if (keep) acc += c.extract
+          st = c.s; lastXs = c.expected; any = true
+        case Pure(a, _) =>
+          if (keep) acc += a          // no progress; faithful spin, see above
+        case f: Fail =>
+          out = if (any) Commit(st, acc.result(), lastXs ++ f.expected)
+                else if (need) f
+                else Pure(List.empty[A @uncheckedVariance], f)
+        case e: ParseFailure => out = e
+      }
+    }
+    out
+  }
+
+  override def many: Parser[S,List[A]] = new Parser[S,List[A]] {
+    def apply(s: ParseState[S], vs: Supply) = scalaz.Trampoline.delay(repeat(s, vs, true, false))
+  }
+  override def some: Parser[S,List[A]] = new Parser[S,List[A]] {
+    def apply(s: ParseState[S], vs: Supply) = scalaz.Trampoline.delay(repeat(s, vs, true, true))
+  }
+  override def skipMany: Parser[S,Unit] = new Parser[S,Unit] {
+    def apply(s: ParseState[S], vs: Supply) = scalaz.Trampoline.delay(repeat(s, vs, false, false).map(_ => ()))
+  }
+  override def skipSome: Parser[S,Unit] = new Parser[S,Unit] {
+    def apply(s: ParseState[S], vs: Supply) = scalaz.Trampoline.delay(repeat(s, vs, false, true).map(_ => ()))
+  }
+
   def orElse[B >: A](b: => B) = new Parser[S,B] {
     def apply(s: ParseState[S], vs: Supply) = that(s, vs).map {
       case e : Fail => Pure(b, e)

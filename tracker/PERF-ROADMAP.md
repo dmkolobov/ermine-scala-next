@@ -343,6 +343,17 @@ any change, then the cheapest change with the largest profiled share, then the
   a lazier representation (a list, or a thunk that unions on demand) is
   semantically free — but the rendering must stay byte-identical, which the
   REPL goldens and lsp-smoke's position fixtures pin.
+  (d) **DONE 2026-08-31 — loop the repetition combinators**, the surgical
+  alternative to (c) that avoids every one of its costs.  `many`/`some`/
+  `skipMany`/`skipSome` were mutually recursive in Monadic's `Alternating`
+  trait, so depth was the REPETITION COUNT — proportional to input length, not
+  grammar nesting — and every iteration allocated a fresh Parser plus a Free
+  bind.  `Parser` now overrides them with while-loops that run each element
+  parse's own trampoline and drive it iteratively: constant depth, no
+  per-iteration parser.  `sepBy`/`sepBy1`/`endBy1`/`skipSepBy1` follow by
+  dispatch.  `chainl`/`chainr` are separately recursive and NOT done.
+  This makes the stack situation strictly BETTER rather than worse, which is
+  the opposite of what removing the trampoline wholesale would do.
   (c) **The `Free` trampoline — 52.6%, and it is architectural.**  Every
   combinator in `scalaparsers` runs through `scalaz.Free`
   (`Parser.run` alone is 23.2% of the editor round trip).  This is a big
