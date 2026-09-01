@@ -115,7 +115,10 @@ disables the search and looks like it works.
   400 labels/1 partition costs +90ms; 200 labels x 16 partitions costs +110ms, FLAT in
   the partition count. Cheap.
 
-STILL OPEN: interaction with `reduce`'s second case unexamined. **Status is candidate, not recommendation.**
+STILL OPEN: interaction with `reduce`'s second case unexamined. (The "candidate, not
+recommendation" status this file used to carry is SUPERSEDED — both changes were
+adopted as defaults; see the ADOPTED section at the top.) Remaining work across this
+and the editor is collected in `tracker/TICKET-editor-and-solver-followups.md`.
 
 Lean audit is now mechanical, not spot-checked: `cd tracker/lean && lake env lean
 Audit.lean` walks the whole environment (1197 theorems, 0 non-standard axioms).
