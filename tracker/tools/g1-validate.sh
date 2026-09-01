@@ -46,19 +46,16 @@ tracker/tools/g1-diff.sh compare /tmp/g1-selfA /tmp/g1-selfB \
   && echo "  PASS  double-run self-agreement" \
   || { echo "  FAIL  double-run self-agreement"; fail=1; }
 
-# ADVISORY, not a hard gate, until the baseline is re-recorded -- see the
-# PERF-ROADMAP P7 gate question.  First arming (2026-08-31) reported 1447
-# signatures with exactly ONE differing: lookbackJoin, which is the DOCUMENTED
-# solver-order-sensitive residual (the reason -Dermine.loadInSeries exists).
-# The browse/groups diffs are explained by Stage 1 replacing the pipeline.  So
-# the baseline is STALE, not the tree drifted -- and re-recording a golden is a
-# Decision 9 act that needs sign-off, not a side effect of repairing a script.
-echo "-- baseline drift (fresh run vs tracker/g1-baseline) [ADVISORY] --"
+# HARD GATE since 2026-08-31, when tracker/g1-baseline was re-recorded against
+# the split pipeline (P7 Step 0, signed off).  This is the check that catches an
+# inference change altering a type that still RENDERS alpha-equal, which the
+# double run above cannot: two runs of the same build agree with each other
+# whether or not they agree with yesterday.  A red here is a Decision 9 stop --
+# explain it or revert it; never re-cut the baseline to make it green.
+echo "-- baseline drift (fresh run vs tracker/g1-baseline) --"
 if tracker/tools/g1-diff.sh compare /tmp/g1-selfA tracker/g1-baseline > /tmp/g1-baseline-cmp.log 2>&1; then
   echo "  PASS  no drift from tracker/g1-baseline"
 else
-  echo "  ADVISORY  differs from tracker/g1-baseline (stale since Stage 1; see"
-  echo "            PERF-ROADMAP P7 gate question).  Signature verdict:"
-  sed -n 's/^\(g1-compare: [0-9]* files.*\)/            \1/p' /tmp/g1-baseline-cmp.log
+  echo "  FAIL  drift from tracker/g1-baseline"; tail -12 /tmp/g1-baseline-cmp.log; fail=1
 fi
 exit $fail

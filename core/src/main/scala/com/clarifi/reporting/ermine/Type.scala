@@ -206,11 +206,22 @@ object Arrow {
 
 case class AppT(e1: Type, e2: Type) extends Type {
   def loc = e1.loc
-  override def map(f: Kind => Kind) = AppT(e1.map(f), e2.map(f))
+  override def map(f: Kind => Kind) = {
+    val a = e1.map(f); val b = e2.map(f)
+    if ((a eq e1) && (b eq e2)) this else AppT(a, b)
+  }
   override def nfWith(stk: List[Type])(implicit su: Supply) = e1.nfWith(e2.nf :: stk)
   override def foreignLookup = e1.foreignLookup
   override def unboxedForeign = e1.unboxedForeign
-  override def subst(ks: PartialFunction[KindVar,Kind], ts: PartialFunction[TypeVar,Type]) = AppT(e1.subst(ks, ts), e2.subst(ks, ts))
+  // Physical-identity short-circuit; see the note on ArrowK.subst.  NOTE that
+  // returning `this` also SHARES memoizedKindSchema below instead of resetting
+  // it to None.  Sound, because only CLOSED schemas are ever cached
+  // (Subst.scala:495) and those cannot depend on the substitution -- but it is
+  // a behaviour change to kind-inference caching, not a pure allocation win.
+  override def subst(ks: PartialFunction[KindVar,Kind], ts: PartialFunction[TypeVar,Type]) = {
+    val a = e1.subst(ks, ts); val b = e2.subst(ks, ts)
+    if ((a eq e1) && (b eq e2)) this else AppT(a, b)
+  }
   var memoizedKindSchema: Option[KindSchema] = None
   override def mono = e1.mono && e2.mono
   def at(l: Loc) = AppT(e1 at l, e2)
@@ -222,7 +233,15 @@ case class VarT(v: TypeVar) extends Type with Variable[Kind] {
   override def map(f: Kind => Kind) = VarT(v.map(f))
   override def toString = v.toString
   override def subst(ks: PartialFunction[KindVar,Kind], ts: PartialFunction[TypeVar,Type]): Type =
-    ts.lift(v).getOrElse(VarT(v map (subKind(ks,_))))
+    // The LEAF of every traversal, and what allocated most: a variable NOT in
+    // the substitution still rebuilt a fresh V (a case class) inside a fresh
+    // VarT on every pass, even under an empty kind map.  Roadmap P7 Step 1.
+    ts.lift(v) match {
+      case Some(t) => t
+      case None =>
+        val k = subKind(ks, v.extract)
+        if (k eq v.extract) this else VarT(v map (_ => k))
+    }
   def at(l: Loc) = VarT(v at l)
 }
 
@@ -406,7 +425,10 @@ case class Memory(id: Int, body: Type) extends Type {
   override def foreignLookup: Class[_] = body.foreignLookup
   override def unboxedForeign: Boolean = body.unboxedForeign
   override def subst(ks: PartialFunction[KindVar,Kind], ts: PartialFunction[TypeVar,Type]): Type =
-    Memory(id, body subst (ks, ts))
+  {
+    val b = body subst (ks, ts)
+    if (b eq body) this else Memory(id, b)
+  }
   override def mono: Boolean = body mono
   override def isTrivialConstraint: Boolean = body isTrivialConstraint
   override def rowConstraints: List[Type] = body rowConstraints

@@ -119,7 +119,7 @@ todo
 todoWith
 undefined
 == Field
-PARSE-ERROR: Field:12:14: end of layout not found, expected end of layout, eof, or semicolon
+PARSE-ERROR: Field:1:1: Field:12:14: error: unknown operator !
 == Field.Type
 == Float
 == Function
@@ -989,7 +989,7 @@ toEitherZ#
 == Native.Exception
 == Native.Function
 == Native.List
-PARSE-ERROR: Native.List:7:24: error: ill-formed expression, expected ')', '-', case, do,
+toList#
 == Native.Magnitude
 cells
 cellsA
@@ -1129,8 +1129,59 @@ anyRecordOrd
 appendR
 header
 == Relation
-Missing primitive: Relation.rename
-PARSE-ERROR: Relation:74:59: expected ',' or whitespace
+bottomKBy
+copyColumn
+count
+filterEq
+filterNEq
+firstBy
+groupBy
+join1
+joinBy
+joinBy'
+joinWithDefault
+lastBy
+leafRows
+leftJoinOr
+letRWithPK
+lookbackJoin
+lookupLatest
+lookupLatest'
+lookupLatest1
+lookupLatestWithin
+lookupLatestWithin1
+materialize
+materializeWithPK
+maxBy
+maxRowBy
+meanBy
+mem
+memoRelWithPK
+minBy_A
+minRowBy
+nearestDate
+nearestDateWithin
+nonEmptyRelation
+partialLookup
+partialLookup'
+relation
+relationWithHeader
+rename'
+replaceColumn
+rheader
+rheader#
+rightJoinOr
+rightJoinWithDefault
+row
+setColumn
+standardDeviationBy
+sumBy
+toMem
+topKBy
+unionAll
+unionAllWithHeader
+unsafeRightJoin
+varianceBy
 == Relation.Aggregate
 aggregateBy
 aggregateByGroup
@@ -1348,7 +1399,7 @@ sqlite
 vertica
 == Short
 == String
-PARSE-ERROR: String:13:27: error: ill-formed expression, expected ')', '-', case, do, let,
+PARSE-ERROR: String:1:1: String:29:12: error: unknown operator ++
 == StringManip
 allMatches
 templateSubstitute
@@ -1435,7 +1486,7 @@ refl
 trans
 upcast
 == Type.Eq
-PARSE-ERROR: Type.Eq:9:46: end of layout not found, expected end of layout, eof, or semicolon
+PARSE-ERROR: Type.Eq:1:1: Type.Eq:9:46: error: unknown type operator ==
 == Unsafe.Coerce
 == Validation
 >=>

@@ -1022,3 +1022,64 @@ deferred by LSP 5.5).
   from every `unifyType` variable case via `kindCheck` — Step 2(ii) counts it
   before anyone budgets for it.
   NEXT: Step 1, once the baseline gate question is answered.
+
+- 2026-08-31 (P7 Step 0 baseline re-recorded, and Step 1 — six kept, one
+  REVERTED by the gate on its first real use).
+
+  BASELINE RE-RECORDED (signed off).  `tracker/g1-baseline` was cut with `run
+  old` before D3 and had gone stale.  Re-cut from a full-inference run at
+  3a2dd06, and the diff was small: only **6 of 129 interfaces** changed
+  (Relation, Relation/Op, Relation/Predicate, Layout/Chart, Layout/Report,
+  Layout/Column/Unsafe — all row-constraint-heavy), plus browse/groups.  The
+  drift check is now a HARD GATE, and the README records that re-cutting is a
+  Decision 9 act, never a way to make a red gate green.
+
+  STEP 1, KEPT (6): physical-identity short-circuits in `ArrowK.subst`,
+  `AppT.subst`, `AppT.map`, `VarT.subst` and `Memory.subst` — return `this`
+  when nothing underneath changed, so an untouched subtree costs no allocation
+  — plus `Vars.contains`, which was `exists(_ == v)` and therefore went through
+  `ForeachIterable.iterator`, MATERIALISING the whole variable Vector before
+  testing anything, on every occurs check.
+  `VarT.subst` was the biggest: a variable NOT in the substitution still
+  rebuilt a fresh `V` (a case class) inside a fresh `VarT` on every pass.
+  DELIBERATELY NOT TOUCHED: `Forall`, `Exists` and `Part` all have NORMALISING
+  smart constructors (Forall-of-Forall flattening, `Exists` dedup via
+  `toSet.toList`, `Part` simplification), so returning `this` there would skip
+  normalisation that happens today.
+
+  STEP 1, REVERTED (1) — AND THIS IS THE REAL FINDING.  An empty-map fast path
+  in `Kind.subKind`, mirroring the one `Type.subType` has had all along, is
+  semantically a NO-OP and it still MOVED browse.txt.  Mechanism:
+  `typeHasKindVars.sub(m,t)` is `t.map(_.subst(m))`, `Part.map` goes through
+  `Part.apply`, and `Part.apply`'s foldLeft PREPENDS — so it REVERSES the RHS
+  list every time it runs.  **The rendered order of a partition constraint is
+  therefore a function of how many substitution passes happened to execute.**
+  Skipping one no-op pass flipped the parity: `r <- (sr, xr, yr, o)` became
+  `r <- (o, yr, xr, sr)` across every ChartMode-shaped signature.  All 1447
+  signatures stayed ALPHA-EQUIVALENT, so only the browse byte-diff caught it —
+  the artifact the hard gate had been armed for twenty minutes earlier.
+  The revert carries the reason in place so it is not re-added.
+  I HAD CLAIMED THESE CHANGES "CANNOT MOVE A .ei BYTE".  That was wrong, and
+  the gate is what said so rather than a later session.
+
+  NUMBERS.  Batch cold **11.50s** (5 reps, range 11.39-11.61) -> **11.14s**
+  (10 reps, range 10.96-11.27).  The ranges do not overlap — every after-rep
+  beat every before-rep — so ~3.1%, above the ~1-2% floor.  Weakness stated:
+  the two arms were not interleaved, and a strictly paired 10-vs-10 run was
+  attempted and killed mid-flight.
+  GATE: double run 1447 signatures EQUIVALENT, and no drift from the
+  re-recorded baseline — exit 0.
+  BASELINES: core/test 904 total, 903 pass, 1 fail (the known
+  `Constraints.disjunction sound`).  The first run showed TWO failures; the
+  protocol's single re-run showed only the known one, i.e. the documented
+  concurrent-suite flake.  I did not capture the transient's name — my own
+  grep filtered it — which is a gap worth not repeating.
+  repl-smoke 4, lsp-smoke 82, boot 129, npm PASS.
+
+  OPEN, AND IT IS A DECISION 9 QUESTION: make `Part.apply` ORDER-STABLE so the
+  parity dependence disappears.  It is a latent fragility — the printed order of
+  a partition is an artifact of pass count, not a property of the type — but
+  fixing it moves .ei and browse bytes once, deliberately, and `Part.hashCode`
+  depends on the RHS LIST order, which feeds the solver's priority-queue key
+  (Constraints.scala:483).  So it could perturb solve order too.  Not bundled
+  into a step whose whole premise was representation-neutrality.
