@@ -169,7 +169,13 @@ root, and `#print axioms` on the headline theorems.
 - Running `bin/ermine` on one `core/examples/Ai/*.e` file alone reports
   `Module not found: 'Ai.Common'`. Put `Common.e` first on the command line. (The
   EDITOR resolves it correctly since the Resident fix below; the CLI still does not.)
-- LSP FIX 2026-09-01, `lsp/Resident.scala` `checkFile`: a module `A.B.C` resolves its
+- LSP FIX 2026-09-01 (2), `lsp/Resident.scala` `checkFile`: it scrubbed the module
+  under check by NAME, which deleted that module's BUILTINS -- `Lib` installs `asOp`
+  and class `AsOp` as `Global("Relation.Op", ...)`, and they are only COMMENTED in
+  `Relation/Op.e`. Re-reading the source cannot restore them. Now guarded with
+  `|| builtinEnv.contains(...)`, the way `Session.reloadChangedModules` always did.
+  Only `Relation.Op` and `Layout.Presentation` carry builtins (`grep '[a-z]Mod =' Lib.scala`).
+- LSP FIX 2026-09-01 (1), `lsp/Resident.scala` `checkFile`: a module `A.B.C` resolves its
   siblings against the HIERARCHY ROOT, not its own directory -- `SourceFile.filesystem`
   appends the whole dotted path, so the old code looked for `<dir>/A/B/D.e` inside
   `<root>/A/B/`. The header is now parsed BEFORE the loader is built so the name is
