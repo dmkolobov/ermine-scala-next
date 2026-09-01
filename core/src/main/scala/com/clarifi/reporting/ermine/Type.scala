@@ -143,7 +143,13 @@ case class ConcreteRho(loc: Loc, fields: Set[Name] = Set()) extends Type {
     case ConcreteRho(_, fs) => fields == fs
     case _                  => false
   }
-  override def hashCode = fields.hashCode * 111
+  // `fields.hashCode` is O(|fields|), and a row type is re-hashed on every
+  // insertion into a Set or Map of Types -- Exists.apply's `p.toSet.toList`
+  // being the frequent one. Memoized lazily so the cost is paid once per row
+  // and only if the row is actually hashed. The VALUE is unchanged, so no
+  // hash-ordered structure observes a difference.
+  private[this] lazy val cachedHash: Int = fields.hashCode * 111
+  override def hashCode = cachedHash
   def at(l: Loc) = ConcreteRho(l, fields)
   override def closeWith(vs: List[TypeVar])(implicit su: Supply) = this
 }

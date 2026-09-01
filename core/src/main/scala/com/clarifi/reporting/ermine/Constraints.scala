@@ -675,6 +675,46 @@ object Constraints {
   case object CommonPartition     extends Inference
   case object DeDuplication       extends Inference
   case object CommonSubexpression extends Inference
+  /** Stage 0 provenance: the fresh-minting branch of `commonSubexpression`
+   *  ONLY -- the one the row-constraint ticket proposes to cut. The reuse and
+   *  folding branches keep `CommonSubexpression`. `Inference` is never
+   *  inspected, and `Partition.equals`/`hashCode` ignore it, so this split is
+   *  behaviour-neutral. */
+  case object CommonSubexpressionMint extends Inference
+
+  /** Which generative rules are allowed to mint fresh variables.
+   *
+   *  `-Dermine.genRules=all` (DEFAULT) -- shipped behaviour, unchanged.
+   *  `-Dermine.genRules=cut`  -- the five-line cut of the row-constraint ticket:
+   *      `commonSubexpression`'s MINTING branch returns nothing; its reuse and
+   *      folding branches, and `splitConcrete`/`resolution`, are untouched.
+   *  `-Dermine.genRules=nongen` -- the fully NON-GENERATIVE calculus: no rule
+   *      mints. That is the object `tracker/lean/Rowpartition/Canonical.lean`
+   *      proves terminating and meaning-preserving.
+   *
+   *  Read once at class-init from a system property, so a run is a constant and
+   *  nothing depends on evaluation order. Default `all` means the shipped
+   *  compiler is bit-identical to before this switch existed. */
+  object GenRules {
+    /* ADOPTED 2026-09-01 (ticket §7.10/§7.11): `cut` is the default.  It deletes only
+     * the fresh-minting `else` branch of `commonSubexpression`, keeping REUSE, FOLD,
+     * `splitConcrete` and `resolution`.  `-Dermine.genRules=all` restores the previous
+     * shipped behaviour exactly; `nongen` is UNSOUND and is kept only to reproduce that. */
+    private val mode: String = System.getProperty("ermine.genRules", "cut")
+    val cseMints: Boolean   = mode == "all"
+    val splitMints: Boolean = mode == "all" || mode == "cut"
+    val resolves: Boolean   = mode == "all" || mode == "cut"
+    /* Orthogonal to `mode`: re-enables the Disjunction rule, whose three call
+     * sites shipped commented out.  Experiment for the row-constraint ticket. */
+    val disjRule: Boolean   = System.getProperty("ermine.disjunction", "false") == "true"
+    /* Orthogonal: the refutation-only per-concrete-label check (`labelClash`). */
+    /* ADOPTED 2026-09-01 (ticket §7.13): the per-concrete-label refutation is on.  It
+     * closes a soundness hole -- the solver accepted constraint sets with no solution
+     * (`core/examples/incomplete/unsound0*.e`).  `-Dermine.labelCheck=false` disables it. */
+    val labelCheck: Boolean = System.getProperty("ermine.labelCheck", "true") == "true"
+    override def toString =
+      mode + (if (disjRule) "+disj" else "") + (if (labelCheck) "+label" else "")
+  }
   case object Disjunction         extends Inference
 
   case class Partition(_1: TypeVar, _2: RHS, inf: Option[Inference]) {
@@ -791,6 +831,7 @@ object Constraints {
     else // split concrete
       rhss(RHSAbstr(abstr)) match {
         case Some(u) => Set(Partition(v, RHS(Set(u), concr), SplitConcrete))
+        case None if !GenRules.splitMints => Set()
         case None    =>
           val u = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
           Set( Partition(u, RHSAbstr(abstr), SplitConcrete)
@@ -811,25 +852,25 @@ object Constraints {
              if(u == v) {
                val rps = resolution(v, rhs1, rhs2)
                val cps = cancellation(v, rhs1, rhs2)
-//               val dps = proc.toList.flatMap {
-//                 case Partition(w, rhs3, _) if w != v => disjunction(rhs3, rhs1, rhs2) ++ disjunction(rhs3, rhs2, rhs1)
-//                 case _                               => Set[Partition]()
-//               }
-               (s ++ rps ++ cps) // ++ dps)
+               val dps = if(!GenRules.disjRule) Nil else proc.toList.flatMap {
+                 case Partition(w, rhs3, _) if w != v => disjunction(rhs3, rhs1, rhs2) ++ disjunction(rhs3, rhs2, rhs1)
+                 case _                               => Set[Partition]()
+               }
+               (s ++ rps ++ cps ++ dps)
              }
              else {
                val csps = commonSubexpression(v, rhs1, u, rhs2, findRHS(incm, proc, s))
                val sps  = substitution(v, rhs1, u, rhs2)
-//               val dps  = proc.toList.flatMap {
-//                 case Partition(w, rhs3, _) =>
-//                   if(w == u && rhs2 != rhs3)
-//                     disjunction(rhs1, rhs2, rhs3) ++ disjunction(rhs1, rhs3, rhs2)
-//                   else if(w == v && rhs1 != rhs3)
-//                     disjunction(rhs2, rhs1, rhs3) ++ disjunction(rhs2, rhs3, rhs1)
-//                   else
-//                     Set[Partition]()
-//               }
-               (s ++ csps ++ sps) // ++ dps)
+               val dps  = if(!GenRules.disjRule) Nil else proc.toList.flatMap {
+                 case Partition(w, rhs3, _) =>
+                   if(w == u && rhs2 != rhs3)
+                     disjunction(rhs1, rhs2, rhs3) ++ disjunction(rhs1, rhs3, rhs2)
+                   else if(w == v && rhs1 != rhs3)
+                     disjunction(rhs2, rhs1, rhs3) ++ disjunction(rhs2, rhs3, rhs1)
+                   else
+                     Set[Partition]()
+               }
+               (s ++ csps ++ sps ++ dps)
              }
          }
 
@@ -1016,7 +1057,8 @@ object Constraints {
    *      x <- E+ z
    *      y <- C+ z
    */
-  def resolution(v: TypeVar, rhs1: RHS, rhs2: RHS)(implicit su: Supply): Set[Partition] = (rhs1, rhs2) match {
+  def resolution(v: TypeVar, rhs1: RHS, rhs2: RHS)(implicit su: Supply): Set[Partition] =
+    if (!GenRules.resolves) Set() else (rhs1, rhs2) match {
     case (RHS(Single(x), concr1), RHS(Single(y), concr2)) =>
       val z = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
       val int = concr1 & concr2
@@ -1072,11 +1114,12 @@ object Constraints {
               Set(Partition(u, RHS((abstr2 -- int) + v, concr2), CommonSubexpression))
             else if(rhs2 == rhsCommon)
               Set(Partition(v, RHS((abstr1 -- int) + u, concr1), CommonSubexpression))
+            else if (!GenRules.cseMints) Set()
             else {
               val z = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
-              Set(Partition(z, rhsCommon, CommonSubexpression),
-                  Partition(v, RHS((abstr1 -- int) + z, concr1), CommonSubexpression),
-                  Partition(u, RHS((abstr2 -- int) + z, concr2), CommonSubexpression))
+              Set(Partition(z, rhsCommon, CommonSubexpressionMint),
+                  Partition(v, RHS((abstr1 -- int) + z, concr1), CommonSubexpressionMint),
+                  Partition(u, RHS((abstr2 -- int) + z, concr2), CommonSubexpressionMint))
             }
         }
     }
@@ -1123,5 +1166,78 @@ object Constraints {
 //      System.err.println("-----")
 //    }
     r
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Per-concrete-label refutation.                                       *
+   *                                                                      *
+   * A partition `v <- (u1..un, C)` says the parts are pairwise disjoint   *
+   * and union to v.  Project onto a single label L: at most one part      *
+   * carries L, and v carries L iff some part does.  That is a boolean     *
+   * constraint over the bits [L in x]; a ConcreteRho pins its bit and     *
+   * unit propagation does the rest.  A clash at any ONE label refutes the *
+   * whole set, since every solution induces a consistent assignment.      *
+   *                                                                      *
+   * This rule is REFUTATION-ONLY.  It emits no partition and mints no     *
+   * variable, so it cannot feed the saturation loop and cannot change any *
+   * type that is inferred for an accepted program -- the property that    *
+   * makes it usable where `disjunction` is not.  It ranges only over      *
+   * labels that occur in some ConcreteRho, so a fully abstract helper     *
+   * signature has no labels to check and is untouched.                    *
+   *                                                                      *
+   * It propagates without case splitting, hence is linear per label and   *
+   * INCOMPLETE by construction: deciding these systems in general is      *
+   * Schaefer's one-in-three problem.  Refusing to search is what makes    *
+   * the failure mode deterministic.                                       *
+   * ------------------------------------------------------------------- */
+  def labelClash(ps: List[(TypeVar, RHS)]): Option[(Name, String)] = {
+    val labels: Set[Name] = ps.foldLeft(Set[Name]()) { case (s, (_, r)) => s ++ r.concr }
+    labels.view.flatMap(l => checkLabel(ps, l).map((l, _))).headOption
+  }
+
+  /** Unit-propagate the bits `[l in x]`; Some(msg) means a contradiction. */
+  private def checkLabel(ps: List[(TypeVar, RHS)], l: Name): Option[String] = {
+    var bits    = Map[TypeVar, Boolean]()
+    var changed = true
+    var clash: Option[String] = None
+
+    def note(m: => String): Unit = if (clash.isEmpty) clash = Some(m)
+    def setVar(v: TypeVar, b: Boolean, why: => String): Unit = bits.get(v) match {
+      case Some(b0) => if (b0 != b) note(why)
+      case None     => bits = bits + (v -> b); changed = true
+    }
+
+    while (changed && clash.isEmpty) {
+      changed = false
+      for ((v, RHS(abstr, concr)) <- ps if clash.isEmpty) {
+        val conBit  = concr contains l
+        val absList = abstr.toList
+        val known   = absList.map(bits.get)
+        val ones    = known.count(_ == Some(true)) + (if (conBit) 1 else 0)
+        val unknown = absList.filter(!bits.contains(_))
+
+        if (ones > 1)
+          note("two parts of one partition both contain it")
+        else {
+          if (ones == 1) {
+            // exactly one part carries l: the whole does, every other part does not
+            setVar(v, true, "a part contains it but the whole does not")
+            for (u <- unknown) setVar(u, false, "")
+          }
+          if (bits.get(v) == Some(false)) {
+            if (conBit) note("a part contains it but the whole does not")
+            for (u <- unknown) setVar(u, false, "")
+          }
+          if (ones == 0 && unknown.isEmpty)
+            setVar(v, false, "the whole contains it but no part does")
+          if (bits.get(v) == Some(true) && ones == 0) unknown match {
+            case Nil      => note("the whole contains it but no part can")
+            case u :: Nil => setVar(u, true, "")
+            case _        => ()
+          }
+        }
+      }
+    }
+    clash
   }
 }

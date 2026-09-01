@@ -2,7 +2,7 @@ package com.clarifi.reporting
 package ermine
 
 import scalaparsers.Document._
-import scalaparsers.{Applied, Comonadic, Document, Loc, Located, Supply}
+import scalaparsers.{Applied, Comonadic, Document, Inferred, Loc, Located, Pos, Supply}
 
 import com.clarifi.reporting.ermine.Relocatable.preserveLoc
 import com.clarifi.reporting.ermine.Term.{ termHasTermVars, subTerm, subTermEx, zipTerms, termVars }
@@ -22,7 +22,7 @@ import com.clarifi.reporting.ermine.Pretty.{ prettyKind, prettyType }
 import scala.collection.immutable.List
 import scala.collection.mutable.ListBuffer
 import scalaz.Scalaz._
-import Constraints.{ Partition, RHSConcr, RHS }
+import Constraints.{ Partition, RHSConcr, RHS, GenRules, labelClash }
 import Constraints.Q.{ PQueue }
 
 /**
@@ -802,7 +802,7 @@ object Subst {
 //          l.die("Disallowed local row constraints on ambient variables")
 
     implicit val tml: Located = l
-    val csp = if (slv) solve(Exists(l, List(), rs))
+    val csp = if (slv) RowTrace.withSite("inferImplicitBindingTypes")(solve(Exists(l, List(), rs)))
               else Exists(l, List(), rs)
     (ds, bs.zip(ts).map({
       case (b,t) =>
@@ -1036,11 +1036,13 @@ object Subst {
              es: List[TypeVar],
              ps: List[Partition])(implicit hm: SubstEnv, su: Supply, tml: Located) =
     ps.foldRight(csz) {
-      case (Partition(v, RHSConcr(fs), _), cs) =>
+      case (Partition(v, RHSConcr(fs), inf), cs) =>
+        RowTrace.log("concr\t" + RowTrace.site + "\t" + RowTrace.clean(lc.toString) +
+                     "\t" + v + "\t" + fs.size + "\t" + inf.fold("INPUT")(_.toString))
         instantiateType(v, ConcreteRho(lc, fs))
         cs.map(substType _)
-      case (Partition(v, RHS(abs, con), _), cs) if v.ty.ambiguous || es.contains(v) =>
-        cs map {
+      case (Partition(v, RHS(abs, con), inf), cs) if v.ty.ambiguous || es.contains(v) =>
+        val csp = cs map {
           case Part(loc, l, rs) => Part(loc, l, rs flatMap {
               case VarT(`v`) => ConcreteRho(lc, con) :: abs.toList.map(VarT(_))
               case x         => List(x)
@@ -1048,6 +1050,11 @@ object Subst {
           )
           case x => x
         }
+        RowTrace.log("splice\t" + RowTrace.site + "\t" + RowTrace.clean(lc.toString) +
+                     "\t" + v + "\t" + abs.size + "\t" + con.size +
+                     "\t" + inf.fold("INPUT")(_.toString) +
+                     "\t" + (csp != cs))
+        csp
       case (_, cs) => cs
     }
 
@@ -1056,6 +1063,52 @@ object Subst {
     val (es, cs) = unbindExists(Ambiguous(Free), csz)
     val (q, esp) = PQueue.build(Exists(l, List(), cs))
     var ps = q.expand.toList
+    RowTrace.log {
+      // The INPUT population: the constraint list solve actually receives, and
+      // the partitions built from it, against the SATURATED set it reduces over.
+      val inParts = q.toList
+      val rows    = cs.flatMap(_.rowConstraints)
+      val arities = rows.map { case Part(_, _, rs) => rs.length ; case _ => 0 }
+      val concrete = rows.exists {
+        case Part(_, lhs, rs) => (lhs :: rs).exists { case ConcreteRho(_, f) => f.nonEmpty ; case _ => false }
+        case _ => false
+      }
+      val derived = ps.filter(_._3.isDefined)
+      val byRule  = derived.groupBy(_._3.get.toString).map { case (k, v) => k + ":" + v.length }
+                           .toList.sorted.mkString(",")
+      "solve\t" + RowTrace.site + "\t" + RowTrace.clean(l.toString) +
+        "\t" + rows.length + "\t" + inParts.length + "\t" + ps.length +
+        "\t" + derived.length + "\t" + concrete +
+        "\t" + arities.sorted.mkString(";") + "\t" + (if (byRule.isEmpty) "-" else byRule)
+    }
+    if (GenRules.labelCheck)
+      // On the INPUT partitions (`q`), not the saturated set (`ps`).  Propagation is
+      // monotone (`Rowpartition.forced_mono`), so the saturated set would be strictly
+      // stronger -- but its soundness would then rest on every saturation rule being
+      // sound or conservative, and `Rowpartition/Rules.lean` found rule 6's documented
+      // form unsound.  Reading the input makes this check depend on nothing but the
+      // semantics of the constraints the user wrote, which is exactly what
+      // `Rowpartition/LabelProp.lean` proves.
+      labelClash(q.toList.map(_.tup)) foreach { case (lbl, msg) =>
+        // Blame the constraint that mentions the offending field, not the enclosing
+        // module: `tml` here is whatever scope `solve` was called in, which for a
+        // module-level binding is the module header.
+        // ...but only within the file being compiled: a constraint reached through a
+        // stdlib helper's signature would otherwise point the user at the stdlib.
+        def file(x: Loc): Option[String] = x match {
+          case Pos(fn, _, _, _, _)           => Some(fn)
+          case Inferred(Pos(fn, _, _, _, _)) => Some(fn)
+          case _                             => None
+        }
+        val here = file(l)
+        val blame = cs.flatMap(_.rowConstraints).collectFirst {
+          case Part(ploc, lhs, rhs) if file(ploc) == here && (lhs :: rhs).exists {
+                 case ConcreteRho(_, f) => f contains lbl
+                 case _                 => false
+               } => ploc
+        }
+        blame.getOrElse(l).die("Row partitions are unsatisfiable at field '" + lbl + "': " + msg)
+      }
     Exists(l, List(), reduce(l, cs map (substType _), es, ps))
   }
 
@@ -1064,7 +1117,7 @@ object Subst {
     val (_, evs, cs) = Exists.unfurl(ex)
     val fevs = typeVars(cs) -- evs -- uvs
     if(fevs.toSet.isEmpty) {
-      val csp = solve(ex.nf)
+      val csp = RowTrace.withSite("trySolveOn")(solve(ex.nf))
       generalize(substGamma(g), csp, substType(t))
     } else ty
   }
@@ -1346,7 +1399,7 @@ object Subst {
       p => (typeVars(p).toSet -- iso).nonEmpty
     }
     // solve constraints before throwing them away to ensure failure for unsatisfiable sets
-    solve(Exists(l, List(), extinct))
+    RowTrace.withSite("mkSimplified-extinct")(solve(Exists(l, List(), extinct)))
     val complex = reduce(classes)
     val am = ambiguitiesIn(exts, complex).map(_.v).toSet
     val lessComplex = complex.filterNot(p => typeVars(p).exists(am))
