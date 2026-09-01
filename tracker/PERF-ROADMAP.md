@@ -343,8 +343,12 @@ any change, then the cheapest change with the largest profiled share, then the
   a lazier representation (a list, or a thunk that unions on demand) is
   semantically free — but the rendering must stay byte-identical, which the
   REPL goldens and lsp-smoke's position fixtures pin.
-  (d) **DONE 2026-08-31 — loop the repetition combinators**, the surgical
-  alternative to (c) that avoids every one of its costs.  `many`/`some`/
+  (d) **TRIED AND REVERTED 2026-08-31 — looping the repetition combinators.
+  DO NOT RETRY WITHOUT NEW EVIDENCE.**  Measured interleaved B,A,B,A: pooled
+  1.611s -> 1.568s, **43ms, BELOW the ~50ms floor**, and the READ segment — the
+  thing it targets — moved 0.800s -> 0.788s, 1.5%.  Two independent
+  justifications were checked and neither survived; details in the log.  The
+  original description, kept because the analysis is reusable:  `many`/`some`/
   `skipMany`/`skipSome` were mutually recursive in Monadic's `Alternating`
   trait, so depth was the REPETITION COUNT — proportional to input length, not
   grammar nesting — and every iteration allocated a fresh Parser plus a Free
@@ -1158,3 +1162,56 @@ deferred by LSP 5.5).
   NEXT: Step 3's design is already written above and now has its blocker
   cleared.  It remains a big change with eight named silent-divergence sites,
   so it wants its own gate before code.
+
+- 2026-08-31 (P5(d) — looped repetition combinators: TRIED, MEASURED, REVERTED.
+  Two claims of mine died here, which is most of the value.)
+
+  THE CHANGE.  `many`/`some`/`skipMany`/`skipSome` are mutually recursive in
+  Monadic's `Alternating` trait; `Parser` overrode them with while loops that
+  run each element parse's own trampoline and drive it iteratively.
+  `sepBy`/`sepBy1`/`endBy1` followed by dispatch.  It was correct — see the
+  test below — and it did not pay.
+
+  THE MEASUREMENT.  Interleaved **B,A,B,A** rather than a single pair, after a
+  first attempt gave BEFORE a quiet machine and left AFTER queued behind a load
+  gate, which would have biased against the change.  Two pairs: 1.622 -> 1.597
+  and 1.600 -> 1.539; pooled **1.611s -> 1.568s = 43ms, 2.7%** — under the
+  ~50ms editor floor.  Read: 0.800 -> 0.788, **1.5%**.
+  Also fixed en route: my load gate waited for <0.7 while perf-bench's own
+  ceiling is 1.5, so it stalled on a desktop with a browser open.  A wait
+  threshold must sit UNDER the tool's ceiling, not far below it.
+
+  CLAIM 1 THAT DIED: "it removes an unbounded-stack hazard."  **False for
+  today's code.**  A property run against the RECURSIVE definition shows it
+  handles 4,000 repetitions fine — because it is TRAMPOLINED, so the depth was
+  always on the heap, never the JVM stack.  There is no present hazard.
+  Looping is a PREREQUISITE for de-trampolining, not a fix for anything that
+  exists now — and P5(c) argues against de-trampolining anyway.
+
+  CLAIM 2 THAT DIED: that repetition is where the trampoline cost sits.  It is
+  not, and this is the finding worth keeping.  `Parser.run` is 23-31% of the
+  editor path, but that is the `Free` interpreter across EVERY bind, and most
+  parsing is SEQUENCING inside grammar rules rather than repetition.  So
+  `many`/`some` are a small share of total binds and **no localized combinator
+  fix can reach that cost.**  P5(c) is therefore architectural or nothing —
+  which the design suspected and this now measures.
+
+  THE TEST LESSON, which outlives the change.  The property test pinned
+  equivalence against the recursive definitions and passed six for six — and
+  STILL passed with the bug it existed to catch planted in the implementation,
+  because every element parser used one fixed `expected` string and set union
+  is idempotent.  Putting the offset into the expectation gave it teeth: the
+  planted bug then falsified four properties.  **A test that has never been
+  seen to fail has not been shown to work.**  The repo has the same lesson in
+  its own history (the VS Code load test that "passed while proving nothing",
+  LSP-ROADMAP 0.7 era).
+
+  DERIVED AND VERIFIED, KEEP FOR ANY FUTURE ATTEMPT: the right-nested recursion
+  DROPS every intermediate `expected` set and keeps only the LAST, unioned with
+  the terminating failure's — tracing `Parser.flatMap`, a Commit whose
+  continuation also Commits falls through `case r => r` and discards the outer
+  `xs`.  Anything reimplementing these combinators must reproduce that or it
+  silently enlarges every error message in the language.
+  Reverted cleanly: Parser.scala identical to its pre-change state, the test
+  removed with it, core/test back to 904 with only the known Constraints
+  failure.
