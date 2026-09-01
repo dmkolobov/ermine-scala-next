@@ -276,9 +276,23 @@ object TolerantCheck {
         }
     }
 
+    // A foreign declaration binds a top-level name with a type written out in
+    // the statement, but it is neither an implicit nor an explicit binding, so
+    // neither map above holds it and hover on `dateAdd#` came back empty.  No
+    // inference is involved -- take the declared type as written.
+    val foreignTypes: List[(String, Type)] = m.foreigns.flatMap {
+      case ForeignFunctionStatement(_, v, t, _, _)  => v.name.map(_.string -> t)
+      case ForeignMethodStatement(_, v, t, _)       => v.name.map(_.string -> t)
+      case ForeignValueStatement(_, v, t, _, _)     => v.name.map(_.string -> t)
+      case ForeignConstructorStatement(_, v, t)     => v.name.map(_.string -> t)
+      case ForeignSubtypeStatement(_, v, t)         => v.name.map(_.string -> t)
+      case _                                        => None
+    }
+
     val types =
       (subs.flatMap { case (v, v2) => v.name.map(_.string -> v2.extract) } ++
-       etm.flatMap  { case (v, t)  => v.name.map(_.string -> t) }).toMap
+       etm.flatMap  { case (v, t)  => v.name.map(_.string -> t) } ++
+       foreignTypes).toMap
     (Result(notes.toList, types, reused, components), Cache(scopeKey, fresh.toMap))
   }
 

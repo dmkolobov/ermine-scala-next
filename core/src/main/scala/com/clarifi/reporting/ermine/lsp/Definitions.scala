@@ -51,8 +51,11 @@ object Definitions {
         occ <- occurrenceAt(docs, params)
         lt  <- occ.hover
       } yield Json.obj("contents" -> Json.obj(
-        "kind"  -> Json.Str("plaintext"),
-        "value" -> Json.Str(lt._1 + " : " + Pretty.prettyType(lt._2, -1).toString)))
+        // A fenced block tagged `ermine` gets the extension's own TextMate
+        // grammar applied, so a hovered type is highlighted like source.
+        "kind"  -> Json.Str("markdown"),
+        "value" -> Json.Str("```ermine\n" + lt._1 + " : " +
+                            Pretty.prettyType(lt._2, -1).toString + "\n```")))
       answer getOrElse Json.Null
     } }
   }
@@ -120,7 +123,29 @@ object Definitions {
                 Some(Target(v.loc, v.name.map(_.string.length).getOrElse(1))),
                 Some((label(g), v.extract)))
           }
-        case _ => None  // unresolved/ambiguous: no navigation
+        // A foreign declaration binds a top-level term, but `collectHeads` records
+        // binders only for signatures and equations, so uses of `dateAdd#` arrive
+        // here as Unresolved rather than ToBinder and were dropped -- no hover, no
+        // type, while `dateAdd` beside it worked.  The declared type is written in
+        // the statement and reaches us through the tolerant check's own types map,
+        // so hover is answerable even though navigation is not: there is no binder
+        // to navigate to.  Names that are genuinely undefined are not in that map,
+        // so they stay silent.
+        case Renamer.Unresolved(spelling) =>
+          // Two kinds of name land here rather than as ToBinder, because
+          // `collectHeads` records binders only for signatures and equations:
+          //   - foreign declarations, whose type is written in the statement and
+          //     reaches us through the tolerant check's own `types` map;
+          //   - `field` declarations, which are TYPE-level names and so never
+          //     appear in `types` at all, but whose global the session does hold.
+          // Both are answerable for hover; neither has a binder to navigate to.
+          // A genuinely undefined name is in neither map and stays silent.
+          val g = ownGlobal(spelling)
+          val ty = c.types.get(spelling) orElse env.termNames.get(g).map(_.extract)
+          ty.map { t =>
+            Occ(sp.startLine, sp.startCol, spanLen(sp), None, Some((label(g), t)))
+          }
+        case _ => None  // ambiguous: no navigation
       }
     }
     DocIndex(occs)
