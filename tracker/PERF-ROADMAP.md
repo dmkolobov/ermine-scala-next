@@ -466,6 +466,10 @@ representation change, so P7's own number is measured against a clean floor.
 ### Step 2 — instrument BEFORE choosing a representation
 
 Three counts, each cheap, each decisive.  No design survives without them:
+  **ALL THREE ANSWERED 2026-08-31 — see the iteration log.  Headline:
+  `reopened = 0`, so retaining bindings is NOT ruled out; `instantiateKind`
+  is a real but secondary 12.8%; and the M^2 term is a BATCH problem, because
+  per-SCC envs make the editor's mean M 46x smaller.**
   (i) **Does `restrictTypes` ever re-open the boundness guard?**
   `hm.types.get(v)` (Subst.scala:182) is the ONLY guard against double
   instantiation, and `restrictTypes` DELETES keys (Subst.scala:153), so after a
@@ -1100,3 +1104,46 @@ deferred by LSP 5.5).
   depends on the RHS LIST order, which feeds the solver's priority-queue key
   (Constraints.scala:483).  So it could perturb solve order too.  Not bundled
   into a step whose whole premise was representation-neutrality.
+
+- 2026-08-31 (P7 Step 2 — the three counts, and they clear the way).
+  Temporary probe on `instantiateType`/`instantiateKind`/`restrictTypes` plus a
+  per-env record of restricted keys, behind `-Dermine.p7probe`.  Instrumentation
+  REMOVED in the same session that read it; the tree is back to HEAD.
+
+  (i) THE GATING QUESTION: **`reopened = 0`.**  Over the whole 129-module
+  interface-free load — 42,850 `restrictTypes` calls, 13,797 keys actually
+  deleted — `instantiateType` was NEVER called on a variable its env had
+  restricted.  Same on the editor path (111,305 restricts, 36,198 deletions,
+  still zero).  So restrictTypes does not re-open the boundness guard in
+  practice, and **retaining bindings for chain-chasing is NOT ruled out**: the
+  design's own stated blocker is cleared.  Stated honestly: zero over this
+  corpus is a measurement, not a proof — it is exactly the evidence the design
+  asked for, and no more.
+  Incidental: 2 of every 3 `restrictTypes` calls delete nothing.
+
+  (ii) `instantiateKind` IS REAL BUT SECONDARY.  7,035 calls rewriting 716,017
+  TYPE-map entries, **12.8%** of `instantiateType`'s 5,577,596.  So the second
+  quadratic is worth about an eighth of the first, and the design was right to
+  refuse to budget for it off the 42-44% figure, which never included it.
+
+  (iii) THE M^2 TERM IS A BATCH PROBLEM, and this is the scoping result.
+  Batch: 798 SubstEnvs, largest `hm.types` **1,578** entries, 18,939
+  `instantiateType` calls at a mean map size of **294.5**, for **5.58M**
+  map-entry rewrites — each one a full `Type.subst` traversal of that entry.
+  Editor CHECKS (total minus the boot): 30,026 calls but only 190,394 entry
+  rewrites, a mean map size of **6.3** — **46x smaller**.
+  The reason is already in the tree: TolerantCheck gives every binding SCC its
+  own SubstEnv (TolerantCheck.scala:246), which LSP 5.4 did for CORRECTNESS —
+  a Death mid-component must not leave partial meta bindings on a shared env —
+  and which incidentally solved the editor's M^2 problem years before anyone
+  measured it.  **P7 is therefore a [B]-only item.**  Anyone hoping it would
+  speed up the editor should stop: the editor's mean M is 6.
+
+  WHAT THIS MEANS FOR THE PRIZE.  5.58M entry rewrites on the batch path, at
+  ~21% of samples in substitution application and ~33% in free-variable
+  collection.  If lazy resolution with write-back makes instantiation O(1)
+  instead of O(map size), that is the term it removes.  Step 1 bought 3.2% by
+  making each traversal cheaper; Step 3 would attack the number of traversals.
+  NEXT: Step 3's design is already written above and now has its blocker
+  cleared.  It remains a big change with eight named silent-divergence sites,
+  so it wants its own gate before code.
