@@ -12,8 +12,8 @@ module Ai.RevenueByPeriod where
    The roll-up is done with `Ai.Common.factsAtKind`, which is generic in the
    fact row: it names only the kind column it filters on.
 
-     >> :load core/examples/ai/Common.e
-     >> :load core/examples/ai/RevenueByPeriod.e
+     >> :load core/examples/Ai/Common.e
+     >> :load core/examples/Ai/RevenueByPeriod.e
      >> render revenueReport
 -}
 

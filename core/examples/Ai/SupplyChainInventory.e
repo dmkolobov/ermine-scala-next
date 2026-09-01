@@ -10,7 +10,7 @@ module Ai.SupplyChainInventory where
    Dimensions: item     (itemId -> sku, itemDesc, hazmat)
                location (locationId -> locationName, siteId, parentSiteId)
 
-     >> :load core/examples/ai/SupplyChainInventory.e
+     >> :load core/examples/Ai/SupplyChainInventory.e
      >> render inventoryReport
 -}
 

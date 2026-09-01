@@ -20,8 +20,8 @@ module Ai.FiscalCalendar where
    The display labels are built by `Ai.Common.periodLabel`, a row-polymorphic
    function that knows only the four columns it reads.
 
-     >> :load core/examples/ai/Common.e
-     >> :load core/examples/ai/FiscalCalendar.e
+     >> :load core/examples/Ai/Common.e
+     >> :load core/examples/Ai/FiscalCalendar.e
      >> render calendarReport
 -}
 

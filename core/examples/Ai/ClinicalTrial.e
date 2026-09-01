@@ -14,7 +14,7 @@ module Ai.ClinicalTrial where
    Uses `softRelation` + `keyValueTabular` so each measurement key can be
    presented and ordered differently.
 
-     >> :load core/examples/ai/ClinicalTrial.e
+     >> :load core/examples/Ai/ClinicalTrial.e
      >> render trialReport
 -}
 

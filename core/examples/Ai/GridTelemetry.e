@@ -12,8 +12,8 @@ module Ai.GridTelemetry where
                                         periodShort, fiscalYear)
    Hierarchy:  substation tree over gridNodeId / parentGridNodeId
 
-     >> :load core/examples/ai/Common.e
-     >> :load core/examples/ai/GridTelemetry.e
+     >> :load core/examples/Ai/Common.e
+     >> :load core/examples/Ai/GridTelemetry.e
      >> render telemetryReport
 -}
 

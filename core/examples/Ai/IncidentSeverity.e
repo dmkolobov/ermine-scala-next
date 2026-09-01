@@ -8,8 +8,8 @@ module Ai.IncidentSeverity where
    Dimensions: serviceRegistry (serviceId -> system, region, isCustomerFacing)
                severityDim     (severityId -> severityCode, bandId, parentBandId)
 
-     >> :load core/examples/ai/Common.e
-     >> :load core/examples/ai/IncidentSeverity.e
+     >> :load core/examples/Ai/Common.e
+     >> :load core/examples/Ai/IncidentSeverity.e
      >> render severityReport
 -}
 

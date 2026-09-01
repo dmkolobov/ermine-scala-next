@@ -8,7 +8,7 @@ module Ai.SalesByRegion where
                region  (regionId  -> regionName, territoryId, parentTerritoryId)
                channel (channelId -> channelName, isDirect)
 
-     >> :load core/examples/ai/SalesByRegion.e
+     >> :load core/examples/Ai/SalesByRegion.e
      >> render salesReport
 -}
 

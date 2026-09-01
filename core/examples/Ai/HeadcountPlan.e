@@ -8,7 +8,7 @@ module Ai.HeadcountPlan where
    Dimensions: person (seatId -> personName, startDate)
                org    (orgId  -> orgName, orgUnitId, parentOrgUnitId)
 
-     >> :load core/examples/ai/HeadcountPlan.e
+     >> :load core/examples/Ai/HeadcountPlan.e
      >> render headcountReport
 -}
 

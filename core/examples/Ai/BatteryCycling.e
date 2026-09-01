@@ -10,7 +10,7 @@ module Ai.BatteryCycling where
    computed `displayName` that folds the chemistry into the label, and a
    rename so the rendered column header differs from the source column.
 
-     >> :load core/examples/ai/BatteryCycling.e
+     >> :load core/examples/Ai/BatteryCycling.e
      >> render cyclingReport
 -}
 

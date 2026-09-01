@@ -13,7 +13,7 @@ module Ai.TelescopeTime where
    is computed with a conditional Op rather than taken from any one column.
 
    From the REPL:
-     >> :load core/examples/ai/TelescopeTime.e
+     >> :load core/examples/Ai/TelescopeTime.e
      >> render allocationReport
 -}
 
