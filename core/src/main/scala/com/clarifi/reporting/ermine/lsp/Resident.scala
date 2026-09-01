@@ -25,7 +25,10 @@ import scalaparsers.{ Death, Supply }
   */
 final class Resident(val log: String => Unit) {
 
-  final case class Ready(env: SessionEnv, modules: Int, seconds: Double)
+  /** `builtins` is the env as it stands after `Lib.preamble` and BEFORE any
+    * module is read: everything Scala installs rather than source declares.
+    * `checkFile` needs it to avoid scrubbing away a module's own builtins. */
+  final case class Ready(env: SessionEnv, builtins: SessionEnv, modules: Int, seconds: Double)
 
   implicit val supply: Supply = Supply.create
 
@@ -94,8 +97,9 @@ final class Resident(val log: String => Unit) {
     implicit val env: SessionEnv =
       new SessionEnv(_typeCheck = Some(true), _useInterface = Some(false))
     Lib.preamble
+    val builtins = env.copy
     val loaded = Session.loadModules(List("Prelude", "Layout"))
-    val r = Ready(env, loaded.size, (System.nanoTime - t0) / 1e9)
+    val r = Ready(env, builtins, loaded.size, (System.nanoTime - t0) / 1e9)
     booted = Some(r)
     bootFailure = None
     log(f"session: ready — ${r.modules} modules in ${r.seconds}%.1fs")
@@ -104,6 +108,9 @@ final class Resident(val log: String => Unit) {
 
   /** Run f against a fresh copy of the resident env (booting on demand). */
   def withEnv[A](f: SessionEnv => A): A = f(boot().env.copy)
+
+  /** The post-`Lib.preamble` env: names Scala installs, not source. */
+  def builtinEnv: SessionEnv = boot().builtins
 
   /** Everything textDocument/definition and hover need from one check:
     * the post-load env (termNames carry inferred types and true def
@@ -184,18 +191,26 @@ final class Resident(val log: String => Unit) {
     // Layout/Report.e).  Scrub the module out of the COPY first, the way
     // :reload's scrubber does (Session.reloadChangedModules).
     if (e.loadedModules contains mh.name) {
+      // Scrub only what the SOURCE declares.  `Lib` installs builtins under the
+      // module they belong to -- `asOp` and class `AsOp` are `Global("Relation.Op",
+      // ...)`, declared in Scala and merely COMMENTED in `Relation/Op.e` -- so a
+      // scrub by module name alone deletes them, and re-reading the file cannot
+      // put them back.  `Session.reloadChangedModules` guards its scrub with
+      // `|| builtinEnv.contains(...)` for exactly this reason; mirror it, which is
+      // what the comment below always claimed this code did.
+      val b = builtinEnv
       def mine(g: Global) = g.module == mh.name
       e.env = e.env filter { case (v, _) => v.name match {
-        case Some(g: Global) => !mine(g)
+        case Some(g: Global) => !mine(g) || b.env.contains(v)
         case _               => true
       } }
-      e.termNames       = e.termNames       filterNot { case (g, _) => mine(g) }
-      e.termNameOrigins = e.termNameOrigins filterNot { case (g, _) => mine(g) }
-      e.cons            = e.cons            filterNot { case (g, _) => mine(g) }
-      e.privateCons     = e.privateCons     filterNot { case (g, _) => mine(g) }
-      e.consOrigins     = e.consOrigins     filterNot { case (g, _) => mine(g) }
-      e.classes         = e.classes         filterNot { case (g, _) => mine(g) }
-      e.classOrigins    = e.classOrigins    filterNot { case (g, _) => mine(g) }
+      e.termNames       = e.termNames       filterNot { case (g, _) => mine(g) && !b.termNames.contains(g) }
+      e.termNameOrigins = e.termNameOrigins filterNot { case (g, _) => mine(g) && !b.termNameOrigins.contains(g) }
+      e.cons            = e.cons            filterNot { case (g, _) => mine(g) && !b.cons.contains(g) }
+      e.privateCons     = e.privateCons     filterNot { case (g, _) => mine(g) && !b.privateCons.contains(g) }
+      e.consOrigins     = e.consOrigins     filterNot { case (g, _) => mine(g) && !b.consOrigins.contains(g) }
+      e.classes         = e.classes         filterNot { case (g, _) => mine(g) && !b.classes.contains(g) }
+      e.classOrigins    = e.classOrigins    filterNot { case (g, _) => mine(g) && !b.classOrigins.contains(g) }
       e.loadedFiles     = e.loadedFiles     filterNot { case (_, n) => n == mh.name }
       e.loadedModules   = e.loadedModules - mh.name
     }
