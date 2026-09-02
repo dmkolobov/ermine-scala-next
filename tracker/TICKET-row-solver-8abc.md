@@ -586,7 +586,7 @@ pre-existing failures unrelated to any of this work:
 
 | gate | result |
 |---|---|
-| `Audit.lean` | **1465 theorems, 0 non-standard axioms**; no `sorry`, `native_decide` or custom axiom anywhere |
+| `Audit.lean` | **1469 theorems, 0 non-standard axioms**; no `sorry`, `native_decide` or custom axiom anywhere |
 | 66-file corpus, `-Dermine.resGuard=true` | **0 of 66 differ** (V+M), verdicts identical, `shouldfail` 40/40 rejected |
 | 66-file corpus, `-Dermine.labelCheckSaturated=true` | **0 of 66 differ** (V+M) |
 | 66-file corpus, `-Dermine.labelCheckEarly=true` | verdicts identical, but **26 of 66 messages change** (V+M) — see 8c's "second change" above |
@@ -669,6 +669,15 @@ The four SHAPE regressions have **two independent causes**, established by bisec
 
 Both are written up in `TICKET-signature-resolution-fragility.md`, which is REINSTATED as a
 confirmed defect report on this evidence.
+
+**They are QUALITY defects, not soundness defects — settled, not assumed.** Empirically, a
+consumer annotated at the exact 9-field header is ACCEPTED while one field missing or one
+field extra is REJECTED, so the probe discriminates and the published constraints really do
+pin `t`. Then proved for the whole shape in `Rowpartition/DerivedColumn.lean`
+(`t_determined_of_sat`), which needs neither `L ⊆ K` nor `d ∉ K` nor the disjointness halves
+of its hypotheses: the three constraints' concatenation content alone forces
+`rho t = insert d K`. So nothing is unsound and nothing is unusable; what is lost is
+signature quality, and the constraints travel to every caller.
 
 Note `ei-diff.sh`'s closing line still reads "0 = the splice loses nothing that reaches an
 interface" — that legend belongs to its original 8b use and is misleading for any other

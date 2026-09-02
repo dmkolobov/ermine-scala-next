@@ -58,12 +58,39 @@ cleanly to `genRules`, from a clean `.ei` state every time:
 decision already taken, and it is NOT caused by `labelCheck` or `resGuard`. Whether it is
 acceptable is a judgement call that should be made explicitly rather than by default.
 
-## Still not established -- do not assume either way
+## SETTLED: these are QUALITY defects, not soundness defects
 
-* **Are the two forms equivalent?** The constraints in the polymorphic form should force `t`
-  to the concrete row. If they do, this is a QUALITY defect; if they do not, a SOUNDNESS one,
-  and the priority changes entirely. `Rowpartition/Splice.lean` and `Saturate.lean` have the
-  vocabulary. This was step 2 of the original ticket and is still unrun.
+This was step 2 of the original ticket and was the open question that set the priority. It is
+now answered twice, empirically and by proof, and both say the same thing.
+
+**Empirically.** In the poly regime, a consumer annotated at the exact concrete header
+typechecks -- and the probe discriminates, so the pass means something:
+
+    exact 9-field header             ACCEPTED
+    one field MISSING (no fte)       REJECTED
+    one field EXTRA (costPerFte)     REJECTED
+
+**By proof.** `Rowpartition/DerivedColumn.lean : t_determined_of_sat`, for the SHAPE rather
+than for one module -- "add one derived column to a relation with a concrete header", which
+is what `BatteryCycling`, `RevenueByPeriod`, `HeadcountPlan` and `ClinicalTrial` all are:
+
+    t   = L ∪ rs ∪ so ∪ a        (third constraint)
+    K   = L ∪ a ∪ rs             (first)
+    {d} = rs ∪ so                (second)
+    so  t = K ∪ so = K ∪ rs ∪ so = K ∪ {d} = insert d K,   since rs ⊆ K
+
+The proof needs NEITHER `L ⊆ K` nor `d ∉ K`, and not the `Pairwise Disjoint` halves of the
+`Sat` hypotheses either. A first version assumed both inclusions; Lean reported `L ⊆ K`
+unused, and chasing that produced the argument above, which needs neither. Determinacy is
+forced by the concatenation content alone.
+
+**So: nothing is unsound and nothing is unusable.** Every consumer that accepted the concrete
+row still typechecks. What is lost is signature QUALITY -- the constraints are viral, every
+downstream caller carries them instead of a concrete row, and "the compiler resolved my type"
+stops being a property of the program. That is worth fixing, and it is not urgent in the way
+a soundness defect would have been.
+
+## Still not established -- do not assume either way
 * Whether the 8b repair (`Rowpartition/SpliceGuard.lean`, flag deleted in `cb7fab4`) fixes
   the build-order half. Testing it means restoring the flag.
 * Whether `HeadcountPlan.withUnitCost` and `RevenueByPeriod.labelled` -- the other two SHAPE

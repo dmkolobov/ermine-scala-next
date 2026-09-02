@@ -116,7 +116,7 @@ namespace* — see [Integration log](#integration-log).
 
 Every file was type-checked individually and as part of the root. The table lists the
 eleven-module state; on 2026-09-01 `ResGuard`, `ResGuardTerm`, `ResGuardDiverge`,
-`Saturate`, `Splice` and `LabelAlgo` were each verified the same way (`lake env lean`,
+`Saturate`, `Splice`, `LabelAlgo` and `DerivedColumn` were each verified the same way (`lake env lean`,
 exit 0, no output), the root builds, and `Audit.lean` reports 1465 theorems and 0
 non-standard axioms. `CutSearch` is the one module that does NOT build here at all.
 
@@ -234,6 +234,7 @@ because several informal rules get them wrong:
 | `Splice.lean` | 29 | **`Subst.reduce`'s second case** (ticket 8b). The splice is sound with NO side condition — the concrete parts are automatically disjoint and a duplicated variable is automatically empty — and exactly conservative for one splice. But `DroppedPartition.dropped_can_lose` exhibits a satisfiable system with no concrete labels on which the emitted residual FAILS to entail a consequence of the input, because `reduce` never rewrites a left-hand side. |
 | `LabelAlgo.lean` | 57 | **The Scala `checkLabel` fixpoint itself**, not just the rule it implements: every bit the algorithm writes is `Forced` (`algoWrite_forced`), so every clash it reports is a genuine refutation (`checkLabel_clash_unsat`). Closes what `Saturate` calls the weakest link. And `DupNeeded.nodup_needed` shows the `ones > 1` branch is sound ONLY because the Scala's right-hand side is a `Set`: with a duplicated variable part it fires where `Forced` derives nothing. |
 | `SpliceGuard.lean` | 17 | **The licence for the 8b repair.** `SpliceOK` packages the three side conditions of `splice_entails_iff` as ONE DECIDABLE predicate — so the compiler can test them — and `reduce2G` is the guarded fold. `reduce2G_backward`: a model of the guarded residual extends, changing only ambiguous variables, to a model of the input. `reduce2G_preserves_entailment` is unconditional. `dropped_fixed_entails` shows the guard repairs `DroppedPartition`, and `spliceOK_fires` that it is not merely "never splice". |
+| `DerivedColumn.lean` | 4 | **Settles quality-vs-soundness for the 2026-09-02 signature regressions.** Four definitions began publishing `forall t. (exists ..) => Relation t` where they had published a concrete row. `t_determined_of_sat`: the three published constraints force `rho t = insert d K`, so the two forms accept exactly the same consumers and the regressions are QUALITY defects, not soundness ones. Proved for the SHAPE ("add one derived column to a relation with a concrete header"), which recurs in `BatteryCycling`, `RevenueByPeriod`, `HeadcountPlan` and `ClinicalTrial`. Needs NEITHER `L ⊆ K` nor `d ∉ K` — a first version assumed both, Lean reported one unused, and chasing that produced an argument needing neither, nor the `Pairwise Disjoint` halves of the hypotheses. |
 | `Sanity.lean` | 0 | A single `example`: a toolchain smoke test, no content. |
 
 ---

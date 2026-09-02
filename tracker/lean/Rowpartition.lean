@@ -60,3 +60,4 @@ import Rowpartition.Saturate
 import Rowpartition.Splice
 import Rowpartition.LabelAlgo
 import Rowpartition.SpliceGuard
+import Rowpartition.DerivedColumn
