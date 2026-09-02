@@ -1042,18 +1042,52 @@ object Subst {
         instantiateType(v, ConcreteRho(lc, fs))
         cs.map(substType _)
       case (Partition(v, RHS(abs, con), inf), cs) if v.ty.ambiguous || es.contains(v) =>
-        val csp = cs map {
-          case Part(loc, l, rs) => Part(loc, l, rs flatMap {
-              case VarT(`v`) => ConcreteRho(lc, con) :: abs.toList.map(VarT(_))
-              case x         => List(x)
-            }
-          )
-          case x => x
+        /* The three side conditions of `Rowpartition.splice_entails_iff`
+         * (`tracker/lean/Rowpartition/Splice.lean`), which are exactly what makes this
+         * splice CONSERVATIVE rather than merely sound.  Without the first,
+         * `Splice.DroppedPartition.dropped_can_lose` exhibits a satisfiable system with no
+         * concrete labels on which the residual we publish stops entailing a consequence
+         * of the input -- because this case substitutes `v` away on right-hand sides,
+         * discards the partition it substituted WITH, and never rewrites a left-hand side,
+         * so a `v` that still heads a constraint here is left with nothing tying it to the
+         * rest.  All three are decidable, which is the point: the compiler can test them.
+         *   hlhs -- `v` heads no constraint of the emitted list
+         *   hdis -- every constraint mentioning `v` has concrete blocks disjoint from `con`
+         *   hdup -- `v` occurs at most once per right-hand side, or `con` is empty
+         * `Rowpartition.reduce2G_backward` proves the guarded fold conservative and
+         * `dropped_fixed_entails` that it repairs the counterexample. */
+        def concrOf(t: Type): Set[Name] = t match {
+          case ConcreteRho(_, s) => s
+          case Con(_, n, _, _)   => Set(n)
+          case _                 => Set()
         }
+        val hlhs = !cs.exists { case Part(_, VarT(u), _) => u == v ; case _ => false }
+        val hdis = cs.forall {
+          case Part(_, _, rs) =>
+            !rs.exists { case VarT(u) => u == v ; case _ => false } ||
+              (rs.flatMap(concrOf).toSet & con).isEmpty
+          case _ => true
+        }
+        val hdup = con.isEmpty || cs.forall {
+          case Part(_, _, rs) => rs.count { case VarT(u) => u == v ; case _ => false } < 2
+          case _              => true
+        }
+        val ok = hlhs && hdis && hdup
+        val csp =
+          if (GenRules.spliceGuard && !ok) cs
+          else cs map {
+            case Part(loc, l, rs) => Part(loc, l, rs flatMap {
+                case VarT(`v`) => ConcreteRho(lc, con) :: abs.toList.map(VarT(_))
+                case x         => List(x)
+              }
+            )
+            case x => x
+          }
         RowTrace.log("splice\t" + RowTrace.site + "\t" + RowTrace.clean(lc.toString) +
                      "\t" + v + "\t" + abs.size + "\t" + con.size +
                      "\t" + inf.fold("INPUT")(_.toString) +
-                     "\t" + (csp != cs))
+                     "\t" + (csp != cs) +
+                     "\t" + hlhs + "\t" + hdis + "\t" + hdup)
         csp
       case (_, cs) => cs
     }
@@ -1062,34 +1096,18 @@ object Subst {
     val l = csz.loc
     val (es, cs) = unbindExists(Ambiguous(Free), csz)
     val (q, esp) = PQueue.build(Exists(l, List(), cs))
-    var ps = q.expand.toList
-    RowTrace.log {
-      // The INPUT population: the constraint list solve actually receives, and
-      // the partitions built from it, against the SATURATED set it reduces over.
-      val inParts = q.toList
-      val rows    = cs.flatMap(_.rowConstraints)
-      val arities = rows.map { case Part(_, _, rs) => rs.length ; case _ => 0 }
-      val concrete = rows.exists {
-        case Part(_, lhs, rs) => (lhs :: rs).exists { case ConcreteRho(_, f) => f.nonEmpty ; case _ => false }
-        case _ => false
-      }
-      val derived = ps.filter(_._3.isDefined)
-      val byRule  = derived.groupBy(_._3.get.toString).map { case (k, v) => k + ":" + v.length }
-                           .toList.sorted.mkString(",")
-      "solve\t" + RowTrace.site + "\t" + RowTrace.clean(l.toString) +
-        "\t" + rows.length + "\t" + inParts.length + "\t" + ps.length +
-        "\t" + derived.length + "\t" + concrete +
-        "\t" + arities.sorted.mkString(";") + "\t" + (if (byRule.isEmpty) "-" else byRule)
-    }
-    if (GenRules.labelCheck)
-      // On the INPUT partitions (`q`), not the saturated set (`ps`).  Propagation is
-      // monotone (`Rowpartition.forced_mono`), so the saturated set would be strictly
-      // stronger -- but its soundness would then rest on every saturation rule being
-      // sound or conservative, and `Rowpartition/Rules.lean` found rule 6's documented
-      // form unsound.  Reading the input makes this check depend on nothing but the
-      // semantics of the constraints the user wrote, which is exactly what
-      // `Rowpartition/LabelProp.lean` proves.
-      labelClash(q.toList.map(_.tup)) foreach { case (lbl, msg) =>
+    /* The per-concrete-label refutation, as a thunk, because WHERE it runs is a
+     * question in its own right.  It reads `q` -- the INPUT partitions -- and nothing
+     * else, so it is independent of `q.expand`; running it first costs nothing and
+     * refutes an unsatisfiable input BEFORE the saturation can diverge on it.  That
+     * matters: `Rowpartition/ResGuardDiverge.lean` exhibits a four-constraint
+     * unsatisfiable system on which resolution has derivations of every length, guarded
+     * or not, and the same system is refuted at a single label by this check.  Behind a
+     * flag because moving it changes WHICH error a module that fails both ways reports.
+     */
+    def checkLabels(source: List[(TypeVar, Constraints.RHS)]): Unit =
+      if (GenRules.labelCheck)
+      labelClash(source) foreach { case (lbl, msg) =>
         // Blame the constraint that mentions the offending field, not the enclosing
         // module: `tml` here is whatever scope `solve` was called in, which for a
         // module-level binding is the module header.
@@ -1109,6 +1127,55 @@ object Subst {
         }
         blame.getOrElse(l).die("Row partitions are unsatisfiable at field '" + lbl + "': " + msg)
       }
+    if (GenRules.labelCheckEarly) checkLabels(q.toList.map(_.tup))
+    var ps = q.expand.toList
+    RowTrace.log {
+      // The INPUT population: the constraint list solve actually receives, and
+      // the partitions built from it, against the SATURATED set it reduces over.
+      val inParts = q.toList
+      val rows    = cs.flatMap(_.rowConstraints)
+      val arities = rows.map { case Part(_, _, rs) => rs.length ; case _ => 0 }
+      val concrete = rows.exists {
+        case Part(_, lhs, rs) => (lhs :: rs).exists { case ConcreteRho(_, f) => f.nonEmpty ; case _ => false }
+        case _ => false
+      }
+      val derived = ps.filter(_._3.isDefined)
+      val byRule  = derived.groupBy(_._3.get.toString).map { case (k, v) => k + ":" + v.length }
+                           .toList.sorted.mkString(",")
+      "solve\t" + RowTrace.site + "\t" + RowTrace.clean(l.toString) +
+        "\t" + rows.length + "\t" + inParts.length + "\t" + ps.length +
+        "\t" + derived.length + "\t" + concrete +
+        "\t" + arities.sorted.mkString(";") + "\t" + (if (byRule.isEmpty) "-" else byRule)
+    }
+    // On the INPUT partitions (`q`), not the saturated set (`ps`).
+    //
+    // CORRECTED 2026-09-01 (ticket item 8a).  This comment used to justify the choice by
+    // "propagation is monotone (`Rowpartition.forced_mono`), so the saturated set would be
+    // strictly stronger".  That does not follow.  `forced_mono` is monotone in the SYSTEM
+    // (`G subset G' -> Forced l G v x -> Forced l G' v x`), and `q.expand` is NOT a
+    // superset of `q`: `makeEmpty`, `makeConcrete`, `destructiveSub` and `instantiate` all
+    // DELETE partitions and rename variables.  So the saturated set is a different system,
+    // not a larger one, and "strictly stronger" is an empirical question rather than a
+    // corollary.  (The old comment also blamed rule 6's documented form, which is indeed
+    // unsound -- `Rowpartition.Rule6Header.header_not_conservative` -- but `def resolution`
+    // never implemented that form; it computes `Rowpartition.rule6`, which is sound.)
+    //
+    // What running the check on `ps` WOULD need is: input satisfiable => saturated set
+    // satisfiable.  For the rule set the default `genRules=cut` runs, that is
+    // `Rowpartition.CutRuleSteps.satisfiable_iff`; see the ticket for what it does not
+    // yet cover.  Reading the input needs none of that: it depends only on the semantics
+    // of the constraints the user wrote, which is what `Rowpartition/LabelProp.lean`
+    // proves (`forced_sound`, `refuted_unsat`, `not_refuted_of_sat`).
+    //
+    // ADDED 2026-09-01 (ticket item 8a): `-Dermine.labelCheckSaturated=true` runs the
+    // check on `ps` instead.  Licensed by `Rowpartition.refute_saturated_sound`
+    // (tracker/lean/Rowpartition/Saturate.lean), which proves "input satisfiable =>
+    // every system the saturation reaches is satisfiable" for the rule set the default
+    // `genRules=cut` runs -- so a clash on `ps` really does refute the input, and
+    // `saturated_not_refuted_of_sat` says a satisfiable input is never refuted there.
+    // DEFAULT OFF: the question the ticket asks is how many MORE programs it refutes.
+    if (!GenRules.labelCheckEarly)
+      checkLabels(if (GenRules.labelCheckSaturated) ps.map(_.tup) else q.toList.map(_.tup))
     Exists(l, List(), reduce(l, cs map (substType _), es, ps))
   }
 

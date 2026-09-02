@@ -1,5 +1,38 @@
 # Row-constraint work — state as of 2026-09-01
 
+## 2026-09-01, later the same day: items 8a / 8b / 8c ANSWERED
+
+See `tracker/TICKET-row-solver-8abc.md`.
+
+**ADOPTED 2026-09-02: `ermine.resGuard` now DEFAULTS TO TRUE** — `resolution`'s mint is guarded
+by the resolvent reverse lookup. `-Dermine.resGuard=false` restores the previous behaviour
+exactly. Gates under the new default: `core/test` 903/904 (known failure only), 66-file and
+34-file corpora 0 files differ, `shouldfail/` 40/40 rejected, `lsp-smoke` PASS 82.
+The win: `core/examples/incomplete/gu05_star_join_4dim_concrete_signature.e` goes from ~12.0s
+of solve to ~1.1s. `resolution` fires on 18 example modules and ZERO stdlib ones.
+
+The other three flags stay DEFAULT OFF, each for a measured reason:
+
+    -Dermine.labelCheckSaturated=true  0 additional refutations on BOTH corpora -> leave the
+                                       check reading the input (ticket 8a's own criterion)
+    -Dermine.labelCheckEarly=true      verdicts identical but 26 of 66 messages change: better
+                                       text, 11 worse locations -> revisit after follow-up item 1
+    -Dermine.spliceGuard=true          its precondition fails on 90% of splices, and the .ei
+                                       diff shows it DEGRADES signatures (resolved concrete rows
+                                       become constrained polymorphic) -> do not adopt
+
+Seven new Lean modules (`ResGuard`, `ResGuardTerm`, `ResGuardDiverge`, `Saturate`, `Splice`,
+`LabelAlgo`, `SpliceGuard`); `lake env lean Audit.lean` reports 1465 theorems, 0 non-standard
+axioms.
+
+Headline: guarding `resolution` terminates on every SATISFIABLE system
+(`guarded_terminates_of_satisfiable`) and not in general (`gSeed_diverges`), and there is
+a SECOND cliff — driven by `resolution`, not `commonSubexpression`, on a well-typed
+program — that the guard removes (`ResStar5`: >240s off, 0.2s on). `resolution` fires zero
+times in a stdlib boot, which is why no existing corpus could see it;
+`tracker/tools/gen-res-star.py` builds the population that can.
+
+
 ## ADOPTED 2026-09-01
 
 Both changes are now the DEFAULT in `Constraints.GenRules`:
@@ -205,3 +238,27 @@ root, and `#print axioms` on the headline theorems.
   `P="Xms10""24m"; pkill -f "$P"`.
 - Never run `sbt` concurrently with another `sbt` on this project; they share the target
   directory and the second invalidates the first.
+- **`bin/ermine` WRITES `.ei` interface files, and `ermine.useInterface` defaults to TRUE.**
+  So the SECOND side of any A/B corpus comparison reads the interfaces the FIRST side just
+  wrote and never re-runs the solver on those modules. This invalidated a 66-file
+  comparison on 2026-09-01 before it was caught: the tell was the type-hole report vanishing
+  from `Holes.e` and `LayoutTesting.e` on side B, and the stdlib boot dropping from 12.4s to
+  5.6s. `tracker/tools/corpus-run.sh` now deletes `core/examples/**/*.ei` before each run
+  AND passes `-Dermine.useInterface=false`. Any hand-rolled comparison must do both.
+- **Never TIME anything while another build runs.** A full `res-guard-bench.sh` table was
+  invalidated on 2026-09-01 by contention with a `lake build`: `ResStar3` was recorded as
+  TIMEOUT at 90s and, re-run alone, solves in 0.05s. The table was discarded and re-run.
+  Probes measure wall time; anything else on the machine is measurement error.
+- **`bin/ermine` exits 0 even when the module fails to load.** It prints "Unable to load
+  module" and then reads EOF from stdin and quits cleanly, so an exit-code comparison sees
+  nothing. Read the verdict out of the output text --
+  `tracker/tools/corpus-verdicts.py <dir> [<dir2>]` classifies LOADED/REJECTED per file and
+  diffs two runs, including the error message.
+- **`lake` 5.0.0 has no `-j` / `--jobs` option** (both are rejected). To bound memory,
+  build modules one at a time (`lake build Rowpartition.X`) and/or set `LEAN_NUM_THREADS`.
+- **`tracker/lean/Rowpartition/CutSearch.lean` does not build on this machine.**
+  `lake build Rowpartition.CutSearch` is OOM-killed (`Lean exited with code 137`) at 15 GB,
+  both with default parallelism and with `LEAN_NUM_THREADS=1`, once with nothing else
+  running. It is therefore NOT imported by `Rowpartition.lean` and its 125 theorems are
+  NOT covered by `Audit.lean` -- contrary to what README.md used to claim. Everything else
+  is: `lake env lean Audit.lean` reports **1465 theorems, 0 non-standard axioms**.

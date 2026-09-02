@@ -103,12 +103,24 @@ package ermine
  *   from both rules, and that each of the lone right variables contain the
  *   fields missing from their rule.
  *
- *     a <- C* D* x
- *     a <- y  D* E*
+ *     a <- C+ D* x
+ *     a <- y  D* E+
  *    ---------------
- *    a <- C* D* E* z  (z fresh)
- *       x <- C* z
- *       y <- E* z
+ *    a <- C+ D* E+ z  (z fresh)
+ *       x <- E+ z
+ *       y <- C+ z
+ *
+ *   CORRECTED 2026-09-01.  This diagram used to pair each lone variable with the
+ *   concrete part of ITS OWN premise (`x <- C* z`, `y <- E* z`), which is UNSOUND:
+ *   premise 1 forces `x` disjoint from `C`, while `x <- C* z` forces `C` inside
+ *   `x`, so the two together force `C` empty and the rule reports a type error on
+ *   a program that has none.  Mechanised as
+ *   `Rowpartition.Rule6Header.header_not_conservative` and
+ *   `Rule6Header.header_makes_unsat` in `tracker/lean/Rowpartition/Rules.lean`,
+ *   with an explicit two-label counterexample.  The prose above always described
+ *   the correct crossed pairing, and `def resolution` always implemented it
+ *   (`bots = concr2 -- int` for `x`, `tops = concr1 -- int` for `y`), which is
+ *   `Rowpartition.rule6` -- proved sound there.  Only the diagram was wrong.
  *
  *
  *  Substitution
@@ -712,8 +724,71 @@ object Constraints {
      * closes a soundness hole -- the solver accepted constraint sets with no solution
      * (`core/examples/incomplete/unsound0*.e`).  `-Dermine.labelCheck=false` disables it. */
     val labelCheck: Boolean = System.getProperty("ermine.labelCheck", "true") == "true"
+    /* Orthogonal: guard `resolution`'s mint with the resolvent reverse lookup, the way
+     * `splitConcrete` already guards its own (ticket item 8c).
+     *
+     * `Rowpartition/ResGuard.lean` proves the guard is not a semantic change
+     * (`GResStep.satisfiable_iff`, `GResStep.entails_iff`, `resolvent_unique`);
+     * `ResGuardTerm.lean` proves the guarded rule TERMINATES on every satisfiable system,
+     * which the unguarded rule does not (`Cut.resSeed_diverges` runs on a system that has
+     * a model); `ResGuardDiverge.lean` proves the guard does NOT buy termination in
+     * general -- the remaining divergent seeds are all unsatisfiable, which is the
+     * complementary job of `labelCheck`.
+     *
+     * ADOPTED 2026-09-02 (ticket item 8c): DEFAULT ON.  `-Dermine.resGuard=false` restores
+     * the previous behaviour exactly.  The evidence:
+     *   - proved not a semantic change (`GResStep.satisfiable_iff`, `guard_loses_nothing`,
+     *     `resolvent_unique`) and terminating on every SATISFIABLE system, with the
+     *     unconditional version proved FALSE so the boundary is known;
+     *   - 66-file example corpus and 34-file incompleteness corpus: 0 files differ,
+     *     verdicts identical, `shouldfail/` 40/40 still rejected;
+     *   - `core/test` 903/904 with the flag ON, the one failure being the pre-existing
+     *     `Constraints.disjunction sound` generator; `Constraints.resolution sound` itself
+     *     passes 100 tests under the guard;
+     *   - and it is not merely insurance: `core/examples/incomplete/gu05_star_join_4dim_
+     *     concrete_signature.e` goes from ~12.0s of solve time to ~1.1s, an 11x reduction,
+     *     in BOTH rule modes.  `resolution` fires on 18 example modules (and zero stdlib
+     *     ones), so the corpus zeros above are the guard running on real code. */
+    val resGuard: Boolean = System.getProperty("ermine.resGuard", "true") == "true"
+    /* Orthogonal: run `labelClash` BEFORE `q.expand` rather than after.  The check reads
+     * only the input partitions, so this is free; what it buys is refuting an
+     * unsatisfiable input before the saturation gets a chance to diverge on it.  What it
+     * costs is that a module which fails both ways now reports the label clash instead of
+     * whatever `expand` would have raised, so it is measured, not assumed.
+     * DEFAULT OFF. */
+    val labelCheckEarly: Boolean =
+      System.getProperty("ermine.labelCheckEarly", "false") == "true"
+    /* Orthogonal (ticket item 8a): run `labelClash` on the SATURATED set `q.expand`
+     * rather than on the input partitions.  Strictly more to look at, hence potentially
+     * more refutations.  Licensed by `Rowpartition.refute_saturated_sound`
+     * (`tracker/lean/Rowpartition/Saturate.lean`): for the rule set `genRules=cut` runs,
+     * a satisfiable input stays satisfiable through the saturation, so a clash there
+     * refutes the input and cannot reject a well-typed program.  Mutually exclusive with
+     * `labelCheckEarly`, which by definition runs before the saturation exists.
+     * DEFAULT OFF. */
+    val labelCheckSaturated: Boolean =
+      System.getProperty("ermine.labelCheckSaturated", "false") == "true"
+    /* Orthogonal (ticket item 8b): make `Subst.reduce`'s second case check the three side
+     * conditions that make its splice CONSERVATIVE, and skip the splice when they fail.
+     *
+     * Without them the published residual can be strictly WEAKER than the constraints the
+     * user wrote -- `Rowpartition.Splice.DroppedPartition.dropped_can_lose` is a
+     * satisfiable system with no concrete labels where a consequence of the input is no
+     * longer entailed by what the compiler publishes.  The guard is licensed by
+     * `Rowpartition.reduce2G_backward`; `Rowpartition.dropped_fixed_entails` shows it
+     * repairs that counterexample, and `spliceOK_fires` that it is not just "never splice".
+     *
+     * Skipping is sound in the safe direction: the residual keeps `v` and its constraints,
+     * so it gets STRONGER, never weaker, and is still entailed by the input.  But it
+     * changes published signatures, hence DEFAULT OFF and a corpus measurement.  The trace
+     * record `splice` carries the three flags whether or not this is enabled, so the
+     * frequency of each condition can be measured without changing behaviour. */
+    val spliceGuard: Boolean = System.getProperty("ermine.spliceGuard", "false") == "true"
     override def toString =
-      mode + (if (disjRule) "+disj" else "") + (if (labelCheck) "+label" else "")
+      mode + (if (disjRule) "+disj" else "") + (if (labelCheck) "+label" else "") +
+        (if (labelCheckEarly) "-early" else "") +
+        (if (labelCheckSaturated) "-sat" else "") + (if (resGuard) "+resguard" else "") +
+        (if (spliceGuard) "+spliceguard" else "")
   }
   case object Disjunction         extends Inference
 
@@ -845,12 +920,28 @@ object Constraints {
   // @throws SubstException
   def learnPartitions(v: TypeVar, rhs1: RHS, incm: PQueue, proc: PQueue)(implicit su: Supply, tml: Located): Set[Partition] =
     if(rhs1.abstr contains v) selfSubstitution(v, rhs1.abstr, rhs1.concr)
-    else proc.foldLeft[Set[Partition]](
+    else {
+      /* The reverse lookup that guards `resolution`'s mint: every partition of `v` whose
+       * right-hand side is a lone variable, indexed by its concrete part.  Built at most
+       * once per call, and only when `-Dermine.resGuard=true` -- the lambda below is
+       * never invoked otherwise, so this costs nothing in the default configuration. */
+      lazy val resolvents: Map[Fields, TypeVar] = {
+        def add(m: Map[Fields, TypeVar], p: Partition): Map[Fields, TypeVar] = p match {
+          case Partition(u, RHS(Single(w), con), _) if u == v => m + (con -> w)
+          case _                                             => m
+        }
+        incm.foldLeft(proc.foldLeft(Map[Fields, TypeVar]())(add))(add)
+      }
+      def findResolvent(s: Set[Partition])(k: Fields): Option[TypeVar] =
+        s.collectFirst {
+          case Partition(u, RHS(Single(w), con), _) if u == v && con == k => w
+        } orElse resolvents.get(k)
+      proc.foldLeft[Set[Partition]](
            splitConcrete(v, rhs1.abstr, rhs1.concr, findRHS(incm, proc, Set()))
          ){
            case (s, Partition(u, rhs2, _)) =>
              if(u == v) {
-               val rps = resolution(v, rhs1, rhs2)
+               val rps = resolution(v, rhs1, rhs2, findResolvent(s))
                val cps = cancellation(v, rhs1, rhs2)
                val dps = if(!GenRules.disjRule) Nil else proc.toList.flatMap {
                  case Partition(w, rhs3, _) if w != v => disjunction(rhs3, rhs1, rhs2) ++ disjunction(rhs3, rhs2, rhs1)
@@ -873,6 +964,7 @@ object Constraints {
                (s ++ csps ++ sps ++ dps)
              }
          }
+    }
 
   def simpleSubst(v: TypeVar, u: TypeVar, w: TypeVar)(r : Partition): PQueue = {
     def f(z: TypeVar) = if(z == v || z == u) w else z
@@ -1057,7 +1149,20 @@ object Constraints {
    *      x <- E+ z
    *      y <- C+ z
    */
-  def resolution(v: TypeVar, rhs1: RHS, rhs2: RHS)(implicit su: Supply): Set[Partition] =
+  /* The resolvent lookup that guards the mint, under `-Dermine.resGuard=true`.
+   *
+   * `resolvent(K)` answers "does the environment already name the row `v \ K`?".  The
+   * first conclusion, `v <- (z, K)` with `K = concr1 ++ concr2`, IS that naming: it says
+   * exactly `z = v \ K`.  So if a partition of that shape is already present, its
+   * variable is FORCED EQUAL to the one this rule would mint -- `Rowpartition.ResGuard`,
+   * `resolvent_unique` -- and reusing it loses nothing (`guard_loses_nothing`).
+   *
+   * Note `fresh` is still called in the guarded branch, at the same point.  That keeps
+   * the `Supply` sequence identical in both modes, so a guarded run and an unguarded run
+   * differ only in the partitions they derive, never in variable numbering.
+   */
+  def resolution(v: TypeVar, rhs1: RHS, rhs2: RHS,
+                 resolvent: Fields => Option[TypeVar] = _ => none)(implicit su: Supply): Set[Partition] =
     if (!GenRules.resolves) Set() else (rhs1, rhs2) match {
     case (RHS(Single(x), concr1), RHS(Single(y), concr2)) =>
       val z = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
@@ -1065,9 +1170,21 @@ object Constraints {
       val tops = concr1 -- int
       val bots = concr2 -- int
       if(tops.isEmpty || bots.isEmpty) Set() // Such cases are handled by cancellation
-      else Set(Partition(v, RHS(Set(z), concr1 ++ concr2), Resolution),
-               Partition(x, RHS(Set(z), bots), Resolution),
-               Partition(y, RHS(Set(z), tops), Resolution))
+      else {
+        val all = concr1 ++ concr2
+        (if (GenRules.resGuard) resolvent(all) else none) match {
+          case Some(w) =>
+            // REUSE: `v <- (w, all)` is already present, so emit only the two
+            // conclusions about the lone variables.  Entailed by the environment:
+            // `Rowpartition.ResGuard.res_reuse_entails`.
+            Set(Partition(x, RHS(Set(w), bots), Resolution),
+                Partition(y, RHS(Set(w), tops), Resolution))
+          case None =>
+            Set(Partition(v, RHS(Set(z), all), Resolution),
+                Partition(x, RHS(Set(z), bots), Resolution),
+                Partition(y, RHS(Set(z), tops), Resolution))
+        }
+      }
     case _ => Set()
   }
 
@@ -1222,17 +1339,22 @@ object Constraints {
           if (ones == 1) {
             // exactly one part carries l: the whole does, every other part does not
             setVar(v, true, "a part contains it but the whole does not")
-            for (u <- unknown) setVar(u, false, "")
+            // NB `unknown` was computed BEFORE the line above, so when `v` is a part of
+            // its own partition it is still listed here and this loop sets it false
+            // after setting it true.  That is the RIGHT conclusion -- a variable that is
+            // a part of its own partition is forced empty -- but it must not report an
+            // empty explanation, which is what the message below used to be.
+            for (u <- unknown) setVar(u, false, "two parts of one partition both contain it")
           }
           if (bits.get(v) == Some(false)) {
             if (conBit) note("a part contains it but the whole does not")
-            for (u <- unknown) setVar(u, false, "")
+            for (u <- unknown) setVar(u, false, "a part contains it but the whole does not")
           }
           if (ones == 0 && unknown.isEmpty)
             setVar(v, false, "the whole contains it but no part does")
           if (bits.get(v) == Some(true) && ones == 0) unknown match {
             case Nil      => note("the whole contains it but no part can")
-            case u :: Nil => setVar(u, true, "")
+            case u :: Nil => setVar(u, true, "the whole contains it but no part can")
             case _        => ()
           }
         }

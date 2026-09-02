@@ -429,6 +429,14 @@ for that reason and must be checked against the real implementation.
 
 ### 4.2 A third defect: the documented resolution rule is stated backwards
 
+**FIXED 2026-09-01** (ticket item 8a). The header diagram now states the sound crossed
+pairing, with the reason and the Lean theorem names recorded in place. Two independent
+readings of `def resolution` that day confirmed the implementation always computed the
+sound form — which is the discharge of `tracker/lean/README.md`'s "proved on paper only"
+item 3, the one it says a reviewer should check against `Constraints.scala` directly.
+The paragraphs below describe the state before that fix.
+
+
 `Constraints.scala`'s header comment gives Resolution as
 
         a <- C* D* x

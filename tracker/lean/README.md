@@ -13,25 +13,58 @@ This development formalises that language and then audits the real solver
 against it: its inference rules, its canonicalisation, its divergence, and the fragment
 of the language that actually occurs in Ermine's own standard library.
 
-**Headline numbers.** 15 modules, 960 named theorems in source, **0 `sorry`**, **0
-custom axioms**. Every theorem's axiom set is a subset of Lean's three standard axioms
-(`propext`, `Classical.choice`, `Quot.sound`); `sorryAx` appears nowhere. This is
-checked mechanically by walking the whole environment — `Audit.lean` in this directory
-enumerates every theorem under the `Rowpartition` namespace and collects its axioms:
+**Headline numbers**, recounted mechanically on 2026-09-01. 22 modules, **1224 named
+theorems in source**, **0 `sorry`**, **0 custom axioms**. Every theorem's axiom set is a
+subset of Lean's three standard axioms (`propext`, `Classical.choice`, `Quot.sound`);
+`sorryAx` appears nowhere. This is checked by walking the whole environment — `Audit.lean`
+in this directory enumerates every theorem under the `Rowpartition` namespace and collects
+its axioms:
 
 ```
 $ lake env lean Audit.lean
-Rowpartition theorems audited: 1197; declarations using a non-standard axiom: 0
+Rowpartition theorems audited: 1465; declarations using a non-standard axiom: 0
 ```
 
-(1197 > 960 because the environment also carries generated equation and match-arm
-lemmas, which the audit checks too.)
+(1465 > 1224 because the environment also carries generated equation and match-arm lemmas,
+which the audit checks too; and 1224 counts `CutSearch`'s 125, which the audit does NOT
+see — see the correction below.)
 
-**Four modules were added after the original inventory was written** — `CutConcrete`,
-`CutSearch`, `SplitNecessary` and `LabelProp`. The detailed per-theorem
-[inventory](#complete-inventory) below still covers the original eleven; the four later
-modules are described under [Later additions](#later-additions) and are included in the
-axiom audit above.
+The source count is reproducible:
+
+```
+$ for f in Rowpartition/*.lean; do \
+    grep -cE '^(theorem|lemma|@\[simp\] theorem|protected theorem|private theorem)' $f; \
+  done | paste -sd+ | bc
+1224
+```
+
+The figures this paragraph used to give — "15 modules, 960 named theorems", and per-module
+counts of 86 for `Divergence`, 117 for `Cut`, 27 for `Compare`, 114 for `CutSearch`, 87 for
+`SplitNecessary` — did not match any reproducible count and are corrected in the module map
+below.
+
+**Modules added after the original inventory was written.** First `CutConcrete`,
+`CutSearch`, `SplitNecessary` and `LabelProp`; then, on 2026-09-01, `ResGuard`,
+`ResGuardTerm`, `ResGuardDiverge` and `Saturate` (ticket items 8c and 8a). The detailed
+per-theorem [inventory](#complete-inventory) below still covers the original eleven; the
+later modules are described under [Later additions](#later-additions).
+
+**Correction, 2026-09-01: `CutSearch` is NOT in the axiom audit, and never was.** The
+library root did not import it, so `lake build` never compiled it and `Audit.lean`, which
+walks the environment reachable from the root, never saw its theorems. Worse, it does not
+build in the current environment at all: `lake build Rowpartition.CutSearch` is killed by
+the OOM killer (`Lean exited with code 137`) on a 15 GB machine, twice, once with nothing
+else running. Its 125 theorems are therefore claimed on the strength of a `lake env lean`
+run recorded in a previous session and are NOT covered by any audit reproducible here.
+Every other module IS imported by the root and IS covered.
+
+**A standing caveat about citations.** Module headers written before 2026-09-01 cite
+`Constraints.scala` and `Subst.scala` by LINE NUMBER, and those numbers are stale — the
+solver files have grown by roughly 120 lines since (the `GenRules` flag object, the
+`resGuard` guard, the corrected resolution diagram). The theorem statements are unaffected;
+only the cross-references are. The modules added on 2026-09-01 cite by DEFINITION NAME
+(`Constraints.scala`, `def resolution`) for exactly this reason, and new work should do the
+same.
 
 **Four of the results are negative** — three informal claims turn out to be *false*, and
 they are the most useful things here. They are collected under
@@ -67,7 +100,7 @@ default `PATH`, so the export is required:
 export PATH="$HOME/.elan/bin:$PATH"
 cd ermine-scala/tracker/lean
 
-lake build                              # build the whole library (795 jobs)
+lake build                              # build the whole library (804 jobs, 2026-09-01)
 lake env lean Rowpartition/Rules.lean   # type-check ONE file (fast iteration)
 ```
 
@@ -81,8 +114,11 @@ namespace* — see [Integration log](#integration-log).
 
 ### Verified build status
 
-Every file was type-checked individually and as part of the root, at the state of this
-README:
+Every file was type-checked individually and as part of the root. The table lists the
+eleven-module state; on 2026-09-01 `ResGuard`, `ResGuardTerm`, `ResGuardDiverge`,
+`Saturate`, `Splice` and `LabelAlgo` were each verified the same way (`lake env lean`,
+exit 0, no output), the root builds, and `Audit.lean` reports 1465 theorems and 0
+non-standard axioms. `CutSearch` is the one module that does NOT build here at all.
 
 | file | `lake env lean` | notes |
 |---|---|---|
@@ -99,10 +135,19 @@ README:
 | `Rowpartition/LabelClass.lean` | **exit 0**, no output | |
 | `Rowpartition/Sanity.lean` | **exit 0** | one-line toolchain smoke test; `linter.style.header` warning |
 
-`lake build` → `Build completed successfully (795 jobs).`
+`lake build` → `Build completed successfully (804 jobs).` (2026-09-01, with the five
+modules added that day; `CutSearch` is NOT among them — see the correction at the top.)
 
-`lake build` emits 193 warnings and **0 errors**. All of them are Mathlib *style*
-linters, none touches a proof:
+**Build these one at a time on a small machine.** `lake` 5.0.0 has no `-j`/`--jobs` option,
+so a bare `lake build` runs as many elaborations in parallel as it likes and can exhaust
+memory. `lake build Rowpartition.<Module>` one module at a time is the reliable route, and
+`LEAN_NUM_THREADS` bounds the per-file parallelism.
+
+`lake build` emits **0 errors**. The warning counts in the table below were measured at
+the eleven-module state and are NOT current — the five modules added on 2026-09-01 add more
+`linter.style.header` warnings, since they follow the surrounding convention of a `/- … -/`
+block before the imports. All warnings are Mathlib *style* linters and none touches a
+proof:
 
 | linter | count | what it wants |
 |---|---|---|
@@ -171,17 +216,24 @@ because several informal rules get them wrong:
 | `Basic.lean` | 56 | Syntax, semantics, and the **label-decomposition theorem**: satisfaction is pointwise in the label, so one row problem is a family of independent Boolean problems. Plus finite-support reconstruction, and the fact that *entailment* decomposes per label exactly when the hypothesis system is satisfiable — with a counterexample showing the side condition cannot be dropped. |
 | `Rules.lean` | 97 | Every inference rule in `Constraints.scala`'s header comment, proved or refuted. Rules 1–5 and 7–11 sound; **rule 6 as written in the comment is unsound**. Fresh-variable rules are stated as `ConservativeExt`, which is the correct soundness notion for a rule that mints a variable. |
 | `Canonical.lean` | 88 | The six non-generative rules as a terminating, meaning-preserving calculus: well-founded lexicographic measure, exact model preservation, an executable deterministic driver that is both sound and exhaustive. **Confluence is refuted.** |
-| `Divergence.lean` | 86 | Why the solver blows up: the `commonSubexpression` rule is conservative (so the search is *pointless*, not merely slow), admits **no `ℕ`-valued decreasing measure at all**, and any saturated system over the `m`-constraint co-star has `≥ 2^m − m − 2` constraints. |
-| `Cut.lean` | 117 | The proposed **five-line cut**: delete `commonSubexpression`'s minting branch, keep REUSE and FOLD. The kept branches are non-generative, derive only *entailed contractions*, and **preserve the model set exactly**; the cut's risk is one-sided (it can accept an ill-typed program, never reject a well-typed one). But the cut rule set **does not terminate**, and the obstruction is identified precisely: `resolution`, which mints unconditionally. |
-| `Compare.lean` | 27 | The cut against `Canonical.lean`'s clean calculus, property by property. `Canonical`'s lexicographic measure runs strictly **backwards** on a rule the cut retains, on input that *has a model*; the cut inherits both of the clean calculus's negative results (non-confluence, non-decidability), and inheriting them is a theorem, not an observation. |
+| `Divergence.lean` | 81 | Why the solver blows up: the `commonSubexpression` rule is conservative (so the search is *pointless*, not merely slow), admits **no `ℕ`-valued decreasing measure at all**, and any saturated system over the `m`-constraint co-star has `≥ 2^m − m − 2` constraints. |
+| `Cut.lean` | 102 | The proposed **five-line cut**: delete `commonSubexpression`'s minting branch, keep REUSE and FOLD. The kept branches are non-generative, derive only *entailed contractions*, and **preserve the model set exactly**; the cut's risk is one-sided (it can accept an ill-typed program, never reject a well-typed one). But the cut rule set **does not terminate**, and the obstruction is identified precisely: `resolution`, which mints unconditionally. |
+| `Compare.lean` | 28 | The cut against `Canonical.lean`'s clean calculus, property by property. `Canonical`'s lexicographic measure runs strictly **backwards** on a rule the cut retains, on input that *has a model*; the cut inherits both of the clean calculus's negative results (non-confluence, non-decidability), and inheriting them is a theorem, not an observation. |
 | `Fragment.lean` | 61 | The **definitional fragment** — what Ermine's own stdlib residuals actually look like — is trivially satisfiable, has a structural leaf-expansion normal form, and has *decidable* entailment by a syntactic multiset test. Completeness needs an extra `Linear` hypothesis that the informal statement omitted. |
 | `Berthomieu.lean` | 48 | Berthomieu's `=_L` ("the rows agree outside the finite set `L`"), the device that keeps Wand-style concatenation disjunction-free. **Ermine cannot adopt it**: no `=_L` system defines `a <- (b, c)`, with any number of auxiliaries — and a complete classification of what does survive. |
 | `Pottier.lean` | 81 | The bridge to Pottier's LICS 2003 constraint language. His symmetric concatenation **is** Ermine's binary partition, exactly (`bridge`) — but the exactness is a consequence of dropping subtyping, the **ternary** partition is not definable at all over its own variables, and his Theorem 4's join-of-lower-bounds witness degenerates to the empty assignment. |
 | `LabelClass.lean` | 53 | Per-label reasoning costs one Boolean solve per **signature class**, not per label. Under a laminar hypothesis — one concrete block per database table — that is one solve per table plus one, **independent of schema width**. The two general bounds are shown simultaneously tight. |
 | `CutConcrete.lean` | 80 | The minting branch of `commonSubexpression` introduces no concrete label, so cutting it cannot lose a refutation that turns on a concrete label. |
-| `CutSearch.lean` | 114 | Bounded exhaustive counterexample hunt over small systems, by `decide` rather than `native_decide`, for the claim that the cut changes no verdict. |
-| `SplitNecessary.lean` | 87 | Why the fully non-generative variant is unsound: `splitConcrete` is load-bearing for error detection, and the five programs `nongen` wrongly accepts are exhibited. |
+| `CutSearch.lean` | 125 | Bounded exhaustive counterexample hunt over small systems, by `decide` rather than `native_decide`, for the claim that the cut changes no verdict. |
+| `SplitNecessary.lean` | 91 | Why the fully non-generative variant is unsound: `splitConcrete` is load-bearing for error detection, and the five programs `nongen` wrongly accepts are exhibited. |
 | `LabelProp.lean` | 22 | **Per-label unit propagation**, the refutation-only rule now implemented behind `-Dermine.labelCheck`. Soundness (`forced_sound`, `refuted_unsat`): the rule never rejects a satisfiable system. The soundness bug in `unsound01_keyed_halves.e` is refuted mechanically, its satisfiable sibling is kept, and the rule's **incompleteness is proved, not asserted** — an unsatisfiable system is exhibited that propagation provably cannot refute. |
+| `ResGuard.lean` | 20 | **Guarding `resolution`** with the resolvent reverse lookup — the analogue, for that rule, of the lookup `splitConcrete` already consults. The guard is not a semantic change: the reuse branch does not move the model set at all, the mint branch is a conservative extension, and `resolvent_unique` shows the variable the guard declines to mint is FORCED EQUAL to the one it reuses. |
+| `ResGuardTerm.lean` | 30 | …and the guarded rule **terminates on every satisfiable system**, with an explicit bound (`guarded_terminates_of_satisfiable`). The measure weights each variable's remaining resolvent-key budget by a power of the cardinality of the row it denotes: the guard bounds the keys, the MODEL bounds the depth, and neither ingredient works alone. |
+| `ResGuardDiverge.lean` | 33 | …and **not in general**. Four constraints on four variables and four labels admit guarded chains of every length (`gSeed_diverges`, `gres_no_decreasing_measure`). The seed is proved unsatisfiable, so the two halves are complementary — and `gSeed_refuted` proves per-label propagation kills it at one label in five steps, so the guard and the label check are complementary defences. |
+| `Saturate.lean` | 25 | **The licence to run the label check on the SATURATED set** (`refute_saturated_sound`): a satisfiable input stays satisfiable through any run of the solver. Adds the four behaviours no other step relation modelled — `makeEmpty`'s two halves, `makeConcrete`, rename-with-de-duplication, and DELETION — and proves the implication is STRICT (`satStep_not_reflecting`), so a refutation-only check may move there and an acceptance check may not. |
+| `Splice.lean` | 29 | **`Subst.reduce`'s second case** (ticket 8b). The splice is sound with NO side condition — the concrete parts are automatically disjoint and a duplicated variable is automatically empty — and exactly conservative for one splice. But `DroppedPartition.dropped_can_lose` exhibits a satisfiable system with no concrete labels on which the emitted residual FAILS to entail a consequence of the input, because `reduce` never rewrites a left-hand side. |
+| `LabelAlgo.lean` | 57 | **The Scala `checkLabel` fixpoint itself**, not just the rule it implements: every bit the algorithm writes is `Forced` (`algoWrite_forced`), so every clash it reports is a genuine refutation (`checkLabel_clash_unsat`). Closes what `Saturate` calls the weakest link. And `DupNeeded.nodup_needed` shows the `ones > 1` branch is sound ONLY because the Scala's right-hand side is a `Set`: with a duplicated variable part it fires where `Forced` derives nothing. |
+| `SpliceGuard.lean` | 17 | **The licence for the 8b repair.** `SpliceOK` packages the three side conditions of `splice_entails_iff` as ONE DECIDABLE predicate — so the compiler can test them — and `reduce2G` is the guarded fold. `reduce2G_backward`: a model of the guarded residual extends, changing only ambiguous variables, to a model of the input. `reduce2G_preserves_entailment` is unconditional. `dropped_fixed_entails` shows the guard repairs `DroppedPartition`, and `spliceOK_fires` that it is not merely "never splice". |
 | `Sanity.lean` | 0 | A single `example`: a toolchain smoke test, no content. |
 
 ---
@@ -219,8 +271,10 @@ Two structural facts separate this rule from `disjunction`, and they are why one
 adoptable and the other is not:
 
 * it **emits no constraint and mints no variable**, so it cannot feed the saturation
-  loop — `models_unchanged` states that the system the compiler reasons about afterwards
-  is literally the one it started with;
+  loop. NOTE, corrected 2026-09-01: this is visible from the SHAPE of `Forced`, whose
+  conclusion is a `Prop` about the system and never a system — it is *not* established by
+  `models_unchanged`, which is literally `Models rho G ↔ Models rho G := Iff.rfl`, a
+  tautology with no content. That declaration records the intent and proves nothing;
 * it **ranges only over labels occurring in a `ConcreteRho`**, so a general helper
   signature with no concrete instance has no labels to check and is untouched.
 
@@ -237,6 +291,54 @@ cannot lose a concrete-label refutation. `CutSearch` runs a bounded exhaustive
 counterexample search by `decide` (not `native_decide`, so no compiler trust is
 involved). `SplitNecessary` proves the complementary negative: `splitConcrete` is
 load-bearing, which is why the fully non-generative `nongen` variant is unsound.
+
+### 2026-09-01: `ResGuard`, `ResGuardTerm`, `ResGuardDiverge`, `Saturate`, `Splice`
+
+Ticket items 8c, 8a and 8b — full write-up in `tracker/TICKET-row-solver-8abc.md`.
+
+`Cut.lean` §5 left `resolution` as the sole obstruction to termination of the cut rule set,
+and observed that the guard it needs already exists elsewhere in the same file. These
+modules take that step and settle what it buys.
+
+* **`ResGuard`** — the guard. `resolution`'s minted `z` has no defining partition, so
+  `Cut.Named` is the wrong lookup; what names `z` is the rule's own first conclusion,
+  `v <- (z, C ∪ D)`. Guarding on that is provably not a semantic change: the reuse branch
+  does not move the model set (`GResStep.reuse_models_iff`), the mint branch is a
+  conservative extension, and `resolvent_unique` shows the variable the guard declines to
+  mint is FORCED EQUAL to the one it reuses (`guard_loses_nothing`).
+* **`ResGuardTerm`** — `guarded_terminates_of_satisfiable`, with an explicit bound. The
+  measure weights each variable's remaining resolvent-key budget by a power of the
+  cardinality of the row it denotes. The guard alone bounds nothing, because minting
+  creates variables with fresh budgets; the MODEL supplies the descent (`mint_rank_lt`).
+  Contrast `Cut.resSeed_diverges`, which runs on a system that *has* a model.
+* **`ResGuardDiverge`** — and it does NOT terminate in general: four constraints admit
+  guarded chains of every length (`gSeed_diverges`, `gres_no_decreasing_measure`). The
+  seed is proved unsatisfiable, so the halves are complementary rather than contradictory
+  — and `gSeed_refuted` proves `LabelProp`'s propagation kills it at one label in five
+  steps, which is why the guard and the label check are complementary defences.
+* **`Saturate`** — the licence for item 8a: a satisfiable input stays satisfiable through
+  any run of the solver (`SatSteps.sat_mono`), so a refutation on the saturated set refutes
+  the input (`refute_saturated_sound`). Adds the four behaviours no other step relation
+  modelled: `makeEmpty`'s two halves, `makeConcrete`, rename-with-de-duplication, and
+  DELETION — every previous step relation is monotone by construction. And it proves the
+  implication STRICT (`satStep_not_reflecting`): a refutation-only check may move to the
+  saturated set, an acceptance check may not.
+* **`Splice`** — item 8b, and the answer is a counterexample. `Subst.reduce`'s second case
+  is sound (`splice_sat`, with no side condition — the concrete-part disjointness and the
+  duplicate case both discharge themselves) and exactly conservative for one splice
+  (`spliceG_backward`). But `DroppedPartition.dropped_can_lose` exhibits a satisfiable
+  four-variable system with no concrete labels on which the emitted residual FAILS to
+  entail a consequence of the input. The cause is precise, and it is not the drop:
+  `reduce` never rewrites a LEFT-hand side, so an ambiguous variable that still heads a
+  constraint in the published list is left with nothing tying it to the rest.
+  `dropped_loses_nothing` is the positive half, under exactly the hypothesis the
+  counterexample violates.
+* **`SpliceGuard`** — the repair, licensed. Those three hypotheses are all syntactically
+  decidable, so the compiler can check them and skip the splice when they fail; that is
+  `-Dermine.spliceGuard`. `reduce2G_backward` proves the guarded fold conservative,
+  `reduce2G_preserves_entailment` — with no hypothesis about the saturated set at all —
+  that every consequence of the input over non-ambiguous variables survives, and
+  `dropped_fixed_entails` that the guard repairs the counterexample above.
 
 
 ## What is proved in Lean / what is proved on paper / what is cited
@@ -334,16 +436,31 @@ in a module's prose and is **not** backed by a Lean theorem:
    repairing non-confluence by letting `occurs` detect the contradiction when
    `c.conc ≠ ∅` instead of blocking, and says outright: "I expect the latter joins this
    particular pair, but I did not prove that."
-3. **That the Scala `def resolution` implements the sound pairing.** `Rules.lean` reports
-   from a *reading of the Scala source* that `resolution` derives `x <- bots z` with
-   `bots = concr2 -- (concr1 & concr2)`, i.e. the correct `E \ C` / `C \ E` form proved
-   as `rule6`. The Lean development proves that this form is sound; it does not and
-   cannot verify that the Scala code computes it. **A reviewer who wants that link should
-   re-read `Constraints.scala` directly.**
+3. ~~**That the Scala `def resolution` implements the sound pairing.**~~ **DISCHARGED
+   2026-09-01.** `Rules.lean` reported from a *reading of the Scala source* that
+   `resolution` derives `x <- bots z` with `bots = concr2 -- (concr1 & concr2)`, i.e. the
+   correct `E \ C` / `C \ E` form proved as `rule6`, and said a reviewer wanting the link
+   should re-read `Constraints.scala` directly. Two independent readings did that on
+   2026-09-01 and confirmed it, with the substitution written out: `D := concr1 ∩ concr2`,
+   `C := tops`, `E := bots`, under which `rule6`'s two disjointness hypotheses are
+   set-difference identities and hold unconditionally. It remains a reading, not a
+   verification of the Scala — Lean cannot check Scala — but it is no longer an unchecked
+   one. The FILE-HEADER diagram, which stated the unsound own-premise pairing, has been
+   corrected.
 4. **That the Scala solver is saved from `Divergence`'s non-termination by its `rhss`
    reverse lookup and queue de-duplication.** Stated as a design observation about the
    engine, not proved. What *is* proved is that the rule as documented has no termination
    argument.
+
+   Sharpened 2026-09-01, still not proved. The engine has a third discipline the rule sets
+   here do not model: `learnPartitions` compares the INCOMING partition against `proc`
+   only, so a fixed PAIR of premises is examined exactly once — when the later of the two
+   is incorporated — whereas every step relation in this development lets a matching pair
+   fire forever. That is why `Cut.resSeed_diverges` and `ResGuardDiverge.gSeed_diverges`
+   are statements about RULE SETS and not reproducible compiler hangs, and it is visible
+   in the corpus: the Ermine transcription of `gSeed` is REJECTED by the shipped compiler
+   in 0.03s, by rules the model does not include. A faithful model of the engine would
+   have to carry the incoming/processed split, and none here does.
 
 ### Cited (empirical, from outside Lean)
 

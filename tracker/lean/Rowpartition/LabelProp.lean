@@ -185,9 +185,17 @@ theorem not_refuted_of_sat {G : List Constraint} (h : ∃ rho, Models rho G) : �
 
 Two structural properties that separate this rule from `Constraints.disjunction`. -/
 
-/-- Propagation only gains power as the system grows: derived facts survive
-weakening.  So running the check on the SATURATED set, as the implementation does,
-is at least as strong as running it on the input. -/
+/-- Propagation only gains power as the system GROWS: derived facts survive weakening.
+
+CORRECTED 2026-09-01 (ticket item 8a).  This docstring used to read "so running the check
+on the SATURATED set, as the implementation does, is at least as strong as running it on
+the input".  Both halves were wrong.  `Subst.solve` runs `labelClash` on the INPUT
+partitions (`q.toList.map(_.tup)`), not on `q.expand`; and even if it did, the conclusion
+would not follow from this theorem, because the saturated set is not a SUPERSET of the
+input — `makeEmpty`, `makeConcrete`, `destructiveSub` and `instantiate` all delete
+partitions and rename variables, so `G ⊆ G'` simply does not hold between the two.  What
+would license reading the saturated set is "input satisfiable ⇒ saturated set satisfiable"
+(`Rowpartition.Saturate`), which is a different statement about a different set of rules. -/
 theorem forced_mono {l : Label} {G G' : List Constraint} (hsub : G ⊆ G')
     {v : Var} {x : Bool} (hf : Forced l G v x) : Forced l G' v x := by
   induction hf with
@@ -204,11 +212,20 @@ theorem refuted_mono {G G' : List Constraint} (hsub : G ⊆ G') (h : Refuted G) 
   obtain ⟨l, v, ht, hf⟩ := h
   exact ⟨l, v, forced_mono hsub ht, forced_mono hsub hf⟩
 
-/-- **The rule is not generative.**  Its verdict is a proposition ABOUT `G`; it emits
-no constraint, so the system whose models the compiler goes on to reason about is
-literally unchanged.  This is the property `Constraints.disjunction` lacks -- that
-rule mints a fresh variable on every emission path and feeds the result back into
-saturation, which is why enabling it does not terminate (ticket §7.12). -/
+/-- **The rule is not generative** -- recorded, not proved.
+
+READ THIS BEFORE CITING IT (corrected 2026-09-01, ticket item 8a).  The statement below is
+`Models rho G ↔ Models rho G`, discharged by `Iff.rfl`.  It is a TAUTOLOGY.  It carries no
+mathematical content and it is not evidence for anything; it exists only to write down, in
+the vocabulary of this file, the observation that the rule's verdict is a proposition ABOUT
+`G` and that no constructor of `Forced` produces a constraint.  The substantive form of
+"non-generative" is the SHAPE of the rule -- `Forced : Label → List Constraint → Var → Bool
+→ Prop` has no `List Constraint` in its conclusion -- and that is visible from the
+declaration, not from this theorem.
+
+The contrast with `Constraints.disjunction` (which mints a fresh variable on every emission
+path and feeds the result back into saturation, ticket §7.12) is real, but it is an
+observation about the two rules' types, not a consequence of the line below. -/
 theorem models_unchanged (G : List Constraint) (rho : Assign) :
     Models rho G ↔ Models rho G := Iff.rfl
 

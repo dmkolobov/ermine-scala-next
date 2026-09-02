@@ -85,13 +85,35 @@ retained anywhere the editor path can see them, so this is a design change with 
 measured cost, not a patch. It is the remaining gap against the stated goal that
 every value be hoverable.
 
-## 8. Row-solver work not finished
+## 8. Row-solver work not finished — ANSWERED 2026-09-01
 
-- The label check reads the INPUT partitions. Running it on the saturated set would
-  be strictly stronger (`Rowpartition.forced_mono`), but only once every saturation
-  rule is known sound or conservative — and `Rules.lean` shows rule 6's documented
-  form is not. Settling that would buy more refutations.
-- The interaction with `reduce`'s second case is unexamined.
-- `cut` removes the measured cliff but is NOT a termination proof: `Cut.lean` shows
-  the cut rule set still does not terminate, the remaining obstruction being
-  `resolution`, which mints unconditionally.
+Full write-up, with the Lean theorem names and the measurements:
+**`tracker/TICKET-row-solver-8abc.md`**. Summary of the three bullets as they stood:
+
+- **8a, the label check on the saturated set.** LICENSED. The old justification was
+  wrong twice over — `forced_mono` is monotone in the SYSTEM and `q.expand` is not a
+  superset of `q` (it deletes and renames), and the code never implemented rule 6's
+  unsound documented form in the first place. The correct licence is
+  `Rowpartition.refute_saturated_sound` (`Rowpartition/Saturate.lean`): a satisfiable
+  input stays satisfiable through any run of the solver, so a refutation on the
+  saturated set really does refute the input. Behind `-Dermine.labelCheckSaturated`,
+  default off. The implication is STRICT (`satStep_not_reflecting`): a refutation-only
+  check may move there, an acceptance check may not.
+- **8b, `reduce`'s second case.** SETTLED, and the answer is NEGATIVE.
+  `Rowpartition/Splice.lean` proves the splice sound (`splice_sat`, `reduce2_models`)
+  and exactly conservative for ONE splice (`spliceG_backward`), but
+  `DroppedPartition.dropped_can_lose` exhibits a satisfiable four-variable system with
+  no concrete labels at all on which the emitted residual FAILS to entail a consequence
+  of the input. The cause is precise: `reduce` never rewrites a LEFT-hand side, so an
+  ambiguous variable that also heads a constraint in the published list is left with
+  nothing tying it to the rest. `dropped_loses_nothing` is the positive half, under the
+  hypothesis (`hlhs`) that the counterexample violates.
+- **8c, making the cut terminate.** DONE, with a dichotomy. Guarding `resolution` with
+  the resolvent reverse lookup is provably not a semantic change
+  (`Rowpartition/ResGuard.lean`), makes the rule terminate on every SATISFIABLE system
+  with an explicit bound (`guarded_terminates_of_satisfiable`), and does NOT restore
+  termination in general (`gSeed_diverges`) — the surviving divergent seeds are all
+  unsatisfiable, and the per-label check refutes the witness at one label
+  (`gSeed_refuted`), so the two defences are complementary. Behind `-Dermine.resGuard`,
+  default off. Measured on a probe family built for the purpose: there is a second
+  cliff driven by `resolution` on a WELL-TYPED program, and the guard removes it.
