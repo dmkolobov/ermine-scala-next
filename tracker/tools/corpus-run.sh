@@ -29,6 +29,10 @@ set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$here"
+# set it here rather than relying on the caller: a background invocation without it
+# produces 66 files of `bin/ermine: exec: java: not found` and a comparison that reads
+# "0 of 66 differ" (2026-09-02)
+export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 
 incomplete=0
 if [[ ${1:-} == "--incomplete" ]]; then incomplete=1; shift; fi

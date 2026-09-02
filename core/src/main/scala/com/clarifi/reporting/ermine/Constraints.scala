@@ -758,37 +758,20 @@ object Constraints {
      * DEFAULT OFF. */
     val labelCheckEarly: Boolean =
       System.getProperty("ermine.labelCheckEarly", "false") == "true"
-    /* Orthogonal (ticket item 8a): run `labelClash` on the SATURATED set `q.expand`
-     * rather than on the input partitions.  Strictly more to look at, hence potentially
-     * more refutations.  Licensed by `Rowpartition.refute_saturated_sound`
-     * (`tracker/lean/Rowpartition/Saturate.lean`): for the rule set `genRules=cut` runs,
-     * a satisfiable input stays satisfiable through the saturation, so a clash there
-     * refutes the input and cannot reject a well-typed program.  Mutually exclusive with
-     * `labelCheckEarly`, which by definition runs before the saturation exists.
-     * DEFAULT OFF. */
-    val labelCheckSaturated: Boolean =
-      System.getProperty("ermine.labelCheckSaturated", "false") == "true"
-    /* Orthogonal (ticket item 8b): make `Subst.reduce`'s second case check the three side
-     * conditions that make its splice CONSERVATIVE, and skip the splice when they fail.
-     *
-     * Without them the published residual can be strictly WEAKER than the constraints the
-     * user wrote -- `Rowpartition.Splice.DroppedPartition.dropped_can_lose` is a
-     * satisfiable system with no concrete labels where a consequence of the input is no
-     * longer entailed by what the compiler publishes.  The guard is licensed by
-     * `Rowpartition.reduce2G_backward`; `Rowpartition.dropped_fixed_entails` shows it
-     * repairs that counterexample, and `spliceOK_fires` that it is not just "never splice".
-     *
-     * Skipping is sound in the safe direction: the residual keeps `v` and its constraints,
-     * so it gets STRONGER, never weaker, and is still entailed by the input.  But it
-     * changes published signatures, hence DEFAULT OFF and a corpus measurement.  The trace
-     * record `splice` carries the three flags whether or not this is enabled, so the
-     * frequency of each condition can be measured without changing behaviour. */
-    val spliceGuard: Boolean = System.getProperty("ermine.spliceGuard", "false") == "true"
+    /* REMOVED 2026-09-02, both measured and declined; see
+     * `tracker/TICKET-row-solver-8abc.md` and the Lean that still licenses them.
+     *   `ermine.labelCheckSaturated` -- run the check on `q.expand` instead of the input.
+     *     Sound (`Rowpartition.refute_saturated_sound`), but it refuted ZERO additional
+     *     programs on the 66-file example corpus AND the 34-file incompleteness corpus,
+     *     which is item 8a's own stopping condition.
+     *   `ermine.spliceGuard` -- skip a `Subst.reduce` splice that is not provably
+     *     conservative.  Correct (`Rowpartition.reduce2G_backward`), but its precondition
+     *     fails on 90% of splices and diffing the published `.ei` showed it DEGRADES
+     *     signatures, turning resolved concrete rows into constrained polymorphic ones.
+     * The proofs are kept; the flags were dead weight. */
     override def toString =
       mode + (if (disjRule) "+disj" else "") + (if (labelCheck) "+label" else "") +
-        (if (labelCheckEarly) "-early" else "") +
-        (if (labelCheckSaturated) "-sat" else "") + (if (resGuard) "+resguard" else "") +
-        (if (spliceGuard) "+spliceguard" else "")
+        (if (labelCheckEarly) "-early" else "") + (if (resGuard) "+resguard" else "")
   }
   case object Disjunction         extends Inference
 

@@ -1042,52 +1042,45 @@ object Subst {
         instantiateType(v, ConcreteRho(lc, fs))
         cs.map(substType _)
       case (Partition(v, RHS(abs, con), inf), cs) if v.ty.ambiguous || es.contains(v) =>
-        /* The three side conditions of `Rowpartition.splice_entails_iff`
-         * (`tracker/lean/Rowpartition/Splice.lean`), which are exactly what makes this
-         * splice CONSERVATIVE rather than merely sound.  Without the first,
-         * `Splice.DroppedPartition.dropped_can_lose` exhibits a satisfiable system with no
-         * concrete labels on which the residual we publish stops entailing a consequence
-         * of the input -- because this case substitutes `v` away on right-hand sides,
-         * discards the partition it substituted WITH, and never rewrites a left-hand side,
-         * so a `v` that still heads a constraint here is left with nothing tying it to the
-         * rest.  All three are decidable, which is the point: the compiler can test them.
-         *   hlhs -- `v` heads no constraint of the emitted list
-         *   hdis -- every constraint mentioning `v` has concrete blocks disjoint from `con`
-         *   hdup -- `v` occurs at most once per right-hand side, or `con` is empty
-         * `Rowpartition.reduce2G_backward` proves the guarded fold conservative and
-         * `dropped_fixed_entails` that it repairs the counterexample. */
-        def concrOf(t: Type): Set[Name] = t match {
-          case ConcreteRho(_, s) => s
-          case Con(_, n, _, _)   => Set(n)
-          case _                 => Set()
+        /* `Rowpartition.splice_entails_iff` (tracker/lean/Rowpartition/Splice.lean) proves
+         * this splice CONSERVATIVE under three side conditions -- `v` heads no constraint
+         * of the emitted list, concrete parts disjoint, `v` not repeated in a right-hand
+         * side -- and `Splice.DroppedPartition.dropped_can_lose` exhibits a system where
+         * dropping the first of them loses a consequence of the input.  Guarding on them
+         * was implemented, measured and REMOVED (2026-09-02): the first condition fails on
+         * 90% of splices, and skipping those degrades published signatures from resolved
+         * concrete rows to constrained polymorphic ones.  The conditions survive as a
+         * trace-only diagnostic, computed only when `-Dermine.rowTrace` is set. */
+        val csp = cs map {
+          case Part(loc, l, rs) => Part(loc, l, rs flatMap {
+              case VarT(`v`) => ConcreteRho(lc, con) :: abs.toList.map(VarT(_))
+              case x         => List(x)
+            }
+          )
+          case x => x
         }
-        val hlhs = !cs.exists { case Part(_, VarT(u), _) => u == v ; case _ => false }
-        val hdis = cs.forall {
-          case Part(_, _, rs) =>
-            !rs.exists { case VarT(u) => u == v ; case _ => false } ||
-              (rs.flatMap(concrOf).toSet & con).isEmpty
-          case _ => true
-        }
-        val hdup = con.isEmpty || cs.forall {
-          case Part(_, _, rs) => rs.count { case VarT(u) => u == v ; case _ => false } < 2
-          case _              => true
-        }
-        val ok = hlhs && hdis && hdup
-        val csp =
-          if (GenRules.spliceGuard && !ok) cs
-          else cs map {
-            case Part(loc, l, rs) => Part(loc, l, rs flatMap {
-                case VarT(`v`) => ConcreteRho(lc, con) :: abs.toList.map(VarT(_))
-                case x         => List(x)
-              }
-            )
-            case x => x
-          }
         RowTrace.log("splice\t" + RowTrace.site + "\t" + RowTrace.clean(lc.toString) +
                      "\t" + v + "\t" + abs.size + "\t" + con.size +
                      "\t" + inf.fold("INPUT")(_.toString) +
-                     "\t" + (csp != cs) +
-                     "\t" + hlhs + "\t" + hdis + "\t" + hdup)
+                     "\t" + (csp != cs) + {
+                       def concrOf(t: Type): Set[Name] = t match {
+                         case ConcreteRho(_, s) => s
+                         case Con(_, n, _, _)   => Set(n)
+                         case _                 => Set()
+                       }
+                       val hlhs = !cs.exists { case Part(_, VarT(u), _) => u == v ; case _ => false }
+                       val hdis = cs.forall {
+                         case Part(_, _, rs) =>
+                           !rs.exists { case VarT(u) => u == v ; case _ => false } ||
+                             (rs.flatMap(concrOf).toSet & con).isEmpty
+                         case _ => true
+                       }
+                       val hdup = con.isEmpty || cs.forall {
+                         case Part(_, _, rs) => rs.count { case VarT(u) => u == v ; case _ => false } < 2
+                         case _              => true
+                       }
+                       "\t" + hlhs + "\t" + hdis + "\t" + hdup
+                     })
         csp
       case (_, cs) => cs
     }
@@ -1167,15 +1160,10 @@ object Subst {
     // of the constraints the user wrote, which is what `Rowpartition/LabelProp.lean`
     // proves (`forced_sound`, `refuted_unsat`, `not_refuted_of_sat`).
     //
-    // ADDED 2026-09-01 (ticket item 8a): `-Dermine.labelCheckSaturated=true` runs the
-    // check on `ps` instead.  Licensed by `Rowpartition.refute_saturated_sound`
-    // (tracker/lean/Rowpartition/Saturate.lean), which proves "input satisfiable =>
-    // every system the saturation reaches is satisfiable" for the rule set the default
-    // `genRules=cut` runs -- so a clash on `ps` really does refute the input, and
-    // `saturated_not_refuted_of_sat` says a satisfiable input is never refuted there.
-    // DEFAULT OFF: the question the ticket asks is how many MORE programs it refutes.
-    if (!GenRules.labelCheckEarly)
-      checkLabels(if (GenRules.labelCheckSaturated) ps.map(_.tup) else q.toList.map(_.tup))
+    // Reading `ps` instead is SOUND -- `Rowpartition.refute_saturated_sound`,
+    // tracker/lean/Rowpartition/Saturate.lean -- and was measured on both corpora at ZERO
+    // additional refutations, so the flag for it was removed again.  See item 8a.
+    if (!GenRules.labelCheckEarly) checkLabels(q.toList.map(_.tup))
     Exists(l, List(), reduce(l, cs map (substType _), es, ps))
   }
 

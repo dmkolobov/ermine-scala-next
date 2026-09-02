@@ -49,6 +49,14 @@ def main():
                  sum(1 for v, _ in a.values() if v == "UNKNOWN"), len(a)))
         return 0
     b = read(sys.argv[2])
+    # an all-UNKNOWN side means the runs produced nothing (a missing PATH, a bad
+    # classpath); comparing them yields a meaningless "0 differ" (2026-09-02)
+    for name, d in ((sys.argv[1], a), (sys.argv[2], b)):
+        if d and all(v == "UNKNOWN" for v, _ in d.values()):
+            print("REFUSING TO COMPARE: every run in %s is UNKNOWN -- those invocations\n"
+                  "produced neither 'Importing module' nor 'Unable to load module'.\n"
+                  "Check the .out files before reading anything into a diff." % name)
+            return 2
     changed = 0
     for k in sorted(set(a) | set(b)):
         va, ma = a.get(k, ("MISSING", ""))
