@@ -134,6 +134,9 @@ non-standard axioms. `CutSearch` is the one module that does NOT build here at a
 | `Rowpartition/Pottier.lean` | **exit 0**, no output | the slowest module, 3.7 s |
 | `Rowpartition/LabelClass.lean` | **exit 0**, no output | |
 | `Rowpartition/Sanity.lean` | **exit 0** | one-line toolchain smoke test; `linter.style.header` warning |
+| `Rowpartition/NameLoss.lean` | **exit 0**, no output | 2026-09-02; 3 s |
+| `Rowpartition/NameLossClosed.lean` | **exit 0**, no output | 2026-09-02; 26 s (the 81-pair case analyses); one `linter.flexible` warning under `lake build` |
+| `Rowpartition/NameLossDerivation.lean` | **exit 0**, no output | 2026-09-02; 5 s |
 
 `lake build` → `Build completed successfully (804 jobs).` (2026-09-01, with the five
 modules added that day; `CutSearch` is NOT among them — see the correction at the top.)
@@ -235,6 +238,9 @@ because several informal rules get them wrong:
 | `LabelAlgo.lean` | 57 | **The Scala `checkLabel` fixpoint itself**, not just the rule it implements: every bit the algorithm writes is `Forced` (`algoWrite_forced`), so every clash it reports is a genuine refutation (`checkLabel_clash_unsat`). Closes what `Saturate` calls the weakest link. And `DupNeeded.nodup_needed` shows the `ones > 1` branch is sound ONLY because the Scala's right-hand side is a `Set`: with a duplicated variable part it fires where `Forced` derives nothing. |
 | `SpliceGuard.lean` | 17 | **The licence for the 8b repair.** `SpliceOK` packages the three side conditions of `splice_entails_iff` as ONE DECIDABLE predicate — so the compiler can test them — and `reduce2G` is the guarded fold. `reduce2G_backward`: a model of the guarded residual extends, changing only ambiguous variables, to a model of the input. `reduce2G_preserves_entailment` is unconditional. `dropped_fixed_entails` shows the guard repairs `DroppedPartition`, and `spliceOK_fires` that it is not merely "never splice". |
 | `DerivedColumn.lean` | 4 | **Settles quality-vs-soundness for the 2026-09-02 signature regressions.** Four definitions began publishing `forall t. (exists ..) => Relation t` where they had published a concrete row. `t_determined_of_sat`: the three published constraints force `rho t = insert d K`, so the two forms accept exactly the same consumers and the regressions are QUALITY defects, not soundness ones. Proved for the SHAPE ("add one derived column to a relation with a concrete header"), which recurs in `BatteryCycling`, `RevenueByPeriod`, `HeadcountPlan` and `ClinicalTrial`. Needs NEITHER `L ⊆ K` nor `d ∉ K` — a first version assumed both, Lean reported one unused, and chasing that produced an argument needing neither, nor the `Pairwise Disjoint` halves of the hypotheses. |
+| `NameLoss.lean` | 42 | **The substitution gap (2026-09-02) is a race, not the redundant partition.** `concretize` is `makeConcrete`/`destructiveSub` as a function on systems (rewrite every mention of `u`, DROP every definition, keep `u <- C`); `concretize_sound`. On the three-constraint instance `(|k,c|) <- ((|k|),x,y); (|d|) <- (x,z); t <- (x,y,z)`: the cut reaches the race state in two steps (`grace_reached`); fold-then-concretise keeps `t <- ((|c|), z)` (`orderA_has_fact`), concretise-first leaves exactly the input plus `u <- (|c|)` (`orderB_eq`) which still ENTAILS `t = (|c,d|)` (`orderB_entails_goal`) and on which a re-mint is enabled (`orderB_remint_enabled`) -- the single-pass loop never performs it. The fix (`concretizeKeep`, keep definitions with two or more abstract parts; adopted unconditionally in `destructiveSub` the same day) is sound (`concretizeKeep_sound`) and recovers the fact in two non-generative steps (`keep_recovers_fact`). |
+| `NameLossClosed.lean` | 20 | **No non-generative rule recovers it.** `Cl`, the solver's saturated set for the losing order (plus the degenerate `D <- (D)` the Lean `reuse` emits), is closed under `NonGenStep` (`Cl_closed`, rule by rule over all 81 pairs), the rules are monotone (`NonGenStep.mono`), hence `orderB_stuck`: no `NonGenSteps` run from the concretise-first system contains the fact, the goal, or any name for `{x, y}`; `keep_vs_delete` states the contrast. |
+| `NameLossDerivation.lean` | 53 | **In the other order the solver's own relation pins `t`.** Eleven explicit `SatStep`s from the race state -- fold, subst, fold, subst, resolution (mint), subst, split (mint), cancellation, two `makeEmpty` propagations, one erasure -- to `t <- (|c, d|)` (`orderA_steps`, `orderA_derives_goal`), composed with `grace_reached` into `input_derives_goal : SatSteps 13 G₀ S11 ∧ tGoal ∈ S11`. |
 | `Sanity.lean` | 0 | A single `example`: a toolchain smoke test, no content. |
 
 ---
@@ -341,6 +347,42 @@ modules take that step and settle what it buys.
   that every consequence of the input over non-ambiguous variables survives, and
   `dropped_fixed_entails` that the guard repairs the counterexample above.
 
+
+### 2026-09-02: `NameLoss`, `NameLossClosed`, `NameLossDerivation`
+
+The answer to `tracker/PROMPT-substitution-gap.md` (write-up:
+`tracker/TICKET-substitution-gap.md`). The three files model ONE step the development had
+not modelled -- `makeConcrete`'s deletion of the definitions of the variable it makes
+concrete -- and show on the smallest input that exhibits it that the deletion races the
+cut's common-subexpression fold: applied before the fold, no non-generative rule ever
+recovers what the fold would have learnt (`NameLossClosed.orderB_stuck`); applied after
+it, the solver's own `SatSteps` reach the concrete row (`NameLossDerivation.
+orderA_derives_goal`). The concretise-first system still ENTAILS the row
+(`NameLoss.orderB_entails_goal`), and a re-mint is enabled on it
+(`NameLoss.orderB_remint_enabled`) -- the additive calculus would recover; the single-pass
+`incorporateAll` never re-examines the partition. Which order the solver takes is decided
+by the priority-queue key, i.e. by the variable ids.
+
+Tactic note, recorded because it cost a few compile rounds: `decide` cannot reduce a goal
+containing `mk`, `slist` or `vset (mk ..)` -- `slist` is `Finset.sort`, well-founded
+recursion the kernel does not unfold. Every closed goal in these files is first rewritten
+with `simp` (`vset_mk`, `conc_mk`, `lhs_mk`, the new `NameLoss.mk_eq_iff`, the unfolded
+abbreviations so that `Nat` literal simprocs fire) and only then closed by `decide` on the
+residual literal-`Finset ℕ` propositions; the `nl_decide` / `nlc_decide` / `nld_decide`
+macros package this.
+
+Root: `Rowpartition.lean` imports all three; `lake build Rowpartition` -> `Build completed
+successfully (809 jobs)`. `Audit.lean` after integration: **1625 theorems audited, 0 using
+a non-standard axiom** (was 1465). Fifteen headline theorems checked one at a time with
+`#print axioms`: all `[propext, Classical.choice, Quot.sound]`.
+
+Two pre-existing README/source discrepancies noticed while surveying for this work, NOT
+fixed here: (1) `DerivedColumn.lean`'s header cites `redundant_premise_dropped` and
+`t_not_determined_without_disjointness`, which exist nowhere, and hypotheses (`L ⊆ K`,
+`d ∉ K`) the theorems do not take; this README's row for it says 4 theorems, the file has
+3. (2) This README's `forced_mono` row still says "running on the saturated set is at
+least as strong as on the input", which `LabelProp.lean`'s own docstring (2026-09-01)
+retracts.
 
 ## What is proved in Lean / what is proved on paper / what is cited
 

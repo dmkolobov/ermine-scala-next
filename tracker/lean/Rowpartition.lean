@@ -37,6 +37,12 @@ first getting the module to build.
 * `Rowpartition.SpliceGuard` -- the licence for the 8b REPAIR: guarding the splice on the
                                three conditions of `splice_entails_iff` makes it conservative,
                                and repairs the `DroppedPartition` counterexample
+* `Rowpartition.NameLoss`   -- the substitution gap (2026-09-02): `makeConcrete` deletes the
+                               name `splitConcrete` minted, and under the cut the later fold
+                               needs it; the race, on the three-constraint instance
+* `Rowpartition.NameLossClosed` -- ...concretise first, and no non-generative rule ever
+                               recovers the fact: the solver's saturated set is closed
+* `Rowpartition.NameLossDerivation` -- ...fold first, and `SatSteps` reach `t <- (|c, d|)`
 * `Rowpartition.Sanity`     -- a standalone toolchain smoke test
 -/
 import Rowpartition.Basic
@@ -61,3 +67,6 @@ import Rowpartition.Splice
 import Rowpartition.LabelAlgo
 import Rowpartition.SpliceGuard
 import Rowpartition.DerivedColumn
+import Rowpartition.NameLoss
+import Rowpartition.NameLossClosed
+import Rowpartition.NameLossDerivation
