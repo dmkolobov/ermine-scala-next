@@ -593,6 +593,7 @@ pre-existing failures unrelated to any of this work:
 | 34-file `incomplete/`, `-Dermine.resGuard=true` | **0 of 34 differ** (V+M) |
 | 34-file `incomplete/`, `-Dermine.labelCheckSaturated=true` | **0 of 34 differ** (V+M) |
 | **cumulative**: 66-file corpus, today's defaults vs pre-work compiler | **0 of 66 differ** (V+M) — 23 LOADED / 43 REJECTED on both sides, every message byte-identical. See below. |
+| **cumulative SIGNATURES**: `ei-diff.sh`, same two configs | **13 of 188 interfaces differ**, 40 definitions. Two interfaces exist on one side only, both WINS. **4 definitions REGRESS** — see below and `TICKET-signature-resolution-fragility.md`. |
 | `lsp-smoke.sh` | **PASS, 82 checks** |
 | `core/test` | **903/904**, the single failure being the pre-existing `Constraints.disjunction sound` generator (`Gave up after only 0 passed tests, 501 discarded`). `Constraints.resolution sound` still passes 100 tests with the guarded signature. |
 
@@ -633,6 +634,45 @@ and the identical classifier, on four modules `labelCheck` is known to flip:
 Also note `corpus-verdicts.py` reads a live directory: the file currently being written
 classifies as UNKNOWN until its last line lands, so a sweep in flight always shows exactly one
 UNKNOWN tracking the write head. That is not a timeout and not a finding.
+
+### The signature surface, which the corpus rows do NOT cover
+
+Run separately, for exactly that reason. `ei-diff.sh`, today's defaults (side A) against
+`-Dermine.genRules=all -Dermine.labelCheck=false -Dermine.resGuard=false` (side B).
+**13 of 188 published interfaces differ, across 40 definitions.** Unlike the corpus rows,
+this is not a zero, and it does not all point the same way.
+
+**Present on one side only — both are the adopted work behaving as designed:**
+
+| interface | side | why |
+|---|---|---|
+| `incomplete/gu05_star_join_4dim_concrete_signature.ei` | NEW only | the pre-work compiler does not finish it; `resGuard` does (measured 12.0s -> 1.1s). The cliff, visible as a published interface that simply did not exist before. |
+| `incomplete/unsound0{1,2,3,4}.ei` | OLD only | `labelCheck` now REJECTS these four, so no interface is written. Refusing to publish a signature for an unsatisfiable program is the point of the check. |
+
+**Content differences, classified by what actually changed:**
+
+| class | count | reading |
+|---|---|---|
+| REORDER — same constraint count, same shape | 34 defs | the known cosmetic class from the ten-site determinism inventory in `TICKET-row-constraint-decision.md`. Not new. |
+| COUNT — fewer constraints on the new side | 2 defs | `Relation.lookbackJoin` 9 vs 15, `RunCalibration.valueAsOf` 10 vs 14. Not yet examined; fewer is not automatically better. |
+| **SHAPE — resolved concrete row becomes constrained polymorphic** | **4 defs** | **a regression.** `Ai_BatteryCycling.withHealth`, `Ai_HeadcountPlan.{labelled,withUnitCost}`, `Ai_RevenueByPeriod.labelled`. |
+
+The four SHAPE regressions have **two independent causes**, established by bisection:
+
+* `BatteryCycling.withHealth` bisects cleanly to **`genRules=cut`** from a clean `.ei` state —
+  not `labelCheck`, not `resGuard`. A previously unrecorded cost of a decision already taken.
+* `HeadcountPlan.labelled` does not reproduce in isolation under ANY flag setting. It flips on
+  **build order**: compiling against a dependency's published `.ei` yields a less resolved type
+  than compiling against its source. That is item **8b's proven defect
+  (`Splice.lean : DroppedPartition.dropped_can_lose`) reaching a user-visible signature** — so
+  8b is NOT latent, and the decision to decline its repair needs re-examination.
+
+Both are written up in `TICKET-signature-resolution-fragility.md`, which is REINSTATED as a
+confirmed defect report on this evidence.
+
+Note `ei-diff.sh`'s closing line still reads "0 = the splice loses nothing that reaches an
+interface" — that legend belongs to its original 8b use and is misleading for any other
+comparison.
 
 ## Defects found and fixed (none behind a flag)
 

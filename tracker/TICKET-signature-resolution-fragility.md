@@ -1,7 +1,80 @@
-# OPEN QUESTION, NOT A CONFIRMED DEFECT: is signature resolution order-fragile?
+# CONFIRMED DEFECT: build order decides a published type
 
-**STATUS 2026-09-02, corrected the same day it was written: the headline claim is
-UNSUPPORTED. Do not act on this ticket as a defect report.**
+**STATUS 2026-09-02, EVENING: REINSTATED. The deciding experiment has now been RUN and it
+comes back POSITIVE.** The headline claim was retracted earlier the same day because its
+stated premise was false; the defect is real, the mechanism is different from the one first
+proposed, and it reproduces under DEFAULT FLAGS with no experimental flag involved.
+
+## The defect, in one experiment
+
+Same compiler. Same flags (all defaults). Same source. The only thing that varies is which
+`.ei` files happen to be on disk when the module is compiled:
+
+    A. nothing on disk beforehand              -> labelled : Builtin.Relation (|..9 fields..|)
+    B. after one HelloWorld boot (130 .ei)     -> labelled : Builtin.Relation (|..9 fields..|)
+    C. after the sweep's own prefix (141 .ei)  -> labelled : forall t. (exists ..) => Relation t
+
+`Ai/HeadcountPlan.labelled` publishes a RESOLVED CONCRETE ROW or a CONSTRAINED POLYMORPHIC
+type depending on nothing but build order. Deterministic and reproducible in both directions.
+
+## What triggers it, narrowed
+
+Bisecting the prefix: the flip appears when `Ai/IncidentSeverity.e` is compiled first.
+`IncidentSeverity` is unrelated to `HeadcountPlan` -- but compiling it PUBLISHES four interfaces
+that `HeadcountPlan` does import (`Layout/Report/Keyed{,/Options,/OptionTypes,/Syntax}`), and
+from then on those are READ instead of re-derived from source:
+
+    full flipping state (137 .ei)          -> poly
+    minus the 4 Layout/Report/Keyed*.ei    -> CONCRETE
+    minus IncidentSeverity.ei only         -> poly          (IncidentSeverity is irrelevant)
+
+Deleting any single one of `Keyed.ei`, `Keyed/OptionTypes.ei` or `Keyed/Syntax.ei` restores
+the concrete answer; deleting `Keyed/Options.ei` alone does not.
+
+**So the statement of the defect is: compiling a module against its dependencies' PUBLISHED
+INTERFACES yields a different, less resolved type than compiling it against their SOURCE.**
+Since `ermine.useInterface` defaults TRUE, this is the shipped configuration.
+
+## Why this matters more than the original framing
+
+The first write-up guessed at ordering inside the solver. The mechanism is upstream of that:
+information is lost when an interface is PUBLISHED, and the loss is user-visible in the next
+module's signature. That is the defect proved in Lean as
+`Rowpartition/Splice.lean : DroppedPartition.dropped_can_lose` -- ticket item 8b -- which was
+recorded as a proven-but-possibly-latent defect. **It is not latent.** The 8b repair was
+declined on the evidence of an `.ei` diff that showed it degrading signatures; that diff was
+itself taken in a build-order-dependent regime, so the decision deserves re-examination.
+
+## A SECOND, INDEPENDENT cause found at the same time
+
+`Ai/BatteryCycling.withHealth` also degrades, but from a different cause -- it bisects
+cleanly to `genRules`, from a clean `.ei` state every time:
+
+    today's defaults          -> poly        -Dermine.labelCheck=false  -> poly
+    -Dermine.genRules=all     -> CONCRETE    -Dermine.resGuard=false    -> poly
+                                             pre-work (all three off)   -> CONCRETE
+
+**The cut costs signature resolution here.** That is a real, previously unrecorded cost of a
+decision already taken, and it is NOT caused by `labelCheck` or `resGuard`. Whether it is
+acceptable is a judgement call that should be made explicitly rather than by default.
+
+## Still not established -- do not assume either way
+
+* **Are the two forms equivalent?** The constraints in the polymorphic form should force `t`
+  to the concrete row. If they do, this is a QUALITY defect; if they do not, a SOUNDNESS one,
+  and the priority changes entirely. `Rowpartition/Splice.lean` and `Saturate.lean` have the
+  vocabulary. This was step 2 of the original ticket and is still unrun.
+* Whether the 8b repair (`Rowpartition/SpliceGuard.lean`, flag deleted in `cb7fab4`) fixes
+  the build-order half. Testing it means restoring the flag.
+* Whether `HeadcountPlan.withUnitCost` and `RevenueByPeriod.labelled` -- the other two SHAPE
+  regressions in the cumulative `.ei` diff -- have the build-order cause or the cut cause.
+
+---
+
+# Superseded write-ups below, retained for their evidence and their errors
+
+The RETRACTION that follows was correct about its own premise being false, and is kept because
+the reasoning error it records is worth not repeating. It is no longer the status of the ticket.
 
 It was opened on this reasoning: `Ai/ClinicalTrial.labelled` and `Ai/HeadcountPlan.withUnitCost`
 have structurally identical constraint sets, and `-Dermine.spliceGuard=true` flips them in

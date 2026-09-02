@@ -113,8 +113,20 @@ ERMINE_JAVA_OPTS="-Dermine.useInterface=false -Dermine.genRules=cut" bin/ermine 
 _JAVA_OPTIONS="-Dermine.genRules=cut" tracker/tools/g1-diff.sh run new /tmp/g1-cut   # g1-diff resets G1_PROPS
 tracker/tools/g1-diff.sh compare /tmp/g1-cut tracker/g1-baseline
 python3 tracker/tools/gen-row-overlap.py --out /tmp/probe                            # cliff probes
+tracker/tools/sweep-progress.py                                                      # live bar for a sweep
 ```
 Lean: `export PATH="$HOME/.elan/bin:$PATH"; cd tracker/lean; lake env lean Rowpartition/X.lean`
+
+`corpus-run.sh` and `ei-diff.sh` are silent for 15-50 minutes (one JVM per file, 66 and
+220 files respectively), and through a pipe even their final line is buffered until exit.
+`sweep-progress.py` attaches to an ALREADY-RUNNING sweep -- no flag, no restart -- and
+reads position off the JVM's argv against the same sorted file list the sweep walks. It
+renders to a TTY on stderr and never into captured output, because sweep stdout is
+compared byte-for-byte and a progress bar there is the same noise the JVM's own boot bar
+already forces every corpus diff to normalise away. Its ETA is deliberately two numbers:
+per-file cost is bimodal (`incomplete/` runs ~35% slower without `resGuard`; `gu05` is
+1.1s guarded and 12.0s not), so a single mean smooths the cliff away and lies -- the
+overall and recent figures diverging is the signal that a slow stretch has started.
 
 ## The label-check rule (added 2026-09-01, after the cut work)
 
