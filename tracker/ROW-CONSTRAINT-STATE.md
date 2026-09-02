@@ -1,4 +1,23 @@
-# Row-constraint work — state as of 2026-09-01
+# Row-constraint work — state as of 2026-09-02
+
+## 2026-09-02, later: `ermine.labelCheckEarly` ADOPTED, label-check blame goes to the call site
+
+`GenRules.labelCheckEarly` now DEFAULTS TO TRUE: the per-concrete-label refutation runs on
+the input partitions BEFORE `q.expand`, so an unsatisfiable input is refuted before the
+saturation can diverge on it. `-Dermine.labelCheckEarly=false` restores the late position.
+What had blocked it was follow-up item 1 (11 of its 26 changed messages blamed a stdlib
+signature); that is fixed in three places -- `Subst.instantiatedAt` locates a scheme's
+constraints at the occurrence that instantiates them, `Term.sub` keeps occurrence positions
+instead of the binder's, and `Subst.solve` blames the refuted partition's constraint in the
+file `tml` is in -- see `TICKET-editor-and-solver-followups.md` §1 for the mechanism and
+`core/examples/shouldfail/RESULTS.md` for every message before and after.
+
+Gates, all from snapshotted class directories, one JVM per file: 66-file corpus verdicts
+identical (23/43, `shouldfail` 40/40), 26 label-check messages all in the user's file at the
+call site, 16 further pre-existing messages move definition -> call site or stdlib -> user
+file; `incomplete/` 34 files verdicts identical (18/16), 16 messages move to call sites,
+`witness03` and `unsound03` no longer fall back to `1:1`; `core/test` 903/904 (known failure
+only); `lsp-smoke` PASS 82.
 
 ## 2026-09-01, later the same day: items 8a / 8b / 8c ANSWERED
 
@@ -17,6 +36,7 @@ The other three flags stay DEFAULT OFF, each for a measured reason:
                                        check reading the input (ticket 8a's own criterion)
     -Dermine.labelCheckEarly=true      verdicts identical but 26 of 66 messages change: better
                                        text, 11 worse locations -> revisit after follow-up item 1
+                                       [ADOPTED 2026-09-02 once item 1 was fixed; see the top]
     -Dermine.spliceGuard=true          its precondition fails on 90% of splices, and the .ei
                                        diff shows it DEGRADES signatures (resolved concrete rows
                                        become constrained polymorphic) -> do not adopt
@@ -55,7 +75,8 @@ The VS Code extension is installed (`clarifi.ermine-lang@0.1.0`, packaged with v
 
 DEFERRED to a later session: diagnostics. Two of six label-check rejections
 (`witness03`, `unsound03`) can only name the field, not the constraint, because their
-offending constraint is not in the file being compiled.
+offending constraint is not in the file being compiled. [DONE 2026-09-02: both now
+blame the call site, `32:16` and `81:16`; see the top of this file.]
 
 Handoff note. Everything below is DONE and verified unless marked otherwise.
 Authoritative documents: `tracker/TICKET-row-constraint-decision.md` (1303 lines,
@@ -152,7 +173,9 @@ Gates green so far:
 BLAME (fixed): `Subst.solve` now finds the input `Part` mentioning the offending field
 and dies at its loc, restricted to the current file. `unsound01` -> `104:18`, the
 constraint itself. Two cases (`witness03`, `unsound03`) still fall back to the module
-header because their constraint is not in the compiled file. NOTE: `Loc` has TWO
+header because their constraint is not in the compiled file. [Fixed 2026-09-02:
+constraints are now located at the occurrence that instantiated them, so the search
+finds them in the compiled file; see the top of this file.] NOTE: `Loc` has TWO
 source-bearing shapes, `Pos` and `Inferred(Pos)` -- matching only `Pos` silently
 disables the search and looks like it works.
 

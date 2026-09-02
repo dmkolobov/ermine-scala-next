@@ -4,7 +4,9 @@ Answers the three open bullets of `TICKET-editor-and-solver-followups.md` §8. M
 proof in Lean licenses the change; a measurement decides whether to take it. Nothing below
 is asserted from a reading of the code alone unless it says so.
 
-**One change is ADOPTED as a default: `-Dermine.resGuard=true` (item 8c).** Everything else
+**Two changes are ADOPTED as defaults: `-Dermine.resGuard=true` (item 8c) and, on 2026-09-02,
+`-Dermine.labelCheckEarly=true` (8c's side-finding, once follow-up item 1 was fixed; see the
+end of that section).** Everything else
 is behind a flag that defaults OFF, so apart from the guard and one diagnostic-message fix the
 shipped compiler's behaviour is unchanged. The rest of what changed is documentation that was
 wrong; it is listed under "Defects found and fixed".
@@ -13,7 +15,7 @@ wrong; it is listed under "Defects found and fixed".
 |---|---|---|
 | `ermine.resGuard` | **`true` — ADOPTED 2026-09-02** | 8c |
 | `ermine.labelCheckSaturated` | `false` — measured, buys nothing | 8a |
-| `ermine.labelCheckEarly` | `false` — right direction, wrong time | 8c side-finding |
+| `ermine.labelCheckEarly` | **`true` — ADOPTED 2026-09-02**, after follow-up item 1 | 8c side-finding |
 | `ermine.spliceGuard` | `false` — measured, do not adopt | 8b |
 
 ---
@@ -224,6 +226,18 @@ So the honest verdict: this is the right direction and the wrong time. It should
 item 1 (blame the call site, not the module) is fixed, and not before — the message text is
 a clear win and the location is a clear regression, and the second currently outweighs the
 first for anyone reading an error.
+
+**ADOPTED 2026-09-02, DEFAULT ON.** Follow-up item 1 is fixed
+(`TICKET-editor-and-solver-followups.md` §1 has the mechanism: a scheme's constraints are
+now located at the occurrence that instantiates them, `Term.sub` keeps occurrence
+positions, and `solve` reads "the file being compiled" off `tml`). Re-measured from
+snapshotted class directories, base vs early with the fix: verdicts identical (23 LOADED /
+43 REJECTED, `shouldfail` 40/40), **26 messages change and all 26 are in the user's file
+at the call site** -- zero in the stdlib, where before 11 were. The location fixes alone
+also move 16 pre-existing messages (10 definition -> call site, 4 stdlib -> user file,
+`dup06` gains a position), verdicts unchanged. `incomplete/` 34 files: verdicts identical,
+16 messages move to call sites. Per-case before/after: `core/examples/shouldfail/RESULTS.md`.
+`-Dermine.labelCheckEarly=false` restores the late position exactly.
 
 ---
 
@@ -590,6 +604,7 @@ pre-existing failures unrelated to any of this work:
 | 66-file corpus, `-Dermine.resGuard=true` | **0 of 66 differ** (V+M), verdicts identical, `shouldfail` 40/40 rejected |
 | 66-file corpus, `-Dermine.labelCheckSaturated=true` | **0 of 66 differ** (V+M) |
 | 66-file corpus, `-Dermine.labelCheckEarly=true` | verdicts identical, but **26 of 66 messages change** (V+M) — see 8c's "second change" above |
+| **2026-09-02**, same, after follow-up item 1 | verdicts identical, 26 messages change, **0 blame the stdlib** (was 11); location fixes alone move 16 more, verdicts identical; `incomplete/` 34 files verdicts identical, 16 messages move to call sites |
 | 34-file `incomplete/`, `-Dermine.resGuard=true` | **0 of 34 differ** (V+M) |
 | 34-file `incomplete/`, `-Dermine.labelCheckSaturated=true` | **0 of 34 differ** (V+M) |
 | **cumulative**: 66-file corpus, today's defaults vs pre-work compiler | **0 of 66 differ** (V+M) — 23 LOADED / 43 REJECTED on both sides, every message byte-identical. See below. |

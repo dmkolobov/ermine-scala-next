@@ -752,12 +752,26 @@ object Constraints {
     val resGuard: Boolean = System.getProperty("ermine.resGuard", "true") == "true"
     /* Orthogonal: run `labelClash` BEFORE `q.expand` rather than after.  The check reads
      * only the input partitions, so this is free; what it buys is refuting an
-     * unsatisfiable input before the saturation gets a chance to diverge on it.  What it
-     * costs is that a module which fails both ways now reports the label clash instead of
-     * whatever `expand` would have raised, so it is measured, not assumed.
-     * DEFAULT OFF. */
+     * unsatisfiable input before the saturation gets a chance to diverge on it
+     * (`Rowpartition/ResGuardDiverge.lean`: a four-constraint unsatisfiable system on
+     * which resolution, guarded or not, has derivations of every length is refuted at
+     * one label).  What it costs is that a module which fails both ways reports the
+     * label clash instead of whatever `expand` would have raised.
+     *
+     * ADOPTED 2026-09-02: DEFAULT ON.  On the 66-file corpus it changes no verdict
+     * (23 LOADED / 43 REJECTED, `shouldfail/` 40/40) and 26 messages, all in
+     * `shouldfail/`; each now names the field and the reason where it used to quote an
+     * internal variable ("Infinite row partition for 'r2^579383'", "Incompatible
+     * instantiations of '579503'", a bare "R2").  It was measured and DECLINED the day
+     * before because 11 of the 26 blamed a stdlib signature: the check blamed wherever
+     * the offending constraint was located, and a constraint instantiated from a stdlib
+     * helper's type was located in the stdlib.  That was follow-up item 1 (blame the
+     * call site); `Subst.instantiatedAt` and `Term.sub` now keep every constraint at
+     * the occurrence that incurred it, and all 26 blame the user's call site.  The
+     * incompleteness corpus (34 files) is unchanged.  `-Dermine.labelCheckEarly=false`
+     * restores the late position exactly. */
     val labelCheckEarly: Boolean =
-      System.getProperty("ermine.labelCheckEarly", "false") == "true"
+      System.getProperty("ermine.labelCheckEarly", "true") == "true"
     /* REMOVED 2026-09-02, both measured and declined; see
      * `tracker/TICKET-row-solver-8abc.md` and the Lean that still licenses them.
      *   `ermine.labelCheckSaturated` -- run the check on `q.expand` instead of the input.
@@ -1322,18 +1336,24 @@ object Constraints {
    * Schaefer's one-in-three problem.  Refusing to search is what makes    *
    * the failure mode deterministic.                                       *
    * ------------------------------------------------------------------- */
-  def labelClash(ps: List[(TypeVar, RHS)]): Option[(Name, String)] = {
+  /** The first label at which propagation refutes `ps`: the label, the partition (by its
+    * left-hand variable) whose constraint the propagation found violated, and the reason.
+    * The partition is what lets the caller blame ONE input constraint rather than any that
+    * happens to mention the label. */
+  def labelClash(ps: List[(TypeVar, RHS)]): Option[(Name, TypeVar, String)] = {
     val labels: Set[Name] = ps.foldLeft(Set[Name]()) { case (s, (_, r)) => s ++ r.concr }
-    labels.view.flatMap(l => checkLabel(ps, l).map((l, _))).headOption
+    labels.view.flatMap(l => checkLabel(ps, l).map { case (v, m) => (l, v, m) }).headOption
   }
 
-  /** Unit-propagate the bits `[l in x]`; Some(msg) means a contradiction. */
-  private def checkLabel(ps: List[(TypeVar, RHS)], l: Name): Option[String] = {
+  /** Unit-propagate the bits `[l in x]`; Some((v, msg)) means a contradiction, detected
+    * while processing the partition of `v`. */
+  private def checkLabel(ps: List[(TypeVar, RHS)], l: Name): Option[(TypeVar, String)] = {
     var bits    = Map[TypeVar, Boolean]()
     var changed = true
-    var clash: Option[String] = None
+    var clash: Option[(TypeVar, String)] = None
+    var at: TypeVar = null
 
-    def note(m: => String): Unit = if (clash.isEmpty) clash = Some(m)
+    def note(m: => String): Unit = if (clash.isEmpty) clash = Some((at, m))
     def setVar(v: TypeVar, b: Boolean, why: => String): Unit = bits.get(v) match {
       case Some(b0) => if (b0 != b) note(why)
       case None     => bits = bits + (v -> b); changed = true
@@ -1342,6 +1362,7 @@ object Constraints {
     while (changed && clash.isEmpty) {
       changed = false
       for ((v, RHS(abstr, concr)) <- ps if clash.isEmpty) {
+        at = v
         val conBit  = concr contains l
         val absList = abstr.toList
         val known   = absList.map(bits.get)

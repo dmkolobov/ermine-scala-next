@@ -68,8 +68,8 @@ Two harness facts worth keeping:
   written; the deciding experiment (perturb something semantically irrelevant, e.g. reorder two
   independent bindings in `tracker/repro/MinReproUse.e`, and see whether resolution flips) is
   NOT RUN. If it comes back clean, WITHDRAW the ticket rather than downgrade it.
-* Follow-up item 1 (blame the call site, not the module header) is what unblocks
-  `-Dermine.labelCheckEarly`. Measured 2026-09-02: verdicts identical, `shouldfail` 40/40, all
-  26 changed messages get better TEXT, but 11 move blame into the stdlib — 7 to `Constraint.e`,
-  3 to `Relation/Row.e`, 1 to `Syntax/Relation.e`. Re-measure rather than inherit those
-  figures: they were taken before the two dead flags were removed.
+* ~~Follow-up item 1 (blame the call site, not the module header) is what unblocks
+  `-Dermine.labelCheckEarly`.~~ RESOLVED later on 2026-09-02: the figures were re-measured
+  (26 changed, 11 into the stdlib: 7 `Constraint.e`, 3 `Relation/Row.e`, 1 `Syntax/Relation.e`
+  -- identical to the inherited ones), item 1 fixed, and `labelCheckEarly` adopted as the
+  default with all 26 in the user's file. `TICKET-editor-and-solver-followups.md` §1.

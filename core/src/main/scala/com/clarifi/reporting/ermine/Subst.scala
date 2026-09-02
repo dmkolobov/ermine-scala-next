@@ -814,11 +814,48 @@ object Subst {
   def toGamma(m: Map[TermVar,TermVar]): Gamma = m.values.toList
 
   // NB: the inferred type has kind star
+  /**
+   * A variable's scheme as seen from ONE occurrence of it.  The scheme's constraints were
+   * stated where the variable was defined -- a signature in this file, or one in the
+   * stdlib -- but instantiating them here makes them obligations of this occurrence, and
+   * when the set they join is unsatisfiable it is this occurrence, not the definition,
+   * that the user can change.  So the row constraints (and the Exists that carries them)
+   * are re-located to the occurrence before they enter the constraint set.  The Forall's
+   * own location is kept: "where the type came from" is what the subsumption messages
+   * report.  `Part` equality ignores location, so the solver sees the same set either way.
+   *
+   * Only a source position is worth moving to; a synthesised occurrence (`Loc.builtin`)
+   * keeps the definition's location, and `Subst.solve` filters those out of the blame.
+   * Follow-up item 1 in tracker/TICKET-editor-and-solver-followups.md.
+   */
+  /** The position a diagnostic should be REPORTED at.  `Inferred(p)` is the right location
+    * to carry -- it records that the constraint was inferred from `p` -- but its `report`
+    * appends "inferred from" to the message, which after a reason clause ("...but no part
+    * does inferred from") is noise; the messages that use this say why in their own words. */
+  def sourcePosition(x: Loc): Loc = x match {
+    case Inferred(p) => p
+    case _           => x
+  }
+
+  def instantiatedAt(at: Loc, t: Type): Type = at match {
+    case Pos(_, _, _, _, _) | Inferred(_) => t match {
+      case Forall(l, ks, ts, q, b) if q.hasRowConstraints => new Forall(l, ks, ts, relocateConstraints(at, q), b)
+      case _                                              => t
+    }
+    case _ => t
+  }
+
+  private def relocateConstraints(at: Loc, q: Type): Type = q match {
+    case Exists(_, xs, cs) => new Exists(at, xs, cs.map(relocateConstraints(at, _)))
+    case p: Part           => p.at(at)
+    case other             => other
+  }
+
   def inferType(g: Gamma, e: Term, suppressEscapes:Boolean = false)(implicit hm: SubstEnv, su: Supply): Type = {
     val li = e.loc.inferred
     implicit val tml: Located = e
     val ty = e match {
-      case Var(v)          => substType(v.extract)
+      case Var(v)          => instantiatedAt(e.loc, substType(v.extract))
       case Rigid(e)        => inferType(g, e, suppressEscapes)
       case LitInt(_, i)    => int at li
       case LitByte(_, i)   => byte at li
@@ -1095,30 +1132,50 @@ object Subst {
      * refutes an unsatisfiable input BEFORE the saturation can diverge on it.  That
      * matters: `Rowpartition/ResGuardDiverge.lean` exhibits a four-constraint
      * unsatisfiable system on which resolution has derivations of every length, guarded
-     * or not, and the same system is refuted at a single label by this check.  Behind a
-     * flag because moving it changes WHICH error a module that fails both ways reports.
+     * or not, and the same system is refuted at a single label by this check.  It runs
+     * first by default (`GenRules.labelCheckEarly`, adopted 2026-09-02);
+     * `-Dermine.labelCheckEarly=false` moves it back after `expand`.  Moving it changes
+     * WHICH error a module that fails both ways reports, which is why it spent a day
+     * behind a flag: until the blame below pointed at the call site, the label clash was
+     * reported at a stdlib signature where `expand`'s error had named the user's line.
      */
     def checkLabels(source: List[(TypeVar, Constraints.RHS)]): Unit =
       if (GenRules.labelCheck)
-      labelClash(source) foreach { case (lbl, msg) =>
-        // Blame the constraint that mentions the offending field, not the enclosing
-        // module: `tml` here is whatever scope `solve` was called in, which for a
-        // module-level binding is the module header.
-        // ...but only within the file being compiled: a constraint reached through a
-        // stdlib helper's signature would otherwise point the user at the stdlib.
+      labelClash(source) foreach { case (lbl, refuted, msg) =>
+        // Blame the input constraint the propagation found violated, not the enclosing
+        // scope: `tml` is whatever `solve` was called in, which for a module-level
+        // binding group is the module header, and `l` is the constraint set's own
+        // location, which can be anywhere its constraints came from.
+        //
+        // The candidates are the input `Part`s mentioning the field whose location is in
+        // the file being compiled.  Since `instantiatedAt` moves a scheme's constraints
+        // to the occurrence that instantiated them, a constraint reached through a stdlib
+        // helper is located at the call site and qualifies; one that still carries a
+        // foreign location (a synthesised occurrence) does not, and must not send the
+        // user into the stdlib.  Prefer the candidate whose left-hand variable is the
+        // refuted partition's; otherwise take the first.  With no candidate at all fall
+        // back to `l` if it is in this file, else to `tml`.
+        //
+        // `Loc` has TWO source-bearing shapes, `Pos` and `Inferred(Pos)`; matching only
+        // the first silently disables the search and looks like it works.  The report
+        // is made at the underlying position: `Inferred.report` appends "inferred from"
+        // to the message, which reads as nonsense after a reason clause.
         def file(x: Loc): Option[String] = x match {
           case Pos(fn, _, _, _, _)           => Some(fn)
           case Inferred(Pos(fn, _, _, _, _)) => Some(fn)
           case _                             => None
         }
-        val here = file(l)
-        val blame = cs.flatMap(_.rowConstraints).collectFirst {
-          case Part(ploc, lhs, rhs) if file(ploc) == here && (lhs :: rhs).exists {
+        val here = file(tml.loc) orElse file(l)
+        val candidates = cs.flatMap(_.rowConstraints).collect {
+          case p@Part(ploc, lhs, rhs) if here.isDefined && file(ploc) == here && (lhs :: rhs).exists {
                  case ConcreteRho(_, f) => f contains lbl
                  case _                 => false
-               } => ploc
+               } => p
         }
-        blame.getOrElse(l).die("Row partitions are unsatisfiable at field '" + lbl + "': " + msg)
+        val blame = candidates.collectFirst { case Part(ploc, VarT(v), _) if v == refuted => ploc }
+          .orElse(candidates.headOption.map(_.loc))
+          .getOrElse(if (file(l) == here) l else tml.loc)
+        sourcePosition(blame).die("Row partitions are unsatisfiable at field '" + lbl + "': " + msg)
       }
     if (GenRules.labelCheckEarly) checkLabels(q.toList.map(_.tup))
     var ps = q.expand.toList
@@ -1459,7 +1516,11 @@ object Subst {
           case ((cs, vs, ts), ConcreteRho(_, s)) =>
             val i = cs.intersect(s)
             if(i.nonEmpty)
-              l.die("Fields appear twice in row: " + i.mkString(","))
+              // at the constraint, not at its left-hand variable: the variable's location
+              // is wherever the signature declared it, which for a stdlib helper's
+              // constraint is the stdlib; the constraint's is the occurrence that
+              // instantiated it (`instantiatedAt`)
+              sourcePosition(loc).die("Fields appear twice in row: " + i.mkString(","))
             else (cs ++ s, vs, ts)
           case ((cs, vs, ts), c@Con(_, n, _, _)) => (cs + n, vs, ts)
           case ((cs, vs, ts), t)                 => (cs, vs, t :: ts)

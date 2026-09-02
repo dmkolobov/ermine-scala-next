@@ -8,17 +8,52 @@ Landed on `scala3-migration` in `03a288d..606f6ae`: `cut` and the per-concrete-l
 refutation check adopted as compiler defaults, three example corpora, the Lean
 development, and three LSP fixes.
 
-## 1. Label-check diagnostics blame the module, not the call site
+## 1. Label-check diagnostics blame the module, not the call site — DONE 2026-09-02
 
-`Subst.solve` searches the input constraints for a `Part` mentioning the offending
-field and dies at its location, restricted to the file being compiled. When the
-offending constraint is not in that file the blame falls back to the module header
-and the user learns only the field name.
+Was: `Subst.solve` searched the input constraints for a `Part` mentioning the offending
+field and died at its location, restricted to the file being compiled. When the
+offending constraint was not in that file the blame fell back to the module header and
+the user learned only the field name (`witness03_grounded_call.e` and
+`unsound03_inferred_headers.e` reported `1:1`); and under `-Dermine.labelCheckEarly`
+11 of 26 messages blamed a stdlib signature outright, because "the file being compiled"
+was read off the constraint set's own location, which for a set assembled from a stdlib
+helper's instantiated type WAS the stdlib.
 
-Cases: `core/examples/incomplete/witness03_grounded_call.e` and
-`unsound03_inferred_headers.e`. Both are correctly REJECTED; only the location is
-poor. The right blame is the call site that made the set unsatisfiable, which is
-what the older "Fields appear twice" path achieves by failing during unification.
+Root cause, two layers, neither in the check itself:
+
+- a scheme's constraints kept the location of the SIGNATURE that stated them when the
+  scheme was instantiated at a use, so a constraint reached through `except` sat at
+  `Relation/Row.e:51:48` however many times the user's file called `except`;
+- and `Term.sub` replaced a substituted `Var`'s V wholesale, so every reference to a
+  let- or module-bound name carried the BINDER's position (`App.loc = e1.loc`), and a
+  type error in `bad = helper x` was reported at the line defining `helper` --
+  `der04` reported `38:1`, the definition, not `40:7`, the call.
+
+Fix: `Subst.instantiatedAt` re-locates a scheme's row constraints (and their `Exists`)
+to the occurrence that instantiates them, in `inferType`'s `Var` case; `Term.sub` keeps
+the occurrence's location (`vp at v.loc`, the discipline `Relocatable.preserveLoc`
+already applied to the module-level maps); `Subst.solve`'s blame takes "the file being
+compiled" from `tml`, prefers the constraint whose left-hand variable is the partition
+`labelClash` refuted (it now returns it), and reports at the underlying `Pos`, so
+`Inferred.report`'s "inferred from" no longer trails the reason clause;
+`mkSimplified.normalPart`'s "Fields appear twice" dies at the constraint rather than at
+its left-hand type variable, whose location was the stdlib signature that declared it.
+
+Measured (`tracker/tools/corpus-run.sh`, one JVM per file, both sides from snapshotted
+class directories so recompiling could not leak into a run): 66-file corpus, location
+fixes alone (`-Dermine.labelCheckEarly=false`): 0 verdicts change, 16 messages move --
+10 from a definition to its call site (`der04-08`, `dup01`, `dup02`, `inc07`,
+`inf01/02/04`), 4 out of the stdlib (`der03`, `dup05`, `dup07`, `dup08`), and `dup06`
+gains a position it never had. With the early check on top (now the default): 26
+label-check messages, every one in the user's file at the call site; see
+`core/examples/shouldfail/RESULTS.md`. 34-file `incomplete/`: verdicts identical (18
+LOADED / 16 REJECTED, no timeouts), 16 messages move to call sites; `witness03`
+`1:1 -> 32:16`, `unsound03` `1:1 -> 81:16`, `unsound01` `104:18 -> 120:7` -- its
+signature is satisfiable (the control `good` proves it), so the call is the right blame.
+`core/test` 903/904 (known failure only), `lsp-smoke` PASS 82.
+
+This is what unblocked `-Dermine.labelCheckEarly` (`TICKET-row-solver-8abc.md`, "A
+second, free change").
 
 ## 2. `bin/ermine` cannot resolve a module hierarchy; the editor now can
 
