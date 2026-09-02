@@ -89,12 +89,54 @@ symptom rather than mere ordering:
   immune to a comparator swap and is the most likely candidate for an outcome flip rather
   than an ordering flip.
 
+## Narrowed 2026-09-02: what selects between the two forms
+
+Step 1 below was done, and it corrects the diagnosis above. Both witnesses are one
+`combine_Op` — adding a derived column to a relation with a concrete header. Distilled to
+15 lines in `tracker/repro/`:
+
+| module | differs by | published type |
+|---|---|---|
+| `MinRepro.e` | nothing uses `derived` | `forall t. (exists so rs a. ..4 constraints..) => Relation t` |
+| `MinReproUse.e` | adds `use : [a,b,c,extra]; use = derived` | `Relation (\|b, a, c, extra\|)` |
+
+**A downstream use at a concrete header pins the row, and the published signature becomes
+concrete. Without one it stays constrained-polymorphic.** That rule accounts for the real
+modules under the DEFAULT compiler, and it is not a defect — it is ordinary inference:
+
+* `Ai/ClinicalTrial.labelled` is used (`renamed = rename armName cohortLabel labelled`) — resolves;
+* `Ai/HeadcountPlan.withUnitCost` is used NOWHERE (line 62 is its only occurrence) — does not.
+
+**So the ticket's opening framing is too strong.** "Same source, two different published
+types" is right for the flag comparison, but the two forms are not two orderings of one
+computation; one has a pinning use and the other does not. Delete that from the indictment.
+
+**What survives, and is still a defect, is narrower and stranger.** Under
+`-Dermine.spliceGuard=true` BOTH witnesses move AGAINST the rule:
+
+* `ClinicalTrial.labelled` has a use and STOPS resolving — the flag broke the pinning;
+* `HeadcountPlan.withUnitCost` has no use and STARTS resolving — the solver pinned it
+  unaided, which is plausible, since skipping the splice retains constraints that can force
+  `t`.
+
+The 15-line reproducers are STABLE under the flag — neither flips. So they isolate the two
+forms but do NOT reproduce the fragility, and the first witness for that is still a real
+`Ai` module. **Shrinking the FLIP is the next task, and it is what step 1 has left to do.**
+
+The suspected sites also change. Binding-group ordering — inventory site (10),
+`Binding.scala`'s Tarjan over hash-ordered maps and `toGamma(m) = m.values.toList` — decides
+whether a use is processed before the definition is generalised, which is exactly the
+mechanism the reproducers expose. That is a better first suspect than `Part.apply` or
+`reduce`'s `abs.toList`.
+
 ## What is needed, in order
 
-1. **Establish which site decides it.** Instrument `reduce` and `Part.apply` to record, for
-   one witness module, the order the RHS arrives in and whether the collapse fired. One
-   `-Dermine.rowTrace`-style record is enough; the witness is two modules and both are small.
-   Until this is known, everything below is speculation.
+1. **PARTLY DONE — see above.** The two published forms are isolated in `tracker/repro/`
+   and the selector is a downstream pinning use. What remains is a minimal witness for the
+   FLIP: take `MinReproUse.e` (a use, resolves) and find the smallest addition that makes
+   `-Dermine.spliceGuard=true` break the pinning, as it does in `ClinicalTrial`. Start by
+   adding a SECOND `combine_Op` and a second use, since both real witnesses sit in modules
+   with several interacting derived relations and the reproducer has exactly one.
 2. **Decide whether resolving is even the preferred answer.** Both forms are believed
    equivalent — the constraints in the unresolved form should force `t` to the concrete row.
    That is worth CHECKING rather than assuming: if they are equivalent, this is a quality
