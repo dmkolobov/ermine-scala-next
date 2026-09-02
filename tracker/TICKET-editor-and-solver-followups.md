@@ -117,3 +117,20 @@ Full write-up, with the Lean theorem names and the measurements:
   (`gSeed_refuted`), so the two defences are complementary. Behind `-Dermine.resGuard`,
   default off. Measured on a probe family built for the purpose: there is a second
   cliff driven by `resolution` on a WELL-TYPED program, and the guard removes it.
+
+## 9. Whether a published signature is RESOLVED is order-fragile
+
+Found 2026-09-02 while diffing `.ei` interfaces for item 8b. For the same source the
+compiler sometimes publishes `Relation (|..6 fields..|)` and sometimes
+`forall t. (..4 constraints..) => Relation t`, decided by ordering with no semantic
+content — `Ai/ClinicalTrial` and `Ai/HeadcountPlan` show both forms with the deciding
+perturbation swapped, on structurally identical constraint sets.
+
+Deterministic given fixed input (checked), but fragile to any irrelevant perturbation. It
+is the same root cause as the ten-site determinism inventory in
+`TICKET-row-constraint-decision.md`, with a worse symptom than the reordering that
+inventory describes: it changes the type a user programs against, it propagates to callers,
+and it is invisible to a multiset comparison of constraints.
+
+Full write-up, witness, reproduction and the ordered list of what to establish first:
+**`tracker/TICKET-signature-resolution-fragility.md`**.
