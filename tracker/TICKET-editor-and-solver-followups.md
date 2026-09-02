@@ -174,3 +174,27 @@ and it is invisible to a multiset comparison of constraints.
 
 Full write-up, witness, reproduction and the ordered list of what to establish first:
 **`tracker/TICKET-signature-resolution-fragility.md`**.
+
+## 10. Skolem-emptiness errors still blame the module header
+
+`sk03_field_copy_append_self.e` and `sk05_derived_skolem_field_copy.e` (error class 4,
+written 2026-09-01 to reach skolem escape through the stdlib's `EField` existential) report
+
+    sk03_field_copy_append_self.e:1:1: .../modules/Field.e:22:24: Cannot unify skolem variable with empty relation
+
+The INNER position is right and deliberate: `Field.e:22:24` is the
+`data EField a = forall r . EField (Field r a)` declaration where the skolemised row was
+bound, and the headers say so. The OUTER position, `1:1`, is the module-header fallback
+again: `makeEmpty` (`Constraints.scala:1061`) dies at the ambient `tml`, which for a
+top-level binding group is the module's location, so the user's `bad = ...` line is never
+named. Item 1's fix does not reach it because this path is a solver rule, not the
+label-check blame in `Subst.solve`. `sk01`/`sk02`/`sk04` are unaffected only because
+their existential is declared in the file being compiled.
+
+Fix when wanted: give `makeEmpty`'s report the same treatment as item 1 -- blame the input
+constraint that forced the skolem empty (now located at the call site), falling back to
+`tml` only when none is in the compiled file. Expected result:
+`sk03...e:31:7: ... Field.e:22:24: Cannot unify skolem variable with empty relation`.
+Deliberately NOT done 2026-09-02; the two cases are documented in
+`core/examples/shouldfail/RESULTS.md` (2026-09-02 section) as the only messages that still
+carry a stdlib position.
