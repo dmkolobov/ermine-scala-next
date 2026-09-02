@@ -66,8 +66,15 @@ object Session {
   }
 
   // @throws Death
+  /** `loc` is the DEFINITION SITE of the name being installed, and the
+    * variable keeps it: a data constructor, field, table or foreign
+    * declaration is written in a source file just as an equation is, and
+    * discarding the position (as this did until 2026-09-02) left the
+    * editor with no place to jump to — every such name answered
+    * textDocument/definition with null.  Scala-installed builtins reach
+    * the 2-arg overload below and stay `Loc.builtin`. */
   def primOp(loc: Loc, name: Global, rep: Runtime, t: Type)(implicit s: SessionEnv, su: Supply): TermVar = {
-    val v = V(Loc.builtin, su.fresh, Some(name), Bound, t.nf)
+    val v = V(loc, su.fresh, Some(name), Bound, t.nf)
     s.termNames.get(name) match {
       case Some(v) => die("primOp: rebinding " + name)
       case None    =>
@@ -1184,7 +1191,9 @@ object Session {
         text(if (static) "is not static; use foreign method instead"
              else "is static; use foreign function instead")
       )
-    primOp(loc, global(mod, v), foreignLift(methName, static, post, domain, method), ty)
+    // v.loc is the declared NAME's position; `loc` is the statement's,
+    // and stays the one error reports blame
+    primOp(v.loc, global(mod, v), foreignLift(methName, static, post, domain, method), ty)
   }
 
   def processForeignValueStatement(
@@ -1210,7 +1219,7 @@ object Session {
           ), e)
       }
       val r = primOp(
-        loc,
+        v.loc,
         global(mod, v),
         perhapsForeign(post, try { value.get(null) } catch { case NonFatal(e) => throw e.getCause }),
         typ
@@ -1255,7 +1264,7 @@ object Session {
       val f = domain.foldRight((z: List[Any]) => g(z.asInstanceOf[List[AnyRef]].reverse)) { (t, b) =>
                 z => Fun(a => b(marshalForeign(t, a, name.string) :: z))
               }
-      val r = primOp(loc, name, f.apply(Nil), ty)
+      val r = primOp(v.loc, name, f.apply(Nil), ty)
       (cm._1, cm._2 + (fcs.v -> r))
   }
 
@@ -1286,7 +1295,7 @@ object Session {
       assertTypeClosed(ty)
       mapAccum_(cm, vs) {
         case (cs, ns ++ v) =>
-          val u = primOp(global(mod, v),
+          val u = primOp(v.loc, global(mod, v),
                          Rel(ExtRel(Table(toHeader(mod, ty),
                                                TableName(v.name.get.string,
                                                          ns.map(_.string))), db)), ty)
@@ -1309,7 +1318,7 @@ object Session {
       kindCheck(Nil, fss.ty, Star(fss.loc.inferred)); substType(ty)
     } }
     assertTypeClosed(ty)
-    (cm._1, cm._2 + (fss.v -> primOp(fss.loc, global(mod, fss.v), Fun(x => x), ty)))
+    (cm._1, cm._2 + (fss.v -> primOp(fss.v.loc, global(mod, fss.v), Fun(x => x), ty)))
   }
 
   def processForeignFunctionStatement(mod: String)(cm: Maps, ffs: ForeignFunctionStatement)(implicit s: SessionEnv, su: Supply) =
@@ -1361,7 +1370,9 @@ object Session {
       }
       if (!otyp.isDefined) die(text("Invalid field type:") :+: text(ty.toString))
       val tyCon = addCon(Con(v.loc.inferred,global(module, v),FieldConDecl(ty),Field(v.loc.inferred).schema))
-      val tmv = primOp(fs.loc, tyCon.name, Data(tyCon.name, Array(Prim(otyp.get))),
+      // v.loc, not fs.loc: `field a, b : Int` declares two names at two
+      // positions, and each one is its own definition site
+      val tmv = primOp(v.loc, tyCon.name, Data(tyCon.name, Array(Prim(otyp.get))),
                        field(ConcreteRho(v.loc.inferred, Set(tyCon.name)), ty))
       ps.s.termNames.get(v.name.get) match {
         case None    => (Map(v -> tyCon), Map():Map[TermVar,TermVar])

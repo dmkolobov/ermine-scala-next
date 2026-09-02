@@ -41,7 +41,7 @@ object TestRenamer extends Properties("Renamer 3.2a") {
 
   property("sig and equations share one binder; def-site is the last equation") = secure {
     val r = renamed("f : a\nf 0 = 1\nf q = q")
-    val ids = r.occurrences.filter(_.spelling == "f").collect { case Occurrence(_, _, ToBinder(i)) => i }.distinct
+    val ids = r.occurrences.filter(_.spelling == "f").collect { case Occurrence(_, _, ToBinder(i), _) => i }.distinct
     val info = r.binders(ids.head)
     val qKinds = resOf(r, "q").collect { case ToBinder(i) => r.binders(i).kind }.distinct
     ((ids.size ?= 1) :| "one binder id") &&

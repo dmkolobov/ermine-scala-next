@@ -48,7 +48,13 @@ object Renamer {
   case object TyDef      extends BinderKind  // module-level type definitions
 
   final case class BinderInfo(id: Int, spelling: String, defSite: Span, kind: BinderKind)
-  final case class Occurrence(span: Span, spelling: String, resolution: Resolution)
+  /** `typeLevel` says which namespace the occurrence was read in.  A
+    * data statement gives ONE Global to two different things — the type
+    * `Color` and a constructor `Color` — so a consumer that looks a
+    * resolved Global up in the session (the LSP's go-to-definition) has
+    * to know which of the two tables to read. */
+  final case class Occurrence(span: Span, spelling: String, resolution: Resolution,
+                              typeLevel: Boolean = false)
   final case class Frame(span: Span, bindings: Map[String, Int])
   final case class Diag(span: Span, message: String)
 
@@ -139,6 +145,9 @@ object Renamer {
 
     def occur(name: SName, res: Resolution): Unit =
       occs += Occurrence(name.span, name.spelling, res)
+
+    def occurTy(name: SName, res: Resolution): Unit =
+      occs += Occurrence(name.span, name.spelling, res, typeLevel = true)
   }
 
   private type Env = List[Map[String, Int]]  // innermost first
@@ -361,7 +370,7 @@ object Renamer {
     case STyName(n) =>
       val res = if (kindAtoms(n.spelling)) ToGlobal(Global("Builtin", n.spelling), Local(n.spelling), Global("Builtin", n.spelling))
                 else ctx.resolve(n, refPos(n))
-      ctx.s.occur(n, res)
+      ctx.s.occurTy(n, res)
     case STyApp(f, a) => ty(f, ctx); ty(a, ctx)
     case STyChain(c) => c.items.foreach {
       case Left(operand) => ty(operand, ctx)
@@ -371,7 +380,7 @@ object Renamer {
         val res = if (Set("->", "=>", "<-")(op.name.spelling) || kindAtoms(op.name.spelling))
           ToGlobal(Global("Builtin", op.name.spelling), Local(op.name.spelling), Global("Builtin", op.name.spelling))
         else ctx.resolve(op.name, Some(op.posClass))
-        ctx.s.occur(op.name, res)
+        ctx.s.occurTy(op.name, res)
     }
     case STyParen(_, i) => ty(i, ctx)
     case STyTuple(_, es) => es.foreach(ty(_, ctx))

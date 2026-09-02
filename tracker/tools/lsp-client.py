@@ -284,6 +284,65 @@ def main():
           and "Int" in r["contents"]["value"], repr(r))
     check("hover local x -> null", hover("Nav.e", 5, 10) is None)
 
+    # --- navigation for every kind of DECLARATION, not just equations ---
+    # Fields, data constructors, foreign declarations, tables and types are
+    # installed through Session.primOp/addCon rather than bound by the
+    # renamer; until primOp kept the definition site they all answered null.
+    open_doc("Decls.e")
+    check("Decls.e clean", client.diagnostics_for(uri("Decls.e")) == [])
+
+    r = definition("Decls.e", 16, 8)     # `fa` in `useFa = fa`
+    check("def own field -> its declaration", r is not None
+          and r["uri"] == uri("Decls.e")
+          and r["range"]["start"] == {"line": 9, "character": 6}, repr(r))
+    r = definition("Decls.e", 9, 6)      # the `fa` declaration head itself
+    check("def field head -> itself", r is not None
+          and r["range"]["start"] == {"line": 9, "character": 6}, repr(r))
+    r = hover("Decls.e", 9, 6)
+    check("hover field head has its type", r is not None
+          and "Decls.fa" in r["contents"]["value"], repr(r))
+
+    r = definition("Decls.e", 17, 12)    # `Circle` in `useCircle = Circle 1`
+    check("def own constructor -> the data statement", r is not None
+          and r["uri"] == uri("Decls.e")
+          and r["range"]["start"] == {"line": 11, "character": 15}, repr(r))
+    r = hover("Decls.e", 11, 15)         # the constructor at its declaration
+    check("hover constructor head", r is not None
+          and "Decls.Circle" in r["contents"]["value"], repr(r))
+
+    r = definition("Decls.e", 18, 14)    # `Left`, a constructor from Either.e
+    check("def imported constructor -> Either.e", r is not None
+          and r["uri"].endswith("/Either.e"), repr(r))
+    r = definition("Decls.e", 19, 13)    # `yyyymmdd`, a foreign function
+    check("def foreign function -> Date.e", r is not None
+          and r["uri"].endswith("/Date.e"), repr(r))
+
+    r = definition("Decls.e", 20, 11)    # `Alias` in the signature
+    check("def own type alias -> its statement", r is not None
+          and r["uri"] == uri("Decls.e")
+          and r["range"]["start"] == {"line": 13, "character": 5}, repr(r))
+    r = definition("Decls.e", 22, 12)    # `Either` in the signature
+    check("def imported type -> Either.e", r is not None
+          and r["uri"].endswith("/Either.e"), repr(r))
+    r = definition("Decls.e", 11, 5)     # the `Shape` head itself
+    check("def type head -> itself", r is not None
+          and r["range"]["start"] == {"line": 11, "character": 5}, repr(r))
+
+    r = definition("Decls.e", 6, 9)      # `<+>` named in its fixity declaration
+    check("def fixity mention -> the equation", r is not None
+          and r["uri"] == uri("Decls.e")
+          and r["range"]["start"] == {"line": 7, "character": 0}, repr(r))
+
+    r = definition("Decls.e", 3, 8)      # `import Either`
+    check("def import -> the module's file", r is not None
+          and r["uri"].endswith("/Either.e")
+          and r["range"]["start"] == {"line": 0, "character": 0}, repr(r))
+
+    # A name that is genuinely undefined still says nothing.
+    check("def unknown name -> null", definition("Decls.e", 0, 7) is None)
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Decls.e")}})
+    client.diagnostics_for(uri("Decls.e"))
+
     # --- 5.4: tolerant type checking -----------------------------------
     # loadModule stops at the first Death; the editor checker reports
     # every independent problem.
@@ -420,6 +479,18 @@ def main():
     r = definition("Nav.e", 6, 12)
     check("fast mode keeps go-to-definition", r is not None
           and r["uri"] == uri("Good.e"), repr(r))
+    # ... including for names the SESSION would only know after a check:
+    # a field or constructor of this module is placed from the surface tree.
+    open_doc("Decls.e")
+    client.diagnostics_for(uri("Decls.e"))
+    r = definition("Decls.e", 16, 8)
+    check("fast mode keeps own-field navigation", r is not None
+          and r["range"]["start"] == {"line": 9, "character": 6}, repr(r))
+    r = definition("Decls.e", 17, 12)
+    check("fast mode keeps own-constructor navigation", r is not None
+          and r["range"]["start"] == {"line": 11, "character": 15}, repr(r))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Decls.e")}})
+    client.diagnostics_for(uri("Decls.e"))
 
     set_fast(False)
     client.notify("textDocument/didSave", {"textDocument": {"uri": uri("Bad.e")}})

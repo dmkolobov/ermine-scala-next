@@ -48,7 +48,7 @@
         "ermine.fastMode": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Skip type checking. Roughly halves the time to diagnostics (measured on a 1757-line module: 0.80s read + 0.45s typecheck).\n\n**Kept:** syntax, shadowing, unknown-operator and lowering diagnostics; go-to-definition; hover on *imported* names.\n\n**Lost:** all type errors, the \"unchecked\" notes, import-list export requirements, and hover on this module's *own* top-level names."
+          "markdownDescription": "Skip type checking. Roughly halves the time to diagnostics (measured on a 1757-line module: 0.80s read + 0.45s typecheck).\n\n**Kept:** syntax, shadowing, unknown-operator and lowering diagnostics; go-to-definition; hover on *imported* names.\n\n**Lost:** all type errors, the \"unchecked\" notes, import-list export requirements, and hover on this module's *own* definitions."
         },
         "ermine.logFile": {
           "type": "string",

@@ -33,9 +33,11 @@ elsewhere if your layout differs.
 |---|---|
 | Syntax highlighting | keywords, literals, comments, operators, constructors, declaration heads |
 | Diagnostics | on open, on save, and ~300ms after you stop typing — no save needed |
-| Go to definition | same file, workspace siblings, and the stdlib |
-| Hover | inferred types for top-level and imported names |
+| Go to definition | equations, signatures, local binders, `field` and `table` declarations, data constructors, foreign declarations, type names, fixity mentions, and `import` module names — same file, workspace siblings, and the stdlib |
+| Hover | inferred or declared types for top-level, imported and declared names |
 
+Names Scala installs rather than source declares (`Just`, `True`, `Int`,
+`Maybe` — all of `Builtin`) have no file to open, so they answer nothing.
 Local binders hover empty on purpose — that is gated on
 `tracker/TICKET-perf-type-inference.md`, not on this extension.
 
@@ -51,7 +53,9 @@ equations, every lowering diagnostic — and all navigation, plus hover on
 
 **Lost:** every type error, the "unchecked: depends on a broken definition"
 notes, import-list export requirements, and hover on this module's *own*
-top-level names. Nothing but the type check computes those.
+definitions. Nothing but the type check computes those. Navigation to this
+module's own fields and constructors survives, since their positions come from
+the surface tree rather than from the check.
 
 The inference cache is carried forward while fast mode is on, so switching back
 does not start cold.

@@ -25,7 +25,9 @@ scoping fix, commits f9cf42a / 41b13cc).
   Stage 0; suites GROW, so a commit that adds tests updates the count in
   its iteration-log line, and green-except-the-known-one is the invariant
 - `tracker/tools/repl-smoke.sh`: all suites PASS (4 as of D2)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (77 as of G2)
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (98 as of the 2026-09-02
+  declaration-navigation work; it read 82 before that, the G2 line's 77
+  having gone stale)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 - KNOWN FLAKE: core/test suites run concurrently in one JVM and rarely
@@ -1718,3 +1720,50 @@ inference.md should be re-read against that before Stage 3 picks a
 target.
 
 STOP.  The loop is stopped for sign-off, per the gate.
+
+## Post-G2: navigation for every declaration (2026-09-02)
+
+Not a Stage-3 item — a defect found by asking for go-to-definition on a
+`field`.  Only names the RENAMER binds (equations, signatures, local
+binders) and imported ordinary terms answered `textDocument/definition`.
+Everything installed by the SESSION instead answered null: `field` and
+`table` declarations, data constructors, every foreign declaration, and
+every imported TYPE.
+
+ROOT CAUSE, one line.  `Session.primOp` took a `loc` argument and built
+its variable with `Loc.builtin` anyway (Session.scala:69), so the
+definition site of every name it installs was discarded at installation.
+`Definitions.index` read `v.loc` for its navigation target and got
+`builtin`, which is not a file.  Fixed by keeping the argument, and by
+passing a better one where the statement position was standing in for a
+name position: `field a, b : Int` declares two names at two columns, and
+foreign/table declarations name themselves after their keyword.  The
+2-arg overload still passes `Loc.builtin`, so Scala-installed builtins
+(`Just`, `True`, `Int`, `Maybe`) keep answering null — correctly: they
+have no source.
+
+THREE MORE GAPS, all in `lsp/Definitions.scala`:
+- Type occurrences looked their Global up in `termNames`, which only
+  holds terms, so no imported type ever navigated.  They go through
+  `env.cons` now.  `data Color = Color Int` gives ONE Global to a type
+  and a constructor, so the table cannot be chosen by fallback order:
+  `Renamer.Occurrence` carries a `typeLevel` flag (set by the type-side
+  walk's new `occurTy`) and the flag picks the table.
+- `Inferred(p)` is a real position wearing a report-time wrapper, and
+  field cons carry it; `positionOf` reads through it.
+- Declaration HEADS were not occurrences at all, so hovering the `fa` in
+  `field fa : Int` said nothing where `fa` a line below said its type.
+  The heads come from the surface tree (`ownDecls`), which also serves as
+  the navigation fallback when the session has nothing — that is what
+  keeps own-field and own-constructor navigation alive in FAST MODE and
+  in a file whose check died.  Operators named in a fixity declaration
+  point at their equation; `import Layout.Scan` points at the file, via
+  `loadedFiles` inverted.
+
+VERIFIED: core/test 903/904 (the known `Constraints.disjunction sound`),
+repl-smoke 4/4, lsp-smoke 98/98 (+16, fixture `tracker/lsp-tests/Decls.e`
+covering own/imported fields, constructors, foreigns, types, aliases,
+declaration heads, fixity mentions, imports, a fast-mode pair and the
+undefined-name miss), bin/ermine 129 modules.  Layout/Report.e checks in
+0.90s read + 1.05s cold typecheck, unmoved.  Interfaces are unaffected:
+`writeInterface` prints name and type only.

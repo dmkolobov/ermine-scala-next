@@ -19,13 +19,23 @@ then serves:
   something broken is reported "unchecked: depends on a broken definition"
   rather than inferred against unconstrained metavariables.
 
-- **Go-to-definition** for term names: same file, workspace siblings, and the
-  stdlib. It works on the healthy statements of a broken file, and follows a
-  sibling's unsaved edits.
+- **Go-to-definition** for every name that has a source position: equations,
+  signatures and local binders; `field` and `table` declarations; data
+  constructors; foreign declarations; type names (`data`, `type`, `class`,
+  `foreign data`) and their aliases; the operator named in a fixity
+  declaration; and the module named by an `import`, which opens its file.
+  Same file, workspace siblings, and the stdlib alike. It works on the
+  healthy statements of a broken file, and follows a sibling's unsaved edits.
 
-- **Hover** with the inferred type for top-level and imported names
-  (`Nav.twice : forall a. a -> a`). Local binders answer null for now — gated
-  on `tracker/TICKET-perf-type-inference.md`, not on the protocol.
+  Names installed by Scala rather than declared in source — `Just`, `True`,
+  `Int`, `Maybe` and the rest of `Builtin` — answer null, because there is no
+  source to open.
+
+- **Hover** with the inferred or declared type for top-level, imported and
+  declared names (`Nav.twice : forall a. a -> a`, `GroupBy.value : Field
+  (|value|) Double`), including at the declaration itself. Local binders and
+  type names answer null for now — the former gated on
+  `tracker/TICKET-perf-type-inference.md`, not on the protocol.
 
 Logging goes to the file named by `ERMINE_LSP_LOG` (or `-Dermine.lsp.log`);
 stdout is reserved for the protocol.
@@ -38,9 +48,10 @@ On a 1757-line module a check splits roughly 0.80s read + 0.45s typecheck, so
 this is about half the latency.
 
 Kept: every syntax, shadowing, unknown-operator and lowering diagnostic;
-go-to-definition; hover on imported names. Lost: all type errors, the
-"unchecked" notes, import-list export requirements, and hover on the module's
-own top-level names.
+go-to-definition, including to this module's own fields and constructors,
+whose positions come from the surface tree rather than from the check; hover
+on imported names. Lost: all type errors, the "unchecked" notes, import-list
+export requirements, and hover on the module's own definitions.
 
 ## Latency
 
