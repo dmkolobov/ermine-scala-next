@@ -587,16 +587,52 @@ pre-existing failures unrelated to any of this work:
 | gate | result |
 |---|---|
 | `Audit.lean` | **1465 theorems, 0 non-standard axioms**; no `sorry`, `native_decide` or custom axiom anywhere |
-| 66-file corpus, `-Dermine.resGuard=true` | **0 of 66 differ**, verdicts identical, `shouldfail` 40/40 rejected |
-| 66-file corpus, `-Dermine.labelCheckSaturated=true` | **0 of 66 differ** |
-| 66-file corpus, `-Dermine.labelCheckEarly=true` | verdicts identical, but **26 of 66 messages change** — see 8c's "second change" above |
-| 34-file `incomplete/`, `-Dermine.resGuard=true` | **0 of 34 differ** |
-| 34-file `incomplete/`, `-Dermine.labelCheckSaturated=true` | **0 of 34 differ** |
+| 66-file corpus, `-Dermine.resGuard=true` | **0 of 66 differ** (V+M), verdicts identical, `shouldfail` 40/40 rejected |
+| 66-file corpus, `-Dermine.labelCheckSaturated=true` | **0 of 66 differ** (V+M) |
+| 66-file corpus, `-Dermine.labelCheckEarly=true` | verdicts identical, but **26 of 66 messages change** (V+M) — see 8c's "second change" above |
+| 34-file `incomplete/`, `-Dermine.resGuard=true` | **0 of 34 differ** (V+M) |
+| 34-file `incomplete/`, `-Dermine.labelCheckSaturated=true` | **0 of 34 differ** (V+M) |
+| **cumulative**: 66-file corpus, today's defaults vs pre-work compiler | **0 of 66 differ** (V+M) — 23 LOADED / 43 REJECTED on both sides, every message byte-identical. See below. |
 | `lsp-smoke.sh` | **PASS, 82 checks** |
 | `core/test` | **903/904**, the single failure being the pre-existing `Constraints.disjunction sound` generator (`Gave up after only 0 passed tests, 501 discarded`). `Constraints.resolution sound` still passes 100 tests with the guarded signature. |
 
-Comparisons are modulo progress bars and per-run timings, which differ between any two runs;
-nothing else is normalised, so a fresh-variable id or a field order would show up.
+### What a corpus comparison does and does NOT cover
+
+Comparisons are modulo progress bars and per-run timings, which differ between any two runs.
+Nothing else is normalised — but that is not the same as covering everything, and an earlier
+version of this line claimed it was.
+
+**(V+M) marks the rows above that compare VERDICTS and ERROR MESSAGES.** That is all a corpus
+sweep can compare. A module that loads prints exactly one line, `Importing module 'X'`; it
+never prints a signature. Measured, not assumed — across all 66 outputs:
+
+    grep -lE 'forall|rho|<-' cum-new/*.out   ->   0 files
+
+So a fresh-variable id shift or a field print order **cannot show up in these rows**, and a
+`0` in them is not evidence about published types. Signatures live in `.ei` files, which
+`-Dermine.useInterface=false` suppresses; the instrument for them is `tracker/tools/ei-diff.sh`,
+and it is a SEPARATE measurement.
+
+This mattered concretely. `HANDOFF-cumulative-check.md` predicted the cumulative row would
+show **15 differing line-pairs** — 14 fresh-variable ids and one field order. It showed 0.
+The prediction was wrong, not the measurement: those 15 came from an `.ei` diff and were
+chained into an expectation for an instrument that cannot see them. **Two different surfaces,
+never comparable.** The adoption of `resGuard` does not rest on this — its signature evidence
+was always the separate `.ei` diff — but the table should not imply coverage it never had.
+
+**The cumulative zero was proved live, not assumed.** The standing rule in this work is that a
+zero is suspect until the instrument is shown capable of a non-zero; three times on 2026-09-02
+a "0 differ" meant "measured nothing". Positive control, through the identical normalisation
+and the identical classifier, on four modules `labelCheck` is known to flip:
+
+    VERDICT LOADED -> REJECTED   unsound01_keyed_halves.e      24 differing lines
+    VERDICT LOADED -> REJECTED   unsound02_three_way_shard.e   4 of 4 files differ
+    VERDICT LOADED -> REJECTED   unsound03_inferred_headers.e
+    VERDICT LOADED -> REJECTED   unsound04_dead_helper.e
+
+Also note `corpus-verdicts.py` reads a live directory: the file currently being written
+classifies as UNKNOWN until its last line lands, so a sweep in flight always shows exactly one
+UNKNOWN tracking the write head. That is not a timeout and not a finding.
 
 ## Defects found and fixed (none behind a flag)
 

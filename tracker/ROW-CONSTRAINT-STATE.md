@@ -187,6 +187,28 @@ root, and `#print axioms` on the headline theorems.
 
 ## Traps that cost time — do not rediscover
 
+- A NUMBER BELONGS TO AN INSTRUMENT, NOT TO THE COMPILER. A 66-file corpus sweep
+  compares VERDICTS and ERROR MESSAGES and nothing else: a module that loads prints
+  only `Importing module 'X'`, and `-Dermine.useInterface=false` suppresses the `.ei`
+  where signatures live. Measured: `grep -lE 'forall|rho|<-' *.out` matches 0 of 66.
+  So a corpus `0 differ` says NOTHING about published types — that surface needs
+  `tracker/tools/ei-diff.sh`. On 2026-09-02 a predicted "15 differing line-pairs" for
+  the cumulative check came back 0 purely because the 15 had been carried over from an
+  `.ei` diff; the prediction was wrong, the measurement was fine. Same class of error
+  as comparing against a moving baseline.
+- A ZERO IS SUSPECT UNTIL THE INSTRUMENT IS SHOWN CAPABLE OF A NON-ZERO. Three times
+  on 2026-09-02 a "0 differ" meant "measured nothing" (`.ei` contamination, a missing
+  `PATH`, a metric on the wrong predicate). Positive control for the corpus harness:
+  `core/examples/incomplete/unsound0[1-4]*.e` flip LOADED -> REJECTED under
+  `-Dermine.labelCheck`, so run them through the same normalisation and classifier and
+  confirm a non-zero before believing a zero.
+- `corpus-verdicts.py` reads a LIVE directory. The file currently being written has no
+  terminator yet and classifies as UNKNOWN, so a sweep in flight always shows exactly
+  one UNKNOWN tracking the write head. Not a timeout. Wait for the run to end.
+- A full-text corpus diff needs the boot PROGRESS BAR normalised as well as the
+  `(N.NN seconds)` timings — it carries per-run wall-clocks, so without it all 66 pairs
+  differ by exactly 2 lines and the diff looks meaningful when it is pure noise.
+
 - The `:browse` pretty-printer WRAPS long types. Join continuation lines before
   parsing (see `tracker/tools/g1-normalize.py`); otherwise signature comparisons
   silently compare first lines and every equivalence check passes vacuously.
