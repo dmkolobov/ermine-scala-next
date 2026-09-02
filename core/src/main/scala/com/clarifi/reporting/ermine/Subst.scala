@@ -1122,6 +1122,35 @@ object Subst {
       }
     if (GenRules.labelCheckEarly) checkLabels(q.toList.map(_.tup))
     var ps = q.expand.toList
+    /* Trace-only dump of the POPULATION, not just its counts: the input constraint
+     * list as `solve` received it (a `Part`'s right-hand side is a List, so this is
+     * the one place its ORDER is still visible), the partitions built from it, and
+     * the saturated set with each partition's provenance.  Guarded on `enabled`
+     * like every other record here; nothing is built when tracing is off. */
+    if (RowTrace.enabled) {
+      val tag = "\t" + RowTrace.site + "\t" + RowTrace.clean(l.toString) + "\t"
+      def sv(v: TypeVar): String = v.name.fold("")(_.toString) + "^" + v.id
+      def st(t: Type): String = t match {
+        case VarT(v)           => sv(v)
+        case ConcreteRho(_, f) => "(|" + f.toList.map(_.toString).sorted.mkString(",") + "|)"
+        case Con(_, n, _, _)   => "(|" + n + "|)"
+        case x                 => RowTrace.clean(x.toString)
+      }
+      def sp(p: Partition): String = p match {
+        case Partition(v, RHS(abs, con), inf) =>
+          inf.fold("INPUT")(_.toString) + "\t" + sv(v) + "\t" +
+            abs.toList.map(sv).sorted.mkString(" ") + "\t" +
+            con.toList.map(_.toString).sorted.mkString(",")
+      }
+      cs.flatMap(_.rowConstraints).zipWithIndex.foreach {
+        case (Part(_, lhs, rs), i) =>
+          RowTrace.log("in" + tag + i + "\t" + st(lhs) + "\t" + rs.map(st).mkString(" | "))
+        case _ => ()
+      }
+      es.foreach(v => RowTrace.log("ex" + tag + sv(v)))
+      q.toList.zipWithIndex.foreach { case (p, i) => RowTrace.log("inpart" + tag + i + "\t" + sp(p)) }
+      ps.zipWithIndex.foreach { case (p, i) => RowTrace.log("sat" + tag + i + "\t" + sp(p)) }
+    }
     RowTrace.log {
       // The INPUT population: the constraint list solve actually receives, and
       // the partitions built from it, against the SATURATED set it reduces over.

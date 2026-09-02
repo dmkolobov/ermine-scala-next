@@ -847,13 +847,27 @@ object Constraints {
 //        println("processed")
 //        println(proc.toString)
 //        println("--------------------")
+        /* Trace-only: one `step` record per dequeue, naming the branch taken, and one
+         * `learn` record per partition the general branch derived.  Inert unless
+         * `-Dermine.rowTrace` is set (`RowTrace.enabled` is a constant). */
+        def stepLog(branch: String): Unit =
+          if (RowTrace.enabled)
+            RowTrace.log("step\t" + RowTrace.site + "\t" + branch + "\t" + RowTrace.clean(r.toString) +
+                         "\tincm=" + rest.size + "\tproc=" + proc.size)
         val (nincm, nproc) = proc findRHS(rhs) match {
-          case Some(u) => unify(v, u, rest, proc) // common partition
+          case Some(u) => stepLog("common:" + u.id); unify(v, u, rest, proc) // common partition
           case None    => rhs match {
-            case RHSEmpty()          => makeEmpty(v, rest, proc)
-            case RHSConcr(concr)     => makeConcrete(v, concr, rest, proc)
-            case RHSAbstr(Single(u)) => unify(u, v, rest, proc)
-            case RHS(abstr,concr)    => (rest ++! trim(learnPartitions(v, rhs, rest, proc), proc), proc + r)
+            case RHSEmpty()          => stepLog("empty"); makeEmpty(v, rest, proc)
+            case RHSConcr(concr)     => stepLog("concrete"); makeConcrete(v, concr, rest, proc)
+            case RHSAbstr(Single(u)) => stepLog("unify:" + u.id); unify(u, v, rest, proc)
+            case RHS(abstr,concr)    =>
+              stepLog("learn")
+              val learned = learnPartitions(v, rhs, rest, proc)
+              if (RowTrace.enabled)
+                learned.foreach(p => RowTrace.log("learn\t" + RowTrace.site + "\t" +
+                                                  (if (proc contains p) "seen" else "new") + "\t" +
+                                                  RowTrace.clean(p.toString)))
+              (rest ++! trim(learned, proc), proc + r)
           }
         }
         incorporateAll(nincm, nproc)
@@ -1086,8 +1100,26 @@ object Constraints {
       case (s, rhs) => s ++ subPartitions(v, rhs, procd, incmg)
     }
     val p : Partition => Boolean = { case Partition(u, rhs, _) => u != v && !rhs.contains(v) }
-    val nproc = if((srs isEmpty) && keep) proc else procd filter p
-    val nincm = if((srs isEmpty) && keep) incm else incmg filter p
+    val nproc0 = if((srs isEmpty) && keep) proc else procd filter p
+    val nincm0 = if((srs isEmpty) && keep) incm else incmg filter p
+    /* Keep the DEFINITIONS of `v` that have two or more abstract parts (2026-09-02,
+     * tracker/TICKET-substitution-gap.md).  The filter above used to drop every partition
+     * with `v` on the left along with the mentions it rewrites.  A definition with ONE
+     * abstract part is re-expressed by `makeConcrete`'s cancellation (`v <- (x, D)`,
+     * `v <- C`  ==>  `x <- C \ D`); a definition with two or more has no variable-headed
+     * form without `v`, so deleting it deleted the NAME `v` for the row `x ++ y`.  Under
+     * the cut, `commonSubexpression` only reuses names and never mints, so a partition
+     * dequeued later that shares `x ++ y` found nothing to fold against -- and whether it
+     * was dequeued before or after the deletion was decided by the queue key, i.e. by the
+     * variable ids.  That was the whole of the build-order-dependent published types
+     * (`Ai/HeadcountPlan.labelled` and friends).  Keeping the definitions is sound -- they
+     * were already in the set (`Rowpartition.NameLoss.concretizeKeep_sound`) -- and
+     * restores the fold (`keep_recovers_fact`); measured on the example and stdlib
+     * corpora it strengthened four published signatures and weakened none. */
+    val keepDefs = !((srs isEmpty) && keep)
+    val defs: Partition => Boolean = { case Partition(_, RHS(abs, _), _) => abs.size >= 2 }
+    val nproc = if (keepDefs) nproc0 ++ pps.filter(defs) else nproc0
+    val nincm = if (keepDefs) nincm0 ++! qps.filter(defs) else nincm0
     (nincm ++! trim(srs,nproc), nproc)
   }
 
