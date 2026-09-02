@@ -70,11 +70,11 @@ go = display . (maybe $ text "parse error") where display f i = iobind i (javaFX
 
 -- ========= Yahoo Code ========= --
 
-pad2 s = if (length_String s == 1) ("0" ++_String s) s
+pad2' s = if (length_String s == 1) ("0" ++_String s) s
 yahooBaseURL = "http://ichart.finance.yahoo.com/table.csv?"
 yahooDate a b c d = concatStrings [
-  "&", a, "=", pad2 $ getMonth d  |> toString,
-  "&", b, "=", pad2 $ getDate  d  |> toString,
+  "&", a, "=", pad2' $ getMonth d  |> toString,
+  "&", b, "=", pad2' $ getDate  d  |> toString,
   "&", c, "=", (getYear d) + 1900 |> toString
 ]
 yahooStartDate = yahooDate "a" "b" "c"
