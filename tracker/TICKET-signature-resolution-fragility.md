@@ -1,4 +1,59 @@
-# Whether a published signature is RESOLVED is order-fragile (2026-09-02)
+# OPEN QUESTION, NOT A CONFIRMED DEFECT: is signature resolution order-fragile?
+
+**STATUS 2026-09-02, corrected the same day it was written: the headline claim is
+UNSUPPORTED. Do not act on this ticket as a defect report.**
+
+It was opened on this reasoning: `Ai/ClinicalTrial.labelled` and `Ai/HeadcountPlan.withUnitCost`
+have structurally identical constraint sets, and `-Dermine.spliceGuard=true` flips them in
+OPPOSITE directions between a resolved concrete row and an unresolved constrained polymorphic
+type — so the outcome must turn on ordering with no semantic content.
+
+**The premise is false.** The two modules are not in the same situation: `labelled` has a
+downstream use that pins the row (`renamed = rename armName cohortLabel labelled`),
+`withUnitCost` has none (line 62 is its only occurrence). `tracker/repro/` isolates exactly
+that: two 15-line modules differing only by a pinning use, publishing the two forms. Once the
+premise goes, so does the inference.
+
+**And both observations are fully explained without invoking fragility.**
+`-Dermine.spliceGuard=true` suppresses ~90% of splices, so:
+
+* `ClinicalTrial` — the existential is no longer eliminated, the residual really is different,
+  and the use no longer pins the row;
+* `HeadcountPlan` — the retained constraints pin `t` unaided, with no use needed.
+
+A flag that changes solver behaviour substantially changing published signatures is not a
+defect. The flag is DEFAULT OFF and `TICKET-row-solver-8abc.md` recommends it stay off.
+
+**So: no problem has been demonstrated in the shipped compiler.** What follows is kept because
+the question is worth settling, not because an answer has been established.
+
+## The experiment that would settle it — NOT YET RUN
+
+Perturb something SEMANTICALLY IRRELEVANT and see whether resolution flips:
+
+* reorder two independent bindings in a source file;
+* insert an unrelated definition above them;
+* rename a field so `Supply` ids shift.
+
+Then diff the `.ei`. If a published type moves between `Relation (|..|)` and
+`forall t. (..) => Relation t` under any of those, the defect is real and this ticket becomes a
+defect report. If nothing moves, WITHDRAW it — do not downgrade it, withdraw it. Anything
+already known about constraint REORDERING is the pre-existing ten-site inventory in
+`TICKET-row-constraint-decision.md` and is not this.
+
+`tracker/repro/MinReproUse.e` is the base to perturb; `tracker/tools/ei-diff.sh` does the
+capture (it deletes every `.ei` on both sides, which is mandatory — see
+`ROW-CONSTRAINT-STATE.md`).
+
+## What IS established, and is not in dispute
+
+A downstream use at a concrete header pins the row and the published signature becomes
+concrete; without one it stays constrained-polymorphic. That is ordinary inference. Whether the
+compiler SHOULD resolve `derived` with no use is a design question, not a defect.
+
+---
+
+# Original write-up, retained for its evidence and its errors
 
 Found while diffing `.ei` interfaces for ticket item 8b
 (`tracker/TICKET-row-solver-8abc.md`). It is not an 8b defect and it is not fixed by any

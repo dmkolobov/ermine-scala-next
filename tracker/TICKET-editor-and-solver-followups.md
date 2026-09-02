@@ -118,7 +118,7 @@ Full write-up, with the Lean theorem names and the measurements:
   default off. Measured on a probe family built for the purpose: there is a second
   cliff driven by `resolution` on a WELL-TYPED program, and the guard removes it.
 
-## 9. Whether a published signature is RESOLVED is order-fragile
+## 9. OPEN QUESTION (not a confirmed defect): is signature resolution order-fragile?
 
 Found 2026-09-02 while diffing `.ei` interfaces for item 8b. For the same source the
 compiler sometimes publishes `Relation (|..6 fields..|)` and sometimes
@@ -126,8 +126,13 @@ compiler sometimes publishes `Relation (|..6 fields..|)` and sometimes
 content — `Ai/ClinicalTrial` and `Ai/HeadcountPlan` show both forms with the deciding
 perturbation swapped, on structurally identical constraint sets.
 
-Deterministic given fixed input (checked), but fragile to any irrelevant perturbation. It
-is the same root cause as the ten-site determinism inventory in
+**Corrected the same day: the headline claim is UNSUPPORTED.** The two modules are not
+comparable — one has a downstream use that pins the row and the other does not — and both
+observations follow directly from what the flag does, without any appeal to fragility. No
+problem has been demonstrated in the shipped compiler. The deciding experiment (perturb
+something semantically irrelevant and see whether resolution flips) has NOT been run; if it
+comes back clean the ticket should be withdrawn, not downgraded. Loosely related to the
+ten-site determinism inventory in
 `TICKET-row-constraint-decision.md`, with a worse symptom than the reordering that
 inventory describes: it changes the type a user programs against, it propagates to callers,
 and it is invisible to a multiset comparison of constraints.
