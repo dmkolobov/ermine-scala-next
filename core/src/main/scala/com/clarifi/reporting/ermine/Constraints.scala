@@ -694,6 +694,15 @@ object Constraints {
    *  behaviour-neutral. */
   case object CommonSubexpressionMint extends Inference
 
+  /** Stage 2 provenance (`tracker/satterm/KEYED-SPLIT-STAGE2.md`): the KEYED REUSE
+   *  branch of `splitConcrete`, taken only when `-Dermine.splitKey=true` and the
+   *  resolvent reverse lookup finds a name for `v \ concr`.  It emits ONE partition,
+   *  `w <- (abstr)`, and mints nothing -- the Lean `KeyedSplit.kSplitReuseResult`.
+   *  `Inference` is never inspected and `Partition.equals`/`hashCode` ignore it, so
+   *  the tag itself is behaviour-neutral; it exists so `-Dermine.rowTrace` can count
+   *  how often the branch fires. */
+  case object SplitKeyed           extends Inference
+
   /** Which generative rules are allowed to mint fresh variables.
    *
    *  `-Dermine.genRules=all` (DEFAULT) -- shipped behaviour, unchanged.
@@ -732,8 +741,10 @@ object Constraints {
      * `ResGuardTerm.lean` proves the guarded rule TERMINATES on every satisfiable system,
      * which the unguarded rule does not (`Cut.resSeed_diverges` runs on a system that has
      * a model); `ResGuardDiverge.lean` proves the guard does NOT buy termination in
-     * general -- the remaining divergent seeds are all unsatisfiable, which is the
-     * complementary job of `labelCheck`.
+     * general -- the remaining divergent seeds are all unsatisfiable.  `labelCheck`
+     * refutes `gSeed` in particular (`gSeed_refuted`) but NOT every such seed:
+     * `DefaultDiverge.lean` (`not_CRule`, 2026-09-02) exhibits an unsatisfiable system on
+     * which this rule set diverges and which the input check does not refute.
      *
      * ADOPTED 2026-09-02 (ticket item 8c): DEFAULT ON.  `-Dermine.resGuard=false` restores
      * the previous behaviour exactly.  The evidence:
@@ -772,6 +783,59 @@ object Constraints {
      * restores the late position exactly. */
     val labelCheckEarly: Boolean =
       System.getProperty("ermine.labelCheckEarly", "true") == "true"
+    /* Orthogonal: key `splitConcrete`'s mint guard on the pair (lhs, concrete part) --
+     * the resolvent reverse lookup `resolution` already uses -- instead of on the GROUP.
+     *
+     * Shipped (syntactic) guard: mint a name for the group `abstr` unless some partition
+     * of the system is a bare `d <- abstr`.  Groups can be manufactured without end, so
+     * nothing bounds split branching.  KEYED guard: mint unless some partition of the
+     * system is `v <- (z, concr)` for a single variable `z` -- i.e. unless the system
+     * already names `v \ concr`.  Under a model the minted variable's row is FORCED by
+     * that pair alone (`v <- (u, concr)` forces `rho u = rho v \ concr`), so this is the
+     * keying the semantics already imposes, and it is the keying `resolution`'s guard has
+     * had since `resGuard` was adopted.  On a hit the rule REUSES: it gives the existing
+     * name `w` the new group as a bare definition, `w <- (abstr)`, and mints nothing.
+     *
+     * `Rowpartition/KeyedSplit.lean` licenses it:
+     *   - `terminatesOnSatKeyed` -- the whole calculus (`KDefaultStep` = the non-generative
+     *     rules + the KEYED split + guarded resolution) terminates on EVERY satisfiable
+     *     input in EVERY run order, with the explicit bound `KRun.length_le`;
+     *   - `keyed_vs_syntactic : TerminatesOnSatKeyed /\ ~TerminatesOnSat` -- the same
+     *     statement is FALSE for the shipped guard (`DefaultSatDiverge.not_TerminatesOnSat`,
+     *     witness `W2`);
+     *   - `ksplit_reuse_sat` / `KSplitStep.reuse_models_iff` -- the reuse branch is pure
+     *     entailment and does not move the model set at all;
+     *   - `ksplit_mint_conservativeExt` -- the mint branch is still a conservative
+     *     extension at the fresh name.
+     * It says NOTHING about ill-typed (unsatisfiable) input: guarded resolution still
+     * diverges on `ResGuardDiverge.gSeed`, and the label check plus `RHS.merge` remain the
+     * only defences there.  The two calculi are INCOMPARABLE, not nested
+     * (`split_mint_not_keyed`), so the emitted NAME differs from the shipped rule's.
+     *
+     * ADOPTED 2026-09-03: DEFAULT ON.  `-Dermine.splitKey=false` restores the previous
+     * behaviour exactly.  The evidence (`tracker/satterm/KEYED-SPLIT-STAGE2.md`):
+     *   - proved not a semantic change (`ksplit_reuse_sat`, `KSplitStep.reuse_models_iff`,
+     *     `ksplit_mint_conservativeExt`) and TERMINATING on every satisfiable system in
+     *     every run order (`terminatesOnSatKeyed`), with the shipped guard's version of the
+     *     same statement proved FALSE (`keyed_vs_syntactic`), so the boundary is known;
+     *   - 66-file example corpus and 34-file incompleteness corpus: 0 files differ,
+     *     verdicts identical (23/43 and 18/16), `shouldfail/` 40/40 still rejected;
+     *   - 188 published interfaces / 1932 bindings: no signature weaker; the only two
+     *     bindings attributable to the flag are alpha-equivalent and equivalent-modulo-a-
+     *     forced-name, everything else appears in a same-configuration control run;
+     *   - `core/test` 903/904 with the flag ON, the one failure being the pre-existing
+     *     `Constraints.disjunction sound` generator; `repl-smoke` 4/4, `lsp-smoke` 98/98;
+     *   - and it is not merely insurance: `core/examples/incomplete/gu05_star_join_4dim_
+     *     concrete_signature.e` goes from ~6.2s of module time to ~1.2s, a 5x reduction,
+     *     because five keyed reuses take its largest solve from 1372 saturated partitions
+     *     to 458.  The branch fires 77 times over 18 of the 110 example modules (and zero
+     *     stdlib ones), so the corpus zeros above are the guard running on real code.
+     * What it does NOT buy: anything for ill-typed input (guarded resolution still diverges
+     * on `ResGuardDiverge.gSeed`; the label check and `RHS.merge` remain the defences), and
+     * the theorem is about the additive rule set, not about `incorporateAll`'s deletions
+     * (`makeConcrete`/`destructiveSub` absorb exactly the `v <- (z, K)` witnesses the key
+     * needs; whether that can re-open a mint is open). */
+    val splitKey: Boolean = System.getProperty("ermine.splitKey", "true") == "true"
     /* REMOVED 2026-09-02, both measured and declined; see
      * `tracker/TICKET-row-solver-8abc.md` and the Lean that still licenses them.
      *   `ermine.labelCheckSaturated` -- run the check on `q.expand` instead of the input.
@@ -785,7 +849,8 @@ object Constraints {
      * The proofs are kept; the flags were dead weight. */
     override def toString =
       mode + (if (disjRule) "+disj" else "") + (if (labelCheck) "+label" else "") +
-        (if (labelCheckEarly) "-early" else "") + (if (resGuard) "+resguard" else "")
+        (if (labelCheckEarly) "-early" else "") + (if (resGuard) "+resguard" else "") +
+        (if (splitKey) "+splitkey" else "")
   }
   case object Disjunction         extends Inference
 
@@ -911,17 +976,55 @@ object Constraints {
    *    -----------
    *     u <- x++    (u fresh)
    *     a <- C+ u
-   */
-  def splitConcrete(v: TypeVar, abstr: Set[TypeVar], concr: Fields, rhss: RHS => Option[TypeVar])(implicit su: Supply): Set[Partition] =
+   *
+   * CORRESPONDENCE WITH `Rowpartition/KeyedSplit.lean` (`-Dermine.splitKey`, off by
+   * default).  Write `c` for the premise `v <- (abstr, concr)`, so `c.lhs = v`,
+   * `vset c = abstr`, `c.conc = concr`; `G` is the current system.  The three branches
+   * below are, in order:
+   *
+   *   syntactic reuse  `rhss(RHSAbstr(abstr)) = Some(u)`, i.e. `Names G u (vset c)`.
+   *       Emits `c.lhs <- (u, c.conc)`.  This is `Cut.SplitReuseApp` / `splitReuseResult`,
+   *       which the keyed calculus keeps VERBATIM: it is one of the `NonGenStep` rules of
+   *       `KDefaultStep`, not part of `KSplitStep`, so `splitKey` must not touch it.
+   *   keyed reuse      `splitKey` and `resolvent(concr) = Some(w)`, i.e. `mk c.lhs {w}
+   *       c.conc ∈ G` -- exactly `KSplitReuseApp G c w` (its other three premises,
+   *       `c ∈ G`, `c.conc ≠ ∅`, `2 ≤ |vset c|`, are the guards above and the caller).
+   *       Emits `mk w (vset c) ∅` = `w <- (abstr)` = `kSplitReuseResult`.  No fresh id is
+   *       drawn -- `fresh` is called only in the mint branch below.
+   *   mint             otherwise.  With `splitKey` on, `resolvent(concr) = None` is
+   *       `¬ Resolved G c.lhs c.conc`, which is `KSplitApp.unresolved`, so this branch is
+   *       `KSplitStep.mint`.  With `splitKey` off it is `Cut.SplitApp` as shipped.
+   *
+   * `Resolved G v K` is `∃ z, mk v {z} K ∈ G` (ResGuard.lean:79), and `resolvent` is
+   * `learnPartitions`'s `findResolvent`, which is exactly that lookup restricted to the
+   * `v` at hand.  ONE DIFFERENCE, and it is nil in effect: `findResolvent` ranges over
+   * `proc ++ incm`, i.e. `G` MINUS the premise `c` itself (`incorporateAll` re-adds the
+   * dequeued partition to `proc` only after `learnPartitions` returns).  `c` cannot be a
+   * witness for its own key -- a witness has a SINGLE abstract variable and `c` reaches
+   * this rule only with `2 ≤ |abstr|` -- so `¬Resolved (G \ {c}) v concr = ¬Resolved G v
+   * concr`, and the Scala guard is the Lean guard, not an approximation of it.  The batch
+   * `s` that `resolution` also consults is empty here: `splitConcrete` is the INITIAL
+   * value of `learnPartitions`' fold, so no partition of this batch exists yet. */
+  def splitConcrete(v: TypeVar, abstr: Set[TypeVar], concr: Fields, rhss: RHS => Option[TypeVar],
+                    resolvent: Fields => Option[TypeVar] = _ => none)(implicit su: Supply): Set[Partition] =
     if(concr.isEmpty || abstr.size < 2) Set()
     else // split concrete
       rhss(RHSAbstr(abstr)) match {
         case Some(u) => Set(Partition(v, RHS(Set(u), concr), SplitConcrete))
         case None if !GenRules.splitMints => Set()
         case None    =>
-          val u = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
-          Set( Partition(u, RHSAbstr(abstr), SplitConcrete)
-             , Partition(v, RHS(Set(u), concr), SplitConcrete))
+          (if (GenRules.splitKey) resolvent(concr) else none) match {
+            case Some(w) =>
+              // KEYED REUSE: `v <- (w, concr)` is already present, so `w` denotes
+              // `v \ concr`, which is what a mint would have named.  Give the existing
+              // name the new group as a bare definition and mint nothing.  Entailed by
+              // the environment: `Rowpartition.ksplit_reuse_entails`.
+              Set(Partition(w, RHSAbstr(abstr), SplitKeyed))
+            case None =>
+              val u = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
+              Set( Partition(u, RHSAbstr(abstr), SplitConcrete)
+                 , Partition(v, RHS(Set(u), concr), SplitConcrete))
+          }
       }
 
   /* When the above special case rules haven't fired, we need to collect
@@ -932,10 +1035,20 @@ object Constraints {
   def learnPartitions(v: TypeVar, rhs1: RHS, incm: PQueue, proc: PQueue)(implicit su: Supply, tml: Located): Set[Partition] =
     if(rhs1.abstr contains v) selfSubstitution(v, rhs1.abstr, rhs1.concr)
     else {
-      /* The reverse lookup that guards `resolution`'s mint: every partition of `v` whose
-       * right-hand side is a lone variable, indexed by its concrete part.  Built at most
-       * once per call, and only when `-Dermine.resGuard=true` -- the lambda below is
-       * never invoked otherwise, so this costs nothing in the default configuration. */
+      /* The reverse lookup that guards `resolution`'s mint -- and, under
+       * `-Dermine.splitKey=true`, `splitConcrete`'s: every partition of `v` whose
+       * right-hand side is a lone variable, indexed by its concrete part.  This IS
+       * `Rowpartition.Resolved G v K` (`∃ z, mk v {z} K ∈ G`) restricted to the `v` at
+       * hand.  It consults `proc` and `incm`, i.e. the whole current system except the
+       * partition being dequeued (which `incorporateAll` returns to `proc` only after this
+       * call) and except the current batch (which `findResolvent`'s `s` argument adds for
+       * `resolution`; `splitConcrete` runs before any batch partition exists, so it passes
+       * `Set()`).  The dequeued partition can never be a witness for its own key: a
+       * witness has a single abstract variable and `resolution`/`splitConcrete` reach the
+       * lookup only with a lone variable on each side / with `2 ≤ |abstr|` respectively.
+       * Built at most once per call, and only when one of the two flags is on -- the
+       * lambda below is never invoked otherwise, so this costs nothing when both are
+       * off. */
       lazy val resolvents: Map[Fields, TypeVar] = {
         def add(m: Map[Fields, TypeVar], p: Partition): Map[Fields, TypeVar] = p match {
           case Partition(u, RHS(Single(w), con), _) if u == v => m + (con -> w)
@@ -948,7 +1061,7 @@ object Constraints {
           case Partition(u, RHS(Single(w), con), _) if u == v && con == k => w
         } orElse resolvents.get(k)
       proc.foldLeft[Set[Partition]](
-           splitConcrete(v, rhs1.abstr, rhs1.concr, findRHS(incm, proc, Set()))
+           splitConcrete(v, rhs1.abstr, rhs1.concr, findRHS(incm, proc, Set()), findResolvent(Set()))
          ){
            case (s, Partition(u, rhs2, _)) =>
              if(u == v) {

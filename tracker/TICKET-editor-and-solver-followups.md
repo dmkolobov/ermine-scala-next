@@ -148,8 +148,13 @@ Full write-up, with the Lean theorem names and the measurements:
   (`Rowpartition/ResGuard.lean`), makes the rule terminate on every SATISFIABLE system
   with an explicit bound (`guarded_terminates_of_satisfiable`), and does NOT restore
   termination in general (`gSeed_diverges`) — the surviving divergent seeds are all
-  unsatisfiable, and the per-label check refutes the witness at one label
-  (`gSeed_refuted`), so the two defences are complementary. Behind `-Dermine.resGuard`,
+  unsatisfiable, and the per-label check refutes THAT witness at one label
+  (`gSeed_refuted`). [CORRECTED 2026-09-02: this used to say "so the two defences are
+  complementary". They are not, in general: the check refutes only what propagation can
+  force, and `Rowpartition/DefaultDiverge.lean` (`not_CRule`) exhibits an unsatisfiable
+  eight-constraint system on which the shipped rule set diverges and which the input check
+  does not refute — see `tracker/PROMPT-default-termination.md` and
+  `ROW-CONSTRAINT-STATE.md`.] Behind `-Dermine.resGuard`,
   default off. Measured on a probe family built for the purpose: there is a second
   cliff driven by `resolution` on a WELL-TYPED program, and the guard removes it.
 

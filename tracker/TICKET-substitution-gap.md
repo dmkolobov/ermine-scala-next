@@ -288,7 +288,20 @@ What was NOT re-proved, and what stands in for it:
 
 * Termination. The kept definitions re-enable only the reuse/fold branch of
   `commonSubexpression` and `substitution`, which mint nothing; `resolution` needs
-  single-variable forms, which a two-abstract definition is not. The sweep covers every
+  single-variable forms, which a two-abstract definition is not. [CHECKED IN LEAN
+  2026-09-02, `Rowpartition/KeepInert.lean`, and found HALF TRUE. `resolution` (guarded)
+  is inert on the kept definitions: `keep_gres_inert`, `keep_gres_runs_inert`. But this
+  bullet omitted `splitConcrete`: a kept definition with a NONEMPTY concrete part,
+  `u <- (x, y, (|k|))`, is a `splitConcrete` premise and mints a name for `{x, y}` if the
+  group is unnamed — `KeepMint.keep_mints` / `prose_false` on the three-constraint instance
+  `u <- (x, y, (|k|)); u <- (|k, c|); R <- (u, z)`, and the real solver does it
+  (`tracker/repro/keepmint/run.sh`: 16 of 32 id/order configurations). What is true: for
+  BARE kept definitions (the `u <- (x, y)` this ticket is about) the delta is
+  `NonGenStep`-only (`keep_mint_inert_of_bare`), and every mint on a kept definition was
+  already enabled on the INPUT before the deletion (`keep_split_of_kept`) — keepDefs
+  restores a mint the deletion had suppressed, it does not create one. Since the loop's
+  steps are a subset of the rule set's, the inertness half transfers to `incorporateAll`.]
+  The sweep covers every
   `.e` under `core/examples/` including `incomplete/` at a 120 s cap with no timeout, and
   the six `.slow` divergence seeds were timed separately (§4).
 * The common-partition branch can now unify a later same-right-hand-side variable with a

@@ -107,13 +107,25 @@ are the next round's roots. The invariant that makes the lookup miss forever is 
 the moment of each mint, every constraint with that left-hand side still has a SINGLETON
 concrete part while the key has two labels.
 
-**The two halves are complementary, not in conflict.** `gSeed_unsat` proves the divergent
-seed has no model, and `gSeed_path_unsat` that every system on the divergent path is
-unsatisfiable too — the solver would be searching a problem decided before the first step.
-And `gSeed_refuted` proves that the per-label unit propagation of `LabelProp` refutes it at
-the single label `f0`, in five propagation steps and with no case split. **Guarded
-resolution and the label check are complementary defences, and this gadget is precisely the
-shape that needs both.**
+**The two halves do not contradict each other, and they do not cover each other.**
+`gSeed_unsat` proves the divergent seed has no model, and `gSeed_path_unsat` that every
+system on the divergent path is unsatisfiable too — the solver would be searching a problem
+decided before the first step. And `gSeed_refuted` proves that the per-label unit
+propagation of `LabelProp` refutes it at the single label `f0`, in five propagation steps
+and with no case split. What that establishes is exactly: the guard bounds the search on
+every SATISFIABLE system, and the label check refutes `gSeed`. It does NOT establish that
+the check refutes every system on which the shipped rules diverge — that claim, (C-rule) in
+`tracker/PROMPT-default-termination.md`, is FALSE: `Rowpartition/DefaultDiverge.lean`
+(`not_CRule`, 2026-09-02) exhibits an eight-constraint system `CRule.W`, unsatisfiable,
+on which the shipped rule set (`DefaultStep` = the cut with GUARDED resolution) admits
+chains of every length (`W_diverges`) and which per-label propagation on the input does
+not refute (`W_not_refuted`): the gadget is hidden behind two `w <- (v, s)`,
+`w <- (x1, x2, s, (|l|))`, `x <- (x1, x2)` triples that propagation cannot see through in
+either polarity, and four non-generative steps (fold, cancellation, twice) unfold it. The
+check covers, in general, only what propagation can force (`LabelProp.Incomplete`); the
+saturated set `G₄` IS refuted (`G₄_refuted`), the input is not. Whether `incorporateAll`
+walks into the loop on `W` is a measurement, not a theorem: see `tracker/repro/crule/`
+and `tracker/ROW-CONSTRAINT-STATE.md` (2026-09-02, "default termination").
 
 ### (c) What the compiler does — MEASURED
 

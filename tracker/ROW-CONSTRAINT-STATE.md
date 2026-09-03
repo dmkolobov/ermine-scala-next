@@ -1,4 +1,125 @@
-# Row-constraint work — state as of 2026-09-02
+# Row-constraint work — state as of 2026-09-03
+
+## 2026-09-03: termination on WELL-TYPED input — FALSE for the syntactic split guard; the KEYED guard is proved terminating and `ermine.splitKey` ADOPTED
+
+Full write-up `tracker/TICKET-sat-termination.md`. THEOREM (`DefaultSatDiverge.lean`,
+`not_TerminatesOnSat`): the satisfiable two-constraint `W2 = {p <- (e1, e2, (|k|)), p <- (e2,
+(|k|))}` admits productive runs of every length under the shipped additive rule set — the
+forced-empty `e1` recurs in every group, so one parent acquires infinitely many split
+children, exactly the gap `DefaultTerm.lean` isolates (rank descent and the resolution guard
+bound everything else). MEASUREMENT (`tracker/repro/satterm/`): the shipped loop mints once
+on `W2` and solves it at 1000/1000 id bases, because cancellation exposes `e1 <- ()`,
+`makeEmpty` erases it and the singleton link is UNIFIED, never substituted; `H2` and `NE6`
+likewise. MEASUREMENT (`tracker/satterm/measure/`): no well-typed input diverges under the
+defaults; `ResStar` (m single-label projections of one row) is exponential, `3^m` partitions
+and `2^m − m − 1` mints, timing out at m = 10 — a work cliff, not a termination one.
+THEOREM, the repair (`KeyedSplit.lean`, later the same day): key `splitConcrete`'s guard on
+`(lhs, concrete part)` as `resolution`'s is (`¬ Resolved G lhs conc`) and the whole calculus
+terminates on every satisfiable input in every run order, by `ResGuardTerm`'s measure unchanged
+(`terminatesOnSatKeyed`, `keyed_vs_syntactic`; `tracker/satterm/KEYED-SPLIT.md`).
+**ADOPTED 2026-09-03: `ermine.splitKey` now DEFAULTS TO TRUE** (`GenRules.splitKey`,
+`SplitKeyed` provenance; `-Dermine.splitKey=false` restores the syntactic guard exactly; the
+Scala guard is the Lean guard exactly). MEASUREMENT, Stage 2
+(`tracker/satterm/KEYED-SPLIT-STAGE2.md`), every gate green off vs on from one class set
+before the flip: seeds 300/300 solved and
+200/200 rejected, `W2` mints nothing with the flag on; stdlib boot byte-identical; `core/test`
+903/904 both sides; corpus 0 of 66 and 0 of 34 differ, `shouldfail/` 40/40; 188 published
+interfaces, 0 weaker (two attributable bindings, both equivalent); `ResStar` unchanged and
+`gu05` 6.1 s -> 1.2 s (five keyed reuses, 1,372 -> 458 saturated partitions); 77 keyed firings
+in 18 of 110 example modules. Report recommends ADOPT WITH CAVEATS (behaviour change in ids,
+one forced existential, `np01` mints more; nothing for ill-typed input; additive theorem only —
+the loop-layer question is Stage 3). Post-flip re-run against the new default with no
+flags: see `TICKET-sat-termination.md` §3d. Still open for the PREVIOUS guard only
+(`-Dermine.splitKey=false`): Conjecture S, a loop-shaped relation, undetected empty resolvents
+(`NE6`) — moot for the shipped compiler, since the theorem covers every run order. Open for
+the shipped compiler: the loop layer (Stage 3). Scala change: the flag, default on.
+`incomplete/README.md`'s `.slow` timings are stale under the shipped defaults (all load in
+under 0.4 s except `gu05` at 7 s).
+
+## 2026-09-02, latest: the two shipped defaults nothing proved — `PROMPT-default-termination.md` ANSWERED
+
+Both questions Lean-first; every result below is labelled THEOREM (about the additive rule
+set, `tracker/lean/Rowpartition/`) or MEASUREMENT (about `Constraints.incorporateAll`, with
+the instrument named). The development has no vocabulary for the single-pass loop, so a
+statement about it is a measurement, never a theorem.
+
+**Q1 — "complementary defences" is FALSE; the compiler still terminates on the witness.**
+
+* THEOREM (`DefaultDiverge.lean`, `not_CRule`): the shipped rule set `DefaultStep`
+  (= `CutRuleStep` with `resolution` GUARDED, i.e. `genRules=cut` + `resGuard`) admits chains
+  of every length from an unsatisfiable eight-constraint system `CRule.W` that the per-label
+  check on the INPUT does not refute (`W_witness : W_unsat ∧ Diverges W ∧ ¬ Refuted W.toList`).
+  The gadget `gSeed` cannot be an input — unit propagation is complete for single-variable
+  constraints — so it is hidden behind two `w <- (v, s); w <- (x1, x2, s, (|l|)); x <- (x1, x2)`
+  triples that propagation cannot see through in either polarity and that four
+  `NonGenStep`s (fold, cancellation, twice) unfold. The saturated set `G₄` IS refuted
+  (`G₄_refuted`). So the four documents' sentence was retired: what is proved is that the
+  guard covers satisfiable systems (`guarded_terminates_of_satisfiable`) and the check
+  covers `gSeed` and, in general, only what propagation can force (`LabelProp.Incomplete`).
+* MEASUREMENT (`tracker/repro/crule/run.sh`, real `Subst.solve`, exact ids): `W` is REJECTED
+  at 1000 of 1000 contiguous id bases under the default flags, in 2–75 ms each, by
+  `RHS.merge` — "Fields appear twice in row: Set(l_i)" — never a hang, never an acceptance;
+  also 100/100 under `genRules=all` and 10/10 with `resGuard=false`. The trace of base 0
+  shows the loop DOES enter the mint round (4 Resolution-minted ids), but eager
+  `substitution` spreads the resolvents' multi-label concrete parts into rows already
+  carrying one of them and the duplicated-field check fires at the 50th dequeue. The label
+  check never fires on `W` (predicted); it does on `gSeed` and on `G₄` (controls c1, c3);
+  the satisfiable sibling `Wsat` SOLVES (c4); under `genRules=nongen` the unsatisfiable `W`
+  is ACCEPTED (c6) — one more instance of `nongen`'s unsoundness, and one the label check
+  cannot cover. Source level: `tracker/repro/crule/CRuleHang.e` is rejected the same way
+  ("Fields appear twice in row: Set(Repro.CRuleHang.l1)"), blamed at `1:1` — the merge
+  error still blames the module header, unlike the label check since follow-up item 1
+  (small diagnostics follow-up, not fixed here).
+* VERDICT on `TICKET-row-constraint-decision.md` §7 Stage 5 (the work budget): the case is
+  "insurance whose premium is now known", NOT "urgent". The rule-set counterexample exists
+  and is proved, but `incorporateAll` does not walk into it on this witness at any of 1000
+  queue orders: a refuter the label check is not — `RHS.merge` (`SplitNecessary.FiresMerge`)
+  — reaches the contradiction first. Stage 5 is therefore not scheduled by this result. What
+  is NOT established, and remains the only gap between "measured" and "guaranteed": no
+  theorem says the loop always finds a merge before it loops on an ill-typed input, and no
+  theorem says the combined rule set terminates on WELL-typed input (`ResGuardTerm` covers
+  guarded resolution alone; `guarded_terminates_of_satisfiable` says nothing about the
+  combination with substitution and `splitConcrete`). If a witness is ever found that the
+  loop follows into the mint round without a merge, Stage 5 becomes urgent; until then its
+  premium is one counter and one `tml.die`, and its benefit is unmeasured.
+
+**Q2 — `keepDefs` can mint (half of the prose was wrong), and does, on real code.**
+
+* THEOREM (`KeepInert.lean`): guarded resolution is INERT on the kept definitions
+  (`keep_gres_inert`, `keep_gres_runs_inert`; the loop's steps are a subset, so this
+  transfers). `splitConcrete` is NOT: a kept definition with a nonempty concrete part is a
+  `SplitApp` premise (`KeepMint.keep_mints` vs `concretize_no_split`; `prose_false`). What
+  is true: bare kept definitions (the `NameLoss` `u <- (x, y)`) are inert for both minting
+  rules (`keep_mint_inert_of_bare`), and any mint on a kept definition was already enabled
+  on the INPUT before the deletion (`keep_split_of_kept`, hypothesis `u ∉ vset c`) — keepDefs
+  restores a mint the deletion suppressed; it creates none. The prose in
+  `TICKET-substitution-gap.md` §7 is annotated accordingly.
+* MEASUREMENT (`tracker/repro/keepmint/run.sh`; `tracker/tools/keptdef-sweep.sh`, i.e. `keptdef-mints.py`
+  over a serialized `-Dermine.rowTrace` of every `core/examples/**/*.e`, 110 modules, plus one
+  stdlib boot; per-module results in `tracker/repro/keepmint/corpus-*-2026-09-02.txt`): the instance mints in 16 of 32 id/order configurations; on the example
+  corpus kept definitions are re-dequeued 715 (329 the kept definition itself, 386 partitions derived from one after the concretisation) times, 284 (42 strict) of them with a concrete
+  part, and `splitConcrete` MINTS on 156 (24 on the kept definition itself) of those (128 reuse an existing name)
+  across 27 (14 with a mint on the kept definition itself, all ten `Ai/` modules among the 27) modules; the stdlib boot has 0 `makeConcrete` steps and hence 0 (it has
+  no concrete rows to concretise — the §7.9 population fact again). A split mint is bounded
+  on its own (`Cut.split_terminates`); the corpus sweep of `TICKET-substitution-gap.md` §7
+  (every `.e` incl. `incomplete/`, no timeouts) is the only evidence about the combination.
+* No Scala change. The only edit under `core/src` is the `resGuard` comment in
+  `Constraints.scala`, which asserted the retired sentence.
+
+Audit after integration: `lake build` -> `Build completed successfully (811 jobs)`;
+`lake env lean Audit.lean` -> **1790 theorems audited, 0 using a non-standard axiom**
+(was 1625). Baselines re-run 2026-09-02 (after the comment edit and recompile): `core/test`
+903/904 (277 s; the one failure is the known `Constraints.disjunction sound` generator
+starvation, re-confirmed with `testOnly`), `repl-smoke` 4/4 suites (35 checks), `lsp-smoke`
+98/98, and 129 stdlib modules loaded on every one of the sweep's 110 runs.
+
+Documents corrected: `tracker/lean/README.md` (module map row, `ResGuardDiverge` bullet),
+`TICKET-row-solver-8abc.md`, `TICKET-editor-and-solver-followups.md` §8,
+`ResGuardDiverge.lean` (header and summary docstrings), `Constraints.scala` (comment),
+`TICKET-substitution-gap.md` §7. Still stale and NOT fixed here (flagged in the prompt):
+`TICKET-signature-resolution-fragility.md` (headline fixed by `a4b62c0`),
+`TICKET-row-solver-8abc.md` §"The signature surface", `TICKET-editor-and-solver-followups.md`
+§9, `TICKET-row-constraint-decision.md`'s "No Scala changed" status line.
 
 ## 2026-09-02, later: `ermine.labelCheckEarly` ADOPTED, label-check blame goes to the call site
 
