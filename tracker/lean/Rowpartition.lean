@@ -65,6 +65,11 @@ first getting the module to build.
                                part), as resolution's already is, and the whole calculus
                                TERMINATES on every satisfiable input (`terminatesOnSatKeyed`,
                                `keyed_vs_syntactic`), by `ResGuardTerm`'s measure unchanged
+* `Rowpartition.KeyedSplitScala` -- ...and the SHIPPED `splitConcrete` is that rule: both of
+                               its reverse lookups give the same answers on the system minus
+                               the dequeued premise as on the whole system (`resolved_erase_iff`,
+                               `named_erase_iff`), and every branch it takes is a `KDefaultStep`
+                               (`scalaSplit_step`, `scalaSplitOf_step`)
 * `Rowpartition.Sanity`     -- a standalone toolchain smoke test
 -/
 import Rowpartition.Basic
@@ -97,3 +102,4 @@ import Rowpartition.KeepInert
 import Rowpartition.DefaultTerm
 import Rowpartition.DefaultSatDiverge
 import Rowpartition.KeyedSplit
+import Rowpartition.KeyedSplitScala

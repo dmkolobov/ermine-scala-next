@@ -79,6 +79,15 @@ not a difference: `splitConcrete` is the INITIAL value of `learnPartitions`' fol
 batch partition exists yet, and `findResolvent(Set())` is literally `findResolvent(s)` at
 `s = ∅`.  **The Scala implements `KSplitStep` exactly; nothing was approximated.**
 
+**Now a theorem** (`Rowpartition/KeyedSplitScala.lean`, 2026-09-03), not the prose above:
+`resolved_erase_iff` (`Resolved (G.erase c) v K ↔ Resolved G v K` given `2 ≤ |vset c|`),
+`ksplit_guard_erase_iff`, `ksplitApp_erase_iff`, `ksplitReuseApp_erase_iff`; the same for the
+SYNTACTIC lookup, which the prose above never checked, by `named_erase_iff` /
+`names_erase_iff` (its witnesses are bare, `conc = ∅`, and the rule runs only with
+`concr ≠ ∅`); and the whole three-branch rule as `scalaSplit` with the adequacy theorem
+`scalaSplit_step` / `scalaSplitOf_step` — every system it returns is a `KDefaultStep` of `G`
+(`scalaSplit_eq_none_iff` pins the only no-op to the early return).
+
 ### A.3 Compile and unit tests
 
 ```

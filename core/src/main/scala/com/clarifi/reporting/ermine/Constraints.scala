@@ -977,8 +977,8 @@ object Constraints {
    *     u <- x++    (u fresh)
    *     a <- C+ u
    *
-   * CORRESPONDENCE WITH `Rowpartition/KeyedSplit.lean` (`-Dermine.splitKey`, off by
-   * default).  Write `c` for the premise `v <- (abstr, concr)`, so `c.lhs = v`,
+   * CORRESPONDENCE WITH `Rowpartition/KeyedSplit.lean` (`-Dermine.splitKey`, DEFAULT ON
+   * since 2026-09-03).  Write `c` for the premise `v <- (abstr, concr)`, so `c.lhs = v`,
    * `vset c = abstr`, `c.conc = concr`; `G` is the current system.  The three branches
    * below are, in order:
    *
@@ -995,16 +995,41 @@ object Constraints {
    *       `¬ Resolved G c.lhs c.conc`, which is `KSplitApp.unresolved`, so this branch is
    *       `KSplitStep.mint`.  With `splitKey` off it is `Cut.SplitApp` as shipped.
    *
-   * `Resolved G v K` is `∃ z, mk v {z} K ∈ G` (ResGuard.lean:79), and `resolvent` is
-   * `learnPartitions`'s `findResolvent`, which is exactly that lookup restricted to the
-   * `v` at hand.  ONE DIFFERENCE, and it is nil in effect: `findResolvent` ranges over
-   * `proc ++ incm`, i.e. `G` MINUS the premise `c` itself (`incorporateAll` re-adds the
-   * dequeued partition to `proc` only after `learnPartitions` returns).  `c` cannot be a
-   * witness for its own key -- a witness has a SINGLE abstract variable and `c` reaches
-   * this rule only with `2 ≤ |abstr|` -- so `¬Resolved (G \ {c}) v concr = ¬Resolved G v
-   * concr`, and the Scala guard is the Lean guard, not an approximation of it.  The batch
-   * `s` that `resolution` also consults is empty here: `splitConcrete` is the INITIAL
-   * value of `learnPartitions`' fold, so no partition of this batch exists yet. */
+   * `Resolved G v K` is `∃ z, mk v {z} K ∈ G` (`ResGuard.lean`, `def Resolved`), and
+   * `resolvent` is `learnPartitions`'s `findResolvent`, which is exactly that lookup
+   * restricted to the `v` at hand.  ONE DIFFERENCE, and it is nil in effect:
+   * `findResolvent` ranges over `proc ++ incm`, i.e. `G` MINUS the premise `c` itself
+   * (`incorporateAll` re-adds the dequeued partition to `proc` only after
+   * `learnPartitions` returns).  `c` cannot be a witness for its own key -- a witness has
+   * a SINGLE abstract variable and `c` reaches this rule only with `2 ≤ |abstr|` -- so
+   * `¬Resolved (G \ {c}) v concr = ¬Resolved G v concr`, and the Scala guard is the Lean
+   * guard, not an approximation of it.
+   *
+   * THAT ARGUMENT IS NOW A THEOREM, not the prose it used to be:
+   * `Rowpartition/KeyedSplitScala.lean` (2026-09-03).
+   *   `resolved_erase_iff`   `Resolved (G.erase c) v K <-> Resolved G v K`, given
+   *       `2 ≤ |vset c|`: exactly the argument above.  `ksplit_guard_erase_iff` states it
+   *       in the guard's own vocabulary, and `ksplitApp_erase_iff` /
+   *       `ksplitReuseApp_erase_iff` say `KSplitApp` / `KSplitReuseApp` are unchanged
+   *       when their lookup is computed on `G.erase c`.  (Not
+   *       `KSplitApp (G.erase c) c u <-> KSplitApp G c u` -- its premise `c ∈ G` fails on
+   *       `G.erase c`; it is the GUARD that is insensitive to the erase.)
+   *   `named_erase_iff`,     the same question for the SYNTACTIC lookup above, which
+   *   `names_erase_iff`      `findRHS` also computes on `incm ++ proc`.  It closes for a
+   *       DIFFERENT reason, which the prose here never mentioned: that lookup's witnesses
+   *       are BARE partitions (`conc = ∅`) and this rule runs only when `concr` is
+   *       nonempty.
+   *   `scalaSplit`,          the three branches below as a function, in this order, with
+   *   `scalaSplit_step`      the two lookups as arguments meeting `RhssSpec` /
+   *       `ResolventSpec` on `G.erase c` -- and ADEQUACY: whatever it returns is a
+   *       `KDefaultStep` of `G`, i.e. a step of the calculus proved to terminate on every
+   *       satisfiable system (`KeyedSplit.terminatesOnSatKeyed`).  `scalaSplitOf_step` is
+   *       the same for the closed function; `scalaSplit_eq_none_iff` pins the only no-op
+   *       to the `concr.isEmpty || abstr.size < 2` early return, so no branch is silently
+   *       dropped.
+   *
+   * The batch `s` that `resolution` also consults is empty here: `splitConcrete` is the
+   * INITIAL value of `learnPartitions`' fold, so no partition of this batch exists yet. */
   def splitConcrete(v: TypeVar, abstr: Set[TypeVar], concr: Fields, rhss: RHS => Option[TypeVar],
                     resolvent: Fields => Option[TypeVar] = _ => none)(implicit su: Supply): Set[Partition] =
     if(concr.isEmpty || abstr.size < 2) Set()

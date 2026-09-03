@@ -180,6 +180,21 @@ in the report §C.2. **ADOPTED 2026-09-03: the flip is applied** (`GenRules.spli
 to `true`, `-Dermine.splitKey=false` restores the syntactic guard), re-run against the new
 default in §3d, and committed.
 
+**Correspondence lemma DONE 2026-09-03** (`tracker/lean/Rowpartition/KeyedSplitScala.lean`,
+20 theorems). The "the Scala guard is the Lean guard exactly" sentence above was prose; it
+is now checked. `resolved_erase_iff` : `Resolved (G.erase c) v K ↔ Resolved G v K` given
+`2 ≤ |vset c|` — the dequeued premise cannot witness its own key — with
+`ksplit_guard_erase_iff`, `ksplitApp_erase_iff`, `ksplitReuseApp_erase_iff` in the rules'
+own vocabulary. The SYNTACTIC lookup, which the sentence never checked, closes the same way
+for a different reason: `named_erase_iff` / `names_erase_iff` (its witnesses are bare,
+`conc = ∅`, and the rule runs only when `concr ≠ ∅`). Adequacy: `scalaSplit` mirrors the three
+branches in the source's order with both lookups as arguments meeting `RhssSpec` /
+`ResolventSpec` on `G.erase c`, and `scalaSplit_step` / `scalaSplitOf_step` prove every
+system it returns is a `KDefaultStep` of `G`; `scalaSplit_eq_none_iff` pins the only no-op
+to the `concr.isEmpty || abstr.size < 2` early return. Scope: `splitKey`/`splitMints` at
+their shipped default `true`, and the additive relation only — the loop layer is still Stage
+3 (§4 item 0).
+
 ### 3d. Post-flip re-run against the NEW default, no flags (2026-09-03, one class set)
 
 The restore side is `-Dermine.splitKey=false`; the banner reads `cut+label-early+resguard+splitkey`.
@@ -234,6 +249,7 @@ interfaces regenerated under the new default.
 | `tracker/repro/satterm/` | `W2`/`H2`/`NE6` replayed through the real solver, with traces |
 | `tracker/lean/Rowpartition/KeyedSplit.lean` | the repair: `KSplitStep`, `terminatesOnSatKeyed`, `keyed_vs_syntactic`, `split_mint_not_keyed` |
 | `tracker/satterm/KEYED-SPLIT.md` | Stage 1 write-up of the keyed guard |
+| `tracker/lean/Rowpartition/KeyedSplitScala.lean` | the correspondence, as a theorem: `resolved_erase_iff`, `named_erase_iff`, `scalaSplit_step`, `scalaSplitOf_step` |
 | `tracker/satterm/KEYED-SPLIT-STAGE2.md` | Stage 2: the flag, every gate off vs on, the gate table, the unapplied flip, the recommendation |
 | `core/.../Constraints.scala` | `GenRules.splitKey` (default off), `SplitKeyed`, `splitConcrete`'s `resolvent` parameter |
 | `tracker/tools/splitkey-counts.py`, `splitkey-sweep.sh`, `ei-classify.py` | Stage 2 instruments: split-branch counts per trace, the 110-module traced sweep, `.ei` signature classification |
