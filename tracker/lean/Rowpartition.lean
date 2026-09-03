@@ -79,6 +79,16 @@ first getting the module to build.
                                witness dies either as a deleted definition
                                (`notMem_lone_lhs`) or, and this is the engine, as an
                                `absorbC`-rewritten mention (`notMem_lone_mention`)
+* `Rowpartition.KeyedRow`   -- ...and Stage 4: the CONCRETE-ROW reuse.  `splitConcrete`'s
+                               keyed lookup widened to `Carried` (a lone witness `v <- (z, K)`
+                               OR a pair of concrete definitions `v <- ((|C|))`,
+                               `z <- ((|C \ K|))`), and `makeConcrete` made faithful to the
+                               Scala's `srs` re-expression (`concretizeSrs`).  `Carried` is
+                               PRESERVED by the deletion (`carried_concretizeSrs`), so the
+                               budget survives and minting is BOUNDED on satisfiable input
+                               (`mintsBoundedOnSatKeyed2Star`, `mintsBoundedOnSat_splitFragment`);
+                               with guarded `resolution` left as shipped it is NOT
+                               (`not_MintsBoundedOnSatKeyed2`, the split-free witness `W4`)
 * `Rowpartition.Sanity`     -- a standalone toolchain smoke test
 -/
 import Rowpartition.Basic
@@ -113,3 +123,4 @@ import Rowpartition.DefaultSatDiverge
 import Rowpartition.KeyedSplit
 import Rowpartition.KeyedSplitScala
 import Rowpartition.KeyedLoop
+import Rowpartition.KeyedRow

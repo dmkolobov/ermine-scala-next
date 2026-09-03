@@ -77,6 +77,38 @@ that obeys the rule is Stage 4: when the premise's left-hand side is concrete `C
 on the complement row `C \ K` and REUSE any variable already carrying that row — which is what
 `common` achieves after the fact, moved into the rule where it holds in every order.
 
+**Stage 4, the same day: the concrete-row reuse WORKS for the split, and the split was not the
+whole engine.** THEOREM (`Rowpartition/KeyedRow.lean`, 94 theorems, write-up
+`tracker/satterm/KEYED-ROW-STAGE4.md`). Add the clause the Design rule points at — a premise
+`v <- (S, K)` whose left-hand side has a concrete definition `v <- ((|C|))` REUSES any `z` with
+`z <- ((|C \ K|))`, emitting `z <- (S)` (sound: `conc_lone_sat` says the two concrete
+definitions ARE the lone witness `v <- (z, K)`, and `ksplit_reuse_sat` finishes;
+`K2RowApp.models_iff`, the model set does not move) — and make the deletion faithful to the
+Scala's `srs`, i.e. keep the cancellation fact `z <- ((|C \ K|))` that `makeConcrete` derives
+from each one-abstract definition before `destructiveSub` drops it (`concretizeSrs`, sound,
+strictly larger than Stage 3's `concretizeKeep`; the `K ⊆ C` guard is `key_subset_of_model`, not
+hidden). Then the guard `Carried G v K := Resolved G v K ∨ (v <- ((|C|)) and some z <- ((|C \ K|)))`
+is an INVARIANT of the deleting step (`carried_concretizeSrs`): Stage 3's two failure modes are
+precisely the two ways a lone witness turns INTO a concrete-row carrier. `ResGuardTerm`'s budget
+therefore survives, and the split mints boundedly on every satisfiable input in every order
+(`mintsBoundedOnSat_splitFragment`, bound `|allVars G₀| + hmeas L rho G₀`); Stage 3's `W3` dies
+under the rule (`W3_row_reuse` emits `z <- (x, y)` where the shipped loop needed `common`;
+`W3_not_mintable`). Every non-syntactic branch carries `¬ Named`, so the Stage 3 faithfulness gap
+is closed for this relation (`K2MintApp.toSplitApp`: every mint here passes both shipped
+lookups). **What is NOT bounded is the calculus**
+(`not_MintsBoundedOnSatKeyed2`): the satisfiable, split-free `W4 = {v <- ((|a,b,c|)),
+v <- (x, (|a|)), v <- (y, (|b|))}` mints for ever through guarded RESOLUTION, whose guard is
+still keyed on `Resolved` and whose resolvent `v <- (w, (|a,b|))` is absorbed by the
+`makeConcrete w` that makes the mint's own name concrete — Stage 3's failure mode 2 with no
+split anywhere, so `W4` refutes `TerminatesOnSatKeyedLoop` as well, and that is a theorem
+(`W4_kloop_mints_unbounded`, `W4_not_TerminatesOnSatKeyedLoop`): on this witness `srsOf` is
+empty, so the faithful step and Stage 3's `concretizeKeep` coincide. Rekeying `resolution` on
+`Carried` too, with the matching reuse branch, closes it in Lean
+(`mintsBoundedOnSatKeyed2Star`, `keyed2_star_vs_shipped_res`). NO SCALA CHANGE: the exact
+`splitConcrete`/`learnPartitions` edit (a `concRows` map of the bare concrete partitions, a
+third lookup before the mint, a `SplitRow` reuse tag) and the matching `resolution` edit are
+written out in the report, UNIMPLEMENTED and unmeasured — that is Stage 5.
+
 ## 2026-09-02, latest: the two shipped defaults nothing proved — `PROMPT-default-termination.md` ANSWERED
 
 Both questions Lean-first; every result below is labelled THEOREM (about the additive rule

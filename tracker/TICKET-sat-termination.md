@@ -318,6 +318,93 @@ differ; `np01` 26 -> 33 and `np05` 5 -> 9 up, `TelescopeTime` 11 -> 8, `np02` 6 
 `gu05` 8 -> 6 down); 19 of 110 modules differ in some column, no verdict does.  The sweeps ran
 with `-Dermine.useInterface=false` and `core/examples` was checked clean of `.ei` afterwards.
 
+### 3f. Stage 4 — does the CONCRETE-ROW reuse bound minting under the deletions?  PARTLY (2026-09-03, `tracker/satterm/KEYED-ROW-STAGE4.md`)
+
+**THEOREM (`Rowpartition/KeyedRow.lean`, 94 theorems), outcome (T2): the new clause bounds
+the SPLIT and cannot bound the calculus, because guarded RESOLUTION has the same disease.**
+
+The clause.  For a split premise `v <- (S, K)`, `splitConcrete`'s reverse lookups become
+three: the shipped syntactic one (`Named G S` -> `v <- (d, K)`), the shipped keyed one
+(`mk v {z} K ∈ G` -> `z <- (S)`), and the NEW **concrete-row** one — `v` has a concrete
+definition `v <- ((|C|))` and some `z` has `z <- ((|C \ K|))`, so `z` already denotes `v \ K`
+and the branch emits `z <- (S)`.  Mint only if all three miss.  The guard is
+`Carried G v K := Resolved G v K ∨ ConcCarried G v K`.  Soundness is `conc_lone_sat` (a
+concrete definition of `v` plus a concrete definition of the complement row IS the lone
+witness `v <- (z, K)`) followed by `ksplit_reuse_sat` unchanged: `concRow_reuse_sat`,
+`K2RowApp.models_iff` — the model set does not move.  **Every non-syntactic branch carries
+`¬ Named G (vset c)`, so the §3e faithfulness gap (§2.4 of the Stage 3 write-up) is closed for
+this relation**: `K2MintApp.toSplitApp` proves that every mint of `K2SplitStep` passes BOTH of
+the shipped lookups, i.e. is a mint the shipped rule would take.
+
+The deletion, made faithful.  `concretizeSrs u C G = concretizeKeep u C G ∪ srsOf u C G`,
+where `srsOf` carries the fact `makeConcrete`'s own cancellation derives from each ONE-abstract
+definition `u <- (z, K)` before `destructiveSub` drops it: `z <- ((|C \ K|))` (`Constraints.scala`,
+`makeConcrete`'s `val can`, `destructiveSub`'s `val srs`).  Sound (`concretizeSrs_sound`),
+strictly larger than Stage 3's step (`concretizeKeep_subset_srs`), adds no variable and no
+label.  The side condition `K ⊆ C` that cancellation's Scala guard imposes is not hidden: it is
+`key_subset_of_model`, automatic under a model, and soundness is stated for modelled systems only.
+
+Why it works: **once carried, always carried**.  Stage 3's two failure modes are exactly the
+two ways a lone witness BECOMES a concrete-row carrier — the deleted definition leaves
+`z <- ((|C \ K|))` next to the new `u <- ((|C|))` (`carried_of_deleted_def`, no model needed),
+and the absorbed mention `v <- (u, K)` becomes `v <- ((|K ∪ C|))` next to `u <- ((|C|))`, whose
+complement is `C` because a model forces `K ∩ C = ∅` (`carried_of_absorbed_mention`).  Hence
+`carried_concretizeSrs`, and hence `ResGuardTerm`'s budget survives the deleting step:
+`uncarried` / `hmeas` are `unfired` / `gmeas` with `Carried` for `Resolved`.
+
+    mintsBoundedOnSat_splitFragment : ∀ G₀ rho, SModels rho G₀ →
+        ∃ N, ∀ n G, K2SplitLoopRun n G₀ G → (allVars G).card ≤ N
+    mintsBoundedOnSatKeyed2Star     : MintsBoundedOnSatKeyed2Star
+    not_MintsBoundedOnSatKeyed2     : ¬ MintsBoundedOnSatKeyed2
+    keyed2_star_vs_shipped_res      : MintsBoundedOnSatKeyed2Star ∧ ¬ MintsBoundedOnSatKeyed2
+
+with the explicit bound `N = |allVars G₀| + hmeas (labelsOf G₀) rho G₀` in both positive
+statements.  Vocabulary, not run length, is the right measure — the any-order relation permits
+add/delete cycles — and `K2LoopStep.allVars_cases` licenses the reading: only a MINT enlarges
+the vocabulary.
+
+**(W), and it is not about the split.**  `MintsBoundedOnSatKeyed2` — the same statement over
+the relation that keeps guarded `resolution` AS SHIPPED — is FALSE.  The witness
+`W4 = {v <- ((|a,b,c|)), v <- (x, (|a|)), v <- (y, (|b|))}` is satisfiable
+(`v = {a,b,c}, x = {b,c}, y = {a,c}`) and contains **no split premise at all**: every
+right-hand side has at most one variable, so `abstr.size >= 2` never holds.  Guarded
+resolution mints the resolvent `w`, cancellation gives `w <- ((|c|))`, and `makeConcrete w`
+ABSORBS the resolvent `v <- (w, (|a,b|))` back into the already-present `v <- ((|a,b,c|))` —
+Stage 3's failure mode 2 again — while the two premises are untouched.  One fresh variable per
+round, for ever (`W4_mints_unbounded`).  `srsOf` contributes nothing on this witness
+(`srsOf_eq_empty`, `concretizeSrs_eq_concretizeKeep`), so the same three steps are Stage 3's
+too and **`W4` refutes `TerminatesOnSatKeyedLoop` as a theorem, with no split step**
+(`W4_kloop_mints_unbounded`, `W4_not_TerminatesOnSatKeyedLoop`): no change to `splitConcrete`
+alone can make the loop-extended calculus terminate.
+
+**The missing piece, named exactly and closed in Lean.**  Key `resolution`'s mint on `Carried`
+as well, with the matching concrete-row reuse branch (`K2ResStep.row`, entailed by
+`K2ResStep.row_models_iff`), and the whole loop-extended calculus is bounded
+(`mintsBoundedOnSatKeyed2Star`).  Stage 3's own witness dies under the new split rule: at the
+system the FAITHFUL `makeConcrete u` reaches, `W3`'s re-mint is refused (`W3_not_mintable`) and
+the `row` branch emits `z <- (x, y)` (`W3_row_reuse`) — the constraint the shipped loop obtains
+only afterwards, by `common`-unifying the re-minted name with `z` (§3e, 55 of 55 bases).  The
+rule does in EVERY order what `common` does in some.
+
+Scope and cost.  No Scala change: the report's §9 writes the exact `splitConcrete` /
+`learnPartitions` edit (a `concRows : Map[Fields, TypeVar]` of the bare concrete partitions,
+a third lookup before the mint, a `SplitRow` reuse tag) and the matching `resolution` edit,
+UNIMPLEMENTED and unmeasured — that is Stage 5.  Nothing here models `common`/`unify`, and
+unsatisfiable input is untouched (`hmeas` needs a model).
+
+**`W4` in the real loop (session measurement, 2026-09-03).** `W4` as a `json:` seed for `tracker/repro/satterm/` (`v = {l1,l2,l3}`,
+`x = {l2,l3}`, `y = {l1,l3}`), 40 id bases, default flags: **SOLVED 40/40**, fresh ids drawn
+0 at 37 bases, 1 at 2, 3 at 1. Traced at base 5 (3 draws, 1 of them a mint): the two
+one-part premises are dequeued before the concrete definition, so `resolution` mints the
+resolvent once (`v <- (w, l1 l2)`, `x <- (w, l2)`, `y <- (w, l1)`); then `v <- ((|l1,l2,l3|))`
+is dequeued, `makeConcrete v` fires, and the cancellations make `w`, `x`, `y` concrete
+(`w = {l3}`) — every variable is concrete and the solve ends. At the 37 bases where the
+concrete definition is dequeued first, the one-part premises are absorbed and nothing mints.
+So in the loop this engine never reaches its second round: the defence is `makeConcrete`'s
+own order (concrete facts absorb the premises the next round would need), not `common` —
+the agent's argument, confirmed. As with `W3`, that is a property of `incorporateAll`'s
+single pass that no relation states.
+
 ## 4. What stays open, ranked
 
 0. **Stage 2 — DONE and ADOPTED 2026-09-03** (§3c, §3d). Items 1–3 below are now moot for the
@@ -332,11 +419,24 @@ with `-Dermine.useInterface=false` and `core/examples` was checked clean of `.ei
    write-up `tracker/satterm/KEYED-LOOP-STAGE3.md`). MEASURED: the first re-mint happens in
    the shipped compiler at 55 of 100 id bases, and the loop stops there because its `common`
    branch unifies the re-minted name with the deleted witness's variable.
-   **What Stage 3 leaves open, and is now the ranked-first question:** the SHIPPED rule
-   consults the syntactic lookup FIRST, and `KSplitApp` does not; the witness's first re-mint
-   passes both lookups (`W3sat_remint_enabled`) but its later ones do not
-   (`named_after_round`). Does the two-lookup rule plus deletion terminate on satisfiable
-   input? A divergence would need a fresh UNNAMED group every round.
+   **Stage 4 — DONE 2026-09-03 (§3f), outcome (T2).** The two-lookup question Stage 3 left
+   ranked-first is ANSWERED for the split, in the affirmative and with the `¬ Named` premise
+   in the relation: adding a CONCRETE-ROW reuse clause (`v <- ((|C|))` and `z <- ((|C \ K|))`
+   name `v \ K`, so emit `z <- (S)`) and making the deletion faithful to the Scala's `srs`
+   re-expression makes the guard `Carried` an INVARIANT of the deleting step
+   (`carried_concretizeSrs`), so `ResGuardTerm`'s budget survives it and the split mints
+   boundedly on satisfiable input in every order (`mintsBoundedOnSat_splitFragment`, bound
+   `|allVars G₀| + hmeas L rho G₀`; `Rowpartition/KeyedRow.lean`, write-up
+   `tracker/satterm/KEYED-ROW-STAGE4.md`). Stage 3's `W3` dies under it (`W3_row_reuse`,
+   `W3_not_mintable`). **But the calculus as a whole is still unbounded**
+   (`not_MintsBoundedOnSatKeyed2`): the split-free satisfiable witness
+   `W4 = {v <- ((|a,b,c|)), v <- (x, (|a|)), v <- (y, (|b|))}` mints for ever through guarded
+   RESOLUTION, whose guard is still keyed on `Resolved` and whose resolvent is absorbed by the
+   very concretisation that makes it concrete — Stage 3's failure mode 2, with no split step
+   anywhere. `W4` therefore also refutes `TerminatesOnSatKeyedLoop` on its own.
+   **The ranked-first question is now**: rekey `resolution` the same way. In Lean that already
+   closes it (`mintsBoundedOnSatKeyed2Star`, `keyed2_star_vs_shipped_res`); in Scala neither
+   the split's third lookup nor resolution's exists, and neither is measured — Stage 5.
 1. **Conjecture S** — every substitution-closed run (all non-generative consequences taken
    before each mint) is bounded from every satisfiable input. The explorer's breadth-first
    strategy reaches fixpoints on every seed; `subst_names_travel` is the one-step mechanism;
@@ -369,5 +469,7 @@ with `-Dermine.useInterface=false` and `core/examples` was checked clean of `.ei
 | `tracker/satterm/KEYED-SPLIT-STAGE2.md` | Stage 2: the flag, every gate off vs on, the gate table, the unapplied flip, the recommendation |
 | `tracker/lean/Rowpartition/KeyedLoop.lean` | Stage 3: `KLoopStep` (the additive calculus + `concretizeKeep`), the two ways a concretisation kills a key witness (`notMem_lone_lhs`, `notMem_lone_mention`) and what survives (`resolved_of_concretizeKeep`), `concretizeKeep_idem`, `conc_unique_of_model`, and the refutation `not_TerminatesOnSatKeyedLoop` / `W3_mints_unbounded` with its scope theorems `W3sat_remint_enabled`, `named_after_round` |
 | `tracker/satterm/KEYED-LOOP-STAGE3.md` | Stage 3 write-up: the theorem verbatim, the corrected mechanism, the 100-base replay of `W3`/`W3M` and the corpus re-run of the kept-definition instrument |
+| `tracker/lean/Rowpartition/KeyedRow.lean` | Stage 4: the CONCRETE-ROW reuse (`ConcCarried`, `Carried`, `conc_lone_sat`, `concRow_reuse_sat`, `K2SplitStep`'s four branches with `¬ Named` on the non-syntactic ones), the faithful deletion (`srsOf`, `concretizeSrs`, `concretizeSrs_sound`, `concDef_persists`), the invariant `carried_concretizeSrs` with its two modes (`carried_of_deleted_def`, `carried_of_absorbed_mention`), the budget `uncarried`/`hmeas` and the bounds (`mintsBoundedOnSat_splitFragment`, `mintsBoundedOnSatKeyed2Star`), the split-free divergence `W4` (`W4_mints_unbounded`, `not_MintsBoundedOnSatKeyed2`, `keyed2_star_vs_shipped_res`, and `W4_kloop_mints_unbounded` / `W4_not_TerminatesOnSatKeyedLoop`, which refute Stage 3's statement with no split step) and the Stage 3 re-run (`W3srs_eq`, `W3_carried`, `W3_row_reuse`, `W3_not_mintable`) |
+| `tracker/satterm/KEYED-ROW-STAGE4.md` | Stage 4 write-up: the relation verbatim, the invariant, the bound, the `W4` witness and what `common` would do to it, the mechanism notes checked one by one, and the UNIMPLEMENTED Scala change |
 | `core/.../Constraints.scala` | `GenRules.splitKey` (default off), `SplitKeyed`, `splitConcrete`'s `resolvent` parameter |
 | `tracker/tools/splitkey-counts.py`, `splitkey-sweep.sh`, `ei-classify.py` | Stage 2 instruments: split-branch counts per trace, the 110-module traced sweep, `.ei` signature classification |
