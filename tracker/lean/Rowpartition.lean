@@ -43,6 +43,28 @@ first getting the module to build.
 * `Rowpartition.NameLossClosed` -- ...concretise first, and no non-generative rule ever
                                recovers the fact: the solver's saturated set is closed
 * `Rowpartition.NameLossDerivation` -- ...fold first, and `SatSteps` reach `t <- (|c, d|)`
+* `Rowpartition.DefaultDiverge` -- the SHIPPED rule set (`cut` + guarded resolution) as a step
+                               relation, and the "complementary defences" claim refuted: an
+                               unsatisfiable eight-constraint input on which it diverges and
+                               which the per-label check does not refute (`not_CRule`)
+* `Rowpartition.KeepInert`  -- can `destructiveSub`'s kept definitions mint?  Guarded
+                               resolution: never.  `splitConcrete`: yes, when the kept
+                               definition carries a concrete part -- and that mint was already
+                               enabled on the input
+* `Rowpartition.DefaultTerm` -- does the shipped rule set terminate on every SATISFIABLE input?
+                               The question stated (`TerminatesOnSat`) and the structural chain
+                               proved: mint-free runs are bounded, every mint strictly lowers the
+                               model rank, resolution branching is bounded; split branching per
+                               parent is the one open gap
+* `Rowpartition.DefaultSatDiverge` -- ...and the answer is NO: `not_TerminatesOnSat`.  The
+                               satisfiable two-constraint `SatDiverge.W2` admits productive runs
+                               of every length (an empty-row variable recurs in every group);
+                               a saturating run escapes because names travel with their groups
+                               (`subst_names_travel`), and the real loop unifies the link instead
+* `Rowpartition.KeyedSplit` -- ...and the repair: key `splitConcrete`'s guard on (lhs, concrete
+                               part), as resolution's already is, and the whole calculus
+                               TERMINATES on every satisfiable input (`terminatesOnSatKeyed`,
+                               `keyed_vs_syntactic`), by `ResGuardTerm`'s measure unchanged
 * `Rowpartition.Sanity`     -- a standalone toolchain smoke test
 -/
 import Rowpartition.Basic
@@ -70,3 +92,8 @@ import Rowpartition.DerivedColumn
 import Rowpartition.NameLoss
 import Rowpartition.NameLossClosed
 import Rowpartition.NameLossDerivation
+import Rowpartition.DefaultDiverge
+import Rowpartition.KeepInert
+import Rowpartition.DefaultTerm
+import Rowpartition.DefaultSatDiverge
+import Rowpartition.KeyedSplit

@@ -13,8 +13,8 @@ This development formalises that language and then audits the real solver
 against it: its inference rules, its canonicalisation, its divergence, and the fragment
 of the language that actually occurs in Ermine's own standard library.
 
-**Headline numbers**, recounted mechanically on 2026-09-01. 22 modules, **1224 named
-theorems in source**, **0 `sorry`**, **0 custom axioms**. Every theorem's axiom set is a
+**Headline numbers**, recounted mechanically on 2026-09-02 (last: 2026-09-01, 22 modules and
+1224). 31 module files, **1649 named theorems in source**, **0 `sorry`**, **0 custom axioms**. Every theorem's axiom set is a
 subset of Lean's three standard axioms (`propext`, `Classical.choice`, `Quot.sound`);
 `sorryAx` appears nowhere. This is checked by walking the whole environment — `Audit.lean`
 in this directory enumerates every theorem under the `Rowpartition` namespace and collects
@@ -22,12 +22,14 @@ its axioms:
 
 ```
 $ lake env lean Audit.lean
-Rowpartition theorems audited: 1465; declarations using a non-standard axiom: 0
+Rowpartition theorems audited: 1997; declarations using a non-standard axiom: 0
 ```
 
-(1465 > 1224 because the environment also carries generated equation and match-arm lemmas,
-which the audit checks too; and 1224 counts `CutSearch`'s 125, which the audit does NOT
-see — see the correction below.)
+(1997 > 1649 because the environment also carries generated equation and match-arm
+lemmas, which the audit checks too; and 1470 counts `CutSearch`'s 125, which the audit does
+NOT see — see the correction below. 2026-09-03, after `DefaultTerm`, `DefaultSatDiverge` and
+`KeyedSplit`; the figure on 2026-09-01 was 1465, after the `NameLoss` modules 1625, after
+`DefaultDiverge`/`KeepInert` 1790, after `DefaultTerm` 1871, after `DefaultSatDiverge` 1929.)
 
 The source count is reproducible:
 
@@ -35,7 +37,7 @@ The source count is reproducible:
 $ for f in Rowpartition/*.lean; do \
     grep -cE '^(theorem|lemma|@\[simp\] theorem|protected theorem|private theorem)' $f; \
   done | paste -sd+ | bc
-1224
+1649
 ```
 
 The figures this paragraph used to give — "15 modules, 960 named theorems", and per-module
@@ -137,6 +139,11 @@ non-standard axioms. `CutSearch` is the one module that does NOT build here at a
 | `Rowpartition/NameLoss.lean` | **exit 0**, no output | 2026-09-02; 3 s |
 | `Rowpartition/NameLossClosed.lean` | **exit 0**, no output | 2026-09-02; 26 s (the 81-pair case analyses); one `linter.flexible` warning under `lake build` |
 | `Rowpartition/NameLossDerivation.lean` | **exit 0**, no output | 2026-09-02; 5 s |
+| `Rowpartition/DefaultDiverge.lean` | **exit 0**, no output | 2026-09-02 (later); ~5 s; the four `ForcedClosed` tables are `simp`-normalised, not `decide`d |
+| `Rowpartition/KeepInert.lean` | **exit 0**, no output | 2026-09-02 (later); ~3 s; `linter.style.header` warnings under `lake build` (the header comment's shape), as `Cut.lean` |
+| `Rowpartition/DefaultTerm.lean` | **exit 0**, no output | 2026-09-02 (later); ~2 s |
+| `Rowpartition/DefaultSatDiverge.lean` | **exit 0**, no output | 2026-09-03; ~2 s |
+| `Rowpartition/KeyedSplit.lean` | **exit 0**, no output | 2026-09-03; ~3 s |
 
 `lake build` → `Build completed successfully (804 jobs).` (2026-09-01, with the five
 modules added that day; `CutSearch` is NOT among them — see the correction at the top.)
@@ -230,9 +237,14 @@ because several informal rules get them wrong:
 | `CutSearch.lean` | 125 | Bounded exhaustive counterexample hunt over small systems, by `decide` rather than `native_decide`, for the claim that the cut changes no verdict. |
 | `SplitNecessary.lean` | 91 | Why the fully non-generative variant is unsound: `splitConcrete` is load-bearing for error detection, and the five programs `nongen` wrongly accepts are exhibited. |
 | `LabelProp.lean` | 22 | **Per-label unit propagation**, the refutation-only rule now implemented behind `-Dermine.labelCheck`. Soundness (`forced_sound`, `refuted_unsat`): the rule never rejects a satisfiable system. The soundness bug in `unsound01_keyed_halves.e` is refuted mechanically, its satisfiable sibling is kept, and the rule's **incompleteness is proved, not asserted** — an unsatisfiable system is exhibited that propagation provably cannot refute. |
+| `DefaultDiverge.lean` | 88 | **The shipped rule set** (`DefaultStep` = the cut with GUARDED resolution) as a step relation, and the "complementary defences" claim REFUTED (`not_CRule`): an unsatisfiable eight-constraint input `CRule.W` on which it admits chains of every length (`Diverges`, the shape of `gSeed_diverges`) and which per-label propagation on the input does not refute — `gSeed` hidden behind two triples propagation cannot see through, unfolded by four non-generative steps. Generic closure argument `ForcedClosed` / `forced_of_forcedClosed`; `GInv.diverges_exact`, `GInv.unsat`. The SATURATED set is refuted (`G₄_refuted`). About the rule set only; what `incorporateAll` does is measured in `tracker/repro/crule/`. |
+| `KeepInert.lean` | 40 | **Can `destructiveSub`'s kept definitions mint?** Guarded resolution: never (`keep_gres_inert`, over any inert part with ≥ 2 variables). `splitConcrete`: yes when the kept definition carries a concrete part (`KeepMint.keep_mints`, `prose_false` — the ticket's prose omitted this rule); no for bare kept definitions (`keep_mint_inert_of_bare`); and every such mint was already enabled on the input (`keep_split_of_kept`). |
+| `DefaultTerm.lean` | 77 | **Does the shipped rule set terminate on every SATISFIABLE input?** Stated (`TerminatesOnSat`, over productive runs `DefaultRun`) and NOT decided. Proved: no non-generative rule touches the vocabulary, each mint adds one fresh variable, no rule invents a label; a run is no longer than the `mk`-shaped constraints over its final vocabulary (`DefaultRun.length_le_forms`), so an unbounded run mints without bound; the model extends along a run, forced at the mint; every mint's child has strictly smaller rank than its parent (`mintParent_rank_lt`, `split_rank_lt`) and rows shrink down the parent relation (`DefaultRun.rank_le`); resolution branching per parent ≤ `2^|L|` (`CountRun.res_branching_le`). The gap (§9): split branching per parent is bounded only by the named groups of the FINAL system (`CountRun.split_branching_le`). |
+| `DefaultSatDiverge.lean` | 40 | **The answer is NO** (`not_TerminatesOnSat`): the satisfiable two-constraint `SatDiverge.W2 = {p <- (e1, e2, (|k|)), p <- (e2, (|k|))}` (model `p = {k,m}`, `e2 = {m}`, `e1 = ∅`) admits productive runs of every length — cancellation of the two single-variable decompositions gives the alias link `e2 <- (u)`, substitution puts the latest name next to the forced-empty `e1`, and the split mints again (`W2Inv.round`, `W2Inv.run`, `W2_diverges`). The empty-row loophole of `DefaultTerm` §9, realised. Scope: ALL run orders; a substitution-closed run names the next group first (`subst_names_travel`) and the real loop unifies the link — both stated, neither a termination theorem. |
+| `KeyedSplit.lean` | 57 | **The repair, proved.** Key `splitConcrete`'s reverse lookup on `(lhs, concrete part)` — `¬ Resolved G c.lhs c.conc`, the guard `resolution` already has — instead of on the group. The reuse branch emits the existing name's new definition `u <- (S)` (entailment, `ksplit_reuse_sat`); the mint is unchanged (conservative extension). Because the keyed witness has resolution's shape, `ResGuardTerm`'s measure `gmeas` bounds BOTH mints at once: `KRun.length_le : n ≤ M·2^M·2^|L|` with `M = |allVars G₀| + gmeas L rho G₀`, hence **`terminatesOnSatKeyed`** and `keyed_vs_syntactic : TerminatesOnSatKeyed ∧ ¬ TerminatesOnSat`. On `W2` the keyed guard refuses even round 0 (`SatDiverge.W2_not_keyed_mint0`). Unsatisfiable input untouched; the compiler flag is Stage 2. |
 | `ResGuard.lean` | 20 | **Guarding `resolution`** with the resolvent reverse lookup — the analogue, for that rule, of the lookup `splitConcrete` already consults. The guard is not a semantic change: the reuse branch does not move the model set at all, the mint branch is a conservative extension, and `resolvent_unique` shows the variable the guard declines to mint is FORCED EQUAL to the one it reuses. |
 | `ResGuardTerm.lean` | 30 | …and the guarded rule **terminates on every satisfiable system**, with an explicit bound (`guarded_terminates_of_satisfiable`). The measure weights each variable's remaining resolvent-key budget by a power of the cardinality of the row it denotes: the guard bounds the keys, the MODEL bounds the depth, and neither ingredient works alone. |
-| `ResGuardDiverge.lean` | 33 | …and **not in general**. Four constraints on four variables and four labels admit guarded chains of every length (`gSeed_diverges`, `gres_no_decreasing_measure`). The seed is proved unsatisfiable, so the two halves are complementary — and `gSeed_refuted` proves per-label propagation kills it at one label in five steps, so the guard and the label check are complementary defences. |
+| `ResGuardDiverge.lean` | 33 | …and **not in general**. Four constraints on four variables and four labels admit guarded chains of every length (`gSeed_diverges`, `gres_no_decreasing_measure`). The seed is proved unsatisfiable, so the two halves do not conflict — and `gSeed_refuted` proves per-label propagation kills THAT seed at one label in five steps. (Corrected 2026-09-02: this row used to conclude "so the guard and the label check are complementary defences"; `DefaultDiverge.lean` proves that general claim FALSE, `not_CRule`.) |
 | `Saturate.lean` | 25 | **The licence to run the label check on the SATURATED set** (`refute_saturated_sound`): a satisfiable input stays satisfiable through any run of the solver. Adds the four behaviours no other step relation modelled — `makeEmpty`'s two halves, `makeConcrete`, rename-with-de-duplication, and DELETION — and proves the implication is STRICT (`satStep_not_reflecting`), so a refutation-only check may move there and an acceptance check may not. |
 | `Splice.lean` | 29 | **`Subst.reduce`'s second case** (ticket 8b). The splice is sound with NO side condition — the concrete parts are automatically disjoint and a duplicated variable is automatically empty — and exactly conservative for one splice. But `DroppedPartition.dropped_can_lose` exhibits a satisfiable system with no concrete labels on which the emitted residual FAILS to entail a consequence of the input, because `reduce` never rewrites a left-hand side. |
 | `LabelAlgo.lean` | 57 | **The Scala `checkLabel` fixpoint itself**, not just the rule it implements: every bit the algorithm writes is `Forced` (`algoWrite_forced`), so every clash it reports is a genuine refutation (`checkLabel_clash_unsat`). Closes what `Saturate` calls the weakest link. And `DupNeeded.nodup_needed` shows the `ones > 1` branch is sound ONLY because the Scala's right-hand side is a `Set`: with a duplicated variable part it fires where `Forced` derives nothing. |
@@ -320,9 +332,13 @@ modules take that step and settle what it buys.
   Contrast `Cut.resSeed_diverges`, which runs on a system that *has* a model.
 * **`ResGuardDiverge`** — and it does NOT terminate in general: four constraints admit
   guarded chains of every length (`gSeed_diverges`, `gres_no_decreasing_measure`). The
-  seed is proved unsatisfiable, so the halves are complementary rather than contradictory
-  — and `gSeed_refuted` proves `LabelProp`'s propagation kills it at one label in five
-  steps, which is why the guard and the label check are complementary defences.
+  seed is proved unsatisfiable, so the halves do not contradict each other — and
+  `gSeed_refuted` proves `LabelProp`'s propagation kills that one seed at one label in
+  five steps. That is all it proves: the guard covers satisfiable systems, the check covers
+  `gSeed` and, in general, only what propagation can force. The sentence this bullet used
+  to end with — "which is why the guard and the label check are complementary defences" —
+  was retired on 2026-09-02, when `DefaultDiverge.lean` proved the general claim false
+  (`not_CRule`; see the 2026-09-02 "default termination" section below).
 * **`Saturate`** — the licence for item 8a: a satisfiable input stays satisfiable through
   any run of the solver (`SatSteps.sat_mono`), so a refutation on the saturated set refutes
   the input (`refute_saturated_sound`). Adds the four behaviours no other step relation
@@ -383,6 +399,162 @@ fixed here: (1) `DerivedColumn.lean`'s header cites `redundant_premise_dropped` 
 3. (2) This README's `forced_mono` row still says "running on the saturated set is at
 least as strong as on the input", which `LabelProp.lean`'s own docstring (2026-09-01)
 retracts.
+
+### 2026-09-02, later: `DefaultDiverge`, `KeepInert` — the two row defaults nothing proved
+
+The answer to `tracker/PROMPT-default-termination.md`. Two questions about the shipped
+configuration (`ermine.genRules=cut`, `resGuard`, `labelCheck`, `labelCheckEarly`, and the
+unconditional `keepDefs` of `a4b62c0`), both Lean-first; the compiler-level facts are
+MEASUREMENTS and are labelled as such.
+
+* **`DefaultDiverge`** — the shipped rule set as a step relation, and the claim four
+  documents made about it refuted. `DefaultStep` is `SplitNecessary.CutRuleStep` with the
+  unguarded `ResStep` replaced by `GResStep`: `NonGenStep` + `splitConcrete`'s mint +
+  GUARDED resolution. This is the ADDITIVE calculus, not the single-pass `incorporateAll`.
+  `Diverges G₀ := ∀ n, ∃ G, DefaultSteps n G₀ G ∧ G₀.card + n ≤ G.card` (the shape of
+  `gSeed_diverges`), and the claim the "complementary defences" sentence needs is
+  `CRule := ∀ G₀, Diverges G₀ → Refuted G₀.toList`. **`not_CRule`.** The witness `CRule.W`
+  is eight constraints on twelve variables: the gadget edges `a <- (p, (|1|))`,
+  `b <- (q, (|4|))` in the clear, and the two cross edges hidden as
+  `w2 <- (a, s2)`, `w2 <- (q1, q2, s2, (|2|))`, `q <- (q1, q2)` (and the mirror on `b, p`).
+  `W_unsat`, `W_diverges`, `W_not_refuted`, packaged as `W_witness`. Why the hiding is
+  needed: unit propagation is complete for single-variable constraints (each is a pin or an
+  equation at every label), so any unsatisfiable system of them IS refuted — the gadget has
+  to be derived, not present. Why it works: at every label the triple leaves two candidates
+  on the `bot` constraint, so `last_one` never fires, and the slack `s` blocks the negative
+  direction; the proof is a generic closure argument — `ForcedClosed l G F` mirrors the
+  seven constructors of `Forced` on an explicit table `F : Finset (Var × Bool)`,
+  `forced_of_forcedClosed` (induction on `Forced`), `not_refutedAt_of_forcedClosed`,
+  `not_refutedAt_of_no_concLabel` — instantiated at the four labels with tables read off a
+  fixpoint (`closed₁..₄`, `clashFree₁..₄`). Four `NonGenStep`s (CSE fold of the name into
+  `bot`, cancellation of `top` against the result, twice) reach `G₄ ⊇ gSeed`'s shape
+  (`W_to_G₄`, `G₄_inv : GInv G₄ a b p q 1 2 3 4`), and `GInv.diverges_exact` — the
+  exact-length strengthening of `ResGuardDiverge.GInv.diverges` (`GInv.mint_step`,
+  `gInv_round_aux`) — runs it forever. `GInv.unsat` generalises `gSeed_unsat` to every
+  gadget. Non-vacuity: `e2_notMem_W`, `e3_notMem_W` (the gadget is derived), and
+  `G₄_refuted` — the SATURATED set is refuted at label 1, the input is not, which is the
+  shape `labelCheckSaturated` (declined on 2026-09-02 for refuting nothing extra on the
+  corpora) would have caught.
+* **`KeepInert`** — can the definitions `destructiveSub` now keeps mint? Half yes.
+  `keep_gres_inert` / `keep_gres_runs_inert` (from `GResStep.of_union` over any part whose
+  members have ≥ 2 variables): guarded resolution, its guard `Resolved` included, never
+  sees a kept definition, so every guarded step or run on `concretizeKeep u C G` is one on
+  `concretize u C G` with the kept part carried along — and since the loop's steps are a
+  subset of the rule set's, this transfers to `incorporateAll`. But the prose of
+  `TICKET-substitution-gap.md` §7 omitted `splitConcrete`: a kept definition with a
+  NONEMPTY concrete part is a `SplitApp` premise. `KeepMint` is the three-constraint
+  instance `u <- (x, y, (|k|)); u <- (|k, c|); R <- (u, z)` on which the deleting
+  concretisation admits no minting step at all (`concretize_no_split`,
+  `concretize_no_gres`) and the kept one mints (`keep_mints`); `prose_false` refutes the
+  transfer statement. The weakest true version: `keep_mint_inert_of_bare` (bare kept
+  definitions — the `NameLoss` case — are inert for both minting rules),
+  `keep_split_of_kept` (a mint on a kept definition was already enabled on the INPUT `G`,
+  hypothesis `u ∉ vset c`), `keep_split_cases` (the dichotomy). The omitted hypothesis is
+  the kept definition's concrete part, which the Scala predicate `abs.size >= 2` does not
+  constrain.
+
+**What is a theorem and what is a measurement.** `not_CRule` is about `DefaultStep`, the
+additive rule set. It does NOT say the compiler hangs on `W`, and it does not:
+`tracker/repro/crule/run.sh` replays `W` through the real `Subst.solve` at 100 id bases
+and every one terminates with the duplicated-field error of `RHS.merge` ("Fields appear
+twice in row") — the single-pass loop's eager substitution reaches the contradiction
+(`SplitNecessary.FiresMerge`, a refuter the label check is not) before the resolution loop
+can run. Also 100/100 under `genRules=all` and 10/10 with `resGuard=false`; the label check never
+fires on `W` (predicted) but does on `gSeed` and on `G₄` fed as inputs (controls); the
+satisfiable sibling `W` minus `b <- (q, (|4|))` solves; under `genRules=nongen` the
+unsatisfiable `W` is ACCEPTED. The trace of base 0 shows the loop entering the mint round
+(4 `Resolution`-minted ids) and dying at the 50th dequeue when `substitution` carries a
+two-label resolvent into a row already holding one of its labels. The same eight
+constraints as a source module, `tracker/repro/crule/CRuleHang.e`, are rejected with
+"Fields appear twice in row" blamed at `1:1`. That is an empirical answer about one witness and 100 queue
+orders, not a termination theorem for `incorporateAll` on ill-typed input; none exists.
+For `KeepInert`, the counterexample's mint is real in the compiler:
+`tracker/repro/keepmint/run.sh` replays the instance at 32 id/order configurations and
+`splitConcrete` mints on the kept definition in 16 of them, and over the 110-module
+example corpus (`tracker/tools/keptdef-sweep.sh`: `keptdef-mints.py` on a serialized `rowTrace` per module) kept
+definitions with a concrete part are re-dequeued 284 (42 strict) times and mint 156 (24 on the kept definition itself) times
+(27 (14 with a mint on the kept definition itself, all ten `Ai/` modules among the 27) modules; zero in the stdlib, which has no concrete rows to concretise). A
+split mint is bounded on its own (`Cut.split_terminates`); nothing is claimed about it in
+combination.
+
+Corrections made the same day: the "complementary defences" sentence retired from
+`ResGuardDiverge.lean` (header and summary), this README (module map and the
+`ResGuardDiverge` bullet above), `TICKET-row-solver-8abc.md`,
+`TICKET-editor-and-solver-followups.md` §8 and the `resGuard` comment in
+`Constraints.scala`; the §7 termination bullet of `TICKET-substitution-gap.md` annotated
+with the `KeepInert` result.
+
+Root: `Rowpartition.lean` imports both; `lake build Rowpartition` -> `Build completed
+successfully (811 jobs)`. `Audit.lean` after integration: **1790 theorems audited,
+0 using a non-standard axiom** (was 1625). Headline theorems checked one at a time with
+`#print axioms`, all `[propext, Classical.choice, Quot.sound]`: `not_CRule`,
+`CRule.W_witness`, `CRule.W_unsat`, `CRule.W_not_refuted`, `CRule.W_diverges`,
+`GInv.diverges_exact`, `forced_of_forcedClosed`, `KeepInert.GResStep.of_union`,
+`KeepInert.keep_gres_inert`, `KeepInert.keep_split_of_kept`,
+`KeepInert.keep_mint_inert_of_bare`, `KeepInert.keep_split_cases`,
+`KeepInert.KeepMint.keep_mints`, `KeepInert.KeepMint.concretize_no_split`,
+`KeepInert.KeepMint.prose_false`.
+
+Tactic note: `decide` could not synthesise a `Decidable` instance for the closure
+residual of `ForcedClosed` (hundreds of nested connectives over `Prod` equalities) even
+with every `mk` gone; the four instances are closed by a two-stage `simp` (macro
+`cr_closed`), and `Finset.mem_insert` must not share a `simp` call with
+`Finset.forall_mem_insert` when splitting `∀ c ∈ W` (it rewrites the inner membership
+first and leaves an undecidable `∀ c, c = _ ∨ _ → _`). `Finset.forall_mem_singleton` does
+not exist in this Mathlib; use `Finset.mem_singleton` with `forall_eq`.
+
+### 2026-09-03: `DefaultTerm`, `DefaultSatDiverge` — termination on WELL-TYPED input
+
+The question left open on 2026-09-02: does the shipped rule set terminate on every
+SATISFIABLE input? Write-up: `tracker/TICKET-sat-termination.md`.
+
+* **`DefaultTerm`** states it (`TerminatesOnSat`, over productive runs `DefaultRun` of
+  `DefaultStep`) and proves the structural chain the natural argument needs: mint-free runs
+  are bounded by the finitely many `mk`-shaped constraints over the final vocabulary
+  (`DefaultRun.length_le_forms`), so an unbounded run mints without bound; the model extends
+  along a run, forced at each mint; every mint's child has strictly smaller rank than its
+  parent (`mintParent_rank_lt`) and ranks are bounded by the input (`DefaultRun.rank_le`);
+  resolution branching per parent is at most `2^|L|` (`CountRun.res_branching_le`). It stops,
+  deliberately, at the one unproved step: split branching per parent
+  (`CountRun.split_branching_le` bounds it only by the FINAL system).
+* **`DefaultSatDiverge`** shows that step cannot be proved: **`not_TerminatesOnSat`**. The
+  satisfiable `SatDiverge.W2 = {p <- (e1, e2, (|k|)), p <- (e2, (|k|))}` (with `e1` forced
+  empty) admits productive runs of every length — cancellation gives the alias link
+  `e2 <- (u)`, substitution puts the latest name next to the empty `e1`, the split mints again
+  (`W2Inv.round`, `W2Inv.run`, `W2_diverges`). Found twice independently (the paper analysis
+  and the closure explorer's random search, which hits the mint cap on ~18 % of tiny
+  satisfiable seeds, always through an empty-row variable).
+* **Scope, stated in both files.** The theorem is about ALL run orders of the additive
+  relation. A substitution-closed run rewrites the name's own definition first and so names
+  the next group (`subst_names_travel`); the real loop unifies the singleton link and erases
+  the detected empty. Measured (`tracker/repro/satterm/`): the shipped `Subst.solve` mints
+  once on `W2` and solves it at 1000/1000 id bases, likewise `H2` and `NE6`. So the loop's
+  termination on well-typed input rests on three defences no Lean relation states; Conjecture
+  S (substitution-closed runs bounded) is the next target.
+
+* **`KeyedSplit`** (later the same day) — the repair, Lean-first. `splitConcrete`'s guard is
+  syntactic ("does anything name this GROUP"), and groups are what the `W2` engine
+  manufactures; under a model the minted row is forced by `(lhs, concrete part)` alone, which
+  is how `resolution`'s guard is keyed. `KSplitStep` keys the split the same way (mint iff
+  `¬ Resolved G c.lhs c.conc`; otherwise give the existing name the new group as a bare
+  definition). The keyed witness has resolution's shape, so `ResGuardTerm.gmeas` is a budget
+  for both mints and the whole calculus `KDefaultStep` terminates on every satisfiable input,
+  in every run order, with an explicit bound (`KRun.length_le`, `terminatesOnSatKeyed`,
+  `keyed_vs_syntactic`). The explorer with `--split-key` reaches fixpoints on every seed and
+  every strategy (0 of 2,000 random seeds hit the mint cap, against 183 under the shipped
+  guard). Not a semantic change (`ksplit_reuse_sat`, `ksplit_mint_conservativeExt`); does
+  nothing for unsatisfiable input. The compiler flag `-Dermine.splitKey` is implemented
+  (Stage 2, 2026-09-03, default OFF) and measured in `tracker/satterm/KEYED-SPLIT-STAGE2.md`:
+  every adoption gate green off vs on, `gu05` 5x faster, 77 keyed firings on real code;
+  ADOPTED as the default the same day (`-Dermine.splitKey=false` restores the syntactic
+  guard). Write-up: `tracker/satterm/KEYED-SPLIT.md`.
+
+Root: all three modules imported; `lake build Rowpartition` -> `Build completed successfully
+(814 jobs)`. `Audit.lean`: **1997 theorems audited, 0 using a non-standard axiom** (1929
+before `KeyedSplit`, 1871 after `DefaultTerm` alone, 1790 before). Headline `#print axioms`, all standard:
+`TerminatesOnSat`, `DefaultRun.length_le_forms`, `DefaultRun.rank_le`, `mintParent_rank_lt`,
+`CountRun.res_branching_le`, `CountRun.split_branching_le`, `not_TerminatesOnSat`,
+`SatDiverge.W2_witness`, `SatDiverge.W2_diverges`, `W2Inv.round`, `subst_names_travel`.
 
 ## What is proved in Lean / what is proved on paper / what is cited
 

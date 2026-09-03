@@ -40,10 +40,15 @@ and `w` are fresh, hence the left-hand side of nothing at all.
 
 The seed has NO model (`gSeed_unsat`), so the divergence lives entirely inside the
 unsatisfiable systems.  Section 6 makes that constructive: the per-label unit propagation
-of `Rowpartition.LabelProp` refutes the seed at the single label `1`
-(`gSeed_refuted`), so a solver that runs the label check alongside guarded resolution
-never enters the loop this file constructs.  Guarded resolution and the label check are
-complementary defences, and the gadget is precisely the shape that needs both.
+of `Rowpartition.LabelProp` refutes THIS seed at the single label `1` (`gSeed_refuted`),
+so a solver that runs the label check on `gSeed` never enters the loop this file
+constructs on `gSeed`.
+
+That is all section 6 proves.  This header used to conclude "guarded resolution and the
+label check are complementary defences"; that general claim -- every system on which the
+shipped rules diverge is refuted by the check on its input -- is FALSE, and
+`DefaultDiverge.lean` (`not_CRule`, 2026-09-02) exhibits the witness: `gSeed` hidden behind
+two triples that propagation cannot see through and four non-generative steps unfold.
 -/
 import Rowpartition.ResGuard
 import Rowpartition.LabelProp
@@ -493,10 +498,12 @@ theorem gSeed_unsat_of_refuted : ¬ ∃ rho, SModels rho gSeed := by
   solver is burning time on a problem that was already decided before the first step.
 * And it was decidable cheaply.  `gSeed_refuted`: the per-label unit propagation of
   `Rowpartition.LabelProp` refutes this witness at the single label `1`, in five
-  propagation steps and without a case split.  So guarded resolution and the label check
-  are complementary defences — the guard bounds the search on the satisfiable systems,
-  the label check removes the unsatisfiable ones on which the guard cannot — and the
-  gadget above is precisely the shape that needs both.
+  propagation steps and without a case split.  The guard bounds the search on the
+  satisfiable systems; the label check removes THIS unsatisfiable seed.  It does not
+  remove every unsatisfiable seed the guard cannot bound: the check refutes only what
+  propagation can force (`LabelProp.Incomplete`), and `DefaultDiverge.not_CRule` gives an
+  unsatisfiable input on which the shipped rule set diverges unrefuted.  (This bullet used
+  to say the two were "complementary defences"; retired 2026-09-02.)
 -/
 
 end Rowpartition
