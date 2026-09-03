@@ -1,0 +1,83 @@
+SOLVE: solve	IIBT	/tmp/claude-1000/-home-dmitry-research-ermine/8ad54026-1a3a-4b68-a018-ea52aca01453/scratchpad/satterm/measure/resprobe/ResStar3.e(1:1)	3	3	19	16	true	2;2;2	Cancellation:2,Resolution:12,Substitution:2
+step/learn records in segment: 77 (showing first 80)
+  step	IIBT	learn	^F579446 <- (^F579447,ResStar3.f0)	incm=2	proc=0
+  step	IIBT	learn	^F579446 <- (^F579449,ResStar3.f2)	incm=1	proc=1
+  learn	IIBT	new	Resolution: ^F579446 <- (^A579450,ResStar3.f2 ResStar3.f0)
+  learn	IIBT	new	Resolution: ^F579449 <- (^A579450,ResStar3.f0)
+  learn	IIBT	new	Resolution: ^F579447 <- (^A579450,ResStar3.f2)
+  step	IIBT	learn	Resolution: ^F579449 <- (^A579450,ResStar3.f0)	incm=3	proc=2
+  learn	IIBT	new	Substitution: ^F579446 <- (^A579450,ResStar3.f2 ResStar3.f0)
+  step	IIBT	learn	Resolution: ^F579447 <- (^A579450,ResStar3.f2)	incm=2	proc=3
+  learn	IIBT	new	Substitution: ^F579446 <- (^A579450,ResStar3.f0 ResStar3.f2)
+  step	IIBT	learn	Resolution: ^F579446 <- (^A579450,ResStar3.f2 ResStar3.f0)	incm=1	proc=4
+  learn	IIBT	seen	Cancellation: ^F579447 <- (^A579450,ResStar3.f2)
+  learn	IIBT	seen	Cancellation: ^F579449 <- (^A579450,ResStar3.f0)
+  step	IIBT	learn	^F579446 <- (^F579448,ResStar3.f1)	incm=0	proc=5
+  learn	IIBT	new	Resolution: ^F579449 <- (^A579455,ResStar3.f1)
+  learn	IIBT	new	Resolution: ^A579450 <- (^A579454,ResStar3.f1)
+  learn	IIBT	new	Resolution: ^F579447 <- (^A579453,ResStar3.f1)
+  learn	IIBT	new	Resolution: ^F579446 <- (^A579454,ResStar3.f1 ResStar3.f2 ResStar3.f0)
+  learn	IIBT	new	Resolution: ^F579448 <- (^A579453,ResStar3.f0)
+  learn	IIBT	new	Resolution: ^F579448 <- (^A579454,ResStar3.f2 ResStar3.f0)
+  learn	IIBT	new	Resolution: ^F579446 <- (^A579453,ResStar3.f1 ResStar3.f0)
+  learn	IIBT	new	Resolution: ^F579446 <- (^A579455,ResStar3.f1 ResStar3.f2)
+  learn	IIBT	new	Resolution: ^F579448 <- (^A579455,ResStar3.f2)
+  step	IIBT	learn	Resolution: ^A579450 <- (^A579454,ResStar3.f1)	incm=8	proc=6
+  learn	IIBT	new	Substitution: ^F579447 <- (^A579454,ResStar3.f2 ResStar3.f1)
+  learn	IIBT	new	Substitution: ^F579449 <- (^A579454,ResStar3.f0 ResStar3.f1)
+  learn	IIBT	new	Substitution: ^F579446 <- (^A579454,ResStar3.f2 ResStar3.f0 ResStar3.f1)
+  step	IIBT	learn	Substitution: ^F579449 <- (^A579454,ResStar3.f0 ResStar3.f1)	incm=9	proc=7
+  learn	IIBT	seen	Cancellation: ^A579450 <- (^A579454,ResStar3.f1)
+  learn	IIBT	new	Substitution: ^F579446 <- (^A579454,ResStar3.f2 ResStar3.f0 ResStar3.f1)
+  step	IIBT	learn	Resolution: ^F579449 <- (^A579455,ResStar3.f1)	incm=8	proc=8
+  learn	IIBT	new	Cancellation: ^A579455 <- (^A579454,ResStar3.f0)
+  learn	IIBT	seen	Resolution: ^A579450 <- (^A579454,ResStar3.f1)
+  learn	IIBT	new	Substitution: ^F579446 <- (^A579455,ResStar3.f2 ResStar3.f1)
+  step	IIBT	learn	Cancellation: ^A579455 <- (^A579454,ResStar3.f0)	incm=8	proc=9
+  learn	IIBT	seen	Substitution: ^F579449 <- (^A579454,ResStar3.f1 ResStar3.f0)
+  step	IIBT	learn	Resolution: ^F579448 <- (^A579454,ResStar3.f2 ResStar3.f0)	incm=7	proc=10
+  learn	IIBT	new	Substitution: ^F579446 <- (^A579454,ResStar3.f1 ResStar3.f2 ResStar3.f0)
+  step	IIBT	learn	Resolution: ^F579448 <- (^A579453,ResStar3.f0)	incm=6	proc=11
+  learn	IIBT	new	Cancellation: ^A579453 <- (^A579454,ResStar3.f2)
+  learn	IIBT	new	Substitution: ^F579446 <- (^A579453,ResStar3.f1 ResStar3.f0)
+  step	IIBT	learn	Cancellation: ^A579453 <- (^A579454,ResStar3.f2)	incm=6	proc=12
+  learn	IIBT	seen	Substitution: ^F579448 <- (^A579454,ResStar3.f0 ResStar3.f2)
+  step	IIBT	learn	Resolution: ^F579448 <- (^A579455,ResStar3.f2)	incm=5	proc=13
+  learn	IIBT	seen	Cancellation: ^A579455 <- (^A579454,ResStar3.f0)
+  learn	IIBT	seen	Resolution: ^A579453 <- (^A579454,ResStar3.f2)
+  learn	IIBT	new	Substitution: ^F579446 <- (^A579455,ResStar3.f1 ResStar3.f2)
+  learn	IIBT	seen	Substitution: ^F579448 <- (^A579454,ResStar3.f2 ResStar3.f0)
+  step	IIBT	learn	Resolution: ^F579447 <- (^A579453,ResStar3.f1)	incm=4	proc=14
+  learn	IIBT	seen	Resolution: ^A579453 <- (^A579454,ResStar3.f2)
+  learn	IIBT	seen	Resolution: ^A579450 <- (^A579454,ResStar3.f1)
+  learn	IIBT	new	Substitution: ^F579446 <- (^A579453,ResStar3.f0 ResStar3.f1)
+  learn	IIBT	new	Substitution: ^F579447 <- (^A579454,ResStar3.f1 ResStar3.f2)
+  step	IIBT	learn	Substitution: ^F579447 <- (^A579454,ResStar3.f2 ResStar3.f1)	incm=3	proc=15
+  learn	IIBT	seen	Cancellation: ^A579450 <- (^A579454,ResStar3.f1)
+  learn	IIBT	new	Substitution: ^F579446 <- (^A579454,ResStar3.f0 ResStar3.f2 ResStar3.f1)
+  learn	IIBT	seen	Cancellation: ^A579453 <- (^A579454,ResStar3.f2)
+  step	IIBT	learn	Resolution: ^F579446 <- (^A579453,ResStar3.f1 ResStar3.f0)	incm=2	proc=16
+  learn	IIBT	seen	Resolution: ^A579450 <- (^A579454,ResStar3.f1)
+  learn	IIBT	seen	Resolution: ^F579449 <- (^A579454,ResStar3.f1 ResStar3.f0)
+  learn	IIBT	seen	Cancellation: ^F579447 <- (^A579453,ResStar3.f1)
+  learn	IIBT	new	Substitution: ^F579446 <- (^A579454,ResStar3.f1 ResStar3.f0 ResStar3.f2)
+  learn	IIBT	seen	Resolution: ^A579453 <- (^A579454,ResStar3.f2)
+  learn	IIBT	seen	Cancellation: ^F579448 <- (^A579453,ResStar3.f0)
+  step	IIBT	learn	Resolution: ^F579446 <- (^A579454,ResStar3.f1 ResStar3.f2 ResStar3.f0)	incm=1	proc=17
+  learn	IIBT	seen	Cancellation: ^A579450 <- (^A579454,ResStar3.f1)
+  learn	IIBT	seen	Cancellation: ^F579449 <- (^A579454,ResStar3.f1 ResStar3.f0)
+  learn	IIBT	seen	Cancellation: ^F579447 <- (^A579454,ResStar3.f1 ResStar3.f2)
+  learn	IIBT	seen	Cancellation: ^A579453 <- (^A579454,ResStar3.f2)
+  learn	IIBT	seen	Cancellation: ^F579448 <- (^A579454,ResStar3.f2 ResStar3.f0)
+  step	IIBT	learn	Resolution: ^F579446 <- (^A579455,ResStar3.f1 ResStar3.f2)	incm=0	proc=18
+  learn	IIBT	seen	Cancellation: ^F579449 <- (^A579455,ResStar3.f1)
+  learn	IIBT	seen	Resolution: ^A579450 <- (^A579454,ResStar3.f1)
+  learn	IIBT	seen	Cancellation: ^F579448 <- (^A579455,ResStar3.f2)
+  learn	IIBT	seen	Resolution: ^A579453 <- (^A579454,ResStar3.f2)
+  learn	IIBT	seen	Resolution: ^A579455 <- (^A579454,ResStar3.f0)
+  learn	IIBT	seen	Substitution: ^F579446 <- (^A579454,ResStar3.f1 ResStar3.f2 ResStar3.f0)
+  learn	IIBT	seen	Resolution: ^F579447 <- (^A579454,ResStar3.f1 ResStar3.f2)
+inputs (3):
+  0	INPUT	a^579446	x^579447	ResStar3.f0
+  1	INPUT	a^579446	x^579449	ResStar3.f2
+  2	INPUT	a^579446	x^579448	ResStar3.f1
