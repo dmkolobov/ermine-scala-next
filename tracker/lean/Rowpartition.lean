@@ -70,6 +70,15 @@ first getting the module to build.
                                the dequeued premise as on the whole system (`resolved_erase_iff`,
                                `named_erase_iff`), and every branch it takes is a `KDefaultStep`
                                (`scalaSplit_step`, `scalaSplitOf_step`)
+* `Rowpartition.KeyedLoop`  -- ...and it does NOT survive the LOOP layer.  `KLoopStep` adds
+                               `makeConcrete`/`destructiveSub` (`NameLoss.concretizeKeep`,
+                               which DELETES and REWRITES) to the additive `KDefaultStep`,
+                               and a three-constraint satisfiable system admits productive
+                               runs of every length, minting without bound
+                               (`not_TerminatesOnSatKeyedLoop`, `W3_mints_unbounded`): a key
+                               witness dies either as a deleted definition
+                               (`notMem_lone_lhs`) or, and this is the engine, as an
+                               `absorbC`-rewritten mention (`notMem_lone_mention`)
 * `Rowpartition.Sanity`     -- a standalone toolchain smoke test
 -/
 import Rowpartition.Basic
@@ -103,3 +112,4 @@ import Rowpartition.DefaultTerm
 import Rowpartition.DefaultSatDiverge
 import Rowpartition.KeyedSplit
 import Rowpartition.KeyedSplitScala
+import Rowpartition.KeyedLoop

@@ -22,7 +22,11 @@ records of one `solve` are contiguous) and reports, per solve segment:
     definition by substitution or CSE (it exists only because the definition was kept)
   * of those, how many carry a nonempty concrete part (the `splitConcrete` premise shape)
   * of those, how many are followed by a `learn ... new SplitConcrete: n <- (abs,)` -- a MINT
-    (a fresh bare name for the group) -- or by a `SplitConcrete: u <- (n, con)` alone -- a REUSE
+    (a fresh bare name for the group) -- or by a `SplitConcrete: u <- (n, con)` alone -- a
+    syntactic REUSE -- or (added 2026-09-03 for Stage 3, `tracker/satterm/KEYED-LOOP-STAGE3.md`)
+    by a `SplitKeyed: w <- (abs,)` -- a KEYED reuse, the branch `-Dermine.splitKey` opens,
+    which is DEFAULT ON since commit 1e6f52b.  Before that flag every keyed reuse showed up
+    in the `no splitConcrete derivation` bucket, so the three branch counts now add up.
 
 Usage:
     tracker/tools/keptdef-mints.py trace.tsv [--filter SUBSTR] [--show N]
@@ -91,7 +95,7 @@ def key_of_inpart(rec):
 
 def analyse(path, flt=None, show=0):
     tot = dict(solves=0, concrete=0, kept=0, strict=0, derived=0, kept_conc=0, strict_conc=0,
-               mint=0, strict_mint=0, reuse=0, neither=0)
+               mint=0, strict_mint=0, reuse=0, keyed=0, neither=0)
     mints_at = {}
     shown = 0
     for loc, recs in segments(path):
@@ -135,6 +139,9 @@ def analyse(path, flt=None, show=0):
                         kind = 'neither'
                         for l in learns:
                             lp = parse_part(l[3]) if len(l) >= 4 else None
+                            if lp and lp[0] == 'SplitKeyed' and lp[3] == '' \
+                                    and set(lp[2]) == set(part[2]):
+                                kind = 'keyed'; break
                             if lp and lp[0] == 'SplitConcrete':
                                 if lp[3] == '' and set(lp[2]) == set(part[2]) and l[2] == 'new':
                                     kind = 'mint'; break
@@ -169,6 +176,7 @@ def main():
     print(f"    with a NONEMPTY concrete part (splitConcrete premise):   {tot['kept_conc']}  (strict {tot['strict_conc']})")
     print(f"      -> splitConcrete MINTED a fresh name:                   {tot['mint']}  (strict {tot['strict_mint']})")
     print(f"      -> splitConcrete REUSED an existing name:               {tot['reuse']}")
+    print(f"      -> splitConcrete KEYED-REUSED an existing name:          {tot['keyed']}")
     print(f"      -> no splitConcrete derivation:                         {tot['neither']}")
     if mints_at:
         print("  mints by solve location:")

@@ -36,6 +36,47 @@ the shipped compiler: the loop layer (Stage 3). Scala change: the flag, default 
 `incomplete/README.md`'s `.slow` timings are stale under the shipped defaults (all load in
 under 0.4 s except `gu05` at 7 s).
 
+**Stage 3, the same day: the keyed guard does NOT survive the loop layer.** THEOREM
+(`KeyedLoop.lean`, `not_TerminatesOnSatKeyedLoop`): add the loop's own concretisation
+`NameLoss.concretizeKeep` — `makeConcrete`/`destructiveSub`, which deletes the definitions
+with fewer than two abstract parts and destructively rewrites every mention — to the additive
+`KDefaultStep`, and the satisfiable three-constraint `W3 = {u <- ((|k,c|)), u <- (z, (|k|)),
+u <- (x, y, (|k|))}` mints for ever, three steps to the round (`W3_mints_unbounded`). A
+concretisation kills a key witness in exactly two ways, one per clause of `keepDefs`: as a
+DEFINITION of the concretised variable (`notMem_lone_lhs` — the mode the Stage 3 brief named)
+and as a MENTION of it (`notMem_lone_mention` — the mode the brief's sketch assumed away, and
+the one the engine runs on); everything else survives (`resolved_of_concretizeKeep`).
+MEASUREMENT (`tracker/repro/satterm/`, `W3` as a `json:` seed, 100 id bases, default flags):
+SOLVED 100/100, and the mechanism's FIRST re-mint really happens — at 55 of 100 bases
+`makeConcrete u` precedes the dequeue of the kept `u <- (x, y, (|k|))` and `splitConcrete`
+mints (0 mints at the other 45, where the keyed reuse fires instead; the syntactic guard mints
+at 100/100). The loop stops there through a defence no relation here states: `common`
+dedup-unifies the re-minted name with `z`, the variable of the deleted witness, at 55 of 55.
+MEASUREMENT, the corpus (`keptdef-sweep.sh`, 110 example modules, both flag sides from one
+class set; a `SplitKeyed` count added to `keptdef-mints.py`): kept-definition mints — which
+ARE these loop-layer re-mints — are **157 under the keyed guard against 156 under the
+syntactic one**, in the same 27 of 110 modules, with 748 vs 715 kept-definition dequeues and
+identical verdicts; the restore side reproduces the 2026-09-02 baseline exactly. **The guard
+that makes the additive calculus terminate removes none of the loop-layer re-mints.** Scope,
+machine-checked: `KSplitApp` has no `¬ Named` premise while the shipped `splitConcrete` asks
+that lookup FIRST, so the witness's first re-mint is faithful (`W3sat_remint_enabled`) and its
+later ones are not (`named_after_round`) — whether the two-lookup rule plus deletion terminates
+is now the ranked-first open question. Write-up `tracker/satterm/KEYED-LOOP-STAGE3.md`; the
+only Scala change is the adoption comment recording this answer.
+
+**Design rule, written down after Stage 3 (2026-09-03).** A guard may replace a mint by a NAME
+that denotes the same row (the keyed reuse: `ksplit_reuse_sat`, model set unchanged), never by
+silence. Plain refusal — "do not split-mint when the left-hand side is already concrete" — was
+considered and withdrawn: the minted name is the only channel through which two kept
+definitions of one group under different concrete left-hand sides ever meet, so refusing it can
+turn a refutation into an acceptance (the two-concrete-lhs instance in the conversation record;
+the input-level version is caught by the label check, a derived one would not be), and the
+channel is live on real code: of the 157 kept-definition mints in the corpus, 133 are later used
+as a name by another partition (`keptmint-consumers.py`, scratch, 2026-09-03). The candidate
+that obeys the rule is Stage 4: when the premise's left-hand side is concrete `C`, key the split
+on the complement row `C \ K` and REUSE any variable already carrying that row — which is what
+`common` achieves after the fact, moved into the rule where it holds in every order.
+
 ## 2026-09-02, latest: the two shipped defaults nothing proved — `PROMPT-default-termination.md` ANSWERED
 
 Both questions Lean-first; every result below is labelled THEOREM (about the additive rule

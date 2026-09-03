@@ -14,7 +14,7 @@ against it: its inference rules, its canonicalisation, its divergence, and the f
 of the language that actually occurs in Ermine's own standard library.
 
 **Headline numbers**, recounted mechanically on 2026-09-02 (last: 2026-09-01, 22 modules and
-1224). 32 module files, **1669 named theorems in source**, **0 `sorry`**, **0 custom axioms**. Every theorem's axiom set is a
+1224; 2026-09-03 after `KeyedLoop`: 33 files and 1722). 33 module files, **1722 named theorems in source**, **0 `sorry`**, **0 custom axioms**. Every theorem's axiom set is a
 subset of Lean's three standard axioms (`propext`, `Classical.choice`, `Quot.sound`);
 `sorryAx` appears nowhere. This is checked by walking the whole environment — `Audit.lean`
 in this directory enumerates every theorem under the `Rowpartition` namespace and collects
@@ -22,15 +22,15 @@ its axioms:
 
 ```
 $ lake env lean Audit.lean
-Rowpartition theorems audited: 2020; declarations using a non-standard axiom: 0
+Rowpartition theorems audited: 2086; declarations using a non-standard axiom: 0
 ```
 
-(2020 > 1669 because the environment also carries generated equation and match-arm
+(2086 > 1722 because the environment also carries generated equation and match-arm
 lemmas, which the audit checks too; and 1470 counts `CutSearch`'s 125, which the audit does
 NOT see — see the correction below. 2026-09-03, after `DefaultTerm`, `DefaultSatDiverge`,
-`KeyedSplit` and `KeyedSplitScala`; the figure on 2026-09-01 was 1465, after the `NameLoss`
-modules 1625, after `DefaultDiverge`/`KeepInert` 1790, after `DefaultTerm` 1871, after
-`DefaultSatDiverge` 1929, after `KeyedSplit` 1997.)
+`KeyedSplit`, `KeyedSplitScala` and `KeyedLoop`; the figure on 2026-09-01 was 1465, after the
+`NameLoss` modules 1625, after `DefaultDiverge`/`KeepInert` 1790, after `DefaultTerm` 1871,
+after `DefaultSatDiverge` 1929, after `KeyedSplit` 1997, after `KeyedSplitScala` 2020.)
 
 The source count is reproducible:
 
@@ -146,6 +146,7 @@ non-standard axioms. `CutSearch` is the one module that does NOT build here at a
 | `Rowpartition/DefaultSatDiverge.lean` | **exit 0**, no output | 2026-09-03; ~2 s |
 | `Rowpartition/KeyedSplit.lean` | **exit 0**, no output | 2026-09-03; ~3 s |
 | `Rowpartition/KeyedSplitScala.lean` | **exit 0**, no output | 2026-09-03 (later); ~1.7 s; `linter.style.header` warnings only |
+| `Rowpartition/KeyedLoop.lean` | **exit 0**, no output | 2026-09-03 (later still); ~2 s; `linter.style.header` warnings only |
 
 `lake build` → `Build completed successfully (804 jobs).` (2026-09-01, with the five
 modules added that day; `CutSearch` is NOT among them — see the correction at the top.)
@@ -245,6 +246,7 @@ because several informal rules get them wrong:
 | `DefaultSatDiverge.lean` | 40 | **The answer is NO** (`not_TerminatesOnSat`): the satisfiable two-constraint `SatDiverge.W2 = {p <- (e1, e2, (|k|)), p <- (e2, (|k|))}` (model `p = {k,m}`, `e2 = {m}`, `e1 = ∅`) admits productive runs of every length — cancellation of the two single-variable decompositions gives the alias link `e2 <- (u)`, substitution puts the latest name next to the forced-empty `e1`, and the split mints again (`W2Inv.round`, `W2Inv.run`, `W2_diverges`). The empty-row loophole of `DefaultTerm` §9, realised. Scope: ALL run orders; a substitution-closed run names the next group first (`subst_names_travel`) and the real loop unifies the link — both stated, neither a termination theorem. |
 | `KeyedSplit.lean` | 57 | **The repair, proved.** Key `splitConcrete`'s reverse lookup on `(lhs, concrete part)` — `¬ Resolved G c.lhs c.conc`, the guard `resolution` already has — instead of on the group. The reuse branch emits the existing name's new definition `u <- (S)` (entailment, `ksplit_reuse_sat`); the mint is unchanged (conservative extension). Because the keyed witness has resolution's shape, `ResGuardTerm`'s measure `gmeas` bounds BOTH mints at once: `KRun.length_le : n ≤ M·2^M·2^|L|` with `M = |allVars G₀| + gmeas L rho G₀`, hence **`terminatesOnSatKeyed`** and `keyed_vs_syntactic : TerminatesOnSatKeyed ∧ ¬ TerminatesOnSat`. On `W2` the keyed guard refuses even round 0 (`SatDiverge.W2_not_keyed_mint0`). Unsatisfiable input untouched; the compiler flag is Stage 2. |
 | `KeyedSplitScala.lean` | 20 | **The Scala rule IS that rule — as a theorem.** Both of `splitConcrete`'s reverse lookups run on the system MINUS the dequeued premise `c`; neither difference is one. `resolved_erase_iff` : `Resolved (G.erase c) v K ↔ Resolved G v K` given `2 ≤ |vset c|` (a keyed witness has ONE variable part) — the comment at `def splitConcrete`, verbatim; `ksplit_guard_erase_iff`, `ksplitApp_erase_iff`, `ksplitReuseApp_erase_iff` in the rules' vocabulary. `named_erase_iff` / `names_erase_iff` : the same for the SYNTACTIC lookup, for a DIFFERENT reason the prose never gave (its witnesses are bare, `conc = ∅`, and the rule runs only when `concr ≠ ∅`). Then `scalaSplit`, the three branches in the source's order with the lookups as arguments meeting `RhssSpec` / `ResolventSpec` on `G.erase c`, and **`scalaSplit_step`** : whatever branch fires, the result is a `KDefaultStep` of `G`. `scalaSplitOf_step` closes the lookups; `scalaSplit_eq_none_iff` pins the only no-op to the early return. Scope: `splitKey`/`splitMints` at their shipped default `true`; `incorporateAll`'s deletions are outside the calculus. |
+| `KeyedLoop.lean` | 52 | **...and the keyed guard does NOT survive the loop layer.** `KLoopStep` = `KDefaultStep` + the loop's own concretisation (`NameLoss.concretizeKeep`, which DELETES definitions with fewer than two abstract parts and DESTRUCTIVELY rewrites every mention). Two ways a concretisation kills a key witness, one per clause, both unconditional: `notMem_lone_lhs` (`mk u {z} K ∉ concretizeKeep u C G`, the deletion) and `notMem_lone_mention` (`v ≠ u → mk v {u} K ∉ concretizeKeep u C G`, the `absorbC` rewrite — invisible to `KeepInert`, which studies only the kept definitions); `resolved_of_concretizeKeep` says nothing else is lost. Also `concretizeKeep_idem` and `conc_unique_of_model`. **`not_TerminatesOnSatKeyedLoop`**: the satisfiable three-constraint `W3 = {u <- ((|k,c|)), u <- (z,(|k|)), u <- (x,y,(|k|))}` — on which the keyed guard is CLOSED at the input — admits runs of every length after one `makeConcrete u`, three steps to the round (mint, cancel, `makeConcrete` of the fresh name, which absorbs the mention that closed the key), minting once per round (`W3_mints_unbounded`, `W3Inv.round`). Scope, machine-checked: `KSplitApp` lacks the syntactic `¬ Named` premise the shipped rule checks FIRST, so the first re-mint is faithful (`W3sat_remint_enabled`, the keyed `orderB_remint_enabled`) and the later ones are not (`named_after_round`). |
 | `ResGuard.lean` | 20 | **Guarding `resolution`** with the resolvent reverse lookup — the analogue, for that rule, of the lookup `splitConcrete` already consults. The guard is not a semantic change: the reuse branch does not move the model set at all, the mint branch is a conservative extension, and `resolvent_unique` shows the variable the guard declines to mint is FORCED EQUAL to the one it reuses. |
 | `ResGuardTerm.lean` | 30 | …and the guarded rule **terminates on every satisfiable system**, with an explicit bound (`guarded_terminates_of_satisfiable`). The measure weights each variable's remaining resolvent-key budget by a power of the cardinality of the row it denotes: the guard bounds the keys, the MODEL bounds the depth, and neither ingredient works alone. |
 | `ResGuardDiverge.lean` | 33 | …and **not in general**. Four constraints on four variables and four labels admit guarded chains of every length (`gSeed_diverges`, `gres_no_decreasing_measure`). The seed is proved unsatisfiable, so the two halves do not conflict — and `gSeed_refuted` proves per-label propagation kills THAT seed at one label in five steps. (Corrected 2026-09-02: this row used to conclude "so the guard and the label check are complementary defences"; `DefaultDiverge.lean` proves that general claim FALSE, `not_CRule`.) |
@@ -572,14 +574,52 @@ SATISFIABLE input? Write-up: `tracker/TICKET-sat-termination.md`.
   nothing here models `incorporateAll`'s deletions. Cited from `Constraints.scala` at
   `def splitConcrete`.
 
-Root: all four modules imported; `lake build Rowpartition` -> `Build completed successfully
-(815 jobs)`. `Audit.lean`: **2020 theorems audited, 0 using a non-standard axiom** (1997
-before `KeyedSplitScala`, 1929 before `KeyedSplit`, 1871 after `DefaultTerm` alone, 1790
-before). Headline `#print axioms`, all standard:
+* **`KeyedLoop`** (later still the same day, Stage 3) — and the keyed guard does NOT survive
+  the LOOP layer. `KeyedSplit`'s theorem is about the additive relation; the real loop
+  DELETES. `KLoopStep` is `KDefaultStep` plus `makeConcrete`/`destructiveSub` as
+  `NameLoss.concretizeKeep` (delete every definition of `u` with fewer than two abstract
+  parts, rewrite every mention by `absorbC`, keep `u <- ((|C|))` and the `keepDefs`), with the
+  uniform productivity side condition `G ≠ G'` — on an additive step exactly `KRun`'s
+  `G ⊂ G'`. A key witness dies in exactly two ways, one per clause, both proved without
+  hypotheses on the system: as a DEFINITION of the concretised variable
+  (`notMem_lone_lhs`, the mode `TICKET-sat-termination.md` §4 item 0 named) and as a MENTION
+  of it (`notMem_lone_mention`) — the second is destructive because `concretize` keeps only
+  the `absorbC` IMAGE, it is invisible to `KeepInert.lean`, and it is the engine.
+  `resolved_of_concretizeKeep` is the complement: a witness mentioning `u` nowhere survives.
+  **`not_TerminatesOnSatKeyedLoop`**, on `W3 = {u <- ((|k,c|)), u <- (z, (|k|)),
+  u <- (x, y, (|k|))}`, satisfiable, with the keyed guard CLOSED at the input
+  (`W3_resolved`): one `makeConcrete u` deletes the key witness and keeps the split premise
+  (`W3_concretize_eq`), then every round is MINT (`w <- (x, y)`, `u <- (w, (|k|))`),
+  CANCELLATION (`w <- ((|c|))`) and `makeConcrete w` — which absorbs `u <- (w, (|k|))` into
+  the `u <- ((|k,c|))` already present, reopening the key and keeping `w <- (x, y)`. One
+  fresh variable per round, for ever (`W3Inv.round`, `W3Inv.run`, `W3_mints_unbounded` — the
+  vocabulary form, since only a mint enlarges the vocabulary, `KLoopStep.allVars_cases`).
+  Also `concretizeKeep_idem`, `conc_unique_of_model`, `KLoopRun.of_kRun` (a deletion-free
+  loop run is a `KRun`, so `KRun.length_le` still bounds it). **Scope, as theorems:**
+  `KSplitApp` carries only the keyed premise, while `splitConcrete` asks the SYNTACTIC lookup
+  first, so this refutes exactly the statement `KeyedSplit` proves and no more — the FIRST
+  re-mint is faithful (`W3sat_remint_enabled` gives `Cut.SplitApp` too, the keyed
+  `NameLoss.orderB_remint_enabled`) and the later ones are not (`named_after_round`).
+  MEASURED (`tracker/repro/satterm/`, `W3` as a `json:` seed, 100 id bases): SOLVED 100/100,
+  the first re-mint fires at 55 of 100 bases, and the loop kills it with a defence no relation
+  here states — `common` dedup-unifies the re-minted name with `z`, the deleted witness's own
+  variable, at 55 of 55. Over the 110-module example corpus the kept-definition mints, which
+  are exactly these loop-layer re-mints, are 157 under the keyed guard against 156 under the
+  syntactic one, in the same 27 modules: the guard that makes the additive calculus terminate
+  removes none of them. Write-up: `tracker/satterm/KEYED-LOOP-STAGE3.md`.
+
+Root: all five modules imported; `lake build Rowpartition` -> `Build completed successfully
+(816 jobs)`. `Audit.lean`: **2086 theorems audited, 0 using a non-standard axiom** (2020
+before `KeyedLoop`, 1997 before `KeyedSplitScala`, 1929 before `KeyedSplit`, 1871 after
+`DefaultTerm` alone, 1790 before). Headline `#print axioms`, all standard:
 `TerminatesOnSat`, `DefaultRun.length_le_forms`, `DefaultRun.rank_le`, `mintParent_rank_lt`,
 `CountRun.res_branching_le`, `CountRun.split_branching_le`, `not_TerminatesOnSat`,
 `SatDiverge.W2_witness`, `SatDiverge.W2_diverges`, `W2Inv.round`, `subst_names_travel`,
-`resolved_erase_iff`, `scalaSplit_step`, `scalaSplitOf_step`.
+`resolved_erase_iff`, `scalaSplit_step`, `scalaSplitOf_step`,
+`not_TerminatesOnSatKeyedLoop`, `keyed_additive_vs_loop`, `W3_mints_unbounded`,
+`W3_diverges`, `W3Inv.round`, `W3Inv.run`, `notMem_lone_lhs`, `notMem_lone_mention`,
+`resolved_of_concretizeKeep`, `concretizeKeep_idem`, `conc_unique_of_model`,
+`W3sat_remint_enabled`, `named_after_round`, `KLoopStep.sat_mono`, `KLoopRun.sat_mono`.
 
 ## What is proved in Lean / what is proved on paper / what is cited
 

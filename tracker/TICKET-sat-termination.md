@@ -9,7 +9,9 @@ Every result below is labelled THEOREM (Lean, `tracker/lean/Rowpartition/`), MEA
 
 *(Update 2026-09-03, later: the keyed split guard of §3b is ADOPTED as the default,
 `ermine.splitKey`; §3c is its measurement, §3d the post-flip re-run. The answer below is about
-the syntactic guard, now `-Dermine.splitKey=false`.)*
+the syntactic guard, now `-Dermine.splitKey=false`. §3e is Stage 3: the keyed guard's
+termination theorem is about the ADDITIVE relation and does NOT survive the loop layer's
+deletions — `not_TerminatesOnSatKeyedLoop`.)*
 
 **For the additive rule set with the syntactic split guard: NO.** `TerminatesOnSat` — every
 productive run of the shipped-until-today rule set `DefaultStep` (`cut` + guarded resolution)
@@ -213,14 +215,128 @@ The restore side is `-Dermine.splitKey=false`; the banner reads `cut+label-early
 Housekeeping: the `.ei` files the sweeps wrote under `core/examples` were deleted and the 129 stdlib
 interfaces regenerated under the new default.
 
+### 3e. Stage 3 — does the keyed guard survive the LOOP layer?  NO (2026-09-03, `tracker/satterm/KEYED-LOOP-STAGE3.md`)
+
+**THEOREM (`Rowpartition/KeyedLoop.lean`, 52 theorems): it does not.**  `KLoopStep` is
+`KDefaultStep` (§3b's calculus, the shipped additive rule set) plus the loop's own
+concretisation `NameLoss.concretizeKeep u C G` — `makeConcrete`/`destructiveSub`, which
+DELETES the definitions of `u` with fewer than two abstract parts, REWRITES every mention of
+`u` by `absorbC`, and keeps `u <- ((|C|))` and the definitions with `2 ≤ |vset|` (`keepDefs`).
+`KLoopRun`'s side condition is one uniform `G ≠ G'`, which on an additive step is exactly
+`KRun`'s `G ⊂ G'` (`KLoopRun.ssubset_of_additive`) and on a concretise step is the
+constructor's own productivity test.  Soundness: `KLoopStep.concrete_models` (=
+`concretizeKeep_sound`), `KLoopStep.extend`, `KLoopStep.sat_mono`, `KLoopRun.sat_mono` — one
+direction only, since a deleting step cannot preserve satisfiability backwards.
+
+    not_TerminatesOnSatKeyedLoop : ¬ TerminatesOnSatKeyedLoop
+    keyed_additive_vs_loop       : TerminatesOnSatKeyed ∧ ¬ TerminatesOnSatKeyedLoop
+    W3_mints_unbounded (n : ℕ)   : ∃ G, KLoopRun (3 * n + 1) W3 G ∧ n + 3 ≤ (allVars G).card
+
+The witness is three constraints on four variables and two labels, satisfiable (`rho3`,
+`W3_models`), on which the KEYED guard is CLOSED at the input (`W3_resolved`) — the additive
+theorem applies and no mint is possible:
+
+    W3 :  u <- ((|k, c|)),   u <- (z, (|k|)),   u <- (x, y, (|k|))
+          model  u = {k, c},  z = x = {c},  y = ∅
+
+One `makeConcrete u` deletes the key witness `u <- (z, (|k|))` (one abstract part) and keeps
+`u <- (x, y, (|k|))` (`W3_concretize_eq : concretizeKeep u C W3 = {u <- ((|k,c|)), u <- (x,y,(|k|))}`),
+and from there each round is three productive steps: the keyed MINT (`w <- (x, y)`,
+`u <- (w, (|k|))`), the CANCELLATION against `u <- ((|k, c|))` giving `w <- ((|c|))`, and
+`makeConcrete w` — which absorbs the mention `u <- (w, (|k|))` back into the already-present
+`u <- ((|k, c|))`, so the key is open again, while `keepDefs` keeps `w <- (x, y)`.  One fresh
+variable per round, for ever.
+
+**The Stage 3 brief's mechanism sketch is wrong in exactly one step.**  It expected
+`u <- (w, K)` to survive `makeConcrete w` and close the key for good.  `w` is on the RIGHT of
+that constraint, so it is a MENTION and `absorbC` destroys it.  There are precisely two ways a
+concretisation kills a key witness, one per clause, and both are proved unconditionally:
+`notMem_lone_lhs : mk u {z} K ∉ concretizeKeep u C G` (the DELETION the brief names) and
+`notMem_lone_mention : v ≠ u → mk v {u} K ∉ concretizeKeep u C G` (the destructive REWRITE,
+which `KeepInert.lean` cannot see because it studies only the kept definitions).  Everything
+else survives: `resolved_of_concretizeKeep`.  Also proved, all three of the "cheap if
+possible" items: `concretizeKeep_idem`, `conc_unique_of_model` (one concrete value per
+variable under a model), `resolved_of_concretizeKeep`.
+
+**Scope, machine-checked.**  `KSplitApp` carries only the keyed premise; the shipped
+`splitConcrete` consults the SYNTACTIC lookup `rhss(RHSAbstr(abstr))` FIRST, so `KDefaultStep`
+is more permissive than the compiler's rule and this refutation is about exactly the relation
+§3b's theorem bounds.  The FIRST re-mint is faithful — at the concretised system both lookups
+miss (`W3sat_remint_enabled : SplitApp .. ∧ KSplitApp ..`, the keyed analogue of
+`NameLoss.orderB_remint_enabled`) — and the measurement below finds it in the real compiler.
+From the second round on it is not: the round's mint leaves the bare `w <- (x, y)` and the
+round's concretisation keeps it, so the group is named (`named_after_round`) and the shipped
+rule would take its syntactic reuse.  **Whether the SHIPPED rule — both lookups, plus
+deletion — terminates on satisfiable input is open** (§4 item 0).
+
+**MEASUREMENT — the mechanism is real, and the loop kills it after one round by a FOURTH
+defence.**  The Lean `W3` as a seed for `tracker/repro/satterm/` (its `json:` seed format;
+`W3M` adds a mention `R <- (u, q)` so `destructiveSub` has one to rewrite), 100 id bases,
+default flags vs `-Dermine.splitKey=false`:
+
+| seed / guard | verdicts | mints per base | kept-def dequeued after the concretisation | of those, MINTED | fresh name cancelled to `((|c|))` | then `common`-unified with `z` |
+|---|---|---|---|---|---|---|
+| `W3`, keyed (default) | SOLVED 100/100 | 0 at 45, **1 at 55** | **55/100** | 55/55 | 55/55 | 55/55 |
+| `W3`, `splitKey=false` | SOLVED 100/100 | 1 at 100 | 57/100 | 57/57 | 55/57 | 55/57 |
+| `W3M`, keyed (default) | SOLVED 100/100 | 1 at 45, 2 at 55 | 55/100 | 55/55 | 55/55 | 55/55 |
+| `W3M`, `splitKey=false` | SOLVED 100/100 | 2 at 100 | 59/100 | 59/59 | 57/59 | 57/59 |
+
+At 55 of 100 bases the queue order really does put `makeConcrete u` before the dequeue of the
+kept `u <- (x, y, (|k|))`, the key witness is deleted, and `splitConcrete` mints — the mint the
+keyed guard refuses at the input.  At the other 45 the split premise is dequeued first and the
+KEYED REUSE fires (`SplitKeyed: z <- (x, y)`), which is why the keyed guard mints 0 there while
+the syntactic guard mints at 100/100.  The Lean round's second step is performed too
+(`Cancellation: w <- ((|c|))`, 55 of 55).  What the Lean has no rule for is the third: the loop
+notices `w <- ((|c|))` has the same right-hand side as the already-processed `z <- ((|c|))` and
+takes its `common` branch, UNIFYING `w := z` — restoring the deleted witness instead of losing
+it, at 55 of 55.  So the loop's defences are four, not three: name travel, eager `unify` of
+singleton links, eager `makeEmpty`, and **`common`, the dedup-unification of a re-minted name
+with the one the deletion removed**.  None is stated by any relation in the development.
+
+MEASUREMENT, the corpus (`tracker/tools/keptdef-sweep.sh` + `keptdef-mints.py`, one serialized
+`-Dermine.rowTrace` per example module; a `SplitKeyed` reuse count was added to the instrument
+for this stage, so its three branch counts now add up).  Kept-definition mints ARE the
+loop-layer re-mints: a kept `u <- (x, y, (|K|))` dequeued after `u` was made concrete is
+exactly `W3sat`'s premise.  110 modules, 55,338 solve segments, both sides from one class set:
+
+| over `core/examples` | keyed (DEFAULT) | `-Dermine.splitKey=false` | 2026-09-02 baseline |
+|---|---|---|---|
+| verdicts | 50 LOADED / 60 REJECTED | same, 0 of 110 differ | — |
+| `makeConcrete` steps | 3617 | 3605 | — |
+| kept-definition dequeues | **748** (336 strict, 412 derived) | **715** (329, 386) | 715 (329, 386) |
+| ... with a nonempty concrete part | **308** (47 strict) | **284** (42 strict) | 284 (42) |
+| ... **`splitConcrete` MINTED** | **157** (23 strict) | **156** (24 strict) | 156 (24) |
+| ... syntactically REUSED | 147 | 128 | 128 |
+| ... KEYED-reused | **4** | 0 | (not counted then) |
+| modules with such a mint | **27** (12 strict) | 27 (14 strict) | 27 (14) |
+
+The restore side reproduces the baseline exactly in every shared column — the control.  **The
+keyed guard removes none of the loop-layer re-mints: 157 against 156, in the same 27 modules.**
+That is what §3e's theorem predicts, since the guard's witness is precisely what `makeConcrete`
+deletes.  Per module the two are incomparable as `split_mint_not_keyed` says (ten modules
+differ; `np01` 26 -> 33 and `np05` 5 -> 9 up, `TelescopeTime` 11 -> 8, `np02` 6 -> 3,
+`gu05` 8 -> 6 down); 19 of 110 modules differ in some column, no verdict does.  The sweeps ran
+with `-Dermine.useInterface=false` and `core/examples` was checked clean of `.ei` afterwards.
+
 ## 4. What stays open, ranked
 
 0. **Stage 2 — DONE and ADOPTED 2026-09-03** (§3c, §3d). Items 1–3 below are now moot for the
-   shipped compiler (the theorem covers every loop order); they stay as questions about the
-   syntactic guard, `-Dermine.splitKey=false`. **Stage 3**, the open question for the shipped
-   compiler: does the keyed guard survive the loop layer, i.e. can `makeConcrete`/
-   `destructiveSub` delete a key witness `v <- (z, K)` and re-open a mint the additive theorem
-   refuses? The shape wanted is `KeepInert.lean`'s, for `KSplitStep`.
+   shipped compiler as far as the ADDITIVE relation goes (the theorem covers every run order);
+   they stay as questions about the syntactic guard, `-Dermine.splitKey=false`.
+   **Stage 3 — DONE 2026-09-03 (§3e), outcome (W): the keyed guard does NOT survive the loop
+   layer.** `makeConcrete`/`destructiveSub` deletes a key witness `v <- (z, K)` two different
+   ways — as a definition of `v = u` (`notMem_lone_lhs`) and as a MENTION of `z = u`
+   (`notMem_lone_mention`, the mode the brief's sketch missed) — and the second drives a
+   three-step round that mints for ever from a satisfiable three-constraint input
+   (`not_TerminatesOnSatKeyedLoop`, `W3_mints_unbounded`, `Rowpartition/KeyedLoop.lean`;
+   write-up `tracker/satterm/KEYED-LOOP-STAGE3.md`). MEASURED: the first re-mint happens in
+   the shipped compiler at 55 of 100 id bases, and the loop stops there because its `common`
+   branch unifies the re-minted name with the deleted witness's variable.
+   **What Stage 3 leaves open, and is now the ranked-first question:** the SHIPPED rule
+   consults the syntactic lookup FIRST, and `KSplitApp` does not; the witness's first re-mint
+   passes both lookups (`W3sat_remint_enabled`) but its later ones do not
+   (`named_after_round`). Does the two-lookup rule plus deletion terminate on satisfiable
+   input? A divergence would need a fresh UNNAMED group every round.
 1. **Conjecture S** — every substitution-closed run (all non-generative consequences taken
    before each mint) is bounded from every satisfiable input. The explorer's breadth-first
    strategy reaches fixpoints on every seed; `subst_names_travel` is the one-step mechanism;
@@ -251,5 +367,7 @@ interfaces regenerated under the new default.
 | `tracker/satterm/KEYED-SPLIT.md` | Stage 1 write-up of the keyed guard |
 | `tracker/lean/Rowpartition/KeyedSplitScala.lean` | the correspondence, as a theorem: `resolved_erase_iff`, `named_erase_iff`, `scalaSplit_step`, `scalaSplitOf_step` |
 | `tracker/satterm/KEYED-SPLIT-STAGE2.md` | Stage 2: the flag, every gate off vs on, the gate table, the unapplied flip, the recommendation |
+| `tracker/lean/Rowpartition/KeyedLoop.lean` | Stage 3: `KLoopStep` (the additive calculus + `concretizeKeep`), the two ways a concretisation kills a key witness (`notMem_lone_lhs`, `notMem_lone_mention`) and what survives (`resolved_of_concretizeKeep`), `concretizeKeep_idem`, `conc_unique_of_model`, and the refutation `not_TerminatesOnSatKeyedLoop` / `W3_mints_unbounded` with its scope theorems `W3sat_remint_enabled`, `named_after_round` |
+| `tracker/satterm/KEYED-LOOP-STAGE3.md` | Stage 3 write-up: the theorem verbatim, the corrected mechanism, the 100-base replay of `W3`/`W3M` and the corpus re-run of the kept-definition instrument |
 | `core/.../Constraints.scala` | `GenRules.splitKey` (default off), `SplitKeyed`, `splitConcrete`'s `resolvent` parameter |
 | `tracker/tools/splitkey-counts.py`, `splitkey-sweep.sh`, `ei-classify.py` | Stage 2 instruments: split-branch counts per trace, the 110-module traced sweep, `.ei` signature classification |

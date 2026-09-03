@@ -834,7 +834,12 @@ object Constraints {
      * on `ResGuardDiverge.gSeed`; the label check and `RHS.merge` remain the defences), and
      * the theorem is about the additive rule set, not about `incorporateAll`'s deletions
      * (`makeConcrete`/`destructiveSub` absorb exactly the `v <- (z, K)` witnesses the key
-     * needs; whether that can re-open a mint is open). */
+     * needs).  Stage 3 (`Rowpartition/KeyedLoop.lean`, `tracker/satterm/KEYED-LOOP-STAGE3.md`)
+     * answered that: with the concretisation step added, the keyed calculus does NOT
+     * terminate on all satisfiable input (`not_TerminatesOnSatKeyedLoop`, witness `W3`), the
+     * mechanism is real here at about half of the id bases, and what stops it is `common`
+     * unifying the re-minted name with the deleted witness's -- a loop property no relation
+     * states.  The corpus count of such re-mints is unchanged by this flag (157 vs 156). */
     val splitKey: Boolean = System.getProperty("ermine.splitKey", "true") == "true"
     /* REMOVED 2026-09-02, both measured and declined; see
      * `tracker/TICKET-row-solver-8abc.md` and the Lean that still licenses them.
