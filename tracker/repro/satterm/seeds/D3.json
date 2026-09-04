@@ -1,0 +1,5 @@
+{"name":"D3: makeEmpty aux death -- v0<-() and v0<-((|l1|)) are incompatible instantiations",
+ "rho": {"0":[], "1":[]},
+ "cons": [[0,[],[]],
+          [0,[],[1]],
+          [1,[0],[]]]}

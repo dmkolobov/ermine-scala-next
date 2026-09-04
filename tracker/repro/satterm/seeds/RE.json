@@ -1,0 +1,6 @@
+{"name":"RE: resolution empty-row reuse (ResolutionEmpty, needs emptyRow) -- a bare v4<-() emptied first, v0<-(v1,l1), v0<-(v2,l2), v0<-((|l1,l2|))",
+ "rho": {"0":[1,2], "1":[2], "2":[1], "4":[]},
+ "cons": [[4,[],[]],
+          [0,[1],[1]],
+          [0,[2],[2]],
+          [0,[],[1,2]]]}

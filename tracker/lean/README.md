@@ -14,7 +14,14 @@ against it: its inference rules, its canonicalisation, its divergence, and the f
 of the language that actually occurs in Ermine's own standard library.
 
 **Headline numbers**, recounted mechanically on 2026-09-02 (last: 2026-09-01, 22 modules and
-1224; 2026-09-03 after `KeyedLoop`: 33 files and 1722; 2026-09-03 after `KeyedRow`: 34 files and 1816; 2026-09-03 after `KeyedRowScala`: 35 files and 1849; 2026-09-04 after `KeyedEmptyScala`: 36 files and 1888). 36 module files, **1888 named theorems in source**, **0 `sorry`**, **0 custom axioms**. Every theorem's axiom set is a
+1224; 2026-09-03 after `KeyedLoop`: 33 files and 1722; 2026-09-03 after `KeyedRow`: 34 files and 1816; 2026-09-03 after `KeyedRowScala`: 35 files and 1849; 2026-09-04 after `KeyedEmptyScala`: 36 files and 1888). 36 module files, **1888 named theorems in source**, **0 `sorry`**, **0 custom axioms**.
+**UPDATED 2026-09-04 after the L1 loop model** (`Rowpartition/Loop/`, `tracker/loopmodel/L1-MODEL.md`),
+recounted with the command below: the README's own glob `Rowpartition/*.lean` now reaches
+**38 files and 1952 named theorems** (it picks up the new umbrella `Rowpartition/Loop.lean`),
+and there are **12 more files and 28 more named theorems under `Rowpartition/Loop/`** that the
+glob does not reach — **50 files, 1980 named theorems** in all. Still **0 `sorry`**, **0 custom
+axioms**, and additionally no `partial`, `unsafe`, `native_decide`, `opaque` or `implemented_by`
+under `Rowpartition/Loop/`. Every theorem's axiom set is a
 subset of Lean's three standard axioms (`propext`, `Classical.choice`, `Quot.sound`);
 `sorryAx` appears nowhere. This is checked by walking the whole environment — `Audit.lean`
 in this directory enumerates every theorem under the `Rowpartition` namespace and collects
@@ -23,6 +30,15 @@ its axioms:
 ```
 $ lake env lean Audit.lean
 Rowpartition theorems audited: 2378; declarations using a non-standard axiom: 0
+```
+
+**UPDATED 2026-09-04**, after `import Rowpartition.Loop` was added to the root:
+
+```
+$ lake env lean Audit.lean
+Rowpartition theorems audited: 2508; declarations using a non-standard axiom: 0
+$ lake build Rowpartition
+Build completed successfully (832 jobs).
 ```
 
 (2378 > 1888 because the environment also carries generated equation and match-arm
@@ -154,6 +170,19 @@ non-standard axioms. `CutSearch` is the one module that does NOT build here at a
 | `Rowpartition/KeyedRowScala.lean` | **exit 0**, no output | 2026-09-03 (later still, Stage 5); ~2 s; `linter.style.header` warnings only |
 | `Rowpartition/KeyedEmpty.lean` | **exit 0**, no output | 2026-09-03 (evening, Stage 6); `linter.style.header` warnings only |
 | `Rowpartition/KeyedEmptyScala.lean` | **exit 0**, no output | 2026-09-04 (Stage 7); ~2 s; `linter.style.header` warnings only |
+| `Rowpartition/Loop.lean` | **exit 0**, no output | 2026-09-04 (L1, the loop model); umbrella |
+| `Rowpartition/Loop/Hash.lean` | **exit 0**, no output | 2026-09-04; 1.1 s; `MurmurHash3` / `Hashing.improve`, no Mathlib |
+| `Rowpartition/Loop/SSet.lean` | **exit 0**, no output | 2026-09-04; 1.2 s; `immutable.Set` with its iteration order |
+| `Rowpartition/Loop/State.lean` | **exit 0**, no output | 2026-09-04; 1.3 s |
+| `Rowpartition/Loop/Queue.lean` | **exit 0**, no output | 2026-09-04; 1.2 s |
+| `Rowpartition/Loop/Rules.lean` | **exit 0**, no output | 2026-09-04; 1.2 s |
+| `Rowpartition/Loop/Step.lean` | **exit 0**, no output | 2026-09-04; 1.3 s; `step` / `run` |
+| `Rowpartition/Loop/Trace.lean` | **exit 0**, no output | 2026-09-04; 1.1 s |
+| `Rowpartition/Loop/Json.lean` | **exit 0**, no output | 2026-09-04; 1.5 s |
+| `Rowpartition/Loop/Seed.lean` | **exit 0**, no output | 2026-09-04; 1.2 s; uses `Lean.Data.Json` (no new `require`) |
+| `Rowpartition/Loop/Conformance.lean` | **exit 0**, no output | 2026-09-04; 1.5 s; 45 JVM-checked `#guard`s |
+| `Rowpartition/Loop/Bridge.lean` | **exit 0**, no output | 2026-09-04; 1.9 s; the only Loop module that needs Mathlib |
+| `Rowpartition/Loop/Main.lean` | **exit 0**, no output | 2026-09-04; the `looptrace` executable root, NOT imported by `Rowpartition.lean` |
 
 `lake build` → `Build completed successfully (804 jobs).` (2026-09-01, with the five
 modules added that day; `CutSearch` is NOT among them — see the correction at the top.)
@@ -185,6 +214,42 @@ so neither new module introduced a tactic-level lint.
 
 (The string `error` does occur twice in the build log — inside the phrase "error
 condition 10" in a `Rules.lean` docstring. There are no compilation errors.)
+
+---
+
+## Loop model (L1)
+
+`Rowpartition/Loop/` is stage L1 of `tracker/LOOP-MODEL-PLAN.md`: `Constraints.incorporateAll`
+itself, as a total Lean FUNCTION, and an executable that prints the compiler's own
+`-Dermine.rowTrace` TSV so the two can be diffed record for record. Everything above it in
+`Rowpartition/` is about a RELATION — the rules applied in any order; the compiler applies
+them in ONE order, with a priority-search queue, a `SubstEnv`, an id supply and four deleting
+steps, and the measured behaviour lives in that difference.
+
+```bash
+export PATH="$HOME/.elan/bin:$PATH"
+cd ermine-scala/tracker/lean
+lake build looptrace                                   # 22 jobs
+lake exe looptrace ../repro/satterm/seeds/W2.json 0     # the RowTrace TSV of one solve
+lake exe looptrace ../repro/satterm/seeds/W2.json 0 --verdict
+lake exe looptrace ../repro/satterm/seeds/G7.json 0 --flags=emptyrow
+```
+
+The model computes the REAL queue order, which means the real JVM hashes: `rhs.hashCode` is
+`MurmurHash3.productHash("RHS", [setHash abstr, setHash conc])`, and the priority is the
+position in `reverseTopSort`, which depends on the ITERATION ORDER of
+`scala.collection.immutable.Set` — insertion order up to four elements, canonical CHAMP order
+above. Both are transcribed from the 2.13.18 sources and pinned by `#guard`s in
+`Loop/Conformance.lean`; if one of those fails the queue order is wrong.
+
+**Differential status (2026-09-04): 240/240 comparisons agree**, and the 60 at the shipped
+flags are byte-identical, not merely equal after id normalisation. The harness is
+`tracker/tools/looptrace-diff.py`; the table, the correspondence table (every Scala function
+`incorporateAll` reaches → its Lean definition), and the "not modelled" list are in
+`tracker/loopmodel/L1-MODEL.md`.
+
+**A solver change must keep this green.** If a rule, a queue operation or a flag default
+changes in `Constraints.scala`, the model changes with it, or the differential stops agreeing.
 
 ---
 
@@ -678,7 +743,8 @@ SATISFIABLE input? Write-up: `tracker/TICKET-sat-termination.md`.
   `res_empty_forced`). Measured in `tracker/satterm/KEYED-EMPTY-STAGE7.md`.
 
 Root: all eight modules imported; `lake build Rowpartition` -> `Build completed successfully
-(820 jobs)`. `Audit.lean`: **2378 theorems audited, 0 using a non-standard axiom** (2329 after Stage 6, 2255 after Stage 5, 2216
+(820 jobs)`. (UPDATED 2026-09-04 after the L1 loop model: **832 jobs**, `Audit.lean` **2508
+theorems audited, 0 using a non-standard axiom**.) `Audit.lean`: **2378 theorems audited, 0 using a non-standard axiom** (2329 after Stage 6, 2255 after Stage 5, 2216
 before `KeyedRowScala`, 2086 before `KeyedRow`, 2020 before `KeyedLoop`, 1997 before
 `KeyedSplitScala`, 1929 before `KeyedSplit`, 1871 after `DefaultTerm` alone, 1790 before). Headline `#print axioms`, all
 standard:

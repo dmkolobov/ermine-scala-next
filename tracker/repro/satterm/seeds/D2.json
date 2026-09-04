@@ -1,0 +1,4 @@
+{"name":"D2: RHS.merge death -- v0<-(v1,l1) and v1<-(v2,l1) make substitution put l1 in twice",
+ "rho": {"0":[1], "1":[1], "2":[]},
+ "cons": [[0,[1],[1]],
+          [1,[2],[1]]]}

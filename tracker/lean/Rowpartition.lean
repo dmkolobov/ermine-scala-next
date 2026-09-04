@@ -120,6 +120,15 @@ first getting the module to build.
                                `resEmpty_two_steps`) and the Stage 4 bound applies
                                (`scalaEmptySplit_bounded`, `scalaEmptyRes_bounded`)
 * `Rowpartition.Sanity`     -- a standalone toolchain smoke test
+* `Rowpartition.Loop`       -- L1 of `tracker/LOOP-MODEL-PLAN.md`: `Constraints.incorporateAll`
+                               itself as an executable FUNCTION -- the real queue order (the
+                               priority-search key `(rhs.hashCode, lhs.hashCode)` and the
+                               reverse-topological priority), the `SubstEnv`, the id supply,
+                               every dispatch branch and rule under the shipped flags, with an
+                               explicit fuel and no `partial`.  The `looptrace` executable
+                               prints the compiler's `-Dermine.rowTrace` TSV, and
+                               `tracker/tools/looptrace-diff.py` diffs the two: 240/240
+                               comparisons agree (`tracker/loopmodel/L1-MODEL.md`)
 -/
 import Rowpartition.Basic
 import Rowpartition.Rules
@@ -157,3 +166,4 @@ import Rowpartition.KeyedRow
 import Rowpartition.KeyedRowScala
 import Rowpartition.KeyedEmpty
 import Rowpartition.KeyedEmptyScala
+import Rowpartition.Loop

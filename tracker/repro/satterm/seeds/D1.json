@@ -1,0 +1,3 @@
+{"name":"D1: selfSubstitution death -- v0 <- (v0, v1, l1) is an infinite row partition",
+ "rho": {"0":[1], "1":[]},
+ "cons": [[0,[0,1],[1]]]}

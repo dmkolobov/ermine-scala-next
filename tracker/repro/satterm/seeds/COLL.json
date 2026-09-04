@@ -1,0 +1,4 @@
+{"name":"COLL: a six-variable right-hand side (so abstr is a CHAMP HashSet) one of whose members is erased by makeEmpty; at base 23 the ids 24 and 25 share a level-0 trie slot, so removing 25 INLINES 24 and moves it to the front",
+ "rho": {"0":[],"1":[],"2":[],"3":[],"4":[],"5":[],"6":[]},
+ "cons": [[0,[1,2,3,4,5,6],[]],
+          [2,[],[]]]}

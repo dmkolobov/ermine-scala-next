@@ -16,3 +16,8 @@ rev = "v4.33.1"
 
 [[lean_lib]]
 name = "Rowpartition"
+
+[[lean_exe]]
+name = "looptrace"
+root = "Rowpartition.Loop.Main"
+supportInterpreter = true
