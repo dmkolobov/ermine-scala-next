@@ -176,6 +176,36 @@ see the environment (`mintsBoundedOnSatKeyed3E`), which turns the 74 empty-compl
 kept-definition mints into reuses (`G7_mints`, `G7_blocked`). The unhypothesised statement is
 neither proved nor refuted; `unify` is the last unmodelled deletion. No Scala change.
 
+**Stage 7, 2026-09-04: the repair implemented behind `-Dermine.emptyRow`, DEFAULT OFF, and
+measured.** The §3i one-line repair is in `Constraints.scala`: a FIFTH branch of
+`splitConcrete` and a FOURTH of `resolution`, taken when the Stage 5 concrete-row lookup
+misses because the complement (resp. resolvent) row is EMPTY and some variable is known to
+denote `∅` — read from the `SubstEnv`, where `makeEmpty` leaves the fact, which is
+`KeyedEmpty.makeEmptyE` implemented literally and LOOKUP-ONLY (re-enqueueing `v <- ()` would
+call `makeEmpty` again and cycle). The design was chosen on data: at 74 of 74 of the corpus's
+empty-complement mints a `makeEmpty` had already run in that module, against 14 of 74 in the
+same solve segment and 0 of 74 with the fact still queued. What the branch EMITS is not the
+Lean reuse's conclusion — a partition about the emptied carrier would reach `makeEmpty` twice
+and panic — but the propagation that conclusion forces, `x <- ()` per group member (resolution:
+the two reuse conclusions with `∅` substituted for the carrier); `KeyedEmptyScala.lean` proves
+that IS the reuse composed with its `makeEmptyE` step (`emptyReuse_compose`), so one Scala step
+is two steps of `K3ELoopStep` and the Stage 4 bound applies to the rule as written
+(`scalaEmptySplit_run`, `scalaEmptySplit_bounded`). Soundness needs no carrier at all
+(`group_forced_empty`). MEASURED, every gate from one class set: the new tracked seed
+`G7` mints at 100 of 100 id bases with the flag off and at NONE with it on; `core/test`
+910/911 both sides; corpus verdicts 23/43 and 18/16 with `shouldfail/` 40/40 and the four
+message differences shown by per-file re-runs to be `--batch` drift; 188 published interfaces,
+0 weaker, two attributable bindings both hand-checked equivalent and more economical;
+`repl-smoke` 4/4, `lsp-smoke` 98/98; stdlib boot trace byte-identical. Population, the largest
+of the series: `SplitEmpty` 65 firings in 16 of 110 modules, `ResolutionEmpty` 183 in 19,
+kept-definition mints 154 -> 82 (73 of the 154 have an empty complement), resolution
+conclusions 1,644 -> 792. **The one gate that fails is timing: `incomplete/gu05` is 1.9x
+SLOWER (1.03 s -> 1.96 s) and the cause was not isolated** — JFR puts the extra time in the
+row-constraint QUEUE, not in the environment scan, and the module derives LESS under the flag.
+Report recommends **DO NOT ADOPT YET**: keep the flag, settle `gu05` first. Nothing flipped,
+nothing committed. Write-up `tracker/satterm/KEYED-EMPTY-STAGE7.md`; the remaining unmodelled
+deletion is `unify`.
+
 ## 2026-09-02, latest: the two shipped defaults nothing proved — `PROMPT-default-termination.md` ANSWERED
 
 Both questions Lean-first; every result below is labelled THEOREM (about the additive rule

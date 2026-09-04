@@ -542,6 +542,87 @@ The Scala repair (report §9, UNIMPLEMENTED): seed `concRows` with the environme
 instantiations, or have `makeEmpty` return `v <- ()` to `incm`. Same gate set as Stage 5. The
 other deletion, `unify`, remains unmodelled.
 
+### 3j. Stage 7 — the repair IMPLEMENTED behind `-Dermine.emptyRow`, MEASURED (2026-09-04, `tracker/satterm/KEYED-EMPTY-STAGE7.md`)
+
+The §3i repair is written.  `-Dermine.emptyRow` (`GenRules.emptyRow`, **DEFAULT OFF**, tags
+`SplitEmpty` / `ResolutionEmpty`) adds a FIFTH branch to `splitConcrete` and a FOURTH to
+`resolution`, taken when the Stage 5 lookups miss because the complement row (resp. the
+resolvent row) is EMPTY and some variable is known to denote `∅`.  The lookup is
+`findConcRow` with the complement pinned to `∅` and a SECOND source for the carrier: the
+substitution environment, `hm.types.collectFirst { case (z, ConcreteRho(_, fs)) if fs.isEmpty => z }`,
+which is where `makeEmpty` leaves the fact — `makeEmptyE` implemented literally, LOOKUP-ONLY
+(re-enqueueing `v <- ()` would call `makeEmpty` again and cycle).
+
+**The design decision was made on data.**  Of the two options, seeding from the environment
+(a) or threading an `emptied` set alongside the queues (b): replaying the Stage 5 traces
+(`stage7/pre-empty.py`) shows that at **74 of 74** empty-complement mints a `makeEmpty` had
+already run earlier in the module — so (a) can find a carrier at all of them — while only
+**14 of 74** have one in the same solve segment, which is the most (b) could see; and at
+**0 of 74** is a bare `x <- ()` still in the queues, which is why Stage 5's lookup misses all
+74.  (a) also needs no change to `incorporateAll`'s recursion.
+
+**What the branch emits is NOT the Lean reuse's conclusion, and that is a theorem.**  Traced
+on the `G7` instance first: a partition about the emptied carrier would re-enter the queues
+and reach `makeEmpty` a second time (`panic: reinstantiated type`), so the branch emits the
+PROPAGATION the reuse forces — `x <- ()` for every `x` of the group (resolution: the reuse's
+two conclusions with the carrier's row `∅` substituted in, `x <- ((|D \ C|))`,
+`y <- ((|C \ D|))`).  `Rowpartition/KeyedEmptyScala.lean` (NEW, 39 theorems):
+`emptyReuse_compose` / `resEmptyReuse_compose` prove `makeEmptyE z` applied to the Lean
+reuse's conclusion is exactly what the Scala emits, so one Scala step is TWO steps of
+`K3ELoopStep` (`splitEmpty_two_steps`, `resEmpty_two_steps`); `scalaEmptySplit_run` /
+`scalaEmptyRes_run` are the adequacy for the five- and four-branch rules, and
+`scalaEmptySplit_bounded` / `scalaEmptyRes_bounded` state the resulting bound
+`|allVars H| + hmeas (labelsOf H) rho H`.  Soundness needs NO carrier at all
+(`splitEmpty_models_iff` through `group_forced_empty`, `resEmpty_models_iff` through
+`res_empty_forced`); the carrier is asked for because it is what makes the step a step of the
+relation that has the bound.  Build 820 jobs, Audit **2378 theorems, 0 non-standard axioms**.
+
+
+Every gate below is from ONE class set in two configurations (`D` today's default,
+`E` `-Dermine.emptyRow=true`), each with a positive control:
+
+* seeds: `W2`/`H2`/`NE6`/`W3`/`W4` SOLVED 100/100 with IDENTICAL draw distributions on both
+  sides; the NEW tracked seed **`G7`** (`KeyedEmpty.G7` plus the `e <- ()` of `G7_blocked`,
+  ordered so the `empty` step runs FIRST and the carrier is in the environment, not the
+  queues) **draws one fresh id at 100 of 100 bases under `D` and NONE under `E`**, same
+  solved system, one bound variable fewer; the base-0 traces show `D` minting and then
+  reaching the same answer through cancellation plus `makeEmpty` in five more steps, and `E`
+  emitting `SplitEmpty: ^free2 <- (,)`, `^free3 <- (,)` directly.  `W`/`gseed` REJECTED
+  200/200, byte-identical bar the banner.  The `ResolutionEmpty` control had to be
+  synthesised (`stage7/W4e.json`, scratch), as Stage 5's `W4c` was.
+* the BARE `G7` (`KeyedEmpty.G7` verbatim, no carrier anywhere) is UNCHANGED by the flag —
+  `G7_not_emptyKnown`: where no `makeEmpty` has run there is no fact to retain.
+* stdlib boot 129 modules, traces **byte-identical**; `core/test` **910/911** on both sides
+  (the known `disjunction sound` starvation); `repl-smoke` 4/4, `lsp-smoke` 98/98.
+* corpus verdicts 23/43 and 18/16 on both sides, `shouldfail/` **40/40**; 1 of 66 and 3 of 34
+  files differ in MESSAGE only, and all four are IDENTICAL when re-run PER FILE twice per
+  side — `--batch` session drift, not the flag (and a later batch pair on the recompiled
+  tree shows 0 of 66).
+* published types, PER FILE with a same-configuration control: 188 interfaces / 1,933
+  bindings, **0 weaker**; the control moves 3 interfaces and one binding
+  (`Relation.lookbackJoin`, the documented churn), `D` vs `E` moves 8 and **two attributable
+  bindings**, `incomplete/np01.inferredRestate` (7 existentials -> 6, the removed name FORCED
+  by the rest) and `incomplete/RunCalibration.scaledRuns` (one order-only duplicate fewer), both
+  hand-checked EQUIVALENT.
+* population, PER FILE over 110 modules (the batch mode does not survive the `incomplete`
+  group under `rowTrace`): **`SplitEmpty` fires 65 times in 16 modules and `ResolutionEmpty`
+  183 times in 19**, kept-definition mints **154 -> 82** (of the 154, **73 have an empty
+  complement**, and at 73 of 73 a `makeEmpty` had already run), corpus split mints 626 -> 561,
+  resolution conclusions **1,644 -> 792**.  The `D` column reproduces Stage 5's `B` column
+  exactly.  This is by far the largest population of any flag in the series.
+* timing, one JVM at a time on an idle machine: ResStar 5-9, RowStress 10/14, CoStar8 and two
+  corpus modules are all inside their own spread (`np01`, where the branch fires most, +7 %)
+  — but **`incomplete/gu05` is 1.9x SLOWER** (1.03 s -> 1.96 s, three runs each).  The cause
+  was NOT isolated: JFR moves the attribution into the row-constraint QUEUE (`Q.part`, the
+  finger-tree monoid, `RHS.hashCode`, `PQueue.foldLeft`), NOT into the environment scan, and
+  `gu05` derives LESS under `E` (1,496 -> 1,174 `learn new`) while taking longer.
+
+Recommendation in the report: **DO NOT ADOPT YET — keep the flag, settle `gu05` first.**  The
+theorem is the one that was missing and every correctness gate is green, but a 1.9x regression
+on the corpus's most expensive module, on the very module `resGuard` (11x) and `splitKey` (5x)
+were adopted on, is not a state to make a default in.  **The default was not flipped and
+nothing was committed**; the one-line diff with its ADOPTED comment is in the report §C.2.
+
 ## 4. What stays open, ranked
 
 0. **Stage 2 — DONE and ADOPTED 2026-09-03** (§3c, §3d). Items 1–3 below are now moot for the
@@ -576,8 +657,17 @@ other deletion, `unify`, remains unmodelled.
    the split's third lookup nor resolution's exists, and neither is measured — Stage 5.
    **Stage 6 — DONE 2026-09-03 evening (§3i), outcome (T2): `makeEmpty` breaks the Stage 4
    invariant only at the EMPTY row's carrier; the bound survives under the eager-propagation
-   order hypothesis, or unconditionally with the one-line repair (retain `v <- ()`). Stage 7,
-   if wanted: implement the repair behind a flag and gate it; then `unify`, the last deletion.**
+   order hypothesis, or unconditionally with the one-line repair (retain `v <- ()`).**
+   **Stage 7 — DONE 2026-09-04 (§3j): the repair is IMPLEMENTED behind `-Dermine.emptyRow`
+   (DEFAULT OFF) and gated.** The lookup reads the empty facts from the `SubstEnv`, where
+   `makeEmpty` leaves them; the branch emits the PROPAGATION rather than the Lean reuse's
+   conclusion, and `Rowpartition/KeyedEmptyScala.lean` proves that is the reuse composed with
+   its forced `makeEmptyE` step, so the rule as written is a step-pair of the calculus with the
+   bound. Every correctness gate is green and the population is the largest in the series
+   (kept-definition mints 154 -> 82, resolution conclusions 1,644 -> 792), but `incomplete/gu05`
+   is 1.9x SLOWER with the cause unisolated, so the report recommends NOT flipping yet. **The
+   ranked-first question is now that regression** — an instrumented build separating the two
+   candidates in §3j — and after it `unify`, the last unmodelled deletion.
    **Stage 5 — DONE 2026-09-03 (§3g), outcome: BOTH branches implemented and measured, both
    DEFAULT OFF.** `-Dermine.splitRow` and `-Dermine.resRow` exist in `Constraints.scala` with
    one shared lazy lookup, the correspondence is proved for the spec the compiler's lookup
@@ -627,10 +717,13 @@ other deletion, `unify`, remains unmodelled.
 | `tracker/satterm/KEYED-LOOP-STAGE3.md` | Stage 3 write-up: the theorem verbatim, the corrected mechanism, the 100-base replay of `W3`/`W3M` and the corpus re-run of the kept-definition instrument |
 | `tracker/lean/Rowpartition/KeyedRow.lean` | Stage 4: the CONCRETE-ROW reuse (`ConcCarried`, `Carried`, `conc_lone_sat`, `concRow_reuse_sat`, `K2SplitStep`'s four branches with `¬ Named` on the non-syntactic ones), the faithful deletion (`srsOf`, `concretizeSrs`, `concretizeSrs_sound`, `concDef_persists`), the invariant `carried_concretizeSrs` with its two modes (`carried_of_deleted_def`, `carried_of_absorbed_mention`), the budget `uncarried`/`hmeas` and the bounds (`mintsBoundedOnSat_splitFragment`, `mintsBoundedOnSatKeyed2Star`), the split-free divergence `W4` (`W4_mints_unbounded`, `not_MintsBoundedOnSatKeyed2`, `keyed2_star_vs_shipped_res`, and `W4_kloop_mints_unbounded` / `W4_not_TerminatesOnSatKeyedLoop`, which refute Stage 3's statement with no split step) and the Stage 3 re-run (`W3srs_eq`, `W3_carried`, `W3_row_reuse`, `W3_not_mintable`) |
 | `tracker/satterm/KEYED-ROW-STAGE4.md` | Stage 4 write-up: the relation verbatim, the invariant, the bound, the `W4` witness and what `common` would do to it, the mechanism notes checked one by one, and the UNIMPLEMENTED Scala change |
-| `core/.../Constraints.scala` | Stage 2: `GenRules.splitKey` (ADOPTED, default on since 1e6f52b), `SplitKeyed`, `splitConcrete`'s `resolvent` parameter. Stage 5: `GenRules.splitRow` / `GenRules.resRow` (**both default OFF**), the `SplitRow` / `ResolutionRow` tags, `splitConcrete`'s fourth branch, `resolution`'s third, and `learnPartitions`' lazy `concRows` lookup |
+| `core/.../Constraints.scala` | Stage 2: `GenRules.splitKey` (ADOPTED, default on since 1e6f52b), `SplitKeyed`, `splitConcrete`'s `resolvent` parameter. Stage 5: `GenRules.splitRow` / `GenRules.resRow` (**both ADOPTED, default on**), the `SplitRow` / `ResolutionRow` tags, `splitConcrete`'s fourth branch, `resolution`'s third, and `learnPartitions`' lazy `concRows` lookup. Stage 7: `GenRules.emptyRow` (**default OFF**), the `SplitEmpty` / `ResolutionEmpty` tags, `splitConcrete`'s fifth branch, `resolution`'s fourth, and `learnPartitions`' `envEmptyRow` / `findEmptyRow` with the `implicit hm: SubstEnv` |
 | `tracker/lean/Rowpartition/KeyedRowScala.lean` | Stage 5: the correspondence for the two new branches, as a theorem about the spec the compiler's lookup really meets — `MyRowSpec` / `ConcRowSpec` (one `Option` row per variable, `k ⊆ C` asked explicitly), `myRowLookup_spec` / `concRowLookup_spec`, the erase lemmas `bare_erase_iff` and `resolved_erase_iff_row`, the four-branch `scalaRowSplit` with `scalaRowSplit_step : K2SplitStep` and the three-branch `scalaRowRes` with `scalaRowRes_step : K2ResStep`, `scalaRow_starStep`, and the two model-using lemmas `conc_key_subset_of_model` / `concRow_none_uncarried` that close the MINT-guard gaps |
 | `tracker/satterm/KEYED-ROW-STAGE5.md` | Stage 5 write-up: the implementation and its faithfulness note (where the compiler keeps a concrete row), every gate in four configurations with its command, the population figures, the deviations with their mechanisms, and Part C — the gate table, the two UNAPPLIED one-line flips with their ADOPTED comments, the re-run list, the honest scope and the per-flag recommendation |
 | `tracker/lean/Rowpartition/KeyedEmpty.lean` | Stage 6: `makeEmptyD`, `carried_not_invariant`, `hmeas_increases`, `mintsBoundedOnSat_emptyPersisting`, `mintsBoundedOnSatKeyed3E`, `G7_mints` |
 | `tracker/satterm/KEYED-EMPTY-STAGE6.md` | Stage 6 write-up |
+| `tracker/lean/Rowpartition/KeyedEmptyScala.lean` | Stage 7: the transcription of the repair — `SoleFact`, `EmptyRowSpec` / `emptyRowLookup(_spec)` / `emptyRowSpec_toConcRow`, the emitted sets `emptyProp` / `splitEmptyResult` / `resEmptyResult` with their entailment (`splitEmpty_models_iff`, `res_empty_forced`, `res_empty_F`, `resEmpty_models_iff`), the composition theorems `emptyReuse_compose` / `resEmptyReuse_compose` and hence `splitEmpty_two_steps` / `resEmpty_two_steps` (`K3ELoopRun 2`), the five- and four-branch `scalaEmptySplit` / `scalaEmptyRes` with `scalaEmptySplit_run` / `scalaEmptyRes_run` and the explicit bound `scalaEmptySplit_bounded` / `scalaEmptyRes_bounded` |
+| `tracker/satterm/KEYED-EMPTY-STAGE7.md` | Stage 7 write-up: the implementation and the two design decisions (which lookup, what to emit), every gate with its command, the population, the `gu05` regression with what was and was not established about it, and Part C — the gate table, the UNAPPLIED one-line flip with its ADOPTED comment, the re-run list, the honest scope and the recommendation |
+| `tracker/repro/satterm/seeds/G7.json` | Stage 7's witness as a tracked `json:` seed: `KeyedEmpty.G7` plus the `e <- ()` of `G7_blocked`, ordered so the carrier is in the `SubstEnv` when the split premise is dequeued |
 | `tracker/repro/satterm/seeds/W3.json`, `seeds/W4.json` | Stage 3's and Stage 4's witnesses as tracked `json:` seeds for `tracker/repro/satterm/sweep.sh` |
 | `tracker/tools/splitkey-counts.py`, `splitkey-sweep.sh`, `ei-classify.py` | Stage 2 instruments: split-branch counts per trace, the 110-module traced sweep, `.ei` signature classification |

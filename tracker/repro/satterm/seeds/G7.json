@@ -1,0 +1,7 @@
+{
+ "name": "G7: KeyedEmpty.G7 (p <- ((|l1|)), p <- (x, y, (|l1|)) -- the split group is FORCED empty) plus the bare e <- () of G7_blocked, ordered so makeEmpty runs FIRST and the carrier of the empty complement is in the SubstEnv, not the queues",
+ "rho": {"0": [], "1": [1], "2": [], "3": []},
+ "cons": [[0, [], []],
+          [1, [], [1]],
+          [1, [2,3], [1]]]
+}

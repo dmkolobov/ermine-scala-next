@@ -109,6 +109,16 @@ first getting the module to build.
                                unconditionally if `v <- ()` is retained
                                (`mintsBoundedOnSatKeyed3E`).  `G7_mints` is the 74-of-157
                                population as a theorem
+* `Rowpartition.KeyedEmptyScala` -- ...and Stage 7, the repair IMPLEMENTED: the Scala rules
+                               with the EMPTY-ROW branch (`-Dermine.emptyRow`, default off)
+                               transcribed.  The lookup reads the retained facts as well as
+                               the queues (`EmptyRowSpec`, a `ConcRowSpec` at `C \ K = ∅`);
+                               what the branch EMITS is the propagation, and
+                               `emptyReuse_compose` proves that is the Lean reuse composed
+                               with its forced `makeEmptyE` step, so every firing is TWO
+                               steps of `K3ELoopStep` (`splitEmpty_two_steps`,
+                               `resEmpty_two_steps`) and the Stage 4 bound applies
+                               (`scalaEmptySplit_bounded`, `scalaEmptyRes_bounded`)
 * `Rowpartition.Sanity`     -- a standalone toolchain smoke test
 -/
 import Rowpartition.Basic
@@ -146,3 +156,4 @@ import Rowpartition.KeyedLoop
 import Rowpartition.KeyedRow
 import Rowpartition.KeyedRowScala
 import Rowpartition.KeyedEmpty
+import Rowpartition.KeyedEmptyScala

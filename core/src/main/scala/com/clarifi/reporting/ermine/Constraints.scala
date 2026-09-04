@@ -722,6 +722,31 @@ object Constraints {
    *  entailed by `K2ResStep.row_models_iff`.  Behaviour-neutral as a tag, as above. */
   case object ResolutionRow        extends Inference
 
+  /** Stage 7 provenance (`tracker/satterm/KEYED-EMPTY-STAGE7.md`): the EMPTY-ROW branch of
+   *  `splitConcrete`, taken only when `-Dermine.emptyRow=true`, the premise's left-hand side
+   *  is concrete with EXACTLY the premise's own concrete part (`myRow(v) = concr`, so the
+   *  complement row `C \ concr` is EMPTY), and some variable is already known to denote the
+   *  empty row -- either still queued, or in the `SubstEnv` where `makeEmpty` retained the
+   *  fact after deleting the partition.  The Lean reuse `KeyedRow.K2SplitStep.row` at that
+   *  carrier `z` emits `z <- (abstr)`; this branch emits instead the PROPAGATION which that
+   *  conclusion plus `makeEmpty z` force -- `x <- ()` for every `x ∈ abstr`
+   *  (`KeyedEmpty.propPart`, and `KeyedEmpty.group_forced_empty` for the entailment) --
+   *  because in the compiler the carrier has already left both queues and a partition about
+   *  it would make `makeEmpty` reinstantiate an instantiated variable.  See the long
+   *  correspondence note at `def splitConcrete`.  `Inference` is never inspected and
+   *  `Partition.equals`/`hashCode` ignore it, so the tag itself is behaviour-neutral; it
+   *  exists so `-Dermine.rowTrace` can count how often the branch fires. */
+  case object SplitEmpty           extends Inference
+
+  /** Stage 7 provenance: the EMPTY-ROW branch of `resolution`, taken only when
+   *  `-Dermine.emptyRow=true`, both earlier lookups missed, and the RESOLVENT row
+   *  `F \ (concr1 ++ concr2)` is empty with an empty-row carrier known.  The resolvent `z`
+   *  a mint would name denotes `∅`, so the two conclusions the `resGuard` reuse emits,
+   *  `x <- (z, D \ C)` and `y <- (z, C \ D)`, become the bare concrete `x <- ((|D \ C|))`
+   *  and `y <- ((|C \ D|))`, which is what this branch emits.  Behaviour-neutral as a tag,
+   *  as above. */
+  case object ResolutionEmpty      extends Inference
+
   /** Which generative rules are allowed to mint fresh variables.
    *
    *  `-Dermine.genRules=all` (DEFAULT) -- shipped behaviour, unchanged.
@@ -969,6 +994,36 @@ object Constraints {
      * kept-definition mints have an EMPTY complement and stay mints; what stops those from
      * chaining is eager empty propagation, unformalised (Stage 6). */
     val resRow: Boolean = System.getProperty("ermine.resRow", "true") == "true"
+    /* Orthogonal, Stage 7 (`tracker/satterm/KEYED-EMPTY-STAGE7.md`): make the EMPTY row
+     * visible to the two concrete-row branches above.  Both of them look for a carrier of
+     * the complement row `C \ K`; when `K = C` that complement is EMPTY, and the only
+     * carrier it could have is a variable already known to denote `∅` -- which `makeEmpty`
+     * has DELETED from both queues, keeping the fact in the `SubstEnv` instead.  That is
+     * 74 of the corpus's 157 kept-definition mints (`KEYED-ROW-STAGE5.md` §B7-2), and the
+     * hole Stage 6 found in the mint bound.
+     *
+     * `Rowpartition/KeyedEmpty.lean` licenses it:
+     *   - `makeEmptyD` is the compiler's `makeEmpty` made faithful, and `carried_not_invariant`
+     *     / `hmeas_increases` show Stage 4's invariant FAILS at it in exactly one way: the
+     *     deleted `v <- ()` was the carrier of the EMPTY row;
+     *   - `makeEmptyE v G = insert (mk v ∅ ∅) (makeEmptyD v G)` is the same step with that
+     *     fact RETAINED -- which is what the `SubstEnv` does -- and `carried_makeEmptyE`
+     *     makes `Carried` an unconditional invariant again;
+     *   - `mintsBoundedOnSatKeyed3E`: with it, minting is bounded on every satisfiable input
+     *     in every order of the calculus with BOTH deletions (concretisation and
+     *     `makeEmpty`), by Stage 4's own bound `|allVars G0| + hmeas L rho G0`;
+     *   - `G7_mints` is the 74-of-157 shape as a theorem (a satisfiable system whose split
+     *     group is FORCED empty, on which all three lookups miss and the rule mints) and
+     *     `G7_blocked` says ONE visible `e <- ()`, anywhere, turns that mint into a reuse.
+     * The branch is LOOKUP-ONLY: `v <- ()` is NOT re-enqueued (it would be dequeued, call
+     * `makeEmpty` again and reinstantiate `v`), and what the branch EMITS is the propagation
+     * the Lean reuse plus its forced `empty` step derive -- see `def splitConcrete` and
+     * `def resolution`.  Scope: nothing here is about ill-typed input, and `unify` -- the
+     * other deletion that moves a fact into the `SubstEnv` -- is still unmodelled.
+     *
+     * DEFAULT OFF pending the adoption gates in `tracker/satterm/KEYED-EMPTY-STAGE7.md`.
+     * `-Dermine.emptyRow=true` enables it. */
+    val emptyRow: Boolean = System.getProperty("ermine.emptyRow", "false") == "true"
     /* REMOVED 2026-09-02, both measured and declined; see
      * `tracker/TICKET-row-solver-8abc.md` and the Lean that still licenses them.
      *   `ermine.labelCheckSaturated` -- run the check on `q.expand` instead of the input.
@@ -984,7 +1039,7 @@ object Constraints {
       mode + (if (disjRule) "+disj" else "") + (if (labelCheck) "+label" else "") +
         (if (labelCheckEarly) "-early" else "") + (if (resGuard) "+resguard" else "") +
         (if (splitKey) "+splitkey" else "") + (if (splitRow) "+splitrow" else "") +
-        (if (resRow) "+resrow" else "")
+        (if (resRow) "+resrow" else "") + (if (emptyRow) "+emptyrow" else "")
   }
   case object Disjunction         extends Inference
 
@@ -1197,10 +1252,56 @@ object Constraints {
    * variable already made empty is invisible to `concRows` and can never be the carrier `w`
    * (a `w <- ()` still sitting in `incm`, not yet dequeued, IS visible).  `unify` likewise
    * moves `v := VarT(u)` into the `SubstEnv` and removes `v`'s partitions.  So the lookup is
-   * a lower bound on the Lean's `∈ G`: it can only miss, never hit spuriously. */
+   * a lower bound on the Lean's `∈ G`: it can only miss, never hit spuriously.
+   *
+   * CORRESPONDENCE WITH `Rowpartition/KeyedEmpty.lean` (`-Dermine.emptyRow`, DEFAULT OFF;
+   * Stage 7, `tracker/satterm/KEYED-EMPTY-STAGE7.md`).  The FIFTH branch below, between the
+   * concrete-row reuse and the mint, is the ONE case the Stage 5 lookup structurally cannot
+   * reach -- the complement row is EMPTY:
+   *
+   *   empty-row reuse   `emptyRow` and `emptyRow(concr) = Some(z)`, i.e. `mk c.lhs ∅ C ∈ G`
+   *       with `C = c.conc` (so the complement `C \ c.conc` is `∅`) and some `mk z ∅ ∅`
+   *       KNOWN -- still queued, or in the `SubstEnv`, which is where `makeEmpty` left it
+   *       after deleting the partition.  That is `KeyedRow.K2RowApp G c z C` on a
+   *       `makeEmptyE` image: the systems in which the emptied variable's fact is RETAINED,
+   *       which are exactly the ones `KeyedEmpty.mintsBoundedOnSatKeyed3E` bounds.
+   *       `KeyedEmpty.G7_mints` is this premise shape as a theorem -- a SATISFIABLE system
+   *       whose split group is forced empty, on which all three earlier lookups miss -- and
+   *       `G7_blocked` says one visible `e <- ()` turns the mint into a reuse.  It is 74 of
+   *       the corpus's 157 kept-definition mints (`KEYED-ROW-STAGE5.md` §B7-2).
+   *
+   * WHAT THE BRANCH EMITS, and why it is not the Lean's conclusion verbatim.  `K2RowApp`
+   * emits `mk z (vset c) ∅` = `z <- (abstr)`.  The compiler must NOT emit that: `z` has been
+   * instantiated (`instantiateType(z, ConcreteRho(∅))`) and deleted from both queues, so a
+   * partition about `z` would re-enter the queues, and once its group is erased it would
+   * reach `makeEmpty z` a second time -- `instantiateType`'s "panic: reinstantiated type".
+   * (Re-enqueueing `z <- ()` itself is worse: it is dequeued, calls `makeEmpty` again, and
+   * cycles.  The repair is LOOKUP-ONLY.)  What the branch emits instead is the propagation
+   * that the Lean conclusion FORCES one step later: in the Lean, `makeEmptyE z` applied to a
+   * system containing both `z <- ()` and `z <- (S)` derives `x <- ()` for every `x ∈ S`
+   * (`KeyedEmpty.propPart`, `mem_makeEmptyD`'s third disjunct), and when `z` occurs nowhere
+   * else -- which is exactly what "deleted from both queues" means -- that step ADDS those
+   * and nothing more (`KeyedEmptyScala.emptyReuse_compose`).  So the Scala step is the Lean
+   * reuse composed with its forced `empty` step, so one step here is TWO steps of
+   * `KeyedEmpty.K3ELoopStep` (`KeyedEmptyScala.splitEmpty_two_steps`).  The adequacy for the
+   * rule as a whole is `KeyedEmptyScala.scalaEmptySplit_run` -- every system the five-branch
+   * rule returns is reachable by a run of that relation -- for the spec the lookup really
+   * meets (`EmptyRowSpec`, which is Stage 5's `ConcRowSpec` at `C \ K = ∅` with the
+   * environment's retained empties as a second source), and `scalaEmptySplit_bounded` states
+   * the resulting bound.
+   *
+   * The emitted set is entailed by the PREMISE ALONE, with no carrier:
+   * `KeyedEmpty.group_forced_empty` -- if `mk u ∅ K ∈ G` and a definition of `u` has concrete
+   * part `K`, then every variable of its group denotes `∅` in every model.  The carrier is
+   * asked for anyway, because it is what makes the step a step of the RELATION that has the
+   * bound.  And it is what the default reaches the long way round: mint `u <- (abstr)` and
+   * `v <- (u, concr)`, cancellation against `v <- ((|C|))` derives `u <- ()`, and
+   * `makeEmpty u`'s `aux` emits these same partitions.  The rule does in every order what
+   * the mint plus cancellation plus `makeEmpty` do in some. */
   def splitConcrete(v: TypeVar, abstr: Set[TypeVar], concr: Fields, rhss: RHS => Option[TypeVar],
                     resolvent: Fields => Option[TypeVar] = _ => none,
-                    concRow: Fields => Option[TypeVar] = _ => none)(implicit su: Supply): Set[Partition] =
+                    concRow: Fields => Option[TypeVar] = _ => none,
+                    emptyRow: Fields => Option[TypeVar] = _ => none)(implicit su: Supply): Set[Partition] =
     if(concr.isEmpty || abstr.size < 2) Set()
     else // split concrete
       rhss(RHSAbstr(abstr)) match {
@@ -1223,15 +1324,27 @@ object Constraints {
                   // no fresh id.  Entailed: `KeyedRow.concRow_reuse_sat`.
                   Set(Partition(w, RHSAbstr(abstr), SplitRow))
                 case None =>
-                  val u = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
-                  Set( Partition(u, RHSAbstr(abstr), SplitConcrete)
-                     , Partition(v, RHS(Set(u), concr), SplitConcrete))
+                  (if (GenRules.emptyRow) emptyRow(concr) else none) match {
+                    case Some(_) =>
+                      // EMPTY-ROW REUSE (Stage 7): `v <- ((|C|))` with `C = concr`, so the
+                      // complement is `∅` and some `z <- ()` is known -- in the queues or in
+                      // the `SubstEnv`.  The group is FORCED empty
+                      // (`KeyedEmpty.group_forced_empty`), so emit the propagation the Lean
+                      // reuse plus its `makeEmptyE` step derive, and mint nothing.  The
+                      // carrier itself is deliberately NOT mentioned: it has left the queues.
+                      abstr.map(x => Partition(x, RHSEmpty(), SplitEmpty))
+                    case None =>
+                      val u = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
+                      Set( Partition(u, RHSAbstr(abstr), SplitConcrete)
+                         , Partition(v, RHS(Set(u), concr), SplitConcrete))
+                  }
               }
           }
       }
 
-  /* The concrete-row lookup that is passed when BOTH Stage 5 flags are off: one shared
-   * constant, so the default allocates no closure per `learnPartitions` call. */
+  /* The lookup that is passed when the Stage 5 flags -- and, since Stage 7, the empty-row
+   * flag -- are off: one shared constant, so the default allocates no closure per
+   * `learnPartitions` call. */
   private val noConcRow: Fields => Option[TypeVar] = _ => none
 
   /* When the above special case rules haven't fired, we need to collect
@@ -1239,7 +1352,8 @@ object Constraints {
    * rules that have been incorporated already.
    */
   // @throws SubstException
-  def learnPartitions(v: TypeVar, rhs1: RHS, incm: PQueue, proc: PQueue)(implicit su: Supply, tml: Located): Set[Partition] =
+  def learnPartitions(v: TypeVar, rhs1: RHS, incm: PQueue, proc: PQueue)
+                     (implicit hm: SubstEnv, su: Supply, tml: Located): Set[Partition] =
     if(rhs1.abstr contains v) selfSubstitution(v, rhs1.abstr, rhs1.concr)
     else {
       /* The reverse lookup that guards `resolution`'s mint -- and, under
@@ -1308,13 +1422,53 @@ object Constraints {
       }
       val concRow: Fields => Option[TypeVar] =
         if (GenRules.splitRow || GenRules.resRow) findConcRow else noConcRow
+      /* Stage 7 (`tracker/satterm/KEYED-EMPTY-STAGE7.md`), the EMPTY-ROW lookup that widens
+       * both mint guards once more under `-Dermine.emptyRow`.  It is `findConcRow` with the
+       * complement pinned to the EMPTY row -- the one row the fold above can never find a
+       * carrier for, because `makeEmpty` deletes every partition mentioning the variable it
+       * empties and keeps the fact in the `SubstEnv` (`instantiateType(v, ConcreteRho(∅))`).
+       * So the second source here is that environment, read exactly where the compiler
+       * writes it, which is the Lean's `KeyedEmpty.makeEmptyE` -- the step with `v <- ()`
+       * RETAINED -- implemented literally.
+       *
+       * The first test, `myRow.filter(c => (k subsetOf c) && (c -- k).isEmpty)`, is
+       * `findConcRow`'s two tests with `C \ k = ∅`, i.e. `C = k`: the premise's left-hand
+       * side is concrete with exactly the premise's own concrete part, so its group is
+       * FORCED empty (`KeyedEmpty.group_forced_empty`).  The second, `rows.get(∅)`, is the
+       * carrier a queue still holds -- with `-Dermine.splitRow` on, that case has already
+       * been taken by the branch above, so this arm matters only when the empty-row flag is
+       * used alone.  The third, `envEmptyRow`, is the retained fact.
+       *
+       * TWO HONEST DIFFERENCES from Stage 5's lookup, both recorded in the report's
+       * faithfulness note.  (i) `hm.types` holds the empties of the WHOLE inference, not of
+       * this solve's system, so unlike `concRows` this lookup is an UPPER bound on the
+       * Lean's `EmptyKnown G`: it can answer where the current system has no carrier.  That
+       * costs nothing in soundness -- what the branch emits is entailed by the premise
+       * alone, with no carrier -- but it means a firing is a `K2RowApp` of the system PLUS
+       * the environment, which is the state the Lean models (`KeyedEmptyScala`).  (ii) the
+       * scan returns the FIRST empty instantiation the map iterates over; which one it is
+       * cannot reach the output, because the branches below do not mention the carrier.
+       *
+       * COST: the scan is `hm.types.collectFirst`, forced at most once per `learnPartitions`
+       * call and only after the two cheap tests above have passed, so with the flag off (and
+       * with it on but the complement nonempty) nothing is allocated or walked.  It is the
+       * same order as the map rebuild `instantiateType` already does on every instantiation. */
+      lazy val envEmptyRow: Option[TypeVar] =
+        hm.types.collectFirst { case (z, ConcreteRho(_, fs)) if fs.isEmpty => z }
+      def findEmptyRow(k: Fields): Option[TypeVar] = {
+        val (rows, myRow) = concRows
+        myRow.filter(c => (k subsetOf c) && (c -- k).isEmpty)
+             .flatMap(_ => rows.get(Set[Name]()) orElse envEmptyRow)
+      }
+      val emptyRow: Fields => Option[TypeVar] =
+        if (GenRules.emptyRow) findEmptyRow else noConcRow
       proc.foldLeft[Set[Partition]](
            splitConcrete(v, rhs1.abstr, rhs1.concr, findRHS(incm, proc, Set()),
-                         findResolvent(Set()), concRow)
+                         findResolvent(Set()), concRow, emptyRow)
          ){
            case (s, Partition(u, rhs2, _)) =>
              if(u == v) {
-               val rps = resolution(v, rhs1, rhs2, findResolvent(s), concRow)
+               val rps = resolution(v, rhs1, rhs2, findResolvent(s), concRow, emptyRow)
                val cps = cancellation(v, rhs1, rhs2)
                val dps = if(!GenRules.disjRule) Nil else proc.toList.flatMap {
                  case Partition(w, rhs3, _) if w != v => disjunction(rhs3, rhs1, rhs2) ++ disjunction(rhs3, rhs2, rhs1)
@@ -1578,10 +1732,33 @@ object Constraints {
    * ONE MORE DIFFERENCE FROM `findResolvent`, in the safe direction: `concRow` does NOT
    * consult the current batch `s`, only `proc ++ incm`.  So this branch sees one partition
    * set less than the shipped resolvent lookup does; that can only refuse a reuse, never
-   * take a wrong one. */
+   * take a wrong one.
+   *
+   * CORRESPONDENCE WITH `Rowpartition/KeyedEmpty.lean` (`-Dermine.emptyRow`, DEFAULT OFF;
+   * Stage 7, `tracker/satterm/KEYED-EMPTY-STAGE7.md`).  A FOURTH branch, taken when both
+   * lookups above miss and the RESOLVENT row is EMPTY:
+   *
+   *   empty-row reuse   `emptyRow` and `emptyRow(all) = Some(z)`, i.e. `mk v ∅ F ∈ G` with
+   *       `F = all` (so the resolvent row `F \ all` is `∅`) and some `mk z ∅ ∅` known -- in
+   *       the queues or in the `SubstEnv`, where `makeEmpty` retained it.  That is
+   *       `KeyedRow.K2ResStep.row` at the carrier of the empty row, on a `makeEmptyE` image.
+   *   The conclusions are the reuse's, `x <- (z, bots)` and `y <- (z, tops)`, with the
+   *       carrier's row substituted in: `z` denotes `∅`, so they are the BARE CONCRETE
+   *       `x <- ((|bots|))` and `y <- ((|tops|))`, which is what the branch emits.  As in the
+   *       split, the carrier is not mentioned -- it has left the queues, and a partition
+   *       about it would reach `makeEmpty` twice.  Entailed by the premises alone:
+   *       `v <- (x, C)` with `v <- ((|F|))` forces `rho x = F \ C`, which is `D \ C = bots`
+   *       when `F = C ∪ D` (`KeyedEmptyScala.res_empty_forced`, `res_empty_F`).  As in the
+   *       split, one step here is TWO steps of `KeyedEmpty.K3ELoopStep`
+   *       (`KeyedEmptyScala.resEmptyReuse_compose`, `resEmpty_two_steps`), the adequacy for
+   *       the whole rule is `scalaEmptyRes_run` and the bound is `scalaEmptyRes_bounded`.
+   *       It is again what the DEFAULT reaches the long way round -- mint `z`, then
+   *       cancellation derives `z <- ()` and `makeEmpty z` substitutes it into both
+   *       conclusions. */
   def resolution(v: TypeVar, rhs1: RHS, rhs2: RHS,
                  resolvent: Fields => Option[TypeVar] = _ => none,
-                 concRow: Fields => Option[TypeVar] = _ => none)(implicit su: Supply): Set[Partition] =
+                 concRow: Fields => Option[TypeVar] = _ => none,
+                 emptyRow: Fields => Option[TypeVar] = _ => none)(implicit su: Supply): Set[Partition] =
     if (!GenRules.resolves) Set() else (rhs1, rhs2) match {
     case (RHS(Single(x), concr1), RHS(Single(y), concr2)) =>
       val z = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
@@ -1607,9 +1784,19 @@ object Constraints {
                 Set(Partition(x, RHS(Set(w), bots), ResolutionRow),
                     Partition(y, RHS(Set(w), tops), ResolutionRow))
               case None =>
-                Set(Partition(v, RHS(Set(z), all), Resolution),
-                    Partition(x, RHS(Set(z), bots), Resolution),
-                    Partition(y, RHS(Set(z), tops), Resolution))
+                (if (GenRules.emptyRow) emptyRow(all) else none) match {
+                  case Some(_) =>
+                    // EMPTY-ROW REUSE (Stage 7): `v <- ((|F|))` with `F = all`, so the
+                    // resolvent row is `∅` and some `z <- ()` is known.  The two conclusions
+                    // of the reuse with `z` denoting `∅` are these bare concrete ones; the
+                    // carrier is not mentioned, and nothing is minted.
+                    Set(Partition(x, RHSConcr(bots), ResolutionEmpty),
+                        Partition(y, RHSConcr(tops), ResolutionEmpty))
+                  case None =>
+                    Set(Partition(v, RHS(Set(z), all), Resolution),
+                        Partition(x, RHS(Set(z), bots), Resolution),
+                        Partition(y, RHS(Set(z), tops), Resolution))
+                }
             }
         }
       }

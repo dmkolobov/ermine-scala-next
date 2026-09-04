@@ -30,11 +30,20 @@ records of one `solve` are contiguous) and reports, per solve segment:
     ADDED 2026-09-03 for Stage 5 (`tracker/satterm/KEYED-ROW-STAGE5.md`): a fourth reuse
     bucket, `SplitRow: w <- (abs,)`, the CONCRETE-ROW reuse `-Dermine.splitRow` opens.  It
     emits exactly the shape `SplitKeyed` does, so it is recognised the same way and, with
-    the flag off, is simply never seen.  Also reported, per solve segment and independently
-    of the kept-definition analysis, are the WHOLE-TRACE totals of the four split branches
-    and of `resolution`'s two reuse branches, so one number per configuration says how often
+    the flag off, is simply never seen.
+    ADDED 2026-09-04 for Stage 7 (`tracker/satterm/KEYED-EMPTY-STAGE7.md`): a FIFTH bucket,
+    `SplitEmpty`, the EMPTY-ROW branch `-Dermine.emptyRow` opens.  Unlike the other reuses it
+    emits no name for the group -- the group is FORCED EMPTY, so it emits one `x <- ()` per
+    member -- and it is therefore recognised by the GROUP being COVERED: every `x` of the
+    dequeued premise's `abs` appears as a bare `SplitEmpty: ^x <- (,)` among the learn records
+    that follow.  Also reported, per solve segment and independently
+    of the kept-definition analysis, are the WHOLE-TRACE totals of the split branches
+    and of `resolution`'s reuse branches, so one number per configuration says how often
     each new branch fired: `SplitConcrete` bare (a MINT), `SplitConcrete` non-bare,
-    `SplitKeyed`, `SplitRow`, `Resolution`, `ResolutionRow`.
+    `SplitKeyed`, `SplitRow`, `SplitEmpty`, `Resolution`, `ResolutionRow`,
+    `ResolutionEmpty`.  The two Stage 7 whole-trace counters count PARTITIONS: one firing of
+    the split branch emits one per group member (two, normally), one firing of the resolution
+    branch emits exactly two.
 
 Usage:
     tracker/tools/keptdef-mints.py trace.tsv [--filter SUBSTR] [--show N]
@@ -103,9 +112,9 @@ def key_of_inpart(rec):
 
 def analyse(path, flt=None, show=0):
     tot = dict(solves=0, concrete=0, kept=0, strict=0, derived=0, kept_conc=0, strict_conc=0,
-               mint=0, strict_mint=0, reuse=0, keyed=0, row=0, neither=0,
-               all_splitmint=0, all_splitreuse=0, all_keyed=0, all_row=0,
-               all_res=0, all_resrow=0)
+               mint=0, strict_mint=0, reuse=0, keyed=0, row=0, empty=0, neither=0,
+               all_splitmint=0, all_splitreuse=0, all_keyed=0, all_row=0, all_splitempty=0,
+               all_res=0, all_resrow=0, all_resempty=0)
     mints_at = {}
     shown = 0
     for loc, recs in segments(path):
@@ -125,10 +134,14 @@ def analyse(path, flt=None, show=0):
                     tot['all_keyed'] += 1
                 elif prov == 'SplitRow':
                     tot['all_row'] += 1
+                elif prov == 'SplitEmpty':
+                    tot['all_splitempty'] += 1
                 elif prov == 'Resolution':
                     tot['all_res'] += 1
                 elif prov == 'ResolutionRow':
                     tot['all_resrow'] += 1
+                elif prov == 'ResolutionEmpty':
+                    tot['all_resempty'] += 1
         inputs = set(k for k in (key_of_inpart(r) for r in recs if r[0] == 'inpart') if k)
         learned_before = set()          # keys learnt (`learn new`) so far in this segment
         concretised = {}                # u -> set of keys of u's definitions known at concretisation
@@ -164,7 +177,18 @@ def analyse(path, flt=None, show=0):
                         if strict:
                             tot['strict_conc'] += 1
                         kind = 'neither'
+                        # Stage 7: the empty-row branch names nothing -- it emits `x <- ()`
+                        # for every member of the group, so the group must be COVERED.
+                        empties = set()
                         for l in learns:
+                            lp = parse_part(l[3]) if len(l) >= 4 else None
+                            if lp and lp[0] == 'SplitEmpty' and lp[3] == '' and not lp[2]:
+                                empties.add(lp[1])
+                        if empties and set(part[2]) <= empties:
+                            kind = 'empty'
+                        for l in learns:
+                            if kind == 'empty':
+                                break
                             lp = parse_part(l[3]) if len(l) >= 4 else None
                             if lp and lp[0] == 'SplitKeyed' and lp[3] == '' \
                                     and set(lp[2]) == set(part[2]):
@@ -208,11 +232,12 @@ def main():
     print(f"      -> splitConcrete REUSED an existing name:               {tot['reuse']}")
     print(f"      -> splitConcrete KEYED-REUSED an existing name:          {tot['keyed']}")
     print(f"      -> splitConcrete ROW-REUSED an existing name:            {tot['row']}")
+    print(f"      -> splitConcrete EMPTIED the group (SplitEmpty):         {tot['empty']}")
     print(f"      -> no splitConcrete derivation:                         {tot['neither']}")
     print(f"  whole-trace branch tallies (learn records, same segments):")
     print(f"      SplitConcrete bare (a MINT) / non-bare:                  {tot['all_splitmint']} / {tot['all_splitreuse']}")
-    print(f"      SplitKeyed / SplitRow:                                   {tot['all_keyed']} / {tot['all_row']}")
-    print(f"      Resolution / ResolutionRow:                              {tot['all_res']} / {tot['all_resrow']}")
+    print(f"      SplitKeyed / SplitRow / SplitEmpty:                       {tot['all_keyed']} / {tot['all_row']} / {tot['all_splitempty']}")
+    print(f"      Resolution / ResolutionRow / ResolutionEmpty:             {tot['all_res']} / {tot['all_resrow']} / {tot['all_resempty']}")
     if mints_at:
         print("  mints by solve location:")
         for k, v in sorted(mints_at.items(), key=lambda kv: -kv[1]):
