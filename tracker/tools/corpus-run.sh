@@ -1,18 +1,44 @@
 #!/usr/bin/env bash
-# Run `bin/ermine` on every corpus file, ONE INVOCATION PER FILE, into <outdir>.
+# Run `bin/ermine` on every corpus file into <outdir>: ONE INVOCATION PER FILE by default,
+# or all of them in ONE JVM with --batch.
 #
 #   tracker/tools/corpus-run.sh /tmp/corpus-base
+#   tracker/tools/corpus-run.sh --batch /tmp/corpus-fast
 #   ERMINE_JAVA_OPTS="-Dermine.resGuard=true" tracker/tools/corpus-run.sh /tmp/corpus-guard
 #   diff -ru /tmp/corpus-base /tmp/corpus-guard
 #
-# WHY PER FILE.  The module loader StackOverflows in `StreamTUtils.chop` after roughly
-# two heavy modules in one invocation (tracker/ROW-CONSTRAINT-STATE.md, "Traps").  A
-# batch load therefore dies partway and BOTH sides of a comparison are truncated, which
-# has already invalidated one corpus comparison in this work.  Never batch-load.
+# PER FILE IS STILL THE DEFAULT, and it is the mode every adopted measurement in
+# tracker/ROW-CONSTRAINT-STATE.md was taken in.  Per file, each module is compiled in a
+# virgin session; in a batch it is compiled in a session that already holds every module
+# ahead of it on the command line.  The verdicts came out identical on both corpora
+# (2026-09-03: 0 of 66 and 0 of 34 differ, 23/43 and 18/16, `shouldfail/` 40/40) -- but seven
+# modules print a DIFFERENT CLAUSE of the same refutation, at the same field and position.
+# That is a measurement, not a guarantee: keep the default until a comparison you care about
+# has been run both ways.  TICKET-editor-and-solver-followups.md item 4 has the numbers.
 #
-# Ai/ modules import `Ai.Common`, which the CLI cannot resolve on its own (the editor
-# can, since lsp/Resident.scala `checkFile` was fixed), so `Common.e` goes first on the
-# command line for those.
+# --batch: ONE JVM for the whole corpus, split back into per-file `<name>.out` files by
+# `tracker/tools/batch-split.py`, so `corpus-verdicts.py` and every diff built on it read a
+# batch run exactly as they read a per-file one.  The saving is the stdlib boot, ~11 s per
+# invocation:
+#
+#     66-file corpus     per file 19m22s   --batch 19.5s   (60x)
+#     34-file incomplete per file  7m31s   --batch 15.4s   (29x)
+#
+# (measured 2026-09-03 on a shared machine, so the per-file side is an upper bound; the
+# structural saving is one stdlib boot instead of N.)
+#
+# Batch loading was ruled out before 2026-09-03: the loader's dependency-order computation
+# (`StreamTUtils.chop`/`postOrder`) recursed once per graph NODE and appended quadratically,
+# so a big enough batch overflowed the stack partway through and both sides of a comparison
+# were truncated -- which invalidated one corpus comparison in this work.  (At 98e7bf2 the
+# threshold had moved: each corpus loaded in one JVM, all 110 files together did not.)  The
+# computation is iterative now (TICKET-editor-and-solver-followups.md item 4).
+# `batch-split.py` REFUSES to split a run that did not produce one terminator line per file,
+# so a batch that dies partway is an error here rather than a partial count.
+#
+# Ai/ modules import `Ai.Common`, which the CLI cannot resolve on its own (the editor can,
+# since lsp/Resident.scala `checkFile` was fixed), so `Common.e` goes first on the command
+# line for those -- ahead of its group in a batch, immediately before each Ai module per file.
 #
 # CRITICAL: `bin/ermine` WRITES `.ei` interface files next to the sources it loads, and
 # `ermine.useInterface` defaults to TRUE, so a second run READS what the first one wrote and
@@ -51,9 +77,17 @@ cd "$here"
 export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 
 incomplete=0
-if [[ ${1:-} == "--incomplete" ]]; then incomplete=1; shift; fi
-out="${1:?usage: corpus-run.sh [--incomplete] <outdir>}"
+batch=0
+while [[ ${1:-} == --* ]]; do
+  case "$1" in
+    --incomplete) incomplete=1; shift ;;
+    --batch)      batch=1;      shift ;;
+    *) echo "usage: corpus-run.sh [--incomplete] [--batch] <outdir>" >&2; exit 2 ;;
+  esac
+done
+out="${1:?usage: corpus-run.sh [--incomplete] [--batch] <outdir>}"
 timeout_s="${CORPUS_TIMEOUT:-120}"
+batch_timeout_s="${CORPUS_BATCH_TIMEOUT:-900}"
 
 mkdir -p "$out"
 : > "$out/verdicts.txt"
@@ -63,6 +97,36 @@ find core/examples -name '*.ei' -delete
 
 files=( core/examples/*.e core/examples/Ai/*.e core/examples/shouldfail/*.e )
 if [[ $incomplete == 1 ]]; then files=( core/examples/incomplete/*.e ); fi
+
+if [[ $batch == 1 ]]; then
+  # one command line, with Ai/Common.e hoisted to the head of the Ai group
+  bfiles=(); ai_done=0
+  for f in "${files[@]}"; do
+    case "$f" in
+      core/examples/Ai/Common.e) ;;
+      core/examples/Ai/*)
+        if [[ $ai_done == 0 ]]; then bfiles+=( core/examples/Ai/Common.e ); ai_done=1; fi
+        bfiles+=( "$f" ) ;;
+      *) bfiles+=( "$f" ) ;;
+    esac
+  done
+  if [[ -n ${ERMINE_CP:-} ]]; then
+    read -r -a extra <<< "${ERMINE_JAVA_OPTS:-}"
+    timeout "$batch_timeout_s" java -Dermine.typeCheck=true -Dermine.useInterface=false ${extra[@]+"${extra[@]}"} \
+      -cp "$(cat "$ERMINE_CP")" com.clarifi.reporting.ermine.session.Console "${bfiles[@]}" \
+      </dev/null > "$out/batch.log" 2>&1
+  else
+    ERMINE_JAVA_OPTS="-Dermine.useInterface=false ${ERMINE_JAVA_OPTS:-}" \
+      timeout "$batch_timeout_s" bin/ermine "${bfiles[@]}" </dev/null > "$out/batch.log" 2>&1
+  fi
+  rc=$?
+  # one exit code for the whole run: it distinguishes a timeout, nothing else (the verdict
+  # a gate cares about is read out of the output by corpus-verdicts.py, as per file)
+  for f in "${bfiles[@]}"; do printf '%s\t%s\n' "$rc" "$f" >> "$out/verdicts.txt"; done
+  python3 tracker/tools/batch-split.py "$out/batch.log" "$out" "${bfiles[@]}" || exit 1
+  echo "wrote $(ls "$out"/*.out | wc -l) outputs to $out (one JVM, exit $rc)"
+  exit 0
+fi
 
 for f in "${files[@]}"; do
   name="${f#core/examples/}"; name="${name//\//_}"

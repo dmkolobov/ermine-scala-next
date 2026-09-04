@@ -117,30 +117,112 @@ object StreamTUtils {
   def generate[A](children: A => Stream[A], a: A): Tree[A] =
     node(a, children(a).map(b => generate(children, b)))
 
-  def chop[A](forest: Forest[A]) : State[Set[A], Forest[A]] = forest match {
-    case Node(v,ts) #:: us =>
-      for {
-        s <- init
-        a <- if (s contains v) chop(us)
-             else for {
-               _  <- put(s + v)
-               as <- chop(ts)
-               bs <- chop(us)
-             } yield node(v,as) #:: bs
-      } yield a
-    case _ => Stream().pure[[a] =>> State[Set[A], a]]
+  /* DEPENDENCY ORDER, iteratively (2026-09-03).  `chop`/`prune`/`dfs`/`postOrder` compute
+   * the depth-first order the module loader and the constraint solver's `TypeVarGraph`
+   * (`Constraints.Q`) run on.  They used to be the textbook Haskell definitions, and both
+   * shapes fail at scale: `chop` recursed once per SIBLING as well as once per level, so
+   * its stack depth was the NUMBER OF NODES rather than the depth of the forest, and
+   * `postOrder` built its result by left-nested lazy `++`, which is quadratic.  Loading
+   * many modules in one JVM overflowed the stack there, which is why every corpus tool
+   * used to run one file per JVM (TICKET-editor-and-solver-followups.md section 4).
+   *
+   * They are now iterative -- an explicit stack, a visited set, an accumulated result --
+   * and produce EXACTLY the order the recursive definitions produced, node for node.
+   * That is the requirement, not an optimisation: the order feeds the id supply and ids
+   * reach published interfaces.  `TestStreamTUtils` keeps the old definitions verbatim as
+   * a reference and compares the two on random forests and random graphs.
+   */
+
+  /** The engine of `chop` and `prune`: one frame per OPEN node, holding the siblings not
+    * yet visited and the pruned children accumulated so far.  Marks a vertex when it is
+    * first reached in the same order the recursive `chop` did, so the visited set it
+    * returns is the same set.  It does NOT force an already-visited node's subforest,
+    * where the recursive version did (`Tree.Node.unapply` is strict in both components);
+    * that is unobservable, since `children` is a pure lookup at every call site.
+    */
+  private def chopRun[A](forest: Forest[A], visited0: Set[A]): (Set[A], Forest[A]) = {
+    class Frame(val label: Option[A], var rest: Forest[A]) {
+      val kids = Vector.newBuilder[Tree[A]]
+    }
+    var visited = visited0
+    var stack: List[Frame] = new Frame(None, forest) :: Nil
+    var result: Forest[A] = Stream.empty
+    while (stack.nonEmpty) {
+      val f = stack.head
+      f.rest match {
+        case t #:: us =>
+          f.rest = us
+          val v = t.rootLabel
+          if (!visited(v)) {
+            visited = visited + v
+            stack = new Frame(Some(v), t.subForest) :: stack
+          }
+        case _ =>
+          stack = stack.tail
+          val kids = f.kids.result().to(Stream)
+          f.label match {
+            case None    => result = kids
+            case Some(v) => stack.head.kids += node(v, kids)
+          }
+      }
+    }
+    (visited, result)
   }
 
-  def prune[A](forest: Forest[A]): Forest[A] = chop(forest) eval Set()
+  def chop[A](forest: Forest[A]) : State[Set[A], Forest[A]] =
+    State[Set[A], Forest[A]]((s: Set[A]) => chopRun(forest, s))
+
+  def prune[A](forest: Forest[A]): Forest[A] = chopRun(forest, Set[A]())._2
 
   def dfs[A](children: A => Stream[A], vs: Stream[A]) : Forest[A] = prune(vs.map(generate(children,_)))
 
-  def postOrder[A](tree : Tree[A]): Stream[A] = tree match {
-    case Node(a,ts) => ts.flatMap(postOrder) ++ Stream(a)
+  def postOrder[A](tree : Tree[A]): Stream[A] = {
+    val out = Vector.newBuilder[A]
+    var stack: List[(A, Forest[A])] = (tree.rootLabel, tree.subForest) :: Nil
+    while (stack.nonEmpty) {
+      val (a, ts) = stack.head
+      ts match {
+        case t #:: us =>
+          stack = (t.rootLabel, t.subForest) :: (a, us) :: stack.tail
+        case _ =>
+          out += a
+          stack = stack.tail
+      }
+    }
+    out.result().to(Stream)
   }
 
-  def reverseTopSort[A](vertices: Stream[A])(children: A => Stream[A]): Stream[A] =
-    dfs(children, vertices) flatMap postOrder
+  /** `dfs(children, vertices) flatMap postOrder`, computed without building the forest at
+    * all: one explicit stack, and `children` applied at most once per REACHED vertex.
+    */
+  def reverseTopSort[A](vertices: Stream[A])(children: A => Stream[A]): Stream[A] = {
+    val out = Vector.newBuilder[A]
+    var visited = Set[A]()
+    var roots = vertices
+    while (roots.nonEmpty) {
+      val v0 = roots.head
+      roots = roots.tail
+      if (!visited(v0)) {
+        visited = visited + v0
+        var stack: List[(A, Stream[A])] = (v0, children(v0)) :: Nil
+        while (stack.nonEmpty) {
+          val (v, cs) = stack.head
+          cs match {
+            case c #:: rest =>
+              stack = (v, rest) :: stack.tail
+              if (!visited(c)) {
+                visited = visited + c
+                stack = (c, children(c)) :: stack
+              }
+            case _ =>
+              out += v
+              stack = stack.tail
+          }
+        }
+      }
+    }
+    out.result().to(Stream)
+  }
 
   def foreach[A](aas: StreamT[Id, A])(f: A => Unit): Unit = aas.step match {
     case Yield(a,as) => { f(a); foreach[A](as())(f); }

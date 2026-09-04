@@ -68,21 +68,112 @@ The editor and the CLI should agree.
 ## 3. `Constraints.disjunction sound` has been failing for a long time
 
 Its generator discards every case: "Gave up after only 0 passed tests. 501 tests
-were discarded." It is the one failure in `core/test`'s 903/904 and predates all of
-this work. Fix the generator or retire the property — a permanently red test
+were discarded." It is the one failure in `core/test` (910 of 911 since item 4 added
+seven properties; 903 of 904 before) and predates all of this work. Fix the generator or retire the property — a permanently red test
 teaches everyone to ignore the suite.
 
-## 4. The module loader StackOverflows on batch loads
+## 4. The module loader StackOverflows on batch loads — FIXED 2026-09-03
 
-`StreamTUtils.chop`, in the loader's StateT stream chain, overflows after roughly
-two modules of `core/examples/incomplete/` in one `bin/ermine` invocation.
-PRE-EXISTING: reproduces identically with `-Dermine.genRules=all
--Dermine.labelCheck=false`. `postOrder` builds its result by left-nested lazy
-`Stream` append, which is quadratic and deeply recursive.
+`StreamTUtils`'s dependency-order computation is iterative now, and a whole corpus loads
+in ONE `bin/ermine` invocation: 66 files in 19 s against 19m22s one file per JVM.
 
-Consequence worth knowing: **never compare two corpora by batch-loading them.**
-Both runs die partway and the counts are partial; that invalidated one comparison
-in this work before it was caught. Compare per-file.
+**The mechanism.** `chop` — the depth-first walk that prunes the import forest — recursed
+once per SIBLING as well as once per level (`bs <- chop(us)` inside the `State[Set[A],
+Forest[A]]` bind), so its stack depth was the NUMBER OF NODES in the graph rather than the
+depth of the graph, and every frame carried the `IndexedStateT.flatMap` /
+`IdInstances.bind` group with it; `postOrder` flattened each tree with a left-nested lazy
+`Stream` append, which is quadratic. The caller that overflows is not the loader's own
+import graph, which is small, but the constraint solver's `Constraints.Q.TypeVarGraph`
+(`Constraints.scala` ~425), which re-runs `reverseTopSort` over ALL of its nodes on every
+edge it adds.
+
+**The reproduction is bigger than this ticket used to say.** Its original text — "overflows
+after roughly two modules of `core/examples/incomplete/` in one `bin/ermine` invocation" —
+does not hold at 98e7bf2 under the current defaults (`cut`, `labelCheckEarly`, `resGuard`,
+`splitKey`): the 66-file corpus loads in one JVM without overflowing, and so do
+`incomplete/`'s 34 files. What still overflowed
+was all 110 in one JVM: `java.lang.StackOverflowError` at
+`StreamTUtils$.chop$$anonfun$1(StreamTUtils.scala:124)` — the `if (s contains v)` line —
+under 60 repetitions of that frame group, 293 s in, on `incomplete/gu05` after the 66-file
+corpus, with 41 of the 110 files never attempted. `-Xss1g` was tried in earlier work and
+burned 13 CPU-minutes without loading a module, so depth was never the whole story.
+
+**The fix** is in `core/src/main/scala/com/clarifi/reporting/util/StreamTUtils.scala`:
+`chop`, `prune`, `dfs`, `postOrder` and `reverseTopSort` use an explicit stack, a visited
+set and an accumulated result. Public signatures are unchanged — `chop` still returns
+`State[Set[A], Forest[A]]`, `prune`/`dfs` still build a `Forest` — `generate` and `Tree`
+are untouched, and `reverseTopSort` no longer builds the intermediate forest at all. The
+requirement was not "a topological sort" but "the SAME order, node for node": load order
+feeds the id supply and ids reach published types. `TestStreamTUtils` keeps the old
+definitions verbatim as a private `Reference` and compares the two on random 16-vertex
+graphs (dense, cyclic, with repeated edges and repeated roots) — the emitted order, the
+pruned forest, `chop`'s final visited set, and `postOrder` per tree, 100 cases each — plus
+a DAG ordering property and two regressions at 50,000 vertices, a chain and a flat forest,
+which the recursive definitions cannot do at all. Positive controls: reversing the new
+order falsifies 4 of the properties, reversing the pruned children falsifies 2 others.
+
+**Failure attribution.** `bin/ermine`'s failure line now names the file — `Unable to load
+module from '<path>'` (`Console.loadProject`) — because in a batch the bare message
+identified nothing. The verdict scripts grep the unchanged prefix `Unable to load module`.
+A module that FAILS in a batch leaves nothing behind: `ConsoleEnv.session`
+(`Console.scala` ~214) snapshots `sessionEnv.copy` and restores it on `Death`, which is
+why 43 rejections in one JVM do not disturb the modules after them. Anything that is not a
+`Death` — a `StackOverflowError`, an OOM — reaches `main`'s catch-all instead and takes
+the rest of the command line with it, which is exactly what the pre-fix 110-file run did.
+
+**The batch mode.** `tracker/tools/corpus-run.sh --batch` loads a whole corpus in ONE JVM
+and splits the combined output back into the per-file `.out` files every verdict tool reads
+(`tracker/tools/batch-split.py`, which refuses to split a run that did not produce one
+terminator line per file). `keptdef-sweep.sh --batch` does the same one JVM per corpus
+DIRECTORY; its per-`solve` segmentation survives, because the `solve` record carries the
+solve's source loc and `keptdef-mints.py --filter` picks one file's solves out of a group's
+trace — checked on `incomplete/np01` in a three-module batch against a per-file run: 605
+solve segments and every kept-definition count identical (150 dequeues, 82 with a concrete
+part, 33 mints, 48 reuses, 1 keyed). `ei-diff.sh --batch` can only manage FIVE FILES at a
+time and still does not come out whole — its sweep needs interfaces ENABLED, and that makes
+the accumulation below much more expensive. PER FILE REMAINS THE DEFAULT in all three: a batch compiles each module in
+a session that already holds every module ahead of it on the command line, and that is not
+the same compilation as a virgin session.
+
+Measured 2026-09-03 in a worktree at 98e7bf2 + this fix, one class set, on a machine
+shared with another agent's sweep (the wall-clocks are upper bounds; the ratio is the
+honest part):
+
+| gate | per file | --batch |
+|---|---|---|
+| 66-file corpus, wall | **19m 22s** (1161.6 s) | **19.5 s** — 60x |
+| `incomplete/`, 34 files, wall | **7m 31s** (450.9 s) | **15.4 s** — 29x |
+| 66-file verdicts | 23 LOADED / 43 REJECTED | **identical**, 0 of 66 differ in verdict |
+| 34-file verdicts | 18 LOADED / 16 REJECTED | **identical**, 0 of 34 differ in verdict |
+| `shouldfail/` | 40/40 REJECTED | 40/40 REJECTED |
+| diagnostic TEXT | — | **6 of 66 and 1 of 34 differ** (see below) |
+| one `ei-diff.sh` sweep, wall | **13m 45s** (818 s) | **8m 41s** (521 s) — 1.6x, chunked by 5 |
+| published `.ei` (`ei-classify.py`) | CONTROL, two per-file sweeps of one build: **6 of 188 interfaces differ**; 1902 bindings identical, 25 order-only, 5 alpha-equivalent, 1 other, **0 weaker** | **18 of 185 differ**; 1855 identical, 41 order-only, 11 alpha-equivalent, 12 other, **0 weaker** — and 3 interfaces MISSING, two of them because a chunk hit its 180 s cap |
+
+The message differences are not verdict changes and not noise: same file, same source
+position, same field, a different clause of the same refutation — `Row partitions are
+unsatisfiable at field 'Shouldfail.Der06.b': the whole contains it but no part does`
+per file against `... a part contains it but the whole does not` in a batch. Both modes
+are STABLE run to run (a second batch differs from the first on 0 of 66; a per-file re-run
+of the seven files reproduces the per-file wording exactly), so the difference is
+attributable to batching: the label check reaches its refutation through a different
+witness when the session already holds the modules ahead of it.
+
+**The accumulation cliff, which is the real limit on batching.** A module's solve gets
+dramatically more expensive as the session fills up, and the effect is in `Constraints`
+(`learnPartitions`, `substitution`, `PQueue.contains`), not in the loader.
+`incomplete/gu05`, measured 2026-09-03 on one class set:
+
+| how it is loaded | interfaces on | interfaces off |
+|---|---|---|
+| alone | **1.09 s** | 0.41 s in the 34-file batch |
+| behind `gu01` + `gu04` in one JVM | **26.94 s** | 7.46 s |
+| behind the 66-file corpus | — | **not finished after 200 s** |
+
+So: do not merge the two corpora into one JVM, and do not batch a sweep that needs
+interfaces written. `ei-diff.sh --batch` chunks by five for this reason and still loses two
+chunks of the 110-file corpus to its 180 s cap; it is for A/Bs where BOTH sides are
+batched, so the losses are symmetric.
 
 ## 5. Audit `checkFile`'s environment handling generally
 

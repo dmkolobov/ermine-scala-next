@@ -303,7 +303,10 @@ object Console {
       case Some(n) =>
         importing(n)
         "Importing module '" + n + "'"
-      case None    => "Unable to load module"
+      // name the FILE: in a batch load (many paths on one command line) the bare
+      // message said nothing about which of them failed.  The verdict scripts grep the
+      // prefix "Unable to load module", which is unchanged.
+      case None    => "Unable to load module from '" + s + "'"
     }
   }
 
