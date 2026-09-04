@@ -89,6 +89,15 @@ first getting the module to build.
                                (`mintsBoundedOnSatKeyed2Star`, `mintsBoundedOnSat_splitFragment`);
                                with guarded `resolution` left as shipped it is NOT
                                (`not_MintsBoundedOnSatKeyed2`, the split-free witness `W4`)
+* `Rowpartition.KeyedRowScala` -- ...and Stage 5: the SHIPPED `splitConcrete` and
+                               `resolution` WITH the concrete-row branch (`-Dermine.splitRow`,
+                               `-Dermine.resRow`, adopted as defaults later that day) are steps of that
+                               relation.  The Scala's lookup is a single `Option[Fields]` for
+                               `v`'s own row plus an explicit `k ⊆ C`, not `∃ C, mk v ∅ C ∈ G`;
+                               `MyRowSpec` / `ConcRowSpec` are what it really meets, and
+                               `scalaRowSplit_step` / `scalaRowRes_step` prove adequacy for
+                               THAT, on a MODELLED system -- which is where the difference
+                               costs something (`concRow_none_uncarried`)
 * `Rowpartition.Sanity`     -- a standalone toolchain smoke test
 -/
 import Rowpartition.Basic
@@ -124,3 +133,4 @@ import Rowpartition.KeyedSplit
 import Rowpartition.KeyedSplitScala
 import Rowpartition.KeyedLoop
 import Rowpartition.KeyedRow
+import Rowpartition.KeyedRowScala

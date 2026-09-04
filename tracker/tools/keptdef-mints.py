@@ -27,6 +27,14 @@ records of one `solve` are contiguous) and reports, per solve segment:
     by a `SplitKeyed: w <- (abs,)` -- a KEYED reuse, the branch `-Dermine.splitKey` opens,
     which is DEFAULT ON since commit 1e6f52b.  Before that flag every keyed reuse showed up
     in the `no splitConcrete derivation` bucket, so the three branch counts now add up.
+    ADDED 2026-09-03 for Stage 5 (`tracker/satterm/KEYED-ROW-STAGE5.md`): a fourth reuse
+    bucket, `SplitRow: w <- (abs,)`, the CONCRETE-ROW reuse `-Dermine.splitRow` opens.  It
+    emits exactly the shape `SplitKeyed` does, so it is recognised the same way and, with
+    the flag off, is simply never seen.  Also reported, per solve segment and independently
+    of the kept-definition analysis, are the WHOLE-TRACE totals of the four split branches
+    and of `resolution`'s two reuse branches, so one number per configuration says how often
+    each new branch fired: `SplitConcrete` bare (a MINT), `SplitConcrete` non-bare,
+    `SplitKeyed`, `SplitRow`, `Resolution`, `ResolutionRow`.
 
 Usage:
     tracker/tools/keptdef-mints.py trace.tsv [--filter SUBSTR] [--show N]
@@ -95,13 +103,32 @@ def key_of_inpart(rec):
 
 def analyse(path, flt=None, show=0):
     tot = dict(solves=0, concrete=0, kept=0, strict=0, derived=0, kept_conc=0, strict_conc=0,
-               mint=0, strict_mint=0, reuse=0, keyed=0, neither=0)
+               mint=0, strict_mint=0, reuse=0, keyed=0, row=0, neither=0,
+               all_splitmint=0, all_splitreuse=0, all_keyed=0, all_row=0,
+               all_res=0, all_resrow=0)
     mints_at = {}
     shown = 0
     for loc, recs in segments(path):
         if flt and flt not in loc:
             continue
         tot['solves'] += 1
+        # whole-segment branch tallies, independent of the kept-definition analysis
+        for r in recs:
+            if r[0] == 'learn' and len(r) >= 4:
+                lp = parse_part(r[3])
+                if not lp:
+                    continue
+                prov, _lhs, _abs, con = lp
+                if prov == 'SplitConcrete':
+                    tot['all_splitmint' if con == '' else 'all_splitreuse'] += 1
+                elif prov == 'SplitKeyed':
+                    tot['all_keyed'] += 1
+                elif prov == 'SplitRow':
+                    tot['all_row'] += 1
+                elif prov == 'Resolution':
+                    tot['all_res'] += 1
+                elif prov == 'ResolutionRow':
+                    tot['all_resrow'] += 1
         inputs = set(k for k in (key_of_inpart(r) for r in recs if r[0] == 'inpart') if k)
         learned_before = set()          # keys learnt (`learn new`) so far in this segment
         concretised = {}                # u -> set of keys of u's definitions known at concretisation
@@ -142,6 +169,9 @@ def analyse(path, flt=None, show=0):
                             if lp and lp[0] == 'SplitKeyed' and lp[3] == '' \
                                     and set(lp[2]) == set(part[2]):
                                 kind = 'keyed'; break
+                            if lp and lp[0] == 'SplitRow' and lp[3] == '' \
+                                    and set(lp[2]) == set(part[2]):
+                                kind = 'row'; break
                             if lp and lp[0] == 'SplitConcrete':
                                 if lp[3] == '' and set(lp[2]) == set(part[2]) and l[2] == 'new':
                                     kind = 'mint'; break
@@ -177,7 +207,12 @@ def main():
     print(f"      -> splitConcrete MINTED a fresh name:                   {tot['mint']}  (strict {tot['strict_mint']})")
     print(f"      -> splitConcrete REUSED an existing name:               {tot['reuse']}")
     print(f"      -> splitConcrete KEYED-REUSED an existing name:          {tot['keyed']}")
+    print(f"      -> splitConcrete ROW-REUSED an existing name:            {tot['row']}")
     print(f"      -> no splitConcrete derivation:                         {tot['neither']}")
+    print(f"  whole-trace branch tallies (learn records, same segments):")
+    print(f"      SplitConcrete bare (a MINT) / non-bare:                  {tot['all_splitmint']} / {tot['all_splitreuse']}")
+    print(f"      SplitKeyed / SplitRow:                                   {tot['all_keyed']} / {tot['all_row']}")
+    print(f"      Resolution / ResolutionRow:                              {tot['all_res']} / {tot['all_resrow']}")
     if mints_at:
         print("  mints by solve location:")
         for k, v in sorted(mints_at.items(), key=lambda kv: -kv[1]):

@@ -1,0 +1,7 @@
+{
+ "name": "W3: keyed guard closed at input; makeConcrete deletes the key witness and keeps the split premise",
+ "rho": {"0": [1,2], "1": [2], "2": [2], "3": []},
+ "cons": [[0, [], [1,2]],
+          [0, [1], [1]],
+          [0, [2,3], [1]]]
+}

@@ -703,6 +703,25 @@ object Constraints {
    *  how often the branch fires. */
   case object SplitKeyed           extends Inference
 
+  /** Stage 5 provenance (`tracker/satterm/KEYED-ROW-STAGE5.md`): the CONCRETE-ROW REUSE
+   *  branch of `splitConcrete`, taken only when `-Dermine.splitRow=true` and the premise's
+   *  left-hand side is concrete `C` while some variable `w` already carries the complement
+   *  row `C \ concr`.  It emits ONE partition, `w <- (abstr)` -- the same conclusion the
+   *  keyed reuse emits -- and mints nothing; the Lean is `KeyedRow.K2SplitStep.row` /
+   *  `kSplitReuseResult`, entailed by `KeyedRow.concRow_reuse_sat` and
+   *  `K2RowApp.models_iff`.  `Inference` is never inspected and `Partition.equals`/
+   *  `hashCode` ignore it, so the tag itself is behaviour-neutral; it exists so
+   *  `-Dermine.rowTrace` can count how often the branch fires. */
+  case object SplitRow             extends Inference
+
+  /** Stage 5 provenance: the CONCRETE-ROW REUSE branch of `resolution`, taken only when
+   *  `-Dermine.resRow=true`, the resolvent reverse lookup MISSED, and the same
+   *  concrete-row lookup hits at the resolvent row `C \ (concr1 ++ concr2)`.  It emits the
+   *  two conclusions `x <- (w, D \ C)`, `y <- (w, C \ D)` that the `resGuard` reuse emits,
+   *  with the carrier `w` in place of a fresh name.  The Lean is `KeyedRow.K2ResStep.row`,
+   *  entailed by `K2ResStep.row_models_iff`.  Behaviour-neutral as a tag, as above. */
+  case object ResolutionRow        extends Inference
+
   /** Which generative rules are allowed to mint fresh variables.
    *
    *  `-Dermine.genRules=all` (DEFAULT) -- shipped behaviour, unchanged.
@@ -841,6 +860,115 @@ object Constraints {
      * unifying the re-minted name with the deleted witness's -- a loop property no relation
      * states.  The corpus count of such re-mints is unchanged by this flag (157 vs 156). */
     val splitKey: Boolean = System.getProperty("ermine.splitKey", "true") == "true"
+    /* Orthogonal, Stage 5 (`tracker/satterm/KEYED-ROW-STAGE5.md`): widen the mint guard of
+     * `splitConcrete` ONE MORE STEP, from the lone witness `v <- (z, K)` to the CONCRETE-ROW
+     * carrier -- `v <- ((|C|))` together with `w <- ((|C \ K|))`.  Under a model those two
+     * concrete definitions ARE the lone witness (`KeyedRow.conc_lone_sat`), so `w` already
+     * denotes `v \ K`, which is what a mint would have named; the branch gives `w` the group
+     * as a bare definition, `w <- (abstr)`, and mints nothing.  A NAME, never silence -- the
+     * design rule of `tracker/ROW-CONSTRAINT-STATE.md`.
+     *
+     * `Rowpartition/KeyedRow.lean` licenses it:
+     *   - `KeyedRow.K2SplitStep.row` / `K2RowApp` is the branch; `concRow_reuse_sat` and
+     *     `K2RowApp.models_iff` say it does not move the model set at all;
+     *   - `Carried G v K := Resolved G v K \/ ConcCarried G v K` is the widened guard, and
+     *     `K2MintApp.toSplitApp` says every mint that survives it is a mint the SHIPPED rule
+     *     would take, so the branch only ever replaces mints;
+     *   - `mintsBoundedOnSat_splitFragment` -- with this branch and a faithful model of
+     *     `makeConcrete`/`destructiveSub` (`concretizeSrs`), the split fragment mints
+     *     BOUNDEDLY on satisfiable input under the loop's deletions, in every run order,
+     *     which is exactly what Stage 3 proved FALSE for the keyed guard
+     *     (`KeyedLoop.not_TerminatesOnSatKeyedLoop`, witness `W3`).  The mechanism is
+     *     `carried_concretizeSrs` ("once carried, always carried"): the two ways a key
+     *     witness dies are the two ways it becomes a concrete-row carrier.
+     * Scope: the SPLIT fragment only.  `KeyedRow.not_MintsBoundedOnSatKeyed2` shows the
+     * whole loop-extended calculus is still unbounded with guarded `resolution` as shipped
+     * (witness `W4`, which has NO split premise), which is what `ermine.resRow` below is
+     * for; and nothing here is about ill-typed input.
+     *
+     * ADOPTED 2026-09-03: DEFAULT ON.  `-Dermine.splitRow=false` restores the previous
+     * behaviour exactly.  The evidence (`tracker/satterm/KEYED-ROW-STAGE5.md`):
+     *   - proved not a semantic change (`KeyedRow.concRow_reuse_sat`,
+     *     `K2RowApp.models_iff` -- the model set does not move) and, for the SPLIT
+     *     fragment, MINT-BOUNDED under the loop's own deletions on every satisfiable input
+     *     in every run order (`mintsBoundedOnSat_splitFragment`), which is exactly the
+     *     statement Stage 3 proved FALSE for the keyed guard alone
+     *     (`KeyedLoop.not_TerminatesOnSatKeyedLoop`, witness `W3`); and the rule AS WRITTEN
+     *     here is a step of that calculus (`KeyedRowScala.scalaRowSplit_step`, for the spec
+     *     the lookup really meets, `MyRowSpec`/`ConcRowSpec`, on a modelled system);
+     *   - `W3` in the real solver: the re-mint happens at 55 of 100 id bases with the flag
+     *     off and at NONE with it on, same solved system -- the rule does in every order
+     *     what `common` does in some;
+     *   - 66-file example corpus and 34-file incompleteness corpus: 0 files differ,
+     *     verdicts identical (23/43 and 18/16), `shouldfail/` 40/40 still rejected;
+     *   - 188 published interfaces / 1,933 bindings: NO signature weaker; the one binding
+     *     attributable to this flag, `incomplete/np01.inferredRestate`, LOSES a forced
+     *     existential (7 -> 6) and is equivalent to the shipped one;
+     *   - `core/test` 903/904 with the flag on, the one failure being the pre-existing
+     *     `Constraints.disjunction sound` generator; `repl-smoke` 4/4, `lsp-smoke` 98/98;
+     *   - population, stated honestly: it is INSURANCE, not a speed-up.  It fires 4 times
+     *     over 3 of the 110 example modules and at 17 of 100 `NE6` bases, taking corpus
+     *     split mints 637 -> 626 and kept-definition mints 157 -> 154 with all 133
+     *     consumers still finding a name; no timing moved (ResStar 5-9, RowStress 10/14,
+     *     CoStar8 and `gu05` all inside their own run-to-run spread).
+     * COVERAGE, stated at adoption: the bound is against the loop's CONCRETISATION
+     * deletions (`concretizeSrs`).  `makeEmpty`/`unify` deletions are NOT in the relation,
+     * and the Scala lookup cannot see an emptied carrier -- 74 of the corpus's 157
+     * kept-definition mints have an EMPTY complement and stay mints; what stops those from
+     * chaining is eager empty propagation, unformalised (Stage 6). */
+    val splitRow: Boolean = System.getProperty("ermine.splitRow", "true") == "true"
+    /* Orthogonal, Stage 5: the same widening for `resolution`'s mint guard.  When the
+     * resolvent reverse lookup misses, fall through to the concrete-row lookup at the
+     * RESOLVENT row: if `v <- ((|C|))` and some `w <- ((|C \ (concr1 ++ concr2)|))`, then
+     * `w` already denotes the resolvent and the rule emits the two conclusions about the
+     * lone variables with `w` in place of the fresh name.
+     *
+     * `Rowpartition/KeyedRow.lean`: `K2ResStep.row` is the branch, `K2ResStep.row_models_iff`
+     * says it does not move the model set (`conc_lone_sat` manufactures the resolvent, then
+     * `ResGuard.reuse_sat` draws both conclusions unchanged), `K2ResStep.mint_toGRes` says
+     * every mint that survives the widened guard is a shipped guarded mint, and
+     * `mintsBoundedOnSatKeyed2Star` is the point: with BOTH guards widened this way the
+     * whole loop-extended calculus mints boundedly on every satisfiable input in every run
+     * order, with the explicit bound `|allVars G0| + hmeas L rho G0`.
+     * `keyed2_star_vs_shipped_res : MintsBoundedOnSatKeyed2Star /\ ~MintsBoundedOnSatKeyed2`
+     * is the contrast in one line: without THIS flag the statement is false.
+     *
+     * Note `fresh` is still drawn at the same point in both branches of ONE call (as
+     * `resGuard` already arranged), so the reuse itself draws no extra id.  The TOTAL number
+     * of draws in a run can still differ, because a run that reuses derives fewer partitions
+     * and therefore calls `resolution` fewer times -- each call draws one id whether or not
+     * it emits anything (measured on the `W4c` control: 3 draws with the flag off, 1 with it
+     * on, at the same input).
+     *
+     * ADOPTED 2026-09-03: DEFAULT ON.  `-Dermine.resRow=false` restores the previous
+     * behaviour exactly.  The evidence (`tracker/satterm/KEYED-ROW-STAGE5.md`):
+     *   - proved not a semantic change (`K2ResStep.row_models_iff`; the two conclusions are
+     *     the ones `resGuard`'s reuse already emits, with an existing name in place of the
+     *     fresh one) and every mint that survives the widened guard is a shipped guarded
+     *     mint (`K2ResStep.mint_toGRes`); the rule AS WRITTEN is a step of the calculus
+     *     (`KeyedRowScala.scalaRowRes_step`);
+     *   - it is the flag that completes the theorem: with BOTH branches the whole
+     *     loop-extended calculus mints boundedly on every satisfiable input in every order
+     *     (`mintsBoundedOnSatKeyed2Star`, bound `|allVars G0| + hmeas L rho G0`), and
+     *     `keyed2_star_vs_shipped_res` says the same statement is FALSE with `resolution`
+     *     left as shipped (`not_MintsBoundedOnSatKeyed2`, the split-free witness `W4`);
+     *   - 66-file and 34-file corpora: 0 files differ, verdicts identical, `shouldfail/`
+     *     40/40 -- including `inc08_project_absent_from_join_result.e` and
+     *     `mis02_join_result_annotation.e`, the two modules where this branch actually
+     *     fires, which stay REJECTED with the same message (the refutation-safety check);
+     *   - 188 published interfaces: NO signature weaker and NO binding attributable to this
+     *     flag at all;
+     *   - `core/test` 903/904 with the flag on; `repl-smoke` 4/4, `lsp-smoke` 98/98;
+     *   - population: 19 firings over 5 of the 110 example modules, taking resolution's
+     *     conclusions 1,748 -> 1,696 (and 1,644 with `splitRow` as well); no timing moved,
+     *     including the `ResStar` family, which cannot reach the branch because the
+     *     resolution premise's left-hand side never becomes concrete there.
+     * COVERAGE, stated at adoption: the bound is against the loop's CONCRETISATION
+     * deletions (`concretizeSrs`).  `makeEmpty`/`unify` deletions are NOT in the relation,
+     * and the Scala lookup cannot see an emptied carrier -- 74 of the corpus's 157
+     * kept-definition mints have an EMPTY complement and stay mints; what stops those from
+     * chaining is eager empty propagation, unformalised (Stage 6). */
+    val resRow: Boolean = System.getProperty("ermine.resRow", "true") == "true"
     /* REMOVED 2026-09-02, both measured and declined; see
      * `tracker/TICKET-row-solver-8abc.md` and the Lean that still licenses them.
      *   `ermine.labelCheckSaturated` -- run the check on `q.expand` instead of the input.
@@ -855,7 +983,8 @@ object Constraints {
     override def toString =
       mode + (if (disjRule) "+disj" else "") + (if (labelCheck) "+label" else "") +
         (if (labelCheckEarly) "-early" else "") + (if (resGuard) "+resguard" else "") +
-        (if (splitKey) "+splitkey" else "")
+        (if (splitKey) "+splitkey" else "") + (if (splitRow) "+splitrow" else "") +
+        (if (resRow) "+resrow" else "")
   }
   case object Disjunction         extends Inference
 
@@ -1034,9 +1163,44 @@ object Constraints {
    *       dropped.
    *
    * The batch `s` that `resolution` also consults is empty here: `splitConcrete` is the
-   * INITIAL value of `learnPartitions`' fold, so no partition of this batch exists yet. */
+   * INITIAL value of `learnPartitions`' fold, so no partition of this batch exists yet.
+   *
+   * CORRESPONDENCE WITH `Rowpartition/KeyedRow.lean` (`-Dermine.splitRow`, DEFAULT OFF;
+   * Stage 5, `tracker/satterm/KEYED-ROW-STAGE5.md`).  The FOURTH branch below, between the
+   * keyed reuse and the mint:
+   *
+   *   concrete-row reuse   `splitRow` and `concRow(concr) = Some(w)`, i.e. `v` has a bare
+   *       concrete definition `mk c.lhs ∅ C ∈ G` and `w` carries the complement,
+   *       `mk w ∅ (C \ c.conc) ∈ G` -- exactly `KeyedRow.K2RowApp G c w C`.  Emits
+   *       `mk w (vset c) ∅` = `w <- (abstr)` = `kSplitReuseResult`, the SAME conclusion the
+   *       keyed reuse emits, and draws no fresh id.  Entailed by the environment:
+   *       `KeyedRow.concRow_reuse_sat`, `K2RowApp.models_iff`.  With the flag on, the mint
+   *       branch's guard is `¬ Carried G v concr` (`KeyedRow.Carried`), and
+   *       `K2MintApp.toSplitApp` says every mint that survives it is a mint the shipped rule
+   *       would take.
+   *
+   * ONE DIFFERENCE FROM THE LEAN, deliberate and in the safe direction: `K2RowApp` has no
+   * `c.conc ⊆ C` premise (soundness derives it from the model, `concRow_reuse_sat`), while
+   * `concRow` below ASKS for it.  On satisfiable input the two agree -- `makeConcrete`'s
+   * `ensureSuperset` enforces it -- and on unsatisfiable input the Scala refuses the branch
+   * where the Lean would take it, so no refutation can be lost to it.  Every firing of the
+   * Scala branch is therefore a `K2RowApp`, which is what `KeyedRowScala.scalaRowSplit_step`
+   * proves.
+   *
+   * WHERE THE CONCRETE ROW LIVES (the faithfulness note the Lean cannot supply).  The Lean
+   * asks `mk v ∅ C ∈ G`.  In the compiler a NONEMPTY concrete row of `v` is a bare partition
+   * `Partition(v, RHS(Set(), C))` in the `proc` queue and NOWHERE ELSE: `makeConcrete` does
+   * not call `instantiateType`, and it returns the dequeued partition to `proc`
+   * (`nproc + Partition(v, RHSConcr(fs))`), so after `makeConcrete v` the fact is exactly a
+   * queue partition.  The EMPTY row is the one exception: `makeEmpty` records
+   * `v := ConcreteRho(∅)` in the `SubstEnv` and DELETES every partition mentioning `v`, so a
+   * variable already made empty is invisible to `concRows` and can never be the carrier `w`
+   * (a `w <- ()` still sitting in `incm`, not yet dequeued, IS visible).  `unify` likewise
+   * moves `v := VarT(u)` into the `SubstEnv` and removes `v`'s partitions.  So the lookup is
+   * a lower bound on the Lean's `∈ G`: it can only miss, never hit spuriously. */
   def splitConcrete(v: TypeVar, abstr: Set[TypeVar], concr: Fields, rhss: RHS => Option[TypeVar],
-                    resolvent: Fields => Option[TypeVar] = _ => none)(implicit su: Supply): Set[Partition] =
+                    resolvent: Fields => Option[TypeVar] = _ => none,
+                    concRow: Fields => Option[TypeVar] = _ => none)(implicit su: Supply): Set[Partition] =
     if(concr.isEmpty || abstr.size < 2) Set()
     else // split concrete
       rhss(RHSAbstr(abstr)) match {
@@ -1051,11 +1215,24 @@ object Constraints {
               // the environment: `Rowpartition.ksplit_reuse_entails`.
               Set(Partition(w, RHSAbstr(abstr), SplitKeyed))
             case None =>
-              val u = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
-              Set( Partition(u, RHSAbstr(abstr), SplitConcrete)
-                 , Partition(v, RHS(Set(u), concr), SplitConcrete))
+              (if (GenRules.splitRow) concRow(concr) else none) match {
+                case Some(w) =>
+                  // CONCRETE-ROW REUSE (Stage 5): `v <- ((|C|))` and `w <- ((|C \ concr|))`
+                  // are both present, so `w` denotes `v \ concr` just as a lone witness
+                  // would (`KeyedRow.conc_lone_sat`).  Same conclusion as the keyed reuse,
+                  // no fresh id.  Entailed: `KeyedRow.concRow_reuse_sat`.
+                  Set(Partition(w, RHSAbstr(abstr), SplitRow))
+                case None =>
+                  val u = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
+                  Set( Partition(u, RHSAbstr(abstr), SplitConcrete)
+                     , Partition(v, RHS(Set(u), concr), SplitConcrete))
+              }
           }
       }
+
+  /* The concrete-row lookup that is passed when BOTH Stage 5 flags are off: one shared
+   * constant, so the default allocates no closure per `learnPartitions` call. */
+  private val noConcRow: Fields => Option[TypeVar] = _ => none
 
   /* When the above special case rules haven't fired, we need to collect
    * up new rules based on the rule we're about to add, and the other
@@ -1090,12 +1267,54 @@ object Constraints {
         s.collectFirst {
           case Partition(u, RHS(Single(w), con), _) if u == v && con == k => w
         } orElse resolvents.get(k)
+      /* Stage 5 (`tracker/satterm/KEYED-ROW-STAGE5.md`), the CONCRETE-ROW reverse lookup
+       * that widens both mint guards under `-Dermine.splitRow` / `-Dermine.resRow`.  One
+       * pass over `proc ++ incm` collecting every BARE CONCRETE partition `u <- ((|con|))`
+       * (`RHS(abs, con)` with `abs.isEmpty`) into `con -> u`, and, on the way, `v`'s own
+       * concrete row.  This is `KeyedRow.ConcCarried`'s pair of memberships:
+       * `mk v ∅ C ∈ G` is `myRow = Some(C)` and `mk w ∅ (C \ k) ∈ G` is `rows.get(C -- k)`.
+       *
+       * WHERE THE CONCRETE ROW LIVES.  A nonempty concrete row is a bare partition in the
+       * queues and nothing else -- `makeConcrete` never touches the `SubstEnv` and returns
+       * `Partition(v, RHSConcr(fs))` to `proc`.  The EMPTY row is the exception:
+       * `makeEmpty` writes `v := ConcreteRho(∅)` into the `SubstEnv` and deletes every
+       * partition mentioning `v`, so an already-emptied variable cannot be a carrier here
+       * (one still queued in `incm` can).  See the long note at `def splitConcrete`.
+       *
+       * `k ⊆ C` is asked explicitly, which `KeyedRow.K2RowApp` does not (it gets it from
+       * the model); on satisfiable input `ensureSuperset` makes the two agree, and on
+       * unsatisfiable input asking it can only REFUSE a reuse the Lean would take, never
+       * take one it would not.  So every firing is a `K2RowApp`.
+       *
+       * Like `resolvents` this ranges over `proc ++ incm`, i.e. the whole current system
+       * minus the dequeued premise; unlike `findResolvent` it does NOT consult the current
+       * batch `s`, so `resolution`'s use of it sees one partition set less than its
+       * resolvent lookup does.  That direction is safe (fewer reuses, never a wrong one).
+       * Both the map and the lambda are built only when a flag is on: with both off,
+       * `noConcRow` is passed and the lazy val is never forced, so the default costs one
+       * unforced `lazy val` cell per `learnPartitions` call and nothing else. */
+      lazy val concRows: (Map[Fields, TypeVar], Option[Fields]) = {
+        def add(m: (Map[Fields, TypeVar], Option[Fields]), p: Partition)
+            : (Map[Fields, TypeVar], Option[Fields]) = p match {
+          case Partition(u, RHS(abs, con), _) if abs.isEmpty =>
+            (m._1 + (con -> u), if (u == v) some(con) else m._2)
+          case _ => m
+        }
+        incm.foldLeft(proc.foldLeft((Map[Fields, TypeVar](), none[Fields]))(add))(add)
+      }
+      def findConcRow(k: Fields): Option[TypeVar] = {
+        val (rows, myRow) = concRows
+        myRow.filter(k subsetOf _).flatMap(c => rows.get(c -- k))
+      }
+      val concRow: Fields => Option[TypeVar] =
+        if (GenRules.splitRow || GenRules.resRow) findConcRow else noConcRow
       proc.foldLeft[Set[Partition]](
-           splitConcrete(v, rhs1.abstr, rhs1.concr, findRHS(incm, proc, Set()), findResolvent(Set()))
+           splitConcrete(v, rhs1.abstr, rhs1.concr, findRHS(incm, proc, Set()),
+                         findResolvent(Set()), concRow)
          ){
            case (s, Partition(u, rhs2, _)) =>
              if(u == v) {
-               val rps = resolution(v, rhs1, rhs2, findResolvent(s))
+               val rps = resolution(v, rhs1, rhs2, findResolvent(s), concRow)
                val cps = cancellation(v, rhs1, rhs2)
                val dps = if(!GenRules.disjRule) Nil else proc.toList.flatMap {
                  case Partition(w, rhs3, _) if w != v => disjunction(rhs3, rhs1, rhs2) ++ disjunction(rhs3, rhs2, rhs1)
@@ -1332,9 +1551,37 @@ object Constraints {
    * Note `fresh` is still called in the guarded branch, at the same point.  That keeps
    * the `Supply` sequence identical in both modes, so a guarded run and an unguarded run
    * differ only in the partitions they derive, never in variable numbering.
-   */
+   *
+   * CORRESPONDENCE WITH `Rowpartition/KeyedRow.lean` (`-Dermine.resRow`, DEFAULT OFF;
+   * Stage 5, `tracker/satterm/KEYED-ROW-STAGE5.md`).  Write `C = concr1`, `D = concr2`,
+   * `K = C ∪ D = all`; the premises are `v <- (x, C)` and `v <- (y, D)` with `C \ D ≠ ∅`
+   * and `D \ C ≠ ∅` -- exactly `ResGuard.ResPair G v x y C D`.  The three branches are:
+   *
+   *   reuse (shipped, `resGuard`)   `resolvent(all) = Some(w)`, i.e. `mk v {w} K ∈ G`.
+   *       Emits `resReuseResult` = `x <- (w, D \ C)`, `y <- (w, C \ D)` -- which is
+   *       `bots = concr2 -- int` and `tops = concr1 -- int` below.  `GResStep.reuse`.
+   *   concrete-row reuse (NEW)      `resRow` and `concRow(all) = Some(w)`, i.e.
+   *       `mk v ∅ F ∈ G` and `mk w ∅ (F \ K) ∈ G` -- exactly the premises of
+   *       `KeyedRow.K2ResStep.row`, which emits the SAME `resReuseResult`.  Entailed:
+   *       `K2ResStep.row_models_iff` (`conc_lone_sat` manufactures `v <- (w, K)` out of
+   *       the two concrete definitions, then `ResGuard.reuse_sat` draws both conclusions).
+   *   mint (otherwise)              `resResult`, `K2ResStep.mint`; its guard is then
+   *       `¬ Carried G v K`, and `K2ResStep.mint_toGRes` says every such mint is a shipped
+   *       guarded mint, so the branch only ever replaces mints.
+   *
+   * The `K ⊆ F` side condition and the note on where a concrete row actually lives are at
+   * `def splitConcrete` and at `learnPartitions`' `concRows`; `concRow` here is the same
+   * lookup, at the RESOLVENT row `F \ K` instead of the split's `C \ concr`.  `fresh` is
+   * still drawn before the match, so the reuse draws no id of its own; the run's TOTAL draw
+   * count can still fall, because fewer derived partitions means fewer calls to this rule.
+   *
+   * ONE MORE DIFFERENCE FROM `findResolvent`, in the safe direction: `concRow` does NOT
+   * consult the current batch `s`, only `proc ++ incm`.  So this branch sees one partition
+   * set less than the shipped resolvent lookup does; that can only refuse a reuse, never
+   * take a wrong one. */
   def resolution(v: TypeVar, rhs1: RHS, rhs2: RHS,
-                 resolvent: Fields => Option[TypeVar] = _ => none)(implicit su: Supply): Set[Partition] =
+                 resolvent: Fields => Option[TypeVar] = _ => none,
+                 concRow: Fields => Option[TypeVar] = _ => none)(implicit su: Supply): Set[Partition] =
     if (!GenRules.resolves) Set() else (rhs1, rhs2) match {
     case (RHS(Single(x), concr1), RHS(Single(y), concr2)) =>
       val z = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
@@ -1352,9 +1599,18 @@ object Constraints {
             Set(Partition(x, RHS(Set(w), bots), Resolution),
                 Partition(y, RHS(Set(w), tops), Resolution))
           case None =>
-            Set(Partition(v, RHS(Set(z), all), Resolution),
-                Partition(x, RHS(Set(z), bots), Resolution),
-                Partition(y, RHS(Set(z), tops), Resolution))
+            (if (GenRules.resRow) concRow(all) else none) match {
+              case Some(w) =>
+                // CONCRETE-ROW REUSE (Stage 5): `v <- ((|F|))` and `w <- ((|F \ all|))` are
+                // both present, so `w` already denotes the resolvent `v \ all`.  Same two
+                // conclusions as the reuse above.  Entailed: `KeyedRow.K2ResStep.row_models_iff`.
+                Set(Partition(x, RHS(Set(w), bots), ResolutionRow),
+                    Partition(y, RHS(Set(w), tops), ResolutionRow))
+              case None =>
+                Set(Partition(v, RHS(Set(z), all), Resolution),
+                    Partition(x, RHS(Set(z), bots), Resolution),
+                    Partition(y, RHS(Set(z), tops), Resolution))
+            }
         }
       }
     case _ => Set()

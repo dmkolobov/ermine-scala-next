@@ -11,7 +11,10 @@ Every result below is labelled THEOREM (Lean, `tracker/lean/Rowpartition/`), MEA
 `ermine.splitKey`; §3c is its measurement, §3d the post-flip re-run. The answer below is about
 the syntactic guard, now `-Dermine.splitKey=false`. §3e is Stage 3: the keyed guard's
 termination theorem is about the ADDITIVE relation and does NOT survive the loop layer's
-deletions — `not_TerminatesOnSatKeyedLoop`.)*
+deletions — `not_TerminatesOnSatKeyedLoop`. §3f is Stage 4: the CONCRETE-ROW reuse restores
+the bound for the split fragment but not with `resolution` as shipped. §3g is Stage 5: both
+branches are now IMPLEMENTED behind `-Dermine.splitRow` / `-Dermine.resRow` and measured,
+**both ADOPTED the same evening, DEFAULT ON** (§3h is the post-flip re-run); coverage is partial — `makeEmpty` deletions are outside the relation, which is Stage 6.)*
 
 **For the additive rule set with the syntactic split guard: NO.** `TerminatesOnSat` — every
 productive run of the shipped-until-today rule set `DefaultStep` (`cut` + guarded resolution)
@@ -405,6 +408,109 @@ own order (concrete facts absorb the premises the next round would need), not `c
 the agent's argument, confirmed. As with `W3`, that is a property of `incorporateAll`'s
 single pass that no relation states.
 
+### 3g. Stage 5 — BOTH concrete-row branches, IMPLEMENTED behind flags, MEASURED and ADOPTED (2026-09-03, `tracker/satterm/KEYED-ROW-STAGE5.md`)
+
+*(ADOPTED 2026-09-03, later the same day: both defaults flipped to ON with the ADOPTED comments of the report's §C.2 plus a COVERAGE paragraph — the bound is against concretisation deletions only; `makeEmpty`/`unify` deletions are outside the relation and the Scala lookup cannot see an emptied carrier (74 of the corpus's 157 kept-definition mints have an empty complement and stay mints). `-Dermine.splitRow=false -Dermine.resRow=false` restores the previous behaviour. Post-flip re-run in §3h. The text below is as written before the decision.)*
+
+The §3f Scala change is written. `-Dermine.splitRow` (`GenRules.splitRow`, `SplitRow` tag, a
+FOURTH branch of `splitConcrete` between the keyed reuse and the mint) and `-Dermine.resRow`
+(`GenRules.resRow`, `ResolutionRow` tag, a THIRD branch of `resolution` taken when
+`findResolvent` misses) are in `Constraints.scala`, **both DEFAULT OFF**, sharing one lazy
+lookup built in `learnPartitions` alongside `resolvents`: a single fold over `proc ++ incm`
+collecting every BARE CONCRETE partition into `con -> u` and, on the way, `v`'s own row, with
+`k ⊆ C` asked explicitly. With both flags off the lambda is a shared constant and the
+`lazy val` is never forced.
+
+**The faithfulness note the Lean cannot supply, traced with `-Dermine.rowTrace` BEFORE the
+lookup was written.** A NONEMPTY concrete row of `v` is a bare partition in the `proc` queue
+and NOWHERE else: `makeConcrete` never calls `instantiateType` and returns the dequeued
+partition to `proc`. The EMPTY row is the exception — `makeEmpty` writes `v := ConcreteRho(∅)`
+into the `SubstEnv` and DELETES every partition mentioning `v` — and `unify` likewise. So the
+Scala lookup is a LOWER bound on the Lean's `mk u ∅ R ∈ G`: it can miss (an emptied or
+unified-away carrier), never hit spuriously; and asking `k ⊆ C`, which `K2RowApp` does not,
+can only REFUSE a reuse, so no refutation is lost.
+
+**Correspondence proved** (`tracker/lean/Rowpartition/KeyedRowScala.lean`, 33 theorems):
+`MyRowSpec` / `ConcRowSpec` state what the fold really meets (ONE `Option` row per variable,
+the explicit `k ⊆ C`), `myRowLookup_spec` / `concRowLookup_spec` inhabit them, and
+**`scalaRowSplit_step : K2SplitStep`** and **`scalaRowRes_step : K2ResStep`** prove every
+firing of either branch is a step of Stage 4's calculus — on a MODELLED system, the model
+being used in exactly one place (`concRow_none_uncarried`, via `conc_unique_of_model` and
+`conc_key_subset_of_model`) to close the two gaps at the MINT guard. New erase lemmas:
+`bare_erase_iff` (the dequeued premise is invisible to this lookup for a third reason — its
+witnesses are BARE) and `resolved_erase_iff_row` (resolution's premise has one variable, so
+Stage 2's erase lemma does not apply and the argument is about the ROW).
+
+Every gate below is from ONE class set in FOUR configurations (`D` default, `S` splitRow,
+`R` resRow, `B` both), each with a positive control:
+
+* seeds: `W2`/`H2`/`NE6`/`W3`/`W4` SOLVED 100/100 in all four; **`W3` mints at 55 of 100 id
+  bases under `D` and at NONE under `S`** (`SplitRow: ^free4 <- (^free5 ^free6,)` in the base-3
+  trace — `KeyedRow.lean` §10 executed, and the constraint the shipped loop reaches only
+  afterwards by `common`-unifying the re-mint with `z`); `NE6` draws one id fewer at 17 of 100
+  bases under `S`, same bindings. `W`/`gseed` REJECTED 200/200, byte-identical bar the banner;
+  the KeepMint instance still mints on both sides (no carrier exists there).
+* **`W4` is NOT changed by `resRow`** — the draw distribution is identical in all four
+  configurations. The branch needs a carrier for the resolvent row `F \ (C ∪ D)`, which `W4`
+  acquires only in round 2 of the Lean divergence, and the real loop never reaches round 2
+  (§3f's own measurement: `makeConcrete`'s order absorbs the premises). The positive control
+  is therefore `W4c`, `W4` plus that carrier: at base 37, `D` draws 3 ids and mints the
+  resolvent, `R` draws 1 and emits `ResolutionRow` twice, same solved system with one bound
+  variable fewer.
+* stdlib boot 129 modules, traces **byte-identical** `D` vs `B` (neither `splitConcrete` nor
+  `resolution` fires there at all); `core/test` **903/904** in `D` and in `B`, the known
+  `disjunction sound` generator starvation; `repl-smoke` 4/4, `lsp-smoke` 98/98.
+* corpus verdicts 23/43 and 18/16 in `D`, `S` and `B`; **0 of 66 and 0 of 34 files differ**,
+  verdicts and messages; `shouldfail/` **40/40** rejected in every configuration — including
+  the two modules where the resolution branch actually fires.
+* published types: 188 interfaces / 1,933 bindings, **0 weaker anywhere**. A same-configuration
+  control already moves 1 interface; `D` vs `B` moves 3, all stdlib churn and NONE attributable
+  (the stdlib boot cannot reach either rule); `D` vs `S` moves 5, of which two bindings are
+  attributable — `TargetList.restrictTo` alpha-equivalent and `np01.inferredRestate` **7
+  existentials -> 6**, hand-checked equivalent (the removed name is FORCED by the remaining
+  constraints), i.e. the OPPOSITE direction from §3c's 7 -> 8.
+* timing (one JVM at a time, machine idle, three passes): **nothing moved** — ResStar 5–9,
+  RowStress 10/14, CoStar8 and `gu05` are all inside their own run-to-run spread. The
+  `ResStar` family cannot reach either branch: no left-hand side there ever becomes concrete.
+* population, the honest part: **`SplitRow` fires 4 times in 3 of 110 example modules and
+  `ResolutionRow` 19 times in 5**, against `SplitKeyed`'s 77 in 18. Corpus split mints
+  637 -> 626, kept-definition mints 157 -> 154 with all **133 consumers still finding a name**
+  (the three removed were mints nothing used), resolution conclusions 1,748 -> 1,696 (`R`)
+  and 1,644 (`B`). Both branches are RARE because the carrier `w <- ((|C \ K|))` normally
+  exists only where a cancellation has just made it — which is the keyed witness's own
+  situation, already handled by `splitKey`.
+
+Recommendation in the report: **ADOPT WITH CAVEATS for both, and as ONE decision** — `splitRow`
+alone bounds only the split fragment (`mintsBoundedOnSat_splitFragment`) and `resRow` alone
+bounds nothing; together they are `mintsBoundedOnSatKeyed2Star`, which
+`keyed2_star_vs_shipped_res` says is false without `resRow`. The caveats: the population is
+small, so the corpus zeros are weaker evidence than §3c's; no speed win; ids shift and one
+`incomplete/` published type changes shape (equivalently); nothing here touches ill-typed
+input (`not_CRule` still lives) and the loop's single pass and `common` remain unmodelled.
+**Neither default was flipped and nothing was committed**; the two one-line diffs with their
+ADOPTED comments are in the report §C.2.
+
+### 3h. Post-flip re-run against the NEW defaults, no flags (2026-09-03 evening, one class set incl. the loader fix)
+
+The restore side is `-Dermine.splitRow=false -Dermine.resRow=false`; the banner reads
+`cut+label-early+resguard+splitkey+splitrow+resrow`. The class set also carries the loader's
+batch-load fix (`TICKET-editor-and-solver-followups.md` §4), so the corpus gate ran in
+`--batch` mode on BOTH sides for the first time.
+
+| gate | new defaults | restore side / expectation |
+|---|---|---|
+| `sbt core/compile`, `core/test` | clean; **910/911** (904 + 7 new loader properties), the known `disjunction sound` starvation | as before |
+| `W2`/`H2`/`NE6`/`W3`/`W4`, 100 bases each | **SOLVED 100/100** each; `W3` draws **0** fresh ids at all 100 bases | `W3` restore side: 55 of 100 mint |
+| `W`/`gseed` (unsat), 100 bases each | **REJECTED 100/100** each | same |
+| `repl-smoke` / `lsp-smoke` | **4/4 (35 checks)** / **98/98** | same |
+| `gu05` module time, 2 runs, idle machine | **1.09 s, 1.04 s** | 1.02 s, 1.04 s (no speed change, as Stage 5 predicted) |
+| corpus 66, `--batch` both sides | **23 LOADED / 43 REJECTED**, `shouldfail/` **40/40**; 4 of 66 differ in MESSAGE only | restore 23/43; the 4 are `der01/02/06/07`, a different clause of the same label-check refutation at the same field — re-run PER FILE both sides: identical, so it is batch-session id drift (the documented `--batch` caveat), not the flags |
+| `incomplete/` 34, `--batch` both sides | **18 / 16, 0 of 34 differ** | |
+| `.ei`, 188 interfaces / 1,933 bindings, per file | **2 of 188 differ**, 4 bindings order-only (`Layout/Chart`, `Layout/Report` — the documented stdlib churn), 1,929 identical, **0 weaker** | |
+
+Housekeeping: `.ei` under `core/examples` deleted; the 129 stdlib interfaces regenerated under
+the new defaults.
+
 ## 4. What stays open, ranked
 
 0. **Stage 2 — DONE and ADOPTED 2026-09-03** (§3c, §3d). Items 1–3 below are now moot for the
@@ -437,6 +543,21 @@ single pass that no relation states.
    **The ranked-first question is now**: rekey `resolution` the same way. In Lean that already
    closes it (`mintsBoundedOnSatKeyed2Star`, `keyed2_star_vs_shipped_res`); in Scala neither
    the split's third lookup nor resolution's exists, and neither is measured — Stage 5.
+   **Stage 5 — DONE 2026-09-03 (§3g), outcome: BOTH branches implemented and measured, both
+   DEFAULT OFF.** `-Dermine.splitRow` and `-Dermine.resRow` exist in `Constraints.scala` with
+   one shared lazy lookup, the correspondence is proved for the spec the compiler's lookup
+   really meets (`Rowpartition/KeyedRowScala.lean`, `scalaRowSplit_step`,
+   `scalaRowRes_step`), and every adoption gate is green in four configurations
+   (`tracker/satterm/KEYED-ROW-STAGE5.md`). The ranked-first question is therefore
+   ANSWERED in Lean and IMPLEMENTED in Scala; what remains is a DECISION, not work:
+   the two one-line flips are written out unapplied in the report §C.2, with ADOPT WITH
+   CAVEATS for both as ONE decision (the theorem is a property of the pair — `splitRow`
+   alone bounds only the split fragment and `resRow` alone bounds nothing). The honest
+   caveat the measurement adds: the population is SMALL (`SplitRow` 4 firings in 3 of 110
+   example modules, `ResolutionRow` 19 in 5, both zero in a stdlib boot), because the
+   carrier `w <- ((|C \ K|))` exists essentially only where `makeConcrete`'s own
+   cancellation has just built it — and at 74 of the 157 kept-definition mints the
+   complement is the EMPTY row, whose carrier `makeEmpty` has deleted (§3g, report §B7-2).
 1. **Conjecture S** — every substitution-closed run (all non-generative consequences taken
    before each mint) is bounded from every satisfiable input. The explorer's breadth-first
    strategy reaches fixpoints on every seed; `subst_names_travel` is the one-step mechanism;
@@ -471,5 +592,8 @@ single pass that no relation states.
 | `tracker/satterm/KEYED-LOOP-STAGE3.md` | Stage 3 write-up: the theorem verbatim, the corrected mechanism, the 100-base replay of `W3`/`W3M` and the corpus re-run of the kept-definition instrument |
 | `tracker/lean/Rowpartition/KeyedRow.lean` | Stage 4: the CONCRETE-ROW reuse (`ConcCarried`, `Carried`, `conc_lone_sat`, `concRow_reuse_sat`, `K2SplitStep`'s four branches with `¬ Named` on the non-syntactic ones), the faithful deletion (`srsOf`, `concretizeSrs`, `concretizeSrs_sound`, `concDef_persists`), the invariant `carried_concretizeSrs` with its two modes (`carried_of_deleted_def`, `carried_of_absorbed_mention`), the budget `uncarried`/`hmeas` and the bounds (`mintsBoundedOnSat_splitFragment`, `mintsBoundedOnSatKeyed2Star`), the split-free divergence `W4` (`W4_mints_unbounded`, `not_MintsBoundedOnSatKeyed2`, `keyed2_star_vs_shipped_res`, and `W4_kloop_mints_unbounded` / `W4_not_TerminatesOnSatKeyedLoop`, which refute Stage 3's statement with no split step) and the Stage 3 re-run (`W3srs_eq`, `W3_carried`, `W3_row_reuse`, `W3_not_mintable`) |
 | `tracker/satterm/KEYED-ROW-STAGE4.md` | Stage 4 write-up: the relation verbatim, the invariant, the bound, the `W4` witness and what `common` would do to it, the mechanism notes checked one by one, and the UNIMPLEMENTED Scala change |
-| `core/.../Constraints.scala` | `GenRules.splitKey` (default off), `SplitKeyed`, `splitConcrete`'s `resolvent` parameter |
+| `core/.../Constraints.scala` | Stage 2: `GenRules.splitKey` (ADOPTED, default on since 1e6f52b), `SplitKeyed`, `splitConcrete`'s `resolvent` parameter. Stage 5: `GenRules.splitRow` / `GenRules.resRow` (**both default OFF**), the `SplitRow` / `ResolutionRow` tags, `splitConcrete`'s fourth branch, `resolution`'s third, and `learnPartitions`' lazy `concRows` lookup |
+| `tracker/lean/Rowpartition/KeyedRowScala.lean` | Stage 5: the correspondence for the two new branches, as a theorem about the spec the compiler's lookup really meets — `MyRowSpec` / `ConcRowSpec` (one `Option` row per variable, `k ⊆ C` asked explicitly), `myRowLookup_spec` / `concRowLookup_spec`, the erase lemmas `bare_erase_iff` and `resolved_erase_iff_row`, the four-branch `scalaRowSplit` with `scalaRowSplit_step : K2SplitStep` and the three-branch `scalaRowRes` with `scalaRowRes_step : K2ResStep`, `scalaRow_starStep`, and the two model-using lemmas `conc_key_subset_of_model` / `concRow_none_uncarried` that close the MINT-guard gaps |
+| `tracker/satterm/KEYED-ROW-STAGE5.md` | Stage 5 write-up: the implementation and its faithfulness note (where the compiler keeps a concrete row), every gate in four configurations with its command, the population figures, the deviations with their mechanisms, and Part C — the gate table, the two UNAPPLIED one-line flips with their ADOPTED comments, the re-run list, the honest scope and the per-flag recommendation |
+| `tracker/repro/satterm/seeds/W3.json`, `seeds/W4.json` | Stage 3's and Stage 4's witnesses as tracked `json:` seeds for `tracker/repro/satterm/sweep.sh` |
 | `tracker/tools/splitkey-counts.py`, `splitkey-sweep.sh`, `ei-classify.py` | Stage 2 instruments: split-branch counts per trace, the 110-module traced sweep, `.ei` signature classification |

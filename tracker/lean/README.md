@@ -14,7 +14,7 @@ against it: its inference rules, its canonicalisation, its divergence, and the f
 of the language that actually occurs in Ermine's own standard library.
 
 **Headline numbers**, recounted mechanically on 2026-09-02 (last: 2026-09-01, 22 modules and
-1224; 2026-09-03 after `KeyedLoop`: 33 files and 1722; 2026-09-03 after `KeyedRow`: 34 files and 1816). 34 module files, **1816 named theorems in source**, **0 `sorry`**, **0 custom axioms**. Every theorem's axiom set is a
+1224; 2026-09-03 after `KeyedLoop`: 33 files and 1722; 2026-09-03 after `KeyedRow`: 34 files and 1816; 2026-09-03 after `KeyedRowScala`: 35 files and 1849). 35 module files, **1849 named theorems in source**, **0 `sorry`**, **0 custom axioms**. Every theorem's axiom set is a
 subset of Lean's three standard axioms (`propext`, `Classical.choice`, `Quot.sound`);
 `sorryAx` appears nowhere. This is checked by walking the whole environment — `Audit.lean`
 in this directory enumerates every theorem under the `Rowpartition` namespace and collects
@@ -22,16 +22,16 @@ its axioms:
 
 ```
 $ lake env lean Audit.lean
-Rowpartition theorems audited: 2216; declarations using a non-standard axiom: 0
+Rowpartition theorems audited: 2255; declarations using a non-standard axiom: 0
 ```
 
-(2216 > 1816 because the environment also carries generated equation and match-arm
+(2255 > 1849 because the environment also carries generated equation and match-arm
 lemmas, which the audit checks too; and 1470 counts `CutSearch`'s 125, which the audit does
 NOT see — see the correction below. 2026-09-03, after `DefaultTerm`, `DefaultSatDiverge`,
-`KeyedSplit`, `KeyedSplitScala`, `KeyedLoop` and `KeyedRow`; the figure on 2026-09-01 was
+`KeyedSplit`, `KeyedSplitScala`, `KeyedLoop`, `KeyedRow` and `KeyedRowScala`; the figure on 2026-09-01 was
 1465, after the `NameLoss` modules 1625, after `DefaultDiverge`/`KeepInert` 1790, after
 `DefaultTerm` 1871, after `DefaultSatDiverge` 1929, after `KeyedSplit` 1997, after
-`KeyedSplitScala` 2020, after `KeyedLoop` 2086.)
+`KeyedSplitScala` 2020, after `KeyedLoop` 2086, after `KeyedRow` 2216.)
 
 The source count is reproducible:
 
@@ -149,6 +149,7 @@ non-standard axioms. `CutSearch` is the one module that does NOT build here at a
 | `Rowpartition/KeyedSplitScala.lean` | **exit 0**, no output | 2026-09-03 (later); ~1.7 s; `linter.style.header` warnings only |
 | `Rowpartition/KeyedLoop.lean` | **exit 0**, no output | 2026-09-03 (later still); ~2 s; `linter.style.header` warnings only |
 | `Rowpartition/KeyedRow.lean` | **exit 0**, no output | 2026-09-03 (later still, Stage 4); ~4 s; `linter.style.header` warnings only |
+| `Rowpartition/KeyedRowScala.lean` | **exit 0**, no output | 2026-09-03 (later still, Stage 5); ~2 s; `linter.style.header` warnings only |
 
 `lake build` → `Build completed successfully (804 jobs).` (2026-09-01, with the five
 modules added that day; `CutSearch` is NOT among them — see the correction at the top.)
@@ -250,6 +251,7 @@ because several informal rules get them wrong:
 | `KeyedSplitScala.lean` | 20 | **The Scala rule IS that rule — as a theorem.** Both of `splitConcrete`'s reverse lookups run on the system MINUS the dequeued premise `c`; neither difference is one. `resolved_erase_iff` : `Resolved (G.erase c) v K ↔ Resolved G v K` given `2 ≤ |vset c|` (a keyed witness has ONE variable part) — the comment at `def splitConcrete`, verbatim; `ksplit_guard_erase_iff`, `ksplitApp_erase_iff`, `ksplitReuseApp_erase_iff` in the rules' vocabulary. `named_erase_iff` / `names_erase_iff` : the same for the SYNTACTIC lookup, for a DIFFERENT reason the prose never gave (its witnesses are bare, `conc = ∅`, and the rule runs only when `concr ≠ ∅`). Then `scalaSplit`, the three branches in the source's order with the lookups as arguments meeting `RhssSpec` / `ResolventSpec` on `G.erase c`, and **`scalaSplit_step`** : whatever branch fires, the result is a `KDefaultStep` of `G`. `scalaSplitOf_step` closes the lookups; `scalaSplit_eq_none_iff` pins the only no-op to the early return. Scope: `splitKey`/`splitMints` at their shipped default `true`; `incorporateAll`'s deletions are outside the calculus. |
 | `KeyedLoop.lean` | 52 | **...and the keyed guard does NOT survive the loop layer.** `KLoopStep` = `KDefaultStep` + the loop's own concretisation (`NameLoss.concretizeKeep`, which DELETES definitions with fewer than two abstract parts and DESTRUCTIVELY rewrites every mention). Two ways a concretisation kills a key witness, one per clause, both unconditional: `notMem_lone_lhs` (`mk u {z} K ∉ concretizeKeep u C G`, the deletion) and `notMem_lone_mention` (`v ≠ u → mk v {u} K ∉ concretizeKeep u C G`, the `absorbC` rewrite — invisible to `KeepInert`, which studies only the kept definitions); `resolved_of_concretizeKeep` says nothing else is lost. Also `concretizeKeep_idem` and `conc_unique_of_model`. **`not_TerminatesOnSatKeyedLoop`**: the satisfiable three-constraint `W3 = {u <- ((|k,c|)), u <- (z,(|k|)), u <- (x,y,(|k|))}` — on which the keyed guard is CLOSED at the input — admits runs of every length after one `makeConcrete u`, three steps to the round (mint, cancel, `makeConcrete` of the fresh name, which absorbs the mention that closed the key), minting once per round (`W3_mints_unbounded`, `W3Inv.round`). Scope, machine-checked: `KSplitApp` lacks the syntactic `¬ Named` premise the shipped rule checks FIRST, so the first re-mint is faithful (`W3sat_remint_enabled`, the keyed `orderB_remint_enabled`) and the later ones are not (`named_after_round`). |
 | `KeyedRow.lean` | 94 | **...and Stage 4: the CONCRETE-ROW reuse — which bounds the SPLIT and shows the split was never the whole engine.** The clause: a split premise `v <- (S, K)` whose left-hand side has a concrete definition `v <- ((|C|))` REUSES any `z` carrying `z <- ((|C \ K|))`, emitting `z <- (S)`; sound because those two concrete definitions ARE the lone witness `v <- (z, K)` (`conc_lone_sat`), after which `ksplit_reuse_sat` finishes (`concRow_reuse_sat`, `K2RowApp.models_iff` — the model set does not move). The guard becomes `Carried G v K := Resolved G v K ∨ ConcCarried G v K`, and EVERY non-syntactic branch of `K2SplitStep` carries `¬ Named G (vset c)`, closing `KeyedLoop`'s §2.4 faithfulness gap for this relation (`K2MintApp.toSplitApp`). The deletion is made faithful to the Scala's `srs`: `concretizeSrs u C G = concretizeKeep u C G ∪ srsOf u C G` keeps the cancellation fact `z <- ((|C \ K|))` that `makeConcrete` derives from each one-abstract definition before `destructiveSub` drops it (`concretizeSrs_sound`, `concretizeKeep_subset_srs`, `key_subset_of_model` for the honest `K ⊆ C` side condition, `concDef_persists`). **`carried_concretizeSrs`: once carried, always carried** — `KeyedLoop`'s two failure modes are exactly the two ways a lone witness turns INTO a concrete-row carrier (`carried_of_deleted_def`, `carried_of_absorbed_mention`). So `ResGuardTerm`'s budget survives the deletion (`uncarried`/`hmeas` = `unfired`/`gmeas` with `Carried`), and minting is BOUNDED on satisfiable input in every order: `mintsBoundedOnSat_splitFragment` and, with `resolution` rekeyed the same way (`K2ResStep`), `mintsBoundedOnSatKeyed2Star`, bound `|allVars G₀| + hmeas L rho G₀`. **With guarded `resolution` AS SHIPPED it is NOT** (`not_MintsBoundedOnSatKeyed2`): the satisfiable `W4 = {v <- ((|a,b,c|)), v <- (x, (|a|)), v <- (y, (|b|))}` has NO split premise at all and mints for ever through resolution, whose resolvent is absorbed by the `makeConcrete` of its own fresh name — so `W4` refutes `TerminatesOnSatKeyedLoop` too. `W3_row_reuse` / `W3_not_mintable`: Stage 3's witness dies under the new split rule. |
+| `KeyedRowScala.lean` | 33 | **...and Stage 5: the SHIPPED `splitConcrete` and `resolution` WITH the concrete-row branch are steps of that relation — for the spec the Scala actually meets.** `-Dermine.splitRow` / `-Dermine.resRow` (both DEFAULT OFF) build ONE lazy fold over `proc ++ incm` giving the map of bare concrete partitions and, on the way, the row of the `v` at hand; so the lookup is NOT `∃ C, mk v ∅ C ∈ G` but a single `Option` row plus an explicit `k ⊆ C` — `MyRowSpec` / `ConcRowSpec` state exactly that, `myRowLookup` / `concRowLookup` inhabit them. `bare_erase_iff` : the dequeued premise is invisible to this lookup for a THIRD reason (its witnesses are BARE, `vset = ∅`, and both rules run with a nonempty variable set), with `myRowSpec_erase_iff` / `concRowSpec_erase_iff`; `resolved_erase_iff_row` does the same for resolution's resolvent lookup, whose premise has `|vset| = 1` so `KeyedSplitScala.resolved_erase_iff` does not apply and the argument is about the ROW (`C ∪ D ≠ C`). Then `scalaRowSplit` (four branches, source order) with **`scalaRowSplit_step` : `K2SplitStep`** (hence `_defaultStep`, `_starStep`) and `scalaRowRes` (three branches) with **`scalaRowRes_step` : `K2ResStep`** (hence `_starStep`); `scalaRowSplit_eq_none_iff` / `scalaRowRes_eq_none_iff` pin the only no-ops to the early returns; `scalaRowSplitOf_step` / `scalaRowResOf_step` close the lookups and `scalaRow_starStep` states both together. **Where the model is needed, isolated:** the MINT guard `¬ Carried` quantifies over every concrete row while the fold keeps one, and asks no `k ⊆ C`; `conc_key_subset_of_model` and `concRow_none_uncarried` close both gaps under `SModels`, which is the scope every Stage 4 termination statement already has. Write-up `tracker/satterm/KEYED-ROW-STAGE5.md`. |
 | `ResGuard.lean` | 20 | **Guarding `resolution`** with the resolvent reverse lookup — the analogue, for that rule, of the lookup `splitConcrete` already consults. The guard is not a semantic change: the reuse branch does not move the model set at all, the mint branch is a conservative extension, and `resolvent_unique` shows the variable the guard declines to mint is FORCED EQUAL to the one it reuses. |
 | `ResGuardTerm.lean` | 30 | …and the guarded rule **terminates on every satisfiable system**, with an explicit bound (`guarded_terminates_of_satisfiable`). The measure weights each variable's remaining resolvent-key budget by a power of the cardinality of the row it denotes: the guard bounds the keys, the MODEL bounds the depth, and neither ingredient works alone. |
 | `ResGuardDiverge.lean` | 33 | …and **not in general**. Four constraints on four variables and four labels admit guarded chains of every length (`gSeed_diverges`, `gres_no_decreasing_measure`). The seed is proved unsatisfiable, so the two halves do not conflict — and `gSeed_refuted` proves per-label propagation kills THAT seed at one label in five steps. (Corrected 2026-09-02: this row used to conclude "so the guard and the label check are complementary defences"; `DefaultDiverge.lean` proves that general claim FALSE, `not_CRule`.) |
@@ -637,10 +639,26 @@ SATISFIABLE input? Write-up: `tracker/TICKET-sat-termination.md`.
   `keyed2_star_vs_shipped_res`. No Scala change; the edit is written out in
   `tracker/satterm/KEYED-ROW-STAGE4.md` §9, UNIMPLEMENTED.
 
-Root: all six modules imported; `lake build Rowpartition` -> `Build completed successfully
-(817 jobs)`. `Audit.lean`: **2216 theorems audited, 0 using a non-standard axiom** (2086
-before `KeyedRow`, 2020 before `KeyedLoop`, 1997 before `KeyedSplitScala`, 1929 before
-`KeyedSplit`, 1871 after `DefaultTerm` alone, 1790 before). Headline `#print axioms`, all
+* **`KeyedRowScala`** (2026-09-03, Stage 5) — the transcription of the branches Stage 4 asked
+  for, now IMPLEMENTED in `Constraints.scala` behind `-Dermine.splitRow` and
+  `-Dermine.resRow`, both ADOPTED as defaults later on 2026-09-03 (coverage partial: `makeEmpty` deletions are outside the relation, Stage 6). Its point is the gap between `ConcCarried` and what the
+  compiler can actually look up: `learnPartitions` folds `proc ++ incm` ONCE into a map of the
+  bare concrete partitions plus a SINGLE `Option` row for the `v` at hand, and asks `k ⊆ C`
+  explicitly. `MyRowSpec` / `ConcRowSpec` are that, and adequacy is proved for THAT —
+  `scalaRowSplit_step : K2SplitStep`, `scalaRowRes_step : K2ResStep`, on a MODELLED system.
+  The model is used in exactly one place, `concRow_none_uncarried`, where
+  `conc_unique_of_model` supplies "one concrete row per variable" and
+  `conc_key_subset_of_model` supplies `k ⊆ C`; without a model the Scala's MINT is not
+  provably a `K2MintApp`, and that is stated rather than hidden. The erase lemmas are new too
+  (`bare_erase_iff`, `resolved_erase_iff_row`). Measured in
+  `tracker/satterm/KEYED-ROW-STAGE5.md`: every adoption gate green in four configurations,
+  0 weaker published signatures, and both branches rare but live on real code (`SplitRow` 4
+  firings in 3 of 110 modules, `ResolutionRow` 19 in 5).
+
+Root: all seven modules imported; `lake build Rowpartition` -> `Build completed successfully
+(818 jobs)`. `Audit.lean`: **2255 theorems audited, 0 using a non-standard axiom** (2216
+before `KeyedRowScala`, 2086 before `KeyedRow`, 2020 before `KeyedLoop`, 1997 before
+`KeyedSplitScala`, 1929 before `KeyedSplit`, 1871 after `DefaultTerm` alone, 1790 before). Headline `#print axioms`, all
 standard:
 `TerminatesOnSat`, `DefaultRun.length_le_forms`, `DefaultRun.rank_le`, `mintParent_rank_lt`,
 `CountRun.res_branching_le`, `CountRun.split_branching_le`, `not_TerminatesOnSat`,

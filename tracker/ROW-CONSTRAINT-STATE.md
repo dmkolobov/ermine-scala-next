@@ -109,6 +109,60 @@ empty, so the faithful step and Stage 3's `concretizeKeep` coincide. Rekeying `r
 third lookup before the mint, a `SplitRow` reuse tag) and the matching `resolution` edit are
 written out in the report, UNIMPLEMENTED and unmeasured — that is Stage 5.
 
+**Stage 5, the same day: both concrete-row branches IMPLEMENTED behind flags, measured, and
+ADOPTED — `ermine.splitRow` and `ermine.resRow` now DEFAULT TO TRUE** (`-Dermine.splitRow=false
+-Dermine.resRow=false` restores the previous guard pair; coverage is PARTIAL: the mint bound
+`mintsBoundedOnSatKeyed2Star` is against concretisation deletions, while `makeEmpty`/`unify`
+deletions are outside the relation and the Scala lookup cannot see an emptied carrier — 74 of the
+corpus's 157 kept-definition mints have an empty complement and stay mints, protected only by
+eager empty propagation; Stage 6 formalises that step). As measured before the flip:** `-Dermine.splitRow` (the split's third lookup) and `-Dermine.resRow`
+(resolution's second) are in `Constraints.scala` with the `SplitRow` / `ResolutionRow`
+provenance tags and one shared lazy lookup in `learnPartitions` — a single fold over
+`proc ++ incm` producing the map of BARE CONCRETE partitions `con -> u` and, on the way, the
+row of the `v` at hand; the branch fires when `k ⊆ C` and `concRows(C -- k)` hits.
+FAITHFULNESS, traced before the lookup was written: a NONEMPTY concrete row lives as a bare
+partition in the `proc` queue and NOWHERE else — `makeConcrete` never calls `instantiateType`
+and returns the dequeued partition to `proc` — while the EMPTY row is the exception
+(`makeEmpty` writes it into the `SubstEnv` and DELETES every partition mentioning the
+variable), so the lookup is a LOWER bound on the Lean's `mk u ∅ R ∈ G`: it can only miss.
+The Scala also asks `k ⊆ C`, which `K2RowApp` does not (it gets it from the model); that too
+can only refuse a reuse, so no refutation is lost. Correspondence proved:
+`Rowpartition/KeyedRowScala.lean` (33 theorems) states the spec the Scala actually meets
+(`MyRowSpec`, `ConcRowSpec` — one `Option` row per variable, plus the explicit `k ⊆ C`) and
+proves `scalaRowSplit_step : K2SplitStep` and `scalaRowRes_step : K2ResStep` for THAT, on a
+MODELLED system, the model being needed only to close the two gaps at the MINT guard
+(`conc_unique_of_model`, `conc_key_subset_of_model`, isolated in `concRow_none_uncarried`).
+MEASUREMENT, every gate from one class set in four configurations
+(`tracker/satterm/KEYED-ROW-STAGE5.md`): `core/test` 903/904 both sides; 129 stdlib modules
+with byte-identical traces and ZERO firings of either rule; corpus 0 of 66 and 0 of 34
+differ, `shouldfail/` 40/40 (two of which exercise the new resolution branch); 188 published
+interfaces, **0 weaker**, one attributable binding hand-classified (`np01.inferredRestate`
+loses a FORCED existential, 7 -> 6, equivalent); `repl-smoke` 4/4, `lsp-smoke` 98/98; seeds
+300/300 solved and 200/200 rejected, `W3` mints at 55 of 100 bases under the default and **0
+under `splitRow`**. POPULATION: `SplitRow` fires 4 times in 3 of 110 example modules (split
+mints 637 -> 626, kept-definition mints 157 -> 154 with all 133 consumers still finding a
+name); `ResolutionRow` 19 times in 5 modules (resolution conclusions 1,748 -> 1,696). Both
+branches are RARE on this corpus and neither is dead code; the `W4` seed does NOT exercise
+`resRow` in the real loop (its carrier only exists from round 2, which `makeConcrete`'s order
+prevents), so the positive control is `W4c`, `W4` plus that carrier. TIMING, one JVM at a
+time on an idle machine over three passes (ResStar 5-9, RowStress 10/14, CoStar8, `gu05`
+three runs per configuration): **nothing moved in either direction** — every ratio is inside
+the run-to-run spread of the default itself (5 % on ResStar9 between idle passes, 25 %
+including a loaded one), and the `ResStar` family cannot reach either branch at all, since
+the resolution premise's left-hand side never becomes concrete there (traced: zero firings
+under both flags). WHY THE POPULATION IS SMALL, classified over the 110 default traces: of
+the 157 kept-definition mints, **74 have `K = C`, so the complement is the EMPTY row** and
+the only carrier the rule could use is the one `makeEmpty` deletes; 82 have a nonempty
+complement that nothing names; 1 is carried. The carrier exists essentially only where
+`makeConcrete`'s own cancellation has just built it — Stage 4's `srsOf` fact — which is the
+lone witness's own situation, already covered by `splitKey`. NEITHER DEFAULT WAS FLIPPED and
+nothing was committed; the report's Part C carries the two one-line diffs with the ADOPTED
+comment each would need, the re-run list, the honest scope and a per-flag recommendation:
+**ADOPT WITH CAVEATS for both, as ONE decision** — `mintsBoundedOnSatKeyed2Star` is a
+property of the PAIR (`splitRow` alone bounds only the split fragment,
+`mintsBoundedOnSat_splitFragment`; `resRow` alone bounds nothing), and the caveats are the
+small population, the absence of any speed win, and the usual behaviour-change churn.
+
 ## 2026-09-02, latest: the two shipped defaults nothing proved — `PROMPT-default-termination.md` ANSWERED
 
 Both questions Lean-first; every result below is labelled THEOREM (about the additive rule
@@ -448,11 +502,39 @@ root, and `#print axioms` on the headline theorems.
 - Adding files under `core/examples/` breaks the hard-coded corpus count in
   `TestSurfaceParsers.scala`.
 - One waiter per condition. Killing a long job orphans every watcher on it.
-- Loading MANY heavy modules in ONE `bin/ermine` invocation StackOverflows in
-  `StreamTUtils.chop` (the loader's StateT stream chain), after ~2 modules of
-  `core/examples/incomplete/`. PRE-EXISTING: identical with `-Dermine.genRules=all
-  -Dermine.labelCheck=false`. Consequence: **never compare corpora by batch-loading
-  them** -- both runs die partway and the counts are partial. Compare per-file.
+- Batch loading -- MANY modules in ONE `bin/ermine` invocation -- used to StackOverflow in
+  `StreamTUtils.chop` (the loader's StateT stream chain, reached from the solver's
+  `TypeVarGraph`). **FIXED 2026-09-03**: the dependency-order computation is iterative;
+  `TICKET-editor-and-solver-followups.md` item 4 carries the mechanism, the property test
+  and the gate numbers. `corpus-run.sh --batch`, `ei-diff.sh --batch` and
+  `keptdef-sweep.sh --batch` now batch a corpus -- `corpus-run.sh` one JVM for the whole of
+  it, `keptdef-sweep.sh` one per directory, `ei-diff.sh` only five files at a time (it needs
+  interfaces WRITTEN, which makes the accumulation below far worse). The 66-file corpus goes
+  from 19m22s per file to 19 s, `incomplete/`'s 34 from 7m31s to 15 s. What to know
+  before switching a comparison over -- PER FILE IS STILL THE DEFAULT in all three, and
+  every adopted measurement in this file was taken that way:
+  * A batch compiles each module in a session that already holds every module ahead of it
+    on the command line. Verdicts came out IDENTICAL on both corpora (0 of 66 and 0 of 34
+    differ, 23/43 and 18/16, `shouldfail/` 40/40) but seven modules report a DIFFERENT
+    CLAUSE of the same refutation at the same field and position, and published interfaces
+    differ on 18 of 185 against a same-configuration per-file CONTROL's 6 of 188
+    (0 weaker either way; the batch side is also missing 3 interfaces, two of them because
+    a chunk ran out of time).
+  * Do NOT merge the corpora into one JVM. `incomplete/gu05` solves in 0.4 s in a fresh
+    session and had not finished after 200 s in a session already holding the 66-file
+    corpus -- the time is in `learnPartitions`/`substitution`, not the loader. With
+    INTERFACES ENABLED (which `ei-diff.sh` needs, since `useInterface=false` suppresses
+    writing too) the same cliff appears inside `incomplete/` alone, one module short of the
+    end of the group, which is why `ei-diff.sh --batch` chunks instead of taking a whole
+    directory at once.
+  * A batch dies WHOLE on anything that is not a `Death`. `ConsoleEnv.session`
+    (`Console.scala` ~214) restores the session env on `Death`, so a REJECTED module leaves
+    nothing behind; a `StackOverflowError` or an OOM reaches `main`'s catch-all and takes
+    the rest of the command line with it (the pre-fix 110-file run: 41 of 110 files never
+    attempted). `batch-split.py` refuses to split a run that did not produce one terminator
+    line per file, so a truncated batch is an error here rather than a partial count.
+  * `bin/ermine`'s failure line now names the file: `Unable to load module from '<path>'`
+    (`Console.loadProject`). The verdict scripts grep the unchanged prefix.
 - Running `bin/ermine` on one `core/examples/Ai/*.e` file alone reports
   `Module not found: 'Ai.Common'`. Put `Common.e` first on the command line. (The
   EDITOR resolves it correctly since the Resident fix below; the CLI still does not.)
