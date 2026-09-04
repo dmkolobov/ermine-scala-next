@@ -98,6 +98,17 @@ first getting the module to build.
                                `scalaRowSplit_step` / `scalaRowRes_step` prove adequacy for
                                THAT, on a MODELLED system -- which is where the difference
                                costs something (`concRow_none_uncarried`)
+* `Rowpartition.KeyedEmpty` -- ...and Stage 6: the SECOND deleting step.  `makeEmpty` added
+                               faithfully (`makeEmptyD`; `v <- ()` goes to the SubstEnv, NOT
+                               back into the system).  `Carried` is NOT an invariant of it
+                               (`carried_not_invariant`) and Stage 4's potential strictly
+                               INCREASES (`hmeas_increases`); the missing piece is a carrier
+                               of the EMPTY row.  (T2): the Stage 4 bound survives verbatim
+                               under the order hypothesis that each `makeEmpty` leaves one
+                               behind (`mintsBoundedOnSat_emptyPersisting`), and
+                               unconditionally if `v <- ()` is retained
+                               (`mintsBoundedOnSatKeyed3E`).  `G7_mints` is the 74-of-157
+                               population as a theorem
 * `Rowpartition.Sanity`     -- a standalone toolchain smoke test
 -/
 import Rowpartition.Basic
@@ -134,3 +145,4 @@ import Rowpartition.KeyedSplitScala
 import Rowpartition.KeyedLoop
 import Rowpartition.KeyedRow
 import Rowpartition.KeyedRowScala
+import Rowpartition.KeyedEmpty

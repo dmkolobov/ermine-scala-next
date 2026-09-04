@@ -163,6 +163,19 @@ property of the PAIR (`splitRow` alone bounds only the split fragment,
 `mintsBoundedOnSat_splitFragment`; `resRow` alone bounds nothing), and the caveats are the
 small population, the absence of any speed win, and the usual behaviour-change churn.
 
+**Stage 6, the same evening: `makeEmpty` as the second deleting step — the hole is exactly the
+empty row's carrier.** THEOREM (`KeyedEmpty.lean`, `tracker/satterm/KEYED-EMPTY-STAGE6.md`):
+with the compiler's `makeEmpty` added faithfully (`makeEmptyD`, `v <- ()` to the environment,
+not the system), Stage 4's invariant fails (`carried_not_invariant`) and its potential strictly
+increases (`hmeas_increases`) — in exactly one way, the deleted carrier of the EMPTY row. (T2):
+the Stage 4 bound holds verbatim in every order under the order hypothesis that each `makeEmpty`
+leaves an empty-row carrier behind (`mintsBoundedOnSat_emptyPersisting`, `EmptyKnown` made
+checkable) — eager empty propagation, the first of the four unformalised defences, now stated
+but not measured. (T1) unconditionally with a one-line repair: retain `v <- ()` / let the lookup
+see the environment (`mintsBoundedOnSatKeyed3E`), which turns the 74 empty-complement
+kept-definition mints into reuses (`G7_mints`, `G7_blocked`). The unhypothesised statement is
+neither proved nor refuted; `unify` is the last unmodelled deletion. No Scala change.
+
 ## 2026-09-02, latest: the two shipped defaults nothing proved — `PROMPT-default-termination.md` ANSWERED
 
 Both questions Lean-first; every result below is labelled THEOREM (about the additive rule

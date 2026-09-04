@@ -511,6 +511,37 @@ batch-load fix (`TICKET-editor-and-solver-followups.md` §4), so the corpus gate
 Housekeeping: `.ei` under `core/examples` deleted; the 129 stdlib interfaces regenerated under
 the new defaults.
 
+### 3i. Stage 6 — `makeEmpty` as a deleting step: the bound survives under ONE order hypothesis, or unconditionally with a one-line repair (2026-09-03 evening, `tracker/satterm/KEYED-EMPTY-STAGE6.md`)
+
+THEOREM (`Rowpartition/KeyedEmpty.lean`, 65 theorems; Audit 2329/0, build 819). `makeEmptyD` is
+the compiler's `makeEmpty` made faithful (partitions involving `v` leave both queues; mentions
+are re-emitted with `v` erased; a bare definition's parts are forced empty; a definition with a
+concrete part is a contradiction; `v <- ()` goes to the substitution environment and NOT back into
+the system). Stage 4's invariant FAILS at it in exactly one way: the deleted `v <- ()` was the
+only carrier of the EMPTY row (`carried_not_invariant`), and Stage 4's potential strictly
+INCREASES across one step of a satisfiable three-constraint system (`hmeas_increases`, 52 -> 76)
+— the wrong measure, not a missing lemma. Everything else about the step is harmless: an erased
+witness becomes a bare concrete definition and IS a carrier for other keys.
+
+* (T2) `mintsBoundedOnSat_emptyPersisting`: Stage 4's bound `|allVars G₀| + hmeas L rho G₀`
+  holds verbatim for `K3LoopStep = K2StarLoopStep ∪ makeEmptyD`, in every order, under the
+  ORDER hypothesis `K3LoopRunEP` that every `makeEmpty` step leaves an empty-row carrier behind
+  (`EmptyKnown`; `emptyKnown_makeEmptyD` gives three necessary and three sufficient syntactic
+  conditions, decidable at the step). This is "eager empty propagation", the first of the loop's
+  four unformalised defences, stated as a hypothesis on runs — but NOT measured against the
+  compiler.
+* (T1) for a one-line repair, `mintsBoundedOnSatKeyed3E`: retain `v <- ()` (`makeEmptyE`), i.e.
+  let the reverse lookup consult the substitution environment where the compiler already keeps
+  the fact, and the bound holds UNCONDITIONALLY. `G7_mints` formalises the corpus's 74-of-157
+  empty-complement mints; `G7_blocked` shows one `e <- ()` turns each into a reuse.
+* NOT decided: `MintsBoundedOnSatKeyed3` itself (no hypothesis). §10 of the report records where
+  both witness constructions die; the brief's T1 sketch was wrong in one step (the premise keeps
+  its `2 ≤ |S|` after erasure; what blocks the mint is the propagation acting as the `∅` carrier).
+
+The Scala repair (report §9, UNIMPLEMENTED): seed `concRows` with the environment's empty
+instantiations, or have `makeEmpty` return `v <- ()` to `incm`. Same gate set as Stage 5. The
+other deletion, `unify`, remains unmodelled.
+
 ## 4. What stays open, ranked
 
 0. **Stage 2 — DONE and ADOPTED 2026-09-03** (§3c, §3d). Items 1–3 below are now moot for the
@@ -543,6 +574,10 @@ the new defaults.
    **The ranked-first question is now**: rekey `resolution` the same way. In Lean that already
    closes it (`mintsBoundedOnSatKeyed2Star`, `keyed2_star_vs_shipped_res`); in Scala neither
    the split's third lookup nor resolution's exists, and neither is measured — Stage 5.
+   **Stage 6 — DONE 2026-09-03 evening (§3i), outcome (T2): `makeEmpty` breaks the Stage 4
+   invariant only at the EMPTY row's carrier; the bound survives under the eager-propagation
+   order hypothesis, or unconditionally with the one-line repair (retain `v <- ()`). Stage 7,
+   if wanted: implement the repair behind a flag and gate it; then `unify`, the last deletion.**
    **Stage 5 — DONE 2026-09-03 (§3g), outcome: BOTH branches implemented and measured, both
    DEFAULT OFF.** `-Dermine.splitRow` and `-Dermine.resRow` exist in `Constraints.scala` with
    one shared lazy lookup, the correspondence is proved for the spec the compiler's lookup
@@ -595,5 +630,7 @@ the new defaults.
 | `core/.../Constraints.scala` | Stage 2: `GenRules.splitKey` (ADOPTED, default on since 1e6f52b), `SplitKeyed`, `splitConcrete`'s `resolvent` parameter. Stage 5: `GenRules.splitRow` / `GenRules.resRow` (**both default OFF**), the `SplitRow` / `ResolutionRow` tags, `splitConcrete`'s fourth branch, `resolution`'s third, and `learnPartitions`' lazy `concRows` lookup |
 | `tracker/lean/Rowpartition/KeyedRowScala.lean` | Stage 5: the correspondence for the two new branches, as a theorem about the spec the compiler's lookup really meets — `MyRowSpec` / `ConcRowSpec` (one `Option` row per variable, `k ⊆ C` asked explicitly), `myRowLookup_spec` / `concRowLookup_spec`, the erase lemmas `bare_erase_iff` and `resolved_erase_iff_row`, the four-branch `scalaRowSplit` with `scalaRowSplit_step : K2SplitStep` and the three-branch `scalaRowRes` with `scalaRowRes_step : K2ResStep`, `scalaRow_starStep`, and the two model-using lemmas `conc_key_subset_of_model` / `concRow_none_uncarried` that close the MINT-guard gaps |
 | `tracker/satterm/KEYED-ROW-STAGE5.md` | Stage 5 write-up: the implementation and its faithfulness note (where the compiler keeps a concrete row), every gate in four configurations with its command, the population figures, the deviations with their mechanisms, and Part C — the gate table, the two UNAPPLIED one-line flips with their ADOPTED comments, the re-run list, the honest scope and the per-flag recommendation |
+| `tracker/lean/Rowpartition/KeyedEmpty.lean` | Stage 6: `makeEmptyD`, `carried_not_invariant`, `hmeas_increases`, `mintsBoundedOnSat_emptyPersisting`, `mintsBoundedOnSatKeyed3E`, `G7_mints` |
+| `tracker/satterm/KEYED-EMPTY-STAGE6.md` | Stage 6 write-up |
 | `tracker/repro/satterm/seeds/W3.json`, `seeds/W4.json` | Stage 3's and Stage 4's witnesses as tracked `json:` seeds for `tracker/repro/satterm/sweep.sh` |
 | `tracker/tools/splitkey-counts.py`, `splitkey-sweep.sh`, `ei-classify.py` | Stage 2 instruments: split-branch counts per trace, the 110-module traced sweep, `.ei` signature classification |
