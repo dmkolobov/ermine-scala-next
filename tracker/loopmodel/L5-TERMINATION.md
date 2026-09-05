@@ -3241,3 +3241,864 @@ directions, not as results.
    `Rowpartition.lean` +3/−0, `Loop/Main.lean` (the `--mints` mode only), the plan's L5 row,
    `tracker/lean/README.md` additive, and this report.  Every other Lean module and every
    Scala file UNCHANGED.
+
+# Round 6 — 2026-09-05, after `L5-REVIEW.md`'s "Round-5 review" (V-13: R6.1–R6.3)
+
+The round-5 reviewer's judgement is that the question is **open**, and that five rounds of
+*measures* have gone as far as measures can go.  His three-item specification replaces the
+report's own directions, and this round follows it in his order of expected value:
+
+* **R6.3** the fragment the corpus actually lives in — inputs with **no concrete labels**;
+* **R6.1** a search for a **state cycle** (up to renaming of the minted ids), which is the
+  only shape a divergence of a deterministic loop can have;
+* **R6.2** the recast of termination as "**`incm` empties**", i.e. as saturation of the
+  derived set rather than as any measure.
+
+**Outcome in one line.**  **R6.3 lands, and it is the first unconditional `Terminates` of this
+stage that covers real input**: `noConc_terminates` proves termination on the whole
+no-concrete-labels fragment with the explicit fuel `measure3 … + 1`, and the corpus
+measurement confirms the review's claim exactly — **every one of the 373 row-carrying solves
+of the 129-module standard-library boot is in the fragment**, as is a quarter of the example
+corpus.  Stated exactly, and this is the round's headline:
+
+> **`Subst.solve` terminates on every row-constraint solve the Ermine standard library
+> performs** — booting alone, or while any corpus program is loaded: **15,377 of 15,377**
+> stdlib-located row-carrying solves across all 41 traces (373 of 373 in the bare boot) —
+> because every one of them presents an input with no concrete label, and on such an input
+> **the LOOP** is non-generative (`splitConcrete` and `resolution` are both refused before
+> their `fresh`, so `incorporateAll` draws no id and the vocabulary is fixed) and the three
+> quantities that can move — the environment, the processed set and the incoming queue — are
+> each bounded by that vocabulary.
+
+Two qualifiers on that sentence, both from the round-6 review and both applied throughout what
+follows.  **The corpus-wide figure is the reviewer's** (W-6e, W-7): this round measured the bare
+boot's 373 and the six example groups, and he added the `incomplete/` group and re-derived the
+whole thing, getting 15,377 of 15,377 stdlib-located row-carrying solves `NoConc`, 0 with a
+label.  And **"draws no id" is a statement about the LOOP, not about the whole solve** (W-6b):
+`PQueue.build`'s `aux` mints a name for a `Part` whose left-hand side is not a variable
+(`Constraints.scala:661–662`, modelled at `Json.lean:155–167`), and **8 of the 373 boot inputs
+have exactly that shape** — a `ConcreteRho` with an EMPTY field set on the left, in
+`Relation/Op.e` and `Relation.e`.  The theorem is unaffected and still covers those 8:
+`noConc_terminates_of_buildQueue` starts the state at the supply `buildQueue` returns, and
+`hconc` is a condition on the BUILT queue.  It is the word "solve" that has to be read as "the
+loop `Subst.solve` runs", which is what `Terminates` is about.
+
+R6.1's instrument is built, the theorem it needs is proved, and the search is a **quantified
+negative: no canonical repeat in 134,674 solves and 3,082,009 canonical states** (round 5's
+whole population re-run, 183 deep candidates at ten id bases, and a fresh 50,000-solve hunt),
+with 0 `FUEL` and 0 `REJECTED`.  R6.2 is **(T1) for the recast** and **(T2)** for the residual, with its strong form
+(`GuardComplete`) refuted by round 5's own witnesses — and the residual is FRAGMENT-RELATIVE
+(review W-6d): `terminates_of_bounds` carries `NoConc` along the run, so off the fragment it is
+no sharper than round 4's or round 5's.
+
+New modules: `Loop/Cycle.lean` (375 lines, 13 theorems), `Loop/NoConc.lean` (1,722 lines,
+88 theorems).  `Loop/Main.lean`
+gains a `--cycle` mode; `Rowpartition.lean` gains two imports.  No other Lean module and no
+Scala file is touched.  Audit after: **3611 theorems / 0 non-standard axioms, 854 jobs**
+(3494 / 852 before).
+
+## R6.3 — the NO-CONCRETE-LABELS fragment (`Loop/NoConc.lean`)
+
+### R6.3.1 The fragment, verbatim
+
+```lean
+/-- **The no-concrete-labels fragment.**  No partition of either queue carries a field label.
+The state is a system of pure decompositions `a <- (b, c, ...)` over row variables. -/
+def NoConc (s : State) : Prop := ∀ p ∈ s.parts, p.rhs.conc.elems = []
+```
+
+`State.parts` is `s.incm.elems ++ s.proc.elems` (`Loop/Wf.lean:1008`), so `NoConc s₀` at an
+initial state — where `proc` is empty — is exactly "every INPUT partition has an empty
+concrete part", which is what the corpus measurement below tests.
+
+### R6.3.2 Both generative rules are unreachable, and the LOOP draws no id
+
+```lean
+/-- **`splitConcrete` is unreachable**: its first guard refuses an empty concrete part, so it
+returns nothing and does not draw. -/
+theorem splitConcrete_noConc {fl : Flags} {v : Nat} {abstr : SSet Nat} {concr : SSet Lbl}
+    {rhss : RHS → Option Nat} {resolvent concRow emptyRow : SSet Lbl → Option Nat} {su : Sup}
+    (h : concr.elems = []) :
+    splitConcrete fl v abstr concr rhss resolvent concRow emptyRow su = (SSet.empty, su)
+
+/-- **`resolution` is unreachable** at a premise with two or more abstract parts: the
+lone-variable pattern fails before the `fresh`, so nothing is emitted AND no id is drawn. -/
+theorem resolution_noConc {fl : Flags} {v : Nat} {rhs1 rhs2 : RHS}
+    {resolvent concRow emptyRow : SSet Lbl → Option Nat} {su : Sup}
+    (h : rhs1.abstrSingle? = none) :
+    resolution fl v rhs1 rhs2 resolvent concRow emptyRow su = (SSet.empty, su)
+```
+
+The second is **stronger than the review's R6.3 predicts**.  V-13 says "`resolution` still
+draws an id before its guards — round 4's `resolution_draws` — so the theorem is *no fresh
+variable enters a partition*, not *no id is drawn*."  That is right about `resolution` in
+general and wrong about it on this fragment, and the reason is one line of
+`Constraints.scala`: `resolution` (`:1768`) is
+`if (!GenRules.resolves) Set() else (rhs1, rhs2) match { case (RHS(Single(x), concr1),
+RHS(Single(y), concr2)) => val z = fresh(…)` — the draw sits INSIDE the lone-variable arm, not
+before the match.  On the fragment the
+dequeued premise of a `learn` step has an empty concrete part and is not `single?` (or the
+dispatch would have unified), so `RHS.single?` and `RHS.abstrSingle?` coincide
+(`single_eq_abstrSingle`) and the premise has **two or more abstract parts** — the pattern
+fails, and the rule returns before the draw.  The consequence is recorded in the step lemma:
+
+```lean
+/-- **The step, on the fragment.**  `NoConc` is an invariant of `step`, the `concrete`
+dispatch branch is unreachable, and the supply does not move: the fragment is closed under
+the loop and the loop is non-generative on it. -/
+theorem step_noConc {s s' : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (h : NoConc s) (hst : step s = .continue s') :
+    NoConc s' ∧ s'.su = s.su ∧ s'.flags = s.flags
+
+/-- ...and therefore along a whole run. -/
+theorem run_noConc : ∀ (n : Nat) {s s' : State}, s.flags.disjRule = false →
+    s.flags.cseMints = false → NoConc s → Runs n s s' →
+    NoConc s' ∧ s'.su = s.su ∧ s'.flags = s.flags
+```
+
+**Scope of "no id is drawn" (round-6 review W-6b).**  `step_noConc`'s `s'.su = s.su` is about
+`step`, i.e. about `incorporateAll`.  It says nothing about `PQueue.build`, which runs BEFORE
+the loop and does draw when a `Part`'s left-hand side is not a variable
+(`Constraints.scala:661–662`); on the stdlib boot that happens on 8 of the 373 solves, whose
+left-hand side is a `ConcreteRho` with an empty field set.  Those 8 are still inside the
+fragment and still covered by the theorem — an empty concrete row contributes no label, so
+`NoConc` holds of the built queue, and `noConc_terminates_of_buildQueue` takes the state at the
+post-build supply.  Everywhere below, "no id is drawn" means "the loop draws no id".
+
+The two flag hypotheses are the SHIPPED defaults (`GenRules` reads `genRules=cut`, so
+`cseMints = false`, and `-Dermine.disjunction` ships off); they are the same two
+`Loop/Supply.lean`'s `learnPartitions_new` and `Loop/Hygiene.lean`'s `step_queueHygiene`
+carry.  `splitRow`, `resRow`, `resGuard`, `splitKey`, `labelCheck` are NOT restricted.
+
+What the preservation costs, rule by rule — every one of these is proved, none assumed:
+`rhsMerge_conc`, `rhsSubstitute_conc`, `selfSubstitution_conc`, `cancellation_conc`,
+`subBody_conc`, `substitution_conc`, `commonSubexpression_conc` (all five of its branches,
+including the mint it does not take), `commonSubexpression_su_of_cut`, then
+`learnPartitions_noConc` for the fold, `replace_conc` / `instantiate_conc` / `unifyVars_conc`
+for the two link branches, `makeEmpty_conc` for the empty branch, and — the one branch that
+simply cannot fire — `makeConcrete`, whose dispatch needs `RHSConcr`, i.e. an empty ABSTRACT
+part; with an empty concrete part too the right-hand side is `RHSEmpty` and the previous
+branch has already taken it.
+
+```lean
+/-- **The `learn` step, on the fragment.**  With no labels in the dequeued premise or in the
+processed queue, `learnPartitions` derives only label-free partitions and draws no id. -/
+theorem learnPartitions_noConc {fl : Flags} {ns : Names} {env : Env} {v : Nat} {rhs1 : RHS}
+    {incm proc : PQueue} {su : Sup} {S : SSet LPart} {su' : Sup}
+    (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (hc1 : rhs1.conc.elems = []) (hsg : rhs1.abstrSingle? = none)
+    (hp : ∀ x ∈ proc.elems, x.rhs.conc.elems = [])
+    (h : learnPartitions fl ns env v rhs1 incm proc su = .ok (S, su')) :
+    su' = su ∧ ∀ x ∈ S.elems, x.rhs.conc.elems = []
+```
+
+### R6.3.3 Termination on the fragment, with an explicit bound — PROVED
+
+Every `continue` step of the fragment is one of three kinds, and each moves one of three
+quantities:
+
+```lean
+/-- The trichotomy.  On the fragment the `concrete` branch is unreachable, so these three
+cases are exhaustive. -/
+theorem step_trichotomy {s s' : State} (hnc : NoConc s) (h : step s = .continue s') :
+    (IsLearnStep s ∧ s'.env = s.env) ∨
+    (s'.env.binds.length = s.env.binds.length + 1) ∨
+    (s'.env = s.env ∧ s'.proc = s.proc ∧ s'.incm.elems.length + 1 = s.incm.elems.length)
+```
+
+* a `learn` step strictly GROWS the processed set — `Order.learn_procSys_lt`, round 3: the
+  dequeued premise is `Partition.equals`-new, or the COMMON branch would have fired — and
+  leaves the environment alone;
+* a `common` / `unify` / `empty` step at DISTINCT variables strictly grows the environment
+  (`StrictBound.instantiate_env_len`, `makeEmpty_env_len`: `instantiateType` panics on a
+  variable already bound, so each of these branches adds exactly one binding);
+* a `common` / `unify` step at EQUAL variables changes nothing at all except that the
+  dequeued partition is gone — `unify` at equal variables is the identity, which is
+  `Order.common_self_drops`'s observation — so the incoming queue strictly shrinks.
+
+Flattening that lexicographic order gives an explicit fuel, from three BOUNDS:
+
+```lean
+/-- The lexicographic measure, flattened: the environment's room to grow weighs most, then
+the processed set's, then the incoming queue's own length. -/
+def measure3 (P Q E : Nat) (s : State) : Nat :=
+  (E - s.env.binds.length) * ((P + 1) * (Q + 1)) +
+    (P - (procSys s).card) * (Q + 1) + s.incm.elems.length
+
+/-- **The measure strictly decreases at every step of the fragment**, given the three
+bounds. -/
+theorem measure3_lt {P Q E : Nat} {s s' : State} (hw : Wf s) (hnc : NoConc s)
+    (hP' : (procSys s').card ≤ P) (hQ' : s'.incm.elems.length ≤ Q)
+    (hE' : s'.env.binds.length ≤ E) (h : step s = .continue s') :
+    measure3 P Q E s' < measure3 P Q E s
+
+theorem terminates_of_bounds {P Q E : Nat} {s : State}
+    (hw : ∀ t, Reaches s t → Wf t) (hnc : ∀ t, Reaches s t → NoConc t)
+    (hp : ∀ t, Reaches s t → (procSys t).card ≤ P)
+    (hq : ∀ t, Reaches s t → t.incm.elems.length ≤ Q)
+    (he : ∀ t, Reaches s t → t.env.binds.length ≤ E) : Terminates s
+```
+
+and all three bounds are then DISCHARGED, at `V := allVars (sys s)`, the initial state's own
+vocabulary.
+
+**The vocabulary, first.**  This is what round 5 left open, and on the fragment it closes.
+`Loop/Hygiene.lean`'s `Avoids B` machinery is parametric in `B`, and at `B := (· ∉ V)` the
+statement "every variable of `p` is in `V`" IS `Avoids B p.toConstraint`
+(`avoids_toConstraint_iff`).  Every rule lemma there is usable at that `B` except
+`commonSubexpression_avoids`, which carries a `SupAvoids B su` hypothesis it needs only for the
+minting branch `genRules=cut` closes; `commonSubexpression_avoids_cut` supplies the variant.
+The `learn` fold and the step then go through:
+
+```lean
+/-- **The vocabulary clause for the `learn` branch, on the fragment.**  Every partition
+`learnPartitions` derives mentions only variables the premises already mention.  This is the
+clause `Loop/Supply.lean`'s `learnPartitions_new` could not give: its conclusion is
+`Avoids (New Old su')`, i.e. "old OR unreachable", and the second disjunct is what a
+vocabulary bound cannot afford.  On the fragment it can be dropped, because neither generative
+rule fires. -/
+theorem learnPartitions_avoidsV {B : Var → Prop} {fl : Flags} {ns : Names} {env : Env}
+    {v : Nat} {rhs1 : RHS} {incm proc : PQueue} {su : Sup} {S : SSet LPart} {su' : Sup}
+    (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (hc1 : rhs1.conc.elems = []) (hsg : rhs1.abstrSingle? = none)
+    (hv : ¬ B v) (hr1 : ∀ w ∈ rhs1.abstr.elems, ¬ B w)
+    (hi : ∀ x ∈ incm.elems, Avoids B x.toConstraint)
+    (hp : ∀ x ∈ proc.elems, Avoids B x.toConstraint)
+    (h : learnPartitions fl ns env v rhs1 incm proc su = .ok (S, su')) :
+    ∀ x ∈ S.elems, Avoids B x.toConstraint
+
+/-- **Every variable of the state is in `V`** -- in either queue and in the environment. -/
+def InVoc (V : Finset Var) (s : State) : Prop :=
+  (∀ p ∈ s.parts, Avoids (fun w => w ∉ V) p.toConstraint) ∧
+    (∀ b ∈ s.env.binds, Avoids (fun w => w ∉ V) (EnvVal.toConstraint b.1 b.2))
+
+/-- **The vocabulary does not grow, on the fragment.** -/
+theorem step_inVoc {V : Finset Var} {s s' : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hnc : NoConc s) (h0 : InVoc V s)
+    (h : step s = .continue s') : InVoc V s'
+
+/-- Every state is `InVoc` at its OWN vocabulary, so the `V` of the bounds is not an
+assumption: it is `allVars (sys s)` of the initial state. -/
+theorem inVoc_self (s : State) : InVoc (allVars (sys s)) s
+```
+
+**Then the three bounds.**
+
+```lean
+/-- **Bound one: the environment.** -/
+theorem env_len_le_card {V : Finset Var} {s : State} (h : InVoc V s) (hnd : EnvNodup s) :
+    s.env.binds.length ≤ V.card
+
+/-- **Bound two: the processed set.**  Every processed partition is a `mk`-shaped constraint
+over `V` with an empty concrete part, so it is one of `DefaultTerm.forms V ∅`. -/
+theorem procSys_card_le {V : Finset Var} {s : State} (h : InVoc V s) (hnc : NoConc s) :
+    (procSys s).card ≤ V.card * 2 ^ V.card
+```
+
+**Bound three is the queue, and it needed a fact nothing in the development had.**  The queue
+bounds itself: `Q.insert` refuses a partition already present AT THE SAME SEARCH KEY
+`(rhs.hashCode, lhs.hashCode)`, and its test is one-directional (`x.eqv p` against the elements
+already there), so what an insertion establishes for a PAIR is that at least one of the two
+directions fails — which is symmetric, hence a `List.Pairwise` invariant:
+
+```lean
+/-- The queue's own de-duplication test, symmetrised. -/
+def KRel (a b : LPart) : Prop :=
+  (PQueue.keyEq (PQueue.keyOf a) (PQueue.keyOf b) && a.eqv b) = false ∨
+    (PQueue.keyEq (PQueue.keyOf b) (PQueue.keyOf a) && b.eqv a) = false
+
+def KDist (l : List LPart) : Prop := l.Pairwise KRel
+```
+
+Turning it into a length bound needs `Partition.equals` to imply equality of the SEARCH KEY,
+i.e. `RHS.hashCode` not to depend on a set's iteration order.  It does not, and the reason is
+arithmetic — **`MurmurHash3.unorderedHash` folds a sum, an exclusive-or and a product, all
+commutative and associative on a Java `int`**:
+
+```lean
+theorem unorderedHash_perm {l1 l2 : List I32} (h : l1.Perm l2) (seed : I32) :
+    Murmur.unorderedHash l1 seed = Murmur.unorderedHash l2 seed
+
+theorem keyEq_of_eqv {p q : LPart} (hpa : p.rhs.abstr.Nodup) (hpc : p.rhs.conc.Nodup)
+    (hqa : q.rhs.abstr.Nodup) (hqc : q.rhs.conc.Nodup) (h : p.eqv q = true) :
+    PQueue.keyEq (PQueue.keyOf p) (PQueue.keyOf q) = true
+
+/-- The separating map: on the fragment a partition is determined, up to `Partition.equals`,
+by its left-hand side and the SET of its abstract parts. -/
+def sepMap (p : LPart) : Nat × Finset Nat := (p.lhs, p.rhs.abstr.elems.toFinset)
+
+theorem kdist_length_le {V : Finset Var} {s : State} {l : List LPart}
+    (hw : Wf s) (hnc : NoConc s) (hv : InVoc V s)
+    (hsub : ∀ p ∈ l, p ∈ s.parts) (hk : KDist l) :
+    l.length ≤ V.card * 2 ^ V.card
+```
+
+(The `Nodup` side conditions are `Wf`'s four, which `Loop/Wf.lean`'s `step_wf` has carried
+since L3; `SSet.eqv_iff_toFinset` and `List.perm_of_nodup_nodup_toFinset_eq` do the rest.)
+
+**And the theorem:**
+
+```lean
+/-- **`Terminates` ON THE FRAGMENT, with an explicit bound.** -/
+theorem noConc_terminates {s : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hw : Wf s) (hnd : EnvNodup s) (hnc : NoConc s)
+    (hki : KDist s.incm.elems) (hkp : KDist s.proc.elems) : Terminates s
+
+/-- The same, as the explicit FUEL. -/
+theorem noConc_run {s : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hw : Wf s) (hnd : EnvNodup s) (hnc : NoConc s)
+    (hki : KDist s.incm.elems) (hkp : KDist s.proc.elems) :
+    Finished (run s
+      (measure3 ((allVars (sys s)).card * 2 ^ (allVars (sys s)).card)
+        ((allVars (sys s)).card * 2 ^ (allVars (sys s)).card) (allVars (sys s)).card s + 1))
+
+/-- **The corollary for a real solve.**  An INITIAL state -- `proc` and `env` empty and the
+incoming queue built by `Json.buildQueue`, which is the shape both `Seed.solve` and
+`Replay.replay` construct -- whose INPUT partitions carry no concrete label TERMINATES. -/
+theorem noConc_terminates_of_input {ps : List LPart} {fl : Flags} {ns : Names} {site : String}
+    {su : Sup} {tr : List String} {z : Nat}
+    (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (hconc : ∀ p ∈ (PQueue.ofList ps).elems, p.rhs.conc.elems = [])
+    (hw : Wf { incm := PQueue.ofList ps, proc := PQueue.empty, env := {}, su := su,
+               trace := tr, flags := fl, names := ns, site := site, su0 := z }) :
+    Terminates { incm := PQueue.ofList ps, proc := PQueue.empty, env := {}, su := su,
+                 trace := tr, flags := fl, names := ns, site := site, su0 := z }
+```
+
+**The bound, written out.**  With `n := |allVars (sys s₀)|` the fuel is
+`measure3 (n·2ⁿ) (n·2ⁿ) n s₀ + 1`, i.e. at most
+`n · (n·2ⁿ + 1)² + (n·2ⁿ) · (n·2ⁿ + 1) + |incm₀| + 1` dequeues — a bound of order `n²·4ⁿ`.  It
+is not tight and is not meant to be: the three factors are (the number of variables that can
+be eliminated) × (the number of distinct label-free constraints over them) × (the queue's own
+capacity), and every one of the three is the crude combinatorial count.  On the stdlib boot
+`n` is at most 13 partitions' worth of variables and the loop finishes in at most a few dozen
+dequeues; the theorem's job is to be finite, not small.
+
+```lean
+/-- **The theorem a reviewer applies to a real solve.**  Both `Seed.solve` and
+`Replay.replay` build `{ incm := q, proc := empty, env := {}, ... }` with
+`buildQueue cs su = .ok (q, su')`; `Wf` of that state is `Wf.wf_initial` / `Wf.wf_seed` /
+`Wf.wf_replay`.  If the built queue carries no concrete label -- which is what the corpus
+measurement tests, and what all 373 row-carrying stdlib-boot solves satisfy -- the solve
+TERMINATES. -/
+theorem noConc_terminates_of_buildQueue {cs : List CsItem} {su : Sup} {q : PQueue} {su' : Sup}
+    {fl : Flags} {ns : Names} {site : String} {tr : List String} {z : Nat}
+    (hq : buildQueue cs su = .ok (q, su'))
+    (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (hconc : ∀ p ∈ q.elems, p.rhs.conc.elems = [])
+    (hw : Wf { incm := q, proc := PQueue.empty, env := {}, su := su', trace := tr,
+               flags := fl, names := ns, site := site, su0 := z }) :
+    Terminates { incm := q, proc := PQueue.empty, env := {}, su := su', trace := tr,
+                 flags := fl, names := ns, site := site, su0 := z }
+```
+
+**Hypotheses, and why none of them is a weakening.**  `disjRule = false` and `cseMints = false`
+are the SHIPPED defaults and are the same two `RefineLearn.step_refines_all`,
+`Supply.step_supFresh` and `Hygiene.step_queueHygiene` carry.  `Wf` is L3's invariant, proved
+for every initial state (`Wf.lean` §8) and preserved (`step_wf`).  `EnvNodup` and the two
+`KDist`s are DISCHARGED at an initial state by `noConc_terminates_of_input`
+(`envNodup_initial`, `kdist_ofList`, and `PQueue.empty`), which is the shape `Seed.solve` and
+`Replay.replay` build.  So the corollary's only real hypothesis is the fragment itself.
+(`Wf.wf_replay`'s own side condition `CsItem.SetsOk` — "every concrete row really is a set" —
+is vacuous on the fragment: a `concRho fs` with a nonempty `fs` would put a label into the
+built partition, so on a `NoConc` input every `concRho` is empty and `[].Nodup` holds.)
+
+**And what the certification is a certification OF.**  The theorem is about the LOOP MODEL,
+`Rowpartition.Loop.step`.  The bridge to the compiler is stage L2's, and it is the strongest
+one this project has: the model reproduces `Constraints.incorporateAll`'s own
+`-Dermine.rowTrace` records — branch, partition, `incm=`, `proc=`, every `learn` line, the
+saturated set — on **2,355,430 corpus segments with 0 mismatches and 0 skips**
+(`L2-CORPUS.md` §4a), including all 54,199 of the boot's.  So "the standard library boot
+terminates" is proved of the model and verified of the compiler on exactly those solves; it is
+not a claim about `Subst.solve`'s Scala source read directly.
+### R6.3.4 The corpus measurement — every row-carrying stdlib-boot solve is in the fragment
+
+Traces regenerated from scratch for this round (not the round-5 reviewer's), one JVM per
+corpus group, serialised loader, interfaces off:
+
+```
+ERMINE_JAVA_OPTS="-XX:ActiveProcessorCount=2 -Xmx3000m -Dermine.useInterface=false \
+  -Dermine.loadInSeries=true -Dermine.rowTrace=<out>/<group>.tsv" bin/ermine <group's files>
+```
+
+(`tmp/L5r6/gentrace.sh`; the seven groups `boot top Ai shouldfail bugs guide
+shouldfail-controls` = 75 of the 110 example files.  `incomplete/` — the remaining 35, run
+one JVM per file because several are non-terminating by design — is NOT included; see the
+caveat below.)  The census reads the `inpart` records (`Subst.scala:1215`, fields
+`prov / lhs / abstr / conc`), segmenting per THREAD at `sin` boundaries:
+`python3 tmp/L5r6/fragcensus.py tmp/L5r6/traces/*.tsv.gz`.
+
+| group | solves | with a row constraint | building ≥1 partition | **`NoConc`** | with a concrete label | `LinkOnly` (R5.4) |
+|---|---|---|---|---|---|---|
+| `boot` (129-module stdlib) | 54,199 | 383 | **373** | **373 (100 %)** | **0** | 4 |
+| `top` | 92,673 | 5,424 | 5,412 | 1,670 | 3,742 | 5 |
+| `Ai` | 83,942 | 4,494 | 4,484 | 1,461 | 3,023 | 5 |
+| `shouldfail` | 56,032 | 647 | 605 | 442 | 163 | 4 |
+| `bugs` | 54,235 | 383 | 373 | 373 | 0 | 4 |
+| `guide` | 54,244 | 383 | 373 | 373 | 0 | 4 |
+| `shouldfail-controls` | 54,739 | 447 | 437 | 391 | 46 | 4 |
+
+`bugs` and `guide` reproduce `boot` exactly, which is L2-CORPUS §4a's point that those two
+groups raise no row constraint of their own.  The per-group figures therefore double-count the
+boot; de-duplicated by `loc`, the EXAMPLE corpus proper is
+(`python3 tmp/L5r6/excensus.py tmp/L5r6/traces/{top,Ai,shouldfail,bugs,guide,shouldfail-controls}.tsv.gz`):
+
+| population | solves | building ≥1 partition | **`NoConc`** | with a concrete label | `LinkOnly` |
+|---|---|---|---|---|---|
+| solves whose `loc` is under `core/examples` | 48,583 | **9,362** | **2,388 (25.5 %)** | 6,974 | **0** |
+
+Three readings, and the first is the round's headline measurement:
+
+* **The whole stdlib boot is in the fragment.**  All 383 row-carrying boot segments are
+  `NoConc`; 373 of them build at least one partition and 10 build none at all (`nRows > 0`
+  but every row constraint is discharged before `PQueue.build` — those are trivially finished
+  in one dequeue).  **0** boot solves carry a concrete label anywhere in their input.  The
+  round-5 review's "373 row-carrying boot solves" and L2-CORPUS §4a's "383" are the same
+  population counted with and without those 10.
+* **The step census bears it out.**  Over the whole `boot` trace the derived-partition
+  provenance histogram is `CommonSubexpression 221, Substitution 114, Cancellation 9` and the
+  dispatch histogram is `learn 1056, unify 38, empty 30, common 19` — **zero `Resolution`,
+  zero `SplitConcrete`, zero `SplitKeyed`, zero `concrete` steps**, which is exactly what
+  `splitConcrete_noConc`, `resolution_noConc` and the unreachability of the `concrete` branch
+  predict.  On the examples the two generative rules DO fire: `SplitConcrete 422`,
+  `Resolution 106`, `SplitKeyed 23`, `SplitRow 1`, `ResolutionRow 6`.
+* **`LinkOnly` (round 5's fragment) is 4 of 373 on the boot and 0 of 9,362 on the examples**,
+  which reproduces the round-5 review's W-1 (his 4 and 5) and shows how much the widening is
+  worth: from 4 solves to all 373.  (His fifth is `Layout/Scan.e(1:1)`, a stdlib module the
+  bare boot does not load but every example group does; it is a `core/target/…/modules/` `loc`,
+  so this table counts it under the group and the examples-only table does not count it at
+  all.)
+* **And the residual holds empirically where the proof is missing.**  Of the 373 boot solves,
+  361 write a saturated set; in **361 of 361** that set is concrete-free (which
+  `run_noConc` proves) **and mentions no variable absent from the input** (which is exactly
+  the vocabulary clause R6.3.3 names as missing).  On the examples the second figure is 1,843
+  of 1,878 for the round-5 reviewer's ten-module set — the 35 exceptions are solves where the
+  generative rules fired, i.e. precisely outside the fragment.
+
+**What the measurement certifies, stated exactly.**  Combining it with R6.3.3:
+
+> Termination is proved for every solve of the Ermine standard library that raises a row
+> constraint — 373 of 373 in the bare boot, and **15,377 of 15,377 stdlib-located row-carrying
+> solves across all 41 traces** (round-6 review W-6e, W-7) — and with it non-generativity: on
+> those solves the loop draws no id, invents no variable, and both minting rules are refused
+> before their `fresh`.
+
+The stronger figure is the reviewer's, and it is worth stating separately because it is a
+different claim: not "the boot's own 373, repeated in every group", but every solve any stdlib
+module performs while any corpus program is loaded.  He counted **2,322 row-carrying solves
+with a stdlib `loc` across the six example groups, 2,322 of 2,322 `NoConc`, 0 with a label**,
+and — closing the caveat this round recorded — traced all 34 `.e` modules of `incomplete/`
+(1,851,131 segments, all finishing inside a 90 s cap) and found its stdlib half **12,682 of
+12,682 `NoConc`**, with the group's OWN solves the thinnest part of the corpus (425 of 1,283,
+33 %) and its labelled inputs concentrated in exactly the label-heavy modules it exists for.
+
+The step census is the independent check on the last clause: **0 `Resolution` and 0
+`SplitConcrete` records in 54,199 boot segments**.  On the examples the fragment covers 2,388
+of 9,362 row-carrying solves (25.5 %), so a quarter of the example corpus is certified too and
+the rest is not.  The one population this round did not measure was the 35 `incomplete/` files — skipped because
+they are non-terminating by design and a rowTrace of one writes ~8 MB/s.  **The round-6 reviewer
+measured them (W-7) and the caveat is closed**: all 34 `.e` modules of the group finish inside a
+90 s cap, and of their 13,965 partition-building row-carrying solves, the 12,682 with a stdlib
+`loc` are 12,682 `NoConc` and the 1,283 of the group's own are 425 `NoConc` / 858 labelled.
+
+### R6.3.4a How much further the fragment could go — a measurement for round 7
+
+`NoConc` is proved and covers 100 % of the boot and 25.5 % of the examples.  The obvious
+question is what the next fragment should be, and the traces answer it
+(`python3 tmp/L5r6/nextcensus.py tmp/L5r6/traces/{top,Ai,shouldfail,bugs,guide,shouldfail-controls}.tsv.gz`):
+
+| of the 9,362 row-carrying EXAMPLE solves | count | share |
+|---|---|---|
+| `NoConc` — the proved fragment | 2,388 | 25.5 % |
+| `splitConcrete` cannot fire on the INPUT (no partition has a nonempty concrete part AND ≥2 abstract parts) | 9,256 | 98.9 % |
+| `resolution` cannot fire on the INPUT (no two lone-abstract premises at one variable with incomparable concrete parts) | **9,362** | **100 %** |
+| NEITHER can fire on the input | 9,256 | 98.9 % |
+| the run in fact derived nothing by any generative rule (measured from the `sat` provenances) | 9,146 | 97.7 % |
+| **…blocked at the input yet a generative rule FIRED anyway** (reviewer, W-9) | **111** | **1.2 %** |
+| the saturated set introduces a variable absent from the input (reviewer, W-9) | 220 of 9,340 | 2.4 % |
+| **the vocabulary demonstrably NOT grown — the honest ceiling** (reviewer, W-9) | **9,120** | **97.6 %** |
+
+So the corpus is overwhelmingly non-generative, and the gap between 25.5 % and 98.9 % is
+entirely a PRESERVATION question: on 9,256 of the 9,362 the two rules are blocked at the input,
+and on 9,146 they never fire at all, but "blocked at the input" is not an invariant — a step
+can create a partition with a nonempty concrete part and two abstract parts (that is what
+`substitution` and `commonSubexpression` do), and `NoConc` is the largest condition this round
+could prove closed under `step`.
+
+**And the round-6 reviewer put a number on that, which REFUTES the naive widening (W-9).**  Of
+the 9,256 example solves where neither generative rule can fire on the input, **111 fire one
+anyway during the run** — `SplitConcrete` 230 firings, `Resolution` 106, `SplitKeyed` 23,
+`ResolutionRow` 6, `SplitRow` 1 — and the partitions that unblock `splitConcrete` are derived by
+`Substitution` (164) and `CommonSubexpression` (37).  So the input-only condition is **not an
+invariant, and the corpus exhibits its failure 111 times**: a round 7 cannot simply widen
+`NoConc` to it.  The reviewer also measured the honest ceiling for the property
+`noConc_terminates` actually uses — the vocabulary being fixed: of the 9,340 example solves with
+a saturated set, **220 (2.4 %) introduce a variable absent from the input** and **9,120 (97.6 %)
+demonstrably do not**.  **97.6 %, not 98.9 %, is the target**, and the missing 2.4 % is where
+the whole open problem lives.  A round 7 aiming at "no id is ever DRAWN into a partition" would
+certify that, and much of this round's
+machinery transfers unchanged — `measure3_arith`, `env_len_le_card`, every `KDist` preservation
+lemma, `unorderedHash_perm` and `keyEq_of_eqv` are stated for arbitrary states.  Three things
+would have to be redone, and they are exactly where `NoConc` is used beyond fixing the
+vocabulary: `step_trichotomy` uses it to make the `concrete` dispatch branch unreachable (a
+wider fragment must either kill that branch too or find something that decreases on it — the
+one branch `StrictBound.lean` already flags as unbounded), and `procSys_card_le` and
+`kdist_length_le` use `conc = ∅` to make `(lhs, the set of abstract parts)` a separating map
+(with labels the map has to carry the concrete part, and the bound picks up the `2^{|L|}`
+factor `DefaultTerm.card_forms_le` already has).
+
+### R6.3.4b The fragment is inhabited, and it is entirely inside the satisfiable class
+
+Two small facts that a reviewer will want and that the round-5 review asked for about
+`LinkOnly` (its V-7 item 5):
+
+```lean
+/-- **The fragment is inhabited by a state that runs.**  Three label-free constraints over
+five variables, at id base 5. -/
+def nS0 : State := …   -- `buildQueue` of the three constraints, `proc` and `env` empty
+theorem nS0_size : nS0.incm.elems.length = 3 := rfl
+theorem nS0_noConc : NoConc nS0
+theorem nS0_solved : Finished (run nS0 40) := trivial
+theorem nS0_nodraw : (match run nS0 40 with | .solved s => s.su.drawn | _ => 99) = 0 := rfl
+
+/-- **The fragment is entirely inside the SATISFIABLE class**, so the plan's acceptance
+criterion ("for every satisfiable `Wf s₀`") costs nothing here: a system with no concrete
+label is satisfied by sending every variable to the EMPTY row. -/
+theorem ssat_of_no_conc {G : System} (h : ∀ c ∈ G, c.conc = (∅ : Finset Label)) : SSat G
+```
+
+The second matters for the plan's L5 row: the acceptance criterion quantifies over
+*satisfiable* `Wf s₀`, and on this fragment satisfiability is free — every label-free partition
+system has the all-empty model — so `noConc_terminates` needs no satisfiability hypothesis and
+loses nothing by not having one.
+
+### R6.3.5 The theorem checked against the model and against the compiler
+
+Three independent checks, because a termination theorem whose fragment is empty in practice is
+worth nothing and one whose hypotheses are subtly wrong is worse.
+
+| check | command | result |
+|---|---|---|
+| the model on the WHOLE corpus | `looptrace --replay <group>.tsv` on the four traces this round generated | `boot` **54,199 replayed, 0 skipped, 0 hashdiff, 0 eqdiff, 0 rejected, 0 FUEL**; `top` 92,673 / 0 / 0; `Ai` 83,942 / 0 / 0; `shouldfail` 56,032, 0 fuel, 32 rejected (those modules are meant to fail) |
+| the model on 5,244 SYNTHETIC label-free solves | `tmp/L5r6/hunt/gennoconc.py 1500 10 5 14 popNC` then `huntc.sh popNC 4 3000 popNC.tsv 6` | 1,311 seeds × 4 id bases = **5,244 solves, all SOLVED, 0 FUEL, and 0 ids drawn in total** — `step_noConc`'s `s'.su = s.su`, measured |
+| the SHIPPED COMPILER on ten of those seeds at ten id bases | `ERMINE_JAVA_OPTS=-Dermine.useInterface=false tracker/repro/satterm/run.sh sweep json:<seed> 0 9 30 20` | **100 solves, `SOLVED=10 REJECTED=0 HANG=0 OOM=0` on every seed, and `DRAWN min=0 median=0 max=0 histogram 0:x10` on every seed** — the compiler draws no id either.  (These seeds' left-hand sides are all variables, so `PQueue.build` draws nothing on them and the 0 is the whole solve's, not only the loop's — see W-6b above) |
+
+The generator (`gennoconc.py`) fixes a valuation first and emits only `w <- (v₁ … v_k)` with the
+parts' rows pairwise disjoint and their union `rho w` and NO labels anywhere, so every seed is
+satisfiable by construction and every seed is in the fragment; a checker re-verifies the label
+count is zero.
+
+## R6.1 — a STATE CYCLE, up to renaming of the minted ids (`Loop/Cycle.lean`)
+
+### R6.1.1 The theorem: a repeat is `not_Terminates`
+
+The review promised this in "one line (`run` is deterministic)".  It is one line once `step`
+is known to be a function of the state's OPERATIVE part — which had never been stated, because
+`State` also carries the trace, the site and `su0`, and the trace grows at every step, so
+literal state equality never recurs and the naive statement is vacuous.
+
+```lean
+/-- **The operative core of a state.**  `step` reads the two queues, the environment, the
+supply, the flags and the name table, and writes the first four; `trace`, `site` and `su0`
+are carried for the records and never inspected by a rule. -/
+def SEq (s t : State) : Prop :=
+  s.incm = t.incm ∧ s.proc = t.proc ∧ s.env = t.env ∧ s.su = t.su ∧
+    s.flags = t.flags ∧ s.names = t.names
+
+/-- **`step` is a function of the core.** -/
+theorem step_decor (s : State) (tr : List String) (si : String) (z : Nat) :
+    ∀ s', step s = .continue s' →
+      ∃ t', step { s with trace := tr, site := si, su0 := z } = .continue t' ∧ SEq s' t'
+
+/-- **The congruence, forwards.** -/
+theorem step_congr {s t : State} (h : SEq s t) {s' : State} (hs : step s = .continue s') :
+    ∃ t', step t = .continue t' ∧ SEq s' t'
+
+/-- `n` `continue` steps from `s` to `t`. -/
+def Runs : Nat → State → State → Prop
+  | 0, s, t => s = t
+  | n + 1, s, t => ∃ s', step s = .continue s' ∧ Runs n s' t
+
+/-- **A CYCLE IS A DIVERGENCE.**  If a run of `n ≥ 1` `continue` steps returns to a state
+`SEq`-equal to where it started, the loop does not terminate.  `run` is a function of `step`
+and `step` is a function of `SEq`, so nothing more is needed. -/
+theorem not_terminates_of_cycle {s t : State} {n : Nat} (hn : 0 < n) (hr : Runs n s t)
+    (heq : SEq t s) : ¬ Terminates s
+```
+
+`step_decor` is the whole content: five dispatch branches, each showing that changing the
+three decorative fields changes only the three decorative fields of the answer, plus
+`foldl_log_state` for the `learn` branch's record fold (`RefineLearn.lean` had the `env` and
+`flags` projections of that; the general form is what `SEq` needs).  `run_seq` lifts it to
+`run`, and `not_terminates_of_cycle` is a strong induction on the fuel: an answer at fuel `m`
+gives one at `m − n`, and `Runs.not_finished` says there is none below `n`.
+
+### R6.1.2 The canonical form, and what the quotient is NOT
+
+```lean
+/-- The minted ids of a state, in FIRST-OCCURRENCE order: the incoming queue then the
+processed queue, each in its own order, each partition's left-hand side then its abstract
+parts in iteration order, then the environment's bindings.  An id below `su0` is an INPUT
+variable and is not renamed. -/
+def mintOrder (s : State) : List Nat
+
+/-- **The canonical state**: the two queues in order and the environment, with every minted
+id renamed.  The supply is deliberately absent. -/
+def canonState (s : State) : String
+
+/-- **The exact state**: no renaming, and the supply included. -/
+def rawState (s : State) : String
+```
+
+Two things have to be said plainly about this quotient, and neither is in the review.
+
+**(a) Why the supply must be quotiented away.**  `Sup.fresh` increments `drawn` and `lo` on
+BOTH of its arms, so any run that draws an id has a strictly increasing supply and can never
+repeat a state exactly.  An exact cycle is possible only in a draw-free run; the divergence
+this stage is hunting mints without bound.  So the renaming quotient is not a convenience —
+it is the only quotient under which the search can succeed at all, and the exact detector
+(`rawState`) is reported alongside only because it is the one the theorem applies to.
+
+**(b) NEITHER detector's hit would have been a proof — both are candidates.**  Two separate
+reasons, and the round-6 review (W-6a) caught the second, which this report previously got
+wrong.
+
+*The canonical detector*: `V.hashCode` IS the id; the queue is ordered by
+`(rhs.hashCode, lhs.hashCode)` and the dequeue priority is a reverse-topological index computed
+over a hash-ordered node set.  A permutation of the minted ids can therefore change which
+partition is dequeued next, so `SEq` is not implied by `canonState` equality.
+
+*The exact detector*: `rawState` renders `incm.elems`, `proc.elems`, `env.binds` and
+`su.{lo,hi,drawn}` — but `SEq` demands `s.incm = t.incm` for the whole `PQueue`, which is
+`⟨elems, graph⟩`, and the `Graph` is not a decoration (`PQueue.dequeue` reads `graph.sort`, and
+the graph keeps nodes and edges that removals from `elems` do not), plus `Sup.blk`/`bsz`,
+`flags` and `names`.  So two states can share a `rawState` and fail `SEq`, and **an exact hit is
+a candidate whose graphs, supply block and flags would have to be compared** — not, as this
+report said in its first draft, "a proof by `not_terminates_of_cycle`".
+
+**The direction the search is used in is sound in both readings.**  `canonState` and `rawState`
+are functions of the state, so an `SEq` repeat forces a `rawState` repeat forces a `canonState`
+repeat: **no canonical repeat means no `SEq` cycle**, which is exactly what R6.1.3 reports.  Any
+hit would have been replayed through the compiler, and its `SEq` checked, before being claimed.
+
+### R6.1.3 The search, and its cross-check
+
+**No repeat, in 134,674 solves and 3,082,009 canonical states.**  That is the strongest negative
+this stage can produce, because it rules out the only shape a divergence of a deterministic
+loop can have.
+
+`tmp/L5r6/hunt/bighuntc.sh` (under `setsid nohup`, log `bighuntc.log`) runs three things: round
+5's whole population re-run under `--cycle`, 183 deep candidates collected into `deep/` (the
+round's four climbers' bests, the round-5 reviewer's ten climbs `L3`/`L4`/`L6`/`L8`/`L10`/
+`D21`–`D25`, both Lean witnesses `min2`/`minC1`, `climb9`, and every seed of round 5's
+`cand-deep.txt`), and a FRESH 50,000-solve hunt biased exactly as round 5's (`gen5.py`, one hub,
+weights `0.30,0.30,0.30,0.10`, `--start` 500000/600000/700000 so no seed is a repeat of round
+5's).  `tmp/L5r6/hunt/cycsum.py` tabulates it:
+
+| population | shape | solves | canonical states | max dequeues | ids drawn | verdicts |
+|---|---|---|---|---|---|---|
+| `r5-popA` … `r5-popG` | round 5's seven 200-seed populations × 4 bases | 5,600 | 124,632 | 197 | 56,857 | 5,600 SOLVED |
+| `r5-deep` | 183 deep candidates × 10 bases | 1,830 | 93,457 | **340** | 54,383 | 1,830 SOLVED |
+| `r5-popH2` | 8,000 seeds (12 vars, 6 labels, 16 cons) × 6 bases | 48,000 | 1,020,195 | 324 | 366,664 | 48,000 SOLVED |
+| `r5-popI` | 3,000 seeds (14/6/24) × 4 bases | 12,000 | 319,501 | 284 | 113,404 | 12,000 SOLVED |
+| `r5-popJ` | 3,000 seeds (16/8/28) × 4 bases | 12,000 | 301,358 | 227 | 108,813 | 12,000 SOLVED |
+| **`popK`** (fresh) | 6,000 seeds (12/6/16) × 4 bases | **24,000** | 512,570 | 236 | 188,957 | 24,000 SOLVED |
+| **`popL`** (fresh) | 4,000 seeds (14/6/24) × 4 bases | **16,000** | 426,249 | 197 | 153,027 | 16,000 SOLVED |
+| **`popM`** (fresh) | 2,500 seeds (16/8/28) × 4 bases | **10,000** | 253,268 | 289 | 86,448 | 10,000 SOLVED |
+| `popNC` | 1,311 LABEL-FREE seeds × 4 bases (R6.3's fragment) | 5,244 | 30,779 | 18 | **0** | 5,244 SOLVED |
+| **total** | | **134,674** | **3,082,009** | 340 | 1,128,553 | **134,674 SOLVED, 0 REJECTED, 0 FUEL** |
+
+* **Canonical repeats: 0.  Exact repeats: 0.**  (The fresh hunt alone is 50,000 solves and
+  1,192,087 canonical states.)
+* **An independent cross-check of the detector.**  `cycleRun` reports both the number of
+  dequeues and the number of DISTINCT canonical states it saw.  If a state ever repeated, the
+  second would be smaller than the first plus one.  Across all **134,674** runs,
+  `states = steps + 1` holds in **every single one** — computed from a different column of the
+  `.tsv` than the `canon=`/`exact=` fields, so the negative is not resting on one code path:
+  `zcat *.tsv.gz | awk -F'\t' '$3=="cycle"{gsub("steps=","",$5); gsub("states=","",$6); n++;
+  if($6+0 != $5+0+1) bad++} END {print n, bad+0}'` prints `134674 0`.
+* **And the fragment's own population confirms the theorem's headline clause**: on the 5,244
+  label-free solves the total number of ids drawn is **0**, which is `step_noConc`'s
+  `s'.su = s.su` measured rather than proved.
+* No compiler replay was owed, because there was nothing to replay: a hit would have been
+  replayed at ten id bases before being claimed (that is what §R6.5 item 9 does for round 5's
+  deepest witness, which still `SOLVED=10 HANG=0`).
+
+**What this does and does not settle.**  It does not prove termination; it rules out the one
+shape a divergence could take *and be detected by a finite run*, over the largest and most
+directed population the stage has searched.  Round 5's own directed search (hill-climbing on
+mints-at-one-key) plateaued at 9, the round-5 reviewer reached 10, and this round adds 134,674
+runs with a detector aimed at the divergence itself rather than at a proxy for it — still 0
+`FUEL`, still no repeat.  Against that, the honest caveat of R6.1.2(b) stands: the quotient is
+not a congruence, so the search could in principle miss a divergence that revisits a state only
+up to a renaming the queue order distinguishes.
+
+## R6.2 — "`incm` empties": termination as saturation of the derived set (`Loop/NoConc.lean` §8)
+
+### R6.2.1 The recast, proved
+
+```lean
+/-- A state the loop cannot step from. -/
+def Stuck (t : State) : Prop := ∀ t', step t ≠ .continue t'
+
+/-- **`done` IS the empty incoming queue.**  `step`'s only `done` is its first branch. -/
+theorem step_done_dequeue {t u : State} (h : step t = .done u) : t.incm.dequeue = none
+
+/-- **Termination is reaching a stuck state.** -/
+theorem terminates_iff_stuck {s : State} :
+    Terminates s ↔ ∃ (n : Nat) (t : State), Runs n s t ∧ Stuck t
+
+/-- **"`incm` empties" is the recast R6.2 asks for.**  On a run that does not DIE -- which is
+what round 3's `run_refutes_all` gives on a satisfiable input, every death of the loop being a
+refutation of the system it was handed -- `Terminates` is exactly "the incoming queue
+empties". -/
+theorem terminates_iff_incm_empties {s : State}
+    (hnd : ∀ (n : Nat) (t : State), Runs n s t → ∀ m u, step t ≠ .died m u) :
+    Terminates s ↔ ∃ (n : Nat) (t : State), Runs n s t ∧ t.incm.dequeue = none
+```
+
+The death hypothesis is not a fudge: it is exactly what rounds 3 and 4 already deliver on a
+satisfiable input (`run_refutes_all`, `reaches_link_no_death`, `queueHygiene_binds_unbound`),
+where every death of the loop is a refutation of the system it was handed and therefore
+impossible.  Stated this way `Terminates` is a statement about `trim` and the dispatch, with
+no measure anywhere in it.
+
+### R6.2.2 What would make the derived set saturate, and the exact gap
+
+Saturation has two halves.
+
+**Half one is PROVED, and has been since round 3.**  `trim` refuses everything the processed
+queue already holds (`Order.trim_refuses`, restated as `trim_notContains`), and the dequeued
+premise itself is `Partition.equals`-new or the COMMON branch would have fired
+(`Order.learn_procSys_lt`).  So every `learn` step moves the processed set strictly forward
+and enqueues nothing the processed set has already seen.
+
+**Half two is GUARD COMPLETENESS, and it is FALSE.**
+
+```lean
+/-- **Half two, the one that is missing: GUARD COMPLETENESS.**  Once the loop has minted at a
+key, the reuse guards refuse every later mint at that key. -/
+def GuardComplete : Prop :=
+  ∀ (s s' t t' : State) (v : Nat) (K : SSet Lbl),
+    step s = .continue s' → MintsAt s s' v K → Reaches s' t → step t = .continue t' →
+    ¬ MintsAt t t' v K
+
+theorem guardComplete_false : ¬ GuardComplete := fun h =>
+  h (pAt 5) (pAt 6) (pAt 12) (pAt 13) 2 pKey pStep5 pMint5 pReach6_12 pStep12 pMint12
+```
+
+This is the brief's "exact gap", and it is the pump: the re-mints of round 5 are derivations
+the guard permits AGAIN once a carrier is lost.  Round 5's own two witnesses refute it
+(`pS0`, where `cancellation` + `makeEmpty` withdraw the carrier; `cS0`, where `makeConcrete`
+does it without binding anything), and the round-5 reviewer's `climb/L4/best11.json` refutes
+it **ten times over at a single key** while the whole label pool in play has three labels.
+So `KMintRun.mints_le`'s additive bound cannot be transported: what it bounds is the number of
+mints the ADDITIVE calculus permits at a key that is never uncarried, and the loop uncarries
+keys — with `makeEmpty`, with `makeConcrete`'s `destructiveSub`, and with `Q.++!`'s redirect
+(round 4's R4.1) — after which the same guard permits the same mint again.
+
+**The residual that survives, stated as one lemma, and its status.**
+
+```lean
+/-- The positive residual that survives the refutation, and the one `terminates_of_bounds`
+consumes: the derived set is bounded along the run. -/
+def ProcSaturates (s : State) : Prop := ∃ P : Nat, ∀ t, Reaches s t → (procSys t).card ≤ P
+
+/-- **The residual, assembled.**  On the fragment, saturation of the derived set together with
+the two bounds it does not itself give -- on the queue and on the environment -- IS
+termination. -/
+theorem terminates_of_saturation {s : State} {Q E : Nat}
+    (hw : ∀ t, Reaches s t → Wf t) (hnc : ∀ t, Reaches s t → NoConc t)
+    (hsat : ProcSaturates s)
+    (hq : ∀ t, Reaches s t → t.incm.elems.length ≤ Q)
+    (he : ∀ t, Reaches s t → t.env.binds.length ≤ E) : Terminates s
+```
+
+**Outcome: (T1) for the recast, (T2), and the residual is FRAGMENT-RELATIVE** — the round-6
+review's W-6d, and the correction matters.  `ProcSaturates` is not proved in general and it is
+not refuted.  What the round adds is that it is SUFFICIENT *together with the two other bounds*,
+that its natural strengthening `GuardComplete` is FALSE, and that ON THE FRAGMENT it is PROVED
+(`procSys_card_le` gives `P := |V|·2^|V|` once the vocabulary is fixed).  But
+`terminates_of_saturation` and `terminates_of_bounds` both carry
+`hnc : ∀ t, Reaches s t → NoConc t`, and they cannot be dropped: `measure3_lt` needs
+`step_trichotomy` needs `NoConc` to discharge the `concrete` dispatch branch by `exfalso`
+(`NoConc.lean` §7).  **So off the fragment neither lemma applies, and this residual is no
+sharper than round 4's or round 5's.**  On the fragment it adds nothing either, because
+`ProcSaturates` is already a theorem there.  Its value is as a factorisation: it names the three
+quantities a general proof would have to bound, and says which of the three the `concrete`
+branch is the obstacle for.  The general case is open for exactly one reason: off the fragment
+the vocabulary is not fixed, because `splitConcrete` and `resolution` mint.  What the ten-turn pump does to it is precise: it does
+not touch `ProcSaturates` at all — the reviewer's own V-9 instrumentation shows `proc` growing
+monotonically 6 → 23 while `incm` DRAINS 10 → 2 → 0 across the ten turns, so on every witness
+ever measured the derived set does saturate — but it kills `GuardComplete`, which was the only
+route to `ProcSaturates` that did not go through a vocabulary bound.
+
+## R6.4 — what round 6 could NOT prove, side by side
+
+| asked for | what is proved | what is not, and why |
+|---|---|---|
+| **R6.3** "define `NoConc`, prove it preserved and terminating with an explicit bound, and measure which stdlib-boot and example-corpus solves are in it" | `NoConc` + `step_noConc` + `run_noConc`; both generative rules unreachable AND no id drawn (`splitConcrete_noConc`, `resolution_noConc`); `makeConcrete`'s branch unreachable; the vocabulary fixed (`learnPartitions_avoidsV`, `step_inVoc`, `inVoc_self`); the three bounds (`env_len_le_card`, `procSys_card_le`, `kdist_length_le`, the last via `unorderedHash_perm`); **`noConc_terminates` / `noConc_run` / `noConc_terminates_of_buildQueue`** with the fuel `measure3 (n·2ⁿ) (n·2ⁿ) n s + 1`; the corpus measured on fresh traces (373/373 boot, 2,388/9,362 examples; the reviewer's corpus-wide figure is 15,377/15,377 stdlib-located) | the bound is not tight (order `n²·4ⁿ` against a few dozen dequeues in practice) and nothing is claimed about the 6,974 example solves that DO carry a label.  "No id is drawn" is a statement about the LOOP: `PQueue.build` mints for a `Part` with a non-variable left-hand side, and 8 of the 373 boot inputs have one (review W-6b) — the theorem still covers them.  The `incomplete/` corpus group was not measured here; the reviewer measured it (W-7) and it does not disturb the claim |
+| **R6.1** "a canonical form up to renaming of minted ids, a cycle detector, the lemma that a repeat implies non-termination, and a search over round 5's populations plus a fresh 50,000-solve hunt" | `SEq`, `step_decor`, `step_congr`, `run_seq`, `Runs`, **`not_terminates_of_cycle`**; `mintOrder` / `canonId` / `canonState` / `rawState` / `cycleRun` and `looptrace --cycle`; the search — **134,674 solves, 3,082,009 canonical states, 0 repeats, 0 `FUEL`, 0 `REJECTED`**, including a fresh 50,000-solve hunt (R6.1.3) | **no repeat found**, so the lemma is insurance and the outcome is a quantified negative.  And NEITHER detector's hit would have been a proof: the renaming quotient is not a congruence (the queue is ordered by `V.hashCode`, which IS the id), and — review W-6a, a claim this report had wrong — `rawState` omits the queue GRAPHS, `Sup.blk`/`bsz`, `flags` and `names`, all of which `SEq` demands, so an "exact" hit is a candidate too.  Sound in the direction used: an `SEq` repeat forces a `rawState` repeat forces a canonical repeat, so 0 canonical hits ⇒ 0 cycles |
+| **R6.2** "recast termination as `incm` emptying, state what would make the derived set saturate, find the exact gap, state the residual as one lemma, attempt it" | `Stuck`, `step_done_dequeue`, `terminates_iff_stuck`, **`terminates_iff_incm_empties`**; half one of saturation (`trim_notContains`, with `Order.learn_procSys_lt`); the gap named and **refuted** (`GuardComplete`, `guardComplete_false`); the surviving residual `ProcSaturates` stated and proved SUFFICIENT (`terminates_of_saturation`, `terminates_of_bounds`) and proved outright on the fragment (`procSys_card_le`) | `ProcSaturates` is neither proved nor refuted in general, and the residual is **fragment-relative** (review W-6d): `terminates_of_saturation` and `terminates_of_bounds` both carry `NoConc` along the run, because `step_trichotomy` needs it to kill the `concrete` branch — so off the fragment neither applies and this is no sharper than round 4's or round 5's residual.  What the ten-turn pump does to it is precise and is recorded in R6.2.2: it leaves `ProcSaturates` untouched (the reviewer's own V-9 shows `proc` growing monotonically and `incm` draining across all ten turns) and kills `GuardComplete`, which was the only route to `ProcSaturates` that did not go through a vocabulary bound |
+
+**And what the round does not touch.**  The plan's L5 acceptance has four criteria; this round
+moves the third from FAIL to PARTIAL and leaves the second where round 5 left it:
+
+| criterion | round 5 | round 6 |
+|---|---|---|
+| `LoopStrict` has no arbitrary-deletion constructor | PASS | **PASS, unchanged** — `Strict.lean` is not touched |
+| every `step` refines it under `step_refines_all`'s hypotheses | FAIL | **FAIL, unchanged** — `concrete` and `learn` are still outside `LinkOrEmptyStep`; this round does not touch the strict refinement |
+| `Terminates s₀` for every satisfiable `Wf s₀` with an explicit bound, **or** a compiler-reproduced witness | FAIL (T2) | **PARTIAL** — proved, with an explicit bound, for the `NoConc` fragment, which is 100 % of the stdlib boot's row-carrying solves and 25.5 % of the examples'.  Still open in general; still no witness (this round adds 134,674 model solves under a cycle detector and 100 compiler solves, all terminating) |
+| audit green | PASS | **PASS** — 854 jobs, `3611 / 0`, 0 `sorry` |
+
+## R6.5 — what a reviewer should re-run
+
+1. **Build and audit.**  `cd tracker/lean && export PATH=$HOME/.elan/bin:$PATH && lake build
+   Rowpartition` → `Build completed successfully (854 jobs)`; `lake env lean Audit.lean` →
+   `Rowpartition theorems audited: 3611; declarations using a non-standard axiom: 0`
+   (3494 / 852 before).  `lake build looptrace` for the executable.
+2. **Hygiene.**  `grep -nE '\bsorry\b|\baxiom\b|\bpartial\b|native_decide|implemented_by|\bunsafe\b|\bopaque\b|Classical|\badmit\b|#exit'
+   Rowpartition/Loop/{Cycle,NoConc}.lean` — 0 hits.  (`Loop/Main.lean` has one `partial`
+   hit: the word inside a doc comment saying nothing under `Loop/` may be `partial`.)
+   `#print axioms` over all **128** declarations of the two modules — 101 `theorem`s (88 in
+   `NoConc.lean`, 13 in `Cycle.lean`), 25 `def`s, 1 `abbrev` and 1 `structure`
+   (`tmp/L5r6/scratch/{names.txt,Axioms.lean,axioms.txt}`, corrected per review W-6c): 99 ×
+   `[propext, Classical.choice, Quot.sound]`, 4 × `[propext, Quot.sound]`, 8 × `[propext]`,
+   **17** axiom-free.  **No non-standard axiom.**
+3. **`git diff` scope.**  Two NEW modules (`Loop/{Cycle,NoConc}.lean` — 375 and **1,722** lines), `Rowpartition.lean`
+   +2/−0, `Loop/Main.lean` (the `--cycle` mode and its doc paragraph only), the plan's L5 row,
+   `tracker/lean/README.md` additive, `tracker/ROW-CONSTRAINT-STATE.md` +1 section, and this
+   report.  Every other Lean module and every Scala file UNCHANGED.
+4. **The load-bearing statements are cheap to re-check.**  `noConc_terminates_of_buildQueue`
+   is the theorem the corpus claim rests on; `guardComplete_false` is a one-line application of
+   round 5's own `pMint5`/`pMint12`; `not_terminates_of_cycle` is a strong induction on the
+   fuel; `unorderedHash_perm` is `List.Perm.foldl_eq'` plus `UInt32.{add,xor,mul}_{comm,assoc}`.
+5. **The corpus traces.**  `tmp/L5r6/gentrace.sh` regenerates all seven groups from scratch
+   (~3 minutes total); the census is `python3 tmp/L5r6/fragcensus.py tmp/L5r6/traces/*.tsv.gz`
+   and `python3 tmp/L5r6/excensus.py tmp/L5r6/traces/{top,Ai,shouldfail,bugs,guide,shouldfail-controls}.tsv.gz`.
+   The segment counts must match L2-CORPUS §4a exactly (54,199 / 92,673 / 83,942 / 56,032 /
+   54,235 / 54,244 / 54,739); they did.
+6. **The model on the corpus.**  `zcat tmp/L5r6/traces/boot.tsv.gz > /tmp/boot.tsv &&
+   tracker/lean/.lake/build/bin/looptrace --replay /tmp/boot.tsv | tail -1` →
+   `segments=54199 replayed=54199 skipped=0 hashdiff=0 eqdiff=0 rejected=0 fuel=0`.
+7. **The fragment, synthetically.**  `python3 tmp/L5r6/hunt/gennoconc.py 1500 10 5 14 popNC`
+   (1,311 seeds, `random.Random(i)` per seed so they reproduce bit for bit) then
+   `tmp/L5r6/hunt/huntc.sh popNC 4 3000 popNC.tsv 6` → 5,244 solves, all `SOLVED`, **0 ids
+   drawn in total**, 0 canonical repeats.  Ten of them on the shipped compiler:
+   `ERMINE_JAVA_OPTS="-Dermine.useInterface=false" tracker/repro/satterm/run.sh sweep
+   json:<abs path> 0 9 30 20` → `SOLVED=10 HANG=0` and `DRAWN … histogram 0:x10` on each.
+8. **The cycle search.**  Note first (review W-6g) that `--cycle` and `--mints` exist only on
+   the `json:` seed path (`Main.lean:199–202`); `replayMain` has neither, so a corpus segment
+   cannot be cycle-searched or draw-counted without transcoding it into a seed.  Wiring
+   `cycleRun` into `replayMain` is the cheapest thing a round 7 could do first — it would put
+   the detector over all 2,355,430 corpus segments instead of over synthetic seeds.
+   `tmp/L5r6/hunt/bighuntc.sh` runs the whole thing: round 5's
+   populations (`popA`…`popG`, `popH2`, `popI`, `popJ` and 183 deep candidates collected into
+   `deep/`) re-run under `--cycle`, then the fresh `popK`/`popL`/`popM`.  `looptrace
+   <seed.json> <base> <fuel> --cycle` on any one seed prints the line directly; on round 5's
+   deepest witness, `looptrace tmp/L5r5/hunt/climb9.json 0 20000 --cycle` prints
+   `cycle SOLVED steps=213 states=214 drawn=188 canon=- exact=-`.
+9. **The compiler, on round 5's deepest witness, unchanged:**
+   `ERMINE_JAVA_OPTS="-Dermine.useInterface=false" tracker/repro/satterm/run.sh sweep
+   json:tmp/L5r5/hunt/climb9.json 0 9 30 20` → `SOLVED=10 REJECTED=0 HANG=0 OOM=0`,
+   `DRAWN min=19 median=86 max=208`.

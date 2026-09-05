@@ -2169,3 +2169,666 @@ key — which reframes termination as saturation of the derived set rather than 
 
 **ADVANCE**, with W-1 … W-6 to be applied to the report, the README and the plan row, and V-13's
 R6.1–R6.3 offered as the round-6 specification in place of the report's two directions.
+
+---
+
+# Round-6 review — 2026-09-05
+
+Reviewer: fresh agent, brief `tracker/loopmodel/briefs/brief-review.md` at `$STAGE = L5 round 6`,
+`$BRIEF = briefs/brief-L5r6.md`, `$REPORT = L5-TERMINATION.md` "Round 6".  Pre-existing: `HEAD
+1394df4`.  Under review: `tracker/lean/Rowpartition/Loop/{NoConc,Cycle}.lean`, `Loop/Main.lean`'s
+`--cycle`, `Rowpartition.lean` +2 imports, the README block, the plan's L5 row, the new
+`ROW-CONSTRAINT-STATE.md` section, the handoff edit, and the report.  Scratch
+`/home/dmitry/.claude/jobs/880c725d/tmp/review-L5r6/`.  **This round claims a CERTIFICATION, so
+nothing below is taken from the report: every number is one I produced myself.**
+
+## W-1. Rebuild, re-audit, hygiene — everything reproduces, and the axiom census is mine
+
+| check | command | result |
+|---|---|---|
+| build | `lake build Rowpartition` | `Build completed successfully (854 jobs)` — the report's 854 |
+| audit | `lake env lean Audit.lean` | `Rowpartition theorems audited: 3611; declarations using a non-standard axiom: 0` — the report's 3611/0 |
+| `looptrace` | `lake build looptrace` | `Build completed successfully (1656 jobs)` |
+| hygiene | `grep -nE '\bsorry\b\|\baxiom\b\|\bpartial\b\|native_decide\|implemented_by\|\bunsafe\b\|\bopaque\b\|Classical\|\badmit\b\|#exit' Loop/{Cycle,NoConc,Main}.lean` | one hit, `Main.lean:81`, the word `partial` **inside a doc comment saying nothing under `Loop/` may be `partial`**.  Otherwise 0 |
+| line counts | `wc -l` | `Cycle.lean` 375 (report: 375), `NoConc.lean` **1722** (report: 1,721 — off by one) |
+| declarations | `grep -E '^(theorem\|def\|abbrev\|structure) '` | **128**: 101 `theorem` (88 `NoConc`, 13 `Cycle`), 25 `def`, 1 `abbrev`, 1 `structure`.  The report and the plan row say **127** declarations / 26 defs — off by one (the `structure CycleRep` is not counted) |
+| `#print axioms`, all 128 | `tmp/review-L5r6/{decls.txt,Axioms.lean,axioms.txt}` | 99 × `[propext, Classical.choice, Quot.sound]`, 8 × `[propext]`, 4 × `[propext, Quot.sound]`, **17 axiom-free**.  **No non-standard axiom, no `sorryAx`.**  (The report's 16 axiom-free is the same off-by-one.) |
+| diff scope | `git diff --stat` | exactly the seven files the report claims; every other Lean module and every Scala file untouched |
+
+The two count slips are documentation, not substance (**W-6c** below).
+
+## W-2. R6.3 — the fragment, checked VERBATIM, then applied to a real boot solve in Lean
+
+### W-2a. All 48 quoted declarations are verbatim (CONFIRMED, checked mechanically)
+
+I did this mechanically rather than by eye: a script extracts every `theorem`/`def` block from
+the report's Round-6 section, normalises whitespace, and compares it with the block of the same
+name in `NoConc.lean` / `Cycle.lean`.  **48 quoted declarations checked, 0 differences.**  (Two
+initially flagged, `run_noConc` and `Runs`, are equation-style definitions my block extractor
+mis-terminated on; read by hand they are identical too.)  I then read the load-bearing ones
+line by line: `NoConc.lean:75, 125, 134, 450, 532, 573, 664, 696, 749, 1198, 1229, 1268, 1286,
+1511, 1583, 1603, 1626, 1658, 1707` and `Cycle.lean:50, 88, 175, 219, 247`.  In particular `noConc_terminates_of_buildQueue`
+really is
+
+```lean
+theorem noConc_terminates_of_buildQueue {cs : List CsItem} {su : Sup} {q : PQueue} {su' : Sup}
+    {fl : Flags} {ns : Names} {site : String} {tr : List String} {z : Nat}
+    (hq : buildQueue cs su = .ok (q, su'))
+    (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (hconc : ∀ p ∈ q.elems, p.rhs.conc.elems = [])
+    (hw : Wf { incm := q, proc := PQueue.empty, env := {}, su := su', ... }) :
+    Terminates { incm := q, proc := PQueue.empty, env := {}, su := su', ... }
+```
+
+**Hidden hypotheses: there are none.**  I checked each of the five:
+
+* `hdj`/`hcse` are the **shipped defaults**, not a weakening.  `Constraints.scala:768–774`:
+  `mode = System.getProperty("ermine.genRules", "cut")`, `cseMints = mode == "all"` (so
+  `false` by default), `disjRule = System.getProperty("ermine.disjunction","false")`.  The Lean
+  `Flags` defaults (`State.lean:354–368`) agree, and `splitMints`, `resolves`, `resGuard`,
+  `splitKey`, `splitRow`, `resRow`, `labelCheck`, `labelCheckEarly` are all left at their
+  shipped values — the theorem restricts **nothing else**.
+* `hw : Wf` is discharged, not assumed: `Wf.wf_seed` for a `json:` seed, `Wf.wf_replay` for a
+  corpus segment (both call `wf_initial`, `Wf.lean:1269`).  `wf_replay`'s extra side condition
+  `CsItem.SetsOk` is genuinely **vacuous on the fragment**, and I checked the reason rather than
+  taking it: `Json.lean`'s `rhsBuild` folds `concRho s` into the concrete accumulator with
+  `c.concat s` and nothing ever removes from it, and `conT n` adds a label, so a built partition
+  with `conc.elems = []` forces every `concRho` payload in that part (and, via `rhsBuild [lhs]`,
+  in a non-variable left-hand side) to be empty, and `[].Nodup` is trivial.
+* `EnvNodup` and the two `KDist`s never appear in the corollary — `noConc_terminates_of_input`
+  discharges them at an initial state (`envNodup_initial`, `kdist_ofList`, `PQueue.empty`).
+* `Terminates` (`Order.lean:24,30`) is `∃ n, Finished (run s n)` with `Finished` false only on
+  `outOfFuel`.  So a `died` counts as terminating — correct for a termination claim, and moot
+  on the boot, where nothing dies.
+
+`Runs`, `Reaches`, `Wf`, `procSys`, `sys`, `allVars`, `measure3`, `InVoc`, `KDist` are all
+ordinary definitions; none is trivially satisfied.  `step_trichotomy`, `measure3_lt`,
+`terminates_of_bounds_aux` and the three bounds (`env_len_le_card`, `procSys_card_le`,
+`kdist_length_le`) are real proofs I read line by line, not `sorry`-shaped shells.
+
+### W-2b. THE CHECK THAT MATTERS: the theorem instantiated at a real boot solve (CONFIRMED)
+
+A termination theorem is worth what it can be applied to, so I applied it.
+`tmp/review-L5r6/BootCheck.lean` transcribes the **largest stdlib-boot row-carrying solve**
+(`modules/Relation.e(231:1)`, 13 input partitions over 30 variables) out of my own fresh trace,
+builds it with `buildQueue`, and runs the corollary:
+
+```lean
+theorem bS0_terminates : Terminates bS0 :=
+  noConc_terminates_of_buildQueue (cs := bParts) (su := bSu) bBuild rfl rfl bS0_conc
+    (wf_seed bSeed 0 bBuild bFl bNs "boot" bSu.lo)
+```
+
+It type-checks, and
+
+```
+'RevCheck.bS0_terminates' depends on axioms: [propext, Classical.choice, Quot.sound]
+'RevCheck.bS0_solved'     depends on axioms: [propext, Classical.choice, Quot.sound]
+'RevCheck.bS0_nodraw'     depends on axioms: [propext, Classical.choice, Quot.sound]
+```
+
+with `bS0_conc : ∀ p ∈ bQ.elems, p.rhs.conc.elems = []` by `decide`, `bS0_size = 13` by
+`decide`, `bS0_nodraw : (match run bS0 200 with | .solved s => s.su.drawn | _ => 99) = 0` by
+`decide` — so the run really finishes and really draws nothing — and
+
+```
+#eval (allVars (sys bS0)).card                                   = 30
+#eval measure3 (30*2^30) (30*2^30) 30 bS0 + 1  = 32166509980495978168364
+```
+
+against the 31 dequeues the model actually takes.  **The certification is applicable end to end
+to real boot input, on standard axioms, and it is not vacuous.**  The bound is ≈ 3.2·10²²
+for a 31-step solve, which is exactly the "order `n²·4ⁿ`, not meant to be tight" the report
+states — honest, and stated.
+
+### W-2c. "`resolution` never draws on the fragment" — checked against `Constraints.scala` (CONFIRMED)
+
+This is the round's one correction of the round-5 review and it is right.
+`Constraints.scala:1772–1775`:
+
+```scala
+if (!GenRules.resolves) Set() else (rhs1, rhs2) match {
+  case (RHS(Single(x), concr1), RHS(Single(y), concr2)) =>
+    val z = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
+```
+
+The `fresh` is **inside** the `Single/Single` arm, after the match, so a premise that is not
+lone-abstract exits at `case _ => Set()` without drawing.  `Rules.lean:113–150` models exactly
+that shape.  Two further links I checked rather than assumed:
+
+* the dequeued premise is always `rhs1`: `Constraints.scala:1471`
+  `resolution(v, rhs1, rhs2, findResolvent(s), concRow, emptyRow)` inside
+  `proc.foldLeft`, and `Step.lean:283` `resolution fl v rhs1 rhs2 …` — same position, so
+  `rhs1.abstrSingle? = none` really does suffice;
+* the `learn` branch is reached only when `r.rhs.single? = none` (`Step.lean:343–349`, and
+  `Constraints`' dispatch), and on the fragment `single? = abstrSingle?`
+  (`single_eq_abstrSingle`), so the premise has ≠ 1 abstract parts.  Round 4's
+  `resolution_draws` is untouched — it is about the *guards*, not the pattern — so nothing
+  earlier is contradicted.
+
+### W-2d. `unorderedHash_perm` against the real `MurmurHash3` (CONFIRMED at source level)
+
+I extracted `scala/util/hashing/MurmurHash3.scala` from
+`scala-library-2.13.18-sources.jar` (the library Scala 3.3.8 uses):
+
+```scala
+final def unorderedHash(xs: IterableOnce[Any], seed: Int): Int = {
+  var a, b, n = 0 ; var c = 1
+  while (iterator.hasNext) { val h = x.## ; a += h ; b ^= h ; c *= h | 1 ; n += 1 }
+  var h = seed ; h = mix(h, a) ; h = mix(h, b) ; h = mixLast(h, c) ; finalizeHash(h, n)
+}
+...
+def setHash(xs: scala.collection.Set[_]): Int = unorderedHash(xs, setSeed)
+final val setSeed = "Set".hashCode
+```
+
+`Hash.lean:96–109` is that, term for term: the same four accumulators in the same order, the
+same `mix / mix / mixLast / finalizeHash` tail, `setHash = unorderedHash hs setSeed`.  The three
+accumulators are `+`, `^^^` and `*` on a 32-bit word — commutative and associative — which is
+what `uh_fold_perm` uses (`List.Perm.foldl_eq'` plus `UInt32.{add,xor,mul}_{comm,assoc}`).  So
+`unorderedHash_perm` is a true statement **about the hash the compiler actually computes**, and
+`keyEq_of_eqv` (which it feeds) correctly needs the four `Wf` `Nodup`s.
+
+### W-2e. The corpus measurement, RE-DERIVED from traces I generated myself (CONFIRMED, exactly)
+
+I did not use the implementer's traces or scripts.  `tmp/review-L5r6/gentrace-mine.sh`
+regenerates all seven groups from scratch
+(`-Dermine.rowTrace -Dermine.loadInSeries=true -Dermine.useInterface=false`, one JVM per group)
+and `tmp/review-L5r6/mycensus.py` is a census I wrote from `RowTrace.scala:200–250` and
+`Subst.scala:1190–1216` — segmenting per THREAD at `sin` boundaries, reading the `inpart`
+fields `prov / lhs / abstr / conc`.
+
+| group | segments | row-carrying (`nRows>0`) | built ≥1 partition | **`NoConc`** | with a label | `LinkOnly` |
+|---|---|---|---|---|---|---|
+| `boot` | **54,199** | **383** | **373** | **373 (100 %)** | **0** | 4 |
+| `top` | 92,673 | 5,424 | 5,412 | 1,670 | 3,742 | 5 |
+| `Ai` | 83,942 | 4,494 | 4,484 | 1,461 | 3,023 | 5 |
+| `shouldfail` | 56,032 | 647 | 605 | 442 | 163 | 4 |
+| `bugs` | 54,235 | 383 | 373 | 373 | 0 | 4 |
+| `guide` | 54,244 | 383 | 373 | 373 | 0 | 4 |
+| `shouldfail-controls` | 54,739 | 447 | 437 | 391 | 46 | 4 |
+
+**Every cell reproduces the report's table**, and every segment count reproduces L2-CORPUS §4a.
+Three further checks of my own on the boot:
+
+* the 373 are a **subset** of the 383 (`built but nRows==0` is 0; `rowCarrying with 0 inparts`
+  is 10), and **all 383 are `NoConc`**, not just the 373;
+* the 373 span **289 distinct source locations**, the largest input is 13 partitions and the
+  widest right-hand side has 5 abstract parts — the population is real, not one problem counted
+  373 times;
+* `satWritten = 361`, `satNoConc = 361`, `satInVocOfInput = 361` — the report's 361/361 for both
+  the concreteness clause and the vocabulary clause.
+
+The **example corpus** (`loc` containing `core/examples`, which is what excludes the boot repeats):
+
+```
+example-loc solves=48583  built>=1part=9362  NoConc=2388 (25.5%)  withLabel=6974  LinkOnly=0
+```
+
+— the report's 48,583 / 9,362 / 2,388 / 6,974 / 0, exactly.  And the R6.3.4a round-7 table,
+which I recomputed from the `inpart` records with my own predicates:
+
+```
+resolution cannot fire on input : 9362      splitConcrete cannot fire : 9256
+NEITHER can fire                : 9256      never fired one (sat provenances) : 9146
+```
+
+— the report's 9,362 / 9,256 / 9,256 / 9,146, exactly.
+
+**The independent corroboration is the step census, and it is decisive.**  The `step` records
+(`Constraints.scala:1123`) give the DISPATCH histogram, which is a different code path from the
+`inpart` records the fragment test reads:
+
+```
+boot : learn 1056  unify 38  empty 30  common 19       <- ZERO `concrete` steps
+top  : learn 5167  concrete 1305  empty 76  unify 51  common 44
+Ai   : learn 8295  concrete 1556  common 566  empty 497  unify 222
+```
+
+`step_noConc` predicts the `concrete` branch is unreachable on the fragment, and the boot has
+exactly zero of them while the example groups have thousands.  The derived-partition provenance
+histogram over the whole boot is `CommonSubexpression 221, Substitution 114, Cancellation 9` —
+**0 `Resolution`, 0 `SplitConcrete`, 0 `SplitKeyed`** — against `SplitConcrete 422`,
+`Resolution 106`, `SplitKeyed 23`, `SplitRow 1`, `ResolutionRow 6` on the examples.  Every one
+of those numbers is the report's.
+
+### W-2f. Ten boot solves replayed through the model and through the COMPILER (CONFIRMED)
+
+`--cycle` and `--mints` are seed-mode only (`Main.lean:199–202`; `--replay` has neither), so I
+transcoded the **ten largest distinct-location boot solves** into seeds
+(`tmp/review-L5r6/bootseeds/B0*.json`, 6–13 partitions, 11–30 variables) and ran both modes:
+
+* **50 model runs** (10 seeds × bases 0, 1, 7, 100, 999) under `--cycle`: `SOLVED` every time,
+  **`drawn=0` every time**, `canon=-` and `exact=-` every time, and `states = steps + 1` in all
+  50 — 11 to 38 dequeues each;
+* **30 model runs** under `--mints`: `drawn=0 max=0 remint=0 cmax=0 cremint=0` in every one;
+* **100 SHIPPED-COMPILER solves** — a differential the implementer did NOT do, since its compiler
+  check used only synthetic label-free seeds — `ERMINE_JAVA_OPTS=-Dermine.useInterface=false
+  tracker/repro/satterm/run.sh sweep json:<boot seed> 0 9 30 20` on each of the ten:
+
+```
+SUMMARY ... bases=0..9 n=10 SOLVED=10 REJECTED=0 HANG=0 OOM=0
+DRAWN  min=0 median=0 max=0  histogram 0:x10          (x10 seeds, identical)
+```
+
+So on real standard-library input the **shipped compiler draws no id either**, at ten id bases,
+on all ten solves.  That is the empirical half of `step_noConc`'s `s'.su = s.su`, measured on
+the compiler rather than on the model.
+
+### W-2g. The model on the corpus (CONFIRMED)
+
+```
+looptrace --replay <my boot.tsv>
+#summary segments=54199 replayed=54199 skipped=0 hashdiff=0 eqdiff=0 nonpart=1009 rejected=0 fuel=0
+```
+
+## W-3. R6.1 — the cycle theorem and the search
+
+### W-3a. `not_terminates_of_cycle` is the real lemma, and `run` is deterministic as used (CONFIRMED)
+
+`Cycle.lean:244–258`, verbatim as quoted.  The proof is a strong induction on the fuel:
+`Runs.run_eq` moves an answer at `n + k` down to one at `k`, `run_seq` transports it across
+`SEq t s`, and `Runs.not_finished` kills everything below `n`.  `run` is a total function of
+`step` (`Step.lean:365`) so determinism is definitional; the content is `step_decor`, the
+five-branch proof that `trace`, `site` and `su0` are inert, which had to be stated because the
+trace grows at every step and literal state equality is therefore vacuous.  `SEq` omits exactly
+those three fields and nothing else — I checked the `State` structure against it.  Non-vacuous
+and correctly oriented: the theorem needs `SEq`, i.e. an **exact** repeat.
+
+### W-3b. The caveats are stated and correct (CONFIRMED)
+
+Both are in `Cycle.lean`'s header and in R6.1.2, and both are right:
+
+* the supply **must** be quotiented away — `Sup.fresh` advances `drawn` and `lo` on both arms,
+  so no state that drew an id can ever recur exactly;
+* the renaming quotient is **not a congruence** — `V.hashCode` IS the id, the queue is keyed on
+  `(rhs.hashCode, lhs.hashCode)` (`Queue.lean:128–133`) and the dequeue priority is a
+  reverse-topological index over a hash-ordered node set, so permuting mints can change the next
+  dequeue.  The direction used is the sound one ("no canonical repeat ⇒ no exact repeat"), and
+  the report says so rather than hiding it.
+
+### W-3c. The search re-tabulated from the raw `.tsv`, and re-run (CONFIRMED)
+
+I ignored `cycsum.py` and tabulated the fifteen gzipped population files with my own `awk`
+(steps/states/drawn/verdict columns, plus the `states == steps + 1` invariant):
+
+```
+r5-popA..G  800 each   r5-deep 1830   r5-popH2 48000   r5-popI 12000   r5-popJ 12000
+popK 24000  popL 16000  popM 10000    popNC 5244
+TOTAL solves=134674  canonical states=3082009  drawn=1128553  fuel=0  rejected=0
+canon hits = 0   exact hits = 0   states != steps+1 : 0   (in all 134,674)
+```
+
+Every cell of the report's table, including the max-dequeue column (340 on `r5-deep`) and
+`popNC`'s **drawn = 0**.  Then I re-ran it:
+
+* `huntc.sh` on round 5's `popA` from the original seed directory produced a file **identical
+  after sorting** to the implementer's `r5-popA.tsv.gz` — bit-for-bit reproducible;
+* a **fresh hunt of my own** at `--start` values nobody has used (900000/910000/920000), three
+  populations with different shapes and biases (`popR1` 1,600 seeds 12/6/16 hubs=1 w=.30/.30/.30/.10 ×4 bases;
+  `popR2` 1,200 seeds 14/6/24 hubs=2 w=.40/.25/.20/.15 ×4; `popR3` 800 seeds 18/9/32 hubs=1
+  w=.25/.35/.30/.10 ×6 at fuel 5,000), plus the 183 deep candidates at 10 bases re-run.
+  Result below in W-5.
+
+## W-4. R6.2 — the recast, the refutation, and how sharp the residual really is
+
+`Stuck`, `step_done_dequeue`, `terminates_iff_stuck`, `terminates_iff_incm_empties`,
+`trim_notContains`, `GuardComplete`, `guardComplete_false`, `ProcSaturates`,
+`terminates_of_saturation` — all verbatim as quoted (`NoConc.lean:767–880`).
+
+* `terminates_iff_incm_empties` is a genuine iff with one hypothesis, "no reachable state dies",
+  which is honestly labelled and is what rounds 3/4 supply on satisfiable input.  (T1) for the
+  recast: **agreed**.
+* `guardComplete_false` is a one-line application of round 5's own `pStep5`/`pMint5`/`pStep12`/
+  `pMint12` at `(v2, pKey)`.  It is the real gap and the report names it as such.
+* **`terminates_of_saturation` is NOT sharper than round 5's residual in the general case, and
+  the report's own §R6.4 says so only obliquely.**  The lemma carries
+  `hnc : ∀ t, Reaches s t → NoConc t` — it is a *fragment* statement, and on the fragment
+  `ProcSaturates` is already proved by `procSys_card_le`, so `terminates_of_saturation` adds
+  nothing there beyond `noConc_terminates`.  Off the fragment it does not apply at all, because
+  `measure3_lt` needs `step_trichotomy` needs `NoConc` to kill the `concrete` branch.  So R6.2's
+  "residual, assembled" is a **restatement inside the fragment**, not a general residual.  The
+  general residual that survives is the unquantified one in `terminates_of_bounds` (three bounds
+  ⇒ `Terminates`, no `NoConc`… except that `terminates_of_bounds` *also* takes `hnc`).  This is
+  **finding W-6d**: documentation, in the round's disfavour, and the honest label for R6.2's
+  second half is "(T2), and the residual is fragment-relative".
+
+## W-5. Things I ran that the implementer did not
+
+1. **`noConc_terminates_of_buildQueue` instantiated at a real 13-partition stdlib-boot solve**
+   (W-2b): `Terminates bS0` on `[propext, Classical.choice, Quot.sound]`, with the run's own
+   31 dequeues and `drawn = 0` decided, and the fuel the theorem hands over evaluated
+   (3.2·10²² for `n = 30`).  No round has instantiated the certification before.
+2. **100 SHIPPED-COMPILER solves on ten real boot inputs** at ten id bases (W-2f):
+   `SOLVED=10 HANG=0` and `DRAWN 0:x10` on each.  The round's own compiler check used synthetic
+   seeds only.
+3. **A census written from the trace format rather than reused** (W-2e), reproducing all 34
+   cells of the two corpus tables and both round-7-pointer rows.
+4. **The dispatch histogram** — a code path neither the report's census nor mine reads for the
+   fragment test — confirming 0 `concrete` steps on the boot against 1,305/1,556 on the examples.
+5. **The stdlib-under-user-programs question, measured** (see W-6e): across all six example
+   groups, **2,322 row-carrying solves whose `loc` is a stdlib module — 2,322 of 2,322 `NoConc`,
+   0 with a label.**  So the certification is not fragile to being reached from user code.
+6. **A fresh cycle hunt of my own** at unused `--start` values and different biases, and the
+   deep candidates re-run.
+7. **The `incomplete/` corpus, which the round skipped**, traced per file under a 90 s cap
+   (all 34 `.e` modules, 1.85 M segments) and censused — W-7.
+8. **The round-7 pointer put to the test**: 111 corpus solves **refute** the naive widening
+   ("neither generative rule can fire on the input" is not closed under `step`), and the honest
+   ceiling for a vocabulary-fixed fragment is 97.6 %, not 98.9 % — W-9.
+9. **A mechanical verbatim check of all 48 quoted declarations** (W-2a), rather than reading a
+   sample of them.
+10. **A 10-base compiler/model draw differential on my own deepest witness** — 443 dequeues,
+   1,382 draws, ten per-base draw counts identical on both sides (W-8).
+
+## W-6. Findings, ranked
+
+None is a soundness defect; none blocks the round; the certification stands.  W-6a and W-6b are
+the two that touch a *claim* rather than a count, and both should be fixed before this is
+committed.
+
+* **W-6a (CONFIRMED, a claim that is false as written).**
+  `Cycle.lean:315–325` says of `rawState`: *"Two dequeues with the same `rawState` are `SEq` in
+  everything `canonState` records plus the supply, which is what `not_terminates_of_cycle`
+  needs"*, and R6.1.2(b) says *"an exact repeat (`rawState`) is a proof by
+  `not_terminates_of_cycle`"*.  **It is not.**  `rawState` renders `incm.elems`, `proc.elems`,
+  `env.binds` and `su.{lo,hi,drawn}` — and `PQueue` is `⟨elems, graph⟩` (`Queue.lean:120–122`)
+  with `Graph = ⟨nodes, edges, sort⟩` (`:59–62`), while `SEq` demands `s.incm = t.incm`, i.e.
+  **the graph too**; `Sup` also has `blk`/`bsz` (`State.lean:178–186`) and `SEq` also demands
+  `flags` and `names`.  The graph is not a decoration: `PQueue.dequeue` reads `graph.sort` for
+  the priority, and the graph accumulates nodes and edges that deletions from `elems` do not
+  remove — so two states with identical `elems` and different graphs are perfectly possible and
+  would be reported as an "exact repeat" that is **not** `SEq`.
+  *Impact: none on this round's result*, because the direction the search is used in is the
+  other one — `rawState`/`canonState` are functions of the state, so an `SEq` repeat implies a
+  `rawState` repeat implies a `canonState` repeat, and **0 hits still means 0 `SEq` cycles**.
+  But a hit would have been a candidate needing the graphs compared, not "a proof", and the
+  report and the module doc-comment both say "a proof".
+  *Fix:* one sentence in R6.1.2(b) and in `rawState`'s doc-comment — "`rawState` omits the
+  queue graphs, `Sup.blk/bsz`, `flags` and `names`, so an exact hit is a candidate whose `SEq`
+  has to be checked" — or render the graphs (cheap: `graph.sort` is the only part the dequeue
+  reads).
+* **W-6b (CONFIRMED, a claim that is too strong in four documents).**  "**No id is drawn**"
+  is true of the LOOP and false of the SOLVE, on 8 of the 373 boot solves.  `PQueue.build`'s
+  `aux` mints a name for a part with a **non-variable left-hand side** — `Constraints.scala:661–662`
+  `case Part(loc, lhs, rhs) => // lhs is not a variable / val v = fresh(loc, none, …)`, modelled
+  at `Json.lean:155–167` as `| lhs => let (v, su) := su.fresh` — and eight stdlib-boot inputs have
+  exactly that shape — a `ConcreteRho` with an EMPTY field set on the left:
+
+  ```
+  modules/Relation/Op.e(114:31) (142:43) (1:1) (129:49) (170:21) (165:3)
+  modules/Relation.e(85:33) (88:34)          scon payload:  part  c|v111536|v111535
+  ```
+
+  I proved it rather than inferred it (`tmp/review-L5r6/BuildDraw.lean`, all on standard axioms):
+
+  ```lean
+  theorem cDrawn  : cSu'.drawn = 1 := by decide          -- buildQueue DREW, before the loop
+  theorem cDrawn0 : cSu.drawn  = 0 := by decide
+  theorem cS0_loop_nodraw : (match run cS0 100 with | .solved s => s.su.drawn | _ => 99) = 1
+  theorem cS0_terminates  : Terminates cS0               -- the theorem still covers it
+  ```
+
+  **Nothing in the theorem is affected** — `noConc_terminates_of_buildQueue` starts the state at
+  `su'`, i.e. *after* the build, and `hconc` is about the built queue, so the 8 are covered like
+  the other 365; `NoConc` survives because a `concRho ∅` contributes no label; and `inVoc_self`
+  takes the vocabulary of the built state, which already contains the minted name.  It is the
+  *prose* that is wrong.  Report R6.3's headline ("so no id is drawn"), the README ("so no id is
+  drawn at all"), the plan's L5 row ("**no id is drawn at all**") and the handoff all need the
+  qualifier; `ROW-CONSTRAINT-STATE.md`'s "the solver is proved … to draw no id while doing so"
+  needs it most, because "the solver" reads as including `PQueue.build`.  R6.3.4's own summary
+  sentence ("on those solves **the loop** draws no id") is already correct — that is the wording
+  the other four should adopt.  My W-2f measurement is unaffected: those seeds are transcoded
+  from post-build `inpart` records, so their left-hand sides are variables and `drawn = 0` there
+  is the loop's own figure.
+
+* **W-6c (documentation, minor, CONFIRMED).**  `Loop/NoConc.lean` is **1722** lines, not 1,721,
+  and the two new modules hold **128** declarations (101 theorems, 25 defs, 1 abbrev, 1
+  structure), not 127 / "26 defs".  The axiom histogram is therefore 99/8/4/**17**, not …/16.
+  Report §R6.5 item 2 and the plan's L5 row.
+* **W-6d (documentation, in the round's disfavour, CONFIRMED).**  R6.2's residual is
+  **fragment-relative**: `terminates_of_saturation` carries
+  `hnc : ∀ t, Reaches s t → NoConc t`, and so does `terminates_of_bounds`.  On the fragment
+  `ProcSaturates` is already a theorem (`procSys_card_le`), so the "residual, assembled" adds
+  nothing there; off the fragment neither lemma applies, because `measure3_lt` needs
+  `step_trichotomy` needs `NoConc` to kill the `concrete` branch (`NoConc.lean:1478–1481` is
+  literally where the `concrete` case is discharged by `exfalso`).  The report's
+  "(T2) for the residual **in the general case**" should read "(T2), and the residual is
+  fragment-relative".  It is not sharper than round 4's or round 5's residual off the fragment.
+* **W-6e (scope, in the round's FAVOUR — belongs in the certification paragraph, CONFIRMED).**
+  `ROW-CONSTRAINT-STATE.md` currently certifies *the boot*.  I measured the stronger reading and
+  it holds: across the six example groups there are **2,322 row-carrying solves whose `loc` is a
+  stdlib module** (not only the boot's own 373 repeated six times), and **2,322 of 2,322 are
+  `NoConc`, 0 with a concrete label**; adding the boot's own 373 and the `incomplete/` group (W-7) makes it **15,377 of
+  15,377** across all 41 traces.  So "every row-constraint solve the standard library performs — booting alone, or
+  while any corpus program is loaded — is inside the fragment" is a measured statement, and a
+  materially better one than the paragraph makes.
+* **W-6f (scope caveat the report flags; now closed — see W-7).**  The `incomplete/` group was
+  excluded.  I traced all 34 of its `.e` modules and censused them; it does not disturb the
+  certification.
+* **W-6g (instrument gap, for a round 7).**  `--cycle` and `--mints` exist only on the `json:`
+  seed path (`Main.lean:199–202`); `replayMain` has neither, so a corpus segment cannot be
+  cycle-searched or draw-counted without transcoding it into a seed (which is what I had to do
+  in W-2f).  Wiring `cycleRun` into `replayMain` would let the next round run the cycle detector
+  over the 2.3 M corpus segments directly.
+
+## W-7. The `incomplete/` corpus — measured, since the round skipped it
+
+
+The report excludes `core/examples/incomplete/` ("non-terminating by design, ~8 MB/s of trace")
+and says so.  Disk allowed it, so I ran it: `tmp/review-L5r6/genic.sh` traces all **34** `.e`
+modules of the group, one JVM per file, 90 s cap, same flags.  **All 34 finished inside the cap,
+`rc=0`**, ~17 MB of trace each; `tmp/review-L5r6/inccensus.py` censuses them.
+
+```
+files=34  segments=1,851,131  row-carrying=14,315  built >=1 partition=13,965
+  NoConc = 13,107   with a concrete label = 858
+  of which loc is a STDLIB module : 12,682 built, 12,682 NoConc  (100 %)
+  of which loc is under incomplete/: 1,283 built, 425 NoConc, 858 with a label
+  dispatch: learn 40,858  unify 1,381  empty 1,283  common 991  concrete 615
+  provenances: CommonSubexpression 8,344  Substitution 4,576  Cancellation 346
+               SplitConcrete 285  Resolution 91  SplitKeyed 26  ResolutionRow 12
+               CommonPartition 1
+```
+
+(My 14,315 row-carrying against L2-CORPUS's 14,703 is the 34 `.e` modules against L2's 35-file
+group definition; the group also holds 6 `.slow` modules the sweep excludes.)
+
+**Two conclusions, both in the round's favour.**
+
+1. **The stdlib half of the hardest corpus group is 12,682 of 12,682 `NoConc`.**  Nothing in
+   `incomplete/` — the star-join blowups, the label-helper modules, the unsoundness witnesses —
+   pushes a labelled row constraint into a stdlib-located solve.  With W-6e this makes the
+   stdlib figure **15,377 of 15,377 across all 41 traces (the 7 groups + the 34 `incomplete/`
+   files).**
+2. **The `incomplete/` modules' OWN solves are where the fragment is thinnest** — 425 of 1,283
+   (33 %), against 25.5 % on the rest of the examples — and the labelled inputs concentrate in
+   the label-heavy modules the group exists for (`RunCalibration.e` 129, `np01_add_or_recompute.e`
+   104, `RevenueShare.e` 95, `gu08_label_inline.e` 68).  That is the right shape: the group was
+   built to be hard, and it is outside the fragment.
+
+So the caveat the report records is real but harmless to the claim, and the claim's scope is
+larger than the report states.
+
+## W-8. The cycle search, re-run from scratch with populations of my own
+
+`tmp/review-L5r6/hunt/fresh.sh`, seeds nobody has used (`--start 900000/910000/920000`), three
+shapes and three different bias weights, plus the 183 deep candidates re-run at ten bases:
+
+| population | shape | solves | canonical states | max dequeues | ids drawn | repeats |
+|---|---|---|---|---|---|---|
+| `popR1` | 1,600 seeds 12 var / 6 lbl / 16 con, hubs 1, w .30/.30/.30/.10, ×4 bases | 6,400 | 135,345 | 184 | 47,755 | **0** |
+| `popR2` | 1,200 seeds 14/6/24, hubs 2, w .40/.25/.20/.15, ×4 | 4,800 | 143,334 | 212 | 60,767 | **0** |
+| `popR3` | 800 seeds 18/9/32, hubs 1, w .25/.35/.30/.10, ×6, fuel 5,000 | 4,800 | 147,863 | **443** | 89,967 | **0** |
+| `mydeep` | the 183 deep candidates × 10 bases | 1,830 | 93,457 | 340 | 54,383 | **0** |
+| **total** | | **17,830** | **519,999** | 443 | 252,872 | **0**, 0 `FUEL`, 0 `REJECTED` |
+
+`states == steps + 1` in all 17,830, and `mydeep.tsv` is **identical after sorting** to the
+implementer's `r5-deep.tsv.gz`, as `myA.tsv` is to `r5-popA.tsv.gz`.  So the harness is
+deterministic and the round's own 134,674 runs are reproducible; mine are 17,830 more, on
+populations chosen to be *larger and more label-rich* than any the round used.
+
+**And `popR3` produced the deepest run this stage has ever recorded**, which is worth its own
+line because rounds 4 and 5 were a hunt for exactly this:
+
+```
+seed R3920797 (18 vars, 9 labels, 32 constraints)
+  model  base=0 steps=356 drawn=1382   base=2 steps=443 drawn=1351   (canon=- exact=- in both)
+  compiler, bases 0..9: SOLVED=10 REJECTED=0 HANG=0 OOM=0
+    DRAWN histogram 3:x1 13:x1 22:x1 104:x1 110:x1 137:x1 153:x1 214:x1 1351:x1 1382:x1
+```
+
+The model's ten per-base draw counts are **exactly** the compiler's ten — `{3, 13, 22, 104, 110,
+137, 153, 214, 1351, 1382}` on both sides.  Round 5's deepest witness drew 208; this one draws
+**1,382** and takes **443** dequeues, and it still terminates on both sides with no repeat of any
+kind.  That is the strongest single piece of evidence the negative has: the search was pushed an
+order of magnitude past where the previous rounds plateaued, and the answer did not change.
+
+## W-9. The round-7 pointer, evaluated — and the naive fragment is REFUTED by the corpus
+
+R6.3.4a offers a round 7 the target "no generative rule ever fires", pointing at 9,256 of 9,362
+(98.9 %) example solves where neither rule can fire **on the input**, and correctly says the gap
+is a *preservation* question.  I put a number on it, which the report does not:
+
+```
+example row-carrying solves                       : 9,362
+  neither generative rule fireable on the INPUT   : 9,256
+  ...yet a generative rule FIRED during the run   :   111    <-- the invariant fails, 111 times
+  rules that fired anyway: SplitConcrete 230, Resolution 106, SplitKeyed 23, ResolutionRow 6, SplitRow 1
+  DERIVED partitions that unblock splitConcrete, by provenance:
+      Substitution 164, CommonSubexpression 37
+```
+
+So the report's diagnosis is exactly right and now has witnesses: `substitution` and
+`commonSubexpression` manufacture partitions with a nonempty concrete part **and** two or more
+abstract parts, which is precisely `splitConcrete`'s firing shape, and they do it on **111 real
+corpus solves**.  **A round 7 therefore cannot simply widen `NoConc` to the input-only
+condition — as an invariant it is false, and the corpus refutes it.**
+
+The honest ceiling for a *closed* fragment is lower than 98.9 %, and I measured that too:
+
+```
+example row-carrying solves with a saturated set  : 9,340
+  saturated set introduces a variable absent from the input :   220  (2.4 %)
+  vocabulary demonstrably NOT grown                          : 9,120  (97.6 %)
+```
+
+**97.6 %**, not 98.9 %, is what "the vocabulary is fixed" — the property `noConc_terminates`
+actually uses — is worth on the examples.  My recommendation for the round-7 target is therefore
+**"no id is ever DRAWN into a partition", i.e. the vocabulary-fixed condition, aimed at 97.6 %**,
+rather than "no generative rule fires", and the honest framing is that the missing 2.4 % is
+where the whole open problem lives.  Three further observations for whoever writes that brief:
+
+1. The round is right that `measure3_arith`, `env_len_le_card`, every `KDist` lemma,
+   `unorderedHash_perm` and `keyEq_of_eqv` are stated for arbitrary states and transfer.
+2. It is also right about the three things that do not.  I checked the third one at source:
+   `NoConc.lean:1478–1481`, inside `step_kdist`, discharges the `concrete` dispatch branch by
+   `exfalso` from `isEmpty_of_nil hrC` — so a wider fragment has to handle `makeConcrete`, which
+   `StrictBound.lean` already flags as the unbounded branch.  That is a real obstacle, not a
+   formality.
+3. **W-6g's instrument gap is the cheapest thing a round 7 could fix first**: with `cycleRun`
+   wired into `replayMain` the cycle detector and the draw counter could be run over all
+   2,355,430 corpus segments instead of over transcoded seeds.
+
+## W-10. Side by side, for the parts round 6 depends on
+
+| claim | Scala | Lean | verdict |
+|---|---|---|---|
+| `resolution` draws INSIDE the lone-variable arm, so a non-lone premise costs no id | `Constraints.scala:1772–1775` (`case (RHS(Single(x),c1), RHS(Single(y),c2)) => val z = fresh…`) | `Rules.lean:113–150`; `resolution_noConc` | **exact** — the round's correction of the round-5 review is right |
+| the dequeued premise is `resolution`'s `rhs1` | `:1471` inside `proc.foldLeft` | `Step.lean:283` | **exact** |
+| `splitConcrete` refuses an empty concrete part at its first guard | `def splitConcrete`'s leading `if` | `splitConcrete_noConc` | **exact** |
+| the `learn` branch is entered only when `rhs.single?` is none | `incorporateAll`'s dispatch | `Step.lean:319–360` | **exact**, and `single_eq_abstrSingle` closes the fragment's case |
+| `cseMints = false`, `disjRule = false` are SHIPPED, not assumed | `Constraints.scala:768–774` | `State.lean:354–368` | **exact**; no other flag is restricted |
+| `MurmurHash3.unorderedHash` = sum / xor / product, `setHash = unorderedHash(_, "Set".hashCode)` | `scala-library-2.13.18-sources.jar`, `MurmurHash3.scala` | `Hash.lean:96–109`; `unorderedHash_perm` | **exact**, checked term for term against the library source |
+| `Q.insert` refuses a duplicate at the same search key, one-directionally | `PQueue.+`/`+!` | `Queue.lean:166–188`; `KRel`/`KDist` symmetrised | **exact**; `kdist_insertP` covers the `++!` redirect |
+| substituting branches re-establish the queue invariant by RE-INSERTION, not by preservation | `instantiateType` / `makeEmpty` partition-and-requeue | `kdist_instantiate`, `kdist_makeEmpty` (`concatP` over the filtered queue) | **exact**, and the right shape |
+| `concRho` payloads are sets, so `CsItem.SetsOk` is vacuous on the fragment | `Json.lean`'s `rhsBuild` accumulates `c.concat s` and never removes | `Wf.lean:1356–1382` | **exact** (I verified the implication rather than taking it) |
+| `SEq` = everything `step` reads | `State` has 9 fields; 3 are records-only | `Cycle.lean:50–52`; `step_decor` | **exact** |
+| `rawState` determines `SEq` | — | `Cycle.lean:315–325` | **NOT exact — W-6a** |
+| "no id is drawn" | `Constraints.scala:661–662`, `PQueue.build`'s `aux` mints for a non-variable lhs | `Json.lean:155–167`; `cDrawn : cSu'.drawn = 1` | model **exact**; the CLAIM is true of the LOOP, false of the SOLVE on 8 of 373 — W-6b |
+
+Nothing in the round does anything in a different order or over a different set from the Scala.
+
+## W-11. Acceptance criteria (plan `LOOP-MODEL-PLAN.md`, L5)
+
+| criterion | verdict | evidence |
+|---|---|---|
+| `LoopStrict` has no arbitrary-deletion constructor | **PASS**, unchanged | `Strict.lean` untouched (`git diff --stat`) |
+| every `step` refines it under `step_refines_all`'s hypotheses | **FAIL**, unchanged | `concrete` and `learn` are still outside `LinkOrEmptyStep`; round 6 does not touch the strict refinement, and does not claim to |
+| `Terminates s₀` for every satisfiable `Wf s₀` with an explicit bound, **or** a compiler-reproduced witness | **PARTIAL** (was FAIL) | neither disjunct is met in full.  What is met: `Terminates` with an explicit fuel for the `NoConc` fragment, which `ssat_of_no_conc` shows lies **entirely inside** the satisfiable class the criterion quantifies over — so this is a genuine sub-case of the criterion, not a sideways restriction — and which covers **100 % of the standard library's row-carrying solves** (373/373 boot, and by my measurement 15,377/15,377 stdlib-located solves corpus-wide) and 25.5 % of the examples'.  I verified the theorem applies to a real boot solve (W-2b).  No witness; my 17,830 extra runs and the round's 134,674 all terminate |
+| audit green | **PASS** | 854 jobs, 3611 theorems / 0 non-standard axioms, 0 `sorry`, all 128 new declarations on standard axioms (my own `#print axioms`) |
+
+## W-12. The round-6 brief's checkpoints, item by item
+
+| checkpoint | asked | delivered | my verdict |
+|---|---|---|---|
+| **R6.3** | define `NoConc`, prove preservation and termination with an explicit bound, measure the corpus, state the outcome exactly | all of it, plus "no id is drawn" (stronger than the review predicted, and correct), plus the queue bound via `unorderedHash_perm` which nothing in the development had | **DONE, and beyond the ask.**  Every number re-derived by me from my own traces; the theorem instantiated by me at a real boot solve |
+| **R6.1** | canonical form, `--cycle`, the lemma, a search over round 5's populations + a fresh 50,000 | all of it; 134,674 solves / 3,082,009 states / 0 repeats, with an independent `states == steps+1` cross-check | **DONE**, quantified negative as specified.  One claim overstated (W-6a); I added 17,830 runs and the deepest witness of the stage |
+| **R6.2** | recast as "`incm` empties", say what makes the derived set saturate, find the exact gap, state the residual, attempt it | `terminates_iff_incm_empties` (T1); `GuardComplete` named and refuted; `ProcSaturates` stated, proved sufficient, proved on the fragment | **DONE for the recast and the gap; the residual is fragment-relative** (W-6d) and so is weaker than the brief's "one lemma" for the general case |
+
+## W-13. Verdict — **ADVANCE**
+
+The certification is real, and I checked it at the highest bar the brief asks for.
+
+* The **Lean** rebuilds (854 jobs), the audit is 3611 / 0, the hygiene grep is clean, and all
+  **128** declarations of the two new modules print only `propext` / `Classical.choice` /
+  `Quot.sound` under my own `#print axioms` run.  **All 48 declarations the report quotes are verbatim** — checked
+  mechanically (`tmp/review-L5r6/`: extract every `theorem`/`def` block from the Round-6 section,
+  normalise whitespace, compare against the two modules; 48 checked, 0 differences).  `noConc_terminates_of_buildQueue` has **no hidden hypothesis**: the two
+  flags are the shipped defaults, `Wf` is discharged by `wf_seed`/`wf_replay`, `EnvNodup` and the
+  two `KDist`s are discharged at an initial state, and `wf_replay`'s `SetsOk` really is vacuous
+  on the fragment for a reason I verified in `Json.lean` rather than accepted.
+* The **theorem applies**: I instantiated it in Lean at the largest stdlib-boot row-carrying
+  solve (13 partitions, 30 variables, transcribed from my own trace) and got
+  `Terminates bS0` on standard axioms, with the run's 31 dequeues and `drawn = 0` decided and the
+  handed-over fuel evaluated at 3.2·10²².  I also instantiated it at the *other* boot input
+  shape — the eight solves whose left-hand side is a `ConcreteRho`, where `PQueue.build` mints
+  before the loop starts — and it covers those too (W-6b).
+* The **measurement reproduces exactly** — all 34 cells of the two corpus tables and both
+  round-7-pointer rows — from traces I generated and a census I wrote from the record format.
+  The boot's 383 row-carrying segments are **all** `NoConc`, the 373 that build a partition span
+  289 distinct source locations, and the dispatch histogram (a different code path) shows
+  **0 `concrete` steps on the boot against 1,305 and 1,556 on the example groups** — exactly what
+  `step_noConc` predicts.
+* The **compiler agrees on real input**: 100 shipped-compiler solves on ten real boot solves at
+  ten id bases, `SOLVED=10 HANG=0` and `DRAWN 0:x10` every time.  The round's own compiler check
+  used synthetic seeds; this one uses the standard library.
+* The **cycle search** reproduces cell for cell from the raw `.tsv`, re-runs bit-for-bit, and I
+  added 17,830 runs of my own on larger, more label-rich populations — including the deepest run
+  this stage has recorded (443 dequeues, 1,382 draws), whose ten per-base draw counts the shipped
+  compiler reproduces exactly. Still 0 repeats, 0 `FUEL`.
+* The **caveats the round states are the right ones and are stated honestly** — the quotient is
+  not a congruence, the supply must be quotiented, the bound is not tight, nothing is claimed
+  about the 6,974 labelled example solves, and the claim is "proved of the model, verified of the
+  compiler by L2".
+
+**What is certified, in one sentence, as I would write it after re-running everything:**
+
+> Under the shipped flags, `Rowpartition.Loop.step` — the L2-verified model of
+> `Constraints.incorporateAll` — provably reaches `done` or `died` within an explicit fuel from
+> any initial state whose input partitions carry no field label; a fresh census puts **every one
+> of the 383 row-carrying solves of the 129-module standard-library boot (and every one of the
+> 15,377 stdlib-located row-carrying solves across the whole corpus) inside that
+> fragment**, so `Subst.solve` terminates on all of them, and its LOOP draws no id while doing
+> so (`PQueue.build` draws one on 8 of them, before the loop — W-6b).
+
+**What is NOT certified, and must not be read into it:** the 6,974 example-corpus solves that
+carry a concrete label (74.5 % of the examples' row-carrying solves) and the 858 labelled ones in
+`incomplete/`; termination in general, which remains open with the same mechanism named since
+round 4; and — because the theorem is about the model — anything read directly off `Subst.solve`'s
+Scala beyond what L2's 2,355,430-segment record-for-record differential establishes.  "The
+standard library" means the standard library's own solves, and I have measured that this holds
+whether it boots alone or under any corpus program; it does **not** mean every solve a user
+program performs.
+
+**Findings**: **W-6a** (a claim about `rawState` that is false as written, with no effect on the
+result) and **W-6b** ("no id is drawn" is true of the loop, false of the solve, on 8 of the 373
+boot solves — the theorem is unaffected, four documents' prose is not); W-6c/W-6d (two
+documentation corrections); W-6e (a scope statement that should be *strengthened*, from 373 to
+15,377); W-6f (a caveat I closed by measuring it); W-6g (an instrument gap for round 7).  None
+blocks the round.  **W-6a, W-6b and W-6d should be applied to the report, and W-6b and W-6e to
+`ROW-CONSTRAINT-STATE.md`, the README, the plan row and the handoff, before the round is
+committed** — W-6b in particular, because that paragraph is the certification the project will
+be quoted on.
+
+**ADVANCE.**

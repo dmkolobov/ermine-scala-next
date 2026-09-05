@@ -1,4 +1,52 @@
-# Row-constraint work — state as of 2026-09-04
+# Row-constraint work — state as of 2026-09-05
+
+## 2026-09-05: the STANDARD LIBRARY BOOT is proved terminating (loop model, L5 round 6)
+
+`tracker/lean/Rowpartition/Loop/NoConc.lean` proves `Terminates` for the **no-concrete-labels
+fragment** of `Constraints.incorporateAll` — states in which no partition of either queue
+carries a field label — with an explicit fuel, at the SHIPPED flags (`genRules=cut`,
+`disjunction` off; `splitKey`, `splitRow`, `resGuard`, `resRow`, `labelCheck` unrestricted).
+On such a state the loop is **non-generative**: `splitConcrete` is refused at its first guard
+and `resolution`'s lone-variable pattern fails *before* its `fresh`, so no id is ever drawn,
+`makeConcrete`'s dispatch branch is unreachable, and the vocabulary is fixed — which bounds the
+`SubstEnv`, the processed queue (by `forms V ∅`) and the incoming queue (by the queue's own
+de-duplication, once `MurmurHash3.unorderedHash` is proved permutation-invariant so that
+`Partition.equals` implies equality of the search key).
+
+**What that certifies, exactly.**  A fresh `-Dermine.rowTrace` census of the 129-module stdlib
+boot (54,199 `Subst.solve` segments) finds **383 segments carrying a row constraint, 373 of
+which build at least one partition, and every one of the 373 has an input with NO concrete
+label** — 0 with a label anywhere, and a step census of `0 Resolution` and `0 SplitConcrete`
+records to match.  The round-6 reviewer widened that measurement to the whole corpus and it
+holds there too: across the six example groups **2,322 of 2,322** row-carrying solves with a
+stdlib `loc` are label-free, and adding the boot's own 373 and all 34 `.e` modules of
+`core/examples/incomplete/` makes it **15,377 of 15,377 across 41 traces**.  So:
+
+> **Every row-constraint solve the Ermine standard library performs — booting alone, or while
+> any corpus program is loaded — is inside the proved fragment, and `incorporateAll` is proved
+> to terminate on all 15,377 of them.**
+
+Two qualifiers, both from the round-6 review.  **(1) "Draws no id" is true of the LOOP, not of
+the whole solve.**  `PQueue.build`'s `aux` mints a name for a `Part` whose left-hand side is not
+a variable (`Constraints.scala:661–662`), and 8 of the 373 boot inputs have exactly that shape —
+a `ConcreteRho` with an empty field set on the left, in `Relation/Op.e` and `Relation.e`.  Those
+8 are still in the fragment and still covered: an empty concrete row carries no label, and the
+theorem's state starts at the supply `buildQueue` returns.  What is proved is that
+`incorporateAll` invents no variable and draws no id; the build may draw one before it starts.
+**(2) The theorem is about the Lean loop model**, which stage L2 verified record-for-record
+against the compiler's own trace on 2,355,430 corpus segments with 0 mismatches — so the claim
+is "proved of the model, verified of the compiler on exactly these solves", not a claim read off
+`Subst.solve`'s source.
+
+On the example programs' OWN solves the fragment covers **2,388 of 9,362** row-carrying solves
+(25.5 %); the rest carry concrete labels and are NOT covered.  Termination in general is still
+OPEN, for one reason: off the fragment the vocabulary is not fixed, because the two generative
+rules mint, and round 5's witnesses show the reuse guards permit a second mint at a key whose
+carrier has been lost (`guardComplete_false`).  And the obvious widening — "neither generative
+rule can fire" — is REFUTED by the corpus: on 111 example solves both rules are blocked at the
+input and one fires anyway, unblocked by a partition `Substitution` or `CommonSubexpression`
+derived.  The honest ceiling for a closed fragment is the vocabulary-fixed condition, worth
+**97.6 %** of the example solves, not 98.9 %.
 
 ## 2026-09-04: a compiler PANIC on satisfiable input — `makeEmpty` self-propagation, FIXED
 

@@ -567,6 +567,29 @@ neither carrier-shaped nor a charge -- one reading the key's CONCRETE-LABEL stru
 pool never grows, and every deep pump measured sits at a hub's full row), or one bounding the
 supply of premise PAIRS a key can be resolved on.
 
+### L5 round 6 -- the standard library boot PROVED TERMINATING, a cycle search, and "incm empties" (2026-09-05)
+
+Worked from the clean commit `1394df4`.  Two NEW modules; every earlier Lean module is
+unchanged except `Loop/Main.lean`, which gains a `--cycle` mode, so nothing rounds 1-5 proved
+is weakened.  Build 854, Audit 3611/0; the two modules are 375 + 1,722 lines and 128 declarations (101 theorems, 25 defs, 1 abbrev, 1 structure), all on standard axioms.  Report `tracker/loopmodel/L5-TERMINATION.md` (Round 6).
+
+| module | what |
+|---|---|
+| `Rowpartition/Loop/NoConc.lean` | **The no-concrete-labels fragment, and `Terminates` on it.**  `NoConc s` -- no partition of either queue carries a field label -- is preserved by `step` (`step_noConc`, `run_noConc`) and **on it the loop is non-generative**: `splitConcrete` is refused at its first guard and `resolution`'s lone-variable pattern fails BEFORE its `fresh` (`splitConcrete_noConc`, `resolution_noConc`), so the LOOP draws no id at all (`PQueue.build`, which runs before it, still mints for a `Part` with a non-variable left-hand side — 8 of the 373 boot inputs; round-6 review W-6b) and `makeConcrete`'s dispatch branch is unreachable.  The vocabulary is therefore fixed (`learnPartitions_avoidsV`, `step_inVoc`, `inVoc_self` -- the clause `Supply.learnPartitions_new` could not give, since its "old OR unreachable" conclusion is unusable for a vocabulary bound), which bounds the environment (`env_len_le_card`) and the processed set (`procSys_card_le`, via `DefaultTerm.forms V ∅`); and the queue's own de-duplication bounds the queue (`KDist`, `kdist_length_le`), which needs **`unorderedHash_perm`**: `MurmurHash3.unorderedHash` folds a sum, an exclusive-or and a product, so `RHS.hashCode` does not depend on a `Set`'s iteration order and `Partition.equals` implies equality of the queue's SEARCH KEY.  Hence `noConc_terminates` / `noConc_run` / `noConc_terminates_of_buildQueue`, with the explicit fuel `measure3 (n·2ⁿ) (n·2ⁿ) n s + 1`.  Also §7's reduction `terminates_of_bounds` (three bounds ⇒ `Terminates`; it carries `NoConc` along the run, so the residual it names is FRAGMENT-RELATIVE -- review W-6d) and §8's recast `terminates_iff_incm_empties`, `trim_notContains`, and `guardComplete_false` |
+| `Rowpartition/Loop/Cycle.lean` | **A repeated state is a divergence, and the search for one.**  `SEq` is equality of everything `step` reads; `step_decor` / `step_congr` prove `step` is a function of that much (the trace really is inert), `run_seq` lifts it to `run`, and `not_terminates_of_cycle` turns any run returning to an `SEq`-equal state into `¬ Terminates`.  Then the instrument: `canonState` renames every MINTED id (`id ≥ su0`) to its first-occurrence index, `rawState` does not and keeps the supply, `cycleRun` hashes both at every dequeue, and `lake exe looptrace --cycle` prints the first repeat of each (on the `json:` seed path only -- `replayMain` has neither `--cycle` nor `--mints`, review W-6g).  The search: **134,674 solves, 3,082,009 canonical states, 0 repeats, 0 `FUEL`**.  NEITHER detector's hit would be a proof: the renaming quotient is not a congruence (the queue is ordered by `V.hashCode`, which IS the id), and `rawState` omits the queue GRAPHS, `Sup.blk`/`bsz`, `flags` and `names` that `SEq` demands (review W-6a) -- both are candidates to be replayed.  The negative direction is sound: an `SEq` repeat forces a `rawState` repeat forces a canonical one |
+
+**What round 6 settles.**  `Subst.solve`'s loop **terminates on every row-constraint solve the
+Ermine standard library performs** -- 373 of 373 in the bare boot, and **15,377 of 15,377
+stdlib-located row-carrying solves across all 41 corpus traces** (round-6 review W-6e, W-7) --
+because every one of them presents an input with no concrete label; a quarter of the example
+programs' own solves (2,388 of 9,362) is covered too.  That
+is the first unconditional `Terminates` of this stage that covers real input, and it is proved
+of the loop model, which L2 verified against the compiler's own trace on 2,355,430 corpus
+segments with 0 mismatches.  The general case stays open for exactly one reason: off the
+fragment the vocabulary is not fixed, because `splitConcrete` and `resolution` mint -- and
+round 5's own witnesses show the guards permit a re-mint at a key whose carrier has been lost
+(`guardComplete_false`).
+
 ---
 
 ## The shared vocabulary

@@ -186,3 +186,5 @@ import Rowpartition.Loop.Mints
 import Rowpartition.Loop.Pump
 import Rowpartition.Loop.Dequeue
 import Rowpartition.Loop.Fragment
+import Rowpartition.Loop.Cycle
+import Rowpartition.Loop.NoConc

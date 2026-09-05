@@ -21,6 +21,13 @@ computes it from `splitConcrete`'s own supply, so the instrument is the rule its
 dequeued left-hand side, which is `resolution`'s mint as well as `splitConcrete`'s, and is
 the round-4 hunt's detector.
 
+`--cycle` (L5 round 6) prints instead the STATE-CYCLE search of the same solve: one `cycle`
+line with the verdict, the dequeue count, the number of DISTINCT canonical states visited,
+and the first canonical and the first exact repeat, if any.  `Loop/Cycle.lean` canonicalises
+a state by renaming every minted id (`id >= su0`) to its index in the state's own
+first-occurrence traversal; an exact repeat is `not_Terminates` by `not_terminates_of_cycle`,
+a canonical repeat is a candidate that has to be replayed.
+
 `--flags=a,b,c` turns individual `GenRules` switches on or off: `all`, `cut`, `nongen`,
 `disj`, `nolabel`, `lateLabel`, `noresguard`, `nosplitkey`, `nosplitrow`, `noresrow`,
 `emptyrow`.  With no `--flags` the SHIPPED defaults are used.
@@ -35,6 +42,7 @@ counts.  Segments are numbered from 0 in file order; `--from`/`--to` restrict th
 -/
 import Rowpartition.Loop.Replay
 import Rowpartition.Loop.Pump
+import Rowpartition.Loop.Cycle
 
 namespace Rowpartition.Loop
 
@@ -191,7 +199,23 @@ def mainImpl (args : List String) : IO UInt32 := do
       | .ok seed =>
         let (parts, ns) := seedSystem seed base
         let out := solveSeed fl site "-" parts ns (Sup.ofSeed ns.supplyLo) fuel
-        if opts.contains "--mints" then
+        if opts.contains "--cycle" then
+          match buildQueue parts (Sup.ofSeed ns.supplyLo) with
+          | .error m => IO.println s!"cycle\tREJECTED\tsteps=0\tstates=0\tcanon=-\texact=-\t{m}"
+          | .ok (q, su2) =>
+            let st0 : State :=
+              { incm := q, proc := PQueue.empty, env := {}, su := su2, trace := [], flags := fl,
+                names := ns, site := site, su0 := (Sup.ofSeed ns.supplyLo).lo }
+            let rep := cycleRun fuel st0 [] [] {}
+            let sc := match rep.canonHit with
+              | none => "-"
+              | some (i, j) => s!"{i},{j}"
+            let sr := match rep.rawHit with
+              | none => "-"
+              | some (i, j) => s!"{i},{j}"
+            IO.println s!"cycle\t{rep.verdict}\tsteps={rep.steps}\tstates={rep.distinct}\tdrawn={rep.drawn}\tcanon={sc}\texact={sr}"
+            if rep.canonHit.isSome then IO.println s!"witness\t{rep.witness}"
+        else if opts.contains "--mints" then
           let (parts', su1) := (parts, Sup.ofSeed ns.supplyLo)
           match buildQueue parts' su1 with
           | .error m => IO.println s!"mints\tREJECTED\tsteps=0\tdrawn=0\tmax=0\tremint=0\t{m}"

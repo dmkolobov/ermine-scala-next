@@ -186,8 +186,26 @@ from a growing proc, not cycles; vs: diverges one flag away, seven invariants re
 off-ledger). ROUND-6 SPEC: R6.1 search for a state CYCLE up to renaming of minted ids (a repeat = not_Terminates;
 no repeat in 100k solves = strong negative), R6.2 recast termination as 'incm empties' (trim + guard completeness),
 R6.3 widen the fragment to inputs with NO concrete labels — covers all 373 row-carrying stdlib-boot solves →
-'proved for the standard library, open for the examples'. UNCOMMITTED: round 5 (commit on the user's word);
-round 6 = user's decision.
+'proved for the standard library, open for the examples'. Round 5 COMMITTED `1394df4` (2026-09-05). L5 ROUND 6 DONE (fresh Opus, `briefs/brief-L5r6.md`), UNCOMMITTED:
+**R6.3 LANDS — `Terminates` is PROVED, with an explicit bound, for the no-concrete-labels fragment
+(`Loop/NoConc.lean`: `noConc_terminates` / `noConc_run` / `noConc_terminates_of_buildQueue`), and a fresh corpus
+census puts ALL 373 row-carrying stdlib-boot solves inside it (0 with any concrete label; step census 0 Resolution,
+0 SplitConcrete), plus 2,388 of 9,362 of the example programs' own solves; the reviewer widened that to 15,377 of
+15,377 stdlib-located row-carrying solves across all 41 traces (W-6e/W-7).** On the fragment the loop is
+non-generative — both minting rules are refused BEFORE their `fresh`, so the LOOP draws no id (stronger than the
+round-5 review predicted; `PQueue.build`, which runs first, still mints for a non-variable lhs — 8 of the 373 boot
+inputs — and the theorem covers them, W-6b) — the vocabulary is fixed, and the three quantities that move (env,
+procSys, incm) are each bounded by it; the queue bound needed `unorderedHash_perm` (MurmurHash3's set hash is
+order-independent, so `Partition.equals` implies equality of the queue's search key). R6.1 `Loop/Cycle.lean`:
+`not_terminates_of_cycle` proved, `looptrace --cycle` built, 134,674 solves / 3,082,009 canonical states searched
+(incl. a fresh 50,000-solve hunt), NO canonical repeat, 0 FUEL; NEITHER detector's hit would have been a proof —
+the renaming quotient is not a congruence and `rawState` omits the queue graphs / `Sup.blk`,`bsz` / flags / names
+that `SEq` demands (W-6a) — the negative direction is sound.
+R6.2 (T1) recast (`terminates_iff_incm_empties`), (T2) residual: `GuardComplete` REFUTED by round 5's witnesses,
+`ProcSaturates` proved sufficient and proved on the fragment, but the residual is FRAGMENT-RELATIVE (W-6d).
+Build 854, Audit 3611/0; 128 new declarations (101 theorems), 375 + 1,722 lines. Round-6 review corrections
+W-6a/b/c/d/e/g and W-9 APPLIED (2026-09-05) to the report, the plan row, the README and `ROW-CONSTRAINT-STATE.md`;
+build and audit re-checked green after. Commit on the user's word.
 (The earlier handoff sentences saying the invariant is false and that B1 must replace the emits_self lemma are
 superseded by this paragraph.); the 1,456-partition splitKey=false replay under tmp/L4/gu05nk/ is a model-speed
 question, not a disagreement. Reports: `L3-THEOREMS.md` (Round 2 section), `L4-TEST.md`.
@@ -220,3 +238,22 @@ L2's brief is not yet written; the plan's L2 section is its specification.
 `ei-classify.py`, `corpus-verdicts.py`, `keptdef-sweep.sh` + `keptdef-mints.py`,
 `splitkey-counts.py`, `rowclosure.py` (additive explorer + seed generator), `batch-split.py`,
 `repl-smoke.sh`, `lsp-smoke.sh`, gate-chain scripts under `~/.claude/jobs/880c725d/tmp/postflip2/`.
+
+## Orchestrator note, 2026-09-05 (after L5 round 6)
+ROUND 6 DONE (Loop/{NoConc,Cycle}.lean; build 854, Audit 3611/0): R6.3 CERTIFICATION CLAIM — `noConc_terminates`
+with an explicit bound; NO id is drawn on the fragment; `unorderedHash_perm` turns queue dedup into a length bound;
+corpus: 373 of 373 row-carrying stdlib-boot solves are NoConc → "Subst.solve terminates on every row-constraint
+solve of the standard-library boot" (examples 2,388 of 9,362 = 25.5%); R6.1 cycle search 134,674 solves /
+3,082,009 canonical states / 0 repeats (`not_terminates_of_cycle`; the renaming quotient is not a congruence, so a
+hit would be a candidate, not a proof); R6.2 `terminates_iff_incm_empties` proved, `GuardComplete` refuted by
+round-5 witnesses, `ProcSaturates` sufficient. Round-7 pointer: 9,256/9,362 example solves never fire a
+generative rule on the input — a preservation question. ROUND-6 REVIEW running (certification checked at the
+highest bar). UNCOMMITTED: round 6; commit on the user's word.
+ROUND-6 REVIEW (2026-09-05): ADVANCE. Certification instantiated in Lean on the largest boot solve; corpus
+re-derived; scope STRENGTHENED to 15,377/15,377 stdlib-located row-carrying solves across all seven groups; W-6b:
+"no id drawn" holds of the loop, not the solve (PQueue.build mints for a non-variable lhs; 8 boot inputs);
+naive round-7 widening refuted — 111 solves fire a generative rule via Substitution/CSE despite both being blocked
+at the input; ceiling 97.6% (vocabulary-fixed), not 98.9%. Corrections sent to the r6 implementer. USER'S POINT
+(2026-09-05): Ermine is a reporting language, users always end with concrete fields — the stdlib certification is
+a FLOOR; round 7 should certify the examples' no-generative-rule fragment and list the label-carrying residue solve
+by solve. UNCOMMITTED: round 6 (commit on the user's word).
