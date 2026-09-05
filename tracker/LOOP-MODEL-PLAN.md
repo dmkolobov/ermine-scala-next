@@ -64,8 +64,9 @@ which transfers soundness. (ii) TERMINATION of iterated `step` on satisfiable in
 theorem this whole programme is for — with a measure over queue content and mints; the four
 order properties are now lemmas about `step`, not hypotheses. (iii) The Stage 7b question:
 with the single pass built in, does the fallback mint chain? (iv) The state invariants the
-bridge assumes (`Loop/Bridge.lean`'s `Nodup` hypotheses, L1 review F6) are proved preserved by
-`step` from the initial state, so the bridge applies to every reachable state. Acceptance: (i)
+bridge assumes (`Loop/Bridge.lean`'s four `Nodup` hypotheses, L1 review F6, and the `LblCoh`
+hypothesis added in L2, L2 review F5) are proved preserved by `step` from every initial state
+`Seed`/`Replay` builds, so the bridge applies to every reachable state. Acceptance: (i)
 and (ii) proved or refuted with a witness the compiler reproduces; (iii) decided; (iv) proved;
 audit green.
 
@@ -87,13 +88,24 @@ matter. Findings ranked, each with CONFIRMED (re-run) or PLAUSIBLE (read only). 
 sends confirmed findings back to the implementer; a stage advances only when the reviewer's
 list is empty or every remaining item is recorded in the report as accepted scope.
 
+### Known scope limits carried by every later stage
+* The trace-equivalence population is the SERIALIZED loader (`-Dermine.loadInSeries=true`). The
+  parallel loader — the shipped path — interleaves records of concurrent solves; gu05's
+  1,372-partition solve exists only there. Closing it needs a thread id on every trace record
+  and a segmenter that uses it (candidate L4 item).
+* `Disjunction` is covered by seeds only; a corpus sweep with it on finishes on neither side.
+* `emptyRow` (default off): the model's per-solve environment misses carriers the compiler's
+  whole-inference environment has (M4, 37 segments).
+* Building the initial queue from a raw constraint list is not under corpus test: non-partition
+  elements' hash/equals classes are taken from the trace (L2 review F3).
+
 ## Status
 
 | stage | implementer | reviewer | state |
 |---|---|---|---|
 | L1 | agent (2026-09-04) | agent (2026-09-04), three rounds | **ADVANCED 2026-09-04.** `tracker/lean/Rowpartition/Loop/` (13 files) + `lake exe looptrace` + `tracker/tools/looptrace-diff.py`; reports `tracker/loopmodel/L1-MODEL.md`, `L1-REVIEW.md`. Final: 1,301 trace comparisons (6 tracked + 11 regression seeds + two fuzzes) and 2,572 hash-set-level JVM comparisons, 0 differing; build 832, Audit 2508/0. Review found and fixed two CHAMP-semantics bugs (sub-node inlining on removal; both early returns of `concat`). Carried forward: F6 → L3 (iv); F7 (`V.ty` inferred from id) → L2 blocker. |
-| L2 | agent (2026-09-04) | — | LAUNCHED; brief `tracker/loopmodel/briefs/brief-L2.md` |
-| L3 | | | |
+| L2 | agent (2026-09-04) | agent (2026-09-04): FIX-THEN-ADVANCE, no correctness defect, eight documentation findings, all applied | **ADVANCED 2026-09-04.** Every SERIALIZED corpus solve (stdlib boot + 110 examples: 26,864 row-carrying segments, 12,310 distinct solves, the boot at 42 id bases) and 2,000 random systems replay byte for byte at the compiler's ids; 920,611 segments re-run by the reviewer. `RowTrace` gained four inert replay records (`sin`/`slbl`/`svar`/`scon`); model gaps fixed: `makeEmpty`'s skolem refusal, `Supply`'s block boundary; accepted: M4 (`emptyRow` only). Reports `tracker/loopmodel/L2-CORPUS.md`, `L2-REVIEW.md`. Build 833, Audit 2530/0. |
+| L3 | agent (2026-09-04) | — | LAUNCHED; brief `tracker/loopmodel/briefs/brief-L3.md` |
 | L4 | | | |
 
 Constraints throughout: the tree carries uncommitted Stage 7 work (`git status`); agents touch

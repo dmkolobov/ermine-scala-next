@@ -22,6 +22,9 @@ loop itself, as a total function, with an executable that prints the compiler's 
 * `Loop.Trace`       -- the TSV record formats of `RowTrace`
 * `Loop.Json`        -- `Exists.apply`, `RHS.build`, `PQueue.build`, `labelClash`
 * `Loop.Seed`        -- the `json:` seed format and the whole of `Subst.solve` around the loop
+* `Loop.Replay`      -- (L2) reading a compiler `-Dermine.rowTrace` file back: its `sin` /
+                        `slbl` / `svar` / `scon` records reconstruct every solve's input, so
+                        the model can be run on the corpus rather than on hand seeds
 * `Loop.Conformance` -- the JVM's hash and iteration-order answers as build-time `#guard`s
 * `Loop.Bridge`      -- a loop partition IS a `Rowpartition.Constraint`: the conversion both
                         ways, `champSort` proved a permutation, and `LPart.eqv` proved to be
@@ -43,5 +46,6 @@ import Rowpartition.Loop.Step
 import Rowpartition.Loop.Trace
 import Rowpartition.Loop.Json
 import Rowpartition.Loop.Seed
+import Rowpartition.Loop.Replay
 import Rowpartition.Loop.Conformance
 import Rowpartition.Loop.Bridge

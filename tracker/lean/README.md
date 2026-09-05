@@ -21,7 +21,13 @@ recounted with the command below: the README's own glob `Rowpartition/*.lean` no
 and there are **12 more files and 28 more named theorems under `Rowpartition/Loop/`** that the
 glob does not reach — **50 files, 1980 named theorems** in all. Still **0 `sorry`**, **0 custom
 axioms**, and additionally no `partial`, `unsafe`, `native_decide`, `opaque` or `implemented_by`
-under `Rowpartition/Loop/`. Every theorem's axiom set is a
+under `Rowpartition/Loop/`.
+**UPDATED 2026-09-04 again, after L2** (`tracker/loopmodel/L2-CORPUS.md`), which adds
+`Rowpartition/Loop/Replay.lean`: recounted with the same command, `Rowpartition/*.lean` is
+unchanged at **38 files and 1952 named theorems**, and `Rowpartition/Loop/` is now **13 files
+and 29 named theorems** — **51 files, 1981 named theorems** in all, still 0 `sorry`, 0 custom
+axioms, no `partial`, `unsafe`, `native_decide`, `opaque` or `implemented_by`.
+Every theorem's axiom set is a
 subset of Lean's three standard axioms (`propext`, `Classical.choice`, `Quot.sound`);
 `sorryAx` appears nowhere. This is checked by walking the whole environment — `Audit.lean`
 in this directory enumerates every theorem under the `Rowpartition` namespace and collects
@@ -39,6 +45,17 @@ $ lake env lean Audit.lean
 Rowpartition theorems audited: 2508; declarations using a non-standard axiom: 0
 $ lake build Rowpartition
 Build completed successfully (832 jobs).
+```
+
+**UPDATED 2026-09-04 (L2)**, after `Rowpartition/Loop/Replay.lean`:
+
+```
+$ lake env lean Audit.lean
+Rowpartition theorems audited: 2530; declarations using a non-standard axiom: 0
+$ lake build Rowpartition
+Build completed successfully (833 jobs).
+$ lake build looptrace
+Build completed successfully (24 jobs).
 ```
 
 (2378 > 1888 because the environment also carries generated equation and match-arm
@@ -182,6 +199,7 @@ non-standard axioms. `CutSearch` is the one module that does NOT build here at a
 | `Rowpartition/Loop/Seed.lean` | **exit 0**, no output | 2026-09-04; 1.2 s; uses `Lean.Data.Json` (no new `require`) |
 | `Rowpartition/Loop/Conformance.lean` | **exit 0**, no output | 2026-09-04; 1.5 s; 45 JVM-checked `#guard`s |
 | `Rowpartition/Loop/Bridge.lean` | **exit 0**, no output | 2026-09-04; 1.9 s; the only Loop module that needs Mathlib |
+| `Rowpartition/Loop/Replay.lean` | **exit 0**, no output | 2026-09-04 (L2); reading a compiler `-Dermine.rowTrace` file back, one `Segment` per solve |
 | `Rowpartition/Loop/Main.lean` | **exit 0**, no output | 2026-09-04; the `looptrace` executable root, NOT imported by `Rowpartition.lean` |
 
 `lake build` → `Build completed successfully (804 jobs).` (2026-09-01, with the five
@@ -250,6 +268,45 @@ flags are byte-identical, not merely equal after id normalisation. The harness i
 
 **A solver change must keep this green.** If a rule, a queue operation or a flag default
 changes in `Constraints.scala`, the model changes with it, or the differential stops agreeing.
+
+### L2 — the same differential over the WHOLE corpus (2026-09-04)
+
+Stage L2 replays EVERY `Subst.solve` the compiler performs while it loads the corpus, not
+just hand-written seeds. `-Dermine.rowTrace` now writes four extra records per solve --
+`sin`, `slbl`, `svar`, `scon`, documented in `RowTrace.scala`'s header -- which carry the id
+supply, every input variable's `VarType`, every label's `Name`, and the constraint list with
+each element's `hashCode` and `equals` class. That is what a replay needs, so:
+
+```bash
+tracker/tools/looptrace-corpus.sh /tmp/L2            # trace, replay and diff everything
+cd tracker/lean
+lake exe looptrace --replay <trace.tsv>              # one process per corpus file
+python3 ../tools/looptrace-diff.py --segments --lean MODEL.out --scala TRACE.tsv
+```
+
+`--replay` streams the trace and prints one `#seg` marker per solve; `--segments` splits both
+sides the same way, pairs them by index and compares them BYTE for byte -- no id
+normalisation, because the replay runs at the compiler's own ids.
+
+Two things this found that seeds could not, both now modelled rather than excused:
+`makeEmpty`'s SKOLEM refusal (`Constraints.scala:1577`), which five `shouldfail/sk0*` modules
+reach, and `Supply.fresh`'s BLOCK BOUNDARY -- a supply whose 1024-id block runs out jumps to
+wherever a global counter stands, which moves `V.hashCode` and hence the queue order.
+`Loop/State.lean`'s `Sup` is `scalaparsers.Supply` exactly, block changes included.
+
+**Result: 0 mismatches and 0 skips at the shipped flags**, byte for byte at the compiler's own
+ids. Read the counts the way `L2-CORPUS.md` §4a states them: the sweep compares 2,355,430
+solve SEGMENTS, but 96.6 % of those are the 129-module stdlib boot replayed 42 times (every
+group's JVM boots it, and `incomplete/` runs one JVM per file) and 98.9 % are trivial solves
+with no row constraint at all. **26,864 segments carry a row constraint, 12,310 of them are
+not repeats of the bare boot, and 10,694 have a location under `core/examples`** — that is the
+distinct population. The 42 repeats are real coverage rather than padding (each is a fresh
+`Supply`, so a different id base; `M3`, the block boundary, was found in two segments of ONE
+of them), but the distinct figure is the honest headline. Plus 2,000 random `rowclosure.py`
+systems, also 0 mismatches.
+
+Counts, the mismatch triage and the accepted-abstraction list are in
+`tracker/loopmodel/L2-CORPUS.md`.
 
 ---
 

@@ -51,8 +51,10 @@ def satBody (ns : Names) (p : LPart) : String :=
   String.intercalate " " (sortStrings (p.rhs.abstr.toList.map (ns.sv ·))) ++ "\t" ++
   String.intercalate "," (sortStrings (p.rhs.conc.toList.map Lbl.toStr))
 
-/-- One `inpart` or `sat` record. -/
-def popRecord (kind : String) (site : String) (ns : Names) (i : Nat) (p : LPart) : String :=
-  kind ++ "\t" ++ site ++ "\t-\t" ++ toString i ++ "\t" ++ satBody ns p
+/-- One `inpart` or `sat` record.  `loc` is `RowTrace.clean(l.toString)`, the third column:
+`-` for a seed (`Loc.builtin`), the solve's own location when replaying a compiler trace. -/
+def popRecord (kind : String) (site : String) (loc : String) (ns : Names) (i : Nat)
+    (p : LPart) : String :=
+  kind ++ "\t" ++ site ++ "\t" ++ loc ++ "\t" ++ toString i ++ "\t" ++ satBody ns p
 
 end Rowpartition.Loop

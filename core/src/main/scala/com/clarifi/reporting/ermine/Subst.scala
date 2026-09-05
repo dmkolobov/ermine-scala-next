@@ -1125,6 +1125,13 @@ object Subst {
   def solve(csz: Type)(implicit hm: SubstEnv, su: Supply, tml: Located): Type = {
     val l = csz.loc
     val (es, cs) = unbindExists(Ambiguous(Free), csz)
+    /* Trace-only, and the ONLY line of the solver stage L2 adds: the replay records that
+     * let the Lean loop model re-run this exact solve (`RowTrace`'s FORMAT block, `sin` /
+     * `slbl` / `svar` / `scon`).  It runs HERE because it must see the `Supply` before
+     * `PQueue.build` draws from it and the constraint list before `Exists.apply` reorders
+     * it.  Inert unless `-Dermine.rowTrace` is set: `solveInput`'s whole body is under
+     * `if (enabled)`. */
+    RowTrace.solveInput(l.toString, cs, su)
     val (q, esp) = PQueue.build(Exists(l, List(), cs))
     /* The per-concrete-label refutation, as a thunk, because WHERE it runs is a
      * question in its own right.  It reads `q` -- the INPUT partitions -- and nothing

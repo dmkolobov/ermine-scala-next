@@ -65,16 +65,18 @@ def seedVars (s : Seed) : List Nat :=
   sortNats (raw.foldl (fun acc v => if acc.contains v then acc else acc ++ [v]) [])
 
 /-- The system a seed makes at an id base: the input `Part` list, the display names, and the
-first id the `Supply` will draw. -/
-def seedSystem (s : Seed) (base : Nat) : List IPart × Names :=
+first id the `Supply` will draw.  A seed's constraint list is all `Part`s, so every item is a
+`CsItem.part`; the corpus replay is where `other` items appear. -/
+def seedSystem (s : Seed) (base : Nat) : List CsItem × Names :=
   let vs := seedVars s
   let idOf := fun (k : Nat) => base + (vs.idxOf k)
   let named := (withIndex vs).map (fun (k, i) => (base + i, "v" ++ toString k))
   let parts := s.cons.map (fun c =>
+    CsItem.part
     { lhs := ITerm.varT (idOf c.lhs),
       rhs := c.vars.map (fun v => ITerm.varT (idOf v)) ++
         (if c.labels.isEmpty then []
-         else [ITerm.concRho (SSet.ofList (c.labels.map (fun n => (⟨n⟩ : Lbl))))]) : IPart })
+         else [ITerm.concRho (SSet.ofList (c.labels.map Lbl.repro))]) : IPart })
   (parts, { named := named, supplyLo := base + vs.length })
 
 /-! ## The driver -/
@@ -101,14 +103,22 @@ def byRuleStr (ps : List LPart) : String :=
   let entries := uniq.map (fun n => n ++ ":" ++ toString (names.filter (· == n)).length)
   if entries.isEmpty then "-" else String.intercalate "," (sortStrings entries)
 
-/-- `Subst.solve` with `-Dermine.rowTrace` on, minus `reduce`. -/
-def solveSeed (fl : Flags) (site : String) (parts : List IPart) (ns : Names) (fuel : Nat) :
-    SolveOut :=
-  let tag := "\t" ++ site ++ "\t-\t"
+/-- `Subst.solve` with `-Dermine.rowTrace` on, minus `reduce`.  `loc` is the third column of
+every record: `-` for a seed, the solve's own location when replaying a compiler trace.
+
+The `in` records are `cs.flatMap(_.rowConstraints)`, which for a list of `Part`s is the list
+itself -- so they are generated from the `part` items, in order.  An `other` item whose
+`rowConstraints` is nonempty would break that, so the replay CHECKS it: the trace's `sin`
+record carries `nRows = cs.flatMap(_.rowConstraints).length` and `Loop/Replay.lean`'s
+`replay` refuses a segment where that is not the number of `part` items. -/
+def solveSeed (fl : Flags) (site : String) (loc : String) (cs : List CsItem) (ns : Names)
+    (su0 : Sup) (fuel : Nat) : SolveOut :=
+  let tag := "\t" ++ site ++ "\t" ++ loc ++ "\t"
+  let parts := cs.filterMap CsItem.part?
   let inRecs := (withIndex parts).map (fun (p, i) =>
     "in" ++ tag ++ toString i ++ "\t" ++ ITerm.toStr ns p.lhs ++ "\t" ++
     String.intercalate " | " (p.rhs.map (ITerm.toStr ns)))
-  match buildQueue parts ns.supplyLo with
+  match buildQueue cs su0 with
   | .error m =>
     { records := [], verdict := "REJECTED", message := m, env := {}, drawn := 0, sat := [] }
   | .ok (q, su1) =>
@@ -119,18 +129,18 @@ def solveSeed (fl : Flags) (site : String) (parts : List IPart) (ns : Names) (fu
       { records := [],
         verdict := "REJECTED",
         message := "Row partitions are unsatisfiable at field '" ++ Lbl.toStr l ++ "': " ++ msg,
-        env := {}, drawn := su1 - ns.supplyLo, sat := [] }
+        env := {}, drawn := su1.drawn, sat := [] }
     | none =>
       let st0 : State :=
         { incm := q, proc := PQueue.empty, env := {}, su := su1, trace := [], flags := fl,
-          names := ns, site := site, su0 := ns.supplyLo }
+          names := ns, site := site, su0 := su0.lo }
       match run st0 fuel with
       | .rejected m s =>
         { records := s.trace.reverse, verdict := "REJECTED", message := m, env := s.env,
-          drawn := s.su - s.su0, sat := [] }
+          drawn := s.su.drawn, sat := [] }
       | .outOfFuel s =>
         { records := s.trace.reverse, verdict := "FUEL", message := "", env := s.env,
-          drawn := s.su - s.su0, sat := s.proc.elems }
+          drawn := s.su.drawn, sat := s.proc.elems }
       | .solved s =>
         let ps := s.proc.elems
         let late :=
@@ -139,21 +149,22 @@ def solveSeed (fl : Flags) (site : String) (parts : List IPart) (ns : Names) (fu
         | some (l, _, msg) =>
           { records := s.trace.reverse, verdict := "REJECTED",
             message := "Row partitions are unsatisfiable at field '" ++ Lbl.toStr l ++ "': " ++ msg,
-            env := s.env, drawn := s.su - s.su0, sat := ps }
+            env := s.env, drawn := s.su.drawn, sat := ps }
         | none =>
-          let inpartRecs := (withIndex q.elems).map (fun (p, i) => popRecord "inpart" site ns i p)
-          let satRecs := (withIndex ps).map (fun (p, i) => popRecord "sat" site ns i p)
+          let inpartRecs :=
+            (withIndex q.elems).map (fun (p, i) => popRecord "inpart" site loc ns i p)
+          let satRecs := (withIndex ps).map (fun (p, i) => popRecord "sat" site loc ns i p)
           let derived := ps.filter (fun p => p.inf.isSome)
           let concrete := parts.any (fun p => (p.lhs :: p.rhs).any (fun t =>
             match t with | .concRho f => !f.isEmpty | _ => false))
           let arities := sortNats (parts.map (fun p => p.rhs.length))
           let solveRec :=
-            "solve\t" ++ site ++ "\t-\t" ++ toString parts.length ++ "\t" ++
+            "solve\t" ++ site ++ "\t" ++ loc ++ "\t" ++ toString parts.length ++ "\t" ++
             toString q.elems.length ++ "\t" ++ toString ps.length ++ "\t" ++
             toString derived.length ++ "\t" ++ (if concrete then "true" else "false") ++
             "\t" ++ String.intercalate ";" (arities.map toString) ++ "\t" ++ byRuleStr derived
           { records := s.trace.reverse ++ inRecs ++ inpartRecs ++ satRecs ++ [solveRec],
-            verdict := "SOLVED", message := "", env := s.env, drawn := s.su - s.su0,
+            verdict := "SOLVED", message := "", env := s.env, drawn := s.su.drawn,
             sat := ps }
 
 /-- The harness's `v0 := ...` line, over the LOOP's environment.  `Subst.reduce`, which runs

@@ -62,7 +62,7 @@ def selfSubstitution (ns : Names) (v : Nat) (abstr : SSet Nat) (concr : SSet Lbl
 the derived set and the supply after the call. -/
 def splitConcrete (fl : Flags) (v : Nat) (abstr : SSet Nat) (concr : SSet Lbl)
     (rhss : RHS → Option Nat) (resolvent concRow emptyRow : SSet Lbl → Option Nat)
-    (su : Nat) : SSet LPart × Nat :=
+    (su : Sup) : SSet LPart × Sup :=
   if concr.isEmpty || abstr.size < 2 then (SSet.empty, su)
   else
     match rhss (RHS.ofAbstr abstr) with
@@ -80,10 +80,10 @@ def splitConcrete (fl : Flags) (v : Nat) (abstr : SSet Nat) (concr : SSet Lbl)
             | some _ =>
               (abstr.map (fun x => (⟨x, RHS.empty, some .splitEmpty⟩ : LPart)), su)
             | none =>
-              let u := su
+              let (u, su) := su.fresh
               (SSet.ofList
                 [⟨u, RHS.ofAbstr abstr, some .splitConcrete⟩,
-                 ⟨v, ⟨SSet.ofList [u], concr⟩, some .splitConcrete⟩], su + 1)
+                 ⟨v, ⟨SSet.ofList [u], concr⟩, some .splitConcrete⟩], su)
 
 /-! ## Cancellation -/
 
@@ -111,15 +111,14 @@ def cancellation (_v : Nat) (rhs1 rhs2 : RHS) : SSet LPart :=
 (`resRow`), empty-row reuse (`emptyRow`), mint.  `fresh` is drawn ONCE per call that gets
 past the lone-variable pattern, before any branch, so a reuse costs an id too. -/
 def resolution (fl : Flags) (v : Nat) (rhs1 rhs2 : RHS)
-    (resolvent concRow emptyRow : SSet Lbl → Option Nat) (su : Nat) : SSet LPart × Nat :=
+    (resolvent concRow emptyRow : SSet Lbl → Option Nat) (su : Sup) : SSet LPart × Sup :=
   if !fl.resolves then (SSet.empty, su)
   else
     match rhs1.abstrSingle?, rhs2.abstrSingle? with
     | some x, some y =>
       let concr1 := rhs1.conc
       let concr2 := rhs2.conc
-      let z := su
-      let su := su + 1
+      let (z, su) := su.fresh
       let int := concr1.inter concr2
       let tops := concr1.removedAll int
       let bots := concr2.removedAll int
@@ -169,7 +168,7 @@ def substitution (v : Nat) (rhs1 : RHS) (u : Nat) (rhs2 : RHS) : Except String (
 /-- `Constraints.commonSubexpression`.  Under the shipped `genRules=cut` the final MINTING
 branch returns nothing; the reuse and the two folding branches are untouched. -/
 def commonSubexpression (fl : Flags) (v : Nat) (rhs1 : RHS) (u : Nat) (rhs2 : RHS)
-    (rhss : RHS → Option Nat) (su : Nat) : SSet LPart × Nat :=
+    (rhss : RHS → Option Nat) (su : Sup) : SSet LPart × Sup :=
   let abstr1 := rhs1.abstr
   let abstr2 := rhs2.abstr
   let int := abstr1.inter abstr2
@@ -190,19 +189,19 @@ def commonSubexpression (fl : Flags) (v : Nat) (rhs1 : RHS) (u : Nat) (rhs2 : RH
           [⟨v, ⟨(abstr1.removedAll int).incl u, rhs1.conc⟩, some .commonSubexpression⟩], su)
       else if !fl.cseMints then (SSet.empty, su)
       else
-        let z := su
+        let (z, su) := su.fresh
         (SSet.ofList
           [⟨z, rhsCommon, some .commonSubexpressionMint⟩,
            ⟨v, ⟨(abstr1.removedAll int).incl z, rhs1.conc⟩, some .commonSubexpressionMint⟩,
            ⟨u, ⟨(abstr2.removedAll int).incl z, rhs2.conc⟩, some .commonSubexpressionMint⟩],
-         su + 1)
+         su)
 
 /-! ## Disjunction -/
 
 /-- `Constraints.disjunction`.  Its three call sites are behind `-Dermine.disjunction`, which
 ships OFF; it is here so the flag is meaningful and so `fresh` is accounted for if it is ever
 turned on.  Note the Scala draws `v` BEFORE the guards, and a second id in the last arm. -/
-def disjunction (rhs1 rhs2 rhs3 : RHS) (su : Nat) : SSet LPart × Nat :=
+def disjunction (rhs1 rhs2 rhs3 : RHS) (su : Sup) : SSet LPart × Sup :=
   let conAll := (rhs1.conc.inter rhs2.conc).inter rhs3.conc
   let absAll := (rhs1.abstr.inter rhs2.abstr).inter rhs3.abstr
   let conC := (rhs1.conc.inter rhs2.conc).removedAll conAll
@@ -210,17 +209,16 @@ def disjunction (rhs1 rhs2 rhs3 : RHS) (su : Nat) : SSet LPart × Nat :=
   let absr := (rhs2.abstr.inter rhs3.abstr).removedAll absAll
   let absz := (rhs1.abstr.inter rhs3.abstr).removedAll absAll
   let absu := ((rhs3.abstr.removedAll absz).removedAll absr).removedAll absAll
-  let v := su
-  let su := su + 1
+  let (v, su) := su.fresh
   if absz.isEmpty || (conC.isEmpty && absc.isEmpty) then (SSet.empty, su)
   else
     match absu.elems with
     | [] => (SSet.empty, su)
     | [u] => (SSet.ofList [⟨u, ⟨absc.incl v, conC⟩, some .disjunction⟩], su)
     | _ =>
-      let us := su
+      let (us, su) := su.fresh
       (SSet.ofList
         [⟨us, RHS.ofAbstr absu, some .disjunction⟩,
-         ⟨us, ⟨absc.incl v, conC⟩, some .disjunction⟩], su + 1)
+         ⟨us, ⟨absc.incl v, conC⟩, some .disjunction⟩], su)
 
 end Rowpartition.Loop

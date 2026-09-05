@@ -28,21 +28,33 @@ namespace Rowpartition.Loop
 
 /-! ## 1. Input row expressions -/
 
-/-- The two shapes a seed's row expression can take: `VarT(v)` and `ConcreteRho(fs)`. -/
+/-- A row expression in an input constraint.  A seed only ever writes the first two; the
+corpus adds `Con`, which `RHS.build` treats as a one-label concrete row
+(`Constraints.scala:394`), and `otherT` for anything else -- a shape `RHS.build`'s last case
+dies on, carried here only so that `Part.hashCode`, and hence `Exists.apply`'s ordering, is
+still exact. -/
 inductive ITerm where
   | varT (v : Nat)
   | concRho (fs : SSet Lbl)
+  | conT (n : Lbl)
+  | otherT (h : I32)
 
 namespace ITerm
 
-/-- `VarT.hashCode = v.hashCode = id`; `ConcreteRho.hashCode = fields.hashCode * 111`. -/
+/-- `VarT.hashCode = v.hashCode = id` (the `Variable` trait);
+`ConcreteRho.hashCode = fields.hashCode * 111` (`Type.scala:152`);
+`Con.hashCode = 92 + 13 * name.hashCode` (`Type.scala:536`). -/
 def hshOf : ITerm → I32
   | .varT v => UInt32.ofNat v
   | .concRho fs => fs.hsh * 111
+  | .conT n => 92 + 13 * n.hshOf
+  | .otherT h => h
 
 def eqv : ITerm → ITerm → Bool
   | .varT a, .varT b => a == b
   | .concRho a, .concRho b => a.eqv b
+  | .conT a, .conT b => SVal.eq a b
+  | .otherT a, .otherT b => a == b
   | _, _ => false
 
 /-- `Subst.solve`'s trace helper `st`. -/
@@ -50,6 +62,8 @@ def toStr (ns : Names) : ITerm → String
   | .varT v => ns.sv v
   | .concRho fs =>
     "(|" ++ String.intercalate "," (sortStrings (fs.toList.map Lbl.toStr)) ++ "|)"
+  | .conT n => "(|" ++ Lbl.toStr n ++ "|)"
+  | .otherT h => "?" ++ toString h.toNat
 
 end ITerm
 
@@ -71,15 +85,49 @@ def eqv (p q : IPart) : Bool :=
 
 end IPart
 
-instance : SVal IPart where
+instance svalIPart : SVal IPart where
   eq := IPart.eqv
   hsh := IPart.hshOf
+
+/-! ## 1b. One element of the constraint list `PQueue.build` receives
+
+`solve` hands `PQueue.build` an `Exists` over the WHOLE list `unbindExists` returned, and
+`aux` turns only the `Part`s of it into partitions.  But every element is in the list
+`Exists.apply` puts through `p.toSet.toList`, so an element the solver never looks at can
+still MOVE the ones it does.  `other` is such an element, reduced to what that reordering
+reads: its `hashCode`, and the index of the first element of the list it is `equals` to
+(the trace's `scon` fields, `RowTrace.scala`). -/
+inductive CsItem where
+  | part (p : IPart)
+  /-- `hashCode`, and the `eqid` that stands in for `equals`. -/
+  | other (h : I32) (eqid : Nat)
+
+namespace CsItem
+
+def hshOf : CsItem → I32
+  | .part p => p.hshOf
+  | .other h _ => h
+
+def eqv : CsItem → CsItem → Bool
+  | .part p, .part q => p.eqv q
+  | .other _ a, .other _ b => a == b
+  | _, _ => false
+
+def part? : CsItem → Option IPart
+  | .part p => some p
+  | .other _ _ => none
+
+end CsItem
+
+instance svalCsItem : SVal CsItem where
+  eq := CsItem.eqv
+  hsh := CsItem.hshOf
 
 /-! ## 2. `Exists.apply` and `PQueue.build` -/
 
 /-- `Exists.apply(l, Nil, q)`, as it acts on the constraint LIST: identity at one element,
 otherwise reverse then `toSet.toList`. -/
-def existsApply (q : List IPart) : List IPart :=
+def existsApply {α : Type} [SVal α] (q : List α) : List α :=
   if q.length == 1 then q
   else (SSet.ofList (q.foldl (fun r t => t :: r) [])).toList
 
@@ -97,32 +145,38 @@ def rhsBuild (ts : List ITerm) : Except String (RHS × List Nat) :=
     | .varT v =>
       if a.contains v || e.contains v then return (a.excl v, c, e.incl v)
       else return (a.incl v, c, e)
+    | .conT n => return (a, c.incl n, e)
+    | .otherT _ => .error "panic: Malformed constraint, RHS"
   do
     let (a, c, e) ← ts.foldl step (.ok (SSet.empty, SSet.empty, SSet.empty))
     return (⟨a, c⟩, e.toList)
 
 /-- `Q.PQueue.build`'s `aux`, for one `Part`. -/
-def partToPartitions (p : IPart) (su : Nat) : Except String (List LPart × Nat) := do
+def partToPartitions (p : IPart) (su : Sup) : Except String (List LPart × Sup) := do
   match p.lhs with
   | .varT v =>
     let (rhs, es) ← rhsBuild p.rhs
     return (⟨v, rhs, none⟩ :: es.map (fun u => (⟨u, RHS.empty, none⟩ : LPart)), su)
-  | .concRho _ =>
+  | lhs =>
     -- `Part(loc, lhs, rhs)` with a non-variable left-hand side mints a name for it.
-    let v := su
+    let (v, su) := su.fresh
     let (rhs1, es1) ← rhsBuild p.rhs
-    let (rhs2, es2) ← rhsBuild [p.lhs]
+    let (rhs2, es2) ← rhsBuild [lhs]
     return (⟨v, rhs1, none⟩ :: ⟨v, rhs2, none⟩ ::
-            (es1 ++ es2).map (fun u => (⟨u, RHS.empty, none⟩ : LPart)), su + 1)
+            (es1 ++ es2).map (fun u => (⟨u, RHS.empty, none⟩ : LPart)), su)
 
-/-- `PQueue.build(Exists(l, Nil, cs))`, including the two `Exists.apply` passes. -/
-def buildQueue (cs : List IPart) (su : Nat) : Except String (PQueue × Nat) := do
+/-- `PQueue.build(Exists(l, Nil, cs))`, including the two `Exists.apply` passes.  `aux`'s
+`case _ => (List(), List())` is why an `other` item contributes no partition. -/
+def buildQueue (cs : List CsItem) (su : Sup) : Except String (PQueue × Sup) := do
   let cs2 := existsApply (existsApply cs)
   let (ps, su) ← cs2.foldl
-    (fun (acc : Except String (List LPart × Nat)) (p : IPart) => do
+    (fun (acc : Except String (List LPart × Sup)) (c : CsItem) => do
       let (l, su) ← acc
-      let (l', su) ← partToPartitions p su
-      return (l ++ l', su))
+      match c with
+      | .other _ _ => return (l, su)
+      | .part p =>
+        let (l', su) ← partToPartitions p su
+        return (l ++ l', su))
     (.ok ([], su))
   return (PQueue.ofList ps, su)
 

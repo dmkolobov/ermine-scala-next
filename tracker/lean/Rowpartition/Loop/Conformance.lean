@@ -38,7 +38,7 @@ namespace Rowpartition.Loop
 /-! ## The solver's own case classes -/
 
 /- `Global("Repro", "l1").hashCode`. -/
-#guard I32.toSigned (Lbl.hshOf ⟨1⟩) == (2069000494 : Int)
+#guard I32.toSigned (Lbl.hshOf (Lbl.repro 1)) == (2069000494 : Int)
 
 /- `RHS().hashCode`. -/
 #guard I32.toSigned RHS.empty.hshOf == (-1285229852 : Int)
@@ -47,20 +47,23 @@ namespace Rowpartition.Loop
 #guard I32.toSigned (RHS.hshOf ⟨SSet.ofList [1], SSet.empty⟩) == (-1065199571 : Int)
 
 /- `RHS(Set(v1, v2), Set(Repro.l1)).hashCode`. -/
-#guard I32.toSigned (RHS.hshOf ⟨SSet.ofList [1, 2], SSet.ofList [⟨1⟩]⟩) == (-1720534804 : Int)
+#guard I32.toSigned (RHS.hshOf ⟨SSet.ofList [1, 2], SSet.ofList [Lbl.repro 1]⟩) ==
+  (-1720534804 : Int)
 
 /- `Partition(v1, RHS()).hashCode`, which is `(v1, RHS()).hashCode`. -/
 #guard I32.toSigned (LPart.hshOf ⟨1, RHS.empty, none⟩) == (257672878 : Int)
 
 /- `ConcreteRho(-, Set(Repro.l100)).hashCode = fields.hashCode * 111`. -/
-#guard I32.toSigned (ITerm.hshOf (.concRho (SSet.ofList [⟨100⟩]))) == (1040573865 : Int)
+#guard I32.toSigned (ITerm.hshOf (.concRho (SSet.ofList [Lbl.repro 100]))) ==
+  (1040573865 : Int)
 
 /- `VarT(v0).hashCode = v0.hashCode = 0` (the `Variable` trait). -/
 #guard I32.toSigned (ITerm.hshOf (.varT 0)) == (0 : Int)
 
 /- `Part(VarT(v0), List(VarT(v2), ConcreteRho(Set(Repro.l100)))).hashCode`. -/
 #guard I32.toSigned
-  (IPart.hshOf ⟨.varT 0, [.varT 2, .concRho (SSet.ofList [⟨100⟩])]⟩) == (1723884977 : Int)
+  (IPart.hshOf ⟨.varT 0, [.varT 2, .concRho (SSet.ofList [Lbl.repro 100])]⟩) ==
+  (1723884977 : Int)
 
 /-! ## `immutable.Set`'s ITERATION ORDER
 
@@ -117,5 +120,48 @@ namespace Rowpartition.Loop
 /-! ## `Set.hashCode` does not depend on the iteration order -/
 
 #guard (SSet.ofList [3, 1, 2, 4, 5]).hsh == (SSet.ofList [5, 4, 3, 2, 1]).hsh
+
+/-! ## L2: the label forms the CORPUS has, which a `json:` seed never produces
+
+`Lbl` now carries the `Name` rather than a number.  These pin the three things that changed:
+a qualified `Global` at a module other than `Repro`, a `Local`, and a non-`Idfix` fixity,
+whose `toString` has parentheses and whose `con` is not 1.  The expected values are
+`(2, module, string, con).hashCode` / `(1, string, con).hashCode` computed by the same
+`Murmur.productHash` the JVM probes in `L1-MODEL.md` §5 validated, so what they really guard
+is that `hshOf` dispatches on `glob` and reads `mod`, `str` and `con` and nothing else. -/
+
+/- `Global("Prelude", "x").hashCode` = `(2, "Prelude", "x", 1).hashCode`. -/
+#guard Lbl.hshOf { n := 0, glob := true, mod := "Prelude", str := "x", con := 1 } ==
+  Murmur.productHash "Tuple4" [2, javaStringHash "Prelude", javaStringHash "x", 1]
+
+/- `Local("x").hashCode` = `(1, "x", 1).hashCode`, and it is NOT the `Global`'s. -/
+#guard Lbl.hshOf { n := 0, glob := false, mod := "", str := "x", con := 1 } ==
+  Murmur.productHash "Tuple3" [1, javaStringHash "x", 1]
+#guard Lbl.hshOf { n := 0, glob := false, mod := "", str := "x", con := 1 } !=
+  Lbl.hshOf { n := 0, glob := true, mod := "", str := "x", con := 1 }
+
+/- `Name.toString`: `Idfix` prints `module.string`, every other fixity `module.(string)`,
+and a `Local` prints its string alone (`Name.scala:17,31`). -/
+#guard Lbl.toStr { n := 0, glob := true, mod := "Prelude", str := "x", con := 1 } == "Prelude.x"
+#guard Lbl.toStr { n := 0, glob := true, mod := "Prelude", str := "+", con := 3 } == "Prelude.(+)"
+#guard Lbl.toStr { n := 0, glob := false, mod := "", str := "x", con := 1 } == "x"
+#guard Lbl.toStr (Lbl.repro 100) == "Repro.l100"
+
+/- `Fixity.con` is what `hashCode` reads, so `Infix` and `Postfix` (both 3) hash alike and
+`Prefix` (2) does not -- which is why `slbl` records `con` and not the fixity. -/
+#guard Lbl.hshOf { n := 0, glob := true, mod := "M", str := "f", con := 2 } !=
+  Lbl.hshOf { n := 0, glob := true, mod := "M", str := "f", con := 3 }
+
+/- `Con.hashCode = 92 + 13 * name.hashCode` (`Type.scala:536`). -/
+#guard ITerm.hshOf (.conT (Lbl.repro 1)) == 92 + 13 * Lbl.hshOf (Lbl.repro 1)
+
+/- `Partition.toString`'s `pvar` reads the `svar` table, and falls back to L1's id rule for a
+variable the table does not list — i.e. for a mint. -/
+#guard Names.pvar { named := [], tys := [(3, "Skolem"), (4, "Ambiguous(Skolem)")],
+                    supplyLo := 10 } 3 == "^skolem3"
+#guard Names.pvar { named := [], tys := [(3, "Skolem"), (4, "Ambiguous(Skolem)")],
+                    supplyLo := 10 } 4 == "^ambiguous(skolem)4"
+#guard Names.pvar { named := [], tys := [], supplyLo := 10 } 2 == "^free2"
+#guard Names.pvar { named := [], tys := [], supplyLo := 10 } 11 == "^ambiguous(free)11"
 
 end Rowpartition.Loop

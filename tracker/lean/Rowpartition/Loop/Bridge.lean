@@ -167,8 +167,7 @@ class LawfulSVal (α : Type) [SVal α] : Prop where
 
 instance : LawfulSVal Nat := ⟨fun a b => by simp [SVal.eq, svalNat]⟩
 
-instance : LawfulSVal Lbl := ⟨fun a b => by
-  cases a; cases b; simp [SVal.eq, svalLbl]⟩
+instance : LawfulSVal Lbl := ⟨fun a b => by simp [SVal.eq, svalLbl]⟩
 
 namespace SSet
 
@@ -297,7 +296,7 @@ def LPart.ofConstraint (c : Constraint) : LPart :=
     rhs :=
       ⟨⟨decide (4 < (slist (vset c)).length), slist (vset c)⟩,
        ⟨decide (4 < (c.conc.sort (· ≤ ·)).length),
-        (c.conc.sort (· ≤ ·)).map (fun n => (⟨n⟩ : Lbl))⟩⟩,
+        (c.conc.sort (· ≤ ·)).map (fun n => ({ n := n } : Lbl))⟩⟩,
     inf := none }
 
 @[simp] theorem LPart.lhs_toConstraint (p : LPart) : p.toConstraint.lhs = p.lhs := rfl
@@ -313,7 +312,8 @@ every constraint the relational development builds. -/
 theorem LPart.toConstraint_ofConstraint (a : Var) (S : Finset Var) (k : Finset Label) :
     (LPart.ofConstraint (Rowpartition.mk a S k)).toConstraint = Rowpartition.mk a S k := by
   unfold LPart.ofConstraint LPart.toConstraint
-  have h2 : ((k.sort (· ≤ ·)).map (fun n => (⟨n⟩ : Lbl))).map Lbl.n = k.sort (· ≤ ·) := by
+  have h2 : ((k.sort (· ≤ ·)).map (fun n => ({ n := n } : Lbl))).map Lbl.n
+      = k.sort (· ≤ ·) := by
     rw [List.map_map]; exact List.map_id_fun' ▸ rfl
   simp only [lhs_mk, conc_mk, vset_mk, h2, slist_toFinset, Finset.sort_toFinset]
 
@@ -330,24 +330,50 @@ theorem LPart.toConstraint_eq_iff (p q : LPart) :
     unfold LPart.toConstraint
     rw [h1, h2, h3]
 
-/-- `Lbl.n` is injective, so membership can be read either side of it. -/
-theorem mem_map_n {l : List Lbl} {x : Lbl} : x.n ∈ l.map Lbl.n ↔ x ∈ l := by
-  simp only [List.mem_map]
-  constructor
-  · rintro ⟨y, hy, hyx⟩
-    cases x; cases y; simp only [Lbl.n] at hyx; subst hyx; exact hy
-  · intro h; exact ⟨x, h, rfl⟩
+/-- Two labels of ONE solve with the same table index are the SAME label.
 
-/-- ... so the label sets can be compared either side of it. -/
-theorem toFinset_map_n_iff {l m : List Lbl} :
+L1's `Lbl` was a bare number, so `Lbl.n` was injective by construction and the two lemmas
+below needed no hypothesis.  L2's `Lbl` carries the `Name` the compiler hashes and prints
+(module, string, fixity `con`, `Global`/`Local`) alongside the index, because the corpus's
+labels are real qualified names — so `n` is injective on the labels of one solve, not on the
+type.  `RowTrace.solveInput` numbers a solve's labels out of a `LinkedHashMap[Name, Int]`
+keyed by Scala's own `Name.equals`, which is exactly this property for every label list the
+loop can build from one input; stating it as a hypothesis keeps it checkable rather than
+assumed. -/
+def LblCoh (l : List Lbl) : Prop := ∀ x ∈ l, ∀ y ∈ l, x.n = y.n → x = y
+
+theorem LblCoh.mono {l m : List Lbl} (h : LblCoh m) (hs : ∀ x ∈ l, x ∈ m) : LblCoh l :=
+  fun x hx y hy hn => h x (hs x hx) y (hs y hy) hn
+
+theorem mem_map_n_of_mem {l : List Lbl} {x : Lbl} (h : x ∈ l) : x.n ∈ l.map Lbl.n :=
+  List.mem_map.mpr ⟨x, h, rfl⟩
+
+/-- On a coherent list the label sets can be compared either side of `Lbl.n`. -/
+theorem toFinset_map_n_iff {l m : List Lbl} (hc : LblCoh (l ++ m)) :
     (l.map Lbl.n).toFinset = (m.map Lbl.n).toFinset ↔ l.toFinset = m.toFinset := by
   constructor
   · intro h
     ext x
-    have hx := Finset.ext_iff.mp h x.n
-    simp only [List.mem_toFinset] at hx ⊢
-    rw [mem_map_n, mem_map_n] at hx
-    exact hx
+    simp only [List.mem_toFinset]
+    constructor
+    · intro hx
+      have hn : x.n ∈ m.map Lbl.n := by
+        have hxn := Finset.ext_iff.mp h x.n
+        simp only [List.mem_toFinset] at hxn
+        exact hxn.mp (mem_map_n_of_mem hx)
+      obtain ⟨y, hy, hyx⟩ := List.mem_map.mp hn
+      have hxy : x = y :=
+        hc x (List.mem_append_left _ hx) y (List.mem_append_right _ hy) hyx.symm
+      rw [hxy]; exact hy
+    · intro hx
+      have hn : x.n ∈ l.map Lbl.n := by
+        have hxn := Finset.ext_iff.mp h x.n
+        simp only [List.mem_toFinset] at hxn
+        exact hxn.mpr (mem_map_n_of_mem hx)
+      obtain ⟨y, hy, hyx⟩ := List.mem_map.mp hn
+      have hxy : x = y :=
+        hc x (List.mem_append_right _ hx) y (List.mem_append_left _ hy) hyx.symm
+      rw [hxy]; exact hy
   · intro h
     ext y
     simp only [List.mem_toFinset, List.mem_map]
@@ -363,9 +389,10 @@ with, and it ignores the `Inference` tag and both sets' iteration order -- exact
 `toConstraint` forgets. -/
 theorem LPart.eqv_iff_toConstraint {p q : LPart}
     (hpa : p.rhs.abstr.Nodup) (hqa : q.rhs.abstr.Nodup)
-    (hpc : p.rhs.conc.Nodup) (hqc : q.rhs.conc.Nodup) :
+    (hpc : p.rhs.conc.Nodup) (hqc : q.rhs.conc.Nodup)
+    (hcoh : LblCoh (p.rhs.conc.elems ++ q.rhs.conc.elems)) :
     p.eqv q = true ↔ p.toConstraint = q.toConstraint := by
-  rw [LPart.toConstraint_eq_iff, toFinset_map_n_iff]
+  rw [LPart.toConstraint_eq_iff, toFinset_map_n_iff hcoh]
   unfold LPart.eqv RHS.eqv
   simp only [Bool.and_eq_true, beq_iff_eq,
     SSet.eqv_iff_toFinset hpa hqa, SSet.eqv_iff_toFinset hpc hqc]

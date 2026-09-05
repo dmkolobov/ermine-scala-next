@@ -37,15 +37,15 @@ structure State where
   incm : PQueue
   proc : PQueue
   env : Env
-  /-- The next id the `Supply` will hand out. -/
-  su : Nat
+  /-- The id supply, `scalaparsers.Supply` (`Sup`). -/
+  su : Sup
   /-- Trace records, most recent first. -/
   trace : List String
   flags : Flags
   names : Names
   /-- `RowTrace.site`, the first column of every record. -/
   site : String
-  /-- The `Supply`'s starting point, so `drawn` can be reported. -/
+  /-- The `Supply`'s starting `lo`, kept for the report line. -/
   su0 : Nat
 
 /-- The result of one dequeue. -/
@@ -104,7 +104,14 @@ def unifyVars (ns : Names) (v u : Nat) (incm proc : PQueue) (env : Env) :
 nothing, an all-variable one forces every part empty, a right-hand side with labels is a
 contradiction.  Every partition MENTIONING `v` is erased from both queues and the fact
 `v := ConcreteRho(∅)` goes into the environment, which is why an emptied variable is
-invisible to the concrete-row lookups. -/
+invisible to the concrete-row lookups.
+
+The SKOLEM refusal (`Constraints.scala:1577`) sits exactly where the Scala puts it: after the
+`nps` fold, so an "Incompatible instantiations" contradiction still wins, and before
+`instantiateType`, so the reinstantiation panic comes after.  L1 listed it as not modelled --
+a `json:` seed has no skolem -- and L2 found it: five `shouldfail/sk0*` modules force a
+skolem row variable empty, and until this landed the model ran on past the compiler's
+death. -/
 def makeEmpty (ns : Names) (v : Nat) (incm proc : PQueue) (env : Env) :
     Except String (PQueue × PQueue × Env) := do
   let (pps, procd) := proc.partition (fun p => p.involves v)
@@ -120,7 +127,9 @@ def makeEmpty (ns : Names) (v : Nat) (incm proc : PQueue) (env : Env) :
         else .error ("Incompatible instantiations of '" ++ varStr ns v ++ "'")
       else return s.incl ⟨p.lhs, p.rhs.erase v, p.inf⟩)
     start
-  if env.contains v then
+  if ns.isSkolem v then
+    .error ("Cannot unify skolem variable with empty relation " ++ varStr ns v)
+  else if env.contains v then
     .error ("panic: reinstantiated type " ++ varStr ns v ++ " to ConcreteRho(-,Set())" ++
             " but it was already bound")
   else
@@ -248,7 +257,7 @@ def findEmptyRow (env : Env) (l : Lookups) (k : SSet Lbl) : Option Nat :=
 over `proc` applying `resolution`+`cancellation` at the same left-hand side and
 `commonSubexpression`+`substitution` at a different one. -/
 def learnPartitions (fl : Flags) (ns : Names) (env : Env) (v : Nat) (rhs1 : RHS)
-    (incm proc : PQueue) (su : Nat) : Except String (SSet LPart × Nat) :=
+    (incm proc : PQueue) (su : Sup) : Except String (SSet LPart × Sup) :=
   if rhs1.abstr.contains v then do
     let s ← selfSubstitution ns v rhs1.abstr rhs1.conc
     return (s, su)
@@ -261,7 +270,7 @@ def learnPartitions (fl : Flags) (ns : Names) (env : Env) (v : Nat) (rhs1 : RHS)
         (fun r => findRHS3 incm proc SSet.empty r)
         (fun k => findResolvent v l SSet.empty k) concRow emptyRow su
     proc.elems.foldl
-      (fun (acc : Except String (SSet LPart × Nat)) (p2 : LPart) => do
+      (fun (acc : Except String (SSet LPart × Sup)) (p2 : LPart) => do
         let (s, su) ← acc
         let u := p2.lhs
         let rhs2 := p2.rhs
@@ -271,7 +280,7 @@ def learnPartitions (fl : Flags) (ns : Names) (env : Env) (v : Nat) (rhs1 : RHS)
           let cps := cancellation v rhs1 rhs2
           let dps :=
             if !fl.disjRule then (SSet.empty, su)
-            else proc.elems.foldl (fun (a : SSet LPart × Nat) (p3 : LPart) =>
+            else proc.elems.foldl (fun (a : SSet LPart × Sup) (p3 : LPart) =>
               if p3.lhs != v then
                 let (d1, s1) := disjunction p3.rhs rhs1 rhs2 a.2
                 let (d2, s2) := disjunction p3.rhs rhs2 rhs1 s1
@@ -284,7 +293,7 @@ def learnPartitions (fl : Flags) (ns : Names) (env : Env) (v : Nat) (rhs1 : RHS)
           let sps ← substitution v rhs1 u rhs2
           let dps :=
             if !fl.disjRule then (SSet.empty, su)
-            else proc.elems.foldl (fun (a : SSet LPart × Nat) (p3 : LPart) =>
+            else proc.elems.foldl (fun (a : SSet LPart × Sup) (p3 : LPart) =>
               if p3.lhs == u && !(rhs2.eqv p3.rhs) then
                 let (d1, s1) := disjunction rhs1 rhs2 p3.rhs a.2
                 let (d2, s2) := disjunction rhs1 p3.rhs rhs2 s1

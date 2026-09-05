@@ -19,29 +19,60 @@ namespace Rowpartition.Loop
 
 /-! ## 1. Labels -/
 
-/-- A field label: the repro harness's `Global("Repro", "l" ++ toString n)`. -/
+/-- A field label: a `Name`, with the four things the compiler reads off one.
+
+L1 modelled a label as a bare number `n`, standing for the repro harness's
+`Global("Repro", "l" ++ toString n)`, and computed `hashCode` and `toString` from it.  The
+corpus's labels are real qualified names, so L2 carries the name itself; `n` survives as the
+label's INDEX in its solve's `slbl` table, which is what the bridge maps a label to (the
+relational development's `Label` is `Nat`).  Distinct `Name`s get distinct indices --
+`RowTrace.solveInput` numbers them out of a `LinkedHashMap[Name, Int]` keyed by Scala's own
+`Name.equals` -- so within one solve `n` and the name determine each other; `Bridge.lean`
+states that as `LblCoh` where it needs it, rather than assuming it. -/
 structure Lbl where
+  /-- The label's index in its solve's `slbl` table. -/
   n : Nat
-deriving DecidableEq, Repr, Inhabited
+  /-- `Global` (true) or `Local` (false).  `Name.equals` never identifies the two. -/
+  glob : Bool := true
+  /-- `Global.module`; `""` for a `Local`. -/
+  mod : String := ""
+  /-- `Name.string`. -/
+  str : String := ""
+  /-- `Fixity.con`: `Idfix` 1, `Prefix` 2, `Infix` and `Postfix` 3.  `Name.equals` and
+  `Name.hashCode` read the `con`, not the fixity. -/
+  con : Nat := 1
+deriving DecidableEq, Repr, Inhabited, BEq
 
 namespace Lbl
 
-/-- `Name.toString` for a `Global` with `Idfix` fixity: `module ++ "." ++ string`. -/
-def toStr (l : Lbl) : String := "Repro.l" ++ toString l.n
+/-- The repro harness's label `n`: `Global("Repro", "l" ++ toString n, Idfix)`. -/
+def repro (n : Nat) : Lbl := { n := n, glob := true, mod := "Repro", str := "l" ++ toString n }
 
-/-- `Global.hashCode = (2, module, string, fixity.con).hashCode` (`Name.scala:39`), with
-`Idfix.con = 1`. -/
+/-- `Name.toString`.  `Global` prints `module ++ "." ++ string` at `Idfix` and
+`module ++ ".(" ++ string ++ ")"` otherwise (`Name.scala:31`); `Local` prints its string. -/
+def toStr (l : Lbl) : String :=
+  if l.glob then
+    (if l.con == 1 then l.mod ++ "." ++ l.str else l.mod ++ ".(" ++ l.str ++ ")")
+  else l.str
+
+/-- `Name.hashCode`: `(2, module, string, fixity.con).hashCode` for a `Global`
+(`Name.scala:39`) and `(1, string, fixity.con).hashCode` for a `Local` (`Name.scala:24`). -/
 def hshOf (l : Lbl) : I32 :=
-  Murmur.productHash "Tuple4"
-    [2, javaStringHash "Repro", javaStringHash ("l" ++ toString l.n), 1]
+  if l.glob then
+    Murmur.productHash "Tuple4"
+      [2, javaStringHash l.mod, javaStringHash l.str, UInt32.ofNat l.con]
+  else
+    Murmur.productHash "Tuple3" [1, javaStringHash l.str, UInt32.ofNat l.con]
 
 end Lbl
 
+/-- `Name.equals` is structural on `(kind, module, string, fixity.con)` (`Name.scala:20,35`),
+and a `Global` never equals a `Local`.  `decide` on the derived `DecidableEq` is exactly
+that, and it compares the table index first, so two labels of one solve are separated by a
+`Nat` test. -/
 instance svalLbl : SVal Lbl where
-  eq a b := a.n == b.n
+  eq a b := decide (a = b)
   hsh := Lbl.hshOf
-
-instance : BEq Lbl := ⟨fun a b => a.n == b.n⟩
 
 /-! ## 2. The right-hand side of a partition -/
 
@@ -124,6 +155,53 @@ def toStr : Inference → String
 
 end Inference
 
+/-! ## 3b. The id supply -/
+
+/-- `scalaparsers.Supply`, exactly.
+
+L1 modelled the supply as a single counter, which is right for a `json:` seed: the repro
+harness builds `Supply(base, base + 100000)` and no seed draws 100 000 ids.  It is NOT right
+for the corpus.  A real `Supply` owns a BLOCK of 1024 ids, and
+
+```scala
+def fresh: Int = if (lo != hi) { val r = lo; lo = r + 1; r }
+                 else { val r = getBlock; hi = r + blockSize - 1; lo = r + 1; r }
+```
+
+so when the block runs out the next id is whatever the GLOBAL counter `Supply.block` hands
+out -- a jump of a thousand or more, which changes `V.hashCode`, which changes the queue
+order.  677 of the 83 942 solves in the `Ai` corpus start with fewer than ten ids left in
+their block, and two of them actually cross the boundary while minting; before this was
+modelled those two were the only disagreements left in that corpus.  The trace's `sin`
+record carries `lo`, `hi`, the global counter and the block size, so the model can follow
+`fresh` exactly, block changes and all. -/
+structure Sup where
+  /-- The next id, `Supply.lo`. -/
+  lo : Nat
+  /-- The last id of the current block, `Supply.hi`. -/
+  hi : Nat
+  /-- `Supply.block`, the global counter `getBlock` returns and then advances. -/
+  blk : Nat
+  /-- `Supply.blockSize`, 1024. -/
+  bsz : Nat
+  /-- How many ids have been drawn, for the harness's `drawn=` report. -/
+  drawn : Nat := 0
+deriving Inhabited, Repr
+
+namespace Sup
+
+/-- `Supply.fresh`. -/
+def fresh (s : Sup) : Nat × Sup :=
+  if s.lo != s.hi then (s.lo, { s with lo := s.lo + 1, drawn := s.drawn + 1 })
+  else
+    (s.blk, { s with lo := s.blk + 1, hi := s.blk + s.bsz - 1, blk := s.blk + s.bsz,
+                     drawn := s.drawn + 1 })
+
+/-- The repro harness's `supplyAt(lo)`: `Supply(lo, lo + 100000)`, which no seed exhausts. -/
+def ofSeed (lo : Nat) : Sup := { lo := lo, hi := lo + 100000, blk := 0, bsz := 1024 }
+
+end Sup
+
 /-! ## 4. Partitions -/
 
 /-- `Constraints.Partition`.  `equals` and `hashCode` IGNORE the `Inference` tag
@@ -159,12 +237,20 @@ instance svalLPart : SVal LPart where
 
 /-! ## 5. Printing, exactly as `Partition.toString` does -/
 
-/-- The display names the repro harness gives the seed's variables, and the id below which a
-variable is an input rather than a mint. -/
+/-- What the trace records need about a variable beyond its id: the `V.name` the population
+records print and the `VarType` `Partition.toString` prints. -/
 structure Names where
-  /-- `id ↦ the `V.name` the harness gave it`; a mint has none. -/
+  /-- `id ↦ V.name.toString`; a variable with `V.name = None` is absent. -/
   named : List (Nat × String)
-  /-- The first id the `Supply` will hand out: at or above it, `V.ty = Ambiguous(Free)`. -/
+  /-- `id ↦ V.ty.toString`, from the trace's `svar` records — `Free`, `Skolem`, `Bound`,
+  `Unspecified`, `Ambiguous(Free)`, ...  EVERY input variable of the solve is listed.  A
+  variable that is not is a MINT, and every mint the loop makes is `Ambiguous(Free)`
+  (`Constraints.scala`'s five `fresh(Loc.builtin, none, Ambiguous(Free), Rho(...))` sites),
+  which is what the fallback in `pvar` says.  L1 had no such table and inferred the flavour
+  from the id; that is exact for a `json:` seed and wrong for real code, which is L1 review
+  F7 and the reason this field exists. -/
+  tys : List (Nat × String) := []
+  /-- The first id the `Supply` will hand out. -/
   supplyLo : Nat
 deriving Inhabited
 
@@ -173,11 +259,28 @@ namespace Names
 def nameOf (ns : Names) (v : Nat) : Option String :=
   (ns.named.find? (fun p => p.1 == v)).map (·.2)
 
-/-- `Partition.toString`'s `pvar`: `'^' + ty.toString.toLowerCase + id`.  An input variable
-has `ty = Free`, a minted one `ty = Ambiguous(Free)` (`Constraints.scala:1338`,
-`fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))`). -/
+/-- `VarType.toString.toLowerCase`. -/
+def lower (s : String) : String := s.map Char.toLower
+
+/-- `V.ty.toString` for a variable the `svar` table lists; `Ambiguous(Free)` for one it does
+not, which is a mint. -/
+def tyOf (ns : Names) (v : Nat) : String :=
+  match ns.tys.find? (fun p => p.1 == v) with
+  | some p => p.2
+  | none => "Ambiguous(Free)"
+
+/-- `v.ty == Skolem`, the one flavour test the LOOP makes (`Constraints.scala:1577`, in
+`makeEmpty`).  `Ambiguous(Skolem)` is NOT `Skolem`: the Scala compares the case object. -/
+def isSkolem (ns : Names) (v : Nat) : Bool := ns.tyOf v == "Skolem"
+
+/-- `Partition.toString`'s `pvar`: `'^' + ty.toString.toLowerCase + id`.  The `svar` table
+decides the flavour; with no entry the variable is a mint, whose `ty` is `Ambiguous(Free)`.
+(The `v < supplyLo` arm is L1's rule, kept so that a `json:` seed, which carries no table,
+prints exactly what it printed before.) -/
 def pvar (ns : Names) (v : Nat) : String :=
-  if v < ns.supplyLo then "^free" ++ toString v else "^ambiguous(free)" ++ toString v
+  match ns.tys.find? (fun p => p.1 == v) with
+  | some p => "^" ++ lower p.2 ++ toString v
+  | none => if v < ns.supplyLo then "^free" ++ toString v else "^ambiguous(free)" ++ toString v
 
 /-- `Subst.solve`'s trace helper `sv`: `v.name.fold("")(_.toString) + "^" + v.id`. -/
 def sv (ns : Names) (v : Nat) : String :=

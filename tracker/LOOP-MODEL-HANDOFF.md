@@ -11,7 +11,9 @@ durable is on disk; nothing lives only in a conversation.
   `98e7bf2` Stage 4, `e47a3ae` Stage 3, `d736bf9` correspondence lemma, `1e6f52b` adoption of
   `splitKey`, `94a2074`/`d30c4de` the Lean modules and harnesses. Shipped defaults:
   `cut+label-early+resguard+splitkey+splitrow+resrow`.
-* **Uncommitted in the main checkout** (9 entries): Stage 7 — the `emptyRow` flag, DEFAULT OFF,
+* **COMMITTED 2026-09-04 (user's decision): `756c59e` Stage 7 (flag off) and `c8484d0` L1.** The
+  paragraph below is kept for the record of what Stage 7 is.
+* **(was uncommitted)** Stage 7 — the `emptyRow` flag, DEFAULT OFF,
   with `KeyedEmptyScala.lean`, `seeds/G7.json`, `KEYED-EMPTY-STAGE7.md`, ticket §3j, state-file
   paragraph, README, `keptdef-mints.py`. All gates green except gu05 1.9× slower. The USER has
   not decided whether to commit it; ask before committing. Plus the loop-model files L1 adds.
@@ -45,9 +47,18 @@ agree with the compiler's traces. Implementer's own sweep: 240/240 agree, 60 byt
 L1 REVIEW done (`tracker/loopmodel/L1-REVIEW.md`, 696/701 comparisons agree; verdict FIX-THEN-ADVANCE:
 F1 CHAMP inlining in SSet.excl/filter, F2 rightWins early return, F3-F7 docs). Fixes APPLIED by the implementer (SSet.excl/filter re-champ survivors; rightWins takes concat's early
 return; 851/851 comparisons agree; 11 regression seeds added under tracker/repro/satterm/seeds/; orchestrator
-re-verified build 832 / Audit 2508/0 / LBL, COLL, RR agree). Targeted RE-REVIEW by the same reviewer in
-progress (appends a dated section to L1-REVIEW.md with the final verdict); on ADVANCE, launch L2 with
-`tracker/loopmodel/briefs/brief-L2.md`. F6 was added to L3's acceptance (iv). If the launching session is gone: read both reports, and if the review verdict
+re-verified build 832 / Audit 2508/0 / LBL, COLL, RR agree). Second half of F2 (concat's 2nd early return,
+`SSet.changed`) applied; reviewer's FINAL verdict ADVANCE (1,301 trace + 2,572 hash-set comparisons, 0
+differing). L1 ADVANCED 2026-09-04. Its reviewed state is COMMITTED as `c8484d0` (the shared
+README/root files split by hand so `756c59e` builds without the Loop import). The shared files README.md / Rowpartition.lean carry both Stage 7
+and L1 lines and are unstaged; split by hand at commit time. L2 IMPLEMENTED 2026-09-04 (Opus, ~2h40): 2,355,430 corpus segments (stdlib boot + 110 examples,
+`loadInSeries=true`) and 2,000 random systems AGREE byte for byte at the compiler's own ids; replay
+records `sin`/`slbl`/`svar`/`scon` added to RowTrace.scala (+ one call line in Subst.solve, two
+recompiles); model gaps fixed: makeEmpty's skolem refusal (M2), Supply's 1024-id block boundary (M3);
+accepted abstraction M4 (envEmptyRow reads the whole inference's SubstEnv; 37 mismatches, `emptyRow` only,
+ships off). SCOPE LIMIT: the PARALLEL loader's solves are not replayable (records interleave; gu05's
+1,372-partition solve is not in the population) — needs a thread id per record. Build 833, Audit 2530/0.
+L2 REVIEW launched (report `tracker/loopmodel/L2-REVIEW.md`; it runs core/test once first). F6 was added to L3's acceptance (iv). If the launching session is gone: read both reports, and if the review verdict
 is FIX-THEN-ADVANCE, re-launch an implementer with `briefs/brief-L1.md` + the review's fix list.
 L2's brief is not yet written; the plan's L2 section is its specification.
 

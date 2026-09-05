@@ -17,9 +17,21 @@ Normalisation
     (the population records' `sv`), plus the `common:<id>` / `unify:<id>` branch tags;
   * labels are already names (`Repro.l7`), so nothing to do.
 
+Segment mode (stage L2)
+  looptrace-diff.py --segments --lean MODEL.out --scala TRACE.tsv [--report FILE] [--show N]
+
+  A corpus trace holds MANY solves.  `RowTrace`'s `sin` record opens each one, so the
+  compiler side splits there; the model side, `looptrace --replay`, prints a `#seg <i>`
+  line per solve in the same order.  Segments are paired by index and compared RAW -- no
+  id normalisation, because a replay runs at the compiler's own ids and its records should
+  be byte-identical.  Each pair is classified AGREE, or by the record TYPE at which it
+  first differs (`step`, `learn`, `inpart`, `sat`, `solve`, `length`), and per-class
+  examples are printed.
+
 Usage
   looptrace-diff.py LEAN.tsv SCALA.tsv
   looptrace-diff.py --sweep --lean DIR --scala DIR [--seeds W2,H2,..] [--bases 0-9]
+  looptrace-diff.py --segments --lean MODEL.out --scala TRACE.tsv
 
 Exit status is 0 when every comparison agrees.
 """
@@ -83,6 +95,141 @@ def normalise(path):
     return out
 
 
+# ---------------------------------------------------------------------------
+# Segment mode
+# ---------------------------------------------------------------------------
+
+def _open(path):
+    if path.endswith(".gz"):
+        import gzip
+        return gzip.open(path, "rt", encoding="utf-8", errors="replace")
+    return open(path, "r", encoding="utf-8", errors="replace")
+
+
+def scala_segments(path):
+    """Split a compiler trace at its `sin` records.
+
+    Returns a list of (site, loc, records) with `records` restricted to the types the
+    model produces, in file order.  Records before the first `sin` (there are none in a
+    trace taken with this build) are dropped."""
+    segs = []
+    cur = None
+    with _open(path) as fh:
+        for ln in fh:
+            ln = ln.rstrip("\n")
+            if not ln:
+                continue
+            cols = ln.split("\t")
+            k = cols[0]
+            if k == "sin":
+                cur = (cols[1] if len(cols) > 1 else "?",
+                       cols[2] if len(cols) > 2 else "-", [])
+                segs.append(cur)
+            elif k in KEEP and cur is not None:
+                cur[2].append(ln)
+    return segs
+
+
+def lean_segments(path):
+    """Split `looptrace --replay` output at its `#seg` markers.
+
+    Returns (segments, summary) where a segment is (index, site, loc, records, note);
+    `note` is the `#skip`/`#REJECTED`/`#FUEL` line's reason, or None."""
+    segs = []
+    summary = ""
+    cur = None
+    with _open(path) as fh:
+        for ln in fh:
+            ln = ln.rstrip("\n")
+            if not ln:
+                continue
+            cols = ln.split("\t")
+            k = cols[0]
+            if k == "#seg":
+                cur = {"i": int(cols[1]), "site": cols[2] if len(cols) > 2 else "?",
+                       "loc": cols[3] if len(cols) > 3 else "-", "recs": [], "note": None,
+                       "hashdiff": 0, "eqdiff": 0}
+                segs.append(cur)
+            elif k == "#skip" and cur is not None:
+                cur["note"] = "skip: " + (cols[2] if len(cols) > 2 else "?")
+            elif k == "#hashdiff" and cur is not None:
+                cur["hashdiff"] = int(cols[2]) if len(cols) > 2 else 1
+            elif k == "#eqdiff" and cur is not None:
+                cur["eqdiff"] = int(cols[2]) if len(cols) > 2 else 1
+            elif k in ("#REJECTED", "#FUEL") and cur is not None:
+                cur["note"] = k[1:] + ": " + (cols[2] if len(cols) > 2 else "")
+            elif k == "#summary":
+                summary = ln
+            elif k in KEEP and cur is not None:
+                cur["recs"].append(ln)
+    return segs, summary
+
+
+def classify(lean_recs, scala_recs):
+    """AGREE, or (class, i, lean record, scala record)."""
+    n = min(len(lean_recs), len(scala_recs))
+    for i in range(n):
+        if lean_recs[i] != scala_recs[i]:
+            return (lean_recs[i].split("\t")[0], i, lean_recs[i], scala_recs[i])
+    if len(lean_recs) != len(scala_recs):
+        if len(lean_recs) > len(scala_recs):
+            return ("length+", n, lean_recs[n], "<none>")
+        return ("length-", n, "<none>", scala_recs[n])
+    return None
+
+
+def segments_main(lean_path, scala_path, report=None, show=3):
+    sc = scala_segments(scala_path)
+    ln, summary = lean_segments(lean_path)
+    out = []
+    classes = {}
+    examples = {}
+    agree = 0
+    skipped = 0
+    hashdiff = 0
+    eqdiff = 0
+    n = min(len(sc), len(ln))
+    for i in range(n):
+        site, loc, srecs = sc[i]
+        lseg = ln[i]
+        hashdiff += 1 if lseg["hashdiff"] else 0
+        eqdiff += 1 if lseg["eqdiff"] else 0
+        if lseg["note"] and lseg["note"].startswith("skip"):
+            skipped += 1
+            classes["SKIP"] = classes.get("SKIP", 0) + 1
+            examples.setdefault("SKIP", []).append((i, site, loc, lseg["note"], ""))
+            continue
+        c = classify(lseg["recs"], srecs)
+        if c is None:
+            agree += 1
+        else:
+            cls, j, a, b = c
+            classes[cls] = classes.get(cls, 0) + 1
+            examples.setdefault(cls, []).append((i, site, loc, a, b))
+    out.append("segments: scala=%d lean=%d compared=%d" % (len(sc), len(ln), n))
+    out.append("AGREE   %d" % agree)
+    out.append("SKIP    %d" % skipped)
+    out.append("hashdiff segments: %d" % hashdiff)
+    out.append("eqdiff segments: %d" % eqdiff)
+    if len(sc) != len(ln):
+        out.append("!! segment COUNT differs (scala %d, lean %d)" % (len(sc), len(ln)))
+    for cls in sorted(classes):
+        out.append("class %-8s %d" % (cls, classes[cls]))
+    for cls in sorted(examples):
+        for (i, site, loc, a, b) in examples[cls][:show]:
+            out.append("  [%s] seg %d  %s  %s" % (cls, i, site, loc))
+            out.append("      lean : %s" % a)
+            out.append("      scala: %s" % b)
+    out.append(summary)
+    text = "\n".join(out)
+    print(text)
+    if report:
+        with open(report, "w", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+    bad = sum(v for k, v in classes.items())
+    return 0 if bad == 0 and len(sc) == len(ln) else 1
+
+
 def compare(lean_path, scala_path):
     """Return (ok, message)."""
     a = normalise(lean_path)
@@ -108,11 +255,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="*")
     ap.add_argument("--sweep", action="store_true")
+    ap.add_argument("--segments", action="store_true")
+    ap.add_argument("--report", default=None)
+    ap.add_argument("--show", type=int, default=3)
     ap.add_argument("--lean", default=None)
     ap.add_argument("--scala", default=None)
     ap.add_argument("--seeds", default="W2,H2,NE6,W3,W4,G7")
     ap.add_argument("--bases", default="0-9")
     args = ap.parse_args()
+
+    if args.segments:
+        if not (args.lean and args.scala):
+            ap.error("--segments needs --lean MODEL.out --scala TRACE.tsv")
+        return segments_main(args.lean, args.scala, args.report, args.show)
 
     if not args.sweep:
         if len(args.files) != 2:
