@@ -167,3 +167,8 @@ import Rowpartition.KeyedRowScala
 import Rowpartition.KeyedEmpty
 import Rowpartition.KeyedEmptyScala
 import Rowpartition.Loop
+import Rowpartition.Loop.Wf
+import Rowpartition.Loop.Refine
+import Rowpartition.Loop.RefineConcrete
+import Rowpartition.Loop.RefineLearn
+import Rowpartition.Loop.Order
