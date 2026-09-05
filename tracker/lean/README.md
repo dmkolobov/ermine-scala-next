@@ -308,6 +308,152 @@ systems, also 0 mismatches.
 Counts, the mismatch triage and the accepted-abstraction list are in
 `tracker/loopmodel/L2-CORPUS.md`.
 
+### L3 — theorems about the model (2026-09-04)
+
+Stage L3 proves things about the model rather than testing it. Five new modules, imported
+from `Rowpartition.lean`; report `tracker/loopmodel/L3-THEOREMS.md`, review `L3-REVIEW.md`
+(round 2 verdict ADVANCE, with (ii) carried forward as its own stage). Build 838,
+Audit 2935/0.
+
+| module | lines | what |
+|---|---|---|
+| `Rowpartition/Loop/Wf.lean` | 1,565 | `Wf : State -> Prop` — the five hypotheses `Loop/Bridge.lean` takes (four `Nodup`s and `LblCoh`), proved for every state `Seed`/`Replay` builds (`wf_seed`, `wf_replay`) and preserved by `step` (`step_wf`, `run_wf`), so `LPart.eqv_iff_toConstraint_of_wf` needs no side hypotheses. Closes L1 review F6 and L2 review F5 |
+| `Rowpartition/Loop/Refine.lean` | 1,427 | `sys : State -> System` (the queues' partitions plus the environment's facts, `makeEmptyE`'s "retain `v <- ()`" as the precedent) and `LoopRel`, assembled from `NonGenStep`, `K2SplitStep`, `ResStep`, `K2ResStep` and `makeEmptyE` plus five new constructors (`weaken`, `renameLhs`, `linkSymm`, `emptyProp`, `dedup`), each with a soundness lemma. `step_refines` for the `common`, `empty` and `unify` branches; the four refuting `died` paths proved to refute |
+| `Rowpartition/Loop/RefineConcrete.lean` | 723 | the LABEL side of the `SSet -> Finset` dictionary (`cfs_removedAll`, `cfs_inter`, both under `LblCoh`) and the `concrete` branch: `subPartitions` is `SubstStep` plus one `SubstStep` per de-duplicated variable, `makeConcrete`'s cancellation fold is `CancelStep`. `step_refines_nonlearn` covers every branch except `learn`, the only one that MINTS |
+| `Rowpartition/Loop/RefineLearn.lean` | 1,558 | the `learn` branch: the supply invariant (`SupOk`, `SupFresh` and its five lemmas), one `*_run` lemma per rule (`selfSubstitution_run`, `cancellationG_run`, `substitution_run`, `commonSubexpression_run`, `splitConcrete_run`, `resolution_run`), the soundness of the three reverse lookups, `learnPartitions_run`, and `step_refines_all` — refinement for EVERY dispatch branch at the shipped flags |
+| `Rowpartition/Loop/Order.lean` | 989 | the plan's four order properties as lemmas about `step`: `trim_refuses`, `learn_single_pass`, `step_proc_mono`, `step_empty_branch`, `step_unify_branch`, `step_common_branch`, the bound `learnChain_card`, the loop-level death `step_died_empty`, and the two queue invariants `NoSelfUnif` and `NoInfRow` |
+
+Two facts from this worth having outside their proofs. **No rule of the solver ever
+introduces a label the system did not already have** (`step_qok` at a fixed label pool) —
+the loop-level analogue of `CutConcrete`. And **`trim` refuses everything the processed
+queue already holds**, with exactly two escapes: the dequeued partition itself, whose
+re-derivation is dropped at its next dequeue by the COMMON branch (`common_self_drops`), and
+the queue-level `CommonPartition` redirect, which is a naming constraint and never a
+`resolution` premise. That is the answer to the Stage 7b question.
+
+Termination is (T2): every `learn` step is paid for by a new constraint in the processed
+queue (`learn_procSys_lt`, `learnChain_card`), and the missing piece is the loop-level MINT
+bound — `KeyedRow.mintsBoundedOnSatKeyed2Star` transported through the refinement. The
+obstacle is now specified exactly: `LoopRel.weaken` is an ARBITRARY deletion, so no measure is
+monotone along a run; `L3-THEOREMS.md` R2.5 catalogues all six of its uses and lists the five
+loop operations a tighter relation would have to name. No divergence witness was found: 33
+tracked-seed runs and 2,000 runs on randomly generated satisfiable systems (at four flag
+settings) all terminate, `W2`/`W3`/`W4`/`G7` included — the seeds on which the RELATIONS
+diverge.
+
+Two caveats the L3 review asked to be stated plainly: the four `died`-path refutation lemmas
+are SYSTEM-level, and only the `Incompatible instantiations` death has a loop-level extraction
+(`step_died_empty`); and `run_sat` / `run_refutes` in their original form hold only for runs
+that never take the `learn` branch — `run_sat_all` / `run_refutes_all` are the unrestricted
+versions, which carry the supply invariant instead.
+
+### L4 -- the trace test lives in `core/test`, and the parallel loader joins the population (2026-09-04)
+
+**THE RULE THIS SECTION EXISTS FOR.**
+
+> **A change to the SOLVER must keep `core/test`'s `loop model trace` property green, and a
+> change to the MODEL must keep the L2 corpus replay green.** They are the two directions of
+> one agreement. The property
+> (`core/src/test/scala/com/clarifi/reporting/ermine/loopmodel/TestLoopTrace.scala`) fails the
+> moment `Subst.solve` emits a record the Lean model does not; the corpus replay
+> (`tracker/tools/looptrace-corpus.sh`) fails the moment the model emits one the compiler does
+> not. When a change is deliberate, BOTH sides move together and both are re-run -- neither is
+> a thing to switch off. And if the property starts SKIPPING rather than failing, that means
+> `tracker/lean/.lake/build/bin/looptrace` is missing, not that the agreement holds: build it
+> with `lake build looptrace`. A skip is the ONLY thing that missing binary causes; a child JVM
+> that crashes, hangs or writes nothing FAILS the property, because a comparison that did not
+> happen is not evidence that the two sides agree.
+>
+> **How far the first half of the rule reaches.** The property's 702 solves fire all five
+> dispatch branches and NINE of the sixteen `Inference` kinds; `CommonSubexpressionMint`,
+> `SplitEmpty` and `ResolutionEmpty` fire only under a forwarded flag
+> (`-Dermine.genRules=all`, `-Dermine.emptyRow=true`), and **`ResolutionRow`, `PartitionEmpty`,
+> `CommonPartition` and `Disjunction` never fire in it at all** — the corpus does reach
+> `ResolutionRow`. Nor does the property see existentials, `Skolem`/`Ambiguous` variables,
+> `.nf`-normalised input, or the construction of the loop's input (both sides replay the
+> compiler's own `sin`/`scon` records — L2 review F3). **A change confined to those is caught
+> by the corpus sweep, which is not part of `core/test`, so run
+> `tracker/tools/looptrace-corpus.sh` as well when a change touches them.** The
+> `-Dermine.*` rule switches are forwarded to both sides, so `sbt -Dermine.emptyRow=true
+> core/test` compares that configuration for real; `-Dermine.disjunction=true` does not finish
+> on either side and is covered by seeds only.
+
+`sbt core/test` now runs the model against the real `Subst.solve` on **702 solves** -- the 17
+tracked seeds at six id bases plus 600 generated satisfiable-by-construction systems -- and
+requires the two traces to be byte identical, segment for segment. All 702 agree, in **2.6 s**
+inside a 9-12 s `testOnly`. Because `core`'s tests are not forked and `RowTrace.enabled` is a
+`val` read once from a system property, the trace is taken by a CHILD JVM launched with the
+test's own classpath; nothing is added to the solver's default path. Two injections are
+asserted to be DETECTED (a wrong id base: 47 of 702 segments; `--flags=nongen`: 59 of 702), and
+`-Dermine.looptrace.inject=idbase|nongen` reproduces the failure end to end. With the
+`looptrace` binary absent the property SKIPS with a message, so `core/test` has no hard
+dependency on Lean or on `lake`.
+
+Every `-Dermine.rowTrace` record now ends with a THREAD ID, which brings the SHIPPED (parallel)
+loader into the population the corpus replay covers -- the first of the plan's "known scope
+limits". `looptrace-diff.py --demux` regroups a parallel trace so each solve's records are
+contiguous, `looptrace-corpus.sh` with `LOOPTRACE_SERIES=false` inserts that step, and both
+sides then read the regrouped file:
+
+| | segments | threads | interleaved | AGREE |
+|---|---|---|---|---|
+| `Ai`, parallel | 83,942 | 12 | 5,599 | **83,942** |
+| `incomplete/gu05`, parallel | 54,235 | 12 | 5,212 | **54,235** |
+
+That includes gu05's expensive solve, which exists ONLY under the parallel loader: 458
+saturated partitions against 83 serialized. (With `-Dermine.splitKey=false` the same solve
+saturates 1,456; that variant's replay was still running when L4 was written, so it is NOT part
+of the agreement above.) Without the regroup the same `Ai` trace loses 132 segments to
+`scon count != nCs`. The serialized runs
+reproduce L2's counts to the digit. Report: `tracker/loopmodel/L4-TEST.md`.
+
+```bash
+sbt -batch core/test                       # the property runs among everything else
+LOOPTRACE_GROUPS=Ai LOOPTRACE_SERIES=false tracker/tools/looptrace-corpus.sh /tmp/L4par
+python3 tracker/tools/looptrace-diff.py --demux RAW.tsv --out DEMUX.tsv    # by hand
+```
+
+### L5 -- `LoopStrict`: the refinement relation with no arbitrary deletion (2026-09-04)
+
+L3 left (ii), the loop-level mint bound, open for a structural reason: `LoopRel.weaken` admits
+an ARBITRARY deletion, so no measure is monotone along a `LoopRun`. Stage L5 replaces it.
+Three new modules, imported from `Rowpartition.lean`; report
+`tracker/loopmodel/L5-TERMINATION.md`. Build 841, Audit 3003/0.
+
+| module | lines | what |
+|---|---|---|
+| `Rowpartition/Loop/Strict.lean` | 225 | `NoLoss G G' := ∀ c ∈ G, SEntails G' c` and `LoopStrict` — `LoopRel`'s nine RULE constructors verbatim, plus FOUR deletions (`drop`, `instRemove`, `emptyRemove`, `concRemove`) each carrying `NoLoss` as its licence. `LoopStrict.sat`, `LoopStrict.no_loss` (and both for a run), `LoopStrict.of_rel` (every ADDITIVE `LoopRel` step is a `LoopStrict` step), `weaken_not_strict` |
+| `Rowpartition/Loop/StrictStep.lean` | 1,268 | the licences: `Q.insert`/`Q.+!`/`trim` lose nothing (`insertP_noLoss`, `concatP_noLoss`, `trim_noLoss`), the CHAMP writers keep every CONSTRAINT (`toConstraint_mem_concat`, `toConstraint_mem_map`), `makeEmpty_noLoss`, `instantiate_noLoss`, `sat_of_erase`, `sat_of_replace`; then `step_refines_strict` for the `common`, `empty` and `unify` branches, `step_learn_sys_mono` (the `learn` branch DELETES NOTHING) and `step_noLoss` (the loop loses information at most at the `concrete` branch). Also `qsys` and `cancellation_bare` |
+| `Rowpartition/Loop/StrictBound.lean` | 230 | ingredients of the bound: `step_su` (only `learn` draws an id), `step_envNodup` (a variable is bound at most once), `env_len_le_allVars` |
+
+**The theorem worth having outside its proof.** `LoopStrict.no_loss` — *every constraint of the
+system a step leaves is a consequence of the system it reaches*, for a step and for a whole
+run. `LoopRel.weaken` fails it (`weaken_not_strict`), which is what "no arbitrary deletion"
+means precisely. Of `L3-THEOREMS.md` R2.5's six residual `weaken` sites, rows 2-5 are now
+licensed deletions and row 7 is proved not to be a deletion at all; only row 6, the `concrete`
+branch, is open — and `cancellation_bare` shows why its licence has to be conditioned on
+satisfiability: `cancellation` emits nothing against a bare concrete definition, so
+`makeConcrete` deletes `v <- ((|C|))` and nothing records `C`. On satisfiable input a model
+forces `C = fs`; the only shape where it bites is refuted earlier by `labelCheck`.
+
+Termination is still (T2), but the obstacle is smaller. The measure has to be taken over
+`qsys` — the queues PLUS the environment's retained empty-row facts and NOT its aliases —
+because `sys` fails at the alias elimination and the queues alone fail at `makeEmpty`; and over
+`qsys` the guard mismatch of the L3 review's §6d is exactly ONE case: a mint at a key equal to
+the parent's whole concrete row taken while some variable is already empty, i.e. the case
+`-Dermine.emptyRow` exists to close. No divergence witness: 7,468 SOLVED / 0 FUEL over 1,500
+empty-biased satisfiable-by-construction seeds at five id bases, plus a 480-run scaling family
+whose mint count grows about quadratically in the number of constraints.
+
+**A compiler bug the hunt turned up.** The satisfiable three-constraint system
+`v7 <- (v4, v6)`, `v6 <- (v6, v7)`, `v9 <- (v5, (|l100|))` makes the SHIPPED `Subst.solve`
+throw `panic: reinstantiated type v6 to ConcreteRho(-,Set()) but it was already bound to
+ConcreteRho(-,Set())` at 11 of 100 id bases (`tracker/repro/satterm/run.sh sweep json:...`).
+The panic refuses a NO-OP re-binding, so a valid program is accepted or rejected according to
+how many type variables were allocated before the solve -- and the case that would handle it is
+already in `Subst.scala:182`, COMMENTED OUT, directly above the `die`. See
+`L5-TERMINATION.md` §0.
+
 ---
 
 ## The shared vocabulary

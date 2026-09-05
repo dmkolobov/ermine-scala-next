@@ -27,6 +27,10 @@ import com.clarifi.reporting.ermine.Type.Con
  *   concr   site  loc  var  fields  prov
  *   splice  site  loc  var  nAbs  con  prov  changed
  *
+ * EVERY record ends with a THREAD ID column (`t0`, `t1`, ... in order of first trace write
+ * by that thread), appended by `log` — see `tid` below.  It is LAST so that every reader
+ * indexing from the start of a record is unaffected.
+ *
  * `prov` is the `Inference` that derived a partition, or `INPUT` when
  * `Partition.inf` is `None` — which is precisely how an input partition is
  * distinguished from a derived one, since `PQueue.build` uses the two-argument
@@ -124,9 +128,37 @@ object RowTrace {
       try body finally site0.set(old)
     }
 
+  /** The THREAD id column (added 2026-09-04 for stage L4).  Every record ends with it, so a
+    * trace written by the PARALLEL loader can be demultiplexed per thread and only then
+    * segmented at `sin` boundaries, the way a serialized trace already is.  `log`
+    * synchronises per LINE, not per solve, so without a thread id two threads solving at
+    * once interleave their records and neither solve can be replayed
+    * (`tracker/loopmodel/L2-CORPUS.md` §8: 1,654 of `gu05`'s 54,235 parallel segments hold
+    * more than one `solve` record).
+    *
+    * It is a SMALL DENSE integer handed out on first use rather than `Thread.getId`, so the
+    * ids are readable and stable across runs (`t0` is whichever thread traces first) and the
+    * column stays narrow on a 500 MB trace.  It is APPENDED, so every reader that indexes
+    * from the START of a record is unaffected: `tracker/tools/keptdef-mints.py`,
+    * `splitkey-counts.py`, `rowtrace-summary.py` and the Lean `Loop/Replay.lean` parsers all
+    * match a fixed prefix and ignore the tail.  `tracker/tools/looptrace-diff.py` strips it
+    * before comparing, because the model does not emit one.
+    *
+    * Cost on the default path: none — `tid` is read inside `log`'s `if (enabled)`. */
+  private val nextTid = new java.util.concurrent.atomic.AtomicInteger(0)
+
+  private val tid0 = new ThreadLocal[String] {
+    override def initialValue(): String = "t" + nextTid.getAndIncrement()
+  }
+
+  def tid: String = tid0.get
+
   /** The argument is by-name: nothing is built when tracing is off. */
   def log(record: => String): Unit =
-    if (enabled) out.synchronized { out.println(record); out.flush() }
+    if (enabled) {
+      val line = record + "\t" + tid
+      out.synchronized { out.println(line); out.flush() }
+    }
 
   /** Escape tabs and newlines so a record stays on one line. */
   def clean(s: String): String =

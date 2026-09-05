@@ -28,12 +28,32 @@ Segment mode (stage L2)
   first differs (`step`, `learn`, `inpart`, `sat`, `solve`, `length`), and per-class
   examples are printed.
 
+The THREAD ID column (stage L4)
+  Every compiler record now ends with a thread id (`RowTrace.log`, `t0`/`t1`/...).  The
+  MODEL emits no such column, so this script STRIPS it before comparing, and it detects
+  its presence from the field count of the `sin` records rather than being told
+  (`--thread-column=yes|no|auto`, default `auto`).
+
+  The column also makes the PARALLEL loader segmentable.  `RowTrace.log` synchronises per
+  line, not per solve, so under the shipped (parallel) loader two threads solving at once
+  interleave their records and a segment split at `sin` alone is a mixture of two solves.
+  `--segments` therefore DEMULTIPLEXES first: it partitions the records by their thread id
+  and splits each thread's stream at its own `sin` records.  Segments from different
+  threads are then interleaved back into the order of their OPENING `sin` record, because
+  that is the order `looptrace --replay` -- which reads the same file top to bottom and
+  starts a segment at every `sin` -- emits them in.  On a serialized trace (one tracing
+  thread) this is exactly the L2 behaviour, byte for byte.  `--per-thread` prints the
+  per-thread segment counts.
+
 Usage
   looptrace-diff.py LEAN.tsv SCALA.tsv
   looptrace-diff.py --sweep --lean DIR --scala DIR [--seeds W2,H2,..] [--bases 0-9]
   looptrace-diff.py --segments --lean MODEL.out --scala TRACE.tsv
 
-Exit status is 0 when every comparison agrees.
+Exit status is 0 when every comparison agrees.  "Agrees" includes the model's own
+cross-checks: a nonzero `#hashdiff` or `#eqdiff` count -- a segment whose records match but
+whose `Part.hashCode` / `equals` class the model computed differently -- is a FAILURE here
+too, as it already is in `looptrace --replay`'s own exit status (L2 review, F8).
 """
 
 import argparse
@@ -51,10 +71,41 @@ _PATTERNS = [
 ]
 
 
+# `RowTrace.log` appends a thread id to EVERY record (stage L4).  The model emits none, so
+# both the comparison and the id normalisation have to drop it.  Which records carry one is
+# decided by the `sin` record's field count -- `sin site loc suLo suHi nCs blk bsz nRows` is
+# nine fields, ten with a thread id -- so a trace from either build is read correctly with
+# no flag.  Falls back to the `solve` record (ten fields, eleven with a thread id) for a
+# fragment that has no `sin`.
+SIN_FIELDS = 9
+SOLVE_FIELDS = 10
+
+
+def has_thread_column(lines, forced="auto"):
+    """True when these records end with a `RowTrace` thread id."""
+    if forced == "yes":
+        return True
+    if forced == "no":
+        return False
+    for ln in lines:
+        if ln.startswith("sin\t"):
+            return len(ln.split("\t")) > SIN_FIELDS
+        if ln.startswith("solve\t"):
+            return len(ln.split("\t")) > SOLVE_FIELDS
+    return False
+
+
+def drop_tid(ln):
+    """A record without its trailing thread-id column."""
+    i = ln.rfind("\t")
+    return ln[:i] if i >= 0 else ln
+
+
 def normalise(path):
     """Return the normalised record list of a trace file."""
     with open(path, "r", encoding="utf-8") as fh:
         raw = [ln.rstrip("\n") for ln in fh]
+    tid = has_thread_column(raw)
     rows = []
     for ln in raw:
         if not ln:
@@ -62,6 +113,8 @@ def normalise(path):
         cols = ln.split("\t")
         if cols[0] not in KEEP:
             continue
+        if tid:
+            cols = cols[:-1]
         # drop the site column
         rows.append("\t".join([cols[0]] + cols[2:]))
 
@@ -106,14 +159,23 @@ def _open(path):
     return open(path, "r", encoding="utf-8", errors="replace")
 
 
-def scala_segments(path):
-    """Split a compiler trace at its `sin` records.
+def scala_segments(path, forced="auto"):
+    """Split a compiler trace at its `sin` records, PER THREAD.
 
-    Returns a list of (site, loc, records) with `records` restricted to the types the
-    model produces, in file order.  Records before the first `sin` (there are none in a
-    trace taken with this build) are dropped."""
+    Returns (segments, stats) where a segment is (site, loc, records) with `records`
+    restricted to the types the model produces and stripped of their thread-id column, and
+    `stats` is {thread id: number of segments opened on it}.  Segments appear in the order
+    of their opening `sin`, which is the order `looptrace --replay` emits them in.
+
+    Records are attached to the open segment OF THEIR OWN THREAD.  On a serialized trace
+    (one tracing thread) that is identical to the L2 behaviour of splitting the file at
+    every `sin`.  On a parallel trace it is the difference between a segment and a mixture
+    of two solves: `RowTrace.log` synchronises per line, so concurrent solves interleave.
+    Records before their thread's first `sin` are dropped."""
     segs = []
-    cur = None
+    cur = {}
+    stats = {}
+    tid_col = None if forced == "auto" else (forced == "yes")
     with _open(path) as fh:
         for ln in fh:
             ln = ln.rstrip("\n")
@@ -121,13 +183,118 @@ def scala_segments(path):
                 continue
             cols = ln.split("\t")
             k = cols[0]
+            if k != "sin" and k not in KEEP:
+                continue
+            if tid_col is None:
+                if k == "sin":
+                    tid_col = len(cols) > SIN_FIELDS
+                elif k == "solve":
+                    tid_col = len(cols) > SOLVE_FIELDS
+                else:
+                    continue          # cannot tell yet, and nothing is open anyway
+            t = cols[-1] if tid_col else "-"
+            if tid_col:
+                ln = drop_tid(ln)
             if k == "sin":
-                cur = (cols[1] if len(cols) > 1 else "?",
+                seg = (cols[1] if len(cols) > 1 else "?",
                        cols[2] if len(cols) > 2 else "-", [])
-                segs.append(cur)
-            elif k in KEEP and cur is not None:
-                cur[2].append(ln)
-    return segs
+                cur[t] = seg
+                segs.append(seg)
+                stats[t] = stats.get(t, 0) + 1
+            else:
+                seg = cur.get(t)
+                if seg is not None:
+                    seg[2].append(ln)
+    return segs, stats
+
+
+def demux(path, out_path):
+    """Rewrite a trace so that each solve's records are CONTIGUOUS.
+
+    `looptrace --replay` reads a trace top to bottom, opens a segment at every `sin` and
+    folds the `slbl`/`svar`/`scon` records that follow into the most recent one -- it has
+    no notion of a thread.  A trace written by the PARALLEL loader therefore cannot be fed
+    to it directly: two threads solving at once interleave, and the replay reconstructs a
+    system the compiler never had (`tracker/loopmodel/L2-CORPUS.md` §8).
+
+    This regroups the file by thread id, emitting each thread's segments WHOLE (in the order
+    they complete -- see STREAMING below), and writes the result.  EVERY record type is
+    carried through,
+    not just the ones the diff compares, because the model's input records (`slbl`, `svar`,
+    `scon`) are exactly the ones that were interleaved.  The output is a valid trace with
+    the same records in a different order, so the same `--segments` comparison applies to
+    it -- and on a serialized trace it is a byte-for-byte copy.
+
+    STREAMING: only the segment currently open on each thread is held, so a 500 MB trace
+    costs a few threads' worth of records.  The price is that segments come out in the order
+    they COMPLETE rather than the order they opened; that is harmless because both sides of
+    the comparison read this same file -- `looptrace --replay` numbers the segments of the
+    file it is given, and `--segments` pairs by that index.  On a serialized trace (one
+    tracing thread) the two orders coincide and the output is a copy.
+
+    Returns (segments, threads, interleaved, dropped): `interleaved` counts segments whose
+    records were NOT already contiguous in the input, i.e. exactly what the parallel loader
+    breaks and this repairs; `dropped` counts records that preceded their thread's first
+    `sin`."""
+    cur = {}            # thread id -> the segment currently open on it
+    dropped = 0
+    nseg = 0
+    interleaved = 0
+    threads = set()
+    tid_col = None
+    prev = None         # the segment the PREVIOUS record of the file belonged to
+    oh = open(out_path, "w", encoding="utf-8")
+
+    def flush(seg):
+        nonlocal interleaved
+        if not seg["contig"]:
+            interleaved += 1
+        for r in seg["recs"]:
+            oh.write(r + "\n")
+
+    try:
+        with _open(path) as fh:
+            for ln in fh:
+                ln = ln.rstrip("\n")
+                if not ln:
+                    continue
+                cols = ln.split("\t")
+                k = cols[0]
+                if tid_col is None:
+                    if k == "sin":
+                        tid_col = len(cols) > SIN_FIELDS
+                    elif k == "solve":
+                        tid_col = len(cols) > SOLVE_FIELDS
+                if tid_col is None:
+                    dropped += 1
+                    continue
+                t = cols[-1] if tid_col else "-"
+                if k == "sin":
+                    # This thread's previous solve is complete: write it out and forget it.
+                    old = cur.get(t)
+                    if old is not None:
+                        flush(old)
+                    seg = {"recs": [ln], "contig": True}
+                    cur[t] = seg
+                    threads.add(t)
+                    nseg += 1
+                else:
+                    seg = cur.get(t)
+                    if seg is None:
+                        dropped += 1
+                        prev = None
+                        continue
+                    seg["recs"].append(ln)
+                    # Another thread wrote between two of this segment's records: the input
+                    # was interleaved here, and this is a segment the regrouping repairs.
+                    if prev is not None and prev is not seg:
+                        seg["contig"] = False
+                prev = seg
+        for t in sorted(cur):
+            flush(cur[t])
+    finally:
+        oh.close()
+    return nseg, len(threads), interleaved, dropped
 
 
 def lean_segments(path):
@@ -178,8 +345,9 @@ def classify(lean_recs, scala_recs):
     return None
 
 
-def segments_main(lean_path, scala_path, report=None, show=3):
-    sc = scala_segments(scala_path)
+def segments_main(lean_path, scala_path, report=None, show=3, forced="auto",
+                  per_thread=False):
+    sc, tstats = scala_segments(scala_path, forced)
     ln, summary = lean_segments(lean_path)
     out = []
     classes = {}
@@ -211,6 +379,8 @@ def segments_main(lean_path, scala_path, report=None, show=3):
     out.append("SKIP    %d" % skipped)
     out.append("hashdiff segments: %d" % hashdiff)
     out.append("eqdiff segments: %d" % eqdiff)
+    out.append("threads: %d  %s" % (len(tstats), " ".join(
+        "%s=%d" % (t, tstats[t]) for t in sorted(tstats)) if per_thread else ""))
     if len(sc) != len(ln):
         out.append("!! segment COUNT differs (scala %d, lean %d)" % (len(sc), len(ln)))
     for cls in sorted(classes):
@@ -226,7 +396,10 @@ def segments_main(lean_path, scala_path, report=None, show=3):
     if report:
         with open(report, "w", encoding="utf-8") as fh:
             fh.write(text + "\n")
-    bad = sum(v for k, v in classes.items())
+    # L2 review F8: `hashdiff` / `eqdiff` are model-vs-compiler disagreements too -- a
+    # segment whose records match but whose `Part.hashCode` or `equals` class the model got
+    # wrong.  `looptrace --replay` already exits non-zero on them; this now agrees.
+    bad = sum(v for k, v in classes.items()) + hashdiff + eqdiff
     return 0 if bad == 0 and len(sc) == len(ln) else 1
 
 
@@ -260,14 +433,31 @@ def main():
     ap.add_argument("--show", type=int, default=3)
     ap.add_argument("--lean", default=None)
     ap.add_argument("--scala", default=None)
+    ap.add_argument("--demux", default=None,
+                    help="regroup a trace so each solve's records are contiguous "
+                         "(--demux RAW.tsv --out DEMUX.tsv); needed before `looptrace "
+                         "--replay` on a trace written by the PARALLEL loader")
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--thread-column", default="auto", choices=("auto", "yes", "no"),
+                    dest="thread_column")
+    ap.add_argument("--per-thread", action="store_true", dest="per_thread")
     ap.add_argument("--seeds", default="W2,H2,NE6,W3,W4,G7")
     ap.add_argument("--bases", default="0-9")
     args = ap.parse_args()
 
+    if args.demux:
+        if not args.out:
+            ap.error("--demux needs --out DEMUX.tsv")
+        nseg, nthr, inter, drop = demux(args.demux, args.out)
+        print("demux: segments=%d threads=%d interleaved=%d dropped-records=%d -> %s"
+              % (nseg, nthr, inter, drop, args.out))
+        return 0
+
     if args.segments:
         if not (args.lean and args.scala):
             ap.error("--segments needs --lean MODEL.out --scala TRACE.tsv")
-        return segments_main(args.lean, args.scala, args.report, args.show)
+        return segments_main(args.lean, args.scala, args.report, args.show,
+                             args.thread_column, args.per_thread)
 
     if not args.sweep:
         if len(args.files) != 2:

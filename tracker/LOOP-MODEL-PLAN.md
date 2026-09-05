@@ -78,6 +78,25 @@ the model checked against it), traces equal. Acceptance: the property runs in th
 `core/test`, fails on an injected divergence (positive control), and `tracker/lean/README.md`
 records that a solver change must keep it green.
 
+### L5 — the tighter relation and the loop-level mint bound (split out of L3 on 2026-09-04)
+
+L3 proved (iv), (i) for every branch (`step_refines_all`), and (iii); (ii) is neither proved nor
+refuted, for a structural reason the L3 review established: the refinement relation `LoopRel` has a
+`weaken` constructor admitting arbitrary deletion, so no measure is monotone along its runs and none
+of the library's mint bounds (`hmeas`, `gmeas`) transports. The L3 report's R2.5 catalogue lists the
+six loop deletions that `weaken` stands for, with the Scala each must model (the `empty` dequeue,
+which is `makeEmptyE` up to the `++!` redirect; the `concrete` dequeue, which is `concretizeSrs` up
+to `keepDefs` and `can`; the dequeue drop; the queue drops; `instantiate`'s removal; the `unify`
+site). L5 is: define `LoopStrict` with exactly those deletions as constructors, re-prove
+`step_refines_all` against it, and then prove the loop-level mint bound — or produce a satisfiable
+well-formed witness on which `run` exhausts any fuel, replayed through the compiler.
+
+Acceptance: `LoopStrict` has no arbitrary-deletion constructor; every `step` refines it under the
+same hypotheses as `step_refines_all`; either `Terminates s₀` for every satisfiable `Wf s₀` with an
+explicit bound (the order properties, already lemmas, plus a mint budget that survives the six
+deletions), or a compiler-reproduced witness; audit green. Expected to take more than one round;
+the reviewer's §6d is the starting analysis.
+
 ## Review protocol (every stage)
 
 A second agent, briefed with the stage's brief, its report and `git diff`, and told to trust
@@ -92,7 +111,19 @@ list is empty or every remaining item is recorded in the report as accepted scop
 * The trace-equivalence population is the SERIALIZED loader (`-Dermine.loadInSeries=true`). The
   parallel loader — the shipped path — interleaves records of concurrent solves; gu05's
   1,372-partition solve exists only there. Closing it needs a thread id on every trace record
-  and a segmenter that uses it (candidate L4 item).
+  and a segmenter that uses it (candidate L4 item). **PARTIALLY CLOSED by L4 (2026-09-04)** —
+  the MECHANISM exists and works, the POPULATION has not moved: every
+  `RowTrace` record ends with a thread id, `looptrace-diff.py --demux` regroups a parallel
+  trace so each solve's records are contiguous, and `Ai` (83,942 segments, 12 threads) and
+  `incomplete/gu05` (54,235 segments, 12 threads, including the 458-partition solve that the
+  serialized loader never produces) both replay and agree completely. Still open within it:
+  the parallel sweep is **2 of the 8 corpus groups**, and its `incomplete` half is one FILE
+  (`gu05`), not the group; `looptrace-corpus.sh` still DEFAULTS to `LOOPTRACE_SERIES=true`, so
+  the routine population remains the serialized loader; its per-file TIMEOUT cut (`incomplete/`)
+  cuts at the last `sin` regardless of thread, which is only safe for a serialized trace
+  (it fails LOUDLY if it ever fires — see `L4-TEST.md`); and `looptrace --replay` still cannot
+  demultiplex, so the regroup is an external step a future runner has to remember. (L4 review,
+  F3: do not read this bullet as closed.)
 * `Disjunction` is covered by seeds only; a corpus sweep with it on finishes on neither side.
 * `emptyRow` (default off): the model's per-solve environment misses carriers the compiler's
   whole-inference environment has (M4, 37 segments).
@@ -105,8 +136,9 @@ list is empty or every remaining item is recorded in the report as accepted scop
 |---|---|---|---|
 | L1 | agent (2026-09-04) | agent (2026-09-04), three rounds | **ADVANCED 2026-09-04.** `tracker/lean/Rowpartition/Loop/` (13 files) + `lake exe looptrace` + `tracker/tools/looptrace-diff.py`; reports `tracker/loopmodel/L1-MODEL.md`, `L1-REVIEW.md`. Final: 1,301 trace comparisons (6 tracked + 11 regression seeds + two fuzzes) and 2,572 hash-set-level JVM comparisons, 0 differing; build 832, Audit 2508/0. Review found and fixed two CHAMP-semantics bugs (sub-node inlining on removal; both early returns of `concat`). Carried forward: F6 → L3 (iv); F7 (`V.ty` inferred from id) → L2 blocker. |
 | L2 | agent (2026-09-04) | agent (2026-09-04): FIX-THEN-ADVANCE, no correctness defect, eight documentation findings, all applied | **ADVANCED 2026-09-04.** Every SERIALIZED corpus solve (stdlib boot + 110 examples: 26,864 row-carrying segments, 12,310 distinct solves, the boot at 42 id bases) and 2,000 random systems replay byte for byte at the compiler's ids; 920,611 segments re-run by the reviewer. `RowTrace` gained four inert replay records (`sin`/`slbl`/`svar`/`scon`); model gaps fixed: `makeEmpty`'s skolem refusal, `Supply`'s block boundary; accepted: M4 (`emptyRow` only). Reports `tracker/loopmodel/L2-CORPUS.md`, `L2-REVIEW.md`. Build 833, Audit 2530/0. |
-| L3 | agent (2026-09-04) | — | LAUNCHED; brief `tracker/loopmodel/briefs/brief-L3.md` |
-| L4 | | | |
+| L3 | agent (2026-09-04), two rounds | agent (2026-09-04), three sections | **ADVANCED 2026-09-04, with (ii) carried forward as L5.** (iv) `Wf` PROVED (closes L1 F6, L2 F5); (i) PROVED for every branch: `step_refines_all` under the shipped-off flags (`emptyRow`, `disjRule`, `cseMints`) and the supply invariants `SupOk`/`SupFresh` (satisfied by every replay state), all ten `LoopRel` constructors live, both minting rules inside the theorem, the `¬Named` guard discharged; 4 of 7 deaths proved refutations, 3 classified as not; (iii) DECIDED — trim refuses what proc holds, both of escape 1's premises PROVED (`NoSelfUnif`, and `NoInfRow` after the re-review's R-B — the four-writer argument, no order reasoning needed), leaving only the seven-way rule case analysis of `learn_no_self_rederive`; escape 2 benign on the compiler (seed c012); (ii) NOT proved: the six residual `weaken` sites (R2.5) are the `LoopStrict` spec. Modules `Loop/{Wf,Order,Refine,RefineConcrete,RefineLearn}.lean`; reports `L3-THEOREMS.md`, `L3-REVIEW.md`. Closing items R-A (the sixth `weaken` row, the `unify` branch), R-C (the summary now says `SupOk`/`SupFresh` are per-state hypotheses carried by `RunSupOk`, not an invariant) and R-B done. Build 838, Audit 2935/0, 0 `sorry`, 31 headline theorems on standard axioms. |
+| L4 | agent (2026-09-04), two rounds | agent (2026-09-04): F1 CONFIRMED and fixed, final ADVANCE | **ADVANCED 2026-09-04.** `core/test` carries `TestLoopTrace`: a child JVM runs the shipped `Subst.solve` at exact id bases on 17 tracked seeds × 6 bases + 600 generated satisfiable systems (702 solves, ~3 s), compared record for record with `lake exe looptrace`; rule switches `-Dermine.*` forwarded to both sides (ten settings 702/702; `disjunction=true` fails loudly as the compiler child does not finish); two positive controls asserted non-vacuously; a missing Lean binary SKIPS, every compiler-side failure FAILS. Trace records carry a thread id; `--demux` regroups parallel-loader traces; `Ai` and `gu05` under the parallel loader replay and agree incl. gu05's 458-partition solve. core/test 913/914 (the known starvation). Reach: 9 of 16 `Inference` kinds fire in the property (`ResolutionRow`, `PartitionEmpty`, `CommonPartition`, `Disjunction` never; corpus sweep for those). Reports `L4-TEST.md`, `L4-REVIEW.md`. |
+| L5 | agent (2026-09-04), round 2 in progress | agent (2026-09-04): FIX-THEN-ADVANCE — F1 `LoopStrict`'s deletion constructors admit arbitrary GROWTH (`no_mint_bound_along_strict` proved by the reviewer); F2 the strict refinement still reaches `LoopRel.weaken` transitively; C3's localisation prose partly wrong; round-2 spec §10 | IMPLEMENTED + REVIEWED; round 2 running (constructors as library operators, weaken-free refinement, queue-hygiene invariant). **The witness hunt found a COMPILER BUG**: `v7 <- (v4,v6), v6 <- (v6,v7), v9 <- (v5,(|l100|))` (satisfiable) panics `reinstantiated type` at 11 of 100 id bases; root cause `makeEmpty`'s `aux` maps over all of `abstr` including the emptied `v` itself (Constraints.scala ≈1564), where `selfSubstitution` uses `abstr - v`; the model reproduces the same eleven bases. Fix NOT applied (user decision); it needs both sides (Scala + model) and the gate set. Build 841, Audit 3003/0. |
 
 Constraints throughout: the tree carries uncommitted Stage 7 work (`git status`); agents touch
 only their own new files plus the root import line; no commits by agents; disk is tight (no
