@@ -1561,7 +1561,17 @@ object Constraints {
   def makeEmpty(v: TypeVar, incm: PQueue, proc: PQueue)(implicit hm: SubstEnv, tml: Located): (PQueue, PQueue) = {
     def aux(s: Set[Partition], rhs: RHS): Set[Partition] = rhs match {
       case RHSEmpty()      => s
-      case RHSAbstr(abstr) => s ++ abstr.map(v => Partition(v, RHSEmpty(), PartitionEmpty))
+      // The emptied variable is EXCLUDED from the propagation: a self-referential
+      // definition v <- (v, w) would otherwise manufacture `v <- ()` for v itself, which is
+      // re-enqueued and dequeued into a SECOND makeEmpty(v), and instantiateType's `die`
+      // rejects the (no-op) re-binding -- "panic: reinstantiated type v to
+      // ConcreteRho(-,Set()) but it was already bound to ConcreteRho(-,Set())" on a
+      // SATISFIABLE program, at whichever id bases the queue order lets the second step run
+      // (11 of 100 for tracker/repro/satterm/seeds/PANIC3.json; the self-reference need not
+      // be in the input -- the loop derives it).  `selfSubstitution` above uses (abstr - v)
+      // for the same reason.  Sound: `v <- ()` is recorded by this very call's
+      // instantiateType below.
+      case RHSAbstr(abstr) => s ++ (abstr - v).map(u => Partition(u, RHSEmpty(), PartitionEmpty))
       case _               => tml.die("Incompatible instantiations of '" + v + "'")
     }
 

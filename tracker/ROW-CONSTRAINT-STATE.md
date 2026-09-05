@@ -1,4 +1,33 @@
-# Row-constraint work — state as of 2026-09-03
+# Row-constraint work — state as of 2026-09-04
+
+## 2026-09-04: a compiler PANIC on satisfiable input — `makeEmpty` self-propagation, FIXED
+
+`Constraints.makeEmpty` propagated the "is empty" fact to every variable of a right-hand side
+INCLUDING the one being emptied, so a self-referential definition `v <- (v, w)` — written, or
+DERIVED by `SplitKeyed` — made the call manufacture `v <- ()` for `v` itself, re-enqueue it,
+and reach `makeEmpty v` a second time, where `Subst.instantiateType`'s `die` refuses the
+(no-op) re-binding: `panic: reinstantiated type v6 to ConcreteRho(-,Set()) but it was already
+bound to ConcreteRho(-,Set())`, on a SATISFIABLE program. Whether the second step happens
+depends on the queue order, hence on how many ids were allocated before the solve, so a valid
+program was accepted or rejected by id accident — the NameLoss order-dependence class again.
+Found by the L5 witness hunt (`tracker/loopmodel/L5-TERMINATION.md` §0, root-caused in
+`L5-REVIEW.md` §6.3), minimised to the new tracked seed `tracker/repro/satterm/seeds/PANIC3.json`
+(11 of 100 id bases); over the fourteen panicking hunt seeds at bases 0–99 the shipped compiler
+died at **534 of 1400 runs**. The fix is one token — `abstr.map` → `(abstr - v).map`, matching
+`selfSubstitution` twelve lines above — and it leaves `instantiateType`'s `die` in place as a
+real invariant check rather than uncommenting the tolerant `warn` at `Subst.scala:182`, which
+would have masked the symptom and removed the only enforcement of queue hygiene. Everything
+else holds: `PANIC3` 89/11 → 100/100, the hunt seeds 866/534 → 1400/0, the other 17 tracked
+seeds and both `crule` controls byte-identical, corpus verdicts identical (23/43, 18/16,
+`shouldfail/` 40/40) with identical per-file messages, no published type weakened, both smokes
+green, `core/test` 913/914 (`disjunction sound` only). The Lean model was mirrored in lock-step
+(`Loop/Step.lean:126`, `(p.rhs.abstr.excl v)`) with six proof sites moved and
+`makeEmpty_aux_emits_self` replaced by `makeEmpty_aux_excludes_self`: `lake build Rowpartition`
+841 jobs, `Audit.lean` 3058 theorems / 0 non-standard axioms, `TestLoopTrace` 708/708 segments
+agreeing with `PANIC3` in the population, L1 sweep 180/180, L2 replay 148,705 segments 0
+differing. Full account and gate tables: `tracker/loopmodel/B1-FIX.md`;
+`TICKET-editor-and-solver-followups.md` item 11. Nothing committed.
+
 
 ## 2026-09-03: termination on WELL-TYPED input — FALSE for the syntactic split guard; the KEYED guard is proved terminating and `ermine.splitKey` ADOPTED
 

@@ -684,7 +684,7 @@ theorem makeEmpty_ok {L : List Lbl} {ns : Names} {v : Nat} {incm proc : PQueue} 
     if p.lhs == v then
       if p.rhs.isEmpty then pure s
       else if p.rhs.conc.isEmpty then
-        pure (s.concat (p.rhs.abstr.map (fun w => (⟨w, RHS.empty, some .partitionEmpty⟩ : LPart))))
+        pure (s.concat ((p.rhs.abstr.excl v).map (fun w => (⟨w, RHS.empty, some .partitionEmpty⟩ : LPart))))
       else .error ("Incompatible instantiations of '" ++ varStr ns v ++ "'")
     else pure (s.incl ⟨p.lhs, p.rhs.erase v, p.inf⟩) with hF
   have hstep : ∀ (acc : Except String (SSet LPart)) (x : LPart), POk L x →

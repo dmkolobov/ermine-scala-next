@@ -123,7 +123,12 @@ def makeEmpty (ns : Names) (v : Nat) (incm proc : PQueue) (env : Env) :
       if p.lhs == v then
         if p.rhs.isEmpty then return s
         else if p.rhs.conc.isEmpty then
-          return s.concat (p.rhs.abstr.map (fun w => (⟨w, RHS.empty, some .partitionEmpty⟩ : LPart)))
+          -- The emptied variable is EXCLUDED, mirroring `Constraints.makeEmpty`'s `(abstr - v)`
+          -- (fixed 2026-09-04, brief B1): propagating the empty fact to `v` ITSELF re-enqueued
+          -- `v <- ()` and made a later dequeue call `makeEmpty v` a second time, which
+          -- `instantiateType` refuses -- the panic of `L5-TERMINATION.md` §0 on a SATISFIABLE
+          -- input.  `selfSubstitution` (`Loop/Rules.lean`) already writes `(abstr.excl v)`.
+          return s.concat ((p.rhs.abstr.excl v).map (fun w => (⟨w, RHS.empty, some .partitionEmpty⟩ : LPart)))
         else .error ("Incompatible instantiations of '" ++ varStr ns v ++ "'")
       else return s.incl ⟨p.lhs, p.rhs.erase v, p.inf⟩)
     start

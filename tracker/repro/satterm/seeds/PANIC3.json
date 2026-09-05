@@ -1,0 +1,7 @@
+{
+ "name": "PANIC3: v7<-(v4,v6), v6<-(v6,v7), v9<-(v5,(|l100|)) -- satisfiable; makeEmpty's aux used to propagate the empty fact to the emptied variable ITSELF through the self-referential v6<-(v6,v7), so a second makeEmpty(v6) hit instantiateType's die: 'panic: reinstantiated type v6 to ConcreteRho(-,Set()) but it was already bound to ConcreteRho(-,Set())' at 11 of 100 id bases. Minimised by L5 from the C3 empty-biased witness hunt; fixed by (abstr - v) in Constraints.makeEmpty.",
+ "rho": {"4": [], "5": [], "6": [], "7": [], "9": [100]},
+ "cons": [[7, [4, 6], []],
+          [6, [6, 7], []],
+          [9, [5], [100]]]
+}

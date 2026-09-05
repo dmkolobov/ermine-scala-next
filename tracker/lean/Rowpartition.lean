@@ -172,3 +172,6 @@ import Rowpartition.Loop.Refine
 import Rowpartition.Loop.RefineConcrete
 import Rowpartition.Loop.RefineLearn
 import Rowpartition.Loop.Order
+import Rowpartition.Loop.Strict
+import Rowpartition.Loop.StrictStep
+import Rowpartition.Loop.StrictBound

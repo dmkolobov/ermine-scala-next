@@ -294,3 +294,93 @@ constraint that forced the skolem empty (now located at the call site), falling 
 Deliberately NOT done 2026-09-02; the two cases are documented in
 `core/examples/shouldfail/RESULTS.md` (2026-09-02 section) as the only messages that still
 carry a stdlib position.
+
+## 11. `makeEmpty` propagated the empty fact to the variable being emptied — FIXED 2026-09-04
+
+**The defect.** `Constraints.makeEmpty`'s `aux` mapped over ALL of a right-hand side's
+abstract part, INCLUDING the variable the call is about to bind empty:
+
+```scala
+case RHSAbstr(abstr) => s ++ abstr.map(v => Partition(v, RHSEmpty(), PartitionEmpty))
+```
+
+(the inner lambda's `v` shadows the outer one). So a self-referential definition
+`v <- (v, w)` in either queue made `makeEmpty v` manufacture `v <- ()` **for `v` itself**;
+that partition is re-enqueued, dequeued, and calls `makeEmpty v` a SECOND time, where
+`Subst.instantiateType` refuses the re-binding and the solve dies:
+
+    panic: reinstantiated type v6 to ConcreteRho(-,Set()) but it was already bound
+    to ConcreteRho(-,Set())
+
+— note both sides are the SAME value: the panic refuses a NO-OP re-binding, on a program
+that is perfectly satisfiable. `selfSubstitution`, twelve lines above, already used
+`(abstr - v)`; the two had simply drifted apart.
+
+**Why it is a user-visible bug, not a curiosity.** Whether the second `makeEmpty` step
+happens at all depends on the queue's priority order, which depends on the ids allocated
+before the solve. So a VALID program is accepted or rejected according to how many type
+variables the compiler happened to allocate earlier — the same order-dependence class as the
+NameLoss ticket. And the self-reference need not be written by the user: the loop DERIVES it
+(`SplitKeyed`), so 3 of the 14 witness seeds have no self-referential input at all.
+
+**How it was found.** The L5 witness hunt (`tracker/loopmodel/L5-TERMINATION.md` §0,
+root-caused in `L5-REVIEW.md` §6.2/§6.3/§6.4, findings F3/F4 in its §9): 1,500 empty-biased systems that are satisfiable BY
+CONSTRUCTION, run through the Lean loop model, then the interesting individuals replayed
+through the real `Subst.solve`. Minimised to
+`tracker/repro/satterm/seeds/PANIC3.json` — `v7 <- (v4, v6)`, `v6 <- (v6, v7)`,
+`v9 <- (v5, (|l100|))`, satisfied by `v4 = v5 = v6 = v7 = ()`, `v9 = (|l100|)` — which
+panicked at **11 of 100 id bases**. Over the fourteen panicking hunt seeds at bases 0–99 the
+shipped compiler panicked at **534 of 1400 runs (38%)**, from 1/100 on `e00438` to 78/100 on
+`e01228` and `e01479`; the hunt's 5-base sample had shown only 29.
+
+**The premise shape ships in the standard library.** The B1 reviewer scanned all seven corpus
+row traces (1,082,449 records) for a multi-part self-reference and found exactly one, in
+`core/src/main/resources/modules/Layout/Report.e`: `r <- (o, r)`, produced on **every boot, in
+every corpus group**. It never reaches `makeEmpty`'s `aux` — `selfSubstitution`, the sister
+rule that already excluded `v`, dissolves it first — and the solve lifted verbatim into a seed
+plus two perturbations sweeps **100/100 SOLVED at bases 0–99 on the PRE-FIX compiler**, so the
+corpus really was safe. But the ingredient was already being compiled every day, and only the
+dequeue order separated it from the panic. Nor was the panic a rare order coincidence: the
+reviewer's `RS5` — `v0 <- (v0,v1)`, `v1 <- (v1,v2)`, `v2 <- (v2,v0)`, `v9 <- (v5,(|l100|))`,
+satisfiable — was **rejected by the shipped compiler at 100% of 50 bases** (SOLVED 50/50 after
+the fix). Three self-referential constraints instead of one make it a certainty.
+
+**The fix** (brief B1, `tracker/loopmodel/B1-FIX.md`): `abstr.map` → `(abstr - v).map`, with
+the shadowing lambda parameter renamed. Sound because `v <- ()` is recorded by that same
+call's `instantiateType`. The REJECTED alternative was uncommenting the tolerant
+`case Some(t) if e == t => warn` at `Subst.scala:182`: it masks the symptom and removes the
+only enforcement of the queue-hygiene invariant the loop model's lemmas rely on. The `die`
+stays as a genuine invariant check.
+
+**Gates** (full table in `tracker/loopmodel/B1-FIX.md`): `PANIC3` 89/11 → **100/100 SOLVED**;
+the 14 hunt seeds **866/534 → 1400/0**; the other 17 tracked seeds byte-identical at bases
+0–19, draw counts included; `crule` `W` and `gseed` still REJECTED 100/100; corpus verdicts
+identical (66: 23 LOADED / 43 REJECTED with `shouldfail/` 40/40; `--incomplete` 34: 18/16) and
+per-file messages identical; `.ei` sweep 0 published types weakened (the churn it does show is
+the size a same-configuration control produces on its own); `repl-smoke` and `lsp-smoke` pass;
+`core/test` 913/914 with only item 3's `disjunction sound` starvation. The Lean model was
+mirrored in lock-step (`Loop/Step.lean:126`) — `lake build Rowpartition` 841 jobs, `Audit.lean`
+**0 non-standard axioms** over 3058 theorems, `TestLoopTrace` 708/708 segments agree with
+`PANIC3` in the population, the L1 seed sweep 180/180 and the L2 corpus replay 148,705
+segments, 0 differing. The reviewer added a stronger measurement still: the whole 66-file
+corpus row trace is **byte-identical pre and post, 363,570 records**. That matters because the
+no-op is measured, not structural — the removed `v <- ()` was a visible EMPTY-ROW CARRIER for
+`learnPartitions`' `concRows` lookup (`Constraints.scala:1410-1418`, feeding
+`findConcRow`/`findEmptyRow`, which guard `splitRow` and `resRow`, both default ON), so in a
+state whose only carrier was that manufactured partition the fix could in principle turn a
+reuse into a mint. Unobserved everywhere measured (identical `drawn`/`bound`/`residual` on all
+866 both-sides-solved hunt runs, identical `DRAWN` histograms on all 18 tracked seeds, and the
+byte-identical corpus trace).
+
+**Left open.** (a) The `QueueHygiene` preservation proof: the fix removes the counterexample
+that made the invariant false, so `queueHygiene_no_rebind` could be turned into a proof that
+this panic is UNREACHABLE rather than merely unobserved — L5 round-3 work, not attempted.
+(b) The ALIAS form of the same `die` ("reinstantiated type v to u", when the second binding is
+an alias rather than `ConcreteRho(-,Set())`), raised by L5 §0 and examined by the B1 reviewer
+(`B1-REVIEW.md` §5b): it is the same line `Subst.scala:184`, reached from the same two call
+sites (`incorporateAll`'s `common` and `unify` branches), with the same root cause — during the
+partition loop only `makeEmpty` and `instantiate` bind anything, both remove every partition
+involving their variable, and after this fix neither re-emits one. By reading there is no path
+to it post-fix; by experiment, 6,000 alias-biased satisfiable solves post-fix died zero times,
+and the 141 pre-fix deaths in that population were all the `ConcreteRho` form. That is a
+reading plus a measurement, not a proof — the proof is (a).

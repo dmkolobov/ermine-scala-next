@@ -418,41 +418,68 @@ python3 tracker/tools/looptrace-diff.py --demux RAW.tsv --out DEMUX.tsv    # by 
 L3 left (ii), the loop-level mint bound, open for a structural reason: `LoopRel.weaken` admits
 an ARBITRARY deletion, so no measure is monotone along a `LoopRun`. Stage L5 replaces it.
 Three new modules, imported from `Rowpartition.lean`; report
-`tracker/loopmodel/L5-TERMINATION.md`. Build 841, Audit 3003/0.
+`tracker/loopmodel/L5-TERMINATION.md`, review `L5-REVIEW.md` (round-2 fixes applied).
+Build 841, Audit 3058/0.
 
 | module | lines | what |
 |---|---|---|
-| `Rowpartition/Loop/Strict.lean` | 225 | `NoLoss G G' := ∀ c ∈ G, SEntails G' c` and `LoopStrict` — `LoopRel`'s nine RULE constructors verbatim, plus FOUR deletions (`drop`, `instRemove`, `emptyRemove`, `concRemove`) each carrying `NoLoss` as its licence. `LoopStrict.sat`, `LoopStrict.no_loss` (and both for a run), `LoopStrict.of_rel` (every ADDITIVE `LoopRel` step is a `LoopStrict` step), `weaken_not_strict` |
-| `Rowpartition/Loop/StrictStep.lean` | 1,268 | the licences: `Q.insert`/`Q.+!`/`trim` lose nothing (`insertP_noLoss`, `concatP_noLoss`, `trim_noLoss`), the CHAMP writers keep every CONSTRAINT (`toConstraint_mem_concat`, `toConstraint_mem_map`), `makeEmpty_noLoss`, `instantiate_noLoss`, `sat_of_erase`, `sat_of_replace`; then `step_refines_strict` for the `common`, `empty` and `unify` branches, `step_learn_sys_mono` (the `learn` branch DELETES NOTHING) and `step_noLoss` (the loop loses information at most at the `concrete` branch). Also `qsys` and `cancellation_bare` |
-| `Rowpartition/Loop/StrictBound.lean` | 230 | ingredients of the bound: `step_su` (only `learn` draws an id), `step_envNodup` (a variable is bound at most once), `env_len_le_allVars` |
+| `Rowpartition/Loop/Strict.lean` | 612 | `NoLoss G G' := ∀ c ∈ G, SEntails G' c`, `Conserv G G' := ∀ c ∈ G', SEntails G c`, the operator `substOut v u G` (`instantiate`'s removal), and `LoopStrict` -- `LoopRel`'s nine RULE constructors verbatim, plus `drop` (subset + `NoLoss`), the three eliminations AS THE LIBRARY OPERATORS (`makeEmptyE`, `concretizeSrs`, `substOut`) and one tight `requeue` (logical equivalence + `allVars G' ⊆ allVars G`). `LoopStrict.sat`, `LoopStrict.no_loss`, `LoopStrict.of_rel`, `weaken_not_strict`, `emptyRemove_step` (the library operator IS a step); and the vocabulary bound: `LoopStrict.allVars_subset_of_notMint`, `LoopStrictSteps.allVars_card_le`, `MintFreeRun.allVars_subset`, `no_growth_without_mint` |
+| `Rowpartition/Loop/StrictStep.lean` | 1,962 | the licences (`insertP_noLoss`, `concatP_noLoss`, `trim_noLoss`, `makeEmpty_noLoss`, `instantiate_noLoss`, `sat_of_erase`, `sat_of_replace`) and the FORWARD analyses (`makeEmpty_forward`, `instantiate_forward`, `replace_forward_sent/voc`), then `step_strict` for the `common`, `empty` and `unify` branches with its corollaries `step_refines_strict`, `step_steps_strict`, `step_noLoss_strict`, `step_conserv_strict`, **`step_models_iff`**, `step_sat_strict`, `step_allVars_strict`; `step_learn_sys_mono` (the `learn` branch DELETES NOTHING) and `step_noLoss`. Also `qsys`, `cancellation_bare`, `mkShaped_sys` and `step_empty_makeEmptyE` (the `empty` branch's elimination IS `makeEmptyE`) |
+| `Rowpartition/Loop/StrictBound.lean` | 339 | ingredients of the bound: `step_su` (only `learn` draws an id), `step_envNodup` (a variable is bound at most once), `env_len_le_allVars`; the corrected localisation (`concCarried_of_conc_subset`, `concCarried_parent_empty`, `qsys_concCarried_of_envEmpty`); and the queue-hygiene invariant (`QueueHygiene`, `queueHygiene_no_rebind`, `selfSubstitution_excludes_self`, `makeEmpty_aux_excludes_self` -- the latter replaced round 2's `makeEmpty_aux_emits_self` when brief B1 fixed the propagation, 2026-09-04) |
 
-**The theorem worth having outside its proof.** `LoopStrict.no_loss` — *every constraint of the
-system a step leaves is a consequence of the system it reaches*, for a step and for a whole
-run. `LoopRel.weaken` fails it (`weaken_not_strict`), which is what "no arbitrary deletion"
-means precisely. Of `L3-THEOREMS.md` R2.5's six residual `weaken` sites, rows 2-5 are now
-licensed deletions and row 7 is proved not to be a deletion at all; only row 6, the `concrete`
-branch, is open — and `cancellation_bare` shows why its licence has to be conditioned on
+**Two theorems worth having outside their proofs.** `LoopStrict.no_loss` -- *every constraint
+of the system a step leaves is a consequence of the system it reaches*, for a step and for a
+whole run; `LoopRel.weaken` fails it (`weaken_not_strict`), which is what "no arbitrary
+deletion" means precisely. And `LoopStrictSteps.allVars_card_le` -- *the vocabulary along a run
+is bounded by the initial vocabulary plus the number of MINTING steps*, because the three
+eliminations are the library operators and only the four minting constructors touch
+`allVars`. Of `L3-THEOREMS.md` R2.5's six residual `weaken` sites, rows 2-5 are now licensed
+deletions and row 7 is proved not to be a deletion at all; only row 6, the `concrete` branch,
+is open -- and `cancellation_bare` shows why its licence has to be conditioned on
 satisfiability: `cancellation` emits nothing against a bare concrete definition, so
-`makeConcrete` deletes `v <- ((|C|))` and nothing records `C`. On satisfiable input a model
-forces `C = fs`; the only shape where it bites is refuted earlier by `labelCheck`.
+`makeConcrete` deletes `v <- ((|C|))` and nothing records `C`.
 
-Termination is still (T2), but the obstacle is smaller. The measure has to be taken over
-`qsys` — the queues PLUS the environment's retained empty-row facts and NOT its aliases —
-because `sys` fails at the alias elimination and the queues alone fail at `makeEmpty`; and over
-`qsys` the guard mismatch of the L3 review's §6d is exactly ONE case: a mint at a key equal to
-the parent's whole concrete row taken while some variable is already empty, i.e. the case
-`-Dermine.emptyRow` exists to close. No divergence witness: 7,468 SOLVED / 0 FUEL over 1,500
+The refinement is weaken-free TRANSITIVELY, not only textually: the `SSat` side conditions come
+from a forward analysis here rather than from L3's `step_sat`, which is `(step_refines _).sat`.
+That also buys `step_models_iff`: the `common`, `empty` and `unify` branches do not move the
+model set at all.
+
+Termination is still (T2), but the obstacle is smaller and now correctly stated. The measure
+has to be taken over `qsys` -- the queues PLUS the environment's retained empty-row facts and
+NOT its aliases -- because `sys` fails at the alias elimination and the queues alone fail at
+`makeEmpty`; and over `qsys` the guard mismatch of the L3 review's §6d is: every key `K ⊇ C` of
+a queue-visible parent with concrete row `C` once the environment holds one empty-row fact
+(`qsys_concCarried_of_envEmpty`), and EVERY key when the parent is itself already empty
+(`concCarried_parent_empty`). The second case is vacuous exactly when `QueueHygiene` holds --
+which the compiler bug below violated until B1 fixed it (2026-09-04). No divergence witness: 7,468 SOLVED / 0 FUEL over 1,500
 empty-biased satisfiable-by-construction seeds at five id bases, plus a 480-run scaling family
 whose mint count grows about quadratically in the number of constraints.
 
-**A compiler bug the hunt turned up.** The satisfiable three-constraint system
-`v7 <- (v4, v6)`, `v6 <- (v6, v7)`, `v9 <- (v5, (|l100|))` makes the SHIPPED `Subst.solve`
-throw `panic: reinstantiated type v6 to ConcreteRho(-,Set()) but it was already bound to
-ConcreteRho(-,Set())` at 11 of 100 id bases (`tracker/repro/satterm/run.sh sweep json:...`).
-The panic refuses a NO-OP re-binding, so a valid program is accepted or rejected according to
-how many type variables were allocated before the solve -- and the case that would handle it is
-already in `Subst.scala:182`, COMMENTED OUT, directly above the `die`. See
-`L5-TERMINATION.md` §0.
+**A compiler bug the hunt turned up — FIXED 2026-09-04 (brief B1), unconditionally and with
+no flag.** The satisfiable three-constraint system `v7 <- (v4, v6)`, `v6 <- (v6, v7)`,
+`v9 <- (v5, (|l100|))` USED TO make the shipped `Subst.solve` throw `panic: reinstantiated
+type v6 to ConcreteRho(-,Set()) but it was already bound to ConcreteRho(-,Set())` at 11 of 100
+id bases, and the Lean model rejected at the identical bases. The root cause was `makeEmpty`'s
+`aux`, which mapped over ALL of `abstr` where `selfSubstitution` twelve lines away used
+`(abstr - v)`, so a self-referential partition made `makeEmpty v` emit `v <- ()` for the very
+variable it was about to bind; re-enqueued, it reached `makeEmpty v` a second time and
+`instantiateType` refused the (no-op) re-binding. **The fix applied is `abstr.map` ->
+`(abstr - v).map`** — NOT uncommenting `Subst.scala:183`, which would have removed the only
+enforcement of queue hygiene and invalidated `makeEmpty_env_len`. The Lean model's `makeEmpty`
+(`Loop/Step.lean:126`) was mirrored in lock-step with `(p.rhs.abstr.excl v)` and L2/L4 re-run.
+
+Gates: `PANIC3` 89/11 → **100/100 SOLVED**; L5's 14 panicking hunt seeds at bases 0–99
+**866/534 → 1400/0**; the other 17 tracked seeds byte-identical including draw counts; corpus
+verdicts and per-file messages identical and the whole 66-file corpus row trace **byte-identical,
+363,570 records** (reviewer); `core/test` 913/914 (`disjunction sound` only); `lake build
+Rowpartition` 841 jobs, `Audit.lean` 3058 theorems / **0 non-standard axioms**, `TestLoopTrace`
+708/708 segments agreeing with `PANIC3` in the population, L1 sweep 180/180, L2 replay 0
+differing. Six proof sites moved and `makeEmpty_aux_emits_self` — which stated the OLD
+behaviour — replaced by `makeEmpty_aux_excludes_self`; `QueueHygiene` and
+`queueHygiene_no_rebind` are unchanged, but the counterexample that made the invariant FALSE is
+gone, so it is now provable in principle (preservation is L5 round-3 work). See
+`../loopmodel/B1-FIX.md`, `../loopmodel/B1-REVIEW.md`, ticket item 11, and
+`L5-TERMINATION.md` §0 for the original diagnosis.
 
 ---
 

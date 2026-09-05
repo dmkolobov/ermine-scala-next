@@ -975,7 +975,7 @@ theorem makeEmpty_run {L : List Lbl} (hcoh : LblCoh L) {G : System} {ns : Names}
               simp only [pure, Except.pure, Except.ok.injEq] at hb
               subst hb
               obtain ⟨H2, hrun2, hsub2, hmem2⟩ := adds_list (G := H)
-                ((x.rhs.abstr.elems.map (fun w => mk w ∅ (∅ : Row))))
+                (((x.rhs.abstr.excl v).elems.map (fun w => mk w ∅ (∅ : Row))))
                 (by
                   intro c hc
                   obtain ⟨w, hw, rfl⟩ := List.mem_map.mp hc
@@ -984,7 +984,9 @@ theorem makeEmpty_run {L : List Lbl} (hcoh : LblCoh L) {G : System} {ns : Names}
                   rw [toConstraint_conc_empty hconc] at h1
                   have h3 : mk x.lhs ∅ (∅ : Row) ∈ Hx := by rw [hxv]; exact hHx (hsub hv)
                   exact LoopRel.emptyProp h1 h3
-                    (by rw [LPart.vset_toConstraint]; exact List.mem_toFinset.mpr hw))
+                    (by
+                      rw [LPart.vset_toConstraint]
+                      exact List.mem_toFinset.mpr (SSet.mem_excl_iff.mp hw).1))
               refine ⟨haOk.concat (SOk.map (fun _ => POk.ofEmpty _ _)),
                 H2, hrun.trans hrun2, hsub.trans hsub2, ?_⟩
               intro y hy
@@ -1364,7 +1366,7 @@ theorem makeEmpty_died {G : System} {ns : Names} {v : Nat} {incm proc : PQueue} 
         if p.lhs == v then
           if p.rhs.isEmpty then pure s
           else if p.rhs.conc.isEmpty then
-            pure (s.concat (p.rhs.abstr.map
+            pure (s.concat ((p.rhs.abstr.excl v).map
               (fun w => (⟨w, RHS.empty, some Inference.partitionEmpty⟩ : LPart))))
           else .error ("Incompatible instantiations of '" ++ varStr ns v ++ "'")
         else pure (s.incl ⟨p.lhs, p.rhs.erase v, p.inf⟩)) with hF

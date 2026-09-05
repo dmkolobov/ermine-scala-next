@@ -91,7 +91,9 @@ C1 LoopStrict, C2 supply invariant preserved by step, C3 the mint bound / witnes
 L4 IMPLEMENTED 2026-09-04 (core/test property via child JVM, 702 solves agree in ~3 s, positive controls
 detected, skip path; thread ids in the trace, parallel-loader replay of Ai and gu05 AGREE incl. the
 458-partition solve; core/test 913/914; orchestrator re-ran the three properties: pass). L4 REVIEW: F1 CONFIRMED (compiler-side failures reported as PASS) → fixed, flags forwarded to both sides,
-positive-control vacuity fixed; FINAL ADVANCE. L4 ADVANCED 2026-09-04. L2 COMMITTED as `9b8aa33` (2026-09-04, user's word). UNSTAGED: L3 + L4 files, L5 in progress. Commit plan when the user says: L2 (the index), then L3 (Loop/{Wf,Order,Refine,RefineConcrete,
+positive-control vacuity fixed; FINAL ADVANCE. L4 ADVANCED 2026-09-04. COMMITTED (user's word, 2026-09-04): L2 `9b8aa33`, L3 `9568754` (root import list without the L5 imports),
+L4 `9be2214` (with README/plan/handoff/briefs). Working tree now = L5 only: Loop/{Strict,StrictStep,StrictBound}.lean,
+the three Strict imports in Rowpartition.lean, L5-TERMINATION.md, L5-REVIEW.md (round 2 in progress). Commit plan when the user says: L2 (the index), then L3 (Loop/{Wf,Order,Refine,RefineConcrete,
 RefineLearn}.lean + L3 reports + root import lines), then L4 (RowTrace.scala thread id, the two test
 sources, the two tools, L4 reports) with the shared README/plan/handoff in the last one. L5 IMPLEMENTED 2026-09-04 (Loop/{Strict,StrictStep,StrictBound}.lean, 1,723 lines; build 841, Audit 3003/0):
 C1 PARTIAL — `LoopStrict` with four NoLoss-licensed deletions, rows 2-5 discharged, row 7 deletes nothing, row 6
@@ -110,9 +112,33 @@ the emptied `v` (Constraints.scala ≈1564: `abstr.map(v => Partition(v, RHSEmpt
 self-referential `v <- (v, w)` manufactures `v <- ()` again → second makeEmpty(v) → panic; `selfSubstitution`
 twelve lines away already uses `(abstr - v)`. 3 of 14 panicking hunt seeds have no self-referential INPUT (the
 shape is derived via SplitKeyed). Recommended fix: `abstr.map` → `(abstr - v).map` at that line — NOT the
-commented-out warn in Subst.scala (wrong layer; would also invalidate model lemmas). Unapplied; the fix must be
-mirrored in the Lean model's makeEmpty (Loop/Step.lean) and gated (core/test incl. TestLoopTrace, corpus,
-.ei, seeds). L5 ROUND 2 running (same implementer); the 1,456-partition splitKey=false replay under tmp/L4/gu05nk/ is a model-speed
+commented-out warn in Subst.scala (wrong layer; would also invalidate model lemmas). USER DECIDED 2026-09-04: fix it. B1 LAUNCHED (Opus; `briefs/brief-B1.md`): Part A = Scala fix + gates in worktree
+`~/research/ermine/ermine-scala-wt-b1` (branch `makeempty-self-fix`) against the main checkout's classes, then STOP;
+Part B (Lean mirror in `Loop/Step.lean`, TestLoopTrace with PANIC3 in the population, corpus replay, full core/test,
+tickets) only after L5 round 2 is idle — the orchestrator messages the B1 agent to proceed; then a B1 reviewer.
+L5 ROUND 2 DONE 2026-09-04 (build 841, Audit 3058/0): eliminations are the library operators (`substOut` new,
+`makeEmptyE`, `concretizeSrs`; `drop`; one tight existential `requeue`); vocabulary bound PROVED
+(`LoopStrictSteps.allVars_card_le`: +m over m minting steps; reviewer's Growth.lean no longer elaborates);
+refinement weaken-free (reviewer's Deps.lean: 22 roots clean); `step_empty_makeEmptyE`; `QueueHygiene` stated,
+`queueHygiene_no_rebind` proved, invariant FALSE for the current model (`makeEmpty_aux_emits_self` vs
+`selfSubstitution_excludes_self`) — provable after B1's mirror; localisation corrected and proved. Still open:
+`instRemove`/`concRemove` not live (substOut lacks replace's dedup fact; cancellation_bare), C2, termination.
+L5 RE-REVIEW: ADVANCE with the remaining work carried forward (new obstacle R-4: `requeue` licence semantic → `hmeas`
+may increase; priority list for a round 3 in L5-REVIEW.md). L5 ADVANCED 2026-09-04, TERMINATION STILL OPEN; whether
+to fund a round 3 is the user's decision. L5's files UNCOMMITTED. B1 PART A DONE (worktree ermine-scala-wt-b1): fix `(abstr - v)` + PANIC3.json; gates all green (core/test 913/914,
+PANIC3 100/100 solved, 17 other seeds byte-identical, the 14 hunt seeds 1400/1400 solved vs 866/1400 before —
+the bug hits 38% of those runs, corpus verdicts identical, .ei 0 weaker, smokes pass). B1 PART B DONE in the MAIN
+checkout: Step.lean:126 `.excl v`; six proof sites moved (Wf.makeEmpty_ok, Refine.makeEmpty_died/_run,
+StrictStep.makeEmpty_forward/MECover/makeEmpty_noLoss — one genuinely new case discharged by the retained
+`v <- ()`), `makeEmpty_aux_emits_self` REPLACED by `makeEmpty_aux_excludes_self` (so `QueueHygiene` is now
+provable in principle — preservation is L5 round-3 work); Scala fix applied in main; PANIC3 100/100; TestLoopTrace
+708/708 with PANIC3 in the population (18 seeds), controls detected; L1 sweep 180/180; L2 replay top 92,673 +
+shouldfail 56,032 agree; core/test 913/914; build 841, Audit 3058/0; ticket item 11, state-file section. Orchestrator
+re-verified build/audit/PANIC3/testOnly. B1 REVIEW: ADVANCE (full corpus row trace byte-identical pre/post; alias form has no path; RS5 = 100%-of-bases
+rejection fixed; stdlib carries the premise shape, dissolved by selfSubstitution). Five doc fixes sent to the
+implementer. UNCOMMITTED: B1 + L5 — commit on the user's word (B1 is an unconditional behaviour fix).
+(The earlier handoff sentences saying the invariant is false and that B1 must replace the emits_self lemma are
+superseded by this paragraph.); the 1,456-partition splitKey=false replay under tmp/L4/gu05nk/ is a model-speed
 question, not a disagreement. Reports: `L3-THEOREMS.md` (Round 2 section), `L4-TEST.md`.
 Original launch note:
 (iv) Wf invariant incl. LblCoh, (i) refinement + soundness, (ii) termination T1/T2/W with compiler replay
