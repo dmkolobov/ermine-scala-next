@@ -543,6 +543,30 @@ of the report named does NOT close (round-4 review T-9), and the loop may PUMP â
 which the hunt has already measured twice at one key; round 5's first job is to decide whether
 that pump runs (`L5-REVIEW.md`, "Round-4 review" T-9, checkpoints R5.1-R5.4).
 
+### L5 round 5 -- the pump DRIVEN (seven turns), the charge and the order both REFUTED, and a fragment (2026-09-05)
+
+Worked from the clean commit `e3cb56a`.  Three NEW modules; every earlier Lean module is
+unchanged except `Loop/Main.lean`, which gains a `--mints` mode, so nothing rounds 1-4 proved is
+weakened.  Build 852, Audit 3494/0.  Report `tracker/loopmodel/L5-TERMINATION.md` (Round 5).
+
+| module | what |
+|---|---|
+| `Rowpartition/Loop/Pump.lean` | **The instrument and the two refutations.**  `splitConcrete_cases` / `splitConcrete_mint_eq` pin what the minting branch emits -- the fresh definition AND **the carrier of its own key** -- so `splitMintKey`, which reads the decision off `splitConcrete`'s own supply, is the rule rather than a copy of it; `carrierKeys` is the two-rule count (`resolution`'s guard key as well), `pumpRun` tallies it per key and `lake exe looptrace --mints` prints it.  Then the charging lemma of the round-4 review's T-9, stated over `Reaches` in two clauses and **both refuted**: `chargeII_false` on a six-constraint satisfiable input where the only carrier of the re-minted key is the id THAT MINT DREW (the pump), and `chargeI_false` on an eight-constraint one where the loop binds NOTHING between two mints at one key, because `makeConcrete`'s `destructiveSub` withdrew the carrier without writing a `SubstEnv` entry |
+| `Rowpartition/Loop/Dequeue.lean` | **The dequeue order, used for the first time in L5 -- and it does not repair the redirect.**  `dequeue_prio_min` (`Q.pop` returns a partition of minimal `graph.sort` priority), `dequeue_not_of_lt`, `dequeue_mem`, `dequeue_length_lt`, `dequeue_sub`, and the redirect's equations `insertP_redirect` / `insertNP_graph`.  `RepairBeforeExam` -- "between a carrier's loss at the redirect and the next examination of its key the carrier is re-established" -- is stated and **`repairBeforeExam_false`** refutes it on R4.1's own four-constraint witness, where the very next dequeue is at the swallowed variable and MINTS at the uncarried key while the repairing link is still in the queue.  The reason is structural: `Q.++!` puts the link at the swallowed variable's PARENT (`rPrio`), and reverse-topological order serves children first |
+| `Rowpartition/Loop/Fragment.lean` | **`Terminates` for a stated fragment.**  `LinkOnly` -- every partition is a link `a <- (b)`, no concrete labels -- makes `makeEmpty`, `makeConcrete` and `learnPartitions` syntactically unreachable, so no id is ever drawn; the fragment is preserved (`replace_link`, `link_commonPartition`: even the redirect's manufactured partition is a link) and the two queues strictly shrink (`step_linkOnly`), giving `linkOnly_terminates` and `linkOnly_run` with the explicit bound `qsize s + 1`.  Also 21 reusable size/membership lemmas for `SSet.incl/ofList/concat/map` and `PQueue.insertSorted/insertNP/insertP/concatP/concatNP/partition`, and `instantiate_eq` |
+
+**What round 5 settles.**  The pump is real and it is deeper than round 4 measured -- **9 mints
+at one key**, on a 16-constraint satisfiable input the compiler solves -- and its engine is
+cheaper than the review guessed: the carrier is withdrawn by `cancellation` + `makeEmpty`
+against a bare row the input already contains, or by `makeConcrete`, which withdraws it with no
+binding at all.  It still stops: ~100,000 model solves aimed at the pump (0 `FUEL`) and 3,840
+compiler solves of the deepest candidates at ten id bases each (0 `HANG`).  So the outcome is
+(T2) again, with both of the round-4 review's repairs now refuted in Lean rather than open, and
+with a fragment carrying a real termination theorem.  What is NOT ruled out is a measure that is
+neither carrier-shaped nor a charge -- one reading the key's CONCRETE-LABEL structure (the label
+pool never grows, and every deep pump measured sits at a hub's full row), or one bounding the
+supply of premise PAIRS a key can be resolved on.
+
 ---
 
 ## The shared vocabulary

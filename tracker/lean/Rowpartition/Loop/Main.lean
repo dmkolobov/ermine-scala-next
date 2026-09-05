@@ -12,6 +12,15 @@ and the `solve` line -- so that it can be diffed against the compiler's own trac
 `--verdict` prints `SOLVED` / `REJECTED <msg>` / `FUEL` and the loop's bindings in the repro
 harness's `v0 := ...` shape instead.
 
+`--mints` (L5 round 5) prints the per-KEY `splitConcrete` mint tally of the same solve
+instead of the trace: a `mints` summary line with the verdict, the dequeue count, the ids
+drawn, the largest number of mints at ONE key and the number of keys minted at more than
+once, then one `key` line per key and one `mint` line per minting step.  `Loop/Pump.lean`
+computes it from `splitConcrete`'s own supply, so the instrument is the rule itself; the
+`cmax`/`ckey`/`carrier` columns are the wider count -- every fresh CARRIER installed at the
+dequeued left-hand side, which is `resolution`'s mint as well as `splitConcrete`'s, and is
+the round-4 hunt's detector.
+
 `--flags=a,b,c` turns individual `GenRules` switches on or off: `all`, `cut`, `nongen`,
 `disj`, `nolabel`, `lateLabel`, `noresguard`, `nosplitkey`, `nosplitrow`, `noresrow`,
 `emptyrow`.  With no `--flags` the SHIPPED defaults are used.
@@ -25,6 +34,7 @@ gets `#skip <i> <reason>` instead of records.  The trailing `#summary` line carr
 counts.  Segments are numbered from 0 in file order; `--from`/`--to` restrict the range.
 -/
 import Rowpartition.Loop.Replay
+import Rowpartition.Loop.Pump
 
 namespace Rowpartition.Loop
 
@@ -181,7 +191,30 @@ def mainImpl (args : List String) : IO UInt32 := do
       | .ok seed =>
         let (parts, ns) := seedSystem seed base
         let out := solveSeed fl site "-" parts ns (Sup.ofSeed ns.supplyLo) fuel
-        if opts.contains "--verdict" then
+        if opts.contains "--mints" then
+          let (parts', su1) := (parts, Sup.ofSeed ns.supplyLo)
+          match buildQueue parts' su1 with
+          | .error m => IO.println s!"mints\tREJECTED\tsteps=0\tdrawn=0\tmax=0\tremint=0\t{m}"
+          | .ok (q, su2) =>
+            let st0 : State :=
+              { incm := q, proc := PQueue.empty, env := {}, su := su2, trace := [], flags := fl,
+                names := ns, site := site, su0 := (Sup.ofSeed ns.supplyLo).lo }
+            let rep := pumpRun fuel st0 {}
+            IO.println s!"mints\t{rep.verdict}\tsteps={rep.steps}\tdrawn={rep.drawn}\tmax={rep.maxAtKey}\tremint={rep.remintKeys}\tcmax={rep.maxAtCKey}\tcremint={rep.remintCKeys}"
+            for (k, n) in rep.tally do
+              IO.println s!"key\t{k.1}\t{String.intercalate "," (k.2.toList.map (fun l => toString l.n))}\t{n}"
+            for (k, n) in rep.ctally do
+              IO.println s!"ckey\t{k.1}\t{String.intercalate "," (k.2.toList.map (fun l => toString l.n))}\t{n}"
+            for (i, v, ls) in rep.mints do
+              IO.println s!"mint\t{i}\t{v}\t{String.intercalate "," (ls.map toString)}"
+            for (i, v, ls) in rep.carriers do
+              IO.println s!"carrier\t{i}\t{v}\t{String.intercalate "," (ls.map toString)}"
+            for (i, v, ls, ws) in rep.carrAt do
+              IO.println s!"carr\t{i}\t{v}\t{String.intercalate "," (ls.map toString)}\t{String.intercalate "," (ws.map toString)}"
+            for (i, w) in rep.binds do
+              IO.println s!"bind\t{i}\t{w}"
+            IO.println s!"v0\t{String.intercalate "," ((stateVars st0).toList.map toString)}"
+        else if opts.contains "--verdict" then
           IO.println s!"genRules={fl.toStr}  base={base}  supply={ns.supplyLo}"
           match out.verdict with
           | "SOLVED" =>

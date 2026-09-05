@@ -1532,3 +1532,640 @@ a proof.
 
 None of that blocks the round.  **ADVANCE**, with U-1/U-2/U-3/N-1 to be applied to the report and
 the round-5 specification of T-9 replacing §R4.4's.
+
+---
+
+# Round-5 review — 2026-09-05 (fresh reviewer)
+
+Review of L5 round 5 against `briefs/brief-L5r5.md`, `briefs/brief-review.md` and the plan's
+L5 acceptance.  Pre-existing baseline **`e3cb56a`** (rounds 1–4 committed); under review are
+the three uncommitted modules `Loop/{Pump,Dequeue,Fragment}.lean`, the `--mints` mode in
+`Loop/Main.lean`, `Rowpartition.lean` +3 imports, `tracker/lean/README.md` +24, the plan's L5
+row, the handoff paragraph, `L5-TERMINATION.md`'s Round 5 section, and the hunt tooling under
+`/home/dmitry/.claude/jobs/880c725d/tmp/L5r5/`.  I read the round-1 … round-4 review sections
+first; the round-4 review's **R5.1–R5.4** (§T-9) are this round's specification.
+
+Scratch: `/home/dmitry/.claude/jobs/880c725d/tmp/review-L5r5/`.  Nothing outside that
+directory and this file was edited; no commits, no Lean edits, no Scala edits, no sbt.
+
+**Verdict: ADVANCE.**  Every headline reproduces under my own re-runs, and I re-derived the
+three load-bearing negatives by *evaluating the definitions* (and, for the two charge
+witnesses, a second time through the implementer's Python audit on the compiled model) rather
+than reading the proofs.  The instrument is honest: I checked `splitMintKey` line by line
+against `learnPartitions`' own call and `carrierKeys` against both minting rules in
+`Loop/Rules.lean`, and confirmed against `Constraints.scala` the two structural claims the
+round rests on (`destructiveSub` writes no `SubstEnv` entry; `Q.++!` puts the repairing link
+at the swallowed variable's *parent*, and `reverseTopSort` serves children first).  The
+compiler agrees with the model *drawn-for-drawn at all ten id bases* on the deepest pump
+witness.  Findings are five documentation items and one measurement the report does not have
+(the `LinkOnly` fragment is **not** empty on the real corpus — 4 of 54,199 stdlib-boot solves
+and 5 of 68,533 example solves are in it, all trivially).  None blocks the round.
+
+---
+
+## V-1. Rebuild, re-audit, hygiene — everything reproduces
+
+| step | command | result |
+|---|---|---|
+| build | `cd tracker/lean && lake build Rowpartition` | `Build completed successfully (852 jobs)` — **matches** (849 before) |
+| audit | `lake env lean Audit.lean` | `Rowpartition theorems audited: 3494; declarations using a non-standard axiom: 0` — **matches** |
+| grep | `sorry`/`axiom`/`partial`/`native_decide`/`implemented_by`/`unsafe`/`opaque`/`Classical`/`admit`/`#exit` over `Loop/{Pump,Dequeue,Fragment}.lean` **and** `Loop/Main.lean` | **0 hits**; the one `partial` hit is the word inside a `Main.lean` doc comment ("nothing under `Loop/` may be `partial`") |
+| `#print axioms` | my own list of **all 141 declarations** of the three modules (`tmp/review-L5r5/{names.txt,Axioms.lean,axioms.txt}`), not the implementer's | 118 × `[propext, Classical.choice, Quot.sound]`, 4 × `[propext, Quot.sound]`, 5 × `[propext]`, 14 axiom-free. **No non-standard axiom.**  Of these, `theorem`s number **107**, matching the report's "105 standard, 2 axiom-free" |
+| line counts | `wc -l` | 488 / 224 / 585 = 1,297 |
+| diff scope | `git diff --stat` + `git status` | exactly the six tracked files the report names plus the three new modules; **`Rowpartition.lean` +3/−0** and `Main.lean` +35/−4 (the `--mints` mode only); no other Lean module, no Scala file |
+| verbatim | I extracted all 14 declarations quoted in `L5-TERMINATION.md`'s round-5 `lean` blocks and matched each against the modules with whitespace normalised | **14/14 verbatim, 0 mismatches** |
+
+Build warnings only (three `unusedSimpArgs`/`unusedSectionVars` in `Fragment.lean`, one long line
+in `Rowpartition.lean`).  Cosmetic.
+
+## V-2. R5.1 — the instrument is the rule, and the numbers reproduce exactly
+
+### V-2a. Does `splitMintKey` count what it claims? (CONFIRMED)
+
+I read it against `learnPartitions` (`Step.lean:264–312`) and `step` (`:319`) line by line.
+`splitAt` is `learnPartitions`' own call with the same four lookups over the same queues
+(`mkLookups r.lhs rest s.proc`, `findRHS3 rest s.proc SSet.empty`, `findResolvent r.lhs l
+SSet.empty`, and the two flag-gated row lookups) — **identical, argument for argument**.
+`splitMintKey`'s five guards reproduce `step`'s dispatch (`proc.findRHS`, `isEmpty`,
+`abstr.isEmpty`, `single?`) plus `learnPartitions`' own `rhs1.abstr.contains v` self-substitution
+guard, in that order.  And "the supply advanced" really is "the mint branch fired": `Sup.fresh`
+(`State.lean:193`) increments `drawn` on **both** of its arms, and `splitConcrete`
+(`Rules.lean:63`) calls `fresh` in its last branch and nowhere else.  So `splitConcrete_mint_eq`'s
+hypothesis `(…).2.drawn ≠ su.drawn` is exactly the mint, and the theorem's conclusion — the pair
+`u <- (A)`, `v <- (u, K)` — is `splitConcrete`'s last branch verbatim.
+
+### V-2b. Does `carrierKeys` count what it claims? (CONFIRMED, with one caveat)
+
+The report says it counts the guard keys of BOTH generative rules.  I checked `resolution`
+(`Rules.lean:113–150`): its **minting** branch emits *three* partitions, and the first is
+`⟨v, ⟨[z], all⟩⟩` with `v` the dequeued left-hand side and `all = C₁ ∪ C₂` — precisely the key
+`resolvent all` is looked up at.  (Its three *reuse* branches emit only `x`- and `y`-headed
+partitions, which `carrierKeys`' `p.lhs == r.lhs` filter correctly ignores, and they draw an id
+anyway — `resolution_draws`, round 4.)  So `carrierKeys` fires on exactly the two rules' guard
+keys.
+
+**Caveat (documentation, not a defect):** `carrierKeys` is a *state-difference* detector, so it
+is a **lower bound** on mints — a mint whose carrier is immediately removed by `trim` (already in
+`proc`) or swallowed by the `Q.++!` redirect in the same step is not counted.  Every `cmax` in
+the report is therefore a floor, which is the safe direction for a "the maximum found is 9" claim
+and the unsafe direction for the "0 re-mints elsewhere" readings.  The report does not say this.
+
+### V-2c. The measurements, re-run by me
+
+| what | my command | my result | report |
+|---|---|---|---|
+| round 4's own 199 seeds regenerated | `python3 genjson.py 200 8 5 10 myg4seeds` | **bit-for-bit identical** to `g4seeds` (`diff -rq`, 0 differences) | — |
+| the instrument against round 4's detector | `looptrace myg4seeds/*.json 0 3000 --mints` | `cmax = 2` at **exactly `s0074` and `s0139`**, at no other seed | matches, and these are the two the round-4 review's T-9 names |
+| population J regenerated | `python3 gen5.py 3000 16 8 28 mypopJ --hubs 1 --w 0.30,0.30,0.30,0.10 --tag J --start 1000` | **bit-for-bit identical** to `popJ` | — |
+| the **whole 12,000-solve J hunt**, re-run from my own seeds | `hunt.sh popJ 4 3000 mypopJ.tsv 10` | `cmax` 2:**154** 3:**42** 4:**25** 5:**4** 6:**3** 7:**3** 8:**1**; **FUEL=0, REJECTED=0**, 12,000 solves | 154 / 42 / 25 / 4 / 3 / 3 / 1, 0, 0 — **exact match, every cell** |
+| the `cmax = 9` witness | `looptrace climb9.json 0 20000 --mints` | `steps=213 drawn=188 cmax=9`; bases 1,2,3 give **2, 3, 3** | matches, including the per-base figures |
+| the most efficient pump | `looptrace popJ/J002680.json 3 20000 --mints` | `steps=75 drawn=24 cmax=8` | "75 dequeues and 24 ids drawn for eight mints at one key" — matches |
+| the two `splitConcrete` double-mints | `looptrace popH2/H200{3470,6001}.json {3,2}` | `max=2 remint=1` on both | matches |
+| the charge audit | `charge.py min2.json 2`, `charge.py minC1.json 3` | `carr=[8] bound=[8,5] charged=[8] chargedInput=[]` and `carr=[10] bound=[] charged=[] chargedInput=[]` | matches the two Lean theorems exactly |
+| the whole charge audit | `tail chargeall.log` | `solves=1692 remintPairs=2743 clauseIfailures=68 clauseIIholds=10` | matches |
+| seed/solve inventory | `ls`/`wc -l` over every population and `.tsv` | 199+1600+8000+3000+3000 = **15,799** seeds; 2,388+6,400+48,000+12,000+12,000 = 80,788 recorded solves + ≈19,000 climber solves ≈ **100,000** | matches |
+| replay inventory | `wc -l cand-*.txt`, `grep -o 'SOLVED=…' replay-*.tsv` | 186+149+48+1 = **384** seeds, **3,840** solves, `SOLVED=3840 HANG=0 REJECTED=0` | matches |
+
+### V-2d. The compiler, re-run by me — including the differential the report did not do
+
+The harness's cap **does bite**, and I proved it rather than assuming it: `SatTermRepro.runCapped`
+is `th.join(capMs)` with a daemon thread that keeps spinning, and
+
+```
+ERMINE_JAVA_OPTS="-Dermine.useInterface=false" tracker/repro/satterm/run.sh \
+  sweep json:climb9.json 0 2 0.02 20      →  SOLVED=0 REJECTED=0 HANG=3 OOM=0
+```
+
+so at a 20 ms cap the deepest witness reports HANG at every base.  The replay script uses
+`capSec = 10` (`replay-all.tsv`) and `20` (`replay-deep/J/sc.tsv`) with `maxHung = 20`, so the
+sweep never stops early and a genuine hang would have been reported.  Measured wall times on the
+deepest witness are 37–1,274 ms, three to four orders below the cap.
+
+My own replays (ten bases each, cap 20 s):
+
+| seeds | solves | SOLVED | REJECTED | HANG | OOM |
+|---|---|---|---|---|---|
+| `climb9`, `min2`, `minC1` | 30 | 30 | 0 | 0 | 0 |
+| ten seeds sampled from `cand-deep.txt` (`popI/I001{104,139,168,177,884,902,945,991},I002037,I001206`) | 100 | 100 | 0 | 0 | 0 |
+
+**And the model matches the compiler `drawn` for `drawn`, at every base.**  This is the check the
+brief asks for and the report only did for `climb9` at base 0 and `min2` at base 2.  For `climb9`
+the compiler's per-base draw counts are `188 28 81 88 54 19 86 35 106 208` and the model's are
+`188 28 81 88 54 19 86 35 106 208` — **identical at all ten bases**.  For my ten sampled seeds I
+compared the compiler's `DRAWN` histogram against the model's ten per-base counts as multisets:
+**10 of 10 match exactly** (`tmp/review-L5r5/mysample-replay.tsv`, the comparison script in the
+same directory).  So there is no base at which the compiler behaves differently from the model on
+any deep seed I could find.
+
+### V-2e. What R5.1 delivers, judged
+
+The pump is real, it is nine turns deep, and it stops.  R5.1 asked for either a divergence or the
+measurement; it delivered the measurement, with a genuinely new instrument that reads the rule
+rather than re-implementing it, and with the *engine* corrected: the round-4 review guessed the
+turn is paid for by binding the fresh variable, and the round shows it can also be paid for by
+`makeConcrete`, which binds nothing.  **DONE, and the correction is the more valuable half.**
+
+## V-3. R5.2 — the two refutations are of the real lemma, and I re-derived both by evaluation
+
+### V-3a. Is `ChargeI`/`ChargeII` the lemma the round-4 review asked for? (YES)
+
+T-9's R5.2 reads: *"Between two minting steps at the same key `(v, K)`, the loop binds a variable
+occurring in a carrier of `(v, K)` that was present at the first mint"* — then *"and that variable
+is not one the loop minted for `(v, K)`"*.  `ChargeI` is the first sentence and `ChargeII` the
+conjunction, both over `Reaches`, exactly as asked.  Three checks that it is not a strawman:
+
+1. **The existential ranges over `carriersOf s'`, the carriers *after* the first mint**, which
+   *includes the freshly minted one.  That is the largest reading of "present at the first mint",
+   so it makes the lemma **as easy as possible** to satisfy — the right direction for a
+   refutation.  Had the implementer used `carriersOf s` the refutation would have been cheaper and
+   weaker.
+2. **`MintsAt` really is a minting step.**  `carrierKeys` only fires on a partition whose lone
+   abstract variable is absent from `stateVars s`, and a variable absent before the step can only
+   have come from `Sup.fresh`.  I confirmed by evaluation that the supply advances at exactly the
+   four steps the two witnesses use (`pS0`: `drawn` 0→1 out of `pAt 5`, 3→4 out of `pAt 12`;
+   `cS0`: 0→1 out of `cAt 4`, 1→2 out of `cAt 8`).
+3. **The pairs are consecutive.**  At `pS0` the key's carrier list is `[8]` at states 6–9, `[]` at
+   10–12 and `[11]` at 13 — no third id, so no mint at that key in between; likewise `cS0` is
+   `[10]` at 5–6, `[]` at 7–8, `[11]` at 9.  So neither refutation smuggles in a hidden
+   intermediate mint.
+
+### V-3b. Re-derived by evaluating the definitions (CONFIRMED, twice over)
+
+`tmp/review-L5r5/Eval.lean` evaluates `carriersOf`, `boundVars` and `su.drawn` at every state of
+both witnesses, and `tmp/review-L5r5/Wfck.lean` proves what the report does not claim:
+
+```
+pS0:  carriersOf (pAt i) 2 pKey  = [3]·—  … [8] at 6..9, [] at 10..12, [11] at 13
+      boundVars   (pAt 6) = [3]      boundVars (pAt 12) = [3, 8, 5]      run pS0 60 = SOLVED
+      stateVars pS0 = {5,6,2,7,3,4}   (8 is NOT in it)
+cS0:  carriersOf (cAt i) 4 cKey  = [10] at 5..6, [] at 7..8, [11] at 9
+      boundVars (cAt 5) = boundVars (cAt 6) = boundVars (cAt 7) = boundVars (cAt 8) = [8]
+      run cS0 60 = SOLVED
+```
+
+so `chargeII_false` (the only carrier is the mint's own fresh id) and `chargeI_false` (nothing at
+all is bound between the two mints) are both real.  A second, independent derivation: the
+implementer's own Python audit on the compiled model prints
+`pair key=(2,{1,2,4,5}) steps=5->12 carr=[8] bound=[8,5] charged=[8] chargedInput=[]` and
+`pair key=(4,{0,1,2,3,4}) steps=4->8 carr=[10] bound=[] charged=[] chargedInput=[]`, which agrees
+with the Lean state-by-state.
+
+**And `chargeI_false` is stronger than the report claims.**  The report says the charge fails
+because no *carrier* is eliminated.  My evaluation shows the environment is **literally unchanged**
+across the four dequeues between the two mints (`[8] → [8] → [8] → [8]`), so even the weakest
+imaginable repair — "*some* elimination happens between two mints at one key" — is refuted by the
+same witness.  That closes the whole family, not one member of it.
+
+**I also proved the two witnesses are `Wf`** (`tmp/review-L5r5/Wfck.lean`, via `Wf.wf_seed`;
+`#print axioms` gives the three standard axioms for both), so the refutations sit at well-formed
+initial states of satisfiable inputs — the exact class the plan's L5 acceptance quantifies over.
+The report asserts satisfiability and compiler-solvability but never states `Wf`.
+
+### V-3c. "`destructiveSub` withdraws the carrier without a `SubstEnv` entry" — TRUE of the Scala (CONFIRMED)
+
+`Constraints.scala:1610` `makeConcrete` → `:1632` `destructiveSub`.  Neither calls
+`instantiateType`; the `implicit hm: SubstEnv` is threaded through and never written.  Compare
+`instantiate` (`:1533`, `instantiateType(v, VarT(u))`) and `makeEmpty` (`:1561`,
+`instantiateType(v, ConcreteRho(Loc.builtin, Set()))`), which do.  And the carrier really is
+deleted: `destructiveSub`'s filter is
+`{ case Partition(u, rhs, _) => u != v && !rhs.contains(v) }` (`:1653`), so `v₄ <- (w, K)` goes
+when `w` is the concretised variable; `keepDefs`' `defs` filter is `abs.size >= 2` (`:1663`) and a
+carrier has `abs.size == 1`, so the exemption does not save it.  On the model side the `concrete`
+branch of `step` (`Step.lean:344–347`) changes `incm`/`proc` only and never `env` — faithful.
+
+**This is the round's sharpest result.**  Every counting argument L5 has tried charges a re-mint
+to an event that the environment records.  `makeConcrete` withdraws a carrier and records nothing,
+so the environment is not a ledger of the loop's eliminations, and `env_len_le_allVars` — the only
+elimination bound in the tree — cannot see them.
+
+## V-4. R5.3 — `dequeue_prio_min` is the real `Q.pop`, and the refutation is of the real claim
+
+### V-4a. Side by side with `Constraints.scala:521–560` (CONFIRMED)
+
+`Q.pop` (`:521`) takes `priority = q.measure._1.map(_._1)` — the whole tree's minimum, because
+the reducer's monoid appends `(prl min prr, tpr)` (`:449–465`) — and splits on the first prefix
+whose accumulated minimum equals it, returning that element.  That is "the first element, in
+queue order, of minimal `graph.sort(lhs)`", which is `Queue.lean:189`'s `dequeue` exactly
+(`findIdx?` of the first element attaining `foldl Nat.min`).  `dequeue_prio_min` states the
+minimality half and `dequeue_not_of_lt` its contrapositive; both are faithful and both are
+*weaker* than the full order (they say nothing about the `(rhs.hashCode, lhs.hashCode)`
+tiebreak that `insertSorted` maintains), which is honest — nothing in the round needs the tiebreak.
+
+`insertP_redirect` is `PQueue.insertP` unfolded, matching `Q.insert(p, q, graph, process=true)`
+(`:491–519`): `if(leq any (p == _)) (q, graph) else rhsLookup(...) match { case Some(v) =>
+insert(Partition(v, RHSAbstr(Set(p._1)), CommonPartition), q, graph, false) … }`.  The redirect
+inserts the link **at `v`, the variable that already held the right-hand side**, with the swallowed
+`p.lhs` in its RHS — so `insertNP_graph` plus `TypeVarGraph.+` (`:408–427`, which adds `u -> vs`
+and re-sorts with `reverseTopSort` whenever a child's index is not already below its parent's)
+makes `p.lhs` a child of `v`.  `Q.pop` takes the minimum index, and `reverseTopSort` gives children
+the smaller index.  **So "the repair is scheduled last" is a property of the Scala, not of the
+model** — CONFIRMED at source level, and `rPrio : prio 1 < prio 2` is its instance.
+
+### V-4b. Does `repairBeforeExam_false` refute what R5.3 asked? (YES)
+
+R5.3 asked for "between a carrier's loss at the redirect and the next examination of its key, the
+carrier is re-established, or a seed showing it is not".  `RepairBeforeExam` quantifies over *every*
+`t` reachable from `s'` whose dequeue is at `v` — so it implies the claim at the *first* such `t`,
+and the refutation instantiates `t := s'` itself, which **is** the first examination (`mS1`'s very
+next dequeue is `mD` with `mD.lhs = 1`).  I re-derived every ingredient by evaluation:
+`carriersOf mS0 1 rKey = [0]`, `carriersOf mS1 1 rKey = []`, `mS1.incm.dequeue` heads at `1`,
+`(prio 1, prio 2) = (3, 4)`, `splitMintKey mS1 = some (1, rKey)`, `carriersOf mS2 1 rKey = [100]`,
+`run mS0 60 = SOLVED`.  There is no room in the schedule for a repair: the loss and the examination
+are adjacent.  **DONE, and the structural reason is real.**
+
+One scope note the report could state more plainly: `RepairBeforeExam` is about *any* carrier loss,
+not specifically a redirect loss; the witness happens to be a redirect loss, so the refutation
+covers the asked-for claim and more.
+
+## V-5. R5.4 — the fragment is real and non-vacuous, and the corpus distance is understated
+
+### V-5a. The theorems (CONFIRMED)
+
+`step_linkOnly` is a genuine five-branch case analysis: `common` and `unify` go through
+`unifyVars_link` → `instantiate_link`; `empty` is excluded by `not_isEmpty_of_link`, `concrete` by
+`abstr.elems.length = 1`, and `learn` by `single_of_link` (a lone abstract part with no labels *is*
+`single?`).  The strict decrease comes from `dequeue_length_lt` (the premise is gone) plus
+`instantiate_link`'s `≤` (at most one re-insertion per removal); preservation survives the redirect
+because `link_commonPartition` says the manufactured partition `u <- (p.lhs)` is itself a link.
+`Terminates`/`Finished` are `Order.lean:24,30` and mean what they should.
+
+### V-5b. Non-vacuous, and the bound is tight (my own construction)
+
+The report exhibits no `LinkOnly` state, so I built one (`tmp/review-L5r5/Link.lean`): four links
+`v0 <- (v1)`, `v1 <- (v2)`, `v2 <- (v3)`, `v4 <- (v1)`.
+
+```
+qsize lS0 = 4          lS0.parts.all (link)      = true
+run lS0 4 = outOfFuel  run lS0 5 = solved        boundVars = [3, 2, 1, 0]
+```
+
+so the fragment is inhabited by a state that really runs four dequeues and binds four variables,
+and `linkOnly_run`'s bound `qsize s + 1` is **exactly tight**, not slack.  A second state with two
+links sharing a right-hand side (which forces the `Q.++!` redirect) also solves — so the
+preservation clause is exercised, not vacuous.
+
+### V-5c. The corpus distance — the report measures its own seeds, not the corpus (FINDING)
+
+The report says "of **15,799** seeds, **0** are `LinkOnly`, and **0** contain even a single link
+constraint".  That is true and I reproduce it — but it is a statement about a generator that emits
+a nonempty concrete part or ≥2 parts *by construction*.  The plan's L5 acceptance and R5.4's
+"distance from the corpus" are about the corpus.  So I measured it, with
+`-Dermine.rowTrace -Dermine.loadInSeries=true -Dermine.useInterface=false`:
+
+| corpus | solves | with row constraints | **`LinkOnly`** | ≥1 link | with any concrete label at input |
+|---|---|---|---|---|---|
+| stdlib boot | 54,199 | 373 | **4** | 5 | **0** |
+| boot + ten example modules (`Ai/Common`, `Ai/HeadcountPlan`, `PivotTest`, `GroupBy`, `Accumulate`, `SoftRelation`, `Yahoo`, `Interp`, `Sample`, `Holes`) | 68,533 | 1,895 | **5** | 6 | 1,105 |
+
+(`tmp/review-L5r5/{boot,ex}.tsv`, parsed on `inpart` records — `Subst.scala:1215`, fields
+`lhs / abstr / conc`.)  So **the fragment is not empty on real input**: four stdlib solves
+(`Relation/Aggregate.e(35:11)`, `Relation/Sort.e(143:14)`, `Relation/Scan.e(132:18)` and
+`(138:32)`) are `LinkOnly`, plus one more in the examples.  All five are the *trivial* instance —
+one partition `a <- (b)`, one dequeue — so the report's conclusion ("the scope is small") is
+right; its *number* is the wrong number and should be the corpus one.  **Documentation finding
+W-1**, in the round's favour: 5 of 1,895 row-carrying corpus solves is a better statement than
+0 of 15,799 synthetic seeds.
+
+Two by-products of that measurement worth recording, because no round has them:
+
+* **The stdlib boot's input partitions carry no concrete labels at all** (every `(#abstract,
+  #concrete)` shape is `(n, 0)`).  So on `boot` neither generative rule can ever fire, and the
+  step census bears it out: 228 `CommonSubexpression`, 120 `Substitution`, 28 `Cancellation`,
+  16 `PartitionEmpty`, 5 `CommonPartition`, 3 `DeDuplication`, 2 `SelfSubstitution` — **zero
+  `Resolution`, zero `SplitConcrete`**.  The pump is a phenomenon of the *examples* corpus and of
+  synthetic seeds, not of the standard library.
+* Row-carrying solves are rare and small: 1,626 of 1,895 have a single partition; the largest has
+  13.
+
+## V-6. Side by side, for the parts round 5 depends on
+
+| claim | Scala | Lean | verdict |
+|---|---|---|---|
+| the mint installs the carrier of its own key | `Constraints.scala` `splitConcrete`'s last branch | `Rules.lean:63–86`, `Pump.lean:38–72` (`splitConcrete_cases`, `splitConcrete_mint_eq`) | **exact** |
+| `resolution`'s mint also emits a carrier at the *dequeued* variable | `resolution`'s minting branch emits three partitions, the first headed by `v` | `Rules.lean:145–148`; `carrierKeys` (`Pump.lean:146–160`) picks up exactly `p.lhs == r.lhs` | **exact** |
+| `resolution` draws before its guards, so `drawn` over-counts mints | `val (z, su) = su.fresh` precedes every branch | `Rules.lean:120`; round 4's `resolution_draws` | **exact**, and the reason `max` (splitConcrete-only) ≪ `cmax` |
+| `makeConcrete` withdraws a carrier and writes no `SubstEnv` entry | `:1610`/`:1632`, no `instantiateType`; filter `u != v && !rhs.contains(v)`; `keepDefs` needs `abs.size >= 2` | `Step.lean:344–347` (`env` untouched on the `concrete` branch) | **exact** |
+| `Q.pop` = first element of minimal `graph.sort(lhs)` | `:521–527` + the reducer `:449–465` | `Queue.lean:189–200`; `dequeue_prio_min` | **exact** (the model's statement is weaker than the full order — honest) |
+| `Q.++!` redirects onto the holder `u` and adds the edge `u → p.lhs` | `:491–519` + `TypeVarGraph.+ :408–427` (`reverseTopSort`) | `Queue.lean:174–182`; `insertP_redirect`, `insertNP_graph` | **exact**; children-first is a Scala property |
+| the label pool never grows | no rule invents a label (`merge`/`removedAll`/`inter`/`concat` only) | L1/`Wf`'s `InPool`/`LblCoh` (pre-existing) | pre-existing, relied on by the round's "directions" paragraph |
+
+Nothing in the round does anything in a different order or over a different set from the Scala,
+as far as I could check it.
+
+## V-7. Things I ran that the implementer did not
+
+1. **12,000 model solves of population J re-run from seeds I regenerated myself** — every cell of
+   the report's J row reproduces, `FUEL=0`, `REJECTED=0`.
+2. **A ten-base compiler/model draw differential on ten seeds sampled from `cand-deep.txt`** —
+   100 compiler solves, all `SOLVED`, and the model's per-base `drawn` matches the compiler's
+   histogram as a multiset on 10 of 10 seeds; plus the per-base identity on `climb9` at all ten
+   bases.
+3. **A direct test that the harness's time cap bites** (20 ms cap ⇒ `HANG=3` on `climb9`).
+4. **`Wf pS0` and `Wf cS0` proved** — the report never states that its refutation witnesses are
+   well-formed.
+5. **A `LinkOnly` state of my own**, showing the fragment is inhabited by a state that runs and
+   that `qsize s + 1` is a tight bound.
+6. **The corpus measurement of the fragment's distance** (V-5c), which the report replaces with a
+   measurement of its own generator.
+7. **A label-pool scaling experiment on the pump** (V-8), which is the part of this review I would
+   most want carried into round 6.
+
+## V-8. The reviewer's own experiment: **the pump's depth does not scale with the label pool, and it is search-limited**
+
+The report's closing paragraph names two untried directions.  The first is *"a measure that reads
+the CONCRETE-LABEL structure of a key (every key measured in rounds 4 and 5 is a subset of the
+input's label pool, which never grows, and the deepest pumps all sit at the hub's FULL row)"*.
+The report's own data is consistent with a rough scaling `max cmax ≈ |L|` (nl 5→5, 6→6/7, 8→8),
+which would make that direction look promising.  **That scaling is an artefact of the search
+budget, and I broke it.**
+
+I re-ran the implementer's own hill-climber at *fixed* input size (12 vars, 16 constraints, 1 hub,
+4 id bases) with the label pool as the swept parameter, seed 11, ~700 iterations each:
+
+| labels `nl` | best `cmax` found | effective pool at the best input | dequeues | ids drawn |
+|---|---|---|---|---|
+| **3** | **7** | `{l0,l1,l2}` — **3 labels, 8 possible keys per variable** | 71 | 30 |
+| **4** | **10** | `{l0,l1,l3}` — **3 labels in use** | 133 | 51 |
+| 6 | 2 (search-starved: longer runs, fewer iterations) | — | 121 | 152 |
+| 8, 10 | 1 (same) | — | — | — |
+
+and then five further independent starts at `nl = 4` (seeds 21–25, 20,000 fuel, up to 3,000
+iterations), which reached `cmax` = **7, 7, 5, 10, 8** — so **two of six** independent nl=4
+climbers reach 10, and none exceeds it.
+
+All three deep witnesses are satisfiable by construction and all are **`SOLVED 10/10` on the
+shipped compiler**, with the model matching the compiler's `drawn` multiset over the ten bases
+exactly:
+
+```
+climb/L4/best11.json  (cmax 10)  model 21 51 28 15 11 32 15 16 10 29  compiler 10 11 15 15 16 21 28 29 32 51  SOLVED=10 HANG=0
+climb/L3/best11.json  (cmax  7)  model 16 30 22 41 30 26 44 42 33 21  compiler 16 21 22 26 30 30 33 41 42 44  SOLVED=10 HANG=0
+climb/D24/best24.json (cmax 10)  182 dequeues, 92 ids drawn at base 0  compiler 20 25 33 37 40 69 71 72 77 92  SOLVED=10 HANG=0
+```
+
+Two consequences, and they matter for round 6.
+
+**(a) `cmax = 10` beats the round's headline of 9 — after twenty minutes of hill-climbing at a
+*smaller* input than the round's climbers used.**  Round 4 measured 2; round 5 measured 9; I
+measured 10 essentially by accident while testing something else.  The measured maximum has gone
+up with every increase in search effort and has never plateaued.  That is the signature of a
+search-limited quantity, not of a bounded one, and it is the strongest single piece of evidence in
+the whole stage that the pump may be unbounded.
+
+**(b) The naive form of the report's first direction is dead.**  At `climb/L4/best11.json` base 1
+the loop mints **ten times at the single key `(hub, {l0,l1,l3})`** — the hub's full row, as the
+report predicts — while the entire label pool in play has **three** labels, so the whole lattice of
+keys at that variable has 8 elements.  Ten mints at one key with 8 keys available means **no
+measure that is a function of the key's concrete-label structure and decreases once per mint can
+exist**; the label structure bounds the number of *distinct* keys (correctly, by `2^{|L|}` per
+variable — that part is a genuine finite quantity, since `Wf`'s `InPool` keeps the pool fixed), but
+not the number of mints at one of them.  Any measure in that family has to be lexicographic with a
+second component that handles re-mints at a fixed key — which is precisely the quantity R5.2 just
+proved cannot be charged to an elimination.
+
+The report's second direction — *"a bound on the supply of premise PAIRS a key can be resolved on"* —
+survives this experiment and is the one I would pursue.  It has a concrete shape: `resolution`
+fires on the dequeued premise `v <- (x, C₁)` together with a `proc` premise `v <- (y, C₂)` with
+`C₁, C₂` incomparable, and mints at `(v, C₁ ∪ C₂)`; the mint's own carrier `v <- (z, C₁ ∪ C₂)` is
+again a lone-abstract premise at `v`, whose concrete part is *strictly larger* than either parent's.
+So along any chain in which one mint's carrier is a parent of the next, the key's concrete part
+strictly grows and the chain has length `≤ |L|`.  The pump is exactly the case where that chain is
+*not* followed — the carrier is destroyed and the same key is re-derived from *other* premises — so
+the missing lemma is a bound on the number of *distinct incomparable pairs* `(C₁, C₂)` with
+`C₁ ∪ C₂ = K` that are simultaneously available at `v`, together with an argument that each pair is
+consumed at most once.  `learnPartitions` puts the dequeued premise into `proc` (`proc :=
+s.proc.insertNP r`) and `proc` is a *set*, so a pair, once both members are in `proc`, is
+re-resolvable at every later dequeue at `v` — which is where I would expect that route to fail too,
+but it has not been tried and it is cheap to test empirically with the existing instrument
+(`carr`/`bind` lines already carry what is needed; a `pair` line would finish it).
+
+## V-9. And the deep pumps are **not cycles** — they are one key re-derived from a growing `proc`
+
+The round-4 review's picture of the pump is a *cycle*: mint, free elimination, mint again, nothing
+external consumed.  I instrumented what actually happens across the ten turns of my deepest
+witness (`climb/L4/best11.json` at base 1; `tmp/review-L5r5/deep-{mints,trace}.txt`), reading
+`incm=`/`proc=` off the `step` records:
+
+| turn | dequeue | branch | \|incm\| | \|proc\| | carrier installed | bound since previous turn |
+|---|---|---|---|---|---|---|
+| 1 | 6 | learn | 10 | 6 | 14 | — |
+| 2 | 14 | learn | 9 | 9 | 18 | 14 |
+| 3 | 36 | learn | 13 | 13 | 24 | 9, **18**, 8, 22 |
+| 4 | 60 | learn | 12 | 15 | 33 | **24**, 11, 31, 32 |
+| 5 | 63 | learn | 11 | 16 | 34 | **33** |
+| 6 | 67 | learn | 11 | 18 | 36 | **34** |
+| 7 | 90 | learn | 7 | 18 | 47 | **36**, 5, 6, 40, 12 |
+| 8 | 111 | learn | 3 | 22 | 51 | **47**, 49, 4, 10 |
+| 9 | 115 | learn | 2 | 23 | 56 | **51** |
+| 10 | 128 | learn | 2 | 22 | 63 | **56**, 25, 61, 62 |
+
+Three things fall out, and none of them is in the report:
+
+* **`proc` grows monotonically (6 → 23) and `incm` drains (10 → 2, ending at 0).**  Over the whole
+  run `max|incm| = 20` from 16 input constraints and `max|proc| = 25`; on `climb9` it is
+  `max|incm| = 31`, `max|proc| = 76`, `|incm|` finishing at 0.  The incoming queue never runs away
+  on any deep witness I measured.
+* **The ten turns are ten *different* premise pairs, not one cycle repeated.**  Each turn's
+  dequeued premise is a different partition (`^free1 <- (^free2, l1 l3)`, `(^free9, l1 l3)`,
+  `SplitConcrete: (^amb23, l0 l1 l3)`, …), drawn from a `proc` that has grown since the last turn.
+  So the pump's fuel is `proc` growth, and `proc` grows only by `learn` dequeues, each of which
+  consumes an `incm` element.
+* **On *this* witness clause I of the charge holds at every one of the nine pairs** — the bolded
+  ids are exactly the previous turn's carrier.  `chargeI_false` needs `cS0`'s `makeConcrete` route,
+  which is rarer (68 of 2,743 audited pairs).  That is consistent with the report; it is worth
+  saying because it means the *typical* pump does pay a binding per turn, and only the atypical one
+  does not.
+
+This reframes the open question in a way I think is more tractable than either direction the
+report names: **the loop terminates iff the derived-partition set saturates**, and `trim` refuses
+what `proc` already holds, so the only thing that can prevent saturation is that a mint's *fresh
+name* makes a syntactically new partition out of a semantically old fact.  That is exactly the
+pump, and it is exactly what `splitKey`/`resGuard` exist to prevent — which puts the whole question
+on the reuse guards' completeness rather than on any measure.
+
+## V-10. Acceptance criteria (plan `LOOP-MODEL-PLAN.md`, L5)
+
+| criterion | round 4 | round 5 | evidence |
+|---|---|---|---|
+| `LoopStrict` has no arbitrary-deletion constructor | PASS | **PASS, unchanged** — `Strict.lean` is not touched (`git status` lists no `Loop/Strict*.lean`) | V-1 |
+| every `step` refines it under the same hypotheses as `step_refines_all` | FAIL | **FAIL, unchanged** — `concrete` and `learn` are still outside `LinkOrEmptyStep`; round 5 does not touch the strict refinement and does not claim to | §R5.5 |
+| `Terminates s₀` for every satisfiable `Wf s₀` with an explicit bound, **or** a compiler-reproduced witness | FAIL (T2) | **FAIL (T2)** — but the first `Terminates` theorem in the stage now exists (`linkOnly_terminates`, with a tight bound), and both remaining repairs are refuted rather than open.  No witness: ~100,000 model solves + my 12,000 re-run + my ~6,000 climber solves, 0 `FUEL`; 3,840 compiler solves + my 240, 0 `HANG` | §R5.1–R5.4, V-2, V-8 |
+| audit green | PASS | **PASS** — 852 jobs, `3494 / 0`, 0 `sorry`, all **141** declarations of the three modules on standard axioms (my own census) | V-1 |
+
+Two of four still fail; both are recorded in the report as accepted scope with reasons, which is
+the condition the protocol sets for advancing.  The third criterion has moved from "open" to
+"open, with four named routes proved impossible", which is progress of the right kind.
+
+## V-11. The round-5 brief's checkpoints, item by item
+
+| # | asked | delivered | my judgement |
+|---|---|---|---|
+| R5.1 | drive the pump toward `W`; instrument; generator biased to immediate elimination; replay every `cmax ≥ 3` candidate at ten bases; report hangs at once; prove `not_Terminates` if found | instrument (`splitMintKey`/`carrierKeys`/`pumpRun`/`--mints`) with `splitConcrete_mint_eq` proving it reads the rule; generator + hill-climber; **cmax 9**; ~100,000 solves, 0 FUEL; 384 seeds × 10 bases, 0 HANG; two reduced witnesses in Lean; engine corrected | **DONE**, and the engine correction (`makeConcrete` withdraws with no binding) is the round's best result.  The cap was never approached, and I verified the cap mechanism itself bites |
+| R5.2 | the charging lemma over `Reaches`/`Trail`, refuted or proved | `ChargeI`/`ChargeII` stated as T-9 stated them, both refuted on satisfiable inputs the compiler solves, `env_instantiate_boundVars` kept | **DONE**, and stronger than claimed — the `cS0` witness binds *nothing at all* between two mints, so it refutes the whole family, not one member |
+| R5.3 | a dequeue-order lemma repairing the redirect, or a seed showing there is none | `dequeue_prio_min`/`dequeue_not_of_lt`/`insertP_redirect`/`insertNP_graph`; `RepairBeforeExam` refuted at the *first* examination, with the graph-direction reason | **DONE.**  I confirmed the children-first property is a property of `Constraints.scala`, not of the model |
+| R5.4 | `Terminates` for an explicitly stated fragment, residual stated precisely | `LinkOnly` + `step_linkOnly` + `linkOnly_terminates`/`linkOnly_run`, bound `qsize s + 1`, 21 reusable lemmas | **DONE**; non-vacuous and the bound is tight (my own witness).  The residual is measured against the wrong population (W-1) |
+
+## V-12. Findings, ranked
+
+**W-1 (documentation, PLAUSIBLE→CONFIRMED by my measurement).**  §R5.4 measures the fragment's
+distance against the round's own generator ("0 of 15,799 seeds") when the plan and the brief ask
+for the distance from the **corpus**.  Measured: **4 of 54,199 stdlib-boot solves and 5 of 68,533
+boot+examples solves are `LinkOnly`** (all the trivial one-partition instance), against 373 and
+1,895 solves that carry any row constraint at all.  Fix: replace the sentence with the corpus
+number; the conclusion ("the scope is small") is unchanged and better supported.  Worth adding
+alongside it: **the stdlib boot's input partitions carry no concrete labels at all**, so neither
+generative rule ever fires on `boot` — 0 `Resolution` and 0 `SplitConcrete` records in 54,199
+solves.
+
+**W-2 (documentation).**  `tracker/lean/README.md`'s new heading reads "the pump DRIVEN (**seven**
+turns)" while the body of the same block, the report and the plan row all say **nine**.  One-word
+fix.
+
+**W-3 (documentation).**  `carrierKeys` is a state-difference detector and therefore a **lower
+bound** on mints: a mint whose carrier is `trim`med (already in `proc`) or swallowed by the
+`Q.++!` redirect within the same step is not counted.  Every `cmax` in the round is a floor.  That
+is the safe direction for "the maximum found is 9" and the unsafe direction for any reading of the
+form "and no re-mint happens anywhere else".  One sentence in `Pump.lean`'s §2 doc comment.
+
+**W-4 (in the round's favour, not stated).**  `Wf pS0` and `Wf cS0` are provable from
+`Wf.wf_seed` in three lines each (`tmp/review-L5r5/Wfck.lean`, standard axioms).  Saying so puts
+both refutation witnesses inside the exact class the plan's acceptance quantifies over, which is
+worth the three lines.
+
+**W-5 (in the round's favour, not stated).**  `chargeI_false`'s witness binds *nothing* between
+the two mints, so it refutes not only "an elimination of a carrier is charged" but "any
+elimination happens at all".  §R5.2's prose says the weaker thing.
+
+**W-6 (measurement, NEW — see V-8).**  The report's first named direction ("a measure over the
+key's concrete-label structure") is dead in its naive form: I found a satisfiable input with a
+**three-label** pool on which the loop mints **ten times at one key**, more than the eight keys the
+whole lattice admits at that variable.  Both witnesses (`nl = 3` giving 7, `nl = 4` giving 10) are
+`SOLVED 10/10` on the shipped compiler with the model matching `drawn` at every base.  **`cmax = 10`
+also beats the round's headline of 9**, at a smaller input, after twenty minutes of climbing.
+
+None of W-1 … W-6 is a soundness defect and none blocks the round.
+
+## V-13. The judgement the brief asks for: true, false, or open?
+
+**My answer: genuinely open, leaning "likely true" — and, more usefully, the question has now been
+narrowed to one crisp statement that a round 6 can attack directly.**
+
+### The strongest case for TRUE
+
+1. **The empirical base is no longer just large, it is *directed*.**  Rounds 3–5 put ~130,000 model
+   solves and ~4,000 compiler solves behind it, but what matters is that round 5's search
+   hill-climbs on **exactly the quantity a divergence would have to blow up** (mints at one key) at
+   fixed input size.  I re-ran that search at five label-pool sizes and from five further
+   independent starts at `nl = 4`, which reached 5, 7, 7, 8 and 10 — so the maximum I could reach
+   at all, from six independent starts, is 10, and two starts reach it.  Directed search that plateaus is much better evidence than undirected search that
+   finds nothing.
+2. **There is a structural reason the loop wins on every witness measured, and it is not a
+   measure.**  On the deepest runs `incm` *drains* (10 → 2 → 0 on my witness; peak 20 from 16
+   inputs; peak 31 on `climb9` from 16 inputs) while `proc` accumulates monotonically.  Every
+   `learn` dequeue moves one partition from `incm` to `proc`, and `trim` refuses anything `proc`
+   already holds.  **So termination is exactly saturation of the derived set**, and the only thing
+   that can defeat saturation is a *fresh name* turning a semantically old fact into a
+   syntactically new partition.
+3. **Three independent mechanisms exist precisely to stop that**: `splitConcrete`'s `splitKey`
+   reuse, `resolution`'s `resGuard` reuse, and `Q.++!`'s common-right-hand-side redirect.  Round 5
+   shows each can be defeated *once* (that is the pump, and that is why `cmax` can reach 10).
+   Nothing in five rounds shows they can be defeated in a way that feeds itself.
+4. **The additive bound already exists.**  `KMintRun.mints_le` bounds the additive keyed calculus's
+   mints by `hmeas L ρ G₀` for every satisfiable `G₀`, and every loop deletion is semantically
+   justified (`NoLoss`), so every fact the loop holds lies inside the additive closure.  The only
+   gap is re-derivation under new names — i.e. point 2 again.
+
+### The strongest case for FALSE
+
+1. **The same loop provably diverges one flag away.**  `DefaultSatDiverge`'s W2 is a satisfiable
+   input on which this loop does not terminate with `-Dermine.emptyRow=true`.  So termination is
+   *not* a property of the calculus; it is a property of one particular guard set, and it has to be
+   earned rather than assumed.
+2. **Every candidate invariant has been refuted, in Lean, at satisfiable well-formed states.**
+   `QStepDichotomy` and its relativisation, `HistDichotomy` and its relativisation, all three
+   natural carriers (`qsys`, `Trail`, `sys`), `ChargeI`, `ChargeII`, `RepairBeforeExam` — seven
+   refutations in two rounds.  When every natural invariant is false, the usual explanation is that
+   the theorem is false.
+3. **The measured depth has never plateaued across rounds**: 2 (round 4) → 9 (round 5) → 10 (this
+   review, at a *smaller* input, in twenty minutes).  And every divergence witness this project has
+   ever produced — W2, W3, G7 — was **constructed from the mechanism, not found by search**, so the
+   absence of a found witness is weak evidence.
+4. **`makeConcrete` withdraws a name for free and records nothing** (V-3c).  A loop that can forget
+   names off-ledger admits no accounting, which is why every charge has failed and why no
+   accounting-shaped proof can succeed.
+
+### Where that leaves it
+
+Points TRUE-2/TRUE-3 and FALSE-1/FALSE-4 are the same observation seen from two sides: the reuse
+guards are the whole of the termination argument, and they are individually defeasible.  I would
+put it at roughly **65/35 in favour of termination**, which is not a number anyone should act on;
+the honest statement is that the question is open and that five rounds of *measures* have gone as
+far as measures can go.
+
+### What a round 6 should do — three items, in order
+
+**R6.1 — search for a STATE CYCLE, not for a bigger `cmax`.  This is the decisive, cheap
+experiment, and nobody has run it.**  If two reachable states are equal *up to a renaming that
+fixes the input variables and permutes minted ids*, the run diverges and `not_Terminates` follows
+by a one-line induction — no fuel exhaustion needed, and it is (W).  Conversely "no canonical state
+ever repeats in 100,000 solves" is a far stronger negative than "0 `FUEL`", because it rules out
+the *only* shape a divergence of a deterministic loop can have.  The instrument is a small addition
+to `pumpRun`: canonicalise the state (both queues plus `env`, with ids replaced by their index in a
+canonical traversal), hash it, and keep the set.  **My V-9 table is the pilot** and it already
+points the right way: on the deepest witness the states are visibly *not* cycling — `proc` grows
+monotonically and `incm` drains, and the ten turns are ten *different* premise pairs at one key
+rather than one cycle repeated.
+
+**R6.2 — turn "termination" into "`incm` empties", which is a statement about `trim`, not about a
+measure.**  `proc` is monotone except at `instantiate`/`makeEmpty`/`makeConcrete` (all three via
+`partition ruleInvolves(v)`), and each `learn` dequeue removes one `incm` element and adds one
+`proc` element.  So `Terminates` ⟺ every `learn` step eventually emits only partitions `trim`
+refuses ⟺ the reuse guards are eventually complete.  `Fragment.lean`'s `qsize` and its 21 size
+lemmas are already the toolkit for this — `qsize` decreases on `LinkOnly` for exactly this reason.
+This is the report's second named direction (the supply of premise pairs) with the right target:
+not "how many pairs are there" but "does a pair ever yield a partition `trim` does not already
+refuse".
+
+**R6.3 — widen the fragment to the one the corpus actually lives in.**  `LinkOnly` covers 4 of
+54,199 stdlib solves.  The natural next fragment is **inputs whose partitions carry no concrete
+labels**: `splitConcrete` needs a nonempty concrete part and `resolution` needs incomparable
+concrete differences, so neither can produce a partition mentioning a fresh variable, and
+`makeConcrete`'s branch is unreachable — so the vocabulary never grows.  (`resolution` still draws
+an id before its guards — round 4's `resolution_draws` — so the theorem is "no fresh variable
+enters a partition", not "no id is drawn".)  I measured that this fragment covers **every one of
+the 373 row-carrying stdlib-boot solves**: all their input shapes are `(n abstract, 0 concrete)`,
+the step census has **0 `Resolution` and 0 `SplitConcrete`** records in 54,199 solves, and in all
+361 solves with a saturated set **the saturated set mentions no variable absent from the input**.
+That turns (T2) into "**proved for the whole standard library**, open for the examples corpus",
+which is a materially better place for the stage to sit, and the proof should reuse
+`Fragment.lean`'s skeleton almost unchanged.
+
+*(I would not spend a sixth round on another measure over the same state.  Rounds 1–5 have refuted
+seven of them, and the reason is now understood: every bound in the tree has the form
+`X ≤ f(|allVars|)` while `|allVars| ≤ |V₀| + M`, so every charge of `M` against such an `X` is
+vacuous.  The only vocabulary-independent quantities in play are the label pool and the model, so
+any measure that can work must be **semantic**, and V-8 shows the naive semantic candidate — the
+key's label structure — cannot carry a per-mint decrease.)*
+
+## V-14. Verdict — **ADVANCE**
+
+All four checkpoints landed as asked, two of them beyond what was asked (R5.2's clause-I refutation
+kills the whole charging family rather than one member; R5.1's engine correction retires the
+round-4 review's own guess about how the pump is paid for).  Nothing is unsound: the build, the
+audit, the axiom census over all 141 declarations, the 107-theorem count, the verbatim quotation of
+all 14 quoted declarations, every population and `.tsv` inventory, the whole 12,000-solve J hunt
+re-run from seeds I regenerated bit-for-bit, the round-4 hit list, the charge audit, and the
+compiler replays all reproduce exactly.  I re-derived the three load-bearing negatives by
+evaluating the definitions and, for the two charge witnesses, a second time through the Python
+audit; I confirmed the two structural claims against `Constraints.scala` at source level; I proved
+`Wf` at both charge witnesses; I showed the fragment is inhabited and its bound tight; and I found
+no base at which the compiler differs from the model on any deep seed — 110 (seed, base) pairs
+compared `drawn` for `drawn`, all identical.
+
+My findings are six documentation items (W-1 … W-6), two of which are in the round's favour, plus
+one measurement that materially changes what round 6 should do: the report's first named direction
+is dead in its naive form, and the deep pumps are not cycles but a growing `proc` re-deriving one
+key — which reframes termination as saturation of the derived set rather than as any measure.
+
+**ADVANCE**, with W-1 … W-6 to be applied to the report, the README and the plan row, and V-13's
+R6.1–R6.3 offered as the round-6 specification in place of the report's two directions.

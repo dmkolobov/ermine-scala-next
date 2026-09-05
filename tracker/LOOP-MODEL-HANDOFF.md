@@ -170,8 +170,24 @@ to deletions' direction does NOT close (charge vacuous for c≥1; seeds 74/139 r
 the loop may PUMP (mint installs v <- (w,K); eliminating fresh w withdraws it; mint again) = what a divergence
 witness would look like. ROUND-5 SPEC in the review: R5.1 drive the pump toward a witness W, R5.2 charging lemma in
 refutable form, R5.3 use the DEQUEUE ORDER (untouched by any measure so far), R5.4 relativise Terminates to a stated
-fragment. Doc corrections sent to the r4 implementer. UNCOMMITTED: round 4 (commit on the user's word); round 5 =
-user's decision.
+fragment. Doc corrections sent to the r4 implementer. Round 4 COMMITTED `e3cb56a` (2026-09-05, user's word). L5 ROUND 5 LAUNCHED (fresh Opus agent,
+`briefs/brief-L5r5.md`: R5.1 drive the pump toward a divergence witness W with compiler replays and hang
+detection, R5.2 charging lemma in refutable form, R5.3 dequeue-order lemma, R5.4 stated fragment); reviewer after.
+ROUND 5 DONE 2026-09-05 (Loop/{Pump,Dequeue,Fragment}.lean; build 852, Audit 3494/0): (T2) NO divergence — pump
+driven to 9 re-mints at one key (~100,000 model solves, 0 fuel; 384 seeds x 10 bases = 3,840 compiler solves, 0
+HANG); charging lemma REFUTED in both clauses (`chargeI_false`: destructiveSub withdraws a carrier with no
+SubstEnv entry, nothing to charge); dequeue order does NOT repair the redirect (`repairBeforeExam_false`);
+`LinkOnly` fragment terminates (`linkOnly_terminates`, bound qsize+1) but no generated seed is in it. Two
+untried directions named: a measure over the key's concrete-label structure; a bound on premise pairs per key.
+ROUND-5 REVIEW: ADVANCE (everything reproduced; W-6: a 3-label input pumps 10 times at one key, killing the
+naive label-structure measure; stdlib-boot inputs carry NO concrete labels — 0 Resolution/SplitConcrete records).
+JUDGEMENT: genuinely open, ~65/35 toward termination (directed search plateaus; deep pumps are one key re-derived
+from a growing proc, not cycles; vs: diverges one flag away, seven invariants refuted, makeConcrete forgets names
+off-ledger). ROUND-6 SPEC: R6.1 search for a state CYCLE up to renaming of minted ids (a repeat = not_Terminates;
+no repeat in 100k solves = strong negative), R6.2 recast termination as 'incm empties' (trim + guard completeness),
+R6.3 widen the fragment to inputs with NO concrete labels — covers all 373 row-carrying stdlib-boot solves →
+'proved for the standard library, open for the examples'. UNCOMMITTED: round 5 (commit on the user's word);
+round 6 = user's decision.
 (The earlier handoff sentences saying the invariant is false and that B1 must replace the emits_self lemma are
 superseded by this paragraph.); the 1,456-partition splitKey=false replay under tmp/L4/gu05nk/ is a model-speed
 question, not a disagreement. Reports: `L3-THEOREMS.md` (Round 2 section), `L4-TEST.md`.

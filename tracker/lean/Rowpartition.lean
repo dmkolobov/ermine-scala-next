@@ -183,3 +183,6 @@ import Rowpartition.Loop.Residual
 import Rowpartition.Loop.Refuted
 import Rowpartition.Loop.Supply
 import Rowpartition.Loop.Mints
+import Rowpartition.Loop.Pump
+import Rowpartition.Loop.Dequeue
+import Rowpartition.Loop.Fragment
