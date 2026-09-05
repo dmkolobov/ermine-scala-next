@@ -175,3 +175,8 @@ import Rowpartition.Loop.Order
 import Rowpartition.Loop.Strict
 import Rowpartition.Loop.StrictStep
 import Rowpartition.Loop.StrictBound
+import Rowpartition.Loop.Carried
+import Rowpartition.Loop.Hygiene
+import Rowpartition.Loop.Factor
+import Rowpartition.Loop.Draws
+import Rowpartition.Loop.Residual

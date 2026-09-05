@@ -481,6 +481,40 @@ gone, so it is now provable in principle (preservation is L5 round-3 work). See
 `../loopmodel/B1-FIX.md`, `../loopmodel/B1-REVIEW.md`, ticket item 11, and
 `L5-TERMINATION.md` §0 for the original diagnosis.
 
+### L5 round 3 -- `Carried`-preservation, queue hygiene, and the residual (2026-09-05)
+
+The reviewer's round-2 priority list, worked from the clean commit `52da5b8` (B1 fixed on both
+sides).  Five NEW modules; `Loop/{Strict,StrictStep,StrictBound}.lean` are unchanged, so
+nothing round 2 proved is weakened.  Build 846, Audit 3186/0.  Report
+`tracker/loopmodel/L5-TERMINATION.md` (Round 3 section).
+
+| module | lines | what |
+|---|---|---|
+| `Rowpartition/Loop/Carried.lean` | 413 | `CarrPres` / `CarrPresOn` / `CarrPresOff` and `CarrPresOn.hmeas_le`; `carried_substOut_of_ne` (the `Carried` lemma the library had for `makeEmptyE` and `concretizeSrs` but not for `substOut`) and its exact limit `substOut_breaks_carried` / `carried_iff_of_link_only`; `carried_not_monotone_under_deletion`; **`LoopStrict.carried_step`** -- ingredient (B) of §C3.1, proved outright at seven constructors, vacuous at the four minting ones and passed through as a hypothesis at `drop`/`instRemove`/`requeue` -- and `LoopStrict.models_of_notMint`; then `LoopStrictKRun` and **`LoopStrictKRun.allVars_card_le`**, a VOCABULARY SNAPSHOT bound along runs that keep every carried key (it does NOT bound the number of counted steps -- see the note on the theorem) |
+| `Rowpartition/Loop/Hygiene.lean` | 1,505 | **`step_queueHygiene` / `QueueHygiene.step`** -- the invariant `StrictBound.lean` states is PRESERVED by every `continue` step -- with `queueHygiene_initial` (the states `Seed.solve` builds), `run_queueHygiene`, `run_queueHygiene'` (refutations too) and `queueHygiene_binds_unbound` / `step_link_no_death` (the three variables a step can bind are unbound, which is what `instantiateType`'s `die` tests, so neither link branch can die).  The single-step theorem is unconditional; the RUN-level ones carry `RunSupOk`, an unproved per-state supply hypothesis.  Built from `Avoids B c`, one predicate run through round 2's forward machinery: writer lemmas (`insertP_avoids` and the redirect), `makeEmpty_avoids`, `instantiate_avoids`, `makeConcrete_avoids`, `learnPartitions_avoids`, a lemma per rule and per reverse lookup |
+| `Rowpartition/Loop/Factor.lean` | 466 | `defs_conc_empty_of_sat`; the operators' vocabulary EQUALITIES `allVars_makeEmptyE_eq`, `allVars_substOut_eq`; **`step_empty_via_makeEmptyE`** (round 2's `step_empty_makeEmptyE` composed with the `requeue` that reaches `sys s'`, so it is no longer a leaf); `NeedsDedup`, `substOutD`, `dedup_entailed`, `substOut_noLoss_of_disjoint`, `substOut_noLoss_of_dedup`, **`instRemove_step`** and **`instRemove_step_dedup`** (the constructor round 2 could not apply), and both link branches factored through them, `step_unify_via_substOut` and `step_common_via_substOut` |
+| `Rowpartition/Loop/Draws.lean` | 275 | **`learnPartitions_drawn`**: a `learn` step draws at most `1 + \|proc\|` ids under the shipped flags -- one for `splitConcrete`, at most one per processed partition for `resolution`, whose `fresh` is taken BEFORE its guards; `commonSubexpression_no_draw` under `genRules=cut`; and `learnPartitions_vocab` (every name a rule writes is a queue variable or a supply id) -- which is WEAKER than C2's clause and so does not preserve `SupFresh` |
+| `Rowpartition/Loop/Residual.lean` | 262 | `redirect_breaks_carried` (`Q.+!`'s `CommonPartition` redirect destroys a `ConcCarried` parent), `dequeued_not_empty_of_sat` and `concCarried_parent_nonempty` (§C3.2's worse half is VACUOUS at a mint on satisfiable input); `insertP_covers` / `concatP_covers` (`Q.+!` keeps something with the inserted right-hand side); the exact remaining lemma `QStepDichotomy`, and the bound it yields: `run_qsys_invariant`, **`run_qsys_allVars_card_le`**, `run_qsys_bound` |
+
+**What round 3 settles.**  `QueueHygiene` is an invariant -- which is what certifies B1, since
+the invariant is what the unfixed `makeEmpty` violated: in `makeEmpty_avoids` the propagated
+`w` avoids the newly bound `v` for exactly one reason, that the fold ranges over
+`p.rhs.abstr.excl v`.  And ingredient (B) is now available for a relation
+(`LoopStrictKRun.allVars_card_le`) and provably UNAVAILABLE for the loop over `sys`: after an
+elimination the only constraint about the eliminated variable is the retained alias link,
+which carries the key `∅` and no other.  So the measure must be taken over `qsys`, as the L5
+report already said -- and `redirect_breaks_carried` says what still blocks it there.
+Termination is still (T2): the residual is ONE `Prop` (`QStepDichotomy`), proved SUFFICIENT for
+the explicit SNAPSHOT bound `|allVars (qsys s0)| + hmeas L rho (qsys s0)` on the queue-visible
+vocabulary held at ONE state -- **not** a bound on the number of mints (the loop's `qsys` shrinks
+at an elimination, so mints and eliminations can alternate for ever inside the snapshot) and not
+`Terminates`.  Both gaps are open items in the report's §R3.5.4.  The run-level queue-hygiene
+statements, and with them the run-level reading of the B1 certification, are conditional on the
+unproved per-state supply hypothesis `RunSupOk`.  No witness either: a new hunt aimed at the two
+configurations that destroy the guard is 20,720 runs with 0 `FUEL` and 0 `REJECTED`, with 410
+model-vs-compiler comparisons of verdict and draw count all identical -- a whole-run divergence
+check, which is not evidence for the per-step `QStepDichotomy`.
+
 ---
 
 ## The shared vocabulary

@@ -1060,3 +1060,882 @@ is proved here; the two mechanism lemmas are.
 | (6) the compiler bug handed over with the right root cause | **done** in §0 | no Scala change, as instructed |
 | C1's `concrete` and `learn` branches | still open | unchanged from round 1: row 6 needs `subPartitions`/`destructiveSub`/`makeConcrete` backwards; the `learn` branch needs `RefineLearn.lean` re-proved against `LoopStrict`, which the no-edit rule turns into a 1,558-line duplication |
 | C2, C3 (T1) | unchanged: C2 PARTIAL, C3 (T2) | round 2 was spent on F1 and F2, as specified |
+
+---
+
+# Round 3 — 2026-09-05, after `L5-REVIEW.md`'s round-2 priority list
+
+Fresh implementer, starting from the clean commit `52da5b8` in which the compiler bug that made
+`QueueHygiene` false is fixed on both sides (`B1-FIX.md`).  Work order is the reviewer's round-2
+priority list, R-4 first.  Five NEW modules,
+`Rowpartition/Loop/{Carried,Hygiene,Factor,Draws,Residual}.lean`;
+`Loop/{Strict,StrictStep,StrictBound}.lean` are **not edited**, so nothing rounds 1 and 2
+proved is weakened or removed.  **Every Lean SIGNATURE quoted below is
+byte-for-byte verbatim** (70 of 70, checked mechanically against the five modules — the
+round-3 reviewer's own script agrees on 70); only the doc comments are shortened, and where one
+is, the elision is marked.
+
+| | before round 3 | after round 3 |
+|---|---|---|
+| `lake build Rowpartition` | 841 jobs | **846 jobs**, success |
+| `lake env lean Audit.lean` | `3058; 0` | **`Rowpartition theorems audited: 3186; declarations using a non-standard axiom: 0`** |
+| new-module lines | — | `Carried.lean` 413 + `Hygiene.lean` 1,505 + `Factor.lean` 466 + `Draws.lean` 275 + `Residual.lean` 262 = **2,921** |
+| `sorry` / `axiom` / `partial` / `native_decide` / `Classical` / `unsafe` / `opaque` / `admit` | — | **0 in all five new modules** |
+| `#print axioms`, 49 headlines (`tmp/L5r3/Axioms.lean`) | — | 49 × `[propext, Classical.choice, Quot.sound]`; **no non-standard axiom** |
+| files touched | — | five NEW `Loop/` modules; `Rowpartition.lean` +5 import lines; `tracker/lean/README.md` +34/−0 (additive); the plan's L5 row; this report |
+
+## R3.1 — R-4: a `Carried`-preserving licence, `carried_step`, and what it buys
+
+**Outcome: `carried_step` is PROVED for the seven constructors that can have it (four more close
+vacuously under `¬ IsMint`, three are passed through as hypotheses); the loop's `common`/`unify`
+re-emissions provably CANNOT be given the conjunct over `sys`, which is a new negative result and
+the reason the measure has to move to `qsys`.  What the conjunct then buys along the new relation
+is a VOCABULARY SNAPSHOT bound, not a mint count — see the correction in R3.1.4.**
+
+### R3.1.1 The predicate, and what it buys (`Loop/Carried.lean` §1)
+
+```lean
+/-- **`G'` keeps every key `G` carries.** -/
+def CarrPres (G G' : System) : Prop := ∀ w K, Carried G w K → Carried G' w K
+
+/-- The relativised form: only the variables the successor still HAS need keep their keys. -/
+def CarrPresOn (G G' : System) : Prop :=
+  ∀ w ∈ allVars G', ∀ K, Carried G w K → Carried G' w K
+
+/-- Preservation at every variable BUT `v`. -/
+def CarrPresOff (v : Var) (G G' : System) : Prop :=
+  ∀ w, w ≠ v → ∀ K, Carried G w K → Carried G' w K
+
+theorem CarrPresOn.hmeas_le {L : Finset Label} {G G' : System} (rho : Assign)
+    (hAV : allVars G' ⊆ allVars G) (h : CarrPresOn G G') :
+    hmeas L rho G' ≤ hmeas L rho G
+```
+
+### R3.1.2 `substOut`, the operator the library had no `Carried` lemma for
+
+`KeyedEmpty.carried_makeEmptyE` and `KeyedRow.carried_concretizeSrs` are the library's; round 2's
+`substOut` had none.  This is the FULL truth about it — preservation off the eliminated variable,
+and failure at it:
+
+```lean
+/-- **`substOut` preserves `Carried` at every variable but the one it eliminates.** -/
+theorem carried_substOut_of_ne {G : System} {v u w : Var} {K : Row} (hw : w ≠ v)
+    (h : Carried G w K) : Carried (substOut v u G) w K
+
+theorem carrPresOff_substOut (v u : Var) (G : System) : CarrPresOff v G (substOut v u G)
+
+/-- **After an elimination, the eliminated variable carries only the empty key.** -/
+theorem carried_iff_of_link_only {G : System} {v u : Var} {K : Row}
+    (h : ∀ c ∈ G, c.lhs = v → c = mk v {u} (∅ : Row)) (hc : Carried G v K) : K = ∅
+
+/-- **`substOut` does NOT preserve `Carried` at the variable it eliminates.** -/
+theorem substOut_breaks_carried :
+    ∃ (G : System) (v u : Var) (K : Row), mk v {u} (∅ : Row) ∈ G ∧
+      Carried G v K ∧ ¬ Carried (substOut v u G) v K
+
+/-- **`Carried` is not monotone under deletion**, so `drop` needs the licence too. -/
+theorem carried_not_monotone_under_deletion :
+    ∃ (G G' : System) (w : Var) (K : Row), G' ⊆ G ∧ Carried G w K ∧ ¬ Carried G' w K
+```
+
+`substOut_breaks_carried`'s witness is `GA = {v0 <- (v1), v0 <- ((|l5|)), v2 <- ()}` at the key
+`(v0, {l5})`: before the step `v0`'s own concrete definition and `v2 <- ()` carry it; after
+`instantiate(v0 := v1)` the definition reads `v1 <- ((|l5|))` and the ONLY constraint left about
+`v0` is the retained link, which `carried_iff_of_link_only` shows carries `∅` and nothing else.
+**This is `§C3.1`'s table row 1 — "(B) fails for `sys s` at `instantiate`" — as a theorem rather
+than as prose, and it settles R-4's first half NEGATIVELY**: no `Carried`-preserving conjunct can
+be discharged at the loop's `common` and `unify` branches over `sys`, because after those steps
+`sys s'` contains exactly one constraint about the eliminated variable and it is the alias link.
+
+### R3.1.3 `carried_step` — the ingredient (B) of §C3.1, and exactly what it covers
+
+```lean
+/-- **`carried_step`.**  (doc comment elided; it now tabulates the fourteen cases -- seven
+proved, four vacuous, three passed through.) -/
+theorem LoopStrict.carried_step {G G' : System} {rho : Assign} (hm : SModels rho G)
+    (h : LoopStrict G G') (hmint : ¬ IsMint G G')
+    (hdrop : G' ⊆ G → CarrPres G G')
+    (hinst : (∃ v u : Var, G' = substOut v u G) → CarrPres G G')
+    (hreq : allVars G' ⊆ allVars G → Conserv G G' → NoLoss G G' → CarrPres G G') :
+    CarrPres G G'
+
+/-- **A non-minting `LoopStrict` step keeps the model it started with.** -/
+theorem LoopStrict.models_of_notMint {G G' : System} {rho : Assign} (h : LoopStrict G G')
+    (hmint : ¬ IsMint G G') (hmod : SModels rho G) : SModels rho G'
+```
+
+**How the fourteen cases divide** (corrected after the round-3 review's F-1, which counted them
+against the proof — the first draft of this paragraph said "nine … by additivity" and "the other
+ten need nothing beyond a model", and both were wrong):
+
+| how discharged | constructors | count |
+|---|---|---|
+| additivity (`CarrPres.of_subset`) | `nongen`, `renameLhs`, `linkSymm`, `emptyProp`, `dedup` | 5 |
+| a library `Carried` lemma | `emptyRemove` (`KeyedEmpty.carried_makeEmptyE`), `concRemove` (`KeyedRow.carried_concretizeSrs`) | 2 |
+| **vacuous** — `absurd … hmint`, since these four ARE `IsMint` | `split`, `res`, `splitFree`, `kres` | 4 |
+| **licence assumed** (`hdrop`, `hinst`, `hreq`) | `drop`, `instRemove`, `requeue` | 3 |
+
+So `carried_step` proves something at **seven** constructors, closes four VACUOUSLY under
+`¬ IsMint`, and passes three through as hypotheses.  The two library lemmas are the only reason
+it needs a MODEL rather than `SSat`.  For the three passed through, `substOut_breaks_carried`,
+`carried_not_monotone_under_deletion` and `L5-REVIEW.md`'s `requeue_breaks_carried` show that
+none of them can be discharged — which is the point of isolating them.
+
+### R3.1.4 What (B) buys: a VOCABULARY SNAPSHOT bound (NOT a mint count)
+
+```lean
+/-- The potential `KeyedRow`'s bound is stated with. -/
+def Pot (L : Finset Label) (rho : Assign) (G : System) : ℕ :=
+  (allVars G).card + hmeas L rho G
+
+/-- **A run of carried-preserving `LoopStrict` steps and keyed mints, with the mints counted.** -/
+inductive LoopStrictKRun (L : Finset Label) : ℕ → System → System → Prop
+  | refl (G : System) : LoopStrictKRun L 0 G G
+  | keep {n : ℕ} {G₀ G G' : System} :
+      LoopStrictKRun L n G₀ G → LoopStrict G G' → ¬ IsMint G G' →
+      allVars G' ⊆ allVars G → ConcSub L G' → CarrPresOn G G' →
+      LoopStrictKRun L n G₀ G'
+  | mint {n : ℕ} {G₀ G G' : System} :
+      LoopStrictKRun L n G₀ G → K2StarStep G G' → LoopStrictKRun L (n + 1) G₀ G'
+
+theorem LoopStrictKRun.toRun {L : Finset Label} {n : ℕ} {G₀ G : System}
+    (h : LoopStrictKRun L n G₀ G) : LoopStrictRun G₀ G
+
+/-- **The invariant that drives the bound.** -/
+theorem LoopStrictKRun.invariant {L : Finset Label} {n : ℕ} {G₀ G : System}
+    (h : LoopStrictKRun L n G₀ G) :
+    ∀ rho₀ : Assign, SModels rho₀ G₀ → ConcSub L G₀ →
+      ∃ rho, SModels rho G ∧ ConcSub L G ∧ Pot L rho G ≤ Pot L rho₀ G₀
+
+/-- **THE VOCABULARY SNAPSHOT BOUND for the carried-preserving fragment.** -/
+theorem LoopStrictKRun.allVars_card_le {L : Finset Label} {n : ℕ} {G₀ G : System}
+    (h : LoopStrictKRun L n G₀ G) (rho : Assign) (hm : SModels rho G₀) (hcs : ConcSub L G₀) :
+    (allVars G).card ≤ (allVars G₀).card + hmeas L rho G₀
+
+theorem LoopStrictKRun.vocab_snapshot_bound {G₀ : System} (rho : Assign) (hm : SModels rho G₀) :
+    ∀ (n : ℕ) (G : System), LoopStrictKRun (labelsOf G₀) n G₀ G →
+      (allVars G).card ≤ (allVars G₀).card + hmeas (labelsOf G₀) rho G₀
+```
+
+This is `KeyedRow.mintsBoundedOnSatKeyed2Star` extended to arbitrary `LoopStrict` steps that keep
+every carried key and name no new variable or label — i.e. it is exactly what ingredient (B) is
+for.  The mints it interleaves are the KEYED ones (`K2StarStep` = `NonGenStep` ∪ `K2SplitStep` ∪
+`K2ResStep`), which is what the shipped `splitKey`/`splitRow`/`resGuard`/`resRow` select;
+`Cut.ResStep` and `Cut.SplitStep`, the unguarded mints `LoopStrict` also carries, are
+deliberately outside it.
+
+> **CORRECTED after the round-3 review (F-2, machine-checked).**  The first draft of this
+> section called these theorems "THE MINT BOUND" and said they "bound the number of mints as
+> well".  **They do not.**  `n` does not occur in either conclusion, and the reviewer proved
+> `mints_not_bounded`: from a fixed satisfiable `G₀`, `LoopStrictKRun` reaches every `n` with
+> the vocabulary bound holding.  Two reasons, both structural: `LoopStrictKRun.mint` carries no
+> productivity side condition where the library's `K2StarLoopRun.tail` carries `G ≠ G'` (and
+> `K2StarStep` contains the NON-generative `NonGenStep`, so a counted step need not change
+> anything); and `LoopStrictKRun.keep` permits `allVars G' ⊊ allVars G`, so a minted variable
+> can leave again.  The library's card bound bounds its mint count only because its systems grow
+> monotonically; this relation's do not.  **What is proved is a bound on the vocabulary HELD AT
+> ONE STATE, not on the number of minting steps** — and bounding the latter is an explicit open
+> item (R3.5.4), not a corollary of this.  I have not weakened the theorems: they are correct as
+> written, and only the surrounding claims were wrong.
+
+**Where the reviewer's acceptance stands.**  R-4 asked that `requeue_breaks_carried` become
+unprovable.  For `LoopStrictKRun`'s `keep` steps it IS unprovable, by construction.  It could not
+be made unprovable for `LoopStrict` itself without either weakening or deleting
+`step_strict_common`, `step_strict_empty` and `step_strict_unify` — all three go through
+`requeue`, and R3.1.2 shows two of them cannot be given the conjunct at all.  I did not weaken
+them; `LoopStrict` is byte-identical to round 2.
+
+## R3.2 — `step_empty_makeEmptyE` load-bearing, and `instRemove` live
+
+**Outcome: BOTH DONE, without editing `Loop/Strict.lean`.**  (`Loop/Factor.lean`.)  The pattern
+is the same in each case: the operator's output `H` sits between `sys s` and `sys s'`,
+`LoopStrict (sys s) H` is the operator constructor, and `LoopStrict H (sys s')` is one
+`requeue` whose three clauses are COMPOSED out of what round 2 already proved
+(`step_noLoss_strict`, `step_conserv_strict`, `step_allVars_strict`) with the operator's own
+soundness.  The one genuinely new ingredient is the operators' vocabulary EQUALITIES — the
+library and round 2 had only the ⊆ direction, and the composition needs ⊇:
+
+```lean
+/-- **Under a model, `v <- ()` forces every definition of `v` to be label-free.** -/
+theorem defs_conc_empty_of_sat {G : System} {v : Var} (hshape : MkShaped G)
+    (hv : mk v ∅ (∅ : Row) ∈ G) (hsat : SSat G) : ∀ c ∈ G, c.lhs = v → c.conc = ∅
+
+/-- **`makeEmptyE` keeps every variable.** -/
+theorem allVars_makeEmptyE_supset {G : System} {v : Var} (_hshape : MkShaped G)
+    (_hv : mk v ∅ (∅ : Row) ∈ G) (hdefs : ∀ c ∈ G, c.lhs = v → c.conc = ∅) :
+    allVars G ⊆ allVars (makeEmptyE v G)
+
+theorem allVars_makeEmptyE_eq {G : System} {v : Var} (hshape : MkShaped G)
+    (hv : mk v ∅ (∅ : Row) ∈ G) (hdefs : ∀ c ∈ G, c.lhs = v → c.conc = ∅) :
+    allVars (makeEmptyE v G) = allVars G
+
+/-- **`substOut` keeps every variable too.** -/
+theorem allVars_substOut_supset {G : System} {v u : Var} (_hlink : mk v {u} (∅ : Row) ∈ G) :
+    allVars G ⊆ allVars (substOut v u G)
+
+theorem allVars_substOut_eq {G : System} {v u : Var} (hlink : mk v {u} (∅ : Row) ∈ G) :
+    allVars (substOut v u G) = allVars G
+```
+
+`defs_conc_empty_of_sat` replaces a re-run of `makeEmpty_defs_conc_empty`'s fold: under a model,
+`v <- ()` forces every definition of `v` to have an empty concrete part, which is the `die` arm
+read semantically, and satisfiability is the hypothesis a termination argument has anyway.
+
+### R3.2(a) the `empty` branch
+
+```lean
+/-- **`step_empty_makeEmptyE`, made LOAD-BEARING.** -/
+theorem step_empty_via_makeEmptyE {s s' : State} (hw : Wf s) (hsat : SSat (sys s))
+    {r : LPart} {rest : PQueue}
+    (hdq : s.incm.dequeue = some (r, rest)) (hfr : s.proc.findRHS r.rhs = none)
+    (hem : r.rhs.isEmpty = true) (h : step s = .continue s') :
+    LoopStrict (sys s) (makeEmptyE r.lhs (sys s)) ∧
+      LoopStrict (makeEmptyE r.lhs (sys s)) (sys s') ∧
+      LoopStrictRun (sys s) (sys s')
+```
+
+`step_empty_makeEmptyE` is no longer a leaf: it is the first conjunct, and the third conjunct
+composes it with the `requeue` that reaches `sys s'`.  One premise is new relative to round 2's
+`step_empty_makeEmptyE`: `hsat : SSat (sys s)`, needed for `allVars_makeEmptyE_eq` through
+`defs_conc_empty_of_sat`.  It is harmless — satisfiability is the setting of the whole C3
+argument — but it is a strengthening and is flagged here (round-3 review, N-3).  The factoring
+also does not REMOVE the trailing `requeue`: `LoopStrict H (sys s')` is still one
+semantically-licensed requeue, and `step_refines_strict`, the acceptance criterion, still runs
+through the bare one.
+
+### R3.2(b) `replace`'s de-duplication fact, and `instRemove` LIVE
+
+`substOut` collapses the parts `v` and `u` of a constraint that mentions both, so it loses a
+fact — unless the system also knows `u <- ()`, which is exactly the partition
+`Constraints.replace` emits in that case.  Two observations make `instRemove` live WITHOUT
+touching `Loop/Strict.lean` (so round 2's `LoopStrict` is byte-identical):
+
+```lean
+/-- Some constraint mentions both `v` and `u`: the case `replace` de-duplicates. -/
+def NeedsDedup (v u : Var) (G : System) : Prop := ∃ c ∈ G, v ∈ vset c ∧ u ∈ vset c
+
+/-- **`instantiate`'s removal WITH `replace`'s de-duplication fact.** -/
+def substOutD (v u : Var) (G : System) : System := substOut v u (insert (mk u ∅ (∅ : Row)) G)
+
+/-- **The de-duplication fact is a CONSEQUENCE.** -/
+theorem dedup_entailed {G : System} {v u : Var} (hshape : MkShaped G) (hvu : v ≠ u)
+    (hlink : mk v {u} (∅ : Row) ∈ G) (hnd : NeedsDedup v u G) :
+    SEntails G (mk u ∅ (∅ : Row))
+
+/-- **When nothing collapses, `substOut` loses nothing.** -/
+theorem substOut_noLoss_of_disjoint {G : System} {v u : Var} (hshape : MkShaped G)
+    (_hlink : mk v {u} (∅ : Row) ∈ G) (hnd : ¬ NeedsDedup v u G) :
+    NoLoss G (substOut v u G)
+
+/-- **With the de-duplication fact present, `substOut` loses nothing.** -/
+theorem substOut_noLoss_of_dedup {G : System} {v u : Var} (hshape : MkShaped G)
+    (_hlink : mk v {u} (∅ : Row) ∈ G) (hdd : mk u ∅ (∅ : Row) ∈ G) (hvu : v ≠ u) :
+    NoLoss G (substOut v u G)
+
+/-- **`instRemove` is LIVE**, in the case where nothing collapses. -/
+theorem instRemove_step {G : System} {v u : Var} (hshape : MkShaped G)
+    (hlink : mk v {u} (∅ : Row) ∈ G) (hnd : ¬ NeedsDedup v u G) :
+    LoopStrict G (substOut v u G)
+
+/-- **`instRemove` is LIVE**, in the case where the de-duplication fact is needed. -/
+theorem instRemove_step_dedup {G : System} {v u : Var} (hshape : MkShaped G) (hvu : v ≠ u)
+    (hlink : mk v {u} (∅ : Row) ∈ G) (hnd : NeedsDedup v u G) :
+    LoopStrictRun G (substOutD v u G)
+```
+
+The second is the point: the missing `u <- ()` is not an extra axiom, it is a CONSEQUENCE of
+the link and the disjointness of the constraint that mentions both, so the run adds it with
+`LoopStrict.dedup` — the constructor that stands for `RHS.merge`'s returned `es` and
+`replace`'s two-element queue — and then `instRemove` applies.  And at the loop:
+
+```lean
+/-- **The `unify` branch's transition, factored.** -/
+theorem step_unify_via_substOut {s s' : State} (hw : Wf s) {r : LPart} {rest : PQueue}
+    {u : Nat} (hdq : s.incm.dequeue = some (r, rest)) (_hfr : s.proc.findRHS r.rhs = none)
+    (hsg : r.rhs.single? = some u) (hur : u ≠ r.lhs) (h : step s = .continue s') :
+    ∃ H : System, LoopStrictRun (sys s) H ∧ LoopStrict H (sys s') ∧
+      allVars H = allVars (sys s) ∧
+      (H = substOut u r.lhs (insert (mk u {r.lhs} (∅ : Row)) (sys s)) ∨
+        H = substOutD u r.lhs (insert (mk u {r.lhs} (∅ : Row)) (sys s)))
+```
+
+The `common` branch is factored the same way, with one extra step at the front: there the link
+`r.lhs <- (u)` is not in `sys s` (it is only ENTAILED, from `r` and the `proc` partition with
+the same right-hand side), so the run takes a `NonGenStep.commonPart` step first —
+`step_common_via_substOut`, stated with the constructor table below.
+
+### The constructor-use table
+
+Counted mechanically (`grep -o "LoopStrict\.<ctor>"` per file):
+
+| constructor | Strict | StrictStep | Carried | Factor | total | round 2 |
+|---|---|---|---|---|---|---|
+| `nongen` | 1 | | 1 | 1 | 3 | 1 |
+| `split` | 1 | | 1 | | 2 | 2 |
+| `res` | 1 | | | | 1 | 1 |
+| `splitFree` | 1 | | | | 1 | 1 |
+| `kres` | 1 | | 1 | | 2 | 1 |
+| `renameLhs` | 1 | | | | 1 | 1 |
+| `linkSymm` | 1 | | | 1 | 2 | 1 |
+| `emptyProp` | 1 | | | | 1 | 1 |
+| `dedup` | 1 | | | 3 | 4 | 1 |
+| `drop` | | 2 | | | 2 | 2 |
+| **`instRemove`** | | | | **2** | **2** | **0** |
+| `emptyRemove` | 1 | | | | 1 | 1 |
+| **`concRemove`** | | | | | **0** | **0** |
+| `requeue` | | 4 | | 4 | 8 | 4 |
+
+**13 of 14 live** (round 2: 12 of 14).  `concRemove` is the only one still declared and never
+applied, for the reason round 1 gave and round 3 does not change: its `NoLoss` premise is the
+`cancellation_bare` gap, and the `concrete` branch is not refined at all.
+
+`instRemove` is applied inside `instRemove_step` and `instRemove_step_dedup`, and those two are
+used at BOTH link branches of the loop — `step_unify_via_substOut` and
+`step_common_via_substOut`.  The `common` branch needed one extra step, which is the third
+`nongen` above: the link `r.lhs <- (u)` is not in `sys s` there, it is what
+`NonGenStep.commonPart` derives from the dequeued `r` and the `proc` partition `findRHS`
+matched (`step_common_via_substOut`, added after the first draft of this section):
+
+```lean
+/-- **The `common` branch's transition, factored.** -/
+theorem step_common_via_substOut {s s' : State} (hw : Wf s) {r : LPart} {rest : PQueue}
+    {u : Nat} (hdq : s.incm.dequeue = some (r, rest)) (hfr : s.proc.findRHS r.rhs = some u)
+    (hru : r.lhs ≠ u) (h : step s = .continue s') :
+    ∃ H : System, LoopStrictRun (sys s) H ∧ LoopStrict H (sys s') ∧
+      allVars H = allVars (sys s) ∧
+      (H = substOut r.lhs u (insert (mk r.lhs {u} (∅ : Row)) (sys s)) ∨
+        H = substOutD r.lhs u (insert (mk r.lhs {u} (∅ : Row)) (sys s)))
+```
+
+**So all three of `step_refines_strict`'s branches are now factored through the LIBRARY
+OPERATORS**: `empty` through `makeEmptyE`, `common` and `unify` through `substOut`/`substOutD`.
+Round 2's bare `requeue`s are still there — they are the shorter statement of the same step —
+but they are no longer the only route.
+
+## R3.3 — `QueueHygiene` preserved by `step`, and the panic unreachable
+
+**Outcome: PROVED, for all five dispatch branches, with `disjunction` (shipped OFF) excluded at
+the `learn` branch exactly as `RefineLearn.step_refines_all` excludes it.  This is the theorem
+that certifies the B1 fix.**  (`Loop/Hygiene.lean`; taken before R3.2 and R3.4 because it is the
+lemma `L5-REVIEW.md` §5e names as the second step to T1 and the one `B1-FIX.md` §5a leaves open.)
+
+The mechanism is one predicate run through round 2's own forward machinery:
+
+```lean
+/-- **`c` mentions no variable of `B`.** -/
+def Avoids (B : Var → Prop) (c : Constraint) : Prop :=
+  ¬ B c.lhs ∧ ∀ w ∈ vset c, ¬ B w
+
+theorem redClosed_avoids (B : Var → Prop) : RedClosed (Avoids B)
+
+/-- **The bridge to `QueueHygiene`'s `involves`.** -/
+theorem notInvolves_iff_avoids {p : LPart} {v : Nat} :
+    p.involves v = false ↔ Avoids (fun w => w = v) p.toConstraint
+
+/-- The predicate `QueueHygiene` is stated at. -/
+def Bound (e : Env) (v : Var) : Prop := e.contains v = true
+
+theorem queueHygiene_iff {s : State} :
+    QueueHygiene s ↔ ∀ p ∈ s.parts, Avoids (Bound s.env) p.toConstraint
+```
+
+with `Env.contains_iff` and `Env.contains_instantiate` (`(e.instantiate v val).contains w = true
+↔ e.contains w = true ∨ w = v`) as the environment's side.
+
+### The five branches, as separate theorems
+
+```lean
+/-- `Q.+!`, INCLUDING its `CommonPartition` redirect. -/
+theorem insertP_avoids {B : Var → Prop} {q : PQueue} {p x : LPart}
+    (hq : ∀ y ∈ q.elems, Avoids B y.toConstraint) (hp : Avoids B p.toConstraint)
+    (h : x ∈ (q.insertP p).elems) : Avoids B x.toConstraint
+
+theorem makeEmpty_avoids {B : Var → Prop} {ns : Names} {v : Nat} {incm proc : PQueue}
+    {env : Env} {ni np : PQueue} {e : Env}
+    (hi : ∀ x ∈ incm.elems, Avoids B x.toConstraint)
+    (hp : ∀ x ∈ proc.elems, Avoids B x.toConstraint)
+    (h : makeEmpty ns v incm proc env = .ok (ni, np, e)) :
+    (∀ x ∈ ni.elems, Avoids (fun w => B w ∨ w = v) x.toConstraint) ∧
+      (∀ x ∈ np.elems, Avoids (fun w => B w ∨ w = v) x.toConstraint)
+
+theorem instantiate_avoids {B : Var → Prop} {ns : Names} {v u : Nat} {incm proc : PQueue}
+    {env : Env} {ni np : PQueue} {e : Env} (hvu : v ≠ u) (hu : ¬ B u)
+    (hi : ∀ x ∈ incm.elems, Avoids B x.toConstraint)
+    (hp : ∀ x ∈ proc.elems, Avoids B x.toConstraint)
+    (h : instantiate ns v u incm proc env = .ok (ni, np, e)) :
+    (∀ x ∈ ni.elems, Avoids (fun w => B w ∨ w = v) x.toConstraint) ∧
+      (∀ x ∈ np.elems, Avoids (fun w => B w ∨ w = v) x.toConstraint)
+
+theorem makeConcrete_avoids {B : Var → Prop} {v : Nat} {fs : SSet Lbl} {incm proc : PQueue}
+    {ni np : PQueue} (hv : ¬ B v)
+    (hi : ∀ x ∈ incm.elems, Avoids B x.toConstraint)
+    (hp : ∀ x ∈ proc.elems, Avoids B x.toConstraint)
+    (h : makeConcrete v fs incm proc = .ok (ni, np)) :
+    (∀ x ∈ ni.elems, Avoids B x.toConstraint) ∧ (∀ x ∈ np.elems, Avoids B x.toConstraint)
+
+theorem learnPartitions_avoids {B : Var → Prop} {fl : Flags} {ns : Names} {env : Env}
+    {v : Nat} {rhs1 : RHS} {incm proc : PQueue} {su : Sup} {S : SSet LPart} {su' : Sup}
+    (hdj : fl.disjRule = false)
+    (hok : SupOk su) (hsu : SupAvoids B su) (hv : ¬ B v)
+    (hr1 : ∀ w ∈ rhs1.abstr.elems, ¬ B w)
+    (hi : ∀ x ∈ incm.elems, Avoids B x.toConstraint)
+    (hp : ∀ x ∈ proc.elems, Avoids B x.toConstraint)
+    (h : learnPartitions fl ns env v rhs1 incm proc su = .ok (S, su')) :
+    ∀ x ∈ S.elems, Avoids B x.toConstraint
+```
+
+with a per-rule lemma for each of the seven rules (`selfSubstitution_avoids`,
+`splitConcrete_avoids`, `cancellation_avoids`, `resolution_avoids`, `subBody_avoids`,
+`substitution_avoids`, `commonSubexpression_avoids`, `disjunction_avoids`), a lemma for each
+reverse lookup (`findRHS_avoids`, `findRHS3_avoids`, `findResolvent_avoids`,
+`findConcRow_avoids`, `mkLookups_avoids`), and the supply side:
+
+```lean
+/-- No id the supply can still hand out is bound. -/
+def SupAvoids (B : Var → Prop) (su : Sup) : Prop := ∀ z, Sup.Reach su z → ¬ B z
+
+theorem supAvoids_of_supFresh {su : Sup} {G : System} (h : SupFresh su G) {B : Var → Prop}
+    (hB : ∀ v, B v → v ∈ allVars G) : SupAvoids B su
+```
+
+### The headline
+
+```lean
+/-- **`QueueHygiene` is preserved by every `continue` step.** -/
+theorem step_queueHygiene {s s' : State} (hdj : s.flags.disjRule = false)
+    (hok : SupOk s.su) (hfr : SupFresh s.su (sys s))
+    (h0 : QueueHygiene s) (h : step s = .continue s') : QueueHygiene s'
+
+/-- The brief's name for the theorem above. -/
+theorem QueueHygiene.step {s s' : State} (hdj : s.flags.disjRule = false)
+    (hok : SupOk s.su) (hfr : SupFresh s.su (sys s))
+    (h0 : QueueHygiene s) (h : Rowpartition.Loop.step s = .continue s') : QueueHygiene s'
+
+/-- **Every initial state is hygienic**: `Seed`/`Replay` start with an EMPTY environment. -/
+theorem queueHygiene_of_env_nil {s : State} (h : s.env.binds = []) : QueueHygiene s
+
+theorem queueHygiene_initial {q : PQueue} (fl : Flags) (ns : Names) (site : String) (su : Sup)
+    (lo : Nat) (t : List String) :
+    QueueHygiene { incm := q, proc := PQueue.empty, env := {}, su := su, trace := t,
+                   flags := fl, names := ns, site := site, su0 := lo }
+
+/-- **Hygiene holds at every state a run reaches.** -/
+theorem run_queueHygiene : ∀ (n : Nat) {s : State}, s.flags.disjRule = false → RunSupOk n s →
+    QueueHygiene s → ∀ s', (run s n = .solved s' ∨ run s n = .outOfFuel s') → QueueHygiene s'
+
+/-- A `died` step changes nothing but the trace, so hygiene survives a REFUTATION too. -/
+theorem step_died_parts {s s' : State} {m : String} (h : Rowpartition.Loop.step s = .died m s') :
+    s'.parts = s.parts ∧ s'.env = s.env
+
+/-- **Hygiene holds at every state a run reaches, refutations included.** -/
+theorem run_queueHygiene' : ∀ (n : Nat) {s : State}, s.flags.disjRule = false → RunSupOk n s →
+    QueueHygiene s → ∀ s' m, run s n = .rejected m s' → QueueHygiene s'
+
+/-- **The reinstantiation panic is unreachable from a hygienic state.** -/
+theorem queueHygiene_binds_unbound {s : State} (h : QueueHygiene s) {r : LPart} {rest : PQueue}
+    (hdq : s.incm.dequeue = some (r, rest)) :
+    s.env.contains r.lhs = false ∧
+      (∀ u, r.rhs.abstr.contains u = true → s.env.contains u = false) ∧
+      (∀ u, s.proc.findRHS r.rhs = some u → s.env.contains u = false)
+```
+
+The three conjuncts of `queueHygiene_binds_unbound` are exactly the three variables a `step` can
+bind — the dequeued left-hand side (`makeEmpty` at `empty`, `instantiate` at `common`), its lone
+variable part (`instantiate` at `unify`) and the `common` partner — which is the condition
+`Subst.instantiateType`'s `die` tests.  Together with `queueHygiene_initial` and
+`run_queueHygiene` this closes `B1-FIX.md`'s open item — **conditionally, and the condition is
+worth stating plainly (round-3 review, Q-1):**
+
+> `run_queueHygiene` and `run_queueHygiene'` carry `RunSupOk n s`, which
+> `RefineLearn.lean:1499` defines as `SupOk` and `SupFresh` AT EVERY STATE of the run.  L3's own
+> row records that this is a per-state HYPOTHESIS, not an invariant, and round 3 does not
+> discharge it (R3.4: that needs C2's sharp vocabulary clause, which is exactly what
+> `learnPartitions_vocab` does not give).  So **"the reinstantiation panic has no path from an
+> initial state" is conditional on `RunSupOk` and on `disjRule = false`.**  The single-step
+> theorem `step_queueHygiene` carries only the single-state `SupOk`/`SupFresh`, which every
+> replay state satisfies; it is the RUN-level statement that needs the unproved per-state form.
+> Q-2, also worth recording: `queueHygiene_initial` is stated for the state literal
+> `Seed.solve` builds (`env := {}`), which is "every state the seed loader builds", not "every
+> `Wf` initial state" — `Wf` is `QOk` plus `LblCoh` and says nothing about `env`; and there is
+> no single assembled corollary of the shape `run st0 n ≠ .rejected (panic …) s'`, the reader
+> composes `queueHygiene_initial` + `step_queueHygiene` + `queueHygiene_binds_unbound`.
+
+Before B1 the invariant was false outright (round 2, §R2.4), so this is still the theorem that
+certifies the fix; what is conditional is only its run-level reach.  In its sharpest form:
+
+```lean
+/-- `instantiate`'s ONLY error is the reinstantiation panic. -/
+theorem instantiate_ok_of_unbound {ns : Names} {v u : Nat} {incm proc : PQueue} {env : Env}
+    (h : env.contains v = false) :
+    ∃ ni np, instantiate ns v u incm proc env
+      = .ok (ni, np, env.instantiate v (.alias u))
+
+/-- **At a hygienic state neither link branch can die.** -/
+theorem step_link_no_death {s : State} (h : QueueHygiene s) {r : LPart} {rest : PQueue}
+    (hdq : s.incm.dequeue = some (r, rest)) :
+    (∀ u, s.proc.findRHS r.rhs = some u →
+        ∃ w, unifyVars s.names r.lhs u rest s.proc s.env = .ok w) ∧
+      (∀ u, r.rhs.single? = some u →
+        ∃ w, unifyVars s.names u r.lhs rest s.proc s.env = .ok w)
+```
+
+**Where the B1 fix is load-bearing, exactly.**  In `makeEmpty_avoids`'s propagation case the
+emitted `w` must satisfy `w ≠ v`, and the only reason it does is that the fold ranges over
+`p.rhs.abstr.excl v` — the `(abstr - v)` of `B1-FIX.md` §5.  With `abstr` in its place that case
+is false, and with it `makeEmpty_avoids`, `step_queueHygiene`, `run_queueHygiene` and the
+corollary.  Nothing else in the proof changes between the two versions.
+
+**Scope.**  `learnPartitions_avoids` carries `fl.disjRule = false`.  The RULE is fine —
+`disjunction_avoids` is proved — but its two call sites are inner folds over `proc` whose
+plumbing would roughly double the proof for a branch the plan's "Known scope limits" already
+scopes to seeds, and which `RefineLearn.step_refines_all` excludes by the same hypothesis.  No
+other flag is assumed: `emptyRow` and `cseMints` are handled in both settings.
+
+## R3.4 — the `concrete` and `learn` branches, and C2
+
+**Outcome: NOT DONE for the two branches; the quantitative half of C2 is PROVED.**
+
+### The two branches: what stops them, stated plainly
+
+* **`learn`.**  `step_learn_sys_mono` gives `sys s ⊆ sys s'`, so the step is purely additive on
+  `sys`, and `LoopStrict.of_rel` converts every ADDITIVE `LoopRel` step into a `LoopStrictRun`.
+  So the transfer is mechanical IF the learn branch's `LoopRun` is presented as a chain of
+  `Adds`-steps.  It is not: `RefineLearn.lean` threads it through `RuleRun`, whose first
+  component is a bare `LoopRun`, and whose producers (`subst_one_run`, `subBody_run`, the five
+  minting-rule runs) build that `LoopRun` from lemmas that do not record additivity.  Making
+  the transfer would mean changing `RuleRun` to carry both runs and re-proving its 20-odd
+  producers — a 1,558-line edit that I judged not worth doing before `qsys` is settled, since
+  the `learn` branch is where the MINTS are and the mint side of the bound is the `qsys`
+  question, not the refinement question.  Recorded as NOT DONE, not attempted.
+* **`concrete`.**  Unchanged from rounds 1 and 2: `concRemove`'s `NoLoss` premise is the
+  `cancellation_bare` gap (§C1.5), so the constructor cannot be applied to `sys s` at all, and
+  the backwards reading through `subPartitions`/`destructiveSub`/`makeConcrete` was not written.
+
+So `step_refines_strict` still covers three of five branches, and the plan's acceptance clause
+"every `step` refines it under the same hypotheses as `step_refines_all`" still FAILS.
+
+### C2's question, answered: how many ids a `learn` step draws (`Loop/Draws.lean`)
+
+```lean
+theorem fresh_drawn (su : Sup) : (su.fresh).2.drawn = su.drawn + 1
+
+/-- `splitConcrete` draws at most one id, in its final branch. -/
+theorem splitConcrete_drawn {fl : Flags} {v : Nat} {abstr : SSet Nat} {concr : SSet Lbl}
+    {rhss : RHS → Option Nat} {resolvent concRow emptyRow : SSet Lbl → Option Nat} {su : Sup} :
+    (splitConcrete fl v abstr concr rhss resolvent concRow emptyRow su).2.drawn
+      ≤ su.drawn + 1
+
+/-- `resolution` draws at most one id -- taken BEFORE the guards, so a reuse costs one too. -/
+theorem resolution_drawn {fl : Flags} {v : Nat} {rhs1 rhs2 : RHS}
+    {resolvent concRow emptyRow : SSet Lbl → Option Nat} {su : Sup} :
+    (resolution fl v rhs1 rhs2 resolvent concRow emptyRow su).2.drawn ≤ su.drawn + 1
+
+/-- Under `genRules=cut` -- the shipped setting -- `commonSubexpression` draws NOTHING. -/
+theorem commonSubexpression_no_draw {fl : Flags} {v : Nat} {rhs1 : RHS} {u : Nat} {rhs2 : RHS}
+    {rhss : RHS → Option Nat} {su : Sup} (hcse : fl.cseMints = false) :
+    (commonSubexpression fl v rhs1 u rhs2 rhss su).2 = su
+
+/-- **How many ids a `learn` step draws.** -/
+theorem learnPartitions_drawn {fl : Flags} {ns : Names} {env : Env} {v : Nat} {rhs1 : RHS}
+    {incm proc : PQueue} {su : Sup} {S : SSet LPart} {su' : Sup}
+    (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (h : learnPartitions fl ns env v rhs1 incm proc su = .ok (S, su')) :
+    su'.drawn ≤ su.drawn + 1 + proc.elems.length
+```
+
+**The answer: at most `1 + |proc|` ids per `learn` step under the shipped flags** — one for
+`splitConcrete` at the top, and at most one per PROCESSED partition, only through `resolution`,
+whose `fresh` is drawn BEFORE its guards (so a reuse costs an id too; that is what makes the
+`e00346` seed draw 1,033 ids from twelve constraints).  With `-Dermine.disjunction` on the
+bound is false: each `disjunction` call draws one or two more and there are two nested folds
+over `proc` per step.  `selfSubstitution` draws nothing (the whole branch returns `su`).
+
+**C2's vocabulary clause itself is NOT delivered** (round-3 review, F-4).  What is proved is
+`learnPartitions_vocab`, whose conclusion is `x.lhs ∈ V ∨ Sup.Reach su x.lhs` — "in the old
+vocabulary, or ANY id the supply can ever hand out".  C2 needs "…, or one of the ids THIS step
+actually drew"; the weaker clause cannot preserve `SupFresh`, since `Sup.Reach su` is the whole
+tail of the supply and not just the consumed prefix.  `learnPartitions_drawn` counts the drawn
+ids, so the two halves exist and the strengthening that intersects them is one lemma away — but
+it is not written, and therefore:
+
+> **`SupOk`/`SupFresh` preserved by `step` — so that `RunSupOk` becomes a theorem rather than a
+> per-state hypothesis — is NOT delivered by round 3.**  This is the same gap that makes
+> R3.3's run-level statement conditional (Q-1), and the round-3 review makes it the
+> highest-value-per-line item left.  `Loop/Hygiene.lean` does prove the
+predicate-level half of that clause for every rule (`splitConcrete_avoids`,
+`resolution_avoids`, `commonSubexpression_avoids`, `substitution_avoids`,
+`disjunction_avoids`, `selfSubstitution_avoids`, `cancellation_avoids`), so the ingredients
+exist; assembling them into `SupFresh` was not done.
+
+## R3.5 — the bound: **(T2) with the exact remaining lemma**
+
+**Outcome: T2.**  Not T1 — the remaining lemma is named below and is not proved, and even with
+it what follows is a SNAPSHOT bound on the queue-visible vocabulary, not a mint count (R3.5.4)
+and not `Terminates`.  Not W — the new witness hunt is 20,720 runs with 0 `FUEL`, 20,000 of them
+aimed at exactly the two configurations this round proves destroy the syntactic guard (R3.5.3).
+
+### R3.5.1 What round 3 changes about the shape of the obstacle
+
+Round 2 left "(A) fails at the parent-concrete keys; (B) is unavailable because `requeue`'s
+licence is semantic".  Round 3 replaces both halves with something sharper:
+
+* **(B) is now AVAILABLE as a relation-level result.**  `LoopStrict.carried_step` proves
+  `Carried`-preservation for every constructor that can have it, and
+  `LoopStrictKRun.allVars_card_le` turns that into the vocabulary SNAPSHOT bound
+  `|allVars G| ≤ |allVars G₀| + hmeas L rho G₀` at every state of any run of carried-preserving
+  steps and KEYED mints.  So the relation side of ingredient (B) is done — but the snapshot is
+  not a mint count (R3.5.4).
+* **(B) is now provably UNAVAILABLE for the loop over `sys`, and the reason is exact.**  There
+  are three distinct destroyers of the syntactic guard, each machine-checked:
+  `substOut_breaks_carried` (the alias elimination retains `v <- (u)`, and
+  `carried_iff_of_link_only` says a variable whose only constraint is its alias link carries
+  the key `∅` and no other); `carried_not_monotone_under_deletion` (any `drop`); and
+  `redirect_breaks_carried` (`Q.+!`'s `CommonPartition` redirect replaces the insertion of
+  `w <- (S,K)` by `w <- (a)` when `a <- (S,K)` is already queued, which destroys a
+  `ConcCarried` PARENT even though the two systems have the same models).
+* **The first destroyer disappears over `qsys`** — `qsys` drops the environment's alias facts,
+  so the eliminated variable leaves the vocabulary and `carried_substOut_of_ne` covers every
+  variable that remains.  **The third does not**: the redirect is a queue operation, and `qsys`
+  is the queues.  One precision the round-3 review asks for (N-1): `redirect_breaks_carried`
+  compares two hypothetical SUCCESSORS of one system — what the queue would hold if the
+  insertion went through, against what it holds when the redirect fires — so it is an obstacle
+  to the covering-lemma route of R3.5.2b, not by itself a counterexample to
+  `CarrPresOn (qsys s) (qsys s')`.  That refutation is round 4's item (1).
+
+### R3.5.2 The exact remaining lemma, and the bound it yields (`Loop/Residual.lean`)
+
+```lean
+/-- **A dequeued partition with a nonempty concrete part forbids `v <- ()`.** -/
+theorem dequeued_not_empty_of_sat {s : State} (hsat : SSat (sys s)) {r : LPart} {rest : PQueue}
+    (hdq : s.incm.dequeue = some (r, rest)) (hconc : r.rhs.conc.isEmpty = false) :
+    mk r.lhs ∅ (∅ : Row) ∉ sys s
+
+/-- **§C3.2's localisation, sharpened.** -/
+theorem concCarried_parent_nonempty {s : State} (hsat : SSat (sys s)) {r : LPart}
+    {rest : PQueue} (hdq : s.incm.dequeue = some (r, rest)) (hconc : r.rhs.conc.isEmpty = false)
+    {K : Row} (h : ConcCarried (qsys s) r.lhs K) :
+    ∃ C : Row, C ≠ ∅ ∧ mk r.lhs ∅ C ∈ qsys s ∧ ∃ z, mk z ∅ (C \ K) ∈ qsys s
+
+/-- **THE REMAINING LEMMA.** -/
+def QStepDichotomy (L : Finset Label) : Prop :=
+  ∀ (s s' : State) (rho : Assign), Wf s → SModels rho (qsys s) → ConcSub L (qsys s) →
+    step s = .continue s' →
+    K2StarStep (qsys s) (qsys s') ∨
+      (allVars (qsys s') ⊆ allVars (qsys s) ∧ ConcSub L (qsys s') ∧
+        CarrPresOn (qsys s) (qsys s') ∧ SModels rho (qsys s'))
+
+/-- One step, under the remaining lemma: the potential does not grow. -/
+theorem qstep_pot_le {L : Finset Label} (h : QStepDichotomy L) {s s' : State} {rho : Assign}
+    (hw : Wf s) (hm : SModels rho (qsys s)) (hcs : ConcSub L (qsys s))
+    (hst : step s = .continue s') :
+    ∃ rho', SModels rho' (qsys s') ∧ ConcSub L (qsys s') ∧
+      Pot L rho' (qsys s') ≤ Pot L rho (qsys s)
+
+/-- **The loop-level bound, conditional on the remaining lemma.** -/
+theorem run_qsys_invariant {L : Finset Label} (h : QStepDichotomy L) :
+    ∀ (n : Nat) (s : State), Wf s → ∀ rho : Assign, SModels rho (qsys s) → ConcSub L (qsys s) →
+      ∀ s', (run s n = .solved s' ∨ run s n = .outOfFuel s') →
+        ∃ rho', SModels rho' (qsys s') ∧ Pot L rho' (qsys s') ≤ Pot L rho (qsys s)
+
+/-- **THE LOOP-LEVEL VOCABULARY SNAPSHOT BOUND, conditional on the remaining lemma.** -/
+theorem run_qsys_allVars_card_le {L : Finset Label} (h : QStepDichotomy L) (n : Nat)
+    (s : State) (hw : Wf s) (rho : Assign) (hm : SModels rho (qsys s)) (hcs : ConcSub L (qsys s))
+    (s' : State) (hres : run s n = .solved s' ∨ run s n = .outOfFuel s') :
+    (allVars (qsys s')).card ≤ (allVars (qsys s)).card + hmeas L rho (qsys s)
+
+/-- The bound at the labels the input carries, so that it depends on the input alone. -/
+theorem run_qsys_bound {s0 : State} (h : QStepDichotomy (labelsOf (qsys s0))) (n : Nat)
+    (hw : Wf s0) (rho : Assign) (hm : SModels rho (qsys s0)) (s' : State)
+    (hres : run s0 n = .solved s' ∨ run s0 n = .outOfFuel s') :
+    (allVars (qsys s')).card
+      ≤ (allVars (qsys s0)).card + hmeas (labelsOf (qsys s0)) rho (qsys s0)
+```
+
+So the residual is ONE `Prop`, and it is proved SUFFICIENT for the explicit bound
+`|allVars (qsys s₀)| + hmeas (labelsOf (qsys s₀)) rho (qsys s₀)` on the number of queue-visible
+variables HELD AT ANY ONE STATE.
+
+> **CORRECTED after the round-3 review (F-2).**  This paragraph originally continued "hence on
+> the number of mints, since only a mint enlarges the vocabulary".  That is false here, and for
+> a reason specific to `qsys`: the loop's queue-visible vocabulary SHRINKS at an elimination — a
+> `common`/`unify` step writes the alias into `env`, and `qsys` excludes aliases, so the
+> eliminated variable leaves `allVars (qsys ·)`.  A mint(+1)/elimination(−1) alternation
+> therefore keeps the snapshot flat while minting without limit, and `QStepDichotomy`'s second
+> disjunct (`allVars (qsys s') ⊆ allVars (qsys s)`) permits exactly that.  **No statement in the
+> tree bounds how many times the loop mints.**  See R3.5.4.
+
+**What `QStepDichotomy` still needs, clause by clause.**
+
+| clause | status |
+|---|---|
+| `K2StarStep (qsys s) (qsys s')` at a minting step — ingredient (A) | OPEN, but its WORSE HALF is now closed. §C3.2 localises the gap to two cases; the dangerous one — the parent already empty, which carries EVERY key at once — is PROVED VACUOUS at a mint on satisfiable input (`dequeued_not_empty_of_sat`, `concCarried_parent_nonempty`): a mint's parent is the dequeued left-hand side, whose right-hand side has a nonempty concrete part, so the system cannot also hold `v <- ()`. What is left is the `C ⊆ K` half with `C` the parent's own NONEMPTY row, i.e. `2^{\|L \\ C\|}` keys per parent. |
+| `allVars (qsys s') ⊆ allVars (qsys s)` at a non-minting step | plausible, unproved; the `sys` analogue is `step_allVars_strict` for three branches. |
+| `ConcSub L (qsys s')` | plausible, unproved; no rule invents a label. |
+| `CarrPresOn (qsys s) (qsys s')` — ingredient (B) | OPEN, and `redirect_breaks_carried` is the sharpened obstacle. The alias half is closed by `carried_substOut_of_ne` (over `qsys`), the `makeEmpty` half by `KeyedEmpty.carried_makeEmptyE`, the `makeConcrete` half by `KeyedRow.carried_concretizeSrs`. |
+| `SModels rho (qsys s')` | plausible, unproved; `step_models_iff` is the `sys` analogue for three branches. |
+
+**And note what `QStepDichotomy` does NOT give**, in two independent ways.
+
+*It does not bound the mint count.*  The bound is a snapshot on the queue-visible vocabulary,
+and `qsys` shrinks at an elimination, so mints and eliminations can alternate for ever inside
+it (F-2 above).
+
+*It does not give `Terminates s₀`.*  Even a genuine mint count would bound names, not dequeues;
+termination needs it TOGETHER with §C3.4's progress table, whose last row — the `concrete`
+branch count — is still open (L3 §4c(2)'s `ensureSuperset`-monotonicity sketch).
+
+Both are stated here so no reader mistakes the conditional bound for a conditional termination
+proof, or for a mint budget.
+
+### R3.5.2b The next step, named
+
+The shortest route to the `CarrPresOn` clause of `QStepDichotomy` is a syntactic COVERING lemma
+for the queue writer, the mirror of round 2's `MECover`:
+
+> `insertP_covers`: for every `p`, either `q.insertP p` contains a partition `eqv` to `p`, or
+> `p` is a self-unification, or `q.rhsLookup p.rhs` hit — and in the last case the queue holds
+> `a <- (S,K)` and gains `p.lhs <- (a)`.
+
+`StrictStep.lean` already has `MECover` (what `makeEmpty`'s fold leaves behind, partition by
+partition) but only as an internal `def` consumed inside `makeEmpty_noLoss`.  The QUEUE half is
+now written and is exportable:
+
+```lean
+theorem sset_eqv_refl {α : Type} [SVal α] [LawfulSVal α] (s : SSet α) : s.eqv s = true
+
+theorem rhs_eqv_refl (r : RHS) : r.eqv r = true
+
+theorem insertP_covers {q : PQueue} {p : LPart} :
+    (∃ x ∈ (q.insertP p).elems, x.rhs.eqv p.rhs = true) ∨ p.isSelfUnification = true
+
+theorem concatP_covers : ∀ (ps : List LPart) (q : PQueue) (p : LPart), p ∈ ps →
+    (∃ x ∈ (q.concatP ps).elems, x.rhs.eqv p.rhs = true) ∨ p.isSelfUnification = true
+```
+
+— after `Q.+!` the queue holds SOMETHING with the inserted partition's right-hand side: the
+partition itself, or the `CommonPartition` redirect's match, which is precisely the case in
+which the insertion is logically redundant and syntactically invisible.  (The only escape is a
+self-unification, which `Q.insert` refuses and `Order.NoSelfUnif` excludes from every reachable
+state.)  What is still missing is the `makeEmpty` half — exporting `MECover` — after which
+`makeEmptyD r.lhs (qsys s)` is covered by `qsys s'` up to redirect victims, and
+`KeyedEmpty.carried_of_makeEmptyD_subset` finishes the `empty` branch modulo exactly the
+redirect.  The `common`/`unify` clauses would follow the same way from `replace`'s image.
+`redirect_breaks_carried` says what the residue after all of that would be.
+
+### R3.5.3 The witness hunt — 20,720 runs, 0 divergences
+
+**New populations, aimed at the three places round 3 PROVES the guard is destroyed.**  Generator
+`tmp/L5r3/hunt/gen.py`: a valuation is built first and every constraint is emitted as
+`whole <- (pairwise-disjoint parts ⊎ disjoint concrete)` over it, so every system is satisfiable
+by construction; an independent Python checker re-verifies each emitted system against its own
+`rho` before it is written (0 of 4,240 rejected).  Five labels, four empty-row variables.
+
+| population | what it is biased for | seeds × bases | runs | result |
+|---|---|---|---|---|
+| `redirect` | with probability 0.6 every constraint gets a TWIN with the SAME right-hand side and a different left-hand side — the `Q.+!` `CommonPartition` redirect's premise, i.e. exactly the configuration `redirect_breaks_carried` shows destroys a `ConcCarried` parent | 2,000 × 5 (0, 1, 5, 13, 97) | 10,000 | **SOLVED 10,000, FUEL 0, REJECTED 0** |
+| `alias` | with probability 0.6 every constraint gets a companion singleton link `a <- (b)` between variables of equal row — the `unify` branch's premise, i.e. the configuration `substOut_breaks_carried` shows destroys `Carried` at the eliminated variable | 2,000 × 5 | 10,000 | **SOLVED 10,000, FUEL 0, REJECTED 0** |
+| `scale18/20/22/24` | the constraint count pushed past round 2's 16 | 4 × 60 × 3 | 720 | **SOLVED 720, FUEL 0, REJECTED 0** |
+
+Fuel 400,000, 180 s per-run cap, shipped flags; runs are of `lake exe looptrace`, the L1/L2
+model executable.  **20,720 runs, no `FUEL`, no `REJECTED`, no timeout.**
+
+| population | mean ids drawn | median | max |
+|---|---|---|---|
+| `redirect` | 8.93 | 2 | **669** |
+| `alias` | 6.84 | 2 | **281** |
+| `scale18` | 6.34 | 2 | 71 |
+| `scale20` | 7.93 | 3 | 71 |
+| `scale22` | 8.89 | 5 | 70 |
+| `scale24` | 10.00 | 5 | 72 |
+
+The scaling family here grows only the CONSTRAINT count, at a fixed five-label budget, so it is
+NOT comparable with round 2's family (which grew the label set too): the mean grows roughly
+linearly, 6.3 → 10.0 over 18 → 24 constraints, and the maximum does not move.  It is a
+divergence check, not a growth measurement.
+
+**Model against the compiler, on the new populations.**  The trace agreement of L2/L4 is about
+the corpus and the tracked seeds, not about these; so 21 seeds spread across both populations
+were replayed through the REAL `Subst.solve` at bases 0–9, and the two extremes at bases 0–99:
+**410 comparisons of verdict AND ids drawn, 410 identical, 0 differing.**
+
+**The two extremes, on the compiler, at 100 id bases.**
+
+| seed | shape | compiler | `DRAWN` |
+|---|---|---|---|
+| `redirect00032` | 30 variables, 23 constraints, 5 labels | **SOLVED 100/100**, median 41 ms, max 530 ms | min 206, median 668, max **688**, in three clusters (206–207 ×10, 464–471 ×15, 666–688 ×75) |
+| `alias01349` | 38 variables, 20 constraints, 5 labels | **SOLVED 100/100**, median 71 ms, max 643 ms | min 173, median 275, max 287, in two clusters (173–177 ×44, 273–287 ×56) |
+
+The clustering is the point: the id base decides which of two or three regimes the queue order
+falls into, and the draw count jumps by a factor of three between them — the same phenomenon as
+round 2's 553-to-1,033 spread on `e00346`, on a fresh population.  Every base terminates, on
+both sides, in milliseconds.
+
+**Verdict: no witness.**  Round 3 therefore has no `W`, and combined with round 2's 7,500 +
+480 runs the evidence against divergence at the shipped flags now stands at **28,700 runs with
+0 `FUEL`**, including 20,000 aimed specifically at the two configurations this round proves
+destroy the syntactic guard.  That is evidence that the guard's fragility is not the loop's
+fragility — which is the honest reading of (T2) here: the bound is missing, not the property.
+
+**What the hunt does NOT establish, stated plainly** (round-3 review, S-7).  It is a WHOLE-RUN
+divergence check.  It is not evidence for `QStepDichotomy`, which is a PER-STEP `Prop`: a run
+can terminate while individual steps violate the dichotomy.  The review's round-4 item (1) —
+try to REFUTE the dichotomy at a single `Wf` state, which `Wf` does not constrain much (it is
+`QOk` plus `LblCoh`, with no `QueueHygiene`, `NoSelfUnif` or reachability) — is a different and
+much cheaper experiment, and round 3 did not run it.
+
+Artefacts: `tmp/L5r3/hunt/{gen.py,run.py,cmp.sh}`, `tmp/L5r3/hunt/seeds/`,
+`tmp/L5r3/hunt/logs/{redirect,alias,scale18,scale20,scale22,scale24}.txt`.
+
+### R3.5.4 The mint COUNT, as an explicit open item
+
+Round 2 and the first draft of round 3 both used "mint bound" for a bound on
+`|allVars ·|`.  For the library's `K2StarLoopRun` the two coincide, because its systems grow
+monotonically and every mint adds a fresh variable that never leaves.  For the loop they do NOT
+coincide, and round 3's review made that precise.  So, stated as an open item in its own right:
+
+> **OPEN.**  No theorem in the tree bounds the number of minting `step`s of a solve.  What is
+> proved is (i) `LoopStrictKRun.allVars_card_le` — a snapshot bound on the relation, and
+> (ii) `run_qsys_allVars_card_le` — the same on the loop, conditional on `QStepDichotomy`.
+> Closing the gap needs one of two things, neither of which is written:
+>
+> * a PRODUCTIVITY condition on the counted step (the library's `G ≠ G'`, plus "a mint adds a
+>   variable that no later step removes"), which for the loop means proving that an eliminated
+>   variable is never a variable minted later — plausible from `step_envNodup` plus
+>   `SupFresh`, and not attempted; or
+> * a MONOTONE carrier (the union of everything ever derived), for which ingredient (B) is free
+>   — `Carried` is monotone under addition — but ingredient (A) breaks, because the loop's mint
+>   guard is a lookup over the QUEUES and a bigger carrier carries more keys.
+>
+> That is a genuine dilemma between the two horns, not an oversight; the round-3 review's §S-11
+> states it the same way, and it is the thing round 4 should attack.
+
+## R3.6 — what round 3 could NOT prove, side by side
+
+| asked for | what is proved | what is not, and why |
+|---|---|---|
+| **R3.1** (reviewer's R-4 acceptance) "add a syntactic conjunct to `requeue` that preserves `Carried` (and prove the loop's actual re-emissions satisfy it), or dissolve `requeue`; then `carried_step` for every non-minting step" | `carried_step` = `LoopStrict.carried_step`: **seven** constructors proved outright (five by additivity, two by the library's `Carried` lemmas), four closed VACUOUSLY under `¬ IsMint`, three passed through as hypotheses — F-1; `CarrPresOn.hmeas_le`; the conjunct SUPPLIED in `LoopStrictKRun`, for which `requeue_breaks_carried` is unprovable; and along such runs a VOCABULARY SNAPSHOT bound (`LoopStrictKRun.allVars_card_le`), **not** a mint count — F-2 | The conjunct CANNOT be put on `LoopStrict.requeue` itself: `substOut_breaks_carried` + `carried_iff_of_link_only` show the loop's `common`/`unify` re-emissions violate it over `sys`, and `redirect_breaks_carried` shows the shape `Q.+!`'s redirect produces destroys a `ConcCarried` parent over `qsys` too — strictly, it compares two hypothetical successors (plain insertion versus redirect), so it blocks the covering-lemma route of R3.5.2b rather than refuting `CarrPresOn (qsys s) (qsys s')` outright. Putting it on the constructor would have forced deleting `step_strict_common`, `step_strict_empty` and `step_strict_unify`; I did not weaken them, and `Loop/Strict.lean` is byte-identical to round 2. |
+| **R3.2** "make `step_empty_makeEmptyE` load-bearing, and widen `substOut` with `replace`'s de-duplication fact so `instRemove` goes live" | both, and for BOTH link branches: `step_empty_via_makeEmptyE`; `substOutD` + `dedup_entailed` + `instRemove_step` + `instRemove_step_dedup` + `step_unify_via_substOut` + `step_common_via_substOut`. 13 of 14 constructors live | `concRemove` is still dead: its `NoLoss` premise is the `cancellation_bare` gap, so the `concrete` branch is not factored at all. |
+| **R3.3** "`QueueHygiene` preserved by `step`, then `queueHygiene_run` from the initial states, and the corollary that the reinstantiation panic is unreachable from any `Wf` initial state" | all three: `step_queueHygiene` / `QueueHygiene.step` (unconditional, hypotheses strictly weaker than `step_refines_all`'s), `queueHygiene_initial` + `run_queueHygiene` + `run_queueHygiene'`, `queueHygiene_binds_unbound` + `step_link_no_death` | `learnPartitions_avoids` carries `fl.disjRule = false` (as `RefineLearn.step_refines_all` does). `disjunction_avoids` is proved, so the RULE is not the obstacle — only its two inner folds over `proc`.  **The RUN-level statements are conditional on `RunSupOk`, an unproved per-state hypothesis (Q-1)**, so "the panic has no path" holds modulo it and modulo `disjRule = false`; the single-step theorem is unconditional.  `queueHygiene_initial` covers "every state `Seed.solve` builds", not literally "every `Wf` initial state" (Q-2), and the `run … ≠ .rejected (panic …)` corollary is composed by the reader rather than assembled into one theorem. |
+| **R3.4** "the `concrete` branch and the `learn` branch of the strict refinement, so `step_refines_strict` covers all five branches; and C2's vocabulary lemma for `learn`" | C2's quantitative half (`learnPartitions_drawn`: at most `1 + \|proc\|` ids) and a vocabulary clause that is **weaker than C2's** (`learnPartitions_vocab`: "old vocabulary or ANY reachable supply id") — F-4 | Neither branch of the refinement. `learn` needs `RefineLearn`'s `RuleRun` changed to carry a `LoopStrictRun` alongside its `LoopRun` and its ~20 producers re-proved (1,558 lines); `concrete` needs `concRemove`'s licence, i.e. `cancellation_bare`. `SupOk`/`SupFresh` preservation (the rest of C2) needs the SHARPER vocabulary clause "or one of the ids this step actually drew", which `learnPartitions_vocab` does not give. |
+| **R3.5** "`Terminates s₀` for every satisfiable `Wf s₀` with an explicit bound, or the exact remaining lemma plus a witness hunt" | the exact remaining lemma `QStepDichotomy`, PROVED SUFFICIENT for the explicit SNAPSHOT bound `\|allVars (qsys s₀)\| + hmeas (labelsOf (qsys s₀)) rho (qsys s₀)` on the queue-visible vocabulary held at one state (`run_qsys_bound`); a new witness hunt (R3.5.3) | `QStepDichotomy` itself; the MINT COUNT (R3.5.4 — the snapshot is not a budget, F-2); and `Terminates`, which needs a count TOGETHER with §C3.4's progress table, whose `concrete` row is still open. |
+
+## R3.7 — what a reviewer should re-run
+
+1. `cd tracker/lean && export PATH=$HOME/.elan/bin:$PATH && lake build Rowpartition` (846 jobs)
+   and `lake env lean Audit.lean` (3186 / 0).
+2. `grep -nE '\bsorry\b|\baxiom\b|\bpartial\b|native_decide|implemented_by|\bunsafe\b|\bopaque\b|Classical|\badmit\b|#exit' Rowpartition/Loop/{Carried,Hygiene,Factor,Draws,Residual}.lean`
+   — 0 hits in all five.
+3. `lake env lean tmp/L5r3/Axioms.lean` — 49 headlines, all `[propext, Classical.choice,
+   Quot.sound]`.
+4. The verbatim check: every ```lean block of this section, doc comments removed, must occur
+   byte-for-byte in the five modules (71 of 71).
+5. `git diff` scope: five NEW modules, `Rowpartition.lean` +5/−0, `tracker/lean/README.md`
+   +34/−0, the plan's L5 row, this report.  `Loop/{Strict,StrictStep,StrictBound}.lean`,
+   `Loop/{Refine,RefineConcrete,RefineLearn,Order,Wf,Step}.lean` and every Scala file
+   UNCHANGED.
+6. The counterexamples are the load-bearing negative results and are cheap to re-check:
+   `substOut_breaks_carried`, `carried_not_monotone_under_deletion`, `redirect_breaks_carried`.
+   Each is a closed term over a three-constraint system.
+7. The hunt: `python3 tmp/L5r3/hunt/gen.py redirect 2000 <dir> 5 4 14` reproduces the seeds
+   bit-for-bit (fixed `random.Random(i)` per seed), and `tmp/L5r3/hunt/cmp.sh <seed> 0 9`
+   re-runs one seed on both sides.

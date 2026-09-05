@@ -136,7 +136,23 @@ provable in principle — preservation is L5 round-3 work); Scala fix applied in
 shouldfail 56,032 agree; core/test 913/914; build 841, Audit 3058/0; ticket item 11, state-file section. Orchestrator
 re-verified build/audit/PANIC3/testOnly. B1 REVIEW: ADVANCE (full corpus row trace byte-identical pre/post; alias form has no path; RS5 = 100%-of-bases
 rejection fixed; stdlib carries the premise shape, dissolved by selfSubstitution). Five doc fixes sent to the
-implementer. UNCOMMITTED: B1 + L5 — commit on the user's word (B1 is an unconditional behaviour fix).
+implementer. COMMITTED 2026-09-04 as `52da5b8` (B1 + L5 round 2 in ONE commit: the fix touched three proof sites inside L5's
+then-uncommitted modules, so no buildable split existed). Tree clean. L5 ROUND 3 LAUNCHED (FRESH Opus agent,
+`briefs/brief-L5r3.md`: R3.1 Carried-preserving requeue/carried_step, R3.2 load-bearing empty branch + substOut,
+R3.3 QueueHygiene preservation certifying B1, R3.4 concrete/learn branches + supply lemma, R3.5 the bound or the
+lemma + witness hunt); reviewer after.
+L5 ROUND 3 DONE 2026-09-05 (fresh agent; Loop/{Carried,Factor,Hygiene,Residual}.lean, 2,875 lines; build 846,
+Audit 3186/0): R3.3 PROVED — `QueueHygiene` preserved by step and along runs from every Wf initial state,
+`step_link_no_death`: the reinstantiation panic is unreachable, CERTIFYING B1 (the fix load-bearing at exactly
+`abstr.excl v`); R3.1 `carried_step` for all ten constructors, mint bound proved along a Carried-preserving
+`LoopStrictKRun`, but the conjunct cannot go on `requeue` (`substOut_breaks_carried`); R3.2 instRemove live,
+13/14 constructors; R3.4 PARTIAL (learn/concrete branches; `learnPartitions_drawn` ≤ 1+|proc|); R3.5 T2 with
+ONE residual Prop `QStepDichotomy` proved sufficient for the explicit bound (`run_qsys_bound`), new obstacle
+`redirect_breaks_carried`; hunt 20,720 runs 0 fuel, 410 model-vs-compiler comparisons identical. ROUND-3 REVIEW: ADVANCE with corrections, APPLIED (the 'mint bound' restated as a queue-visible VOCABULARY
+SNAPSHOT bound — no theorem yet bounds the loop's mint COUNT; B1's run-level certification is CONDITIONAL on the
+unproved RunSupOk; carried_step 7 proved/4 vacuous/3 by hypothesis; learnPartitions_vocab weaker than C2's
+clause). Round-4 spec in L5-REVIEW.md S-11/S-12: refute-or-relativise QStepDichotomy, discharge RunSupOk, choose
+the carrier. UNCOMMITTED: round 3 (ready; commit on the user's word).
 (The earlier handoff sentences saying the invariant is false and that B1 must replace the emits_self lemma are
 superseded by this paragraph.); the 1,456-partition splitKey=false replay under tmp/L4/gu05nk/ is a model-speed
 question, not a disagreement. Reports: `L3-THEOREMS.md` (Round 2 section), `L4-TEST.md`.

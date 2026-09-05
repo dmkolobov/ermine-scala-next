@@ -676,3 +676,392 @@ sets for advancing. This is research that is not finished, not a defect list.
    `LoopStrict`), and C2's `learn` vocabulary lemma. Unchanged.
 5. Add R-4 and the `step_empty_makeEmptyE`-is-a-leaf note to `L5-TERMINATION.md`'s closing table so
    the record is complete.
+
+---
+
+# Round-3 review — 2026-09-05 (fresh reviewer)
+
+Review of L5 round 3 against `briefs/brief-L5r3.md`, `briefs/brief-review.md` and the plan's L5
+acceptance. Pre-existing baseline `52da5b8` (everything through B1 and L5 round 2 committed);
+under review are the five uncommitted modules `Loop/{Carried,Draws,Factor,Hygiene,Residual}.lean`,
+`Rowpartition.lean` +5, `tracker/lean/README.md` +28, the plan's L5 row, the handoff paragraph,
+and `L5-TERMINATION.md`'s Round 3 section. I read my predecessor's round-1 and round-2 sections
+first; this round answers their R-4 and their five-item priority list.
+
+Scratch: `/home/dmitry/.claude/jobs/880c725d/tmp/review-L5r3/`. Nothing outside that directory and
+this file was edited; no commits, no Lean edits, no Scala edits, no sbt. Two throwaway Lean
+witnesses of my own (`B1Bad.lean`, `MintCount.lean`) compile clean against the tree and are cited
+below.
+
+**Verdict: ADVANCE, with three corrections and a round-4 specification.** Nothing is unsound. The
+build, the audit, the axiom census, the module sizes, the verbatim quotations and the
+constructor-use table all reproduce exactly, and I re-derived the two load-bearing claims myself
+rather than reading them: the B1 fix IS load-bearing exactly where the report says (I reverted
+`.excl v` in a scratch copy of the arm and proved `makeEmpty_avoids` FALSE for it), and the
+`carried_step` / `LoopStrictKRun` construction is what it says it is. But three statements are
+weaker than the surrounding prose claims, one of them machine-checkably so.
+
+---
+
+## S-1. Rebuild, re-audit, hygiene — everything reproduces
+
+| step | command | result |
+|---|---|---|
+| build | `lake build Rowpartition` | `Build completed successfully (846 jobs)` — **matches** (841 before) |
+| audit | `lake env lean Audit.lean` | `Rowpartition theorems audited: 3186; declarations using a non-standard axiom: 0` — **matches** |
+| audit script | read `Audit.lean` | a real `Lean.collectAxioms` sweep over every non-internal `Rowpartition.*` theorem; `sorryAx` would be reported. Covers the new modules. |
+| grep | `sorry`/`axiom`/`partial`/`native_decide`/`implemented_by`/`unsafe`/`opaque`/`Classical`/`admit`/`#exit`/`extern`/`trust` over all five new modules | **0 hits** |
+| `#print axioms`, my own list | I extracted **all 121** theorem names from the five modules and ran them (`tmp/review-L5r3/MyAxioms.lean`) | 117 × `[propext, Classical.choice, Quot.sound]`, 2 × `[propext, Quot.sound]`, 1 × `[propext]`, 1 × "does not depend on any axioms". **No non-standard axiom.** |
+| `#print axioms`, the implementer's list | re-ran `tmp/L5r3/Axioms.lean` | 49 headlines, 49 × `[propext, Classical.choice, Quot.sound]` — **matches** |
+| verbatim | script-checked every ```lean block of the Round 3 section, doc comments stripped, against the five modules | **70 of 70 declarations byte-for-byte present.** (The report says 71 of 71 signatures; the difference is how a `def`+`theorem` block splits. Nothing paraphrased, nothing weakened silently.) |
+| line counts | `wc -l` | 391 / 1,496 / 466 / 270 / 252 = **2,875** — matches |
+| diff scope | `git status` + `git diff --numstat` | five NEW `Loop/` modules; `Rowpartition.lean` +5/−0; `README.md` +28/−0; plan +1/−1; report +773/−0; handoff +14/−1. `Loop/{Strict,StrictStep,StrictBound}.lean` and every `Refine*`/`Order`/`Wf`/`Step` module and every Scala file **UNCHANGED** — so the round-2 claim that nothing earlier is weakened holds literally. |
+
+## S-2. R3.1 (R-4) — the statements are honest; two counts in the prose are not
+
+`LoopStrict.carried_step` VERBATIM as quoted. Reading it for hidden hypotheses:
+
+* `hm : SModels rho G` — a **model** hypothesis, not merely `SSat`. Used only to discharge
+  `emptyRemove` and `concRemove` (both operators lose a fact on unsatisfiable input). Disclosed
+  in the doc comment. Fine.
+* `hdrop`, `hinst`, `hreq` are the theorem's **conclusion, assumed** at three of the fourteen
+  constructors. So `carried_step` proves nothing at `drop`, `instRemove` or `requeue`; it is a
+  case dispatch that isolates them. The report says exactly this, and R3.1.2/§3 prove two of the
+  three cannot be discharged (`substOut_breaks_carried`, `carried_not_monotone_under_deletion`),
+  with the third being my predecessor's `requeue_breaks_carried`. **The negative half of R-4 is
+  correctly established.** This is a legitimate research answer, not a dodge.
+
+**F-1 (CONFIRMED, counting).** "The other **ten** constructors need nothing beyond a model"
+(`Carried.lean:245`, quoted verbatim in the report) and "for all **ten** constructors that can
+have it" (§R3.6) are both wrong, and so is "nine of the fourteen constructors (the rule
+constructors) are discharged by **additivity**". I read the fourteen cases of the proof:
+
+| how discharged | constructors | count |
+|---|---|---|
+| additivity (`CarrPres.of_subset`) | `nongen`, `renameLhs`, `linkSymm`, `emptyProp`, `dedup` | 5 |
+| library `Carried` lemma | `emptyRemove`, `concRemove` | 2 |
+| **vacuous** — `absurd … hmint` | `split`, `res`, `splitFree`, `kres` | 4 |
+| licence assumed | `drop`, `instRemove`, `requeue` | 3 |
+
+So the number of constructors for which `carried_step` proves anything is **seven**, not ten, and
+four of the "rule constructors" are discharged by the `¬ IsMint` hypothesis rather than by
+additivity. Fix: say "seven proved outright, four vacuous under `¬IsMint`, three passed through".
+
+**F-2 (CONFIRMED, machine-checked) — `LoopStrictKRun.mints_bounded` does not bound the mints.**
+Its conclusion does not mention `n` at all:
+
+```lean
+theorem LoopStrictKRun.mints_bounded {G₀ : System} (rho : Assign) (hm : SModels rho G₀) :
+    ∀ (n : ℕ) (G : System), LoopStrictKRun (labelsOf G₀) n G₀ G →
+      (allVars G).card ≤ (allVars G₀).card + hmeas (labelsOf G₀) rho G₀
+```
+
+and its doc comment ("the mints themselves are bounded, because each of the `n` counted steps is
+the only kind that can enlarge the vocabulary"), the report's §R3.5.2 ("hence on the number of
+mints, since only a mint enlarges the vocabulary") and `Residual.lean:234` ("so this bounds the
+number of mints of the whole solve") all assert something the theorems do not give. Two reasons,
+both structural:
+
+1. `LoopStrictKRun.mint` carries **no progress side condition**, where the library's
+   `K2StarLoopRun.tail` carries `G ≠ G'`; and `K2StarStep` includes the NON-generative
+   `NonGenStep`, so a counted step need not enlarge anything.
+2. `LoopStrictKRun.keep` weakens the library's subset-monotone step to
+   `allVars G' ⊆ allVars G`, which permits **strict shrinking**. The library's card bound bounds
+   the mints only because its systems grow monotonically; this relation's do not.
+
+Machine-checked in `tmp/review-L5r3/MintCount.lean` (compiles clean, `[propext, Classical.choice,
+Quot.sound]`, no `sorry`):
+
+```lean
+def G0 : System := {mk 0 ∅ (∅ : Row), mk 1 ∅ (∅ : Row), mk 0 {1} (∅ : Row)}
+theorem k2 : K2StarStep G0 G0                                        -- commonPart re-derives v0 <- (v1)
+theorem krun_unbounded (L) : ∀ n : ℕ, LoopStrictKRun L n G0 G0
+theorem mints_not_bounded :
+    ∀ N : ℕ, ∃ (n : ℕ) (G : System), N < n ∧ LoopStrictKRun (labelsOf G0) n G0 G ∧
+      (allVars G).card ≤ (allVars G0).card + hmeas (labelsOf G0) (fun _ => (∅ : Row)) G0
+```
+
+From the FIXED satisfiable `G0`, `LoopStrictKRun` reaches every `n` with the vocabulary bound
+holding. The same defect propagates to the loop-level statement: `QStepDichotomy`'s second
+disjunct permits `allVars (qsys s') ⊊ allVars (qsys s)`, and the loop **does** shrink `qsys` — a
+`common`/`unify` step writes the alias into `env`, and `qsys` (`StrictStep.lean:1733`) excludes
+aliases, so the eliminated variable leaves the queue-visible vocabulary. So a mint(+1) /
+elimination(−1) alternation keeps `|allVars (qsys ·)|` flat while minting without limit
+(PLAUSIBLE for the loop; CONFIRMED for the relation). This does not make anything false — the
+proved statements are correct as written — but it means what round 3 has is a **snapshot bound on
+the queue-visible vocabulary, not a mint budget**, and the gap to (T1) is larger than the
+narrative suggests.
+
+**F-3 (CONFIRMED) — `LoopStrictKRun` is not connected to the loop.** `grep -rn LoopStrictKRun
+Rowpartition/` finds it in `Carried.lean` only (one prose mention in `Residual.lean`). No theorem
+derives a `LoopStrictKRun` step from `step`, and by the round's own `substOut_breaks_carried` none
+can over `sys`. The report is candid about this in §R3.1.4 and §R3.6 ("for the carried-preserving
+fragment"), and the plan row says "along carried-preserving runs" — so the wording is defensible.
+Recorded so the record is complete: this is round-2's "`step_empty_makeEmptyE` is a leaf" finding
+recurring at round 3's headline, and it is the reason F-2 matters.
+
+## S-3. R3.2 — DONE, verified, and the constructor count is exactly right
+
+I counted the constructor applications myself (`grep -o "LoopStrict\.<ctor>"` over all eight
+`Strict*`/new modules) and got the report's table **entry for entry**: `nongen` 3, `split` 2,
+`res` 1, `splitFree` 1, `kres` 2, `renameLhs` 1, `linkSymm` 2, `emptyProp` 1, `dedup` 4, `drop` 2,
+`instRemove` 2, `emptyRemove` 1, `concRemove` 0, `requeue` 8. **13 of 14 live**, confirmed.
+
+* `step_empty_via_makeEmptyE` genuinely composes round 2's leaf with the `requeue` that reaches
+  `sys s'`; the third conjunct is the composite `LoopStrictRun`, so the leaf is no longer a leaf.
+  It costs one new hypothesis, `hsat : SSat (sys s)` (needed for `allVars_makeEmptyE_eq` via
+  `defs_conc_empty_of_sat`) — a strengthening of the premise the report does not flag, harmless
+  because satisfiability is the setting of the whole C3 argument.
+* `dedup_entailed` is a real argument, not a re-labelled assumption: `v` and `u` are parts of one
+  constraint hence have disjoint rows, the link makes the rows equal, so both are empty. The
+  `LoopStrict.dedup` constructor then adds `u <- ()` legitimately and `instRemove` applies.
+  `instRemove` is live at BOTH link branches (`step_unify_via_substOut`, `step_common_via_substOut`).
+* Caveat worth one line in the report: the factoring interposes the operator but does **not**
+  remove the trailing `requeue` — `LoopStrict H (sys s')` is still one semantically-licensed
+  requeue, and `step_refines_strict` (the acceptance criterion) still runs through the bare one.
+  The report says as much ("Round 2's bare `requeue`s are still there").
+
+## S-4. R3.3 — the strongest result of the round; B1 certification confirmed, with two qualifications
+
+The statements are as quoted and the proof is a genuine five-way case analysis on `step`'s
+dispatch (`common`, `empty`, `concrete`, `unify`, `learn`), not a vacuity. It is **not** vacuous:
+`queueHygiene_binds_unbound` derives three real facts, and `step_link_no_death` turns them into
+"neither link branch can error", using `instantiate_ok_of_unbound` — which I verified against
+`Loop/Step.lean:82-94`: `instantiate`'s ONLY error arm is `env.contains v`.
+
+**Hypotheses are strictly weaker than `step_refines_all`'s**, which the report claims and I
+confirmed: `step_refines_all` needs `emptyRow = false ∧ disjRule = false ∧ cseMints = false ∧
+SupOk ∧ SupFresh` (`RefineLearn.lean`), `step_queueHygiene` needs only `disjRule = false ∧ SupOk ∧
+SupFresh`. `Wf` is not needed at all.
+
+**The B1 fix is load-bearing exactly where claimed — CONFIRMED by reverting it.** The brief asked
+me to try this; I did, in `tmp/review-L5r3/B1Bad.lean` (compiles clean against the tree):
+`makeEmptyBad` is `Loop.makeEmpty` with the single token `p.rhs.abstr.excl v` reverted to
+`p.rhs.abstr`, everything else byte-identical. With `proc = {v0 <- (v0, v1)}`, `incm` empty, empty
+env:
+
+```
+fixed   makeEmpty : Except.ok ([(1, [])], [])          -- emits only  v1 <- ()
+reverted makeEmptyBad : Except.ok ([(0, []), (1, [])], [])  -- emits  v0 <- ()  as well
+```
+
+and therefore, as theorems:
+
+```lean
+theorem good_avoids_v : … ∧ ni.elems.any (fun p => p.involves 0) = false
+theorem bad_emits_v   : ∃ x ∈ niBad.elems, x.lhs = 0
+theorem makeEmptyBad_avoids_false :        -- the statement of `makeEmpty_avoids`, verbatim,
+    ¬ (∀ …, makeEmptyBad ns v incm proc env = .ok (ni, np, e) → …)   -- with makeEmptyBad
+```
+
+So the failing lemma is `makeEmpty_avoids` in its propagation case, exactly as
+`Hygiene.lean:220-226` and the report say; and I checked that the *other* `SSet.mem_excl_iff` use
+in that proof (`:279`) belongs to the erasure arm `p.rhs.erase v`, which pre-dates B1. The Scala
+side (`Constraints.scala:1574`, `(abstr - v)`) and the model agree.
+
+**Qualification Q-1 (CONFIRMED).** `run_queueHygiene` and `run_queueHygiene'` carry
+`RunSupOk n s` — which `RefineLearn.lean:1499` defines as `SupOk`/`SupFresh` **at every state of
+the run**, a per-state hypothesis that L3's own row records is *not* an invariant. So "the panic
+has no path from any initial state" is conditional on an unproved supply invariant (plus
+`disjRule = false`). The verbatim quotations show it; the prose in §R3.3, the plan row ("R3.3 DONE
+and it CERTIFIES B1") and the handoff paragraph do not.
+
+**Qualification Q-2 (CONFIRMED, minor).** `queueHygiene_initial` is stated for a state *literal*
+with `env := {}`, `proc := PQueue.empty`. I checked it matches `Seed.lean:135`'s `st0` exactly, so
+the coverage is real — but it is "every state `Seed.solve` builds", not "every `Wf` initial state"
+as the brief and the handoff phrase it (`Wf` does not constrain `env`; `Wf.lean` is only `QOk` on
+both queues plus `LblCoh`). Also, there is no single assembled corollary of the shape
+"`run st0 n ≠ .rejected (panic …) s'`"; the pieces are `queueHygiene_initial` +
+`step_queueHygiene` + `queueHygiene_binds_unbound`, and the reader composes them. One theorem
+would close it. Note the §0 panic is `makeEmpty`'s, which is covered by
+`queueHygiene_binds_unbound`'s FIRST conjunct rather than by `step_link_no_death`.
+
+## S-5. R3.4 — `learnPartitions_drawn` verified against the Scala; the plan row overstates `_vocab`
+
+`learnPartitions_drawn : su'.drawn ≤ su.drawn + 1 + proc.elems.length` under `disjRule = false ∧
+cseMints = false`. I checked the bound against the shipped Scala rather than the model:
+`Constraints.scala:1466` is `proc.foldLeft(splitConcrete(…))`, one `splitConcrete` (≤1 draw,
+`:1301`, guarded by `concr.isEmpty || abstr.size < 2`) plus, per `proc` element, either
+`resolution` (`:1773`: `val z = fresh(…)` is taken **before** `tops.isEmpty || bots.isEmpty` and
+before all three reuse guards — so a reuse costs an id, exactly as the report says) or
+`commonSubexpression` + `substitution` (no draw under `cseMints = false`). `cancellation` and
+`selfSubstitution` draw nothing. **The bound is right and tight.**
+
+**F-4 (CONFIRMED) — the plan's L5 row overstates C2.** It says "C2's quantitative half PROVED …
+and its **vocabulary clause PROVED** (`learnPartitions_vocab`)". The report's own §R3.6 says the
+opposite: "`SupOk`/`SupFresh` preservation (the rest of C2) needs the SHARPER vocabulary clause
+'or one of the ids this step actually drew', which `learnPartitions_vocab` does not give". Reading
+the statement, §R3.6 is right: the conclusion is `(x.lhs ∈ V ∨ Sup.Reach su x.lhs)`, i.e. "in the
+old vocabulary or **any** id the supply can ever hand out", which cannot preserve `SupFresh`. The
+plan row should say "a vocabulary clause that is not C2's". The brief's R3.4 asked for the lemma
+"so `SupOk`/`SupFresh` are preserved by `step`"; that is NOT delivered, and the report says so.
+
+Both refinement branches (`concrete`, `learn`) remain undone, with reasons I find accurate:
+`concRemove`'s `NoLoss` premise is still the `cancellation_bare` gap, and the `learn` transfer
+needs `RefineLearn`'s `RuleRun` to carry a `LoopStrictRun` alongside its `LoopRun`.
+
+## S-6. R3.5 — the dichotomy is a real Prop, `redirect_breaks_carried` is real, but the framing has two gaps
+
+**Is `QStepDichotomy` a real Prop about the model or a restatement of the goal?** A real Prop. It
+is a per-step statement about the actual `step` function; `qstep_pot_le`, `run_qsys_invariant`,
+`run_qsys_allVars_card_le` and `run_qsys_bound` are a genuine induction on fuel over `run`, with
+`step_wf` threading well-formedness. The reduction from a run-level bound to a step-level
+dichotomy is real work, and the bound it yields is explicit and depends on the input alone. I
+found no circularity and no hidden hypothesis: `Wf s`, `SModels rho (qsys s)`, `ConcSub L (qsys s)`
+are all present in the assembled theorems and all discharged or carried.
+
+**Is the "worse half vacuous at a mint on satisfiable input" theorem stated as claimed?** Yes, with
+one unformalised link. `dequeued_not_empty_of_sat` and `concCarried_parent_nonempty` both take
+`hconc : r.rhs.conc.isEmpty = false` as a **hypothesis**; nothing in the tree proves that a mint's
+dequeued premise has a nonempty concrete part. I verified that side condition against the Scala
+myself and it holds: `splitConcrete` returns `Set()` when `concr.isEmpty` (`:1305`) and
+`resolution` needs `tops = concr1 -- int` nonempty (`:1777`), so both minting rules require it. So
+the claim is TRUE but rests on a Scala-side observation, not on a theorem. Worth one lemma.
+
+**Is `redirect_breaks_carried` a genuine new obstacle?** Yes, and it is correctly stated — a legal
+`requeue`-shaped move (same models, `allVars G' ⊆ allVars G`) that destroys a `ConcCarried`
+parent, in the specific shape `Q.+!`'s `CommonPartition` redirect produces. But note precisely
+what it is and is not: it compares two *hypothetical successors* (plain insertion vs. redirect),
+not a state's predecessor with its successor. It is therefore an obstacle to the **covering-lemma
+route** §R3.5.2b names, not a counterexample to `CarrPresOn (qsys s) (qsys s')`. §R3.6's phrasing
+"`redirect_breaks_carried` shows `Q.+!`'s redirect violates it over `qsys` too" reads as the
+latter and should be tightened to the former.
+
+**F-5 (PLAUSIBLE, and the most important item for round 4) — `QStepDichotomy` may be FALSE as
+stated, and nothing in the round tries to find out.** It is universally quantified over every `s`
+with `Wf s`, and `Wf` (`Wf.lean`) is only `QOk` on both queues plus `LblCoh` — it does not carry
+`QueueHygiene`, `NoSelfUnif`, `SupOk` or reachability. The run-level induction only ever applies
+the dichotomy at states reachable from `s0`, so the lemma as stated is strictly stronger than the
+proof needs, and the redirect mechanism the same round exhibits is exactly the kind of thing that
+could refute it at an unreachable-but-`Wf` state. Round 3 spent its evidence budget on hunting a
+*divergence witness* (a whole-run property) and none on trying to refute the *step-level Prop* it
+nominates as the residual — which is far cheaper, since a single state and a single step suffice.
+
+## S-7. The witness hunt, re-run
+
+I re-ran the hunt independently (regeneration, samples at bases the implementer never used, the
+scale families in full, and fresh model-vs-compiler comparisons), and spot-checked the headline
+numbers by hand afterwards. **Everything reproduces; no discrepancy anywhere.**
+
+| phase | what I ran | result vs. claimed |
+|---|---|---|
+| regeneration | `gen.py redirect 2000 <dir> 5 4 14` and the same for `alias`, then `diff -rq` against the shipped `seeds/`; separately I regenerated 40 `alias` seeds and `cmp`-ed each | **byte-for-bit identical**, 2000/2000 files each dir, 40/40 on my own check. The generator is deterministic per seed and its independent satisfiability checker rejected 0. |
+| sample, shipped bases | 300 redirect + 300 alias seeds (random sample, seed 20260905) × bases {0,1,5,13,97}, fuel 400,000 | 1500 + 1500 runs, **SOLVED 3000, FUEL 0, REJECTED 0, TIMEOUT 0**; drawn mean 8.06 / 8.21, median 2 — consistent with the full-population 8.93 / 6.84 |
+| **bases nobody used** | 200 redirect + 200 alias seeds × bases **7 and 1000** | 800 runs, **SOLVED 800, FUEL 0, REJECTED 0** |
+| my own extra bases | `redirect00032` and `alias01349` at bases **2026** and **31337** by hand | SOLVED at all four; drawn 207 / 668 and 275 / 275 — the two- and three-cluster structure the report describes is real |
+| scale families | scale18/20/22/24 **re-run in full**, 60 seeds × 3 bases each | 720/720 SOLVED, means **6.34 / 7.93 / 8.89 / 10.00** — exact match, top-10-by-drawn lists identical to the shipped logs |
+| model vs. compiler | `cmp.sh` on 8 seeds spread across both populations at bases 0–9, plus `redirect00032` and `alias01349` at bases 0–29 | **140 fresh comparisons of verdict AND ids drawn, 140 identical, 0 differing.** `redirect00032` 30/30 SOLVED, DRAWN min 207 / median 668 / max 688; `alias01349` 30/30 SOLVED, DRAWN 173 / 275 / 287 — the report's 100-base figures reproduce exactly |
+
+The generator's shape is sound for the purpose: a valuation is built first and every constraint is
+emitted as `whole <- (pairwise-disjoint parts ⊎ disjoint concrete)` over it, so satisfiability is
+by construction and independently re-checked. The two biases do hit their targets (twinned
+right-hand sides for the redirect; companion singleton links for the alias elimination).
+
+**Scope of what the hunt establishes, stated plainly.** It is a *whole-run divergence* check, and
+it found nothing in 20,720 + my 4,320 runs. It is NOT evidence for `QStepDichotomy`, which is a
+per-step Prop: a run can terminate while individual steps violate the dichotomy. The report's
+closing line ("the guard's fragility is not the loop's fragility") is the right reading, but the
+evidence is aimed at a different proposition from the one nominated as the residual.
+
+## S-8. Acceptance criteria (plan `LOOP-MODEL-PLAN.md`, L5)
+
+| criterion | round 2 | round 3 | evidence |
+|---|---|---|---|
+| `LoopStrict` has no arbitrary-deletion constructor | PASS | **PASS**, unchanged | `Loop/Strict.lean` byte-identical (not in `git status`) |
+| every `step` refines it under the same hypotheses as `step_refines_all` | FAIL | **FAIL, unchanged** — `common`/`empty`/`unify` only; `concrete` and `learn` still out. Recorded as NOT DONE with reasons. |
+| `Terminates s₀` for every satisfiable `Wf s₀` with an explicit bound, **or** a compiler-reproduced witness | FAIL (T2) | **FAIL (T2)** — and the report says so twice, including "what `QStepDichotomy` does NOT give: `Terminates s₀`". The conditional result is a bound on `|allVars (qsys ·)|`, which by F-2 is not even a mint budget. No witness: 20,720 + 4,320 runs, 0 FUEL. |
+| audit green | PASS | **PASS** — 846 jobs, 3186/0, 0 `sorry`, all 121 new theorems on standard axioms |
+
+## S-9. The round-2 priority list, item by item
+
+| # | asked | delivered | my judgement |
+|---|---|---|---|
+| 1 | R-4: syntactic `Carried` conjunct on `requeue` **or** dissolve it; acceptance `requeue_breaks_carried` unprovable and `hmeas` non-increasing at every non-`IsMint` step | the conjunct proved UNADDABLE (`substOut_breaks_carried`, `carried_iff_of_link_only`, `redirect_breaks_carried`); supplied instead in a new relation `LoopStrictKRun` where it is a hypothesis | **ANSWERED, NEGATIVELY — and that is the right answer.** The acceptance as I wrote it is not met and cannot be met; the impossibility is now a theorem. The consolation prize (`LoopStrictKRun.allVars_card_le`) is not connected to the loop (F-3) and does not bound mints (F-2). |
+| 2 | make `step_empty_makeEmptyE` load-bearing; widen `substOut` with the dedup fact so `instRemove` goes live | both, and for both link branches | **DONE**, verified by my own constructor count |
+| 3 | `QueueHygiene` preservation after B1 | `step_queueHygiene` + `queueHygiene_initial` + `run_queueHygiene`/`'` + `queueHygiene_binds_unbound` + `step_link_no_death` | **DONE** — the best work in the round; two qualifications (Q-1 `RunSupOk`, Q-2 the initial-state shape and the missing assembled corollary) |
+| 4 | `concrete` and `learn` branches; C2's `learn` vocabulary lemma | neither branch; `learnPartitions_drawn` (new, verified against the Scala); `learnPartitions_vocab` which is not C2's clause | **PARTIAL**, honestly reported in §R3.6; the plan row overstates it (F-4) |
+| 5 | add R-4 and the `step_empty_makeEmptyE`-is-a-leaf note to the closing table | round 3 is purely additive, so §"Summary of everything not proved" and §R2.6 still read as they did (R2.6 row 3 still says `QueueHygiene` preservation "is FALSE for the model as it stands", now superseded) | **NOT DONE as asked**, superseded in substance by §R3.6. Documentation only. |
+
+## S-10. Findings, ranked
+
+| # | severity | status | finding | fix |
+|---|---|---|---|---|
+| F-2 | **major** | CONFIRMED (Lean) | `mints_bounded` / `run_qsys_allVars_card_le` bound the vocabulary **snapshot**, not the number of mints; the doc comments and §R3.5.2 claim otherwise. `LoopStrictKRun.mint` has no `G ≠ G'` and `keep` permits `allVars G' ⊊ allVars G`; the loop's `qsys` really does shrink at an elimination. | Rename/reword; state the mint count as an explicit open item; if a mint budget is wanted, add a progress condition or a monotone carrier (see S-11). |
+| F-4 | moderate | CONFIRMED | the plan's L5 row says C2's "vocabulary clause PROVED (`learnPartitions_vocab`)"; the report's own §R3.6 says that lemma is not C2's clause. | correct the plan row |
+| F-1 | moderate | CONFIRMED | `carried_step` covers **seven** constructors with content, four vacuously and three by hypothesis — not "ten … discharged by additivity". | correct `Carried.lean:245` and §R3.6 |
+| Q-1 | moderate | CONFIRMED | `run_queueHygiene` carries `RunSupOk n s`, an unproved per-state hypothesis, so "the panic has no path" is conditional on it (and on `disjRule = false`). Prose and plan row omit this. | add the qualifier wherever B1 "certification" is claimed |
+| F-5 | moderate | PLAUSIBLE | `QStepDichotomy` quantifies over all `Wf` states (`Wf` = `QOk` + `LblCoh` only), which is strictly stronger than the induction needs and may well be false; no attempt was made to refute it. | see the round-4 spec |
+| F-3 | minor | CONFIRMED | `LoopStrictKRun` appears nowhere outside `Carried.lean`; no `step` is shown to take a `keep` step. Correctly hedged in the report; recorded for the record. | one sentence in the report |
+| Q-2 | minor | CONFIRMED | "every `Wf` initial state" (handoff, brief) is really "every state `Seed.solve` builds" (`env = {}`); and the `run … ≠ .rejected (panic …)` corollary is never assembled into one theorem. | one theorem, one word |
+| N-1 | minor | CONFIRMED | §R3.6 says `redirect_breaks_carried` "shows `Q.+!`'s redirect violates [`CarrPresOn`] over `qsys` too". It compares two hypothetical successors, so it blocks the *covering-lemma route*, not `CarrPresOn` itself. | tighten one sentence |
+| N-2 | minor | CONFIRMED | "the parent-already-empty half is VACUOUS at a mint" rests on `hconc : r.rhs.conc.isEmpty = false` being a hypothesis; nothing proves a mint's premise has a nonempty concrete part. I verified it against the Scala (`splitConcrete:1305`, `resolution:1777`) and it is TRUE. | add the lemma |
+| N-3 | minor | CONFIRMED | `step_empty_via_makeEmptyE` adds `hsat : SSat (sys s)` over round 2's `step_empty_makeEmptyE`; harmless but unflagged. The handoff paragraph lists four new modules and omits `Draws.lean`. | one line each |
+
+Nothing in this list is a soundness defect, and none of it invalidates a proved statement: every
+theorem I checked says exactly what its text says. F-2 is the one that changes how the result
+should be read.
+
+## S-11. Round-4 specification — and whether the gap is fundamental
+
+**It is not fundamental, but it is structural, and round 3 is what made that visible.** All three
+destroyers of the syntactic guard (`substOut_breaks_carried`, `carried_not_monotone_under_deletion`,
+`redirect_breaks_carried`) are consequences of the loop DELETING, and the choice of carrier system
+is a genuine dilemma, now sharp on both horns:
+
+* over a **monotone** carrier (the union of everything ever derived), (B) is free — `Carried` is
+  monotone under addition, `CarrPres.of_subset` — and the mint count is exactly the vocabulary
+  growth, because a fresh id enters and never leaves. But (A) breaks: the loop's mint guard is a
+  lookup over the QUEUES, and a bigger carrier carries more keys, so `¬ Carried (queues) v K` does
+  not give `¬ Carried (hist) v K`.
+* over the **queue-visible** carrier `qsys`, (A) is within reach (§C3.2's localisation, now
+  sharpened by `concCarried_parent_nonempty`) and (B) is what `redirect_breaks_carried` blocks.
+
+That is a real trade-off, not an oversight, and it is the thing round 4 should attack directly
+rather than continuing to file down one horn.
+
+In priority order:
+
+1. **Try to REFUTE `QStepDichotomy` before trying to prove it** (F-5). It is one state and one
+   step; the counterexample machinery of `Carried.lean`/`Residual.lean` is right there, and the
+   redirect is the obvious lever (a `common`/`unify` step whose re-emission of a bare concrete
+   definition is redirected onto an existing carrier). Outcome either way is decisive: a
+   refutation retires the residual and forces the carrier question; a failed hunt is evidence.
+2. **Relativise the residual to reachable states.** `QStepDichotomy` should carry the invariants
+   round 3 now supplies — `QueueHygiene` (from `step_queueHygiene`, whose hypotheses are weaker
+   than `step_refines_all`'s), `Order.NoSelfUnif`, and `RunSupOk`'s per-state conjuncts — since
+   `run_qsys_invariant`'s induction can thread all of them and only ever applies the dichotomy at
+   reachable states. This is cheap and materially raises the chance the lemma is true.
+3. **Fix F-2 at the source: state and prove a MINT COUNT, not a vocabulary snapshot.** Either add
+   a progress condition to the counted step (the library's `G ≠ G'` plus "a mint adds a variable
+   that no later step removes"), or count mints against the monotone history and pay for (A)
+   separately. Until then, no statement in the tree bounds how many times the loop mints.
+4. **Discharge `RunSupOk`** (Q-1) — it now gates the B1 certification as well as C3. It needs the
+   `learn` branch's sharp vocabulary clause ("in the old vocabulary or one of the ids THIS step
+   drew"), which `learnPartitions_vocab` is one strengthening away from and `learnPartitions_drawn`
+   already counts. This is the highest value-per-line item left.
+5. **Assemble the B1 corollary** (Q-2): one theorem, `run st0 n ≠ .rejected (panic …) s'` for the
+   `Seed`-built initial state, so the certification is a statement rather than a composition the
+   reader performs. And add the `hconc`-at-a-mint lemma (N-2).
+6. **Corrections**: F-1, F-4, F-3, Q-1, N-1, N-3, and round-2's item 5 (mark §R2.6 row 3 and the
+   round-1 closing table superseded).
+
+If (1) refutes the dichotomy, round 5 is a different stage: the measure moves, and §C3.4's
+progress table plus a combinatorial mint bound (each mint names a row; `QueueHygiene` plus the
+single pass should give at most one per (premise, key)) becomes the main line rather than the
+fallback.
+
+## S-12. Verdict — **ADVANCE**
+
+Three of the five checkpoints landed as asked (R3.2, R3.3 in full; R3.1 answered, negatively and
+correctly). R3.4 is PARTIAL and says so. R3.5 is (T2) and says so, twice, including that it does
+not give `Terminates`. The build, audit, axiom census, module sizes, verbatim quotations,
+constructor table, draw bound and the entire witness hunt reproduce under my own re-runs, at bases
+and sample points the implementer never used. The two load-bearing claims I re-derived myself
+rather than reading — the B1 fix's necessity and the mint-count question — came out one for and
+one against the report, and the one against (F-2) is a misreading of the round's own theorems in
+the prose, not a false theorem.
+
+The plan's L5 acceptance is still not met on two of four criteria, but every gap is recorded in
+the report as accepted scope with a reason, which is the condition the review protocol sets. The
+stage advances with F-1, F-2, F-4 and Q-1 to be corrected in the report and the plan row, and the
+round-4 specification above.
