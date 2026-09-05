@@ -406,6 +406,14 @@ threading does for freshness and what the vocabulary clause would have to do too
 
 ### C3.1 Which system the measure is taken over — the choice `L3-REVIEW.md` §6d did not make
 
+> **SUPERSEDED BY R4.1 and R4.3 (2026-09-05).**  The choice this section makes — take the
+> measure over `qsys` — is refuted: ingredient (B) FAILS there, at an initial state
+> (`qStepDichotomy_false`), and the potential rises (`qstep_pot_increases`).  So is the
+> monotone alternative, where (B) is free and ingredient (A) fails
+> (`histDichotomy_false`), and so is the intermediate carrier `sys` this section starts from
+> (§R4.5, row "the carriers").  **All three natural carriers are refuted**; the table below
+> should be read as a record of what was tried, not as a live choice.
+
 The relation-level bound is `KeyedRow.mintsBoundedOnSatKeyed2Star`: along `K2StarLoopRun`,
 `(allVars G).card ≤ (allVars G₀).card + hmeas (labelsOf G₀) rho G₀`, with
 
@@ -648,6 +656,11 @@ measure argument.  No Scala change; the variant is still not in the model.
 ---
 
 ## Summary of everything not proved
+
+> **PARTLY SUPERSEDED (2026-09-05).**  Row "C2 `SupOk`/`SupFresh` preserved" is now DONE
+> (R4.2, `step_supFresh` / `runSupOk_of`).  Row "C3 `Terminates` with a bound" is still (T2),
+> but its stated route — the measure over `qsys` — is refuted by R4.1, as is the monotone
+> alternative by R4.3.
 
 | asked for | delivered | why not more |
 |---|---|---|
@@ -1049,6 +1062,12 @@ is proved here; the two mechanism lemmas are.
   an input no corpus contains and belongs in L4's population notes.
 
 ## R2.6 — what round 2 does NOT do
+
+> **SUPERSEDED (2026-09-05).**  Row (3) below says `QueueHygiene` preservation "is FALSE for
+> the model as it stands"; that was true of the UNFIXED `makeEmpty` and was superseded by
+> round 3's `step_queueHygiene` after the B1 fix.  Round 4 removes the last hypothesis from
+> its run-level form (`run_queueHygiene_of`, R4.2).  The round-3 review's S-9 item 5 asked
+> for this note.
 
 | asked for (§10) | delivered | why not more |
 |---|---|---|
@@ -1669,6 +1688,17 @@ exist; assembling them into `SupFresh` was not done.
 
 ## R3.5 — the bound: **(T2) with the exact remaining lemma**
 
+> **SUPERSEDED BY R4.1 (2026-09-05).**  The "exact remaining lemma" this section nominates,
+> `QStepDichotomy`, is **FALSE** — `Refuted.qStepDichotomy_false`, at an INITIAL state of a
+> satisfiable three-constraint input, and `qStepDichotomy_labelsOf_false` at the very pool
+> `run_qsys_bound` is stated with.  Everything proved below remains true as written
+> (`run_qsys_invariant`, `run_qsys_allVars_card_le`, `run_qsys_bound` are theorems), but their
+> hypothesis is now known to be unsatisfiable, so they bound nothing.  R4.1 also proves the
+> POTENTIAL this section propagates strictly increases at that step
+> (`qstep_pot_increases`), so no repair of the dichotomy that keeps `Pot` over `qsys` can
+> hold, and the relativisation to reachable states is refuted too (`qStepDichotomy'_false`).
+> Read §R4.1 before relying on anything in §R3.5.
+
 **Outcome: T2.**  Not T1 — the remaining lemma is named below and is not proved, and even with
 it what follows is a SNAPSHOT bound on the queue-visible vocabulary, not a mint count (R3.5.4)
 and not `Terminates`.  Not W — the new witness hunt is 20,720 runs with 0 `FUEL`, 20,000 of them
@@ -1888,6 +1918,16 @@ Artefacts: `tmp/L5r3/hunt/{gen.py,run.py,cmp.sh}`, `tmp/L5r3/hunt/seeds/`,
 
 ### R3.5.4 The mint COUNT, as an explicit open item
 
+> **SUPERSEDED BY R4.3 (2026-09-05).**  The open item is answered for the CALCULUS —
+> `Mints.KMintRun.mints_le` bounds the number of generative steps of `K2StarStep` by
+> `hmeas L rho G₀` for every satisfiable `G₀`, with the productivity condition this section
+> asks for — and answered NEGATIVELY for the LOOP: both of the two routes named below are
+> refuted.  The first (a productivity condition on the counted step over the queue-visible
+> carrier) dies with `qStepDichotomy_false`; the second (a monotone carrier) is built as
+> `Mints.Trail`, gives ingredient (B) for free, and needs one lemma `HistDichotomy`, which is
+> **FALSE** (`Mints.histDichotomy_false`, and `histDichotomyR_false` over real run histories).
+> Read §R4.3.
+
 Round 2 and the first draft of round 3 both used "mint bound" for a bound on
 `|allVars ·|`.  For the library's `K2StarLoopRun` the two coincide, because its systems grow
 monotonically and every mint adds a fresh variable that never leaves.  For the loop they do NOT
@@ -1939,3 +1979,793 @@ coincide, and round 3's review made that precise.  So, stated as an open item in
 7. The hunt: `python3 tmp/L5r3/hunt/gen.py redirect 2000 <dir> 5 4 14` reproduces the seeds
    bit-for-bit (fixed `random.Random(i)` per seed), and `tmp/L5r3/hunt/cmp.sh <seed> 0 9`
    re-runs one seed on both sides.
+
+# Round 4 — 2026-09-05, after `L5-REVIEW.md`'s "Round-3 review" (F-5, S-11, S-12)
+
+Fresh implementer, starting from the clean commit `9060fbf` (rounds 1–3 committed).  Work
+order is the brief's four checkpoints, R4.1 first: *attack `QStepDichotomy` before relying on
+it*.  **The attack succeeded: the residual round 3 nominated is FALSE**, and false at an
+INITIAL state of a satisfiable three-constraint input whose whole solve the compiler and the
+model both finish in three dequeues.  R4.2 then discharges `RunSupOk`, and R4.3 proves a real
+mint count for the calculus and refutes the OTHER horn of the review's §S-11 dilemma as well.
+Three NEW modules, `Rowpartition/Loop/{Refuted,Supply,Mints}.lean`; **no earlier module is
+edited**, so nothing rounds 1-3 proved is weakened or removed.
+
+| | before round 4 | after round 4 |
+|---|---|---|
+| `lake build Rowpartition` | 846 jobs | **849 jobs**, success |
+| `lake env lean Audit.lean` | `3186; 0` | **`Rowpartition theorems audited: 3376; declarations using a non-standard axiom: 0`** |
+| new-module lines | — | `Refuted.lean` 574 + `Supply.lean` 820 + `Mints.lean` 786 = **2,180** |
+| `sorry` / `axiom` / `partial` / `native_decide` / `Classical` / `unsafe` / `opaque` / `admit` | — | **0 in all three new modules** |
+| `#print axioms`, all 165 new theorems (`tmp/L5r4/Axioms.lean`) | — | 157 × `[propext, Classical.choice, Quot.sound]`, 4 × `[propext, Quot.sound]`, 4 depend on no axioms; **no non-standard axiom** |
+| verbatim | every ```lean block of this section, doc comments stripped, checked mechanically against the three modules | **89 of 89 statements byte-for-byte**; 95 declarations are quoted, six of them with an explicit `…` elision (marked in the text) |
+| files touched | — | three NEW `Loop/` modules; `Rowpartition.lean` +3 import lines; `tracker/lean/README.md` additive; the plan's L5 row; this report.  No earlier module and no Scala file is edited. |
+
+## R4.1 — `QStepDichotomy` is FALSE, at an initial state (review F-5, item 1)
+
+**Outcome: REFUTED, in Lean, over `Wf` states AND over reachable states AND with every
+invariant round 3 supplies assumed.  Not (b) — it is not provable as stated, because it is
+not true.**
+
+### R4.1.1 The witness
+
+Three constraints, satisfiable by `rho v0 = {}`, `rho v1 = rho v2 = {l0}`:
+
+```
+  v2 <- (v0, (|l0|))        v0 <- ()        v1 <- ((|l0|))
+```
+
+as the state `wS` (`Refuted.lean` §1) — `incm` the three partitions, **`proc` empty, `env`
+empty**, a coherent supply well clear of `{0,1,2}`, shipped flags.  That is exactly the
+literal shape `Hygiene.queueHygiene_initial` is stated for, i.e. the shape `Seed.solve`
+builds.
+
+```lean
+def wS : State :=
+  { incm := PQueue.ofList [wW, wV, wA], proc := PQueue.empty, env := {},
+    su := wSup, trace := [], flags := {}, names := wNames, site := "t0", su0 := 100 }
+
+def wS' : State :=
+  match step wS with
+  | .continue t => t
+  | .done t => t
+  | .died _ t => t
+
+theorem wS_step : step wS = .continue wS' := rfl
+```
+
+`v0` is the deepest variable of the graph, so the queue dequeues `v0 <- ()` first and the
+`empty` branch runs.  `makeEmpty v0` erases `v0` from `v2 <- (v0, (|l0|))`, leaving the bare
+concrete definition `v2 <- ((|l0|))`, and re-inserts it with `Q.++!` — into a queue that
+already holds `v1 <- ((|l0|))`.  **The `CommonPartition` redirect fires and inserts
+`v1 <- (v2)` instead.**
+
+```lean
+theorem qsys_wS :
+    qsys wS = ({mk 0 ∅ (∅ : Row), mk 1 ∅ ({0} : Row), mk 2 {0} ({0} : Row)} : System)
+
+theorem qsys_wS' :
+    qsys wS' = ({mk 1 ∅ ({0} : Row), mk 1 {2} (∅ : Row), mk 0 ∅ (∅ : Row)} : System)
+```
+
+The key `(v2, {l0})` is carried before the step by the lone witness `v2 <- (v0, (|l0|))`
+(`Resolved`), and by nothing after it — `v2` has no constraint left with `v2` on the left —
+while `v2` is still in the queue-visible vocabulary, as the part of `v1 <- (v2)`.
+
+```lean
+theorem wS_carried2 : Carried (qsys wS) 2 ({0} : Row)
+theorem wS'_notCarried2 : ¬ Carried (qsys wS') 2 ({0} : Row)
+theorem wS'_mem2 : (2 : Var) ∈ allVars (qsys wS')
+theorem wS_memW : mk 2 {0} ({0} : Row) ∈ qsys wS
+theorem wS'_notMemW : mk 2 {0} ({0} : Row) ∉ qsys wS'
+```
+
+So neither disjunct survives: the first fails because every `K2StarStep` is additive
+(`K2StarStep.subset`) and the premise `mk 2 {0} {0}` is gone; the second fails at
+`CarrPresOn`.
+
+```lean
+/-- **THE RESIDUAL IS FALSE.** -/
+theorem qStepDichotomy_false {L : Finset Label} (hL : (0 : Label) ∈ L) :
+    ¬ QStepDichotomy L
+
+theorem qStepDichotomy_labelsOf_false : ¬ QStepDichotomy (labelsOf (qsys wS))
+```
+
+The second is the pool `run_qsys_bound` is stated at, so the round-3 bound is conditional on
+a hypothesis that is false at its own label pool.
+
+### R4.1.2 Why no relativisation rescues it (the review's item 2)
+
+The witness is INITIAL, so it is reachable in zero steps, and every invariant round 3
+supplies holds at it — proved, not asserted:
+
+```lean
+theorem wS_invariants :
+    Initial wS ∧ Wf wS ∧ QueueHygiene wS ∧ NoSelfUnif wS ∧ NoInfRow wS ∧
+      SupOk wS.su ∧ SupFresh wS.su (sys wS) ∧ SSat (sys wS) ∧
+      wS.flags.disjRule = false ∧ wS.flags.emptyRow = false ∧ wS.flags.cseMints = false
+```
+
+The brief asks for the relativised statement and for `run_qsys_bound` re-proved from it.  Both
+are delivered — the route is sound, reachability threads through the fuel induction exactly as
+`Wf` does — and then the relativised statement is refuted by the same step:
+
+```lean
+def Initial (s : State) : Prop := s.proc = PQueue.empty ∧ s.env.binds = []
+
+inductive Reaches : State → State → Prop
+  | refl (s : State) : Reaches s s
+  | tail {s t u : State} : Reaches s t → step t = .continue u → Reaches s u
+
+def QStepDichotomy' (L : Finset Label) : Prop :=
+  ∀ (s0 s s' : State) (rho : Assign), Initial s0 → Reaches s0 s →
+    Wf s → SModels rho (qsys s) → ConcSub L (qsys s) → step s = .continue s' →
+    K2StarStep (qsys s) (qsys s') ∨
+      (allVars (qsys s') ⊆ allVars (qsys s) ∧ ConcSub L (qsys s') ∧
+        CarrPresOn (qsys s) (qsys s') ∧ SModels rho (qsys s'))
+
+theorem run_qsys_bound' {L : Finset Label} (h : QStepDichotomy' L) {s0 : State}
+    (hi : Initial s0) (n : Nat) (hw : Wf s0) (rho : Assign) (hm : SModels rho (qsys s0))
+    (hcs : ConcSub L (qsys s0)) (s' : State)
+    (hres : run s0 n = .solved s' ∨ run s0 n = .outOfFuel s') :
+    (allVars (qsys s')).card ≤ (allVars (qsys s0)).card + hmeas L rho (qsys s0)
+
+theorem qStepDichotomy'_false {L : Finset Label} (hL : (0 : Label) ∈ L) :
+    ¬ QStepDichotomy' L
+```
+
+with `qstep_pot_le'` and `run_qsys_invariant'` in between, mirroring round 3's chain.
+
+### R4.1.3 The POTENTIAL itself increases — so no repair of the dichotomy can work
+
+This is the part that decides where round 4 goes next.  At the same step, and for **every**
+model of the successor, the potential `Pot L rho G = |allVars G| + hmeas L rho G` — the
+quantity `qstep_pot_le` and `run_qsys_invariant` propagate — strictly GROWS:
+
+```lean
+abbrev wL : Finset Label := {0}
+
+theorem allVars_qsys_wS : allVars (qsys wS) = ({0, 1, 2} : Finset Var)
+theorem allVars_qsys_wS' : allVars (qsys wS') = ({0, 1, 2} : Finset Var)
+
+theorem uncarried_wS_2 : uncarried wL (qsys wS) 2 = 1
+theorem uncarried_wS'_2 : uncarried wL (qsys wS') 2 = 2
+theorem hmeas_wS : hmeas wL wRho (qsys wS) = 3
+theorem hmeas_wS' {rho : Assign} (h : SModels rho (qsys wS')) :
+    hmeas wL rho (qsys wS') = 6
+
+/-- **The potential STRICTLY INCREASES at the witness step**, for every model of the
+successor. -/
+theorem qstep_pot_increases {rho : Assign} (h : SModels rho (qsys wS')) :
+    Pot wL wRho (qsys wS) < Pot wL rho (qsys wS')
+
+/-- ... so the CONCLUSION of `qstep_pot_le` is false at this step. -/
+theorem qstep_pot_le_false :
+    ¬ (∃ rho', SModels rho' (qsys wS') ∧ ConcSub wL (qsys wS') ∧
+        Pot wL rho' (qsys wS') ≤ Pot wL wRho (qsys wS))
+```
+
+`6 < 9`: the vocabulary card is 3 on both sides, `hmeas` goes 3 → 6 because `v2`'s budget
+`uncarried` goes 1 → 2 and `|rho v2| = 1`.  `wS'_model_pinned` proves every model of the
+successor agrees with `wRho` on all three variables, so the increase is not an artefact of
+choosing a bad `rho'`.
+
+**Reading.**  The failure is not slack in how the dichotomy was phrased.  Over `qsys`, with
+`Carried` as the guard, the round-3 measure is simply not monotone along the loop's steps —
+the `Q.++!` redirect deletes a carrier from the queues at an `empty` step, on satisfiable
+input, at step one.  `L5-REVIEW.md` §S-11's second horn ("over the queue-visible carrier
+`qsys`, (A) is within reach and (B) is what `redirect_breaks_carried` blocks") is now closed
+NEGATIVELY: (B) is not merely blocked, it is false, and so is the potential that depends on
+it.  What survives of round 3's R3.5 is the *implication* `QStepDichotomy L → run_qsys_bound`
+— a true theorem with a false hypothesis.
+
+### R4.1.4 The witness on the SHIPPED compiler
+
+Not only reachable in the model: the compiler takes the same step.  With
+`tracker/repro/satterm/run.sh sweep json:.../redir.json 0 4 20 10` under
+`-Dermine.useInterface=false -Dermine.rowTrace=…`, all five id bases give `SOLVED`, `drawn=0`,
+`v0 := ConcreteRho(-,Set()); v1 := ConcreteRho(-,Set(l0)); v2 := ConcreteRho(-,Set(l0))`, and
+the trace at base 0 is three `step` records:
+
+```
+step  …  empty     ^free0 <- (,)                          incm=2  proc=0
+step  …  unify:2   CommonPartition: ^free1 <- (^free2,)   incm=1  proc=0
+step  …  concrete  ^free1 <- (,Repro.l0)                  incm=0  proc=0
+```
+
+The model's own trace for `wS` is those three records — branch, partition, `incm=`, `proc=`
+— as a theorem.  (The compiler's records carry two extra columns the model's `site` field
+stands in for: the seed's file name with its id base, and the JVM thread; those are per-run
+metadata, and they are the only difference.)
+
+```lean
+theorem wS_trace :
+    (match run wS 20 with
+      | .solved s => s.trace.reverse
+      | .rejected _ s => s.trace.reverse
+      | .outOfFuel s => s.trace.reverse) =
+      ["step\tt0\tempty\t^free0 <- (,)\tincm=2\tproc=0",
+       "step\tt0\tunify:2\tCommonPartition: ^free1 <- (^free2,)\tincm=1\tproc=0",
+       "step\tt0\tconcrete\t^free1 <- (,Repro.l0)\tincm=0\tproc=0"] := rfl
+
+theorem wS_solved : ∃ s, run wS 20 = .solved s
+```
+
+So the counterexample is a benign, terminating, three-dequeue solve of a satisfiable input,
+and the second `step` record IS the redirect: the compiler dequeues the partition
+`^free1 <- (^free2,)` that `Q.++!` manufactured in place of `^free2 <- (,Repro.l0)`.
+Seed: `tmp/L5r4/seeds/redir.json`.
+
+## R4.2 — `RunSupOk` DISCHARGED: `SupOk`/`SupFresh` are preserved by `step`
+
+**Outcome: DONE.**  `Loop/Supply.lean` (820 lines).  The per-state hypothesis that gated
+round 3's run-level queue hygiene — and with it the B1 certification — is now a theorem.
+
+### R4.2.1 Why the existing machinery could not give it, and what replaces it
+
+`Hygiene.lean`'s `learnPartitions_avoids` is parametric in a FIXED predicate `B` and needs
+`SupAvoids B su` — *no id the supply can still hand out is `B`*.  A freshness clause cannot
+assume that of itself: the ids a step DRAWS are ids the supply could hand out, so with `B`
+read as "still drawable at the END of the step" the hypothesis is false, for every rule.
+That is the exact reason `learnPartitions_vocab` came out as "in the old vocabulary or ANY
+reachable id" (round-3 review F-4) — the fixed-`B` shape cannot express "or one of the ids
+THIS step drew".
+
+The repair is to let the predicate move with the supply:
+
+```lean
+/-- **`w` is not an old name, and the supply `su` can still hand it out.** -/
+def New (Old : Var → Prop) (su : Sup) (w : Var) : Prop := ¬ Old w ∧ Sup.Reach su w
+
+theorem not_new_of_old {Old : Var → Prop} {su : Sup} {w : Var} (h : Old w) :
+    ¬ New Old su w
+
+/-- Drawing only shrinks the reachable set, so `New` only shrinks. -/
+theorem New.mono {Old : Var → Prop} {su su' : Sup}
+    (hm : ∀ z, Sup.Reach su' z → Sup.Reach su z) {w : Var} (h : New Old su' w) :
+    New Old su w
+
+/-- **The drawn id is not `New` at the supply that drew it.** -/
+theorem not_new_fresh {Old : Var → Prop} {su : Sup} (hok : SupOk su) :
+    ¬ New Old (su.fresh).2 (su.fresh).1
+
+/-- A supply that is either untouched or drawn from once. -/
+def SupStep (su su' : Sup) : Prop := su' = su ∨ su' = (su.fresh).2
+```
+
+`New` SHRINKS along a draw, so "every name accumulated so far avoids `New Old (the current
+supply)`" is a genuine FORWARD invariant, and `Wf.foldl_except_inv` carries it through
+`learnPartitions`' fold with no future-referring hypothesis.
+
+### R4.2.2 The three drawing rules, re-proved with the sharp conclusion
+
+Each rule's conclusion avoids `New Old` **at the rule's own output supply**, and none of the
+three needs a `SupAvoids` hypothesis:
+
+```lean
+theorem splitConcrete_su {fl : Flags} {v : Nat} {abstr : SSet Nat} {concr : SSet Lbl}
+    {rhss : RHS → Option Nat} {resolvent concRow emptyRow : SSet Lbl → Option Nat} {su : Sup} :
+    SupStep su (splitConcrete fl v abstr concr rhss resolvent concRow emptyRow su).2
+theorem resolution_su {fl : Flags} {v : Nat} {rhs1 rhs2 : RHS}
+    {resolvent concRow emptyRow : SSet Lbl → Option Nat} {su : Sup} :
+    SupStep su (resolution fl v rhs1 rhs2 resolvent concRow emptyRow su).2
+
+theorem splitConcrete_new {Old : Var → Prop} … (hok : SupOk su)
+    (hv : ¬ New Old su v) (ha : ∀ w ∈ abstr.elems, ¬ New Old su w)
+    (hr : ∀ r w, rhss r = some w → ¬ New Old su w)
+    (hres : ∀ k w, resolvent k = some w → ¬ New Old su w)
+    (hcr : ∀ k w, concRow k = some w → ¬ New Old su w) :
+    ∀ x ∈ (splitConcrete fl v abstr concr rhss resolvent concRow emptyRow su).1.elems,
+      Avoids (New Old (splitConcrete fl v abstr concr rhss resolvent concRow emptyRow su).2)
+        x.toConstraint
+
+theorem resolution_new … (analogous)
+theorem commonSubexpression_new … (hcse : fl.cseMints = false) … (analogous)
+```
+
+The hypotheses are `¬ New Old su ·` rather than `Old ·` on purpose: a reverse lookup may return
+a name from the CURRENT BATCH, which can be an id the step has already drawn, and that is
+exactly a name which is not old and no longer `New`.
+
+### R4.2.3 C2's sharp vocabulary clause
+
+```lean
+/-- Every name of `p` is an old one. -/
+def OldPart (Old : Var → Prop) (p : LPart) : Prop :=
+  Old p.lhs ∧ ∀ w ∈ p.rhs.abstr.elems, Old w
+
+/-- **C2's sharp vocabulary clause.**  Every name a `learn` step writes is an OLD name or an
+id the step has already SPENT -- so no name it writes is one the supply can still hand out. -/
+theorem learnPartitions_new {Old : Var → Prop} {fl : Flags} {ns : Names} {env : Env}
+    {v : Nat} {rhs1 : RHS} {incm proc : PQueue} {su : Sup} {S : SSet LPart} {su' : Sup}
+    (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (hok : SupOk su) (hv : Old v)
+    (hr1 : ∀ w ∈ rhs1.abstr.elems, Old w)
+    (hi : ∀ x ∈ incm.elems, OldPart Old x)
+    (hp : ∀ x ∈ proc.elems, OldPart Old x)
+    (h : learnPartitions fl ns env v rhs1 incm proc su = .ok (S, su')) :
+    SupOk su' ∧ (∀ z, Sup.Reach su' z → Sup.Reach su z) ∧
+      ∀ x ∈ S.elems, Avoids (New Old su') x.toConstraint
+```
+
+This IS the clause round 3 said was "one strengthening away" and did not write.
+
+### R4.2.4 The step, all five branches
+
+```lean
+/-- **`SupOk` and `SupFresh` are preserved by every `continue` step**, under the shipped
+flags.  This is the rest of C2. -/
+theorem step_supFresh {s s' : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hok : SupOk s.su) (hfr : SupFresh s.su (sys s))
+    (h : step s = .continue s') :
+    SupOk s'.su ∧ (∀ z, Sup.Reach s'.su z → Sup.Reach s.su z) ∧ SupFresh s'.su (sys s')
+```
+
+Taking `Old := (· ∈ allVars (sys s))`, the four non-`learn` branches reuse `Hygiene.lean`'s
+own `makeEmpty_avoids` / `instantiate_avoids` / `makeConcrete_avoids` at `B := New Old s.su`
+(they draw nothing, so the supply is fixed and every name they write is old), and the `learn`
+branch is `learnPartitions_new`.  The environment side is new — `SupFresh` is about all of
+`sys s`, not only the queues — and needs `instantiateType`'s rewriting:
+
+```lean
+theorem avoids_env_instantiate {B : Var → Prop} {e : Env} {v : Nat} {val : EnvVal}
+    (he : ∀ b ∈ e.binds, Avoids B (EnvVal.toConstraint b.1 b.2))
+    (hv : ¬ B v) (hval : ∀ u, val = EnvVal.alias u → ¬ B u) :
+    ∀ b ∈ (e.instantiate v val).binds, Avoids B (EnvVal.toConstraint b.1 b.2)
+```
+
+### R4.2.5 `RunSupOk` is a theorem, and B1's certification is hypothesis-free
+
+```lean
+/-- **The supply invariant is an INVARIANT**, not a per-state hypothesis. -/
+theorem runSupOk_of {s : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hok : SupOk s.su) (hfr : SupFresh s.su (sys s)) :
+    ∀ n : Nat, RunSupOk n s
+
+/-- **Queue hygiene at every state a run reaches -- UNCONDITIONALLY.** -/
+theorem run_queueHygiene_of (n : Nat) {s : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hok : SupOk s.su) (hfr : SupFresh s.su (sys s))
+    (h0 : QueueHygiene s) :
+    ∀ s', (run s n = .solved s' ∨ run s n = .outOfFuel s') → QueueHygiene s'
+
+theorem run_queueHygiene'_of (n : Nat) {s : State} … : ∀ s' m, run s n = .rejected m s' → QueueHygiene s'
+
+/-- Hygiene, the supply invariant and the flags all travel along `Reaches`. -/
+theorem reaches_invariants {s t : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hok : SupOk s.su) (hfr : SupFresh s.su (sys s))
+    (h0 : QueueHygiene s) (hr : Reaches s t) :
+    t.flags.disjRule = false ∧ t.flags.cseMints = false ∧ SupOk t.su ∧
+      SupFresh t.su (sys t) ∧ QueueHygiene t
+
+/-- **THE PANIC IS UNREACHABLE.**  At every state reachable from a hygienic one the three
+variables a step can bind are UNBOUND -- exactly the condition `Subst.instantiateType`'s `die`
+tests. -/
+theorem reaches_binds_unbound {s t : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hok : SupOk s.su) (hfr : SupFresh s.su (sys s))
+    (h0 : QueueHygiene s) (hr : Reaches s t) {r : LPart} {rest : PQueue}
+    (hdq : t.incm.dequeue = some (r, rest)) :
+    t.env.contains r.lhs = false ∧
+      (∀ u, r.rhs.abstr.contains u = true → t.env.contains u = false) ∧
+      (∀ u, t.proc.findRHS r.rhs = some u → t.env.contains u = false)
+
+theorem reaches_link_no_death … : (neither link branch can die)
+
+/-- **The certification, from an INITIAL state.** -/
+theorem initial_binds_unbound {s t : State} (hi : Initial s)
+    (hdj : s.flags.disjRule = false) (hcse : s.flags.cseMints = false)
+    (hok : SupOk s.su) (hfr : SupFresh s.su (sys s)) (hr : Reaches s t)
+    {r : LPart} {rest : PQueue} (hdq : t.incm.dequeue = some (r, rest)) :
+    t.env.contains r.lhs = false ∧
+      (∀ u, r.rhs.abstr.contains u = true → t.env.contains u = false) ∧
+      (∀ u, t.proc.findRHS r.rhs = some u → t.env.contains u = false)
+```
+
+**What is left as a hypothesis, stated plainly.**  `SupOk s.su` and `SupFresh s.su (sys s)`
+at the INITIAL state, and the two shipped flags `disjRule = false`, `cseMints = false`.  The
+first two are properties of the input, not of the loop: a seed is free to name a variable
+inside its own supply's range, and `Seed.solveSeed` does not check it.  Round 3's per-state
+`RunSupOk` is gone; the assembled corollary the review's Q-2 asked for is
+`reaches_binds_unbound` / `initial_binds_unbound`, stated semantically (the `die` test never
+fires) rather than as a string non-equality on the panic message.
+
+**Scope of the certification, exactly** (round-4 review U-2).  The two input hypotheses hold of
+every supply the COMPILER hands `Subst.solve` — that is what a `scalaparsers.Supply` is, and the
+trace's `sin` record carries `lo`, `hi` and the global block counter, which is how `Loop.Replay`
+gets them.  They do **not** hold of the model's own `json:` seed driver: `Sup.ofSeed` sets
+`blk = 0` (`Loop/State.lean`, and `RefineLearn.lean`'s own note on `SupOk` says so), so
+`SupOk`'s `hi ≤ blk` is false for it, and `Loop/Main.lean`'s `looptrace` seed runs are outside
+the theorem.  So the hypothesis-free reading is: **`Replay` of a real compiler trace, and
+hand-built states with a realistic supply** (R4.1's `wS` is one) — not the seed driver.  Nothing
+here is a defect of the loop; `Sup.ofSeed`'s `blk = 0` is the repro harness's real, process-global
+starting counter, and the panic-freedom argument simply does not quantify over it.
+
+**One asymmetry, unflagged until now** (round-4 review N-1).  `step_link_no_death` assembles
+"`instantiate` returns `.ok`" for the two link branches, but nothing assembles the same for
+`makeEmpty`'s own panic arm, although `reaches_binds_unbound`'s FIRST conjunct
+(`t.env.contains r.lhs = false`) is exactly that arm's guard (`Loop/Step.lean`, the
+`env.contains v` test before `instantiateType`).  The composition is one line and is not
+written; the fact is available, the corollary is not.
+
+## R4.3 — a REAL mint count, and the carrier dilemma settled on BOTH horns
+
+**Outcome: the mint count is PROVED for the relation, unconditionally; the loop-level
+transport is (T2) with the exact remaining lemma, and the hunt aimed at that lemma FOUND
+violations.**  `Loop/Mints.lean` (786 lines).
+
+### R4.3.1 The count itself (review F-2, and the brief's "productivity condition")
+
+Round 3's `LoopStrictKRun` counted steps that need not change anything and permitted the
+vocabulary to shrink, which is why its `n` was unbounded (the review's `mints_not_bounded`).
+Both defects are fixed by making the counted step exactly a step that ADDS A VARIABLE —
+`K2StarStep.allVars_cases` says there is no third case, so this is not a restriction of the
+calculus but a bookkeeping of it:
+
+```lean
+/-- **A run of the additive keyed calculus with the GENERATIVE steps counted.** -/
+inductive KMintRun (L : Finset Label) : ℕ → System → System → Prop
+  | refl (G : System) : KMintRun L 0 G G
+  | keep {n : ℕ} {G₀ G G' : System} :
+      KMintRun L n G₀ G → K2StarStep G G' → allVars G' = allVars G → KMintRun L n G₀ G'
+  | mint {n : ℕ} {G₀ G G' : System} :
+      KMintRun L n G₀ G → K2StarStep G G' →
+      (∃ w, w ∉ allVars G ∧ allVars G' = insert w (allVars G)) → KMintRun L (n + 1) G₀ G'
+
+theorem KMintRun.step {L : Finset Label} {n : ℕ} {G₀ G G' : System}
+    (h : KMintRun L n G₀ G) (hs : K2StarStep G G') :
+    KMintRun L n G₀ G' ∨ KMintRun L (n + 1) G₀ G'
+
+/-- **The count IS the vocabulary growth.** -/
+theorem KMintRun.card_eq {L : Finset Label} {n : ℕ} {G₀ G : System}
+    (h : KMintRun L n G₀ G) : (allVars G).card = (allVars G₀).card + n
+
+theorem KMintRun.pot_le {L : Finset Label} {n : ℕ} {G₀ G : System}
+    (h : KMintRun L n G₀ G) : ConcSub L G₀ → ∀ rho : Assign, SModels rho G₀ →
+      ∃ rho', SModels rho' G ∧ Pot L rho' G ≤ Pot L rho G₀
+
+/-- **THE MINT COUNT.**  From a satisfiable `G₀`, the additive keyed calculus takes at most
+`hmeas L rho G₀` GENERATIVE steps — an explicit bound in the input alone. -/
+theorem KMintRun.mints_le {L : Finset Label} {n : ℕ} {G₀ G : System} {rho : Assign}
+    (h : KMintRun L n G₀ G) (hcs : ConcSub L G₀) (hm : SModels rho G₀) :
+    n ≤ hmeas L rho G₀
+
+theorem KMintRun.mints_le_labelsOf {n : ℕ} {G₀ G : System} {rho : Assign}
+    (h : KMintRun (labelsOf G₀) n G₀ G) (hm : SModels rho G₀) :
+    n ≤ hmeas (labelsOf G₀) rho G₀
+
+theorem KMintRun.trans {L : Finset Label} {m n : ℕ} {G₀ G G' : System}
+    (h' : KMintRun L n G G') : KMintRun L m G₀ G → KMintRun L (m + n) G₀ G'
+
+/-- The round-3 review's `mints_not_bounded` is UNPROVABLE for this relation. -/
+theorem kmint_bounded (G₀ : System) (rho : Assign) (hm : SModels rho G₀) :
+    ∃ N : ℕ, ∀ (n : ℕ) (G : System), KMintRun (labelsOf G₀) n G₀ G → n ≤ N
+```
+
+This is the statement round 2 and round 3 both reached for and did not have: **a bound on the
+NUMBER OF MINTING STEPS, not on the vocabulary held at one state.**
+
+### R4.3.2 The carrier, and ingredient (B) for free
+
+R4.1 kills the queue-visible horn of the review's §S-11 dilemma outright, so this round takes
+the monotone one.  `Trail s H t` is "the run from `s` has reached `t`, and `H` is everything it
+has ever held":
+
+```lean
+inductive Trail : State → System → State → Prop
+  | refl (s : State) : Trail s (sys s) s
+  | tail {s t u : State} {H : System} :
+      Trail s H t → step t = .continue u → Trail s (H ∪ sys u) u
+
+theorem Trail.start_subset {s t : State} {H : System} (h : Trail s H t) : sys s ⊆ H
+theorem Trail.cur_subset {s t : State} {H : System} (h : Trail s H t) : sys t ⊆ H
+theorem Trail.reaches {s t : State} {H : System} (h : Trail s H t) : Reaches s t
+theorem Trail.wf {s t : State} {H : System} (hw : Wf s) (h : Trail s H t) : Wf t
+
+/-- **Ingredient (B), free.** -/
+theorem Trail.carrPres {H : System} (u : State) : CarrPres H (H ∪ sys u) :=
+  CarrPres.of_subset Finset.subset_union_left
+```
+
+One line, where over `sys` it took `substOut_breaks_carried` and over `qsys` it is FALSE.
+That is the whole content of the monotone horn, and it is now used rather than discussed.
+
+### R4.3.3 The remaining lemma, and the loop-level mint bound it gives
+
+```lean
+/-- **THE REMAINING LEMMA, over the monotone carrier.** -/
+def HistDichotomy (L : Finset Label) : Prop :=
+  ∀ (s s' : State) (H : System) (rho : Assign), Wf s → sys s ⊆ H → SModels rho H →
+    ConcSub L H → step s = .continue s' → ∃ n, KMintRun L n H (H ∪ sys s')
+
+theorem trail_kmintRun {L : Finset Label} (h : HistDichotomy L) {s0 t : State} {H : System}
+    (hw : Wf s0) (hcs : ConcSub L (sys s0)) (rho : Assign) (hm : SModels rho (sys s0))
+    (ht : Trail s0 H t) : ∃ n, KMintRun L n (sys s0) H
+
+/-- **THE LOOP-LEVEL MINT COUNT, conditional on the remaining lemma.** -/
+theorem run_hist_mints_le {L : Finset Label} (h : HistDichotomy L) {s0 t : State} {H : System}
+    (hw : Wf s0) (hcs : ConcSub L (sys s0)) (rho : Assign) (hm : SModels rho (sys s0))
+    (ht : Trail s0 H t) :
+    (allVars H).card ≤ (allVars (sys s0)).card + hmeas L rho (sys s0)
+
+theorem run_sys_allVars_le … : (allVars (sys t)).card ≤ (allVars (sys s0)).card + hmeas L rho (sys s0)
+```
+
+Unlike round 3's `run_qsys_allVars_card_le` this **is** a count of minting steps, because
+`KMintRun.card_eq` makes the count and the growth of the history's vocabulary the same number,
+and the history never shrinks.
+
+`HistDichotomy` contains ingredient (A) and nothing else — (B) is `Trail.carrPres`.  What (A)
+asks is that the loop's own guard, a lookup over the QUEUES, imply the relation's guard over
+the whole HISTORY.  Those are different predicates, and R4.1's witness proves it:
+
+```lean
+/-- **The two guards ARE different predicates**, at step one of a three-constraint solve. -/
+theorem hist_qsys_disagree :
+    Carried (sys wS ∪ sys wS') 2 ({0} : Row) ∧ ¬ Carried (qsys wS') 2 ({0} : Row)
+
+theorem mint_needs_uncarried {G : System} {c : Constraint} {u : Var} (h : K2MintApp G c u) :
+    ¬ Carried G c.lhs c.conc
+
+/-- **The necessary condition** — a step at which the potential over the history grows refutes
+the remaining lemma. -/
+theorem histDichotomy_pot_le {L : Finset Label} (h : HistDichotomy L) {s s' : State}
+    {H : System} {rho : Assign} (hw : Wf s) (hsub : sys s ⊆ H) (hm : SModels rho H)
+    (hcs : ConcSub L H) (hst : step s = .continue s') :
+    ∃ rho', SModels rho' (H ∪ sys s') ∧ Pot L rho' (H ∪ sys s') ≤ Pot L rho H
+```
+
+### R4.3.4 `drawn` is NOT the mint count, and cannot be made one
+
+```lean
+/-- **`resolution` always draws when its two premises have a lone variable part** — before the
+intersection test and before all three reuse lookups. -/
+theorem resolution_draws {fl : Flags} {v : Nat} {rhs1 rhs2 : RHS} {x y : Nat}
+    {resolvent concRow emptyRow : SSet Lbl → Option Nat} {su : Sup}
+    (hres : fl.resolves = true) (hx : rhs1.abstrSingle? = some x)
+    (hy : rhs2.abstrSingle? = some y) :
+    (resolution fl v rhs1 rhs2 resolvent concRow emptyRow su).2 = (su.fresh).2
+
+/-- **How many ids one `step` can draw.** -/
+theorem step_drawn_le {s s' : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (h : step s = .continue s') :
+    s'.su.drawn ≤ s.su.drawn + 1 + s.proc.elems.length
+```
+
+`Sup.drawn` is the number the harness reports and L2/L4 match against the compiler, and it is
+NOT a mint count: a `resolution` REUSE costs an id too, which is the mechanism behind
+`e00346`'s 1,033 draws from twelve constraints.  So no carrier-based bound can bound `drawn`;
+the bound above is over the vocabulary of the history, and bounding `drawn` needs the number
+of dequeues, i.e. termination itself.  Recording this explicitly because "the mint count"
+could otherwise be read as "the draw count", and they are different quantities.
+
+### R4.3.5 The remaining lemma is FALSE too — the second horn refuted, in Lean
+
+The hunt (R4.3.6) found the loop minting at a key the history already carried, and the shape
+it found is small enough to hand-build and prove.  **Four constraints, satisfiable**
+(`rho v0 = rho v3 = rho v4 = {}`, `rho v1 = rho v2 = {l0}`):
+
+```
+  v1 <- (v0, (|l0|))     v0 <- ()     v2 <- ((|l0|))     v1 <- (v3, v4, (|l0|))
+```
+
+Step 1 is R4.1's redirect: `makeEmpty v0` erases `v0` from `v1 <- (v0, (|l0|))`, the bare
+`v1 <- ((|l0|))` is re-inserted with `Q.++!`, the twin `v2 <- ((|l0|))` catches it, and the
+queue gains `v2 <- (v1)` instead.  Step 2 dequeues `v1 <- (v3, v4, (|l0|))`; all three of
+`splitConcrete`'s lookups miss over the QUEUES, and it MINTS — at the key `(v1, {l0})`, which
+the history has carried since the input.
+
+```lean
+def mS0 : State :=
+  { incm := PQueue.ofList [mA, mB, mC, mD], proc := PQueue.empty, env := {},
+    su := wSup, trace := [], flags := {}, names := wNames, site := "t0", su0 := 100 }
+def mS1 : State := mNext mS0
+def mS2 : State := mNext mS1
+
+theorem mS0_step : step mS0 = .continue mS1 := rfl
+theorem mS1_step : step mS1 = .continue mS2 := rfl
+theorem mS2_drawn : mS2.su.drawn = 1 := rfl
+
+def mH1 : System :=
+  {mk 0 ∅ (∅ : Row), mk 1 {0} ({0} : Row), mk 1 {3, 4} ({0} : Row), mk 2 ∅ ({0} : Row),
+   mk 2 {1} (∅ : Row)}
+def mH2 : System :=
+  {mk 0 ∅ (∅ : Row), mk 1 {0} ({0} : Row), mk 1 {3, 4} ({0} : Row), mk 2 ∅ ({0} : Row),
+   mk 2 {1} (∅ : Row), mk 100 {3, 4} (∅ : Row), mk 1 {100} ({0} : Row)}
+
+theorem mH1_eq : sys mS0 ∪ sys mS1 = mH1
+theorem mH2_eq : mH1 ∪ sys mS2 = mH2
+theorem mH1_carries_the_key : Carried mH1 1 ({0} : Row)
+theorem hmeas_mH1 : hmeas wL mRho mH1 = 7
+theorem hmeas_mH2_mRho : hmeas wL mRho mH2 = 9
+theorem allVars_mH1 : allVars mH1 = ({0, 1, 2, 3, 4} : Finset Var)
+theorem allVars_mH2 : allVars mH2 = ({0, 1, 2, 3, 4, 100} : Finset Var)
+
+/-- Every model of the history after the mint agrees with `mRho` on its whole vocabulary. -/
+theorem mH2_pinned {rho : Assign} (h : SModels rho mH2) : ∀ v ∈ allVars mH2, rho v = mRho v
+
+/-- **The history the refutation uses is a real run history**, not an arbitrary superset. -/
+theorem mS1_trail : Trail mS0 mH1 mS1
+
+/-- The arithmetic both refutations share: `5 + 7 = 12` before the mint, `6 + 9 = 15` after. -/
+theorem pot_mH2_gt {rho : Assign} (h : SModels rho mH2) :
+    Pot wL mRho mH1 < Pot wL rho mH2
+
+/-- **THE REMAINING LEMMA IS FALSE.** -/
+theorem histDichotomy_false : ¬ HistDichotomy wL
+
+/-- The remaining lemma RELATIVISED to the histories the loop actually builds. -/
+def HistDichotomyR (L : Finset Label) : Prop :=
+  ∀ (s0 s s' : State) (H : System) (rho : Assign), Trail s0 H s → Wf s0 → SModels rho H →
+    ConcSub L H → step s = .continue s' → ∃ n, KMintRun L n H (H ∪ sys s')
+
+/-- **... and it is false too**, by the same witness, because `mH1` is a `Trail` history. -/
+theorem histDichotomyR_false : ¬ HistDichotomyR wL
+
+theorem labelsOf_mH1 : labelsOf mH1 = wL
+```
+
+As in R4.1, the relativisation does not help: `mH1` is literally what `Trail` accumulates over
+the witness's first step (`mS1_trail`), so restricting the quantifier to real run histories
+leaves the same counterexample.
+
+The potential over the monotone carrier goes from `5 + 7 = 12` to `6 + 9 = 15`: the mint costs
+a variable and buys nothing, because the key's budget was already spent.  `mH2_pinned` closes
+the choice of model — every model of the successor history gives the same `hmeas`.
+
+**So both horns of the dilemma are refuted, in Lean**: `qStepDichotomy_false` (queue-visible
+carrier, (B) fails, at an INITIAL state) and `histDichotomy_false` (monotone carrier, (B) is
+free and (A) fails, at the SECOND step of a four-constraint solve).  The bound the library
+supplies — `KMintRun.mints_le`, which is real and unconditional for the calculus — does not
+transport to the loop along either carrier.
+
+### R4.3.6 The hunt, and the compiler
+
+The hunt is a per-STEP check, not a whole-run divergence check, which is what
+`L5-REVIEW.md` §S-7 says round 3's hunt was missing.  Generator
+`tmp/L5r4/hunt/gen.py`: a valuation is fixed first and every constraint is emitted as
+`whole <- (pairwise-disjoint parts ⊎ disjoint concrete)` over it, so every system is
+satisfiable by construction and an independent checker re-verifies it; 8 variables, 5 labels,
+10 constraints, biased toward `splitConcrete`'s minting shape (≥ 2 abstract parts AND a
+nonempty concrete part).  The analyser (`tmp/L5r4/hunt/Hunt.lean`, run under `#eval` against
+the model itself) replays each seed step by step, accumulates the history `H`, and at every
+step that puts a NEW variable into play checks whether the minted key — the dequeued
+left-hand side with the concrete part of the constraint the fresh id appears in — is already
+`Carried H`, and whether the split premise is already `Named H`.
+
+| population | seeds | steps | steps that mint | mints at an already-CARRIED key | mints at an already-NAMED premise | FUEL / died |
+|---|---|---|---|---|---|---|
+| 8 vars, 5 labels, 10 constraints (seeds 0–59) | 60 | 2,027 | 216 | **2** | 0 | 0 / 0 |
+| the same, seeds 60–139 | 80 | 2,696 | 297 | **13** | **1** | 0 / 0 |
+| **total** | **140** | **4,723** | **513** | **15** | **1** | **0 / 0** |
+
+So the mismatch is not rare: **15 of 513 minting steps mint at a key the history already
+carries**, in 6 of 140 seeds, and one mints on a premise the history already `Named`.  Several
+of the hits are at variables the loop itself minted earlier (`v106`, `v102`, `v103`), i.e. the
+re-minting compounds.  Every seed still SOLVES — this is a per-step property, not divergence.
+
+The first two hits are seeds 44 (step 19, key `(v5, {l0,l2,l3,l4})`) and 52 (step 39, key
+`(v3, {l0,l1,l2,l3,l4})`).  **Both replay on the SHIPPED compiler**
+(`tracker/repro/satterm/run.sh sweep json:.../hist44.json 0 9`): `SOLVED 10/10` each, and the
+model reproduces the compiler's verdict AND draw count exactly at bases 0, 1, 2 — 5/4/4 for
+`hist44` and 12/15/11 for `hist52`, identical on both sides.  The hand-built witness of
+R4.3.5 does too: `SOLVED 5/5`, `drawn = 1` at every base on the compiler, and the model's
+`mS2.su.drawn = 1` is a theorem.  Its trace is the compiler's:
+
+```
+step  …  empty  ^free0 <- (,)                              incm=3  proc=0
+step  …  learn  ^free1 <- (^free3 ^free4,Repro.l0)         incm=2  proc=0
+learn …  new    SplitConcrete: ^ambiguous(free)5 <- (^free3 ^free4,)
+learn …  new    SplitConcrete: ^free1 <- (^ambiguous(free)5,Repro.l0)
+```
+
+So the mint that refutes the remaining lemma is a mint the compiler really takes, on a
+satisfiable input it really solves.
+
+## R4.4 — `Terminates`: **(T2)**, and the residual is now REFUTED rather than open
+
+**Outcome: T2.**  Not T1: no bound on the loop's vocabulary follows, because the two
+statements that would have delivered one are both false (R4.1, R4.3.5).  Not W: no divergence
+was found — round 4 adds 140 seeds × 300-step replays (4,723 steps) and five compiler sweeps to
+round 3's 28,700 runs, all terminating.
+
+What is missing is no longer a lemma nobody had tried; it is a measure.  Stating the position
+exactly:
+
+* **The pieces that exist.**  `KMintRun.mints_le` bounds the mints of the keyed calculus by
+  `hmeas L rho G₀`, unconditionally, for satisfiable input.  `Order.learnChain_card` bounds a
+  chain of consecutive `learn` steps by the number of distinct constraints the processed queue
+  can hold.  `StrictBound`'s `step_envNodup` / `env_len_le_allVars` bound the `empty`,
+  `common` and `unify` steps by `|allVars (sys s)|`.  R4.2's `step_supFresh` bounds the
+  vocabulary by the ids drawn.  Every one of these is a bound in the VOCABULARY.
+* **The circle.**  The vocabulary is bounded by the mint count; the mint count needs the
+  keyed guard to transport; the guard transports only along a carrier; and both carriers are
+  now refuted.  So the vocabulary is the free variable of the whole system of bounds, and
+  nothing in the tree pins it.
+* **What round 4 removes from the search space.**  Any argument of the form "take a carrier
+  `C(s)`, prove `Carried (C s)` preserved at non-minting steps and implied-by-the-guard at
+  minting ones" fails for `C = qsys` (R4.1, at an initial state), for `C = ` the monotone
+  history (R4.3.5, at the second step of a four-constraint solve), and — the round-4 review's
+  U-3, checked by the reviewer with the SAME two witnesses — for the intermediate carrier
+  `C = sys`, the one `LoopStrict` and `step_refines_all` are stated over:
+  `Carried (sys wS) 2 {l0}` is true and `Carried (sys wS') 2 {l0}` is false, with `Pot` going
+  6 → 9, and `Carried (sys mS0) 1 {l0}` is true and `Carried (sys mS1) 1 {l0}` is false.  So
+  **all three natural carriers are refuted**, and the two that fail on (B) fail at the same
+  step — the `Q.++!` redirect.  The two failure modes are dual: a carrier small enough to
+  match the loop's guard is too small to be preserved, and one big enough to be preserved is
+  too big for the guard.
+* **The direction that is NOT left** (round-4 review U-4 / T-9; I named this one and the
+  reviewer refutes it, correctly).  "Charge each RE-MINT to a DELETION" does not close, for
+  the reason §C3.3 already gives and for two more:
+
+  1. `env_len_le_allVars` bounds eliminations only by `|allVars (sys s)| = V₀ + M`, so a
+     charge `M ≤ hmeas₀ + c·#eliminations` reads `M ≤ hmeas₀ + c·(V₀ + M)`, which bounds
+     nothing for `c ≥ 1`.  Sharpening WHAT is charged only changes `c`.
+  2. The per-(lost carrier, key) reading makes `c` bigger, not smaller: one elimination
+     removes every queue partition mentioning the eliminated variable, and withdrawing one
+     `ConcCarried` parent `mk v ∅ C` withdraws carrying for a whole slice of `L.powerset`, so
+     the pairs per elimination are `O(|queue| · 2^{|L|})`.
+  3. The per-key reading is already refuted by this round's own hunt data, which I did not
+     read closely enough: seed 74 hits at `(step 97, v4, {l0,l1,l2})` **and**
+     `(step 100, v4, {l0,l1,l2})`, and seed 139 at `(70, v102, {l0,l1,l3})` and
+     `(80, v102, {l0,l1,l3})` — **the same `(v, K)` re-minted twice**, four times over.  So
+     "at most one re-mint per key" is false in the measured data.
+* **And the loop supplies its own fuel — the PUMP.**  The reviewer's structural reading, which
+  I accept: the loop mints a fresh `w` for a key `(v, K)`; the mint installs the carrier
+  `v <- (w, K)`; eliminating `w` — a FREE elimination, since `w` did not exist before the mint
+  — withdraws that carrier; and the loop may then mint at `(v, K)` again.  Each turn spends one
+  binding and produces one variable, so nothing external is consumed, and no counting argument
+  of the shape above can close while it runs.  **That is what a divergence witness would have
+  to look like**, and the hunt has already measured a second turn.  The evidence against a
+  third is empirical (0 `FUEL` in ~29,000 runs across rounds 3 and 4, plus the corpus), not
+  structural.
+* **Round 5, therefore.**  The specification is the round-4 review's T-9, four checkpoints, and
+  it replaces the direction I had named: **R5.1** drive the pump — build a family `P(k)` that
+  repeats mint → eliminate → re-mint at one `(v, K)` and push `k` from 2 (measured) to 3 and 4,
+  instrumenting the hunt to report the maximum number of mints at one `(v, K)` and scaling the
+  generator, with the compiled `looptrace` rather than `#eval`; acceptance is either a family
+  whose draw count grows without bound at fixed input size, replayed on the shipped compiler —
+  which **meets the plan's L5 acceptance by a WITNESS** — or the measurement that the maximum
+  is bounded.  **R5.2** state the charging lemma so that it can be refuted ("between two mints
+  at the same `(v, K)` the loop binds a variable occurring in a carrier of `(v, K)` present at
+  the first mint", then the clause that matters: "and that variable is not one the loop minted
+  for `(v, K)`") — refuting the second clause IS R5.1's pump, so the two run together.
+  **R5.3** use the dequeue ORDER, which no L5 measure has used: in R4.1's witness the link
+  `v1 <- (v2)` the redirect manufactures is dequeued immediately, so the carrier loss is
+  transient, and if the graph priority guarantees that, the redirect's damage can be excluded
+  by evaluating the potential only at quiescent states (`Loop/Queue.lean`'s `dequeue`,
+  `Loop/Order.lean`).  **R5.4** if neither closes, deliver `Terminates` for a stated FRAGMENT
+  (`|L| ≤ 1`, or `Q.++` in place of `Q.++!`) with a measurement of how far it is from the
+  corpus, turning (T2) into a theorem with a scope.
+
+## R4.5 — what round 4 could NOT prove, side by side
+
+| asked for | what is proved | what is not, and why |
+|---|---|---|
+| **R4.1** "refute `QStepDichotomy` over all `Wf` states and relativise it to reachable states, or prove it" | REFUTED: `qStepDichotomy_false` (for every `L ∋ l0`), `qStepDichotomy_labelsOf_false`, at an INITIAL state of a satisfiable input the compiler solves in three dequeues (`wS_trace`, `wS_solved` — the same three `step` records as the compiler's, in every field but the trace's own site/location/thread columns); the relativisation IS delivered (`QStepDichotomy'`, `qstep_pot_le'`, `run_qsys_invariant'`, `run_qsys_bound'`) and then refuted too (`qStepDichotomy'_false`); and the potential itself is proved to GROW (`qstep_pot_increases`, `qstep_pot_le_false`) | Nothing is left of the positive reading: the residual round 3 nominated is false, and `run_qsys_bound` is a true theorem with a false hypothesis. Round 3's modules are untouched, so nothing it proved is weakened. |
+| **R4.2** "prove `SupOk`/`SupFresh` preserved by `step` so `RunSupOk` is discharged and B1's certification is hypothesis-free" | DONE: `New`/`SupStep` and the three drawing rules re-proved (`splitConcrete_new`, `resolution_new`, `commonSubexpression_new`), C2's sharp clause `learnPartitions_new`, `step_supFresh` for all five branches, `runSupOk_of`, `run_queueHygiene_of`, `run_queueHygiene'_of`, `reaches_invariants`, `reaches_binds_unbound`, `reaches_link_no_death`, `initial_binds_unbound` | Two hypotheses remain and are properties of the INPUT, not of the loop: `SupOk s.su` and `SupFresh s.su (sys s)` at the initial state, plus the two shipped flags `disjRule = false`, `cseMints = false` (the same flags `step_refines_all` and `learnPartitions_avoids` carry). The panic corollary is stated semantically (`env.contains` is false at the three variables a step can bind), not as a string non-equality on the panic message. |
+| **R4.3** "a carrier monotone along the loop's steps, a productivity condition on the minting constructor, `mints ≤ f(s₀)` — or the exact blocking lemma with a witness hunt replayed through the compiler" | BOTH: the count is PROVED for the calculus (`KMintRun` with the productivity condition, `card_eq`, `pot_le`, `mints_le`, `kmint_bounded`), the monotone carrier is built and ingredient (B) is free (`Trail`, `Trail.carrPres`), the loop-level bound is proved from the exact remaining lemma (`HistDichotomy`, `trail_kmintRun`, `run_hist_mints_le`, `run_sys_allVars_le`) — and then the remaining lemma is REFUTED (`histDichotomy_false`), with the hunt that found the shape and the compiler replay | `mints ≤ f(s₀)` for the LOOP is therefore not obtained, and cannot be by this route. Also recorded: `Sup.drawn` is not a mint count and no carrier bound can make it one (`resolution_draws`, `step_drawn_le`). |
+| **the carriers** (not a brief item; recorded because it is what round 4 removes from the search space) | ALL THREE natural carriers are refuted, two of them in Lean and the third by the round-4 reviewer with the same two witnesses: `qsys` fails ingredient (B) at an initial state (`qStepDichotomy_false`, `qstep_pot_increases`); the monotone history fails ingredient (A) (`histDichotomy_false`, `histDichotomyR_false`); and the intermediate `sys` — the carrier `LoopStrict` and `step_refines_all` are stated over — fails (B) at the SAME step as `qsys`, the `Q.++!` redirect (`Carried (sys wS) 2 {l0}` true → false, `Pot` 6 → 9; `Carried (sys mS0) 1 {l0}` true → false) | So no carrier-and-guard argument of the round-3 shape survives, and §C3.1's choice of measure carrier is closed rather than open. What is NOT ruled out is an argument that is not carrier-shaped — the dequeue order (round-5 R5.3) is the untried one. |
+| **R4.4** "assemble `Terminates` with the explicit bound" | not assembled — (T2) | The vocabulary is unbounded in the tree, and R4.1/R4.3 show why the available carrier routes to bounding it fail. The counting-over-deletions direction I first named does NOT close (round-4 review U-4/T-9: the elimination bound is not input-sized, the per-pair reading enlarges the constant, and the per-key reading is refuted by this round's own hit list); the loop may PUMP, and round 5's job is to decide whether it does — the four-checkpoint specification is in §R4.4. |
+
+## R4.6 — what a reviewer should re-run
+
+1. `cd tracker/lean && export PATH=$HOME/.elan/bin:$PATH && lake build Rowpartition` (849 jobs)
+   and `lake env lean Audit.lean` (3376 / 0).
+2. `grep -nE '\bsorry\b|\baxiom\b|\bpartial\b|native_decide|implemented_by|\bunsafe\b|\bopaque\b|Classical|\badmit\b|#exit' Rowpartition/Loop/{Refuted,Supply,Mints}.lean`
+   — 0 hits in all three.
+3. `#print axioms` over every theorem of the three modules (`tmp/L5r4/Axioms.lean`) — all
+   standard.
+4. The two refutations are the load-bearing negative results and are cheap to re-check:
+   `qStepDichotomy_false` (three constraints, one step) and `histDichotomy_false` (four
+   constraints, two steps).  Both are closed terms; `wS_step`, `mS0_step`, `mS1_step`,
+   `wS_trace`, `mS2_drawn` are all `rfl`.
+5. `git diff` scope: three NEW modules, `Rowpartition.lean` +3/−0, the plan's L5 row,
+   `tracker/lean/README.md` additive, this report.  Every earlier module — `Loop/{Strict,
+   StrictStep,StrictBound,Carried,Hygiene,Factor,Draws,Residual,Refine,RefineConcrete,
+   RefineLearn,Order,Wf,Step}.lean` — and every Scala file UNCHANGED.
+6. The compiler replays: `tracker/repro/satterm/run.sh sweep json:<seed> 0 4` on
+   `tmp/L5r4/seeds/redir.json` (R4.1's witness, 3 records), `tmp/L5r4/hunt/mint.json`
+   (R4.3.5's witness, `drawn=1`), and `tmp/L5r4/hunt/hist{44,52}.json` (the hunt's two hits).
+7. The hunt: `python3 tmp/L5r4/hunt/gen.py 200 8 5 10 > Seeds.lean` reproduces the seeds
+   bit-for-bit (a fixed `random.Random(i)` per seed), and `tmp/L5r4/hunt/Hunt.lean` re-runs the
+   per-step check under `#eval`.

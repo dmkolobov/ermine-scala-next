@@ -1065,3 +1065,470 @@ The plan's L5 acceptance is still not met on two of four criteria, but every gap
 the report as accepted scope with a reason, which is the condition the review protocol sets. The
 stage advances with F-1, F-2, F-4 and Q-1 to be corrected in the report and the plan row, and the
 round-4 specification above.
+
+---
+
+# Round-4 review — 2026-09-05 (fresh reviewer)
+
+Review of L5 round 4 against `briefs/brief-L5r4.md`, `briefs/brief-review.md` and the plan's L5
+acceptance.  Pre-existing baseline **`9060fbf`** (rounds 1–3 committed); under review are the
+three uncommitted modules `Loop/{Refuted,Supply,Mints}.lean`, `Rowpartition.lean` +3 import
+lines, `tracker/lean/README.md` +21, the plan's L5 row, the handoff paragraph, and
+`L5-TERMINATION.md`'s Round 4 section.  I read the round-1, round-2 and round-3 review sections
+first; the round-3 review's F-5, S-11 and S-12 are this round's specification.
+
+Scratch: `/home/dmitry/.claude/jobs/880c725d/tmp/review-L5r4/`.  Nothing outside that directory
+and this file was edited; no commits, no Lean edits, no Scala edits, no sbt.
+
+**Verdict: ADVANCE.**  Everything in the round reproduces under my own re-runs, and the two
+load-bearing NEGATIVE results — the round is mostly negative results — are real: I re-derived
+both refutations by evaluation rather than by reading the proofs, replayed both witnesses on the
+shipped compiler at more bases than the report used, and got the compiler's *whole* trace for the
+second witness byte-identical to the model's.  The one genuinely positive result, R4.2, I
+instantiated myself at a state of my own choosing, including across a step that mints.  Two
+documentation findings and one judgement disagreement (§T-9: the round-5 direction the report
+names does not close, and I say why and what to do instead).
+
+---
+
+## T-1. Rebuild, re-audit, hygiene — everything reproduces
+
+| step | command | result |
+|---|---|---|
+| build | `lake build Rowpartition` | `Build completed successfully (849 jobs)` — **matches** (846 before) |
+| audit | `lake env lean Audit.lean` | `Rowpartition theorems audited: 3376; declarations using a non-standard axiom: 0` — **matches** |
+| escape hatches | the report's own grep, `\bsorry\b\|\baxiom\b\|\bpartial\b\|native_decide\|implemented_by\|\bunsafe\b\|\bopaque\b\|Classical\|\badmit\b\|#exit` over the three modules | exit 1, **0 hits** (the only near-hit anywhere is the word "counterexample" in a `Mints.lean` comment) |
+| line counts | `wc -l` | 574 + 820 + 786 = **2,180** — matches |
+| `#print axioms` | my own `tmp/review-L5r4/Axioms.lean`, 39 headline theorems across all three modules | every one `[propext, Classical.choice, Quot.sound]`; **no non-standard axiom** |
+| `#print axioms`, exhaustively | I also re-ran the implementer's own `tmp/L5r4/Axioms.lean` | **165 results: 157 × `[propext, Classical.choice, Quot.sound]`, 4 × `[propext, Quot.sound]`, 4 on no axioms** — exactly the report's figures.  (Their saved `axioms.txt` has only 162 lines and is stale; the *report* is right, the artefact is not, which is why re-running mattered.)  And the census is exhaustive: `grep -cE '^(theorem\|lemma) '` over the three modules gives **165**, and the set of names printed is byte-equal to the set declared |
+| verbatim | my own mechanical extractor over the Round-4 section's ```lean blocks, doc comments stripped, whitespace normalised | **95 declarations quoted, 89 byte-exact, 6 mismatches — and the 6 are exactly the 6 the report marks with an explicit `…` elision.**  The report's own figure ("89 of 89 … 95 declarations … six with an explicit `…`") is exactly right |
+| scope | `git diff --stat HEAD -- tracker/lean/Rowpartition/Loop/` | **empty**: no tracked `Loop/` module changed.  `Rowpartition.lean` +3/−0, README +21/−0, `L5-TERMINATION.md` **+733/−0** (purely additive), plan row, handoff |
+
+## T-2. R4.1 — the refutation is real, and I re-derived it by evaluation
+
+I did not take the proofs on trust.  `Carried`, `ConcCarried`, `Resolved` and `uncarried` are all
+decidable/computable, so every number in §R4.1 can be checked by `#eval` against the *definitions*
+rather than against the proof scripts (`tmp/review-L5r4/Check.lean`, `Check2.lean`):
+
+| claim | report | my `#eval` |
+|---|---|---|
+| `Carried (qsys wS) 2 {0}` | true | `true` |
+| `Carried (qsys wS') 2 {0}` | false | `false` |
+| `2 ∈ allVars (qsys wS')` | true | `true` |
+| `\|allVars (qsys wS)\|`, `\|allVars (qsys wS')\|` | 3, 3 | `3`, `3` |
+| `uncarried wL (qsys wS) 2` → `(qsys wS') 2` | 1 → 2 | `1` → `2` |
+| `hmeas wL wRho (qsys ·)` | 3 → 6 | `3` → `6` |
+| `Pot wL (qsys ·)` | 6 → 9 | `6` → `9` |
+| `run wS 20` trace | three `step` records | identical, `SOLVED`, `drawn = 0` |
+
+I also checked two things the report does not:
+
+* **the label pool really is the one the bound is stated at**: `labelsOf (qsys wS) = wL = {0}` (`decide`,
+  `tmp/review-L5r4/Small2.lean`), so `qstep_pot_increases` is at the pool `run_qsys_bound` would
+  take for this input, not at a convenient smaller one;
+* **the potential increase is not an artefact of the one-label pool**: `Pot {0,1}` goes 18 → 23
+  and `Pot {0,1,2}` goes 66 → 75 at the same step.
+
+**The witness really is an initial state of a real seed.**  The report's `wS` is hand-built, so I
+ran the model's own `Seed.solve` driver on `redir.json` at base 0
+(`.lake/build/bin/looptrace tmp/review-L5r4/redir.json 0`) and got the *same three `step` records*.
+The only difference between `wS` and what `solveSeed` builds is the supply — `wS` uses
+`{lo := 100, hi := 100000, blk := 200000}` where `Seed.solveSeed` uses `Sup.ofSeed`.  That
+difference is in the report's favour (see T-8): `Sup.ofSeed` has `blk = 0`, so it does *not*
+satisfy `SupOk`, and `wS`'s supply is the realistic one for which `wS_invariants` can be proved.
+
+**The compiler takes the same step.**  `tracker/repro/satterm/run.sh sweep json:…/redir.json 0 4 20 10`:
+`SOLVED 5/5`, `drawn=0` at every base, `v0 := ConcreteRho(-,Set()); v1 := ConcreteRho(-,Set(l0)); v2 := ConcreteRho(-,Set(l0))`.
+With `-Dermine.rowTrace` at base 0 the three `step` records are
+
+```
+step  <seed@0>  empty     ^free0 <- (,)                          incm=2  proc=0  t0
+step  <seed@0>  unify:2   CommonPartition: ^free1 <- (^free2,)   incm=1  proc=0  t0
+step  <seed@0>  concrete  ^free1 <- (,Repro.l0)                  incm=0  proc=0  t0
+```
+
+which is `wS_trace` in every field but the trace's own site/location/thread columns, exactly as
+the report says.  The second record IS the redirect.
+
+**The mechanism checks out against the Scala.**  `Constraints.scala:491-518`: `insert(p, q, graph,
+process=true)` falls through `rhsLookup(p._2, req, process)` to
+`insert(Partition(v, RHSAbstr(Set(p._1)), CommonPartition), q, graph, false)` — the inserted
+partition `p` is **dropped** and a link into the *original* `q` is inserted instead.
+`Loop/Queue.lean:174-180`'s `insertP` is that, with `insertNP` for the `process=false` recursion.
+So the carrier deletion is the shipped compiler's, not a modelling artefact.
+
+**Verdict on R4.1: CONFIRMED, and the refutation is as strong as the report claims.**  Both
+disjuncts fail for a real reason (`K2StarStep.subset` for the first, `CarrPresOn` at `(v2,{l0})` for
+the second); the relativisation `QStepDichotomy'` is a genuine `Prop` whose `run_qsys_bound'` is
+re-proved (I read the whole chain — `qstep_pot_le'`, `run_qsys_invariant'`, `run_qsys_bound'` — and
+it is the round-3 chain with `Reaches s0 ·` threaded, no weakening); and `qStepDichotomy'_false`
+is discharged from `Reaches.refl`, which is the right way to do it.
+
+## T-3. R4.2 — DONE, and I instantiated it myself rather than reading it
+
+The statements are verbatim and the hypothesis set is what the report says.  `step_supFresh`
+carries `disjRule = false`, `cseMints = false`, `SupOk s.su`, `SupFresh s.su (sys s)` and the step
+— **no `Wf`, no `emptyRow = false`**, so it really is weaker than `step_refines_all`'s hypotheses.
+`New Old su w := ¬ Old w ∧ Sup.Reach su w` shrinks along a draw (`New.mono`, from
+`reach_fresh_mono`), which is the reason the fold's invariant can be forward-only; that is the
+right repair for the fixed-`B` problem the round-3 review's F-4 identified, and `learnPartitions_new`
+really is C2's sharp clause.
+
+**Is `New Old su` the right freshness predicate against `scalaparsers.Supply`?**  I read
+`parsers/src/main/scala/scalaparsers/Supply.scala` against `Loop/State.lean:178-201`:
+
+* `fresh` returns `lo` and increments while `lo != hi`, else takes `getBlock` and sets
+  `hi := result + blockSize - 1`, `lo := result + 1`.  `Sup.fresh` is that, exactly.
+* so the ids a supply can still hand out are `[lo, hi)` ∪ (whatever `getBlock` will return),
+  and `getBlock` is monotone (`block = result + blockSize`), so `blk ≤ z` is a **sound
+  over-approximation of every future block id** — including across threads, since `Supply.block`
+  is a process-global counter that only increases and the model's `blk` is a snapshot of it.
+  `Sup.Reach su z := (lo ≤ z ∧ z < hi) ∨ blk ≤ z` is therefore correct for freshness (it is an
+  over-approximation, which is the safe direction).
+* `SupOk`'s `hi ≤ blk` is true of every live `Supply`: `create` gives `(b, b+1023)` with `block`
+  already at `b+1024`, `fresh`'s block jump gives `hi = blk_old + bsz - 1 < blk_new`, and `split`
+  only narrows.  ✓
+
+**Is the panic corollary genuinely "the die test never fires", and is it vacuous?**
+`Subst.scala:182-184`: `instantiateType(v, e)` dies iff `hm.types.get(v)` is `Some(_)`, i.e. iff `v`
+is already bound.  The model's two panic sites (`Step.lean:88-90` in `instantiate`,
+`Step.lean:137-139` in `makeEmpty`) are guarded by exactly `env.contains v`.  The three variables a
+`step` can bind are the dequeued `r.lhs` (`empty`, `common`) and `r.rhs.single?` (`unify`);
+`reaches_binds_unbound` gives `env.contains = false` for `r.lhs`, for **every** abstract part (hence
+for `single?`), and for the `common` partner.  So yes: the theorem says the die test never fires,
+at every reachable state, and `reaches_link_no_death` turns that into `instantiate` returning `.ok`.
+
+Not vacuous — I checked by instantiating it (`tmp/review-L5r4/Vac.lean`), and at a state where
+the environment is **non-empty**:
+
+```lean
+theorem wS_reaches_wS' : Reaches wS wS' := (Reaches.refl wS).tail wS_step
+
+theorem cert_at_wS' {r : LPart} {rest : PQueue} (hdq : wS'.incm.dequeue = some (r, rest)) : … :=
+  initial_binds_unbound wS_initial rfl rfl wS_supOk wS_supFresh wS_reaches_wS' hdq
+```
+
+`wS'.env.binds = [(0, .emptyRow)]`, `wS'.env.contains 0 = true`, `wS'.incm.dequeue.isSome = true`
+— so the conclusion is a statement about a state that has already bound a variable, and
+`#print axioms cert_at_wS'` is standard.  I also checked that the preservation composes **across a
+step that mints** (`tmp/review-L5r4/Vac2.lean`): with my own `mS0_supOk` / `mS0_supFresh`,
+
+```lean
+theorem supFresh_across_the_mint :
+    SupOk mS2.su ∧ (∀ z, Sup.Reach mS2.su z → Sup.Reach mS1.su z) ∧ SupFresh mS2.su (sys mS2) := …
+```
+
+goes through, and `mS1 → mS2` is the step that draws the fresh id (`mS1.su.drawn = 0`,
+`mS2.su.drawn = 1`).  So `step_supFresh` is load-bearing on the `learn`/minting branch, not only
+on the four branches that draw nothing.
+
+**Verdict on R4.2: CONFIRMED.**  The round-3 review's Q-1 is closed.  Q-2's second half is closed
+in a *different* and I think better form than I asked for — the corollary is semantic
+(`env.contains` false at the three bindable variables) rather than a string non-equality on the
+panic message — and the report says so plainly.  Q-2's first half (the scope is states with
+`proc` and `env` empty, not every `Wf` state) is unchanged and correctly stated; see T-8 for the
+one qualification the report does not make.
+
+## T-4. R4.3 — the count is real, the carrier is real, the second refutation is real
+
+**`KMintRun` is a bookkeeping of the calculus, not a restriction of it.**  This is the thing the
+brief asks me to check, and it holds: `KeyedRow.lean:1340`'s `K2StarStep.allVars_cases` says every
+`K2StarStep` either fixes `allVars` or adds exactly one fresh variable, and `KMintRun.keep` /
+`KMintRun.mint` are precisely those two cases, so `KMintRun.step` extends any counted run by any
+`K2StarStep`.  `card_eq` is then immediate and `mints_le` follows from `pot_le` + `card_eq`.  The
+round-3 review's `mints_not_bounded` really is unprovable for it (`kmint_bounded` exhibits the
+bound).  **What it bounds, stated exactly: the number of generative steps of the ADDITIVE keyed
+calculus `K2StarStep` (`nongen`/`split`/`res`) from a satisfiable `G₀` — not of `K2StarLoopStep`
+(which has the deleting concretisation), and not of the loop.**  The report is careful about this
+throughout; the plan row is too.
+
+**`Trail` and `Trail.carrPres` are what they say.**  `CarrPres.of_subset Finset.subset_union_left`
+— one line, and correct, because the history only grows.
+
+**`HistDichotomy` is sufficient**: `trail_kmintRun` → `run_hist_mints_le` → `run_sys_allVars_le`.  I
+read the chain; the only subtlety is that `trail_kmintRun` re-derives a model at each step through
+`pot_le`, which is legitimate.
+
+**And it is false.**  Again I re-derived the numbers by evaluation rather than reading:
+
+| claim | report | my `#eval` |
+|---|---|---|
+| `sys mS0 ∪ sys mS1 = mH1` | theorem | `true` |
+| `mH1 ∪ sys mS2 = mH2` | theorem | `true` |
+| `Carried mH1 1 {0}` | true | `true` |
+| `hmeas wL mRho mH1`, `mH2` | 7, 9 | `7`, `9` |
+| `\|allVars mH1\|`, `\|allVars mH2\|` | 5, 6 | `5`, `6` |
+| `Pot mH1` → `Pot mH2` | 12 → 15 | `12` → `15` |
+| `mS2.su.drawn` | 1 | `1` |
+
+and I added the two evaluations that show the *mechanism* rather than the arithmetic:
+
+```
+Carried (qsys mS0) 1 {0}  =  true
+Carried (qsys mS1) 1 {0}  =  false      -- the redirect really deletes the carrier from the queues
+Carried (sys  mS1) 1 {0}  =  false
+```
+
+so the loop's own lookups legitimately miss, and the history legitimately carries: the two guards
+genuinely disagree, which is `hist_qsys_disagree`.
+
+**The compiler replay is stronger than the report claims.**  The report quotes the first four
+records of `mint.json`.  I took the whole `-Dermine.rowTrace` trace at base 0 and compared it with
+the model's own `Seed.solve` records: **all 20 records byte-identical** in every field but the
+site/location/thread columns (the minted id is `^ambiguous(free)5` on both sides, because the model
+driver uses `Sup.ofSeed ns.supplyLo = 5`; the hand-built `mS0` uses 100).  `SOLVED 10/10` on the
+compiler at bases 0–9, `drawn = 1` at every base.
+
+**Model-vs-compiler at bases the implementer did not use.**  The report compares the two hunt hits
+at bases 0, 1, 2.  I ran both at bases **0–7** on each side (`tmp/review-L5r4/Cmp8.lean` vs
+`run.sh sweep … 0 7`):
+
+| seed | bases 0..7, model | bases 0..7, compiler |
+|---|---|---|
+| `hist44` | 5, 4, 4, 10, 24, 4, 11, 9 | 5, 4, 4, 10, 24, 4, 11, 9 |
+| `hist52` | 12, 15, 11, 12, 11, 47, 12, 11 | 12, 15, 11, 12, 11, 47, 12, 11 |
+| `mint` | 1 × 8 | 1 × 8 |
+
+verdict `SOLVED` on both sides at all 24 solves, draw counts identical including the two outliers
+(24 and 47) that the report's three-base sample never saw.
+
+**Verdict on R4.3: CONFIRMED.**  `resolution_draws` and `step_drawn_le` are correct and the
+"`drawn` is not a mint count" note is a genuinely useful clarification.
+
+## T-5. The hunt — regenerated and re-run, including seeds the implementer never ran
+
+`python3 gen.py 200 8 5 10` reproduces `Seeds.lean` **bit-for-bit** against the implementer's copy
+(fixed `random.Random(i)` per seed; `seeds=199`).  Lines 1–203 of their `Hunt.lean` are that file.
+I read the analyser: at each step it takes `newv = allVars (sys s') \ allVars (sys s)`, and when
+that is non-empty it counts successor constraints `c` with `c.lhs = ` the dequeued lhs,
+`|vset c| = 1`, exactly one new variable in `vset c`, and `Carried H c.lhs c.conc` — with `H` the
+history **before** the step.  That is the right test for "the loop minted at a key the history
+already carried", and the `badNamed` column is the `Cut.Named` analogue.  Re-run with my own copy
+of the seeds and the same analyser, split three ways:
+
+| population | seeds | steps | minting steps | mints at an already-CARRIED key | mints on an already-NAMED premise | FUEL / died |
+|---|---|---|---|---|---|---|
+| seeds 0–59 (the report's first row) | 60 | **2,027** | **216** | **2** | **0** | 0 / 0 |
+| seeds 60–139 (the report's second row) | 80 | **2,696** | **297** | **13** | **1** | 0 / 0 |
+| **seeds 140–198 — the implementer never ran these** | 59 | 1,784 | 194 | **5** | 0 | 0 / 0 |
+| total, mine | **199** | **6,507** | **707** | **20** | **1** | **0 / 0** |
+
+The first two rows reproduce the report's table **exactly**, figure for figure, and the two hits of
+the first row are the two seeds it names (`(seed 44, step 19, v5, {l0,l2,l3,l4})` and
+`(seed 52, step 39, v3, {l0,l1,l2,l3,l4})`).  My third row is new: on 59 seeds the implementer
+never ran, the phenomenon reproduces at the same rate (5 of 194 minting steps, 2.6%, against
+15 of 513, 2.9%), in three further seeds (145, 146, 193), and again every run terminates.
+
+Two observations from the hit list that the report does not draw, both of which matter for round 5:
+
+* **the same `(v, K)` is re-minted twice within one run** — seed 74 hits at `(step 97, v4, {l0,l1,l2})`
+  *and* `(step 100, v4, {l0,l1,l2})`, and again at `(107, v2, {l0,l1,l2,l4})` and
+  `(115, v2, {l0,l1,l2,l4})`; seed 139 at `(70, v102, {l0,l1,l3})` and `(80, v102, {l0,l1,l3})`, and
+  at `(83, v103, …)` and `(95, v103, …)`.  So the multiplicity per key is already ≥ 2 in the
+  measured data.  This is the fact that kills the per-key reading of §R4.4's charging (T-9);
+* **the analyser undercounts**, which is in the report's favour: its `hit` filter requires the
+  minted constraint's `lhs` to be the DEQUEUED lhs, so it catches `splitConcrete`'s
+  `v <- (u, concr)` and `resolution`'s `v <- (z, all)` but misses `resolution`'s other two
+  conclusions `x <- (z, bots)`, `y <- (z, tops)` (`Constraints.scala:1806-1808`), whose left-hand
+  sides are the premises' lone variables.  The true number of mints into the guard gap is at least
+  the number reported.
+
+I also launched a scaled probe (40 seeds at 12 variables / 5 labels / 16 constraints, the same
+analyser) to see whether the re-mint rate or the per-key multiplicity grows with input size, and
+**cancelled it after an hour** — the model interpreter is too slow at that size for a review
+budget.  Nothing in this review depends on it; it is the measurement R5.1 should do properly, with
+the compiled `looptrace` executable rather than `#eval`.
+
+## T-6. Things I ran that the implementer did not
+
+1. **The whole compiler trace of the second witness, not the first four records.**  §R4.3.6 quotes
+   four records of `mint.json`.  I took the full `-Dermine.rowTrace` trace at base 0 and the model's
+   own `Seed.solve` output for the same file, and all **20 records** agree byte for byte in every
+   field but the trace's site/location/thread columns — the four `learn` sub-records, the
+   `unify:1 CommonPartition: ^free2 <- (^free1,)` redirect, the two `Cancellation` steps and the
+   two `PartitionEmpty` steps included.  So the model and the compiler agree on the *whole* solve
+   that contains the refuting mint, not just its first two steps.
+2. **Bases 3–7 on both sides** for `hist44`, `hist52` and `mint` (T-4's table) — 24 extra solves,
+   including the draw-count outliers 24 (`hist44@4`) and 47 (`hist52@5`), all identical.
+3. **The intermediate carrier `sys`.**  R4.4 says the two failures are dual — the queue-visible
+   carrier too small for (B), the history too big for (A) — and leaves the impression that
+   something between them might survive.  The obvious candidate is `sys` (the queues **plus** the
+   environment, which is what `step_refines_all` and `LoopStrict` are stated over).  It is refuted
+   by the same two witnesses:
+
+   ```
+   Carried (sys wS)  2 {0} = true      Carried (sys wS')  2 {0} = false     Pot wL (sys ·) : 6 → 9
+   Carried (sys mS0) 1 {0} = true      Carried (sys mS1) 1 {0} = false
+   ```
+
+   so **all three natural carriers fail**, and the two that fail on (B) fail at the *same* step,
+   the `Q.++!` redirect.  This is in the report's favour and should be one row in §R4.5.
+4. **Bigger label pools.**  `qstep_pot_increases` is stated at `wL = {0}`.  I checked
+   `labelsOf (qsys wS) = wL` by `decide` (so it is the pool `run_qsys_bound` would take), and then
+   that the increase is not an artefact of a one-label pool: `Pot {0,1}` goes 18 → 23 and
+   `Pot {0,1,2}` goes 66 → 75 at the same step.
+5. **`resolution` draws before its guards, in the Scala.**  `Constraints.scala:1774` takes
+   `val z = fresh(...)` before the `tops.isEmpty || bots.isEmpty` test at 1778 and before all three
+   reuse lookups at 1781/1789/1797.  `resolution_draws` is exactly that.  For contrast
+   `splitConcrete` (`Constraints.scala:1301-1339`) draws only in the last branch, after all four
+   lookups — which is why `splitConcrete_su` has six `SupStep.refl` cases before its `Or.inr`.
+   Both match.
+
+## T-7. Side by side, for the parts round 4 depends on
+
+| claim | Scala | Lean | verdict |
+|---|---|---|---|
+| the `CommonPartition` redirect DROPS the inserted partition and inserts a link into the ORIGINAL queue | `Constraints.scala:491-518`: at 514 `rhsLookup(p._2, req, process)` → 516 `insert(Partition(v, RHSAbstr(Set(p._1)), CommonPartition), q, graph, false)`, with `q` (not the sandwiched queue) | `Queue.lean:174-180` `insertP`: `q.insertNP ⟨v, RHS.ofAbstr [p.lhs], some .commonPartition⟩` | **exact** — this is the carrier deletion both refutations turn on |
+| `instantiateType` dies iff the variable is already bound | `Subst.scala:182-184`, `hm.types.get(v)` is `Some(_)` | `Step.lean:88-90` (`instantiate`) and `:137-139` (`makeEmpty`), guard `env.contains v` | **exact**; `reaches_binds_unbound` therefore is "the die test never fires" |
+| `Supply.fresh` and the block jump | `Supply.scala:22-31` | `State.lean:194-199` `Sup.fresh` | **exact**; `Sup.Reach` over-approximates soundly, `SupOk` true of every live `Supply` |
+| `Env.instantiate` = `subType(Map(v→e), hm.types) + (v→e)` | `Subst.scala:185` | `State.lean:340-345` | **exact**; `avoids_env_instantiate` covers both arms of the substitution |
+| `splitConcrete` draws only after all four lookups | `Constraints.scala:1301-1339` | `splitConcrete_su`'s six non-drawing branches | **exact** |
+| `resolution` draws before its guards | `Constraints.scala:1774` | `resolution_draws` | **exact** |
+
+I re-read `makeEmpty`'s `(abstr - v)` (`Constraints.scala:1574`) and its Lean mirror
+(`Step.lean:131`) because R4.1's witness runs the `empty` branch: the B1 fix is present on both
+sides and is what makes the witness's first step erase `v0` from `v2 <- (v0, (|l0|))` rather than
+loop.
+
+## T-8. Findings, ranked
+
+| # | severity | status | finding | fix |
+|---|---|---|---|---|
+| U-1 | moderate | CONFIRMED | The report is **purely additive** (+733/−0), so §C3, §"Summary of everything not proved", §R2.6 and above all **§R3.5 still read as live** — §R3.5 presents `QStepDichotomy` as "the exact remaining lemma" and §R3.5.4 as an open item, when R4.1 proves the hypothesis FALSE.  A reader who stops at §R3.5 is misled, and the round-3 review's S-9 item 5 already asked for supersession notes that are now two rounds stale.  (`Residual.lean`'s own docstrings have the same problem — "THE REMAINING LEMMA", "conditional on the remaining lemma" — but the brief forbade editing earlier modules, so that belongs to whoever commits.) | one `**SUPERSEDED BY R4.1**` line under §R3.5, §R3.5.4, §C3.1's table and §R2.6 row 3; and, at commit time, a one-line pointer in `Residual.lean`'s module note |
+| U-2 | minor | CONFIRMED | §R4.2.5 says the two input hypotheses hold of "every state the compiler hands `Subst.solve`".  True — but the model's OWN seed driver is outside the theorem: `Loop/Main.lean:183` uses `Sup.ofSeed`, whose `blk = 0` makes **`SupOk` false** (`hi ≤ blk` is `lo+100000 ≤ 0`), and the satterm harness's `sin` record reports `blk = 0` too (I checked: `sin … 3 100003 3 0 1024 3`).  So `initial_binds_unbound` applies to `Replay` states from real compiler traces and to realistic hand-built supplies like `wS`, not to `json:` seed runs.  This is pre-existing and documented on `SupOk` (`RefineLearn.lean:41-44`), and R4.1's `wS` correctly uses a realistic supply — but the report's sentence reads wider than the theorem. | one clause |
+| U-3 | minor | CONFIRMED (in the report's favour) | The intermediate carrier `sys` is refuted by the same witnesses (T-6.3) and §R4.5 does not say so; "the two failures are dual" understates what the round removes from the search space. | one row |
+| U-4 | **judgement** | see T-9 | The round-5 direction §R4.4 names — "charge each RE-MINT to a DELETION" — does not close, for the reason §C3.3 already gives: eliminations are bounded only by `|allVars| = |allVars₀| + M`, so the inequality stays quadratic in `M` whether the charge is per elimination or per (lost carrier, key) pair.  The report's own hunt data also already refutes the per-key reading: seeds 74 and 139 re-mint at the **same** `(v, K)` twice. | see the round-5 spec in T-9 |
+| N-1 | minor | CONFIRMED | `step_link_no_death` assembles "`instantiate` returns `.ok`" for the two link branches, but nothing assembles the same for `makeEmpty`'s panic arm, although `reaches_binds_unbound`'s first conjunct is exactly its guard.  One-line composition, unflagged asymmetry. | one theorem or one sentence |
+
+Nothing in this list is a soundness defect.  Every theorem I checked says exactly what its text
+says, and the two headline refutations are stronger than I expected going in.
+
+## T-9. The judgement the brief asks for: is the round-5 direction sound?
+
+**No — not as stated, and the report's own §C3.3 is the reason.**  I want to be precise about
+this, because it is the only place I disagree with the round.
+
+Write `M` for the number of minting steps in a run, `V₀ = |allVars (sys s₀)|`, so the vocabulary
+ever in play is `V = V₀ + M`.  §R4.4 proposes: a mint at an already-carried key can only happen
+once the queues have lost every carrier of that key; carriers leave the queues at a step that
+binds a variable (bounded by `|allVars|` through `EnvNodup`) or at a `Q.++!` redirect (bounded by
+the insertions); so charge each re-mint to a deletion, sharpened to "at most one re-mint per
+(lost carrier, key) pair".  Three objections, increasing in seriousness:
+
+1. **The elimination bound is not input-sized.**  `env_len_le_allVars` gives
+   `#eliminations ≤ |allVars (sys s)| ≤ V₀ + M`.  So any charge of the form
+   `M ≤ hmeas₀ + c · #eliminations` reads `M ≤ hmeas₀ + c·(V₀ + M)`, which bounds nothing for
+   `c ≥ 1`.  This is exactly §C3.3's argument, and sharpening *what* is charged only changes `c`.
+   To close, either the charge must be strictly sub-unit, or eliminations must be bounded
+   independently of `M` — and nothing in the tree does that.
+2. **The (lost carrier, key) reading makes `c` larger, not smaller.**  One elimination removes
+   every queue partition mentioning the eliminated variable, and withdrawing one `ConcCarried`
+   parent `mk v ∅ C` withdraws carrying for a whole slice of `L.powerset`.  So the pairs per
+   elimination are `O(|queue| · 2^{|L|})`, not `O(1)`.
+3. **The per-key reading is already refuted by the round's own data.**  The hunt's hit list —
+   which I reproduced (T-5) — has `(step 97, v4, {l0,l1,l2})` and `(step 100, v4, {l0,l1,l2})` in
+   seed 74, and `(step 70, v102, {l0,l1,l3})` and `(step 80, v102, {l0,l1,l3})` in seed 139:
+   **the same `(v, K)` re-minted twice**, four times over.  So "at most one re-mint per key" is
+   false in the measured data, and only the reading that objection 2 kills survives.
+
+**And the loop supplies its own fuel.**  The reason no counting argument of this shape closes is
+structural, and the two witnesses of this very round show it.  The loop mints a fresh `w` for a
+key `(v, K)`; the mint installs the carrier `v <- (w, K)`; eliminating `w` — a *free* elimination,
+since `w` did not exist before the mint — withdraws that carrier; and the loop may then mint again
+at `(v, K)`.  Each turn of the cycle spends one binding and produces one variable, so nothing
+external is consumed.  **That is a pump, and it is what a divergence witness would have to look
+like.**  The evidence against it is empirical — 0 `FUEL` in ~29,000 runs across rounds 3 and 4,
+plus the whole corpus — not structural; nothing in the tree forbids a third turn, and the hunt has
+already measured a second.
+
+So round 5's first job is not to prove the charging.  It is to decide whether the pump runs.
+
+### The round-5 specification
+
+**R5.1 — try to drive the pump; aim for W.**  The two witnesses are the two halves: `redir.json`
+is the redirect destroying a carrier at step one, `mint.json` is a mint at a key the history
+carries at step two.  Build a family `P(k)` of satisfiable systems in which
+*mint a fresh `w_i` at `(v, K)` → eliminate `w_i` (empty or unify) so both queues lose
+`v <- (w_i, K)` → mint again at `(v, K)`* repeats `k` times, and push `k` from 2 (measured) to 3
+and 4.  Instrument the hunt to report, per run, the **maximum number of mints at one `(v, K)`**,
+and scale the generator (8 vars/10 constraints is the current population; 12 vars/16 constraints
+is the obvious next probe — T-5).  Acceptance: either a family whose draw count grows without
+bound at fixed input size — `run` exhausts any fuel, replayed on the shipped compiler, which
+**meets the plan's L5 acceptance by a witness** — or the measurement that the maximum is bounded,
+which is R5.2's lemma in empirical form.
+
+**R5.2 — state the charging lemma so that it can be refuted.**  "Between two minting steps at the
+same key `(v, K)`, the loop binds a variable occurring in a carrier of `(v, K)` that was present
+at the first mint" — prove it or refute it (`Refuted.lean`'s machinery is exactly right for the
+refutation).  Then the second clause, which is where the difficulty actually lives: "and that
+variable is not one the loop minted for `(v, K)`".  Refuting the second clause **is** R5.1's pump,
+so the two checkpoints are the same question from opposite ends and should be run together.
+
+**R5.3 — use the dequeue ORDER, which nothing in L5 has used.**  `LoopStrict`, `Carried`, `hmeas`,
+`Pot`, `Trail` are all order-free; the priority-search queue and the type-variable graph — the one
+mechanism the compiler relies on for progress — appear nowhere in any of L5's four rounds of measures.
+In R4.1's witness the link `v1 <- (v2)` the redirect manufactured is dequeued **immediately** (it
+is the very next `step`), so the carrier loss is transient.  If the graph priority guarantees that a
+`CommonPartition` link is dequeued before any further `learn` at either endpoint, the redirect's
+damage can be excluded by evaluating the potential only at "quiescent" states — states with no
+pending link.  `Loop/Queue.lean`'s `dequeue` and `Loop/Order.lean` are where to look.  This is the
+cheapest untried lever in the stage and I would spend a checkpoint on it before any further
+carrier engineering.
+
+**R5.4 — if neither closes, relativise the goal rather than run the same shape a fifth time.**
+Deliver `Terminates` for a stated fragment — `|L| ≤ 1`, or inputs solved with `Q.++` in place of
+`Q.++!` (a flag the model can carry and the differential harness can check against the compiler) —
+together with the measurement of how far that fragment is from the corpus.  That turns (T2) into a
+theorem with a scope instead of a fifth open item.
+
+**Also carry**: U-1 (supersession notes — now two rounds stale), U-2, U-3, N-1.
+
+## T-10. Acceptance criteria (plan `LOOP-MODEL-PLAN.md`, L5)
+
+| criterion | round 3 | round 4 | evidence |
+|---|---|---|---|
+| `LoopStrict` has no arbitrary-deletion constructor | PASS | **PASS**, unchanged | `git diff --stat HEAD -- tracker/lean/Rowpartition/Loop/` is **empty**; `Strict.lean` is not in `git status` |
+| every `step` refines it under the same hypotheses as `step_refines_all` | FAIL | **FAIL, unchanged** — `common`/`empty`/`unify` only; `concrete` and `learn` still out.  Round 4 does not touch the strict refinement and does not claim to | §R4.5 |
+| `Terminates s₀` for every satisfiable `Wf s₀` with an explicit bound, **or** a compiler-reproduced witness | FAIL (T2) | **FAIL (T2)** — and now with both available routes proved impossible in Lean rather than merely open.  No witness: round 4 adds 140 seeds × ≤300 steps (4,723 steps) and 5 compiler sweeps to round 3's 28,700 runs, and **my re-run adds 59 unseen seeds (1,784 steps) and 67 further compiler solves** — 0 `FUEL`, 0 died on both | §R4.4, my T-5 |
+| audit green | PASS | **PASS** — 849 jobs, `3376 / 0`, 0 `sorry`, all 39 headlines I checked on standard axioms | T-1 |
+
+Two of four still fail, and both are recorded in the report as accepted scope with reasons —
+which is the condition the review protocol sets for advancing.
+
+## T-11. The round-4 brief's checkpoints, item by item
+
+| # | asked | delivered | my judgement |
+|---|---|---|---|
+| R4.1 | refute `QStepDichotomy` and relativise, **or** prove it; "do not proceed to R4.3 on an unexamined dichotomy" | refuted over `Wf` states, the relativisation stated AND its consequence re-proved AND refuted, every round-3 invariant proved at the witness, and the potential proved to increase | **EXCEEDED.**  The brief asked for (a) *or* (b); the round delivered (a) plus the relativisation route as a working proof chain plus the stronger `Pot` result |
+| R4.2 | discharge `RunSupOk` so B1's certification is hypothesis-free | `New`/`SupStep`, the three drawing rules, `learnPartitions_new`, `step_supFresh` (five branches), `runSupOk_of`, the four run-level theorems, `reaches_*`, `initial_binds_unbound` | **DONE.**  I instantiated it myself, at a state with a non-empty environment and across a minting step |
+| R4.3 | a monotone carrier, a productivity condition, `mints ≤ f(s₀)` — **or** the exact blocking lemma with a hunt replayed through the compiler | **both**: the count for the calculus (unconditional), the carrier and (B) free, the loop bound from `HistDichotomy` — and `HistDichotomy` refuted, with the hunt and the replays | **DONE**, and the negative half is the more valuable one |
+| R4.4 | assemble `Terminates` | not assembled — (T2), with the position stated exactly | **HONEST.**  The one thing I disagree with is the *direction* named for round 5 (T-9) |
+
+## T-12. Verdict — **ADVANCE**
+
+Three of the four checkpoints landed as asked, one of them beyond what was asked; the fourth is
+(T2) and says so.  Nothing is unsound: the build, the audit, the axiom census, the module sizes and
+the verbatim quotation count all reproduce exactly, and I re-derived the two load-bearing
+refutations by **evaluating the definitions** rather than reading the proofs, replayed both
+witnesses on the shipped compiler at more bases than the report used, and found the model and the
+compiler agreeing on the whole 20-record solve that contains the refuting mint.  The one positive
+theorem of the round, `step_supFresh`, I instantiated myself across a step that mints.
+
+The round is mostly negative results, which is the right outcome for a round whose first
+instruction was "attack the residual before relying on it", and the negative results are sharp:
+`qStepDichotomy_false` retires round 3's residual at an *initial* state of a satisfiable input, and
+`histDichotomy_false` retires the alternative before anyone invests in it.  My own extra checks add
+a third carrier (`sys`) to the refuted list, 59 unseen hunt seeds on which the re-mint phenomenon
+reproduces at the same rate, and 67 further compiler solves, none of which diverge.
+
+My findings are two documentation items (U-1 is the one that matters — the report is additive, so
+§R3.5 still reads as live although its hypothesis is now known false), one minor scope clause
+(U-2), one addition in the report's favour (U-3), one one-liner (N-1), and one substantive
+disagreement about where round 5 should go (U-4/T-9): the "charge each re-mint to a deletion"
+direction does not close, for the reason §C3.3 already gives, and the round's own hunt data refutes
+its per-key reading.  I would replace it with R5.1–R5.4 above, whose first job is to decide whether
+the re-mint pump can be driven — because if it can, L5's acceptance is met by a witness rather than
+a proof.
+
+None of that blocks the round.  **ADVANCE**, with U-1/U-2/U-3/N-1 to be applied to the report and
+the round-5 specification of T-9 replacing §R4.4's.

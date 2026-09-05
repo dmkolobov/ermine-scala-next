@@ -152,7 +152,26 @@ ONE residual Prop `QStepDichotomy` proved sufficient for the explicit bound (`ru
 SNAPSHOT bound — no theorem yet bounds the loop's mint COUNT; B1's run-level certification is CONDITIONAL on the
 unproved RunSupOk; carried_step 7 proved/4 vacuous/3 by hypothesis; learnPartitions_vocab weaker than C2's
 clause). Round-4 spec in L5-REVIEW.md S-11/S-12: refute-or-relativise QStepDichotomy, discharge RunSupOk, choose
-the carrier. UNCOMMITTED: round 3 (ready; commit on the user's word).
+the carrier. Round 3 COMMITTED `9060fbf` (2026-09-05, user's word). L5 ROUND 4 LAUNCHED (fresh Opus agent, `briefs/brief-L5r4.md`:
+R4.1 refute-or-relativise QStepDichotomy, R4.2 discharge RunSupOk (makes B1's certification unconditional), R4.3 a
+real mint count with a productivity condition and a monotone carrier, R4.4 Terminates); reviewer after.
+ROUND 4 DONE 2026-09-05 (Loop/{Refuted,Supply,Mints}.lean, 2,180 lines; build 849, Audit 3376/0): R4.1
+QStepDichotomy REFUTED on an INITIAL witness (`v2 <- (v0,(|l0|)), v0 <- (), v1 <- ((|l0|))`; the CommonPartition
+redirect swallows the carrier; no relativisation helps; the potential itself rises); R4.2 RunSupOk DISCHARGED
+(`New Old su` freshness predicate; `step_supFresh`; `run_queueHygiene_of` unconditional except INPUT properties
+SupOk/SupFresh + disjRule/cseMints=false) → B1's certification hypothesis-free; R4.3 `KMintRun.mints_le : n ≤ hmeas`
+(productive mints, unconditional for satisfiable input) but the loop-level bound needs `HistDichotomy`, ALSO
+REFUTED (four-constraint witness; 15 such mints in 6 hunt seeds; replays agree with the compiler); both carrier
+horns refuted in Lean; direction left = charge each re-mint to a deletion (counting over queue history). T2.
+ROUND-4 REVIEW: ADVANCE (everything reproduced by #eval and compiler replays; all 20 records of the mint witness
+byte-identical; hunt extended to seeds 140-198: 5 more re-mints). Findings: U-2 the hypothesis-free certification
+covers Replay of REAL traces, not the json seed driver (Sup.ofSeed blk=0 fails SupOk); U-4/T-9 the 'charge re-mints
+to deletions' direction does NOT close (charge vacuous for c≥1; seeds 74/139 re-mint at the same (v,K) twice), and
+the loop may PUMP (mint installs v <- (w,K); eliminating fresh w withdraws it; mint again) = what a divergence
+witness would look like. ROUND-5 SPEC in the review: R5.1 drive the pump toward a witness W, R5.2 charging lemma in
+refutable form, R5.3 use the DEQUEUE ORDER (untouched by any measure so far), R5.4 relativise Terminates to a stated
+fragment. Doc corrections sent to the r4 implementer. UNCOMMITTED: round 4 (commit on the user's word); round 5 =
+user's decision.
 (The earlier handoff sentences saying the invariant is false and that B1 must replace the emits_self lemma are
 superseded by this paragraph.); the 1,456-partition splitKey=false replay under tmp/L4/gu05nk/ is a model-speed
 question, not a disagreement. Reports: `L3-THEOREMS.md` (Round 2 section), `L4-TEST.md`.

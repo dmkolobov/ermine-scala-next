@@ -515,6 +515,34 @@ configurations that destroy the guard is 20,720 runs with 0 `FUEL` and 0 `REJECT
 model-vs-compiler comparisons of verdict and draw count all identical -- a whole-run divergence
 check, which is not evidence for the per-step `QStepDichotomy`.
 
+### L5 round 4 -- the residual REFUTED, the supply invariant discharged, a real mint count (2026-09-05)
+
+Worked from the clean commit `9060fbf`.  Three NEW modules; every earlier module is unchanged,
+so nothing rounds 1-3 proved is weakened.  Build 849, Audit 3376/0.  Report
+`tracker/loopmodel/L5-TERMINATION.md` (Round 4 section).
+
+| module | lines | what |
+|---|---|---|
+| `Rowpartition/Loop/Refuted.lean` | 574 | **`qStepDichotomy_false`** -- round 3's residual is FALSE, at an INITIAL state (`proc` and `env` empty) of a satisfiable three-constraint input the compiler solves in three dequeues.  `makeEmpty` erases the emptied variable from `v2 <- (v0, (\|l0\|))`, and `Q.++!`'s `CommonPartition` redirect swallows the bare `v2 <- ((\|l0\|))` it leaves, so the key `(v2, {l0})` is carried before the step and by nothing after it.  With it: `wS_invariants` (every round-3 invariant holds at the witness, so no relativisation helps), the relativisation itself (`Initial`, `Reaches`, `QStepDichotomy'`, `run_qsys_bound'`) and its refutation `qStepDichotomy'_false`, and **`qstep_pot_increases`** -- the round-3 POTENTIAL strictly grows at that step for every model of the successor, so no repair keeping `Pot` can hold.  `wS_trace` is the compiler's own three `step` records -- branch, partition, `incm=`, `proc=` |
+| `Rowpartition/Loop/Supply.lean` | 820 | **`step_supFresh`** -- `SupOk` and `SupFresh` PRESERVED by every `continue` step, so **`runSupOk_of`** makes `RunSupOk` a theorem and `run_queueHygiene_of` / `run_queueHygiene'_of` / `reaches_binds_unbound` / `initial_binds_unbound` are unconditional: the reinstantiation panic has no path from a `Seed.solve` or `Replay` state.  The key is a predicate that MOVES WITH THE SUPPLY (`New Old su`), which the fixed-`B` machinery of `Hygiene.lean` could not express; the three drawing rules are re-proved with it (`splitConcrete_new`, `resolution_new`, `commonSubexpression_new`), giving C2's sharp vocabulary clause **`learnPartitions_new`** -- every name a `learn` step writes is an old name or an id it has already spent |
+| `Rowpartition/Loop/Mints.lean` | 786 | **`KMintRun.mints_le`** -- a REAL mint count: the additive keyed calculus takes at most `hmeas L rho G₀` GENERATIVE steps from a satisfiable `G₀`, with the productivity condition on the minting constructor and `card_eq` making the count and the vocabulary growth the same number (the round-3 review's `mints_not_bounded` is unprovable for it).  Then the monotone carrier `Trail` for the loop, for which ingredient (B) is free (`Trail.carrPres`), the loop-level bound from the exact remaining lemma (`HistDichotomy`, `run_hist_mints_le`), and **`histDichotomy_false`** (and `histDichotomyR_false`, the same relativised to the histories the loop actually builds) -- that lemma is FALSE too, at the second step of a four-constraint solve where the loop mints at a key the history has carried since the input.  Also `resolution_draws` and `step_drawn_le`: `Sup.drawn` is not a mint count and no carrier bound can make it one |
+
+**What round 4 settles.**  Both horns of the carrier dilemma are refuted in Lean: the
+queue-visible carrier is too small for ingredient (B) (`qStepDichotomy_false`, at an initial
+state) and the monotone history is too big for ingredient (A) (`histDichotomy_false`).  The
+round-4 reviewer adds the third, intermediate carrier `sys` — refuted by the same two witnesses
+— so ALL THREE natural carriers fail and §C3.1's choice of carrier is closed rather than open.
+The supply invariant is no longer a hypothesis, so B1's certification is a theorem modulo the
+input's own `SupOk`/`SupFresh` and the two shipped flags; its SCOPE is `Loop.Replay` of real
+compiler traces and hand-built states with a realistic supply, **not** the model's own `json:`
+seed driver, whose `Sup.ofSeed` has `blk = 0` and so fails `SupOk` (`Loop/Main.lean`,
+`RefineLearn.lean`'s note on `SupOk`).  Termination is still (T2), and what is missing is now a
+MEASURE rather than a lemma nobody tried.  The counting-over-deletions direction the first draft
+of the report named does NOT close (round-4 review T-9), and the loop may PUMP — a mint installs
+`v <- (w, K)`, eliminating the fresh `w` withdraws it, and the loop can mint at `(v, K)` again,
+which the hunt has already measured twice at one key; round 5's first job is to decide whether
+that pump runs (`L5-REVIEW.md`, "Round-4 review" T-9, checkpoints R5.1-R5.4).
+
 ---
 
 ## The shared vocabulary
