@@ -1,7 +1,9 @@
-# Brief: D1 — ENGINEERED termination and order-robustness for `incorporateAll` (DRAFT, finalised after S1)
+# Brief: D1 — ENGINEERED termination and order-robustness for `incorporateAll`
 
-Repository `/home/dmitry/research/ermine/ermine-scala`, branch `scala3-migration`; start from the clean tree the
-orchestrator names (S1 committed). Lean project `tracker/lean/` (`export PATH=$HOME/.elan/bin:$PATH`); compiler via
+Repository `/home/dmitry/research/ermine/ermine-scala`, branch `scala3-migration`, CLEAN at `3991a58` (L5 rounds
+1–8, S1 and S2 committed; start figures: `lake build Rowpartition` 861 jobs, Audit 3898 theorems / 0 non-standard
+axioms, `lake build looptrace` 1664; `-Dermine.rowSound` exists, default OFF — run every experiment at the SHIPPED
+defaults unless the brief says otherwise). Lean project `tracker/lean/` (`export PATH=$HOME/.elan/bin:$PATH`); compiler via
 `bin/ermine` and `tracker/repro/satterm/run.sh` (`export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH`,
 `ERMINE_JAVA_OPTS=-Dermine.useInterface=false`, one JVM at a time, `-XX:ActiveProcessorCount=2`). THIS STAGE MAY EDIT
 SCALA in Part B only, behind a flag whose DEFAULT IS OFF; sbt allowed in Part B for `core/testOnly`; no default
@@ -25,7 +27,8 @@ then smallest rhs hash, then most recent — the model reproduces the compiler's
 try OTHER orders without touching Scala); `Loop/Depth.lean` (`--depth`), `Loop/VocFix.lean`
 (`terminates_of_drawsAtMost`: a draw budget IS a termination proof); `Constraints.scala` (`incorporateAll`,
 `PQueue`, `TypeVarGraph`, the `splitKey`/`splitRow`/`resRow` guards); `tracker/tools/perf-bench.sh` (P1 harness);
-`tracker/loopmodel/briefs/brief-L5r8.md` and the S1 report for the current theorem inventory.
+`tracker/loopmodel/briefs/brief-L5r8.md`, `S1-SOUNDNESS.md` and `S2-FIX.md` for the current theorem inventory
+(`solve_accepted_faithful` is the soundness chain a policy change must keep intact).
 
 ## Part A — design and model experiments (LEAN + measurement only; no Scala)
 

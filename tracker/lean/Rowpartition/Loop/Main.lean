@@ -48,6 +48,13 @@ a canonical repeat is a candidate that has to be replayed.
 `norsbare` / `norssat` / `norsdecide` to switch one back off).  With no `--flags` the SHIPPED
 defaults are used, and every S2 flag is OFF in them.
 
+`--policy=<name>` (D1 round A2) prints instead ONE `pol` line per solve -- the verdict, the
+dequeues and the ids drawn -- with the loop's `pop` under that dequeue order:
+`shipped` (the default, and `Q.pop` itself), `concfirst`, `smallrhs`, `fifo` or `canon`
+(`Loop/Policy.lean`).  `--budget=<n>` caps the fresh ids ONE SOLVE may draw and makes
+exhaustion a REJECTION with a diagnostic (`Loop/Budget.lean`); `0`, the default, is off.
+Both work on a `json:` seed and under `--replay`.
+
 `--replay` (stage L2) reads a compiler `-Dermine.rowTrace` file, reconstructs EVERY solve in
 it from its `sin`/`slbl`/`svar`/`scon` records, runs the model on each, and prints the
 model's records for each -- ONE process for a whole corpus file, not one per solve.  Each
@@ -60,6 +67,7 @@ import Rowpartition.Loop.Replay
 import Rowpartition.Loop.Pump
 import Rowpartition.Loop.Cycle
 import Rowpartition.Loop.Depth
+import Rowpartition.Loop.Policy
 
 namespace Rowpartition.Loop
 
@@ -145,6 +153,36 @@ def replayDepthOne (fl : Flags) (fuel : Nat) (g : Segment) : Except String Depth
           names := g.names, site := g.site, su0 := g.sup.lo }
       .ok (depthRun fuel st0 {})
 
+/-- D1 (A2): ONE segment through the POLICY census (`Loop/Policy.lean`), so `--policy=` runs
+over corpus replays.  The state is the one `Replay.replay` builds, so the counts are those of
+the solve the compiler performed; the early label check is deliberately NOT applied, exactly as
+`replayCycleOne` and `replayDepthOne` do not apply it, so that the four orders are compared on
+the same loop and not on the checker in front of it. -/
+def replayPolicyOne (fl : Flags) (pol : Policy) (bud : Nat) (fuel : Nat) (g : Segment) :
+    Except String PolRep :=
+  if !g.errs.isEmpty then .error (String.intercalate "; " g.errs)
+  else if g.cons.length != g.nCs then
+    .error ("scon count " ++ toString g.cons.length ++ " != nCs " ++ toString g.nCs)
+  else
+    match buildQueue g.cons g.sup with
+    | .error _ => .ok { verdict := "BUILD" }
+    | .ok (q, su1) =>
+      let st0 : State :=
+        { incm := q, proc := PQueue.empty, env := {}, su := su1, trace := [], flags := fl,
+          names := g.names, site := g.site, su0 := g.sup.lo }
+      .ok (polCensus pol bud fuel st0)
+
+/-- The `pol` summary line of one solve, without the leading index/site columns. -/
+def polCols (rep : PolRep) : String :=
+  s!"steps={rep.steps}\tdrawn={rep.drawn}\tdrawn0={rep.drawn0}"
+
+/-- The `--policy=` option; absent means the shipped order. -/
+def policyOf (opts : List String) : Policy :=
+  match (opts.find? (fun a => a.startsWith "--policy=")).bind
+      (fun a => Policy.ofString ((a.drop 9).toString)) with
+  | some p => p
+  | none => .shipped
+
 /-- The `depth` summary line of one solve, without the leading index/site columns. -/
 def depthCols (rep : DepthRep) : String :=
   s!"steps={rep.steps}\tdrawn={rep.drawn}\tdrawn0={rep.drawn0}" ++
@@ -200,9 +238,21 @@ def replayMain (path : String) (opts : List String) : IO UInt32 := do
   let cycMode := opts.contains "--cycle"
   let mintMode := opts.contains "--mints"
   let depMode := opts.contains "--depth"
+  let polMode := (opts.any (fun a => a.startsWith "--policy=")) || (opts.any (fun a => a.startsWith "--budget="))
+  let pol := policyOf opts
+  let bud := natOpt opts "--budget=" 0
   let flush : Nat → Segment → IO (Nat × Nat × Nat × Nat × Nat × Nat) := fun j g => do
     if !(lo ≤ j && j ≤ hi) then
       return (0, 0, 0, 0, 0, 0)
+    if polMode then
+      match replayPolicyOne fl pol bud fuel g with
+      | .error m =>
+        IO.println s!"#skip\t{j}\t{m}"
+        return (0, 1, 0, 0, 0, 0)
+      | .ok rep =>
+        IO.println (s!"pol\t{j}\t{g.site}\t{g.loc}\t{rep.verdict}\t" ++ polCols rep)
+        return (1, 0, 0, 0, (if rep.verdict == "REJECTED" then 1 else 0),
+          (if rep.verdict == "FUEL" then 1 else 0))
     if depMode then
       match replayDepthOne fl fuel g with
       | .error m =>
@@ -349,7 +399,20 @@ def mainImpl (args : List String) : IO UInt32 := do
       | .ok seed =>
         let (parts, ns) := seedSystem seed base
         let out := solveSeed fl site "-" parts ns (Sup.ofSeed ns.supplyLo) fuel
-        if opts.contains "--depth" then
+        if opts.any (fun a => a.startsWith "--policy=") ||
+            opts.any (fun a => a.startsWith "--budget=") then
+          let pol := policyOf opts
+          let bud := natOpt opts "--budget=" 0
+          match buildQueue parts (Sup.ofSeed ns.supplyLo) with
+          | .error m => IO.println s!"pol\t{(policyOf opts).toStr}\tBUILD\t{m}"
+          | .ok (q, su2) =>
+            let st0 : State :=
+              { incm := q, proc := PQueue.empty, env := {}, su := su2, trace := [], flags := fl,
+                names := ns, site := site, su0 := (Sup.ofSeed ns.supplyLo).lo }
+            let rep := polCensus pol bud fuel st0
+            IO.println (s!"pol\t{pol.toStr}\tbase={base}\t{rep.verdict}\t" ++ polCols rep ++
+              (if rep.msg.isEmpty then "" else s!"\t{rep.msg}"))
+        else if opts.contains "--depth" then
           match buildQueue parts (Sup.ofSeed ns.supplyLo) with
           | .error m => IO.println s!"depth\tBUILD\t{m}"
           | .ok (q, su2) =>

@@ -462,3 +462,21 @@ long-lived SubstEnv (SOLVED today, REJECTED with the flag on). ADOPTION RECOMMEN
 gate, (2) per-solve budget + visible exhaustion signal, (3) the chain in Lean; then yes; layers (i)+(iii) alone buy
 the whole measured benefit (layer (ii) contributed 0 corpus records, cited-sound only). S2 implementer RESUMED to
 close V-1..V-13 + the three prerequisites; then orchestrator re-verify → COMMIT S2 (flags OFF) → D1 launch.
+S2 COMMITTED `3991a58` (2026-09-06 ~05:20, autonomous mode; orchestrator re-verified 861/1664/3898-0, TestLoopTrace
+714/714 both ways, env gate 9 cases shipped 4 differ / flag ON 0 differ, ENV-LINK shipped SOLVED 5/5 / flag ON
+REJECTED at l0). USER DECISION QUEUED: flip `-Dermine.rowSound` (or `.bare`+`.decide` only) default ON — the
+reviewer's three prerequisites are now met. D1 LAUNCHING (Opus, briefs/brief-D1.md finalised at 3991a58): Part A on
+the model only (draw budget spec + `budget_terminates`/`budget_never_accepts`; dequeue-order policies vs
+GU05/GU05MIN/tracked seeds/eight-group corpus; design note D1-DESIGN.md; STOP). Part B (flagged Scala change) only
+on the orchestrator's go after Part A's report.
+D1-A REVIEW (2026-09-06 ~11:30): ADVANCE — all load-bearing numbers reproduced (smallcanon GU05 414 dequeues / 306
+draws at every base; only 134 of 2.3M segments change draws, 0 change verdict); T-1 budget reset must be at the
+loop's entry thread-locally (RowTrace.withSite is a no-op without -Dermine.rowTrace); T-2 smallcanon needs a
+finger-tree measure component (or scan) and must not displace rhs.hashCode (findRHS/contains/insert range-split on
+it); T-3 dequeuePol_none unproved; T-4..T-7 prose (canon/fifo SEVEN segments short; canon −4.0%/+1.49% on the common
+population; concfirst changes one verdict); T-9 diagnostic wording; T-13 budget value by compiler measurement,
+flags coupling; T-14 extra gates (.ei with policy ON, env gate, smokes, perf ON, per-solve draw equality
+compiler vs model). Recommendation: implement smallcanon + budget together, default OFF. Implementer RESUMED:
+Phase 1 (T-3 Lean + prose, main tree) → orchestrator commits D1-A → Phase 2 Part B Scala in worktree
+ermine-scala-wt-d1 (branch dequeue-policy), Lean mirror in main only after "D1-A committed" → Part B reviewer →
+commit (flags OFF). Adoption of smallcanon/solveBudget AND rowSound = user's decisions.

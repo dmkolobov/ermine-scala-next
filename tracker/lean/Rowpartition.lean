@@ -178,6 +178,23 @@ first getting the module to build.
                                `run_noLoss` and `solve_sound` are conditional on.  Seeds in the
                                kernel: `MIN1`, `MIN2`, `SURV1` accepted by the LOOP and refuted
                                by the DECISION; `NP01` unchanged
+* `Rowpartition.Loop.Budget` -- D1 (A1): the DRAW BUDGET.  `stepBud`/`runBud` cap the fresh ids
+                               ONE SOLVE may draw; `budget_terminates` (every solve stops, via
+                               `VocFix.terminates_of_drawsAtMost`), `budget_never_accepts`
+                               (whatever the budgeted loop accepts the shipped loop accepts, at
+                               the same state), `stepBud_died_sys` (the death changes nothing)
+                               and `runBud_eq_run` (below the cap it IS `run`).  DEFAULT OFF:
+                               `step` and `run` are untouched
+* `Rowpartition.Loop.Policy` -- D1 (A2): DEQUEUE-ORDER policies.  `stepP` is `step` with `pop`
+                               taking a `Policy` and `stepP_shipped` is `rfl`, so the shipped
+                               order is the default definitionally; `concFirst`, `smallRhs`,
+                               `fifo`, `canon` (the shipped order with every id replaced by its
+                               first-occurrence RANK) and `smallCanon` (the WINNER: `smallRhs`'s
+                               arity with `canon`'s id order as the tie-break) are the
+                               alternatives, and `dequeuePol_shape` says every one of them
+                               returns an element of the queue with that position erased --
+                               which, with `dequeuePol_none` for the acceptance branch, is all
+                               the development's proofs ever use of `pop`
 -/
 import Rowpartition.Basic
 import Rowpartition.Rules
@@ -244,3 +261,5 @@ import Rowpartition.Loop.Reject
 import Rowpartition.Loop.Solve
 import Rowpartition.Loop.Decide
 import Rowpartition.Loop.NoFalseAccept
+import Rowpartition.Loop.Budget
+import Rowpartition.Loop.Policy
