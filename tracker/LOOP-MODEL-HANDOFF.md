@@ -617,3 +617,4 @@ U-0 (U-8); lblKey now code POINTS on both sides (U-9); RowTrace doc comment (U-1
 looptrace 1,670, TestLoopTrace 714/714 x3, boot+top differential 146,872/146,872 OFF and under the policy,
 fingerprint unchanged at defaults. NO COMMITS; both flags DEFAULT OFF. Recommendation carried forward from the
 review: adopt rowSound first or with the policy, the policy second, the budget only with the policy.
+D1-B + D1-T COMMITTED 82c982a (2026-09-06 15:45, autonomous mode; verified 867/1670/4115-0, TestLoopTrace 714/714 x3, MIN2 policy rsOFF 5/5 SOLVED / rsON 0/5, budget ignored at shipped with warning). Tree clean. NEXT = report to the user; the loop is at a natural stop: the user's decisions (rowSound default; smallcanon default with rowSound; budget value) gate everything further.
