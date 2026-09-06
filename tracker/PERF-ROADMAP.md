@@ -411,6 +411,28 @@ any change, then the cheapest change with the largest profiled share, then the
   not work done here.
 
 
+- [ ] **P10 [B] Dequeue-ORDER sensitivity of the row solver** (from the LOOP MODEL
+  programme, L5 round 8, 2026-09-05).  One satisfiable 21-variable / 10-label /
+  18-partition input, `tracker/repro/satterm/seeds/slow/GU05.json` (transcoded
+  from `core/examples/incomplete/gu05_star_join_4dim_concrete_signature.e(62:1)`'s
+  own solve; `GU05MIN.json` is its 15-constraint reduction), solves in 221 ms at
+  one id base and in 133-486 s at others, drawing 743 vs 47,000-81,000 fresh ids
+  -- >= 1,210x in wall clock like-for-like, decided by NOTHING but the id base,
+  i.e. the order `PQueue`'s hashCode-keyed priority gives the same constraints.
+  The corpus solve of the same system takes 281 dequeues at the ids it happens
+  to get.  The Lean instrument (`lake exe looptrace <seed> <base> <fuel> --depth`)
+  shows the cost is WIDTH -- many distinct (site, concrete-part) split keys, the
+  `2^|labels|` factor -- with the chain depth and the per-key mint count both
+  climbing slowly (L5-TERMINATION.md sR8.0/sR8.4c, L5-REVIEW.md round-8 Y-10).
+  Repro: `ERMINE_JAVA_OPTS=-Dermine.useInterface=false tracker/repro/satterm/run.sh
+  sweep json:tracker/repro/satterm/seeds/slow/GU05.json 0 24 600 30` (one JVM at
+  a time; the harness's supply window was widened to 2^30 on 2026-09-05 so runs
+  past 100,000 draws no longer die in a recycled id block).  This is the input
+  the design stage for engineered termination (LOOP-MODEL-PLAN.md, after S1)
+  must measure before and after; it is NOT a hang (every base run to completion
+  terminates) and is filed here as the first real, satisfiable, pathological
+  input the solver has.  Awaiting the design stage; no code here.
+
 ## P7 DESIGN (written 2026-08-31; awaiting sign-off before any code)
 
 ### The measured problem
@@ -1215,3 +1237,16 @@ deferred by LSP 5.5).
   Reverted cleanly: Parser.scala identical to its pre-change state, the test
   removed with it, core/test back to 904 with only the known Constraints
   failure.
+
+- 2026-09-05 (P10 filed, no measurement loop run).  The LOOP MODEL programme's
+  L5 round 8 (commit bd348ab) produced the first real satisfiable input on which
+  the shipped row solver's cost depends on the dequeue order by three orders of
+  magnitude; filed above as P10 with the seeds, the repro command and the
+  instrument.  The one code change is in the replay harnesses, not the compiler:
+  `tracker/repro/nameloss/Replay.scala`'s `supplyAt` window 100,000 -> 2^30
+  (`SupplyWindow`), used by `SatTermRepro.drawnOf` too, because the round-8
+  reviewer traced a false "panic: reinstantiated type" at 692 s to the window
+  recycling into global block 0.  NO compiler change, so the P1 baselines are
+  untouched.  Termination of the solver stays OPEN in Lean (see
+  tracker/ROW-CONSTRAINT-STATE.md); the user's direction after round 8 is
+  soundness first (stage S1), then engineered termination behind a flag.

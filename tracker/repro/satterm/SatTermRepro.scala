@@ -156,7 +156,7 @@ object SatTermRepro {
   def drawnOf(su: Supply, lo0: Int): Int = {
     val fld = classOf[Supply].getDeclaredField("lo"); fld.setAccessible(true)
     val lo = fld.getInt(su)
-    if (lo < lo0 || lo > lo0 + 100000) -1 else lo - lo0   // -1: the block was exhausted, count unknown
+    if (lo < lo0 || lo > lo0 + SupplyWindow) -1 else lo - lo0   // -1: the window was exhausted, count unknown
   }
 
   /** For a HANG under `-Dermine.rowTrace`: `step` records so far and the largest id in a learn record. */

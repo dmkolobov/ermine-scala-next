@@ -13,10 +13,18 @@ object Replay {
   val R6: Set[Name] = R8 -- K
   val R9: Set[Name] = R8 ++ D
 
+  /** Width of a replay supply's private id window.  `Supply.fresh` hands out `lo` up to `hi - 1`
+    * and then takes GLOBAL blocks, which start at id 0 and collide with the seed's own variables
+    * (`panic: reinstantiated type`).  100,000 was enough for every seed until L5 round 8's
+    * GU05.json drew 69,768 ids in ten minutes at one base and died in the recycled block at
+    * ~692 s (L5-REVIEW.md, round-8 review Y-D); 2^30 leaves room for any run the wall clock
+    * allows and still fits an Int for every base the harnesses use. */
+  val SupplyWindow: Int = 1 << 30
+
   def supplyAt(lo: Int): Supply = {
     val c = classOf[Supply].getDeclaredConstructors.head
     c.setAccessible(true)
-    c.newInstance(Integer.valueOf(lo), Integer.valueOf(lo + 100000)).asInstanceOf[Supply]
+    c.newInstance(Integer.valueOf(lo), Integer.valueOf(lo + SupplyWindow)).asInstanceOf[Supply]
   }
   def rho: Kind = Rho(Loc.builtin)
   def tv(id: Int, name: String = ""): TypeVar =

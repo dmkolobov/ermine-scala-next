@@ -395,3 +395,6 @@ instrument), then hunt R, then a generator built to drive D -- NOT the round's o
 "L-c first", which rested on the two false claims above. Deliverables Y-F done:
 `LOOP-MODEL-PLAN.md` L5 row, a `### L5 round 8` section in `tracker/lean/README.md`, and the
 eight-group 96.81 % beside the seven-group 97.39 % in `ROW-CONSTRAINT-STATE.md`.
+Round 8 COMMITTED `bd348ab` (2026-09-05, autonomous mode; verified 856/1662/3742-0, TestLoopTrace 714/714 with NP01
+in seeds/ and GU05/GU05MIN in seeds/slow/). S1 plan section + status row added; S1 implementer launching (Opus,
+briefs/brief-S1.md, report S1-SOUNDNESS.md). Start figures for S1: 3742 theorems / 856 jobs / looptrace 1662.
