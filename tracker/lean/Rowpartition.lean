@@ -154,6 +154,30 @@ first getting the module to build.
                                `buildQueue`/`initState` with every hypothesis discharged from
                                the input, instantiated on `NP01.json` (accepted) and
                                `REF.json` (rejected)
+* `Rowpartition.Loop.Decide` -- S2: the three NO-FALSE-ACCEPTANCE layers of
+                               `tracker/loopmodel/S2-DESIGN.md`, EXECUTABLE and behind the
+                               same flags the compiler carries, ALL DEFAULT OFF.  (i)
+                               `bareExact`/`stepS`/`runS`: `makeConcrete`'s compatibility fold
+                               with EQUALITY at a BARE definition, as a pre-check in front of
+                               `step`'s `concrete` branch.  (iii) `labelDecide`: the COMPLETE
+                               per-label decision -- `forcedBy`'s five rules to a fixpoint
+                               (`propagate`), then a CASE SPLIT (`searchLabel`), with the model
+                               CHECKED against every partition (`modelChecks`) before SAT is
+                               returned and a budget whose exhaustion is NO VERDICT.  Layer
+                               (ii) is `labelClash` on the saturated set and needs nothing new
+* `Rowpartition.Loop.NoFalseAccept` -- S2's theorems.  `forcedBy_sound`, `propagate_sound`,
+                               `searchLabel_sound` / `searchLabel_checks`; the bridge
+                               `bsat_iff_count` / `lsat_iff_bsat` to `Rowpartition.BSat`;
+                               `labelDecide_refuted_unsat` (SOUND) and `labelDecide_sat_ssat`
+                               (COMPLETE: a pass means `SSat`); `stepS_continue` -- layer (i)
+                               can only turn a continuation into a DEATH, which is why no S1
+                               theorem needed a hypothesis -- and `bare_death_refutes`; and
+                               **`solve_noFalseAccept`**: with layer (iii) on and the budget
+                               not exhausted, a solve that does not reject says the system it
+                               was given HAS A MODEL.  The converse of S1, and the hypothesis
+                               `run_noLoss` and `solve_sound` are conditional on.  Seeds in the
+                               kernel: `MIN1`, `MIN2`, `SURV1` accepted by the LOOP and refuted
+                               by the DECISION; `NP01` unchanged
 -/
 import Rowpartition.Basic
 import Rowpartition.Rules
@@ -218,3 +242,5 @@ import Rowpartition.Loop.Depth
 import Rowpartition.Loop.Sound
 import Rowpartition.Loop.Reject
 import Rowpartition.Loop.Solve
+import Rowpartition.Loop.Decide
+import Rowpartition.Loop.NoFalseAccept

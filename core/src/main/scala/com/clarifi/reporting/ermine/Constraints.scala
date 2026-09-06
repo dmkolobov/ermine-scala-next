@@ -308,16 +308,38 @@ object Constraints {
     else             indent + factored.mkString(",\n" + indent)
   }
 
+  /* The death both row-compatibility checks raise: S1's death site 7,
+   * "Row types failed to unify".  Factored out so that `ensureExactly` (S2
+   * layer (i)) reports in exactly the words `ensureSuperset` has always used;
+   * the two differ in WHEN they fire, never in what they say. */
+  private def rowUnifyDeath(loc: Loc, sub: Fields, sup: Fields)(implicit tml: Located): Nothing =
+    die {
+      "Row types failed to unify: " :/:
+      "R1 = " :/: displayFactoredRow(sub, "  ") :/:
+      "R2 = " :/: displayFactoredRow(sup, "  ") :/:
+      loc.report("R1") :/:
+      tml.report("R2")
+    }
+
   // @throws SubstException
   def ensureSuperset(loc: Loc, sub: Fields, sup: Fields)(implicit tml: Located) =
-    if (!(sub subsetOf sup))
-      die {
-        "Row types failed to unify: " :/:
-        "R1 = " :/: displayFactoredRow(sub, "  ") :/:
-        "R2 = " :/: displayFactoredRow(sup, "  ") :/:
-        loc.report("R1") :/:
-        tml.report("R2")
-      }
+    if (!(sub subsetOf sup)) rowUnifyDeath(loc, sub, sup)
+
+  /* S2 layer (i), `-Dermine.rowSound.bare` (default OFF).  At a BARE definition
+   * `v <- ((|C|))` -- no abstract part at all -- a concrete instantiation
+   * `v := ((|fs|))` forces `C = fs`, not merely `C subsetOf fs`: the two are
+   * definitions of the SAME row.  `Rowpartition/Loop/Sound.lean`'s `bare_refutes`
+   * is that statement (two different bare rows for one variable refute the
+   * system), so refusing `C != fs` here is a REFUTATION and never a false
+   * rejection.  It matters because `makeConcrete`'s `destructiveSub` then
+   * DELETES the bare row (`keepDefs` keeps only definitions with two or more
+   * abstract parts, and `cancellation` emits nothing for a bare one), so a `C`
+   * waved through by containment is lost with nothing in its place -- the hole
+   * `S1-SOUNDNESS.md` section S1.1 row 4 names and seed `MIN2` walks through.
+   */
+  // @throws SubstException
+  def ensureExactly(loc: Loc, sub: Fields, sup: Fields)(implicit tml: Located) =
+    if (sub != sup) rowUnifyDeath(loc, sub, sup)
 
   private def predOr[A](p1: A => Boolean, p2: A => Boolean)(x: A): Boolean = p1(x) || p2(x)
 
@@ -1024,6 +1046,86 @@ object Constraints {
      * DEFAULT OFF pending the adoption gates in `tracker/satterm/KEYED-EMPTY-STAGE7.md`.
      * `-Dermine.emptyRow=true` enables it. */
     val emptyRow: Boolean = System.getProperty("ermine.emptyRow", "false") == "true"
+    /* ------------------------------------------------------------------ *
+     * S2 (`tracker/loopmodel/S2-DESIGN.md`): NO FALSE ACCEPTANCE.          *
+     * ------------------------------------------------------------------ *
+     * The shipped solver ACCEPTS unsatisfiable row systems.  Ten seeds are
+     * confirmed on the compiler (`tracker/loopmodel/S1-REVIEW.md` Z-1/Z-2 and
+     * its Appendix B; `tracker/repro/satterm/seeds/unsat/`), the shortest five
+     * constraints long.  Two mechanisms:
+     *   - the loop reaches `.done` on a residual it never refuted (saturation is
+     *     refutation-INCOMPLETE), and
+     *   - `makeConcrete` deletes a bare definition `v <- ((|C|))` with `C` a
+     *     PROPER subset of the concrete instantiation, because `ensureSuperset`
+     *     tests containment where the semantics forces equality.
+     * `labelCheckEarly` misses them because it is unit propagation, which is
+     * SOUND but not COMPLETE (`Rowpartition/LabelAlgo.lean`); every one of these
+     * needs a case split.
+     *
+     * Three layers, each separately switchable, ALL DEFAULT OFF.  With them off
+     * the compiler is byte-identical to before this switch existed; adoption is
+     * a decision for the user, not for this stage.
+     *
+     *   `-Dermine.rowSound=true`            -- master: turns all three on.
+     *   `-Dermine.rowSound.bare=true|false` -- (i)   bare-row EXACTNESS in
+     *       `makeConcrete`: at a bare definition `v <- ((|C|))` and a concrete
+     *       instantiation `v := ((|fs|))`, require `C = fs` rather than
+     *       `C subsetOf fs`.  Sound: `Rowpartition/Loop/Sound.lean`'s
+     *       `bare_refutes` (two DIFFERENT bare rows for one variable refute the
+     *       system).  Refutation site: `ensureExactly`, the same
+     *       "Row types failed to unify" death `ensureSuperset` raises.
+     *   `-Dermine.rowSound.saturated=true|false` -- (ii)  run `labelClash` on the
+     *       SATURATED set as well as on the input.  Sound:
+     *       `Rowpartition.refute_saturated_sound`.  This is the flag removed on
+     *       2026-09-02 at "zero additional refutations on both corpora" -- a fact
+     *       about the corpora, not about the algorithm (S1 review, section 7.1:
+     *       it catches 1146 of 1166 model false acceptances).
+     *   `-Dermine.rowSound.decide=true|false` -- (iii) a COMPLETE per-label
+     *       decision (`labelDecide`): unit propagation PLUS case split, run on
+     *       the solve's LIVE INPUT -- the input partitions together with the
+     *       `SubstEnv` bindings of every variable they mention, because
+     *       `Subst.solve` does NOT `substType` its input before `PQueue.build`
+     *       and the environment is long-lived (S1 review Z-6).  This is the layer
+     *       that carries the theorem: pass ==> satisfiable.
+     *   `-Dermine.rowSound.budget=<n>`      -- decision nodes per label for (iii),
+     *       default 200000; `-Dermine.rowSound.solveBudget=<n>` caps their SUM over
+     *       one solve, default 1000000.  The problem is NP-complete (Schaefer's one-in-three),
+     *       so the budget is what keeps a pathological solve from hanging; on
+     *       exhaustion the check returns NO VERDICT and refutes nothing, which is
+     *       why the theorem in `S2-DESIGN.md` carries the budget as a hypothesis.
+     *       Exhaustion is COUNTED (`GenRules.rowSoundBudgetHits`) and traced
+     *       (`RowTrace` kind `budget`) so that "it never fired" is a measurement
+     *       rather than an assumption.
+     */
+    private val rowSoundAll: Boolean =
+      System.getProperty("ermine.rowSound", "false") == "true"
+    private def rowSoundFlag(n: String): Boolean =
+      System.getProperty(n, if (rowSoundAll) "true" else "false") == "true"
+    val rowSoundBare: Boolean   = rowSoundFlag("ermine.rowSound.bare")
+    val rowSoundSat: Boolean    = rowSoundFlag("ermine.rowSound.saturated")
+    val rowSoundDecide: Boolean = rowSoundFlag("ermine.rowSound.decide")
+    val rowSoundBudget: Int     =
+      try System.getProperty("ermine.rowSound.budget", "200000").toInt
+      catch { case _: NumberFormatException => 200000 }
+    /** Layer (iii)'s cap on the decision nodes ONE SOLVE may spend, summed over
+      * its labels; `-Dermine.rowSound.solveBudget`, default 1000000.  S2 review
+      * V-12: the per-label budget alone bounds the worst case at `#labels` times
+      * the per-label cost (measured at 0.20 s for 200000 nodes), which is
+      * seconds on a wide solve.  Exhaustion is NO VERDICT, refutes nothing, and
+      * is now VISIBLE -- see `Subst.solve`'s `decideLabels`. */
+    val rowSoundSolveBudget: Long =
+      try System.getProperty("ermine.rowSound.solveBudget", "1000000").toLong
+      catch { case _: NumberFormatException => 1000000L }
+    /** Times (iii) ran out of a BUDGET (per label or per solve) and returned NO
+      * VERDICT.  Read by the S2 measurement harness; never read by the compiler. */
+    val rowSoundBudgetHits = new java.util.concurrent.atomic.AtomicLong(0L)
+    /** Times (iii)'s FAIL-SAFE fired instead: a total assignment failed its own
+      * check, which would be a propagator bug.  Counted apart from the budget so
+      * that "0 budget exhaustions" cannot absorb it (S2 review V-8). */
+    val rowSoundCheckFails = new java.util.concurrent.atomic.AtomicLong(0L)
+    /** Decision nodes (iii) has spent, and the largest single `solve` bill. */
+    val rowSoundNodes      = new java.util.concurrent.atomic.AtomicLong(0L)
+    val rowSoundMaxNanos   = new java.util.concurrent.atomic.AtomicLong(0L)
     /* REMOVED 2026-09-02, both measured and declined; see
      * `tracker/TICKET-row-solver-8abc.md` and the Lean that still licenses them.
      *   `ermine.labelCheckSaturated` -- run the check on `q.expand` instead of the input.
@@ -1039,7 +1141,9 @@ object Constraints {
       mode + (if (disjRule) "+disj" else "") + (if (labelCheck) "+label" else "") +
         (if (labelCheckEarly) "-early" else "") + (if (resGuard) "+resguard" else "") +
         (if (splitKey) "+splitkey" else "") + (if (splitRow) "+splitrow" else "") +
-        (if (resRow) "+resrow" else "") + (if (emptyRow) "+emptyrow" else "")
+        (if (resRow) "+resrow" else "") + (if (emptyRow) "+emptyrow" else "") +
+        (if (rowSoundBare) "+rsbare" else "") + (if (rowSoundSat) "+rssat" else "") +
+        (if (rowSoundDecide) "+rsdecide" else "")
   }
   case object Disjunction         extends Inference
 
@@ -1615,6 +1719,15 @@ object Constraints {
              ++ incm.toSet.filter(p => p._1 == v).map(_._2))
       // Check superset compatibility for the concrete instantiation
     rhss.foreach {
+      /* S2 layer (i): a BARE definition of `v` is an EQUATION, not a lower
+       * bound.  Only reachable with `-Dermine.rowSound.bare=true`; with the
+       * flag off this is `ensureSuperset` on every definition, as shipped. */
+      case RHS(abstr, concr) if GenRules.rowSoundBare && abstr.isEmpty =>
+        if (concr != fs)
+          RowTrace.rowSound("bare", v.loc.toString,
+            v.toString + "\t" + concr.toList.map(_.toString).sorted.mkString(",") +
+            "\t" + fs.toList.map(_.toString).sorted.mkString(","))
+        ensureExactly(v.loc, concr, fs)
       case RHS(_, concr) => ensureSuperset(v.loc, concr, fs)
     }
     val can = rhss.foldLeft(Set[Partition]()){
@@ -1993,5 +2106,288 @@ object Constraints {
       }
     }
     clash
+  }
+
+  /* ------------------------------------------------------------------ *
+   * S2 layer (iii): the COMPLETE per-label decision.                     *
+   * `-Dermine.rowSound.decide` (default OFF).                            *
+   * ------------------------------------------------------------------ *
+   * `checkLabel` above is unit propagation: SOUND (a clash refutes the
+   * system -- `Rowpartition/LabelProp.lean`'s `refuted_unsat`) but NOT
+   * COMPLETE.  Every one of the ten seeds on which the shipped compiler
+   * accepts an unsatisfiable row system passes it, because each needs a CASE
+   * SPLIT (`tracker/loopmodel/S1-REVIEW.md` sections 2.3-2.6, Appendix B).
+   *
+   * WHAT IS DECIDED.  A partition `v <- (u1..uk, C)` says the parts are
+   * pairwise disjoint and union to `v`.  Project onto ONE label `l`: with bits
+   * `b[x] = [l in rho x]` and `c = [l in C]`, the constraint is exactly
+   *
+   *     b[u1] + ... + b[uk] + c  <=  1        and   b[v] = that sum.
+   *
+   * The system is satisfiable IFF every label's boolean problem is (a model is
+   * assembled label by label; a label mentioned in no concrete set has the
+   * all-false model, so only the MENTIONED labels need deciding -- the same
+   * label range `labelClash` walks).  The bit problem is 1-in-3-SAT when a
+   * whole is known present, hence NP-complete, hence the search below and the
+   * budget on it.
+   *
+   * HOW.  DPLL: `propagate` is `checkLabel`'s fixpoint made worklist-driven
+   * and re-using its five rules and its five messages verbatim, so a
+   * refutation that propagation alone would have found is reported in exactly
+   * the words the shipped check uses; `search` then branches on the first
+   * unassigned bit (FALSE first) and recurses.  A branch that assigns every
+   * bit without a clash is VERIFIED against every partition directly before
+   * SAT is returned -- so "passes" means "a model was exhibited and checked",
+   * not "no rule complained".  If that verification ever fails the answer is
+   * NO VERDICT, never UNSAT: a bug in the propagator can then cost a
+   * refutation but can never cause a false rejection.
+   *
+   * BUDGET.  `budget` bounds the DECISION NODES per label.  On exhaustion the
+   * result is `LabelNoVerdict` and nothing is refuted, which is why the
+   * theorem in `S2-DESIGN.md` carries "the budget was not exhausted" as a
+   * hypothesis and why exhaustion is counted and traced rather than silent.
+   */
+  sealed abstract class LabelVerdict
+  /** Every mentioned label's problem has a model, and each model was checked. */
+  case object LabelSat extends LabelVerdict
+  /** No model at `label`; `at` is the partition (by its left-hand variable) at
+    * which the search's first clash was detected, for blame. */
+  case class LabelRefuted(label: Name, at: TypeVar, why: String) extends LabelVerdict
+  /** The search stopped without an answer.  Refutes nothing.  `exhausted` is
+    * true when a BUDGET ran out (per label or per solve) and false when the
+    * fail-safe fired -- a total assignment that failed its own check.  The two
+    * are counted separately: a counter named `budgetHits` must not silently
+    * absorb a propagator bug (S2 review V-8). */
+  case class LabelNoVerdict(label: Name, why: String, exhausted: Boolean) extends LabelVerdict
+
+  /** `verdict`, the decision nodes spent, and how many labels were decided. */
+  case class DecideResult(verdict: LabelVerdict, nodes: Long, labels: Int)
+
+  /** Decide every mentioned label.  Returns the FIRST refutation in label
+    * order if there is one, else the first no-verdict, else `LabelSat`.
+    *
+    * TWO caps, and both can lapse the theorem (`S2-DESIGN.md` §2's hypothesis):
+    * `budget` bounds the decision nodes at ONE label, and `solveBudget` bounds
+    * their SUM over the whole solve.  The per-solve cap is S2 review V-12: the
+    * per-label budget alone bounds the worst case at `#labels x 0.2 s`, which
+    * is seconds on a wide solve, and this bounds it once.
+    *
+    * ORDER (S2 review V-13a): `labels` is a `Set[Name]`, so the iteration is
+    * HASH order -- deterministic for a build, not sorted.  It decides only
+    * WHICH of several refuting labels is reported, never whether the system is
+    * refuted: the loop runs to the first refutation and a refutation at any
+    * label is a refutation of the system. */
+  def labelDecide(ps: List[(TypeVar, RHS)], budget: Int, solveBudget: Long): DecideResult = {
+    val labels: Set[Name] = ps.foldLeft(Set[Name]()) { case (s, (_, r)) => s ++ r.concr }
+    var nodes    = 0L
+    var refuted: LabelVerdict = null
+    var unknown: LabelVerdict = null
+    val it = labels.iterator
+    while (it.hasNext && (refuted eq null)) {
+      val l = it.next()
+      if (nodes >= solveBudget) {
+        if (unknown eq null)
+          unknown = LabelNoVerdict(l, "the solve's decision budget of " + solveBudget +
+            " nodes was spent before this field was decided", true)
+      } else {
+        // never let one label spend more than the solve has left
+        val left = solveBudget - nodes
+        val cap = if (left < budget.toLong) left.toInt else budget
+        val (v, n) = decideLabel(ps, l, cap)
+        nodes += n
+        v match {
+          case LabelSat            => ()
+          case r: LabelRefuted     => refuted = r
+          case u: LabelNoVerdict   => if (unknown eq null) unknown = u
+        }
+      }
+    }
+    val verdict = if (refuted ne null) refuted else if (unknown ne null) unknown else LabelSat
+    DecideResult(verdict, nodes, labels.size)
+  }
+
+  /** One label's problem, decided completely.  `(verdict, decision nodes)`.
+    *
+    * BLAME (S2 review V-13b): `firstAt`/`firstWhy` record the FIRST clash seen anywhere in
+    * the search and are NOT reset between branches, so a search-refutation's blamed variable
+    * need not belong to the branch that closes the proof.  Deliberate, and it changes
+    * nothing that is checked: the LABEL is fixed by the caller's loop, the verdict is fixed
+    * by the search, and `Subst.solve`'s `rowUnsat` uses the variable only to PREFER one
+    * input `Part` over another when several mention the field -- with a fallback that is a
+    * real source position either way.  Resetting it per branch would pick a different
+    * arbitrary clash, not a better one. */
+  private def decideLabel(ps: List[(TypeVar, RHS)], l: Name, budget: Int): (LabelVerdict, Long) = {
+    // ---- index the variables in order of FIRST APPEARANCE (so the search is
+    // ---- a function of the partition list's order, not of a hash set's).
+    val index = new scala.collection.mutable.LinkedHashMap[TypeVar, Int]
+    def ix(v: TypeVar): Int = index.getOrElseUpdate(v, index.size)
+    val m     = ps.length
+    val lhsA  = new Array[Int](m)
+    val partA = new Array[Array[Int]](m)
+    val conA  = new Array[Boolean](m)
+    var i = 0
+    ps.foreach {
+      case (v, RHS(abstr, concr)) =>
+        lhsA(i)  = ix(v)
+        partA(i) = abstr.toList.map(ix).toArray
+        conA(i)  = concr contains l
+        i += 1
+    }
+    val n    = index.size
+    val vars = index.keysIterator.toArray
+
+    if (n == 0) return ((LabelSat: LabelVerdict), 0L)
+
+    // partitions mentioning each variable, so propagation revisits only those
+    val occ: Array[Array[Int]] = {
+      val b = Array.fill(n)(new scala.collection.mutable.ArrayBuffer[Int]())
+      var k = 0
+      while (k < m) {
+        b(lhsA(k)) += k
+        partA(k).foreach(u => if (u != lhsA(k)) b(u) += k)
+        k += 1
+      }
+      b.map(_.toArray)
+    }
+
+    val bits   = new Array[Byte](n)   // 0 unknown, 1 true, 2 false
+    val trail  = new Array[Int](n)
+    var tlen   = 0
+    val stack  = new Array[Int](m)
+    val queued = new Array[Boolean](m)
+    var slen   = 0
+    var conflict  = false
+    var firstAt   = -1
+    var firstWhy: String = null
+    var nodes     = 0L
+    var budgetOut = false
+    var checkFailed = false
+
+    def push(k: Int): Unit = if (!queued(k)) { queued(k) = true; stack(slen) = k; slen += 1 }
+    def clearQueue(): Unit = { while (slen > 0) { slen -= 1; queued(stack(slen)) = false } }
+    def note(at: Int, why: String): Unit = {
+      conflict = true
+      if (firstWhy eq null) { firstAt = at; firstWhy = why }
+    }
+    def assign(u: Int, b: Byte, at: Int, why: String): Unit =
+      if (bits(u) == 0) {
+        bits(u) = b; trail(tlen) = u; tlen += 1
+        val os = occ(u); var j = 0
+        while (j < os.length) { push(os(j)); j += 1 }
+      } else if (bits(u) != b) note(at, why)
+
+    /* `checkLabel`'s five rules, in `checkLabel`'s order, on the worklist. */
+    def propagate(): Unit = {
+      while (slen > 0 && !conflict) {
+        slen -= 1
+        val k = stack(slen); queued(k) = false
+        val lhs   = lhsA(k)
+        val parts = partA(k)
+        val con   = conA(k)
+        var ones  = if (con) 1 else 0
+        var unkN  = 0
+        var j = 0
+        while (j < parts.length) {
+          val b = bits(parts(j))
+          if (b == 1) ones += 1 else if (b == 0) unkN += 1
+          j += 1
+        }
+        if (ones > 1) note(lhs, "two parts of one partition both contain it")
+        else {
+          // the UNKNOWN parts as of NOW, exactly as `checkLabel` snapshots them
+          // before it assigns the whole -- which is what makes a variable that
+          // is a part of its own partition come out forced empty.
+          val unk = new Array[Int](unkN)
+          var u = 0; j = 0
+          while (j < parts.length) { if (bits(parts(j)) == 0) { unk(u) = parts(j); u += 1 }; j += 1 }
+          if (ones == 1) {
+            assign(lhs, 1, lhs, "a part contains it but the whole does not")
+            j = 0
+            while (j < unkN && !conflict) {
+              assign(unk(j), 2, lhs, "two parts of one partition both contain it"); j += 1
+            }
+          }
+          if (!conflict && bits(lhs) == 2) {
+            if (con) note(lhs, "a part contains it but the whole does not")
+            j = 0
+            while (j < unkN && !conflict) {
+              assign(unk(j), 2, lhs, "a part contains it but the whole does not"); j += 1
+            }
+          }
+          if (!conflict && ones == 0 && unkN == 0)
+            assign(lhs, 2, lhs, "the whole contains it but no part does")
+          if (!conflict && bits(lhs) == 1 && ones == 0) {
+            if (unkN == 0) note(lhs, "the whole contains it but no part can")
+            else if (unkN == 1) assign(unk(0), 1, lhs, "the whole contains it but no part can")
+          }
+        }
+      }
+      if (conflict) clearQueue()
+    }
+
+    /** A TOTAL assignment, checked against every partition directly. */
+    def verify(): Boolean = {
+      var k = 0
+      var ok = true
+      while (k < m && ok) {
+        val parts = partA(k)
+        var ones = if (conA(k)) 1 else 0
+        var j = 0
+        while (j < parts.length) { if (bits(parts(j)) == 1) ones += 1; j += 1 }
+        if (ones > 1) ok = false
+        else if ((ones == 1) != (bits(lhsA(k)) == 1)) ok = false
+        k += 1
+      }
+      ok
+    }
+
+    def search(): Boolean = {
+      var u = -1
+      var z = 0
+      while (z < n && u < 0) { if (bits(z) == 0) u = z; z += 1 }
+      if (u < 0) {
+        val ok = verify()
+        if (!ok) checkFailed = true
+        return ok
+      }
+      nodes += 1
+      if (nodes > budget) { budgetOut = true; return false }
+      var res = false
+      var b   = 2                                   // FALSE first, then TRUE
+      while (!res && b >= 1 && !budgetOut) {
+        val mark = tlen
+        conflict = false
+        bits(u) = b.toByte; trail(tlen) = u; tlen += 1
+        val os = occ(u); var j = 0
+        while (j < os.length) { push(os(j)); j += 1 }
+        propagate()
+        if (!conflict) res = search()
+        if (!res) {
+          while (tlen > mark) { tlen -= 1; bits(trail(tlen)) = 0 }
+          clearQueue()
+          conflict = false
+        }
+        b -= 1
+      }
+      res
+    }
+
+    // ---- root propagation: every partition once ------------------------
+    var k = 0
+    while (k < m) { push(k); k += 1 }
+    propagate()
+    val verdict: LabelVerdict =
+      if (conflict) LabelRefuted(l, if (firstAt >= 0) vars(firstAt) else vars(0), firstWhy)
+      else if (search()) LabelSat
+      else if (budgetOut)
+        LabelNoVerdict(l, "search budget exhausted after " + nodes + " decisions", true)
+      else if (checkFailed)
+        LabelNoVerdict(l, "a complete assignment failed its own check; no verdict is claimed", false)
+      else
+        LabelRefuted(l,
+          if (firstAt >= 0) vars(firstAt) else vars(0),
+          "no assignment of this field to the parts satisfies every partition" +
+          " (complete search, " + nodes + " cases; unit propagation alone does not see it)")
+    (verdict, nodes)
   }
 }

@@ -1,10 +1,86 @@
 # Row-constraint work — state as of 2026-09-06
 
+## 2026-09-06: **the FIX for that bug, behind flags that DEFAULT OFF** (loop model, stage S2)
+
+`tracker/loopmodel/S2-DESIGN.md` (what it targets) and `S2-FIX.md` (what was measured and
+proved).  **Nothing is adopted: every flag introduced defaults to OFF, and with them off the
+compiler is byte-identical — 2 355 430 corpus solve segments, group for group.**  Adoption is
+the user's decision and this work does not make it.
+
+Three layers on `Subst.solve`, each separately switchable:
+
+* `-Dermine.rowSound.bare` — at a BARE definition `v <- ((|C|))` and a concrete instantiation
+  `v := ((|fs|))`, require `C = fs` instead of `ensureSuperset`'s `C ⊆ fs`.  Sound by
+  `Rowpartition/Loop/Sound.lean`'s `bare_refutes`; closes the hole `MIN2` walks through.
+* `-Dermine.rowSound.saturated` — `labelClash` on the SATURATED set as well as on the input.
+  Sound by `Rowpartition.refute_saturated_sound`.  This is the flag removed on 2026-09-02 at
+  "zero additional refutations on both corpora"; it catches 384 of the 404 compiler-level
+  false acceptances in the S1 review's population.
+* `-Dermine.rowSound.decide` — a COMPLETE per-label decision (unit propagation plus a CASE
+  SPLIT) on the solve's LIVE INPUT: the queue's partitions together with the `SubstEnv`
+  bindings of every variable they mention, because `solve` does not `substType` its input and
+  the environment is long-lived (S1 review Z-6).  This is the layer that carries the theorem.
+  `-Dermine.rowSound.budget` (200000 nodes per label) bounds it; exhaustion is NO VERDICT,
+  refutes nothing, and is counted.
+
+**What is now proved** (`Rowpartition/Loop/NoFalseAccept.lean`):
+
+    solve_noFalseAccept : flag on ∧ budget not exhausted ∧ the solve does not reject
+                          ⇒ SSat (the queue's partitions ∪ the environment facts)
+
+    solve_accepted_faithful : ... and hence, with S1's `run_noLoss` / `run_models` /
+                          `run_ssat_iff`, the loop lost nothing, every model of the OUTPUT is
+                          a model of the INPUT, and the two are satisfiable together
+
+the CONVERSE of S1, whose `run_noLoss` / `solve_sound` are conditional on `SSat (sys s₀)`
+exactly where they have to be.  Its two halves are `labelDecide_sat_ssat` (COMPLETE: a pass
+means a model was constructed label by label and CHECKED against every constraint) and
+`labelDecide_refuted_unsat` (SOUND: a refutation means there is none).
+
+**THREE provisos, all stated and none of them hidden.**  The theorem says nothing when (a) a
+node BUDGET runs out — per label (`-Dermine.rowSound.budget`, 200 000) or per solve
+(`-Dermine.rowSound.solveBudget`, 1 000 000): the answer is NO VERDICT, nothing is refuted, a
+warning naming the site goes to stderr, and it never fired on the corpus; (b) the `SubstEnv`
+binds a mentioned variable to something that is not row-shaped, which is COUNTED as `opaque`
+and skipped, so the decision runs on a sub-system — refutations stay sound, completeness is
+not claimed for that solve, and the count was 0 over the whole corpus; (c) "satisfiable" is
+read with EVERY variable existentially quantified, skolems included — the same reading
+`labelClash` has always had, weaker than "the program type-checks", and free in the refutation
+direction.  Layer (i)'s new death
+is a refutation (`bare_death_refutes`), and `stepS_continue` — layer (i) can only turn a
+continuation into a death — is why **no S1 theorem needed a hypothesis or changed at all.**
+
+**Reviewed 2026-09-06** (`tracker/loopmodel/S2-REVIEW.md`, verdict ADVANCE, thirteen findings,
+zero confirmed false rejections in the reviewer's own 4,800 + 1,500 + 8 runs) and every finding
+closed (`S2-FIX.md` §P1-§P6).  Three things changed that a reader of this file should know:
+the chain to S1 is now the theorem `solve_accepted_faithful`, not prose; the environment-fact
+path is a TRACKED gate (`run.sh env`, and `seeds/unsat/ENV-LINK.json` carrying the third
+mechanism above); and layer (iii) now has a PER-SOLVE node cap
+(`-Dermine.rowSound.solveBudget`, default 1000000) whose exhaustion prints a warning on stderr
+naming the site, so the one condition under which the theorem says nothing is bounded and
+visible rather than silent.
+
+**What it costs, measured** (`S2-FIX.md` §5): `perf-bench.sh batch` cold median 12.78 s off
+against 12.89 s on, inside the run-to-run spread; layer (iii) spends 0.69 s over the whole
+corpus (2 355 392 solves), median 7 µs on a solve with any row constraint, worst 3.7 ms, and
+the budget never fired.  **The corpus list of newly rejected programs is EMPTY**: over the two
+tracked corpora and the eight `looptrace-corpus` groups not one program is newly rejected, and
+exactly one already-rejected module (`shouldfail/inf04_except_recursive.e`) reports a different
+clause of the same refutation at the same field.
+
 ## 2026-09-06: **BUG — the shipped compiler ACCEPTS unsatisfiable row systems** (loop model, stage S1 + review)
 
 Two minimal, compiler-reproduced witnesses, both five constraints, both passing
 `labelCheckEarly`, both returned `SOLVED` by the shipped `Subst.solve` with a substitution that
 violates an input constraint.  Seeds in `tracker/repro/satterm/seeds/unsat/`.
+
+A THIRD mechanism was found by the S2 reviewer (2026-09-06, `S2-REVIEW.md` §4.5) and is
+tracked as `seeds/unsat/ENV-LINK.json`: a system unsatisfiable **only through the
+`SubstEnv`**.  A first solve binds `v4 := v0` (a `VarT` link, no concrete row anywhere); a
+second solve in the same environment is handed `v3 <- (v0,v4)` and `v3 <- ((|l0|))`, which
+under the binding forces `rho v3 = ∅` against `rho v3 = {l0}`.  `Subst.solve` does not
+`substType` its input, so the shipped check never sees the binding (S1 review Z-6).  SOLVED
+20/20 shipped; REJECTED 20/20 with `-Dermine.rowSound.decide`.
 
 ```json
 MIN2.json   [[2,[3,0],[]], [3,[0,1],[]], [2,[1],[17]], [2,[],[17,38]], [5,[2,8],[]]]

@@ -43,7 +43,18 @@ object SatTermRepro {
   def f(s: String): Name = Global("Repro", s)
   val K = Set(f("k"))
 
-  case class Seed(name: String, names: List[String], model: String, build: (String => Type) => List[Type])
+  /** A seed.  `build` is the solve under test; `env`, when non-empty, is a FIRST solve run in
+    * the SAME `SubstEnv`, so that the solve under test is handed constraints mentioning
+    * variables the environment already binds.
+    *
+    * WHY (S2 review V-2).  `runCapped` makes a fresh `SubstEnv` per run, so every seed gate
+    * ever run has `facts = 0` in `Subst.solve`'s `liveInput`: layer (iii)'s environment-fact
+    * path -- the reason `envFacts`, the `senv` replay record and the theorem's `E` exist --
+    * was exercised by exactly ONE solve in the corpus and by no tracked gate.  A seed with a
+    * non-empty `env` reaches it, and `seeds/unsat/ENV-LINK.json` is one. */
+  case class Seed(name: String, names: List[String], model: String,
+                  build: (String => Type) => List[Type],
+                  env: (String => Type) => List[Type] = _ => Nil)
 
   val W2 = Seed("W2", List("p", "e1", "e2"), "p={k,m} e1={} e2={m}", x => List(
     part(x("p"), List(x("e1"), x("e2"), cr(K))),
@@ -110,11 +121,19 @@ object SatTermRepro {
       case Some(JObj(m)) => m.map { case (k, v) => (k.toInt, ints(v)) }
       case _ => Nil
     }
-    val vars = (cons.flatMap { case (l, vs, _) => l :: vs } ++ rho.map(_._1)).distinct.sorted
+    // Optional FIRST solve, in the same `cons` shape and the same SubstEnv (S2 review V-2).
+    val envCons: List[(Int, List[Int], List[Int])] = field(obj, "env") match {
+      case Some(JArr(cs)) => cs.map { case JArr(List(l, vs, ks)) => (l.asInstanceOf[JNum].n.toInt, ints(vs), ints(ks)); case x => sys.error("bad env constraint " + x) }
+      case _ => Nil
+    }
+    val vars = ((cons ++ envCons).flatMap { case (l, vs, _) => l :: vs } ++ rho.map(_._1)).distinct.sorted
     val name = field(obj, "name").collect { case JStr(s) => s }.getOrElse(path)
     val model = rho.sortBy(_._1).map { case (v, ls) => "v" + v + "={" + ls.map("l" + _).mkString(",") + "}" }.mkString(" ")
-    Seed(name, vars.map("v" + _), model, x => cons.map { case (l, vs, ks) =>
-      part(x("v" + l), vs.map(v => x("v" + v)) ++ (if (ks.isEmpty) Nil else List(cr(ks.map(n => f("l" + n)).toSet)))) })
+    def mk(cs: List[(Int, List[Int], List[Int])])(x: String => Type): List[Type] = cs.map {
+      case (l, vs, ks) =>
+        part(x("v" + l), vs.map(v => x("v" + v)) ++ (if (ks.isEmpty) Nil else List(cr(ks.map(n => f("l" + n)).toSet))))
+    }
+    Seed(name, vars.map("v" + _), model, mk(cons), mk(envCons))
   }
 
   val seedDir: String = System.getProperty("satterm.seeds", "tracker/repro/satterm/seeds")
@@ -126,12 +145,13 @@ object SatTermRepro {
     case other => sys.error("unknown seed " + other)
   }
 
-  case class Sys(seed: Seed, base: Int, vars: Map[String, TypeVar], parts: List[Type], supplyLo: Int)
+  case class Sys(seed: Seed, base: Int, vars: Map[String, TypeVar], parts: List[Type],
+                 envParts: List[Type], supplyLo: Int)
 
   def system(sd: Seed, base: Int): Sys = {
     val v = sd.names.zipWithIndex.map { case (n, i) => n -> tv(base + i, n) }.toMap
     def x(n: String): Type = vt(v(n))
-    Sys(sd, base, v, sd.build(x), base + sd.names.length)
+    Sys(sd, base, v, sd.build(x), sd.env(x), base + sd.names.length)
   }
 
   def showInput(t: Type): String = t match {
@@ -186,6 +206,12 @@ object SatTermRepro {
         implicit val hm: SubstEnv = new SubstEnv()
         implicit val isu: Supply = su
         implicit val tml: Located = Loc.builtin
+        // The seed's optional FIRST solve, in THIS `SubstEnv`, so the solve under test is
+        // handed constraints mentioning variables the environment already binds -- the
+        // layer-(iii) path no other gate reaches (S2 review V-2).  A refutation here is a
+        // property of the seed, not of the solve under test, so it is reported as such.
+        if (s.envParts.nonEmpty)
+          RowTrace.withSite(site + ":env")(solve(new Exists(Loc.builtin, List(), s.envParts)))
         val ex: Type = new Exists(Loc.builtin, List(), s.parts) // raw: Exists.apply would reverse + Set-dedup
         val res = RowTrace.withSite(site)(solve(ex))
         val took = ms
@@ -233,6 +259,7 @@ object SatTermRepro {
 
   def printInputs(s: Sys): Unit = {
     println("SEED " + s.seed.name + "  model " + s.seed.model)
+    s.envParts.foreach(p => println("ENV   " + showInput(p)))
     s.parts.foreach(p => println("INPUT " + showInput(p)))
   }
 
@@ -281,6 +308,70 @@ object SatTermRepro {
           case None => ()
         }
 
+      /* ---------------------------------------------------------------- env ----
+       * TWO solves in ONE `SubstEnv`, so the second is handed constraints mentioning
+       * variables the environment already binds -- layer (iii)'s environment-fact path
+       * (S1 review Z-6, S2 review V-2).  `runCapped` makes a fresh `SubstEnv` per run, so
+       * every OTHER gate here has `facts = 0` and this path is unreached; the corpus
+       * reaches it exactly once (`shouldfail/inf04_except_recursive.e`).
+       *
+       * Adapted from the S2 reviewer's `EnvProbe.scala`.  Each case is
+       * `(name, first solve, second solve, what the second solve SHOULD be with the flag
+       * on)`; run it at both flag settings and compare.  A case marked `SOLVED` that
+       * REJECTS is a FALSE REJECTION and the thing this gate exists to catch. */
+      case "env" :: _ =>
+        type C = (Int, List[Int], List[Int])
+        val cases: List[(String, List[C], List[C], String)] = List(
+          ("SAT-1  second solve consistent with the binding",
+            List((0, Nil, List(0, 1))), List((2, List(0, 1), Nil), (1, Nil, List(2))), "SOLVED"),
+          ("UNSAT-env-1  v3 <- (v0,(|l0|)) with v0 already {l0,l1}",
+            List((0, Nil, List(0, 1))), List((3, List(0), List(0))), "REJECTED"),
+          ("UNSAT-env-2  the same through an alias link",
+            List((4, Nil, List(0, 1)), (0, List(4), Nil)), List((3, List(0), List(0))), "REJECTED"),
+          ("SAT-2  alias chain, consistent",
+            List((4, Nil, List(0, 1)), (0, List(4), Nil)), List((3, List(0), List(2))), "SOLVED"),
+          ("SAT-3  many labels under a binding",
+            List((0, Nil, List(0, 1, 2, 3))), List((5, List(0, 6), Nil), (6, Nil, List(4, 5))), "SOLVED"),
+          ("LINK   pure link v0 <- (v4), then v3 <- (v0,v4), v3 <- ((|l0|))",
+            List((0, List(4), Nil)), List((3, List(0, 4), Nil), (3, Nil, List(0))), "REJECTED"),
+          ("UNSAT-link  v0 and v4 aliased, then v5 <- (v0,v4)",
+            List((0, List(4), Nil), (4, Nil, List(0))), List((5, List(0, 4), Nil)), "REJECTED"),
+          ("SAT-4  bare row EQUAL to its instantiation (layer (i) must stay silent)",
+            Nil, List((0, Nil, List(0, 1)), (0, Nil, List(0, 1)), (1, List(0), List(2))), "SOLVED"),
+          ("UNSAT-bare  bare row a PROPER subset (layer (i) must fire)",
+            Nil, List((0, Nil, List(0)), (0, Nil, List(0, 1))), "REJECTED"))
+        def mkC(cs: List[C], v: Map[Int, TypeVar]): List[Type] = cs.map { case (l, us, ks) =>
+          part(vt(v(l)), us.map(u => vt(v(u))) ++
+            (if (ks.isEmpty) Nil else List(cr(ks.map(n => f("l" + n)).toSet)))) }
+        var bad = 0
+        cases.foreach { case (nm, first, second, want) =>
+          val vars = (first ++ second).flatMap { case (l, us, _) => l :: us }.distinct.sorted
+          val base = 1000
+          implicit val hm: SubstEnv = new SubstEnv()
+          implicit val isu: Supply = supplyAt(base + vars.length)
+          implicit val tml: Located = Loc.builtin
+          val v = vars.zipWithIndex.map { case (n, i) => n -> tv(base + i, "v" + n) }.toMap
+          def go(cs: List[C], tag: String): String =
+            if (cs.isEmpty) "-"
+            else try { RowTrace.withSite(tag)(solve(new Exists(Loc.builtin, List(), mkC(cs, v))))
+                       "SOLVED" }
+            catch { case e: Throwable =>
+              "REJECTED " + clip(String.valueOf(e.getMessage), 110) }
+          val r1 = go(first, "env-first")
+          val env = vars.filter(n => hm.types.contains(v(n)))
+                        .map(n => "v" + n + ":=" + short(substType(vt(v(n))).toString))
+          val r2 = go(second, "env-second")
+          val got = if (r2.startsWith("REJECTED")) "REJECTED" else r2
+          val ok = got == want
+          if (!ok) bad += 1
+          println(f"${if (ok) "ok  " else "diff"}%s $nm%-62s first=$r1%-9s env=[${env.mkString(", ")}%s] second=$r2")
+        }
+        // `want` is what layer (iii) SHOULD give.  At the SHIPPED flags the differing lines
+        // are the BUG (four of them, three previously unrecorded -- S2 review 4.5); with
+        // `-Dermine.rowSound.decide` any difference is a defect, so only then is it fatal.
+        println(s"ENVSUMMARY cases=${cases.length} differ=$bad decide=${GenRules.rowSoundDecide}")
+        if (bad > 0 && GenRules.rowSoundDecide) System.exit(3)
+
       case "trace" :: sdName :: base :: rest =>
         if (tracePath.isEmpty) { System.err.println("trace: needs -Dermine.rowTrace=<fresh file>"); System.exit(2) }
         val sd = seed(sdName)
@@ -323,6 +414,7 @@ object SatTermRepro {
 
       case _ =>
         System.err.println("usage: SatTermRepro sweep <W2|H2|NE6|json:PATH> <from> <to> [capSec] [maxHung]\n" +
+                           "       SatTermRepro env                      (the two-solve environment-fact gate)\n" +
                            "       SatTermRepro trace <seed> <base> [capSec] [nLines]   (with -Dermine.rowTrace=<fresh file>)")
         System.exit(2)
     }

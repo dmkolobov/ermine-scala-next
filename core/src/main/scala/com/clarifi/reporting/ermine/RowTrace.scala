@@ -100,6 +100,55 @@ import com.clarifi.reporting.ermine.Type.Con
  *                        `SetN` — the size does not determine that.
  *     k<i>               a `Con`, its name as a label-table index
  *     o<hashCode>        anything else (`RHS.build` dies on it)
+ *
+ * S2 RECORDS (added 2026-09-06 for stage S2 of `tracker/LOOP-MODEL-PLAN.md`, see
+ * `tracker/loopmodel/S2-DESIGN.md`).  ONE record per firing of a NO-FALSE-ACCEPTANCE
+ * layer, so the L2 replay can see the new refutation sites and Part B's model can
+ * mirror them:
+ *
+ *   rsound  site  loc  kind  detail
+ *
+ * `kind` is one of
+ *   `bare`     -- (i)   `makeConcrete` refused `C != fs` at a BARE definition;
+ *                       `detail` is `<var>\t<C>\t<fs>`.
+ *   `sat`      -- (ii)  `labelClash` refuted the SATURATED set; `detail` is
+ *                       `<label>\t<lhs var>\t<reason>`.
+ *   `decide`   -- (iii) the complete per-label decision refuted the live input;
+ *                       `detail` is `<label>\t<lhs var>\t<nodes>\t<reason>`.
+ *   `env`      -- (iii) the live input needed `SubstEnv` facts; `detail` is
+ *                       `<#facts>\t<#opaque bindings skipped>`.
+ *   `budget`   -- (iii) the decision returned NO VERDICT; `detail` is
+ *                       `<label>\t<cause>\t<reason>`, `cause` being `budget` (a per-label
+ *                       or per-solve node cap ran out) or `checkfail` (the fail-safe: a
+ *                       total assignment failed its own check).  The two are counted
+ *                       apart -- `GenRules.rowSoundBudgetHits` and `rowSoundCheckFails` --
+ *                       so a counter named for the budget cannot absorb a propagator bug.
+ *                       A no-verdict ALSO prints a one-line warning on stderr naming the
+ *                       site, because it is the one condition under which the S2 theorem
+ *                       says nothing (S2 review V-8, V-12).
+ *   `ok`       -- (iii) the decision RAN and passed; `detail` is
+ *                       `<#labels>\t<#partitions>\t<nodes>\t<micros>`.
+ * Every one of these is emitted only when the corresponding `GenRules.rowSound*`
+ * flag is on AND `-Dermine.rowTrace` is set, so a trace taken at the shipped
+ * defaults is unchanged.
+ *
+ * and ONE REPLAY record, written by `solveInput` alongside `slbl`/`svar`/`scon`
+ * and only under `-Dermine.rowSound.decide`:
+ *
+ *   senv    site  loc  v<id>  payload
+ *
+ * the `SubstEnv` binding of one variable the input mentions, in `scon`'s own term
+ * language (`v<id>`, `c<i>,<i>` / `C<i>,<i>`, `k<i>`, `o<hash>` for a binding that is
+ * not row-shaped).  It exists because `Subst.solve` does NOT `substType` its input
+ * and `SubstEnv.types` is long-lived (S1 review Z-6), so the constraints the layer-(iii)
+ * decision is really about are the input PLUS these facts -- and a replay that cannot
+ * see them cannot reproduce a flags-ON trace.  Emitted HERE rather than from the check
+ * itself so that the label and variable tables above already carry anything the facts
+ * mention: `term` extends both, and the `slbl`/`svar` blocks are written afterwards.
+ * The set of variables walked is the one the input constraints mention, which is
+ * exactly `PQueue.build`'s variable set on any segment the model replays (an item that
+ * is not a `Part` makes the model skip the segment, and the only variable `build` mints
+ * itself is fresh, hence unbound).
  */
 object RowTrace {
   private val path: String = System.getProperty("ermine.rowTrace", "")
@@ -160,6 +209,11 @@ object RowTrace {
       out.synchronized { out.println(line); out.flush() }
     }
 
+  /** One S2 no-false-acceptance record.  Both arguments are by-name, like `log`'s, so
+    * nothing is rendered when tracing is off. */
+  def rowSound(kind: String, loc: => String, detail: => String): Unit =
+    if (enabled) log("rsound\t" + site + "\t" + clean(loc) + "\t" + kind + "\t" + detail)
+
   /** Escape tabs and newlines so a record stays on one line. */
   def clean(s: String): String =
     s.replace('\t', ' ').replace('\n', ' ').replace('\r', ' ')
@@ -196,7 +250,8 @@ object RowTrace {
     * before the solve does anything.  See the FORMAT block above.  This reads its
     * arguments and writes lines; it does not touch the `Supply` and builds no `Type`.
     * `loc` is by-name, like `log`'s argument, so a traced-off build renders no location. */
-  def solveInput(loc: => String, cs: List[Type], su: Supply): Unit = if (enabled) {
+  def solveInput(loc: => String, cs: List[Type], su: Supply,
+                 env: Map[TypeVar, Type] = Map()): Unit = if (enabled) {
     val tag = "\t" + site + "\t" + clean(loc) + "\t"
 
     /* Label table and variable table, both in order of FIRST APPEARANCE, filled while the
@@ -229,6 +284,33 @@ object RowTrace {
     val firstEq = new scala.collection.mutable.HashMap[Type, Int]
     val eqid = cs.zipWithIndex.map { case (t, i) => firstEq.getOrElseUpdate(t, i) }
 
+    /* The environment facts, in the input's own vocabulary.  Rendered BEFORE the tables
+     * are written so that `term`'s side effect -- numbering a label or a variable the
+     * facts mention and nothing else does -- lands in them.  The walk closes over the
+     * variables the facts themselves introduce; `instantiateType` keeps `hm.types`
+     * idempotent, so one round is normally enough, but the closure does not rely on it. */
+    val envRecs =
+      if (!Constraints.GenRules.rowSoundDecide) Nil
+      else {
+        val buf = new scala.collection.mutable.ListBuffer[String]
+        var seen = Set[TypeVar]()
+        var todo = vars.keysIterator.toList
+        while (todo.nonEmpty) {
+          val v = todo.head; todo = todo.tail
+          if (!seen(v)) {
+            seen = seen + v
+            env.get(v) match {
+              case None    => ()
+              case Some(t) =>
+                val rhs = term(t)
+                buf += ("senv" + tag + "v" + v.id + "\t" + rhs)
+                t match { case VarT(u) => todo = u :: todo ; case _ => () }
+            }
+          }
+        }
+        buf.toList
+      }
+
     val (suLo, suHi) = supplyBounds(su)
     val (blk, bsz) = supplyBlock()
     log("sin" + tag + suLo + "\t" + suHi + "\t" + cs.length + "\t" + blk + "\t" + bsz +
@@ -248,5 +330,6 @@ object RowTrace {
     payload.zip(eqid).zip(cs).zipWithIndex.foreach { case (((p, e), t), i) =>
       log("scon" + tag + i + "\t" + e + "\t" + t.hashCode + "\t" + p)
     }
+    envRecs.foreach(log(_))
   }
 }

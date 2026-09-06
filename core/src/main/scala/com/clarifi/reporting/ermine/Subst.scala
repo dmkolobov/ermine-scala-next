@@ -1131,7 +1131,7 @@ object Subst {
      * `PQueue.build` draws from it and the constraint list before `Exists.apply` reorders
      * it.  Inert unless `-Dermine.rowTrace` is set: `solveInput`'s whole body is under
      * `if (enabled)`. */
-    RowTrace.solveInput(l.toString, cs, su)
+    RowTrace.solveInput(l.toString, cs, su, hm.types)
     val (q, esp) = PQueue.build(Exists(l, List(), cs))
     /* The per-concrete-label refutation, as a thunk, because WHERE it runs is a
      * question in its own right.  It reads `q` -- the INPUT partitions -- and nothing
@@ -1146,9 +1146,7 @@ object Subst {
      * behind a flag: until the blame below pointed at the call site, the label clash was
      * reported at a stdlib signature where `expand`'s error had named the user's line.
      */
-    def checkLabels(source: List[(TypeVar, Constraints.RHS)]): Unit =
-      if (GenRules.labelCheck)
-      labelClash(source) foreach { case (lbl, refuted, msg) =>
+    def rowUnsat(lbl: Name, refuted: TypeVar, msg: String): Nothing = {
         // Blame the input constraint the propagation found violated, not the enclosing
         // scope: `tml` is whatever `solve` was called in, which for a module-level
         // binding group is the module header, and `l` is the constraint set's own
@@ -1183,9 +1181,126 @@ object Subst {
           .orElse(candidates.headOption.map(_.loc))
           .getOrElse(if (file(l) == here) l else tml.loc)
         sourcePosition(blame).die("Row partitions are unsatisfiable at field '" + lbl + "': " + msg)
+    }
+    def checkLabels(source: List[(TypeVar, Constraints.RHS)]): Unit =
+      if (GenRules.labelCheck)
+        labelClash(source) foreach { case (lbl, refuted, msg) => rowUnsat(lbl, refuted, msg) }
+
+    /* ---------------------------------------------------------------- *
+     * S2 (`tracker/loopmodel/S2-DESIGN.md`), layers (ii) and (iii).      *
+     * Both are DEFAULT OFF; with the flags off not one line below runs   *
+     * and the solve is the shipped one, instruction for instruction.     *
+     * ---------------------------------------------------------------- */
+
+    /* (iii)'s INPUT.  `solve` does NOT `substType` its constraints before
+     * `PQueue.build` (the substitution happens at the `reduce` call below) and
+     * `SubstEnv.types` is a long-lived mutable map shared by the whole checker
+     * (S1 review Z-6), so `q`'s partitions may mention variables the
+     * environment already binds.  Deciding `q` alone would therefore decide a
+     * SUB-system: still sound to refute from, but not the property we want to
+     * state.  The environment is added as FACTS rather than applied as a
+     * substitution -- `v := ((|fs|))` becomes the partition `v <- ((|fs|))`,
+     * `v := u` becomes the link `v <- (u)` -- which is equisatisfiable (the
+     * environment is idempotent, so the two systems interpret each other) and,
+     * unlike rebuilding a queue, draws NO ids from the `Supply`: `PQueue.build`
+     * mints a variable for a non-variable left-hand side, and calling it twice
+     * would change every id the solve goes on to hand out.
+     *
+     * A binding that is not row-shaped (not a variable, a `ConcreteRho` or a
+     * `Con`) is COUNTED and skipped: the decision then runs on a sub-system, so
+     * its refutations stay sound while the completeness half is claimed only
+     * for solves with no such binding.  The count is traced (`rsound env`) so
+     * that "this never happened on the corpus" is a measurement. */
+    def liveInput: (List[(TypeVar, Constraints.RHS)], Int, Int) = {
+      val base = q.toList.map(_.tup)
+      var seen  = Set[TypeVar]()
+      var todo  = base.foldLeft(List[TypeVar]()) { case (acc, (v, Constraints.RHS(a, _))) => v :: a.toList ++ acc }
+      var extra = List[(TypeVar, Constraints.RHS)]()
+      var facts = 0
+      var opaque = 0
+      while (todo.nonEmpty) {
+        val v = todo.head; todo = todo.tail
+        if (!seen(v)) {
+          seen = seen + v
+          hm.types.get(v) match {
+            case None                       => ()
+            case Some(VarT(u))              =>
+              extra = (v, Constraints.RHS(Set(u), Set())) :: extra; facts += 1; todo = u :: todo
+            case Some(ConcreteRho(_, f))    =>
+              extra = (v, Constraints.RHS(Set(), f)) :: extra; facts += 1
+            case Some(Con(_, nm, _, _))     =>
+              extra = (v, Constraints.RHS(Set(), Set(nm))) :: extra; facts += 1
+            case Some(_)                    => opaque += 1
+          }
+        }
       }
+      (base ++ extra.reverse, facts, opaque)
+    }
+
+    /* (ii) the SAME unit propagation, on the SATURATED set.  Sound by
+     * `Rowpartition.refute_saturated_sound`; the flag for it was removed on
+     * 2026-09-02 after measuring zero additional refutations on both corpora,
+     * which is a fact about the corpora (S1 review section 7.1: it catches
+     * 1146 of the 1166 model false acceptances and all six compiler-confirmed
+     * seeds).  It is INDEPENDENT of `GenRules.labelCheck`, so that (ii) can be
+     * measured on its own. */
+    def checkSaturated(source: List[(TypeVar, Constraints.RHS)]): Unit =
+      labelClash(source) foreach { case (lbl, refuted, msg) =>
+        RowTrace.rowSound("sat", l.toString,
+                          lbl.toString + "\t" + refuted.toString + "\t" + RowTrace.clean(msg))
+        rowUnsat(lbl, refuted, msg)
+      }
+
+    /* (iii) the complete per-label decision on the live input. */
+    def decideLabels(): Unit = {
+      val t0 = System.nanoTime
+      val (source, facts, opaque) = liveInput
+      val res = Constraints.labelDecide(source, GenRules.rowSoundBudget,
+                                        GenRules.rowSoundSolveBudget)
+      val dt  = System.nanoTime - t0
+      GenRules.rowSoundNodes.addAndGet(res.nodes)
+      var mx = GenRules.rowSoundMaxNanos.get
+      while (dt > mx && !GenRules.rowSoundMaxNanos.compareAndSet(mx, dt)) mx = GenRules.rowSoundMaxNanos.get
+      if (RowTrace.enabled && (facts > 0 || opaque > 0))
+        RowTrace.rowSound("env", l.toString, facts + "\t" + opaque)
+      res.verdict match {
+        case Constraints.LabelSat =>
+          RowTrace.rowSound("ok", l.toString,
+            res.labels + "\t" + source.length + "\t" + res.nodes + "\t" + (dt / 1000))
+        case Constraints.LabelNoVerdict(lbl, why, exhausted) =>
+          if (exhausted) GenRules.rowSoundBudgetHits.incrementAndGet()
+          else           GenRules.rowSoundCheckFails.incrementAndGet()
+          /* THE ONE CONDITION UNDER WHICH THE THEOREM LAPSES, SAID OUT LOUD
+           * (S2 review V-12).  A no-verdict refutes nothing, so the solve
+           * proceeds exactly as it would with the flag off -- but it is also
+           * the case `S2-DESIGN.md` §2 excludes, and until now the only signals
+           * were a counter the compiler never reads and a trace record that
+           * needs `-Dermine.rowTrace`.  One line per solve, on stderr, naming
+           * the site: enough to notice, cheap enough not to matter, and it
+           * cannot fire at the shipped defaults because the whole check is off.
+           */
+          System.err.println("warning: the row soundness check gave NO VERDICT at " +
+            sourcePosition(l).toString + " (field '" + lbl + "': " + why +
+            "); this solve is accepted on the shipped rules alone")
+          RowTrace.rowSound("budget", l.toString,
+            lbl.toString + "\t" + (if (exhausted) "budget" else "checkfail") +
+            "\t" + RowTrace.clean(why))
+        case Constraints.LabelRefuted(lbl, refuted, why) =>
+          RowTrace.rowSound("decide", l.toString,
+            lbl.toString + "\t" + refuted.toString + "\t" + res.nodes + "\t" + RowTrace.clean(why))
+          rowUnsat(lbl, refuted, why)
+      }
+    }
+
     if (GenRules.labelCheckEarly) checkLabels(q.toList.map(_.tup))
+    /* AFTER `labelCheckEarly`, so that an input unit propagation already
+     * refutes reports exactly the message it reports today and the corpus
+     * delta this stage measures is (iii)'s OWN refutations; BEFORE `expand`,
+     * because refuting an unsatisfiable input before the saturation can
+     * diverge on it is half the point (`Rowpartition/ResGuardDiverge.lean`). */
+    if (GenRules.rowSoundDecide) decideLabels()
     var ps = q.expand.toList
+    if (GenRules.rowSoundSat) checkSaturated(ps.map(_.tup))
     /* Trace-only dump of the POPULATION, not just its counts: the input constraint
      * list as `solve` received it (a `Part`'s right-hand side is a List, so this is
      * the one place its ORDER is still visible), the partitions built from it, and

@@ -43,7 +43,10 @@ a canonical repeat is a candidate that has to be replayed.
 
 `--flags=a,b,c` turns individual `GenRules` switches on or off: `all`, `cut`, `nongen`,
 `disj`, `nolabel`, `lateLabel`, `noresguard`, `nosplitkey`, `nosplitrow`, `noresrow`,
-`emptyrow`.  With no `--flags` the SHIPPED defaults are used.
+`emptyrow`, and S2's `rowsound` / `rsbare` / `rssat` / `rsdecide` / `rsbudget=<n>` /
+`rssolvebudget=<n>` (with
+`norsbare` / `norssat` / `norsdecide` to switch one back off).  With no `--flags` the SHIPPED
+defaults are used, and every S2 flag is OFF in them.
 
 `--replay` (stage L2) reads a compiler `-Dermine.rowTrace` file, reconstructs EVERY solve in
 it from its `sin`/`slbl`/`svar`/`scon` records, runs the model on each, and prints the
@@ -73,7 +76,26 @@ def applyFlag (f : Flags) : String → Flags
   | "nosplitrow" => { f with splitRow := false }
   | "noresrow" => { f with resRow := false }
   | "emptyrow" => { f with emptyRow := true }
-  | _ => f
+  -- S2 (`tracker/loopmodel/S2-DESIGN.md`), all DEFAULT OFF: `rowsound` is the master, and
+  -- the three layers are separately switchable so each can be measured alone.
+  | "rowsound" => { f with rowSoundBare := true, rowSoundSat := true, rowSoundDecide := true }
+  | "rsbare" => { f with rowSoundBare := true }
+  | "rssat" => { f with rowSoundSat := true }
+  | "rsdecide" => { f with rowSoundDecide := true }
+  | "norsbare" => { f with rowSoundBare := false }
+  | "norssat" => { f with rowSoundSat := false }
+  | "norsdecide" => { f with rowSoundDecide := false }
+  | t =>
+    -- `rsbudget=<n>`: layer (iii)'s decision-node budget per label.
+    if t.startsWith "rsbudget=" then
+      match (t.drop 9).toNat? with
+      | some n => { f with rowSoundBudget := n }
+      | none => f
+    else if t.startsWith "rssolvebudget=" then
+      match (t.drop 14).toNat? with
+      | some n => { f with rowSoundSolveBudget := n }
+      | none => f
+    else f
 
 /-- Read the `--flags=` option. -/
 def flagsOf (opts : List String) : Flags :=
@@ -281,7 +303,7 @@ def replayMain (path : String) (opts : List String) : IO UInt32 := do
       | none => pure ()
       cur := some (startSegment f)
       nSeg := nSeg + 1
-    | some "slbl" | some "svar" | some "scon" =>
+    | some "slbl" | some "svar" | some "scon" | some "senv" =>
       match cur with
       | some g => cur := some (addRecord g f)
       | none => pure ()

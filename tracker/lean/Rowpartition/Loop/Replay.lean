@@ -75,6 +75,12 @@ structure Segment where
   recEqid : List Nat := []
   /-- Whether every `scon` was a `part`. -/
   allParts : Bool := true
+  /-- S2: the `senv` records — the `SubstEnv` binding of each variable the input mentions,
+  which `Subst.solve` does NOT apply to its input (S1 review Z-6).  Only ever nonempty in a
+  trace taken with `-Dermine.rowSound.decide`; the layer-(iii) decision is about the input
+  TOGETHER with these facts, so a replay that could not see them could not reproduce a
+  flags-ON trace.  Accumulated reversed, like `vars`. -/
+  envs : List (Nat × ITerm) := []
   /-- Parse or consistency failures; a nonempty list makes the segment unreplayable. -/
   errs : List String := []
 
@@ -84,7 +90,7 @@ namespace Segment
 def finish (g : Segment) : Segment :=
   { g with vars := g.vars.reverse, cons := g.cons.reverse,
            recHash := g.recHash.reverse, recEqid := g.recEqid.reverse,
-           errs := g.errs.reverse }
+           envs := g.envs.reverse, errs := g.errs.reverse }
 
 def err (g : Segment) (m : String) : Segment := { g with errs := m :: g.errs }
 
@@ -97,6 +103,22 @@ def names (g : Segment) : Names :=
 /-- The `Supply` this solve started with. -/
 def sup (g : Segment) : Sup :=
   { lo := g.suLo, hi := g.suHi, blk := g.suBlk, bsz := g.suBsz }
+
+/-- The environment facts as PARTITIONS, which is how `S2-DESIGN.md` §3 defines them:
+`v := ((|fs|))` is `v <- ((|fs|))` and `v := u` is the link `v <- (u)`.  A binding that is
+not row-shaped (`otherT`) is DROPPED — the decision then runs on a sub-system, which keeps
+its refutations sound and is exactly what the compiler's `opaque` counter records. -/
+def envFacts (g : Segment) : List LPart :=
+  g.envs.filterMap (fun (v, t) =>
+    match t with
+    | .varT u => some ⟨v, RHS.ofAbstr (SSet.ofList [u]), none⟩
+    | .concRho fs => some ⟨v, RHS.ofConcr fs, none⟩
+    | .conT l => some ⟨v, RHS.ofConcr (SSet.ofList [l]), none⟩
+    | .otherT _ => none)
+
+/-- Bindings the model had to drop because they are not row-shaped. -/
+def envOpaque (g : Segment) : Nat :=
+  (g.envs.filter (fun p => match p.2 with | .otherT _ => true | _ => false)).length
 
 end Segment
 
@@ -176,6 +198,14 @@ def addRecord (g : Segment) (f : List String) : Segment :=
         { g with cons := CsItem.other h e :: g.cons, recHash := h :: g.recHash,
                  recEqid := e :: g.recEqid, allParts := false }
     | _, _, _ => g.err ("bad scon: " ++ iS)
+  | "senv" :: _ :: _ :: vS :: payload :: _ =>
+    -- `senv site loc v<id> <term>`: the term language is `scon`'s, and every label it can
+    -- mention is already in `g.labels` (`RowTrace.solveInput` renders the facts before it
+    -- writes the tables, so `term` has numbered them).
+    match (if vS.startsWith "v" then (vS.drop 1).toNat? else none),
+          parseTerm g.labels payload with
+    | some v, .ok t => { g with envs := (v, t) :: g.envs }
+    | _, _ => g.err ("bad senv: " ++ vS ++ " " ++ payload)
   | _ => g
 
 /-- `sin`: start a fresh segment. -/
@@ -200,7 +230,7 @@ def parseSegments (lines : List String) : List Segment :=
     let f := ln.splitOn "\t"
     match f.head? with
     | some "sin" => startSegment f :: acc
-    | some "slbl" | some "svar" | some "scon" =>
+    | some "slbl" | some "svar" | some "scon" | some "senv" =>
       match acc with
       | [] => acc
       | g :: rest => addRecord g f :: rest
@@ -240,7 +270,7 @@ def replay (fl : Flags) (fuel : Nat) (g : Segment) : Except String ReplayOut :=
       ((idx.zip g.recEqid).filter (fun ((c, i), e) =>
         let first := (idx.findSome? (fun (d, j) => if CsItem.eqv d c then some j else none)).getD i
         first != e)).length
-    let out := solveSeed fl g.site g.loc g.cons g.names g.sup fuel
+    let out := solveSeed fl g.site g.loc g.cons g.names g.sup fuel g.envFacts
     .ok { records := out.records, hashDiffs := hashDiffs, eqDiffs := eqDiffs,
           verdict := out.verdict, message := out.message }
 

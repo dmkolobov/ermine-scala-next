@@ -426,3 +426,39 @@ STOP after Part A; Part B (Lean mirror + `solve_noFalseAccept` theorem) after S1
 is added by the orchestrator after S1's corrections land (plan file in use by the S1 agent). Then: S1 commit →
 S2 Part B → S2 reviewer → S2 commit (flag default OFF) → D1. ADOPTION of the fix's default = the USER's decision;
 it is the first thing to put in front of them.
+S1 COMMITTED `5c08363` (2026-09-06, autonomous mode; corrections applied; verified 859/1662/3804-0; outcome BUG).
+Plan: S2 + D1 sections and status rows added (uncommitted, goes with the S2 commit). S2 Part A RUNNING in
+worktree ermine-scala-wt-s2; on its report: check the gates + corpus list, then give the go for Part B (Lean in
+the main tree, now clean), then an Opus reviewer, then commit with flags default OFF, then D1.
+S2 PART A DONE (2026-09-06 ~03:00, worktree ermine-scala-wt-s2, report there: S2-FIX.md/S2-DESIGN.md): flags
+`-Dermine.rowSound` (+ .bare/.saturated/.decide/.budget=200000), all default OFF; "the input" = queue partitions +
+SubstEnv facts of mentioned variables (closed transitively). Gates OFF: core/test 913/914, TestLoopTrace 714/714,
+corpus row trace byte-identical (2,355,430 segments, 8 groups), 20 seeds × 10 bases byte-identical, .ei 0/185
+differ. Gates ON: seeds/unsat 120 runs 0 SOLVED (labels as predicted); reviewer's 665-seed population 404 → 0
+SOLVED (667 distinct refutations, 0 satisfiable at the named label under an independent oracle); 38,400
+satisfiable hunt runs all SOLVED, substitutions byte-identical; CORPUS LIST OF NEWLY REJECTED PROGRAMS = EMPTY (0
+verdicts move; one message moves on already-failing shouldfail/inf04); cost +0.9% within noise, the decision
+0.69 s over 2.36M solves, per-solve max 3.7 ms. PART B RELEASED (message sent): apply the 3-file diff to main,
+Lean mirror + Decide theorems (sound + COMPLETE) + `solve_noFalseAccept`, L2 differential flags ON, TestLoopTrace
+flag forwarded, report/README/state/plan row. Then an Opus reviewer, then commit (flags OFF). USER DECISION
+QUEUED: flip `ermine.rowSound` default ON (the corpus shows zero behaviour change on valid programs and no cost).
+S2 PART B DONE (2026-09-06 ~07:30, main tree, uncommitted): Scala 3-file diff applied on main (+ senv record +
+TestLoopTrace flag forwarding, 8 new model --flags tokens); Loop/Decide.lean (327) + Loop/NoFalseAccept.lean
+(1,025): `labelDecide_sat_ssat` (COMPLETENESS), `labelDecide_refuted_unsat` (soundness), `solve_noFalseAccept`
+(flags on ∧ budget not cut ∧ verdict ≠ REJECTED ⇒ SSat of the live input = queue + env facts); L2 differential
+flags ON 2,355,428/2,355,428 agree (0/0/0), OFF 2,355,430 unchanged; TestLoopTrace 714/714 both ways; build 861 /
+Audit 3888-0 / looptrace 1664; core/test 913/914. Gaps stated: no end-to-end kernel rfl (Json.checkLabel WF
+recursion), pass-based vs worklist propagation (same verdicts), layer (ii) cited-sound only, Subst.reduce
+unmodelled, opaque env bindings skipped. Orchestrator verification running (s2-verify.log). S2 REVIEWER LAUNCHED
+(Opus; report S2-REVIEW.md; incl. a false-REJECTION hunt under the flag and an adoption recommendation). Then
+commit S2 (flags default OFF) → D1 launch. USER DECISION QUEUED: flip -Dermine.rowSound default ON.
+S2 REVIEW (2026-09-06 ~08:00): ADVANCE — everything reproduced (861/3888-0/1664; TestLoopTrace 714/714 both ways;
+120/120 unsat runs rejected; 404→0; corpus verdicts unchanged; 0 CONFIRMED FALSE REJECTIONS in 6,300+ runs incl. a
+case-split-forcing generator). Findings: V-1 the chain to run_noLoss only in prose (~15 lines of Lean); V-2 the
+env-fact path has no tracked gate (one corpus solve); V-3 .budget not forwarded by TestLoopTrace; V-12 per-label
+budget without a per-solve cap and exhaustion invisible; V-4..V-10 prose/numbers (core/test 912/914 on the
+reviewer's run: a writers date/TZ flake). BONUS: a THIRD shipped false-acceptance mechanism via a VarT link in the
+long-lived SubstEnv (SOLVED today, REJECTED with the flag on). ADOPTION RECOMMENDATION: not yet — (1) tracked env
+gate, (2) per-solve budget + visible exhaustion signal, (3) the chain in Lean; then yes; layers (i)+(iii) alone buy
+the whole measured benefit (layer (ii) contributed 0 corpus records, cited-sound only). S2 implementer RESUMED to
+close V-1..V-13 + the three prerequisites; then orchestrator re-verify → COMMIT S2 (flags OFF) → D1 launch.

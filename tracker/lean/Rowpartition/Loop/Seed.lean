@@ -11,6 +11,7 @@ maps label `n` to `Global("Repro", "l" ++ n)`, and starts the `Supply` at
 `base + #vars`.
 -/
 import Rowpartition.Loop.Json
+import Rowpartition.Loop.Decide
 import Lean.Data.Json
 
 namespace Rowpartition.Loop
@@ -112,7 +113,7 @@ itself -- so they are generated from the `part` items, in order.  An `other` ite
 record carries `nRows = cs.flatMap(_.rowConstraints).length` and `Loop/Replay.lean`'s
 `replay` refuses a segment where that is not the number of `part` items. -/
 def solveSeed (fl : Flags) (site : String) (loc : String) (cs : List CsItem) (ns : Names)
-    (su0 : Sup) (fuel : Nat) : SolveOut :=
+    (su0 : Sup) (fuel : Nat) (envFacts : List LPart := []) : SolveOut :=
   let tag := "\t" ++ site ++ "\t" ++ loc ++ "\t"
   let parts := cs.filterMap CsItem.part?
   let inRecs := (withIndex parts).map (fun (p, i) =>
@@ -131,10 +132,23 @@ def solveSeed (fl : Flags) (site : String) (loc : String) (cs : List CsItem) (ns
         message := "Row partitions are unsatisfiable at field '" ++ Lbl.toStr l ++ "': " ++ msg,
         env := {}, drawn := su1.drawn, sat := [] }
     | none =>
+    /- S2 layer (iii), `Flags.rowSoundDecide`, DEFAULT OFF (`tracker/loopmodel/S2-DESIGN.md`).
+       The COMPLETE per-label decision, on the LIVE INPUT: the queue's partitions together
+       with the `SubstEnv` facts the trace's `senv` records carry, because `Subst.solve` does
+       not `substType` its input (S1 review Z-6).  It runs AFTER `labelCheckEarly` and BEFORE
+       the loop, exactly where the compiler runs it. -/
+    match (if fl.rowSoundDecide then
+             some (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
+                                fl.rowSoundSolveBudget).1
+           else none) with
+    | some (.refuted l _ why) =>
+      { records := [], verdict := "REJECTED", message := rowUnsatMsg l why,
+        env := {}, drawn := su1.drawn, sat := [] }
+    | _ =>
       let st0 : State :=
         { incm := q, proc := PQueue.empty, env := {}, su := su1, trace := [], flags := fl,
           names := ns, site := site, su0 := su0.lo }
-      match run st0 fuel with
+      match runS st0 fuel with
       | .rejected m s =>
         { records := s.trace.reverse, verdict := "REJECTED", message := m, env := s.env,
           drawn := s.su.drawn, sat := [] }
@@ -143,8 +157,12 @@ def solveSeed (fl : Flags) (site : String) (loc : String) (cs : List CsItem) (ns
           drawn := s.su.drawn, sat := s.proc.elems }
       | .solved s =>
         let ps := s.proc.elems
+        /- S2 layer (ii), `Flags.rowSoundSat`, DEFAULT OFF: the SAME unit propagation on the
+           SATURATED set.  Independent of `labelCheck`, like the compiler's. -/
         let late :=
-          if fl.labelCheck && !fl.labelCheckEarly then labelClash ns q.elems else none
+          match (if fl.rowSoundSat then labelClash ns ps else none) with
+          | some c => some c
+          | none => if fl.labelCheck && !fl.labelCheckEarly then labelClash ns q.elems else none
         match late with
         | some (l, _, msg) =>
           { records := s.trace.reverse, verdict := "REJECTED",

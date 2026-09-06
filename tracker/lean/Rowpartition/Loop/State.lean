@@ -366,6 +366,23 @@ structure Flags where
   splitRow : Bool := true
   resRow : Bool := true
   emptyRow : Bool := false
+  /-- S2 (`tracker/loopmodel/S2-DESIGN.md`) layer (i): `-Dermine.rowSound.bare`.  At a BARE
+  definition `v <- ((|C|))` and a concrete instantiation `v := ((|fs|))`, require `C = fs`
+  instead of `ensureSuperset`'s `C ⊆ fs`.  DEFAULT OFF, like the compiler's. -/
+  rowSoundBare : Bool := false
+  /-- S2 layer (ii): `-Dermine.rowSound.saturated`.  Run `labelClash` on the SATURATED set as
+  well as on the input.  DEFAULT OFF. -/
+  rowSoundSat : Bool := false
+  /-- S2 layer (iii): `-Dermine.rowSound.decide`.  The COMPLETE per-label decision on the
+  live input.  DEFAULT OFF. -/
+  rowSoundDecide : Bool := false
+  /-- S2: `-Dermine.rowSound.budget`, decision nodes per label for layer (iii).  On
+  exhaustion the decision returns NO VERDICT and refutes nothing. -/
+  rowSoundBudget : Nat := 200000
+  /-- S2 review V-12: `-Dermine.rowSound.solveBudget`, a cap on the decision nodes ONE SOLVE
+  may spend summed over its labels.  The per-label budget alone bounds the worst case at
+  `#labels` times the per-label cost; this bounds it once.  Exhaustion is NO VERDICT. -/
+  rowSoundSolveBudget : Nat := 1000000
 deriving Inhabited
 
 namespace Flags
@@ -380,7 +397,10 @@ def toStr (f : Flags) : String :=
   (if f.splitKey then "+splitkey" else "") ++
   (if f.splitRow then "+splitrow" else "") ++
   (if f.resRow then "+resrow" else "") ++
-  (if f.emptyRow then "+emptyrow" else "")
+  (if f.emptyRow then "+emptyrow" else "") ++
+  (if f.rowSoundBare then "+rsbare" else "") ++
+  (if f.rowSoundSat then "+rssat" else "") ++
+  (if f.rowSoundDecide then "+rsdecide" else "")
 
 end Flags
 

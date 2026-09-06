@@ -353,7 +353,32 @@ object TestLoopTrace extends Properties("loop model trace") {
     ("ermine.splitKey",          "false",   "nosplitkey"),
     ("ermine.splitRow",          "false",   "nosplitrow"),
     ("ermine.resRow",            "false",   "noresrow"),
-    ("ermine.emptyRow",          "true",    "emptyrow"))
+    ("ermine.emptyRow",          "true",    "emptyrow"),
+    // S2 (`tracker/loopmodel/S2-DESIGN.md`), all DEFAULT OFF on both sides.  The master
+    // `-Dermine.rowSound` turns the three layers on together, and each is separately
+    // switchable, so each maps to its own model token (`Loop/Main.lean`'s `applyFlag`).
+    ("ermine.rowSound",            "true",  "rowsound"),
+    ("ermine.rowSound.bare",       "true",  "rsbare"),
+    ("ermine.rowSound.bare",       "false", "norsbare"),
+    ("ermine.rowSound.saturated",  "true",  "rssat"),
+    ("ermine.rowSound.saturated",  "false", "norssat"),
+    ("ermine.rowSound.decide",     "true",  "rsdecide"),
+    ("ermine.rowSound.decide",     "false", "norsdecide"))
+
+  /** The NUMERIC S2 switches, which `flagMap`'s value-by-value shape cannot express: any
+    * value maps to `<token>=<value>` (S2 review V-3 -- `-Dermine.rowSound.budget` used to be
+    * in neither `setFlags` nor the `bad` check, so
+    * `sbt -Dermine.rowSound.budget=1 "core/testOnly *TestLoopTrace"` ran the compiler at
+    * budget 1 and the model at 200 000, silently). */
+  val numericFlags: List[(String, String)] = List(
+    ("ermine.rowSound.budget",      "rsbudget"),
+    ("ermine.rowSound.solveBudget", "rssolvebudget"))
+
+  /** The numeric `-Dermine.*` this JVM was given. */
+  val setNumeric: List[(String, String)] =
+    numericFlags.map(_._1).flatMap { k =>
+      Option(System.getProperty(k)).filter(_.nonEmpty).map(k -> _)
+    }
 
   /** The `-Dermine.*` this JVM was given, in the order `flagMap` lists them. */
   val setFlags: List[(String, String)] =
@@ -369,7 +394,8 @@ object TestLoopTrace extends Properties("loop model trace") {
         (k, v) == ("ermine.disjunction", "false") || (k, v) == ("ermine.labelCheck", "true") ||
         (k, v) == ("ermine.labelCheckEarly", "true") || (k, v) == ("ermine.resGuard", "true") ||
         (k, v) == ("ermine.splitKey", "true") || (k, v) == ("ermine.splitRow", "true") ||
-        (k, v) == ("ermine.resRow", "true") || (k, v) == ("ermine.emptyRow", "false")
+        (k, v) == ("ermine.resRow", "true") || (k, v) == ("ermine.emptyRow", "false") ||
+        (k, v) == ("ermine.rowSound", "false")
     }
     if (bad.nonEmpty)
       Left("no `looptrace --flags` token is known for " +
@@ -377,7 +403,9 @@ object TestLoopTrace extends Properties("loop model trace") {
            "; add it to TestLoopTrace.flagMap (and to Loop/Main.lean's applyFlag) before " +
            "running the property under that setting")
     else Right(setFlags.flatMap { case (k, v) =>
-      flagMap.collectFirst { case (k2, v2, tok) if k2 == k && v2 == v => tok } })
+      flagMap.collectFirst { case (k2, v2, tok) if k2 == k && v2 == v => tok } } ++
+      setNumeric.flatMap { case (k, v) =>
+        numericFlags.collectFirst { case (k2, tok) if k2 == k => tok + "=" + v } })
   }
 
   /** `--flags=a,b` for the model, or nothing when the run is at the shipped defaults. */
@@ -591,12 +619,12 @@ object TestLoopTrace extends Properties("loop model trace") {
       val javaExe = new File(new File(System.getProperty("java.home"), "bin"), "java").getPath
       val cp = childClasspath().mkString(File.pathSeparator)
       val cmd = List(javaExe, "-Xmx1g", "-Dermine.rowTrace=" + trace.getPath) ++
-                setFlags.map { case (k, v) => "-D" + k + "=" + v } ++
+                (setFlags ++ setNumeric).map { case (k, v) => "-D" + k + "=" + v } ++
                 List("-cp", cp,
                      "com.clarifi.reporting.ermine.loopmodel.LoopTraceChild", jobFile.getPath)
-      if (setFlags.nonEmpty)
+      if ((setFlags ++ setNumeric).nonEmpty)
         println("[loop model trace] rule flags forwarded to both sides: " +
-                setFlags.map { case (k, v) => "-D" + k + "=" + v }.mkString(" ") +
+                (setFlags ++ setNumeric).map { case (k, v) => "-D" + k + "=" + v }.mkString(" ") +
                 "  ->  " + flagArgs(Nil).mkString(" "))
       val childRc = run(cmd, childLog, 180000)
       val childOut = childRc.map(_._2).getOrElse("<timed out>")
@@ -604,8 +632,8 @@ object TestLoopTrace extends Properties("loop model trace") {
         fail("the tracing child JVM did NOT FINISH " + jobs.length + " solves in 180 s. The " +
              "likely cause is a solve that does not terminate, which is exactly what this " +
              "property exists to catch. Rule flags in force: " +
-             (if (setFlags.isEmpty) "the shipped defaults"
-              else setFlags.map { case (k, v) => "-D" + k + "=" + v }.mkString(" ")) +
+             (if ((setFlags ++ setNumeric).isEmpty) "the shipped defaults"
+              else (setFlags ++ setNumeric).map { case (k, v) => "-D" + k + "=" + v }.mkString(" ")) +
              ". (`-Dermine.disjunction=true` is KNOWN not to finish here, on this side and on " +
              "the model's: `L2-CORPUS.md` §4c/§10 covers `Disjunction` by seeds only.)\n" +
              childOut)
