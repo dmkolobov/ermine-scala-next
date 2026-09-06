@@ -81,6 +81,13 @@ structure Segment where
   TOGETHER with these facts, so a replay that could not see them could not reproduce a
   flags-ON trace.  Accumulated reversed, like `vars`. -/
   envs : List (Nat × ITerm) := []
+  /-- D1: the dequeue POLICY the compiler ran this solve under, from the `sin` record's
+  eighth field.  `"shipped"` for a trace written before D1 or with the flag off, which is what
+  every existing corpus trace says. -/
+  policy : String := "shipped"
+  /-- D1: the draw BUDGET the compiler ran this solve under, from `sin`'s ninth field; `0` is
+  off, and is what every existing trace says. -/
+  budget : Nat := 0
   /-- Parse or consistency failures; a nonempty list makes the segment unreplayable. -/
   errs : List String := []
 
@@ -217,10 +224,19 @@ def startSegment (f : List String) : Segment :=
       | some a, some b, some c => { g with suLo := a, suHi := b, nCs := c }
       | _, _, _ => g.err "bad sin"
     match rest with
-    | blk :: bsz :: nr :: _ =>
-      match blk.toNat?, bsz.toNat?, nr.toNat? with
-      | some a, some b, some c => { g with suBlk := a, suBsz := b, nRows := c }
-      | _, _, _ => g.err "bad sin block fields"
+    | blk :: bsz :: nr :: more =>
+      let g := match blk.toNat?, bsz.toNat?, nr.toNat? with
+        | some a, some b, some c => { g with suBlk := a, suBsz := b, nRows := c }
+        | _, _, _ => g.err "bad sin block fields"
+      -- D1: the policy and the budget, if the writer put them there.  A trace that predates
+      -- them, or one written with the flags off, has neither and keeps the defaults; the
+      -- trailing thread-id column (stage L4) is ignored either way.
+      match more with
+      | pol :: bud :: _ =>
+        match bud.toNat? with
+        | some b => { g with policy := pol, budget := b }
+        | none => g
+      | _ => g
     | _ => g.err "sin has no block fields (trace predates the L2 RowTrace)"
   | _ => ({ } : Segment).err "bad sin"
 

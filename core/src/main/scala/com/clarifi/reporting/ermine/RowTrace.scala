@@ -168,6 +168,14 @@ object RowTrace {
 
   def site: String = site0.get
 
+  /** D1: emit the LOOP's draw count for each solve as its own `sdraw` record.
+    * `-Dermine.rowTrace.draws=true`, DEFAULT OFF, because a new record kind on a trace the
+    * model does not produce would break the byte-for-byte L2 differential.  With it on, the
+    * gate is a per-solve equality of this count against the model's `drawn - drawn0`, which is
+    * the only thing that ties the compiler's budget unit to the model's. */
+  val drawRecords: Boolean =
+    enabled && System.getProperty("ermine.rowTrace.draws", "false") == "true"
+
   /** Run `body` with the call site tagged. Returns `body`'s value unchanged. */
   def withSite[A](s: String)(body: => A): A =
     if (!enabled) body
@@ -313,8 +321,17 @@ object RowTrace {
 
     val (suLo, suHi) = supplyBounds(su)
     val (blk, bsz) = supplyBlock()
+    /* D1: the dequeue POLICY and the draw BUDGET ride on `sin`, so a policy-on or
+     * budget-on trace can be replayed by `looptrace --replay`.  They go BEFORE the
+     * thread-id column `log` appends and AFTER every field an older reader knows,
+     * and `Loop/Replay.lean` parses `sin` positionally with a trailing wildcard,
+     * so old traces keep parsing and new ones stay readable by old tools. */
     log("sin" + tag + suLo + "\t" + suHi + "\t" + cs.length + "\t" + blk + "\t" + bsz +
-        "\t" + cs.flatMap(_.rowConstraints).length)
+        "\t" + cs.flatMap(_.rowConstraints).length +
+        "\t" + Constraints.GenRules.dequeuePolicy +
+        /* the EFFECTIVE budget (0 under the shipped order, where the flag is
+         * ignored), so a replay applies exactly the cap this run applied. */
+        "\t" + Constraints.GenRules.solveBudget)
     lbls.foreach { case (n, i) =>
       val (kind, module) = n match {
         case g: Global => ("G", g.module)

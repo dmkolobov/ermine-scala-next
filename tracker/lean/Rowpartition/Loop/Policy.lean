@@ -162,23 +162,49 @@ end Aux
 (the largest corpus solve has 21 variables and 10 labels). -/
 def canonSep : Nat := 1000000000
 
-/-- `canon`'s replacement for `(rhs.hashCode, lhs.hashCode)`: the SORTED ids of the right-hand
-side's variables, the SORTED label indices of its concrete part, and the id of the left-hand
-side, compared LEXICOGRAPHICALLY.  Two distinct partitions of one solve get distinct keys, so
-the order is total; and because only the ORDER of the ids is ever consulted, a change of base
--- which shifts every id by the same amount -- leaves it alone.  That is the whole difference
-from `Q.pop`, whose key is `rhs.hashCode`: the case-class hash of a `Set[TypeVar]`, a Murmur
-mix that is a pseudo-random function of exactly those ids. -/
-def canonKey (p : LPart) : List Nat :=
-  sortNats p.rhs.abstr.elems ++ [canonSep] ++
-    sortNats (p.rhs.conc.elems.map (fun l => l.n)) ++ [canonSep, p.lhs]
-
 /-- Lexicographic order on the keys, shorter-is-smaller at a common prefix. -/
 def natListLt : List Nat → List Nat → Bool
   | [], [] => false
   | [], _ :: _ => true
   | _ :: _, [] => false
   | x :: xs, y :: ys => if x == y then natListLt xs ys else decide (x < y)
+
+/-- A LABEL's canonical key: the `Name` itself, as `(kind, module, string, fixity.con)` --
+`1` for a `Local` and `2` for a `Global`, exactly the tags `Name.hashCode` uses
+(`Name.scala:23,39`) -- with the two strings as their characters' code points.
+
+**Why not the label's table index** (`Lbl.n`), which is what an earlier version of this file
+used: `n` is the label's position in the solve's `slbl` table, and `slbl` is a TRACE artefact
+built by `RowTrace.solveInput`.  The compiler at solve time has no such table, so a key built
+from `n` is not implementable in `Constraints.scala` at all -- and a dequeue policy the compiler
+cannot compute is not a policy.  The `Name` is on both sides, needs no table, and is
+base-independent for the same reason an id ORDER is: nothing about it moves when the id base
+does.  (`tracker/loopmodel/D1-DESIGN.md` §6b records the change.) -/
+def lblKey (l : Lbl) : List Nat :=
+  (if l.glob then 2 else 1) :: (l.mod.toList.map Char.toNat) ++ [canonSep] ++
+    (l.str.toList.map Char.toNat) ++ [canonSep, l.con]
+
+/-- Insertion sort on the label keys, by the same lexicographic order the partition keys use. -/
+def sortLblKeys (xs : List (List Nat)) : List (List Nat) :=
+  xs.foldl (fun acc x =>
+    let rec ins : List (List Nat) → List (List Nat)
+      | [] => [x]
+      | y :: ys => if natListLt x y then x :: y :: ys else y :: ins ys
+    ins acc) []
+
+/-- `canon`'s replacement for `(rhs.hashCode, lhs.hashCode)`: the SORTED ids of the right-hand
+side's variables, the SORTED `Name` keys of its concrete part, and the id of the left-hand side,
+compared LEXICOGRAPHICALLY.  Two distinct partitions of one solve get distinct keys, so the
+order is total; and because only the ORDER of the ids is ever consulted, a change of base --
+which shifts every id by the same amount -- leaves it alone.  That is the whole difference from
+`Q.pop`, whose key is `rhs.hashCode`: the case-class hash of a `Set[TypeVar]`, a Murmur mix that
+is a pseudo-random function of exactly those ids.
+
+`canonSep` separates the components and must exceed every value that can appear in one: a
+variable id, a Unicode code point (< 1,114,112) and `Fixity.con` (≤ 3). -/
+def canonKey (p : LPart) : List Nat :=
+  sortNats p.rhs.abstr.elems ++ [canonSep] ++
+    (sortLblKeys (p.rhs.conc.elems.map lblKey)).flatten ++ [canonSep, p.lhs]
 
 /-- `(priority, key)`, lexicographically. -/
 def canonLt (x y : Nat × List Nat) : Bool :=
@@ -338,9 +364,33 @@ def polRun (pol : Policy) (d0 b : Nat) : Nat → Aux → State → Nat → PolRe
       { verdict := "REJECTED", steps := k, drawn := s'.su.drawn, drawn0 := d0, msg := m }
     | .continue s' => polRun pol d0 b n (a.next pol s') s' (k + 1)
 
-/-- The census of one solve from its initial state. -/
+/-- **The two flags are COUPLED, and this is where the model says so.**
+
+D1B review: under the SHIPPED order a solve's draw count depends on the id base, so a draw
+budget alone rejects a well-typed program at some bases and accepts it at others (the reviewer
+reproduced `-Dermine.solveBudget=20000` rejecting a satisfiable `GU05.json` at base 0 after 56 s
+while bases 1 and 2 accept it in under a second).  `Constraints.GenRules` therefore IGNORES
+`-Dermine.solveBudget` unless `-Dermine.dequeuePolicy` is non-shipped, and prints a warning
+saying so.  Every driver in the model applies the same rule through `effBudget`, so a trace or a
+command line that asks for the shipped order with a budget replays exactly as the compiler runs
+it, and the L2 differential stays exact under every combination of the two flags.
+
+It is a DRIVER rule, deliberately not a change to `stepPB`/`runSP`: the theorems about those --
+`budgetP_terminates`, `runSP_never_accepts`, `runSP_rejects_unsat` -- keep their statements, and
+this function just says which `b` the drivers hand them. -/
+def effBudget (pol : Policy) (b : Nat) : Nat := if pol == .shipped then 0 else b
+
+/-- At a non-shipped policy the budget is whatever was asked for. -/
+theorem effBudget_of_ne_shipped {pol : Policy} {b : Nat} (h : (pol == .shipped) = false) :
+    effBudget pol b = b := by
+  simp [effBudget, h]
+
+/-- At the shipped policy the budget is off, whatever was asked for. -/
+theorem effBudget_shipped (b : Nat) : effBudget .shipped b = 0 := rfl
+
+/-- The census of one solve from its initial state.  The budget is the EFFECTIVE one. -/
 def polCensus (pol : Policy) (b : Nat) (fuel : Nat) (s0 : State) : PolRep :=
-  polRun pol s0.su.drawn b fuel (Aux.init pol s0) s0 0
+  polRun pol s0.su.drawn (effBudget pol b) fuel (Aux.init pol s0) s0 0
 
 /-! ## 5. What every policy has in common: the SHAPE of a dequeue
 

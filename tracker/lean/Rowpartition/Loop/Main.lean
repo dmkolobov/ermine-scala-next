@@ -53,7 +53,16 @@ dequeues and the ids drawn -- with the loop's `pop` under that dequeue order:
 `shipped` (the default, and `Q.pop` itself), `concfirst`, `smallrhs`, `fifo` or `canon`
 (`Loop/Policy.lean`).  `--budget=<n>` caps the fresh ids ONE SOLVE may draw and makes
 exhaustion a REJECTION with a diagnostic (`Loop/Budget.lean`); `0`, the default, is off.
-Both work on a `json:` seed and under `--replay`.
+Both work on a `json:` seed and under `--replay`.  A budget asked for at the SHIPPED order is
+IGNORED, here and in the compiler alike (`Policy.effBudget`, D1B review): under that order a
+solve's draw count depends on the id base, so a budget alone would reject a well-typed program
+at some bases and accept it at others.
+
+`--trace` forces the RECORD path even when `--policy=`/`--budget=` are given, so that the L2
+corpus differential can be run UNDER a policy or a budget (Part B's gate): without it those two
+options select the `pol` census instead.  With no `--policy=` the policy is taken from the
+trace's own `sin` record, so a compiler trace written with `-Dermine.dequeuePolicy` on replays
+under that policy without being told.
 
 `--replay` (stage L2) reads a compiler `-Dermine.rowTrace` file, reconstructs EVERY solve in
 it from its `sin`/`slbl`/`svar`/`scon` records, runs the model on each, and prints the
@@ -68,6 +77,7 @@ import Rowpartition.Loop.Pump
 import Rowpartition.Loop.Cycle
 import Rowpartition.Loop.Depth
 import Rowpartition.Loop.Policy
+import Rowpartition.Loop.PolicyReplay
 
 namespace Rowpartition.Loop
 
@@ -238,9 +248,16 @@ def replayMain (path : String) (opts : List String) : IO UInt32 := do
   let cycMode := opts.contains "--cycle"
   let mintMode := opts.contains "--mints"
   let depMode := opts.contains "--depth"
-  let polMode := (opts.any (fun a => a.startsWith "--policy=")) || (opts.any (fun a => a.startsWith "--budget="))
-  let pol := policyOf opts
-  let bud := natOpt opts "--budget=" 0
+  let traceMode := opts.contains "--trace"
+  let polMode := !traceMode &&
+    ((opts.any (fun a => a.startsWith "--policy=")) || (opts.any (fun a => a.startsWith "--budget=")))
+  let polOpt : Option Policy :=
+    (opts.find? (fun a => a.startsWith "--policy=")).bind
+      (fun a => Policy.ofString ((a.drop 9).toString))
+  let pol := polOpt.getD .shipped
+  let budOpt : Option Nat :=
+    (opts.find? (fun a => a.startsWith "--budget=")).bind (fun a => (a.drop 9).toNat?)
+  let bud := budOpt.getD 0
   let flush : Nat → Segment → IO (Nat × Nat × Nat × Nat × Nat × Nat) := fun j g => do
     if !(lo ≤ j && j ≤ hi) then
       return (0, 0, 0, 0, 0, 0)
@@ -304,7 +321,14 @@ def replayMain (path : String) (opts : List String) : IO UInt32 := do
         return (1, 0, 0, 0, (if rep.verdict == "REJECTED" then 1 else 0),
           (if rep.verdict == "FUEL" then 1 else 0))
     IO.println s!"#seg\t{j}\t{g.site}\t{g.loc}"
-    match replay fl fuel g with
+    -- D1: the policy and the budget the records are produced under.  An explicit `--policy=` /
+    -- `--budget=` wins; otherwise the segment's own `sin` fields are used, which is what makes
+    -- a policy-on compiler trace replay under that policy without being told.
+    let segPol := (Policy.ofString g.policy).getD .shipped
+    let usePol := polOpt.getD segPol
+    let useBud := budOpt.getD g.budget
+    match (if usePol == .shipped && useBud == 0 then replay fl fuel g
+           else replayP usePol useBud fl fuel g) with
     | .error m =>
       IO.println s!"#skip\t{j}\t{m}"
       return (0, 1, 0, 0, 0, 0)
@@ -399,8 +423,9 @@ def mainImpl (args : List String) : IO UInt32 := do
       | .ok seed =>
         let (parts, ns) := seedSystem seed base
         let out := solveSeed fl site "-" parts ns (Sup.ofSeed ns.supplyLo) fuel
-        if opts.any (fun a => a.startsWith "--policy=") ||
-            opts.any (fun a => a.startsWith "--budget=") then
+        if !opts.contains "--trace" &&
+            (opts.any (fun a => a.startsWith "--policy=") ||
+             opts.any (fun a => a.startsWith "--budget=")) then
           let pol := policyOf opts
           let bud := natOpt opts "--budget=" 0
           match buildQueue parts (Sup.ofSeed ns.supplyLo) with
@@ -475,6 +500,16 @@ def mainImpl (args : List String) : IO UInt32 := do
           | "REJECTED" => IO.println s!"REJECTED {out.message}  [drawn={out.drawn}]"
           | _ => IO.println s!"FUEL     [drawn={out.drawn}]"
         else
+          -- D1: `--trace` forces the RECORD path here as it does under `--replay`, and the
+          -- records are produced UNDER the policy and the budget.  Without this the `json:`
+          -- seed path answered `--policy=` with the `pol` census line and never printed a
+          -- record, so `TestLoopTrace` -- which drives its seeds through this path -- compared
+          -- a census line against a trace and was falsified before it started.
+          let pol := policyOf opts
+          let bud := natOpt opts "--budget=" 0
+          let out :=
+            if pol == .shipped && bud == 0 then out
+            else solveSeedP pol bud fl site "-" parts ns (Sup.ofSeed ns.supplyLo) fuel
           for r in out.records do IO.println r
           if out.verdict != "SOLVED" then
             IO.eprintln s!"# {out.verdict} {out.message}"

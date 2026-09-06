@@ -432,6 +432,43 @@ any change, then the cheapest change with the largest profiled share, then the
   must measure before and after; it is NOT a hang (every base run to completion
   terminates) and is filed here as the first real, satisfiable, pathological
   input the solver has.  Awaiting the design stage; no code here.
+  **ANSWERED 2026-09-06 by LOOP MODEL stage D1 -- ANSWERED, NOT CLOSED: the box stays unticked
+  until a default moves (D1B review U-4), because the change is uncommitted, default OFF and
+  unadopted.**  Everything below is the answer, and the adoption decision is the user's.
+  **The full text:  D1 (`loopmodel/D1-DESIGN.md`, `D1-CHANGE.md`),
+  behind `-Dermine.dequeuePolicy=smallcanon`, DEFAULT OFF, not committed.**  Six dequeue
+  orders were measured on the model over the whole eight-group corpus (2,301,195 solve
+  segments), the 19 tracked seeds at 10 id bases and `GU05`/`GU05MIN` at 25; the winner is
+  `smallcanon` -- fewest right-hand-side parts first (`|abstr| + (conc ? 1 : 0)`), ties by an
+  ID ORDER instead of `rhs.hashCode`.  ON THE COMPILER, same harness as the repro line above:
+  `GU05` goes from 743 draws at its best base and **47,317 draws at base 0** to **306 draws at
+  EVERY one of the 25 bases** -- spread 1.00x against >= 63.7x, and a 155x cut in the worst
+  base.  DRAWS are the figure of record here; wall clocks are quoted as ranges because they do
+  not reproduce across JIT states (D1B review U-12: two independent runs of the same harness on
+  this host give 128 s and 138 s for the worst shipped base, 1.3 s and 0.2 s for the best, and
+  0.2-1.0 s per base under the policy, while the DRAW counts agree to the digit).  `GU05MIN`: SOLVED at all 25, 256 draws at every one.
+  Corpus cost does not rise: 68,940 dequeues against the shipped 69,207 (**-0.39 %**), no solve
+  worse by more than 2x, and zero verdict changes in 2,301,195 solves.  The mechanism is
+  structural, not a fit: `Q.++!`'s repair link has arity 1, so an arity-primary order dequeues
+  it FIRST, reversing the pathology `Loop/Dequeue.lean` R5.3 documents for the shipped order.
+  The user-visible half: in a normal ten-file batch load, `Incomplete.Gu05` does not finish
+  under the shipped order (the chunk dies at its 900 s cap and the four modules after it are
+  never reached) and takes **2.08 s** under the policy -- the same module loads in ~16 s under
+  BOTH settings when loaded ALONE, which is the id-base sensitivity itself.  A draw BUDGET
+  (`-Dermine.solveBudget`, default 0 = off) ships with it; at 20,000 it never fired anywhere in
+  the corpus, and it is IGNORED unless the policy is set (a budget alone is order-dependent by
+  id base, so it would reject a well-typed program at some bases -- D1B review).
+  **ADOPTION CONDITION, from the D1B review (U-0): the policy must not ship without S2's
+  `-Dermine.rowSound`.**  At the shipped `rowSound` default the policy stops refuting two of the
+  seven curated unsatisfiable witnesses (`MIN2`, `FALSE-ACCEPT-2`: rejected at 8 of 10 id bases
+  under the shipped order, at none under `smallcanon`); with `-Dermine.rowSound=true` all seven
+  are refuted at all ten bases under both orders.  Cost on the measurement of record, `perf-bench.sh batch` cold, 5 reps, OFF and ON
+  alternated twice on the same host in one window: OFF **13.63 / 13.68 s**, ON **13.42 / 13.55 s**
+  -- inside each run's own spread (0.45-0.78 s), i.e. **no measurable difference**; `PERF_MAX_LOAD`
+  had to be raised to 6.0 because this host's desktop background load never falls below the
+  harness's 1.5 and a batch run leaves the 1-minute average at ~4.3 by itself, so the OFF/ON
+  comparison stands but the absolute seconds are not comparable with quiet-machine numbers.
+  Adoption (turning either default ON) is the user's decision and was not made.
 
 ## P7 DESIGN (written 2026-08-31; awaiting sign-off before any code)
 

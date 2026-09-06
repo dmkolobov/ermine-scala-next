@@ -403,7 +403,20 @@ val dequeuePolicy: String =                 // "shipped" = off, the DEFAULT
   `makeEmpty` already use, which is what makes exhaustion a REJECTION and not an acceptance —
   `Loop/Budget.lean`'s `budget_never_accepts` is the theorem that this is the whole of it;
 * with `solveBudget = 0` no counter is read and no branch is taken, which is the sense in which
-  `runBud_eq_run` says the trace is untouched.
+  `runBud_eq_run` says the trace is untouched;
+* **AND THE BUDGET IS COUPLED TO THE POLICY** (added 2026-09-06, after the D1B review; §0 already
+  argued it and Part B first shipped it as a warning only).  `-Dermine.solveBudget` is IGNORED
+  unless `-Dermine.dequeuePolicy` is non-shipped, and the message says `is IGNORED … Set
+  -Dermine.dequeuePolicy=smallcanon to enable the budget`.  The reason is measured, not
+  hypothetical: under the shipped order a solve's draw count depends on the ID BASE, and the
+  reviewer reproduced `-Dermine.solveBudget=20000` REJECTING a satisfiable `GU05` at base 0 after
+  56 s while bases 1 and 2 accept it in under a second — a well-typed program failing by id base,
+  which is worse than slow.  A `System.err` warning is not enough on its own: it is printed at
+  class-initialisation time and an `sbt` or LSP session swallows it.  The model's drivers apply
+  the same rule (`Loop/Policy.lean`'s `effBudget`, used by `polCensus` and
+  `PolicyReplay.solveSeedP`) and the trace's `sin` record carries the EFFECTIVE budget, so the L2
+  differential stays exact under every combination of the two flags.  It is deliberately a DRIVER
+  rule and not a change to `stepBud`/`stepPB`/`runSP`, so no theorem statement moves.
 
 ### 6b The dequeue policy
 
@@ -439,10 +452,22 @@ part by `Lbl.n` — the label's index in the solve's `slbl` table — and `slbl`
 order labels by the `Name` itself — `(module, string, fixity.con)`, which every `Name` carries, is
 base-independent for the same reason ids-by-order are, and needs no table on either side.  This is a
 change to the MODEL as well as to the Scala (`canonKey`'s label component becomes the name triple
-instead of `l.n`), it belongs to the Lean mirror of §6c, and it obliges a re-run of the `smallcanon`
-census to confirm the §5 figures are unchanged — the two orders differ only where two partitions
-tie on the abstract-rank list and differ on labels, which may be never, but that is a measurement
-and not an assumption.
+instead of `l.n`), it belongs to the Lean mirror of §6c, and it obliged a re-run of the `smallcanon`
+census to confirm the §5 figures.
+
+**Done, 2026-09-06, and NOTHING MOVED.**  `Loop/Policy.lean`'s `canonKey` now orders labels by
+`lblKey` — `(kind, module, string, con)`, the tags `Name.hashCode` uses, with the strings as code
+points and `canonSep` separating the components — and the three measurements were re-run against
+the pre-change artefacts (`tmp/D1/PREKEY-*`):
+
+| measurement | result |
+|---|---|
+| `smallcanon` corpus census, all 41 traces | **byte-identical**, 2,301,195 rows |
+| the 19 tracked seeds at 10 bases (190 runs) | **identical** |
+| `GU05` at 25 id bases, run to completion | **identical** — 414 dequeues / 306 loop draws at every base |
+
+So §5's figures stand as printed, and the two label orders never break a tie differently on this
+corpus.
 
 ### 6c The model mirror
 

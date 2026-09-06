@@ -452,6 +452,18 @@ object Constraints {
         case Partition(u, RHS(vs, _), _) => this + (u -> vs)
       }
 
+      /** D1: the reverse-topological index recomputed over ID-ORDERED nodes and
+        * id-ordered children.  `sort` above is computed from `Set` iteration
+        * orders, and a `TypeVar`'s hash IS its id, so `sort` moves wholesale when
+        * the id base does; this one depends on the graph alone.  `lazy` because
+        * only the `smallcanon` policy reads it. */
+      lazy val canonSort: Map[TypeVar, Int] = {
+        def kids(v: TypeVar): Stream[TypeVar] =
+          edges.get(v).cata(_.toList.sortBy(_.id).toStream, Stream[TypeVar]())
+        reverseTopSort(nodes.toList.sortBy(_.id).toStream)(kids)
+          .zip(Stream.from(0)).toMap
+      }
+
       def rename(u: TypeVar, v: TypeVar): TypeVarGraph = {
         val nnodes = substSet(u, v, nodes)
         val nedges = edges map { case (k, s) => (if(k == u) v else k, substSet(u, v, s)) }
@@ -540,12 +552,129 @@ object Constraints {
         }
       }
 
-    def pop(q: PSQI, graph: TypeVarGraph): Option[(Partition, PSQI)] = {
+    def pop(q: PSQI, graph: TypeVarGraph): Option[(Partition, PSQI)] =
+      if (GenRules.dequeuePolicy == "shipped") popShipped(q)
+      else popSmallCanon(q, graph)
+
+    /** `Q.pop` as it has always been: split the finger tree on "the prefix's
+      * minimum priority equals the whole tree's".  The DEFAULT, and untouched. */
+    private def popShipped(q: PSQI): Option[(Partition, PSQI)] = {
       val priority = q.measure._1.map(_._1)
 
       val (lhs, rhs) = q.split(k => k._1.map(_._1) == priority)
 
       rhs.viewl.fold(none, (p, rest) => some((p, lhs <++> rest)))
+    }
+
+    /* ---------------- D1: the `smallcanon` dequeue order ----------------- *
+     *
+     * Fewest right-hand-side PARTS first; ties by the id-ordered topological
+     * index; ties by a canonical key built from the right-hand side's variable
+     * IDS and its labels' NAMES -- never from a `hashCode`.  Base-invariant,
+     * because a change of id base shifts every id of a solve by the same amount
+     * and so leaves an id ORDER alone, whereas `rhs.hashCode` is a Murmur mix of
+     * exactly those ids.
+     *
+     * Review T-2, honoured: this chooses a different ELEMENT and leaves the tree
+     * SORTED BY `(rhs.hashCode, lhs.hashCode)`, because `PQueue.findRHS`,
+     * `PQueue.contains` and `Q.insert`'s `sandwich` are finger-tree RANGE SPLITS
+     * on that key and return wrong answers, silently, if it stops holding.  The
+     * measure is not touched either; the price is an O(n) scan per dequeue, paid
+     * only when the policy is on. */
+
+    /** A partition's ARITY: its right-hand side's parts, a nonempty concrete part
+      * counting as one -- the `arities` column of the `solve` trace record. */
+    private def arityOf(p: Partition): Int =
+      p._2.abstr.size + (if (p._2.concr.isEmpty) 0 else 1)
+
+    /* The comparisons are written out rather than taken from an `Ordering`: the name
+     * `Ordering` is `scalaz.Ordering` here (`import Scalaz._`).  More importantly they are
+     * written to match `Loop/Policy.lean`'s `canonKey` / `natListLt` EXACTLY -- the model is
+     * the specification, its census is the number D1 reports, and the compiler has to make the
+     * same choice at every dequeue or the L2 differential under the policy is meaningless.
+     *
+     * WHY A FLATTENED `List[Int]` AND NOT A TUPLE.  The first version of this file compared
+     * `(sortedAbstrIds, sortedLabelKeys, lhsId)` component by component with Scala's list
+     * ordering, which puts a PREFIX FIRST.  The model concatenates the components with a
+     * SENTINEL between them, so where one list ends the comparison sees `canonSep` -- larger
+     * than any id, code point or `Fixity.con` -- and the LONGER list wins.  The two rules
+     * disagree exactly when two partitions of equal ARITY have abstract parts of different
+     * lengths (one has a concrete part and one more variable, the other does not), which is
+     * common; on `GU05.json` it was the difference between the model's 306 draws and the
+     * compiler's 1,093.  Found by the 25-base compiler sweep, which is what that gate is for. */
+
+    /** `Loop/Policy.lean`'s `canonSep`: larger than any id, Unicode code point or `Fixity.con`
+      * that can appear in a key. */
+    private val canonSep: Int = 1000000000
+
+    /** `Loop/Policy.lean`'s `natListLt`: lexicographic, shorter-is-smaller at a common prefix. */
+    private def intListLt(a: List[Int], b: List[Int]): Boolean = (a, b) match {
+      case (Nil, Nil)         => false
+      case (Nil, _)           => true
+      case (_, Nil)           => false
+      case (x :: xs, y :: ys) => if (x == y) intListLt(xs, ys) else x < y
+    }
+
+    /** `Loop/Policy.lean`'s `lblKey`: the `Name` as `(kind, module, string, fixity.con)`, `1`
+      * for a `Local` and `2` for a `Global` -- the tags `Name.hashCode` uses
+      * (`Name.scala:23,39`) -- with the two strings as their characters' code units. */
+    private def lblKey(n: Name): List[Int] = {
+      val (kind, module) = n match {
+        case g: Global => (2, g.module)
+        case _         => (1, "")
+      }
+      (kind :: codePoints(module)) ++ (canonSep :: codePoints(n.string)) ++
+        List(canonSep, n.fixity.con)
+    }
+
+    /** Unicode CODE POINTS, which is what `Loop/Policy.lean`'s `lblKey` reads
+      * (`Char.toNat` over `String.toList`).  D1B review U-9: `String.toList` in
+      * Scala gives UTF-16 code UNITS, so a name outside the BMP would key as two
+      * numbers on this side and one on the model's.  No name in this corpus
+      * reaches that, and the two sides now agree for every string. */
+    private def codePoints(s: String): List[Int] = s.codePoints.toArray.toList
+
+    /** `smallcanon`'s replacement for `(rhs.hashCode, lhs.hashCode)`, byte for byte the model's
+      * `canonKey`: the sorted ids of the right-hand side's variables, the sorted `Name` keys of
+      * its concrete part, and the id of the left-hand side. */
+    private def canonKey(p: Partition): List[Int] =
+      p._2.abstr.toList.map(_.id).sorted ++ (canonSep ::
+        p._2.concr.toList.map(lblKey).sortWith(intListLt).flatten) ++ List(canonSep, p._1.id)
+
+    private def smallCanonLt(a: Partition, b: Partition, graph: TypeVarGraph): Boolean = {
+      val (aa, ba) = (arityOf(a), arityOf(b))
+      if (aa != ba) aa < ba
+      else {
+        val (ap, bp) = (graph.canonSort.getOrElse(a._1, 0), graph.canonSort.getOrElse(b._1, 0))
+        if (ap != bp) ap < bp
+        else intListLt(canonKey(a), canonKey(b))
+      }
+    }
+
+    /** Remove ONE occurrence of `p`, keeping the tree's `(rhs.hashCode,
+      * lhs.hashCode)` order: split at `p`'s key block, drop the first element of
+      * that block equal to `p`, rejoin. */
+    private def removeOne(q: PSQI, p: Partition, graph: TypeVarGraph): PSQI = {
+      implicit def r: Reducer[Partition, PSQK] = pr(graph)
+      val (less, equal, greater) =
+        part(q, (_._1.map(_._2)), some((p._2.hashCode, p._1.hashCode)))
+      val block = equal.foldRight(List[Partition]())(_ :: _)
+      var dropped = false
+      val kept = block.filter(e => if (!dropped && e == p) { dropped = true; false } else true)
+      less <++> kept.foldRight(FingerTree.empty[PSQK, Partition])(_ +: _) <++> greater
+    }
+
+    private def popSmallCanon(q: PSQI, graph: TypeVarGraph): Option[(Partition, PSQI)] = {
+      // LEFT to right, first-wins on a tie -- the model's `foldl` over `withIndex es`.  The key
+      // is total on the partitions of one solve, so the direction cannot matter; matching it is
+      // insurance, not semantics.
+      val es = q.foldRight(List[Partition]())(_ :: _)
+      es match {
+        case Nil => None
+        case h :: t =>
+          val best = t.foldLeft(h)((b, e) => if (smallCanonLt(e, b, graph)) e else b)
+          some((best, removeOne(q, best, graph)))
+      }
     }
 
     class PQueue(val q: PSQI, graph: TypeVarGraph) extends ForeachIterable[Partition] {
@@ -639,7 +768,16 @@ object Constraints {
 
       override def toString: String = foldRight("")((p, s) => "\n  " + p.toString + s)
 
-      def expand(implicit hm: SubstEnv, su: Supply, tml: Located): PQueue = incorporateAll(this, PQueue())
+      def expand(implicit hm: SubstEnv, su: Supply, tml: Located): PQueue =
+        GenRules.withLoopDraws {
+          val r = incorporateAll(this, PQueue())
+          /* D1: the loop's draw count for this solve, for the gate that ties the compiler's
+           * budget unit to the model's `drawn - drawn0`.  Default off (`RowTrace.drawRecords`),
+           * because a record kind the model does not produce would break the L2 differential. */
+          if (RowTrace.drawRecords)
+            RowTrace.log("sdraw\t" + RowTrace.site + "\t-\t" + GenRules.drawnThisSolve)
+          r
+        }
 
       def vars: Vars[Kind] = foldRight(Vars() : Vars[Kind])((p, r) => r ++ Vars(p._1) ++ p._2.vars)
 
@@ -1123,6 +1261,98 @@ object Constraints {
       * check, which would be a propagator bug.  Counted apart from the budget so
       * that "0 budget exhaustions" cannot absorb it (S2 review V-8). */
     val rowSoundCheckFails = new java.util.concurrent.atomic.AtomicLong(0L)
+
+    /* ------------------------------------------------------------------ *
+     * D1: the DRAW BUDGET and the DEQUEUE POLICY.  Both DEFAULT OFF.
+     * `tracker/loopmodel/D1-DESIGN.md`; the model is
+     * `tracker/lean/Rowpartition/Loop/{Budget,Policy}.lean`.
+     * ------------------------------------------------------------------ */
+
+    /** `-Dermine.solveBudget=<n>`: the largest number of FRESH ROW VARIABLES one
+      * solve's loop may draw.  `0`, the default, is off and costs nothing.  The
+      * unit is DRAWS and not dequeues because that is the quantity the model's
+      * termination theorem is about (`VocFix.terminates_of_drawsAtMost`: a solve
+      * that draws boundedly many ids terminates); no theorem bounds dequeues per
+      * draw, which is `L5-TERMINATION.md` R8.6b's open problem.  Exhaustion is a
+      * REJECTION with a diagnostic and never an acceptance
+      * (`Budget.budget_never_accepts`). */
+    private val solveBudgetRequested: Int =
+      try System.getProperty("ermine.solveBudget", "0").toInt
+      catch { case _: NumberFormatException => 0 }
+
+    /** `-Dermine.dequeuePolicy=<name>`: `shipped` (the default, `Q.pop` exactly)
+      * or `smallcanon` -- fewest right-hand-side parts first, ties by an ID ORDER
+      * instead of `rhs.hashCode`.  D1 measured six orders over the whole
+      * eight-group corpus; `smallcanon` is the only one that is base-invariant
+      * AND cheaper in dequeues.
+      *
+      * Declared BEFORE the budget on purpose: the budget's effective value is a
+      * function of it (`vals` initialise in textual order). */
+    val dequeuePolicy: String = System.getProperty("ermine.dequeuePolicy", "shipped")
+
+    /** The EFFECTIVE budget: what was asked for, but only under a non-shipped
+      * dequeue order.
+      *
+      * D1B review, the budget footgun made STRUCTURAL rather than merely warned
+      * about.  Under the shipped order a solve's draw count depends on the id
+      * base, so a budget alone turns a well-typed program into a hard error at
+      * SOME bases: the reviewer reproduced `-Dermine.solveBudget=20000` rejecting
+      * a satisfiable `GU05.json` at base 0 after 56 s while it is accepted at
+      * bases 1 and 2 (743 and 1,091 draws).  Warning about that was not enough --
+      * the warning goes to `System.err` at class-initialisation time, which an
+      * `sbt` or LSP session swallows.  So the budget is IGNORED unless a policy
+      * is set, and the model's drivers mirror the rule (`Loop/Policy.lean`'s
+      * `effBudget`, used by `polCensus` and `PolicyReplay.solveSeedP`), so the
+      * L2 differential stays exact under every combination of the two flags. */
+    val solveBudget: Int = if (dequeuePolicy == "shipped") 0 else solveBudgetRequested
+
+    /** Times the draw budget was exhausted.  A measurement, not a control. */
+    val solveBudgetHits = new java.util.concurrent.atomic.AtomicLong(0L)
+
+    /* D1 review T-13, strengthened by the D1B review: the budget ALONE is a
+     * footgun -- under the shipped order a solve's draw count depends on the id
+     * base (`GU05.json`: 743 draws at one base, 47,317 at another), so a budget
+     * alone rejects a well-typed program at some bases and accepts it at others.
+     * It is now IGNORED there, and the message says so. */
+    if (solveBudgetRequested > 0 && dequeuePolicy == "shipped")
+      System.err.println(
+        "ermine: WARNING -Dermine.solveBudget=" + solveBudgetRequested + " is IGNORED " +
+        "because -Dermine.dequeuePolicy is 'shipped'.  Under the shipped dequeue order a " +
+        "solve's draw count depends on the id base, so this budget would reject a " +
+        "well-typed program at some id bases and accept it at others.  Set " +
+        "-Dermine.dequeuePolicy=smallcanon to enable the budget; see " +
+        "tracker/loopmodel/D1-DESIGN.md section 0.")
+
+    /** Whether anything reads the draw counter.  When neither the budget nor the
+      * trace is on, the loop pays nothing for it. */
+    val drawCountActive: Boolean = solveBudget > 0 || RowTrace.enabled
+
+    /** Fresh ids THIS SOLVE'S LOOP has drawn.
+      *
+      * THREAD-LOCAL, and saved/restored at every loop ENTRY (`PQueue.expand`,
+      * `combine`), for two reasons the D1 review found (T-1): solves NEST, and
+      * the shipped loader runs them on several threads.  It must NOT be hung off
+      * `RowTrace.withSite`, which is a no-op unless `-Dermine.rowTrace` is set --
+      * a counter reset there would never reset in a normal compile, and the
+      * budget would fire on whichever solve pushed the MODULE's cumulative draw
+      * count past the limit. */
+    private val loopDrawn = new ThreadLocal[Int] { override def initialValue(): Int = 0 }
+
+    /** The loop's draw count for the solve now running. */
+    def drawnThisSolve: Int = loopDrawn.get
+
+    /** Count one draw.  Called at the loop's two minting sites -- and only there,
+      * so `PQueue.build`'s mint is excluded by construction. */
+    def countDraw(): Unit = if (drawCountActive) loopDrawn.set(loopDrawn.get + 1)
+
+    /** Run one LOOP with its own draw count. */
+    def withLoopDraws[A](body: => A): A =
+      if (!drawCountActive) body
+      else {
+        val old = loopDrawn.get
+        loopDrawn.set(0)
+        try body finally loopDrawn.set(old)
+      }
     /** Decision nodes (iii) has spent, and the largest single `solve` bill. */
     val rowSoundNodes      = new java.util.concurrent.atomic.AtomicLong(0L)
     val rowSoundMaxNanos   = new java.util.concurrent.atomic.AtomicLong(0L)
@@ -1143,7 +1373,18 @@ object Constraints {
         (if (splitKey) "+splitkey" else "") + (if (splitRow) "+splitrow" else "") +
         (if (resRow) "+resrow" else "") + (if (emptyRow) "+emptyrow" else "") +
         (if (rowSoundBare) "+rsbare" else "") + (if (rowSoundSat) "+rssat" else "") +
-        (if (rowSoundDecide) "+rsdecide" else "")
+        (if (rowSoundDecide) "+rsdecide" else "") +
+        /* D1B review U-6: the dequeue order and an ACTIVE budget belong in the
+         * same configuration string S2's layers use -- both are empty at the
+         * defaults, so this string is byte-identical to S2's for every shipped
+         * configuration.  NOTE what this does NOT do: nothing in the tree keys a
+         * published `.ei` by this string (its only consumer is `DisjProbe`), so a
+         * tree built partly with the policy on still mixes interfaces silently.
+         * That is safe today -- the interfaces the policy changes are
+         * alpha-variants and a mixed tree loads (D1B review gate 16) -- and it is
+         * recorded as an open gap for incremental adoption. */
+        (if (dequeuePolicy != "shipped") "+pol:" + dequeuePolicy else "") +
+        (if (solveBudget > 0) "+budget:" + solveBudget else "")
   }
   case object Disjunction         extends Inference
 
@@ -1205,12 +1446,29 @@ object Constraints {
    */
 
   def combine(q1: PQueue, q2: PQueue)(implicit hm: SubstEnv, su: Supply, tml: Located): PQueue =
-    if(q1.size < q2.size)
-      incorporateAll(q2, q1)
-    else
-      incorporateAll(q1, q2)
+    GenRules.withLoopDraws(
+      if(q1.size < q2.size)
+        incorporateAll(q2, q1)
+      else
+        incorporateAll(q1, q2))
 
-  def incorporateAll(incm: PQueue, proc: PQueue)(implicit hm: SubstEnv, su: Supply, tml: Located): PQueue = incm.dequeue match {
+  def incorporateAll(incm: PQueue, proc: PQueue)(implicit hm: SubstEnv, su: Supply, tml: Located): PQueue = {
+    /* D1: the DRAW BUDGET, checked once per dequeue, BEFORE the dequeue -- which
+     * is exactly where `Loop/Budget.lean`'s `stepBud` checks it, so the model and
+     * the compiler stop on the same dequeue and the L2 differential can be run
+     * with the budget on.  Counting happens at the two minting sites; only the
+     * test is here, because this is where a `Located` is in scope and a `Death`
+     * raised anywhere else would have no source position to report. */
+    if (GenRules.solveBudget > 0 && GenRules.drawnThisSolve > GenRules.solveBudget) {
+      GenRules.solveBudgetHits.incrementAndGet()
+      tml.die("Row solver resource limit reached (this is NOT a type error): the row " +
+              "constraint solver drew " + GenRules.drawnThisSolve + " fresh row variables " +
+              "at this signature, past the -Dermine.solveBudget=" + GenRules.solveBudget +
+              " limit, so it was stopped rather than left to run.  Raise the limit with " +
+              "-Dermine.solveBudget=<n>, simplify the row constraints at this signature, " +
+              "or report it.")
+    }
+    incm.dequeue match {
       case None => proc
       case Some((r@Partition(v, rhs, _), rest)) =>
 //        System.err.println(r)
@@ -1244,6 +1502,7 @@ object Constraints {
         }
         incorporateAll(nincm, nproc)
     }
+  }
 
   /*
    *  Self substitution
@@ -1439,6 +1698,7 @@ object Constraints {
                       abstr.map(x => Partition(x, RHSEmpty(), SplitEmpty))
                     case None =>
                       val u = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
+                      GenRules.countDraw()   // D1: one of the loop's two draw sites
                       Set( Partition(u, RHSAbstr(abstr), SplitConcrete)
                          , Partition(v, RHS(Set(u), concr), SplitConcrete))
                   }
@@ -1885,6 +2145,8 @@ object Constraints {
     if (!GenRules.resolves) Set() else (rhs1, rhs2) match {
     case (RHS(Single(x), concr1), RHS(Single(y), concr2)) =>
       val z = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
+      GenRules.countDraw()   // D1: the loop's OTHER draw site -- taken before the
+                             // guards, so a reuse costs an id too
       val int = concr1 & concr2
       val tops = concr1 -- int
       val bots = concr2 -- int

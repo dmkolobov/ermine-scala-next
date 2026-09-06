@@ -667,6 +667,69 @@ reach from `labelCheckEarly`-passing inputs (`seeds/unsat/MIN2.json`, step 9).
 
 ---
 
+## The DEQUEUE POLICY, and the transport of soundness to it (D1)
+
+`tracker/LOOP-MODEL-PLAN.md` §D1.  Part A asked whether the loop's cost may depend on the ID
+BASE (it does: `GU05.json` costs 743 draws at one base and 81,481 at another, because
+`Q.PQueue`'s priority is keyed on `hashCode` and a `TypeVar`'s `hashCode` IS its id), and
+answered with a draw BUDGET (`Loop/Budget.lean`) and a dequeue POLICY (`Loop/Policy.lean`).
+Neither changes `step` or `run`: `stepP` is `step` with the single `pop` call replaced, and
+`stepP_shipped : stepP .shipped a s = step s` is `rfl`, so the shipped order is the default
+DEFINITIONALLY and every earlier theorem is still about the same loop.
+
+That leaves the question the user asked of the change — *are we sure we are not introducing
+unsoundness?*  For the SHIPPED policy the answer is the `rfl` above.  For the other five it was,
+for one stage, measurement (0 verdict differences over 2,301,195 corpus solves) rather than
+proof.  `Loop/PolicyStep.lean` makes it proof.
+
+| module | lines | what |
+|---|---|---|
+| `Rowpartition/Loop/Budget.lean` | 221 | **the DRAW BUDGET.** `stepBud`/`runBud` cap the fresh ids ONE SOLVE may draw; `budget_terminates` (every solve stops, at exactly `VocFix.terminates_of_drawsAtMost`'s hypotheses), `budget_never_accepts` (whatever the budgeted loop accepts the shipped loop accepts, at the same state), `stepBud_died_sys` (the death changes nothing) and `runBud_eq_run` (below the cap it IS `run`) |
+| `Rowpartition/Loop/Policy.lean` | 752 | **the six dequeue orders** (`shipped`, `concFirst`, `smallRhs`, `fifo`, `canon`, `smallCanon`) and what they have in COMMON: `DequeueShape q r rest := ∃ i, q.elems[i]? = some r ∧ rest = ⟨q.elems.eraseIdx i, q.graph⟩`, proved for `Q.pop` and for all five alternatives (`dequeuePol_shape`), with `shape_mem`, `shape_mem_or`, `shape_length_lt`, `shape_kdist`, `dequeuePol_unique` — and `dequeuePol_none` for the `.done` branch, which is the ACCEPTANCE branch |
+| `Rowpartition/Loop/PolicyReplay.lean` | 161 | `stepSP`/`runSP`/`solveSeedP`/`replayP` — the trace replay under a policy and a budget, which is what the L2 corpus differential runs |
+| `Rowpartition/Loop/FlaggedSound.lean` | 267 | **the BUDGET transported**: `runBud_outOfFuel`, `runBud_noLoss`, `runBud_sat_all`, `runBud_models`, `runBud_rejects_unsat` with the budget's death added to the exception list (`BudgetDeath`, `NonRefutationB` — without it *"the loop rejected"* would license *"the input has no model"* when the loop merely ran out of budget), and `runBud_not_rejected` which carries S2's chain across; plus `stepP_done_dequeue`/`stepSP_done_dequeue`, the acceptance branch for ANY policy |
+| `Rowpartition/Loop/PolicyStep.lean` | 2,373 | **the POLICY transported** — S1 and S2 re-proved for `stepP pol aux`, from `DequeueShape` and the `shape_*` facts, with the ORIGINALS UNTOUCHED. 41 originals copied with two substitutions (`simp only [stepP, …]` for `simp only [step, …]`; `shape_mem (dequeuePol_shape hdq)` for `PQueue.dequeue_mem hdq`, and siblings), plus policy forms of the four dispatch predicates, which quantify over the dequeue and so could not be reused. Step level: `stepP_qok`, `stepP_wf`, `stepP_supFresh`, `stepP_queueHygiene`, `stepP_drawn_le`, `stepP_envNodup`, `stepP_su`, `stepP_refines*`, **`stepP_refines_all`**, `stepP_sat_all`, `stepP_strict*`, **`stepP_noLoss_all`**/`stepP_noLoss_or`, **`stepP_died_refutes`**. Run level (`runP`, and `runP_shipped` recovering `run`): **`runP_sat_all`**, **`runP_noLoss`**, `runP_models`, `runP_ssat_iff`, `runP_noLoss_or`, `runP_refutes_all`, **`runP_rejects_unsat`**, and **`runP_solved_saturated`** — an acceptance under ANY policy left an EMPTY queue, proved in the `.solved` case from `stepP_done_dequeue`. Driver level: `runSP_eq_runP`, `runSP_never_accepts`, `runSP_outOfFuel`, `runSP_noLoss`/`_sat_all`/`_models`/`_solved_saturated`, **`runSP_rejects_unsat` with `NonRefutationB`**, `runSP_not_rejected`. S2: `solveP_noFalseAccept`, `solveP_accepted_faithful` |
+| `Rowpartition/Loop/PolicyTerm.lean` | 1,127 | **TERMINATION under a budget, transported** — round 7's argument (`Loop/VocFix.lean` §5–§11) and `Budget.budget_terminates`, both stated for the shipped order, re-proved for `stepP pol`/`runP`/`runSP`. The measure is a function of the STATE, so `measure4` itself is reused and only the decrease lemma changes (`measureP4_lt`); the four dequeue facts it needs are `shape_mem`, `shape_mem_or`, `shape_kdist` and the queue-length EQUATION (`shape_length_eq`, added here — `Policy.lean` states only the inequality). Step level: `stepP_quadrichotomy`, `measureP4_lt`, `stepP_kdist'`, `stepP_drawn_ge`, `stepP_inVoc_noDraw`, `rowSetP_lt_concrete`, `learnP_procSys_lt`, `stepP_concSub`. Run level: the reachability relations thread the policy's auxiliary state (`ReachesP`, `RunsP`, `TerminatesP`, `TerminatesBP`, `VocFixedP`, `NoDrawP`, `NoDrawBP`), so every statement over `Reaches s t` gains exactly ONE binder and nothing else changes — **`terminatesP_of_drawsAtMost`**, **`vocFixedP_terminates`**/`vocFixedP_run`, `drawnP_unbounded_of_not_terminatesP`, and **`budgetP_terminates`**: under a draw budget every solve stops, under ANY policy. `reachesP_shipped`/`terminatesP_shipped`/`terminatesP_of_drawsAtMost_recovers`/`vocFixedP_terminates_recovers` recover the originals in the kernel. ONE stated difference: `budgetP_terminates` needs `b ≠ 0`, because `runSP` guards its budget test with `b != 0` (the budget off) while `runBud` does not |
+
+**Why the copy is not a weakening.**  Each transported statement is the original with `step s`
+replaced by `stepP pol aux s` and `s.incm.dequeue` by `dequeuePol pol aux s.incm`, and nothing
+else — 41 statements compared mechanically against their originals, 0 differences.  §7 of
+`PolicyStep.lean` then proves the ORIGINALS BACK in the kernel: `stepP_qok_recovers`,
+`stepP_supFresh_recovers`, `stepP_queueHygiene_recovers`, `stepP_refines_all_recovers`,
+`stepP_noLoss_all_recovers`, `stepP_died_refutes_recovers`, `stepP_drawn_le_recovers`,
+`runSupOkP_shipped`, `runP_sat_all_recovers`, `runP_noLoss_recovers`,
+`runP_rejects_unsat_recovers` — each proved by instantiating the policy theorem at
+`pol := .shipped` and handing it a hypothesis about `step`, with no bridging lemma in between.
+
+**Termination** is `PolicyTerm.lean`'s business and it is now proved for every policy too:
+`budgetP_terminates` says that under a draw budget every solve stops whatever the order, and
+`terminatesP_of_drawsAtMost` is the theorem it rests on.  What no order gets, here or in the
+shipped development, is an a-priori FUEL number: converting a draw budget into a dequeue bound
+needs a bound on dequeues per draw, which is `L5-TERMINATION.md` §R8.6b and is open.  Unbudgeted
+divergence is real and order-sensitive — D1 Part A measured `canon` failing to finish `GU05`'s
+corpus instance in 1,800 s while `smallcanon` finishes it in 306 draws at every one of 25 id
+bases.  Reports: `tracker/loopmodel/D1-CHANGE.md` §6 for the transport (`D1-TRANSPORT.md` is a
+pointer to it), §1-§2 for the compiler side and its gates, §8 for the post-review corrections.
+A `#print axioms` census over **161 declarations** — every one in the four new modules,
+`QOk.shape` included, plus `effBudget` and its two lemmas — is **0 non-standard**
+(`tmp/D1/PrintAxiomsD1B.lean`); `Audit.lean` is **4,115 theorems / 0 non-standard**.
+
+**The compiler side, so this file is not read as model-only.**  D1 Part B puts both of these
+behind flags in `Constraints.scala`, DEFAULT OFF: `-Dermine.dequeuePolicy=smallcanon` (default
+`shipped`) is `Policy.smallCanon` in `Q.pop`, and `-Dermine.solveBudget=<n>` (default `0` = off)
+is `stepBud`'s cap, counted at the loop's two `fresh` sites and checked once per dequeue at the
+top of `incorporateAll` — the same place `stepBud` checks it, so the two stop on the same
+dequeue.  The two flags are COUPLED (D1B review): a budget without a policy is IGNORED, because
+under the shipped order a solve's draw count depends on the id base and a budget alone would
+reject a well-typed program at some bases and accept it at others.  `Policy.effBudget` is the
+model's copy of that rule, applied by `polCensus` and `PolicyReplay.solveSeedP` — a DRIVER rule
+on purpose, so `budgetP_terminates`, `runSP_never_accepts` and `runSP_rejects_unsat` keep their
+statements untouched and the drivers merely choose the `b` they are given.  The L2 corpus differential is what holds the two implementations to each other: at the
+flags OFF and again UNDER THE POLICY it is 2,355,430 of 2,355,430 segments agreeing, and the
+model reads the policy and the budget off the trace's own `sin` record (`Loop/Replay.lean`), so
+a replay cannot silently run a different loop from the one that produced the trace.
+
+
 ## The shared vocabulary
 
 All ten substantive modules are stated against the definitions in `Basic.lean`:

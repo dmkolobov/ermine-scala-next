@@ -263,3 +263,7 @@ import Rowpartition.Loop.Decide
 import Rowpartition.Loop.NoFalseAccept
 import Rowpartition.Loop.Budget
 import Rowpartition.Loop.Policy
+import Rowpartition.Loop.PolicyReplay
+import Rowpartition.Loop.FlaggedSound
+import Rowpartition.Loop.PolicyStep
+import Rowpartition.Loop.PolicyTerm

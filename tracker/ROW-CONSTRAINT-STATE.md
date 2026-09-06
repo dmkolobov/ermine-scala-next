@@ -1039,3 +1039,148 @@ root, and `#print axioms` on the headline theorems.
   running. It is therefore NOT imported by `Rowpartition.lean` and its 125 theorems are
   NOT covered by `Audit.lean` -- contrary to what README.md used to claim. Everything else
   is: `lake env lean Audit.lean` reports **1465 theorems, 0 non-standard axioms**.
+
+
+## 2026-09-06: D1 — the row solver's dequeue ORDER and a draw BUDGET, both behind flags, DEFAULT OFF
+
+Stage D1 of the LOOP MODEL programme (`tracker/LOOP-MODEL-PLAN.md`; design
+`loopmodel/D1-DESIGN.md`, review `D1-REVIEW.md`, change `D1-CHANGE.md`).  Nothing is committed
+and no default moves; adoption is the user's decision.
+
+**What the two flags do.**
+
+* `-Dermine.dequeuePolicy=smallcanon` (default `shipped`) changes `Q.pop` ONLY: fewest
+  right-hand-side parts first (`|abstr| + (conc ? 1 : 0)`), ties by the id-ordered
+  reverse-topological index, ties by a canonical key built from the right-hand side's variable
+  IDS and its labels' NAMES — never from `rhs.hashCode`.  The finger tree keeps its
+  `(rhs.hashCode, lhs.hashCode)` order, because `findRHS`, `contains` and `insert`'s `sandwich`
+  are range splits on it; only the CHOICE of element changes.  Base-invariant because a change
+  of id base shifts every id of a solve by the same amount, while `rhs.hashCode` is a Murmur mix
+  of exactly those ids.
+* `-Dermine.solveBudget=<n>` (default `0` = off) caps the fresh row variables ONE SOLVE's loop
+  may draw.  Counted at the loop's two `fresh` sites, checked once per dequeue at the top of
+  `incorporateAll` — the same place the model checks it, so both stop on the same dequeue.
+  Exhaustion is a `Death` that says, in the message, that it is a resource limit and not a type
+  error.  The counter is a `ThreadLocal` saved/restored at the LOOP's entry, NOT at
+  `RowTrace.withSite`, which is a no-op unless tracing is on.
+  **The two flags are COUPLED (D1B review):** the budget is IGNORED unless a non-shipped
+  dequeue order is also set, and says so on `System.err`.  Under the shipped order a solve's
+  draw count depends on the id base, so a budget alone rejects a well-typed program at some
+  bases and accepts it at others — the reviewer reproduced `-Dermine.solveBudget=20000`
+  rejecting a satisfiable `GU05` at base 0 after 56 s while bases 1 and 2 accept it.  The model's
+  drivers apply the same rule (`Loop/Policy.lean`'s `effBudget`), and the trace carries the
+  EFFECTIVE budget, so the differential is exact under every combination.  The published
+  configuration string `GenRules.toString` gains `+pol:<name>` and `+budget:<n>` when they are
+  active and is byte-identical to S2's at the defaults.
+
+**The numbers, on the COMPILER.**  `GU05.json` — the satisfiable input of `PERF-ROADMAP` P10 —
+goes from 743 draws / 1.3 s at its best id base and **47,317 draws / 128 s at base 0** to
+**306 draws at every one of 25 bases**, ~1.0 s each: spread 1.00x against >= 63.7x, a 155x cut in
+the worst base.  `GU05MIN`: SOLVED at all 25, 256 draws at every one.  Corpus cost does not rise
+— 68,940 dequeues against the shipped 69,207 (**-0.39 %**) over 2,301,195 solve segments, no solve
+worse by more than 2x, **zero verdict changes**.
+
+**The user-visible half.**  In a normal ten-file batch load, `Incomplete.Gu05` does not finish
+under the shipped order — the chunk dies at its 900 s cap and the four modules after it are never
+reached — and takes **2.08 s** under the policy, after which `Gu06`, `Gu08`, `Gu10` and `Np01`
+follow in under half a second each.  Loaded ALONE the same module completes under BOTH settings
+in ~16 s, which is the id-base sensitivity itself and not a property of the module.
+
+**What the gates say.**  Flags OFF the shipped path is byte-identical (`stepP_shipped` is `rfl`
+on the model side, `popShipped` is the original body on the compiler side): `core/test`
+913/914 — the one known `TestConstraints` failure, unmoved; `TestLoopTrace` 714/714; the L2
+corpus differential 2,355,430 of 2,355,430 segments agreeing over eight groups; the published
+interfaces identical to the base compiler's, 181 of 181.  Flags ON: the same corpus differential
+**under the policy** is 2,355,430 of 2,355,430 agreeing, `TestLoopTrace` is 714/714 with the
+policy and with the policy plus a budget, `repl-smoke` and `lsp-smoke` pass, and a budget that
+FIRES (20 on `incomplete/gu05`, which draws 328) rejects the module with the resource-limit
+diagnostic while the model's replay agrees on all 54,235 segments and on the rejection itself.
+A per-solve draw census ties the two definitions of the budget's unit together: 54,199 solves of
+`boot`, compiler-counted draws identical to the model's, every one.
+
+**What it costs.**  `perf-bench.sh batch`, cold, 5 reps, OFF and ON alternated twice: OFF 13.63 /
+13.68 s, ON 13.42 / 13.55 s — inside every run's own spread, i.e. **no measurable difference**
+(the O(n) scan in `popSmallCanon` is invisible when the queues are small, and the corpus's whole
+population is 68,940 dequeues over 2.3 M solves).  `PERF_MAX_LOAD` had to be raised for this: the
+machine's background load is the user's desktop and a batch run leaves the 1-minute average at
+~4.3 by itself, so the absolute seconds are not comparable with numbers taken on a quiet machine
+while the OFF/ON comparison is.
+
+**Where the change lives.**  `Constraints.scala` (+231/-8), `RowTrace.scala` (+16/-1),
+`TestLoopTrace.scala` (+33/-7) in this tree, uncommitted; the model side is `Loop/Budget.lean`,
+`Loop/Policy.lean`, `Loop/PolicyReplay.lean`, `Loop/FlaggedSound.lean` and D1-T's
+`Loop/PolicyStep.lean` + `Loop/PolicyTerm.lean`.  The tree compiles and `TestLoopTrace` is
+714/714 at all three settings (OFF, policy, policy+budget) in the main tree itself.
+
+**THE ADOPTION CONDITION (D1B review U-0, the finding that decides this).**  At the shipped
+`-Dermine.rowSound` default the policy STOPS REFUTING two of the seven curated unsatisfiable
+witnesses: `seeds/unsat/MIN2` and `FALSE-ACCEPT-2` are rejected at 8 of 10 id bases under the
+shipped order and at NONE under `smallcanon` (compiler and model agree, so it is the ORDER).  It
+contradicts no theorem — `runP_rejects_unsat` says a rejection is SOUND and nothing says an
+unsatisfiable input WILL be rejected; the loop's refutation is incomplete and, as this shows,
+order-dependent — but it is behaviour users have today.  **With `-Dermine.rowSound=true` the loss
+is exactly zero: all seven witnesses are refuted at all ten bases under BOTH orders**, because
+S2's layer (iii) is a complete per-label decision run BEFORE the loop.  So: **adopt `rowSound`
+first or with the policy; never the policy alone.**  The PAIR is gated: the 15 top-level examples
+and the `Ai` group load at four settings (OFF, policy, `rowSound`, both) with the SAME three
+pre-existing `top` failures — `Interp.e`, `Sample.e`, `Yahoo.e`, module for module — and none in
+`Ai`.  This also qualifies "zero verdict changes in
+2,301,195 solves" — that population is the corpus, which holds no known unsatisfiable input of
+this shape, and the gate that would have caught it (`tmp/D1/bindcmp.sh`) was broken until the
+review; fixed, it catches it immediately.
+
+**The interface caveat, corrected.**  Turning the policy on moves published `.ei` TEXT, but far
+less than this section first said, and no published TYPE changes.  Measured with the module
+loader made deterministic (`-Dermine.loadInSeries=true`; the shipped loader is PARALLEL and
+thread timing reaches interface bytes, so the original single-repetition control was not a
+control) and with the normaliser fixed to anonymise binders BEFORE sorting: the floor is zero at
+the BYTE level twice at each setting, and OFF versus ON differs in **one interface, `GridExample`,
+in two bindings** (`stackedBarChart`, `stackedAreaChart`) — by ONE implicit KIND binder that is
+VACUOUS (a bare binder is kind `*`, and the body pins that kind either way).  Every other
+difference, including all three the first pass called "different residual row shapes", is
+alpha-equivalence: the same constraint set under a renaming of the existentially bound row
+variables.  What remains true: the 6 `incomplete/` interfaces published only under the policy are
+real, and are the point of the stage.
+
+**The theorems** (all `#print axioms` clean, no `sorry`; `lake build Rowpartition` 867 jobs,
+`Audit.lean` 4,112 theorems / 0 non-standard axioms):
+
+* `Loop/Budget.lean` — `budget_terminates`, `budget_never_accepts`, `stepBud_died_sys`,
+  `budget_exhausted_rejects`, `runBud_eq_run`;
+* `Loop/Policy.lean` — `stepP_shipped` (`rfl`: the default IS the shipped loop),
+  `dequeuePol_shape` and the `shape_*` facts, `dequeuePol_none` (no policy can accept a
+  non-empty queue);
+* `Loop/FlaggedSound.lean` — the budget's transport: `runBud_noLoss`, `runBud_sat_all`,
+  `runBud_models`, `runBud_rejects_unsat` with `BudgetDeath` on the `NonRefutation` exception
+  list, `runBud_not_rejected`;
+* `Loop/PolicyStep.lean` — soundness for EVERY policy: `stepP_refines_all`, `runP_sat_all`,
+  `runP_noLoss`, `runP_rejects_unsat`, and S2's chain;
+* `Loop/PolicyTerm.lean` — `budgetP_terminates` for every policy (with `b ≠ 0`, since a budget
+  of 0 is off);
+* `Loop/Policy.lean` — `effBudget` and its two lemmas, the model's copy of the compiler's rule
+  that a budget without a policy is ignored (a DRIVER rule: no theorem statement changed).
+
+`lake build Rowpartition` 867 jobs, `Audit.lean` **4,115 theorems / 0 non-standard axioms**,
+`lake build looptrace` 1,670; a `#print axioms` census over **161 declarations** — every one in
+the four new modules, `QOk.shape` included (D1B review U-5), plus the three new `effBudget`
+declarations — is **0 non-standard**.
+
+**The gap that remains, and it is not new.**  None of this supplies an a-priori FUEL number: a
+draw budget bounds DRAWS, and converting that into a bound on DEQUEUES needs a dequeues-per-draw
+bound, which is `L5-TERMINATION.md` §R8.6b's open problem.  The budget therefore stops
+divergence-by-minting — the divergence eight L5 rounds actually found — and is not a wall-clock
+watchdog.
+
+**Traps this stage paid for.**  (i) `.ei` is NOT byte-stable at a fixed configuration: published
+constraint lists and concrete rows print in `Set` iteration order, so an interface diff must be
+taken up to that order (`tmp/D1/einorm3.py`) — and the normaliser must anonymise binder names
+BEFORE sorting, or it reports alpha-variants as differences (D1B review U-3).  (iv) An `.ei`
+comparison must be run with `-Dermine.loadInSeries=true`: the shipped loader is PARALLEL and
+`Session.scala:558-560` says thread timing reaches interface bytes through the solver's id-hash
+queue, so a control run once at the defaults is not a control (U-1).  (v) A verdict-comparison
+script must not compare a line that BEGINS with the thing being varied: `bindcmp.sh` compared
+`looptrace --verdict`'s whole last line, which starts with the policy name, so it reported SAME
+only on a double timeout — and it was the one gate that would have caught U-0 (U-8).  (ii) A driver that runs gates after a build step
+must FAIL on a non-zero build — a failed `core/compile` let a 25-base sweep and a differential
+run against stale classes and nearly shipped a wrong number.  (iii) Do not `lake build` while a
+corpus differential is running; it relinks `looptrace` under the sweep.

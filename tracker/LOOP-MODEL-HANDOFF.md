@@ -480,3 +480,140 @@ compiler vs model). Recommendation: implement smallcanon + budget together, defa
 Phase 1 (T-3 Lean + prose, main tree) → orchestrator commits D1-A → Phase 2 Part B Scala in worktree
 ermine-scala-wt-d1 (branch dequeue-policy), Lean mirror in main only after "D1-A committed" → Part B reviewer →
 commit (flags OFF). Adoption of smallcanon/solveBudget AND rowSound = user's decisions.
+D1-A COMMITTED 93e9454 (2026-09-06); Part B RUNNING in worktree ermine-scala-wt-d1 (branch dequeue-policy); Lean mirror in main released by message; canonKey label order must be by Name triple, not slbl index (implementer's finding) — census re-run required.
+D1 PART B IN PROGRESS (2026-09-06 afternoon): Scala in worktree ermine-scala-wt-d1 compiles; flags-OFF gates:
+core/test 913/914, TestLoopTrace 714/714, L2 differential 7/8 groups agree (incomplete running), .ei queued; driver
+runs unattended: .ei A/B/C, GU05 25 bases on the COMPILER under smallcanon, shipped control, GU05MIN, gu05 load
+time, corpus at the budget, env gate, smokes, perf. Lean mirror written (Loop/PolicyReplay.lean new; Replay/Main
+edits; TestLoopTrace.d1Opts forwards -Dermine.dequeuePolicy/-Dermine.solveBudget as --policy/--budget/--trace),
+build deferred until the differential's binary is free. HARD REQUIREMENT SENT (user's soundness question):
+re-PROVE step_refines_all / run_sat_all / run_noLoss / run_rejects_unsat (+ budget message in NonRefutation) and the
+S2 chain against the flagged step before the D1-B commit; any policy for which a proof fails = a finding.
+USER'S POSITION (2026-09-06): asked whether the improvements can reject valid programs — answer given: S2 cannot
+(sound + no false rejections found), the policy cannot (same derived set), the BUDGET can in principle (resource
+error vs hang; 60× headroom under the policy; coupled to the policy; both flags default OFF; the policy can ship
+alone). Decision on flags is the user's.
+D1-B FINDING (2026-09-06 ~15:00): the BUDGET transports completely (Loop/FlaggedSound.lean 303: runBud_noLoss /
+runBud_sat_all / runBud_models / runBud_rejects_unsat with NonRefutationB = NonRefutation ∨ BudgetDeath;
+runBud_not_rejected carries the S2 chain; stepP_done_dequeue: accept only on an empty queue; build 865 / Audit
+3969-0 / looptrace 1670). The POLICY transport is NOT done: 22 theorems in 11 modules unfold the dispatch (1,221
+proof lines) and must be re-run against DequeueShape — mechanical, all facts proved, not yet written. ORCHESTRATOR
+DECISION: no D1-B commit until the transport is a theorem; D1-B implementer finishes the gates + writes a TRANSPORT
+SPEC section in D1-CHANGE.md; then a FRESH Opus agent "D1-T" does the re-proof in a new module (Loop/PolicyStep.lean:
+stepP_refines_all / runP_sat_all / runP_noLoss / runP_rejects_unsat + S2 chain for runSP), originals untouched;
+then the Part B reviewer; then commit (flags OFF). Gate 3 CLOSED: L2 differential flags OFF 2,355,430/2,355,430.
+D1-T brief written at briefs/brief-D1T.md (2026-09-06 ~16:00): the policy transport in a new Loop/PolicyStep.lean from D1-CHANGE.md §5's spec; LAUNCH (fresh Opus) only after D1-B reports done (shared Lean tree; never 'lake build looptrace' from D1-T). Then Part B reviewer over D1-B + D1-T together, then commit (flags OFF).
+D1-B GATE RESULTS (2026-09-06 ~11:00): GU05 on the COMPILER under smallcanon: 1,093 draws at EVERY one of 25 bases,
+≤ 2.4 s each (shipped: 743 / 1,091 / 47,317 draws at bases 2/1/0, 128 s at base 0); GU05MIN SOLVED 25/25 at 256
+draws. gu05 load time unchanged; corpus at solveBudget=20000 limit-hits=0; env gate identical; repl/lsp smokes
+PASS. TWO FINDINGS: (1) .ei is NOT byte-stable at a fixed configuration (published constraint lists print in Set/
+hash/id order) → gate compared up to order (einorm.py): OFF 180/181, policy ON 173/181; six interfaces exist only
+under the policy (incomplete/gu05, gu06, gu08, gu10, np01 — likely the batch sweep's 180 s cap; per-file check
+requested). (2) BLOCKING: compiler 1,093 vs model 306 draws on GU05 — both base-invariant, so the two smallcanon
+implementations differ (canonKey list-order bug found+fixed, gap remains); the differential under the policy must
+localise the first diverging dequeue; until green, NEITHER number is "the" policy figure. Implementer nudged to
+continue; D1-T waits for its report.
+D1-B GAP CLOSED (2026-09-06 ~12:00): compiler = model on GU05 under smallcanon — 306 draws at EVERY one of 25 bases
+(shipped: 743–47,317; 155× reduction of the maximum on the compiler). Cause of the phantom "fix had no effect": the
+driver ran gates after a FAILED compile (stale classes) — lesson recorded; the real bug was canonKey's tuple
+prefix-order vs the model's sentinel order at equal arity. Arity = |abstr| + [conc nonempty]. removeOne preserves
+survivor order. Remaining D1-B gates running unattended (eight-group differential under the policy, firing-budget
+differential, draw equality, TestLoopTrace both flags, per-file OFF/ON loads of the five incomplete/ modules, .ei
+control, perf). D1-T LAUNCHED (fresh Opus, briefs/brief-D1T.md) in main's Lean in parallel: Loop/PolicyStep.lean,
+`lake build -j2 Rowpartition` only, never looptrace. Then: one Part B reviewer over D1-B + D1-T → commit (flags
+OFF). Both agents told to coordinate on Rowpartition.lean.
+D1-T DONE (2026-09-06 ~13:00): Loop/PolicyStep.lean 2,373 lines / 84 declarations, Audit 4059-0, build 866: the
+transitive closure was 41 declarations (not 22) + five policy forms of the step predicates; stepP_refines_all,
+stepP_noLoss_all, stepP_died_refutes, runP_sat_all/noLoss/models/ssat_iff/rejects_unsat, runP_solved_saturated
+(uses stepP_done_dequeue in the .solved case), runSP_* incl. runSP_rejects_unsat with NonRefutationB and
+runSP_not_rejected, solveP_noFalseAccept / solveP_accepted_faithful; NO policy broke any theorem; originals
+RECOVERED from the transported forms at pol := .shipped (anti-weakening); report D1-TRANSPORT.md (= D1-CHANGE §6).
+GAP → D1-T ROUND 2 (running): termination under a budget was only for run/runBud (shipped order); transporting
+round 7's measure argument to stepP → budgetP_terminates for runSP. D1-B: eight-group differential UNDER THE
+POLICY 2,355,430/2,355,430; draw equality exact (54,199/54,199); the five incomplete/ interfaces are a REAL
+completion (gu05 never finishes in the .ei chunk under the shipped order at the id base its predecessors leave;
+2.08 s under smallcanon; alone, both settings ~16-17 s); TestLoopTrace with flags forwarded FAILS on a one-line
+Main.lean seed-path `--trace` bug (fix authorised; looptrace rebuild only after "D1-T done"); firing-budget check
+on gu05 queued; .ei control + perf running. Then D1-B applies the Scala diff to main, folds D1-TRANSPORT into
+D1-CHANGE §6, fixes FlaggedSound §SS5 note → Part B reviewer over D1-B + D1-T → commit (flags OFF).
+D1-T ROUND 2 DONE (2026-09-06 ~14:00): Loop/PolicyTerm.lean 1,127 lines / 54 declarations — round 7's measure
+argument transported to stepP for EVERY policy (measure4 reused verbatim; ReachesP threads Aux): terminatesP_of_
+drawsAtMost, vocFixedP_terminates, drawnP_unbounded_of_not_terminatesP, budgetP_terminates (needs b ≠ 0: runSP
+treats budget 0 as OFF) + recoveries at pol := .shipped; build 867 / Audit 4112-0 (orchestrator re-verified).
+Open for EVERY order incl. shipped: an a-priori fuel number (dequeues per draw unbounded). D1-B given the go: rebuild
+looptrace, TestLoopTrace both flags, FlaggedSound §SS5 note, finish gates, apply Scala diff to main, fold
+D1-TRANSPORT into D1-CHANGE §6, state file D1 section, plan/README, report → Part B reviewer (over D1-B + D1-T)
+→ commit (flags OFF).
+D1-B DONE (2026-09-06 ~12:20): the worktree's Scala diff is APPLIED TO MAIN (Constraints.scala +231/-8,
+RowTrace.scala +16/-1, TestLoopTrace.scala +33/-7; git apply clean, files byte-identical to the worktree's;
+Rowpartition.lean re-read and NOT touched — it carries both agents' import lines). Main tree re-gated:
+core/compile + core/test:compile green; core/test 913/914 (the known TestConstraints failure, unmoved); TestLoopTrace 714/714 3-of-3 at ALL THREE settings (OFF, policy,
+policy+budget) after the child-JVM forwarding fix (setD1 on the child's command line — the model had been
+running the policy while the compiler ran shipped, 419/714 mismatches, a silent failure mode). Remaining gates
+closed: firing budget on incomplete/gu05 (budget 0 → imports in 0.41 s, 54,235/54,235 agree, rejected=0;
+budget 20 → REJECTED with the resource-limit diagnostic at gu05:62:1, 54,235/54,235 agree, rejected=1 — the
+model agrees on the firing itself); corpus at solveBudget=20000 under the policy inert (bugs 54,235, guide
+54,244, limit-hits=0); .ei with einorm2.py: control 181/181 (ZERO noise floor), OFF vs main 181/181, OFF vs
+policy 176/181 + 6 policy-only → the policy is INTERFACE-AFFECTING; perf-bench batch alternated twice OFF
+13.63/13.68 s vs ON 13.42/13.55 s = no measurable cost (PERF_MAX_LOAD raised to 6.0: the desktop's own load
+never falls below 1.5 and a batch run leaves it at ~4.3; OFF/ON comparison sound, absolutes not comparable
+with quiet-machine numbers). Docs updated in main: D1-CHANGE.md (1,347 lines; §6 = D1-TRANSPORT folded in,
+D1-TRANSPORT.md replaced by a 9-line pointer; §7 = the application to main), ROW-CONSTRAINT-STATE.md dated D1
+section, LOOP-MODEL-PLAN.md D1 Part B row + narrative, tracker/lean/README.md (compiler side + FlaggedSound
+line count corrected to 267). NO COMMITS; both flags DEFAULT OFF. NEXT: the Part B reviewer over D1-B + D1-T.
+D1 PART B DONE (2026-09-06 ~17:30; all in MAIN, uncommitted, flags default OFF): gates OFF: core/test 913/914,
+TestLoopTrace 714/714, differential 2,355,430/2,355,430, .ei 181/181 identical; ON: GU05 on the compiler 306 draws
+at all 25 bases (~1 s; shipped 743..47,317 / 128 s), GU05MIN 256×25, differential under the policy
+2,355,430/2,355,430, TestLoopTrace 714/714 at OFF/policy/policy+budget (child-JVM forwarding fixed), firing budget
+on gu05 rejected at budget 20 with the diagnostic and the model agreeing on the firing, draw census identical,
+smokes PASS, perf no measurable cost (load guard overridden to 6.0; comparison alternated). FINDINGS: .ei not
+byte-stable (compared up to Set order, control residue 0); the POLICY IS INTERFACE-AFFECTING: 5 signatures change
+TEXT (ChartsExample.stackedPair, GridExample.stackedBarChart, incomplete/TargetList.restrictTo,
+incomplete/RunCalibration.valueAsOf, Relation.lookbackJoin) and 6 interfaces exist only under the policy (gu05 etc.
+now finish) — THE REVIEWER MUST DECIDE whether the five are equivalent types printed differently (residual
+constraint form / variable naming) or genuine differences. Orchestrator verification running (d1b-verify.log),
+then the Part B reviewer (over D1-B + D1-T), then commit (flags OFF). Adoption: user; weigh the interface finding.
+ORCHESTRATOR VERIFIED D1-B ON MAIN (2026-09-06 12:29): build 867 / looptrace 1670 / Audit 4112-0 / no sorry;
+TestLoopTrace 714/714 at OFF, policy, policy+budget (forwarding printed); GU05 under the policy 306 draws at bases
+0–2, ≤ 1 s. D1-B REVIEWER LAUNCHED (Opus; report D1B-REVIEW.md; CENTRAL QUESTION = are the five changed signatures
+equivalent types printed differently or genuine differences; plus the anti-weakening check of D1-T, the Scala line
+by line, gates re-run, substitution comparison under the two orders on all seeds + a 500-seed hunt; two
+recommendations: commit verdict, and adoption of smallcanon/budget and of rowSound). Then commit (flags OFF).
+D1-B+D1-T REVIEW (2026-09-06 ~14:30): FIX-THEN-ADVANCE — no defect in Scala or Lean; all numbers reproduced (49
+transported statements 0 weakenings; 158 new declarations 0 non-standard; differential under the policy
+2,355,430/2,355,430; hunt 600 seeds × 3 bases: 1 verdict change = a shipped-side timeout). CENTRAL QUESTION
+ANSWERED: the five signatures are alpha-equivalent residuals (three identical up to existential names; two differ
+by a vacuous kind binder that also flips between runs at the SHIPPED configuration under the parallel loader) —
+no different type; residue is Subst.reduce naming + printer, unmodelled. NEW U-0 (HIGH): smallcanon ACCEPTS
+unsat MIN2/FALSE-ACCEPT-2 at 10/10 bases vs shipped 2/10 (refutation completeness is order-dependent; theorems
+hold) — rowSound removes it entirely (all seven witnesses refuted 10/10 under both orders). U-1..U-12: .ei floor
+via the parallel loader is NOT zero (1/152), deterministic loader OFF-vs-ON 2/152; einorm2.py artefacts; P10
+un-tick; census 83/84; NO .ei CACHE KEY RECORDS THE FLAGS (U-6); bindcmp.sh broken; budget footgun reproduced
+(20,000 at the shipped order rejects satisfiable GU05 at base 0). RECOMMENDATIONS: commit this stage flags OFF
+= YES; adopt smallcanon = YES but ONLY TOGETHER WITH rowSound; budget NEVER alone (20,000 under the policy
+defensible, ~56 s ceiling; 5,000 tighter); adopt rowSound before or with the policy. Corrections SENT to the D1
+implementer (incl. structural: budget ignored unless the policy is on; flags in the .ei fingerprint).
+Then orchestrator verify → COMMIT D1-B (flags OFF) → REPORT TO THE USER with the adoption decision.
+D1-B POST-REVIEW (2026-09-06 ~15:30), verdict FIX-THEN-ADVANCE (loopmodel/D1B-REVIEW.md, 763 lines; no defect
+in the Scala or the Lean, every re-run number reproduced): all findings CLOSED, D1-CHANGE.md section 8 carries
+old -> new. THE FINDING THAT DECIDES ADOPTION is the review's own U-0: at the shipped rowSound default the
+policy STOPS REFUTING seeds/unsat/MIN2 and FALSE-ACCEPT-2 (8 of 10 bases rejected under shipped, 0 of 10 under
+smallcanon; the model agrees, so it is the ORDER; no theorem is contradicted -- rejection soundness never
+promised refutation completeness). Reproduced over all 7 witnesses x 10 bases x 2 orders x 2 rowSound settings:
+with -Dermine.rowSound=true ALL SEVEN are refuted 10/10 under BOTH orders => the policy must not ship without
+rowSound, and "zero verdict changes in 2,301,195 solves" is qualified (the corpus has no unsat input of this
+shape). TWO CODE CHANGES: (1) the budget is now IGNORED unless a non-shipped policy is set (warning says so;
+EFFECTIVE budget in the trace; mirrored in the model by Loop/Policy.lean's effBudget in polCensus/solveSeedP --
+a DRIVER rule, no theorem statement moved); gate: gu05 at budget 20 under shipped LOADS, limit-hits=0, replay
+54,235/54,235 rejected=0, while under the policy it still fires rejected=1. (2) U-6: +pol:/+budget: tokens in
+GenRules.toString, byte-identical at defaults (nothing keys an .ei by that string -- stated as the open gap for
+incremental adoption). INTERFACE FINDING RE-MEASURED with -Dermine.loadInSeries=true and einorm3.py (anonymise
+before sort): floor ZERO at the BYTE level twice at each setting; OFF vs ON = 1 of 152 interfaces (GridExample,
+two bindings) differing by ONE VACUOUS kind binder; all other residuals ALPHA-EQUIVALENT -> "five signatures
+change text" withdrawn. Also: P10 un-ticked (U-4); axiom census re-run over 161 decls incl QOk.shape, 0
+non-standard (U-5); the flags-OFF sin record has two new columns (U-7); bindcmp.sh fixed and RUN -- it catches
+U-0 (U-8); lblKey now code POINTS on both sides (U-9); RowTrace doc comment (U-10); combine has no callers
+(U-11); draws are the figure of record, wall clocks are ranges (U-12). Re-gated: build 867 / audit 4,115-0 /
+looptrace 1,670, TestLoopTrace 714/714 x3, boot+top differential 146,872/146,872 OFF and under the policy,
+fingerprint unchanged at defaults. NO COMMITS; both flags DEFAULT OFF. Recommendation carried forward from the
+review: adopt rowSound first or with the policy, the policy second, the budget only with the policy.

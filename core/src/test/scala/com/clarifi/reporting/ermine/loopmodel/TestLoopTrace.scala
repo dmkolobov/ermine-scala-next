@@ -408,11 +408,33 @@ object TestLoopTrace extends Properties("loop model trace") {
         numericFlags.collectFirst { case (k2, tok) if k2 == k => tok + "=" + v } })
   }
 
-  /** `--flags=a,b` for the model, or nothing when the run is at the shipped defaults. */
-  def flagArgs(extra: List[String]): List[String] = modelFlags match {
+  /** D1's two switches.  They are NOT `--flags` tokens: `-Dermine.dequeuePolicy` and
+    * `-Dermine.solveBudget` are read by the LOOP DRIVER, not by any rule, and the model
+    * mirrors that with its own `--policy=` / `--budget=` options rather than with a field on
+    * `GenRules`/`Flags`.  `--trace` forces the model's RECORD path, because `--policy=` alone
+    * selects its `pol` census.  Forwarded here for the same reason S2 review V-3 made the
+    * numeric flags forwarded: otherwise `sbt -Dermine.dequeuePolicy=smallcanon
+    * "core/testOnly *TestLoopTrace"` would run the compiler under the policy and the model
+    * under the shipped order, and the property would fail for a reason that is not a bug. */
+  val setD1: List[(String, String)] =
+    List("ermine.dequeuePolicy" -> "shipped", "ermine.solveBudget" -> "0").flatMap {
+      case (k, off) => Option(System.getProperty(k)).filter(_.nonEmpty).filter(_ != off).map(k -> _)
+    }
+
+  val d1Opts: List[String] = {
+    val opts = setD1.map {
+      case ("ermine.dequeuePolicy", v) => "--policy=" + v
+      case (_, v)                      => "--budget=" + v
+    }
+    if (opts.isEmpty) Nil else opts :+ "--trace"
+  }
+
+  /** `--flags=a,b` for the model, or nothing when the run is at the shipped defaults; plus
+    * D1's `--policy=` / `--budget=` / `--trace` when they are set. */
+  def flagArgs(extra: List[String]): List[String] = (modelFlags match {
     case Right(ts) if (ts ++ extra).nonEmpty => List("--flags=" + (ts ++ extra).mkString(","))
     case _                                   => Nil
-  }
+  }) ++ d1Opts
 
   /** The rule-set injection for the positive control.  `nongen` normally, but if the run is
     * ALREADY at `nongen` that would be no injection at all, so use `all` instead. */
@@ -618,13 +640,17 @@ object TestLoopTrace extends Properties("loop model trace") {
       val childLog = new File(dir, "child.out")
       val javaExe = new File(new File(System.getProperty("java.home"), "bin"), "java").getPath
       val cp = childClasspath().mkString(File.pathSeparator)
+      // `setD1` must be forwarded to the CHILD as well, not only translated into the model's
+      // `--policy=` / `--budget=`: without it the compiler side runs at the shipped order while
+      // the model side runs under the policy, and the property fails on 419 of 714 segments for
+      // a reason that is not a bug in either.
       val cmd = List(javaExe, "-Xmx1g", "-Dermine.rowTrace=" + trace.getPath) ++
-                (setFlags ++ setNumeric).map { case (k, v) => "-D" + k + "=" + v } ++
+                (setFlags ++ setNumeric ++ setD1).map { case (k, v) => "-D" + k + "=" + v } ++
                 List("-cp", cp,
                      "com.clarifi.reporting.ermine.loopmodel.LoopTraceChild", jobFile.getPath)
-      if ((setFlags ++ setNumeric).nonEmpty)
-        println("[loop model trace] rule flags forwarded to both sides: " +
-                (setFlags ++ setNumeric).map { case (k, v) => "-D" + k + "=" + v }.mkString(" ") +
+      if ((setFlags ++ setNumeric ++ setD1).nonEmpty)
+        println("[loop model trace] flags forwarded to both sides: " +
+                (setFlags ++ setNumeric ++ setD1).map { case (k, v) => "-D" + k + "=" + v }.mkString(" ") +
                 "  ->  " + flagArgs(Nil).mkString(" "))
       val childRc = run(cmd, childLog, 180000)
       val childOut = childRc.map(_._2).getOrElse("<timed out>")
