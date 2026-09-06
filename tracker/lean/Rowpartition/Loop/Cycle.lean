@@ -353,6 +353,37 @@ structure CycleRep where
   distinct : Nat := 0
   /-- Ids drawn. -/
   drawn : Nat := 0
+  /-- L5 round 7.  The MINTED ids (`id >= su0`) present at the FIRST dequeue: `PQueue.build`
+  runs before the loop and mints for a `Part` whose left-hand side is not a variable
+  (`Constraints.scala:661`), so this is not always empty. -/
+  mint0 : List Nat := []
+  /-- L5 round 7.  Whether some state of the run mentions a minted id that was NOT present at
+  the first dequeue -- i.e. whether the loop GREW the vocabulary.  This is the instrument for
+  `Loop/VocFix.lean`'s run-level condition, and it is not the same as `drawn > 0`:
+  `resolution` draws its id before its guards, so a REUSE costs an id without putting one
+  into a partition. -/
+  grew : Bool := false
+  /-- L5 round 7.  The largest number of minted ids present in one state. -/
+  maxMint : Nat := 0
+  /-- L5 round 7.  How many dequeues took the `concrete` dispatch branch (`makeConcrete`),
+  which is the branch `NoConc.step_trichotomy` discharged as unreachable. -/
+  nconc : Nat := 0
+  /-- L5 round 7.  `Sup.drawn` at the FIRST dequeue.  `Sup.drawn` accumulates across
+  `PQueue.build` as well, which mints for a `Part` whose left-hand side is not a variable, so
+  the LOOP's own draw count -- which is what `Loop/VocFix.lean`'s `NoDraw` is about -- is
+  `drawn - drawn0`, not `drawn`. -/
+  drawn0 : Nat := 0
+
+/-- L5 round 7: does this state's dequeue take the `concrete` branch?  `incorporateAll`'s
+dispatch, read off the state: no common partition, a non-empty right-hand side with no
+variable parts. -/
+def isConcDispatch (s : State) : Bool :=
+  match s.incm.dequeue with
+  | none => false
+  | some (r, _) =>
+    match s.proc.findRHS r.rhs with
+    | some _ => false
+    | none => !r.rhs.isEmpty && r.rhs.abstr.isEmpty
 
 /-- A seen-set: the hash first, then the string, with the index it was first seen at. -/
 abbrev SeenSet := List (UInt64 × String × Nat)
@@ -369,6 +400,12 @@ def cycleRun : Nat → State → SeenSet → SeenSet → CycleRep → CycleRep
     let r := rawState s
     let ch := c.hash
     let rh := r.hash
+    let mo := mintOrder s
+    let rep := if rep.steps == 0 then { rep with mint0 := mo, drawn0 := s.su.drawn } else rep
+    let rep :=
+      { rep with grew := rep.grew || mo.any (fun w => !rep.mint0.contains w),
+                 maxMint := max rep.maxMint mo.length,
+                 nconc := rep.nconc + (if isConcDispatch s then 1 else 0) }
     let rep :=
       match rep.canonHit, seenFind cs ch c with
       | none, some i => { rep with canonHit := some (i, rep.steps), witness := c }

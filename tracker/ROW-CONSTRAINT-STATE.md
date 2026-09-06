@@ -1,5 +1,83 @@
 # Row-constraint work — state as of 2026-09-05
 
+## 2026-09-05: USER PROGRAMS too — the VOCABULARY-FIXED fragment terminates (loop model, L5 round 7)
+
+`tracker/lean/Rowpartition/Loop/VocFix.lean` proves `Terminates` for a fragment that ALLOWS
+labels, allows both generative rules to fire, and allows the `concrete` dispatch branch — the
+one round 6 discharged as unreachable.  The condition is that the run keeps a fixed finite
+vocabulary:
+
+* `VocFixed V s := ∀ t, Reaches s t → InVoc V t`, with `vocFixed_terminates` giving
+  `Terminates` at the explicit fuel `measure4 (n·2ⁿ·2ᵐ) (n·2ⁿ·2ᵐ) n (n·2ᵐ) V L s + 1`
+  (`n = |V|`, `m = |L|`);
+* `NoDraw s` — the loop draws no id at any reachable state — is sufficient for it
+  (`vocFixed_of_noDraw`), and `noDraw_terminates` is the corollary.
+
+Three things had to replace what "no labels" gave round 6 for free.  (1) The loop invents no
+LABEL: every one of `LoopRel`'s eleven constructors preserves `ConcSub`, so the bound transports
+along L3's own refinement and the two counting bounds land in `DefaultTerm.forms V L`.  (2) The
+`learn` branch's vocabulary clause is traded for "the call drew nothing" — `resolution` takes
+its `fresh` *inside* the lone-variable arm and *before* its guards, so not drawing means not
+emitting; `splitConcrete` draws only in its last branch, so not drawing means it took a reuse
+branch and named a variable a lookup produced.  (3) **The `concrete` branch is paid for**: the
+downward-closed set of `(variable, concrete row)` pairs the processed queue carries strictly
+GROWS at every `makeConcrete` step, because `ensureSuperset` forces every concrete row already
+recorded for `v` inside the new one, the dispatch's own `findRHS` miss makes the inclusion
+proper, and `destructiveSub` deletes only partitions that mention `v`.  That set is bounded by
+`|V|·2^|L|`, and it is what takes the certified fraction of the example corpus from 72 % to
+97 %.
+
+**What that certifies, exactly.**  Running the MODEL over every solve of a fresh
+`-Dermine.rowTrace` census of all seven corpus groups (450,064 segments, 0 skipped; the L2
+differential — `hashdiff` / `eqdiff`, which `--cycle` mode does NOT compute — was re-run
+separately as a plain `--replay` over the same 450,064 segments and is 0 / 0):
+
+* **the standard library: 2,695 of 2,695** row-carrying solves keep a fixed vocabulary, draw
+  no id and never take the `concrete` branch — the round-6 certification re-derived from the
+  run rather than from the input;
+* **user programs: 9,118 of 9,362 (97.39 %)** example-corpus row-carrying solves keep a fixed
+  vocabulary (9,117 draw no id), against 2,388 (25.5 %) for round 6's input-checkable
+  fragment.  That population is "the solve wrote an `inpart` record", which
+  `Subst.scala:1215` writes only after `q.expand` SUCCEEDS, so it cannot see the 19 solves the
+  row solver REJECTS; over every solve the model runs the figures are **9,134 of 9,381
+  (97.37 %)**, with 247 rather than 244 in the residue;
+* in `core/examples/incomplete/` — inside `core/examples`, not measured by this round,
+  measured by its reviewer — the group's own solves are **1,188 of 1,283 (92.6 %)**
+  vocabulary-fixed and its stdlib half is **12,682 of 12,682**, which with the seven groups'
+  2,695 is the 15,377-of-15,377 stdlib figure again;
+* the cycle detector, now runnable over corpus replays, finds **0 canonical and 0 exact state
+  repeats in all 450,064 solves**, 0 `FUEL`, deepest run 140 dequeues;
+* round 5's per-key mint instrument, likewise, **and this is where the round's first draft
+  over-reached**: no `splitConcrete` GUARD key is minted more than once **in the seven
+  groups** — but `core/examples/incomplete/np01_add_or_recompute.e(134:15)` mints one twice
+  (98 dequeues, 18 loop draws, on a solve the shipped compiler performs and the model replays
+  record-for-record), and round 5's pump is defined on the **CARRIER** key, which **46 of the
+  seven groups' own 9,362 solves re-mint**, up to four times (six in `incomplete/`).  So the
+  pump shape DOES occur in real code; what is bounded — at four turns, and six — is how often.
+
+**The honest caveat, and it matters.**  The condition is RUN-LEVEL, not input-checkable.  The
+round-6 review refuted the obvious input predicate with 111 corpus witnesses: `substitution`
+and `commonSubexpression` manufacture partitions of exactly `splitConcrete`'s firing shape out
+of inputs on which it cannot fire.  So unlike round 6's `NoConc` — which is decidable from the
+input alone and is why "the standard library terminates" is a prediction — this round's
+certification is checkable per solve by running the model, and does not predict termination for
+an input nobody has run.  What it does is delimit where divergence can live:
+
+> **`drawn_unbounded_of_not_terminates`: a divergent solve draws unboundedly many ids**, and
+> `terminates_of_drawsAtMost`: a run that draws at most `k` ids terminates, for any `k`.
+
+So the open problem is now a single quantitative question — *is `Sup.drawn` bounded along every
+run?* — with the whole measure apparatus discharged behind it.  The 247 example solves outside
+the fragment are tabulated row by row in `tracker/loopmodel/L5-TERMINATION.md` (Round 7,
+§R7.2d) and classified in §R7.3; `incomplete/` adds 95 more.
+
+Audit after: **3706 theorems / 0 non-standard axioms, 855 jobs**.  The round-7 review's verdict
+was FIX-THEN-ADVANCE: the mathematics reproduced exactly (50/50 verbatim, all 244 residue rows
+× 9 fields, every census cell) and three sentences were false or vacuous as written — the
+`splitConcrete`-key sentence above, the census population, and an `hashdiff`/`eqdiff` claim
+`--cycle` mode does not actually compute.  All three are corrected here and recorded old-for-new
+in `L5-TERMINATION.md` §R7.7.
+
 ## 2026-09-05: the STANDARD LIBRARY BOOT is proved terminating (loop model, L5 round 6)
 
 `tracker/lean/Rowpartition/Loop/NoConc.lean` proves `Terminates` for the **no-concrete-labels

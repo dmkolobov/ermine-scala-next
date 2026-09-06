@@ -2832,3 +2832,468 @@ committed** — W-6b in particular, because that paragraph is the certification 
 be quoted on.
 
 **ADVANCE.**
+
+# Round-7 review — 2026-09-05 (fresh reviewer)
+
+Reviewer: fresh agent.  Under review: `tracker/lean/Rowpartition/Loop/VocFix.lean` (new),
+`Loop/Cycle.lean` + `Loop/Main.lean` + `Rowpartition.lean` (edits), `tracker/lean/README.md`,
+the plan's L5 row, `ROW-CONSTRAINT-STATE.md`'s new section, and `L5-TERMINATION.md` "Round 7"
+(§R7.1–§R7.6).  Pre-existing at `HEAD 157a3f3`: the handoff's launch note and
+`briefs/brief-L5r7.md`.  Scratch `/home/dmitry/.claude/jobs/880c725d/tmp/review-L5r7/`.
+**Nothing below is taken from the report: every number is one I produced myself, from traces I
+generated and censuses I wrote.**  Findings are numbered `X-`.
+
+## X-1. Rebuild, re-audit, hygiene, axioms — all mine, all reproduce
+
+| check | command | result |
+|---|---|---|
+| build | `lake build Rowpartition` | `Build completed successfully (855 jobs)` — the report's 855 |
+| audit | `lake env lean Audit.lean` | `Rowpartition theorems audited: 3706; declarations using a non-standard axiom: 0` — the report's 3706/0 |
+| `looptrace` | `lake build looptrace` | `Build completed successfully (1656 jobs)` |
+| hygiene | the report's grep over `Loop/{VocFix,Cycle,Main}.lean` | **one hit**, `Main.lean:118`, the word `partial` inside a doc comment forbidding it.  0 `sorry`, 0 `axiom`, 0 `Classical` *in source*, 0 `native_decide`, 0 `opaque`, 0 `unsafe`, 0 `implemented_by`, 0 `admit`, 0 `#exit`.  (Widening the grep to `Rowpartition.lean` adds two more doc-comment hits, `:24` and `:128`.) |
+| size | `wc -l` | `VocFix.lean` **1938** — the report's 1,938, exactly |
+| declarations | `grep -E '^(theorem\|def\|abbrev\|structure) '` | **100** in `VocFix.lean`: 86 `theorem`, 14 `def` — the report's 86/14/100, exactly |
+| `#print axioms`, my own list | `tmp/review-L5r7/{decls-vocfix.txt,RevAxioms.lean,revaxioms.txt}`, all 100 + `isConcDispatch` + `cycleRun` + `CycleRep` | 97 × `[propext, Classical.choice, Quot.sound]`, 2 × `[propext, Quot.sound]`, **4 axiom-free** (the 4th is the `CycleRep` structure the report does not count).  **0 `sorryAx`, 0 non-standard axiom.**  Excluding `CycleRep` this is the report's 97/2/3 = 102 |
+| round-6 definitions unchanged | `git diff` on `Loop/{Order,NoConc,StrictBound,Refuted,Refine,RefineLearn,Wf,Step,Queue,Rules,Hygiene}.lean`, `ResGuardTerm.lean` | **empty** — `Terminates`, `Reaches`, `InVoc`, `ConcSub`, `EnvNodup`, `KDist` are round 6's, untouched |
+| diff scope | `git status --short tracker/lean/` | exactly the four files the report claims; no Scala file touched |
+
+## X-2. Verbatim check — 50 quoted declarations, 0 differences (my own, stricter checker)
+
+`tmp/review-L5r7/myverbatim.py` does not reuse the implementer's substring search.  It
+extracts every quoted `theorem`/`def` block from the Round-7 section, looks each one up **by
+name** across twelve modules, and compares the FULL SIGNATURE up to the top-level `:=`/`by` —
+so a dropped *trailing* hypothesis is caught, which a prefix substring match would not catch.
+
+```
+checked 50 quoted declarations from the Round 7 section; 0 differing, 0 not found
+```
+
+## X-3. The census, re-derived from traces I generated and a census I wrote
+
+`tmp/review-L5r7/gentrace-mine.sh` regenerates all seven groups from scratch (the report's own
+flags, one JVM per group, serialised loader, interfaces off) and `runinstr.sh` runs
+`--replay --cycle` and `--replay --mints` over every one.  `mycensus2.py` is a census I wrote
+from `RowTrace.scala:200–250` and `Subst.scala:1195–1216`, joining the `sin`/`scon`/`inpart`/
+`sat`/`step` records with the model's own two reports segment by segment.
+
+| | mine | report |
+|---|---|---|
+| segments, seven groups | 54,199 / 92,673 / 83,942 / 56,032 / 54,235 / 54,244 / 54,739 = **450,064** | identical |
+| example-`loc` solves | **48,583** | 48,583 |
+| ...building ≥ 1 partition | **9,362** | 9,362 |
+| `NoConc` | **2,388 (25.5 %)** | 2,388 |
+| loop drew no id (`drawn − drawn0 = 0`) | **9,117 (97.38 %)** | 9,117 |
+| vocabulary fixed (`grew = false`) | **9,118 (97.39 %)** | 9,118 |
+| ...and no `concrete` step | **6,763 (72.2 %)** | 6,763 |
+| residue | **244 (2.61 %)** | 244 |
+| every per-group cell of §R7.2a | **identical** (48/184/8/0/0/4 residue) | — |
+| stdlib table §R7.2b | **373/415/415/373/373/373/373 = 2,695**, all vocabulary-fixed, all draw-free, **0** `concrete` steps | identical |
+| §R7.2c: canonical repeats / exact repeats / `FUEL` | **0 / 0 / 0** in 450,064 | identical |
+| deepest run | **140 dequeues**, `Ai/IncidentSeverity.e(69:15)` | identical |
+| `SupOk` on every `sin` record | **450,064 / 450,064, 0 violations** | identical |
+| §R7.3a classes A/B/C/D | **173 / 36 / 3 / 32**, summing to 244 | identical |
+| §R7.3a sub-classes A1/A2/A3 | **97 / 29 / 47**, summing to 173 | identical |
+| A1 shapes `join` / `lone` / `join+lone` | **47 / 28 / 22**; `drawn = 1` and `cmax = 1` in all 97; 3–9 dequeues; 1–4 partitions | identical |
+| A2 | **all 29 `bare`, all `cmax = 1`**, drawn 1 on 27 and 2 on 2 | identical |
+| A3 | **26 with 5 partitions, 19 with 7, 2 with 2; 45 `bare`; `cmax` 1/2/3 on 24/18/5** | identical |
+| D | **all 32 take ≥ 3 `concrete` steps** (3 on 24, 4 on 1, 7 on 6, 8 on 1), drawn 1–8 | identical |
+| §R7.3b `--mints`: `max` / `remint` | example **1 / 0**, stdlib **0 / 0** | identical |
+| §R7.3b `cmax` histogram | example **0:9118 1:198 2:40 3:5 4:1**, stdlib **0:2695** | identical |
+| `cmax = 0` ⇔ vocabulary fixed | **holds on every one of the 9,362**, both sides 9,118 | identical |
+| §R7.3b provenance cross-check | residue **SC 418, Res 106, SK 23, SR 1, ResR 6**; all-example **SC 422** and the rest identical | identical |
+| max ids drawn in the residue | **73** | 73 |
+
+### X-3a. The residue table, all 244 rows × 9 fields — 0 differences
+
+I did not sample it.  `tmp/review-L5r7/` re-derives the whole of §R7.2d — module(location),
+rules in `sat`, ids drawn, new names, max at one key, input key shape, partitions, dequeues,
+`concrete` steps — from my own traces, sorts it the way the report does, and diffs it:
+
+```
+244 residue rows x 9 fields: 0 field differences
+```
+
+The row ORDER reproduces too, which is an extra check on the join.  (I first hand-checked ten
+random rows — 22, 27, 70, 81, 122, 132, 149, 151, 184, 230 — field by field, then did all 244.)
+
+### X-3b. `SupFresh`, which the round did NOT measure — it holds too (in the round's favour)
+
+§R7.1d says "`SupOk` and `SupFresh` … a corpus replay reads out of its `sin` record" and then
+measures **only** `SupOk`.  `SupFresh su (sys s)` is not a `sin` field: it is
+`∀ z, Sup.Reach su z → z ∉ allVars G` (`RefineLearn.lean:39,54`).  I measured it
+(`tmp/review-L5r7/supfresh.py`): for each segment, simulate `buildQueue`'s draws (one per `part`
+with a non-variable left-hand side) to get `su'`, then test every input variable id (`svar`) and
+every id the build minted against `Sup.Reach su'`.
+
+```
+segments 450064   SupFresh(su') holds 450064   violations 0
+```
+
+So both new hypotheses are discharged on real compiler input, not just the one the report checked.
+
+## X-4. THE CHECK THAT MATTERS: the theorem instantiated at a witness of my own, five `concrete` steps
+
+Round 6's certification was worth what it could be applied to, and so is this one.  The round's
+own `vS0` takes the `concrete` branch at its FIRST dequeue and no more.  I built a witness that
+takes it **five times in a row**, so `rowSet_lt_concrete` — the whole content of §R7.1c — is what
+pays for the run, and checked in Lean that the potential really rises at every one of them
+(`tmp/review-L5r7/RevWitness.lean`, compiled with `lake env lean`, then removed from the tree):
+
+```lean
+def rSeed : Seed :=                       -- v0 <- ((|l0,l1|)), v1 <- ((|l2|)), v2 <- (v0,v1),
+  { name := "revfix",                     -- v3 <- (v2,v4), v4 <- ((|l3|))
+    cons := [⟨0,[],[0,1]⟩, ⟨1,[],[2]⟩, ⟨2,[0,1],[]⟩, ⟨3,[2,4],[]⟩, ⟨4,[],[3]⟩], rhoKeys := [] }
+def rSu : Sup := { lo := 10, hi := 1000, blk := 1000, bsz := 1024 }   -- the COMPILER's shape
+
+theorem rConc0 : isConcDispatch (rAt 0) = true := by rfl   -- …rConc1 … rConc4, five in a row
+theorem rRow0 : (rowSet rV rL (rAt 0)).card < (rowSet rV rL (rAt 1)).card := by decide
+theorem rRow1 … rRow4                                       -- the potential rises five times
+theorem rS0_notNoConc : ¬ NoConc rS0                        -- round 6's theorem does NOT apply
+theorem rS0_terminates : Terminates rS0                     -- this one does
+theorem rS0_drawn : (match run rS0 40 with | .solved s => s.su.drawn | _ => 99) = 0 := by rfl
+```
+
+```
+'Rowpartition.Loop.RevCheck.rS0_terminates' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Rowpartition.Loop.RevCheck.rS0_notNoConc'  depends on axioms: [propext, Classical.choice, Quot.sound]
+'Rowpartition.Loop.RevCheck.rRow0' / 'rRow4' / 'rS0_drawn' : the same three
+#eval (allVars (sys rS0)).card = 5   #eval rL.card = 4
+#eval (rowSet rV rL rS0).card = 0    #eval (rowSet rV rL (rAt 5)).card = 32   (bound |V|·2^|L| = 80)
+```
+
+Every hypothesis is discharged, not assumed — `wf_seed`, `envNodup_initial`,
+`queueHygiene_of_env_nil`, `kdist_ofList`, and `SupOk`/`SupFresh` proved from the supply's own
+numbers.  **The certification applies end to end to a labelled input on which round 6's does not,
+on standard axioms, and the new potential is what carries it.**
+
+## X-5. The compiler, on both witnesses, at 22 and 16 id bases
+
+| seed | bases | result |
+|---|---|---|
+| the round's `vSeed` (`tmp/L5r7/seeds/D.json`) | 0–9 (the report's) | `SOLVED=10 REJECTED=0 HANG=0 OOM=0`, `DRAWN 0:x10` — reproduced |
+| the same | **10–21 (mine)** | `SOLVED=12 REJECTED=0 HANG=0 OOM=0`, `DRAWN 0:x12` |
+| **my `rSeed`** (`tmp/review-L5r7/seeds/RW.json`) | **10–21** | `SOLVED=12 REJECTED=0 HANG=0 OOM=0`, `DRAWN 0:x12` |
+| my `rSeed`, through the MODEL | bases 0, 3, 100, 4096 | `SOLVED steps=5 drawn=0 canon=- exact=-`, `max=0 remint=0 cmax=0 cremint=0` |
+
+`ERMINE_JAVA_OPTS=-Dermine.useInterface=false tracker/repro/satterm/run.sh sweep json:<seed> …`.
+
+## X-6. Side by side — the model, the Scala, and the round's prose
+
+Every fact the round's mathematics rests on, checked in `Constraints.scala` and in the module,
+not taken from the report.
+
+| claim | Scala | Lean | verdict |
+|---|---|---|---|
+| `ensureSuperset` forces every concrete row recorded for `v` inside the new `fs` | `makeConcrete` (`Constraints.scala:1610–1628`) builds `rhss` from **`proc` AND `incm`, every partition with `_._1 == v`** — not only bare rows — and calls `ensureSuperset(v.loc, concr, fs)` on each, which `die`s unless `concr subsetOf fs` (`:312–320`).  Direction: the RECORDED part is the subset | `makeConcrete_superset : ∀ p ∈ proc.elems, p.lhs = v → p.rhs.conc.subsetOf fs = true` | **exact**, and the Lean is the weaker (proc-only) half of what the Scala checks, which is all `rowSet` needs |
+| ...so `makeConcrete` cannot DELETE a row of `v` that is not a subset — downward closure is safe | the `rhss.foreach` runs **before** `destructiveSub`, and `ensureSuperset` throws | `rowSet_lt_concrete`'s `hsupN` + the `p.lhs = r.lhs` branch of `hsub` | **exact**.  The brief's question answered: no such deletion is possible without failing the step |
+| the dispatch's `findRHS` miss makes the inclusion PROPER | `PQueue.findRHS` (`:591–608`) narrows the priority-search queue by `rhs.hashCode` and then tests `rhs == rhs2`, i.e. **case-class structural equality on `RHS(Set[TypeVar], Fields)`**; equal values have equal hash, so an equal bare row `v <- ((|fs|))` in `proc` CANNOT be missed.  The dispatch uses `proc findRHS(rhs)` only (`:1123`), not the three-way `:1087` version | `hnofind` → `hno` → `makeConcrete_row_mem`; the final `ssubset` witness `(r.lhs, r.toConstraint.conc)` | **exact** |
+| `destructiveSub` keeps every partition not mentioning `v` — including another variable's bare row, unchanged | `p = { case Partition(u, rhs, _) => u != v && !rhs.contains(v) }` and `RHS.contains(v) = abstr contains v` (`:333`), so a bare row has `contains = false` and `procd filter p` keeps the ORIGINAL object.  The `keepDefs`/`srs` path only ADDS back `pps.filter(abs.size >= 2)`; the `(srs isEmpty) && keep` path keeps `proc` whole.  **No branch deletes or rewrites another variable's bare row** | `destructiveSub_proc_keep`, used through `makeConcrete_proc_keep` with `RHS.contains` and `ha : abstr = []` | **exact** |
+| `resolution` draws INSIDE the lone/lone arm and BEFORE its guards | `:1768–1780`: `case (RHS(Single(x), concr1), RHS(Single(y), concr2)) => val z = fresh(…)` — then `tops/bots`, then `resGuard`, `resRow`, `emptyRow`.  `case _ => Set()` costs nothing | `resolution_noDraw : drawn unchanged → result = SSet.empty` | **exact** |
+| `splitConcrete` draws only in its LAST branch, and every reuse branch names a lookup result | `:1301–1341`: `rhss(RHSAbstr(abstr)) → u`; `resolvent(concr) → w`; `concRow(concr) → w`; `emptyRow(concr) → Partition(x, RHSEmpty())` for `x ∈ abstr`; only the final `case None` does `val u = fresh(…)` | `splitConcrete_avoidsV`'s `hr`/`hres`/`hcr` (one per lookup) and `ha` (the `emptyRow` branch names only `abstr`) | **exact**; the hypothesis list is exactly the branch list |
+| the `concrete` dispatch is `findRHS` miss + non-empty rhs + no abstract parts | `:1130–1134` `case None => rhs match { RHSEmpty() → empty ; RHSConcr(concr) → concrete ; … }` | `Step.lean:334–342`; `Cycle.isConcDispatch` | **exact** — `nconc` measures the branch it claims to |
+| the `learn` step's strict decrease comes from `procSys`, not from the queue | the `learn` branch is reached only after `proc findRHS(rhs)` MISSED, so `r.toConstraint ∉ procSys s`, and `proc.insertNP r` puts it in | `Order.learn_procSys_lt` (unchanged, no fragment hypothesis) via `step_quadrichotomy`'s first disjunct | **exact**, and round 7 **inherits** round 6's answer rather than re-proving it.  A dedup of the dequeued premise is impossible in that branch, so the brief's worry does not arise; the queue may GROW at a `learn` step and the measure does not care |
+| the LOOP's own draw count excludes `PQueue.build`'s mints | `Constraints.scala:661–662` mints for a `Part` with a non-variable lhs, before `expand` | `replayCycleOne` sets `su0 := g.sup.lo` and `cycleRun` sets `drawn0 := s.su.drawn` and `mint0 := mintOrder s` at the FIRST dequeue; the census uses `drawn − drawn0` | **exact** — W-6b is correctly handled.  I cross-checked the count: **56 of the 2,695 stdlib solves and 379 of the 9,362 example solves carry a build mint** (56 = the round-6 reviewer's 8 per group × 7), and **145 of the 244** residue solves — the report's 145 |
+| `grew = false` is the run-level `VocFixed (allVars (sys s₀))` | — | `mintOrder` (`Cycle.lean:269–278`) collects ids `≥ su0` from `s.parts` and `s.env.binds`; `cycleRun` visits **exactly** the states `Reaches s₀ ·` (it reports at every state on which `step` is invoked and stops at `done`/`died`) | **very slightly WEAKER, and harmlessly so**.  `grew` tracks only ids `≥ su0`; `InVoc V` also forbids a NEW id `< su0`, which the loop cannot produce (every id it writes comes from a premise or from `fresh`, and `fresh` under `SupOk` yields a `Sup.Reach` id) — true, but argued, not measured.  No Lean theorem links `grew` to `VocFixed`; the link is the instrument's doc comment |
+| `NoConc` / `Terminates` / `Reaches` / `InVoc` / `ConcSub` / `EnvNodup` / `KDist` are round 6's | — | `git diff` on their modules is **empty** | **exact** |
+
+## X-7. THE `incomplete/` GROUP, WHICH ROUND 7 SKIPPED — and it holds a counter-witness
+
+§R7.5 records `incomplete/` as "NOT MEASURED THIS ROUND".  It is part of `core/examples`, it is
+what the user's framing calls the user-facing population, and it is the group built to be hard.
+I traced all **34** of its `.e` modules (`tmp/review-L5r7/genic.sh`, one JVM per file, 90 s cap,
+the same flags) and ran BOTH round-7 instruments over every segment.
+
+```
+files=34  segments=1,851,131  canonical repeats=0  exact repeats=0  FUEL=0
+deepest run 281 dequeues at core/examples/incomplete/gu05_star_join_4dim_concrete_signature.e(62:1)
+
+stdlib-loc   : built 12,682   NoConc 12,682   vocabulary-fixed 12,682 (100 %)   `concrete` steps 0
+incomplete-loc: built  1,283   NoConc    425   vocabulary-fixed  1,188 (92.60 %)  residue 95
+   residue classes A/B/C/D = 44 / 30 / 1 / 20
+   splitConcrete max-at-one-key : 0 on 1,188,  1 on 94,  **2 on 1**
+   carrier      max-at-one-key : 0 on 1,188,  1 on 66, 2 on 19, 3 on 5, 4 on 2, 5 on 2, **6 on 1**
+   `remint > 0` : **1 solve**       `cremint > 0` : 29 solves
+```
+
+(The segment count, the 12,682 and the 1,283/425 all reproduce the round-6 review's W-7 exactly.)
+
+Two things follow, and the first is a **CONFIRMED refutation of a headline sentence**.
+
+**(1) A `splitConcrete` GUARD key IS minted twice in real Ermine code.**
+
+```
+mints 54291 trySolveOn core/examples/incomplete/np01_add_or_recompute.e(134:15) SOLVED
+      steps=98 drawn=22 max=2 remint=1 cmax=3 cremint=3 keys=5
+cycle 54291 … SOLVED steps=98 states=99 drawn=22 grew=true mint0=4 maxmint=17 conc=8 drawn0=4
+      nrows=8 canon=- exact=-
+```
+
+98 dequeues, 18 LOOP draws, **one `splitConcrete` key minted twice**, three carrier keys
+re-minted, `cmax = 3` — and still `SOLVED`, with no canonical and no exact repeat.  This is not a
+model artefact: `looptrace --replay` (the L2 differential, not the `--cycle` path) over that file
+gives `segments=55015 replayed=55015 skipped=0 hashdiff=0 eqdiff=0 rejected=0 fuel=0`, so the
+solve is the SHIPPED COMPILER's and so is the mint count.  The deepest solve in the group,
+`gu05_star_join_4dim_concrete_signature.e(62:1)`, takes **281 dequeues** (twice the seven groups'
+140), draws **145** ids, reaches `cmax = 6`, and also replays clean (`hashdiff=0 eqdiff=0`).
+
+**(2) The stdlib certification is untouched and, again, complete** — 12,682 of 12,682
+stdlib-located solves in the hardest group are `NoConc`, vocabulary-fixed, draw-free and take no
+`concrete` step.  With the seven groups' 2,695 that is the round-6 reviewer's 15,377 figure
+re-derived through the round-7 instrument.
+
+## X-8. Findings, ranked
+
+Nothing below is a soundness defect: every Lean statement I checked is true, verbatim, on
+standard axioms, and every number in the report reproduces on the population it measured.
+X-8a is a claim that is **false as written** and must be fixed; X-8b and X-8c change what the
+census means; the rest are documentation.
+
+* **X-8a (CONFIRMED, a headline claim refuted by a corpus witness).**
+  `ROW-CONSTRAINT-STATE.md`: *"**no `splitConcrete` key is minted more than once anywhere in the
+  corpus** — the pump shape the last three rounds hunted does not occur in real code even once"*;
+  the plan's L5 row: *"ROUND 5'S PUMP DOES NOT OCCUR: `--mints` over the whole corpus finds **no
+  `splitConcrete` key minted more than once, anywhere**"*; §R7.4: *"the corpus never does it even
+  twice"*.  **Two things are wrong.**
+  1. *Scope.*  "the corpus" is the seven groups; `core/examples/incomplete/` is excluded (§R7.5
+     says so) and it is part of `core/examples`.  Measured (X-7): **`core/examples/incomplete/np01_add_or_recompute.e(134:15)`
+     mints one `splitConcrete` guard key TWICE** (`max=2 remint=1`), on a solve the compiler
+     performs and the model replays record-for-record.  So the sentence is false of the example
+     corpus; it is true of the seven groups.
+  2. *Which key.*  Round 5's pump is defined on the **carrier** key, not the `splitConcrete`
+     guard key: `Pump.lean`'s refutation witness is `cMint4`/`cMint8`, two `MintsAt … 4 cKey`
+     where `cKey` comes from `carrierKeys`, and the instrument for it is `ctally`/`cmax`/`cremint`
+     (`PumpRep.maxAtCKey`, `.remintCKeys`), not `tally`/`max`/`remint`.  By that counter the
+     SEVEN GROUPS already re-mint at one key: **46 of the 9,362 example solves have
+     `cremint ≥ 1`** (`cmax` 2 on 40, 3 on 5, 4 on 1; three distinct re-minted keys on
+     `Ai/SupplyChainInventory.e(74:20)`), and `incomplete/` adds 29 more, reaching `cmax = 6`.
+     So "the pump shape … does not occur in real code even once" is false on the round's own
+     seven-group data under round 5's own definition of the shape.
+  §R7.3b is careful about (2) ("the wider CARRIER counter … does repeat, but barely") and the
+  plan row quotes `cmax ≤ 4`, so the report knows; it is the *conclusion sentence* that
+  over-reaches, in the two documents the project will be quoted on.
+  **Fix (required):** in the state file and the plan row, say "no `splitConcrete` GUARD key is
+  minted more than once in the seven groups (`incomplete/` was not measured; it has one solve that
+  does, `np01_add_or_recompute.e(134:15)`), and the CARRIER key round 5's refutation uses is
+  re-minted on 46 of the 9,362, up to four times."  Also correct §R7.3b's "the repeats are at
+  *different* keys" — true of the guard key, false of the carrier key its own `cmax` column shows.
+
+* **X-8b (CONFIRMED, a scope bias in the census the report does not state).**
+  The population predicate is "≥ 1 `inpart` record", and `Subst.scala:1215` writes those records
+  **after** `var ps = q.expand.toList` (`:1188`) — i.e. only for solves the compiler COMPLETES.
+  So a solve the row solver REJECTS is invisible to the census.  Measured: **19 example-`loc`
+  solves** that the model builds a queue for and runs are dropped, **all 19 `REJECTED`**, and
+  **3 of them are residue**:
+
+  ```
+  shouldfail/der06_shared_two_var_remainder.e(66:7)    grew, 1 draw, 2 `concrete` steps, cmax=1
+  shouldfail/der07_shared_three_var_remainder.e(44:7)  grew, 1 draw, 2 `concrete` steps, cmax=1
+  shouldfail/der08_shared_remainder_relations.e(42:7)  grew, 1 draw, 2 `concrete` steps, cmax=1
+  ```
+
+  The honest example-corpus figures over the solves the MODEL runs are **9,381 built /
+  9,134 vocabulary-fixed (97.37 %) / 247 residue**, not 9,362 / 9,118 (97.39 %) / 244.  The
+  headline moves by 0.02 points — nothing — but §R7.2d is **three rows short of the brief's
+  "for EVERY solve outside it, one row"**, and "Every one of the 244 is `SOLVED` by the model" is
+  true only because the census cannot see the rejected ones.  A termination census that
+  systematically excludes the failing solves is exactly backwards for this question.
+  **Fix:** state the predicate and its bias; add the three rows; or use the model's own
+  `steps > 0` as the population and report both figures.
+
+* **X-8c (CONFIRMED, a claim that is vacuous as measured).**  §R7.2c's table row
+  "skipped / `hashdiff` / `eqdiff` | **0 / 0 / 0**" and its gloss *"the L2 replay checks
+  (`hashdiff`, `eqdiff`, skips) stay at zero throughout, so the model is running the compiler's
+  own solves"*, repeated in `ROW-CONSTRAINT-STATE.md` ("0 skipped, 0 `hashdiff`, 0 `eqdiff`") and
+  the plan row.  In `--cycle`/`--mints` mode `replayMain` never calls `replay`, so those two
+  counters are the literal `0`s of `return (1, 0, 0, 0, …)` (`Main.lean:158, 176`) and **nothing
+  is compared**.  Only `skipped` is real.  The differential does hold — I ran the real thing,
+  plain `--replay` on `boot`/`top`/`Ai`/`shouldfail`: `hashdiff=0 eqdiff=0 skipped=0` on all four
+  (and on the two `incomplete/` files of X-7) — but the round's own run does not establish it.
+  **Fix:** one clause, or run plain `--replay` alongside and cite that.
+
+* **X-8d (CONFIRMED, an explanation with the wrong number and a missing term).**  §R7.2a:
+  *"The small difference is the proxy's … which is precisely the 32-solve class §R7.3 names."*
+  I recomputed the round-6 proxy from my own traces — 9,340 with a saturated set, **9,120 fixed
+  (97.64 %), 220 grown**, all three the reviewer's W-9 numbers — and diffed it against the model
+  solve by solve:
+
+  ```
+  (proxy fixed, model fixed) 9,096   (proxy grew, model grew) 220   (proxy fixed, model GREW) 24
+  the 24 are all class D; class D has 32, and the proxy CATCHES 8 of them
+  solves with no saturated set at all: 22 — all vocabulary-fixed, and outside the proxy's population
+  9,120 + 22 − 24 = 9,118 ✓
+  ```
+
+  So the mechanism named is right and the count is not: **24 of the 32**, plus an opposite-signed
+  **+22** the report omits.  **Fix:** state both terms.
+
+* **X-8e (CONFIRMED, a misnomer, twice over).**  §R7.3a's sub-class table labels **A1** —
+  "one new name, **no** `concrete` step" — "the B1 shape".  The brief's own gloss of that phrase
+  is *"single mints that are immediately concretised"*, which is class **A2** ("one mint, then the
+  row is concretised"), not A1; and in this tracker `B1` already names the `makeEmpty`
+  propagation fix (`LOOP-MODEL-PLAN.md` row `B1`, `tracker/loopmodel/B1-FIX.md`), a different
+  thing again.  **Fix:** drop the label, or move it to A2 with a different name.
+
+* **X-8f (documentation, small, CONFIRMED).**  §R7.1d: *"`Wf`, `EnvNodup`, the two `KDist`s and
+  `QueueHygiene` are all free at an initial state"* — the `_of_buildQueue` corollaries discharge
+  `EnvNodup`, `QueueHygiene` and both `KDist`s but keep **`Wf`** as a hypothesis (as round 6's did;
+  it is dischargeable by `wf_seed`/`wf_replay`, and I discharged it in X-4, so the claim is true
+  but the corollary does not show it).  And *"`SupOk` and `SupFresh` … a corpus replay reads out of
+  its `sin` record"*: `SupOk` is four `sin` fields, `SupFresh` is not a field at all — it is
+  `∀ z, Sup.Reach su z → z ∉ allVars G`, and the round measures only `SupOk`.  I measured
+  `SupFresh` too and it holds 450,064/450,064 (X-3b), so the claim survives; the sentence should
+  not put them in the same breath.
+
+* **X-8g (latent instrument defect, currently harmless, CONFIRMED).**  `replayCycleOne` /
+  `replayMintOne` map a `buildQueue` error to `{verdict := "BUILD"}` with the structure's
+  DEFAULTS — `steps = 0`, `grew = false`, `drawn = 0`, `cmax = 0` — so a segment the model cannot
+  even build would be scored **vocabulary-fixed** by any census reading `grew`.  There is exactly
+  one such segment in the seven groups (`shouldfail/dup01_partition_literal.e(25:7)`), and it has
+  no `inpart` record, so it is filtered out and no number moves.  It also explains the
+  `rejected=31` (`--cycle`) vs `rejected=32` (plain `--replay`) difference on `shouldfail`, which
+  is not a disagreement.  **Fix:** print `grew=?` on a BUILD verdict, or exclude it explicitly.
+
+* **X-8h (instrument gap, for round 8).**  The five new `CycleRep` fields and `--mints`' `keys`
+  print only on the `--replay` path; the `json:` seed path's `--cycle` line is still
+  `steps/states/drawn/canon/exact`, so a hand-built seed cannot be scored for `grew`, `conc`,
+  `mint0` or `drawn0` without going through a trace.  I hit this building X-4's witness.
+
+## X-9. Things I ran that the round did not
+
+1. **`incomplete/`, all 34 modules, through BOTH new instruments** (X-7) — 1,851,131 more
+   segments, 0 repeats, 0 `FUEL`, and the **counter-witness to the round's pump sentence**.
+2. **The round-7 theorem instantiated at a witness of my own with FIVE `concrete` steps** (X-4),
+   with `rowSet`'s strict growth `decide`d at each of them — the round's own `vS0` takes the
+   branch once.
+3. **`SupFresh` measured on the whole corpus** (X-3b) — 450,064/450,064; the round measured only
+   `SupOk`.
+4. **The genuine L2 differential re-run** on `boot`/`top`/`Ai`/`shouldfail` and on the two
+   `incomplete/` files that matter (X-8c) — the check the `--cycle` summary only appears to make.
+5. **All 244 residue rows × 9 fields diffed**, not sampled (X-3a).
+6. **The round-6 proxy recomputed and diffed against the model solve by solve** (X-8d) — which is
+   what shows the 97.6 → 97.39 explanation is 24-of-32 plus an omitted +22.
+7. **The shipped compiler at 12 further id bases on the round's witness and 12 on mine** (X-5).
+8. **A mint-SITE census** — is the left-hand side of a mint an INPUT variable or one this run
+   minted?  This is the round-8 lever and nobody has measured it:
+
+   | population | `splitConcrete`-family mint conclusions | site is an INPUT variable | `resolution` conclusions | site is an INPUT variable |
+   |---|---|---|---|---|
+   | six example groups | 230 | **227 (98.7 %)** | 112 | 60 (53.6 %) |
+   | `incomplete/` | 169 | **147 (87.0 %)** | 103 | 62 (60.2 %) |
+
+   So `splitConcrete` almost never chains on its own output, while `resolution` chains routinely —
+   and `incomplete/` is where the split chains at all.  (Read off `sat` provenances, so it sees
+   only the mints that survive into the saturated set; class D's do not.)
+9. **`drawn` against `concrete` steps over all 339 residue solves of both populations**: `drawn`
+   reaches 149 and `drawn > 3·conc + 4` on 15 of them (worst `(149, 29)`), so the tempting
+   "charge every mint to a `concrete` step" is not a constant-factor law either.
+
+## X-10. Acceptance criteria (`LOOP-MODEL-PLAN.md`, L5)
+
+| criterion | verdict | evidence |
+|---|---|---|
+| `LoopStrict` has no arbitrary-deletion constructor | **PASS**, unchanged | `Strict.lean` untouched (`git diff` empty) |
+| every `step` refines it under `step_refines_all`'s hypotheses | **FAIL**, unchanged | round 7 does not touch the strict refinement and does not claim to; it uses `step_refines_all` (the `LoopRel` version) only to transport `ConcSub` |
+| `Terminates s₀` for every satisfiable `Wf s₀` with an explicit bound, **or** a compiler-reproduced witness | **PARTIAL**, and materially wider than round 6 | neither disjunct in full.  What is met: `Terminates` at an explicit fuel for a fragment that now ALLOWS labels, ALLOWS both generative rules to fire and ALLOWS the `concrete` branch, containing **97.4 % of the example corpus and 100 % of the standard library** — but defined by the RUN, not by the input, which the round states plainly and repeatedly.  I applied the theorem myself to a labelled five-`concrete`-step input (X-4).  Still no witness: 450,064 + 1,851,131 corpus solves and round 6's 134,674 synthetic ones all terminate, 0 repeats |
+| audit green | **PASS** | 855 jobs, 3706/0, 0 `sorry`, all 103 new declarations on standard axioms under my own `#print axioms` |
+
+## X-11. The round-7 brief's checkpoints
+
+| checkpoint | asked | delivered | my verdict |
+|---|---|---|---|
+| **R7.1** define `VocabFixed`, find the strongest INPUT-checkable condition the data supports, prove preservation + `Terminates` with an explicit bound; if only run-level, say so and prove `terminates_of_noMint` | run-level `VocFixed`/`NoDraw` with `vocFixed_terminates`/`noDraw_terminates` at `measure4 … + 1`; the input-checkable widening **searched for and not found**, said so in five places; three genuinely new pieces, of which `rowSet` (the `concrete` branch) is real mathematics with a real Scala reading | **DONE**, and the brief's fallback is exactly what was taken.  The `concrete` branch being *paid for* rather than excluded is the round's substance and it holds up against `Constraints.scala` line by line (X-6) |
+| **R7.2** census solve by solve, ≥ 9,120 target, a row for EVERY residue solve, `cycleRun` in `replayMain` | 9,118 (97.39 %); §R7.2d's 244 rows, all nine fields; `--cycle` and `--mints` over `--replay`, closing W-6g | **DONE with one gap.**  Every number reproduces exactly (X-3, X-3a).  The brief's target "≥ 9,120" is missed by 2 on the round's own denominator (9,118 of 9,362) and MET on the wider population that includes the rejected solves (9,134 of 9,381); the two figures count different things (X-8b, X-8d), so the miss is nominal.  "EVERY solve outside it" is **three rows short** (X-8b) and the `incomplete/` group's 95 residue solves were not counted at all (X-7) |
+| **R7.3** classify the residue; for each class say what the pump needs and the class lacks; if a class admits a per-class lemma, prove it and report the final certified fraction | four classes + three A sub-classes, all reproducing; `terminates_of_drawsAtMost` — **one cardinal reduction for all five shapes**, and an explicit statement that no structural per-class lemma was found | **PARTIAL, and honestly labelled.**  The reduction does not move a single solve into the certified population, and the report says so (§R7.3c: "the bound is read off the observed run").  The lemma the brief hints at for A1 — "one mint, then `NoConc`" — **is already proved**: `terminates_of_eventuallyNoDraw` is exactly it, and A1's `drawn = 1` makes its hypothesis a finite check (`NoDrawB` from the post-mint state).  But it buys nothing, for the same reason: certifying A1 requires running A1, and a run that finishes already proves `Terminates`.  **The report should make that connection explicitly** rather than leaving `terminates_of_eventuallyNoDraw` unattached to the residue table.  I looked for a structural lemma the round missed and found none; the one that would have worked — "a `splitConcrete` key is minted at most once" — is **refuted** by X-7's witness |
+| **R7.4** state the open problem in the state file and the plan row: certified population, residue as a named list with counts, what a divergence must look like | all four, well written, with the run-level caveat carried throughout | **DONE**, subject to X-8a (the pump sentence) and X-8c (the vacuous `hashdiff`/`eqdiff`) |
+
+## X-12. The round-8 pointer
+
+Round 7 leaves the problem in the best shape it has been in: `terminates_of_drawsAtMost` is a
+socket that any mint bound plugs into, and `reaches_concSub` — **the label pool is FIXED along
+every run, unconditionally, with no fragment hypothesis** — is the first invariant of this stage
+that constrains the state space without assuming the answer.  Together they say the whole open
+problem is: *the loop mints at keys `(v, C)` with `C` drawn from a FIXED finite set; is the set of
+`v` bounded?*
+
+**The single most valuable next step is to measure and then bound the MINT CHAIN DEPTH.**  A
+divergence must mint at unboundedly many distinct left-hand sides (§R7.4's own conclusion, now
+sharpened by the fixed label pool), and since each `v` beyond the input's own is itself a
+minted name, a divergence is an infinite chain `v₀ → v₁ → v₂ → …` in which `vᵢ₊₁` is minted while
+a partition of `vᵢ` is dequeued.  Nothing in seven rounds has measured that chain.  My X-9(8)
+census is the first datum and it is encouraging in a way the residue table is not: in the six
+example groups **227 of 230 `splitConcrete` mint sites are INPUT variables** — the split
+essentially does not chain — while `resolution` chains on about half its conclusions, and in
+`incomplete/` the split chains 22 times out of 169.  So:
+
+1. **Instrument the chain**: for each mint, record whether its site is an input variable or one
+   this run minted, and at what depth; report the depth histogram over both populations.  This is
+   a `PumpRep` field and an afternoon's work, and it is the quantity a mint bound has to bound.
+   If the depth is bounded by the input's own size (or by `|L|`), that is the missing lemma; if it
+   is not, the deep chains ARE the witness candidates and round 8 should drive them.
+2. **Do NOT spend a round on "a `splitConcrete` guard key is minted at most once."**  It reads
+   like the natural consequence of §R7.3b's `remint = 0` and it is **FALSE**:
+   `core/examples/incomplete/np01_add_or_recompute.e(134:15)` mints one twice (X-7), on a solve
+   the shipped compiler performs, replayed record-for-record.
+3. **Retire the synthetic pump seeds in favour of two real ones.**
+   `np01_add_or_recompute.e(134:15)` (98 dequeues, 18 loop draws, `max=2 remint=1 cmax=3
+   cremint=3`) is the sharpest real specimen of round 5's pump at the guard key, and
+   `gu05_star_join_4dim_concrete_signature.e(62:1)` (**281 dequeues, 145 draws, `cmax = 6`**) is
+   the deepest real solve on record — deeper than round 6's best synthetic hunt result by every
+   measure except draws.  Both should be transcoded into `json:` seeds, swept at many id bases on
+   the shipped compiler, and added to `core/test`'s `TestLoopTrace` corpus.
+4. **Measure `incomplete/` as a first-class group from now on.**  It is inside `core/examples`,
+   it is 92.6 % vocabulary-fixed against the other groups' 97.4 %, its stdlib half is still
+   12,682/12,682 certified, and it is where every interesting counter-example of this round lives.
+
+## X-13. Verdict — **FIX-THEN-ADVANCE**
+
+The mathematics is right and I checked it at the highest bar the brief asks for.
+
+* The **Lean** rebuilds (855 jobs), the audit is 3706/0, the hygiene grep is clean, `VocFix.lean`
+  is 1,938 lines and 100 declarations exactly as claimed, and all 100 plus the three
+  `Cycle.lean` additions print only `propext` / `Classical.choice` / `Quot.sound` under my own
+  `#print axioms`.  **All 50 quoted declarations are verbatim**, checked by name with full-signature
+  comparison, which also rules out a dropped trailing hypothesis.  Round 6's definitions —
+  `Terminates`, `Reaches`, `InVoc`, `ConcSub`, `EnvNodup`, `KDist` — are untouched.
+* The **new mathematics holds against the Scala**.  I read `ensureSuperset`, `makeConcrete`,
+  `destructiveSub`, `findRHS`, `RHS.contains`, `resolution`, `splitConcrete` and the
+  `incorporateAll` dispatch, and every one of the three facts `rowSet_lt_concrete` rests on is
+  exactly what the compiler does — including the two the brief singled out: `ensureSuperset`
+  covers **all** partitions with lhs `v` in **both** queues (so `makeConcrete` cannot delete a
+  non-subset row without failing), and `findRHS` is hash-narrowed **structural** equality (so an
+  equal bare row cannot be missed and the inclusion really is proper).  The `learn` step's strict
+  decrease is round 6's `learn_procSys_lt`, inherited unchanged, and the dedup worry the brief
+  raises cannot arise in that branch.
+* The **theorem applies**: I instantiated it at a labelled input of my own whose run takes the
+  `concrete` branch **five times**, `decide`d that `rowSet` rises at each, and got `Terminates` on
+  standard axioms with `Wf`/`SupOk`/`SupFresh` discharged from the seed's own numbers — and the
+  shipped compiler solves it at twelve id bases drawing nothing.
+* The **measurement reproduces exactly**: every cell of §R7.2a/b/c, §R7.3a/b/d, all **244 residue
+  rows × 9 fields with zero differences**, `SupOk` 450,064/450,064 — and `SupFresh`, which the
+  round did not measure, holds 450,064/450,064 too.
+* The **caveats the round states are the right ones**: run-level not input-checkable, said in five
+  places; the fuel not tight and stated as such; `terminates_of_drawsAtMost` labelled a reduction
+  and not a certification.  That honesty is why this is not a REDO.
+
+**What must be fixed before it is committed** — three of them touch sentences the project will be
+quoted on:
+
+1. **X-8a**, required.  "No `splitConcrete` key is minted more than once anywhere in the corpus /
+   the pump shape does not occur in real code even once" is **false**: `incomplete/` is inside
+   `core/examples` and `np01_add_or_recompute.e(134:15)` does it, and round 5's pump is a CARRIER-key
+   pump that 46 of the seven groups' own 9,362 solves already exhibit.  Restate with both
+   qualifications, in `ROW-CONSTRAINT-STATE.md`, the plan's L5 row, §R7.3b and §R7.4.
+2. **X-8b**, required.  State the census population predicate (`≥ 1 inpart` record, written only
+   after a successful `q.expand`) and its bias, and either add the three dropped residue rows or
+   report 9,381 / 247 alongside 9,362 / 244.
+3. **X-8c**, required.  Drop or qualify "0 skipped, 0 `hashdiff`, 0 `eqdiff`" for the
+   `--cycle`/`--mints` runs — those two counters are not computed in that mode.  (The differential
+   does hold; cite a plain `--replay`.)
+4. **X-8d**, **X-8e**, **X-8f**, **X-8g** — documentation corrections, one or two sentences each.
+5. Worth adding, in the round's favour: **X-3b** (`SupFresh` holds 450,064/450,064) and **X-7**'s
+   `incomplete/` numbers (stdlib 12,682/12,682; the group's own 1,188/1,283 = 92.6 %).
+
+None of these changes a theorem, a bound, or the certified fraction by more than 0.02 points.
+The round is a real advance — the `concrete` branch is genuinely paid for, and the corpus is
+measured by running the model rather than by a proxy for the first time.
+
+**FIX-THEN-ADVANCE.**

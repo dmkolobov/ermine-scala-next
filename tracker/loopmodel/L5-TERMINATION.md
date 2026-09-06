@@ -4102,3 +4102,1266 @@ moves the third from FAIL to PARTIAL and leaves the second where round 5 left it
    `ERMINE_JAVA_OPTS="-Dermine.useInterface=false" tracker/repro/satterm/run.sh sweep
    json:tmp/L5r5/hunt/climb9.json 0 9 30 20` → `SOLVED=10 REJECTED=0 HANG=0 OOM=0`,
    `DRAWN min=19 median=86 max=208`.
+
+# Round 7 — 2026-09-05, after `L5-REVIEW.md`'s "Round-6 review" (W-9: the vocabulary-fixed target)
+
+The framing is the user's: Ermine is a reporting language, its users always end with concrete
+fields, and the standard library's certification (round 6: **every** stdlib row solve is in the
+no-concrete-labels fragment) is therefore a FLOOR.  This round is about the solves USER
+PROGRAMS produce.
+
+The round-6 reviewer put the target and the ceiling on it (W-9).  He refuted the naive
+widening — of the 9,256 example solves on which neither generative rule can fire ON THE INPUT,
+**111 fire one anyway**, because `substitution` and `commonSubexpression` manufacture partitions
+of exactly `splitConcrete`'s firing shape — so "no generative rule can fire" is *not* an
+invariant and cannot be the fragment.  What he named instead is the VOCABULARY-FIXED
+condition, "no id ever enters a partition", and he measured its ceiling at 97.6 % of the
+example corpus.
+
+**Outcome in one line.**  The vocabulary-fixed fragment is proved to terminate, with an
+explicit bound, and it holds on **9,118 of 9,362 example solves (97.4 %)** and on **2,695 of
+2,695 stdlib solves (100 %)** — measured by running the MODEL over every corpus solve, not by
+a proxy.  Three things that `NoConc` did for free had to be replaced, and the third is the
+one that matters: the `concrete` dispatch branch, which round 6 discharged by `exfalso`, is
+now *paid for* — `makeConcrete` strictly grows a bounded potential (§R7.1c), which is what
+takes the certified fraction from 72.2 % (vocabulary fixed **and** no `concrete` step) to
+97.4 %.
+
+Stated exactly, and this is the round's headline:
+
+> **A row-constraint solve on which `incorporateAll` never draws an id TERMINATES**
+> (`noDraw_terminates`), and so does one whose reachable states merely stay inside a fixed
+> finite vocabulary (`vocFixed_terminates`), at the explicit fuel
+> `measure4 (n·2ⁿ·2ᵐ) (n·2ⁿ·2ᵐ) n (n·2ᵐ) V L s + 1` with `n = |V|`, `m = |L|`.  Contrapositively
+> (`draws_cofinally_of_not_terminates`): **a divergent solve must draw ids at cofinally many
+> steps** — non-termination lives entirely in `splitConcrete` and `resolution` and nowhere
+> else in the loop.
+
+Two honesty clauses, both required by the round-6 review's own logic and both carried
+throughout:
+
+* **The condition is RUN-LEVEL, not input-checkable.**  W-9's 111 witnesses close the obvious
+  input predicate, and this round found no other; the brief anticipates this ("if only the
+  run-level version is provable, say so").  So the certification is *"every solve on which the
+  model's trace shows no mint"*, checkable per solve — `looptrace --replay <trace> --cycle`
+  now prints `drawn=` and `grew=` for every solve of a corpus trace (round-6 review W-6g,
+  implemented here).  It is **weaker than round 6's** in exactly this sense: `NoConc` is
+  decidable from the input alone, and this is not.
+* **What the theorem buys, precisely.**  For a solve whose replay the model already ran to
+  completion, `Terminates` is witnessed by the replay itself; the theorem's content is (i) that
+  the whole CLASS terminates, at a stated bound, at any id base and any label pool, and (ii)
+  the contrapositive, which localises divergence in the two minting rules.  It is not a
+  prediction about an input nobody has run.
+
+New module: `Loop/VocFix.lean` (1,938 lines, 86 theorems, 14 defs = 100 declarations).
+`Loop/Cycle.lean` gains five `CycleRep` fields (`mint0`, `grew`, `maxMint`, `nconc`, `drawn0`)
+and `isConcDispatch`; `Loop/Main.lean` gains `--cycle` and `--mints` over `--replay`
+(`replayCycleOne`, `replayMintOne`); `Rowpartition.lean` gains one import.  No other Lean
+module and no Scala file is touched.  Audit after: **3706 theorems / 0 non-standard axioms,
+855 jobs** (3611 / 854 before); `lake build looptrace` 1,656 jobs.
+
+## R7.1 — the fragment, and why it needs three new pieces
+
+`NoConc.lean` used "no concrete labels" for three separate jobs.  Only the first is about the
+vocabulary; the other two are what round 6's §R6.3.4a flagged, and each needed its own
+replacement.
+
+### R7.1a The label bound — free, from L3's refinement
+
+`procSys_card_le` and `kdist_length_le` used `conc = []` to land in `forms V ∅` and to make
+`(lhs, abstract parts)` a separating map.  With labels the ambient set is `forms V L` and the
+`2^|L|` factor comes back — which needs the loop not to INVENT a label.  That is free:
+`RefineLearn.step_refines_all` gives `LoopRun (sys s) (sys s')` for every dispatch branch, and
+every one of `LoopRel`'s eleven constructors preserves `ConcSub`.
+
+```lean
+theorem LoopRel.concSub {L : Finset Label} {G G' : System} (h : LoopRel G G')
+    (hcs : ConcSub L G) : ConcSub L G'
+
+theorem LoopRun.concSub {L : Finset Label} {G G' : System} (h : LoopRun G G')
+    (hcs : ConcSub L G) : ConcSub L G'
+
+theorem step_concSub {L : Finset Label} {s s' : State} (hw : Wf s)
+    (hem : s.flags.emptyRow = false) (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hok : SupOk s.su) (hfr : SupFresh s.su (sys s))
+    (hcs : ConcSub L (sys s)) (h : step s = .continue s') : ConcSub L (sys s')
+
+theorem reaches_concSub {L : Finset Label} {s t : State} (hw : Wf s)
+    (hem : s.flags.emptyRow = false) (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hok : SupOk s.su) (hfr : SupFresh s.su (sys s))
+    (h0 : QueueHygiene s) (hcs : ConcSub L (sys s)) (hr : Reaches s t) : ConcSub L (sys t)
+
+theorem concSub_self (s : State) : ConcSub (labelsOf (sys s)) (sys s) := labelsOf_concSub _
+```
+
+Only `Cut.ResStep` needed a `concSub` lemma of its own (it is `ResGuardTerm.GResStep.concSub`'s
+mint branch at the unguarded rule); `NonGenStep`, `K2SplitStep`, `SplitStep` and `K2ResStep`
+already had theirs, `weaken` is deletion, and the five loop-specific constructors
+(`renameLhs`, `linkSymm`, `emptyProp`, `dedup`) emit `mk _ _ K` with `K` a premise's row or
+`∅`.  `L` is not an assumption either: `concSub_self` takes the input's own label pool.
+
+The two bounds then go through with `LPart.toConstraint` itself as the separating map —
+`Wf.LPart.eqv_iff_toConstraint_of_wf` says `Partition.equals` IS equality of the constraint,
+with no side conditions, for two partitions of a well-formed state, which is *simpler* than
+round 6's `sepMap`:
+
+```lean
+theorem procSys_card_leL {V : Finset Var} {L : Finset Label} {s : State}
+    (hv : InVoc V s) (hcs : ConcSub L (sys s)) :
+    (procSys s).card ≤ V.card * 2 ^ V.card * 2 ^ L.card
+
+theorem kdist_length_leL {V : Finset Var} {L : Finset Label} {s : State} {l : List LPart}
+    (hw : Wf s) (hv : InVoc V s) (hcs : ConcSub L (sys s))
+    (hsub : ∀ p ∈ l, p ∈ s.parts) (hk : KDist l) :
+    l.length ≤ V.card * 2 ^ V.card * 2 ^ L.card
+```
+
+### R7.1b The vocabulary clause for `learn` — traded for "the step drew nothing"
+
+`learnPartitions_avoidsV` killed `splitConcrete` by `concr.isEmpty` and `resolution` by
+`rhs1.abstrSingle? = none`.  Neither survives labels: the dequeued premise of a `learn` step
+may be `v <- (x, (|C|))`, which is not `single?` and IS `abstrSingle?` — exactly the shape
+W-9's 111 solves have.  What replaces both is the hypothesis that the call DREW NO ID.
+`resolution` draws inside the lone-variable arm and BEFORE its guards, so "it did not draw"
+already says "it returned nothing"; `splitConcrete` draws only in its last branch, so "it did
+not draw" says "it took a reuse branch", and every reuse branch names a variable one of the
+three lookups produced.
+
+```lean
+theorem resolution_noDraw {fl : Flags} {v : Nat} {rhs1 rhs2 : RHS}
+    {resolvent concRow emptyRow : SSet Lbl → Option Nat} {su : Sup}
+    (h : (resolution fl v rhs1 rhs2 resolvent concRow emptyRow su).2.drawn = su.drawn) :
+    (resolution fl v rhs1 rhs2 resolvent concRow emptyRow su).1 = SSet.empty
+
+theorem splitConcrete_avoidsV {B : Var → Prop} {fl : Flags} {v : Nat} {abstr : SSet Nat}
+    {concr : SSet Lbl} {rhss : RHS → Option Nat}
+    {resolvent concRow emptyRow : SSet Lbl → Option Nat} {su : Sup}
+    (hv : ¬ B v) (ha : ∀ w ∈ abstr.elems, ¬ B w)
+    (hr : ∀ r w, rhss r = some w → ¬ B w)
+    (hres : ∀ k w, resolvent k = some w → ¬ B w)
+    (hcr : ∀ k w, concRow k = some w → ¬ B w)
+    (hnd : (splitConcrete fl v abstr concr rhss resolvent concRow emptyRow su).2.drawn
+             = su.drawn) :
+    ∀ x ∈ (splitConcrete fl v abstr concr rhss resolvent concRow emptyRow su).1.elems,
+      Avoids B x.toConstraint
+```
+
+The fold carries two facts at once — the supply's `drawn` never goes down, and *while it has
+not moved* every partition derived so far is over the old vocabulary — so the hypothesis
+"the whole call drew nothing" propagates backwards to every one of its rule applications.
+That is one application of `foldl_except_inv`, not a restatement of the fold:
+
+```lean
+theorem learnPartitions_avoidsV_noDraw {B : Var → Prop} {fl : Flags} {ns : Names} {env : Env}
+    {v : Nat} {rhs1 : RHS} {incm proc : PQueue} {su : Sup} {S : SSet LPart} {su' : Sup}
+    (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (hv : ¬ B v) (hr1 : ∀ w ∈ rhs1.abstr.elems, ¬ B w)
+    (hi : ∀ x ∈ incm.elems, Avoids B x.toConstraint)
+    (hp : ∀ x ∈ proc.elems, Avoids B x.toConstraint)
+    (h : learnPartitions fl ns env v rhs1 incm proc su = .ok (S, su'))
+    (hnd : su'.drawn = su.drawn) :
+    ∀ x ∈ S.elems, Avoids B x.toConstraint
+
+theorem step_inVoc_noDraw {V : Finset Var} {s s' : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (h0 : InVoc V s)
+    (h : step s = .continue s') (hnd : s'.su.drawn = s.su.drawn) : InVoc V s'
+```
+
+`step_inVoc_noDraw` covers all FIVE dispatch branches, `concrete` included:
+`Hygiene.makeConcrete_avoids` was already general and round 6 simply never reached it.
+
+### R7.1c The `concrete` branch — what it pays with
+
+This is the piece round 6 named as the obstacle ("a wider fragment must either kill that
+branch too or find something that decreases on it — the one branch `StrictBound.lean` already
+flags as unbounded"), and it is the reason the round is worth anything: the branch fires on
+**2,500 of the 9,362 example solves**, and excluding it costs 25 points of coverage.
+
+`makeConcrete` binds no variable and does not grow the processed set — `destructiveSub`
+DELETES.  What it does do is install `v <- ((|fs|))`, and three facts make that a measure:
+
+* `ensureSuperset` (`Constraints.scala:1608`) fails the whole step unless every concrete row
+  already recorded for `v` is a SUBSET of `fs`;
+* the dispatch reached `makeConcrete` only because `proc.findRHS r.rhs` MISSED, so no
+  processed partition has right-hand side `((|fs|))` — the subset is PROPER;
+* `destructiveSub` deletes only partitions that mention `v`, and a bare concrete row mentions
+  no variable, so every OTHER variable's rows survive.
+
+So the DOWNWARD-CLOSED set of `(variable, concrete row it is known to contain)` pairs that the
+processed queue carries strictly grows, and it lives inside `V ×ˢ L.powerset`:
+
+```lean
+def rowSet (V : Finset Var) (L : Finset Label) (s : State) : Finset (Var × Finset Label) :=
+  (V ×ˢ L.powerset).filter (fun q =>
+    s.proc.elems.any (fun p => p.lhs == q.1 && p.rhs.abstr.elems.isEmpty &&
+      decide (q.2 ⊆ p.toConstraint.conc)))
+
+theorem rowSet_card_le {V : Finset Var} {L : Finset Label} {s : State} :
+    (rowSet V L s).card ≤ V.card * 2 ^ L.card
+
+theorem rowSet_subset_of {V : Finset Var} {L : Finset Label} {s t : State}
+    (h : ∀ p ∈ s.proc.elems, p.rhs.abstr.elems = [] → p ∈ t.proc.elems) :
+    rowSet V L s ⊆ rowSet V L t
+
+theorem rowSet_lt_concrete {V : Finset Var} {L : Finset Label} {s s' : State}
+    (hw : Wf s) (hv : InVoc V s) (hcs : ConcSub L (sys s)) {r : LPart} {rest : PQueue}
+    (hdq : s.incm.dequeue = some (r, rest))
+    (hfind : s.proc.findRHS r.rhs = none)
+    (hne : r.rhs.isEmpty = false) (hab : r.rhs.abstr.isEmpty = true)
+    (hmk : makeConcrete r.lhs r.rhs.conc rest s.proc = .ok (s'.incm, s'.proc)) :
+    (rowSet V L s).card < (rowSet V L s').card
+```
+
+Downward closure is exactly what makes it monotone: a `concrete` step at `u` DELETES `u`'s old
+rows, but `ensureSuperset` has already forced each of them inside the new one, so no pair is
+lost.  Reading `ensureSuperset` out of the Scala's two `Set` layers is the fiddly half —
+`SVal RHS` is `RHS.eqv`, not structural equality, so `p.rhs` need not be an ELEMENT of the set
+`makeConcrete` checks; §4.0 of the module proves a representative is always there and that a
+`subsetOf` on the concrete part survives `SSet.ofList`, `filter`, `map` and the CHAMP `concat`
+(whose `pickRep` may keep the LEFT operand's copy, which is why duplicate-freeness is needed
+there and nowhere else).  The three facts about the queues are
+
+```lean
+theorem makeConcrete_superset {v : Nat} {fs : SSet Lbl} {incm proc : PQueue} {ni np : PQueue}
+    (hcp : ∀ q ∈ proc.elems, q.rhs.conc.Nodup) (hci : ∀ q ∈ incm.elems, q.rhs.conc.Nodup)
+    (h : makeConcrete v fs incm proc = .ok (ni, np)) :
+    ∀ p ∈ proc.elems, p.lhs = v → p.rhs.conc.subsetOf fs = true
+
+theorem makeConcrete_row_mem {v : Nat} {fs : SSet Lbl} {incm proc : PQueue} {ni np : PQueue}
+    (h : makeConcrete v fs incm proc = .ok (ni, np)) (hfs : fs.isEmpty = false)
+    (hno : ∀ y ∈ proc.elems, y.rhs.eqv (RHS.ofConcr fs) = false) :
+    (⟨v, RHS.ofConcr fs, none⟩ : LPart) ∈ np.elems
+
+theorem destructiveSub_proc_keep {v : Nat} {rhs : RHS} {incm proc : PQueue} {ni np : PQueue}
+    (h : destructiveSub v rhs incm proc = .ok (ni, np)) {x : LPart} (hx : x ∈ proc.elems)
+    (hl : (x.lhs == v) = false) (hc : x.rhs.contains v = false) : x ∈ np.elems
+```
+
+`makeConcrete_row_mem` is where the dispatch's own `findRHS` miss is spent: `Q.insert` refuses
+a self-unification (impossible for a bare concrete row) and a partition already present at the
+same search key (which `findRHS` would have found), so the row really lands.
+
+### R7.1d The measure, and `Terminates`
+
+Round 6's three kinds of step become four.
+
+```lean
+def IsConcStep (s s' : State) : Prop :=
+  ∃ (r : LPart) (rest : PQueue), s.incm.dequeue = some (r, rest) ∧
+    s.proc.findRHS r.rhs = none ∧ r.rhs.isEmpty = false ∧ r.rhs.abstr.isEmpty = true ∧
+    makeConcrete r.lhs r.rhs.conc rest s.proc = .ok (s'.incm, s'.proc)
+
+theorem step_quadrichotomy {s s' : State} (h : step s = .continue s') :
+    (IsLearnStep s ∧ s'.env = s.env ∧ ∀ p ∈ s.proc.elems, p ∈ s'.proc.elems) ∨
+    (s'.env.binds.length = s.env.binds.length + 1) ∨
+    (s'.env = s.env ∧ s'.proc = s.proc ∧ s'.incm.elems.length + 1 = s.incm.elems.length) ∨
+    (IsConcStep s s' ∧ s'.env = s.env)
+```
+
+Note what `step_quadrichotomy` does NOT have: a fragment hypothesis.  It is a statement about
+the real `step` at any state.  Flattening the four-way lexicographic order gives
+
+```lean
+def measure4 (P Q E R : Nat) (V : Finset Var) (L : Finset Label) (s : State) : Nat :=
+  (E - s.env.binds.length) * ((R + 1) * ((P + 1) * (Q + 1))) +
+    (R - (rowSet V L s).card) * ((P + 1) * (Q + 1)) +
+    (P - (procSys s).card) * (Q + 1) + s.incm.elems.length
+
+theorem measure4_lt {P Q E R : Nat} {V : Finset Var} {L : Finset Label} {s s' : State}
+    (hw : Wf s) (hv : InVoc V s) (hcs : ConcSub L (sys s))
+    (hR' : (rowSet V L s').card ≤ R) (hP' : (procSys s').card ≤ P)
+    (hQ' : s'.incm.elems.length ≤ Q) (hE' : s'.env.binds.length ≤ E)
+    (h : step s = .continue s') :
+    measure4 P Q E R V L s' < measure4 P Q E R V L s
+
+theorem terminates_of_bounds4 {P Q E R : Nat} {V : Finset Var} {L : Finset Label} {s : State}
+    (hw : ∀ t, Reaches s t → Wf t) (hv : ∀ t, Reaches s t → InVoc V t)
+    (hcs : ∀ t, Reaches s t → ConcSub L (sys t))
+    (hr : ∀ t, Reaches s t → (rowSet V L t).card ≤ R)
+    (hp : ∀ t, Reaches s t → (procSys t).card ≤ P)
+    (hq : ∀ t, Reaches s t → t.incm.elems.length ≤ Q)
+    (he : ∀ t, Reaches s t → t.env.binds.length ≤ E) : Terminates s
+```
+
+The queue invariant also had to be re-proved on the `concrete` branch (`NoConc.step_kdist`
+discharges it by `exfalso` too); it is mechanical, because `destructiveSub` and `makeConcrete`
+build their queues out of `filter`, `partition`, `concatP`, `concatNP` and `insertNP` and
+`KDist` survives each:
+
+```lean
+theorem kdist_makeConcrete {v : Nat} {fs : SSet Lbl} {incm proc : PQueue} {ni np : PQueue}
+    (hi : KDist incm.elems) (hp : KDist proc.elems)
+    (h : makeConcrete v fs incm proc = .ok (ni, np)) :
+    KDist ni.elems ∧ KDist np.elems
+
+theorem step_kdist' {s s' : State} (hi : KDist s.incm.elems)
+    (hp : KDist s.proc.elems) (h : step s = .continue s') :
+    KDist s'.incm.elems ∧ KDist s'.proc.elems
+```
+
+And the fragment and the theorem:
+
+```lean
+def VocFixed (V : Finset Var) (s : State) : Prop := ∀ t, Reaches s t → InVoc V t
+
+def NoDraw (s : State) : Prop :=
+  ∀ t t', Reaches s t → step t = .continue t' → t'.su.drawn = t.su.drawn
+
+theorem vocFixed_of_noDraw {s : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (h : NoDraw s) : VocFixed (allVars (sys s)) s
+
+theorem vocFixed_terminates {V : Finset Var} {L : Finset Label} {s : State}
+    (hem : s.flags.emptyRow = false) (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hw : Wf s) (hnd : EnvNodup s)
+    (hok : SupOk s.su) (hfr : SupFresh s.su (sys s)) (hqh : QueueHygiene s)
+    (hcs : ConcSub L (sys s)) (hki : KDist s.incm.elems) (hkp : KDist s.proc.elems)
+    (hvf : VocFixed V s) : Terminates s
+
+theorem vocFixed_run {V : Finset Var} {L : Finset Label} {s : State}
+    (hem : s.flags.emptyRow = false) (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hw : Wf s) (hnd : EnvNodup s)
+    (hok : SupOk s.su) (hfr : SupFresh s.su (sys s)) (hqh : QueueHygiene s)
+    (hcs : ConcSub L (sys s)) (hki : KDist s.incm.elems) (hkp : KDist s.proc.elems)
+    (hvf : VocFixed V s) :
+    Finished (run s (measure4 (V.card * 2 ^ V.card * 2 ^ L.card)
+      (V.card * 2 ^ V.card * 2 ^ L.card) V.card (V.card * 2 ^ L.card) V L s + 1))
+
+theorem noDraw_terminates {s : State}
+    (hem : s.flags.emptyRow = false) (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hw : Wf s) (hnd : EnvNodup s)
+    (hok : SupOk s.su) (hfr : SupFresh s.su (sys s)) (hqh : QueueHygiene s)
+    (hki : KDist s.incm.elems) (hkp : KDist s.proc.elems) (h : NoDraw s) : Terminates s
+```
+
+**The bound, written out.**  With `n = |V|` and `m = |L|`, at `E = n`, `R = n·2ᵐ` and
+`P = Q = n·2ⁿ·2ᵐ`, the fuel `measure4 P Q E R V L s + 1` is at most
+`n·(n·2ᵐ + 1)·(n·2ⁿ·2ᵐ + 1)² + (n·2ᵐ)·(n·2ⁿ·2ᵐ + 1)² + (n·2ⁿ·2ᵐ)·(n·2ⁿ·2ᵐ + 1) + |incm₀| + 1`,
+i.e. of order `n⁴·2^{2n+3m}` — worse than round 6's `n²·4ⁿ` by the label factor `2^{3m}` and by
+one factor of the potential the `concrete` branch lowers, which is itself of size `n·2ᵐ`.  It
+is not tight and is not meant to be: the four factors are (variables that can be eliminated) ×
+(concrete rows that can be recorded) × (distinct constraints over `V` and `L`) × (the queue's
+own capacity), every one of them the crude combinatorial count.  On the corpus the deepest run
+is **140 dequeues**.
+
+**Hypotheses, and which of them are new.**  `emptyRow`, `disjRule` and `cseMints` are the
+SHIPPED defaults (`Constraints.scala:768–774`; `-Dermine.emptyRow` ships off, as
+`RefineLearn.step_refines_all` already required).  `EnvNodup`, the two `KDist`s and
+`QueueHygiene` are discharged outright by the `_of_buildQueue` corollaries; **`Wf` is kept as a
+hypothesis there**, exactly as round 6's corollary keeps it, and is discharged per solve by
+`Wf.wf_seed` / `Wf.wf_replay` (round-7 review X-8f).  `SupOk` and `SupFresh` are L3's supply
+invariant and are NEW relative to round 6, because the label bound goes through
+`step_refines_all`; **`SupOk` is four `sin` fields, `SupFresh` is not a field at all** — it is
+`∀ z, Sup.Reach su z → z ∉ allVars G` (`RefineLearn.lean:39,54`) — so the two are checked
+differently and §R7.1d's original sentence, which put them in one breath as things "a corpus
+replay reads out of its `sin` record", was wrong about the second.  `V` and `L` are the input's
+own (`inVoc_self`, `concSub_self`), so neither is an assumption.
+
+`SupOk` is worth checking rather than assuming, since it is the one hypothesis round 6 did not
+carry: `SupOk su` is `su.lo ≤ su.hi ≤ su.blk` and `2 ≤ su.bsz`, and the `sin` record carries
+all four fields.  Over the whole corpus — **450,064 `sin` records, 450,064 satisfy it, 0
+violations** — so it costs nothing on real compiler input.  (It is FALSE of the repro
+harness's `Sup.ofSeed`, whose `blk = 0` is the harness's real process-global counter; that is
+why §R7.1e's witness uses a supply of the compiler's shape.)
+
+**`SupFresh` too** (added after the round-7 review, which measured it first — X-3b).  It is
+not a `sin` field, so it has to be simulated: replay `PQueue.build`'s draws (one per `part`
+with a non-variable left-hand side, `Constraints.scala:661`) to get `su'`, then test every
+input variable of the `svar` table and every id the build minted against `Sup.Reach su'`
+(`tmp/L5r7/supfresh.py`).  **450,064 segments, 450,064 satisfy it, 0 violations** — my own
+run, and it agrees with the reviewer's.  So both of the hypotheses round 6 did not carry are
+discharged on real compiler input, not merely assumed.
+
+```lean
+def initState (q : PQueue) (su : Sup) (tr : List String) (fl : Flags) (ns : Names)
+    (site : String) (z : Nat) : State :=
+  { incm := q, proc := PQueue.empty, env := {}, su := su, trace := tr, flags := fl,
+    names := ns, site := site, su0 := z }
+
+theorem vocFixed_terminates_of_buildQueue {V : Finset Var} {L : Finset Label}
+    {cs : List CsItem} {su : Sup} {q : PQueue} {su' : Sup}
+    {fl : Flags} {ns : Names} {site : String} {tr : List String} {z : Nat}
+    (hq : buildQueue cs su = .ok (q, su'))
+    (hem : fl.emptyRow = false) (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (hw : Wf (initState q su' tr fl ns site z))
+    (hok : SupOk su')
+    (hfr : SupFresh su' (sys (initState q su' tr fl ns site z)))
+    (hcs : ConcSub L (sys (initState q su' tr fl ns site z)))
+    (hvf : VocFixed V (initState q su' tr fl ns site z)) :
+    Terminates (initState q su' tr fl ns site z)
+
+theorem noDraw_terminates_of_buildQueue {cs : List CsItem} {su : Sup} {q : PQueue} {su' : Sup}
+    {fl : Flags} {ns : Names} {site : String} {tr : List String} {z : Nat}
+    (hq : buildQueue cs su = .ok (q, su'))
+    (hem : fl.emptyRow = false) (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (hw : Wf (initState q su' tr fl ns site z))
+    (hok : SupOk su')
+    (hfr : SupFresh su' (sys (initState q su' tr fl ns site z)))
+    (h : NoDraw (initState q su' tr fl ns site z)) :
+    Terminates (initState q su' tr fl ns site z)
+```
+
+### R7.1e The condition is DECIDABLE per solve, and the fragment is inhabited outside round 6's
+
+`NoDraw` quantifies over `Reaches`, which is not decidable; on a run that FINISHES it is a
+finite check, and that check is discharged inside Lean by `rfl`, not only measured by the
+harness:
+
+```lean
+def NoDrawB : Nat → State → Bool
+  | 0, s => match step s with
+    | .continue _ => false
+    | _ => true
+  | n + 1, s => match step s with
+    | .continue s' => (s'.su.drawn == s.su.drawn) && NoDrawB n s'
+    | _ => true
+
+theorem noDraw_of_noDrawB {n : Nat} {s : State} (h : NoDrawB n s = true) : NoDraw s
+```
+
+The witness is a four-constraint labelled input at a REAL supply (`blk` ahead of `hi`; the
+repro harness's `Sup.ofSeed` has `blk = 0`, which makes `SupFresh` false):
+
+```lean
+def vSeed : Seed :=
+  { name := "vocfix",
+    cons := [⟨0, [], [0, 1]⟩, ⟨1, [0, 2], []⟩, ⟨2, [3], []⟩, ⟨4, [1], []⟩],
+    rhoKeys := [] }
+
+theorem vS0_size : vS0.incm.elems.length = 4 := by rfl
+theorem vS0_notNoConc : ¬ NoConc vS0
+theorem vS0_concrete : isConcDispatch vS0 = true := by rfl
+theorem vS0_noDrawB : NoDrawB 20 vS0 = true := by rfl
+theorem vS0_terminates : Terminates vS0
+```
+
+`vS0_notNoConc` and `vS0_concrete` are the point: the input carries labels and the run takes
+the `concrete` dispatch branch, so **round 6's theorem does not apply to it and this one
+does**.  The SHIPPED COMPILER agrees on the same seed at ten id bases
+(`ERMINE_JAVA_OPTS=-Dermine.useInterface=false tracker/repro/satterm/run.sh sweep
+json:<seeds/D.json> 0 9 30 20`): `SOLVED=10 REJECTED=0 HANG=0 OOM=0`,
+`DRAWN min=0 median=0 max=0 histogram 0:x10`.
+
+### R7.1f Termination is a TAIL property of the draws
+
+It is enough that the loop STOPS drawing, because termination transports backwards along
+`Runs`:
+
+```lean
+theorem terminates_of_reaches {s t : State} (h : Reaches s t) (ht : Terminates t) :
+    Terminates s
+
+def EventuallyNoDraw (s : State) : Prop := ∃ t, Reaches s t ∧ NoDraw t
+
+theorem terminates_of_eventuallyNoDraw {s : State}
+    (hem : s.flags.emptyRow = false) (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hw : Wf s) (hnd : EnvNodup s)
+    (hok : SupOk s.su) (hfr : SupFresh s.su (sys s)) (hqh : QueueHygiene s)
+    (hki : KDist s.incm.elems) (hkp : KDist s.proc.elems)
+    (h : EventuallyNoDraw s) : Terminates s
+
+theorem draws_cofinally_of_not_terminates {s : State}
+    (hem : s.flags.emptyRow = false) (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hw : Wf s) (hnd : EnvNodup s)
+    (hok : SupOk s.su) (hfr : SupFresh s.su (sys s)) (hqh : QueueHygiene s)
+    (hki : KDist s.incm.elems) (hkp : KDist s.proc.elems)
+    (h : ¬ Terminates s) : ∀ t, Reaches s t → ¬ NoDraw t
+
+theorem not_vocFixed_of_not_terminates {L : Finset Label} {s : State}
+    (hem : s.flags.emptyRow = false) (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hw : Wf s) (hnd : EnvNodup s)
+    (hok : SupOk s.su) (hfr : SupFresh s.su (sys s)) (hqh : QueueHygiene s)
+    (hcs : ConcSub L (sys s)) (hki : KDist s.incm.elems) (hkp : KDist s.proc.elems)
+    (h : ¬ Terminates s) : ∀ V : Finset Var, ¬ VocFixed V s
+```
+
+`draws_cofinally_of_not_terminates` is the sharpest thing this stage has said: a divergent run
+draws at cofinally many steps, so the four non-generative dispatch branches and the whole of
+`learnPartitions`' folding half (`substitution`, `commonSubexpression`, `cancellation`,
+`selfSubstitution`) cannot cause non-termination on their own.  **A caveat that must be
+stated with it**: `EventuallyNoDraw` is a *tail* condition, so for a solve whose run has been
+observed to finish it is witnessed by the observation and certifies nothing new about that
+solve.  Its content is the contrapositive and the class-level statement, not a per-solve
+prediction.
+
+## R7.2 — the census, solve by solve
+
+Traces regenerated from scratch for this round (`tmp/L5r7/gentrace.sh`, the round-6 script
+with a new output directory), one JVM per corpus group, serialised loader, interfaces off:
+
+```
+ERMINE_JAVA_OPTS="-XX:ActiveProcessorCount=2 -Xmx3000m -Dermine.useInterface=false \
+  -Dermine.loadInSeries=true -Dermine.rowTrace=<out>/<group>.tsv" bin/ermine <group's files>
+```
+
+Segment counts reproduce round 6's and L2-CORPUS §4a's exactly (54,199 / 92,673 / 83,942 /
+56,032 / 54,235 / 54,244 / 54,739).
+
+**The instrument is new, and it is the round-6 review's W-6g.**  `--cycle` and `--mints` were
+seed-mode only; `replayMain` now has both, so the cycle detector, the draw counter and round
+5's per-key mint tally run over corpus replays directly instead of over transcoded seeds
+(`Loop/Main.lean`: `replayCycleOne`, `replayMintOne`; `Loop/Cycle.lean`: `CycleRep.mint0`,
+`.grew`, `.maxMint`, `.nconc`, `.drawn0`, and `isConcDispatch`).  One line per solve:
+
+```
+lake exe looptrace --replay <group>.tsv --cycle
+cycle <i> <site> <loc> SOLVED steps=N states=M drawn=D grew=B mint0=K maxmint=X conc=C
+      drawn0=D0 nrows=R canon=- exact=-
+lake exe looptrace --replay <group>.tsv --mints
+mints <i> <site> <loc> SOLVED steps=N drawn=D max=A remint=B cmax=A' cremint=B' keys=K
+```
+
+**The population predicate, and its bias (round-7 review X-8b).**  The census population is
+"the solve wrote at least one `inpart` record", and `Subst.scala:1215` writes those only AFTER
+`var ps = q.expand.toList` has SUCCEEDED — so a solve the row solver REJECTS is invisible to
+it.  Measured: **19 example-`loc` solves the model builds a queue for and runs are dropped by
+that predicate, all 19 `REJECTED`, three of them residue** (§R7.2d rows 245–247).  Every table
+below therefore carries two populations: **P1**, the `inpart` one the round measured (9,362),
+and **P2**, every solve the MODEL ran (9,381 = P1 + 19).  A `BUILD` verdict — `PQueue.build`
+itself failed, so `cycleRun` never ran and every field is the structure's default — is excluded
+from both; there is exactly one in the seven groups
+(`shouldfail/dup01_partition_literal.e(25:7)`), it has no `inpart` record either, and the
+instrument now prints `grew=?` for it rather than the default `false` (X-8g).  That one segment
+is also the whole of the `rejected=31` (`--cycle`) versus `rejected=32` (plain `--replay`)
+difference on `shouldfail`.
+
+`grew` is the vocabulary test: whether some state of the run mentions a minted id (`id ≥ su0`)
+absent at the first dequeue.  `drawn − drawn0` is the LOOP's own draw count — `Sup.drawn`
+accumulates across `PQueue.build`, which mints for a `Part` whose left-hand side is not a
+variable (round-6 review W-6b), and 145 of the 244 residue solves have such a build mint.
+
+```
+python3 tmp/L5r7/r7census.py <group> traces/<group>.tsv.gz cyc/<group>.tsv.gz
+python3 tmp/L5r7/stdcens.py
+```
+
+### R7.2a The example corpus
+
+| group | ex-loc solves | building ≥1 partition | `NoConc` | loop drew NO id | **vocabulary fixed** | …and no `concrete` step | residue |
+|---|---|---|---|---|---|---|---|
+| `top` | 26,338 | 4,997 | 1,255 | 4,948 | **4,949** | 3,694 | 48 |
+| `Ai` | 20,393 | 4,069 | 1,046 | 3,885 | **3,885** | 2,852 | 184 |
+| `shouldfail` | 1,380 | 232 | 69 | 224 | **224** | 175 | 8 |
+| `bugs` | 36 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `guide` | 32 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `shouldfail-controls` | 404 | 64 | 18 | 60 | **60** | 42 | 4 |
+| **all six, P1 (`inpart`)** | **48,583** | **9,362** | **2,388 (25.5 %)** | **9,117 (97.38 %)** | **9,118 (97.39 %)** | **6,763 (72.2 %)** | **244 (2.61 %)** |
+| **all six, P2 (every solve the model ran)** | — | **9,381** | 2,388 (25.5 %) | **9,133 (97.36 %)** | **9,134 (97.37 %)** | 6,763 (72.1 %) | **247 (2.63 %)** |
+
+The per-group rows are P1's, which is what the round originally measured; P2 adds the 19
+`REJECTED` solves the `inpart` predicate cannot see, all of them in `shouldfail` (16 of the 19
+keep a fixed vocabulary, 3 do not).  **The headline moves by 0.02 points either way; the
+population is stated because a termination census that silently drops the solves the solver
+REJECTS is exactly backwards for this question, not because the number changes.**
+
+The 9,362 and the 2,388 reproduce round 6's headline numbers exactly, from a census written
+against the record format and a model run, not reused.  Three readings:
+
+* **The target is met**, on P2 outright and on P1 within two solves.  The review's ceiling was
+  97.6 % measured on a PROXY (whether the SATURATED SET introduces a variable absent from the
+  input, over the 9,340 solves that write one); the direct measurement over the model's whole
+  run is **97.39 %** on P1 and **97.37 %** on P2.  The 97.64 → 97.39 gap is **two terms of
+  opposite sign, not one** (round-7 review X-8d; recomputed here by
+  `tmp/L5r7/proxy.py`, diffing the proxy against the model solve by solve):
+
+  ```
+  with a saturated set 9,340: proxy fixed 9,120 (97.64 %), proxy grew 220
+    (proxy fixed, model fixed) 9,096   (proxy grew, model grew) 220
+    (proxy fixed, model GREW)    24    (proxy grew, model fixed) 0
+    the 24 are ALL class D -- and class D has 32, so the proxy CATCHES 8 of them
+  with NO saturated set at all: 22 -- outside the proxy's population, all model-fixed
+  9,120 + 22 - 24 = 9,118
+  ```
+
+  So the mechanism named originally (a variable minted and then deleted before `ps` is
+  written) is right, the count was not: it is **24 of the 32**, and there is an omitted
+  **+22** — solves that write no saturated set at all, which the proxy never counted and which
+  are all vocabulary-fixed.
+* **The `concrete` branch is worth 25 points.**  Vocabulary fixed AND no `concrete` step is
+  **6,763 (72.2 %)**; with the branch paid for it is **9,118 (97.4 %)**.  That is the whole
+  return on §R7.1c.
+* **`drawn = 0` and "vocabulary fixed" differ by exactly ONE solve**, `core/examples/Accumulate.e(35:13)`:
+  the loop draws one id which never enters a partition, because `resolution` takes its `fresh`
+  before the guards and then discards it.  So `noDraw_terminates` covers 9,117 and
+  `vocFixed_terminates` covers 9,118 — the second theorem earns its keep on one real solve,
+  and would earn much more on a corpus with more `resolution` traffic.
+
+### R7.2b The standard library, through the model
+
+| group | stdlib-`loc` solves building ≥1 partition | vocabulary fixed | loop drew no id | with a `concrete` step |
+|---|---|---|---|---|
+| `boot` | 373 | 373 | 373 | 0 |
+| `top` | 415 | 415 | 415 | 0 |
+| `Ai` | 415 | 415 | 415 | 0 |
+| `shouldfail` | 373 | 373 | 373 | 0 |
+| `bugs` | 373 | 373 | 373 | 0 |
+| `guide` | 373 | 373 | 373 | 0 |
+| `shouldfail-controls` | 373 | 373 | 373 | 0 |
+| **all seven** | **2,695** | **2,695 (100 %)** | **2,695 (100 %)** | **0** |
+
+2,695 = the boot's 373 plus the reviewer's 2,322 stdlib-located solves across the six example
+groups (W-6e), and this is the same population measured a different way — by running the model
+rather than by reading the input's labels.  It agrees: **the standard library never draws an
+id, never grows its vocabulary, and never takes the `concrete` branch.**
+
+### R7.2c The cycle detector over the whole corpus
+
+```
+lake exe looptrace --replay <group>.tsv --cycle      (all seven groups)
+```
+
+| | |
+|---|---|
+| corpus segments replayed | **450,064** |
+| skipped | **0** |
+| canonical state repeats | **0** |
+| exact state repeats | **0** |
+| `FUEL` | **0** |
+| deepest run | **140 dequeues**, `core/examples/Ai/IncidentSeverity.e(69:15)` |
+
+This is round 6's search (134,674 synthetic solves) extended to the corpus itself, which is
+what W-6g asked for: **no canonical or exact state repeat in any of the 450,064 solves the
+compiler performs while loading the corpus**.
+
+**The `hashdiff` / `eqdiff` counters are NOT computed in this mode** (round-7 review X-8c):
+in `--cycle` / `--mints` mode `replayMain` never calls `replay`, so the two columns of its
+`#summary` line are the literal zeros of `return (1, 0, 0, 0, …)` and nothing is compared.
+Only `skipped` is real.  The round's original text claimed those two as evidence that "the
+model is running the compiler's own solves"; that claim is **withdrawn from the `--cycle` run**
+and re-established by the genuine differential, which is plain `--replay`
+(`tmp/L5r7/runreplay.sh`, my own run over all seven groups):
+
+```
+boot                 segments=54199 replayed=54199 skipped=0 hashdiff=0 eqdiff=0 rejected=0  fuel=0
+top                  segments=92673 replayed=92673 skipped=0 hashdiff=0 eqdiff=0 rejected=0  fuel=0
+Ai                   segments=83942 replayed=83942 skipped=0 hashdiff=0 eqdiff=0 rejected=0  fuel=0
+shouldfail           segments=56032 replayed=56032 skipped=0 hashdiff=0 eqdiff=0 rejected=32 fuel=0
+bugs                 segments=54235 replayed=54235 skipped=0 hashdiff=0 eqdiff=0 rejected=0  fuel=0
+guide                segments=54244 replayed=54244 skipped=0 hashdiff=0 eqdiff=0 rejected=0  fuel=0
+shouldfail-controls  segments=54739 replayed=54739 skipped=0 hashdiff=0 eqdiff=0 rejected=0  fuel=0
+incomplete/np01_add_or_recompute      segments=55015 replayed=55015 skipped=0 hashdiff=0 eqdiff=0
+incomplete/gu05_star_join_4dim…       segments=54235 replayed=54235 skipped=0 hashdiff=0 eqdiff=0
+```
+
+**450,064 segments, 0 `hashdiff`, 0 `eqdiff`, 0 skipped** — so the differential does hold, and
+now it has been run.  (`rejected=32` here against the `--cycle` run's 31 is the one `BUILD`
+segment of X-8g, not a disagreement.)
+
+### R7.2d The residue, one row per solve
+
+Every one of the 244 example solves outside the fragment, with what the brief asks for: the
+module and location, the generative rules that appear in the saturated set, the ids the LOOP
+drew, how many NEW names entered a state (`maxmint − mint0`), the largest number of fresh
+carriers installed at ONE key `(lhs, concrete part)` (round 5's pump counter, `--mints`'
+`cmax`), the input's key shape, the number of input partitions, the dequeue count, and how
+many dequeues took the `concrete` branch.
+
+Key shape legend: `join` = some input partition has ≥ 2 abstract parts AND a nonempty concrete
+part (`splitConcrete`'s firing shape); `lone` = some input partition has exactly one abstract
+part and a nonempty concrete part (`resolution`'s premise shape); `bare` = some input partition
+is a whole concrete row `v <- ((|C|))` (the `concrete` dispatch's shape).  `SC`/`SK`/`SR`/`Res`/`ResR`
+are `SplitConcrete`, `SplitKeyed`, `SplitRow`, `Resolution`, `ResolutionRow`.
+
+Rows 1–244 are population P1's residue.  **Rows 245–247, marked †, are the three solves the
+`inpart` predicate cannot see** (round-7 review X-8b): the row solver REJECTS them, so
+`Subst.scala:1215` writes no `inpart` and no `sat` record, and their input key shape and
+partition count are read off the `scon` payloads (which `RowTrace.solveInput` writes BEFORE
+the solve) instead.  All three are in `shouldfail/`, all three draw one id, take two
+`concrete` steps and reach `cmax = 1`.
+
+Every one of rows 1–244 is `SOLVED` by the model; rows 245–247 are `REJECTED` by it, as by the
+compiler.  None of the 247 has a canonical or an exact state repeat.
+
+| # | module(location) | generative rules in the saturated set | ids drawn | new names | max at one key | input key shape | parts | dequeues | `concrete` steps |
+|---:|---|---|---:|---:|---:|---|---:|---:|---:|
+| 1 | `Accumulate.e(32:3)` | SC1 | 6 | 3 | 1 | bare | 5 | 30 | 6 |
+| 2 | `Accumulate.e(35:13)` | SC2 | 1 | 1 | 1 | join | 3 | 5 | 0 |
+| 3 | `Accumulate.e(36:13)` | SC1 | 4 | 3 | 1 | bare | 5 | 33 | 7 |
+| 4 | `Accumulate.e(37:16)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 5 | `Accumulate.e(37:16)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 6 | `Ai/BatteryCycling.e(61:19)` | SC1 | 4 | 3 | 1 | bare | 5 | 34 | 7 |
+| 7 | `Ai/BatteryCycling.e(61:27)` | ResR2 | 7 | 4 | 1 | bare | 5 | 38 | 7 |
+| 8 | `Ai/BatteryCycling.e(64:14)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 9 | `Ai/BatteryCycling.e(64:14)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 10 | `Ai/BatteryCycling.e(64:14)` | SC1 | 9 | 6 | 2 | join/bare | 5 | 46 | 5 |
+| 11 | `Ai/BatteryCycling.e(69:3)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 12 | `Ai/BatteryCycling.e(69:3)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 13 | `Ai/BatteryCycling.e(69:3)` | SC1 | 9 | 6 | 2 | join/bare | 5 | 47 | 5 |
+| 14 | `Ai/BatteryCycling.e(70:6)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 15 | `Ai/BatteryCycling.e(70:6)` | SC4+Res3 | 7 | 3 | 1 | bare | 6 | 46 | 2 |
+| 16 | `Ai/BatteryCycling.e(71:29)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 25 | 3 |
+| 17 | `Ai/BatteryCycling.e(72:29)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 26 | 3 |
+| 18 | `Ai/BatteryCycling.e(84:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 19 | `Ai/BatteryCycling.e(84:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 20 | `Ai/BatteryCycling.e(88:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 21 | `Ai/BatteryCycling.e(88:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 22 | `Ai/ClinicalTrial.e(109:12)` | SC2 | 1 | 1 | 1 | lone | 2 | 5 | 0 |
+| 23 | `Ai/ClinicalTrial.e(109:12)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 24 | `Ai/ClinicalTrial.e(67:24)` | SC1 | 6 | 3 | 1 | bare | 5 | 35 | 6 |
+| 25 | `Ai/ClinicalTrial.e(72:3)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 26 | `Ai/ClinicalTrial.e(72:3)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 27 | `Ai/ClinicalTrial.e(72:3)` | SC1 | 9 | 6 | 2 | join/bare | 5 | 46 | 5 |
+| 28 | `Ai/ClinicalTrial.e(73:6)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 29 | `Ai/ClinicalTrial.e(73:6)` | SC4+Res3 | 5 | 3 | 1 | bare | 6 | 45 | 2 |
+| 30 | `Ai/ClinicalTrial.e(73:6)` | (none in `sat`) | 2 | 1 | 1 | bare | 7 | 24 | 3 |
+| 31 | `Ai/ClinicalTrial.e(74:31)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 25 | 3 |
+| 32 | `Ai/ClinicalTrial.e(75:31)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 26 | 3 |
+| 33 | `Ai/FiscalCalendar.e(135:31)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 34 | `Ai/FiscalCalendar.e(76:15)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 35 | `Ai/FiscalCalendar.e(76:15)` | SC4+Res3 | 5 | 3 | 1 | bare | 6 | 47 | 2 |
+| 36 | `Ai/FiscalCalendar.e(76:15)` | SC1 | 13 | 7 | 1 | bare | 7 | 64 | 7 |
+| 37 | `Ai/FiscalCalendar.e(76:3)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 38 | `Ai/FiscalCalendar.e(76:3)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 39 | `Ai/FiscalCalendar.e(76:3)` | SC2 | 9 | 6 | 2 | join/bare | 5 | 44 | 5 |
+| 40 | `Ai/FiscalCalendar.e(78:41)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 25 | 3 |
+| 41 | `Ai/FiscalCalendar.e(83:16)` | SC2 | 1 | 1 | 1 | lone | 2 | 5 | 0 |
+| 42 | `Ai/FiscalCalendar.e(83:16)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 43 | `Ai/GridTelemetry.e(100:16)` | SC2 | 1 | 1 | 1 | lone | 2 | 5 | 0 |
+| 44 | `Ai/GridTelemetry.e(100:16)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 45 | `Ai/GridTelemetry.e(110:15)` | SC2 | 1 | 1 | 1 | lone | 2 | 5 | 0 |
+| 46 | `Ai/GridTelemetry.e(110:15)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 47 | `Ai/GridTelemetry.e(115:12)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 48 | `Ai/GridTelemetry.e(115:12)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 49 | `Ai/GridTelemetry.e(78:22)` | SC1 | 6 | 3 | 1 | bare | 5 | 32 | 6 |
+| 50 | `Ai/GridTelemetry.e(78:34)` | (none in `sat`) | 4 | 3 | 1 | bare | 5 | 33 | 7 |
+| 51 | `Ai/GridTelemetry.e(79:22)` | SC1 | 6 | 3 | 1 | bare | 5 | 32 | 6 |
+| 52 | `Ai/GridTelemetry.e(83:15)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 53 | `Ai/GridTelemetry.e(83:15)` | SC4+Res3 | 7 | 3 | 1 | bare | 6 | 47 | 2 |
+| 54 | `Ai/GridTelemetry.e(83:15)` | (none in `sat`) | 5 | 2 | 1 | bare | 7 | 40 | 4 |
+| 55 | `Ai/GridTelemetry.e(83:3)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 56 | `Ai/GridTelemetry.e(83:3)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 57 | `Ai/GridTelemetry.e(83:3)` | SC2 | 8 | 6 | 2 | join/bare | 7 | 42 | 5 |
+| 58 | `Ai/GridTelemetry.e(85:22)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 59 | `Ai/GridTelemetry.e(85:22)` | SC4+SK1+Res3 | 7 | 3 | 1 | bare | 6 | 48 | 2 |
+| 60 | `Ai/GridTelemetry.e(85:22)` | (none in `sat`) | 1 | 1 | 1 | bare | 7 | 22 | 3 |
+| 61 | `Ai/GridTelemetry.e(94:15)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 62 | `Ai/GridTelemetry.e(94:15)` | SC4+SK1+Res3 | 5 | 3 | 1 | bare | 6 | 47 | 2 |
+| 63 | `Ai/GridTelemetry.e(94:15)` | SC3 | 12 | 7 | 1 | bare | 7 | 65 | 7 |
+| 64 | `Ai/GridTelemetry.e(94:3)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 65 | `Ai/GridTelemetry.e(94:3)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 66 | `Ai/GridTelemetry.e(94:3)` | SC2 | 8 | 6 | 2 | join/bare | 5 | 41 | 5 |
+| 67 | `Ai/GridTelemetry.e(96:41)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 26 | 3 |
+| 68 | `Ai/HeadcountPlan.e(59:16)` | SC1 | 5 | 3 | 1 | bare | 5 | 30 | 7 |
+| 69 | `Ai/HeadcountPlan.e(59:29)` | SC1 | 6 | 3 | 1 | bare | 5 | 35 | 7 |
+| 70 | `Ai/HeadcountPlan.e(62:16)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 71 | `Ai/HeadcountPlan.e(62:16)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 72 | `Ai/HeadcountPlan.e(62:16)` | SC2 | 8 | 6 | 2 | join/bare | 7 | 43 | 5 |
+| 73 | `Ai/HeadcountPlan.e(62:46)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 24 | 3 |
+| 74 | `Ai/HeadcountPlan.e(67:3)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 75 | `Ai/HeadcountPlan.e(67:3)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 76 | `Ai/HeadcountPlan.e(67:3)` | SC2 | 9 | 7 | 3 | join/bare | 7 | 47 | 5 |
+| 77 | `Ai/HeadcountPlan.e(68:6)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 78 | `Ai/HeadcountPlan.e(68:6)` | SC4+Res3 | 7 | 3 | 1 | bare | 6 | 47 | 2 |
+| 79 | `Ai/HeadcountPlan.e(68:6)` | SC1 | 9 | 6 | 1 | bare | 7 | 56 | 7 |
+| 80 | `Ai/HeadcountPlan.e(70:13)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 81 | `Ai/HeadcountPlan.e(70:13)` | SC4+Res3 | 7 | 3 | 1 | bare | 6 | 47 | 2 |
+| 82 | `Ai/HeadcountPlan.e(70:13)` | SC1 | 20 | 9 | 2 | bare | 7 | 84 | 8 |
+| 83 | `Ai/HeadcountPlan.e(72:65)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 26 | 3 |
+| 84 | `Ai/HeadcountPlan.e(87:11)` | SC2 | 1 | 1 | 1 | lone | 2 | 5 | 0 |
+| 85 | `Ai/HeadcountPlan.e(87:11)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 86 | `Ai/HeadcountPlan.e(90:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 87 | `Ai/HeadcountPlan.e(90:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 88 | `Ai/IncidentSeverity.e(103:12)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 89 | `Ai/IncidentSeverity.e(103:12)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 90 | `Ai/IncidentSeverity.e(108:12)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 91 | `Ai/IncidentSeverity.e(108:12)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 92 | `Ai/IncidentSeverity.e(61:18)` | ResR2 | 8 | 4 | 1 | bare | 5 | 41 | 7 |
+| 93 | `Ai/IncidentSeverity.e(61:37)` | SC1 | 3 | 3 | 1 | bare | 5 | 28 | 7 |
+| 94 | `Ai/IncidentSeverity.e(64:10)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 95 | `Ai/IncidentSeverity.e(64:10)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 96 | `Ai/IncidentSeverity.e(64:10)` | SC1 | 9 | 6 | 2 | join/bare | 5 | 44 | 5 |
+| 97 | `Ai/IncidentSeverity.e(64:38)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 26 | 3 |
+| 98 | `Ai/IncidentSeverity.e(69:15)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 99 | `Ai/IncidentSeverity.e(69:15)` | SC4+Res3 | 5 | 3 | 1 | bare | 6 | 45 | 2 |
+| 100 | `Ai/IncidentSeverity.e(69:15)` | SC4+SR1 | 73 | 16 | 3 | bare | 7 | 140 | 12 |
+| 101 | `Ai/IncidentSeverity.e(69:3)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 102 | `Ai/IncidentSeverity.e(69:3)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 103 | `Ai/IncidentSeverity.e(69:3)` | SC2 | 10 | 7 | 3 | join/bare | 7 | 49 | 6 |
+| 104 | `Ai/IncidentSeverity.e(70:36)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 25 | 3 |
+| 105 | `Ai/IncidentSeverity.e(71:36)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 25 | 3 |
+| 106 | `Ai/IncidentSeverity.e(98:15)` | SC2 | 1 | 1 | 1 | lone | 2 | 5 | 0 |
+| 107 | `Ai/IncidentSeverity.e(98:15)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 108 | `Ai/RevenueByPeriod.e(71:20)` | SC1 | 6 | 3 | 1 | bare | 5 | 32 | 6 |
+| 109 | `Ai/RevenueByPeriod.e(71:35)` | SC1 | 4 | 3 | 1 | bare | 5 | 34 | 7 |
+| 110 | `Ai/RevenueByPeriod.e(76:15)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 111 | `Ai/RevenueByPeriod.e(76:15)` | SC4+SK1+Res3 | 5 | 3 | 1 | bare | 6 | 47 | 2 |
+| 112 | `Ai/RevenueByPeriod.e(76:15)` | SC1 | 11 | 6 | 1 | bare | 7 | 60 | 7 |
+| 113 | `Ai/RevenueByPeriod.e(76:3)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 114 | `Ai/RevenueByPeriod.e(76:3)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 115 | `Ai/RevenueByPeriod.e(76:3)` | SC1 | 10 | 7 | 3 | join/bare | 7 | 50 | 5 |
+| 116 | `Ai/RevenueByPeriod.e(77:42)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 26 | 3 |
+| 117 | `Ai/RevenueByPeriod.e(84:15)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 118 | `Ai/RevenueByPeriod.e(84:15)` | SC4+SK1+Res3 | 5 | 3 | 1 | bare | 6 | 47 | 2 |
+| 119 | `Ai/RevenueByPeriod.e(84:15)` | SC1 | 13 | 7 | 3 | bare | 7 | 72 | 6 |
+| 120 | `Ai/RevenueByPeriod.e(84:3)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 121 | `Ai/RevenueByPeriod.e(84:3)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 122 | `Ai/RevenueByPeriod.e(84:3)` | SC1 | 9 | 6 | 2 | join/bare | 7 | 47 | 5 |
+| 123 | `Ai/RevenueByPeriod.e(86:41)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 26 | 3 |
+| 124 | `Ai/RevenueByPeriod.e(90:16)` | SC2 | 1 | 1 | 1 | lone | 2 | 5 | 0 |
+| 125 | `Ai/RevenueByPeriod.e(90:16)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 126 | `Ai/RevenueByPeriod.e(95:12)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 127 | `Ai/RevenueByPeriod.e(95:12)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 128 | `Ai/SalesByRegion.e(63:16)` | (none in `sat`) | 4 | 3 | 1 | bare | 5 | 33 | 7 |
+| 129 | `Ai/SalesByRegion.e(63:30)` | SC1 | 3 | 3 | 1 | bare | 5 | 31 | 7 |
+| 130 | `Ai/SalesByRegion.e(63:43)` | ResR2 | 9 | 4 | 1 | bare | 5 | 38 | 7 |
+| 131 | `Ai/SalesByRegion.e(65:15)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 132 | `Ai/SalesByRegion.e(65:15)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 133 | `Ai/SalesByRegion.e(65:15)` | SC1 | 9 | 6 | 2 | join/bare | 7 | 47 | 5 |
+| 134 | `Ai/SalesByRegion.e(65:40)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 25 | 3 |
+| 135 | `Ai/SalesByRegion.e(71:3)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 136 | `Ai/SalesByRegion.e(71:3)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 137 | `Ai/SalesByRegion.e(71:3)` | SC1 | 8 | 6 | 2 | join/bare | 5 | 42 | 5 |
+| 138 | `Ai/SalesByRegion.e(72:6)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 139 | `Ai/SalesByRegion.e(72:6)` | SC4+SK1+Res3 | 7 | 3 | 1 | bare | 6 | 48 | 2 |
+| 140 | `Ai/SalesByRegion.e(72:6)` | (none in `sat`) | 8 | 3 | 1 | bare | 7 | 53 | 7 |
+| 141 | `Ai/SalesByRegion.e(74:32)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 25 | 3 |
+| 142 | `Ai/SalesByRegion.e(92:17)` | SC2 | 1 | 1 | 1 | lone | 2 | 5 | 0 |
+| 143 | `Ai/SalesByRegion.e(92:17)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 144 | `Ai/SalesByRegion.e(95:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 145 | `Ai/SalesByRegion.e(95:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 146 | `Ai/SupplyChainInventory.e(62:19)` | (none in `sat`) | 4 | 3 | 1 | bare | 5 | 32 | 7 |
+| 147 | `Ai/SupplyChainInventory.e(62:30)` | (none in `sat`) | 4 | 3 | 1 | bare | 5 | 34 | 7 |
+| 148 | `Ai/SupplyChainInventory.e(64:14)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 149 | `Ai/SupplyChainInventory.e(64:14)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 150 | `Ai/SupplyChainInventory.e(64:14)` | SC1 | 9 | 6 | 2 | join/bare | 7 | 46 | 5 |
+| 151 | `Ai/SupplyChainInventory.e(64:43)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 25 | 3 |
+| 152 | `Ai/SupplyChainInventory.e(69:3)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 153 | `Ai/SupplyChainInventory.e(69:3)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 154 | `Ai/SupplyChainInventory.e(69:3)` | SC1 | 8 | 6 | 2 | join/bare | 5 | 41 | 5 |
+| 155 | `Ai/SupplyChainInventory.e(70:6)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 156 | `Ai/SupplyChainInventory.e(70:6)` | SC4+Res3 | 5 | 3 | 1 | bare | 6 | 45 | 2 |
+| 157 | `Ai/SupplyChainInventory.e(70:6)` | SC2 | 18 | 11 | 2 | bare | 7 | 80 | 7 |
+| 158 | `Ai/SupplyChainInventory.e(71:50)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 26 | 3 |
+| 159 | `Ai/SupplyChainInventory.e(72:13)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 160 | `Ai/SupplyChainInventory.e(72:13)` | SC4+Res3 | 5 | 3 | 1 | bare | 6 | 46 | 2 |
+| 161 | `Ai/SupplyChainInventory.e(72:13)` | SC1 | 8 | 5 | 1 | bare | 7 | 51 | 7 |
+| 162 | `Ai/SupplyChainInventory.e(74:20)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 163 | `Ai/SupplyChainInventory.e(74:20)` | SC4+Res3 | 5 | 3 | 1 | bare | 6 | 46 | 2 |
+| 164 | `Ai/SupplyChainInventory.e(74:20)` | SC2+Res1 | 24 | 14 | 4 | bare | 7 | 105 | 7 |
+| 165 | `Ai/SupplyChainInventory.e(96:15)` | SC2 | 1 | 1 | 1 | lone | 2 | 5 | 0 |
+| 166 | `Ai/SupplyChainInventory.e(96:15)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 167 | `Ai/SupplyChainInventory.e(99:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 168 | `Ai/SupplyChainInventory.e(99:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 169 | `Ai/TelescopeTime.e(101:38)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 27 | 3 |
+| 170 | `Ai/TelescopeTime.e(126:15)` | SC2 | 1 | 1 | 1 | lone | 2 | 5 | 0 |
+| 171 | `Ai/TelescopeTime.e(126:15)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 172 | `Ai/TelescopeTime.e(129:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 173 | `Ai/TelescopeTime.e(129:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 174 | `Ai/TelescopeTime.e(85:21)` | (none in `sat`) | 5 | 4 | 1 | bare | 5 | 35 | 8 |
+| 175 | `Ai/TelescopeTime.e(85:35)` | SC1 | 6 | 3 | 1 | bare | 5 | 33 | 6 |
+| 176 | `Ai/TelescopeTime.e(85:45)` | SC1 | 8 | 3 | 1 | bare | 5 | 35 | 6 |
+| 177 | `Ai/TelescopeTime.e(90:13)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 178 | `Ai/TelescopeTime.e(90:13)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 179 | `Ai/TelescopeTime.e(90:13)` | SC2 | 8 | 6 | 2 | join/bare | 5 | 40 | 5 |
+| 180 | `Ai/TelescopeTime.e(90:41)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 25 | 3 |
+| 181 | `Ai/TelescopeTime.e(96:3)` | SC2 | 1 | 1 | 1 | lone | 4 | 9 | 0 |
+| 182 | `Ai/TelescopeTime.e(96:3)` | SC2+SK1+Res3 | 4 | 2 | 1 | lone/bare | 5 | 20 | 1 |
+| 183 | `Ai/TelescopeTime.e(96:3)` | SC2 | 9 | 6 | 2 | join/bare | 5 | 44 | 5 |
+| 184 | `Ai/TelescopeTime.e(97:6)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 185 | `Ai/TelescopeTime.e(97:6)` | SC4+Res3 | 5 | 3 | 1 | bare | 6 | 46 | 2 |
+| 186 | `Ai/TelescopeTime.e(97:6)` | SC1 | 13 | 7 | 1 | bare | 7 | 64 | 7 |
+| 187 | `Ai/TelescopeTime.e(99:13)` | SC2 | 1 | 1 | 1 | bare | 5 | 13 | 1 |
+| 188 | `Ai/TelescopeTime.e(99:13)` | SC4+Res3 | 5 | 3 | 1 | bare | 6 | 44 | 2 |
+| 189 | `Ai/TelescopeTime.e(99:13)` | SC2 | 10 | 8 | 2 | bare | 7 | 64 | 7 |
+| 190 | `ChartsExample.e(370:4)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 191 | `ChartsExample.e(370:4)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 192 | `ChartsExample.e(383:6)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 193 | `ChartsExample.e(383:6)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 194 | `ChartsExample.e(402:6)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 195 | `ChartsExample.e(402:6)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 196 | `ChartsExample.e(411:6)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 197 | `ChartsExample.e(411:6)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 198 | `ChartsExample.e(440:4)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 199 | `ChartsExample.e(440:4)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 200 | `ChartsExample.e(445:4)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 201 | `ChartsExample.e(445:4)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 202 | `ChartsExample.e(445:4)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 203 | `ChartsExample.e(450:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 204 | `ChartsExample.e(450:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 205 | `ChartsExample.e(450:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 206 | `ChartsExample.e(450:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 207 | `ChartsExample.e(478:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 208 | `ChartsExample.e(478:3)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 209 | `ChartsExample.e(498:3)` | SC4 | 2 | 2 | 1 | join | 2 | 6 | 0 |
+| 210 | `ChartsExample.e(498:3)` | SC4 | 2 | 2 | 1 | join | 2 | 6 | 0 |
+| 211 | `ChartsExample.e(69:20)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 212 | `ChartsExample.e(70:29)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 213 | `ChartsExample.e(70:29)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 214 | `ChartsExample.e(71:29)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 215 | `ChartsExample.e(71:29)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 216 | `ChartsExample.e(75:21)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 217 | `GridExample.e(109:3)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 26 | 3 |
+| 218 | `GridExample.e(111:3)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 25 | 3 |
+| 219 | `PieChartLegendExample.e(11:7)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 220 | `PivotTest.e(1:1)` | SC1 | 1 | 1 | 1 | join/lone/bare | 3 | 6 | 2 |
+| 221 | `PivotTest.e(1:1)` | SC1 | 1 | 1 | 1 | join/lone/bare | 3 | 6 | 2 |
+| 222 | `PivotTest.e(36:13)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 223 | `PivotTest.e(36:13)` | SC1 | 1 | 1 | 1 | join/lone/bare | 3 | 6 | 2 |
+| 224 | `PivotTest.e(57:14)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 225 | `PivotTest.e(57:14)` | SC1 | 1 | 1 | 1 | join/lone/bare | 3 | 6 | 2 |
+| 226 | `SoftRelation.e(56:3)` | (none in `sat`) | 3 | 3 | 2 | bare | 5 | 25 | 3 |
+| 227 | `SoftRelation.e(84:20)` | SC1 | 1 | 1 | 1 | join/bare | 2 | 5 | 2 |
+| 228 | `SoftRelation.e(88:25)` | SC1 | 1 | 1 | 1 | join/bare | 2 | 5 | 2 |
+| 229 | `SoftRelation.e(90:25)` | SC1 | 1 | 1 | 1 | join/bare | 2 | 5 | 2 |
+| 230 | `SoftRelation.e(92:25)` | SC2 | 1 | 1 | 1 | join | 2 | 6 | 0 |
+| 231 | `SoftRelation.e(92:25)` | SC2 | 1 | 1 | 1 | join/bare | 3 | 5 | 1 |
+| 232 | `SoftRelation.e(92:25)` | SC2 | 1 | 1 | 1 | join | 1 | 3 | 0 |
+| 233 | `shouldfail-controls/control01_vocabulary.e(24:10)` | SC1 | 6 | 3 | 1 | bare | 5 | 32 | 6 |
+| 234 | `shouldfail-controls/control04_step2_satisfiable.e(29:6)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 235 | `shouldfail-controls/control07_pair.e(22:6)` | SC1 | 1 | 1 | 1 | join/bare | 3 | 8 | 3 |
+| 236 | `shouldfail-controls/control07_pair.e(22:6)` | SC2 | 1 | 1 | 1 | join/bare | 4 | 9 | 3 |
+| 237 | `shouldfail/der02_copy_column_onto_existing.e(39:7)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 238 | `shouldfail/dup03_join1_shared_column.e(30:7)` | SC2 | 1 | 1 | 1 | join/lone | 3 | 5 | 0 |
+| 239 | `shouldfail/dup03_join1_shared_column.e(30:7)` | SC2 | 2 | 1 | 1 | join/lone/bare | 4 | 9 | 2 |
+| 240 | `shouldfail/dup04_joinby_shared_column.e(30:7)` | SC2 | 1 | 1 | 1 | join/lone | 3 | 5 | 0 |
+| 241 | `shouldfail/dup04_joinby_shared_column.e(30:7)` | SC2 | 2 | 1 | 1 | join/lone/bare | 4 | 9 | 2 |
+| 242 | `shouldfail/dup08_copy_column_onto_itself.e(24:7)` | SC2 | 1 | 1 | 1 | join/lone | 2 | 4 | 0 |
+| 243 | `shouldfail/inc08_project_absent_from_join_result.e(47:19)` | SC1 | 6 | 3 | 1 | bare | 5 | 30 | 6 |
+| 244 | `shouldfail/mis02_join_result_annotation.e(42:16)` | (none in `sat`) | 4 | 3 | 1 | bare | 5 | 34 | 7 |
+| 245 | `shouldfail/der06_shared_two_var_remainder.e(66:7)` † | (none in `sat`) | 1 | 1 | 1 | join | 2 | 6 | 2 |
+| 246 | `shouldfail/der07_shared_three_var_remainder.e(44:7)` † | (none in `sat`) | 1 | 1 | 1 | join | 2 | 7 | 2 |
+| 247 | `shouldfail/der08_shared_remainder_relations.e(42:7)` † | (none in `sat`) | 1 | 1 | 1 | join | 2 | 6 | 2 |
+
+† `REJECTED` by the row solver, so invisible to the `inpart` census predicate; the shape
+columns come from `scon`.  Their `(none in `sat`)` is for a different reason from class D's:
+there is no saturated set at all, rather than one that has lost the provenance.
+
+## R7.3 — the residue's shape, and a per-class lemma
+
+### R7.3a The four classes
+
+| class | count | what it is |
+|---|---|---|
+| **A** `split-only` | 173 | the saturated set records only `SplitConcrete`/`SplitKeyed`/`SplitRow` derivations |
+| **B** `split+resolution` | 36 | both minting rules appear |
+| **C** `resolution-only` | 3 | only `Resolution`/`ResolutionRow` appears |
+| **D** no generative provenance in `sat` | 32 | the model minted, but **no** generative provenance survives into the saturated set |
+
+Class **D** is the round's one genuinely new empirical finding, and it is the NameLoss shape
+(`Rowpartition/NameLoss.lean`, ticket 2026-09-02) seen in the corpus: **every one of the 32
+takes at least three `concrete` dispatch steps** (3 on 24 of them, 4 on one, 7 on six, 8 on
+one) and draws between 1 and 8 ids, and the minted partitions are consumed by
+`makeConcrete`/`destructiveSub` before `Subst.solve` writes `ps`.  It is also why the
+round-6 review's saturated-set proxy read 97.6 % where the direct measurement reads 97.39 %:
+a solve can mint and lose the evidence.  The 32 are concentrated in
+`Ai/{GridTelemetry,SalesByRegion,SupplyChainInventory,ClinicalTrial,IncidentSeverity,TelescopeTime,…}.e`
+and `GridExample.e` / `SoftRelation.e` / `shouldfail/mis02_join_result_annotation.e`.
+
+Sub-classing **A** by what the loop actually adds:
+
+| sub-class | count | shape |
+|---|---|---|
+| A1: one new name, **no** `concrete` step | **97** | exactly ONE id drawn, 3–9 dequeues, 1–4 input partitions; input key shape `join` 47, `lone` 28, `join/lone` 22.  (The round originally called this "the B1 shape"; that was wrong twice — the brief's gloss of the phrase, "single mints immediately concretised", is A2 below, and `B1` in this tracker already names the `makeEmpty` propagation fix, `B1-FIX.md`.  Round-7 review X-8e.) |
+| A2: one new name, with `concrete` steps | 29 | one mint, then the row is concretised; every one has a `bare` input partition and `cmax = 1` |
+| A3: more than one new name | 47 | 45 of them have 5 or 7 input partitions and all but two carry a `bare` whole row; `cmax` 1 on 24, 2 on 18, 3 on 5 |
+
+### R7.3b What the round-5 pump needs, and what the corpus lacks
+
+Round 5's pump is REPEATED MINTING AT ONE KEY — the same `(lhs, concrete part)` key minted
+turn after turn (`Loop/Pump.lean`; the round-5 hunt drove it to ten turns, the round-6
+reviewer to 443 dequeues and 1,382 draws).  **Which key matters, and the round originally got
+it wrong** (round-7 review X-8a(2)): round 5's refutation witnesses `cMint4`/`cMint8` are
+`MintsAt … 4 cKey` with `cKey` from `carrierKeys`, so the pump is defined on the **CARRIER**
+key — every fresh carrier installed at the dequeued left-hand side, `resolution`'s mint
+included — and the instrument for it is `cmax`/`cremint`, not the `splitConcrete` GUARD key's
+`max`/`remint`.  Both counters are reported below; the guard key is the flat one.  The
+instrument is now runnable over the corpus (`--replay --mints`), and on the guard key the
+answer is flat **within the seven groups**:
+
+```
+lake exe looptrace --replay <group>.tsv --mints        (all seven groups)
+```
+
+| population | solves | largest `splitConcrete` GUARD-key mints (`max`) | keys minted more than once (`remint`) |
+|---|---|---|---|
+| stdlib-`loc`, all seven groups | 2,695 | **0** (nothing minted at all) | 0 |
+| example-`loc`, seven groups | 9,362 | **1** | **0** |
+| `core/examples/incomplete/`, the group's own solves | 1,283 | **2** | **1 solve** |
+
+**Corrected (round-7 review X-8a(1)).**  The round originally concluded from the first two
+rows that "no `splitConcrete` key is ever minted twice, anywhere in the corpus — the pump shape
+does not occur in real code even once".  That is **false**: `core/examples/incomplete/` is
+inside `core/examples`, the round did not measure it, and it holds a counter-witness.  I traced
+the file myself:
+
+```
+mints 54291 trySolveOn core/examples/incomplete/np01_add_or_recompute.e(134:15) SOLVED
+      steps=98 drawn=22 max=2 remint=1 cmax=3 cremint=3 keys=5
+cycle 54291 … SOLVED steps=98 states=99 drawn=22 grew=true mint0=4 maxmint=17 conc=8
+      drawn0=4 nrows=8 canon=- exact=-
+looptrace --replay <that file> : segments=55015 replayed=55015 skipped=0 hashdiff=0 eqdiff=0
+```
+
+98 dequeues, **18 loop draws, one `splitConcrete` guard key minted TWICE**, three carrier keys
+re-minted — and the plain-`--replay` differential on the same file is clean, so it is the
+SHIPPED COMPILER's solve, not a model artefact.  The honest statement is: **no `splitConcrete`
+guard key is minted twice in the seven groups; `core/examples/incomplete/` has exactly one
+solve that does.**
+
+And the CARRIER counter — the one round 5's pump is actually defined on — repeats already in
+the seven groups:
+
+| `cmax` (fresh carriers at one key) | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|---|
+| example solves, seven groups | 9,118 | 198 | 40 | 5 | 1 | 0 | 0 |
+| stdlib solves, seven groups | 2,695 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `incomplete/`, the group's own (review X-7) | 1,188 | 66 | 19 | 5 | 2 | 2 | 1 |
+
+**46 of the seven groups' own 9,362 solves have `cremint ≥ 1`** — a carrier key minted more
+than once — with three distinct re-minted keys on `Ai/SupplyChainInventory.e(74:20)`; the
+review's `incomplete/` census adds 29 more, reaching `cmax = 6` at
+`gu05_star_join_4dim_concrete_signature.e(62:1)` (281 dequeues, 149 loop draws — 155 counting
+`PQueue.build`'s six — which I re-derived from my own trace of that file; the review quotes 145
+at X-7 and 149 at X-9(9)).  So **round 5's pump shape does occur in real code**, up to four
+turns in the seven groups and six in `incomplete/`; what does not occur, outside that one
+`np01` solve, is a repeat at the `splitConcrete` GUARD key.
+
+`cmax = 0` is exactly the 9,118 vocabulary-fixed solves — an independent cross-check of the
+census from a different instrument.  The deepest are
+`Ai/SupplyChainInventory.e(74:20)` (`cmax = 4`, 24 draws, 105 dequeues) and
+`Ai/IncidentSeverity.e(69:15)` (`cmax = 3`, 73 draws, 140 dequeues).
+
+So, class by class, what the pump needs and the class lacks:
+
+* **A1 (97 solves)** lacks the pump's *second turn* outright: **exactly one id drawn, at one
+  key** (`drawn = 1` and `cmax = 1` in all 97), and the minted name survives into the
+  saturated set — class A is defined by a `SplitConcrete` provenance being there.  There is no
+  second mint, at that key or any other.
+* **A2 (29)** draws once on 27 of them and twice on two, all at `cmax = 1`: the mint is
+  followed by a `concrete` step that closes the variable off.  **A3 (47)** and **D (32)** are
+  where the loop mints repeatedly (A3 up to 73 draws, D 3 on 22 of the 32), and never at the
+  same `splitConcrete` GUARD key — but the round's original "the repeats are at *different*
+  keys" was **true only of the guard key and false of the carrier key its own `cmax` column
+  shows** (review X-8a(2)): 18 of A3 and 22 of D reach `cmax = 2`, and five of A3 reach 3, so
+  on round 5's own key these solves DO re-mint.  What they do not do is re-mint enough times
+  for the count to be unbounded: four turns is the seven groups' maximum.  The round-5 pump needs the SAME key's carrier to
+  be withdrawn and re-minted (`destructiveSub` removing the witness, `L5-TERMINATION.md` R4.3.5);
+  in the corpus the carrier that would be withdrawn is instead consumed by a `concrete` step
+  that closes the variable off for good — which is precisely what §R7.1c's potential counts.
+* **B/C (39)** are the only classes where `resolution` mints, and they are the smallest.
+  `resolution`'s mint needs two lone-abstract premises at one variable with incomparable
+  concrete parts; over all 9,362 example solves the saturated sets record **106** `Resolution`
+  and 6 `ResolutionRow` derivations in total, all of them inside these 39 solves.
+
+**A cross-check worth stating, because it looks like an inconsistency and is not.**  Round 6's
+census of the example corpus records `SplitConcrete 422, Resolution 106, SplitKeyed 23,
+SplitRow 1, ResolutionRow 6`; summed over the 244 residue solves this round finds
+`SplitConcrete 418` and all four others in full.  The four missing `SplitConcrete`
+derivations are in VOCABULARY-FIXED solves, and they are exactly the rule's REUSE branches:
+`splitConcrete`'s syntactic, keyed and concrete-row arms all tag their conclusion
+`.splitConcrete` / `.splitKeyed` / `.splitRow` without calling `fresh`.  So a `SplitConcrete`
+provenance is not evidence of a mint — which is the same distinction §R7.2a's one-solve gap
+makes on `resolution`'s side, in the opposite direction.
+
+### R7.3c The per-class lemma: a mint BOUND is enough
+
+The classes have no separate proofs, and they do not need one: what all of them satisfy is a
+CARDINAL bound on the draws, and that is enough.
+
+```lean
+theorem step_drawn_ge {s s' : State} (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (h : step s = .continue s') :
+    s.su.drawn ≤ s'.su.drawn
+
+theorem drawn_unbounded_of_not_terminates {s : State}
+    (hem : s.flags.emptyRow = false) (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hw : Wf s) (hnd : EnvNodup s)
+    (hok : SupOk s.su) (hfr : SupFresh s.su (sys s)) (hqh : QueueHygiene s)
+    (hki : KDist s.incm.elems) (hkp : KDist s.proc.elems)
+    (h : ¬ Terminates s) : ∀ n : Nat, ∃ t, Reaches s t ∧ s.su.drawn + n ≤ t.su.drawn
+
+theorem terminates_of_drawsAtMost {k : Nat} {s : State}
+    (hem : s.flags.emptyRow = false) (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hw : Wf s) (hnd : EnvNodup s)
+    (hok : SupOk s.su) (hfr : SupFresh s.su (sys s)) (hqh : QueueHygiene s)
+    (hki : KDist s.incm.elems) (hkp : KDist s.proc.elems)
+    (h : ∀ t, Reaches s t → t.su.drawn ≤ s.su.drawn + k) : Terminates s
+```
+
+`terminates_of_drawsAtMost` is the shape every earlier round was reaching for and none could
+state: **`k` is not required to be zero, only to EXIST.**  Whatever mint bound a later round
+proves — round 4's carrier budget, round 5's charging lemma, KeyedRow's
+`mintsBoundedOnSatKeyed2Star` transported to the loop — plugs straight into it and delivers
+`Terminates` with no further measure work.  Its contrapositive
+(`drawn_unbounded_of_not_terminates`) is the sharpest negative statement of the stage:
+**a divergent solve draws unboundedly many ids.**
+
+On the corpus every residue solve draws at most **73** ids (149 in `incomplete/`), so
+`terminates_of_drawsAtMost` covers all 247 at `k = 73`.  **The epistemic status of that must be
+stated plainly**: the bound is read off the observed run, so the lemma certifies the residue
+only in the sense "given a mint bound, termination follows"; it does not supply the bound a
+priori.  That is the open problem, and §R7.4 states it.
+
+**And the same is true of the shape-specific lemma the brief hints at for A1**, which is worth
+attaching to the table explicitly (round-7 review X-11).  "One mint, then `NoConc`" is
+`terminates_of_eventuallyNoDraw` (§R7.1f), and A1's `drawn = 1` makes its hypothesis a finite
+check: run to the state just after the single mint and discharge `NoDraw` from there with
+`NoDrawB`.  So A1 has its per-class lemma and it is already proved — and it buys nothing, for
+exactly the reason above: certifying A1 that way requires running A1 to completion, and a run
+that completes already witnesses `Terminates`.  The structural lemma that WOULD have bought
+something — "a `splitConcrete` key is minted at most once" — is refuted by
+`incomplete/np01_add_or_recompute.e(134:15)` (§R7.3b).
+
+### R7.3d The certified fractions, four ways
+
+| condition | how it is checked | example solves, P1 (`inpart`) | example solves, P2 (model ran) | stdlib solves |
+|---|---|---|---|---|
+| `NoConc` (round 6) | **from the INPUT alone** | 2,388 / 9,362 = **25.5 %** | 2,388 / 9,381 = 25.5 % | 2,695 / 2,695 = **100 %** |
+| `NoDraw` (`noDraw_terminates`) | the model's run: `drawn − drawn0 = 0` | 9,117 / 9,362 = **97.38 %** | 9,133 / 9,381 = **97.36 %** | 2,695 / 2,695 = **100 %** |
+| `VocFixed` (`vocFixed_terminates`) | the model's run: `grew = false` | **9,118 / 9,362 = 97.39 %** | **9,134 / 9,381 = 97.37 %** | 2,695 / 2,695 = **100 %** |
+| `DrawsAtMost k` (`terminates_of_drawsAtMost`) | a mint bound — the corpus supplies `k ≤ 73` | 9,362 / 9,362 (at the observed `k`) | 9,381 / 9,381 (same) | 2,695 / 2,695 (at `k = 0`) |
+
+(`incomplete/`, which the round did not measure and the round-7 review did: its own solves are
+**1,188 / 1,283 = 92.6 %** vocabulary-fixed and 425 / 1,283 `NoConc`, and its stdlib half is
+12,682 / 12,682 on every one of the four conditions — X-7.)
+
+Only the first row is a prediction about an unseen input.  Rows two and three are the round's
+result: the class is proved to terminate at an explicit bound, and 97.4 % of the example
+corpus is measured to be in it.  Row four is the reduction, not a certification.
+
+## R7.4 — the open problem, stated
+
+**Certified population.**  Standard library: **100 %** — 2,695 of 2,695 row-carrying solves
+across the seven traces by this round's model run, and 12,682 of 12,682 in `incomplete/` by the
+round-7 review's (X-7), which with the boot's own 373 is the round-6 reviewer's 15,377 of
+15,377 across all 41 traces — input-checkably, by round 6's `NoConc`.  User programs, run-level:
+**97.39 %** of the 9,362 solves the `inpart` census predicate can see (9,118 vocabulary-fixed,
+9,117 draw-free) and **97.37 %** of the 9,381 the model actually runs (9,134 / 9,133), the
+difference being the 19 `REJECTED` solves that predicate drops (§R7.2, review X-8b).  In
+`core/examples/incomplete/`, which this round did not measure, the group's own solves are
+**1,188 of 1,283 = 92.6 %** vocabulary-fixed (review X-7).
+
+**The residue, as a named list of shapes.**
+
+| shape | count | what a divergence inside it would have to look like |
+|---|---|---|
+| **A1** exactly one id drawn, no `concrete` step | 97 | a second mint at the SAME key; the corpus has none, and A1's minted name survives into `sat`, so the carrier `splitConcrete`'s lookup would have to miss is still there |
+| **A2** one mint, then the row is concretised | 29 | the concretised variable would have to be re-opened; `makeConcrete` installs `v <- ((|fs|))` and `ensureSuperset` forces every later row of `v` to contain `fs`, which is the potential §R7.1c counts — so a divergence here needs a variable whose concrete row grows without bound, i.e. an unbounded LABEL pool |
+| **A3** ≥ 2 new names, `join`/`bare` inputs of 5–7 partitions | 47 | mints at unboundedly many DISTINCT keys; each key is a `(lhs, concrete part)` pair over the input's vocabulary and label pool, so this needs the VOCABULARY to grow — which is what round 4's `hmeas_increases` and round 5's redirect show is possible in principle and what no corpus solve does |
+| **B/C** `resolution` mints (36 + 3) | 39 | unboundedly many pairs of lone-abstract premises at one variable with incomparable concrete parts; `resGuard` and `resRow` reuse close the ones the corpus produces |
+| **D** mints whose provenance is consumed before `sat` | 32 | the NameLoss race (`destructiveSub` withdrawing the carrier `splitConcrete` would reuse) driven cofinally — round 4's `mS0`/`mH2` witness is exactly one turn of it, and the corpus reaches at most `cmax = 2` |
+
+**What a divergence would have to look like, in one sentence.**  By
+`drawn_unbounded_of_not_terminates` it must draw unboundedly many ids, and by
+`not_vocFixed_of_not_terminates` it must therefore leave every finite vocabulary — so it must
+mint at unboundedly many distinct left-hand sides, each key being a `(lhs, concrete part)`
+pair over a label pool `reaches_concSub` proves FIXED.  **Whether it must do so at distinct
+keys is exactly what the round originally over-claimed** (review X-8a).  Corrected: at the
+`splitConcrete` GUARD key the corpus re-mints once, at
+`core/examples/incomplete/np01_add_or_recompute.e(134:15)`, on a solve the shipped compiler
+performs; at the CARRIER key round 5's refutation is defined on, 46 of the seven groups' own
+9,362 solves re-mint, up to four times, and `incomplete/` reaches six.  So a divergence need
+not invent a new key at every turn — it needs the re-minting to be UNBOUNDED, and the largest
+depth anyone has measured in real code is six.  The other half of the shape is unchanged and is
+the strongest negative on record: the pump's deep witnesses are walks, not cycles — round 6's 0
+repeats in 3,082,009 canonical states, and now 0 in 450,064 corpus solves and, by the review,
+0 in `incomplete/`'s further 1,851,131 segments.
+
+**The open problem, precisely.**  Is `drawn` bounded along every run from a satisfiable
+initial state?  Equivalently, since `terminates_of_drawsAtMost` closes the gap: *does the loop
+mint boundedly often?*  Round 4 refuted the two natural charging arguments
+(`ChargeI`/`ChargeII`), round 5 refuted the dequeue-order repair, and round 6 and this round
+have found no divergence in 134,674 + 450,064 solves.  The question is now a single
+quantitative one about `Sup.drawn`, with the whole measure apparatus discharged behind it.
+
+## R7.5 — what round 7 could NOT prove, side by side
+
+| wanted | got | why not more |
+|---|---|---|
+| an INPUT-checkable condition wider than `NoConc` | **NOT FOUND** | W-9's 111 corpus witnesses refute the obvious one; `substitution` and `commonSubexpression` manufacture `splitConcrete`'s firing shape out of inputs on which it cannot fire, and nothing weaker than "no labels" was found closed under `step` |
+| `Terminates` for every satisfiable `Wf s₀` | **NO** | still the plan's open criterion; what is proved is `Terminates` for a class defined by the RUN, which contains 97.4 % of the example corpus and all of the standard library |
+| a mint bound | **NO** | round 4's two charging lemmas and round 5's order repair are refuted; this round did not attempt a third and states the reduction instead (`terminates_of_drawsAtMost`) |
+| per-class termination lemmas for the five residue shapes | **ONE, cardinal not structural** | `terminates_of_drawsAtMost` covers all five at once given a draw bound; no shape-specific argument was found that supplies the bound |
+| the `incomplete/` corpus | **NOT MEASURED THIS ROUND — and it held a counter-witness** | the round-7 reviewer ran both new instruments over all 34 modules (X-7): 1,851,131 segments, **0 canonical and 0 exact repeats, 0 `FUEL`**, deepest run **281 dequeues** at `gu05_star_join_4dim_concrete_signature.e(62:1)`; stdlib-`loc` **12,682 / 12,682** `NoConc`, vocabulary-fixed, draw-free and `concrete`-free; the group's own solves **1,283 built, 425 `NoConc`, 1,188 (92.6 %) vocabulary-fixed, 95 residue** (A/B/C/D = 44/30/1/20).  It is also where the round's `splitConcrete`-guard-key sentence was refuted (X-8a).  **`incomplete/` is inside `core/examples` and should be a first-class group from round 8 on** |
+
+## R7.6 — what a reviewer should re-run
+
+```bash
+export PATH=$HOME/.elan/bin:$PATH
+cd tracker/lean && lake build Rowpartition          # 855 jobs
+lake env lean Audit.lean                            # 3706 theorems / 0 non-standard axioms
+grep -nE '\bsorry\b|\baxiom\b|\bpartial\b|native_decide|implemented_by|\bunsafe\b|\bopaque\b|Classical|\badmit\b|#exit' \
+  Rowpartition/Loop/{VocFix,Cycle,Main}.lean        # one hit: the word `partial` in Main's doc comment
+lake build looptrace                                # 1656 jobs
+
+# the corpus, from scratch (~12 min, ~5 MB of gzipped trace)
+tmp/L5r7/gentrace.sh
+tmp/L5r7/runcycle.sh          # --replay --cycle over all seven groups
+tmp/L5r7/runmints.sh          # --replay --mints over all seven groups
+python3 tmp/L5r7/r7census.py <group> traces/<group>.tsv.gz cyc/<group>.tsv.gz
+python3 tmp/L5r7/stdcens.py
+python3 tmp/L5r7/agg.py       # the residue classification
+python3 tmp/L5r7/supok.py     # SupOk on all 450,064 `sin` records
+python3 tmp/L5r7/supfresh.py  # SupFresh    on all 450,064 `sin` records  (review X-3b)
+python3 tmp/L5r7/verbatim.py  # every quoted Lean declaration against its module
+
+# added after the round-7 review
+tmp/L5r7/runreplay.sh         # the GENUINE L2 differential: plain `--replay`, seven groups
+python3 tmp/L5r7/r7census2.py # both census populations (9,362 / 9,381) and residue2.json
+python3 tmp/L5r7/proxy.py     # the round-6 proxy diffed against the model, solve by solve
+
+# the shipped compiler on the Lean witness, ten id bases
+export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
+ERMINE_JAVA_OPTS=-Dermine.useInterface=false tracker/repro/satterm/run.sh \
+  sweep json:tmp/L5r7/seeds/D.json 0 9 30 20        # SOLVED=10, DRAWN 0:x10
+```
+
+(`tmp/L5r7` is this round's scratch directory,
+`/home/dmitry/.claude/jobs/880c725d/tmp/L5r7/`, the same convention round 6 used for
+`tmp/L5r6`; it holds the scripts, the gzipped traces, the two per-solve reports, the residue
+JSON and the axiom census.)
+
+`#print axioms` for all 100 declarations of `Loop/VocFix.lean` plus `isConcDispatch` and
+`cycleRun` (102 in all): 97 × `[propext, Classical.choice, Quot.sound]`, 2 × `[propext, Quot.sound]`,
+3 axiom-free, **0 `sorryAx`** (`tmp/L5r7/{decls.txt,Axioms.lean,axioms.txt}`).
+
+Every Lean declaration quoted in this section was checked against its module mechanically
+(`tmp/L5r7/verbatim.py`: extract each `theorem`/`def` block from the Round-7 section,
+normalise whitespace, look it up in `Loop/{VocFix,Cycle}.lean`): **50 quoted declarations, 0
+differences.**
+
+## R7.7 — Round 7, post-review corrections (2026-09-05, after `L5-REVIEW.md` "Round-7 review", verdict FIX-THEN-ADVANCE)
+
+The reviewer reproduced every theorem, every verbatim quotation and every number on the
+population the round measured — 855 jobs, 3706/0, 50/50 verbatim, all 244 residue rows × 9
+fields with zero differences — and refuted or qualified **three sentences**.  All three are
+corrected in place above; this section records what they said and what they now say, so the
+change is not silent.  **No theorem, bound or Lean statement changed**; the certified fraction
+moves by at most 0.02 points.
+
+| # | where | OLD (wrong or vacuous) | NEW |
+|---|---|---|---|
+| **X-8a** | state file, plan L5 row, §R7.3b, §R7.4 | "**no `splitConcrete` key is minted more than once anywhere in the corpus** — the pump shape the last three rounds hunted does not occur in real code even once" | "no `splitConcrete` **GUARD** key is minted twice **in the seven groups**; `core/examples/incomplete/` — which the round did not measure and which is inside `core/examples` — has exactly one solve that does, `np01_add_or_recompute.e(134:15)`.  And round 5's pump is defined on the **CARRIER** key, on which **46 of the seven groups' own 9,362 solves already re-mint**, up to four times (six in `incomplete/`).  So the pump shape DOES occur in real code; what is bounded, at four and six, is how often" |
+| **X-8b** | §R7.2, §R7.2a, §R7.2d, §R7.3d, §R7.4, state file, plan row | the census population was "≥ 1 `inpart` record", stated nowhere; "Every one of the 244 is `SOLVED` by the model" | the predicate and its bias are stated: `Subst.scala:1215` writes `inpart` only after `q.expand` SUCCEEDS, so the 19 example solves the row solver REJECTS are invisible.  Both populations are now reported everywhere — **P1 9,362 / 9,118 (97.39 %) / 244** and **P2 9,381 / 9,134 (97.37 %) / 247** — and §R7.2d gains rows 245–247, the three dropped residue solves |
+| **X-8c** | §R7.2c, state file, plan row | "skipped / `hashdiff` / `eqdiff` \| **0 / 0 / 0**", glossed as "so the model is running the compiler's own solves" | in `--cycle`/`--mints` mode `replayMain` never calls `replay`; those two counters are the literal zeros of `return (1, 0, 0, 0, …)` and **nothing is compared**.  The row now claims only `skipped`, and the differential is re-established by a plain `--replay` over all seven groups plus the two `incomplete/` files: **450,064 replayed, 0 skipped, 0 `hashdiff`, 0 `eqdiff`** |
+| **X-8d** | §R7.2a | the 97.64 → 97.39 gap is "precisely the 32-solve class §R7.3 names" | it is TWO terms: **24 of those 32** (the proxy catches the other 8) **minus** an omitted **+22** — solves that write no saturated set at all, outside the proxy's population, all vocabulary-fixed.  `9,120 + 22 − 24 = 9,118` |
+| **X-8e** | §R7.3a | sub-class A1 labelled "the B1 shape" | label dropped: the brief's gloss of that phrase ("single mints immediately concretised") is **A2**, and `B1` in this tracker already names the `makeEmpty` propagation fix |
+| **X-8f** | §R7.1d | "`Wf`, `EnvNodup`, the two `KDist`s and `QueueHygiene` are all free at an initial state"; "`SupOk` and `SupFresh` … a corpus replay reads out of its `sin` record" | `Wf` is **kept as a hypothesis** by the `_of_buildQueue` corollaries (dischargeable by `wf_seed`/`wf_replay`); `SupOk` is four `sin` fields but **`SupFresh` is not a field at all**, and the round measured only the first.  It is now measured too: **450,064 / 450,064, 0 violations** |
+| **X-8g** | `Loop/Main.lean` | a `buildQueue` failure printed the `CycleRep` DEFAULTS, so a `BUILD` segment scored `grew=false`, i.e. "vocabulary fixed" | the cycle line prints **`grew=?`** on a `BUILD` verdict.  One such segment exists in the seven groups, `shouldfail/dup01_partition_literal.e(25:7)`; it has no `inpart` record, so no number moved, and it is the whole of the `rejected=31` vs `32` difference on `shouldfail` |
+| **X-8h** | `Loop/Main.lean` | the five new `CycleRep` fields and `--mints`' `keys` printed only on the `--replay` path | the `json:` seed path prints them too, so a hand-built seed can be scored for `grew`, `conc`, `mint0`, `drawn0` and `keys` without going through a trace |
+
+**Everything in the corrections was re-measured here, not copied.**  My own runs, from my own
+traces: the 19 dropped solves and the three residue ones among them (`tmp/L5r7/r7census2.py`,
+`dropped.json`); the proxy diff `9,120 / 220 / 24 / +22` (`proxy.py`); `SupFresh`
+450,064/450,064 (`supfresh.py`); the plain-`--replay` differential over all seven groups
+(`runreplay.sh`); and the `np01_add_or_recompute.e(134:15)` and
+`gu05_star_join_4dim_concrete_signature.e(62:1)` witnesses, traced from source with
+`-Dermine.rowTrace` and run through both instruments (`tmp/L5r7/inc/`).  The `incomplete/`
+group's aggregate figures (12,682 / 1,283 / 1,188 / 95 and the class split) are the reviewer's
+X-7 and are attributed as such; I re-derived only the two witness files.  Where my figure and
+the review's differ I use mine and say so: `gu05…(62:1)` draws **149** ids in the loop (155
+counting `PQueue.build`'s six), which is X-9(9)'s number, not X-7's 145.
+
+`Loop/Main.lean` is the only Lean file touched by these corrections and it carries no theorem.
+After them: `lake build Rowpartition` **855 jobs**, `lake env lean Audit.lean` **3706 theorems /
+0 non-standard axioms**, `lake build looptrace` **1656 jobs** — unchanged.
+
+**What the reviewer added in the round's favour**, and which is now folded in above: `SupFresh`
+holds corpus-wide (X-3b); the theorem instantiated at a witness taking the `concrete` branch
+**five times in a row**, with `rowSet`'s strict growth `decide`d at each (X-4); the shipped
+compiler at 12 further id bases on this round's witness and 12 on the reviewer's (X-5); a
+line-by-line reading of `ensureSuperset` / `makeConcrete` / `destructiveSub` / `findRHS`
+against §R7.1c, which confirms all three facts the potential rests on (X-6); and the
+`incomplete/` census (X-7).  The round-8 pointer the review leaves — **instrument the MINT
+CHAIN DEPTH**, since `227 of 230` `splitConcrete` mint sites in the six example groups are
+INPUT variables while `resolution` chains on about half its conclusions (X-9(8)) — is the
+first quantity anyone has proposed that a mint bound could plausibly bound.

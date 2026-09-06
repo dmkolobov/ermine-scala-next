@@ -257,3 +257,33 @@ at the input; ceiling 97.6% (vocabulary-fixed), not 98.9%. Corrections sent to t
 (2026-09-05): Ermine is a reporting language, users always end with concrete fields — the stdlib certification is
 a FLOOR; round 7 should certify the examples' no-generative-rule fragment and list the label-carrying residue solve
 by solve. UNCOMMITTED: round 6 (commit on the user's word).
+Round 6 COMMITTED `157a3f3` (2026-09-05, user's word; certification scope = 15,377/15,377 stdlib-located row solves).
+L5 ROUND 7 LAUNCHED (fresh Opus, `briefs/brief-L5r7.md`): the USER-FACING fragment — R7.1 vocabulary-fixed /
+no-mint fragment with Terminates, R7.2 census of all 9,362 example solves with a row per residue solve (+ cycle
+detector over corpus replays), R7.3 residue classified by shape with per-class lemmas, R7.4 the open problem
+stated as certified fractions + a named list of shapes. Reviewer after.
+ROUND 7 REPORTED (2026-09-05; uncommitted): `Loop/VocFix.lean` (1,938 lines, 86 theorems), `--cycle`/`--mints` over
+corpus replays in `Loop/Main.lean`; orchestrator re-verified build 855 jobs / Audit 3706 theorems, 0 non-standard
+axioms / no sorry. Headline: `vocFixed_terminates` + `noDraw_terminates` (RUN-level; input-checkable widening NOT
+found), `terminates_of_drawsAtMost` / `drawn_unbounded_of_not_terminates` (a divergent solve draws unboundedly many
+ids); the `concrete` branch paid for by `rowSet` (ensureSuperset + findRHS miss + destructiveSub keeps other rows).
+Census: examples 9,118/9,362 (97.39%) vocabulary-fixed, stdlib 2,695/2,695; cycle detector over 450,064 corpus
+solves 0 repeats; no splitConcrete key minted twice anywhere in the corpus (cmax reaches 4); residue 244 rows
+classified A1 97 / A2 29 / A3 47 / B 36 / C 3 / D 32 (D = NameLoss shape in the corpus). REVIEWER LAUNCHED (fresh
+Opus; report = "Round-7 review" section of L5-REVIEW.md; scratch tmp/review-L5r7/). Commit only on the user's word.
+ROUND-7 REVIEW (2026-09-05): FIX-THEN-ADVANCE — mathematics reproduces exactly (all 50 verbatim, 244 residue rows ×
+9 fields identical, theorem instantiated at a 5-`concrete`-step witness of the reviewer's own, SupFresh 450,064/
+450,064); three sentences to fix: X-8a "no splitConcrete key minted twice anywhere / pump does not occur" is FALSE
+(`incomplete/np01_add_or_recompute.e(134:15)` re-mints a guard key; round 5's pump is the CARRIER key, re-minted on
+46/9,362 up to cmax 4, cmax 6 in incomplete/); X-8b census predicate (≥1 inpart, written only after q.expand) hides
+19 REJECTED solves, 3 residue → honest 9,381/9,134/247; X-8c hashdiff/eqdiff are literal 0s in --cycle/--mints mode
+(differential re-run separately, holds); docs X-8d..g. incomplete/ measured by the reviewer: stdlib 12,682/12,682,
+group's own 1,188/1,283 = 92.6%, deepest 281 dequeues. Round-8 pointer: measure/bound the mint CHAIN DEPTH; do NOT
+spend a round on "guard key minted at most once". Corrections SENT to the round-7 implementer (resumed).
+ROUND 7 CORRECTIONS APPLIED (2026-09-05): §R7.7 old/new table in L5-TERMINATION.md; state file / plan row / README /
+§R7.3b / §R7.4 restated (guard key vs CARRIER key; incomplete/ np01 re-mint; both populations 9,362/9,118/244 and
+9,381/9,134/247; hashdiff/eqdiff via plain --replay 450,064 replayed 0/0/0; SupFresh 450,064/450,064; Wf kept as a
+hypothesis by _of_buildQueue; incomplete/ figures folded in); Main.lean prints grew=? on BUILD and the CycleRep
+fields on the json: path. Orchestrator re-verified: build 855 / looptrace 1656 / Audit 3706 theorems, 0 non-standard
+axioms / no sorry. READY TO COMMIT on the user's word (round 7 + review + corrections, one commit; include the
+handoff note and briefs/brief-L5r7.md). Round 8, if the user wants it: mint CHAIN DEPTH (reviewer X-12).

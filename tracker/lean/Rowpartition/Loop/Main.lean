@@ -73,6 +73,43 @@ def natOpt (opts : List String) (key : String) (dflt : Nat) : Nat :=
   | some n => n
   | none => dflt
 
+/-- L5 round 7 (round-6 review W-6g): ONE segment through the cycle detector rather than
+through the record printer, so `--cycle` runs over corpus replays and not only over `json:`
+seeds.  The state is the one `Seed.solve` and `Replay.replay` build -- `buildQueue` of the
+segment's constraint list, `proc` and `env` empty -- so the report is about exactly the solve
+the compiler performed.  The early label check is deliberately NOT applied: a solve the
+checker rejects before the loop starts still has a loop to search, and `labelCheckEarly`
+would hide it. -/
+def replayCycleOne (fl : Flags) (fuel : Nat) (g : Segment) : Except String CycleRep :=
+  if !g.errs.isEmpty then .error (String.intercalate "; " g.errs)
+  else if g.cons.length != g.nCs then
+    .error ("scon count " ++ toString g.cons.length ++ " != nCs " ++ toString g.nCs)
+  else
+    match buildQueue g.cons g.sup with
+    | .error m => .ok { verdict := "BUILD", witness := m }
+    | .ok (q, su1) =>
+      let st0 : State :=
+        { incm := q, proc := PQueue.empty, env := {}, su := su1, trace := [], flags := fl,
+          names := g.names, site := g.site, su0 := g.sup.lo }
+      .ok (cycleRun fuel st0 [] [] {})
+
+/-- L5 round 7: ONE segment through round 5's PER-KEY MINT instrument (`Loop/Pump.lean`),
+so `--mints` runs over corpus replays too.  `max` is the largest number of `splitConcrete`
+mints at ONE key `(lhs, concrete part)` and `remint` the number of keys minted at more than
+once -- which is exactly the shape the round-5 pump needs. -/
+def replayMintOne (fl : Flags) (fuel : Nat) (g : Segment) : Except String PumpRep :=
+  if !g.errs.isEmpty then .error (String.intercalate "; " g.errs)
+  else if g.cons.length != g.nCs then
+    .error ("scon count " ++ toString g.cons.length ++ " != nCs " ++ toString g.nCs)
+  else
+    match buildQueue g.cons g.sup with
+    | .error m => .ok { verdict := "BUILD" }
+    | .ok (q, su1) =>
+      let st0 : State :=
+        { incm := q, proc := PQueue.empty, env := {}, su := su1, trace := [], flags := fl,
+          names := g.names, site := g.site, su0 := g.sup.lo }
+      .ok (pumpRun fuel st0 {})
+
 /-- `--replay`: every solve of a compiler trace, through the model.
 
 STREAMING, one segment at a time: a corpus trace can be hundreds of megabytes (a diverging
@@ -100,9 +137,49 @@ def replayMain (path : String) (opts : List String) : IO UInt32 := do
   let mut eof := false
   let mut hitBound := true
   -- Replay the segment just completed.
+  let cycMode := opts.contains "--cycle"
+  let mintMode := opts.contains "--mints"
   let flush : Nat → Segment → IO (Nat × Nat × Nat × Nat × Nat × Nat) := fun j g => do
     if !(lo ≤ j && j ≤ hi) then
       return (0, 0, 0, 0, 0, 0)
+    if mintMode then
+      match replayMintOne fl fuel g with
+      | .error m =>
+        IO.println s!"#skip\t{j}\t{m}"
+        return (0, 1, 0, 0, 0, 0)
+      | .ok rep =>
+        IO.println (s!"mints\t{j}\t{g.site}\t{g.loc}\t{rep.verdict}\tsteps={rep.steps}" ++
+          s!"\tdrawn={rep.drawn}\tmax={rep.maxAtKey}\tremint={rep.remintKeys}" ++
+          s!"\tcmax={rep.maxAtCKey}\tcremint={rep.remintCKeys}\tkeys={rep.tally.length}")
+        return (1, 0, 0, 0, (if rep.verdict == "REJECTED" then 1 else 0),
+          (if rep.verdict == "FUEL" then 1 else 0))
+    if cycMode then
+      -- One `cycle` line per solve; nothing else is printed.  `parts` is the number of
+      -- input partitions the model built, `grew` whether a minted id ever entered a
+      -- partition, `conc` how many dequeues took the `concrete` branch.
+      match replayCycleOne fl fuel g with
+      | .error m =>
+        IO.println s!"#skip\t{j}\t{m}"
+        return (0, 1, 0, 0, 0, 0)
+      | .ok rep =>
+        let sc := match rep.canonHit with
+          | none => "-"
+          | some (i, k) => s!"{i},{k}"
+        let sr := match rep.rawHit with
+          | none => "-"
+          | some (i, k) => s!"{i},{k}"
+        -- `BUILD` means `PQueue.build` itself failed, so `cycleRun` never ran and every
+        -- field below is the structure's DEFAULT.  `grew=false` would then read as
+        -- "vocabulary fixed" to a census that only looks at the column, so it is printed
+        -- as `?` (round-7 review X-8g).
+        let sg := if rep.verdict == "BUILD" then "?" else toString rep.grew
+        IO.println (s!"cycle\t{j}\t{g.site}\t{g.loc}\t{rep.verdict}\tsteps={rep.steps}" ++
+          s!"\tstates={rep.distinct}\tdrawn={rep.drawn}\tgrew={sg}" ++
+          s!"\tmint0={rep.mint0.length}\tmaxmint={rep.maxMint}\tconc={rep.nconc}" ++
+          s!"\tdrawn0={rep.drawn0}" ++
+          s!"\tnrows={g.nRows}\tcanon={sc}\texact={sr}")
+        return (1, 0, 0, 0, (if rep.verdict == "REJECTED" then 1 else 0),
+          (if rep.verdict == "FUEL" then 1 else 0))
     IO.println s!"#seg\t{j}\t{g.site}\t{g.loc}"
     match replay fl fuel g with
     | .error m =>
@@ -213,7 +290,10 @@ def mainImpl (args : List String) : IO UInt32 := do
             let sr := match rep.rawHit with
               | none => "-"
               | some (i, j) => s!"{i},{j}"
-            IO.println s!"cycle\t{rep.verdict}\tsteps={rep.steps}\tstates={rep.distinct}\tdrawn={rep.drawn}\tcanon={sc}\texact={sr}"
+            IO.println (s!"cycle\t{rep.verdict}\tsteps={rep.steps}\tstates={rep.distinct}" ++
+              s!"\tdrawn={rep.drawn}\tgrew={rep.grew}\tmint0={rep.mint0.length}" ++
+              s!"\tmaxmint={rep.maxMint}\tconc={rep.nconc}\tdrawn0={rep.drawn0}" ++
+              s!"\tcanon={sc}\texact={sr}")
             if rep.canonHit.isSome then IO.println s!"witness\t{rep.witness}"
         else if opts.contains "--mints" then
           let (parts', su1) := (parts, Sup.ofSeed ns.supplyLo)
@@ -224,7 +304,9 @@ def mainImpl (args : List String) : IO UInt32 := do
               { incm := q, proc := PQueue.empty, env := {}, su := su2, trace := [], flags := fl,
                 names := ns, site := site, su0 := (Sup.ofSeed ns.supplyLo).lo }
             let rep := pumpRun fuel st0 {}
-            IO.println s!"mints\t{rep.verdict}\tsteps={rep.steps}\tdrawn={rep.drawn}\tmax={rep.maxAtKey}\tremint={rep.remintKeys}\tcmax={rep.maxAtCKey}\tcremint={rep.remintCKeys}"
+            IO.println (s!"mints\t{rep.verdict}\tsteps={rep.steps}\tdrawn={rep.drawn}" ++
+              s!"\tmax={rep.maxAtKey}\tremint={rep.remintKeys}\tcmax={rep.maxAtCKey}" ++
+              s!"\tcremint={rep.remintCKeys}\tkeys={rep.tally.length}")
             for (k, n) in rep.tally do
               IO.println s!"key\t{k.1}\t{String.intercalate "," (k.2.toList.map (fun l => toString l.n))}\t{n}"
             for (k, n) in rep.ctally do
