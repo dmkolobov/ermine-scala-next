@@ -2,8 +2,9 @@
 # `incorporateAll` as a function
 
 `Constraints.scala`: `incorporateAll` (1109), `learnPartitions` (1355), `simpleSubst` (1496),
-`unify`/`replace`/`instantiate` (1520-1543), `makeEmpty` (1561), `subPartitions` (1588),
-`makeConcrete` (1600), `destructiveSub` (1622).
+`unify` (1520) / `replace` (1523) / `instantiate` (1533), `makeEmpty` (1561),
+`subPartitions` (1598), `makeConcrete` (1610), `destructiveSub` (1632), `ensureSuperset`
+(312).  (Line numbers re-checked 2026-09-06, S1 review Z-11.)
 
 The Scala is a tail-recursive function over two queues, a mutable `SubstEnv` and a mutable
 `Supply`, and it can throw.  Here it is one `step : State -> StepResult`, with the
@@ -106,7 +107,7 @@ contradiction.  Every partition MENTIONING `v` is erased from both queues and th
 `v := ConcreteRho(∅)` goes into the environment, which is why an emptied variable is
 invisible to the concrete-row lookups.
 
-The SKOLEM refusal (`Constraints.scala:1577`) sits exactly where the Scala puts it: after the
+The SKOLEM refusal (`Constraints.scala:1587`) sits exactly where the Scala puts it: after the
 `nps` fold, so an "Incompatible instantiations" contradiction still wins, and before
 `instantiateType`, so the reinstantiation panic comes after.  L1 listed it as not modelled --
 a `json:` seed has no skolem -- and L2 found it: five `shouldfail/sk0*` modules force a

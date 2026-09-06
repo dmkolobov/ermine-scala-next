@@ -1,0 +1,2 @@
+{"name":"FALSE-ACCEPT-1 (S1 review Z-1, un-minimised = u00019): UNSATISFIABLE, passes labelCheckEarly, SHIPPED compiler SOLVED at bases 300..302. The witness MIN1.json was minimised from this one.",
+ "cons": [[6, [7, 2], []], [6, [4, 0], [22, 35]], [7, [3, 1], []], [3, [2, 0], []], [1, [0], [22]]]}

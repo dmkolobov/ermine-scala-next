@@ -129,6 +129,31 @@ first getting the module to build.
                                prints the compiler's `-Dermine.rowTrace` TSV, and
                                `tracker/tools/looptrace-diff.py` diffs the two: 240/240
                                comparisons agree (`tracker/loopmodel/L1-MODEL.md`)
+* `Rowpartition.Loop.Sound`  -- S1 (A): OUTPUT SOUNDNESS.  `StrictStep.step_noLoss` covers four
+                               of the five dispatch branches; this adds the fifth, `concrete`,
+                               the one that DELETES.  Three of its four deletions are licensed
+                               (`sat_of_subst_image`, `sat_of_cancel_image`, `keepDefs`); the
+                               fourth -- a BARE concrete definition `v <- ((|C|))` with
+                               `C != fs`, deleted when `destructiveSub`'s `srs` is non-empty --
+                               is not, and `bare_refutes` shows the state it can happen at has
+                               no model, so the licence is `BareAgree` and the unconditional
+                               form is `NoLoss ∨ ¬ SSat` (`step_noLoss_all`, `step_noLoss_or`,
+                               `run_noLoss`, `run_models`).  The S1 REVIEW found `BareAgree`
+                               failing at reachable shipped-flag states and the compiler
+                               ACCEPTING the resulting unsatisfiable system
+                               (`tracker/repro/satterm/seeds/unsat/MIN2.json`): the theorems
+                               hold, but soundness here is soundness on SATISFIABLE input
+* `Rowpartition.Loop.Reject` -- S1 (B): REJECTION SOUNDNESS.  Every one of the seven messages
+                               `step` can die with, extracted to `¬ SSat (sys s)` or excluded:
+                               the two reinstantiation panics are unreachable under
+                               `QueueHygiene`, the skolem refusal is the ONE non-refutation,
+                               and the rest are `merge_refutes` / `selfSubst_refutes` /
+                               `incompatible_refutes` / `ensureSuperset_refutes`
+                               (`step_died_refutes`, `run_rejects_unsat`)
+* `Rowpartition.Loop.Solve`  -- S1 (C): `solve_sound`, both halves packaged from
+                               `buildQueue`/`initState` with every hypothesis discharged from
+                               the input, instantiated on `NP01.json` (accepted) and
+                               `REF.json` (rejected)
 -/
 import Rowpartition.Basic
 import Rowpartition.Rules
@@ -190,3 +215,6 @@ import Rowpartition.Loop.Cycle
 import Rowpartition.Loop.NoConc
 import Rowpartition.Loop.VocFix
 import Rowpartition.Loop.Depth
+import Rowpartition.Loop.Sound
+import Rowpartition.Loop.Reject
+import Rowpartition.Loop.Solve

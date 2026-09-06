@@ -1,9 +1,10 @@
 /-
 # The inference rules, branch for branch
 
-`Constraints.scala`: `selfSubstitution` (1156), `splitConcrete` (1301), `cancellation` (1667),
-`resolution` (1758), `subBody`/`substitution` (1807/1821), `commonSubexpression` (1834),
-`disjunction` (1867).
+`Constraints.scala`: `selfSubstitution` (1156), `splitConcrete` (1301), `cancellation` (1677),
+`resolution` (1768), `subBody`/`substitution` (1817/1831), `commonSubexpression` (1844),
+`disjunction` (1877); `RHS.merge`'s `die` (341).  (Line numbers re-checked 2026-09-06,
+S1 review Z-11.)
 
 Two things every rule here has to get right and a relation does not:
 
@@ -22,7 +23,9 @@ import Rowpartition.Loop.Queue
 
 namespace Rowpartition.Loop
 
-/-- `V.toString` (`Vars.scala:111`), which the error messages interpolate. -/
+/-- `V.toString` (`Vars.scala:110`), which the error messages interpolate.  ABSTRACTED: the
+Scala appends `"S"` for a `Skolem` (`Vars.scala:110-112`), which the model does not, so a
+skolem message differs from the compiler's in that one character (S1 review Z-9). -/
 def varStr (ns : Names) (v : Nat) : String :=
   match ns.nameOf v with
   | some n => n ++ "^" ++ toString v

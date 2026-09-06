@@ -629,6 +629,42 @@ all terminate -- but base 4 cannot be decided in the repro harness at all, becau
 
 ---
 
+## SOUNDNESS of the loop (S1) — and the BUG the review found
+
+`tracker/LOOP-MODEL-PLAN.md` §S1, report `tracker/loopmodel/S1-SOUNDNESS.md`, review
+`S1-REVIEW.md` (FIX-THEN-ADVANCE; nothing to change in the Lean).  Three new modules, imported
+from `Rowpartition.lean`.  Build 859, Audit 3804/0; `lake build looptrace` 1662.
+
+> **What is proved is soundness on SATISFIABLE input.**  `solve_sound` says nothing when the
+> input is unsatisfiable, and the review found that the gap is real: the SHIPPED COMPILER
+> ACCEPTS unsatisfiable row systems.  `tracker/repro/satterm/seeds/unsat/MIN2.json` (5
+> constraints, UNSAT at `l17`, `SOLVED` at 4/20 id bases) goes THROUGH the bare-row deletion
+> below; `MIN1.json` (UNSAT at `l35`, `SOLVED` at 20/20) is a second, independent
+> refutation-incompleteness.  1,166 model false acceptances over 665 seeds; ten replayed on
+> the compiler, ten accepted.  **Every theorem here survives every witness** — the residual was
+> itself unsatisfiable in all 1,166, so `NoLoss` never failed.  "An accepted program is
+> well-typed" is refutation COMPLETENESS, which the loop does not have and S1 never claimed.
+
+| module | lines | what |
+|---|---|---|
+| `Rowpartition/Loop/Sound.lean` | 1,060 | **(A) OUTPUT SOUNDNESS, all five dispatch branches.** The `SVal`-quotient membership lemmas one type up from `StrictStep`'s (`val_mem_foldl_incl`, `val_mem_map`, `val_mem_concat`, for `makeConcrete`'s `SSet RHS`); the three semantic licences (`sat_of_subst_image`, `sat_of_cancel_image`) and the one shape that has none (`bare_refutes`); `subPartitions_mem` (every mention of `v` is REWRITTEN, not just deleted — the converse of `subPartitions_run`); `cancellation_singleton` (what `cancellation` emits at a definition of `v` with exactly one abstract part); `destructiveSub_noLoss` and `makeConcrete_noLoss`; then `step_noLoss_concrete`, **`step_noLoss_all`** (the fifth branch added to `StrictStep.step_noLoss`, under `BareAgree`), `step_noLoss_or` (the unconditional disjunction `NoLoss ∨ ¬ SSat`), and along a run `run_noLoss`, `run_models`, `run_ssat_iff`, `run_noLoss_or` |
+| `Rowpartition/Loop/Reject.lean` | 633 | **(B) REJECTION SOUNDNESS, every death site.** The loop-level extraction L3 §2f left open for messages 1, 2 and 7: `rhsSubstitute_died` / `subst_died_refutes` (`RHS.merge`'s overlap), `ensureSuperset_died`, `subPartitions_died_refutes`, `destructiveSub_died_refutes`, `makeConcrete_died`, `substitution_died_refutes`, `learnPartitions_died`; `makeEmpty_died_hyg`, which kills message 6 with `QueueHygiene`; then `step_died_refutes` (messages 3 and 6 unreachable via `step_link_no_death` and `queueHygiene_binds_unbound`, 1/2/4/7 refutations, 5 the only exception), **`run_rejects_unsat`** with `NonRefutation` the single skolem message, and `run_rejects_unsat_noSkolem` with no exception list at all |
+| `Rowpartition/Loop/Solve.lean` | 215 | **(C) the `Subst.solve`-shaped statement.** `supFresh_initState` turns `SupFresh` at an initial state into a `decide`-able check on the queue; **`solve_sound`** packages (A) and (B) from `buildQueue`/`initState` with `Wf`, `QueueHygiene` and `RunSupOk` discharged from the input, and `solve_sound_rejects` drops the exception list on a skolem-free solve. Instantiated on two tracked seeds at a compiler-shaped supply: `NP01.json` (`npS0_solved`, `npS0_sound`) and `REF.json` (`refS0_rejected`, `refS0_refutes`), with `Wf`/`SupOk`/`SupFresh` proved by `decide` and the verdicts by kernel `rfl` |
+
+**What (A) does NOT say.**  `step_noLoss_all` carries the proviso `BareAgree s`: at the
+dequeue of a bare concrete `v <- ((|fs|))`, every other bare concrete definition of `v` in the
+queues records the same row.  Without it the theorem is FALSE — when `destructiveSub`'s `srs`
+is NON-empty (`Constraints.scala:1643-1644`, `Loop/Step.lean:175-177`; when it is empty nothing
+is deleted at all) `makeConcrete` deletes `v <- ((|C|))` for every `C ⊆ fs` that
+`ensureSuperset` waves through, and `cancellation` emits nothing in its place
+(`StrictStep.cancellation_bare`).  `bareAgree_of_sat` shows the proviso is exactly
+satisfiability, so the unconditional statement is `step_noLoss_or`.  `L5-TERMINATION.md`
+§C1.5 predicted this, and the S1 review confirmed the proviso FAILS at states the shipped flags
+reach from `labelCheckEarly`-passing inputs (`seeds/unsat/MIN2.json`, step 9).
+
+
+---
+
 ## The shared vocabulary
 
 All ten substantive modules are stated against the definitions in `Basic.lean`:

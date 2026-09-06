@@ -398,3 +398,31 @@ eight-group 96.81 % beside the seven-group 97.39 % in `ROW-CONSTRAINT-STATE.md`.
 Round 8 COMMITTED `bd348ab` (2026-09-05, autonomous mode; verified 856/1662/3742-0, TestLoopTrace 714/714 with NP01
 in seeds/ and GU05/GU05MIN in seeds/slow/). S1 plan section + status row added; S1 implementer launching (Opus,
 briefs/brief-S1.md, report S1-SOUNDNESS.md). Start figures for S1: 3742 theorems / 856 jobs / looptrace 1662.
+Orchestrator commit fde996a (2026-09-05): S1 plan section/row + brief, harness SupplyWindow 2^30, PERF-ROADMAP P10. S1 implementer RUNNING.
+D1 brief DRAFTED at briefs/brief-D1.md (Part A: budget spec + dequeue-policy experiments on the MODEL, design doc, STOP; Part B: flagged Scala change default OFF with gates + perf; adoption = user). Finalise after S1's outcome; launch after S1 is committed.
+S1 REPORTED (2026-09-05 night, uncommitted): OUTCOME P-. (B) rejection soundness COMPLETE (`run_rejects_unsat`; every
+death a refutation except the skolem message; two panics proved unreachable). (A) output soundness `run_noLoss`
+holds UNDER `SSat (sys s₀)`: unconditional NoLoss at the `concrete` branch is FALSE — makeConcrete deletes a bare
+row `v <- ((|C|))` with C ⊊ fs and emits nothing (`step_noLoss_or : NoLoss ∨ ¬SSat`). OPEN QUESTION = can the
+shipped compiler ACCEPT an unsatisfiable input through that hole (false acceptance)? Two probes caught by
+ensureSuperset / labelCheckEarly; LabelAlgo proves the label check SOUND not COMPLETE, so it does not close the
+hole. New Loop/{Sound,Reject,Solve}.lean; build 859 / Audit 3804-0 / looptrace 1662 (orchestrator re-verified: see
+s1-verify.log). S1 REVIEWER LAUNCHED (Opus; report S1-REVIEW.md; main job = a SOUNDNESS HUNT for a false
+acceptance with the per-label sat oracle, compiler replay of any candidate, and an attempt at the closing theorem).
+If a false acceptance is CONFIRMED: it is a compiler soundness BUG -> a fix stage (like B1) before D1.
+S1 REVIEW (2026-09-06 ~00:30): FIX-THEN-ADVANCE, nothing wrong in the Lean, but the hunt answered the open question
+YES: the SHIPPED COMPILER ACCEPTS UNSATISFIABLE ROW SYSTEMS — 10 seeds confirmed SOLVED with a substitution that
+violates an input constraint (review-S1/MIN1.json: saturation incompleteness, 20/20 bases; MIN2.json: THROUGH the
+bare-row deletion, 4/20 bases; U11/u00857 survives even labelClash-on-saturated-set). Hunt: 11,048 unsat
+label-check-passing seeds, ~27k model runs, 1,166 model false acceptances / 665 seeds, 0 unsound rejections. The
+S1 theorems hold on every witness (the output is unsat too) — they are right and are NOT the property the type
+checker needs (accepted ⇒ satisfiable = refutation completeness). S1 implementer RESUMED with the framing
+corrections (outcome → BUG; seeds to seeds/unsat/; Z-3..Z-11). S2 LAUNCHED (Opus, briefs/brief-S2.md): Part A in
+worktree ermine-scala-wt-s2 (branch row-sound): (i) makeConcrete requires C = fs at a bare definition, (ii)
+checkLabels on the saturated set, (iii) a COMPLETE per-label decision (unit propagation + case split) on the live
+input — ALL behind flags default OFF; gates: flags off byte-identical; flags on: unsat seeds 0 SOLVED, satisfiable
+seeds unchanged, corpus list of newly rejected programs (each = an ill-typed program accepted today), P1 perf.
+STOP after Part A; Part B (Lean mirror + `solve_noFalseAccept` theorem) after S1 is committed. The S2 plan section
+is added by the orchestrator after S1's corrections land (plan file in use by the S1 agent). Then: S1 commit →
+S2 Part B → S2 reviewer → S2 commit (flag default OFF) → D1. ADOPTION of the fix's default = the USER's decision;
+it is the first thing to put in front of them.

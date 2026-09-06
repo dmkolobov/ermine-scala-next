@@ -1,4 +1,171 @@
-# Row-constraint work — state as of 2026-09-05
+# Row-constraint work — state as of 2026-09-06
+
+## 2026-09-06: **BUG — the shipped compiler ACCEPTS unsatisfiable row systems** (loop model, stage S1 + review)
+
+Two minimal, compiler-reproduced witnesses, both five constraints, both passing
+`labelCheckEarly`, both returned `SOLVED` by the shipped `Subst.solve` with a substitution that
+violates an input constraint.  Seeds in `tracker/repro/satterm/seeds/unsat/`.
+
+```json
+MIN2.json   [[2,[3,0],[]], [3,[0,1],[]], [2,[1],[17]], [2,[],[17,38]], [5,[2,8],[]]]
+```
+```
+v2 <- (v3, v0)     v3 <- (v0, v1)     v2 <- (v1, (|l17|))
+v2 <- ((|l17,l38|))                   v5 <- (v2, v8)
+```
+UNSATISFIABLE at **`l17`**; `SOLVED` at **4 of 20** id bases (300, 303, 307, 315), binding
+`v1 = v2 = v3 = {l17,l38}`, which makes `v2 <- (v1,(|l17|))` read `{l17,l38} = {l17,l38} ⊎
+{l17}` — `l17` in two parts of one whole.  **This one goes THROUGH the `concrete` branch's
+unlicensed bare-row deletion** (below): at step 9 `v1` carries both `((|l17,l38|))` and the
+`cancellation`-derived `((|l38|))`, `ensureSuperset` passes (it is `subsetOf`), `destructiveSub`'s
+`srs` is non-empty so `keepDefs` drops the bare row, `cancellation` emits nothing, `{l38}` is
+lost.
+
+```json
+MIN1.json   [[6,[7,2],[]], [6,[4],[35]], [7,[3,1],[]], [3,[2,0],[]], [1,[0],[22]]]
+```
+```
+v6 <- (v7, v2)     v6 <- (v4, (|l35|))     v7 <- (v3, v1)
+v3 <- (v2, v0)     v1 <- (v0, (|l22|))
+```
+UNSATISFIABLE at **`l35`**; `SOLVED` at **20 of 20** id bases, binding `v6 = {l22}` against an
+input that puts `l35` in `v6`, and PUBLISHING the violated constraint `{l22} <- ({l35}, v4)`
+unchecked.  This one is NOT the bare-row hole: the loop reaches `.done` on a residual it never
+refuted — plain refutation INCOMPLETENESS of the saturation.
+
+Scale (`tracker/loopmodel/S1-REVIEW.md` §2.6, §7): ~9 M generated systems, 11,048 that are
+UNSAT **and** pass `labelCheckEarly`, ~27,000 model runs at the shipped flags, **1,166 model
+false acceptances over 665 distinct seeds**, ten replayed on the shipped compiler, **ten
+accepted**.  Zero unsound REJECTIONS in ~23,000 runs.  Both defences are incomplete in the same
+way: `ensureSuperset` is CONTAINMENT (`Constraints.scala:312`), so it waves through exactly the
+`C ⊊ fs` the deletion loses; `labelCheckEarly` is unit propagation over the INPUT
+(`Subst.scala:1187`), so any unsatisfiability needing a case split walks past it.
+
+**The fix** (stage S2): (1) make `makeConcrete` refuse `C ⊊ fs` at a BARE definition — sound by
+`bare_refutes`, and it turns `MIN2` into a proper `Row types failed to unify` diagnostic;
+(2) run `checkLabels` on the SATURATED set as well as the input — sound by
+`Rowpartition.refute_saturated_sound`, catches all six compiler-confirmed witnesses and
+1,146 of the 1,166; (3) a COMPLETE per-label decision (propagation plus a case split), because
+ten seeds survive (2) — `seeds/unsat/SURV1.json` is one, verified `SOLVED` on the compiler.
+
+## 2026-09-05: SOUNDNESS of the row solver's LOOP, proved ON SATISFIABLE INPUT (loop model, stage S1)
+
+After eight L5 rounds the direction changed: termination is to be ENGINEERED (stage D1) and
+SOUNDNESS is what gets PROVED.  Stage S1 does that, over the loop model
+(`tracker/lean/Rowpartition/Loop/`), in three new modules — `Sound.lean` (1,060 lines),
+`Reject.lean` (633) and `Solve.lean` (215).  Report `tracker/loopmodel/S1-SOUNDNESS.md`,
+review `S1-REVIEW.md` (FIX-THEN-ADVANCE, nothing to change in the Lean; the prose corrections
+are applied here and dated 2026-09-06).  Build 859 jobs; audit 3,804 theorems, 0 non-standard
+axioms.
+
+**Read the proviso, it is load-bearing.**  What is proved is "an accepted SATISFIABLE program
+is well-typed".  `solve_sound` says NOTHING when the input is unsatisfiable, and "an accepted
+program is well-typed" is a refutation-COMPLETENESS statement the loop does not have — see the
+BUG section above.  On all 1,166 measured false acceptances the OUTPUT system was itself
+unsatisfiable, so `NoLoss` never actually failed: the theorems below are right, and they are
+not the property the type checker needs.
+
+### (A) OUTPUT SOUNDNESS — every model of the output is a model of the input, ON SATISFIABLE INPUT
+
+The output system is `sys s'`: the residual partitions of BOTH queues plus the substitution
+environment read as constraints (`EnvVal.toConstraint`: `emptyRow` is `v <- ()`, `alias u` is
+`v <- (u)`).  So the substitution the type checker goes on to apply is part of what the
+theorem talks about.
+
+```lean
+theorem step_noLoss_all {s s' : State} (hw : Wf s) (hba : BareAgree s)
+    (h : step s = .continue s') : NoLoss (sys s) (sys s')
+
+theorem step_noLoss_or {s s' : State} (hw : Wf s) (h : step s = .continue s') :
+    NoLoss (sys s) (sys s') ∨ ¬ SSat (sys s)
+
+theorem run_noLoss : ∀ (n : Nat) {s : State}, Wf s → s.flags.emptyRow = false →
+    s.flags.disjRule = false → s.flags.cseMints = false → RunSupOk n s → SSat (sys s) →
+    ∀ s', (run s n = .solved s' ∨ run s n = .outOfFuel s') → NoLoss (sys s) (sys s')
+```
+
+`StrictStep.step_noLoss` already had four of the five dispatch branches; S1 adds the fifth,
+`concrete`, which is the one that DELETES — and only when `destructiveSub`'s `srs` is NON-empty,
+i.e. when something other than `v`'s own definitions mentions `v`
+(`Constraints.scala:1643-1644`, `Loop/Step.lean:175-177`); when `srs` is empty nothing is
+deleted at all.  Three of its four deletions are licensed —
+a rewritten mention `a <- (S, K)` with `v ∈ S` by its `srs` image plus `v <- ((|fs|))`
+(`sat_of_subst_image`), a definition `v <- (a, (|K|))` with ONE abstract part by
+`cancellation`'s output `a <- ((|fs \ K|))` plus `v <- ((|fs|))` (`sat_of_cancel_image`), and
+a definition with two or more abstract parts because `keepDefs` puts it back.
+
+**The fourth is not, and this is the finding.**  A BARE concrete definition `v <- ((|C|))`
+with `C ⊆ fs` (which `ensureSuperset` permits) is deleted and NOTHING is emitted in its place
+— `cancellation`'s two branches both want exactly one variable left over and a bare row has
+none (`StrictStep.cancellation_bare`).  With `C ≠ fs` that is a real loss.  It costs nothing
+about ACCEPTING a well-typed program, because a state holding two different bare concrete
+rows for one variable has no model (`bare_refutes`); what it costs is COMPLETENESS — the loop
+can turn an unsatisfiable system into a satisfiable one and then accept.  `L5-TERMINATION.md`
+§C1.5 predicted exactly this ("`concRemove`'s third field will have to read
+`SSat G → NoLoss G G'`"); S1 proves it and localises it to that one shape.
+
+**And it is reached, at the shipped flags, and the compiler accepts: `MIN2.json`, above.**
+(The original submission said "no input on which the shipped compiler ACCEPTS through this hole
+was found … two defences and both held".  That was drawn from two hand probes and is
+WITHDRAWN: `ensureSuperset` is containment, `labelCheckEarly` is unit propagation, and both
+wave `MIN2` through.  The review's instrument found the hole's SHAPE in 26.7 % of 11,048 runs
+and the DELETION firing in 1.6 %.)
+
+### (B) REJECTION SOUNDNESS — a rejected program is ill-typed
+
+Complete.  All seven messages `step` can die with:
+
+| # | message | branch | verdict |
+|---|---|---|---|
+| 1 | `Fields appear twice in row: …` | `concrete`, `learn` | REFUTATION (`merge_refutes`, extracted through `subPartitions`/`destructiveSub` and through `substitution`) |
+| 2 | `Infinite row partition for 'v'` | `learn` | REFUTATION (`selfSubst_refutes`) |
+| 3 | `panic: reinstantiated type v to u …` | `common`, `unify` | UNREACHABLE (`Hygiene.step_link_no_death`) |
+| 4 | `Incompatible instantiations of 'v'` | `empty` | REFUTATION (`incompatible_refutes`) |
+| 5 | `Cannot unify skolem variable …` | `empty` | NON-REFUTATION — a KINDING error; the only exception |
+| 6 | `panic: … to ConcreteRho(-,Set()) …` | `empty` | UNREACHABLE (`queueHygiene_binds_unbound`) |
+| 7 | `Row types failed to unify: …` | `concrete` | REFUTATION (`ensureSuperset_refutes`) |
+
+```lean
+def NonRefutation (ns : Names) (m : String) : Prop :=
+  ∃ v : Nat, ns.isSkolem v = true ∧
+    m = "Cannot unify skolem variable with empty relation " ++ varStr ns v
+
+theorem run_rejects_unsat : ∀ (n : Nat) {s : State}, Wf s → s.flags.emptyRow = false →
+    s.flags.disjRule = false → s.flags.cseMints = false → RunSupOk n s → QueueHygiene s →
+    ∀ (m : String) (s' : State), run s n = .rejected m s' →
+      ¬ NonRefutation s.names m → ¬ SSat (sys s)
+```
+
+and `run_rejects_unsat_noSkolem`, which drops the exception list entirely on a solve whose
+variables carry no `Skolem` flavour — every `json:` seed, and every corpus solve whose `svar`
+table has no `Skolem` entry.
+
+### (C) `solve_sound`, and two seeds
+
+`solve_sound` packages both halves from `buildQueue` / `initState`, with `Wf`, `QueueHygiene`
+and `RunSupOk` discharged from the input.  Instantiated in Lean on
+`tracker/repro/satterm/seeds/NP01.json` (SOLVED, 98 dequeues, drawn 18) and `.../REF.json`
+(REJECTED, `Fields appear twice in row: Set(l1)`), and the COMPILER agrees on both at base 300
+(`tracker/repro/satterm/run.sh sweep json:… 300 300`; REF needs `-Dermine.labelCheck=false` to
+let the LOOP be the one that rejects, since at the shipped flags `labelCheckEarly` rejects it
+first, with a different message and the same verdict).
+
+### Scope limits, stated not proved
+
+`Subst.reduce` (post-loop, not modelled — `Rowpartition.Splice` studies its second case
+relationally and finds a residual WEAKER than the input; and it is NOT inert: it is the last
+defence for the bare-row hole, its defence is a PANIC (`Subst.scala:1079 → :184`,
+`seeds/unsat/PANIC-1.json` at 3/3 bases), and `Subst.solve` publishes
+`reduce(l, cs map substType, es, ps)`, not `sys s'`); `labelClash` / `labelCheckEarly`
+(pre-loop, `Rowpartition.LabelAlgo`'s own theorem — SOUNDNESS, not completeness); `Loc` /
+blame (outside the model).
+
+**Side condition on the two UNREACHABLE verdicts.**  Messages 3 and 6 are unreachable because
+`QueueHygiene` is free at an initial state — but only because the MODEL sets `env := {}`.  In
+the compiler `SubstEnv.types` is long-lived (`Subst.scala:182-188`) and `solve` does not
+`substType` its input before `PQueue.build` (`:1135`), so the verdict transfers only under the
+unproved side condition "no input partition mentions an already-bound variable".
+
 
 ## 2026-09-05: USER PROGRAMS too — the VOCABULARY-FIXED fragment terminates (loop model, L5 round 7)
 

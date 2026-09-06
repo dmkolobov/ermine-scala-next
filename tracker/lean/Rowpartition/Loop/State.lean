@@ -205,7 +205,7 @@ end Sup
 /-! ## 4. Partitions -/
 
 /-- `Constraints.Partition`.  `equals` and `hashCode` IGNORE the `Inference` tag
-(`Constraints.scala:1064-1071`), so two partitions that differ only in provenance are the
+(`Constraints.scala:1062-1067`), so two partitions that differ only in provenance are the
 same element of every `Set` and of the queue. -/
 structure LPart where
   lhs : Nat
@@ -269,7 +269,7 @@ def tyOf (ns : Names) (v : Nat) : String :=
   | some p => p.2
   | none => "Ambiguous(Free)"
 
-/-- `v.ty == Skolem`, the one flavour test the LOOP makes (`Constraints.scala:1577`, in
+/-- `v.ty == Skolem`, the one flavour test the LOOP makes (`Constraints.scala:1587`, in
 `makeEmpty`).  `Ambiguous(Skolem)` is NOT `Skolem`: the Scala compares the case object. -/
 def isSkolem (ns : Names) (v : Nat) : Bool := ns.tyOf v == "Skolem"
 

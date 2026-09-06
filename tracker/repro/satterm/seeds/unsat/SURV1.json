@@ -1,0 +1,2 @@
+{"name":"SURV1 (S1 review 7.1, = U11/u00857): UNSATISFIABLE at l20, passes labelCheckEarly, SHIPPED compiler SOLVED at bases 300 and 301 with every variable unbound and an 8-partition unsatisfiable residual -- and it SURVIVES the recommended fix of running checkLabels on the saturated set too, because unit propagation still finds nothing on the residual. One of the 10 seeds (20 runs of 1166) that fix misses; refuting it needs a case split.",
+ "cons": [[5, [2, 6, 0], []], [5, [2, 4], [1]], [3, [2, 1, 6], [20]], [3, [0, 4], []]]}
