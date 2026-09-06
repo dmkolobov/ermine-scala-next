@@ -287,3 +287,111 @@ hypothesis by _of_buildQueue; incomplete/ figures folded in); Main.lean prints g
 fields on the json: path. Orchestrator re-verified: build 855 / looptrace 1656 / Audit 3706 theorems, 0 non-standard
 axioms / no sorry. READY TO COMMIT on the user's word (round 7 + review + corrections, one commit; include the
 handoff note and briefs/brief-L5r7.md). Round 8, if the user wants it: mint CHAIN DEPTH (reviewer X-12).
+Round 7 COMMITTED `2f572a5` (2026-09-05, user's word; one commit: VocFix.lean + instruments + report + review +
+corrections + brief + this handoff). L5 ROUND 8 LAUNCHED (fresh Opus, `briefs/brief-L5r8.md`, from the reviewer's
+X-12): R8.1 instrument the mint CHAIN DEPTH (depth per drawn id; per-key re-mint index for guard AND carrier keys)
+over EIGHT groups incl. incomplete/; R8.2 decomposition lemma in Lean (depth ≤ D ∧ re-mints per key ≤ R ⇒ drawn ≤
+f(n,m,D,R) ⇒ Terminates via terminates_of_drawsAtMost); R8.3 hunt each factor with compiler replays; R8.4 transcode
+np01(134:15) and gu05(62:1) into tracked json seeds (no sbt; orchestrator runs core/test if TestLoopTrace needs a
+change); R8.5 incomplete/ first-class. Reviewer after; commit only on the user's word.
+ROUND 8 IN PROGRESS, INTERRUPTED TWICE (power cut ~19:27, reboot ~20:24 on 2026-09-05; agent resumed each time by
+SendMessage — transcripts survive). FINDING REPORTED AT ONCE (R8.0 in L5-TERMINATION.md): the SHIPPED COMPILER HANGS
+on `tracker/repro/satterm/seeds/GU05.json` — 18 constraints / 21 vars / 10 labels, SATISFIABLE (model checked),
+transcoded from `incomplete/gu05_star_join_4dim_concrete_signature.e(62:1)` (the corpus solve itself SOLVES; the
+only difference is the ids of the four build-minted names = dequeue order) — HANG at 14 of 25 id bases, up to
+21,609 ids drawn in 60 s; the model runs out of fuel at every fuel tried (~0.25 draws/dequeue). NP01.json (from
+np01_add_or_recompute.e(134:15)) solves. Done so far: Loop/Depth.lean (chain-depth instrument `--depth` +
+decomposition lemma §5–§8), R8.1 census over eight groups, R8.2, R8.5; hunt 11,520 runs / 6 timeouts (rerun8.log).
+Pending: confirm the hang under a 600 s cap + model `--cycle` at large fuel, reduce the witness, classify the six
+timeouts, write R8.3/R8.4, restate outcome as W if confirmed. Then reviewer; commit only on the user's word.
+L5 ROUND 8 DONE (2026-09-05), outcome (T2), UNCOMMITTED, awaiting review. New module
+`Loop/Depth.lean` (the mint-CHAIN instrument `--depth` + the DECOMPOSITION theorem
+`terminates_of_chainRun`: depth <= D and every dequeue key drawing <= R times => Terminates at
+`chainBound n m D R = n*D*(2^m*R)^D`); `Loop/Main.lean` prints `depth`/`dm` lines on both paths;
+two tracked seeds `tracker/repro/satterm/seeds/{NP01,GU05}.json` transcoded from real corpus
+segments (TestLoopTrace picks them up with NO code change -- but GU05@base0 takes 267 s in the
+compiler, so cap it before it enters a routine test run). Figures: build 856 / looptrace 1662 /
+Audit 3735 theorems 0 non-standard axioms, 35 new decls all standard-axiom, no sorry.
+Differential over EIGHT groups (seven + all 34 incomplete/ files) 2,301,195 segments, 0 skipped
+/ 0 hashdiff / 0 eqdiff by plain --replay. Census: chain depth <= 2 in the seven groups, <= 4
+over everything, per-dequeue-key draws (the theorem's R) <= 11; hunt 3,840 seeds / 11,514 runs
+reached depth 5 and NEVER exceeded a guard-key count of 1 -- zero candidates. TWO THINGS A
+REVIEWER MUST SEE: (i) R8.0 was written as a compiler DIVERGENCE on satisfiable GU05.json and
+then RETRACTED -- longer caps SOLVE base 0 (267 s / 47,317 draws), base 6 (371 s / 81,481) and
+base 5 (486 s / 75,059), each after more draws than the one base still unfinished had reached,
+so it is a 2,200x order-dependent BLOW-UP, not non-termination, and the outcome is NOT (W); (ii) the remaining
+lemma is named three ways in R8.6b, and the recommendation is L-c (bound the DEPTH -- the only
+factor no refutation of rounds 4-7 touches) plus a generator built to drive depth, which the
+rounds 4-5 generator provably is not. Report: L5-TERMINATION.md "Round 8", brief
+`briefs/brief-L5r8.md`, scratch `tmp/L5r8/`.
+ROUND 8 DONE (2026-09-05, uncommitted): OUTCOME T2. The GU05 "hang" was RETRACTED — bases 0/5/6 SOLVE at 267/486/371 s
+after 47k–81k draws; it is a 2,200× order-dependent BLOW-UP (width over 2^m keys, depth pinned at 3), not a
+divergence (§R8.0 kept both versions on purpose). Loop/Depth.lean: chain-depth instrument (`--depth`; third counter
+`maxdkey` = the theorem's R; round 5's guard/carrier counters are NOT it) + `terminates_of_chainRun` (depth ≤ D ∧
+dequeue-key draws ≤ R ⇒ Terminates at n·D·(2^m·R)^D); `ChainRun` is a HYPOTHESIS (L-a bridge from step not proved).
+Census 2,301,195 segments / eight groups: D ≤ 4, R ≤ 11, user programs 96.8%, stdlib 15,377/15,377. Hunt 11,514
+runs, zero candidates. Seeds NP01.json/GU05.json tracked — GU05@base0 = 267 s in the compiler and TestLoopTrace
+enumerates every seed at bases 0,7,41,300,1234,65537 with a timeout = FAILURE → must move GU05 out of seeds/ (e.g.
+seeds/slow/) or cap before commit; plan L5 row + README NOT updated by the round (reviewer to confirm). Orchestrator
+re-verified build 856 / looptrace 1662 / Audit 3742/0 / no sorry. REVIEWER LAUNCHED (fresh Opus, "Round-8 review"
+section of L5-REVIEW.md, scratch tmp/review-L5r8/). Implementer's background jobs may still run: GU05 base 4 at
+2,400 s, reduce8.py → GU05MIN.json. Commit only on the user's word.
+TestLoopTrace with NP01 included and GU05 EXCLUDED (`-Dsatterm.seeds=<copy without GU05>`): 714 solves (19 seeds × 6
+bases + 600 generated), 714 agree, 10.4 s, 3/3 properties pass (2026-09-05 20:56). So NP01 can stay in seeds/; GU05
+must not be enumerated by the test.
+ROUND-8 REVIEW (2026-09-05): FIX-THEN-ADVANCE — maths/instrument/census reproduce exactly; Y-A the hunt never measured
+the theorem's R (`maxdkey` absent from agg8.py; where present 18, reviewer re-runs 26/31; GU05@base2 maxcremint=12) →
+"zero candidates" is a coverage artefact; Y-B "width not depth" refuted at fuel 1000 (depth 4, maxdkey 14) → BOTH
+factors still look unbounded; Y-C GU05 breaks core/test (bases 7/300 HANG at 600 s; one -Xmx1g child JVM, 180 s
+cap) → move to seeds/slow/; Y-D base 4 = REJECTED by the HARNESS's 100,000-id supply window recycling
+(panic: reinstantiated type), so base 4 unresolved and 11/25 bases have no verdict — widening Replay.supplyAt is a
+Scala follow-up; Y-E --depth/--cycle don't model labelCheck refutation (6 incomplete/ segments scored SOLVED); Y-F
+plan row/README not updated; Y-G..J arithmetic/prose. Reviewer's round-9 order: L-a first, then hunt R, then depth
+generator; GU05/GU05MIN → PERF-ROADMAP. Corrections SENT to the round-8 implementer (resumed).
+ORCHESTRATOR'S POSITION (told the user 2026-09-05): rounds 7–8 drifted from proving to profiling (run-level
+hypotheses); recommend stopping measurement rounds: prove SOUNDNESS (derived partitions entailed; rejection ⇒
+unsat) as the theorem, ENGINEER termination (budget + structural mint-bound design change aimed at the 2^m width
+factor, proved on the model, trace-tested, perf-measured on gu05). User's decision pending.
+USER'S DECISION (2026-09-05): "prove soundness, then iterate on engineered termination guarantees/performance."
+NEXT STAGE = S1 SOUNDNESS, brief written at `tracker/loopmodel/briefs/brief-S1.md` (pure proving: (A) output
+soundness = NoLoss (sys s₀) (sys s_final) for all five branches — only the `concrete` branch's NoLoss is missing
+(`StrictStep.step_noLoss` covers NonConcreteStep); (B) rejection soundness = every death site's loop-level extraction
++ explicit NonRefutation list; `solve_sound` from buildQueue; scope limits Subst.reduce / labelClash / Loc; report
+S1-SOUNDNESS.md). LAUNCH ONLY after round 8's corrections land and are COMMITTED (user's word) — the plan file is
+being edited by the round-8 implementer, so the S1 plan section is added by the orchestrator at launch time.
+After S1: a DESIGN stage for engineered termination (budget + structural change at the 2^m width factor, proved on
+the model, trace-tested, perf-measured on gu05/GU05MIN); Replay.supplyAt window widening is a Scala follow-up.
+AUTONOMOUS MODE (user, 2026-09-05 evening: "I want this to be autonomous: I am stepping away"). Orchestrator's
+reading, stated to the user: run the whole loop without waiting — verify, review, apply findings, COMMIT each
+reviewed+green stage on the branch (no push, no merge), launch the next stage. Hard boundaries kept: never commit
+red; never commit an unreviewed stage; no flag default flips / compiler behaviour changes adopted without the user
+(a design stage ships its change behind a flag default OFF, proved + trace-tested + perf-measured, adoption waits);
+no Scala edits by L5/S1 agents; disk/Lean constraints unchanged. Sequence: round-8 corrections → verify → move
+GU05 to seeds/slow/ → TestLoopTrace → commit round 8 → add S1 plan section → launch S1 (brief-S1.md) → verify →
+reviewer → fixes → commit S1 → design stage brief (engineered termination: budget + structural change at the 2^m
+width factor) → implementer/reviewer → commit behind a flag → REPORT to the user. If this session dies (power),
+a new orchestrator resumes from here; agents of a dead session cannot be resumed — re-launch with brief + report.
+ROUND-8 REVIEW DONE (2026-09-05, fresh reviewer, `L5-REVIEW.md` "Round-8 review"): verdict
+FIX-THEN-ADVANCE. Everything reproduced (856/3742-0/1662, 49 declarations, 22 verbatim, 342
+residue rows x 18 fields with 0 differences, the 2,301,195-segment differential); the retraction
+and the ChainRun-is-a-hypothesis honesty called exemplary. Ten findings, ALL APPLIED, old-for-new
+in `L5-TERMINATION.md` "Round 8 -- post-review corrections" + `R8.7`. The three that change what
+the round concludes: (Y-C) `TestLoopTrace` runs every seed in `seeds/` x 6 bases + 600 generated
+in ONE -Xmx1g child under a SINGLE 180 s cap and a timeout is a FAILURE -- two of those six bases
+exceed 600 s on GU05, so `GU05.json` and `GU05MIN.json` MOVED to `tracker/repro/satterm/seeds/slow/`
+(`listFiles` is non-recursive, no code change; orchestrator already ran core/test without it:
+714 solves, 714 agree, 3/3 pass); (Y-A) the hunt never measured the theorem's own R -- `maxdkey`
+was in neither the growth table nor the candidate test and present in only 2,040 of 11,514 rows --
+so "zero candidates" was a coverage artefact: R reaches 31 in the hunt against a corpus 11, and
+20 on the round's own tracked seed, every such run SOLVED on the compiler; (Y-B) "the depth
+reaches 3 and does not move again" was refuted by the round's OWN log (fuel 1000 -> depth 4), and
+GU05 at base 2 gives depth 5 / maxcremint 12 / maxdkey 19. Also (Y-D) base 4 is UNRESOLVED, not
+"cut off short": it ends `REJECTED ... panic: reinstantiated type 121` at ~692 s because
+`Replay.supplyAt` gives a 100,000-id `Supply` window -- widening it is a Scala follow-up for the
+orchestrator; and (Y-E) `--depth`/`--cycle` do not model `checkLabel`, so 6 of `incomplete/`'s 7
+P2-only solves score SOLVED though the compiler refutes them (headline moves 0.01 points).
+CORRECTED ROUND-9 ORDER: L-a first (make `ChainRun` a statement about `step`, not the
+instrument), then hunt R, then a generator built to drive D -- NOT the round's original
+"L-c first", which rested on the two false claims above. Deliverables Y-F done:
+`LOOP-MODEL-PLAN.md` L5 row, a `### L5 round 8` section in `tracker/lean/README.md`, and the
+eight-group 96.81 % beside the seven-group 97.39 % in `ROW-CONSTRAINT-STATE.md`.

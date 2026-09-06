@@ -21,6 +21,19 @@ computes it from `splitConcrete`'s own supply, so the instrument is the rule its
 dequeued left-hand side, which is `resolution`'s mint as well as `splitConcrete`'s, and is
 the round-4 hunt's detector.
 
+`--depth` (L5 round 8) prints instead the MINT CHAIN of the same solve: one `depth` summary
+line with the verdict, the dequeue count, the ids drawn, the largest DEPTH of a drawn id, the
+`splitConcrete` and `resolution` draw counts, THREE key counters -- `maxremint` at the guard
+key and `maxcremint` at the carrier key, which are round 5's, and `maxdkey`, the largest number
+of DRAWS at one dequeue key `(dequeued lhs, dequeued concrete part)`, which is the one
+`Depth.Chain` needs because `resolution` takes its `fresh` before its guards and a REUSE bumps
+neither of the other two -- then the input's variable / partition / label counts and the depth
+histogram; then one `dm` line per DRAW with its rule, its site, the site's depth, the id, the
+id's depth and its index at the dequeue key.  `Loop/Depth.lean` computes it: an id present at
+the FIRST dequeue is at depth 0, an id drawn at a step whose dequeued premise has left-hand
+side `v` is at depth `depth v + 1`.  `maxdepth` and `maxdkey` are the `D` and the `R` of
+`Depth.terminates_of_chainRun`.
+
 `--cycle` (L5 round 6) prints instead the STATE-CYCLE search of the same solve: one `cycle`
 line with the verdict, the dequeue count, the number of DISTINCT canonical states visited,
 and the first canonical and the first exact repeat, if any.  `Loop/Cycle.lean` canonicalises
@@ -43,6 +56,7 @@ counts.  Segments are numbered from 0 in file order; `--from`/`--to` restrict th
 import Rowpartition.Loop.Replay
 import Rowpartition.Loop.Pump
 import Rowpartition.Loop.Cycle
+import Rowpartition.Loop.Depth
 
 namespace Rowpartition.Loop
 
@@ -93,6 +107,30 @@ def replayCycleOne (fl : Flags) (fuel : Nat) (g : Segment) : Except String Cycle
           names := g.names, site := g.site, su0 := g.sup.lo }
       .ok (cycleRun fuel st0 [] [] {})
 
+/-- L5 round 8: ONE segment through the MINT CHAIN instrument (`Loop/Depth.lean`), so
+`--depth` runs over corpus replays.  The state is the one `Replay.replay` builds, so the
+depths are those of the solve the compiler performed. -/
+def replayDepthOne (fl : Flags) (fuel : Nat) (g : Segment) : Except String DepthRep :=
+  if !g.errs.isEmpty then .error (String.intercalate "; " g.errs)
+  else if g.cons.length != g.nCs then
+    .error ("scon count " ++ toString g.cons.length ++ " != nCs " ++ toString g.nCs)
+  else
+    match buildQueue g.cons g.sup with
+    | .error _ => .ok { verdict := "BUILD" }
+    | .ok (q, su1) =>
+      let st0 : State :=
+        { incm := q, proc := PQueue.empty, env := {}, su := su1, trace := [], flags := fl,
+          names := g.names, site := g.site, su0 := g.sup.lo }
+      .ok (depthRun fuel st0 {})
+
+/-- The `depth` summary line of one solve, without the leading index/site columns. -/
+def depthCols (rep : DepthRep) : String :=
+  s!"steps={rep.steps}\tdrawn={rep.drawn}\tdrawn0={rep.drawn0}" ++
+  s!"\tmaxdepth={rep.maxDepth}\tnsplit={rep.nSplit}\tnres={rep.nRes}" ++
+  s!"\tmaxremint={rep.maxRemint}\tmaxcremint={rep.maxCRemint}\tmaxdkey={rep.maxDKey}" ++
+  s!"\tnvars={rep.nVars}\tnparts={rep.nParts}\tnlbl={rep.nLbl}" ++
+  s!"\thist={String.intercalate "," (rep.hist.map (fun p => s!"{p.1}:{p.2}"))}"
+
 /-- L5 round 7: ONE segment through round 5's PER-KEY MINT instrument (`Loop/Pump.lean`),
 so `--mints` runs over corpus replays too.  `max` is the largest number of `splitConcrete`
 mints at ONE key `(lhs, concrete part)` and `remint` the number of keys minted at more than
@@ -139,9 +177,22 @@ def replayMain (path : String) (opts : List String) : IO UInt32 := do
   -- Replay the segment just completed.
   let cycMode := opts.contains "--cycle"
   let mintMode := opts.contains "--mints"
+  let depMode := opts.contains "--depth"
   let flush : Nat → Segment → IO (Nat × Nat × Nat × Nat × Nat × Nat) := fun j g => do
     if !(lo ≤ j && j ≤ hi) then
       return (0, 0, 0, 0, 0, 0)
+    if depMode then
+      match replayDepthOne fl fuel g with
+      | .error m =>
+        IO.println s!"#skip\t{j}\t{m}"
+        return (0, 1, 0, 0, 0, 0)
+      | .ok rep =>
+        IO.println (s!"depth\t{j}\t{g.site}\t{g.loc}\t{rep.verdict}\t" ++ depthCols rep)
+        if rep.drawn > rep.drawn0 then
+          for (i, rl, v, sd, z, dz, ri) in rep.chain do
+            IO.println s!"dm\t{j}\t{i}\t{rl}\t{v}\t{sd}\t{z}\t{dz}\t{ri}"
+        return (1, 0, 0, 0, (if rep.verdict == "REJECTED" then 1 else 0),
+          (if rep.verdict == "FUEL" then 1 else 0))
     if mintMode then
       match replayMintOne fl fuel g with
       | .error m =>
@@ -276,7 +327,18 @@ def mainImpl (args : List String) : IO UInt32 := do
       | .ok seed =>
         let (parts, ns) := seedSystem seed base
         let out := solveSeed fl site "-" parts ns (Sup.ofSeed ns.supplyLo) fuel
-        if opts.contains "--cycle" then
+        if opts.contains "--depth" then
+          match buildQueue parts (Sup.ofSeed ns.supplyLo) with
+          | .error m => IO.println s!"depth\tBUILD\t{m}"
+          | .ok (q, su2) =>
+            let st0 : State :=
+              { incm := q, proc := PQueue.empty, env := {}, su := su2, trace := [], flags := fl,
+                names := ns, site := site, su0 := (Sup.ofSeed ns.supplyLo).lo }
+            let rep := depthRun fuel st0 {}
+            IO.println (s!"depth\t{rep.verdict}\t" ++ depthCols rep)
+            for (i, rl, v, sd, z, dz, ri) in rep.chain do
+              IO.println s!"dm\t{i}\t{rl}\t{v}\t{sd}\t{z}\t{dz}\t{ri}"
+        else if opts.contains "--cycle" then
           match buildQueue parts (Sup.ofSeed ns.supplyLo) with
           | .error m => IO.println s!"cycle\tREJECTED\tsteps=0\tstates=0\tcanon=-\texact=-\t{m}"
           | .ok (q, su2) =>

@@ -5365,3 +5365,1348 @@ against §R7.1c, which confirms all three facts the potential rests on (X-6); an
 CHAIN DEPTH**, since `227 of 230` `splitConcrete` mint sites in the six example groups are
 INPUT variables while `resolution` chains on about half its conclusions (X-9(8)) — is the
 first quantity anyone has proposed that a mint bound could plausibly bound.
+
+# Round 8 — 2026-09-05, after `L5-REVIEW.md`'s "Round-7 review" (X-12: the mint CHAIN DEPTH)
+
+**STATUS: IN PROGRESS.**  This section is written as the round runs (the machine lost power at
+19:27 during round 8's first trace generation; everything below is from traces re-made after
+that).  It is updated in place; the outcome line at the end says W / T1 / T2.
+
+The round-7 review leaves the problem in one sentence: `terminates_of_drawsAtMost` turns
+termination into a bound on `Sup.drawn`, and `reaches_concSub` fixes the label pool along every
+run, so a divergence must mint at unboundedly many DISTINCT left-hand sides — an infinite chain
+`v₀ → v₁ → v₂ → …` in which `vᵢ₊₁` is drawn while a partition of `vᵢ` is dequeued.  Round 8
+measures that chain, decomposes the mint bound into it, and hunts it.
+
+## R8.0a REPORTED AT ONCE, AND THEN CORRECTED — an order-dependent blow-up on a satisfiable input; NOT a divergence
+
+**This subsection was written twice.  The first version, on the 60 s evidence, called it a
+divergence and the round's outcome (W).  A longer cap refuted that, and the retraction is left
+in place rather than edited away, because the way the evidence moved is itself the finding.**
+
+### What was seen first (60 s cap)
+
+Found at R8.4 while transcoding the round-7 review's two witnesses into tracked `json:` seeds.
+`tracker/repro/satterm/seeds/slow/GU05.json` — 18 constraints, 21 variables, 10 labels, SATISFIABLE
+with a verified model — ran past the harness's 60 s cap at 14 of 25 id bases:
+
+```
+ERMINE_JAVA_OPTS=-Dermine.useInterface=false \
+  tracker/repro/satterm/run.sh sweep json:tracker/repro/satterm/seeds/slow/GU05.json 0 24 60 30
+SUMMARY bases=0..24 n=25 SOLVED=11 REJECTED=0 HANG=14 OOM=0
+DRAWN  min=97 median=9618 max=21609        TIME min=106 median=472 p95=49077 max=49077 ms
+```
+
+### What a longer cap says (300 s), and the retraction
+
+```
+ERMINE_JAVA_OPTS=-Dermine.useInterface=false SATTERM_XMX=6g \
+  tracker/repro/satterm/run.sh sweep json:tracker/repro/satterm/seeds/slow/GU05.json 0 5 300 30
+base=0 : SOLVED in 267,347 ms  drawn=47,317
+base=1 : SOLVED in     459 ms  drawn= 1,091
+base=2 : SOLVED in     221 ms  drawn=   743
+base=3 : SOLVED in  45,641 ms
+```
+
+**Base 0 SOLVES.**  It takes four and a half minutes and 47,317 draws, but it stops, and the
+substitution it produces is the model `tmp/L5r8/satcheck.py` independently computed, variable
+for variable.  So a 60 s "HANG" on this seed is not evidence of non-termination, and **the
+round does not claim (W)**.
+
+**And a second slow base confirms it.**  Under a 600 s cap, one JVM at a time and
+`-XX:ActiveProcessorCount=2` (`tmp/L5r8/gu05conf600.sh`):
+
+```
+base=4  HANG    cap 600,000 ms  drawn=69,768
+base=5  SOLVED  in 485,614 ms   drawn=75,059
+base=6  SOLVED  in 371,199 ms   drawn=81,481
+```
+
+**Bases 5 and 6 — two more of the fourteen 60 s "HANG"s — also SOLVE**, after eight and six
+minutes and 75,059 and 81,481 draws.
+
+**Base 4 does NOT, and the reason is the harness, not the solver** (round-8 review Y-D).  Given
+2,400 s it ends at ~682–692 s with
+
+```
+base=4  REJECTED in 681,894 ms  drawn=147
+        scalaparsers.Death: panic: reinstantiated type 121 to ConcreteRho(-,Set())
+                            but it was already bound to ConcreteRho(-,Set())
+```
+
+`tracker/repro/nameloss/Replay.scala:16` builds the harness's supply as
+`new Supply(lo, lo + 100000)` — a **100,000-id window** — and past it `Supply.fresh`'s recycling
+branch re-issues an id that is already bound, which is what the panic reports.  So base 4 drew
+past 100,000, and **this harness cannot decide this seed beyond that point at all**.  My own
+2,400 s run says the same thing (`tmp/L5r8/gu05base4long.log`, `in 691584 ms drawn=147`); I
+missed it the first time because the `grep -oE` filter in `gu05conf600.sh` and `gu05base4long.sh`
+listed `SOLVED|HANG|OOM` and **not `REJECTED`**, so the verdict word was filtered out of my own
+log and I read the surviving `drawn=147` as noise.
+
+**Two things follow, and the first version of this subsection had one of them backwards.**
+
+* Base 4 is **UNRESOLVED**, not "cut off short".  It had drawn 69,768 at 600 s and went on past
+  100,000 — *more* than any base that finished (81,481 is the largest completing count), so the
+  inference "fewer than a comparable base needed, therefore merely cut off" is the wrong way
+  round and is withdrawn.
+* Nine further bases (8, 9, 10, 11, 12, 14, 15, 16, 22) have **no verdict beyond 60 s** at all.
+  Base 7 does have one and it is not a verdict either: the reviewer's six-base run HANGs it at a
+  600 s cap (drawn 46,749).  So does base **300**, which my 0…24 sweep never reached
+  (drawn 35,650).  Counting base 4, **twelve of GU05's bases are unresolved** — nine never run
+  past 60 s, and three (4, 7, 300) past every cap they have been given.
+
+**What the evidence supports**: the seed is a severe order-dependent BLOW-UP; **the four slow
+bases that have been run to completion all terminate** (0 at 267 s / 47,317 draws — 133 s in the
+reviewer's unloaded re-run — 3 at 46 s, 6 at 371 s / 81,481 draws, 5 at 486 s / 75,059 draws),
+and 11 of 25 finish inside 60 s.  **No base has been shown not to terminate, and no base beyond
+100,000 draws can be decided in this harness at all.**  There is no divergence in evidence here
+and the round claims none; neither does it claim the seed always terminates.
+
+*Follow-up for the orchestrator (a Scala edit, which this round does not make):* widening
+`Replay.supplyAt`'s window from `lo + 100000` to something the blow-up cannot exhaust would let
+bases 4, 7 and 300 be decided.
+
+### What it IS, which is not nothing
+
+**Like for like** — one pass, one JVM setting — the 300 s pass over bases 0…3 spans
+**1,210×** in time (221 ms at base 2, 267,347 ms at base 0) and **64×** in draws (743 to
+47,317).  **Across everything measured**, on runs whose JVM settings differ (the 60 s and 300 s
+passes ran without `-XX:ActiveProcessorCount=2`, the 600 s pass with it), the span is
+**≥ 4,581×** in time (106 ms at the fastest 60 s base, 485,614 ms at base 5) and **110×** in
+draws (743 to 81,481).  Wall-clock here is load-sensitive by about 2× — base 0 took 267 s in
+the round's own 300 s pass and 133 s in the reviewer's unloaded re-run — so the honest headline
+is the like-for-like 1,210×, with the cross-pass figure quoted as a range and not as a
+measurement.  Either way it is ONE satisfiable 21-variable input, decided by nothing but the
+id base — that is, by the order `PQueue`'s `hashCode`-keyed priority happens to give the same
+constraints.  The corpus solve of the SAME system draws 149 ids in 281 dequeues.  This is the
+sharpest measurement the stage has of how much the dequeue order costs, and it is a real
+robustness finding about the shipped `Constraints.incorporateAll` even though it is not a
+termination one.
+
+### Where the input comes from, and that it is satisfiable
+
+It is `core/examples/incomplete/gu05_star_join_4dim_concrete_signature.e(62:1)` — the deepest
+solve on record (281 dequeues, 149 loop draws, carrier key minted six times) — transcoded out
+of its own `sin`/`scon` records into the `rowclosure.py` seed format (`tmp/L5r8/mkseed.py`).
+The seed format takes a VARIABLE left-hand side and one concrete part, and segment 54234 has
+twelve `Part`s of which **six** carry a CONCRETE left-hand side (`drawn0 = 6`, six build-mints —
+not four, which §R8.0a said in its first version), so the transcode makes three changes and
+only three, all semantics-preserving:
+
+1. each of the six `Part`s `C <- (rhs)` with a concrete left-hand side becomes a fresh seed
+   variable `w` with the two constraints `w <- rhs` and `w <- ((|C|))` — *exactly the two
+   partitions `PQueue.build` itself makes for it* (`Json.partToPartitions`,
+   `Constraints.scala:661`), except that `w` is an INPUT variable instead of a drawn id, so its
+   id — and hence its queue priority, which IS the id — is different;
+2. several concrete parts in one right-hand side are merged, which is what `RHS.build` does;
+3. the right-hand side's iteration order is normalised to `vars ++ [concrete]`.
+
+The seed is therefore equisatisfiable with the original solve's system and has the same 21
+variables, 10 labels and 18 partitions the trace records for that segment.  Satisfiability is
+CHECKED, not assumed (`tmp/L5r8/satcheck.py`): the constraint `l <- (v₁…v_k, K)` decomposes per
+LABEL into "exactly one of the parts carries it", so satisfiability is `|L|` independent boolean
+problems, and the model it returns is verified against every constraint for disjointness and
+cover:
+
+```
+{"0":[0], "1":[1,2,3,4,5], "2":[6], "3":[3], "4":[0,1,2,3,4,5,9], "5":[0,1,2,4,5,9],
+ "6":[0,1,2,3,4,5,6,8,9], "7":[8], "8":[1], "9":[0,2,3,4,5,6,9], "10":[0,1,2,3,4,5,6,9],
+ "11":[7], "12":[2], "13":[0,1,3,4,5,6,8,9], "14":[9], "15":[0,1,2,3,4,5], "16":[3,6],
+ "17":[0,1,2,3,4,5,6,7,8,9], "18":[2,7], "19":[1,8], "20":[0,9]}
+```
+
+The compiler's own answer at base 0 is this model (`v0 := (|l0|)`, `v1 := (|l1..l5|)`,
+`v2 := (|l6|)`, …), which is the cross-check that the checker solves the right problem; on
+`NP01.json` it likewise returns the substitution the compiler prints.
+
+### And what it says about THIS round's two factors
+
+The blow-up is the round's own experiment, run on itself.  `--depth` on the same seed at
+increasing fuel (§R8.4c) shows the chain depth going 1, 2, 2, 3, 3, 3, 3, **4** over twenty
+times the dequeues, the guard-key count pinned at 1, and the per-dequeue-key draw count
+`maxdkey` climbing 3 → 4 → 7 → 10 → **14**; at the bases where the run FINISHES, depth reaches
+**5** and `maxdkey` **20**.  The draws grow far faster than the chain — the blow-up is mostly
+WIDTH — but the depth climbs too, and the first version of this paragraph said it had stopped,
+which §R8.4c corrects with my own log.  Either way the shape is what
+`chainBound n m D R = n · D · (2^m · R)^D` permits to be astronomical at values that look
+small: at `n = 21`, `m = 10`, `D = 3`, `R = 7` the bound is **2.32 × 10^13**, and at `D = 5`,
+`R = 20` it is 3.8 × 10^23.  The theorem is true and useless at these constants, and that is
+the honest reading of §R8.2's contribution.
+
+## R8.0b Baseline, and this round's figures
+
+|  | before (round 7) | after (round 8) |
+|---|---|---|
+| `lake build Rowpartition` | 855 jobs | **856 jobs** (`Loop/Depth.lean`) |
+| `lake env lean Audit.lean` | 3706 theorems / 0 non-standard axioms | **3742 theorems / 0 non-standard axioms** |
+| `lake build looptrace` | 1656 jobs | **1662 jobs** |
+| `sorry` / `axiom` / `partial` / `native_decide` in the new module | — | **none** (hygiene grep below) |
+
+```bash
+export PATH=$HOME/.elan/bin:$PATH; cd tracker/lean
+lake build Rowpartition ; lake env lean Audit.lean ; lake build looptrace
+grep -nE '\bsorry\b|\baxiom\b|\bpartial\b|native_decide|implemented_by|\bunsafe\b|\bopaque\b|Classical|\badmit\b|#exit' \
+  Rowpartition/Loop/Depth.lean          # no hits
+```
+
+(The proofs of `chain_card_le` and the two layer lemmas open with the `classical` TACTIC —
+lower case, so the grep above does not see it; that is where the `Classical.choice` in the
+axiom census comes from and it is standard.  All **49** new declarations print only
+`propext` / `Classical.choice` / `Quot.sound` or nothing: 26 × the three, 4 × `[propext,
+Quot.sound]`, 3 × `[propext]`, 16 axiom-free, **0 `sorryAx`**
+(`tmp/L5r8/{decls.txt,Axioms.lean,axioms.txt}`).)
+
+**Traces.**  Regenerated from scratch for this round, over EIGHT groups — the seven of round 7
+plus `core/examples/incomplete/`, one JVM per file with a 90 s cap, exactly as the round-7
+reviewer's `genic.sh` did (`tmp/L5r8/gentrace.sh`, `genic-resume.sh`).  Segment counts:
+
+```
+boot 54,199   top 92,673   Ai 83,942   shouldfail 56,032   bugs 54,235   guide 54,244
+shouldfail-controls 54,739                              -> 450,064   (round 7's, exactly)
+incomplete/, 34 files, one trace each                   -> 1,851,131 (the review's X-7, exactly)
+                                                  TOTAL -> 2,301,195
+```
+
+**The differential, run properly** (round-7 review X-8c: `hashdiff`/`eqdiff` are computed ONLY
+by plain `--replay`, never by `--cycle`/`--mints`/`--depth`).  `tmp/L5r8/runreplay.sh`, all
+eight groups, 41 files:
+
+```
+TOTAL segments=2301195 replayed=2301195 skipped=0 hashdiff=0 eqdiff=0 rejected=41 fuel=0
+```
+
+**2,301,195 segments, 0 skipped, 0 `hashdiff`, 0 `eqdiff`** — five times round 7's differential
+population, and the licence for every number below: the model is running the compiler's own
+solves.
+
+## R8.1 The chain, instrumented and measured
+
+### R8.1a The instrument (`Loop/Depth.lean` §1–§4, `--depth`)
+
+`depthRun` is round 5's `pumpRun` with a DEPTH assignment threaded through it.
+
+```lean
+/-- The ids the supply will hand out next, in order.  `Sup.fresh` is a function of the supply
+alone, so the ids a run draws are determined by the supply it starts from and how many it
+draws — which is what makes the depth of a draw observable without re-implementing any rule. -/
+def drawSeq (su : Sup) : Nat → List Nat
+  | 0 => []
+  | k + 1 => (su.fresh).1 :: drawSeq (su.fresh).2 k
+```
+
+Every id present at the FIRST dequeue — the input's own variables and whatever `PQueue.build`
+minted for a `Part` with a non-variable left-hand side — is written into the depth map at depth
+`0`; an id drawn at a step whose dequeued premise has left-hand side `v` is written at depth
+`dget dmap v + 1`.  The draws of a step are read off the SUPPLY (`drawSeq s.su
+(s'.su.drawn - s.su.drawn)`), not off any rule, so the instrument cannot disagree with the rule
+about which ids were drawn.
+
+**Rule attribution.**  `splitConcrete` is `learnPartitions`' fold INITIAL VALUE and draws at
+most once (`Draws.splitConcrete_drawn`), so when a step mints at a `splitConcrete` guard key
+(`Pump.splitMintKey`, round 5's instrument, unchanged) that mint is the step's FIRST draw and
+every later draw of the step is `resolution`'s:
+
+```lean
+def chainRecs (stp : Nat) (v d didx : Nat) (hasSplit : Bool) :
+    List Nat → Nat → List (Nat × String × Nat × Nat × Nat × Nat × Nat)
+  | [], _ => []
+  | z :: zs, i =>
+    (stp, (if hasSplit && i == 0 then "split" else "res"), v, d, z, d + 1, didx + i) ::
+      chainRecs stp v d didx hasSplit zs (i + 1)
+```
+
+**Three key counters, and which one the theorem needs.**  The instrument keeps all three.
+
+| column | key | counts | who uses it |
+|---|---|---|---|
+| `maxremint` | `splitMintKey s` — the `splitConcrete` GUARD key | `splitConcrete` mints at it | round 5's pump at the guard key; `--mints`' `max` |
+| `maxcremint` | `carrierKeys s s'` — a fresh CARRIER installed at the dequeued lhs | carriers installed at it | round 5's pump proper (its refutation witnesses are `MintsAt … cKey`); `--mints`' `cmax` |
+| **`maxdkey`** | the DEQUEUED premise's `(lhs, concrete part)` | **every DRAW of the step** | **`Chain`'s `R`** |
+
+The first two are round 5's and are reported so this round's census can be cross-checked
+against §R7.3b's cell for cell.  **Neither of them is the `R` the decomposition theorem needs**,
+and the round found that out the hard way (§R8.4c): `resolution` takes its `fresh` BEFORE its
+guards, so a REUSE costs an id and installs no carrier — such a draw bumps neither the guard
+nor the carrier tally, and `Chain.inj` would fail for it.  `maxdkey` counts every draw at its
+dequeue key, which is exactly `Chain`'s `(site, key, idx)`: `site` is the dequeued left-hand
+side, `key` its concrete part (a subset of `L` by `reaches_concSub`), and `idx` the running
+index, so `inj` holds by construction.  **`maxdkey` is the number to read as `R` everywhere
+below.**
+
+```
+lake exe looptrace --replay <trace>.tsv --depth
+depth <i> <site> <loc> <verdict> steps=N drawn=D drawn0=D0 maxdepth=X nsplit=A nres=B
+      maxremint=R maxcremint=C maxdkey=K nvars=V nparts=P nlbl=L hist=<depth>:<count>,...
+dm <i> <step> <rule> <site> <site's depth> <id> <id's depth> <index at the dequeue key>
+```
+
+Both are on the `--replay` path AND on the `json:` seed path (round-7 review X-8h).  `dm` lines
+are printed only for a solve whose LOOP drew something, which is what keeps the corpus output
+small.
+
+### R8.1b What one solve looks like
+
+The round-7 review's own witness, `np01_add_or_recompute.e(134:15)` — segment 54291 of my own
+trace:
+
+```
+depth 54291 trySolveOn core/examples/incomplete/np01_add_or_recompute.e(134:15) SOLVED
+      steps=98 drawn=22 drawn0=4 maxdepth=2 nsplit=6 nres=12 maxremint=2 maxcremint=3
+      maxdkey=4 nvars=11 nparts=11 nlbl=7 hist=1:11,2:7
+```
+
+98 dequeues; `22 − 4 = 18` LOOP draws (`nsplit + nres = 6 + 12`); the guard key minted twice
+and a carrier key three times, which is X-7's `max=2 remint=1 cmax=3 cremint=3` exactly; and
+the new columns: **the chain is two deep**, eleven ids drawn at depth 1 and seven at depth 2,
+and the busiest dequeue key is drawn at four times.
+
+### R8.1c The census, over EIGHT groups and BOTH populations
+
+**The population predicate, stated** (round-7 review X-8b).  **P1** is "the solve wrote at
+least one `inpart` record"; `Subst.scala:1215` writes those only AFTER `var ps = q.expand.toList`
+has SUCCEEDED, so a solve the row solver REJECTS is invisible to it.  **P2** is every solve the
+MODEL runs (`steps > 0`, or an `inpart` record).  A `BUILD` verdict — `PQueue.build` itself
+failed, so nothing ran — is excluded from both and counted separately (one in the seven groups,
+one in `incomplete/`).
+
+```
+python3 tmp/L5r8/r8census.py .     # both populations, all eight groups, both depth tables
+python3 tmp/L5r8/r8chains.py       # the ten deepest chains and the input-size relation
+```
+
+| | seven groups, example-`loc` | `incomplete/`, example-`loc` | stdlib-`loc`, seven | stdlib-`loc`, `incomplete/` |
+|---|---|---|---|---|
+| P1 (`inpart`) | **9,362** | **1,283** | 2,695 | 12,682 |
+| …vocabulary fixed | **9,118 (97.39 %)** | **1,188 (92.60 %)** | 2,695 (100 %) | 12,682 (100 %) |
+| …draw-free | 9,117 | 1,188 | 2,695 | 12,682 |
+| …`NoConc` | 2,388 | 425 | 2,695 | 12,682 |
+| …residue | **244** | **95** | 0 | 0 |
+| P2 (every solve the model ran) | **9,381** | **1,290** | 2,695 | 12,682 |
+| …vocabulary fixed | **9,134 (97.37 %)** | **1,195 (92.64 %)** | 2,695 | 12,682 |
+| …residue | **247** | **95** | 0 | 0 |
+| P2-only (no `inpart` record) | 19 | 7 | 0 | 0 |
+| …of those, the MODEL also `REJECTED` | 19 | **1** | — | — |
+
+**An instrument gap the census inherits** (round-8 review Y-E).  `--depth` and `--cycle`
+iterate `step`, which does not model `Constraints.checkLabel`'s refutation, so a solve the
+COMPILER refutes on a label clash before the loop can run scores `SOLVED` in the model.  All
+seven of `incomplete/`'s P2-only solves are compiler-`REJECTED`; **six of the seven the model
+scores `SOLVED`** — `unsound01_keyed_halves.e(120:7)`, `unsound02_three_way_shard.e(78:7)`,
+`unsound03_inferred_headers.e(1:1)`, `unsound04_dead_helper.e(80:7)`,
+`unsound05_lhs_used.e(37:9)` and `witness03_grounded_call.e(1:1)`; only
+`witness01_case3_right_key.e(31:5)` is refuted by the model too.  (The seven groups' 19 are all
+`REJECTED` in the model as well, so the original "all REJECTED" was true there and false for
+`incomplete/`.)
+
+**What it costs the headline: 0.01 points.**  All seven have `grew = false` and draw nothing,
+so they sit in the certified bucket on either reading; dropping all 26 P2-only solves from both
+populations moves `incomplete/`'s P2 figure from 92.64 % to 92.60 % and the eight-group P2
+figure from **96.80 % to 96.79 %**.  The gap is real and is named here rather than joined away;
+it does not touch `D`, `R` or the differential, which run off `--replay` and the `sat` records.
+
+It also explains an eight-segment discrepancy nobody had accounted for: plain `--replay`
+reports `rejected=41` summed over the eight groups and `--cycle` reports **33**.  Six of the
+eight are these label refutations; the other two are the `BUILD` verdicts of round-7 review
+X-8g, where `PQueue.build` itself failed and the loop never ran.  41 = 33 + 6 + 2.
+
+Every figure of round 7 and of the round-7 review reproduces exactly — 9,362 / 9,118 / 244,
+9,381 / 9,134 / 247, 2,695, 1,283 / 1,188 / 425 / 95, 12,682 — from traces I made myself after
+the power cut and a census written for this round.  `incomplete/`'s P2 (1,290) and its 7
+`REJECTED` solves are new: the review measured P1 only.
+
+**THE TWO NUMBERS THE ROUND IS ABOUT.**
+
+| | seven groups | `incomplete/` | BOTH |
+|---|---|---|---|
+| depth histogram of ALL draws | `{1: 780, 2: 123}` | `{1: 734, 2: 185, 3: 21, 4: 2}` | 903 + 942 = **1,845 draws** (1,844 in a solve whose vocabulary grew) |
+| **largest chain depth** | **2** | **4** | **4** |
+| per-solve max depth | `{0: 9133, 1: 215, 2: 33}` | `{0: 1195, 1: 67, 2: 21, 3: 6, 4: 1}` | |
+| **largest `splitConcrete` GUARD-key mints** | **1** (246 solves) | **2** (1 solve) | **2** |
+| per-solve max guard-key mints | `{0: 9135, 1: 246}` | `{0: 1195, 1: 94, 2: 1}` | |
+| **largest CARRIER-key mints** | **4** (1 solve) | **6** (1 solve) | **6** |
+| per-solve max carrier-key mints | `{0: 9134, 1: 201, 2: 40, 3: 5, 4: 1}` | `{0: 1195, 1: 66, 2: 19, 3: 5, 4: 2, 5: 2, 6: 1}` | |
+| **largest DEQUEUE-key draws (`R`)** | **11** (1 solve) | **9** (1 solve) | **11** |
+| per-solve max dequeue-key draws | `{0: 9133, 1: 156, 2: 57, 3: 23, 4: 10, 5: 1, 11: 1}` | `{0: 1195, 1: 35, 2: 34, 3: 6, 4: 12, 5: 3, 6: 2, 7: 1, 8: 1, 9: 1}` | |
+
+The guard-key and carrier-key rows reproduce §R7.3b and X-7 cell for cell, which is the
+cross-check that the new instrument counts what round 5's counts.  **The depth rows are new,
+and they are flat**: over 2,301,195 corpus segments and 1,845 loop draws the mint chain is
+never more than **four** links long, and in the seven groups never more than **two**.  The
+dequeue-key row — the `R` the theorem actually needs — is also new, and its maximum over
+everything is **11**: `D = 4` and `R = 11` are the two constants the whole corpus supports.
+The five largest `R`s:
+
+```
+R=11  D=2  drawn= 73 steps=140 n= 9 m= 4  [A3] Ai/IncidentSeverity.e(69:15)
+R= 9  D=3  drawn=149 steps=281 n=21 m=10  [B]  incomplete/gu05_star_join_4dim_concrete_signature.e(62:1)
+R= 8  D=2  drawn= 27 steps=104 n= 9 m= 3  [A3] incomplete/gu08_label_inline.e(48:6)
+R= 7  D=3  drawn= 75 steps=151 n=11 m= 7  [B]  incomplete/np01_add_or_recompute.e(97:1)
+R= 6  D=2  drawn= 39 steps= 88 n=16 m= 3  [B]  incomplete/RevenueShare.e(108:12)
+```
+
+Note that `R` and `D` do not go together: the largest `R` in the corpus sits at depth 2, and the
+deepest solve has `R = 7`.  They are independent knobs, which is why the theorem needs both.
+
+### R8.1d Cross-tabulated by round 7's residue classes
+
+Classes as §R7.3a defines them (`A` = only split provenances in `sat`, `B` = both, `C` =
+resolution only, `D` = no generative provenance survives; `A` split by `maxmint − mint0`, the
+number of NEW minted ids a state ever held, and whether the run takes a `concrete` step).
+Counts are over **P2**, so `D` carries the three residue solves the `inpart` predicate drops.
+
+**Seven groups** (247 residue solves; round 7's P1 counts, 244, are A1 97 / A2 29 / A3 47 /
+B 36 / C 3 / D 32, and this table is those plus the three `REJECTED` ones, which have no `sat`
+records and so fall in D):
+
+| class | n | max depth | max guard-key mints | max carrier-key mints | **max dequeue-key draws** | max draws | depth spread |
+|---|---|---|---|---|---|---|---|
+| A1 | 97 | **1** | 1 | 1 | 1 | 1 | `{1: 97}` |
+| A2 | 29 | **1** | 1 | 1 | 1 | 2 | `{1: 29}` |
+| A3 | 47 | **2** | 1 | 3 | **11** | 73 | `{1: 20, 2: 27}` |
+| B | 36 | **2** | 1 | 4 | 5 | 24 | `{1: 35, 2: 1}` |
+| C | 3 | **2** | 1 | 1 | 2 | 9 | `{2: 3}` |
+| D | 35 | **2** | 1 | 2 | 4 | 8 | `{1: 33, 2: 2}` |
+
+**`incomplete/`** (95 residue solves):
+
+| class | n | max depth | max guard-key mints | max carrier-key mints | **max dequeue-key draws** | max draws | depth spread |
+|---|---|---|---|---|---|---|---|
+| A1 | 15 | **1** | 1 | 1 | 1 | 1 | `{1: 15}` |
+| A2 | 7 | **1** | 1 | 1 | 1 | 2 | `{1: 7}` |
+| A3 | 22 | **3** | **2** | 5 | 8 | 30 | `{1: 11, 2: 8, 3: 3}` |
+| B | 30 | **4** | 1 | **6** | **9** | 149 | `{1: 18, 2: 8, 3: 3, 4: 1}` |
+| C | 1 | 2 | 1 | 1 | 2 | 10 | `{2: 1}` |
+| D | 20 | **2** | 1 | 2 | 5 | 13 | `{1: 16, 2: 4}` |
+
+A1 and A2 are depth 1 by definition (one new name).  **Everything deeper than 2 is in class B**
+— where BOTH generative rules fire — or in `incomplete/`'s A3.  That is the round's sharpest
+structural reading: the chain gets long only when `splitConcrete` and `resolution` alternate.
+
+### R8.1e The ten deepest chains, link by link
+
+Each line is the chain from the deepest drawn id back to the input variable it hangs off,
+with each link's rule.  `d<k>` is the id's depth.
+
+**The tie-break, stated** (round-8 review Y-J): `tmp/L5r8/r8chains.py` sorts every drawn id by
+depth descending with Python's STABLE sort and then keeps the first ten distinct
+`(trace, segment, depth)` triples, so ties are broken by the order the rows were emitted — the
+seven groups before `incomplete/`, each in trace order, and within one solve in `dm` (i.e.
+step) order.  **Seven** solves reach depth 3 or more (one at depth 4, six at depth 3) and 54 reach depth 2, so
+the first eight rows below are the whole of the depth ≥ 3 population and rows 9–10 are two of
+the 54 depth-2 solves, chosen by that tie-break and by nothing else.
+
+```
+ 1. depth 4  incomplete/np01_add_or_recompute.e(103:1)  [B] steps=137 drawn=58 nvars=11 nparts=10 nlbl=7
+    305047(d4,res) <- 305046(d3,split) <- 305014(d2,split) <- 305011(d1,split) <- v305001 (input)
+ 2. depth 3  incomplete/gu05_star_join_4dim_concrete_signature.e(62:1) [B] steps=281 drawn=149 nvars=21 nparts=18 nlbl=10
+    303417(d3,res) <- 303411(d2,split) <- 303395(d1,split) <- v303362 (input)
+ 3. depth 3  incomplete/np01_add_or_recompute.e(135:15) [A3] steps=90 drawn=25 nvars=11 nparts=11 nlbl=7
+    303673(d3,res) <- 303667(d2,split) <- 303656(d1,split) <- v303652 (input)
+ 4. depth 3  incomplete/np01_add_or_recompute.e(97:1)  [B] steps=151 drawn=75 nvars=11 nparts=10 nlbl=7
+    304585(d3,res) <- 304582(d2,split) <- 304575(d1,split) <- v304564 (input)
+ 5. depth 3  incomplete/np01_add_or_recompute.e(103:1) [B] steps=137 drawn=58 nvars=11 nparts=10 nlbl=7
+    305032(d3,res) <- 305014(d2,split) <- 305011(d1,split) <- v305001 (input)
+ 6. depth 3  incomplete/np01_add_or_recompute.e(109:1) [B] steps=111 drawn=43 nvars=12 nparts=12 nlbl=7
+    305454(d3,res) <- 305435(d2,split) <- 305431(d1,split) <- v305429 (input)
+ 7. depth 3  incomplete/np01_add_or_recompute.e(115:1) [A3] steps=84 drawn=27 nvars=12 nparts=12 nlbl=7
+    305848(d3,res) <- 305847(d2,split) <- 305836(d1,split) <- v305822 (input)
+ 8. depth 3  incomplete/np01_add_or_recompute.e(132:1) [A3] steps=79 drawn=24 nvars=11 nparts=12 nlbl=7
+    305991(d3,res) <- 305990(d2,split) <- 305984(d1,split) <- v305980 (input)
+ 9. depth 2  Ai/ClinicalTrial.e(72:3)  [A3] steps=46 drawn=9 nvars=6 nparts=5 nlbl=6
+    305631(d2,res) <- 305629(d1,split) <- v305622 (input)
+10. depth 2  Ai/IncidentSeverity.e(64:10)   [A3] steps=44 drawn=9 nvars=6 nparts=5 nlbl=11
+    336334(d2,res) <- 336331(d1,split) <- v336325 (input)
+```
+
+**Every one of the ten has the same shape**: a run of `split` links, then ONE `res` link at the
+end.  Over the 1,844 draws that belong to a vocabulary-GROWING solve (the 1,845th is in a solve
+whose mint was withdrawn again, so `grew = false` and it carries no residue row) the adjacency
+table is
+
+| the site was drawn by | …and this draw is `split` | …and this draw is `res` |
+|---|---|---|
+| the INPUT | 554 | 959 |
+| `splitConcrete` | **48** | 281 |
+| `resolution` | **0** | **2** |
+
+so, exactly: **`splitConcrete` never once mints on a site that `resolution` drew** (0 of 1,844),
+and two `resolution` links in a row happen **twice**.  `splitConcrete` extends the chain,
+`resolution` almost always caps it — "almost", because the two exceptions are real and are
+what make depth 4 possible at all (chain 1 of the ten above ends `split, split, split, res`;
+the `res, res` pairs are elsewhere in `incomplete/`).
+
+### R8.1f Where the mints sit: the site census, over ALL draws
+
+The round-7 review's X-9(8) read mint sites off `sat` provenances, so it saw only the mints that
+SURVIVE into the saturated set (class D's do not).  The instrument sees every draw:
+
+| rule | draws | site is an INPUT variable | site is a MINTED id |
+|---|---|---|---|
+| `splitConcrete` | 602 | **554 (92.0 %)** | 48 (8.0 %) — all 48 minted by `splitConcrete` |
+| `resolution` | 1,242 | **959 (77.2 %)** | 283 (22.8 %) — 281 by `splitConcrete`, 2 by `resolution` |
+
+and by depth: `split` `{1: 554, 2: 46, 3: 2}`, `res` `{1: 959, 2: 262, 3: 19, 4: 2}`.  This
+confirms X-9(8)'s reading on a population five times larger and sharpens it: the split does
+chain, but only 48 times in 2.3 million segments and never more than three links; `resolution`
+sits on a minted site 283 times but on a `resolution`-minted one only twice.
+
+### R8.1g Is the depth bounded by something the INPUT determines?
+
+Over every solve of both populations that draws at all — **343**: the 247 + 95 = 342 residue
+rows plus the one solve that drew an id and had it withdrawn again, so `grew = false` and it
+carries no residue row (the same solve that makes the draw totals 1,845 and 1,844 differ):
+
+```
+population      solves   max depth   nvars   nparts   nlbl   (at the deepest solve)
+incomplete/         95           4      11       10      7
+seven groups       247           2       6        5      3
+solves whose max depth EXCEEDS the input's own variable, partition or label count: NONE
+largest  maxdepth / nvars  ratio : 0.364  (incomplete/np01_add_or_recompute.e(103:1), 4 / 11)
+largest  maxdepth / |L|    ratio : 1.0    (shouldfail/dup08_copy_column_onto_itself.e(24:7), 1 / 1)
+```
+
+So on the corpus **the chain depth is bounded by every one of the three input measures**, with
+a factor of three to spare against the variable count, and equals `|L|` only in the trivial
+one-label case.  That is a measurement, not a lemma: nothing here proves the depth cannot
+exceed `n`, and §R8.3 is the attempt to break it.
+
+## R8.2 The decomposition lemma, in Lean (`Loop/Depth.lean` §5–§8)
+
+### R8.2a What has to be counted, and the two facts that make it finite
+
+Round 7's `terminates_of_drawsAtMost` is a socket: any `k` with `∀ t, Reaches s t →
+t.su.drawn ≤ s.su.drawn + k` gives `Terminates s`.  So the whole problem is to bound the SET of
+ids a run draws.  Two facts make that set finite once the chain is bounded.
+
+* **The draws are distinct, and they are a function of the supply.**  `Sup.fresh` hands out an
+  id it can still reach and can never reach it again, so under `SupOk` the `j`-th and `k`-th
+  draws differ.  This is what turns "the run drew `k` ids" into "the drawn set has `k`
+  elements":
+
+```lean
+def Sup.after (su : Sup) : Nat → Sup
+  | 0 => su
+  | k + 1 => (su.after k).fresh.2
+
+def drawAt (su : Sup) (k : Nat) : Nat := (su.after k).fresh.1
+
+theorem drawAt_ne {su : Sup} (hok : SupOk su) {j k : Nat} (hjk : j < k) :
+    drawAt su j ≠ drawAt su k
+
+def drawnSet (su : Sup) (k : Nat) : Finset Nat := (Finset.range k).image (drawAt su)
+
+theorem drawnSet_card {su : Sup} (hok : SupOk su) (k : Nat) : (drawnSet su k).card = k
+```
+
+* **The label pool is fixed** (round 7's `reaches_concSub`, unconditionally), so a key `(v, C)`
+  ranges over `V × 𝒫(L)` and there are at most `2^m` of them per site.
+
+### R8.2b The hypotheses, as a structure on the draws
+
+```lean
+structure Chain (V₀ : Finset Nat) (L : Finset Nat) (D R : Nat) (Drawn : Finset Nat)
+    (dep site idx : Nat → Nat) (key : Nat → Finset Nat) : Prop where
+  /-- the input's own variables are at depth `0` -/
+  base : ∀ v ∈ V₀, dep v = 0
+  /-- a drawn id is one deeper than its site -/
+  succ : ∀ z ∈ Drawn, dep z = dep (site z) + 1
+  /-- a site is an input variable or an id this run drew -/
+  from_ : ∀ z ∈ Drawn, site z ∈ V₀ ∨ site z ∈ Drawn
+  /-- (a) the depth bound -/
+  depth : ∀ z ∈ Drawn, dep z ≤ D
+  /-- the key is over the input's label pool -/
+  keyL : ∀ z ∈ Drawn, key z ⊆ L
+  /-- (b) the per-key mint bound -/
+  idxR : ∀ z ∈ Drawn, idx z < R
+  /-- ...and the index really indexes the key: same site, same key, same index, same draw -/
+  inj : ∀ z ∈ Drawn, ∀ w ∈ Drawn, site z = site w → key z = key w → idx z = idx w → z = w
+```
+
+`depth` is the brief's (a) and `idxR` + `inj` together are its (b): "every key is minted at most
+`R` times" is only a bound if two mints at one key are distinguished by their index, which is
+what `inj` says.  Both are exactly what §R8.1's instrument computes per solve — `maxdepth` is
+`D`, and `maxremint` / `maxcremint` are `R`.
+
+### R8.2c The counting, layer by layer
+
+```lean
+def atDepth (Drawn : Finset Nat) (dep : Nat → Nat) (d : Nat) : Finset Nat :=
+  Drawn.filter (fun z => dep z = d)
+
+theorem atDepth_zero {V₀ L : Finset Nat} {D R : Nat} {Drawn : Finset Nat}
+    {dep site idx : Nat → Nat} {key : Nat → Finset Nat}
+    (hc : Chain V₀ L D R Drawn dep site idx key) : atDepth Drawn dep 0 = ∅
+
+theorem atDepth_succ_card {V₀ L : Finset Nat} {D R : Nat} {Drawn : Finset Nat}
+    {dep site idx : Nat → Nat} {key : Nat → Finset Nat}
+    (hc : Chain V₀ L D R Drawn dep site idx key) (d : Nat) (hd : 1 ≤ d) :
+    (atDepth Drawn dep (d + 1)).card ≤ (atDepth Drawn dep d).card * (2 ^ L.card * R)
+
+theorem atDepth_one_card {V₀ L : Finset Nat} {D R : Nat} {Drawn : Finset Nat}
+    {dep site idx : Nat → Nat} {key : Nat → Finset Nat}
+    (hc : Chain V₀ L D R Drawn dep site idx key) :
+    (atDepth Drawn dep 1).card ≤ V₀.card * (2 ^ L.card * R)
+
+theorem atDepth_card_le {V₀ L : Finset Nat} {D R : Nat} {Drawn : Finset Nat}
+    {dep site idx : Nat → Nat} {key : Nat → Finset Nat}
+    (hc : Chain V₀ L D R Drawn dep site idx key) :
+    ∀ d, 1 ≤ d → (atDepth Drawn dep d).card ≤ V₀.card * (2 ^ L.card * R) ^ d
+```
+
+Each proof is one `Finset.card_le_card_of_injOn` into `(layer d) ×ˢ (L.powerset ×ˢ range R)`
+along `z ↦ (site z, key z, idx z)` — injective by `Chain.inj`, well defined by `Chain.succ`,
+`Chain.from_` and `atDepth_zero` (a site at depth `0` cannot be a drawn id, so it is an INPUT
+variable, which is where `V₀.card` enters at `d = 1`).
+
+```lean
+def chainBound (n m D R : Nat) : Nat := n * D * (2 ^ m * R) ^ D
+
+theorem chain_card_le {V₀ L : Finset Nat} {D R : Nat} {Drawn : Finset Nat}
+    {dep site idx : Nat → Nat} {key : Nat → Finset Nat}
+    (hc : Chain V₀ L D R Drawn dep site idx key) :
+    Drawn.card ≤ chainBound V₀.card L.card D R
+```
+
+### R8.2d …and hence `Terminates`
+
+```lean
+def ChainRun (s : State) (V₀ L : Finset Nat) (D R : Nat) : Prop :=
+  ∀ t, Reaches s t → ∃ (dep site idx : Nat → Nat) (key : Nat → Finset Nat),
+    Chain V₀ L D R (drawnSet s.su (t.su.drawn - s.su.drawn)) dep site idx key
+
+theorem drawn_le_of_chainRun {s : State} {V₀ L : Finset Nat} {D R : Nat}
+    (hok : SupOk s.su) (h : ChainRun s V₀ L D R) :
+    ∀ t, Reaches s t → t.su.drawn ≤ s.su.drawn + chainBound V₀.card L.card D R
+
+theorem terminates_of_chainRun {s : State} {V₀ L : Finset Nat} {D R : Nat}
+    (hem : s.flags.emptyRow = false) (hdj : s.flags.disjRule = false)
+    (hcse : s.flags.cseMints = false) (hw : Wf s) (hnd : EnvNodup s)
+    (hok : SupOk s.su) (hfr : SupFresh s.su (sys s)) (hqh : QueueHygiene s)
+    (hki : KDist s.incm.elems) (hkp : KDist s.proc.elems)
+    (h : ChainRun s V₀ L D R) : Terminates s
+
+theorem terminates_of_chainRun_of_buildQueue {V₀ L : Finset Nat} {D R : Nat}
+    {cs : List CsItem} {su : Sup} {q : PQueue} {su' : Sup}
+    {fl : Flags} {ns : Names} {site : String} {tr : List String} {z : Nat}
+    (hq : buildQueue cs su = .ok (q, su'))
+    (hem : fl.emptyRow = false) (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (hw : Wf (initState q su' tr fl ns site z))
+    (hok : SupOk su')
+    (hfr : SupFresh su' (sys (initState q su' tr fl ns site z)))
+    (h : ChainRun (initState q su' tr fl ns site z) V₀ L D R) :
+    Terminates (initState q su' tr fl ns site z)
+```
+
+**THE STATEMENT THE ROUND IS FOR**, in one line: *depth `≤ D` and every key minted `≤ R` times
+⟹ the loop draws at most `n · D · (2^m · R)^D` ids ⟹ `Terminates`.*  Every other hypothesis is
+round 7's and is discharged at an initial state by the `_of_buildQueue` corollary (`Wf`,
+`SupOk`, `SupFresh` excepted, exactly as round 7's corollaries keep them).
+
+### R8.2e Which of (a) and (b) each earlier refutation bears on
+
+| refutation | what it refutes | bears on |
+|---|---|---|
+| round 4 `ChargeI` (`Loop/Pump.lean` §4) — "each mint can be charged to a distinct binding" | the charge is not injective: the witness re-mints at one key with no new binding spent | **(b)** only.  It says nothing about the DEPTH: `ChargeI`'s witness is a re-mint at ONE key, i.e. depth 1 with `R = 2` |
+| round 4 `ChargeII` — "each mint's carrier is withdrawn by a `SubstEnv` entry" | `destructiveSub` withdraws the carrier WITHOUT an entry | **(b)** only, same key, same reason |
+| round 5's dequeue-order repair (`repairBeforeExam_false`) — "the key's carrier is examined before the key is re-dequeued" | the order does not save the key | **(b)** only |
+| round 4 `QStepDichotomy` / `hmeas_increases` (`KeyedEmpty`) | the Stage-4 potential INCREASES across `makeEmpty` | **(b)** — it is about a key surviving, not about a new site |
+| round-6 review W-9's 111 corpus witnesses | the naive input-checkable fragment ("no `join` shape in the input") | neither: it is about which INPUTS can mint at all |
+| round-7 review X-7's `np01(134:15)` | "a `splitConcrete` guard key is minted at most once" | **(b)**, and it fixes its value: `R ≥ 2` is real |
+| round 5's ten-turn pump, round 6's 443-dequeue hunt | how far `R` can be DRIVEN synthetically | **(b)** |
+
+**Every refutation of the last four rounds is about (b).  Not one of them touches (a).**  That
+is the reason the chain depth was worth measuring: it is the factor nobody has attacked, and it
+is the one the corpus says is small (§R8.1c: 2 in the seven groups, 4 over everything).
+
+One caveat, stated because it weakens the table a little.  Rounds 4–5 refuted bounds on the
+GUARD key and on the CARRIER key; `Chain`'s `R` is over the DEQUEUE key (§R8.1a), which is a
+coarser partition of the draws — every guard key `(v, C)` from `splitMintKey` IS the dequeue
+key of its step, so a refutation of "the guard key is minted once" refutes "the dequeue key is
+drawn at once" a fortiori, but a refutation of "the CARRIER key is installed once" does not
+transfer directly, because a carrier key is keyed on the dequeued lhs and the MERGED concrete
+part, not the dequeued one.  So the honest reading of the table is: rounds 4–5 kill the natural
+bounds on (b) for the guard key outright, and make any bound on (b) for the carrier key
+implausible; neither says anything at all about (a).
+
+## R8.3 The hunt: how far can each factor be driven?
+
+### R8.3a Method
+
+Parents: the rounds 4–5 generator (`tmp/L5r8/hunt/gen5.py`, copied unchanged from round 5 —
+satisfiable by construction over a fixed valuation `rho`, biased toward HUBS so the keys
+concentrate, LONE definitions so `resolution` fires, and BARE / EMPTY rows so `makeEmpty` and
+`destructiveSub` withdraw carriers), swept over a **size grid**: `nv ∈ {6,8,10,12,16,20}` ×
+`nl ∈ {4,6,8,10}` × `nc ∈ {6,10,16,24}`, 40 seeds a cell, **3 id bases each**.
+
+```
+tmp/L5r8/hunt/gengrid.sh          3,840 seeds
+tmp/L5r8/hunt/rungrid.sh          11,520 model runs, fuel 3,000, `--depth`, 60 s per run
+tmp/L5r8/hunt/agg8.py             the tables below
+                                  11,514 SOLVED, 6 runs over the 60 s cap (§R8.3c)
+```
+
+(1,104 further runs first came back `TIMEOUT`; every one was in a cell that ran WHILE I was
+rebuilding `looptrace` to add the `maxdkey` counter, so `exec` found no binary and my runner's
+`${line:-TIMEOUT}` fallback fired.  Those ten cells were re-run on the stable binary —
+`tmp/L5r8/hunt/rerun8.sh`, `TOTAL 11520 TIMEOUTS 6` — and none of them times out.  It is a
+harness artefact of my own making and it is reported because a reviewer would otherwise read
+1,104 hangs off the raw logs.)
+
+### R8.3b The growth curves
+
+| | runs | **max chain depth** | max guard-key mints | max carrier-key mints | max draws |
+|---|---|---|---|---|---|
+| `nv = 6` | 1,920 | 3 | 1 | 1 | 60 |
+| `nv = 8` | 1,920 | 4 | 1 | 3 | 159 |
+| `nv = 10` | 1,920 | 4 | 1 | 5 | 340 |
+| `nv = 12` | 1,920 | 4 | 1 | 4 | 1,836 |
+| `nv = 16` | 1,915 | **5** | 1 | **6** | 1,037 |
+| `nv = 20` | 1,919 | 4 | 1 | **6** | 1,370 |
+| `nl = 4` | 2,880 | 3 | 1 | **6** | 173 |
+| `nl = 6` | 2,880 | 4 | 1 | 4 | 1,370 |
+| `nl = 8` | 2,880 | 4 | 1 | 3 | 1,836 |
+| `nl = 10` | 2,874 | **5** | 1 | 3 | 1,166 |
+| `nc = 6` | 2,880 | 3 | 1 | 2 | 208 |
+| `nc = 10` | 2,880 | 4 | 1 | 3 | 1,836 |
+| `nc = 16` | 2,877 | **5** | 1 | 5 | 1,370 |
+| `nc = 24` | 2,877 | 4 | 1 | **6** | 1,166 |
+
+**CORRECTION (round-8 review Y-A).  This table has no `maxdkey` column, and `maxdkey` is the
+factor the theorem is stated in.**  The column was added to the instrument mid-round and
+`agg8.py` was never taught about it, so the run above measured `D`, the guard key and the
+carrier key, and not `R`.  Worse, only **2,040 of the 11,514 rows carry the field at all** —
+the ten cells `rerun8.sh` re-ran plus seven that happened to execute after the binary was
+rebuilt.  §R8.7 has the corrected table from a re-run of the whole grid.
+
+What the table above still supports, and what it does not: **the chain depth does not grow much
+with the input** — trebling the variable count (6 → 20) moves the largest depth from 3 to 4,
+and the single 5 is at `nv = 16`, not at 20, while draws grow thirtyfold over the same range.
+The earlier bolded claim that it "does not grow with the input" is withdrawn: the reviewer's
+single-threaded re-runs reproduce depth 5 twice more, and the round's own tracked seed reaches
+depth 5 at one base (§R8.4c), so the right statement is *slowly*, not *not at all*.  The
+guard-key count is **1 everywhere in 11,514 runs** — the corpus's own 2 (`np01(134:15)`) is
+still the only 2 anyone has found, in either population.  The carrier-key count reaches 6 here,
+which is the corpus maximum exactly — but `GU05.json` at base 2 reaches **12** (§R8.4c), so
+even that row was not the maximum this round had in hand.
+
+### R8.3c The six runs that missed the cap
+
+`g16_10_16_000019` (bases 0, 1), `g20_10_16_000013` (base 0), `g16_10_24_000019` (bases 0, 2)
+and `g16_10_24_000016` (base 1) did not finish 3,000 model dequeues in 60 s.
+
+**Two things about how that cap was measured** (round-8 review Y-6c).  `huntd.sh` runs
+`xargs -P 6` — six `looptrace` processes against a 60 s WALL-CLOCK cap — so the misses are
+measured under contention.  Re-run alone under a 300 s cap, **all six SOLVE**, and they are the
+hunt's largest `R`s: `maxdkey` 22, 23, 24, 26, 29 and **31**, on inputs of 12–16 variables, with
+`g16_10_24_000019` at base 2 reaching depth 5 on a histogram `1:939, 2:1062, 3:165, 4:118,
+5:19` — nineteen ids at depth 5, a real layer.  So the conclusion below ("slow, not divergence
+candidates") is right about divergence and wrong about what they are: **they are the hunt's `R`
+candidates** (§R8.7).
+
+All four seeds were replayed through the **shipped compiler** at ten id bases each:
+
+```
+tmp/L5r8/candrun.sh
+g16_10_16_000019   n=10 SOLVED=10 HANG=0   drawn 300..1357   max 1,834 ms
+g16_10_24_000016   n=10 SOLVED=10 HANG=0   drawn  77..1061   max 1,544 ms
+g16_10_24_000019   n=10 SOLVED=10 HANG=0   drawn  73..2834   max 1,871 ms
+g20_10_16_000013   n=10 SOLVED=10 HANG=0   drawn   4.. 733   max 1,649 ms
+```
+
+**40 / 40 SOLVED, none over 1.9 s**, and the reviewer's independent replay of the three
+largest-`R` seeds is **30 / 30 SOLVED, none over 0.7 s**, with the compiler's draw counts
+matching the model's base for base.  The model is simply slower than the compiler on the larger
+inputs (association lists against hash sets); these six are *slow*, not divergence candidates —
+but they ARE `R` candidates, and that is what the first version of this subsection missed.
+
+### R8.3d The verdict of the hunt
+
+The brief's threshold was "a candidate exceeding the corpus maximum by two or more on any
+factor, replayed through the shipped compiler at ten id bases".  What the first version of this
+table said, and what is true:
+
+| factor | corpus max (§R8.1c) | threshold | hunt max, **as first reported** | hunt max, **corrected** (§R8.7) | hit? |
+|---|---|---|---|---|---|
+| chain depth | 4 | ≥ 6 | 5 | 5 | no |
+| `splitConcrete` guard-key mints | 2 | ≥ 4 | 1 | 1 | no |
+| carrier-key mints | 6 | ≥ 8 | 6 | 6 | no |
+| **DEQUEUE-key draws (`R`)** | **11** | **≥ 13** | *not measured* | **38** | **YES — 121 runs** |
+
+**"Not one candidate" was a coverage artefact.**  The factor the theorem is stated in was never
+plotted, and where the field happened to be recorded it already reached **18** — on
+`g8_6_16_000013` at base 1, an input with **seven variables and six labels**, i.e. `R` larger
+than either.  The round-8 reviewer re-ran two whole parameter families single-threaded and
+reached **26** and **31** (`g16_10_24_000019` at base 0, 14 variables), and the six §R8.3c
+cap-misses — re-run alone under a 300 s cap — are not merely "slow" but the hunt's `R`
+candidates: 22, 23, 24, 26, 29 and 31, every one SOLVED.  **My own re-run of the whole grid
+reaches 38** and finds **121 candidate runs**, every one of them an `R` hit and every one
+SOLVED; the eight distinct seeds behind them are 80/80 SOLVED on the shipped compiler in under
+750 ms.  §R8.7 has the tables.
+
+What survives of the paragraph this replaces: the one input in the round that pushes the loop
+hardest — `GU05.json` — was still found by TRANSCRIBING A REAL SOLVE and changing six ids, not
+by generating anything.  And the generator's failure to drive the DEPTH stands, on the narrower
+reading §R8.3b now gives it: it concentrates keys, which is what drives `R`, and a generator
+that drove `D` would have to build a chain on purpose — mint at `v`, then arrange that the
+MINTED name is itself the left-hand side of a partition whose right-hand side has two abstract
+parts and a concrete one — which no round has written.  §R8.7 puts that job in its corrected
+place in the queue.
+
+## R8.4 The two real witnesses as tracked seeds
+
+### R8.4a The transcode, and whether `TestLoopTrace` needs a change
+
+`tmp/L5r8/mkseed.py` reads one segment's `sin` / `scon` records out of a compiler trace and
+writes a `rowclosure.py`-format seed.  Two are now tracked:
+
+| seed | segment | what it is |
+|---|---|---|
+| `tracker/repro/satterm/seeds/NP01.json` | `incomplete/np01_add_or_recompute.e(134:15)`, segment 54291 | the ONLY corpus solve that mints one `splitConcrete` GUARD key twice (round-7 review X-7) |
+| `tracker/repro/satterm/seeds/slow/GU05.json` | `incomplete/gu05_star_join_4dim_concrete_signature.e(62:1)`, segment 54234 | the deepest solve on record: 281 dequeues, 149 loop draws, carrier key minted six times.  **In `slow/`, and NOT in `core/test`'s population — see below** |
+| `tracker/repro/satterm/seeds/slow/GU05MIN.json` | — | GU05 reduced to 15 of its 18 constraints, still satisfiable, still blowing up (§R8.4e) |
+
+**Enumeration is automatic — and that is the problem.**  `core/src/test/…/TestLoopTrace.scala:199`
+is
+
+```scala
+lazy val seeds: List[Sys] = {
+  val fs = Option(seedDir.listFiles).getOrElse(Array[File]())
+    .filter(_.getName.endsWith(".json")).sortBy(_.getName).toList
+  fs.map(readSeed)
+}
+```
+
+— every `.json` directly under `tracker/repro/satterm/seeds`, at each of the six id bases in
+`Bases` (`0, 7, 41, 300, 1234, 65537`).  So no code change is needed to pick a new seed up.  But
+the next lines are the ones that matter, and the first version of this subsection did not read
+them: **all `seeds × Bases` jobs plus `NGenerated = 600` generated systems run in ONE `-Xmx1g`
+child JVM under a SINGLE 180 s cap**, and a timeout is a FAILURE
+(`fail("the tracing child JVM did NOT FINISH …")`), followed by three model replays each under
+their own 180 s cap.  **The outcome of dropping `GU05.json` into `seeds/` would not have been a
+slow test; it would have been a failing build.**  Measured at exactly those six bases, one JVM
+at a time, `-XX:ActiveProcessorCount=2`, 600 s cap (round-8 review Y-11, `sixbases.log`):
+
+| base | `NP01.json` | `GU05.json` |
+|---|---|---|
+| 0 | SOLVED **490 ms** | SOLVED **133,419 ms** |
+| 7 | SOLVED **415 ms** | **HANG — 600,000 ms cap, drawn 46,749** |
+| 41 | SOLVED **404 ms** | SOLVED **1,002 ms** |
+| 300 | SOLVED **377 ms** | **HANG — 600,000 ms cap, drawn 35,650** |
+| 1234 | SOLVED **376 ms** | SOLVED **675 ms** |
+| 65537 | SOLVED **403 ms** | SOLVED **641 ms** |
+| | **6/6 SOLVED, max 490 ms** | 4/6 SOLVED, two bases unfinished after ten minutes each |
+
+Two of `core/test`'s own six bases do not finish in 600 s, a third takes 133 s, and the budget
+for all 720 jobs is 180 s in a 1 GB heap.  Bases 41, 300, 1234 and 65537 were outside this
+round's 0…24 sweep entirely, and one of the two hangs is among them.  Worse, a base that runs
+long enough does not time out but PANICS at the harness's 100,000-id ceiling (§R8.4c), which
+would surface as a non-zero child exit rather than a timeout.
+
+**Fix applied**: `GU05.json` and `GU05MIN.json` now live in
+`tracker/repro/satterm/seeds/slow/`.  `listFiles` is non-recursive, so both stay tracked, stay
+reachable by `run.sh sweep json:tracker/repro/satterm/seeds/slow/GU05.json`, and
+`TestLoopTrace` skips them **with no code change**.  Each carries the reason in its own `name`
+field.  So the property's job count goes from `18 × 6 + 600` to `19 × 6 + 600` — one seed
+added, `NP01.json`, which is safe: 6/6 SOLVED in 376–490 ms, returning the substitution
+`tmp/L5r8/satcheck.py` computes independently.  I did NOT run `sbt core/test` (no sbt in this
+round's brief); the orchestrator has, with `GU05` excluded: **714 solves, 714 agree, 3/3
+pass**.
+
+### R8.4b NP01: the transcode reproduces the corpus solve in every column but one
+
+At id base 300 — the seed's variables get ids 300…310, which is where the compiler's own solve
+had them — the model's `--depth` report on the seed and on the trace segment agree as follows:
+
+| | trace segment 54291 | seed `NP01.json` @ 300 |
+|---|---|---|
+| dequeues | 98 | **98** |
+| loop draws | 22 − 4 = 18 | **18** |
+| `nsplit` / `nres` | 6 / 12 | **6 / 12** |
+| chain depth | 2 | **2** |
+| guard-key mints | 2 | **2** |
+| carrier-key mints | 3 | **3** |
+| dequeue-key draws | 4 | 3 |
+| `nvars` / `nparts` / `nlbl` | 11 / 11 / 7 | **11 / 11 / 7** |
+| depth histogram | `1:11, 2:7` | **`1:11, 2:7`** |
+
+One column differs, and it is the one the transcode touches: the segment's busiest dequeue key
+is drawn at **four** times, the seed's **three**.  Segment 54291 has four `Part`s with a
+concrete left-hand side (`drawn0 = 4`), so `PQueue.build` mints four names whose partitions are
+also dequeued, and one of those dequeues shares a key; in the seed those four are input
+variables with different ids and the sharing does not happen.  That is change (1) of §R8.0a showing up in the measurement,
+and it is the reason `drawn0` is 4 in the trace and 0 in the seed.
+
+The SHIPPED compiler solves the seed at **25 id bases, 25/25 SOLVED**, drawing 15–34 ids in
+17–335 ms (`tmp/L5r8/np01sweep.log`: `DRAWN min=15 median=18 max=34`,
+`TIME min=17 median=34 p95=64 max=335 ms`), and returns the substitution `tmp/L5r8/satcheck.py`
+computes independently.  The model at other bases gives 16–18 draws and 89–105 dequeues.  The
+solve's shape is stable and its size wobbles with the dequeue order — which is the same lever
+that moves GU05 by a factor of 2,200, and on NP01 moves it by a factor of two.
+
+**In Lean** (`Loop/Depth.lean` §9), the same seed, kernel-checked:
+
+```lean
+theorem npS0_depth : (depthRun 200 npS0 {}).maxDepth = 2 := by rfl
+
+theorem npS0_terminates : Terminates npS0 := ⟨200, by trivial⟩
+
+theorem npS0_bound : chainBound 11 7 2 3 = 3244032 := by rfl
+```
+
+(The bound is stated at the SEED's `R = 3`; at the segment's `R = 4` it is
+`chainBound 11 7 2 4 = 5,767,168` — either way five to six orders of magnitude above the 18
+draws the solve actually takes.)
+
+Three theorems, not the eight I first wrote.  Each `by rfl` on `depthRun` re-runs the 98 dequeues in the
+KERNEL: eight of them elaborated in 7 m 46 s in a scratch file and then **ran the machine out of
+memory inside `lake build` (Lean killed, exit 137)** while the GU05 sweep held 6 GB.  This is
+reported rather than quietly trimmed: what the module now proves is the DEPTH, the fact that
+the solve stops, and the arithmetic of the bound; the remaining columns of the table above are
+established by the corpus differential instead, which replays the same solve out of the
+compiler's own trace with `0 hashdiff / 0 eqdiff` — a stronger check than a second kernel
+evaluation of the same function, and free.
+
+### R8.4c GU05: the confirmation runs, and what the divergence question came to
+
+§R8.0a has the headline and the retraction.  The confirmations:
+
+| cap | bases | result | log |
+|---|---|---|---|
+| 60 s | 0…24 | SOLVED 11, **HANG 14**, drawn up to 21,609 | `gu05probe.log` |
+| 300 s | 0…3 | **SOLVED 4/4**: 267,347 ms (drawn 47,317) / 459 ms / 221 ms / 45,641 ms | `gu05confirm.log` |
+| 600 s, one JVM, `-XX:ActiveProcessorCount=2` | 4, 5, 6 | base 4 **HANG**, drawn 69,768; base 5 **SOLVED** in 485,614 ms, drawn 75,059; base 6 **SOLVED** in 371,199 ms, drawn 81,481 | `gu05conf600.log` |
+| 2,400 s | 4 | **REJECTED** at ~692 s with `panic: reinstantiated type 121` — the harness's 100,000-id supply window, not a solver verdict (Y-D) | `gu05base4long.log` |
+| 600 s, the reviewer's six-base run | 0, 7, 41, 300, 1234, 65537 | base 0 SOLVED in **133,419 ms**, 41 in 1,002 ms, 1234 in 675 ms, 65537 in 641 ms; **bases 7 and 300 HANG** (drawn 46,749 and 35,650) | `review-L5r8/sixbases.log` |
+
+(All under `tmp/L5r8/` except the last row.  Two of the three 600 s bases SOLVE; the third,
+base 4, does not, and is undecidable in this harness — see §R8.0a, which withdraws the
+"cut off short" reading the first version of this table supported.  **Twelve of GU05's bases
+have no verdict at all**: 8, 9, 10, 11, 12, 14, 15, 16 and 22 were never run past 60 s, and 4,
+7 and 300 exceed every cap they have been given.)
+
+and the model, on the same seed at base 0, under `--cycle` (round 6's state-repeat search):
+
+```
+cycle fuel=100  steps=100 states=100 drawn= 16 grew=true maxmint= 9 conc= 7 canon=- exact=-
+cycle fuel=200  steps=200 states=200 drawn= 51 grew=true maxmint=14 conc= 8 canon=- exact=-
+cycle fuel=300  steps=300 states=300 drawn= 68 grew=true maxmint=23 conc=11 canon=- exact=-
+cycle fuel=400  steps=400 states=400 drawn=102 grew=true maxmint=29 conc=12 canon=- exact=-
+```
+
+**No canonical repeat and no exact repeat at any prefix**, so `Cycle.not_terminates_of_cycle`
+is not available — and, since the compiler SOLVES the seed, that is the right answer rather
+than a gap.  What the run does instead is WALK: `maxmint`, the largest number of minted ids the
+state ever holds at once, climbs 9 → 14 → 23 → 29 while the state never repeats.  That is round
+5's and round 6's picture at four times the scale.
+
+And the round's own two factors, measured along the blow-up (`tmp/L5r8/gu05factors*.sh`):
+
+| model dequeues | draws | **chain depth** | guard-key | carrier-key | **dequeue-key draws** | depth histogram |
+|---|---|---|---|---|---|---|
+| 50 | 7 | 1 | 1 | 1 | 3 | `1:7` |
+| 100 | 16 | 2 | 1 | 2 | 4 | `1:15, 2:1` |
+| 200 | 51 | 2 | 1 | 2 | 7 | `1:37, 2:14` |
+| 300 | 68 | 3 | 1 | 3 | 7 | `1:38, 2:28, 3:2` |
+| 400 | 102 | 3 | 1 | 5 | 7 | `1:54, 2:44, 3:4` |
+| 500 | 167 | 3 | 1 | 7 | 10 | `1:107, 2:55, 3:5` |
+| 700 | 222 | 3 | 1 | 7 | 10 | `1:133, 2:77, 3:12` |
+| **1000** | 350 | **4** | 1 | 7 | **14** | `1:211, 2:117, 3:20, 4:2` |
+
+and at the five bases the compiler solves quickly, where the model run FINISHES rather than
+running out of fuel (bases 1 and 2 from round-8 review Y-6e, `review-L5r8/gu05seed.log`; all
+five re-run in `tmp/L5r8/factseed.log`):
+
+| base | verdict | dequeues | draws | **chain depth** | carrier-key | **dequeue-key draws** | depth histogram |
+|---|---|---|---|---|---|---|---|
+| 1 | SOLVED | 721 | 1,091 | 3 | 9 | **20** | `1:621, 2:456, 3:14` |
+| 2 | SOLVED | 637 | 743 | **5** | **12** | **19** | `1:407, 2:80, 3:151, 4:82, 5:23` |
+| 41 | SOLVED | 721 | 762 | **5** | 6 | **18** | `1:282, 2:281, 3:146, 4:46, 5:7` |
+| 1234 | SOLVED | 395 | 302 | 3 | **10** | 12 | `1:179, 2:102, 3:21` |
+| 65537 | SOLVED | 378 | 239 | 4 | 5 | 10 | `1:103, 2:79, 3:49, 4:8` |
+
+(Bases 1 and 2 are the reviewer's, and I re-ran both and got their lines character for
+character; bases 41, 1234 and 65537 are mine — `tmp/L5r8/factseed.log`.  All five are bases the
+compiler solves in about a second, which is why the model can be run to completion on them at
+all.)
+
+**The round's own tracked seed is a candidate on two of the four factors, at several bases.**
+`maxdkey` is 18–20 at three of the five (corpus maximum 11, threshold ≥ 13) and `maxcremint` is
+10 and 12 at two (corpus maximum 6, threshold ≥ 8).  §R8.3d's table would have flagged it had
+`--depth` been run on it at more than base 0 — which is Y-A again, in the round's own artefact.
+Depth reaches **5** at two independent bases, with 7 and 23 ids in that layer, so it is a real
+layer and not an outlier.
+
+**And this is the R8.4 check the round did for NP01 and not for GU05, passing.**  The COMPILER
+solves base 1 with `drawn=1091` and base 2 with `drawn=743` (`gu05confirm.log`); the model gives
+**1,091** and **743**.  The seed's model run and the compiler's therefore agree on the draw
+count at the bases where both finish — which is a weaker check than NP01's column-by-column
+reproduction of its own trace segment (§R8.4b), and §R8.6c's side-by-side now says so.
+
+**CORRECTION (round-8 review Y-B).  The first version of this subsection said "the depth
+reaches 3 at dequeue 300 and does not move again … the blow-up is WIDTH, not depth."  That is
+false, and it was refuted by my own log**: `tmp/L5r8/gu05factors3.log`, written before the
+sentence was, already had `fuel=1000 maxdepth=4 maxdkey=14`.  The sentence rested on a table I
+stopped at fuel 500.
+
+What the corrected data says is weaker and less tidy: **both factors move slowly, and neither
+has stopped.**  Over a twenty-fold increase in dequeues the depth goes 1, 2, 2, 3, 3, 3, 3, 4
+and `maxdkey` goes 3, 4, 7, 7, 7, 10, 10, 14; at the bases that finish, depth reaches **5** and
+`maxdkey` **20**, with `maxcremint` at **12** — twice the corpus maximum of 6, which is a
+candidate by §R8.3d's own ≥ 8 threshold, on the round's OWN tracked seed.  23 of base 2's 743
+ids sit at depth 5, so it is a real layer and not one outlier.
+
+The one thing that does hold: **the draws grow much faster than the depth.**  350 draws at
+depth 4 and 743 at depth 5 are far more than a chain of that depth needs, so the blow-up is
+mostly width — but "mostly" is the honest word, not "not depth", and the depth is climbing.
+Nor is depth 5 an artefact of one base: it appears at base 2 (23 ids in the layer) and again at
+base 41 (7 ids), on runs that differ in nothing but the id base.
+Both are exactly the regime `chainBound = n · D · (2^m · R)^D` permits to be astronomical while
+`D` and `R` look small: at `n = 21`, `m = 10`, `D = 5`, `R = 20` the bound is 3.8 × 10^23.
+The theorem is true and its constants are useless; `2^m` is the whole of it.
+
+### R8.4d What a `not_Terminates` proof would have needed
+
+Recorded because the question was asked and the answer turned out to be "the input does
+terminate", so nobody should spend the next round looking for this proof on THIS seed:
+
+* `Cycle.not_terminates_of_cycle` needs `SEq t s` with `Reaches s t` — an exact state repeat.
+  The instrument looked for one at four prefixes and found none, and the compiler's own answer
+  says there is none to find.
+* The only other route the stage has is a `Pump.lean`-style INVARIANT: a predicate `P` on
+  states with `P s → ∃ t, Reaches s t ∧ P t ∧ t.su.drawn > s.su.drawn`, the shape
+  `DefaultSatDiverge.W2Inv` has for the additive relation.  Writing one needs a SMALL witness,
+  which is why the reduction (§R8.4e) was attempted first, and it needs the witness to actually
+  diverge, which this one does not.
+
+### R8.4e The reduction
+
+`tmp/L5r8/reduce8.py` drops constraints one at a time, keeping a drop only if the reduced
+system is still SATISFIABLE (by the per-label checker, re-run on every candidate) and the model
+still misses a 600-dequeue fuel at one of three id bases.  **It converged at 15 of the 18 constraints** and is tracked as
+`tracker/repro/satterm/seeds/slow/GU05MIN.json` — in `slow/` for the same reason as GU05 itself
+(§R8.4a).  Its satisfiability is verified by the same per-label checker
+(`tmp/L5r8/satcheck.py`), and the three dropped constraints are `[15,[0,1],[]]`,
+`[15,[],[0..5]]` and `[17,[],[0..9]]`: the two that define the input's largest hub and the one
+bare row above it.
+
+Since §R8.0a's retraction the reduction is no longer load-bearing for a divergence proof — there
+is no divergence to prove.  What it produces instead is the smallest satisfiable input that
+still shows the ORDER-DEPENDENT BLOW-UP, which is what a performance ticket against
+`Constraints.incorporateAll` wants, and what a round that wants to understand the blow-up
+should start from.
+
+## R8.5 `incomplete/` is a first-class group from here on
+
+Every census figure of this round is over EIGHT groups.  What that changes, stated once:
+
+* **Trace generation** covers it (`tmp/L5r8/gentrace.sh` traces the seven groups one JVM per
+  group and then `core/examples/incomplete/`'s 34 modules one JVM per file under a 90 s cap —
+  the round-7 reviewer's `genic.sh` recipe, folded into the round's own script).  Segment total
+  **2,301,195**, five times round 7's population.
+* **Every instrument** runs over it: `--depth`, `--cycle` and plain `--replay`
+  (`tmp/L5r8/runinstr.sh`, `runreplay.sh`), 41 traces each.
+* **The differential** is established over all eight (`0 hashdiff / 0 eqdiff / 0 skipped` on
+  2,301,195 segments), by plain `--replay`, which is the only mode that computes it.
+
+**The vocabulary-fixed certified fractions, restated over the eight groups.**
+
+| population | how it is checked | P1 (`inpart`) | P2 (every solve the model ran) |
+|---|---|---|---|
+| standard library, seven groups | `NoConc`, from the INPUT alone | **2,695 / 2,695 = 100 %** | 2,695 / 2,695 |
+| standard library, `incomplete/`'s 34 traces | `NoConc`, from the INPUT alone | **12,682 / 12,682 = 100 %** | 12,682 / 12,682 |
+| user programs, seven groups | the model's run: `grew = false` | **9,118 / 9,362 = 97.39 %** | **9,134 / 9,381 = 97.37 %** |
+| user programs, `incomplete/` | the model's run: `grew = false` | **1,188 / 1,283 = 92.60 %** | **1,195 / 1,290 = 92.64 %** |
+| **user programs, all eight** | | **10,306 / 10,645 = 96.81 %** | **10,329 / 10,671 = 96.80 %** |
+
+The eight-group user-program figure is **96.8 %**, not round 7's 97.4 %: `incomplete/` is the
+group built to be hard and it drags the headline down by 0.6 points.  The standard library is
+**15,377 / 15,377 = 100 %** across all 41 traces (2,695 + 12,682), which is the round-6
+reviewer's figure re-derived by running the model.  Cycle search over the eight: **0 canonical
+and 0 exact state repeats, 0 `FUEL`, in all 2,301,195 segments**.
+
+## R8.6 OUTCOME: **(T2)** — the decomposition lemma proved, both factors measured, the remaining lemma named
+
+Not (W): §R8.0a's blow-up looked like a divergence at a 60 s cap and stopped looking like one at
+300 s and again at 600 s, when three of the "hanging" bases SOLVED — two of them after 75,059
+and 81,481 draws, both more than the one base still unfinished had reached when it was cut off.
+No `not_Terminates` is proved and none is claimed.  Not (T1): the two factors are bounded on everything measured, but
+neither bound is PROVED from `step`, so no new solve is certified.
+
+### R8.6a What is now true that was not
+
+1. **`Depth.terminates_of_chainRun`** — depth `≤ D` and every dequeue key drawing `≤ R` times
+   ⟹ `Terminates`, at the explicit bound `n · D · (2^m · R)^D`.  49 declarations, 0 non-standard
+   axioms, no `sorry`, no `native_decide`.  This is the first theorem of the stage that turns
+   termination into two SMALL NUMBERS instead of a structural property.
+2. **Both numbers are measured**, over 2,301,195 corpus segments (five times round 7's
+   population, `0 hashdiff / 0 eqdiff / 0 skipped`) and 11,514 generated runs:
+   **`D ≤ 4`** and **`R ≤ 11`** on the corpus.  In the hunt, `D` reaches **5** and — this is
+   the round-8 review's Y-A, and the first version of this line got it wrong by reporting the
+   GUARD-key counter in `R`'s place — **`R` reaches 38**, three and a half times the corpus
+   maximum, on a SEVENTEEN-variable, six-label input, i.e. larger than both `n` and `m`; 121 of
+   the 11,520 runs are candidates and every one of them is an `R` hit; and all eight distinct
+   candidate seeds are **80/80 SOLVED** on the shipped compiler in under 750 ms (§R8.3d,
+   §R8.7).  So `R` is NOT un-driven: the generator drives it far past the corpus without having
+   been built to.
+3. **The chain barely chains.**  In 1,844 corpus draws the `splitConcrete` mint sits on a
+   MINTED site only 48 times and NEVER on a site `resolution` drew; `resolution` extends a
+   chain twice in a row exactly twice; and every one of the ten deepest chains is
+   `split…split, res` — a run of splits capped by one resolution (§R8.1e).
+4. **`incomplete/` is first-class** (§R8.5), and the eight-group user-program certified
+   fraction is **96.8 %**, the standard library **100 %** (15,377 / 15,377).
+5. **A real order-dependent blow-up** — **1,210×** in time and 64× in draws within one
+   measurement pass, and 110× in draws (743 to 81,481) across all of them — on one satisfiable
+   21-variable input, with the chain depth moving only from 2 to 4 while the draws multiply by
+   a hundred (§R8.0a, §R8.4c).  The four slow bases run to completion terminate; ten more have
+   no verdict past 60 s and one is undecidable in this harness (§R8.4c).  This is a robustness finding about the
+   shipped solver in its own right, and the first input the stage has that is BOTH real and
+   pathological.
+
+### R8.6b The exact remaining lemma
+
+`ChainRun s V₀ L D R` is currently a hypothesis.  What is missing is the bridge from `step` to
+it, and it splits into exactly three obligations, in increasing order of difficulty:
+
+| # | obligation | status | strongest data |
+|---|---|---|---|
+| **L-a** | the instrument's records really form a `Chain`: `succ`, `from_` and `inj` for the assignment `site := dequeued lhs`, `key := dequeued concrete part`, `idx := running count` | **not proved**, and it is the cheap one — `keyL` is `reaches_concSub` (proved, round 7); `inj` is true by construction of a running counter; `succ` and `from_` need `step` to draw only ids that are fresh and to dequeue only partitions whose lhs is in the state's vocabulary, both of which round 7's `SupFresh` / `Wf` machinery has in pieces | 2,301,195 segments in which the instrument computed it and the model matched the compiler exactly |
+| **L-b** | (b) a bound on `R` from the input | **not proved, and now the hardest by a long way.**  Every refutation of rounds 4–7 is about this factor (§R8.2e), and there is now positive evidence against any small input-determined bound | corpus max **11**; hunt max **38** (`g20_6_16_000039` base 2 — **17 variables, 6 labels**, so `R > n` and `R > m`), 121 candidate runs out of 11,520, all `R` hits; `R > n` and `R > m` again on `g8_6_16_000013` (7 variables, 6 labels, `R = 18`); the round's own tracked seed reaches `R = 20`.  **Every one of these SOLVES on the compiler** — 80/80 in my replay, none over 750 ms; 30/30 in the review's.  (The first version of this cell said "hunt max un-driven (the generator never exceeds the guard-key count 1)", which reports the wrong counter: round-8 review Y-A) |
+| **L-c** | (a) a bound on `D` from the input | **not proved, and nobody has attacked it.**  No refutation of rounds 4–7 touches the depth; the corpus says 4, the hunt says 5, and it grows only slowly with `n`, `m` and the constraint count | §R8.1c, §R8.1g, §R8.3b — with the caveat that the generator was not built to drive `D`, so "slowly" is a measurement over an unfavourable sample |
+
+**The recommendation, corrected** (round-8 review Y-A, Y-B, Y-15).  The first version of this
+paragraph said "L-c is the one to try next" and put the depth-driving generator first, on the
+strength of two claims that turned out to be false: that the hunt left `R` un-driven, and that
+GU05's depth had stopped at 3.  With `R` driven to 31 by an unfavourable generator and `D`
+still climbing at 5 on both the hunt and the round's own seed, **neither factor is flat**, and
+the order changes.  Three jobs for a round 9, in this order:
+
+1. **L-a, first**, so that `ChainRun` stops being a hypothesis about the instrument and becomes
+   one about `step`.  Be clear about what it buys and what it does not: L-a gives a
+   `ChainRunB`-style DECIDABLE certificate for one solve at its own measured `D` and `R` — the
+   shape the brief asked for and round 7 achieved for `NoDraw` — and for a solve that has
+   already finished that certificate is redundant, since running it was the proof.  Its value
+   is as the SOCKET: with L-a, a bound on `D` or on `R` proved from the INPUT immediately
+   becomes `Terminates` for every input of that shape, whereas today either bound would land on
+   a hypothesis nothing can discharge.  It is also the cheapest: `keyL` is round 7's
+   `reaches_concSub`, `inj` is a running counter, and `succ`/`from_` need only that `step`
+   draws fresh ids and dequeues partitions whose left-hand side is in the state's vocabulary —
+   all of which round 7's `SupFresh` / `Wf` machinery has in pieces.
+2. **Hunt `R`, second.**  It is the factor already driven to **38** against a corpus maximum of
+   11, the factor every refutation of rounds 4–7 bears on, and — on `g20_6_16_000039` (17
+   variables, 6 labels) and `g8_6_16_000013` (7 and 6) — the factor that already exceeds BOTH
+   `n` and `m`.  Any bound `R ≤ f(n, m)` with `f` linear is refuted by measurement before it is
+   attempted.  Finding where `R` stops, if it does, is a measurement the EXISTING generator can
+   make today: it produced 121 candidates in 11,520 runs without being built to.
+3. **A generator that drives the DEPTH, third.**  The rounds 4–5 generator does not: it
+   concentrates keys, which is what drives `R`.  A depth-driving generator has to arrange that
+   a MINTED name is itself the left-hand side of a partition with two abstract parts and a
+   concrete one — the `splitConcrete` firing shape — which means emitting the constraint that
+   will exist only AFTER the mint.  That is a different construction from anything the stage
+   has written, and until someone writes it, every statement about how `D` grows rests on a
+   generator that was not built to test it.
+
+### R8.6c Side-by-side: what the brief asked, what is here
+
+| brief | delivered | gap |
+|---|---|---|
+| R8.1 instrument the chain depth, per-key re-mint index for guard AND carrier keys, over eight groups | done; **plus a third counter, `maxdkey`**, which is the one the theorem needs (§R8.1a) | none |
+| R8.1 census cross-tabulated by A1/A2/A3/B/C/D, ten deepest chains, is depth input-bounded | done (§R8.1d, e, g), both populations | none |
+| R8.2 decomposition lemma ⟹ `Terminates` | done (`terminates_of_chainRun`, `…_of_buildQueue`) | none |
+| R8.2 "make both hypotheses statements the instrument decides per solve (as `NoDrawB` did)" | **NOT done.**  `ChainRun` is a `Prop` over the run; there is no `ChainRunB : Bool` with `chainRun_of_chainRunB` | **the gap.**  Round 7 could do this for `NoDraw` because "the loop draws nothing" is a property OF THE RUN alone; `Chain` additionally asserts that the instrument's `site`/`key`/`idx` are the real ones, which is obligation L-a above.  A `ChainRunB` that only checked the two numbers would be a silent weakening and is not written |
+| R8.2 instantiate on the two real seeds with measured `D`, `R` | done for **NP01**, in part: `npS0_depth`, `npS0_terminates`, `npS0_bound`, kernel-checked | **partial.**  Five further `rfl` witnesses (`steps`, `drawn`, the three key counters) elaborate but OOM-kill `lake build`, so they are not in the module (§R8.4b); and **GU05 is not instantiated at all** — its run needs > 1,000 dequeues of kernel reduction |
+| R8.2 which of (a)/(b) each earlier refutation bears on | done (§R8.2e): **all of them are (b)** | none |
+| R8.3 hunt both factors, growth curves, candidates ≥ 2 over the corpus max on the compiler at 10 bases | 3,840 seeds, 11,514 runs; growth curves for `D`, the guard key and the carrier key; the four model-slow seeds replayed, 40/40 SOLVED | **The factor the theorem is stated in was not among them** (round-8 review Y-A).  `maxdkey` was in neither the growth table nor the candidate test, and in only 2,040 of 11,514 rows, so "zero candidates" was a coverage artefact — corrected in §R8.7 with the whole grid re-run and the candidates replayed |
+| R8.4 two tracked seeds, model reproduces trace counts, ≥ 20 compiler bases, `TestLoopTrace` | NP01 reproduces every column but `maxdkey`, and the discrepancy is explained; both seeds swept at 25 compiler bases (NP01 25/25 SOLVED, GU05 11/25 inside 60 s and three more SOLVED under longer caps); enumeration needs no code change | **Three gaps** (round-8 review Y-12).  (i) "verify each seed's model run reproduces the trace's draw and dequeue counts" is done for NP01 and **NOT for GU05** — at base 0 the seed does not reproduce 281 dequeues / 149 draws, it runs away; what it does reproduce is the COMPILER's own draw count at bases 1 and 2 (1,091 and 743, §R8.4c), which is a different and weaker check.  (ii) **Twelve of GU05's bases still have no verdict** — nine never run past 60 s, and bases 4, 7 and 300 exceed every cap they have been given, base 4 undecidably so.  (iii) "no code change" is true of ENUMERATION and false of the OUTCOME: leaving GU05 in `seeds/` would fail `core/test`, which is why it moved to `seeds/slow/` (§R8.4a) |
+| R8.5 eight groups everywhere | done | none |
+
+### R8.6d Costs a reviewer should know
+
+* A `by rfl` on `depthRun` re-runs 98 dequeues in the KERNEL.  Eight such theorems cost
+  7 m 46 s in a scratch file and were OOM-killed inside `lake build`; the module keeps **one**
+  (§R8.4b).  A future round that wants more of them should first give the instrument a `Bool`
+  summary and check that instead.
+* `--depth` over the eight groups takes about 25 minutes; `--replay`, `--cycle` and `--depth`
+  together about 75.  Scripts: `tmp/L5r8/{gentrace.sh,genic-resume.sh,runinstr.sh,runreplay.sh,rundepth2.sh}`.
+* The census is `tmp/L5r8/r8census.py` (both populations, eight groups) and `r8chains.py`
+  (chains and the input-size relation); `verbatim.py` checks every Lean quotation in this
+  section against the module.
+* Post-review (§R8.7): `hunt/rungrid2.sh` + `hunt/run1e.sh` re-run the whole grid with
+  `maxdkey`, `hunt/agg8.py` aggregates it, `candR8.sh` replays the candidates on the compiler,
+  `factseed.sh` runs `--depth` on both tracked seeds at several bases, `topR.sh` reproduces the
+  review's largest-`R` runs, and `satcheck.py` / `reduce8.py` are the satisfiability checker and
+  the witness reducer.  The re-run grid takes about half an hour at `-P 3`.
+
+---
+
+# Round 8 — post-review corrections (2026-09-05, after `L5-REVIEW.md`'s "Round-8 review")
+
+The review's verdict is FIX-THEN-ADVANCE.  It re-ran everything: the three build figures, the
+49-declaration axiom census, 22 verbatim quotations, the whole census from `--depth` traces it
+generated itself (342 residue rows × 18 fields, **0 differences**) and the 2,301,195-segment
+differential — all reproduce.  What follows is what it found WRONG, each fix applied in place in
+the sections above and listed here old-for-new so nothing is silently rewritten.
+
+| # | where | OLD | NEW |
+|---|---|---|---|
+| Y-C | §R8.4a, and the repository | "`TestLoopTrace` picks both up with no code change at all… the property's job count goes from `18 × 6` to `20 × 6`" | **`GU05.json` and `GU05MIN.json` MOVED to `tracker/repro/satterm/seeds/slow/`.**  Enumeration is automatic, but ALL `seeds × 6 bases + 600 generated = 720` solves run in ONE `-Xmx1g` child JVM under a SINGLE 180 s cap and a timeout is a FAILURE — and two of `core/test`'s own six bases (7 and 300) exceed a 600 s cap on GU05 while a third takes 133 s.  Dropping it into `seeds/` would have broken the build, not slowed it.  `listFiles` is non-recursive, so `slow/` needs no code change; the six-base timing table is now in §R8.4a; job count `19 × 6 + 600` |
+| Y-A | §R8.3b, §R8.3d, §R8.6a(2), §R8.6b L-b | the hunt's growth table and candidate test used depth, guard-key and carrier-key; "**zero candidates**"; "`R` un-driven in the hunt"; L-b's evidence "hunt max un-driven (the generator never exceeds the guard-key count 1)" | **The hunt never measured `R`.**  `maxdkey` was in neither `agg8.py`'s table nor its candidate test, and only 2,040 of 11,514 rows carried the field at all.  Both fixed; the whole grid re-run (11,520 runs, 0 cap misses, every row complete): **`R` reaches 38, there are 121 candidates and all of them are `R` hits, and the eight distinct candidate seeds are 80/80 SOLVED on the compiler**.  §R8.3b, §R8.3d, §R8.6a and §R8.6b restated; the data is §R8.7 |
+| Y-B | §R8.4c, §R8.0a | "the depth reaches 3 at dequeue 300 and **does not move again** … the blow-up is WIDTH, not depth" | **False, and refuted by my own log** — `gu05factors3.log` already held `fuel=1000 maxdepth=4 maxdkey=14`.  The ladder is extended to fuel 1,000 and to the bases that FINISH, where depth reaches **5**, `maxdkey` **20** and `maxcremint` **12**.  Corrected to "both factors move slowly and neither has stopped; the draws grow much faster than the depth, so the blow-up is MOSTLY width" |
+| Y-D | §R8.0a, §R8.4c | "base 4 had drawn 69,768 …, *fewer* than either count a comparable base needed to finish, so it was simply cut off short"; "every base ever given enough time has terminated" | **Backwards.**  Base 4 ends `REJECTED … panic: reinstantiated type 121` at ~692 s: `Replay.scala:16` gives the harness a **100,000-id** `Supply` window and the run draws past it.  So base 4 is UNRESOLVED, it drew MORE than any base that finished, and ten further bases have no verdict past 60 s.  Corrected to "the four slow bases run to completion terminate"; the window widening is logged as a Scala follow-up |
+| Y-E | §R8.1c | "P2-only (all `REJECTED`): 19 / 7" | `--depth`/`--cycle` iterate `step` and do not model `checkLabel`, so **6 of `incomplete/`'s 7** P2-only solves score `SOLVED` in the model though the compiler refutes them.  Cell relabelled, the six named, the gap stated; the headline moves **0.01 points** (96.80 % → 96.79 % if all 26 P2-only solves are dropped) |
+| Y-G | §R8.0a ×2, §R8.1g | "`chainBound 21 10 3 7` … already 3 × 10^14"; "the segment has **four** `Part`s with a concrete left-hand side"; "(247 + 95 = **342**)" | **2.32 × 10^13**; **six** (`drawn0 = 6`); **343** — the 342 residue rows plus the one drawing solve whose mint was withdrawn |
+| Y-H | §R8.0's heading and body, §R8.6a(5), the section numbering | heading "a **1,200×** blow-up" against a body saying **2,200×**; 110× in §R8.0 against 101× in §R8.6a; the 2,200× paired runs with different JVM core settings; **two subsections both numbered `## R8.0`** | Headings are now `## R8.0a` and `## R8.0b`.  The spread is quoted like-for-like: **1,210× within the 300 s pass**, and **≥ 4,581×** across passes flagged as cross-pass; draws **64×** within the pass and **110×** across; wall clock noted as load-sensitive by ~2× (base 0 is 267 s loaded, 133 s unloaded) |
+| Y-I | `Loop/Depth.lean` §6 and its header | §6 documented non-existent `ChainDepth` / `KeyRemint` and named `maxremint` / `maxcremint` as the bound's columns, contradicting the `dtally` docstring and §R8.1a; the header attributed `reaches_concSub` to `NoConc` | §6 now names **`maxdepth`** and **`maxdkey`**, says why it is not the other two, and says outright that `Chain` is MEASURED and not DECIDED, with no `ChainRunB`, pointing at obligation L-a; `VocFix.reaches_concSub`.  Docstrings only — build/audit unchanged and re-run below |
+| Y-J | §R8.1e | the ten-deepest list had no stated tie-break | Stated: a stable sort by depth, first ten distinct `(trace, segment, depth)`, ties in emission order.  And the sample is now described honestly — **seven** solves reach depth ≥ 3 (one at 4, six at 3), so rows 1–8 are that whole population and rows 9–10 are two of the 54 depth-2 solves |
+| Y-F | `LOOP-MODEL-PLAN.md`, `tracker/lean/README.md`, `ROW-CONSTRAINT-STATE.md` | all three untouched by round 8 | L5 row extended; a `### L5 round 8` section added to the Lean README; `ROW-CONSTRAINT-STATE.md` now gives **10,306 / 10,645 (96.81 %)** over eight groups beside the seven-group 97.39 % |
+
+**Build and audit after the docstring edits** (Y-I), unchanged from the round's own figures:
+
+```
+lake build Rowpartition   Build completed successfully (856 jobs).
+lake env lean Audit.lean  Rowpartition theorems audited: 3742; non-standard axioms: 0
+lake build looptrace      Build completed successfully (1662 jobs).
+verbatim.py               checked 22 quoted declarations, 0 differences
+```
+
+Two review findings are NOT corrections and are recorded as such.  **Y-6f**: the reviewer
+checked whether §R8.3d claims the generator "provably" cannot drive depth and found it does not
+— it says "until someone writes it, 'the depth is flat' rests on a generator that was not built
+to test it", which the reviewer calls the right epistemic label.  §R8.3b's bolded heading "The
+chain depth does not grow with the input" is the one sentence that read harder than the
+evidence, and §R8.7 below withdraws it.  **Y-4**: the retraction in §R8.0a is confirmed
+independently.
+
+## R8.7 The hunt re-run with `R` in it (round-8 review Y-A)
+
+### R8.7a What was wrong, and what was re-run
+
+`--depth` gained the `maxdkey` counter part-way through round 8 (§R8.1a), and `agg8.py` was
+never taught about it: its growth table plotted the chain depth, the guard key and the carrier
+key, and its candidate test was `maxdepth ≥ 6 or maxremint ≥ 4 or maxcremint ≥ 8`.  **`maxdkey`
+appeared in neither**, and because the whole grid had been run before the counter existed, only
+**2,040 of the 11,514 rows carried the field at all** — the ten cells `rerun8.sh` re-ran plus
+seven that happened to execute after the binary was rebuilt.  So §R8.3's "zero candidates" was
+a statement about three factors, none of which is the `R` of `terminates_of_chainRun`.
+
+Fixed and re-measured:
+
+* `agg8.py` now has a `maxdkey` column in the growth table and a `maxdkey ≥ 13` clause
+  (corpus maximum 11, plus 2) in the candidate test, next to the three that were there.
+* **The whole grid — all 3,840 seeds × 3 id bases — was re-run** with the current binary
+  (`hunt/rungrid2.sh`, output in `hunt/r2/`), so every row carries every counter.  The re-run
+  also drops the round's 60 s cap under `xargs -P 6` for a **180 s cap at `-P 3`**, because the
+  review showed the six §R8.3c "cap misses" were an artefact of six processes racing one
+  wall-clock cap (all six SOLVE alone under 300 s).
+* `--depth` was run on **both tracked seeds at several id bases**, not just GU05 at base 0.
+* Every candidate over the corpus maximum + 2 on any of the four factors was replayed through
+  the **shipped compiler at ten id bases** (`candR8.sh`).
+
+### R8.7b The growth curves, with `R`
+
+11,520 runs over the same 3,840 seeds × 3 id bases, 180 s cap, three at a time; **11,520 SOLVED, 0 over the cap**, and every row carries every counter.
+
+| | runs | **max chain depth** | **max DEQUEUE-key draws (`R`)** | max guard-key | max carrier-key | max draws |
+|---|---|---|---|---|---|---|
+| `nv = 6` | 1,920 | 3 | **7** | 1 | 1 | 60 |
+| `nv = 8` | 1,920 | 4 | **18** | 1 | 3 | 159 |
+| `nv = 10` | 1,920 | 4 | **15** | 1 | 5 | 340 |
+| `nv = 12` | 1,920 | 4 | **35** | 1 | 4 | 1,836 |
+| `nv = 16` | 1,920 | 5 | **31** | 1 | 6 | 2,303 |
+| `nv = 20` | 1,920 | 4 | **38** | 1 | 6 | 1,370 |
+| `nl = 4` | 2,880 | 3 | **17** | 1 | 6 | 173 |
+| `nl = 6` | 2,880 | 4 | **38** | 1 | 4 | 1,370 |
+| `nl = 8` | 2,880 | 4 | **35** | 1 | 3 | 1,836 |
+| `nl = 10` | 2,880 | 5 | **31** | 1 | 3 | 2,303 |
+| `nc = 6` | 2,880 | 3 | **14** | 1 | 2 | 208 |
+| `nc = 10` | 2,880 | 4 | **35** | 1 | 3 | 1,836 |
+| `nc = 16` | 2,880 | 5 | **38** | 1 | 5 | 1,370 |
+| `nc = 24` | 2,880 | 5 | **33** | 1 | 6 | 2,303 |
+
+**Overall maxima: `D` = 5, `R` = 38, guard-key = 1, carrier-key = 6, draws = 2,303.**
+
+The eight largest `R`s:
+
+```
+R= 38  D=2  carrier=1  drawn=  313  steps= 142  n=17 m=6  g20_6_16_000039@2  SOLVED
+R= 37  D=2  carrier=1  drawn=  860  steps= 207  n=13 m=6  g20_6_16_000016@0  SOLVED
+R= 35  D=4  carrier=1  drawn= 1836  steps= 380  n=12 m=8  g12_8_10_000026@0  SOLVED
+R= 33  D=3  carrier=1  drawn=  403  steps= 146  n=16 m=6  g20_6_24_000001@2  SOLVED
+R= 31  D=3  carrier=1  drawn= 1981  steps= 320  n=14 m=10  g16_10_24_000019@0  SOLVED
+R= 30  D=2  carrier=1  drawn= 1100  steps= 213  n=17 m=9  g20_10_16_000015@0  SOLVED
+R= 30  D=2  carrier=1  drawn= 1111  steps= 222  n=17 m=9  g20_10_16_000015@2  SOLVED
+R= 30  D=2  carrier=1  drawn= 1166  steps= 233  n=17 m=9  g20_10_16_000015@1  SOLVED
+```
+
+I reproduced the review's three headline runs on my own binary, character for character
+(`tmp/L5r8/topR.log`):
+
+```
+g16_10_24_000019 base=0  SOLVED steps=320 drawn=1981 maxdepth=3 maxdkey=31  nvars=14 nlbl=10
+g16_10_24_000019 base=2  SOLVED steps=381 drawn=2303 maxdepth=5 maxdkey=29  nvars=14 nlbl=10
+                         hist=1:939, 2:1062, 3:165, 4:118, 5:19
+g8_6_16_000013   base=1  SOLVED steps= 82 drawn= 112 maxdepth=3 maxdkey=18  nvars= 7 nlbl= 6
+```
+
+### R8.7c `R` exceeds every input measure, on inputs a quarter of GU05's size
+
+The corrected maxima are **`D` = 5** and **`R` = 38**, and the second is the interesting one.
+`R = 38` is on `g20_6_16_000039` at base 2: **seventeen variables and six labels**.  So
+
+| | `n` | `m` | `R` |
+|---|---|---|---|
+| `g20_6_16_000039@2` | 17 | 6 | **38** |
+| `g20_6_16_000016@0` | 13 | 6 | **37** |
+| `g12_8_10_000026@0` | 12 | 8 | **35** |
+| `g8_6_16_000013@1` | **7** | **6** | **18** |
+
+**`R` is larger than the variable count and than the label pool, on every one of them.**  Any
+bound of the form `R ≤ f(n, m)` with `f` linear is already refuted by measurement; `R` grows
+with `n` in the table above (7 → 18 → 15 → 35 → 31 → 38 as `nv` goes 6 → 20), and the largest
+values sit at SMALL label pools (`nl = 6` gives 38, `nl = 10` gives 31), which is the opposite
+of what the `2^m` in `chainBound` would suggest matters.  Note also how base-sensitive it is:
+`g8_6_16_000013` gives `R` = 1, 18, 3 at three consecutive id bases — the GU05 lever again,
+four orders of magnitude smaller.
+
+The other three factors are unchanged by the re-run: `D` = 5 on **two runs of the 11,520**
+(`g16_10_16_000013` at base 1, 11 variables, and `g16_10_24_000019` at base 2, 14 variables —
+the latter with 19 ids in the depth-5 layer, so not a single-id artefact); the `splitConcrete`
+guard key is **1 in all 11,520 runs**; and the carrier key reaches 6, the corpus maximum.  `D` still grows only slowly with the input — 3, 4, 4, 4, 5, 4 as `nv` goes
+6 → 20 — and the caveat of §R8.3b stands: the generator was not built to drive it.
+
+### R8.7d The candidates, replayed on the shipped compiler
+
+**121 of the 11,520 runs are candidates** by the brief's rule (corpus maximum + 2 on any
+factor), and **every one of the 121 is an `R` hit**: not one is a depth, guard-key or
+carrier-key hit.  The **eight
+distinct seeds** with the largest `R` were replayed through the shipped compiler at **ten id
+bases each** (`tmp/L5r8/candR8.sh`):
+
+```
+g20_6_16_000039  R=38  n=10 SOLVED=10 HANG=0  drawn  271..326   max 406 ms
+g20_6_16_000016  R=37  n=10 SOLVED=10 HANG=0  drawn   35..1434  max 492 ms
+g12_8_10_000026  R=35  n=10 SOLVED=10 HANG=0  drawn 1173..1836  max 750 ms
+g20_6_24_000001  R=33  n=10 SOLVED=10 HANG=0  drawn   19..403   max 414 ms
+g16_10_24_000019 R=31  n=10 SOLVED=10 HANG=0  drawn   73..2834  max 704 ms
+g20_10_16_000015 R=30  n=10 SOLVED=10 HANG=0  drawn 1100..1206  max 517 ms
+g20_10_24_000015 R=30  n=10 SOLVED=10 HANG=0  drawn 1100..1369  max 545 ms
+g16_10_16_000019 R=26  n=10 SOLVED=10 HANG=0  drawn  300..1357  max 515 ms
+```
+
+**80 / 80 SOLVED, none over 750 ms.**  So the corrected verdict of the hunt is not a divergence
+either — it is that **`R` is driven, easily, far past the corpus and far past both input
+measures, on inputs the compiler solves in under a second.**  That is a much worse position for
+L-b than "R = 11, no argument behind it": there is now positive evidence against any small
+input-determined bound on `R`, and it was obtained by a generator built for a different purpose.
+
+### R8.7e What this changes, in one line each
+
+* **§R8.3d's "zero candidates" → 121 candidates, all on `R`, all SOLVED on the compiler.**
+* **§R8.6a(2)'s "`R` un-driven in the hunt" → `R` driven from 11 to 38.**
+* **§R8.6b's L-b evidence cell** now carries the 38, the `R > n` and `R > m` witnesses, and the
+  80/80 compiler replay.
+* **§R8.6b's recommendation** changes order: L-a first, then hunt `R`, then a depth generator
+  (§R8.6b, restated) — because `R` is now the factor with both the most evidence against a
+  bound and the cheapest experiments left, and `D`, while still small, is no longer the "flat"
+  quantity the original recommendation rested on.
+* Nothing in `Loop/Depth.lean` changes: `terminates_of_chainRun` is a statement about whatever
+  `D` and `R` happen to be, and a larger `R` makes the bound bigger, not the theorem wrong.

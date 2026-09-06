@@ -591,6 +591,42 @@ fragment the vocabulary is not fixed, because `splitConcrete` and `resolution` m
 round 5's own witnesses show the guards permit a re-mint at a key whose carrier has been lost
 (`guardComplete_false`).
 
+### L5 round 8 -- the MINT CHAIN measured, and the mint bound DECOMPOSED (2026-09-05)
+
+One NEW module; every earlier Lean module is unchanged except `Loop/Main.lean`, which gains a
+`--depth` mode, and `Rowpartition.lean`, which gains one import.  Build **856**, Audit
+**3742 / 0 non-standard axioms**, `looptrace` **1662**; 49 declarations, all on standard
+axioms, 0 `sorry`.  Report `tracker/loopmodel/L5-TERMINATION.md` (Round 8, plus its
+post-review corrections); review `L5-REVIEW.md` (Round-8 review), verdict FIX-THEN-ADVANCE with
+every correction applied.
+
+| module | what it is |
+|---|---|
+| `Rowpartition/Loop/Depth.lean` | **The chain instrument and the decomposition theorem.**  `depthRun` is round 5's `pumpRun` with a DEPTH assignment threaded through it: an id in play at the first dequeue is at depth 0, an id drawn at a step whose dequeued premise has left-hand side `v` is at `depth v + 1`, and the draws of a step are read off the SUPPLY (`drawSeq`) rather than off any rule, so the instrument cannot disagree with the rule about which ids were drawn.  It keeps THREE key tallies -- round 5's guard key and carrier key, and the new **`dtally`**, the draws at one DEQUEUE key `(dequeued lhs, dequeued concrete part)`, which is the one the theorem needs, because `resolution` takes its `fresh` BEFORE its guards and a REUSE bumps neither of the others.  `lake exe looptrace --depth` prints it on the corpus-replay path and on the `json:` seed path.  Then the mathematics: `drawAt_ne` (a coherent `Sup` never hands out an id twice) and `drawnSet_card` turn "the run drew `k` ids" into "the drawn set has `k` elements"; `Chain` is the hypothesis (input at depth 0, a draw one deeper than its site, a site that is an input variable or an earlier draw, depth <= `D`, key inside `L`, index < `R`, and index-injectivity); `atDepth_succ_card` injects layer `d+1` into layer `d` x `L.powerset` x `range R`; `chain_card_le` sums the layers to `chainBound n m D R = n*D*(2^m*R)^D`; and **`terminates_of_chainRun`** feeds that into round 7's `terminates_of_drawsAtMost`.  `terminates_of_chainRun_of_buildQueue` is the initial-state corollary.  A seed section transcribes `incomplete/np01_add_or_recompute.e(134:15)` and proves its measured depth, its termination and its bound by kernel `rfl` |
+
+**What round 8 settles, and what it does not.**  Termination is now equivalent to two SMALL
+NUMBERS -- the chain depth `D` and the per-dequeue-key draw count `R` -- and both are measured
+per solve over **2,301,195** corpus segments across EIGHT groups (the seven example groups plus
+all 34 `core/examples/incomplete/` files; `0 hashdiff / 0 eqdiff / 0 skipped` by plain
+`--replay`): `D <= 4` and `R <= 11`.  The eight-group vocabulary-fixed user-program fraction is
+**96.81 %** (97.39 % over seven groups); the standard library stays **15,377 / 15,377**.
+
+`ChainRun` is a HYPOTHESIS, not a decidable check.  Round 7 could turn `NoDraw` into `NoDrawB`
+because "the loop draws nothing" is a property of the run alone; `Chain` additionally asserts
+that the instrument's site / key / index are the ones `step` uses, and that is unproved.  The
+three remaining obligations are named in the report as **L-a** (the instrument's records really
+form a `Chain`), **L-b** (bound `R` from the input) and **L-c** (bound `D` from the input);
+every refutation of rounds 4-7 bears on `R`, none on `D`.
+
+Two seeds transcoded from real corpus segments are tracked: `tracker/repro/satterm/seeds/NP01.json`
+and `tracker/repro/satterm/seeds/slow/GU05.json` (plus `slow/GU05MIN.json`, its 15-constraint
+reduction).  The `slow/` directory exists because `TestLoopTrace` enumerates
+`seeds/*.json` non-recursively and runs every seed at six id bases inside ONE 180 s child JVM:
+two of those bases exceed a 600 s cap on GU05, so leaving it in `seeds/` would fail the build.
+GU05 is an order-dependent BLOW-UP, not a divergence -- the four slow bases run to completion
+all terminate -- but base 4 cannot be decided in the repro harness at all, because
+`Replay.supplyAt` gives a 100,000-id `Supply` window and the run draws past it.
+
 ---
 
 ## The shared vocabulary

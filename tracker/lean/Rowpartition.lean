@@ -189,3 +189,4 @@ import Rowpartition.Loop.Fragment
 import Rowpartition.Loop.Cycle
 import Rowpartition.Loop.NoConc
 import Rowpartition.Loop.VocFix
+import Rowpartition.Loop.Depth

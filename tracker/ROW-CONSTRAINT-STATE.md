@@ -35,7 +35,10 @@ separately as a plain `--replay` over the same 450,064 segments and is 0 / 0):
 * **the standard library: 2,695 of 2,695** row-carrying solves keep a fixed vocabulary, draw
   no id and never take the `concrete` branch — the round-6 certification re-derived from the
   run rather than from the input;
-* **user programs: 9,118 of 9,362 (97.39 %)** example-corpus row-carrying solves keep a fixed
+* **user programs: 9,118 of 9,362 (97.39 %)** over the SEVEN example groups and
+  **10,306 of 10,645 (96.81 %)** over the EIGHT that L5 round 8 measures (the seven plus all 34
+  `core/examples/incomplete/` files, 2,301,195 segments; `L5-TERMINATION.md` §R8.5) —
+  example-corpus row-carrying solves that keep a fixed
   vocabulary (9,117 draw no id), against 2,388 (25.5 %) for round 6's input-checkable
   fragment.  That population is "the solve wrote an `inpart` record", which
   `Subst.scala:1215` writes only after `q.expand` SUCCEEDS, so it cannot see the 19 solves the
