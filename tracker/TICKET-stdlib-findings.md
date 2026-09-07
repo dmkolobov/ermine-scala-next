@@ -112,7 +112,7 @@ B5. **The projection fan-out cliff.** N projections of ONE open-row record param
     `Present/ProjectionCost.e` + `shouldfail/proj01_seven_reads.e` pin it; the
     model reproduces the budget stop at the same count. **This is the one known shape on which the adopted
     budget rejects a valid program.** (E4-REVIEW M-*, E4 §4.) — stage S4 candidate (guard the repeated
-    projections of one record, or raise the budget with a measured justification).
+    projections of one record, or raise the budget with a measured justification). **FIXED behind a flag in `c48f178`** (stage S4, 2026-09-07): `-Dermine.topNormalise`, DEFAULT OFF -- the written-partition normalisation (k >= 3 distinct pairwise-incomparable lone-abstract reads at one lhs, no concrete row, no self-read -> `v <- (c, F)` + `c_i <- (c, F \ F_i)` before every input reader); the ladder is one pre-loop draw at every N (measured 3/30/207/1,230/6,783 OFF for N = 2..6; ON: 3/0/0/0/0/0/0 for N = 2..8, ten reads compile in 0.04 s); `Present/WildChain.e` is the wild-code gate. NOT ADOPTED: flipping the flag is the user's decision and stage S4c (correspondence lemma + ON coverage of the S2 chain) is the prerequisite (`tracker/loopmodel/S4B-REVIEW.md` §5.2). At adoption `proj01_seven_reads.e` leaves `shouldfail/` and the `.ei` cache is cleared once.
 
 B6. **Refutation blame wording is a propagation reason, not a description, and it varies with load order**:
     the same module prints a different clause of the same refutation per file vs in a batch, and on

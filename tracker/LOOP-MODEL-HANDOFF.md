@@ -921,3 +921,21 @@ Audit.lean` (count, 0 non-standard) + `lake env lean tracker/loopmodel/S4Top.lea
 + TestLoopTrace 720/720; optionally SendMessage the reviewer for a re-check of H-1/H-2/H-12; then the ADVANCE
 steps of the compaction checkpoint above (apply Scala diff to main, ONE commit, stamp ticket B5, report to the
 user with the adoption recommendation = NOT YET, S4c queued before adoption).
+
+S4 COMMITTED c48f178 (2026-09-07 ~16:15): "Row solver S4: written-partition normalisation behind
+-Dermine.topNormalise (default OFF)". Fix round (brief-S4-fix.md F1..F9) verified by the orchestrator: lake build
+867 green; Audit 4,119 / 0 non-standard; S4Top 18/18 standard; H8/H8c/H21 REJECTED both paths ON+OFF; replay
+census 6,804 -> 1 on all four instruments; main == worktree byte-identical on the three Scala files; TestLoopTrace
+720/720 on main; corpus-run --batch OFF 83/69 (implementer). Ticket B5 stamped. Worktree ermine-scala-wt-s4
+(branch top-normalise at 4a9ed4b + the diff) is now redundant — removal is the user's call.
+ADOPTION: NOT flipped (user's decision). Reviewer's prerequisites = stage S4c: (1) correspondence lemma
+Json.topFamilies/topNormalise -> S4Top.lean (trigger, F = union F_i, carrier fresh w.r.t. the whole system,
+one-pass fold, queue = (G u topAdds) \ topReads); (2) the six S2 no-false-acceptance theorems at
+topNormalise = true (bridge via reads_of_rewrite / ssat_rewrite_fwd); plus a LoopStrict constructor for the
+additive mint. Plan row S4c exists (NOT STARTED).
+QUEUE (autonomous rules unchanged: reviewed green stages committed on the branch, no push/merge, no default
+flips): S4c -> R2 (Ermine as a Rose row theory at the model level, Lean only) -> R3 (Rose Def. 13 determinacy
+closure for reduce's splice; design) -> A1b (three in-memory MapView equality sites + a test) -> F3 (one-line
+library fixes: B1 dateDiff, A4 formatQuarter, A3 Date timezone, C2 join1 doc, C5 Layout.Scan re-exports, K-1
+Type.scala:414 .toSet). Agents: S4 implementer abc3f1c6cb9c6e5eb and S4B reviewer a2b44eca957190201 both
+COMPLETE (resumable).
