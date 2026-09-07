@@ -844,3 +844,4 @@ concrete-identity case is DEAD CODE (ticket; one-word repair `.toSet`, pre-solve
 in the whole-corpus batch (ROSE acceptance item (i)); K-3 rowequiv.py reads neither class constraints nor bodies;
 Signatures.e comments across Wide/Algebra/Time/incomplete + TopReadings/RunCalibration/Time-Helpers to update. S3
 implementer RESUMED for the doc pass; then COMMIT S3 (+ E4-REVIEW late edit) → F1 → S4.
+S3 COMMITTED a2789a8 (2026-09-07 ~06:40). F1 LAUNCHING (MapView panic + Console.other loop). Then S4, then the Rose items R2/R3 unless the user reorders.

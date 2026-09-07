@@ -47,7 +47,7 @@ module Present.Signatures where
    question, recorded in `tracker/loopmodel/E4-EXAMPLES.md` section 4.
 
    ---------------------------------------------------------------------------
-   STAGE S3 HAS LANDED IN THE WORKING TREE (uncommitted), AND IT CHANGES THESE
+   STAGE S3 HAS LANDED IN THE WORKING TREE (committed as a2789a8), AND IT CHANGES THESE
 
    Every inferred set quoted below was read out BEFORE stage S3's uncommitted
    change to `Subst.scala`, which (i) deletes the `a <- (a)` TAUTOLOGY from
