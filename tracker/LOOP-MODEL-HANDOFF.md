@@ -821,3 +821,4 @@ growing string; minimal input `printf 'staircase\n' | bin/ermine` (4,906 prompts
 EOF (F2). corpus-run.sh PER-FILE hoists were MISSING for Algebra/Time/Present (orchestrator's patch bug) — fixed
 now. S3 in flight has an uncommitted Subst.scala change deleting `a <- (a)` tautologies → Present/Signatures.e's
 taut/tautIsFree/scaledByFull need a revisit when S3 lands. E4 implementer to be RESUMED with the corrections.
+QUEUE after E-series: F1 MapView fix (Lib.scala 988/1007/1012 + a forcing test); F2 Console.other EOF-null hang fix (Console.scala:149); S4 candidate: the PROJECTION FAN-OUT cliff (N projections of one open record → 3/33/207/1,243/6,795 draws, N=7 exhausts the budget; resolution-only) — a solver-shape stage with a Lean model reproduction first; TICKET-stdlib-findings.md.

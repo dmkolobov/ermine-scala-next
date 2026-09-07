@@ -66,11 +66,11 @@
 # (2026-09-02: the labelCheckEarly adoption was measured this way, four sweeps in flight
 # while the fix was being compiled.)
 #
-# Directories covered, 130 files: core/examples/*.e (15), core/examples/Ai/*.e (11),
+# Directories covered, 132 files: core/examples/*.e (15), core/examples/Ai/*.e (11),
 # core/examples/Wide/*.e (11), core/examples/Wide/shouldfail/*.e (3),
 # core/examples/Algebra/*.e (13), core/examples/Algebra/shouldfail/*.e (6),
 # core/examples/Time/*.e (11), core/examples/Time/shouldfail/*.e (3),
-# core/examples/Present/*.e (11), core/examples/Present/shouldfail/*.e (6),
+# core/examples/Present/*.e (12), core/examples/Present/shouldfail/*.e (7),
 # core/examples/shouldfail/*.e (40).  `incomplete/` is NOT here: four of its modules
 # diverge on pristine code and are named `.slow` for that reason; use --incomplete for
 # it, which applies a timeout per file.
