@@ -1617,7 +1617,14 @@ object Subst {
   private case class NormalPart(loc: Loc, left: TypeVar, concrete: Set[Name], abstrakt: List[TypeVar]) {
     override def equals(a: Any) = a match {
       case NormalPart(_, l, c, a) => l == left && c == concrete && a.sortWith(_.id < _.id) == abstrakt.sortWith(_.id < _.id)
+      case _ => false
     }
+    // MUST agree with `equals` above, which ignores `loc` and compares `abstrakt` SORTED:
+    // `List.distinct` buckets by `hashCode` and only compares within a bucket, so the
+    // synthesised case-class hashCode (which hashes `loc`, and hashes `abstrakt` in ORDER)
+    // sent two permuted copies of one constraint to different buckets and published both.
+    // `V.hashCode` is `id.hashCode`, so hashing the ids is hashing the variables.
+    override def hashCode: Int = (left.id, concrete, abstrakt.map(_.id).sorted).hashCode
     def part: Type = Part(loc, VarT(left), ConcreteRho(loc, concrete) :: abstrakt.map(VarT(_)))
   }
 
@@ -1655,7 +1662,11 @@ object Subst {
             else if(cs.isEmpty && vs.length == 1) Some(Left(NormalPart(loc, vs.head, s, List())))
             else Some(Right(p))
           case VarT(v) =>
-            Some(Left(NormalPart(loc, v, cs, vs)))
+            // `a <- (a)` is an identity, not a condition: the sibling of the ConcreteRho
+            // case just above, which already deletes `(|Foo|) <- (|Foo|)`.  It is true of
+            // every row, so deleting it cannot weaken the published residual.
+            if(cs.isEmpty && vs == List(v)) None
+            else Some(Left(NormalPart(loc, v, cs, vs)))
           case _ => Some(Right(p))
         }
       case p => Some(Right(p))

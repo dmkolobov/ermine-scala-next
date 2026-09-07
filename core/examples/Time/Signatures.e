@@ -34,6 +34,40 @@ module Time.Signatures where
    AND ONE OF THEM CANNOT BE WRITTEN DOWN AT ALL: see the note on `bucketBy` at
    the foot of this file.
 
+   ---------------------------------------------------------------------------
+   STAGE S3 (2026-09-07) CHANGED WHAT THE COMPILER INFERS FOR THESE BODIES
+
+   Every `xFull` set below was captured BEFORE stage S3's change to
+   `Subst.mkSimplified` (`tracker/loopmodel/S3-SIMPLIFY.md`), which deletes two
+   things from a PUBLISHED residual: the tautology `a <- (a)`, and permuted
+   duplicate partitions (`NormalPart` had an `equals` that ignored the order of
+   the parts and a `hashCode` that did not, so `List.distinct` never compared
+   them). Re-measured against the fixed compiler, one body per scratch module:
+
+       orZero        1 partition  -> 0    -- `v <- (v)` gone
+       yearFrac365   1            -> 0    -- `out <- (out)` gone
+       band3         1            -> 0    -- `v <- (v)` gone
+       band4         1            -> 0    -- `v <- (v)` gone
+       pctChange     5            -> 4    -- `prior <- (prior)` gone
+       safeDiv       5            -> 3    -- BOTH permuted copies gone: what the
+                                             compiler infers IS `safeDivDeduped`
+       shiftBy       7            -> 6    -- `p <- (p)` gone
+       nearestBy    10            -> 7    -- two tautologies and a permuted copy
+       movingAgg     2            -> 2    -- unchanged; nothing here to delete
+
+   (The exact pre-fix count depends on what else is in scope -- `nearestBy` is
+   the run-to-run-unstable one noted above, and `safeDiv`'s five reproduce only
+   with the stdlib read from interfaces. The DELETIONS do not depend on it.)
+
+   NOTHING BELOW STOPS CHECKING, and nothing below was changed. A signature that
+   carries a true-but-redundant constraint is still a legal signature, and a
+   DECLARED signature is published verbatim -- it does not pass through
+   `mkSimplified` -- so every `xFull`, every `xDeduped` and every `= xFull`
+   proof is exactly as it was. What has changed is that the `xFull` sets are now
+   the compiler's OLD answers: read them as "the residual before S3", and read
+   this file as the record of what S3 removed -- which is, for the tautologies,
+   precisely what `taut`/`tautIsFree` proved was safe to remove.
+
    KEEP THIS FILE SEPARATE from `Helpers.e`: an annotated copy of a body in the
    same module as the unannotated one perturbs what the unannotated one infers.
 -}
@@ -87,7 +121,8 @@ freshLhsFromWider x = freshLhsIsDisjointness x
 -- ================================================================== orZero
 
 -- Four characters of ordinary library code, and the residual carries the
--- tautology.
+-- tautology. SINCE S3 IT DOES NOT: the compiler now infers `orZeroDeduped`'s
+-- signature for this body (1 partition -> 0).
 orZeroFull : (v <- (v), AsOp opc) => opc v (Nullable Double) -> Op v Double
 orZeroFull x = coalesce_Op x (prim_Op 0.0)
 
@@ -97,7 +132,8 @@ orZeroDeduped = orZeroFull
 
 -- ============================================================== yearFrac365
 
--- The same tautology, from a date difference divided by a literal.
+-- The same tautology, from a date difference divided by a literal. Also gone
+-- since S3: the inferred residual is `yearFrac365Deduped`'s (1 -> 0).
 yearFrac365Full : (out <- (out), PrimitiveTemporal a)
                => Field r a -> Field r1 a -> Op out Double
 yearFrac365Full s e =
@@ -114,7 +150,9 @@ yearFrac365Simple s e =
 -- ================================================================ pctChange
 
 -- SIX constraints for "(a - b) / b". One is the tautology; one more is implied
--- by two others.
+-- by two others. SINCE S3 the tautology is gone from the inferred residual
+-- (5 partitions -> 4); the implied one stays, because `mkSimplified` still has
+-- no entailment test between surviving partitions (ROSE-COMPARISON rank 3).
 pctChangeFull : ( PrimitiveNum n
                 , prior <- (f, e)
                 , prior <- (prior)
@@ -147,6 +185,13 @@ pctChangeSimple curF priorF = (col_Op curF -_Op col_Op priorF) /_Op col_Op prior
 -- ground it down -- and note that it did grind it down: at the adopted
 -- defaults a conditional over one column costs five constraints, not the
 -- unbounded chain `Ai/Common.e` measured before them.
+--
+-- THIS IS THE SHARPEST CASE S3 CLOSES. Both permuted copies are gone from the
+-- inferred residual since 2026-09-07: the compiler now infers THREE constraints
+-- for this body, and they are `safeDivDeduped`'s three, member for member. The
+-- hand-deduplication below is now the compiler's own answer, and the pair
+-- `safeDivDeduped = safeDivFull` is kept as the proof that it was the right
+-- one.
 safeDivFull : ( out <- (so, f, e)
               , den <- (e, f)
               , num <- (so, e)
@@ -177,7 +222,10 @@ safeDivSimple n d = if_Op (col_Op d !=_Pred prim_Op 0.0)
 -- tautology. This is the measurement `Ai/Common.e` asked for: at the adopted
 -- defaults an `Op`-returning conditional helper does NOT accumulate the
 -- inclusion-exclusion lattice, however deeply it is nested, PROVIDED every
--- branch reads the same one column.
+-- branch reads the same one column. SINCE S3 the residual of each is EMPTY of
+-- row constraints -- `v <- (v)` is deleted, so the compiler infers
+-- `band3Deduped`/`band4Deduped` themselves, and the measurement becomes "no row
+-- constraint at all, however deeply nested".
 band3Full : (v <- (v), Primitive a, Primitive b)
          => Field v a -> a -> b -> a -> b -> b -> Op v b
 band3Full f lo loLbl hi hiLbl rest =
@@ -220,7 +268,10 @@ movingAggDeduped = movingAggFull
 
 -- THIRTEEN constraints for the per-key as-of, verbatim. Two tautologies, one
 -- permuted pair over four parts, one permuted pair over two, and three whose
--- left-hand side occurs nowhere else.
+-- left-hand side occurs nowhere else. SINCE S3 the first four of those go by
+-- themselves: re-measured, this body infers 10 partitions before the fix and
+-- SEVEN after. The three whose left-hand side occurs nowhere else remain --
+-- deleting them needs the entailment test `mkSimplified` still does not have.
 --
 -- READ THE VARIABLE NAMES CAREFULLY: in the INFERRED signature below (and so in
 -- `nearestByDeduped`, which must match it member for member) the compiler minted
@@ -281,7 +332,10 @@ nearestBySimple keyRow fsparse rsparse ffine rfine =
 -- ================================================================== shiftBy
 
 -- NINE constraints for "add n to the index column, rename the measure". One is
--- the tautology on the index column, minted by `withFieldCopy`.
+-- the tautology on the index column, minted by `withFieldCopy`. SINCE S3 that
+-- one is gone from the inferred residual (re-measured, 7 partitions -> 6); the
+-- `r1 <- (ro, so, rs)` that `shiftByDeduped` also deletes remains, for the same
+-- reason as `nearestBy`'s three.
 shiftByFull : ( src <- (ro, rs)
               , r1 <- (ro, so, rs)
               , g <- (i, v)

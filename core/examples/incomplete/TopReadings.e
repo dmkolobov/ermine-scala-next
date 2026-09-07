@@ -19,33 +19,57 @@ module Incomplete.TopReadings where
 
    `Incomplete.Signatures.topRowsByDeduped` has that signature and it checks.
 
-   WHAT ACTUALLY HAPPENS. Reproduce with
+   WHAT USED TO HAPPEN, AND WHAT S3 FIXED. Reproduce with
 
      ERMINE_JAVA_OPTS=-Dermine.useInterface=false bin/ermine \
        core/examples/incomplete/TopReadings.e
      >> :type topRowsBy
 
-   Identical on every run:
+   BEFORE stage S3 (2026-09-07), identical on every run:
 
      forall (h: rho) (a: rho -> *) (b: rho).
-       (exists (c: rho). h <- (h), b <- (h, c), RelationalComb a) =>
+       (exists (c: rho). b <- (h, c), h <- (h), b <- (c, h), RelationalComb a) =>
        Row h -> Int -> a b -> a b
 
-   `b <- (h, c)` IS `Has b h` -- the alias is defined as `exists c. a <- (b, c)`
-   in Constraint.e. So the whole content of the type is the one constraint the
-   user expected, PLUS `h <- (h)`: the row `h` is the disjoint union of the
-   single row `h`. That holds for every row in the language. It is not a
-   condition on anything; it is the solver failing to notice that a partition
-   with one part is an identity, and printing it in the user's face.
+   THREE row constraints, and TWO defects in them. `b <- (h, c)` IS `Has b h` --
+   the alias is defined as `exists c. a <- (b, c)` in Constraint.e -- and it is
+   the one constraint the user expected. `b <- (c, h)` is that same constraint
+   printed a SECOND time with its two parts in the other order: the right-hand
+   side of a partition is a SET, so the two are one constraint, and
+   `Incomplete.Signatures.permA`/`permB`/`permC` are the proof. And `h <- (h)`
+   says the row `h` is the disjoint union of the single row `h`, which holds for
+   every row in the language: not a condition on anything, but the solver failing
+   to notice that a partition with one part is an identity, and printing it in
+   the user's face.
 
    `Incomplete.Signatures.tautIsFree` is the proof that it is vacuous: it uses a
    function whose only constraint is `r <- (r)` from a context with NO
    constraints whatsoever, and the solver discharges it.
 
-   INCOMPLETENESS DEMONSTRATED -- THE RESIDUAL IS TRUE BUT USELESS. This is the
-   smallest possible instance: a two-constraint type where one constraint is a
-   tautology. If the solver cannot simplify THIS, the fifteen-constraint cases
-   in this directory are not surprising.
+   AFTER S3 the same command prints
+
+     forall (h: rho) (a: rho -> *) (b: rho).
+       (exists (c: rho). b <- (c, h), RelationalComb a) =>
+       Row h -> Int -> a b -> a b
+
+   ONE row constraint, and it is `Has b h`. That is exactly the signature at the
+   top of this header, the one
+   `Incomplete.Signatures.topRowsByDeduped` proves and the one "a competent user
+   expects". BOTH defects were in `Subst.mkSimplified`, which had documented
+   since it was written that its first job is to delete all but one permutation
+   of a right-hand side: it never did, because `NormalPart` overrode `equals` and
+   not `hashCode` and `List.distinct` buckets by hash; and its `normalPart` had a
+   `None` case for the concrete identity `(|Foo|) <- (|Foo|)` and none for the
+   variable identity. Thirteen lines in `Subst.scala` fixed both
+   (`tracker/loopmodel/S3-SIMPLIFY.md`; this module is the reproduction the fix
+   was built from).
+
+   WHAT REMAINS INCOMPLETE. The simplifier still has NO entailment test between
+   surviving partitions -- it deletes copies and tautologies and nothing else --
+   so the fifteen-constraint residuals elsewhere in this directory lose their
+   duplicates and their tautologies and keep every member that is merely IMPLIED
+   by the others (`Signatures.valueAsOfFormA`, `shareOfGroupFull`). That is
+   `tracker/ROSE-COMPARISON.md` rank 3 and a separate stage.
 -}
 
 import Prelude

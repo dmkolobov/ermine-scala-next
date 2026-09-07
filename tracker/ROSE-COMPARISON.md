@@ -359,13 +359,24 @@ All three have the same shape: **the concrete case is handled and the variable c
    in an inferred type and the module's own commentary calls it what it is: *"It is not a condition
    on anything; it is the solver failing to notice that a partition with one part is an identity,
    and printing it in the user's face."*  Fix: `case VarT(v) if cs.isEmpty && vs == List(v) => None`.
-3. **`Part.apply` has the same gap** (`Type.scala:414` collapses `(|Foo,Bar|) <- (|Foo,Bar|)` to
-   `Exists(l)`; there is no variable-identity case), and `Part.isTrivialConstraint` is `false`
-   unconditionally (`:394`).  Fixing (2) is enough for the published residual; fixing (3) as well
-   would keep the tautology out of intermediate types too.  **Do not** route this through
-   `isTrivialConstraint` — `Exists.isTrivialConstraint` is `constraints.forall(...)` (`:266`) and
-   `Forall` drops the *whole* qualification when it is trivial (`:356`), so a per-constraint test
-   there would be wrong.
+3. **`Part.apply` has the same gap** — there is no variable-identity case, and
+   `Part.isTrivialConstraint` is `false` unconditionally (`:394`).  Fixing (2) is enough for the
+   published residual; fixing (3) as well would keep the tautology out of intermediate types too.
+   **Do not** route this through `isTrivialConstraint` — `Exists.isTrivialConstraint` is
+   `constraints.forall(...)` (`:266`) and `Forall` drops the *whole* qualification when it is
+   trivial (`:356`), so a per-constraint test there would be wrong.
+
+   > **Correction, stage S3 review 2026-09-07 (`loopmodel/S3-REVIEW.md` K-1).**  This item as first
+   > written said `Type.scala:414` "collapses `(|Foo,Bar|) <- (|Foo,Bar|)` to `Exists(l)`", i.e. that
+   > the concrete case is handled here and only the variable case is missing.  **It is not.**  The
+   > guard is `case ConcreteRho(lclhs, cs) if ts.isEmpty && ss == cs`, where `ss` is a `List[Name]`
+   > accumulated by the fold and `cs` is a `Set[Name]`; `List == Set` is **always false** at this
+   > project's Scala 3.3.8, so the case is **dead code** and the constraint is rebuilt unchanged and
+   > reaches the solver.  The concrete identity is deleted from the PUBLISHED residual only, by
+   > `Subst.normalPart`'s `ConcreteRho` branch, where the comparison really is `Set == Set`.  So at
+   > `Part.apply` **neither** case is handled — a fourth omission of this family — and the repair is
+   > one word, `ss.toSet == cs`, which belongs in the same follow-up as the variable-identity case
+   > because both are on the PRE-solver path and both move the row trace.
 
 * **In Rose's terms.**  (1) is `∼simp`, which "identifies sequences up to permutation" — Ermine
   honours it in the solver (`RHS` is a `Set`) and violates it in the published type.  (2) is the

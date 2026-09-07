@@ -28,6 +28,26 @@ module Algebra.Signatures where
    signature-free definitions in a scratch module, `:type` each. Reproduce
    with the recipe in `tracker/loopmodel/E2-EXAMPLES.md` §G4.
 
+   ---------------------------------------------------------------------------
+   STAGE S3 (2026-09-07) CHANGED WHAT THE COMPILER INFERS FOR TWO OF THESE
+
+   Every inferred set below was read out BEFORE stage S3's change to
+   `Subst.mkSimplified` (`tracker/loopmodel/S3-SIMPLIFY.md`), which deletes the
+   tautology `a <- (a)` and permuted duplicate partitions from a PUBLISHED
+   residual.  Re-measured against the fixed compiler:
+
+       antiJoin       3 partitions -> 2   -- `r1 <- (r1)` gone; the compiler now
+                                             infers `antiJoinDeduped`'s set
+       runningTotal  20            -> 19  -- two permuted pairs gone, one new
+                                             consequence in their place; the set
+                                             is EQUIVALENT to the twenty-one
+                                             below (`S3-SIMPLIFY.md` §6)
+
+   NOTHING BELOW WAS CHANGED AND NOTHING BELOW STOPS CHECKING: a DECLARED
+   signature is published verbatim and does not pass through `mkSimplified`, so
+   every `xFull`, every `xDeduped` and every `= xFull` proof is exactly as it
+   was.  Read the `xFull` sets as "the residual before S3".
+
    KEEP THIS FILE SEPARATE from `Helpers.e`: an annotated copy of a body in the
    same module as the unannotated one perturbs what the unannotated one infers.
 -}
@@ -46,6 +66,12 @@ import Syntax.Relation
 -- It appears because `difference`'s two operands are unified through the row
 -- the semi-join returns, and the solver records the resulting identity as a
 -- partition rather than dropping it.
+--
+-- SINCE STAGE S3 (2026-09-07) THE SOLVER DOES DROP IT: `Subst.normalPart` now
+-- has a case for the variable identity beside the one it always had for the
+-- concrete identity, so this body infers `antiJoinDeduped`'s three-member set
+-- (re-measured: 3 partitions before the fix, 2 after). The pair below is kept as
+-- the proof that deleting it was sound.
 
 antiJoinFull : ( b <- (c1, r1)
                , r <- (r1, c)
@@ -156,8 +182,15 @@ groupSumFullViaWritten = groupSumAsWritten
 -- The fourth pair, added after review, and the one that makes the case for
 -- Rule 1 of `Helpers.e` better than anything else in the directory.
 -- `Helpers.runningTotal` carries TWO partition constraints. Remove its
--- signature and the compiler infers TWENTY-ONE, over twenty-seven existentially
--- quantified row variables -- because the body nests two `withFieldCopy`s, a
+-- signature and the compiler inferred TWENTY-ONE, over twenty-seven
+-- existentially quantified row variables -- TWENTY since stage S3 (2026-09-07),
+-- which deletes the two order-permuted duplicate pairs in the set below
+-- (`o <- (e, i, t)` / `o <- (i, t, e)` and `r <- (e, e1, f1, c1)` /
+-- `r <- (e1, f1, c1, e)`) and, on the re-measurement, publishes one further
+-- consequence in their place that the remaining members already entail; the two
+-- sets are EQUIVALENT, checked mechanically in `tracker/loopmodel/S3-SIMPLIFY.md`
+-- §6. The set below is the PRE-S3 answer, transcribed verbatim, and the proofs
+-- around it are untouched -- because the body nests two `withFieldCopy`s, a
 -- deliberate cartesian product, a filter, a `groupBy` and two renames, and
 -- nothing tells the solver which of those rows are the same row.
 --

@@ -107,6 +107,40 @@ module Incomplete.RunCalibration where
    same compiler emits for the same file on a different run -- it repeats itself
    under permuted right-hand sides, it carries a tautology, and it is not even a
    function of the program.
+
+   ---------------------------------------------------------------------------
+   STAGE S3 (2026-09-07): TWO OF THOSE FOUR COMPLAINTS ARE NOW FIXED
+
+   Everything above was measured before stage S3's change to
+   `Subst.mkSimplified` (`tracker/loopmodel/S3-SIMPLIFY.md`). The simplifier had
+   always documented that its first job is to "eliminate all but one permutation
+   of a right hand side" and had never done it -- `NormalPart` overrode `equals`
+   (which ignores the order of the parts) and not `hashCode`, and `List.distinct`
+   buckets by hash -- and it had a `None` case for the concrete identity
+   `(|Foo|) <- (|Foo|)` but none for the variable identity `a <- (a)`. Both are
+   fixed, so **the tautology and the permuted duplicates are gone**:
+
+     * Form A loses `r <- (r)`, `c <- (e, d)` and `f <- (d, r, g)` -- three of
+       its fifteen, exactly the three this header calls "redundant by
+       inspection", and for exactly the two reasons `Signatures.tautIsFree` and
+       `Signatures.perm2A`/`permA` prove.
+     * Form B loses `r <- (r)`.
+     * `lookbackJoin` loses `r <- (r)`, `t <- (j, r, c)` and `m <- (i, j)`.
+
+   Re-measured today with the recipe above (`-Dermine.useInterface=false`,
+   `:type`), on a run that produced the Form B shape: `valueAsOf` prints TEN
+   constraints before the fix and NINE after, and `lookbackJoin` ten before and
+   nine after -- the deleted member being `r <- (r)` in both.
+
+   THE OTHER TWO COMPLAINTS STAND, and they are the interesting ones. The
+   simplifier deletes copies and tautologies and NOTHING ELSE: it still has no
+   entailment test between surviving partitions, so a Form A run still prints
+   twelve constraints where nine of its own output say the same thing, and
+   `Incomplete.Signatures.valueAsOfFormA` / `valueAsOfFormB` are still the proof
+   that it cannot tell. And the residual is still not a function of the program:
+   which form comes out still varies run to run. Deciding entailment is
+   `tracker/ROSE-COMPARISON.md` rank 3 and a separate stage; the run-to-run
+   instability is the dequeue order, `tracker/loopmodel/A1-REVIEW.md` §R-6.
 -}
 
 import Prelude

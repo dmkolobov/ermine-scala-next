@@ -1,4 +1,137 @@
-# Row-constraint work — state as of 2026-09-06
+# Row-constraint work — state as of 2026-09-07
+
+## 2026-09-07: **FIXED — the published residual no longer carries permuted duplicates or `a <- (a)`** (loop model, stage S3)
+
+`Subst.mkSimplified` has documented since it was written that its job (1) is to "eliminate all but
+one permutation of a right hand side for partitions of a given variable".  It never did.
+`NormalPart` overrides `equals` (ignoring `loc`, comparing `abstrakt` SORTED) and **not**
+`hashCode`, and `List.distinct` is `distinctBy(identity)` over a `mutable.HashSet`, so two permuted
+copies of one constraint hashed into different buckets and were never compared.  Beside it,
+`normalPart` had a `None` case for the concrete identity `(|Foo|) <- (|Foo|)` and none for the
+variable identity `a <- (a)`.  Both are one-line omissions; both are now fixed
+(`core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala`, +13 −1, nothing else touched).
+Origin `tracker/ROSE-COMPARISON.md` §3 rank 1; report `tracker/loopmodel/S3-SIMPLIFY.md`
+(§11 = the post-review corrections), review `tracker/loopmodel/S3-REVIEW.md`.
+**REVIEWED 2026-09-07: ADVANCE (commit) after documentation corrections, findings K-1…K-9, no defect
+in the change** — both compilers rebuilt in a throwaway worktree, every gate re-run, the whole corpus
+re-swept, and entailment-equivalence re-decided with an independent CNF+DPLL checker that also
+compares bodies, binders, class multisets and binding sets: **21 of 21 EQUIVALENT, 0 weaker, 0
+stronger**, and every load-bearing number below reproduces to the digit.  The corrections are applied
+here and in the report.
+
+**Reproduction, one JVM, two modules.**  `incomplete/TopReadings.e`'s `topRowsBy` published
+`b <- (c, h), h <- (h), b <- (h, c)` — a tautology and a permuted duplicate in the same three-element
+residual — and now publishes `b <- (h, c)`, which is `Has b h`, the signature the module's own header
+says a competent user expects.  `incomplete/np01_add_or_recompute.e`'s `inferredRestate` published
+nine partitions with two permuted pairs and now publishes **seven**, the number `A1-REVIEW.md` §R-1
+reached by hand.
+
+**Gates.**  `core/test` 913/914 (the known `Constraints.disjunction sound` starvation);
+`TestLoopTrace` **714/714** (`skipped=0 hashdiff=0 eqdiff=0 nonpart=0 rejected=36 fuel=0`) — note
+that this property **passes VACUOUSLY in a tree without `tracker/lean/.lake/build/bin/looptrace`**
+and still reports `Passed: Total 3`, so quote it only with the binary present or
+`-Dermine.looptrace=<path>` (review K-7);
+`looptrace-corpus.sh` groups `boot` and `Wide`, model-vs-compiler **54,199/54,199** and
+**115,864/115,864** agree with 0 skips on BOTH sides; `corpus-run.sh --batch` **0 verdict changes**
+over the 130 files common to the two runs (69 LOADED / 61 REJECTED) and `--incomplete --batch`
+**0 of 34** (18 / 16); the five `Signatures.e` proof modules still check with 0 errors.
+**One user-visible message DOES move** (review K-2, and it is exactly `ROSE-COMPARISON.md` §3
+rank 1's acceptance item (i) about which surviving representative's `loc` a blame message points at):
+the corpus gate compared exit codes only, and a content comparison of all 132 + 34 `.out` files finds
+one change — `Time/shouldfail/bucket01_calendar_overlaps_facts.e:77:7` prints "a part contains it but
+the whole does not" where it printed "the whole contains it but no part does", **same verdict, same
+position, same field, a different clause of the same refutation**.  Run PER FILE the clause is
+identical on both sides, so this is the whole-corpus-batch configuration only; and the clause the
+fixed compiler prints is the one `bucket01`'s own header and `E3-EXAMPLES.md:176` record first.  The
+clause was already documented as unstable across loading modes.  Not a regression.
+
+**What moved, and the proof it is equivalent.**  A 174-file `.ei` sweep against a FROZEN copy of
+`core/examples` with `-Dermine.loadInSeries=true`, 242 interfaces / 2,946 bindings, with a
+**same-configuration control that differs in 0 of 242 interfaces**: **21 bindings in 10 interfaces
+change**.  (The frozen copy predates two `Present/` files: the same sweep at the reviewed commit
+`0741fb2` is **176 files / 243 interfaces / 2,966 bindings** and moves the same twenty-one bindings —
+review K-5 — and the `Lang/` group, committed mid-review, adds no moving binding of its own.)
+Nineteen are exactly "before minus permuted duplicates minus `a <- (a)`" (10 duplicate copies, 15
+tautologies); of the other two — four bindings by name — **two are PROPAGATION** (a module reading a
+now-smaller signature from a module above it saturates differently) and **two are only the print
+order of a three-element concrete row** (K-4).  All **21 are ENTAILMENT-EQUIVALENT**, decided
+semantically rather than syntactically: a residual `exists E. G` is, per label, the Boolean function
+`SAT(G at that label)` of the universals' membership bits (`Basic.lean` `sat_iff_forall_label` plus
+the independence of a row variable's bits across labels), so equivalence is 2–256 SAT instances per
+binding.  Zero weaker, zero stronger.  **What decides what** (K-3): that per-label decision covers
+the ROW-PARTITION part only — it reads neither the body nor the class constraints — so the claim
+rests on it together with the syntactic checker (bodies and `forall` binders, for the 19 it explains)
+and the class-multiset check; the reviewer's independent CNF+DPLL checker covers all four for all 21
+and agrees.  After the fix the only bindings in the whole sweep that still
+publish a duplicate or a tautology are the **21 hand-written signatures in the five `Signatures.e`
+proof files**, which carry those sets deliberately.
+
+**The row trace is NOT byte-identical, and the brief's reason for expecting it to be is wrong.**
+`mkSimplified` is post-loop for one binding, but its output is an input twice: it runs a solve of its
+own (`RowTrace.withSite("mkSimplified-extinct")`, `Subst.scala:1670`) on the set it drops, and the
+published residual is instantiated at every later use of the binding.  On `boot`, **26 of 54,199
+segments differ (0.048 %)** — 18 where the before side's solve input carries a tautology, 4 a
+duplicate, 4 with the same constraint count and shape and only a shifted `Supply`; `learn`, `step`,
+`sat`, `splice`, `inpart`, `ex` and `slbl` record counts are identical and only `scon` (1,999 →
+1,975), `svar` and `in` move.  What IS invariant is the loop itself: no rule, dequeue order or
+refutation changed, and the model reproduces the compiler solve for solve on both sides.
+
+**Perf.**  `perf-bench.sh` refuses above load average 1.5 and the implementer's machine ran at 3–7
+with two other agents on it; **the reviewer ran it on a quiet machine, both sides:
+`perf-bench.sh batch -n 3` gives 12.04 s before and 12.05 s after (a second after-run 12.10 s), each
+started at load ≈ 1.1 — UNMOVED.**  The import-time proxy the implementer quoted (23.7 s → 21.9 s,
+92 %) is retired: it was a single pair of runs at load 3 and does not reproduce at that magnitude;
+the reviewer's re-measurement over the 70 shared modules is 21.40 s → 20.99 s (98.1 %), worst single
+regression +0.05 s, dominated by `WardRoster` −0.62 s (K-8).
+
+**Two corrections to the E-series memos.**  `Wide/Signatures.e`'s `melt3Full` carries **three**
+order-permuted duplicate pairs, not the two `E1-EXAMPLES.md` N-11 records — the third,
+`r21 <- (ro,rs)` / `r21 <- (rs,ro)`, survives into `melt3Deduped`, so the hand-deduplicated twenty is
+nineteen by the rule the compiler now applies.  `Time/Signatures.e`'s `nearestByFull` carries two
+pairs AND two tautologies.
+
+**Not fixed, deliberately: the third sibling, in both readings — and a FOURTH omission found by the
+review.**  `Part.apply` has no variable-identity case and `Part.isTrivialConstraint` (`Type.scala:394`)
+is `false` unconditionally; and its concrete-identity case (`:414`) is **DEAD CODE** — the guard
+`ss == cs` compares a `List[Name]` to a `Set[Name]`, which is always false at this project's Scala
+3.3.8, so `(|Foo,Bar|) <- ((|Foo,Bar|))` is rebuilt unchanged and reaches the solver, and what deletes
+it is `Subst.normalPart`'s `ConcreteRho` branch, from the published residual only (review K-1;
+**`ROSE-COMPARISON.md` §3 rank 1 item 3 and the first version of `S3-SIMPLIFY.md` §2 both assert the
+opposite and are corrected in place**).  So at `Part.apply` NEITHER case is handled, and the repair is
+two changes, the concrete one being the single word `ss.toSet == cs`.  Both stay deferred for the same
+reason: `Part.apply` is on the PRE-solver path (`Constraints.scala:786` builds every queue partition
+through it), so either change moves the row trace and forces a fresh L2 differential on every group,
+and `incomplete/Signatures.e:40`'s `taut : r <- (r) => …` — with `tautIsFree` proving it discharges
+from an empty context — is a source-written constraint of exactly that shape.  And
+`mkSimplified` still has NO entailment test between surviving partitions of any kind — confirmed by
+reading; that is `ROSE-COMPARISON.md` rank 3 (canonical simplification), a separate stage, and two
+of the residuals S3 moves show what it would buy (`RunCalibration.valueAsOf`'s `t <- (e, c1, r)`, the
+`runningTotal` probe's `e <- (f1, f, e1, d1, so)`, each entailed by three siblings).
+
+**Lean.**  `tracker/loopmodel/S3Simplify.lean` — a scratch file OUTSIDE `tracker/lean/`'s source
+tree, checked with `cd tracker/lean && lake env lean ../loopmodel/S3Simplify.lean` (no `lake build`:
+other agents were running the `looptrace` binary).  **Eight declarations** (K-6), all on
+`[propext, Classical.choice, Quot.sound]` only: `sat_congr_of_perm`, `sEntails_of_perm`, `sat_taut`,
+`sEntails_taut`, `sEntails_of_mem_subset`, `erase_perm_dup_equiv`, `erase_taut_equiv`,
+`SEquiv.sat_iff`.  None of it is new: `Canonical.lean`
+already implements both rules (`Step.dedup` "RECOGNISED UP TO PERMUTATION", `Step.occurs` which
+"also deletes the vacuous `r <- (r)`") and already proves `Step.preserves`.  **The model was the
+specification and the compiler was behind it.**
+
+**A1's movers, re-measured.**  Re-running A1's configuration flip (`-Dermine.rowSound=false -Dermine.dequeuePolicy=shipped` against the shipped defaults) on BOTH compilers over the same frozen corpus: the flip moves **45 of 2,941 bindings before the fix and 44 after** — the count does not drop, and should not have been expected to, because what a dequeue-order flip moves is dominated by alpha-renaming and print order.  What changes is the classification: `A1-REVIEW.md` §R-1's `np01.inferredRestate` published 8 constraints at the old configuration and now publishes 7, so the manual de-duplication R-1 had to perform is done by the compiler.  And the same complete per-label decision **independently confirms §R-6**: of the 45 movers at the fixed compiler, 44 are equivalent and exactly one — `incomplete/RevenueShare.shareOfGroup` — is strictly WEAKER at the new defaults, i.e. strictly more general, which R-6 established by hand.
+
+**The example corpus's own commentary is updated.**  Ten comments in `core/examples/**` quoted an
+inferred residual S3 changes; each now says what the compiler inferred BEFORE S3 and what it infers
+now, with **no signature, proof or body changed** — `Wide/Signatures.e` (melt3: three permuted pairs,
+not two, so the minimal set is nineteen), `Algebra/Signatures.e` (`antiJoin` 3 → 2, `runningTotal`
+21 → 20), `Time/Signatures.e` (`orZero`/`yearFrac365`/`band3`/`band4` 1 → 0, `pctChange` 5 → 4,
+**`safeDiv` 5 → 3 = `safeDivDeduped`**, `shiftBy` 7 → 6, `nearestBy` 10 → 7), `incomplete/Signatures.e`,
+`incomplete/TopReadings.e` (the module the fix was read out of — its "WHAT ACTUALLY HAPPENS" block is
+now "WHAT USED TO HAPPEN, AND WHAT S3 FIXED"), `incomplete/RunCalibration.e` (`valueAsOf` and
+`lookbackJoin` 10 → 9 each) and `Time/Helpers.e`.  `Present/Signatures.e` was already correct.  All
+five `Signatures.e` re-checked after the edits, 0 errors.
+
+**Not committed.**  Working tree only.
 
 ## 2026-09-06: **ADOPTED — three defaults move** (loop model, stage A1)
 

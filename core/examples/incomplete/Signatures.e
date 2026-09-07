@@ -20,6 +20,38 @@ module Incomplete.Signatures where
    body written out instead, so that its checking still proves the body has that
    type.
 
+   ---------------------------------------------------------------------------
+   STAGE S3 (2026-09-07) CHANGED WHAT THE COMPILER INFERS FOR THESE BODIES
+
+   Every `xFull` set below was transcribed BEFORE stage S3's change to
+   `Subst.mkSimplified` (`tracker/loopmodel/S3-SIMPLIFY.md`).  `mkSimplified`
+   has always documented that its first job is to "eliminate all but one
+   permutation of a right hand side"; it never did it, because `NormalPart`
+   overrode `equals` (ignoring the order of the parts) and not `hashCode`, and
+   `List.distinct` buckets by hash.  Beside it, `normalPart` had a `None` case
+   for the concrete identity `(|Foo|) <- (|Foo|)` and none for the variable
+   identity `a <- (a)`.  Both are fixed, so a PUBLISHED residual no longer
+   carries either -- and the two facts this file opens with, `taut` and
+   `permA`/`permB`/`permC`, are exactly the two entailments that licence the
+   deletions.  This module is where the fix was read out of.
+
+   The three bodies below, re-measured (`S3-SIMPLIFY.md` §1, §6):
+
+       topRowsBy    3 partitions -> 1  -- BOTH defects in one residual:
+                                          `h <- (h)` and a permuted copy of
+                                          `b <- (h, c)`.  What is left is exactly
+                                          `topRowsByDeduped`, i.e. `Has b h`
+       valueAsOf    the two residuals `RunCalibration.e` emits lose `r <- (r)` and
+                    the `c <- (d, e)` / `c <- (e, d)` pair
+       shareOfGroup loses the `kv2 <- (b, f1)` / `kv2 <- (f1, b)` pair
+
+   NOTHING BELOW WAS CHANGED AND NOTHING BELOW STOPS CHECKING.  A DECLARED
+   signature is published verbatim -- it does not pass through `mkSimplified` --
+   so `taut`, every `xFull`, every `xDeduped` and every `= xFull` proof is
+   exactly as it was, and `incomplete/Signatures.ei` still reads
+   `taut : forall (r: rho). r <- (r) => ...`.  Read the `xFull` sets as "the
+   residual before S3" and the file as the record of what S3 removed.
+
    KEEP THIS FILE SEPARATE from the query files: an annotated copy of a body in
    the same module as the unannotated one perturbs what the unannotated one
    infers.
@@ -60,6 +92,10 @@ perm2B x = perm2A x
 -- ---------------------------------------------------------- RunCalibration
 
 -- The LARGER of the two residuals RunCalibration.e emits, verbatim, all fifteen.
+-- SINCE S3 (2026-09-07) three of the fifteen are no longer published for an
+-- inferred residual: the tautology `r <- (r)` and the permuted pair
+-- `c <- (d, e)` / `c <- (e, d)`.  The set is transcribed here as it was, and the
+-- proofs below are untouched; it is the compiler's PRE-S3 answer.
 valueAsOfFormA : ( r <- (r)
                  , r1 <- (c1, r)
                  , r2 <- (d, r)
@@ -128,7 +164,13 @@ valueAsOfSimple d ts ps = withFieldCopy d (d' ->
 -- ------------------------------------------------------------ RevenueShare
 
 -- The inferred set, verbatim: fifteen row constraints and seventeen
--- existentials, for "group, total, divide".
+-- existentials, for "group, total, divide".  SINCE S3 (2026-09-07) the permuted
+-- pair `kv2 <- (b, f1)` / `kv2 <- (f1, b)` is no longer published twice, so an
+-- inferred residual of this shape carries fourteen; the other three members
+-- `shareOfGroupDeduped` deletes still need the entailment test `mkSimplified`
+-- does not have.  The set below is the PRE-S3 answer and is left as it was --
+-- it is also the residual `A1-REVIEW.md` §R-6 certifies at both dequeue-order
+-- configurations.
 shareOfGroupFull : ( PrimitiveNum n
                    , e1 <- (g, j)
                    , kv2 <- (b, f1)
@@ -191,6 +233,14 @@ topRowsByFull h n r = join r (topK h n (r # h))
 
 -- The tautology deleted. What is left, `exists c. b <- (h, c)`, is exactly the
 -- `Has b h` alias, which is how a person spells it.
+--
+-- AND SINCE S3 (2026-09-07) THE COMPILER PRODUCES THIS SIGNATURE ITSELF.  On a
+-- virgin load `TopReadings.topRowsBy` published `b <- (c, h), h <- (h),
+-- b <- (h, c)` -- the tautology AND a permuted duplicate, both defects in one
+-- three-member residual -- and now publishes `b <- (h, c)` alone.  `topRowsByFull`
+-- above is the pre-S3 answer, kept because this pair is the proof that deleting
+-- the tautology was sound; `TopReadings.e`'s own header records the same
+-- before/after.
 topRowsByDeduped : (Has b h, RelationalComb rel)
                 => Row h -> Int -> rel b -> rel b
 topRowsByDeduped = topRowsByFull

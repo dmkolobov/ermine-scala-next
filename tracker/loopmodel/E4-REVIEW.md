@@ -168,17 +168,20 @@ partition, and the solver closes five partitions sharing one left-hand side agai
 **Is it realistic or an artefact?** I isolated it. `ProbeCascade.e` in my scratch is nothing but a
 row of unannotated lambdas projecting one record parameter N times:
 
-| projections | input partitions | draws | steps | splits |
+| projections | draws (model replay) | steps | splits | compiler |
 |---|---|---|---|---|
-| 2 | 2 | 3 | 5 | 0 |
-| 3 | 3 | 33 | 24 | 0 |
-| 4 | 4 | 207 | 65 | 0 |
-| 5 | 5 | 1,243 | 220 | 0 |
-| 6 | 6 | **6,795** | 677 | 0 |
-| 7 | 7 | **budget exhausted** | — | — |
+| 2 | 3 | 5 | 0 | loads |
+| 3 | 33 | 24 | 0 | loads |
+| 4 | 207 | 65 | 0 | loads |
+| 5 | 1,243 | 220 | 0 | loads |
+| 6 | **6,795** | 677 | 0 | loads |
+| 7 | **35,923** | — | 0 | **REJECTED at 20,009 draws** |
+| 8 | **185,848** | — | 0 | **REJECTED** |
 
-and the same five projections under **one written partition** (`forall r o. (r <- ((| p1, p2, p3,
-p4, p5 |), o)) => {..r} -> String`) cost **0 draws**.
+(the model replays without the budget, so it reports the count the solve *would* have needed; the
+compiler stops at 20,000). Growth is a steady **≈5.3–6× per extra projection**, every draw a
+`Resolution`, never a split. And the same five projections under **one written partition**
+(`forall r o. (r <- ((| p1, p2, p3, p4, p5 |), o)) => {..r} -> String`) cost **0 draws**.
 
 Seven `p ! field` in one lambda — one line of ordinary Ermine, no helper, no relation, no
 presentation — is rejected:
@@ -577,10 +580,10 @@ it is false for `Wide`/`Algebra`/`Time` too if they were written the same way.
   **1**. Delete the claim; report `maxmint` under its real name and the per-key max as 1. Rename
   "decision nodes (states)" to `steps` (73), as P-18 asked. **CONFIRMED.**
 * **M-2 — "budget headroom 89×" describes a shape that is one line from the cliff.** Measured
-  ladder (my `ProbeCascade*.e`, each body alone in a module): 2/3/4/5/6 projections of one record
-  parameter with an open row cost **3 / 33 / 207 / 1,243 / 6,795** draws — ~6× per extra read —
-  and **seven exhausts the 20,000 budget** with the resource diagnostic quoted in §3.1. The same
-  five projections under one written partition cost **0**. Replace the headroom sentence with the
+  ladder (my `ProbeCascade*.e`, each body alone in a module): 2…8 projections of one record
+  parameter with an open row cost **3 / 33 / 207 / 1,243 / 6,795 / 35,923 / 185,848** draws —
+  ≈5.3–6× per extra read — and **seven already exhausts the 20,000 budget**, with the resource
+  diagnostic quoted in §3.1. The same five projections under one written partition cost **0**. Replace the headroom sentence with the
   ladder and the remedy, and say that `ValidationReport`'s 218 is the *concrete-row* case.
   **CONFIRMED.**
 * **M-3 — four wrong counts in §2's "Counts" paragraph** (and repeated in the file table):
@@ -666,7 +669,7 @@ New `tracker/TICKET-stdlib-findings.md`:
 `tracker/TICKET-editor-and-solver-followups.md`:
 
 6. **Resolution cascade on a projected record** — N `Has` constraints on one unannotated row
-   variable cost ~6× per additional projection and exhaust the 20,000-draw budget at N = 7
-   (measurements in §3.1). This is the production `params → report` shape. Worth a solver look
+   variable cost ≈5.3–6× per additional projection (3 → 185,848 for N = 2 → 8) and exhaust the
+   20,000-draw budget at N = 7 (measurements in §3.1). This is the production `params → report` shape. Worth a solver look
    (the closure is doing work a single left-hand-side index would avoid) and, until then, worth a
    line in the examples' README: *write the parameter row down*.

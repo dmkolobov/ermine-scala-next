@@ -59,6 +59,13 @@ module Time.Helpers where
    only in the type the compiler INFERS, and even there it grinds down to five
    constraints for `safeDiv` and to the single tautology `v <- (v)` for `band3`
    and `band4` (`Time/Signatures.e` carries all of them verbatim).
+   SINCE STAGE S3 (2026-09-07) it grinds down further still, because the
+   simplifier now deletes the tautology and permuted duplicate partitions from a
+   published residual: `safeDiv`'s five are THREE (its two permuted pairs were
+   one constraint each), and `band3`/`band4` infer NO row constraint at all. So
+   the measurement this paragraph reports is now stronger than it was: an
+   `Op`-returning conditional over one column costs three constraints for a
+   guarded division and NOTHING for a band, however deeply nested.
 
    The conditionals here still return `Op`s and let the caller feed them to
    `combine`, but the reason is now composability, not the solver: `band3` is
@@ -354,8 +361,9 @@ accrual prinF rateF yf = col_Op prinF *_Op col_Op rateF *_Op yf
 -- Both columns must be on the row -- put the prior period's value there with a
 -- shifted self-join first (`Time.SubscriptionWaterfall` shows the join).
 --
--- Its residual carries `r1 <- (r1)`, the tautology; see
--- `Time.Signatures.pctChangeFull` / `pctChangeDeduped`.
+-- Its residual carried `r1 <- (r1)`, the tautology, until stage S3 (2026-09-07)
+-- taught the simplifier to delete it; five inferred constraints became four.
+-- See `Time.Signatures.pctChangeFull` / `pctChangeDeduped`.
 pctChange : forall cur prior out n.
             (out <- (cur, prior), PrimitiveNum n)
          => Field cur n -> Field prior n -> Op out n
@@ -393,11 +401,13 @@ shiftBy pF vF pvF n r =
 
 -- | A nullable `Op` made total by substituting zero for null: `coalesce`.
 --
--- Its inferred residual is `v <- (v)` -- the TAUTOLOGY, a row is the disjoint
+-- Its inferred residual WAS `v <- (v)` -- the TAUTOLOGY, a row is the disjoint
 -- union of itself -- which every row satisfies and which therefore says
 -- nothing. `Time.Signatures.orZeroFull` carries it verbatim and
 -- `orZeroSimple` discharges it with nothing in scope, which is the proof that
--- the constraint is noise. This is the same phenomenon
+-- the constraint is noise. Stage S3 (2026-09-07) acted on that proof: the
+-- simplifier deletes `a <- (a)` now, so this body infers NO row constraint at
+-- all. This is the same phenomenon
 -- `core/examples/incomplete/Signatures.e` documents for `lookbackJoin`, reached
 -- here from four characters of ordinary library code.
 orZero : forall opc v. AsOp opc => opc v (Nullable Double) -> Op v Double
@@ -510,10 +520,10 @@ band3 f lo loLbl hi hiLbl rest =
         (if_Op (col_Op f <_Pred prim_Op hi) (prim_Op hiLbl) (prim_Op rest))
 
 -- | A FOUR-WAY band: three thresholds and a fallthrough. Three levels of nested
--- `if`, so three nested `RUnion3`s -- and its residual is still the single
--- tautology `v <- (v)`, which is the measurement that says the conditional
--- lattice collapses when every branch reads one column. Age bands, ageing
--- buckets, SLA buckets.
+-- `if`, so three nested `RUnion3`s -- and its residual was the single tautology
+-- `v <- (v)` and is now EMPTY (stage S3 deletes `a <- (a)`), which is the
+-- measurement that says the conditional lattice collapses when every branch
+-- reads one column. Age bands, ageing buckets, SLA buckets.
 band4 : forall v a b. (Primitive a, Primitive b)
      => Field v a -> a -> b -> a -> b -> a -> b -> b -> Op v b
 band4 f b1 l1 b2 l2 b3 l3 rest =

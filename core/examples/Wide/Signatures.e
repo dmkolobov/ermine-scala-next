@@ -33,12 +33,28 @@ module Wide.Signatures where
         Here it is checked.
      2. `rankWithin`'s five published constraints are equivalent to the four it
         was written with -- again both directions.
-     3. `melt3`'s TWENTY-TWO inferred constraints reduce to TWENTY by deleting
-        two order-permuted duplicates, and to TWO by saying what the function
-        means.  The first reduction is the interesting one: it proves that the
-        published list is not canonical, which is why the same body publishes 20
-        constraints in one module and 22 in another (E1 review, N-11).
+     3. `melt3`'s TWENTY-TWO inferred constraints reduce by deleting order-
+        permuted duplicates, and to TWO by saying what the function means.  The
+        first reduction is the interesting one: it proves that the published list
+        is not canonical, which is why the same body publishes 20 constraints in
+        one module and 22 in another (E1 review, N-11).
+        TWO CORRECTIONS, both from stage S3 (2026-09-07):
+          (a) there are THREE permuted pairs in the twenty-two, not two, so the
+              reduction is to NINETEEN.  The third, `r21 <- (ro, rs)` beside
+              `r21 <- (rs, ro)`, is still present in `melt3Deduped` below --
+              which is why that signature says twenty and not nineteen; and
+          (b) the compiler now performs the reduction ITSELF.  `mkSimplified`
+              could never delete a permuted duplicate because `NormalPart`
+              overrode `equals` and not `hashCode`; since S3 it can, and this
+              body re-measured infers TWENTY partitions before the fix and
+              NINETEEN after (`tracker/loopmodel/S3-SIMPLIFY.md` §6).
      4. `withDerived2`'s eight published constraints reduce to four.
+
+   NOTHING BELOW WAS CHANGED BY S3 AND NOTHING BELOW STOPS CHECKING.  A DECLARED
+   signature is published verbatim -- it does not pass through `mkSimplified` --
+   so `melt3Full`'s twenty-two, `melt3Deduped`'s twenty and every `= xFull` proof
+   are exactly as they were.  What changed is that `melt3Full`'s set is now the
+   compiler's OLD answer; read it as "the residual before S3".
 
    KEEP THIS FILE SEPARATE from `Helpers.e`: an annotated copy of a body in the
    same module as the original perturbs what the original infers.
@@ -151,11 +167,21 @@ melt3Full kf vf fa fb fc r =
 -- the list -- and the right-hand side of a partition constraint is a SET, so a
 -- rotation entails the original and is pure noise.
 --
+-- TWO IS AN UNDERCOUNT (stage S3, 2026-09-07, `S3-SIMPLIFY.md` §6): there is a
+-- THIRD permuted pair in `melt3Full`, `r21 <- (ro, rs)` beside `r21 <- (rs, ro)`,
+-- and BOTH copies are still in the list below.  So the minimal set by this rule
+-- is NINETEEN, not twenty, and `melt3Deduped` is a proof about a set that is
+-- itself not yet duplicate-free.  It is left exactly as it was: it still checks,
+-- and it still proves what it says.
+--
 -- Deleting them and checking `melt3Deduped = melt3Full` proves the twenty entail
 -- the twenty-two, and the reverse inclusion is trivial, so the two sets are
 -- EQUIVALENT.  That is the machine-checked half of E1 review finding N-11: the
 -- reviewer's copy of this same body published twenty constraints and mine
--- published twenty-two, and this is exactly the difference.
+-- published twenty-two, and this is exactly the difference.  Since S3 the
+-- compiler does this deletion itself -- re-measured, the unannotated body infers
+-- twenty partitions before the fix and nineteen after -- so the instability N-11
+-- found is gone for the permuted-duplicate half of it.
 melt3Deduped : ( t1 <- (rs, so, ro)
                , r5 <- (c1, r)
                , c <- (rs, so)
