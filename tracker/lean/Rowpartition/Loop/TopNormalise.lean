@@ -1416,6 +1416,107 @@ theorem supFresh_sysQ {q : PQueue} {su : Sup}
   obtain ⟨p, hp, hw⟩ := mem_allVars_sysQ hmem
   exact h p hp z hw hz
 
+/-! ### S4c fix round (J-1): NO FALSE REJECTION at `topNormalise = true`
+
+`Flags.rowSoundDecide` ships ON, so at `topNormalise = true` layer (iii) decides the REWRITTEN
+live input `q'.elems ++ envFacts` and a REJECTION is a refutation of THAT.  Carrying it back to
+the input the compiler was handed needs the FORWARD direction WITH the environment facts,
+`SSat (q0 ∪ E) → SSat (q' ∪ E)` — and `TnOk.fresh` is `SupFresh su (sysQ q)`, which says nothing
+about `E`, while `ssat_addAll` builds its model by UPDATING `rho` at each carrier.  A carrier
+occurring in `E` would break the extension (the reviewer's witness: `E = [c <- ((|d|))]` for the
+`c` the rewrite is about to draw).
+
+**The missing side condition, named:** `hE : SupFresh su (efs E)` — the carriers are fresh for
+the environment facts too.  It is discharged from the code the same way `TnOk.fresh` is: the
+`Supply` a solve is given (the trace's `sin` record carries `lo`, `hi` and the global block
+counter) starts ABOVE every variable id the solve's input mentions, and the `senv` facts are
+built from that same input's variables — so no id the supply can still hand out occurs in them.
+`supFresh_efs` below is that statement in the form a caller checks: a fact about the ids the
+facts MENTION, with no `allVars` in sight.
+-/
+
+/-- The system a list of ENVIRONMENT FACTS denotes -- the `senv` records `solveSeed` takes as
+`envFacts`, which are part of the live input the checks read (S1 review Z-6) and are NOT part of
+the queue. -/
+def efs (E : List LPart) : System := (E.map LPart.toConstraint).toFinset
+
+@[simp] theorem mem_efs {E : List LPart} {d : Constraint} :
+    d ∈ efs E ↔ ∃ p ∈ E, p.toConstraint = d := by
+  simp [efs, List.mem_toFinset, List.mem_map]
+
+theorem sysQ_eq_efs (q : PQueue) : sysQ q = efs q.elems := rfl
+
+theorem efs_append (a b : List LPart) : efs (a ++ b) = efs a ∪ efs b := by
+  simp [efs, List.map_append, List.toFinset_append]
+
+/-- The LIVE input of a solve: the queue the checks read, together with the environment facts. -/
+theorem live_eq (q : PQueue) (E : List LPart) :
+    ((q.elems ++ E).map LPart.toConstraint).toFinset = sysQ q ∪ efs E := by
+  show efs (q.elems ++ E) = sysQ q ∪ efs E
+  rw [efs_append, sysQ_eq_efs]
+
+theorem mem_allVars_efs {E : List LPart} {w : Nat} (h : w ∈ allVars (efs E)) :
+    ∃ p ∈ E, w = p.lhs ∨ w ∈ p.rhs.abstr.elems := by
+  obtain ⟨d, hd, hw⟩ := Finset.mem_biUnion.mp h
+  obtain ⟨p, hp, rfl⟩ := mem_efs.mp hd
+  refine ⟨p, hp, ?_⟩
+  rcases Finset.mem_insert.mp hw with hw' | hw'
+  · exact Or.inl (by simpa using hw')
+  · exact Or.inr (by simpa using hw')
+
+/-- `SupFresh` at the environment facts, from the ids they MENTION: the form a caller checks. -/
+theorem supFresh_efs {E : List LPart} {su : Sup}
+    (h : ∀ p ∈ E, ∀ w, (w = p.lhs ∨ w ∈ p.rhs.abstr.elems) → ¬ Sup.Reach su w) :
+    SupFresh su (efs E) := by
+  intro z hz hmem
+  obtain ⟨p, hp, hw⟩ := mem_allVars_efs hmem
+  exact h p hp z hw hz
+
+theorem supFresh_union {su : Sup} {A B : System} (ha : SupFresh su A) (hb : SupFresh su B) :
+    SupFresh su (A ∪ B) := by
+  intro z hz hmem
+  rw [allVars_union] at hmem
+  rcases Finset.mem_union.mp hmem with h | h
+  · exact ha z hz h
+  · exact hb z hz h
+
+/-- **The forward direction WITH the environment facts.** -/
+theorem tn_ssat_fwd_env {L : List Lbl} {q : PQueue} {su : Sup} (on : Bool) (H : TnOk L q su)
+    {E : List LPart} (hE : SupFresh su (efs E)) (h : SSat (sysQ q ∪ efs E)) :
+    SSat (sysQ (topNormalise on q su).1 ∪ efs E) := by
+  cases on
+  · simpa using h
+  · obtain ⟨rho, hm⟩ := h
+    obtain ⟨rho', hm'⟩ := ssat_addAll (topFamilies q) su (sysQ q ∪ efs E) H.sup
+      (supFresh_union H.fresh hE)
+      (fun t ht pr hpr => Finset.mem_union_left _ ((plans_topFam H.qok t ht).read_mem pr hpr))
+      (fun t ht => (plans_topFam H.qok t ht).subCfs)
+      (fun t ht => (plans_topFam H.qok t ht).famRows_ne)
+      (fun t ht => (plans_topFam H.qok t ht).cfs_union) hm
+    refine ⟨rho', ?_⟩
+    intro d hd
+    rcases Finset.mem_union.mp hd with hd' | hd'
+    · rw [topNormalise_sysQ H] at hd'
+      obtain ⟨hd1, -⟩ := Finset.mem_sdiff.mp hd'
+      rcases Finset.mem_union.mp hd1 with hd2 | hd2
+      · exact hm' d (Finset.mem_union_left _ (Finset.mem_union_left _ hd2))
+      · exact hm' d (Finset.mem_union_right _ hd2)
+    · exact hm' d (Finset.mem_union_left _ (Finset.mem_union_right _ hd'))
+
+theorem tn_live_ssat_fwd {L : List Lbl} {q : PQueue} {su : Sup} (on : Bool) (H : TnOk L q su)
+    {E : List LPart} (hE : SupFresh su (efs E))
+    (h : SSat (((q.elems ++ E).map LPart.toConstraint).toFinset)) :
+    SSat ((((topNormalise on q su).1.elems ++ E).map LPart.toConstraint).toFinset) := by
+  rw [live_eq] at h ⊢
+  exact tn_ssat_fwd_env on H hE h
+
+/-- **NO FALSE REJECTION.** -/
+theorem tn_live_unsat_input {L : List Lbl} {q : PQueue} {su : Sup} (on : Bool) (H : TnOk L q su)
+    {E : List LPart} (hE : SupFresh su (efs E))
+    (h : ¬ SSat ((((topNormalise on q su).1.elems ++ E).map LPart.toConstraint).toFinset)) :
+    ¬ SSat (((q.elems ++ E).map LPart.toConstraint).toFinset) :=
+  fun hs => h (tn_live_ssat_fwd on H hE hs)
+
 /-- **`TnOk` DISCHARGED FROM THE CODE.**  `qok` is `Wf.buildQueue_qok`, `self` is
 `buildQueue_no_self` above; what is left is `LblCoh` (`Wf.coh`) and the supply invariant
 `SupOk`/`SupFresh`, which every run-level theorem of this development already carries and

@@ -2386,6 +2386,33 @@ theorem solveP_accepted_faithful_input {L : List Lbl} (hcoh : LblCoh L) {bud : N
   · rw [← hinit]; exact h2 rho hmm
   · rw [hiff, ← hinit]; exact h3
 
+/-- **NO FALSE REJECTION, ABOUT THE INPUT, under any policy (S4c fix round, J-1).**  The policy
+changes which partition is dequeued and nothing about the three input-reading checks, so the
+statement and its proof are `NoFalseAccept.solve_rejects_input`'s with `solveSeedP` in place of
+`solveSeed`. -/
+theorem solveP_rejects_input {L : List Lbl} (hcoh : LblCoh L) {bud : Nat}
+    {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
+    {envFacts : List LPart} {q0 q : PQueue} {su0' su1 : Sup}
+    {rc : List (Nat × Nat × SSet Lbl)}
+    (H : TnOk L q0 su0') (hE : SupFresh su0' (efs envFacts))
+    (hq : buildQueue cs su0 = .ok (q0, su0'))
+    (htn : topNormalise fl.topNormalise q0 su0' = (q, su1, rc))
+    (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
+      none)
+    (hflag : fl.rowSoundDecide = true)
+    (hnd : ∀ p ∈ q.elems ++ envFacts, p.rhs.abstr.elems.Nodup)
+    (hmem : ∀ p ∈ q.elems ++ envFacts, ∀ x ∈ p.rhs.conc.elems, x ∈ L)
+    {l : Lbl} {a : Nat} {w : String}
+    (href : (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
+              fl.rowSoundSolveBudget).1 = .refuted l a w) :
+    (solveSeedP pol bud fl site loc cs ns su0 fuel envFacts).verdict = "REJECTED" ∧
+    ¬ SSat ((((q0.elems ++ envFacts).map LPart.toConstraint)).toFinset) := by
+  refine ⟨solveSeedP_rejects_of_refuted hq htn hearly hflag href, ?_⟩
+  have hq' : (topNormalise fl.topNormalise q0 su0').1 = q := by rw [htn]
+  refine tn_live_unsat_input fl.topNormalise H hE ?_
+  rw [hq']
+  exact labelDecide_refuted_unsat hcoh hnd hmem href
+
 /-! ## 7. NO SILENT WEAKENING: the originals, recovered
 
 Every theorem above is the original statement with `step s` replaced by `stepP pol aux s`, so

@@ -1171,6 +1171,40 @@ theorem solve_accepted_faithful_input {L : List Lbl} (hcoh : LblCoh L)
   · rw [← hinit]; exact h2 rho hmm
   · rw [hiff, ← hinit]; exact h3
 
+/-- **NO FALSE REJECTION, ABOUT THE SYSTEM THE SOLVE WAS GIVEN (S4c fix round, J-1).**  The
+mirror of `solve_noFalseAccept_input`, in the other direction and for the check that ships ON.
+
+With `topNormalise` ON, layer (iii) decides the REWRITTEN live input, so a refutation is a
+refutation of `q'.elems ++ envFacts`.  This says the solve then REJECTS *and* that the system it
+was handed — `buildQueue`'s queue together with the environment facts — has NO MODEL: **the
+rejection is not an artefact of the rewrite.**
+
+`hE` is the one side condition the queue-only direction does not need: the carriers must be fresh
+for the environment facts as well.  `Loop/TopNormalise.lean`'s §J-1 says where it comes from and
+`supFresh_efs` is the form a caller checks.  With the flag OFF it is not used at all. -/
+theorem solve_rejects_input {L : List Lbl} (hcoh : LblCoh L)
+    {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
+    {envFacts : List LPart} {q0 q : PQueue} {su0' su1 : Sup}
+    {rc : List (Nat × Nat × SSet Lbl)}
+    (H : TnOk L q0 su0') (hE : SupFresh su0' (efs envFacts))
+    (hq : buildQueue cs su0 = .ok (q0, su0'))
+    (htn : topNormalise fl.topNormalise q0 su0' = (q, su1, rc))
+    (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
+      none)
+    (hflag : fl.rowSoundDecide = true)
+    (hnd : ∀ p ∈ q.elems ++ envFacts, p.rhs.abstr.elems.Nodup)
+    (hmem : ∀ p ∈ q.elems ++ envFacts, ∀ x ∈ p.rhs.conc.elems, x ∈ L)
+    {l : Lbl} {a : Nat} {w : String}
+    (href : (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
+              fl.rowSoundSolveBudget).1 = .refuted l a w) :
+    (solveSeed fl site loc cs ns su0 fuel envFacts).verdict = "REJECTED" ∧
+    ¬ SSat ((((q0.elems ++ envFacts).map LPart.toConstraint)).toFinset) := by
+  refine ⟨solveSeed_rejects_of_refuted hq htn hearly hflag href, ?_⟩
+  have hq' : (topNormalise fl.topNormalise q0 su0').1 = q := by rw [htn]
+  refine tn_live_unsat_input fl.topNormalise H hE ?_
+  rw [hq']
+  exact labelDecide_refuted_unsat hcoh hnd hmem href
+
 /-! ## 10. The seeds
 
 The three witnesses of `tracker/repro/satterm/seeds/unsat/` and one satisfiable control.  Each

@@ -179,10 +179,11 @@ these conditions of the flip and neither existed at S4; both are now closed.  Th
 about items 1 and 2 above, which remain the user's to do.
 
    * the **CORRESPONDENCE LEMMA** the flag was missing and every other adopted default in this
-     programme shipped: `tracker/lean/Rowpartition/Loop/TopNormalise.lean` (111 theorems) proves
+     programme shipped: `tracker/lean/Rowpartition/Loop/TopNormalise.lean` (121 theorems) proves
      about the EXECUTABLE `Loop/Json.lean` mirror that every family the selector returns meets
      the abstract theorems' hypotheses (`topFamilies_spec`), that every carrier is fresh for the
-     WHOLE input system and distinct (`carriers_spec`, from the `Supply`'s own counter), that the
+     WHOLE input system and distinct (`carriers_spec`, derived from the supply invariant the
+     development already carries), that the
      returned queue read as a system IS `(G ∪ ⋃ topAdds) \ ⋃ topReads` (`topNormalise_sysQ`), and
      that the rewrite is **satisfiability-EQUIVALENT** (`topNormalise_ssat_iff`), losing nothing
      (`topNormalise_noLoss`) and inventing nothing beyond the mint (`topNormalise_conserv`,
@@ -192,12 +193,24 @@ about items 1 and 2 above, which remain the user's to do.
      `htn : fl.topNormalise = false` now carry none, and four new `…_input` theorems state the
      faithful conclusion about the queue `buildQueue` returned rather than the rewritten one —
      which is the statement that matters at ON, because with the flag ON all three checks decide
-     the REWRITTEN system.  S4's statements are recovered verbatim as `…_off` corollaries.
+     the REWRITTEN system.  S4's statements are recovered verbatim as `…_off` corollaries.  The
+     S4c review's `J-1` added the OTHER direction, which `rowSoundDecide` (shipped ON) newly
+     exercises at ON: `solve_rejects_input` / `solveP_rejects_input` say a refutation of the
+     REWRITTEN live input means the system the solve was HANDED has no model either — **no false
+     rejection** — under one named side condition, `hE : SupFresh su0' (efs envFacts)` (the
+     carriers fresh for the `senv` facts as well as for the queue), which the `sin` record's
+     supply counter gives because it starts above every id the solve's input mentions.
+
+   Two scope limits, stated rather than implied: the correspondence is **ORDER-BLIND** (`sysQ` is
+   a `Finset`), so the rewritten queue's ORDER — which fixes the dequeue priority and every
+   downstream mint — is covered by the L2 differential and by `TestLoopTrace`, not by these
+   theorems; and the additive MINT half is still not a `LoopStrict` constructor (the DROP half is,
+   `topNormalise_loopStrict`).
 
    Report `tracker/loopmodel/S4C-CORRESPONDENCE.md`.  `tracker/loopmodel/S4Top.lean` is now a
    POINTER: its content moved into the library file, so its 18 theorems are inside the
-   project-wide audit (`Audit.lean`: **4,282 theorems, 0 non-standard axioms**; `lake build` 868
-   jobs; TestLoopTrace 720/720).
+   project-wide audit (`Audit.lean`: **4,295 theorems, 0 non-standard axioms**, against **4,119**
+   at `c48f178` re-derived from git; `lake build` 868 jobs; TestLoopTrace 720/720).
 
 **Status: OFFERED, NOT ADOPTED.**  Report `tracker/loopmodel/S4-CHANGE.md`, design
 `tracker/loopmodel/S4-DESIGN.md`, review `tracker/loopmodel/S4A-REVIEW.md`, Lean
