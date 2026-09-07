@@ -61,7 +61,12 @@ import os
 import re
 import sys
 
-KEEP = ("step", "learn", "in", "inpart", "sat", "solve")
+# S4 (2026-09-07): `tnorm` is compared like the rest.  The model MINTS the rewrite's carrier
+# itself rather than reading the compiler's, so comparing the record proves the two agree on
+# the family, the carrier id and the union `F` -- not merely that both did something.  With
+# `-Dermine.topNormalise` off (the default) neither side emits one, so every pre-S4
+# differential is unaffected.
+KEEP = ("step", "learn", "in", "inpart", "sat", "solve", "tnorm")
 
 _PATTERNS = [
     (re.compile(r"\^ambiguous\(free\)(\d+)"), "A"),

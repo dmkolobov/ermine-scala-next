@@ -27,10 +27,11 @@ module Present.Helpers where
    `Record.(!)` is a row partition, not a lookup:
    `(!) : t <- (r, s) => {..t} -> Field r a -> a`. So a report that reads N
    fields out of one UNANNOTATED parameter record hands the solver N partitions
-   sharing a left-hand side, and closing them costs about six times as much per
-   additional field: **3 / 33 / 207 / 1,243 / 6,795 draws for N = 2…6, and seven
-   reads exhaust the adopted 20,000-draw budget.** The same five reads under one
-   written partition cost **nothing at all**.
+   sharing a left-hand side, and closing them costs FIVE times as much per
+   additional field -- exactly `(5^N - 3*3^N + 2*2^N)/2` draws:
+   **3 / 30 / 207 / 1,230 / 6,783 for N = 2…6, and seven reads exhaust the adopted
+   20,000-draw budget** (they need 35,910). The same five reads under one written
+   partition cost **nothing at all**.
 
    `Present/ProjectionCost.e` measures this and
    `Present/shouldfail/proj01_seven_reads.e` is the module that does not

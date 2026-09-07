@@ -1456,6 +1456,57 @@ object Constraints {
      *     fails on 90% of splices and diffing the published `.ei` showed it DEGRADES
      *     signatures, turning resolved concrete rows into constrained polymorphic ones.
      * The proofs are kept; the flags were dead weight. */
+    /* S4 (`tracker/loopmodel/S4-CHANGE.md`, ticket B5): the WRITTEN-PARTITION
+     * NORMALISATION.  DEFAULT OFF.
+     *
+     * N projections `p ! f_i` of one record parameter whose row is a VARIABLE hand
+     * `Subst.solve` N lone-abstract partitions at the same left-hand side with
+     * pairwise-disjoint singleton concrete parts.  `resolution` closes them by walking
+     * the whole subset lattice of the N labels, and because `countDraw()` is taken
+     * before the applicability test and before all three guards, the draw count is the
+     * number of same-lhs PAIRS COMPARED:
+     *
+     *     D(N) = (5^N - 3*3^N + 2*2^N) / 2
+     *
+     * exact against this compiler for N = 2..8 (3 / 30 / 207 / 1,230 / 6,783 / 35,910 /
+     * 185,727), i.e. x5 per extra read.  At N = 7 a VALID program is rejected by the
+     * adopted `solveBudget=20000` at 20,009 draws
+     * (`core/examples/Present/shouldfail/proj01_seven_reads.e`).  Raising the budget
+     * cannot keep pace and is not the fix; neither is moving `countDraw()` past the
+     * applicability test, which still needs 23,772 at N = 7.
+     *
+     * With this flag ON, when one left-hand side `v` carries k >= 3 lone-abstract
+     * partitions whose DISTINCT concrete parts are pairwise INCOMPARABLE and non-empty,
+     * and `v` has no concrete row of its own, the k reads are REPLACED by
+     *
+     *     v   <- (c, F)          F = F_1 u .. u F_k, c fresh   (the written partition)
+     *     c_i <- (c, F \ F_i)    for each read                  (the re-expressions)
+     *
+     * -- the 0-draw form the user could have written.  The whole ladder becomes ONE draw
+     * at every N.  It is an EQUIVALENCE, not a weakening: the replacements entail every
+     * read they delete (`S4Top.read_of_top`, no side condition), and every model of the
+     * reads extends uniquely at the forced value `c := v \ F`
+     * (`S4Top.ssat_rewrite_fwd`, premise `c not in allVars G`, from the library's
+     * `sModels_setVar`).  In `Loop/Strict.lean`'s vocabulary it is TWO steps: an additive
+     * `ResStep`-shaped mint, then `drop` with `NoLoss` discharged by
+     * `S4Top.noloss_of_top`.  Not `requeue` (a fresh name breaks `allVars G' subset
+     * allVars G`), never `weaken`.
+     *
+     * THE TWO SIDE CONDITIONS ARE NOT DECORATION.  `k >= 3`: at k = 2 the binary
+     * `resolution` IS this rule -- same two conclusions, same single mint -- so firing
+     * would only pre-empt the cheaper `cancellation` path (seed `NE6` goes 3 -> 10 draws
+     * without it).  NO CONCRETE ROW at `v`: that case is `resRow`'s (Stage 5) and
+     * `emptyRow`'s (Stage 7) and they answer it at 0 draws (seed `GROW`).
+     *
+     * DISTINCT parts, not partitions: keying on the partition count fires on six corpus
+     * solves that draw 2-5 and gain nothing (S4A review G-2).  ONE PASS over the
+     * ORIGINAL families, never a fixpoint, so the answer cannot depend on the fold order
+     * (G-11) and the Lean mirror can be identical.
+     *
+     * Mirrored in `Rowpartition/Loop/Json.lean`'s `topNormalise` under
+     * `Flags.topNormalise`, applied at the same point of the same solve. */
+    val topNormalise: Boolean = System.getProperty("ermine.topNormalise", "false") == "true"
+
     override def toString =
       mode + (if (disjRule) "+disj" else "") + (if (labelCheck) "+label" else "") +
         (if (labelCheckEarly) "-early" else "") + (if (resGuard) "+resguard" else "") +
@@ -1473,9 +1524,13 @@ object Constraints {
          * alpha-variants and a mixed tree loads (D1B review gate 16) -- and it is
          * recorded as an open gap for incremental adoption. */
         (if (dequeuePolicy != "shipped") "+pol:" + dequeuePolicy else "") +
-        (if (solveBudget > 0) "+budget:" + solveBudget else "")
+        (if (solveBudget > 0) "+budget:" + solveBudget else "") +
+        (if (topNormalise) "+topnorm" else "")
   }
   case object Disjunction         extends Inference
+  /** S4: a partition introduced by the written-partition normalisation
+    * (`GenRules.topNormalise`), which is neither a loop rule nor a user constraint. */
+  case object TopNormalise        extends Inference
 
   case class Partition(_1: TypeVar, _2: RHS, inf: Option[Inference]) {
     def tup: (TypeVar, RHS) = (_1, _2)
@@ -2155,6 +2210,88 @@ object Constraints {
         Set(Partition(ys.head, RHS(xs, fs), Cancellation))
       else
         Set()
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * S4: THE WRITTEN-PARTITION NORMALISATION (`GenRules.topNormalise`)     *
+   * ------------------------------------------------------------------ */
+
+  /** One family the normalisation fires on: the left-hand side, the reads to delete
+    * (in queue order), and the union of their concrete parts. */
+  private case class TopFamily(lhs: TypeVar, reads: List[Partition], top: Fields)
+
+  /** The families, in the QUEUE's own order, computed from the ORIGINAL partition list.
+    *
+    * Trigger at one left-hand side `v`: at least three LONE-ABSTRACT partitions with
+    * non-empty concrete parts whose DISTINCT concrete parts are pairwise INCOMPARABLE,
+    * and no concrete-row partition at `v`.  See `GenRules.topNormalise` for why each
+    * clause is there. */
+  private def topFamilies(ps: List[Partition]): List[TopFamily] = {
+    /* A READ is a LONE-ABSTRACT partition with a non-empty concrete part -- `resolution`'s
+     * own premise pattern -- and NOT a SELF-READ `v <- (v, C)`.
+     *
+     * WHY THE SELF-READ IS EXCLUDED (S4B review H-2).  This is the first rule in the solver
+     * that DELETES premises the loop can still use; `resolution`, which derives the very same
+     * conclusions at k = 2, only ADDS.  `S4Top.noloss_of_top` says the replacements ENTAIL
+     * every deleted read, but that is a SEMANTIC entailment and the loop's own deaths are
+     * SYNTACTIC: `selfSubstitution`'s occurs check ("Infinite row partition") and
+     * `RHS.merge`'s duplicate-field check are refutations of a SHAPE, not of a model.  A
+     * self-read `v <- (v, C)` with `C` non-empty is unsatisfiable and the loop kills it at
+     * once; rewritten away, the resulting system is still unsatisfiable but the LOOP no
+     * longer sees why, and with `-Dermine.labelCheck=false -Dermine.rowSound=false` the
+     * compiler LOADS a module it used to reject (review §4.3, `probes/AdvSelf3.e`).
+     * Excluding it costs nothing: no corpus family contains one. */
+    def isRead(p: Partition): Boolean = p match {
+      case Partition(v, RHS(Single(x), con), _) => con.nonEmpty && x != v
+      case _                                    => false
+    }
+    val cands = ps.filter(isRead).map(_._1).distinct
+    cands.flatMap { v =>
+      if (ps.exists(p => p._1 == v && p._2.abstr.isEmpty)) None
+      else {
+        val fam = ps.filter(p => p._1 == v && isRead(p))
+        val dis = fam.map(_._2.concr).distinct
+        if (dis.length < 3) None
+        else if (dis.exists(c => dis.exists(d => c != d && c.subsetOf(d)))) None
+        else Some(TopFamily(v, fam, dis.reduce(_ ++ _)))
+      }
+    }
+  }
+
+  /** Apply the rewrite to a partition list.  Returns the new list and one
+    * `(lhs, carrier, F)` per family, for the `tnorm` trace record.
+    *
+    * ONE PASS over the ORIGINAL families: every family is read off `ps` as
+    * `PQueue.build` left it, and the replacements are applied afterwards, so no rewrite
+    * can see a family the input did not have and the result does not depend on the fold
+    * order (S4A review G-11).  Ids are drawn in the candidates' queue order, which is
+    * what `Rowpartition/Loop/Json.lean`'s `topNormalise` also uses. */
+  def topNormalise(ps: List[Partition], loc: Loc)(implicit su: Supply):
+      (List[Partition], List[(TypeVar, TypeVar, Fields)]) = {
+    val plans = topFamilies(ps)
+    if (plans.isEmpty) (ps, List())
+    else {
+      val dead = plans.flatMap(_.reads).toSet
+      val keep = ps.filterNot(dead.contains)
+      var added: List[Partition] = List()
+      var recs:  List[(TypeVar, TypeVar, Fields)] = List()
+      plans.foreach { t =>
+        /* The carrier is minted BEFORE the loop, so -- exactly like `PQueue.build`'s
+         * own mint for a non-variable left-hand side -- it is NOT counted by
+         * `GenRules.countDraw()`, which counts the LOOP's draws and is scoped by
+         * `withLoopDraws` around `q.expand`.  That keeps the D1 gate exact: the
+         * compiler's `sdraw` (`drawnThisSolve`) still equals the model's
+         * `drawn - drawn0`, because the model's `drawn0` is taken after this mint too. */
+        val c = fresh(loc, none, Ambiguous(Free), Rho(loc.inferred))
+        val res = t.reads.collect {
+          case Partition(_, RHS(Single(x), con), _) =>
+            Partition(x, RHS(Set(c), t.top -- con), TopNormalise)
+        }
+        added = added ++ (Partition(t.lhs, RHS(Set(c), t.top), TopNormalise) :: res)
+        recs  = recs :+ ((t.lhs, c, t.top))
+      }
+      (keep ++ added, recs)
     }
   }
 

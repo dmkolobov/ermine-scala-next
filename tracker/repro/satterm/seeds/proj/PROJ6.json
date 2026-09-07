@@ -1,0 +1,60 @@
+{
+ "name": "PROJ6: N=6 projections `p ! f_i` of ONE open-row record parameter -- the S4 projection cliff.  t <- ({f_i}, c_i) for i=1..6, one lone-abstract premise per read at the same t with pairwise-disjoint singleton concrete parts.  From ProbeProj6.e(1:1) `inferImplicitBindingTypes` (compiler scon block; ids renumbered t=0, c_i=i).",
+ "rho": {},
+ "cons": [
+  [
+   0,
+   [
+    1
+   ],
+   [
+    0
+   ]
+  ],
+  [
+   0,
+   [
+    2
+   ],
+   [
+    1
+   ]
+  ],
+  [
+   0,
+   [
+    3
+   ],
+   [
+    2
+   ]
+  ],
+  [
+   0,
+   [
+    4
+   ],
+   [
+    3
+   ]
+  ],
+  [
+   0,
+   [
+    5
+   ],
+   [
+    4
+   ]
+  ],
+  [
+   0,
+   [
+    6
+   ],
+   [
+    5
+   ]
+  ]
+ ]
+}

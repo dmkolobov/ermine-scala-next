@@ -2219,10 +2219,13 @@ theorem runSP_not_rejected {d0 b n : Nat} {aux : Aux} {s : State}
 as `solveSeed` does, and the policy changes nothing about it.  So the two S2 theorems transport
 line for line, with `runP` supplying the S1 half. -/
 
-/-- `NoFalseAccept.solveSeed_rejects_of_refuted` for the policy solve. -/
+/-- `NoFalseAccept.solveSeed_rejects_of_refuted` for the policy solve.  `htn` is that theorem's
+S4 premise, for the same reason and with the same scope: the chain covers `topNormalise = false`,
+the shipped configuration. -/
 theorem solveSeedP_rejects_of_refuted {bud : Nat} {fl : Flags} {site loc : String}
     {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat} {envFacts : List LPart}
     {q : PQueue} {su1 : Sup}
+    (htn : fl.topNormalise = false)
     (hq : buildQueue cs su0 = .ok (q, su1))
     (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
       none)
@@ -2231,13 +2234,14 @@ theorem solveSeedP_rejects_of_refuted {bud : Nat} {fl : Flags} {site loc : Strin
     (href : (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
               fl.rowSoundSolveBudget).1 = .refuted l a w) :
     (solveSeedP pol bud fl site loc cs ns su0 fuel envFacts).verdict = "REJECTED" := by
-  simp only [solveSeedP, hq, hearly, hflag, if_true, href]
+  simp only [solveSeedP, hq, htn, topNormalise, Bool.not_false, if_true, hearly, hflag, href]
 
 /-- **NO FALSE ACCEPTANCE, under any policy.**  With layer (iii) on and its budget intact, a
 policy solve that does NOT reject says the system it was given HAS A MODEL. -/
 theorem solveP_noFalseAccept {L : List Lbl} (hcoh : LblCoh L) {bud : Nat}
     {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
     {envFacts : List LPart} {q : PQueue} {su1 : Sup}
+    (htn : fl.topNormalise = false)
     (hq : buildQueue cs su0 = .ok (q, su1))
     (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
       none)
@@ -2253,7 +2257,7 @@ theorem solveP_noFalseAccept {L : List Lbl} (hcoh : LblCoh L) {bud : Nat}
     cases hv : (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
         fl.rowSoundSolveBudget).1 with
     | sat => rfl
-    | refuted l a w => exact absurd (solveSeedP_rejects_of_refuted hq hearly hflag hv) hacc
+    | refuted l a w => exact absurd (solveSeedP_rejects_of_refuted htn hq hearly hflag hv) hacc
     | noVerdict l w => exact absurd hv (hbud l w)
   exact labelDecide_sat_ssat hcoh hnd hmem hsat
 
@@ -2263,6 +2267,7 @@ the input system, and the two are satisfiable together.  S1 (this module) and S2
 theorem solveP_accepted_faithful {L : List Lbl} (hcoh : LblCoh L) {bud : Nat}
     {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
     {envFacts : List LPart} {q : PQueue} {su1 : Sup} {tr : List String} {z : Nat}
+    (htn : fl.topNormalise = false)
     (hq : buildQueue cs su0 = .ok (q, su1))
     (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
       none)
@@ -2282,7 +2287,7 @@ theorem solveP_accepted_faithful {L : List Lbl} (hcoh : LblCoh L) {bud : Nat}
     (∀ rho, SModels rho (sys s') → SModels rho (sys (initState q su1 tr fl ns site z))) ∧
     (SSat (sys (initState q su1 tr fl ns site z)) ↔ SSat (sys s')) := by
   have hlive : SSat ((((q.elems ++ envFacts).map LPart.toConstraint)).toFinset) :=
-    solveP_noFalseAccept hcoh hq hearly hflag hnd hmem hbud hacc
+    solveP_noFalseAccept hcoh htn hq hearly hflag hnd hmem hbud hacc
   have hsat : SSat (sys (initState q su1 tr fl ns site z)) :=
     ssat_of_subset sys_subset_live hlive
   exact ⟨runP_noLoss n hw hem hdj hcse hb hsat s' hres,

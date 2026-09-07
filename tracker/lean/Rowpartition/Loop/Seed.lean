@@ -122,12 +122,21 @@ def solveSeed (fl : Flags) (site : String) (loc : String) (cs : List CsItem) (ns
   match buildQueue cs su0 with
   | .error m =>
     { records := [], verdict := "REJECTED", message := m, env := {}, drawn := 0, sat := [] }
-  | .ok (q, su1) =>
+  | .ok (q0, su0') =>
+    /- S4 (`Flags.topNormalise`, DEFAULT OFF): the written-partition normalisation, applied
+       immediately after `buildQueue` and BEFORE `labelCheckEarly`, `rowSoundDecide` and the
+       loop -- exactly where `Subst.solve` applies it, so all three input-reading checks and
+       the loop see the same live input.  With the flag off `topNormalise` is the identity and
+       draws nothing, so a flags-off run is the shipped one instruction for instruction. -/
+    let (q, su1, tnorms) := topNormalise fl.topNormalise q0 su0'
+    let tnormRecs := tnorms.map (fun (v, c, f) =>
+      "tnorm" ++ tag ++ ns.sv v ++ "\t" ++ ns.sv c ++ "\t" ++
+      ITerm.toStr ns (.concRho f))
     let early :=
       if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none
     match early with
     | some (l, _, msg) =>
-      { records := [],
+      { records := tnormRecs,
         verdict := "REJECTED",
         message := "Row partitions are unsatisfiable at field '" ++ Lbl.toStr l ++ "': " ++ msg,
         env := {}, drawn := su1.drawn, sat := [] }
@@ -142,7 +151,7 @@ def solveSeed (fl : Flags) (site : String) (loc : String) (cs : List CsItem) (ns
                                 fl.rowSoundSolveBudget).1
            else none) with
     | some (.refuted l _ why) =>
-      { records := [], verdict := "REJECTED", message := rowUnsatMsg l why,
+      { records := tnormRecs, verdict := "REJECTED", message := rowUnsatMsg l why,
         env := {}, drawn := su1.drawn, sat := [] }
     | _ =>
       let st0 : State :=
@@ -150,10 +159,10 @@ def solveSeed (fl : Flags) (site : String) (loc : String) (cs : List CsItem) (ns
           names := ns, site := site, su0 := su0.lo }
       match runS st0 fuel with
       | .rejected m s =>
-        { records := s.trace.reverse, verdict := "REJECTED", message := m, env := s.env,
+        { records := tnormRecs ++ s.trace.reverse, verdict := "REJECTED", message := m, env := s.env,
           drawn := s.su.drawn, sat := [] }
       | .outOfFuel s =>
-        { records := s.trace.reverse, verdict := "FUEL", message := "", env := s.env,
+        { records := tnormRecs ++ s.trace.reverse, verdict := "FUEL", message := "", env := s.env,
           drawn := s.su.drawn, sat := s.proc.elems }
       | .solved s =>
         let ps := s.proc.elems
@@ -165,7 +174,7 @@ def solveSeed (fl : Flags) (site : String) (loc : String) (cs : List CsItem) (ns
           | none => if fl.labelCheck && !fl.labelCheckEarly then labelClash ns q.elems else none
         match late with
         | some (l, _, msg) =>
-          { records := s.trace.reverse, verdict := "REJECTED",
+          { records := tnormRecs ++ s.trace.reverse, verdict := "REJECTED",
             message := "Row partitions are unsatisfiable at field '" ++ Lbl.toStr l ++ "': " ++ msg,
             env := s.env, drawn := s.su.drawn, sat := ps }
         | none =>
@@ -181,7 +190,7 @@ def solveSeed (fl : Flags) (site : String) (loc : String) (cs : List CsItem) (ns
             toString q.elems.length ++ "\t" ++ toString ps.length ++ "\t" ++
             toString derived.length ++ "\t" ++ (if concrete then "true" else "false") ++
             "\t" ++ String.intercalate ";" (arities.map toString) ++ "\t" ++ byRuleStr derived
-          { records := s.trace.reverse ++ inRecs ++ inpartRecs ++ satRecs ++ [solveRec],
+          { records := tnormRecs ++ s.trace.reverse ++ inRecs ++ inpartRecs ++ satRecs ++ [solveRec],
             verdict := "SOLVED", message := "", env := s.env, drawn := s.su.drawn,
             sat := ps }
 

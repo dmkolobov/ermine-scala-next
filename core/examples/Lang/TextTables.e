@@ -51,13 +51,16 @@ module Lang.TextTables where
      * `Helpers.showRows`: a row variable, a projection to cells, and a markdown table.
      * THE PROJECTION CLIFF, twice, and its remedy. Two of the three most expensive
        solves in the whole E-series corpus are in this file: `catalogueMarkdown`'s cell
-       lambda at 1,241 draws and `catalogueAscii`'s at 1,230, every one of them a
-       `Resolution` step. (The third is `RunningState.postingMarkdown` at 1,233; the
-       three sit within 1 % of one another, so treat them as a set rather than a
-       ranking.) Five `t ! f`s on an unannotated record is all it takes.
+       lambda and `catalogueAscii`'s, at **1,230 draws each**, every one of them a
+       `Resolution` step. (The third is `RunningState.postingMarkdown`, also 1,230;
+       all three are the same rung of the same ladder -- five reads of one
+       unannotated record cost `(5^5 - 3*3^5 + 2*2^5)/2 = 1,230` -- so treat them as
+       a set rather than a ranking. Measured with the compiler's own counter,
+       `-Dermine.rowTrace.draws=true`; the round-1 figures 1,241 and 1,233 were model
+       runs at one id base.) Five `t ! f`s on an unannotated record is all it takes.
        `catalogueMarkdownPinned` below is the SAME table with the lambda's argument
-       annotated at the concrete row: **one draw**. E5's reviewer also measured that
-       reordering `showRows`'s arguments changes nothing (1,230 vs 1,233) -- the
+       annotated at the concrete row: **no draws at all**. E5's reviewer also measured that
+       reordering `showRows`'s arguments changes nothing at all -- the
        annotation is the only fix.
      * `Control.Monoid` used for text: `joinedMonoid` is the separator-aware monoid
        `stringMonoid` is not.
@@ -65,7 +68,7 @@ module Lang.TextTables where
    >> :load core/examples/Lang/Helpers.e
    >> :load core/examples/Lang/TextTables.e
    >> catalogueMarkdown          -- a markdown table, printed (1,230 draws to check)
-   >> catalogueMarkdownPinned    -- the same table, annotated lambda: 1 draw
+   >> catalogueMarkdownPinned    -- the same table, annotated lambda: 0 draws
    >> workingLink
    >> catalogueAscii             -- fixed-width, printed
    >> catalogueCsv
@@ -144,8 +147,8 @@ catalogueMarkdown =
 
 -- | THE SAME TABLE, one token cheaper. Annotating the lambda's argument at the concrete
 --   row removes the row VARIABLE, and with it all five existential partitions: this
---   binding costs the solver **one** draw where the one above costs 1,230. Nothing else
---   differs. Keep both: the generic one is what a helper's caller writes, and this is
+--   binding costs the solver **nothing at all** -- zero draws -- where the one above
+--   costs 1,230. Nothing else differs. Keep both: the generic one is what a helper's caller writes, and this is
 --   what to do when the census says it hurts.
 catalogueMarkdownPinned : String
 catalogueMarkdownPinned =

@@ -178,10 +178,10 @@ projection:**
 |---|---|---|---|---|
 | 1 | 0 | 0 | 0 | 0.14 s |
 | 2 | 3 | 5 | 1 | 0.11 s |
-| 3 | 31 | 23 | 5 | 0.13 s |
+| 3 | 30 | 19 | 4 | 0.13 s |
 | 4 | 207 | 65 | 11 | 0.21 s |
-| 5 | 1,241 | 217 | 27 | 0.68 s |
-| 6 | 6,956 | 698 | 60 | 2.00 s |
+| 5 | 1,230 | 211 | ~26 | 0.68 s |
+| 6 | 6,783 | 665 | ~57 | 2.00 s |
 | **7** | **> 20,000 — the draw budget fires** | — | — | 2.93 s, **REJECTED** |
 
 (The last column is the minted-variable *vocabulary* size, `--cycle`'s `maxmint`. The
@@ -197,20 +197,24 @@ limit, so it was stopped rather than left to run.
 This is not an exotic shape. It is what you write to render a row —
 `showRows hdr (t -> [t ! a, t ! b, t ! c, t ! d, t ! e, t ! f, t ! g]) rows` — for a
 seven-column table. Three bindings in this group do it with five columns and they are the
-three most expensive solves in the E-series corpus: `TextTables.catalogueMarkdown` (1,241
-draws), `RunningState.postingMarkdown` (1,233) and `TextTables.catalogueAscii` (1,230). Their
-*order* is not stable — all three sit within 1 % of one another — so treat them as a set.
+three most expensive solves in the E-series corpus: `TextTables.catalogueMarkdown`,
+`RunningState.postingMarkdown` and `TextTables.catalogueAscii` — **1,230 draws each, the same
+number**, because five reads of one unannotated record cost `(5^5 − 3·3^5 + 2·2^5)/2 = 1,230`
+whatever else is in the expression. (Round-1 figures 1,241 / 1,233 were model runs at one id
+base; the compiler's own counter says 1,230 three times.)
 
 The same cliff was found independently, at the same time, from the presentation side:
 `core/examples/Present/shouldfail/proj01_seven_reads.e` is the negative for it and
 `tracker/loopmodel/E4-REVIEW.md` carries a second ladder (3 / 33 / 207 / 1,243 / 6,795 /
-budget) measured with bare `p ! f` projections instead of a list literal. That review also
+budget) measured with bare `p ! f` projections instead of a list literal; on the compiler's own
+counter that ladder is also 3 / 30 / 207 / 1,230 / 6,783 (`tracker/loopmodel/S4-DESIGN.md`).
+That review also
 found the stronger remedy: five projections under **one written partition**,
 `forall r o. (r <- ((| p1, …, p5 |), o)) => {..r} -> String`, cost **zero** draws.
 
 **The fix a user has is to write the row down**, and it is the *only* fix: reordering the
-helper's arguments changes nothing (1,230 → 1,233 draws), while annotating the lambda's
-argument takes the same call to **1 draw**. The seven projections with the argument
+helper's arguments changes nothing, while annotating the lambda's argument takes the same
+call to **0 draws**. The seven projections with the argument
 annotated `{q1, …, q7}` compile in **0.04 s**: with a concrete row there is no row
 variable and no existential at all. `TextTables.e` and `RunningState.e` ship both
 spellings side by side (`catalogueMarkdownPinned`, `postingMarkdownPinned`). That is the same shape

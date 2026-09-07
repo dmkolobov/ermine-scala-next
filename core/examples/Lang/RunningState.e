@@ -200,10 +200,14 @@ checkedPostings = checkedRel postingChecks postingList
 
 -- | `showRows` at the 13-column row. NOTE THE COST: this cell lambda projects the record
 --   five times against a row VARIABLE and is one of the three most expensive solves in
---   the E-series corpus -- 1,233 draws, beside `TextTables.catalogueMarkdown`'s 1,241
---   and `catalogueAscii`'s 1,230. All three are within 1 % of one another, so they are a
---   set and not a ranking. `postingMarkdownPinned` below is the same table with the
---   argument annotated: **one draw**. See `Lang/ProjectionCliff.slow`.
+--   the E-series corpus -- **1,230 draws**, exactly as many as
+--   `TextTables.catalogueMarkdown` and `catalogueAscii`. All three are the SAME number,
+--   not three numbers within 1 %: five reads of one unannotated record cost
+--   `(5^5 - 3*3^5 + 2*2^5)/2 = 1,230`, whatever else is in the expression. (Measured with
+--   `-Dermine.rowTrace.draws=true`; the round-1 figures 1,233 / 1,241 were model runs at
+--   one id base.) `postingMarkdownPinned` below is the same table with the argument
+--   annotated: **no draws at all**. See `Lang/ProjectionCliff.slow` and
+--   `tracker/loopmodel/S4-DESIGN.md`.
 postingMarkdown : String
 postingMarkdown =
   showRows (["Seq", "Ref", "Kind", "Net", "Running"]_L)
@@ -211,7 +215,7 @@ postingMarkdown =
                  , toString (t ! netAmt), toString (t ! runningNet) ]_L)
            runningRows
 
--- | The annotated spelling, for comparison. One draw instead of 1,241.
+-- | The annotated spelling, for comparison. Zero draws instead of 1,230.
 postingMarkdownPinned : String
 postingMarkdownPinned =
   showRows (["Seq", "Ref", "Kind", "Net", "Running"]_L)

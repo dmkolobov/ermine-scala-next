@@ -165,6 +165,68 @@ def partToPartitions (p : IPart) (su : Sup) : Except String (List LPart × Sup) 
     return (⟨v, rhs1, none⟩ :: ⟨v, rhs2, none⟩ ::
             (es1 ++ es2).map (fun u => (⟨u, RHS.empty, none⟩ : LPart)), su)
 
+/-! ## 2b. S4: the written-partition normalisation (`Flags.topNormalise`, DEFAULT OFF)
+
+`tracker/loopmodel/S4-CHANGE.md`.  Mirrors `Constraints.topNormalise` / `Subst.solve`'s call to
+it, which runs immediately after `PQueue.build` and BEFORE `labelCheckEarly`, `rowSoundDecide`
+and `q.expand`, so all three input-reading checks and the loop see the SAME live input.
+
+The trigger at one left-hand side `v`: `k ≥ 3` LONE-ABSTRACT partitions with non-empty concrete
+parts whose DISTINCT concrete parts are pairwise INCOMPARABLE, and no concrete-row partition at
+`v` (that case is `resRow`'s / `emptyRow`'s and they answer it without minting).  The rewrite
+deletes the `k` reads and adds `v <- (c, F)` with `c` fresh and `F` their union, plus
+`c_i <- (c, F \ F_i)` for each read.
+
+**One pass over the ORIGINAL families** (S4A review G-11): every family is computed from the
+queue as `buildQueue` left it, and the replacements are applied afterwards, so no rewrite can
+see a family the input did not have and the result does not depend on the fold order.  The
+candidate left-hand sides are taken in the QUEUE's own order, which is what the Scala's
+`q.toList` gives, so the two mint the same ids in the same order. -/
+
+/-- The families the rewrite fires on, in queue order: `(lhs, the reads, their union)`. -/
+def topFamilies (q : PQueue) : List (Nat × List LPart × SSet Lbl) :=
+  let ps := q.elems
+  /- A READ is lone-abstract with a non-empty concrete part and NOT a SELF-READ `v <- (v, C)`;
+     `Constraints.topFamilies`' `isRead` carries the reason (S4B review H-2: the rewrite deletes
+     premises, and `noloss_of_top` is semantic while `selfSubstitution`'s occurs check is
+     syntactic). -/
+  let isRead := fun (p : LPart) =>
+    (match p.rhs.abstrSingle? with | some x => x != p.lhs | none => false) &&
+      !p.rhs.conc.isEmpty
+  let cand := (ps.filterMap (fun p => if isRead p then some p.lhs else none)).eraseDups
+  cand.filterMap (fun v =>
+    if ps.any (fun p => p.lhs == v && p.rhs.abstr.isEmpty) then none
+    else
+      let fam := ps.filter (fun p => p.lhs == v && isRead p)
+      let dis := (fam.map (fun p => p.rhs.conc)).foldl
+        (fun acc c => if acc.any (fun d => d.eqv c) then acc else acc ++ [c]) []
+      if dis.length < 3 then none
+      else if !(dis.all (fun c => dis.all (fun d => c.eqv d || !(c.subsetOf d)))) then none
+      else some (v, fam, dis.foldl (fun a c => a.concat c) SSet.empty))
+
+/-- Apply the rewrite.  Returns the new queue, the supply, and one `(lhs, carrier, F)` per
+family for the `tnorm` trace record. -/
+def topNormalise (on : Bool) (q : PQueue) (su : Sup) :
+    PQueue × Sup × List (Nat × Nat × SSet Lbl) :=
+  if !on then (q, su, []) else
+  let plans := topFamilies q
+  if plans.isEmpty then (q, su, []) else
+    let dead := plans.flatMap (fun t => t.2.1)
+    let keep := q.elems.filter (fun p => !(dead.any (fun d => d.eqv p)))
+    let step := fun (acc : List LPart × Sup × List (Nat × Nat × SSet Lbl))
+                    (t : Nat × List LPart × SSet Lbl) =>
+      let (added, su, rc) := acc
+      let (c, su) := su.fresh
+      let top : LPart := ⟨t.1, ⟨SSet.ofList [c], t.2.2⟩, some .topNormalise⟩
+      let res := t.2.1.filterMap (fun p =>
+        match p.rhs.abstrSingle? with
+        | some x => some (⟨x, ⟨SSet.ofList [c], t.2.2.removedAll p.rhs.conc⟩,
+                           some .topNormalise⟩ : LPart)
+        | none => none)
+      (added ++ (top :: res), su, rc ++ [(t.1, c, t.2.2)])
+    let (added, su, rc) := plans.foldl step ([], su, [])
+    (PQueue.ofList (keep ++ added), su, rc)
+
 /-- `PQueue.build(Exists(l, Nil, cs))`, including the two `Exists.apply` passes.  `aux`'s
 `case _ => (List(), List())` is why an `other` item contributes no partition. -/
 def buildQueue (cs : List CsItem) (su : Sup) : Except String (PQueue × Sup) := do

@@ -146,6 +146,43 @@ and the S2 review's adoption prerequisites: **adopt the full recommended set.** 
 | `-Dermine.dequeuePolicy` | `shipped` | **`smallcanon`** | D1's dequeue order: fewest right-hand-side parts first, ties by an id order instead of `rhs.hashCode` |
 | `-Dermine.solveBudget` | `0` (off) | **`20000`** | D1's draw budget, per solve; still IGNORED under `-Dermine.dequeuePolicy=shipped` |
 
+**NOT adopted, offered: `-Dermine.topNormalise` (stage S4, 2026-09-07, DEFAULT OFF).**
+
+| flag | default | what it is |
+|---|---|---|
+| `-Dermine.topNormalise` | **`false`** | S4's WRITTEN-PARTITION NORMALISATION: when one left-hand side carries k >= 3 lone-abstract INPUT partitions whose DISTINCT concrete parts are pairwise INCOMPARABLE and non-empty, and that left-hand side has no concrete row, the k reads are replaced by `v <- (c, F)` (F their union, c fresh) plus `c_i <- (c, F \ F_i)` — the 0-draw form the user could have written |
+
+**Why it exists.**  `Record.(!)` is a row PARTITION, so N reads of one record parameter whose row
+is a VARIABLE cost exactly `D(N) = (5^N - 3*3^N + 2*2^N) / 2` draws — 3 / 30 / 207 / 1,230 /
+6,783 / 35,910 / 185,727 for N = 2..8, verified against this compiler at every one — i.e. **x5
+per extra read**.  At N = 7 the adopted budget rejects a VALID program.  This is the only known
+shape on which it does.  Raising the budget buys one read per x5 (and 99.74 s at N = 9, 843.90 s
+at N = 10); moving `countDraw()` past the applicability test still needs 23,772 at N = 7; a
+per-record cap breaks `Loop/Strict.lean`'s `NoLoss`.  The normalisation takes the whole ladder to
+**one pre-loop draw at every N**: with it on, ten reads compile in 0.04 s where seven did not
+compile at all.
+
+**AT ADOPTION, TWO THINGS THAT ARE NOT OPTIONAL** (S4B review H-8 and §5.2).
+
+1. **Clear the interface cache once**, exactly as `smallcanon`/`solveBudget` needed:
+   `find . -name '*.ei' -delete`.  Nothing keys a published `.ei` by `GenRules.toString`
+   (`Constraints.scala:1371`, the open gap A1 review R-4 recorded), so the new `+topnorm` token
+   changes no interface key — and this flag demonstrably changes published bytes
+   (`Present/ProjectionCost.ei` order-only, plus a NEW `Present/shouldfail/proj01_seven_reads.ei`
+   because that module starts compiling).
+2. **`core/examples/Present/shouldfail/proj01_seven_reads.e` must leave `shouldfail/`** (or gain
+   more reads) in the same commit: its failure IS the resource limit this removes, and it is the
+   one corpus module whose verdict changes.
+
+**Status: OFFERED, NOT ADOPTED.**  Report `tracker/loopmodel/S4-CHANGE.md`, design
+`tracker/loopmodel/S4-DESIGN.md`, review `tracker/loopmodel/S4A-REVIEW.md`, Lean
+`tracker/loopmodel/S4Top.lean` (22 declarations, 18 audited theorems, 0 non-standard axioms), Scala in the worktree
+`~/research/ermine/ermine-scala-wt-s4` (branch `top-normalise`, uncommitted), model mirror in
+`Rowpartition/Loop/{State,Json,Seed,PolicyReplay,Main}.lean` under `Flags.topNormalise`
+(`--flags=topnorm`).  **Adopting it changes the verdict of exactly one corpus module**:
+`core/examples/Present/shouldfail/proj01_seven_reads.e` stops failing, because its failure is the
+resource limit this removes.
+
 **WHAT A USER MUST DO AT ADOPTION: nothing to their code — but CLEAR THE INTERFACE CACHE ONCE.**
 
 ```
@@ -200,10 +237,30 @@ it.
   all 25 bases — and every soundness and termination theorem was transported to it before it was
   adopted (`Loop/PolicyStep.lean`, `Loop/PolicyTerm.lean`: they hold for EVERY policy).
 * **`solveBudget=20000`.**  A floor under divergence-by-minting, the divergence eight L5 rounds
-  actually found.  20,000 is 61x the largest draw count of any solve in the corpus (328); it
-  never fires anywhere in the corpus or on any tracked or hunt seed, and when it does fire it
-  is a REJECTION with a diagnostic that says in words that it is a resource limit and not a
-  type error (`Budget.budget_never_accepts`, `runBud_rejects_unsat`).
+  actually found.  When it fires it is a REJECTION with a diagnostic that says in words that it
+  is a resource limit and not a type error (`Budget.budget_never_accepts`,
+  `runBud_rejects_unsat`).
+
+  **RE-MEASURED 2026-09-07** (stage S4, `tracker/loopmodel/S4-DESIGN.md`; the sentence that used
+  to stand here — "20,000 is 61x the largest draw count of any solve in the corpus (328); it
+  never fires anywhere in the corpus" — was written before the `Present/` and `Lang/` groups
+  were added and is stale on both halves).  Over all eighteen groups of `looptrace-corpus.sh`,
+  with the compiler's own per-solve counter (`-Dermine.rowTrace.draws=true`):
+
+  | | draws |
+  |---|---|
+  | largest solve in the corpus | **6,783** — `Present/ProjectionCost.e(1:1)`, i.e. the budget is **2.95x** it, not 61x |
+  | largest that is not a projection cascade | 385 — `Wide/ClaimsExperience.e(207:3)` |
+  | largest in ordinary code (nobody wrote it to demonstrate the cliff) | 1,230, three times — `Lang/TextTables.e(138:13)`, `(174:23)`, `Lang/RunningState.e(210:13)` |
+  | stdlib boot | 0 |
+
+  and **it does fire**: `Present/shouldfail/proj01_seven_reads.e` is rejected at 20,009 draws.
+  That module is a VALID program — seven `p ! f` reads of one open-row record parameter — and it
+  is the one known shape on which the budget rejects a well-typed program.  N reads of one such
+  parameter cost exactly `(5^N - 3*3^N + 2*2^N)/2` draws (3 / 30 / 207 / 1,230 / 6,783 / 35,910 /
+  185,727 for N = 2..8, verified against the compiler at every one), so the cost is x5 per extra
+  read and no budget value can keep pace.  Stage S4 proposes the fix as a flagged normalisation
+  rather than a bigger number; see `tracker/loopmodel/S4-CHANGE.md`.
 
 **AND WHY AS A SET.**  `smallcanon` alone would have been a net LOSS of refutation power: the
 loop's own refutation is incomplete and order-dependent, and under `smallcanon` it stops firing
@@ -241,13 +298,18 @@ budget is meaningless without the policy and is coded to ignore itself without i
   configuration in the interface key, before any INCREMENTAL adoption (A1 review R-4).
 * **No a-priori fuel number.**  A draw budget bounds DRAWS.  Turning that into a bound on
   DEQUEUES needs a dequeues-per-draw bound, which is `L5-TERMINATION.md` R8.6b and is open, for
-  every order including the shipped one.  20,000 is an empirical ceiling with 61x headroom, not
-  a derived one.  The budget is not a wall-clock watchdog.
+  every order including the shipped one.  20,000 is an empirical ceiling — with **2.95x**
+  headroom over the corpus's largest solve as of 2026-09-07, not the 61x the pre-`Present`
+  corpus showed — not a derived one.  The budget is not a wall-clock watchdog.
 * **The budget diagnostic carries no diagnostic `code`.**  It is LSP `severity 1` and the
   diagnostic JSON has no `code` field (`lsp/Diagnostics.scala:167`), so tooling can tell a
   resource limit from a type error only by reading the prose.  Judged **acceptable at adoption**
-  (A1 review R-9): it never fires at 20,000, the wording carries the distinction, and Error is
-  the right severity for a signature that did not get checked.  **Follow-up: give it a code.**
+  (A1 review R-9): it never fired at 20,000 on the corpus as it stood, the wording carries the
+  distinction, and Error is the right severity for a signature that did not get checked.
+  **Follow-up: give it a code** — and it is now more than cosmetic, because as of 2026-09-07 the
+  budget DOES fire on a valid program (`Present/shouldfail/proj01_seven_reads.e`, the projection
+  cliff), so a tool cannot tell "your program is wrong" from "the solver gave up" without
+  reading English.
 * **One published TYPE really is more general.**  `incomplete/RevenueShare.shareOfGroup`: the
   old side names the universal `k` of its `Row k` argument in three constraints where the new
   side names a fresh existential, so `OLD |= NEW` and `NEW |/= OLD`.  No call site regresses

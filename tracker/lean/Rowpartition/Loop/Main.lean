@@ -122,6 +122,7 @@ def applyFlag (f : Flags) : String → Flags
       match (t.drop 9).toNat? with
       | some n => { f with rowSoundBudget := n }
       | none => f
+    else if t == "topnorm" then { f with topNormalise := true }
     else if t.startsWith "rssolvebudget=" then
       match (t.drop 14).toNat? with
       | some n => { f with rowSoundSolveBudget := n }
@@ -140,6 +141,21 @@ def natOpt (opts : List String) (key : String) (dflt : Nat) : Nat :=
   | some n => n
   | none => dflt
 
+/-- `buildQueue` with `Flags.topNormalise` applied (S4, `tracker/loopmodel/S4-CHANGE.md`).
+
+**EVERY executable path that builds a queue must go through this.**  There are NINE of them:
+`Seed.solveSeed` and `PolicyReplay.solveSeedP` apply `topNormalise` inline (they also need the
+`tnorm` records), and the seven instrument drivers here call this — the four `json:`-seed
+census paths in `mainImpl` and the four `--replay` per-segment ones below
+(`replayCycleOne` / `replayDepthOne` / `replayPolicyOne` / `replayMintOne`).  The replay four
+were missed in the first cut and every ON census over a corpus replay read the OFF numbers
+(S4B review H-12); they are patched here, which is why this definition sits ABOVE them. -/
+def buildQueueTop (fl : Flags) (cs : List CsItem) (su : Sup) :
+    Except String (PQueue × Sup) := do
+  let (q, su) ← buildQueue cs su
+  let (q, su, _) := topNormalise fl.topNormalise q su
+  return (q, su)
+
 /-- L5 round 7 (round-6 review W-6g): ONE segment through the cycle detector rather than
 through the record printer, so `--cycle` runs over corpus replays and not only over `json:`
 seeds.  The state is the one `Seed.solve` and `Replay.replay` build -- `buildQueue` of the
@@ -152,7 +168,7 @@ def replayCycleOne (fl : Flags) (fuel : Nat) (g : Segment) : Except String Cycle
   else if g.cons.length != g.nCs then
     .error ("scon count " ++ toString g.cons.length ++ " != nCs " ++ toString g.nCs)
   else
-    match buildQueue g.cons g.sup with
+    match buildQueueTop fl g.cons g.sup with
     | .error m => .ok { verdict := "BUILD", witness := m }
     | .ok (q, su1) =>
       let st0 : State :=
@@ -168,7 +184,7 @@ def replayDepthOne (fl : Flags) (fuel : Nat) (g : Segment) : Except String Depth
   else if g.cons.length != g.nCs then
     .error ("scon count " ++ toString g.cons.length ++ " != nCs " ++ toString g.nCs)
   else
-    match buildQueue g.cons g.sup with
+    match buildQueueTop fl g.cons g.sup with
     | .error _ => .ok { verdict := "BUILD" }
     | .ok (q, su1) =>
       let st0 : State :=
@@ -187,7 +203,7 @@ def replayPolicyOne (fl : Flags) (pol : Policy) (bud : Nat) (fuel : Nat) (g : Se
   else if g.cons.length != g.nCs then
     .error ("scon count " ++ toString g.cons.length ++ " != nCs " ++ toString g.nCs)
   else
-    match buildQueue g.cons g.sup with
+    match buildQueueTop fl g.cons g.sup with
     | .error _ => .ok { verdict := "BUILD" }
     | .ok (q, su1) =>
       let st0 : State :=
@@ -232,7 +248,7 @@ def replayMintOne (fl : Flags) (fuel : Nat) (g : Segment) : Except String PumpRe
   else if g.cons.length != g.nCs then
     .error ("scon count " ++ toString g.cons.length ++ " != nCs " ++ toString g.nCs)
   else
-    match buildQueue g.cons g.sup with
+    match buildQueueTop fl g.cons g.sup with
     | .error m => .ok { verdict := "BUILD" }
     | .ok (q, su1) =>
       let st0 : State :=
@@ -248,7 +264,8 @@ whole would hold every line of it live.  The outer loop is a bounded `for` rathe
 recursion, because nothing under `Loop/` may be `partial`; the bound is a line count no trace
 approaches, and running into it is reported. -/
 def replayMain (path : String) (opts : List String) : IO UInt32 := do
-  let fl := flagsOf opts
+  let fl0 := flagsOf opts
+  let fl := if opts.contains "--topres" then { fl0 with topNormalise := true } else fl0
   let fuel := natOpt opts "--fuel=" 2000000
   let lo := natOpt opts "--from=" 0
   let hi := natOpt opts "--to=" 1000000000
@@ -289,6 +306,10 @@ def replayMain (path : String) (opts : List String) : IO UInt32 := do
     let segPol := (Policy.ofString g.policy).getD .shipped
     let usePol := polOpt.getD segPol
     let useBud := budOpt.getD g.budget
+    -- S4 (S4B review H-4): the same rule for `topNormalise`.  The segment's own `sin` column
+    -- says what the trace was taken under; `--flags=topnorm` on the command line still wins,
+    -- which is what the `json:` seed path needs.
+    let fl := if g.topNormalise then { fl with topNormalise := true } else fl
     if polMode then
       match replayPolicyOne fl usePol useBud fuel g with
       | .error m =>
@@ -420,6 +441,15 @@ def replayMain (path : String) (opts : List String) : IO UInt32 := do
   IO.println s!"#summary\tsegments={nSeg}\treplayed={nRun}\tskipped={nSkip}\thashdiff={nHash}\teqdiff={nEq}\tnonpart={nOther}\trejected={nRej}\tfuel={nFuel}"
   return (if nSkip == 0 && nHash == 0 && nEq == 0 then 0 else 1)
 
+/-! ## S4: `--topres` is now an alias for `--flags=topnorm`
+
+Part A's prototype lived here, in the driver, so `--replay` could not see it.  Part B moved the
+real rule into `Loop/Json.lean`'s `topNormalise` and `Loop/Seed.lean`'s `solveSeed`, where BOTH
+the `json:` seed path and `--replay` reach it, and where it sits at the same point in the solve
+as `Subst.solve`'s call: immediately after `buildQueue`, before `labelCheckEarly`,
+`rowSoundDecide` and the loop.  `--topres` is kept as a spelling of `--flags=topnorm` so the
+Part A reproduction lines still work. -/
+
 /-- The entry point. -/
 def mainImpl (args : List String) : IO UInt32 := do
   let positional := args.filter (fun a => !a.startsWith "--")
@@ -432,7 +462,8 @@ def mainImpl (args : List String) : IO UInt32 := do
   | path :: baseS :: rest => do
     let base := (baseS.toNat?).getD 0
     let fuel := (rest.head?.bind (·.toNat?)).getD 100000
-    let fl := flagsOf opts
+    let fl0 := flagsOf opts
+    let fl := if opts.contains "--topres" then { fl0 with topNormalise := true } else fl0
     let site := match (opts.find? (fun a => a.startsWith "--site=")).map (fun a => (a.drop 7).toString) with
       | some s => s
       | none => "json:" ++ path ++ "@" ++ toString base
@@ -463,7 +494,7 @@ def mainImpl (args : List String) : IO UInt32 := do
              opts.any (fun a => a.startsWith "--budget=")) then
           let pol := dfPol
           let bud := dfBud
-          match buildQueue parts (Sup.ofSeed ns.supplyLo) with
+          match buildQueueTop fl parts (Sup.ofSeed ns.supplyLo) with
           | .error m => IO.println s!"pol\t{(policyOf opts).toStr}\tBUILD\t{m}"
           | .ok (q, su2) =>
             let st0 : State :=
@@ -473,7 +504,7 @@ def mainImpl (args : List String) : IO UInt32 := do
             IO.println (s!"pol\t{pol.toStr}\tbase={base}\t{rep.verdict}\t" ++ polCols rep ++
               (if rep.msg.isEmpty then "" else s!"\t{rep.msg}"))
         else if opts.contains "--depth" then
-          match buildQueue parts (Sup.ofSeed ns.supplyLo) with
+          match buildQueueTop fl parts (Sup.ofSeed ns.supplyLo) with
           | .error m => IO.println s!"depth\tBUILD\t{m}"
           | .ok (q, su2) =>
             let st0 : State :=
@@ -484,7 +515,7 @@ def mainImpl (args : List String) : IO UInt32 := do
             for (i, rl, v, sd, z, dz, ri) in rep.chain do
               IO.println s!"dm\t{i}\t{rl}\t{v}\t{sd}\t{z}\t{dz}\t{ri}"
         else if opts.contains "--cycle" then
-          match buildQueue parts (Sup.ofSeed ns.supplyLo) with
+          match buildQueueTop fl parts (Sup.ofSeed ns.supplyLo) with
           | .error m => IO.println s!"cycle\tREJECTED\tsteps=0\tstates=0\tcanon=-\texact=-\t{m}"
           | .ok (q, su2) =>
             let st0 : State :=
@@ -504,7 +535,7 @@ def mainImpl (args : List String) : IO UInt32 := do
             if rep.canonHit.isSome then IO.println s!"witness\t{rep.witness}"
         else if opts.contains "--mints" then
           let (parts', su1) := (parts, Sup.ofSeed ns.supplyLo)
-          match buildQueue parts' su1 with
+          match buildQueueTop fl parts' su1 with
           | .error m => IO.println s!"mints\tREJECTED\tsteps=0\tdrawn=0\tmax=0\tremint=0\t{m}"
           | .ok (q, su2) =>
             let st0 : State :=

@@ -129,7 +129,7 @@ inductive Inference where
   | resolution | cancellation | selfSubstitution | substitution | partitionEmpty
   | splitConcrete | commonPartition | deDuplication | commonSubexpression
   | commonSubexpressionMint | splitKeyed | splitRow | resolutionRow | splitEmpty
-  | resolutionEmpty | disjunction
+  | resolutionEmpty | disjunction | topNormalise
 deriving DecidableEq, Repr, Inhabited
 
 namespace Inference
@@ -152,6 +152,7 @@ def toStr : Inference → String
   | .splitEmpty => "SplitEmpty"
   | .resolutionEmpty => "ResolutionEmpty"
   | .disjunction => "Disjunction"
+  | .topNormalise => "TopNormalise"
 
 end Inference
 
@@ -389,6 +390,15 @@ structure Flags where
   may spend summed over its labels.  The per-label budget alone bounds the worst case at
   `#labels` times the per-label cost; this bounds it once.  Exhaustion is NO VERDICT. -/
   rowSoundSolveBudget : Nat := 1000000
+  /-- S4 (`tracker/loopmodel/S4-CHANGE.md`): `-Dermine.topNormalise`, the WRITTEN-PARTITION
+  normalisation.  When one left-hand side carries `k ≥ 3` lone-abstract input partitions whose
+  concrete parts are pairwise INCOMPARABLE and DISTINCT and non-empty, and that left-hand side
+  has no concrete row of its own, the `k` reads are replaced by the single written partition
+  `v <- (c, F)` (`F` their union, `c` fresh) and the `k` re-expressions `c_i <- (c, F \ F_i)`.
+  It runs immediately after `buildQueue`, BEFORE `labelCheckEarly`, `rowSoundDecide` and the
+  loop, so all three checks and the loop see the same live input.  DEFAULT OFF, like the
+  compiler's. -/
+  topNormalise : Bool := false
 deriving Inhabited
 
 namespace Flags
@@ -406,7 +416,8 @@ def toStr (f : Flags) : String :=
   (if f.emptyRow then "+emptyrow" else "") ++
   (if f.rowSoundBare then "+rsbare" else "") ++
   (if f.rowSoundSat then "+rssat" else "") ++
-  (if f.rowSoundDecide then "+rsdecide" else "")
+  (if f.rowSoundDecide then "+rsdecide" else "") ++
+  (if f.topNormalise then "+topnorm" else "")
 
 end Flags
 

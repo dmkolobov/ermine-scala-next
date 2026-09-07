@@ -107,7 +107,7 @@ module.
 | `SortShowcase.e` | one table, four orderings | 16 cols | the four different things called a sort — `Relation.Sort`, `SortPriority`, `SortStrategy`, `Ord (Record (\| … \|))` — side by side, plus a hidden sort column, the `Layout.Column` API and `Layout.Column.Unsafe`'s `column#`, the seam to the writer |
 | `AtomicAndRelation.e` | the two report models | 18 cols | `Atomic` value reports against relational ones, `scanRelation`/`scan`/`runScan` as the bridge, `formatDate`'s writer callback, and `Layout.Report.Relation`'s "Other" bucketing |
 | `StyleGridHeatmap.e` | a risk heat map | 16 cols | `styleBox` — the only combinator that lays out by POSITION; `StyleGrid`; `Layout.Color` in full; `Layout.Magnitude` in all three units plus `Area`/`Volume`; `treemapChart` |
-| `ProjectionCost.e` | what a parameterised report costs the solver | — | the measured ladder: N reads of one unannotated record parameter cost **3 / 30 / 212 / 1,232 / 6,804** draws for N = 2…6 — the group's costliest solve, 34 % of the budget — and **seven exhausts the 20,000-draw budget**; the same reads under one written partition cost **nothing** |
+| `ProjectionCost.e` | what a parameterised report costs the solver | — | the measured ladder: N reads of one unannotated record parameter cost **3 / 30 / 207 / 1,230 / 6,783** draws for N = 2…6 (`(5^N − 3·3^N + 2·2^N)/2`, exact) — the group's costliest solve, 34 % of the budget — and **seven exhausts the 20,000-draw budget**; the same reads under one written partition cost **nothing** |
 | `Signatures.e` | the proofs | — | `xFull`/`xDeduped`/`xAsWritten` for four helpers plus a full 14-constraint/11-existential `xFull` for `unreconciled`, `xSimple` for two, and the finding that **three** helpers' inferred signatures cannot be written down |
 
 ## `Helpers.e` — the library, and the rule it obeys
@@ -128,10 +128,11 @@ checks in half a second. Numbers in `tracker/loopmodel/E4-EXAMPLES.md`.
 
 **And the harder rule, which `ProjectionCost.e` measures**: write the PARAMETER
 row down. `Record.(!)` is a partition, not a lookup, so reading N fields out of
-one unannotated record costs about six times as much per extra field
-(**3 / 30 / 212 / 1,232 / 6,804** for two to six) — and seven reads of a bare
-parameter record exhaust the adopted draw budget, with no relation, no join and
-no presentation anywhere near it. One line of signature takes 1,232 draws to 0.
+one unannotated record costs FIVE times as much per extra field, exactly
+`(5^N − 3·3^N + 2·2^N)/2` draws (**3 / 30 / 207 / 1,230 / 6,783** for two to six,
+35,910 at seven) — and seven reads of a bare parameter record exhaust the adopted
+draw budget, with no relation, no join and no presentation anywhere near it. One
+line of signature takes 1,230 draws to 0.
 
 **And the counter-rule**, which `Signatures.e` proves: write the signature by
 hand anyway. `unreconciled`'s inferred constraint set is **eleven existentials

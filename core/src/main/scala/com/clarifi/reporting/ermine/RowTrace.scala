@@ -132,6 +132,19 @@ import com.clarifi.reporting.ermine.Type.Con
  * flag is on AND `-Dermine.rowTrace` is set, so a trace taken at the shipped
  * defaults is unchanged.
  *
+ * S4 RECORD (added 2026-09-07 for stage S4, `tracker/loopmodel/S4-CHANGE.md`).  ONE
+ * record per FAMILY the written-partition normalisation rewrites, so the model mirror
+ * can be diffed against it byte for byte:
+ *
+ *   tnorm   site  loc  <lhs var>  <fresh carrier>  <(|F|)>
+ *
+ * `<lhs var>` and `<carrier>` are printed by `solve`'s own `sv` helper
+ * (`name + '^' + id`) and `F` by its `st` helper for a `ConcreteRho` (sorted, so the
+ * `Set` iteration order does not leak).  It is written immediately after `PQueue.build`
+ * and before every check and the loop, so it is the FIRST record of a rewritten
+ * segment.  Emitted only when `-Dermine.topNormalise=true` fires on a solve, so a trace
+ * taken at the shipped defaults is byte-identical to one taken before S4.
+ *
  * and ONE REPLAY record, written by `solveInput` alongside `slbl`/`svar`/`scon`
  * and only under `-Dermine.rowSound.decide`:
  *
@@ -331,7 +344,15 @@ object RowTrace {
         "\t" + Constraints.GenRules.dequeuePolicy +
         /* the EFFECTIVE budget (0 under the shipped order, where the flag is
          * ignored), so a replay applies exactly the cap this run applied. */
-        "\t" + Constraints.GenRules.solveBudget)
+        "\t" + Constraints.GenRules.solveBudget +
+        /* S4 (2026-09-07, S4B review H-4): the written-partition normalisation, for the
+         * same reason the two columns above are here -- a replay must apply the
+         * CONFIGURATION the trace was taken under, not the one its own command line
+         * happens to carry.  Without it an ON trace replayed without `--flags=topnorm`
+         * diverges instead of reproducing, which is loud but is exactly the failure mode
+         * that hid two missing mirror call sites.  `Loop/Replay.lean` parses `sin`
+         * positionally with a trailing wildcard, so old traces keep parsing. */
+        "\t" + Constraints.GenRules.topNormalise)
     lbls.foreach { case (n, i) =>
       val (kind, module) = n match {
         case g: Global => ("G", g.module)

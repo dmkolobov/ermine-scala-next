@@ -933,9 +933,18 @@ theorem bare_death_refutes {L : List Lbl} (hcoh : LblCoh L) {s : State} {r : LPa
 /-! ## 9. `solve_noFalseAccept` -/
 
 /-- The model's `solveSeed` REJECTS whenever layer (iii) refutes: the check sits between the
-early label check and the loop, exactly where `Subst.solve` runs it. -/
+early label check and the loop, exactly where `Subst.solve` runs it.
+
+**S4 (2026-09-07), `htn`.**  `solveSeed` now interposes `topNormalise fl.topNormalise` between
+`buildQueue` and the three checks (`tracker/loopmodel/S4-CHANGE.md` §1), so the queue the checks
+read is `buildQueue`'s `q` only when the flag is OFF.  `htn : fl.topNormalise = false` is the
+honest premise: **the S2 no-false-acceptance chain covers the flag-OFF configuration, which is
+the shipped one.**  Covering `topNormalise = true` means restating the chain on the REWRITTEN
+queue and bridging it back with `S4Top.reads_of_rewrite` / `ssat_rewrite_fwd`; that is stage S4c
+(`S4-CHANGE.md` §6), a prerequisite of adoption and not of a default-OFF commit. -/
 theorem solveSeed_rejects_of_refuted {fl : Flags} {site loc : String} {cs : List CsItem}
     {ns : Names} {su0 : Sup} {fuel : Nat} {envFacts : List LPart} {q : PQueue} {su1 : Sup}
+    (htn : fl.topNormalise = false)
     (hq : buildQueue cs su0 = .ok (q, su1))
     (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
       none)
@@ -944,7 +953,7 @@ theorem solveSeed_rejects_of_refuted {fl : Flags} {site loc : String} {cs : List
     (href : (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
               fl.rowSoundSolveBudget).1 = .refuted l a w) :
     (solveSeed fl site loc cs ns su0 fuel envFacts).verdict = "REJECTED" := by
-  simp only [solveSeed, hq, hearly, hflag, if_true, href]
+  simp only [solveSeed, hq, htn, topNormalise, Bool.not_false, if_true, hearly, hflag, href]
 
 /-- **NO FALSE ACCEPTANCE.**  With layer (iii) on, a solve that does NOT reject says the
 system it was given — the queue's partitions TOGETHER WITH the environment facts the trace's
@@ -963,6 +972,7 @@ exactly where they have to be, and this is what supplies it. -/
 theorem solve_noFalseAccept {L : List Lbl} (hcoh : LblCoh L)
     {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
     {envFacts : List LPart} {q : PQueue} {su1 : Sup}
+    (htn : fl.topNormalise = false)
     (hq : buildQueue cs su0 = .ok (q, su1))
     (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
       none)
@@ -978,7 +988,7 @@ theorem solve_noFalseAccept {L : List Lbl} (hcoh : LblCoh L)
     cases hv : (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
         fl.rowSoundSolveBudget).1 with
     | sat => rfl
-    | refuted l a w => exact absurd (solveSeed_rejects_of_refuted hq hearly hflag hv) hacc
+    | refuted l a w => exact absurd (solveSeed_rejects_of_refuted htn hq hearly hflag hv) hacc
     | noVerdict l w => exact absurd hv (hbud l w)
   exact labelDecide_sat_ssat hcoh hnd hmem hsat
 
@@ -1025,6 +1035,7 @@ environment facts) down to the queue the loop actually runs on. -/
 theorem solve_accepted_faithful {L : List Lbl} (hcoh : LblCoh L)
     {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
     {envFacts : List LPart} {q : PQueue} {su1 : Sup} {tr : List String} {z : Nat}
+    (htn : fl.topNormalise = false)
     (hq : buildQueue cs su0 = .ok (q, su1))
     (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
       none)
@@ -1045,7 +1056,7 @@ theorem solve_accepted_faithful {L : List Lbl} (hcoh : LblCoh L)
     (∀ rho, SModels rho (sys s') → SModels rho (sys (initState q su1 tr fl ns site z))) ∧
     (SSat (sys (initState q su1 tr fl ns site z)) ↔ SSat (sys s')) := by
   have hlive : SSat ((((q.elems ++ envFacts).map LPart.toConstraint)).toFinset) :=
-    solve_noFalseAccept hcoh hq hearly hflag hnd hmem hbud hacc
+    solve_noFalseAccept hcoh htn hq hearly hflag hnd hmem hbud hacc
   have hsat : SSat (sys (initState q su1 tr fl ns site z)) :=
     ssat_of_subset sys_subset_live hlive
   exact ⟨run_noLoss n hw hem hdj hcse hb hsat s' hres,

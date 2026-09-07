@@ -6,9 +6,11 @@ module Present.Shouldfail.Proj01 where
    Seven reads of one unannotated record parameter. `Record.(!)` is a row
    partition -- `(!) : t <- (r, s) => {..t} -> Field r a -> a` -- so seven reads
    are seven partitions sharing a left-hand side, and closing them against one
-   another costs about six times as much per additional read:
-   **3 / 30 / 212 / 1,232 / 6,804** draws for two to six
-   (`core/examples/Present/ProjectionCost.e`, measured). Seven runs past
+   another costs about 5.3-6x as much per additional read -- exactly
+   `D(N) = (5^N - 3*3^N + 2*2^N)/2`:
+   **3 / 30 / 207 / 1,230 / 6,783** draws for two to six
+   (`core/examples/Present/ProjectionCost.e`, measured on this compiler with
+   `-Dermine.rowTrace.draws=true`). Seven needs 35,910 and runs past
    `-Dermine.solveBudget=20000` at 20,009.
 
    There is no relation here, no join, no window and no presentation. This is

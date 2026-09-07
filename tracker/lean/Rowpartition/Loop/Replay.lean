@@ -88,6 +88,9 @@ structure Segment where
   /-- D1: the draw BUDGET the compiler ran this solve under, from `sin`'s ninth field; `0` is
   off, and is what every existing trace says. -/
   budget : Nat := 0
+  /-- S4 (`sin`'s eleventh column, 2026-09-07): the written-partition normalisation the trace
+  was taken under.  `false` for a trace that predates the column, which is what it was. -/
+  topNormalise : Bool := false
   /-- Parse or consistency failures; a nonempty list makes the segment unreplayable. -/
   errs : List String := []
 
@@ -232,10 +235,14 @@ def startSegment (f : List String) : Segment :=
       -- them, or one written with the flags off, has neither and keeps the defaults; the
       -- trailing thread-id column (stage L4) is ignored either way.
       match more with
-      | pol :: bud :: _ =>
-        match bud.toNat? with
-        | some b => { g with policy := pol, budget := b }
-        | none => g
+      | pol :: bud :: rest2 =>
+        let g := match bud.toNat? with
+          | some b => { g with policy := pol, budget := b }
+          | none => g
+        -- S4: the eleventh column, if the writer put it there (the twelfth is the L4 thread id).
+        match rest2 with
+        | tn :: _ => { g with topNormalise := (tn == "true") }
+        | _ => g
       | _ => g
     | _ => g.err "sin has no block fields (trace predates the L2 RowTrace)"
   | _ => ({ } : Segment).err "bad sin"

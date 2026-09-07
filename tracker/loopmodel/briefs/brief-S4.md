@@ -58,6 +58,21 @@ A4 Design note `tracker/loopmodel/S4-DESIGN.md`; STOP and report. The orchestrat
 five example groups' verdicts unchanged, `core/test`, perf-bench, the `Present/ProjectionCost.e` pair
 re-measured), report `S4-CHANGE.md`, adoption = the user.
 
+
+## Part B addition (user, 2026-09-07): the WILD-CODE gate
+
+The user's reading of the census: code in the wild stores chained modifications of a WIDE input relation as
+UN-ANNOTATED let-bindings; each step's inferred type carries a `Has r f` constraint on the same input row, and at
+the use site those instantiate into exactly the fan the cliff needs (k lone-abstract premises at one lhs). The
+corpus under-represents it because the E-series groups follow the explicit-signature discipline. Part B must
+therefore add `core/examples/Present/WildChain.e` (or a better-named module in the group that fits): a 25-column
+input relation and a chain of six un-annotated let-bound steps (derived columns, filters, renames — each naming
+DIFFERENT fields of the input, no helper signatures), plus the same chain with one partition written at the top;
+measure both on the COMPILER under the shipped rules and under the normalisation flag (draws, dequeues, wall
+clock, the published residual of the chain's final binding), and put the four numbers in the state file beside
+the pinned ladder. If the un-annotated chain does NOT produce the fan, say precisely why (which constraints it
+produces instead) — that is the answer to the user's question either way.
+
 Constraints as always: no silent weakening, audit 0 non-standard axioms if Lean changes, `#print axioms` in
 scratch under `/home/dmitry/.claude/jobs/880c725d/tmp/S4/`, report early. Outcomes: (A-done) mechanism +
 recommendation; (B-done) flagged change with gates; (NO-GUARD) no sound guard found — budget recommendation with

@@ -1,0 +1,43 @@
+{
+ "name": "GROW: 3 pairwise-incomparable lone-abstract reads at t PLUS a concrete row t <- ((|f0,f1,f2,f3|)) -- the shape the second side condition is meant to exclude, which NO seed in the suite has at k>=3.",
+ "rho": {},
+ "cons": [
+  [
+   0,
+   [
+    1
+   ],
+   [
+    0
+   ]
+  ],
+  [
+   0,
+   [
+    2
+   ],
+   [
+    1
+   ]
+  ],
+  [
+   0,
+   [
+    3
+   ],
+   [
+    2
+   ]
+  ],
+  [
+   0,
+   [],
+   [
+    0,
+    1,
+    2,
+    3
+   ]
+  ]
+ ]
+}

@@ -1132,7 +1132,48 @@ object Subst {
      * it.  Inert unless `-Dermine.rowTrace` is set: `solveInput`'s whole body is under
      * `if (enabled)`. */
     RowTrace.solveInput(l.toString, cs, su, hm.types)
-    val (q, esp) = PQueue.build(Exists(l, List(), cs))
+    val (q0, esp) = PQueue.build(Exists(l, List(), cs))
+    /* S4 (`tracker/loopmodel/S4-CHANGE.md`, ticket B5): the WRITTEN-PARTITION
+     * NORMALISATION, `-Dermine.topNormalise`, DEFAULT OFF.  See `GenRules.topNormalise`
+     * for the rule, the two side conditions and the soundness argument.
+     *
+     * WHERE IT RUNS, and why HERE (S4A review G-3).  `solve` has THREE input-reading
+     * checks -- `labelCheckEarly`'s unit propagation, `rowSoundDecide`'s COMPLETE
+     * per-label decision (default ON since 2026-09-06, with a no-verdict escape on
+     * budget exhaustion) and `rowSoundSat` on the closure -- and then the loop.
+     * Running the rewrite HERE, before all three, is the only placement on which every
+     * one of them and the loop see the SAME live input; running it between two of them
+     * would split `q` in two and `Loop/NoFalseAccept.lean`'s `solve_accepted_faithful`,
+     * whose premises all mention ONE `q`, would need a bridge lemma before it meant
+     * anything.  The subject of that theorem becomes the rewritten system, which is
+     * logically EQUIVALENT to the user's -- `S4Top.read_of_top` backwards and
+     * `S4Top.ssat_rewrite_fwd` forwards -- so "accepted implies the user's input is
+     * satisfiable" transfers through `reads_of_rewrite`.  It is also the placement the
+     * model can mirror: `Loop/Seed.lean`'s `solveSeed` applies it at exactly this point,
+     * so `looptrace --replay` reproduces it.
+     *
+     * BLAME IS UNAFFECTED, and that is structural rather than lucky: `rowUnsat` below
+     * searches `cs.flatMap(_.rowConstraints)` -- the user's own `Part`s, with their
+     * `Loc`s -- and `cs` is not rewritten.  A partition carries no `Loc` at all.  The
+     * one case that moves is a refutation blamed on the FRESH carrier, which appears in
+     * no `Part`: the search then falls back to the first candidate `Part` mentioning the
+     * field, which is still in the user's file.
+     *
+     * `esp` comes from `PQueue.build` and is untouched. */
+    val (q, tnorms) =
+      if (!GenRules.topNormalise) (q0, List())
+      else Constraints.topNormalise(q0.toList, l) match {
+        case (_, Nil)   => (q0, Nil)
+        case (ps, recs) => (PQueue(ps), recs)
+      }
+    if (RowTrace.enabled && tnorms.nonEmpty) {
+      val ttag = "\t" + RowTrace.site + "\t" + RowTrace.clean(l.toString) + "\t"
+      def tsv(v: TypeVar): String = v.name.fold("")(_.toString) + "^" + v.id
+      tnorms.foreach { case (v, c, f) =>
+        RowTrace.log("tnorm" + ttag + tsv(v) + "\t" + tsv(c) + "\t(|" +
+          f.toList.map(_.toString).sorted.mkString(",") + "|)")
+      }
+    }
     /* The per-concrete-label refutation, as a thunk, because WHERE it runs is a
      * question in its own right.  It reads `q` -- the INPUT partitions -- and nothing
      * else, so it is independent of `q.expand`; running it first costs nothing and

@@ -78,12 +78,19 @@ def solveSeedP (pol : Policy) (bud : Nat) (fl : Flags) (site : String) (loc : St
   match buildQueue cs su0 with
   | .error m =>
     { records := [], verdict := "REJECTED", message := m, env := {}, drawn := 0, sat := [] }
-  | .ok (q, su1) =>
+  | .ok (q0, su0') =>
+    /- S4 (`Flags.topNormalise`, DEFAULT OFF), the same line as `Seed.solveSeed`'s and at the
+       same point: immediately after `buildQueue`, BEFORE `labelCheckEarly`, `rowSoundDecide`
+       and the loop.  THIS is the path a corpus `--replay` takes, because the trace's `sin`
+       record carries the adopted `smallcanon` policy and the 20,000 budget. -/
+    let (q, su1, tnorms) := topNormalise fl.topNormalise q0 su0'
+    let tnormRecs := tnorms.map (fun (v, c, f) =>
+      "tnorm" ++ tag ++ ns.sv v ++ "\t" ++ ns.sv c ++ "\t" ++ ITerm.toStr ns (.concRho f))
     let early :=
       if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none
     match early with
     | some (l, _, msg) =>
-      { records := [],
+      { records := tnormRecs,
         verdict := "REJECTED",
         message := "Row partitions are unsatisfiable at field '" ++ Lbl.toStr l ++ "': " ++ msg,
         env := {}, drawn := su1.drawn, sat := [] }
@@ -93,7 +100,7 @@ def solveSeedP (pol : Policy) (bud : Nat) (fl : Flags) (site : String) (loc : St
                                 fl.rowSoundSolveBudget).1
            else none) with
     | some (.refuted l _ why) =>
-      { records := [], verdict := "REJECTED", message := rowUnsatMsg l why,
+      { records := tnormRecs, verdict := "REJECTED", message := rowUnsatMsg l why,
         env := {}, drawn := su1.drawn, sat := [] }
     | _ =>
       let st0 : State :=
@@ -103,10 +110,10 @@ def solveSeedP (pol : Policy) (bud : Nat) (fl : Flags) (site : String) (loc : St
       -- `-Dermine.solveBudget` is ignored under the shipped dequeue order (D1B review).
       match runSP pol su1.drawn (effBudget pol bud) (Aux.init pol st0) st0 fuel with
       | .rejected m s =>
-        { records := s.trace.reverse, verdict := "REJECTED", message := m, env := s.env,
+        { records := tnormRecs ++ s.trace.reverse, verdict := "REJECTED", message := m, env := s.env,
           drawn := s.su.drawn, sat := [] }
       | .outOfFuel s =>
-        { records := s.trace.reverse, verdict := "FUEL", message := "", env := s.env,
+        { records := tnormRecs ++ s.trace.reverse, verdict := "FUEL", message := "", env := s.env,
           drawn := s.su.drawn, sat := s.proc.elems }
       | .solved s =>
         let ps := s.proc.elems
@@ -116,7 +123,7 @@ def solveSeedP (pol : Policy) (bud : Nat) (fl : Flags) (site : String) (loc : St
           | none => if fl.labelCheck && !fl.labelCheckEarly then labelClash ns q.elems else none
         match late with
         | some (l, _, msg) =>
-          { records := s.trace.reverse, verdict := "REJECTED",
+          { records := tnormRecs ++ s.trace.reverse, verdict := "REJECTED",
             message := "Row partitions are unsatisfiable at field '" ++ Lbl.toStr l ++ "': " ++ msg,
             env := s.env, drawn := s.su.drawn, sat := ps }
         | none =>
@@ -132,7 +139,7 @@ def solveSeedP (pol : Policy) (bud : Nat) (fl : Flags) (site : String) (loc : St
             toString q.elems.length ++ "\t" ++ toString ps.length ++ "\t" ++
             toString derived.length ++ "\t" ++ (if concrete then "true" else "false") ++
             "\t" ++ String.intercalate ";" (arities.map toString) ++ "\t" ++ byRuleStr derived
-          { records := s.trace.reverse ++ inRecs ++ inpartRecs ++ satRecs ++ [solveRec],
+          { records := tnormRecs ++ s.trace.reverse ++ inRecs ++ inpartRecs ++ satRecs ++ [solveRec],
             verdict := "SOLVED", message := "", env := s.env, drawn := s.su.drawn,
             sat := ps }
 
