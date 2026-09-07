@@ -848,3 +848,60 @@ S3 COMMITTED a2789a8 (2026-09-07 ~06:40). F1 LAUNCHING (MapView panic + Console.
 F1 DONE GREEN (2026-09-07 ~07:40; uncommitted): Lib.scala three .toMap (record#, scalaRecord#, scalaRecordIn#); Console.scala keywords as tokens + null-as-EOF; TestRecordPrims.scala 8 properties (8/8 fail pre-fix); repl-tests/pipedeof golden (12 checks); core/test 921/922 (913+8, one known); TestLoopTrace 714/714; row trace byte-identical modulo the rsound elapsed column; corpus 82/69; sql-render unchanged; smokes 47 + 98; all seven E-report bindings that panicked now evaluate. Moved (not regressions): pivot probes now hit the pre-existing 'dump a mem' wall; chart01's clause flips are B6's nondeterminism (18 runs). F1 REVIEWER LAUNCHED. Then commit F1 (fill the ticket's A1/A2 'FIXED in' with the hash) → S4.
 F1 COMMITTED 254110b (2026-09-07 ~08:10; A1 + A2 fixed with tests; A1b = three more MapView equality/hash sites on the in-memory path, ticketed). S4 LAUNCHING (projection cliff, Part A model-only, STOP before Scala). Queue after S4: R2 (Ermine as a Rose row theory), R3 (Def. 13 determinacy closure), A1b fix, F2-type items (dateDiff signature B1, formatQuarter A4, Date timezone A3) — orchestrator to brief as F3.
 CORRECTION: the first F1 commit attempt failed on a wrong path (Lib.scala is under session/); the ticket was briefly stamped 5ab6e7e (wrong) in 0740a7b; F1 is really 254110b and the ticket now says so.
+S4 PART A DONE (2026-09-07 ~09:00; uncommitted: Main.lean --topres prototype, S4Top.lean, PROJ2..8 seeds,
+S4-DESIGN.md): MECHANISM — N reads of one open-row param = N lone-abstract premises t <- ((|f_i|), c_i) at one lhs;
+`fresh` + countDraw() run BEFORE resolution's applicability test (Constraints.scala:2231), so drawn counts PAIRS
+COMPARED not names minted; closed forms: carriers 2^N−N−1, saturated set 3^N−2^N, draws (5^N − 3·3^N + 2·2^N)/2
+(exact on N=2..6; N=7/8 within 0.1%); guards cap the vocabulary (cmax=1) not the draws; cascade WIDE not deep
+(depth ≤ 3). CORPUS (18 groups, 3.2M solves): Pinc ≥ 2 in 31 solves, all Present/Lang; N=5 three times outside
+the pinned examples (Lang/RunningState, TextTables ×2 at 1,230 = 6% of budget); corpus max draws 6,783 (34%);
+state file's "61×/never fires" stale. OPTION (i) written-partition normalisation RECOMMENDED: replace k ≥ 3
+pairwise-incomparable lone-abstract premises at one lhs (no concrete row) by v <- (c, F) + c_i <- (c, F\F_i);
+model prototype (--topres): 1 draw at every N=3..8; Lean S4Top.lean 11 decls standard axioms: NoLoss outright,
+Conserv over the old vocabulary (conservative extension, like the shipped resolution mint); 26 seeds identical
+ON/OFF; side conditions k ≥ 3 and no concrete row forced by regressions (NE6 3→10, RR/W4 0→1). (ii) budget raise
+REJECTED (×5 per read; wall clock N=7 2.6 s, N=8 14 s, N=9 100 s, N=10 844 s); (iii) cap REJECTED (breaks NoLoss).
+S4-A REVIEWER LAUNCHED (incl. the cheaper alternative: draw AFTER the applicability test). Then Part B (flagged
+Scala + model mirror in buildQueue/step + differential ON), its reviewer, commit (default OFF); adoption = user.
+USER (2026-09-07 ~09:20): the cliff is likely a big win for wild code that chains un-annotated let-bound modifications of a wide input relation — added the WILD-CODE gate to brief-S4.md Part B (a wild-style module measured shipped vs normalised on the compiler).
+S4-A REVIEW (2026-09-07 ~09:50): ADVANCE to Part B with changes — draws formula EXACT on the compiler N=2..8
+(35,910 / 185,727); cheaper alternative (draw after applicability) counts (5^N − 2·4^N + 3^N)/2 = 23,772 at N=7,
+still over budget → rejected; THE WILD-CODE GATE IS ALREADY ANSWERED: six un-annotated one-line helpers draw
+6,783 (= six reads in one expression), seven helpers REJECTED at 20,009 — the fan does not need the reads in one
+expression (user's intuition confirmed); G-1 S4Top.lean proved the FAMILY not the SYSTEM (freshness) — reviewer's
+GapCheck.lean closes it (ssat_rewrite_fwd); the rule = two LoopStrict steps (ResStep-shaped mint + drop); G-3
+placement must account for the THREE input-reading checks (labelCheckEarly, rowSoundDecide, rowSoundSat — the
+latter two default ON) and solve_accepted_faithful's shared q; G-2 blast radius 19 not 13; G-4 .ei risk backwards;
+--depth positional arg is the id BASE. S4 implementer RESUMED for Part A corrections + PART B (worktree
+ermine-scala-wt-s4, flag default OFF, model mirror in the pre-loop stage so --replay applies, 18-group differential
+ON, wild-code module Present/WildChain.e). Then S4-B reviewer, commit (default OFF); adoption = user.
+S4 PART B DONE (2026-09-07 ~13:30; Scala in worktree ermine-scala-wt-s4 branch top-normalise, flag
+-Dermine.topNormalise DEFAULT OFF; Lean mirror + example/doc edits + seeds in MAIN, uncommitted): placement =
+immediately after PQueue.build, before all four input readers; S4Top.lean 18 decls (ssat_rewrite_fwd with c ∉
+allVars G; two LoopStrict steps; requeue refuted); gates OFF: core/test 920/922 (baseline same), TestLoopTrace
+720/720 (+GROW), 18-group trace byte-identical worktree vs main (normalised), OFF differential 18/18; gates ON:
+compiler ladder N=2..10 all compile 0 loop draws; ON differential 18/18 with 15 tnorm records byte-exact; corpus
+83/69 → 84/68 (proj01 only); .ei 4/225 order-only; PROJ7 REJECTED@20,009 → SOLVED@1; perf unmoved (12.36 →
+12.33); WILD-CODE GATE Present/WildChain.e: let-chain 6,783 / helpers 6,783 / pinned 0 → all 0 ON, module 1.65 s →
+0.32 s. Found: the model has FIVE buildQueue call sites (mirror had to cover Seed + PolicyReplay). Left open:
+GU05MIN/PROJ8 budgeted path; per-file sweep. S4-B REVIEWER LAUNCHED. Then: apply the Scala diff to main, commit
+(flag OFF); ADOPTION of topNormalise = user's decision (the reviewer gives a recommendation).
+COMPACTION CHECKPOINT (2026-09-07 ~13:40). LIVE AGENTS (resume by SendMessage with these ids): S4 implementer =
+abc3f1c6cb9c6e5eb (idle, resumable; owns the worktree ermine-scala-wt-s4 and the main-tree Lean mirror/docs);
+S4-B reviewer = a2b44eca957190201 (RUNNING; report → tracker/loopmodel/S4B-REVIEW.md, findings H-*).
+WHEN THE S4-B REVIEW ARRIVES: (1) if FIX-THEN-ADVANCE, send the findings to the S4 implementer and wait; (2) on
+ADVANCE: ask the implementer to apply the worktree's Scala diff to main (git apply from ermine-scala-wt-s4;
+Constraints.scala, Subst.scala, RowTrace.scala, tracker/tools/looptrace-diff.py) and re-run TestLoopTrace + a
+2-group differential on main; (3) orchestrator verifies (build/audit: S4Top.lean is scratch — `lake env lean`;
+TestLoopTrace 720/720; corpus-run --batch 83/69 OFF), commits ONE commit "Row solver S4: written-partition
+normalisation behind -Dermine.topNormalise (default OFF)" incl. the Present/WildChain.e module, PROJ/GROW seeds,
+S4-DESIGN/S4-CHANGE/S4A-REVIEW/S4B-REVIEW, state file, plan row; stamps ticket B5 "FIXED behind a flag in <hash>";
+(4) REPORT TO THE USER with the reviewer's ADOPTION recommendation — flipping topNormalise ON is the USER's
+decision (like rowSound/smallcanon/budget were). QUEUE AFTER S4: R2 (Ermine as a Rose row theory at the model
+level; Lean only), R3 (Rose Def. 13 determinacy closure for reduce's splice; design), A1b (three in-memory MapView
+equality sites SqlScanner.scala:644/:708, relational/package.scala:67 + a test driving the in-memory path), F3
+(one-line library fixes from the ticket: B1 dateDiff signature, A4 formatQuarter, A3 Date timezone, C2 join1 doc,
+C5 Layout.Scan re-exports, K-1 Type.scala:414 `.toSet`), then the ticket's remaining items by the user's choice.
+Standing rules unchanged: autonomous mode; commit reviewed green stages on the branch; no push/merge; no default
+flips without the user; Opus implementer + Opus reviewer per stage; one JVM at a time (machine ~9 GB free);
+never `lake build` while another agent runs looptrace; delete .ei files; `.slow` for non-terminating modules.
