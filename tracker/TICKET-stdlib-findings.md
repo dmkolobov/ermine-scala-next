@@ -17,14 +17,43 @@ A1. **`record#` returns a Scala 2.13 `MapView`; every consumer that pattern-matc
     `core/examples/PivotTest.e`'s `pivotData` has panicked for years. `Relation.relation` is NOT affected
     (`mkRelation#`), which is why relation renderings work. Nobody saw it because everything is lazy.
     **Fix:** three `.toMap` (988, 1007, 1012) plus a test that FORCES a pivot. (E1 §7.2, E1-REVIEW §MapView,
-    E4 §4.6.) — stage F1.
+    E4 §4.6.) — stage F1. **FIXED in `5ab6e7e`** (stage F1, 2026-09-07): the three `.toMap`s are in
+    (`Lib.scala:997`, `:1016`, `:1021` after the added comment), and eight new `core/test` properties in
+    `scalacheck-binding/src/main/scala/TestRecordPrims.scala` FORCE a pivot, `Relation.Predicate.all`,
+    `Record.header`, `header#`, `scalaRecord#` and `scalaRecordIn#` to values and check them; all eight
+    fail on the pre-fix compiler (measured as a negative control). `PivotTest.pivotData`,
+    `Wide/MediaSpend`'s two pivots, `Present/FulcrumPanel.bothHalves` and `Algebra/SoftSchema`'s two
+    pivots now evaluate, and the six `q_pivot_*` probes in `sql-render.sh` get past the panic to the
+    SAME pre-existing wall every other `Mem` probe hits (`Don't know how to dump a mem`,
+    `Scanner.scala:35` — no `SqlScanner` override), so the panic is gone but a pivot still renders no
+    SQL; the 15 renderings that did work are byte-identical. Details and every gate:
+    `tracker/loopmodel/F1-FIXES.md`.
+
+A1b. **Three more `MapView` sites survive where the compiler cannot reject a view: equality and hashing.**
+    `SqlScanner.scala:644` — `kr == k` is always false against a view, so the IN-MEMORY pivot gives every column
+    its default on the first row of each group; `SqlScanner.scala:708` — `Tee.hashJoin`'s key is a view, so the
+    lookup never matches and the join emits nothing; `relational/package.scala:67` — the chunk predicate is always
+    false, so `sorting` never groups. The correct spellings sit nearby (`SqlScanner.scala:629/630`, `:538`,
+    `Optimizer.scala:277`). Pre-existing, out of F1's scope, unreachable from the corpus (every pivot stops at
+    `dumpMem`), same family as A1 on the feature A1 unblocked. **Fix:** `.toMap` at the three sites plus a test
+    that drives the in-memory pivot/join/sort path. (F1-REVIEW J-3; `tracker/03-core-progress.md` records the
+    migration converted "only the ~20 sites the compiler rejected".)
 
 A2. **`Console.other` loops forever on a piped line containing `case`, `let` or `where` as a substring.**
     `Console.scala:149`: `readLine` returns `null` at EOF, `null == ""` is false, so `blank` never flips; each
     iteration appends `"\n" + null` and re-runs `balanced()` and three `contains` over the growing string.
-    Minimal input: `printf 'staircase\n' | bin/ermine` (thousands of `|>` prompts, never exits); control
-    `staircas` exits cleanly. This is the long-known "REPL pipe quirk". **Fix:** treat `null` as EOF; match
-    the keywords as tokens, not substrings. (E4 §4.7, E4-REVIEW.) — stage F2.
+    Minimal input: `printf 'staircase\n' | bin/ermine` (an unbounded stream of `|>` prompts — the count in any
+    report is a time-boxed iteration count, not a durable number); control `staircas` exits cleanly. This is the long-known "REPL pipe quirk". **Fix:** treat `null` as EOF; match
+    the keywords as tokens, not substrings. (E4 §4.7, E4-REVIEW.) — stage F2, done early in F1.
+    **FIXED in `5ab6e7e`** (stage F1, 2026-09-07): both halves. `Console.opensLayout` matches the three
+    keywords as WORDS (a boundary that excludes `'` and `#`, so `case'` and `let#` stay names), which is
+    what stops `staircase` / `"complete"` opening a continuation at all; and
+    `blank = (last == null) || (last == "")` ends the continuation at EOF, which is what makes a line
+    carrying a REAL keyword terminate (`printf 'f x = case x of\n' | bin/ermine`: 2,493 prompts and rc=124
+    before, 1 prompt and rc=0 after). `tracker/repl-tests/pipedeof.in` pins both, plus that the multi-line
+    `case`/`let` continuations still work, and `repl-smoke.sh` now runs every input under a timeout and
+    fails on a non-zero exit so such a hang cannot come back silently.
+    Details: `tracker/loopmodel/F1-FIXES.md`.
 
 A3. **`Date`'s accessors read the instant in the JVM's default timezone; its formatters do not.** `@2011/1/1`
     is simultaneously `"1/1/11"` and `"Dec 31"`; `getMonth` is 11 under MDT and 0 under UTC;
