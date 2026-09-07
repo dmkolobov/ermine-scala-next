@@ -963,3 +963,14 @@ tracker/loopmodel/S4C-CORRESPONDENCE.md. UNCOMMITTED pending review. REVIEWER LA
 briefs/brief-S4c-review.md; report -> tracker/loopmodel/S4C-REVIEW.md, findings J-*). On ADVANCE: ONE commit
 "Loop model S4c: the correspondence lemma for topNormalise and the S2 chain at ON"; then REPORT to the user with
 the reviewer's adoption recommendation (the flip is the user's).
+
+S4c REVIEWED + COMMITTED 2747b47 (2026-09-07 ~17:45). Review tracker/loopmodel/S4C-REVIEW.md: ADVANCE; adoption
+recommendation YES — flip -Dermine.topNormalise ON in its own commit WITH J-1 CLOSED FIRST. J-1 (medium): no-false-
+rejection at ON through envFacts needs one lemma (carriers fresh w.r.t. E; ~30 lines). J-2..J-8 prose. FIX ROUND SENT
+to the S4c implementer ab0be9ea98f80dab4 (J-1 + prose; Lean only). ON ITS REPORT: orchestrator verifies lake build +
+Audit + #print axioms of the new lemma, commits ONE commit "Loop model S4c fix: no-false-rejection at topNormalise=true
+(J-1); prose". THEN REPORT TO THE USER: the adoption decision is theirs — the flip commit would contain: default
+"true" at Constraints.scala:1508, fingerprint token +topnorm becomes default, proj01_seven_reads.e moves out of
+shouldfail/ (verdict change: VALID program now compiles) with a positive twin, `.ei` cache cleared once (not keyed by
+the flag), state file ADOPTED block, plan row; gates: TestLoopTrace 720/720, corpus-run --batch 84/68, 18-group
+differential, perf-bench. Do NOT flip without the user. Queue after: R2, R3, A1b, F3.
