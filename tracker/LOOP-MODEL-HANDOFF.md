@@ -678,3 +678,17 @@ instruction: `find . -name '*.ei' -delete` once after the flip (`core/examples/*
 modules/**`), because `.ei` is not keyed by the solver configuration. Plan row and `tracker/lean/README.md`
 updated with the review verdict. NEXT = COMMIT.
 A1 COMMITTED fe024a7 (2026-09-06 ~23:00): the three defaults are SHIPPED (rowSound ON, smallcanon, budget 20000). Tree clean. Agents stopped. PROGRAMME COMPLETE for the user's stated goals; open follow-ups: .ei cache key by configuration (clear .ei once at adoption), a-priori fuel number, budget diagnostic code, the model's json seed loader lacks S2's env block, worktrees ermine-scala-wt-{s2,d1,b1,loader,prof} still present (user's call to remove).
+E-SERIES EXAMPLE CORPUS (user, 2026-09-06 23:00: "develop the examples directory even further … with background
+agents … different under-exampled aspects of ermine … many examples of interesting generic helpers"). Import
+census: examples import ~40 of ~160 stdlib modules. Machine: 12 cores / ~9 GB free → THREE concurrent
+implementers max, one JVM each (-Xmx2g, 2 cores). RUNNING: E1 Wide/ (pivots, window functions, wide tables;
+brief-E1.md — it ALSO wires corpus-run.sh/looptrace-corpus.sh/README for its group), E2 Algebra/ (Relation.e's
+constrained helpers incl. joinWithDefault's `exists`, UnifyFields/RTree/Scan/Process, set ops, closures;
+brief-E2.md), E3 Time/ (Date/DateRange/lookupLatest/nearestDate, Currency, Nullable, Math, aggregates, charts;
+brief-E3.md). Common rules in brief-E-common.md (E2+ do NOT edit shared tooling; they record wiring lines; the
+orchestrator wires all groups at the end). QUEUED when slots free: E4 Present/ (Layout.Chart/Writer/StyleGrid/
+Fulcrum reports/Validation/Column/Magnitude/DrilldownList/Syntax.Selector), E5 Lang/ (Control.* monads/
+functors/traversable, Data.Free/Cofree, Syntax.Do/Monad/Reader/Procedure, Either/Maybe/Validation, Parse,
+String.Markdown/StringManip, Map/Tree/List.*, Type.*, IO/IO.CSV/File). Per group: an Opus reviewer, then wiring
++ commit. Reviews judge the examples as programs a user learns from AND as corpus (differential clean, census).
+R1 LAUNCHED (2026-09-06 ~23:40; Opus researcher, briefs/brief-R1.md): Rose/Rω vs Ermine comparison memo → tracker/ROSE-COMPARISON.md; reading/writing only, no lake build (E1–E3 use the looptrace binary), scratch Lean via lake env lean only. Adoptable-idea candidates: canonical residual simplification via entailment-equivalence (fixes order-dependent .ei form, Signatures.e noise, cache-key gap), entailment-based call-site checking with labelDecide as oracle (the Ai README cost cliff), a formal correspondence theorem Ermine rules ⇔ Rose axioms.
