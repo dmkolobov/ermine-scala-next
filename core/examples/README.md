@@ -20,7 +20,7 @@ Some subdirectories are self-contained example *sets*, each with its own
 |---|---|---|
 | `Ai/` | ten reports over **trees** — drilldowns, hierarchies, date-range calendars | `Ai/Common.e` |
 | `Wide/` | nine reports over **wide** fact tables (20–36 columns) — window functions, pivots, unpivots | `Wide/Helpers.e` |
-| `Lang/` | eleven modules on the **language itself** — parser combinators, accumulating validation, State/Reader/Free monads, do-notation across monads, strings and markdown, trees and maps, foreign bindings, kinds and existentials | `Lang/Helpers.e` |
+| `Lang/` | ten reports on the **language itself** — parser combinators, accumulating validation, State/Reader/Free monads, do-notation across monads, strings and markdown, trees and maps, foreign bindings, kinds and existentials | `Lang/Helpers.e` |
 | `Present/` | nine reports over **presentation** — charts, styled grids, fulcrum reports, validation, drilldown lists, sort strategies, writers | `Present/Helpers.e` |
 | `Time/` | eight reports over **dates and money** — as-of lookups, nearest-date joins, fiscal calendars, currency conversion, nullable arithmetic, framed windows, cohorts | `Time/Helpers.e` |
 | `Algebra/` | eleven reports over **relational algebra** — outer joins with defaults, set operations, semi/anti-joins, transitive closure, deduplication, key/value schemas, self-joins, scans, comprehensions | `Algebra/Helpers.e` |

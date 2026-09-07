@@ -1,0 +1,93 @@
+module Lang.ProjectionCliff where
+
+{- THE PROJECTION CLIFF: projecting one record N times inside one expression, N = 1 .. 7.
+
+   `.slow`, not `.e`, because at N = 7 this module DOES NOT COMPILE at the shipped
+   defaults, and `core/test` type-checks every `.e` it finds. See
+   `core/examples/incomplete/README.md` for the convention. `bin/ermine` will still run
+   it if you name it explicitly:
+
+       ERMINE_JAVA_OPTS="-Xmx3000m -XX:ActiveProcessorCount=2" \
+         bin/ermine core/examples/Lang/ProjectionCliff.slow
+
+   WHAT THIS MEASURES. `t ! f` on a record whose row is a VARIABLE is a `Has r f`, which
+   is `exists c. r <- (f, c)` -- one existential row partition. N projections of the same
+   record in one expression are N existential partitions over ONE whole, and the solver
+   resolves them against one another. Measured on this file, one module per N, one JVM
+   each, at `-Dermine.rowSound` ON / `dequeuePolicy=smallcanon` / `solveBudget=20000`:
+
+       N   draws     dequeues   minted vocabulary   module load
+       1       0          0             0             0.14 s
+       2       3          5             1             0.11 s
+       3      31         23             5             0.13 s
+       4     207         65            11             0.21 s
+       5   1,241        217            27             0.68 s
+       6   6,956        698            60             2.00 s
+       7   >20,000  -- THE DRAW BUDGET FIRES                2.93 s, REJECTED
+
+   The third column is `--cycle`'s `maxmint`, which is the size of the MINTED-VARIABLE
+   VOCABULARY at a step (`Cycle.lean:407`), not a per-key count. The per-key census is
+   `looptrace --replay … --mints`, and over the whole of `Lang/` its maximum is **1** --
+   as it is for every group in the E series. (E5's reviewer, L-1; the same mislabel was
+   E4's M-1 and E3's P-18.)
+
+   The ratio is a steady ~6x per extra projection, and **seven crosses the shipped
+   budget**:
+
+       Row solver resource limit reached (this is NOT a type error): the row constraint
+       solver drew 20009 fresh row variables at this signature, past the
+       -Dermine.solveBudget=20000 limit, so it was stopped rather than left to run.
+       Raise the limit with -Dermine.solveBudget=<n>, simplify the row constraints at
+       this signature, or report it.
+
+   WHY IT MATTERS. This is not an exotic shape. It is what you write to render a row:
+
+       showRows hdr (t -> [t ! a, t ! b, t ! c, t ! d, t ! e, t ! f, t ! g]) rows
+
+   -- a markdown or CSV line for a SEVEN-column table. `Lang/TextTables.e`'s
+   `catalogueMarkdown` does exactly this with five columns and is the most expensive
+   solve in the whole `Lang/` group (1,241 draws, 27 per-key mints, both records for the
+   E-series corpus). A sixth column would cost ~7,000 and a seventh does not compile.
+
+   FOUND TWICE, INDEPENDENTLY. E4's reviewer isolated the same cliff at the same time from the
+   presentation side, with bare `p ! f` projections rather than a list literal, and measured
+   3 / 33 / 207 / 1,243 / 6,795 / budget against the 3 / 31 / 207 / 1,241 / 6,956 / budget
+   above -- the same curve. `core/examples/Present/shouldfail/proj01_seven_reads.e` is the
+   negative for it; this file is the CURVE, which is why it is `.slow` and not a second
+   negative. `tracker/loopmodel/E4-REVIEW.md` also records the stronger remedy: five
+   projections under ONE WRITTEN PARTITION,
+   `forall r o. (r <- ((| p1, ..., p5 |), o)) => {..r} -> String`, cost ZERO draws.
+
+   THE FIX, MEASURED. E5's reviewer isolated the remedy on the group's own helper shape:
+   reordering `showRows`'s arguments so the row-fixing one is checked first changes
+   NOTHING (1,230 draws becomes 1,233), and annotating the lambda's argument at the
+   concrete row takes the same call to **1 draw, 2 steps**. `TextTables.e` and
+   `RunningState.e` now ship both spellings side by side. So:
+
+   THE FIX A USER HAS. Give the lambda's argument a CONCRETE row. With
+   `(t : {skuCode, skuTitle, …})` written out, or with the rows arriving from a
+   `relation` whose header is fixed, there is no row variable and no existential at all.
+   The cliff is a property of INFERENCE over a row variable, exactly as
+   `core/examples/incomplete/README.md` says of the star-join cliff: "same eight
+   dimensions, and the type annotation is the only difference."
+-}
+
+import Prelude
+import Syntax.List
+import List as L
+
+field q1, q2, q3, q4, q5, q6, q7 : String
+
+p1 t = [t ! q1]_L
+p2 t = [t ! q1, t ! q2]_L
+p3 t = [t ! q1, t ! q2, t ! q3]_L
+p4 t = [t ! q1, t ! q2, t ! q3, t ! q4]_L
+p5 t = [t ! q1, t ! q2, t ! q3, t ! q4, t ! q5]_L
+p6 t = [t ! q1, t ! q2, t ! q3, t ! q4, t ! q5, t ! q6]_L
+
+-- THE ONE THAT DOES NOT COMPILE:
+p7 t = [t ! q1, t ! q2, t ! q3, t ! q4, t ! q5, t ! q6, t ! q7]_L
+
+-- and the same seven columns with the row written out, which costs nothing:
+p7fixed : {q1, q2, q3, q4, q5, q6, q7} -> List String
+p7fixed t = [t ! q1, t ! q2, t ! q3, t ! q4, t ! q5, t ! q6, t ! q7]_L
