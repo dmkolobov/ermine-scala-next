@@ -78,7 +78,28 @@ object TestSurfaceParsers extends Properties("Surface parser 2.3a") {
       }
     }
     val failures = bad.result()
-    (failures.isEmpty :| failures.take(6).mkString(" ;; ")) && ((files ?= 271) :| s"$files files")
+    // TWO assertions, because they catch different things.
+    //
+    // The count was the literal 271 until 2026-09-07, when four example groups landed at
+    // once (`core/examples/{Wide,Algebra,Time,Present}`) and the corpus went 271 -> 333:
+    // the property then failed with `Expected 271 but got 315` and an EMPTY failure list,
+    // i.e. on the count alone, and every future example would have had to edit it.
+    //
+    // Deriving the count removes that trap but, on its own, asserts NOTHING: every branch
+    // of the match above either does `files += 1` or appends to `bad`, so `failures.isEmpty`
+    // already implies `files == moduleFiles.size`.  What the literal bought and the derived
+    // equality does not is the FLOOR: if `moduleFiles` ever comes back empty or truncated --
+    // wrong working directory, moved resources, partial checkout -- then `bad` is empty,
+    // `files` and `expected` are both 0, and the property would pass on a corpus of zero
+    // files.  The literal failed loudly at `Expected 271 but got 0`.
+    //
+    // So: keep the derived equality (it documents the invariant) and add the floor this file
+    // already uses twice below (`fixities > 30`, `statements > 1000`) and `TestTolerantRead`
+    // uses as `>= 180`.  E1 review finding N-1; tracker/loopmodel/E1-EXAMPLES.md section 3d.
+    val expected = moduleFiles.size
+    (failures.isEmpty :| failures.take(6).mkString(" ;; ")) &&
+      ((expected >= 250) :| s"only $expected corpus files found -- sweep broken?") &&
+      ((files ?= expected) :| s"$files of $expected files compared")
   }
 
   property("the splitter covers every file with ordered, plausible statements") = secure {

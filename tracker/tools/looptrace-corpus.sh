@@ -50,7 +50,7 @@ mkdir -p "$S/traces" "$S/lean" "$S/diff"
 : > "$S/results.txt"
 find core/examples -name '*.ei' -delete
 
-groups="${LOOPTRACE_GROUPS:-boot top Ai shouldfail bugs guide shouldfail-controls incomplete}"
+groups="${LOOPTRACE_GROUPS:-boot top Ai Wide Wide-shouldfail shouldfail bugs guide shouldfail-controls incomplete}"
 perfile=" ${LOOPTRACE_PERFILE:-incomplete} "
 flags="${LOOPTRACE_FLAGS:-}"
 jopts="${LOOPTRACE_JAVA:-}"
@@ -65,6 +65,16 @@ for g in $groups; do
     top)  mapfile -t gf < <(find core/examples -maxdepth 1 -name '*.e' | sort) ;;
     Ai)   mapfile -t gf < <( { echo core/examples/Ai/Common.e
                                find core/examples/Ai -name '*.e' ! -name 'Common.e' | sort; } ) ;;
+    # Wide/ is the Ai/ case with a different library: every Wide module imports
+    # `Wide.Helpers`, and so does every module under Wide/shouldfail, so the library
+    # goes first on both command lines (stage E1, 2026-09-06).
+    Wide) mapfile -t gf < <( { echo core/examples/Wide/Helpers.e
+                               find core/examples/Wide -maxdepth 1 -name '*.e' \
+                                    ! -name 'Helpers.e' | sort; } ) ;;
+    Wide-shouldfail)
+          mapfile -t gf < <( { echo core/examples/Wide/Helpers.e
+                               find core/examples/Wide/shouldfail -maxdepth 1 -name '*.e' \
+                                 | sort; } ) ;;
     *)    mapfile -t gf < <(find "core/examples/$g" -maxdepth 1 -name '*.e' | sort) ;;
   esac
   t0=$(date +%s); dropped=0; timeouts=0

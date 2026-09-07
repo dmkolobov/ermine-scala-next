@@ -39,6 +39,9 @@
 # Ai/ modules import `Ai.Common`, which the CLI cannot resolve on its own (the editor can,
 # since lsp/Resident.scala `checkFile` was fixed), so `Common.e` goes first on the command
 # line for those -- ahead of its group in a batch, immediately before each Ai module per file.
+# Wide/ and Wide/shouldfail/ are the same shape with `Wide/Helpers.e` as the library
+# (added 2026-09-06, stage E1): the negative modules import it too, so it is hoisted for
+# them as well.
 #
 # CRITICAL: `bin/ermine` WRITES `.ei` interface files next to the sources it loads, and
 # `ermine.useInterface` defaults to TRUE, so a second run READS what the first one wrote and
@@ -63,7 +66,8 @@
 # (2026-09-02: the labelCheckEarly adoption was measured this way, four sweeps in flight
 # while the fix was being compiled.)
 #
-# Directories covered, 66 files: core/examples/*.e (15), core/examples/Ai/*.e (11),
+# Directories covered, 80 files: core/examples/*.e (15), core/examples/Ai/*.e (11),
+# core/examples/Wide/*.e (11), core/examples/Wide/shouldfail/*.e (3),
 # core/examples/shouldfail/*.e (40).  `incomplete/` is NOT here: four of its modules
 # diverge on pristine code and are named `.slow` for that reason; use --incomplete for
 # it, which applies a timeout per file.
@@ -95,17 +99,22 @@ mkdir -p "$out"
 # see the header: interfaces written by a previous run would be read by this one
 find core/examples -name '*.ei' -delete
 
-files=( core/examples/*.e core/examples/Ai/*.e core/examples/shouldfail/*.e )
+files=( core/examples/*.e core/examples/Ai/*.e core/examples/Wide/*.e \
+        core/examples/Wide/shouldfail/*.e core/examples/shouldfail/*.e )
 if [[ $incomplete == 1 ]]; then files=( core/examples/incomplete/*.e ); fi
 
 if [[ $batch == 1 ]]; then
   # one command line, with Ai/Common.e hoisted to the head of the Ai group
-  bfiles=(); ai_done=0
+  bfiles=(); ai_done=0; wide_done=0
   for f in "${files[@]}"; do
     case "$f" in
       core/examples/Ai/Common.e) ;;
+      core/examples/Wide/Helpers.e) ;;
       core/examples/Ai/*)
         if [[ $ai_done == 0 ]]; then bfiles+=( core/examples/Ai/Common.e ); ai_done=1; fi
+        bfiles+=( "$f" ) ;;
+      core/examples/Wide/*)
+        if [[ $wide_done == 0 ]]; then bfiles+=( core/examples/Wide/Helpers.e ); wide_done=1; fi
         bfiles+=( "$f" ) ;;
       *) bfiles+=( "$f" ) ;;
     esac
@@ -132,8 +141,10 @@ for f in "${files[@]}"; do
   name="${f#core/examples/}"; name="${name//\//_}"
   args=( "$f" )
   case "$f" in
-    core/examples/Ai/Common.e) ;;
-    core/examples/Ai/*)        args=( core/examples/Ai/Common.e "$f" ) ;;
+    core/examples/Ai/Common.e)    ;;
+    core/examples/Wide/Helpers.e) ;;
+    core/examples/Ai/*)           args=( core/examples/Ai/Common.e "$f" ) ;;
+    core/examples/Wide/*)         args=( core/examples/Wide/Helpers.e "$f" ) ;;
   esac
   if [[ -n ${ERMINE_CP:-} ]]; then
     # same JVM invocation as bin/ermine, classpath from the snapshot file

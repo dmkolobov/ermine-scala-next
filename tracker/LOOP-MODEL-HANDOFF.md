@@ -692,3 +692,101 @@ functors/traversable, Data.Free/Cofree, Syntax.Do/Monad/Reader/Procedure, Either
 String.Markdown/StringManip, Map/Tree/List.*, Type.*, IO/IO.CSV/File). Per group: an Opus reviewer, then wiring
 + commit. Reviews judge the examples as programs a user learns from AND as corpus (differential clean, census).
 R1 LAUNCHED (2026-09-06 ~23:40; Opus researcher, briefs/brief-R1.md): Rose/Rω vs Ermine comparison memo → tracker/ROSE-COMPARISON.md; reading/writing only, no lake build (E1–E3 use the looptrace binary), scratch Lean via lake env lean only. Adoptable-idea candidates: canonical residual simplification via entailment-equivalence (fixes order-dependent .ei form, Signatures.e noise, cache-key gap), entailment-based call-site checking with labelDecide as oracle (the Ai README cost cliff), a formal correspondence theorem Ermine rules ⇔ Rose axioms.
+S3 BRIEF WRITTEN (briefs/brief-S3.md: mkSimplified NormalPart.hashCode + tautology case; launch when a JVM slot frees after E1–E3). R1 memo COMMITTED 40f80aa.
+E2 Algebra/ DONE GREEN (2026-09-07 ~00:40; uncommitted): 12 modules + 6 shouldfail + README; 28 helpers (89
+partition constraints across 43 signatures vs the old corpus's 12/9); loads per file ≤ 1.25 s own time, batch 15.5
+s; differential 151,993 segments 0/0/0; census: GENTLER than Ai (max draws 14, depth ≤ 2, key mints ≤ 1) but the
+widest label set (26). STDLIB/LANGUAGE FINDINGS (to ticket after review): UnifyFields.unify1 cannot unify
+differently-named schemas; join1's doc is wrong (it is joinBy {f}); a row variable in `[f1,f2]` relation-type
+syntax is read as a LABEL; rowSound blame clause varies with the command line at a fixed field; NO REPL `render`
+(Ai README wrong) — E1 built tracker/tools/sql-render.sh (SQLite route; cannot dump Mem); Ai README's
+"does not finish" RUnion3+RUnion2 figure does NOT reproduce at either configuration. SHARED WIRING for the
+orchestrator at the end: looptrace-corpus.sh groups + hoist arms; corpus-run.sh file lists + hoist arms;
+examples README rows; scalacheck-binding/src/main/scala/TestSurfaceParsers.scala:81 `(files ?= 271)` → the new
+total (every E-stage trips it; 315 at E2's run) + the "271 files" strings there and in TestStatementExtents.
+E2 REVIEWER LAUNCHED (Opus, briefs/brief-E-review.md template, report E2-REVIEW.md). Slots: E1, E3, E2-review
+running (3 JVM users) → E4 launches when one finishes, then E5, then S3.
+E3 Time/ DONE GREEN (2026-09-07 ~01:30; uncommitted): 13 modules (34 helpers, 38 partition constraints/23 sigs;
+Signatures.e 8 entailment proofs); all six stdlib as-of lookups exercised; differential 115,674 segments 0/0/0
+(the model reproduces both row negatives down to the clause); census: max input row vars 42 (Ai 11), max input
+partitions 24 (Ai 7), label table 31 (Ai 14) — yet cheaper per solve (max draws 13, depth ≤ 2, vocab-fixed
+99.5%); budget never fired (1,538× headroom). RUnion cliff GONE at the adopted defaults (1.04→0.17 s; "does not
+finish"→0.12 s). FINDINGS: `render` is NOT a defined term anywhere (Ai/*.e headers' recipe is not executable;
+Layout.harness needs DB-backed Scanner+Runner); lookupLatest/nearestDate group by the DATE ALONE (multi-series
+histories silently lose a series); nearestDate is dates→dates only; Relation.Op.dateDiff's result row is
+UNCONSTRAINED (type-checks over a relation containing neither date); weightedMean forces one type; refutation
+clause flips per-file vs batch (bucket01); bucketBy's inferred type quantifies over the class AsOp and an implicit
+kind var — the compiler prints a type its parser cannot read back; Math/Vector cannot be lifted into an Op (no
+rolling median/percentile as a column); no year/month/quarter op. Wiring lines in E3-EXAMPLES.md §6 (same shape
+as E2's). E4 Present/ LAUNCHED into the freed slot (running: E1, E2-review, E4). Queue: E3-review, E5, S3.
+E2 REVIEW (2026-09-07 ~02:00): FIX-THEN-ADVANCE — every measurement reproduced (151,993 segments 0/0/0; census
+table line for line; 18/23 relations render via sql-render.sh with matching row counts; all 7 stdlib findings
+CONFIRMED with probes: unify1 cross-schema impossible; join1 ≡ joinBy {f}; `[aid, c]` label trap; blame-clause
+instability; no render; rename' misnamed not misdocumented; sumBy' vacuous constraint; Layout.Scan omits
+removeK/removeBy/multiply). Fixes: prose (Customer360 19 cols; ManagerChains 4 doc errors; alg06 clause;
+LedgerScan/Deduplication list unused helpers; duplicate `valued` across modules), §G3's heaviest-solve labels are
+combine_Op (RUnion2) not joins — conclusion flipped; missed rightJoinWithDefault/unsafeRightJoin/partialLookup'/
+`[| … |]` comprehensions/running total → follow-up Algebra/Comprehensions.e. SqlEmitter bug sharpened: flattens
+a non-left-deep join tree without parentheses (`A JOIN B ON c1 JOIN C JOIN D ON c2 ON c3`). Best: Inventory
+Snapshots, KeyDiscipline, Signatures; weakest: ManagerChains, LedgerScan, Deduplication. NOTE: someone (E1)
+replaced TestSurfaceParsers' `files ?= 271` with `moduleFiles.size` — count property now passes. E2 implementer
+RESUMED with the corrections + the new module. Running: E1, E4, E2-corrections. Queue: E3-review, E5, S3.
+Ticket recommendations (E2-REVIEW §13): new TICKET-stdlib-findings.md + two additions to
+TICKET-editor-and-solver-followups.md — orchestrator writes them at the end of the E-series.
+E1 Wide/ DONE GREEN (2026-09-07 ~02:30; uncommitted; it ALSO edited corpus-run.sh, looptrace-corpus.sh,
+core/examples/README.md (3-column table), TestSurfaceParsers.scala (`moduleFiles.size` replaces `files ?= 271`),
+and added tracker/tools/{sql-render.sh,SqlRun.java,tsql2sqlite.py,wide-render-probe.*}): 10 modules (20–36
+fact fields) + 3 shouldfail; 24 helpers, 85 partition constraints; reports publish 0 residuals (the pivot's
+existential `i` minted and resolved); differential 114,844 + 55,775 segments 0/0/0; census bigger not deeper
+(nvars 21, labels 46, draws 77 vs Ai 52; depth ceiling 3; vocab-fixed 99.64%); budget headroom 77/20,000;
+RUnion cliff gone (bundled form 1.3–1.5 s on the very module Ai measured). FINDINGS: `render` undefined (no
+concrete Writer ships); **Relation.Pivot.pivot and Relation.Predicate.all PANIC when forced** — `record#`
+returns a MapView (Scala 2.13) that scalaRecord#'s `case Prim(t: Map[...])` cannot match; one-line fix at
+Lib.scala:988 (NOT applied — a real runtime bug for a ticket/fix stage); window functions emit real SQL only on
+the MS SQL emitter (others emit a TODO into the query); dumpQuery cannot dump Mem or lookupLatest's SqlLoad;
+variadic melt / relation-level dynamic pivot inexpressible (no type-level fold over a row); `seq`/`currency`
+collide with stdlib terms. E3 REVIEWER LAUNCHED. Running: E4, E2-corrections, E3-review. Queue: E1-review, E5,
+S3, then a fix stage for the MapView panic.
+E2 CORRECTIONS DONE GREEN (2026-09-07 ~03:30): 13 modules (+Comprehensions.e: all `[| … |]` clause forms, right
+outer joins, running total twice), 33 helpers, .ei 146 partition constraints/51 sigs; differential 156,368
+segments 0/0/0; census now MATCHES Ai on draws/depth (max draws 53, depth 3) — the "gentler" claim withdrawn;
+runningTotal: 2 hand-written constraints proved equivalent to the compiler's 21 over 27 existentials (19 are
+noise — the largest ratio in the repo). E1 REVIEWER LAUNCHED (covers E1's SHARED-FILE edits: corpus-run.sh,
+looptrace-corpus.sh, examples README, TestSurfaceParsers moduleFiles.size, the sql-render tooling; and the
+MapView pivot panic's scope + fix). Running: E4, E3-review, E1-review. Queue: E5, S3, pivot-panic fix stage.
+COMMIT PLAN: after E1's review — one commit for E1 (incl. shared tooling) then E2 and E3 (their READMEs depend
+on sql-render.sh), each after its review's fixes; then E4/E5 likewise; the orchestrator writes
+TICKET-stdlib-findings.md from the confirmed findings at the end.
+E3 REVIEW (2026-09-07 ~04:00): FIX-THEN-ADVANCE — all 8 stdlib findings CONFIRMED (dateDiff's wrapper has NO
+signature → `Op r2 Int` with r2 free: a static guarantee silently deferred to run time, one-signature fix;
+bucketBy unprintable: four AsOp existentials + forall {a}); three claims the DATA DENIES (MultiCurrencyPnl.unrated
+always empty; ReadingHistory.asOfWithin 1 not empty; carriedCells wrong); five clashing top-level names
+(banded/indexed ×3 modules); census corrections (draws max 16; per-key mints max 1, "4" was mint keys; band4's 42
+vars are a definition-site lattice, call sites peak at 11/7); DateRange never used (the one coverage gap). E3
+implementer RESUMED with the corrections. Running: E4, E1-review, E3-corrections. Queue: E5, S3, pivot-panic fix.
+E4 Present/ DONE GREEN (2026-09-07 ~05:00; uncommitted): 9 reports (15–30 fields) + 6 shouldfail + Signatures.e;
+34 helpers (11 with partitions, 6 with existentials); differential 126,260 + 59,493 segments 0/0/0; census: max
+draws 225 — ALL Resolution, zero splits (new shape) at a Layout.Validation call site; PER-KEY MINTS 12 (first time
+the round-7/8 max of 11 is exceeded; no theorem violated — R is a hypothesis; headroom 89×); depth ≤ 2; vocab-fixed
+99.81%. FINDINGS: the WRITERS EXIST in sibling project ermine-writers (HTML/JavaFX/JSON/CSV/PDF), all with one
+Ermine-facing type `Scanner f -> Runner f -> Writer f z` — params→report confirmed; the .ei printer publishes a
+FREE row variable it does not bind (3 helpers; round-trips); AsOp-polymorphic inferred signatures unwritable
+(existentially quantified class; 5 helpers); Native.Record.header# has the MapView bug too (FORCED here);
+**Console.other treats case/let/where as SUBSTRINGS — a binding named e.g. sortShowcase hangs a piped session**
+(= the known REPL pipe quirk, now localised); partition blame wording backwards again; Layout.Magnitude is box
+sizes not number scaling; no type-level syntax for a record over a concrete row. E5 Lang/ LAUNCHED into the freed
+slot. Running: E1-review, E3-corrections, E5. Queue: E4-review, S3, pivot-panic (MapView) fix stage incl.
+header#, Console.other substring fix candidate.
+E1 REVIEW (2026-09-07 ~06:00): FIX-THEN-ADVANCE — measurements reproduce exactly; shared files KEEP (corpus-run.sh,
+looptrace-corpus.sh, README additive) except TestSurfaceParsers AMEND (N-1: the derived `files == moduleFiles.size`
+is VACUOUS — add a floor like `files > 250`); sql-render.sh sound with two amendments (positional name mapping;
+SqlRun.java's jar scrape vs python sqlite3); SqlEmitter join-tree bug CONFIRMED as the emitter's (SqlEmitter.scala:262
+emits both operands bare; a PORTABILITY bug — SQLite's flat grammar rejects it); old-vs-new corpus-run: 9 message
+diffs on pre-existing shouldfail modules, inf02's FIELD moves. MAPVIEW BUG SCOPE: record# returns a MapView;
+scalaRecord# (Lib.scala:988) panics and would return a MapView (:1007); scalaRecordIn# (:1012, live at
+Layout/Report.e:1594,1608) same; affected: Record.header, Record.anyRecordOrd, Relation.Sort.partialRecordOrd,
+Relation.nonEmptyRelation, Layout.Chart.srecKeys, Layout.Presentation, Relation.Predicate.all, Relation.Pivot.pivot,
+PivotTest.pivotData (in the tree for years); Relation.relation NOT affected. FIX = three .toMap (988/1007/1012) + a
+test that FORCES a pivot. Group fixes: Wide/Signatures.e; melt2/melt3 call sites on wide rows; three header errors;
+plan row; numbers (melt3 20/19; bundling 1.2× not 3–4×). E1 implementer RESUMED. Running: E3-corrections, E5,
+E1-corrections. Queue: E4-review, S3, MapView fix stage (F1), Console.other substring fix candidate.
