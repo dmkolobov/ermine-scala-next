@@ -677,3 +677,4 @@ acceptable, follow-up filed in the report. `ROW-CONSTRAINT-STATE.md`'s ADOPTED s
 instruction: `find . -name '*.ei' -delete` once after the flip (`core/examples/**`, `core/target/scala-*/classes/
 modules/**`), because `.ei` is not keyed by the solver configuration. Plan row and `tracker/lean/README.md`
 updated with the review verdict. NEXT = COMMIT.
+A1 COMMITTED fe024a7 (2026-09-06 ~23:00): the three defaults are SHIPPED (rowSound ON, smallcanon, budget 20000). Tree clean. Agents stopped. PROGRAMME COMPLETE for the user's stated goals; open follow-ups: .ei cache key by configuration (clear .ei once at adoption), a-priori fuel number, budget diagnostic code, the model's json seed loader lacks S2's env block, worktrees ermine-scala-wt-{s2,d1,b1,loader,prof} still present (user's call to remove).
