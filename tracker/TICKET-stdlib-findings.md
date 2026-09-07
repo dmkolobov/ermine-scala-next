@@ -44,6 +44,17 @@ A5. **`SqlEmitter` flattens a non-left-deep join tree without parentheses** (`Sq
 A6. **Window functions emit real SQL only on the MS SQL emitter**; every other emitter writes
     `TODO I don't yet know how to play … over …` into the query. (E1 §7.3.)
 
+A7. **A foreign exception becomes a `Bottom` VALUE, so nothing can catch it.** `Runtime.scala:51`'s `Prim.apply`
+    converts the exception, so `IO.Unsafe.eval`'s try/catch (`Lib.scala:1311`) never fires, `Parse.numberFormat`'s
+    `NumberFormatException` branch is dead, and `IO.catch` cannot catch a foreign exception either
+    (`catch (readFile "/nope") …` → `<error: …>`). Consequence: `Parse.parseInt`/`parseDouble` are not total —
+    `isJust (parseInt 10 "1O2")` is `True` (a `Just <error>`), and a hand-written "total" parser still bombs on
+    overflow (`parseIntTotal "99999999999999"`). (E5 finding 2, E5-REVIEW L-*; ticketed with A2's family of
+    runtime traps.)
+
+A8. **`File.readFile` calls `traceShow` through `System.console()`**, which breaks an `IO.CSV` read from a piped
+    or non-console session; the read itself works. (E5-REVIEW.)
+
 ## B. Type-system holes (things that type-check and should not, or vice versa)
 
 B1. **`Relation.Op.dateDiff`'s wrapper has no signature** (`Relation/Op.e:150` commented out), so it infers
@@ -61,13 +72,15 @@ B3. **The `.ei` printer publishes a free row variable it does not bind** (genera
 B4. **An `AsOp`-polymorphic helper's inferred signature cannot be written down**: it contains an existentially
     quantified CLASS, `(exists (AsOp: b). AsOp op, …)`. Three of five affected helpers in `Present/`, and
     `Time.bucketBy` (four `AsOp` existentials + `forall {a}`) — the compiler prints a type its own parser
-    cannot read back. (E3, E4 §4.3.)
+    cannot read back; the minimal case is `atAnyKind` (E5-REVIEW). (E3, E4 §4.3.)
 
 B5. **The projection fan-out cliff.** N projections of ONE open-row record parameter cost 3 / 30 / 212 / 1,232
     / 6,804 fresh row variables for N = 2..6, and (model replay without the budget) 35,923 at N = 7 and 185,848
     at N = 8 -- about 5.3-6x per extra read, every draw a `Resolution`, no split; N = 7 exhausts the adopted
     20,000-draw budget and a VALID program is rejected with the resource diagnostic. The same reads under one
-    written partition cost 0. `Present/ProjectionCost.e` + `shouldfail/proj01_seven_reads.e` pin it; the
+    written partition cost 0, and the remedy is the annotation and only the annotation: reordering the helper's
+    arguments changes nothing (1,230 → 1,233 draws), annotating the lambda takes it to 1 (E5-REVIEW).
+    `Present/ProjectionCost.e` + `shouldfail/proj01_seven_reads.e` pin it; the
     model reproduces the budget stop at the same count. **This is the one known shape on which the adopted
     budget rejects a valid program.** (E4-REVIEW M-*, E4 §4.) — stage S4 candidate (guard the repeated
     projections of one record, or raise the budget with a measured justification).
@@ -76,6 +89,14 @@ B6. **Refutation blame wording is a propagation reason, not a description, and i
     the same module prints a different clause of the same refutation per file vs in a batch, and on
     `shouldfail/inf02` the blamed FIELD moves; the clause follows the id base (a census must state its file
     order). (E1 §7.5, E2 F4, E3 P-*, E4.)
+
+B7. **The `.ei` interface is neither a subset nor a superset of the module**: it lists `private` names importers
+    cannot see and omits `foreign` names they can (proved both ways by importing). (E5 finding 7, E5-REVIEW.)
+
+B8. **A rank-2 function argument cannot be applied at all**: `oneWay nat a = nat a` fails with
+    `failed to unify type (forall x. f x -> m x) with type (a -> b)` — which explains the shape of every
+    `Control.*` dictionary and why `Data.Free` has no `foldFree` (a generic one loads only through a `Nat`
+    data-field wrapper). (E5-REVIEW.)
 
 ## C. Wrong, misleading or missing API
 
@@ -111,7 +132,12 @@ C10. Small language facts worth a guide chapter: fields may not shadow globals; 
     arithmetic is homogeneous (`fromNumericOp`); `'` is `infixl 0`; duplicate `field` declarations across
     modules do not clash (keyed by name and type) but duplicate top-level TERM names do (`undefined term` in a
     multi-module session); variadic melt / relation-level dynamic pivot are inexpressible (no type-level fold
-    over a row). (E1, E3, E4.)
+    over a row); the character-literal rule is positional (`'/'` fails after `==`, `'-'` works as an argument);
+    there are no operator sections; a suffixed bracket/brace literal cannot be a non-final argument, a pattern, or
+    precede `where`; `Prelude`'s `length`/`++` are `List`'s and `||` is `Layout.Report`'s. (E1, E3, E4, E5.)
+
+C11. **`String.Markdown.link`'s type is `(String -> String) -> String -> String`** — it CAN make a link
+    (`link ((++) "SUP-77/A") loc`), but the shape is a trap; E5's claim that it cannot was refuted. (E5-REVIEW.)
 
 ## D. Claims in older documents that do not reproduce
 
