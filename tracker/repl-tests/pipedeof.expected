@@ -1,0 +1,12 @@
+runtime error: <interactive>:1:1: error: undefined term
+^
+Use ":stack" to see a stack trace
+res0 : String = "complete"
+|> |> |> res1 : Int = 2
+|> res2 : Int = 42
+|> <interactive>:1:1: expected '{', eof, module header, semicolon, or whitespace
+f x = case x of<EOF>
+^
+<interactive>:1:2: syntax error
+f x = case x of<EOF>
+ ^

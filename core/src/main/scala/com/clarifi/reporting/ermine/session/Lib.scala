@@ -981,11 +981,20 @@ object Lib {
           mem(nidv) ->:
           mem(pidnidk) ->: mem(nidv2)))))))))))
 
+    // A1: the three `.toMap`s below.  Scala 2.13 made `Map#mapValues` return a
+    // lazy `MapView`, which is NOT a `Map`, so `record#` published a `MapView`
+    // at type `Record#` and every consumer that pattern-matches
+    // `Prim(_: Map[String,Runtime])` -- `scalaRecord#`, `header#`,
+    // `unsafeRecordIn#`'s cast -- failed to match and panicked when forced
+    // (`Relation.Pivot.pivot`, `Relation.Predicate.all`, `Record.header`,
+    // `Record.anyRecordOrd`, `Relation.Sort.partialRecordOrd`,
+    // `Relation.nonEmptyRelation`, `Layout.Chart.srecKeys`,
+    // `Layout.Presentation`).  Laziness hid it: nothing forced a pivot.
     val rec = addCon(mkCon[Map[String,Runtime]](Global("Native.Record","Record#")))
     val scalaRec = addCon(mkCon[Record](Global("Native.Record", "ScalaRecord#")))
     primOp(Global("Native.Record","record#"), Fun(x => x.whnfMatch("Native.Record.record#") {
            case t@Rec(m) =>
-             try { Prim(m.mapValues(_.whnf)) }
+             try { Prim(m.mapValues(_.whnf).toMap) }
              catch { case NonFatal(e) => Bottom(throw new RuntimeException("error invoking record#", e)) }
          }), FAR(a => recordT(a) ->: rec))
     primOp(Global("Native.Record","unsafeRecordIn#"), Fun(x => x.whnfMatch("Native.Record.unsafeRecordIn#") {
@@ -1004,12 +1013,12 @@ object Lib {
                  , FAR(a => FAR(b => FAR(c => recordT(a) ->: recordT(b) ->: recordT(c)))))
     primOp(Global("Native.Record", "scalaRecord#"),
            Fun(x => x.whnfMatch("Native.Record.scalaRecord#") {
-             case Prim(t: Map[String, Runtime]) => Prim(t mapValues (toPrimExpr(_)))
+             case Prim(t: Map[String, Runtime]) => Prim((t mapValues (toPrimExpr(_))).toMap)
            }),
            rec ->: scalaRec)
     primOp(Global("Native.Record", "scalaRecordIn#"),
            Fun(x => x.whnfMatch("Native.Record.scalaRecordIn#") {
-             case Prim(t: Record) => Prim(t mapValues (fromPrimExpr(_)))
+             case Prim(t: Record) => Prim((t mapValues (fromPrimExpr(_))).toMap)
            }),
            scalaRec ->: rec)
 

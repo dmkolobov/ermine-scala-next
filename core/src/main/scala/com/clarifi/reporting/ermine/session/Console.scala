@@ -600,6 +600,21 @@ object Console {
   case object Unbalanced extends Balance
   case object Borked extends Balance
 
+  /** A2: `case`, `let` and `where` open a layout block only when they are WORDS.
+    * The old test was `Set("case","let","where").exists(input.contains(_))`, so
+    * `staircase`, `"complete"`, `palette`, `delete`, `showcase` and `elsewhere`
+    * -- an identifier or even the inside of a string literal -- opened a `|>`
+    * continuation that a piped session could not close.  The boundary excludes
+    * the characters an Ermine name can be built from (`'` and `#` among them),
+    * so `case'` and `let#` are names, not keywords.  A keyword inside a string
+    * literal (`"where to?"`) still opens a continuation; that costs one extra
+    * line, no longer an unbounded loop.
+    */
+  private val layoutKeyword =
+    "(?<![A-Za-z0-9_'#])(case|let|where)(?![A-Za-z0-9_'#])".r
+
+  def opensLayout(s: String): Boolean = layoutKeyword.findFirstIn(s).isDefined
+
   def balanced(s: String, stk: List[Char] = List()): Balance =
     if (s.length == 0) if (stk.isEmpty) Balanced else Unbalanced
     else s.head match {
@@ -621,10 +636,14 @@ object Console {
     // D3: the fused StatementParsers.multiline probe is gone; a line
     // that ends mid-definition keeps the |> continuation heuristics
     val needMoar = x.trim.endsWith("=") || x.trim.endsWith("->") || x.trim.endsWith("do")
-    val verbose = Set("case","let","where")
-    while ((needMoar || (balanced(input) == Unbalanced) || verbose.exists(input.contains(_))) && !blank) {
+    while ((needMoar || (balanced(input) == Unbalanced) || opensLayout(input)) && !blank) {
       val last = e.readLine("|> ")
-      blank = last == ""
+      // A2: `readLine` answers null at end of input (jline 3 throws
+      // EndOfFileException; :146 turns it into null), and `null == ""` is false
+      // in Scala -- so before this line a piped session appended "\nnull" for
+      // ever and re-ran `balanced` over a growing string.  EOF ends the
+      // continuation exactly like a blank line, and what was read is processed.
+      blank = (last == null) || (last == "")
       if (!blank) { input = input + "\n" + last }
     }
     val startLoc = scalaparsers.Pos.start("<interactive>", input)

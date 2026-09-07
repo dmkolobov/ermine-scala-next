@@ -18,9 +18,18 @@ fail=0
 for input in tracker/repl-tests/*.in; do
   name=$(basename "$input" .in)
   expected="tracker/repl-tests/$name.expected"
-  actual=$(
+  raw="/tmp/repl-smoke-$name.raw"
+  # F1/A2: a TIMEOUT and an exit-code check.  `Console.other` used to reopen the
+  # `|>` continuation for any line merely CONTAINING "case"/"let"/"where" and to
+  # treat `readLine`'s null at EOF as a non-blank line, so a piped session could
+  # spin for ever; `pipedeof.in` is exactly such an input and without a cap it
+  # would hang this suite instead of failing it.
+  timeout "${REPL_SMOKE_TIMEOUT:-180}" \
     "$JAVA_HOME/bin/java" -Dermine.typeCheck=true -Dermine.useInterface=false \
-      -cp "$cp" com.clarifi.reporting.ermine.session.Console < "$input" 2>&1 |
+      -cp "$cp" com.clarifi.reporting.ermine.session.Console < "$input" > "$raw" 2>&1
+  rc=$?
+  actual=$(
+    cat "$raw" |
     sed -n '/Loaded [0-9]* modules/,$p' |   # drop banner and startup module list
     tail -n +2 |                            # drop the "Loaded N modules" line
     grep -v '^  ' |                         # drop :import's module listing
@@ -29,6 +38,11 @@ for input in tracker/repl-tests/*.in; do
     sed 's/^>> //; s/^>>$//' |              # strip prompts
     grep -v '^$'
   )
+  if [[ $rc != 0 ]]; then
+    echo "  FAIL  $name (the REPL exited $rc$([[ $rc == 124 ]] && echo ' — timed out'); raw: $raw)"
+    fail=1
+    continue
+  fi
   if diff -u "$expected" <(printf '%s\n' "$actual") > /tmp/repl-smoke-$name.diff 2>&1; then
     echo "  PASS  $name ($(grep -c . "$expected") checks)"
   else

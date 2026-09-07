@@ -1,0 +1,9 @@
+staircase
+"complete"
+(x -> case x of
+  1 -> 2
+  _ -> 0) 1
+
+(let y = 41 in y + 1)
+
+f x = case x of
