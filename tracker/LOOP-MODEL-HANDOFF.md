@@ -974,3 +974,9 @@ Audit + #print axioms of the new lemma, commits ONE commit "Loop model S4c fix: 
 shouldfail/ (verdict change: VALID program now compiles) with a positive twin, `.ei` cache cleared once (not keyed by
 the flag), state file ADOPTED block, plan row; gates: TestLoopTrace 720/720, corpus-run --batch 84/68, 18-group
 differential, perf-bench. Do NOT flip without the user. Queue after: R2, R3, A1b, F3.
+
+S4c FIX COMMITTED a696d1c (2026-09-07 ~18:05): J-1 closed (solve_rejects_input / solveP_rejects_input; hE : SupFresh su0'
+(efs envFacts) from the sin supply counter); J-2..J-8 prose. Audit 4,295 / 0. EVERY prerequisite the S4B and S4c
+reviewers set for adopting -Dermine.topNormalise is now met. THE FLIP IS THE USER'S DECISION — NOT MADE. Waiting on
+the user; meanwhile the queue continues: R2 (Ermine as a Rose row theory at the model level, Lean only) next, then
+R3, A1b, F3. Agents: S4c implementer ab0be9ea98f80dab4 and reviewer adb10d8f6c5456c89 COMPLETE (resumable).
