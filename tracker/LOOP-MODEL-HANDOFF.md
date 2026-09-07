@@ -905,3 +905,19 @@ C5 Layout.Scan re-exports, K-1 Type.scala:414 `.toSet`), then the ticket's remai
 Standing rules unchanged: autonomous mode; commit reviewed green stages on the branch; no push/merge; no default
 flips without the user; Opus implementer + Opus reviewer per stage; one JVM at a time (machine ~9 GB free);
 never `lake build` while another agent runs looptrace; delete .ei files; `.slow` for non-terminating modules.
+
+S4B REVIEW ARRIVED (2026-09-07 ~13:50). Verdict FIX-THEN-ADVANCE (tracker/loopmodel/S4B-REVIEW.md, H-1..H-13).
+Adoption recommendation: DO NOT flip topNormalise ON yet (three prerequisites: lake build green + audit count;
+correspondence lemma code->S4Top.lean (H-9, new stage S4c); the self-read class H-2 closed/documented).
+Blocker H-1: full `lake build` fails at Loop/NoFalseAccept.lean:946 (solveSeed_rejects_of_refuted stated about
+buildQueue's queue; the mirror interposed topNormalise); Audit.lean cannot run. H-12: four replay call sites in
+Loop/Main.lean unpatched (ON census over a replay inert). H-2: self-read v <- (v,C) in a k>=3 family loses the
+loop's syntactic refutation; layer (iii) catches it at defaults; fix = exclude self-reads. H-3 diagnostic text
+moves; H-4 sin lacks topNormalise; H-5/6/7/8 docs; H-10 .ei gate noise floor (parallel load); H-13 = my 2862d14.
+FIX ROUND SENT to the S4 implementer abc3f1c6cb9c6e5eb (brief tracker/loopmodel/briefs/brief-S4-fix.md, F1..F9,
+gates listed there). Reviewer a2b44eca957190201 is COMPLETE (resumable for a quick re-check of the H-2 fix).
+WHEN THE FIX ROUND REPORTS: orchestrator verifies `cd tracker/lean && lake build` (green) + `lake env lean
+Audit.lean` (count, 0 non-standard) + `lake env lean tracker/loopmodel/S4Top.lean` + seeds H8/H8c/H21 ON REJECTED
++ TestLoopTrace 720/720; optionally SendMessage the reviewer for a re-check of H-1/H-2/H-12; then the ADVANCE
+steps of the compaction checkpoint above (apply Scala diff to main, ONE commit, stamp ticket B5, report to the
+user with the adoption recommendation = NOT YET, S4c queued before adoption).
