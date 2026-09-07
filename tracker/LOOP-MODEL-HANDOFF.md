@@ -803,3 +803,21 @@ is wrong twice (getMonth/4+1 then a 0-based index with a 1-based number: quarter
 unreachable). WIRING for Algebra/Time/Present applied by the orchestrator (both scripts + README; counts 13/6,
 11/3, 11/6; header total 130); verification running (wire.log: looptrace-corpus on the six groups + corpus-run
 --batch). Then COMMIT E2 and E3; E4 after its review; E5 when delivered; then S3, F1 (MapView), tickets.
+E2 COMMITTED 78fc221 (with the Algebra/Time/Present wiring, verified: six groups traced, every segment agrees; batch 130 files 69/61, old corpus 23/43 unchanged — my first wiring patch had missed Time/Present in corpus-run.sh's files= array; fixed). E3 COMMITTED 2c38956. S3 (mkSimplified) LAUNCHED into the freed slot. Running: E4-review, E5, S3. Queue: E4 commit after its review's fixes; E5 review + commit; F1 MapView fix stage; TICKET-stdlib-findings.md (orchestrator writes from the confirmed findings); Console.other substring fix candidate.
+E4 REVIEW (2026-09-07 ~08:30): FIX-THEN-ADVANCE — Ermine good (11 load, 6 negatives verbatim, differential 0/0/0,
+walkers 20/20); fixes: INVENTED HEADLINE NUMBERS in four modules (SalesDashboard $1,103,283.6 vs the data's
+482,408.3; VarianceStyling, AtomicAndRelation, StyleGridHeatmap) — dangerous because every other row is
+arithmetically perfect; census: max draws 218 not 225, "per-key mints 12" is a MISLABEL (Cycle.lean:407 maxmint =
+minted-vocabulary size; --mints per-key max = 1 — E3's P-18 repeated); the AsOp existential class appears for 3 of
+5 helpers; concrete-row record syntax EXISTS (`Ord (Record (| positionName |))` loads) — restore SortShowcase's two
+dropped signatures; writers: 4 of 6 use the harness' entry, HTML/Json have two constructors; missed
+Layout.Column.Unsafe/Layout.Scan/PresRow/SelectorMode (comments only). NEW FINDING (ticket + solver): N projections
+of ONE open-row record parameter cost 3/33/207/1,243/6,795 draws for N=2..6 and N=7 EXHAUSTS THE 20,000 BUDGET
+("drew 20009 fresh row variables"); the same under one written partition costs 0 — a realistic user shape (a
+validator lambda) where a VALID program hits the budget; ValidationReport's 218 is the cheap case; "headroom 89×"
+misleading. Console.other hang CHARACTERISED: readLine returns null at EOF (Console.scala:149), `null == ""` is
+false, so `blank` never flips → INFINITE loop appending "\n"+null and re-running balanced()+3 contains on the
+growing string; minimal input `printf 'staircase\n' | bin/ermine` (4,906 prompts in 60 s) — fix = treat null as
+EOF (F2). corpus-run.sh PER-FILE hoists were MISSING for Algebra/Time/Present (orchestrator's patch bug) — fixed
+now. S3 in flight has an uncommitted Subst.scala change deleting `a <- (a)` tautologies → Present/Signatures.e's
+taut/tautIsFree/scaledByFull need a revisit when S3 lands. E4 implementer to be RESUMED with the corrections.

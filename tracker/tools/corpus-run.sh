@@ -163,6 +163,12 @@ for f in "${files[@]}"; do
     core/examples/Wide/Helpers.e) ;;
     core/examples/Ai/*)           args=( core/examples/Ai/Common.e "$f" ) ;;
     core/examples/Wide/*)         args=( core/examples/Wide/Helpers.e "$f" ) ;;
+    core/examples/Algebra/Helpers.e) ;;
+    core/examples/Algebra/*)      args=( core/examples/Algebra/Helpers.e "$f" ) ;;
+    core/examples/Time/Helpers.e) ;;
+    core/examples/Time/*)      args=( core/examples/Time/Helpers.e "$f" ) ;;
+    core/examples/Present/Helpers.e) ;;
+    core/examples/Present/*)      args=( core/examples/Present/Helpers.e "$f" ) ;;
   esac
   if [[ -n ${ERMINE_CP:-} ]]; then
     # same JVM invocation as bin/ermine, classpath from the snapshot file
