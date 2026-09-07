@@ -411,7 +411,7 @@ any change, then the cheapest change with the largest profiled share, then the
   not work done here.
 
 
-- [ ] **P10 [B] Dequeue-ORDER sensitivity of the row solver** (from the LOOP MODEL
+- [x] **P10 [B] Dequeue-ORDER sensitivity of the row solver** (from the LOOP MODEL
   programme, L5 round 8, 2026-09-05).  One satisfiable 21-variable / 10-label /
   18-partition input, `tracker/repro/satterm/seeds/slow/GU05.json` (transcoded
   from `core/examples/incomplete/gu05_star_join_4dim_concrete_signature.e(62:1)`'s
@@ -432,9 +432,12 @@ any change, then the cheapest change with the largest profiled share, then the
   must measure before and after; it is NOT a hang (every base run to completion
   terminates) and is filed here as the first real, satisfiable, pathological
   input the solver has.  Awaiting the design stage; no code here.
-  **ANSWERED 2026-09-06 by LOOP MODEL stage D1 -- ANSWERED, NOT CLOSED: the box stays unticked
-  until a default moves (D1B review U-4), because the change is uncommitted, default OFF and
-  unadopted.**  Everything below is the answer, and the adoption decision is the user's.
+  **CLOSED 2026-09-06: the default MOVED.**  Stage A1 (`loopmodel/A1-ADOPTION.md`), on the
+  user's decision, made `-Dermine.dequeuePolicy=smallcanon` the DEFAULT, together with
+  `-Dermine.rowSound=true` (its adoption condition, U-0 below) and `-Dermine.solveBudget=20000`.
+  `-Dermine.rowSound=false -Dermine.dequeuePolicy=shipped` restores the old behaviour exactly.
+  Everything below is the answer D1 produced and is unchanged by the flip; the perf reading at
+  the flip itself is in `A1-ADOPTION.md` §2 (A1.9).
   **The full text:  D1 (`loopmodel/D1-DESIGN.md`, `D1-CHANGE.md`),
   behind `-Dermine.dequeuePolicy=smallcanon`, DEFAULT OFF, not committed.**  Six dequeue
   orders were measured on the model over the whole eight-group corpus (2,301,195 solve
@@ -468,7 +471,9 @@ any change, then the cheapest change with the largest profiled share, then the
   had to be raised to 6.0 because this host's desktop background load never falls below the
   harness's 1.5 and a batch run leaves the 1-minute average at ~4.3 by itself, so the OFF/ON
   comparison stands but the absolute seconds are not comparable with quiet-machine numbers.
-  Adoption (turning either default ON) is the user's decision and was not made.
+  **ADOPTED 2026-09-06 (stage A1)**, with `-Dermine.rowSound` and a 20,000 draw budget, and
+  re-measured at the flip: see `tracker/loopmodel/A1-ADOPTION.md` and the dated ADOPTED section
+  at the top of `tracker/ROW-CONSTRAINT-STATE.md`.
 
 ## P7 DESIGN (written 2026-08-31; awaiting sign-off before any code)
 

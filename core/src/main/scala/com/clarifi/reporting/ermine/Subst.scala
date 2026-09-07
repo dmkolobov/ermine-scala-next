@@ -1188,8 +1188,9 @@ object Subst {
 
     /* ---------------------------------------------------------------- *
      * S2 (`tracker/loopmodel/S2-DESIGN.md`), layers (ii) and (iii).      *
-     * Both are DEFAULT OFF; with the flags off not one line below runs   *
-     * and the solve is the shipped one, instruction for instruction.     *
+     * ADOPTED 2026-09-06: both DEFAULT ON.  With `-Dermine.rowSound=false`  *
+     * not one line below runs and the solve is the shipped one,           *
+     * instruction for instruction.                                        *
      * ---------------------------------------------------------------- */
 
     /* (iii)'s INPUT.  `solve` does NOT `substType` its constraints before

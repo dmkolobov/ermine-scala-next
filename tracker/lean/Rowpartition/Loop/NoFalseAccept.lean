@@ -1109,8 +1109,20 @@ def seedS0 (fl : Flags) (sd : Seed) (base : Nat) : State :=
   | .error _ =>
     initState PQueue.empty (Sup.ofSeed 0) [] fl (seedSystem sd base).2 sd.name 0
 
+/-- The PRE-ADOPTION flag configuration: all three S2 layers OFF, i.e. what
+`Constraints.GenRules` did before 2026-09-06 and what `-Dermine.rowSound=false` restores.
+
+A1 (`tracker/loopmodel/A1-ADOPTION.md`) flipped `Flags`'s three `rowSound*` defaults to
+`true`, so `({} : Flags)` no longer denotes that configuration.  The three "the shipped loop
+ACCEPTS this" theorems below are statements ABOUT the shipped loop, so they now name it
+explicitly; not one of them is weakened, and the sentence each proves is the sentence it
+proved before the flip. -/
+def shippedFlags : Flags :=
+  { rowSoundBare := false, rowSoundSat := false, rowSoundDecide := false }
+
 /-- **The bug, in the kernel.**  The shipped loop ACCEPTS `MIN1`. -/
-theorem min1_loop_accepts : isSolvedB (runS (seedS0 {} min1Seed 300) 200) = true := by rfl
+theorem min1_loop_accepts :
+    isSolvedB (runS (seedS0 shippedFlags min1Seed 300) 200) = true := by rfl
 
 /-- **The fix, in the kernel.**  Layer (iii) REFUTES `MIN1`, at `l35`. -/
 theorem min1_decide_refutes :
@@ -1118,7 +1130,16 @@ theorem min1_decide_refutes :
       .refuted (Lbl.repro 35) 305 (searchReason 2) := by rfl
 
 /-- **The bug, in the kernel.**  The shipped loop ACCEPTS `MIN2` at this id base. -/
-theorem min2_loop_accepts : isSolvedB (runS (seedS0 {} min2Seed 300) 200) = true := by rfl
+theorem min2_loop_accepts :
+    isSolvedB (runS (seedS0 shippedFlags min2Seed 300) 200) = true := by rfl
+
+/-- **And the adoption, in the kernel.**  At the DEFAULT flags — which since 2026-09-06 are
+the compiler's, with every S2 layer ON — the loop does NOT accept `MIN2`: layer (i)'s
+bare-row exactness refutes it inside `runS`, before layer (iii) in `solveSeed` is reached.
+This is the one of the three seeds the LOOP itself now kills; `MIN1` and `SURV1` need the
+per-label decision, which is not part of `runS`. -/
+theorem min2_loop_rejects_at_defaults :
+    isSolvedB (runS (seedS0 {} min2Seed 300) 200) = false := by rfl
 
 /-- **The fix.**  Layer (iii) REFUTES `MIN2`, at `l17`. -/
 theorem min2_decide_refutes :
@@ -1126,7 +1147,8 @@ theorem min2_decide_refutes :
       .refuted (Lbl.repro 17) 304 (searchReason 1) := by rfl
 
 /-- **The bug.**  The shipped loop ACCEPTS `SURV1`. -/
-theorem surv1_loop_accepts : isSolvedB (runS (seedS0 {} surv1Seed 300) 200) = true := by rfl
+theorem surv1_loop_accepts :
+    isSolvedB (runS (seedS0 shippedFlags surv1Seed 300) 200) = true := by rfl
 
 /-- **The fix, on the seed that survives BOTH propagations.**  Layer (iii) REFUTES `SURV1`,
 at `l20`. -/

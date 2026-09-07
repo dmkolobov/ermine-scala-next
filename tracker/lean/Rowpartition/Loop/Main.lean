@@ -45,14 +45,22 @@ a canonical repeat is a candidate that has to be replayed.
 `disj`, `nolabel`, `lateLabel`, `noresguard`, `nosplitkey`, `nosplitrow`, `noresrow`,
 `emptyrow`, and S2's `rowsound` / `rsbare` / `rssat` / `rsdecide` / `rsbudget=<n>` /
 `rssolvebudget=<n>` (with
-`norsbare` / `norssat` / `norsdecide` to switch one back off).  With no `--flags` the SHIPPED
-defaults are used, and every S2 flag is OFF in them.
+`norowsound` to switch all three S2 layers back off, and `norsbare` / `norssat` /
+`norsdecide` to switch one back off).  With no `--flags` the SHIPPED defaults are used --
+and since 2026-09-06 (`tracker/loopmodel/A1-ADOPTION.md`) the S2 layers are ON in them,
+because they are on in the compiler's defaults.  `--flags=norowsound` is the pre-adoption
+configuration.
 
 `--policy=<name>` (D1 round A2) prints instead ONE `pol` line per solve -- the verdict, the
 dequeues and the ids drawn -- with the loop's `pop` under that dequeue order:
-`shipped` (the default, and `Q.pop` itself), `concfirst`, `smallrhs`, `fifo` or `canon`
+`shipped` (`Q.pop` itself), `concfirst`, `smallrhs`, `fifo`, `canon` or `smallcanon`
 (`Loop/Policy.lean`).  `--budget=<n>` caps the fresh ids ONE SOLVE may draw and makes
-exhaustion a REJECTION with a diagnostic (`Loop/Budget.lean`); `0`, the default, is off.
+exhaustion a REJECTION with a diagnostic (`Loop/Budget.lean`); `0` is off.
+
+ADOPTED 2026-09-06 (`tracker/loopmodel/A1-ADOPTION.md`): on a `json:` seed the DEFAULTS are
+`--policy=smallcanon --budget=20000`, which are the compiler's defaults, so the model and the
+compiler agree with nothing on either command line.  `--policy=shipped --budget=0` is the
+pre-adoption configuration (and `--policy=shipped` alone already implies it, by `effBudget`).
 Both work on a `json:` seed and under `--replay`.  A budget asked for at the SHIPPED order is
 IGNORED, here and in the compiler alike (`Policy.effBudget`, D1B review): under that order a
 solve's draw count depends on the id base, so a budget alone would reject a well-typed program
@@ -94,9 +102,14 @@ def applyFlag (f : Flags) : String → Flags
   | "nosplitrow" => { f with splitRow := false }
   | "noresrow" => { f with resRow := false }
   | "emptyrow" => { f with emptyRow := true }
-  -- S2 (`tracker/loopmodel/S2-DESIGN.md`), all DEFAULT OFF: `rowsound` is the master, and
-  -- the three layers are separately switchable so each can be measured alone.
+  -- S2 (`tracker/loopmodel/S2-DESIGN.md`): `rowsound` is the master and the three layers are
+  -- separately switchable so each can be measured alone.  ADOPTED 2026-09-06: all three
+  -- DEFAULT ON, so `rowsound` is now a no-op and `norowsound` is the token that moves.
   | "rowsound" => { f with rowSoundBare := true, rowSoundSat := true, rowSoundDecide := true }
+  -- A1 (2026-09-06): the three layers DEFAULT ON, so the token that has to exist is the one
+  -- that turns them off -- otherwise the pre-adoption configuration is unreachable from the
+  -- command line and `-Dermine.rowSound=false` cannot be forwarded to the model.
+  | "norowsound" => { f with rowSoundBare := false, rowSoundSat := false, rowSoundDecide := false }
   | "rsbare" => { f with rowSoundBare := true }
   | "rssat" => { f with rowSoundSat := true }
   | "rsdecide" => { f with rowSoundDecide := true }
@@ -186,12 +199,21 @@ def replayPolicyOne (fl : Flags) (pol : Policy) (bud : Nat) (fuel : Nat) (g : Se
 def polCols (rep : PolRep) : String :=
   s!"steps={rep.steps}\tdrawn={rep.drawn}\tdrawn0={rep.drawn0}"
 
-/-- The `--policy=` option; absent means the shipped order. -/
+/-- The draw budget a `json:` seed run uses when the command line does not say.
+
+A1 (2026-09-06): `Constraints.GenRules.solveBudget`'s default, so that the model and the
+compiler run the same solve with nothing on either command line. -/
+def defaultBudget : Nat := 20000
+
+/-- The `--policy=` option; absent means the compiler's default dequeue order.
+
+A1 (2026-09-06): that default is `smallcanon`, not `shipped` -- `Constraints.GenRules.
+dequeuePolicy`.  `--policy=shipped` is the pre-adoption order. -/
 def policyOf (opts : List String) : Policy :=
   match (opts.find? (fun a => a.startsWith "--policy=")).bind
       (fun a => Policy.ofString ((a.drop 9).toString)) with
   | some p => p
-  | none => .shipped
+  | none => .smallCanon
 
 /-- The `depth` summary line of one solve, without the leading index/site columns. -/
 def depthCols (rep : DepthRep) : String :=
@@ -254,15 +276,21 @@ def replayMain (path : String) (opts : List String) : IO UInt32 := do
   let polOpt : Option Policy :=
     (opts.find? (fun a => a.startsWith "--policy=")).bind
       (fun a => Policy.ofString ((a.drop 9).toString))
-  let pol := polOpt.getD .shipped
   let budOpt : Option Nat :=
     (opts.find? (fun a => a.startsWith "--budget=")).bind (fun a => (a.drop 9).toNat?)
-  let bud := budOpt.getD 0
   let flush : Nat → Segment → IO (Nat × Nat × Nat × Nat × Nat × Nat) := fun j g => do
     if !(lo ≤ j && j ≤ hi) then
       return (0, 0, 0, 0, 0, 0)
+    -- D1: the policy and the budget the segment was PRODUCED under, from its own `sin`
+    -- record; an explicit `--policy=` / `--budget=` wins.  A trace that predates those two
+    -- columns reads as `shipped`/0, which is what it was.  A1 (2026-09-06): the census path
+    -- reads them the same way the record path always has, so `--budget=<n>` alone over a
+    -- policy-on trace no longer silently censuses it at the shipped order.
+    let segPol := (Policy.ofString g.policy).getD .shipped
+    let usePol := polOpt.getD segPol
+    let useBud := budOpt.getD g.budget
     if polMode then
-      match replayPolicyOne fl pol bud fuel g with
+      match replayPolicyOne fl usePol useBud fuel g with
       | .error m =>
         IO.println s!"#skip\t{j}\t{m}"
         return (0, 1, 0, 0, 0, 0)
@@ -321,12 +349,6 @@ def replayMain (path : String) (opts : List String) : IO UInt32 := do
         return (1, 0, 0, 0, (if rep.verdict == "REJECTED" then 1 else 0),
           (if rep.verdict == "FUEL" then 1 else 0))
     IO.println s!"#seg\t{j}\t{g.site}\t{g.loc}"
-    -- D1: the policy and the budget the records are produced under.  An explicit `--policy=` /
-    -- `--budget=` wins; otherwise the segment's own `sin` fields are used, which is what makes
-    -- a policy-on compiler trace replay under that policy without being told.
-    let segPol := (Policy.ofString g.policy).getD .shipped
-    let usePol := polOpt.getD segPol
-    let useBud := budOpt.getD g.budget
     match (if usePol == .shipped && useBud == 0 then replay fl fuel g
            else replayP usePol useBud fl fuel g) with
     | .error m =>
@@ -422,12 +444,25 @@ def mainImpl (args : List String) : IO UInt32 := do
       | .error e => IO.eprintln s!"bad seed: {e}"; return 2
       | .ok seed =>
         let (parts, ns) := seedSystem seed base
-        let out := solveSeed fl site "-" parts ns (Sup.ofSeed ns.supplyLo) fuel
+        -- A1 (2026-09-06): the seed is solved under the COMPILER'S DEFAULTS -- the dequeue
+        -- policy `policyOf` gives (`smallcanon` unless `--policy=` says otherwise) and
+        -- `defaultBudget` -- so that `looptrace <seed>.json <base>` and `bin/ermine` run the
+        -- same solve with nothing on either command line.  `--policy=shipped` (which also
+        -- zeroes the budget, by `effBudget`) is the pre-adoption configuration, and there
+        -- `solveSeedP .shipped 0` IS `solveSeed`: `stepSP_shipped` is `rfl`.
+        let dfPol := policyOf opts
+        let dfBud := natOpt opts "--budget=" defaultBudget
+        -- a thunk, not a value: the `--policy=` census, `--depth`, `--cycle` and `--mints`
+        -- paths do not want this solve run at all.
+        let solveOut : Unit → SolveOut := fun _ =>
+          if dfPol == .shipped && effBudget dfPol dfBud == 0 then
+            solveSeed fl site "-" parts ns (Sup.ofSeed ns.supplyLo) fuel
+          else solveSeedP dfPol dfBud fl site "-" parts ns (Sup.ofSeed ns.supplyLo) fuel
         if !opts.contains "--trace" &&
             (opts.any (fun a => a.startsWith "--policy=") ||
              opts.any (fun a => a.startsWith "--budget=")) then
-          let pol := policyOf opts
-          let bud := natOpt opts "--budget=" 0
+          let pol := dfPol
+          let bud := dfBud
           match buildQueue parts (Sup.ofSeed ns.supplyLo) with
           | .error m => IO.println s!"pol\t{(policyOf opts).toStr}\tBUILD\t{m}"
           | .ok (q, su2) =>
@@ -493,7 +528,16 @@ def mainImpl (args : List String) : IO UInt32 := do
               IO.println s!"bind\t{i}\t{w}"
             IO.println s!"v0\t{String.intercalate "," ((stateVars st0).toList.map toString)}"
         else if opts.contains "--verdict" then
-          IO.println s!"genRules={fl.toStr}  base={base}  supply={ns.supplyLo}"
+          -- A1: the compiler's `GenRules.toString` carries `+pol:<name>` and `+budget:<n>`
+          -- for the EFFECTIVE configuration (D1B review U-6); `Flags` has no policy field,
+          -- because the policy is read by the loop DRIVER and not by any rule, so the two
+          -- tokens are appended here.  The two fingerprints are then the same string.
+          let out := solveOut ()
+          let effB := effBudget dfPol dfBud
+          IO.println (s!"genRules={fl.toStr}" ++
+            (if dfPol == .shipped then "" else s!"+pol:{dfPol.toStr}") ++
+            (if effB == 0 then "" else s!"+budget:{effB}") ++
+            s!"  base={base}  supply={ns.supplyLo}")
           match out.verdict with
           | "SOLVED" =>
             IO.println s!"SOLVED   {bindingsStr ns out.env}  [bound={out.env.size} drawn={out.drawn} sat={out.sat.length}]"
@@ -505,11 +549,7 @@ def mainImpl (args : List String) : IO UInt32 := do
           -- seed path answered `--policy=` with the `pol` census line and never printed a
           -- record, so `TestLoopTrace` -- which drives its seeds through this path -- compared
           -- a census line against a trace and was falsified before it started.
-          let pol := policyOf opts
-          let bud := natOpt opts "--budget=" 0
-          let out :=
-            if pol == .shipped && bud == 0 then out
-            else solveSeedP pol bud fl site "-" parts ns (Sup.ofSeed ns.supplyLo) fuel
+          let out := solveOut ()
           for r in out.records do IO.println r
           if out.verdict != "SOLVED" then
             IO.eprintln s!"# {out.verdict} {out.message}"

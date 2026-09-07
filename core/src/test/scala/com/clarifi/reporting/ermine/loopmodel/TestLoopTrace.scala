@@ -354,10 +354,13 @@ object TestLoopTrace extends Properties("loop model trace") {
     ("ermine.splitRow",          "false",   "nosplitrow"),
     ("ermine.resRow",            "false",   "noresrow"),
     ("ermine.emptyRow",          "true",    "emptyrow"),
-    // S2 (`tracker/loopmodel/S2-DESIGN.md`), all DEFAULT OFF on both sides.  The master
-    // `-Dermine.rowSound` turns the three layers on together, and each is separately
-    // switchable, so each maps to its own model token (`Loop/Main.lean`'s `applyFlag`).
+    // S2 (`tracker/loopmodel/S2-DESIGN.md`).  ADOPTED 2026-09-06: all three layers DEFAULT
+    // ON on both sides, so the token that MUST exist is the one that turns them off --
+    // `-Dermine.rowSound=false` is the pre-adoption configuration and has to reach the model
+    // as `norowsound` (`Loop/Main.lean`'s `applyFlag`), not as silence.  The master turns the
+    // three layers together and each is separately switchable in either direction.
     ("ermine.rowSound",            "true",  "rowsound"),
+    ("ermine.rowSound",            "false", "norowsound"),
     ("ermine.rowSound.bare",       "true",  "rsbare"),
     ("ermine.rowSound.bare",       "false", "norsbare"),
     ("ermine.rowSound.saturated",  "true",  "rssat"),
@@ -395,7 +398,7 @@ object TestLoopTrace extends Properties("loop model trace") {
         (k, v) == ("ermine.labelCheckEarly", "true") || (k, v) == ("ermine.resGuard", "true") ||
         (k, v) == ("ermine.splitKey", "true") || (k, v) == ("ermine.splitRow", "true") ||
         (k, v) == ("ermine.resRow", "true") || (k, v) == ("ermine.emptyRow", "false") ||
-        (k, v) == ("ermine.rowSound", "false")
+        (k, v) == ("ermine.rowSound", "true")
     }
     if (bad.nonEmpty)
       Left("no `looptrace --flags` token is known for " +
@@ -415,10 +418,21 @@ object TestLoopTrace extends Properties("loop model trace") {
     * selects its `pol` census.  Forwarded here for the same reason S2 review V-3 made the
     * numeric flags forwarded: otherwise `sbt -Dermine.dequeuePolicy=smallcanon
     * "core/testOnly *TestLoopTrace"` would run the compiler under the policy and the model
-    * under the shipped order, and the property would fail for a reason that is not a bug. */
+    * under the shipped order, and the property would fail for a reason that is not a bug.
+    *
+    * ADOPTED 2026-09-06: the model's own defaults are now the compiler's -- `--policy=`
+    * absent means `smallcanon` and `--budget=` absent means 20000 (`Loop/Main.lean`'s
+    * `policyOf` and `defaultBudget`).  So what has to be forwarded is any value that DIFFERS
+    * from the shared default, in EITHER direction: `-Dermine.dequeuePolicy=shipped` must now
+    * reach the model as `--policy=shipped` (and, by `effBudget`, take the budget with it),
+    * exactly as `-Dermine.dequeuePolicy=smallcanon` had to reach it before the flip. */
+  val d1Defaults: List[(String, String)] =
+    List("ermine.dequeuePolicy" -> "smallcanon", "ermine.solveBudget" -> "20000")
+
   val setD1: List[(String, String)] =
-    List("ermine.dequeuePolicy" -> "shipped", "ermine.solveBudget" -> "0").flatMap {
-      case (k, off) => Option(System.getProperty(k)).filter(_.nonEmpty).filter(_ != off).map(k -> _)
+    d1Defaults.flatMap {
+      case (k, dflt) =>
+        Option(System.getProperty(k)).filter(_.nonEmpty).filter(_ != dflt).map(k -> _)
     }
 
   val d1Opts: List[String] = {

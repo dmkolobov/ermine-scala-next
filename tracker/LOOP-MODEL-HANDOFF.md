@@ -618,3 +618,62 @@ looptrace 1,670, TestLoopTrace 714/714 x3, boot+top differential 146,872/146,872
 fingerprint unchanged at defaults. NO COMMITS; both flags DEFAULT OFF. Recommendation carried forward from the
 review: adopt rowSound first or with the policy, the policy second, the budget only with the policy.
 D1-B + D1-T COMMITTED 82c982a (2026-09-06 15:45, autonomous mode; verified 867/1670/4115-0, TestLoopTrace 714/714 x3, MIN2 policy rsOFF 5/5 SOLVED / rsON 0/5, budget ignored at shipped with warning). Tree clean. NEXT = report to the user; the loop is at a natural stop: the user's decisions (rowSound default; smallcanon default with rowSound; budget value) gate everything further.
+USER'S DECISION (2026-09-06 17:00): "Let's do 20,000" → "Full recommended set": ADOPT rowSound ON + dequeuePolicy=
+smallcanon + solveBudget=20000 as defaults. A1 ADOPTION LAUNCHED (fresh Opus, briefs/brief-A1.md): flip defaults on
+BOTH sides (compiler GenRules + model Flags), full gate set at the new shipped configuration with the old
+configuration as the control (core/test, TestLoopTrace both ways, eight-group differential, corpus verdicts with
+every change explained, .ei sweep up to Set order with the deterministic loader + 0 weaker, seeds incl. unsat 0
+SOLVED and GU05 306×25, hunt seeds 0 limit hits, perf, smokes, docs incl. an ADOPTED section in the state file).
+Then an Opus reviewer, then COMMIT (this is the first default flip made in autonomous mode — with the user's
+explicit word). Rollback = -Dermine.rowSound=false -Dermine.dequeuePolicy=shipped (budget then off).
+A1 DELIVERED 2026-09-06, GREEN, UNCOMMITTED. Report `tracker/loopmodel/A1-ADOPTION.md`. Defaults flipped on BOTH
+sides: `-Dermine.rowSound=true`, `-Dermine.dequeuePolicy=smallcanon`, `-Dermine.solveBudget=20000`; model `Flags`
+rowSound* default true, `Loop/Main.lean` `policyOf`->smallCanon and `defaultBudget=20000`, new `--flags=norowsound`
+token; `TestLoopTrace` forwards any DEPARTURE from the shared defaults in either direction. New fingerprint
+`cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000`; rollback
+`-Dermine.rowSound=false -Dermine.dequeuePolicy=shipped` gives back the pre-adoption string byte for byte.
+Gates: build 867 / Audit 4116-0 / looptrace 1670; core/test 913/914; TestLoopTrace 714/714 at BOTH configurations
+(the OLD one forwarded as `--flags=norowsound --policy=shipped`); L2 differential 2,355,428/2,355,428 NEW and
+2,355,430/2,355,430 OLD; corpus verdicts 0 changes (deterministic loader, floor 0, 9 blame-clause messages in
+shouldfail/); .ei 187 both sides, byte-identical floor at each configuration, 0 signatures weaker, and ATTRIBUTION:
+`rowSound` changes NOT ONE BYTE, all four moved interfaces are the policy's; unsat witnesses 44 SOLVED of 70 -> 0;
+run.sh env differ=4 -> 0; GU05 306 x25, GU05MIN 256 x25; PANIC3 100/100; 11,520 hunt runs all SOLVED with no
+concrete row moved and the draw budget never fired; perf unmoved (sign flips); repl/lsp smoke PASS; both new deaths
+render as ordinary diagnostics in CLI, REPL and LSP. NO THEOREM STATEMENT CHANGED (`({} : Flags)` no longer means
+the shipped configuration, so NoFalseAccept's three "the shipped loop accepts" theorems name it explicitly via
+`shippedFlags`, and `min2_loop_rejects_at_defaults` is ADDED). Open, stated in the report §3: three
+`incomplete/` residuals are NOT isomorphic (no type weaker, bodies identical); the .ei cache is still not keyed by
+the configuration (measured: a stale stdlib closure IS read across the flip); the budget diagnostic still renders
+at error severity; the model's json seed loader cannot read S2's `env` block. NEXT = reviewer, then commit.
+A1 ADOPTION REPORTED GREEN (2026-09-06 ~20:20, uncommitted): defaults flipped both sides; fingerprint
+`cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000`; rollback
+`-Dermine.rowSound=false -Dermine.dequeuePolicy=shipped` (byte-identical to the pre-adoption string; one NOTE line
+about the ignored budget). Gates: Lean 867 / 4116-0 / 1670; core/test 913/914; TestLoopTrace 714/714 both
+configurations; differential 2,355,428/2,355,428; corpus verdicts 0 changes (9 shouldfail files blame a different
+clause/field); unsat witnesses 0/70 SOLVED (old 44/70); env differ=0; GU05 306×25, GU05MIN 256×25; PANIC3 100/100;
+hunt 11,520/11,520 both sides, budget never fired; .ei 187: 183 identical / 4 differ / 0 weaker — rowSound changes
+NOT ONE BYTE, all four moved interfaces are the policy's; THREE bindings (incomplete/np01.inferredRestate,
+RunCalibration.valueAsOf, RevenueShare.shareOfGroup) publish a DIFFERENT (theorem-equivalent) saturated set, not a
+renaming — bodies identical, nothing weaker — REVIEWER TO CONFIRM EQUIVALENCE; perf unmoved; smokes PASS; the
+batch chunk holding gu05 629 s → 11 s. Open: .ei cache not keyed by configuration (old-configuration interfaces
+are READ at the new defaults — clear .ei once at adoption); budget diagnostic severity 1 in the LSP; the model's
+json seed loader lacks S2's env block (ENV-LINK on the model). Lean: shippedFlags named explicitly in
+NoFalseAccept.lean (+ min2_loop_rejects_at_defaults). Orchestrator verification running (a1-verify.log) → A1
+reviewer → COMMIT (the default flip, with the user's explicit word "Full recommended set").
+ORCHESTRATOR VERIFIED A1 (2026-09-06 21:33): 867/1670/4116-0; TestLoopTrace 714/714 at the new defaults and with the old configuration forced; MIN1/MIN2/SURV1/ENV-LINK 0/5 SOLVED each at the new defaults; GU05 306×3; NP01 SOLVED 5/5. A1 REVIEWER LAUNCHED (Opus; A1-REVIEW.md; settles the three saturated-set bindings' equivalence, re-runs the gates, judges the diagnostic severity for adoption). COMMIT on ADVANCE.
+A1 REVIEW (2026-09-06 ~22:30): ADVANCE — commit the flip after doc corrections. Reviewer classified all 1,921 bindings: ONE genuine difference (RevenueShare.shareOfGroup, strictly MORE GENERAL = the hand-written shareOfGroupFull in Signatures.e; OLD entails NEW; no call site regresses); np01.inferredRestate alpha-equivalent, RunCalibration.valueAsOf equivalent (entailed extra constraint). Corrections R-1..R-9 (doc only: verdict column, weaker/more-general wording, CLEAR .ei ONCE instruction with paths, perf +2.2% median on the reviewer's 4 rounds, core/test 912/914 flake, inf02/inf05 wording, kind variable, budget parse note, diagnostic code follow-up) SENT to the A1 implementer. Then COMMIT.
+A1 POST-REVIEW CORRECTIONS APPLIED (2026-09-06, docs only, no code, no re-gate, uncommitted). `A1-ADOPTION.md`
+gains §6 "POST-REVIEW CORRECTIONS" (old -> new for R-1…R-9) and §A1.7 is rewritten: 30 of 1,921 bindings move --
+27 renamings, 1 a renaming plus an ENTAILED constraint (`RunCalibration.valueAsOf`), 2 a bound KIND variable
+(`GridExample`), and ONE genuine (`RevenueShare.shareOfGroup`), stated as ENTAILMENT: `OLD |= NEW`, `NEW |/= OLD`,
+i.e. strictly MORE GENERAL, certified by the hand-written `Signatures.shareOfGroupFull` over the identical body at
+BOTH configurations, and no call site regresses. `np01.inferredRestate` (two verbatim duplicate constraints; `rs
+<-> rs1`), `RunCalibration.scaledRuns` and `SoftRelation.groupingDateDrilldown` are RENAMINGS, not differences. Also
+corrected: core/test is 913-or-912 of 914 (TestInterfaceRoundTrip flake); perf is "a small 1-3 % cost, not
+separable from this desktop's noise" (the reviewer's four alternated rounds put NEW slower every time, median
++0.30 s), not "the sign flips"; `inf02` moves a->b and `inf05` moves 23:18 -> 23:30; GridExample's is a bound kind
+variable; `-Dermine.solveBudget=<not a number>` means 20,000; the budget diagnostic has no `code` field --
+acceptable, follow-up filed in the report. `ROW-CONSTRAINT-STATE.md`'s ADOPTED section now OPENS with the R-4
+instruction: `find . -name '*.ei' -delete` once after the flip (`core/examples/**`, `core/target/scala-*/classes/
+modules/**`), because `.ei` is not keyed by the solver configuration. Plan row and `tracker/lean/README.md`
+updated with the review verdict. NEXT = COMMIT.

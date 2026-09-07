@@ -1,5 +1,136 @@
 # Row-constraint work — state as of 2026-09-06
 
+## 2026-09-06: **ADOPTED — three defaults move** (loop model, stage A1)
+
+The user's decision of 2026-09-06 17:00, on the D1B review's recommendation (§8 (ii) and (iii))
+and the S2 review's adoption prerequisites: **adopt the full recommended set.**  Report
+`tracker/loopmodel/A1-ADOPTION.md`; the evidence is `S2-FIX.md`, `S2-REVIEW.md`,
+`D1-CHANGE.md`, `D1B-REVIEW.md`.
+
+| flag | old default | new default | what it is |
+|---|---|---|---|
+| `-Dermine.rowSound` (master for `.bare` / `.saturated` / `.decide`) | `false` | **`true`** | S2's three layers: bare-row EXACTNESS in `makeConcrete`, `labelClash` on the SATURATED set, and a COMPLETE per-label decision on the solve's LIVE INPUT |
+| `-Dermine.dequeuePolicy` | `shipped` | **`smallcanon`** | D1's dequeue order: fewest right-hand-side parts first, ties by an id order instead of `rhs.hashCode` |
+| `-Dermine.solveBudget` | `0` (off) | **`20000`** | D1's draw budget, per solve; still IGNORED under `-Dermine.dequeuePolicy=shipped` |
+
+**WHAT A USER MUST DO AT ADOPTION: nothing to their code — but CLEAR THE INTERFACE CACHE ONCE.**
+
+```
+find . -name '*.ei' -delete
+# they live beside the sources under  core/examples/**/*.ei
+# and, for the stdlib, under          core/target/scala-*/classes/modules/**/*.ei
+```
+
+A published `.ei` is **not keyed by the solver configuration** (the loader's `preChecked` asks
+only whether type-checking is on, whether interfaces are on, and whether every import was itself
+interface-checked; `GenRules.toString`'s only consumer in the tree is `DisjProbe`).  So a tree
+built before the flip keeps feeding pre-flip interfaces to the post-flip compiler, silently —
+measured, not assumed: a stdlib closure whose interfaces were written at the OLD configuration is
+READ at the new defaults (cold boot 8.44 s against 15.12 s with none present).  A mixed tree
+loads today and the differences are a renaming or a strictly more general type, so this is a
+hygiene instruction rather than a correctness one; it costs one line
+(A1 review R-4).
+
+**HOW TO GET THE OLD BEHAVIOUR BACK, in one line:**
+
+```
+-Dermine.rowSound=false -Dermine.dequeuePolicy=shipped
+```
+
+`rowSound=false` turns all three S2 layers off (they take their default from the master), and
+`dequeuePolicy=shipped` restores `Q.pop`'s original body AND turns the draw budget off with it
+(the budget-requires-policy rule).  At that setting `GenRules.toString` is
+`cut+label-early+resguard+splitkey+splitrow+resrow` — byte-identical to the pre-adoption
+default string — and the corpus row trace is the pre-adoption trace, 2,355,430 segments, with
+the model agreeing on every one.  The model's matching command line is
+`--flags=norowsound --policy=shipped`.  One thing is NOT restored: asking for the shipped order
+now prints one `NOTE` line on `stderr` saying the (defaulted) draw budget is being ignored with
+it.
+
+**WHY, in one paragraph each.**
+
+* **`rowSound`.**  The shipped solver ACCEPTS unsatisfiable row systems — ten confirmed on the
+  compiler, the shortest five constraints long (`tracker/repro/satterm/seeds/unsat/`).  Layer
+  (iii) is a COMPLETE per-label decision, so acceptance now carries a theorem
+  (`Loop/NoFalseAccept.lean`'s `solve_noFalseAccept`, chained to S1 by
+  `solve_accepted_faithful`), and the price is nothing measurable: no corpus program is newly
+  rejected, no published signature changes, no substitution moves on 38,400 satisfiable-seed
+  runs, `core/test` and `TestLoopTrace` unmoved, and the check's whole bill on the eight-group
+  corpus is under a second.
+* **`dequeuePolicy=smallcanon`.**  The shipped order's cost depends on the ID BASE, by two
+  orders of magnitude on real code: `GU05` draws 743 ids at one base and 47,317 at another, and
+  in a normal ten-file batch load with interfaces enabled the chunk holding
+  `core/examples/incomplete/gu05_star_join_4dim_concrete_signature.e` takes **629 s under the
+  shipped order and 11 s at the new defaults** (A1's own deterministic `.ei` sweep; D1 measured
+  the same chunk dying at its 900 s cap under the shipped parallel loader, taking the four
+  modules after it down with it).  `smallcanon` is base-INVARIANT by construction — 306 draws at
+  all 25 bases — and every soundness and termination theorem was transported to it before it was
+  adopted (`Loop/PolicyStep.lean`, `Loop/PolicyTerm.lean`: they hold for EVERY policy).
+* **`solveBudget=20000`.**  A floor under divergence-by-minting, the divergence eight L5 rounds
+  actually found.  20,000 is 61x the largest draw count of any solve in the corpus (328); it
+  never fires anywhere in the corpus or on any tracked or hunt seed, and when it does fire it
+  is a REJECTION with a diagnostic that says in words that it is a resource limit and not a
+  type error (`Budget.budget_never_accepts`, `runBud_rejects_unsat`).
+
+**AND WHY AS A SET.**  `smallcanon` alone would have been a net LOSS of refutation power: the
+loop's own refutation is incomplete and order-dependent, and under `smallcanon` it stops firing
+on `MIN2` and `FALSE-ACCEPT-2` (D1B review U-0).  With `rowSound` on, all seven curated
+witnesses are refuted at all ten id bases under BOTH orders, so the pair loses nothing.  The
+budget is meaningless without the policy and is coded to ignore itself without it.
+
+**THE GATES, in one table** (all of them, with commands and numbers, are in
+`tracker/loopmodel/A1-ADOPTION.md`):
+
+| gate | OLD | NEW |
+|---|---|---|
+| `core/test` | 913/914 | **913 or 912 of 914** — the `Constraints.disjunction sound` starvation always, and on one reviewer run also `TestInterfaceRoundTrip`, a documented flake that passes isolated at both configurations |
+| `TestLoopTrace`, both configurations forwarded to both sides | 714/714 | **714/714** |
+| the eight-group L2 corpus differential | 2,355,430 / 2,355,430 agree | **2,355,428 / 2,355,428 agree** |
+| corpus verdicts, 100 files, deterministic loader, each side twice | 23 LOADED / 43 REJECTED, 18 / 16 | **identical — 0 verdict changes**, 9 blame-clause messages in `shouldfail/` |
+| the 7 curated unsatisfiable witnesses x 10 id bases | 44 SOLVED of 70 | **0 SOLVED of 70** |
+| `run.sh env` | `cases=9 differ=4` | **`differ=0`** |
+| `GU05` / `GU05MIN` x 25 id bases | 743-47,317 draws | **306 / 256 at every base** |
+| 3,840 hunt seeds x 3 bases | 11,520 SOLVED | **11,520 SOLVED**, no concrete row moved, the draw budget never fired |
+| published `.ei`, 187 interfaces / 1,921 bindings | byte-identical floor | **30 bindings move: 27 renamings, 1 a renaming plus a constraint its siblings ENTAIL, 2 that BIND a kind the old side fixed, and ONE genuinely different — `incomplete/RevenueShare.shareOfGroup`, which is strictly MORE GENERAL (`OLD \|= NEW`, so no call site regresses).**  `rowSound` moves NOT ONE BYTE; every moved interface is the policy's |
+| `perf-bench batch` cold, a loaded desktop | 12.81 / 12.91 s (2 rounds); 13.43-13.76 s (the reviewer's 4) | **12.89 / 12.70 s**; 13.58-13.90 s — **a small cost, of order 1-3 %, not separable from this host's noise** (the sign flips over two rounds but not over the reviewer's four, median +0.30 s / +2.2 %) |
+| `repl-smoke` / `lsp-smoke` | — | **PASS** (2+6+4+23, 98) |
+| Lean | — | build **867**, `Audit.lean` **4,116 theorems / 0 non-standard axioms**, `looptrace` **1,670** |
+
+**THE OPEN GAPS, at adoption.**
+
+* **No `.ei` cache key for the flags.**  Nothing in the tree keys a published interface by
+  `GenRules.toString` (its only consumer is `DisjProbe`), and the loader reads any `.ei` whose
+  dependencies were interface-checked.  So a tree built partly at one configuration keeps
+  mixing interfaces silently, and switching a default does NOT force a rebuild — measured, not
+  assumed (`A1-ADOPTION.md` §2, A1.7).  It is safe today because 29 of the 30 moved bindings
+  are the same type and the thirtieth is more general; **what a user must do about it is the
+  one-line `find . -name '*.ei' -delete` above**, and what the tree should grow is a
+  configuration in the interface key, before any INCREMENTAL adoption (A1 review R-4).
+* **No a-priori fuel number.**  A draw budget bounds DRAWS.  Turning that into a bound on
+  DEQUEUES needs a dequeues-per-draw bound, which is `L5-TERMINATION.md` R8.6b and is open, for
+  every order including the shipped one.  20,000 is an empirical ceiling with 61x headroom, not
+  a derived one.  The budget is not a wall-clock watchdog.
+* **The budget diagnostic carries no diagnostic `code`.**  It is LSP `severity 1` and the
+  diagnostic JSON has no `code` field (`lsp/Diagnostics.scala:167`), so tooling can tell a
+  resource limit from a type error only by reading the prose.  Judged **acceptable at adoption**
+  (A1 review R-9): it never fires at 20,000, the wording carries the distinction, and Error is
+  the right severity for a signature that did not get checked.  **Follow-up: give it a code.**
+* **One published TYPE really is more general.**  `incomplete/RevenueShare.shareOfGroup`: the
+  old side names the universal `k` of its `Row k` argument in three constraints where the new
+  side names a fresh existential, so `OLD |= NEW` and `NEW |/= OLD`.  No call site regresses
+  (`OLD |= NEW`), and `core/examples/incomplete/Signatures.e`'s hand-written `shareOfGroupFull`
+  is that same more general signature over the identical body and checks at BOTH configurations
+  — but "no published type is weaker" is a statement about `ei-classify.py`'s test, not about
+  entailment, and this state file does not make it (A1 review R-6).
+* **`-Dermine.solveBudget=<not a number>` means 20,000**, not 0: the `NumberFormatException`
+  fallback moved with the default.  It fails towards the shipped configuration (A1 review R-8).
+* **`rowSound`'s three provisos are unchanged** and are stated in the S2 section below: the
+  guarantee is conditional on the decision budgets not being exhausted (exhaustion is NO
+  VERDICT, is counted, and warns on stderr), "the input" is the live input (the partitions plus
+  the `SubstEnv` bindings of the variables they mention), and "satisfiable" is read
+  existentially over the row variables.
+
+
 ## 2026-09-06: **the FIX for that bug, behind flags that DEFAULT OFF** (loop model, stage S2)
 
 `tracker/loopmodel/S2-DESIGN.md` (what it targets) and `S2-FIX.md` (what was measured and

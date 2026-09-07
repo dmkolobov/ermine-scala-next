@@ -368,14 +368,20 @@ structure Flags where
   emptyRow : Bool := false
   /-- S2 (`tracker/loopmodel/S2-DESIGN.md`) layer (i): `-Dermine.rowSound.bare`.  At a BARE
   definition `v <- ((|C|))` and a concrete instantiation `v := ((|fs|))`, require `C = fs`
-  instead of `ensureSuperset`'s `C ⊆ fs`.  DEFAULT OFF, like the compiler's. -/
-  rowSoundBare : Bool := false
+  instead of `ensureSuperset`'s `C ⊆ fs`.
+
+  ADOPTED 2026-09-06 (`tracker/loopmodel/A1-ADOPTION.md`): DEFAULT ON, like the compiler's
+  (`Constraints.GenRules.rowSoundBare`).  `--flags=norowsound` turns all three layers off
+  and `--flags=norsbare` this one, which is the configuration every pre-adoption trace and
+  every pre-adoption theorem measurement was taken at. -/
+  rowSoundBare : Bool := true
   /-- S2 layer (ii): `-Dermine.rowSound.saturated`.  Run `labelClash` on the SATURATED set as
-  well as on the input.  DEFAULT OFF. -/
-  rowSoundSat : Bool := false
+  well as on the input.  ADOPTED 2026-09-06: DEFAULT ON, like the compiler's. -/
+  rowSoundSat : Bool := true
   /-- S2 layer (iii): `-Dermine.rowSound.decide`.  The COMPLETE per-label decision on the
-  live input.  DEFAULT OFF. -/
-  rowSoundDecide : Bool := false
+  live input -- the layer `Loop/NoFalseAccept.lean`'s `solve_noFalseAccept` and
+  `solve_accepted_faithful` are about.  ADOPTED 2026-09-06: DEFAULT ON, like the compiler's. -/
+  rowSoundDecide : Bool := true
   /-- S2: `-Dermine.rowSound.budget`, decision nodes per label for layer (iii).  On
   exhaustion the decision returns NO VERDICT and refutes nothing. -/
   rowSoundBudget : Nat := 200000

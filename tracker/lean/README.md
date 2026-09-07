@@ -729,6 +729,25 @@ flags OFF and again UNDER THE POLICY it is 2,355,430 of 2,355,430 segments agree
 model reads the policy and the budget off the trace's own `sin` record (`Loop/Replay.lean`), so
 a replay cannot silently run a different loop from the one that produced the trace.
 
+**ADOPTED 2026-09-06 — the model's own defaults moved with the compiler's** (stage A1,
+`tracker/loopmodel/A1-ADOPTION.md`).  `-Dermine.rowSound` now defaults to `true`,
+`-Dermine.dequeuePolicy` to `smallcanon` and `-Dermine.solveBudget` to `20000`, so
+`Flags.rowSoundBare` / `.rowSoundSat` / `.rowSoundDecide` default `true` in `Loop/State.lean`
+and `Loop/Main.lean`'s `policyOf` / `defaultBudget` default to `.smallCanon` / `20000`.  The
+point of moving both sides together is that `looptrace <seed>.json <base>` and `bin/ermine` now
+run the same solve with nothing on either command line, and `TestLoopTrace` forwards any
+DEPARTURE from those defaults in either direction.  The pre-adoption configuration is
+`--flags=norowsound --policy=shipped` on the model and `-Dermine.rowSound=false
+-Dermine.dequeuePolicy=shipped` on the compiler, and both were run as the control for every
+gate.  **No theorem statement changed.**  What did change in the Lean is that `({} : Flags)` no
+longer denotes the shipped configuration, so `Loop/NoFalseAccept.lean`'s three "the SHIPPED loop
+ACCEPTS this seed" theorems name it explicitly (`shippedFlags`) and one theorem is ADDED,
+`min2_loop_rejects_at_defaults`: at the new defaults layer (i) refutes `MIN2` inside `runS`.
+Build **867**, `Audit.lean` **4,116 theorems / 0 non-standard axioms**, `lake build looptrace`
+**1,670**.  Reviewed (`tracker/loopmodel/A1-REVIEW.md`, **ADVANCE**): the reviewer re-ran the
+build and the audit, diffed the 16 `Flags` fields to confirm that exactly three defaults moved,
+and checked that `shippedFlags` proves the same sentence the `({} : Flags)` form proved.
+
 
 ## The shared vocabulary
 

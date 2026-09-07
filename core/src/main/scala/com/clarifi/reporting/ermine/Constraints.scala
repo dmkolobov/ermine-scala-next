@@ -325,7 +325,7 @@ object Constraints {
   def ensureSuperset(loc: Loc, sub: Fields, sup: Fields)(implicit tml: Located) =
     if (!(sub subsetOf sup)) rowUnifyDeath(loc, sub, sup)
 
-  /* S2 layer (i), `-Dermine.rowSound.bare` (default OFF).  At a BARE definition
+  /* S2 layer (i), `-Dermine.rowSound.bare` (ADOPTED 2026-09-06, default ON).  At a BARE definition
    * `v <- ((|C|))` -- no abstract part at all -- a concrete instantiation
    * `v := ((|fs|))` forces `C = fs`, not merely `C subsetOf fs`: the two are
    * definitions of the SAME row.  `Rowpartition/Loop/Sound.lean`'s `bare_refutes`
@@ -1200,9 +1200,10 @@ object Constraints {
      * SOUND but not COMPLETE (`Rowpartition/LabelAlgo.lean`); every one of these
      * needs a case split.
      *
-     * Three layers, each separately switchable, ALL DEFAULT OFF.  With them off
-     * the compiler is byte-identical to before this switch existed; adoption is
-     * a decision for the user, not for this stage.
+     * Three layers, each separately switchable.  ADOPTED 2026-09-06: all three
+     * DEFAULT ON (see the `rowSoundAll` comment below for the evidence).
+     * `-Dermine.rowSound=false` turns all three off and is byte-identical to the
+     * compiler before this switch existed.
      *
      *   `-Dermine.rowSound=true`            -- master: turns all three on.
      *   `-Dermine.rowSound.bare=true|false` -- (i)   bare-row EXACTNESS in
@@ -1235,8 +1236,37 @@ object Constraints {
      *       (`RowTrace` kind `budget`) so that "it never fired" is a measurement
      *       rather than an assumption.
      */
+    /* ADOPTED 2026-09-06 (`tracker/loopmodel/A1-ADOPTION.md`): DEFAULT ON.  All three
+     * layers are on unless a sub-flag says otherwise; `-Dermine.rowSound=false` restores
+     * the previous behaviour exactly (it turns all three off, because `rowSoundFlag`
+     * takes its default from this master).  The evidence:
+     *   - the theorem, not a corpus zero: `Loop/NoFalseAccept.lean`'s
+     *     `solve_noFalseAccept` and `solve_accepted_faithful` -- with layer (iii) on and
+     *     its budget intact, a solve that ACCEPTS has a MODEL of the constraints it was
+     *     given closed under the environment, and S1's `run_noLoss`/`run_models` chain
+     *     then applies (`tracker/loopmodel/S2-FIX.md` §P1);
+     *   - it closes a soundness hole users have today: the shipped solver ACCEPTS
+     *     unsatisfiable row systems.  All seven curated witnesses
+     *     (`tracker/repro/satterm/seeds/unsat/`) are SOLVED at the shipped default and
+     *     REJECTED at every id base with this on; the S1 reviewer's 665-seed
+     *     false-acceptance population goes 404 SOLVED -> 0 of 1,330 runs;
+     *   - and no false REJECTION: 3,840 satisfiable-by-construction seeds x 10 bases stay
+     *     SOLVED with byte-identical substitutions, the eight-group corpus (2,355,430
+     *     solves, 145 files) newly rejects NOTHING, and 185 published interfaces / 1,919
+     *     bindings are identical to the shipped compiler's;
+     *   - `core/test` 913/914 and `TestLoopTrace` 714/714 with it on, `perf-bench batch`
+     *     inside the run-to-run spread;
+     *   - D1B review (ii)/(iii): it is also the PRECONDITION for the dequeue policy
+     *     below -- under `smallcanon` the loop's own (incomplete, order-dependent)
+     *     refutation stops firing on `MIN2`/`FALSE-ACCEPT-2`, and this layer is what puts
+     *     the refutation back at every base and in every order.
+     * PROVISOS, stated at adoption (`tracker/ROW-CONSTRAINT-STATE.md`): the guarantee is
+     * conditional on the budgets below not being exhausted (exhaustion is NO VERDICT, is
+     * counted, and warns on stderr); "the input" is the live input, i.e. the partitions
+     * closed under the `SubstEnv` bindings of the variables they mention; and
+     * "satisfiable" is read existentially over the row variables. */
     private val rowSoundAll: Boolean =
-      System.getProperty("ermine.rowSound", "false") == "true"
+      System.getProperty("ermine.rowSound", "true") == "true"
     private def rowSoundFlag(n: String): Boolean =
       System.getProperty(n, if (rowSoundAll) "true" else "false") == "true"
     val rowSoundBare: Boolean   = rowSoundFlag("ermine.rowSound.bare")
@@ -1263,7 +1293,8 @@ object Constraints {
     val rowSoundCheckFails = new java.util.concurrent.atomic.AtomicLong(0L)
 
     /* ------------------------------------------------------------------ *
-     * D1: the DRAW BUDGET and the DEQUEUE POLICY.  Both DEFAULT OFF.
+     * D1: the DRAW BUDGET and the DEQUEUE POLICY.  ADOPTED 2026-09-06:
+     * `dequeuePolicy` defaults to `smallcanon` and `solveBudget` to 20000.
      * `tracker/loopmodel/D1-DESIGN.md`; the model is
      * `tracker/lean/Rowpartition/Loop/{Budget,Policy}.lean`.
      * ------------------------------------------------------------------ */
@@ -1275,20 +1306,71 @@ object Constraints {
       * that draws boundedly many ids terminates); no theorem bounds dequeues per
       * draw, which is `L5-TERMINATION.md` R8.6b's open problem.  Exhaustion is a
       * REJECTION with a diagnostic and never an acceptance
-      * (`Budget.budget_never_accepts`). */
+      * (`Budget.budget_never_accepts`).
+      *
+      * ADOPTED 2026-09-06 (`tracker/loopmodel/A1-ADOPTION.md`): DEFAULT 20000, and only
+      * under a non-shipped dequeue order (see `solveBudget` below).
+      * `-Dermine.solveBudget=0` turns it off; `-Dermine.dequeuePolicy=shipped` does too.
+      * The evidence (`D1B-REVIEW.md` §8(ii), "the budget value"):
+      *   - it never fires on anything known to be well-typed: 20,000 is 61x the largest
+      *     draw count of any solve in the eight-group corpus (328) and 65x `GU05`'s 306
+      *     under this order; the corpus at this budget is INERT record for record;
+      *   - it cannot turn an acceptance into a rejection of a program the loop would have
+      *     accepted for a legitimate reason: `Budget.budget_never_accepts` and
+      *     `runBud_rejects_unsat` say a budget death is a `BudgetDeath` and never a
+      *     refutation, and the death carries a diagnostic that says so in words;
+      *   - what it buys is a floor under divergence-by-minting, which is the divergence
+      *     eight L5 rounds actually found;
+      *   - it fires where it should: `incomplete/gu05...e` at `-Dermine.solveBudget=20`
+      *     stops at the 21st draw, on the same dequeue as the model's `stepBud`.
+      * WHAT IT IS NOT: a wall-clock watchdog.  It bounds DRAWS; turning that into a bound
+      * on DEQUEUES needs a dequeues-per-draw bound, which is open
+      * (`L5-TERMINATION.md` R8.6b), and there is no a-priori derivation of 20,000 -- it is
+      * an empirical ceiling with 61x headroom over the worst measured solve. */
     private val solveBudgetRequested: Int =
-      try System.getProperty("ermine.solveBudget", "0").toInt
-      catch { case _: NumberFormatException => 0 }
+      try System.getProperty("ermine.solveBudget", "20000").toInt
+      catch { case _: NumberFormatException => 20000 }
 
-    /** `-Dermine.dequeuePolicy=<name>`: `shipped` (the default, `Q.pop` exactly)
-      * or `smallcanon` -- fewest right-hand-side parts first, ties by an ID ORDER
-      * instead of `rhs.hashCode`.  D1 measured six orders over the whole
+    /** `-Dermine.dequeuePolicy=<name>`: `smallcanon` (the default since
+      * 2026-09-06) -- fewest right-hand-side parts first, ties by an ID ORDER
+      * instead of `rhs.hashCode` -- or `shipped`, `Q.pop` exactly.
+      * D1 measured six orders over the whole
       * eight-group corpus; `smallcanon` is the only one that is base-invariant
       * AND cheaper in dequeues.
       *
       * Declared BEFORE the budget on purpose: the budget's effective value is a
-      * function of it (`vals` initialise in textual order). */
-    val dequeuePolicy: String = System.getProperty("ermine.dequeuePolicy", "shipped")
+      * function of it (`vals` initialise in textual order).
+      *
+      * ADOPTED 2026-09-06 (`tracker/loopmodel/A1-ADOPTION.md`): DEFAULT `smallcanon`.
+      * `-Dermine.dequeuePolicy=shipped` restores `Q.pop`'s original body exactly (and,
+      * by the rule below, turns the draw budget off with it).  The evidence
+      * (`tracker/loopmodel/D1-CHANGE.md`, `D1B-REVIEW.md` §8(ii)):
+      *   - it removes the id-order blow-up outright and is base-INVARIANT by
+      *     construction, which the shipped order is not: `GU05.json` draws 306 at all 25
+      *     id bases against 743 / 1,091 / 47,317 at the shipped order's first three, a
+      *     155x cut at the worst base, and `core/examples/incomplete/gu05...e` loads in
+      *     2.08 s inside a batch where the shipped order does not finish in 900 s and
+      *     takes the four modules after it down with it;
+      *   - it is not a semantic change: `Loop/PolicyStep.lean`'s `runP_noLoss`,
+      *     `runP_models`, `runP_ssat_iff` and `runP_rejects_unsat` hold for EVERY policy,
+      *     and every soundness and termination theorem of S1/S2/D1 was transported to
+      *     the policy driver (`D1-CHANGE.md` §6);
+      *   - measured, not assumed: the compiler under this policy and the model under the
+      *     policy it reads off the trace agree on all 2,355,430 corpus solve segments,
+      *     record for record; corpus verdicts do not move; `core/test` 913/914,
+      *     `TestLoopTrace` 714/714; no measurable wall-clock cost (the O(n) scan is
+      *     invisible -- the corpus's whole population is 68,940 dequeues over 2.3 M
+      *     solves);
+      *   - published `.ei`: no TYPE changes; with a deterministic loader one interface's
+      *     TEXT moves by one VACUOUS kind binder and six interfaces exist only because
+      *     the modules now finish (D1-CHANGE.md FINDING 2).
+      * PRECONDITION, and it is why `rowSound` is adopted with it: on its own this order
+      * stops the loop refuting `MIN2`/`FALSE-ACCEPT-2` (D1B review U-0) -- the loop's
+      * refutation is incomplete and order-dependent.  With `rowSound` on, all seven
+      * witnesses are refuted at every base under BOTH orders, so the pair loses nothing.
+      * OPEN GAP: nothing keys a published `.ei` by `GenRules.toString`, so a tree built
+      * partly at one order still mixes interfaces silently (D1B review U-6). */
+    val dequeuePolicy: String = System.getProperty("ermine.dequeuePolicy", "smallcanon")
 
     /** The EFFECTIVE budget: what was asked for, but only under a non-shipped
       * dequeue order.
@@ -1313,14 +1395,21 @@ object Constraints {
      * footgun -- under the shipped order a solve's draw count depends on the id
      * base (`GU05.json`: 743 draws at one base, 47,317 at another), so a budget
      * alone rejects a well-typed program at some bases and accepts it at others.
-     * It is now IGNORED there, and the message says so. */
+     * It is IGNORED there, and the message says so.
+     *
+     * A1 (2026-09-06): since the budget now DEFAULTS to 20000, this line fires for
+     * anyone who asks for `-Dermine.dequeuePolicy=shipped` without asking for a
+     * budget at all -- so the message says which value it is talking about and
+     * that turning the order back also turns the budget off.  That is the whole
+     * of the old behaviour, which is what asking for `shipped` means. */
     if (solveBudgetRequested > 0 && dequeuePolicy == "shipped")
       System.err.println(
-        "ermine: WARNING -Dermine.solveBudget=" + solveBudgetRequested + " is IGNORED " +
-        "because -Dermine.dequeuePolicy is 'shipped'.  Under the shipped dequeue order a " +
-        "solve's draw count depends on the id base, so this budget would reject a " +
-        "well-typed program at some id bases and accept it at others.  Set " +
-        "-Dermine.dequeuePolicy=smallcanon to enable the budget; see " +
+        "ermine: NOTE the draw budget -Dermine.solveBudget=" + solveBudgetRequested +
+        (if (System.getProperty("ermine.solveBudget") == null) " (the default)" else "") +
+        " is IGNORED because -Dermine.dequeuePolicy is 'shipped'.  Under the shipped " +
+        "dequeue order a solve's draw count depends on the id base, so this budget would " +
+        "reject a well-typed program at some id bases and accept it at others.  Leave " +
+        "-Dermine.dequeuePolicy at its default 'smallcanon' to keep the budget; see " +
         "tracker/loopmodel/D1-DESIGN.md section 0.")
 
     /** Whether anything reads the draw counter.  When neither the budget nor the
@@ -1980,8 +2069,9 @@ object Constraints {
       // Check superset compatibility for the concrete instantiation
     rhss.foreach {
       /* S2 layer (i): a BARE definition of `v` is an EQUATION, not a lower
-       * bound.  Only reachable with `-Dermine.rowSound.bare=true`; with the
-       * flag off this is `ensureSuperset` on every definition, as shipped. */
+       * bound.  On by default since 2026-09-06; with
+       * `-Dermine.rowSound.bare=false` this is `ensureSuperset` on every
+       * definition, as shipped. */
       case RHS(abstr, concr) if GenRules.rowSoundBare && abstr.isEmpty =>
         if (concr != fs)
           RowTrace.rowSound("bare", v.loc.toString,
@@ -2372,7 +2462,7 @@ object Constraints {
 
   /* ------------------------------------------------------------------ *
    * S2 layer (iii): the COMPLETE per-label decision.                     *
-   * `-Dermine.rowSound.decide` (default OFF).                            *
+   * `-Dermine.rowSound.decide` (ADOPTED 2026-09-06, default ON).        *
    * ------------------------------------------------------------------ *
    * `checkLabel` above is unit propagation: SOUND (a clash refutes the
    * system -- `Rowpartition/LabelProp.lean`'s `refuted_unsat`) but NOT
