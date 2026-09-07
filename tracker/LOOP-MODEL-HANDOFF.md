@@ -790,3 +790,16 @@ PivotTest.pivotData (in the tree for years); Relation.relation NOT affected. FIX
 test that FORCES a pivot. Group fixes: Wide/Signatures.e; melt2/melt3 call sites on wide rows; three header errors;
 plan row; numbers (melt3 20/19; bundling 1.2× not 3–4×). E1 implementer RESUMED. Running: E3-corrections, E5,
 E1-corrections. Queue: E4-review, S3, MapView fix stage (F1), Console.other substring fix candidate.
+E1 COMMITTED a80c5c5 (2026-09-07 03:05; group + shared tooling + sql-render + TestSurfaceParsers floor + plan rows). E4 REVIEWER LAUNCHED. Running: E3-corrections, E5, E4-review. Next: apply E2's wiring (corpus-run.sh, looptrace-corpus.sh, README) from E2-EXAMPLES.md §6 (reviewer-verified), verify when a slot frees, commit E2; then E3 after its corrections; then E4/E5; then S3, F1 (MapView), the ticket file.
+E3 CORRECTIONS DONE GREEN (2026-09-07 ~07:30): data-denied claims fixed and PROVED BY RENDERING (CHF fixing moved
+to 4 Apr; asOfWithin is a binary gate on asOf's answer, not a per-row staleness filter — new finding); seven name
+clashes removed (group loads in one session: 11 modules / 80 bindings / 0 errors); census: structural quantities
+identical across two command-line orders, COST quantities and the refutation clause move with the id base (a
+census must state its file order); new FiscalTree.e (tree of date ranges; all seven DateRange functions;
+Double.e is EMPTY); 37 helpers / 43 partition constraints. TWO NEW STDLIB BUGS (ticket): Date's accessors read
+the instant in the JVM default timezone while its formatters do not → every DateRange period label is
+machine-dependent (@2011/1/1 is "1/1/11" and "Dec 31"; getMonth 11 under MDT, 0 under UTC); Date.formatQuarter
+is wrong twice (getMonth/4+1 then a 0-based index with a 1-based number: quarters four months long, "Q1"
+unreachable). WIRING for Algebra/Time/Present applied by the orchestrator (both scripts + README; counts 13/6,
+11/3, 11/6; header total 130); verification running (wire.log: looptrace-corpus on the six groups + corpus-run
+--batch). Then COMMIT E2 and E3; E4 after its review; E5 when delivered; then S3, F1 (MapView), tickets.
