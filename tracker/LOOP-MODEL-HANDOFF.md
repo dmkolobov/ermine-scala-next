@@ -959,7 +959,7 @@ topNormalise_eq (rfl), topFamilies_spec, carriers_spec, topNormalise_sysQ, topNo
 _loopStrict, tnOk_of_buildQueue, exQ_* non-vacuity; the six htn premises replaced by the rewrite's own equation;
 four _input theorems; two _off corollaries. ORCHESTRATOR VERIFIED: lake build 868 green; Audit 4,282 / 0; 17 key
 theorems standard axioms; TestLoopTrace 720/720; executable closure untouched, looptrace not rebuilt. Report
-tracker/loopmodel/S4C-CORRESPONDENCE.md. UNCOMMITTED pending review. REVIEWER LAUNCHED (brief
+tracker/loopmodel/S4C-CORRESPONDENCE.md. UNCOMMITTED pending review. REVIEWER LAUNCHED = agent adb10d8f6c5456c89 (Opus, background; resume by SendMessage; brief
 briefs/brief-S4c-review.md; report -> tracker/loopmodel/S4C-REVIEW.md, findings J-*). On ADVANCE: ONE commit
 "Loop model S4c: the correspondence lemma for topNormalise and the S2 chain at ON"; then REPORT to the user with
 the reviewer's adoption recommendation (the flip is the user's).
