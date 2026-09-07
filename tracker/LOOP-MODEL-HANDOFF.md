@@ -823,3 +823,14 @@ now. S3 in flight has an uncommitted Subst.scala change deleting `a <- (a)` taut
 taut/tautIsFree/scaledByFull need a revisit when S3 lands. E4 implementer to be RESUMED with the corrections.
 QUEUE after E-series: F1 MapView fix (Lib.scala 988/1007/1012 + a forcing test); F2 Console.other EOF-null hang fix (Console.scala:149); S4 candidate: the PROJECTION FAN-OUT cliff (N projections of one open record → 3/33/207/1,243/6,795 draws, N=7 exhausts the budget; resolution-only) — a solver-shape stage with a Lean model reproduction first; TICKET-stdlib-findings.md.
 E4 COMMITTED 2ae1b75 (2026-09-07 ~10:00). TICKET-stdlib-findings.md WRITTEN (A runtime bugs A1–A6, B type-system holes B1–B6 incl. the projection fan-out cliff, C API C1–C10, D non-reproducing claims; E5's findings to be appended). Running: E5, S3. F1 (MapView) BLOCKED until S3 finishes (same source tree/sbt). Queue: E5 review + commit, S3 review + commit, F1, F2 (Console.other EOF-null), S4 (projection fan-out).
+E5 Lang/ DONE GREEN (2026-09-07 ~11:30; uncommitted): 12 modules + 7 shouldfail + ProjectionCliff.slow; Helpers.e
+70 bindings (16 row-quantified, 5 with constraints); differential 88,037 + 58,289 segments 0/0/0 (no row-solver
+refutations among the negatives); census: max draws 1,245 all Resolution (projection cliff reproduced
+independently: 0/3/31/207/1,241/6,956, N=7 busts the budget), "per-key mints 29" — instrument to be checked by
+the reviewer (E4's 12 was maxmint = vocabulary). FINDINGS: Parse.parseInt/parseDouble NOT TOTAL (Runtime.scala:52
+Prim.apply turns the exception into a Bottom VALUE; IO.Unsafe.eval's catch at Lib.scala:1311 never fires;
+Parse.numberFormat's branch dead) → ticket A; String.Markdown.link cannot make a link; REPL EOF loop variant
+(printf '"complete"\n'); interface printer emits `forall {a} … (a1: a)` the parser rejects (moved with S3's
+change); four parse limits (suffixed bracket literal positions; '-' char literal; no operator sections);
+.ei lists private names and omits foreign names; Prelude shadowing (length/++/||); Data.Nu seed opaque; left
+recursion uncaught. E5 REVIEWER LAUNCHED. Running: S3, E5-review. F1/S4 BLOCKED on S3 (same tree).

@@ -66,11 +66,12 @@
 # (2026-09-02: the labelCheckEarly adoption was measured this way, four sweeps in flight
 # while the fix was being compiled.)
 #
-# Directories covered, 132 files: core/examples/*.e (15), core/examples/Ai/*.e (11),
+# Directories covered, 151 files: core/examples/*.e (15), core/examples/Ai/*.e (11),
 # core/examples/Wide/*.e (11), core/examples/Wide/shouldfail/*.e (3),
 # core/examples/Algebra/*.e (13), core/examples/Algebra/shouldfail/*.e (6),
 # core/examples/Time/*.e (11), core/examples/Time/shouldfail/*.e (3),
 # core/examples/Present/*.e (12), core/examples/Present/shouldfail/*.e (7),
+# core/examples/Lang/*.e (12), core/examples/Lang/shouldfail/*.e (7),
 # core/examples/shouldfail/*.e (40).  `incomplete/` is NOT here: four of its modules
 # diverge on pristine code and are named `.slow` for that reason; use --incomplete for
 # it, which applies a timeout per file.
@@ -106,12 +107,13 @@ files=( core/examples/*.e core/examples/Ai/*.e core/examples/Wide/*.e \
         core/examples/Wide/shouldfail/*.e core/examples/Algebra/*.e \
         core/examples/Algebra/shouldfail/*.e core/examples/Time/*.e \
         core/examples/Time/shouldfail/*.e core/examples/Present/*.e \
-        core/examples/Present/shouldfail/*.e core/examples/shouldfail/*.e )
+        core/examples/Present/shouldfail/*.e core/examples/Lang/*.e \
+        core/examples/Lang/shouldfail/*.e core/examples/shouldfail/*.e )
 if [[ $incomplete == 1 ]]; then files=( core/examples/incomplete/*.e ); fi
 
 if [[ $batch == 1 ]]; then
   # one command line, with Ai/Common.e hoisted to the head of the Ai group
-  bfiles=(); ai_done=0; wide_done=0; algebra_done=0; time_done=0; present_done=0
+  bfiles=(); ai_done=0; wide_done=0; algebra_done=0; time_done=0; present_done=0; lang_done=0
   for f in "${files[@]}"; do
     case "$f" in
       core/examples/Ai/Common.e) ;;
@@ -133,6 +135,10 @@ if [[ $batch == 1 ]]; then
       core/examples/Present/Helpers.e) ;;
       core/examples/Present/*)
         if [[ $present_done == 0 ]]; then bfiles+=( core/examples/Present/Helpers.e ); present_done=1; fi
+        bfiles+=( "$f" ) ;;
+      core/examples/Lang/Helpers.e) ;;
+      core/examples/Lang/*)
+        if [[ $lang_done == 0 ]]; then bfiles+=( core/examples/Lang/Helpers.e ); lang_done=1; fi
         bfiles+=( "$f" ) ;;
       *) bfiles+=( "$f" ) ;;
     esac

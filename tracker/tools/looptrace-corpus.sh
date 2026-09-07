@@ -50,7 +50,7 @@ mkdir -p "$S/traces" "$S/lean" "$S/diff"
 : > "$S/results.txt"
 find core/examples -name '*.ei' -delete
 
-groups="${LOOPTRACE_GROUPS:-boot top Ai Wide Wide-shouldfail Present Present-shouldfail Time Time-shouldfail Algebra Algebra-shouldfail shouldfail bugs guide shouldfail-controls incomplete}"
+groups="${LOOPTRACE_GROUPS:-boot top Ai Wide Wide-shouldfail Present Present-shouldfail Time Time-shouldfail Algebra Algebra-shouldfail Lang Lang-shouldfail shouldfail bugs guide shouldfail-controls incomplete}"
 perfile=" ${LOOPTRACE_PERFILE:-incomplete} "
 flags="${LOOPTRACE_FLAGS:-}"
 jopts="${LOOPTRACE_JAVA:-}"
@@ -104,6 +104,16 @@ for g in $groups; do
     Present-shouldfail)
           mapfile -t gf < <( { echo core/examples/Present/Helpers.e
                                find core/examples/Present/shouldfail -maxdepth 1 -name '*.e' \
+                                 | sort; } ) ;;
+    # Lang/ is the Ai/ case with a different library: every Lang module imports
+    # `Lang.Helpers`, and so may every module under Lang/shouldfail, so the library
+    # goes first on both command lines (stage E5, 2026-09-07).
+    Lang) mapfile -t gf < <( { echo core/examples/Lang/Helpers.e
+                               find core/examples/Lang -maxdepth 1 -name '*.e' \
+                                    ! -name 'Helpers.e' | sort; } ) ;;
+    Lang-shouldfail)
+          mapfile -t gf < <( { echo core/examples/Lang/Helpers.e
+                               find core/examples/Lang/shouldfail -maxdepth 1 -name '*.e' \
                                  | sort; } ) ;;
     *)    mapfile -t gf < <(find "core/examples/$g" -maxdepth 1 -name '*.e' | sort) ;;
   esac
