@@ -64,7 +64,8 @@ B4. **An `AsOp`-polymorphic helper's inferred signature cannot be written down**
     cannot read back. (E3, E4 §4.3.)
 
 B5. **The projection fan-out cliff.** N projections of ONE open-row record parameter cost 3 / 30 / 212 / 1,232
-    / 6,804 fresh row variables for N = 2..6 (every draw a `Resolution`, no split); N = 7 exhausts the adopted
+    / 6,804 fresh row variables for N = 2..6, and (model replay without the budget) 35,923 at N = 7 and 185,848
+    at N = 8 -- about 5.3-6x per extra read, every draw a `Resolution`, no split; N = 7 exhausts the adopted
     20,000-draw budget and a VALID program is rejected with the resource diagnostic. The same reads under one
     written partition cost 0. `Present/ProjectionCost.e` + `shouldfail/proj01_seven_reads.e` pin it; the
     model reproduces the budget stop at the same count. **This is the one known shape on which the adopted

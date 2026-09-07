@@ -11,7 +11,9 @@ goes behind a flag DEFAULT OFF in a worktree; adoption is the user's.
 THE FINDING (ticket B5; `core/examples/Present/ProjectionCost.e`, `Present/shouldfail/proj01_seven_reads.e`,
 `core/examples/Lang/ProjectionCliff.slow`; E4-REVIEW M-*, E5 finding 1): N projections `t ! f` of ONE open-row
 record parameter in one expression cost 3 / 30 / 212 / 1,232 / 6,804 fresh row variables for N = 2..6 (E5:
-0/3/31/207/1,241/6,956), every draw a `Resolution` and no split; N = 7 exhausts the adopted 20,000 budget and a
+0/3/31/207/1,241/6,956; the E4 reviewer's model replay without the budget: 35,923 at N = 7 and 185,848 at
+N = 8, i.e. about 5.3-6x per extra read -- so raising the budget cannot keep pace and option (i), the guard, is
+the one to prove), every draw a `Resolution` and no split; N = 7 exhausts the adopted 20,000 budget and a
 VALID program is rejected with the resource diagnostic. The same reads under one written partition cost 0.
 This is the one known shape on which the budget rejects a valid program, and it is a realistic one (a validator
 lambda reading five fields of a parameter record). The trace differential already shows the model reproducing
