@@ -939,3 +939,11 @@ closure for reduce's splice; design) -> A1b (three in-memory MapView equality si
 library fixes: B1 dateDiff, A4 formatQuarter, A3 Date timezone, C2 join1 doc, C5 Layout.Scan re-exports, K-1
 Type.scala:414 .toSet). Agents: S4 implementer abc3f1c6cb9c6e5eb and S4B reviewer a2b44eca957190201 both
 COMPLETE (resumable).
+
+S4c LAUNCHED (2026-09-07 ~16:25): implementer agent ab0be9ea98f80dab4 (Opus, background; resume by SendMessage),
+brief tracker/loopmodel/briefs/brief-S4c.md (commit fd33e10); report -> tracker/loopmodel/S4C-CORRESPONDENCE.md.
+Lean only; it is the only agent, so it may lake build. ON ITS REPORT: orchestrator verifies lake build + Audit +
+#print axioms + TestLoopTrace 720/720 (+ ON differential if executable Lean changed), then launches an Opus reviewer
+(brief to write: brief-S4c-review.md, imitating brief-E-review.md's shape: re-run every gate, check every hypothesis
+is discharged from the code, adversarial seeds against the correspondence), then fix -> commit ONE stage commit.
+Adoption remains the user's decision even if S4c is GREEN.
