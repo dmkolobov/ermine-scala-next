@@ -1,0 +1,139 @@
+diff --git a/core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala b/core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala
+index 8ebe4be..6e0a185 100644
+--- a/core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala
++++ b/core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala
+@@ -744,7 +744,13 @@ object Constraints {
+    *  a mint would name denotes `∅`, so the two conclusions the `resGuard` reuse emits,
+    *  `x <- (z, D \ C)` and `y <- (z, C \ D)`, become the bare concrete `x <- ((|D \ C|))`
+    *  and `y <- ((|C \ D|))`, which is what this branch emits.  Behaviour-neutral as a tag,
+-   *  as above. */
++   *  as above.
++   *
++   *  STAGE 7b (`tracker/satterm/KEYED-EMPTY-STAGE7B.md`) puts a NO-OP GUARD in front of this
++   *  branch: it is taken only when at least one of the two conclusions is not already in the
++   *  system.  See the guard's own note at `def resolution`; the tag is emitted only where the
++   *  branch is actually taken, so a `SplitEmpty`/`ResolutionEmpty` census still counts
++   *  firings and not attempts. */
+   case object ResolutionEmpty      extends Inference
+ 
+   /** Which generative rules are allowed to mint fresh variables.
+@@ -1021,6 +1027,20 @@ object Constraints {
+      * `def resolution`.  Scope: nothing here is about ill-typed input, and `unify` -- the
+      * other deletion that moves a fact into the `SubstEnv` -- is still unmodelled.
+      *
++     * STAGE 7b (`tracker/satterm/KEYED-EMPTY-STAGE7B.md`) -- the one gate Stage 7 failed, and
++     * its repair.  With the branch taken UNCONDITIONALLY, `incomplete/gu05` cost 1.9x
++     * (1.08 s -> 1.93 s).  Isolated: at 283 of the corpus's 293 `resolution` firings BOTH
++     * conclusions are already in the system, so the branch's whole effect there is to
++     * SUPPRESS the mint -- and on `gu05` that mint is not waste.  `v <- (z, all)` cancels
++     * against the `v <- ((|F|))` the lookup itself requires, giving `z <- ()`; `makeEmpty z`
++     * is the queue's only bulk-shrinking operation.  135 of the default's 165 `makeEmpty`
++     * passes on `gu05` are on such a mint, and they delete 7,092 partitions between them; with
++     * the branch on, 3 are, and the same saturation runs to 1,389 partitions instead of 458.
++     * So `resolution`'s branch carries a guard: take it only when it adds a fact.  The SPLIT
++     * branch has no guard and needs none -- it emits `x <- ()`, which drives `makeEmpty`
++     * itself, and its emission is measured never redundant (0 of 130 over the 19 firing
++     * modules).
++     *
+      * DEFAULT OFF pending the adoption gates in `tracker/satterm/KEYED-EMPTY-STAGE7.md`.
+      * `-Dermine.emptyRow=true` enables it. */
+     val emptyRow: Boolean = System.getProperty("ermine.emptyRow", "false") == "true"
+@@ -1298,6 +1318,13 @@ object Constraints {
+    * `v <- (u, concr)`, cancellation against `v <- ((|C|))` derives `u <- ()`, and
+    * `makeEmpty u`'s `aux` emits these same partitions.  The rule does in every order what
+    * the mint plus cancellation plus `makeEmpty` do in some. */
++  /* STAGE 7b (`tracker/satterm/KEYED-EMPTY-STAGE7B.md`).  Unlike `resolution`'s empty-row
++   * branch, the one below carries NO no-op guard, and needs none.  Two measured reasons.
++   * (i) What it emits is `x <- ()`, which `incorporateAll` dequeues into `makeEmpty` -- so it
++   * DRIVES the bulk deletion that Stage 7b found the resolution branch was suppressing,
++   * rather than skipping it.  (ii) Its emission is never redundant: over the 19 modules of
++   * the example corpus that fire it, 0 of 130 emitted `x <- ()` name a variable already bound
++   * empty in the `SubstEnv` or already queued empty (§2 of that report). */
+   def splitConcrete(v: TypeVar, abstr: Set[TypeVar], concr: Fields, rhss: RHS => Option[TypeVar],
+                     resolvent: Fields => Option[TypeVar] = _ => none,
+                     concRow: Fields => Option[TypeVar] = _ => none,
+@@ -1347,6 +1374,11 @@ object Constraints {
+    * `learnPartitions` call. */
+   private val noConcRow: Fields => Option[TypeVar] = _ => none
+ 
++  /* The no-op test that is passed when `-Dermine.emptyRow` is off: one shared constant, so
++   * the default allocates no closure per `learnPartitions` call.  See the STAGE 7b note at
++   * `def resolution`. */
++  private val noKnown: Partition => Boolean = _ => false
++
+   /* When the above special case rules haven't fired, we need to collect
+    * up new rules based on the rule we're about to add, and the other
+    * rules that have been incorporated already.
+@@ -1462,13 +1494,23 @@ object Constraints {
+       }
+       val emptyRow: Fields => Option[TypeVar] =
+         if (GenRules.emptyRow) findEmptyRow else noConcRow
++      /* Stage 7b's no-op guard (see `def resolution`): "is this conclusion already in the
++       * system?".  `PQueue.contains` is a keyed finger-tree split, not a scan, and this is
++       * consulted only at a firing of the empty-row branch -- twice -- so it costs two
++       * O(log n) splits per firing and nothing at all with the flag off, where the shared
++       * `noKnown` constant is passed instead.  Like `concRows` it ranges over `proc ++ incm`
++       * and NOT the current batch `s`; a conclusion derived earlier in this same batch
++       * therefore reads as "new", which errs towards the mint, i.e. towards the shipped
++       * default. */
++      val known: Partition => Boolean =
++        if (GenRules.emptyRow) (p => (proc contains p) || (incm contains p)) else noKnown
+       proc.foldLeft[Set[Partition]](
+            splitConcrete(v, rhs1.abstr, rhs1.concr, findRHS(incm, proc, Set()),
+                          findResolvent(Set()), concRow, emptyRow)
+          ){
+            case (s, Partition(u, rhs2, _)) =>
+              if(u == v) {
+-               val rps = resolution(v, rhs1, rhs2, findResolvent(s), concRow, emptyRow)
++               val rps = resolution(v, rhs1, rhs2, findResolvent(s), concRow, emptyRow, known)
+                val cps = cancellation(v, rhs1, rhs2)
+                val dps = if(!GenRules.disjRule) Nil else proc.toList.flatMap {
+                  case Partition(w, rhs3, _) if w != v => disjunction(rhs3, rhs1, rhs2) ++ disjunction(rhs3, rhs2, rhs1)
+@@ -1758,7 +1800,8 @@ object Constraints {
+   def resolution(v: TypeVar, rhs1: RHS, rhs2: RHS,
+                  resolvent: Fields => Option[TypeVar] = _ => none,
+                  concRow: Fields => Option[TypeVar] = _ => none,
+-                 emptyRow: Fields => Option[TypeVar] = _ => none)(implicit su: Supply): Set[Partition] =
++                 emptyRow: Fields => Option[TypeVar] = _ => none,
++                 known: Partition => Boolean = _ => false)(implicit su: Supply): Set[Partition] =
+     if (!GenRules.resolves) Set() else (rhs1, rhs2) match {
+     case (RHS(Single(x), concr1), RHS(Single(y), concr2)) =>
+       val z = fresh(Loc.builtin, none, Ambiguous(Free), Rho(Loc.builtin))
+@@ -1784,18 +1827,31 @@ object Constraints {
+                 Set(Partition(x, RHS(Set(w), bots), ResolutionRow),
+                     Partition(y, RHS(Set(w), tops), ResolutionRow))
+               case None =>
++                def mint: Set[Partition] =
++                  Set(Partition(v, RHS(Set(z), all), Resolution),
++                      Partition(x, RHS(Set(z), bots), Resolution),
++                      Partition(y, RHS(Set(z), tops), Resolution))
+                 (if (GenRules.emptyRow) emptyRow(all) else none) match {
+                   case Some(_) =>
+                     // EMPTY-ROW REUSE (Stage 7): `v <- ((|F|))` with `F = all`, so the
+                     // resolvent row is `∅` and some `z <- ()` is known.  The two conclusions
+                     // of the reuse with `z` denoting `∅` are these bare concrete ones; the
+                     // carrier is not mentioned, and nothing is minted.
+-                    Set(Partition(x, RHSConcr(bots), ResolutionEmpty),
+-                        Partition(y, RHSConcr(tops), ResolutionEmpty))
+-                  case None =>
+-                    Set(Partition(v, RHS(Set(z), all), Resolution),
+-                        Partition(x, RHS(Set(z), bots), Resolution),
+-                        Partition(y, RHS(Set(z), tops), Resolution))
++                    val bot = Partition(x, RHSConcr(bots), ResolutionEmpty)
++                    val top = Partition(y, RHSConcr(tops), ResolutionEmpty)
++                    // THE NO-OP GUARD (Stage 7b, `tracker/satterm/KEYED-EMPTY-STAGE7B.md`).
++                    // If BOTH conclusions are already in the system the reuse adds nothing --
++                    // and all it does is suppress a mint that the default would immediately
++                    // have proved EMPTY (`v <- (z, all)` against `v <- ((|F|))` cancels to
++                    // `z <- ()`), whose `makeEmpty` is the queue's only bulk-shrinking
++                    // operation and, through `makeEmpty`'s `aux`, the way the solver
++                    // discovers that other variables are `∅` too.  Measured: on
++                    // `incomplete/gu05` that suppression costs 1.9x (458 -> 1,389 partitions
++                    // in one saturation).  So take the reuse only when it actually adds a
++                    // fact, and otherwise take the shipped guarded mint.  283 of the corpus's
++                    // 293 firings are this case; the 10 that are not keep the reuse.
++                    if (known(bot) && known(top)) mint else Set(bot, top)
++                  case None => mint
+                 }
+             }
+         }

@@ -727,3 +727,14 @@ nothing was committed**; the one-line diff with its ADOPTED comment is in the re
 | `tracker/repro/satterm/seeds/G7.json` | Stage 7's witness as a tracked `json:` seed: `KeyedEmpty.G7` plus the `e <- ()` of `G7_blocked`, ordered so the carrier is in the `SubstEnv` when the split premise is dequeued |
 | `tracker/repro/satterm/seeds/W3.json`, `seeds/W4.json` | Stage 3's and Stage 4's witnesses as tracked `json:` seeds for `tracker/repro/satterm/sweep.sh` |
 | `tracker/tools/splitkey-counts.py`, `splitkey-sweep.sh`, `ei-classify.py` | Stage 2 instruments: split-branch counts per trace, the 110-module traced sweep, `.ei` signature classification |
+
+### 3k. Stage 7b — preserved from the removed worktree (2026-09-07)
+
+Stage 7b (2026-09-04) lived only in the worktree `ermine-scala-wt-prof` (branch `emptyrow-profiling`, Stage 7 as
+committed in `756c59e` plus an UNCOMMITTED change) and was never committed. The worktree was removed on 2026-09-07;
+its two unique artefacts are kept here: the report `tracker/satterm/KEYED-EMPTY-STAGE7B.md` (the isolation of the
+`gu05` regression under `-Dermine.emptyRow=true`: the empty-row branch of `resolution` suppresses the mint that is
+the queue's GC; the delivery is a no-op guard, "take the branch only when it adds a fact", `gu05` 1.93 s -> 1.09 s)
+and the change itself as an unapplied patch `tracker/satterm/stage7b-emptyrow-noop-guard.patch` (65 insertions in
+`Constraints.scala`; `git apply --check` is clean against `c48f178`). UNREVIEWED and NOT applied; `emptyRow` remains
+DEFAULT OFF; the Lean gap it names (a membership-dependent choice) is Stage 8, not scheduled.

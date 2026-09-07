@@ -947,3 +947,9 @@ Lean only; it is the only agent, so it may lake build. ON ITS REPORT: orchestrat
 (brief to write: brief-S4c-review.md, imitating brief-E-review.md's shape: re-run every gate, check every hypothesis
 is discharged from the code, adversarial seeds against the correspondence), then fix -> commit ONE stage commit.
 Adoption remains the user's decision even if S4c is GREEN.
+
+WORKTREES REMOVED (2026-09-07, user's instruction): wt-b1 (identical to 52da5b8), wt-d1 (identical to 82c982a),
+wt-loader (identical to 939c2aa), wt-s2 (earlier snapshot of 3991a58), wt-s4 (identical to main after c48f178),
+wt-prof (Stage 7 = 756c59e; the uncommitted Stage 7b preserved as tracker/satterm/KEYED-EMPTY-STAGE7B.md +
+stage7b-emptyrow-noop-guard.patch, ticket §3k). Their six branches were all ancestors of HEAD and were deleted.
+Future stages that need a Scala change behind a flag create a fresh worktree and remove it after the commit.
