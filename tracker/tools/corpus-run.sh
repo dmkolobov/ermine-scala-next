@@ -66,8 +66,11 @@
 # (2026-09-02: the labelCheckEarly adoption was measured this way, four sweeps in flight
 # while the fix was being compiled.)
 #
-# Directories covered, 80 files: core/examples/*.e (15), core/examples/Ai/*.e (11),
+# Directories covered, 130 files: core/examples/*.e (15), core/examples/Ai/*.e (11),
 # core/examples/Wide/*.e (11), core/examples/Wide/shouldfail/*.e (3),
+# core/examples/Algebra/*.e (13), core/examples/Algebra/shouldfail/*.e (6),
+# core/examples/Time/*.e (11), core/examples/Time/shouldfail/*.e (3),
+# core/examples/Present/*.e (11), core/examples/Present/shouldfail/*.e (6),
 # core/examples/shouldfail/*.e (40).  `incomplete/` is NOT here: four of its modules
 # diverge on pristine code and are named `.slow` for that reason; use --incomplete for
 # it, which applies a timeout per file.
@@ -100,12 +103,15 @@ mkdir -p "$out"
 find core/examples -name '*.ei' -delete
 
 files=( core/examples/*.e core/examples/Ai/*.e core/examples/Wide/*.e \
-        core/examples/Wide/shouldfail/*.e core/examples/shouldfail/*.e )
+        core/examples/Wide/shouldfail/*.e core/examples/Algebra/*.e \
+        core/examples/Algebra/shouldfail/*.e core/examples/Time/*.e \
+        core/examples/Time/shouldfail/*.e core/examples/Present/*.e \
+        core/examples/Present/shouldfail/*.e core/examples/shouldfail/*.e )
 if [[ $incomplete == 1 ]]; then files=( core/examples/incomplete/*.e ); fi
 
 if [[ $batch == 1 ]]; then
   # one command line, with Ai/Common.e hoisted to the head of the Ai group
-  bfiles=(); ai_done=0; wide_done=0
+  bfiles=(); ai_done=0; wide_done=0; algebra_done=0; time_done=0; present_done=0
   for f in "${files[@]}"; do
     case "$f" in
       core/examples/Ai/Common.e) ;;
@@ -115,6 +121,18 @@ if [[ $batch == 1 ]]; then
         bfiles+=( "$f" ) ;;
       core/examples/Wide/*)
         if [[ $wide_done == 0 ]]; then bfiles+=( core/examples/Wide/Helpers.e ); wide_done=1; fi
+        bfiles+=( "$f" ) ;;
+      core/examples/Algebra/Helpers.e) ;;
+      core/examples/Algebra/*)
+        if [[ $algebra_done == 0 ]]; then bfiles+=( core/examples/Algebra/Helpers.e ); algebra_done=1; fi
+        bfiles+=( "$f" ) ;;
+      core/examples/Time/Helpers.e) ;;
+      core/examples/Time/*)
+        if [[ $time_done == 0 ]]; then bfiles+=( core/examples/Time/Helpers.e ); time_done=1; fi
+        bfiles+=( "$f" ) ;;
+      core/examples/Present/Helpers.e) ;;
+      core/examples/Present/*)
+        if [[ $present_done == 0 ]]; then bfiles+=( core/examples/Present/Helpers.e ); present_done=1; fi
         bfiles+=( "$f" ) ;;
       *) bfiles+=( "$f" ) ;;
     esac

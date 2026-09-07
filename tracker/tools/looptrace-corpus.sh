@@ -50,7 +50,7 @@ mkdir -p "$S/traces" "$S/lean" "$S/diff"
 : > "$S/results.txt"
 find core/examples -name '*.ei' -delete
 
-groups="${LOOPTRACE_GROUPS:-boot top Ai Wide Wide-shouldfail shouldfail bugs guide shouldfail-controls incomplete}"
+groups="${LOOPTRACE_GROUPS:-boot top Ai Wide Wide-shouldfail Present Present-shouldfail Time Time-shouldfail Algebra Algebra-shouldfail shouldfail bugs guide shouldfail-controls incomplete}"
 perfile=" ${LOOPTRACE_PERFILE:-incomplete} "
 flags="${LOOPTRACE_FLAGS:-}"
 jopts="${LOOPTRACE_JAVA:-}"
@@ -74,6 +74,36 @@ for g in $groups; do
     Wide-shouldfail)
           mapfile -t gf < <( { echo core/examples/Wide/Helpers.e
                                find core/examples/Wide/shouldfail -maxdepth 1 -name '*.e' \
+                                 | sort; } ) ;;
+    # Algebra/ is the Ai/ case with a different library: every Algebra module imports
+    # `Algebra.Helpers`, and so does every module under Algebra/shouldfail, so the library
+    # goes first on both command lines (stage E2, 2026-09-06).
+    Algebra) mapfile -t gf < <( { echo core/examples/Algebra/Helpers.e
+                               find core/examples/Algebra -maxdepth 1 -name '*.e' \
+                                    ! -name 'Helpers.e' | sort; } ) ;;
+    Algebra-shouldfail)
+          mapfile -t gf < <( { echo core/examples/Algebra/Helpers.e
+                               find core/examples/Algebra/shouldfail -maxdepth 1 -name '*.e' \
+                                 | sort; } ) ;;
+    # Time/ is the Ai/ case with a different library: every Time module imports
+    # `Time.Helpers`, and so does every module under Time/shouldfail, so the library
+    # goes first on both command lines (stage E3, 2026-09-07).
+    Time) mapfile -t gf < <( { echo core/examples/Time/Helpers.e
+                               find core/examples/Time -maxdepth 1 -name '*.e' \
+                                    ! -name 'Helpers.e' | sort; } ) ;;
+    Time-shouldfail)
+          mapfile -t gf < <( { echo core/examples/Time/Helpers.e
+                               find core/examples/Time/shouldfail -maxdepth 1 -name '*.e' \
+                                 | sort; } ) ;;
+    # Present/ is the Ai/ case with a different library: every Present module imports
+    # `Present.Helpers`, and so does every module under Present/shouldfail, so the library
+    # goes first on both command lines (stage E4, 2026-09-07).
+    Present) mapfile -t gf < <( { echo core/examples/Present/Helpers.e
+                               find core/examples/Present -maxdepth 1 -name '*.e' \
+                                    ! -name 'Helpers.e' | sort; } ) ;;
+    Present-shouldfail)
+          mapfile -t gf < <( { echo core/examples/Present/Helpers.e
+                               find core/examples/Present/shouldfail -maxdepth 1 -name '*.e' \
                                  | sort; } ) ;;
     *)    mapfile -t gf < <(find "core/examples/$g" -maxdepth 1 -name '*.e' | sort) ;;
   esac
