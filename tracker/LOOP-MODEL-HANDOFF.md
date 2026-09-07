@@ -953,3 +953,13 @@ wt-loader (identical to 939c2aa), wt-s2 (earlier snapshot of 3991a58), wt-s4 (id
 wt-prof (Stage 7 = 756c59e; the uncommitted Stage 7b preserved as tracker/satterm/KEYED-EMPTY-STAGE7B.md +
 stage7b-emptyrow-noop-guard.patch, ticket §3k). Their six branches were all ancestors of HEAD and were deleted.
 Future stages that need a Scala change behind a flag create a fresh worktree and remove it after the commit.
+
+S4c IMPLEMENTER DONE (2026-09-07 ~17:05), GREEN: TopNormalise.lean (1,476 lines, 109 theorems) incl. topFamilies_eq/
+topNormalise_eq (rfl), topFamilies_spec, carriers_spec, topNormalise_sysQ, topNormalise_ssat_iff/_noLoss/_conserv/
+_loopStrict, tnOk_of_buildQueue, exQ_* non-vacuity; the six htn premises replaced by the rewrite's own equation;
+four _input theorems; two _off corollaries. ORCHESTRATOR VERIFIED: lake build 868 green; Audit 4,282 / 0; 17 key
+theorems standard axioms; TestLoopTrace 720/720; executable closure untouched, looptrace not rebuilt. Report
+tracker/loopmodel/S4C-CORRESPONDENCE.md. UNCOMMITTED pending review. REVIEWER LAUNCHED (brief
+briefs/brief-S4c-review.md; report -> tracker/loopmodel/S4C-REVIEW.md, findings J-*). On ADVANCE: ONE commit
+"Loop model S4c: the correspondence lemma for topNormalise and the S2 chain at ON"; then REPORT to the user with
+the reviewer's adoption recommendation (the flip is the user's).
