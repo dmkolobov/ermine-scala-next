@@ -17,7 +17,7 @@ A1. **`record#` returns a Scala 2.13 `MapView`; every consumer that pattern-matc
     `core/examples/PivotTest.e`'s `pivotData` has panicked for years. `Relation.relation` is NOT affected
     (`mkRelation#`), which is why relation renderings work. Nobody saw it because everything is lazy.
     **Fix:** three `.toMap` (988, 1007, 1012) plus a test that FORCES a pivot. (E1 §7.2, E1-REVIEW §MapView,
-    E4 §4.6.) — stage F1. **FIXED in `5ab6e7e`** (stage F1, 2026-09-07): the three `.toMap`s are in
+    E4 §4.6.) — stage F1. **FIXED in `254110b`** (stage F1, 2026-09-07): the three `.toMap`s are in
     (`Lib.scala:997`, `:1016`, `:1021` after the added comment), and eight new `core/test` properties in
     `scalacheck-binding/src/main/scala/TestRecordPrims.scala` FORCE a pivot, `Relation.Predicate.all`,
     `Record.header`, `header#`, `scalaRecord#` and `scalaRecordIn#` to values and check them; all eight
@@ -45,7 +45,7 @@ A2. **`Console.other` loops forever on a piped line containing `case`, `let` or 
     Minimal input: `printf 'staircase\n' | bin/ermine` (an unbounded stream of `|>` prompts — the count in any
     report is a time-boxed iteration count, not a durable number); control `staircas` exits cleanly. This is the long-known "REPL pipe quirk". **Fix:** treat `null` as EOF; match
     the keywords as tokens, not substrings. (E4 §4.7, E4-REVIEW.) — stage F2, done early in F1.
-    **FIXED in `5ab6e7e`** (stage F1, 2026-09-07): both halves. `Console.opensLayout` matches the three
+    **FIXED in `254110b`** (stage F1, 2026-09-07): both halves. `Console.opensLayout` matches the three
     keywords as WORDS (a boundary that excludes `'` and `#`, so `case'` and `let#` stay names), which is
     what stops `staircase` / `"complete"` opening a continuation at all; and
     `blank = (last == null) || (last == "")` ends the continuation at EOF, which is what makes a line
