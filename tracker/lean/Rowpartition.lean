@@ -195,6 +195,17 @@ first getting the module to build.
                                returns an element of the queue with that position erased --
                                which, with `dequeuePol_none` for the acceptance branch, is all
                                the development's proofs ever use of `pop`
+* `Rowpartition.Loop.TopNormalise` -- S4c: the CORRESPONDENCE LEMMA for S4's written-partition
+                               normalisation (`-Dermine.topNormalise`, default OFF).  Carries
+                               `S4Top.lean`'s abstract theorems INTO the library, and ties them
+                               to the executable mirror: every family `topFamilies` selects
+                               meets their hypotheses (`topFamilies_spec`), every carrier is
+                               fresh for the whole system and distinct (`carriers_spec`), the
+                               returned queue IS `(G ∪ ⋃ topAdds) \ ⋃ topReads`
+                               (`topNormalise_sysQ`), and the rewrite is satisfiability
+                               EQUIVALENT (`topNormalise_ssat_iff`), losing nothing
+                               (`topNormalise_noLoss`) and inventing nothing beyond the mint
+                               (`topNormalise_conserv`, `topNormalise_loopStrict`)
 -/
 import Rowpartition.Basic
 import Rowpartition.Rules
@@ -267,3 +278,4 @@ import Rowpartition.Loop.PolicyReplay
 import Rowpartition.Loop.FlaggedSound
 import Rowpartition.Loop.PolicyStep
 import Rowpartition.Loop.PolicyTerm
+import Rowpartition.Loop.TopNormalise

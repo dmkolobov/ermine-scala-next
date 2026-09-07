@@ -2219,10 +2219,26 @@ theorem runSP_not_rejected {d0 b n : Nat} {aux : Aux} {s : State}
 as `solveSeed` does, and the policy changes nothing about it.  So the two S2 theorems transport
 line for line, with `runP` supplying the S1 half. -/
 
-/-- `NoFalseAccept.solveSeed_rejects_of_refuted` for the policy solve.  `htn` is that theorem's
-S4 premise, for the same reason and with the same scope: the chain covers `topNormalise = false`,
-the shipped configuration. -/
+/-- `NoFalseAccept.solveSeed_rejects_of_refuted` for the policy solve.  **S4c: the flag
+hypothesis is gone here too**, for the same reason and by the same route — `htn` names the
+queue the checks read, which is the rewrite's own output at EITHER setting of the flag, and
+the S4 statement is recovered as `solveSeedP_rejects_of_refuted_off`. -/
 theorem solveSeedP_rejects_of_refuted {bud : Nat} {fl : Flags} {site loc : String}
+    {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat} {envFacts : List LPart}
+    {q0 q : PQueue} {su0' su1 : Sup} {rc : List (Nat × Nat × SSet Lbl)}
+    (hq : buildQueue cs su0 = .ok (q0, su0'))
+    (htn : topNormalise fl.topNormalise q0 su0' = (q, su1, rc))
+    (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
+      none)
+    (hflag : fl.rowSoundDecide = true)
+    {l : Lbl} {a : Nat} {w : String}
+    (href : (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
+              fl.rowSoundSolveBudget).1 = .refuted l a w) :
+    (solveSeedP pol bud fl site loc cs ns su0 fuel envFacts).verdict = "REJECTED" := by
+  simp only [solveSeedP, hq, htn, hearly, hflag, href, if_true]
+
+/-- **NO SILENT WEAKENING**: S4's own statement, recovered as an instance. -/
+theorem solveSeedP_rejects_of_refuted_off {bud : Nat} {fl : Flags} {site loc : String}
     {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat} {envFacts : List LPart}
     {q : PQueue} {su1 : Sup}
     (htn : fl.topNormalise = false)
@@ -2233,16 +2249,17 @@ theorem solveSeedP_rejects_of_refuted {bud : Nat} {fl : Flags} {site loc : Strin
     {l : Lbl} {a : Nat} {w : String}
     (href : (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
               fl.rowSoundSolveBudget).1 = .refuted l a w) :
-    (solveSeedP pol bud fl site loc cs ns su0 fuel envFacts).verdict = "REJECTED" := by
-  simp only [solveSeedP, hq, htn, topNormalise, Bool.not_false, if_true, hearly, hflag, href]
+    (solveSeedP pol bud fl site loc cs ns su0 fuel envFacts).verdict = "REJECTED" :=
+  solveSeedP_rejects_of_refuted hq (by rw [htn]; exact topNormalise_off q su1) hearly hflag href
 
 /-- **NO FALSE ACCEPTANCE, under any policy.**  With layer (iii) on and its budget intact, a
 policy solve that does NOT reject says the system it was given HAS A MODEL. -/
 theorem solveP_noFalseAccept {L : List Lbl} (hcoh : LblCoh L) {bud : Nat}
     {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
-    {envFacts : List LPart} {q : PQueue} {su1 : Sup}
-    (htn : fl.topNormalise = false)
-    (hq : buildQueue cs su0 = .ok (q, su1))
+    {envFacts : List LPart} {q0 q : PQueue} {su0' su1 : Sup}
+    {rc : List (Nat × Nat × SSet Lbl)}
+    (hq : buildQueue cs su0 = .ok (q0, su0'))
+    (htn : topNormalise fl.topNormalise q0 su0' = (q, su1, rc))
     (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
       none)
     (hflag : fl.rowSoundDecide = true)
@@ -2257,7 +2274,7 @@ theorem solveP_noFalseAccept {L : List Lbl} (hcoh : LblCoh L) {bud : Nat}
     cases hv : (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
         fl.rowSoundSolveBudget).1 with
     | sat => rfl
-    | refuted l a w => exact absurd (solveSeedP_rejects_of_refuted htn hq hearly hflag hv) hacc
+    | refuted l a w => exact absurd (solveSeedP_rejects_of_refuted hq htn hearly hflag hv) hacc
     | noVerdict l w => exact absurd hv (hbud l w)
   exact labelDecide_sat_ssat hcoh hnd hmem hsat
 
@@ -2266,9 +2283,10 @@ that ACCEPTS is FAITHFUL: the loop lost nothing, every model of the output syste
 the input system, and the two are satisfiable together.  S1 (this module) and S2 composed. -/
 theorem solveP_accepted_faithful {L : List Lbl} (hcoh : LblCoh L) {bud : Nat}
     {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
-    {envFacts : List LPart} {q : PQueue} {su1 : Sup} {tr : List String} {z : Nat}
-    (htn : fl.topNormalise = false)
-    (hq : buildQueue cs su0 = .ok (q, su1))
+    {envFacts : List LPart} {q0 q : PQueue} {su0' su1 : Sup}
+    {rc : List (Nat × Nat × SSet Lbl)} {tr : List String} {z : Nat}
+    (hq : buildQueue cs su0 = .ok (q0, su0'))
+    (htn : topNormalise fl.topNormalise q0 su0' = (q, su1, rc))
     (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
       none)
     (hflag : fl.rowSoundDecide = true)
@@ -2287,12 +2305,86 @@ theorem solveP_accepted_faithful {L : List Lbl} (hcoh : LblCoh L) {bud : Nat}
     (∀ rho, SModels rho (sys s') → SModels rho (sys (initState q su1 tr fl ns site z))) ∧
     (SSat (sys (initState q su1 tr fl ns site z)) ↔ SSat (sys s')) := by
   have hlive : SSat ((((q.elems ++ envFacts).map LPart.toConstraint)).toFinset) :=
-    solveP_noFalseAccept hcoh htn hq hearly hflag hnd hmem hbud hacc
+    solveP_noFalseAccept hcoh hq htn hearly hflag hnd hmem hbud hacc
   have hsat : SSat (sys (initState q su1 tr fl ns site z)) :=
     ssat_of_subset sys_subset_live hlive
   exact ⟨runP_noLoss n hw hem hdj hcse hb hsat s' hres,
          runP_models hw hem hdj hcse hb hsat hres,
          runP_ssat_iff hw hem hdj hcse hb hsat hres⟩
+
+/-- **NO FALSE ACCEPTANCE, ABOUT THE INPUT, under any policy** -- `NoFalseAccept.solve_noFalseAccept_input`
+transported.  S4c-1(d) carries the verdict from the queue the checks read back to
+`buildQueue`'s own. -/
+theorem solveP_noFalseAccept_input {L : List Lbl} (hcoh : LblCoh L) {bud : Nat}
+    {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
+    {envFacts : List LPart} {q0 q : PQueue} {su0' su1 : Sup}
+    {rc : List (Nat × Nat × SSet Lbl)}
+    (H : TnOk L q0 su0')
+    (hq : buildQueue cs su0 = .ok (q0, su0'))
+    (htn : topNormalise fl.topNormalise q0 su0' = (q, su1, rc))
+    (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
+      none)
+    (hflag : fl.rowSoundDecide = true)
+    (hnd : ∀ p ∈ q.elems ++ envFacts, p.rhs.abstr.elems.Nodup)
+    (hmem : ∀ p ∈ q.elems ++ envFacts, ∀ x ∈ p.rhs.conc.elems, x ∈ L)
+    (hbud : ∀ l w, (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
+                     fl.rowSoundSolveBudget).1 ≠ .noVerdict l w)
+    (hacc : (solveSeedP pol bud fl site loc cs ns su0 fuel envFacts).verdict ≠ "REJECTED") :
+    SSat ((((q0.elems ++ envFacts).map LPart.toConstraint)).toFinset) := by
+  obtain ⟨rho, hm⟩ := solveP_noFalseAccept hcoh hq htn hearly hflag hnd hmem hbud hacc
+  have hq' : (topNormalise fl.topNormalise q0 su0').1 = q := by rw [htn]
+  have hmq : SModels rho (sysQ q) := by
+    intro c hc
+    obtain ⟨p, hp, rfl⟩ := mem_sysQ.mp hc
+    exact hm _ (List.mem_toFinset.mpr
+      (List.mem_map.mpr ⟨p, List.mem_append_left _ hp, rfl⟩))
+  have hm0 : SModels rho (sysQ q0) :=
+    tn_models fl.topNormalise H (by rw [hq']; exact hmq)
+  refine ⟨rho, ?_⟩
+  intro c hc
+  obtain ⟨p, hp, rfl⟩ := List.mem_map.mp (List.mem_toFinset.mp hc)
+  rcases List.mem_append.mp hp with hp' | hp'
+  · exact hm0 _ (mem_sysQ.mpr ⟨p, hp', rfl⟩)
+  · exact hm _ (List.mem_toFinset.mpr
+      (List.mem_map.mpr ⟨p, List.mem_append_right _ hp', rfl⟩))
+
+/-- **THE CHAIN, ABOUT THE INPUT, under any policy.** -/
+theorem solveP_accepted_faithful_input {L : List Lbl} (hcoh : LblCoh L) {bud : Nat}
+    {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
+    {envFacts : List LPart} {q0 q : PQueue} {su0' su1 : Sup}
+    {rc : List (Nat × Nat × SSet Lbl)} {tr : List String} {z : Nat}
+    (H : TnOk L q0 su0')
+    (hq : buildQueue cs su0 = .ok (q0, su0'))
+    (htn : topNormalise fl.topNormalise q0 su0' = (q, su1, rc))
+    (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
+      none)
+    (hflag : fl.rowSoundDecide = true)
+    (hnd : ∀ p ∈ q.elems ++ envFacts, p.rhs.abstr.elems.Nodup)
+    (hmem : ∀ p ∈ q.elems ++ envFacts, ∀ x ∈ p.rhs.conc.elems, x ∈ L)
+    (hbud : ∀ l w, (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
+                     fl.rowSoundSolveBudget).1 ≠ .noVerdict l w)
+    (hacc : (solveSeedP pol bud fl site loc cs ns su0 fuel envFacts).verdict ≠ "REJECTED")
+    (n : Nat) (aux : Aux) (hw : Wf (initState q su1 tr fl ns site z))
+    (hem : fl.emptyRow = false) (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (hb : RunSupOkP pol aux n (initState q su1 tr fl ns site z))
+    {s' : State}
+    (hres : runP pol aux (initState q su1 tr fl ns site z) n = .solved s' ∨
+            runP pol aux (initState q su1 tr fl ns site z) n = .outOfFuel s') :
+    NoLoss (sysQ q0) (sys s') ∧
+    (∀ rho, SModels rho (sys s') → SModels rho (sysQ q0)) ∧
+    (SSat (sysQ q0) ↔ SSat (sys s')) := by
+  obtain ⟨h1, h2, h3⟩ := solveP_accepted_faithful hcoh hq htn hearly hflag hnd hmem hbud hacc
+    n aux hw hem hdj hcse hb hres
+  have hinit : sys (initState q su1 tr fl ns site z) = sysQ q := sys_initState_eq
+  have hq' : (topNormalise fl.topNormalise q0 su0').1 = q := by rw [htn]
+  have hnl : NoLoss (sysQ q0) (sysQ q) := by
+    rw [← hq']; exact tn_noLoss fl.topNormalise H
+  have hiff : SSat (sysQ q0) ↔ SSat (sysQ q) := by
+    rw [← hq']; exact tn_ssat_iff fl.topNormalise H
+  have h1' : NoLoss (sysQ q) (sys s') := by rw [← hinit]; exact h1
+  refine ⟨NoLoss.trans hnl h1', fun rho hmm => hnl.models ?_, ?_⟩
+  · rw [← hinit]; exact h2 rho hmm
+  · rw [hiff, ← hinit]; exact h3
 
 /-! ## 7. NO SILENT WEAKENING: the originals, recovered
 

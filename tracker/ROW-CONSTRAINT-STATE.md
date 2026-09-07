@@ -174,9 +174,35 @@ compile at all.
    more reads) in the same commit: its failure IS the resource limit this removes, and it is the
    one corpus module whose verdict changes.
 
+**AND TWO LEAN PREREQUISITES, WHICH ARE NOW MET (S4c, 2026-09-07).**  `S4B-REVIEW.md` §5.2 made
+these conditions of the flip and neither existed at S4; both are now closed.  They change nothing
+about items 1 and 2 above, which remain the user's to do.
+
+   * the **CORRESPONDENCE LEMMA** the flag was missing and every other adopted default in this
+     programme shipped: `tracker/lean/Rowpartition/Loop/TopNormalise.lean` (111 theorems) proves
+     about the EXECUTABLE `Loop/Json.lean` mirror that every family the selector returns meets
+     the abstract theorems' hypotheses (`topFamilies_spec`), that every carrier is fresh for the
+     WHOLE input system and distinct (`carriers_spec`, from the `Supply`'s own counter), that the
+     returned queue read as a system IS `(G ∪ ⋃ topAdds) \ ⋃ topReads` (`topNormalise_sysQ`), and
+     that the rewrite is **satisfiability-EQUIVALENT** (`topNormalise_ssat_iff`), losing nothing
+     (`topNormalise_noLoss`) and inventing nothing beyond the mint (`topNormalise_conserv`,
+     `topNormalise_loopStrict`).  `topFamilies_eq` and `topNormalise_eq` are `rfl`, so this is
+     about the code as it ships, not a paraphrase of it;
+   * the **S2 NO-FALSE-ACCEPTANCE CHAIN AT ON**: all six theorems that carried
+     `htn : fl.topNormalise = false` now carry none, and four new `…_input` theorems state the
+     faithful conclusion about the queue `buildQueue` returned rather than the rewritten one —
+     which is the statement that matters at ON, because with the flag ON all three checks decide
+     the REWRITTEN system.  S4's statements are recovered verbatim as `…_off` corollaries.
+
+   Report `tracker/loopmodel/S4C-CORRESPONDENCE.md`.  `tracker/loopmodel/S4Top.lean` is now a
+   POINTER: its content moved into the library file, so its 18 theorems are inside the
+   project-wide audit (`Audit.lean`: **4,282 theorems, 0 non-standard axioms**; `lake build` 868
+   jobs; TestLoopTrace 720/720).
+
 **Status: OFFERED, NOT ADOPTED.**  Report `tracker/loopmodel/S4-CHANGE.md`, design
 `tracker/loopmodel/S4-DESIGN.md`, review `tracker/loopmodel/S4A-REVIEW.md`, Lean
-`tracker/loopmodel/S4Top.lean` (22 declarations, 18 audited theorems, 0 non-standard axioms), Scala in the worktree
+`tracker/lean/Rowpartition/Loop/TopNormalise.lean` (S4c; `tracker/loopmodel/S4Top.lean` is now a
+pointer to it), Scala in the worktree
 `~/research/ermine/ermine-scala-wt-s4` (branch `top-normalise`, uncommitted), model mirror in
 `Rowpartition/Loop/{State,Json,Seed,PolicyReplay,Main}.lean` under `Flags.topNormalise`
 (`--flags=topnorm`).  **Adopting it changes the verdict of exactly one corpus module**:

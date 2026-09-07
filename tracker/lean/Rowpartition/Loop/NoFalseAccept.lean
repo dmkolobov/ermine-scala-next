@@ -26,6 +26,7 @@ The chain:
 -/
 import Rowpartition.Loop.Solve
 import Rowpartition.Loop.Decide
+import Rowpartition.Loop.TopNormalise
 
 namespace Rowpartition.Loop
 
@@ -935,14 +936,29 @@ theorem bare_death_refutes {L : List Lbl} (hcoh : LblCoh L) {s : State} {r : LPa
 /-- The model's `solveSeed` REJECTS whenever layer (iii) refutes: the check sits between the
 early label check and the loop, exactly where `Subst.solve` runs it.
 
-**S4 (2026-09-07), `htn`.**  `solveSeed` now interposes `topNormalise fl.topNormalise` between
-`buildQueue` and the three checks (`tracker/loopmodel/S4-CHANGE.md` §1), so the queue the checks
-read is `buildQueue`'s `q` only when the flag is OFF.  `htn : fl.topNormalise = false` is the
-honest premise: **the S2 no-false-acceptance chain covers the flag-OFF configuration, which is
-the shipped one.**  Covering `topNormalise = true` means restating the chain on the REWRITTEN
-queue and bridging it back with `S4Top.reads_of_rewrite` / `ssat_rewrite_fwd`; that is stage S4c
-(`S4-CHANGE.md` §6), a prerequisite of adoption and not of a default-OFF commit. -/
+**S4c (2026-09-07): the flag hypothesis is GONE.**  `solveSeed` interposes `topNormalise
+fl.topNormalise` between `buildQueue` and the three checks (`tracker/loopmodel/S4-CHANGE.md`
+§1), so the queue the checks read is `buildQueue`'s `q0` only when the flag is OFF.  S4 stated
+this theorem with `htn : fl.topNormalise = false`; it now names the queue the checks ACTUALLY
+read, and `htn` is the REWRITE'S OWN EQUATION, which holds at either setting of the flag.  The
+S4 statement is the instance `solveSeed_rejects_of_refuted_off` below — `topNormalise_off` is
+`rfl`, so nothing is weakened. -/
 theorem solveSeed_rejects_of_refuted {fl : Flags} {site loc : String} {cs : List CsItem}
+    {ns : Names} {su0 : Sup} {fuel : Nat} {envFacts : List LPart} {q0 q : PQueue}
+    {su0' su1 : Sup} {rc : List (Nat × Nat × SSet Lbl)}
+    (hq : buildQueue cs su0 = .ok (q0, su0'))
+    (htn : topNormalise fl.topNormalise q0 su0' = (q, su1, rc))
+    (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
+      none)
+    (hflag : fl.rowSoundDecide = true)
+    {l : Lbl} {a : Nat} {w : String}
+    (href : (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
+              fl.rowSoundSolveBudget).1 = .refuted l a w) :
+    (solveSeed fl site loc cs ns su0 fuel envFacts).verdict = "REJECTED" := by
+  simp only [solveSeed, hq, htn, hearly, hflag, href, if_true]
+
+/-- **NO SILENT WEAKENING**: S4's own statement, recovered as an instance. -/
+theorem solveSeed_rejects_of_refuted_off {fl : Flags} {site loc : String} {cs : List CsItem}
     {ns : Names} {su0 : Sup} {fuel : Nat} {envFacts : List LPart} {q : PQueue} {su1 : Sup}
     (htn : fl.topNormalise = false)
     (hq : buildQueue cs su0 = .ok (q, su1))
@@ -952,8 +968,8 @@ theorem solveSeed_rejects_of_refuted {fl : Flags} {site loc : String} {cs : List
     {l : Lbl} {a : Nat} {w : String}
     (href : (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
               fl.rowSoundSolveBudget).1 = .refuted l a w) :
-    (solveSeed fl site loc cs ns su0 fuel envFacts).verdict = "REJECTED" := by
-  simp only [solveSeed, hq, htn, topNormalise, Bool.not_false, if_true, hearly, hflag, href]
+    (solveSeed fl site loc cs ns su0 fuel envFacts).verdict = "REJECTED" :=
+  solveSeed_rejects_of_refuted hq (by rw [htn]; exact topNormalise_off q su1) hearly hflag href
 
 /-- **NO FALSE ACCEPTANCE.**  With layer (iii) on, a solve that does NOT reject says the
 system it was given — the queue's partitions TOGETHER WITH the environment facts the trace's
@@ -968,12 +984,18 @@ The two provisos are the ones `S2-DESIGN.md` §2 states and refuses to hide:
   (`LblCoh`, the hypothesis `Loop/Reject.lean` already carries).
 
 This is the CONVERSE of S1: `run_noLoss` and `solve_sound` are conditional on `SSat (sys s₀)`
-exactly where they have to be, and this is what supplies it. -/
+exactly where they have to be, and this is what supplies it.
+
+**S4c (2026-09-07).**  `q` is the queue the CHECKS READ — `buildQueue`'s output rewritten by
+`topNormalise`, which at the shipped OFF setting is `buildQueue`'s output itself.  The statement
+about the queue `buildQueue` returned is `solve_noFalseAccept_input` below, and the bridge is the
+correspondence lemma of `Loop/TopNormalise.lean`. -/
 theorem solve_noFalseAccept {L : List Lbl} (hcoh : LblCoh L)
     {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
-    {envFacts : List LPart} {q : PQueue} {su1 : Sup}
-    (htn : fl.topNormalise = false)
-    (hq : buildQueue cs su0 = .ok (q, su1))
+    {envFacts : List LPart} {q0 q : PQueue} {su0' su1 : Sup}
+    {rc : List (Nat × Nat × SSet Lbl)}
+    (hq : buildQueue cs su0 = .ok (q0, su0'))
+    (htn : topNormalise fl.topNormalise q0 su0' = (q, su1, rc))
     (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
       none)
     (hflag : fl.rowSoundDecide = true)
@@ -988,9 +1010,48 @@ theorem solve_noFalseAccept {L : List Lbl} (hcoh : LblCoh L)
     cases hv : (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
         fl.rowSoundSolveBudget).1 with
     | sat => rfl
-    | refuted l a w => exact absurd (solveSeed_rejects_of_refuted htn hq hearly hflag hv) hacc
+    | refuted l a w => exact absurd (solveSeed_rejects_of_refuted hq htn hearly hflag hv) hacc
     | noVerdict l w => exact absurd hv (hbud l w)
   exact labelDecide_sat_ssat hcoh hnd hmem hsat
+
+/-- **NO FALSE ACCEPTANCE, ABOUT THE SYSTEM THE SOLVE WAS GIVEN.**  With `topNormalise` ON the
+three checks decide the REWRITTEN queue, so `solve_noFalseAccept` above is a statement about
+`q`, not about `buildQueue`'s `q0`.  S4c-1(d) closes that gap: the rewrite loses nothing
+(`tn_models`), so a model of the live input is a model of the input the compiler was handed.
+`TnOk` is `Wf`'s side conditions at `q0` plus the supply invariant `RefineLearn.SupFresh`;
+with the flag OFF it is not used at all (`tn_models` is then `rfl`). -/
+theorem solve_noFalseAccept_input {L : List Lbl} (hcoh : LblCoh L)
+    {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
+    {envFacts : List LPart} {q0 q : PQueue} {su0' su1 : Sup}
+    {rc : List (Nat × Nat × SSet Lbl)}
+    (H : TnOk L q0 su0')
+    (hq : buildQueue cs su0 = .ok (q0, su0'))
+    (htn : topNormalise fl.topNormalise q0 su0' = (q, su1, rc))
+    (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
+      none)
+    (hflag : fl.rowSoundDecide = true)
+    (hnd : ∀ p ∈ q.elems ++ envFacts, p.rhs.abstr.elems.Nodup)
+    (hmem : ∀ p ∈ q.elems ++ envFacts, ∀ x ∈ p.rhs.conc.elems, x ∈ L)
+    (hbud : ∀ l w, (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
+                     fl.rowSoundSolveBudget).1 ≠ .noVerdict l w)
+    (hacc : (solveSeed fl site loc cs ns su0 fuel envFacts).verdict ≠ "REJECTED") :
+    SSat ((((q0.elems ++ envFacts).map LPart.toConstraint)).toFinset) := by
+  obtain ⟨rho, hm⟩ := solve_noFalseAccept hcoh hq htn hearly hflag hnd hmem hbud hacc
+  have hq' : (topNormalise fl.topNormalise q0 su0').1 = q := by rw [htn]
+  have hmq : SModels rho (sysQ q) := by
+    intro c hc
+    obtain ⟨p, hp, rfl⟩ := mem_sysQ.mp hc
+    exact hm _ (List.mem_toFinset.mpr
+      (List.mem_map.mpr ⟨p, List.mem_append_left _ hp, rfl⟩))
+  have hm0 : SModels rho (sysQ q0) :=
+    tn_models fl.topNormalise H (by rw [hq']; exact hmq)
+  refine ⟨rho, ?_⟩
+  intro c hc
+  obtain ⟨p, hp, rfl⟩ := List.mem_map.mp (List.mem_toFinset.mp hc)
+  rcases List.mem_append.mp hp with hp' | hp'
+  · exact hm0 _ (mem_sysQ.mpr ⟨p, hp', rfl⟩)
+  · exact hm _ (List.mem_toFinset.mpr
+      (List.mem_map.mpr ⟨p, List.mem_append_right _ hp', rfl⟩))
 
 /-- The queue half of the conclusion, in the `sys`-of-a-state form S1's theorems use: at an
 initial state the environment is empty, so `sys` IS the queue's partitions. -/
@@ -1031,12 +1092,17 @@ system, and the two are satisfiable together.
 This is S1 and S2 composed.  S2 supplies the `SSat (sys s₀)` that every S1 output-soundness
 theorem is conditional on — that is the whole point of the stage — and the restriction step
 `ssat_of_subset`/`sys_subset_live` is what carries it from the LIVE input (queue plus
-environment facts) down to the queue the loop actually runs on. -/
+environment facts) down to the queue the loop actually runs on.
+
+**S4c (2026-09-07).**  `q` is the queue the LOOP RUNS ON, i.e. `buildQueue`'s output rewritten by
+`topNormalise`; `solve_accepted_faithful_input` below is the same conclusion about the queue
+`buildQueue` returned, composed with the correspondence lemma. -/
 theorem solve_accepted_faithful {L : List Lbl} (hcoh : LblCoh L)
     {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
-    {envFacts : List LPart} {q : PQueue} {su1 : Sup} {tr : List String} {z : Nat}
-    (htn : fl.topNormalise = false)
-    (hq : buildQueue cs su0 = .ok (q, su1))
+    {envFacts : List LPart} {q0 q : PQueue} {su0' su1 : Sup}
+    {rc : List (Nat × Nat × SSet Lbl)} {tr : List String} {z : Nat}
+    (hq : buildQueue cs su0 = .ok (q0, su0'))
+    (htn : topNormalise fl.topNormalise q0 su0' = (q, su1, rc))
     (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
       none)
     (hflag : fl.rowSoundDecide = true)
@@ -1056,12 +1122,54 @@ theorem solve_accepted_faithful {L : List Lbl} (hcoh : LblCoh L)
     (∀ rho, SModels rho (sys s') → SModels rho (sys (initState q su1 tr fl ns site z))) ∧
     (SSat (sys (initState q su1 tr fl ns site z)) ↔ SSat (sys s')) := by
   have hlive : SSat ((((q.elems ++ envFacts).map LPart.toConstraint)).toFinset) :=
-    solve_noFalseAccept hcoh htn hq hearly hflag hnd hmem hbud hacc
+    solve_noFalseAccept hcoh hq htn hearly hflag hnd hmem hbud hacc
   have hsat : SSat (sys (initState q su1 tr fl ns site z)) :=
     ssat_of_subset sys_subset_live hlive
   exact ⟨run_noLoss n hw hem hdj hcse hb hsat s' hres,
          run_models hw hem hdj hcse hb hsat hres,
          run_ssat_iff hw hem hdj hcse hb hsat hres⟩
+
+/-- **THE CHAIN, ABOUT THE SYSTEM THE SOLVE WAS GIVEN.**  `solve_accepted_faithful` speaks of
+the queue the LOOP runs on, which with `topNormalise` ON is the rewritten one.  Composed with
+S4c-1(d) — `tn_noLoss` and `tn_ssat_iff`, the correspondence lemma's two halves — it speaks of
+`buildQueue`'s own queue: the whole pipeline, rewrite included, loses nothing and is
+satisfiable exactly when its output is. -/
+theorem solve_accepted_faithful_input {L : List Lbl} (hcoh : LblCoh L)
+    {fl : Flags} {site loc : String} {cs : List CsItem} {ns : Names} {su0 : Sup} {fuel : Nat}
+    {envFacts : List LPart} {q0 q : PQueue} {su0' su1 : Sup}
+    {rc : List (Nat × Nat × SSet Lbl)} {tr : List String} {z : Nat}
+    (H : TnOk L q0 su0')
+    (hq : buildQueue cs su0 = .ok (q0, su0'))
+    (htn : topNormalise fl.topNormalise q0 su0' = (q, su1, rc))
+    (hearly : (if fl.labelCheck && fl.labelCheckEarly then labelClash ns q.elems else none) =
+      none)
+    (hflag : fl.rowSoundDecide = true)
+    (hnd : ∀ p ∈ q.elems ++ envFacts, p.rhs.abstr.elems.Nodup)
+    (hmem : ∀ p ∈ q.elems ++ envFacts, ∀ x ∈ p.rhs.conc.elems, x ∈ L)
+    (hbud : ∀ l w, (labelDecide (q.elems ++ envFacts) fl.rowSoundBudget
+                     fl.rowSoundSolveBudget).1 ≠ .noVerdict l w)
+    (hacc : (solveSeed fl site loc cs ns su0 fuel envFacts).verdict ≠ "REJECTED")
+    (n : Nat) (hw : Wf (initState q su1 tr fl ns site z))
+    (hem : fl.emptyRow = false) (hdj : fl.disjRule = false) (hcse : fl.cseMints = false)
+    (hb : RunSupOk n (initState q su1 tr fl ns site z))
+    {s' : State}
+    (hres : run (initState q su1 tr fl ns site z) n = .solved s' ∨
+            run (initState q su1 tr fl ns site z) n = .outOfFuel s') :
+    NoLoss (sysQ q0) (sys s') ∧
+    (∀ rho, SModels rho (sys s') → SModels rho (sysQ q0)) ∧
+    (SSat (sysQ q0) ↔ SSat (sys s')) := by
+  obtain ⟨h1, h2, h3⟩ := solve_accepted_faithful hcoh hq htn hearly hflag hnd hmem hbud hacc
+    n hw hem hdj hcse hb hres
+  have hinit : sys (initState q su1 tr fl ns site z) = sysQ q := sys_initState_eq
+  have hq' : (topNormalise fl.topNormalise q0 su0').1 = q := by rw [htn]
+  have hnl : NoLoss (sysQ q0) (sysQ q) := by
+    rw [← hq']; exact tn_noLoss fl.topNormalise H
+  have hiff : SSat (sysQ q0) ↔ SSat (sysQ q) := by
+    rw [← hq']; exact tn_ssat_iff fl.topNormalise H
+  have h1' : NoLoss (sysQ q) (sys s') := by rw [← hinit]; exact h1
+  refine ⟨NoLoss.trans hnl h1', fun rho hmm => hnl.models ?_, ?_⟩
+  · rw [← hinit]; exact h2 rho hmm
+  · rw [hiff, ← hinit]; exact h3
 
 /-! ## 10. The seeds
 
