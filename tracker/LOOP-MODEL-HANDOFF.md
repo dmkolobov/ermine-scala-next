@@ -1131,3 +1131,11 @@ Implementer to launch (id recorded when launched); then an Opus reviewer (brief-
 + repl goldens once), fix, ONE commit. If the user answers the three questions differently, send the answers to the
 implementer by SendMessage.
 LSP-FFI IMPLEMENTER LAUNCHED (2026-09-08 ~08:20): agent aa9d89af84828a827 (Opus, background; resume by SendMessage).
+
+LSP-FFI IMPLEMENTER DONE (2026-09-08 ~09:20): GREEN, nine kinds; SessionEnv._foreignTolerant (ermine.foreign.tolerant)
+OFF except the LSP Resident; Bottom stub at the declared type; severity-2 notes on class/member spans via
+TolerantCheck.Note(Option[Span]); NoClassDefFoundError fixed both modes; lsp-smoke 150 (98+52); repl-smoke 7/7;
+core/test 938/0; TestLoopTrace 720/720; corpus 85/69/0. Report tracker/LSP-FFI-TOLERANCE.md. REVIEWER to launch
+(brief briefs/brief-LSP-FFI-review.md, findings P-*, report loopmodel/LSP-FFI-REVIEW.md). On ADVANCE: orchestrator
+Tier 0 once (after the reviewer is idle), ONE commit "LSP: tolerate missing/mismatched FFI bindings (ermine.foreign.
+tolerant; default ON in the language server only)".
