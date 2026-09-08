@@ -1033,3 +1033,19 @@ repl-smoke 27, lsp-smoke 98). PERF-BENCH PENDING: declined under load (R3 runnin
 adoption block (expect ~12.3 s; boot has 0 tnorm). Shipped fingerprint now
 cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm.
 Rollback -Dermine.topNormalise=false. Wide's model replay is historically 363-1,146 s (dominates the differential).
+
+R3 IMPLEMENTER DONE (2026-09-08 ~00:00): GREEN. Determined.lean (1,245 lines, 124 decls): Def. 13 n-ary + Ermine's
+cancelAdd, closure properties, determined_unique; SPLICE GUARD REFUTED both ways (SpliceGuard13.*; Rose's closure and
+the withdrawn guard never license the same splice: 0/42,902 per file, 0/8,415 batch) -> "never build it"; DELETION
+licence refuted twice (value not definedness) -> dead_delete_of_pairwise / _le_one_part; AMBIGUITY criterion: 104
+signatures, Rose flags 88, Ermine 19 (none in core/examples), pivotData Rose-ambiguous NOT Ermine-ambiguous
+(Pivot.criterion_split), hand-check 7/10 false positives from a missing `resolution` clause (now added §13) -> NOT
+READY, re-measure. Trace-only detm/ramb records in wt-r3 (RowTrace +51, Subst +153), byte-identity gates green.
+ORCHESTRATOR VERIFIED: lake build 870; Audit 4,582 / 0; six headline theorems standard axioms; looptrace untouched.
+REVIEW BRIEF briefs/brief-R3-review.md (findings M-*, report R3-REVIEW.md). On ADVANCE: apply the worktree's
+RowTrace/Subst diff to main (git diff in wt-r3 -- core/src | git apply), TestLoopTrace 720/720 on main, ONE commit
+"Loop model R3: Definition 13 determinacy closure — splice guard refuted, ambiguity criterion measured (trace-only
+detm/ramb)"; then remove wt-r3 and its branch. Stage 2 (re-measure with the resolution clause) = user's decision.
+PERF A/B (topNormalise OFF/ON alternating, quiet-load wait per side) running: scratch perf-ab2.log; the first
+attempt gave OFF 12.68 s at 23:55 vs ON 10.89 s at 21:00 — NOT comparable (different times); record only the
+interleaved pair in the state file (follow-up commit).
