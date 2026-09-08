@@ -996,3 +996,15 @@ axioms; looptrace untouched. Report tracker/loopmodel/R2-ROSE-THEORY.md. UNCOMMI
 briefs/brief-R2-review.md (findings K-*, report R2-REVIEW.md). On ADVANCE: ONE commit "Loop model R2: Ermine's
 constraints as a Rose row theory (mint-free non-deleting fragment)" + memo correction note if the reviewer asks.
 R2 REVIEWER LAUNCHED (2026-09-07 ~19:00): agent ab904385d32d8d58b (Opus, background; resume by SendMessage).
+
+R2 REVIEW ARRIVED (2026-09-07 ~19:30): FIX-THEN-ADVANCE (R2-REVIEW.md, K-1..K-12). Reviewer OBTAINED THE PAPER
+(Wayback 2025-07-21 snapshot of dl.acm.org/doi/pdf/10.1145/3290325). No defect in the Lean; K-1 RowTheoryHom is not
+Def. 6 (map on syntactic rows preserving ∼ and ⇒; the memo's "inclusion ∘ dom" was the same misreading); K-2 the
+PARTIAL is structural (Def. 2 quantifies θ over fv(P,ψ); no mint can be an entailment rule in any row theory); K-3
+the vocabulary-restricted Def-2 soundness of the FULL minting fragment is provable in ~50 lines (reviewer's scratch
+/home/dmitry/.claude/jobs/880c725d/tmp/review-R2/) and Cut.CseStep.entails_iff already does it for CSE; K-4 EEnt =
+Derives MFStep; K-5 taut_entailed is an incompleteness witness; K-6/7 narrowings + ∼ must be ∼simp (permutations);
+K-8 ten constructors; K-9 pivotData confirmed, Def. 14 not well-defined for Ermine; K-10 R3 inherits sat_iff_pfold +
+labelAlgebra only, the PARTIAL does not weaken R3's licence; K-12 memo correction wording. FIX ROUND SENT to the R2
+implementer a847ea79c874e8349. ON ITS REPORT: verify lake build + Audit + axioms sweep + no executable change; ONE
+commit "Loop model R2: Ermine's constraints as a Rose row theory (mint-free fragment); Definition 6 corrected".
