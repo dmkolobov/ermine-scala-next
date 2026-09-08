@@ -1024,3 +1024,12 @@ R3-DETERMINED.md with a stage-2 recommendation. NO behaviour change, NO diagnost
 (lake build, Audit, axioms, TestLoopTrace, filtered-trace byte-identity), write brief-R3-review.md (shape of
 brief-R2-review.md + the measurement re-run), launch an Opus reviewer, fix, apply the trace-only Scala to main, ONE
 commit; remove wt-r3 after the commit (the user asked for no stale worktrees). Any stage 2 = user's decision.
+
+TOPNORMALISE ADOPTED 3a767b6 (2026-09-08 ~20:20, the user's decision): default ON; SevenReads.e positive;
+ProjectionCliff.e restored; .ei cleared. Gates at the new default all green (TestLoopTrace 720/720; corpus-run
+85/68/0 over 153; 18-group differential agree = segments, 20 tnorm; core/test 921/922 documented failure;
+repl-smoke 27, lsp-smoke 98). PERF-BENCH PENDING: declined under load (R3 running); RE-MEASURE with
+`tracker/tools/perf-bench.sh batch -n 3` once R3 is done and the load is < 1.5, record in the state file's
+adoption block (expect ~12.3 s; boot has 0 tnorm). Shipped fingerprint now
+cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm.
+Rollback -Dermine.topNormalise=false. Wide's model replay is historically 363-1,146 s (dominates the differential).
