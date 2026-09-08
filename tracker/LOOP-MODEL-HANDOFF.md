@@ -1014,3 +1014,13 @@ theorems standard axioms; looptrace untouched). Agents a847ea79c874e8349 (impl) 
 COMPLETE. QUEUE: R3 (Rose Def. 13 determinacy closure as the licence for reduce's splice — DESIGN stage; inherits
 sat_iff_pfold + labelAlgebra-as-partial-monoid from R2; memo Rank 4) -> A1b -> F3. ADOPTION of topNormalise still
 awaits the user.
+
+R3 LAUNCHED (2026-09-07 ~20:30): implementer agent a336107c67ea23138 (Opus, background; resume by SendMessage), brief
+tracker/loopmodel/briefs/brief-R3.md (commit c7410e9). INVESTIGATION stage: Determined.lean (Def. 13 closure + Ermine's
+cancellation closure + uniqueness theorem), R3.2 statements (splice conservativity under determinedness / deletion
+licence / row-ambiguity criterion), trace-only `detm`/`ramb` records in a fresh worktree ermine-scala-wt-r3 (branch
+determined-closure; OFF byte-identity gates), measurement over stdlib + 18 groups + incomplete/, report
+R3-DETERMINED.md with a stage-2 recommendation. NO behaviour change, NO diagnostic shipped. ON ITS REPORT: verify
+(lake build, Audit, axioms, TestLoopTrace, filtered-trace byte-identity), write brief-R3-review.md (shape of
+brief-R2-review.md + the measurement re-run), launch an Opus reviewer, fix, apply the trace-only Scala to main, ONE
+commit; remove wt-r3 after the commit (the user asked for no stale worktrees). Any stage 2 = user's decision.
