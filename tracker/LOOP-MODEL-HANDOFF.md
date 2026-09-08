@@ -1008,3 +1008,9 @@ K-8 ten constructors; K-9 pivotData confirmed, Def. 14 not well-defined for Ermi
 labelAlgebra only, the PARTIAL does not weaken R3's licence; K-12 memo correction wording. FIX ROUND SENT to the R2
 implementer a847ea79c874e8349. ON ITS REPORT: verify lake build + Audit + axioms sweep + no executable change; ONE
 commit "Loop model R2: Ermine's constraints as a Rose row theory (mint-free fragment); Definition 6 corrected".
+
+R2 COMMITTED 1c8017a (2026-09-07 ~20:10): fix round K-1..K-12 verified (lake build 869; Audit 4,446 / 0; eleven main
+theorems standard axioms; looptrace untouched). Agents a847ea79c874e8349 (impl) and ab904385d32d8d58b (review)
+COMPLETE. QUEUE: R3 (Rose Def. 13 determinacy closure as the licence for reduce's splice — DESIGN stage; inherits
+sat_iff_pfold + labelAlgebra-as-partial-monoid from R2; memo Rank 4) -> A1b -> F3. ADOPTION of topNormalise still
+awaits the user.
