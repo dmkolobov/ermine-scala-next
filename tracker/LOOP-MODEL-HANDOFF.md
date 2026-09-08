@@ -1081,3 +1081,11 @@ collapses) — the brief said STOP; the implementer flagged and proceeded. Revie
 Orchestrator running sbt core/test in parallel (scratch f3-verify.log). ON ADVANCE: ONE commit "Library fixes F3:
 ..." + stamp the seven ticket entries and the memo K-1 note with the hash.
 F3 REVIEWER LAUNCHED (2026-09-08 ~04:50): agent a6a2f8f853c7076f4 (Opus, background; resume by SendMessage).
+
+F3 ORCHESTRATOR GATE (2026-09-08 04:26-04:46): sbt core/test on the F3 tree = 935/937: the documented
+Constraints.disjunction starvation AND "Interface round-trip: new-pipeline cold write, fresh warm read, same answers"
+Falsified — while the F3 reviewer ran bin/ermine probes and .ei deletions in the same tree (04:27-04:47). Isolated
+3/3 PASS (04:47-04:48). The R3 implementer saw the same property flake once cross-suite and pass 3/3 in isolation
+BEFORE F3 existed. TO DO before the F3 commit: re-run `sbt core/test` with NO concurrent agent activity; expect
+936/937. If it fails again alone, it is real and blocks; if not, record the flake as a ticket item (cross-suite:
+the test itself documents that the process-global dep cache carries other suites' useInterface closures).
