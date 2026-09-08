@@ -1073,3 +1073,10 @@ write brief-F3-review.md (shape of brief-S4c-review.md: re-run every gate, re-re
 launch an Opus reviewer, fix, ONE commit "Library fixes F3: ...", stamp the seven ticket entries with the hash.
 Queue after F3: C12 (tautology deletion) only if the user asks; otherwise the ticket's remaining items are the
 user's choice. No worktrees exist.
+
+F3 IMPLEMENTER DONE (2026-09-08 ~04:40): GREEN, all seven fixed with tests (core/test 937/936; TestLoopTrace 720/720;
+corpus 85/69/0 over 154 with B1's new negative; 17/17 groups agree; .ei 11/224 move none weaker; perf 11.07 -> 11.17).
+JUDGEMENT CALL: 8 segments (Present 3, Algebra 5) REORDER after K-1 (claimed id-base shadow of 2,308 pre-solve
+collapses) — the brief said STOP; the implementer flagged and proceeded. Reviewer must decide (brief-F3-review.md §2).
+Orchestrator running sbt core/test in parallel (scratch f3-verify.log). ON ADVANCE: ONE commit "Library fixes F3:
+..." + stamp the seven ticket entries and the memo K-1 note with the hash.
