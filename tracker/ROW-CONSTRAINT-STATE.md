@@ -153,6 +153,8 @@ items were done in the adoption commit (`.ei` cleared; `Present/shouldfail/proj0
 became `Present/SevenReads.e`, and `Lang/ProjectionCliff.slow` became a `.e` again).  Rollback:
 `-Dermine.topNormalise=false`.
 
+**Adoption gates (2026-09-08, commit `3a767b6`, all re-run at the new default):** `TestLoopTrace` 720/720; `corpus-run.sh --batch` 85 LOADED / 68 REJECTED / 0 UNKNOWN over 153 files; `looptrace-corpus.sh` all 18 groups agree = segments, 0 skipped, 20 `tnorm` records; `core/test` 921/922 (the documented `Constraints.disjunction` failure); `repl-smoke` 27/27, `lsp-smoke` 98/98.  **`perf-bench batch -n 3`, interleaved A/B on a quiet machine (load < 1.3 before every side):** OFF 10.98 s, ON 11.03 s, OFF 10.94 s, ON 10.98 s cold in-process medians (spreads 0.10-0.26 s) -- UNMOVED, as it must be: the stdlib boot emits 0 `tnorm` records over 54,199 segments.  (A single-side 12.68 s reading taken under load 2.5 was discarded as not comparable; day-to-day machine drift between 10.9 and 13.9 s is larger than any effect here, which is why only the interleaved pair counts.)
+
 | flag | default | what it is |
 |---|---|---|
 | `-Dermine.topNormalise` | **`true`** since 2026-09-08 (`false` at S4) | S4's WRITTEN-PARTITION NORMALISATION: when one left-hand side carries k >= 3 lone-abstract INPUT partitions whose DISTINCT concrete parts are pairwise INCOMPARABLE and non-empty, and that left-hand side has no concrete row, the k reads are replaced by `v <- (c, F)` (F their union, c fresh) plus `c_i <- (c, F \ F_i)` — the 0-draw form the user could have written |

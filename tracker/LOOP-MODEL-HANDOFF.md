@@ -1050,3 +1050,9 @@ PERF A/B (topNormalise OFF/ON alternating, quiet-load wait per side) running: sc
 attempt gave OFF 12.68 s at 23:55 vs ON 10.89 s at 21:00 — NOT comparable (different times); record only the
 interleaved pair in the state file (follow-up commit).
 R3 REVIEWER LAUNCHED (2026-09-08 ~00:10): agent a9a04a7a523872c61 (Opus, background; resume by SendMessage).
+
+PERF A/B DONE (2026-09-08 00:05): interleaved OFF/ON/OFF/ON = 10.98 / 11.03 / 10.94 / 10.98 s, UNMOVED; recorded in
+the state file's adoption block. The pending perf item from 3a767b6 is CLOSED. R3 review arrived: FIX-THEN-ADVANCE
+(docs only, M-1..M-7; stage 2 CLOSED by the reviewer's number: three-clause closure flags 11/19 with 2 false
+positives; new ticket item = tautology deletion `exists t h. r <- (t,h)`, r universal). Fix round sent to the R3
+implementer a336107c67ea23138. Reviewer a9a04a7a523872c61 COMPLETE.
