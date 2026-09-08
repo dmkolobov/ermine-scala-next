@@ -1110,3 +1110,17 @@ Session.scala ~1053-1214 (getMethod / arity / isAssignableFrom / getField) -> di
 unchecked. Six surface forms with spans; eight failure kinds. Brief to write after the user answers: severity and
 behaviour (declared type + evaluation-time stub + diagnostic), fork checkout availability for a real corpus, LSP-only
 vs flag. Fixtures in tracker/lsp-tests; gate lsp-smoke.sh 98 + new fixtures; core/test; repl-smoke.
+
+GATE POLICY ADOPTED (2026-09-08 ~08:10, user's decision): tracker/GATE-POLICY.md — Tier 0 always (~5 min), Tier 1
+on solver/trace/Type/executable-Lean changes (differential now parallel by group via LOOPTRACE_PAR=3 in
+looptrace-corpus.sh — NOT YET TESTED: run it on `bugs guide Wide-shouldfail` once the quiet core/test finishes and
+check agree = segments before relying on it), Tier 2 (full core/test ALONE + interleaved perf A/B) for adoption
+commits only; NO triple-running (orchestrator = Tier 0 + disputed items). `disjunction sound` quarantined behind
+-Dermine.test.disjunction=true (ticket D3). To commit as its own commit after F3.
+
+F3 COMMITTED 775a20f (2026-09-08 08:10): quiet core/test ALONE 938/939 (round-trip PASSED alone — the earlier
+failure was interference); ticket entries and memo stamped 775a20f. NEXT: commit the gate-policy bundle
+(GATE-POLICY.md, looptrace-corpus.sh parallel replay, TestConstraints quarantine, stamps, handoff) once the
+parallel-differential test on five small groups shows agree = segments (scratch par-test.log). THEN the LSP
+FFI-tolerance detour (brief to write on the user's answers; defaults if none: warning severity, synthetic
+fixtures, LSP-only default ON behind a flag).

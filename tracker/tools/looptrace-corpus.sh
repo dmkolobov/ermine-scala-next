@@ -57,6 +57,34 @@ jopts="${LOOPTRACE_JAVA:-}"
 series="${LOOPTRACE_SERIES:-true}"
 if [[ "$series" == true ]]; then sopt="-Dermine.loadInSeries=true"; else sopt=""; fi
 
+# The MODEL replay of a group is a single-threaded `looptrace` process that reads a finished
+# trace, so it can run in the background while the next group's compiler side runs; the
+# compiler side stays sequential (one JVM at a time).  `LOOPTRACE_PAR` bounds the concurrent
+# replays (default 3; `Wide` alone takes ~15 min and dominated the 40-min serial run).
+par="${LOOPTRACE_PAR:-3}"
+mkdir -p "$S/results.d"
+replay_group() {
+  local g="$1" rep="$2" tr="$3" rc="$4" timeouts="$5" dropped="$6" nfiles="$7" dt="$8" nseg="$9" dmx="${10}"
+  local t2 t3 mrc agree skip cls thr
+  t2=$(date +%s%3N)
+  timeout "${LOOPTRACE_MODEL_TIMEOUT:-7200}" "$LOOPTRACE_BIN" --replay "$rep" $flags \
+    > "$S/lean/$g.out" 2> "$S/lean/$g.err"
+  mrc=$?
+  t3=$(date +%s%3N)
+  python3 tracker/tools/looptrace-diff.py --segments --lean "$S/lean/$g.out" \
+      --scala "$rep" --report "$S/diff/$g.txt" --show 6 --per-thread > /dev/null 2>&1
+  agree=$(awk '$1=="AGREE"{print $2}' "$S/diff/$g.txt")
+  skip=$(awk '$1=="SKIP"{print $2}' "$S/diff/$g.txt")
+  cls=$(awk '$1=="class"{printf "%s=%s ", $2, $3}' "$S/diff/$g.txt")
+  thr=$(awk '$1=="threads:"{print $2}' "$S/diff/$g.txt")
+  printf '%-20s files=%-3s ermine=%ss(rc=%s,timeouts=%s,dropped=%s) segments=%-6s threads=%-3s demux=%-6s model=%sms(rc=%s) agree=%-6s skip=%-4s %s\n' \
+    "$g" "$nfiles" "$dt" "$rc" "$timeouts" "$dropped" "$nseg" "$thr" "$dmx" \
+    "$((t3-t2))" "$mrc" "$agree" "$skip" "$cls" > "$S/results.d/$g.txt"
+  cat "$S/results.d/$g.txt"
+  gzip -f "$tr"
+  [[ -f "$tr.dx" ]] && gzip -f "$tr.dx"
+}
+
 for g in $groups; do
   tr="$S/traces/$g.tsv"; rm -f "$tr" "$tr.gz"
   : > "$tr"
@@ -157,22 +185,11 @@ for g in $groups; do
             | sed -n 's/.*interleaved=\([0-9]*\).*/\1/p')
     rep="$tr.dx"
   fi
-  t2=$(date +%s%3N)
-  timeout "${LOOPTRACE_MODEL_TIMEOUT:-7200}" "$LOOPTRACE_BIN" --replay "$rep" $flags \
-    > "$S/lean/$g.out" 2> "$S/lean/$g.err"
-  mrc=$?
-  t3=$(date +%s%3N)
-  python3 tracker/tools/looptrace-diff.py --segments --lean "$S/lean/$g.out" \
-      --scala "$rep" --report "$S/diff/$g.txt" --show 6 --per-thread > /dev/null 2>&1
-  agree=$(awk '$1=="AGREE"{print $2}' "$S/diff/$g.txt")
-  skip=$(awk '$1=="SKIP"{print $2}' "$S/diff/$g.txt")
-  cls=$(awk '$1=="class"{printf "%s=%s ", $2, $3}' "$S/diff/$g.txt")
-  thr=$(awk '$1=="threads:"{print $2}' "$S/diff/$g.txt")
-  printf '%-20s files=%-3s ermine=%ss(rc=%s,timeouts=%s,dropped=%s) segments=%-6s threads=%-3s demux=%-6s model=%sms(rc=%s) agree=%-6s skip=%-4s %s\n' \
-    "$g" "${#gf[@]}" "$((t1-t0))" "$rc" "$timeouts" "$dropped" "$nseg" "$thr" "$dmx" \
-    "$((t3-t2))" "$mrc" "$agree" "$skip" "$cls" | tee -a "$S/results.txt"
-  gzip -f "$tr"
-  [[ -f "$tr.dx" ]] && gzip -f "$tr.dx"
+  # hand the finished trace to a background replay; throttle to $par concurrent replays
+  while (( $(jobs -rp | wc -l) >= par )); do sleep 5; done
+  replay_group "$g" "$rep" "$tr" "$rc" "$timeouts" "$dropped" "${#gf[@]}" "$((t1-t0))" "$nseg" "$dmx" &
 done
+wait
+for g in $groups; do cat "$S/results.d/$g.txt" 2>/dev/null; done >> "$S/results.txt"
 find core/examples -name '*.ei' -delete
 echo "done $(date)" >> "$S/results.txt"

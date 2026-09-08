@@ -42,7 +42,7 @@ A1b. **Three more `MapView` sites survive where the compiler cannot reject a vie
     `dumpMem`), same family as A1 on the feature A1 unblocked. **Fix:** `.toMap` at the three sites plus a test
     that drives the in-memory pivot/join/sort path. (F1-REVIEW J-3; `tracker/03-core-progress.md` records the
     migration converted "only the ~20 sites the compiler rejected".) — stage F3.
-    **FIXED in `<commit>`** (stage F3, 2026-09-08): the three `.toMap`s are in
+    **FIXED in `775a20f`** (stage F3, 2026-09-08): the three `.toMap`s are in
     (`SqlScanner.scala:649` the pivot's bootstrap key, `:719-720` the hash join's two key
     functions, `relational/package.scala:72` the sort's chunk predicate), and five new
     `core/test` properties in `scalacheck-binding/src/main/scala/TestInMemoryScan.scala`
@@ -81,7 +81,7 @@ A3. **`Date`'s accessors read the instant in the JVM's default timezone; its for
     `formatPeriodOr "custom" (1 Jan, 31 Jan)` is `"Jan 2011"` on one machine and `"custom"` on another.
     **Every `DateRange` period label is machine-dependent.** Measured with and without `-Duser.timezone=UTC`.
     **Fix:** one timezone (UTC) for both, or make it a parameter. (E3 §8 FiscalTree; E3-REVIEW.) — stage F3.
-    **FIXED in `<commit>`** (stage F3, 2026-09-08), the first of the two: ONE timezone, UTC.
+    **FIXED in `775a20f`** (stage F3, 2026-09-08), the first of the two: ONE timezone, UTC.
     `PrimExprs` gains `getYear`/`getMonth`/`getDate` reading a `GregorianCalendar` in
     `YMDTriple.ymdPivotTimeZone` — the zone `dateFormatterTLV` already pins every formatter
     to — and `Date.e` binds the three names to those instead of to `java.util.Date`'s
@@ -116,7 +116,7 @@ A3. **`Date`'s accessors read the instant in the JVM's default timezone; its for
 A4. **`Date.formatQuarter` is wrong twice over:** `getMonth d / 4 + 1` divides by four, then indexes a 0-based
     list with a 1-based number — quarters are four months long and `"Q1"` is unreachable (January prints
     `"Q2"` under UTC). **Fix:** `/ 3`, 0-based index. (E3 §8.) — stage F3.
-    **FIXED in `<commit>`** (stage F3, 2026-09-08): `quarter d = getMonth d / 3 + 1` and
+    **FIXED in `775a20f`** (stage F3, 2026-09-08): `quarter d = getMonth d / 3 + 1` and
     `formatQuarter d = orElse "Unknown" (at (quarter d - 1) quarterNames)`.  `quarter` keeps
     its 1-based meaning, which is the one its name and `quarterNames` have; the index is
     where the off-by-one is fixed.  The twelve month-firsts of 2011 now label
@@ -150,7 +150,7 @@ B1. **`Relation.Op.dateDiff`'s wrapper has no signature** (`Relation/Op.e:150` c
     `Op r2 Int` with `r2` FREE: `combine_Op (dateDiff …) gap t` type-checks over a relation carrying neither
     date and fails only at header computation (`Operation refers to nonexistent column`). A static guarantee
     silently deferred to run time. **Fix:** the one-line signature. (E3 §finding; E3-REVIEW P-3.) — stage F3.
-    **FIXED in `<commit>`** (stage F3, 2026-09-08): the wrapper now carries `dateAdd'`'s
+    **FIXED in `775a20f`** (stage F3, 2026-09-08): the wrapper now carries `dateAdd'`'s
     signature, one line above it in the same file —
     `dateDiff : (AsOp op1, AsOp op2, RUnion2 t r1 r2, PrimitiveTemporal d) => TimeUnit ->
     op1 r1 d -> op2 r2 d -> Op t Int` — so the result row is the union of the operands'.  The
@@ -235,7 +235,7 @@ C1. **`Relation.UnifyFields.unify1` cannot unify differently-named schemas** —
     constraint; only same-header self-joins load. (E2 F1.)
 C2. **`Relation.join1` is `joinBy {f}`**, not "the intersection is nonempty" as its doc comment says
     (`r <- (k, r1, r2)` is a partition, so `f` is the whole key). (E2 F2.) — stage F3.
-    **FIXED in `<commit>`** (stage F3, 2026-09-08): the comment now says that it takes the join
+    **FIXED in `775a20f`** (stage F3, 2026-09-08): the comment now says that it takes the join
     key EXPLICITLY and is exactly `joinBy {f}`, and spells out why — `r <- (k, r1, r2)` is a
     partition, so `r1` and `r2` are disjoint, and with `ra <- (k, r1)` and `rb <- (k, r2)` the
     intersection of the operands is exactly `k`.  Comment only: no signature and no `.ei` byte
@@ -247,7 +247,7 @@ C4. **`weightedMean` forces value and weight to one type** (needs `annul`). (E3.
 C5. **`rename'` is misnamed** (its doc is right; it requires the destination column to already exist);
     **`Relation.Scan.sumBy'` carries a vacuous `r <- (h,t)`**; **`Layout.Scan` omits exactly `removeK`,
     `removeBy`, `multiply`**. (E2 F7–F9.) — stage F3.
-    **FIXED in `<commit>`** (stage F3, 2026-09-08), all three as the brief scoped them.
+    **FIXED in `775a20f`** (stage F3, 2026-09-08), all three as the brief scoped them.
     `Layout/Scan.e` re-exports `removeK`, `removeBy` and `multiply` (the last takes the runner,
     as `groupBy`/`sumBy`/`count` do); three `core/test` properties resolve them, and a module
     whose whole body is those three names failed to load before and loads now.

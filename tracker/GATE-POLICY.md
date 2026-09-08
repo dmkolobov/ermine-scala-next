@@ -1,0 +1,45 @@
+# Gate policy (adopted 2026-09-08, the user's decision)
+
+Why: an audit of the loop-model programme's gates (2026-09-08) found the model differential, the Lean build +
+audit, the corpus batch verdicts and targeted adversarial probes doing the real work, the perf bench never moving
+(machine drift 10.9-13.9 s exceeds any plausible effect), the interface sweep skipping half the corpus with a noise
+floor as large as its signal until fixed (F3 N-4), and every stage running its gates THREE times (implementer,
+reviewer, orchestrator). This replaces "re-measure rather than inherit" as applied to every figure at every step:
+re-measurement applies to the numbers that go into the trackers, once, by the reviewer.
+
+## Tiers
+
+**Tier 0 — always, every stage, before any commit (about five minutes).**
+- `sbt core/compile core/copyResources` (compile alone does NOT copy the stdlib `.e` into the target tree).
+- `sbt 'core/testOnly *TestLoopTrace'` 720/720 (the model-agreement invariant; ten seconds).
+- `tracker/tools/corpus-run.sh --batch` verdicts (85 / 69 / 0 over 154 as of F3; forty seconds).
+- If any Lean changed: `cd tracker/lean && lake build` (full default target) and `lake env lean Audit.lean`
+  (count, 0 non-standard), `#print axioms` for every new or changed declaration.
+- `tracker/tools/repl-smoke.sh` and `tracker/tools/lsp-smoke.sh`.
+
+**Tier 1 — when the solver, the row trace, `Type.scala`'s constraint construction, or executable Lean changes.**
+- The 18-group differential `tracker/tools/looptrace-corpus.sh` (now replays groups in parallel, `LOOPTRACE_PAR`,
+  default 3: about fifteen minutes instead of forty; `Wide` alone is a fifteen-minute model replay).
+- The per-group trace comparison against a pre-change run with `tracker/tools/trace-ab.py` (ALL record kinds).
+- The interface sweep `tracker/tools/ei-diff.sh --batch` with `-Dermine.loadInSeries=true` on BOTH sides (or
+  `--snapshot` for two builds), classified with `ei-classify.py`; the tool hoists all six group libraries.
+
+**Tier 2 — adoption commits only (a default flips or shipped behaviour changes).**
+- `sbt core/test` in full (939 total after F3; the documented quarantines below are the only allowed misses).
+- `tracker/tools/perf-bench.sh batch -n 3` as an INTERLEAVED A/B (old / new / old / new), each side waiting for
+  load < 1.3; never a single-side figure, never under load. Not a per-stage gate.
+
+## Who runs what
+- The implementer runs the tier its change needs and reports every number.
+- The reviewer re-runs that tier once; its numbers are the ones that go into the trackers.
+- The orchestrator runs Tier 0 before the commit and re-runs only what the review disputed. NO third full run.
+
+## Quarantines (a green suite must mean green)
+- `TestConstraints."disjunction sound"`: generator starvation (0 passed / 501 discarded, every run on record);
+  the rule ships OFF. Registered only under `-Dermine.test.disjunction=true`; ticket D3.
+- `TestInterfaceRoundTrip`: passes alone; failed once under a concurrent process deleting `.ei` files in the same
+  tree. Not quarantined — the rule is that Tier 2 runs ALONE on the tree.
+
+## Standing rules that stay
+Never commit red. One JVM per agent, three agents at most. Never `lake build` while a `looptrace` binary runs.
+Delete every `.ei` you cause. Disk: no `lake exe cache get`, no `require`, no new Lean project, CutSearch out.

@@ -378,7 +378,7 @@ All three have the same shape: **the concrete case is handled and the variable c
    > one word, `ss.toSet == cs`, which belongs in the same follow-up as the variable-identity case
    > because both are on the PRE-solver path and both move the row trace.
    >
-   > **FIXED, stage F3 2026-09-08** (`loopmodel/F3-FIXES.md`, commit `<commit>`).  The guard is
+   > **FIXED, stage F3 2026-09-08** (`loopmodel/F3-FIXES.md`, commit `775a20f`).  The guard is
    > now `ts.isEmpty && ss.toSet == cs && ss.length == cs.size`.  The length test is not
    > decoration: `ss` is the concatenation of EVERY concrete part's labels, so `ss.toSet == cs`
    > alone would also fire on `(|Foo,Bar|) <- ((|Foo,Bar|), (|Foo|))`, where two parts share a
