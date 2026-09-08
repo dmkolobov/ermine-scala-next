@@ -7,6 +7,10 @@ cited per item). Items are grouped by what they are — a runtime bug, a type-sy
 API, a tooling defect — and ordered within a group by severity. "Fix" states the change the finding implies;
 none of these fixes has been made unless a later line says so.
 
+Later stages outside E1–E5 add items here when what they find is a stdlib or published-API defect rather than
+a solver question; such items name their stage. **C12** (2026-09-08) is the first, from the loop-model
+programme's stage R3 and its review.
+
 ## A. Runtime bugs
 
 A1. **`record#` returns a Scala 2.13 `MapView`; every consumer that pattern-matches `Map` panics when forced.**
@@ -167,6 +171,36 @@ C10. Small language facts worth a guide chapter: fields may not shadow globals; 
 
 C11. **`String.Markdown.link`'s type is `(String -> String) -> String -> String`** — it CAN make a link
     (`link ((++) "SUP-77/A") loc`), but the shape is a trap; E5's claim that it cannot was refuted. (E5-REVIEW.)
+
+C12. **Five stdlib signatures publish a constraint that says nothing.**  `Layout/Scan.e`'s `sumBy` :44,
+    `sumBy'` :43, `count` :47, `count'` :48 and `avgBy'` :45 each publish
+    `(exists (t: rho) (h: rho). r <- (t, h)) => …` with `r` UNIVERSAL and both parts existential.  That
+    qualification is a **tautology** — every row splits, `t := r`, `h := ∅` — so it constrains no caller,
+    it cannot be discharged usefully, and it makes five signatures longer and harder to read than they are.
+    It is also, measured, five of the **nine** genuinely row-ambiguous published signatures in the whole
+    corpus (`tracker/loopmodel/R3-DETERMINED.md` §4.5, §4.7), so it is the single most common shape the
+    row-ambiguity criterion of stage R3 finds.  **Fix:** delete it in `Subst.mkSimplified`, beside the
+    tautology deletion S3 already does for `a <- (a)`.
+
+    *What it needs first, and why R3 did not do it.*  A two-line theorem R3 does not have: R3 proves
+    `dead_delete_of_pairwise` and `dead_delete_of_le_one_part`, and **both are about a dead existential on
+    the LEFT**, whereas here the left-hand side is the universal (R3-REVIEW M-3).  The statement to prove is
+    `REquiv ⟨ex ∪ {t,h}, insert (mk r {t,h} ∅) G⟩ ⟨ex, G⟩` when `t`, `h` occur nowhere else; the witness is
+    `t := rho r`, `h := ∅`, of the same kind as the reviewer's `RevCheck.pairwise_not_necessary`
+    (`/home/dmitry/.claude/jobs/880c725d/tmp/review-R3/Check1.lean`).  `Rowpartition/Determined.lean`'s
+    `Residual` / `Holds` / `REquiv` are already the right vocabulary.
+
+    *Acceptance criteria.*  (1) the theorem in `Determined.lean`, standard axioms; (2) the deletion in
+    `mkSimplified`, behind no flag if the corpus is unchanged and behind one if it is not; (3)
+    `tracker/tools/ei-diff.sh` over `core/examples` shows **exactly** the five signatures shortened and
+    every other interface byte-identical — which is the question R3's splice measurement explicitly could
+    not answer (`R3-DETERMINED.md` §7 item 6: how many published interfaces actually change); (4)
+    `core/test` unchanged and the corpus verdicts unchanged.
+
+    *And a warning is NOT part of this.*  R3 measured a row-ambiguity criterion and recommends against
+    shipping one (`R3-DETERMINED.md` §5(ii)); if one is ever written it must be **signature-level and must
+    never name variables** — `Layout/Report/Relation.cutoffGroupedFldsPosNegRel'` is flagged on 33 of its 34
+    row existentials and only 16 are genuinely undetermined.  (R3, R3-REVIEW §6(iii).)
 
 ## D. Claims in older documents that do not reproduce
 

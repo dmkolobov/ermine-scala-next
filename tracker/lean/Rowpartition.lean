@@ -206,6 +206,37 @@ first getting the module to build.
                                EQUIVALENT (`topNormalise_ssat_iff`), losing nothing
                                (`topNormalise_noLoss`) and inventing nothing beyond the mint
                                (`topNormalise_conserv`, `topNormalise_loopStrict`)
+* `Rowpartition.Determined` -- R3: Rose's DEFINITION 13, the DETERMINACY CLOSURE, as a
+                               criterion.  `roseAdd` is Definition 13's clause n-arily (the
+                               whole is determined by the parts, licensed by R2's
+                               `Rose.sat_iff_pfold`); `cancelAdd` is Ermine's STRICTLY LARGER
+                               clause (a PART is determined by the whole and the other parts,
+                               because the concrete part is always known).  `Determined G U`
+                               is the least fixed point of both and `RoseDetermined G U` of
+                               the first alone; both are closure operators (extensive,
+                               monotone, closed, least, idempotent) and
+                               `determined_unique` is what makes "determined" mean anything:
+                               two models of `G` agreeing on `U` agree on `Determined G U`.
+                               THREE NEGATIVE RESULTS.  (a) the candidate guard on
+                               `Subst.reduce`'s splice -- "splice only a determined variable"
+                               -- is INDEPENDENT of conservativity in both directions
+                               (`determined_splice_not_conservative` on
+                               `Splice.DroppedPartition`, where the lost consequence is stated
+                               in the universal vocabulary alone;
+                               `undetermined_splice_is_conservative`); the binding condition
+                               stays `splice_entails_iff`'s SYNTACTIC `hlhs`.  (b) the
+                               deletion licence is REFUTED twice
+                               (`DeadTwoParts.two_parts_not_deletable`, the partiality of the
+                               monoid; `DeadUndetermined.undetermined_not_deletable`), and
+                               what IS licensed is `dead_delete_of_pairwise`.  (c) the
+                               row-ambiguity criterion `RowAmbiguous` with its content
+                               (`witness_unique_of_not_rowAmbiguous`, a unique witness) is
+                               SOUND but not complete (`CriterionIncomplete`).  On
+                               `PivotTest.pivotData` the two closures DISAGREE
+                               (`Pivot.criterion_split`): Rose's flags it, Ermine's does not,
+                               and the models side with Ermine's (`Pivot.full_unique`) -- the
+                               bare constraint on its own really does have four solutions
+                               (`Pivot.bare_genuinely_ambiguous`)
 * `Rowpartition.RoseTheory` -- R2: Ermine's row constraints exhibited as a ROW THEORY in the
                                sense of Morris & McKinna's Rose (POPL 2019), at the MODEL level.
                                Rose's Definition 1 (row theory), Definition 2 (row algebra = a
@@ -307,3 +338,4 @@ import Rowpartition.Loop.PolicyStep
 import Rowpartition.Loop.PolicyTerm
 import Rowpartition.Loop.TopNormalise
 import Rowpartition.RoseTheory
+import Rowpartition.Determined

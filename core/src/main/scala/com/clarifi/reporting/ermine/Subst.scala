@@ -807,7 +807,11 @@ object Subst {
     (ds, bs.zip(ts).map({
       case (b,t) =>
         implicit val tml: Located = b
-        b.v -> b.v.as(generalize(omg, csp, substType(t).forget))
+        /* R3, TRACE-ONLY: name the binding whose signature this `generalize` publishes,
+         * for the `ramb` record.  `withBinding` is a no-op unless `-Dermine.rowTrace` is
+         * set, and its argument is by-name, so nothing is rendered otherwise. */
+        b.v -> b.v.as(RowTrace.withBinding(b.v.toString)(
+                        generalize(omg, csp, substType(t).forget)))
     }).toMap)
   }
 
@@ -1068,6 +1072,101 @@ object Subst {
     }
   }
 
+  /** **TRACE-ONLY** (stage R3, `tracker/loopmodel/R3-DETERMINED.md`).  Rose's Definition 13
+    * closure -- the whole is determined by the parts -- and Ermine's strictly larger closure,
+    * which adds CANCELLATION: a part is determined by the whole and the other parts, because
+    * the concrete part of a partition is always known.  The Lean statements, the closure
+    * properties and the uniqueness theorem that gives them meaning are
+    * `tracker/lean/Rowpartition/Determined.lean` (`roseAdd`, `cancelAdd`, `Determined`,
+    * `determined_unique`).
+    *
+    * NOTHING HERE IS CALLED unless `-Dermine.rowTrace` is set: both call sites are inside
+    * `if (RowTrace.enabled)`.  It reads a constraint list and returns sets; it draws no ids,
+    * touches no `SubstEnv` and builds no `Type`.
+    *
+    * The Lean model gives every partition a VARIABLE left-hand side, because `PQueue.build`
+    * mints one for a concrete row; a published `Part` may still have a `ConcreteRho` on the
+    * left, and that is modelled here by `whole = None`, "already known", which is exactly
+    * what the Lean carrier constraint `p <- ((|K|))` gives after one step of Rose's clause. */
+  object Determinacy {
+    /** One partition, read for the closure. */
+    final case class P(whole: Option[TypeVar], parts: List[TypeVar], blocked: Boolean)
+
+    private def isConcrete(t: Type): Boolean = t match {
+      case ConcreteRho(_, _) => true
+      case Con(_, _, _, _)   => true
+      case _                 => false
+    }
+
+    private def isVar(t: Type): Boolean = t match {
+      case VarT(_) => true
+      case _       => false
+    }
+
+    /** Read the row constraints of a published list.  A right-hand side carrying anything
+      * that is neither a variable nor a concrete row is BLOCKED: neither clause may fire
+      * through it, which is the conservative reading (`mkSimplified.normalPart` calls the
+      * same shape "something we don't know how to deal with"). */
+    def read(ps: List[Type]): List[P] = ps.collect { case p: Part => p }.map { p =>
+      val vs = p.rhs.collect { case VarT(v) => v }.distinct
+      val blocked = p.rhs.exists(t => !isVar(t) && !isConcrete(t))
+      p.lhs match {
+        case VarT(v)          => P(Some(v), vs, blocked)
+        case l if isConcrete(l) => P(None, vs, blocked)
+        case _                => P(None, vs, true)
+      }
+    }
+
+    /** Every row variable the partitions mention. */
+    def vars(cs: List[P]): Set[TypeVar] =
+      cs.foldLeft(Set[TypeVar]())((acc, p) => acc ++ p.whole.toSet ++ p.parts)
+
+    /** The closure of `u0`: Rose's clause alone (`cancel = false`), or with cancellation. */
+    def closure(cs: List[P], u0: Set[TypeVar], cancel: Boolean): Set[TypeVar] = {
+      var d = u0
+      var changed = true
+      while (changed) {
+        changed = false
+        for (p <- cs if !p.blocked) {
+          p.whole match {
+            case Some(w) if !d(w) && p.parts.forall(d) => d = d + w; changed = true
+            case _                                     => ()
+          }
+          // `p.whole.forall(d)` is TRUE for a concrete left-hand side: it is known outright.
+          if (cancel && p.whole.forall(d))
+            for (v <- p.parts if !d(v) && p.parts.forall(x => x == v || d(x))) {
+              d = d + v; changed = true
+            }
+        }
+      }
+      d
+    }
+
+    /** The three side conditions of `Rowpartition.splice_entails_iff`, on the residual `cs`
+      * for the variable `v` whose partition carries the concrete part `con`.  A transcription
+      * of the `splice` record's own inline block; the corpus measurement checks the two agree
+      * on every splice. */
+    def conds(cs: List[Type], v: TypeVar, con: Set[Name]): (Boolean, Boolean, Boolean) = {
+      def concrOf(t: Type): Set[Name] = t match {
+        case ConcreteRho(_, s) => s
+        case Con(_, n, _, _)   => Set(n)
+        case _                 => Set()
+      }
+      val hlhs = !cs.exists { case Part(_, VarT(u), _) => u == v ; case _ => false }
+      val hdis = cs.forall {
+        case Part(_, _, rs) =>
+          !rs.exists { case VarT(u) => u == v ; case _ => false } ||
+            (rs.flatMap(concrOf).toSet & con).isEmpty
+        case _ => true
+      }
+      val hdup = con.isEmpty || cs.forall {
+        case Part(_, _, rs) => rs.count { case VarT(u) => u == v ; case _ => false } < 2
+        case _              => true
+      }
+      (hlhs, hdis, hdup)
+    }
+  }
+
   def reduce(lc: Loc,
              csz: List[Type],
              es: List[TypeVar],
@@ -1118,6 +1217,26 @@ object Subst {
                        }
                        "\t" + hlhs + "\t" + hdis + "\t" + hdup
                      })
+        /* R3 (`tracker/loopmodel/R3-DETERMINED.md`), TRACE-ONLY and a SEPARATE record: the
+         * `splice` line above is untouched, so a trace with the `detm` lines filtered out is
+         * byte-identical to one taken before this stage.  The two closures are evaluated on
+         * `cs` -- the residual this fold has accumulated, which is the system a determinacy
+         * guard would consult -- from `U0`, the variables of `cs` that the splice's OWN guard
+         * does not count as existential.  Variables of `cs` that occur in no row constraint
+         * cannot affect either closure (both clauses quantify over partitions), so reading
+         * `U0` off the partitions rather than off `typeVars(cs)` gives the same answer. */
+        if (RowTrace.enabled) {
+          val dps  = Determinacy.read(cs)
+          val dvs  = Determinacy.vars(dps)
+          val u0   = dvs.filterNot(u => u.ty.ambiguous || es.contains(u))
+          val rose = Determinacy.closure(dps, u0, false)
+          val erm  = Determinacy.closure(dps, u0, true)
+          val (chlhs, chdis, chdup) = Determinacy.conds(cs, v, con)
+          RowTrace.log("detm\t" + RowTrace.site + "\t" + RowTrace.clean(lc.toString) +
+                       "\t" + v + "\t" + rose(v) + "\t" + erm(v) +
+                       "\t" + chlhs + "\t" + chdis + "\t" + chdup +
+                       "\t" + u0.size + "\t" + dvs.size + "\t" + dps.length)
+        }
         csp
       case (_, cs) => cs
     }
@@ -1724,6 +1843,36 @@ object Subst {
     val am = ambiguitiesIn(exts, complex).map(_.v).toSet
     val lessComplex = complex.filterNot(p => typeVars(p).exists(am))
     val pruned = lessComplex ++ dumb
-    Exists(l, exts filterNot (v => iso(v) || am(v)), pruned)
+    val pubExts = exts filterNot (v => iso(v) || am(v))
+    /* R3 (`tracker/loopmodel/R3-DETERMINED.md`), TRACE-ONLY: the ROW-AMBIGUITY criterion --
+     * Rose's Definition 14 read through Definition 13 -- on the signature this call is about
+     * to publish.  `ambiguitiesIn` above runs on the CLASS constraints only (`complex`); the
+     * row parts (`dumb`) reach `pruned` without passing through it, and this record is the
+     * measurement of what a criterion for them would say.  It changes nothing: `pubExts` is
+     * the same list the `Exists` below always bound.
+     *
+     * `U0` is the variables the row constraints mention that are NOT published existentials.
+     * That is exactly `fv(tau) ∪ universals` as far as the closure can tell, because a
+     * variable of `tau` occurring in no constraint can never be used by either clause. */
+    if (RowTrace.enabled) {
+      val dps = Determinacy.read(pruned)
+      if (dps.nonEmpty) {
+        val dvs   = Determinacy.vars(dps)
+        val exset = pubExts.toSet
+        val u0    = dvs.filterNot(exset)
+        val rose  = Determinacy.closure(dps, u0, false)
+        val erm   = Determinacy.closure(dps, u0, true)
+        val rowEx = pubExts.filter(dvs)
+        val rU    = rowEx.filterNot(rose)
+        val eU    = rowEx.filterNot(erm)
+        RowTrace.log("ramb\t" + RowTrace.site + "\t" + RowTrace.clean(l.toString) +
+                     "\t" + RowTrace.clean(RowTrace.binding) +
+                     "\t" + pubExts.length + "\t" + rowEx.length +
+                     "\t" + rU.length + "\t" + eU.length + "\t" + dps.length +
+                     "\t" + rU.map(_.toString).sorted.mkString(" ") +
+                     "\t" + eU.map(_.toString).sorted.mkString(" "))
+      }
+    }
+    Exists(l, pubExts, pruned)
   }
 }

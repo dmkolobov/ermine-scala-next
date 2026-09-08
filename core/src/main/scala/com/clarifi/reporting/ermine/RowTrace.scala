@@ -162,6 +162,36 @@ import com.clarifi.reporting.ermine.Type.Con
  * exactly `PQueue.build`'s variable set on any segment the model replays (an item that
  * is not a `Part` makes the model skip the segment, and the only variable `build` mints
  * itself is fresh, hence unbound).
+ *
+ * R3 RECORDS (added 2026-09-07 for stage R3, `tracker/loopmodel/R3-DETERMINED.md`).  TWO
+ * new records, and NO existing record is touched -- a trace taken before R3 and one taken
+ * after are byte-identical once these two are filtered out.  They carry the verdict of
+ * Rose's DETERMINACY CLOSURE (Definition 13, `tracker/lean/Rowpartition/Determined.lean`)
+ * and of Ermine's strictly larger closure, so that "how many splices would a determinacy
+ * guard license" and "how many published signatures carry an undetermined row existential"
+ * are MEASURED rather than guessed.  Nothing in the solver reads them.
+ *
+ *   detm    site  loc  var  rose  erm  hlhs  hdis  hdup  nU0  nVars  nParts
+ *   ramb    site  loc  binding  nEx  nRowEx  nRoseUndet  nErmUndet  nParts  roseUndet  ermUndet
+ *
+ * `detm` is written by `Subst.reduce` at every splice, immediately after the `splice`
+ * record and computed on the SAME state: `cs`, the residual the fold has accumulated, which
+ * is the system a determinacy guard would consult, with `U0` the variables of `cs` that the
+ * splice's own guard does NOT count as existential (`!(v.ty.ambiguous || es.contains(v))`).
+ * `rose`/`erm` say whether the spliced variable is in the respective closure.
+ * `hlhs`/`hdis`/`hdup` are the three side conditions of `Rowpartition.splice_entails_iff`,
+ * recomputed here so that the two guards can be compared row by row; they are a
+ * transcription of the `splice` record's own inline block, and the corpus measurement
+ * CHECKS that the two agree on every splice rather than assuming it.
+ *
+ * `ramb` is written by `Subst.mkSimplified` for every signature it publishes that carries at
+ * least one row constraint.  `nEx` is the number of existentials the signature binds,
+ * `nRowEx` how many of those the ROW constraints mention (an existential that occurs only in
+ * a class constraint is not a row-ambiguity candidate and `ambiguitiesIn` already covers it),
+ * and the two counts are how many of those `nRowEx` escape each closure.  `binding` is the
+ * name of the binding whose final type this is, empty when the call is not one (the
+ * `mkSimplified` inside `subsumeType`, and the intermediate `generalize`s of `App`/`Lam`);
+ * it comes from `withBinding` below, which, like `withSite`, is a no-op when tracing is off.
  */
 object RowTrace {
   private val path: String = System.getProperty("ermine.rowTrace", "")
@@ -222,6 +252,27 @@ object RowTrace {
   }
 
   def tid: String = tid0.get
+
+  /** R3: the BINDING whose final type is being generalised, for the `ramb` record.  Set by
+    * `withBinding` around `inferImplicitBindingTypes`'s per-binding `generalize`, which is
+    * the one call that publishes a binding's signature; every other `mkSimplified` call
+    * leaves it empty.  Thread-local for the same reason `site0` is, and -- like `withSite`
+    * -- it does nothing at all unless tracing is on, so the default path is unchanged. */
+  private val binding0 = new ThreadLocal[String] {
+    override def initialValue(): String = ""
+  }
+
+  def binding: String = binding0.get
+
+  /** Run `body` with the binding name tagged.  Returns `body`'s value unchanged; the
+    * argument is by-name, so no name is rendered when tracing is off. */
+  def withBinding[A](s: => String)(body: => A): A =
+    if (!enabled) body
+    else {
+      val old = binding0.get
+      binding0.set(s)
+      try body finally binding0.set(old)
+    }
 
   /** The argument is by-name: nothing is built when tracing is off. */
   def log(record: => String): Unit =

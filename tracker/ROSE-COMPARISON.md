@@ -610,6 +610,69 @@ The single best *new* idea in the papers, and it lands on a known open problem.
 * **Verdict: ADOPT AS AN INVESTIGATION** (one stage to build the closure and measure how many
   splices it licenses against the 90 % figure; a second only if the number is good).
 
+**R3 (2026-09-07) — the investigation was run; the splice half is REFUTED and the ambiguity half
+is a criterion with measured numbers.**  `tracker/loopmodel/R3-DETERMINED.md`,
+`tracker/lean/Rowpartition/Determined.lean` (1,245 lines, 163 source declarations, 136 theorems in
+the environment, standard axioms).  Additive
+note; nothing above is retracted except where it is named here.
+
+* **The closure exists and is a closure.**  `Determined G U` and `RoseDetermined G U` are least
+  fixed points, proved extensive / monotone / closed / least / idempotent, and
+  `determined_unique` is the theorem that makes "determined" mean something: two models of `G`
+  agreeing on `U` agree on `Determined G U`.  Ermine's cancellation clause is proved strictly
+  larger than Rose's (`RuleFires.rose_lt_det`), and the measured reason it has to be is `Has`:
+  `type Has a b = exists c. a <- (b, c)` is Rose-ambiguous and not Ermine-ambiguous
+  (`Derived.has_needs_cancellation`), because Rose keeps `≼` primitive where Ermine mints the
+  complement.
+* **"Definition 13 gives a different and cheaper guard [for the splice]" — WITHDRAW that
+  sentence.**  Determinedness is independent of conservativity in BOTH directions, on
+  satisfiable systems with no concrete labels: `SpliceGuard13.determined_splice_not_conservative`
+  (the `Splice.DroppedPartition` system, where `v` is determined by **Rose's clause alone** and
+  the splice still loses a consequence stated entirely in the universal vocabulary) and
+  `SpliceGuard13.undetermined_splice_is_conservative`.  The condition that decides the splice is
+  `splice_entails_iff`'s `hlhs`, which is SYNTACTIC — a property of what `reduce` rewrites and
+  discards — and no closure on models can see it.
+* **"supplies the deletion licence §4's `Goal_dead_existential_deletable` needs" — WITHDRAW that
+  too.**  Definition 13 licenses the VALUE and not the DEFINEDNESS: the row algebra is a PARTIAL
+  monoid, and a partition also asserts that its parts COMBINE.
+  `DeadTwoParts.two_parts_not_deletable` refutes deletion for a dead existential whose value
+  Rose's clause DOES determine; `DeadUndetermined.undetermined_not_deletable` refutes it under
+  the memo's own hypothesis ("neither determined by nor determining the universals").  What is
+  proved is `dead_delete_of_pairwise` — deletion is sound exactly when the remainder already
+  forces the parts to be pairwise disjoint — and its unconditional corollary
+  `dead_delete_of_le_one_part` for a constraint with at most one part.
+* **`PivotTest.pivotData` — the memo's example is right about the constraint it quotes and wrong
+  about the residual.**  On the bare `(|Issue,Key,Value|) <- ((|Key|), i, v3)` the four solutions
+  are real and both closures leave `i`, `v3` undetermined
+  (`Pivot.bare_genuinely_ambiguous`).  On the residual the compiler PUBLISHES, which also carries
+  `s <- ((|Sector,Price,MarketCap|), i)`, Rose's closure still says undetermined and **Ermine's
+  says determined** (`Pivot.criterion_split`), and the models side with Ermine's
+  (`Pivot.full_unique`: the value of `s` pins both).  So Ermine's tree does not, after all,
+  contain "Rose's incoherence diagnosed by Rose's criterion" — it contains a residual that is
+  incoherent by Rose's criterion and coherent by the criterion Ermine's own algebra supports.
+* **The MEASURED numbers, in one line each.**  Splices: Rose's closure licenses 13.6 % per file
+  (3.4 % in batch), Ermine's 18.6 % (10.1 %), the withdrawn guard 14.7 % (64.0 %) -- and **Rose's
+  closure and the withdrawn guard never once license the same splice**, 0 of 42,902.  Published
+  top-level signatures: of 104, **Rose's criterion flags 88 and Ermine's flags 19, none of them in
+  `core/examples`**.  A hand-check of ten of the nineteen finds **seven false positives**, all from
+  one missing clause -- the solver's own `resolution` -- which `Determined.lean` §13 now has,
+  with the uniqueness theorem re-proved (`resAdd`, `Determined3`, `determined3_unique`) and the
+  smallest of the seven as a kernel-checked instance (`NotEq.res_cures`, the stdlib `(!=)`).
+  **`resolution` is not enough, and that number is in hand too** (R3 review M-1, re-derived by the
+  implementer): running all three clauses over the published `.ei` leaves **11 of the 19** flagged,
+  and two of the eleven — `Predicate.(>=)` and `(<=)` — are false positives pinned by a
+  DISJOINTNESS obligation (`f ⊥ d` forces `e = a1 ∩ b`), which is `CriterionIncomplete`'s
+  mechanism and which no clause of this family can reach.
+* **Verdict on rank 4: the investigation is CLOSED, on both halves.**  (i) the splice guard should
+  never be built — refuted in both directions, and Rose's closure and the withdrawn guard never
+  once license the same splice.  (ii) no ambiguity warning should ship, and the stage 2 an earlier
+  draft of the R3 report proposed is closed with a "no" rather than scheduled: its number fails
+  the report's own acceptance criteria.  The one thing worth doing is a TICKET rather than a
+  stage — TAUTOLOGY DELETION, `TICKET-stdlib-findings.md` C12: `exists t h. r <- (t, h)` with `r`
+  universal is true of every row, it accounts for five of the nine genuine flags, deleting it
+  shortens five published stdlib signatures, and `ei-diff.sh` is the measurement.  The numbers are
+  in `R3-DETERMINED.md` §4 and §4.7, the recommendation in its §5, the review in `R3-REVIEW.md`.
+
 ### Rank 5 — entailment-based call-site checking  ·  cost **3 stages**  ·  risk MEDIUM
 
 This is the brief's item **(b)**.  Verdict: **ADOPT AS A FAST PATH, NOT AS A REPLACEMENT.**
