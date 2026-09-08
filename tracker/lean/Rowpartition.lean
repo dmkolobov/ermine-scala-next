@@ -206,6 +206,33 @@ first getting the module to build.
                                EQUIVALENT (`topNormalise_ssat_iff`), losing nothing
                                (`topNormalise_noLoss`) and inventing nothing beyond the mint
                                (`topNormalise_conserv`, `topNormalise_loopStrict`)
+* `Rowpartition.RoseTheory` -- R2: Ermine's row constraints exhibited as a ROW THEORY in the
+                               sense of Morris & McKinna's Rose (POPL 2019), at the MODEL level.
+                               Rose's Definition 1 (row theory), Definition 2 (row algebra = a
+                               partial monoid, plus the conditions for a MODEL) and Definition 6
+                               (row theory homomorphism) stated in Lean, quoted from the paper;
+                               `sat_iff_pfold` -- one Ermine constraint IS one combination
+                               predicate of `⟨𝒫fin(L), ⊎, ∅⟩`; `ermine_isRowTheory` -- the
+                               triple `⟨Row, =, derivability⟩` is a row theory and `Sat` is a
+                               model of it, with `ζ₀ = (||)`; `ermineSem_isRowTheory` -- the
+                               same over SEMANTIC consequence, whose `∼`-invariance is
+                               discharged at Rose's `∼simp`, the permutation equivalence
+                               (`permSim_sat`); `ermine_to_simple_hom` -- **Definition 6**, from
+                               `ermineTheory` to `simpleTheory tau` (Rose's simple rows
+                               `⟨L ⇀ T, ⊔, ∅⟩` under semantic consequence along the `tau`-slice,
+                               NOT `⇒simp`), with the paper's separate notion, the partial
+                               monoid homomorphisms `dom_hom` / `lift_algHom`, kept apart as
+                               `SimpleRowTransport`.  TWO CAVEATS, both theorems: `weaken`
+                               DELETES (`weaken_not_subset`), so the theory is `LoopRel` minus
+                               `weaken`; and four of the nine survivors MINT, which Definition 2
+                               structurally forbids (`θ` ranges over `fv(P,ψ)`), so plain
+                               derivability there is NOT entailment
+                               (`nd_derives_not_entails`, `split_not_conserv`) -- the theory is
+                               built on the MINT-FREE fragment `MFStep`, and the mints are
+                               recovered on the input's own VOCABULARY
+                               (`nd_derives_sound_on_vocab`, `Cut.CseStep.entails_iff`'s shape
+                               for all four).  Both fragment identities are proved
+                               (`loopRel_split`, `ndStep_split`)
 -/
 import Rowpartition.Basic
 import Rowpartition.Rules
@@ -279,3 +306,4 @@ import Rowpartition.Loop.FlaggedSound
 import Rowpartition.Loop.PolicyStep
 import Rowpartition.Loop.PolicyTerm
 import Rowpartition.Loop.TopNormalise
+import Rowpartition.RoseTheory

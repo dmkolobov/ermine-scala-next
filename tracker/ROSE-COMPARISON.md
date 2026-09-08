@@ -63,7 +63,7 @@ followed the loop-model programme.
 | `Sat`, `SModels`, `SEntails`, `SSat` | semantics.  `Sat rho c` = the assignment `rho` satisfies one constraint; `SModels rho G` = it satisfies every constraint of a system; `SEntails G c` = every model of `G` satisfies `c`; `SSat G` = `G` has a model.  (`Rowpartition/Basic.lean`, `Divergence.lean:178-196`.) |
 | `NoLoss G G'` | `∀ c ∈ G, SEntails G' c` — the output still says everything the input said (`Loop/Strict.lean:48`). |
 | `Conserv G G'` | `∀ c ∈ G', SEntails G c` — the output invents nothing (`:52`).  A mint fails this by construction. |
-| `LoopRel` | the eleven-constructor relation the loop refines into (`Loop/Refine.lean:345`). |
+| `LoopRel` | the eleven-constructor relation the loop refines into (`Loop/Refine.lean:345`). **[Corrected 2026-09-07, R2 review K-8: TEN constructors — `nongen`, `split`, `res`, `splitFree`, `kres`, `weaken`, `renameLhs`, `linkSymm`, `emptyProp`, `dedup`.  The ELEVEN of §1.3 is the count of Ermine's RULES, which is a different tally.  `RoseTheory.loopRel_split` and `ndStep_split` are the constructor-by-constructor case analyses.]** |
 | `labelDecide` | S2 layer (iii): a **complete** per-label DPLL decision on a solve's live input (`Constraints.scala:2532`, `Loop/Decide.lean:335`), default ON since 2026-09-06. |
 
 **Rose side.**
@@ -423,6 +423,22 @@ This is the brief's item **(c)**, and the verdict is **REJECT AS STATED, ADOPT T
   is **already proved**: `LoopRel.sat` (`Loop/Refine.lean:417`), "every constructor of `LoopRel`
   preserves satisfiability"; (3) some `ζ₀` with `f(ζ₀) = ε` — `a <- ()`.  The homomorphism into
   simple rows (Definition 6) is the inclusion composed with `dom : (L ⇀ T) → 𝒫(L)`.
+
+  > **CORRECTION (2026-09-07, R2 review K-1; the paper was obtained during the review).**  Two
+  > sentences of this bullet are wrong.  (a) *"soundness of `⇒` … is **already proved**:
+  > `LoopRel.sat`"* — `LoopRel.sat` is SATISFIABILITY preservation; Definition 2's second model
+  > condition is MODEL preservation, "If `P ⇒ ψ`, then for each ground substitution `θ` on
+  > `fv(P,ψ)`, `f ⊨ θP` implies `f ⊨ θψ`" (paper, verbatim).  `θ` ranges over the conclusion's
+  > free variables too, so a MINT — whose fresh variable lies in `fv(ψ) \ fv(P)` — can never be an
+  > entailment rule in Rose's sense, **in any row theory**.  (b) *"The homomorphism into simple
+  > rows (Definition 6) is the inclusion composed with `dom`"* — Definition 6 is a map
+  > `h : R₁ → R₂` on **syntactic rows** with two clauses, `ζ₁ ∼ ζ₂ ⟹ h(ζ₁) ∼′ h(ζ₂)` and
+  > `P ⇒ ψ ⟹ h(P) ⇒′ h(ψ)`; maps of ALGEBRAS are the paper's separate notion, named one sentence
+  > later ("Row algebras are related by partial monoid homomorphisms"), and `dom` runs *out of*
+  > Rose's algebra into Ermine's, not into simple rows.  Both are repaired in R2's fix round:
+  > `RoseTheory.ermine_isRowTheory` is built on the MINT-FREE fragment, and
+  > `RoseTheory.ermine_to_simple_hom` is Definition 6 proper, with the algebra maps kept apart as
+  > `dom_hom` / `lift_algHom` / `SimpleRowTransport`.
 * **What it buys.**  Rose's Theorem 11 (Principality) and Theorem 15 (Coherence) become *citable*
   for Ermine's surface language rather than analogies, because Rose is parametric over the row
   theory and Ermine would be exhibited as one.  That is the licence rank 4 needs before importing
@@ -437,6 +453,81 @@ This is the brief's item **(c)**, and the verdict is **REJECT AS STATED, ADOPT T
   the theory must be built from `LoopRel` minus `weaken` — the non-deleting fragment — with the
   deletions handled where they belong, in `NoLoss`.
 * **Verdict: ADOPT.**  Cheapest framing result available, and a prerequisite for rank 4.
+
+> **DONE 2026-09-07 (stage R2, `tracker/loopmodel/R2-ROSE-THEORY.md`, uncommitted).**  PARTIAL:
+> every deliverable is in `tracker/lean/Rowpartition/RoseTheory.lean` (1,061 lines, in the root
+> import list; `lake build` 869 jobs green, `Audit.lean` 4,427/0, `looptrace` untouched), and
+> **one condition of this item fails as stated**.
+>
+> *What is proved.*  `sat_iff_pfold` — one Ermine partition constraint IS one n-ary combination
+> predicate of `⟨𝒫fin(L), ⊎, ∅⟩`, the fold being DEFINED exactly at pairwise disjointness and
+> EQUAL to the whole exactly at completeness.  `ermine_isRowTheory` — `⟨Constraint, =,
+> derivability⟩` is a row theory (Definition 1: monotone, transitive, `∼`-invariant) and `Sat`
+> is a model of it (Definition 2), with `ζ₀ = (||)`.  `dom_hom` and `lift_algHom` — the paper's
+> PARTIAL MONOID homomorphisms between `⟨𝒫fin(L), ⊎, ∅⟩` and `⟨L ⇀ T, ⊔, ∅⟩`, preserving `⊎`
+> (definedness included) and `ε`; `dom` is `lift tau`'s retraction and the two are mutually
+> inverse at `T = Unit`, which is this section's "Ermine's is that algebra composed with `dom`"
+> (§1.1 row 2) as a theorem.  `ermine_to_simple_hom` — **Definition 6 itself** (fix round; the
+> first round mis-named the transport bundle after it), from `ermineTheory` to `simpleTheory tau`,
+> the simple rows under SEMANTIC consequence along the `tau`-slice.  Non-vacuity is kernel-checked
+> (`Witness`, `LiveRules`), and `taut_entailed` proves §4.5's `Goal_taut_is_trivial` — as a fact
+> about `SEntails`, not about `⇒`: `eEnt_empty_false` shows the exhibited `⇒` does not derive it.
+>
+> *The condition that fails.*  This section says condition (2), soundness of `⇒` for the
+> algebra, "is **already proved**: `LoopRel.sat`".  **It is not the same statement.**
+> `LoopRel.sat` is SATISFIABILITY preservation (`SSat G → SSat G'`); Definition 2 asks for MODEL
+> preservation.  Dropping `weaken` is necessary but NOT sufficient: the four MINTING
+> constructors (`split`, `res`, `splitFree`, `kres`) add a constraint over a variable the
+> premises do not constrain, which is exactly what `Loop/Strict.lean`'s `Conserv` records
+> ("A MINT fails this").  `nd_derives_not_entails` and `split_not_conserv` exhibit it on
+> `G₀ = { a <- (x, y, (|ℓ|)) }`.  The row theory is therefore built on the **mint-free**
+> non-deleting fragment `MFStep`, where soundness is `NonGenStep.models_iff` plus `Refine.lean`'s
+> four `*_sat` lemmas and is strictly stronger than Definition 2 asks; the minting fragment keeps
+> only `ndRun_ssat`.  So `splitConcrete` and `resolution` — two of the eleven rules of §1.3 —
+> are **conservative extensions, not entailments**, which is the same fact as §1.1's last bullet
+> (`Has a b = exists c. a <- (b, c)`) seen from the solver side: Rose's predicate language has no
+> existential, and Ermine's solver mints them.
+>
+> *What it buys, corrected.*  This section's "Rose's Theorem 11 and Theorem 15 become *citable*
+> for Ermine's surface language" is **too strong as written**.  What becomes citable is the
+> STATEMENT of principality (the memo's own §1.5 wording — the correspondence "is the
+> prerequisite for even stating it") and the legitimacy of Definition 13/14 as Ermine notions,
+> which is the licence rank 4 needs.  Theorem 11 itself does not transfer: Ermine's *type system*
+> has not been exhibited as an instance of Rose's calculus, Rose buys principality by never
+> solving while Ermine solves and commits (§1.5, `A1-REVIEW.md` §R-6), and the compiler runs
+> `LoopRel` with `weaken` and the mints rather than `⇒`.  Theorem 15 has a **named unmet
+> hypothesis**: Definition 14's coherence, which `PivotTest.pivotData`'s four-solution residual
+> violates and which Ermine has no criterion for at all (rank 4).  R3 was not started.
+
+> **CORRECTION (2026-09-07, R2 review K-12).**  Two further claims in this item are wrong, and the
+> paper was obtained during the review, so both are now checkable.
+>
+> 1. The *Risk* bullet's "the only hard lemma already exists" and "one new Lean module of order
+>    150 lines".  `LoopRel.sat` is *satisfiability* preservation; Definition 2's second model
+>    condition is *model* preservation — "If `P ⇒ ψ`, then for each ground substitution `θ` on
+>    `fv(P,ψ)`, `f ⊨ θP` implies `f ⊨ θψ`" (paper, verbatim).  For a MINT no such lemma can exist:
+>    the fresh variable lies in `fv(ψ) \ fv(P)`, which `θ` ranges over, so **no minting rule is an
+>    entailment rule in Rose's sense, in any row theory**.  The lemma that does the work is
+>    `NonGenStep.models_iff`, on the mint-free fragment, and the module is 1,554 lines.  What the
+>    minting fragment *does* satisfy is not only `LoopRel.sat` but the library's own
+>    vocabulary-restricted form — `Cut.CseStep.entails_iff`'s shape, `SEntails G' c ↔ SEntails G c`
+>    for `c` phrased inside `allVars G` — which R2's fix round proves for all four mints
+>    (`RoseTheory.nd_derives_sound_on_vocab`) from `K2SplitStep.extend`, `K2ResStep.extend`,
+>    `mint_extend`, `split_mint_conservativeExt` and `sat_congr_of_agree`.
+> 2. "The homomorphism into simple rows (Definition 6) is the inclusion composed with
+>    `dom : (L ⇀ T) → 𝒫(L)`."  Definition 6 is a map `h : R₁ → R₂` on **syntactic rows** with two
+>    clauses, `ζ₁ ∼ ζ₂ ⟹ h(ζ₁) ∼′ h(ζ₂)` and `P ⇒ ψ ⟹ h(P) ⇒′ h(ψ)`; maps of *algebras* are the
+>    paper's separate notion ("Row algebras are related by partial monoid homomorphisms"), and
+>    `dom` runs from Rose's algebra into Ermine's, not into simple rows.  R2 proves the partial
+>    monoid half (`dom_hom`, `lift_algHom`) and model-level transport (`SimpleRowTransport`); the
+>    fix round adds **Definition 6 itself** (`Def6Hom`, `ermine_to_simple_hom`) into a target row
+>    theory whose `⇒′` is semantic consequence in the simple-row algebra.  A Definition-6 map into
+>    Rose's own `⇒simp` is probably blocked: `⇒simp` derives none of Ermine's rules (§1.3), and
+>    Ermine has no *ground* predicates for `h` to be "extended to … in the obvious fashion"
+>    (`Constraint` is always over variables).  The paper's own bridge — a partial monoid
+>    homomorphism `j` together with `∀ζ ∈ R. ∃ζ′ ∈ R′. j(f(ζ)) = g(ζ′)` yields a row theory
+>    homomorphism — is the alternative route, and its side condition is exactly R2's `tau`-slice
+>    (`RoseTheory.bridge_side_condition`); the bridge is prose and unproved in the paper.
 
 ### Rank 3 — canonical residual simplification, the achievable form  ·  cost **3 stages**  ·  risk MEDIUM
 
