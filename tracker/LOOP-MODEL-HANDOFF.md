@@ -1101,3 +1101,12 @@ N-5 position 50:7; N-6 a date property mutates TimeZone.setDefault globally in a
 ticket entry for the dayCount hole; N-9 "renaming" description. FIX ROUND SENT to the F3 implementer
 a871ffab0682a75b8. Reviewer a6a2f8f853c7076f4 COMPLETE. AFTER THE FIX ROUND: orchestrator runs sbt core/test ALONE
 (expect 936/937 or better; the round-trip flake must not recur alone), then ONE commit + ticket stamps.
+
+USER DIRECTION (2026-09-08 ~06:00): after F3 commits, a QUICK LSP DETOUR (not the roadmap loop): tolerance to
+missing FFI bindings of every kind, because the LSP will run against an older Scala-2 fork whose FFI (writer
+trait, sibling repo ermine-writers) changed. Scoping done (memory ermine-lsp-ffi-tolerance.md): failure path =
+ForeignClasses.classLookup (Class.forName; catches Exception only — NoClassDefFoundError uncaught) and
+Session.scala ~1053-1214 (getMethod / arity / isAssignableFrom / getField) -> die -> module unchecked -> dependents
+unchecked. Six surface forms with spans; eight failure kinds. Brief to write after the user answers: severity and
+behaviour (declared type + evaluation-time stub + diagnostic), fork checkout availability for a real corpus, LSP-only
+vs flag. Fixtures in tracker/lsp-tests; gate lsp-smoke.sh 98 + new fixtures; core/test; repl-smoke.
