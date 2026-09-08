@@ -1124,3 +1124,9 @@ failure was interference); ticket entries and memo stamped 775a20f. NEXT: commit
 parallel-differential test on five small groups shows agree = segments (scratch par-test.log). THEN the LSP
 FFI-tolerance detour (brief to write on the user's answers; defaults if none: warning severity, synthetic
 fixtures, LSP-only default ON behind a flag).
+
+GATE POLICY COMMITTED 4380ae3. LSP-FFI DETOUR BRIEF written: tracker/loopmodel/briefs/brief-LSP-FFI.md (defaults:
+warning severity; session option ermine.foreign.tolerant default OFF, ON in the LSP Resident; synthetic fixtures).
+Implementer to launch (id recorded when launched); then an Opus reviewer (brief-LSP-FFI-review.md; Tier 0 + lsp-smoke
++ repl goldens once), fix, ONE commit. If the user answers the three questions differently, send the answers to the
+implementer by SendMessage.
