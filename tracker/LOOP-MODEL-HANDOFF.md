@@ -1139,3 +1139,4 @@ core/test 938/0; TestLoopTrace 720/720; corpus 85/69/0. Report tracker/LSP-FFI-T
 (brief briefs/brief-LSP-FFI-review.md, findings P-*, report loopmodel/LSP-FFI-REVIEW.md). On ADVANCE: orchestrator
 Tier 0 once (after the reviewer is idle), ONE commit "LSP: tolerate missing/mismatched FFI bindings (ermine.foreign.
 tolerant; default ON in the language server only)".
+LSP-FFI REVIEWER LAUNCHED (2026-09-08 ~09:25): agent a63e86056bc6e83b1 (Opus, background; resume by SendMessage).
