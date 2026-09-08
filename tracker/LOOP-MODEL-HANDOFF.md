@@ -1089,3 +1089,15 @@ Falsified — while the F3 reviewer ran bin/ermine probes and .ei deletions in t
 BEFORE F3 existed. TO DO before the F3 commit: re-run `sbt core/test` with NO concurrent agent activity; expect
 936/937. If it fails again alone, it is real and blocks; if not, record the flake as a ticket item (cross-suite:
 the test itself documents that the process-global dep cache carries other suites' useInterface closures).
+
+F3 REVIEW ARRIVED (2026-09-08 ~05:45): FIX-THEN-ADVANCE (F3-REVIEW.md, N-1..N-9). All seven fixes CORRECT, every
+gate reproduced (core/test 937/1/936; TestLoopTrace 720/720; corpus 85/69/0/154 byte-identical; K-1 length test
+load-bearing both ways). Judgement call: the stage did not need to stop, but the instrument was too narrow — under a
+full 16-record-kind comparison K-1 moves 402 segments in ALL 18 groups (dominated by `detm` nParts decreasing = the
+fix working); the "id base shift" mechanism was wrong (real: Exists.apply's p.toSet.toList hash-order cascade; the
+id base moves only in 59 `incomplete` solves). N-2 shape table wrong in two permanent trackers; N-3 K-1-only .ei
+snapshot missing; N-4 .ei gate tool hoists only Ai/Common.e (45/92 healthy modules produce no .ei) — FIX THE TOOL;
+N-5 position 50:7; N-6 a date property mutates TimeZone.setDefault globally in a parallel suite; N-7 counts; N-8
+ticket entry for the dayCount hole; N-9 "renaming" description. FIX ROUND SENT to the F3 implementer
+a871ffab0682a75b8. Reviewer a6a2f8f853c7076f4 COMPLETE. AFTER THE FIX ROUND: orchestrator runs sbt core/test ALONE
+(expect 936/937 or better; the round-trip flake must not recur alone), then ONE commit + ticket stamps.
