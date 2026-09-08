@@ -985,3 +985,13 @@ R2 BRIEF WRITTEN (2026-09-07 ~18:15): tracker/loopmodel/briefs/brief-R2.md (Rose
 only, Rowpartition/RoseTheory.lean; report R2-ROSE-THEORY.md). Implementer launched next (id recorded below when
 launched). Then an Opus reviewer (brief-R2-review.md to write, shape of brief-S4c-review.md), fix, ONE commit.
 R2 IMPLEMENTER LAUNCHED (2026-09-07 ~18:20): agent a847ea79c874e8349 (Opus, background; resume by SendMessage).
+
+R2 IMPLEMENTER DONE (2026-09-07 ~18:50): PARTIAL — brief condition R2.2(2) fails AS STATED (LoopRel.sat is SSat
+preservation, not model preservation; the four minting constructors violate Def. 2 soundness — exhibited by
+nd_derives_not_entails / split_not_conserv); theory built on the MINT-FREE non-deleting fragment MFStep
+(MFStep.conserv, NonGenStep.models_iff); ermine_isRowTheory, ermine_to_simple_hom, sat_iff_pfold proved;
+Goal_nd_ent_sound stated OPEN. R2.4: Thm 11 statement citable, theorem does not transfer; Thm 15 hypothesis (Def. 14
+coherence) unmet (pivotData). ORCHESTRATOR VERIFIED: lake build 869; Audit 4,427 / 0; 7 main theorems standard
+axioms; looptrace untouched. Report tracker/loopmodel/R2-ROSE-THEORY.md. UNCOMMITTED pending review; reviewer brief
+briefs/brief-R2-review.md (findings K-*, report R2-REVIEW.md). On ADVANCE: ONE commit "Loop model R2: Ermine's
+constraints as a Rose row theory (mint-free non-deleting fragment)" + memo correction note if the reviewer asks.
