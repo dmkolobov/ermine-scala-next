@@ -1130,3 +1130,4 @@ warning severity; session option ermine.foreign.tolerant default OFF, ON in the 
 Implementer to launch (id recorded when launched); then an Opus reviewer (brief-LSP-FFI-review.md; Tier 0 + lsp-smoke
 + repl goldens once), fix, ONE commit. If the user answers the three questions differently, send the answers to the
 implementer by SendMessage.
+LSP-FFI IMPLEMENTER LAUNCHED (2026-09-08 ~08:20): agent aa9d89af84828a827 (Opus, background; resume by SendMessage).
