@@ -206,7 +206,7 @@ checkedPostings = checkedRel postingChecks postingList
 --   `(5^5 - 3*3^5 + 2*2^5)/2 = 1,230`, whatever else is in the expression. (Measured with
 --   `-Dermine.rowTrace.draws=true`; the round-1 figures 1,233 / 1,241 were model runs at
 --   one id base.) `postingMarkdownPinned` below is the same table with the argument
---   annotated: **no draws at all**. See `Lang/ProjectionCliff.slow` and
+--   annotated: **no draws at all**. See `Lang/ProjectionCliff.e` and
 --   `tracker/loopmodel/S4-DESIGN.md`.
 postingMarkdown : String
 postingMarkdown =

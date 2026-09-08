@@ -2,13 +2,15 @@ module Lang.ProjectionCliff where
 
 {- THE PROJECTION CLIFF: projecting one record N times inside one expression, N = 1 .. 7.
 
-   `.slow`, not `.e`, because at N = 7 this module DOES NOT COMPILE at the shipped
-   defaults, and `core/test` type-checks every `.e` it finds. See
-   `core/examples/incomplete/README.md` for the convention. `bin/ermine` will still run
-   it if you name it explicitly:
+   A `.e` again since 2026-09-08. Until then it was `ProjectionCliff.slow`, because at N = 7
+   it DID NOT COMPILE at the shipped defaults. Stage S4's written-partition normalisation
+   (`-Dermine.topNormalise`, default ON since 2026-09-08) takes every rung of the ladder to ONE
+   pre-loop draw and no loop draws, so all seven bindings compile in a few hundredths of a
+   second. The table below is the ladder WITHOUT it (`-Dermine.topNormalise=false`), kept
+   as the record of why the normalisation exists; reproduce it with
 
-       ERMINE_JAVA_OPTS="-Xmx3000m -XX:ActiveProcessorCount=2" \
-         bin/ermine core/examples/Lang/ProjectionCliff.slow
+       ERMINE_JAVA_OPTS="-Dermine.topNormalise=false -Dermine.rowTrace.draws=true" \
+         bin/ermine core/examples/Lang/ProjectionCliff.e
 
    WHAT THIS MEASURES. `t ! f` on a record whose row is a VARIABLE is a `Has r f`, which
    is `exists c. r <- (f, c)` -- one existential row partition. N projections of the same
@@ -64,9 +66,8 @@ module Lang.ProjectionCliff where
    presentation side, with bare `p ! f` projections rather than a list literal, and measured
    3 / 33 / 207 / 1,243 / 6,795 / budget against the 3 / 31 / 207 / 1,241 / 6,956 / budget
    this file first reported -- the same curve, and on the compiler's own counter BOTH are
-   3 / 30 / 207 / 1,230 / 6,783 / budget, because D(N) does not depend on the spelling. `core/examples/Present/shouldfail/proj01_seven_reads.e` is the
-   negative for it; this file is the CURVE, which is why it is `.slow` and not a second
-   negative. `tracker/loopmodel/E4-REVIEW.md` also records the stronger remedy: five
+   3 / 30 / 207 / 1,230 / 6,783 / budget, because D(N) does not depend on the spelling. `core/examples/Present/SevenReads.e` (until 2026-09-08 the negative
+   `shouldfail/proj01_seven_reads.e`) pins the seventh read; this file is the CURVE. `tracker/loopmodel/E4-REVIEW.md` also records the stronger remedy: five
    projections under ONE WRITTEN PARTITION,
    `forall r o. (r <- ((| p1, ..., p5 |), o)) => {..r} -> String`, cost ZERO draws.
 

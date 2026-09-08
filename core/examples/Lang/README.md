@@ -4,7 +4,7 @@
 written in**, plus a shared library of **seventy-one generic bindings** (`Helpers.e`) and
 machine-checked proofs about their signatures (`Signatures.e`) — **twelve `.e` files** —
 with seven negative modules under `shouldfail/` and one `.slow` module that measures a
-compiler cliff (`ProjectionCliff.slow`).
+compiler cliff (`ProjectionCliff.e`).
 
 Every other directory under `core/examples` is about relations. This one is about
 monads, parsers, validation, state, readers, free structures, strings, trees, maps and
@@ -167,7 +167,7 @@ eta-delegating wrapper emits `forall {a} … (a1: a)`, a scheme with the value t
 inferred **kind** variable, and that scheme does not parse — `->` demands kind `*`. The
 minimal case is `atAnyKind : forall {k} (a: k). a -> Int`.
 
-## The projection cliff — `ProjectionCliff.slow`
+## The projection cliff — `ProjectionCliff.e`
 
 `t ! f` on a record whose row is a VARIABLE is a `Has r f`, i.e. `exists c. r <- (f, c)`
 — one existential row partition. **N projections of the same record in one expression
@@ -204,7 +204,8 @@ whatever else is in the expression. (Round-1 figures 1,241 / 1,233 were model ru
 base; the compiler's own counter says 1,230 three times.)
 
 The same cliff was found independently, at the same time, from the presentation side:
-`core/examples/Present/shouldfail/proj01_seven_reads.e` is the negative for it and
+`core/examples/Present/SevenReads.e` (the negative `shouldfail/proj01_seven_reads.e` until
+2026-09-08) pins the seventh read and
 `tracker/loopmodel/E4-REVIEW.md` carries a second ladder (3 / 33 / 207 / 1,243 / 6,795 /
 budget) measured with bare `p ! f` projections instead of a list literal; on the compiler's own
 counter that ladder is also 3 / 30 / 207 / 1,230 / 6,783 (`tracker/loopmodel/S4-DESIGN.md`).
@@ -221,10 +222,11 @@ spellings side by side (`catalogueMarkdownPinned`, `postingMarkdownPinned`). Tha
 `core/examples/incomplete/README.md` records for the star-join cliff — "same eight
 dimensions, and the type annotation is the only difference."
 
-`ProjectionCliff.slow` carries the whole series and is `.slow` rather than `.e` because
-`core/test` type-checks every `.e` under `core/examples` and this one does not compile. It is
-not a second `shouldfail/` module because `Present/shouldfail/proj01_seven_reads.e` already
-carries the refutation; what this file adds is the curve.
+`ProjectionCliff.e` carries the whole series. Until 2026-09-08 it was `ProjectionCliff.slow`, because
+`core/test` type-checks every `.e` under `core/examples` and the seven-read rung did not compile;
+since stage S4's written-partition normalisation (`-Dermine.topNormalise`, default ON) every
+rung is one pre-loop draw and the file is an ordinary example again. What it adds is the curve,
+measured with the flag off.
 
 **Left recursion is not in this list.** `pMany p` where `p` can succeed without consuming
 input loops forever, and Ermine says nothing about it: `Parser a` is a function type and

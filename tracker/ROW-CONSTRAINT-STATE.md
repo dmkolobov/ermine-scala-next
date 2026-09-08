@@ -145,12 +145,17 @@ and the S2 review's adoption prerequisites: **adopt the full recommended set.** 
 | `-Dermine.rowSound` (master for `.bare` / `.saturated` / `.decide`) | `false` | **`true`** | S2's three layers: bare-row EXACTNESS in `makeConcrete`, `labelClash` on the SATURATED set, and a COMPLETE per-label decision on the solve's LIVE INPUT |
 | `-Dermine.dequeuePolicy` | `shipped` | **`smallcanon`** | D1's dequeue order: fewest right-hand-side parts first, ties by an id order instead of `rhs.hashCode` |
 | `-Dermine.solveBudget` | `0` (off) | **`20000`** | D1's draw budget, per solve; still IGNORED under `-Dermine.dequeuePolicy=shipped` |
+| `-Dermine.topNormalise` | `false` | **`true`** (2026-09-08) | S4's written-partition normalisation: k >= 3 distinct pairwise-incomparable reads at one lhs, no concrete row, no self-read -> one written partition before the loop; fingerprint token `+topnorm` |
 
-**NOT adopted, offered: `-Dermine.topNormalise` (stage S4, 2026-09-07, DEFAULT OFF).**
+**ADOPTED 2026-09-08 (the user's decision after S4 + S4c): `-Dermine.topNormalise` DEFAULT ON.**  The block
+below is the offer as it stood at S4 and the record of what adoption required; both non-optional
+items were done in the adoption commit (`.ei` cleared; `Present/shouldfail/proj01_seven_reads.e`
+became `Present/SevenReads.e`, and `Lang/ProjectionCliff.slow` became a `.e` again).  Rollback:
+`-Dermine.topNormalise=false`.
 
 | flag | default | what it is |
 |---|---|---|
-| `-Dermine.topNormalise` | **`false`** | S4's WRITTEN-PARTITION NORMALISATION: when one left-hand side carries k >= 3 lone-abstract INPUT partitions whose DISTINCT concrete parts are pairwise INCOMPARABLE and non-empty, and that left-hand side has no concrete row, the k reads are replaced by `v <- (c, F)` (F their union, c fresh) plus `c_i <- (c, F \ F_i)` — the 0-draw form the user could have written |
+| `-Dermine.topNormalise` | **`true`** since 2026-09-08 (`false` at S4) | S4's WRITTEN-PARTITION NORMALISATION: when one left-hand side carries k >= 3 lone-abstract INPUT partitions whose DISTINCT concrete parts are pairwise INCOMPARABLE and non-empty, and that left-hand side has no concrete row, the k reads are replaced by `v <- (c, F)` (F their union, c fresh) plus `c_i <- (c, F \ F_i)` — the 0-draw form the user could have written |
 
 **Why it exists.**  `Record.(!)` is a row PARTITION, so N reads of one record parameter whose row
 is a VARIABLE cost exactly `D(N) = (5^N - 3*3^N + 2*2^N) / 2` draws — 3 / 30 / 207 / 1,230 /
@@ -162,7 +167,7 @@ per-record cap breaks `Loop/Strict.lean`'s `NoLoss`.  The normalisation takes th
 **one pre-loop draw at every N**: with it on, ten reads compile in 0.04 s where seven did not
 compile at all.
 
-**AT ADOPTION, TWO THINGS THAT ARE NOT OPTIONAL** (S4B review H-8 and §5.2).
+**AT ADOPTION, TWO THINGS THAT WERE NOT OPTIONAL — BOTH DONE 2026-09-08** (S4B review H-8 and §5.2).
 
 1. **Clear the interface cache once**, exactly as `smallcanon`/`solveBudget` needed:
    `find . -name '*.ei' -delete`.  Nothing keys a published `.ei` by `GenRules.toString`
@@ -212,7 +217,7 @@ about items 1 and 2 above, which remain the user's to do.
    project-wide audit (`Audit.lean`: **4,295 theorems, 0 non-standard axioms**, against **4,119**
    at `c48f178` re-derived from git; `lake build` 868 jobs; TestLoopTrace 720/720).
 
-**Status: OFFERED, NOT ADOPTED.**  Report `tracker/loopmodel/S4-CHANGE.md`, design
+**Status: ADOPTED 2026-09-08 (default ON).**  Report `tracker/loopmodel/S4-CHANGE.md`, design
 `tracker/loopmodel/S4-DESIGN.md`, review `tracker/loopmodel/S4A-REVIEW.md`, Lean
 `tracker/lean/Rowpartition/Loop/TopNormalise.lean` (S4c; `tracker/loopmodel/S4Top.lean` is now a
 pointer to it), Scala in the worktree

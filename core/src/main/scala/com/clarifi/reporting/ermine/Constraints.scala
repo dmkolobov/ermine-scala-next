@@ -1504,8 +1504,12 @@ object Constraints {
      * (G-11) and the Lean mirror can be identical.
      *
      * Mirrored in `Rowpartition/Loop/Json.lean`'s `topNormalise` under
-     * `Flags.topNormalise`, applied at the same point of the same solve. */
-    val topNormalise: Boolean = System.getProperty("ermine.topNormalise", "false") == "true"
+     * `Flags.topNormalise`, applied at the same point of the same solve.
+     *
+     * DEFAULT ON since 2026-09-08 (adopted by the user after stages S4 / S4c: correspondence
+     * lemma `TopNormalise.lean`, no-false-acceptance and no-false-rejection at ON).
+     * Rollback: `-Dermine.topNormalise=false`. */
+    val topNormalise: Boolean = System.getProperty("ermine.topNormalise", "true") == "true"
 
     override def toString =
       mode + (if (disjRule) "+disj" else "") + (if (labelCheck) "+label" else "") +

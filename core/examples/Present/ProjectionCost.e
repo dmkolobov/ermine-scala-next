@@ -33,7 +33,12 @@ module Present.ProjectionCost where
          4            4             207         65          0
          5            5           1,230        211          0
          6            6           6,783        665          0
-         7            7        BUDGET EXHAUSTED at 20,009 -- see shouldfail/proj01
+         7            7        BUDGET EXHAUSTED at 20,009 -- see SevenReads.e
+
+   MEASURED WITH `-Dermine.topNormalise=false`. At the shipped default (ON since
+   2026-09-08, stage S4) the draws column reads 3 / 0 / 0 / 0 / 0 and seven compiles:
+   from three reads up, the solver rewrites the reads to one written partition before
+   the loop (one `tnorm` record per binding).
 
    Every draw is a `Resolution` step and none is a split, and the whole ladder
    is reported at `ProjectionCost.e(1:1)` because these are the module's own
@@ -118,8 +123,8 @@ proj5 p = (p ! pAlpha) ++_String (p ! pBeta) ++_String (p ! pGamma)
                        ++_String (p ! pDelta) ++_String (p ! pEpsilon)
 
 -- Six. Six thousand seven hundred and eighty-three -- a third of the budget for
--- one line of ordinary Ermine. Seven does not compile; see
--- `shouldfail/proj01_seven_reads.e`.
+-- one line of ordinary Ermine, before the normalisation was adopted (2026-09-08).
+-- Seven did not compile then; see `SevenReads.e`.
 proj6 p = (p ! pAlpha) ++_String (p ! pBeta) ++_String (p ! pGamma)
                        ++_String (p ! pDelta) ++_String (p ! pEpsilon)
                        ++_String (p ! pZeta)

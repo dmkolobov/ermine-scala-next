@@ -141,6 +141,15 @@ inferred type knows nothing about rows at all — it would let a caller pass a
 series selector for one relation and a value selector for another. The
 hand-written signature is where the meaning lives.
 
+## `SevenReads.e` — the module that used to be a negative
+
+Until 2026-09-08 this was `shouldfail/proj01_seven_reads.e`, the only module in `core/examples` rejected by
+the **draw budget** rather than by a type error (seven reads of one unannotated record parameter,
+35,910 draws against a budget of 20,000). Stage S4's written-partition normalisation
+(`-Dermine.topNormalise`, default ON since 2026-09-08) rewrites the seven reads to one partition before
+the loop, and the module compiles at 0 loop draws. `-Dermine.topNormalise=false` reproduces the
+old diagnostic. The budget diagnostic has no corpus negative any more.
+
 ## `shouldfail/`
 
 Seven negatives, each with its verbatim diagnostic in its own header:
@@ -153,4 +162,3 @@ Seven negatives, each with its verbatim diagnostic in its own header:
 | `box01_position_in_legend.e` | `styleBox`'s cell-coordinate column also in its legend |
 | `box02_treemap_same_measure.e` | a treemap coloured and sized by the same column |
 | `chart01_series_not_in_relation.e` | a chart series column dropped by a projection |
-| `proj01_seven_reads.e` | seven reads of one unannotated record parameter — the only module in `core/examples` rejected by the **draw budget** rather than by a type error |

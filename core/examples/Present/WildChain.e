@@ -34,15 +34,15 @@ module Present.WildChain where
    which is the same number `proj6` costs in `ProjectionCost.e`. The fan is a
    property of the CONSTRAINT SET, not of the syntax: six lone-abstract
    partitions at one row variable close the same way whether they arrive from one
-   expression, six `let`s or six imported helpers. A seventh of either does not
-   compile at the adopted `-Dermine.solveBudget=20000`; see
-   `shouldfail/proj01_seven_reads.e`.
+   expression, six `let`s or six imported helpers. A seventh of either did not
+   compile at `-Dermine.solveBudget=20000` until the normalisation below was adopted
+   (2026-09-08); see `SevenReads.e`.
 
    THE FIX IS ONE TOKEN, and it is the same one `Helpers.e` preaches: write the
    row down. `wildPinned` draws nothing at all.
 
    THIS IS ALSO THE MODULE STAGE S4 USES AS ITS WILD-CODE GATE. With
-   `-Dermine.topNormalise=true` (DEFAULT OFF) the solver performs for itself the
+   `-Dermine.topNormalise` (DEFAULT ON since 2026-09-08) the solver performs for itself the
    normalisation `wildPinned` writes by hand: the module's 13,566 draws become
    **0** and its import 1.65 s becomes **0.32 s**, with two `tnorm` records
    naming the same six-field partition at both sites. See

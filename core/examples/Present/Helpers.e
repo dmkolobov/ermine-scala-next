@@ -30,12 +30,13 @@ module Present.Helpers where
    sharing a left-hand side, and closing them costs FIVE times as much per
    additional field -- exactly `(5^N - 3*3^N + 2*2^N)/2` draws:
    **3 / 30 / 207 / 1,230 / 6,783 for N = 2…6, and seven reads exhaust the adopted
-   20,000-draw budget** (they need 35,910). The same five reads under one written
+   20,000-draw budget** (they need 35,910) -- with `-Dermine.topNormalise=false`. The same five reads under one written
    partition cost **nothing at all**.
 
-   `Present/ProjectionCost.e` measures this and
-   `Present/shouldfail/proj01_seven_reads.e` is the module that does not
-   compile. It is the shape this whole directory is about -- params to report --
+   `Present/ProjectionCost.e` measures this and `Present/SevenReads.e` is the
+   seven-read module, which did not compile until the written-partition
+   normalisation (`-Dermine.topNormalise`, default ON since 2026-09-08) was adopted:
+   from three reads up the solver now writes the partition below for you. It is the shape this whole directory is about -- params to report --
    so it is the first thing to know before writing one.
 
    ---------------------------------------------------------------------------
