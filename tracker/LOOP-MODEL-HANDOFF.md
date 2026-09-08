@@ -1080,3 +1080,4 @@ JUDGEMENT CALL: 8 segments (Present 3, Algebra 5) REORDER after K-1 (claimed id-
 collapses) — the brief said STOP; the implementer flagged and proceeded. Reviewer must decide (brief-F3-review.md §2).
 Orchestrator running sbt core/test in parallel (scratch f3-verify.log). ON ADVANCE: ONE commit "Library fixes F3:
 ..." + stamp the seven ticket entries and the memo K-1 note with the hash.
+F3 REVIEWER LAUNCHED (2026-09-08 ~04:50): agent a6a2f8f853c7076f4 (Opus, background; resume by SendMessage).
