@@ -1140,3 +1140,14 @@ core/test 938/0; TestLoopTrace 720/720; corpus 85/69/0. Report tracker/LSP-FFI-T
 Tier 0 once (after the reviewer is idle), ONE commit "LSP: tolerate missing/mismatched FFI bindings (ermine.foreign.
 tolerant; default ON in the language server only)".
 LSP-FFI REVIEWER LAUNCHED (2026-09-08 ~09:25): agent a63e86056bc6e83b1 (Opus, background; resume by SendMessage).
+
+LSP-FFI REVIEW ARRIVED (2026-09-08 ~10:25): FIX-THEN-ADVANCE (LSP-FFI-REVIEW.md, P-1..P-9). All nine kinds hold under
+independent probes; default-off byte-identical over 154 outputs vs a pre-change compiler; gates reproduced (150 /
+7/7 / 938 / 720 / 85-69-0). BLOCKER P-1: getMethod/getField/getConstructor/getMethods still catch Exception only ->
+NoClassDefFoundError from member signatures escapes -> NO diagnostics (the fork's stale-jar shape). P-2 foreign data
+of a missing class must emit an Information note (severity 3), not silence. P-3 spans one char wide; P-4 warnings
+dropped on :load rollback; P-5 negative lookups uncached; P-6 ConDecl.isInstance on the sentinel; P-7 self-contained
+kind-2 fixture (reviewer built it); P-8/9 prose. FIX ROUND SENT to the implementer aa9d89af84828a827. Reviewer
+a63e86056bc6e83b1 COMPLETE. ON THE FIX REPORT: orchestrator Tier 0 once (compile+copyResources, TestLoopTrace,
+corpus batch, lsp-smoke, repl-smoke), ONE commit, then STOP — the queue is empty; the next stage is the user's
+choice (recommended: C12 + .ei config key, then canonical residual simplification).
