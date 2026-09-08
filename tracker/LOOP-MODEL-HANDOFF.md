@@ -1049,3 +1049,4 @@ detm/ramb)"; then remove wt-r3 and its branch. Stage 2 (re-measure with the reso
 PERF A/B (topNormalise OFF/ON alternating, quiet-load wait per side) running: scratch perf-ab2.log; the first
 attempt gave OFF 12.68 s at 23:55 vs ON 10.89 s at 21:00 — NOT comparable (different times); record only the
 interleaved pair in the state file (follow-up commit).
+R3 REVIEWER LAUNCHED (2026-09-08 ~00:10): agent a9a04a7a523872c61 (Opus, background; resume by SendMessage).
