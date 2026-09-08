@@ -980,3 +980,7 @@ S4c FIX COMMITTED a696d1c (2026-09-07 ~18:05): J-1 closed (solve_rejects_input /
 reviewers set for adopting -Dermine.topNormalise is now met. THE FLIP IS THE USER'S DECISION — NOT MADE. Waiting on
 the user; meanwhile the queue continues: R2 (Ermine as a Rose row theory at the model level, Lean only) next, then
 R3, A1b, F3. Agents: S4c implementer ab0be9ea98f80dab4 and reviewer adb10d8f6c5456c89 COMPLETE (resumable).
+
+R2 BRIEF WRITTEN (2026-09-07 ~18:15): tracker/loopmodel/briefs/brief-R2.md (Rose row theory at the model level, Lean
+only, Rowpartition/RoseTheory.lean; report R2-ROSE-THEORY.md). Implementer launched next (id recorded below when
+launched). Then an Opus reviewer (brief-R2-review.md to write, shape of brief-S4c-review.md), fix, ONE commit.
