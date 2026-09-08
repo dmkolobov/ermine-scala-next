@@ -1056,3 +1056,10 @@ the state file's adoption block. The pending perf item from 3a767b6 is CLOSED. R
 (docs only, M-1..M-7; stage 2 CLOSED by the reviewer's number: three-clause closure flags 11/19 with 2 false
 positives; new ticket item = tautology deletion `exists t h. r <- (t,h)`, r universal). Fix round sent to the R3
 implementer a336107c67ea23138. Reviewer a9a04a7a523872c61 COMPLETE.
+
+R3 COMMITTED a79dd6f (2026-09-08 ~01:40): Determined.lean + trace-only detm/ramb instrument applied to main + docs; review
+M-1..M-7 applied; stage 2 CLOSED (no ambiguity warning); ticket C12 (tautology deletion) opened. wt-r3 and branch
+determined-closure REMOVED; no worktrees remain. All R-series agents COMPLETE.
+QUEUE: A1b (three in-memory MapView equality sites SqlScanner.scala:644/:708, relational/package.scala:67 + a test)
+-> F3 (one-line library fixes: B1 dateDiff, A4 formatQuarter, A3 Date timezone, C2 join1 doc, C5 Layout.Scan
+re-exports, K-1 Type.scala:414 .toSet) -> C12 (tautology deletion, two-line proof + ei-diff) if the user wants it.
