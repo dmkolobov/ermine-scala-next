@@ -377,6 +377,50 @@ All three have the same shape: **the concrete case is handled and the variable c
    > `Part.apply` **neither** case is handled — a fourth omission of this family — and the repair is
    > one word, `ss.toSet == cs`, which belongs in the same follow-up as the variable-identity case
    > because both are on the PRE-solver path and both move the row trace.
+   >
+   > **FIXED, stage F3 2026-09-08** (`loopmodel/F3-FIXES.md`, commit `<commit>`).  The guard is
+   > now `ts.isEmpty && ss.toSet == cs && ss.length == cs.size`.  The length test is not
+   > decoration: `ss` is the concatenation of EVERY concrete part's labels, so `ss.toSet == cs`
+   > alone would also fire on `(|Foo,Bar|) <- ((|Foo,Bar|), (|Foo|))`, where two parts share a
+   > label and the constraint is UNSATISFIABLE rather than trivially true.  With it the case is
+   > exactly "the concrete parts are pairwise disjoint and their union is the concrete whole",
+   > which is a partition of a concrete row and therefore holds.
+   >
+   > **What it moved, measured.**  The guard fires **2,308 times in the `Algebra` corpus group
+   > alone** (**1,896** pure identities `(|X|) <- ((|X|))`, **389** non-empty concrete rows split
+   > into two disjoint concrete parts and **23** empty-row cases, the largest a 26-label row; and
+   > of all 2,308, ZERO had overlapping parts and ZERO had a part-union different from the whole,
+   > so the guard fired only on genuine partitions.  Corrected 2026-09-08 in the F3 fix round: the
+   > first version of this note said 1,516 / 769 / 23, which the artefact does not support).  None
+   > of them ever reached
+   > `Subst.solve`: over all eighteen `looptrace-corpus.sh` groups and 3,205,346 solves the
+   > compiler receives **zero** concrete-identity `in` records, before the fix or after.  They
+   > come from `Constraint.e`'s `type (|) a b = exists c. c <- (a, b)` once both operands have
+   > been substituted to concrete rows, and from `Subst.instantiatedAt`'s `relocateConstraints`,
+   > which re-runs `Part.apply` at every instantiation of an already-solved scheme.  The
+   > consequence in the trace is real and it is the fix working: over **all eighteen** groups and
+   > 3,205,346 solves, **402 segments differ** — 305 CONTENT-DIFFERS, 96 PERMUTATION-ONLY, 1
+   > KINDCOUNT-DIFFERS — and the dominant class is R3's `detm` record, whose residual partition
+   > count **decreases 510 times and increases 0 times** (`Relation/Op.e(165:3)` 6 → 5 in every
+   > group, `Present/Helpers.e(529:1)` 17 → 10, `Algebra/Comprehensions.e(123:3)` 9 → 0).  The 96
+   > permutations are `Exists.apply`'s `p.toSet.toList`: swap a `Part` for an `Exists` and the
+   > constraint set's hash order changes, so the survivors reach `PQueue.build` in a different
+   > order and mint their existentials in it.  Fifty-nine `incomplete` solves draw one id fewer
+   > (`suLo` one lower).  Two runs of one binary are byte-identical under the same comparison, so
+   > it is the change and not run-to-run noise; all 153 corpus verdicts AND messages are
+   > byte-identical, and ticket B6 — which does follow the id base — fires zero times here against
+   > thirteen times on the shipped build.  In the PUBLISHED interfaces, measured on the repaired
+   > sweep (268 per side), K-1 alone moves **4 bindings in 2 interfaces**: `Algebra/SoftSchema`'s
+   > `fulcrum4`/`fulcrum5`/`pivoted` alpha-equivalent, and `cutoffGroupedFldsPosNegRel'` keeping
+   > its 26 partitions with one 3-part becoming a 6-part.  3,474 bindings identical, nothing
+   > weaker, none lost or added.
+   > *(This paragraph first said "16 of 18 groups identical segment for segment, eight segments",
+   > which was the output of an instrument comparing six of the trace's sixteen record kinds;
+   > corrected 2026-09-08 in the F3 fix round, review finding N-1.)*
+   >
+   > **Still open, and named here so it is not lost:** the VARIABLE-identity case of item 3
+   > (`a <- (a)` at `Part.apply`, as opposed to `Subst.normalPart`) and
+   > `Part.isTrivialConstraint`, which is still `false` unconditionally.
 
 * **In Rose's terms.**  (1) is `∼simp`, which "identifies sequences up to permutation" — Ermine
   honours it in the solver (`RHS` is a `Set`) and violates it in the published type.  (2) is the

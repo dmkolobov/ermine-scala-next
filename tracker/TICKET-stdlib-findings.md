@@ -41,7 +41,24 @@ A1b. **Three more `MapView` sites survive where the compiler cannot reject a vie
     `Optimizer.scala:277`). Pre-existing, out of F1's scope, unreachable from the corpus (every pivot stops at
     `dumpMem`), same family as A1 on the feature A1 unblocked. **Fix:** `.toMap` at the three sites plus a test
     that drives the in-memory pivot/join/sort path. (F1-REVIEW J-3; `tracker/03-core-progress.md` records the
-    migration converted "only the ~20 sites the compiler rejected".)
+    migration converted "only the ~20 sites the compiler rejected".) — stage F3.
+    **FIXED in `<commit>`** (stage F3, 2026-09-08): the three `.toMap`s are in
+    (`SqlScanner.scala:649` the pivot's bootstrap key, `:719-720` the hash join's two key
+    functions, `relational/package.scala:72` the sort's chunk predicate), and five new
+    `core/test` properties in `scalacheck-binding/src/main/scala/TestInMemoryScan.scala`
+    DRIVE the in-memory pivot, the hash join and the sort and check what they emit.
+    Four of the five fail on the pre-fix compiler, measured as a negative control with only
+    the three `.toMap`s reverted: the pivot answered `xs -> -1` (the DEFAULT) for the row
+    that opened every group, the hash join answered the EMPTY SET, and `sorting` gave the
+    input order back; the fifth is an already-sorted stream, unchanged either way, and is a
+    regression guard rather than a discriminator.  `pivot` and `hashJoin` became
+    `private[relational]` so the test can drive them; nothing else about them changed.
+    None of the three is reachable from an Ermine program — `Scanners.e` publishes only
+    `dumpClosed`, so the REPL can dump a relation's SQL and can never execute a `Mem` — which
+    is why the properties drive them directly rather than through a scan.  Every other
+    `mapValues`/`filterKeys`/`.view` in `core/src/main/scala` (115 hits, 9 of them in the
+    fully commented-out `Access.scala`) was checked one by one and is listed in the report.
+    Details and every gate: `tracker/loopmodel/F3-FIXES.md`.
 
 A2. **`Console.other` loops forever on a piped line containing `case`, `let` or `where` as a substring.**
     `Console.scala:149`: `readLine` returns `null` at EOF, `null == ""` is false, so `blank` never flips; each
@@ -63,11 +80,50 @@ A3. **`Date`'s accessors read the instant in the JVM's default timezone; its for
     is simultaneously `"1/1/11"` and `"Dec 31"`; `getMonth` is 11 under MDT and 0 under UTC;
     `formatPeriodOr "custom" (1 Jan, 31 Jan)` is `"Jan 2011"` on one machine and `"custom"` on another.
     **Every `DateRange` period label is machine-dependent.** Measured with and without `-Duser.timezone=UTC`.
-    **Fix:** one timezone (UTC) for both, or make it a parameter. (E3 §8 FiscalTree; E3-REVIEW.)
+    **Fix:** one timezone (UTC) for both, or make it a parameter. (E3 §8 FiscalTree; E3-REVIEW.) — stage F3.
+    **FIXED in `<commit>`** (stage F3, 2026-09-08), the first of the two: ONE timezone, UTC.
+    `PrimExprs` gains `getYear`/`getMonth`/`getDate` reading a `GregorianCalendar` in
+    `YMDTriple.ymdPivotTimeZone` — the zone `dateFormatterTLV` already pins every formatter
+    to — and `Date.e` binds the three names to those instead of to `java.util.Date`'s
+    deprecated methods.  The CONVENTIONS are unchanged (`getYear` is the year minus 1900,
+    which `core/examples/Yahoo.e` relies on; `getMonth` is 0-based; `getDate` is the 1-based
+    day), and `getTime` is epoch milliseconds and was never affected.  Measured on this
+    machine (default zone America/Denver): `@2011/1/1` answered `getMonth 11, getDate 31,
+    getYear 110` before and answers `0, 1, 111` now — the same as under `-Duser.timezone=UTC`
+    and the same under `Pacific/Kiritimati` (UTC+14), `Asia/Tokyo` and `Pacific/Niue`
+    (UTC−11): five zones, one answer.  **Published behaviour that changes on a non-UTC
+    machine**: `Date.getYear/getMonth/getDate`, `Date.formatExcelDate`, `Date.quarter`,
+    `Date.formatQuarter`, `DateRange.formatPeriod`, `DateRange.formatPeriodOr`,
+    `DateRange.formatExcelPeriod`, and in the examples `Yahoo.e`'s URL builder (which was a
+    day out) and `Time/FiscalTree.e`'s ten `periodLabel*`/`jan*Number`/`*QuarterLabel`
+    bindings.  Nothing that goes through a formatter moves, and no SQL rendering moves.  A
+    timezone PARAMETER is still not offered.
+    **STILL OPEN IN THE SAME FAMILY, found in the F3 fix round and NOT fixed:** date
+    ARITHMETIC is still in the default zone.  `Date.incrementDate` / `decrementDate` /
+    `incrementTimestamp` go through `com.clarifi.reporting.TimeUnit.increment`
+    (`Op.scala:291`, `:313`), which builds a `Calendar.getInstance` — the JVM's default zone —
+    and adds there.  Adding whole days is offset-invariant EXCEPT across a daylight-saving
+    transition, where the local day is 23 or 25 hours and the result lands on the wrong UTC
+    day.  Measured: `incrementDate 1 days @2011/3/13` is `"3/14/11"` under
+    `-Duser.timezone=UTC` and `"3/13/11"` under `America/Denver` (13 March 2011 is the US
+    spring-forward); `@2011/11/6`, the autumn transition, does not move.  The fix is the same
+    one line — `Calendar.getInstance(YMDTriple.ymdPivotTimeZone)` — but it CHANGES the answer
+    of a shipped function on a non-UTC host, so it wants its own stage and its own gates
+    rather than a footnote here.  `Date.e`'s header now scopes its "one timezone" claim to
+    reading and formatting and names this.
+    Details: `tracker/loopmodel/F3-FIXES.md`.
 
 A4. **`Date.formatQuarter` is wrong twice over:** `getMonth d / 4 + 1` divides by four, then indexes a 0-based
     list with a 1-based number — quarters are four months long and `"Q1"` is unreachable (January prints
-    `"Q2"` under UTC). **Fix:** `/ 3`, 0-based index. (E3 §8.)
+    `"Q2"` under UTC). **Fix:** `/ 3`, 0-based index. (E3 §8.) — stage F3.
+    **FIXED in `<commit>`** (stage F3, 2026-09-08): `quarter d = getMonth d / 3 + 1` and
+    `formatQuarter d = orElse "Unknown" (at (quarter d - 1) quarterNames)`.  `quarter` keeps
+    its 1-based meaning, which is the one its name and `quarterNames` have; the index is
+    where the off-by-one is fixed.  The twelve month-firsts of 2011 now label
+    `Q1 Q1 Q1 Q2 Q2 Q2 Q3 Q3 Q3 Q4 Q4 Q4` (they were `Q2 Q2 Q2 Q2 Q3 Q3 Q3 Q3 Q4 Q4 Q4 Q4`
+    under UTC and `Q4 Q2 Q2 Q2 Q2 Q3 Q3 Q3 Q3 Q4 Q4 Q4` under this machine's MDT default
+    zone, which is A3 on top of A4), and two `core/test` properties pin all twelve.
+    Details: `tracker/loopmodel/F3-FIXES.md`.
 
 A5. **`SqlEmitter` flattens a non-left-deep join tree without parentheses** (`SqlEmitter.scala:262` emits both
     operands bare: `A JOIN B ON c1 JOIN C JOIN D ON c2 ON c3`). SQL-92/T-SQL/Postgres re-associate it; SQLite's
@@ -93,7 +149,48 @@ A8. **`File.readFile` calls `traceShow` through `System.console()`**, which brea
 B1. **`Relation.Op.dateDiff`'s wrapper has no signature** (`Relation/Op.e:150` commented out), so it infers
     `Op r2 Int` with `r2` FREE: `combine_Op (dateDiff …) gap t` type-checks over a relation carrying neither
     date and fails only at header computation (`Operation refers to nonexistent column`). A static guarantee
-    silently deferred to run time. **Fix:** the one-line signature. (E3 §finding; E3-REVIEW P-3.)
+    silently deferred to run time. **Fix:** the one-line signature. (E3 §finding; E3-REVIEW P-3.) — stage F3.
+    **FIXED in `<commit>`** (stage F3, 2026-09-08): the wrapper now carries `dateAdd'`'s
+    signature, one line above it in the same file —
+    `dateDiff : (AsOp op1, AsOp op2, RUnion2 t r1 r2, PrimitiveTemporal d) => TimeUnit ->
+    op1 r1 d -> op2 r2 d -> Op t Int` — so the result row is the union of the operands'.  The
+    commented-out line it replaces would not have fixed anything: `r2` was free there too, and
+    `AsOp op1 op2` is not a constraint the parser accepts.  The reproduction (a `combine_Op` of
+    a date difference over a relation carrying NEITHER date) LOADED before and answered
+    `<relation with Failure(NonEmpty[Operation refers to nonexistent column (startDate) in
+    header., …])>` only when forced; it is now rejected statically with `Row partitions are
+    unsatisfiable at field '…startDate': the whole contains it but no part does`, and it is in
+    the corpus as `core/examples/Time/shouldfail/date01_datediff_free_row.e` — the one
+    deliberate corpus change of this stage — plus two `core/test` properties, one positive and
+    one negative.  The PRIMITIVE `dateDiff#` still publishes a free result row, as `dateAdd#`
+    always has; the wrapper is what users call.  **`core/examples/Time/Helpers.e` still declares
+    `dayCount : forall r r1 out. …`, and that signature is still ACCEPTED for that body, so a
+    caller who goes through the example helper rather than through `dateDiff` still gets the
+    deferred failure**; tightening it to `RUnion2 out r r1 => …` was measured in F3 to load the
+    whole `Time/` group cleanly and is left as a one-line follow-up, with the helper's comment
+    updated to say so.  **That follow-up is now ticket B1a below** (eight helpers, not seven — F3 review N-7/N-8), so it is not parked inside a FIXED entry.  Details: `tracker/loopmodel/F3-FIXES.md`.
+
+B1a. **Eleven example helpers still publish a FREE result row, so B1's static guarantee stops at the
+    stdlib boundary.**  Opened 2026-09-08 by the F3 review (finding N-8); B1 itself is fixed.
+    `core/examples/Time/Helpers.e` declares **eight** helpers as `forall … out. … -> Op out …`
+    with `out` constrained by nothing — `dayCount` :288, `yearFrac365` :293, `monthsBetween` :303,
+    `monthsSince` :309, `daysSince` :313, `daysUntil` :319, `yearsOn` :324, `yearFrac360` :330 —
+    and every one of those signatures is still ACCEPTED for its body after `Relation.Op.dateDiff`
+    was tightened, so `combine_Op (dayCount_H f g) gap r` over a relation carrying NEITHER date
+    still type-checks and still fails at header computation with `Operation refers to nonexistent
+    column`.  That is exactly the defect B1 was raised for, one level up.
+    `core/examples/Time/Signatures.e` mirrors it in `yearFrac365Full` (`out <- (out)`, the
+    tautology), `yearFrac365Deduped` and `yearFrac365Simple` — the last labelled "What `Helpers.e`
+    ships, specialised to `Date`" — while its `pctChange*` and `safeDiv*` families all constrain
+    `out` properly, so the hole there is exactly those three.  The two PRIMITIVES `dateDiff#` and
+    `dateAdd#` (`Relation/Op.e`) also still publish a free result row; that is deliberate — they
+    are the raw foreign imports and the wrappers are what users call — but it is the reason the
+    hole is one `unsafe` step away for anyone who reaches past a wrapper.
+    **Fix:** `RUnion2 out r r1 => …` on the eight, and a decision on the three exhibits.  MEASURED
+    in stage F3: tightening the eight loads the whole `Time/` group cleanly (all eleven modules
+    import), so this is a one-line-per-helper change and not a design question.  It was left out of
+    F3 because it is an example-level change the brief did not scope and it moves eight published
+    signatures.  (F3 review N-8; `tracker/loopmodel/F3-FIXES.md` §5.)
 
 B2. **A row variable written in the `[f1, f2]` relation-type syntax is read as a LABEL.**
     `mk : Field c String -> [aid, c]` checks, and `:type mk` is `forall (c: rho). … Relation (|aid, c|)` — the
@@ -137,14 +234,30 @@ C1. **`Relation.UnifyFields.unify1` cannot unify differently-named schemas** —
     its constraints force the operands to agree on every column but one each, and `f1` appears in no
     constraint; only same-header self-joins load. (E2 F1.)
 C2. **`Relation.join1` is `joinBy {f}`**, not "the intersection is nonempty" as its doc comment says
-    (`r <- (k, r1, r2)` is a partition, so `f` is the whole key). (E2 F2.)
+    (`r <- (k, r1, r2)` is a partition, so `f` is the whole key). (E2 F2.) — stage F3.
+    **FIXED in `<commit>`** (stage F3, 2026-09-08): the comment now says that it takes the join
+    key EXPLICITLY and is exactly `joinBy {f}`, and spells out why — `r <- (k, r1, r2)` is a
+    partition, so `r1` and `r2` are disjoint, and with `ra <- (k, r1)` and `rb <- (k, r2)` the
+    intersection of the operands is exactly `k`.  Comment only: no signature and no `.ei` byte
+    changed.
 C3. **`lookupLatest`/`nearestDate` group by the DATE ALONE**: a multi-series history silently loses whichever
     series stopped reporting; `nearestDate` maps dates to dates and forces both relations to one column.
     (E3.) `asOfWithin` is a binary gate on the as-of answer, never a per-row staleness filter. (E3 §8.)
 C4. **`weightedMean` forces value and weight to one type** (needs `annul`). (E3.)
 C5. **`rename'` is misnamed** (its doc is right; it requires the destination column to already exist);
     **`Relation.Scan.sumBy'` carries a vacuous `r <- (h,t)`**; **`Layout.Scan` omits exactly `removeK`,
-    `removeBy`, `multiply`**. (E2 F7–F9.)
+    `removeBy`, `multiply`**. (E2 F7–F9.) — stage F3.
+    **FIXED in `<commit>`** (stage F3, 2026-09-08), all three as the brief scoped them.
+    `Layout/Scan.e` re-exports `removeK`, `removeBy` and `multiply` (the last takes the runner,
+    as `groupBy`/`sumBy`/`count` do); three `core/test` properties resolve them, and a module
+    whose whole body is those three names failed to load before and loads now.
+    `Relation/Scan.e`'s `sumBy'` loses `r <- (h,t)`, in which `h` and `t` occur nowhere else —
+    the published interface printed them as FREE variables it did not bind, which is B3 as well
+    as C5.  The other four signatures carrying the same tautology (`sumBy`, `avgBy'`, `count`,
+    `count'`) keep it: deleting them one at a time is not the fix, C12 is.  `rename'` KEEPS its
+    name, as the brief directs, and gains the doc line: it requires the destination column to be
+    there already, because the `except {f2}` is what gives it its name, so it OVERWRITES rather
+    than renaming into a fresh column.  Details: `tracker/loopmodel/F3-FIXES.md`.
 C6. **`Relation` and `Mem` have no conversion back**: `filterEq`/`firstBy`/`lastBy`/`leafRows`/`lookupLatest*`/
     `unionAll` are `Relation`-only, `groupBy`/`accumulate`/`medianBy` return `Mem`, `join`/`union`/`difference`
     insist both operands be the same `rel`, and `asMem` goes one way — so a report that groups and then
@@ -218,3 +331,11 @@ D2. `TICKET-row-constraint-decision.md` states Rémy-style row unification is po
   overrode `equals` but not `hashCode`; the `a <- (a)` tautology was never dropped. — stage S3 (see
   `tracker/loopmodel/S3-SIMPLIFY.md` when it lands).
 - `TestSurfaceParsers.scala` asserted an exact corpus size (`files ?= 271`); now derived with a floor.
+
+D3. **`TestConstraints.disjunction sound` never checks anything: generator starvation.** `disjunctionGen` draws
+    seven field sets and seven variable valuations independently, so the three partitions' parts overlap and the
+    `satisfies` guard discards every sample ("gave up after 0 passed tests, 501 discarded" in every recorded run;
+    `tracker/06-tests.md`). The rule under test, `Constraints.disjunction`, ships OFF (`GenRules.disjRule`).
+    QUARANTINED 2026-09-08 behind `-Dermine.test.disjunction=true` (gate policy) so the suite's green means green.
+    **Fix:** draw one pool of fields and partition it among A/B/C/D/E/F/G, and valuations disjoint from the fields
+    and each other; acceptance = the property PASSES 100 samples with the guard discarding < 50 %.

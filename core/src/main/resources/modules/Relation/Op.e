@@ -147,7 +147,18 @@ dateAdd n u o = dateAdd# (prim n) u (asOp o)
 dateAdd' : (AsOp op1, AsOp op2, RUnion2 t r s, PrimitiveTemporal d) => op1 r Int -> TimeUnit -> op2 s d -> Op t d
 dateAdd' n u o = dateAdd# (asOp n) u (asOp o)
 
---dateDiff : forall r r1 r2 .  AsOp op1 op2 => TimeUnit -> op1 r Date -> op2 r1 Date -> Op r2 Long
+-- | The whole `TimeUnit`s from `s` to `e`.
+--
+-- Stage F3, ticket B1: this had NO signature (the line that would have given it
+-- one was commented out and left `r2` free anyway), so it inherited the result row
+-- of the primitive `dateDiff#`, which is unconstrained -- and a `combine` of a date
+-- difference then type-checked over a relation carrying NEITHER date column and
+-- failed only at header computation, with `Operation refers to nonexistent column`.
+-- The signature is `dateAdd'`'s, one line above: the result row is the union of the
+-- two operands' rows, so the columns the difference reads must be in the relation
+-- it is combined into.
+dateDiff : (AsOp op1, AsOp op2, RUnion2 t r1 r2, PrimitiveTemporal d)
+        => TimeUnit -> op1 r1 d -> op2 r2 d -> Op t Int
 dateDiff u s e = dateDiff# u (asOp s) (asOp e)
 
 typeOfOp : AsOp op => op r n -> Prim n

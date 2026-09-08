@@ -17,6 +17,37 @@ import String as S
 -- A `Timestamp` is a Date+Time, corresponding to a SQL TIMESTAMP value
 -- (or DATETIME2 in MS-SQL). Timestamps are assumed to be in UTC for the
 -- purposes of treating a Date+Time as an actual moment in time.
+--
+-- ONE TIMEZONE, AND IT IS UTC (stage F3, ticket A3), for everything that READS
+-- or FORMATS a date: `parseDate`, `unsafeFormatDate`, `formatMonthYear`,
+-- `formatYear`, `formatMonth`, `formatDay`, `getYear`, `getMonth`, `getDate`,
+-- and everything built on them (`quarter`, `formatQuarter`, `formatExcelDate`,
+-- and `DateRange`'s period labels) all work in `YMDTriple.ymdPivotTimeZone` --
+-- the same zone the SQL emitters bind a date parameter in. So a date literal is
+-- ONE day everywhere and a report labels its periods the same on every machine.
+--
+-- DATE ARITHMETIC IS NOT YET IN THAT ZONE, and F3 did not fix it.
+-- `incrementDate` / `decrementDate` / `incrementTimestamp` go through
+-- `com.clarifi.reporting.TimeUnit.increment`, which builds a
+-- `Calendar.getInstance` -- the JVM's DEFAULT zone -- and adds there. Adding
+-- whole days is offset-invariant EXCEPT across a daylight-saving transition,
+-- where the local day is 23 or 25 hours long and the answer lands on the wrong
+-- UTC day. Measured on this repository:
+--
+--     incrementDate 1 days @2011/3/13     UTC: "3/14/11"   MDT: "3/13/11"
+--
+-- (13 March 2011 is the US spring-forward.) Same family as A3, same fix --
+-- `Calendar.getInstance(ymdPivotTimeZone)` in `Op.scala` -- and it is a
+-- BEHAVIOUR change to a shipped function, so it belongs in a stage of its own.
+--
+-- Until 2026-09-08 the three ACCESSORS below did not: `getYear`, `getMonth` and
+-- `getDate` were bound to `java.util.Date`'s deprecated methods, which read the
+-- instant in the JVM's DEFAULT timezone, so `@2011/1/1` was simultaneously
+-- "1/1/11" (formatted, UTC) and 31 December 2010 (accessed, in MDT) and every
+-- `DateRange` period label was machine-dependent. They are bound to
+-- `PrimExprs.get{Year,Month,Date}` now, which read the same UTC calendar. Their
+-- CONVENTIONS are unchanged: `getYear` is the year minus 1900, `getMonth` is
+-- 0-based (January is 0), `getDate` is the 1-based day of the month.
 
 parseDate : String -> Maybe Date
 parseDate = fromMaybe# . parseDate#
@@ -34,9 +65,15 @@ foreign
   function "com.clarifi.reporting.PrimExprs" "formatDay" formatDay : Date -> String
 
   method "getTime" getTime       : Date -> Long
-  method "getDate" getDate       : Date -> Int
-  method "getMonth" getMonth     : Date -> Int
-  method "getYear" getYear       : Date -> Int
+
+-- The accessors read the instant in UTC, the zone the formatters above use; see
+-- the module header. `getYear` is the year minus 1900, `getMonth` is 0-based,
+-- `getDate` is the 1-based day of the month -- the conventions of the
+-- `java.util.Date` methods these replaced.
+  function "com.clarifi.reporting.PrimExprs" "getDate" getDate   : Date -> Int
+  function "com.clarifi.reporting.PrimExprs" "getMonth" getMonth : Date -> Int
+  function "com.clarifi.reporting.PrimExprs" "getYear" getYear   : Date -> Int
+
   method "before" before : Date -> Date -> Bool
 
 foreign
@@ -60,11 +97,19 @@ shortMonthNames =
 quarterNames : List String
 quarterNames = ["Q1", "Q2", "Q3", "Q4"]_L
 
+-- | The calendar quarter a date falls in, 1 through 4: January is 1.
+--
+-- Stage F3, ticket A4: this used to read `getMonth d / 4 + 1`, which is wrong
+-- twice over -- a quarter is THREE months, not four, and `formatQuarter` then
+-- indexed a 0-based list with the 1-based answer, so "Q1" was unreachable and
+-- January printed "Q2". The divisor is 3 now and `formatQuarter` subtracts the
+-- one; `quarter` itself keeps its 1-based meaning, which is the one its name and
+-- `quarterNames` have.
 quarter : Date -> Int
-quarter d = getMonth d / 4 + 1
+quarter d = getMonth d / 3 + 1
 
 formatQuarter : Date -> String
-formatQuarter d = orElse_M "Unknown" (at_L (quarter d) quarterNames)
+formatQuarter d = orElse_M "Unknown" (at_L (quarter d - 1) quarterNames)
 
 -- | `incrementDate 5 days d`
 incrementDate : Int -> TimeUnit -> Date -> Date

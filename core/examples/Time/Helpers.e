@@ -273,18 +273,24 @@ bucketBy startF endF dateF cal facts =
 
 -- | The number of whole days from `s` to `e`, as an `Op` usable in `combine`.
 --
--- FINDING, recorded in the report: `Relation.Op.dateDiff` is declared
+-- FINDING (E3), FIXED IN THE STDLIB BY STAGE F3 (2026-09-08, ticket B1):
+-- `Relation.Op.dateDiff#` is declared
 --     dateDiff# : PrimitiveTemporal d => TimeUnit -> Op r d -> Op r1 d -> Op r2 Int
 -- with the RESULT row `r2` unconstrained by either argument's row, and its
--- wrapper `dateDiff` (Relation/Op.e:151) has NO SIGNATURE AT ALL -- the line
--- that would have given it one is commented out immediately above. So a
--- `combine` of `dayCount` type-checks even when neither date column is in the
--- relation being combined: the header computation then fails at run time with
--- `Operation refers to nonexistent column`. A static guarantee every other `Op`
--- combinator enforces is, for date differences alone, deferred to run time.
--- `dateAdd` does NOT have the hole -- its wrapper ties the rows -- so the fix is
--- one signature. The signature below repeats the hole rather than hiding it,
--- because tightening it would be a stdlib change and this directory is examples.
+-- wrapper `dateDiff` (Relation/Op.e) HAD no signature at all, so it inherited
+-- that hole: a `combine` of a date difference type-checked even when neither
+-- date column was in the relation being combined, and the header computation
+-- then failed at run time with `Operation refers to nonexistent column`. The
+-- wrapper now carries `dateAdd'`'s signature -- `RUnion2 t r1 r2`, the result
+-- row is the union of the operands' -- and that program is rejected statically.
+--
+-- THE SIGNATURE BELOW STILL REPEATS THE HOLE, deliberately: `forall out` is
+-- accepted for this body, so a caller who goes through `dayCount` rather than
+-- through `dateDiff` still gets the deferred failure. Tightening it to
+-- `RUnion2 out r r1 => …` was measured in F3 to load the whole `Time/` group
+-- cleanly; it is left as a one-line follow-up rather than folded into a stdlib
+-- stage, so that the example keeps showing what an unconstrained result row
+-- costs.
 dayCount : forall r r1 out. Field r Date -> Field r1 Date -> Op out Int
 dayCount s e = dateDiff_Op days (col_Op s) (col_Op e)
 

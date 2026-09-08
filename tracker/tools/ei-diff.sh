@@ -50,8 +50,19 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$here"
 export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 batch=0
-if [[ ${1:-} == "--batch" ]]; then batch=1; shift; fi
-out="${1:?usage: ei-diff.sh [--batch] <outdir> [flags-for-side-B]}"
+snapshot=0
+while [[ ${1:-} == --* ]]; do
+  case "$1" in
+    --batch)    batch=1; shift ;;
+    # ONE SIDE only, into <outdir>, with the flags given.  This is what a comparison of two
+    # BUILDS needs -- `ei-diff.sh` on its own can only vary FLAGS, because both of its sides
+    # run the compiler that is on disk.  Stage F3 needed three builds (base, K-1-only,
+    # shipped) and cloned the sweep into scratch to get it; it belongs here instead.
+    --snapshot) snapshot=1; shift ;;
+    *) echo "usage: ei-diff.sh [--batch] [--snapshot] <outdir> [flags]" >&2; exit 2 ;;
+  esac
+done
+out="${1:?usage: ei-diff.sh [--batch] [--snapshot] <outdir> [flags]}"
 flagsB="${2:--Dermine.spliceGuard=true}"
 mkdir -p "$out"
 
@@ -71,13 +82,28 @@ sweep() {  # sweep <snapshot-dir> <flags>
     local i=0 k=0
     while (( i < ${#all[@]} )); do
       local chunk=( "${all[@]:i:CHUNK}" ) gf=()
-      # an Ai module cannot resolve Ai.Common on its own, so every chunk that holds one
-      # gets Common.e at its head (it is loaded again in its own chunk, harmlessly)
-      case " ${chunk[*]} " in
-        *" core/examples/Ai/"*) [[ " ${chunk[*]} " == *" core/examples/Ai/Common.e "* ]] ||
-                                  gf=( core/examples/Ai/Common.e ) ;;
-      esac
-      gf+=( "${chunk[@]}" )
+      # A module in a library-backed group cannot resolve its library on its own, so every
+      # chunk that holds one gets the library at its head (it is loaded again in its own
+      # chunk, harmlessly).  SIX libraries, not one: until 2026-09-08 this hoisted only
+      # `Ai/Common.e`, and the five group libraries the E-stages added were missing, so
+      # **59 of the 60 chunks failed with `Module not found` and 45 of the 92 healthy
+      # corpus modules produced no `.ei` at all** -- among them `Time/FiscalTree.e`.  The
+      # sweep looked healthy because the loss was symmetric across two sides of one
+      # comparison; add or remove one corpus file and the chunk boundaries shift and a
+      # different module falls out, which is how it was found (F3 review, N-4).
+      local lib f2 hoisted=" "
+      for lib in Ai/Common Wide/Helpers Algebra/Helpers Time/Helpers Present/Helpers Lang/Helpers; do
+        local dir="core/examples/${lib%/*}/" src="core/examples/$lib.e"
+        case " ${chunk[*]} " in
+          *" $dir"*) gf+=( "$src" ); hoisted+="$src " ;;
+        esac
+      done
+      # the library goes at the HEAD even when the chunk already holds it: the chunk is
+      # sorted, so `Ai/ClinicalTrial.e` precedes `Ai/Common.e` and a chunk holding both
+      # still failed.  Drop the second copy rather than passing the same file twice.
+      for f2 in "${chunk[@]}"; do
+        [[ "$hoisted" == *" $f2 "* ]] || gf+=( "$f2" )
+      done
       ERMINE_JAVA_OPTS="$flags" timeout "${EI_BATCH_TIMEOUT:-180}" \
         bin/ermine "${gf[@]}" </dev/null > "$snap.chunk$k.log" 2>&1
       i=$(( i + CHUNK )); k=$(( k + 1 ))
@@ -88,8 +114,13 @@ sweep() {  # sweep <snapshot-dir> <flags>
     for f in "${files[@]}"; do
       local args=( "$f" )
       case "$f" in
-        core/examples/Ai/Common.e) ;;
-        core/examples/Ai/*)        args=( core/examples/Ai/Common.e "$f" ) ;;
+        core/examples/Ai/Common.e|core/examples/*/Helpers.e) ;;
+        core/examples/Ai/*)      args=( core/examples/Ai/Common.e "$f" ) ;;
+        core/examples/Wide/*)    args=( core/examples/Wide/Helpers.e "$f" ) ;;
+        core/examples/Algebra/*) args=( core/examples/Algebra/Helpers.e "$f" ) ;;
+        core/examples/Time/*)    args=( core/examples/Time/Helpers.e "$f" ) ;;
+        core/examples/Present/*) args=( core/examples/Present/Helpers.e "$f" ) ;;
+        core/examples/Lang/*)    args=( core/examples/Lang/Helpers.e "$f" ) ;;
       esac
       ERMINE_JAVA_OPTS="$flags" timeout "${EI_TIMEOUT:-120}" \
         bin/ermine "${args[@]}" </dev/null > /dev/null 2>&1
@@ -101,6 +132,13 @@ sweep() {  # sweep <snapshot-dir> <flags>
   done
   echo "  $(ls "$snap" | wc -l) interfaces captured"
 }
+
+if [[ $snapshot == 1 ]]; then
+  echo "== snapshot: ${flagsB:-<no flags>}$([[ $batch == 1 ]] && echo ' (batch)')"
+  sweep "$out" "$flagsB"
+  find core/examples "$STDLIB" -name '*.ei' -delete 2>/dev/null
+  exit 0
+fi
 
 echo "== side A: default flags$([[ $batch == 1 ]] && echo ' (batch)')"
 sweep "$out/A" ""

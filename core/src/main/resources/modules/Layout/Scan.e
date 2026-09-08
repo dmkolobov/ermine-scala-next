@@ -36,6 +36,14 @@ pickK = pickK_S
 pickByK = pickByK_S
 deriveFromK = deriveFromK_S
 updateK = updateK_S
+-- Stage F3, ticket C5: `Relation.Scan` publishes fourteen combinators over a
+-- `Scan`; this module used to re-export eleven of them, and the three below were
+-- the ones it left out, for no reason anyone recorded -- `removeK` in particular
+-- is the exact opposite of `pickK`, which IS here. `multiply` takes the runner,
+-- like `groupBy`/`sumBy`/`count` do.
+removeK = removeK_S
+removeBy = removeBy_S
+multiply = multiply_S runner
 groupBy' = groupBy'_S runner
 groupBy = groupBy_S runner
 groupBy1 = groupBy1_S runner

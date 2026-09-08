@@ -154,11 +154,23 @@ unionAllWithHeader r [] = relationWithHeader r []
 unionAllWithHeader _ (h :: t) = foldl union h t
 
 -- | Removes `f2`, then renames `f1` to `f2`
+--
+-- REQUIRES `f2` TO ALREADY BE IN THE RELATION (ticket C5, stage F3): the `except
+-- {f2}` is what gives it its name, so this OVERWRITES an existing destination
+-- column rather than renaming into a fresh one. `rename f1 f2` is the plain
+-- rename, and it is what a caller wants when `f2` is not there yet.
 rename' f1 f2 = rename f1 f2 . except { f2 }
 
--- | Identical behavior to `join`, but requires a witness that
--- the intersection is nonempty, to guard against accidental
--- cartesian joins
+-- | Identical behavior to `join`, but takes the join key EXPLICITLY: it is
+-- exactly `joinBy {f}`.
+--
+-- Stage F3, ticket C2. The comment here used to claim the constraints were "a
+-- witness that the intersection is nonempty". They say more than that:
+-- `r <- (k, r1, r2)` is a PARTITION, so `r1` and `r2` are disjoint, and with
+-- `ra <- (k, r1)` and `rb <- (k, r2)` the intersection of `ra` and `rb` is
+-- exactly `k` -- one field, the one `f` names. Two relations that share two
+-- columns cannot be joined with this; `join` (implicit key) or `joinBy` (a whole
+-- row as the key) is what takes them.
 join1 : (ra <- (k, r1), rb <- (k,r2), r <- (k,r1,r2), Relational rel)
      => Field k a
      -> rel ra

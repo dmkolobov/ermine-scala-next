@@ -1556,3 +1556,103 @@ only on a double timeout — and it was the one gate that would have caught U-0 
 must FAIL on a non-zero build — a failed `core/compile` let a 25-base sweep and a differential
 run against stale classes and nearly shipped a wrong number.  (iii) Do not `lake build` while a
 corpus differential is running; it relinks `looptrace` under the sweep.
+
+---
+
+## 2026-09-08 — stage F3, item K-1: `Part.apply`'s dead concrete-identity guard, and the 402 segments it moved
+
+**Additive note.**  Nothing here changes a decision or a default; it records the one
+solver-visible thing stage F3 did (`tracker/loopmodel/F3-FIXES.md`, ticket K-1 in
+`ROSE-COMPARISON.md` §3 Rank 1).
+
+`Type.scala`'s `Part.apply` had a case meant to collapse a concrete partition to the
+trivially-true constraint:
+
+```scala
+case ConcreteRho(lclhs, cs) if ts.isEmpty && ss == cs => Exists(l)
+```
+
+`ss` is a `List[Name]` and `cs` a `Set[Name]`, so `ss == cs` is **always false** at Scala 3.3.8
+and the case was dead — the S3 review found this and named it K-1.  It is now
+
+```scala
+case ConcreteRho(lclhs, cs) if ts.isEmpty && ss.toSet == cs && ss.length == cs.size => Exists(l)
+```
+
+The length test is load-bearing.  `ss` is the concatenation of EVERY concrete part's labels, so
+`ss.toSet == cs` alone would also fire on `(|Foo,Bar|) <- ((|Foo,Bar|), (|Foo|))`, where two
+parts share a label: that constraint is **unsatisfiable**, not trivially true, and must be left
+for the solver to refute.  With the length test the case is exactly "the concrete parts are
+pairwise disjoint and their union is the concrete whole", which is the definition of a partition
+of a concrete row.
+
+**It fires, a lot, and never at a place the trace can see directly.**  Instrumented, the new
+branch fires **2,308 times in the `Algebra` corpus group alone** — **1,896** pure identities
+`(|X|) <- ((|X|))`, **389** non-empty concrete rows split into two disjoint concrete parts and
+**23** empty-row cases, the largest a 26-label row.  Of all 2,308, **zero have overlapping parts
+and zero have a part-union different from the whole**: the guard fired only ever on a genuine
+partition of a concrete row, which is its soundness side-condition, measured.  *(This paragraph
+first said 1,516 / 769 / 23; corrected 2026-09-08 in the F3 fix round, review finding N-2.)*
+
+Yet over all eighteen `looptrace-corpus.sh` groups and **3,205,346
+solves** the compiler receives **zero** concrete-identity `in` records, before the fix or after:
+these constraints are built and consumed before `Subst.solve` ever sees them.  They come from
+`Constraint.e`'s `type (|) a b = exists c. c <- (a, b)` once both operands have been substituted
+to concrete rows, and from `Subst.instantiatedAt`'s `relocateConstraints`, which re-runs
+`Part.apply` on an already-solved scheme's constraints at every instantiation — by then a row
+variable may be a concrete row.
+
+**What moved, measured against a build that differs in `Type.scala` and nothing else that can
+reach inference** (the stdlib `.e` files were put back to their committed bytes for this
+measurement, so only the Scala changed):
+
+* `corpus-run.sh --batch`: **85 LOADED / 68 REJECTED / 0 UNKNOWN**, unchanged, and **0 of 153**
+  per-file outputs differ once the progress-bar frames and the elapsed-time strings are masked
+  (those are wall clocks and differ between any two runs of one binary).
+* the 18-group row trace, **3,205,346 segments**, compared over EVERY record kind
+  (`tracker/tools/trace-ab.py`, masking only `rsound ok`'s wall-clock microseconds): **402
+  segments differ, in all 18 groups** — 305 `CONTENT-DIFFERS`, 96 `PERMUTATION-ONLY`, 1
+  `KINDCOUNT-DIFFERS`.  The dominant class is R3's `detm` record — the residual `Subst.reduce` has
+  accumulated at each splice — whose partition count **decreases 510 times and increases 0 times**:
+  `Relation/Op.e(165:3)` 6 → 5 (52 times, once per JVM, and in `boot`/`bugs`/`guide` the only
+  differing segment there is), `Wide/Helpers.e(201:1)` 7 → 5, `Present/Helpers.e(529:1)` 17 → 10,
+  `Algebra/Comprehensions.e(123:3)` 9 → 0.  That is the deletion, visible.
+* the `sin` supply bounds: **17 groups have none; `incomplete` has 59**, from segment 1088215 on,
+  each `suLo` exactly one LOWER after the fix until the next block boundary absorbs it — one
+  `Part` fewer is one object fewer to freshen.
+* it is **not** run-to-run noise: the same binary traced twice over `Algebra` and `Present` gives
+  `101,005 / 101,005` and `131,358 / 131,358` IDENTICAL under the same full comparison.  No
+  same-build control was taken on `incomplete`, so its 123 differences are the change on the
+  balance of evidence and not proved to be.
+
+**The mechanism is the constraint set's hash order, not the id base.**  `Exists.apply` puts the
+constraint list through `p.toSet.toList` (`RowTrace.scala`'s own `scon` paragraph says so), and
+`Part.hashCode` is `3 + 23*lhs.hashCode + 5*rhs.hashCode`.  Replace one element of that
+`Set[Type]` by an `Exists` and the survivors come out of it in a different order, so the
+instantiation that follows mints their existentials in that order and the permuted ids re-hash the
+next set: content-dependent and local.  The decisive check is ticket B6, whose blame clause DOES
+follow the id base: it fires **13 times on the shipped build and zero times on this one**.
+
+So the 402 are the deletion itself in 305 segments and its hash-order shadow in 96, and no verdict
+and no message moves because of them.  *(This bullet first said "16 of 18 groups identical, eight
+segments … no id was consumed or spared anywhere" and attributed the reorder to the id base; all of
+that was the output of an instrument comparing six of the trace's sixteen record kinds.  Corrected
+2026-09-08 in the F3 fix round, review findings N-1 and N-3.)*  **A trap for the next person:**
+"no concrete-identity constraint appears in the row trace" does NOT mean `Part.apply` never sees
+one.  The trace records what `solve` receives; `Part.apply` runs at parse time and at every
+instantiation, and most of what it collapses never reaches a solve.  Instrument the branch if you
+want to know whether a `Part.apply` case is live.
+
+**Published interfaces, measured in the fix round (review N-3).**  The isolation above originally
+asserted that no published interface moves; no `.ei` snapshot had been taken on the K-1-only build,
+so that was assumed.  It is now measured, on the repaired sweep (`tracker/tools/ei-diff.sh
+--batch --snapshot`, all six group libraries hoisted, 268 interfaces per side): **2 interfaces and
+4 bindings move under K-1 alone** — `Algebra/SoftSchema`'s `fulcrum4`, `fulcrum5` and `pivoted` are
+alpha-equivalent, and `Layout.Report.Relation.cutoffGroupedFldsPosNegRel'` keeps its 26 partitions
+with one 3-part becoming a 6-part.  **3,474 bindings identical, nothing `concrete->polymorphic`,
+none lost or added.**  The accurate claim is therefore "no published type gets WEAKER", not "no
+published interface moves".
+
+**Still open in the same family** (`ROSE-COMPARISON.md` §3 Rank 1 item 3): the VARIABLE-identity
+case at `Part.apply` — `a <- (a)`, which `Subst.normalPart` deletes from the published residual
+but `Part.apply` still builds — and `Part.isTrivialConstraint`, which is `false` unconditionally.

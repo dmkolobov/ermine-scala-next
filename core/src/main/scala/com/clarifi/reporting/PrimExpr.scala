@@ -544,6 +544,35 @@ object PrimExprs {
 
   def formatDay(d: Date): String =
     dd.get.format(d)
+
+  // ---------------------------------------------------------------- accessors
+  //
+  // Stage F3, ticket A3.  `Date.e` used to bind its three accessors to
+  // `java.util.Date`'s DEPRECATED `getYear`/`getMonth`/`getDate` methods, which read
+  // the instant in the JVM'S DEFAULT TIMEZONE, while every formatter above is pinned
+  // to `ymdPivotTimeZone` (GMT) by `dateFormatterTLV`.  So one and the same `Date`
+  // was two different days at once: `@2011/1/1` formatted as "1/1/11" and answered
+  // `getMonth = 11`, `getDate = 31`, `getYear = 110` under MDT -- and 0, 1, 111 under
+  // UTC.  Every `Date.quarter`, `Date.formatExcelDate` and `DateRange` period label
+  // was therefore MACHINE-DEPENDENT.  These read the instant in the SAME zone the
+  // formatters use, and `Date.e` binds them instead.
+  //
+  // The conventions of the methods they replace are kept exactly, because published
+  // Ermine code depends on them (`core/examples/Yahoo.e` writes `getYear d + 1900`):
+  // `getYear` is the year minus 1900, `getMonth` is 0-based (January is 0, which is
+  // what `Date.shortMonthNames` is indexed by), `getDate` is the 1-based day of the
+  // month.
+  private def ymdCalendar(d: Date): java.util.Calendar = {
+    val c = new java.util.GregorianCalendar(tz)
+    c.setTime(d)
+    c
+  }
+
+  def getYear(d: Date): Int = ymdCalendar(d).get(java.util.Calendar.YEAR) - 1900
+
+  def getMonth(d: Date): Int = ymdCalendar(d).get(java.util.Calendar.MONTH)
+
+  def getDate(d: Date): Int = ymdCalendar(d).get(java.util.Calendar.DAY_OF_MONTH)
 }
 
 object PrimExpr {

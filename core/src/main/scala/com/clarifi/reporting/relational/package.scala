@@ -63,8 +63,13 @@ package object relational {
     val sortCols = (post map (_._2) toList)
     if (sortCols.isEmpty) Process.apply(i => i)
     else
+      // `.toMap`: since 2.13 `filterKeys` answers a lazy `MapView`, whose `equals` is
+      // reference equality, so this predicate was ALWAYS FALSE, every chunk was one
+      // record long and `sorting` never grouped -- it sorted singletons and gave the
+      // input order back (stage F3, ticket A1b; `SqlScanner.scala:538` and
+      // `Optimizer.scala:277` spell it correctly).
       Process.grouping(
-        (t1: Record, t2: Record) => (t1 filterKeys chunkCols) == (t2 filterKeys chunkCols)).
+        (t1: Record, t2: Record) => (t1 filterKeys chunkCols).toMap == (t2 filterKeys chunkCols).toMap).
         outmap(sort(_, sortCols)) andThen Machine.flattened((x: Vector[Record] => Any) => x)
   }
 

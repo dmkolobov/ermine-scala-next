@@ -411,7 +411,15 @@ object Part {
       case ((ts,l,ss), other) => (other ::ts, l, ss)
     }
     lh match {
-      case ConcreteRho(lclhs, cs) if ts.isEmpty && ss == cs => Exists(l) // (|Foo, Bar|) <- (|Foo,Bar|)
+      // `ss` is a List[Name] and `cs` a Set[Name], so `ss == cs` was ALWAYS FALSE and this
+      // guard was dead: a concrete identity was rebuilt below and reached the solver
+      // (stage F3, item K-1; `ROSE-COMPARISON.md` §3 Rank 1's dated correction).  The
+      // length test is what the old spelling could not have expressed and the case below
+      // (`ss.toSet.size == ss.length`) does: `ss` is the concatenation of EVERY concrete
+      // part, so equal sets with a longer list means two parts share a label, which is
+      // unsatisfiable rather than trivially true and must be left for the solver.
+      case ConcreteRho(lclhs, cs) if ts.isEmpty && ss.toSet == cs && ss.length == cs.size =>
+        Exists(l) // (|Foo, Bar|) <- (|Foo,Bar|), and (|Foo,Bar|) <- ((|Foo|), (|Bar|))
       case ConcreteRho(lclhs, cs) if ts.length == 1 && ss.isEmpty =>
         new Part(l, ts(0), List(lh)) // flop the concrete rho to the right
       case _ if ts.isEmpty && ss.isEmpty => new Part(l,lh,Nil)           // a <- ()

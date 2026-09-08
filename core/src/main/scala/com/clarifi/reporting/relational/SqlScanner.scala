@@ -616,7 +616,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       case x => sys.error("inconceivable! " + x)
   }
 
-  private def pivot(
+  // `private[relational]` so `TestInMemoryScan` can drive the in-memory pivot.
+  private[relational] def pivot(
     pKey: Set[ColumnName],
     pVals: Set[ColumnName],
     colMap: Map[ColumnName, (Record, Op, PrimExpr)],
@@ -641,7 +642,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
     def prime(r: Record): Process[Record, Record] = {
       val extra = r -- pKey -- pVals
-      val kr = r filterKeys pKey
+      // `.toMap`: since 2.13 `filterKeys` answers a lazy `MapView`, whose `equals`
+      // is reference equality, so `kr == k` below was ALWAYS FALSE and the first
+      // row of every group got each pivoted column's default (stage F3, ticket
+      // A1b; `collect` above spells it correctly).
+      val kr = (r filterKeys pKey).toMap
       val bootstrap : Record = colMap map {
         case (c, (k,o,d)) =>
           if (kr == k) c -> o.eval(r)
@@ -704,8 +709,15 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     awaits(left[Record]).flatMap( l => awaits(right[Record]).flatMap( r => loop(l,r)).orElse(emit(l) >> readAll(left[Record])))
   }
 
-  private def hashJoin(q1: DB[Procedure[Id, Record]], q2: DB[Procedure[Id, Record]], jk: Set[String]) =
-    ^(q1, q2)((q1, q2) => q1.tee(q2)(Tee.hashJoin(_ filterKeys jk, _ filterKeys jk)).map(p => p._1 ++ p._2))
+  // `.toMap`: `Tee.hashJoin` HASHES the two key functions' answers and compares them.
+  // Since 2.13 `filterKeys` answers a lazy `MapView`, which inherits `Object`'s
+  // identity `hashCode`/`equals`, so no left key ever matched a right key and the
+  // join emitted NOTHING (stage F3, ticket A1b; `mergeOuterJoin` at :421 and
+  // `leftHashJoin` at :716 spell it correctly).  `private[relational]` so
+  // `TestInMemoryScan` can drive it.
+  private[relational] def hashJoin(q1: DB[Procedure[Id, Record]], q2: DB[Procedure[Id, Record]], jk: Set[String]) =
+    ^(q1, q2)((q1, q2) => q1.tee(q2)(Tee.hashJoin((r: Record) => (r filterKeys jk).toMap,
+                                                  (r: Record) => (r filterKeys jk).toMap)).map(p => p._1 ++ p._2))
 
   private def leftHashJoin(dq1: DB[Procedure[Id, Record]],
                            dq2: DB[Procedure[Id, Record]],

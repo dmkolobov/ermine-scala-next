@@ -311,45 +311,55 @@ undisputed = missing creditNote serviceOrders
    `periodLabel*` below does with the tree's own nodes. But two things go wrong,
    and both are `Date.e`'s doing rather than `DateRange`'s.
 
+   BOTH DEFECTS ARE FIXED as of stage F3 (2026-09-08, tickets A3 and A4); what
+   follows is the record of what they were, because the two bindings at the foot
+   of this section were written to expose them and now pin the fix instead.
+
    DEFECT 1 -- `Date`'s accessors read the instant in the JVM'S DEFAULT TIMEZONE
-   while its formatters do not, so a date literal is two different days at once.
+   while its formatters did not, so a date literal was two different days at once.
    Measured on this repository for the single literal `@2011/1/1`:
 
-                                    system TZ (MDT)     -Duser.timezone=UTC
-       unsafeFormatDate             "1/1/11"            "1/1/11"
-       formatMonthYear              "Jan 2011"          "Jan 2011"
-       getYear                      110  (= 2010)       111  (= 2011)
-       getMonth                     11   (December)     0    (January)
-       getDate                      31                  1
-       formatExcelDate              "Dec 31"            "Jan 1"
-       quarter                      3                   1
-       formatQuarter                "Q4"                "Q2"
+                                    system TZ (MDT)     -Duser.timezone=UTC   AFTER F3
+       unsafeFormatDate             "1/1/11"            "1/1/11"              unchanged
+       formatMonthYear              "Jan 2011"          "Jan 2011"            unchanged
+       getYear                      110  (= 2010)       111  (= 2011)         111
+       getMonth                     11   (December)     0    (January)        0
+       getDate                      31                  1                     1
+       formatExcelDate              "Dec 31"            "Jan 1"               "Jan 1"
+       quarter                      3                   1                     1
+       formatQuarter                "Q4"                "Q2"                  "Q1"
        formatPeriodOr "custom"
-         (1 Jan, 31 Jan)            "Jan 2011"          "custom"
-         (1 Jan,  1 Apr)            "custom"            "Q2 2011"
+         (1 Jan, 31 Jan)            "Jan 2011"          "custom"              "custom"
+         (1 Jan,  1 Apr)            "custom"            "Q2 2011"             "Q2 2011"
        formatExcelPeriod
-         (1 Jan, 31 Jan)            "Dec 31 to Jan 30"  "Jan 1 to Jan 31"
+         (1 Jan, 31 Jan)            "Dec 31 to Jan 30"  "Jan 1 to Jan 31"     "Jan 1 to Jan 31"
 
    `formatDate`/`formatMonthYear` go through a formatter fixed at UTC;
-   `getYear`/`getMonth`/`getDate` are `java.util.Date` methods and use the default
-   zone. `Date.quarter`, `Date.formatQuarter`, `Date.formatExcelDate`,
+   `getYear`/`getMonth`/`getDate` WERE `java.util.Date` methods and used the
+   default zone. `Date.quarter`, `Date.formatQuarter`, `Date.formatExcelDate`,
    `DateRange.formatPeriod` and `DateRange.formatExcelPeriod` are all built on the
-   accessors, so **a period label computed with `DateRange` is not reproducible
-   across machines**. A report that must be the same everywhere labels its periods
-   from a calendar column, as this directory does.
+   accessors, so **a period label computed with `DateRange` was not reproducible
+   across machines**. F3 bound the three accessors to `PrimExprs.get{Year,Month,
+   Date}`, which read the same UTC calendar the formatters use, so the whole
+   module is now one timezone; the last column above is the answer on ANY machine.
+   The advice the defect motivated is still the better practice and is what this
+   directory does: a report that must be the same everywhere labels its periods
+   from a calendar COLUMN, because that survives a database round trip as well.
 
-   DEFECT 2 -- `Date.formatQuarter` is wrong on its own terms, in two ways, and
-   the two do not cancel.
+   DEFECT 2 -- `Date.formatQuarter` was wrong on its own terms, in two ways, and
+   the two did not cancel.
 
-       quarter d = getMonth d / 4 + 1                     -- Date.e
+       quarter d = getMonth d / 4 + 1                     -- Date.e, before F3
        formatQuarter d = orElse "Unknown" (at (quarter d) quarterNames)
        quarterNames = ["Q1", "Q2", "Q3", "Q4"]
 
    `getMonth` is 0-based and `List.at` is 0-based, but `quarter` returns a
-   1-based number, so the lookup is off by one and **"Q1" is unreachable**. And
-   the divisor is 4, not 3, so the "quarters" are four months long: months 0-3
+   1-based number, so the lookup was off by one and **"Q1" was unreachable**. And
+   the divisor was 4, not 3, so the "quarters" were four months long: months 0-3
    -> 1 -> "Q2", months 4-7 -> 2 -> "Q3", months 8-11 -> 3 -> "Q4". Under UTC,
-   1 January reports "Q2". Recorded in `tracker/loopmodel/E3-EXAMPLES.md`.
+   1 January reported "Q2". Recorded in `tracker/loopmodel/E3-EXAMPLES.md`; fixed
+   in F3 as `getMonth d / 3 + 1` with `at (quarter d - 1)`, so `quarter` keeps its
+   1-based meaning and January is "Q1".
    ========================================================================== -}
 
 -- The tree's own ranges, as `(Date, Date)` pairs, labelled with `DateRange`.
@@ -362,17 +372,18 @@ periodLabelFy  = formatPeriodOr_DR "custom" fyRange
 periodLabelQ2  = formatPeriodOr_DR "custom" q2Range
 periodLabelJan = formatPeriodOr_DR "custom" janRange
 
--- The two formatters that DO agree with the literal, and the one that does not.
-rangeText  = unsafeFormatDateRange_DR janRange     -- "1/1/11 - 1/31/11", stable
-excelText  = formatExcelPeriod_DR janRange         -- zone-dependent, see above
+-- The two formatters, which agree with the literal on every machine since F3.
+rangeText  = unsafeFormatDateRange_DR janRange     -- "1/1/11 - 1/31/11"
+excelText  = formatExcelPeriod_DR janRange         -- "Jan 1 to Jan 31" (was zone-dependent)
 
 -- The parser, and the string ordering built on it.
 parsedRange = parseDateRange_DR "1/1/2011-1/31/2011"
 janBeforeFeb = ltStringDateRange_DR "1/1/2011-1/31/2011" "2/1/2011-2/28/2011"
 janBeforeQ2  = lt_Od ord_DR janRange q2Range
 
--- The two `Date` accessors that expose defect 1, and the quarter that exposes
+-- The two `Date` accessors that exposed defect 1, and the quarter that exposed
 -- defect 2, kept as values so a reader can evaluate them and see for themselves.
+-- Since stage F3 they read the same on every machine: 0, 111, 1 and "Q1".
 janMonthNumber   = getMonth_Dt @2011/1/1
 janYearNumber    = getYear_Dt @2011/1/1
 janQuarterNumber = quarter_Dt @2011/1/1

@@ -109,7 +109,13 @@ groupBy1' : r <- (h,t) => RunScan List z -> Field h k -> [..r] -> Scan z (k, [..
 groupBy1' scanner f rel =
   groupBy' scanner {f} rel |> mapK (t -> t ! f)
 
-sumBy' : (r <- (h,t), AsOp op, PrimitiveNum n)
+-- Stage F3, ticket C5: the `r <- (h,t)` this used to carry was VACUOUS -- `h` and
+-- `t` occur nowhere else in the signature, and every row splits (take `h := r`,
+-- `t := the empty row`), so it constrained no caller and only made the published
+-- signature longer. `sumBy`, `avgBy'`, `count` and `count'` below still carry it;
+-- deleting theirs is ticket C12's job, in `Subst.mkSimplified`, where it can be
+-- done for every signature at once.
+sumBy' : (AsOp op, PrimitiveNum n)
       => op r n -> Field r2 n -> Scan z (k, [..r]) -> Scan z (k, [..r2])
 sumBy' op f = mapV (aggregate_A (sum_A op) f)
 
