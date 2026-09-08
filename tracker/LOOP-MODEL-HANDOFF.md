@@ -1063,3 +1063,13 @@ determined-closure REMOVED; no worktrees remain. All R-series agents COMPLETE.
 QUEUE: A1b (three in-memory MapView equality sites SqlScanner.scala:644/:708, relational/package.scala:67 + a test)
 -> F3 (one-line library fixes: B1 dateDiff, A4 formatQuarter, A3 Date timezone, C2 join1 doc, C5 Layout.Scan
 re-exports, K-1 Type.scala:414 .toSet) -> C12 (tautology deletion, two-line proof + ei-diff) if the user wants it.
+
+F3 LAUNCHED (2026-09-08 ~01:50): implementer agent a871ffab0682a75b8 (Opus, background; resume by SendMessage), brief
+briefs/brief-F3.md (commit 9147441): A1b (three MapView sites + test), B1 dateDiff signature, A4 formatQuarter, A3 Date
+timezone (UTC for both), C2 join1 doc, C5 Layout.Scan re-exports + sumBy' vacuous constraint + rename' doc, K-1
+Type.scala:414 `ss.toSet == cs` (pre-solver; full trace gates; STOP if anything but identity deletions moves).
+Report F3-FIXES.md. ON ITS REPORT: verify core/test + TestLoopTrace + corpus-run + the K-1 trace classification;
+write brief-F3-review.md (shape of brief-S4c-review.md: re-run every gate, re-reproduce each defect before/after),
+launch an Opus reviewer, fix, ONE commit "Library fixes F3: ...", stamp the seven ticket entries with the hash.
+Queue after F3: C12 (tautology deletion) only if the user asks; otherwise the ticket's remaining items are the
+user's choice. No worktrees exist.
