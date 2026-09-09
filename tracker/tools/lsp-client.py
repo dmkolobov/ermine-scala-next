@@ -399,6 +399,162 @@ def main():
         check("Nested.e no undefined-term cascade from the broken block",
               not any("undefined term" in d["message"] for d in ds), repr(ds))
 
+
+    # --- LSP-FFI: foreign bindings this JVM cannot resolve --------------
+    # The server runs foreign-tolerant (Resident.boot): a `foreign`
+    # declaration naming a class or member this JVM does not have is a
+    # WARNING at that class or member, the binding is installed at its
+    # declared type as a stub, and the rest of the module -- and every
+    # dependent -- is checked normally.  A `foreign data` whose class is
+    # missing is not a warning (the opaque type is fine) but is not silent
+    # either: an Information note says so.  Batch loads keep dying; see
+    # tracker/LSP-FFI-TOLERANCE.md.
+    #
+    # The `probejar.*` fixtures link against a jar built by
+    # tracker/tools/build-probejar.sh from tracker/lsp-tests/jsrc: classes
+    # that LOAD but whose supertype or member signatures name a class that
+    # was deleted after compilation.  That is the shape of a stale jar of
+    # the user's fork, and nothing a third-party library ships can silence
+    # it.
+    def ffi(name, expected, keep_open=False):
+        """expected: [(severity, (line, char), (line, char), message substring)]"""
+        open_doc(name)
+        ds = client.diagnostics_for(uri(name))
+        check(name + ": diagnostic count", len(ds) == len(expected), repr(ds))
+        if len(ds) == len(expected):
+            for i, (sev, start, end, sub) in enumerate(expected):
+                d = ds[i]
+                check("%s[%d]: severity %d" % (name, i, sev), d["severity"] == sev, repr(d))
+                check("%s[%d]: span" % (name, i),
+                      d["range"]["start"] == {"line": start[0], "character": start[1]}
+                      and d["range"]["end"] == {"line": end[0], "character": end[1]},
+                      repr(d["range"]))
+                check("%s[%d]: message" % (name, i), sub in d["message"], d["message"])
+        if not keep_open:
+            client.notify("textDocument/didClose", {"textDocument": {"uri": uri(name)}})
+            client.diagnostics_for(uri(name))
+
+    # Tolerance must not INVENT warnings: the stdlib's own writer trait
+    # is exactly the shape the fork's is, and every class it names is
+    # here, so it stays clean.
+    writer = repo("core/src/main/resources/modules/Layout/Writer.e")
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": writer.as_uri(), "languageId": "ermine", "version": 1,
+        "text": writer.read_text()}})
+    ds = client.diagnostics_for(writer.as_uri())
+    check("a healthy foreign-heavy stdlib module stays clean", ds == [], repr(ds[:2]))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": writer.as_uri()}})
+    client.diagnostics_for(writer.as_uri())
+
+    # Every range below is the LITERAL and nothing more: `spanned` ends a
+    # token where the next one starts, so these used to run one character
+    # into the following space.
+
+    # (1) the class is not on the classpath: warn on the CLASS NAME
+    ffi("FfiClassMissing.e",
+        [(2, (5, 11), (5, 55),
+          "class missing: com.clarifi.reporting.writers.NoSuchWriter.render "
+          "\u2014 java.lang.ClassNotFoundException")], keep_open=True)
+    # (2) the class is here but will not LINK -- a NoClassDefFoundError,
+    # an Error, which the old `catch { case e: Exception }` let escape
+    # (it crashed the check outright, in both modes)
+    ffi("FfiClassUnloadable.e",
+        [(2, (9, 11), (9, 34), "class unloadable: probejar.PresentSuper.shout "
+          "\u2014 java.lang.NoClassDefFoundError: probejar/Missing")])
+    # (2') the same Error one layer down: the class LOADS, and `getMethod`
+    # / `getField` / `getConstructor` throw while resolving the signature
+    # classes of the members they search.  Until the fix round these three
+    # unwound past TolerantCheck.guard and Diagnostics.run and the file
+    # was published NOTHING.
+    ffi("FfiMemberUnloadable.e",
+        [(2, (9, 36), (9, 40), "member unloadable: probejar.PresentMember.ok(java.lang.String) "
+          "\u2014 java.lang.NoClassDefFoundError: probejar/Missing")])
+    ffi("FfiFieldUnloadable.e",
+        [(2, (6, 32), (6, 36), "field unloadable: probejar.PresentField.OK "
+          "\u2014 java.lang.NoClassDefFoundError: probejar/Missing")])
+    ffi("FfiCtorUnloadable.e",
+        [(2, (8, 14), (8, 16), "constructor unloadable: probejar.PresentCtor(java.lang.String) "
+          "\u2014 java.lang.NoClassDefFoundError: probejar/Missing")])
+    # (3) no such member: warn on the MEMBER string
+    ffi("FfiMemberMissing.e",
+        [(2, (4, 30), (4, 49), "member missing: java.lang.String.noSuchMethodAtAll")])
+    # (4) the member exists at other arities -- said so, not "no such method"
+    ffi("FfiArity.e",
+        [(2, (4, 30), (4, 39), "arity mismatch (declared 2, the class has 1/3)")])
+    # (5) the return type is not assignable to the declared codomain
+    ffi("FfiReturn.e",
+        [(2, (4, 9), (4, 17),
+          "return type mismatch: java.lang.String.length "
+          "\u2014 declared java.lang.String, found int")])
+    # (6) `foreign value`: no such static field
+    ffi("FfiFieldMissing.e",
+        [(2, (4, 28), (4, 43), "field missing: java.lang.Integer.NO_SUCH_FIELD")])
+    # (7) `foreign constructor` names no class and no member, so the
+    # warning lands on the declared NAME
+    ffi("FfiCtorMissing.e",
+        [(2, (6, 14), (6, 16), "constructor missing: java.lang.String(java.lang.String, java.lang.String)")])
+    # (8) `foreign subtype` over a foreign type with no backing class: the
+    # claim is never checked against a class -- resolved or not -- so the
+    # note says so, and the identity is installed anyway.  The `data` above
+    # it contributes its own Information note.
+    ffi("FfiSubtype.e",
+        [(3, (6, 7), (6, 49), "opaque foreign type `Base#`"),
+         (2, (7, 10), (7, 12),
+          "foreign subtype `up` over an unresolved foreign class: "
+          "com.clarifi.reporting.writers.NoSuchBase")])
+    # (9) a `foreign data` of a missing class warns at the SITE that needs
+    # the class -- here the receiver of a reflective method lookup -- and
+    # names the class rather than reporting "no such method" on a sentinel
+    ffi("FfiDataNeeded.e",
+        [(3, (6, 7), (6, 51), "opaque foreign type `Opaque`"),
+         (2, (7, 9), (7, 17),
+          "unresolved foreign class: com.clarifi.reporting.writers.NoSuchOpaque "
+          "(needed to resolve `render`)")])
+    # ... and when NOTHING needs the class, the type is opaque and usable
+    # and the module checks normally -- so this is Information, severity 3,
+    # a hint and not a squiggle.  Not a warning, and not silence either:
+    # silence would be indistinguishable from an intact FFI, which is the
+    # one thing someone pointing this server at a fork must not get.
+    ffi("FfiDataOpaque.e",
+        [(3, (6, 7), (6, 51),
+          "opaque foreign type `Opaque`: com.clarifi.reporting.writers.NoSuchOpaque "
+          "is not on this JVM (class missing) \u2014 the type is usable")])
+
+    # The fork's writer-trait shape end to end: the opaque writer notes
+    # itself, its factory warns on its class, its method warns on its
+    # member, and the Ermine code around them checks clean.
+    ffi("FfiWriter.e",
+        [(3, (8, 7), (8, 52), "opaque foreign type `Writer#`"),
+         (2, (10, 11), (10, 59), "class missing: com.clarifi.reporting.writers.MissingCsvWriter.csvWriter"),
+         (2, (13, 9), (13, 17),
+          "unresolved foreign class: com.clarifi.reporting.writers.MissingWriter")])
+
+    # A warning does not stop the rest of the module being checked: this
+    # one carries an unrelated type error four lines below the block.
+    ffi("FfiRollback.e",
+        [(2, (7, 11), (7, 55), "class missing: com.clarifi.reporting.writers.NoSuchWriter.render"),
+         (1, (10, 0), (10, 0), "failed to unify type Int with type String")])
+
+    # A DEPENDENT of a stubbed module: the warning stays on the file that
+    # declared it, and this one is clean.
+    ffi("FfiUse.e", [], keep_open=True)
+    # The stub is bound at its DECLARED type, so navigation and hover work
+    # through it...
+    r = definition("FfiUse.e", 7, 8)   # `render` in `greet = render "hello"`
+    check("def stubbed foreign -> its declaration", r is not None
+          and r["uri"] == uri("FfiClassMissing.e")
+          and r["range"]["start"]["line"] == 5, repr(r))
+    r = hover("FfiUse.e", 7, 8)
+    check("hover stubbed foreign : String -> String", r is not None
+          and "String -> String" in r["contents"]["value"], repr(r))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("FfiUse.e")}})
+    client.diagnostics_for(uri("FfiUse.e"))
+    # ... and misusing it is still ONE type error at the use site, not a
+    # dead module.
+    ffi("FfiUseBad.e", [(1, (7, 7), (7, 7), "failed to unify type String with type Int")])
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("FfiClassMissing.e")}})
+    client.diagnostics_for(uri("FfiClassMissing.e"))
+
     # --- 5.3: didChange drives everything, with no save at all ---------
     def change(name, text, version):
         client.notify("textDocument/didChange", {

@@ -1,0 +1,6 @@
+:load tracker/lsp-tests/FfiClassMissing.e
+:type render
+:eval render "x"
+:load tracker/lsp-tests/FfiMemberUnloadable.e
+:load tracker/lsp-tests/FfiRollback.e
+:quit

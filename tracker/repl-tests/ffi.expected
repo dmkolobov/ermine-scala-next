@@ -1,0 +1,5 @@
+tracker/lsp-tests/FfiClassMissing.e:6:12: error: error loading 'com.clarifi.reporting.writers.NoSuchWriter'
+Use ":stack" to see a stack trace
+Unable to load module from 'tracker/lsp-tests/FfiClassMissing.e'
+tracker/lsp-tests/FfiMemberUnloadable.e:10:37: member ok of class probejar.PresentMember could not be resolved: java.lang.NoClassDefFoundError: probejar/Missing
+Unable to load module from 'tracker/lsp-tests/FfiMemberUnloadable.e'

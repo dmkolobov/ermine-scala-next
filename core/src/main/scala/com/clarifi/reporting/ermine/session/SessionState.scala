@@ -1,6 +1,7 @@
 package com.clarifi.reporting.ermine.session
 
 import com.clarifi.reporting.ermine.{ V, Global, Runtime, Type, Kind, Requirements, Pretty }
+import com.clarifi.reporting.ermine.surface.Span
 import com.clarifi.reporting.ermine.Type.subType
 import com.clarifi.reporting.ermine.parsing.{ ModuleHeader }
 import com.clarifi.reporting.ermine.Pretty.{ prettyType, ppType, ppName, ppVar }
@@ -78,6 +79,19 @@ object CheckMethod {
   case object Full extends CheckMethod
 }
 
+/** ONE note left by a tolerated `foreign` statement (LSP-FFI).
+  *
+  * `module` is the module whose statement it is, `span` the class or
+  * member span in THAT module's source, `severity` the LSP one (2 for a
+  * binding that will not resolve, 3 for the opaque-type note a missing
+  * `foreign data` class leaves), and `report` the rendered
+  * "file:line:col: warning|note: ..." text — the same shape every Death
+  * has, so the editor maps it the same way.  Recorded only when
+  * `SessionEnv.foreignTolerant`; with the option off a foreign failure is
+  * the Death it has always been and no note exists.
+  */
+case class ForeignNote(module: String, span: Span, severity: Int, report: String)
+
 class SessionEnv(
   var env:             Map[V[Type],Runtime]           = Map(), // vars here are all for global names
   var termNames:       Map[Global,V[Type]]            = Map(),
@@ -91,13 +105,35 @@ class SessionEnv(
   var classes:         Map[Global,ClassDef]           = Map(),
   var classOrigins:    Map[Global, List[Global]]      = Map(),
      _typeCheck:       Option[Boolean]                = None,
-     _useInterface:    Option[Boolean]                = None
+     _useInterface:    Option[Boolean]                = None,
+     _foreignTolerant: Option[Boolean]                = None
 ) { that =>
-  def copy = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck),Some(that.useInterface))
+  def copy = {
+    val e = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck),Some(that.useInterface),Some(that.foreignTolerant))
+    // NOT the notes: a copy is what a forked load (SessionTask.fork) or a
+    // fresh editor check runs in, and `+=` merges its notes back.  Carrying
+    // them forward would report every module's warnings on every file.
+    e
+  }
 
   val typeCheck : Boolean = _typeCheck.getOrElse(java.lang.Boolean.getBoolean("ermine.typeCheck"))
   val useInterface : Boolean =
     _useInterface.getOrElse(java.lang.Boolean.parseBoolean(System.getProperty("ermine.useInterface","true")))
+
+  /** LSP-FFI (tracker/LSP-FFI-TOLERANCE.md): tolerate a `foreign`
+    * declaration whose class or member this JVM does not have, or has
+    * with another signature.  DEFAULT OFF — `bin/ermine`, the REPL and
+    * `core/test` keep today's hard failure with byte-identical messages;
+    * the language server's `Resident` turns it ON, and the editor gets a
+    * warning plus a stub instead of a dead module. */
+  val foreignTolerant : Boolean =
+    _foreignTolerant.getOrElse(java.lang.Boolean.getBoolean("ermine.foreign.tolerant"))
+
+  /** The tolerated failures, in the order they were declared.  Loads may
+    * run on forked copies (SessionTask), so appending is synchronized. */
+  var foreignNotes: List[ForeignNote] = Nil
+
+  def noteForeign(n: ForeignNote): Unit = synchronized { foreignNotes = foreignNotes :+ n }
 
 
   def +=(sp: SessionEnv): Unit = {
@@ -115,6 +151,8 @@ class SessionEnv(
         k => k -> (classes(k) ++ sp.classes(k).instances)
       })
     classOrigins    = classOrigins ++ sp.classOrigins // is this enough, or do we need the keySet.intersect?
+    // a forked load's tolerated foreign failures come home with it
+    foreignNotes    = foreignNotes ++ sp.foreignNotes
   }
   def :=(s: SessionEnv): Unit = {
     env = s.env
@@ -128,5 +166,6 @@ class SessionEnv(
     loadedModules = s.loadedModules
     classes = s.classes
     classOrigins = classOrigins ++ s.classOrigins
+    foreignNotes = s.foreignNotes
   }
 }

@@ -9,7 +9,7 @@ import com.clarifi.reporting.ermine.Subst.{
   assertTypeClosed, inferImplicitBindingTypes, toGamma, typeCheckExplicitBinding, unbindAnnot }
 import com.clarifi.reporting.ermine.syntax._
 import com.clarifi.reporting.ermine.syntax.TypeDef.typeDefComponents
-import com.clarifi.reporting.ermine.surface.StatementExtents
+import com.clarifi.reporting.ermine.surface.{ Span, StatementExtents }
 import com.clarifi.reporting.ermine.parsing.ParseState
 import scalaparsers.{ Death, Document, Supply }
 
@@ -43,13 +43,15 @@ object TolerantCheck {
 
   /** LSP severities. */
   val Error       = 1
+  val Warning     = 2
   val Information = 3
 
   /** One note.  `report` is rendered the way every Death is — leading
     * "file:line:col:" — so the caller maps it to a position the same
     * way.  `spelling` is set on undefined-term notes, which the editor
     * suppresses when a broken statement defines that name (5.4). */
-  final case class Note(report: String, severity: Int, spelling: Option[String] = None)
+  final case class Note(report: String, severity: Int, spelling: Option[String] = None,
+                        span: Option[Span] = None)
 
   /** `types` maps a top-level binding's spelling to the type checking
     * gave it — inferred for implicits, declared for explicits.  It is
@@ -131,11 +133,18 @@ object TolerantCheck {
                (implicit s: SessionEnv, su: Supply): (Result, Cache) = {
     val notes = scala.collection.mutable.ListBuffer.empty[Note]
 
+    // `Recoverable`, not `NonFatal` (review finding P-1): NonFatal treats
+    // the whole LinkageError family as fatal, and a reflective lookup
+    // over a stale classpath throws exactly that.  One escaping from here
+    // reaches Diagnostics.run, then Rpc's notification guard, and the
+    // file is published NOTHING — a blank editor is worse than any
+    // diagnostic, so nothing short of the three genuinely fatal
+    // throwables gets to leave a check.
     def guard[A](sev: Int)(body: => A): Option[A] =
       try Some(body)
       catch {
         case Death(e, _) => notes += Note(e.toString, sev); None
-        case scala.util.control.NonFatal(e) =>
+        case com.clarifi.reporting.ermine.parsing.Recoverable(e) =>
           notes += Note("error: " + Option(e.getMessage).getOrElse(e.toString), sev); None
       }
 
@@ -158,6 +167,15 @@ object TolerantCheck {
       case x: ForeignSubtypeStatement     => Session.processForeignSubtypeStatement(mod)(cm, x)
     } }
     phase(m.tables)(Session.processTableStatement(mod))
+
+    // LSP-FFI: the foreign phases above install stubs for whatever this
+    // JVM could not resolve and leave positioned notes behind — warnings
+    // for the bindings, information for an opaque `foreign data`.  Take
+    // this module's; the env copy also carries the ones its imports left
+    // when they were loaded, and those belong on their own files.
+    s.foreignNotes.filter(_.module == mod).foreach { n =>
+      notes += Note(n.report, n.severity, None, Some(n.span))
+    }
 
     val is = Session.subTermMaps(maps, m.implicits).map(_.close).toList
     val es = Session.subTermMaps(maps, m.explicits).map(_.close).toList

@@ -13,6 +13,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$here"
 : "${JAVA_HOME:=$HOME/.local/ermine-toolchain/jdk-21.0.12.1+1}"
 cp="$(tr -d '\n' < tracker/repl-classpath.txt)"
+# LSP-FFI: a tiny self-contained jar whose classes LOAD but whose supertype
+# and member signatures name a class that is NOT there -- the shape of a stale
+# jar of the user's fork.  Built from tracker/lsp-tests/jsrc so no third-party
+# library's contents can silence the linkage fixtures.
+cp="$cp:$(tracker/tools/build-probejar.sh)" || exit 1
 
 fail=0
 for input in tracker/repl-tests/*.in; do
@@ -24,8 +29,14 @@ for input in tracker/repl-tests/*.in; do
   # treat `readLine`'s null at EOF as a non-blank line, so a piped session could
   # spin for ever; `pipedeof.in` is exactly such an input and without a cap it
   # would hang this suite instead of failing it.
+  # Per-case JVM flags: `<name>.opts`, one line of flags.  Only cases that
+  # need a session option have one (LSP-FFI's `ermine.foreign.tolerant`),
+  # so every existing case runs on exactly the command line it always did.
+  opts=()
+  [[ -f "tracker/repl-tests/$name.opts" ]] && read -r -a opts < "tracker/repl-tests/$name.opts"
   timeout "${REPL_SMOKE_TIMEOUT:-180}" \
     "$JAVA_HOME/bin/java" -Dermine.typeCheck=true -Dermine.useInterface=false \
+      ${opts[@]+"${opts[@]}"} \
       -cp "$cp" com.clarifi.reporting.ermine.session.Console < "$input" > "$raw" 2>&1
   rc=$?
   actual=$(
@@ -34,6 +45,7 @@ for input in tracker/repl-tests/*.in; do
     tail -n +2 |                            # drop the "Loaded N modules" line
     grep -v '^  ' |                         # drop :import's module listing
     grep -v 'Importing module\|Loaded module' |  # timing varies run to run
+    sed 's/ ([0-9]*\.[0-9]* seconds)//' |   # ... and so does a failed load's
     grep -v '^Imports:\|^Files:\|^Modules:' |   # :import's session summary
     sed 's/^>> //; s/^>>$//' |              # strip prompts
     grep -v '^$'

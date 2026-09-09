@@ -113,10 +113,23 @@ object Diagnostics {
             // healthy statements no longer decays to the last good save.
             docs.putIndex(uri, Definitions.index(path.toString, checked))
             checked.diags.map(fromDiag) :::
-              checked.notes.map(n => fromReport(n.report, path, n.severity))
+              checked.notes.map(n => n.span match {
+                // LSP-FFI: a tolerated foreign binding knows its class or
+                // member span exactly, so it squiggles the name rather
+                // than the caret `fromReport` recovers from the text.
+                case Some(sp) => fromSpan(sp, n.report, n.severity)
+                case None     => fromReport(n.report, path, n.severity)
+              })
           } catch {
             case Death(err, _) => List(fromReport(err.toString, path))
-            case scala.util.control.NonFatal(e) =>
+            // `Recoverable`, not `NonFatal` (LSP-FFI review finding P-1):
+            // NonFatal counts every LinkageError as fatal, so a reflective
+            // lookup over a stale classpath used to unwind past here into
+            // Rpc's notification guard and the file got NO diagnostics at
+            // all — stale squiggles and a stack trace in the log.  This is
+            // the backstop that keeps "the editor never goes dark" from
+            // resting on having enumerated every reflective call.
+            case com.clarifi.reporting.ermine.parsing.Recoverable(e) =>
               log("diagnostics: internal error on " + path + ": " + Rpc.stackTrace(e))
               List(diagnostic(0, 0, "ermine-lsp internal error: " + e))
           }
@@ -150,6 +163,19 @@ object Diagnostics {
     val (endLine, endCol) =
       if (el > sl || (el == sl && ec > sc)) (el, ec) else (sl, sc)
     range(sl, sc, endLine, endCol, d.message)
+  }
+
+  /** A note that came with a real span renders like a structured
+    * diagnostic: 1-based inclusive in, 0-based half-open out. */
+  private def fromSpan(sp: com.clarifi.reporting.ermine.surface.Span,
+                       message: String, severity: Int): Json = {
+    val sl = 0 max (sp.startLine - 1)
+    val sc = 0 max (sp.startCol - 1)
+    val el = 0 max (sp.endLine - 1)
+    val ec = 0 max (sp.endCol - 1)
+    val (endLine, endCol) =
+      if (el > sl || (el == sl && ec > sc)) (el, ec) else (sl, sc)
+    range(sl, sc, endLine, endCol, message, severity)
   }
 
   private def fromReport(report: String, path: Path, severity: Int = 1): Json =

@@ -218,7 +218,14 @@ class ConsoleEnv(
       updateCompletor
       Some(r)
     } catch { case e@Death(err, _) =>
+      // LSP-FFI review finding P-4: the rollback restores a `copy`, which
+      // deliberately carries no foreign notes, so the warnings recorded
+      // before the death would vanish and "no warnings" would be
+      // indistinguishable from "none were found".  They are still true of
+      // the file whether or not the load finished, so keep them.
+      val foreignNotes = sessionEnv.foreignNotes
       sessionEnv = envp
+      sessionEnv.foreignNotes = foreignNotes
       sayLn(err)
       stackHint
       stackHandler = () => sayLn(e.getStackTrace.mkString("\n"))
@@ -299,6 +306,7 @@ object Console {
 
   def loadProject(s: String)(implicit e: ConsoleEnv): Unit = {
     import e.{con,supply}
+    val notesBefore = e.sessionEnv.foreignNotes.length
     benchmark(session(implicit se => load(Filesystem(s, exotic=true)))) {
       case Some(n) =>
         importing(n)
@@ -308,6 +316,10 @@ object Console {
       // prefix "Unable to load module", which is unchanged.
       case None    => "Unable to load module from '" + s + "'"
     }
+    // LSP-FFI: a tolerated foreign binding is not silent here either.
+    // With `ermine.foreign.tolerant` off nothing is ever recorded, so
+    // this loop never runs and the REPL's output is unchanged.
+    e.sessionEnv.foreignNotes.drop(notesBefore).foreach(n => writeLn(text(n.report)))
   }
 
   val actions: List[Action] = List(

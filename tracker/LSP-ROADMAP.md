@@ -1652,6 +1652,69 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   2026-08-30 and covered by the G1 sign-off; it was only ever unticked
   because the item was split into 4.1a/b/c.
   Suite 902 (901+known), repl 4, lsp 73/73, boot 129.
+- 2026-09-08 LSP-FFI (a DETOUR, not Stage 3; the loop stays stopped at G2):
+  the server now tolerates a `foreign` declaration whose class or member
+  this JVM does not have.  The user is pointing it at an older Scala 2
+  fork whose divergence IS the FFI (the writer trait), and today any
+  foreign resolution failure kills its module at load, which the editor
+  showed as ONE diagnostic for the file with every dependent unchecked.
+  A session option `ermine.foreign.tolerant` (`SessionEnv._foreignTolerant`)
+  is ON in `Resident` and OFF everywhere else: the binding is installed at
+  its DECLARED type as a `Bottom` stub, so the module and its dependents
+  type-check, navigate and hover, and only EVALUATING it fails; the
+  failure becomes a warning (severity 2) positioned on the class-name or
+  member string it is about, carried as a `TolerantCheck.Note` with a real
+  Span.  All nine failure kinds: class missing, class unloadable, member
+  missing, arity mismatch, return type not assignable, field missing,
+  constructor missing, subtype of a missing class, and `foreign data` of a
+  missing class — which is SILENT (an opaque type needs no class) and
+  warns only at the site that needs it, the test being
+  `Type.foreignLookup == classOf[UnresolvedForeign]`.  Also fixed in BOTH
+  modes: `ForeignClasses.classLookup` caught `Exception`, so a class that
+  is present but will not LINK threw `NoClassDefFoundError` past it — an
+  uncaught crash in batch, and in the editor no diagnostic at all (it
+  unwound to Rpc's notification guard).  With the option off the batch
+  before/after diff over twelve fixtures is that crash becoming a
+  positioned `error loading '…'`, and nothing else.  Report
+  `tracker/LSP-FFI-TOLERANCE.md`; fixtures `tracker/lsp-tests/Ffi*.e`.
+  Gates: compile+copyResources, TestLoopTrace 720/720, corpus --batch
+  85/69/0 over 154, lsp-smoke 150 (98 + 52 new), repl-smoke 7/7 with the
+  five old goldens byte-unchanged plus `ffi` and `ffi-tolerant`
+  (repl-smoke grew a per-case `<name>.opts` file for JVM flags),
+  core/test 938/938, boot 129 modules in 12.5-13.4s.
+- 2026-09-09 LSP-FFI fix round, after an independent review
+  (tracker/loopmodel/LSP-FFI-REVIEW.md, FIX-THEN-ADVANCE; it reproduced
+  every gate, rebuilt all nine kinds against its own modules and probe
+  classes, and showed default-off byte-identical over all 154 corpus
+  outputs against a compiler built from HEAD).  The BLOCKER: the
+  NoClassDefFoundError hole closed at `Class.forName` was still open one
+  layer down.  `getMethod`/`getField`/`getConstructor` resolve the
+  signature classes of everything they search, so a class that LOADS but
+  whose members mention an absent class threw an Error past
+  `TolerantCheck.guard` AND `Diagnostics.run` into Rpc's notification
+  guard — the file was published NOTHING, which is the very symptom the
+  stage claimed to fix, and is exactly the shape of a stale fork jar.
+  Fixed by naming the catch set once (`parsing.Recoverable` = NonFatal
+  plus the LinkageError family), using it at all four reflective sites
+  and at both guards, adding `member/field/constructor unloadable` kinds
+  at the member span, and giving the Error path a POSITION in default
+  mode (it was an uncaught crash before, so no message moved).  Also
+  adopted: an Information note (severity 3) for a `foreign data` whose
+  class is missing — the opaque type is fine, but total silence made a
+  stale FFI indistinguishable from an intact one; exact literal spans
+  (`spanned` ends a token where the next begins, so every class/member
+  range ran one character long); the REPL rollback keeps its warnings; a
+  negative class-lookup cache (measured: 3 ms of a 324 ms round trip on a
+  40-binding file — kept for determinism of cost, not speed);
+  `TypeConDecl.isInstance` raises on the sentinel instead of silently
+  answering "no match"; and a SELF-CONTAINED probe jar
+  (tracker/lsp-tests/jsrc + tracker/tools/build-probejar.sh: compile
+  `Missing`, then delete it) replacing the log4j-dependent kind-2
+  fixture, which also gives the three linkage regressions.  Gates:
+  TestLoopTrace 720/720, corpus 85/69/0 over 154 AND 0 of 154 outputs
+  differ from the pre-fix run once timings are normalised, lsp-smoke 181
+  (98 + 83 new), repl-smoke 7/7 with the five old goldens still
+  unmodified, boot 129 in 12.8s.
 
 ## Gate evidence (G2, recorded 2026-08-31)
 

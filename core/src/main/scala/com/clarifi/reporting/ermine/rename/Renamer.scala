@@ -208,7 +208,13 @@ object Renamer {
 
   // ---------------------------------------------------------------- walking
 
-  def rename(m: SModule, scope: ModuleScope.Scope): Result = {
+  /** `foreignTolerant` (LSP-FFI): with the option ON the foreign-class
+    * lookups below are NOT a rename diagnostic — the assemble phase
+    * records the failure on the `ForeignClass` instead and the loader
+    * turns it into ONE positioned warning at the site that needs the
+    * class.  Default false, so every batch caller renames exactly as
+    * before. */
+  def rename(m: SModule, scope: ModuleScope.Scope, foreignTolerant: Boolean = false): Result = {
     val s = new S(scope)
 
     val top = topLevelHeads(m.statements, s)
@@ -221,7 +227,7 @@ object Renamer {
     m.statements.foreach(statement(_, env, s))
     val tyDefs = collectTypeDefs(m.statements, s)
     m.statements.foreach(statementTypes(_, s, tyDefs))   // 3.2c: the type/kind side
-    m.statements.foreach(foreignClasses(_, m.file, "", s))
+    if (!foreignTolerant) m.statements.foreach(foreignClasses(_, m.file, "", s))
 
     Result(s.occs.result(), s.binders.result(), s.frames.result(), s.diags.result(), top)
   }

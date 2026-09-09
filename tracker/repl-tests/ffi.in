@@ -1,0 +1,3 @@
+:load tracker/lsp-tests/FfiClassMissing.e
+:load tracker/lsp-tests/FfiMemberUnloadable.e
+:quit

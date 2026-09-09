@@ -471,11 +471,38 @@ object PrimConDecl {
   )
 }
 
+/** The stand-in `Class` of a `foreign data` whose class this JVM does
+  * not have (LSP-FFI).  It is never instantiated and never matches
+  * anything: its only job is to be recognisable by identity, so a
+  * reflective lookup that would need the real class reports "the class
+  * is missing" at the site that needs it rather than "no such method". */
+final class UnresolvedForeign private ()
+
 case class TypeConDecl(
   override val foreignLookup: Class[_],
-  override val unboxedForeign: Boolean
+  override val unboxedForeign: Boolean,
+  /** The class name a tolerated `foreign data` could not resolve
+    * (LSP-FFI kind 9).  The TYPE exists and is opaque — Ermine code may
+    * mention it freely — but `foreignLookup` is the `UnresolvedForeign`
+    * sentinel, so every operation that actually needs the class (a
+    * reflective method/field/constructor lookup, or marshalling across
+    * that boundary) can name it in its warning. */
+  unresolved: Option[String] = None
 ) extends ConDecl {
   def desc = "data"
+
+  /** A foreign pattern match asks the decl whether a runtime value is one
+    * of these (Pattern.scala), and with no class there is nothing to ask
+    * — the sentinel would answer a flat `false` and the match would
+    * silently take the wrong branch (LSP-FFI review finding P-6).  Say so
+    * instead.  This is RUN time only: the editor never evaluates, and a
+    * batch run only reaches it with `ermine.foreign.tolerant` on. */
+  override def isInstance(a: Any): Boolean = unresolved match {
+    case Some(cn) =>
+      sys.error("foreign type has no class on this JVM: " + cn +
+                " — a pattern match against it cannot be decided")
+    case None => foreignLookup.isInstance(a)
+  }
 }
 
 case class FieldConDecl(fieldType: Type) extends ConDecl {

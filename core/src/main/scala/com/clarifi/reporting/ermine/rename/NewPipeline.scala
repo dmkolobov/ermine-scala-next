@@ -7,7 +7,7 @@ import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleHeader }
 import com.clarifi.reporting.ermine.session.SessionEnv
 import com.clarifi.reporting.ermine.surface._
 import com.clarifi.reporting.ermine.syntax.{
-  DataStatement, FieldStatement, ForeignBlock, ForeignClass,
+  DataStatement, FieldStatement, ForeignBlock, ForeignClass, ForeignFailure,
   ForeignConstructorStatement, ForeignDataStatement, ForeignFunctionStatement,
   ForeignMember, ForeignMethodStatement, ForeignSubtypeStatement,
   ForeignTermDef, ForeignValueStatement, Module, PrivateBlock, SigStatement,
@@ -136,7 +136,7 @@ object NewPipeline {
     // --- rename
     val scope = ModuleScope.importing(mh.name, ModuleScope.Scope.empty,
       s.termNames, s.cons.keySet, mh.imports, s.termNameOrigins, s.consOrigins)
-    val renamed = Renamer.rename(sm, scope)
+    val renamed = Renamer.rename(sm, scope, s.foreignTolerant)
     renamed.diagnostics.foreach(d => ds += Diag(Phase.Rename, d.span, "error: " + d.message))
     checkpoint()
 
@@ -442,19 +442,19 @@ object NewPipeline {
                                                b.name.spelling, b.name.span,
                                                b.kind.map(TyLower.kind(_, tctx))
                                                  .orElse(Some(com.clarifi.reporting.ermine.Star(lctx.pos(b.name.span)))))),
-                    foreignClass(x.className, x.classSpan))
+                    foreignClass(x.className, x.classSpan, fileName))
                   if (priv) privateTypes = privateTypes + ownTypeNames(tctx.localTypeName(x.name.spelling))
                 case x: SForeignFunction =>
                   foreigns ::= ForeignFunctionStatement(lctx.pos(x.loc.span), privTerm(priv, sigV(x.name)),
-                    TyLower.annot(x.ty, tctx).body, foreignClass(x.className, x.classSpan),
-                    ForeignMember(lctx.pos(x.memberSpan), x.member))
+                    TyLower.annot(x.ty, tctx).body, foreignClass(x.className, x.classSpan, fileName),
+                    ForeignMember(lctx.pos(x.memberSpan), x.member, literalSpan(x.memberSpan, x.member)))
                 case x: SForeignMethod =>
                   foreigns ::= ForeignMethodStatement(lctx.pos(x.loc.span), privTerm(priv, sigV(x.name)),
-                    TyLower.annot(x.ty, tctx).body, ForeignMember(lctx.pos(x.memberSpan), x.member))
+                    TyLower.annot(x.ty, tctx).body, ForeignMember(lctx.pos(x.memberSpan), x.member, literalSpan(x.memberSpan, x.member)))
                 case x: SForeignValue =>
                   foreigns ::= ForeignValueStatement(lctx.pos(x.loc.span), privTerm(priv, sigV(x.name)),
-                    TyLower.annot(x.ty, tctx).body, foreignClass(x.className, x.classSpan),
-                    ForeignMember(lctx.pos(x.memberSpan), x.member))
+                    TyLower.annot(x.ty, tctx).body, foreignClass(x.className, x.classSpan, fileName),
+                    ForeignMember(lctx.pos(x.memberSpan), x.member, literalSpan(x.memberSpan, x.member)))
                 case x: SForeignConstructor =>
                   foreigns ::= ForeignConstructorStatement(lctx.pos(x.loc.span), privTerm(priv, sigV(x.name)),
                     TyLower.annot(x.ty, tctx).body)
@@ -511,11 +511,35 @@ object NewPipeline {
     (module, scalaparsers.ParseState.mk(fileName, contents, er))
   }
 
-  private def foreignClass(name: String, sp: Span)(implicit s: SessionEnv): ForeignClass = {
-    val pos = Pos("<foreign>", "", sp.startLine, sp.startCol, false)
+  /** LSP-FFI: with `foreignTolerant` OFF this is unreachable in a batch
+    * load — the renamer's own foreign-class check refuses the module one
+    * phase earlier — and its Death is kept for the editor's non-tolerant
+    * path, which collects the rename diagnostic instead of throwing.
+    * With the option ON nothing dies: the failure rides on the
+    * `ForeignClass` to the loader, which decides where to warn. */
+  private def foreignClass(name: String, sp: Span, fileName: String)(implicit s: SessionEnv): ForeignClass = {
+    val pos = Pos(fileName, "", sp.startLine, sp.startCol, false)
     com.clarifi.reporting.ermine.parsing.ForeignClasses.classLookup(pos, name) match {
-      case Right(c) => c
-      case Left(e)  => throw Death(pos.report(Document.text(s"error loading '$name'")))
+      case Right(c)                     => c
+      case Left(e) if s.foreignTolerant =>
+        ForeignClass(pos, classOf[com.clarifi.reporting.ermine.UnresolvedForeign],
+                     Some(ForeignFailure(name, literalSpan(sp, name), e)))
+      case Left(e)                      => throw Death(pos.report(Document.text(s"error loading '$name'")))
     }
   }
+
+  /** The extent of a STRING LITERAL, given the span the parser recorded
+    * for it and the value it parsed to (LSP-FFI review finding P-3).
+    *
+    * `spanned` ends a token's span where the NEXT token begins, so a
+    * literal's recorded span runs over the trailing whitespace and a
+    * diagnostic built from it squiggles one character too far.  The
+    * literal itself is the value plus its two quotes; escapes can only
+    * make the source longer than the value, never shorter, so clamp to
+    * the recorded end rather than trusting the arithmetic.  A literal
+    * that spans lines (there are none in practice) keeps its span. */
+  private def literalSpan(sp: Span, value: String): Span =
+    if (sp.endLine != sp.startLine) sp
+    else Span(sp.startLine, sp.startCol, sp.startLine,
+              math.min(sp.endCol, sp.startCol + value.length + 2))
 }

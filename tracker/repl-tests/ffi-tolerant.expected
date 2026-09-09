@@ -1,0 +1,9 @@
+tracker/lsp-tests/FfiClassMissing.e:6:12: warning: unresolved foreign binding `render`: class missing: com.clarifi.reporting.writers.NoSuchWriter.render — java.lang.ClassNotFoundException: com.clarifi.reporting.writers.NoSuchWriter
+String -> String
+runtime error: unresolved foreign binding `render`: class missing: com.clarifi.reporting.writers.NoSuchWriter.render — java.lang.ClassNotFoundException: com.clarifi.reporting.writers.NoSuchWriter
+Use ":stack" to see a stack trace
+tracker/lsp-tests/FfiMemberUnloadable.e:10:37: warning: unresolved foreign binding `ok`: member unloadable: probejar.PresentMember.ok(java.lang.String) — java.lang.NoClassDefFoundError: probejar/Missing
+tracker/lsp-tests/FfiRollback.e:11:1: error: failed to unify type Int with type String
+^
+Unable to load module from 'tracker/lsp-tests/FfiRollback.e'
+tracker/lsp-tests/FfiRollback.e:8:12: warning: unresolved foreign binding `render`: class missing: com.clarifi.reporting.writers.NoSuchWriter.render — java.lang.ClassNotFoundException: com.clarifi.reporting.writers.NoSuchWriter

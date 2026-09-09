@@ -1742,7 +1742,13 @@ object Subst {
   def checkForeignData(module: String)(cm: Maps, fds: ForeignDataStatement): Maps = fds match {
     case ForeignDataStatement(loc, v, vs, clazz) =>
       val k = vs.foldRight(Star(loc.inferred) : Kind)((u, r) => ArrowK(loc.inferred, u.extract, r))
-      val c = Con(loc, global(module, v), TypeConDecl(clazz.cls, true), k.schema)
+      // mirrors Session.processForeignDataStatement: a tolerated `foreign
+      // data` keeps the name of the class it could not resolve (LSP-FFI)
+      val decl = clazz.failure match {
+        case Some(f) => TypeConDecl(clazz.cls, true, Some(f.className))
+        case None    => TypeConDecl(clazz.cls, true)
+      }
+      val c = Con(loc, global(module, v), decl, k.schema)
       (cm._1 + (v -> c), cm._2)
   }
 

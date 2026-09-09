@@ -94,8 +94,15 @@ final class Resident(val log: String => Unit) {
     log("session: booting (Lib.preamble + Prelude/Layout, interface-free)")
     announce("Ermine: loading the session (129 modules, ~13s)…")
     val t0 = System.nanoTime
+    // LSP-FFI: foreign tolerance is ON here and only here.  The fork this
+    // server is pointed at declares foreign bindings this JVM does not
+    // have; without tolerance the first of them kills its module at load
+    // and every dependent goes unchecked in the editor.  Batch loads keep
+    // today's hard failure — the option is a SessionEnv field, not a
+    // global (tracker/LSP-FFI-TOLERANCE.md).
     implicit val env: SessionEnv =
-      new SessionEnv(_typeCheck = Some(true), _useInterface = Some(false))
+      new SessionEnv(_typeCheck = Some(true), _useInterface = Some(false),
+                     _foreignTolerant = Some(true))
     Lib.preamble
     val builtins = env.copy
     val loaded = Session.loadModules(List("Prelude", "Layout"))

@@ -29,8 +29,9 @@ import com.clarifi.reporting.ermine.Subst.{
 }
 import com.clarifi.reporting.ermine.syntax._
 import com.clarifi.reporting.ermine.syntax.TypeDef.typeDefComponents
+import com.clarifi.reporting.ermine.surface.Span
 import com.clarifi.reporting.ermine.parsing.{
-  phrase, ModuleHeader, ErParseState, ParseState, Parser
+  phrase, ModuleHeader, ErParseState, ParseState, Parser, Recoverable
 }
 import ErParseState.Implicits._
 import com.clarifi.reporting.ermine.parsing.ModuleParsers._
@@ -1144,53 +1145,232 @@ object Session {
     case _              => (c.foreignLookup, Raw)
   }
 
+  // ---------------------------------------------------------- LSP-FFI
+  // Tolerating a `foreign` declaration this JVM cannot resolve
+  // (tracker/LSP-FFI-TOLERANCE.md).  Every branch below is guarded by
+  // `s.foreignTolerant`, which is OFF for bin/ermine, the REPL and
+  // core/test: with it off each `die`/`Death` here is the one that has
+  // always been thrown, with the same words.
+
+  /** The first of these types whose head is a `foreign data` with no
+    * backing class, and the class name it wanted.
+    *
+    * This is the whole of "which operations need the class AT LOAD TIME":
+    * a reflective method / field / constructor lookup, and the class
+    * `computePost` demands of a codomain, all read `Type.foreignLookup`,
+    * and nothing else in a load does.  So a `foreign data` of a missing
+    * class is a perfectly good opaque type until one of those runs, and
+    * marshalling does not change that — `marshalForeign` falls through to
+    * `whnfForeign`, which uses no type information at all.
+    *
+    * It is NOT a complete test at RUN time (review finding P-6): a
+    * foreign pattern match goes through `ConDecl.isInstance`, which has
+    * no class to ask.  `TypeConDecl.isInstance` raises there rather than
+    * quietly answering "no match"; the editor never evaluates, so this
+    * only concerns a batch run with the option on. */
+  private def unresolvedForeignIn(ts: List[Type]): Option[String] = {
+    def head(t: Type): Option[Con] = t match {
+      case Forall(_, _, _, _, b) => head(b)
+      case _                     => unfurlApp(t).map(_._1)
+    }
+    def isSentinel(t: Type): Boolean =
+      try t.foreignLookup eq classOf[UnresolvedForeign]
+      catch { case NonFatal(_) => false }
+    ts.find(isSentinel).map { t =>
+      head(t).map(_.decl).collect { case TypeConDecl(_, _, Some(cn)) => cn }
+             .getOrElse("an unresolved foreign class")
+    }
+  }
+
+  /** The span of a declared NAME, for a failure with no class or member
+    * string of its own (`foreign constructor`, `foreign subtype`). */
+  private def nameSpan(v: TermVar): Option[Span] = v.loc match {
+    case p: Pos => Some(Span(p.line, p.column, p.line,
+                             p.column + v.name.map(_.string.length).getOrElse(1)))
+    case _      => None
+  }
+
+  /** `loc` re-pointed at `span`, so a Death rendered from it blames the
+    * class name or the member string rather than the statement head. */
+  private def atSpan(loc: Loc, span: Option[Span]): Loc = (loc, span) match {
+    case (p: Pos, Some(sp)) => Pos(p.fileName, "", sp.startLine, sp.startCol, false)
+    case _                  => loc
+  }
+
+  /** Record ONE tolerated failure as a positioned note.
+    *
+    * The text is ONE line, "file:line:col: <label>: ...", positioned at
+    * the same place as `span` — the class name or the member string, not
+    * the statement head.  `Pos.report`'s usual source line and caret are
+    * left off deliberately: the Pos a lowered statement carries has no
+    * source text, so they would render as a blank line and a lone caret,
+    * and the editor shows the whole report as the message.
+    *
+    * `severity` is the LSP one: 2 for a binding that will not resolve, 3
+    * for the `foreign data` note, which is information and not a
+    * complaint (review finding P-2). */
+  private def noteForeign(mod: String, loc: Loc, span: Option[Span],
+                          severity: Int, detail: String)
+                         (implicit s: SessionEnv): Unit = {
+    val (file, line, col) = (loc, span) match {
+      case (p: Pos, Some(sp)) => (p.fileName, sp.startLine, sp.startCol)
+      case (p: Pos, None)     => (p.fileName, p.line, p.column)
+      case _                  => ("", 0, 0)
+    }
+    val at    = if (file.isEmpty) "" else file + ":" + line + ":" + col + ": "
+    val label = if (severity == 2) "warning: " else "note: "
+    s.noteForeign(ForeignNote(mod, span getOrElse Span(line, col, line, col),
+                              severity, at + label + detail))
+  }
+
+  /** The warning AND the value the binding is installed with.  The stub
+    * is bound at the DECLARED type, so the module and everything
+    * downstream still type-check, navigate and hover; only RUNNING it
+    * fails, with the sentence the warning carries. */
+  private def foreignStub(mod: String, name: Global, loc: Loc, span: Option[Span],
+                          kind: String, what: String, cause: String)
+                         (implicit s: SessionEnv): Runtime = {
+    val detail = "unresolved foreign binding `" + name.string + "`: " + kind + ": " + what +
+                 (if (cause.isEmpty) "" else " — " + cause)
+    noteForeign(mod, loc, span, 2, detail)
+    Bottom(throw Death(text(detail)))
+  }
+
+  private def causeText(e: Throwable): String =
+    e.getClass.getName + Option(e.getMessage).map(": " + _).getOrElse("")
+
+  /** Why `getMethod` said no: the member's own class will not link, or it
+    * is absent by name, present at another arity, or present at this
+    * arity with other parameter types.
+    *
+    * `getMethods` resolves every public method's SIGNATURE classes while
+    * it searches, so it throws the same `NoClassDefFoundError` the lookup
+    * that got us here did (review finding P-1) — hence the `attempt`,
+    * inside the tolerant branch where an escaping Error would blank the
+    * whole file. */
+  private def memberKind(clazz: Class[_], name: String, dom: List[Class[_]], cause: Throwable): String =
+    if (!cause.isInstanceOf[Exception]) "member unloadable"
+    else Recoverable.attempt(clazz.getMethods.filter(_.getName == name)) match {
+      case Left(_) => "member unloadable"
+      case Right(byName) =>
+        if (byName.isEmpty) "member missing"
+        else if (!byName.exists(_.getParameterCount == dom.length))
+          "arity mismatch (declared " + dom.length + ", the class has " +
+            byName.map(_.getParameterCount).distinct.sorted.mkString("/") + ")"
+        else "signature mismatch"
+    }
+
   def processForeignCommon(mod: String,
-                           methName: String,
+                           member: ForeignMember,
                            v: TermVar,
-                           staticClazz: Option[Class[_]],
+                           foreignCls: Option[ForeignClass],
                            reporter: Located,
                            tyz: Type)(implicit s: SessionEnv, su: Supply): TermVar = {
-    val static = staticClazz.isDefined
+    val methName = member.name
+    val static = foreignCls.isDefined
     val loc = reporter.loc
     val ty = subst(implicit hm => {
       implicit val loc: Located = tyz
       kindCheck(Nil, tyz, Star(tyz.loc.inferred)); substType(tyz)
     })
     assertTypeClosed(ty)
-    val (clazz, domain, codomain, post) = unfurlType(ty) match {
-      case (d, c) =>
-        val (r, p) = computePost(c, true)
-        staticClazz match {
-          case Some(clazz) => (clazz, d, r, p)
-          case None        => (d.head.foreignLookup, d.tail, r, p)
-        }
+
+    def stub(span: Option[Span], kind: String, what: String, cause: String): TermVar = {
+      val g = global(mod, v)
+      primOp(v.loc, g, foreignStub(mod, g, v.loc, span, kind, what, cause), ty)
+    }
+
+    // (1)(2) the class named by `foreign function`/`foreign value` is
+    // missing or will not link.  The reader kept the failure instead of
+    // dying, so the warning lands on the CLASS NAME.
+    foreignCls.flatMap(_.failure) match {
+      case Some(f) if s.foreignTolerant =>
+        return stub(Some(f.span), f.kind, f.className + "." + methName, f.causeText)
+      case _ => ()
+    }
+
+    val (domainTypes, codomainType) = unfurlType(ty)
+    val (clazz, domain, codomain, post) = {
+      val (r, p) = computePost(codomainType, true)
+      foreignCls match {
+        case Some(fc) => (fc.cls, domainTypes, r, p)
+        case None     => (domainTypes.head.foreignLookup, domainTypes.tail, r, p)
+      }
     }
     val classDomain = domain.map(_.foreignLookup)
-    val method = try {
-      clazz.getMethod(methName, classDomain:_*)
-    } catch {
-      case e : Exception =>
+
+    // (9) the lookup below needs the class of a `foreign data` we do not
+    // have.  Blame the MEMBER, and name the class that is actually
+    // missing rather than reporting "no such method" on a sentinel.
+    if (s.foreignTolerant)
+      unresolvedForeignIn(domainTypes :+ codomainType) match {
+        case Some(cn) =>
+          return stub(Some(member.span), "unresolved foreign class",
+                      cn + " (needed to resolve `" + methName + "`)", "")
+        case None => ()
+      }
+
+    // `getMethod` resolves the SIGNATURE classes of everything it
+    // searches, so a class that loaded fine still throws
+    // `NoClassDefFoundError` here when one of its members mentions a
+    // class this JVM lacks (review finding P-1) — an Error, which
+    // `case e: Exception` let escape past TolerantCheck.guard and
+    // Diagnostics.run, blanking the file.  `Recoverable` is the same
+    // catch set `classLookup` uses.
+    val looked = Recoverable.attempt(clazz.getMethod(methName, classDomain:_*))
+    // (3) member missing, (4) arity mismatch, a signature mismatch
+    // between them, and (2') the member's own class failing to link:
+    // one `getMethod`, four diagnoses.
+    val method = looked match {
+      case Right(m) => m
+      case Left(e) if s.foreignTolerant =>
+        return stub(Some(member.span), memberKind(clazz, methName, classDomain, e),
+                    clazz.getName + "." + methName +
+                      classDomain.map(_.getName).mkString("(", ", ", ")"),
+                    causeText(e))
+      case Left(e: Exception) =>
         throw Death(
           "method" :+: methName :+:
           "with domain" :+: classDomain.mkString(",") :+:
           "not found in class" :+: text(clazz.getName),
           e
         )
+      case Left(e) =>
+        // An Error here was an UNCAUGHT crash before this stage, so there
+        // is no message to keep byte-identical: give it the position and
+        // the cause the class-name case gets.
+        throw Death(atSpan(loc, Some(member.span)).report(
+          "member" :+: methName :+:
+          "of class" :+: clazz.getName :+:
+          "could not be resolved:" :+: text(causeText(e))
+        ))
     }
 
-    if (!codomain.isAssignableFrom(method.getReturnType))
+    // (5) the return type is not assignable to the declared codomain.
+    if (!codomain.isAssignableFrom(method.getReturnType)) {
+      if (s.foreignTolerant)
+        return stub(Some(member.span), "return type mismatch",
+                    clazz.getName + "." + methName,
+                    "declared " + codomain.getName + ", found " + method.getReturnType.toString)
       reporter.die(
         "expected return type" :+: codomain.getName :+:
         "does not match foreign return type" :+: text(method.getReturnType.toString)
       )
+    }
 
-    if(java.lang.reflect.Modifier.isStatic(method.getModifiers) != static)
+    if(java.lang.reflect.Modifier.isStatic(method.getModifiers) != static) {
+      if (s.foreignTolerant)
+        return stub(Some(member.span), "static/instance mismatch",
+                    clazz.getName + "." + methName,
+                    if (static) "the method is not static; use foreign method instead"
+                    else "the method is static; use foreign function instead")
       reporter.die(
         "method" :+: methName :+:
         "in class" :+: clazz.getName :+:
         text(if (static) "is not static; use foreign method instead"
              else "is static; use foreign function instead")
       )
+    }
     // v.loc is the declared NAME's position; `loc` is the statement's,
     // and stays the one error reports blame
     primOp(v.loc, global(mod, v), foreignLift(methName, static, post, domain, method), ty)
@@ -1202,7 +1382,8 @@ object Session {
     cm: Maps,
     fvs: ForeignValueStatement
   )(implicit s: SessionEnv, su: Supply) = fvs match {
-    case ForeignValueStatement(loc, v, ty, ForeignClass(_, clazz), ForeignMember(_, valName)) =>
+    case ForeignValueStatement(loc, v, ty, fc, member) =>
+      val valName = member.name
       var typ = subTypeMaps(cm, ty).close
       val (_, post) = computePost(typ, true)
       typ = subst { implicit hm => {
@@ -1210,20 +1391,46 @@ object Session {
         kindCheck(Nil, typ, Star(typ.loc.inferred)); substType(typ)
       } }
       assertTypeClosed(typ)
-      val value = try {
-        clazz.getField(valName)
-      } catch { case e : Exception =>
-          throw Death(loc.report(
-            "static field" :+: valName :+:
-            "not found in class" :+: text(clazz.getName)
-          ), e)
+      def stub(span: Option[Span], kind: String, what: String, cause: String): TermVar = {
+        val g = global(mod, v)
+        primOp(v.loc, g, foreignStub(mod, g, v.loc, span, kind, what, cause), typ)
       }
-      val r = primOp(
-        v.loc,
-        global(mod, v),
-        perhapsForeign(post, try { value.get(null) } catch { case NonFatal(e) => throw e.getCause }),
-        typ
-      )
+      // (1)(2) the holder class, then (6) the static field itself.  The
+      // field's VALUE stays lazy — `perhapsForeign` takes it by name and
+      // Prim turns a throw into a Bottom — so only the lookup fails here.
+      val r = fc.failure match {
+        case Some(f) if s.foreignTolerant =>
+          stub(Some(f.span), f.kind, f.className + "." + valName, f.causeText)
+        case _ =>
+          val clazz = fc.cls
+          // `getField` resolves every public field's type as it searches:
+          // same Error hazard as `getMethod` (review finding P-1).
+          val looked = Recoverable.attempt(clazz.getField(valName))
+          looked match {
+            case Left(e) if s.foreignTolerant =>
+              stub(Some(member.span),
+                   if (e.isInstanceOf[Exception]) "field missing" else "field unloadable",
+                   clazz.getName + "." + valName, causeText(e))
+            case Left(e: Exception) =>
+              throw Death(loc.report(
+                "static field" :+: valName :+:
+                "not found in class" :+: text(clazz.getName)
+              ), e)
+            case Left(e) =>
+              throw Death(atSpan(loc, Some(member.span)).report(
+                "static field" :+: valName :+:
+                "of class" :+: clazz.getName :+:
+                "could not be resolved:" :+: text(causeText(e))
+              ))
+            case Right(value) =>
+              primOp(
+                v.loc,
+                global(mod, v),
+                perhapsForeign(post, try { value.get(null) } catch { case NonFatal(e) => throw e.getCause }),
+                typ
+              )
+          }
+      }
       (cm._1, cm._2 + (fvs.v -> r))
   }
 
@@ -1240,31 +1447,56 @@ object Session {
         kindCheck(Nil, ty, Star(ty.loc.inferred)); substType(ty)
       } }
       assertTypeClosed(ty)
-      val (domain, codomain, post) = unfurlType(ty) match {
-        case (d, c) =>
-          val (cl, p) = computePost(c, true)
-          (d, cl, p)
+      val (domainTypes, codomainType) = unfurlType(ty)
+      val (domain, codomain, post) = {
+        val (cl, p) = computePost(codomainType, true)
+        (domainTypes, cl, p)
       }
       val classDomain = domain.map(_.foreignLookup)
-      val ctor = try {
-        codomain.getConstructor(classDomain:_*)
-      } catch { case e : Exception =>
-        throw Death(loc.report(
-          "constructor not found for" :+: codomain.getName + "with arguments (" ::
-          classDomain.map(_.getName).mkString(", ") :: text(")")
-        ), e)
-      }
       val name = global(mod, v)
-      val g = (args : List[AnyRef]) =>
-                perhapsForeign(post,
-                  try {
-                    ctor.newInstance(args:_*)
-                  } catch { case NonFatal(e) => throw e.getCause }
-                )
-      val f = domain.foldRight((z: List[Any]) => g(z.asInstanceOf[List[AnyRef]].reverse)) { (t, b) =>
-                z => Fun(a => b(marshalForeign(t, a, name.string) :: z))
-              }
-      val r = primOp(v.loc, name, f.apply(Nil), ty)
+      // A `foreign constructor` names no class and no member: its class
+      // IS its codomain, so a tolerated failure is blamed on the declared
+      // NAME.  (9) first — a missing `foreign data` class is the honest
+      // reason — then (7), the constructor itself.
+      def stub(kind: String, what: String, cause: String): TermVar =
+        primOp(v.loc, name, foreignStub(mod, name, v.loc, nameSpan(v), kind, what, cause), ty)
+      val unresolved =
+        if (s.foreignTolerant) unresolvedForeignIn(domainTypes :+ codomainType) else None
+      val r = unresolved match {
+        case Some(cn) =>
+          stub("unresolved foreign class", cn + " (needed to resolve a constructor)", "")
+        case None =>
+          // `getConstructor` resolves every public constructor's
+          // signature as it searches (review finding P-1).
+          val looked = Recoverable.attempt(codomain.getConstructor(classDomain:_*))
+          looked match {
+            case Left(e) if s.foreignTolerant =>
+              stub(if (e.isInstanceOf[Exception]) "constructor missing" else "constructor unloadable",
+                   codomain.getName + classDomain.map(_.getName).mkString("(", ", ", ")"),
+                   causeText(e))
+            case Left(e: Exception) =>
+              throw Death(loc.report(
+                "constructor not found for" :+: codomain.getName + "with arguments (" ::
+                classDomain.map(_.getName).mkString(", ") :: text(")")
+              ), e)
+            case Left(e) =>
+              throw Death(atSpan(loc, nameSpan(v)).report(
+                "constructor of" :+: codomain.getName :+:
+                "could not be resolved:" :+: text(causeText(e))
+              ))
+            case Right(ctor) =>
+              val g = (args : List[AnyRef]) =>
+                        perhapsForeign(post,
+                          try {
+                            ctor.newInstance(args:_*)
+                          } catch { case NonFatal(e) => throw e.getCause }
+                        )
+              val f = domain.foldRight((z: List[Any]) => g(z.asInstanceOf[List[AnyRef]].reverse)) { (t, b) =>
+                        z => Fun(a => b(marshalForeign(t, a, name.string) :: z))
+                      }
+              primOp(v.loc, name, f.apply(Nil), ty)
+          }
+      }
       (cm._1, cm._2 + (fcs.v -> r))
   }
 
@@ -1307,7 +1539,30 @@ object Session {
   def processForeignDataStatement(mod: String)(cm: Maps, fds: ForeignDataStatement)(implicit s: SessionEnv, su: Supply): Maps = fds match {
     case ForeignDataStatement(loc, v, vs, clazz) =>
       val k = vs.foldRight(Star(loc.inferred) : Kind)((u, r) => ArrowK(loc.inferred, u.extract, r))
-      val c = addCon(Con(loc, global(mod, v), TypeConDecl(clazz.cls, true), k.schema))
+      // (9) A `foreign data` whose class is missing is still a perfectly
+      // good OPAQUE type: nothing about declaring it, mentioning it in a
+      // signature or passing it around needs the class, so this is no
+      // WARNING.  It is not silence either (review finding P-2): a module
+      // whose only foreign statement is such a declaration would publish
+      // nothing at all, and be indistinguishable from one whose FFI is
+      // intact — which is the opposite of what someone pointing this
+      // server at a fork wants to learn.  So: an INFORMATION note (LSP
+      // severity 3, a hint rather than a squiggle) on the class name,
+      // saying the type is usable and where the class would be needed.
+      // The decl remembers the name, and every site that does need it
+      // names it in its own warning.
+      val decl = clazz.failure match {
+        case Some(f) =>
+          if (s.foreignTolerant)
+            noteForeign(mod, loc, Some(f.span), 3,
+              "opaque foreign type `" + global(mod, v).string + "`: " + f.className +
+              " is not on this JVM (" + f.kind + ") — the type is usable and this module " +
+              "checks normally; a foreign function, method, value or constructor over it " +
+              "cannot be resolved, and will warn where it is declared")
+          TypeConDecl(clazz.cls, true, Some(f.className))
+        case None    => TypeConDecl(clazz.cls, true)
+      }
+      val c = addCon(Con(loc, global(mod, v), decl, k.schema))
       (cm._1 + (v -> c), cm._2)
   }
 
@@ -1318,20 +1573,41 @@ object Session {
       kindCheck(Nil, fss.ty, Star(fss.loc.inferred)); substType(ty)
     } }
     assertTypeClosed(ty)
+    // (8) A `foreign subtype` performs NO reflection: it is the identity,
+    // and an unchecked claim that one foreign type is assignable to
+    // another.  When either side has no backing class the claim cannot be
+    // checked against anything, so it is warned about and the identity is
+    // installed anyway — a stub here would break callers at run time for a
+    // coercion that was never going to look at the class.
+    // "over", not "unverifiable" (review finding P-8): nothing here ever
+    // verifies the claim, resolved classes or not, so calling this case
+    // unverifiable would imply a check that does not exist.  What the
+    // note says is that this module's FFI is stale and here is one more
+    // place it shows.
+    if (s.foreignTolerant) {
+      val (d, c) = unfurlType(ty)
+      unresolvedForeignIn(d :+ c) foreach { cn =>
+        noteForeign(mod, fss.v.loc, nameSpan(fss.v), 2,
+          "foreign subtype `" + global(mod, fss.v).string +
+          "` over an unresolved foreign class: " + cn +
+          " — the coercion is installed as the identity it always was, and is not checked " +
+          "against the class (it never is)")
+      }
+    }
     (cm._1, cm._2 + (fss.v -> primOp(fss.v.loc, global(mod, fss.v), Fun(x => x), ty)))
   }
 
   def processForeignFunctionStatement(mod: String)(cm: Maps, ffs: ForeignFunctionStatement)(implicit s: SessionEnv, su: Supply) =
     ( cm._1,
       cm._2 + (
-        ffs.v -> processForeignCommon(mod, ffs.member.name, ffs.v, Some(ffs.cls.cls), ffs.loc, subTypeMaps(cm, ffs.ty).close)
+        ffs.v -> processForeignCommon(mod, ffs.member, ffs.v, Some(ffs.cls), ffs.loc, subTypeMaps(cm, ffs.ty).close)
       )
     )
 
   def processForeignMethodStatement(mod: String)(cm: Maps, fms: ForeignMethodStatement)(implicit s: SessionEnv, su: Supply) =
     ( cm._1,
       cm._2 + (
-        fms.v -> processForeignCommon(mod, fms.member.name, fms.v, None, fms.loc, subTypeMaps(cm, fms.ty).close)
+        fms.v -> processForeignCommon(mod, fms.member, fms.v, None, fms.loc, subTypeMaps(cm, fms.ty).close)
       )
     )
 

@@ -12,8 +12,32 @@ import scalaparsers.{Diagnostic, Loc, Located, Pos, Supply}
 import scalaparsers.Diagnostic._
 
 // misc.
-case class ForeignClass(loc: Pos, cls: Class[_]) extends Located
-case class ForeignMember(loc: Pos, name: String) extends Located
+
+/** Why a `foreign` declaration's class could not be resolved (LSP-FFI,
+  * tracker/LSP-FFI-TOLERANCE.md).  The reader only RECORDS it — the
+  * loader decides: with `SessionEnv.foreignTolerant` off the reader dies
+  * before one is ever built, so batch messages are untouched; with it on
+  * the binding is installed at its declared type as a stub and the
+  * failure becomes a positioned warning at `span`, the class name. */
+final case class ForeignFailure(className: String, span: surface.Span, cause: Throwable) {
+  /** The failure kind, named the way the report names it. */
+  def kind: String = cause match {
+    case _: ClassNotFoundException => "class missing"
+    case _: LinkageError           => "class unloadable"
+    case _                         => "class not resolvable"
+  }
+  def causeText: String =
+    cause.getClass.getName + Option(cause.getMessage).map(": " + _).getOrElse("")
+}
+
+/** `cls` is the resolved class, or — when `failure` is set — the
+  * `UnresolvedForeign` sentinel standing in for it. */
+case class ForeignClass(loc: Pos, cls: Class[_], failure: Option[ForeignFailure] = None) extends Located
+
+/** `span` is the member string literal's extent, so a tolerated member
+  * failure squiggles the member and not the whole statement. */
+case class ForeignMember(loc: Pos, name: String,
+                         span: surface.Span = surface.Span(0, 0, 0, 0)) extends Located
 
 // body statements
 sealed trait Statement extends Located {
