@@ -1,6 +1,6 @@
-(&) : forall (a: rho) (r: rho) (b: rho). (exists (c: rho) (d: rho) (e: rho). a <- (d, c), r <- (e, d), b <- (e, d, c)) => Builtin.Relation a -> Builtin.Record r -> Builtin.Relation b
+(&) : forall (a: rho) (r: rho) (b: rho). (exists (c: rho) (d: rho) (e: rho). a <- (e, d), r <- (d, c), b <- (e, d, c)) => Builtin.Relation a -> Builtin.Record r -> Builtin.Relation b
 (&') : forall (a: rho) (r: rho). a <- (r, o) => Builtin.Relation a -> Builtin.Record r -> Builtin.Relation a
 (&'_Mem) : forall (a: rho) (r: rho). a <- (r, o) => Builtin.Mem a -> Builtin.Record r -> Builtin.Mem a
-(&_Mem) : forall (a: rho) (r: rho) (b: rho). (exists (c: rho) (d: rho) (e: rho). a <- (d, c), r <- (e, d), b <- (e, d, c)) => Builtin.Mem a -> Builtin.Record r -> Builtin.Mem b
-(**) : forall (a: rho -> *) (b: rho) (c: rho) (d: rho). (exists (e: rho) (f: rho) (g: rho). b <- (f, e), c <- (g, f), d <- (g, f, e), Builtin.RelationalComb a) => a b -> a c -> a d
+(&_Mem) : forall (a: rho) (r: rho) (b: rho). (exists (c: rho) (d: rho) (e: rho). a <- (e, d), r <- (d, c), b <- (e, d, c)) => Builtin.Mem a -> Builtin.Record r -> Builtin.Mem b
+(**) : forall (a: rho -> *) (b: rho) (c: rho) (d: rho). (exists (e: rho) (f: rho) (g: rho). b <- (g, f), c <- (f, e), d <- (g, f, e), Builtin.RelationalComb a) => a b -> a c -> a d
 (**') : forall (rel: rho -> *) (a: rho) (r: rho). (relalComb rel, a <- (r, o)) => rel a -> rel r -> rel a

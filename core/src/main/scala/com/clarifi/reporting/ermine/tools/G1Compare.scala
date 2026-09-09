@@ -122,7 +122,13 @@ object G1Compare {
   /** name -> (raw line, parsed type); parse errors are fatal (the oracle
     * must never limp past unreadable input). */
   private def parseEi(f: File)(implicit env: SessionEnv, su: Supply): Map[String, (String, Type)] = {
-    val text = { val s = Source.fromFile(f, "UTF-8"); try s.mkString finally s.close() }
+    val whole = { val s = Source.fromFile(f, "UTF-8"); try s.mkString finally s.close() }
+    // S5.2: an `.ei` written since stage S5 opens with the solver-configuration key,
+    // which the interface grammar does not accept (it is a `laidout` block and takes
+    // neither a leading comment nor a leading blank line).  Reading through
+    // `splitInterfaceKey` is what lets this tool compare a fresh tree against the 143
+    // UNKEYED baselines under `tracker/g1-baseline` and `tracker/g1-oracle-tests`.
+    val text = Session.splitInterfaceKey(whole)._2
     val raw = text.linesIterator.filter(_.trim.nonEmpty).map { l =>
       l.takeWhile(_ != ':').trim.stripPrefix("(").stripSuffix(")") -> l
     }.toMap

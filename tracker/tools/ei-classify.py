@@ -38,6 +38,15 @@ def read_ei(path):
         line = line.rstrip('\n')
         if not line.strip():
             continue
+        # S5.2: an `.ei` opens with the solver-configuration key
+        # (`-- ermine-interface <format>|<GenRules>`).  It is not a binding; it is
+        # also not noise -- two sides with DIFFERENT keys are two configurations and
+        # comparing them is the point -- so it is skipped here and reported by the
+        # caller if it matters.  Without this it landed in `<<unparsed>>` as a LIST
+        # and `classify` crashed on it.
+        if line.startswith('-- ermine-interface '):
+            out.setdefault('<<key>>', line[len('-- ermine-interface '):].strip())
+            continue
         i = line.find(' : ')
         if i < 0:
             out.setdefault('<<unparsed>>', []).append(line)
@@ -236,7 +245,7 @@ def main(da, db):
     fb = {f for f in os.listdir(db) if f.endswith('.ei')}
     print('interfaces: A %d  B %d  only-in-A %s  only-in-B %s'
           % (len(fa), len(fb), sorted(fa - fb) or '-', sorted(fb - fa) or '-'))
-    tally, differing_files = Counter(), []
+    tally, differing_files, key_differs = Counter(), [], []
     for f in sorted(fa & fb):
         A, B = read_ei(os.path.join(da, f)), read_ei(os.path.join(db, f))
         rows = []
@@ -245,6 +254,14 @@ def main(da, db):
                 rows.append((n, 'only-in-B', '', '', B[n])); continue
             if n not in B:
                 rows.append((n, 'only-in-A', '', A[n], '')); continue
+            if n == '<<key>>':
+                # S5 review Q-6: a differing KEY is expected in every flag A/B -- the
+                # flag is IN the key -- so it must NOT put the file in
+                # `differing_files`, or the headline reads "268 of 268 differ" for the
+                # comparison this tool exists for.  Counted separately below.
+                if A.get(n) != B.get(n):
+                    key_differs.append(f)
+                continue
             kind, note = classify(A[n], B[n])
             tally[kind] += 1
             if kind != 'identical':
@@ -260,6 +277,11 @@ def main(da, db):
                     print('      B: %s' % b)
     print('\n== %d of %d interfaces differ' % (len(differing_files), len(fa & fb)))
     print('== bindings by verdict: %s' % dict(tally))
+    if key_differs:
+        ka = read_ei(os.path.join(da, key_differs[0])).get('<<key>>')
+        kb = read_ei(os.path.join(db, key_differs[0])).get('<<key>>')
+        print('== interface key differs on %d of %d files (expected in a flag A/B): '
+              '%s -> %s' % (len(key_differs), len(fa & fb), ka, kb))
 
 if __name__ == '__main__':
     main(sys.argv[1], sys.argv[2])

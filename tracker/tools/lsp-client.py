@@ -284,6 +284,36 @@ def main():
           and "Int" in r["contents"]["value"], repr(r))
     check("hover local x -> null", hover("Nav.e", 5, 10) is None)
 
+    # --- S5 review Q-1: the editor must show the type the compiler PUBLISHES ---
+    # `TolerantCheck.checkWith` is the editor's copy of the module's top-level
+    # generalisation, and it passed `publishing = false` until this fix, so the C12
+    # tautology deletion did not run here: hover answered
+    # `(exists h t. r <- (t, h)) => Relation r -> Relation r` for `pos` while the
+    # `.ei` the compiler writes for the same binding said `Relation r -> Relation r`.
+    # `Tauto.e`'s three cases are a deleted one, a near miss that must survive, and a
+    # real `Layout.Scan` re-export whose published type the sweep pins.
+    open_doc("Tauto.e")
+    # ONE call: `diagnostics_for` waits for a publish, so asking twice (e.g. once for
+    # the condition and once for `check`'s eagerly-evaluated detail) blocks for ever.
+    tauto_ds = client.diagnostics_for(uri("Tauto.e"))
+    check("Tauto.e clean", tauto_ds == [], repr(tauto_ds))
+    r = hover("Tauto.e", 8, 10)          # `pos`, C12's shape, INFERRED
+    v = r["contents"]["value"] if r else ""
+    check("hover pos has no vacuous row constraint (C12)",
+          r is not None and "->" in v and "<-" not in v and "exists" not in v, repr(r))
+    r = hover("Tauto.e", 13, 11)         # `conc`, a CONCRETE part: must survive
+    v = r["contents"]["value"] if r else ""
+    check("hover conc keeps its concrete-part constraint",
+          r is not None and "<-" in v, repr(r))
+    # the IMPORTED global itself: this one comes from the session's loaded
+    # `Layout.Scan`, i.e. from the compiler's publishing path (or its `.ei`), so it is
+    # the "hover agrees with the interface" half rather than the TolerantCheck half.
+    r = hover("Tauto.e", 15, 12)         # `count_LS` in `tCount = count_LS`
+    v = r["contents"]["value"] if r else ""
+    check("hover Layout.Scan.count agrees with its .ei (no qualification)",
+          r is not None and "Relation" in v and "<-" not in v and "exists" not in v,
+          repr(r))
+
     # --- navigation for every kind of DECLARATION, not just equations ---
     # Fields, data constructors, foreign declarations, tables and types are
     # installed through Session.primOp/addCon rather than bound by the

@@ -438,7 +438,9 @@ All three have the same shape: **the concrete case is handled and the variable c
   `TopReadings.e:18` says is "what a competent user expects".
 * **Risk.**  LOW but not zero.  `mkSimplified` is on the path of every inferred signature, so
   published `.ei` bytes move — the same one-line `find . -name '*.ei' -delete` A1 already
-  documents, and rank 6 is the real answer.  Two things need acceptance criteria: (i)
+  documents, and rank 6 is the real answer.  **[2026-09-09: rank 6 is DONE, so this is no
+  longer a manual step — a `.ei` written at another configuration is now detected and
+  rebuilt.]**  Two things need acceptance criteria: (i)
   `normal.distinct` preserves first occurrence, and the surviving representative's `loc` is what a
   blame message points at, so collapsing more constraints changes *which* `loc` survives; (ii)
   `NormalPart.equals` has no default case and throws `MatchError` against a non-`NormalPart` (it
@@ -771,6 +773,20 @@ prerequisite.  Nothing keys a published interface by `GenRules.toString` (its on
 one-line `find . -name '*.ei' -delete`.  A canonicaliser makes that unacceptable, because the
 whole point is that the published form is now a *function of the configuration*.
 **Verdict: ADOPT, before rank 3.**
+
+> **DONE 2026-09-09 (stage S5.2, `tracker/loopmodel/S5-HYGIENE.md` §2).**  A published `.ei`
+> now opens with `-- ermine-interface <interface format version>|<GenRules.toString>`
+> (`Session.interfaceKey`, format version 2), written by `Session.Dep.writeInterface` and
+> checked in `Session.dep`'s `preCk` — the same expression that already decides currency,
+> between the mtime test and the parse.  A key that does not match the running configuration,
+> or no key at all (every `.ei` written before this stage), is STALE in exactly the sense a
+> newer source is: full recheck, and the full check rewrites the file with the running key.
+> **The manual `find . -name '*.ei' -delete` is no longer part of adopting a default.**
+> Deliberately NOT in the key: `rowTrace`, `foreign.tolerant`, `typeCheck`, `useInterface`,
+> the `rowSound` budgets, and `loadInSeries` — the report's §2.2 gives the argument for each,
+> and `TestInterfaceKey`'s first property is the regression guard.  `G1Compare` reads through
+> `Session.splitInterfaceKey`, so the 143 unkeyed baselines under `tracker/g1-baseline` and
+> `tracker/g1-oracle-tests` still compare against a keyed tree and none of them was touched.
 
 ### Rank 7 — a primitive containment constraint  ·  cost **4–6 stages**  ·  risk HIGH
 

@@ -1,6 +1,6 @@
-(!*) : forall (r: rho) (h: rho). (exists (t: rho). r <- (h, t)) => Builtin.Record r -> Relation.Row.Row h -> Builtin.Record h
-(#) : forall (rel: rho -> *) (r: rho) (r1: rho). (exists (c: rho). r <- (r1, c), Builtin.RelationalComb rel) => rel r -> Relation.Row.Row r1 -> rel r1
-(-#) : forall (rel: rho -> *) (r: rho) (r1: rho) (r2: rho). (r <- (r2, r1), Builtin.RelationalComb rel) => rel r -> Relation.Row.Row r1 -> rel r2
+(!*) : forall (r: rho) (h: rho). (exists (t: rho). r <- (t, h)) => Builtin.Record r -> Relation.Row.Row h -> Builtin.Record h
+(#) : forall (rel: rho -> *) (r: rho) (r1: rho). (exists (c: rho). r <- (c, r1), Builtin.RelationalComb rel) => rel r -> Relation.Row.Row r1 -> rel r1
+(-#) : forall (rel: rho -> *) (r: rho) (r1: rho) (r2: rho). (r <- (r1, r2), Builtin.RelationalComb rel) => rel r -> Relation.Row.Row r1 -> rel r2
 append : forall (r1: rho) (r2: rho) (r: rho). r <- (r1, r2) => Relation.Row.Row r1 -> Relation.Row.Row r2 -> Relation.Row.Row r
 cons_Bracket : forall a. a -> Builtin.List a -> Builtin.List a
 empty : Relation.Row.Row (||)
@@ -15,5 +15,5 @@ rowUsed# : forall (r: rho). Native.TraversableColumns.TraversableColumns# r -> R
 single : forall (r: rho) a. Builtin.Field r a -> Relation.Row.Row r
 single_Brace : forall (r: rho) a. Builtin.Field r a -> Relation.Row.Row r
 snoc : forall (r1: rho) (r2: rho) a (r: rho). r <- (r1, r2) => Relation.Row.Row r1 -> Builtin.Field r2 a -> Relation.Row.Row r
-snoc_Brace : forall (r1: rho) (r2: rho) a (r: rho). r <- (r1, r2) => Relation.Row.Row r1 -> Builtin.Field r2 a -> Relation.Row.Row r
+snoc_Brace : forall (r1: rho) (r2: rho) a (r: rho). r <- (r2, r1) => Relation.Row.Row r1 -> Builtin.Field r2 a -> Relation.Row.Row r
 spanT : forall (h: rho) (r: rho) (t: rho). r <- (h, t) => Relation.Row.Row h -> Builtin.Record r -> (Builtin.Record h, Builtin.Record t)

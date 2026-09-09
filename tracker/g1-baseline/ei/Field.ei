@@ -1,8 +1,8 @@
-copyF : forall (a: rho) b (c: rho) (d: rho) (e: rho). (exists (f: rho). c <- (f, a), e <- (a, d)) => Builtin.Field a b -> Builtin.Record c -> Builtin.Record d -> Builtin.Record e
+copyF : forall (a: rho) b (c: rho) (d: rho) (e: rho). (exists (f: rho). c <- (a, f), e <- (d, a)) => Builtin.Field a b -> Builtin.Record c -> Builtin.Record d -> Builtin.Record e
 ecopyF : forall (r: rho) a. Builtin.Field r a -> Field.EField a
 existentialF : forall a. Builtin.String -> Builtin.Prim a -> Field.EField a
 getF : forall (h: rho) a (r: rho). r <- (h, t) => Builtin.Field h a -> Builtin.Record r -> a
-getF2 : forall (a: rho) b (c: rho) d (e: rho). (exists (f: rho) (g: rho). e <- (g, c), e <- (f, a)) => Builtin.Field a b -> Builtin.Field c d -> Builtin.Record e -> (b, d)
+getF2 : forall (a: rho) b (c: rho) d (e: rho). (exists (f: rho) (g: rho). e <- (c, g), e <- (a, f)) => Builtin.Field a b -> Builtin.Field c d -> Builtin.Record e -> (b, d)
 getFieldOr : forall a (h: rho) (r: rho). r <- (h, t) => a -> Builtin.Field h (Builtin.Nullable a) -> Builtin.Record r -> a
 modify : forall (h: rho) a (r: rho). r <- (h, t) => Builtin.Field h a -> (a -> a) -> Builtin.Record r -> Builtin.Record r
 uniqExistentialF : forall a. Builtin.Prim a -> Field.EField a

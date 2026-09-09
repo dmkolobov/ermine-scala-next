@@ -22,3 +22,34 @@ re-parses Native.List and Relation, which the fused one could not.
 
 Re-cutting this is a Decision 9 act (PERF-ROADMAP.md) and needs sign-off —
 never a silent re-cut to make a red gate green.
+
+## Re-cut 2026-09-09 (stage S5 fix round, review finding Q-15)
+
+`tracker/tools/g1-validate.sh`'s baseline-drift check had been RED since stage F3 and the
+script says a red here "is a Decision 9 stop — explain it or revert it".  This is the
+explanation, and the baseline is re-cut on it.
+
+**What drifted, and why none of it is a regression.**  13 of 129 `.ei` (70 lines) and 46 of
+1,301 `browse.txt` lines; `groups.txt` byte-identical.  `G1Compare` — which compares up to
+alpha-equivalence, so it sees through renaming — reports 22 signatures in 7 files as
+genuinely differing.  Two classes, both from adoptions COMMITTED after the baseline was
+recorded in `1a18b78` (2026-08-31):
+
+* `Relation/Scan.ei :: sumBy'` — F3 (`775a20f`, 2026-09-08) deleted a VACUOUS `r <- (h, t)`
+  from the written signature in `Relation/Scan.e` by hand; the baseline still carries it.
+  An intended source change, and the one the drift check was actually reporting.
+* everything else — alpha-variants and part-order differences in `(&)`, `(&_Mem)`, `(**)`,
+  `dateDiff`, `lookbackJoin`, `setColumn`, the `Predicate` comparisons and so on: the
+  published constraint sets are the same up to renaming the existentials, which is the
+  churn `smallcanon` (A1, `fe024a7`, 2026-09-06) and `topNormalise` (S4c, 2026-09-08)
+  produce and which both adoptions measured and accepted.
+
+**Stage S5 changes NONE of them.**  S5's tautology deletion moves exactly four signatures,
+all in `Layout/Scan.ei`, which is not among the 13 files; and all 13 are byte-identical
+between S5's flag-OFF and flag-ON interface snapshots.  Verified before the re-cut.
+
+**Form.**  Re-cut from a fresh `g1-diff.sh run new`, with the stage-S5.2 interface key
+header (`-- ermine-interface <format>|<GenRules>`) STRIPPED, so the baseline stays in the
+unkeyed form it has always had and its diff shows only type changes.  `G1Compare` reads
+through `Session.splitInterfaceKey`, so it compares a keyed tree against this unkeyed
+baseline without either side being touched.

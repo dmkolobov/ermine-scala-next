@@ -883,6 +883,335 @@ theorem undetermined_not_deletable : ¬ REquiv R R' := by
 
 end DeadUndetermined
 
+/-! ### S5.1 (ticket C12) — the deletion licence with the UNIVERSAL on the LEFT
+
+`dead_delete_of_pairwise` and `dead_delete_of_le_one_part` are both about a dead
+EXISTENTIAL on the LEFT of the deleted constraint: `v <- (...)` with `v` bound by the
+`exists`.  The shape four stdlib signatures actually publish is the mirror image --
+the left-hand side is a variable the CALLER fixes (a universal), and it is the PARTS
+that are existential and occur nowhere else (`tracker/TICKET-stdlib-findings.md` C12
+says FIVE; the fifth, `sumBy'`, was hand-fixed in the source by stage F3 the day after
+C12 was written.  `R3-REVIEW.md` M-3 is the observation that R3's theorems do not
+cover this shape):
+
+    count : forall (f: * -> *) z k (r: rho). (exists (t: a) (h: b). r <- (h, t)) => ...
+
+Every row splits, so that qualification constrains no caller: take `t := rho r` and
+`h := ∅`.  `tauto_delete` is the general form -- `k ≥ 1` existential parts, NO concrete
+labels, every part fresh with respect to the rest of the system -- and `tauto_delete_two`
+is the two-part instance C12 states.
+
+WHICH SIDE CONDITIONS ARE NECESSARY, AND WHICH ARE NOT.  Three of them live in the
+SHAPE of the statement rather than in a hypothesis -- the parts are all existential
+(`⟨ex ∪ P, ..⟩` against `⟨ex, ..⟩`), the concrete part is empty (`mk r P ∅`), and the
+deleted constraint is a single `insert` -- and three are hypotheses: `hne`, `hr`,
+`hfresh`.  FOUR of those five conditions are load-bearing and each has a witness; the
+fifth, `hr`, is NOT necessary.  (The S5 review, finding Q-3, is what established this:
+the first version of this section cited `DeadTwoParts.two_parts_not_deletable` for
+`hfresh`, and that theorem has the WRONG ORIENTATION -- its deleted constraint's
+left-hand side is the existential and its parts are universal, which is R3's mirror
+shape, not this one.  `RevHfresh` and `RevUnivPart` below are the reviewer's witnesses,
+adopted here; `tauto_delete_no_hr` is the reviewer's proof that `hr` can go.)
+
+* A CONCRETE part is not allowed: `DeadUndetermined.undetermined_not_deletable` is
+  `a <- (v, w, (|Foo|))` with `v`, `w` existential and fresh, and it is NOT deletable --
+  the constraint still says `Foo ∈ rho a`, which is about the universal.  That IS this
+  theorem's orientation (`R.ex = {1,2}`, lhs `0` universal): it is `tauto_delete` with
+  `∅` replaced by `{0}`.
+* A UNIVERSAL part is not allowed -- the Scala side condition `vs.forall(ex)`:
+  `RevUnivPart.univ_part_needed`, `r = 0`, parts `{1, 2}` with `1` universal.
+* A part occurring ELSEWHERE is not allowed -- `hfresh`:
+  `RevHfresh.hfresh_needed`, `r = 0`, `P = {1}`, `G = {2 <- (1)}`, `ex = ∅`, where every
+  other hypothesis holds and the equivalence still fails.
+* `k = 0` is not allowed -- `hne`: `r <- ()` says `rho r = ∅`, a genuine condition on the
+  universal, and `TautoEmpty.tauto_empty_not_deletable` proves it.
+* `hr : r ∉ P` IS NOT NECESSARY: `tauto_delete_no_hr` proves the same conclusion without
+  it, by taking `r` itself as the distinguished part when `r ∈ P`.  `tauto_delete` keeps
+  it because the proof reads more simply with it and because the Scala side condition is
+  narrower still -- there `r ∉ P` FOLLOWS from `!ex(r) && vs.forall(ex)`.
+
+C12 also carries `t ≠ h`, and it is not a hypothesis here.  In the `Finset` formulation
+`{t, h}` with `t = h` IS the singleton `{t}`, i.e. the `k = 1` case, which the same
+theorem covers.  BUT NOTE WHAT THAT DOES AND DOES NOT SAY: it says the theorem has
+nothing to exclude, NOT that a surface constraint `r <- (t, t)` is a tautology.  That
+one asserts `t` disjoint from ITSELF, which forces `rho t = ∅` and `rho r = ∅` with it,
+and it is a different constraint from `mk r {t} ∅`.  The solver collapses a repeated
+variable part before it can reach a residual (`RHS.build` moves it into the forced-empty
+set; `LoopRel.dedup`, sound by `dedup_sat`), and the implementation of this deletion
+rejects a repeated part outright rather than relying on that.
+-/
+
+namespace Tauto
+
+/-- The witness that discharges a fresh, all-existential, label-free split: one
+distinguished part takes the whole of the left-hand side, every other part is empty. -/
+def wit (sigma : Assign) (r p0 : Var) (P : Finset Var) : Assign :=
+  fun v => if v = p0 then sigma r else if v ∈ P then ∅ else sigma v
+
+@[simp] theorem wit_p0 (sigma : Assign) (r p0 : Var) (P : Finset Var) :
+    wit sigma r p0 P p0 = sigma r := by simp [wit]
+
+theorem wit_of_mem {sigma : Assign} {r p0 : Var} {P : Finset Var} {v : Var}
+    (hv : v ∈ P) (hne : v ≠ p0) : wit sigma r p0 P v = ∅ := by simp [wit, hne, hv]
+
+theorem wit_of_not_mem {sigma : Assign} {r p0 : Var} {P : Finset Var} {v : Var}
+    (hP : v ∉ P) (hp0 : p0 ∈ P) : wit sigma r p0 P v = sigma v := by
+  have hne : v ≠ p0 := by rintro rfl; exact hP hp0
+  simp [wit, hne, hP]
+
+end Tauto
+
+/-- **C12, the general theorem.**  A partition whose left-hand side is any variable
+outside the parts, whose parts are ALL existential, carry NO concrete labels, and occur
+in NO other constraint of the system, may be deleted together with its parts: the
+residual before and after have exactly the same callers.
+
+The forward direction is NOT `rEntails_erase`: the existential set shrinks as well as
+the system, so the dropped variables have to be re-tied to the caller's assignment. -/
+theorem tauto_delete {ex : Finset Var} {G : System} {r : Var} {P : Finset Var}
+    (hne : P.Nonempty) (hr : r ∉ P) (hfresh : ∀ p ∈ P, p ∉ allVars G) :
+    REquiv ⟨ex ∪ P, insert (mk r P ∅) G⟩ ⟨ex, G⟩ := by
+  classical
+  obtain ⟨p0, hp0⟩ := hne
+  constructor
+  · rintro rho ⟨sigma, hag, hm⟩
+    refine ⟨fun v => if v ∈ ex then sigma v else rho v, ?_, ?_⟩
+    · intro v hv
+      exact if_neg hv
+    · intro d hd
+      refine (sat_congr_of_agree (rho := sigma) ?_).mp (hm d (Finset.mem_insert_of_mem hd))
+      intro w hw
+      by_cases hwe : w ∈ ex
+      · exact (if_pos hwe).symm
+      · have hwP : w ∉ P := fun hp => hfresh w hp (mem_allVars hd hw)
+        exact (hag w (fun hh => (Finset.mem_union.mp hh).elim hwe hwP)).trans
+          (if_neg hwe).symm
+  · rintro rho ⟨sigma, hag, hm⟩
+    refine ⟨Tauto.wit sigma r p0 P, ?_, ?_⟩
+    · intro v hv
+      have hv' : v ∉ ex ∧ v ∉ P := by
+        constructor <;> intro hh <;> exact hv (Finset.mem_union.mpr (by simp [hh]))
+      rw [Tauto.wit_of_not_mem hv'.2 hp0]
+      exact hag v hv'.1
+    · have hbi : P.biUnion (Tauto.wit sigma r p0 P) = sigma r := by
+        ext l
+        simp only [Finset.mem_biUnion]
+        constructor
+        · rintro ⟨p, hpP, hl⟩
+          by_cases hp : p = p0
+          · subst hp; simpa using hl
+          · rw [Tauto.wit_of_mem hpP hp] at hl; simp at hl
+        · intro hl; exact ⟨p0, hp0, by simpa using hl⟩
+      intro d hd
+      rcases Finset.mem_insert.mp hd with rfl | hdG
+      · rw [sat_mk_iff]
+        refine ⟨?_, ?_, ?_⟩
+        · rw [Tauto.wit_of_not_mem hr hp0, hbi, Finset.empty_union]
+        · intro v _; exact Finset.disjoint_empty_left _
+        · intro v hv w hw hvw
+          by_cases hv0 : v = p0
+          · have hw0 : w ≠ p0 := fun hh => hvw (hv0.trans hh.symm)
+            rw [Tauto.wit_of_mem hw hw0]; exact Finset.disjoint_empty_right _
+          · rw [Tauto.wit_of_mem hv hv0]; exact Finset.disjoint_empty_left _
+      · refine (sat_congr_of_agree (rho := sigma) ?_).mp (hm d hdG)
+        intro w hw
+        exact (Tauto.wit_of_not_mem (fun hp => hfresh w hp (mem_allVars hdG hw)) hp0).symm
+
+/-- **C12 as stated**: the two-part instance.  `r` universal, `t` and `h` existential
+and occurring in no other published constraint. -/
+theorem tauto_delete_two {ex : Finset Var} {G : System} {r t h : Var}
+    (hrt : r ≠ t) (hrh : r ≠ h) (ht : t ∉ allVars G) (hh : h ∉ allVars G) :
+    REquiv ⟨ex ∪ {t, h}, insert (mk r {t, h} ∅) G⟩ ⟨ex, G⟩ := by
+  refine tauto_delete ⟨t, by simp⟩ (by simp [hrt, hrh]) ?_
+  intro p hp
+  rcases Finset.mem_insert.mp hp with rfl | hp'
+  · exact ht
+  · rw [Finset.mem_singleton.mp hp']; exact hh
+
+/-- **`hr` is not necessary** (S5 review, Q-4).  The same `REquiv` without `r ∉ P`: when
+`r ∈ P`, take `r` ITSELF as the distinguished part and the witness still works.  Kept as a
+separate declaration rather than as the primary statement because every use -- the Scala
+side condition included -- has `r ∉ P` on hand, and the shorter proof of `tauto_delete` is
+the one worth reading. -/
+theorem tauto_delete_no_hr {ex : Finset Var} {G : System} {r : Var} {P : Finset Var}
+    (hne : P.Nonempty) (hfresh : ∀ p ∈ P, p ∉ allVars G) :
+    REquiv ⟨ex ∪ P, insert (mk r P ∅) G⟩ ⟨ex, G⟩ := by
+  classical
+  by_cases hr : r ∈ P
+  · constructor
+    · rintro rho ⟨sigma, hag, hm⟩
+      refine ⟨fun v => if v ∈ ex then sigma v else rho v, ?_, ?_⟩
+      · intro v hv
+        exact if_neg hv
+      · intro d hd
+        refine (sat_congr_of_agree (rho := sigma) ?_).mp (hm d (Finset.mem_insert_of_mem hd))
+        intro w hw
+        by_cases hwe : w ∈ ex
+        · exact (if_pos hwe).symm
+        · have hwP : w ∉ P := fun hp => hfresh w hp (mem_allVars hd hw)
+          exact (hag w (fun hh => (Finset.mem_union.mp hh).elim hwe hwP)).trans (if_neg hwe).symm
+    · rintro rho ⟨sigma, hag, hm⟩
+      refine ⟨Tauto.wit sigma r r P, ?_, ?_⟩
+      · intro v hv
+        have hv' : v ∉ ex ∧ v ∉ P := by
+          constructor <;> intro hh <;> exact hv (Finset.mem_union.mpr (by simp [hh]))
+        rw [Tauto.wit_of_not_mem hv'.2 hr]
+        exact hag v hv'.1
+      · have hbi : P.biUnion (Tauto.wit sigma r r P) = sigma r := by
+          ext l
+          simp only [Finset.mem_biUnion]
+          constructor
+          · rintro ⟨p, hpP, hl⟩
+            by_cases hp : p = r
+            · subst hp; simpa using hl
+            · rw [Tauto.wit_of_mem hpP hp] at hl; simp at hl
+          · intro hl; exact ⟨r, hr, by simpa using hl⟩
+        intro d hd
+        rcases Finset.mem_insert.mp hd with rfl | hdG
+        · rw [sat_mk_iff]
+          refine ⟨?_, ?_, ?_⟩
+          · rw [Tauto.wit_p0, hbi, Finset.empty_union]
+          · intro v _; exact Finset.disjoint_empty_left _
+          · intro v hv w hw hvw
+            by_cases hv0 : v = r
+            · have hw0 : w ≠ r := fun hh => hvw (hv0.trans hh.symm)
+              rw [Tauto.wit_of_mem hw hw0]; exact Finset.disjoint_empty_right _
+            · rw [Tauto.wit_of_mem hv hv0]; exact Finset.disjoint_empty_left _
+        · refine (sat_congr_of_agree (rho := sigma) ?_).mp (hm d hdG)
+          intro w hw
+          exact (Tauto.wit_of_not_mem (fun hp => hfresh w hp (mem_allVars hdG hw)) hr).symm
+  · exact tauto_delete hne hr hfresh
+
+/-! #### The corpus shape, and every side condition that cannot be dropped
+
+`RevHfresh` and `RevUnivPart` are the S5 reviewer's, adopted verbatim from
+`review-S5/Probe.lean` with their names kept so the review's `#print axioms` lines
+reproduce against this file. -/
+
+namespace ScanCount
+
+/-- `Layout.Scan.count`'s published residual, as a `Residual`: `r = 0` is the
+UNIVERSAL, `h = 1` and `t = 2` are the existentials, and there is nothing else. -/
+def c : Constraint := mk 0 {1, 2} ∅
+def R : Residual := ⟨{1, 2}, {c}⟩
+def R' : Residual := ⟨∅, ∅⟩
+
+/-- The published qualification of `count` says nothing: it is `REquiv` to the empty
+residual, which is what `mkSimplified` now publishes. -/
+theorem count_tautology : REquiv R R' := by
+  have h : REquiv ⟨(∅ : Finset Var) ∪ {1, 2}, insert (mk 0 {1, 2} ∅) (∅ : System)⟩
+                  ⟨(∅ : Finset Var), (∅ : System)⟩ :=
+    tauto_delete_two (by decide) (by decide) (by decide) (by decide)
+  simpa [R, R', c] using h
+
+end ScanCount
+
+namespace TautoEmpty
+
+/-- `r <- ()`: the `k = 0` case.  `r = 0` is universal; there are no parts. -/
+def c : Constraint := mk 0 ∅ ∅
+def R : Residual := ⟨∅, {c}⟩
+def R' : Residual := ⟨∅, ∅⟩
+
+/-- **`P.Nonempty` is necessary.**  With no parts the constraint says `rho r = ∅`,
+which is a condition on the universal and does not survive deletion. -/
+theorem tauto_empty_not_deletable : ¬ REquiv R R' := by
+  rintro ⟨-, hback⟩
+  obtain ⟨tau, hag, hm⟩ :=
+    hback (fun _ => ({0} : Row)) ⟨fun _ => ({0} : Row), fun _ _ => rfl,
+      by intro d hd; simp [R'] at hd⟩
+  have hs : Sat tau c := hm c (by simp [R])
+  have h0 : tau 0 = ({0} : Row) := hag 0 (by simp [R])
+  have he := hs.eq_biUnion
+  simp only [c, lhs_mk, conc_mk, vset_mk, Finset.biUnion_empty, Finset.empty_union] at he
+  rw [h0] at he
+  simp at he
+
+end TautoEmpty
+
+namespace RevHfresh
+
+/-- `r <- (t)` with `t` existential, and `t` ALSO a part of `2 <- (t)` in the rest of the
+system.  `r = 0`, `P = {1}`, `G = {2 <- (1)}`, `ex = ∅`. -/
+def cT : Constraint := mk 0 {1} ∅
+def d  : Constraint := mk 2 {1} ∅
+def G  : System := {d}
+def R  : Residual := ⟨(∅ : Finset Var) ∪ {1}, insert cT G⟩
+def R' : Residual := ⟨(∅ : Finset Var), G⟩
+
+/-- every hypothesis of `tauto_delete` except `hfresh` holds here -/
+theorem hyps : ({1} : Finset Var).Nonempty ∧ (0 : Var) ∉ ({1} : Finset Var) :=
+  ⟨⟨1, by decide⟩, by decide⟩
+
+def rho : Assign := fun v => if v = 1 then {0} else ∅
+
+theorem holds_R : Holds rho R := by
+  refine ⟨fun _ => ∅, ?_, ?_⟩
+  · intro v hv
+    have hv1 : v ≠ 1 := by
+      rintro rfl; exact hv (by simp [R])
+    simp [rho, hv1]
+  · intro c hc
+    have : c = cT ∨ c = d := by
+      rcases Finset.mem_insert.mp hc with h | h
+      · exact Or.inl h
+      · exact Or.inr (Finset.mem_singleton.mp h)
+    rcases this with rfl | rfl <;> simp [cT, d, sat_mk_iff]
+
+theorem not_holds_R' : ¬ Holds rho R' := by
+  rintro ⟨tau, hag, hm⟩
+  have h1 : tau 1 = rho 1 := hag 1 (by simp [R'])
+  have h2 : tau 2 = rho 2 := hag 2 (by simp [R'])
+  have hs : Sat tau d := hm d (by simp [R', G])
+  unfold d at hs
+  rw [sat_mk_iff] at hs
+  have := hs.1
+  simp only [Finset.empty_union, Finset.singleton_biUnion] at this
+  rw [h1, h2] at this
+  simp [rho] at this
+
+/-- **`hfresh` IS necessary.**  Nothing here is about disjointness: the surviving
+constraint `2 <- (1)` pins the part to the rest of the system, so the caller cannot
+re-choose it. -/
+theorem hfresh_needed : ¬ REquiv R R' := fun h => not_holds_R' (h.1 rho holds_R)
+
+end RevHfresh
+
+namespace RevUnivPart
+
+/-- `r <- (u, e)` with `u` UNIVERSAL and `e` existential: `r = 0`, parts `{1, 2}`,
+`ex = {2}`.  This is C12's orientation; `DeadTwoParts` is R3's mirror of it. -/
+def c : Constraint := mk 0 {1, 2} ∅
+def R  : Residual := ⟨{2}, {c}⟩
+def R' : Residual := ⟨{2}, (∅ : System)⟩
+
+def rho : Assign := fun v => if v = 1 then {0} else ∅
+
+theorem holds_R' : Holds rho R' :=
+  ⟨rho, fun _ _ => rfl, by intro d hd; simp [R'] at hd⟩
+
+theorem not_holds_R : ¬ Holds rho R := by
+  rintro ⟨tau, hag, hm⟩
+  have h0 : tau 0 = rho 0 := hag 0 (by simp [R])
+  have h1 : tau 1 = rho 1 := hag 1 (by simp [R])
+  have hs : Sat tau c := hm c (by simp [R])
+  unfold c at hs
+  rw [sat_mk_iff] at hs
+  have he := hs.1
+  have hmem : (0 : Label) ∈ tau 0 := by
+    rw [he]
+    simp only [Finset.mem_union, Finset.mem_biUnion]
+    exact Or.inr ⟨1, by decide, by rw [h1]; simp [rho]⟩
+  rw [h0] at hmem
+  simp [rho] at hmem
+
+/-- **A universal part is a real containment**, so the deletion needs every part to be
+existential -- which in `tauto_delete` is carried by the SHAPE (`⟨ex ∪ P, ..⟩` against
+`⟨ex, ..⟩`) and in `Subst.deleteTautologies` by `vs.forall(ex)`. -/
+theorem univ_part_needed : ¬ REquiv R R' := fun h => not_holds_R (h.2 rho holds_R')
+
+end RevUnivPart
+
 /-! ## 9. R3.2(c) — Definition 14 as a ROW-AMBIGUITY criterion -/
 
 /-- **The criterion.**  A published `exists es. cs => tau` is ROW-AMBIGUOUS when some

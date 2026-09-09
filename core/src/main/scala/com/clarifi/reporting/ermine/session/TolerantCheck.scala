@@ -264,8 +264,20 @@ object TolerantCheck {
           // A FRESH SubstEnv per component (see the class comment).
           guard(Error) {
             Session.subst { implicit hm =>
+              /* S5 review Q-1: `publishing = true`.  `comp` is a component of
+               * `m.implicits` split by the same `implicitBindingComponents` that
+               * `Subst.inferBindingGroupTypes` uses, so this IS the module's
+               * top-level implicit binding group -- the editor's copy of the very
+               * generalisation the compiler publishes.  Without it the C12
+               * tautology deletion did not run here and LSP hover answered a type
+               * the compiler does not publish (measured through the LSP: hover
+               * `(exists h t. r <- (t,h)) => Relation r -> Relation r` against the
+               * `.ei`'s `Relation r -> Relation r`).  This path never writes an
+               * `.ei` -- the only `writeInterface` caller is `Session.dep`'s
+               * closure -- so it changes what the EDITOR shows and nothing on
+               * disk. */
               val (ds, sub) = inferImplicitBindingTypes(m.loc, toGamma(subs),
-                                                        Term.subTerm(subs, comp), true)
+                                                        Term.subTerm(subs, comp), true, true)
               for (d <- ds) if (!d.isTrivialConstraint) d.die("non-trivial top level constraint")
               sub
             }

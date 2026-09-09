@@ -1,0 +1,5 @@
+Imports: Builtin, Layout, Prelude, REPL, Tauto
+forall (r: rho). Relation r -> Relation r
+forall (r: rho). Relation r -> Relation r
+forall (r: rho).
+forall (r: rho) (s: rho).

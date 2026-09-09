@@ -1,11 +1,11 @@
 (!) : forall (a: rho) (b: rho) c. (exists (d: rho). a <- (d, b)) => Record a -> Field b c -> c
-(!*) : forall (r: rho) (h: rho). (exists (t: rho). r <- (h, t)) => Record r -> Row h -> Record h
+(!*) : forall (r: rho) (h: rho). (exists (t: rho). r <- (t, h)) => Record r -> Row h -> Record h
 (!+_Vector) : forall a. Vector a -> a -> Vector a
 (!=) : forall a. Eq a => a -> a -> Bool
 (!==) : forall a. a -> a -> Bool
-(!=_Predicate) : forall {a} (opl: rho -> a -> *) (a1: rho) (v: a) (opr: rho -> a -> *) (b: rho) (c: rho). (exists (AsOp: (d: rho) (e: rho) (f: rho) (rho -> a -> *) -> b1). AsOp opl, AsOp opr, a1 <- (d, e), b <- (e, f), c <- (d, e, f)) => opl a1 v -> opr b v -> Predicate c
+(!=_Predicate) : forall {a} (opl: rho -> a -> *) (a1: rho) (v: a) (opr: rho -> a -> *) (b: rho) (c: rho). (exists (AsOp: (d: rho) (e: rho) (f: rho) (rho -> a -> *) -> b1). AsOp opl, AsOp opr, a1 <- (e, d), b <- (f, e), c <- (f, e, d)) => opl a1 v -> opr b v -> Predicate c
 (!_Map) : forall k v. Map k v -> k -> v
-(#) : forall (rel: rho -> *) (r: rho) (r1: rho). (exists (c: rho). RelationalComb rel, r <- (r1, c)) => rel r -> Row r1 -> rel r1
+(#) : forall (rel: rho -> *) (r: rho) (r1: rho). (exists (c: rho). RelationalComb rel, r <- (c, r1)) => rel r -> Row r1 -> rel r1
 ($!) : forall a b. (a -> b) -> a -> b
 ($) : forall a b. (a -> b) -> a -> b
 (%_Op) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, AsOp opr, PrimitiveNum n, a <- (d, e), b <- (e, f), c <- (d, e, f)) => opl a n -> opr b n -> Op c n
@@ -14,24 +14,24 @@
 (&&_Predicate) : forall (r: rho) (s: rho) (t: rho). RUnion2 t r s => Predicate r -> Predicate s -> Predicate t
 (&'_Mem_Relation) : forall (a: rho) (r: rho). a <- (r, o) => Mem a -> Record r -> Mem a
 (&'_Relation) : forall (a: rho) (r: rho). a <- (r, o) => Relation a -> Record r -> Relation a
-(&_Mem_Relation) : forall (a: rho) (r: rho) (b: rho). (exists (c: rho) (d: rho) (e: rho). a <- (d, c), b <- (e, d, c), r <- (e, d)) => Mem a -> Record r -> Mem b
-(&_Relation) : forall (a: rho) (r: rho) (b: rho). (exists (c: rho) (d: rho) (e: rho). a <- (d, c), b <- (e, d, c), r <- (e, d)) => Relation a -> Record r -> Relation b
+(&_Mem_Relation) : forall (a: rho) (r: rho) (b: rho). (exists (c: rho) (d: rho) (e: rho). a <- (e, d), b <- (e, d, c), r <- (d, c)) => Mem a -> Record r -> Mem b
+(&_Relation) : forall (a: rho) (r: rho) (b: rho). (exists (c: rho) (d: rho) (e: rho). a <- (e, d), b <- (e, d, c), r <- (d, c)) => Relation a -> Record r -> Relation b
 (') : forall a b. (a -> b) -> a -> b
 (*) : forall n. Num n => n -> n -> n
 (**'_Relation) : forall (rel: rho -> *) (a: rho) (r: rho). (relalComb rel, a <- (r, o)) => rel a -> rel r -> rel a
 (***) : forall (f: * -> *) z a b. Selector f z a -> Selector f z b -> Selector f z (a, b)
-(**_Relation) : forall (a: rho -> *) (b: rho) (c: rho) (d: rho). (exists (e: rho) (f: rho) (g: rho). RelationalComb a, b <- (f, e), c <- (g, f), d <- (g, f, e)) => a b -> a c -> a d
+(**_Relation) : forall (a: rho -> *) (b: rho) (c: rho) (d: rho). (exists (e: rho) (f: rho) (g: rho). RelationalComb a, b <- (g, f), c <- (f, e), d <- (g, f, e)) => a b -> a c -> a d
 (*_Op) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, AsOp opr, PrimitiveNum n, a <- (d, e), b <- (e, f), c <- (d, e, f)) => opl a n -> opr b n -> Op c n
 (*_Primitive) : forall n. PrimitiveNum n => n -> n -> n
 (+) : forall n. Num n => n -> n -> n
 (++) : forall a. List a -> List a -> List a
 (++_Op) : forall (opl: rho -> * -> *) (a: rho) s (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, AsOp opr, PrimitiveString s, a <- (d, e), b <- (e, f), c <- (d, e, f)) => opl a s -> opr b s -> Op c s
-(++_Record) : forall (a: rho) (b: rho) (c: rho). c <- (a, b) => Record a -> Record b -> Record c
+(++_Record) : forall (a: rho) (b: rho) (c: rho). c <- (b, a) => Record a -> Record b -> Record c
 (++_String) : String -> String -> String
 (++_Vector) : forall a. Vector a -> Vector a -> Vector a
 (+_Op) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, AsOp opr, PrimitiveNum n, a <- (d, e), b <- (e, f), c <- (d, e, f)) => opl a n -> opr b n -> Op c n
 (+_Primitive) : forall n. PrimitiveNum n => n -> n -> n
-(-#) : forall (rel: rho -> *) (r: rho) (r1: rho) (r2: rho). (r <- (r2, r1), RelationalComb rel) => rel r -> Row r1 -> rel r2
+(-#) : forall (rel: rho -> *) (r: rho) (r1: rho) (r2: rho). (r <- (r1, r2), RelationalComb rel) => rel r -> Row r1 -> rel r2
 (-) : forall n. Num n => n -> n -> n
 (-_Op) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, AsOp opr, PrimitiveNum n, a <- (d, e), b <- (e, f), c <- (d, e, f)) => opl a n -> opr b n -> Op c n
 (-_Primitive) : forall n. PrimitiveNum n => n -> n -> n
@@ -61,7 +61,7 @@
 (<<_List) : forall a b. List a -> List b -> List a
 (<<_Maybe) : forall a b. Maybe a -> Maybe b -> Maybe a
 (<=) : forall a. Primitive a => a -> a -> Bool
-(<=_Predicate) : forall {a} (opl: rho -> a -> *) (a1: rho) (v: a) (opr: rho -> a -> *) (b: rho) (t: rho). (exists (AsOp1: (AsOp: (c1: rho) (c: rho) (d1: rho) (d: rho) (e1: rho) (e: rho) (f1: rho) (f: rho) (rho -> a -> *) (rho -> a -> *) (ro: rho) (rs: rho) (so: rho) -> -> b1) b1). AsOp opl, AsOp opr, AsOp1 opl, AsOp1 opr, a1 <- (d, e), a1 <- (d1, e1), b <- (e, f), b <- (e1, f1), c <- (d, e, f), c <- (ro, rs), c1 <- (d1, e1, f1), c1 <- (so, rs), t <- (ro, so, rs)) => opl a1 v -> opr b v -> Predicate t
+(<=_Predicate) : forall {a} (opl: rho -> a -> *) (a1: rho) (v: a) (opr: rho -> a -> *) (b: rho) (t: rho). (exists (AsOp1: (AsOp: (c1: rho) (c: rho) (d1: rho) (d: rho) (e1: rho) (e: rho) (f1: rho) (f: rho) (rho -> a -> *) (rho -> a -> *) (ro: rho) (rs: rho) (so: rho) -> -> b1) b1). AsOp opl, AsOp opr, AsOp1 opl, AsOp1 opr, a1 <- (e, d), a1 <- (e1, d1), b <- (f, e1), b <- (f1, e), c <- (f, e1, d1), c <- (so, rs), c1 <- (f1, e, d), c1 <- (ro, rs), t <- (ro, so, rs)) => opl a1 v -> opr b v -> Predicate t
 (<=_Primitive) : forall a. Primitive a => a -> a -> Bool
 (<_Predicate) : forall (opl: rho -> * -> *) (a: rho) v (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, AsOp opr, a <- (d, e), b <- (e, f), c <- (d, e, f)) => opl a v -> opr b v -> Predicate c
 (<_Primitive) : forall a. Primitive a => a -> a -> Bool
@@ -72,7 +72,7 @@
 (==_Predicate) : forall (opl: rho -> * -> *) (a: rho) v (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, AsOp opr, a <- (d, e), b <- (e, f), c <- (d, e, f)) => opl a v -> opr b v -> Predicate c
 (>) : forall a. Primitive a => a -> a -> Bool
 (>=) : forall a. Primitive a => a -> a -> Bool
-(>=_Predicate) : forall {a} (opl: rho -> a -> *) (a1: rho) (v: a) (opr: rho -> a -> *) (b: rho) (t: rho). (exists (AsOp1: (AsOp: (c1: rho) (c: rho) (d1: rho) (d: rho) (e1: rho) (e: rho) (f1: rho) (f: rho) (rho -> a -> *) (rho -> a -> *) (ro: rho) (rs: rho) (so: rho) -> -> b1) b1). AsOp opl, AsOp opr, AsOp1 opl, AsOp1 opr, a1 <- (d, e), a1 <- (d1, e1), b <- (e, f), b <- (e1, f1), c <- (d, e, f), c <- (ro, rs), c1 <- (d1, e1, f1), c1 <- (so, rs), t <- (ro, so, rs)) => opl a1 v -> opr b v -> Predicate t
+(>=_Predicate) : forall {a} (opl: rho -> a -> *) (a1: rho) (v: a) (opr: rho -> a -> *) (b: rho) (t: rho). (exists (AsOp1: (AsOp: (c1: rho) (c: rho) (d1: rho) (d: rho) (e1: rho) (e: rho) (f1: rho) (f: rho) (rho -> a -> *) (rho -> a -> *) (ro: rho) (rs: rho) (so: rho) -> -> b1) b1). AsOp opl, AsOp opr, AsOp1 opl, AsOp1 opr, a1 <- (e, d), a1 <- (e1, d1), b <- (f, e1), b <- (f1, e), c <- (f, e1, d1), c <- (so, rs), c1 <- (f1, e, d), c1 <- (ro, rs), t <- (ro, so, rs)) => opl a1 v -> opr b v -> Predicate t
 (>=_Primitive) : forall a. Primitive a => a -> a -> Bool
 (>>=_Either) : forall e a b. Either e a -> (a -> Either e b) -> Either e b
 (>>=_IO) : forall a b. IO a -> (a -> IO b) -> IO b
@@ -244,7 +244,7 @@ borderSizeLeft : forall (f: * -> *) z. LineStyle -> LineThickness -> Report f z 
 borderSizeRight : forall (f: * -> *) z. LineStyle -> LineThickness -> Report f z -> Report f z
 borderSizeTop : forall (f: * -> *) z. LineStyle -> LineThickness -> Report f z -> Report f z
 bottomK : forall (h: rho) (rel: rho -> *) (r: rho). (exists (c: rho). RelationalComb rel, r <- (h, c)) => Row h -> Int -> rel r -> rel r
-bottomKBy : forall (h: rho) (k: rho) (rel: rho -> *) (kv2: rho). (exists (c: rho) (r: rho). Relational rel, kv2 <- (h, c, k), r <- (c, h)) => Row h -> Row k -> Int -> rel kv2 -> Mem kv2
+bottomKBy : forall (h: rho) (k: rho) (rel: rho -> *) (kv: rho). (exists (c: rho) (r: rho). Relational rel, kv <- (k, c, h), r <- (h, c)) => Row h -> Row k -> Int -> rel kv -> Mem kv
 box : forall (f: * -> *) z. Report f z -> Report f z
 boxAndWhiskers : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (er: rho) (rel: rho -> *) (r: rho). (exists (o: rho). AsOp x, AsOp y, AsPresentation s, Has r er, Relational rel, r <- (o, yr, xr, sr)) => s sr sa -> x xr xa -> y yr ya -> PresRow er -> rel r -> ChartSeries xa ya
 break : forall a. (a -> Bool) -> List a -> (List a, List a)
@@ -293,7 +293,7 @@ concatMap_Vector : forall a b. (a -> Vector b) -> Vector a -> Vector b
 concat_String : List String -> String
 cons : forall (a: rho) b (c: rho) (d: rho). d <- (c, a) => Field a b -> b -> Record c -> Record d
 cons_Bracket : forall a. a -> List a -> List a
-cons_Bracket_Op : forall (opl: rho -> * -> *) (a: rho) s (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, AsOp opr, PrimitiveString s, a <- (e, d), b <- (f, e), c <- (f, e, d)) => opl a s -> opr b s -> Op c s
+cons_Bracket_Op : forall (opl: rho -> * -> *) (a: rho) s (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, AsOp opr, PrimitiveString s, a <- (d, e), b <- (e, f), c <- (d, e, f)) => opl a s -> opr b s -> Op c s
 cons_Bracket_Vector : forall a. a -> Vector a -> Vector a
 cons_Vector : forall a. a -> Vector a -> Vector a
 const : forall a b. a -> b -> a
@@ -303,14 +303,14 @@ contMonad : forall r. Monad (Cont r)
 contains : forall a. Eq a => a -> List a -> Bool
 contramap : forall b a. (b -> a) -> (a -> a -> Ordering) -> b -> b -> Ordering
 copyColumn : forall (r1: rho) a (r2: rho) (rel: rho -> *) (ri: rho) (ro: rho). (Relational rel, ro <- (r1, r2, t), ri <- (r1, t)) => Field r1 a -> Field r2 a -> rel ri -> rel ro
-copyF : forall (a: rho) b (c: rho) (d: rho) (e: rho). (exists (f: rho). c <- (f, a), e <- (a, d)) => Field a b -> Record c -> Record d -> Record e
+copyF : forall (a: rho) b (c: rho) (d: rho) (e: rho). (exists (f: rho). c <- (a, f), e <- (d, a)) => Field a b -> Record c -> Record d -> Record e
 copySign : Double -> Double -> Double
 copySign_Float : Float -> Float -> Float
 cos : Double -> Double
 cosh : Double -> Double
-count : forall (a: rho -> *) (b: rho). (b <- (b), RelationalComb a) => a b -> a (|Count|)
+count : forall (a: rho -> *) (b: rho). RelationalComb a => a b -> a (|Count|)
 countAgg_Aggregate : forall n. PrimitiveNum n => Aggregate (||) n
-count_Aggregate : forall (a: rho -> *) (b: rho). (b <- (b), RelationalComb a) => a b -> a (|Count|)
+count_Aggregate : forall (a: rho -> *) (b: rho). RelationalComb a => a b -> a (|Count|)
 currency : forall (f: * -> *) z. String -> Double -> Report f z
 curry : forall a b c. ((a, b) -> c) -> a -> b -> c
 cyan : Color
@@ -321,11 +321,11 @@ dateAdd#_Op : forall (r: rho) (r1: rho) d (r2: rho). PrimitiveTemporal d => Op r
 dateAdd'_Op : forall (op1: rho -> * -> *) (r: rho) (op2: rho -> * -> *) (s: rho) d (t: rho). (exists (ro: rho) (rs: rho) (so: rho). AsOp op1, AsOp op2, PrimitiveTemporal d, r <- (ro, rs), s <- (so, rs), t <- (ro, so, rs)) => op1 r Int -> TimeUnit -> op2 s d -> Op t d
 dateAdd_Op : forall (op: rho -> * -> *) (r: rho) d. (PrimitiveTemporal d, AsOp op) => Int -> TimeUnit -> op r d -> Op r d
 dateDiff#_Op : forall (r: rho) d (r1: rho) (r2: rho). PrimitiveTemporal d => TimeUnit -> Op r d -> Op r1 d -> Op r2 Int
-dateDiff_Op : forall (a: rho -> * -> *) (b: rho) c (d: rho -> * -> *) (e: rho) (r2: rho). (AsOp d, PrimitiveTemporal c, AsOp a) => TimeUnit -> a b c -> d e c -> Op r2 Int
+dateDiff_Op : forall (op1: rho -> * -> *) (r1: rho) d (op2: rho -> * -> *) (r2: rho) (t: rho). (exists (ro: rho) (rs: rho) (so: rho). AsOp op1, AsOp op2, PrimitiveTemporal d, r1 <- (ro, rs), r2 <- (so, rs), t <- (ro, so, rs)) => TimeUnit -> op1 r1 d -> op2 r2 d -> Op t Int
 dateInput : forall (f: * -> *) z. String -> (Report f z -> Selector f z (Maybe Date) -> Report f z) -> Report f z
 dateInputLateBinding : forall (f: * -> *) z. String -> ((String -> Report f z) -> Selector f z (Maybe Date) -> Report f z) -> Report f z
 dateRange : forall (f: * -> *) z. Date -> Date -> Report f z
-dateRange_Op : forall (op: rho -> * -> *) (r: rho) a (op1: rho -> * -> *) (r1: rho) a1 (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp op, AsOp op1, c <- (f, e, d), r <- (e, d), r1 <- (f, e), r1 <- (r1)) => op r a -> op1 r1 a1 -> Op c String
+dateRange_Op : forall (op: rho -> * -> *) (r: rho) a (op1: rho -> * -> *) (r1: rho) a1 (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp op, AsOp op1, c <- (d, e, f), r <- (d, e), r1 <- (e, f)) => op r a -> op1 r1 a1 -> Op c String
 days : TimeUnit
 decrementDate : Int -> TimeUnit -> Date -> Date
 defaultChartLegendOptions : ChartLegendOptions#
@@ -352,15 +352,15 @@ drilldownBarChartW : forall (f: * -> *) a (cr: rho) (vr: rho) (sr: rho) sa ca va
 drilldownBarChartW' : forall (f: * -> *) a (cr: rho) (vr: rho) (sr: rho) sa ca va (xtr: rho) xta (ytr: rho) yta. Writer f a -> AxisChartData# -> List (Record cr, Record cr) -> List (Record vr, Record vr) -> Presentation sr sa -> Presentation cr ca -> Presentation vr va -> Maybe (Presentation xtr xta) -> Maybe (Presentation ytr yta) -> String -> String -> Relation# -> f a
 drilldownKeyValueDateTable : forall a b (k: rho) (v: rho) (i: rho) (lbl: rho) (p: rho) id (c: rho) (d: rho) x (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Relational rel, i <- (lbl, o), r <- (k, v, p, c, i)) => SoftRelation a b k v -> Maybe (Legend i) -> Field lbl String -> Field p id -> Field c id -> Field d x -> rel r -> Report f z
 drilldownKeyValueTable : forall a b (k: rho) (v: rho) (i: rho) (lbl: rho) (p: rho) id (c: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Relational rel, i <- (lbl, o), r <- (k, v, p, c, i)) => SoftRelation a b k v -> Maybe (Legend i) -> Field lbl String -> Field p id -> Field c id -> rel r -> Report f z
-drilldownKeyValueTable2 : forall a b (k: rho) (v: rho) (i: rho) a1 (r: rho) (rel: rho -> *) (a2: rho) (rel1: rho -> *) (r2: rho) (f: * -> *) z. (exists (i1: rho) (s: rho). Relational rel1, RelationalComb rel, a2 <- (i, r, k, v), a2 <- (k, i, r, v), a2 <- (r, i, k, v), i1 <- (i, r), s <- (v, k, i)) => SoftRelation a b k v -> Maybe (Legend i) -> a1 -> DrilldownList r -> rel a2 -> rel1 r2 -> Report f z
+drilldownKeyValueTable2 : forall a b (k: rho) (v: rho) (i: rho) a1 (r: rho) (rel: rho -> *) (a2: rho) (rel1: rho -> *) (r2: rho) (f: * -> *) z. (exists (i1: rho) (s: rho). Relational rel1, RelationalComb rel, a2 <- (v, k, i, r), i1 <- (r, i), s <- (v, k, i)) => SoftRelation a b k v -> Maybe (Legend i) -> a1 -> DrilldownList r -> rel a2 -> rel1 r2 -> Report f z
 drilldownPieChart : forall nm (label: rho) (prl: rho -> * -> *) lv (prd: rho -> * -> *) (r0: rho) d (r1: rho) id (r2: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (t: rho). AsPresentation prd, AsPresentation prl, PrimitiveNum d, Relational rel, r <- (r0, r1, r2, label, t)) => String -> Maybe (Atomic nm) -> ChartLegendOptions# -> List (Record label, Color) -> ChartRenderHints# -> prl label lv -> prd r0 d -> Field r1 id -> Field r2 id -> rel r -> Report f z
 drilldownPieChart# : forall (f: * -> *) a (r: rho) b (s: rho) c. Writer f a -> PieChartData# -> Presentation r b -> Presentation s c -> String -> String -> Relation# -> f a
 drilldownPieChart2 : forall nm (a: rho) (b: rho -> * -> *) c (d: rho -> * -> *) (e: rho) f (r: rho) (g: rho -> *) (h: rho) (i: rho -> *) (j: rho) (f1: * -> *) a1. (Relational g, AsPresentation d, AsPresentation b, Relational i) => String -> Maybe (Atomic nm) -> ChartLegendOptions# -> List (Record a, Color) -> ChartRenderHints# -> b a c -> d e f -> DrilldownList r -> g h -> i j -> Report f1 a1
 drilldownPieChart2# : forall (f: * -> *) a (r: rho) b (s: rho) c. Writer f a -> PieChartData# -> Presentation r b -> Presentation s c -> List# (Pair# String String) -> Relation# -> Relation# -> f a
 drilldownPieChart2W : forall (f: * -> *) a nm (r: rho) a1 (s: rho) c. Writer f a -> String -> Maybe (Atomic nm) -> ChartLegendOptions# -> List (Record r, Color) -> ChartRenderHints# -> Presentation r a1 -> Presentation s c -> List (String, String) -> Relation# -> Relation# -> f a
 drilldownPieChartW : forall (f: * -> *) a nm (r: rho) a1 (s: rho) c. Writer f a -> String -> Maybe (Atomic nm) -> ChartLegendOptions# -> List (Record r, Color) -> ChartRenderHints# -> Presentation r a1 -> Presentation s c -> String -> String -> Relation# -> f a
-drilldownPivotTabular : forall (k: rho) (s: rho) (v: rho) (label: rho) (r1: rho) (s1: rho) (s2: rho) (rel: rho -> *) (t: rho) (f: * -> *) z. (exists (Has: rho -> a) (o: rho) (t1: rho) (t2: rho). Has s2 r1, Has s2 t1, RelationalComb rel, t <- (k, s, v), t <- (s, v, k), t <- (v, k, s), t <- (v, s, k), t1 <- (o, label), t2 <- (v, s)) => Row k -> Either (Sort k) (Record k -> Record k -> Ordering) -> Maybe (Legend s) -> (Record k -> PivotColumn v) -> Field label String -> DrilldownList r1 -> (Mem s1 -> Mem s2) -> rel t -> Report f z
-drilldownPivotTabular' : forall (k: rho) (v: rho) (s: rho) (label: rho) (r1: rho) (s1: rho) (s2: rho) (rel: rho -> *) (t: rho) (f: * -> *) z. (exists (Has: rho -> a) (o: rho) (t1: rho) (t2: rho). Has s2 r1, Has s2 t2, RelationalComb rel, t <- (k, s, v), t <- (s, v, k), t <- (v, k, s), t <- (v, s, k), t1 <- (v, s), t2 <- (o, label)) => DynamicFulcrum k v -> Maybe (Legend s) -> Field label String -> DrilldownList r1 -> (Mem s1 -> Mem s2) -> rel t -> Report f z
+drilldownPivotTabular : forall (k: rho) (i: rho) (v: rho) (label: rho) (r1: rho) (s: rho) (s1: rho) (rel: rho -> *) (t: rho) (f: * -> *) z. (exists (Has: rho -> a) (o: rho) (t1: rho) (t2: rho). Has s1 r1, Has s1 t2, RelationalComb rel, t <- (i, v, k), t1 <- (v, i), t2 <- (o, label)) => Row k -> Either (Sort k) (Record k -> Record k -> Ordering) -> Maybe (Legend i) -> (Record k -> PivotColumn v) -> Field label String -> DrilldownList r1 -> (Mem s -> Mem s1) -> rel t -> Report f z
+drilldownPivotTabular' : forall (k: rho) (v: rho) (i: rho) (label: rho) (r1: rho) (s: rho) (s1: rho) (rel: rho -> *) (t: rho) (f: * -> *) z. (exists (Has: rho -> a) (o: rho) (t1: rho) (t2: rho). Has s1 r1, Has s1 t2, RelationalComb rel, t <- (k, v, i), t1 <- (i, v), t2 <- (label, o)) => DynamicFulcrum k v -> Maybe (Legend i) -> Field label String -> DrilldownList r1 -> (Mem s -> Mem s1) -> rel t -> Report f z
 drilldownTable : forall (v: rho) (label: rho) (r1: rho) id (r2: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Relational rel, r <- (r1, r2, v), v <- (label, o)) => Maybe (Legend v) -> Field label String -> Field r1 id -> Field r2 id -> rel r -> Report f z
 drilldownTable2 : forall (v: rho) (label: rho) (r1: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (exists (o: rho). Has r r1, Has r v, Relational rel, v <- (label, o)) => Maybe (Legend v) -> Field label String -> DrilldownList r1 -> rel r -> rel r -> Report f z
 drop : forall a. Int -> List a -> List a
@@ -419,7 +419,7 @@ fenceposts : forall a. List (a, a) -> List a
 fieldName : forall (a: rho) b. Field a b -> String
 fieldType : forall (a: rho) b. Field a b -> Prim b
 filter : forall a. (a -> Bool) -> List a -> List a
-filterAll : forall (r: rho) (a: rho -> *) (b: rho). (exists (c: rho). RelationalComb a, b <- (c, r)) => Record r -> a b -> a b
+filterAll : forall (r: rho) (a: rho -> *) (b: rho). (exists (c: rho). RelationalComb a, b <- (r, c)) => Record r -> a b -> a b
 filterEq : forall (c: rho) a (r: rho). (exists (c1: rho). r <- (c, c1)) => Field c a -> a -> Relation r -> Relation r
 filterNEq : forall (c: rho) a (r: rho). (exists (c1: rho). r <- (c, c1)) => Field c a -> a -> Relation r -> Relation r
 filter_Predicate : forall (a: rho) (b: rho -> *) (c: rho). (exists (d: rho). RelationalComb b, c <- (d, a)) => Predicate a -> b c -> b c
@@ -496,7 +496,7 @@ getDate : Date -> Int
 getExponent : Double -> Int
 getExponent_Float : Float -> Int
 getF : forall (h: rho) a (r: rho). r <- (h, t) => Field h a -> Record r -> a
-getF2 : forall (a: rho) b (c: rho) d (e: rho). (exists (f: rho) (g: rho). e <- (f, a), e <- (g, c)) => Field a b -> Field c d -> Record e -> (b, d)
+getF2 : forall (a: rho) b (c: rho) d (e: rho). (exists (f: rho) (g: rho). e <- (a, f), e <- (c, g)) => Field a b -> Field c d -> Record e -> (b, d)
 getFieldOr : forall a (h: rho) (r: rho). r <- (h, t) => a -> Field h (Nullable a) -> Record r -> a
 getJust : forall a. String -> Maybe a -> a
 getMessage : Throwable -> String
@@ -514,7 +514,7 @@ groupBy : forall (k: rho) (v: rho) (v2: rho) (rel: rho -> *) (kv: rho) (kv2: rho
 groupBy# : forall (a: rho) (b: rho) (c: rho) (d: rho). List# (Pair# String PrimT) -> (Mem a -> Mem b) -> Mem c -> Mem d
 groupBy_List : forall a. (a -> a -> Bool) -> List a -> List (List a)
 groupBy_Map : forall k a. (k -> k -> Ordering) -> (a -> k) -> Vector a -> Map k (Vector a)
-growthOf10k_Op : forall (opl: rho -> * -> *) (c: rho). (c <- (c), AsOp opl) => opl c (Nullable Double) -> Op c (Nullable Double)
+growthOf10k_Op : forall (opl: rho -> * -> *) (c: rho). AsOp opl => opl c (Nullable Double) -> Op c (Nullable Double)
 gt : forall a. (a -> a -> Ordering) -> a -> a -> Bool
 h : forall (f: * -> *) z. Int -> String -> Report f z
 h1 : forall (f: * -> *) z. String -> Report f z
@@ -532,7 +532,7 @@ hashLeftJoin : forall (a: rho) b (c: rho) (d: rho) (e: rho). (exists (f: rho) (g
 head : forall a. List a -> a
 head# : forall a. List# a -> a
 headDef : forall a. a -> List a -> a
-headFieldOr : forall a (h: rho) (r: rho). (exists (t: rho). r <- (t, h)) => a -> Field h (Nullable a) -> List (Record r) -> a
+headFieldOr : forall a (h: rho) (r: rho). (exists (t: rho). r <- (h, t)) => a -> Field h (Nullable a) -> List (Record r) -> a
 headOption : forall a. List a -> Maybe a
 headOrElse : forall a. List a -> a -> a
 header : forall (f: * -> *) z. String -> Report f z -> Report f z
@@ -637,7 +637,7 @@ joinBy' : forall (kh: rho) (rel: rho -> *) (r1: rho) (r2: rho) (r: rho). (Relati
 joinOn : forall (a: rho) (b: rho) (c: rho) (d: rho) (e: rho). (exists (f: rho) (g: rho) (h: rho) (i: rho) (j: rho). a <- (g, h), b <- (j, g), c <- (i, a), d <- (f, b), e <- (j, f, c)) => UnifyFields a b -> Relation c -> Relation d -> Relation e
 joinWithDefault : forall (extra: rho) a (rel: rho -> *) (r1: rho) (r2: rho) (r3: rho). (exists (c: rho) (s: rho). PrimitiveAtom a, RelationalComb rel, r1 <- (c, s), r2 <- (c, extra), r3 <- (c, s, extra)) => Field extra a -> a -> rel r1 -> rel r2 -> rel r3
 keyValueTabular : forall a b (k: rho) (v: rho) (i: rho) (rel: rho -> *) (r: rho) (f: * -> *) z. (Relational rel, r <- (k, v, i)) => SoftRelation a b k v -> Maybe (Legend i) -> rel r -> Report f z
-keyedDrilldown : forall (p: rho) id (c: rho) (k: rho) a (pr2: rho -> * -> *) (v: rho) b (r: rho) (rel: rho -> *) (r1: rho) (f: * -> *) z. (exists (AsPresentation: (o: rho) (rho -> * -> *) -> a1). AsPresentation Field, AsPresentation pr2, Relational rel, o <- (v, k), r <- (r), r1 <- (k, v, p, c, r)) => Field p id -> Field c id -> Field k a -> pr2 v b -> (String, Field r String) -> rel r1 -> Report f z
+keyedDrilldown : forall (p: rho) id (c: rho) (k: rho) a (pr2: rho -> * -> *) (v: rho) b (r: rho) (rel: rho -> *) (r1: rho) (f: * -> *) z. (exists (AsPresentation: (o: rho) (rho -> * -> *) -> a1). AsPresentation Field, AsPresentation pr2, Relational rel, o <- (k, v), r1 <- (r, c, p, v, k)) => Field p id -> Field c id -> Field k a -> pr2 v b -> (String, Field r String) -> rel r1 -> Report f z
 labeled : forall (f: * -> *) z. String -> String -> Report f z
 lastBy : forall (h: rho) (r: rho). (exists (c: rho). r <- (h, c)) => Row h -> Relation r -> Relation r
 le : forall a. (a -> a -> Ordering) -> a -> a -> Bool
@@ -683,7 +683,7 @@ log10_Op : forall (op: rho -> * -> *) (a: rho) n (b: rho). (exists (c: rho). AsO
 log1p : Double -> Double
 logBase_Op : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, AsOp opr, PrimitiveNum n, a <- (d, e), b <- (e, f), c <- (d, e, f)) => opl a n -> opr b n -> Op c n
 log_Op : forall (op: rho -> * -> *) (a: rho) n (b: rho). (exists (c: rho). AsOp op, PrimitiveNum n, b <- (c, a)) => op a n -> Op b n
-lookbackJoin : forall (r: rho) (r1: rho) (a: rho) (b: rho). (exists (c1: rho) (c: rho) (d: rho) (e: rho) (f: rho) (g: rho) (h: rho) (i: rho) (j: rho) (k: rho) (l: rho) (r2: rho) (t: rho). a <- (c, g), a <- (k, r), b <- (d, c, g), e <- (h, l), e <- (r, f), j <- (f, k), j <- (k, f), r <- (r), r1 <- (i, h), r1 <- (r, c1), r2 <- (d, c), t <- (f, i, r), t <- (i, h, l), t <- (i, r, f), t <- (l, c1, r)) => (Field r Date -> Op r Date) -> Field r Date -> Relation r1 -> Relation a -> Relation b
+lookbackJoin : forall (r: rho) (r1: rho) (a: rho) (b: rho). (exists (c1: rho) (c2: rho) (c: rho) (d: rho) (e: rho) (f: rho) (g: rho) (h: rho) (o: rho) (r2: rho) (t: rho). a <- (c2, r), a <- (h, g), b <- (h, g, f), o <- (g, f), r1 <- (c, e), r1 <- (c1, r), r2 <- (d, c), t <- (d, c, e), t <- (r, d, c1)) => (Field r Date -> Op r Date) -> Field r Date -> Relation r1 -> Relation a -> Relation b
 lookupLatest : forall (h: rho) (r: rho). r <- (h, t) => Field h Date -> Relation h -> Relation r -> Relation r
 lookupLatest' : forall (keys: rho) (r: rho). r <- (keys, t) => (Date -> Relation keys -> Relation r) -> Date -> Date -> Relation keys -> Relation r
 lookupLatest1 : forall (h: rho) (r: rho). r <- (h, t) => Field h Date -> Date -> Relation r -> Relation r
@@ -717,17 +717,17 @@ map_Vector : forall a b. (a -> b) -> Vector a -> Vector b
 mapply : forall (f: * -> *) a b. Functor f -> f (a -> b) -> a -> f b
 markdownShown : forall a (f: * -> *) z. (Primitive a, Unscaled a) => a -> Report f z
 materialize : forall (a: rho -> *) (b: rho). Relational a => a b -> Relation b
-materializeWithPK : forall (k: rho) (rel: rho -> *) (a: rho). (exists (c: rho). Relational rel, a <- (c, k)) => Row k -> rel a -> Relation a
+materializeWithPK : forall (k: rho) (rel: rho -> *) (a: rho). (exists (c: rho). Relational rel, a <- (k, c)) => Row k -> rel a -> Relation a
 max : forall a. (a -> a -> Ordering) -> a -> a -> a
 maxA : forall (f: * -> *) z. List Area -> Report f z -> Report f z
 maxBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). Primitive n, Relational rel, r1 <- (t, r)) => Field r n -> rel r1 -> rel r
-maxBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). Primitive n, Relational rel, r1 <- (t, r)) => Field r n -> rel r1 -> rel r
+maxBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). Primitive n, Relational rel, r1 <- (r, t)) => Field r n -> rel r1 -> rel r
 maxExponent : Int
 maxExponent_Float : Int
 maxH : forall (f: * -> *) z. List ErasedMagnitude -> Report f z -> Report f z
 maxPositive : Double
 maxPositive_Float : Float
-maxRowBy : forall (r: rho) n (rel: rho -> *) (a: rho). (exists (b: rho). Primitive n, RelationalComb rel, a <- (b, r), r <- (r)) => Field r n -> rel a -> rel a
+maxRowBy : forall (r: rho) n (rel: rho -> *) (a: rho). (exists (b: rho). Primitive n, RelationalComb rel, a <- (r, b)) => Field r n -> rel a -> rel a
 maxW : forall (f: * -> *) z. List ErasedMagnitude -> Report f z -> Report f z
 max_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, Primitive n) => op r n -> Aggregate r n
 max_Long : Long -> Long -> Long
@@ -742,7 +742,7 @@ maybeMonad : Monad Maybe
 maybeToList : forall a. Maybe a -> List a
 maybeTraversable : Traversable Maybe
 meanBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). PrimitiveNum n, Relational rel, r1 <- (t, r)) => Field r n -> rel r1 -> rel r
-meanBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). PrimitiveNum n, Relational rel, r1 <- (t, r)) => Field r n -> rel r1 -> rel r
+meanBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). PrimitiveNum n, Relational rel, r1 <- (r, t)) => Field r n -> rel r1 -> rel r
 mean_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, PrimitiveNum n) => op r n -> Aggregate r n
 medianBy : forall (v: rho) n (rel: rho -> *) (r: rho). (r <- (v, t), Relational rel, PrimitiveNum n) => Field v n -> rel r -> Mem v
 medium : LineThickness
@@ -756,14 +756,14 @@ milliseconds : TimeUnit
 min : forall a. (a -> a -> Ordering) -> a -> a -> a
 minBy : forall a b. Primitive b => (a -> b) -> List a -> Maybe a
 minBy_A : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). Primitive n, Relational rel, r1 <- (t, r)) => Field r n -> rel r1 -> rel r
-minBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). Primitive n, Relational rel, r1 <- (t, r)) => Field r n -> rel r1 -> rel r
+minBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). Primitive n, Relational rel, r1 <- (r, t)) => Field r n -> rel r1 -> rel r
 minExponent : Int
 minExponent_Float : Int
 minNormal : Double
 minNormal_Float : Float
 minPositive : Double
 minPositive_Float : Float
-minRowBy : forall (r: rho) n (rel: rho -> *) (a: rho). (exists (b: rho). Primitive n, RelationalComb rel, a <- (b, r), r <- (r)) => Field r n -> rel a -> rel a
+minRowBy : forall (r: rho) n (rel: rho -> *) (a: rho). (exists (b: rho). Primitive n, RelationalComb rel, a <- (r, b)) => Field r n -> rel a -> rel a
 min_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, Primitive n) => op r n -> Aggregate r n
 min_Long : Long -> Long -> Long
 minfinity : Double
@@ -789,7 +789,7 @@ nearestDateWithin : forall (rsparse: rho) (rfine: rho) (r: rho). r <- (rfine, rs
 neg : forall n. Num n => n -> n
 neg_Primitive : forall n. PrimitiveNum n => n -> n
 negate : forall a. Ring a -> a -> a
-negate_Op : forall (opr: rho -> * -> *) (b: rho). (b <- (b), AsOp opr) => opr b (Nullable Double) -> Op b (Nullable Double)
+negate_Op : forall (opr: rho -> * -> *) (c: rho). AsOp opr => opr c (Nullable Double) -> Op c (Nullable Double)
 nel# : forall a. a -> List# a -> NonEmpty# a
 neq : forall a. (a -> a -> Ordering) -> a -> a -> Bool
 nextAfter : Double -> Double -> Double
@@ -859,7 +859,7 @@ parseInt : Int -> String -> Maybe Int
 parseLong : Int -> String -> Maybe Long
 parseShort : Int -> String -> Maybe Short
 partialLookup : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho) (r: rho). (r <- (key, base), kv <- (key, val), PrimitiveAtom a, RelationalComb rel) => Field key a -> Field val a -> rel kv -> rel r -> rel r
-partialLookup' : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho) (r: rho) (r2: rho). (RelationalComb rel, r2 <- (key, val, base), r <- (key, base), kv <- (key, val), PrimitiveAtom a) => Field key a -> Field val a -> rel kv -> rel r -> rel r2
+partialLookup' : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho) (r: rho) (r2: rho). (r2 <- (key, val, base), r <- (key, base), kv <- (key, val), PrimitiveAtom a, RelationalComb rel) => Field key a -> Field val a -> rel kv -> rel r -> rel r2
 partialRecordOrd : forall (r: rho) (s: rho). s <- (r, o) => Sort r -> Record s -> Record s -> Ordering
 partition : forall a. List a -> (a -> Bool) -> (List a, List a)
 partitionEithers : forall a b. List (Either a b) -> (List a, List b)
@@ -938,16 +938,16 @@ refl_Type : forall {k} (a: k). a ==_Type.Eq a
 relation : forall (r: rho). List (Record r) -> Relation r
 relation# : forall (a: rho -> *) (b: rho). Relational a => a b -> Relation#
 relationWithHeader : forall (r: rho). Row r -> List (Record r) -> Relation r
-remoteSelection : forall (rel: rho -> *) (a: rho) (b: rho) c (f: * -> *) z. (exists (d: rho). Relational rel, a <- (b, d)) => rel a -> Field b c -> Report f z -> (List (Record a) -> Record a -> Report f z) -> Report f z
-remoteSelectionDescending : forall (rel: rho -> *) (a: rho) (b: rho) c (f: * -> *) z. (exists (d: rho). Relational rel, a <- (b, d)) => rel a -> Field b c -> Report f z -> (List (Record a) -> Record a -> Report f z) -> Report f z
+remoteSelection : forall (rel: rho -> *) (a: rho) (b: rho) c (f: * -> *) z. (exists (d: rho). Relational rel, a <- (d, b)) => rel a -> Field b c -> Report f z -> (List (Record a) -> Record a -> Report f z) -> Report f z
+remoteSelectionDescending : forall (rel: rho -> *) (a: rho) (b: rho) c (f: * -> *) z. (exists (d: rho). Relational rel, a <- (d, b)) => rel a -> Field b c -> Report f z -> (List (Record a) -> Record a -> Report f z) -> Report f z
 rename : forall (a: rho) b (c: rho) (d: rho -> *) (e: rho) (f: rho). (exists (g: rho). RelationalComb d, e <- (g, a), f <- (g, c)) => Field a b -> Field c b -> d e -> d f
-rename' : forall (a: rho) b (c: rho) (rel: rho -> *) (r: rho) (d: rho). (exists (e: rho) (r2: rho). RelationalComb rel, d <- (c, e), r <- (e, a, c), r2 <- (a, e)) => Field a b -> Field c b -> rel r -> rel d
+rename' : forall (a: rho) b (c: rho) (rel: rho -> *) (r: rho) (d: rho). (exists (e: rho) (r2: rho). RelationalComb rel, d <- (e, c), r <- (c, a, e), r2 <- (e, a)) => Field a b -> Field c b -> rel r -> rel d
 reorder : forall (r: rho) (s: rho). (exists (c: rho). r <- (s, c)) => Sort r -> Sort s -> Sort r
 reorderSome : forall (r: rho) (s: rho). Sort r -> Sort s -> Sort r
 reorderSplit : forall (r: rho) (s: rho) (rs: rho) (ro: rho). (exists (c: rho). r <- (rs, ro), s <- (rs, c)) => Sort r -> Sort s -> (Sort rs, Sort ro)
 repeat : forall a. a -> List a
 replaceAll_String : String -> String -> String -> String
-replaceColumn : forall (r: rho) a (rel: rho -> *) (ra: rho) (rb: rho) (r2: rho). (exists (r11: rho) (r1: rho) (r21: rho). RelationalComb rel, r1 <- (r, r11, r21), r1 <- (r2, r), ra <- (r, r11), rb <- (r, r21)) => Field r a -> rel ra -> rel rb -> rel r2
+replaceColumn : forall (r: rho) a (rel: rho -> *) (ra: rho) (rb: rho) (r2: rho). (exists (r1: rho) (r21: rho) (r3: rho). RelationalComb rel, r3 <- (r, r2), r3 <- (r21, r1, r), ra <- (r1, r), rb <- (r21, r)) => Field r a -> rel ra -> rel rb -> rel r2
 replace_Op : forall (op1: rho -> * -> *) (r1: rho) a (op2: rho -> * -> *) (r2: rho) b (op3: rho -> * -> *) (r3: rho) c (rr: rho). (exists (r123: rho) (r12: rho) (r13: rho) (r1e: rho) (r23: rho) (r2e: rho) (r3e: rho). AsOp op1, AsOp op2, AsOp op3, r1 <- (r1e, r123, r13, r12), r2 <- (r2e, r123, r23, r12), r3 <- (r3e, r123, r23, r13), rr <- (r3e, r2e, r1e, r123, r23, r13, r12)) => op1 r1 a -> op2 r2 b -> op3 r3 c -> Op rr String
 replace_String : Char -> Char -> String -> String
 replicate : forall a. a -> Int -> List a
@@ -1021,7 +1021,7 @@ sequenceSelector : forall (f: * -> *) z a. List (Selector f z a) -> Selector f z
 series : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp x, AsOp y, AsPresentation s, Relational rel, r <- (sr, xr, yr, o)) => (s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya) -> s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
 seriesW : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp x, AsOp y, AsPresentation s, Relational rel, r <- (o, yr, xr, sr)) => ChartVariant# -> s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
 seriesWE : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (er: rho) (rel: rho -> *) (r: rho). (exists (o: rho). AsOp x, AsOp y, AsPresentation s, Has r er, Relational rel, r <- (o, yr, xr, sr)) => ChartVariant# -> s sr sa -> x xr xa -> y yr ya -> PresRow er -> rel r -> ChartSeries xa ya
-setColumn : forall (c: rho) a (op: rho -> * -> *) (s: rho) (rel: rho -> *) (r: rho) (t: rho). (exists (o: rho) (ro: rho) (rs: rho) (so: rho). AsOp op, RelationalComb rel, c <- (so, rs), r <- (ro, rs), r <- (s, o), t <- (ro, so, rs)) => Field c a -> op s a -> rel r -> rel t
+setColumn : forall (c: rho) a (op: rho -> * -> *) (s: rho) (rel: rho -> *) (r: rho) (t: rho). (exists (o: rho) (ro: rho) (rs: rho) (so: rho). AsOp op, RelationalComb rel, c <- (rs, so), r <- (o, s), r <- (rs, ro), t <- (rs, so, ro)) => Field c a -> op s a -> rel r -> rel t
 shortMonthNames : List String
 show_Op : forall (op: rho -> * -> *) (r: rho) a s. (AsOp op, PrimitiveString s) => op r a -> Op r s
 showingValues : forall (pr: rho -> * -> *) (v: rho) b. AsPresentation pr => pr v b -> ((pr v b, Maybe (SortStrategy v)), SortPriority)
@@ -1042,7 +1042,7 @@ sliderLateBinding : forall a (f: * -> *) z. (a -> String) -> a -> List a -> ((a 
 snd : forall a b. (a, b) -> b
 snd# : forall a b. Pair# a b -> b
 snoc : forall (r1: rho) (r2: rho) a (r: rho). r <- (r1, r2) => Row r1 -> Field r2 a -> Row r
-snoc_Brace : forall (r1: rho) (r2: rho) a (r: rho). r <- (r1, r2) => Row r1 -> Field r2 a -> Row r
+snoc_Brace : forall (r1: rho) (r2: rho) a (r: rho). r <- (r2, r1) => Row r1 -> Field r2 a -> Row r
 snoc_Vector : forall a. a -> Vector a -> Vector a
 softRelation : forall (pr1: rho -> * -> *) (k: rho) a (pr2: rho -> * -> *) (v: rho) b. (exists (o: rho). AsPresentation pr1, AsPresentation pr2, o <- (k, v)) => pr1 k a -> Either (Sort k) (Record k -> Record k -> Ordering) -> (Record k -> ((pr2 v b, Maybe (SortStrategy v)), SortPriority)) -> SoftRelation a b k v
 solid : LineStyle
@@ -1085,7 +1085,7 @@ stackedArea : forall (s: rho -> * -> *) (x: rho -> * -> *) (y: rho -> * -> *) (r
 stackedBar : forall (s: rho -> * -> *) (x: rho -> * -> *) (y: rho -> * -> *) (r: rho) (sr: rho) (xr: rho) (yr: rho) sa xa ya (rel: rho -> *). (exists (o: rho). AsOp x, AsOp y, AsPresentation s, Relational rel, Scaled ya, r <- (o, yr, xr, sr)) => s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
 standardColors : Map String Color
 standardDeviationBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). PrimitiveNum n, Relational rel, r1 <- (t, r)) => Field r n -> rel r1 -> rel r
-standardDeviationBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). PrimitiveNum n, Relational rel, r1 <- (t, r)) => Field r n -> rel r1 -> rel r
+standardDeviationBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). PrimitiveNum n, Relational rel, r1 <- (r, t)) => Field r n -> rel r1 -> rel r
 stddev_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, PrimitiveNum n) => op r n -> Aggregate r n
 step : forall (s: rho -> * -> *) (sr: rho) sa (x: rho -> * -> *) (xr: rho) xa (y: rho -> * -> *) (yr: rho) ya (rel: rho -> *) (r: rho). (exists (o: rho). AsOp x, AsOp y, AsPresentation s, Relational rel, r <- (o, yr, xr, sr)) => s sr sa -> x xr xa -> y yr ya -> rel r -> ChartSeries xa ya
 strength : forall (f: * -> *) x y. Functor f -> (x, f y) -> f (x, y)
@@ -1106,7 +1106,7 @@ subtract : forall a. Ring a -> a -> a -> a
 sum : List Int -> Int
 sum' : List Double -> Double
 sumBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). PrimitiveNum n, Relational rel, r1 <- (t, r)) => Field r n -> rel r1 -> rel r
-sumBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). PrimitiveNum n, Relational rel, r1 <- (t, r)) => Field r n -> rel r1 -> rel r
+sumBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). PrimitiveNum n, Relational rel, r1 <- (r, t)) => Field r n -> rel r1 -> rel r
 sum_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, PrimitiveNum n) => op r n -> Aggregate r n
 summaryDetail : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
 surround : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
@@ -1167,7 +1167,7 @@ toTypedSort# : forall (r: a). Sort r -> List# (Pair# (Pair# String PrimT) SortOr
 todo : forall a. a
 todoWith : forall a. String -> a
 topK : forall (h: rho) (rel: rho -> *) (r: rho). (exists (c: rho). RelationalComb rel, r <- (h, c)) => Row h -> Int -> rel r -> rel r
-topKBy : forall (h: rho) (k: rho) (rel: rho -> *) (kv: rho). (exists (c: rho) (r: rho). Relational rel, kv <- (h, c, k), r <- (c, h)) => Row h -> Row k -> Int -> rel kv -> Mem kv
+topKBy : forall (h: rho) (k: rho) (rel: rho -> *) (kv: rho). (exists (c: rho) (r: rho). Relational rel, kv <- (k, c, h), r <- (h, c)) => Row h -> Row k -> Int -> rel kv -> Mem kv
 topSection : forall (f: * -> *) z. Report f z -> Report f z -> Report f z
 trace : forall a. String -> a -> a
 traceBy : forall a b. (a -> b) -> a -> a
@@ -1238,7 +1238,7 @@ valueTickLabels : forall (yr: rho) sa' xa' (y: rho -> * -> *) ya relr xa. Unscal
 valueTooltipLabels : forall (ytr: rho) yta sa' xa' ya' (rel: rho -> *) (r: rho) xa ya. Has r ytr => Presentation ytr yta -> (sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya) -> sa' -> xa' -> ya' -> rel r -> ChartSeries xa ya
 values_Map : forall k v. Map k v -> List v
 varianceBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). PrimitiveNum n, Relational rel, r1 <- (t, r)) => Field r n -> rel r1 -> rel r
-varianceBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). PrimitiveNum n, Relational rel, r1 <- (t, r)) => Field r n -> rel r1 -> rel r
+varianceBy_Aggregate : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). PrimitiveNum n, Relational rel, r1 <- (r, t)) => Field r n -> rel r1 -> rel r
 variance_Aggregate : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, PrimitiveNum n) => op r n -> Aggregate r n
 vector_Vector : forall a. List a -> Vector a
 vertica#_Scanners : forall (f: * -> *). ScannersModule -> SMEnv f -> Scanner f
@@ -1268,9 +1268,9 @@ vstrutWide : forall (f: * -> *) z. Report f z -> Report f z
 weaken_Op : forall (x: rho) b (r: rho). r <- (x, y) => Op x b -> Op r b
 weeks : TimeUnit
 weightedHarmonicMeanBy : forall (w: rho) n (v: rho) (rel: rho -> *) (r: rho). (r <- (w, v, t), Relational rel, PrimitiveNum n) => Field w n -> Field v n -> rel r -> Mem v
-weightedHarmonicMean_Aggregate : forall (a: rho -> * -> *) (b: rho) c (d: rho -> * -> *) (e: rho) (t: rho). (t <- (e, b), AsOp d, AsOp a) => a b c -> d e c -> Aggregate t c
+weightedHarmonicMean_Aggregate : forall (a: rho -> * -> *) (b: rho) c (d: rho -> * -> *) (e: rho) (t: rho). (t <- (b, e), AsOp d, AsOp a) => a b c -> d e c -> Aggregate t c
 weightedMeanBy : forall (w: rho) n (v: rho) (rel: rho -> *) (r: rho). (r <- (w, v, t), Relational rel, PrimitiveNum n) => Field w n -> Field v n -> rel r -> Mem v
-weightedMean_Aggregate : forall (a: rho -> * -> *) (b: rho) c (d: rho -> * -> *) (e: rho) (t: rho). (t <- (e, b), AsOp d, AsOp a) => a b c -> d e c -> Aggregate t c
+weightedMean_Aggregate : forall (a: rho -> * -> *) (b: rho) c (d: rho -> * -> *) (e: rho) (t: rho). (t <- (b, e), AsOp d, AsOp a) => a b c -> d e c -> Aggregate t c
 weightedSum : Double -> (Double, Double) -> Double
 white : Color
 wholeNumber : forall a (f: * -> *) z. PrimitiveNum a => a -> Report f z

@@ -1,4 +1,4 @@
-(++) : forall (a: rho) (b: rho) (c: rho). c <- (a, b) => Builtin.Record a -> Builtin.Record b -> Builtin.Record c
+(++) : forall (a: rho) (b: rho) (c: rho). c <- (b, a) => Builtin.Record a -> Builtin.Record b -> Builtin.Record c
 anyRecordOrd : forall (r: rho). Builtin.Record r -> Builtin.Record r -> Ord.Ordering
 appendR : forall (a: rho) (b: rho) (c: rho). c <- (a, b) => Builtin.Record a -> Builtin.Record b -> Builtin.Record c
 header : forall (r: rho). Builtin.Record r -> Relation.Row.Row r

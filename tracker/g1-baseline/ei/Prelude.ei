@@ -1,2 +1,2 @@
-filterAll : forall (r: rho) (a: rho -> *) (b: rho). (exists (c: rho). b <- (c, r), Builtin.RelationalComb a) => Builtin.Record r -> a b -> a b
-headFieldOr : forall a (h: rho) (r: rho). (exists (t: rho). r <- (t, h)) => a -> Builtin.Field h (Builtin.Nullable a) -> Builtin.List (Builtin.Record r) -> a
+filterAll : forall (r: rho) (a: rho -> *) (b: rho). (exists (c: rho). b <- (r, c), Builtin.RelationalComb a) => Builtin.Record r -> a b -> a b
+headFieldOr : forall a (h: rho) (r: rho). (exists (t: rho). r <- (h, t)) => a -> Builtin.Field h (Builtin.Nullable a) -> Builtin.List (Builtin.Record r) -> a

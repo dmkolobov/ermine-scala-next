@@ -47,7 +47,11 @@ case "${1:-}" in
     (cd "$MODDIR" && find . -name '*.ei' -exec cp --parents {} "$out/ei/" \;)
     nei=$(find "$out/ei" -name '*.ei' | wc -l); nexp=$(wc -l < "$MODLIST")
     [[ $nei -eq $nexp ]] || { echo "FAIL: $nei .ei files, expected $nexp" >&2; exit 1; }
-    nlines=$(cat $(find "$out/ei" -name '*.ei') | grep -c .)
+    # SIGNATURE lines only: since stage S5.2 every `.ei` opens with the
+    # solver-configuration key (`-- ermine-interface <format>|<GenRules>`), which is not
+    # a signature.  Counting it pushed 1447 to 1576 and ate half the band's headroom
+    # (S5 review, Q-8); excluding it keeps the number comparable to every earlier run.
+    nlines=$(cat $(find "$out/ei" -name '*.ei') | grep -v '^-- ermine-interface ' | grep -c .)
     (( nlines >= 1300 && nlines <= 1700 )) || { echo "FAIL: $nlines sig lines outside [1300,1700]" >&2; exit 1; }
     python3 tracker/tools/g1-normalize.py "$out/transcript.raw" "$out" || exit 1
     # SCC groups via the dedicated tool (the REPL's :groups cannot re-parse

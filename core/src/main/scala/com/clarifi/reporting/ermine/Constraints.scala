@@ -1368,8 +1368,12 @@ object Constraints {
       * stops the loop refuting `MIN2`/`FALSE-ACCEPT-2` (D1B review U-0) -- the loop's
       * refutation is incomplete and order-dependent.  With `rowSound` on, all seven
       * witnesses are refuted at every base under BOTH orders, so the pair loses nothing.
-      * OPEN GAP: nothing keys a published `.ei` by `GenRules.toString`, so a tree built
-      * partly at one order still mixes interfaces silently (D1B review U-6). */
+      * CLOSED 2026-09-09 (stage S5.2): a published `.ei` now carries
+      * `Session.interfaceKey` = `<interface format version>|<GenRules.toString>` as its
+      * first line, and `Session.dep`'s `preCk` treats a mismatched or missing key exactly
+      * as it treats a newer source -- full recheck, rewrite.  A tree built partly at one
+      * order no longer mixes interfaces silently, and no adoption needs a manual
+      * `find . -name '*.ei' -delete` (D1B review U-6; `tracker/loopmodel/S5-HYGIENE.md`). */
     val dequeuePolicy: String = System.getProperty("ermine.dequeuePolicy", "smallcanon")
 
     /** The EFFECTIVE budget: what was asked for, but only under a non-shipped
@@ -1511,6 +1515,42 @@ object Constraints {
      * Rollback: `-Dermine.topNormalise=false`. */
     val topNormalise: Boolean = System.getProperty("ermine.topNormalise", "true") == "true"
 
+    /** S5.1 (ticket C12): delete a published partition that says nothing --
+      * `r <- (t1, .., tk)` with `r` a variable the caller fixes, every `ti` a distinct
+      * existential carrying no concrete label and occurring in no other published
+      * constraint.  `Subst.deleteTautologies`; the theorem is
+      * `Rowpartition/Determined.lean`'s `tauto_delete` (standard axioms), whose three
+      * necessity witnesses are `DeadUndetermined.undetermined_not_deletable`,
+      * `DeadTwoParts.two_parts_not_deletable` and `TautoEmpty.tauto_empty_not_deletable`.
+      *
+      * NOT a loop rule -- it runs after `Subst.solve`, like `topNormalise`'s sibling
+      * normalisation -- but it lives here because this object is what a published `.ei`
+      * is KEYED by (`Session.interfaceKey`), and this flag changes published bytes.
+      *
+      * ADOPTED 2026-09-09 (stage S5.1 follow-up): DEFAULT ON.
+      * `-Dermine.tautoDelete=false` restores the previous behaviour exactly.  The
+      * adoption criterion was that EXACTLY the C12 signatures shorten and every other
+      * interface stay byte-identical, and it is MET -- but only once the deletion is
+      * confined to the generalisation that publishes a MODULE's signatures
+      * (`inferBindingGroupTypes`'s `publishing` parameter, true at `checkModule` and
+      * `Session.loadModule` and nowhere else).  The measurement, single build, flag A/B,
+      * `-Dermine.loadInSeries=true` both sides, 268 interfaces / 3,481 bindings:
+      *   - unrestricted (fires at every generalisation): identical 3,463, order-only 10,
+      *     alpha-equivalent 3, other 5 -- the four C12 signatures PLUS
+      *     `Layout.Report.Relation.cutoffGroupedFldsPosNegRel'` 40 -> 38 constraints;
+      *   - restricted to a binding's own generalisation but not to the top-level group
+      *     (a `let`/`where` group reaches the same function): identical 3,476, other 5 --
+      *     the churn is gone, `cutoffGroupedFldsPosNegRel'` still moves, because its own
+      *     LOCAL `let` schemes are simplified and the enclosing signature is inferred
+      *     from them;
+      *   - restricted to the module's top-level group: **identical 3,477, other 4**, and
+      *     with the interface key header stripped exactly ONE file differs
+      *     (`Layout/Scan.ei`) on exactly FOUR lines.
+      * Corpus verdicts 85 / 69 / 0 at both settings, `core/test` green, and the `boot` and
+      * `Wide` row traces are byte-identical to the pre-change compiler.
+      * See `tracker/loopmodel/S5-HYGIENE.md` "Follow-up: publishing-only deletion". */
+    val tautoDelete: Boolean = System.getProperty("ermine.tautoDelete", "true") == "true"
+
     override def toString =
       mode + (if (disjRule) "+disj" else "") + (if (labelCheck) "+label" else "") +
         (if (labelCheckEarly) "-early" else "") + (if (resGuard) "+resguard" else "") +
@@ -1521,15 +1561,18 @@ object Constraints {
         /* D1B review U-6: the dequeue order and an ACTIVE budget belong in the
          * same configuration string S2's layers use -- both are empty at the
          * defaults, so this string is byte-identical to S2's for every shipped
-         * configuration.  NOTE what this does NOT do: nothing in the tree keys a
-         * published `.ei` by this string (its only consumer is `DisjProbe`), so a
-         * tree built partly with the policy on still mixes interfaces silently.
-         * That is safe today -- the interfaces the policy changes are
-         * alpha-variants and a mixed tree loads (D1B review gate 16) -- and it is
-         * recorded as an open gap for incremental adoption. */
+         * configuration.  SINCE 2026-09-09 (stage S5.2) this string is also what a
+         * published `.ei` is KEYED by: `Session.interfaceKey` is
+         * `<interface format version>|<this>`, it is the first line of every
+         * interface the compiler writes, and a mismatch is stale.  So changing any
+         * flag below forces the interfaces it can move to be rebuilt, and the open
+         * gap D1B review U-6 recorded is closed.  ANYTHING ADDED HERE THEREFORE
+         * INVALIDATES EVERY CACHED INTERFACE: only put a flag here if it can change
+         * what the compiler publishes. */
         (if (dequeuePolicy != "shipped") "+pol:" + dequeuePolicy else "") +
         (if (solveBudget > 0) "+budget:" + solveBudget else "") +
-        (if (topNormalise) "+topnorm" else "")
+        (if (topNormalise) "+topnorm" else "") +
+        (if (tautoDelete) "+tauto" else "")
   }
   case object Disjunction         extends Inference
   /** S4: a partition introduced by the written-partition normalisation

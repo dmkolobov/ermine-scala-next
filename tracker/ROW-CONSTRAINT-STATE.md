@@ -169,10 +169,33 @@ per-record cap breaks `Loop/Strict.lean`'s `NoLoss`.  The normalisation takes th
 **one pre-loop draw at every N**: with it on, ten reads compile in 0.04 s where seven did not
 compile at all.
 
+> **[ADDED 2026-09-09 — `-Dermine.tautoDelete` ADOPTED, DEFAULT ON (stage S5.1 follow-up).]**
+> `Subst.mkSimplified` now deletes a published partition that says nothing: `r <- (t1, .., tk)`
+> with `r` a row the caller fixes, `k >= 1`, every `ti` a distinct existential carrying no
+> concrete label and occurring in no other published constraint.  The theorem is
+> `Rowpartition/Determined.lean`'s `tauto_delete` (standard axioms), and the deletion fires
+> ONLY from the generalisation that publishes a module's signatures — a `let`/`where` group is
+> an intermediate generalisation and is left alone, which is what makes the change confined.
+> Measured, single build, flag A/B, 268 interfaces / 3,481 bindings: **identical 3,477, other
+> 4** — the four `Layout.Scan` signatures C12 names (`count`, `count'`, `sumBy`, `avgBy'`), and
+> with the interface key stripped exactly one file of 268 differs on exactly four lines.
+> Corpus 85 / 69 / 0 with the verdict listing byte-identical to the pre-change run (messages
+> included); `boot` and `Wide` row traces byte-identical; `TestLoopTrace` 720/720; `core/test`
+> green.  Rollback: `-Dermine.tautoDelete=false`.
+> **NOTHING TO CLEAR AT THIS ADOPTION**: the key now ends `+topnorm+tauto`, so every `.ei`
+> written before the flip is stale by construction and is rebuilt on the next load.  That is
+> the S5.2 key doing the job the `find . -name '*.ei' -delete` below used to do by hand.
+> (`tracker/loopmodel/S5-HYGIENE.md`, "Follow-up: publishing-only deletion".)
+
 **AT ADOPTION, TWO THINGS THAT WERE NOT OPTIONAL — BOTH DONE 2026-09-08** (S4B review H-8 and §5.2).
 
 1. **Clear the interface cache once**, exactly as `smallcanon`/`solveBudget` needed:
-   `find . -name '*.ei' -delete`.  Nothing keys a published `.ei` by `GenRules.toString`
+   `find . -name '*.ei' -delete`.  **[SUPERSEDED 2026-09-09, stage S5.2: no longer necessary.
+   A published `.ei` now opens with `Session.interfaceKey` = `<format version>|<GenRules.toString>`
+   and a key that does not match the running configuration is stale — full recheck, rewrite.  A
+   `+topnorm` token in the fingerprint now DOES change the interface key.  Kept as written
+   because it is the record of what adoption required on the day.  See
+   `tracker/loopmodel/S5-HYGIENE.md` §2.]**  Nothing keys a published `.ei` by `GenRules.toString`
    (`Constraints.scala:1371`, the open gap A1 review R-4 recorded), so the new `+topnorm` token
    changes no interface key — and this flag demonstrably changes published bytes
    (`Present/ProjectionCost.ei` order-only, plus a NEW `Present/shouldfail/proj01_seven_reads.ei`
@@ -236,6 +259,14 @@ find . -name '*.ei' -delete
 # they live beside the sources under  core/examples/**/*.ei
 # and, for the stdlib, under          core/target/scala-*/classes/modules/**/*.ei
 ```
+
+> **[ADDED 2026-09-09, stage S5.2 — this instruction is retired.]**  The compiler now keys every
+> published `.ei` by the configuration that produced it (`Session.interfaceKey`, the file's first
+> line), and an interface whose key does not match the running compiler is treated exactly like
+> one whose source is newer: rechecked in full and rewritten.  Flipping ANY flag that appears in
+> `GenRules.toString` — `topNormalise` included — therefore rebuilds the interfaces it can move,
+> by itself.  The paragraph below stays as the record of why the key was needed; it is no longer
+> a step anyone has to take.  (`tracker/loopmodel/S5-HYGIENE.md` §2.)
 
 A published `.ei` is **not keyed by the solver configuration** (the loader's `preChecked` asks
 only whether type-checking is on, whether interfaces are on, and whether every import was itself
@@ -334,7 +365,11 @@ budget is meaningless without the policy and is coded to ignore itself without i
 
 **THE OPEN GAPS, at adoption.**
 
-* **No `.ei` cache key for the flags.**  Nothing in the tree keys a published interface by
+* **No `.ei` cache key for the flags.**  **[CLOSED 2026-09-09, stage S5.2: the tree grew exactly
+  the configuration key this bullet asks for — `Session.interfaceKey`, written as the `.ei`'s
+  first line and checked where `preCk` decides currency; a mismatched or missing key is stale.
+  The one-line `find` is retired.  `tracker/loopmodel/S5-HYGIENE.md` §2.]**  Nothing in the tree
+  keys a published interface by
   `GenRules.toString` (its only consumer is `DisjProbe`), and the loader reads any `.ei` whose
   dependencies were interface-checked.  So a tree built partly at one configuration keeps
   mixing interfaces silently, and switching a default does NOT force a rebuild — measured, not

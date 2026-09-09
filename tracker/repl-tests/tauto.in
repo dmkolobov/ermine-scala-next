@@ -1,0 +1,7 @@
+:load tracker/repl-tests/Tauto.e
+:import Tauto
+:type pos
+:type pos3
+:type conc
+:type shared
+:quit

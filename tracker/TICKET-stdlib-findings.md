@@ -285,7 +285,26 @@ C10. Small language facts worth a guide chapter: fields may not shadow globals; 
 C11. **`String.Markdown.link`'s type is `(String -> String) -> String -> String`** — it CAN make a link
     (`link ((++) "SUP-77/A") loc`), but the shape is a trap; E5's claim that it cannot was refuted. (E5-REVIEW.)
 
-C12. **Five stdlib signatures publish a constraint that says nothing.**  `Layout/Scan.e`'s `sumBy` :44,
+C12. **[FIXED 2026-09-09 (stage S5.1, uncommitted at the time of writing; `-Dermine.tautoDelete`
+    DEFAULT ON).**  The theorem is `Rowpartition/Determined.lean`'s `tauto_delete` /
+    `tauto_delete_two` (standard axioms; three necessity witnesses), and the deletion is
+    `Subst.deleteTautologies`, at exactly the theorem's side condition, fired only from the
+    generalisation that publishes a MODULE's signatures (`inferBindingGroupTypes`'s `publishing`
+    parameter).  The adoption criterion — exactly these signatures shorten, every other interface
+    byte-identical — IS met at that restriction: single-build flag A/B over 268 interfaces /
+    3,481 bindings gives **identical 3,477, other 4**, and with the S5.2 interface key stripped
+    exactly one file differs on exactly four lines.  Corpus verdicts AND messages are unchanged
+    (85/69/0, zero differing lines), the `boot` and `Wide` row traces are byte-identical to the
+    pre-change compiler, `core/test` green.
+    TWO CORRECTIONS TO THIS TICKET.  (i) It is **four** signatures, not five: `sumBy'` was
+    already fixed BY HAND in stage F3 (`Relation/Scan.e:113-117`), which C12's text predates.
+    (ii) Fired at EVERY generalisation the deletion is sound but not confined -- it also moved
+    `Layout.Report.Relation.cutoffGroupedFldsPosNegRel'` 40 -> 38 constraints and 13 bindings as
+    alpha-variants -- and a `let`/`where` group counts as an intermediate generalisation, which
+    is the distinction the fix turns on.  Full report: `tracker/loopmodel/S5-HYGIENE.md` §1 and
+    "Follow-up: publishing-only deletion".]**
+
+    **Five stdlib signatures publish a constraint that says nothing.**  `Layout/Scan.e`'s `sumBy` :44,
     `sumBy'` :43, `count` :47, `count'` :48 and `avgBy'` :45 each publish
     `(exists (t: rho) (h: rho). r <- (t, h)) => …` with `r` UNIVERSAL and both parts existential.  That
     qualification is a **tautology** — every row splits, `t := r`, `h := ∅` — so it constrains no caller,
@@ -314,6 +333,80 @@ C12. **Five stdlib signatures publish a constraint that says nothing.**  `Layout
     shipping one (`R3-DETERMINED.md` §5(ii)); if one is ever written it must be **signature-level and must
     never name variables** — `Layout/Report/Relation.cutoffGroupedFldsPosNegRel'` is flagged on 33 of its 34
     row existentials and only 16 are genuinely undetermined.  (R3, R3-REVIEW §6(iii).)
+
+## E. The interface cache (`.ei`)
+
+Opened 2026-09-09 by the S5 review (`tracker/loopmodel/S5-REVIEW.md`, findings Q-16 and Q-7).
+Both are PRE-EXISTING and neither is stage S5's work; they are here because S5.2 made the
+interface cache load-bearing (a mismatched key is now a full recheck) and both are exactly the
+failure mode S5.2's own report warns about — a silent full recheck that no test sees.
+
+E1. **An `.ei` publishing a partition with a CONCRETE part never warm-reads: 18 of 268 corpus
+    interfaces are fully rechecked and rewritten on EVERY load, silently.**
+
+    *Reproduction* (the reviewer's, `review-S5/probe/ConcProbe.e`).  A module whose published
+    signature carries `X <- (…, (|lbl|))`:
+
+    ```
+    module ConcProbe where
+    import Prelude
+    cSig : r <- (h, (|foo|)) => Relation r -> Relation r
+    cSig x = x
+    c = cSig
+    ```
+
+    Load it twice with interfaces on.  The observable is the `.ei`'s mtime, because
+    `writeInterface` runs on every `CheckMethod.Full` and on no `CheckMethod.Interface`: the
+    file is rewritten on the second load too, and on the third, and does not converge.  A
+    control module with classes, `exists` binders and several bindings but NO concrete part
+    (`TautoProbe2.e`) warm-reads on the second load.  The key matches and the mtime is newer,
+    so the only remaining `None` in `Session.dep`'s `preCk` is the PARSE: the printed form of
+    a concrete part is not read back by `InterfaceParsers.interfaceSigs`.
+
+    *Not concrete rows as such.*  129 of 129 stdlib interfaces warm-read, `Currency.ei`'s
+    `Relation (|Currency.currencyName, …|)` included.  The cause is narrowed to the
+    `X <- (…, (|lbl|))` form — a concrete row as a PART of a partition.
+
+    *Scope, measured.*  **18 of 268** corpus interfaces publish that shape,
+    `Layout/Report/Relation.ei` among them.  The cost is silent: those modules pay their full
+    inference time on every load of a tree that is otherwise warm, and nothing fails.
+
+    *Acceptance criteria.*  (1) A round-trip property in `TestInterfaceRoundTrip`'s style —
+    its own temp workspace, `Session.depCache.clear()` under `ErmineFixture.literalLock`,
+    modules owning every interface they depend on (`TestInterfaceKey` is the pattern) — that
+    writes a module publishing `r <- (h, (|foo|))` and asserts the second load is
+    `CheckMethod.Interface`; it must FAIL before the fix.  (2) The 18 corpus interfaces
+    warm-read: two consecutive `bin/ermine` runs over the corpus rewrite 0 `.ei`.  (3) The
+    printer and the parser agree on the whole published grammar, not just this shape — the
+    cheapest form of that is a property that round-trips every `.ei` the corpus produces
+    through `InterfaceParsers.interfaceSigs`.  (4) No published byte changes if the fix is on
+    the READER; if it is on the PRINTER, the `.ei` sweep says exactly which interfaces move.
+
+E2. **The WRITE side of the interface cache is frozen into the cached `Dep`, while the READ
+    side is gated at call time.**  `Session.dep` builds `writeInterfaceString` as
+    `if (s.useInterface) file.interfaceWriteback else (_ => ())` (`Session.scala:513`) and
+    caches the `Dep` process-globally, but `preCk` — the read side — is deliberately always
+    the real closure, with a comment saying why ("a dep cached by a useInterface=false suite
+    must not poison a =true one").  The asymmetry means a dep first built by a
+    `useInterface=false` session never writes an interface again, in any session, for the
+    life of the process.
+
+    *Why it matters more since S5.2.*  A key mismatch is now a full recheck; a dep carrying
+    the no-op writeback is fully rechecked AND never re-keys the file, so it never converges.
+
+    *Evidence.*  This is the mechanism behind both of stage S5's `core/test` failures
+    (`S5-HYGIENE.md`, the fix-round and follow-up sections): a sibling suite building the
+    `Primitive` dep in a `useInterface=false` session made `TestInterfaceKey`'s warm load
+    answer `Full`.  The tests were made to own their own interfaces instead, which is right
+    for the tests and does not fix this.
+
+    *Acceptance criteria.*  Gate the write side at call time the way `preCk` is (pass the
+    live `SessionEnv` into the writeback, or make `Dep.writeInterfaceString` take it), then:
+    (1) the existing interface properties still pass, run alone and in the full suite; (2) a
+    new property that loads a module in a `useInterface=false` session and then, in a
+    `useInterface=true` session over the SAME `depCache`, gets `CheckMethod.Full` followed by
+    a written `.ei` and a warm `CheckMethod.Interface` — failing before the fix; (3) the
+    `.ei` sweep unchanged.
 
 ## D. Claims in older documents that do not reproduce
 
