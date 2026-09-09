@@ -1162,3 +1162,12 @@ OFF except the LSP; Tier 0 by the orchestrator green (720/720; 85/69/0; lsp-smok
 agents COMPLETE. THE QUEUE IS EMPTY. Next = the user's choice (recommended: C12 tautology deletion + .ei config key
 (Rose rank 6), then canonical residual simplification (memo rank 3, three stages); open user-visible items: A3
 sibling Date.incrementDate, B1a example helpers, D3 disjunction generator, LSP roadmap Stage 3 at gate G2).
+
+S5 LAUNCHED (2026-09-09 ~06:30, the user's choice "do the first bullet"): implementer agent aa4afbbcca88e1bb3 (Opus,
+background; resume by SendMessage), brief tracker/loopmodel/briefs/brief-S5.md (commit fbab51b): S5.1 = C12 tautology
+deletion (theorem in Determined.lean + mkSimplified deletion + ei-diff shows exactly the five Layout/Scan signatures
+shorten); S5.2 = Rose rank 6 .ei solver-configuration key (format version | GenRules.toString in the .ei header;
+mismatch = stale; TestInterfaceRoundTrip-style property). Report S5-HYGIENE.md. ON ITS REPORT: Tier 0 once by the
+orchestrator; write brief-S5-review.md (shape of brief-F3-review.md; Tier 1 re-run once by the reviewer), launch an
+Opus reviewer, fix, ONE commit, stamp C12. THEN the canonical residual simplification programme (memo rank 3, §4):
+brief to write for stage CR1 (pass 2: entailment oracle from the decision core + deletion under budget).
