@@ -1204,3 +1204,10 @@ changes; baseline to refresh) — g1-validate ADDED to GATE-POLICY.md Tier 1; Q-
 does not round-trip (18/268 silently rechecked) — ticket entry, not fixed here. FIX ROUND SENT to the S5
 implementer aa4afbbcca88e1bb3. Reviewer ab0d1d89547ade18c COMPLETE. On the fix report: orchestrator Tier 0 once,
 ONE commit, stamp C12.
+
+S5 COMMITTED ed53fe7 (2026-09-09 ~14:10): tautoDelete DEFAULT ON (adoption, criterion met exactly: 1/268 files, four
+lines), .ei solver-configuration key (first adoption with no manual wipe), g1 baseline re-cut, ticket E1/E2 opened.
+All agents COMPLETE. NEXT: the canonical-residual programme, stage CR1 (memo §4.5-4.6 pass 2: extend the per-label
+decision core with a negated goal clause -> entailment oracle with soundness/completeness restated; mkSimplified
+pass (ii) deletes a constraint the rest entails, budget lapse = KEEP; Lean: IsCanonicaliser.faithful for the pass;
+measure on the corpus sweep). Brief to write.

@@ -285,7 +285,7 @@ C10. Small language facts worth a guide chapter: fields may not shadow globals; 
 C11. **`String.Markdown.link`'s type is `(String -> String) -> String -> String`** — it CAN make a link
     (`link ((++) "SUP-77/A") loc`), but the shape is a trap; E5's claim that it cannot was refuted. (E5-REVIEW.)
 
-C12. **[FIXED 2026-09-09 (stage S5.1, uncommitted at the time of writing; `-Dermine.tautoDelete`
+C12. **[FIXED in `ed53fe7` 2026-09-09 (stage S5.1, uncommitted at the time of writing; `-Dermine.tautoDelete`
     DEFAULT ON).**  The theorem is `Rowpartition/Determined.lean`'s `tauto_delete` /
     `tauto_delete_two` (standard axioms; three necessity witnesses), and the deletion is
     `Subst.deleteTautologies`, at exactly the theorem's side condition, fired only from the
