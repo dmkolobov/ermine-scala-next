@@ -1240,3 +1240,8 @@ path, last segment any case); R-5 delete the fixture's temp tree; R-6 prose; R-1
 (TestLower, `Module not found: 'Test'`, the lock-free-suite hazard) and hold literalLock for both loads; R-2 new
 ticket E3 (published .ei bytes depend on load history: 16/241 differ cold vs warm on the pre-fix compiler).
 Reviewer ad86d0c305d99fbeb COMPLETE. On the fix report: orchestrator Tier 0 once, ONE commit, stamp E1, STOP.
+
+F4 COMMITTED 78adf6d (2026-09-09 ~17:58): the .ei label round-trip fix (parser side; 70/241 interfaces were rechecked
+every load; warm load 36 s -> 24 s); tickets E3/E4 opened. All agents COMPLETE. STOPPED — the next choice is the
+user's (options: the canonical-residual programme CR1; A3 sibling Date.incrementDate; B1a example helpers; D3
+disjunction generator; E3 load-order-dependent .ei bytes; E4 the lock-free suites; LSP roadmap Stage 3 at G2).

@@ -341,7 +341,7 @@ Both are PRE-EXISTING and neither is stage S5's work; they are here because S5.2
 interface cache load-bearing (a mismatched key is now a full recheck) and both are exactly the
 failure mode S5.2's own report warns about — a silent full recheck that no test sees.
 
-E1. **[FIXED in `<pending commit>` (stage F4, 2026-09-09; the change is uncommitted in the
+E1. **[FIXED in `78adf6d` (stage F4, 2026-09-09; committed; originally written while uncommitted in the
     working tree at the time of writing).  The narrowing below is WRONG and F4 corrected it: it
     is not the partition SHAPE, it is the LABEL.  Any concrete row carrying a label whose last
     segment starts LOWER case fails to read back, in any position -- as a part of a partition,
