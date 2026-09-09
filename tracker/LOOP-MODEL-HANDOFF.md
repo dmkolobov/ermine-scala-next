@@ -1223,3 +1223,12 @@ grammar round-trip over every corpus .ei; the 18 warm-read with 0 rewrites), war
 F4-ROUNDTRIP.md. ON ITS REPORT: Tier 0 once; write brief-F4-review.md (shape of brief-S5-review.md, lighter: the
 cause, the parser/printer table, the three tests re-run, the gates once), launch an Opus reviewer, fix, ONE commit,
 stamp E1. Then STOP again — the next choice is the user's.
+
+F4 IMPLEMENTER DONE (2026-09-09 ~15:50): GREEN. Cause = Pretty.qualifiedGlobal publishes labels fully qualified and
+TypeParsers.rho read them with dottedName (every segment upper-case) → lower-case last segment unreadable → Full every
+load. Scope corrected: the LABEL not the shape; 70 of 241 interfaces (not 18/268) rewritten every load, no cascade.
+Fix on the PARSER (dottedFieldName), format version stays 2, 0 published bytes move (post-fix compiler reads 241
+pre-fix .ei, rewrites 0). Tests: TestInterfaceConcreteRow (3 props, all RED on the pre-fix build). Gates 720/720;
+85/69/0; lsp 185; repl green; g1 9/9; core/test 943/943; warm load 35.5-36.2 s → 23.5-24.2 s. REVIEWER to launch
+(brief briefs/brief-F4-review.md, findings R-*, report F4-REVIEW.md). On ADVANCE: Tier 0 once, ONE commit, stamp E1,
+then STOP for the user's next choice.
