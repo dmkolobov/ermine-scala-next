@@ -163,7 +163,7 @@ object TypeParsers {
       val mod = u.moduleName
       val nm : Parser[Name] =
         if (u.recognizedCons.nonEmpty)
-           dottedName.attempt | typeName
+           dottedFieldName.attempt | typeName
         else typeName
       nm.sepBy(comma).map(xs => ConcreteRho(l,xs.map(f(mod)).toSet))
     }
@@ -183,6 +183,43 @@ object TypeParsers {
 
     grab map { case (mod,nm) => Global(mod, nm) }
   }
+
+  /** A module-qualified FIELD LABEL inside a `(| ... |)`, spelt EXACTLY the way
+    * `Pretty.ppName` spells a `Global(mod, name, Idfix)` under `FullyQualified`
+    * (`qualifiedGlobal` = `m + "." + n`): a module path whose every segment
+    * starts UPPER case, then ONE final segment that is an ordinary identifier
+    * and may start LOWER case -- `Currency.currencyCode`,
+    * `Layout.Report.Relation.groupId`, and equally `Field.Count`.
+    *
+    * The upper-case module path is not a guess: `SurfaceParsers.moduleNameTok`
+    * requires every segment of a module name to start upper case, so a
+    * lower-case module segment cannot be published.  The final-segment check is
+    * done on the slice rather than in the grammar because the two cannot be
+    * separated by a parser without lookahead: the module path and the label are
+    * both `.`-separated identifiers, and a grammar greedy enough to read
+    * `Layout.Report.Relation.groupId` would eat `Count` out of `Field.Count`.
+    *
+    * `dottedName`, which stood here before, requires EVERY segment to start
+    * upper case.  That is right for its other caller `interfaceCon` (a type
+    * CONSTRUCTOR is upper case by construction) and wrong for a label: the
+    * interface printer has always published `(|Mod.label|)` and this grammar
+    * has never read it back, so `preCk` answered `None`, the module was
+    * `CheckMethod.Full` on EVERY load and its `.ei` was rewritten every time --
+    * silently, since nothing fails.  Ticket E1 / stage F4; the label `Field.Count`
+    * is why the stdlib mostly escaped and `Currency.currencyName` is why it did
+    * not escape entirely.
+    *
+    * This SUBSUMES `dottedName` here (an upper-case final segment is an ordinary
+    * identifier too), so `Field.Count` still reads as `Global("Field","Count")`. */
+  private def dottedFieldName: Parser[Global] =
+    (upperName >> (ch('.') >> anyName).skipSome).slice.filter { s =>
+      s.substring(0, s.lastIndexOf('.')).split('.').forall(_.charAt(0).isUpper)
+    } map { s =>
+      val n = s.lastIndexOf('.')
+      Global(s.substring(0, n), s.substring(n + 1))
+    }
+
+  private def anyName : Parser[Unit] = letter >> tailChar.skipMany
 
   private def dottedOpName: Parser[Global] = {
     def grab : Parser[(String,String)] =

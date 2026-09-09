@@ -341,7 +341,41 @@ Both are PRE-EXISTING and neither is stage S5's work; they are here because S5.2
 interface cache load-bearing (a mismatched key is now a full recheck) and both are exactly the
 failure mode S5.2's own report warns about — a silent full recheck that no test sees.
 
-E1. **An `.ei` publishing a partition with a CONCRETE part never warm-reads: 18 of 268 corpus
+E1. **[FIXED in `<pending commit>` (stage F4, 2026-09-09; the change is uncommitted in the
+    working tree at the time of writing).  The narrowing below is WRONG and F4 corrected it: it
+    is not the partition SHAPE, it is the LABEL.  Any concrete row carrying a label whose last
+    segment starts LOWER case fails to read back, in any position -- as a part of a partition,
+    as an argument to `Relation`, as an argument to `Record` -- because
+    `Pretty.qualifiedGlobal` publishes `(|Mod.label|)` under `FullyQualified` and
+    `TypeParsers.rho` read it with `dottedName`, which requires EVERY segment to start upper
+    case.  Re-measured scope: **70 of 241** corpus interfaces, not 18 -- the 18 counted only the
+    interfaces publishing the partition shape.  The label census is 7,448 dotted-lower / 53
+    dotted-upper / 34 empty, and the set of files holding a dotted-lower label is EXACTLY the
+    set rewritten on every load.  The stdlib escaped because the only row label a REPL boot
+    publishes is `Field.Count`; `Currency.ei` does NOT warm-read either, contrary to the note
+    below -- it is simply not one of the 129 modules a plain boot loads.  Fix: a new
+    `TypeParsers.dottedFieldName` used by `rho` (the module path in upper-case segments, then
+    one ordinary identifier of any case); `dottedName` is untouched for `interfaceCon`.  On the
+    PARSER, so NO published byte moves: the post-fix compiler read the 241 interfaces the
+    pre-fix compiler had written and rewrote 0.  Three new properties in
+    `scalacheck-binding/src/main/scala/TestInterfaceConcreteRow.scala`, all three measured RED on
+    the pre-fix compiler.  Two printer forms remain unreadable and are recorded here rather than
+    fixed, because neither is reachable from Ermine source: an abnormal (back-quotable) label,
+    which `qualifiedGlobal` publishes WITHOUT its back-quotes under `FullyQualified`, and a label
+    with operator fixity.  The two have DIFFERENT mechanisms and F4's first draft gave only one
+    of them (F4-REVIEW R-6a): the operator label is blocked by `SurfaceParsers.fieldStatementP`,
+    which takes `identTok`, so a declared field label is always `Idfix`, and by `typeName`'s
+    `paren(opName(canonicalTypes))`, which refuses anything not already a registered type
+    operator; the ABNORMAL label is blocked by the SOURCE row grammar itself, which does not
+    admit a literal ident there -- `(| ``a b`` |)`, `(| ``ab`` |)` and `type R = (| ``a b`` |)`
+    are all syntax errors, and `field ``a b`` : Int` is refused by `identTok` -- even though
+    `TypeNameParsers.ident` is `super.ident | literalIdent`, which on a reading of the
+    INTERFACE grammar alone would look admissible.  Cross-reference for
+    the header-strip trap of `S5-HYGIENE.md` 2.3: every reader of an `.ei` goes through
+    `Session.splitInterfaceKey`, and the new properties do too.  Report and every gate:
+    `tracker/loopmodel/F4-ROUNDTRIP.md`.]**
+
+    **An `.ei` publishing a partition with a CONCRETE part never warm-reads: 18 of 268 corpus
     interfaces are fully rechecked and rewritten on EVERY load, silently.**
 
     *Reproduction* (the reviewer's, `review-S5/probe/ConcProbe.e`).  A module whose published
@@ -407,6 +441,70 @@ E2. **The WRITE side of the interface cache is frozen into the cached `Dep`, whi
     `useInterface=true` session over the SAME `depCache`, gets `CheckMethod.Full` followed by
     a written `.ei` and a warm `CheckMethod.Interface` — failing before the fix; (3) the
     `.ei` sweep unchanged.
+
+E3. **A published `.ei`'s BYTES depend on the load HISTORY of the session that wrote it: a
+    cold-written tree and a warm-written tree differ in 16 of 241 interfaces.**
+
+    Opened 2026-09-09 by the F4 review (`tracker/loopmodel/F4-REVIEW.md`, finding R-2).
+    PRE-EXISTING and not stage F4's: the reviewer measured it with the PRE-FIX compiler on
+    BOTH sides, so nothing about the F4 parser change is involved.
+
+    *The measurement.*  Build the corpus tree cold (no `.ei` present, every module
+    `CheckMethod.Full`); build it again in a session that read some interfaces warm; diff
+    the bytes.  **16 of 241 interfaces differ** — 15 examples and
+    `Layout/Report/Relation.ei` — in three ways: the QUANTIFIER SHAPE
+    (`forall a b (k: rho)…` against `forall {a b} (a1: a) (b1: b) (k: rho)…`), an
+    existential binder's KIND (`(Has: rho -> a)` against `(Has: a)`), and CONSTRAINT ORDER.
+    All three are alpha-variants; none is a different type.
+
+    *Why it matters.*  Every future `.ei` byte comparison has to control for it, the Tier 1
+    interface sweep (`ei-diff.sh`) included: two sides that loaded in a different ORDER can
+    differ without either compiler having changed.  It is also part of what a canonicaliser
+    (`ROSE-COMPARISON.md` §3 rank 3) would have to absorb, and it compounds **B3** — the
+    printer publishes a free row variable it does not bind, and `qtyp` re-binds it on read,
+    which is one of the two places the quantifier shape can move.
+
+    *What it does NOT overturn.*  F4's claim that its fix moves no published byte survives,
+    because the strong form was measured directly rather than inferred: the post-fix compiler
+    read all 241 interfaces the pre-fix compiler had written, rewrote 0 and moved 0 bytes.
+    F4's report §6 has been corrected where it said the two sides' bytes are identical
+    without qualifying the regime.
+
+    *Acceptance criteria.*  (1) Say where the load-order dependence enters — the candidates
+    are the `Supply` draw order reaching published existential names, `generalize`'s
+    quantifier construction, and the kind-defaulting of an unannotated binder; (2) a property
+    that writes one module's interface from a cold session and from a warm one and compares;
+    (3) either make the bytes load-order-independent or state in `ei-diff.sh`'s header that
+    both sides must be built in the same regime.
+
+E4. **`sbt core/test` is INTERMITTENT: six suites touch the process-global dep cache without
+    `ErmineFixture.literalLock`.**
+
+    Opened 2026-09-09 by the F4 review (R-1).  Two full runs of the SAME tree: run 1 was
+    `Total 943, Failed 0, Errors 1, Passed 942` (1,453 s), the error being
+    `TestLower :: "3.4a.negation applies primNeg to the whole chain" — scalaparsers.Death:
+    Module not found: 'Test'`; run 2 was `943 / 943, 0 failed, 0 errors` (1,356 s).  It does
+    not reproduce in isolation (`TestLower` alone 2× = 28/28; `TestLower` with
+    `TestInterfaceConcreteRow` 2× = 31/31), and it is not the F4 parser change — `TestLower`
+    exercises the lowering pipeline, not the interface grammar.
+
+    *Mechanism.*  `TestNewPipeline`, `TestLower`, `TestTolerantCheck`, `TestTolerantRead`,
+    `TestStage1Pins` and `TestEditorBuffers` use `Session.depCache` / `Session.loadModules`
+    WITHOUT taking `ErmineFixture.literalLock`, while the interface suites clear the
+    process-global dep cache under it.  `ErmineFixture.baseEnv`'s dynamic `Test` module is
+    what goes missing.  This is stage S5's hazard (`S5-HYGIENE.md`), not F4's: F4's suite is
+    on the correct side of the discipline (it holds the lock across staging, both loads and
+    every `depCache.clear()`), but it holds it ~85 s per run and clears the cache five times,
+    which LENGTHENS the window rather than opening it.  Locking harder in the compliant
+    suites cannot close it — the six offenders never take the lock at all.
+
+    *Why it matters.*  A gate that is red one run in two is a gate nobody can use, and the
+    Tier 2 line "`sbt core/test` in full" presumes determinism.
+
+    *Acceptance criteria.*  (1) Make the six suites take `ErmineFixture.literalLock` around
+    anything that touches `depCache`/`loadModules`, or give each its own dep cache; (2) ten
+    consecutive full `core/test` runs green; (3) the quarantine list in
+    `tracker/GATE-POLICY.md` updated to say the suite was intermittent and is not any more.
 
 ## D. Claims in older documents that do not reproduce
 
