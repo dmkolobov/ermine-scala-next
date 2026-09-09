@@ -1213,3 +1213,13 @@ pass (ii) deletes a constraint the rest entails, budget lapse = KEEP; Lean: IsCa
 measure on the corpus sweep). Brief to write.
 
 PAUSE (2026-09-09 ~14:15): the user authorised only 'the first bullet' (S5). CR1 is NOT started; awaiting the user's choice.
+
+F4 LAUNCHED (2026-09-09 ~14:30, the user's choice "fix the round-trip bug next"): implementer agent a3effe0d180e1bab3
+(Opus, background; resume by SendMessage), brief tracker/loopmodel/briefs/brief-F4.md (commit 6701ab0): ticket E1 —
+a published partition with a concrete-row PART never warm-reads (18/268 .ei rewritten every load); locate the cause
+(printer vs InterfaceParsers.interfaceSigs), fix the wrong side (prefer the parser; a printer change bumps the
+interface-format version and needs the Tier 1 sweep), three tests (round-trip property failing before the fix;
+grammar round-trip over every corpus .ei; the 18 warm-read with 0 rewrites), warm-load timing before/after. Report
+F4-ROUNDTRIP.md. ON ITS REPORT: Tier 0 once; write brief-F4-review.md (shape of brief-S5-review.md, lighter: the
+cause, the parser/printer table, the three tests re-run, the gates once), launch an Opus reviewer, fix, ONE commit,
+stamp E1. Then STOP again — the next choice is the user's.
