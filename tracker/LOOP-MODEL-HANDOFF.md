@@ -1233,3 +1233,10 @@ pre-fix .ei, rewrites 0). Tests: TestInterfaceConcreteRow (3 props, all RED on t
 (brief briefs/brief-F4-review.md, findings R-*, report F4-REVIEW.md). On ADVANCE: Tier 0 once, ONE commit, stamp E1,
 then STOP for the user's next choice.
 F4 REVIEWER LAUNCHED (2026-09-09 ~15:55): agent ad86d0c305d99fbeb (Opus, background; resume by SendMessage). F4 implementer a3effe0d180e1bab3 COMPLETE.
+
+F4 REVIEW ARRIVED (2026-09-09 ~17:45): ADVANCE (F4-REVIEW.md, R-1..R-6, none blocking). Short fix round sent to the
+implementer a3effe0d180e1bab3: R-3 drop the positional-Forall relaxation; R-4 tighten dottedFieldName (upper-case
+path, last segment any case); R-5 delete the fixture's temp tree; R-6 prose; R-1 record core/test intermittency
+(TestLower, `Module not found: 'Test'`, the lock-free-suite hazard) and hold literalLock for both loads; R-2 new
+ticket E3 (published .ei bytes depend on load history: 16/241 differ cold vs warm on the pre-fix compiler).
+Reviewer ad86d0c305d99fbeb COMPLETE. On the fix report: orchestrator Tier 0 once, ONE commit, stamp E1, STOP.
