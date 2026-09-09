@@ -23,6 +23,9 @@ re-measurement applies to the numbers that go into the trackers, once, by the re
 - The per-group trace comparison against a pre-change run with `tracker/tools/trace-ab.py` (ALL record kinds).
 - The interface sweep `tracker/tools/ei-diff.sh --batch` with `-Dermine.loadInSeries=true` on BOTH sides (or
   `--snapshot` for two builds), classified with `ei-classify.py`; the tool hoists all six group libraries.
+- `tracker/tools/g1-validate.sh` (the checked-in `tracker/g1-baseline` signature drift check, 9 checks). Added
+  2026-09-09 after the S5 review found it red since F3 with nobody running it: it was in no tier. An INTENDED
+  signature change refreshes the baseline in the same commit, with the before/after listed in the stage report.
 
 **Tier 2 — adoption commits only (a default flips or shipped behaviour changes).**
 - `sbt core/test` in full (939 total after F3; the documented quarantines below are the only allowed misses).

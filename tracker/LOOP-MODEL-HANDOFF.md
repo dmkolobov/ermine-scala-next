@@ -1194,3 +1194,13 @@ lsp-smoke (181) green.
 
 S5 FOLLOW-UP DONE (2026-09-09 ~11:30): the publishing-only restriction (parameter threaded from the module top-level group; two attempts — per-binding generalize was NOT the right predicate because let/where groups reach it too) meets criterion (c): sweep 3477 / 0 / 0 / 4; Layout/Scan.ei differs on exactly four lines, 267/268 byte-identical. `-Dermine.tautoDelete` is DEFAULT ON (supersedes the OFF statement in the agent's 09:08 entry above); fingerprint ends +topnorm+tauto; the key made this the first adoption with no manual .ei wipe. Gates at the new default: TestLoopTrace 720/720; corpus 85/69/0 byte-identical listing; trace-ab boot/Wide IDENTICAL; core/test 940/940; lsp-smoke 181. REVIEWER to launch (brief briefs/brief-S5-review.md, findings Q-*, report S5-REVIEW.md; adoption-commit tiers once). On ADVANCE: orchestrator Tier 0 once, ONE commit 'Residual hygiene S5: tautology deletion (C12, default ON) and the .ei solver-configuration key', stamp C12; then the canonical-residual programme CR1 brief.
 S5 REVIEWER LAUNCHED (2026-09-09 ~11:35): agent ab0d1d89547ade18c (Opus, background; resume by SendMessage). S5 implementer aa4afbbcca88e1bb3 COMPLETE.
+
+S5 REVIEW ARRIVED (2026-09-09 ~13:00): FIX-THEN-ADVANCE (S5-REVIEW.md, Q-1..Q-16). Substance confirmed (theorem,
+exact side condition, sweep 3477/4 = one file four lines, independent Python criterion 4 at OFF / 0 at ON, key end
+to end, 940/940, traces byte-identical vs a pre-change build). MUST FIX: Q-1 the LSP path (TolerantCheck.scala:267)
+calls inferImplicitBindingTypes without publishing=true so hover shows the un-shortened type; Q-2 scaladoc; Q-3/Q-4
+Lean witnesses (reviewer's scratch). PRE-EXISTING: Q-15 g1-validate.sh red since F3 (seven intended signature
+changes; baseline to refresh) — g1-validate ADDED to GATE-POLICY.md Tier 1; Q-16 .ei with a concrete-label part
+does not round-trip (18/268 silently rechecked) — ticket entry, not fixed here. FIX ROUND SENT to the S5
+implementer aa4afbbcca88e1bb3. Reviewer ab0d1d89547ade18c COMPLETE. On the fix report: orchestrator Tier 0 once,
+ONE commit, stamp C12.
