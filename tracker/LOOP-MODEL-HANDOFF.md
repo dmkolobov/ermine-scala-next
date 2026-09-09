@@ -1211,3 +1211,5 @@ All agents COMPLETE. NEXT: the canonical-residual programme, stage CR1 (memo §4
 decision core with a negated goal clause -> entailment oracle with soundness/completeness restated; mkSimplified
 pass (ii) deletes a constraint the rest entails, budget lapse = KEEP; Lean: IsCanonicaliser.faithful for the pass;
 measure on the corpus sweep). Brief to write.
+
+PAUSE (2026-09-09 ~14:15): the user authorised only 'the first bullet' (S5). CR1 is NOT started; awaiting the user's choice.
