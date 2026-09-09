@@ -1151,3 +1151,8 @@ kind-2 fixture (reviewer built it); P-8/9 prose. FIX ROUND SENT to the implement
 a63e86056bc6e83b1 COMPLETE. ON THE FIX REPORT: orchestrator Tier 0 once (compile+copyResources, TestLoopTrace,
 corpus batch, lsp-smoke, repl-smoke), ONE commit, then STOP — the queue is empty; the next stage is the user's
 choice (recommended: C12 + .ei config key, then canonical residual simplification).
+
+INTERRUPTION (2026-09-08 ~10:40): the LSP-FFI implementer was killed by the Opus weekly limit (resets 02:00 Denver)
+before making any fix-round change. RESUMED 2026-09-09 05:22 by SendMessage from the reviewed state (tree = the
+implementer's original deliverables + LSP-FFI-REVIEW.md; no JVM; no .ei). If it dies again: the P-1..P-9 list is in
+the 2026-09-08 ~10:25 entry above and in LSP-FFI-REVIEW.md; a fresh agent can take it from the review alone.
