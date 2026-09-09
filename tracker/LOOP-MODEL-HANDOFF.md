@@ -1171,3 +1171,25 @@ mismatch = stale; TestInterfaceRoundTrip-style property). Report S5-HYGIENE.md. 
 orchestrator; write brief-S5-review.md (shape of brief-F3-review.md; Tier 1 re-run once by the reviewer), launch an
 Opus reviewer, fix, ONE commit, stamp C12. THEN the canonical residual simplification programme (memo rank 3, §4):
 brief to write for stage CR1 (pass 2: entailment oracle from the decision core + deletion under budget).
+S5 DELIVERED 2026-09-09 (uncommitted, `tracker/loopmodel/S5-HYGIENE.md`). **S5.2 GREEN**: every published
+`.ei` opens with `Session.interfaceKey` = `<format version 2>|<GenRules.toString>`, checked in `Session.dep`'s
+`preCk` between the mtime test and the parse; a mismatched or MISSING key is stale = full recheck + rewrite. So
+**the "clear the interface cache once at adoption" instruction is retired** (`ROW-CONSTRAINT-STATE.md` carries
+dated notes saying so; `Constraints.scala`'s OPEN GAP comment now says CLOSED; `ROSE-COMPARISON.md` rank 6 has a
+dated DONE note). New `TestInterfaceKey` (2 properties); `G1Compare` reads through `splitInterfaceKey` so the 143
+unkeyed baselines are untouched. Gotcha for anyone touching this: `InterfaceParsers.interfaceSigs` accepts
+NEITHER a leading `--` comment NOR a leading blank line, so the reader must STRIP the header line, and the
+symptom of getting that wrong is silent (every module rechecks, no test fails). **S5.1 PARTIAL**: the theorem is
+`Determined.lean`'s `tauto_delete` (universal on the left; R3's `dead_delete_*` are the mirror image) with
+`tauto_delete_two`, `ScanCount.count_tautology` and `TautoEmpty.tauto_empty_not_deletable`; `Subst.deleteTautologies`
+implements exactly its side condition but ships **behind `-Dermine.tautoDelete`, DEFAULT OFF**, because the
+brief's criterion is not met — FOUR (not five: F3 hand-fixed `sumBy'` already) signatures shorten as intended,
+but `Layout.Report.Relation.cutoffGroupedFldsPosNegRel'` also moves 40 -> 38 constraints (mkSimplified runs at
+EVERY generalisation, not only the publishing one) and 13 bindings move as alpha-variants behind it. NEXT for
+S5.1 is a MEASUREMENT, not a redesign: restrict the deletion to the one `mkSimplified` call that publishes a
+binding's signature and re-run the sweep. Gates: lake 870 jobs / audit 4,596 / 0 non-standard; TestLoopTrace
+720/720; corpus 85/69/0 at BOTH flag settings; trace-ab `boot` 54,209 and `Wide` 115,874 segments IDENTICAL,
+sinmoved=0, old build vs new at default flags; sql-render `sql/` and `out/` byte-identical; repl-smoke and
+lsp-smoke (181) green.
+
+S5 FOLLOW-UP DONE (2026-09-09 ~11:30): the publishing-only restriction (parameter threaded from the module top-level group; two attempts — per-binding generalize was NOT the right predicate because let/where groups reach it too) meets criterion (c): sweep 3477 / 0 / 0 / 4; Layout/Scan.ei differs on exactly four lines, 267/268 byte-identical. `-Dermine.tautoDelete` is DEFAULT ON (supersedes the OFF statement in the agent's 09:08 entry above); fingerprint ends +topnorm+tauto; the key made this the first adoption with no manual .ei wipe. Gates at the new default: TestLoopTrace 720/720; corpus 85/69/0 byte-identical listing; trace-ab boot/Wide IDENTICAL; core/test 940/940; lsp-smoke 181. REVIEWER to launch (brief briefs/brief-S5-review.md, findings Q-*, report S5-REVIEW.md; adoption-commit tiers once). On ADVANCE: orchestrator Tier 0 once, ONE commit 'Residual hygiene S5: tautology deletion (C12, default ON) and the .ei solver-configuration key', stamp C12; then the canonical-residual programme CR1 brief.
