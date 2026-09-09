@@ -1232,3 +1232,4 @@ pre-fix .ei, rewrites 0). Tests: TestInterfaceConcreteRow (3 props, all RED on t
 85/69/0; lsp 185; repl green; g1 9/9; core/test 943/943; warm load 35.5-36.2 s → 23.5-24.2 s. REVIEWER to launch
 (brief briefs/brief-F4-review.md, findings R-*, report F4-REVIEW.md). On ADVANCE: Tier 0 once, ONE commit, stamp E1,
 then STOP for the user's next choice.
+F4 REVIEWER LAUNCHED (2026-09-09 ~15:55): agent ad86d0c305d99fbeb (Opus, background; resume by SendMessage). F4 implementer a3effe0d180e1bab3 COMPLETE.
