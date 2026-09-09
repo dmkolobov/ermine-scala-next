@@ -1156,3 +1156,9 @@ INTERRUPTION (2026-09-08 ~10:40): the LSP-FFI implementer was killed by the Opus
 before making any fix-round change. RESUMED 2026-09-09 05:22 by SendMessage from the reviewed state (tree = the
 implementer's original deliverables + LSP-FFI-REVIEW.md; no JVM; no .ei). If it dies again: the P-1..P-9 list is in
 the 2026-09-08 ~10:25 entry above and in LSP-FFI-REVIEW.md; a fresh agent can take it from the review alone.
+
+LSP-FFI COMMITTED 5cc46e8 (2026-09-09 ~06:10): nine kinds + three unloadable-member kinds; Recoverable catch set; default
+OFF except the LSP; Tier 0 by the orchestrator green (720/720; 85/69/0; lsp-smoke 181; repl-smoke all PASS). All
+agents COMPLETE. THE QUEUE IS EMPTY. Next = the user's choice (recommended: C12 tautology deletion + .ei config key
+(Rose rank 6), then canonical residual simplification (memo rank 3, three stages); open user-visible items: A3
+sibling Date.incrementDate, B1a example helpers, D3 disjunction generator, LSP roadmap Stage 3 at gate G2).
