@@ -89,7 +89,15 @@ object Main {
             // symbols; the workspace query from those plus the resident
             // session's own globals.
             "documentSymbolProvider"    -> Json.Bool(true),
-            "workspaceSymbolProvider"   -> Json.Bool(true)),
+            "workspaceSymbolProvider"   -> Json.Bool(true),
+            // 6.5: completion from the last check's tables and the
+            // current buffer text.  `.` is the one trigger character (a
+            // qualified name and an `import X.` are both dotted); there
+            // is no completionItem/resolve -- every item arrives with
+            // its detail already on it.
+            "completionProvider"        -> Json.obj(
+              "triggerCharacters" -> Json.Arr(List(Json.Str("."))),
+              "resolveProvider"   -> Json.Bool(false))),
           "serverInfo" -> Json.obj(
             "name"    -> Json.Str("ermine-lsp"),
             "version" -> Json.Str("0.1")))
@@ -135,6 +143,7 @@ object Main {
       Definitions.install(server, ermine, docs, log)
       References.install(server, ermine, docs, log)
       Symbols.install(server, ermine, docs, log)
+      Completion.install(server, ermine, docs, log)
 
       server.onRequest("shutdown") { _ =>
         log("shutdown received")

@@ -127,6 +127,11 @@ def main():
           caps.get("documentSymbolProvider") is True)
     check("initialize.workspaceSymbolProvider",
           caps.get("workspaceSymbolProvider") is True)
+    # 6.5: completion, with `.` as the one trigger character and no resolve.
+    check("initialize.completionProvider",
+          caps.get("completionProvider") ==
+          {"triggerCharacters": ["."], "resolveProvider": False},
+          repr(caps.get("completionProvider")))
     sync = caps.get("textDocumentSync", {})
     # 5.3: TextDocumentSync FULL — didChange carries the whole document
     check("initialize.sync", sync.get("openClose") is True and sync.get("save") is True
@@ -141,6 +146,13 @@ def main():
     rid = client.request("textDocument/documentSymbol",
                          {"textDocument": {"uri": uri("Good.e")}})
     check("documentSymbol before any check -> []",
+          client.response(rid).get("result") == [])
+    # 6.5: the same rule for completion -- an empty list, never null, and
+    # never a wait behind the ~13s boot.
+    rid = client.request("textDocument/completion",
+                         {"textDocument": {"uri": uri("Complete.e")},
+                          "position": {"line": 10, "character": 14}})
+    check("completion before the session boots -> []",
           client.response(rid).get("result") == [])
 
     client.notify("initialized", {})
@@ -1545,6 +1557,345 @@ def main():
     client.diagnostics_for(uri("Broken.e"))
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Decls.e")}})
     client.diagnostics_for(uri("Decls.e"))
+
+    # --- 6.5: completion -----------------------------------------------
+    # Every answer comes from the LAST CHECK'S TABLES (the renamer frames
+    # `scopeAt` folds, 6.2's local types, 6.4's symbol tree, the
+    # ModuleScope the check built) plus the CURRENT BUFFER TEXT, read
+    # lexically on the request's own line for the word prefix and the
+    # `import` / `Module.` / comment / string context.  No parse, no
+    # check, no inference is reachable from the handler -- which is also
+    # why a name typed since the last debounced check is NOT offered until
+    # that check lands (the staleness pin at the end of this block).
+    def complete(name, line, char):
+        rid = client.request("textDocument/completion", {
+            "textDocument": {"uri": uri(name)},
+            "position": {"line": line, "character": char}})
+        return client.response(rid).get("result")
+
+    def labels(res):
+        return [i["label"] for i in res["items"]]
+
+    def one(res, label):
+        for i in res["items"]:
+            if i["label"] == label:
+                return i
+        return None
+
+    def rank(res, label):
+        for n, i in enumerate(res["items"]):
+            if i["label"] == label:
+                return n
+        return -1
+
+    open_doc("CompleteSib.e")
+    check("CompleteSib.e clean", client.diagnostics_for(uri("CompleteSib.e")) == [])
+    open_doc("Complete.e")
+    check("Complete.e clean", client.diagnostics_for(uri("Complete.e")) == [])
+
+    # (1) A LOCAL: an argument, offered inside its own equation with the
+    # type 6.2's argument split gave it -- and offered NOWHERE else.
+    r = complete("Complete.e", 10, 14)          # inside `arg` in `topFn arg = arg && True`
+    check("completion: an argument is offered inside its equation",
+          labels(r) == ["arg"], repr(labels(r)))
+    check("completion: the argument's kind is Variable and its type is its detail",
+          one(r, "arg") is not None and one(r, "arg")["kind"] == 6
+          and one(r, "arg")["detail"] == "Bool", repr(one(r, "arg")))
+    check("completion: a prefix-filtered answer is complete",
+          r["isIncomplete"] is False)
+
+    r = complete("Complete.e", 10, 11)          # empty prefix, same equation
+    check("completion: an empty prefix answers locals + own only, isIncomplete",
+          r["isIncomplete"] is True and "arg" in labels(r) and "topFn" in labels(r)
+          and "not" not in labels(r), repr(labels(r)))
+    check("completion: another equation's binders are not in scope",
+          "helper" not in labels(r) and "inner" not in labels(r)
+          and "h" not in labels(r), repr(labels(r)))
+
+    # (2) A WHERE-BOUND name, in the body it scopes over and not outside.
+    r = complete("Complete.e", 13, 10)          # inside `helper` in the where line
+    check("completion: a where-bound is offered in its own block",
+          labels(r) == ["helper"] and one(r, "helper")["detail"] == "Bool -> Bool",
+          repr(r["items"]))
+    r = complete("Complete.e", 13, 19)          # empty prefix inside the where body
+    check("completion: the where body sees the where-bound, its argument and the equation's",
+          "helper" in labels(r) and "h" in labels(r) and "b" in labels(r), repr(labels(r)))
+    check("completion: the where body does NOT see another equation's argument",
+          "arg" not in labels(r) and "inner" not in labels(r), repr(labels(r)))
+
+    # (3) A LET-BOUND name, in its `in` and not outside the let.
+    r = complete("Complete.e", 17, 7)           # `in inner`, prefix "in"
+    check("completion: a let-bound is offered in the let body",
+          "inner" in labels(r) and one(r, "inner")["detail"] == "Bool", repr(labels(r)))
+    # ... and a KEYWORD with the same prefix, ranked below every name.
+    check("completion: a keyword is offered and ranked last",
+          one(r, "in") is not None and one(r, "in")["kind"] == 14
+          and rank(r, "inner") < rank(r, "in"), repr(labels(r)))
+    check("completion: the keyword tier is 3 in sortText",
+          one(r, "in")["sortText"].startswith("3")
+          and one(r, "inner")["sortText"].startswith("0"),
+          repr([one(r, "in")["sortText"], one(r, "inner")["sortText"]]))
+    r = complete("Complete.e", 17, 5)           # empty prefix in the let body
+    check("completion: the let body sees the let-bound and the equation's argument",
+          "inner" in labels(r) and "c" in labels(r), repr(labels(r)))
+    check("completion: the let-bound does not escape its equation",
+          "helper" not in labels(r) and "arg" not in labels(r), repr(labels(r)))
+
+    # (4) AN OWN TOP-LEVEL, with the type the check gave it.
+    r = complete("Complete.e", 21, 11)          # inside `topFn` in `useTop = topFn True`
+    check("completion: an own top-level with its checked type",
+          labels(r) == ["topFn"] and one(r, "topFn")["detail"] == "Bool -> Bool"
+          and one(r, "topFn")["kind"] == 3, repr(r["items"]))
+
+    # (5) AN OWN CONSTRUCTOR, from 6.4's symbol tree, ranked above the
+    # imported names that share its prefix.
+    r = complete("Complete.e", 5, 16)           # inside `Red` in the data statement
+    check("completion: an own constructor with its type",
+          one(r, "Red") is not None and one(r, "Red")["kind"] == 4
+          and one(r, "Red")["detail"] == "Colour", repr(one(r, "Red")))
+    check("completion: own outranks imported",
+          rank(r, "Red") == 0 and rank(r, "Relation") > 0, repr(labels(r)))
+
+    # (6) AN IMPORTED NAME with its type, and the ranking against a local
+    # of the same prefix: the local first, the import after it.
+    r = complete("Complete.e", 23, 28)          # inside `not` in `... in not n1`
+    check("completion: an imported name with its type",
+          one(r, "not") is not None and one(r, "not")["detail"] == "Bool -> Bool"
+          and one(r, "not")["kind"] == 3, repr(one(r, "not")))
+    check("completion: a local ranks above an imported name",
+          rank(r, "n1") == 0 and rank(r, "n1") < rank(r, "not"), repr(labels(r)))
+    check("completion: a case-insensitive match ranks below every exact one",
+          rank(r, "Nil") > rank(r, "not")
+          and one(r, "Nil")["sortText"].startswith("21"), repr(labels(r)))
+
+    # (7) A SIBLING BUFFER'S EXPORT: CompleteSib is open and imported, and
+    # its own `sibValue` is in this file's scope with its checked type.
+    r = complete("Complete.e", 19, 12)          # inside `sibValue`
+    check("completion: a sibling's export with its type",
+          labels(r) == ["sibValue"] and one(r, "sibValue")["detail"] == "Bool",
+          repr(r["items"]))
+
+    # (8) A CURSOR IN A STRING answers nothing at all.
+    r = complete("Complete.e", 25, 10)          # inside `msg = "not a name"`
+    check("completion: a cursor inside a string literal answers []",
+          r["items"] == [] and r["isIncomplete"] is False, repr(r))
+
+    # (9) MODULE NAMES after `import`: the resident session's loaded
+    # modules, the `.e` files under this file's module root, and the open
+    # buffers' own modules.  Dotted, prefix-matched on the whole path.
+    r = complete("CompleteSib.e", 3, 9)         # `import La|yout.Scan`
+    check("completion: `import La` offers the Layout modules",
+          "Layout" in labels(r) and "Layout.Scan" in labels(r)
+          and one(r, "Layout")["kind"] == 9, repr(labels(r)[:6]))
+    check("completion: `import La` offers modules only",
+          all(x.startswith("La") for x in labels(r)) and "Bool" not in labels(r),
+          repr(labels(r)[:6]))
+    r = complete("CompleteSib.e", 3, 14)        # `import Layout.|Scan`
+    check("completion: `import Layout.` offers the Layout.* modules",
+          labels(r) and all(x.startswith("Layout.") for x in labels(r))
+          and "Layout.Report" in labels(r), repr(labels(r)[:6]))
+    # ... and with no prefix at all, every module the editor could name:
+    # the ones this check loaded, the resident session's, and the `.e`
+    # files under the module root (which is where these fixtures live).
+    r = complete("CompleteSib.e", 3, 7)         # `import |Layout.Scan`
+    check("completion: an empty module prefix offers the root's own files too",
+          "Complete" in labels(r) and "CompleteSib" in labels(r)
+          and "Prelude" in labels(r) and "Layout.Scan" in labels(r),
+          repr(len(labels(r))))
+
+    # (10) QUALIFIED `Module.`: the module's exports and nobody else's --
+    # and, because a dotted reference does not parse in this grammar AT
+    # ALL (`identTok` is tried before the dotted alternatives, so the `.`
+    # is composition in every position: term, constructor and type alike),
+    # every item carries a `textEdit` that replaces the whole
+    # `Module.prefix` span with the BARE name, plus an
+    # `additionalTextEdits` `import M using name` when M is not already
+    # imported here.  The pins below APPLY the edits and re-check.
+    #
+    # The probe text is typed into the BUFFER, which is also the point:
+    # the context comes from the current text, the items from the last
+    # check's tables.
+    def apply_edits(text, item):
+        """The client's job: the textEdit, then the additionalTextEdits."""
+        lines = text.split("\n")
+        te = item["textEdit"]
+        a, b = te["range"]["start"], te["range"]["end"]
+        lines[a["line"]] = (lines[a["line"]][:a["character"]] + te["newText"]
+                            + lines[b["line"]][b["character"]:])
+        for extra in item.get("additionalTextEdits", []):
+            lines.insert(extra["range"]["start"]["line"],
+                         extra["newText"].rstrip("\r\n"))
+        return "\n".join(lines)
+
+    complete_src = (FIXTURES / "Complete.e").read_text()
+    change("Complete.e", complete_src + "q = Bool.no\nz = Nope.no\n", 2)
+    r = complete("Complete.e", 26, 11)          # `q = Bool.no|`
+    check("completion: `Bool.` offers Bool's exports",
+          "not" in labels(r) and one(r, "not")["detail"] == "Bool -> Bool",
+          repr(labels(r)))
+    check("completion: `Bool.` offers nothing from another module",
+          "sibValue" not in labels(r) and "Red" not in labels(r)
+          and "topFn" not in labels(r), repr(labels(r)))
+    it = one(r, "not")
+    check("completion: a qualified item replaces the whole `Module.prefix` span",
+          it["textEdit"]["range"] == {"start": {"line": 26, "character": 4},
+                                      "end": {"line": 26, "character": 11}}
+          and it["textEdit"]["newText"] == "not", repr(it.get("textEdit")))
+    check("completion: a qualified item filters on the DOTTED text the user typed",
+          it.get("filterText") == "Bool.not", repr(it.get("filterText")))
+    check("completion: no import is added for a module already imported",
+          "additionalTextEdits" not in it, repr(it.get("additionalTextEdits")))
+    r = complete("Complete.e", 27, 10)          # `z = Nope.n|o`
+    check("completion: an unknown module answers []", r["items"] == [], repr(r))
+    ds = client.diagnostics_for(uri("Complete.e"))
+    check("Complete.e: a dotted reference does not parse in this grammar",
+          any("unknown operator ." in d["message"] for d in ds), repr(ds))
+    # APPLYING the edit gives code that parses and checks.
+    change("Complete.e", apply_edits(complete_src + "q = Bool.no\n", it), 3)
+    check("completion: the applied qualified edit checks clean",
+          client.diagnostics_for(uri("Complete.e")) == [])
+
+    # ... and for a module this file does NOT import, the item carries the
+    # import line that makes its bare name resolve.
+    change("Complete.e", complete_src + "q = Maybe.isJust\n", 4)
+    r = complete("Complete.e", 26, 16)          # `q = Maybe.isJust|`
+    it = one(r, "isJust")
+    check("completion: `Maybe.` offers a module that is not imported here",
+          it is not None and it["detail"] == "forall a. Maybe a -> Bool",
+          repr(labels(r)))
+    check("completion: an unimported module's item adds its import line",
+          it.get("additionalTextEdits") == [{
+              "range": {"start": {"line": 4, "character": 0},
+                        "end": {"line": 4, "character": 0}},
+              "newText": "import Maybe using isJust\n"}],
+          repr(it.get("additionalTextEdits")))
+    client.diagnostics_for(uri("Complete.e"))
+    change("Complete.e", apply_edits(complete_src + "q = Maybe.isJust\n", it), 5)
+    check("completion: the applied edits (name + import) check clean",
+          client.diagnostics_for(uri("Complete.e")) == [])
+    change("Complete.e", complete_src, 6)
+    check("Complete.e clean again", client.diagnostics_for(uri("Complete.e")) == [])
+
+    # (10b) A SPELLING THAT IS BOTH A TYPE AND A CONSTRUCTOR (review S-2).
+    # The import edit rides on the item's namespace -- `using type Ring`
+    # for the type, `using Ring` for the constructor -- so the two are NOT
+    # collapsed into one item: an editor shows both, told apart by kind
+    # and detail, and only one of them makes a TYPE position check.
+    change("Complete.e", complete_src + "type QQ = Ring.Ring Int\n", 9)
+    r = complete("Complete.e", 26, 19)          # `type QQ = Ring.Ring| Int`
+    rings = [i for i in r["items"] if i["label"] == "Ring"]
+    check("completion: a type and a constructor of one spelling are TWO items",
+          sorted(i["kind"] for i in rings) == [4, 7], repr(rings))
+    check("completion: each namespace carries its own import form",
+          sorted(i["additionalTextEdits"][0]["newText"].strip() for i in rings)
+          == ["import Ring using Ring", "import Ring using type Ring"], repr(rings))
+    client.diagnostics_for(uri("Complete.e"))
+    ty = [i for i in rings if i["kind"] == 7][0]
+    tm = [i for i in rings if i["kind"] == 4][0]
+    change("Complete.e", apply_edits(complete_src + "type QQ = Ring.Ring Int\n", ty), 10)
+    check("completion: the TYPE item's edits check clean in a type position",
+          client.diagnostics_for(uri("Complete.e")) == [])
+    change("Complete.e", apply_edits(complete_src + "type QQ = Ring.Ring Int\n", tm), 11)
+    check("completion: the CONSTRUCTOR item's import does not (why they are two)",
+          len(client.diagnostics_for(uri("Complete.e"))) == 1)
+    change("Complete.e", complete_src, 12)
+    check("Complete.e clean after the Ring probe",
+          client.diagnostics_for(uri("Complete.e")) == [])
+
+    # (10c) AN ALIASED IMPORT (review S-1).  `import Bool as B` puts the
+    # module's names in scope ONLY as `not_B`, and no import edit can help
+    # (the module IS imported), so the item inserts the AFFIX form.
+    open_doc("CompleteAlias.e")
+    check("CompleteAlias.e clean", client.diagnostics_for(uri("CompleteAlias.e")) == [])
+    alias_src = (FIXTURES / "CompleteAlias.e").read_text()
+    change("CompleteAlias.e", alias_src + "q = Bool.no\n", 2)
+    r = complete("CompleteAlias.e", 8, 11)      # `q = Bool.no|`
+    it = one(r, "not")
+    check("completion: an aliased module's item inserts the affix form",
+          it is not None and it["textEdit"]["newText"] == "not_B"
+          and "additionalTextEdits" not in it, repr(it))
+    client.diagnostics_for(uri("CompleteAlias.e"))
+    change("CompleteAlias.e", apply_edits(alias_src + "q = Bool.no\n", it), 3)
+    check("completion: the affix insertion checks clean",
+          client.diagnostics_for(uri("CompleteAlias.e")) == [])
+
+    # (10d) THE `using`-LIST GAP, pinned rather than only stated (S-4):
+    # `import Maybe using isJust` means `isNothing` does not resolve, and
+    # this item never edits a list it did not write -- so the applied
+    # completion leaves ONE diagnostic.  If 6.6 closes the gap, this check
+    # is where it shows.
+    change("CompleteAlias.e", alias_src + "z = Maybe.isNothing\n", 4)
+    r = complete("CompleteAlias.e", 8, 19)      # `z = Maybe.isNothing|`
+    it = one(r, "isNothing")
+    check("completion: a module imported with a using list gets no import edit",
+          it is not None and "additionalTextEdits" not in it, repr(it))
+    client.diagnostics_for(uri("CompleteAlias.e"))
+    change("CompleteAlias.e", apply_edits(alias_src + "z = Maybe.isNothing\n", it), 5)
+    ds = client.diagnostics_for(uri("CompleteAlias.e"))
+    check("completion: THE STATED GAP -- an existing `using` list is not extended",
+          len(ds) == 1 and "undefined term" in ds[0]["message"], repr(ds))
+    change("CompleteAlias.e", alias_src, 6)
+    check("CompleteAlias.e clean again",
+          client.diagnostics_for(uri("CompleteAlias.e")) == [])
+    client.notify("textDocument/didClose",
+                  {"textDocument": {"uri": uri("CompleteAlias.e")}})
+    client.diagnostics_for(uri("CompleteAlias.e"))
+
+    # (10a) A `do` BINDER is offered after its own bind statement and not
+    # inside it -- the frame rule fix 7b made true (the corpus property is
+    # the other pin).
+    r = complete("CompleteSib.e", 11, 8)        # `  dy <- |fb`, empty prefix
+    check("completion: a do binder is not in scope in its own rhs",
+          "dx" in labels(r) and "dy" not in labels(r), repr(labels(r)))
+    r = complete("CompleteSib.e", 12, 11)       # `  unit (f d|x dy)`
+    check("completion: both do binders are in scope after their statements",
+          "dx" in labels(r) and "dy" in labels(r), repr(labels(r)))
+    r = complete("CompleteSib.e", 10, 8)        # `  dx <- |fa`, empty prefix
+    check("completion: neither do binder is in scope in the FIRST rhs",
+          "dx" not in labels(r) and "dy" not in labels(r)
+          and "fa" in labels(r), repr(labels(r)))
+
+    # (11) A BROKEN FILE completes from its healthy part.
+    open_doc("LocalsBroken.e")
+    check("LocalsBroken.e still reports its breakage",
+          len(client.diagnostics_for(uri("LocalsBroken.e"))) > 0)
+    r = complete("LocalsBroken.e", 4, 29)       # inside `ok` in the healthy let
+    check("completion: a broken file completes from its healthy statement",
+          "ok" in labels(r) and one(r, "ok")["kind"] == 6, repr(labels(r)))
+    client.notify("textDocument/didClose",
+                  {"textDocument": {"uri": uri("LocalsBroken.e")}})
+    client.diagnostics_for(uri("LocalsBroken.e"))
+
+    # (12) STALENESS, STATED AND PINNED (docs/lsp.md says the same):
+    # a binder typed since the last check is not offered until that check
+    # lands.  The request goes out immediately after the didChange, so it
+    # is answered from the index the PREVIOUS check left; the debounce is
+    # ~300ms and dispatch is single-threaded, so the check cannot have run.
+    change("Complete.e", complete_src + "zzz = True\n", 13)
+    r = complete("Complete.e", 26, 2)           # `zz|z = True`, before the check
+    check("completion: a binder typed since the last check is NOT offered yet",
+          "zzz" not in labels(r), repr(labels(r)))
+    check("Complete.e clean with the new binding",
+          client.diagnostics_for(uri("Complete.e")) == [])
+    r = complete("Complete.e", 26, 2)           # after the check landed
+    check("completion: it IS offered once the check lands",
+          "zzz" in labels(r) and one(r, "zzz")["detail"] == "Bool", repr(labels(r)))
+    change("Complete.e", complete_src, 14)
+    check("Complete.e clean after the revert",
+          client.diagnostics_for(uri("Complete.e")) == [])
+    check("Complete.e on disk untouched by the buffer edits",
+          (FIXTURES / "Complete.e").read_text() == complete_src)
+
+    # (13) COST: the bar is 50 ms server-side; measure the round trip
+    # instead, which contains it (best of five, so a scheduling hiccup
+    # cannot fail a bound that is about the algorithm).
+    ms = min(_query_ms(complete, "Complete.e", 23, 28) for _ in range(5))
+    check("completion answers well under 50 ms", ms < 50.0, "%.1f ms" % ms)
+
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Complete.e")}})
+    client.diagnostics_for(uri("Complete.e"))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("CompleteSib.e")}})
+    client.diagnostics_for(uri("CompleteSib.e"))
 
     # --- fast mode: skip the type check, keep everything the read gives -
     def set_fast(on):

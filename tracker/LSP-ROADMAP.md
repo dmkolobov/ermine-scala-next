@@ -8,10 +8,10 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 3 IN PROGRESS (2026-09-10).  6.0-6.4 DONE (6.2 as PARTIAL:
+Status: STAGE 3 IN PROGRESS (2026-09-10).  6.0-6.5 DONE (6.2 as PARTIAL:
 62.4% of local binders hover; the pattern-binder residual is a Subst.scala
-FORK under Blocked/Awaiting, the user's decision).  NEXT: 6.5 (completion),
-then 6.6-6.7, then GATE G3.  Orchestration:
+FORK under Blocked/Awaiting, the user's decision).  NEXT: 6.6 (quick
+fixes), then 6.7, then GATE G3.  Orchestration:
 brief -> fresh Opus implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
@@ -30,8 +30,8 @@ brief -> fresh Opus implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (344 as of 2026-09-10 after
-  Stage 3 item 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (407 as of 2026-09-10 after
+  Stage 3 item 6.5; 344 after 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
   82 before that, the G2 line's 77 having gone stale)
@@ -671,6 +671,9 @@ STAGE-3 INVARIANTS (hard):
   import completion).  No persistent workspace index in Stage 3.
   References and rename SAY what they covered: a `window/showMessage`
   warning whenever unopened importers may exist.
+  AMENDED 2026-09-10 (6.5, review F-7): for completion the module-name
+  workspace has a FOURTH source — the modules THIS file's check loaded
+  (`Layout.Scan` is in none of the other three).
 - (d) Rename never edits a file that is not open; never renames to or
   from an operator spelling; refuses a capture (the new name already
   bound in a frame containing an occurrence, or a global the occurrence
@@ -1041,7 +1044,7 @@ STAGE-3 INVARIANTS (hard):
   unsorted over 358 files and 9066 symbols; the identical-range example
   in the report was stale and is corrected in an orchestrator's note.
 
-- [ ] **6.5 Completion** — the consumer the scope-at-position layer has
+- [x] **6.5 Completion** — the consumer the scope-at-position layer has
   waited for since 4.2 ("deferred to where a consumer exists").
   `textDocument/completion` from the last check's tables and the
   CURRENT buffer text (for the word prefix at the cursor and the
@@ -1065,6 +1068,68 @@ STAGE-3 INVARIANTS (hard):
   with its type; `import La` offers the Layout modules; `Bool.` offers
   Bool's exports; a keyword; a broken file completes from its healthy
   part; a request during boot answers an empty list, not null.
+  DONE 2026-09-10 (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP3-6.5-COMPLETION.md, LSP3-6.5-REVIEW.md).  CONTEXT
+  is lexical, one line of buffer text: a line whose first word is
+  `import`/`export` followed only by a dotted name is MODULE context; an
+  identifier preceded by `.` after an upper-initial dotted path is
+  QUALIFIED; otherwise NAME; inside a `--` comment, a same-line `{- -}` or a
+  string the answer is `[]`; the prefix is an identifier, so operators are
+  never completed.  ITEMS in `sortText` tiers: locals from
+  `Renamer.Result.scopeAt` (detail = the 6.2 type via prettyTypeIn) <
+  own declarations (the 6.4 symbol tree plus renamer-bound top levels) <
+  imported terms and types from the check's ModuleScope (types from the
+  V, kinds from cons) < keywords; case-insensitive matches below exact
+  within a tier; one item per label.  Module names from FOUR sources: the
+  resident's loaded modules, the `.e` files under the module root, the
+  open buffers, and what THIS file's check loaded (Layout.Scan is in none
+  of the first three).  Type variables are never offered — TyParam,
+  TyImplicit and KindParam binders are in no frame (12,339 of 18,982 local
+  occurrences): the scope layer is a VALUE-scope layer.  EMPTY PREFIX:
+  the unfiltered payload on Report.e was measured once — 1,332 items,
+  181 KB, 34 ms — and the shipped answer is locals + own only, capped at
+  300, `isIncomplete: true` (a conforming client would otherwise cache
+  the partial list and never see the imports); prefixed answers are
+  `isIncomplete: false`.  TIMING on Report.e line 1504, server-side
+  median of 10: 2.5 ms for prefix `f`, 1.8 ms empty, module context 5.3
+  ms cold / 0.2 ms cached — bar 50 ms.  TWO BUGS IN THE 4.2 LAYER, never
+  tested until it had a consumer: `scopeAt` folded so the OUTERMOST
+  binding won (88 corpus disagreements) and a `do` binder's frame covered
+  only its own bind statement (33 more) — both fixed in Renamer.scala,
+  which the strict path never reads for frames (see the review); the
+  scope-agreement property is now 0 of 6,643 value-local occurrences over
+  252 files, 55 shadowed occurrences as anti-vacuity (TestRenamer 28 ->
+  31).  Staleness stated in docs/lsp.md and pinned deterministically.
+  THE REVIEW REFUTED the report's grammar claim: a dotted reference does
+  not parse in ANY position (`identTok` is tried before the qualified
+  forms, so `.` is always composition) — `Bool.not`, `Bool.True` and
+  `: Bool.Bool` all fail; qualified completion now REPLACES the whole
+  `Module.prefix` span with the bare name, carries `filterText` =
+  `Module.label` so the client's own filter matches the dotted text, and
+  adds an `import M using <name>` additionalTextEdit (the form this
+  grammar has; `using type` for types) after the last import when M is
+  not imported — pinned end to end: edits applied by the client and
+  re-sent, the file checks clean; an existing `using` list is never
+  extended (6.6's add-import job).  The reviewer
+  also ran the REVERSE scope property (every local `scopeAt` reports at an
+  occurrence is what the occurrence resolved to): 0 false locals of 39,487 in the
+  shipped TestRenamer property (the reviewer's independent run: 0 of
+  35,920 under a narrower denominator).  An import LIST is treated as a name context
+  (wrong but harmless, stated).  THE SECOND REVIEW PASS found three
+  qualified-completion shapes whose applied edit does not check clean,
+  none silent: an ALIASED import (`import Bool as B`) exposes names only
+  in the affix form — `importLines` now reads `as A` and the item inserts
+  `not_B` (applied buffer clean); the alias as a QUALIFIER (`B.n|`) still
+  answers nothing (stated); a TYPE and a CONSTRUCTOR of one spelling were
+  collapsed into one item carrying the wrong import form (`using` vs
+  `using type`) — fixed, both items now offered; `Module.` lists names
+  whose ORIGIN is that module, not its exports (`Maybe.` shows no
+  `Just`/`Nothing`, which originate in Native.Maybe) — stated as a gap;
+  and an existing `using` list is never extended (pinned as the
+  diagnostic it leaves, so 6.6 can close it visibly).  Decision (c) amended: the module-name
+  workspace has a FOURTH source, what this file's check loaded.  lsp-smoke 344 ->
+  386 -> 396 -> 407 (two fix rounds); six suites 104/104 (TestRenamer 28 -> 32,
+  TestLower 28); Report.e round trip unmoved.
 
 - [ ] **6.6 Quick fixes (textDocument/codeAction).**  (a) ADD IMPORT: on
   an undefined-term note (Note.spelling, carried since 5.4), candidates
@@ -2312,6 +2377,17 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-10 (6.5 DONE): see the item's DONE paragraph.  Implementer
+  GREEN; reviewer FIX-THEN-ADVANCE twice (the grammar has no dotted
+  references at all, so qualified completion was refuted and rebuilt as
+  a bare-name edit plus an import line; then three applied-edit shapes
+  that did not check clean); two fix rounds.  The 4.2 scope-at-position
+  layer, never tested until it had a consumer, had two bugs (fold order;
+  do-binder frame) — fixed in Renamer.scala, which the batch path never
+  reads for frames (reviewer: frozen by construction).  Implementer
+  ~40 + 16 + 7 min, reviewer ~27 + 14 min.  Baselines: TestLoopTrace
+  720/720, six suites 104/104, corpus 85/69/0 over 154, repl-smoke 8/66
+  goldens untouched, lsp-smoke 407, boot 129.
 - 2026-09-10 (6.4 DONE): see the item's DONE paragraph.  Implementer
   GREEN, reviewer FIX-THEN-ADVANCE (the report claimed non-overlapping
   sibling ranges while 171 corpus pairs straddled; a namespace leak into

@@ -195,6 +195,78 @@ then serves:
   ~40 ms); every query after that is a scan over it, well under a
   millisecond.
 
+- **Completion** (`textDocument/completion`, trigger character `.`, no
+  `completionItem/resolve`). Every item comes from the LAST CHECK's tables and
+  the CURRENT buffer text — never a check, a parse or an inference. The buffer
+  is read lexically, on the request's own line, for two things: the word
+  prefix at the cursor (an identifier; **operators are not completed**) and
+  which of four contexts applies.
+
+  | context | what is offered |
+  |---|---|
+  | the line starts with `import ` / `export ` | module names (Module 9): the ones this file's check loaded, the resident session's, the `.e` files under the file's module root, and the open buffers' own modules — prefix-matched on the whole dotted path, so `import La` offers `Layout` and `Layout.*` |
+  | the cursor follows `Module.` (every segment upper-initial) | the names whose ORIGIN is that module: terms with their types, constructors, and types with their kinds — see the note below on what such an item INSERTS |
+  | the cursor is inside a `--` comment, a `{- -}` opened on this line, or a `"…"` string | nothing: the answer is an empty list |
+  | otherwise | names, ranked: **locals** visible at the position (Variable 6, with the type 6.2 gave the binder) < **this module's own** declarations (from the document-symbol tree, with their checked types) < **imported** names in this file's scope (with the type the check's `ModuleScope` carries) < **keywords** (Keyword 14) |
+
+  The comment/string test reads the CURRENT LINE only, so a cursor inside a
+  `{- -}` block comment opened on an EARLIER line, or inside a string that spans
+  lines, is not recognised and completion answers as if it were code.
+
+  **A qualified item inserts the BARE name, not the dotted one.** A dotted
+  reference does not parse in this dialect — `Bool.not`, `Bool.True` and
+  `: Bool.Bool` all fail with `unknown operator .`, because an upper-initial
+  segment is read as a plain identifier and the `.` as composition. So
+  completing `Bool.no|` replaces the whole `Bool.no` span with `not`, and, when
+  the module is not already imported in this file, adds an
+  `import M using <name>` line after the last import. `Module.` completion is
+  therefore a way to BROWSE another module and pull one name in; the dotted text
+  you typed never survives into the file. Under `import M as A` the module's
+  names are in scope only in the affix form, so the item inserts `not_B` rather
+  than `not` (and no import is added — the module is already imported). A
+  spelling that is both a type and a constructor is offered TWICE, once per
+  namespace, because their import lines differ (`using type Ring` and
+  `using Ring`) and nothing in the buffer says which position you are in.
+
+  Three limits of `Module.`, stated: it lists the names whose ORIGIN is that
+  module, so a name the module RE-EXPORTS is not offered under it (`Maybe.`
+  offers `Maybe.e`'s own functions, not `Maybe`/`Just`/`Nothing`, which
+  originate in `Native.Maybe`); a module referred to by its ALIAS (`B.n`) is not
+  recognised as a module at all and answers nothing; and if the module is
+  already imported with a `using` list that does not name what you picked, the
+  insertion will not resolve until that list is extended — the add-import quick
+  fix (6.6) is what edits existing lists.
+
+  Ranking is carried in `sortText` (tier, then case, then the name); a
+  case-insensitive prefix match is offered BELOW every exact-case match of its
+  own tier. A name is offered once: a local shadowing an import is the local,
+  which is what that name means at that position. Filtering is server-side and
+  case-sensitive-first.
+
+  With a NON-EMPTY prefix the answer is complete (`isIncomplete: false`) and
+  the editor may filter it as you keep typing. With an EMPTY prefix — the
+  cursor after a space, or the `.` trigger — the answer is the file's own
+  names only (locals and the module's declarations) and says
+  `isIncomplete: true`, so the editor asks again the moment a character is
+  typed and gets the imports too: on the largest module in the corpus the
+  unfiltered set is 1332 names and 177 KB of JSON, which is not an answer to
+  "show me everything". Answers are capped at 300 items (with
+  `isIncomplete: true` when the cap bites).
+
+  TYPE VARIABLES ARE NOT OFFERED. A `forall` variable, a data argument and a
+  kind brace bind through the annotation rather than through a scope frame,
+  and the scope-at-position layer carries value scopes only.
+
+  **Staleness is accepted and stated.** Completion answers from the tables the
+  last DEBOUNCED CHECK left behind, so a binder you have just typed is not
+  offered until that check lands (~300 ms after you stop typing, plus the
+  check itself). The word prefix and the context are read from the buffer as
+  it is NOW, so the filtering is always current; only the set of names is as
+  old as the last check. The alternative — checking on a completion request —
+  would put a whole check on every keystroke, which is the one thing this
+  server does not do. A request that arrives during the ~13 s session boot
+  answers with an empty list, never null.
+
 Logging goes to the file named by `ERMINE_LSP_LOG` (or `-Dermine.lsp.log`);
 stdout is reserved for the protocol.
 
@@ -221,6 +293,7 @@ Measured on `core/src/main/resources/modules/Layout/Report.e`, 1757 lines:
 | session boot | ~13s, once |
 | keystroke to diagnostics | ~1.57s (0.80s read + 0.45s typecheck + 0.30s debounce) |
 | binding groups re-inferred | 40 of 154; the rest are reused |
+| a completion, server side | 2 ms (median of ten, 97 items of 1332 in scope) |
 
 Small modules are far below that. Dispatch is single-threaded by design
 (SessionEnv is not thread-safe), so requests are served one at a time —
@@ -251,9 +324,10 @@ For fast mode, add `:initializationOptions (:fastMode t)` to the server entry.
 
 `tracker/tools/lsp-smoke.sh` runs the scripted client
 (`tracker/tools/lsp-client.py`) against the fixtures in `tracker/lsp-tests/` —
-344 checks over everything above, including didChange without save, the
+407 checks over everything above, including didChange without save, the
 sibling-buffer path, local and kind hovers, references/highlight/rename with
 their refusals, the pinned symbol trees of `Decls.e`, `Syms.e`, `Scope.e` and
-the broken `Broken.e`, the workspace queries, and fast mode. Run it with `core/test` and
+the broken `Broken.e`, the workspace queries, completion in every context
+(`Complete.e` and its sibling, including the staleness pin), and fast mode. Run it with `core/test` and
 `repl-smoke.sh` before committing server changes
 (`tracker/LSP-ROADMAP.md`, Baselines).

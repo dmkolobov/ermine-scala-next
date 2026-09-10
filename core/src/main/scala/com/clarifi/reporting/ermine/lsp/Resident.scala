@@ -158,7 +158,13 @@ final class Resident(val log: String => Unit) {
                            // `Checked` is transient (Documents stores
                            // text, version, index and cache, never a
                            // Checked), so this retains nothing new.
-                           contents: String = "")
+                           contents: String = "",
+                           // 6.5: THE MODULE ROOT this check resolved its
+                           // siblings against (computed below).  It is where
+                           // `import La...` completion looks for the project's
+                           // own `.e` files, and computing it needs the
+                           // module header -- which only the check has.
+                           root: String = "")
 
   /** Check one file against a fresh env copy, resolving imports first
     * against the file's own directory (workspace siblings), then the
@@ -419,7 +425,7 @@ final class Resident(val log: String => Unit) {
     // a file full of unexplained undefined names.
     Checked(e, mh.name, r.surface, r.renamed, r.diagnostics,
             importNotes ++ (if (fastMode) Nil else published), checked.types,
-            checked.locals, r.scope, contents)
+            checked.locals, r.scope, contents, root)
   }
 
   private def errorStatements(ss: List[SStatement]): List[SErrorStatement] = ss.flatMap {

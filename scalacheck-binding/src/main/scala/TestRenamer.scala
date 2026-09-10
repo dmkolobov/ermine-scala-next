@@ -3,7 +3,7 @@ package com.clarifi.reporting
 import java.io.File
 
 import com.clarifi.reporting.ermine.{ Global, Idfix, InfixR, Local }
-import com.clarifi.reporting.ermine.lsp.{ Definitions, Symbols }
+import com.clarifi.reporting.ermine.lsp.{ Completion, Definitions, Symbols }
 import com.clarifi.reporting.ermine.rename.{ ModuleScope, Renamer }
 import com.clarifi.reporting.ermine.rename.Renamer._
 import com.clarifi.reporting.ermine.surface._
@@ -540,6 +540,166 @@ object TestRenamer extends Properties("Renamer 3.2a") {
         ((!mt.contains("symEq") && !mt.contains("symNe")) :|
           s"class members leaked into moduleTerms: $mt")
     }
+  }
+
+  // ----------------------------------------------------------------------
+  // 6.5 SCOPE AT A POSITION, over the same corpus.  `Renamer.Result.scopeAt`
+  // was built at 4.2 and DEFERRED ("to where a consumer exists"); completion
+  // is that consumer, and the 4.2 note said the layer was subsumed by the
+  // G1Resolution differential.  Subsumed is not the same as pinned: the
+  // differential says every REFERENCE resolves the way the fused pipeline
+  // resolved it, and says nothing at all about the frame stack `scopeAt`
+  // folds.  So this pins it directly, and in the only terms that matter to
+  // a completion: AT EVERY REAL OCCURRENCE of a local binder, the name the
+  // renamer resolved must be the name `scopeAt` says is visible there --
+  // same spelling, same binder id.  A wrong id here is a completion that
+  // offers the shadowed binding's type.
+
+  /** A VALUE-level local binder: an argument, a `let`/`where` head, a
+    * `do` or `case` binder.  The renamer pushes a FRAME for each of their
+    * scopes, which is what `scopeAt` folds.
+    *
+    * TYPE-level binders (`TyParam`, `TyImplicit`, `KindParam`) are NOT in
+    * any frame -- measured, not assumed: 12339 of the corpus's 18982
+    * local occurrences are type-level and `scopeAt` sees none of them.
+    * So the scope-at-position layer is a VALUE-scope layer, and 6.5's
+    * completion offers no type variables at all (the report says so). */
+  private def localKind(k: Renamer.BinderKind): Boolean =
+    k != Renamer.TopLevel && k != Renamer.TyDef &&
+    k != Renamer.TyParam && k != Renamer.TyImplicit && k != Renamer.KindParam
+
+  private def typeLevelKind(k: Renamer.BinderKind): Boolean =
+    k == Renamer.TyParam || k == Renamer.TyImplicit || k == Renamer.KindParam
+
+  property("6.5 corpus: scopeAt agrees with resolution at every local occurrence") = secure {
+    var checked = 0
+    var typeLevel = 0
+    corpusTables foreach { case (_, _, r) =>
+      r.occurrences foreach {
+        case Occurrence(_, _, ToBinder(id), _) =>
+          if (r.binders.get(id).exists(b => typeLevelKind(b.kind))) typeLevel += 1
+        case _ => ()
+      }
+    }
+    val bad = corpusTables.flatMap { case (f, _, r) =>
+      r.occurrences.flatMap {
+        case Occurrence(sp, n, ToBinder(id), _) =>
+          r.binders.get(id).filter(b => localKind(b.kind)).flatMap { b =>
+            checked += 1
+            r.scopeAt(sp.startLine, sp.startCol).get(n) match {
+              case Some(got) if got == id => None
+              case Some(got) =>
+                Some(s"${f.getName}:${sp.startLine}:${sp.startCol} $n -> $id " +
+                     s"(${b.kind}) but scopeAt says $got " +
+                     r.binders.get(got).map(x => "(" + x.kind + " at " + x.defSite.startLine + ")").getOrElse(""))
+              case None =>
+                Some(s"${f.getName}:${sp.startLine}:${sp.startCol} $n -> $id " +
+                     s"(${b.kind}) not visible at all")
+            }
+          }
+        case _ => None
+      }
+    }
+    Prop.collect(s"files ${corpusTables.size} | value-local occurrences $checked " +
+                 s"| scopeAt disagreements ${bad.size} " +
+                 s"| type-level occurrences $typeLevel (no frames: not offered)") {
+      (bad.isEmpty :| s"${bad.size} of $checked disagree: ${bad.take(8)}") &&
+      ((checked > 5000) :| s"anti-vacuity: only $checked local occurrences")
+    }
+  }
+
+  property("6.5 corpus: scopeAt claims no local where the renamer used none") = secure {
+    // THE REVERSE DIRECTION (review F-3).  The property above looks only
+    // at occurrences that RESOLVED to a value-local binder, so it cannot
+    // see a frame that reaches one statement too far -- an over-wide
+    // frame shows up as `scopeAt` claiming a local at a position where
+    // the renamer used a TOP LEVEL, an import, or nothing at all.  That
+    // is exactly the failure mode the do-binder frame fix could have
+    // introduced, so it is pinned here rather than left to a reviewer's
+    // scratch directory.
+    //
+    // Type-level occurrences are excluded for the reason the forward
+    // property states: `scopeAt` is a value-scope layer and reports none
+    // of them, so every one of them would be a trivial pass.
+    var checked = 0
+    val bad = corpusTables.flatMap { case (f, _, r) =>
+      r.occurrences.flatMap { o =>
+        val local = o.resolution match {
+          case ToBinder(id) => r.binders.get(id).exists(b => localKind(b.kind))
+          case _            => false
+        }
+        val typeLevel = o.resolution match {
+          case ToBinder(id) => r.binders.get(id).exists(b => typeLevelKind(b.kind))
+          case _            => o.typeLevel
+        }
+        if (local || typeLevel) None
+        else {
+          checked += 1
+          r.scopeAt(o.span.startLine, o.span.startCol).get(o.spelling).flatMap { id =>
+            r.binders.get(id).filter(b => localKind(b.kind)).map { b =>
+              s"${f.getName}:${o.span.startLine}:${o.span.startCol} ${o.spelling} " +
+              s"resolved to ${o.resolution} but scopeAt offers the ${b.kind} " +
+              s"bound at ${b.defSite.startLine}"
+            }
+          }
+        }
+      }
+    }
+    Prop.collect(s"top-level/free value occurrences $checked | false-local ${bad.size}") {
+      (bad.isEmpty :| s"${bad.size} of $checked are false locals: ${bad.take(8)}") &&
+      ((checked > 20000) :| s"anti-vacuity: only $checked such occurrences")
+    }
+  }
+
+  property("6.5 corpus: an inner binding wins over an outer one of the same name") = secure {
+    // The anti-vacuity clause for the property above: without a SHADOWED
+    // name in the corpus, agreement is a statement about a map with no
+    // collisions in it.  Count the occurrences whose spelling is bound by
+    // more than one frame containing that position -- those are the ones
+    // where "innermost wins" is the only thing that can make the two
+    // agree.
+    var shadowed = 0
+    corpusTables foreach { case (_, _, r) =>
+      r.occurrences foreach {
+        case Occurrence(sp, n, ToBinder(id), _) if r.binders.get(id).exists(b => localKind(b.kind)) =>
+          val frames = r.frames.filter(fr => fr.span.contains(sp.startLine, sp.startCol))
+          if (frames.count(_.bindings.contains(n)) > 1) shadowed += 1
+        case _ => ()
+      }
+    }
+    Prop.collect(s"shadowed value-local occurrences $shadowed") {
+      (shadowed >= 20) :| s"anti-vacuity: only $shadowed shadowed occurrences"
+    }
+  }
+
+  // ----------------------------------------------------------------------
+  // 6.5 THE CONTEXT RULES.  Completion reads the CURRENT BUFFER TEXT for
+  // the word prefix and for the `import` / qualified / comment / string
+  // context, and nothing else; `Completion.contextAt` is that whole rule and
+  // these call it rather than restate it.
+
+  property("6.5: the context rules over one line of text") = secure {
+    def at(line: String, col: Int) = Completion.contextAt(line, col)
+    val cases: List[(String, Int, Completion.Ctx)] = List(
+      ("topFn arg = arg && True", 14, Completion.Names("ar")),
+      ("topFn arg = arg && True", 11, Completion.Names("")),
+      ("import Layout.Scan", 9, Completion.Modules("La")),
+      ("import Layout.Scan", 14, Completion.Modules("Layout.")),
+      ("export Bool", 9, Completion.Modules("Bo")),
+      ("  import Bool", 11, Completion.Modules("Bo")),
+      ("import Bool using not", 20, Completion.Names("no")),
+      ("x = Bool.no", 11, Completion.Qualified("Bool", "no", 4)),
+      ("x = Layout.Report.so", 20, Completion.Qualified("Layout.Report", "so", 4)),
+      ("x = Bool.", 9, Completion.Qualified("Bool", "", 4)),
+      ("x = rec.fie", 11, Completion.Names("fie")),
+      ("x = 1  -- not a name", 18, Completion.Dead),
+      ("x = \"not a name\"", 10, Completion.Dead),
+      ("x = \"s\" ++ no", 13, Completion.Names("no")),
+      ("{- x = no -}", 8, Completion.Dead),
+      ("x = 1 <+", 8, Completion.Names("")))
+    val bad = cases.filterNot { case (l, c, want) => at(l, c) == want }
+    bad.isEmpty :| bad.map { case (l, c, want) =>
+      s"[$l] at $c: want $want, got ${at(l, c)}" }.mkString("; ")
   }
 }
 

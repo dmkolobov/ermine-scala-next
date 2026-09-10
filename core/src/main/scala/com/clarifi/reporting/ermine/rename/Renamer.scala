@@ -71,11 +71,31 @@ object Renamer {
         case _            => None
       })
 
-    /** Innermost-first name set visible at a position. */
+    /** The names visible at a position, INNERMOST WINNING.
+      *
+      * The frames containing one position are nested (a frame is a
+      * lexical scope), so ordering them by extent orders them outermost
+      * first, and folding left with the frame's own bindings on the RIGHT
+      * lets each inner scope shadow the one around it -- which is exactly
+      * how the renamer itself resolves a reference (`lookup` takes the
+      * first hit in an innermost-first env).
+      *
+      * 6.5 FIXED THE DIRECTION.  This folded RIGHT until 6.5, which made
+      * the OUTERMOST binding win, and 4.2 deferred the layer to "where a
+      * consumer exists" with no test of its own: on the 253-file corpus
+      * 88 of 6643 local occurrences disagreed with the renamer's own
+      * resolution (`Ap.e:35 ap` resolved to the argument and `scopeAt`
+      * answered the top level it shadows).  The corpus property
+      * `TestRenamer` "6.5 corpus: scopeAt agrees with resolution at every
+      * local occurrence" now pins it at 0.
+      *
+      * TYPE-level binders are in no frame at all (`TyParam`,
+      * `TyImplicit`, `KindParam` scope through the annotation, not
+      * through a frame), so this answers with VALUE names only. */
     def scopeAt(line: Int, col: Int): Map[String, Int] =
       frames.filter(_.span.contains(line, col))
         .sortBy(f => (f.span.startLine - f.span.endLine, f.span.startCol - f.span.endCol))
-        .foldRight(Map.empty[String, Int])((f, acc) => acc ++ f.bindings)
+        .foldLeft(Map.empty[String, Int])((acc, f) => acc ++ f.bindings)
   }
 
   // ------------------------------------------------------------------ state
@@ -624,14 +644,25 @@ object Renamer {
       val env2 = b :: env
       sts.foreach(statement(_, env2, s))
       term(body, env2, s)
-    case SDo(_, stmts) =>
+    case SDo(dloc, stmts) =>
       // sequential: a binder's rhs sees the OUTER env; later stmts see it
       var cur = env
       stmts.foreach {
         case SDoBind(loc, pat, _, rhs) =>
           term(rhs, cur, s)                      // unbind-before-rhs (pinned)
           val b = patternBinders(pat, DoBound, s)
-          if (b.nonEmpty) s.frames += Frame(loc.span, b)
+          // THE FRAME IS THE REST OF THE BLOCK (6.5).  A do binder is
+          // visible to every LATER statement -- that is what `cur` does
+          // above -- and NOT to its own rhs.  Until 6.5 the frame was the
+          // bind statement's own span, so `scopeAt` reported a do binder
+          // nowhere it was actually usable: 33 corpus occurrences (every
+          // use in `Monad.e`'s do blocks) resolved to a binder the scope
+          // layer said was not visible at all.  From the END of this
+          // statement (spans run to the start of the next token, so that
+          // is the next statement's start) to the end of the do block.
+          if (b.nonEmpty)
+            s.frames += Frame(Span(loc.span.endLine, loc.span.endCol,
+                                   dloc.span.endLine, dloc.span.endCol), b)
           cur = b :: cur
         case SDoExpr(e) => term(e, cur, s)
       }

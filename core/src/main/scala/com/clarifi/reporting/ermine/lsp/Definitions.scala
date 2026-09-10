@@ -1,7 +1,8 @@
 package com.clarifi.reporting.ermine.lsp
 
-import com.clarifi.reporting.ermine.{ Fixity, Global, Idfix, KindSchema, Local, Name, Pretty, Type }
+import com.clarifi.reporting.ermine.{ Fixity, Global, Idfix, KindSchema, Local, Name, Pretty, Type, V }
 import com.clarifi.reporting.ermine.rename.Renamer
+import com.clarifi.reporting.ermine.session.TolerantCheck
 import com.clarifi.reporting.ermine.surface.{ SClassStatement, SDatabaseBlock,
   SDataStatement, SFieldStatement, SFixity, SForeign, SForeignBlock, SForeignConstructor,
   SForeignData, SForeignFunction, SForeignMethod, SForeignPrivate, SForeignSubtype,
@@ -99,7 +100,33 @@ object Definitions {
                               Renamer.Result(Nil, Map(), Nil, Nil),
                             scopeTerms: Map[Local, List[Name]] = Map(),
                             scopeTypes: Map[Local, List[Name]] = Map(),
-                            symbols: List[Symbols.Sym] = Nil)
+                            symbols: List[Symbols.Sym] = Nil,
+                            // 6.5.  Four references, no copies: completion
+                            // answers from the tables the check already
+                            // built, and storing them here is what keeps the
+                            // request a lookup.
+                            //   `locals` is 6.2's def-site -> type map, for
+                            //     the detail of a visible local binder;
+                            //   `importTypes` is the ModuleScope's own
+                            //     `termNames` (the session superset the check
+                            //     ran against, siblings included), for the
+                            //     detail of an imported name and for
+                            //     `Module.`'s exports;
+                            //   `cons` is the check env's Con table, for a
+                            //     type name's KIND;
+                            //   `root` is the module root `Resident.checkFile`
+                            //     computed, which is where `import La...`
+                            //     looks for the `.e` files of this project;
+                            //   `modules` is what THIS check had loaded, which
+                            //     is a superset of the resident session's set
+                            //     (this file's own imports and their closure --
+                            //     `Layout.Scan` is imported by a fixture and is
+                            //     in no other list).
+                            locals: Map[(Int, Int), TolerantCheck.LocalTy] = Map(),
+                            importTypes: Map[Name, V[Type]] = Map(),
+                            cons: Map[Global, Type.Con] = Map(),
+                            root: String = "",
+                            modules: Set[String] = Set())
 
   // The per-document indexes live in Documents alongside the buffer text
   // and version (roadmap 5.3): a definition request and the check that
@@ -706,7 +733,11 @@ object Definitions {
     DocIndex(dedup(occs ++ headOccs ++ fixityOccs ++ tyHeadOccs ++
                    localDefOccs ++ importOccs ++ importItemOccs),
              0L, c.name, c.renamed, c.scope.canonicalTerms, c.scope.canonicalTypes,
-             syms)
+             syms,
+             // 6.5: four references to tables this check already holds.
+             // Nothing is walked, copied or rendered here -- completion is
+             // a request-time filter over them.
+             c.locals, c.scope.termNames, env.cons, c.root, env.loadedModules.keySet)
   }
 
   /** First entry wins per start position: a real occurrence outranks the
