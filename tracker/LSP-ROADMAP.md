@@ -8,17 +8,22 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 3 IN PROGRESS (2026-09-10).  6.0-6.6 DONE (6.2 as PARTIAL:
-62.4% of local binders hover; the pattern-binder residual is a Subst.scala
-FORK under Blocked/Awaiting, the user's decision).  NEXT: 6.7 (wiring,
-docs, demo, the full G3 gate run), then GATE G3.  Orchestration:
-brief -> fresh Opus implementer -> fresh Opus reviewer -> Tier 0 -> commit.
+Status: STAGE 3 COMPLETE — AWAITING GATE G3 SIGN-OFF (2026-09-10).
+6.0-6.7 done (6.2 as PARTIAL: 62.4% of local binders hover; the
+pattern-binder residual is a Subst.scala FORK under Blocked/Awaiting, the
+user's decision).  Gate evidence (G3) recorded below; every gate green on
+the reviewer's own run, core/test 988/988 alone on the tree, lsp-smoke 454.
+NEXT: nothing — the loop stopped at G3.  Stage 4 is DRAFTED, not opened:
+tracker/LSP-STAGE4-DRAFT.md (from tracker/loopmodel/STAGE4-PRIOR-ART.md);
+say the word to fold it in and open it.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
 
-- `sbt -batch core/test`: all green — 943/943 as of F4 (2026-09-09).
+- `sbt -batch core/test`: all green — 988/988 at GATE G3 (2026-09-10; 943
+  at F4 plus Stage 3's properties); two consecutive full runs of the final
+  tree agree.
   `Constraints.disjunction sound` is QUARANTINED behind
   `-Dermine.test.disjunction=true` (tracker/GATE-POLICY.md), so "green"
   means green; it was 761/762 with that failure visible at Stage 0.
@@ -30,8 +35,8 @@ brief -> fresh Opus implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (454 as of 2026-09-10 after
-  Stage 3 item 6.6; 407 after 6.5; 344 after 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (454 at GATE G3, 2026-09-10;
+  407 after 6.5; 344 after 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
   82 before that, the G2 line's 77 having gone stale)
@@ -1184,7 +1189,8 @@ STAGE-3 INVARIANTS (hard):
   unfolded in the rendering — the signatures are correct and re-check
   silently; honest reading 1166/1166 usable), SKIPPED 168 by named reason (the rendered type
   names a constructor the file cannot write 117 — the review re-derived
-  the class: 31 are types the file resolves through its OWN synonym, a
+  the class: 31 groups (33 name occurrences) are types the file resolves
+  through its OWN synonym, a
   false negative of the scope test stated as a gap; 31 name a `private
   data`; most of the rest are imported under an alias; a free kind
   variable 36; a nested `* ->` kind losing its parens 10; `<:_Type.Cast`
@@ -1209,7 +1215,7 @@ STAGE-3 INVARIANTS (hard):
   Ticket E10 (the printer's four unreadable shapes + the synonym false
   negative) filed.
 
-- [ ] **6.7 Editor wiring, docs, demo.**  VS Code: the client library
+- [x] **6.7 Editor wiring, docs, demo.**  VS Code: the client library
   serves completion/rename/references/symbols/codeAction on its own —
   add the completion trigger character, check the `ermine` fence on
   hover markdown still renders, rebuild the vsix.  Eglot: verify over
@@ -1218,6 +1224,28 @@ STAGE-3 INVARIANTS (hard):
   trip, worst-case request wait during a check, completion time), and
   the staleness/coverage statements from Decisions (c)(d).  Record the
   G3 demo transcript under "Gate evidence (G3)".
+  DONE 2026-09-10 (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP3-6.7-WIRING.md, LSP3-6.7-REVIEW.md).  VS Code:
+  the client filters nothing — verified by reading and now by
+  measurement (the load test asserts all nine providers register, the
+  `.` trigger and the `quickfix,source` kinds); THE LOAD TEST HAD BEEN
+  RED SINCE 6.6 LANDED and leaked a server JVM each run — its `vscode`
+  stub answered 0 for every capitalised static, so registering code-
+  action kinds threw inside the client; fixed in the stub (real VS Code
+  has the method; the extension and server were never implicated);
+  vsix rebuilt as ermine-lang-0.1.1, 0.1.0 removed, no new bloat.  Eglot
+  needs no change.  docs/lsp.md REWRITTEN whole (405 -> 540 lines) to
+  what shipped, every refusal and gap included, E8/E9 stated where a
+  user hits them, no stale count survives; README with a "three things
+  that will surprise you" section.  Demo transcript
+  tracker/lsp-tests/G3-demo.txt from tracker/tools/lsp-demo.sh — twelve
+  steps covering every capability, reproducible byte-for-byte modulo
+  timings.  The latency table and the full gate run are in "Gate
+  evidence (G3)" below.  Review FIX-THEN-ADVANCE: eleven prose fixes
+  (a completion figure labelled server-side was the client round trip;
+  refusal counts needed their units; three rules needed a clause), all
+  applied while the reviewer's core/test ran; one last sentence
+  corrected by the orchestrator.
 
 **GATE G3**: lsp-smoke green with the new fixtures (Locals, Refs, Decls
 symbols, Complete, Fix, BadImport); Tier 0 green; Tier 2 = full
@@ -2431,6 +2459,16 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-10 (6.7 DONE — STAGE 3 COMPLETE, STOPPED AT G3): see the
+  item's DONE paragraph and "Gate evidence (G3)".  The reviewer's
+  interleaved pair against the Stage-3 opening commit settled the round
+  trip question: 1.57 -> 1.7 s since G2 is machine drift on code that
+  predates the stage; Stage 3's own contribution is -65 ms.  Implementer
+  ~68 + 3 min, reviewer ~50 min.  Eight items, eight commits, sixteen
+  agent runs plus fix rounds, one JVM at a time throughout; tickets E4
+  fixed and E5-E10 filed; Stage 4 drafted separately
+  (tracker/LSP-STAGE4-DRAFT.md) from a prior-art survey the user asked
+  for (tracker/loopmodel/STAGE4-PRIOR-ART.md).
 - 2026-09-10 (6.6 DONE): see the item's DONE paragraph.  Implementer
   GREEN (sweep 99.83% clean, 100% on the honest reading), reviewer
   FIX-THEN-ADVANCE with record fixes and one line (the own-field
@@ -2565,6 +2603,92 @@ ONE NUMBER WORTH CARRYING FORWARD: after 5.5, parse+rename+lower is
 checklist's "inference dominates" assumed.  tracker/TICKET-perf-type-
 inference.md should be re-read against that before Stage 3 picks a
 target.
+
+STOP.  The loop is stopped for sign-off, per the gate.
+
+## Gate evidence (G3, recorded 2026-09-10)
+
+Stage 3 shipped in eight item commits on branch scala3-migration, 132354d
+(6.0) through the 6.7 commit, each preceded by a fresh Opus implementer,
+a fresh Opus reviewer re-running the item's tier once, and the
+orchestrator's own Tier 0.  Every item's report and review live under
+tracker/loopmodel/LSP3-6.*-*.md; the per-item DONE paragraphs above carry
+the numbers.  The gate numbers below are the 6.7 REVIEWER's (its brief
+made them the ones of record); the implementer's are in
+tracker/loopmodel/LSP3-6.7-WIRING.md.
+
+BATCH STRICTNESS FROZEN — the gate's hard half.  Across the whole stage
+the strict path is untouched: `Session.load`/`loadModule`, the REPL
+goldens (tracker/repl-tests/*.expected, byte-identical at every commit),
+TestReplDifferential and TestTolerantRead's 180-file agreement property
+green throughout.  Two shared files changed and were each cleared by
+review: `NewPipeline.Read` gained a defaulted `scope` field the strict
+path drops (6.3), and `Renamer.scala`'s scope frames were fixed (6.5) —
+frames have no batch reader.  No `Subst.scala`, `Type.scala` or printer
+change.
+
+BASELINES AT GATE (reviewer's run, one JVM at a time, alone on the tree)
+- core/test: 988 total, 988 passed, 0 failed, 0 errors (26m56s), the second full run of the final tree agreeing with the implementer's 988/988 — deterministic since 6.0 (the F4-era flake
+  was a test flipping ermine.loadInSeries process-wide).
+- tracker/tools/lsp-smoke.sh: 454 checks PASS (185 when the
+  stage opened).
+- tracker/tools/repl-smoke.sh: 8 groups / 66 checks, goldens unmodified.
+- TestLoopTrace 720/720; corpus-run --batch 85 / 69 / 0 over 154;
+  g1-validate 9/9 (first run since the stage opened; no signature drift).
+- bin/ermine-lsp boot: 129 modules.
+- No .ei droppings; git diff -- core/src empty for 6.7 itself.
+
+WHAT THE GATE ASKED FOR, AND WHERE IT IS CHECKED
+- the new fixtures (Locals, Refs, Decls symbols, Complete, Fix,
+  BadImport): all in tracker/lsp-tests, all in lsp-smoke; the G3 demo
+  transcript tracker/lsp-tests/G3-demo.txt exercises every capability in
+  one scripted run (tracker/tools/lsp-demo.sh).
+- the 6.2 perf line: interleaved A/B on Layout/Report.e, every pair inside
+  the 5%/80 ms budget (implementer -13.5 ms pooled; reviewer -9 ms; fix
+  round -21 ms) — locals ship ON.
+- the 6.6 sweep: 1166 signatures offered over 253 files, 1164 clean
+  (99.83%; both type-fails are unfolded aliases that re-check silently),
+  0 parse-fails, 168 refused by named reason; ship bar 95% met, both
+  actions unfiltered.
+- Tier 2 alone on the tree: 988 total, 988 passed, 0 failed, 0 errors (26m56s), the second full run of the final tree agreeing with the implementer's 988/988.
+
+LATENCY AT GATE (Layout/Report.e, 1757 lines; the 6.7 reviewer's
+re-measurement, load 0.95-1.31, one JVM, nothing else running)
+- keystroke -> diagnostics: 1.69-1.70 s = 0.86 read + 0.50 typecheck
+  + 0.30 debounce + 0.03, 97 of 154 components reused; ≈1.9 s on a
+  busy machine (the implementer's 1.859 s at load 1.3-2.2).
+- THE 1.57 -> 1.7 GAP SINCE G2 IS MACHINE DRIFT, MEASURED: an
+  interleaved pair (before/after/before/after) against a scratch build
+  of 78d860f — the Stage-3 opening commit, no Stage-3 code — gives
+  BEFORE 1.759 s, AFTER 1.694 s (Δ = -65 ms in the final tree's favour,
+  -96 and -34 pairwise); the same pre-Stage-3 code reads 0.89-0.92 s
+  today against G2's 0.80, which is the whole of the gap.  Stage 3's
+  contribution to the round trip is negative on both pairs.
+- worst-case request wait DURING a check: 1.45 s median (a hover sent
+  352 ms after the keystroke, answered 1.81 s after it; the server does
+  not read the request until the check ends); the same hover on an idle
+  server 0.58 ms — the 2500x ratio is the whole content of the parked
+  worker-thread fork.
+- completion 2.2 ms server-side (6.9 ms client round trip); workspace/
+  symbol 1.1 ms warm (48 ms first); documentSymbol 21 ms round trip (398
+  top-level, 511 total); index build 12.9-18.7 ms warm (56 ms cold);
+  code action 52 ms first after a check, ~1 ms after; boot 12.4-12.9 s.
+
+NOT SATISFIED, STATED PLAINLY
+- 6.2 is PARTIAL by the item's letter: 62.4% of local binders hover
+  (let/where heads, equation arguments, signed binders, plus kinds on
+  type names); lambda arguments, case and do binders and nested pattern
+  variables need a flag-gated hook at four hot-path sites in Subst.scala
+  — the FORK under Blocked/Awaiting, the user's decision.
+- Open user-visible tickets from the stage's reviews: E8 (parser columns
+  are tab-expanded, so ranges on tab-indented lines are off), E9 (stdlib
+  navigation lands in the build-output tree).  Documented residuals: E7
+  (the import-failure suppression misses operators and types), the
+  group-level refusal at 0:0 outside the corpus.
+- Deferred to Stage 4 (draft tracker/LSP-STAGE4-DRAFT.md): the read is
+  ~0.9 s of a ~1.9 s round trip and requests wait for an in-flight check
+  (~1.5 s worst case) — Stage 3 confirmed inference is not the
+  bottleneck and moved the round trip by nothing measurable.
 
 STOP.  The loop is stopped for sign-off, per the gate.
 

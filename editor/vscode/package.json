@@ -1,8 +1,8 @@
 {
   "name": "ermine-lang",
   "displayName": "Ermine",
-  "description": "Ermine language support: syntax highlighting, diagnostics, go-to-definition and hover, backed by bin/ermine-lsp.",
-  "version": "0.1.0",
+  "description": "Ermine language support: syntax highlighting, diagnostics, navigation, hover types, references, rename, symbols, completion and quick fixes, backed by bin/ermine-lsp.",
+  "version": "0.1.1",
   "publisher": "clarifi",
   "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {
@@ -48,7 +48,7 @@
         "ermine.fastMode": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Skip type checking. Roughly halves the time to diagnostics (measured on a 1757-line module: 0.80s read + 0.45s typecheck).\n\n**Kept:** syntax, shadowing, unknown-operator and lowering diagnostics; go-to-definition; hover on *imported* names.\n\n**Lost:** all type errors, the \"unchecked\" notes, import-list export requirements, and hover on this module's *own* definitions."
+          "markdownDescription": "Skip type checking. Takes about a third off the time to diagnostics (measured on a 1757-line module: 0.94s read + 0.60s typecheck).\n\n**Kept:** syntax, shadowing, unknown-operator and lowering diagnostics, import failures; go-to-definition; hover on *imported* names and on imported type names' kinds.\n\n**Lost:** all type errors, the \"unchecked\" notes, import-list export requirements, hover on this module's *own* definitions, and hover on every local binder."
         },
         "ermine.logFile": {
           "type": "string",

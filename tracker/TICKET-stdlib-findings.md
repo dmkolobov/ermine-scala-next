@@ -600,7 +600,7 @@ E10. **`Pretty` writes four type shapes the grammar cannot read back.**  Filed 2
     (`<:_Type.Cast`) — 2, and the same affix spelling is what makes 68 alias-imported type names unwritable in the
     file's own scope.  NOT the printer: (4) a concrete-row field's Global does not round-trip (`Field.Count.Count`
     vs `Prelude.Count`) — 3; (5) the quick-fix scope test cannot see through the file's OWN type synonyms
-    (`Layout/Scan.e`'s `type Scan = Scan_S`, 33 refusals that would have checked) — editor path, needs the
+    (`Layout/Scan.e`'s `type Scan = Scan_S`: 31 groups, 33 name occurrences, that would have checked) — editor path, needs the
     alias-to-Con map TolerantCheck builds and discards.  *Tier.* (1)-(3) change published `.ei` bytes (the same
     printer writes interfaces): Tier 1 (interface sweep + g1-validate, baseline re-cut for the moved spellings).
     (5) is Tier 0.  Fixing (1)-(3) returns 48 groups to the signature action; (5) returns 33.  Not scheduled.

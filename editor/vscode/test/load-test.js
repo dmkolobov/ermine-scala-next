@@ -38,6 +38,7 @@ const recorded = {
   errors: [],
   warnings: [],
   configListeners: [],
+  registrations: [],
 };
 
 const settings = {
@@ -104,11 +105,36 @@ const vscode = {
     {
       get(target, prop) {
         if (prop in target) return target[prop];
-        if (typeof prop === "string" && prop.startsWith("register")) return () => disposable();
+        if (typeof prop === "string" && prop.startsWith("register")) {
+          // Record it: which providers the client registers is the whole of
+          // "the client serves these capabilities on its own" (6.7.1).
+          return (...args) => { recorded.registrations.push({ name: prop, args }); return disposable(); };
+        }
         return undefined;
       },
     }
   ),
+  // Not generic-stubbable: vscode-languageclient builds a Map from the LSP
+  // kind strings to these OBJECTS at module load, then calls `.append()` on
+  // CodeActionKind.Empty for any string the map misses. A stub whose statics
+  // are all 0 makes every lookup miss and then explodes on `0.append`, which
+  // is what registering the 6.6 codeActionProvider's `codeActionKinds` hits.
+  CodeActionKind: (() => {
+    class CodeActionKind {
+      constructor(value) { this.value = value; }
+      append(part) { return new CodeActionKind(this.value ? this.value + "." + part : part); }
+      contains(other) { return other.value === this.value || other.value.startsWith(this.value + "."); }
+      intersects(other) { return this.contains(other) || other.contains(this); }
+    }
+    for (const [name, value] of [
+      ["Empty", ""], ["QuickFix", "quickfix"], ["Refactor", "refactor"],
+      ["RefactorExtract", "refactor.extract"], ["RefactorInline", "refactor.inline"],
+      ["RefactorMove", "refactor.move"], ["RefactorRewrite", "refactor.rewrite"],
+      ["Source", "source"], ["SourceOrganizeImports", "source.organizeImports"],
+      ["SourceFixAll", "source.fixAll"], ["Notebook", "notebook"],
+    ]) CodeActionKind[name] = new CodeActionKind(value);
+    return CodeActionKind;
+  })(),
   StatusBarAlignment: { Left: 1, Right: 2 },
   ProgressLocation: { SourceControl: 1, Window: 10, Notification: 15 },
   ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
@@ -254,6 +280,37 @@ async function main() {
             !/starting session/.test(bar.text), bar.text);
       check("the ready notification carries the module count",
             /129 modules/.test(String(bar.tooltip)), String(bar.tooltip));
+
+      // 6.7.1: NOTHING in this extension filters the server's capabilities.
+      // vscode-languageclient registers one provider per advertised
+      // capability all by itself, so the proof that completion, rename,
+      // references, highlight, symbols and code actions reach the editor is
+      // that these registrations happened -- with no code here to make them.
+      const registered = recorded.registrations.map((r) => r.name);
+      const expected = [
+        "registerDefinitionProvider", "registerHoverProvider",
+        "registerReferenceProvider", "registerDocumentHighlightProvider",
+        "registerRenameProvider", "registerDocumentSymbolProvider",
+        "registerWorkspaceSymbolProvider", "registerCompletionItemProvider",
+        "registerCodeActionsProvider",
+      ];
+      for (const name of expected) {
+        check("the client registered " + name + " from the server's capabilities",
+              registered.includes(name), "registered " + JSON.stringify(registered));
+      }
+      console.log("   providers registered by the client: " + registered.length +
+                  " (" + registered.map((n) => n.replace(/^register|Provider$/g, "")).join(", ") + ")");
+      // The completion trigger character is the SERVER's (`.`), passed
+      // through by the client; nothing in package.json declares it.
+      const comp = recorded.registrations.find((r) => r.name === "registerCompletionItemProvider");
+      check("the server's completion trigger character reached the editor",
+            comp && comp.args.slice(2).includes("."),
+            comp ? JSON.stringify(comp.args.slice(2)) : "no completion registration");
+      const ca = recorded.registrations.find((r) => r.name === "registerCodeActionsProvider");
+      const kinds = ca && ca.args[2] && ca.args[2].providedCodeActionKinds;
+      check("the server's code-action kinds reached the editor",
+            !!kinds && kinds.map((k) => k.value).join(",") === "quickfix,source",
+            JSON.stringify(kinds && kinds.map((k) => k.value)));
     }
   }
 
