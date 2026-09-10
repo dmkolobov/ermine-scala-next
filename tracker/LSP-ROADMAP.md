@@ -8,14 +8,13 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 3 PLANNED — AWAITING THE USER'S GO ON THE PLAN (2026-09-09).
-G2 signed off 2026-09-09.  Stage 3 checklist 6.0-6.7 and GATE G3 are
-written below (section "Stage 3"), no code yet.  Stage 2 shipped 5.1-5.5
-(5.6 DEFERRED with evidence); the post-G2 navigation work (2026-09-02) and
-the LSP-FFI tolerance detour (2026-09-08/09) are committed and are NOT
-Stage 3 items.
-NEXT: on the user's word, 6.0 (suite hygiene — make Tier 2 deterministic). · Seeded 2026-08-30 (session that shipped the
-scoping fix, commits f9cf42a / 41b13cc).
+Status: STAGE 3 IN PROGRESS (2026-09-10).  6.0, 6.1 DONE; 6.2 DONE as
+PARTIAL (62.4% of local binders hover; the pattern-binder residual is a
+Subst.scala FORK under Blocked/Awaiting, the user's decision).  NEXT: 6.3
+(references, highlight, rename), then 6.4-6.7, then GATE G3.  Orchestration:
+brief -> fresh Opus implementer -> fresh Opus reviewer -> Tier 0 -> commit.
+· Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
+41b13cc).
 
 ## Baselines (hard invariants — never commit red)
 
@@ -31,8 +30,8 @@ scoping fix, commits f9cf42a / 41b13cc).
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (207 as of 2026-09-10,
-  after Stage 3 item 6.1; 185 as of 2026-09-09,
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (237 as of 2026-09-10 after
+  Stage 3 item 6.2; 207 after 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
   82 before that, the G2 line's 77 having gone stale)
@@ -814,7 +813,7 @@ STAGE-3 INVARIANTS (hard):
   reviewer's interleaved pair on Report.e 1.667 s before / 1.629 s after
   — inside the 50 ms floor, unmoved.
 
-- [ ] **6.2 Types at every binder** (the stage's headline; the item
+- [x] **6.2 Types at every binder** (the stage's headline; the item
   Stages 0, 1 and 2 each deferred to the perf ticket, whose premise 5.4
   dissolved).  Hover on a LOCAL binder — Arg, LetBound, WhereBound,
   DoBound, CaseBound (Renamer.BinderKind) — at its def-site and at every
@@ -846,6 +845,46 @@ STAGE-3 INVARIANTS (hard):
   that moves its definition; hover on a local in the healthy statement
   of a broken file; hover on `Bool` and on an own `data` type shows the
   kind; a local in fast mode answers null (nothing computes it).
+  DONE 2026-09-10 as PARTIAL BY THE ITEM'S LETTER, 62.4% of local binders
+  typed (implementer + reviewer Opus, two review passes; reports
+  tracker/loopmodel/LSP3-6.2-LOCALS.md, LSP3-6.2-REVIEW.md).  THE PREMISE
+  WAS HALF FALSE.  True for BINDING HEADS: `inferImplicitBindingTypes`
+  subsumes Lower's meta, so a `let`/`where` head's zonk is its type
+  (LetBound 156/156, WhereBound 89/89 on the 253-file sweep).  False for
+  PATTERN binders: `Lower.pattern` replaces the binder V's meta with
+  `Annot.annotAny` (id -1) and `Subst.inferPatternType` mints a fresh
+  meta through `unbindAnnot` into a body copy; nothing this side holds
+  it, and a zonk of the binder's own meta returns an unconstrained
+  variable (reproduced live by both agents).  RECOVERED WITHOUT A
+  CHECKER CHANGE (the reviewer's option 4): an EQUATION'S argument
+  binders are typed by splitting the head's own inferred/declared type
+  by `arity` — conservative (only when the unbound chain yields exactly
+  `arity` arrows; only bare VarP directly under the alt), 2872/2872 on
+  the sweep, the class computed independently from the surface tree.
+  Signed pattern vars read their declaration.  RESIDUAL (1900 binders,
+  37.6%): lambda arguments, `case` and `do` binders, variables nested in
+  constructor/tuple patterns — the FORK in Blocked/Awaiting (a
+  `Subst.scala` change; the invariant stopped it for the user).
+  RENDERING (Decision a): monotype via the hover printer; a binding's
+  argument types share ONE letter supply with the head
+  (`Pretty.prettyTypeIn` warms the letter state at REQUEST time, zero
+  cost on the check path): `g : forall a b. a -> b -> a` gives `x : a`,
+  `y : b`; the residual caveat (a `where` local's letters vs its
+  enclosing binding's) is stated in docs/lsp.md.  CACHE (Decision b):
+  `Cache.Entry` carries locals; the reviewer's five attacks on the
+  drift invariant all held (column-1 top-levels are enforced by the
+  parser).  KINDS: type occurrences hover `Name : kind` via
+  `Pretty.ppKindSchema`.  Fast mode -> null and died-component -> absent
+  are pinned.  PERF (the gate): interleaved A/B on Report.e, implementer
+  1.621/1.679/1.706/1.621 pooled -13.5 ms; reviewer 1.615 -> 1.606;
+  fix round 1.631 -> 1.610 — every pair inside the 5%/80 ms budget and
+  below the noise floor; locals ship ON.  lsp-smoke 207 -> 237;
+  seven targeted suites 121 -> 124.  Second review pass on the arity split:
+  twelve adversarial shapes, no wrong type; three pre-commit fixes applied by
+  the orchestrator (Pretty.scala's CRLF restored — 99 of 154 core sources are
+  CRLF, no .gitattributes; rank-N domains skipped via `mono`, a `forall` on a
+  local being what Decision (a) forbids; an anti-vacuity floor on the
+  equation-argument class).  Code committed 11be9bb.
 
 - [ ] **6.3 References, document highlight, rename** — from the renamer
   tables (`occurrences` with ToBinder/ToGlobal, `binders`, `frames`);
@@ -975,6 +1014,38 @@ list unchanged below.  Say the word to open Stage 2 (fused-machinery
 deletion + the debt list).
 
 (empty — G0 signed off 2026-08-30, user: “keep going”)
+
+**FORK 6.2 — pattern-binder types beyond equation arguments need a hook in
+`Subst.scala` (2026-09-10; the user's decision).**  Item 6.2 delivered hover on
+`let`/`where` binders, signed pattern binders, EQUATION-ARGUMENT binders (the
+reviewer's option 4: the head's inferred type split by arity, no checker change
+— see the item's DONE paragraph for the coverage number) and kinds on type
+names, within its perf budget.  The residual unreachable class is lambda
+arguments, `case` binders, `do` binders and variables nested inside
+constructor/tuple patterns: `Lower.pattern` replaces the binder V's meta with
+`Annot.annotAny`, and `Subst.inferPatternType` mints a fresh meta through
+`unbindAnnot` that nothing this side holds (report
+tracker/loopmodel/LSP3-6.2-LOCALS.md §1).  The Stage-3 invariant says a
+`Subst.scala` change stops the item for the user, so it stopped.  THE OPTIONS
+(report §8, corrected by the review): (1) a recording hook in `inferPatternType`
+— REFUTED AS FIRST WRITTEN: the recorded meta is removed from `hm.types` by
+`restrictTypes` (Subst.scala:153, reached from the `Lam` case :942 and
+`inferAltTypesPrime` :1036), so a post-component zonk returns the unconstrained
+variable the item failed on; the WORKABLE shape is the one `Remember` uses —
+eager substitution at `instantiateType` (:187) plus `unbind` (:586) and
+`generalize` (:1624), four sites on the checker's hot path behind a flag that is
+OFF in batch.  Tier 1 (differential + interface sweep + g1-validate) plus a
+perf line for the flag check on the batch target.  (2) an editor-only annot
+rewrite — REJECTED, it empties `Patterned.xs` and the editor would accept
+programs batch rejects.  (3) `Remember` wrappers on local occurrences — a second
+engine in spirit.  RECOMMENDATION: (1) in its workable shape, as its own Tier-1
+item "6.2b", sized as a day with review, only if lambda/case/do hover is
+wanted; the equation-argument coverage from option 4 may be enough.  A
+prototype brief exists (tracker/loopmodel/briefs/brief-LSP3-6.2b-prototype.md,
+isolated worktree, evidence only) but was NOT run overnight: after the review's
+finding it is a four-site checker change, and that is the user's call before
+any JVM time goes into it.  Stage 3 continued past it: 6.3-6.7 do not depend
+on it.
 
 **PARKED design fork (2026-09-09; does NOT block Stage 3): checks on a
 worker thread.**  Decision 3 keeps dispatch single-threaded, so a hover
@@ -2128,6 +2199,19 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-10 (6.2 DONE as PARTIAL, 62.4%): see the item's DONE paragraph
+  and the FORK under Blocked/Awaiting.  The night's lesson: the plan's
+  premise ("one zonk per binder") was checked by the implementer FIRST,
+  as the brief demanded, and found half false; the reviewer then refuted
+  the implementer's proposed checker hook (restrictTypes drops the
+  recorded meta) AND found the option nobody had seen — the arity split,
+  no checker change — which took coverage from 5.6% to 62.4%.  Two
+  review passes, one fix round, three orchestrator fixes.  Implementer
+  ~3h, reviewer ~45 min.  Code commit 11be9bb; this roadmap entry landed
+  in a follow-up commit because the bookkeeping script failed on an
+  anchor and the code commit went ahead without it.  Baselines:
+  TestLoopTrace 720/720, seven suites 124/124, corpus 85/69/0 over 154,
+  repl-smoke 8/66 goldens untouched, lsp-smoke 237, boot 129.
 - 2026-09-10 (6.1 DONE): see the item's DONE paragraph.  Implementer
   2h30 (one interruption: an API login expiry killed its turn mid-edit;
   resumed from its transcript with the tree state spelled out — the
