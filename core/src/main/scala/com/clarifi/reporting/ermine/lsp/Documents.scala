@@ -27,11 +27,23 @@ final class Documents {
 
   def get(uri: String): Option[Doc] = docs get uri
 
+  /** Every open document.  References and rename (6.3) answer across
+    * OPEN BUFFERS -- that set is the workspace Stage-3 Decision (c)
+    * admits, and it is the set the coverage warning names. */
+  def all: List[Doc] = docs.valuesIterator.toList.sortBy(_.uri)
+
   /** The navigation index, if this document has been checked. */
   def index(uri: String): Option[Definitions.DocIndex] = docs.get(uri).flatMap(_.index)
 
+  /** Stamp the index with the version of the buffer it was built from
+    * (6.3, Decision d).  Dispatch is single-threaded and the check ran
+    * on this same buffer, so `d.version` IS that version; recording it
+    * here is what lets rename refuse on a stale index instead of
+    * writing an edit at positions the text no longer has. */
   def putIndex(uri: String, idx: Definitions.DocIndex): Unit =
-    docs.get(uri) foreach { d => docs += uri -> d.copy(index = Some(idx)) }
+    docs.get(uri) foreach { d =>
+      docs += uri -> d.copy(index = Some(idx.copy(version = d.version)))
+    }
 
   /** didOpen / didChange.  The superseded buffer is evicted from the
     * process-global depCache: its key is content-bearing, so without

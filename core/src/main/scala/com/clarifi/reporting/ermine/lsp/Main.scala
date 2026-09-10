@@ -79,7 +79,12 @@ object Main {
               "change"    -> Json.num(1),      // FULL: didChange carries the whole document (5.3)
               "save"      -> Json.Bool(true)),
             "definitionProvider" -> Json.Bool(true),
-            "hoverProvider"      -> Json.Bool(true)),
+            "hoverProvider"      -> Json.Bool(true),
+            // 6.3: all three answer from the index the last check built.
+            "referencesProvider"        -> Json.Bool(true),
+            "documentHighlightProvider" -> Json.Bool(true),
+            "renameProvider"            -> Json.obj(
+              "prepareProvider" -> Json.Bool(true))),
           "serverInfo" -> Json.obj(
             "name"    -> Json.Str("ermine-lsp"),
             "version" -> Json.Str("0.1")))
@@ -123,6 +128,7 @@ object Main {
 
       Diagnostics.install(server, ermine, docs, log)
       Definitions.install(server, ermine, docs, log)
+      References.install(server, ermine, docs, log)
 
       server.onRequest("shutdown") { _ =>
         log("shutdown received")

@@ -86,6 +86,56 @@ then serves:
 
   In fast mode no local answers at all — nothing computes them.
 
+- **Find references** and **document highlight**, from the same index. What
+  the set is depends on the name:
+
+  A **local** — a `let` or `where` binding, an equation argument, a `case`,
+  `do` or lambda binder, a type variable — is a renamer binder id, so the
+  set is every mention of it in THAT FILE, plus the def-site itself when
+  `context.includeDeclaration` asks for it. Highlight marks the def-site
+  Write and the uses Read.
+
+  A **global** — this module's own top level, a `data`/`type`/`class` head,
+  a constructor, a `field`, a `table`, a foreign declaration, or a name
+  imported from anywhere — is a canonical name, chased through any
+  re-export chain to the module that DEFINES it (`Prelude` re-exports
+  `Bool`, and a use of `not` reached through `Prelude` is the same name as
+  `Bool.e`'s own), so the set is every mention in every OPEN BUFFER: uses, the defining module's signature and equation
+  heads, its declaration head, its fixity line, and the
+  `import M using (n)` entries that name it. An ALIAS-imported mention
+  counts: the key is the canonical origin, not the spelling. The def-site is
+  in the set even when its file is not open. Document highlight is always
+  per-document.
+
+  COVERAGE: the workspace is the OPEN BUFFERS. A module that imports the
+  name but is not open is not searched, and the server cannot know whether
+  one exists — so every global references or rename request sends one
+  `window/showMessage` warning saying how many open files were searched.
+
+- **Rename** (with `prepareRename`) writes ONE `WorkspaceEdit` over exactly
+  that set. It never produces a partial edit: it refuses instead, with a
+  message, when the name is defined in a file that is not open (a stdlib
+  name); when the new name is not a valid Ermine identifier, or is one of
+  the other case (a constructor or type name stays upper-case, a term
+  lower-case); when either name is an operator (an operator's spelling
+  carries its fixity); when the new name is already bound where the old one
+  is used, is already a top level of the module, or already resolves through
+  the file's imports; when a mention is written under another spelling (an
+  alias import or a qualified use, which a textual rename cannot follow);
+  when the source writes the name in a form that is not its spelling — a
+  `` ``literal`` `` name, whose backticks and escapes a textual rename
+  cannot rebuild, or a name behind a TAB, where the server's columns (the
+  parser's, expanded to eight-column stops) and the editor's disagree;
+  when another open buffer holds that spelling under a different
+  definition; when a mention of the name is ambiguous; and when ANY open
+  document has been edited since its last check ("check pending; retry
+  after diagnostics update"), which is the honest answer while a debounced
+  check is owed — a buffer that has just gained a mention cannot be edited
+  from an index that predates it.
+
+  References and highlight are correct on all of those, `` ``literal`` ``
+  names included: their extent is the whole backticked token.
+
 Logging goes to the file named by `ERMINE_LSP_LOG` (or `-Dermine.lsp.log`);
 stdout is reserved for the protocol.
 
@@ -142,7 +192,8 @@ For fast mode, add `:initializationOptions (:fastMode t)` to the server entry.
 
 `tracker/tools/lsp-smoke.sh` runs the scripted client
 (`tracker/tools/lsp-client.py`) against the fixtures in `tracker/lsp-tests/` —
-237 checks over everything above, including didChange without save, the
-sibling-buffer path, local and kind hovers, and fast mode. Run it with `core/test` and
+306 checks over everything above, including didChange without save, the
+sibling-buffer path, local and kind hovers, references/highlight/rename with
+their refusals, and fast mode. Run it with `core/test` and
 `repl-smoke.sh` before committing server changes
 (`tracker/LSP-ROADMAP.md`, Baselines).

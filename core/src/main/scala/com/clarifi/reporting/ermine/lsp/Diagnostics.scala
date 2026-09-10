@@ -121,7 +121,15 @@ object Diagnostics {
       // The index is rebuilt from the SAME parse that produced the
       // diagnostics, broken file or not: navigation on a file's
       // healthy statements no longer decays to the last good save.
-      docs.putIndex(uri, Definitions.index(path.toString, checked))
+      //
+      // 6.3: the index build is on the CHECK path (every keystroke), and
+      // 6.3 made it carry more, so it is timed out loud rather than
+      // argued about -- the number is the item's own budget line.
+      val tIdx0 = System.nanoTime
+      val idx = Definitions.index(path.toString, checked)
+      log(f"index: ${path.getFileName} ${idx.occs.size} occurrences in "
+          + f"${(System.nanoTime - tIdx0) / 1e6}%.1fms")
+      docs.putIndex(uri, idx)
       checked.diags.map(fromDiag) :::
         checked.notes.map(n => n.span match {
           // LSP-FFI: a tolerated foreign binding knows its class or

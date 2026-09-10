@@ -105,6 +105,14 @@ def main():
     caps = r.get("result", {}).get("capabilities", {})
     check("initialize.definitionProvider", caps.get("definitionProvider") is True)
     check("initialize.hoverProvider", caps.get("hoverProvider") is True)
+    # 6.3: references, document highlight and rename, all answered from
+    # the index the last check built.
+    check("initialize.referencesProvider", caps.get("referencesProvider") is True)
+    check("initialize.documentHighlightProvider",
+          caps.get("documentHighlightProvider") is True)
+    check("initialize.renameProvider with prepare",
+          caps.get("renameProvider") == {"prepareProvider": True},
+          repr(caps.get("renameProvider")))
     sync = caps.get("textDocumentSync", {})
     # 5.3: TextDocumentSync FULL — didChange carries the whole document
     check("initialize.sync", sync.get("openClose") is True and sync.get("save") is True
@@ -873,6 +881,364 @@ def main():
           hover("LocalsBroken.e", 8, 12) is None)
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("LocalsBroken.e")}})
     client.diagnostics_for(uri("LocalsBroken.e"))
+
+    # --- 6.3: references, document highlight, rename -------------------
+    # Every answer below comes from the STORED index and renamer tables of
+    # the last check: no parse, no rename pass, no inference on a request
+    # path (the Stage-3 invariant).  What "the set" is depends on the key:
+    # a LOCAL key is a binder id and means this document only; a GLOBAL key
+    # is a canonical Global and spans the open buffers, def-site included.
+    def references(name, line, char, include=True):
+        rid = client.request("textDocument/references", {
+            "textDocument": {"uri": uri(name)},
+            "position": {"line": line, "character": char},
+            "context": {"includeDeclaration": include}})
+        return client.response(rid).get("result")
+
+    def highlight(name, line, char):
+        rid = client.request("textDocument/documentHighlight", {
+            "textDocument": {"uri": uri(name)},
+            "position": {"line": line, "character": char}})
+        return client.response(rid).get("result")
+
+    def prepare_rename(name, line, char):
+        rid = client.request("textDocument/prepareRename", {
+            "textDocument": {"uri": uri(name)},
+            "position": {"line": line, "character": char}})
+        return client.response(rid).get("result")
+
+    def rename(name, line, char, new):
+        rid = client.request("textDocument/rename", {
+            "textDocument": {"uri": uri(name)},
+            "position": {"line": line, "character": char},
+            "newName": new})
+        return client.response(rid)
+
+    def spans(locs):
+        """Locations as (file, line, startChar, endChar), the compact form."""
+        return [(l["uri"].rsplit("/", 1)[1], l["range"]["start"]["line"],
+                 l["range"]["start"]["character"], l["range"]["end"]["character"])
+                for l in locs]
+
+    def kinds(hs):
+        return [(h["range"]["start"]["line"], h["range"]["start"]["character"],
+                 h["range"]["end"]["character"], h["kind"]) for h in hs]
+
+    def edits_of(result, name):
+        return result["result"]["changes"].get(uri(name), [])
+
+    def warnings():
+        """The window/showMessage warnings stashed since the last call."""
+        ws = [m["params"] for m in client.seen
+              if m.get("method") == "window/showMessage"]
+        client.seen = []
+        return ws
+
+    def apply_edits(text, edits):
+        """Apply single-line TextEdits, last first so earlier ones keep their
+        positions -- what a client does with a WorkspaceEdit."""
+        lines = text.split("\n")
+        for e in sorted(edits, key=lambda e: (e["range"]["start"]["line"],
+                                              e["range"]["start"]["character"]),
+                        reverse=True):
+            ln = e["range"]["start"]["line"]
+            a = e["range"]["start"]["character"]
+            b = e["range"]["end"]["character"]
+            lines[ln] = lines[ln][:a] + e["newText"] + lines[ln][b:]
+        return "\n".join(lines)
+
+    open_doc("Refs.e")
+    check("Refs.e clean", client.diagnostics_for(uri("Refs.e")) == [])
+    open_doc("RefsSib.e")
+    check("RefsSib.e clean", client.diagnostics_for(uri("RefsSib.e")) == [])
+
+    # A LOCAL: `mine`, a let binder with three uses on the line below.  The
+    # def-site is in the set because the index carries it as an occurrence
+    # of its own (6.3.1) -- a pattern binder is not an occurrence at all.
+    mine_all = [("Refs.e", 8, 6, 10), ("Refs.e", 9, 5, 9),
+                ("Refs.e", 9, 14, 18), ("Refs.e", 9, 22, 26)]
+    client.seen = []
+    r = references("Refs.e", 8, 6)
+    check("references on a local: def + 3 uses, exact ranges",
+          spans(r) == mine_all, repr(spans(r)))
+    check("references on a local sends NO coverage warning", warnings() == [])
+    r = references("Refs.e", 9, 14, include=False)
+    check("references on a local without the declaration: 3 uses",
+          spans(r) == mine_all[1:], repr(spans(r)))
+    r = references("Refs.e", 9, 22)
+    check("references from a use answers the same set as from the def-site",
+          spans(r) == mine_all, repr(spans(r)))
+
+    hs = highlight("Refs.e", 9, 14)
+    check("highlight a local: one Write at the def-site, three Reads",
+          kinds(hs) == [(8, 6, 10, 3), (9, 5, 9, 2), (9, 14, 18, 2), (9, 22, 26, 2)],
+          repr(kinds(hs)))
+
+    check("prepareRename on a local: its range and its spelling",
+          prepare_rename("Refs.e", 9, 14) ==
+          {"range": {"start": {"line": 9, "character": 14},
+                     "end": {"line": 9, "character": 18}},
+           "placeholder": "mine"},
+          repr(prepare_rename("Refs.e", 9, 14)))
+
+    # A GLOBAL: `shared`, defined in Refs.e and imported by RefsSib.e.  The
+    # set spans both OPEN buffers -- signature mention, equation head, use,
+    # the `import Refs using shared` list entry, and the sibling's two uses.
+    shared_all = [("Refs.e", 4, 0, 6), ("Refs.e", 5, 0, 6), ("Refs.e", 11, 8, 14),
+                  ("RefsSib.e", 2, 18, 24), ("RefsSib.e", 4, 12, 18),
+                  ("RefsSib.e", 5, 13, 19)]
+    client.seen = []
+    r = references("RefsSib.e", 4, 12)
+    check("references on a top-level from the importing sibling: both files",
+          spans(r) == shared_all, repr(spans(r)))
+    check("references on a top-level: 3 in the defining file, 3 in the importer",
+          len([x for x in spans(r) if x[0] == "Refs.e"]) == 3
+          and len([x for x in spans(r) if x[0] == "RefsSib.e"]) == 3, repr(spans(r)))
+    ws = warnings()
+    check("the coverage warning arrives, once, as a Warning",
+          len(ws) == 1 and ws[0]["type"] == 2
+          and ws[0]["message"].startswith("Ermine: references searched in ")
+          and ws[0]["message"].endswith("unopened importers are not searched"), repr(ws))
+    r = references("Refs.e", 5, 0)
+    check("references from the defining file answers the same set",
+          spans(r) == shared_all, repr(spans(r)))
+    warnings()
+    r = references("Refs.e", 5, 0, include=False)
+    check("references on a top-level without the declaration drops the head",
+          spans(r) == [x for x in shared_all if x != ("Refs.e", 5, 0, 6)], repr(spans(r)))
+    warnings()
+
+    # Highlight is per-document by definition, so it stays inside Refs.e and
+    # sends no warning.  The def-site of a sig+equations group is the LAST
+    # equation (the renamer's rule), so the signature mention reads as a use.
+    hs = highlight("Refs.e", 11, 8)
+    check("highlight a top-level: this file only, Write at the equation head",
+          kinds(hs) == [(4, 0, 6, 2), (5, 0, 6, 3), (11, 8, 14, 2)], repr(kinds(hs)))
+    check("highlight sends no coverage warning", warnings() == [])
+
+    # RENAME a local: an edit at every site, none anywhere else.  Then APPLY
+    # them the way a client would and feed the result back: the file must
+    # re-check clean and the renamed local must hover with the same type.
+    check("hover the local before the rename",
+          hoverline("Refs.e", 8, 6) == "mine : Bool", hoverline("Refs.e", 8, 6))
+    client.seen = []
+    r = rename("Refs.e", 9, 14, "flagged")
+    check("rename a local: one file touched", "error" not in r
+          and list(r["result"]["changes"].keys()) == [uri("Refs.e")], repr(r))
+    es = edits_of(r, "Refs.e")
+    check("rename a local: an edit at every site and nowhere else",
+          [(e["range"]["start"]["line"], e["range"]["start"]["character"],
+            e["range"]["end"]["character"]) for e in es]
+          == [x[1:] for x in mine_all], repr(es))
+    check("rename a local: every edit carries the new name",
+          all(e["newText"] == "flagged" for e in es), repr(es))
+    check("rename a local sends no coverage warning", warnings() == [])
+
+    refs_src = (FIXTURES / "Refs.e").read_text()
+    change("Refs.e", apply_edits(refs_src, es), 2)
+    check("the renamed file re-checks clean",
+          client.diagnostics_for(uri("Refs.e")) == [])
+    check("the renamed local hovers with the same type",
+          hoverline("Refs.e", 8, 6) == "flagged : Bool", hoverline("Refs.e", 8, 6))
+    check("the old name is gone from the buffer the edits produced",
+          "mine" not in apply_edits(refs_src, es))
+    change("Refs.e", refs_src, 3)
+    check("Refs.e clean again after the revert",
+          client.diagnostics_for(uri("Refs.e")) == [])
+
+    # THE REFUSALS (Decision d).  Each is a ResponseError with a message a
+    # person can act on, and none of them is ever a partial edit.
+    def refusal(what, name, line, char, new, code):
+        r = rename(name, line, char, new)
+        check("rename refused: " + what,
+              "result" not in r and r.get("error", {}).get("code") == code,
+              repr(r.get("error")))
+        return r.get("error", {}).get("message", "")
+
+    m = refusal("a capturing name (bound where the local is used)",
+                "Refs.e", 9, 14, "b", -32803)
+    check("the capture refusal names the new name", "'b' is already bound" in m, m)
+    m = refusal("a name that is already a top level of the module",
+                "Refs.e", 9, 14, "shared", -32803)
+    check("the top-level clash refusal names it", "'shared' is already" in m, m)
+    m = refusal("a wrong-case name (a term must stay lower-case)",
+                "Refs.e", 9, 14, "Mine", -32602)
+    check("the case refusal says which case", "lower-case" in m, m)
+    m = refusal("renaming TO an operator", "Refs.e", 9, 14, "&&&", -32602)
+    check("the operator refusal names the spelling", "'&&&'" in m, m)
+    m = refusal("renaming FROM an operator", "Refs.e", 5, 13, "andy", -32602)
+    check("the operator refusal explains why", "fixity" in m, m)
+    m = refusal("a name defined in a file that is not open (a stdlib name)",
+                "Refs.e", 5, 16, "Yes", -32803)
+    check("the unopened-def-site refusal says so",
+          "not open" in m, m)
+    warnings()
+
+    check("prepareRename on an operator -> null", prepare_rename("Refs.e", 5, 13) is None)
+    check("prepareRename off a name -> null", prepare_rename("Refs.e", 6, 0) is None)
+
+    # RENAME a top level across two open buffers: edits in both, the
+    # `import Refs using shared` mention included, plus the warning.
+    client.seen = []
+    r = rename("Refs.e", 5, 0, "combined")
+    check("rename a top-level: both buffers are edited", "error" not in r
+          and sorted(r["result"]["changes"].keys())
+              == sorted([uri("Refs.e"), uri("RefsSib.e")]), repr(r))
+    es_home = edits_of(r, "Refs.e")
+    es_sib = edits_of(r, "RefsSib.e")
+    check("rename a top-level: three edits in the defining file",
+          [(e["range"]["start"]["line"], e["range"]["start"]["character"]) for e in es_home]
+          == [(4, 0), (5, 0), (11, 8)], repr(es_home))
+    check("rename a top-level: three edits in the importer",
+          [(e["range"]["start"]["line"], e["range"]["start"]["character"]) for e in es_sib]
+          == [(2, 18), (4, 12), (5, 13)], repr(es_sib))
+    check("rename a top-level edits the import list mention",
+          es_sib[0]["range"]["end"]["character"] == 24
+          and es_sib[0]["newText"] == "combined", repr(es_sib[0]))
+    ws = warnings()
+    check("rename a global sends the coverage warning too",
+          len(ws) == 1 and ws[0]["type"] == 2
+          and "unopened importers are not searched" in ws[0]["message"], repr(ws))
+
+    # STALE INDEX (Decision d): a keystroke arrives, the debounced check has
+    # not run, and the index describes text that is gone.  Refuse -- never a
+    # partial or misplaced edit.
+    change("Refs.e", refs_src.replace("quiet =", "quiet2 ="), 4)
+    r = rename("Refs.e", 9, 14, "flagged")
+    check("rename on a stale index -> check pending",
+          "result" not in r and r.get("error", {}).get("code") == -32803
+          and "check pending" in r.get("error", {}).get("message", ""),
+          repr(r.get("error")))
+    check("the pending check then runs and the file is clean",
+          client.diagnostics_for(uri("Refs.e")) == [])
+    r = rename("Refs.e", 9, 14, "flagged")
+    check("the same rename succeeds once the check has caught up",
+          "error" not in r and len(edits_of(r, "Refs.e")) == 4, repr(r))
+    change("Refs.e", refs_src, 5)
+    check("Refs.e clean after the second revert",
+          client.diagnostics_for(uri("Refs.e")) == [])
+    warnings()
+
+    # --- 6.3 fix round: the review's three holes ----------------------
+    # R2 — a backtick LITERAL identifier spells `wide` and is written
+    # ``wide``: eight characters, starting two before the spelling.
+    # Measured from the SOURCE now, and refused for rename rather than
+    # re-wrapped (whether the NEW name needs backticks is a grammar
+    # question, and the literal form carries its own escapes).
+    open_doc("Lit.e")
+    check("Lit.e clean", client.diagnostics_for(uri("Lit.e")) == [])
+    r = references("Lit.e", 4, 2)
+    check("references on a ``literal`` name cover the WHOLE token",
+          spans(r) == [("Lit.e", 4, 0, 8), ("Lit.e", 6, 10, 18)], repr(spans(r)))
+    hs = highlight("Lit.e", 6, 12)
+    check("highlight a ``literal`` name: Write at the def, Read at the use",
+          kinds(hs) == [(4, 0, 8, 3), (6, 10, 18, 2)], repr(kinds(hs)))
+    check("prepareRename on a ``literal`` name -> null",
+          prepare_rename("Lit.e", 6, 12) is None)
+    r = rename("Lit.e", 6, 12, "narrow")
+    check("rename a ``literal`` name is REFUSED, not mis-measured",
+          "result" not in r and r.get("error", {}).get("code") == -32803
+          and "not its spelling" in r.get("error", {}).get("message", ""),
+          repr(r.get("error")))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Lit.e")}})
+    client.diagnostics_for(uri("Lit.e"))
+
+    # R1 — a RE-EXPORT used to split the key: `Prelude` exports `Bool`, so
+    # a use of `not` reached through `Prelude` arrived as `Prelude.not`
+    # while `Bool.e`'s own binder keyed on `Bool.not`.  Renaming from
+    # either end silently broke the other.  The key is canonicalised to
+    # the DEFINING module now, so both ends see one name.
+    boolmod = repo("core/src/main/resources/modules/Bool.e")
+    bool_uri = boolmod.as_uri()
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": bool_uri, "languageId": "ermine", "version": 1,
+        "text": boolmod.read_text()}})
+    check("Bool.e clean on open", client.diagnostics_for(bool_uri) == [])
+    open_doc("RefsPre.e")
+    check("RefsPre.e (import Prelude) clean",
+          client.diagnostics_for(uri("RefsPre.e")) == [])
+
+    not_all = [("Bool.e", 18, 0, 3), ("Bool.e", 19, 0, 3), ("Bool.e", 20, 0, 3),
+               ("RefsPre.e", 4, 10, 13)]
+    r = references("RefsPre.e", 4, 10)
+    check("references across a re-export, from the importer: both files",
+          spans(r) == not_all, repr(spans(r)))
+    warnings()
+    # Bool.e is not in the fixtures directory, so it needs its own uri.
+    rid = client.request("textDocument/references", {
+        "textDocument": {"uri": bool_uri}, "position": {"line": 20, "character": 0},
+        "context": {"includeDeclaration": True}})
+    r = client.response(rid).get("result")
+    check("references across a re-export, from the DEFINING module: both files",
+          spans(r) == not_all, repr(spans(r)))
+    warnings()
+
+    def rename_at(u, line, char, new):
+        rid = client.request("textDocument/rename", {
+            "textDocument": {"uri": u}, "position": {"line": line, "character": char},
+            "newName": new})
+        return client.response(rid)
+
+    r = rename_at(bool_uri, 20, 0, "nope")
+    check("rename across a re-export from the defining module edits BOTH",
+          "error" not in r
+          and sorted(k.rsplit("/", 1)[1] for k in r["result"]["changes"])
+              == ["Bool.e", "RefsPre.e"], repr(r.get("error") or r["result"]["changes"].keys()))
+    from_def = r.get("result", {}).get("changes")
+    r = rename_at(uri("RefsPre.e"), 4, 10, "nope")
+    check("rename across a re-export from the IMPORTER is not refused as "
+          "'defined in a file that is not open'",
+          "error" not in r, repr(r.get("error")))
+    check("both directions produce the same edit", from_def == r.get("result", {}).get("changes"),
+          repr(from_def))
+    warnings()
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("RefsPre.e")}})
+    client.diagnostics_for(uri("RefsPre.e"))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": bool_uri}})
+    client.diagnostics_for(bool_uri)
+    check("Bool.e on disk untouched by the rename", boolmod.read_text().count("not ") > 0
+          and "nope" not in boolmod.read_text())
+
+    # R3 — the stale-index refusal used to look only at documents that
+    # already had a hit, so a sibling edited since its last check but not
+    # YET mentioning the name was neither refused nor edited.  Every open
+    # document is version-checked for a GLOBAL rename now; a local still
+    # checks only its own.
+    r = rename("Refs.e", 13, 0, "apex")
+    check("rename a top-level nothing else mentions: one edit",
+          "error" not in r and edits_of(r, "Refs.e")
+             == [{"range": {"start": {"line": 13, "character": 0},
+                            "end": {"line": 13, "character": 8}},
+                  "newText": "apex"}], repr(r))
+    warnings()
+    sib_src = (FIXTURES / "RefsSib.e").read_text()
+    change("RefsSib.e", sib_src + "\nuseTop = True\n", 7)
+    r = rename("Refs.e", 13, 0, "apex")
+    check("a global rename is refused while ANY open buffer is stale",
+          "result" not in r and r.get("error", {}).get("code") == -32803
+          and "check pending" in r.get("error", {}).get("message", ""),
+          repr(r.get("error")))
+    check("the refusal names the stale sibling, not the file being renamed",
+          "RefsSib.e" in r.get("error", {}).get("message", ""),
+          r.get("error", {}).get("message", ""))
+    # ... and a LOCAL rename is NOT blocked by it: a local cannot leave
+    # its own file, so a stale sibling can hold no mention of it.
+    r = rename("Refs.e", 9, 14, "flagged")
+    check("a local rename is not blocked by a stale sibling",
+          "error" not in r and len(edits_of(r, "Refs.e")) == 4, repr(r.get("error")))
+    client.diagnostics_for(uri("RefsSib.e"))
+    change("RefsSib.e", sib_src, 8)
+    check("RefsSib.e clean after the revert",
+          client.diagnostics_for(uri("RefsSib.e")) == [])
+    r = rename("Refs.e", 13, 0, "apex")
+    check("the global rename succeeds once every buffer has caught up",
+          "error" not in r and len(edits_of(r, "Refs.e")) == 1, repr(r.get("error")))
+    warnings()
+
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("RefsSib.e")}})
+    client.diagnostics_for(uri("RefsSib.e"))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Refs.e")}})
+    client.diagnostics_for(uri("Refs.e"))
 
     # --- fast mode: skip the type check, keep everything the read gives -
     def set_fast(on):

@@ -1,6 +1,9 @@
 package com.clarifi.reporting
 
+import java.io.File
+
 import com.clarifi.reporting.ermine.{ Global, Idfix, InfixR, Local }
+import com.clarifi.reporting.ermine.lsp.Definitions
 import com.clarifi.reporting.ermine.rename.{ ModuleScope, Renamer }
 import com.clarifi.reporting.ermine.rename.Renamer._
 import com.clarifi.reporting.ermine.surface._
@@ -194,6 +197,183 @@ object TestRenamer extends Properties("Renamer 3.2a") {
     val rKind = tyOccs(r, "r").map(_.resolution).collect { case ToBinder(i) => r.binders(i).kind }.distinct
     ((cKind ?= List(Renamer.TyParam: BinderKind)) :| s"c: $cKind") &&
     ((rKind ?= List(Renamer.TyImplicit: BinderKind)) :| s"r: $rKind")
+  }
+
+  // ----------------------------------------------------------------------
+  // 6.3 TABLE INTEGRITY over the whole corpus (stdlib + core/examples, the
+  // standing 180-file rule).
+  //
+  // These are what `textDocument/references`, `documentHighlight` and
+  // `rename` STAND ON: the LSP joins an occurrence to a binder by id, a
+  // binder to a position by its def-site, and a spelling to a top level by
+  // `moduleTerms` -- and then EDITS the file at the spans it read off.  If
+  // an id had no binder, a def-site pointed outside the file, two binders
+  // claimed one position, or two occurrences claimed overlapping text, a
+  // rename would write nonsense.  No session is needed: an empty import
+  // scope leaves more names `Unresolved` but changes no binder, no
+  // def-site and no span, which is all these properties look at.
+
+  private val stdlibRoot = new File("core/src/main/resources/modules")
+
+  private def walk(f: File): List[File] =
+    if (f.isDirectory) Option(f.listFiles).toList.flatMap(_.toList.sortBy(_.getName)).flatMap(walk)
+    else if (f.getName endsWith ".e") List(f) else Nil
+
+  /** The same exclusions TestTolerantRead's sweep makes: `shouldfail/` is
+    * meant to be rejected and `incomplete/` does not always terminate. */
+  private val notGoodCode = Set("shouldfail", "shouldfail-controls", "incomplete")
+
+  private def corpusFiles: List[File] =
+    (walk(stdlibRoot) ++ walk(new File("core/examples")))
+      .filterNot(f => Option(f.getParentFile).exists(d => notGoodCode(d.getName)))
+
+  /** The corpus files the surface parser REFUSES outright; named, so the
+    * sweep's denominator is never quietly smaller than the corpus. */
+  private lazy val unparsed: List[String] =
+    corpusFiles.filter { f =>
+      val src = new String(java.nio.file.Files.readAllBytes(f.toPath), "UTF-8")
+      SurfaceParsers.module(f.toString, src, f.getName.stripSuffix(".e")).isLeft
+    }.map(_.getName)
+
+  /** file -> (contents, renamer tables), for every file that parses. */
+  private lazy val corpusTables: List[(File, String, Renamer.Result)] =
+    corpusFiles.flatMap { f =>
+      val src = new String(java.nio.file.Files.readAllBytes(f.toPath), "UTF-8")
+      SurfaceParsers.module(f.toString, src, f.getName.stripSuffix(".e")) match {
+        case Right(m) => List((f, src, Renamer.rename(m, ModuleScope.Scope.empty)))
+        case Left(_)  => Nil
+      }
+    }
+
+  property("6.3 corpus: the tables are there at all") = secure {
+    val n = corpusTables.size
+    val occs = corpusTables.map(_._3.occurrences.size).sum
+    val toB  = corpusTables.map(_._3.occurrences.count(_.resolution.isInstanceOf[ToBinder])).sum
+    val bs   = corpusTables.map(_._3.binders.size).sum
+    val mt   = corpusTables.map(_._3.moduleTerms.size).sum
+    // `collect` prints on a PASS too (sbt's scalacheck runner shows the
+    // collected data), so the counts these properties cover are reported
+    // rather than only asserted.
+    Prop.collect(s"files ${corpusFiles.size} renamed $n | occurrences $occs " +
+                 s"(ToBinder $toB) | binders $bs | moduleTerms $mt" +
+                 (if (unparsed.isEmpty) "" else " | unparsed " + unparsed.mkString(","))) {
+      ((n >= 150) :| s"corpus files renamed: $n (files found: ${corpusFiles.size})") &&
+      ((occs > 10000) :| s"occurrences: $occs") &&
+      ((bs > 3000) :| s"binders: $bs")
+    }
+  }
+
+  property("6.3 corpus: every ToBinder occurrence has a binder, in this file") = secure {
+    val bad = corpusTables.flatMap { case (f, src, r) =>
+      val lines = src.linesIterator.size
+      r.occurrences.collect { case Occurrence(sp, n, ToBinder(id), _) =>
+        r.binders.get(id) match {
+          case None => Some(s"${f.getName}:${sp.startLine}: $n -> binder $id absent")
+          case Some(b) if b.defSite.startLine < 1 || b.defSite.startLine > lines =>
+            Some(s"${f.getName}: binder ${b.spelling} def-site ${b.defSite} outside 1..$lines")
+          case Some(b) if b.defSite.startCol < 1 =>
+            Some(s"${f.getName}: binder ${b.spelling} def-site column ${b.defSite.startCol}")
+          case _ => None
+        }
+      }.flatten
+    }
+    val n = corpusTables.map(_._3.occurrences.count(_.resolution.isInstanceOf[ToBinder])).sum
+    (bad.isEmpty :| s"${bad.size} bad of $n ToBinder occurrences: ${bad.take(5)}") &&
+    ((n > 5000) :| s"anti-vacuity: only $n ToBinder occurrences")
+  }
+
+  property("6.3 corpus: no two occurrences overlap") = secure {
+    // Half-open, and by the NAME's own extent rather than the token span:
+    // `SurfaceParsers.spanned` brackets a `token`, which eats the
+    // whitespace after the lexeme, so raw spans run to the next token and
+    // a name at the end of a line spans onto the next one.  The LSP edits
+    // the NAME, so the edited extents are what must not collide -- and
+    // this calls `Definitions.nameExtent`, THE VERY FUNCTION the index
+    // uses, rather than re-stating its rule (review R2: the first version
+    // re-implemented it inline and was therefore blind to exactly the
+    // class of mis-measurement the reviewer found).
+    val bad = corpusTables.flatMap { case (f, src, r) =>
+      val ls = new Definitions.Lines(src)
+      val ext = r.occurrences.map { o =>
+        val (len, _) = Definitions.nameExtent(ls, o.span, o.spelling)
+        (o.span.startLine, o.span.startCol, o.span.startCol + len, o.spelling)
+      }.sortBy(x => (x._1, x._2))
+      ext.sliding(2).collect {
+        case List(a, b) if a._1 == b._1 && b._2 < a._3 =>
+          s"${f.getName}:${a._1}: '${a._4}' [${a._2},${a._3}) overlaps '${b._4}' at ${b._2}"
+      }.toList
+    }
+    bad.isEmpty :| s"${bad.size} overlapping pairs: ${bad.take(5)}"
+  }
+
+  property("6.3 corpus: a name's measured extent is the source's own") = secure {
+    // The companion to the overlap property, and the one that would have
+    // caught R2: for every occurrence, either the source at that position
+    // spells the name exactly (`exact`), or it does NOT and rename
+    // refuses it.  Report the non-exact ones as a CLASS with counts --
+    // they are real (``literal`` names, parenthesised operators) and the
+    // point is that they are recognised, not that they are absent.
+    val forms = corpusTables.flatMap { case (f, src, r) =>
+      val ls = new Definitions.Lines(src)
+      r.occurrences.map { o =>
+        val (len, exact) = Definitions.nameExtent(ls, o.span, o.spelling)
+        val off = ls.offset(o.span.startLine, o.span.startCol)
+        val text = if (off < 0) "" else src.substring(off, math.min(off + len, src.length))
+        (exact, text, o.spelling, f.getName)
+      }
+    }
+    val inexact = forms.filterNot(_._1)
+    val ticked  = inexact.count(_._2.startsWith("``"))
+    val parens  = inexact.count(_._2.startsWith("("))
+    // behind a TAB the parser's column is not a character index, so the
+    // extent is measured but the name is not treated as exact
+    val tabbed  = inexact.count(x => x._2 == x._3)
+    val other   = inexact.filterNot(x =>
+      x._2.startsWith("``") || x._2.startsWith("(") || x._2 == x._3)
+    Prop.collect(s"occurrences ${forms.size} | exact ${forms.count(_._1)} | " +
+                 s"backticked $ticked | parenthesised $parens | behind a tab $tabbed | " +
+                 s"other ${other.size}") {
+      ((forms.count(_._1) > 50000) :| s"anti-vacuity: ${forms.count(_._1)} exact") &&
+      // every non-exact one is a form we can NAME -- if a new one appears,
+      // this is where it shows up rather than in a corrupted rename
+      ((other.size == 0) :|
+        s"${other.size} occurrences in no form this measurement knows: " +
+        s"${other.take(5).map(x => x._4 + " '" + x._3 + "' vs '" + x._2 + "'")}")
+    }
+  }
+
+  property("6.3 corpus: one binder per def-site position") = secure {
+    // The index keys a binder's def-site Occ by (line, column) and keeps
+    // ONE entry per position (`Definitions.dedup`), so two binders sharing
+    // a def-site would silently lose one -- and a rename would then miss
+    // every use of it.
+    val bad = corpusTables.flatMap { case (f, _, r) =>
+      r.binders.values.groupBy(b => (b.defSite.startLine, b.defSite.startCol))
+        .filter(_._2.size > 1)
+        .map { case (pos, bs) =>
+          s"${f.getName}:$pos shared by ${bs.map(b => b.spelling + "/" + b.kind).mkString(",")}" }
+    }
+    val n = corpusTables.map(_._3.binders.size).sum
+    (bad.isEmpty :| s"${bad.size} shared def-sites of $n binders: ${bad.take(5)}") &&
+    ((n > 3000) :| s"anti-vacuity: only $n binders")
+  }
+
+  property("6.3 corpus: every moduleTerms id is a TopLevel binder") = secure {
+    val bad = corpusTables.flatMap { case (f, _, r) =>
+      r.moduleTerms.toList.flatMap { case (spelling, id) =>
+        r.binders.get(id) match {
+          case None => Some(s"${f.getName}: moduleTerms('$spelling') -> $id absent")
+          case Some(b) if b.kind != Renamer.TopLevel =>
+            Some(s"${f.getName}: moduleTerms('$spelling') is ${b.kind}")
+          case Some(b) if b.spelling != spelling =>
+            Some(s"${f.getName}: moduleTerms('$spelling') spells '${b.spelling}'")
+          case _ => None
+        }
+      }
+    }
+    val n = corpusTables.map(_._3.moduleTerms.size).sum
+    (bad.isEmpty :| s"${bad.size} bad of $n moduleTerms entries: ${bad.take(5)}") &&
+    ((n > 1000) :| s"anti-vacuity: only $n moduleTerms entries")
   }
 }
 

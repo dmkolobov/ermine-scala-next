@@ -562,6 +562,19 @@ E7. **The editor's import-failure suppression rule covers term names only (opera
     DECLINED in 6.1 (an open import has no list; a rule that narrows only sometimes is harder to state and predict).
     Editor path only; Tier 0.  Not scheduled — a Stage 3/4 item if a real session shows the cascade hurts.
 
+E8. **Parser columns are tab-expanded to 8-column stops, so every editor range on a tab-indented line is in
+    the wrong units.**  Filed 2026-09-10 from LSP Stage 3 item 6.3 (report `tracker/loopmodel/LSP3-6.3-REFS.md`
+    §12; found by the new corpus property classifying every occurrence's source extent).  `Pos.bump` advances the
+    column to the next multiple of 8 on a tab; LSP positions count UTF-16 code units, so a diagnostic, a definition
+    target, a hover hit-test, a highlight or a rename range on a line with leading tabs lands right of the real
+    text by 7 per tab (`core/examples/GridExample.e` is the corpus instance; 6 of 71,248 occurrences).  6.3 made
+    rename REFUSE a name behind a tab (`Definitions.nameExtent` non-exact) and `Lines.locate` walk by the parser's
+    rule so the classification is right; nothing else was corrected.  *Fix.* Either convert at the LSP boundary
+    (the server knows the line text: map parser columns back to character offsets in `Diagnostics`/`Definitions`
+    once, in one helper every range goes through) or stop expanding tabs in `Pos` — the latter changes every
+    batch report's column on tab-indented lines (REPL goldens, corpus verdict text) and is Tier 2 + goldens.
+    Recommended: the boundary conversion, editor path only, Tier 0.  Not scheduled; small.
+
 ## D. Claims in older documents that do not reproduce
 
 D1. `core/examples/Ai/README.md`'s RUnion table ("a helper bundling `RUnion3` and `RUnion2` does not finish")

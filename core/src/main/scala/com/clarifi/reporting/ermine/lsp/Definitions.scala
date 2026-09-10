@@ -1,6 +1,6 @@
 package com.clarifi.reporting.ermine.lsp
 
-import com.clarifi.reporting.ermine.{ Fixity, Global, Idfix, KindSchema, Local, Pretty, Type }
+import com.clarifi.reporting.ermine.{ Fixity, Global, Idfix, KindSchema, Local, Name, Pretty, Type }
 import com.clarifi.reporting.ermine.rename.Renamer
 import com.clarifi.reporting.ermine.surface.{ SClassStatement, SDatabaseBlock,
   SDataStatement, SFieldStatement, SFixity, SForeign, SForeignBlock, SForeignConstructor,
@@ -24,6 +24,24 @@ object Definitions {
 
   final case class Target(loc: Loc, len: Int)
 
+  /** 6.3: what two occurrences must AGREE ON to be the same name.
+    *
+    * A `Local` key is a renamer binder id, so it means something only
+    * inside the document whose check minted it.  A `GlobalKey` is a
+    * canonical `Global` -- the `ToGlobal.origin`, not the `g` the
+    * reference was written through, because an alias-imported name and
+    * its canonical name ARE the same thing and must find each other
+    * across buffers.  `typeLevel` keeps `data Color = Color Int` apart:
+    * one `Global`, two different things (the same reason
+    * `Occurrence.typeLevel` exists).
+    *
+    * The key is STORED, not re-derived: the Stage-3 invariant forbids
+    * any analysis on a request path, so references/highlight/rename all
+    * answer by comparing keys in the index the last check left behind. */
+  sealed abstract class Key
+  final case class LocalKey(binderId: Int) extends Key
+  final case class GlobalKey(origin: Global, typeLevel: Boolean) extends Key
+
   /** A TERM-level hover payload: the name to print, its type, and — when
     * the type was recovered from an enclosing binding's own type (6.2's
     * argument split) — that binding's type, so the letters of the two
@@ -38,8 +56,45 @@ object Definitions {
     * nobody asked for. */
   final case class Occ(line: Int, startCol: Int, len: Int,
                        target: Option[Target], hover: Option[TermHover],
-                       kind: Option[(String, KindSchema)] = None)
-  final case class DocIndex(occs: List[Occ])
+                       kind: Option[(String, KindSchema)] = None,
+                       // 6.3: the name this occurrence IS (see Key), the
+                       // spelling it is written with, and whether this
+                       // position is where the name is INTRODUCED (a
+                       // DocumentHighlight Write, the declaration a
+                       // references request may include or drop, and the
+                       // proof rename has a def-site it is allowed to
+                       // touch).
+                       key: Option[Key] = None,
+                       spelling: String = "",
+                       isDef: Boolean = false,
+                       // 6.3 fix round (review R2): does the SOURCE at
+                       // this position spell the name exactly as
+                       // `spelling` says?  A backtick literal
+                       // (``wide``), a parenthesised operator ((++)) and
+                       // anything else whose written form differs from
+                       // its spelling answer false -- and rename refuses
+                       // them rather than replace a range it measured
+                       // and a form it cannot rebuild.
+                       exact: Boolean = true)
+
+  /** One document's stored answer to every navigation request.
+    *
+    * `version` is the buffer version the index was built from
+    * (`Documents.putIndex` stamps it): rename refuses outright when it
+    * differs from the document's current version, rather than writing an
+    * edit at positions the text no longer has (Decision d).  `renamed`
+    * is the renamer's own tables -- frames for the capture test,
+    * `moduleTerms` for "is that name already a top level here", the
+    * occurrence list for the `Ambiguous` test.  `scopeTerms`/`scopeTypes`
+    * are the canonical import maps, held by REFERENCE (no copy is made,
+    * and no probe costs more than a hash lookup). */
+  final case class DocIndex(occs: List[Occ],
+                            version: Long = 0L,
+                            moduleName: String = "",
+                            renamed: Renamer.Result =
+                              Renamer.Result(Nil, Map(), Nil, Nil),
+                            scopeTerms: Map[Local, List[Name]] = Map(),
+                            scopeTypes: Map[Local, List[Name]] = Map())
 
   // The per-document indexes live in Documents alongside the buffer text
   // and version (roadmap 5.3): a definition request and the check that
@@ -95,7 +150,10 @@ object Definitions {
       occ  <- hit(idx, line + 1, chr + 1)  // LSP is 0-based, Pos/Span 1-based
     } yield occ
 
-  private def hit(idx: DocIndex, line: Int, col: Int): Option[Occ] =
+  /** The occurrence at a 1-based position; public since 6.3, because
+    * references, highlight and rename hit-test the very same way
+    * definition and hover do -- one answer per position, always. */
+  def hit(idx: DocIndex, line: Int, col: Int): Option[Occ] =
     idx.occs
       .filter(o => o.line == line && o.startCol <= col && col < o.startCol + o.len)
       .sortBy(-_.startCol)
@@ -110,7 +168,10 @@ object Definitions {
     case _            => None
   }
 
-  private def location(t: Target): Option[Json] = positionOf(t.loc) match {
+  /** A Target as an LSP Location.  Public since 6.3: the references set
+    * for an imported name includes its def-site, which may be in a file
+    * no buffer has open -- a real position all the same. */
+  def location(t: Target): Option[Json] = positionOf(t.loc) match {
     case Some(p) if new java.io.File(p.fileName).isFile =>
       val start = Json.obj("line" -> Json.num(p.line - 1), "character" -> Json.num(p.column - 1))
       val end   = Json.obj("line" -> Json.num(p.line - 1), "character" -> Json.num(p.column - 1 + t.len))
@@ -123,9 +184,183 @@ object Definitions {
   private def spanLen(sp: Span): Int =
     if (sp.endLine == sp.startLine && sp.endCol > sp.startCol) sp.endCol - sp.startCol else 1
 
+  /** 1-based (line, column) to character offset over one buffer, built
+    * once per index.  Public so the corpus properties can measure a name
+    * with the SAME function the index uses (review R2: they used to
+    * re-implement the rule inline and were blind to the case it got
+    * wrong). */
+  final class Lines(val text: String) {
+    private val starts: Array[Int] = {
+      val b = Array.newBuilder[Int]
+      b += 0
+      var i = 0
+      while (i < text.length) { if (text.charAt(i) == '\n') b += i + 1; i += 1 }
+      b.result()
+    }
+    /** Which lines contain a TAB.  On the 99.99 % that do not, a parser
+      * column IS a character index and `locate` is arithmetic; only a
+      * tabbed line pays for the walk.  One pass, on the same text the
+      * line starts were found in. */
+    private val tabby: Array[Boolean] = {
+      val a = new Array[Boolean](starts.length)
+      var ln = 0
+      var i = 0
+      while (i < text.length) {
+        val ch = text.charAt(i)
+        if (ch == '\n') ln += 1 else if (ch == '\t' && ln < a.length) a(ln) = true
+        i += 1
+      }
+      a
+    }
+    def lineCount: Int = starts.length
+
+    /** The character offset of a PARSER position, and whether a TAB lies
+      * between the start of the line and it.
+      *
+      * A parser column is not a character index: `scalaparsers.Pos.bump`
+      * advances a tab to the next multiple of 8
+      * (`column + (8 - column % 8)`), so on a tab-indented line the two
+      * disagree — `core/examples/GridExample.e` indents four lines with a
+      * tab and the naive arithmetic lands seven characters late, which is
+      * how the corpus property found this.  The walk below is the
+      * parser's own rule.  `sawTab` matters as well as the offset: an LSP
+      * range built from a parser column on such a line is in the wrong
+      * units for the editor that receives it (the server's position model
+      * has been tab-blind since 0.5, and fixing THAT is not this item),
+      * so a name behind a tab is never treated as exact and never
+      * renamed. */
+    def locate(line: Int, col: Int): (Int, Boolean) = {
+      if (line < 1 || line > starts.length || col < 1) return (-1, false)
+      if (!tabby(line - 1)) {
+        val o = starts(line - 1) + col - 1
+        return (if (o > text.length) -1 else o, false)
+      }
+      val start = starts(line - 1)
+      val end   = if (line < starts.length) starts(line) else text.length
+      var i = start
+      var c = 1
+      var sawTab = false
+      while (c < col && i < end) {
+        val ch = text.charAt(i)
+        if (ch == '\n' || ch == '\r') return (-1, sawTab)
+        if (ch == '\t') { sawTab = true; c += 8 - (c % 8) } else c += 1
+        i += 1
+      }
+      if (c != col) (-1, sawTab) else (i, sawTab)
+    }
+
+    /** -1 when the position is not in this text. */
+    def offset(line: Int, col: Int): Int = locate(line, col)._1
+    /** Offset just past the last character of `line`, newline excluded. */
+    def endOfLine(line: Int): Int = {
+      if (line < 1 || line > starts.length) return text.length
+      var e = if (line < starts.length) starts(line) else text.length
+      while (e > starts(line - 1) &&
+             (text.charAt(e - 1) == '\n' || text.charAt(e - 1) == '\r')) e -= 1
+      e
+    }
+  }
+
+  /** The extent of the NAME, which is neither the extent of its span nor
+    * the length of its spelling.
+    *
+    * `SurfaceParsers.spanned` brackets a `token`, and a token eats the
+    * whitespace after it — so an occurrence's span runs to the start of
+    * the NEXT token: `mine` in `let mine = ...` spans five characters,
+    * and a name at the end of a line spans onto the next one (where
+    * `spanLen` gives up and answers 1).  6.3's first round measured a
+    * letter-initial name by its SPELLING instead, which is right for a
+    * plain identifier and wrong for a backtick literal — ``wide`` spells
+    * `wide` and occupies eight characters, so rename wrote `narrowde``
+    * over it (review R2).
+    *
+    * So measure against the SOURCE: take the span's own region, clipped
+    * to its line, and drop the trailing whitespace the token swallowed.
+    * That is exact for every form — plain, parenthesised, backticked,
+    * qualified — and it also says whether the source spells the name the
+    * way `spelling` does, which is what rename needs in order to know it
+    * may replace the range with a bare new name. */
+  def nameExtent(ls: Lines, sp: Span, spelling: String): (Int, Boolean) = {
+    val text = ls.text
+    val (off, sawTab) = ls.locate(sp.startLine, sp.startCol)
+    if (off < 0) (spanLen(sp), false)
+    else {
+      val eol = ls.endOfLine(sp.startLine)
+      // EXACT: the source at this position literally begins with the
+      // spelling.  This is the ordinary case and it is measured by the
+      // spelling, NOT by the span -- a token swallows the whitespace AND
+      // the line comment after it (`sa  -- ^ select …` is one span), so
+      // the span is no measure of a name at all.
+      if (spelling.nonEmpty && off + spelling.length <= eol &&
+          text.regionMatches(off, spelling, 0, spelling.length))
+        (spelling.length, !sawTab)
+      // NOT EXACT: the source writes the name in some other form.  Two
+      // exist, and both are measured from the source itself.
+      else if (off + 1 < eol && text.charAt(off) == '`' && text.charAt(off + 1) == '`') {
+        // a ``literal identifier``: through the closing pair, so an
+        // inner space or escape is inside the extent
+        val close = text.indexOf("``", off + 2)
+        if (close < 0 || close + 2 > eol) (math.max(eol - off, 1), false)
+        else (close + 2 - off, false)
+      } else {
+        // a parenthesised operator, or anything else: the run of
+        // non-space characters, clipped to the span and to the line
+        val span = if (sp.endLine == sp.startLine && sp.endCol > sp.startCol)
+                     off + (sp.endCol - sp.startCol) else eol
+        val stop = math.min(math.max(span, off + 1), eol)
+        var e = off
+        while (e < stop && !text.charAt(e).isWhitespace) e += 1
+        (math.max(e - off, 1), false)
+      }
+    }
+  }
+
   /** Build the index for one checked document from the renamer tables. */
   def index(fileName: String, c: Resident#Checked): DocIndex = {
     val env = c.env
+    val lines = new Lines(c.contents)
+
+    /** 6.3 fix round (review R1).  `ToGlobal.origin` is "the module I
+      * imported this name FROM", not the module that DEFINES it:
+      * `ModuleScope.importing` computes `termOrigins0` with the session's
+      * origins in it and then returns `localImportsToGlobals(...)`
+      * instead, so a re-exported name (`Prelude` exports `Bool`) arrives
+      * with `Prelude.not` while `Bool.e`'s own binder keys on
+      * `Bool.not` — two keys, two disjoint sets, one name, and a rename
+      * from either end that quietly breaks the other.
+      *
+      * The session's own `termNameOrigins`/`consOrigins` are the
+      * re-export chain (`Session.scala:1076`), and the check copy has
+      * them.  Chase to the fixpoint HERE, at index time, so the request
+      * path stays a lookup (the Stage-3 invariant) — the same
+      * greatest-ancestor walk `ModuleScope.collapseNames` does, with a
+      * depth cap and a memo, and stopping at an entry that offers more
+      * than one ancestor (that is an ambiguity, not a chain).
+      *
+      * The module's own definitions are unaffected: `Resident.checkFile`
+      * scrubs this module out of the env copy, so its own globals have
+      * no origin entry and canonicalise to themselves. */
+    def canonWith(origins: Map[Global, List[Global]],
+                  memo: scala.collection.mutable.HashMap[Global, Global])
+                 (g: Global): Global =
+      memo.getOrElseUpdate(g, {
+        var x = g
+        var d = 0
+        var going = true
+        while (going && d < 32) {
+          origins.get(x) match {
+            case Some(List(y)) if y != x => x = y; d += 1
+            case _                       => going = false
+          }
+        }
+        x
+      })
+    val termMemo = scala.collection.mutable.HashMap.empty[Global, Global]
+    val typeMemo = scala.collection.mutable.HashMap.empty[Global, Global]
+    def canonTerm(g: Global): Global = canonWith(env.termNameOrigins, termMemo)(g)
+    def canonType(g: Global): Global = canonWith(env.consOrigins, typeMemo)(g)
+    def gkey(g: Global, typeLevel: Boolean): GlobalKey =
+      GlobalKey(if (typeLevel) canonType(g) else canonTerm(g), typeLevel)
     // fixity declarations are part of the module's global NAMES — the
     // hover bridge from a binder spelling to Local(...).global(name)
     // needs them (a plain Local would miss `(++)`)
@@ -220,10 +455,17 @@ object Definitions {
       b.result()
     }
 
+    // 6.3: an occurrence is the DEF-SITE when it sits exactly where the
+    // binder table says the name is introduced.  For a sig+equations
+    // group that is the LAST equation (the renamer's own rule), so an
+    // earlier equation head reads as a use; every one of them is still
+    // in the references set and every one is still edited by a rename.
+    def isDefSite(sp: Span, b: Renamer.BinderInfo): Boolean =
+      sp.startLine == b.defSite.startLine && sp.startCol == b.defSite.startCol
+
     val occs = c.renamed.occurrences.flatMap { o =>
       val sp = o.span
-      def at(tgt: Option[Target], hov: Option[TermHover]): Occ =
-        Occ(sp.startLine, sp.startCol, spanLen(sp), tgt, hov)
+      val (nlen, nexact) = nameExtent(lines, sp, o.spelling)
       o.resolution match {
         case Renamer.ToBinder(id) =>
           c.renamed.binders.get(id).map { b =>
@@ -250,31 +492,51 @@ object Definitions {
             // (TyParam/TyImplicit/KindParam) has no Con and stays null.
             val kindHov =
               if (b.kind == Renamer.TyDef) conHover(ownTyCon(b.spelling)) else None
-            Occ(sp.startLine, sp.startCol, spanLen(sp),
-                Some(selfTarget(b.defSite)), hover, kindHov)
+            // 6.3 KEY.  A top level and a `data`/`type`/`class` head are
+            // GLOBAL names -- a sibling buffer's mention of one resolves
+            // to the very same canonical Global -- so they key on that,
+            // not on the binder id no other document has ever heard of.
+            val key =
+              if (b.kind == Renamer.TopLevel) gkey(ownGlobal(b.spelling), false)
+              else if (b.kind == Renamer.TyDef) gkey(ownTyCon(b.spelling), true)
+              else LocalKey(id)
+            Occ(sp.startLine, sp.startCol, nlen,
+                Some(selfTarget(b.defSite)), hover, kindHov,
+                Some(key), o.spelling, isDefSite(sp, b), nexact)
           }
-        case Renamer.ToGlobal(g, _, _) if o.typeLevel =>
+        case Renamer.ToGlobal(g, _, origin) if o.typeLevel =>
           // `Builtin` type/kind atoms (->, *, rho ...) have no Con and no
           // source file; they answer null, as they always did.
-          conTarget(g).map(t => Occ(sp.startLine, sp.startCol, spanLen(sp),
-                                    Some(t), None, conHover(g)))
-        case Renamer.ToGlobal(g, _, _) =>
-          termOf(g).map { case (t, h) => at(Some(t), Some(h)) }
+          conTarget(g).map(t => Occ(sp.startLine, sp.startCol, nlen,
+                                    Some(t), None, conHover(g),
+                                    Some(gkey(origin, true)), o.spelling,
+                                    false, nexact))
+        case Renamer.ToGlobal(g, _, origin) =>
+          termOf(g).map { case (t, h) =>
+            Occ(sp.startLine, sp.startCol, nlen, Some(t), Some(h), None,
+                Some(gkey(origin, false)), o.spelling, false, nexact) }
         case Renamer.Unresolved(spelling) =>
           // Every name declared but not BOUND lands here — see ownDecls.
           // A genuinely undefined name is in none of these tables and
           // stays silent, which is what makes the miss case honest.
           if (o.typeLevel) {
             val g = ownTyCon(spelling)
-            conTarget(g).map(t => Occ(sp.startLine, sp.startCol, spanLen(sp),
-                                      Some(t), None, conHover(g)))
+            conTarget(g).map(t => Occ(sp.startLine, sp.startCol, nlen,
+                                      Some(t), None, conHover(g),
+                                      Some(gkey(g, true)), o.spelling,
+                                      false, nexact))
           } else {
             val g = ownGlobal(spelling)
             val session = termOf(g)
             val tgt = session.map(_._1) orElse ownDecls.get(spelling).map(selfTarget)
             val hov = session.map(_._2) orElse
                       c.types.get(spelling).map(t => TermHover(label(g), t))
-            if (tgt.isEmpty && hov.isEmpty) None else Some(at(tgt, hov))
+            // A name DECLARED but not BOUND (a constructor, a field, a
+            // table, a foreign) is one of this module's own globals, and
+            // its mentions must find its declaration head below.
+            if (tgt.isEmpty && hov.isEmpty) None
+            else Some(Occ(sp.startLine, sp.startCol, nlen, tgt, hov, None,
+                          Some(gkey(g, false)), o.spelling, false, nexact))
           }
         case _ => None  // ambiguous: no navigation
       }
@@ -290,8 +552,10 @@ object Definitions {
     val headOccs = ownDecls.toList.map { case (spelling, sp) =>
       val g = ownGlobal(spelling)
       val session = termOf(g)
-      Occ(sp.startLine, sp.startCol, spanLen(sp), Some(selfTarget(sp)),
-          session.map(_._2) orElse c.types.get(spelling).map(t => TermHover(label(g), t)))
+      val (l, x) = nameExtent(lines, sp, spelling)
+      Occ(sp.startLine, sp.startCol, l, Some(selfTarget(sp)),
+          session.map(_._2) orElse c.types.get(spelling).map(t => TermHover(label(g), t)),
+          None, Some(gkey(g, false)), spelling, true, x)
     }
 
     // The operator named in `infixl 6 <+>` is a mention of the definition
@@ -308,8 +572,15 @@ object Definitions {
         val hov = if (tyLevel) None
                   else termOf(g).map(_._2) orElse
                        c.types.get(n.spelling).map(t => TermHover(label(g), t))
+        // 6.3: the fixity line is a MENTION, so a rename of the operator
+        // it names would have to edit it.  Renaming operators is refused
+        // outright (References, refusal ii), so this key earns its keep
+        // for references and highlight rather than for rename.
+        val key = gkey(if (tyLevel) ownTyGlobal(n.spelling) else g, tyLevel)
+        val (l, x) = nameExtent(lines, n.span, n.spelling)
         if (tgt.isEmpty && hov.isEmpty) None
-        else Some(Occ(n.span.startLine, n.span.startCol, spanLen(n.span), tgt, hov))
+        else Some(Occ(n.span.startLine, n.span.startCol, l,
+                      tgt, hov, None, Some(key), n.spelling, false, x))
       }
     }.flatten
 
@@ -337,8 +608,10 @@ object Definitions {
     val tyHeadOccs = c.renamed.binders.values.collect {
       case b if b.kind == Renamer.TyDef =>
         val d = b.defSite
-        Occ(d.startLine, d.startCol, spanLen(d), Some(selfTarget(d)), None,
-            conHover(ownTyCon(b.spelling)))
+        val (l, x) = nameExtent(lines, d, b.spelling)
+        Occ(d.startLine, d.startCol, l, Some(selfTarget(d)), None,
+            conHover(ownTyCon(b.spelling)),
+            Some(gkey(ownTyCon(b.spelling), true)), b.spelling, true, x)
     }
 
     // 6.2: a LOCAL binder's own def-site.  An equation head (a `let` or
@@ -348,18 +621,76 @@ object Definitions {
     // occurrence), so without this the one place a reader most expects a
     // type — where the name is introduced — answered nothing.  `dedup`
     // leaves any position a real occurrence already covers alone.
+    // 6.3 CHANGED THE FILTER: every local binder gets its def-site Occ,
+    // typed or not.  6.2 kept only the ones a hover could answer, which
+    // left highlight and rename unable to hit the very position a reader
+    // clicks -- where the name is introduced.  An untyped one still
+    // hovers null (no `hover`, no `kind`), so no hover answer moves; what
+    // it gains is a KEY.  TYPE variables (forall/data args, kind braces)
+    // are in too: they are binders with uses, and a highlight of `a`
+    // inside one signature is exactly as useful as one of a value.
     val localDefOccs = c.renamed.binders.values.collect {
-      case b if b.kind == Renamer.Arg || b.kind == Renamer.LetBound ||
-                b.kind == Renamer.WhereBound || b.kind == Renamer.DoBound ||
-                b.kind == Renamer.CaseBound =>
+      case b if b.kind != Renamer.TopLevel && b.kind != Renamer.TyDef &&
+                b.defSite.startLine > 0 =>
         val d = b.defSite
-        Occ(d.startLine, d.startCol, spanLen(d), Some(selfTarget(d)),
+        val (dl, dx) = nameExtent(lines, d, b.spelling)
+        Occ(d.startLine, d.startCol, dl, Some(selfTarget(d)),
             c.locals.get((d.startLine, d.startCol))
-              .map(l => TermHover(b.spelling, l.ty, l.scope)))
-    }.filter(o => o.hover.isDefined)
+              .map(t => TermHover(b.spelling, t.ty, t.scope)),
+            None, Some(LocalKey(b.id)), b.spelling, true, dx)
+    }
+
+    // 6.3: the names in an `import M using (a, b)` list.  They are
+    // MENTIONS of M's definitions -- a rename of one has to edit them or
+    // the importing file stops compiling -- and until now they were in no
+    // table at all.  The canonical Global is chased the way the renamer
+    // chases it (`Renamer.originOf` over `termOrigins`), but a name that
+    // is USED in this file already has its origin in an occurrence, and
+    // that answer is exact (it went through the renamer itself), so it
+    // wins.  GAP, stated rather than papered over: an OPERATOR item is
+    // written `(<+>)` -- parens in the spelling, fixity not recoverable
+    // here -- so operator import items are not indexed.  Rename refuses
+    // operators outright, so nothing rename does depends on it; a
+    // references request on an operator misses its import-list mentions.
+    val originOfUse: Map[(String, String, Boolean), Global] =
+      c.renamed.occurrences.foldLeft(Map.empty[(String, String, Boolean), Global]) {
+        case (m, o) => o.resolution match {
+          case Renamer.ToGlobal(g, _, origin) =>
+            m.updated((g.module, g.string, o.typeLevel), origin)
+          case _ => m
+        }
+      }
+    def chase(origins: Map[Global, List[Global]], g: Global): Global = {
+      var x = g
+      var d = 0
+      var going = true
+      while (going && d < 32) {
+        origins.get(x) match {
+          case Some(List(y)) if y != x => x = y; d += 1
+          case _                       => going = false
+        }
+      }
+      x
+    }
+    val importItemOccs = c.module.header.imports.flatMap { imp =>
+      imp.items.toList.flatMap(_._2).flatMap { it =>
+        val sp = it.name.span
+        val spelling = it.name.spelling
+        if (spelling.startsWith("(")) None       // an operator item; see above
+        else {
+          val g = Local(spelling, Idfix).global(imp.module)
+          val origin = originOfUse.getOrElse((imp.module, spelling, it.isType),
+            chase(if (it.isType) c.scope.typeOrigins else c.scope.termOrigins, g))
+          val (l, x) = nameExtent(lines, sp, spelling)
+          Some(Occ(sp.startLine, sp.startCol, l, None, None, None,
+                   Some(gkey(origin, it.isType)), spelling, false, x))
+        }
+      }
+    }
 
     DocIndex(dedup(occs ++ headOccs ++ fixityOccs ++ tyHeadOccs ++
-                   localDefOccs ++ importOccs))
+                   localDefOccs ++ importOccs ++ importItemOccs),
+             0L, c.name, c.renamed, c.scope.canonicalTerms, c.scope.canonicalTypes)
   }
 
   /** First entry wins per start position: a real occurrence outranks the

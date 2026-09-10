@@ -3,7 +3,7 @@ package com.clarifi.reporting.ermine.lsp
 import com.clarifi.reporting.ermine.{ Global, Type }
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.parsing.ErParseState.Implicits._
-import com.clarifi.reporting.ermine.rename.{ NewPipeline, Renamer }
+import com.clarifi.reporting.ermine.rename.{ ModuleScope, NewPipeline, Renamer }
 import com.clarifi.reporting.ermine.session.{ Lib, Printer, Session, SessionEnv, TolerantCheck }
 import com.clarifi.reporting.ermine.surface.{ SErrorStatement, SModule, SStatement,
   SDatabaseBlock, SPrivateBlock, Span, StatementExtents }
@@ -133,7 +133,23 @@ final class Resident(val log: String => Unit) {
                            diags: List[NewPipeline.Diag],
                            notes: List[TolerantCheck.Note],
                            types: Map[String, Type],
-                           locals: Map[(Int, Int), TolerantCheck.LocalTy])
+                           locals: Map[(Int, Int), TolerantCheck.LocalTy],
+                           // 6.3: the renamer's own import scope, so
+                           // rename can ask whether a NEW name would
+                           // already resolve in this file without
+                           // re-running any analysis on a request path.
+                           scope: ModuleScope.Scope = ModuleScope.Scope.empty,
+                           // 6.3 fix round (review R2): THE TEXT THIS
+                           // CHECK READ.  A span says where a name is,
+                           // not how it is written -- a backtick literal
+                           // (``wide``) spells `wide` and occupies eight
+                           // characters -- so the index measures every
+                           // name against the source it came from.  It
+                           // is the same String the read already holds;
+                           // `Checked` is transient (Documents stores
+                           // text, version, index and cache, never a
+                           // Checked), so this retains nothing new.
+                           contents: String = "")
 
   /** Check one file against a fresh env copy, resolving imports first
     * against the file's own directory (workspace siblings), then the
@@ -394,7 +410,7 @@ final class Resident(val log: String => Unit) {
     // a file full of unexplained undefined names.
     Checked(e, mh.name, r.surface, r.renamed, r.diagnostics,
             importNotes ++ (if (fastMode) Nil else published), checked.types,
-            checked.locals)
+            checked.locals, r.scope, contents)
   }
 
   private def errorStatements(ss: List[SStatement]): List[SErrorStatement] = ss.flatMap {

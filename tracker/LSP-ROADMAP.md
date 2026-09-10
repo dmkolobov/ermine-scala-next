@@ -8,10 +8,10 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 3 IN PROGRESS (2026-09-10).  6.0, 6.1 DONE; 6.2 DONE as
-PARTIAL (62.4% of local binders hover; the pattern-binder residual is a
-Subst.scala FORK under Blocked/Awaiting, the user's decision).  NEXT: 6.3
-(references, highlight, rename), then 6.4-6.7, then GATE G3.  Orchestration:
+Status: STAGE 3 IN PROGRESS (2026-09-10).  6.0-6.3 DONE (6.2 as PARTIAL:
+62.4% of local binders hover; the pattern-binder residual is a Subst.scala
+FORK under Blocked/Awaiting, the user's decision).  NEXT: 6.4 (symbols),
+then 6.5-6.7, then GATE G3.  Orchestration:
 brief -> fresh Opus implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
@@ -30,8 +30,8 @@ brief -> fresh Opus implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (237 as of 2026-09-10 after
-  Stage 3 item 6.2; 207 after 6.1; 185 as of 2026-09-09,
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (306 as of 2026-09-10 after
+  Stage 3 item 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
   82 before that, the G2 line's 77 having gone stale)
@@ -886,7 +886,7 @@ STAGE-3 INVARIANTS (hard):
   local being what Decision (a) forbids; an anti-vacuity floor on the
   equation-argument class).  Code committed 11be9bb.
 
-- [ ] **6.3 References, document highlight, rename** — from the renamer
+- [x] **6.3 References, document highlight, rename** — from the renamer
   tables (`occurrences` with ToBinder/ToGlobal, `binders`, `frames`);
   no new analysis.  `textDocument/references` (honouring
   includeDeclaration) and `textDocument/documentHighlight` (Write at
@@ -911,6 +911,71 @@ STAGE-3 INVARIANTS (hard):
   stale index (didChange, then rename before the debounce) -> "check
   pending" error; rename a top-level across two open buffers -> edits
   in both plus the coverage warning.
+  DONE 2026-09-10 (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP3-6.3-REFS.md, LSP3-6.3-REVIEW.md).  Every `Occ`
+  now carries a stored KEY: `LocalKey(binderId)` — the set is every
+  occurrence in the document with that id plus the binder's def-site,
+  which the index now carries for EVERY local binder; `GlobalKey(origin)`
+  — `ToGlobal.origin`, never the written-through name, so an alias
+  import and its canonical name are one name — the set is every
+  occurrence in every OPEN buffer: uses, the defining module's signature
+  and equation heads, the declaration head, the fixity mention and the
+  `import M using (n)` list entries (newly indexed), plus the def-site
+  even when its file is not open.  Highlight is the same key in the
+  requesting document (Write at the def-site, Read elsewhere).  RENAME
+  refusals, all checked before any edit is built so no partial edit
+  exists on any path: invalid identifier or wrong case class (the
+  surface Lexer's classification, not a regex); operator either side;
+  capture three ways (`scopeAt` at every occurrence, `moduleTerms` and
+  TyDef binders, the canonical import maps); stale index for ANY document
+  in the edit; an Ambiguous mention; a def-site in a file that is not
+  open; a name mentioned under more than one spelling (alias or qualified
+  use), which a textual rename cannot follow.  The coverage warning
+  (Decision c) is one `window/showMessage` per global request.  A BUG
+  FIXED ON THE WAY: occurrence spans ran to the NEXT TOKEN (a `token`
+  eats trailing whitespace), so a rename would have swallowed the space
+  after every name — `Definitions.nameLen` measures by spelling.
+  TestRenamer 18 -> 23: table integrity over 252 of 253 corpus files
+  (Sample.e does not parse), 71,248 occurrences, 16,506 binders, 3,441
+  moduleTerms: 0 bad ToBinder, 0 overlaps, 0 shared def-sites, 0 bad
+  moduleTerms.  ONE SHARED FILE: `NewPipeline.Read` gained a defaulted
+  `scope` field, set at its single construction site and read only by
+  the editor (the reviewer checked the batch cost).  Index build on
+  Report.e +2..7 ms warm (7305 -> 7980 occs); round trip unmoved.
+  THE REVIEW FOUND TWO WRONG-EDIT PATHS the implementer's fixtures did
+  not reach, both fixed in the fix round: (R1) `ToGlobal.origin` is the
+  module the name was IMPORTED FROM, not the defining module, so a
+  re-exported name (Prelude re-exporting Bool.not) had a different key
+  from its definition — rename from Bool.e succeeded and left the open
+  importer broken; keys are now canonicalised across re-export hops at
+  index time, with a same-spelling-different-key refusal as the belt.
+  (R2) backtick literal identifiers: the spelling is the stripped middle
+  and the span starts at the backtick, so the replace range was wrong
+  (14 such names in Layout/Report.e) — `Definitions.nameExtent` now
+  measures against the SOURCE (exact / backticked / parenthesised / behind
+  a tab: 70,897 / 39 / 306 / 6 of 71,248 corpus occurrences, 0
+  unclassified); references and highlight are correct for all classes,
+  RENAME REFUSES non-exact names (whether the new name needs backticks is
+  a grammar question, and the literal carries its own escapes), with
+  prepareRename answering null first.  A pre-existing bug the new property
+  found: parser columns are TAB-EXPANDED to 8-column stops (`Pos.bump`),
+  so every LSP range on a tab-indented line is in the wrong units —
+  ticket E8; a name behind a tab is never renamed.  (R3) the stale-index refusal covered only
+  documents with a hit; every open document is version-checked now for a
+  global rename.  The shared-file risk was REFUTED: the strict path drops
+  the `Read`, nothing is retained per module in batch memory.
+  lsp-smoke 237 -> 287 -> 306 (fix round); five targeted suites 68/68
+  (TestRenamer 18 -> 24).  Index build on Report.e 12-16 ms warm after the
+  fix round, 3x under the floor; round trip unchanged.
+  GAPS stated in the report's §6 (the reviewer's fuller list): operator
+  import-list items are not indexed (references-completeness only —
+  operators cannot be renamed); a multi-equation definition's def-site
+  is its last equation.
+  Second review pass: ADVANCE — the re-export fix re-broken four ways
+  (stdlib case both directions, a two-hop chain, a type re-export, a
+  multi-ancestor origin that refuses rather than edits) and held; two
+  refusal messages mislead (wording only, S4) and the belt over-refuses
+  by design (stated).  Ticket E8 filed for the tab-column model.
 
 - [ ] **6.4 Document symbols and workspace symbols.**
   `textDocument/documentSymbol` (hierarchical): from the surface tree +
@@ -2199,6 +2264,15 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-10 (6.3 DONE): see the item's DONE paragraph.  Implementer
+  GREEN, reviewer FIX-THEN-ADVANCE with two HIGH wrong-edit paths the
+  fixtures had not reached (re-export key split; backtick replace range)
+  and a stale-sibling gap, fix round closed all three with live pins,
+  second pass ADVANCE.  Ticket E8 (tab-expanded parser columns make every
+  editor range on a tab-indented line wrong) filed.  Implementer ~45 min
+  + 25 min fix round, reviewer ~23 + 12 min.  Baselines: TestLoopTrace
+  720/720, five suites 68/68, corpus 85/69/0 over 154, repl-smoke 8/66
+  goldens untouched, lsp-smoke 306, boot 129.
 - 2026-09-10 (6.2 DONE as PARTIAL, 62.4%): see the item's DONE paragraph
   and the FORK under Blocked/Awaiting.  The night's lesson: the plan's
   premise ("one zonk per binder") was checked by the implementer FIRST,

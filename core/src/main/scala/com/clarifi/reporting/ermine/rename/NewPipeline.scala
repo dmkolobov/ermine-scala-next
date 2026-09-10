@@ -47,9 +47,15 @@ object NewPipeline {
     * loader contract wants, plus — for the editor — the surface module
     * (Definitions' fixity bridge reads it), the renamer tables
     * (navigation) and every phase's diagnostics. */
+  /** `scope` is the module scope the RENAMER resolved through -- the
+    * canonical import maps, not the session superset.  Carried out (6.3)
+    * so the editor can ask "would this new name already resolve here?"
+    * without re-running `ModuleScope.importing`; nothing on the batch
+    * path reads it, and computing it is where it always was. */
   final case class Read(module: Module, ps: scalaparsers.ParseState[ErParseState],
                         surface: SModule, renamed: Renamer.Result,
-                        diagnostics: List[Diag])
+                        diagnostics: List[Diag],
+                        scope: ModuleScope.Scope = ModuleScope.Scope.empty)
 
   /** An assemble refusal with its position kept structurally, so the
     * strict path renders it exactly as before and the tolerant path can
@@ -166,7 +172,7 @@ object NewPipeline {
     lctx.diags.result().foreach(d => ds += Diag(Phase.Lower, d.span, d.message))
     checkpoint()
 
-    Read(module, ps, sm, renamed, ds.toList)
+    Read(module, ps, sm, renamed, ds.toList, scope)
   }
 
   /** A bare TYPE against the session (kindOf, post-G1 D3): parse,

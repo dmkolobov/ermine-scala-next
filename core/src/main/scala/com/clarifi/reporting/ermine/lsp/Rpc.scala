@@ -230,7 +230,14 @@ object Rpc {
   val ParseError     = -32700
   val InvalidRequest = -32600
   val MethodNotFound = -32601
+  val InvalidParams  = -32602
   val InternalError  = -32603
+  /** LSP's own code (not JSON-RPC's): the request was well formed and
+    * the server refused to do it.  6.3's rename refusals that are about
+    * the WORKSPACE (a def-site in an unopened file, a stale index, a
+    * capture) answer with this; the ones about the request itself (an
+    * invalid or wrong-case new name, an operator) answer InvalidParams. */
+  val RequestFailed  = -32803
 
   def stackTrace(e: Throwable): String = {
     val sw = new java.io.StringWriter
