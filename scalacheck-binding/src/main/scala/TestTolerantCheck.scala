@@ -3,11 +3,14 @@ package com.clarifi.reporting
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.rename.NewPipeline
 import com.clarifi.reporting.ermine.Pretty
-import com.clarifi.reporting.ermine.session.{ Session => S, TolerantCheck }
+import com.clarifi.reporting.ermine.lsp.{ Diagnostics, Documents, Json, Resident }
+import com.clarifi.reporting.ermine.session.{ Printer, Session => S, SessionEnv, TolerantCheck }
 
 import org.scalacheck._
 import Prop._
-import scalaparsers.Supply
+import scalaparsers.{ Death, Supply }
+
+import java.io.File
 
 /** Stage 2 item 5.4: the editor's type checker.
   *
@@ -169,5 +172,161 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     // The read drops `helper` as unparseable; `lonely` is still checked.
     val r = check("helper = = 3\nlonely : Int\nlonely = \"no\"\n")
     (errors(r).exists(_.report contains "failed to unify") :| errors(r).map(_.report).toString)
+  }
+
+  // ---- 6.1: the editor path's POSITIONS ------------------------------
+  //
+  // These drive `Diagnostics.check` -- the very call `Diagnostics.run`
+  // makes -- against a real `Resident`, so what they inspect is what the
+  // server publishes, not a re-implementation of it.  They are in this
+  // suite because they are editor-check properties; they are JVM-local
+  // (no socket, no client) so a failure names the file and the message.
+
+  /** ONE resident session for both sweeps: booting is ~13 s and warming
+    * it with the stdlib is more, and `Resident.supply` is a single
+    * `Supply` (documented single-threaded), so the properties below hold
+    * this lock rather than running concurrently on it -- ScalaCheck runs
+    * a Properties object's properties on a pool. */
+  private val residentLock = new Object
+
+  private val stdlibRoot = new File("core/src/main/resources/modules")
+
+  private def walk(f: File): List[File] =
+    if (f.isDirectory) f.listFiles.toList.sortBy(_.getName).flatMap(walk)
+    else if (f.getName endsWith ".e") List(f) else Nil
+
+  /** The 180-file rule: stdlib AND core/examples, minus the directories
+    * whose contents are not good code (TestTolerantRead's `notGoodCode`,
+    * same reasons: `shouldfail` must be rejected and `incomplete` does
+    * not terminate). */
+  private val notGoodCode = Set("shouldfail", "shouldfail-controls", "incomplete")
+
+  private def corpusFiles: List[File] =
+    (walk(stdlibRoot) ++ walk(new File("core/examples")))
+      .filterNot(f => Option(f.getParentFile).exists(d => notGoodCode(d.getName)))
+
+  /** The LSP fixtures, which are broken ON PURPOSE: the ones that make
+    * the 0:0 property non-vacuous. */
+  private def fixtureFiles: List[File] = walk(new File("tracker/lsp-tests"))
+
+  private def stdlibModules: List[String] = {
+    val root = stdlibRoot.getPath + File.separator
+    walk(stdlibRoot).map(_.getPath.stripPrefix(root).stripSuffix(".e")
+                          .replace(File.separator, ".")).sorted
+  }
+
+  private lazy val resident: Resident = {
+    val r = new Resident(_ => ())
+    val ready = r.boot()
+    // Warm the resident env with the WHOLE stdlib.  Without it every
+    // corpus file whose imports are outside the booted Prelude/Layout
+    // closure re-loads them into its own throwaway copy, once per file.
+    implicit val s: SessionEnv = ready.env
+    implicit val su: Supply = r.supply
+    implicit val con: Printer = r.printer
+    try S.loadModules(stdlibModules)
+    catch { case Death(_, _) =>
+      stdlibModules.foreach { m => try S.loadModules(List(m)) catch { case Death(_, _) => () } } }
+    r
+  }
+
+  private def diagnose(f: File, docs: Documents): List[Json] =
+    Diagnostics.check(resident, docs, f.toURI.toString, f.toPath, _ => ())
+
+  private def at(d: Json, which: String, field: String): Int =
+    (d / "range" flatMap (_ / which) flatMap (_ / field) flatMap (_.int)) getOrElse -1
+  private def message(d: Json): String =
+    (d / "message" flatMap (_.str)) getOrElse ""
+  private def severity(d: Json): Int =
+    (d / "severity" flatMap (_.int)) getOrElse -1
+  private def at00(d: Json): Boolean =
+    at(d, "start", "line") == 0 && at(d, "start", "character") == 0 &&
+    at(d, "end", "line") == 0 && at(d, "end", "character") == 0
+  private def where(d: Json): String =
+    "%d:%d-%d:%d".format(at(d, "start", "line"), at(d, "start", "character"),
+                         at(d, "end", "line"), at(d, "end", "character"))
+
+  property("no editor-path diagnostic lands at 0:0") = secure {
+    // 6.1(c).  0:0 is line 1, column 1 -- a position the editor CAN
+    // show, and therefore a position that hides a real one when it is
+    // reached by giving up rather than by pointing.  No corpus file and
+    // no fixture is designed to fail there, so the expected count is 0.
+    residentLock.synchronized {
+      val docs = new Documents
+      val files = corpusFiles ++ fixtureFiles
+      var seen = 0
+      val bad = files.flatMap { f =>
+        val ds = diagnose(f, docs)
+        seen += ds.size
+        ds.filter(at00).map(d =>
+          f.getName + " " + where(d) + ": " + message(d).linesIterator.take(1).mkString)
+      }
+      ((corpusFiles.size >= 180) :| s"only ${corpusFiles.size} corpus files") &&
+      ((fixtureFiles.size >= 30) :| s"only ${fixtureFiles.size} fixtures") &&
+      // ANTI-VACUITY: the corpus is silent by construction (that is
+      // TestTolerantRead's sweep), so all the positions this property can
+      // actually inspect come from the fixtures.  If a change made the
+      // editor path publish nothing at all, "no diagnostic at 0:0" would
+      // pass for the worst possible reason.
+      ((seen >= 40) :| s"only $seen diagnostic(s) inspected over ${files.size} files") &&
+      ((bad.isEmpty) :| s"${bad.size} diagnostic(s) at 0:0: ${bad.take(6).mkString(" ;; ")}")
+    }
+  }
+
+  property("an import that will not load is reported on its own import statement") = secure {
+    // 6.1(b).  BadImport.e imports a module that does not exist and a
+    // sibling whose body has a syntax error.  Before this item the first
+    // failure threw out of checkFile and became ONE diagnostic at 0:0:
+    // the second import, and every healthy definition in the file, went
+    // unreported.
+    residentLock.synchronized {
+      val docs = new Documents
+      val ds = diagnose(new File("tracker" + File.separator + "lsp-tests" +
+                                 File.separator + "BadImport.e"), docs)
+      val missing = ds.filter(d => message(d) contains "NoSuchModule")
+      val sibling = ds.filter(d => message(d) contains "BadSib")
+      // two import failures AND the file's own type error: the roadmap's
+      // tick condition is that the other diagnostics still publish, so it
+      // is asserted positively, not as an absence (review R4).
+      ((ds.size == 3) :| s"got ${ds.size}: ${ds.map(d => where(d) + " " + message(d).take(60))}") &&
+      ((ds.count(d => message(d) contains "failed to unify") == 1) :|
+        ds.map(message(_).take(60)).toString) &&
+      ((missing.size == 1 && sibling.size == 1) :| ds.map(message(_).take(60)).toString) &&
+      // the module NAME of `import NoSuchModule`, line 3, columns 8-19
+      ((missing.forall(d => severity(d) == 1 && at(d, "start", "line") == 2 &&
+                            at(d, "start", "character") == 7 &&
+                            at(d, "end", "character") == 19)) :|
+        missing.map(where).toString) &&
+      // ... and of `import BadSib`, line 4, columns 8-13
+      ((sibling.forall(d => severity(d) == 1 && at(d, "start", "line") == 3 &&
+                            at(d, "start", "character") == 7 &&
+                            at(d, "end", "character") == 13)) :|
+        sibling.map(where).toString) &&
+      // the loader's own report is kept: it names the sibling's file and
+      // the position inside it, which is the only thing that says WHY
+      ((sibling.forall(d => message(d) contains "BadSib.e:5:")) :|
+        sibling.map(message).toString) &&
+      // the rule (6.1(b) step 2): while an import has failed, the names
+      // it would have provided are not reported as undefined terms, and
+      // nothing is reported "unchecked" on their account
+      ((!ds.exists(d => message(d) contains "undefined term")) :| ds.map(message).toString) &&
+      ((!ds.exists(d => message(d) contains "unchecked")) :| ds.map(message).toString)
+    }
+  }
+
+  property("a header that will not parse is still positioned in this file") = secure {
+    // 6.1(b) step 3: the one Death that is genuinely about THIS file.
+    // `fromReport` recovers its position from the report's first line;
+    // the pin is that it does, and that the end is not 0:0 either.
+    residentLock.synchronized {
+      val docs = new Documents
+      val ds = diagnose(new File("tracker" + File.separator + "lsp-tests" +
+                                 File.separator + "BadHeader.e"), docs)
+      ((ds.size == 1) :| ds.map(d => where(d) + " " + message(d).take(60)).toString) &&
+      (ds.forall(d => at(d, "start", "line") == 0 && at(d, "start", "character") == 17 &&
+                      at(d, "end", "line") == 0 && at(d, "end", "character") == 17) :|
+        ds.map(where).toString) &&
+      (ds.forall(d => !at00(d)) :| ds.map(where).toString)
+    }
   }
 }

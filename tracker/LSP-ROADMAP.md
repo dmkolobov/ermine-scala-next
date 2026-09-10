@@ -31,7 +31,8 @@ scoping fix, commits f9cf42a / 41b13cc).
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (185 as of 2026-09-09,
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (207 as of 2026-09-10,
+  after Stage 3 item 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
   82 before that, the G2 line's 77 having gone stale)
@@ -762,7 +763,7 @@ STAGE-3 INVARIANTS (hard):
   edits only (Builtin is a second sourceless module; hook lifetime).
   Follow-up ticket E5 (loader schedules agree) filed, Tier 2 + sweep.
 
-- [ ] **6.1 Diagnostics debt.**
+- [x] **6.1 Diagnostics debt.**
   (a) THE DO-ANCHOR BLAME GAP (Stage-2 diagnostics debt; D3 and 5.4
   log): a type error inside a `do` bind blames the bind's rhs (line 1)
   where the fused pipeline reached the inner subterm (line 2), because
@@ -784,6 +785,34 @@ STAGE-3 INVARIANTS (hard):
   with the loader's message; the file's other diagnostics still publish.
   (c) A sweep pin: over the 180 files, no editor-path diagnostic or note
   is emitted at 0:0 (TestTolerantCheck property; expected 0).
+  DONE 2026-09-10, GREEN-ACCEPTED (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP3-6.1-DIAGNOSTICS.md, LSP3-6.1-REVIEW.md; review
+  FIX-THEN-ADVANCE, three report/fixture fixes applied, no shipped-code
+  change in the fix round).  (a) ACCEPTED: the continuation lambda is
+  inferred bottom-up then subsumed at the App (`Subst` has no checking
+  mode), so Int and Bool first meet at the bind application; an
+  intrinsic inner clash IS blamed inside (DoInner.e 8:27) and a plain
+  `g (w -> w && True)` anchors the same way — the pin stays at line 1;
+  the reviewer's refutation attempt (editor-only re-blame) found it
+  buildable but a second checking engine, 1-2 days, declined; ticket E6.
+  (b) DONE: imports load one at a time only after the batch load fails;
+  each failure is an Error note on its import statement's module-name
+  span carrying the loader's report verbatim; the check CONTINUES.  Rule:
+  while any import failed, undefined-term and "unchecked" notes are
+  withheld wholesale (flags, never text); syntax diagnostics, surviving
+  imports' requirements and type errors still publish (pinned positively
+  by BadImport.e's own type error).  Residual disclosed: operators and
+  type names a failed module would supply still cascade read diagnostics
+  — ticket E7.  Import-list "does not export" notes moved from the header
+  (0:0) to the name span (BadReq.e).  (c) DONE: `Diagnostics.check` split
+  from `run` so a JVM-local property drives the editor path over 253
+  corpus files + 36 fixtures = 289 files, 71 diagnostics: BEFORE 2
+  (BadImport.e, BadReq.e at 0:0), AFTER 0.  Known residual outside the
+  corpus: group-level refusals at `m.loc` (shouldfail/sk03), recorded.
+  Fixtures BadImport/BadSib/BadHeader/BadReq.e; lsp-smoke 185 -> 207;
+  TestTolerantCheck 14 -> 17; docs/lsp.md paragraph added.  Perf: the
+  reviewer's interleaved pair on Report.e 1.667 s before / 1.629 s after
+  — inside the 50 ms floor, unmoved.
 
 - [ ] **6.2 Types at every binder** (the stage's headline; the item
   Stages 0, 1 and 2 each deferred to the perf ticket, whose premise 5.4
@@ -2099,6 +2128,14 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-10 (6.1 DONE): see the item's DONE paragraph.  Implementer
+  2h30 (one interruption: an API login expiry killed its turn mid-edit;
+  resumed from its transcript with the tree state spelled out — the
+  half-written edit compiled, nothing lost), reviewer 26 min, fix round
+  5 min.  Two tickets filed from it: E6 (lambda blame needs a checking
+  mode; Tier 2 + goldens) and E7 (suppression rule misses operators and
+  types; editor path).  Baselines: TestLoopTrace 720/720, corpus 85/69/0
+  over 154, repl-smoke 8/66 goldens untouched, lsp-smoke 207, boot 129.
 - 2026-09-09 (6.0 DONE): see the item's DONE paragraph.  Orchestration
   as agreed: brief -> fresh Opus implementer (2h20, 180 tool uses) ->
   fresh Opus reviewer (52 min, one re-run of Tier 0 + the third full

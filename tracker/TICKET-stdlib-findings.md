@@ -532,6 +532,36 @@ E5. **`Session.loadModulesInSeries` and `Session.loadModules` disagree on alread
     `ei-diff.sh --batch` sweep with `-Dermine.loadInSeries=true` on BOTH sides and `g1-validate.sh`
     (the G1 oracle runs in series).  Not scheduled; a one-line change when a Tier-2 commit is due anyway.
 
+E6. **Type errors inside an unannotated lambda are blamed at the APPLICATION, not the offending subterm.**
+    Filed 2026-09-10 from LSP Stage 3 item 6.1(a), the do-anchor blame gap (report
+    `tracker/loopmodel/LSP3-6.1-DIAGNOSTICS.md` §(a), review `LSP3-6.1-REVIEW.md` §2 — refutation attempted,
+    ACCEPTED confirmed).  `Subst` is purely bottom-up: `inferType`'s `App` case (~:914) infers the argument and
+    `subsumeType`s it against the function's domain (~:527); `typeCheck` is infer + subsume too, so no expected
+    type is ever pushed into a `Lam`.  The do-anchor gap (`TestStage1Pins` "a type error inside a do block
+    anchors on the bind's rhs", line 1 not line 2) is one instance; `g (w -> w && True)` is the general one; an
+    INTRINSIC inner clash is blamed inside already (fixture `DoInner.e` 8:27).  *Fix.* A checking-mode rule for
+    `Lam` (bind the pattern at the expected domain, check the body against the expected codomain), used by `App`
+    when the argument is a syntactic lambda.  *Scope.* Moves the position and sometimes the wording of every such
+    refusal: `tracker/repl-tests` goldens, the two `TestStage1Pins` anchor pins and the corpus batch verdict TEXT
+    must be re-cut — Tier 2 + goldens, its own item, NOT a diagnostics-debt item under frozen batch semantics.
+    An editor-only re-blame was judged (review) implementable without touching `Subst` but is the same rule
+    written a second time, 1-2 days, and was declined.  Not scheduled.
+
+E7. **The editor's import-failure suppression rule covers term names only (operators and type names still
+    cascade).**  Filed 2026-09-10 from LSP Stage 3 item 6.1(b) (review R2/R3).  While an import has failed to
+    load, `Resident.checkFile` withholds undefined-term and "unchecked" NOTES — but a missing module also costs
+    (i) three READ diagnostics per use of an operator it would have supplied (`unknown operator` from `Reassoc`,
+    then `ill-formed expression` and `error node` from `Lower`) and (ii) one `undefined type` note per type name
+    (that note carries no `spelling`, the flag the rule keys on).  Evidence: `OpCascade.e`, `TypeCascade.e`,
+    `BigCascade.e` in the 6.1 review's scratch directory (recreate from the review report if gone).  *Candidate
+    shape.* Tag the read diagnostics whose head is an unresolved operator and the type-phase notes for unresolved
+    type names with a flag (never by matching rendered text) and withhold them the same way while an import
+    failed.  *The hard part is policy, not plumbing:* the same three diagnostics are exactly right for a mistyped
+    operator in a file whose imports are all fine, so the tag must distinguish "unknown because a module did not
+    load" from "unknown".  Also recorded: narrowing by an explicit `import X using {...}` list was available and
+    DECLINED in 6.1 (an open import has no list; a rule that narrows only sometimes is harder to state and predict).
+    Editor path only; Tier 0.  Not scheduled — a Stage 3/4 item if a real session shows the cascade hurts.
+
 ## D. Claims in older documents that do not reproduce
 
 D1. `core/examples/Ai/README.md`'s RUnion table ("a helper bundling `RUnion3` and `RUnion2` does not finish")

@@ -49,9 +49,15 @@ object TolerantCheck {
   /** One note.  `report` is rendered the way every Death is — leading
     * "file:line:col:" — so the caller maps it to a position the same
     * way.  `spelling` is set on undefined-term notes, which the editor
-    * suppresses when a broken statement defines that name (5.4). */
+    * suppresses when a broken statement defines that name (5.4).
+    * `dependsOnBroken` marks the "unchecked" notes, which the editor
+    * suppresses for the same reason and in the same places — a name
+    * that never arrived (a broken statement, a failed import) explains
+    * itself, and its consequences are noise (6.1(b)).  Both are FLAGS
+    * rather than message matching: the caller must not have to parse
+    * rendered report text to know what kind of note it holds. */
   final case class Note(report: String, severity: Int, spelling: Option[String] = None,
-                        span: Option[Span] = None)
+                        span: Option[Span] = None, dependsOnBroken: Boolean = false)
 
   /** `types` maps a top-level binding's spelling to the type checking
     * gave it — inferred for implicits, declared for explicits.  It is
@@ -197,7 +203,8 @@ object TolerantCheck {
 
     def unchecked(b: Binding): Unit =
       notes += Note(b.loc.report(Document.text(
-        "unchecked: depends on a broken definition")).toString, Information)
+        "unchecked: depends on a broken definition")).toString, Information,
+        dependsOnBroken = true)
 
     // The explicit annotations, so implicit components referring to an
     // annotated binding see its DECLARED type rather than a meta.

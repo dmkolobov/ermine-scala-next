@@ -19,6 +19,27 @@ then serves:
   something broken is reported "unchecked: depends on a broken definition"
   rather than inferred against unconstrained metavariables.
 
+  An import that will not load — a module that does not exist, or one whose
+  file has a syntax error of its own — is reported ON ITS OWN `import`
+  statement, squiggling the module name, with the loader's own message (which
+  names the failing file and the position inside it) after an `import X
+  failed:` prefix. Each failing import gets its own diagnostic, so one broken
+  import cannot hide another, and the file is checked anyway: its other
+  diagnostics, its navigation and its hovers all still work. Fixing a broken
+  sibling in ITS buffer clears the importing file's diagnostic on the next
+  check, with no save anywhere.
+
+  While an import has failed, the editor withholds the notes that are merely
+  consequences of the names that never arrived: "undefined term" and
+  "unchecked: depends on a broken definition" are suppressed for that check —
+  the import failure is the error to act on, and a file's worth of undefined
+  names on top of it is noise. (The same rule already applies while a
+  statement is too broken to parse.) It is deliberately blunt: a genuine typo
+  goes quiet until the import is fixed. Two consequences of a missing import
+  are NOT withheld today — an operator it would have supplied still draws
+  "unknown operator" (plus the two lowering diagnostics that follow it) and a
+  type it would have supplied still draws "undefined type".
+
 - **Go-to-definition** for every name that has a source position: equations,
   signatures and local binders; `field` and `table` declarations; data
   constructors; foreign declarations; type names (`data`, `type`, `class`,

@@ -429,6 +429,126 @@ def main():
         check("Nested.e no undefined-term cascade from the broken block",
               not any("undefined term" in d["message"] for d in ds), repr(ds))
 
+    # --- 6.1(b): an import that will not load ---------------------------
+    # Until this item the first failing import threw out of checkFile and
+    # became ONE diagnostic at 0:0 -- the second failing import, and every
+    # healthy definition in the file, went unreported.  Now each failure
+    # squiggles the MODULE NAME in its own import statement, carrying the
+    # loader's own report (which names the import's file and position),
+    # and the file is checked anyway.
+    open_doc("BadImport.e")
+    ds = client.diagnostics_for(uri("BadImport.e"))
+    check("BadImport.e one diagnostic per failing import, plus its own type error",
+          len(ds) == 3, repr(ds))
+    if len(ds) == 3:
+        # `import NoSuchModule`, line 3: the module name, columns 8-19
+        check("BadImport.e missing module squiggles its name",
+              ds[0]["severity"] == 1
+              and ds[0]["range"]["start"] == {"line": 2, "character": 7}
+              and ds[0]["range"]["end"] == {"line": 2, "character": 19}, repr(ds[0]["range"]))
+        check("BadImport.e missing module names the module",
+              "import NoSuchModule failed" in ds[0]["message"]
+              and "Module not found: 'NoSuchModule'" in ds[0]["message"], ds[0]["message"])
+        # `import BadSib`, line 4: the module name, columns 8-13
+        check("BadImport.e unloadable sibling squiggles its name",
+              ds[1]["severity"] == 1
+              and ds[1]["range"]["start"] == {"line": 3, "character": 7}
+              and ds[1]["range"]["end"] == {"line": 3, "character": 13}, repr(ds[1]["range"]))
+        check("BadImport.e unloadable sibling keeps the loader's file:line",
+              "import BadSib failed" in ds[1]["message"]
+              and "BadSib.e:5:" in ds[1]["message"], ds[1]["message"])
+    # THE RULE (6.1(b) step 2): while an import has failed, the names it
+    # would have provided are not reported as undefined terms, and nothing
+    # is reported unchecked on their account -- `use = sibAnswer` is silent.
+    check("BadImport.e suppresses the undefined-term cascade",
+          not any("undefined term" in d["message"] for d in ds), repr(ds))
+    check("BadImport.e suppresses the unchecked cascade",
+          not any("unchecked" in d["message"] for d in ds), repr(ds))
+    # ... and the roadmap's own tick condition, pinned POSITIVELY: the
+    # file's OTHER diagnostics still publish.  `bad : Int` / `bad = "no"`
+    # is a definition that has nothing to do with either import, and a
+    # filter that dropped every Error note would leave the two import
+    # failures behind and pass every check above.
+    check("BadImport.e still publishes its own type error",
+          any("failed to unify" in d["message"] and d["range"]["start"]["line"] == 13
+              for d in ds), repr(ds))
+    # ... and the file is still checked and indexed: its own healthy
+    # definition navigates and hovers.
+    r = definition("BadImport.e", 8, 9)   # `own` in `useOwn = own`
+    check("BadImport.e healthy definition still navigates", r is not None
+          and r["uri"] == uri("BadImport.e")
+          and r["range"]["start"] == {"line": 6, "character": 0}, repr(r))
+    r = hover("BadImport.e", 8, 9)
+    check("BadImport.e healthy definition still hovers", r is not None
+          and "Int" in r["contents"]["value"], repr(r))
+
+    # Fixing the sibling in ITS buffer clears the second import
+    # diagnostic on the next check of BadImport.e -- no save anywhere.
+    open_doc("BadSib.e")
+    ds = client.diagnostics_for(uri("BadSib.e"))
+    check("BadSib.e reports its own syntax error", len(ds) == 1
+          and ds[0]["range"]["start"] == {"line": 4, "character": 9}, repr(ds))
+    bad_sib_src = (FIXTURES / "BadSib.e").read_text()
+
+    def edit(name, text, version):
+        """didChange with the whole document (TextDocumentSync FULL)."""
+        client.notify("textDocument/didChange", {
+            "textDocument": {"uri": uri(name), "version": version},
+            "contentChanges": [{"text": text}]})
+
+    edit("BadSib.e", bad_sib_src.replace("broken = = 3", "broken = 3"), 2)
+    check("BadSib.e clean once fixed in the buffer",
+          client.diagnostics_for(uri("BadSib.e")) == [])
+    client.notify("textDocument/didSave", {"textDocument": {"uri": uri("BadImport.e")}})
+    ds = client.diagnostics_for(uri("BadImport.e"))
+    check("BadImport.e loses the sibling diagnostic and keeps the rest", len(ds) == 2, repr(ds))
+    if len(ds) == 2:
+        check("BadImport.e remaining import diagnostic is the missing module",
+              "NoSuchModule" in ds[0]["message"], ds[0]["message"])
+        check("BadImport.e still publishes its own type error after the sibling is fixed",
+              "failed to unify" in ds[1]["message"], ds[1]["message"])
+    edit("BadSib.e", bad_sib_src, 3)
+    client.diagnostics_for(uri("BadSib.e"))
+    check("BadSib.e on disk untouched by the buffer edits",
+          (FIXTURES / "BadSib.e").read_text() == bad_sib_src)
+    for name in ("BadImport.e", "BadSib.e"):
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri(name)}})
+        client.diagnostics_for(uri(name))
+
+    # 6.1(c): an import list naming something the module does not export
+    # is the editor's own check (batch gets it from Dep.checkNames), and it
+    # used to render at the module header -- line 1, column 1, which is LSP
+    # 0:0.  The name is in the import list and the read knows its span.
+    open_doc("BadReq.e")
+    ds = client.diagnostics_for(uri("BadReq.e"))
+    check("BadReq.e one diagnostic", len(ds) == 1, repr(ds))
+    if len(ds) == 1:
+        # `import Bool using { nosuchname }`, line 3: the NAME.  The end
+        # runs to where the next token starts, as every surface span does.
+        check("BadReq.e squiggles the name in the import list, not the header",
+              ds[0]["severity"] == 1
+              and ds[0]["range"]["start"] == {"line": 2, "character": 20}
+              and ds[0]["range"]["end"] == {"line": 2, "character": 31}, repr(ds[0]["range"]))
+        check("BadReq.e says what is missing",
+              ds[0]["message"] == "Module 'Bool' does not export term 'nosuchname'.",
+              ds[0]["message"])
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("BadReq.e")}})
+    client.diagnostics_for(uri("BadReq.e"))
+
+    # A header that will not parse is the one unrecoverable Death that is
+    # genuinely about THIS file: it keeps its own position (6.1(b) step 3).
+    open_doc("BadHeader.e")
+    ds = client.diagnostics_for(uri("BadHeader.e"))
+    check("BadHeader.e one diagnostic", len(ds) == 1, repr(ds))
+    if len(ds) == 1:
+        check("BadHeader.e is positioned in this file, not at 0:0",
+              ds[0]["range"]["start"] == {"line": 0, "character": 17}
+              and ds[0]["range"]["end"] == {"line": 0, "character": 17}, repr(ds[0]["range"]))
+        check("BadHeader.e says what the header wanted",
+              "where" in ds[0]["message"], ds[0]["message"])
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("BadHeader.e")}})
+    client.diagnostics_for(uri("BadHeader.e"))
+
 
     # --- LSP-FFI: foreign bindings this JVM cannot resolve --------------
     # The server runs foreign-tolerant (Resident.boot): a `foreign`

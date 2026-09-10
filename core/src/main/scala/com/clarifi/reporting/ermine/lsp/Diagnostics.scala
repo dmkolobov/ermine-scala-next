@@ -105,36 +105,43 @@ object Diagnostics {
         log("diagnostics: ignoring non-.e file " + path)
       case Some(path) =>
         val t0 = System.nanoTime
-        val ds =
-          try {
-            val checked = ermine.checkFile(path, docs)
-            // The index is rebuilt from the SAME parse that produced the
-            // diagnostics, broken file or not: navigation on a file's
-            // healthy statements no longer decays to the last good save.
-            docs.putIndex(uri, Definitions.index(path.toString, checked))
-            checked.diags.map(fromDiag) :::
-              checked.notes.map(n => n.span match {
-                // LSP-FFI: a tolerated foreign binding knows its class or
-                // member span exactly, so it squiggles the name rather
-                // than the caret `fromReport` recovers from the text.
-                case Some(sp) => fromSpan(sp, n.report, n.severity)
-                case None     => fromReport(n.report, path, n.severity)
-              })
-          } catch {
-            case Death(err, _) => List(fromReport(err.toString, path))
-            // `Recoverable`, not `NonFatal` (LSP-FFI review finding P-1):
-            // NonFatal counts every LinkageError as fatal, so a reflective
-            // lookup over a stale classpath used to unwind past here into
-            // Rpc's notification guard and the file got NO diagnostics at
-            // all — stale squiggles and a stack trace in the log.  This is
-            // the backstop that keeps "the editor never goes dark" from
-            // resting on having enumerated every reflective call.
-            case com.clarifi.reporting.ermine.parsing.Recoverable(e) =>
-              log("diagnostics: internal error on " + path + ": " + Rpc.stackTrace(e))
-              List(diagnostic(0, 0, "ermine-lsp internal error: " + e))
-          }
+        val ds = check(ermine, docs, uri, path, log)
         log(f"diagnostics: $what ${path.getFileName} -> ${ds.size} diagnostic(s) in ${(System.nanoTime - t0) / 1e9}%.1fs")
         publish(server, uri, ds)
+    }
+
+  /** ONE check, as the LSP diagnostics it publishes.  Split out of `run`
+    * (6.1(c)) so a property can drive the editor path in this JVM
+    * instead of over a socket: `run` adds the timing line and the
+    * publish, and nothing else. */
+  def check(ermine: Resident, docs: Documents, uri: String, path: Path,
+            log: String => Unit): List[Json] =
+    try {
+      val checked = ermine.checkFile(path, docs)
+      // The index is rebuilt from the SAME parse that produced the
+      // diagnostics, broken file or not: navigation on a file's
+      // healthy statements no longer decays to the last good save.
+      docs.putIndex(uri, Definitions.index(path.toString, checked))
+      checked.diags.map(fromDiag) :::
+        checked.notes.map(n => n.span match {
+          // LSP-FFI: a tolerated foreign binding knows its class or
+          // member span exactly, so it squiggles the name rather
+          // than the caret `fromReport` recovers from the text.
+          case Some(sp) => fromSpan(sp, n.report, n.severity)
+          case None     => fromReport(n.report, path, n.severity)
+        })
+    } catch {
+      case Death(err, _) => List(fromReport(err.toString, path))
+      // `Recoverable`, not `NonFatal` (LSP-FFI review finding P-1):
+      // NonFatal counts every LinkageError as fatal, so a reflective
+      // lookup over a stale classpath used to unwind past here into
+      // Rpc's notification guard and the file got NO diagnostics at
+      // all — stale squiggles and a stack trace in the log.  This is
+      // the backstop that keeps "the editor never goes dark" from
+      // resting on having enumerated every reflective call.
+      case com.clarifi.reporting.ermine.parsing.Recoverable(e) =>
+        log("diagnostics: internal error on " + path + ": " + Rpc.stackTrace(e))
+        List(diagnostic(0, 0, "ermine-lsp internal error: " + e))
     }
 
   private def publish(server: Server, uri: String, ds: List[Json]): Unit =

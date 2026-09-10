@@ -6,7 +6,7 @@ import com.clarifi.reporting.ermine.parsing.ErParseState.Implicits._
 import com.clarifi.reporting.ermine.rename.{ NewPipeline, Renamer }
 import com.clarifi.reporting.ermine.session.{ Lib, Printer, Session, SessionEnv, TolerantCheck }
 import com.clarifi.reporting.ermine.surface.{ SErrorStatement, SModule, SStatement,
-  SDatabaseBlock, SPrivateBlock, StatementExtents }
+  SDatabaseBlock, SPrivateBlock, Span, StatementExtents }
 
 import scalaparsers.{ Death, Supply }
 
@@ -226,22 +226,94 @@ final class Resident(val log: String => Unit) {
     // tolerant read runs between it and `make` (SourceFile.forModule is
     // private[Session]; loadModules is the same closure by module name,
     // and it is what boot already uses).
-    val missing = (mh.importExports.map(_.module).toSet &~ e.loadedModules.keySet).toList
-    if (missing.nonEmpty) Session.loadModules(missing.sorted)
+    //
+    // 6.1(b): an import that will not load used to throw out of here.
+    // Diagnostics turned that Death into ONE diagnostic, and since the
+    // report names the IMPORT's file (or has no position at all —
+    // "Module not found") it landed at 0:0: the second broken import,
+    // and every healthy definition in this file, went unreported.  So:
+    // load the whole batch first (the fast path, the only one a healthy
+    // file takes, and the one that keeps the loader's parallelism), and
+    // only when it dies re-load ONE AT A TIME under a catcher, so each
+    // failure is attributed to the import statement that named it and
+    // one broken import cannot hide another.  The env is a throwaway
+    // copy, so a half-loaded module poisons nothing.
+    val missing = (mh.importExports.map(_.module).toSet &~ e.loadedModules.keySet).toList.sorted
+    val importFailures: List[(String, String)] =
+      if (missing.isEmpty) Nil
+      else
+        try { Session.loadModules(missing); Nil }
+        catch {
+          case Death(_, _) | com.clarifi.reporting.ermine.parsing.Recoverable(_) =>
+            missing flatMap { m =>
+              if (e.loadedModules contains m) None
+              else
+                try { Session.loadModules(List(m)); None }
+                catch {
+                  case Death(err, _) => Some(m -> err.toString)
+                  case com.clarifi.reporting.ermine.parsing.Recoverable(x) =>
+                    Some(m -> ("error: " + Option(x.getMessage).getOrElse(x.toString)))
+                }
+            }
+        }
+    val failedImports = importFailures.map(_._1).toSet
     val tRead0 = System.nanoTime
     val r = NewPipeline.readModuleTolerant(file.toString, contents, mh)
     val tRead = System.nanoTime
 
+    // 6.1(b): one Error per failed import, ON the import statement that
+    // named it.  The exact module-name span comes from the tolerant
+    // read (`SImport.moduleSpan`, the same span go-to-definition on an
+    // import uses); the header's own `Pos` — the `import` keyword — is
+    // the fallback for a read that did not shape the header the same
+    // way.  The loader's report is kept verbatim after the prefix: it
+    // names the import's file and the position inside it, and that is
+    // the only thing in the message that says WHY.
+    val importNotes: List[TolerantCheck.Note] = {
+      val spans = r.surface.header.imports.map(i => i.module -> i.moduleSpan).toMap
+      val heads = mh.importExports.map(i => i.module -> i.loc).toMap
+      val order = mh.importExports.map(_.module).zipWithIndex.toMap
+      importFailures.sortBy { case (m, _) => order.getOrElse(m, Int.MaxValue) } map {
+        case (m, report) =>
+          val sp = spans.get(m) orElse (heads.get(m) map { p =>
+            // `import`/`export` is six characters; a caret is worse than
+            // a keyword, and this arm runs only when the read lost the
+            // header.
+            Span(p.line, p.column, p.line, p.column + 6)
+          })
+          TolerantCheck.Note("import " + m + " failed: " + report, TolerantCheck.Error, None, sp)
+      }
+    }
+
     // Dep.checkNames' import-list requirements, which the editor path no
-    // longer gets for free from Session.load.
+    // longer gets for free from Session.load.  A module that did not load
+    // exports nothing, so every name in ITS import list would draw one of
+    // these — a note per name saying what the import failure already
+    // said.  Skip those; the other imports' lists still get checked.
+    //
+    // 6.1(c): these used to render at `mh.loc`, the module header — line
+    // 1, column 1, which is LSP 0:0, the position this item exists to
+    // stop producing.  The name is right there in the import list and the
+    // read knows its span, so squiggle THAT; the header Pos survives only
+    // as the fallback for a read that did not shape the list.
     val reqs = {
-      def req(g: com.clarifi.reporting.ermine.Global, what: String) =
-        TolerantCheck.Note(mh.loc.report(scalaparsers.Document.text(
-          s"Module '${g.module}' does not export $what '${g.string}'.")).toString,
-          TolerantCheck.Error)
-      val ex = mh.importExports.flatMap(_.explicits)
-      ex.collect { case x if x.isType && !e.cons.contains(x.global) => req(x.global, "type") } ++
-      ex.collect { case x if !x.isType && !e.termNames.contains(x.global) => req(x.global, "term") }
+      val imported = r.surface.header.imports.map(i => i.module -> i).toMap
+      def spanOf(g: com.clarifi.reporting.ermine.Global, isType: Boolean): Option[Span] =
+        imported.get(g.module) flatMap { i =>
+          i.items.flatMap(_._2.find(x => x.isType == isType && x.name.spelling == g.string))
+            .map(_.name.span) orElse Some(i.moduleSpan)
+        }
+      def req(g: com.clarifi.reporting.ermine.Global, what: String, isType: Boolean) = {
+        val text = s"Module '${g.module}' does not export $what '${g.string}'."
+        spanOf(g, isType) match {
+          case Some(sp) => TolerantCheck.Note(text, TolerantCheck.Error, None, Some(sp))
+          case None     => TolerantCheck.Note(
+            mh.loc.report(scalaparsers.Document.text(text)).toString, TolerantCheck.Error)
+        }
+      }
+      val ex = mh.importExports.filterNot(i => failedImports(i.module)).flatMap(_.explicits)
+      ex.collect { case x if x.isType && !e.cons.contains(x.global) => req(x.global, "type", true) } ++
+      ex.collect { case x if !x.isType && !e.termNames.contains(x.global) => req(x.global, "term", false) }
     }
 
     // --- 5.5: what an SCC's inference depends on, split in two.
@@ -285,8 +357,35 @@ final class Resident(val log: String => Unit) {
           n.spelling.isDefined && (heads.isEmpty || n.spelling.exists(heads)))
       }
 
+    // THE RULE (6.1(b) step 2), the same rule the broken-statement case
+    // above already applies, for the same reason: while a NAME COULD NOT
+    // ARRIVE, its consequences are not diagnostics.  A module that did
+    // not load contributes no names, so every use of one is an
+    // "undefined term" and everything downstream is "unchecked" — dozens
+    // of notes, none of them actionable, burying the import failure that
+    // caused them all.  So while any import failed: drop the
+    // undefined-term notes (`spelling`) and the unchecked ones
+    // (`dependsOnBroken`) WHOLESALE, and keep everything else — the
+    // syntax diagnostics, the other imports' export requirements, and
+    // the type errors of every definition that could still be checked.
+    //
+    // Wholesale rather than "only the names the failed import's explicit
+    // list spelled": an open `import M` (the common form, and both arms
+    // of the BadImport fixture) has no list to consult, so the narrow
+    // rule would degenerate to no rule at all on exactly the case that
+    // needs one.  The cost is a real typo going quiet until the import
+    // is fixed; the import failure is the error the user must act on
+    // first, and it is now the one they see.
+    val published =
+      if (failedImports.isEmpty) notes
+      else notes.filterNot(n => n.spelling.isDefined || n.dependsOnBroken)
+
+    // Fast mode drops what the CHECK found and keeps what the read
+    // found; an import that would not load is neither — it is the same
+    // failure in both modes, and silence about it in fast mode would be
+    // a file full of unexplained undefined names.
     Checked(e, mh.name, r.surface, r.renamed, r.diagnostics,
-            if (fastMode) Nil else notes, checked.types)
+            importNotes ++ (if (fastMode) Nil else published), checked.types)
   }
 
   private def errorStatements(ss: List[SStatement]): List[SErrorStatement] = ss.flatMap {
