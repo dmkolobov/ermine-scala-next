@@ -16,7 +16,7 @@ object Settings {
 
     compileTestRuntime(sc => classpathConfiguration in sc := sc)
 
-   ,addCompilerPlugin("org.spire-math" % "kind-projector_2.11" % "0.5.2")
+   ,addCompilerPlugin("org.spire-math" % "kind-projector_2.11" % "0.6.3")
 
    ,update <<= (computeRevision, update.task) flatMap { case (_,p) => p }
 
