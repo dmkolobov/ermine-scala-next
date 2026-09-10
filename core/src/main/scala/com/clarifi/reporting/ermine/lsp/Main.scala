@@ -97,7 +97,17 @@ object Main {
             // its detail already on it.
             "completionProvider"        -> Json.obj(
               "triggerCharacters" -> Json.Arr(List(Json.Str("."))),
-              "resolveProvider"   -> Json.Bool(false))),
+              "resolveProvider"   -> Json.Bool(false)),
+            // 6.6: quick fixes.  Two kinds are advertised and two are
+            // served -- `quickfix` for add-import (which carries the
+            // diagnostic it fixes) and for one binding's signature, and
+            // `source` for "add all missing signatures".  A signature
+            // action is a `quickfix` with no diagnostic rather than a
+            // `refactor.rewrite` because these are the kinds this server
+            // declares: a client asking `only: ["refactor"]` must not be
+            // told we have something we then do not send.
+            "codeActionProvider"        -> Json.obj(
+              "codeActionKinds" -> Json.Arr(List(Json.Str("quickfix"), Json.Str("source"))))),
           "serverInfo" -> Json.obj(
             "name"    -> Json.Str("ermine-lsp"),
             "version" -> Json.Str("0.1")))
@@ -144,6 +154,7 @@ object Main {
       References.install(server, ermine, docs, log)
       Symbols.install(server, ermine, docs, log)
       Completion.install(server, ermine, docs, log)
+      QuickFix.install(server, ermine, docs, log)
 
       server.onRequest("shutdown") { _ =>
         log("shutdown received")

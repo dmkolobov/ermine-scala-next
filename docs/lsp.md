@@ -235,7 +235,7 @@ then serves:
   recognised as a module at all and answers nothing; and if the module is
   already imported with a `using` list that does not name what you picked, the
   insertion will not resolve until that list is extended — the add-import quick
-  fix (6.6) is what edits existing lists.
+  fix below is what edits existing lists, and it does.
 
   Ranking is carried in `sortText` (tier, then case, then the name); a
   case-insensitive prefix match is offered BELOW every exact-case match of its
@@ -267,6 +267,74 @@ then serves:
   server does not do. A request that arrives during the ~13 s session boot
   answers with an empty list, never null.
 
+- **Quick fixes** (`textDocument/codeAction`), in two kinds: `quickfix` and
+  `source`.
+
+  ADD IMPORT, on an "undefined term" diagnostic. The candidate modules are the
+  loaded modules that export that spelling — mapped through the session's
+  re-export origins, so a name and its re-exporters are ONE candidate and the
+  one offered is the module that DEFINES it — plus any open sibling buffer
+  whose own declarations include it. One action per candidate (at most eight,
+  alphabetically), each carrying the diagnostic it fixes; when there is exactly
+  one it is `isPreferred`, and when there are two the server does not choose
+  for you. The edit depends on how the file already imports that module:
+
+  | how M is imported | the fix |
+  |---|---|
+  | not at all | `import M using name` on its own line after the LAST import (after the `module … where` line when there are none) |
+  | openly (`import M`) | none — every name M exports is already in scope, so this one did not come from M |
+  | with an alias (`import M as A`) | none: an aliased import puts `name_A` in scope and never `name`, and a second import of one module is a hard error |
+  | `using` a list that lacks the name | `; name` appended to the list — inside the braces when it has them |
+  | `using` a list that has it | none |
+  | `hiding` a list that names it | the name is REMOVED from the hiding list; if it was the only one, the whole `hiding` clause goes |
+
+  Every inserted line carries the buffer's OWN terminator (142 of the 161
+  stdlib modules are CRLF). The import statements are read lexically from the
+  current buffer with comments blanked out, so an import you typed a second
+  ago counts and one inside a `{- -}` block does not.
+
+  ADD TYPE SIGNATURE, on a top-level binding group with no signature (inside a
+  `private` or `database` block too): `f : <type>` on the line above the
+  group's first equation, at that equation's own indentation, with the type
+  rendered by the same printer hover uses. An operator group takes the
+  `(<+>) : …` form. There is also a `source` action, "add all missing
+  signatures (N)", carrying one insertion per group, sorted by line descending
+  so that a client applying them in sequence cannot drift.
+
+  THE SIGNATURE IS NOT RE-CHECKED BEFORE IT IS OFFERED — a code action fires
+  on every cursor move, and a check costs a second. Its correctness was
+  measured once instead, over the 180-file corpus: 1166 signatures inserted
+  and re-checked, **1164 clean (99.83 %)** — and the two that are not are
+  correct signatures whose type merely re-prints with a `type` alias
+  unfolded, both re-checking with no diagnostics.
+
+  The action REFUSES rather than offering a line that would not parse. 168 of
+  the corpus's 1334 groups are refused, and the reasons are the PRINTER's
+  limits and the scope test's, not yours:
+
+  - **117** — the type is not in scope under the spelling the printer writes.
+    Most often the file DOES import that type, under an ALIAS
+    (`import Native.Map as NM`), so only `Map_NM` resolves while the printer
+    writes `Map`; sometimes the type cannot be written there at all (31 name
+    one `private data`); and 33 name types the file CAN write, through a
+    `type` synonym of its own, which the scope test cannot see through — the
+    one class where a signature that would have worked is withheld.
+  - **36** — the printer emits a kind variable that nothing quantifies.
+  - **10** — the printer drops the parentheses a nested `* ->` kind needs.
+  - **3** — a record row whose field names do not round-trip.
+  - **2** — an infix constructor the printer writes as `<:_Type.Cast`, which
+    is not one name to the lexer.
+
+  All of these are tracked as one ticket in the item's report; none of them
+  can produce a wrong edit, only a missing one.
+
+  **Staleness is REFUSED here, not accepted.** Every other request in this
+  server answers from a possibly-stale index, because a stale answer is
+  harmless. A code action is an EDIT: a signature inserted at a line the buffer
+  no longer has is corruption. So while the index is older than the buffer —
+  between a keystroke and the check ~300 ms later — the answer is an empty
+  list. A request during the ~13 s boot answers `[]` as well.
+
 Logging goes to the file named by `ERMINE_LSP_LOG` (or `-Dermine.lsp.log`);
 stdout is reserved for the protocol.
 
@@ -294,6 +362,7 @@ Measured on `core/src/main/resources/modules/Layout/Report.e`, 1757 lines:
 | keystroke to diagnostics | ~1.57s (0.80s read + 0.45s typecheck + 0.30s debounce) |
 | binding groups re-inferred | 40 of 154; the rest are reused |
 | a completion, server side | 2 ms (median of ten, 97 items of 1332 in scope) |
+| a code action, server side | 51 ms on the first request after a check, then 0.1-0.4 ms (the signature edits are memoised per document version) |
 
 Small modules are far below that. Dispatch is single-threaded by design
 (SessionEnv is not thread-safe), so requests are served one at a time —
@@ -324,10 +393,13 @@ For fast mode, add `:initializationOptions (:fastMode t)` to the server entry.
 
 `tracker/tools/lsp-smoke.sh` runs the scripted client
 (`tracker/tools/lsp-client.py`) against the fixtures in `tracker/lsp-tests/` —
-407 checks over everything above, including didChange without save, the
+454 checks over everything above, including didChange without save, the
 sibling-buffer path, local and kind hovers, references/highlight/rename with
 their refusals, the pinned symbol trees of `Decls.e`, `Syms.e`, `Scope.e` and
 the broken `Broken.e`, the workspace queries, completion in every context
-(`Complete.e` and its sibling, including the staleness pin), and fast mode. Run it with `core/test` and
+(`Complete.e` and its sibling, including the staleness pin), the quick fixes
+(`Fix.e`, `FixSib.e`, `FixTy.e` and the CRLF `FixCrlf.e` — every import-edit
+case applied by the client and re-checked, the signature actions, the `only`
+filter and the stale-index refusal), and fast mode. Run it with `core/test` and
 `repl-smoke.sh` before committing server changes
 (`tracker/LSP-ROADMAP.md`, Baselines).

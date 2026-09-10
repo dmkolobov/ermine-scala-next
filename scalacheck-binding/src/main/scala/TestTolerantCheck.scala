@@ -5,7 +5,7 @@ import com.clarifi.reporting.ermine.rename.{ NewPipeline, Renamer }
 import com.clarifi.reporting.ermine.surface.{ SClassStatement, SDatabaseBlock, SEquation,
   SPat, SPAs, SPParen, SPSig, SPVar, SPrivateBlock, SStatement, Span }
 import com.clarifi.reporting.ermine.Pretty
-import com.clarifi.reporting.ermine.lsp.{ Diagnostics, Documents, Json, Resident }
+import com.clarifi.reporting.ermine.lsp.{ Diagnostics, Documents, Json, QuickFix, Resident }
 import com.clarifi.reporting.ermine.session.{ Printer, Session => S, SessionEnv, TolerantCheck }
 
 import org.scalacheck._
@@ -619,5 +619,305 @@ object TestTolerantCheck extends Properties("Tolerant check") {
         ds.map(where).toString) &&
       (ds.forall(d => !at00(d)) :| ds.map(where).toString)
     }
+  }
+
+  // ------------------------------------------------------------------ 6.6
+
+  /** THE 6.6 SWEEP (Decision (e): the ONE correctness measurement for the
+    * add-signature quick fix, which is offered without any server-side
+    * re-checking).
+    *
+    * For every file of the 180-file corpus: check it, render the
+    * add-signature edit for EVERY unsigned top-level group, apply them
+    * ALL to a copy of the text in memory, and check the copy.  A file
+    * whose copy checks silent AND whose every group's type renders the
+    * same as before is N clean insertions; a file that does not is
+    * BISECTED, one insertion at a time, so every failure is attributed to
+    * the insertion that caused it.
+    *
+    * The classes: CLEAN, PARSE-FAIL (a new READ diagnostic —
+    * `Checked.diags`, the tolerant read's own, so the inserted line did
+    * not parse), TYPE-FAIL (a new CHECK note, or a group whose type moved,
+    * with the read silent) and SKIPPED (the builder refused, with its
+    * reason).  ALPHA-EQUIVALENCE is compared as RENDERED TEXT: both sides
+    * go through `QuickFix.render`, i.e. `Pretty.prettyType(t, -1)` with
+    * the same fresh-variable supply, so two alpha-equivalent types render
+    * to the same string by construction and a difference is a difference.
+    *
+    * SLOW: two checks of the corpus, plus one per failing insertion.  It
+    * runs only under `-Dermine.sweep.quickfix=true`, the way the gate
+    * policy quarantines a property that cannot be a per-commit gate; the
+    * numbers of record are in `tracker/loopmodel/LSP3-6.6-QUICKFIX.md`.
+    */
+  private def sweepOn: Boolean = sys.props.get("ermine.sweep.quickfix").contains("true")
+
+  /** Which shape a rendered type is, for the failure table.  Syntactic,
+    * on the rendered text, because that is also what a SHIPPING FILTER
+    * could be if the bar were missed. */
+  private def shape(r: String): String =
+    if (r.contains("<-")) "row constraint (<-)"
+    else if (r.contains("(|")) "concrete row (|…|)"
+    else if (r.contains("=>")) "class constraint (=>)"
+    else if (r.contains("exists")) "exists"
+    else if (r.contains("forall")) "forall"
+    else if (r.contains("->")) "arrow"
+    else "ground"
+
+  private def applyInserts(text: String, es: List[QuickFix.TEdit]): String = {
+    val eol = QuickFix.eolOf(text)
+    val ls = text.split("\n", -1).toBuffer
+    // Descending by line, so an earlier insertion cannot move a later one.
+    es.sortBy(-_.sl).foreach { e =>
+      ls.insert(e.sl, e.newText.stripSuffix(eol) + (if (eol == "\r\n") "\r" else ""))
+    }
+    ls.mkString("\n")
+  }
+
+  property("6.6 sweep: an inserted signature parses and checks (Decision e)") =
+    if (!sweepOn) Prop.proved
+    else residentLock.synchronized {
+    val files = corpusFiles.map(_.getAbsoluteFile)
+    var excluded = 0
+    var groupsSeen = 0
+    var insertions = 0
+    var clean = 0
+    val parseFail = scala.collection.mutable.Map.empty[String, Int].withDefaultValue(0)
+    val typeFail  = scala.collection.mutable.Map.empty[String, Int].withDefaultValue(0)
+    val skipped   = scala.collection.mutable.Map.empty[String, Int].withDefaultValue(0)
+    val example   = scala.collection.mutable.Map.empty[String, String]
+    val scannerBad = scala.collection.mutable.ListBuffer.empty[String]
+    val failures   = scala.collection.mutable.ListBuffer.empty[String]
+    val oos        = scala.collection.mutable.Map.empty[String, Int].withDefaultValue(0)
+    val oosName    = scala.collection.mutable.Map.empty[String, Int].withDefaultValue(0)
+    val excludedFiles = scala.collection.mutable.ListBuffer.empty[String]
+
+    def check1(f: java.io.File, text: String, v: Long): Option[resident.Checked] = {
+      val docs = new Documents
+      docs.put(f.toURI.toString, text, v)
+      try Some(resident.checkFile(f.toPath, docs)) catch { case Death(_, _) => None }
+    }
+    def rendered(c: resident.Checked): Map[String, String] =
+      c.types.map { case (k, t) => k -> QuickFix.render(t) }
+    def errs(c: resident.Checked) = c.notes.count(_.severity == TolerantCheck.Error)
+    // ALPHA-EQUIVALENCE is `tools/G1Compare.alphaEq`, the comparator the
+    // G1 gate's .ei differential is built on: a consistent bijection over
+    // bound variables, Exists binders paired lazily through constraint
+    // matching, and every constraint multiset matched by backtracking
+    // permutation.  A rendered-string comparison is NOT good enough and
+    // the first run of this sweep proved it: 145 of its 223 "failures"
+    // were a `forall {a b c …}` kind-binder group in a different ORDER
+    // (`Layout/Column.e`'s `endoColumn`) or a `Part`'s row-constraint
+    // arguments in a different order (`Field.e`'s `getF2`) — the same two
+    // classes G1's own gate calls logically equal.
+    // ... with ONE completeness repair, made HERE and not in G1Compare
+    // (that comparator is a gate tool and its verdicts are not this
+    // item's to move): `G1Compare.matchMultiset` keeps only the FIRST
+    // bijection each constraint admits, so a permuted row-constraint set
+    // whose first pairing paints the bijection into a corner is reported
+    // unequal even when a consistent pairing exists.  `Relation.e`'s `&`
+    // is exactly that (`a <- (e, d), r <- (d, c)` against
+    // `a <- (d, e), r <- (c, d)`).  The version below returns EVERY
+    // bijection lazily, so the search backtracks properly and stops at
+    // the first success; it is strictly more permissive than
+    // `G1Compare.alphaEq` and agrees with it everywhere that one succeeds.
+    // Both numbers are in the report.
+    import com.clarifi.reporting.ermine.{ AppT, Arrow, ConcreteRho, Exists, Forall,
+                                          Memory, Part, ProductT, Type, VarT }
+    type Bij = com.clarifi.reporting.ermine.tools.G1Compare.Bij
+    def aeq(a: Type, b: Type, e: Bij): LazyList[Bij] = (a, b) match {
+      case (VarT(x), VarT(y)) =>
+        e.tv get x.id match {
+          case Some(m) => if (m == y.id) LazyList(e) else LazyList.empty
+          case None =>
+            if (e.tv.valuesIterator contains y.id) LazyList.empty
+            else if (e.open1(x.id) && e.open2(y.id)) LazyList(e.bindT(x.id, y.id))
+            else if (x.id == y.id) LazyList(e)
+            else if (x.name.isDefined && x.name == y.name) LazyList(e)
+            else LazyList.empty
+        }
+      case (AppT(f1, a1), AppT(f2, a2))             => aeq(f1, f2, e).flatMap(aeq(a1, a2, _))
+      case (Arrow(_), Arrow(_))                     => LazyList(e)
+      case (ProductT(_, n1), ProductT(_, n2))       => if (n1 == n2) LazyList(e) else LazyList.empty
+      case (ConcreteRho(_, f1), ConcreteRho(_, f2)) => if (f1 == f2) LazyList(e) else LazyList.empty
+      case (c1: Type.Con, c2: Type.Con)             => if (c1.name == c2.name) LazyList(e) else LazyList.empty
+      case (f1: Forall, f2: Forall) =>
+        if (f1.ks.length != f2.ks.length || f1.ts.length != f2.ts.length) LazyList.empty
+        else {
+          val e2 = e.copy(tv = e.tv ++ f1.ts.map(_.id).zip(f2.ts.map(_.id)),
+                          kv = e.kv ++ f1.ks.map(_.id).zip(f2.ks.map(_.id)))
+          aeq(f1.constraints, f2.constraints, e2).flatMap(aeq(f1.body, f2.body, _))
+        }
+      case (x1: Exists, x2: Exists) =>
+        if (x1.xs.length != x2.xs.length || x1.constraints.length != x2.constraints.length)
+          LazyList.empty
+        else {
+          val e2 = e.copy(open1 = e.open1 ++ x1.xs.map(_.id), open2 = e.open2 ++ x2.xs.map(_.id))
+          multi(x1.constraints, x2.constraints, e2).map(_.copy(open1 = e.open1, open2 = e.open2))
+        }
+      case (p1: Part, p2: Part) => aeq(p1.lhs, p2.lhs, e).flatMap(multi(p1.rhs, p2.rhs, _))
+      case (Memory(_, b1), Memory(_, b2)) => aeq(b1, b2, e)
+      case _ => LazyList.empty
+    }
+    def multi(cs1: List[Type], cs2: List[Type], e: Bij): LazyList[Bij] = cs1 match {
+      case Nil => if (cs2.isEmpty) LazyList(e) else LazyList.empty
+      case c1 :: rest =>
+        cs2.indices.to(LazyList).flatMap(j =>
+          aeq(c1, cs2(j), e).flatMap(e2 => multi(rest, cs2.patch(j, Nil, 1), e2)))
+    }
+    var g1Only = 0
+    def sameTy(a: Type, b: Type): Boolean = {
+      val strict = com.clarifi.reporting.ermine.tools.G1Compare.alphaEq(
+        a, b, com.clarifi.reporting.ermine.tools.G1Compare.Bij.empty).isDefined
+      val loose = strict || aeq(a, b, com.clarifi.reporting.ermine.tools.G1Compare.Bij.empty).nonEmpty
+      if (loose && !strict) g1Only += 1
+      loose
+    }
+    def sameAll(base: Map[String, Type],
+                c: resident.Checked, names: List[String]): Boolean =
+      names.forall(n => base.get(n).exists(t => c.types.get(n).exists(sameTy(t, _))))
+
+    files.foreach { f =>
+      val text = new String(java.nio.file.Files.readAllBytes(f.toPath), "UTF-8")
+      check1(f, text, 1L) match {
+        case None => excluded += 1; excludedFiles += f.getName
+        case Some(c0) if c0.diags.nonEmpty || errs(c0) > 0 =>
+          excluded += 1; excludedFiles += f.getName
+        case Some(c0) =>
+          // The import scanner, differentially against the PARSER's own
+          // header on the same text: module names, aliases, the list kind
+          // and the spellings the list names.
+          val mine = QuickFix.imports(text).map(i =>
+            (i.module, i.alias, i.isUsing,
+             if (i.isUsing.isEmpty) Nil else i.items.map(x => (x.name, x.isType, x.provides)).sorted))
+          // The parser keeps an operator's PARENS in the item's spelling
+          // (`(++)`); the scanner strips them, because the spelling an
+          // undefined-term note carries is the bare one it has to match.
+          // Normalised here rather than in the scanner for that reason.
+          def bare(x: String) =
+            if (x.startsWith("(") && x.endsWith(")") && x.length > 2) x.substring(1, x.length - 1).trim
+            else x
+          val theirs = c0.module.header.imports.map(i =>
+            (i.module, i.as.map(_.spelling), i.items.map(_._1),
+             i.items.toList.flatMap(_._2).map(x =>
+               (bare(x.name.spelling), x.isType,
+                bare(x.renameTo.map(_.spelling).getOrElse(x.name.spelling)))).sorted))
+          if (mine.sortBy(_._1) != theirs.sortBy(_._1))
+            scannerBad += f.getName + ": mine=" + mine + " parser=" + theirs
+
+          val gs = QuickFix.groups(c0.module).filterNot(_.hasSig)
+          groupsSeen += gs.size
+          val built = gs.map { g =>
+            val e = c0.types.get(g.spelling) match {
+              case None    => Left(QuickFix.NoType: QuickFix.SigSkip)
+              // THE CHECK'S OWN env, not the resident one: a module this
+              // file's imports dragged in has its origins only there, and
+              // `Definitions.index` stores exactly these two maps.
+              case Some(t) => QuickFix.sigEdit(text, g, t, c0.scope.canonicalTypes,
+                                               c0.scope.canonicalTerms,
+                                               c0.env.consOrigins,
+                                               c0.env.termNameOrigins, c0.name)
+            }
+            (g, e)
+          }
+          // The names this module DECLARES as types (a `type` synonym or a
+          // `data`), for the sub-classification of the out-of-scope
+          // refusals below (review R-1).
+          val ownTypeNames: Set[String] = {
+            def go(ss: List[com.clarifi.reporting.ermine.surface.SStatement]): List[String] = ss flatMap {
+              case x: com.clarifi.reporting.ermine.surface.STypeAlias    => List(x.name.spelling)
+              case x: com.clarifi.reporting.ermine.surface.SDataStatement => List(x.name.spelling)
+              case b: SPrivateBlock  => go(b.statements)
+              case b: SDatabaseBlock => go(b.statements)
+              case _ => Nil
+            }
+            go(c0.module.statements).toSet
+          }
+          val scopeKeys = c0.scope.canonicalTypes.keySet.map(_.string)
+          built.foreach {
+            case (g, Left(sk)) =>
+              val k = sk match {
+                case QuickFix.OutOfScope(_) => "out of scope"
+                case x                      => x.why
+              }
+              skipped(k) = skipped(k) + 1
+              example.getOrElseUpdate("SKIP " + k,
+                f.getName + " " + g.spelling + ": " + sk.why)
+              // R-1: WHY is it out of scope?  Three sub-classes, per NAME.
+              sk match {
+                case QuickFix.OutOfScope(ns) => ns.foreach { n =>
+                  val cls =
+                    if (ownTypeNames(n)) "own synonym/data (a FALSE NEGATIVE: the file can write it)"
+                    else if (scopeKeys.exists(k2 => k2.startsWith(n + "_"))) "imported under an ALIAS"
+                    else "not nameable here"
+                  oos(cls) = oos(cls) + 1
+                  oosName(n + "  [" + cls + "]") = oosName(n + "  [" + cls + "]") + 1
+                }
+                case _ => ()
+              }
+            case _ => ()
+          }
+          val ok = built.collect { case (g, Right((txt, e))) => (g, txt, e) }
+          insertions += ok.size
+          if (ok.nonEmpty) {
+            val base = c0.types
+            val names = ok.map(_._1.spelling)
+            val all = applyInserts(text, ok.map(_._3))
+            val cAll = check1(f, all, 2L)
+            val allClean = cAll.exists(c => c.diags.isEmpty && errs(c) == 0 &&
+                                            sameAll(base, c, names))
+            if (allClean) clean += ok.size
+            else ok.foreach { case (g, txt, e) =>
+              // BISECT: one insertion at a time, so a failure is attributed
+              // to the line that caused it and not to its neighbours.
+              val one = applyInserts(text, List(e))
+              val c1 = check1(f, one, 3L)
+              val sh = shape(txt)
+              c1 match {
+                case None =>
+                  parseFail("Death: " + sh) = parseFail("Death: " + sh) + 1
+                  failures += ("PARSE(Death) " + f.getName + ": " + txt)
+                case Some(c) if c.diags.nonEmpty =>
+                  parseFail(sh) = parseFail(sh) + 1
+                  failures += ("PARSE " + f.getName + ": " + txt + "  -->  " +
+                               c.diags.head.message.take(100))
+                case Some(c) if errs(c) > 0 =>
+                  typeFail(sh) = typeFail(sh) + 1
+                  failures += ("TYPE " + f.getName + ": " + txt + "  -->  " +
+                    c.notes.find(_.severity == TolerantCheck.Error)
+                      .map(_.report.linesIterator.take(2).mkString(" ").take(130)).getOrElse(""))
+                case Some(c) if !sameAll(base, c, List(g.spelling)) =>
+                  typeFail("type moved: " + sh) = typeFail("type moved: " + sh) + 1
+                  failures += ("MOVED " + f.getName + " " + g.spelling + ": " +
+                    QuickFix.render(base(g.spelling)).take(150) + "  -->  " +
+                    c.types.get(g.spelling).map(QuickFix.render).getOrElse("?").take(150))
+                case Some(c) if !sameAll(base, c, names) =>
+                  typeFail("moved a neighbour: " + sh) = typeFail("moved a neighbour: " + sh) + 1
+                  failures += ("NEIGHBOUR " + f.getName + " " + g.spelling + ": " + txt.take(120))
+                case _ => clean += 1
+              }
+            }
+          }
+      }
+    }
+    val pct = if (insertions == 0) 0.0 else 100.0 * clean / insertions
+    println("### 6.6 sweep: files " + files.size + " (excluded " + excluded +
+            "), groups " + groupsSeen + ", insertions " + insertions +
+            ", CLEAN " + clean + " (%.2f%%)".format(pct))
+    println("###   PARSE-FAIL " + parseFail.toList.sorted.mkString(", "))
+    println("###   TYPE-FAIL  " + typeFail.toList.sorted.mkString(", "))
+    println("###   SKIPPED    " + skipped.toList.sorted.mkString(", "))
+    example.toList.sorted.foreach(e => println("###   eg " + e._1 + " | " + e._2))
+    println("###   every failing insertion (" + failures.size + "):")
+    failures.toList.sorted.foreach(x => println("###     " + x))
+    println("###   OUT-OF-SCOPE by sub-class " + oos.toList.sorted.mkString(", "))
+    oosName.toList.sortBy(-_._2).take(14).foreach(x => println("###     oos " + x._2 + " x " + x._1))
+    println("###   excluded files: " + excludedFiles.mkString(", "))
+    println("###   pairs equal only under the COMPLETE comparator: " + g1Only)
+    println("###   import-scanner disagreements " + scannerBad.size)
+    scannerBad.take(12).foreach(x => println("###     " + x))
+    ((files.size >= 180) :| s"only ${files.size} corpus files") &&
+    ((insertions >= 500) :| s"only $insertions insertions") &&
+    ((scannerBad.isEmpty) :| s"${scannerBad.size} import-scanner disagreements: ${scannerBad.take(3)}") &&
+    ((pct >= 95.0) :| f"only $pct%.2f%% of $insertions insertions clean")
   }
 }

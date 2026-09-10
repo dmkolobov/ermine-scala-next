@@ -8,10 +8,10 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 3 IN PROGRESS (2026-09-10).  6.0-6.5 DONE (6.2 as PARTIAL:
+Status: STAGE 3 IN PROGRESS (2026-09-10).  6.0-6.6 DONE (6.2 as PARTIAL:
 62.4% of local binders hover; the pattern-binder residual is a Subst.scala
-FORK under Blocked/Awaiting, the user's decision).  NEXT: 6.6 (quick
-fixes), then 6.7, then GATE G3.  Orchestration:
+FORK under Blocked/Awaiting, the user's decision).  NEXT: 6.7 (wiring,
+docs, demo, the full G3 gate run), then GATE G3.  Orchestration:
 brief -> fresh Opus implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
@@ -30,8 +30,8 @@ brief -> fresh Opus implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (407 as of 2026-09-10 after
-  Stage 3 item 6.5; 344 after 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (454 as of 2026-09-10 after
+  Stage 3 item 6.6; 407 after 6.5; 344 after 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
   82 before that, the G2 line's 77 having gone stale)
@@ -1131,7 +1131,7 @@ STAGE-3 INVARIANTS (hard):
   386 -> 396 -> 407 (two fix rounds); six suites 104/104 (TestRenamer 28 -> 32,
   TestLower 28); Report.e round trip unmoved.
 
-- [ ] **6.6 Quick fixes (textDocument/codeAction).**  (a) ADD IMPORT: on
+- [x] **6.6 Quick fixes (textDocument/codeAction).**  (a) ADD IMPORT: on
   an undefined-term note (Note.spelling, carried since 5.4), candidates
   = loaded modules exporting that spelling (termNames origins) ∪ open
   siblings declaring it; one `quickfix` action per candidate, editing
@@ -1154,6 +1154,60 @@ STAGE-3 INVARIANTS (hard):
   exported by two modules offers two actions; an unsigned binding
   offers a signature whose applied edit re-checks clean; a signed
   binding offers none.
+  DONE 2026-09-10 (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP3-6.6-QUICKFIX.md, LSP3-6.6-REVIEW.md).  ADD IMPORT:
+  candidates are the session globals of the undefined spelling collapsed
+  through `termNameOrigins` to their ORIGIN module, plus open siblings'
+  own terms, at most 8, `isPreferred` only when exactly one; the edit is
+  decided lexically from the CURRENT buffer (comments masked): not
+  imported -> `import M using name` after the last import (after the
+  module line when none); a `using` list lacking the name -> append `;
+  name` (inside braces when braced) — which closes the gap 6.5 pinned as
+  its diagnostic; a `hiding` list naming it -> delete the item or the
+  whole clause; own module, open import and aliased import -> no action
+  (an alias puts `name_A` in scope, and a duplicate module import is a
+  header refusal, so no edit exists).  This grammar has NO `import M (a,
+  b)` form: the plan's wording was wrong and the implementer corrected
+  it.  Type names are out of scope (the "undefined type" note carries no
+  spelling; carrying one is a `Subst.scala` change) and operators are
+  unreachable (an unknown operator is a read Diag, not a Note).  ADD
+  SIGNATURE: `<indent><head> : <type>` at the first equation's line,
+  head from the surface `SName.form` (fixity proved wrong on
+  Function.e's backtick operator), rendered FLAT by the hover printer;
+  top level and private/database blocks, not class bodies; a
+  `source`-kind "add all missing signatures (N)" with edits sorted
+  line-descending; STALENESS REFUSED (index version != buffer version ->
+  `[]`): a code action is an edit, not an answer.  THE SWEEP (Decision e,
+  `-Dermine.sweep.quickfix=true`, gated out of the shipped suite): 253
+  files, 1334 unsigned groups, 1166 insertions offered, CLEAN 1164 =
+  99.83%, PARSE-FAIL 0, TYPE-FAIL 2 (Validation.e: a `type Err` alias
+  unfolded in the rendering — the signatures are correct and re-check
+  silently; honest reading 1166/1166 usable), SKIPPED 168 by named reason (the rendered type
+  names a constructor the file cannot write 117 — the review re-derived
+  the class: 31 are types the file resolves through its OWN synonym, a
+  false negative of the scope test stated as a gap; 31 name a `private
+  data`; most of the rest are imported under an alias; a free kind
+  variable 36; a nested `* ->` kind losing its parens 10; `<:_Type.Cast`
+  2; a row field Global that does not round-trip 3).  Ship bar 95% -> GREEN, both
+  actions, no syntactic filter.  CLEAN's equivalence is alpha-equivalence UP TO
+  KINDS, `G1Compare.alphaEq` plus a complete all-bijections variant: rendered-
+  text comparison had first reported 81%, 145 of its "failures" being
+  kind-binder and row-constraint ORDER.  PRINTER TICKET drafted from the
+  skips: nested `* ->` parens, exists-binder kind variables, `ppType`'s
+  operator cases ignoring Qualification (`n_Module`) — 48 groups would
+  return if fixed; the field round-trip is not the printer's.
+  codeAction: 51 ms on the first request after a check, 0.1-0.4 ms after
+  (memo keyed on uri+version).  THE REVIEW (FIX-THEN-ADVANCE, record
+  fixes plus one line): 35 of 35 live rule-table probes green with every
+  edit applied over the wire and re-checked clean; the sweep re-derived
+  a second way (live per-group refusal log) to the same 168; the
+  own-field exemption tightened from a module-prefix test to the exact
+  shape (it also exempted descendant modules' fields); stated
+  limitation: origin-collapse never offers a re-exporter already
+  imported with a `using` list.  lsp-smoke 407 -> 454; TestQuickFix 18
+  new, TestTolerantCheck 26 -> 27; Report.e round trip unmoved.
+  Ticket E10 (the printer's four unreadable shapes + the synonym false
+  negative) filed.
 
 - [ ] **6.7 Editor wiring, docs, demo.**  VS Code: the client library
   serves completion/rename/references/symbols/codeAction on its own —
@@ -2377,6 +2431,16 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-10 (6.6 DONE): see the item's DONE paragraph.  Implementer
+  GREEN (sweep 99.83% clean, 100% on the honest reading), reviewer
+  FIX-THEN-ADVANCE with record fixes and one line (the own-field
+  exemption), fix round closed all; no second pass needed (the two code
+  changes were the reviewer's own).  The plan's `import M (a, b)` was
+  wrong for this grammar (`using`/`hiding`); corrected by the
+  implementer.  Ticket E10 filed.  Implementer ~80 + 10 min, reviewer
+  ~32 min.  Baselines: TestLoopTrace 720/720, five suites 94/94, corpus
+  85/69/0 over 154, repl-smoke 8/66 goldens untouched, lsp-smoke 454,
+  boot 129.
 - 2026-09-10 (6.5 DONE): see the item's DONE paragraph.  Implementer
   GREEN; reviewer FIX-THEN-ADVANCE twice (the grammar has no dotted
   references at all, so qualified completion was refuted and rebuilt as

@@ -134,16 +134,25 @@ object Diagnostics {
           + f"${Symbols.flatten(idx.symbols).size} symbols in "
           + f"${(System.nanoTime - tIdx0) / 1e6}%.1fms")
       docs.putIndex(uri, idx)
-      checked.diags.map(fromDiag) :::
-        checked.notes.map(n => n.span match {
+      val ds =
+        checked.diags.map(d => (fromDiag(d), None: Option[String])) :::
+        checked.notes.map(n => (n.span match {
           // LSP-FFI: a tolerated foreign binding knows its class or
           // member span exactly, so it squiggles the name rather
           // than the caret `fromReport` recovers from the text.
           case Some(sp) => fromSpan(sp, n.report, n.severity)
           case None     => fromReport(n.report, path, n.severity)
-        })
+        }, n.spelling))
+      // 6.6.1: keep what went out, WITH its source.  The range stored is
+      // read back off the JSON that is about to be published, so the
+      // list a code action matches against and the list the editor shows
+      // are the same list by construction; `spelling` is the flag
+      // `TolerantCheck.Note` carries for an undefined term, which is what
+      // an add-import action keys on (never the rendered message text --
+      // 6.1's rule).
+      stored(docs, uri, ds)
     } catch {
-      case Death(err, _) => List(fromReport(err.toString, path))
+      case Death(err, _) => stored(docs, uri, List((fromReport(err.toString, path), None)))
       // `Recoverable`, not `NonFatal` (LSP-FFI review finding P-1):
       // NonFatal counts every LinkageError as fatal, so a reflective
       // lookup over a stale classpath used to unwind past here into
@@ -153,8 +162,31 @@ object Diagnostics {
       // resting on having enumerated every reflective call.
       case com.clarifi.reporting.ermine.parsing.Recoverable(e) =>
         log("diagnostics: internal error on " + path + ": " + Rpc.stackTrace(e))
-        List(diagnostic(0, 0, "ermine-lsp internal error: " + e))
+        stored(docs, uri, List((diagnostic(0, 0, "ermine-lsp internal error: " + e), None)))
     }
+
+  /** Publish-and-remember: every path out of `check` goes through here,
+    * so the stored list is never one check behind the wire (the two
+    * unrecoverable cases -- a header that will not parse, an import that
+    * will not load -- included). */
+  private def stored(docs: Documents, uri: String,
+                     ds: List[(Json, Option[String])]): List[Json] = {
+    docs.putDiags(uri, ds.map { case (d, sp) => published(d, sp) })
+    ds.map(_._1)
+  }
+
+  /** One published diagnostic, as a code action needs it: the range that
+    * WENT OUT (read back off the JSON, so it cannot drift from it), the
+    * message, the severity, and the note's `spelling`. */
+  private def published(d: Json, spelling: Option[String]): QuickFix.Published = {
+    def at(which: String, f: String) =
+      (d / "range" flatMap (_ / which) flatMap (_ / f) flatMap (_.int)) getOrElse 0
+    QuickFix.Published(at("start", "line"), at("start", "character"),
+                       at("end", "line"), at("end", "character"),
+                       (d / "message" flatMap (_.str)) getOrElse "",
+                       (d / "severity" flatMap (_.int)) getOrElse 1,
+                       spelling, d)
+  }
 
   private def publish(server: Server, uri: String, ds: List[Json]): Unit =
     server.notify("textDocument/publishDiagnostics",

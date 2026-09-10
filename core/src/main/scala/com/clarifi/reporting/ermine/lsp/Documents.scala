@@ -18,7 +18,14 @@ final class Documents {
 
   final case class Doc(uri: String, path: Path, text: String, version: Long,
                        index: Option[Definitions.DocIndex],
-                       cache: TolerantCheck.Cache = TolerantCheck.Cache.empty) {
+                       cache: TolerantCheck.Cache = TolerantCheck.Cache.empty,
+                       /** 6.6: the diagnostics the last check PUBLISHED for
+                         * this document, each still paired with the source
+                         * that produced it.  A code action answers from
+                         * this list rather than from the client's copy of
+                         * it, and the ranges here are the ranges that went
+                         * out on the wire. */
+                       diags: List[QuickFix.Published] = Nil) {
     /** The SourceFile a load should see for this document. */
     def source: Session.Buffer = Session.Buffer(path.toString, text, version)
   }
@@ -60,7 +67,14 @@ final class Documents {
       // it still applies (roadmap 5.5).
       val prev = docs.get(uri)
       val d = Doc(uri, path, text, version, prev.flatMap(_.index),
-                  prev.map(_.cache) getOrElse TolerantCheck.Cache.empty)
+                  prev.map(_.cache) getOrElse TolerantCheck.Cache.empty,
+                  // 6.6: the published diagnostics survive the edit for
+                  // the same reason the index does -- they are what the
+                  // editor is still showing.  A code action does not USE
+                  // them across an edit (it refuses on a stale index),
+                  // but dropping them here would make the next check's
+                  // publish race the request rather than settle it.
+                  prev.map(_.diags) getOrElse Nil)
       docs += uri -> d
       d
     }
@@ -79,6 +93,12 @@ final class Documents {
 
   def putCache(fileName: String, c: TolerantCheck.Cache): Unit =
     byPath(fileName) foreach { d => docs += d.uri -> d.copy(cache = c) }
+
+  /** Store what a check published (6.6.1).  Set in the same breath as the
+    * index, from the same check, so the two can never disagree about
+    * which buffer they describe. */
+  def putDiags(uri: String, ds: List[QuickFix.Published]): Unit =
+    docs.get(uri) foreach { d => docs += uri -> d.copy(diags = ds) }
 
   /** The versions of every OTHER open buffer, for a check's scope key: a
     * sibling's unsaved edit changes what this file's imports mean, and

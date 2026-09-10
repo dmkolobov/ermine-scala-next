@@ -403,12 +403,11 @@ object Completion {
     * by a dotted name -- the same shape `contextAt` recognises, and no
     * parse.  It reads the CURRENT buffer, so an import the user has just
     * typed counts even though no check has seen it. */
-  def importLines(text: String): List[(Int, String, Option[String])] = {
-    val imp = "^\\s*(?:import|export)\\s+([A-Za-z0-9_.']+)(?:\\s+as\\s+([A-Za-z0-9_']+))?".r
-    text.split("\n", -1).toList.zipWithIndex.flatMap { case (l, i) =>
-      imp.findFirstMatchIn(l).map(m => (i, m.group(1), Option(m.group(2))))
-    }
-  }
+  def importLines(text: String): List[(Int, String, Option[String])] =
+    // 6.6 made this scanner richer -- it reads the `using`/`hiding` list
+    // and its layout extent too, because an add-import quick fix has to
+    // EDIT one -- so there is one scanner and this is its old face.
+    QuickFix.imports(text).map(i => (i.line, i.module, i.alias))
 
   /** How this buffer imports `mod`: `None` = not at all, `Some(None)` =
     * plainly, `Some(Some(a))` = `import M as a`.

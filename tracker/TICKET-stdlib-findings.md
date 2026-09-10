@@ -589,6 +589,22 @@ E9. **Stdlib navigation and workspace symbols land in the BUILD OUTPUT, not the 
     `bin/ermine`'s).  Editor path only; Tier 0; the pins must become tree-distinguishing or the fix cannot be
     observed.  Not scheduled; small.
 
+E10. **`Pretty` writes four type shapes the grammar cannot read back.**  Filed 2026-09-10 from LSP Stage 3 item
+    6.6's corpus sweep (report `tracker/loopmodel/LSP3-6.6-QUICKFIX.md` §7, review `LSP3-6.6-REVIEW.md` R-2), which
+    inserted the printed type of every unsigned top-level group over 253 files and re-checked: 1166 offered, 1164
+    clean, 168 REFUSED because the rendering would not parse or resolve.  The printer's share: (1) a NESTED `* ->`
+    kind loses its parentheses (`rho -> * -> *` fails; `rho -> (* -> *)` parses) — 10 groups; (2) an `exists`
+    binder's kind names a kind variable nothing quantifies — 36 (`Relation/Aggregate.e avg`,
+    `Layout/Report/Relation.e cutoffGroupedFldsPosNegRel'`; the two examples first cited were item-(1) cases);
+    (3) `ppType`'s operator cases write `n_Module` regardless of `Qualification` while `ppName` honours it
+    (`<:_Type.Cast`) — 2, and the same affix spelling is what makes 68 alias-imported type names unwritable in the
+    file's own scope.  NOT the printer: (4) a concrete-row field's Global does not round-trip (`Field.Count.Count`
+    vs `Prelude.Count`) — 3; (5) the quick-fix scope test cannot see through the file's OWN type synonyms
+    (`Layout/Scan.e`'s `type Scan = Scan_S`, 33 refusals that would have checked) — editor path, needs the
+    alias-to-Con map TolerantCheck builds and discards.  *Tier.* (1)-(3) change published `.ei` bytes (the same
+    printer writes interfaces): Tier 1 (interface sweep + g1-validate, baseline re-cut for the moved spellings).
+    (5) is Tier 0.  Fixing (1)-(3) returns 48 groups to the signature action; (5) returns 33.  Not scheduled.
+
 ## D. Claims in older documents that do not reproduce
 
 D1. `core/examples/Ai/README.md`'s RUnion table ("a helper bundling `RUnion3` and `RUnion2` does not finish")

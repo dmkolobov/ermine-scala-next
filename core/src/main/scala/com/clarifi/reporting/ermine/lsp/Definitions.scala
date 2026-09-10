@@ -6,7 +6,7 @@ import com.clarifi.reporting.ermine.session.TolerantCheck
 import com.clarifi.reporting.ermine.surface.{ SClassStatement, SDatabaseBlock,
   SDataStatement, SFieldStatement, SFixity, SForeign, SForeignBlock, SForeignConstructor,
   SForeignData, SForeignFunction, SForeignMethod, SForeignPrivate, SForeignSubtype,
-  SForeignValue, SName, SPrivateBlock, SStatement, STableStatement, Span }
+  SForeignValue, SModule, SName, SPrivateBlock, SStatement, STableStatement, Span }
 import scalaparsers.{ Inferred, Loc, Pos }
 
 /** textDocument/definition and hover on the Stage-1 renamer tables
@@ -126,7 +126,30 @@ object Definitions {
                             importTypes: Map[Name, V[Type]] = Map(),
                             cons: Map[Global, Type.Con] = Map(),
                             root: String = "",
-                            modules: Set[String] = Set())
+                            modules: Set[String] = Set(),
+                            // 6.6.  Four more references, on the same
+                            // terms as 6.5's: a code action answers from
+                            // what the check left behind, so what it
+                            // needs has to BE here.
+                            //   `module` is the surface tree the read
+                            //     produced, for the top-level binding
+                            //     GROUPS an add-signature action walks
+                            //     (which statement has a sig, which
+                            //     equation comes first);
+                            //   `types` is TolerantCheck's spelling ->
+                            //     type map, the same one hover reads;
+                            //   `termOrigins`/`typeOrigins` are the
+                            //     SESSION's `termNameOrigins`/
+                            //     `consOrigins`, which say that a name a
+                            //     module re-exports and the name its
+                            //     origin defines are one name -- add
+                            //     import offers the ORIGIN, and the
+                            //     signature scope test is an identity
+                            //     test rather than a spelling one.
+                            module: Option[SModule] = None,
+                            types: Map[String, Type] = Map(),
+                            termOrigins: Map[Global, List[Global]] = Map(),
+                            typeOrigins: Map[Global, List[Global]] = Map())
 
   // The per-document indexes live in Documents alongside the buffer text
   // and version (roadmap 5.3): a definition request and the check that
@@ -737,7 +760,11 @@ object Definitions {
              // 6.5: four references to tables this check already holds.
              // Nothing is walked, copied or rendered here -- completion is
              // a request-time filter over them.
-             c.locals, c.scope.termNames, env.cons, c.root, env.loadedModules.keySet)
+             c.locals, c.scope.termNames, env.cons, c.root, env.loadedModules.keySet,
+             // 6.6: four more references to tables this check already
+             // holds -- the surface tree, the inferred types, and the
+             // session's two origin maps.
+             Some(c.module), c.types, env.termNameOrigins, env.consOrigins)
   }
 
   /** First entry wins per start position: a real occurrence outranks the

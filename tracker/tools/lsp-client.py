@@ -132,6 +132,11 @@ def main():
           caps.get("completionProvider") ==
           {"triggerCharacters": ["."], "resolveProvider": False},
           repr(caps.get("completionProvider")))
+    # 6.6: quick fixes, in the two kinds this server actually serves.
+    check("initialize.codeActionProvider",
+          caps.get("codeActionProvider") ==
+          {"codeActionKinds": ["quickfix", "source"]},
+          repr(caps.get("codeActionProvider")))
     sync = caps.get("textDocumentSync", {})
     # 5.3: TextDocumentSync FULL — didChange carries the whole document
     check("initialize.sync", sync.get("openClose") is True and sync.get("save") is True
@@ -153,6 +158,14 @@ def main():
                          {"textDocument": {"uri": uri("Complete.e")},
                           "position": {"line": 10, "character": 14}})
     check("completion before the session boots -> []",
+          client.response(rid).get("result") == [])
+    # 6.6: and the same for a code action -- an EMPTY LIST, at once.
+    rid = client.request("textDocument/codeAction",
+                         {"textDocument": {"uri": uri("Fix.e")},
+                          "range": {"start": {"line": 9, "character": 0},
+                                    "end": {"line": 9, "character": 0}},
+                          "context": {"diagnostics": []}})
+    check("codeAction before the session boots -> []",
           client.response(rid).get("result") == [])
 
     client.notify("initialized", {})
@@ -1896,6 +1909,269 @@ def main():
     client.diagnostics_for(uri("Complete.e"))
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("CompleteSib.e")}})
     client.diagnostics_for(uri("CompleteSib.e"))
+
+    # --- 6.6: quick fixes (textDocument/codeAction) ---------------------
+    # A codeAction request fires on every cursor move, so it answers from
+    # the LAST CHECK'S STORED RESULTS -- the diagnostics that check
+    # published, still paired with the `Note` that produced them, plus the
+    # surface tree and the inferred types on the index -- and the CURRENT
+    # BUFFER TEXT, read lexically for the import statements and the line a
+    # signature goes above.  Never a check (roadmap Decision (e)); the one
+    # correctness measurement for the signature action is the 180-file
+    # corpus sweep in TestTolerantCheck.
+    def code_actions(name, line0, line1=None, only=None, diags=None):
+        ctx = {"diagnostics": diags if diags is not None else []}
+        if only is not None:
+            ctx["only"] = only
+        rid = client.request("textDocument/codeAction", {
+            "textDocument": {"uri": uri(name)},
+            "range": {"start": {"line": line0, "character": 0},
+                      "end": {"line": line0 if line1 is None else line1, "character": 0}},
+            "context": ctx})
+        return client.response(rid).get("result")
+
+    def titles(acts):
+        return [a["title"] for a in acts]
+
+    def act(acts, title):
+        for a in acts:
+            if a["title"] == title:
+                return a
+        return None
+
+    def edits_of(a):
+        # Tolerant of a missing action so ONE failed expectation reports as
+        # one failed check rather than killing the run.
+        if a is None:
+            return []
+        return list(a["edit"]["changes"].values())[0]
+
+    def apply_ws(text, a, eol="\n"):
+        """The client's job: apply a WorkspaceEdit's TextEdits to the buffer.
+        Later positions first, so an earlier edit cannot move a later one."""
+        if a is None:
+            return text
+        ls = text.split(eol)
+        for e in sorted(edits_of(a), key=lambda e: (-e["range"]["start"]["line"],
+                                                    -e["range"]["start"]["character"])):
+            a0, b0 = e["range"]["start"], e["range"]["end"]
+            head = ls[a0["line"]][:a0["character"]]
+            tail = ls[b0["line"]][b0["character"]:]
+            ls[a0["line"]:b0["line"] + 1] = [head + e["newText"] + tail]
+        return eol.join(ls)
+
+    def raw(name):
+        """The fixture EXACTLY as it is on disk -- Python's text mode
+        translates CRLF to LF, which would defeat the CRLF fixture."""
+        return (FIXTURES / name).read_bytes().decode("utf-8")
+
+    open_doc("FixSib.e")
+    check("FixSib.e clean", client.diagnostics_for(uri("FixSib.e")) == [])
+    open_doc("Fix.e")
+    check("Fix.e clean", client.diagnostics_for(uri("Fix.e")) == [])
+    fix_src = raw("Fix.e")
+    tail = fix_src.count("\n")          # the index a line appended to the buffer takes
+
+    # (1) ADD TYPE SIGNATURE for one unsigned group -- a `quickfix` with
+    # NO diagnostic (that is the kind this server declares; a
+    # `refactor.rewrite` would be outside `codeActionKinds`).
+    r = code_actions("Fix.e", 9)                # `answer = 42`
+    a = act(r, "add signature: answer : Int")
+    check("codeAction: an unsigned binding offers its signature", a is not None, repr(titles(r)))
+    check("codeAction: the signature action is a quickfix with no diagnostic",
+          a is not None and a["kind"] == "quickfix" and "diagnostics" not in a
+          and "isPreferred" not in a, repr(a))
+    check("codeAction: the signature is inserted on the line ABOVE the equation",
+          a is not None and edits_of(a) == [{
+              "range": {"start": {"line": 9, "character": 0},
+                        "end": {"line": 9, "character": 0}},
+              "newText": "answer : Int\n"}], repr(a and edits_of(a)))
+    change("Fix.e", apply_ws(fix_src, a), 2)
+    check("codeAction: the applied signature re-checks clean",
+          client.diagnostics_for(uri("Fix.e")) == [])
+    check("codeAction: hover afterwards shows the same type",
+          hoverline("Fix.e", 10, 1) == "Fix.answer : Int", repr(hoverline("Fix.e", 10, 1)))
+    change("Fix.e", fix_src, 3)
+    check("Fix.e clean again", client.diagnostics_for(uri("Fix.e")) == [])
+
+    # (2) A SIGNED binding offers none.
+    r = code_actions("Fix.e", 20)               # `signed = 7`
+    check("codeAction: a signed binding offers no signature action",
+          not any(t.startswith("add signature: signed") for t in titles(r)), repr(titles(r)))
+
+    # (3) A group whose rendered type names a type this file does NOT
+    # import is REFUSED, because the inserted line would not parse.
+    # `peek m = isJust m` is `forall a. Maybe a -> Bool` and the file
+    # imports neither `Maybe` nor `Bool` as a type.
+    r = code_actions("Fix.e", 16)               # `peek = paint`
+    check("codeAction: a signature naming an unimported type is not offered",
+          not any(t.startswith("add signature: peek") for t in titles(r)), repr(titles(r)))
+
+    # (4) "ADD ALL MISSING SIGNATURES", a `source` action over the file:
+    # two insertions for the two offerable groups (peek is refused), sorted
+    # by line DESCENDING so a sequential applier cannot drift.
+    r = code_actions("Fix.e", 0)
+    a = act(r, "add all missing signatures (2)")
+    check("codeAction: the source action counts the groups it can serve",
+          a is not None and a["kind"] == "source", repr(titles(r)))
+    es = edits_of(a) if a else []
+    check("codeAction: one insertion per group, later lines first",
+          [e["range"]["start"]["line"] for e in es] == [11, 9], repr(es))
+    check("codeAction: the second insertion is the polymorphic one",
+          es and es[0]["newText"] == "pairUp : forall a. a -> (a, a)\n", repr(es and es[0]))
+    change("Fix.e", apply_ws(fix_src, a), 4)
+    check("codeAction: all the applied signatures re-check clean",
+          client.diagnostics_for(uri("Fix.e")) == [])
+    r = code_actions("Fix.e", 0)
+    check("codeAction: with them applied the source action is gone",
+          not any(t.startswith("add all") for t in titles(r)), repr(titles(r)))
+    change("Fix.e", fix_src, 5)
+    check("Fix.e clean after the revert", client.diagnostics_for(uri("Fix.e")) == [])
+
+    # (5) ADD IMPORT on an undefined term.  `not` is defined by BOTH
+    # `Bool` and `Relation.Predicate`, so the name offers TWO actions and
+    # neither is preferred -- picking one of two modules for the user is
+    # not a thing this server knows.
+    change("Fix.e", fix_src + "undef = not True\n", 6)
+    ds = client.diagnostics_for(uri("Fix.e"))
+    check("Fix.e: an undefined term is one diagnostic",
+          len(ds) == 1 and "undefined term" in ds[0]["message"], repr(ds))
+    r = code_actions("Fix.e", tail)
+    check("codeAction: a name two modules export offers two actions",
+          sorted(t for t in titles(r) if t.startswith("import")) ==
+          ["import Bool using not", "import Relation.Predicate using not"], repr(titles(r)))
+    a = act(r, "import Bool using not")
+    check("codeAction: the action carries the diagnostic it fixes",
+          a is not None and a.get("diagnostics") == ds, repr(a and a.get("diagnostics")))
+    check("codeAction: with two candidates neither is preferred",
+          all("isPreferred" not in x for x in r if x["title"].startswith("import")), repr(r))
+    check("codeAction: the import line goes after the LAST import",
+          edits_of(a) == [{"range": {"start": {"line": 5, "character": 0},
+                                     "end": {"line": 5, "character": 0}},
+                           "newText": "import Bool using not\n"}], repr(edits_of(a)))
+    change("Fix.e", apply_ws(fix_src + "undef = not True\n", a), 7)
+    check("codeAction: the applied import clears the diagnostic",
+          client.diagnostics_for(uri("Fix.e")) == [])
+
+    # (6) THE OPEN SIBLING is a candidate module in its own right, and a
+    # module already imported WITH A LIST is fixed by growing the list --
+    # 6.5 left exactly that gap and pinned it; this closes it.
+    change("Fix.e", fix_src + "two = catMaybes\n", 8)
+    ds = client.diagnostics_for(uri("Fix.e"))
+    r = code_actions("Fix.e", tail)
+    check("codeAction: an open sibling that declares the name is a candidate",
+          sorted(t for t in titles(r) if t.startswith(("import", "add catMaybes"))) ==
+          ["add catMaybes to the Maybe import list", "import FixSib using catMaybes"],
+          repr(titles(r)))
+    a = act(r, "add catMaybes to the Maybe import list")
+    check("codeAction: THE 6.5 GAP CLOSED -- the existing using list grows",
+          edits_of(a) == [{"range": {"start": {"line": 2, "character": 25},
+                                     "end": {"line": 2, "character": 25}},
+                           "newText": "; catMaybes"}], repr(edits_of(a)))
+    change("Fix.e", apply_ws(fix_src + "two = catMaybes\n", a), 9)
+    check("codeAction: the grown list checks clean",
+          client.diagnostics_for(uri("Fix.e")) == [])
+    a = act(r, "import FixSib using catMaybes")
+    change("Fix.e", apply_ws(fix_src + "two = catMaybes\n", a), 10)
+    check("codeAction: the sibling's import checks clean too",
+          client.diagnostics_for(uri("Fix.e")) == [])
+
+    # (7) ONE candidate: the action IS preferred.
+    change("Fix.e", fix_src + "grow = isNothing\n", 11)
+    client.diagnostics_for(uri("Fix.e"))
+    r = code_actions("Fix.e", tail)
+    a = act(r, "add isNothing to the Maybe import list")
+    check("codeAction: one candidate module, one preferred action",
+          a is not None and a.get("isPreferred") is True, repr(titles(r)))
+    change("Fix.e", apply_ws(fix_src + "grow = isNothing\n", a), 12)
+    check("codeAction: `import Maybe using isJust; isNothing` checks clean",
+          client.diagnostics_for(uri("Fix.e")) == [])
+
+    # (8) A `hiding` LIST: the name is excluded, so the fix REMOVES it.
+    # `import Function hiding id` with `id` its only item becomes an open
+    # `import Function`.
+    change("Fix.e", fix_src + "hid = id\n", 13)
+    client.diagnostics_for(uri("Fix.e"))
+    r = code_actions("Fix.e", tail)
+    a = act(r, "stop hiding id from Function")
+    check("codeAction: a hidden name is fixed by un-hiding it",
+          a is not None and edits_of(a) == [{
+              "range": {"start": {"line": 3, "character": 15},
+                        "end": {"line": 3, "character": 25}},
+              "newText": ""}], repr(titles(r)))
+    change("Fix.e", apply_ws(fix_src + "hid = id\n", a), 14)
+    check("codeAction: the un-hidden import checks clean",
+          client.diagnostics_for(uri("Fix.e")) == [])
+    change("Fix.e", fix_src, 15)
+    check("Fix.e clean after every import probe",
+          client.diagnostics_for(uri("Fix.e")) == [])
+
+    # (9) `context.only` is honoured: a client asking for one kind gets
+    # that kind and nothing else.
+    r = code_actions("Fix.e", 9, only=["source"])
+    check("codeAction: only=[source] answers the source action alone",
+          titles(r) == ["add all missing signatures (2)"], repr(titles(r)))
+    r = code_actions("Fix.e", 9, only=["quickfix"])
+    check("codeAction: only=[quickfix] drops the source action",
+          titles(r) == ["add signature: answer : Int"], repr(titles(r)))
+
+    # (10) STALENESS IS REFUSED, not accepted (unlike every other request
+    # in this server): a code action is an EDIT, and an edit at a line the
+    # buffer no longer has is corruption.  The request goes out
+    # immediately after a didChange, before the ~300ms debounce fires.
+    change("Fix.e", "\n" + fix_src, 16)
+    r = code_actions("Fix.e", 10)
+    check("codeAction: [] while the index is older than the buffer", r == [], repr(r))
+    check("Fix.e clean with the leading blank line",
+          client.diagnostics_for(uri("Fix.e")) == [])
+    r = code_actions("Fix.e", 10)
+    check("codeAction: it answers again once the check lands",
+          any(t.startswith("add signature: answer") for t in titles(r)), repr(titles(r)))
+    change("Fix.e", fix_src, 17)
+    client.diagnostics_for(uri("Fix.e"))
+
+    # (11) CRLF END TO END.  142 of the 161 stdlib modules are CRLF; an
+    # inserted line has to carry the buffer's own terminator.
+    crlf_src = raw("FixCrlf.e")
+    check("FixCrlf.e really is CRLF on disk", "\r\n" in crlf_src and "\n" not in crlf_src.replace("\r\n", ""))
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": uri("FixCrlf.e"), "languageId": "ermine", "version": 1, "text": crlf_src}})
+    check("FixCrlf.e clean", client.diagnostics_for(uri("FixCrlf.e")) == [])
+    r = code_actions("FixCrlf.e", 6)            # `crlfValue = 42`
+    a = act(r, "add signature: crlfValue : Int")
+    check("codeAction: a CRLF buffer's signature line ends CRLF",
+          a is not None and edits_of(a)[0]["newText"] == "crlfValue : Int\r\n",
+          repr(a and edits_of(a)))
+    applied = apply_ws(crlf_src, a, "\r\n")
+    check("codeAction: the applied CRLF buffer has no lone newline",
+          "\n" not in applied.replace("\r\n", ""), repr(applied[:80]))
+    change("FixCrlf.e", applied, 2)
+    check("codeAction: the applied CRLF signature re-checks clean",
+          client.diagnostics_for(uri("FixCrlf.e")) == [])
+    crlf_tail = crlf_src.count("\n")
+    change("FixCrlf.e", crlf_src + "undef = not True\r\n", 3)
+    client.diagnostics_for(uri("FixCrlf.e"))
+    r = code_actions("FixCrlf.e", crlf_tail)
+    a = act(r, "import Bool using not")
+    check("codeAction: a CRLF buffer's import line ends CRLF",
+          a is not None and edits_of(a)[0]["newText"] == "import Bool using not\r\n",
+          repr(a and edits_of(a)))
+    change("FixCrlf.e", apply_ws(crlf_src + "undef = not True\r\n", a, "\r\n"), 4)
+    check("codeAction: the applied CRLF import checks clean",
+          client.diagnostics_for(uri("FixCrlf.e")) == [])
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("FixCrlf.e")}})
+    client.diagnostics_for(uri("FixCrlf.e"))
+
+    # (12) COST: a codeAction fires on every cursor move, so the round
+    # trip is measured, not argued about (best of five).
+    ms = min(_query_ms(code_actions, "Fix.e", 9) for _ in range(5))
+    check("codeAction answers well under 50 ms", ms < 50.0, "%.1f ms" % ms)
+
+    check("Fix.e on disk untouched by the buffer edits", raw("Fix.e") == fix_src)
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Fix.e")}})
+    client.diagnostics_for(uri("Fix.e"))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("FixSib.e")}})
+    client.diagnostics_for(uri("FixSib.e"))
 
     # --- fast mode: skip the type check, keep everything the read gives -
     def set_fast(on):
