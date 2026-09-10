@@ -15,24 +15,23 @@ ONE JVM at a time, no background JVMs. Delete every `.ei` you cause. Do not touc
 build option 1), the 6.2 review `LSP3-6.2-REVIEW.md` if present, `tracker/GATE-POLICY.md` (this IS a Tier-1 change:
 `Subst.scala`), and the Stage-3 invariants in `tracker/LSP-ROADMAP.md`.
 
-## What to build (option 1 from the 6.2 report, and nothing wider)
-1. `SubstEnv` gains `var binderTypes: Map[(Int, Int), Type] = Map()` and `var recordBinders: Boolean = false`
-   (or an `Option` — say). In `Subst.inferPatternType`'s `VarP` case (~:1055), AFTER `unbindAnnot` yields `t`: if
-   `hm.recordBinders` and `v.loc` is a real `Pos` (not `Inferred`/builtin — the same test 6.2's `collectLocals`
-   uses), `hm.binderTypes += (v.loc.line, v.loc.column) -> t`. NOTHING else in `Subst` changes. Note `t` is the
-   pattern's type BEFORE the body is inferred; it is a meta (or contains metas) that the body's inference will
-   constrain — so the ZONK must happen after inference (in `TolerantCheck`), not at record time. Check whether the
-   `Lam` case's `refreshList` (~:930) re-ids the vars so that the recorded `t` no longer connects to what inference
-   constrained — if so, record at the point where the connection is live (say where and why) or show that `subst`
-   composition still reaches it.
-2. `TolerantCheck.checkWith(wantLocals = true)` sets `hm.recordBinders = true` inside each component's `Session.subst`
-   block and, after inference, merges `hm.binderTypes` mapped through `Subst.substType` into `Result.locals`
-   (the `let`/`where` path from 6.2 stays as is; pattern binders now fill the rest). `TolerantCheck.check` and
-   every batch path never set the flag.
-3. Extend the 6.2 sweep property to expect the FULL reachable set: `Arg`, `CaseBound`, `DoBound` binders in clean
-   modules all have a local type — report the new table (6.2's was 284 of 5056; the target is ~5056 minus the
-   class of legitimate misses, which you enumerate). Extend `Locals.e`'s smoke checks to hover an arg, a case and a
-   do binder with exact `Name : Type` strings (in the worktree's copy of lsp-client.py).
+## What to build — the WORKABLE shape (the 6.2 review, R-1, refuted the first shape)
+The 6.2 report's option 1 as first written ("record `t` in `inferPatternType`'s `VarP` case, merge and zonk after the
+component") DOES NOT WORK: the recorded meta is removed from `hm.types` by `restrictTypes` (`Subst.scala:153`), reached
+from the `Lam` case (`:942`, `restrictTypes(ts ++ pt.xs)`) and `inferAltTypesPrime` (`:1036`), because `:1055-1057`
+returns that same var in `Patterned.xs`; a post-component zonk returns the unconstrained variable. Reproduce that
+first (the reviewer's probe: `f x = x && True` — head meta zonks to `Bool -> Bool`, the recorded arg meta to `a`).
+Then build the shape `Remember` uses: `SubstEnv` gains `var binderTypes: Map[(Int,Int), Type]` and a flag
+`recordBinders` (OFF by default; only `TolerantCheck.checkWith(wantLocals = true)` turns it on inside its subst
+blocks); record `v.loc -> t` in `inferPatternType`'s `VarP` case when on; and keep the recorded types EAGERLY
+SUBSTITUTED wherever `hm.remembered` is — `instantiateType` (`:187`), `unbind` (`:586`), `generalize` (`:1624`) — under
+the same flag, so that when `restrictTypes` drops the meta the recorded entry already carries what it was bound to.
+Count the sites you touch and the lines; the number is part of the evidence. Then `TolerantCheck` merges
+`hm.binderTypes` after each component (the pattern-binder class only — equation-argument binders already come from
+6.2's arity split; the two must agree where they overlap: assert it). Extend the 6.2 sweep to expect lambda/case/do
+binders and nested pattern vars typed in clean modules; extend `Locals.e`'s checks in the worktree's lsp-client.py.
+Measure the FLAG-OFF cost on the batch target too: `perf-bench.sh batch -n 3` interleaved main tree vs worktree
+(the flag check sits on the checker's hot path) — the user needs that number as much as the editor one.
 
 ## The evidence the decision needs (all in the worktree, one JVM at a time)
 - TIER 0: compile+copyResources; `TestLoopTrace` 720/720; `corpus-run.sh --batch <outdir>` 85/69/0; `repl-smoke.sh`
