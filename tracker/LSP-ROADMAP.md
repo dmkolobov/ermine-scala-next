@@ -8,26 +8,33 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 2 COMPLETE — AWAITING GATE G2 SIGN-OFF (2026-08-31).
-5.1-5.5 done; 5.6 DEFERRED with evidence (see its entry).  The read path
-is error-tolerant end to end, reports every phase's diagnostics, blames
-syntax errors where the parser actually gave up, the splitter is TOTAL,
-checking runs on open BUFFERS as they are typed, TYPE checking reports
-every independent error including in the healthy part of a broken file,
-and unchanged binding components are no longer re-inferred.
-NEXT: nothing — the loop stopped at G2.  Say the word to open Stage 3. · Seeded 2026-08-30 (session that shipped the
+Status: STAGE 3 PLANNED — AWAITING THE USER'S GO ON THE PLAN (2026-09-09).
+G2 signed off 2026-09-09.  Stage 3 checklist 6.0-6.7 and GATE G3 are
+written below (section "Stage 3"), no code yet.  Stage 2 shipped 5.1-5.5
+(5.6 DEFERRED with evidence); the post-G2 navigation work (2026-09-02) and
+the LSP-FFI tolerance detour (2026-09-08/09) are committed and are NOT
+Stage 3 items.
+NEXT: on the user's word, 6.0 (suite hygiene — make Tier 2 deterministic). · Seeded 2026-08-30 (session that shipped the
 scoping fix, commits f9cf42a / 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
 
-- `sbt -batch core/test`: all green except `Constraints.disjunction sound`
-  (the one known pre-existing failure, tracker/06-tests.md) — 761/762 as of
-  Stage 0; suites GROW, so a commit that adds tests updates the count in
-  its iteration-log line, and green-except-the-known-one is the invariant
+- `sbt -batch core/test`: all green — 943/943 as of F4 (2026-09-09).
+  `Constraints.disjunction sound` is QUARANTINED behind
+  `-Dermine.test.disjunction=true` (tracker/GATE-POLICY.md), so "green"
+  means green; it was 761/762 with that failure visible at Stage 0.
+  Suites GROW, so a commit that adds tests updates the count in its
+  iteration-log line.  KNOWN INTERMITTENCE (F4 review R-1): 942 + 1
+  error one run in two, `Module not found: 'Test'` in TestLower — a
+  cross-suite race of unknown mechanism (R-1's depCache/literalLock
+  explanation is UNVERIFIED; see 6.0).  Stage 3 item 6.0 pins and fixes
+  it; until then a Tier-2 run that shows exactly that error gets ONE
+  re-run.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (4 as of D2)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (98 as of the 2026-09-02
-  declaration-navigation work; it read 82 before that, the G2 line's 77
-  having gone stale)
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (185 as of 2026-09-09,
+  re-measured when Stage 3 was planned; 98 after the 2026-09-02
+  declaration-navigation work, 181 after the LSP-FFI fix round; it read
+  82 before that, the G2 line's 77 having gone stale)
 - All 129 stdlib modules load with type checking on (~6s warm, bin/ermine)
 - Toolchain: export PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH
 - KNOWN FLAKE: core/test suites run concurrently in one JVM and rarely
@@ -579,6 +586,325 @@ a timing line from 5.5); core/test, repl smoke suites and the REPL
 goldens BYTE-UNCHANGED (batch strictness frozen); boot 129.  STOP the
 loop and summarize for sign-off before any Stage 3 planning.
 
+## Stage 3 — types at every binder, and the editor features the tables already pay for (checklist, planned 2026-09-09; G2 signed off 2026-09-09)
+
+GOAL: the editor answers hover on LOCAL binders and on type names, finds
+references, renames, lists symbols, completes names, and offers the two
+quick fixes Ermine code needs most (add import, add signature) — all from
+the tables the last check already built, at no added per-keystroke cost
+beyond one budgeted substitution walk.
+
+WHAT CHANGED SINCE THE STAGE-2 PLAN, and shapes this one:
+- The perf premise moved.  Stages 0, 1 and 2 each gated hover-on-locals
+  on tracker/TICKET-perf-type-inference.md ("type-at-point needs faster
+  inference").  Since 5.4 the editor path RUNS inference on every check,
+  one fresh SubstEnv per binding SCC (TolerantCheck.checkWith), and Lower
+  gives every local binder V a fresh meta as its type (Lower.Ctx.binderV
+  via `unspecified`).  So a local's type is one `Subst.substType` under
+  that component's SubstEnv, inside a block that already exists — a zonk
+  per binder, not a check.  The gate is no longer latency; it is keeping
+  the walk cheap and the strict path untouched.
+- The perf loop has moved NEITHER target (PERF-ROADMAP status: P1/P2/
+  P5(a) done, "neither target has moved measurably"; the editor floor is
+  ~50 ms and the read, 0.80 s of Report.e's 1.57 s, dominates).  So
+  nothing in this stage may add a check, an inference or a parse to any
+  REQUEST path: every request answers from tables the last check built.
+  The one per-check addition (6.2's zonk) has a measured budget.
+- Hover on an arbitrary SUB-EXPRESSION is out of reach and out of scope:
+  inference does not annotate the tree (only `Remember` nodes leave
+  `hm.remembered`).  Binders only.  A typed-tree design is Stage 4+ and
+  belongs with the perf ticket.
+- Post-G2 (2026-09-02) navigation already covers every declaration kind,
+  and the LSP-FFI detour (2026-09-08/09, committed) made the server
+  survive a stale FFI.  Both are DONE and not repeated here; their
+  fixtures are the floor lsp-smoke starts from (185 checks, re-measured
+  2026-09-09 at planning).
+
+STAGE-3 INVARIANTS (hard):
+- BATCH SEMANTICS STAY FROZEN (the Stage-2 invariant, unchanged).  6.2
+  touches TolerantCheck and reads Lower's binder Vs; both are editor-
+  path.  `Session.load`/loadModule, the REPL goldens (tracker/repl-tests/
+  *.expected) and TestReplDifferential stay byte-identical;
+  TestTolerantRead's 180-file agreement property stays the tripwire.  If
+  an item needs a change in Subst.scala or Type.scala, that is Tier 1
+  (GATE-POLICY) and the item stops to say so before making it.
+- NO REQUEST TRIGGERS WORK.  hover/definition/references/rename/symbols/
+  completion/codeAction read Documents' stored index and TolerantCheck
+  results.  Staleness between a keystroke and the next debounced check
+  is ACCEPTED and documented, never papered over with an inline check.
+- Single-threaded dispatch stays (Decision 3).  A request that arrives
+  during a check waits for it.  The gate records that worst case (one
+  Report.e check, ~1.3 s).  A worker-thread check is a PARKED Stage-4
+  fork (Blocked/Awaiting), not a Stage-3 side quest.
+- Decision 5 stays: the resident session is interface-free.
+- Every sweep covers stdlib AND core/examples (the 180-file rule).
+- lsp-smoke's count GROWS with each item; the Baselines note is updated
+  in the same commit.  docs/lsp.md is refreshed at the gate (it still
+  says 82 checks).
+- GATES per tracker/GATE-POLICY.md.  Tier 0 before every commit
+  (compile+copyResources, TestLoopTrace 720/720, corpus --batch
+  85/69/0 over 154, repl-smoke 7/7, lsp-smoke).  Items touching
+  TolerantCheck/Lower/Renamer/Definitions also run
+  `testOnly *TestTolerantCheck *TestTolerantRead *TestEditorBuffers
+  *TestRenamer *TestLower`.  Tier 1 only if the solver, Type.scala's
+  constraint construction or executable Lean is touched (not expected).
+  Tier 2 (full `core/test`, ALONE on the tree) once, at G3.  Implementer
+  runs, reviewer re-runs once, orchestrator runs Tier 0 — no third full
+  run (6.0 is the documented exception).  One JVM at a time.  Never
+  commit red.
+
+### Stage-3 Decisions (append-only; override with a note, not silently)
+
+- (a) Local hover shows the binder's MONOTYPE after solving, with the
+  enclosing binding's generalized metas rendered as type variables; no
+  `forall` on locals (the top-level's hover shows the scheme).  Explicit
+  local signatures show as declared.  Rendering uses the same printer
+  as top-level hover.
+- (b) Local types are collected in the editor path only: `checkWith`
+  grows a `wantLocals` parameter (default false; `check` keeps false).
+  A reused 5.5 cache entry carries its locals: valid because the
+  fingerprint contains the group's start lines AND its whole text, and
+  top-level statements start at column 1, so any edit that could move a
+  def-site changes the key.
+- (c) Workspace = the open buffers + the resident session's loaded
+  modules + the `.e` files under the checked file's module root (for
+  import completion).  No persistent workspace index in Stage 3.
+  References and rename SAY what they covered: a `window/showMessage`
+  warning whenever unopened importers may exist.
+- (d) Rename never edits a file that is not open; never renames to or
+  from an operator spelling; refuses a capture (the new name already
+  bound in a frame containing an occurrence, or a global the occurrence
+  would then resolve to); refuses on a stale index (document version ≠
+  the version the index was built from) with a ResponseError "check
+  pending" rather than a partial edit.
+- (e) The 6.6 signature quick fix is offered WITHOUT server-side re-
+  checking (a codeAction request fires on every cursor move; a check
+  costs a round trip).  Its correctness is measured ONCE by a corpus
+  sweep at the item's gate, with the shipping bar set there.
+- (f) The bare-`class`-statement divergence (assemble registers nothing;
+  the fused pipeline registered the head) is NOT a Stage-3 item: fixing
+  it changes what batch registers, which the frozen-semantics invariant
+  forbids here.  It gets its own ticket when classes matter.
+- (g) 5.6 nested extents stays DEFERRED with its 2026-08-31 evidence;
+  nothing in this stage needs it (completion uses renamer FRAMES, which
+  are nested already).
+
+### Checklist (each item ≈ one loop iteration; the acceptance criteria are the tick conditions)
+
+- [ ] **6.0 Suite hygiene — make Tier 2 deterministic** (debt: F4 review
+  R-1, 2026-09-09; re-scoped 2026-09-09 after the user asked whether the
+  flake is fixable).  THE FACT: `core/test` on one unchanged tree was
+  943/943 on one run and 942 + 1 error on the other — TestLower's
+  `negation applies primNeg to the whole chain` dying with
+  `Death: Module not found: 'Test'`; never reproduced in isolation
+  (TestLower alone 2x, with TestInterfaceConcreteRow 2x).  THE REVIEW'S
+  MECHANISM IS UNVERIFIED: R-1 blamed six suites touching
+  `Session.depCache`/`loadModules` without `ErmineFixture.literalLock`.
+  A code read (2026-09-09) does not confirm that path: the message is
+  produced only when `SourceFile.forModule("Test")` reaches
+  `NotFound.contents`, i.e. when a session's `loadedModules` LACKS the
+  Test entry every fixture seeds into its baseEnv (or a cached Dep names
+  Test as an import, which none does — loadStatements strips it).  A
+  dep-cache hit or miss cannot delete a loadedModules key; the forked
+  makes merge with `+=` (a union), which cannot either; the only removers
+  are the fixture writeback `:=` (under envLock, per fixture) and
+  `reloadChangedModules` (no test calls it).  So: a cross-suite race in
+  one JVM (`Test / fork := false`, suites parallel) is the only shape
+  that fits the record, and WHICH race is not known.
+  STEP 1 — PIN, budget one iteration: a probe in ErmineFixture (mkEnv
+  asserts/logs when the copy it hands out lacks "Test", with the fixture
+  identity, thread and the writeback history), then run the parallel
+  suite — the module-loading suites together, then the full suite — up
+  to five times.  A firing probe names the mechanism; the fix is written
+  against THAT, and the mechanism replaces this paragraph.  A fix
+  written against an unverified mechanism is how R-1's own claim came
+  about.
+  STEP 2 — FIX, or FALL BACK.  If the probe does not fire within the
+  budget, make the harness deterministic BY CONSTRUCTION instead: tag
+  the module-loading suites (TestNewPipeline, TestLower,
+  TestTolerantCheck, TestTolerantRead, TestStage1Pins,
+  TestEditorBuffers, the TestInterface* suites) so sbt runs them
+  serially (`Tags.exclusive` / testGrouping); measure and record the
+  wall-clock cost of `core/test` before and after, once each.  While
+  there: the 3.5 MB/run `ermine-ei-corpus` temp-tree leak (R-5) gets a
+  delete in a finally.  Probe code does not ship: it comes out with the
+  fix, or stays behind a system property, the item says which.
+  ACCEPTANCE: two consecutive full `core/test` runs green by the
+  implementer and one by the reviewer — three in total, the ONE place
+  this stage runs a tier three times, because the claim under test is
+  determinism (recorded here as the exception to GATE-POLICY's "no
+  third run"); the mechanism written here (or the fallback and its
+  cost); no `/tmp/ermine-*` tree left behind by a run; suite count
+  unchanged.  First because G3 is a Tier-2 gate, and a gate that is red
+  one run in two is a gate nobody can use.
+
+- [ ] **6.1 Diagnostics debt.**
+  (a) THE DO-ANCHOR BLAME GAP (Stage-2 diagnostics debt; D3 and 5.4
+  log): a type error inside a `do` bind blames the bind's rhs (line 1)
+  where the fused pipeline reached the inner subterm (line 2), because
+  the checker infers the continuation lambda independently and clashes
+  at the subsume.  Budget: half an iteration.  Fix if it is a Loc-
+  propagation change in the do-desugar or in the editor path (batch
+  goldens must stay byte-identical either way); otherwise write the
+  precise reason under this item and close it as ACCEPTED.  Tick
+  condition: the pinned line flips to the inner subterm's, OR the
+  written reason is here.
+  (b) UNRECOVERABLE-DEATH POSITIONS: a header that will not parse, or an
+  import that will not load, still publishes ONE diagnostic, and when
+  the report names another file it lands at 0:0.  Anchor an import
+  failure on the failing `import` statement's span (the tolerant read
+  succeeded — only the LOAD of the import failed — so the surface tree
+  and its import spans are in hand) and a header failure on the
+  header's extent.  lsp-smoke: `BadImport.e` (one import that does not
+  exist, one whose file has a syntax error) squiggles each import line
+  with the loader's message; the file's other diagnostics still publish.
+  (c) A sweep pin: over the 180 files, no editor-path diagnostic or note
+  is emitted at 0:0 (TestTolerantCheck property; expected 0).
+
+- [ ] **6.2 Types at every binder** (the stage's headline; the item
+  Stages 0, 1 and 2 each deferred to the perf ticket, whose premise 5.4
+  dissolved).  Hover on a LOCAL binder — Arg, LetBound, WhereBound,
+  DoBound, CaseBound (Renamer.BinderKind) — at its def-site and at every
+  use; hover on TYPE names, own and imported, showing the kind (from
+  `env.cons` / TolerantCheck's type phase).  MECHANISM: inside each
+  component's `Session.subst { implicit hm => ... }` block in
+  TolerantCheck.checkWith (implicit AND explicit paths), after inference
+  succeeds, walk the component's alts collecting Bound Vs whose loc is a
+  real Pos in this file (VarP/AsP pattern vars, Let/where binding vs,
+  lambda args) and record `Subst.substType(v.extract)` keyed by def-site
+  (line, col).  `Result` grows `locals: Map[(Int, Int), Type]`; cache
+  entries grow to carry them (Decision b); note-bearing components stay
+  uncached as before.  Definitions.index joins ToBinder occurrences ->
+  BinderInfo.defSite -> locals so `Occ.hover` fills for locals; type
+  occurrences get a kind hover.  RENDERING per Decision (a).
+  PERF BUDGET: keystroke-to-diagnostics on Layout/Report.e, INTERLEAVED
+  A/B (before/after/before/after, `tracker/tools/perf-bench.sh editor
+  -k 15`, load < 1.3 on both sides): Δ ≤ 5% of the round trip (≈ 80
+  ms).  Over budget -> the zonk stays behind `wantLocals=false`, the
+  item moves to Blocked/Awaiting with the number, and the stage goes on
+  without it.  TESTS: TestTolerantCheck — every binder kind gets a
+  type; a where-bound polymorphic local shows its solved monotype; an
+  explicit local sig shows as declared; cache INVISIBILITY extends to
+  locals (warm == cold, byte-identical, over the 5.5 edit set); the
+  180-file sweep requires every Bound V with a real Pos in a clean
+  module to have a local type (no silent misses).  lsp-smoke: fixture
+  `Locals.e` — hover on an arg, a let, a where, a do and a case binder,
+  each at def-site and at a use; hover on a local after a didChange
+  that moves its definition; hover on a local in the healthy statement
+  of a broken file; hover on `Bool` and on an own `data` type shows the
+  kind; a local in fast mode answers null (nothing computes it).
+
+- [ ] **6.3 References, document highlight, rename** — from the renamer
+  tables (`occurrences` with ToBinder/ToGlobal, `binders`, `frames`);
+  no new analysis.  `textDocument/references` (honouring
+  includeDeclaration) and `textDocument/documentHighlight` (Write at
+  the def-site, Read at uses): for a local, every occurrence in the
+  file resolving to its binder id; for a module top-level or an
+  imported global, every occurrence across OPEN documents whose
+  `ToGlobal.origin` matches, plus the def-site (Decision c: the
+  coverage warning whenever the defining module is not itself an open
+  buffer, or is in the stdlib).  `textDocument/prepareRename` +
+  `textDocument/rename`: a WorkspaceEdit over exactly the references
+  set, under Decision (d)'s refusals; the new name must be a valid
+  Ermine identifier of the same case class (a constructor stays
+  capitalised, a term stays lower); operators refused.  TESTS: a
+  TestRenamer property over the 180 files — every ToBinder occurrence's
+  binder has a defSite inside the file, no two occurrence spans
+  overlap, def-sites are unique per id: the table integrity references
+  and rename stand on.  lsp-smoke: fixture `Refs.e` (with `Sib.e`) —
+  references on a local (def + 3 uses); references on a top-level from
+  an importing OPEN sibling (both files, both counts); highlight kinds;
+  rename a local (an edit at every site, none elsewhere); rename to a
+  capturing name -> error; rename to an operator -> error; rename on a
+  stale index (didChange, then rename before the debounce) -> "check
+  pending" error; rename a top-level across two open buffers -> edits
+  in both plus the coverage warning.
+
+- [ ] **6.4 Document symbols and workspace symbols.**
+  `textDocument/documentSymbol` (hierarchical): from the surface tree +
+  StatementExtents — one symbol per top-level group (sig + equations
+  merged; detail = the TolerantCheck type when known), data/type/class
+  (constructors as children), field, table, foreign (block children),
+  import; SymbolKind per kind; `range` = the statement extent,
+  `selectionRange` = the head name.  Works on a broken file's healthy
+  statements.  `workspace/symbol`: case-insensitive substring over the
+  resident session's globals that have a real file Loc (termNames,
+  cons — the tables navigation already uses) plus every open document's
+  own declarations; capped at 200.  lsp-smoke: Decls.e's symbol list
+  (names, kinds, ranges, nesting) pinned; workspace query "twice" finds
+  Nav.twice at its Location; "Relation" finds the stdlib type in its
+  SOURCE file (Decision 5 makes this true); a broken file lists its
+  healthy symbols; a builtin (`Just`) is NOT listed (no source).
+
+- [ ] **6.5 Completion** — the consumer the scope-at-position layer has
+  waited for since 4.2 ("deferred to where a consumer exists").
+  `textDocument/completion` from the last check's tables and the
+  CURRENT buffer text (for the word prefix at the cursor and the
+  `import ` / qualified-name context), never a check: (1) locals
+  visible at the position via `Renamer.Result.scopeAt` (BinderKind ->
+  CompletionItemKind; detail = the 6.2 type); (2) the module's own top-
+  levels (`moduleTerms`; detail from TolerantCheck.types); (3) imported
+  names in the file's scope (the ModuleScope the check built; detail
+  from env); sortText ranks locals > own > imported; (4) after `import `
+  or `import X.`: module names from the loaded modules and the `.e`
+  files under the module root; (5) after `Module.`: that module's
+  exports; (6) keywords.  Prefix-filtered SERVER-side (a Prelude-
+  importing file has thousands of names — measure the unfiltered
+  payload once and record it); trigger character `.`.  Staleness
+  accepted: a binder typed since the last debounced check is not
+  offered until that check lands (docs/lsp.md says so).  LATENCY:
+  completion on Report.e answers in < 50 ms server-side (the log line
+  prints it); over that is a bug, not a budget.  lsp-smoke: fixture
+  `Complete.e` — an arg offered inside its function and not outside; a
+  where-bound offered in the body only; own top-level; an imported name
+  with its type; `import La` offers the Layout modules; `Bool.` offers
+  Bool's exports; a keyword; a broken file completes from its healthy
+  part; a request during boot answers an empty list, not null.
+
+- [ ] **6.6 Quick fixes (textDocument/codeAction).**  (a) ADD IMPORT: on
+  an undefined-term note (Note.spelling, carried since 5.4), candidates
+  = loaded modules exporting that spelling (termNames origins) ∪ open
+  siblings declaring it; one `quickfix` action per candidate, editing
+  the existing `import M (...)` list when M is already imported with a
+  list, else inserting `import M (name)` after the last import (after
+  the header when there are none); `diagnostics` set to the note.
+  (b) ADD TYPE SIGNATURE: on an implicit top-level binding whose group
+  has no sig (surface tree) and whose TolerantCheck type exists: insert
+  `f : <type>` on the line above the first equation, same indentation;
+  also a `source`-kind action for the whole file ("add all missing
+  signatures").  The rendering must PARSE BACK; Decision (e) says how
+  that is verified: a one-off sweep over the 180 files inserting the
+  inferred signature for every unsigned top-level and re-running the
+  tolerant check on the copy — record insertions, clean re-checks and
+  the failing shapes (renderer bugs; G1's kind-meta entropy is the
+  known one).  SHIP BAR: ≥ 95% clean; the failing shapes become a
+  renderer ticket, listed here.  lsp-smoke: fixture `Fix.e` — an
+  undefined `not` offers "import Bool (not)" whose edit, applied by the
+  client script and re-sent as didChange, clears the diagnostic; a name
+  exported by two modules offers two actions; an unsigned binding
+  offers a signature whose applied edit re-checks clean; a signed
+  binding offers none.
+
+- [ ] **6.7 Editor wiring, docs, demo.**  VS Code: the client library
+  serves completion/rename/references/symbols/codeAction on its own —
+  add the completion trigger character, check the `ermine` fence on
+  hover markdown still renders, rebuild the vsix.  Eglot: verify over
+  the scripted transcript (no code).  docs/lsp.md rewritten: the new
+  feature list, the current counts, a RE-MEASURED latency table (round
+  trip, worst-case request wait during a check, completion time), and
+  the staleness/coverage statements from Decisions (c)(d).  Record the
+  G3 demo transcript under "Gate evidence (G3)".
+
+**GATE G3**: lsp-smoke green with the new fixtures (Locals, Refs, Decls
+symbols, Complete, Fix, BadImport); Tier 0 green; Tier 2 = full
+`core/test` ALONE on the tree, green — and deterministic after 6.0 (its
+three runs recorded); REPL goldens and TestReplDifferential BYTE-
+UNCHANGED (batch strictness frozen); TestTolerantRead's 180-file
+agreement property green; the 6.2 perf line recorded (interleaved A/B,
+within budget, or the item parked with its number); the 6.6 sweep
+numbers recorded; boot 129; no `.ei` droppings in tracker/lsp-tests.
+STOP the loop and summarize for sign-off before any Stage 4 planning.
+
 ## Blocked / Awaiting
 
 **GATE G1 — awaiting sign-off (2026-08-30).** Stage 1 checklist complete
@@ -596,6 +922,16 @@ list unchanged below.  Say the word to open Stage 2 (fused-machinery
 deletion + the debt list).
 
 (empty — G0 signed off 2026-08-30, user: “keep going”)
+
+**PARKED design fork (2026-09-09; does NOT block Stage 3): checks on a
+worker thread.**  Decision 3 keeps dispatch single-threaded, so a hover
+or completion that arrives during a check waits for it (~1.3 s worst
+case on Report.e; G3 records the measured figure).  A worker design must
+answer, before Stage 4 considers it: the SessionEnv copy is made on the
+dispatch thread and then owned by exactly one thread; `Session.depCache`
+is process-global and mutated by Documents.put/drop mid-check; the
+Supply is shared; the Documents map is read by the sibling loader while
+the check runs.  Not undertaken in Stage 3.
 
 ## Gate evidence (G0, recorded 2026-08-30)
 
@@ -1715,6 +2051,29 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   differ from the pre-fix run once timings are normalised, lsp-smoke 181
   (98 + 83 new), repl-smoke 7/7 with the five old goldens still
   unmodified, boot 129 in 12.8s.
+
+- 2026-09-09 (STAGE 3 PLANNED — no code).  G2 signed off by the user
+  today.  Read first: the status line, Stage 2 + GATE G2, the post-G1
+  debt list (all eight done), the 2026-09-08/09 LSP-FFI entries
+  (committed; a detour, not Stage 3), TICKET-perf-type-inference.md and
+  GATE-POLICY.md.  Re-measured lsp-smoke at planning: 185 PASS, no .ei
+  droppings.  Three findings shaped the plan: (1) the hover-on-locals
+  gate was a LATENCY premise that 5.4 dissolved — TolerantCheck infers
+  every SCC in its own SubstEnv and Lower types every binder with a
+  fresh meta, so local types are one substType per binder inside a
+  block that already runs (6.2, with a measured budget); (2) the perf
+  loop has moved neither target, so no REQUEST path may add work —
+  everything answers from the last check's tables; (3) core/test is
+  intermittent (F4 review R-1), and G3 is a Tier-2 gate, so making the
+  suite deterministic is 6.0 — re-scoped the same day, after the user
+  asked whether the flake is fixable: a code read could not confirm
+  R-1's depCache-without-lock mechanism (nothing on that path can drop
+  the seeded Test entry from loadedModules), so 6.0 is now pin-first
+  with a probe, fix against what fires, and a fall back to running the
+  module-loading suites serially if nothing does.  Checklist 6.0-6.7 + GATE G3 written
+  under "Stage 3"; Stage-3 Decisions (a)-(g); the worker-thread check
+  parked under Blocked/Awaiting.  STOPPED for the user's review of the
+  plan before implementing anything.
 
 ## Gate evidence (G2, recorded 2026-08-31)
 
