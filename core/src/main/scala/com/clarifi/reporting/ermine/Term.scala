@@ -219,6 +219,7 @@ object Term {
       case l@Let(_, is, es, b) => (termVars(is) ++ termVars(es) ++ vars(b)) -- l.bound
       case Case(_, e, alts)    => (vars(e) ++ termVars(alts))
       case Var(v)              => Vars(v)
+      case Remember(_, e)      => vars(e)
       case _                   => Vars()
     }
     def sub(ks: PartialFunction[KindVar,Kind], ts: PartialFunction[TypeVar, Type], ms: PartialFunction[TermVar, TermVar], tm: Term): Term = tm match {
@@ -232,6 +233,7 @@ object Term {
         case Some(vp) => Var(vp)
         case None     => tm
       }
+      case Remember(i, e)      => Remember(i, sub(ks, ts, ms, e))
       case _                   => tm
     }
   }

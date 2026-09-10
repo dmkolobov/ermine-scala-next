@@ -10,6 +10,7 @@ import com.clarifi.reporting.ermine.Term._
 import com.clarifi.reporting.ermine.syntax.Statement.{ gatherBindings, checkBindings }
 import com.clarifi.reporting.ermine.parsing.TermNameParsers.{
   bindFixity, bindName, op, termName, termVar, termOpVar }
+import com.clarifi.reporting.ermine.parsing.LocalBlocks
 import com.clarifi.reporting.ermine.parsing.PatternParsers.{ pattern, patternL0 }
 import com.clarifi.reporting.ermine.parsing.StatementParsers.{ bindingStatement }
 import com.clarifi.reporting.ermine.parsing.TypeParsers._
@@ -225,20 +226,24 @@ object TermParsers {
     // _ <- keyword("let")
     _ <- leftLet
     bgLoc <- loc
+    _ <- LocalBlocks.open // let-bound names shadow the surrounding scope until the block closes
     bs <- laidout("let binding", bindingStatement)
     (is, ss) = gatherBindings(bs)
 //    bg <- mkBindingGroup(bgLoc, is, ss)
     p <- checkBindings[Parser](bgLoc, is, ss) // Annotation required here because of kind mismatch
     _ <- p.distinct(bgLoc)
+    // where a binding's rhs referenced a shadowed outer variable before the
+    // shadowing binding was reached, rewrite it to the block's variable
+    // (the whole block scopes over every rhs, letrec-style)
+    sh0 <- LocalBlocks.shadows
+    sh <- LocalBlocks.checkShadows(bgLoc, sh0, termVars(p.extract._1) ++ termVars(p.extract._2))
     _ <- right // keyword("in")
-    body <- term << p.unbind // p.unbind is just unit(()) - checkBindings isn't setting unbind, so it's using the default argument.
-    // unbind let-bound vars
-    l = termNames
-    curBS <- gets(termNames.get(_))
-    letBS = is.map(i=>i.v.name)
-                  .flatten
-    _ <- modify(l.set(_, curBS -- letBS))
-  } yield Let(letLoc,p.extract._1,p.extract._2,body)
+    body <- term
+    _ <- LocalBlocks.close // restore what the let-bound names meant outside
+  } yield Let(letLoc, rewriteShadowed(sh, p.extract._1), rewriteShadowed(sh, p.extract._2), body)
+
+  private def rewriteShadowed[A](sh: Map[TermVar, TermVar], bs: List[A])(implicit A: HasTermVars[A]): List[A] =
+    if (sh.isEmpty) bs else subTerm(sh, bs)
 
   /** Parser for do ... desugaring. */
   def doMonad: Parser[Term] = for {

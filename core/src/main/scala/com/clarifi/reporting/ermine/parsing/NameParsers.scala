@@ -110,6 +110,33 @@ abstract class NameParser {
     )
   }
 
+  /** A name in binding position: always answers the Local form, since a
+    * binder introduces a name rather than referencing one. `m` is consulted
+    * only to recover the fixity of a bare operator; a global answer is
+    * localized instead of rejected, so binders may shadow imports. */
+  def bindingName(m: PartialFunction[Local,List[Name]]): Parser[Local] = {
+    def lookup(n: Local): Parser[Local] = m.lift(n) match {
+      case None => unit(n)
+      case Some(List(x)) => unit(x.local)
+      case Some(xs) => fail("Ambiguous reference: " + xs.toString)
+    }
+    ident |
+    paren(
+      (keyword("prefix") >> prec.optional ++ op).flatMap({
+        case Some(n) ++ r => unit(prefix(r,n))
+        case None ++ r => lookup(prefix(r))
+      }) |
+      (keyword("postfix") >> prec.optional ++ op).flatMap({
+        case Some(n) ++ r => unit(postfix(r,n))
+        case None ++ r => lookup(postfix(r))
+      }) |
+      (keyword("infixl") >> prec map2 op)((n,r) => infix(r,n,AssocL)) |
+      (keyword("infixr") >> prec map2 op)((n,r) => infix(r,n,AssocR)) |
+      (keyword("infix")  >> prec map2 op)((n,r) => infix(r,n,AssocN)) |
+      op.flatMap(r => lookup(infix(r)))
+    )
+  }
+
   /** Bind `n` to `v` in outer parser, reverse in inner. */
   def bindName[A](n: Local, v: V[A], l: Lens[ParseState, Map[Name, V[A]]]): Parser[Parser[Unit]] = {
     val lp = l member n

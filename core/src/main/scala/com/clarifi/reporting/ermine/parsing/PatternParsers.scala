@@ -21,23 +21,26 @@ object PatternParsers {
     a = V(loc.inferred, id, None, Bound, Star(loc.inferred))
   } yield Annot(loc.inferred, List(), List(a), VarT(a))
 
+  // A pattern variable is a binder: it may share a name with (and shadow) an
+  // import or an enclosing binder.
   val patternVarName: Parser[Local] = for {
     u <- get
-    p <- loc
-    n <- PatternVarParsers.localName(canonicalTerms get u)
-    r <- n match {
-      case n : Local => unit(n)
-      case _ => raise(p, "error: pattern variable shadows global binding " + n)
-    }
-  } yield r
+    n <- PatternVarParsers.bindingName(canonicalTerms get u)
+  } yield n
 
+  // Shadow the name in both termNames and canonicalTerms, so uses in the
+  // binder's scope resolve to the pattern variable rather than to whatever
+  // the name meant outside; unbinding restores both.
   def mkLocalPatternVar(p: Loc, n: Local, a: Annot): Parser[Localized[VarP]] = for {
     id <- freshId
     l = termNames.member(n)
+    c = canonicalTerms.member(n)
     v : PatternVar = V(p, id, Some(n), Bound, a)
     r = for {old <- gets(l.get(_))
+             oldc <- gets(c.get(_))
              _ <- modify(l.set(_, Some(v.map(_.body)))) // should we store PatternVar?
-           } yield modify(l.set(_, old))
+             _ <- modify(c.set(_, Some(List(n))))
+           } yield modify(l.set(_, old)) >> modify(c.set(_, oldc))
     u <- r
   } yield Localized(VarP(v), List(n), u, r)
 
