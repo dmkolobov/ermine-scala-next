@@ -278,11 +278,23 @@ def main():
     check("def where-local -> binder", r is not None
           and r["uri"] == uri("Nav.e")
           and r["range"]["start"] == {"line": 9, "character": 18}, repr(r))
-    check("hover where-local -> null (perf ticket)", hover("Nav.e", 9, 5) is None)
+    # 6.2: the where-local answers its type now, at its use and at its
+    # def-site.  Before 6.2 both were null ("perf-ticket territory").
+    r = hover("Nav.e", 9, 5)             # `local1` in `sq = local1`
+    check("hover where-local : Int", r is not None
+          and r["contents"]["value"].strip().splitlines()[1] == "local1 : Int", repr(r))
+    r = hover("Nav.e", 9, 18)            # its def-site in the where block
+    check("hover where-local at its def-site", r is not None
+          and r["contents"]["value"].strip().splitlines()[1] == "local1 : Int", repr(r))
     r = hover("Nav.e", 8, 0)  # sig mention hovers via the same binder
     check("hover sig sq : Int", r is not None
           and "Int" in r["contents"]["value"], repr(r))
-    check("hover local x -> null", hover("Nav.e", 5, 10) is None)
+    # An equation's ARGUMENT: not from its own meta (Lower drops that into
+    # an `Annot`) but from `twice`'s own type, split by its arity --
+    # tracker/loopmodel/LSP3-6.2-LOCALS.md.
+    r = hover("Nav.e", 5, 10)
+    check("hover arg x : a (from the head's arity)", r is not None
+          and r["contents"]["value"].strip().splitlines()[1] == "x : a", repr(r))
 
     # --- S5 review Q-1: the editor must show the type the compiler PUBLISHES ---
     # `TolerantCheck.checkWith` is the editor's copy of the module's top-level
@@ -768,6 +780,100 @@ def main():
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Edit.e")}})
     check("Edit.e cleared on close", client.diagnostics_for(uri("Edit.e")) == [])
 
+    # --- 6.2: types at every binder the check can reach, kinds on type
+    # names.  A local's type comes from `TolerantCheck.Result.locals`,
+    # joined to the occurrence by the renamer binder's DEF-SITE; a type
+    # name's kind comes from its `Con`'s kind schema.  What is NOT here
+    # is as pinned as what is: an unsigned pattern binder (arg, case,
+    # do) answers null, by the mechanism the report names.
+    def hoverline(name, line, char):
+        """The `spelling : type` line inside the fenced hover block."""
+        r = hover(name, line, char)
+        if r is None:
+            return None
+        return r["contents"]["value"].strip().splitlines()[1]
+
+    open_doc("Locals.e")
+    locals_ds = client.diagnostics_for(uri("Locals.e"))
+    check("Locals.e clean", locals_ds == [], repr(locals_ds))
+
+    # a LET binder, at its def-site and at a use
+    check("hover let binder at its def-site",
+          hoverline("Locals.e", 10, 6) == "flag : Bool", hoverline("Locals.e", 10, 6))
+    check("hover let binder at a use",
+          hoverline("Locals.e", 11, 5) == "flag : Bool", hoverline("Locals.e", 11, 5))
+    # a WHERE binder, at its def-site and at a use
+    check("hover where binder at its def-site",
+          hoverline("Locals.e", 14, 8) == "keep : Bool", hoverline("Locals.e", 14, 8))
+    check("hover where binder at a use",
+          hoverline("Locals.e", 13, 15) == "keep : Bool", hoverline("Locals.e", 13, 15))
+    # a SIGNED where binder shows AS DECLARED (Decision a)
+    check("hover signed where binder",
+          hoverline("Locals.e", 18, 8) == "strict : Bool -> Bool", hoverline("Locals.e", 18, 8))
+    check("hover signed where binder at its signature",
+          hoverline("Locals.e", 17, 8) == "strict : Bool -> Bool", hoverline("Locals.e", 17, 8))
+    # a polymorphic where-bound helper: the metas its component
+    # generalised render as type VARIABLES, no `forall` on a local
+    check("hover polymorphic where binder",
+          hoverline("Locals.e", 21, 8) == "idy : a -> a", hoverline("Locals.e", 21, 8))
+    # an EQUATION's arguments, recovered from the head's own type
+    check("hover equation arg at its def-site",
+          hoverline("Locals.e", 23, 9) == "p : Bool", hoverline("Locals.e", 23, 9))
+    check("hover equation arg at a use",
+          hoverline("Locals.e", 23, 15) == "p : Bool", hoverline("Locals.e", 23, 15))
+    # ... and their LETTERS agree with the binding's own hover: `konst`
+    # is `forall a b. a -> b -> a`, so its arguments are `a` and `b` --
+    # never `a` and `a`, which two independent renderings would give.
+    check("hover konst's own type",
+          hoverline("Locals.e", 34, 0) == "Locals.konst : forall a b. a -> b -> a",
+          hoverline("Locals.e", 34, 0))
+    check("hover konst's first argument agrees with it",
+          hoverline("Locals.e", 34, 6) == "k : a", hoverline("Locals.e", 34, 6))
+    check("hover konst's second argument agrees with it",
+          hoverline("Locals.e", 34, 8) == "j : b", hoverline("Locals.e", 34, 8))
+    # the pattern binders the split cannot reach, absent BY MECHANISM
+    check("hover case binder -> null", hover("Locals.e", 26, 9) is None)
+    check("hover case-bound use -> null", hover("Locals.e", 26, 14) is None)
+
+    # TYPE NAMES hover with their KIND: imported, own `data`, own alias.
+    check("hover imported type Bool : *",
+          hoverline("Locals.e", 8, 11) == "Builtin.Bool : *", hoverline("Locals.e", 8, 11))
+    check("hover own data type at its head",
+          hoverline("Locals.e", 4, 5) == "Locals.Shape : *", hoverline("Locals.e", 4, 5))
+    check("hover own type alias has an arrow kind",
+          hoverline("Locals.e", 6, 5) == "Locals.Boxed : * -> *", hoverline("Locals.e", 6, 5))
+    # a MENTION of an own type resolves to its TyDef binder, and must
+    # agree with the declaration head about the kind
+    check("hover own data type at a mention",
+          hoverline("Locals.e", 31, 18) == "Locals.Shape : *", hoverline("Locals.e", 31, 18))
+
+    # A local whose definition MOVES answers at its new position, and the
+    # position it left answers null.
+    locals_src = (FIXTURES / "Locals.e").read_text()
+    check("hover last local before the edit",
+          hoverline("Locals.e", 29, 17) == "tail1 : Bool", hoverline("Locals.e", 29, 17))
+    change("Locals.e", locals_src.replace("\nlastLocal", "\n\nlastLocal"), 2)
+    check("Locals.e still clean after the insert",
+          client.diagnostics_for(uri("Locals.e")) == [])
+    check("hover last local at its NEW line",
+          hoverline("Locals.e", 30, 17) == "tail1 : Bool", hoverline("Locals.e", 30, 17))
+    check("hover last local at its OLD line -> null", hover("Locals.e", 29, 17) is None)
+    change("Locals.e", locals_src, 3)
+    check("Locals.e clean again", client.diagnostics_for(uri("Locals.e")) == [])
+
+    # A BROKEN file: the healthy statement's local still hovers, and a
+    # local of a component that DIED answers null (nothing typed it).
+    open_doc("LocalsBroken.e")
+    broken_ds = client.diagnostics_for(uri("LocalsBroken.e"))
+    check("LocalsBroken.e reports its two failures", len(broken_ds) == 2, repr(broken_ds))
+    check("hover a local in the healthy statement of a broken file",
+          hoverline("LocalsBroken.e", 4, 15) == "ok : Bool",
+          hoverline("LocalsBroken.e", 4, 15))
+    check("hover a local of a component that died -> null",
+          hover("LocalsBroken.e", 8, 12) is None)
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("LocalsBroken.e")}})
+    client.diagnostics_for(uri("LocalsBroken.e"))
+
     # --- fast mode: skip the type check, keep everything the read gives -
     def set_fast(on):
         client.notify("workspace/didChangeConfiguration",
@@ -797,6 +903,16 @@ def main():
           and r["range"]["start"] == {"line": 11, "character": 15}, repr(r))
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Decls.e")}})
     client.diagnostics_for(uri("Decls.e"))
+    # 6.2: a local's type is a product of the CHECK, so in fast mode the
+    # same hover that answered `flag : Bool` answers null -- nothing
+    # computes it.  A type name's KIND comes from the session's `Con`
+    # table, so an IMPORTED one still answers; this module's own types
+    # are installed by the check, so they do not.
+    client.notify("textDocument/didSave", {"textDocument": {"uri": uri("Locals.e")}})
+    client.diagnostics_for(uri("Locals.e"))
+    check("fast mode: hover on a local -> null", hover("Locals.e", 10, 6) is None)
+    check("fast mode keeps the imported type's kind",
+          hoverline("Locals.e", 8, 11) == "Builtin.Bool : *", hoverline("Locals.e", 8, 11))
 
     set_fast(False)
     client.notify("textDocument/didSave", {"textDocument": {"uri": uri("Bad.e")}})

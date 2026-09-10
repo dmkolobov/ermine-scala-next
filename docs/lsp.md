@@ -54,9 +54,37 @@ then serves:
 
 - **Hover** with the inferred or declared type for top-level, imported and
   declared names (`Nav.twice : forall a. a -> a`, `GroupBy.value : Field
-  (|value|) Double`), including at the declaration itself. Local binders and
-  type names answer null for now — the former gated on
-  `tracker/TICKET-perf-type-inference.md`, not on the protocol.
+  (|value|) Double`), including at the declaration itself.
+
+  A **type name** hovers with its KIND — `Builtin.Bool : *`,
+  `Locals.Boxed : * -> *` — imported and own alike, at a mention and at the
+  declaration head. Builtin type atoms (`->`, `*`, rho) have no constructor
+  and answer null.
+
+  A **local binder** hovers with the type the last check gave it, at its
+  def-site and at every use, with no `forall` and with still-free metas
+  rendered as type variables (`idy : a -> a`). Since 6.2 this covers `let`
+  and `where` bindings, every ARGUMENT of an equation (top-level or in a
+  `where`), and any binder carrying an explicit signature, which shows AS
+  DECLARED. An equation's arguments are read off the binding's own type by
+  its arity, so their type variables are the SAME ones the binding's hover
+  shows: `konst : forall a b. a -> b -> a` gives `k : a` and `j : b`.
+
+  It does NOT cover an unsigned pattern binder with no equation head over
+  it — a lambda's argument, a `case` alternative's binder, a `do` binder, or
+  a variable nested inside a constructor pattern. Their types exist only
+  inside `Subst.inferPatternType`, which mints a fresh variable per pattern
+  into a copy of the body and writes nothing back, so the editor answers
+  null rather than guessing (`tracker/loopmodel/LSP3-6.2-LOCALS.md`).
+
+  One caveat worth knowing: a local's type variables are named
+  independently of the ENCLOSING binding's, so the same letter in two
+  hovers need not be the same variable — a `where` helper may hover
+  `h : a -> a` inside a binding whose own hover calls that variable `b`.
+  Within one binding (its own type and its arguments) the letters do
+  agree.
+
+  In fast mode no local answers at all — nothing computes them.
 
 Logging goes to the file named by `ERMINE_LSP_LOG` (or `-Dermine.lsp.log`);
 stdout is reserved for the protocol.
@@ -71,8 +99,9 @@ this is about half the latency.
 Kept: every syntax, shadowing, unknown-operator and lowering diagnostic;
 go-to-definition, including to this module's own fields and constructors,
 whose positions come from the surface tree rather than from the check; hover
-on imported names. Lost: all type errors, the "unchecked" notes, import-list
-export requirements, and hover on the module's own definitions.
+on imported names, and on imported TYPE names' kinds. Lost: all type errors,
+the "unchecked" notes, import-list export requirements, hover on the module's
+own definitions, and hover on every local binder.
 
 ## Latency
 
@@ -113,7 +142,7 @@ For fast mode, add `:initializationOptions (:fastMode t)` to the server entry.
 
 `tracker/tools/lsp-smoke.sh` runs the scripted client
 (`tracker/tools/lsp-client.py`) against the fixtures in `tracker/lsp-tests/` —
-82 checks over everything above, including didChange without save, the
-sibling-buffer path, and fast mode. Run it with `core/test` and
+237 checks over everything above, including didChange without save, the
+sibling-buffer path, local and kind hovers, and fast mode. Run it with `core/test` and
 `repl-smoke.sh` before committing server changes
 (`tracker/LSP-ROADMAP.md`, Baselines).

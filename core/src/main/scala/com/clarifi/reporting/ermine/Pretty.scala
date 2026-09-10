@@ -378,6 +378,36 @@ object Pretty {
     ppKind(k)(q).runPrec(p)
   def prettyType(t: Type, p: Int = 11, q: Qualification = Unqualified): Document =
     ppType(t)(q).runPrec(p)
+
+  /** Render `t` with the LETTERS `scope` gives its variables.
+    *
+    * `run`/`runPrec` start every rendering from an empty `chosen` map and a
+    * fresh `varSupply`, so two independent calls both begin at `a`: printing
+    * `g : forall a b. a -> b -> a` and then printing its first argument type
+    * on its own says `a` for one variable and `a` for the other.  When the
+    * two Documents are two hovers on the same binding (LSP 6.2 / review
+    * R-4) that is not a cosmetic problem — it tells the reader that two
+    * different variables are the same one.
+    *
+    * So: warm the state up by rendering `scope` first and throw that
+    * Document away.  The warm-up mirrors `ppForall` exactly — `fresh` over
+    * `ks ++ ts` in order, then the constraints, then the body — rather than
+    * calling `ppType(scope)`, because `ppForall` wraps its body in `scope`,
+    * which DELETES those assignments again on the way out.  For anything
+    * that is not a `Forall` there is no such cleanup and rendering it
+    * outright is the whole warm-up. */
+  def prettyTypeIn(scope: Type, t: Type, p: Int = -1, q: Qualification = Unqualified): Document = {
+    val warm: Pretty[Unit] = scope match {
+      case Forall(_, ks, ts, cs, body) =>
+        for {
+          _ <- (ks ++ ts).traverse[Pretty, Name](fresh _)
+          _ <- ppType(cs)(q)
+          _ <- ppType(body)(q)
+        } yield ()
+      case s => ppType(s)(q) map (_ => ())
+    }
+    (for { _ <- warm; d <- ppType(t)(q) } yield d).runPrec(p)
+  }
   def prettyRuntime(e: Runtime, p: Int = 11, q: Qualification = Unqualified): Document =
     ppRuntime(e)(q).runPrec(p)
 

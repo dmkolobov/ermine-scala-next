@@ -1,7 +1,9 @@
 package com.clarifi.reporting
 
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
-import com.clarifi.reporting.ermine.rename.NewPipeline
+import com.clarifi.reporting.ermine.rename.{ NewPipeline, Renamer }
+import com.clarifi.reporting.ermine.surface.{ SClassStatement, SDatabaseBlock, SEquation,
+  SPat, SPAs, SPParen, SPSig, SPVar, SPrivateBlock, SStatement, Span }
 import com.clarifi.reporting.ermine.Pretty
 import com.clarifi.reporting.ermine.lsp.{ Diagnostics, Documents, Json, Resident }
 import com.clarifi.reporting.ermine.session.{ Printer, Session => S, SessionEnv, TolerantCheck }
@@ -42,6 +44,39 @@ object TestTolerantCheck extends Properties("Tolerant check") {
       val r = NewPipeline.readModuleTolerant("TC", src, mh)
       TolerantCheck.check(r.ps, r.module)
     }
+
+  /** As `check`, but asking for what only the editor path asks for
+    * (6.2): the local binder types.  `check` itself must never grow
+    * them — the batch entry's behaviour is frozen — which is what the
+    * "the batch entry collects nothing" property pins. */
+  private def checkLocals(body: String, imports: List[String] = Nil)
+      : (TolerantCheck.Result, Renamer.Result) =
+    fx.session { implicit s =>
+      implicit val su: Supply = fx.supply
+      implicit val con = fx.con
+      val mods = List("Function", "List", "Primitive") ++ imports
+      S.loadModules(mods)
+      val src = "module TC where\nimport Function\nimport List\nimport Primitive\n" +
+                imports.map("import " + _ + "\n").mkString + "\n" + body
+      val (_, mh) = S.parse(ModuleParsers.moduleHeader("TC"), ErParseState.mk("TC", src, "TC"))
+      val r = NewPipeline.readModuleTolerant("TC", src, mh)
+      (TolerantCheck.checkWith(r.ps, r.module, Map(), "", TolerantCheck.Cache.empty,
+                               wantLocals = true)._1, r.renamed)
+    }
+
+  /** A local's type AS HOVER WOULD RENDER IT, by def-site spelling —
+    * `scope` and all, so these properties pin the string the editor
+    * shows and not a second rendering of my own. */
+  private def render(l: TolerantCheck.LocalTy): String = l.scope match {
+    case Some(sc) => Pretty.prettyTypeIn(sc, l.ty).toString
+    case None     => Pretty.prettyType(l.ty, -1).toString
+  }
+
+  private def localsBySpelling(r: TolerantCheck.Result, rn: Renamer.Result): Map[String, String] =
+    rn.binders.values.flatMap { b =>
+      r.locals.get((b.defSite.startLine, b.defSite.startCol))
+        .map(l => b.spelling -> render(l))
+    }.toMap
 
   private def errors(r: TolerantCheck.Result) = r.notes.filter(_.severity == TolerantCheck.Error)
   private def infos(r: TolerantCheck.Result)  = r.notes.filter(_.severity == TolerantCheck.Information)
@@ -98,6 +133,153 @@ object TestTolerantCheck extends Properties("Tolerant check") {
       ((infos(r).size == 1) :| infos(r).map(_.report.linesIterator.take(1).mkString).toString)
   }
 
+  // ---- 6.2: types at every binder the collection can reach -----------
+  //
+  // THE MECHANISM, and its limit (tracker/loopmodel/LSP3-6.2-LOCALS.md).
+  // Lower gives every renamer binder ONE `V[Type]` whose type is a fresh
+  // meta; a zonk of that meta after inference is the binder's type.
+  // Inference constrains that meta for a BINDING HEAD (`let`, `where`,
+  // top level) -- `Subst.inferImplicitBindingTypes` subsumes it against
+  // the inferred type.  It does NOT for a PATTERN binder: Lower drops
+  // the meta when it builds the pattern (`VarP(v.map(_ => annotOf(..)))`)
+  // and `Subst.inferPatternType` mints a fresh one per occurrence into a
+  // local copy of the body.  So a LAMBDA arg, a `case` binder and a `do`
+  // binder are absent by MECHANISM, not by accident.
+  //
+  // An EQUATION's arguments are recovered anyway, without asking
+  // inference again (6.2 option 4, review R-2): `b.arity` patterns, and
+  // the head's own type is an arrow chain whose first `arity` domains
+  // ARE those arguments.  The properties below pin both sides of the
+  // remaining line, and the letters of the two hovers.
+
+  private val kindsBody =
+    "argEq a b = a && b\n" +
+    "\n" +
+    "letLocal x =\n" +
+    "  let y = x && True\n" +
+    "  in y\n" +
+    "\n" +
+    "whereLocal x = z\n" +
+    "  where z = x || False\n" +
+    "\n" +
+    "caseLocal p = case p of\n" +
+    "  Just q -> q\n" +
+    "  Nothing -> True\n" +
+    "\n" +
+    "lamArg = (w -> w && True)\n" +
+    "\n" +
+    "signedArg = (v : Bool) -> v\n" +
+    "\n" +
+    "asLocal l = case l of\n" +
+    "  whole@(h :: t) -> h\n" +
+    "  _ -> True\n" +
+    "\n" +
+    "polyWhere x = idy x\n" +
+    "  where idy u = u\n" +
+    "\n" +
+    "doLocal m ma = (do a <- liftDo ma\n" +
+    "                   unit (a && True)) m\n" +
+    "\n" +
+    "sigWhere x = sw x\n" +
+    "  where sw : Bool -> Bool\n" +
+    "        sw y = y && True\n"
+
+  private lazy val kinds: (TolerantCheck.Result, Renamer.Result) =
+    checkLocals(kindsBody, List("Bool", "Syntax.Do"))
+
+  property("6.2: every LET and WHERE binder gets a type") = {
+    val (r, rn) = kinds
+    val got = localsBySpelling(r, rn)
+    (r.notes.isEmpty :| ("the fixture must be clean: " +
+       r.notes.map(_.report.linesIterator.take(1).mkString).mkString(" ;; "))) &&
+    ((got.get("y") ?= Some("Bool")) :| s"let binder: $got") &&
+    ((got.get("z") ?= Some("Bool")) :| s"where binder: $got") &&
+    ((got.get("idy") ?= Some("a -> a")) :| s"polymorphic where binder: $got") &&
+    // A SIGNED `let`/`where` binding is a local ExplicitBinding after
+    // `assemble`'s `lowerLet`, and shows AS DECLARED (Decision a).
+    ((got.get("sw") ?= Some("Bool -> Bool")) :| s"signed where binder: $got")
+  }
+
+  property("6.2: the pattern binders the split cannot reach are absent") = {
+    // A LAMBDA argument, a `case` binder, a `do` binder and a var nested
+    // in a constructor pattern lower to pattern vars whose meta
+    // inference never touches, and no equation head's arity reaches
+    // them.  A wrong type is worse than none, so they are absent rather
+    // than guessed.  If this property starts failing because they are
+    // PRESENT, the collection grew a new mechanism and the report must
+    // say which.
+    val (r, rn) = kinds
+    val got = localsBySpelling(r, rn)
+    val absent = List("q", "w", "whole", "h", "t")
+    ((absent.filter(got.contains) ?= Nil) :| s"unexpectedly present: $got") &&
+    // ... and the renamer DID record them, so the absence is about the
+    // collection and not about an empty binder table (anti-vacuity).
+    ((rn.binders.values.count(b => b.kind == Renamer.Arg) >= 6) :|
+      s"only ${rn.binders.values.count(b => b.kind == Renamer.Arg)} Arg binders") &&
+    ((rn.binders.values.exists(_.kind == Renamer.CaseBound)) :| "no CaseBound binder") &&
+    ((rn.binders.values.exists(_.kind == Renamer.DoBound)) :| "no DoBound binder")
+  }
+
+  property("6.2: an EQUATION's arguments get their types from the head") = {
+    val (r, rn) = kinds
+    val got = localsBySpelling(r, rn)
+    ((got.get("a") ?= Some("Bool")) :| s"argEq's first argument: $got") &&
+    ((got.get("b") ?= Some("Bool")) :| s"argEq's second argument: $got") &&
+    // ... at every depth: a `where` equation's own arguments too
+    ((got.get("u") ?= Some("a")) :| s"the where-helper's argument: $got")
+  }
+
+  property("6.2: one binding's argument letters agree with its own type") = {
+    // Review R-4.  `g : forall a b. a -> b -> a` must give `x : a` and
+    // `y : b`.  Two independent `prettyType` calls would say `a` and `a`
+    // — the same letter for two different variables, which is worse than
+    // no answer.  `Pretty.prettyTypeIn` warms the letter state up with
+    // the binding's own type first.
+    val (r, rn) = checkLocals("g x y = x\n")
+    val got = localsBySpelling(r, rn)
+    val head = r.types.get("g").map(t => Pretty.prettyType(t, -1).toString)
+    ((head ?= Some("forall a b. a -> b -> a")) :| s"g's own type: $head") &&
+    ((got.get("x") ?= Some("a")) :| s"g's first argument: $got") &&
+    ((got.get("y") ?= Some("b")) :| s"g's second argument: $got")
+  }
+
+  property("6.2: an argument the split cannot see stays absent") = {
+    // Conservative by construction: a var inside a constructor pattern
+    // has a type this arithmetic does not know, a lambda's argument is
+    // not an equation head's argument at all.
+    val (r, rn) = checkLocals(
+      "conP (Just q) = q\n" +
+      "lam = (w -> w)\n", List("Bool"))
+    val got = localsBySpelling(r, rn)
+    ((!got.contains("q")) :| s"a var inside a ConP was guessed: $got") &&
+    ((!got.contains("w")) :| s"a lambda argument was guessed: $got")
+  }
+
+  property("6.2: an explicit local signature shows as declared") = {
+    // `(v : Bool) -> v`: Lower puts the DECLARED type in the pattern
+    // var's annot, so this one needs no inference at all — Decision (a).
+    val (r, rn) = kinds
+    val got = localsBySpelling(r, rn)
+    (got.get("v") ?= Some("Bool")) :| s"signed lambda parameter: $got"
+  }
+
+  property("6.2: a component that died contributes no locals") = {
+    val (r, rn) = checkLocals(
+      "broken = (let bad = 1 True in bad)\n" +
+      "healthy = (let good = 2 in good)\n")
+    val got = localsBySpelling(r, rn)
+    ((errors(r).size == 1) :| errors(r).map(_.report.linesIterator.take(1).mkString).toString) &&
+    ((!got.contains("bad")) :| s"a dead component's local was published: $got") &&
+    ((got.get("good") ?= Some("Int")) :| s"the healthy component's local: $got")
+  }
+
+  property("6.2: the batch entry collects nothing new") = {
+    // BATCH FROZEN: `check` is what everything but the editor calls, and
+    // `wantLocals` defaults to false there.
+    val r = check("letLocal x =\n  let y = x\n  in y\n")
+    (r.locals.isEmpty :| s"check() collected ${r.locals.size} locals")
+  }
+
   // ---- 5.5: per-SCC reuse --------------------------------------------
   // The cache must be invisible: whatever it hands back must equal what
   // a cold check of the same text would have said.
@@ -113,11 +295,19 @@ object TestTolerantCheck extends Properties("Tolerant check") {
       val r = NewPipeline.readModuleTolerant("TC", src, mh)
       val (groups, scopeKey) =
         TolerantCheck.keys(src, mh.name, mh.imports.toList.sortBy(_._1).toString, "")
-      TolerantCheck.checkWith(r.ps, r.module, groups, scopeKey, cache)
+      // 6.2 asks the reuse question of the locals too, so the reuse
+      // properties below must run the path that carries them.
+      TolerantCheck.checkWith(r.ps, r.module, groups, scopeKey, cache, wantLocals = true)
     }
 
   private def rendered(r: TolerantCheck.Result): Map[String, String] =
     r.types.map { case (k, t) => k -> Pretty.prettyType(t, -1).toString }
+
+  /** 6.2, Decision (b): a reused entry carries its component's locals,
+    * POSITIONS INCLUDED — so warm and cold must agree on the def-site
+    * keys, not merely on the types. */
+  private def renderedLocals(r: TolerantCheck.Result): Map[(Int, Int), String] =
+    r.locals.map { case (k, l) => k -> render(l) }
 
   /** Check `before`, then check `after` twice — once carrying the cache
     * `before` produced, once cold — and require the two to agree. */
@@ -129,12 +319,17 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     ((warm.notes.map(n => (n.severity, n.report)) ?= cold.notes.map(n => (n.severity, n.report)))
        :| s"$what: notes differ") &&
     ((rendered(warm) ?= rendered(cold)) :| s"$what: types differ") &&
+    ((renderedLocals(warm) ?= renderedLocals(cold)) :| s"$what: locals differ") &&
     (if (expectReuse) (warm.reused > 0) :| s"$what: nothing was reused (vacuous)"
      else (warm.reused == 0) :| s"$what: reused ${warm.reused}, expected a full drop")
   }
 
   private val base =
-    "one = 1\ntwo = one\nthree : Int\nthree = two\nfour = three\n"
+    // `six` carries a LOCAL, so the invisibility set is not vacuous on
+    // the 6.2 half: without a let/where binder anywhere in the module
+    // "warm locals == cold locals" would compare two empty maps.
+    "one = 1\ntwo = one\nthree : Int\nthree = two\nfour = three\n" +
+    "six = (let loc = four in loc)\n"
 
   property("reuse is invisible: an edit inside one definition") =
     invisible("body edit", base, base.replace("two = one", "two =  one"))
@@ -270,6 +465,102 @@ object TestTolerantCheck extends Properties("Tolerant check") {
       // pass for the worst possible reason.
       ((seen >= 40) :| s"only $seen diagnostic(s) inspected over ${files.size} files") &&
       ((bad.isEmpty) :| s"${bad.size} diagnostic(s) at 0:0: ${bad.take(6).mkString(" ;; ")}")
+    }
+  }
+
+  /** The EQUATION-ARGUMENT class the split must cover completely: every
+    * argument pattern of a top-level or `where` equation that is a bare
+    * variable (parens and a signature do not change that; an `as`
+    * pattern's OUTER var is one too).  A `let` inside an expression is
+    * not walked here — the statement tree does not reach into terms — so
+    * its arguments count as residual rather than as required. */
+  private def eqArgSpans(ss: List[SStatement]): List[(String, Span)] = {
+    def bare(p: SPat): List[(String, Span)] = p match {
+      case SPVar(n)       => List(n.spelling -> n.span)
+      case SPAs(_, n, _)  => List(n.spelling -> n.span)
+      case SPParen(_, i)  => bare(i)
+      case SPSig(_, i, _) => bare(i)
+      case _              => Nil
+    }
+    ss.flatMap {
+      case SEquation(_, _, as, _, wh) =>
+        as.flatMap(bare) ++ wh.toList.flatMap(w => eqArgSpans(w.statements))
+      case SPrivateBlock(_, ss2)     => eqArgSpans(ss2)
+      case SDatabaseBlock(_, _, ss2) => eqArgSpans(ss2)
+      case x: SClassStatement        => eqArgSpans(x.body)
+      case _                         => Nil
+    }
+  }
+
+  property("6.2: the 253-file sweep — every reachable local binder has a type") = secure {
+    // THE SWEEP.  For every clean corpus module, two classes must be
+    // COMPLETE — no misses, not "few":
+    //   (1) binding heads: LetBound and WhereBound;
+    //   (2) equation arguments: every bare-variable argument pattern of a
+    //       top-level or `where` equation (`eqArgSpans` above).
+    // Everything else is the residual the item documents, and it is a
+    // CLASS, not a number: a binder that lowers to a pattern var and has
+    // no equation head's arity over it — a lambda argument, a `case`
+    // binder, a `do` binder, a var nested in a constructor or product
+    // pattern, and a `let`-in-a-term equation's arguments.  Those are
+    // counted and printed.
+    residentLock.synchronized {
+      val docs = new Documents
+      val files = corpusFiles
+      var checked = 0
+      val misses = scala.collection.mutable.ListBuffer.empty[String]
+      val seen = scala.collection.mutable.Map.empty[String, Int].withDefaultValue(0)
+      val hit  = scala.collection.mutable.Map.empty[String, Int].withDefaultValue(0)
+      files.foreach { f =>
+        val c =
+          try Some(resident.checkFile(f.toPath, docs))
+          catch { case Death(_, _) => None }
+        c foreach { ch =>
+          // Only a module the editor path checked CLEANLY can be
+          // expected to have typed every binder: a component that failed
+          // or went unchecked legitimately contributes none.
+          if (!ch.notes.exists(_.severity == TolerantCheck.Error)) {
+            checked += 1
+            val required = eqArgSpans(ch.module.statements)
+              .map { case (sp, s) => (s.startLine, s.startCol) }.toSet
+            ch.renamed.binders.values.foreach { b =>
+              val local = b.kind match {
+                case Renamer.Arg | Renamer.LetBound | Renamer.WhereBound |
+                     Renamer.DoBound | Renamer.CaseBound => true
+                case _ => false
+              }
+              if (local) {
+                val at = (b.defSite.startLine, b.defSite.startCol)
+                val k  = if (b.kind == Renamer.Arg && required(at)) "Arg(equation)"
+                         else if (b.kind == Renamer.Arg) "Arg(other)"
+                         else b.kind.toString
+                seen(k) = seen(k) + 1
+                if (ch.locals.contains(at)) hit(k) = hit(k) + 1
+                else if (b.kind == Renamer.LetBound || b.kind == Renamer.WhereBound ||
+                         k == "Arg(equation)")
+                  misses += "%s:%d:%d %s (%s)".format(
+                    f.getName, b.defSite.startLine, b.defSite.startCol, b.spelling, k)
+              }
+            }
+          }
+        }
+      }
+      val summary = seen.keys.toList.sorted
+        .map(k => "%s %d/%d".format(k, hit(k), seen(k))).mkString(", ")
+      println("### 6.2 sweep: " + checked + " clean modules of " + files.size +
+              " — " + summary + "; required-class misses " + misses.size)
+      ((files.size >= 180) :| s"only ${files.size} corpus files") &&
+      ((checked >= 150) :| s"only $checked modules checked cleanly") &&
+      // anti-vacuity: the sweep must actually be looking at binders
+      ((seen("LetBound") + seen("WhereBound") >= 200) :|
+        s"only ${seen("LetBound") + seen("WhereBound")} binding-head locals seen: $summary") &&
+      // and at the equation-argument class too, or an empty `eqArgSpans`
+      // would pass at 0 misses covering nothing (6.2 review S-3)
+      ((seen("Arg(equation)") >= 2000) :|
+        s"only ${seen("Arg(equation)")} equation-argument binders seen: $summary") &&
+      ((misses.isEmpty) :|
+        "%d binder(s) of a REQUIRED class with no type: %s".format(
+          misses.size, misses.take(10).mkString(" ;; ")))
     }
   }
 

@@ -132,7 +132,8 @@ final class Resident(val log: String => Unit) {
                            module: SModule, renamed: Renamer.Result,
                            diags: List[NewPipeline.Diag],
                            notes: List[TolerantCheck.Note],
-                           types: Map[String, Type])
+                           types: Map[String, Type],
+                           locals: Map[(Int, Int), TolerantCheck.LocalTy])
 
   /** Check one file against a fresh env copy, resolving imports first
     * against the file's own directory (workspace siblings), then the
@@ -328,7 +329,14 @@ final class Resident(val log: String => Unit) {
 
     val (checked, cache) =
       if (fastMode) (TolerantCheck.Result(Nil, Map()), docs.cacheFor(path.toString))
-      else TolerantCheck.checkWith(r.ps, r.module, groups, scopeKey, docs.cacheFor(path.toString))
+      // 6.2: `wantLocals` is asked for HERE and nowhere else -- the batch
+      // entry `TolerantCheck.check` keeps the default false, so the walk
+      // and its zonks exist only on the editor path.  In fast mode
+      // nothing checks, so `locals` is empty and hover on a local
+      // answers null, exactly as it does for this module's own top
+      // levels.
+      else TolerantCheck.checkWith(r.ps, r.module, groups, scopeKey,
+                                   docs.cacheFor(path.toString), wantLocals = true)
     // In fast mode the cache is carried forward untouched, so switching
     // back does not start cold.
     docs.putCache(path.toString, cache)
@@ -385,7 +393,8 @@ final class Resident(val log: String => Unit) {
     // failure in both modes, and silence about it in fast mode would be
     // a file full of unexplained undefined names.
     Checked(e, mh.name, r.surface, r.renamed, r.diagnostics,
-            importNotes ++ (if (fastMode) Nil else published), checked.types)
+            importNotes ++ (if (fastMode) Nil else published), checked.types,
+            checked.locals)
   }
 
   private def errorStatements(ss: List[SStatement]): List[SErrorStatement] = ss.flatMap {
