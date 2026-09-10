@@ -21,6 +21,26 @@ object ErmineFixture {
   /** Serializes dynamic `Literal` loads: their dep-cache key is the
     * module name, shared across every fixture in the process. */
   val literalLock = new Object
+
+  /* RULE FOR EVERY SUITE (LSP Stage 3 item 6.0, tracker/loopmodel/LSP3-6.0-HYGIENE.md):
+   * never `System.setProperty` a flag that Session reads PER CALL — `ermine.loadInSeries`
+   * above all (`Session.loadModules` re-reads it every time; its series branch asks the
+   * loader for every name, including the sourceless `Test` and `Builtin`, so a 16 ms flip
+   * killed whichever concurrent property was loading: F4 review R-1).  The suite runs in
+   * ONE JVM with classes in parallel.  To exercise a schedule, call it (`Session.
+   * loadModulesInSeries`); to flip a read-once flag, go through TestInterfaceKey.withProps,
+   * whose whitelist names the only properties that are safe to set at runtime. */
+
+  /** Delete a staged temp workspace, deepest entry first.  Every suite that
+    * calls `Files.createTempDirectory` must run this from a `finally`: without
+    * it `core/test` leaves a tree in the system temp directory on every run
+    * (F4 review R-5). */
+  def deleteTree(p: java.nio.file.Path): Unit =
+    try {
+      if (java.nio.file.Files.exists(p))
+        java.nio.file.Files.walk(p).sorted(java.util.Comparator.reverseOrder[java.nio.file.Path]())
+          .forEach(q => try java.nio.file.Files.delete(q) catch { case _: Throwable => () })
+    } catch { case _: Throwable => () }
 }
 
 /** I am not thread-safe, so use a separate one of me per `Properties`

@@ -81,6 +81,18 @@ object TestInterfaceKey extends Properties("Interface key") {
     (e.loadedModules.get("KeyA"), e.loadedModules.get("KeyB"))
   }
 
+  /** `load`, but on the SERIES schedule — what `-Dermine.loadInSeries=true`
+    * selects inside `Session.loadModules`, reached by calling it rather than by
+    * setting a process-global property (see step (3) below). */
+  private def loadInSeries(dir: Path)(implicit su: scalaparsers.Supply)
+      : (Option[CheckMethod], Option[CheckMethod]) = {
+    implicit val printer: Printer = Printer.ignore
+    Session.depCache.clear()
+    val e = session(dir)
+    Session.loadModulesInSeries(List("KeyB"))(e, su, printer)
+    (e.loadedModules.get("KeyA"), e.loadedModules.get("KeyB"))
+  }
+
   private def slurp(p: Path): String = new String(Files.readAllBytes(p), UTF_8)
   private def spit(p: Path, s: String): Unit = Files.write(p, s.getBytes(UTF_8))
 
@@ -94,7 +106,31 @@ object TestInterfaceKey extends Properties("Interface key") {
     spit(p, h.map(_ + "\n").getOrElse("") + body)
   }
 
+  /** The ONLY properties this file may flip, and why there is a list at all.
+    *
+    * `System.setProperty` is process-global; `core/test` runs in ONE JVM
+    * (`Test / fork := false`) with test classes in parallel, so a flag set here
+    * is set for every property ScalaCheck happens to be running at that instant.
+    * That is safe only for a flag read ONCE, into a `val`, at class
+    * initialisation — both of these are (`RowTrace.path` / `RowTrace.enabled`,
+    * forced below so the window cannot catch an uninitialised `RowTrace`).
+    *
+    * It is NOT safe for a flag some code re-reads per call.  `ermine.loadInSeries`
+    * is exactly that (`Session.loadModules` reads it on every call) and setting it
+    * here was the `Death: Module not found: 'Test'` flake that made `core/test`
+    * red one run in two — see LSP Stage 3 item 6.0 and
+    * `tracker/loopmodel/LSP3-6.0-HYGIENE.md`.  Anything of that kind must be
+    * reached by CALLING the code path, as `loadInSeries` above does. */
+  private val flippable = Set("ermine.rowTrace", "ermine.rowTrace.draws")
+
   private def withProps[A](kvs: (String, String)*)(a: => A): A = {
+    kvs.foreach { case (k, _) =>
+      if (!flippable(k))
+        sys.error("withProps: '" + k + "' is not in the read-once whitelist; setting it " +
+                  "would reach every concurrently running property (LSP 6.0)")
+    }
+    // force RowTrace's read-once vals before the window opens
+    com.clarifi.reporting.ermine.RowTrace.enabled
     val old = kvs.map { case (k, _) => (k, Option(System.getProperty(k))) }
     kvs.foreach { case (k, v) => System.setProperty(k, v) }
     try a
@@ -141,7 +177,9 @@ object TestInterfaceKey extends Properties("Interface key") {
     val eiA = dir.resolve("KeyA.ei")
     val eiB = dir.resolve("KeyB.ei")
 
-    ErmineFixture.literalLock.synchronized {
+    // R-5: the workspace goes away with the property, or `core/test` leaves one
+    // in the system temp directory on every run.
+    try ErmineFixture.literalLock.synchronized {
       // (1) COLD, configuration A: a full check that writes both interfaces, each
       //     carrying the running configuration's key as its first line.
       val cold = load(dir)
@@ -152,12 +190,20 @@ object TestInterfaceKey extends Properties("Interface key") {
       // (2) WARM under A: read back, no body inference.
       val warm = load(dir)
 
-      // (3) WARM under A with NON-KEY flags flipped: `loadInSeries` really does
-      //     change how the session loads (`Session.loadModules` reads it on every
-      //     call), and it must not invalidate the cache.
-      val warmFlipped = withProps(
-        "ermine.loadInSeries" -> "true",
-        "ermine.rowTrace"     -> "false")(load(dir))
+      // (3) WARM under A on the OTHER LOADER SCHEDULE: `-Dermine.loadInSeries=true`
+      //     really does change how the session loads, and it must not invalidate
+      //     the cache.  The schedule is selected by CALLING the series loader, not
+      //     by setting the property: `Session.loadModules` re-reads that property
+      //     on EVERY call, `System.setProperty` is process-global, and the suite
+      //     runs in ONE JVM with test classes in parallel (`Test / fork := false`)
+      //     — so setting it here put every concurrently running property onto
+      //     `loadModulesInSeries`, which asks the loader for every name in the
+      //     import map without consulting `loadedModules`, and the fixtures'
+      //     synthetic `Test` module has no source file.  That is the whole of the
+      //     `Death: Module not found: 'Test'` flake (F4 review R-1, LSP Stage 3
+      //     item 6.0, `tracker/loopmodel/LSP3-6.0-HYGIENE.md`).  Calling the
+      //     schedule directly tests the same thing and races nobody.
+      val warmFlipped = loadInSeries(dir)
 
       // (4) CONFIGURATION B: the file says it was written by another compiler.
       val other = Session.interfaceFormatVersion.toString + "|another+configuration"
@@ -188,5 +234,6 @@ object TestInterfaceKey extends Properties("Interface key") {
       (unkeyed ?= (Some(CheckMethod.Full), Some(CheckMethod.Full)))    :| s"unkeyed $unkeyed" &&
       (rekeyedA ?= Session.interfaceHeader)                            :| s"rekeyed $rekeyedA"
     }
+    finally ErmineFixture.deleteTree(dir)
   }
 }

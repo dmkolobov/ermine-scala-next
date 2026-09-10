@@ -75,8 +75,10 @@ object TestInterfaceRoundTrip extends Properties("Interface round-trip") {
     // the dep cache is process-global; deps cached by OTHER suites carry
     // their sessions' useInterface baked into the read closures (a
     // useInterface=false dep answers readInterface with None forever),
-    // which breaks the interface hash chain for our warm load — clear it
-    ErmineFixture.literalLock.synchronized {
+    // which breaks the interface hash chain for our warm load — clear it.
+    // R-5: the workspace goes away with the property, or `core/test` leaves one
+    // in the system temp directory on every run.
+    try ErmineFixture.literalLock.synchronized {
       Session.depCache.clear()
 
       val cold = session(dir)
@@ -98,5 +100,6 @@ object TestInterfaceRoundTrip extends Properties("Interface round-trip") {
       (warmAns ?= coldAns)                            :| s"warm $warmAns vs cold $coldAns" &&
       (coldAns._2 ?= 16)                              :| s"value ${coldAns._2}"
     }
+    finally ErmineFixture.deleteTree(dir)
   }
 }

@@ -184,21 +184,22 @@ object TestInterfaceConcreteRow extends Properties("Interface concrete row") {
     eis: List[File], rewritten: List[String])
 
   /** The staged corpus is ~3.5 MB, so it is DELETED rather than left in the
-    * system temp directory the way `TestInterfaceRoundTrip`'s and
-    * `TestInterfaceKey`'s (kilobyte) workspaces are.  Two properties share the
-    * one tree and either may run last, so the delete is reference-counted and
-    * runs from a `finally` in each. */
-  private val corpusUsers = new java.util.concurrent.atomic.AtomicInteger(2)
+    * system temp directory (R-5).
+    *
+    * FROM A SHUTDOWN HOOK, not from a `finally` in each property.  The tree is a
+    * `lazy val` shared by two properties, so a `finally` has to know when the LAST
+    * reader is done; the reference count that did that (initialised to 2, one per
+    * property) assumed each property is evaluated exactly once, which is true only
+    * at ScalaCheck's default one worker.  Raised to `-workers 4` for the item-6.0
+    * pinning runs, each `secure` property is evaluated once per worker, the count
+    * reached zero after the first two, and the tree was deleted under a reader
+    * still walking it: `NoSuchFileException: .../examples/Accumulate.ei`.  A hook
+    * cannot race a reader at all — it runs when the JVM is on its way out — and it
+    * also survives a property that dies before its `finally`. */
+  private def deleteTree(p: Path): Unit = ErmineFixture.deleteTree(p)
 
-  private def deleteTree(p: Path): Unit =
-    try {
-      if (Files.exists(p))
-        Files.walk(p).sorted(java.util.Comparator.reverseOrder[Path]())
-          .forEach(q => try Files.delete(q) catch { case _: Throwable => () })
-    } catch { case _: Throwable => () }
-
-  private def releaseCorpus(c: Corpus): Unit =
-    if (corpusUsers.decrementAndGet() <= 0) deleteTree(c.root)
+  private def deleteAtExit(root: Path): Unit =
+    java.lang.Runtime.getRuntime.addShutdownHook(new Thread(() => deleteTree(root), "ermine-corpus-cleanup"))
 
   /** Trees an earlier run left behind (before this cleanup existed, or after a
     * kill -9).  Only ones older than an hour, so a concurrent run's tree is
@@ -230,6 +231,7 @@ object TestInterfaceConcreteRow extends Properties("Interface concrete row") {
     implicit val printer: Printer = Printer.ignore
 
     val root = Files.createTempDirectory("ermine-ei-corpus")
+    deleteAtExit(root)
     sweepStaleCorpusTrees(root)
     val libD = root.resolve("modules")
     val exD  = root.resolve("examples")
@@ -367,8 +369,7 @@ object TestInterfaceConcreteRow extends Properties("Interface concrete row") {
     * so the module is `CheckMethod.Interface` on the second load and its `.ei`
     * is not rewritten.  Before the fix, 70 of them were rewritten forever. */
   property("every corpus interface warm-reads, and none is rewritten") = secure {
-    val c = corpus
-    try prop2(c) finally releaseCorpus(c)
+    prop2(corpus)
   }
 
   private def prop2(c: Corpus): Prop = {
@@ -407,8 +408,7 @@ object TestInterfaceConcreteRow extends Properties("Interface concrete row") {
     * reported by `Prop.collect` rather than asserted, and byte identity becomes
     * attainable only with a canonicaliser (`ROSE-COMPARISON.md` §3 rank 3). */
   property("every corpus interface parses and re-prints stably") = secure {
-    val c = corpus
-    try prop3(c) finally releaseCorpus(c)
+    prop3(corpus)
   }
 
   private def prop3(c: Corpus): Prop = {

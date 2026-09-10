@@ -477,8 +477,21 @@ E3. **A published `.ei`'s BYTES depend on the load HISTORY of the session that w
     (3) either make the bytes load-order-independent or state in `ei-diff.sh`'s header that
     both sides must be built in the same regime.
 
-E4. **`sbt core/test` is INTERMITTENT: six suites touch the process-global dep cache without
-    `ErmineFixture.literalLock`.**
+E4. **`sbt core/test` was INTERMITTENT — `TestInterfaceKey` flipped `ermine.loadInSeries` process-wide
+    for ~16 ms and the series loader asks for the sourceless `Test`.**  FIXED 2026-09-09 (LSP Stage 3
+    item 6.0; `tracker/loopmodel/LSP3-6.0-HYGIENE.md`, review `LSP3-6.0-REVIEW.md`).  The title and
+    "Mechanism" paragraph below are the ORIGINAL, WRONG hypothesis, kept for the record: no dep-cache
+    interaction is involved and no `loadedModules` key is ever removed.  Real mechanism: one property
+    set `ermine.loadInSeries=true` with `System.setProperty` for 14-28 ms; `Session.loadModules`
+    re-reads the flag per call; `loadModulesInSeries` does not subtract `s.loadedModules`; every
+    fixture import map names `Test`, seeded as loaded with no source file — so whichever concurrent
+    property was loading died with `Module not found: 'Test'` (deterministic under the flag: TestLower
+    28/28; rate ~0.43 deaths per full run, matching one failure in two).  Fix, test-side only: the
+    property calls `Session.loadModulesInSeries` directly (same assertion); `withProps` refuses any
+    property not read once at class init.  Three full `core/test` runs 943/943 (1,533 s / 1,463 s /
+    1,673 s), pinning recipe 132/132 x4 post-fix.  Acceptance criterion (1) below was therefore the
+    wrong fix and was NOT done; (2) was met with three runs, not ten; (3) see GATE-POLICY.  Follow-up
+    on the loader itself: E5.
 
     Opened 2026-09-09 by the F4 review (R-1).  Two full runs of the SAME tree: run 1 was
     `Total 943, Failed 0, Errors 1, Passed 942` (1,453 s), the error being
@@ -505,6 +518,19 @@ E4. **`sbt core/test` is INTERMITTENT: six suites touch the process-global dep c
     anything that touches `depCache`/`loadModules`, or give each its own dep cache; (2) ten
     consecutive full `core/test` runs green; (3) the quarantine list in
     `tracker/GATE-POLICY.md` updated to say the suite was intermittent and is not any more.
+
+E5. **`Session.loadModulesInSeries` and `Session.loadModules` disagree on already-loaded modules.**
+    Filed 2026-09-09 from E4.  The parallel schedule subtracts `s.loadedModules` before asking the
+    loader (`moduleNames.toSet &~ loaded`); the series schedule asks for every name it is given.  For a
+    module that is in `loadedModules` with no source file — `Builtin`, seeded by shipped code
+    (`SessionState.scala:104`), and the test fixtures' `Test` — the series schedule dies with
+    `Module not found`.  Not a live bug today: no non-test caller passes a sourceless loaded module
+    (`bin/ermine`, the REPL, `ei-diff.sh --batch`, `corpus-run.sh`, `perf-bench.sh` name real files;
+    `Session.load` short-circuits on `loadedFiles`), but the two schedules should agree.
+    *Fix.* `for (m <- moduleNames if !s.loadedModules.contains(m)) load(...)` in `loadModulesInSeries`.
+    *Tier* (LSP3-6.0 review R-7): shipped loader behaviour, so Tier 2 (`core/test` alone) plus Tier 1's
+    `ei-diff.sh --batch` sweep with `-Dermine.loadInSeries=true` on BOTH sides and `g1-validate.sh`
+    (the G1 oracle runs in series).  Not scheduled; a one-line change when a Tier-2 commit is due anyway.
 
 ## D. Claims in older documents that do not reproduce
 

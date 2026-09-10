@@ -24,13 +24,13 @@ scoping fix, commits f9cf42a / 41b13cc).
   `-Dermine.test.disjunction=true` (tracker/GATE-POLICY.md), so "green"
   means green; it was 761/762 with that failure visible at Stage 0.
   Suites GROW, so a commit that adds tests updates the count in its
-  iteration-log line.  KNOWN INTERMITTENCE (F4 review R-1): 942 + 1
-  error one run in two, `Module not found: 'Test'` in TestLower — a
-  cross-suite race of unknown mechanism (R-1's depCache/literalLock
-  explanation is UNVERIFIED; see 6.0).  Stage 3 item 6.0 pins and fixes
-  it; until then a Tier-2 run that shows exactly that error gets ONE
-  re-run.
-- `tracker/tools/repl-smoke.sh`: all suites PASS (4 as of D2)
+  iteration-log line.  The F4-era intermittence (942 + 1 error one run
+  in two, `Module not found: 'Test'`) was FIXED by Stage 3 item 6.0 on
+  2026-09-09: a test flipped `ermine.loadInSeries` process-wide.  Three
+  consecutive full runs 943/943 since; a red run is real again.
+- `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
+  2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
+  gate policy's "7/7" and this line's old "4 as of D2" were both stale)
 - `tracker/tools/lsp-smoke.sh`: all checks PASS (185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
@@ -691,7 +691,7 @@ STAGE-3 INVARIANTS (hard):
 
 ### Checklist (each item ≈ one loop iteration; the acceptance criteria are the tick conditions)
 
-- [ ] **6.0 Suite hygiene — make Tier 2 deterministic** (debt: F4 review
+- [x] **6.0 Suite hygiene — make Tier 2 deterministic** (debt: F4 review
   R-1, 2026-09-09; re-scoped 2026-09-09 after the user asked whether the
   flake is fixable).  THE FACT: `core/test` on one unchanged tree was
   943/943 on one run and 942 + 1 error on the other — TestLower's
@@ -737,6 +737,30 @@ STAGE-3 INVARIANTS (hard):
   cost); no `/tmp/ermine-*` tree left behind by a run; suite count
   unchanged.  First because G3 is a Tier-2 gate, and a gate that is red
   one run in two is a gate nobody can use.
+  DONE 2026-09-09 (implementer + reviewer, both Opus; reports
+  tracker/loopmodel/LSP3-6.0-HYGIENE.md and LSP3-6.0-REVIEW.md).  THE
+  PROBE FIRED and the mechanism is neither R-1's nor the code read's:
+  TestInterfaceKey's second property set `ermine.loadInSeries=true` with
+  System.setProperty, process-wide, for 14-28 ms; `Session.loadModules`
+  re-reads the flag per call; `loadModulesInSeries` asks the loader for
+  EVERY name without subtracting `s.loadedModules`; every fixture import
+  map names the sourceless `Test` — so whichever concurrent property was
+  loading died.  Deterministic under the flag (TestLower 28/28 with the
+  exact message); the window observed live 5/5 pre-fix, 0/3 post-fix;
+  rate ~0.43 deaths per full run against one-in-two observed.  The code
+  read's negative was right (no `loadedModules` key is ever removed; the
+  dying session had `Test` all along) and its positive was incomplete:
+  it missed that the series branch never looks.  FIX, test-side only:
+  the property calls `Session.loadModulesInSeries` directly (same
+  assertion, property counts unchanged 2/1/3/33); `withProps` refuses
+  any property not read once at class init; the rule is written at
+  ErmineFixture.  LEAK: `ermine-key` and `ermine-rt` leaked (30 trees
+  deleted), now `finally`-deleted via ErmineFixture.deleteTree; the
+  shared corpus deletes from a shutdown hook (lives for an interactive
+  sbt JVM's lifetime, stated).  THREE full `core/test` runs 943/943
+  (1,533 / 1,463 / 1,673 s).  Review verdict FIX-THEN-ADVANCE, report
+  edits only (Builtin is a second sourceless module; hook lifetime).
+  Follow-up ticket E5 (loader schedules agree) filed, Tier 2 + sweep.
 
 - [ ] **6.1 Diagnostics debt.**
   (a) THE DO-ANCHOR BLAME GAP (Stage-2 diagnostics debt; D3 and 5.4
@@ -2074,6 +2098,16 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   under "Stage 3"; Stage-3 Decisions (a)-(g); the worker-thread check
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
+
+- 2026-09-09 (6.0 DONE): see the item's DONE paragraph.  Orchestration
+  as agreed: brief -> fresh Opus implementer (2h20, 180 tool uses) ->
+  fresh Opus reviewer (52 min, one re-run of Tier 0 + the third full
+  run) -> orchestrator Tier 0 + commit.  One correction to the plan's
+  own text: the R-1 mechanism the review had asserted was wrong, and
+  the orchestrator's code read that doubted it was itself incomplete —
+  the probe, not either reading, settled it.  Baselines: core/test
+  943/943 x3 (deterministic), TestLoopTrace 720/720, corpus 85/69/0 over
+  154, repl-smoke 8 groups / 66 checks, lsp-smoke 185, /tmp clean.
 
 ## Gate evidence (G2, recorded 2026-08-31)
 
