@@ -99,6 +99,91 @@ object Session {
 
   val depCache = new HashMap[SourceFile, (Long, Dep)] with SynchronizedMap[SourceFile, (Long, Dep)]
 
+  /* ------------------------------------------------------------------ *
+   * S5.2 (`tracker/ROSE-COMPARISON.md` §3 rank 6): the SOLVER-CONFIGURATION KEY
+   * ------------------------------------------------------------------ */
+
+  /** The interface FORMAT version: bumped whenever the shape of a published
+    * signature changes for a reason that is not a solver flag.
+    *
+    * `1` is reserved for the UNKEYED format every `.ei` written before stage S5
+    * carries; there is no such file with a key, so a missing key is exactly a
+    * version-1 file and is stale.  `2` is the first keyed format.
+    *
+    * A SOLVER FLAG does NOT need a bump -- it is in the fingerprint below, which is
+    * the other half of the key.  S5.1's tautology deletion, for instance, rides in
+    * as `+tauto` (`GenRules.tautoDelete`).  Bump this when the published form moves
+    * for a reason the fingerprint cannot see: the pretty-printer, the sort order, the
+    * header format itself. */
+  val interfaceFormatVersion: Int = 2
+
+  /** **What a published `.ei` is keyed by.**  `<format version>|<solver
+    * configuration>`, where the configuration is `Constraints.GenRules.toString` --
+    * the same fingerprint S2's layers and `DisjProbe` already use, e.g.
+    * `2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+
+    * pol:smallcanon+budget:20000+topnorm+tauto`.
+    *
+    * WHY.  Until now nothing tied a published interface to the rules that produced
+    * it (the OPEN GAP recorded at `Constraints.scala`'s `dequeuePolicy`; A1 review
+    * R-4, S4B review H-8), so a tree built partly at one configuration silently
+    * mixed interfaces and every adoption needed a manual `find . -name '*.ei'
+    * -delete`.  A mismatch is now treated exactly like a source change: the module
+    * is fully rechecked and its interface rewritten.
+    *
+    * WHAT IS DELIBERATELY NOT IN IT.  Anything that cannot change the bytes of a
+    * SUCCESSFULLY published interface:
+    *   - `ermine.rowTrace` / `ermine.rowTrace.draws` -- pure instrumentation;
+    *   - `ermine.foreign.tolerant` -- decides whether an unresolvable `foreign
+    *     data` is a refusal or keeps its declared name; it changes whether a module
+    *     loads, never the type published for one that does;
+    *   - `ermine.typeCheck` and `ermine.useInterface` -- neither can WRITE a bad
+    *     `.ei`: with `typeCheck=false` the module is answered by `untyped` and
+    *     reaches `CheckMethod.Interface`, so `writeInterface` is never called, and
+    *     with `useInterface=false` `Dep.writeInterfaceString` is the no-op;
+    *   - `ermine.loadInSeries` -- a LOADER schedule, not a solver rule.  It does
+    *     reach interface bytes (parallel makes draw `Supply` ids in thread-timing
+    *     order), but only through the NAMES of published existentials: two sides
+    *     differ as alpha-variants, which type-check identically and which the
+    *     canonicaliser of `ROSE-COMPARISON.md` rank 3 is what actually removes.
+    *     Keying on it would invalidate every interface an LSP session (parallel)
+    *     wrote for a batch build (which may not be), for no soundness gain.
+    *   - `ermine.rowSound.budget` and `ermine.rowSound.solveBudget` (spelt in full:
+    *     `ermine.solveBudget` is a DIFFERENT property and IS in the key, as
+    *     `+budget:20000`) -- a lapse in either means NO VERDICT, so they can change
+    *     whether a module is REFUTED, never the bytes of one that is published.
+    * The three `rowSound*` switches themselves, `genRules`, `disjunction`,
+    * `labelCheck`, `labelCheckEarly`, `resGuard`, `splitKey`, `splitRow`, `resRow`,
+    * `emptyRow`, `dequeuePolicy`, `solveBudget`, `topNormalise` and `tautoDelete`
+    * ARE in it: they are `GenRules.toString`. */
+  def interfaceKey: String = interfaceFormatVersion.toString + "|" + Constraints.GenRules.toString
+
+  /** The header line an `.ei` carries.  It LOOKS like an Ermine line comment, and
+    * that is deliberate -- but do not rely on it: `InterfaceParsers` does not accept
+    * one here (see `splitInterfaceKey`), so every reader must strip it. */
+  private val interfaceKeyMarker = "-- ermine-interface "
+
+  def interfaceHeader: String = interfaceKeyMarker + interfaceKey
+
+  /** Split a `.ei` into (its key, if it carries one) and (its body).
+    *
+    * The header line is REMOVED, not blanked.  `InterfaceParsers.interfaceSigs` is a
+    * `laidout` block parsed straight off the file with no `phrase` wrapper, and it
+    * accepts neither a leading `--` comment nor a leading blank line -- measured, both
+    * of them, with `G1Compare --pair`.  So the body handed to the parser is exactly the
+    * bytes an unkeyed `.ei` had, and a parse error's line number is one less than the
+    * file's; nothing surfaces that number (the failure is `_log.debug` and a full
+    * recheck), so nothing depends on it.  Every reader of an `.ei` must go through
+    * here: `Session.dep`'s `preCk` and `G1Compare.parseEi` are the two. */
+  def splitInterfaceKey(s: String): (Option[String], String) = {
+    val i = s.indexOf('\n')
+    val first = if (i < 0) s else s.substring(0, i)
+    if (first startsWith interfaceKeyMarker)
+      (Some(first.substring(interfaceKeyMarker.length).trim),
+       if (i < 0) "" else s.substring(i + 1))
+    else (None, s)
+  }
+
+
   sealed abstract class SourceFile extends scala.Product with Serializable {
     // @throws Death
     def contents: String
@@ -339,14 +424,30 @@ object Session {
         if(!s.typeCheck) ((_,_,_) => Some(untyped))
         else if(!s.useInterface) ((_,_,_) => None)
         else (gcs, su, ps) => file.interfaceContents flatMap { intf =>
-           _log.trace("Interface contents: " + intf)
-           val newPs = scalaparsers.ParseState.mk(file.toString + "i", intf, ps.s.copy(recognizedCons = gcs))
-           interfaceFile.run(newPs,su.split) match {
-             case Left(err) =>
-               _log.debug("Error parsing interface file:")
-               _log.debug(err)
-               None
-             case Right((_,pf)) => Some(pf)
+           /* S5.2: the SOLVER-CONFIGURATION KEY, checked on the same path that
+            * already decides currency -- `interfaceContents` has just answered the
+            * mtime question and the parse below answers the well-formedness one.
+            * A key that does not match the running configuration, or a file with
+            * no key at all (every `.ei` written before stage S5), is STALE in
+            * exactly the sense a newer source is: `None` here means a full check,
+            * and the full check rewrites the file with the current key. */
+           val (key, body) = splitInterfaceKey(intf)
+           if (!(key contains interfaceKey)) {
+             _log.debug("Interface for '" + file + "' was written at a different solver " +
+                        "configuration (" + (key getOrElse "<unkeyed>") + " vs " +
+                        interfaceKey + "); rechecking")
+             None
+           } else {
+             _log.trace("Interface contents: " + body)
+             val newPs =
+               scalaparsers.ParseState.mk(file.toString + "i", body, ps.s.copy(recognizedCons = gcs))
+             interfaceFile.run(newPs,su.split) match {
+               case Left(err) =>
+                 _log.debug("Error parsing interface file:")
+                 _log.debug(err)
+                 None
+               case Right((_,pf)) => Some(pf)
+             }
            }
         }
 
@@ -422,7 +523,9 @@ object Session {
     private def writeInterface(defs: List[TermVar]): Unit = {
       val w = new java.io.StringWriter()
       vsep(defs.map(Pretty.prettyVarHasType(_, Pretty.FullyQualified))).format(1000000, w)
-      writeInterfaceString(w.toString)
+      // S5.2: the solver-configuration key, as the FIRST line and above the sorted
+      // signatures, which are left exactly as they were.
+      writeInterfaceString(interfaceHeader + "\n" + w.toString)
     }
 
     def --(xs: Traversable[String]) = copy(imports = imports -- xs)
@@ -839,7 +942,10 @@ object Session {
     val (tcm, (_, ds, varAnn)) = preChecked(localCons) match {
       case None =>
         subst { implicit hm =>
-          val r@(_, ty, ms) = inferBindingGroupTypes(m.loc, Nil, is, es, true)
+          // S5.1 follow-up: the last `true` is `publishing` -- this is the MODULE's
+          // top-level binding group, the one whose generalised types are written to the
+          // `.ei`.  `Subst.deleteTautologies` fires only here.
+          val r@(_, ty, ms) = inferBindingGroupTypes(m.loc, Nil, is, es, true, true)
           if (!hm.remembered.isEmpty) {
             println("\nRemembered terms:\n")
             hm.remembered.values.toSeq

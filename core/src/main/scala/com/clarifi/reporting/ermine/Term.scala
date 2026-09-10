@@ -230,7 +230,13 @@ object Term {
       case Let(l, is, es, b) => Let(l, subTermEx(ks, ts, ms, is), subTermEx(ks, ts, ms, es), sub(ks, ts, ms, b))
       case Case(l, e, alts)    => Case(l, sub(ks, ts, ms, e), alts.map(subTermEx(ks, ts, ms, _)))
       case Var(v)              => ms.lift(v) match {
-        case Some(vp) => Var(vp)
+        // The replacement carries the binder's identity and type; the position stays the
+        // occurrence's.  Without this every reference to a let- or module-bound name
+        // reports at the DEFINITION (the binder's V is what `inferBindingGroupTypes`
+        // substitutes in), so a type error in `bad = helper x` was blamed on the line
+        // defining `helper`.  Same discipline as `Relocatable.preserveLoc`, which the
+        // module-level maps already apply.
+        case Some(vp) => Var(vp at v.loc)
         case None     => tm
       }
       case Remember(i, e)      => Remember(i, sub(ks, ts, ms, e))

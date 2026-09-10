@@ -475,10 +475,18 @@ object TestConstraints extends Properties("Constraints") {
       soundness(f)(_ => selfSubstitution(x, rule._2.abstr, rule._2.concr))
     }
 
+  /* QUARANTINED 2026-09-08 (gate policy, tracker/GATE-POLICY.md).  `disjunctionGen` draws its
+   * seven field sets and seven variable valuations independently, so the parts overlap and
+   * `satisfies` rejects almost every sample: the property has "gave up after 0 passed, 501
+   * discarded" in every run on record (tracker/06-tests.md), i.e. it has never checked anything.
+   * The rule it would check, `Constraints.disjunction`, ships OFF (`GenRules.disjRule`).  It is
+   * registered only under -Dermine.test.disjunction=true so that a green suite means green;
+   * TICKET-stdlib-findings.md D3 asks for the generator to draw disjoint sets. */
+  if (sys.props.contains("ermine.test.disjunction"))
   property("disjunction sound") =
     forAll (disjunctionGen) { case (p1@(Partition(_,r1,_)), p2@(Partition(_,r2,_)), p3@(Partition(_,r3,_)), f) =>
       satisfies(f, Set(p1, p2, p3)) ==>
-      soundness(f)(_ => disjunction(r1, r2, r3))
+      soundness(f)(_ => Constraints.disjunction(r1, r2, r3))
     }
 /*
   property("incorporateAll sound") =

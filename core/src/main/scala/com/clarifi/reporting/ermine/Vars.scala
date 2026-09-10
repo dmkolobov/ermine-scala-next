@@ -31,10 +31,20 @@ abstract class Vars[+K] extends Traversable[V[K]] { that =>
       (that(s ++ t, f) -- t) ++ (t.map(x => x:V[I]) intersect s)
   }
 
-  def foreach[U](f: V[K] => U) = this(Set[V[K]](), { v => f(v); () }) // !@*)#* scala
+  override def foreach[U](f: V[K] => U): Unit = this(Set[V[K]](), { v => f(v); () }) // !@*)#* scala
 
   /** if you are going to use this over and over again, convert to a Set first! */
-  def contains(v: V[Any]) = exists(_ == v)
+  def contains(v: V[Any]): Boolean = {
+    // This was `exists(_ == v)`, and Vars overrides only `foreach` -- so exists
+    // went through ForeachIterable.iterator (ForeachIterable.scala:17-21), which
+    // MATERIALISES the whole variable Vector before testing anything.  Every
+    // occurs check pays it (Type.scala:667, from all four unification variable
+    // cases: Subst.scala:203/206/235/238).  Same traversal, same dedup, no
+    // Vector.  Roadmap P7 Step 1.
+    var found = false
+    this(Set[V[K]](), { u => if (u == v) found = true })
+    found
+  }
 }
 
 object Vars {
@@ -108,7 +118,7 @@ object V {
   implicit val vComonad: scalaz.Comonad[V] = new scalaz.Comonad[V] {
     def copoint[A](v: V[A]) = v.extract
     def map[A,B](v: V[A])(f: A => B) = v.map(f)
-    def cojoin[A](v: V[A]) = V(v.loc,v.id,v.name,v.ty,v)
+    override def cojoin[A](v: V[A]) = V(v.loc,v.id,v.name,v.ty,v)
     def cobind[A,B](v: V[A])(f: V[A] => B) = map(cojoin(v))(f)
   }
 

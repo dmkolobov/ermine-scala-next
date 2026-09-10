@@ -2,7 +2,7 @@ package com.clarifi.reporting
 package ermine
 
 import scalaparsers.Document._
-import scalaparsers.{Applied, Comonadic, Document, Loc, Located, Supply}
+import scalaparsers.{Applied, Comonadic, Document, Inferred, Loc, Located, Pos, Supply}
 
 import com.clarifi.reporting.ermine.Relocatable.preserveLoc
 import com.clarifi.reporting.ermine.Term.{ termHasTermVars, subTerm, subTermEx, zipTerms, termVars }
@@ -22,7 +22,7 @@ import com.clarifi.reporting.ermine.Pretty.{ prettyKind, prettyType }
 import scala.collection.immutable.List
 import scala.collection.mutable.ListBuffer
 import scalaz.Scalaz._
-import Constraints.{ Partition, RHSConcr, RHS }
+import Constraints.{ Partition, RHSConcr, RHS, GenRules, labelClash }
 import Constraints.Q.{ PQueue }
 
 /**
@@ -391,7 +391,7 @@ object Subst {
     (ds, (rs.toSet -- ambs.flatMap(_.preds)).toList)
   }
 
-  def entail(p: Type, q: Type)(implicit hm: SubstEnv, su: Supply) {
+  def entail(p: Type, q: Type)(implicit hm: SubstEnv, su: Supply): Unit = {
     val (vs, ps) = unbindExists(Free,p)
     val (us, qs) = unbindExists(Free,q)
     for (q <- qs)
@@ -402,7 +402,7 @@ object Subst {
         )
   }
 
-  def bientail(p: Type, q: Type)(implicit hm: SubstEnv, su: Supply) {
+  def bientail(p: Type, q: Type)(implicit hm: SubstEnv, su: Supply): Unit = {
     entail(p,q)
     entail(q,p)
   }
@@ -630,7 +630,7 @@ object Subst {
    * Ensures that a term e has a type compatible with t, in context g.
    * Specifically, t must be subsumed by the inferred type of e.
    */
-  def typeCheck(g: Gamma, e: Term, tz: Type)(implicit hm: SubstEnv, su: Supply) {
+  def typeCheck(g: Gamma, e: Term, tz: Type)(implicit hm: SubstEnv, su: Supply): Unit = {
     val et = inferType(g, e)
     val t = substType(tz)
     implicit val tml: Located = e
@@ -644,7 +644,7 @@ object Subst {
    * Checks that the given type for an explicit bindings is subsumed by the
    * inferred type, analogously to typeCheck.
    */
-  def typeCheckExplicitBinding(g: Gamma, binding: ExplicitBinding)(implicit hm: SubstEnv, su: Supply) {
+  def typeCheckExplicitBinding(g: Gamma, binding: ExplicitBinding)(implicit hm: SubstEnv, su: Supply): Unit = {
     val li = binding.loc.inferred
     implicit val tml: Located = binding
     val (kvs, tvs, ty) = unbindAnnot(g, binding.ty)
@@ -738,7 +738,15 @@ object Subst {
                              g: Gamma,
                              is: List[ImplicitBinding],
                              es: List[ExplicitBinding],
-                             slv: Boolean = false)(implicit hm: SubstEnv, su: Supply): (Gamma, List[Type], Map[TermVar,TermVar]) = {
+                             slv: Boolean = false,
+                             /* S5.1 follow-up (ticket C12): true ONLY for a MODULE's
+                              * top-level binding group -- the one whose generalised types
+                              * become the module's published signatures.  A `let`/`where`
+                              * group reaches this function too (`inferType`'s `Let` case)
+                              * and must stay false: a local scheme is re-instantiated by
+                              * the inference around it, so simplifying it reshapes the
+                              * enclosing signature.  See `Subst.deleteTautologies`. */
+                             publishing: Boolean = false)(implicit hm: SubstEnv, su: Supply): (Gamma, List[Type], Map[TermVar,TermVar]) = {
     val etm = es map {
       case e =>
         val (_, tvs, ty) = unbindAnnot(g, e.ty)
@@ -751,7 +759,7 @@ object Subst {
     val isp = is.map(i => i.subst(Map(), Map(), em))
     val (ds, subs) = mapAccum_((List[Type](), Map():Map[TermVar,TermVar]), implicitBindingComponents(isp)) {
        case ((ds0, subs), is) =>
-          val (ds,isp) = inferImplicitBindingTypes(l, g ++ toGamma(subs), subTerm(subs,is), slv)
+          val (ds,isp) = inferImplicitBindingTypes(l, g ++ toGamma(subs), subTerm(subs,is), slv, publishing)
           (ds ++ ds0, subs ++ isp)
     }
     for (e <- esp) typeCheckExplicitBinding(g, subTerm(subs, e.copy(ty = Annot.plain(e.loc, substType(etm(e.v))))))
@@ -776,7 +784,8 @@ object Subst {
   def inferImplicitBindingTypes(l: Loc,
                                 omgz: Gamma,
                                 bs: List[ImplicitBinding],
-                                slv: Boolean)(implicit hm: SubstEnv, su: Supply): (List[Type],Map[TermVar,TermVar]) = {
+                                slv: Boolean,
+                                publishing: Boolean = false)(implicit hm: SubstEnv, su: Supply): (List[Type],Map[TermVar,TermVar]) = {
 
     val ((g, cs), ts) = mapAccum((omgz ++ bs.map(_.v), List[Type]()), bs) {
       case ((g, cs), b) =>
@@ -802,23 +811,74 @@ object Subst {
 //          l.die("Disallowed local row constraints on ambient variables")
 
     implicit val tml: Located = l
-    val csp = if (slv) solve(Exists(l, List(), rs))
+    val csp = if (slv) RowTrace.withSite("inferImplicitBindingTypes")(solve(Exists(l, List(), rs)))
               else Exists(l, List(), rs)
     (ds, bs.zip(ts).map({
       case (b,t) =>
         implicit val tml: Located = b
-        b.v -> b.v.as(generalize(omg, csp, substType(t).forget))
+        /* R3, TRACE-ONLY: name the binding whose signature this `generalize` publishes,
+         * for the `ramb` record.  `withBinding` is a no-op unless `-Dermine.rowTrace` is
+         * set, and its argument is by-name, so nothing is rendered otherwise. */
+        /* S5.1 follow-up (ticket C12): this is the generalisation whose result becomes a
+         * binding's signature -- the same call `withBinding` names for the `ramb` record --
+         * and `publishing` says whether THIS binding group is the module's top-level one.
+         * The tautology deletion fires only when it is.  Every other `generalize`
+         * (`inferType`'s let/lambda/annotation cases, `trySolveOn`) and `subsumeType`'s own
+         * `mkSimplified` build an INTERMEDIATE scheme that later inference re-instantiates,
+         * and deleting there reshapes residuals the deletion was never aimed at -- measured
+         * both ways in `S5-HYGIENE.md` "Follow-up: publishing-only deletion".  Threaded as a
+         * PARAMETER, never a global: generalisation is re-entrant and runs on several
+         * loader threads. */
+        b.v -> b.v.as(RowTrace.withBinding(b.v.toString)(
+                        generalize(omg, csp, substType(t).forget, publishing)))
     }).toMap)
   }
 
   def toGamma(m: Map[TermVar,TermVar]): Gamma = m.values.toList
 
   // NB: the inferred type has kind star
+  /**
+   * A variable's scheme as seen from ONE occurrence of it.  The scheme's constraints were
+   * stated where the variable was defined -- a signature in this file, or one in the
+   * stdlib -- but instantiating them here makes them obligations of this occurrence, and
+   * when the set they join is unsatisfiable it is this occurrence, not the definition,
+   * that the user can change.  So the row constraints (and the Exists that carries them)
+   * are re-located to the occurrence before they enter the constraint set.  The Forall's
+   * own location is kept: "where the type came from" is what the subsumption messages
+   * report.  `Part` equality ignores location, so the solver sees the same set either way.
+   *
+   * Only a source position is worth moving to; a synthesised occurrence (`Loc.builtin`)
+   * keeps the definition's location, and `Subst.solve` filters those out of the blame.
+   * Follow-up item 1 in tracker/TICKET-editor-and-solver-followups.md.
+   */
+  /** The position a diagnostic should be REPORTED at.  `Inferred(p)` is the right location
+    * to carry -- it records that the constraint was inferred from `p` -- but its `report`
+    * appends "inferred from" to the message, which after a reason clause ("...but no part
+    * does inferred from") is noise; the messages that use this say why in their own words. */
+  def sourcePosition(x: Loc): Loc = x match {
+    case Inferred(p) => p
+    case _           => x
+  }
+
+  def instantiatedAt(at: Loc, t: Type): Type = at match {
+    case Pos(_, _, _, _, _) | Inferred(_) => t match {
+      case Forall(l, ks, ts, q, b) if q.hasRowConstraints => new Forall(l, ks, ts, relocateConstraints(at, q), b)
+      case _                                              => t
+    }
+    case _ => t
+  }
+
+  private def relocateConstraints(at: Loc, q: Type): Type = q match {
+    case Exists(_, xs, cs) => new Exists(at, xs, cs.map(relocateConstraints(at, _)))
+    case p: Part           => p.at(at)
+    case other             => other
+  }
+
   def inferType(g: Gamma, e: Term, suppressEscapes:Boolean = false)(implicit hm: SubstEnv, su: Supply): Type = {
     val li = e.loc.inferred
     implicit val tml: Located = e
     val ty = e match {
-      case Var(v)          => substType(v.extract)
+      case Var(v)          => instantiatedAt(e.loc, substType(v.extract))
       case Rigid(e)        => inferType(g, e, suppressEscapes)
       case LitInt(_, i)    => int at li
       case LitByte(_, i)   => byte at li
@@ -1031,16 +1091,122 @@ object Subst {
     }
   }
 
+  /** **TRACE-ONLY** (stage R3, `tracker/loopmodel/R3-DETERMINED.md`).  Rose's Definition 13
+    * closure -- the whole is determined by the parts -- and Ermine's strictly larger closure,
+    * which adds CANCELLATION: a part is determined by the whole and the other parts, because
+    * the concrete part of a partition is always known.  The Lean statements, the closure
+    * properties and the uniqueness theorem that gives them meaning are
+    * `tracker/lean/Rowpartition/Determined.lean` (`roseAdd`, `cancelAdd`, `Determined`,
+    * `determined_unique`).
+    *
+    * NOTHING HERE IS CALLED unless `-Dermine.rowTrace` is set: both call sites are inside
+    * `if (RowTrace.enabled)`.  It reads a constraint list and returns sets; it draws no ids,
+    * touches no `SubstEnv` and builds no `Type`.
+    *
+    * The Lean model gives every partition a VARIABLE left-hand side, because `PQueue.build`
+    * mints one for a concrete row; a published `Part` may still have a `ConcreteRho` on the
+    * left, and that is modelled here by `whole = None`, "already known", which is exactly
+    * what the Lean carrier constraint `p <- ((|K|))` gives after one step of Rose's clause. */
+  object Determinacy {
+    /** One partition, read for the closure. */
+    final case class P(whole: Option[TypeVar], parts: List[TypeVar], blocked: Boolean)
+
+    private def isConcrete(t: Type): Boolean = t match {
+      case ConcreteRho(_, _) => true
+      case Con(_, _, _, _)   => true
+      case _                 => false
+    }
+
+    private def isVar(t: Type): Boolean = t match {
+      case VarT(_) => true
+      case _       => false
+    }
+
+    /** Read the row constraints of a published list.  A right-hand side carrying anything
+      * that is neither a variable nor a concrete row is BLOCKED: neither clause may fire
+      * through it, which is the conservative reading (`mkSimplified.normalPart` calls the
+      * same shape "something we don't know how to deal with"). */
+    def read(ps: List[Type]): List[P] = ps.collect { case p: Part => p }.map { p =>
+      val vs = p.rhs.collect { case VarT(v) => v }.distinct
+      val blocked = p.rhs.exists(t => !isVar(t) && !isConcrete(t))
+      p.lhs match {
+        case VarT(v)          => P(Some(v), vs, blocked)
+        case l if isConcrete(l) => P(None, vs, blocked)
+        case _                => P(None, vs, true)
+      }
+    }
+
+    /** Every row variable the partitions mention. */
+    def vars(cs: List[P]): Set[TypeVar] =
+      cs.foldLeft(Set[TypeVar]())((acc, p) => acc ++ p.whole.toSet ++ p.parts)
+
+    /** The closure of `u0`: Rose's clause alone (`cancel = false`), or with cancellation. */
+    def closure(cs: List[P], u0: Set[TypeVar], cancel: Boolean): Set[TypeVar] = {
+      var d = u0
+      var changed = true
+      while (changed) {
+        changed = false
+        for (p <- cs if !p.blocked) {
+          p.whole match {
+            case Some(w) if !d(w) && p.parts.forall(d) => d = d + w; changed = true
+            case _                                     => ()
+          }
+          // `p.whole.forall(d)` is TRUE for a concrete left-hand side: it is known outright.
+          if (cancel && p.whole.forall(d))
+            for (v <- p.parts if !d(v) && p.parts.forall(x => x == v || d(x))) {
+              d = d + v; changed = true
+            }
+        }
+      }
+      d
+    }
+
+    /** The three side conditions of `Rowpartition.splice_entails_iff`, on the residual `cs`
+      * for the variable `v` whose partition carries the concrete part `con`.  A transcription
+      * of the `splice` record's own inline block; the corpus measurement checks the two agree
+      * on every splice. */
+    def conds(cs: List[Type], v: TypeVar, con: Set[Name]): (Boolean, Boolean, Boolean) = {
+      def concrOf(t: Type): Set[Name] = t match {
+        case ConcreteRho(_, s) => s
+        case Con(_, n, _, _)   => Set(n)
+        case _                 => Set()
+      }
+      val hlhs = !cs.exists { case Part(_, VarT(u), _) => u == v ; case _ => false }
+      val hdis = cs.forall {
+        case Part(_, _, rs) =>
+          !rs.exists { case VarT(u) => u == v ; case _ => false } ||
+            (rs.flatMap(concrOf).toSet & con).isEmpty
+        case _ => true
+      }
+      val hdup = con.isEmpty || cs.forall {
+        case Part(_, _, rs) => rs.count { case VarT(u) => u == v ; case _ => false } < 2
+        case _              => true
+      }
+      (hlhs, hdis, hdup)
+    }
+  }
+
   def reduce(lc: Loc,
              csz: List[Type],
              es: List[TypeVar],
              ps: List[Partition])(implicit hm: SubstEnv, su: Supply, tml: Located) =
     ps.foldRight(csz) {
-      case (Partition(v, RHSConcr(fs), _), cs) =>
+      case (Partition(v, RHSConcr(fs), inf), cs) =>
+        RowTrace.log("concr\t" + RowTrace.site + "\t" + RowTrace.clean(lc.toString) +
+                     "\t" + v + "\t" + fs.size + "\t" + inf.fold("INPUT")(_.toString))
         instantiateType(v, ConcreteRho(lc, fs))
         cs.map(substType _)
-      case (Partition(v, RHS(abs, con), _), cs) if v.ty.ambiguous || es.contains(v) =>
-        cs map {
+      case (Partition(v, RHS(abs, con), inf), cs) if v.ty.ambiguous || es.contains(v) =>
+        /* `Rowpartition.splice_entails_iff` (tracker/lean/Rowpartition/Splice.lean) proves
+         * this splice CONSERVATIVE under three side conditions -- `v` heads no constraint
+         * of the emitted list, concrete parts disjoint, `v` not repeated in a right-hand
+         * side -- and `Splice.DroppedPartition.dropped_can_lose` exhibits a system where
+         * dropping the first of them loses a consequence of the input.  Guarding on them
+         * was implemented, measured and REMOVED (2026-09-02): the first condition fails on
+         * 90% of splices, and skipping those degrades published signatures from resolved
+         * concrete rows to constrained polymorphic ones.  The conditions survive as a
+         * trace-only diagnostic, computed only when `-Dermine.rowTrace` is set. */
+        val csp = cs map {
           case Part(loc, l, rs) => Part(loc, l, rs flatMap {
               case VarT(`v`) => ConcreteRho(lc, con) :: abs.toList.map(VarT(_))
               case x         => List(x)
@@ -1048,14 +1214,344 @@ object Subst {
           )
           case x => x
         }
+        RowTrace.log("splice\t" + RowTrace.site + "\t" + RowTrace.clean(lc.toString) +
+                     "\t" + v + "\t" + abs.size + "\t" + con.size +
+                     "\t" + inf.fold("INPUT")(_.toString) +
+                     "\t" + (csp != cs) + {
+                       def concrOf(t: Type): Set[Name] = t match {
+                         case ConcreteRho(_, s) => s
+                         case Con(_, n, _, _)   => Set(n)
+                         case _                 => Set()
+                       }
+                       val hlhs = !cs.exists { case Part(_, VarT(u), _) => u == v ; case _ => false }
+                       val hdis = cs.forall {
+                         case Part(_, _, rs) =>
+                           !rs.exists { case VarT(u) => u == v ; case _ => false } ||
+                             (rs.flatMap(concrOf).toSet & con).isEmpty
+                         case _ => true
+                       }
+                       val hdup = con.isEmpty || cs.forall {
+                         case Part(_, _, rs) => rs.count { case VarT(u) => u == v ; case _ => false } < 2
+                         case _              => true
+                       }
+                       "\t" + hlhs + "\t" + hdis + "\t" + hdup
+                     })
+        /* R3 (`tracker/loopmodel/R3-DETERMINED.md`), TRACE-ONLY and a SEPARATE record: the
+         * `splice` line above is untouched, so a trace with the `detm` lines filtered out is
+         * byte-identical to one taken before this stage.  The two closures are evaluated on
+         * `cs` -- the residual this fold has accumulated, which is the system a determinacy
+         * guard would consult -- from `U0`, the variables of `cs` that the splice's OWN guard
+         * does not count as existential.  Variables of `cs` that occur in no row constraint
+         * cannot affect either closure (both clauses quantify over partitions), so reading
+         * `U0` off the partitions rather than off `typeVars(cs)` gives the same answer. */
+        if (RowTrace.enabled) {
+          val dps  = Determinacy.read(cs)
+          val dvs  = Determinacy.vars(dps)
+          val u0   = dvs.filterNot(u => u.ty.ambiguous || es.contains(u))
+          val rose = Determinacy.closure(dps, u0, false)
+          val erm  = Determinacy.closure(dps, u0, true)
+          val (chlhs, chdis, chdup) = Determinacy.conds(cs, v, con)
+          RowTrace.log("detm\t" + RowTrace.site + "\t" + RowTrace.clean(lc.toString) +
+                       "\t" + v + "\t" + rose(v) + "\t" + erm(v) +
+                       "\t" + chlhs + "\t" + chdis + "\t" + chdup +
+                       "\t" + u0.size + "\t" + dvs.size + "\t" + dps.length)
+        }
+        csp
       case (_, cs) => cs
     }
 
   def solve(csz: Type)(implicit hm: SubstEnv, su: Supply, tml: Located): Type = {
     val l = csz.loc
     val (es, cs) = unbindExists(Ambiguous(Free), csz)
-    val (q, esp) = PQueue.build(Exists(l, List(), cs))
+    /* Trace-only, and the ONLY line of the solver stage L2 adds: the replay records that
+     * let the Lean loop model re-run this exact solve (`RowTrace`'s FORMAT block, `sin` /
+     * `slbl` / `svar` / `scon`).  It runs HERE because it must see the `Supply` before
+     * `PQueue.build` draws from it and the constraint list before `Exists.apply` reorders
+     * it.  Inert unless `-Dermine.rowTrace` is set: `solveInput`'s whole body is under
+     * `if (enabled)`. */
+    RowTrace.solveInput(l.toString, cs, su, hm.types)
+    val (q0, esp) = PQueue.build(Exists(l, List(), cs))
+    /* S4 (`tracker/loopmodel/S4-CHANGE.md`, ticket B5): the WRITTEN-PARTITION
+     * NORMALISATION, `-Dermine.topNormalise`, DEFAULT OFF.  See `GenRules.topNormalise`
+     * for the rule, the two side conditions and the soundness argument.
+     *
+     * WHERE IT RUNS, and why HERE (S4A review G-3).  `solve` has THREE input-reading
+     * checks -- `labelCheckEarly`'s unit propagation, `rowSoundDecide`'s COMPLETE
+     * per-label decision (default ON since 2026-09-06, with a no-verdict escape on
+     * budget exhaustion) and `rowSoundSat` on the closure -- and then the loop.
+     * Running the rewrite HERE, before all three, is the only placement on which every
+     * one of them and the loop see the SAME live input; running it between two of them
+     * would split `q` in two and `Loop/NoFalseAccept.lean`'s `solve_accepted_faithful`,
+     * whose premises all mention ONE `q`, would need a bridge lemma before it meant
+     * anything.  The subject of that theorem becomes the rewritten system, which is
+     * logically EQUIVALENT to the user's -- `S4Top.read_of_top` backwards and
+     * `S4Top.ssat_rewrite_fwd` forwards -- so "accepted implies the user's input is
+     * satisfiable" transfers through `reads_of_rewrite`.  It is also the placement the
+     * model can mirror: `Loop/Seed.lean`'s `solveSeed` applies it at exactly this point,
+     * so `looptrace --replay` reproduces it.
+     *
+     * BLAME IS UNAFFECTED, and that is structural rather than lucky: `rowUnsat` below
+     * searches `cs.flatMap(_.rowConstraints)` -- the user's own `Part`s, with their
+     * `Loc`s -- and `cs` is not rewritten.  A partition carries no `Loc` at all.  The
+     * one case that moves is a refutation blamed on the FRESH carrier, which appears in
+     * no `Part`: the search then falls back to the first candidate `Part` mentioning the
+     * field, which is still in the user's file.
+     *
+     * `esp` comes from `PQueue.build` and is untouched. */
+    val (q, tnorms) =
+      if (!GenRules.topNormalise) (q0, List())
+      else Constraints.topNormalise(q0.toList, l) match {
+        case (_, Nil)   => (q0, Nil)
+        case (ps, recs) => (PQueue(ps), recs)
+      }
+    if (RowTrace.enabled && tnorms.nonEmpty) {
+      val ttag = "\t" + RowTrace.site + "\t" + RowTrace.clean(l.toString) + "\t"
+      def tsv(v: TypeVar): String = v.name.fold("")(_.toString) + "^" + v.id
+      tnorms.foreach { case (v, c, f) =>
+        RowTrace.log("tnorm" + ttag + tsv(v) + "\t" + tsv(c) + "\t(|" +
+          f.toList.map(_.toString).sorted.mkString(",") + "|)")
+      }
+    }
+    /* The per-concrete-label refutation, as a thunk, because WHERE it runs is a
+     * question in its own right.  It reads `q` -- the INPUT partitions -- and nothing
+     * else, so it is independent of `q.expand`; running it first costs nothing and
+     * refutes an unsatisfiable input BEFORE the saturation can diverge on it.  That
+     * matters: `Rowpartition/ResGuardDiverge.lean` exhibits a four-constraint
+     * unsatisfiable system on which resolution has derivations of every length, guarded
+     * or not, and the same system is refuted at a single label by this check.  It runs
+     * first by default (`GenRules.labelCheckEarly`, adopted 2026-09-02);
+     * `-Dermine.labelCheckEarly=false` moves it back after `expand`.  Moving it changes
+     * WHICH error a module that fails both ways reports, which is why it spent a day
+     * behind a flag: until the blame below pointed at the call site, the label clash was
+     * reported at a stdlib signature where `expand`'s error had named the user's line.
+     */
+    def rowUnsat(lbl: Name, refuted: TypeVar, msg: String): Nothing = {
+        // Blame the input constraint the propagation found violated, not the enclosing
+        // scope: `tml` is whatever `solve` was called in, which for a module-level
+        // binding group is the module header, and `l` is the constraint set's own
+        // location, which can be anywhere its constraints came from.
+        //
+        // The candidates are the input `Part`s mentioning the field whose location is in
+        // the file being compiled.  Since `instantiatedAt` moves a scheme's constraints
+        // to the occurrence that instantiated them, a constraint reached through a stdlib
+        // helper is located at the call site and qualifies; one that still carries a
+        // foreign location (a synthesised occurrence) does not, and must not send the
+        // user into the stdlib.  Prefer the candidate whose left-hand variable is the
+        // refuted partition's; otherwise take the first.  With no candidate at all fall
+        // back to `l` if it is in this file, else to `tml`.
+        //
+        // `Loc` has TWO source-bearing shapes, `Pos` and `Inferred(Pos)`; matching only
+        // the first silently disables the search and looks like it works.  The report
+        // is made at the underlying position: `Inferred.report` appends "inferred from"
+        // to the message, which reads as nonsense after a reason clause.
+        def file(x: Loc): Option[String] = x match {
+          case Pos(fn, _, _, _, _)           => Some(fn)
+          case Inferred(Pos(fn, _, _, _, _)) => Some(fn)
+          case _                             => None
+        }
+        val here = file(tml.loc) orElse file(l)
+        val candidates = cs.flatMap(_.rowConstraints).collect {
+          case p@Part(ploc, lhs, rhs) if here.isDefined && file(ploc) == here && (lhs :: rhs).exists {
+                 case ConcreteRho(_, f) => f contains lbl
+                 case _                 => false
+               } => p
+        }
+        val blame = candidates.collectFirst { case Part(ploc, VarT(v), _) if v == refuted => ploc }
+          .orElse(candidates.headOption.map(_.loc))
+          .getOrElse(if (file(l) == here) l else tml.loc)
+        sourcePosition(blame).die("Row partitions are unsatisfiable at field '" + lbl + "': " + msg)
+    }
+    def checkLabels(source: List[(TypeVar, Constraints.RHS)]): Unit =
+      if (GenRules.labelCheck)
+        labelClash(source) foreach { case (lbl, refuted, msg) => rowUnsat(lbl, refuted, msg) }
+
+    /* ---------------------------------------------------------------- *
+     * S2 (`tracker/loopmodel/S2-DESIGN.md`), layers (ii) and (iii).      *
+     * ADOPTED 2026-09-06: both DEFAULT ON.  With `-Dermine.rowSound=false`  *
+     * not one line below runs and the solve is the shipped one,           *
+     * instruction for instruction.                                        *
+     * ---------------------------------------------------------------- */
+
+    /* (iii)'s INPUT.  `solve` does NOT `substType` its constraints before
+     * `PQueue.build` (the substitution happens at the `reduce` call below) and
+     * `SubstEnv.types` is a long-lived mutable map shared by the whole checker
+     * (S1 review Z-6), so `q`'s partitions may mention variables the
+     * environment already binds.  Deciding `q` alone would therefore decide a
+     * SUB-system: still sound to refute from, but not the property we want to
+     * state.  The environment is added as FACTS rather than applied as a
+     * substitution -- `v := ((|fs|))` becomes the partition `v <- ((|fs|))`,
+     * `v := u` becomes the link `v <- (u)` -- which is equisatisfiable (the
+     * environment is idempotent, so the two systems interpret each other) and,
+     * unlike rebuilding a queue, draws NO ids from the `Supply`: `PQueue.build`
+     * mints a variable for a non-variable left-hand side, and calling it twice
+     * would change every id the solve goes on to hand out.
+     *
+     * A binding that is not row-shaped (not a variable, a `ConcreteRho` or a
+     * `Con`) is COUNTED and skipped: the decision then runs on a sub-system, so
+     * its refutations stay sound while the completeness half is claimed only
+     * for solves with no such binding.  The count is traced (`rsound env`) so
+     * that "this never happened on the corpus" is a measurement. */
+    def liveInput: (List[(TypeVar, Constraints.RHS)], Int, Int) = {
+      val base = q.toList.map(_.tup)
+      var seen  = Set[TypeVar]()
+      var todo  = base.foldLeft(List[TypeVar]()) { case (acc, (v, Constraints.RHS(a, _))) => v :: a.toList ++ acc }
+      var extra = List[(TypeVar, Constraints.RHS)]()
+      var facts = 0
+      var opaque = 0
+      while (todo.nonEmpty) {
+        val v = todo.head; todo = todo.tail
+        if (!seen(v)) {
+          seen = seen + v
+          hm.types.get(v) match {
+            case None                       => ()
+            case Some(VarT(u))              =>
+              extra = (v, Constraints.RHS(Set(u), Set())) :: extra; facts += 1; todo = u :: todo
+            case Some(ConcreteRho(_, f))    =>
+              extra = (v, Constraints.RHS(Set(), f)) :: extra; facts += 1
+            case Some(Con(_, nm, _, _))     =>
+              extra = (v, Constraints.RHS(Set(), Set(nm))) :: extra; facts += 1
+            case Some(_)                    => opaque += 1
+          }
+        }
+      }
+      (base ++ extra.reverse, facts, opaque)
+    }
+
+    /* (ii) the SAME unit propagation, on the SATURATED set.  Sound by
+     * `Rowpartition.refute_saturated_sound`; the flag for it was removed on
+     * 2026-09-02 after measuring zero additional refutations on both corpora,
+     * which is a fact about the corpora (S1 review section 7.1: it catches
+     * 1146 of the 1166 model false acceptances and all six compiler-confirmed
+     * seeds).  It is INDEPENDENT of `GenRules.labelCheck`, so that (ii) can be
+     * measured on its own. */
+    def checkSaturated(source: List[(TypeVar, Constraints.RHS)]): Unit =
+      labelClash(source) foreach { case (lbl, refuted, msg) =>
+        RowTrace.rowSound("sat", l.toString,
+                          lbl.toString + "\t" + refuted.toString + "\t" + RowTrace.clean(msg))
+        rowUnsat(lbl, refuted, msg)
+      }
+
+    /* (iii) the complete per-label decision on the live input. */
+    def decideLabels(): Unit = {
+      val t0 = System.nanoTime
+      val (source, facts, opaque) = liveInput
+      val res = Constraints.labelDecide(source, GenRules.rowSoundBudget,
+                                        GenRules.rowSoundSolveBudget)
+      val dt  = System.nanoTime - t0
+      GenRules.rowSoundNodes.addAndGet(res.nodes)
+      var mx = GenRules.rowSoundMaxNanos.get
+      while (dt > mx && !GenRules.rowSoundMaxNanos.compareAndSet(mx, dt)) mx = GenRules.rowSoundMaxNanos.get
+      if (RowTrace.enabled && (facts > 0 || opaque > 0))
+        RowTrace.rowSound("env", l.toString, facts + "\t" + opaque)
+      res.verdict match {
+        case Constraints.LabelSat =>
+          RowTrace.rowSound("ok", l.toString,
+            res.labels + "\t" + source.length + "\t" + res.nodes + "\t" + (dt / 1000))
+        case Constraints.LabelNoVerdict(lbl, why, exhausted) =>
+          if (exhausted) GenRules.rowSoundBudgetHits.incrementAndGet()
+          else           GenRules.rowSoundCheckFails.incrementAndGet()
+          /* THE ONE CONDITION UNDER WHICH THE THEOREM LAPSES, SAID OUT LOUD
+           * (S2 review V-12).  A no-verdict refutes nothing, so the solve
+           * proceeds exactly as it would with the flag off -- but it is also
+           * the case `S2-DESIGN.md` §2 excludes, and until now the only signals
+           * were a counter the compiler never reads and a trace record that
+           * needs `-Dermine.rowTrace`.  One line per solve, on stderr, naming
+           * the site: enough to notice, cheap enough not to matter, and it
+           * cannot fire at the shipped defaults because the whole check is off.
+           */
+          System.err.println("warning: the row soundness check gave NO VERDICT at " +
+            sourcePosition(l).toString + " (field '" + lbl + "': " + why +
+            "); this solve is accepted on the shipped rules alone")
+          RowTrace.rowSound("budget", l.toString,
+            lbl.toString + "\t" + (if (exhausted) "budget" else "checkfail") +
+            "\t" + RowTrace.clean(why))
+        case Constraints.LabelRefuted(lbl, refuted, why) =>
+          RowTrace.rowSound("decide", l.toString,
+            lbl.toString + "\t" + refuted.toString + "\t" + res.nodes + "\t" + RowTrace.clean(why))
+          rowUnsat(lbl, refuted, why)
+      }
+    }
+
+    if (GenRules.labelCheckEarly) checkLabels(q.toList.map(_.tup))
+    /* AFTER `labelCheckEarly`, so that an input unit propagation already
+     * refutes reports exactly the message it reports today and the corpus
+     * delta this stage measures is (iii)'s OWN refutations; BEFORE `expand`,
+     * because refuting an unsatisfiable input before the saturation can
+     * diverge on it is half the point (`Rowpartition/ResGuardDiverge.lean`). */
+    if (GenRules.rowSoundDecide) decideLabels()
     var ps = q.expand.toList
+    if (GenRules.rowSoundSat) checkSaturated(ps.map(_.tup))
+    /* Trace-only dump of the POPULATION, not just its counts: the input constraint
+     * list as `solve` received it (a `Part`'s right-hand side is a List, so this is
+     * the one place its ORDER is still visible), the partitions built from it, and
+     * the saturated set with each partition's provenance.  Guarded on `enabled`
+     * like every other record here; nothing is built when tracing is off. */
+    if (RowTrace.enabled) {
+      val tag = "\t" + RowTrace.site + "\t" + RowTrace.clean(l.toString) + "\t"
+      def sv(v: TypeVar): String = v.name.fold("")(_.toString) + "^" + v.id
+      def st(t: Type): String = t match {
+        case VarT(v)           => sv(v)
+        case ConcreteRho(_, f) => "(|" + f.toList.map(_.toString).sorted.mkString(",") + "|)"
+        case Con(_, n, _, _)   => "(|" + n + "|)"
+        case x                 => RowTrace.clean(x.toString)
+      }
+      def sp(p: Partition): String = p match {
+        case Partition(v, RHS(abs, con), inf) =>
+          inf.fold("INPUT")(_.toString) + "\t" + sv(v) + "\t" +
+            abs.toList.map(sv).sorted.mkString(" ") + "\t" +
+            con.toList.map(_.toString).sorted.mkString(",")
+      }
+      cs.flatMap(_.rowConstraints).zipWithIndex.foreach {
+        case (Part(_, lhs, rs), i) =>
+          RowTrace.log("in" + tag + i + "\t" + st(lhs) + "\t" + rs.map(st).mkString(" | "))
+        case _ => ()
+      }
+      es.foreach(v => RowTrace.log("ex" + tag + sv(v)))
+      q.toList.zipWithIndex.foreach { case (p, i) => RowTrace.log("inpart" + tag + i + "\t" + sp(p)) }
+      ps.zipWithIndex.foreach { case (p, i) => RowTrace.log("sat" + tag + i + "\t" + sp(p)) }
+    }
+    RowTrace.log {
+      // The INPUT population: the constraint list solve actually receives, and
+      // the partitions built from it, against the SATURATED set it reduces over.
+      val inParts = q.toList
+      val rows    = cs.flatMap(_.rowConstraints)
+      val arities = rows.map { case Part(_, _, rs) => rs.length ; case _ => 0 }
+      val concrete = rows.exists {
+        case Part(_, lhs, rs) => (lhs :: rs).exists { case ConcreteRho(_, f) => f.nonEmpty ; case _ => false }
+        case _ => false
+      }
+      val derived = ps.filter(_.inf.isDefined)
+      val byRule  = derived.groupBy(_.inf.get.toString).map { case (k, v) => k + ":" + v.length }
+                           .toList.sorted.mkString(",")
+      "solve\t" + RowTrace.site + "\t" + RowTrace.clean(l.toString) +
+        "\t" + rows.length + "\t" + inParts.length + "\t" + ps.length +
+        "\t" + derived.length + "\t" + concrete +
+        "\t" + arities.sorted.mkString(";") + "\t" + (if (byRule.isEmpty) "-" else byRule)
+    }
+    // On the INPUT partitions (`q`), not the saturated set (`ps`).
+    //
+    // CORRECTED 2026-09-01 (ticket item 8a).  This comment used to justify the choice by
+    // "propagation is monotone (`Rowpartition.forced_mono`), so the saturated set would be
+    // strictly stronger".  That does not follow.  `forced_mono` is monotone in the SYSTEM
+    // (`G subset G' -> Forced l G v x -> Forced l G' v x`), and `q.expand` is NOT a
+    // superset of `q`: `makeEmpty`, `makeConcrete`, `destructiveSub` and `instantiate` all
+    // DELETE partitions and rename variables.  So the saturated set is a different system,
+    // not a larger one, and "strictly stronger" is an empirical question rather than a
+    // corollary.  (The old comment also blamed rule 6's documented form, which is indeed
+    // unsound -- `Rowpartition.Rule6Header.header_not_conservative` -- but `def resolution`
+    // never implemented that form; it computes `Rowpartition.rule6`, which is sound.)
+    //
+    // What running the check on `ps` WOULD need is: input satisfiable => saturated set
+    // satisfiable.  For the rule set the default `genRules=cut` runs, that is
+    // `Rowpartition.CutRuleSteps.satisfiable_iff`; see the ticket for what it does not
+    // yet cover.  Reading the input needs none of that: it depends only on the semantics
+    // of the constraints the user wrote, which is what `Rowpartition/LabelProp.lean`
+    // proves (`forced_sound`, `refuted_unsat`, `not_refuted_of_sat`).
+    //
+    // Reading `ps` instead is SOUND -- `Rowpartition.refute_saturated_sound`,
+    // tracker/lean/Rowpartition/Saturate.lean -- and was measured on both corpora at ZERO
+    // additional refutations, so the flag for it was removed again.  See item 8a.
+    if (!GenRules.labelCheckEarly) checkLabels(q.toList.map(_.tup))
     Exists(l, List(), reduce(l, cs map (substType _), es, ps))
   }
 
@@ -1064,7 +1560,7 @@ object Subst {
     val (_, evs, cs) = Exists.unfurl(ex)
     val fevs = typeVars(cs) -- evs -- uvs
     if(fevs.toSet.isEmpty) {
-      val csp = solve(ex.nf)
+      val csp = RowTrace.withSite("trySolveOn")(solve(ex.nf))
       generalize(substGamma(g), csp, substType(t))
     } else ty
   }
@@ -1111,7 +1607,7 @@ object Subst {
    * into forall for unambiguous variables and exists for variables that appear
    * only in constraints.
    */
-  def generalize(g: Gamma, q2: Type, ty: Type)(implicit hm: SubstEnv, su: Supply, tml: Located): Type = {
+  def generalize(g: Gamma, q2: Type, ty: Type, publishing: Boolean = false)(implicit hm: SubstEnv, su: Supply, tml: Located): Type = {
     val (_, _, q1, t) = dequantify(ty)
     val li = t.loc.generalized
     val q = Exists(li, List(), List(q1, q2))
@@ -1126,7 +1622,7 @@ object Subst {
     val xs = (typeVars(cs) -- nts -- gs).filter(_.ty != Skolem).toList
     val nxs = refreshList(Ambiguous(Bound), li, xs)
     hm.remembered = hm.remembered map { case (k, (g, t, loc)) => (k, (Type.sub(km, tm, g), t.subst(km,tm), loc)) }
-    Forall(li,nks,nts, mkSimplified(tml.loc,nxs,subType(zipTypes(xs,nxs),cs)), t.subst(km,tm))
+    Forall(li,nks,nts, mkSimplified(tml.loc,nxs,subType(zipTypes(xs,nxs),cs),publishing), t.subst(km,tm))
   }
 
   def generalizeKind(d: Delta, k: Kind)(implicit su: Supply): KindSchema = {
@@ -1168,7 +1664,9 @@ object Subst {
     assertTermClosed(bs, maps._2.keySet ++ bs.map(_.v))
     assertTypeClosed(bs)
 
-    val (_, ds, terms) = inferBindingGroupTypes(m.loc, Nil, is, es, true)
+    // the two booleans are `slv` and, S5.1, `publishing`: this is a MODULE's top-level
+    // binding group, so the C12 tautology deletion runs on what it generalises.
+    val (_, ds, terms) = inferBindingGroupTypes(m.loc, Nil, is, es, true, true)
     for (d <- ds)
       if (!d.isTrivialConstraint)
         d.die("non-trivial deferred constraint in top level binding")
@@ -1234,19 +1732,19 @@ object Subst {
   }
 
   // @throws Death
-  def assertTermClosed[A:HasTermVars](t: A, ex: Set[TermVar] = Set()) {
+  def assertTermClosed[A:HasTermVars](t: A, ex: Set[TermVar] = Set()): Unit = {
     val ftmvs = termVars(t) -- ex
     if (ftmvs nonEmpty) die(vsep(ftmvs.map(v => v.report("error: undefined term")).toList))
   }
 
   // @throws Death
-  def assertTypeClosed[A:HasTypeVars](t: A, ex: Set[TypeVar] = Set()) {
+  def assertTypeClosed[A:HasTypeVars](t: A, ex: Set[TypeVar] = Set()): Unit = {
     val ftvs = typeVars(t) -- ex
     if (ftvs nonEmpty) die(vsep(ftvs.map(v => v.report("error: undefined type")).toList))
   }
 
   // @throws Death
-  def assertKindClosed[A:HasKindVars](t: A, ex: Set[KindVar] = Set()) {
+  def assertKindClosed[A:HasKindVars](t: A, ex: Set[KindVar] = Set()): Unit = {
     val fkvs = implicitly[HasKindVars[A]].vars(t) -- ex
     if (fkvs nonEmpty) die(vsep(fkvs.map(v => v.report("error: undefined kind")).toList))
   }
@@ -1300,11 +1798,117 @@ object Subst {
   private case class NormalPart(loc: Loc, left: TypeVar, concrete: Set[Name], abstrakt: List[TypeVar]) {
     override def equals(a: Any) = a match {
       case NormalPart(_, l, c, a) => l == left && c == concrete && a.sortWith(_.id < _.id) == abstrakt.sortWith(_.id < _.id)
+      case _ => false
     }
+    // MUST agree with `equals` above, which ignores `loc` and compares `abstrakt` SORTED:
+    // `List.distinct` buckets by `hashCode` and only compares within a bucket, so the
+    // synthesised case-class hashCode (which hashes `loc`, and hashes `abstrakt` in ORDER)
+    // sent two permuted copies of one constraint to different buckets and published both.
+    // `V.hashCode` is `id.hashCode`, so hashing the ids is hashing the variables.
+    override def hashCode: Int = (left.id, concrete, abstrakt.map(_.id).sorted).hashCode
     def part: Type = Part(loc, VarT(left), ConcreteRho(loc, concrete) :: abstrakt.map(VarT(_)))
   }
 
-  def mkSimplified(l: Loc, exts: List[TypeVar], ps: List[Type])(implicit hm: SubstEnv, su: Supply, tml: Located): Type = {
+  /** S5.1 (ticket C12): the shape `r <- (t1, .., tk)` with `k >= 1`, no concrete part,
+    * and every `ti` a DISTINCT bare variable.  `None` for anything else, and none of
+    * those exclusions is decoration:
+    *   - a CONCRETE part leaves `Foo` in the left-hand row, which is a condition on a
+    *     row the caller fixes -- refuted in Lean as
+    *     `DeadUndetermined.undetermined_not_deletable`;
+    *   - `k = 0` says the left-hand row IS empty -- refuted as
+    *     `TautoEmpty.tauto_empty_not_deletable`;
+    *   - a REPEATED part is NOT the theorem's shape at all and must be rejected here
+    *     rather than by the theorem: `mk r P {}` takes a `Finset`, so Lean's `{t, t}`
+    *     IS `{t}`, whereas the surface constraint `r <- (t, t)` asserts `t` disjoint
+    *     from itself, forcing `t` and hence `r` empty.  (The solver's own `RHS.build`
+    *     collapses a repeat the same way `LoopRel.dedup` does, so this shape should
+    *     not reach a published residual; it is excluded because it MUST be, not
+    *     because it is expected.) */
+  private def freshSplitShape(t: Type): Option[(TypeVar, List[TypeVar])] = t match {
+    case Part(_, VarT(r), rs) =>
+      val vs = rs.collect { case VarT(v) => v }
+      val emptyConc = rs.count { case ConcreteRho(_, s) => s.isEmpty case _ => false }
+      if (vs.length + emptyConc == rs.length && vs.nonEmpty &&
+          vs.distinct.length == vs.length) Some((r, vs))
+      else None
+    case _ => None
+  }
+
+  /** S5.1 (ticket C12): delete a published partition that says nothing, and the
+    * existentials it alone binds.
+    *
+    * THE THEOREM.  `Rowpartition/Determined.lean`'s `tauto_delete`:
+    * `REquiv <ex U P, insert (mk r P {}) G> <ex, G>` when `P` is non-empty, `r` is not
+    * in `P`, and every `p` in `P` occurs in no constraint of `G`.  Read on a signature:
+    * the left-hand side is a row the CALLER fixes, the parts are all existential,
+    * pairwise distinct, carry no concrete label and occur in no other published
+    * constraint -- so every caller discharges it by taking one part to be the whole row
+    * and the rest empty, and the qualification constrains nobody.  R3's
+    * `dead_delete_of_pairwise` / `_le_one_part` are the MIRROR IMAGE (the dead
+    * existential is the LEFT-hand side there) and do not cover this; that is
+    * `R3-REVIEW.md` M-3, and it is why C12 waited for a theorem.
+    *
+    * This is the sibling of `normalPart`'s `a <- (a)` case (stage S3) and of the
+    * `(|Foo|) <- (|Foo|)` case beside it.  It cannot live there: its side condition is
+    * about the WHOLE published constraint set, not about one constraint.
+    *
+    * NARROWER than the theorem in three places (S5 review §1.5).  (i) The theorem allows
+    * any `r` outside `P`, including an existential one -- `tauto_delete_no_hr` even drops
+    * `r ∉ P` altogether; this requires `r` NOT to be a published existential, so the
+    * deletion can never leave a binder bound by the `exists` and mentioned nowhere, and
+    * `r ∉ P` follows from `!ex(r) && vs.forall(ex)`.  (ii) `occ` is computed over the
+    * WHOLE published list, CLASS constraints included, so a part shared with a class
+    * constraint blocks the deletion; the theorem's `allVars G` only knows about row
+    * constraints.  (iii) Two candidates that share a part delete neither, for the same
+    * reason: each is the other's "other constraint".
+    *
+    * WHY DELETING SEVERAL AT ONCE IS STILL THE THEOREM (S5 review Q-5).  `tauto_delete`
+    * removes ONE constraint; `dead` may hold several.  The licence is the theorem
+    * ITERATED, and the `occ` test is what makes the iteration legitimate: a surviving
+    * candidate's parts occur in no other published constraint, so in particular not in
+    * another candidate and not as another candidate's left-hand side, and its own
+    * left-hand side is not a published existential.  So distinct candidates have disjoint
+    * part sets and deleting one leaves every other still satisfying the side condition
+    * against the smaller system.  The corresponding Lean statement (the iterated form) is
+    * not written; it is noted as ticket work in `S5-REVIEW.md` Q-5 for the canonical-
+    * residual programme, which is where it would first be leaned on.
+    *
+    * `-Dermine.tautoDelete`, DEFAULT ON since 2026-09-09 (`GenRules.tautoDelete` carries
+    * the evidence).  It runs ONLY from the generalisation that publishes a MODULE's
+    * signatures (`inferBindingGroupTypes`'s `publishing`), and that restriction is what
+    * confines it: measured, single build, flag A/B over 268 interfaces / 3,481 published
+    * bindings, exactly FOUR bindings move -- `Layout.Scan`'s `count`, `count'`, `sumBy`
+    * and `avgBy'`, the signatures ticket C12 names -- and with the interface-key header
+    * stripped exactly ONE file of 268 differs, on four lines.  Corpus verdicts and
+    * messages unchanged; `boot` and `Wide` row traces byte-identical to the pre-change
+    * compiler.  `tracker/loopmodel/S5-HYGIENE.md`, "Follow-up: publishing-only deletion". */
+  private def deleteTautologies(ps: List[Type], pubExts: List[TypeVar])
+      : (List[Type], List[TypeVar]) = {
+    val ex = pubExts.toSet
+    if (!GenRules.tautoDelete || ex.isEmpty) (ps, pubExts)
+    else {
+      val ixd = ps.zipWithIndex
+      val cands = ixd.flatMap { case (p, i) =>
+        freshSplitShape(p).filter { case (r, vs) => !ex(r) && vs.forall(ex) }
+                          .map { case (_, vs) => (i, vs.toSet) }
+      }
+      if (cands.isEmpty) (ps, pubExts)
+      else {
+        val occ = ixd.map { case (p, i) => (i, typeVars(p).toSet) }
+        val dead = cands.filter { case (i, vs) =>
+          occ.forall { case (j, tvs) => j == i || (tvs & vs).isEmpty }
+        }
+        if (dead.isEmpty) (ps, pubExts)
+        else {
+          val di = dead.map(_._1).toSet
+          val dv = dead.flatMap(_._2).toSet
+          (ixd.filterNot { case (_, i) => di(i) }.map(_._1), pubExts.filterNot(dv))
+        }
+      }
+    }
+  }
+
+  def mkSimplified(l: Loc, exts: List[TypeVar], ps: List[Type], publishing: Boolean = false)(implicit hm: SubstEnv, su: Supply, tml: Located): Type = {
     def isolated(acc: Set[TypeVar], parts: List[Type]): Set[TypeVar] = {
       val dirty = parts.foldLeft(Set[TypeVar]()) {
         case (d,p) =>
@@ -1322,7 +1926,11 @@ object Subst {
           case ((cs, vs, ts), ConcreteRho(_, s)) =>
             val i = cs.intersect(s)
             if(i.nonEmpty)
-              l.die("Fields appear twice in row: " + i.mkString(","))
+              // at the constraint, not at its left-hand variable: the variable's location
+              // is wherever the signature declared it, which for a stdlib helper's
+              // constraint is the stdlib; the constraint's is the occurrence that
+              // instantiated it (`instantiatedAt`)
+              sourcePosition(loc).die("Fields appear twice in row: " + i.mkString(","))
             else (cs ++ s, vs, ts)
           case ((cs, vs, ts), c@Con(_, n, _, _)) => (cs + n, vs, ts)
           case ((cs, vs, ts), t)                 => (cs, vs, t :: ts)
@@ -1334,7 +1942,11 @@ object Subst {
             else if(cs.isEmpty && vs.length == 1) Some(Left(NormalPart(loc, vs.head, s, List())))
             else Some(Right(p))
           case VarT(v) =>
-            Some(Left(NormalPart(loc, v, cs, vs)))
+            // `a <- (a)` is an identity, not a condition: the sibling of the ConcreteRho
+            // case just above, which already deletes `(|Foo|) <- (|Foo|)`.  It is true of
+            // every row, so deleting it cannot weaken the published residual.
+            if(cs.isEmpty && vs == List(v)) None
+            else Some(Left(NormalPart(loc, v, cs, vs)))
           case _ => Some(Right(p))
         }
       case p => Some(Right(p))
@@ -1346,11 +1958,53 @@ object Subst {
       p => (typeVars(p).toSet -- iso).nonEmpty
     }
     // solve constraints before throwing them away to ensure failure for unsatisfiable sets
-    solve(Exists(l, List(), extinct))
+    RowTrace.withSite("mkSimplified-extinct")(solve(Exists(l, List(), extinct)))
     val complex = reduce(classes)
     val am = ambiguitiesIn(exts, complex).map(_.v).toSet
     val lessComplex = complex.filterNot(p => typeVars(p).exists(am))
     val pruned = lessComplex ++ dumb
-    Exists(l, exts filterNot (v => iso(v) || am(v)), pruned)
+    val pubExts = exts filterNot (v => iso(v) || am(v))
+    /* R3 (`tracker/loopmodel/R3-DETERMINED.md`), TRACE-ONLY: the ROW-AMBIGUITY criterion --
+     * Rose's Definition 14 read through Definition 13 -- on the signature this call is about
+     * to publish.  `ambiguitiesIn` above runs on the CLASS constraints only (`complex`); the
+     * row parts (`dumb`) reach `pruned` without passing through it, and this record is the
+     * measurement of what a criterion for them would say.  It changes nothing: `pubExts` is
+     * the same list the `Exists` below always bound.
+     *
+     * `U0` is the variables the row constraints mention that are NOT published existentials.
+     * That is exactly `fv(tau) ∪ universals` as far as the closure can tell, because a
+     * variable of `tau` occurring in no constraint can never be used by either clause. */
+    if (RowTrace.enabled) {
+      val dps = Determinacy.read(pruned)
+      if (dps.nonEmpty) {
+        val dvs   = Determinacy.vars(dps)
+        val exset = pubExts.toSet
+        val u0    = dvs.filterNot(exset)
+        val rose  = Determinacy.closure(dps, u0, false)
+        val erm   = Determinacy.closure(dps, u0, true)
+        val rowEx = pubExts.filter(dvs)
+        val rU    = rowEx.filterNot(rose)
+        val eU    = rowEx.filterNot(erm)
+        RowTrace.log("ramb\t" + RowTrace.site + "\t" + RowTrace.clean(l.toString) +
+                     "\t" + RowTrace.clean(RowTrace.binding) +
+                     "\t" + pubExts.length + "\t" + rowEx.length +
+                     "\t" + rU.length + "\t" + eU.length + "\t" + dps.length +
+                     "\t" + rU.map(_.toString).sorted.mkString(" ") +
+                     "\t" + eU.map(_.toString).sorted.mkString(" "))
+      }
+    }
+    /* S5.1, ticket C12: the tautology deletion runs HERE, after the `ramb` record and
+     * immediately before the signature is built, and ONLY when this call is the one that
+     * publishes a binding's signature (`publishing`, threaded from
+     * `inferImplicitBindingTypes`).  Three reasons for the position: the record above is
+     * R3's measurement of the residual AS THE LOOP LEFT IT, which is what the L2
+     * differential and `trace-ab.py` compare; the `extinct` solve above must still see
+     * every constraint (deleting one before it could hide an unsatisfiable set); and an
+     * INTERMEDIATE generalisation's residual is re-instantiated by the inference around
+     * it, so deleting there reshapes signatures the deletion was not aimed at.  Nothing
+     * between here and the `Exists` is traced. */
+    val (kept, keptExts) =
+      if (publishing) deleteTautologies(pruned, pubExts) else (pruned, pubExts)
+    Exists(l, keptExts, kept)
   }
 }

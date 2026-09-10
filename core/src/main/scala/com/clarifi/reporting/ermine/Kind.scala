@@ -46,7 +46,15 @@ case class Constraint(loc: Loc) extends Kind {
 }
 case class ArrowK(loc: Loc, i: Kind, o: Kind) extends Kind {
   override def mono(f: Loc => Loc) = ArrowK(loc, i.mono(f), o.mono(f))
-  override def subst(m: PartialFunction[V[Unit],Kind]) = ArrowK(loc, i.subst(m), o.subst(m))
+  override def subst(m: PartialFunction[V[Unit],Kind]) = {
+    // Return THIS when nothing underneath changed, so an untouched subtree
+    // costs no allocation.  instantiateType substitutes a SINGLETON map across
+    // the whole environment (Subst.scala:186) and most entries never mention
+    // the variable -- but every constructor on the path must preserve physical
+    // identity or the sharing is lost one level up.  Roadmap P7 Step 1.
+    val ip = i.subst(m); val op = o.subst(m)
+    if ((ip eq i) && (op eq o)) this else ArrowK(loc, ip, op)
+  }
   override def vars = i.vars ++ o.vars
   override def isMono = i.isMono && o.isMono
 }
@@ -87,9 +95,16 @@ object Kind {
   def monomorphize(k: Kind, f: (Loc => Loc) = (x => x)) = k.mono(f)
   def kindVars[A](a: A)(implicit A:HasKindVars[A]): Vars[Unit] = A.vars(a)
   def fkvs[A](a: A)(implicit A:HasKindVars[A]): Traversable[V[Unit]] = A.vars(a).filter(_.ty == Free)
+  // NO empty-map fast path here, deliberately -- see roadmap P7 Step 1.  Adding
+  // one (mirroring Type.subType:606-607) is semantically a no-op and it still
+  // MOVED browse.txt bytes, because typeHasKindVars.sub is `t.map(_.subst(m))`
+  // and Part.map goes through Part.apply, whose foldLeft REVERSES the RHS on
+  // every pass.  The rendered order of a partition is therefore a function of
+  // how many substitution passes happened to run.  Skipping a no-op pass flips
+  // the parity: r <- (sr, xr, yr, o) became r <- (o, yr, xr, sr).
   def subKind[A](m: PartialFunction[V[Unit],Kind], a: A)(implicit A:HasKindVars[A]) = A.sub(m, a)
 
-  implicit def kindHasKindVars = new HasKindVars[Kind] {
+  implicit def kindHasKindVars: HasKindVars[Kind] = new HasKindVars[Kind] {
     def vars(k: Kind) = k.vars
     def sub(m: PartialFunction[KindVar, Kind], a: Kind) = a.subst(m)
   }

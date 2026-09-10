@@ -143,7 +143,13 @@ case class ConcreteRho(loc: Loc, fields: Set[Name] = Set()) extends Type {
     case ConcreteRho(_, fs) => fields == fs
     case _                  => false
   }
-  override def hashCode = fields.hashCode * 111
+  // `fields.hashCode` is O(|fields|), and a row type is re-hashed on every
+  // insertion into a Set or Map of Types -- Exists.apply's `p.toSet.toList`
+  // being the frequent one. Memoized lazily so the cost is paid once per row
+  // and only if the row is actually hashed. The VALUE is unchanged, so no
+  // hash-ordered structure observes a difference.
+  private[this] lazy val cachedHash: Int = fields.hashCode * 111
+  override def hashCode = cachedHash
   def at(l: Loc) = ConcreteRho(l, fields)
   override def closeWith(vs: List[TypeVar])(implicit su: Supply) = this
 }
@@ -206,11 +212,22 @@ object Arrow {
 
 case class AppT(e1: Type, e2: Type) extends Type {
   def loc = e1.loc
-  override def map(f: Kind => Kind) = AppT(e1.map(f), e2.map(f))
+  override def map(f: Kind => Kind) = {
+    val a = e1.map(f); val b = e2.map(f)
+    if ((a eq e1) && (b eq e2)) this else AppT(a, b)
+  }
   override def nfWith(stk: List[Type])(implicit su: Supply) = e1.nfWith(e2.nf :: stk)
   override def foreignLookup = e1.foreignLookup
   override def unboxedForeign = e1.unboxedForeign
-  override def subst(ks: PartialFunction[KindVar,Kind], ts: PartialFunction[TypeVar,Type]) = AppT(e1.subst(ks, ts), e2.subst(ks, ts))
+  // Physical-identity short-circuit; see the note on ArrowK.subst.  NOTE that
+  // returning `this` also SHARES memoizedKindSchema below instead of resetting
+  // it to None.  Sound, because only CLOSED schemas are ever cached
+  // (Subst.scala:495) and those cannot depend on the substitution -- but it is
+  // a behaviour change to kind-inference caching, not a pure allocation win.
+  override def subst(ks: PartialFunction[KindVar,Kind], ts: PartialFunction[TypeVar,Type]) = {
+    val a = e1.subst(ks, ts); val b = e2.subst(ks, ts)
+    if ((a eq e1) && (b eq e2)) this else AppT(a, b)
+  }
   var memoizedKindSchema: Option[KindSchema] = None
   override def mono = e1.mono && e2.mono
   def at(l: Loc) = AppT(e1 at l, e2)
@@ -222,7 +239,15 @@ case class VarT(v: TypeVar) extends Type with Variable[Kind] {
   override def map(f: Kind => Kind) = VarT(v.map(f))
   override def toString = v.toString
   override def subst(ks: PartialFunction[KindVar,Kind], ts: PartialFunction[TypeVar,Type]): Type =
-    ts.lift(v).getOrElse(VarT(v map (subKind(ks,_))))
+    // The LEAF of every traversal, and what allocated most: a variable NOT in
+    // the substitution still rebuilt a fresh V (a case class) inside a fresh
+    // VarT on every pass, even under an empty kind map.  Roadmap P7 Step 1.
+    ts.lift(v) match {
+      case Some(t) => t
+      case None =>
+        val k = subKind(ks, v.extract)
+        if (k eq v.extract) this else VarT(v map (_ => k))
+    }
   def at(l: Loc) = VarT(v at l)
 }
 
@@ -233,7 +258,7 @@ case class VarT(v: TypeVar) extends Type with Variable[Kind] {
  */
 class Exists(val loc: Loc, val xs: List[TypeVar] = List(), val constraints: List[Type] = List()) extends Type {
   override def map(f: Kind => Kind) = new Exists(loc, xs.map(_.map(f)), constraints.map { _ map f })
-  override def toString = "Exists(%s, [%s],[%s])".format(loc, xs.mkString(", "), constraints.mkString(", "))
+  override def toString = s"""Exists($loc, [${xs.mkString(", ")}],[${constraints.mkString(", ")}])"""
   override def nfWith(stk: List[Type])(implicit su: Supply) = Exists.mk(loc,xs,constraints.map(_.nf)).apply(stk:_*)
   override def subst(km: PartialFunction[KindVar,Kind], tm: PartialFunction[TypeVar,Type]) =
     Exists(loc, xs.map {_ map {_ subst km}}, constraints.map(_.subst(km,tm)))
@@ -300,7 +325,7 @@ object Exists {
  */
 class Forall(val loc: Loc, val ks: List[KindVar], val ts: List[TypeVar], val constraints: Type, val body: Type) extends Type {
   override def map(f: Kind => Kind) = new Forall(loc, ks, ts.map(_.map(f)), constraints.map(f), body.map(f))
-  override def toString = "Forall(%s,[%s],[%s],%s,%s)".format(loc, ks.mkString(", "), ts.mkString(", "), constraints.toString, body.toString)
+  override def toString = s"""Forall($loc,[${ks.mkString(", ")}],[${ts.mkString(", ")}],${constraints.toString},${body.toString})"""
   override def nfWith(stk: List[Type])(implicit supply: Supply) =
     Forall.mk(loc,ks,ts,constraints.nf(supply),body.nf(supply)).apply(stk:_*)
   override def foreignLookup = body.foreignLookup
@@ -386,7 +411,15 @@ object Part {
       case ((ts,l,ss), other) => (other ::ts, l, ss)
     }
     lh match {
-      case ConcreteRho(lclhs, cs) if ts.isEmpty && ss == cs => Exists(l) // (|Foo, Bar|) <- (|Foo,Bar|)
+      // `ss` is a List[Name] and `cs` a Set[Name], so `ss == cs` was ALWAYS FALSE and this
+      // guard was dead: a concrete identity was rebuilt below and reached the solver
+      // (stage F3, item K-1; `ROSE-COMPARISON.md` §3 Rank 1's dated correction).  The
+      // length test is what the old spelling could not have expressed and the case below
+      // (`ss.toSet.size == ss.length`) does: `ss` is the concatenation of EVERY concrete
+      // part, so equal sets with a longer list means two parts share a label, which is
+      // unsatisfiable rather than trivially true and must be left for the solver.
+      case ConcreteRho(lclhs, cs) if ts.isEmpty && ss.toSet == cs && ss.length == cs.size =>
+        Exists(l) // (|Foo, Bar|) <- (|Foo,Bar|), and (|Foo,Bar|) <- ((|Foo|), (|Bar|))
       case ConcreteRho(lclhs, cs) if ts.length == 1 && ss.isEmpty =>
         new Part(l, ts(0), List(lh)) // flop the concrete rho to the right
       case _ if ts.isEmpty && ss.isEmpty => new Part(l,lh,Nil)           // a <- ()
@@ -406,7 +439,10 @@ case class Memory(id: Int, body: Type) extends Type {
   override def foreignLookup: Class[_] = body.foreignLookup
   override def unboxedForeign: Boolean = body.unboxedForeign
   override def subst(ks: PartialFunction[KindVar,Kind], ts: PartialFunction[TypeVar,Type]): Type =
-    Memory(id, body subst (ks, ts))
+  {
+    val b = body subst (ks, ts)
+    if (b eq body) this else Memory(id, b)
+  }
   override def mono: Boolean = body mono
   override def isTrivialConstraint: Boolean = body isTrivialConstraint
   override def rowConstraints: List[Type] = body rowConstraints
@@ -435,11 +471,38 @@ object PrimConDecl {
   )
 }
 
+/** The stand-in `Class` of a `foreign data` whose class this JVM does
+  * not have (LSP-FFI).  It is never instantiated and never matches
+  * anything: its only job is to be recognisable by identity, so a
+  * reflective lookup that would need the real class reports "the class
+  * is missing" at the site that needs it rather than "no such method". */
+final class UnresolvedForeign private ()
+
 case class TypeConDecl(
   override val foreignLookup: Class[_],
-  override val unboxedForeign: Boolean
+  override val unboxedForeign: Boolean,
+  /** The class name a tolerated `foreign data` could not resolve
+    * (LSP-FFI kind 9).  The TYPE exists and is opaque — Ermine code may
+    * mention it freely — but `foreignLookup` is the `UnresolvedForeign`
+    * sentinel, so every operation that actually needs the class (a
+    * reflective method/field/constructor lookup, or marshalling across
+    * that boundary) can name it in its warning. */
+  unresolved: Option[String] = None
 ) extends ConDecl {
   def desc = "data"
+
+  /** A foreign pattern match asks the decl whether a runtime value is one
+    * of these (Pattern.scala), and with no class there is nothing to ask
+    * — the sentinel would answer a flat `false` and the match would
+    * silently take the wrong branch (LSP-FFI review finding P-6).  Say so
+    * instead.  This is RUN time only: the editor never evaluates, and a
+    * batch run only reaches it with `ermine.foreign.tolerant` on. */
+  override def isInstance(a: Any): Boolean = unresolved match {
+    case Some(cn) =>
+      sys.error("foreign type has no class on this JVM: " + cn +
+                " — a pattern match against it cannot be decided")
+    case None => foreignLookup.isInstance(a)
+  }
 }
 
 case class FieldConDecl(fieldType: Type) extends ConDecl {
