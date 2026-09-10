@@ -87,14 +87,19 @@ object Definitions {
     * `moduleTerms` for "is that name already a top level here", the
     * occurrence list for the `Ambiguous` test.  `scopeTerms`/`scopeTypes`
     * are the canonical import maps, held by REFERENCE (no copy is made,
-    * and no probe costs more than a hash lookup). */
+    * and no probe costs more than a hash lookup).  `symbols` is 6.4's
+    * hierarchical document-symbol tree, built here on the CHECK path (a
+    * walk over statements only, no expression traversal) and rendered to
+    * JSON in the request -- so `textDocument/documentSymbol` and
+    * `workspace/symbol` are lookups, like every other request. */
   final case class DocIndex(occs: List[Occ],
                             version: Long = 0L,
                             moduleName: String = "",
                             renamed: Renamer.Result =
                               Renamer.Result(Nil, Map(), Nil, Nil),
                             scopeTerms: Map[Local, List[Name]] = Map(),
-                            scopeTypes: Map[Local, List[Name]] = Map())
+                            scopeTypes: Map[Local, List[Name]] = Map(),
+                            symbols: List[Symbols.Sym] = Nil)
 
   // The per-document indexes live in Documents alongside the buffer text
   // and version (roadmap 5.3): a definition request and the check that
@@ -688,9 +693,20 @@ object Definitions {
       }
     }
 
+    // 6.4: the document symbol tree.  It reads the SURFACE statements and
+    // the types this check knows -- `TolerantCheck.types` for the module's
+    // own top levels, the session's `termNames` for the names a check
+    // INSTALLS rather than binds (constructors, `field`, `table`,
+    // `foreign`) -- and nothing else.  A broken statement is an
+    // `SErrorStatement` and yields no symbol; its healthy neighbours do.
+    val syms = Symbols.build(c.module, lines,
+      spelling => c.types.get(spelling) orElse
+                  env.termNames.get(ownGlobal(spelling)).map(_.extract))
+
     DocIndex(dedup(occs ++ headOccs ++ fixityOccs ++ tyHeadOccs ++
                    localDefOccs ++ importOccs ++ importItemOccs),
-             0L, c.name, c.renamed, c.scope.canonicalTerms, c.scope.canonicalTypes)
+             0L, c.name, c.renamed, c.scope.canonicalTerms, c.scope.canonicalTypes,
+             syms)
   }
 
   /** First entry wins per start position: a real occurrence outranks the

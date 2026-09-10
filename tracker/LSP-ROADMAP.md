@@ -8,10 +8,10 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 3 IN PROGRESS (2026-09-10).  6.0-6.3 DONE (6.2 as PARTIAL:
+Status: STAGE 3 IN PROGRESS (2026-09-10).  6.0-6.4 DONE (6.2 as PARTIAL:
 62.4% of local binders hover; the pattern-binder residual is a Subst.scala
-FORK under Blocked/Awaiting, the user's decision).  NEXT: 6.4 (symbols),
-then 6.5-6.7, then GATE G3.  Orchestration:
+FORK under Blocked/Awaiting, the user's decision).  NEXT: 6.5 (completion),
+then 6.6-6.7, then GATE G3.  Orchestration:
 brief -> fresh Opus implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
@@ -30,8 +30,8 @@ brief -> fresh Opus implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (306 as of 2026-09-10 after
-  Stage 3 item 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (344 as of 2026-09-10 after
+  Stage 3 item 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
   82 before that, the G2 line's 77 having gone stale)
@@ -977,7 +977,7 @@ STAGE-3 INVARIANTS (hard):
   refusal messages mislead (wording only, S4) and the belt over-refuses
   by design (stated).  Ticket E8 filed for the tab-column model.
 
-- [ ] **6.4 Document symbols and workspace symbols.**
+- [x] **6.4 Document symbols and workspace symbols.**
   `textDocument/documentSymbol` (hierarchical): from the surface tree +
   StatementExtents — one symbol per top-level group (sig + equations
   merged; detail = the TolerantCheck type when known), data/type/class
@@ -992,6 +992,54 @@ STAGE-3 INVARIANTS (hard):
   Nav.twice at its Location; "Relation" finds the stdlib type in its
   SOURCE file (Decision 5 makes this true); a broken file lists its
   healthy symbols; a builtin (`Just`) is NOT listed (no source).
+  DONE 2026-09-10 (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP3-6.4-SYMBOLS.md, LSP3-6.4-REVIEW.md).  The unit is
+  the TERM GROUP, not the statement: a spelling's signatures and equations
+  in one binding scope merge into one symbol (range = union of their
+  statement spans, selectionRange = the first equation's head, or the
+  sig's when there is none).  Kinds: argument-taking group Function,
+  nullary Variable, class-body group Method; `data` Struct (Enum when
+  every constructor is nullary) with Constructor children carrying the env
+  type; `type` alias and `foreign data` Class; `class` Interface; `field`
+  Field and `table` Object one per name; `import` and the `foreign` block
+  Module; `private`/`database`/`foreign private` Namespace; foreign
+  function/method/subtype Function, value Property, constructor
+  Constructor; a fixity declaration is no symbol (appended to the
+  operator's detail); a broken statement is no symbol and its neighbours
+  still list.  Ranges go through the existing `Lines`/`nameExtent`
+  conversion (E8 inherited, no second column model).  `workspace/symbol`:
+  every open document's flattened tree plus the resident session's
+  globals with a real file Loc (builtins drop out because `Loc.builtin`
+  yields no location), re-exports deduped by definition site, ranked
+  exact > prefix > substring > lower-cased name > container, capped at
+  200, empty query = open buffers only; the stdlib list is built ONCE
+  after boot (36 ms, 2157 globals) and a query costs 0.2-1.3 ms.
+  Corpus property (TestRenamer 24 -> 27): 8159 symbols over 252 files,
+  0 malformed, and term groups 3441 == moduleTerms 3441 in every file.
+  Two brief expectations corrected, not worked around: the `Relation`
+  TYPE is a Scala-installed builtin with no source (pinned absent; the
+  stdlib query is pinned on SoftRelation/SortOrder instead), and a
+  foreign declaration is Function-kinded but not a term group.
+  THE REVIEW (FIX-THEN-ADVANCE) caught the report claiming "siblings do
+  not overlap" when a group's range was the UNION of its sig and equation
+  spans — 171 straddling sibling pairs in 21 corpus files where a sig
+  block and its equations are separated by other groups (spec-legal, but
+  cursor-to-symbol lookup misrenders on the sig lines).  Fix round: a
+  group's range is the contiguous run of its own statements containing
+  the selectionRange; sibling non-overlap and sortedness are now ASSERTED
+  by the corpus property (straddles 171 -> 0 over 252 files; 1824
+  identical-range sibling pairs counted, not failed);
+  `private`/`database` containers no longer leak into workspace/symbol;
+  a group is emitted in the container of its SELECTION, so a sig at top
+  level with its equation inside `private` is a child of the namespace
+  with the stray sig outside its range (no empty namespace).  Inherited, ticketed as E9: stdlib hits point at
+  the target module tree, not core/src/main/resources — since 6.1's
+  navigation, made visible by symbols.  lsp-smoke 306 -> 338 -> 344 (fix
+  round); five suites 72/72 (TestRenamer 24 -> 28); Report.e round trip unmoved (symbols built
+  on the check path, ~0.3 ms of a 12-18 ms index build).
+  Second review pass: ADVANCE; independent census 0 straddling / 0
+  unsorted over 358 files and 9066 symbols; the identical-range example
+  in the report was stale and is corrected in an orchestrator's note.
 
 - [ ] **6.5 Completion** — the consumer the scope-at-position layer has
   waited for since 4.2 ("deferred to where a consumer exists").
@@ -2264,6 +2312,14 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-10 (6.4 DONE): see the item's DONE paragraph.  Implementer
+  GREEN, reviewer FIX-THEN-ADVANCE (the report claimed non-overlapping
+  sibling ranges while 171 corpus pairs straddled; a namespace leak into
+  workspace symbols), fix round closed all, second pass ADVANCE.  Ticket
+  E9 (stdlib hits land in the build output tree) filed.  Implementer
+  ~43 + 17 min, reviewer ~26 + 17 min.  Baselines: TestLoopTrace 720/720,
+  five suites 72/72, corpus 85/69/0 over 154, repl-smoke 8/66 goldens
+  untouched, lsp-smoke 344, boot 129.
 - 2026-09-10 (6.3 DONE): see the item's DONE paragraph.  Implementer
   GREEN, reviewer FIX-THEN-ADVANCE with two HIGH wrong-edit paths the
   fixtures had not reached (re-export key split; backtick replace range)

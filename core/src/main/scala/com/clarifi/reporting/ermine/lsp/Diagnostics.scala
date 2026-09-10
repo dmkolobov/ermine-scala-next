@@ -127,7 +127,11 @@ object Diagnostics {
       // argued about -- the number is the item's own budget line.
       val tIdx0 = System.nanoTime
       val idx = Definitions.index(path.toString, checked)
-      log(f"index: ${path.getFileName} ${idx.occs.size} occurrences in "
+      // 6.4 folded the document-symbol tree into the same build; report
+      // its share so "the symbol list did not move the check" is a
+      // measured claim and not an argument.
+      log(f"index: ${path.getFileName} ${idx.occs.size} occurrences, "
+          + f"${Symbols.flatten(idx.symbols).size} symbols in "
           + f"${(System.nanoTime - tIdx0) / 1e6}%.1fms")
       docs.putIndex(uri, idx)
       checked.diags.map(fromDiag) :::

@@ -575,6 +575,20 @@ E8. **Parser columns are tab-expanded to 8-column stops, so every editor range o
     batch report's column on tab-indented lines (REPL goldens, corpus verdict text) and is Tier 2 + goldens.
     Recommended: the boundary conversion, editor path only, Tier 0.  Not scheduled; small.
 
+E9. **Stdlib navigation and workspace symbols land in the BUILD OUTPUT, not the source tree.**  Filed 2026-09-10
+    from LSP Stage 3 item 6.4 (review F5; report `tracker/loopmodel/LSP3-6.4-SYMBOLS.md` §7d).
+    `workspace/symbol "not"` answers `core/target/scala-3.3.8/classes/modules/Bool.e:19`, and
+    `textDocument/definition` has done the same since the 6.1-era navigation.  *Cause.* The resident session loads
+    its 129 modules from the classpath, where `copyResources` puts a copy of `core/src/main/resources/modules`, so
+    `V.loc`/`Con.loc` carry positions in the copy and `Definitions.location` reports them faithfully.  *Impact.*
+    A user who edits the file they land in loses the edit at the next `copyResources`; 6.4 makes it matter because
+    browsing the stdlib is the point of workspace symbols.  Invisible to both suites: every pin is
+    `uri.endswith("/Bool.e")`-shaped.  *Fix.* Either rewrite the target module tree back to
+    `core/src/main/resources/modules` at the LSP boundary (one place, `Definitions.location`, given the mapping), or
+    boot the resident session from the source tree (`Resident.boot`; makes the LSP's module set differ from
+    `bin/ermine`'s).  Editor path only; Tier 0; the pins must become tree-distinguishing or the fix cannot be
+    observed.  Not scheduled; small.
+
 ## D. Claims in older documents that do not reproduce
 
 D1. `core/examples/Ai/README.md`'s RUnion table ("a helper bundling `RUnion3` and `RUnion2` does not finish")

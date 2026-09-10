@@ -13,6 +13,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 FIXTURES = HERE.parent / "lsp-tests"
@@ -20,6 +21,14 @@ LOG = os.environ.get("LSP_SMOKE_LOG", "/tmp/lsp-smoke.log")
 
 checks = 0
 failures = []
+
+
+def _query_ms(fn, *args):
+    """One request's round trip in milliseconds (6.4: the workspace-symbol
+    cost budget is measured, not asserted from the log)."""
+    t0 = time.perf_counter()
+    fn(*args)
+    return (time.perf_counter() - t0) * 1000.0
 
 
 def check(name, cond, detail=""):
@@ -113,10 +122,26 @@ def main():
     check("initialize.renameProvider with prepare",
           caps.get("renameProvider") == {"prepareProvider": True},
           repr(caps.get("renameProvider")))
+    # 6.4: document symbols and workspace symbols.
+    check("initialize.documentSymbolProvider",
+          caps.get("documentSymbolProvider") is True)
+    check("initialize.workspaceSymbolProvider",
+          caps.get("workspaceSymbolProvider") is True)
     sync = caps.get("textDocumentSync", {})
     # 5.3: TextDocumentSync FULL — didChange carries the whole document
     check("initialize.sync", sync.get("openClose") is True and sync.get("save") is True
           and sync.get("change") == 1, repr(sync))
+
+    # 6.4.3: a request that arrives before the session exists answers at
+    # once with an EMPTY LIST -- never null, never a wait.  Sent before
+    # `initialized`, so the resident session has not begun to boot.
+    rid = client.request("workspace/symbol", {"query": "not"})
+    check("workspace/symbol before the session boots -> []",
+          client.response(rid).get("result") == [])
+    rid = client.request("textDocument/documentSymbol",
+                         {"textDocument": {"uri": uri("Good.e")}})
+    check("documentSymbol before any check -> []",
+          client.response(rid).get("result") == [])
 
     client.notify("initialized", {})
     ready = client.wait_for(
@@ -1239,6 +1264,287 @@ def main():
     client.diagnostics_for(uri("RefsSib.e"))
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Refs.e")}})
     client.diagnostics_for(uri("Refs.e"))
+
+    # --- 6.4: document symbols and workspace symbols --------------------
+    # Both answer from what the LAST CHECK stored: the hierarchical tree is
+    # built on the check path from the surface statements and rendered here,
+    # and the workspace list is the open documents' own declarations plus a
+    # list of the resident session's globals built ONCE after boot.  No
+    # parse, no check, no inference is reachable from either request.
+    def doc_symbols(name):
+        rid = client.request("textDocument/documentSymbol",
+                             {"textDocument": {"uri": uri(name)}})
+        return client.response(rid).get("result")
+
+    def ws_symbols(query):
+        rid = client.request("workspace/symbol", {"query": query})
+        return client.response(rid).get("result")
+
+    def tree(syms):
+        """(name, kind, range, selectionRange, children) as plain tuples, so
+        a change in ANY of them shows up as one diff."""
+        return [(s["name"], s["kind"],
+                 (s["range"]["start"]["line"], s["range"]["start"]["character"],
+                  s["range"]["end"]["line"], s["range"]["end"]["character"]),
+                 (s["selectionRange"]["start"]["line"],
+                  s["selectionRange"]["start"]["character"],
+                  s["selectionRange"]["end"]["character"]),
+                 tree(s.get("children", [])))
+                for s in syms]
+
+    def detail_of(syms, name):
+        for s in syms:
+            if s["name"] == name:
+                return s.get("detail")
+            d = detail_of(s.get("children", []), name)
+            if d is not None:
+                return d
+        return None
+
+    open_doc("Decls.e")
+    check("Decls.e clean for the symbol pin",
+          client.diagnostics_for(uri("Decls.e")) == [])
+    decls = doc_symbols("Decls.e")
+    # THE PIN.  Imports first (Module), then the fixity's operator merged
+    # into its equation, the two `field` names sharing their statement's
+    # range, the data statement with its constructors as CHILDREN, the type
+    # alias, and one symbol per term group -- `useAlias` and `useEither`
+    # each spanning their signature AND their equation while selecting the
+    # equation's head.
+    check("Decls.e symbol tree", tree(decls) == [
+        ("Prelude",   2, (2, 0, 2, 14), (2, 7, 14), []),
+        ("Either",    2, (3, 0, 3, 13), (3, 7, 13), []),
+        ("Date",      2, (4, 0, 4, 11), (4, 7, 11), []),
+        ("<+>",      12, (7, 0, 7, 17), (7, 0, 5), []),
+        ("fa",        8, (9, 0, 9, 18), (9, 6, 8), []),
+        ("fb",        8, (9, 0, 9, 18), (9, 10, 12), []),
+        ("Shape",    23, (11, 0, 11, 36), (11, 5, 10), [
+            ("Circle", 9, (11, 15, 11, 24), (11, 15, 21), []),
+            ("Square", 9, (11, 26, 11, 36), (11, 26, 32), [])]),
+        ("Alias",     5, (13, 0, 13, 22), (13, 5, 10), []),
+        ("useOp",    13, (15, 0, 15, 15), (15, 0, 5), []),
+        ("useFa",    13, (16, 0, 16, 10), (16, 0, 5), []),
+        ("useCircle", 13, (17, 0, 17, 20), (17, 0, 9), []),
+        ("useImported", 13, (18, 0, 18, 20), (18, 0, 11), []),
+        ("useForeign", 13, (19, 0, 19, 30), (19, 0, 10), []),
+        ("useAlias", 13, (20, 0, 21, 19), (21, 0, 8), []),
+        ("useEither", 13, (22, 0, 24, 0), (23, 0, 9), []),
+    ], repr(tree(decls)))
+    # `detail` is the CHECKED type, printed the way hover prints it, with
+    # the fixity declaration folded in (a fixity is a property of the
+    # operator's symbol, not a symbol of its own).
+    check("detail: the operator's checked type and its fixity",
+          detail_of(decls, "<+>") == "forall a. Num a => a -> a -> a  infixl 6",
+          repr(detail_of(decls, "<+>")))
+    check("detail: a constructor's type comes from the env",
+          detail_of(decls, "Circle") == "forall a. a -> Shape a",
+          repr(detail_of(decls, "Circle")))
+    check("detail: a field's type", detail_of(decls, "fa") == "Field (|fa|) Int",
+          repr(detail_of(decls, "fa")))
+    check("no symbol carries an empty name",
+          all(s[0] for s in tree(decls)))
+
+    # A BROKEN file lists its healthy statements and says nothing about the
+    # broken ones -- their diagnostic is the answer they get.
+    open_doc("Broken.e")
+    check("Broken.e still reports its two errors",
+          len(client.diagnostics_for(uri("Broken.e"))) == 2)
+    broken = doc_symbols("Broken.e")
+    check("a broken file lists its healthy symbols only", tree(broken) == [
+        ("Good",  2, (2, 0, 2, 11), (2, 7, 11), []),
+        ("good1", 13, (4, 0, 4, 14), (4, 0, 5), []),
+        ("good2", 13, (6, 0, 6, 13), (6, 0, 5), []),
+        ("good3", 13, (8, 0, 9, 0), (8, 0, 5), []),
+    ], repr(tree(broken)))
+    check("no symbol for a broken statement",
+          not [s for s in broken if s["name"].startswith("bad")], repr(broken))
+
+    # Every OTHER statement kind, on a fixture that checks clean: an all-
+    # nullary `data` is an Enum and one with fields a Struct, a `type` alias
+    # and a `foreign data` are Classes, a `private` block is a Namespace
+    # whose members are its children, and a `foreign` block is a Module.
+    open_doc("Syms.e")
+    check("Syms.e clean", client.diagnostics_for(uri("Syms.e")) == [])
+    syms = doc_symbols("Syms.e")
+    check("Syms.e symbol tree", tree(syms) == [
+        ("Prelude",     2, (2, 0, 2, 14), (2, 7, 14), []),
+        ("SymName",     5, (6, 0, 6, 28), (6, 5, 12), []),
+        ("SymColor",   10, (8, 0, 8, 43), (8, 5, 13), [
+            ("SymRed",   9, (8, 16, 8, 23), (8, 16, 22), []),
+            ("SymGreen", 9, (8, 25, 8, 34), (8, 25, 33), []),
+            ("SymBlue",  9, (8, 36, 8, 43), (8, 36, 43), [])]),
+        ("SymBox",     23, (10, 0, 10, 24), (10, 5, 11), [
+            ("SymBox",   9, (10, 16, 10, 24), (10, 16, 22), [])]),
+        ("symLabel",    8, (12, 0, 12, 23), (12, 6, 14), []),
+        ("symNullary", 13, (14, 0, 14, 14), (14, 0, 10), []),
+        ("<^>",        12, (16, 0, 16, 17), (16, 0, 5), []),
+        ("symBoth",    13, (18, 0, 19, 11), (19, 0, 7), []),
+        ("symAlsoBoth", 13, (20, 0, 20, 15), (20, 0, 11), []),
+        ("private",     3, (22, 0, 26, 0), (22, 0, 7), [
+            ("symHelper", 12, (23, 2, 24, 21), (24, 2, 11), [])]),
+        ("foreign",     2, (26, 0, 31, 0), (26, 0, 7), [
+            ("SymFile",   5, (27, 2, 27, 29), (27, 22, 29), []),
+            ("symFile#",  9, (28, 2, 28, 42), (28, 14, 22), []),
+            ("symName#", 12, (29, 2, 29, 47), (29, 19, 27), [])]),
+        ("private",     3, (31, 0, 33, 0), (31, 0, 7), [
+            ("foreign",   2, (31, 0, 33, 0), (31, 0, 7), [
+                ("symPath#", 12, (32, 2, 32, 47), (32, 19, 27), [])])]),
+    ], repr(tree(syms)))
+    check("a foreign declaration's detail names its Java class",
+          detail_of(syms, "SymFile") == "java.io.File", repr(detail_of(syms, "SymFile")))
+    # A signature and its equations are ONE symbol: the range covers both,
+    # and the selection is the equation's head.  A sig that names two names
+    # is in the range of whichever group its equation is ADJACENT to: the
+    # range is the contiguous run of a group's own statements around its
+    # selection, so `symAlsoBoth`, whose equation is one statement further
+    # down, starts at its equation and the two do not straddle.
+    check("a sig and its equation merge into one symbol",
+          [s for s in syms if s["name"] == "symBoth"][0]["range"]["start"]["line"] == 18)
+
+    # F1/F2: the range is the CONTIGUOUS RUN of a group's own statements
+    # that holds its selection.  A block of signatures followed by a block
+    # of equations therefore yields one symbol per equation line and no
+    # straddling siblings; and a group whose equation is inside a `private`
+    # block lives THERE, with its top-level signature outside its range,
+    # instead of leaving an empty namespace beside a top-level symbol whose
+    # name is inside it.
+    open_doc("Scope.e")
+    check("Scope.e clean", client.diagnostics_for(uri("Scope.e")) == [])
+    scope = doc_symbols("Scope.e")
+    check("Scope.e symbol tree", tree(scope) == [
+        ("Prelude", 2, (2, 0, 2, 14), (2, 7, 14), []),
+        ("stairA", 13, (6, 0, 6, 10), (6, 0, 6), []),
+        ("stairB", 13, (7, 0, 7, 10), (7, 0, 6), []),
+        ("private", 3, (11, 0, 14, 0), (11, 0, 7), [
+            ("hidden", 13, (12, 2, 12, 12), (12, 2, 8), []),
+            ("helper", 13, (13, 2, 13, 12), (13, 2, 8), [])]),
+    ], repr(tree(scope)))
+
+    def straddles(syms):
+        """Sibling pairs that overlap without being identical, at any level.
+        Ranges are half-open, so touching at one point is not an overlap;
+        IDENTICAL ranges are the legitimate multi-name-statement case."""
+        def span(x):
+            return ((x["range"]["start"]["line"], x["range"]["start"]["character"]),
+                    (x["range"]["end"]["line"], x["range"]["end"]["character"]))
+        out = []
+        for i, a in enumerate(syms):
+            sa, ea = span(a)
+            for b in syms[i + 1:]:
+                sb, eb = span(b)
+                if sa < eb and sb < ea and (sa, ea) != (sb, eb):
+                    out.append((a["name"], b["name"]))
+        for a in syms:
+            out += straddles(a.get("children", []))
+        return out
+
+    for name, t in [("Scope.e", scope), ("Syms.e", syms), ("Decls.e", decls)]:
+        check("no sibling ranges straddle in " + name, straddles(t) == [],
+              repr(straddles(t)))
+
+    open_doc("Nav.e")
+    client.diagnostics_for(uri("Nav.e"))
+
+    # --- workspace/symbol ----------------------------------------------
+    r = ws_symbols("twice")
+    check("workspace query finds a top level of an open buffer",
+          len(r) == 1 and r[0]["name"] == "twice" and r[0]["kind"] == 12
+          and r[0]["containerName"] == "Nav" and r[0]["location"]["uri"] == uri("Nav.e")
+          and r[0]["location"]["range"]["start"] == {"line": 5, "character": 0},
+          repr(r))
+
+    # The session's own globals, found in their SOURCE .e files (Decision 5
+    # keeps the resident session interface-free, so a stdlib Loc is a real
+    # source position and never .ei text).
+    r = ws_symbols("Relation")
+    soft = [s for s in r if s["name"] == "SoftRelation" and s["kind"] == 23]
+    check("a stdlib TYPE is found in its source .e", len(soft) == 1
+          and soft[0]["location"]["uri"].endswith(
+              "/modules/Layout/Report/SoftRelation.e")
+          and soft[0]["containerName"] == "Layout.Report.SoftRelation", repr(soft))
+    rel = [s for s in r if s["name"] == "relation"]
+    check("a stdlib TERM is found in its source .e", len(rel) == 1
+          and rel[0]["location"]["uri"].endswith("/modules/Relation.e")
+          and rel[0]["containerName"] == "Relation" and rel[0]["kind"] == 12, repr(rel))
+    # `Relation` the TYPE is a Scala-installed builtin (Type.scala's
+    # relationT, Global("Builtin","Relation")) with Loc.builtin, so it has
+    # no source and is NOT listed -- the same rule that drops `Just`.
+    check("the builtin type `Relation` itself is not listed",
+          not [s for s in r if s["name"] == "Relation"], repr(r))
+
+    # Case-insensitive, and it reaches a type declared in a nested module.
+    r = ws_symbols("sortorder")
+    so = [s for s in r if s["name"] == "SortOrder"]
+    check("a lower-case query finds an upper-case stdlib type", len(so) == 1
+          and so[0]["kind"] == 23
+          and so[0]["location"]["uri"].endswith("/modules/Relation/Sort.e"), repr(r))
+
+    # A Scala-installed constructor has no source, so it is not a workspace
+    # symbol; the SOURCE names that contain the same letters are.
+    r = ws_symbols("just")
+    check("the builtin constructor `Just` is NOT listed",
+          not [s for s in r if s["name"] == "Just"], repr(r))
+    check("but source names containing 'just' are",
+          sorted(s["name"] for s in r) == ["getJust", "isJust"], repr(r))
+
+    # Ranking: exact match, then prefix, then substring.
+    r = ws_symbols("relation")
+    names = [s["name"] for s in r]
+    check("ranking: the exact match comes first", names[0] == "relation", repr(names))
+    check("ranking: a prefix match beats a substring match",
+          names.index("relationWithHeader") < names.index("fromRelation"), repr(names))
+
+    # An open buffer's own declaration WINS over the session's copy of the
+    # same module: deduped by (module, name).
+    boolmod = repo("core/src/main/resources/modules/Bool.e")
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": boolmod.as_uri(), "languageId": "ermine", "version": 1,
+        "text": boolmod.read_text()}})
+    check("Bool.e clean for the dedupe check",
+          client.diagnostics_for(boolmod.as_uri()) == [])
+    # (`Relation.Predicate` defines a `not` of its own -- two modules, two
+    # names, two entries; the dedupe key is (module, name), not the name.)
+    r = [s for s in ws_symbols("not")
+         if s["name"] == "not" and s["containerName"] == "Bool"]
+    check("an open module is not listed twice", len(r) == 1
+          and r[0]["location"]["uri"] == boolmod.as_uri(), repr(r))
+    client.notify("textDocument/didClose",
+                  {"textDocument": {"uri": boolmod.as_uri()}})
+    client.diagnostics_for(boolmod.as_uri())
+
+    # The EMPTY query is the open documents only: 2000 stdlib names are not
+    # an answer to "show me everything".
+    r = ws_symbols("")
+    check("the empty query answers with the open buffers only",
+          len(r) > 0 and not [s for s in r if "/modules/" in s["location"]["uri"]],
+          repr([s["location"]["uri"] for s in r][:5]))
+    # F4: a `private`/`database` block (Namespace 3) declares nothing, and
+    # neither does an import or the `foreign` block (Module 2).  None of the
+    # four is a workspace symbol -- `Syms.e` alone contributes two `private`
+    # containers and a `foreign` one, and they used to leak.
+    check("the empty query lists no container symbols",
+          not [s for s in r if s["kind"] in (2, 3)], repr(r[:5]))
+    check("but a declaration INSIDE a private block is listed",
+          [s for s in r if s["name"] == "hidden" and s["containerName"] == "Scope"],
+          repr([s["name"] for s in r]))
+
+    # Capped at 200.
+    check("results are capped at 200", len(ws_symbols("a")) == 200)
+
+    # COST.  The session's name list is built once, after boot; a query is a
+    # substring scan over it.  Take the best of five so a scheduling hiccup
+    # cannot fail a bound that is about the ALGORITHM.
+    best = min(_query_ms(ws_symbols, "relation") for _ in range(5))
+    check("a workspace query is well under 50 ms (%.1f ms)" % best, best < 50.0)
+
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Scope.e")}})
+    client.diagnostics_for(uri("Scope.e"))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Syms.e")}})
+    client.diagnostics_for(uri("Syms.e"))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Broken.e")}})
+    client.diagnostics_for(uri("Broken.e"))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Decls.e")}})
+    client.diagnostics_for(uri("Decls.e"))
 
     # --- fast mode: skip the type check, keep everything the read gives -
     def set_fast(on):

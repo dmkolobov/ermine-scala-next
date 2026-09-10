@@ -119,6 +119,15 @@ final class Resident(val log: String => Unit) {
   /** The post-`Lib.preamble` env: names Scala installs, not source. */
   def builtinEnv: SessionEnv = boot().builtins
 
+  /** The RESIDENT env itself, if the session is up -- never a copy, and
+    * never a boot.  6.4's `workspace/symbol` walks it ONCE to build the
+    * session's searchable name list; it cannot go stale, because the
+    * session is interface-free and loads its modules exactly once
+    * (Decision 5) and every check runs against a `withEnv` copy.  `None`
+    * while booting, so a query during boot answers the empty list rather
+    * than queueing behind a thirteen-second load. */
+  def loadedEnv: Option[SessionEnv] = booted.map(_.env)
+
   /** Everything textDocument/definition and hover need from one check:
     * the post-load env (termNames carry inferred types and true def
     * sites), the surface module, and the renamer's occurrence/binder

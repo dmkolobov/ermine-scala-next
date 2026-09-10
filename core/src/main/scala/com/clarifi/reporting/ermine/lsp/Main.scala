@@ -84,7 +84,12 @@ object Main {
             "referencesProvider"        -> Json.Bool(true),
             "documentHighlightProvider" -> Json.Bool(true),
             "renameProvider"            -> Json.obj(
-              "prepareProvider" -> Json.Bool(true))),
+              "prepareProvider" -> Json.Bool(true)),
+            // 6.4: the document tree comes from the last check's stored
+            // symbols; the workspace query from those plus the resident
+            // session's own globals.
+            "documentSymbolProvider"    -> Json.Bool(true),
+            "workspaceSymbolProvider"   -> Json.Bool(true)),
           "serverInfo" -> Json.obj(
             "name"    -> Json.Str("ermine-lsp"),
             "version" -> Json.Str("0.1")))
@@ -129,6 +134,7 @@ object Main {
       Diagnostics.install(server, ermine, docs, log)
       Definitions.install(server, ermine, docs, log)
       References.install(server, ermine, docs, log)
+      Symbols.install(server, ermine, docs, log)
 
       server.onRequest("shutdown") { _ =>
         log("shutdown received")

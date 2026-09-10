@@ -3,7 +3,7 @@ package com.clarifi.reporting
 import java.io.File
 
 import com.clarifi.reporting.ermine.{ Global, Idfix, InfixR, Local }
-import com.clarifi.reporting.ermine.lsp.Definitions
+import com.clarifi.reporting.ermine.lsp.{ Definitions, Symbols }
 import com.clarifi.reporting.ermine.rename.{ ModuleScope, Renamer }
 import com.clarifi.reporting.ermine.rename.Renamer._
 import com.clarifi.reporting.ermine.surface._
@@ -235,15 +235,21 @@ object TestRenamer extends Properties("Renamer 3.2a") {
       SurfaceParsers.module(f.toString, src, f.getName.stripSuffix(".e")).isLeft
     }.map(_.getName)
 
-  /** file -> (contents, renamer tables), for every file that parses. */
-  private lazy val corpusTables: List[(File, String, Renamer.Result)] =
+  /** file -> (contents, surface tree), for every file that parses.  Parsed
+    * ONCE: the renamer tables and the 6.4 symbol trees both come off it. */
+  private lazy val corpusTrees: List[(File, String, SModule)] =
     corpusFiles.flatMap { f =>
       val src = new String(java.nio.file.Files.readAllBytes(f.toPath), "UTF-8")
       SurfaceParsers.module(f.toString, src, f.getName.stripSuffix(".e")) match {
-        case Right(m) => List((f, src, Renamer.rename(m, ModuleScope.Scope.empty)))
+        case Right(m) => List((f, src, m))
         case Left(_)  => Nil
       }
     }
+
+  /** file -> (contents, renamer tables), for every file that parses. */
+  private lazy val corpusTables: List[(File, String, Renamer.Result)] =
+    corpusTrees.map { case (f, src, m) =>
+      (f, src, Renamer.rename(m, ModuleScope.Scope.empty)) }
 
   property("6.3 corpus: the tables are there at all") = secure {
     val n = corpusTables.size
@@ -374,6 +380,166 @@ object TestRenamer extends Properties("Renamer 3.2a") {
     val n = corpusTables.map(_._3.moduleTerms.size).sum
     (bad.isEmpty :| s"${bad.size} bad of $n moduleTerms entries: ${bad.take(5)}") &&
     ((n > 1000) :| s"anti-vacuity: only $n moduleTerms entries")
+  }
+
+  // ----------------------------------------------------------------------
+  // 6.4 DOCUMENT SYMBOLS over the same corpus.  `textDocument/documentSymbol`
+  // hands the editor a TREE of ranges and the LSP spec requires two things
+  // of it -- a symbol's `range` contains its `selectionRange`, and a child
+  // sits inside its parent -- which an editor will happily believe and then
+  // scroll to nonsense.  `Symbols.build` makes both true by construction;
+  // these properties are what says so over 253 real files, and they call
+  // `Symbols.containsRng`, the builder's OWN rule, rather than restating it.
+  //
+  // No session and no types: `build` takes "the type of this spelling" as a
+  // function, and `_ => None` is a legitimate check (the editor path passes
+  // the check's own types).  Nothing here looks at a detail string.
+
+  private def symKindName(k: Int): String = k match {
+    case Symbols.KModule      => "Module"
+    case Symbols.KNamespace   => "Namespace"
+    case Symbols.KClass       => "Class"
+    case Symbols.KMethod      => "Method"
+    case Symbols.KProperty    => "Property"
+    case Symbols.KField       => "Field"
+    case Symbols.KConstructor => "Constructor"
+    case Symbols.KEnum        => "Enum"
+    case Symbols.KInterface   => "Interface"
+    case Symbols.KFunction    => "Function"
+    case Symbols.KVariable    => "Variable"
+    case Symbols.KObject      => "Object"
+    case Symbols.KStruct      => "Struct"
+    case other                => "kind" + other
+  }
+
+  private lazy val corpusSymbols: List[(File, List[Symbols.Sym])] =
+    corpusTrees.map { case (f, src, m) =>
+      (f, Symbols.build(m, new Definitions.Lines(src), _ => None)) }
+
+  property("6.4 corpus: a symbol tree for every file, every range well formed") = secure {
+    val bad = corpusSymbols.flatMap { case (f, syms) =>
+      def go(parent: Option[Symbols.Sym])(s: Symbols.Sym): List[String] = {
+        val here =
+          (if (s.name.trim.isEmpty) List(s"${f.getName}: an unnamed ${symKindName(s.kind)}") else Nil) :::
+          (if (Symbols.containsRng(s.range, s.selection.asRange)) Nil
+           else List(s"${f.getName}: '${s.name}' range ${s.range} excludes its selection ${s.selection}")) :::
+          (parent.filterNot(p => Symbols.containsRng(p.range, s.range))
+             .map(p => s"${f.getName}: '${s.name}' ${s.range} escapes parent '${p.name}' ${p.range}").toList)
+        here ::: s.children.flatMap(go(Some(s)))
+      }
+      syms.flatMap(go(None))
+    }
+    val all   = corpusSymbols.flatMap(x => Symbols.flatten(x._2))
+    val kinds = all.groupBy(_.kind).toList.map { case (k, xs) => symKindName(k) + " " + xs.size }
+                   .sorted.mkString(", ")
+    Prop.collect(s"files ${corpusSymbols.size} | symbols ${all.size} | $kinds") {
+      (bad.isEmpty :| s"${bad.size} malformed symbols: ${bad.take(5)}") &&
+      ((corpusSymbols.size >= 150) :| s"only ${corpusSymbols.size} files") &&
+      ((all.size > 3000) :| s"anti-vacuity: only ${all.size} symbols")
+    }
+  }
+
+  property("6.4 corpus: siblings are sorted, and no two of them straddle") = secure {
+    // The two properties the review (F1/F3) asked for, and the ones the
+    // FIRST version of 6.4 got wrong.  An LSP client that maps a CURSOR to
+    // a symbol -- breadcrumbs, sticky scroll, outline follow-cursor --
+    // walks a level in order and takes the first range that contains the
+    // position, so it needs the level SORTED and it needs no two siblings
+    // to partially cover each other.
+    //
+    // IDENTICAL ranges are a separate, legitimate class and are counted
+    // rather than failed: one statement can declare several names
+    // (`field fa, fb : Int`, `symBoth, symAlsoBoth : Int`), and each gets
+    // its own symbol over the same statement, distinguished by its
+    // selectionRange.  A cursor there is genuinely inside both.
+    // STRADDLING -- overlapping but not identical -- is the defect, and it
+    // must be zero.
+    var levels = 0
+    var identical = 0
+    val bad = corpusSymbols.flatMap { case (f, syms) =>
+      def level(where: String, ss: List[Symbols.Sym]): List[String] = {
+        levels += 1
+        val unsorted = ss.sliding(2).collect {
+          case List(a, b) if !Symbols.beforeSym(a, b) =>
+            s"${f.getName}: $where '${a.name}' ${a.range} precedes '${b.name}' ${b.range}"
+        }.toList
+        val straddling = ss.combinations(2).collect {
+          case List(a, b) if Symbols.overlaps(a.range, b.range) =>
+            if (a.range == b.range) { identical += 1; None }
+            else Some(s"${f.getName}: $where '${a.name}' ${a.range} straddles " +
+                      s"'${b.name}' ${b.range}")
+        }.flatten.toList
+        unsorted ::: straddling ::: ss.flatMap(s => level(where + "/" + s.name, s.children))
+      }
+      level("", syms)
+    }
+    Prop.collect(s"files ${corpusSymbols.size} | sibling levels $levels | " +
+                 s"identical-range pairs $identical | straddling pairs ${bad.size}") {
+      (bad.isEmpty :| s"${bad.size} unsorted-or-straddling: ${bad.take(5)}") &&
+      ((levels > 200) :| s"anti-vacuity: only $levels levels")
+    }
+  }
+
+  property("6.4 corpus: term groups are exactly the renamer's moduleTerms") = secure {
+    // THE CROSS-CHECK that groups merge correctly: one symbol per top-level
+    // term GROUP, and `Renamer.Result.moduleTerms` is one entry per top-level
+    // term group.  They must agree file by file -- a sig that failed to merge
+    // with its equations, or two equations of one name that split, shows up
+    // here as a count that is one too many.  `Symbols.termGroups` is the
+    // builder's own answer to "which symbols are groups" -- a `foreign`
+    // declaration is a Function to an editor but the renamer never binds
+    // it, and a `class` body is its own binding scope -- so this compares
+    // two counts rather than restating a rule.
+    val pairs = corpusSymbols.zip(corpusTables).map {
+      case ((f, syms), (_, _, r)) =>
+        (f, Symbols.termGroups(syms).size, r.moduleTerms.size)
+    }
+    val bad = pairs.filter { case (_, g, mt) => g != mt }
+      .map { case (f, g, mt) => s"${f.getName}: $g Function/Variable symbols, $mt moduleTerms" }
+    val groups = pairs.map(_._2).sum
+    val mts    = pairs.map(_._3).sum
+    Prop.collect(s"files ${pairs.size} | term groups $groups | moduleTerms $mts") {
+      (bad.isEmpty :| s"${bad.size} files disagree: ${bad.take(5)}") &&
+      ((groups > 1000) :| s"anti-vacuity: only $groups groups")
+    }
+  }
+
+  property("6.4: every statement kind maps to a SymbolKind") = secure {
+    // The kinds the FIXTURES cannot reach: `class`, `table` and `database`
+    // are essentially unused in the corpus (Eq.e's class is commented out;
+    // Syntax/Procedure.e's database lives in a doc comment), so the mapping
+    // for them is pinned here, on the parser alone.
+    val src =
+      "module Pins where\n" +
+      "\n" +
+      "class SymEq a where\n" +
+      "  symEq : a -> a -> Int\n" +
+      "  symNe a b = symEq a b\n" +
+      "\n" +
+      "field pkA, pkB : Int\n" +
+      "\n" +
+      "database \"somedb\"\n" +
+      "  table thing : Int\n"
+    SurfaceParsers.module("Pins.e", src, "Pins") match {
+      case Left(err) => falsified :| ("the pin source does not parse: " + err)
+      case Right(m)  =>
+        val syms = Symbols.build(m, new Definitions.Lines(src), _ => None)
+        val flat = Symbols.flatten(syms).map(s => (s.name, s.kind))
+        val want = List(
+          ("SymEq", Symbols.KInterface), ("symEq", Symbols.KMethod),
+          ("symNe", Symbols.KMethod),
+          ("pkA", Symbols.KField), ("pkB", Symbols.KField),
+          ("somedb", Symbols.KNamespace), ("thing", Symbols.KObject))
+        val malformed = Symbols.flatten(syms)
+          .filterNot(s => Symbols.containsRng(s.range, s.selection.asRange))
+        // A class body is its own binding scope, so its members are NOT
+        // moduleTerms; `thing` inside the database block IS one.
+        val mt = Renamer.rename(m, ModuleScope.Scope.empty).moduleTerms.keySet
+        ((flat == want) :| s"symbols were $flat") &&
+        (malformed.isEmpty :| s"malformed: ${malformed.map(_.name)}") &&
+        ((!mt.contains("symEq") && !mt.contains("symNe")) :|
+          s"class members leaked into moduleTerms: $mt")
+    }
   }
 }
 

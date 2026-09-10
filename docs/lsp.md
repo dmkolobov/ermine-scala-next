@@ -136,6 +136,65 @@ then serves:
   References and highlight are correct on all of those, `` ``literal`` ``
   names included: their extent is the whole backticked token.
 
+- **Document symbols** (`textDocument/documentSymbol`), hierarchical, one
+  symbol per top-level GROUP rather than per statement: a spelling's
+  signature and its equations are one thing to a reader, so they merge into
+  one symbol whose selection is the equation's head. `detail` is the type
+  the last check inferred, printed the way hover prints it, with the
+  operator's fixity folded in.
+
+  Its `range` is the CONTIGUOUS RUN of that group's own statements around
+  the selection — normally the signature and the equations right below it.
+  A signature separated from its equations by another group (a block of
+  signatures followed by a block of equations, or a multi-name signature
+  whose equations are on separate lines) is left OUT of the range, and that
+  source line then belongs to no symbol: the alternative is a breadcrumb
+  that names the wrong definition, because a client maps a cursor to a
+  symbol by taking the first sibling range that contains it. No two sibling
+  ranges overlap unless they are identical, which is what one statement
+  declaring several names (`field fa, fb : Int`) produces. A group whose
+  equations live inside a `private` block is a child of that block.
+
+  Bindings inside a definition — `where`, `let` and `do` binders — are NOT
+  symbols. The outline lists a module's declarations; a local binder is
+  reached by hover, go-to-definition and find-references instead. The kinds:
+
+  | statement | SymbolKind |
+  |---|---|
+  | a term group with an argument, or a bare signature | Function (12) |
+  | a term group whose equations take no arguments | Variable (13) |
+  | a member of a `class` body | Method (6) |
+  | `data` with a constructor that carries a field | Struct (23) |
+  | `data` whose constructors are all nullary | Enum (10) |
+  | a data constructor (a child of its type) | Constructor (9) |
+  | `type` alias, `foreign data` | Class (5) |
+  | `class` | Interface (11) |
+  | `field` (one per name) | Field (8) |
+  | `table` (one per name) | Object (19) |
+  | `import`, and the `foreign` block itself | Module (2) |
+  | `private` and `database` blocks | Namespace (3) |
+  | `foreign function` / `method` / `subtype` | Function (12) |
+  | `foreign value` | Property (7) |
+  | `foreign constructor` | Constructor (9) |
+  | a fixity declaration | none — it is a `detail` on the operator's symbol |
+  | a statement that would not parse | none — its diagnostic is the answer |
+
+  A broken file lists its healthy statements. Before the first check of a
+  file the answer is `[]`.
+
+- **Workspace symbols** (`workspace/symbol`), a case-insensitive substring
+  over (a) every open document's own declarations and (b) the resident
+  session's globals that have a real source `Loc` — the stdlib, in its `.e`
+  files, because the session is interface-free. A Scala-installed builtin
+  (`Just`, the `Relation` type) has no source and is not listed, and neither
+  is a CONTAINER: an import, a `foreign` block, a `private` or `database`
+  block declares no name of its own. Results are
+  ranked exact match, then prefix, then substring, and capped at 200; an
+  empty query answers with the open documents only. The session's name list
+  is built once, the first time a query arrives after boot (2157 names,
+  ~40 ms); every query after that is a scan over it, well under a
+  millisecond.
+
 Logging goes to the file named by `ERMINE_LSP_LOG` (or `-Dermine.lsp.log`);
 stdout is reserved for the protocol.
 
@@ -192,8 +251,9 @@ For fast mode, add `:initializationOptions (:fastMode t)` to the server entry.
 
 `tracker/tools/lsp-smoke.sh` runs the scripted client
 (`tracker/tools/lsp-client.py`) against the fixtures in `tracker/lsp-tests/` —
-306 checks over everything above, including didChange without save, the
+344 checks over everything above, including didChange without save, the
 sibling-buffer path, local and kind hovers, references/highlight/rename with
-their refusals, and fast mode. Run it with `core/test` and
+their refusals, the pinned symbol trees of `Decls.e`, `Syms.e`, `Scope.e` and
+the broken `Broken.e`, the workspace queries, and fast mode. Run it with `core/test` and
 `repl-smoke.sh` before committing server changes
 (`tracker/LSP-ROADMAP.md`, Baselines).
