@@ -4,7 +4,7 @@ import com.clarifi.reporting.ermine.{
   Annot, Bound, Global, ImplicitBinding, ExplicitBinding, Kind, Local, Name,
   Pattern, Term, Type, V, Alt, Let }
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleHeader }
-import com.clarifi.reporting.ermine.session.SessionEnv
+import com.clarifi.reporting.ermine.session.{ Phases, SessionEnv }
 import com.clarifi.reporting.ermine.surface._
 import com.clarifi.reporting.ermine.syntax.{
   DataStatement, FieldStatement, ForeignBlock, ForeignClass, ForeignFailure,
@@ -85,10 +85,14 @@ object NewPipeline {
 
     // A module whose header does not parse leaves nothing to be tolerant
     // WITH; both modes die here, identically.
+    // 7.0(c): the whole-file surface parse.  `Phases` is inert unless
+    // -Dermine.lsp.phases=true, which no batch JVM sets.
+    val tParse = Phases.now
     val sm = SurfaceParsers.module(fileName, contents, mh.name) match {
       case Right(m)  => m
       case Left(err) => throw Death(err.pretty)
     }
+    Phases.add("parse", tParse)
 
     val ds = scala.collection.mutable.ListBuffer.empty[Diag]
     def checkpoint(): Unit =
@@ -103,6 +107,7 @@ object NewPipeline {
       case SDatabaseBlock(_, _, ss2)   => errors(ss2)
       case _                           => Nil
     }
+    val tSyntax = Phases.now
     val errs = errors(sm.statements)
     if (errs.nonEmpty) {
       // The splitter's span runs to wherever the offside rule stopped —
@@ -137,18 +142,23 @@ object NewPipeline {
         }
       }
     }
+    Phases.add("syntax", tSyntax)
     checkpoint()
 
     // --- rename
+    val tRename = Phases.now
     val scope = ModuleScope.importing(mh.name, ModuleScope.Scope.empty,
       s.termNames, s.cons.keySet, mh.imports, s.termNameOrigins, s.consOrigins)
     val renamed = Renamer.rename(sm, scope, s.foreignTolerant)
     renamed.diagnostics.foreach(d => ds += Diag(Phase.Rename, d.span, "error: " + d.message))
+    Phases.add("rename", tRename)
     checkpoint()
 
     // --- re-associate
+    val tReassoc = Phases.now
     val (restatements, reDiags) = Reassoc.module(sm, scope)
     reDiags.foreach(d => ds += Diag(Phase.Reassoc, d.span, d.message))
+    Phases.add("reassoc", tReassoc)
     checkpoint()
 
     // fixity declarations are part of the declared NAMES (binders and
@@ -158,15 +168,19 @@ object NewPipeline {
     val typeFix = sm.statements.collect {
       case SFixity(_, f, true, ops) => ops.map(_.spelling -> f) }.flatten.toMap
 
+    val tCtx = Phases.now
     val lctx = Lower(renamed, fileName, s.termNames, scope, termFix)
     val tctx = TyLower(renamed, fileName, mh.name, s.cons ++ s.privateCons, su, typeFix)
     lctx.lowerAnnot = (t: STy) => TyLower.annot(t, tctx)
+    Phases.add("lowerctx", tCtx)
 
     // --- assemble (Lower/TyLower run inside it, statement by statement)
+    val tAssemble = Phases.now
     val (module, ps) =
       try assemble(mh, restatements, lctx, tctx, fileName, contents, scope, tolerant, ds)
       catch { case r: Refusal =>
         throw Death(render(fileName, contents, Diag(Phase.Assemble, r.span, r.message))) }
+    Phases.add("lower", tAssemble)
 
     // --- lower.  assemble's own refusals precede these, as they do today
     lctx.diags.result().foreach(d => ds += Diag(Phase.Lower, d.span, d.message))

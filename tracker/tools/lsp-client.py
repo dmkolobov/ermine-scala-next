@@ -11,6 +11,7 @@ Usage: lsp-client.py <java> <args...>   (the full server command line)
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -2231,6 +2232,39 @@ def main():
     check("shutdown null", r.get("result") is None and "error" not in r)
     client.notify("exit", {})
     check("exit code 0", client.proc.wait(timeout=30) == 0)
+
+    # ---- 7.0: the phase timers are PROPERTY-GATED, both directions.
+    # The run that just finished ran the SHIPPED configuration -- no
+    # -Dermine.lsp.phases -- so its log must carry no timing line at all.
+    # Then one short run WITH the property, which must produce one line per
+    # check, on the LOG and never on stdout (Decision 4: stdout is the
+    # protocol channel, and a stray write there would have broken framing
+    # before this client could report it).
+    log1 = pathlib.Path(LOG).read_text(errors="replace")
+    check("no phases line without -Dermine.lsp.phases",
+          "phases:" not in log1)
+    log2 = LOG + ".phases"
+    pathlib.Path(log2).write_text("")
+    cmd2 = [(("-Dermine.lsp.log=" + log2) if a.startswith("-Dermine.lsp.log=") else a)
+            for a in sys.argv[1:]]
+    cmd2.insert(1, "-Dermine.lsp.phases=true")
+    c2 = Client(cmd2)
+    c2.response(c2.request("initialize", {"capabilities": {}}))
+    c2.notify("initialized", {})
+    c2.wait_for(lambda m: m.get("method") == "window/logMessage"
+                and "ready" in m["params"]["message"], "readiness logMessage")
+    c2.notify("textDocument/didOpen", {"textDocument": {
+        "uri": uri("Good.e"), "languageId": "ermine", "version": 1,
+        "text": (FIXTURES / "Good.e").read_text()}})
+    c2.diagnostics_for(uri("Good.e"))
+    c2.response(c2.request("shutdown", None))
+    c2.notify("exit", {})
+    c2.proc.wait(timeout=30)
+    text2 = pathlib.Path(log2).read_text(errors="replace")
+    check("the phases line appears with -Dermine.lsp.phases",
+          re.search(r"phases: .*\bparse=[0-9.]+ .*\bcheck\.total=[0-9.]+", text2)
+          is not None,
+          repr([l for l in text2.splitlines() if "phases:" in l][:1]))
 
     if failures:
         print("  FAIL  lsp")

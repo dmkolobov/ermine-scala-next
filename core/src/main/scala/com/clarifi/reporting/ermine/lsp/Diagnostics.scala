@@ -2,6 +2,7 @@ package com.clarifi.reporting.ermine.lsp
 
 import java.nio.file.Path
 import com.clarifi.reporting.ermine.rename.NewPipeline
+import com.clarifi.reporting.ermine.session.Phases
 import scalaparsers.Death
 
 /** didOpen/didSave -> parse+typecheck -> publishDiagnostics (roadmap 0.3).
@@ -106,7 +107,19 @@ object Diagnostics {
       case Some(path) =>
         val t0 = System.nanoTime
         val ds = check(ermine, docs, uri, path, log)
-        log(f"diagnostics: $what ${path.getFileName} -> ${ds.size} diagnostic(s) in ${(System.nanoTime - t0) / 1e9}%.1fs")
+        val t1 = System.nanoTime
+        log(f"diagnostics: $what ${path.getFileName} -> ${ds.size} diagnostic(s) in ${(t1 - t0) / 1e9}%.1fs")
+        // 7.0: one line per check with every timed phase, to the LOG --
+        // never stdout, which is the protocol channel (Decision 4).  Off
+        // unless -Dermine.lsp.phases=true; `check.total` is the number the
+        // phase rows must reconcile against, and the Rpc rows are the
+        // didChange that triggered this check (recorded since the last
+        // reset, which is the previous check's).
+        if (Phases.enabled) {
+          Phases.record("check.total", t1 - t0)
+          log("phases: " + Phases.render)
+          Phases.reset()
+        }
         publish(server, uri, ds)
     }
 
@@ -127,6 +140,7 @@ object Diagnostics {
       // argued about -- the number is the item's own budget line.
       val tIdx0 = System.nanoTime
       val idx = Definitions.index(path.toString, checked)
+      Phases.add("index", tIdx0)   // guarded: no clock call when the property is off
       // 6.4 folded the document-symbol tree into the same build; report
       // its share so "the symbol list did not move the check" is a
       // measured claim and not an argument.

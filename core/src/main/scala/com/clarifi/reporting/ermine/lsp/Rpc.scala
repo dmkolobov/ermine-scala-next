@@ -2,6 +2,7 @@ package com.clarifi.reporting.ermine.lsp
 
 import java.io.{ InputStream, OutputStream }
 import java.nio.charset.StandardCharsets.{ US_ASCII, UTF_8 }
+import com.clarifi.reporting.ermine.session.Phases
 
 /** Minimal JSON model for the LSP subset we speak.  Hand-rolled because the
   * build carries no JSON dependency (tracker/LSP-ROADMAP.md decision 1).
@@ -258,8 +259,14 @@ final class Wire(in: InputStream, out: OutputStream, log: String => Unit) {
 
   /** One framed message body, or None once the client closes the stream. */
   def receive(): Option[String] = {
+    // 7.0(d)/Decision (d): the frame read of one full-sync didChange, in
+    // process, against the survey's out-of-process ~369us figure.  The
+    // clock starts on the FIRST header byte, so it excludes the block
+    // waiting for the client and includes only what this server does with
+    // the bytes.  Inert unless -Dermine.lsp.phases=true.
     var len  = -1
     var line = readLine()
+    val tFrame = Phases.now
     if (line.isEmpty) None  // clean EOF between messages
     else {
       var eof = false
@@ -289,7 +296,11 @@ final class Wire(in: InputStream, out: OutputStream, log: String => Unit) {
         if (short) { log("wire: eof inside message body"); None }
         else {
           val body = new String(buf, UTF_8)
+          Phases.add("rpc.frame", tFrame)
+          Phases.count("rpc.bytes", len.toLong)
+          val tClip = Phases.now
           log(">> " + clip(body))
+          Phases.add("rpc.log", tClip)
           Some(body)
         }
       }
@@ -390,8 +401,12 @@ final class Server(wire: Wire, log: String => Unit) {
     exitCode
   }
 
-  private def handle(text: String): Unit =
-    Json.parse(text) match {
+  private def handle(text: String): Unit = {
+    // 7.0(d): the JSON parse of the body just read.
+    val tJson = Phases.now
+    val parsed = Json.parse(text)
+    Phases.add("rpc.json", tJson)
+    parsed match {
       case Left(err) =>
         log("rpc: unparseable message: " + err)
         respondError(Json.Null, ParseError, "invalid JSON: " + err)
@@ -406,6 +421,7 @@ final class Server(wire: Wire, log: String => Unit) {
           case (None, None)           => respondError(Json.Null, InvalidRequest, "message has neither method nor id")
         }
     }
+  }
 
   private def request(method: String, id: Json, params: Json): Unit =
     requests get method match {

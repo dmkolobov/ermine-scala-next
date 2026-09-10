@@ -4,7 +4,7 @@ import com.clarifi.reporting.ermine.{ Global, Type }
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.parsing.ErParseState.Implicits._
 import com.clarifi.reporting.ermine.rename.{ ModuleScope, NewPipeline, Renamer }
-import com.clarifi.reporting.ermine.session.{ Lib, Printer, Session, SessionEnv, TolerantCheck }
+import com.clarifi.reporting.ermine.session.{ Lib, Phases, Printer, Session, SessionEnv, TolerantCheck }
 import com.clarifi.reporting.ermine.surface.{ SErrorStatement, SModule, SStatement,
   SDatabaseBlock, SPrivateBlock, Span, StatementExtents }
 
@@ -110,6 +110,10 @@ final class Resident(val log: String => Unit) {
     booted = Some(r)
     bootFailure = None
     log(f"session: ready — ${r.modules} modules in ${r.seconds}%.1fs")
+    // 7.0: boot reads 129 modules through the same NewPipeline.read, so
+    // without this the FIRST check's phase line carries the whole boot's
+    // parse time.  Inert when the property is off.
+    Phases.reset()
     r
   }
 
@@ -191,14 +195,25 @@ final class Resident(val log: String => Unit) {
     * for this file and for its workspace siblings alike: a cross-file
     * check has to see a sibling's unsaved edits, or the editor reports
     * errors about text nobody is looking at. */
-  def checkFile(path: java.nio.file.Path, docs: Documents): Checked = withEnv { env =>
+  def checkFile(path: java.nio.file.Path, docs: Documents): Checked = {
+    // 7.0: every timer below is inert unless -Dermine.lsp.phases=true.
+    // `tEnv` is taken OUTSIDE withEnv so the SessionEnv copy it makes is
+    // inside the measured window; withEnv itself is unchanged.  The body
+    // is deliberately NOT re-indented under the new brace: this item's
+    // gate is `git diff --stat` == `git diff --stat -w`, and a whitespace
+    // reflow of 230 lines would hide the four lines that are real.
+    val tEnv = Phases.now
+    withEnv { env =>
+    Phases.add("envcopy", tEnv)
     implicit val e: SessionEnv = env
     val file: Session.SourceFile = docs.byPath(path.toString).map(_.source) getOrElse
       Session.Filesystem(path.toString, exotic = true)
     val contents = file.contents
+    val tHeader = Phases.now
     val (_, mh) = Session.parse(
       ModuleParsers.moduleHeader(file.defaultModuleName),
       ErParseState.mk(file.toString, contents, file.defaultModuleName))
+    Phases.add("header", tHeader)
     // The header is parsed BEFORE the loader is built, because the module's own
     // name determines where its siblings live.  `SourceFile.filesystem(root)`
     // appends the whole dotted path, so a module `A.B.C` at `<root>/A/B/C.e`
@@ -229,6 +244,7 @@ final class Resident(val log: String => Unit) {
     // global definition" on every top-level head (329 of them on
     // Layout/Report.e).  Scrub the module out of the COPY first, the way
     // :reload's scrubber does (Session.reloadChangedModules).
+    val tScrub = Phases.now
     if (e.loadedModules contains mh.name) {
       // Scrub only what the SOURCE declares.  `Lib` installs builtins under the
       // module they belong to -- `asOp` and class `AsOp` are `Global("Relation.Op",
@@ -253,6 +269,7 @@ final class Resident(val log: String => Unit) {
       e.loadedFiles     = e.loadedFiles     filterNot { case (_, n) => n == mh.name }
       e.loadedModules   = e.loadedModules - mh.name
     }
+    Phases.add("scrub", tScrub)
 
     // Session.load's own import step (Session.scala:718), hoisted so the
     // tolerant read runs between it and `make` (SourceFile.forModule is
@@ -270,6 +287,7 @@ final class Resident(val log: String => Unit) {
     // failure is attributed to the import statement that named it and
     // one broken import cannot hide another.  The env is a throwaway
     // copy, so a half-loaded module poisons nothing.
+    val tImports = Phases.now
     val missing = (mh.importExports.map(_.module).toSet &~ e.loadedModules.keySet).toList.sorted
     val importFailures: List[(String, String)] =
       if (missing.isEmpty) Nil
@@ -289,9 +307,11 @@ final class Resident(val log: String => Unit) {
             }
         }
     val failedImports = importFailures.map(_._1).toSet
+    Phases.add("imports", tImports)
     val tRead0 = System.nanoTime
     val r = NewPipeline.readModuleTolerant(file.toString, contents, mh)
     val tRead = System.nanoTime
+    if (Phases.enabled) Phases.record("read.total", tRead - tRead0)
 
     // 6.1(b): one Error per failed import, ON the import statement that
     // named it.  The exact module-name span comes from the tolerant
@@ -301,6 +321,7 @@ final class Resident(val log: String => Unit) {
     // way.  The loader's report is kept verbatim after the prefix: it
     // names the import's file and the position inside it, and that is
     // the only thing in the message that says WHY.
+    val tNotesPre = Phases.now
     val importNotes: List[TolerantCheck.Note] = {
       val spans = r.surface.header.imports.map(i => i.module -> i.moduleSpan).toMap
       val heads = mh.importExports.map(i => i.module -> i.loc).toMap
@@ -354,10 +375,14 @@ final class Resident(val log: String => Unit) {
     // reused result can never carry drifted positions.  `scopeKey` is
     // everything else: imports, the scope-bearing statements, the head
     // set, and the other open buffers' versions.
+    Phases.add("notes.pre", tNotesPre)
+    val tKeys = Phases.now
     val (groups, scopeKey) = TolerantCheck.keys(
       contents, mh.name, mh.imports.toList.sortBy(_._1).toString,
       docs.otherVersions(path.toString))
+    Phases.add("keys.total", tKeys)
 
+    val tCheckWith = Phases.now
     val (checked, cache) =
       if (fastMode) (TolerantCheck.Result(Nil, Map()), docs.cacheFor(path.toString))
       // 6.2: `wantLocals` is asked for HERE and nowhere else -- the batch
@@ -370,6 +395,7 @@ final class Resident(val log: String => Unit) {
                                    docs.cacheFor(path.toString), wantLocals = true)
     // In fast mode the cache is carried forward untouched, so switching
     // back does not start cold.
+    Phases.add("checkWith", tCheckWith)
     docs.putCache(path.toString, cache)
     val tCheck = System.nanoTime
     log(f"check: ${mh.name} read ${(tRead - tRead0) / 1e9}%.2fs, " +
@@ -384,6 +410,7 @@ final class Resident(val log: String => Unit) {
     // head word can be recovered (an error nested inside a block, which
     // the top-level extent scan does not see) suppress undefined-term
     // notes outright while syntax errors stand.
+    val tPost = Phases.now
     val broken = errorStatements(r.surface.statements)
     val notes =
       if (broken.isEmpty) reqs ++ checked.notes
@@ -419,6 +446,7 @@ final class Resident(val log: String => Unit) {
       if (failedImports.isEmpty) notes
       else notes.filterNot(n => n.spelling.isDefined || n.dependsOnBroken)
 
+    Phases.add("notes.post", tPost)
     // Fast mode drops what the CHECK found and keeps what the read
     // found; an import that would not load is neither — it is the same
     // failure in both modes, and silence about it in fast mode would be
@@ -426,7 +454,7 @@ final class Resident(val log: String => Unit) {
     Checked(e, mh.name, r.surface, r.renamed, r.diagnostics,
             importNotes ++ (if (fastMode) Nil else published), checked.types,
             checked.locals, r.scope, contents, root)
-  }
+  } }
 
   private def errorStatements(ss: List[SStatement]): List[SErrorStatement] = ss.flatMap {
     case x: SErrorStatement        => List(x)

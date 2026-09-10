@@ -2,7 +2,7 @@ package com.clarifi.reporting.ermine.lsp
 
 import com.clarifi.reporting.ermine.{ Fixity, Global, Idfix, KindSchema, Local, Name, Pretty, Type, V }
 import com.clarifi.reporting.ermine.rename.Renamer
-import com.clarifi.reporting.ermine.session.TolerantCheck
+import com.clarifi.reporting.ermine.session.{ Phases, TolerantCheck }
 import com.clarifi.reporting.ermine.surface.{ SClassStatement, SDatabaseBlock,
   SDataStatement, SFieldStatement, SFixity, SForeign, SForeignBlock, SForeignConstructor,
   SForeignData, SForeignFunction, SForeignMethod, SForeignPrivate, SForeignSubtype,
@@ -749,9 +749,14 @@ object Definitions {
     // INSTALLS rather than binds (constructors, `field`, `table`,
     // `foreign`) -- and nothing else.  A broken statement is an
     // `SErrorStatement` and yields no symbol; its healthy neighbours do.
+    // 7.0(h): the symbol tree's own share of the index build, split out
+    // because the item's table asks for it.  Inert unless
+    // -Dermine.lsp.phases=true.
+    val tSyms = Phases.now
     val syms = Symbols.build(c.module, lines,
       spelling => c.types.get(spelling) orElse
                   env.termNames.get(ownGlobal(spelling)).map(_.extract))
+    Phases.add("index.symbols", tSyms)
 
     DocIndex(dedup(occs ++ headOccs ++ fixityOccs ++ tyHeadOccs ++
                    localDefOccs ++ importOccs ++ importItemOccs),

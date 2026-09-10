@@ -13,8 +13,10 @@ Status: STAGE 4 OPEN (2026-09-10).  G3 SIGNED OFF 2026-09-10 (the user:
 PARTIAL; the pattern-binder Subst.scala FORK stays under Blocked/Awaiting,
 the user's decision).  Stage 4 checklist 7.0-7.6 + GATE G4 below, folded in
 from the draft; the prior-art survey is tracker/loopmodel/STAGE4-PRIOR-ART.md.
-NEXT: 7.0 (direct measurement of the read's phases) — the item every later
-item is judged against.  Orchestration as in Stage 3: brief -> fresh Opus
+7.0 DONE: parse is 98% of the read (844 of 860 ms), per-statement
+parse work is ~58% of the check, VERDICT 7.1 (statement cache) with 7.2
+first; 7.3 re-ranked to the batch target.  NEXT: 7.2 (anchored positions:
+the +0.52 s top-of-file cliff), then 7.1a (Tier 1 high-water mark) and 7.1b.  Orchestration as in Stage 3: brief -> fresh Opus
 implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
@@ -35,7 +37,8 @@ implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (454 at GATE G3, 2026-09-10;
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (456 after Stage 4 item 7.0,
+  2026-09-10; 454 at GATE G3;
   407 after 6.5; 344 after 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
@@ -1453,7 +1456,7 @@ New, and specific to this stage:
 
 ### Checklist (each item ≈ one implementer + reviewer iteration; the acceptance criteria are the tick conditions)
 
-- [ ] **7.0 DIRECT MEASUREMENT of the read's phases.**  THE ITEM EVERY LATER ITEM
+- [x] **7.0 DIRECT MEASUREMENT of the read's phases.**  THE ITEM EVERY LATER ITEM
   IS JUDGED AGAINST, and the one that retires the arithmetic in the premise
   above.  Instrumented timers (System.nanoTime around each phase, behind a system
   property, printed to stderr — NOT a profiler, NOT sample shares), on
@@ -1480,6 +1483,75 @@ New, and specific to this stage:
   number reproduces the survey's 369 µs in-process, the run-based scanner is a
   ten-line optional addendum measured the same way, adopted only if it is free
   and byte-identical on the framing tests; otherwise it is dropped and said so.
+  DONE 2026-09-10 (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP4-7.0-READ.md, LSP4-7.0-REVIEW.md).  THE ARITHMETIC
+  IS RETIRED AND WAS HONEST: property-gated timers (`session/Phases.scala`,
+  `-Dermine.lsp.phases=true`, off by default, one boolean per site, output to
+  the LSP log) around every phase of `Resident.checkFile`, 50 reps after 20
+  warm-ups on Layout/Report.e at load < 1.3, reconciling to the check total
+  within 0.03%.  Medians: PARSE 844 ms of a READ of 860 ms (98.1%, the
+  survey's arithmetic said 91.4% — UNDER-attributed 1.07x); checkWith 496;
+  header 8.2 (parsed TWICE — once by Resident, once inside
+  SurfaceParsers.module); index 10.1; lower 9.3; rename 5.0; keys 3.2;
+  scrub 2.0; extents 2.3; the wire and JSON of a 79,628-byte didChange 0.37
+  — check total 1388 ms, round trip 1.70 s.  Layout/vsemi work inside the
+  parse is UNSEPARABLE at Tier 0 (it lives in scalaparsers).  A 44-line
+  file checks in 31 ms, so the debounce is 90% of its round trip.
+  THE RATIO (Decision g): Report.e has 591 top-level extents at mean 111
+  bytes (the survey's "315 at 245 B" counted distinct head words); each
+  parsed alone through statementFailure's repositioned ParseState — median
+  0.60 ms, mean 1.17, p90 2.2, max 99 ms (the 10.7 KB `private` block);
+  Σ slice parses vs the whole-file parse in the same JVM: RATIO 0.953
+  (the reviewer's five measurement orders: 0.951-0.954; the implementer's
+  first 0.963 omitted the header's share), splitter residual 43 ms (5.5%).
+  The review caught a VACUOUS check: 62 of the 591 extents are `import`/
+  `export` header lines, and "parses alone" was always true because the
+  statement grammar falls back to a total raw-statement rule — the reuse
+  unit for 7.1b is 529 statements + 62 header extents, and the slice-vs-
+  whole divergence is now MEASURED with a non-vacuous oracle (the slice's
+  tree against the whole-file tree for the same extent): 514 of 529 agree
+  structurally, 15 (2.8%) differ ONLY in the statement's own top-level
+  Span END — the whole-file parse runs on to the next statement's start,
+  the slice stops at the extent — no kind or deep-tree divergence.  That
+  is `atLayoutBoundary` consuming trailing trivia made visible: the first
+  direct evidence that 7.1a's high-water mark is not speculative, and a
+  constraint on 7.1b (its splice must re-derive the end span from the
+  next extent's start, or its differential fails on 15 of 529 today).  Parse cost is 10.9
+  µs/byte and SUBLINEAR in bytes (ms ∝ bytes^0.84); private/database
+  blocks are 18.9% of the file's bytes, so one edit in seven lands in
+  the 104 ms block.  The header is parsed TWICE, by two different
+  grammars (8 + 6 ms).
+  ATTRIBUTION vs the survey: extents 23x over raw / 2x over the P5(a)-
+  corrected figure; lower exact; rename 2.5x under; reassoc 1.4x over;
+  rename+reassoc+lower = 15 ms, Decision (b) unaffected.  THE 7.2 CLIFF
+  MEASURED: a body edit keeps 97/154 (typecheck 0.53-0.64 s); one blank
+  line at the top -> 0/154, typecheck 1.07 s, round trip 2.29 s vs 1.79:
+  +0.52 s.  Rpc addendum DROPPED: in-process 306 µs reproduces the survey;
+  a run-based scanner is 1.24x (69 µs), not 5x, and a first draft was
+  silently not byte-identical (StringBuilder.append is (offset, length)).
+  VERDICT: **7.1** — per-statement parse work is 0.963 x 0.981 x 0.619 =
+  ~58% of the check, ~47% of the round trip; a one-character edit leaves
+  all other extents identical, so the expected miss is 62 / 83 / 173 ms
+  (byte-weighted mean / p90 / p99 with header and residual) and the
+  saving 0.78 / 0.76 / 0.67 s — round trip 0.89 / 0.91 / 1.00 s, 3.4-4.1x
+  the 200 ms gate (the implementer's first 0.82 s double-counted the
+  header and used the median miss).  THE STRONGEST CASE AGAINST 7.1, from
+  the review: 7.3 SUBSUMES it — a 10x parser win lands the round trip
+  where 7.1b's floor does, with no cache and no soundness obligation, and
+  takes the 12.7 s boot too; it loses on RISK (Tier 1 in scalaparsers, the
+  reverted P5(d) precedent, 48-52x borrowed from another system), not
+  arithmetic.  Two roadmap notes carried from it: 7.1b and 7.3 must not
+  BOTH be budgeted as editor savings; 7.3's batch re-ranking is stronger
+  than stated.  7.2 lands first (agreed).  lsp-smoke 454 -> 456.
+  NOTES CARRIED INTO 7.1 FROM THIS ITEM'S REVIEW: (i) 7.1b's reuse unit
+  is 529 statements + 62 header extents (import/export lines are
+  raw-statement fallbacks); (ii) 7.1b's splice must re-derive each
+  statement's top-level end span from the next extent's start, or the
+  differential fails on the 15 divergent statements today; (iii) 7.1b and
+  7.3 must NOT both be budgeted as editor savings — 7.3 subsumes 7.1b at
+  10x and is re-ranked to the batch target, where the 12.8 s boot is 7.5x
+  the round trip and no cache can help; (iv) the header is parsed twice by
+  two grammars (8 + 6 ms), worth 10-13% of the read AFTER 7.1b.
 
 - [ ] **7.1 Surface-tree cache keyed by statement extent** (conditional on 7.0's
   verdict; Decision (a) and (g)).  TWO ITERATIONS, because the first is a
@@ -2933,6 +3005,14 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-10 (7.0 DONE): see the item's DONE paragraph.  The arithmetic
+  was honest (parse 98% of the read; the survey said 91%); the verdict is
+  7.1 with 7.2 first; the reviewer corrected the ratio (0.953), the
+  residual band and the saving (0.76 s, not 0.82), and caught a vacuous
+  "parses alone" check whose replacement found the slice-vs-whole end-span
+  divergence 7.1a exists to guard.  Implementer ~57 + 16 min, reviewer
+  ~34 min.  Baselines: TestLoopTrace 720/720, corpus 85/69/0 over 154,
+  repl-smoke 8/66 goldens untouched, lsp-smoke 456, boot 129.
 - 2026-09-10 (G3 SIGNED OFF; STAGE 4 OPENED): the user read the Stage 4
   draft and said "fold the stage 4 draft in and open it".  The draft is
   now the Stage 4 section (the standalone file is removed; git history

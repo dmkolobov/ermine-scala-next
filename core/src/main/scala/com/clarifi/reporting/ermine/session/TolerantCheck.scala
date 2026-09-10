@@ -137,11 +137,19 @@ object TolerantCheck {
     * unsaved edit changes what an import means. */
   def keys(contents: String, moduleName: String, importsKey: String,
            workspaceKey: String): (Map[String, String], String) = {
+    // 7.0(b): the extent scan and its line index, timed apart, because
+    // P5(a)'s 11.5x cut was on the index and the survey still carries the
+    // pre-cut arithmetic (~54ms) for the pair.  Inert unless
+    // -Dermine.lsp.phases=true.
+    val tScan = Phases.now
     val scan = StatementExtents.scan(contents)
+    Phases.add("extents.scan", tScan)
     // One index for the whole run.  This makes two position lookups per
     // top-level statement, and each of them used to re-walk the file from
     // offset 0 -- 4.7% of the editor round trip (roadmap P5(a)).
+    val tOff = Phases.now
     val off = new StatementExtents.Offsets(contents)
+    Phases.add("extents.offsets", tOff)
     val (scopeItems, bindItems) = scan.items partition (x => ScopeWords(x.headWord))
     val groups = bindItems.filter(_.headWord.nonEmpty).groupBy(_.headWord).map {
       case (w, xs) => w -> xs.map(x =>
