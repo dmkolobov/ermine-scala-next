@@ -46,3 +46,6 @@ re-measurement applies to the numbers that go into the trackers, once, by the re
 ## Standing rules that stay
 Never commit red. One JVM per agent, three agents at most. Never `lake build` while a `looptrace` binary runs.
 Delete every `.ei` you cause. Disk: no `lake exe cache get`, no `require`, no new Lean project, CutSearch out.
+In a WORKTREE: `tracker/repl-classpath.txt` is checked in with absolute paths into the main checkout, and
+`repl-smoke.sh`, `g1-validate.sh`, `lsp-smoke.sh`, `g1-diff.sh`, `perf-bench.sh` read it -- regenerate it from
+the worktree's `target/ermine-classpath` (do not commit the result) or the gate tests the wrong build (S1 review, 2026-09-11).

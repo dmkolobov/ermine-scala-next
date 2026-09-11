@@ -205,14 +205,16 @@ Reproduce: `tracker/tools/corpus-run.sh <base>` on the previous build,
 
 ## Pinned, class 6 SIGNATURE CONTEXT TOO WEAK (accepted today; 2026-09-10)
 
-Four modules that MUST NOT load; three of them today DO (sig01, sig02, sig04), under every rule mode and with interface
+Five modules that MUST NOT load; four of them today DO (sig01, sig02, sig04, sig05), under every rule mode and with interface
 caching on or off. They are the S0 pin of `tracker/SIG-ENTAIL-PLAN.md`: a declared
 signature's row constraints are never checked against the body's obligations
 (`Subst.subsumeType` discards the skolem-mentioning wanteds, :535-536 and :553). Each
 accepted module's `crash` evaluates in the REPL to `<error: key not found: health>`
-(sig04: a record carrying that error in a field its printed type does not have). sig03,
-the let-bound twin, is refused today but at the call site, unexplained -- S1 owes the
-reason. Until S3 lands, a corpus sweep must read the three as LOADED and not count them as a change;
+(sig04: a record carrying that error in a field its printed type does not have; sig05 is
+the same hole through an expression annotation). sig03, the let-bound twin, is refused
+today at the call site -- but only because the renamer DROPS let-bound signatures
+(rename/Lower.scala:185-187, a regression of the new pipeline; see its header), so the
+binding is inferred. Until S3 lands, a corpus sweep must read the four as LOADED and not count them as a change;
 when S3 lands, flip this table, the four headers, and `TestSigEntail`'s KNOWN HOLE
 properties.
 
@@ -220,8 +222,9 @@ properties.
 |---|---|---|---|---|
 | `sig01_unconstrained_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | **ACCEPTED** | **ACCEPTED** | **ACCEPTED** |
 | `sig02_wrong_label_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | **ACCEPTED** | **ACCEPTED** | **ACCEPTED** |
-| `sig03_let_bound_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | rejected (at the CALL, 20:12) | rejected (same msg) | rejected (same msg) |
+| `sig03_let_bound_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | rejected (at the CALL, 32:12; let-signature DROPPED by the renamer, binding inferred) | rejected (same msg) | rejected (same msg) |
 | `sig04_unconstrained_modify.e` | 6 SIGNATURE CONTEXT TOO WEAK | **ACCEPTED** | **ACCEPTED** | **ACCEPTED** |
+| `sig05_annotated_lambda.e` | 6 SIGNATURE CONTEXT TOO WEAK (annotation site) | **ACCEPTED** | **ACCEPTED** | **ACCEPTED** |
 
 Control: `shouldfail-controls/control08_sig_declared.e` (loads). Command as at the top
 of this file, plus `-Dermine.genRules=<MODE>`; the REPL evidence needs `:load` of the

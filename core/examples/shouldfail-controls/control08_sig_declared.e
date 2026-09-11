@@ -32,3 +32,6 @@ ok1 = healthWith { position = 1.0, health = 10, mana = Some 3 }
 ok2 = healthHas  { position = 1.0, health = 10 }
 ok3 = bumpWith   { position = 1.0, health = 10 }
 ok4 = tagged 3   { position = 1.0 }
+
+-- the annotation site (sig05's twin), honest
+ok5 = ((r -> r ! health) : forall r t. r <- ((|health|), t) => {..r} -> Int) { position = 1.0, health = 10 }

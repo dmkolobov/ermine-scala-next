@@ -36,7 +36,8 @@ Pins (S0, this commit): `core/examples/shouldfail/sig01..sig04`, `shouldfail-con
 control08_sig_declared.e`, `RESULTS.md` §"Pinned, class 6", `TestSigEntail.scala`
 (KNOWN HOLE properties assert today's behaviour; flip at S3). Observed 2026-09-10: sig01,
 sig02, sig04 ACCEPTED under all/cut/nongen; **sig03 (let-bound) is REFUSED at the call
-site** -- unexplained, S1 owes the reason.
+site** -- explained by S1: the renamer drops let-bound signatures (a second bug, see below);
+**sig05 (expression annotation) ACCEPTED** -- the `ann` site is live (S1 review).
 
 ## The missing judgement
 
@@ -115,11 +116,12 @@ Stop point for the user: read the design before S3 starts.
 ### S3 -- implement, flagged
 `ermine.sigEntail` gains `error`. Default stays `off` in this stage. Under `error`, the
 check rejects with the S2 message and blame; under `warn`, it prints; `off` is byte-identical
-to today. Flip the four pins: sig01/sig02/sig04 headers to "rejected", RESULTS.md, and
+to today. Flip the pins: sig01/sig02/sig04/sig05 headers to "rejected", RESULTS.md, and
 `TestSigEntail`'s KNOWN HOLE properties to `no(...)` -- the suite must run those under
 `error` without `System.setProperty` on a per-call flag (the fixture rule at the top of
 TestErmine.scala; use the fixture's session-option mechanism). Tier 1. Acceptance: under
-`error`, shouldfail sig01/02/04 rejected with the designed message; sig03 still rejected
+`error`, shouldfail sig01/02/04/05 rejected with the designed message (05 through the
+`ann` site, `Subst.typeCheck`); sig03 still rejected
 and its blame now on the signature/`!`; all controls load; corpus sweep under `error` equals
 S1's (c) list exactly (nothing more rejected, nothing less); `.ei` diff under `off` empty.
 
@@ -155,7 +157,7 @@ orchestrator's (FIX-THEN-ADVANCE edits applied; BLOCK -> a fix round to the impl
 ## Checklist
 
 - [x] S0 pin (2026-09-10)
-- [ ] S1 survey
+- [x] S1 survey (2026-09-11; STOP POINT FIRED: 7 stdlib signatures not entailed)
 - [ ] S2 design + Lean statement  (user reads before S3)
 - [ ] S3 implement, flagged
 - [ ] S4 editor parity
@@ -165,5 +167,33 @@ orchestrator's (FIX-THEN-ADVANCE edits applied; BLOCK -> a fix round to the impl
 ## Iteration log
 
 - 2026-09-10 S0: pins written and verified in the REPL (sig01/02/04 accepted + crash,
-  sig03 refused at 20:12, control08 loads). TestSigEntail run in this worktree: see the
-  commit message for the count.
+  sig03 refused at 32:12, control08 loads). TestSigEntail 6/6 in this worktree.
+- 2026-09-11 S1 DONE (implementer report SIG-1-SURVEY.md, review SIG-1-REVIEW.md,
+  FIX-THEN-ADVANCE applied). Probe `ermine.sigEntail=off|warn` (SigEntail.scala; NOT in
+  GenRules, which is half of the interface key). Sweep 158 files: 1,502 hits, 914 row
+  obligations. NOT entailed: 12 signatures / 32 wanteds -- 7 in the stdlib (unify1,
+  partialLookup, cons_Bracket, Keyed.softRelation, Keyed.keyValueTabular, cutoffs, others),
+  5 in examples (melt2/3/4, melt3Simple, runningTotalFullViaWritten); 8 have runtime
+  witnesses (rename of a missing column, a header lacking a column, a record outside its
+  type, union column mismatch). STOP POINT FIRED. Taxonomy (reviewer's independent re-tag
+  agrees): the refutation trick covers 20/914 as stated, 43/914 = 4.7% with the dual for
+  `X <- (L, sk)`; 871/914 have no concrete label at all and are out of reach of any
+  refutation-shaped procedure ("X meets sk" is not "X is inside sk") -- S2 must handle
+  variable-only wanteds by a different route. SECOND BUG: rename/Lower.scala drops
+  let-bound signatures (regression: stub 91c0d52, sole path since 80df1eb); no LSP test
+  pins it; ticket for the LSP loop. Annotation site live: pin sig05 added. Tier 0 off:
+  corpus 88/70/0 of 158, off-vs-warn 0 differ and .out byte-identical, .ei 129/129
+  identical vs g1-baseline and off-vs-warn, repl-smoke 8/8 (with the WORKTREE classpath --
+  tracker/repl-classpath.txt is checked in with absolute paths into the main checkout),
+  TestLoopTrace 3/3, TestSigEntail 8/8 after this commit.
+
+## Blocked / Awaiting the user (after S1)
+
+1. The seven stdlib signatures: fix them in this loop (S5 folds the corrections in) or
+   look at them first. `unify1` has no caller; the Keyed wrappers have none in the corpus;
+   `cutoffs`/`others` are private behind `cutoffDrilldownRel`.
+2. S2's scope: the plan's refutation trick decides 4.7% of the obligations. The general
+   case (variable-only wanteds) needs a different decision procedure -- S2's brief must
+   ask for one, with the Lean statement covering it.
+3. The let-signature drop in rename/Lower.scala: a ticket for the LSP loop (it owns the
+   file; its Stage-4 rules forbid Subst changes but not Lower), or a stage here.

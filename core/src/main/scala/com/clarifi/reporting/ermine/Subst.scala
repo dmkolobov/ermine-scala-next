@@ -524,7 +524,14 @@ object Subst {
    *
    * where T <~ U means T subsumes U.
    */
-  def subsumeType(e1: Type, e2: Type)(implicit hm: SubstEnv, su: Supply, tml: Located): (Type, Type) = {
+  /* S1 of the signature-entailment programme (`tracker/SIG-ENTAIL-PLAN.md`): `sig` names the
+   * USER SIGNATURE this call is checking, and is `None` at every caller that is not checking
+   * one.  It is an explicit parameter rather than a thread-local precisely because the
+   * distinction the check needs is a property of the CALL, not of the dynamic extent: the
+   * `App` case (:929-938, the call at :936) subsumes an argument against a function's domain, and an ambient
+   * flag set by an enclosing signature check would wrongly claim it.  Under the default
+   * (`-Dermine.sigEntail=off`) nothing reads it.  See SIG-1-SURVEY.md's caller table. */
+  def subsumeType(e1: Type, e2: Type, sig: Option[SigEntail.Site] = None)(implicit hm: SubstEnv, su: Supply, tml: Located): (Type, Type) = {
     val (sks, sts, qz, r1) = unbind(Skolem, e1)
     val (tks, tts, pz, r2) = unbind(Free, e2)
     val r3 = unifyType(r1, r2)
@@ -532,6 +539,12 @@ object Subst {
     val (qxs, qs) = unbindExists(Free, q)
     val (pxs, ps) = unbindExists(Free, substType(pz))
     val (ds, rs)  = ps.partition(p => Type.fskvs(p).isEmpty)
+    /* S1 PROBE, measurement only.  `rs` is the body's residual wanteds that mention one of
+     * the signature's skolems -- the obligations the loop below computes an answer for and
+     * then throws away (`entails` returns a Boolean nobody reads, and is class-only anyway,
+     * :313/:394).  Under `-Dermine.sigEntail=warn` and only for a user signature, print one
+     * line per element.  No verdict changes, here or anywhere. */
+    if (SigEntail.warn) sig.foreach(s => if (rs.nonEmpty) SigEntail.probe(s, qs, rs))
     for (r <- rs)
       entails(qs,r)
     restrictTypes(qxs) // ?
@@ -635,7 +648,8 @@ object Subst {
     val t = substType(tz)
     implicit val tml: Located = e
     kindCheck(delta(g), t, Star(e.loc.checked))
-    val (q,p) = subsumeType(substType(t), substType(et))
+    val (q,p) = subsumeType(substType(t), substType(et),
+                            if (SigEntail.warn) Some(SigEntail.siteAt("ann", e.loc)) else None)
     // TODO: ADD warnings here later if we need to check subsumption involving constraints
     ()
   }
@@ -652,7 +666,8 @@ object Subst {
     val typ = substType(ty)
     val args = rep(binding.arity) { VarT(fresh[Kind](li, None, Free, Star(li))) }
     val f = inferAltTypes(binding.loc, g, binding.alts, args) { r => args.foldRight(r)(Arrow(li, _, _)) }
-    val (q,p) = subsumeType(typ, f)
+    val (q,p) = subsumeType(typ, f,
+                            if (SigEntail.warn) Some(SigEntail.siteOf("sig", binding.v)) else None)
     restrictKinds(kvs)
     restrictTypes(tvs)
     // _ <- unifyType(binding.ty, v.extract)

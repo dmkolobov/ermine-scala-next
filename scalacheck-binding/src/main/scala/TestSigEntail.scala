@@ -46,8 +46,21 @@ object TestSigEntail extends Properties("Ermine signature entailment (pinned hol
     typeChecks(fields + "bump : forall r. {..r} -> {..r}\nbump = modify health (h -> h)",
                "bump { position = 2.0 }", imps)
 
-  // The let-bound twin is REFUSED today, at the call site (sig03's header); S1 owes the
-  // reason.  Pinned so that a fix which changes WHERE it is refused is noticed.
+  // The annotation site evaluates eagerly in the fixture, so this pin records the whole
+  // story in one property: the program is ACCEPTED and then fails at runtime with the
+  // missing-key exception.  At S3 it becomes `no(typeChecks(...))`.
+  property("KNOWN HOLE S0 (flip to no(...) at S3): an unconstrained row ANNOTATION is accepted, then crashes") =
+    Prop.throws(classOf[java.util.NoSuchElementException]) {
+      defAndEval(fields, "((r -> r ! health) : forall r. {..r} -> Int) { position = 2.0 }", imps)
+    }
+
+  property("control: an honest row annotation type-checks at a satisfying record") =
+    typeChecks(fields,
+      "((r -> r ! health) : forall r t. r <- ((|health|), t) => {..r} -> Int) { position = 1.0, health = 10 }", imps)
+
+  // The let-bound twin is REFUSED today, at the call site -- because the renamer DROPS
+  // let-bound signatures (rename/Lower.scala:185-187; sig03's header) and the binding is
+  // inferred.  This pins ordinary inference, not the checker; a fix to the drop flips it.
   property("let-bound unconstrained signature is refused today (at the call site)") =
     no(typeChecks(fields,
       "let local : forall r. {..r} -> Int\n    local r = r ! health\nin local { position = 2.0 }", imps))

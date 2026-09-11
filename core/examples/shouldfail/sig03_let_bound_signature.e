@@ -1,22 +1,34 @@
 module ShouldFail.Sig03 where
 
-{- SHOULD FAIL -- error class 6, SIGNATURE CONTEXT TOO WEAK.  REJECTED today, but at
-   the CALL SITE and for a reason not yet explained.
+{- SHOULD FAIL -- error class 6, SIGNATURE CONTEXT TOO WEAK.  REJECTED today, at the
+   CALL SITE -- and NOT because the checker caught it.
 
-   Pinned 2026-09-10.  sig01's shape on a LET-BOUND binding.  Let and top level share
-   `inferBindingGroupTypes` -> `typeCheckExplicitBinding` (reached from `inferType`'s
-   Let case and from `checkModule`), so the same discard happens -- yet this module IS
-   refused, with the message on the call `local { position = 2.0 }` (line 20, col 12):
+   Pinned 2026-09-10; explained 2026-09-11 (S1, tracker/loopmodel/SIG-1-SURVEY.md and
+   SIG-1-REVIEW.md).  sig01's shape on a LET-BOUND binding.  The module is refused with
+   the message on the call `local { position = 2.0 }` (line 32, col 12):
 
        Row partitions are unsatisfiable at field 'ShouldFail.Sig03.health':
        the whole contains it but no part does
 
-   i.e. something in the let path keeps the body's obligation alive long enough for
-   the call site's instantiation to contradict it, where the top-level path (sig01)
-   loses it.  Explaining the difference is a deliverable of S1 in
-   tracker/SIG-ENTAIL-PLAN.md: it may be the seed of the fix, or a coincidence of
-   where the residual lands.  After S3 the blame should sit on the signature and the
-   `!`, not on the call.
+   The reason is a SECOND BUG: the renamer's lowering of `let` DISCARDS explicit (signed)
+   bindings.  `rename/Lower.scala` SLet case (:185-187) does
+   `val (implicits, _) = bindings(ss, c); Let(pos, implicits, Nil, ...)`, and
+   `Lower.bindings` is typed `(List[ImplicitBinding], List[Nothing])` with
+   `case _: SSigStatement => ()  // 4.1` -- it never builds an explicit binding (second
+   site :298-299, a `where` inside a `let`).  So `local`'s signature never reaches the
+   checker; `local` is INFERRED (`forall r t. r <- ((|health|), t) => {..r} -> Int`) and
+   the call is refused by ordinary inference.  Decisive probe: `let g : Int -> Int; g x = x
+   in g "hello"` LOADS, its `where` twin is rejected.  A regression of the new pipeline:
+   the fused `let` production (parsing/TermParsers.scala:224-243 at 9ad5909^) filled both
+   halves of `Let`; the empty stub was written in 91c0d52, became the only path in 80df1eb
+   (2026-08-31).  Top-level and `where` go through `NewPipeline.pairSigs`, so sig01 is
+   accepted.
+
+   Consequences: this pin does NOT witness the entailment hole -- it witnesses the let
+   drop.  Fixing the drop before S3 lands would turn this module from a rejection into an
+   acceptance (it would then be sig01 in a let).  After both fixes the blame should sit on
+   the signature and the `!`, not on the call.  The let drop is outside this plan's scope:
+   ticketed for the LSP loop (it owns rename/Lower.scala).
 
    Rule modes: rejected under all / cut / nongen (same message).
 -}
