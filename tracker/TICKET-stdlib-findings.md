@@ -520,6 +520,14 @@ E4. **`sbt core/test` was INTERMITTENT — `TestInterfaceKey` flipped `ermine.lo
     `tracker/GATE-POLICY.md` updated to say the suite was intermittent and is not any more.
 
 E5. **`Session.loadModulesInSeries` and `Session.loadModules` disagree on already-loaded modules.**
+    NOT THIS STAGE (triaged 2026-09-11, LSP Stage 4 item 7.5; `tracker/loopmodel/LSP4-7.5-TICKETS.md`).
+    Shipped loader behaviour, so Tier 2 (`core/test` ALONE) plus Tier 1's `ei-diff.sh --batch` sweep with
+    `-Dermine.loadInSeries=true` on BOTH sides and `g1-validate.sh` — and the one-line change is not worth a
+    gate run of its own. It waits for the FIRST TIER-2 CODE COMMIT that is due — NOT the G4 evidence run, which
+    measures the tree as it stands and lands no code (the 7.5 review, R-6: landing E5 before G4 would change the
+    tree G4 measures; after it, E5 would get no gate). Concretely: the first Stage-5 adoption item, or its own
+    tiny item if none is due.
+    adoption item inherits it; it is not scheduled before one of those two.
     Filed 2026-09-09 from E4.  The parallel schedule subtracts `s.loadedModules` before asking the
     loader (`moduleNames.toSet &~ loaded`); the series schedule asks for every name it is given.  For a
     module that is in `loadedModules` with no source file — `Builtin`, seeded by shipped code
@@ -533,6 +541,10 @@ E5. **`Session.loadModulesInSeries` and `Session.loadModules` disagree on alread
     (the G1 oracle runs in series).  Not scheduled; a one-line change when a Tier-2 commit is due anyway.
 
 E6. **Type errors inside an unannotated lambda are blamed at the APPLICATION, not the offending subterm.**
+    NOT THIS STAGE (triaged 2026-09-11, LSP Stage 4 item 7.5). A checking-mode rule for `Lam` moves the
+    POSITION and sometimes the wording of every such refusal: the REPL goldens, two `TestStage1Pins` anchor
+    pins and the corpus batch verdict TEXT all have to be re-cut. Tier 2 + goldens, and its own item —
+    frozen batch semantics forbid it inside a diagnostics-debt item. Unchanged by 7.5.
     Filed 2026-09-10 from LSP Stage 3 item 6.1(a), the do-anchor blame gap (report
     `tracker/loopmodel/LSP3-6.1-DIAGNOSTICS.md` §(a), review `LSP3-6.1-REVIEW.md` §2 — refutation attempted,
     ACCEPTED confirmed).  `Subst` is purely bottom-up: `inferType`'s `App` case (~:914) infers the argument and
@@ -548,7 +560,42 @@ E6. **Type errors inside an unannotated lambda are blamed at the APPLICATION, no
     written a second time, 1-2 days, and was declined.  Not scheduled.
 
 E7. **The editor's import-failure suppression rule covers term names only (operators and type names still
-    cascade).**  Filed 2026-09-10 from LSP Stage 3 item 6.1(b) (review R2/R3).  While an import has failed to
+    cascade).**  HALF FIXED, HALF DEFERRED WITH THE REASON 2026-09-11 (LSP Stage 4 item 7.5;
+    `tracker/loopmodel/LSP4-7.5-TICKETS.md`).
+
+    **FIXED: the TYPE half.**  `TolerantCheck.Note` gained an `undefinedType` flag, set where the note is
+    built — the `catch` that used to be `guard(Error) { assertTypeClosed(bs) }` — and
+    `Resident.checkFile`'s suppression predicate is now
+    `n.spelling.isDefined || n.dependsOnBroken || n.undefinedType`.  No text is matched and no rendered
+    message is parsed, per 6.1's rule.  This needed NO discriminator and opened NO policy question: it is
+    6.1(b)'s own wholesale rule, unchanged, applied to a note that could not carry a `spelling` because
+    `assertTypeClosed` dies ONCE with every free type variable joined into one report.  Subst.scala is
+    untouched (splitting that death per name would have been Tier 1 under the Stage-4 invariants).
+    PINS (lsp-smoke): `tracker/lsp-tests/BadTy.e` — an import that does not exist plus
+    `paint : Shape -> Int` — publishes exactly ONE diagnostic, the import failure, and no "undefined type";
+    and the control `tracker/lsp-tests/UndefTy.e`, the same signature with every import healthy, still
+    publishes "undefined type" at the name (7:8), so the rule is conditional and not a filter that deletes
+    the note.
+
+    **DEFERRED: the OPERATOR half (three READ diagnostics per use), with the reason, which is three
+    reasons.**  (1) THE CARRIER.  Those three are `NewPipeline.Diag(phase, span, message)` — a read-phase
+    diagnostic with no structured payload at all, not a `TolerantCheck.Note` — so the suppression filter
+    cannot reach them, and tagging them means threading a new field out of `Reassoc`'s unknown-operator path
+    and `Lower`'s error-node path, whose construction sites are shared with the STRICT read.  That is not
+    the Tier-0 editor-path change this ticket assumed.  (2) THE DISCRIMINATOR DOES NOT EXIST.  The candidate
+    tag — "the operator's spelling appears in a failed module's known exports" — needs that module's export
+    list, and a module that FAILED to load contributes no names to the check's env copy; the resident
+    session holds only its own 129 stdlib modules, so for the realistic case (a workspace sibling that will
+    not load) nothing in the process knows what it would have exported.  The one way to name a module's top
+    levels without loading it, `StatementExtents.scan(...).headWord`, cannot name OPERATORS — the same
+    limitation `TolerantCheck.keys` documents ("a spelling missing from `groups` — an operator, anything the
+    extent scanner cannot name — is simply never cached") — and operators are exactly the half at issue.
+    (3) THE WHOLESALE RULE CANNOT BE COPIED ACROSS.  6.1(b) keeps syntax diagnostics on purpose, and
+    `ill-formed expression` / `error node` are `Lower`'s answer to ANY error node, not only an operator one,
+    so withholding them while an import failed would hide real structural breakage rather than a cascade.
+    A future item that wants this should start at (1): give the read's diagnostics a structured kind, which
+    is worth doing for other reasons, and then (3) becomes a one-line predicate.
+    Filed 2026-09-10 from LSP Stage 3 item 6.1(b) (review R2/R3).  While an import has failed to
     load, `Resident.checkFile` withholds undefined-term and "unchecked" NOTES — but a missing module also costs
     (i) three READ diagnostics per use of an operator it would have supplied (`unknown operator` from `Reassoc`,
     then `ill-formed expression` and `error node` from `Lower`) and (ii) one `undefined type` note per type name
@@ -563,7 +610,30 @@ E7. **The editor's import-failure suppression rule covers term names only (opera
     Editor path only; Tier 0.  Not scheduled — a Stage 3/4 item if a real session shows the cascade hurts.
 
 E8. **Parser columns are tab-expanded to 8-column stops, so every editor range on a tab-indented line is in
-    the wrong units.**  Filed 2026-09-10 from LSP Stage 3 item 6.3 (report `tracker/loopmodel/LSP3-6.3-REFS.md`
+    the wrong units.**  FIXED 2026-09-11 (LSP Stage 4 item 7.5; `tracker/loopmodel/LSP4-7.5-TICKETS.md`).
+    As recommended: the BOUNDARY CONVERSION, editor path only, Tier 0; `Pos` is untouched.
+    `Definitions.Lines` — the line model 6.3 wrote, now KEPT on the `DocIndex` instead of discarded — gained
+    one bidirectional pair, `character(line, parserCol)` and `column(line, chr)`, and every published range
+    and every incoming position in the server goes through `Definitions.toCharacter` / `toColumn`:
+    `Diagnostics.fromDiag`/`fromSpan`/`fromReport`, `Definitions.location` and `occurrenceAt`,
+    `References.siteAt`/`rangeOf` (highlight, prepareRename and the rename edits with it),
+    `Symbols.rangeJson`/`selJson` (documentSymbol and workspace/symbol), and completion's `scopeAt` lookup.
+    An untabbed line is still `col - 1` and O(1), which is 252 of the 253 corpus files.
+    THE UTF-16 RULE IS NOT A SECOND BUG: `ParsingUtil.rawSatisfy` feeds `Pos.bump` one `Char` — a UTF-16 code
+    unit — and `bumps` advances by `String.length`, so a non-BMP character is two parser columns AND two LSP
+    characters and the two models already agree.  The tab is the whole divergence.
+    6.3's "never rename a name behind a tab" mitigation is REMOVED (`nameExtent`'s `exact` no longer keys on
+    `sawTab`), and so is `QuickFix.BehindTab`, which was redundant: that insertion is a whole line at
+    character 0 carrying the line's own leading whitespace.
+    PINS: `tracker/lsp-tests/Tab.e` in lsp-smoke (a structured diagnostic, a caret note, definition, hover,
+    rename and prepareRename behind a tab, plus the control that character 8 of `\tgo = True` now answers
+    `True` — the position that used to answer `go`), and `core/examples/GridExample.e` opened as itself
+    (clean; definition and hover at character 2; all six tabbed occurrences found at their character
+    columns).  NUMBERS: the 6.3 extent classification is now
+    `71248 = 70903 exact + 39 backticked + 306 parenthesised + 0 unclassified`, with the 6 behind a tab
+    EXACT (they were the 6 non-exact ones), and two new `TestRenamer` corpus properties round-trip all
+    71,248 occurrence columns and all 132 characters of the corpus's 3 tabbed lines in both directions.
+    Filed 2026-09-10 from LSP Stage 3 item 6.3 (report `tracker/loopmodel/LSP3-6.3-REFS.md`
     §12; found by the new corpus property classifying every occurrence's source extent).  `Pos.bump` advances the
     column to the next multiple of 8 on a tab; LSP positions count UTF-16 code units, so a diagnostic, a definition
     target, a hover hit-test, a highlight or a rename range on a line with leading tabs lands right of the real
@@ -575,7 +645,29 @@ E8. **Parser columns are tab-expanded to 8-column stops, so every editor range o
     batch report's column on tab-indented lines (REPL goldens, corpus verdict text) and is Tier 2 + goldens.
     Recommended: the boundary conversion, editor path only, Tier 0.  Not scheduled; small.
 
-E9. **Stdlib navigation and workspace symbols land in the BUILD OUTPUT, not the source tree.**  Filed 2026-09-10
+E9. **Stdlib navigation and workspace symbols land in the BUILD OUTPUT, not the source tree.**
+    FIXED 2026-09-11 (LSP Stage 4 item 7.5; `tracker/loopmodel/LSP4-7.5-TICKETS.md`).  The first of the two
+    options: the target tree is rewritten back to `core/src/main/resources/modules` at the LSP boundary, in
+    `Definitions.location` and nowhere else, which is the one place both `textDocument/definition`,
+    `textDocument/references`' def-site and `Symbols.sessionGlobals` (workspace/symbol) build a `Location`.
+    Decision 5 is unchanged: the resident session still boots from the classpath and `V.loc` still says what
+    it said.  THE MAPPING IS DERIVED, not spelled: ask the class loader where `modules` actually is, walk up
+    to the directory that owns the `target` tree, and look for `src/main/resources/modules` beside it — so no
+    Scala version appears anywhere.  It is checked before it is used; if the source directory is absent, or
+    the particular file is not in it (the jar-only case), the target path is returned UNCHANGED.  That
+    fallback is reasoned, not pinned — and the 7.5 review (R-3) BUILT the jar-only case (`jar cf modules.jar
+    modules`, jar first on the classpath): the session boots 129 modules from it, and then `definition` answers
+    null and `workspace/symbol` `[]` — PRE-EXISTING, because a `Resource`'s fileName is a `jar:` URL that
+    `location`'s `isFile` guard rejects before the rewrite is reached; the fallback that IS reachable is a
+    `modules` directory with no `target` ancestor (mapping absent, logged, navigation unchanged and working).
+    PINS, all TREE-DISTINGUISHING (the old `endswith("/Bool.e")` shape could not see the bug): definition,
+    references' def-site and workspace/symbol each assert the uri is under
+    `core/src/main/resources/modules`; one pin asserts NO workspace-symbol location anywhere contains
+    `/target/`; one asserts the rewritten file exists on disk; and the eight pre-existing stdlib pins
+    (`Bool.e`, `Either.e` x3, `Date.e`, `Relation.e`, `Relation/Sort.e`,
+    `Layout/Report/SoftRelation.e`) were tightened from `/<name>.e` to `/resources/modules/<name>.e`.
+    `docs/lsp.md`'s caveat is replaced by the new behaviour.
+    Filed 2026-09-10
     from LSP Stage 3 item 6.4 (review F5; report `tracker/loopmodel/LSP3-6.4-SYMBOLS.md` §7d).
     `workspace/symbol "not"` answers `core/target/scala-3.3.8/classes/modules/Bool.e:19`, and
     `textDocument/definition` has done the same since the 6.1-era navigation.  *Cause.* The resident session loads
@@ -589,7 +681,38 @@ E9. **Stdlib navigation and workspace symbols land in the BUILD OUTPUT, not the 
     `bin/ermine`'s).  Editor path only; Tier 0; the pins must become tree-distinguishing or the fix cannot be
     observed.  Not scheduled; small.
 
-E10. **`Pretty` writes four type shapes the grammar cannot read back.**  Filed 2026-09-10 from LSP Stage 3 item
+E10. **`Pretty` writes four type shapes the grammar cannot read back.**  SPLIT, AND (5) IS FIXED.
+    Triaged 2026-09-11 (LSP Stage 4 item 7.5; `tracker/loopmodel/LSP4-7.5-TICKETS.md`).
+
+    **(5) FIXED — the quick fix now sees through the file's OWN type synonyms.**  `TolerantCheck` publishes
+    `ownTypes`, a map from each of the module's NULLARY `type` synonyms to the `Con` that writing that
+    spelling in this file denotes (the synonym's body under the type-def phase's own `maps`, which is how
+    `Scan_S` becomes `Relation.Scan.Scan`); it rides out on `Result`, `Resident.Checked` and
+    `Definitions.DocIndex`, and `QuickFix.inScope` resolves the printer's spelling through it before
+    refusing — the same IDENTITY test (`chase` on the origins) the import case makes, never a spelling one.
+    ONLY `type X = C` with no type parameters and a bare constructor body is published, and that narrowness
+    IS the soundness argument: `type X = C Int` does not license writing `C` as `X`, and a parameterised
+    synonym is not a type by itself.
+    NUMBERS, from a re-run of the 6.6 sweep (`-Dermine.sweep.quickfix=true 'core/testOnly
+    *TestTolerantCheck'`, 253 files / 4 excluded / 1334 groups, both sides): insertions OFFERED
+    **1166 -> 1183**, CLEAN **1164 -> 1181** (99.83 % both sides), PARSE-FAIL **0 -> 0**, TYPE-FAIL
+    **2 -> 2** (the same two `Validation.e` alias unfolds), SKIPPED **168 -> 151**; out-of-scope refusals
+    **117 -> 100** and the NAME OCCURRENCES they cite **150 -> 117**.  The own-synonym sub-class is
+    **33 -> 0**: every one of the 33 is recovered.  THE GROUP COUNT IS 17, NOT 31, and the ticket's "(5)
+    returns 33" conflated name occurrences with refusals — 31 groups cited an own-synonym name, but 14 of
+    them ALSO cite a name from one of the other two sub-classes (68 alias-imported, 49 not nameable at all)
+    and are still correctly refused.  17 groups were refused for own-synonym names ONLY, and those 17 are
+    the recovery; closing the rest is item (3)'s and the private-data case's, not this one's.
+    PIN: `tracker/lsp-tests/Syn.e` + `SynSrc.e` in lsp-smoke — `type Widget = Widget_W` over
+    `import SynSrc as W`, the unsigned `boxed` offered `boxed : Widget`, applied, re-checks clean; and the
+    SOUNDNESS CONTROL in the same file, `type Boxed a = Box_W a`, whose `wrapped : Box Widget` stays refused.
+
+    **(1)-(3) NOT THIS STAGE.**  The same printer writes interface bytes, so they are Tier 1: the
+    `ei-diff.sh --batch` interface sweep classified with `ei-classify.py`, `g1-validate.sh`, and a RE-CUT
+    `tracker/g1-baseline` for the moved spellings.  Their own item, unchanged by 7.5 (48 groups).
+    **(4) NOT THIS STAGE** either, and not the printer: a concrete row field's `Global` does not round-trip,
+    which is in whatever mints a field's `Global` or in unification's notion of field identity (3 groups).
+    Filed 2026-09-10 from LSP Stage 3 item
     6.6's corpus sweep (report `tracker/loopmodel/LSP3-6.6-QUICKFIX.md` §7, review `LSP3-6.6-REVIEW.md` R-2), which
     inserted the printed type of every unsigned top-level group over 253 files and re-checked: 1166 offered, 1164
     clean, 168 REFUSED because the rendering would not parse or resolve.  The printer's share: (1) a NESTED `* ->`

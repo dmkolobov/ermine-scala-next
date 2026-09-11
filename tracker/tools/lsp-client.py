@@ -14,6 +14,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import urllib.parse
 import time
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -286,8 +287,11 @@ def main():
           and r["uri"] == uri("Good.e")
           and r["range"]["start"]["line"] == 2, repr(r))
     r = definition("Nav.e", 7, 12)  # "&&" imported from stdlib Bool
+    # TREE-DISTINGUISHING since 7.5 (ticket E9): `endswith("/Bool.e")` was
+    # true of the BUILD OUTPUT copy the session loads from and could not see
+    # the bug; `/resources/modules/` is only true of the source tree.
     check("def && -> Bool.e", r is not None
-          and r["uri"].endswith("/Bool.e")
+          and r["uri"].endswith("/resources/modules/Bool.e")
           and r["range"]["start"]["line"] in (6, 7), repr(r))
     check("def miss -> null", definition("Nav.e", 1, 0) is None)
 
@@ -413,10 +417,10 @@ def main():
 
     r = definition("Decls.e", 18, 14)    # `Left`, a constructor from Either.e
     check("def imported constructor -> Either.e", r is not None
-          and r["uri"].endswith("/Either.e"), repr(r))
+          and r["uri"].endswith("/resources/modules/Either.e"), repr(r))
     r = definition("Decls.e", 19, 13)    # `yyyymmdd`, a foreign function
     check("def foreign function -> Date.e", r is not None
-          and r["uri"].endswith("/Date.e"), repr(r))
+          and r["uri"].endswith("/resources/modules/Date.e"), repr(r))
 
     r = definition("Decls.e", 20, 11)    # `Alias` in the signature
     check("def own type alias -> its statement", r is not None
@@ -424,7 +428,7 @@ def main():
           and r["range"]["start"] == {"line": 13, "character": 5}, repr(r))
     r = definition("Decls.e", 22, 12)    # `Either` in the signature
     check("def imported type -> Either.e", r is not None
-          and r["uri"].endswith("/Either.e"), repr(r))
+          and r["uri"].endswith("/resources/modules/Either.e"), repr(r))
     r = definition("Decls.e", 11, 5)     # the `Shape` head itself
     check("def type head -> itself", r is not None
           and r["range"]["start"] == {"line": 11, "character": 5}, repr(r))
@@ -436,7 +440,7 @@ def main():
 
     r = definition("Decls.e", 3, 8)      # `import Either`
     check("def import -> the module's file", r is not None
-          and r["uri"].endswith("/Either.e")
+          and r["uri"].endswith("/resources/modules/Either.e")
           and r["range"]["start"] == {"line": 0, "character": 0}, repr(r))
 
     # A name that is genuinely undefined still says nothing.
@@ -1486,11 +1490,11 @@ def main():
     soft = [s for s in r if s["name"] == "SoftRelation" and s["kind"] == 23]
     check("a stdlib TYPE is found in its source .e", len(soft) == 1
           and soft[0]["location"]["uri"].endswith(
-              "/modules/Layout/Report/SoftRelation.e")
+              "/resources/modules/Layout/Report/SoftRelation.e")
           and soft[0]["containerName"] == "Layout.Report.SoftRelation", repr(soft))
     rel = [s for s in r if s["name"] == "relation"]
     check("a stdlib TERM is found in its source .e", len(rel) == 1
-          and rel[0]["location"]["uri"].endswith("/modules/Relation.e")
+          and rel[0]["location"]["uri"].endswith("/resources/modules/Relation.e")
           and rel[0]["containerName"] == "Relation" and rel[0]["kind"] == 12, repr(rel))
     # `Relation` the TYPE is a Scala-installed builtin (Type.scala's
     # relationT, Global("Builtin","Relation")) with Loc.builtin, so it has
@@ -1503,7 +1507,8 @@ def main():
     so = [s for s in r if s["name"] == "SortOrder"]
     check("a lower-case query finds an upper-case stdlib type", len(so) == 1
           and so[0]["kind"] == 23
-          and so[0]["location"]["uri"].endswith("/modules/Relation/Sort.e"), repr(r))
+          and so[0]["location"]["uri"].endswith(
+              "/resources/modules/Relation/Sort.e"), repr(r))
 
     # A Scala-installed constructor has no source, so it is not a workspace
     # symbol; the SOURCE names that contain the same letters are.
@@ -2479,6 +2484,240 @@ def main():
     client.diagnostics_for(uri("Burst.e"))
     check("7.4 Burst.e on disk untouched by the buffer edits",
           (FIXTURES / "Burst.e").read_text() == burst_src)
+
+    # ---- 7.5, TICKET E8: THE BOUNDARY CONVERSION, parser column <-> LSP
+    # character.  `scalaparsers.Pos.bump` sends a tab to the next tab stop
+    # (column 1 -> column 8); LSP counts characters.  Until 7.5 the server
+    # converted by +-1 in BOTH directions and in EVERY feature, so on a
+    # tab-indented line a squiggle, a definition target, a hover hit-test, a
+    # highlight and a symbol were all seven characters right of the text, and
+    # 6.3 made rename REFUSE such a name rather than mis-edit it.  Tab.e is
+    # the fixture; `core/examples/GridExample.e` is the corpus instance (6 of
+    # 71,248 occurrences) and is pinned below as itself.
+    open_doc("Tab.e")
+    ds = client.diagnostics_for(uri("Tab.e"))
+    check("7.5 Tab.e reports its four diagnostics", len(ds) == 4, repr(ds))
+
+    def diag_with(ds, needle):
+        for d in ds:
+            if needle in d["message"]:
+                return d
+        return None
+
+    d = diag_with(ds, "unknown operator <+>")
+    # `\tTrue <+> False`: the operator is at CHARACTER 6 and at PARSER
+    # COLUMN 13.  A structured READ diagnostic, so this is the `fromDiag`
+    # path.
+    check("7.5 a structured diagnostic on a tabbed line squiggles the text",
+          d is not None and d["range"]["start"] == {"line": 24, "character": 6},
+          repr(d and d["range"]))
+    d = diag_with(ds, "undefined term")
+    # A note with no span: its position is recovered from the report's own
+    # `file:line:col:` prefix, which is a PARSER column (8) -- the
+    # `fromReport` path, which converts too.
+    check("7.5 a caret note on a tabbed line lands on the text",
+          d is not None and d["range"]["start"] == {"line": 19, "character": 1},
+          repr(d and d["range"]))
+
+    # NAVIGATION at the REAL character column.
+    r = definition("Tab.e", 10, 9)              # `go` in `tabbed = go where`
+    check("7.5 def go -> its binder behind a tab", r is not None
+          and r["uri"] == uri("Tab.e")
+          and r["range"] == {"start": {"line": 11, "character": 1},
+                             "end": {"line": 11, "character": 4}}, repr(r))
+    r = definition("Tab.e", 11, 1)              # the binder itself, at character 1
+    check("7.5 def at the character column of a tabbed binder hits", r is not None
+          and r["range"]["start"] == {"line": 11, "character": 1}, repr(r))
+    check("7.5 hover at the character column of a tabbed binder hits",
+          hoverline("Tab.e", 11, 1) == "go : Bool", repr(hoverline("Tab.e", 11, 1)))
+    # THE CONTROL, and it is the reviewer's own observation (6.3 review S5)
+    # inverted: character 8 on `\tgo = True` is inside `True`, and it is
+    # exactly the position that used to answer `go`.
+    check("7.5 the old parser-column position no longer answers the name",
+          definition("Tab.e", 11, 8) is None, repr(definition("Tab.e", 11, 8)))
+    check("7.5 character 8 of that line is `True`, and says so",
+          hoverline("Tab.e", 11, 8) == "Builtin.True : Bool",
+          repr(hoverline("Tab.e", 11, 8)))
+    check("7.5 the tab itself is not a name", definition("Tab.e", 11, 0) is None)
+
+    # RENAME BEHIND A TAB, which 6.3 refused (-32803, `nameExtent` non-exact)
+    # because the range would have been in the wrong units.  It is not a
+    # refusal any more, and prepareRename says so before the user types.
+    rid = client.request("textDocument/prepareRename", {
+        "textDocument": {"uri": uri("Tab.e")}, "position": {"line": 11, "character": 1}})
+    pr = client.response(rid).get("result")
+    check("7.5 prepareRename behind a tab offers the name (6.3 refused it)",
+          pr is not None and pr["placeholder"] == "go"
+          and pr["range"]["start"] == {"line": 11, "character": 1}, repr(pr))
+    rid = client.request("textDocument/rename", {
+        "textDocument": {"uri": uri("Tab.e")}, "position": {"line": 11, "character": 1},
+        "newName": "went"})
+    rr = client.response(rid)
+    es = list((rr.get("result") or {}).get("changes", {}).values())
+    es = sorted(es[0], key=lambda e: e["range"]["start"]["line"]) if es else []
+    check("7.5 rename behind a tab edits both sites, at their character columns",
+          [(e["range"]["start"]["line"], e["range"]["start"]["character"],
+            e["range"]["end"]["character"]) for e in es]
+          == [(10, 9, 11), (11, 1, 3)], repr(rr.get("error") or es))
+
+    # A DOCUMENT SYMBOL whose own line is untabbed still carries a child
+    # range that crosses the tabbed one; the selection columns are the
+    # untabbed ones and must not move.
+    rid = client.request("textDocument/documentSymbol",
+                         {"textDocument": {"uri": uri("Tab.e")}})
+    syms = client.response(rid).get("result") or []
+    tabbed_sym = [x for x in syms if x["name"] == "tabbed"]
+    check("7.5 an untabbed symbol's columns are unchanged by the conversion",
+          len(tabbed_sym) == 1
+          and tabbed_sym[0]["selectionRange"]["start"] == {"line": 10, "character": 0},
+          repr(tabbed_sym))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Tab.e")}})
+    client.diagnostics_for(uri("Tab.e"))
+
+    # THE CORPUS INSTANCE, as itself: `core/examples/GridExample.e` indents
+    # three lines with a tab, and each carries two `atomShown` occurrences --
+    # the 6 the 6.3 extent property counts.  `\t[atomShown` puts the name at
+    # CHARACTER 2 and at PARSER COLUMN 10.
+    grid = repo("core/examples/GridExample.e")
+    grid_uri = grid.as_uri()
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": grid_uri, "languageId": "ermine", "version": 1,
+        "text": grid.read_bytes().decode("utf-8")}})
+    check("7.5 GridExample.e checks clean",
+          client.diagnostics_for(grid_uri) == [], repr(client.seen[-1:]))
+
+    def grid_req(method, line, char, extra=None):
+        p = {"textDocument": {"uri": grid_uri},
+             "position": {"line": line, "character": char}}
+        if extra:
+            p.update(extra)
+        return client.response(client.request(method, p)).get("result")
+
+    r = grid_req("textDocument/definition", 64, 2)
+    check("7.5 definition at the character column of a name behind a tab",
+          r is not None and r["uri"].endswith("/modules/Layout/Report.e"), repr(r))
+    h = grid_req("textDocument/hover", 64, 2)
+    check("7.5 hover at the character column of a name behind a tab",
+          h is not None and "Layout.Report.atomShown :" in h["contents"]["value"],
+          repr(h))
+    check("7.5 the `[` before it is not a name",
+          grid_req("textDocument/definition", 64, 1) is None)
+    r = grid_req("textDocument/references", 64, 2,
+                 {"context": {"includeDeclaration": True}}) or []
+    tabbed_hits = sorted((x["range"]["start"]["line"], x["range"]["start"]["character"])
+                         for x in r if x["uri"] == grid_uri
+                         and x["range"]["start"]["line"] in (64, 65, 66))
+    check("7.5 all six tabbed occurrences are found at their character columns",
+          tabbed_hits == [(64, 2), (64, 26), (65, 2), (65, 27), (66, 2), (66, 32)],
+          repr(tabbed_hits))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": grid_uri}})
+    client.diagnostics_for(grid_uri)
+
+    # ---- 7.5, TICKET E9: A STDLIB TARGET OPENS THE SOURCE TREE.
+    # The resident session loads its 129 modules from the classpath copy
+    # (`core/target/<scala>/classes/modules`), so every stdlib `V.loc` names
+    # that copy -- and a user who edits the file they land in loses the edit
+    # at the next `copyResources`.  The mapping back is made at the LSP
+    # boundary (`Definitions.location`) and derived from where the class
+    # loader actually found `modules`, so no Scala version is spelled here
+    # either.  EVERY pin below is tree-distinguishing: the `endswith` pins
+    # this suite had before cannot see the bug at all.
+    src_root = repo("core/src/main/resources/modules").as_uri()
+
+    def in_source_tree(u):
+        return u is not None and u.startswith(src_root) and "/target/" not in u
+
+    r = definition("Nav.e", 7, 12)              # `&&`, from stdlib Bool
+    check("7.5 a stdlib definition target is in the SOURCE tree",
+          r is not None and in_source_tree(r["uri"]), repr(r))
+    rid = client.request("textDocument/references", {
+        "textDocument": {"uri": uri("Nav.e")}, "position": {"line": 7, "character": 12},
+        "context": {"includeDeclaration": True}})
+    rs = client.response(rid).get("result") or []
+    # The set spans the OPEN buffers (several of them mention `&&`); the one
+    # entry that is NOT in a buffer is the def-site `location` adds, and it
+    # is the one this ticket is about.
+    outside = [x for x in rs if "/modules/" in x["uri"] or "/target/" in x["uri"]]
+    check("7.5 the def-site a references request adds is in the SOURCE tree",
+          len(outside) == 1 and in_source_tree(outside[0]["uri"])
+          and outside[0]["uri"].endswith("/resources/modules/Bool.e"), repr(outside))
+    rid = client.request("workspace/symbol", {"query": "not"})
+    ws = client.response(rid).get("result") or []
+    ws_bool = [x for x in ws if x["containerName"] == "Bool" and x["name"] == "not"]
+    check("7.5 a workspace symbol's location is in the SOURCE tree",
+          len(ws_bool) == 1 and in_source_tree(ws_bool[0]["location"]["uri"]),
+          repr(ws_bool))
+    check("7.5 no workspace-symbol location is in the build output",
+          all("/target/" not in x["location"]["uri"] for x in ws),
+          repr([x["location"]["uri"] for x in ws if "/target/" in x["location"]["uri"]][:2]))
+    # The file the server sends is the one the user would edit, and it is
+    # really there.
+    check("7.5 the rewritten target file exists on disk",
+          pathlib.Path(urllib.parse.urlparse(ws_bool[0]["location"]["uri"]).path).is_file()
+          if ws_bool else False)
+
+    # ---- 7.5, TICKET E10(5): THE QUICK FIX SEES THROUGH THE FILE'S OWN
+    # TYPE SYNONYMS.  `Syn.e` reaches `Widget` only through `type Widget =
+    # Widget_W` over `import SynSrc as W`, so `ModuleScope.canonicalTypes`
+    # holds `Widget_W` and the printer writes `Widget`: the add-signature
+    # action used to refuse a signature the file can perfectly well write
+    # (33 name occurrences over the corpus, 29 of them `Scan` in
+    # `Layout/Scan.e`).
+    open_doc("SynSrc.e")
+    check("7.5 SynSrc.e clean", client.diagnostics_for(uri("SynSrc.e")) == [])
+    open_doc("Syn.e")
+    check("7.5 Syn.e clean", client.diagnostics_for(uri("Syn.e")) == [])
+    syn_src = raw("Syn.e")
+    r = code_actions("Syn.e", 14)               # `boxed = MkWidget_W`
+    a = act(r, "add signature: boxed : Widget")
+    check("7.5 a synonym-typed binding is offered its signature",
+          a is not None, repr(titles(r)))
+    check("7.5 the synonym signature goes above the equation",
+          a is not None and edits_of(a) == [{
+              "range": {"start": {"line": 14, "character": 0},
+                        "end": {"line": 14, "character": 0}},
+              "newText": "boxed : Widget\n"}], repr(a and edits_of(a)))
+    change("Syn.e", apply_ws(syn_src, a), 2)
+    check("7.5 the applied synonym signature re-checks clean",
+          client.diagnostics_for(uri("Syn.e")) == [])
+    change("Syn.e", syn_src, 3)
+    check("7.5 Syn.e clean again", client.diagnostics_for(uri("Syn.e")) == [])
+    # THE SOUNDNESS CONTROL.  `type Boxed a = Box_W a` says how to write
+    # `Box x`; it does NOT make the bare constructor `Box` writable, so
+    # `wrapped : Box Widget` stays refused.  Only a NULLARY synonym of a
+    # bare constructor is published, and this is the half that must not be.
+    r = code_actions("Syn.e", 16)               # `wrapped = MkBox_W MkWidget_W`
+    check("7.5 a PARAMETERISED synonym licenses no bare spelling",
+          not any(t.startswith("add signature: wrapped") for t in titles(r)),
+          repr(titles(r)))
+
+    # ---- 7.5, TICKET E7 (the half that is shippable): AN UNDEFINED TYPE IS
+    # WITHHELD WHILE AN IMPORT FAILED, the same rule 6.1(b) applies to
+    # undefined TERMS and for the same reason -- a module that did not load
+    # contributes no type names either, so "undefined type" is a consequence
+    # of the import failure rather than a second thing to fix.  The note
+    # cannot carry a `spelling` (`assertTypeClosed` dies once with every free
+    # type variable joined into one report), so it carries a FLAG set where it
+    # is built -- never a match on its text.  The OPERATOR half of E7 is
+    # deferred; the ticket says why.
+    open_doc("BadTy.e")
+    ds = client.diagnostics_for(uri("BadTy.e"))
+    check("7.5 a failed import is the only diagnostic, not the type it would supply",
+          len(ds) == 1 and "import NoSuchTypeModule failed" in ds[0]["message"], repr(ds))
+    check("7.5 no undefined-type cascade from a failed import",
+          not any("undefined type" in d["message"] for d in ds), repr(ds))
+    # THE CONTROL, and it is what keeps this from being a filter that deletes
+    # the note outright: with NO import failing, an undefined type is a real
+    # error and is still reported, at the name.
+    open_doc("UndefTy.e")
+    ds = client.diagnostics_for(uri("UndefTy.e"))
+    check("7.5 with no failed import an undefined type is still reported",
+          len(ds) == 1 and "undefined type" in ds[0]["message"]
+          and ds[0]["range"]["start"] == {"line": 7, "character": 8}, repr(ds))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("BadTy.e")}})
+    client.diagnostics_for(uri("BadTy.e"))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("UndefTy.e")}})
+    client.diagnostics_for(uri("UndefTy.e"))
 
     # Checks must neither read nor write interface files (a stale .ei would
     # let type errors through unreported, and writebacks litter workspaces).

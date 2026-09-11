@@ -79,6 +79,11 @@ object References {
 
   def install(server: Server, ermine: Resident, docs: Documents, log: String => Unit): Unit = {
 
+    // 7.5, ticket E8/E9: this handler's own line source, for the one
+    // Location it builds that is not an open buffer's (a def-site
+    // outside the workspace).
+    val src = new Definitions.LineSource(docs)
+
     // Same rule as navigation (Definitions): during the ~13s boot there
     // is no index to answer from, and a request must not read as a hang.
     def ifReady(answer: => Json): Json =
@@ -97,7 +102,11 @@ object References {
         pos  <- params / "position"
         line <- pos / "line" flatMap (_.int)
         chr  <- pos / "character" flatMap (_.int)
-        occ  <- Definitions.hit(idx, line + 1, chr + 1)  // LSP 0-based, Span 1-based
+        // LSP 0-based characters in, 1-based PARSER columns out (7.5,
+        // ticket E8): the same conversion, against the same text, that
+        // `Definitions.occurrenceAt` makes -- so "the name at this
+        // position" still has exactly one meaning in this server.
+        occ  <- Definitions.hit(idx, line + 1, Definitions.toColumn(idx.lines, line + 1, chr))
       } yield (d, idx, occ)
 
     /** Every stored occurrence of `key`.  A local key is scoped to its
@@ -116,15 +125,21 @@ object References {
       }
     }
 
-    def rangeOf(o: Definitions.Occ): Json =
+    /** 7.5, ticket E8: an occurrence's range is converted against the
+      * text of the document it is IN -- `occurrencesOf` spans the open
+      * buffers, so the home document's line model is not the right one
+      * for a sibling's hit. */
+    def rangeOf(d: docs.Doc, o: Definitions.Occ): Json = {
+      val chr = Definitions.toCharacter(d.index.flatMap(_.lines), o.line, o.startCol)
       Json.obj(
         "start" -> Json.obj("line" -> Json.num(o.line - 1),
-                            "character" -> Json.num(o.startCol - 1)),
+                            "character" -> Json.num(chr)),
         "end"   -> Json.obj("line" -> Json.num(o.line - 1),
-                            "character" -> Json.num(o.startCol - 1 + o.len)))
+                            "character" -> Json.num(chr + o.len)))
+    }
 
     def locationOf(d: docs.Doc, o: Definitions.Occ): Json =
-      Json.obj("uri" -> Json.Str(d.uri), "range" -> rangeOf(o))
+      Json.obj("uri" -> Json.Str(d.uri), "range" -> rangeOf(d, o))
 
     def isGlobal(key: Definitions.Key): Boolean = key match {
       case _: Definitions.GlobalKey => true
@@ -161,7 +176,7 @@ object References {
             // answers, so it belongs in the set when asked for.
             val outside =
               if (incl && !hits.exists(_._2.isDef))
-                occ.target.flatMap(Definitions.location).toList
+                occ.target.flatMap(t => Definitions.location(t, src)).toList
               else Nil
             if (isGlobal(key)) coverageWarning("references")
             Json.Arr(uses.map { case (d, o) => locationOf(d, o) } ++ outside)
@@ -173,14 +188,14 @@ object References {
 
     server.onRequest("textDocument/documentHighlight") { params => ifReady {
       siteAt(params) match {
-        case Some((_, idx, occ)) if occ.key.isDefined =>
+        case Some((d, idx, occ)) if occ.key.isDefined =>
           val key = occ.key.get
           // Per-document by definition, so no coverage warning: a
           // highlight is about the buffer on screen.
           Json.Arr(idx.occs.filter(_.key.contains(key))
             .sortBy(o => (o.line, o.startCol))
             .map(o => Json.obj(
-              "range" -> rangeOf(o),
+              "range" -> rangeOf(d, o),
               "kind"  -> Json.num(if (o.isDef) HighlightWrite else HighlightRead))))
         case _ => Json.Null
       }
@@ -194,9 +209,9 @@ object References {
         // spelling -- a backtick literal, a parenthesised operator -- is
         // not renameable, so prepareRename says so before the user types
         // a new name.
-        case Some((_, _, occ))
+        case Some((d, _, occ))
           if occ.key.isDefined && occ.exact && classify(occ.spelling).exists(_ != OpName) =>
-          Json.obj("range" -> rangeOf(occ), "placeholder" -> Json.Str(occ.spelling))
+          Json.obj("range" -> rangeOf(d, occ), "placeholder" -> Json.Str(occ.spelling))
         case _ => Json.Null   // not a renameable name here
       }
     } }
@@ -407,7 +422,7 @@ object References {
       val changes = touched.map { d =>
         val es = hits.filter(_._1.uri == d.uri).map(_._2)
           .sortBy(o => (o.line, o.startCol))
-          .map(o => Json.obj("range" -> rangeOf(o), "newText" -> Json.Str(newName)))
+          .map(o => Json.obj("range" -> rangeOf(d, o), "newText" -> Json.Str(newName)))
         d.uri -> (Json.Arr(es): Json)
       }
       if (isGlobal(key)) coverageWarning("rename")

@@ -1224,10 +1224,15 @@ object TestTolerantCheck extends Properties("Tolerant check") {
               // THE CHECK'S OWN env, not the resident one: a module this
               // file's imports dragged in has its origins only there, and
               // `Definitions.index` stores exactly these two maps.
+              // 7.5, ticket E10(5): `ownTypes` is the ninth argument, and
+              // it is the check's own -- the file's nullary type synonyms
+              // resolved to the `Con` each names, which is what lets the
+              // scope test see through `type Scan = Scan_S`.
               case Some(t) => QuickFix.sigEdit(text, g, t, c0.scope.canonicalTypes,
                                                c0.scope.canonicalTerms,
                                                c0.env.consOrigins,
-                                               c0.env.termNameOrigins, c0.name)
+                                               c0.env.termNameOrigins, c0.name,
+                                               c0.ownTypes)
             }
             (g, e)
           }

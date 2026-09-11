@@ -20,8 +20,10 @@ gone (0/154 -> 115/154 reused; checkWith -40..-60%); the Stage-2 un-keyed-
 definition hole is closed.  7.1 DONE — THE HEADLINE: the read is
 0.05 s (was 0.84) and keystroke-to-diagnostics on Report.e 0.90 s (was
 1.68); 7.3 handed to PERF-ROADMAP.  7.4 DONE (adaptive debounce: small files
-0.32 -> 0.17 s).  NEXT: 7.5 (tickets E8/E9/E10(5)/E7), then the GATE G4
-evidence run, then STOP for sign-off.  Orchestration as in Stage 3: brief -> fresh Opus
+0.32 -> 0.17 s).  7.5 DONE (E8, E9, E10(5) closed; E7
+half).  NEXT: the GATE G4 evidence run (brief-LSP4-G4.md, two phases: quiet
+timings first so the user can start parallel type-checker work, then Tier 1
+for the stage, Tier 2, docs, demo), then STOP for sign-off.  Orchestration as in Stage 3: brief -> fresh Opus
 implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
@@ -46,8 +48,8 @@ implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (510 after Stage 4 item 7.4,
-  2026-09-11; 494 after 7.1b; 480 after 7.2; 456 after 7.0; 454 at GATE G3;
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (542 after Stage 4 item 7.5,
+  2026-09-11; 510 after 7.4; 494 after 7.1b; 480 after 7.2; 456 after 7.0; 454 at GATE G3;
   407 after 6.5; 344 after 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
@@ -1969,7 +1971,7 @@ New, and specific to this stage:
   queued documents share the minimum window and check back to back, so
   the client's `waited == policy` became `<=`.
 
-- [ ] **7.5 Ticket triage — which of E5-E10 this stage takes.**  One iteration,
+- [x] **7.5 Ticket triage — which of E5-E10 this stage takes.**  One iteration,
   and it takes only the ones that are editor-path Tier 0.  DISPOSITIONS:
   - **E8 (parser columns tab-expanded to 8-column stops)** — **TAKE**.  Every
     editor range on a tab-indented line is 7 columns right of the text per tab
@@ -2008,6 +2010,60 @@ New, and specific to this stage:
   grows); each deferred one has its disposition and tier written back into
   `tracker/TICKET-stdlib-findings.md` in the same commit, so the ticket file and
   the roadmap agree.
+  DONE 2026-09-11 (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP4-7.5-TICKETS.md, LSP4-7.5-REVIEW.md).  E8 FIXED: one bidirectional
+  parser-column <-> LSP-character conversion on the `Lines` 6.3 wrote (kept
+  on the DocIndex, so no second scan), routed through every range and
+  incoming position — diagnostics, definition and hit-test, references/
+  highlight/rename edits, symbols, completion's scopeAt; the `±1` grep
+  hits only the helper.  UTF-16 answered — not a bug here: `rawSatisfy`
+  feeds `Pos.bump` a Char, so a non-BMP character is two parser columns
+  AND two LSP characters; the tab (column 1 -> 8) was the whole
+  divergence.  Both mitigations removed: 6.3's tab rename refusal and
+  QuickFix's BehindTab.  The 6.3 extent classification's "6 behind a tab"
+  are now exact (71,248 = 70,903 exact + 39 backticked + 306
+  parenthesised + 0 other); two corpus round-trip properties, both
+  directions; fixtures Tab.e and GridExample.e opened as itself.
+  E9 FIXED: stdlib Locations rewritten from the target module tree to
+  `core/src/main/resources/modules` in `Definitions.location` alone, the
+  mapping DERIVED from the class-loader's `modules` entry (no Scala version
+  spelled), existence-checked, jar fallback to the target path (reasoned,
+  not pinned — no jar-only module is constructible in this build); pins
+  assert the source tree on definition, references' def-site and
+  workspace/symbol and that no location contains `/target/`; the E9 docs
+  caveat removed.  E10(5) FIXED: TolerantCheck publishes the file's own
+  nullary `type X = C` synonyms (only nullary-of-bare-Con — the soundness
+  argument) and the quick fix's scope test resolves the printed spelling
+  through them; the 6.6 sweep: offered 1166 -> 1183, CLEAN 1164 -> 1181,
+  PARSE-FAIL 0, TYPE-FAIL 2, out-of-scope refusals 117 -> 100, own-synonym
+  name occurrences 33 -> 0 (17 groups recovered; the rest also cite an
+  alias-imported or unnameable type and stay correctly refused).  E7
+  HALF: the "undefined type" note gained a flag and joins the import-
+  failure suppression (a fixture and a control); the OPERATOR half
+  deferred with three reasons — the three read diagnostics carry no
+  payload and tagging them reaches Reassoc/Lower shared with the strict
+  read (not Tier 0); a failed module has no export list to discriminate
+  against; 6.1 keeps syntax diagnostics deliberately.  WRITE-BACKS: E8,
+  E9, E10(5) FIXED with pins named; E7 half; E5 waits for the next Tier-2
+  CODE commit (not the G4 evidence run — corrected at commit); E6 Tier 2
+  + goldens, its own item; E10(1)-(3) Tier 1 with a re-cut g1-baseline;
+  E10(4) recorded.  lsp-smoke 510 -> 542; TestRenamer 32 -> 34; Report.e
+  round trip 0.927 -> 0.908 s (unmoved; read 0.055 both sides).
+  THE REVIEW: FIX-THEN-ADVANCE on prose only — E8 attacked past its pins
+  (an astral character probe confirms the UTF-16 reasoning; rename
+  behind TWO tabs applies correctly; every tab pin is a leading tab, mid-
+  line and double tabs verified live), E10(5) attacked with applied
+  types, chains (correctly refused: the module's own alias Con fails the
+  identity test — conservative, now documented) and shadowing; 15
+  signatures offered on Layout/Scan.e all applied and re-check clean;
+  the JAR-ONLY case IS constructible (the reviewer built it) and in it
+  stdlib navigation vanishes for a PRE-EXISTING reason (`isFile` rejects
+  a `jar:` fileName before the rewrite) — the ticket corrected; "E5 rides
+  with G4" was a category error (a gate is an evidence run; E5 waits for
+  the first Tier-2 code commit) — corrected; a miscount and a stale
+  scaladoc fixed by the orchestrator.  Not an adoption item (no flag, no
+  default; the one non-lsp file is reachable only from lsp/); G4 runs
+  Tier 2 regardless.
 
 - [ ] **7.6 PARKED, with triggers** (no work in this stage; listed so the forks
   do not go missing).
@@ -3284,6 +3340,15 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-11 (7.5 DONE): see the item's DONE paragraph.  Three user-visible
+  tickets closed (tab-column ranges, stdlib navigation into the source
+  tree, the quick fix's synonym blindness), one half (undefined-type
+  notes join the import-failure suppression; the operator cascade
+  deferred with reasons), the rest written back with their tiers.  Review
+  FIX-THEN-ADVANCE on prose (a false jar-fallback sentence; "E5 rides
+  with G4" a category error), applied by the orchestrator.  Implementer
+  ~67 min, reviewer ~40 min.  Baselines: TestLoopTrace 720/720, corpus
+  85/69/0 over 154, repl-smoke 8/66, lsp-smoke 542, boot 129.
 - 2026-09-11 (7.4 DONE): see the item's DONE paragraph.  The debounce is
   now derived from each document's own measured check time, clamped to
   150..300 ms: a small file's round trip halves (0.32 -> 0.17 s), the big

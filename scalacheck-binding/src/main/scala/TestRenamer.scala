@@ -323,19 +323,24 @@ object TestRenamer extends Properties("Renamer 3.2a") {
       val ls = new Definitions.Lines(src)
       r.occurrences.map { o =>
         val (len, exact) = Definitions.nameExtent(ls, o.span, o.spelling)
-        val off = ls.offset(o.span.startLine, o.span.startCol)
+        val (off, tab) = ls.locate(o.span.startLine, o.span.startCol)
         val text = if (off < 0) "" else src.substring(off, math.min(off + len, src.length))
-        (exact, text, o.spelling, f.getName)
+        (exact, text, o.spelling, f.getName, tab)
       }
     }
     val inexact = forms.filterNot(_._1)
     val ticked  = inexact.count(_._2.startsWith("``"))
     val parens  = inexact.count(_._2.startsWith("("))
-    // behind a TAB the parser's column is not a character index, so the
-    // extent is measured but the name is not treated as exact
-    val tabbed  = inexact.count(x => x._2 == x._3)
+    // 7.5, ticket E8: BEHIND A TAB IS EXACT NOW.  6.3 made such a name
+    // inexact -- and so unrenameable -- because an LSP range built from a
+    // parser column on a tabbed line was in the wrong units; the server
+    // converts at the boundary since 7.5, so the class is still counted
+    // (it is the one the fix is about) but it is counted among the EXACT
+    // ones.  A tabbed occurrence that ever came back inexact would show
+    // up in `other`, below, which must stay empty.
+    val tabbed  = forms.count(_._5)
     val other   = inexact.filterNot(x =>
-      x._2.startsWith("``") || x._2.startsWith("(") || x._2 == x._3)
+      x._2.startsWith("``") || x._2.startsWith("("))
     Prop.collect(s"occurrences ${forms.size} | exact ${forms.count(_._1)} | " +
                  s"backticked $ticked | parenthesised $parens | behind a tab $tabbed | " +
                  s"other ${other.size}") {
@@ -344,7 +349,78 @@ object TestRenamer extends Properties("Renamer 3.2a") {
       // this is where it shows up rather than in a corrupted rename
       ((other.size == 0) :|
         s"${other.size} occurrences in no form this measurement knows: " +
-        s"${other.take(5).map(x => x._4 + " '" + x._3 + "' vs '" + x._2 + "'")}")
+        s"${other.take(5).map(x => x._4 + " '" + x._3 + "' vs '" + x._2 + "'")}") &&
+      // anti-vacuity for the class the fix is about: the corpus HAS
+      // tab-indented names, and every one of them is exact
+      ((tabbed > 0) :| s"anti-vacuity: no occurrence behind a tab") &&
+      (forms.filter(_._5).forall(_._1) :|
+        s"${forms.count(x => x._5 && !x._1)} occurrences behind a tab are not exact")
+    }
+  }
+
+  property("7.5 corpus: parser column <-> LSP character round-trips") = secure {
+    // TICKET E8.  A parser column is TAB-EXPANDED to 8-column stops
+    // (`scalaparsers.Pos.bump`) and an LSP character index is a count of
+    // UTF-16 code units, so the two are different units and the server
+    // converts between them at its boundary
+    // (`Definitions.Lines.character` / `.column`).  This is the property
+    // that says the conversion is a bijection on the positions the server
+    // actually converts: every occurrence's start column, over the whole
+    // corpus, through parser -> LSP -> parser, back to itself.
+    //
+    // It is also the anti-vacuity guard for the tab half: without a
+    // tab-bearing file in the corpus the identity would hold trivially by
+    // `col - 1` / `chr + 1`, so the number of TABBED occurrences it
+    // covered is collected and required to be non-zero.
+    var tabbed = 0
+    val bad = corpusTables.flatMap { case (f, src, r) =>
+      val ls = new Definitions.Lines(src)
+      r.occurrences.flatMap { o =>
+        val ln  = o.span.startLine
+        val col = o.span.startCol
+        val chr = ls.character(ln, col)
+        val back = ls.column(ln, chr)
+        if (ls.tabbedLine(ln)) tabbed += 1
+        if (back == col) None
+        else Some(s"${f.getName}:$ln: column $col -> character $chr -> column $back")
+      }
+    }
+    val n = corpusTables.map(_._3.occurrences.size).sum
+    Prop.collect(s"occurrences $n | round-tripped ${n - bad.size} | behind a tab $tabbed") {
+      (bad.isEmpty :| s"${bad.size} of $n columns do not round-trip: ${bad.take(5)}") &&
+      ((tabbed > 0) :| "anti-vacuity: no tabbed occurrence in the corpus") &&
+      ((n > 50000) :| s"anti-vacuity: only $n occurrences")
+    }
+  }
+
+  property("7.5 corpus: an LSP character round-trips through a parser column") = secure {
+    // The other direction, on the text rather than on the occurrences: on
+    // every TABBED line of the corpus -- the lines where the two units
+    // disagree at all -- every character index of the line converts to a
+    // parser column and back to itself.  A character index INSIDE a tab's
+    // expansion does not exist, so this is the whole domain.
+    var lines = 0
+    var chars = 0
+    val bad = corpusTables.flatMap { case (f, src, _) =>
+      val ls = new Definitions.Lines(src)
+      (1 to ls.lineCount).toList.flatMap { ln =>
+        if (!ls.tabbedLine(ln)) Nil
+        else {
+          lines += 1
+          val text = ls.lineText(ln)
+          (0 to text.length).toList.flatMap { chr =>
+            chars += 1
+            val col  = ls.column(ln, chr)
+            val back = ls.character(ln, col)
+            if (back == chr) None
+            else Some(s"${f.getName}:$ln: character $chr -> column $col -> character $back")
+          }
+        }
+      }
+    }
+    Prop.collect(s"tabbed lines $lines | characters $chars") {
+      (bad.isEmpty :| s"${bad.size} of $chars characters do not round-trip: ${bad.take(5)}") &&
+      ((lines > 0) :| "anti-vacuity: no tabbed line in the corpus")
     }
   }
 

@@ -58,22 +58,23 @@ save is needed anywhere, but a squiggle that is already fixed can sit there
 until you go back to it.
 
 While an import has failed, the editor withholds the notes that are merely
-consequences of the names that never arrived: "undefined term" and "unchecked:
-depends on a broken definition" are suppressed for that check — the import
-failure is the error to act on, and a file's worth of undefined names on top of
-it is noise. (The same rule already applies while a statement is too broken to
-parse.) It is deliberately blunt: a genuine typo goes quiet until the import is
-fixed.
+consequences of the names that never arrived: "undefined term", "undefined type"
+and "unchecked: depends on a broken definition" are suppressed for that check —
+the import failure is the error to act on, and a file's worth of undefined names
+on top of it is noise. (The same rule already applies while a statement is too
+broken to parse.) It is deliberately blunt: a genuine typo goes quiet until the
+import is fixed. Every one of the three is recognised by a FLAG set where the
+note is built, never by matching its rendered text.
 
-**Two consequences of a missing import are NOT withheld.** An operator the
-module would have supplied still draws "unknown operator", plus the two
-lowering diagnostics that follow it — three per use. A type it would have
-supplied still draws "undefined type". Neither is a note the suppression filter
-can reach: the operator's three are read-phase DIAGNOSTICS rather than notes at
-all, and the type one is a note that carries no name — the flag the rule keys
-on. And the same three diagnostics are exactly right for a genuinely mistyped
-operator in a file whose imports are all fine, so telling the two apart needs a
-change the editor has not made.
+**One consequence of a missing import is NOT withheld.** An operator the module
+would have supplied still draws "unknown operator", plus the two lowering
+diagnostics that follow it — three per use. Those three are read-phase
+DIAGNOSTICS rather than notes, so the filter cannot reach them at all; and they
+are exactly right for a genuinely mistyped operator in a file whose imports are
+all fine, so telling the two cases apart would need a tag that says "unknown
+because a module did not load" — which nothing here can supply, since a module
+that failed to load contributes no export list to compare against. Ticket E7
+carries the argument.
 
 **One position is still wrong.** A refusal raised against a whole BINDING GROUP
 — rather than against a term inside it — carries the module's own position and
@@ -96,14 +97,16 @@ Names installed by Scala rather than declared in source — `Just`, `True`, `Int
 `Maybe`, the `Relation` type and the rest of `Builtin` — answer null, because
 there is no source to open.
 
-**A stdlib target opens the BUILD OUTPUT, not the source tree.** The resident
-session loads its 129 modules from the classpath, where `sbt core/copyResources`
-puts a copy of `core/src/main/resources/modules`, so a stdlib definition (and a
-stdlib workspace-symbol hit) is reported at
-`core/target/scala-3.3.8/classes/modules/Bool.e:19` rather than at the file you
-would edit. Reading is fine; **editing what you land in is not** — the next
-`copyResources` overwrites it. Tracked as ticket E9 in
-`tracker/TICKET-stdlib-findings.md`.
+**A stdlib target opens the SOURCE tree.** The resident session loads its 129
+modules from the classpath, where `sbt core/copyResources` puts a copy of
+`core/src/main/resources/modules` — so a stdlib name's recorded position is in
+that copy, and the server maps it back to
+`core/src/main/resources/modules/Bool.e` before it sends a `Location`. You land
+in the file you would edit, for definition, for references' def-site and for
+workspace symbols alike. The mapping is derived from where the class loader
+actually found `modules` (no Scala version is spelled anywhere); if the source
+tree is not there, or the particular module is not in it, the build-output path
+is sent unchanged.
 
 ## Hover
 
@@ -217,18 +220,28 @@ It refuses when:
   rename checks only its own file, since a local cannot leave it — so renaming
   a `let` binder still works while another buffer is mid-debounce.
 
-References and highlight are correct on all of those EXCEPT a name behind a tab,
-`` `literal` `` names included: their extent is the whole backticked token. The
-tab case is a column-model defect, not a rename one, and it is the next
-paragraph.
+References and highlight are correct on all of those, `` `literal` `` names
+included: their extent is the whole backticked token.
 
 **A note on columns.** The parser expands a tab to the next eight-column stop
-and LSP counts UTF-16 code units, so on a line with leading tabs every range
-this server produces — a diagnostic, a definition target, a hover hit-test, a
-highlight, a symbol — sits seven columns to the right per tab. Rename is the
-one request that refuses rather than risking a wrong edit. Ermine sources are
-space-indented almost everywhere: 6 of 71,248 corpus occurrences are in that
-class, all in `core/examples/GridExample.e`. Ticket E8.
+(`Pos.bump`) and LSP counts UTF-16 code units from the start of the line, so a
+parser column and an LSP character are DIFFERENT UNITS on any line with a tab in
+it — seven apart per tab. The server converts between them at its boundary and
+nowhere else: one helper over the line model the last check built
+(`Definitions.Lines.character` / `.column`), with every published range and
+every incoming position routed through it — diagnostics, definition targets,
+hover and reference hit-tests, highlight, rename edits, document and workspace
+symbols, and completion's scope lookup. A corpus property round-trips all 71,248
+occurrence columns, and every character of every tabbed line, through both
+directions. A name behind a tab is therefore renameable like any other.
+
+The UTF-16 rule is NOT a second bug here: the scanner feeds `Pos.bump` one
+`Char` at a time, so a non-BMP character is two parser columns and two LSP
+characters and the two models already agree about it. The tab is the whole
+difference. Ermine sources are space-indented almost everywhere — 6 of 71,248
+corpus occurrences are behind a tab, all in `core/examples/GridExample.e` — so
+the conversion is `col - 1` and O(1) on 252 of 253 corpus files. Ticket E8,
+fixed in Stage 4 item 7.5.
 
 ## Document symbols
 
@@ -450,11 +463,20 @@ test's, not yours:
 
 None of them can produce a wrong edit, only a missing one; each refusal is
 silent (the reason goes to the log). Fixing the printer would return **48
-groups** and the scope test **31 groups (33 name occurrences)** — ticket E10 in
-`tracker/TICKET-stdlib-findings.md`.
+groups** — ticket E10(1)-(3) in `tracker/TICKET-stdlib-findings.md`.
 
-A signature is also refused on a tab-indented equation, for the column reason
-above. No corpus group is in that class today.
+A tab-indented equation is no longer refused either: the insertion is a whole
+line at character 0 carrying the line's own leading whitespace, so it never had
+a units problem (ticket E8).
+
+The scope test used to refuse a type the file reaches only through a SYNONYM OF
+ITS OWN (`Layout/Scan.e` declares `type Scan = Scan_S` over `import
+Relation.Scan as S`), which cost 33 name occurrences over the corpus. Since
+Stage 4 item 7.5 the check carries the file's own nullary synonyms resolved to
+the constructor each one names, and the scope test resolves the printer's
+spelling through them — an identity test, never a spelling one, and only for
+`type X = C` with no parameters, which is the shape where writing `X` and
+writing `C` mean the same type. Ticket E10(5).
 
 ### Staleness is REFUSED here, not accepted
 

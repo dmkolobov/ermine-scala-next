@@ -34,12 +34,13 @@ import scalaparsers.{ AssocL, AssocN, AssocR, Pos }
   *
   * POSITIONS.  `Span` is 1-based half-open and LSP is 0-based, and the
   * conversion here is the one every other range in this server uses --
-  * `line - 1`, `column - 1`, and a name's length from
-  * `Definitions.nameExtent` over the same `Definitions.Lines`.  It
-  * inherits that path's known limit (ticket E8: a parser column is
-  * tab-expanded, so a range on a tab-indented line is in the wrong units
-  * for the editor); this item does not invent a second position model to
-  * sit beside it.
+  * `line - 1`, `Definitions.toCharacter` for the column, and a name's
+  * length from `Definitions.nameExtent` over the same
+  * `Definitions.Lines`.  Since 7.5 (ticket E8) that conversion is real
+  * rather than `± 1`: a parser column is tab-expanded to 8-column stops
+  * and an LSP character is not, and the index's own `Lines` is what
+  * knows the difference.  This item still does not invent a second
+  * position model to sit beside it.
   */
 object Symbols {
 
@@ -402,15 +403,19 @@ object Symbols {
 
   // ------------------------------------------------------------- rendering
 
-  private def rangeJson(r: Rng): Json =
+  private def rangeJson(r: Rng, ls: Option[Definitions.Lines]): Json =
     Json.obj(
-      "start" -> Json.obj("line" -> Json.num(r.sl - 1), "character" -> Json.num(r.sc - 1)),
-      "end"   -> Json.obj("line" -> Json.num(r.el - 1), "character" -> Json.num(r.ec - 1)))
+      "start" -> Json.obj("line" -> Json.num(r.sl - 1),
+                          "character" -> Json.num(Definitions.toCharacter(ls, r.sl, r.sc))),
+      "end"   -> Json.obj("line" -> Json.num(r.el - 1),
+                          "character" -> Json.num(Definitions.toCharacter(ls, r.el, r.ec))))
 
-  private def selJson(s: Sel): Json =
+  private def selJson(s: Sel, ls: Option[Definitions.Lines]): Json = {
+    val chr = Definitions.toCharacter(ls, s.line, s.col)
     Json.obj(
-      "start" -> Json.obj("line" -> Json.num(s.line - 1), "character" -> Json.num(s.col - 1)),
-      "end"   -> Json.obj("line" -> Json.num(s.line - 1), "character" -> Json.num(s.col - 1 + s.len)))
+      "start" -> Json.obj("line" -> Json.num(s.line - 1), "character" -> Json.num(chr)),
+      "end"   -> Json.obj("line" -> Json.num(s.line - 1), "character" -> Json.num(chr + s.len)))
+  }
 
   /** The rendered `detail`: the checked type printed the way HOVER prints
     * it (one printer, one spelling), then whatever string detail the
@@ -424,13 +429,14 @@ object Symbols {
     }
   }
 
-  private def documentSymbolJson(s: Sym): Json =
+  private def documentSymbolJson(ls: Option[Definitions.Lines])(s: Sym): Json =
     Json.Obj(
       List("name" -> Json.Str(s.name), "kind" -> Json.num(s.kind)) ++
       detailJson(s) ++
-      List("range" -> rangeJson(s.range), "selectionRange" -> selJson(s.selection)) ++
+      List("range" -> rangeJson(s.range, ls),
+           "selectionRange" -> selJson(s.selection, ls)) ++
       (if (s.children.isEmpty) Nil
-       else List("children" -> Json.Arr(s.children.map(documentSymbolJson)))))
+       else List("children" -> Json.Arr(s.children.map(documentSymbolJson(ls))))))
 
   /** A flat `SymbolInformation`, for workspace/symbol.  `location` is the
     * NAME's own range -- where the editor should land -- and
@@ -488,7 +494,8 @@ object Symbols {
     * boot and never again (Decision 5), and every check runs against a
     * COPY of that env (`Resident.withEnv`), so nothing a check does
     * reaches this table. */
-  def sessionGlobals(env: SessionEnv, log: String => Unit): List[GlobalSym] =
+  def sessionGlobals(env: SessionEnv, src: Definitions.LineSource,
+                     log: String => Unit): List[GlobalSym] =
     globals getOrElse {
       val t0 = System.nanoTime
       // A name that several modules re-export arrives under each of their
@@ -542,7 +549,7 @@ object Symbols {
         offer(g, con.loc, if (env.classes.contains(g)) KInterface else KStruct, true)
       }
       val out = picked.toList.flatMap { case ((f, ln, col, name, _), (g, kind)) =>
-        Definitions.location(Definitions.Target(Pos(f, "", ln, col, false), name.length))
+        Definitions.location(Definitions.Target(Pos(f, "", ln, col, false), name.length), src)
           .map(loc => GlobalSym(name, name.toLowerCase, containerOf(f, g), kind, loc))
       }.sortBy(s => (s.lower, s.module))
       log("workspace symbols: " + out.size + " session globals with source, built in " +
@@ -555,15 +562,21 @@ object Symbols {
 
   def install(server: Server, ermine: Resident, docs: Documents, log: String => Unit): Unit = {
 
+    // 7.5, tickets E8/E9: the session's thousands of Locations are built
+    // ONCE (`sessionGlobals`) and share this one line source, so the
+    // whole stdlib is read at most once and its target-tree paths are
+    // rewritten to the source tree in `Definitions.location`.
+    val src = new Definitions.LineSource(docs)
+
     // 6.4.3.  documentSymbol answers from the STORED tree if there is
     // one; before the first check of a file there is none, and the answer
     // is an empty list -- never null, never a wait.
     server.onRequest("textDocument/documentSymbol") { params =>
-      val syms = for {
+      val idx = for {
         uri <- params / "textDocument" flatMap (_ / "uri") flatMap (_.str)
-        idx <- docs index uri
-      } yield idx.symbols
-      Json.Arr(syms.getOrElse(Nil).map(documentSymbolJson))
+        ix  <- docs index uri
+      } yield ix
+      Json.Arr(idx.toList.flatMap(ix => ix.symbols.map(documentSymbolJson(ix.lines))))
     }
 
     server.onRequest("workspace/symbol") { params =>
@@ -577,7 +590,8 @@ object Symbols {
         d.index.toList.flatMap { idx =>
           flatten(idx.symbols).map { s =>
             (s.name, s.name.toLowerCase, idx.moduleName, s.kind,
-             Json.obj("uri" -> Json.Str(d.uri), "range" -> selJson(s.selection)))
+             Json.obj("uri" -> Json.Str(d.uri),
+                      "range" -> selJson(s.selection, idx.lines)))
           }
         }
       }
@@ -596,7 +610,7 @@ object Symbols {
       // everything".
       val fromSession =
         if (q.isEmpty) Nil
-        else ermine.loadedEnv.toList.flatMap(env => sessionGlobals(env, log))
+        else ermine.loadedEnv.toList.flatMap(env => sessionGlobals(env, src, log))
           .filter(_.lower contains q)
           .map(s => (s.name, s.lower, s.module, s.kind, s.location))
 
