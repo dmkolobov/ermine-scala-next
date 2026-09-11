@@ -626,6 +626,31 @@ E11. **Hover publishes a constraint set that depends on how many ids the session
     (`scalacheck-binding/AlphaEq.scala` carries the comparator with counted controls).  Severity low/medium, editor
     quality.  Cross-referenced from ROW-CONSTRAINT-STATE.md.  Not scheduled.
 
+E12. **`TestInterfaceRoundTrip` is intermittent under whole-suite parallelism: other suites repopulate the
+    process-global dep cache between its clear and its warm load.**  Filed 2026-09-11 from LSP Stage 4 item 7.1b's
+    review (R-5), the THIRD sighting (A1 and S2 reviewers before it; the roadmap's 2026-08-31 "interface round-trip
+    flake").  Symptom: `new-pipeline cold write, fresh warm read, same answers` fails with "Expected Some(Interface)
+    but got Some(Full)" about one full `core/test` run in ten; passes alone every time.  *Cause*, from the suite's
+    own comment: `Session.depCache` is process-global; the property clears it under `ErmineFixture.literalLock`, but
+    six suites load modules WITHOUT that lock (TestNewPipeline, TestLower, TestTolerantCheck, TestTolerantRead,
+    TestStage1Pins, TestEditorBuffers — the F4-review R-1 population), so a concurrent load repopulates the cache
+    inside the window and the warm read finds a Full dep.  This is NOT the E4 flake (that was a process-wide flag
+    flip, fixed at 6.0) — E4's fix left this one alone.  *Fix options.* (a) every module-loading suite takes
+    `literalLock` around its loads (the F4 review's original proposal; lengthens lock windows); (b) the interface
+    suites stage their workspaces under UNIQUE module names so a foreign dep cannot alias theirs (the cache is keyed
+    by SourceFile, so a unique path per suite already isolates them — check why it does not); (c) run the interface
+    suites in their own sbt test group (`Tags.exclusive`), the 6.0 fallback that was not needed then.  Prefer (b) if
+    the aliasing is real, else (c).  *Gate.* Three consecutive full `core/test` runs green, the 6.0 acceptance.
+    GATE-POLICY's quarantine note corrected 2026-09-11.  Not scheduled; small.
+
+E13. **`TestLegend."extra args are ignored"` is a seed-dependent flake in the `writers` module.**  Recorded
+    2026-09-11 (first seen by the S2 review, V-4, 2026-09-04: a date-range formatting property falsified on a random
+    ScalaCheck seed, "Expected 5/23/12–1/20/47 but got 5/23/12–1/22/21").  Reproduced: the orchestrator's full
+    `core/test` for LSP Stage 4 item 7.1b failed only this property (1019/1020); alone, 1 failure in 3 runs.
+    Unreachable from any LSP/parser/solver change.  *Fix.* Find the generator range that produces the bad date
+    (a year/day boundary in the formatter?) and either fix the formatter or pin the seed; not a quarantine
+    candidate until then — a red that is exactly this property gets ONE re-run.  Not scheduled; small.
+
 ## D. Claims in older documents that do not reproduce
 
 D1. `core/examples/Ai/README.md`'s RUnion table ("a helper bundling `RUnion3` and `RUnion2` does not finish")

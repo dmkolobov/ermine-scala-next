@@ -2370,6 +2370,57 @@ def main():
     # shifted check must reuse, where before 7.2 it reused nothing at all.
     # Read from the server's own check line after shutdown, below.
 
+    # ---- 7.1b: THE STATEMENT-EXTENT SURFACE CACHE, end to end.
+    # The invariant is that a reused surface tree is what a fresh parse
+    # would give, so the client's form of the corpus differential is: drive
+    # a SEQUENCE of didChanges through one buffer -- a body edit, an edit
+    # ABOVE it (every statement below shifts a line), a MERGE of two
+    # statements and a SPLIT of one -- and then compare what the warm
+    # server publishes against what a COLD open of the same final text
+    # publishes.  The final text is deliberately broken, so the comparison
+    # is not [] == [].
+    splice_src = (FIXTURES / "Splice.e").read_text()
+    open_doc("Splice.e")
+    check("7.1b Splice.e clean on open",
+          client.diagnostics_for(uri("Splice.e")) == [])
+
+    s2 = splice_src.replace("where keep = b + 2", "where keep = b + 22")
+    change("Splice.e", s2, 2)
+    check("7.1b a body edit keeps the file clean",
+          client.diagnostics_for(uri("Splice.e")) == [])
+
+    s3 = s2.replace("import Prelude\n", "import Prelude\n\n")
+    change("Splice.e", s3, 3)
+    check("7.1b an edit ABOVE (a line shift) keeps the file clean",
+          client.diagnostics_for(uri("Splice.e")) == [])
+
+    s4 = s3.replace("\nspliceD x = x <^^> 4", "\n  spliceD x = x <^^> 4")
+    change("Splice.e", s4, 4)
+    ds_merge = client.diagnostics_for(uri("Splice.e"))
+
+    s5 = s4.replace("  let flag = x + 1\n  in flag", "  let flag = x + 1\nin flag")
+    change("Splice.e", s5, 5)
+    ds_warm = client.diagnostics_for(uri("Splice.e"))
+    check("7.1b the merge+split sequence reports something",
+          len(ds_warm) > 0, repr(ds_warm))
+
+    # the SAME text, on a server that has never seen it: didClose drops the
+    # document and its caches, so the re-open is a cold read
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Splice.e")}})
+    check("7.1b didClose clears the squiggles",
+          client.diagnostics_for(uri("Splice.e")) == [])
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": uri("Splice.e"), "languageId": "ermine", "version": 1, "text": s5}})
+    ds_cold = client.diagnostics_for(uri("Splice.e"))
+    check("7.1b the spliced diagnostics are the cold ones, exactly",
+          ds_warm == ds_cold,
+          "warm " + repr(ds_warm) + "\ncold " + repr(ds_cold))
+    check("7.1b the merge was reported too", len(ds_merge) > 0, repr(ds_merge))
+    check("7.1b Splice.e on disk untouched by the buffer edits",
+          (FIXTURES / "Splice.e").read_text() == splice_src)
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Splice.e")}})
+    client.diagnostics_for(uri("Splice.e"))
+
     # Checks must neither read nor write interface files (a stale .ei would
     # let type errors through unreported, and writebacks litter workspaces).
     check("no .ei droppings", not list(FIXTURES.glob("*.ei")),
@@ -2405,6 +2456,28 @@ def main():
         check("7.2 the line-shifted check reuses every component",
               int(anchor_runs[1][0]) > 0 and anchor_runs[1][0] == anchor_runs[1][1],
               repr(anchor_runs[1]))
+    # 7.1b's own acceptance number, from the same log: every check reports
+    # what the surface cache did, the cold ones reuse NOTHING, and the
+    # keystroke ones reuse all but the edited statement and the one before
+    # it (the statement before an edit always misses -- its parse examines
+    # its successor's first byte, LSP4-7.1a-MARK.md §5).
+    splice_runs = re.findall(
+        r"check: Splice read [0-9.,]+s, typecheck [0-9.,]+s "
+        r"\(reused \d+ of \d+ components\), surface (\d+) of (\d+) statements", log1)
+    check("7.1b every Splice check reports the surface reuse", len(splice_runs) >= 6,
+          repr(splice_runs))
+    if len(splice_runs) >= 6:
+        check("7.1b the cold open reuses no statement", splice_runs[0][0] == "0",
+              repr(splice_runs[0]))
+        check("7.1b a body edit reuses all but the edited statement and its predecessor",
+              int(splice_runs[1][0]) >= int(splice_runs[1][1]) - 2 and
+              int(splice_runs[1][0]) > 0, repr(splice_runs[1]))
+        check("7.1b an edit above reuses across the line shift",
+              int(splice_runs[2][0]) > 0, repr(splice_runs[2]))
+        check("7.1b the re-open after didClose is cold again",
+              splice_runs[-1][0] == "0", repr(splice_runs[-1]))
+    check("7.1b no check reuses more statements than the file has",
+          all(int(h) <= int(n) for h, n in splice_runs), repr(splice_runs))
     log2 = LOG + ".phases"
     pathlib.Path(log2).write_text("")
     cmd2 = [(("-Dermine.lsp.log=" + log2) if a.startswith("-Dermine.lsp.log=") else a)

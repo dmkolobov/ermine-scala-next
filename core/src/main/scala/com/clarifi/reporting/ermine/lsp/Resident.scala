@@ -315,7 +315,13 @@ final class Resident(val log: String => Unit) {
     val failedImports = importFailures.map(_._1).toSet
     Phases.add("imports", tImports)
     val tRead0 = System.nanoTime
-    val r = NewPipeline.readModuleTolerant(file.toString, contents, mh)
+    // 7.1b: the EDITOR read, with the statement-extent cache.  The cache is
+    // this document's own and is replaced wholesale below; with none (a first
+    // open, or a file that is not an open buffer) this is the cold read
+    // `readModuleTolerant` performs, statement for statement.
+    val r = NewPipeline.readModuleCached(file.toString, contents, mh,
+                                         docs.surfaceFor(path.toString))
+    docs.putSurface(path.toString, r.surfaceCache)
     val tRead = System.nanoTime
     if (Phases.enabled) Phases.record("read.total", tRead - tRead0)
 
@@ -406,10 +412,15 @@ final class Resident(val log: String => Unit) {
     Phases.add("checkWith", tCheckWith)
     docs.putCache(path.toString, cache)
     val tCheck = System.nanoTime
+    // The surface reuse pair goes at the END of the line: perf-client.py's
+    // harvest regex ends at "components)", and lsp-smoke asserts this suffix.
+    val surfaceReuse = r.surfaceCache
+      .map(c => f", surface ${c.hits} of ${c.statements} statements").getOrElse("")
     log(f"check: ${mh.name} read ${(tRead - tRead0) / 1e9}%.2fs, " +
         (if (fastMode) "typecheck SKIPPED (fast mode)"
          else f"typecheck ${(tCheck - tRead) / 1e9}%.2fs " +
-              f"(reused ${checked.reused} of ${checked.components} components)"))
+              f"(reused ${checked.reused} of ${checked.components} components)") +
+        surfaceReuse)
 
     // A statement the splitter could not parse defines nothing, so every
     // reference to its head word is an undefined term — one syntax error

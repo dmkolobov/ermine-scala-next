@@ -475,9 +475,12 @@ stdout is reserved for the protocol.
 `initializationOptions: { fastMode: true }`, or a
 `workspace/didChangeConfiguration` carrying
 `{ settings: { ermine: { fastMode: true } } }`, skips type checking. On a
-1757-line module a check splits roughly 0.86 s read + 0.50 s typecheck on a
-quiet machine (0.94 + 0.60 on a busy one), so this takes about a third off the
-latency either way.
+1757-line module a WARM check now splits roughly 0.05 s read + 0.50 s typecheck
+on a quiet machine, so skipping the check is most of what is left: about half
+the 0.90 s keystroke-to-diagnostics latency, where before the surface cache
+(Stage 4 item 7.1b) the read was 0.84 s and fast mode took off about a third.
+A file opened for the FIRST time still pays its whole parse, so on a cold open
+fast mode drops the 1.2 s first check and keeps the 0.9 s read.
 
 Kept: every syntax, shadowing, unknown-operator and lowering diagnostic; import
 failures; go-to-definition, including to this module's own fields and
@@ -491,22 +494,34 @@ the module's own definitions, and hover on every local binder.
 Re-measured 2026-09-10 on this machine (JDK 21, one-minute load average under
 1.5 at the start of every run) against
 `core/src/main/resources/modules/Layout/Report.e`, 1757 lines and the largest
-module in the stdlib. Small modules are far below all of it. Where a row gives
-a range, the two ends are a quiet machine and a busy one; nothing else about
-the measurement differs.
+module in the stdlib — and the three editor rows re-measured 2026-09-11 after
+the surface cache landed. Small modules are far below all of it. Where a row
+gives a range, the two ends are a quiet machine and a busy one; nothing else
+about the measurement differs.
 
 | | | how |
 |---|---|---|
 | session boot | 12–15 s, once (129 modules) | six runs: 11.9 / 12.2 / 13.4 / 14.0 / 14.8 / 14.9 s |
-| keystroke to diagnostics | **≈1.7 s quiet, ≈1.9 s busy** — 0.86 read + 0.50 typecheck + 0.30 debounce on the quiet run | `perf-bench.sh editor -k 15`, median of rounds 2–15, 97 of 154 binding groups reused. 1.690–1.697 s at load ≈1.0; 1.859 s (spread 1.80–2.12) at load 1.3–2.2. The gap is the machine, not the build: an interleaved pair against a build of the Stage-3 opening commit (`78d860f`), on the same machine, measured 1.759 s before / 1.694 s after |
-| first check of a freshly opened file | 2.40 s | the same run's cold open |
-| **worst-case wait for a request sent DURING a check** | **1.47 s** | a hover sent 350 ms after the keystroke — just after the debounce fires — median of 3 (1.45 / 1.48 / 1.47); the answer lands 1.82 s after the keystroke. This is the number a worker-thread check would have to beat |
+| keystroke to diagnostics | **≈0.90 s** — 0.05 read + 0.50 typecheck + 0.30 debounce | `perf-bench.sh editor -k 15`, median of rounds 2–15, 97 of 154 binding groups reused. Re-measured 2026-09-11 after Stage 4 item **7.1b**, the statement-extent surface cache: an interleaved pair on this machine, both sides under load 1.3, moved the round trip **1.69 s → 0.90 s** and the read **0.84 s → 0.05 s**, with the typecheck segment unmoved as the control. Before 7.1b this row read ≈1.7 s quiet / ≈1.9 s busy |
+| keystroke to diagnostics, WORST site | **≈1.5 s** | one keystroke inside the 10.7 KB `private` block at the end of `Report.e` — the slowest statement in the stdlib to re-parse (0.17 s read) and a site whose inference cache reuses nothing (1.04 s typecheck). It was ≈2.2 s before 7.1b |
+| first check of a freshly opened file | **2.35 s** | the same run's cold open. A first open has no cache to reuse, so it parses the whole file: 7.1b makes it **30–70 ms SLOWER** (the extent scan, the line index and one cache entry per statement, all running interpreted), which is ~2 % of the open and the price of every keystroke after it |
+| **worst-case wait for a request sent DURING a check** | **1.47 s, an UPPER BOUND** | a hover sent 350 ms after the keystroke — just after the debounce fires — median of 3 (1.45 / 1.48 / 1.47); the answer lands 1.82 s after the keystroke. This is the number a worker-thread check would have to beat. MEASURED BEFORE 7.1b: the check it waits behind is now 0.05 + 0.50 s rather than 0.84 + 0.50 s, so the real wait is shorter and has not been re-measured |
 | a hover on an idle server | 0.6 ms, client round trip | median of 10 |
 | a completion | **≈2.2 ms** server side, **6.5–6.9 ms** client round trip | prefix `f` at line 1504, 97 items of the module's scope. The server figure is its own log line (median of the same ten requests; 6.5 measured 2.5 ms); the round trip adds JSON encoding and the wire, and is the median of 10 measured by the client |
 | `workspace/symbol` | 61 ms first, then **1.6 ms** | the first query builds the 2157-name session list; warm figure is the median of 10 |
 | `documentSymbol` | 32 ms, client round trip | median of 10; 398 top-level symbols, 511 in all. This is the JSON round trip for the whole tree, not the build — the tree itself is built on the check path |
 | the index the requests read | 66 ms cold, **13–23 ms** warm | rebuilt on every check; 7980 occurrences + 511 symbols, from the server's own `index:` log line |
 | a code action | 52 ms on the first request after a check, then 0.7–1.1 ms | the edits are memoised per document version |
+
+**Why a keystroke is now 0.05 s of parsing.** The server keeps the parsed
+statements of each open document and re-parses only those whose own text, or
+whose lookahead region — the bytes the parser actually examined, which reach
+into the next statement — the edit touched; everything else is carried over with
+its positions shifted by the lines the edit added or removed. One keystroke in a
+body therefore re-parses ONE of `Report.e`'s 529 top-level statements. The cost
+is memory: one parsed tree per OPEN document, about 1.6 MB for the largest
+stdlib file (~20x its source) and ~3.6 MB for the ten largest open at once,
+replaced wholesale on every check and dropped on `didClose`.
 
 Dispatch is single-threaded by design (a `SessionEnv` is not thread-safe), so
 requests are served one at a time — which is what the worst-case row measures.

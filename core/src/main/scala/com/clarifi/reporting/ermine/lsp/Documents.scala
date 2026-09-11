@@ -1,6 +1,7 @@
 package com.clarifi.reporting.ermine.lsp
 
 import com.clarifi.reporting.ermine.session.{ Session, TolerantCheck }
+import com.clarifi.reporting.ermine.surface.SurfaceCache
 
 import java.io.File
 import java.nio.file.{ Path, Paths }
@@ -19,6 +20,12 @@ final class Documents {
   final case class Doc(uri: String, path: Path, text: String, version: Long,
                        index: Option[Definitions.DocIndex],
                        cache: TolerantCheck.Cache = TolerantCheck.Cache.empty,
+                       /** 7.1b: the statement-extent surface cache the last
+                         * check of this document built -- one parsed tree per
+                         * open document, REPLACED WHOLESALE by the next check,
+                         * so what it retains is bounded by the document and
+                         * nothing accumulates across keystrokes. */
+                       surface: Option[SurfaceCache.Cache] = None,
                        /** 6.6: the diagnostics the last check PUBLISHED for
                          * this document, each still paired with the source
                          * that produced it.  A code action answers from
@@ -68,6 +75,11 @@ final class Documents {
       val prev = docs.get(uri)
       val d = Doc(uri, path, text, version, prev.flatMap(_.index),
                   prev.map(_.cache) getOrElse TolerantCheck.Cache.empty,
+                  // 7.1b: the surface cache survives the edit for the reason
+                  // the inference cache does -- it is what the NEXT read
+                  // reuses, and its own guard decides what of it still
+                  // applies against the text that just arrived.
+                  prev.flatMap(_.surface),
                   // 6.6: the published diagnostics survive the edit for
                   // the same reason the index does -- they are what the
                   // editor is still showing.  A code action does not USE
@@ -93,6 +105,13 @@ final class Documents {
 
   def putCache(fileName: String, c: TolerantCheck.Cache): Unit =
     byPath(fileName) foreach { d => docs += d.uri -> d.copy(cache = c) }
+
+  /** 7.1b: the surface cache for a path, and its replacement. */
+  def surfaceFor(fileName: String): Option[SurfaceCache.Cache] =
+    byPath(fileName).flatMap(_.surface)
+
+  def putSurface(fileName: String, c: Option[SurfaceCache.Cache]): Unit =
+    byPath(fileName) foreach { d => docs += d.uri -> d.copy(surface = c) }
 
   /** Store what a check published (6.6.1).  Set in the same breath as the
     * index, from the same check, so the two can never disagree about

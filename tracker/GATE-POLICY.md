@@ -40,8 +40,13 @@ re-measurement applies to the numbers that go into the trackers, once, by the re
 ## Quarantines (a green suite must mean green)
 - `TestConstraints."disjunction sound"`: generator starvation (0 passed / 501 discarded, every run on record);
   the rule ships OFF. Registered only under `-Dermine.test.disjunction=true`; ticket D3.
-- `TestInterfaceRoundTrip`: passes alone; failed once under a concurrent process deleting `.ei` files in the same
-  tree. Not quarantined — the rule is that Tier 2 runs ALONE on the tree.
+- `TestInterfaceRoundTrip`: passes alone; fails roughly one full run in ten when ANOTHER SUITE in the same JVM
+  repopulates the process-global `Session.depCache` between the property's clear and its warm load — intra-run
+  cross-suite parallelism, not an external process (corrected 2026-09-11 after the third sighting, LSP Stage 4
+  item 7.1b's review R-5; the 6.0 determinism fix was for a different flake). Ticket E12. Not quarantined: a
+  Tier-2 red that is exactly this property gets ONE re-run, per the standing rule.
+- `TestLegend."extra args are ignored"` (writers): a seed-dependent date-formatting flake, ~1 run in 3 alone
+  (S2 review V-4; 7.1b's Tier 2). Ticket E13. Same rule: exactly this property red gets ONE re-run.
 
 ## Standing rules that stay
 Never commit red. One JVM per agent, three agents at most. Never `lake build` while a `looptrace` binary runs.

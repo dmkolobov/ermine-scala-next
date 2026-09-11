@@ -61,7 +61,13 @@ object NewPipeline {
                         surface: SModule, renamed: Renamer.Result,
                         diagnostics: List[Diag],
                         scope: ModuleScope.Scope = ModuleScope.Scope.empty,
-                        marks: List[SurfaceParsers.StatementMark] = Nil)
+                        marks: List[SurfaceParsers.StatementMark] = Nil,
+                        /** 7.1b: the statement-extent cache THIS read built,
+                          * to be handed back to the next read of the same
+                          * document.  `None` on every path but
+                          * `readModuleCached`; one per open document, replaced
+                          * wholesale per check. */
+                        surfaceCache: Option[SurfaceCache.Cache] = None)
 
   /** An assemble refusal with its position kept structurally, so the
     * strict path renders it exactly as before and the tolerant path can
@@ -86,7 +92,22 @@ object NewPipeline {
                         (implicit s: SessionEnv, su: Supply): Read =
     read(fileName, contents, mh, tolerant = true)
 
-  private def read(fileName: String, contents: String, mh: ModuleHeader, tolerant: Boolean)
+  /** The EDITOR read WITH THE STATEMENT-EXTENT CACHE (Stage 4 item 7.1b):
+    * `readModuleTolerant` in every respect except that the whole-file parse
+    * reuses the statements `prev` holds whose text and whose examined region
+    * the edit did not touch.  Every phase after the parse is the same
+    * traversal on the same shapes -- rename, reassoc, lower and check are
+    * NOT told which statements are new -- so a cached read and a cold one
+    * differ in nothing a caller can see but their time.  BESIDE
+    * `readModuleTolerant`, never a flag inside it (the Stage-4 invariant);
+    * `readModule` and `SurfaceParsers.module` are untouched. */
+  def readModuleCached(fileName: String, contents: String, mh: ModuleHeader,
+                       prev: Option[SurfaceCache.Cache])
+                      (implicit s: SessionEnv, su: Supply): Read =
+    read(fileName, contents, mh, tolerant = true, cached = true, prev = prev)
+
+  private def read(fileName: String, contents: String, mh: ModuleHeader, tolerant: Boolean,
+                   cached: Boolean = false, prev: Option[SurfaceCache.Cache] = None)
                   (implicit s: SessionEnv, su: Supply): Read = {
 
     // A module whose header does not parse leaves nothing to be tolerant
@@ -99,9 +120,13 @@ object NewPipeline {
     // parser, and only the tolerant read takes it, so no strict output can
     // depend on the high-water mark.
     val noMarks: List[SurfaceParsers.StatementMark] = Nil
-    val parsed = if (tolerant) SurfaceParsers.moduleMarked(fileName, contents, mh.name)
-                 else SurfaceParsers.module(fileName, contents, mh.name).map((_, noMarks))
-    val (sm, marks) = parsed match {
+    val parsed =
+      if (cached) SurfaceParsers.moduleCached(fileName, contents, mh.name, prev)
+                    .map { case (m, ms, c) => (m, ms, Some(c)) }
+      else if (tolerant) SurfaceParsers.moduleMarked(fileName, contents, mh.name)
+                    .map { case (m, ms) => (m, ms, None) }
+      else SurfaceParsers.module(fileName, contents, mh.name).map((_, noMarks, None))
+    val (sm, marks, sc) = parsed match {
       case Right(p)  => p
       case Left(err) => throw Death(err.pretty)
     }
@@ -199,7 +224,7 @@ object NewPipeline {
     lctx.diags.result().foreach(d => ds += Diag(Phase.Lower, d.span, d.message))
     checkpoint()
 
-    Read(module, ps, sm, renamed, ds.toList, scope, marks)
+    Read(module, ps, sm, renamed, ds.toList, scope, marks, sc)
   }
 
   /** A bare TYPE against the session (kindOf, post-G1 D3): parse,
