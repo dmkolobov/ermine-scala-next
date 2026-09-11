@@ -8,30 +8,26 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 4 OPEN (2026-09-10).  G3 SIGNED OFF 2026-09-10 (the user:
-"fold the stage 4 draft in and open it").  Stage 3 shipped 6.0-6.7 (6.2 as
-PARTIAL; the pattern-binder Subst.scala FORK stays under Blocked/Awaiting,
-the user's decision).  Stage 4 checklist 7.0-7.6 + GATE G4 below, folded in
-from the draft; the prior-art survey is tracker/loopmodel/STAGE4-PRIOR-ART.md.
-7.0 DONE: parse is 98% of the read (844 of 860 ms), per-statement
-parse work is ~58% of the check, VERDICT 7.1 (statement cache) with 7.2
-first; 7.3 re-ranked to the batch target.  7.2 DONE: the top-of-file cliff is
-gone (0/154 -> 115/154 reused; checkWith -40..-60%); the Stage-2 un-keyed-
-definition hole is closed.  7.1 DONE — THE HEADLINE: the read is
-0.05 s (was 0.84) and keystroke-to-diagnostics on Report.e 0.90 s (was
-1.68); 7.3 handed to PERF-ROADMAP.  7.4 DONE (adaptive debounce: small files
-0.32 -> 0.17 s).  7.5 DONE (E8, E9, E10(5) closed; E7
-half).  NEXT: the GATE G4 evidence run (brief-LSP4-G4.md, two phases: quiet
-timings first so the user can start parallel type-checker work, then Tier 1
-for the stage, Tier 2, docs, demo), then STOP for sign-off.  Orchestration as in Stage 3: brief -> fresh Opus
-implementer -> fresh Opus reviewer -> Tier 0 -> commit.
+Status: STAGE 4 COMPLETE — AWAITING GATE G4 SIGN-OFF (2026-09-11).
+7.0, 7.2, 7.1a, 7.1b, 7.4, 7.5 DONE; 7.3 handed to PERF-ROADMAP; 7.6 parked
+with its trigger measured (the wait sits ON 500 ms; fast mode takes it to 56
+ms — the user's call).  On Layout/Report.e a keystroke re-parses one
+statement: read 0.84 -> 0.05 s, keystroke-to-diagnostics 1.69 -> 0.93 s;
+a 44-line file 0.33 -> 0.17 s; the top-of-file cache cliff is gone; E8/E9/
+E10(5) closed.  Gate evidence (G4) recorded below; every gate green on the
+reviewer's own or method-checked run; batch byte-identical to the G3 build.
+NEXT: nothing — the loop stopped at G4.  Stage 5 is not drafted; its
+candidate material is the G4 evidence's "not satisfied" list and the
+user's parallel type-checker work.  The 6.2 pattern-binder fork remains
+the user's decision.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
 
-- `sbt -batch core/test`: 1026/1026 after Stage 4 item 7.4 (2026-09-11, the
-  reviewer's run, first try); 1020 after 7.1b; 1008
+- `sbt -batch core/test`: 1028/1028 at GATE G4 (2026-09-11; the first run hit
+  exactly the E12 property and the single permitted re-run was clean); 1026
+  after 7.4; 1020 after 7.1b; 1008
   after 7.2, 988 at G3, 943 at F4).  TWO KNOWN INTERMITTENTS, each red about
   one run in ten and unreachable from the editor/parser/solver code:
   `TestInterfaceRoundTrip` (E12, cross-suite dep-cache race) and
@@ -3340,6 +3336,18 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-11 (GATE G4 EVIDENCE RECORDED — STAGE 4 COMPLETE, STOPPED FOR
+  SIGN-OFF): the evidence run went in two phases so the user could start
+  parallel type-checker work after the quiet timings (phase A ~50 min);
+  the review was SLIMMED by agreement with the user — an independent
+  worst-case-wait measurement (n=12, three offsets, a fast-mode probe),
+  method-checks of the identity gates by reading and one byte-level spot
+  check, the record against its sources, no wholesale Tier 1/2 replay —
+  and it settled the one number on a threshold: the wait sits ON 7.6's
+  500 ms trigger and fast mode takes it to 56 ms.  Tier 1 for the stage
+  identical against a build of the G3 commit; Tier 2 1028/1028 on the E12
+  re-run.  vsix 0.1.2; G4-demo.txt; docs re-cut.  See "Gate evidence
+  (G4)".  Stage 5 is NOT drafted — the leftovers are listed there.
 - 2026-09-11 (7.5 DONE): see the item's DONE paragraph.  Three user-visible
   tickets closed (tab-column ranges, stdlib navigation into the source
   tree, the quick fix's synonym blindness), one half (undefined-type
@@ -3551,6 +3559,108 @@ ONE NUMBER WORTH CARRYING FORWARD: after 5.5, parse+rename+lower is
 checklist's "inference dominates" assumed.  tracker/TICKET-perf-type-
 inference.md should be re-read against that before Stage 3 picks a
 target.
+
+STOP.  The loop is stopped for sign-off, per the gate.
+
+## Gate evidence (G4, recorded 2026-09-11)
+
+Stage 4 shipped in six item commits on branch scala3-migration — 7.0
+(6db2c3a), 7.2 (a15a97e), 7.1a (acaa922), 7.1b (02b35e1), 7.4 (775f1b4),
+7.5 (210de01) — each through a fresh Opus implementer, a fresh Opus
+reviewer re-running the item's tier once, and the orchestrator's own Tier
+0; 7.3 was not started (Decision (g): 7.0's verdict ranked 7.1 first, and
+7.3 is handed to PERF-ROADMAP as a batch-target item); 7.6 stays parked
+with its triggers.  The gate numbers below are the G4 reviewer's; the
+implementer's are in tracker/loopmodel/LSP4-G4-GATE.md.
+
+BATCH STRICTNESS FROZEN.  The parser library changed once (7.1a) and the
+whole stage's batch identity is checked in one comparison against a build
+of the G3 commit ed42f55: the trace differential IDENTICAL — 3,206,083 paired
+solver segments over 18 groups, all 16 record kinds, sinmoved 0, rc 0
+everywhere, the Lean model agreeing on every segment both sides (one
+normalisation named: the before build ran from a worktree, so the
+absolute root path in trace records is the one string replaced); the
+interface sweep 0 of 268 differ, 3,481 bindings identical; g1-validate
+9/9; the 154 corpus batch outputs byte-identical to the G3 build.  Session.scala untouched all stage;
+the REPL goldens byte-identical at every commit; TestTolerantRead's
+agreement property green throughout.
+
+THE READ, BEFORE AND AFTER (7.0's instrumented phase table, Report.e,
+50 reps after 20 warm-ups, load < 1.3):
+  parse 830 -> 37 ms (60.9% -> 6.1% of the check); read.total 845 -> 52
+  ms; checkWith 492 -> 529 (the untouched control, +7% — inside 7.0's 8%
+  between-JVM band, so nothing under ~80 ms in this table is a verdict);
+  check.total 1363 -> 608 ms; index 10 -> 11; rename 5.0 -> 4.5; lower 9.1
+  -> 8.8; header 8.1 -> 8.8; extents (one timed scan) 2.4 -> 2.3.
+  Reconciliation 99.94%.  The small file (Reader.e): parse 19.2 -> 2.7,
+  read 22.7 -> 6.2, check 30.7 -> 15.4 ms; round trip 0.333 -> 0.170 s.
+
+LATENCY AT GATE (the G4 reviewer's re-measurement)
+- keystroke -> diagnostics, Layout/Report.e (1757 lines): 0.925 s = 0.05
+  read + 0.54 typecheck + 0.30 debounce + 0.03 (adaptive window at its
+  ceiling); pinned at 300 for roadmap comparability 0.948 s — G3 was 1.69 s.
+- Control/Monad/Reader.e (44 lines): 0.170 s (window at the 150 ms floor) —
+  was 0.333.  Layout/Report/Keyed/Options.e (438 lines): 0.415 s, window
+  tracking the check at 173-300 ms.
+- the WORST SITE, a keystroke inside Report.e's 10.7 KB private block:
+  1.58 s = 0.17 read + 1.07 typecheck + 0.30 debounce; `reused 0 of 154`
+  because `private` is a scope word — an edit inside the block drops the
+  per-uri inference cache by design (the 7.2 operator/backtick family).
+- cold open of Report.e 2.47 s (2.37-3.00); boot 12.75-16.4 s, median 13.6.
+- WORST-CASE REQUEST WAIT DURING A CHECK — the number of record is the
+  G4 REVIEWER's independent measurement (n=12 per offset, load 0.6-0.9):
+  a hover sent 352 ms after the keystroke waits 502 ms median (482-551,
+  8 of 12 above 500), answered 0.86 s after the keystroke; sent mid-check
+  (+600 ms) 277 ms; sent inside the debounce window (+100 ms) 2.2 ms; idle
+  0.28 ms.  The implementer's 544 ms (n=5) was the high end of the same
+  band (two machines' check times).  G3 was 1.45 s.  It SITS ON 7.6's 500
+  ms unpark trigger rather than above it, and the trigger's precondition
+  is now ANSWERED: with fast mode ON the check is read-only (67 ms), the
+  7.4 window drops to its 150 ms floor and the worst-case wait is 56 ms —
+  9x under the trigger; fast-mode round trip 0.23 s.  So the fastMode-
+  first answer is yes, and the worker thread stays parked unless the user
+  wants full-check hover latency below ~0.5 s without fast mode.  The
+  residual is ~87% inference.  The user's decision for Stage 5.
+- idle hover 0.31 ms; completion 1.7 ms server-side / 6.1 round trip;
+  workspace/symbol 106 ms first / 1.3 ms warm; documentSymbol 21.5 ms;
+  code action 40.5 ms first / 0.7 after; index build 59 ms cold / 10.6 warm.
+- Observation, not a claim: one implementer probe run saw check times
+  degrade 0.59 -> 0.95 s under preceding hover traffic; the reviewer could
+  not reproduce it (36 interleaved hovers, typecheck flat over 57 checks).
+  Recorded for Stage 5.
+
+WHAT G4 ASKED FOR, AND WHERE IT IS CHECKED
+- 7.0's phase table before and after the stage: above.
+- an interleaved A/B for every adoption item: 7.2 (cliff checkWith 1.03 ->
+  0.43 s top-insert, steady state +6 ms), 7.1a (batch +0.3..0.7% pooled,
+  editor read +20..48 ms), 7.1b (read 0.8375 -> 0.0500 s, -788 ms), 7.4
+  (Reader.e 0.320 -> 0.173 s, Report.e +15 ms inside the spread) — each
+  the reviewer-of-record's figure, each clearing its floor or stated as
+  inside it.
+- the corpus differential for 7.1b: seed 71, 253 files x up to 12 edit
+  steps = 2,613 steps, 0 SModule mismatches and 0 diagnostic mismatches;
+  seeds 913 and 20260911 equally clean.
+- the reuse counts for 7.2: top-of-file insertion 0/154 -> 115/154.
+- the worst-case request wait, re-measured next to G3's 1.45 s: above.
+- a heap figure for 7.1b's retention: 1.6 MB per open document (Report.e).
+- REVERTED items: none.  7.1a's editor residual (+20..48 ms) is repaid by
+  7.1b sixteenfold; the revert rule was not triggered.
+- Tier 2 alone on the final tree: 1028 total — run 1 failed exactly the
+  E12 property (the interface round-trip cross-suite race), run 2, the
+  single permitted re-run, 1028/1028; E13 did not fire.  (1026 after 7.4
+  + 7.5's two TestRenamer corpus properties.)
+
+NOT SATISFIED, STATED PLAINLY
+- 7.3 not started in Stage 4 (handed to PERF-ROADMAP); 7.6 parked: the
+  6.2b pattern-binder hook remains the user's decision, and the worker
+  thread's trigger is met only on the straddle (502-544 ms vs 500) with
+  its precondition answered in fast mode's favour (56 ms) — the user's
+  decision.  The per-row attribution factors (G4 NUMBERS line 1a) are
+  PARTIAL by design: the survey's profile is of the pre-stage tree.
+- Two known test intermittents stand (E12, E13), each unreachable from
+  this stage's code and each getting the standing single re-run.
+- Open tickets from the stage: E5 (waits for the first Tier-2 code
+  commit), E6, E10(1)-(4), E11, E12, E13; E7's operator half deferred.
 
 STOP.  The loop is stopped for sign-off, per the gate.
 

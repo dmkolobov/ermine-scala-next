@@ -24,8 +24,10 @@ The advertised capabilities are `textDocumentSync` (FULL), `definitionProvider`,
 `renameProvider` (with `prepareProvider`), `documentSymbolProvider`,
 `workspaceSymbolProvider`, `completionProvider` (trigger character `.`, no
 `resolve`) and `codeActionProvider` (kinds `quickfix` and `source`).
-`tracker/lsp-tests/G3-demo.txt` is a scripted run over all of them, with the
-protocol traffic and the timings.
+`tracker/lsp-tests/G4-demo.txt` is a scripted run over all of them, with the
+protocol traffic and the timings; its last section is Stage 4's — the check's own
+log line on a keystroke, a top-of-file insertion, a coalesced burst, a tab-indented
+hover and a stdlib definition. (`G3-demo.txt` is kept as the Stage-3 artifact.)
 
 ## Diagnostics
 
@@ -507,12 +509,13 @@ derivation it switches off is described under **The debounce** in Latency.
 `initializationOptions: { fastMode: true }`, or a
 `workspace/didChangeConfiguration` carrying
 `{ settings: { ermine: { fastMode: true } } }`, skips type checking. On a
-1757-line module a WARM check now splits roughly 0.05 s read + 0.50 s typecheck
-on a quiet machine, so skipping the check is most of what is left: about half
-the 0.90 s keystroke-to-diagnostics latency, where before the surface cache
-(Stage 4 item 7.1b) the read was 0.84 s and fast mode took off about a third.
-A file opened for the FIRST time still pays its whole parse, so on a cold open
-fast mode drops the 1.2 s first check and keeps the 0.9 s read.
+1757-line module a WARM check now splits **0.05 s read + 0.53 s typecheck of a
+0.61 s check** on a quiet machine, so skipping the check is most of what is left,
+where before the surface cache (Stage 4 item 7.1b) the read was 0.84 s of it and
+fast mode took off about a third. It also shortens the WAIT, since item 7.4's
+window tracks the measured check time. A file opened for the FIRST time still
+pays its whole parse, so on a cold open fast mode drops the ~1.3 s first check
+and keeps the ~1.0 s read.
 
 Kept: every syntax, shadowing, unknown-operator and lowering diagnostic; import
 failures; go-to-definition, including to this module's own fields and
@@ -523,29 +526,53 @@ the module's own definitions, and hover on every local binder.
 
 ## Latency
 
-Re-measured 2026-09-10 on this machine (JDK 21, one-minute load average under
-1.5 at the start of every run) against
+**Re-measured whole at GATE G4** (2026-09-11, the final Stage-4 tree) on this
+machine: JDK 21, ONE JVM, the one-minute load average waited for and recorded
+**under 1.3 at the start of every run** (it sat at 1.18–1.29 all window).
+Unless a row says otherwise the file is
 `core/src/main/resources/modules/Layout/Report.e`, 1757 lines and the largest
-module in the stdlib — and the three editor rows re-measured 2026-09-11 after
-the surface cache landed. Small modules are far below all of it. Where a row
-gives a range, the two ends are a quiet machine and a busy one; nothing else
-about the measurement differs.
+module in the stdlib; small modules are far below all of it. The driver is
+`tracker/tools/perf-client.py`, the client `perf-bench.sh editor` uses, and a row
+that says *unpinned* let the adaptive window be whatever the policy chose and
+harvested it from the server's own `debounce:` line.
+
+Calibration, so the deltas below can be read honestly: `checkWith` — the phase
+Stage 4 never touched — measured 492 ms before the stage and 529 ms at G4, i.e.
+**+7 %, which is this machine's between-JVM drift** (item 7.0 measured that band
+at 8 %). Read-side changes below are −90 % and larger, far outside it; nothing
+smaller than ~80 ms in this table should be read as a verdict.
 
 | | | how |
 |---|---|---|
-| session boot | 12–15 s, once (129 modules) | six runs: 11.9 / 12.2 / 13.4 / 14.0 / 14.8 / 14.9 s |
-| keystroke to diagnostics, the LARGEST module | **≈0.90 s** — 0.05 read + 0.50 typecheck + 0.30 debounce (the debounce CEILING: this file's check is 0.58 s, so the policy asks for the ceiling and the figure is unchanged by item 7.4) | `perf-bench.sh editor -k 15`, median of rounds 2–15, 97 of 154 binding groups reused. Re-measured 2026-09-11 after Stage 4 item **7.1b**, the statement-extent surface cache: an interleaved pair on this machine, both sides under load 1.3, moved the round trip **1.69 s → 0.90 s** and the read **0.84 s → 0.05 s**, with the typecheck segment unmoved as the control. Before 7.1b this row read ≈1.7 s quiet / ≈1.9 s busy |
-| keystroke to diagnostics, a SMALL module | **0.17 s** — 0.15 debounce + 0.02 check | `Control/Monad/Reader.e`, 44 lines, `perf-client.py -k 15`, median of rounds 2–15; its very first keystroke already waits 150 ms, off the single sample the didOpen check left. It was **0.32 s** before item **7.4** made the debounce adaptive, of which 0.30 s was the fixed window: 94 % of the round trip was the wait for a 20 ms check. An interleaved A/B on this machine, both sides under load 1.3, moved it **0.3204 → 0.1719 s** (−149 ms, −46.4 %), with the read and typecheck segments unmoved at 0.010 s each as the control |
-| keystroke to diagnostics, a MID-SIZED module | **0.21 s** — 0.15 debounce + 0.05 check | `List.e`, 341 lines, 7 of 13 binding groups reused, same protocol: **0.3583 → 0.2124 s** (−146 ms, −40.7 %). `Layout/Report/Keyed/Options.e` (438 lines), whose check is ~0.18 s and therefore lands INSIDE the 150–300 ms band where the window tracks the check time rather than clamping, moved **0.4703 → 0.3596 s** (−111 ms), its harvested window sitting at 0.177 s |
-| keystroke to diagnostics, WORST site | **≈1.5 s** | one keystroke inside the 10.7 KB `private` block at the end of `Report.e` — the slowest statement in the stdlib to re-parse (0.17 s read) and a site whose inference cache reuses nothing (1.04 s typecheck). It was ≈2.2 s before 7.1b |
-| first check of a freshly opened file | **2.35 s** | the same run's cold open. A first open has no cache to reuse, so it parses the whole file: 7.1b makes it **30–70 ms SLOWER** (the extent scan, the line index and one cache entry per statement, all running interpreted), which is ~2 % of the open and the price of every keystroke after it |
-| **worst-case wait for a request sent DURING a check** | **1.47 s, an UPPER BOUND** | a hover sent 350 ms after the keystroke — just after the debounce fires — median of 3 (1.45 / 1.48 / 1.47); the answer lands 1.82 s after the keystroke. This is the number a worker-thread check would have to beat. MEASURED BEFORE 7.1b: the check it waits behind is now 0.05 + 0.50 s rather than 0.84 + 0.50 s, so the real wait is shorter and has not been re-measured |
-| a hover on an idle server | 0.6 ms, client round trip | median of 10 |
-| a completion | **≈2.2 ms** server side, **6.5–6.9 ms** client round trip | prefix `f` at line 1504, 97 items of the module's scope. The server figure is its own log line (median of the same ten requests; 6.5 measured 2.5 ms); the round trip adds JSON encoding and the wire, and is the median of 10 measured by the client |
-| `workspace/symbol` | 61 ms first, then **1.6 ms** | the first query builds the 2157-name session list; warm figure is the median of 10 |
-| `documentSymbol` | 32 ms, client round trip | median of 10; 398 top-level symbols, 511 in all. This is the JSON round trip for the whole tree, not the build — the tree itself is built on the check path |
-| the index the requests read | 66 ms cold, **13–23 ms** warm | rebuilt on every check; 7980 occurrences + 511 symbols, from the server's own `index:` log line |
-| a code action | 52 ms on the first request after a check, then 0.7–1.1 ms | the edits are memoised per document version |
+| session boot | **13–14 s**, once (129 modules) | seven boots in the G4 window: 12.8 / 13.5 / 13.5 / 13.6 / 13.7 / 14.1 / 16.4 s |
+| **keystroke to diagnostics, the LARGEST module** | **0.93 s** — 0.05 read + 0.54 typecheck + **0.30 debounce** + 0.02 | `perf-client.py --rounds 70` UNPINNED, median of rounds 2–70, 97 of 154 binding groups and 528 of 529 statements reused every round, load 1.29. The policy asked for **300 ms every round** — the CEILING, because this file's median check (0.59–0.60 s) is over it. Pinned at 300 for the roadmap-comparable figure, `perf-bench.sh editor -k 15` gives **0.95 s** at load 1.24: on this file the pin changes nothing, which is the point of quoting both. It was **≈1.7 s** at GATE G3 |
+| keystroke to diagnostics, a SMALL module | **0.17 s** — 0.15 debounce + 0.02 check | `Control/Monad/Reader.e`, 44 lines, `perf-client.py --rounds 70` unpinned, median of rounds 2–70, load 1.27; the harvested window was the **150 ms FLOOR** every round (the server's own line reads `median 13–16ms of 5 checks`). It was **0.32 s** before item **7.4** made the window adaptive, of which 0.30 s was the fixed wait: 94 % of the round trip was the wait for a 20 ms check. 7.4's interleaved A/B moved it **0.3204 → 0.1719 s** (−149 ms, −46.4 %) with the read and typecheck segments unmoved as the control |
+| keystroke to diagnostics, a MID-SIZED module | **0.42 s** — 0.02 read + 0.08 typecheck + **0.22 debounce** + 0.09 | `Layout/Report/Keyed/Options.e`, 438 lines, 15 rounds unpinned, load 1.19. This file is the one that lands INSIDE the 150–300 ms band, so the window TRACKS the check rather than clamping, and you can watch it settle: 300 → 258 → 235 → 212 → 192 → … → **173 ms**. 7.4's own A/B pairs: this file **0.4703 → 0.3596 s** (−111 ms), `List.e` (341 lines, 7 of 13 groups reused) **0.3583 → 0.2124 s** (−146 ms, −40.7 %) |
+| keystroke to diagnostics, **WORST site** | **1.58 s** — 0.17 read + 1.07 typecheck + 0.30 debounce | one keystroke inside the 10.7 KB `private` block at the end of `Report.e`, 15 rounds unpinned, load 1.28. It is worst on BOTH axes: the slowest statement in the stdlib to re-parse (`parse` 154 ms against 37 ms at the ordinary site) **and** `reused 0 of 154` — `private` is one of the SCOPE words, so the block's text is part of the per-document inference key and an edit inside it drops the whole cache on purpose. Same family as the operator / backtick / `_` / `'` definitions below. It was ≈2.2 s before 7.1b |
+| first check of a freshly opened file | **2.47 s** | the cold open of the same runs, median of five (2.37 / 2.38 / 2.47 / 2.57 / 3.00). A first open has no cache to reuse, so it parses the whole file — the server's own line reads `read 0.9–1.4 s, surface 0 of 529` — and 7.1b makes it **30–70 ms SLOWER** (the extent scan, the line index and one cache entry per statement, all running interpreted), ~2 % of the open and the price of every keystroke after it |
+| **worst-case wait for a request sent DURING a check** | **0.54 s** | a hover sent 352 ms after the keystroke — just past the window, so the check is already running — timed send → answer, median of five (0.51 / 0.53 / 0.54 / 0.56 / 0.62), load 1.18; the answer lands **0.90 s** after the keystroke. It was **1.45 s** at GATE G3, and the whole of the difference is the read falling out of the check the request is queued behind. This is the number a worker-thread check would have to beat, and it is now only just above the 500 ms that fork sets as its trigger |
+| a hover on an idle server | **0.31 ms**, client round trip | median of 10 — the same request costs ~1750x less when nothing is checking, which is the entire content of the parked worker-thread fork |
+| a completion | **≈1.7 ms** server side, **6.1 ms** client round trip | prefix `f` at line 1504, 97 items of the 1332 in scope. The server figure is its own log line, warm (11.0 → 4.1 → 2.8 → … → 1.6 ms over ten requests); the round trip adds JSON encoding and the wire, median of 10 |
+| `workspace/symbol` | **106 ms** first, then **1.3 ms** | the first query builds the 2157-name session list. That first figure is the noisiest row here — 61 ms at G3, 106 and 161 ms in two G4 runs — because it is a `File.isFile` sweep of the module tree and moves with the OS page cache; the warm figure is the median of 10 |
+| `documentSymbol` | **22 ms**, client round trip | median of 10; 398 top-level symbols, 511 in all. This is the JSON round trip for the whole tree, not the build — the tree itself is built on the check path |
+| the index the requests read | **59 ms** cold, **9.6–15.4 ms** warm (median 10.6) | rebuilt on every check; 7980 occurrences + 511 symbols, from the server's own `index:` log line, 26 samples |
+| a code action | **41 ms** on the first request after a check, then **0.7 ms** | the edits are memoised per document version |
+
+**Where a warm check actually goes, after Stage 4.** The same run with
+`-Dermine.lsp.phases=true` (see **Logging**) splits the 0.61 s check as: parse
+**37 ms**, the rest of the read **15 ms** (header 8.8, rename 4.5, lower 5.0,
+scrub 2.1, …), `read.total` **52 ms = 8.5 %**; the extent scan and its line index
+**2.3 ms**; the inference-key map **3.3 ms**; the typecheck **529 ms = 87 %**;
+`Definitions.index` **11 ms**. Before the stage the same file read **845 ms** of a
+**1363 ms** check, and the parse alone was **61 %** of it. The read is no longer
+where an editor keystroke goes; inference is.
+
+**One observation, not a claim.** In one G4 probe run, ten hover requests issued
+between checks were followed by checks that got steadily slower (0.59 → 0.95 s)
+while an otherwise identical 70-round run stayed flat (0.50–0.56 s over 70
+checks). It reproduced once and was not chased; whether it is hover-induced
+allocation or machine noise is open. It is recorded here because it is the only
+thing in the G4 window that looked like a pattern and is not explained.
 
 **The debounce is derived from the measured check time** (item 7.4). A `didChange`
 does not check; it queues, and the check runs once the input stream has been quiet
@@ -575,7 +602,7 @@ because checks cannot pile up behind it: the queue holds one entry per document 
 superseded check is dropped before it starts. Between the two, the window tracks the
 check time one-for-one, so at most half the dispatch thread goes to checking while
 you type. The effect, measured: a small file stopped waiting 300 ms for a 20 ms check
-(0.32 → 0.17 s), and the largest module did not move, because its check is 0.58 s and
+(0.32 → 0.17 s), and the largest module did not move, because its check is 0.61 s and
 the policy asks for the ceiling.
 
 What bounds the feedback — a longer window coalesces more keystrokes, which can make
@@ -586,7 +613,7 @@ precisely because those are the clamp values: the worst the feedback can do is t
 constant this server used before.
 
 The server logs the decision on every debounced check — `debounce: Report.e waited
-300ms (median 551ms of 5 checks, policy 300ms)` — so the window is auditable rather
+300ms (median 592ms of 5 checks, policy 300ms)` — so the window is auditable rather
 than assumed. It can also be pinned to a fixed value (see **Fast mode and the pinned
 debounce**); `tracker/tools/perf-bench.sh` pins 300 so its editor numbers stay
 comparable with every figure it recorded while the window was a constant.
@@ -600,6 +627,28 @@ body therefore re-parses ONE of `Report.e`'s 529 top-level statements. The cost
 is memory: one parsed tree per OPEN document, about 1.6 MB for the largest
 stdlib file (~20x its source) and ~3.6 MB for the ten largest open at once,
 replaced wholesale on every check and dropped on `didClose`.
+
+**Which edits check COLD, and why.** The inference half of that reuse is keyed
+per document in two parts. Each top-level binding GROUP has its own key — its
+statements' text, each tagged with its offset from the group's own first line
+(item 7.2: the ABSOLUTE line is deliberately not in it, so a line shift costs
+nothing) — and everything that can change what the other names MEAN goes into a
+single SCOPE key shared by the whole document: the import list, every
+`type`/`data`/`class`/`instance`/`field`/`table`/`foreign`/`database`/`abstract`
+declaration, every fixity declaration, and every `private` block. Touch anything
+in the scope key and the whole per-document cache drops and the file is
+re-inferred from scratch — `reused 0 of 154` on `Report.e`, the WORST-site row in
+the table above.
+
+Two consequences worth knowing before they surprise you. An edit inside a
+`private` (or `database`) block always checks cold, because the block is one
+scope statement and its text is the key. And a top-level definition whose name
+is not a plain word — an operator, a backtick name, or a spelling containing `_`
+or `'` — has its text in the SCOPE key too, because the extent scanner's head
+word does not match the spelling the readers look the group up by; that
+conservative choice is item 7.2's, and the alternative it replaced was worse (a
+dependent silently holding a stale type). Everything else — ordinary equations,
+signatures, comments, whitespace, line shifts — reuses.
 
 Dispatch is single-threaded by design (a `SessionEnv` is not thread-safe), so
 requests are served one at a time — which is what the worst-case row measures.
@@ -641,7 +690,7 @@ client's), and `eglot-code-actions`. For fast mode, add
 
 - `tracker/tools/lsp-smoke.sh` runs the scripted client
   (`tracker/tools/lsp-client.py`) against the fixtures in `tracker/lsp-tests/` —
-  **480 checks** over everything above, including didChange without save, the
+  **542 checks** over everything above, including didChange without save, the
   sibling-buffer path, the import-failure diagnostics, local and kind hovers,
   references/highlight/rename with every refusal, the pinned symbol trees of
   `Decls.e`, `Syms.e`, `Scope.e` and the broken `Broken.e`, the workspace
@@ -655,12 +704,19 @@ client's), and `eglot-code-actions`. For fast mode, add
   highlight, a rename edit, documentSymbol, a code-action edit — asked once on
   the pristine buffer and again after a `didChange` that inserts three blank
   lines at the top with NO save, and required to have moved by exactly three.
+  Since 7.4 it also drives the real server loop through two keystroke BURSTS on
+  `Burst.e` and one on `Layout/Report.e`, asserting one check per burst and the
+  window the policy chose (the floor, the ceiling, the pin and the per-line
+  audit); and since 7.5 the tab-column pins on `Tab.e` and the stdlib-position
+  pins that require a definition, a reference def-site and every workspace
+  symbol to name `core/src/main/resources/modules` and no `/target/` path.
 - `tracker/tools/repl-smoke.sh` — **8 groups, 66 checks** against the byte-exact
   REPL goldens in `tracker/repl-tests/`. The editor path must never move them.
 - `tracker/tools/corpus-run.sh --batch <outdir>` — the batch verdicts over the
   154-file corpus: **85 LOADED / 69 REJECTED / 0 UNKNOWN**.
-- `tracker/tools/lsp-demo.sh > tracker/lsp-tests/G3-demo.txt` regenerates the
-  capability-by-capability transcript. It is evidence, not a test.
+- `tracker/tools/lsp-demo.sh > tracker/lsp-tests/G4-demo.txt` regenerates the
+  capability-by-capability transcript, thirteen sections ending in Stage 4's.
+  It is evidence, not a test, and it is reproducible modulo timings.
 
 Run the first three with `sbt core/test` before committing server changes
 (`tracker/LSP-ROADMAP.md`, Baselines).
