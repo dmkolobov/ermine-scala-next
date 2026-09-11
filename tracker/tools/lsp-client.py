@@ -875,6 +875,18 @@ def main():
           hoverline("Locals.e", 18, 8) == "strict : Bool -> Bool", hoverline("Locals.e", 18, 8))
     check("hover signed where binder at its signature",
           hoverline("Locals.e", 17, 8) == "strict : Bool -> Bool", hoverline("Locals.e", 17, 8))
+    # ... and so does a signed LET binder (LET-1).  Until then the `let`
+    # lowering dropped the signature, the binder was an ImplicitBinding,
+    # and `headType` answered the INFERRED type -- which agreed here by
+    # luck, so the fixture had no signed `let` at all and nothing pinned
+    # Decision (a) for one.  The three positions are the signature, the
+    # equation head and a use.
+    check("hover signed let binder at its signature",
+          hoverline("Locals.e", 38, 6) == "slet : Bool -> Bool", hoverline("Locals.e", 38, 6))
+    check("hover signed let binder at its def-site",
+          hoverline("Locals.e", 39, 6) == "slet : Bool -> Bool", hoverline("Locals.e", 39, 6))
+    check("hover signed let binder at a use",
+          hoverline("Locals.e", 40, 5) == "slet : Bool -> Bool", hoverline("Locals.e", 40, 5))
     # a polymorphic where-bound helper: the metas its component
     # generalised render as type VARIABLES, no `forall` on a local
     check("hover polymorphic where binder",

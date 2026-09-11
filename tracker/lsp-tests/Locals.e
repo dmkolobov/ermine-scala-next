@@ -33,3 +33,9 @@ shapeOf : Bool -> Shape
 shapeOf b = Circle b
 
 konst k j = k
+
+sigLetLocal : Bool -> Bool
+sigLetLocal x =
+  let slet : Bool -> Bool
+      slet y = y && True
+  in slet x

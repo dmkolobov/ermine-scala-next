@@ -1,7 +1,8 @@
 package com.clarifi.reporting.ermine.rename
 
 import com.clarifi.reporting.ermine.{
-  Alt, App, Bound, Case, EmptyRecord, Free, Global, Hole, ImplicitBinding, Lam,
+  Alt, Annot, App, Bound, Case, EmptyRecord, ExplicitBinding, Free, Global,
+  Hole, ImplicitBinding, Lam,
   Let, LitByte, LitChar, LitDate, LitDouble, LitFloat, LitInt, LitLong,
   LitShort, LitString, Local, Name, Pattern, Product, Remember, Sig, Star,
   Term, Type, V, Var, VarT,
@@ -22,9 +23,17 @@ import scalaparsers.Supply
   * exact, locations per the Synthesized policy — the tnodes differential
   * compares modulo ids and locs).
   *
-  * Bracket/brace hook literals and do-notation are 3.4b; relational
-  * envelopes are 3.4c; type/annotation lowering rides 4.1's typecheck
-  * integration.  Encountering one of those here is a Lower.Unsupported.
+  * Bracket/brace hook literals and do-notation (3.4b) and relational
+  * envelopes (3.4c) are here too; a TYPE or ANNOTATION is lowered
+  * through the `Ctx.lowerAnnot` hook the module reader wires to
+  * `TyLower` (`Ctx` cannot depend on its context directly).  What is
+  * left as a `Lower.Unsupported` is a tree the phases before this one
+  * should have removed: an un-reassociated (pattern) chain, an error
+  * node, a signature on a non-variable pattern.
+  *
+  * The binding-block machinery at the bottom of this object
+  * (`collectBlock`/`pairSigs`/`bindings`) is shared with the module
+  * reader: see the comment there (LET-1).
   */
 object Lower {
 
@@ -137,6 +146,14 @@ object Lower {
       * (Lower cannot depend on TyLower's context directly). */
     var lowerAnnot: STy => com.clarifi.reporting.ermine.Annot =
       t => sys.error("Lower.Ctx.lowerAnnot: annotation lowering not wired")
+
+    /** A named kind variable is scoped to the SIGNATURE it appears in
+      * (`TyLower.TCtx.resetKindScope`, which NewPipeline also calls
+      * before every top-level statement).  Wired the same way and for
+      * the same reason as `lowerAnnot` -- by both `read` and `replTerm`;
+      * a `Ctx` built by hand keeps the no-op default, which costs
+      * nothing until it lowers a signature. */
+    var resetKindScope: () => Unit = () => ()
   }
 
   def apply(r: Renamer.Result, file: String, globals: Map[Global, V[Type]],
@@ -183,8 +200,8 @@ object Lower {
         App(App(App(Var(cons), term(k, c)), term(v, c)), acc)
       }
     case SLet(l, ss, b)     =>
-      val (implicits, _) = bindings(ss, c)
-      Let(c.pos(l.span), implicits, Nil, term(b, c))
+      val (implicits, explicits) = bindings(ss, c, ctxEnv(c))
+      Let(c.pos(l.span), implicits, explicits, term(b, c))
     case SSig(l, tm, t)     => Sig(c.pos(l.span), term(tm, c), c.lowerAnnot(t))
     case SChain(_)          => throw Unsupported("un-reassociated chain", t.loc.span)
     case SListLit(l, es, suffix) =>
@@ -282,31 +299,106 @@ object Lower {
     case x: SErrorTerm      => throw Unsupported("error node", x.loc.span)
   }
 
-  /** Adjacent equations of one name merge (gatherBindings parity); sigs
-    * ride to 4.1 (fixtures here avoid them). */
-  private def bindings(ss: List[SStatement], c: Ctx): (List[ImplicitBinding], List[Nothing]) = {
-    val grouped = scala.collection.mutable.LinkedHashMap[String, (V[Type], List[Alt])]()
-    ss foreach {
+  // ------------------------------------------------------- binding blocks
+  // ONE implementation of "group the equations, lower the signatures,
+  // pair them" for EVERY binding block: the module's top level and its
+  // `where` clauses (NewPipeline.assemble, which supplies its own
+  // refusal channel and per-statement tolerance) and `let` blocks and
+  // the `where` clauses inside them (`term`'s SLet case, through
+  // `ctxEnv`).  Until LET-1 the let path had a second, signature-blind
+  // copy of the grouping and built `Let(..., Nil, body)`, so a
+  // let-bound signature never reached the type checker at all.
+
+  /** How a binding block refuses, and how it brackets one statement.
+    * `guarded` is the tolerance bracket: the editor read keeps going
+    * after a bad statement, a batch read does not catch anything. */
+  trait BlockEnv {
+    def refuse(sp: Span, message: String): Unit
+    def guarded[A](sp: Span)(a: => A): Option[A]
+  }
+
+  /** The refusal channel for a block `term` lowers itself: the Ctx's
+    * diagnostic sink, which the batch reader renders as the Death it
+    * renders an assemble refusal as (NewPipeline.read's checkpoint) and
+    * the editor collects as a Phase.Lower squiggle.  Nothing is caught
+    * here -- an `Unsupported` from a nested statement rides out to the
+    * enclosing statement's guard, as it did before. */
+  def ctxEnv(c: Ctx): BlockEnv = new BlockEnv {
+    def refuse(sp: Span, message: String): Unit = c.diags += Renamer.Diag(sp, message)
+    def guarded[A](sp: Span)(a: => A): Option[A] = Some(a)
+  }
+
+  /** One block's bindings: adjacent equations of one name merge into one
+    * binding's alts (gatherBindings parity, so equations of one name
+    * must be consecutive AMONG EQUATIONS -- an interleaved equation
+    * silently merging into an earlier group was a 4.2 regression, caught
+    * by its pin), and each signature is lowered to a type paired with
+    * the binder's V by span.  The groups carry the FIRST equation head's
+    * Span, which is the position a later re-opening of the name collides
+    * with (5.1; that refusal used to report Span(0,0,0,0), not a
+    * position at all). */
+  def collectBlock(ss: List[SStatement], c: Ctx, env: BlockEnv)
+      : (List[(V[Type], ImplicitBinding, Span)], List[(V[Type], Type, Span)]) = {
+    val grouped = scala.collection.mutable.LinkedHashMap[String, (V[Type], List[Alt], Span)]()
+    val sigs = List.newBuilder[(V[Type], Type, Span)]
+    var lastEq: Option[String] = None
+    ss foreach { st => env.guarded(st.loc.span) { st match {
       case SEquation(l, n, args, body, wh) =>
-        val v = c.resolve(n) match {
-          case ToBinder(id) => c.binderV(id, n.spelling)
-          case _            => c.varFor(n)
+        if (grouped.contains(n.spelling) && !lastEq.contains(n.spelling))
+          env.refuse(n.span, s"error: interleaved equations for ${n.spelling}")
+        lastEq = Some(n.spelling)
+        val v = grouped.get(n.spelling).map(_._1).getOrElse {
+          c.binderAtSite(n) getOrElse c.varFor(n)
         }
         val bodyT = wh match {
           case None => term(body, c)
           case Some(SWhere(wl, wss)) =>
-            val (wis, _) = bindings(wss, c)
-            Let(c.pos(wl.span), wis, Nil, term(body, c))
+            val (wis, wes) = bindings(wss, c, env)
+            Let(c.pos(wl.span), wis, wes, term(body, c))
         }
         val alt = Alt(c.pos(l.span), args.map(pattern(_, c)), bodyT)
         grouped(n.spelling) = grouped.get(n.spelling) match {
-          case Some((v0, alts)) => (v0, alts :+ alt)
-          case None             => (v, List(alt))
+          case Some((v0, alts, sp0)) => (v0, alts :+ alt, sp0)
+          case None                  => (v, List(alt), n.span)
         }
-      case _: SSigStatement => ()  // 4.1
+      case SSigStatement(_, ns, t) =>
+        c.resetKindScope()
+        val ty = c.lowerAnnot(t).body
+        ns.foreach { n =>
+          val v = c.binderAtSite(n) getOrElse c.varFor(n)
+          sigs += ((v, ty, n.span))
+        }
       case other => throw Unsupported("statement in binding block", other.loc.span)
-    }
-    (grouped.values.map { case (v, alts) => ImplicitBinding(v.loc, v, alts) }.toList, Nil)
+    } } }
+    (grouped.values.toList.map { case (v, alts, sp) => (v, ImplicitBinding(v.loc, v, alts), sp) },
+     sigs.result())
+  }
+
+  /** Pair each signature with the binding of the same V: that one is
+    * EXPLICIT and carries the declared type into
+    * `Subst.inferBindingGroupTypes`, the rest stay implicit and are
+    * inferred.  A signature with no equation to pair with is refused
+    * ("missing definition", at the signature's own span) -- in a `let`
+    * block exactly as at the top level. */
+  def pairSigs(im: collection.Map[V[Type], ImplicitBinding],
+               sigs: List[(V[Type], Type, Span)], env: BlockEnv)
+      : (List[ImplicitBinding], List[ExplicitBinding]) = {
+    val es = sigs.flatMap { case (v, ty, sp) => env.guarded(sp) {
+      im.get(v) match {
+        case Some(i) => Some(ExplicitBinding(i.loc, i.v, Annot.plain(i.loc, ty), i.alts))
+        case None    => env.refuse(sp, "missing definition"); None
+      }
+    }.flatten }
+    ((im -- es.map(_.v)).values.toList, es)
+  }
+
+  /** A `let`/`where` block: collected and paired in one step, which is
+    * what both halves of `Let(pos, implicits, explicits, body)` want. */
+  def bindings(ss: List[SStatement], c: Ctx, env: BlockEnv)
+      : (List[ImplicitBinding], List[ExplicitBinding]) = {
+    val (groups, sigs) = collectBlock(ss, c, env)
+    pairSigs(scala.collection.mutable.LinkedHashMap(groups.map { case (v, b, _) => v -> b }: _*),
+             sigs, env)
   }
 
   // -------------------------------------------------------------- patterns

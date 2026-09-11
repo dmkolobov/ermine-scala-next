@@ -49,5 +49,19 @@ re-measurement applies to the numbers that go into the trackers, once, by the re
   (S2 review V-4; 7.1b's Tier 2). Ticket E13. Same rule: exactly this property red gets ONE re-run.
 
 ## Standing rules that stay
-Never commit red. One JVM per agent, three agents at most. Never `lake build` while a `looptrace` binary runs.
-Delete every `.ei` you cause. Disk: no `lake exe cache get`, no `require`, no new Lean project, CutSearch out.
+Never commit red. Never `lake build` while a `looptrace` binary runs.
+
+## Parallelism rules (the user, 2026-09-11: "We pretty much want the *opposite* in most cases: maximum
+## parallelism for quick turnaround")
+- DEFAULT IS PARALLEL. Agents, JVMs, sbt invocations and corpus runs all run concurrently. Independent
+  stages of different programmes run at the same time in their own worktrees. The implementer of stage
+  N+1 may start while the reviewer of stage N runs whenever N+1 does not build on N's code.
+- The ONE exception: a timing that will be written into a tracker (interleaved perf A/B, an editor latency
+  figure) runs alone, briefly, and says so. Everything else tolerates contention.
+- Corpus verdicts via `corpus-run.sh --batch` (about 20 s a side); split a per-file run across parallel
+  shells when one is really needed (a baseline being recorded), never serially.
+- Split suites across parallel sbt invocations rather than chaining them in one; or run the full
+  `core/test` once per LANDING and nothing else, never both.
+- A reviewer reads the implementer's gate logs (cite the path) and re-runs only the targeted suites for
+  the code under review plus anything it disputes. Never a whole-corpus or whole-suite re-run for a review.
+- Briefs state a wall-clock budget (hours), and an agent that reaches it writes up and stops.

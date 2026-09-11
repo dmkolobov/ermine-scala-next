@@ -337,9 +337,12 @@ object TolerantCheck {
       * needs no inference at all — `Subst.inferBindingGroupTypes` type
       * checks a COPY carrying the declared type and leaves this tree's
       * `V` holding Lower's untouched meta, so the meta is not an option
-      * here.  A local explicit binding is what `assemble`'s `lowerLet`
-      * makes of a SIGNED `let`/`where` binding (NewPipeline.scala:
-      * `pairSigs`). */
+      * here.  A local explicit binding is what the block machinery makes
+      * of a SIGNED `let`/`where` binding (`Lower.bindings` ->
+      * `Lower.pairSigs`, shared with the top level).  Until LET-1 that
+      * was true of `where` only: a `let` block built `Let(..., Nil, _)`
+      * and a signed `let` binder hovered as INFERRED, which Decision (a)
+      * forbids -- `TestTolerantCheck`'s `sigLet` twin pins it now. */
     def headType(b: Binding): Type = b match {
       case e: ExplicitBinding => Subst.substType(e.ty.body)
       case i                  => Subst.substType(i.v.extract)
