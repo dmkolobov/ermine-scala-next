@@ -20,7 +20,14 @@ case class ParseState[S](
   offset:         Int = 0,
   s:              S,
   layoutStack:    List[LayoutContext[S]] = List(IndentedLayout[S](1,"top level")),
-  bol:            Boolean = false
+  bol:            Boolean = false,
+  /** 7.1a: the furthest input offset this PARSE has examined.  A shared
+    * mutable cell, not a value: `copy` carries the same cell, so the mark
+    * survives the state a failed `attempt` throws away.  The DEFAULT is
+    * `MarkOff`, whose `reach` is empty -- the strict path pays nothing for a
+    * number it never reads; the editor's `SurfaceParsers.moduleMarked`
+    * installs a live cell.  See `Mark`. */
+  mark:           Mark = MarkOff
 ) extends Located {
   def depth: Int = layoutStack match {
     case IndentedLayout(n,_)   :: _ => n
@@ -29,10 +36,11 @@ case class ParseState[S](
   }
   //import Parsing[S].eofIgnoringLayout
   def layoutEndsWith: Parser[S,Any] = {
-    def eof: Parser[S,Unit] = Parser((s, _) =>
+    def eof: Parser[S,Unit] = Parser((s, _) => {
+      s.mark.reach(s.offset + 1)  // 7.1a: the end-of-input probe examines `offset`
       if (s.offset == s.input.length) Pure(())
       else Fail(None, List(), Set("end of input"))
-    )
+    })
     layoutStack.collectFirst({ case p : BracedLayout[S] => p.endsWith }).getOrElse(eof scope "end of top level layout")
     }
   def tracing = true // if we ever add an option we can add it to the case class

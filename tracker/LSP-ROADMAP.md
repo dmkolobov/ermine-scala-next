@@ -17,8 +17,10 @@ from the draft; the prior-art survey is tracker/loopmodel/STAGE4-PRIOR-ART.md.
 parse work is ~58% of the check, VERDICT 7.1 (statement cache) with 7.2
 first; 7.3 re-ranked to the batch target.  7.2 DONE: the top-of-file cliff is
 gone (0/154 -> 115/154 reused; checkWith -40..-60%); the Stage-2 un-keyed-
-definition hole is closed.  NEXT: 7.1a (Tier 1: the high-water mark in
-scalaparsers), then 7.1b (the statement cache).  Orchestration as in Stage 3: brief -> fresh Opus
+definition hole is closed.  7.1a DONE (the high-water mark; batch
+pays nothing, editor +20..48 ms as 7.1b's down payment).  NEXT: 7.1b — the
+statement-extent surface cache, the stage's headline (gate: read -200 ms
+pooled, corpus multi-edit differential 0 mismatches).  Orchestration as in Stage 3: brief -> fresh Opus
 implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
@@ -1577,6 +1579,70 @@ New, and specific to this stage:
   the mark exceeds the extent for at least one real corpus statement (an
   anti-vacuity floor — a mark that never exceeds the extent has not been shown to
   work).  USELESS ON ITS OWN: it ships only as 7.1b's precondition, or not at all.
+  DONE 2026-09-10 as GREEN-CONDITIONAL (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP4-7.1a-MARK.md, LSP4-7.1a-REVIEW.md) — SHIPS ONLY AS
+  7.1b's PRECONDITION and comes out with it if 7.1b is reverted.  THE
+  DESIGN: `scalaparsers.Mark`, a shared mutable cell carried as
+  ParseState's seventh field so every copy of one parse shares it and
+  `attempt`'s rollback of the state VALUE cannot roll back the cell —
+  `furthest` is monotone over the whole parse and includes what committed,
+  rolled-back and peeked-at branches examined (pinned: a failed attempt
+  leaves offset 0 and the mark at 4).  THE AUDIT: 16 sites, 9 bumped
+  (rawSatisfy before its predicate, skipSatisfy, realEOF, offside, onside,
+  layoutEndsWith's eof, atLayoutBoundary's skipTrivia, rawTypeText's
+  scanner), 2 proven non-bumps (slice; Pos.bump's line read-ahead reaches
+  no Span), 5 not-a-parse.  ANTI-VACUITY: 6,954 of 6,954 corpus statements
+  have a mark past their extent — and one byte into the NEXT extent (the
+  grammar always depends on its successor's first byte); all 15 named
+  Report.e statements individually; deleting the atLayoutBoundary bump
+  changed no corpus count (the token layer consumes that trivia first), so
+  a fifth property runs it in isolation and a planted-bug matrix shows
+  each property falsifies exactly its site.  TIER 1 IDENTICAL: trace
+  differential 3,206,083 of 3,206,083 paired segments identical, sinmoved
+  0 in all 18 groups (not one Supply draw moved — the Decision (b) hazard,
+  measured); interface sweep 268/268, 3,481 bindings identical; g1-validate
+  9/9; corpus outputs byte-identical on 154/154.  THE COST, the one
+  criterion that moved: the first A/B put batch at +0.8..1.9% and the
+  editor read at +42 ms (+4.9%) — a seventh field copied per character
+  plus one compare per examined position; FIX ROUND: the strict path
+  constructs `MarkOff` (an empty `reach`; `furthest` = Int.MaxValue so a
+  wrong strict read refuses every reuse rather than claiming nothing was
+  examined) — every strict entry gets it by default and only
+  `SurfaceParsers.moduleMarked`, the editor read, installs a live cell;
+  batch then measured 12.14/11.78, 12.04/12.17, 12.09/11.98, 12.06/12.20
+  (before/after, both orders), pooled -0.4%, median-of-medians 0.00% —
+  the seventh field's copy per character is not measurable, the first
+  round's cost was the `reach` work; THE REVIEWER'S NUMBERS OF RECORD: batch
+  pooled +0.3..0.7% over eight pairs in two runs (inside the ~1% floor; an
+  honest upper bound of ~0.1 s, not exactly zero); editor read +20..+48 ms
+  pooled, +5..+90 per pair, positive in 5 of 5 pairs, typecheck control
+  exactly 0 — inside 7.1b's 200 ms gate and accepted as its precondition.
+  THE REVIEW'S FINDINGS: the layout-boundary site was bumped ONE BYTE
+  SHORT (the trivia skipper peeks i+1 to decide whether `-`/`{` opens a
+  comment; inputs differing only at that byte flip the decision while
+  the mark stops before it) — latent today because the token layer masks
+  it, fixed to cover the peek with a property in the shape of the witness;
+  the `rawTypeText` site had NO property coverage (deleting its bump left
+  10/10 green and every count unchanged) — one isolation property added;
+  the implementer's claim that removing the layout-boundary bump changed
+  no corpus count was FALSE (6,954 -> 6,893 into the next extent; 61
+  statements load-bearing) — corrected, and property (i) now asserts it.
+  Soundness confirmed: no path continues a parse with a different cell,
+  `furthest` is never read during a parse, both reasoned non-bumps hold.  THE
+  RECORD 7.1b CONSUMES: `readModuleTolerant(...).marks`, one
+  `StatementMark(startLine, startCol, startOffset, endOffset, examinedEnd,
+  markAtEntry)` per top-level statement; guard = reuse iff extent text
+  byte-identical AND no edit intersects [startOffset, startOffset +
+  examinedLength); `Nil` on the strict path.  The shared cumulative cell can never
+  produce a too-SMALL guard (reach is a max; cumulativity only widens by
+  the measured <= 23 bytes), and `markAtEntry` may refine only the END —
+  using it as the guard's start is the one unsound reading.  Obligations
+  written into 7.1b's brief: carry `examinedLength` relative, never
+  absolute offsets; the guard is forward-only, so start column and
+  enclosing layout depth stay in the reuse condition; join marks to
+  statements by POSITION, never by index; the 62 header extents get no
+  mark and slices re-parsed with MarkOff yield none; 7.2's reachable rule
+  governs the key.
 
   **7.1b — the cache (Tier 0 + Tier 2 at adoption).**  A new editor-path-only
   entry beside `NewPipeline.readModuleTolerant`; `SurfaceParsers.module` and
@@ -3081,6 +3147,20 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-11 (7.1a DONE as GREEN-CONDITIONAL — 7.1b's precondition): see
+  the 7.1a DONE paragraph inside 7.1.  The one criterion that moved was
+  "the counter is free": the first A/B put batch at +0.8..1.9% and the
+  editor read at +42 ms; the orchestrator's decision — batch pays NOTHING
+  (the strict path constructs a no-op mark; re-measured at +0.3..0.7%,
+  inside the floor) and the editor's +20..48 ms is 7.1b's down payment,
+  both coming out if 7.1b is reverted.  Tier 1 identical on both the
+  implementer's and the reviewer's runs (3,206,083 paired segments,
+  sinmoved 0; 268/268 interfaces byte-identical; g1 9/9).  The review
+  found the layout-boundary site bumped one byte short (latent) and the
+  rawTypeText site unpinned — both fixed with properties.  Implementer
+  ~2h30 + 40 + 27 min, reviewer ~1h54.  Baselines unchanged: TestLoopTrace
+  720/720, corpus 85/69/0 over 154 byte-identical, repl-smoke 8/66,
+  lsp-smoke 480, g1-validate 9/9, boot 129.
 - 2026-09-10 (7.2 DONE): see the item's DONE paragraph.  The cliff is
   gone (top-of-file edits reuse 115/154, more than a body edit's 97);
   the review found the change had WIDENED a Stage-2 hole (un-keyed

@@ -52,10 +52,16 @@ object NewPipeline {
     * so the editor can ask "would this new name already resolve here?"
     * without re-running `ModuleScope.importing`; nothing on the batch
     * path reads it, and computing it is where it always was. */
+  /** `marks` is the EDITOR read's per-statement high-water marks (LSP Stage 4
+    * item 7.1a), one per top-level statement of `surface`, in order; empty on
+    * the strict path, which calls `SurfaceParsers.module` and records nothing.
+    * Nothing in this pipeline reads it -- it is 7.1b's reuse guard, written
+    * here so the cache can be built beside this reader without touching it. */
   final case class Read(module: Module, ps: scalaparsers.ParseState[ErParseState],
                         surface: SModule, renamed: Renamer.Result,
                         diagnostics: List[Diag],
-                        scope: ModuleScope.Scope = ModuleScope.Scope.empty)
+                        scope: ModuleScope.Scope = ModuleScope.Scope.empty,
+                        marks: List[SurfaceParsers.StatementMark] = Nil)
 
   /** An assemble refusal with its position kept structurally, so the
     * strict path renders it exactly as before and the tolerant path can
@@ -88,8 +94,15 @@ object NewPipeline {
     // 7.0(c): the whole-file surface parse.  `Phases` is inert unless
     // -Dermine.lsp.phases=true, which no batch JVM sets.
     val tParse = Phases.now
-    val sm = SurfaceParsers.module(fileName, contents, mh.name) match {
-      case Right(m)  => m
+    // THE BATCH PATH IS THE SAME CALL IT ALWAYS WAS (7.1a): `moduleMarked` is
+    // `module`'s grammar with an observation wrapper around the statement
+    // parser, and only the tolerant read takes it, so no strict output can
+    // depend on the high-water mark.
+    val noMarks: List[SurfaceParsers.StatementMark] = Nil
+    val parsed = if (tolerant) SurfaceParsers.moduleMarked(fileName, contents, mh.name)
+                 else SurfaceParsers.module(fileName, contents, mh.name).map((_, noMarks))
+    val (sm, marks) = parsed match {
+      case Right(p)  => p
       case Left(err) => throw Death(err.pretty)
     }
     Phases.add("parse", tParse)
@@ -186,7 +199,7 @@ object NewPipeline {
     lctx.diags.result().foreach(d => ds += Diag(Phase.Lower, d.span, d.message))
     checkpoint()
 
-    Read(module, ps, sm, renamed, ds.toList, scope)
+    Read(module, ps, sm, renamed, ds.toList, scope, marks)
   }
 
   /** A bare TYPE against the session (kindOf, post-G1 D3): parse,

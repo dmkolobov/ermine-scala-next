@@ -51,9 +51,13 @@ trait Parsing[S] {
   def freshId = Parser((_:ParseState,vs:Supply) => Pure(vs.fresh))
   def rawSatisfy(p: Char => Boolean) = Parser((s:ParseState, _:Supply) => {
     val si = s.input
-    if (s.offset == si.length) Fail(None, List(), Set())
+    val so = s.offset
+    // 7.1a: position `so` is EXAMINED either way -- consumed when `p` holds,
+    // its value used to decide when it does not, and its absence used to
+    // decide at end of input.  One `max`, before the branch.
+    s.mark.reach(so + 1)
+    if (so == si.length) Fail(None, List(), Set())
     else {
-      val so = s.offset
       val c = si.charAt(so)
       val sop = so + 1
       if (p(c)) Commit(s.copy(loc = s.loc.bump(c, si, sop), offset = sop), c, Set())
@@ -70,17 +74,21 @@ trait Parsing[S] {
     val so = s.offset
     if (so < si.length) {
       val k = si.indexWhere(c => !p(c), so) match { case -1 => si.length; case n => n }
+      // 7.1a: `so` .. `k-1` were consumed and `k` was examined to stop (or is
+      // the end of input, examined as such).
+      s.mark.reach(k + 1)
       if (k > so) {
         Commit(s.copy(loc = s.loc.bumps(si.substring(so,k),si,k), offset = k, bol = false), (), Set())
       }
       else Pure(())
-    } else Pure(())
+    } else { s.mark.reach(so + 1); Pure(()) }  // 7.1a: the end-of-input test
   })
 
-  def realEOF: Parser[Unit] = Parser((s, _) =>
+  def realEOF: Parser[Unit] = Parser((s, _) => {
+    s.mark.reach(s.offset + 1)  // 7.1a: the end-of-input probe examines `offset`
     if (s.offset == s.input.length) Pure(())
     else Fail(None, List(), Set("end of input"))
-  )
+  })
 
   def warn(msg: Document) = Parser((s:ParseState, _:Supply) => { println(msg.toString); Pure(()) })
   def info(msg: Document) = Parser((s:ParseState, _:Supply) => { println(msg.toString); Pure(()) })
@@ -152,6 +160,11 @@ trait Parsing[S] {
       case xs                              => onside (true)
     }
   private def offside(spaced: Boolean) = get.flatMap(s => {
+    // 7.1a: the EQ branch below decides on whether input has run out at
+    // `offset`; bumped unconditionally here so the site needs no reindentation
+    // (an over-approximation of one character on the LT branch, which decides
+    // on the column alone).
+    s.mark.reach(s.offset + 1)
     val col = s.loc.column
     s.layoutStack match {
       case IndentedLayout(n, _) :: xs => (col ?|? n) match {
@@ -165,6 +178,7 @@ trait Parsing[S] {
   })
 
   private def onside(spaced: Boolean): Parser[Token] = get.flatMap(s => {
+    s.mark.reach(s.offset + 1)  // 7.1a: the end-of-input test below
     if (s.offset == s.input.length)
       s.layoutStack match {
         case IndentedLayout(n, desc) :: xs    => modify(_.copy(layoutStack = xs, bol = true)) as VBrace
