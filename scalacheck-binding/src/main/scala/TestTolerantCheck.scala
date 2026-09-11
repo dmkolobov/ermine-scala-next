@@ -2,7 +2,7 @@ package com.clarifi.reporting
 
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.rename.{ NewPipeline, Renamer }
-import com.clarifi.reporting.ermine.surface.{ SClassStatement, SDatabaseBlock, SEquation,
+import com.clarifi.reporting.ermine.surface.{ Anchors, SClassStatement, SDatabaseBlock, SEquation,
   SPat, SPAs, SPParen, SPSig, SPVar, SPrivateBlock, SStatement, Span }
 import com.clarifi.reporting.ermine.Pretty
 import com.clarifi.reporting.ermine.lsp.{ Diagnostics, Documents, Json, QuickFix, Resident }
@@ -363,6 +363,250 @@ object TestTolerantCheck extends Properties("Tolerant check") {
         s"reused ${warm.reused} of ${warm.components} on an UNCHANGED module")
   }
 
+  // ---- 7.2: the span arithmetic itself --------------------------------
+  //
+  // `Anchors` is the ONE place a position is moved between a cached
+  // artifact's frame and the buffer's, and 7.1b reuses it for spans, so
+  // its three rules are pinned here rather than only where they are
+  // consumed.
+
+  private val smallInt: Gen[Int] = Gen.choose(-5000, 5000)
+
+  property("7.2 Anchors: rel and abs are inverses at the same anchor") =
+    forAll(smallInt, smallInt) { (line: Int, a: Int) =>
+      (Anchors.abs(Anchors.rel(line, a), a) ?= line) &&
+      (Anchors.rel(Anchors.abs(line, a), a) ?= line)
+    }
+
+  property("7.2 Anchors: a relative line is line - anchor, sign and all") =
+    forAll(smallInt, smallInt) { (line: Int, a: Int) =>
+      (Anchors.rel(line, a) ?= (line - a)) &&
+      (Anchors.tag(line, a) ?= (line - a).toString)
+    }
+
+  property("7.2 Anchors: a column is never moved") =
+    forAll(smallInt, smallInt, smallInt) { (line: Int, col: Int, a: Int) =>
+      (Anchors.relPos((line, col), a)._2 ?= col) &&
+      (Anchors.absPos((line, col), a)._2 ?= col) &&
+      (Anchors.relSpan(Span(line, col, line + 2, col + 3), a).startCol ?= col) &&
+      (Anchors.absSpan(Span(line, col, line + 2, col + 3), a).endCol ?= (col + 3))
+    }
+
+  property("7.2 Anchors: a span moves both ends by the same delta") =
+    forAll(smallInt, smallInt, smallInt) { (l: Int, n: Int, a: Int) =>
+      val sp = Span(l, 1, l + math.abs(n % 40), 7)
+      (Anchors.absSpan(Anchors.relSpan(sp, a), a) ?= sp) &&
+      ((Anchors.relSpan(sp, a).endLine - Anchors.relSpan(sp, a).startLine) ?=
+         (sp.endLine - sp.startLine))
+    }
+
+  property("7.2 Anchors: a keyed map round-trips, keys and values") =
+    forAll(Gen.listOf(Gen.zip(smallInt, smallInt)), smallInt) {
+      (ks: List[(Int, Int)], a: Int) =>
+        val m = ks.map(k => k -> k.toString).toMap
+        (Anchors.absKeys(Anchors.relKeys(m, a), a) ?= m) &&
+        (Anchors.relKeys(m, a).values.toList.sorted ?= m.values.toList.sorted)
+    }
+
+  // ---- 7.2: ANCHORED POSITIONS ---------------------------------------
+  //
+  // The key no longer carries an absolute line, so an edit that only
+  // SHIFTS lines must keep every entry AND hand its def-sites back at
+  // the lines the buffer now has.  These re-attack the drift invariant
+  // in its anchored form: the five attacks of the 6.2 review (R-7) plus
+  // the line-shifting ones this item exists for.
+
+  /** `base` plus two definitions whose bodies are BYTE-IDENTICAL apart
+    * from the head name -- the case a text-only key is weakest on -- and
+    * one whose local sits on the head line. */
+  private val anchorBase =
+    base + "seven = (let dz = four in dz)\n" + "eight = (let dz = four in dz)\n"
+
+  /** Every def-site of a `let` binder spelled `name`, as (line, column),
+    * computed from the TEXT rather than from the check -- so a property
+    * that compares them against `locals` is not comparing the
+    * implementation with itself. */
+  private def letSites(body: String, name: String): Set[(Int, Int)] =
+    header(body).split("\n", -1).zipWithIndex.flatMap { case (l, i) =>
+      val j = l.indexOf("let " + name + " ")
+      if (j < 0) None else Some((i + 1, j + 5))
+    }.toSet
+
+  /** The reuse count of a re-run over UNCHANGED text: the number a
+    * pure line shift has to match. */
+  private lazy val fullReuse: Int = {
+    val (_, c) = run(anchorBase, TolerantCheck.Cache.empty)
+    run(anchorBase, c)._1.reused
+  }
+
+  /** As `invisible`, but also pinning the reuse count and the ACTUAL
+    * def-site positions of every `let` binder in the edited text. */
+  private def anchored(what: String, before: String, after: String,
+                       reuse: Int => Prop): Prop = {
+    val (_, cache) = run(before, TolerantCheck.Cache.empty)
+    val (warm, _)  = run(after, cache)
+    val (cold, _)  = run(after, TolerantCheck.Cache.empty)
+    val want = letSites(after, "loc") ++ letSites(after, "dz")
+    ((warm.notes.map(n => (n.severity, n.report)) ?= cold.notes.map(n => (n.severity, n.report)))
+       :| s"$what: notes differ") &&
+    ((rendered(warm) ?= rendered(cold)) :| s"$what: types differ") &&
+    ((renderedLocals(warm) ?= renderedLocals(cold)) :| s"$what: locals differ") &&
+    ((want.forall(warm.locals.contains)) :|
+       s"$what: def-sites ${want.filterNot(warm.locals.contains)} missing from ${warm.locals.keySet}") &&
+    reuse(warm.reused)
+  }
+
+  private def sameAsUnshifted(what: String)(n: Int): Prop =
+    (n ?= fullReuse) :| s"$what: reused $n where an unchanged re-run reuses $fullReuse"
+
+  property("7.2: a line inserted at the TOP keeps every entry, re-anchored") =
+    anchored("top insert", anchorBase, "\n" + anchorBase, sameAsUnshifted("top insert"))
+
+  property("7.2: a line DELETED at the top keeps every entry, re-anchored") =
+    anchored("top delete", "\n" + anchorBase, anchorBase, sameAsUnshifted("top delete"))
+
+  property("7.2: ten lines inserted at the top keep every entry") =
+    anchored("top insert x10", anchorBase, ("\n" * 10) + anchorBase,
+             sameAsUnshifted("top insert x10"))
+
+  property("7.2: a line inserted BETWEEN two definitions keeps every entry") =
+    anchored("between", anchorBase,
+             anchorBase.replace("four = three", "\nfour = three"),
+             sameAsUnshifted("between"))
+
+  property("7.2: a comment line inserted between two definitions keeps every entry") =
+    // 6.2 review attack C, anchored: it used to keep the groups ABOVE
+    // the comment and re-check every group below it.
+    anchored("comment between", anchorBase,
+             anchorBase.replace("four = three", "-- a comment\nfour = three"),
+             sameAsUnshifted("comment between"))
+
+  property("7.2: a group MOVED past another still hits, at its new lines") =
+    // The key is text-only, so re-ordering two independent definitions
+    // must reuse both -- and each one's local must land where it now is.
+    anchored("reorder", anchorBase,
+             base + "eight = (let dz = four in dz)\n" + "seven = (let dz = four in dz)\n",
+             sameAsUnshifted("reorder"))
+
+  property("7.2: two definitions with IDENTICAL bodies keep their own positions") = {
+    // `seven` and `eight` differ only in the head name.  Their keys hold
+    // that name, so they cannot collide; if they did, one component's
+    // `dz` would come back at the other's line.  Shifted, to make the
+    // re-anchoring do work.
+    val after = "\n" + anchorBase
+    val (_, cache) = run(anchorBase, TolerantCheck.Cache.empty)
+    val (warm, _)  = run(after, cache)
+    val want = letSites(after, "dz")
+    ((want.size ?= 2) :| "the fixture no longer has two identical bodies") &&
+    ((want.forall(warm.locals.contains)) :|
+       s"identical bodies: want $want, have ${warm.locals.keySet}")
+  }
+
+  // ---- 7.2 FIX ROUND: the three properties the review asked for -------
+  //
+  // R-1.  A top-level bind item whose own SPELLING cannot look its group
+  // up reaches NO cache key: `groups` is keyed by the extent scanner's
+  // head word and both readers look up by the binding's full spelling.
+  // Two halves, one property each.  Before the fix round BOTH FAIL: the
+  // dependent hits its cached entry, keeps the old type, and its
+  // diagnostic is never found — and 7.2 is what made the edit invisible,
+  // because the absolute start line that used to be in every group's text
+  // masked it.
+
+  /** Half one: an OPERATOR definition.  `StatementExtents.wordAt` reads
+    * letters, digits, `#` and `.`, so `(<+>) x y = ...` scans with an
+    * EMPTY head word and is filtered out of `groups` altogether. */
+  private val opBase =
+    base + "infixl 6 <+>\n(<+>) x y = x\nuseOp = three <+> three\n"
+
+  /** Half two: a head word TRUNCATED by `_`.  `foo_a` scans as `foo`, so
+    * `groups` is keyed by `foo` and `groups.get("foo_a")` misses.  `'` is
+    * the same case (`Layout/Report.e` has eleven of those and two
+    * operators, review R-3). */
+  private val hwordBase =
+    base + "foo_a = one\nusea = foo_a\n"
+
+  property("7.2 R-1: splitting an OPERATOR's body over two lines is not invisible") =
+    // The edit changes the operator's result type AND its line count, so
+    // `useOp`'s published type must change.  The fix puts the operator's
+    // text in the SCOPE key, so the whole per-uri cache drops -- the same
+    // conservative answer 5.5 already gives for a `private` block.
+    invisible("operator body split", opBase,
+              opBase.replace("(<+>) x y = x\n", "(<+>) x y =\n  True\n"),
+              expectReuse = false)
+
+  property("7.2 R-1: splitting a TRUNCATED-HEAD definition's body is not invisible") =
+    invisible("truncated head body split", hwordBase,
+              hwordBase.replace("foo_a = one\n", "foo_a =\n  True\n"),
+              expectReuse = false)
+
+  // R-2.  The component TAGS -- each group's offset from the component's
+  // own anchor -- are the only thing that stops a line inserted BETWEEN
+  // two mutually recursive groups from being invisible to a key that then
+  // re-anchors both of them by ONE number.  The reviewer replaced them
+  // with a constant and 44 of 44 properties and 480 of 480 smoke checks
+  // stayed green while hover on the second group's local broke.  This is
+  // the property that fails instead.
+
+  private val mutrecBase =
+    base + "pingx n = (let pa = n in qongx pa)\n" +
+           "qongx m = (let qa = m in pingx qa)\n"
+
+  private lazy val fullReuseMutrec: Int = {
+    val (_, c) = run(mutrecBase, TolerantCheck.Cache.empty)
+    run(mutrecBase, c)._1.reused
+  }
+
+  property("7.2 R-2: a line inserted BETWEEN two mutually recursive groups MISSES") = {
+    // One component, two groups, a `let` local in each.  The component's
+    // anchor is `pingx`'s line; inserting a line above `qongx` moves the
+    // second group and not the first, so ONE delta cannot re-anchor both
+    // and the entry must not be reused.
+    val after = mutrecBase.replace("qongx m =", "\nqongx m =")
+    val (_, cache) = run(mutrecBase, TolerantCheck.Cache.empty)
+    val (warm, _)  = run(after, cache)
+    val (cold, _)  = run(after, TolerantCheck.Cache.empty)
+    val want = letSites(after, "pa") ++ letSites(after, "qa")
+    ((want.size ?= 2) :| "the fixture no longer has two locals to find") &&
+    ((warm.reused < fullReuseMutrec) :|
+       s"the mutually recursive component was REUSED across a line inserted between its two groups: reused ${warm.reused} of a possible $fullReuseMutrec") &&
+    ((want.forall(warm.locals.contains)) :|
+       s"mutrec: def-sites ${want.filterNot(warm.locals.contains)} missing from ${warm.locals.keySet}") &&
+    ((warm.notes.map(n => (n.severity, n.report)) ?= cold.notes.map(n => (n.severity, n.report)))
+       :| "mutrec: notes differ") &&
+    ((rendered(warm) ?= rendered(cold)) :| "mutrec: types differ") &&
+    ((renderedLocals(warm) ?= renderedLocals(cold)) :| "mutrec: locals differ")
+  }
+
+  property("7.2: a line inserted INSIDE a definition invalidates THAT definition only") =
+    anchored("inside", anchorBase,
+             anchorBase.replace("six = (let loc = four in loc)",
+                                "six = (let loc = four\n          in loc)"),
+             n => ((n < fullReuse) :| s"inside: reused $n, expected fewer than $fullReuse") &&
+                  ((n > 0) :| "inside: the whole cache went"))
+
+  property("7.2: trailing whitespace after a statement still reuses") =
+    // 6.2 review attack A, anchored.
+    anchored("trailing space", anchorBase,
+             anchorBase.replace("four = three\n", "four = three   \n"),
+             n => (n > 0) :| s"trailing space: reused $n")
+
+  property("7.2: a space before a head-line let binder moves the local, warm == cold") =
+    // 6.2 review attack E, anchored: the COLUMN moves, the text changes,
+    // the entry misses -- which is what keeps the column honest, since
+    // nothing here ever shifts a column.
+    anchored("space before binder", anchorBase,
+             anchorBase.replace("six = (let loc", "six = ( let loc"),
+             n => (n >= 0) :| "vacuous")
+
+  property("7.2: a shift AND a new error together stay byte-identical") =
+    // The escape route a shifted cache could still take: a FRESH
+    // component's diagnostic quoting a REUSED upstream's type.  Notes
+    // are compared byte for byte.
+    anchored("shift + break", anchorBase,
+             ("\n" + anchorBase).replace("two = one", "two = one True"),
+             n => (n > 0) :| s"shift + break: reused $n")
+
   property("a broken statement does not stop the healthy ones being checked") = {
     // The read drops `helper` as unparseable; `lonely` is still checked.
     val r = check("helper = = 3\nlonely : Int\nlonely = \"no\"\n")
@@ -564,6 +808,213 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     }
   }
 
+  /** Alpha-equivalence for the sweeps: `AlphaEq.same` (7.2 moved the
+    * comparator out of the 6.6 sweep's body into `AlphaEq.scala`, so
+    * both sweeps use one). */
+  private def sameType(a: com.clarifi.reporting.ermine.Type,
+                       b: com.clarifi.reporting.ermine.Type): Boolean = AlphaEq.same(a, b)
+
+  /** 7.2: THE CORPUS-SCALE INVISIBILITY SWEEP.  The unit properties
+    * above attack the anchoring on a fixture of six definitions; this
+    * runs the same question over the whole 253-file corpus, through
+    * `Resident.checkFile` -- the very call the server makes.
+    *
+    * For each module, FOUR checks:
+    *   c0    the file as it is, cold, which fills the per-uri cache;
+    *   ctl   the SAME text again, warm -- the CONTROL: whatever reuse
+    *         alone changes, with no edit and no shift at all;
+    *   warm  ONE BLANK LINE INSERTED AT THE TOP, against ctl's cache;
+    *   cold  the same shifted text, cold, in a fresh `Documents`.
+    *
+    * What must hold, and what the control is for:
+    *
+    *   (a) NOTES are byte-identical warm vs cold.  This is what would
+    *       catch a `Loc` from a reused entry reaching a diagnostic of a
+    *       component re-checked around it.
+    *   (b) `locals` DEF-SITES are exactly equal warm vs cold, AND
+    *       exactly the first check's def-sites moved down one line with
+    *       their columns untouched.  That is the re-anchoring itself,
+    *       pinned against a number no cache produced.
+    *   (c) the shifted check REUSES.  Before 7.2 every one of these
+    *       reused nothing whatsoever.
+    *   (d) RENDERED TYPES (and the rendered types of locals) may differ
+    *       warm vs cold ONLY on a module where the CONTROL already
+    *       differs -- i.e. where reuse alone, with no edit, renders a
+    *       type differently.  That divergence predates 7.2 and is the
+    *       one 6.6's sweep documents: a reused scheme was generalized
+    *       with different `V` ids, and the printer's binder/constraint
+    *       ORDER follows id-keyed sets (6.6 found 145 of 223 such
+    *       "failures", all order).  This item must ADD none, and the
+    *       property fails if it does.
+    */
+  property("7.2: the corpus sweep \u2014 a shifted buffer reuses, invisibly") = secure {
+    residentLock.synchronized {
+      // ABSOLUTE, or `Documents.byPath` misses and every check silently
+      // reads the file from DISK -- no buffer, no cache, no shift.  The
+      // `contents` assertion below is the standing guard against that.
+      val files = corpusFiles.map(_.getAbsoluteFile)
+      var clean = 0
+      var withComps = 0
+      var reusedFiles = 0
+      var reusedComps = 0
+      var totalComps = 0
+      var ctlDiff = 0
+      var coldDiff = 0
+      var warmDiff = 0
+      var localsColdDiff = 0
+      val bad = scala.collection.mutable.ListBuffer.empty[String]
+
+      def one(f: java.io.File, text: String, docs: Documents, v: Long)
+          : Option[resident.Checked] = {
+        docs.put(f.toURI.toString, text, v)
+        try Some(resident.checkFile(f.toPath, docs))
+        catch { case Death(_, _) => None }
+      }
+      def rend(c: resident.Checked): Map[String, String] =
+        c.types.map { case (k, t) => k -> Pretty.prettyType(t, -1).toString }
+      def locs(c: resident.Checked): Map[(Int, Int), String] =
+        c.locals.map { case (k, l) => k -> render(l) }
+      // ALPHA-EQUIVALENCE, not the rendered string: two runs never draw
+      // the same `V` ids, and the printer's binder and constraint ORDER
+      // follows id-keyed sets, so a rendered-string comparison reports
+      // an ordering difference as a divergence.  6.6's sweep measured
+      // exactly that (145 of 223 "failures", all order) and this
+      // comparator -- G1's own, the one the .ei differential runs on --
+      // is the answer it settled on.
+      // WHAT THE CLIENT SEES first -- hover renders a type, so two runs
+      // that PRINT the same thing are indistinguishable to the editor --
+      // and alpha-equivalence as the fallback for the id-ordering
+      // artifact 6.6 documented (a reused scheme was generalised with
+      // different `V` ids, and the printer's binder and constraint order
+      // follows id-keyed sets).  Neither alone is the right oracle:
+      // rendering is too strict on order, and `aeq` has an id-dependent
+      // clause for free variables that makes it vary between runs.
+      def typesAgree(a: resident.Checked, c: resident.Checked): Boolean =
+        a.types.keySet == c.types.keySet &&
+        a.types.forall { case (k, t) =>
+          Pretty.prettyType(t, -1).toString == Pretty.prettyType(c.types(k), -1).toString ||
+          sameType(t, c.types(k)) }
+      // A LOCAL's type is compared AS HOVER RENDERS IT (6.2's own
+      // oracle) and not up to alpha: a local's type routinely contains
+      // free metas that no generalisation closed, which two runs draw
+      // with different ids and which alpha-equivalence therefore refuses
+      // to pair -- while both print `a`, which is what the editor shows.
+      def localsAgree(a: resident.Checked, c: resident.Checked): Boolean =
+        locs(a) == locs(c)
+
+      files.foreach { f =>
+        val text = new String(java.nio.file.Files.readAllBytes(f.toPath), "UTF-8")
+        val shifted = "\n" + text
+        val hot = new Documents
+        for {
+          c0 <- one(f, text, hot, 1L)
+          if !c0.notes.exists(_.severity == TolerantCheck.Error)
+          ctl <- one(f, text, hot, 2L)
+          warm <- one(f, shifted, hot, 3L)
+          cold <- one(f, shifted, new Documents, 1L)
+        } {
+          clean += 1
+          totalComps += warm.components
+          reusedComps += warm.reused
+          if (warm.components > 0) withComps += 1
+          if (warm.reused > 0) reusedFiles += 1
+          // (c) THE CLIFF, per module: a check whose only change is a
+          // line shift must reuse EXACTLY what an unedited re-check
+          // reuses.  Before 7.2 the left side was always 0.
+          if (warm.reused != ctl.reused)
+            bad += ("%s: shifted reuse %d, unshifted reuse %d".format(
+              f.getName, warm.reused, ctl.reused))
+          // Anti-vacuity: the check must have read the EDITED buffer.
+          if (warm.contents != shifted) bad += (f.getName + ": the check did not read the buffer")
+          // (a) notes
+          val nw = warm.notes.map(n => (n.severity, n.report))
+          val nc = cold.notes.map(n => (n.severity, n.report))
+          if (nw != nc) bad += (f.getName + ": NOTES differ warm vs cold")
+          if (ctl.notes.map(n => (n.severity, n.report)) != c0.notes.map(n => (n.severity, n.report)))
+            bad += (f.getName + ": NOTES differ on an unshifted reuse")
+          // (b) def-site POSITIONS: strict, both ways
+          if (locs(warm).keySet != locs(cold).keySet)
+            bad += (f.getName + ": local DEF-SITES differ warm vs cold")
+          if (locs(warm).keySet != locs(c0).keySet.map { case (l, c) => (l + 1, c) })
+            bad += (f.getName + ": local DEF-SITES are not the pre-edit ones + 1 line")
+          // (d) TYPES, up to alpha.  The rendered strings are counted
+          // beside them, as the measure of how often the pre-7.2 id
+          // ordering makes two agreeing runs print differently.
+          if (rend(ctl) != rend(c0) || locs(ctl) != locs(c0)) ctlDiff += 1
+          // THE CONTROL: what reuse alone does, with no edit and no
+          // shift.  A divergence this item may not add is one that shows
+          // up SHIFTED where the unshifted reuse agrees.
+          // THE SECOND CONTROL, and the one that turned out to matter:
+          // two COLD checks of the same module, no cache on either side.
+          // They do not always publish the same row constraints -- the
+          // simplifier's queue is id-hash ordered and the `Supply` has
+          // moved between them (PERF-ROADMAP P10, `Session.scala`'s own
+          // note on -Dermine.loadInSeries).  A module where the checker
+          // disagrees with ITSELF cannot indict the cache.
+          val coldStable = typesAgree(cold, c0)
+          if (!coldStable) coldDiff += 1
+          // THE LOCALS, between the two WARM checks, with the shift taken
+          // out of the KEYS: a third statement of the re-anchoring, and
+          // the only one of these comparisons that is fully
+          // deterministic -- both sides serve the same cache entries and a
+          // rendered local type is id-order-free.
+          if (locs(warm) != locs(ctl).map { case ((l, c), t) => (l + 1, c) -> t })
+            bad += (f.getName + ": LOCALS differ between a SHIFTED and an UNSHIFTED warm check")
+          // THE THIRD CONTROL.  The two WARM checks serve the same cache
+          // entries, so if they disagree the disagreement is in a
+          // component NEITHER of them cached -- freshly inferred on both
+          // sides with the `Supply` in a different place -- or in the
+          // comparator, which is not transitive.  Either way it is not
+          // the shift.  `Relation.e` is the module this excuses.
+          val warmStable = typesAgree(warm, ctl)
+          if (!warmStable) warmDiff += 1
+          if (!typesAgree(warm, cold) && typesAgree(ctl, c0) && coldStable && warmStable) {
+            val ns = (warm.types.keySet ++ cold.types.keySet).toList.sorted.filter { k =>
+              !(warm.types.get(k), cold.types.get(k)).match {
+                case (Some(x), Some(y)) =>
+                  Pretty.prettyType(x, -1).toString == Pretty.prettyType(y, -1).toString ||
+                  sameType(x, y)
+                case _ => false } }
+            bad += (f.getName + ": TYPES (alpha) differ warm vs cold where an UNSHIFTED reuse agrees" +
+              ns.take(3).map(k => "\n      " + k +
+                "\n        warm " + warm.types.get(k).map(t => Pretty.prettyType(t, -1).toString) +
+                "\n        cold " + cold.types.get(k).map(t => Pretty.prettyType(t, -1).toString) +
+                "\n        ctl  " + ctl.types.get(k).map(t => Pretty.prettyType(t, -1).toString) +
+                "\n        c0   " + c0.types.get(k).map(t => Pretty.prettyType(t, -1).toString)).mkString)
+          }
+          // The same three controls for the RENDERED LOCAL TYPES: a local's
+          // type can carry row constraints too, so it is subject to
+          // finding (ii) exactly as a published type is.  `Relation.e`
+          // needs this one.
+          val localsColdStable =
+            locs(cold) == locs(c0).map { case ((l, c), t) => (l + 1, c) -> t }
+          if (!localsColdStable) localsColdDiff += 1
+          if (!localsAgree(warm, cold) && localsAgree(ctl, c0) && localsColdStable)
+            bad += (f.getName + ": LOCAL types differ warm vs cold where every control agrees")
+        }
+      }
+      println("### 7.2 sweep: " + clean + " clean modules of " + files.size +
+              " \u2014 " + reusedFiles + " of " + withComps +
+              " with components reused after a top-of-file insertion, " +
+              reusedComps + " of " + totalComps + " components; " +
+              ctlDiff + " render differently on an UNSHIFTED reuse (pre-7.2), " +
+              coldDiff + " publish different row constraints on two COLD checks, " +
+              warmDiff + " on two WARM checks, " + localsColdDiff +
+              " render a LOCAL differently on two COLD checks; mismatches " + bad.size)
+      if (bad.nonEmpty) bad.foreach(x => println("###   " + x))
+      ((files.size >= 180) :| s"only ${files.size} corpus files") &&
+      ((clean >= 100) :| s"only $clean modules checked cleanly on all four passes") &&
+      // Anti-vacuity only: the per-module equality above is the real
+      // assertion, and it would pass on a corpus that reused nothing.
+      ((reusedFiles * 4 >= withComps * 3) :|
+        s"only $reusedFiles of $withComps modules with components reused after a line shift") &&
+      ((reusedComps * 4 >= totalComps * 3) :|
+        s"only $reusedComps of $totalComps components reused after a line shift") &&
+      ((bad.isEmpty) :| ("%d module(s) not invisible: %s".format(
+        bad.size, bad.take(10).mkString(" ;; "))))
+    }
+  }
+
   property("an import that will not load is reported on its own import statement") = secure {
     // 6.1(b).  BadImport.e imports a module that does not exist and a
     // sibling whose body has a syntax error.  Before this item the first
@@ -724,51 +1175,12 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     import com.clarifi.reporting.ermine.{ AppT, Arrow, ConcreteRho, Exists, Forall,
                                           Memory, Part, ProductT, Type, VarT }
     type Bij = com.clarifi.reporting.ermine.tools.G1Compare.Bij
-    def aeq(a: Type, b: Type, e: Bij): LazyList[Bij] = (a, b) match {
-      case (VarT(x), VarT(y)) =>
-        e.tv get x.id match {
-          case Some(m) => if (m == y.id) LazyList(e) else LazyList.empty
-          case None =>
-            if (e.tv.valuesIterator contains y.id) LazyList.empty
-            else if (e.open1(x.id) && e.open2(y.id)) LazyList(e.bindT(x.id, y.id))
-            else if (x.id == y.id) LazyList(e)
-            else if (x.name.isDefined && x.name == y.name) LazyList(e)
-            else LazyList.empty
-        }
-      case (AppT(f1, a1), AppT(f2, a2))             => aeq(f1, f2, e).flatMap(aeq(a1, a2, _))
-      case (Arrow(_), Arrow(_))                     => LazyList(e)
-      case (ProductT(_, n1), ProductT(_, n2))       => if (n1 == n2) LazyList(e) else LazyList.empty
-      case (ConcreteRho(_, f1), ConcreteRho(_, f2)) => if (f1 == f2) LazyList(e) else LazyList.empty
-      case (c1: Type.Con, c2: Type.Con)             => if (c1.name == c2.name) LazyList(e) else LazyList.empty
-      case (f1: Forall, f2: Forall) =>
-        if (f1.ks.length != f2.ks.length || f1.ts.length != f2.ts.length) LazyList.empty
-        else {
-          val e2 = e.copy(tv = e.tv ++ f1.ts.map(_.id).zip(f2.ts.map(_.id)),
-                          kv = e.kv ++ f1.ks.map(_.id).zip(f2.ks.map(_.id)))
-          aeq(f1.constraints, f2.constraints, e2).flatMap(aeq(f1.body, f2.body, _))
-        }
-      case (x1: Exists, x2: Exists) =>
-        if (x1.xs.length != x2.xs.length || x1.constraints.length != x2.constraints.length)
-          LazyList.empty
-        else {
-          val e2 = e.copy(open1 = e.open1 ++ x1.xs.map(_.id), open2 = e.open2 ++ x2.xs.map(_.id))
-          multi(x1.constraints, x2.constraints, e2).map(_.copy(open1 = e.open1, open2 = e.open2))
-        }
-      case (p1: Part, p2: Part) => aeq(p1.lhs, p2.lhs, e).flatMap(multi(p1.rhs, p2.rhs, _))
-      case (Memory(_, b1), Memory(_, b2)) => aeq(b1, b2, e)
-      case _ => LazyList.empty
-    }
-    def multi(cs1: List[Type], cs2: List[Type], e: Bij): LazyList[Bij] = cs1 match {
-      case Nil => if (cs2.isEmpty) LazyList(e) else LazyList.empty
-      case c1 :: rest =>
-        cs2.indices.to(LazyList).flatMap(j =>
-          aeq(c1, cs2(j), e).flatMap(e2 => multi(rest, cs2.patch(j, Nil, 1), e2)))
-    }
+    // `aeq`/`multi` are shared with the 7.2 sweep and live at object
+    // scope now (7.2); this block used to define them inline.
     var g1Only = 0
     def sameTy(a: Type, b: Type): Boolean = {
-      val strict = com.clarifi.reporting.ermine.tools.G1Compare.alphaEq(
-        a, b, com.clarifi.reporting.ermine.tools.G1Compare.Bij.empty).isDefined
-      val loose = strict || aeq(a, b, com.clarifi.reporting.ermine.tools.G1Compare.Bij.empty).nonEmpty
+      val strict = AlphaEq.strict(a, b)
+      val loose = strict || AlphaEq.loose(a, b)
       if (loose && !strict) g1Only += 1
       loose
     }

@@ -9,7 +9,7 @@ import com.clarifi.reporting.ermine.Subst.{
   assertTypeClosed, inferImplicitBindingTypes, toGamma, typeCheckExplicitBinding, unbindAnnot }
 import com.clarifi.reporting.ermine.syntax._
 import com.clarifi.reporting.ermine.syntax.TypeDef.typeDefComponents
-import com.clarifi.reporting.ermine.surface.{ Span, StatementExtents }
+import com.clarifi.reporting.ermine.surface.{ Anchors, Span, StatementExtents }
 import com.clarifi.reporting.ermine.parsing.ParseState
 import scalaparsers.{ Death, Document, Pos, Supply }
 
@@ -83,19 +83,27 @@ object TolerantCheck {
 
   /** Per-uri inference reuse (roadmap 5.5).  `scopeKey` covers
     * everything an SCC's inference depends on beyond its own text: the
-    * imports, the scope-bearing statements, the top-level head set, and
-    * the versions of the OTHER open buffers (a sibling's unsaved edit
-    * changes what an import means).  When it moves, the whole map goes:
-    * conservative and correct beats clever.
+    * imports, the scope-bearing statements, the top-level head set, the
+    * TEXT of every top-level bind item that no group can be looked up by
+    * (7.2 fix round, `reachable` below), and the versions of the OTHER
+    * open buffers (a sibling's unsaved edit changes what an import
+    * means).  When it moves, the whole map goes: conservative and correct
+    * beats clever.
     *
     * `entries` is keyed by an SCC fingerprint — its bindings' source
-    * text INCLUDING their start lines, plus the fingerprints of the
-    * module-local groups it references.  Fingerprints rather than
-    * inferred types because they are alpha-invariant by construction:
-    * every V in a fresh run has a fresh id, so a type rendering would
-    * be a moving target.  Start lines are in the key so a REUSED entry
-    * can never carry a note or a type whose Locs have drifted; note-
-    * bearing components are not cached at all, for the same reason. */
+    * text, each group's items tagged with their offset from the group's
+    * own first line, each group tagged with its offset from the SCC's
+    * own first line, plus the fingerprints of the module-local groups it
+    * references.  Fingerprints rather than inferred types because they
+    * are alpha-invariant by construction: every V in a fresh run has a
+    * fresh id, so a type rendering would be a moving target.
+    *
+    * 7.2: NO ABSOLUTE LINE IS IN THE KEY.  Until 7.2 each statement's
+    * absolute start line was, which made a key move whenever a line was
+    * inserted or deleted ANYWHERE above it — one blank line at the top
+    * of Layout/Report.e dropped reuse from 97 of 154 to 0 and cost
+    * +0.52 s (MEASURED, tracker/loopmodel/LSP4-7.0-READ.md §7).  What
+    * replaces it is `Entry`'s anchoring: see there for the invariant. */
   final case class Cache(scopeKey: String, entries: Map[String, Entry]) {
     def isEmpty: Boolean = entries.isEmpty
     def size: Int = entries.size
@@ -104,19 +112,49 @@ object TolerantCheck {
 
   /** What one cached component carries: the types its top-level
     * bindings were given, and (6.2, Decision b) the LOCAL binder types
-    * collected inside the same `Session.subst` block.
+    * collected inside the same `Session.subst` block — the latter with
+    * their def-site lines RELATIVE to the component's anchor, which is
+    * the first line of the first of its groups (7.2).
     *
-    * A reused entry's local positions cannot have drifted, for the same
-    * reason its notes and types cannot: the entry's key is a fingerprint
-    * of the group's whole SOURCE TEXT INCLUDING ITS START LINES (`keys`
-    * above), and every top-level statement starts at column 1.  So an
-    * edit that moves any def-site inside the group — a line inserted
-    * above it, a character inserted before it on its own line — changes
-    * the group's text or its start line, hence its fingerprint, hence
-    * the key; and an edit ABOVE the group moves the group's own start
-    * line, which is in the key too.  A hit therefore means every byte
-    * and every line number inside the group is what it was. */
+    * THE DRIFT INVARIANT, in the anchored form.  Stage 3 Decision (b)
+    * argued that a reused entry's positions cannot have drifted because
+    * the absolute start lines were in the key.  They no longer are, and
+    * the argument is now this, in three parts:
+    *
+    *  (1) A HIT MEANS THE COMPONENT'S TEXT AND ITS INTERNAL GEOMETRY ARE
+    *      WHAT THEY WERE.  The key holds every group's whole text, and
+    *      every line offset INSIDE the component — each statement's
+    *      offset from its group's first line, each group's offset from
+    *      the component's anchor.  So an edit that changes any byte of
+    *      it, or that moves any part of it relative to any other part
+    *      (a comment or blank line inserted between two of its
+    *      statements), changes the key and MISSES.
+    *  (2) COLUMNS CANNOT HAVE MOVED.  A top-level statement starts at
+    *      column 1 — a PARSER guarantee, not an assumption: an indented
+    *      top-level statement is rejected by the header parse (6.2
+    *      review R-7) — and the statement's own text then fixes every
+    *      column inside it.
+    *  (3) WHAT REMAINS IS ONE NUMBER: the anchor.  The whole component
+    *      may have moved up or down as a block, and by exactly the
+    *      difference between the anchor it was recorded at and the
+    *      anchor it is looked up at.  `Anchors` adds it back at lookup,
+    *      so a reused entry's def-sites are the CURRENT buffer's.
+    *
+    * `types` carry `Loc`s from the run that recorded them, and those are
+    * NOT re-anchored.  They do not reach the client: hover, completion
+    * detail, the document-symbol detail and the add-signature code
+    * action all render a type through `Pretty`, which never reads a
+    * `loc`; every position an LSP reply carries comes from the CURRENT
+    * run's renamer, surface tree or session env (7.2's escape-route
+    * enumeration).  Note-bearing components are still never cached, so
+    * a reused entry contributes no diagnostic of its own. */
   final case class Entry(types: Map[String, Type], locals: Map[(Int, Int), LocalTy])
+
+  /** One top-level spelling's statements, as `keys` fingerprints them:
+    * the text (with each statement tagged by its offset from `anchor`)
+    * and the 1-based source line the group starts at.  The anchor is
+    * NOT part of the text — that is the whole of item 7.2. */
+  final case class Group(text: String, anchor: Int)
 
   /** Statement heads whose EDIT changes what every other statement
     * means, so the whole per-uri cache goes.  `private` and `database`
@@ -127,16 +165,57 @@ object TolerantCheck {
     "foreign", "private", "database", "abstract",
     "infixl", "infixr", "infix", "prefix", "postfix")
 
+  /** Can this top-level bind item's group be looked up by the item's own
+    * SPELLING?  (7.2 fix round, review R-1.)
+    *
+    * `groups` is keyed by `StatementExtents`' head word, which is the run
+    * of letters, digits, `#` and `.` at the statement's first significant
+    * character; the spelling is the run of `Lexer.tailChar`s there, which
+    * is letters, digits, `_`, `#` and `'`.  The two agree on the ordinary
+    * case and disagree in exactly three ways:
+    *
+    *   - the head word is EMPTY -- an operator definition `(<+>) x y = ...`
+    *     or a backtick-quoted name ``1pixel`` = ... (16 of Layout/Report.e's
+    *     top-level bindings);
+    *   - the head word is TRUNCATED because the spelling contains `_` or
+    *     `'` -- `foo_a` scans as `foo`, `unscaled'` as `unscaled` (11 more);
+    *   - the head word is LONGER than the spelling, because `wordAt` eats a
+    *     `.` that is not an identifier character.
+    *
+    * So the test is not "does it contain an odd character" but the direct
+    * one: IS THE HEAD WORD THE WHOLE LEXEME.  That covers all three, and it
+    * stays right if either character set ever changes.
+    *
+    * `head` deliberately does NOT mirror `Lexer`'s `_Module` affix quirk:
+    * a longer lexeme than the head word only ever makes an item
+    * unreachable, which is the safe direction. */
+  private def reachable(x: StatementExtents.Extent, text: String): Boolean =
+    x.headWord.nonEmpty && x.headWord == lexemeAt(text)
+
+  /** The identifier lexeme at the start of an extent's text, by
+    * `Lexer.tailChar`'s character set. */
+  private def lexemeAt(t: String): String = {
+    var k = 0
+    while (k < t.length && {
+             val c = t.charAt(k)
+             c.isLetter || c.isDigit || c == '_' || c == '#' || c == '\''
+           }) k += 1
+    t.substring(0, k)
+  }
+
   /** The two fingerprint inputs, derived from the source: the per-group
     * texts and the scope key.  A group is one top-level spelling's own
     * statements, sig and equations together — the invalidation unit,
-    * since they pair module-wide by shared V — with START LINES in the
-    * text, so a reused result can never carry positions that have
-    * drifted.  `workspaceKey` is the caller's business: the LSP puts
-    * the OTHER open buffers' versions in it, because a sibling's
-    * unsaved edit changes what an import means. */
+    * since they pair module-wide by shared V.  `workspaceKey` is the
+    * caller's business: the LSP puts the OTHER open buffers' versions in
+    * it, because a sibling's unsaved edit changes what an import means.
+    *
+    * 7.2: the text carries each statement's offset from the GROUP'S OWN
+    * first line, and the absolute line comes back separately as the
+    * group's anchor.  Before 7.2 the absolute line was in the text, and
+    * every key in the file moved when a line was inserted above it. */
   def keys(contents: String, moduleName: String, importsKey: String,
-           workspaceKey: String): (Map[String, String], String) = {
+           workspaceKey: String): (Map[String, Group], String) = {
     // 7.0(b): the extent scan and its line index, timed apart, because
     // P5(a)'s 11.5x cut was on the index and the survey still carries the
     // pre-cut arithmetic (~54ms) for the pair.  Inert unless
@@ -151,14 +230,38 @@ object TolerantCheck {
     val off = new StatementExtents.Offsets(contents)
     Phases.add("extents.offsets", tOff)
     val (scopeItems, bindItems) = scan.items partition (x => ScopeWords(x.headWord))
-    val groups = bindItems.filter(_.headWord.nonEmpty).groupBy(_.headWord).map {
-      case (w, xs) => w -> xs.map(x =>
-        x.startLine + ":" + off.text(x)).mkString("\u0000")
+    // 7.2 fix round (review R-1).  A bind item is only REACHABLE if its own
+    // spelling finds its group: both readers look up by the binding's full
+    // spelling (`groups.get(sp)`), and `groups` is keyed by the extent
+    // scanner's head word.  An UNREACHABLE item therefore reaches no key at
+    // all -- not its own, and not its dependents' (`fpOf` returns None for
+    // it, so nothing records an upstream edge), which until this round left
+    // every cacheable dependent holding a stale type with its diagnostic
+    // silently dropped.  Its TEXT goes into the scope key instead, so any
+    // edit to one drops the whole per-uri cache: conservative and correct,
+    // the answer 5.5 already gives for a `private` block.  The text is
+    // position-free, so a pure line shift still moves nothing.
+    // Each bind item's text is taken ONCE here and used by both halves --
+    // strictly fewer `Offsets.text` calls than before this round, which took
+    // one per GROUPED item and none for the rest.
+    val bindTexts = bindItems.map(x => (x, off.text(x)))
+    val (keyedItems, unkeyedItems) = bindTexts partition { case (x, t) => reachable(x, t) }
+    val groups = keyedItems.groupBy(_._1.headWord).map {
+      case (w, xs) =>
+        // 7.2.  The group's ANCHOR is its first statement's line; every
+        // statement goes into the text tagged with its offset from that
+        // anchor, so a comment or blank line inserted BETWEEN a sig and
+        // its equations still changes the text (and misses), while the
+        // group as a whole may move up or down freely.
+        val anchor = xs.map(_._1.startLine).min
+        w -> Group(xs.map { case (x, t) =>
+          Anchors.tag(x.startLine, anchor) + ":" + t }.mkString("\u0000"), anchor)
     }
     val scopeKey = fingerprint(
       moduleName, importsKey,
       scopeItems.map(off.text).mkString("\u0000"),
       bindItems.map(_.headWord).sorted.mkString(","),
+      unkeyedItems.map(_._2).mkString("\u0000"),
       workspaceKey)
     (groups, scopeKey)
   }
@@ -339,10 +442,12 @@ object TolerantCheck {
     * statements — sig and equations together, since they are one
     * invalidation unit (module-wide pairing by shared V: a sig edit
     * changes its group's ExplicitBinding without touching the head
-    * set).  A spelling missing from `groups` — an operator, anything
-    * the extent scanner cannot name — is simply never cached. */
+    * set) — and to the line that group starts at, which is its
+    * ANCHOR (7.2) and is not part of its text.  A spelling missing from
+    * `groups` — an operator, anything the extent scanner cannot name —
+    * is simply never cached. */
   def checkWith(ps: ParseState, m: Module,
-                groups: Map[String, String], scopeKey: String, cache: Cache,
+                groups: Map[String, Group], scopeKey: String, cache: Cache,
                 wantLocals: Boolean = false)
                (implicit s: SessionEnv, su: Supply): (Result, Cache) = {
     val notes = scala.collection.mutable.ListBuffer.empty[Note]
@@ -433,17 +538,40 @@ object TolerantCheck {
     def spelling(v: TermVar): Option[String] = v.name.map(_.string)
     val localFp = scala.collection.mutable.Map.empty[String, String]
     es.foreach { e =>
-      for (sp <- spelling(e.v); text <- groups.get(sp)) localFp += sp -> fingerprint("sig", sp, text)
+      // A sig's own POSITION is not in its fingerprint (7.2): where an
+      // upstream annotation sits cannot move a dependent's binders.
+      for (sp <- spelling(e.v); g <- groups.get(sp)) localFp += sp -> fingerprint("sig", sp, g.text)
     }
-    def fpOf(comp: List[ImplicitBinding], refs: Set[TermVar]): Option[String] = {
+    /** The component's fingerprint AND its anchor (7.2): the first line
+      * of the first of its groups.  Every group goes into the key with
+      * its own offset from that anchor, so the component's INTERNAL
+      * geometry is pinned by the key and only the anchor itself is free
+      * to move — which is exactly the one number a hit re-adds. */
+    def fpOf(comp: List[ImplicitBinding], refs: Set[TermVar]): Option[(String, Int)] = {
       val sps = comp.flatMap(b => spelling(b.v))
       if (sps.size != comp.size) None
       else {
-        val texts = sps.map(groups.get)
-        if (texts.exists(_.isEmpty)) None
+        val gs = sps.map(groups.get)
+        if (gs.exists(_.isEmpty)) None
         else {
+          val anchor   = gs.flatten.map(_.anchor).min
+          // SORTED BY SPELLING, and the TEXTS with it.  Before the 7.2 fix
+          // round the tags were sorted and the texts were taken in `comp`
+          // order, which is an SCC traversal order over id-keyed maps and is
+          // NOT stable between runs: a component with two or more groups
+          // could fingerprint differently each time and then never be reused
+          // at all.  Found while pinning review R-2 -- the property that is
+          // supposed to prove a mutually recursive pair MISSES after a line
+          // is inserted between them could not fail, because the pair never
+          // hit in the first place (measured: reused 4 of 5 components on an
+          // UNCHANGED re-run, the one that never hit being the pair).
+          // Sorting makes the key a function of the text, which is what it
+          // has always claimed to be.
+          val parts    = sps.sorted.map(sp =>
+                           sp + "@" + Anchors.tag(groups(sp).anchor, anchor) +
+                           ":" + groups(sp).text)
           val upstream = refs.toList.flatMap(spelling).flatMap(localFp.get).sorted
-          Some(fingerprint(("scc" :: sps.sorted ::: texts.flatten ::: upstream): _*))
+          Some((fingerprint(("scc" :: parts ::: upstream): _*), anchor))
         }
       }
     }
@@ -463,11 +591,16 @@ object TolerantCheck {
       val vs   = comp.map(_.v).toSet
       val refs = comp.flatMap(b => termVars(b.alts).toList).toSet
       val fp   = fpOf(comp, refs)
+      // 7.2: the fingerprint and the component's ANCHOR travel together.
+      // The anchor is 0 when the component has no fingerprint at all, in
+      // which case nothing is stored or looked up and it is never used.
+      val fpk    = fp.map(_._1)
+      val anchor = fp.map(_._2) getOrElse 0
       components += 1
-      fp foreach { f => comp.foreach(b => spelling(b.v) foreach (localFp += _ -> f)) }
+      fpk foreach { f => comp.foreach(b => spelling(b.v) foreach (localFp += _ -> f)) }
 
       def hit: Option[Entry] =
-        if (!reusable) None else fp.flatMap(cache.entries.get)
+        if (!reusable) None else fpk.flatMap(cache.entries.get)
 
       if ((refs & failed).nonEmpty || (vs & preFailed).nonEmpty) {
         if ((vs & preFailed).isEmpty) comp.foreach(unchecked)
@@ -475,11 +608,15 @@ object TolerantCheck {
       } else hit match {
         case Some(e) if comp.forall(b => spelling(b.v).exists(e.types.contains)) =>
           // Only NOTE-FREE components are ever cached, so a hit adds
-          // nothing to report and nothing whose Locs could have drifted
-          // — the locals included (see `Entry`).
+          // nothing to report; its locals come back RE-ANCHORED to the
+          // buffer as it is now (7.2, see `Entry`'s drift invariant).
           comp foreach { b => spelling(b.v) foreach { sp => subs = subs + (b.v -> b.v.as(e.types(sp))) } }
-          fp foreach { f => fresh += f -> e }
-          locals = locals ++ e.locals
+          // The entry stays RELATIVE as it is carried forward, so a
+          // component that is reused a hundred times over is anchored
+          // once per lookup and never re-based (Stage-4 invariant:
+          // reuse metadata survives reuse).
+          fpk foreach { f => fresh += f -> e }
+          locals = locals ++ Anchors.absKeys(e.locals, anchor)
           reused += 1
         case _ =>
           val before = notes.length
@@ -510,9 +647,10 @@ object TolerantCheck {
             case Some((sub, ls)) =>
               subs = subs ++ sub
               locals = locals ++ ls
-              if (notes.length == before) fp foreach { f =>
+              if (notes.length == before) fpk foreach { f =>
                 fresh += f -> Entry(comp.flatMap(b => spelling(b.v).flatMap(sp =>
-                  sub.get(b.v).map(sp -> _.extract))).toMap, ls)
+                  sub.get(b.v).map(sp -> _.extract))).toMap,
+                  Anchors.relKeys(ls, anchor))
               }
             case None => failed = failed ++ vs
           }

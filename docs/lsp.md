@@ -548,7 +548,7 @@ client's), and `eglot-code-actions`. For fast mode, add
 
 - `tracker/tools/lsp-smoke.sh` runs the scripted client
   (`tracker/tools/lsp-client.py`) against the fixtures in `tracker/lsp-tests/` —
-  **454 checks** over everything above, including didChange without save, the
+  **480 checks** over everything above, including didChange without save, the
   sibling-buffer path, the import-failure diagnostics, local and kind hovers,
   references/highlight/rename with every refusal, the pinned symbol trees of
   `Decls.e`, `Syms.e`, `Scope.e` and the broken `Broken.e`, the workspace
@@ -556,7 +556,12 @@ client's), and `eglot-code-actions`. For fast mode, add
   the staleness pin), the quick fixes (`Fix.e`, `FixSib.e`, `FixTy.e` and the
   CRLF `FixCrlf.e` — every import-edit case applied by the client and
   re-checked, the signature actions, the `only` filter and the stale-index
-  refusal), the FFI-tolerance fixtures, and fast mode.
+  refusal), the FFI-tolerance fixtures, fast mode, the phase-timer property gate
+  in both directions (7.0), and `Anchor.e`'s ANCHORED-POSITION pins (7.2): every
+  reply that carries a position — hover on a local, definition, references,
+  highlight, a rename edit, documentSymbol, a code-action edit — asked once on
+  the pristine buffer and again after a `didChange` that inserts three blank
+  lines at the top with NO save, and required to have moved by exactly three.
 - `tracker/tools/repl-smoke.sh` — **8 groups, 66 checks** against the byte-exact
   REPL goldens in `tracker/repl-tests/`. The editor path must never move them.
 - `tracker/tools/corpus-run.sh --batch <outdir>` — the batch verdicts over the

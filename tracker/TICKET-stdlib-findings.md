@@ -605,6 +605,27 @@ E10. **`Pretty` writes four type shapes the grammar cannot read back.**  Filed 2
     printer writes interfaces): Tier 1 (interface sweep + g1-validate, baseline re-cut for the moved spellings).
     (5) is Tier 0.  Fixing (1)-(3) returns 48 groups to the signature action; (5) returns 33.  Not scheduled.
 
+E11. **Hover publishes a constraint set that depends on how many ids the session has drawn.**  Filed 2026-09-10
+    from LSP Stage 4 item 7.2 (review `tracker/loopmodel/LSP4-7.2-REVIEW.md` R-4; the implementer's sweep first saw
+    it as "2-3 of 249 modules publish different row constraints on two cold checks").  Reproduced: four cold checks
+    (didOpen / hover / didClose, one JVM) of an UNCHANGED `core/examples/Present/WriterOutputs.e` render `reportFor`'s
+    constraint part four different ways — label order moves (`(|pTitle, pMinValue, pRegion|)` vs
+    `(|pMinValue, pRegion, pTitle|)`), and the simplifier drops the redundant conjunct in two rounds and keeps it in
+    the other two.  Also 16 of 249 modules render a published type differently on a reuse with no edit (the
+    printer's order follows id-keyed sets).  Pre-7.2 trees give the same four renderings round for round: it is the
+    documented solver-order sensitivity (`Session.scala`'s note on `-Dermine.loadInSeries`; PERF-ROADMAP P10; G1's
+    lookbackJoin delta) surfacing on the editor path, where the session is single-threaded but the `Supply` has
+    advanced between checks.  Per `tracker/ROW-CONSTRAINT-STATE.md` the variants are entailment-equivalent: a
+    PRESENTATION bug, not soundness — and reproducible and ordered, so testable.  *Ask.* (1) the repro as a test: N
+    cold checks of one module in one JVM, the published type of a named definition equal AS RENDERED
+    (`WriterOutputs.reportFor`, `Relation.e`); (2) a decision between rendering a CANONICAL constraint form at
+    publication (ROSE-COMPARISON.md rank 3, which also fixes the `.ei` order-only diffs) and making the editor path's
+    queue order independent of the id base (`dequeuePolicy=smallcanon` exists; ROW-CONSTRAINT-STATE.md records it as
+    the cheaper order); (3) it must NOT be closed by loosening a test to alpha-equivalence — the user sees the
+    rendering.  Also the warning 7.1b's differential needs: rendered text is not a sound invisibility oracle
+    (`scalacheck-binding/AlphaEq.scala` carries the comparator with counted controls).  Severity low/medium, editor
+    quality.  Cross-referenced from ROW-CONSTRAINT-STATE.md.  Not scheduled.
+
 ## D. Claims in older documents that do not reproduce
 
 D1. `core/examples/Ai/README.md`'s RUnion table ("a helper bundling `RUnion3` and `RUnion2` does not finish")

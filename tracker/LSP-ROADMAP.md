@@ -15,17 +15,19 @@ the user's decision).  Stage 4 checklist 7.0-7.6 + GATE G4 below, folded in
 from the draft; the prior-art survey is tracker/loopmodel/STAGE4-PRIOR-ART.md.
 7.0 DONE: parse is 98% of the read (844 of 860 ms), per-statement
 parse work is ~58% of the check, VERDICT 7.1 (statement cache) with 7.2
-first; 7.3 re-ranked to the batch target.  NEXT: 7.2 (anchored positions:
-the +0.52 s top-of-file cliff), then 7.1a (Tier 1 high-water mark) and 7.1b.  Orchestration as in Stage 3: brief -> fresh Opus
+first; 7.3 re-ranked to the batch target.  7.2 DONE: the top-of-file cliff is
+gone (0/154 -> 115/154 reused; checkWith -40..-60%); the Stage-2 un-keyed-
+definition hole is closed.  NEXT: 7.1a (Tier 1: the high-water mark in
+scalaparsers), then 7.1b (the statement cache).  Orchestration as in Stage 3: brief -> fresh Opus
 implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
 
-- `sbt -batch core/test`: all green — 988/988 at GATE G3 (2026-09-10; 943
-  at F4 plus Stage 3's properties); two consecutive full runs of the final
-  tree agree.
+- `sbt -batch core/test`: all green — 1008/1008 after Stage 4 item 7.2
+  (2026-09-10; 988 at G3, 943 at F4); every full run since 6.0 has agreed
+  with its predecessor.
   `Constraints.disjunction sound` is QUARANTINED behind
   `-Dermine.test.disjunction=true` (tracker/GATE-POLICY.md), so "green"
   means green; it was 761/762 with that failure visible at Stage 0.
@@ -37,8 +39,8 @@ implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (456 after Stage 4 item 7.0,
-  2026-09-10; 454 at GATE G3;
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (480 after Stage 4 item 7.2,
+  2026-09-10; 456 after 7.0; 454 at GATE G3;
   407 after 6.5; 344 after 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
@@ -1620,7 +1622,7 @@ New, and specific to this stage:
   measured heap figure [survey §1.9].  Tier 2 at adoption (it changes shipped
   editor behaviour), plus the seven targeted suites.
 
-- [ ] **7.2 (b-lite) Anchored positions, so the 5.5 inference cache survives an
+- [x] **7.2 (b-lite) Anchored positions, so the 5.5 inference cache survives an
   edit that shifts lines.**  Independent of 7.0's verdict; small; it removes a
   cliff that costs the full inference segment.  TODAY: `TolerantCheck.keys` puts
   each statement's START LINE into its group's text (`x.startLine + ":" +
@@ -1646,6 +1648,80 @@ New, and specific to this stage:
   symbols, code actions) and lsp-smoke gains a fixture per escape route asserting
   a position AFTER a line-shifting `didChange`; 6.2's `locals` keys specifically
   pinned.  Tier 0 + the seven targeted suites; Tier 2 at adoption.
+  DONE 2026-09-10 (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP4-7.2-ANCHORS.md, LSP4-7.2-REVIEW.md).  THE CLIFF,
+  MEASURED BEFORE AND AFTER through the real server on Layout/Report.e
+  (reused / checkWith): a top-of-file INSERTION 0/154 at 1001 ms ->
+  115/154 at 489 ms; a top-of-file DELETION 0/154 at 984 -> 115/154 at 429
+  (the before-column's new fact: deletion costs as much as insertion); a
+  MIDDLE insertion 83/154 at 712 -> 115/154 at 424 (a partial cliff on the
+  common editing case); 7.0's insert+body round 0/154 at 1023 -> 97/154 at
+  578.  THE DESIGN, no identity scheme: the group key is the group's own
+  text with each statement tagged by its offset from the group's first
+  line; the component key adds each group's offset from the component's
+  first line; no absolute line appears in either.  `Entry.locals` stores
+  def-sites as (line - the component's anchor, column) and a hit adds the
+  component's CURRENT anchor.  All arithmetic lives in one new
+  `surface/Anchors.scala` (rel/abs for positions, spans and keys) that
+  7.1b reuses — relative rather than absolute-plus-old-line because the
+  numbers in an entry are then visibly not line numbers and cannot be
+  consumed without re-anchoring.  No ordinal was added for duplicates: a
+  group IS a head word, so two groups cannot collide; two byte-identical
+  bodies under different heads are pinned.  THE DRIFT INVARIANT
+  RE-ATTACKED: the 6.2 reviewer's five attacks re-run (a comment between
+  statements and a blank line at the top went partial/zero -> full reuse;
+  a comment inside a `where` and a column change still miss, correctly)
+  plus ten line-shifting ones; corpus sweep 249 modules x 4 checks:
+  shifted reuse == unshifted 249/249, notes byte-identical, def-sites ==
+  pre-edit + 1 line.  ESCAPE ROUTES enumerated (hover, definition,
+  references, highlight, rename, symbols, code actions, completion
+  detail, diagnostics): no cached position reaches the client — every
+  reply's position comes from the current run and `locals` keys are only
+  a join key; one residue (a cached Type's Loc reaching a note BODY on a
+  shift+break edit) tested at 0 differences; 24 lsp-smoke checks on
+  `Anchor.e` before/after a 3-line didChange, non-vacuity shown by
+  sabotaging the helper.  INTERLEAVED A/B: steady state 1.764 -> 1.763 s
+  (unmoved); cliff checkWith -43% to -62% across the four scenarios.
+  THE REVIEW FOUND A HOLE 7.2 WIDENED (R-1, HIGH): a top-level bind item
+  whose text is in NO cache key — an operator definition (empty head
+  word), a backtick name, or a spelling the extent scanner truncates at
+  `_`/`'` — gave its dependents no upstream edge, so they kept their
+  cached type across ANY edit to it; before 7.2 the absolute start line
+  masked the common case (a line-count edit changed every key below), and
+  7.2 widened the trigger from same-line edits to all edits — reproduced
+  through the real server (an operator's body split across two lines: the
+  dependent's type error silently dropped, hover stale), blast radius 111
+  of 358 corpus files.  FIXED in the fix round: such items' TEXT goes into
+  the scope key (any edit to them drops the whole cache — the 5.5 rule),
+  with failing-before/passing-after properties; the component-level group
+  tags, found unpinned (a constant in their place left 44/44 properties
+  and 480/480 smoke green), gained a property.  The 5.5-era hole itself
+  (same-line edits to an un-keyed item were always missed) is thereby
+  closed too.  THE RULE: a bind item is reachable iff its head word is
+  non-empty AND is the whole identifier lexeme at the statement's first
+  significant character (covers empty heads, `_`/`'` truncation, and a
+  head longer than the spelling); corpus: 659 empty-head items in 92
+  files, 157 truncated in 27.  THE COST, stated plainly: one keystroke
+  inside an operator/backtick/`_`/`'` definition now costs a full cold
+  check (~1.1 s vs ~0.55 s) on 111 of 358 files — taken deliberately over
+  a stale type with its diagnostic dropped; teaching the extent scanner
+  `_` and `'` would recover 157 of the 825 items and is a Tier-1 follow-on
+  noted for 7.1b.  A SECOND PRE-EXISTING LOSS found while pinning the
+  tags (F-1): `fpOf` sorted the group tags but took the group TEXTS in
+  SCC-traversal order over id-keyed maps, so a component with two or more
+  groups fingerprinted differently each run and was never reused (a
+  mutually recursive pair hit 4 of 5 on an UNCHANGED re-run) — fixed by
+  carrying tag and text together in sorted order, 5 of 5.  TWO PRE-EXISTING FINDINGS the invisibility sweep turned up (neither
+  caused by 7.2): 16 of 249 modules RENDER a published type differently
+  on a reuse with no edit at all (the printer's order follows id-keyed
+  sets, so rendered text is not a sound invisibility oracle — the 6.6
+  comparator moved to `AlphaEq.scala` with four counted controls), and
+  2-3 of 249 publish DIFFERENT ROW CONSTRAINTS on two cold checks in one
+  JVM (the simplifier's queue is id-hash ordered) — ticket E11.  lsp-smoke 456 -> 480; TestTolerantCheck 27 -> 44.
+  Tier 2 at adoption: the reviewer's full core/test 1005/1005 on the pre-fix
+  tree, the orchestrator's 1008/1008 on the fixed tree (the three new
+  properties).  Ticket E11 filed and cross-referenced from
+  ROW-CONSTRAINT-STATE.md.
 
 - [ ] **7.3 The parse constant factor — P5(c) reopened AS AN INVESTIGATION, with
   a kill criterion.**  P5(c) named the target and stopped: the `Free` trampoline
@@ -3005,6 +3081,16 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-10 (7.2 DONE): see the item's DONE paragraph.  The cliff is
+  gone (top-of-file edits reuse 115/154, more than a body edit's 97);
+  the review found the change had WIDENED a Stage-2 hole (un-keyed
+  operator/backtick/`_`/`'` definitions leaving dependents stale) and the
+  fix round closed the hole itself, plus a second pre-existing reuse loss
+  (multi-group components never hit); ticket E11 (id-dependent hover
+  rendering) filed.  Implementer ~2h10 + 37 min, reviewer ~73 min (incl.
+  Tier 2).  Baselines: TestLoopTrace 720/720, corpus 85/69/0 over 154,
+  repl-smoke 8/66 goldens untouched, lsp-smoke 480, core/test 1008/1008
+  alone, boot 129.
 - 2026-09-10 (7.0 DONE): see the item's DONE paragraph.  The arithmetic
   was honest (parse 98% of the read; the survey said 91%); the verdict is
   7.1 with 7.2 first; the reviewer corrected the ratio (0.953), the

@@ -168,7 +168,13 @@ final class Resident(val log: String => Unit) {
                            // `import La...` completion looks for the project's
                            // own `.e` files, and computing it needs the
                            // module header -- which only the check has.
-                           root: String = "")
+                           root: String = "",
+                           // 7.2: what the inference cache did on THIS
+                           // check, so a test can ask whether an edit
+                           // reused rather than only whether it agreed.
+                           // The server already logs both numbers; this
+                           // is the same pair, not a second count.
+                           reused: Int = 0, components: Int = 0)
 
   /** Check one file against a fresh env copy, resolving imports first
     * against the file's own directory (workspace siblings), then the
@@ -371,10 +377,12 @@ final class Resident(val log: String => Unit) {
 
     // --- 5.5: what an SCC's inference depends on, split in two.
     // `groups` is one top-level spelling's own source, sig and equations
-    // together (the invalidation unit), with start lines in it so a
-    // reused result can never carry drifted positions.  `scopeKey` is
-    // everything else: imports, the scope-bearing statements, the head
-    // set, and the other open buffers' versions.
+    // together (the invalidation unit), each with the line it starts at
+    // as its ANCHOR -- 7.2: the anchor is NOT in the text, so an edit
+    // that only shifts lines keeps every key and the entries come back
+    // re-anchored.  `scopeKey` is everything else: imports, the
+    // scope-bearing statements, the head set, and the other open
+    // buffers' versions.
     Phases.add("notes.pre", tNotesPre)
     val tKeys = Phases.now
     val (groups, scopeKey) = TolerantCheck.keys(
@@ -453,7 +461,8 @@ final class Resident(val log: String => Unit) {
     // a file full of unexplained undefined names.
     Checked(e, mh.name, r.surface, r.renamed, r.diagnostics,
             importNotes ++ (if (fastMode) Nil else published), checked.types,
-            checked.locals, r.scope, contents, root)
+            checked.locals, r.scope, contents, root,
+            checked.reused, checked.components)
   } }
 
   private def errorStatements(ss: List[SStatement]): List[SErrorStatement] = ss.flatMap {

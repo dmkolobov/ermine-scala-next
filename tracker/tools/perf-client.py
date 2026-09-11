@@ -23,9 +23,11 @@ rather than imported.
 THE EDIT IS THE WHOLE EXPERIMENT, so it is pinned and asserted:
 
   * It must CHANGE A FINGERPRINT.  TolerantCheck.keys (core/src/main/scala/
-    com/clarifi/reporting/ermine/session/TolerantCheck.scala:98-114) keys each
-    group by `startLine + ":" + text`, where text runs from the statement's
-    first significant character to just past its last one.  Trailing
+    com/clarifi/reporting/ermine/session/TolerantCheck.scala) keys each group
+    by its statements' `text`, each tagged with its offset from the GROUP's
+    own first line -- since LSP item 7.2 the absolute start line is NOT in the
+    key -- where text runs from the statement's first significant character
+    to just past its last one.  Trailing
     whitespace and trailing comments therefore change NOTHING -- the roadmap
     records a measurement invalidated by exactly that (PERF-ROADMAP.md, 5.5
     entry).  We edit INSIDE a body line, with significant characters still
@@ -34,10 +36,18 @@ THE EDIT IS THE WHOLE EXPERIMENT, so it is pinned and asserted:
     round is cold: no import/export/type/data/class/instance/field/table/
     foreign/private/database/abstract/infix*/prefix/postfix statement, and no
     change to the top-level head set (TolerantCheck.scala:110).
-  * It must NOT CHANGE THE LINE COUNT.  Start lines are in every group's key,
-    so inserting a line invalidates everything below it.
-  * It must land in a NAMED top-level definition -- groups come from
-    bindItems.filter(_.headWord.nonEmpty), so an operator is never cached.
+  * It must NOT CHANGE THE LINE COUNT.  Since 7.2 that is no longer needed for
+    the cache's sake -- a pure line shift keeps every key -- but it is still
+    what the bench wants: a steady-state keystroke measurement must invalidate
+    the SAME set of components every round, and a line-count change would make
+    round 1 differ from round 2.  7.2's own before/after numbers are the
+    measurement of what a line shift costs; see tracker/loopmodel/
+    LSP4-7.2-ANCHORS.md and its scratch cliff driver.
+  * It must land in a NAMED top-level definition whose head word IS its whole
+    spelling -- `groups` only holds those, and since 7.2's fix round every
+    other top-level bind item (an operator, a backtick name, a spelling with
+    `_` or `'` in it) has its TEXT in the SCOPE key, so editing one drops the
+    whole per-uri cache.
 
 The pinned site satisfies all four: one digit of an integer literal inside
 `emptyReport`'s single-line body, a definition referenced 14 times elsewhere in

@@ -2223,6 +2223,153 @@ def main():
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Bad.e")}})
     check("Bad.e cleared on close", client.diagnostics_for(uri("Bad.e")) == [])
 
+    # ---- 7.2: ANCHORED POSITIONS ----------------------------------------
+    #
+    # The inference cache is keyed on text with positions relative to each
+    # group's own start line, so an edit that only SHIFTS lines keeps every
+    # entry.  What this block pins is the other half: EVERY position that
+    # escapes to the client is re-anchored.  Each route is asked once on
+    # the pristine buffer and once after a didChange that inserts THREE
+    # BLANK LINES AT THE TOP -- no save, so the file on disk still says the
+    # old lines -- and every answer must have moved by exactly three.
+    SHIFT = 3
+
+    def bump(x, n=SHIFT):
+        """A baseline answer, moved down n lines: tuples of
+        (line, col, ...) or lists of them."""
+        if isinstance(x, tuple):
+            return (x[0] + n,) + x[1:]
+        return [bump(y, n) for y in x]
+
+    open_doc("Anchor.e")
+    anchor_ds = client.diagnostics_for(uri("Anchor.e"))
+    check("7.2 Anchor.e clean on open", anchor_ds == [], repr(anchor_ds))
+
+    def loc3(r):
+        """One Location as (line, startChar, endChar)."""
+        if r is None:
+            return None
+        return (r["range"]["start"]["line"], r["range"]["start"]["character"],
+                r["range"]["end"]["character"])
+
+    def hl3(hs):
+        return sorted((h["range"]["start"]["line"], h["range"]["start"]["character"],
+                       h["range"]["end"]["character"]) for h in (hs or []))
+
+    def ed3(es):
+        return sorted((e["range"]["start"]["line"], e["range"]["start"]["character"],
+                       e["range"]["end"]["character"], e["newText"]) for e in (es or []))
+
+    def sym3(syms):
+        out = []
+        for s in (syms or []):
+            out.append((s["name"], s["range"]["start"]["line"], s["range"]["end"]["line"],
+                        s["selectionRange"]["start"]["line"]))
+            out.extend(sym3(s.get("children", [])))
+        return sorted(out)
+
+    def sym_bump(xs, n=SHIFT):
+        return sorted((a, b + n, c + n, d + n) for (a, b, c, d) in xs)
+
+    # The six escape routes, on the pristine buffer.  Positions are 0-based
+    # LSP; Anchor.e's source lines are one more.
+    #   line 9  (0-based 8)  `  let flag = x && True`   -- the local's def-site
+    #   line 10 (0-based 9)  `  in flag`                -- its use
+    #   line 15 (0-based 14) `anchorUse b = anchorLet b`
+    #   line 17 (0-based 16) `noSig b = b && True`      -- no signature
+    base_hover_local = hoverline("Anchor.e", 9, 5)           # `flag` in `in flag`
+    base_def_local   = loc3(definition("Anchor.e", 9, 5))    # -> its let binder
+    base_hover_top   = hoverline("Anchor.e", 14, 14)         # `anchorLet` at a use
+    base_def_top     = loc3(definition("Anchor.e", 14, 14))
+    base_refs        = hl3(references("Anchor.e", 14, 14))
+    base_high        = hl3(highlight("Anchor.e", 14, 14))
+    base_rename      = ed3(rename("Anchor.e", 14, 14, "anchorLetted")
+                           ["result"]["changes"][uri("Anchor.e")])
+    base_syms        = sym3(doc_symbols("Anchor.e"))
+    base_where       = hoverline("Anchor.e", 11, 16)         # `keep` in `= keep`
+    # A LET local inside an UNSIGNED binding.  `anchorLet` carries a
+    # signature, so it is an EXPLICIT binding and `checkWith` never caches
+    # it -- its locals are recomputed on every check and would survive a
+    # broken re-anchoring.  `anchorPlain` has no signature, so its
+    # component IS cached, and this is the pin that bites (verified by
+    # sabotaging `Anchors.absPos` with an off-by-one: this check and the
+    # `where` one fail, the signed one does not).
+    base_plain       = hoverline("Anchor.e", 18, 21)         # `inner` at its binder
+    acts = code_actions("Anchor.e", 16, only=["quickfix", "source"])
+    base_sig = [a for a in (acts or []) if a["title"].startswith("add signature: noSig")]
+    base_sig_edit = ed3(list(base_sig[0]["edit"]["changes"].values())[0]) if base_sig else []
+
+    check("7.2 baseline: hover on a LET local answers",
+          base_hover_local is not None and "Bool" in base_hover_local,
+          repr(base_hover_local))
+    check("7.2 baseline: hover on a WHERE local answers",
+          base_where is not None and "Bool" in base_where, repr(base_where))
+    check("7.2 baseline: hover on a LET local of an UNSIGNED binding answers",
+          base_plain is not None and "Bool" in base_plain, repr(base_plain))
+    check("7.2 baseline: definition of a local is its binder",
+          base_def_local is not None and base_def_local[0] == 8 and base_def_local[1] == 6,
+          repr(base_def_local))
+    check("7.2 baseline: references to a top level found", len(base_refs) >= 3,
+          repr(base_refs))
+    check("7.2 baseline: a rename edits every occurrence",
+          len(base_rename) == len(base_refs), repr(base_rename))
+    check("7.2 baseline: documentSymbol has the five declarations",
+          len(base_syms) >= 5, repr(base_syms))
+    check("7.2 baseline: the add-signature action is offered for noSig",
+          len(base_sig_edit) == 1, repr(base_sig_edit))
+
+    # THE EDIT: three blank lines at the top, as a didChange with NO SAVE.
+    anchor_src = (FIXTURES / "Anchor.e").read_text()
+    change("Anchor.e", ("\n" * SHIFT) + anchor_src, 2)
+    ds = client.diagnostics_for(uri("Anchor.e"))
+    check("7.2 the shifted buffer still checks clean", ds == [], repr(ds))
+
+    check("7.2 hover on a LET local survives a line shift",
+          hoverline("Anchor.e", 9 + SHIFT, 5) == base_hover_local,
+          repr(hoverline("Anchor.e", 9 + SHIFT, 5)) + " want " + repr(base_hover_local))
+    check("7.2 hover on a WHERE local survives a line shift",
+          hoverline("Anchor.e", 11 + SHIFT, 16) == base_where,
+          repr(hoverline("Anchor.e", 11 + SHIFT, 16)) + " want " + repr(base_where))
+    check("7.2 hover on a LET local of an UNSIGNED binding survives a line shift",
+          hoverline("Anchor.e", 18 + SHIFT, 21) == base_plain,
+          repr(hoverline("Anchor.e", 18 + SHIFT, 21)) + " want " + repr(base_plain))
+    check("7.2 hover on a top level survives a line shift",
+          hoverline("Anchor.e", 14 + SHIFT, 14) == base_hover_top,
+          repr(hoverline("Anchor.e", 14 + SHIFT, 14)))
+    check("7.2 definition of a local is re-anchored",
+          loc3(definition("Anchor.e", 9 + SHIFT, 5)) == bump(base_def_local),
+          repr(loc3(definition("Anchor.e", 9 + SHIFT, 5))) + " want " +
+          repr(bump(base_def_local)))
+    check("7.2 definition of a top level is re-anchored",
+          loc3(definition("Anchor.e", 14 + SHIFT, 14)) == bump(base_def_top),
+          repr(loc3(definition("Anchor.e", 14 + SHIFT, 14))))
+    check("7.2 references are re-anchored",
+          hl3(references("Anchor.e", 14 + SHIFT, 14)) == bump(base_refs),
+          repr(hl3(references("Anchor.e", 14 + SHIFT, 14))))
+    check("7.2 highlight ranges are re-anchored",
+          hl3(highlight("Anchor.e", 14 + SHIFT, 14)) == bump(base_high),
+          repr(hl3(highlight("Anchor.e", 14 + SHIFT, 14))))
+    check("7.2 rename edit ranges are re-anchored",
+          ed3(rename("Anchor.e", 14 + SHIFT, 14, "anchorLetted")
+              ["result"]["changes"][uri("Anchor.e")]) ==
+          sorted((l + SHIFT, a, b, t) for (l, a, b, t) in base_rename),
+          repr(ed3(rename("Anchor.e", 14 + SHIFT, 14, "anchorLetted")
+                   ["result"]["changes"][uri("Anchor.e")])))
+    check("7.2 documentSymbol ranges are re-anchored",
+          sym3(doc_symbols("Anchor.e")) == sym_bump(base_syms),
+          repr(sym3(doc_symbols("Anchor.e"))) + " want " + repr(sym_bump(base_syms)))
+    acts2 = code_actions("Anchor.e", 16 + SHIFT, only=["quickfix", "source"])
+    sig2 = [a for a in (acts2 or []) if a["title"].startswith("add signature: noSig")]
+    sig2_edit = ed3(list(sig2[0]["edit"]["changes"].values())[0]) if sig2 else []
+    check("7.2 the add-signature edit range is re-anchored",
+          sig2_edit == sorted((l + SHIFT, a, b, t) for (l, a, b, t) in base_sig_edit),
+          repr(sig2_edit) + " want " +
+          repr(sorted((l + SHIFT, a, b, t) for (l, a, b, t) in base_sig_edit)))
+
+    # And the REUSE COUNT itself, the acceptance number of item 7.2: the
+    # shifted check must reuse, where before 7.2 it reused nothing at all.
+    # Read from the server's own check line after shutdown, below.
+
     # Checks must neither read nor write interface files (a stale .ei would
     # let type errors through unreported, and writebacks litter workspaces).
     check("no .ei droppings", not list(FIXTURES.glob("*.ei")),
@@ -2243,6 +2390,21 @@ def main():
     log1 = pathlib.Path(LOG).read_text(errors="replace")
     check("no phases line without -Dermine.lsp.phases",
           "phases:" not in log1)
+    # 7.2's ACCEPTANCE NUMBER, from the server's own check line: the first
+    # Anchor check is the cold didOpen and reuses nothing; the second is the
+    # same text with three blank lines at the top, and before 7.2 it reused
+    # nothing either (every key carried an absolute start line).  Now it
+    # must reuse every component it has.
+    anchor_runs = re.findall(
+        r"check: Anchor read [0-9.]+s, typecheck [0-9.]+s "
+        r"\(reused (\d+) of (\d+) components\)", log1)
+    check("7.2 two Anchor checks in the log", len(anchor_runs) >= 2, repr(anchor_runs))
+    if len(anchor_runs) >= 2:
+        check("7.2 the cold open reuses nothing", anchor_runs[0][0] == "0",
+              repr(anchor_runs[0]))
+        check("7.2 the line-shifted check reuses every component",
+              int(anchor_runs[1][0]) > 0 and anchor_runs[1][0] == anchor_runs[1][1],
+              repr(anchor_runs[1]))
     log2 = LOG + ".phases"
     pathlib.Path(log2).write_text("")
     cmd2 = [(("-Dermine.lsp.log=" + log2) if a.startswith("-Dermine.lsp.log=") else a)

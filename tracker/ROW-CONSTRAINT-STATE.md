@@ -1691,3 +1691,11 @@ published interface moves".
 **Still open in the same family** (`ROSE-COMPARISON.md` §3 Rank 1 item 3): the VARIABLE-identity
 case at `Part.apply` — `a <- (a)`, which `Subst.normalPart` deletes from the published residual
 but `Part.apply` still builds — and `Part.isTrivialConstraint`, which is `false` unconditionally.
+
+## Cross-reference (2026-09-10): the editor path shows the solver-order sensitivity
+
+Ticket E11 in tracker/TICKET-stdlib-findings.md: four cold checks of an unchanged module in one JVM render one
+definition's constraint set four ways (label order; the redundant conjunct simplified in two rounds and not the
+other two) — entailment-equivalent per this file's complete per-label decision, so presentation not soundness, but
+reproducible and ordered.  Candidate fixes named there: a canonical rendering at publication (ROSE rank 3) or
+`dequeuePolicy=smallcanon` on the editor path.  Found by LSP Stage 4 item 7.2's cache-invisibility sweep.
