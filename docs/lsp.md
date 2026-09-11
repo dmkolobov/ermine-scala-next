@@ -29,10 +29,12 @@ protocol traffic and the timings.
 
 ## Diagnostics
 
-Published on `didOpen`, on `didSave`, and ~300 ms after the last `didChange` —
-no save required. Checking runs against the open BUFFER, for this file and its
-workspace siblings alike, so a cross-file check sees unsaved edits. Every check
-uses a fresh copy of the resident session, so a broken file poisons nothing.
+Published on `didOpen`, on `didSave`, and 150-300 ms after the last `didChange`
+— no save required; the exact wait is derived from what checking that file has
+been measured to cost (see **The debounce** under Latency). Checking runs against
+the open BUFFER, for this file and its workspace siblings alike, so a cross-file
+check sees unsaved edits. Every check uses a fresh copy of the resident session,
+so a broken file poisons nothing.
 
 A file gets **all** of its diagnostics, not just the first: every unparseable
 statement, every shadowing refusal, every unknown operator, and every
@@ -361,7 +363,7 @@ scope-at-position layer carries value scopes only.
 
 **Staleness is accepted and stated.** Completion answers from the tables the
 last DEBOUNCED CHECK left behind, so a binder you have just typed is not offered
-until that check lands (~300 ms after you stop typing, plus the check itself).
+until that check lands (150-300 ms after you stop typing, plus the check itself).
 The word prefix and the context are read from the buffer as it is NOW, so the
 filtering is always current; only the set of names is as old as the last check.
 The alternative — checking on a completion request — would put a whole check on
@@ -459,8 +461,8 @@ above. No corpus group is in that class today.
 Every other request in this server answers from a possibly-stale index, because
 a stale ANSWER is harmless. A code action is an EDIT: a signature inserted at a
 line the buffer no longer has is corruption. So while the index is older than
-the buffer — between a keystroke and the check ~300 ms later — the answer is an
-empty list. A request during the boot answers `[]` as well.
+the buffer — between a keystroke and the check 150-300 ms later — the answer is
+an empty list. A request during the boot answers `[]` as well.
 
 `context.only` is honoured. The server always answers with `CodeAction` objects,
 never the legacy `Command` form, and there is no `codeAction/resolve`.
@@ -470,7 +472,15 @@ never the legacy `Command` form, and there is no `codeAction/resolve`.
 Logging goes to the file named by `ERMINE_LSP_LOG` (or `-Dermine.lsp.log`);
 stdout is reserved for the protocol.
 
-## Fast mode
+## Fast mode and the pinned debounce
+
+`initializationOptions: { debounce: 300 }` pins the quiet window before a debounced
+check to a fixed number of milliseconds (1–10000; anything outside that range is
+refused and logged, never silently clamped) instead of deriving it from the measured
+check time. It exists for reproducibility, not for tuning — a measurement of record
+cannot have one of its own terms move underneath it, so `tracker/tools/perf-bench.sh`
+pins 300, the constant every editor figure in the roadmap was taken with. The
+derivation it switches off is described under **The debounce** in Latency.
 
 `initializationOptions: { fastMode: true }`, or a
 `workspace/didChangeConfiguration` carrying
@@ -502,7 +512,9 @@ about the measurement differs.
 | | | how |
 |---|---|---|
 | session boot | 12–15 s, once (129 modules) | six runs: 11.9 / 12.2 / 13.4 / 14.0 / 14.8 / 14.9 s |
-| keystroke to diagnostics | **≈0.90 s** — 0.05 read + 0.50 typecheck + 0.30 debounce | `perf-bench.sh editor -k 15`, median of rounds 2–15, 97 of 154 binding groups reused. Re-measured 2026-09-11 after Stage 4 item **7.1b**, the statement-extent surface cache: an interleaved pair on this machine, both sides under load 1.3, moved the round trip **1.69 s → 0.90 s** and the read **0.84 s → 0.05 s**, with the typecheck segment unmoved as the control. Before 7.1b this row read ≈1.7 s quiet / ≈1.9 s busy |
+| keystroke to diagnostics, the LARGEST module | **≈0.90 s** — 0.05 read + 0.50 typecheck + 0.30 debounce (the debounce CEILING: this file's check is 0.58 s, so the policy asks for the ceiling and the figure is unchanged by item 7.4) | `perf-bench.sh editor -k 15`, median of rounds 2–15, 97 of 154 binding groups reused. Re-measured 2026-09-11 after Stage 4 item **7.1b**, the statement-extent surface cache: an interleaved pair on this machine, both sides under load 1.3, moved the round trip **1.69 s → 0.90 s** and the read **0.84 s → 0.05 s**, with the typecheck segment unmoved as the control. Before 7.1b this row read ≈1.7 s quiet / ≈1.9 s busy |
+| keystroke to diagnostics, a SMALL module | **0.17 s** — 0.15 debounce + 0.02 check | `Control/Monad/Reader.e`, 44 lines, `perf-client.py -k 15`, median of rounds 2–15; its very first keystroke already waits 150 ms, off the single sample the didOpen check left. It was **0.32 s** before item **7.4** made the debounce adaptive, of which 0.30 s was the fixed window: 94 % of the round trip was the wait for a 20 ms check. An interleaved A/B on this machine, both sides under load 1.3, moved it **0.3204 → 0.1719 s** (−149 ms, −46.4 %), with the read and typecheck segments unmoved at 0.010 s each as the control |
+| keystroke to diagnostics, a MID-SIZED module | **0.21 s** — 0.15 debounce + 0.05 check | `List.e`, 341 lines, 7 of 13 binding groups reused, same protocol: **0.3583 → 0.2124 s** (−146 ms, −40.7 %). `Layout/Report/Keyed/Options.e` (438 lines), whose check is ~0.18 s and therefore lands INSIDE the 150–300 ms band where the window tracks the check time rather than clamping, moved **0.4703 → 0.3596 s** (−111 ms), its harvested window sitting at 0.177 s |
 | keystroke to diagnostics, WORST site | **≈1.5 s** | one keystroke inside the 10.7 KB `private` block at the end of `Report.e` — the slowest statement in the stdlib to re-parse (0.17 s read) and a site whose inference cache reuses nothing (1.04 s typecheck). It was ≈2.2 s before 7.1b |
 | first check of a freshly opened file | **2.35 s** | the same run's cold open. A first open has no cache to reuse, so it parses the whole file: 7.1b makes it **30–70 ms SLOWER** (the extent scan, the line index and one cache entry per statement, all running interpreted), which is ~2 % of the open and the price of every keystroke after it |
 | **worst-case wait for a request sent DURING a check** | **1.47 s, an UPPER BOUND** | a hover sent 350 ms after the keystroke — just after the debounce fires — median of 3 (1.45 / 1.48 / 1.47); the answer lands 1.82 s after the keystroke. This is the number a worker-thread check would have to beat. MEASURED BEFORE 7.1b: the check it waits behind is now 0.05 + 0.50 s rather than 0.84 + 0.50 s, so the real wait is shorter and has not been re-measured |
@@ -512,6 +524,50 @@ about the measurement differs.
 | `documentSymbol` | 32 ms, client round trip | median of 10; 398 top-level symbols, 511 in all. This is the JSON round trip for the whole tree, not the build — the tree itself is built on the check path |
 | the index the requests read | 66 ms cold, **13–23 ms** warm | rebuilt on every check; 7980 occurrences + 511 symbols, from the server's own `index:` log line |
 | a code action | 52 ms on the first request after a check, then 0.7–1.1 ms | the edits are memoised per document version |
+
+**The debounce is derived from the measured check time** (item 7.4). A `didChange`
+does not check; it queues, and the check runs once the input stream has been quiet
+for D milliseconds. D is no longer a constant:
+
+    D = clamp(150 ms, C, 300 ms)
+
+where **C is the median of the last five measured check times of that document**.
+With no samples at all D is 300 ms, but that case is defensive rather than ordinary:
+`didOpen` and `didSave` check synchronously and pay no window, so the first DEBOUNCED
+check of a file already has the open's measurement to go on — on the 44-line module
+below the very first keystroke waited 150 ms off a single 144 ms sample.
+
+The floor is 150 ms because a window shorter than the gap between keystrokes
+coalesces nothing: it catches any burst faster than ~150 ms per character (a fast
+typist is ~120 ms, within-word digraphs 60–80 ms). It deliberately does NOT catch
+slower steady typing — at 40–60 wpm, ~200–300 ms per character, a file whose check is
+at or below the floor gets a check per character. That is accepted, because on such a
+file the check is cheaper than the window: a 20 ms check per 150 ms of quiet is at
+most a ~43 % duty cycle, a request waits at most one 20 ms check, and the squiggles
+are fresher for it. A check per character on an EXPENSIVE file is what must not
+happen, and the clamp prevents it — a file whose check exceeds 150 ms raises its own
+window to match.
+
+The ceiling stays 300 ms because that is the staleness a squiggle may carry, and
+because checks cannot pile up behind it: the queue holds one entry per document and a
+superseded check is dropped before it starts. Between the two, the window tracks the
+check time one-for-one, so at most half the dispatch thread goes to checking while
+you type. The effect, measured: a small file stopped waiting 300 ms for a 20 ms check
+(0.32 → 0.17 s), and the largest module did not move, because its check is 0.58 s and
+the policy asks for the ceiling.
+
+What bounds the feedback — a longer window coalesces more keystrokes, which can make
+the next check cost more, which lengthens the window — is the CLAMP, not the median.
+The median smooths; it does not bound. A document whose check cost alternates between
+100 ms and 400 ms will alternate its window between 150 and 300 ms, which is harmless
+precisely because those are the clamp values: the worst the feedback can do is the
+constant this server used before.
+
+The server logs the decision on every debounced check — `debounce: Report.e waited
+300ms (median 551ms of 5 checks, policy 300ms)` — so the window is auditable rather
+than assumed. It can also be pinned to a fixed value (see **Fast mode and the pinned
+debounce**); `tracker/tools/perf-bench.sh` pins 300 so its editor numbers stay
+comparable with every figure it recorded while the window was a constant.
 
 **Why a keystroke is now 0.05 s of parsing.** The server keeps the parsed
 statements of each open document and re-parses only those whose own text, or

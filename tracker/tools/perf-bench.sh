@@ -25,7 +25,9 @@
 # [E] EDITOR: one boot, then K didChange -> publishDiagnostics round trips
 # through tracker/tools/perf-client.py, which pins the edit site and asserts
 # the reuse counters.  Warm JVM, warm session, warm per-uri inference cache:
-# that IS the editor's steady state.
+# that IS the editor's steady state.  The quiet window is PINNED at 300 ms
+# (--pin-debounce, LSP item 7.4) so this target keeps measuring against the
+# same constant every earlier roadmap figure was taken with.
 #
 # TRAPS THIS SCRIPT EXISTS TO CLOSE (all of them cost a measurement if missed):
 #  - ermine.useInterface DEFAULTS TO TRUE and ermine.typeCheck DEFAULTS TO
@@ -245,8 +247,18 @@ if [ "$MODE" = editor ] || [ "$MODE" = both ]; then
   [ -n "${PERF_EDIT_LINE:-}" ]   && edit+=(--line "$PERF_EDIT_LINE")
   [ -n "${PERF_EDIT_ANCHOR:-}" ] && edit+=(--anchor "$PERF_EDIT_ANCHOR")
   [ -n "${PERF_EDIT_MODE:-}" ]   && edit+=(--mode "$PERF_EDIT_MODE")
+  # THE DEBOUNCE IS PINNED AT 300 ms (LSP item 7.4).  Since 7.4 the shipped
+  # window is adaptive -- clamp(150, median measured check time, 300) per
+  # document -- and a measurement of record cannot have its own constant move
+  # underneath it: every editor figure this harness has ever recorded (1.616 s
+  # at P1, 1.69 s at G3, 0.896 s after 7.1b) includes a 300 ms debounce, so the
+  # bench pins 300 and its before/after numbers stay comparable across the whole
+  # roadmap.  The client ALSO harvests the window from the server's own log line
+  # per round, so the debounce segment is reported rather than assumed; to
+  # measure the adaptive policy itself, run perf-client.py directly without
+  # --pin-debounce (that is what 7.4's own A/B does).
   python3 tracker/tools/perf-client.py \
-    --rounds "$ROUNDS" --file "$TARGET_FILE" --log "$log" \
+    --rounds "$ROUNDS" --file "$TARGET_FILE" --log "$log" --pin-debounce 300 \
     --out "$OUT/editor.json" --stderr "$OUT/editor-server.stderr" "${edit[@]}" \
     -- "$JAVA_HOME/bin/java" -Dermine.lsp.log="$log" "${LOCALE_PROPS[@]}" \
        ${PERF_JVM_PROPS:-} -cp "$cp" com.clarifi.reporting.ermine.lsp.Main \

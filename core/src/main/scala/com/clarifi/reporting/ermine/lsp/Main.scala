@@ -72,6 +72,21 @@ object Main {
         applyFastMode(
           params / "initializationOptions" flatMap (_ / "fastMode") flatMap (_.bool),
           "initializationOptions")
+        // 7.4: `ermine.debounce` PINS the quiet window, in milliseconds,
+        // instead of deriving it from the measured check time.  It exists for
+        // reproducibility, not for tuning: tracker/tools/perf-bench.sh is the
+        // measurement of record and pins 300 so its editor numbers stay
+        // comparable with every figure taken while the window was a constant.
+        // Out-of-range values are refused rather than clamped silently — a
+        // client that asks for a 0 ms or a one-minute window has a bug, and a
+        // pin that silently became something else would poison a measurement.
+        params / "initializationOptions" flatMap (_ / "debounce") flatMap (_.int) foreach { ms =>
+          if (ms >= 1 && ms <= 10000) {
+            Diagnostics.Debounce.pin(ms)
+            log(s"debounce PINNED at ${ms}ms (initializationOptions); the adaptive policy is off")
+          } else
+            log(s"debounce pin of ${ms}ms ignored (outside 1..10000ms); the adaptive policy stands")
+        }
         Json.obj(
           "capabilities" -> Json.obj(
             "textDocumentSync" -> Json.obj(

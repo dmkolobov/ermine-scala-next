@@ -2421,6 +2421,65 @@ def main():
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Splice.e")}})
     client.diagnostics_for(uri("Splice.e"))
 
+    # ---- 7.4: THE ADAPTIVE DEBOUNCE, and the burst it exists to coalesce.
+    # The window is clamp(150, median measured check time of THIS document,
+    # 300) ms of quiet on the input stream, so the two things to pin through a
+    # real server are (i) that a burst of keystrokes closer together than the
+    # window still produces EXACTLY ONE check and one publish, at the small
+    # file's window and at the large file's, and (ii) that what the server
+    # logged as waited is what the policy says for the samples it had.
+    burst_src = (FIXTURES / "Burst.e").read_text()
+    open_doc("Burst.e")
+    check("7.4 Burst.e clean on open", client.diagnostics_for(uri("Burst.e")) == [])
+
+    def burst(name, text_of, n, gap, version0):
+        """n didChanges `gap` seconds apart, sent without waiting for any
+        publish, then the ONE publish they are expected to coalesce into."""
+        for k in range(n):
+            client.notify("textDocument/didChange", {
+                "textDocument": {"uri": name, "version": version0 + k},
+                "contentChanges": [{"text": text_of(k)}]})
+            time.sleep(gap)
+        return client.diagnostics_for(name)
+
+    # Eight keystrokes 20 ms apart -- a fast typist is ~120-300 ms per
+    # character, so 20 ms is well inside any window the policy can choose.
+    ds = burst(uri("Burst.e"),
+               lambda k: burst_src.replace("(y + 2)", "(y +" + " " * (k + 1) + "2)"),
+               8, 0.020, 2)
+    check("7.4 a burst of 8 keystrokes still publishes, and publishes clean",
+          ds == [], repr(ds))
+    # A SECOND burst, so that "one check per burst" is a rule and not an
+    # artefact of there having been only one: it must produce exactly one more.
+    ds = burst(uri("Burst.e"),
+               lambda k: burst_src.replace("(y + 2)", "(y  +" + " " * (k + 1) + "2)"),
+               8, 0.020, 10)
+    check("7.4 a second burst of 8 keystrokes is exactly one more check",
+          ds == [], repr(ds))
+    # The same burst against the LARGEST stdlib module, whose check is ~0.6 s
+    # and whose window is therefore the ceiling (300 ms) rather than the floor.
+    report = repo("core/src/main/resources/modules/Layout/Report.e")
+    report_uri = report.as_uri()
+    report_src = report.read_bytes().decode("utf-8")   # CRLF: never text mode
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": report_uri, "languageId": "ermine", "version": 1,
+        "text": report_src}})
+    check("7.4 Layout/Report.e clean on open",
+          client.diagnostics_for(report_uri) == [])
+    ds = burst(report_uri,
+               lambda k: report_src.replace("emptyReport = prefA [pixelsA 0 0, cellsA 0 0]",
+                                            "emptyReport = prefA [pixelsA 0 0, cellsA 0" +
+                                            " " * (k + 1) + "0]"),
+               6, 0.020, 2)
+    check("7.4 a burst on the largest module publishes, and publishes clean",
+          ds == [], repr(ds[:2]))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": report_uri}})
+    client.diagnostics_for(report_uri)
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Burst.e")}})
+    client.diagnostics_for(uri("Burst.e"))
+    check("7.4 Burst.e on disk untouched by the buffer edits",
+          (FIXTURES / "Burst.e").read_text() == burst_src)
+
     # Checks must neither read nor write interface files (a stale .ei would
     # let type errors through unreported, and writebacks litter workspaces).
     check("no .ei droppings", not list(FIXTURES.glob("*.ei")),
@@ -2478,19 +2537,75 @@ def main():
               splice_runs[-1][0] == "0", repr(splice_runs[-1]))
     check("7.1b no check reuses more statements than the file has",
           all(int(h) <= int(n) for h, n in splice_runs), repr(splice_runs))
+    # 7.4's acceptance, from the server's own log.
+    # (a) THE BURST PIN: the eight keystrokes 20 ms apart produced exactly ONE
+    #     check of Burst.e beyond the didOpen -- one check, one publish, since
+    #     every `check:` line has a `diagnostics:` publish line of its own.
+    burst_checks = re.findall(r"check: Burst read ", log1)
+    burst_pubs = re.findall(r"diagnostics: (didOpen|didChange) Burst\.e -> ", log1)
+    check("7.4 sixteen keystrokes in two bursts produce exactly two checks",
+          len(burst_checks) == 3, repr(burst_checks) + " (one didOpen + two bursts)")
+    check("7.4 one check, one publish",
+          burst_pubs == ["didOpen", "didChange", "didChange"], repr(burst_pubs))
+    burst_waits = re.findall(r"debounce: Burst\.e waited (\d+)ms "
+                             r"\(median (\d+)ms of (\d+) checks, policy (\d+)ms\)", log1)
+    check("7.4 each burst waited exactly one window", len(burst_waits) == 2,
+          repr(burst_waits))
+    check("7.4 a small file's window is the FLOOR, 150 ms",
+          len(burst_waits) == 2 and burst_waits[-1][0] == "150"
+          and int(burst_waits[-1][1]) < 150, repr(burst_waits))
+    # The same for the largest module, whose window must be the CEILING.
+    rep_checks = re.findall(r"check: Layout\.Report read ", log1)
+    rep_waits = re.findall(r"debounce: Report\.e waited (\d+)ms "
+                           r"\(median (\d+)ms of (\d+) checks, policy (\d+)ms\)", log1)
+    check("7.4 a burst on the largest module is also exactly one check",
+          len(rep_checks) == 2, repr(rep_checks))
+    check("7.4 the largest module waits the CEILING, 300 ms",
+          len(rep_waits) == 1 and rep_waits[0][0] == "300"
+          and int(rep_waits[0][1]) > 300, repr(rep_waits))
+    # (b) THE POLICY, on every debounced check in the whole run: what was
+    #     waited is what clamp(150, median, 300) says for the samples the
+    #     server had, and the median is over at most five of them.
+    policy_rows = re.findall(r"debounce: \S+ waited (\d+)ms \(median (\d+)ms of "
+                             r"(\d+) checks, policy (\d+)ms\)", log1)
+    check("7.4 every debounced check logged its policy", len(policy_rows) >= 3,
+          repr(policy_rows[:3]))
+    # `waited <= policy`, not `==`: the loop has ONE quiet window and the queue
+    # can hold more than one document, so `Diagnostics.quiet()` waits the
+    # MINIMUM of the queued documents' windows and then runs their checks back
+    # to back.  A document whose own policy is 300 ms can therefore legitimately
+    # be checked after a 150 ms wait, because a cheaper sibling was owed a check
+    # too.  What must always hold is that nothing waits LONGER than its policy
+    # asked, and that the policy is the clamp of the median the server reports.
+    bad = [r for r in policy_rows
+           if not (int(r[0]) <= int(r[3])
+                   and int(r[3]) == min(300, max(150, int(r[1])))
+                   and 1 <= int(r[2]) <= 5)]
+    check("7.4 waited <= policy == clamp(150, median, 300) on every debounced "
+          "check, over at most 5 samples", bad == [], repr(bad[:3]))
     log2 = LOG + ".phases"
     pathlib.Path(log2).write_text("")
     cmd2 = [(("-Dermine.lsp.log=" + log2) if a.startswith("-Dermine.lsp.log=") else a)
             for a in sys.argv[1:]]
     cmd2.insert(1, "-Dermine.lsp.phases=true")
     c2 = Client(cmd2)
-    c2.response(c2.request("initialize", {"capabilities": {}}))
+    # 7.4: the same short run pins the debounce through the new
+    # initializationOption, which is what perf-bench.sh uses to keep measuring
+    # against a KNOWN window now that the shipped one is derived from the
+    # measured check time.
+    c2.response(c2.request("initialize", {"capabilities": {},
+                                          "initializationOptions": {"debounce": 250}}))
     c2.notify("initialized", {})
     c2.wait_for(lambda m: m.get("method") == "window/logMessage"
                 and "ready" in m["params"]["message"], "readiness logMessage")
     c2.notify("textDocument/didOpen", {"textDocument": {
         "uri": uri("Good.e"), "languageId": "ermine", "version": 1,
         "text": (FIXTURES / "Good.e").read_text()}})
+    c2.diagnostics_for(uri("Good.e"))
+    good_src = (FIXTURES / "Good.e").read_text()
+    c2.notify("textDocument/didChange", {
+        "textDocument": {"uri": uri("Good.e"), "version": 2},
+        "contentChanges": [{"text": good_src.replace("answer = 42", "answer =  42")}]})
     c2.diagnostics_for(uri("Good.e"))
     c2.response(c2.request("shutdown", None))
     c2.notify("exit", {})
@@ -2500,6 +2615,14 @@ def main():
           re.search(r"phases: .*\bparse=[0-9.]+ .*\bcheck\.total=[0-9.]+", text2)
           is not None,
           repr([l for l in text2.splitlines() if "phases:" in l][:1]))
+    check("7.4 initializationOptions.debounce pins the window",
+          "debounce PINNED at 250ms" in text2,
+          repr([l for l in text2.splitlines() if "debounce" in l][:2]))
+    pinned = re.findall(r"debounce: Good\.e waited (\d+)ms \(median \d+ms of \d+ "
+                        r"checks, policy (\d+)ms, PINNED at (\d+)ms\)", text2)
+    check("7.4 a pinned window is what the loop waits, whatever the policy says",
+          len(pinned) == 1 and pinned[0][0] == "250" and pinned[0][2] == "250"
+          and 150 <= int(pinned[0][1]) <= 300, repr(pinned))
 
     if failures:
         print("  FAIL  lsp")

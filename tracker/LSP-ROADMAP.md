@@ -19,16 +19,17 @@ first; 7.3 re-ranked to the batch target.  7.2 DONE: the top-of-file cliff is
 gone (0/154 -> 115/154 reused; checkWith -40..-60%); the Stage-2 un-keyed-
 definition hole is closed.  7.1 DONE — THE HEADLINE: the read is
 0.05 s (was 0.84) and keystroke-to-diagnostics on Report.e 0.90 s (was
-1.68); 7.3 handed to PERF-ROADMAP.  NEXT: 7.4 (adaptive debounce — the
-300 ms is now a third of the round trip), then 7.5 (tickets E8/E9/E10(5)/
-E7), then GATE G4.  Orchestration as in Stage 3: brief -> fresh Opus
+1.68); 7.3 handed to PERF-ROADMAP.  7.4 DONE (adaptive debounce: small files
+0.32 -> 0.17 s).  NEXT: 7.5 (tickets E8/E9/E10(5)/E7), then the GATE G4
+evidence run, then STOP for sign-off.  Orchestration as in Stage 3: brief -> fresh Opus
 implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
 
-- `sbt -batch core/test`: 1020 after Stage 4 item 7.1b (2026-09-11; 1008
+- `sbt -batch core/test`: 1026/1026 after Stage 4 item 7.4 (2026-09-11, the
+  reviewer's run, first try); 1020 after 7.1b; 1008
   after 7.2, 988 at G3, 943 at F4).  TWO KNOWN INTERMITTENTS, each red about
   one run in ten and unreachable from the editor/parser/solver code:
   `TestInterfaceRoundTrip` (E12, cross-suite dep-cache race) and
@@ -45,8 +46,8 @@ implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (494 after Stage 4 item 7.1b,
-  2026-09-11; 480 after 7.2; 456 after 7.0; 454 at GATE G3;
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (510 after Stage 4 item 7.4,
+  2026-09-11; 494 after 7.1b; 480 after 7.2; 456 after 7.0; 454 at GATE G3;
   407 after 6.5; 344 after 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
@@ -1906,7 +1907,7 @@ New, and specific to this stage:
   with its kill criterion intact.  The two cautions carried: 7.1b and 7.3
   must never both be budgeted as editor savings; a parser rewrite is Tier 1
   in scalaparsers with the P5(d) revert as its precedent.
-- [ ] **7.4 Adaptive debounce, derived from the measured check time** (Decision
+- [x] **7.4 Adaptive debounce, derived from the measured check time** (Decision
   (e); gated on 7.1b or 7.3 having landed a measured saving — if neither did, this
   item is skipped and the reason recorded).  Replace the fixed 300 ms with
   clangd's shape: `debounce = clamp(Min, RebuildRatio × measured_check_time, Max)`
@@ -1920,6 +1921,53 @@ New, and specific to this stage:
   and the item shows its output at the measured check times of the fast and slow
   file; the number, the rule and the reason are written into docs/lsp.md.
   Tier 0; Tier 2 at adoption (it changes shipped behaviour).
+  DONE 2026-09-11 (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP4-7.4-DEBOUNCE.md, LSP4-7.4-REVIEW.md).  THE POLICY:
+  D(C) = clamp(150 ms, 1 x C, 300 ms), C the median of the last five
+  measured check times of THAT document (carried on the Doc across edits,
+  dropped on didClose); no history -> 300, so a document's first check is
+  unchanged.  THE ARGUMENT, from the tables rather than clangd's constants:
+  Min 150 because a window below the inter-keystroke interval stops
+  coalescing and because every check here runs on the dispatch thread —
+  a hover waits for it — where clangd's 50 ms rides on a cancellable
+  worker; Max 300 rather than 500 because raising it would make Report.e
+  worse (0.90 -> 1.10 s) to buy pile-up protection the server already has
+  (single-threaded dispatch, one queue entry per uri, the versioned drop);
+  ratio 1 because it is live only in the 150..300 band and keeps D >= C,
+  bounding the check duty cycle near 50%.  OUTPUT at the measured check
+  times: 22-52 ms files -> 150; ~180 ms -> 170-199 (ratio live); Report.e's
+  580 ms and anything above 300 -> 300 — the function is flat at Max above
+  300 ms, so it can ONLY shorten a wait.  NO OSCILLATION: the feedback
+  path (longer D -> more text per check -> larger C) saturates at Max = the
+  old constant; measured D series monotone-then-flat on every file; a
+  cold open is outvoted by two warm samples.  BURST PIN: 8 keystrokes 20 ms
+  apart -> exactly one check at D=150 and at D=300, 3 arriving during a
+  check -> exactly two, through the real Server/Wire loop and again
+  through the scripted client (waited == policy on every debounce line).
+  INTERLEAVED A/B: Control/Monad/Reader.e (44 lines) 0.320 -> 0.172 s
+  (-46%) — the acceptance; List.e 0.358 -> 0.212; Options.e (438 lines)
+  0.470 -> 0.360 with D tracking C at 177 ms; Layout/Report.e 0.896 ->
+  0.906 (+11 ms, inside the spread) with read/typecheck unmoved and reuse
+  identical.  BENCH COMPARABILITY: perf-bench.sh editor PINS D=300 via a
+  new initializationOptions.debounce so its numbers stay comparable with
+  P1/G3/7.1b; perf-client.py harvests the window from the server's own
+  debounce log line.  lsp-smoke 494 -> 510; TestEditorBuffers +6.
+  THE REVIEW: ADVANCE — the acceptance reproduced (Reader.e 0.320 -> 0.173
+  s, -46%, spreads disjoint; Report.e +15 ms inside the spread, the window
+  300 on every round); the burst pin planted (Min=10 -> "Expected 1 but
+  got 4") and restored; every debounce line in a 61-line smoke run
+  re-derived from the policy with 0 disagreements; the bench pin does not
+  leak into the editor; Tier 2 1026/1026 on the first run, no
+  intermittent re-run needed.  Three documentation corrections in a
+  closing round: the Min argument overstated coalescing (at 40-60 wpm on
+  a file whose check is under 150 ms each character gets its own check —
+  bounded and acceptable, since the check is cheaper than the window);
+  the median CAN jump between regimes on one slow check and a period-2
+  check cost alternates 300/150 forever — harmless, the clamp is what
+  bounds the feedback; and "the first check is unchanged" is vacuous
+  because didOpen checks synchronously.  One audit relaxation: two
+  queued documents share the minimum window and check back to back, so
+  the client's `waited == policy` became `<=`.
 
 - [ ] **7.5 Ticket triage — which of E5-E10 this stage takes.**  One iteration,
   and it takes only the ones that are editor-path Tier 0.  DISPOSITIONS:
@@ -3236,6 +3284,15 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-11 (7.4 DONE): see the item's DONE paragraph.  The debounce is
+  now derived from each document's own measured check time, clamped to
+  150..300 ms: a small file's round trip halves (0.32 -> 0.17 s), the big
+  file is unchanged by construction, and the bench pins 300 so the
+  roadmap's editor figures stay comparable.  Review ADVANCE (docs
+  corrections only; the burst pin shown to have teeth by planting);
+  Tier 2 1026/1026 first try.  Implementer ~43 + 5 min, reviewer ~50 min.
+  Baselines: TestLoopTrace 720/720, corpus 85/69/0 over 154, repl-smoke
+  8/66, lsp-smoke 510, boot 129.
 - 2026-09-11 (7.1b DONE — THE STAGE'S HEADLINE): see the 7.1b DONE
   paragraph inside 7.1.  Read 0.84 -> 0.05 s, round trip 1.68 -> 0.90 s on
   Report.e; worst site 2.2 -> 1.5 s; differential 2,613 steps 0 mismatches

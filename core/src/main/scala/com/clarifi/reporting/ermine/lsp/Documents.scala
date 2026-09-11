@@ -26,6 +26,15 @@ final class Documents {
                          * so what it retains is bounded by the document and
                          * nothing accumulates across keystrokes. */
                        surface: Option[SurfaceCache.Cache] = None,
+                       /** 7.4: the last few MEASURED check times of this
+                         * document, in milliseconds, most recent first and at
+                         * most `Diagnostics.Debounce.Window` of them -- the
+                         * sample the adaptive debounce takes its median from.
+                         * It is this document's own cost model and nothing
+                         * else's: the debounce before a keystroke's check is
+                         * derived from what checking THIS document has been
+                         * measured to cost. */
+                       checkMillis: List[Long] = Nil,
                        /** 6.6: the diagnostics the last check PUBLISHED for
                          * this document, each still paired with the source
                          * that produced it.  A code action answers from
@@ -80,6 +89,13 @@ final class Documents {
                   // reuses, and its own guard decides what of it still
                   // applies against the text that just arrived.
                   prev.flatMap(_.surface),
+                  // 7.4: the check-time history survives the edit for the
+                  // reason the caches do -- it is a cost model of this
+                  // document, and the wait before the check this very edit
+                  // just queued is derived from it.  Dropping it here would
+                  // reset every keystroke to the no-history default and the
+                  // debounce would never adapt at all.
+                  prev.map(_.checkMillis) getOrElse Nil,
                   // 6.6: the published diagnostics survive the edit for
                   // the same reason the index does -- they are what the
                   // editor is still showing.  A code action does not USE
@@ -112,6 +128,22 @@ final class Documents {
 
   def putSurface(fileName: String, c: Option[SurfaceCache.Cache]): Unit =
     byPath(fileName) foreach { d => docs += d.uri -> d.copy(surface = c) }
+
+  /** 7.4: remember what one check of this document cost, in milliseconds,
+    * keeping at most `Diagnostics.Debounce.Window` samples (most recent
+    * first).  EVERY check records -- a cold open and a fast-mode check
+    * included -- because the median is what decides, and a median over a
+    * bounded window both outvotes and then forgets an outlier.  A closed
+    * document forgets its history with the rest of its record: a re-open is
+    * a cold read and has no cost model to inherit. */
+  def recordCheck(uri: String, millis: Long): Unit =
+    docs.get(uri) foreach { d =>
+      docs += uri -> d.copy(
+        checkMillis = (millis :: d.checkMillis) take Diagnostics.Debounce.Window)
+    }
+
+  /** The check times this document's debounce is derived from. */
+  def checksFor(uri: String): List[Long] = docs.get(uri).map(_.checkMillis) getOrElse Nil
 
   /** Store what a check published (6.6.1).  Set in the same breath as the
     * index, from the same check, so the two can never disagree about
