@@ -1,0 +1,9 @@
+[0m[[0minfo[0m] [0m+ Markdown.parse anything: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Markdown.parse empty: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Markdown.parse para: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Markdown._test_: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Markdown.*test*: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Markdown.__test__: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Markdown.**test**: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Markdown._**test**_: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Markdown.__*test*__: OK, proved property.[0m

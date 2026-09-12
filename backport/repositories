@@ -1,0 +1,14 @@
+# sbt 0.13.5 repository list for this branch (use with
+# -Dsbt.repository.config=backport/repositories -Dsbt.override.build.repos=true).
+#
+# Why this file exists: sbt 0.13.5's built-in list contains
+# http://repo.typesafe.com/typesafe/ivy-releases/, whose port 80 now black-holes
+# (TCP SYN unanswered), so every resolve hangs forever.  sbt.override.build.repos
+# also neutralises the dead bintray resolvers hard-coded in build.sbt, so no
+# resolver edit is needed in the branch itself.
+[repositories]
+  local
+  central-https: https://repo1.maven.org/maven2/
+  typesafe-ivy-releases: https://repo.typesafe.com/typesafe/ivy-releases/, [organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]
+  sbt-ivy-releases: https://repo.scala-sbt.org/scalasbt/ivy-releases/, [organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]
+  sbt-plugin-releases: https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/, [organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]

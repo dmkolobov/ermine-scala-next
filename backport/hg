@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Minimal `hg` shim for this branch's legacy build.
+# build.sbt's computeRevision task (wired into `update` by project/Settings.scala:21)
+# shells out to `hg id`, `hg id -b`, `hg id -t`.  The checkout is git, where real
+# mercurial aborts, and the abort fails `update` -- so every resolve needs this.
+# Put the directory holding this file on PATH (backport/env-2.11.sh does).
+case "$*" in
+  "id")      git rev-parse --short=12 HEAD 2>/dev/null || echo 000000000000 ;;
+  "id -b")   b=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); [ -z "$b" -o "$b" = "HEAD" ] && b=default; echo "$b" ;;
+  "id -t")   echo tip ;;
+  "st -mard") : ;;   # a clean working copy (only ensure-no-uncommitted, on publish, looks)
+  *)         exec /usr/bin/hg "$@" ;;
+esac

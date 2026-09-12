@@ -1,0 +1,8 @@
+[0m[[0minfo[0m] [0m+ Ermine signature entailment (differential).the corpus: the shipped engine agrees with the committed oracle on every signature: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment (differential).the corpus: the engine's verdict tally equals the resource's, whatever it is: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment (differential).cost: the whole corpus stays far under the per-signature budget: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment (differential).the foreign-skolem guard: a refutation that ASSIGNS one is NO VERDICT: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment (differential).random systems: the engine agrees with exhaustive enumeration: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment (differential).encoding contract: a repeated part forces that variable empty: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment (differential).encoding contract: the empty row on the left normalises, and decides: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment (differential).encoding contract: a non-empty literal set on the left is dropped, and forbids ACCEPT: OK, proved property.[0m

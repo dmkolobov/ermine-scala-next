@@ -1,0 +1,30 @@
+[0m[[0minfo[0m] [0m+ graph types.clique order: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.clique monoid: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS equal: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS monoid: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS== reflexive: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS== not vacuous: OK, proved property.[0m
+[0m[[0minfo[0m] [0m> ARG_0: (PartitionedSet(List(Clique(Set(32767)))),PartitionedSet(List()))[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#hashCode not vacuous: OK, proved property.[0m
+[0m[[0minfo[0m] [0m> ARG_0: (PartitionedSet(List(Clique(Set(-11858)))),PartitionedSet(List()))[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#cliques round-trips: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#require reflexivity: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#allow reflexivity: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#left identity: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#right identity: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#invite vacuous: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#invite absorbs own cliques: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#invite all unifies the set: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#invite one from each unifies the set: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#allow disjoint contains all cliques: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#allow symmetric: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#allow associative: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#allow distributive: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#require symmetric: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#require disjoint yields nothing: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#invite is a step of #allow's fold: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#invite contains PS#exclusive: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#sparse disjoint contains all elements, no edges: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#sparse reflexive: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#sparse symmetric: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ graph types.PS#sparse transitive: OK, passed 100 tests.[0m

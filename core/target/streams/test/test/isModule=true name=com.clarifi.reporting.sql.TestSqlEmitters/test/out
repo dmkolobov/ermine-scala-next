@@ -1,0 +1,5 @@
+[0m[[0minfo[0m] [0m+ emitSql.only MS emitters use literal `over': OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ emitSql.joinOn emitters distribute columns: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ emitSql.SQL emitted stays more or less the same: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ emitSql.if chains become cases: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ emitSql.sqlite literal syntax valid: OK, proved property.[0m

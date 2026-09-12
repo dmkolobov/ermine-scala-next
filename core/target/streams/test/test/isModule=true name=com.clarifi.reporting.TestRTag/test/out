@@ -1,0 +1,17 @@
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.type reflexivity: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.type symmetry: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.type associativity: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.type order: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.column equivalence required: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.nullable variants unify up: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.0-len string is root string type: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.only equal IntTs are equal: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.IntT matches IntT, not LongT: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.StringT equal is total: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.42-value equivalence is just type unification: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.value equivalence presupposes type unification: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.primexpr order: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.reflexivity union (AND) is reflexive: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.reflexivity intersection (OR) keeps like Somes, drops Nones: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.reflexivity union prefers known values: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ PrimTs, PrimExprs, Reflexivity.reflexivity value disagreement is erased in intersections: OK, passed 100 tests.[0m

@@ -55,7 +55,8 @@ object Session {
 
   type Stack = List[String]
 
-  def subst[A](m: SubstEnv => A)(implicit s: SessionEnv) = m(new SubstEnv(s.classes))
+  def subst[A](m: SubstEnv => A)(implicit s: SessionEnv) =
+    m(new SubstEnv(s.classes, sigEntail = s.sigEntail))
 
 
   def install(v: TermVar, rep: Runtime)(implicit s: SessionEnv) = v.name match {
@@ -155,7 +156,23 @@ object Session {
     * `labelCheck`, `labelCheckEarly`, `resGuard`, `splitKey`, `splitRow`, `resRow`,
     * `emptyRow`, `dequeuePolicy`, `solveBudget`, `topNormalise` and `tautoDelete`
     * ARE in it: they are `GenRules.toString`. */
-  def interfaceKey: String = interfaceFormatVersion.toString + "|" + Constraints.GenRules.toString
+  /** S3 (`SIG-ENTAIL-PLAN.md`): `sigEntail=error` CAN change what is published, by
+    * REFUSING a module whose signature is not entailed, so a stale `.ei` written under
+    * `off` would hide the diagnostic on the next run.  It is APPENDED rather than folded
+    * in, and only in `error` mode, because the staleness test is `key contains
+    * interfaceKey` (:452 below): an `.ei` written under `error` carries the suffix and so
+    * still matches under `off`, while one written under `off` does not contain the `error`
+    * key and is rebuilt -- exactly the direction wanted, and the default-mode baseline of
+    * an `off` run stays byte-identical to every interface written before S3.
+    *
+    * S3 REVIEW D5, KNOWN AND LEFT: this reads the PROCESS default while the check reads the
+    * SESSION mode (`SessionEnv.sigEntail`), so a session differing from the process default --
+    * which is exactly what the session option exists to allow -- writes a key describing the
+    * wrong mode.  Harmless today: no production path sets a per-session mode, and every test
+    * fixture that does also sets `useInterface = false`, so nothing reads or writes an `.ei`
+    * under a session mode. */
+  def interfaceKey: String = interfaceFormatVersion.toString + "|" + Constraints.GenRules.toString +
+    (if (SigEntail.defaultMode == SigEntail.Error) "|sigEntail=error" else "")
 
   /** The header line an `.ei` carries.  It LOOKS like an Ermine line comment, and
     * that is deliberate -- but do not rely on it: `InterfaceParsers` does not accept

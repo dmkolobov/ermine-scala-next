@@ -20,16 +20,41 @@ import java.io.File
 import scalaz.{ Failure => _, Success => _, _ }
 import Scalaz.{ gets => _, _ }
 
+object ErmineFixture {
+  /* RULE FOR EVERY SUITE: never `System.setProperty` a flag that a `SessionEnv`,
+   * `SubstEnv` or `GenRules` reads ONCE.  The suite runs in ONE JVM with classes in
+   * parallel, so a flip lands on whichever property happens to be running.  A mode a
+   * suite needs is a SESSION OPTION, passed to the fixture below. */
+
+  /** THE ONE REASON a suite asks for a mode other than the shipped default: booting the
+    * standard library under `error` fails while any shipped signature is dishonest, and a
+    * suite must fail for its own reason.  When the library corrections are in this is
+    * `None` and every use of it can go -- which is why it is one named value rather than
+    * twenty literals. */
+  val untilSigFixes: Option[com.clarifi.reporting.ermine.SigEntail.Mode] =
+    None  // the 2.11 library corrections are in (see backport/CORRECTIONS.md)
+}
+
 /** I am not thread-safe, so use a separate one of me per `Properties`
   * instance.  Importing my symbols unqualified works quite well.
   */
+/** `sigEntail` is the SESSION OPTION of SIG-3, not a system property:
+  * `SessionEnv.sigEntail` is a `val` read at construction, so a suite that wants a mode
+  * other than this fixture's constructs its own, and two fixtures with different modes
+  * coexist in one JVM.  `System.setProperty` could not do this -- see the rule above.
+  *
+  * THE DEFAULT IS THE SHIPPED DEFAULT (`None` inherits `-Dermine.sigEntail`, i.e. `error`),
+  * so a suite tests what ships unless it says otherwise. */
 final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
-                               = Function const (())) {
+                               = Function const (()),
+                               sigEntail: Option[com.clarifi.reporting.ermine.SigEntail.Mode]
+                               = None) {
   implicit val supply = Supply.create
   implicit val con = Printer.ignore
 
   lazy val baseEnv: SessionEnv = {
-    implicit val e : SessionEnv = new SessionEnv(_typeCheck = Some(true), _useInterface = Some(false))
+    implicit val e : SessionEnv = new SessionEnv(_typeCheck = Some(true), _useInterface = Some(false),
+                                                _sigEntail = sigEntail)
     Lib.preamble
     e.loadedModules = e.loadedModules + ("Test" -> CheckMethod.Interface)
     prepBaseEnv(e)
@@ -163,7 +188,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
 }
 
 object TestErmine extends Properties("Ermine") {
-  private val ermineFixture = ErmineFixture()
+  private val ermineFixture = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import ermineFixture._
 
   property("Occurs.fun") = no(sessionProof(implicit s => typeOf("a -> a a")))
@@ -372,7 +397,7 @@ trait ErmineModulesProperties {self: Properties =>
 }
 
 object TestErmineModules extends Properties("Ermine library") with ErmineModulesProperties {
-  protected lazy val ermineFixture = ErmineFixture()
+  protected lazy val ermineFixture = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import ermineFixture.{mkEnv, modules}
 
   lazy val excludedModules = Set.empty[String]

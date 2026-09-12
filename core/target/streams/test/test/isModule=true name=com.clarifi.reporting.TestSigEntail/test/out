@@ -1,0 +1,14 @@
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.control: an honest row signature type-checks at a satisfying record: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.control: inference alone refuses a record lacking the field: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.S3: an unconstrained row signature is REJECTED: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.S3: a wrong-label row signature is REJECTED: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.S3: a record-to-record unconstrained signature (modify) is REJECTED: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.S3: an unconstrained row ANNOTATION is REJECTED: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.control: an honest row annotation type-checks at a satisfying record: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.S3: a let-bound unconstrained signature is REJECTED: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.control: an honest let-bound signature still loads: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.flag: under `off` the unconstrained signature is accepted again: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.flag: under `off` the honest signature still type-checks: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.the message: two sessions, one explanation (reproducible witness): OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.interface key: `error` appends the suffix, and nothing else does: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine signature entailment.flag: the session option is what the checker reads: OK, proved property.[0m

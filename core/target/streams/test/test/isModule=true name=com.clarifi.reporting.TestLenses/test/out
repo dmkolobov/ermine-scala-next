@@ -1,0 +1,14 @@
+[0m[[0minfo[0m] [0m+ Lenses.Lens.firstLens.law1: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Lens.firstLens.law2: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Lens.secondLens.law1: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Lens.secondLens.law2: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Lens.trivial.law1: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Lens.trivial.law2: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Lens.lensId.law1: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Lens.lensId.law2: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Lens.firstLens|||secondLens.law1: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Lens.firstLens|||secondLens.law2: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Composition.firstLens compose secondLens.law1: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Composition.firstLens compose secondLens.law2: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Member.map: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Lenses.Member.set: OK, passed 100 tests.[0m

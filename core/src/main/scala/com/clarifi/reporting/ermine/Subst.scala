@@ -92,7 +92,14 @@ trait Requirements {
  */
 class SubstEnv(
   val classes: Map[Global,Requirements] = Map(),
-  val defaults: List[Type] = List(int)
+  val defaults: List[Type] = List(int),
+  /** The signature-entailment mode for THIS session (S3; `SigEntail.Mode`).  A per-session
+    * option rather than a global read-once flag so that one JVM can run a suite's `error`
+    * properties beside its `off` ones with no `System.setProperty` (the fixture rule at the
+    * top of TestErmine.scala), and so the language server can differ from a batch build.
+    * `SessionEnv.sigEntail` is where it comes from; the process default is
+    * `-Dermine.sigEntail` (`error`). */
+  val sigEntail: SigEntail.Mode = SigEntail.defaultMode
 ) {
   var kinds:      Map[KindVar, Kind] = Map()
   var types:      Map[TypeVar, Type] = Map()
@@ -524,7 +531,14 @@ object Subst {
    *
    * where T <~ U means T subsumes U.
    */
-  def subsumeType(e1: Type, e2: Type)(implicit hm: SubstEnv, su: Supply, tml: Located): (Type, Type) = {
+  /* S1 of the signature-entailment programme (`tracker/SIG-ENTAIL-PLAN.md`): `sig` names the
+   * USER SIGNATURE this call is checking, and is `None` at every caller that is not checking
+   * one.  It is an explicit parameter rather than a thread-local precisely because the
+   * distinction the check needs is a property of the CALL, not of the dynamic extent: the
+   * `App` case (:960-971, the call at :967) subsumes an argument against a function's domain, and an ambient
+   * flag set by an enclosing signature check would wrongly claim it.  Under `off` nothing
+   * reads it.  See SIG-1-SURVEY.md's caller table. */
+  def subsumeType(e1: Type, e2: Type, sig: Option[SigEntail.Site] = None)(implicit hm: SubstEnv, su: Supply, tml: Located): (Type, Type) = {
     val (sks, sts, qz, r1) = unbind(Skolem, e1)
     val (tks, tts, pz, r2) = unbind(Free, e2)
     val r3 = unifyType(r1, r2)
@@ -532,6 +546,25 @@ object Subst {
     val (qxs, qs) = unbindExists(Free, q)
     val (pxs, ps) = unbindExists(Free, substType(pz))
     val (ds, rs)  = ps.partition(p => Type.fskvs(p).isEmpty)
+    /* THE SIGNATURE-ENTAILMENT CHECK (S3; `SigEntail.enforce`, design `SIG-2-DESIGN.md`
+     * (d1)).  `rs` is the body's residual wanteds that mention one of the signature's
+     * skolems -- the obligations the loop below computes an answer for and then throws away
+     * (`entails` returns a Boolean nobody reads, and is class-only anyway, :320/:401) --
+     * and `ds` the skolem-free half, which `enforce` needs because `W` is the closure of
+     * `rs` under shared minted variables within `ps` (design (a3)).
+     *
+     * PLACEMENT.  Here, and only here:
+     *   - only for a USER SIGNATURE, i.e. when `sig` is defined: `typeCheck` :671 (`ann`)
+     *     and `typeCheckExplicitBinding` :689 (`sig`).  The `App` case (:967) subsumes an
+     *     argument against a function's domain and passes `None`; it must keep doing so.
+     *   - BEFORE `restrictTypes` (:570-571), which deletes the substitution entries a
+     *     wanted still needs and hides the skolems;
+     *   - reading the `qs`/`ps` captured at :545-547, never a re-`substType`d copy: that is
+     *     what makes "no wanted can mention a given's existential" true (design (a1)), and
+     *     it is the invariant S4's editor path must preserve.
+     * `:568-569`'s class-only `entails` loop, `mkSimplified` and `ds` are untouched: the
+     * check READS and never rewrites. */
+    sig.foreach(s => SigEntail.enforce(s, qs, rs, ds, sts, pxs))
     for (r <- rs)
       entails(qs,r)
     restrictTypes(qxs) // ?
@@ -635,7 +668,8 @@ object Subst {
     val t = substType(tz)
     implicit val tml: Located = e
     kindCheck(delta(g), t, Star(e.loc.checked))
-    val (q,p) = subsumeType(substType(t), substType(et))
+    val (q,p) = subsumeType(substType(t), substType(et),
+                            if (hm.sigEntail.on) Some(SigEntail.siteAt("ann", e.loc)) else None)
     // TODO: ADD warnings here later if we need to check subsumption involving constraints
     ()
   }
@@ -652,7 +686,19 @@ object Subst {
     val typ = substType(ty)
     val args = rep(binding.arity) { VarT(fresh[Kind](li, None, Free, Star(li))) }
     val f = inferAltTypes(binding.loc, g, binding.alts, args) { r => args.foldRight(r)(Arrow(li, _, _)) }
-    val (q,p) = subsumeType(typ, f)
+    val (q,p) = subsumeType(typ, f,
+                            if (hm.sigEntail.on)
+                              /* THE SECONDARY LOCATION is the DECLARED TYPE's own (`typ.loc`,
+                               * which `Statement.scala:306` copies from the SIGNATURE
+                               * statement's `s.ty`), not `binding.v.loc` and not
+                               * `binding.ty.loc`: both of those are the EQUATION's head
+                               * (`Statement.scala:306` builds the `Annot` with the implicit
+                               * binding's `loc`, and `:811` below rebuilds it with the
+                               * binding's), so on a one-line body the diagnostic's two
+                               * locations collapsed onto one line and the second told the
+                               * reader nothing (S3 review M1). */
+                              Some(SigEntail.siteOf("sig", binding.v, typ.loc))
+                            else None)
     restrictKinds(kvs)
     restrictTypes(tvs)
     // _ <- unifyType(binding.ty, v.extract)

@@ -1,0 +1,23 @@
+[0m[[0minfo[0m] [0m+ Legends & presentations.sorting left-to-right yields std columnname ordering: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.empty sort begets empty sort: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.nonsense labels are harmless: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.nonsense labels filter out: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.overflow labels are harmless: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.overflow labels filter out: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.sorting a Lbl once chooses the leftmost: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.sorting a Lbl twice chooses the left, 2nd left: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.sorting a dual preserves underlying order, flips if needed: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.format basicEvals are homs: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.format devolves are homs: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.extra args are ignored: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.formatting interesting things makes strings: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.devolved round rounds: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.truncate truncates: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.basic eval does sort of what I think: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.natural equality: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.legend monoid: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.format equal: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.presentation equal: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.sortstrategy order: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.sortdirection order: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Legends & presentations.legend equal: OK, passed 100 tests.[0m

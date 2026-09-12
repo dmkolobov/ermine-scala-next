@@ -1,0 +1,11 @@
+[0m[[0minfo[0m] [0m+ process symbol processes.median: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ process symbol processes.weightedMean.weighted mean = mean when the weights are all any positive constant: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ process symbol processes.weightedMean.weighted mean = -mean when the weights are all any negative constant: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ process symbol processes.weightedMean.weighted mean is associative - wm(a ++ b) == wm(wm(a) ++ wm(b)): OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ process symbol processes.weightedHarmonicMean.a constant-weighted weighted harmonic mean is the same as a[0m
+[0m[[0minfo[0m] [0m       weighted mean whose weights are the reciprocals of the values[0m
+[0m[[0minfo[0m] [0m       http://en.wikipedia.org/wiki/Harmonic_mean#Relationship_with_other_means: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ process symbol processes.weightedHarmonicMean.Verify that the arithmetic mean is always greater or equal than the[0m
+[0m[[0minfo[0m] [0m        harmonic mean[0m
+[0m[[0minfo[0m] [0m        http://en.wikipedia.org/wiki/Pythagorean_means: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ process symbol processes.weightedHarmonicMean.verify that harmonic mean is negative if all weights are negative: OK, passed 100 tests.[0m

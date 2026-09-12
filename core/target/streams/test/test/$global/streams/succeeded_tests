@@ -1,0 +1,20 @@
+#Successful Tests
+#Sat Sep 12 07:15:38 MDT 2026
+com.clarifi.reporting.TestRTag=1789218851024
+com.clarifi.reporting.flatteners.TestFlatteners=1789218854743
+com.clarifi.reporting.relational.TestProcessSymbols=1789218850203
+com.clarifi.reporting.TestSigEntailDiff=1789218854857
+com.clarifi.reporting.util.TestStreamTUtils=1789218854332
+com.clarifi.reporting.sql.TestSqlEmitters=1789218853655
+com.clarifi.reporting.TestConstraints=1789218864768
+com.clarifi.reporting.writers.TestErmineLegends=1789218860806
+com.clarifi.reporting.util.TestGraph=1789218882731
+com.clarifi.reporting.writers.TestMarkdown=1789218849639
+com.clarifi.reporting.TestErmine=1789218872158
+com.clarifi.reporting.TestErmineModules=1789218889159
+com.clarifi.reporting.TestLenses=1789218849999
+com.clarifi.reporting.TestSigEntail=1789218861815
+com.clarifi.reporting.backends.TestPersistence=1789218868389
+com.clarifi.reporting.relational.TestOptimizer=1789218849791
+com.clarifi.reporting.TestScopes=1789218938343
+com.clarifi.reporting.writers.TestLegend=1789218863873

@@ -1,0 +1,28 @@
+[0m[[0minfo[0m] [0m+ Ermine scoping.a pattern variable may shadow an import: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.an infix constructor pattern's variables may shadow imports: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a lambda binder may shadow an import: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a case binder may shadow an import: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a let binding may shadow an import: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a where binding may shadow an import: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.an import shadowed in a pattern means itself again outside: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.an import shadowed in a let means itself again outside: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.an import shadowed in a where means itself again in later statements: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.an outer binder shadowed by a let survives the let: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.let bindings see later siblings: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a let binding shadowing an import binds earlier sibling references: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a where binding shadowing an import is what the body sees: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.multiple equations still make one let binding: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a signed let binding still pairs signature with definition: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a let binder's type is independent of what it shadows: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a top-level definition still may not shadow an import: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.let bindings do not leak into the enclosing scope: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.where bindings do not leak into the enclosing scope: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.shadowing may not capture references through another alias (where): OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.shadowing may not capture references through another alias (let): OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.shadowing an aliased import is fine when no reference is captured: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a ?[...] reference is rebound by a shadowing let sibling: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a ?[...] reference is rebound by a shadowing where binding: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a data constructor operator may not be shadowed: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.an operator with its own fixity declaration can still be let-bound: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.nested lets shadowing the same name restore outward layer by layer: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine scoping.a let inside a where clause shadows and restores independently: OK, passed 100 tests.[0m

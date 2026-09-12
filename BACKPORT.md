@@ -4,7 +4,7 @@ Back-port of the scala3-migration fixes to the Scala 2.11 branch
 Branch `backport-2.11`, forked from `default` at 8de8010.  Scope, as agreed:
 minimal.  The Scala 3 branch's language server, resolution-free parser
 (`surface/`, `rename/`), tolerant read path and REPL pipeline cutover are
-NOT here; only the two families of fixes are.
+NOT here; only the three families of fixes are.
 
 1. Scoping fix (parser)
 -----------------------
@@ -38,8 +38,33 @@ rewritten (scala3-migration ed53fe7).  TypeParsers.scala carries the F4 fix so
 row labels with a lower-case last segment read back (78adf6d).  So the first
 load after switching to this branch rechecks every module once.
 
-Not ported on purpose: the stdlib .e library fixes (Date, NonEmpty, Relation),
-the loop-model replay tests, TestInterfaceConcreteRow (needs tools/G1Compare).
+3. Signature entailment (type inference)
+----------------------------------------
+Added 2026-09-12 from scala3-migration 5162945 (SIG-3): a declared
+signature's ROW obligations are now checked against the body's, so
+`healthOpt : forall r. {..r} -> Int; healthOpt r = r ! health` is refused
+instead of getting stuck at run time.  SigEntail.scala (the judgement and its
+per-label decision procedure), Constraints.LabelSearch (the one-hot engine
+lifted out of decideLabel so one search decides both satisfiability and
+entailment), the two call sites in Subst.subsumeType (`ann` and `sig`), the
+per-session mode SessionEnv.sigEntail -> SubstEnv.sigEntail, and
+Session.interfaceKey's `|sigEntail=error` suffix.
+  - DEFAULT `error` (-Dermine.sigEntail=off|warn|error); `off` is byte-identical
+    to the pre-S3 behaviour and `warn` prints the probe records and accepts.
+  - the mode is a SESSION option, not a read-once flag, so one JVM holds a
+    suite's `error` properties beside its `off` ones with no System.setProperty.
+  - the stdlib needed seven signature corrections first (backport/CORRECTIONS.md,
+    BP-2) plus core/examples/SoftRelation.e's date drilldown.
+  - oracle backport/sigcheck.py; suites TestSigEntail (14 properties) and
+    TestSigEntailDiff (8, over core/src/test/resources/sigentail/).
+  - full report and every measurement: backport/SIG-ENTAIL-2.11.md.
+  - toolchain, written into the branch this time: backport/env-2.11.sh
+    (`source` it, then `sbt211 <task>`), backport/repositories, backport/hg.
+
+Not ported on purpose: the loop-model replay tests, TestInterfaceConcreteRow
+(needs tools/G1Compare), TestInterfaceKey (see below), the tracker/ tree
+(design notes, the Lean development, the corpus tooling) and the language
+server, so SIG-3's editor half has nothing here.
 
 Line endings: the branch's files are CRLF and stay CRLF; diff against
 `default` with plain `git diff` -- there is no line-ending churn.
@@ -64,7 +89,21 @@ Verification (2026-09-09, sbt 0.13.5 / Scala 2.11.5 / JDK 8)
     it with the flag gone, flipping back rewrites it again.
   - TestInterfaceKey was NOT ported: its "warm load under ermine.loadInSeries"
     step deadlocks the 2.11 module loader (the Scala 3 branch's loader was
-    reworked in 939c2aa; this branch has no loadInSeries).
+    reworked in 939c2aa; this branch has no loadInSeries).  Its one SIG-3
+    assertion is a property inside TestSigEntail instead.
+
+Verification of family 3 (2026-09-12, same toolchain)
+-----------------------------------------------------
+  - sbt211 core/test: 735 properties, 0 failures (713 + 14 + 8).
+  - REPL boot at the default `error`: 129 modules, 21 s, no warning and no
+    NO VERDICT; identical under `off`.
+  - the engine agrees with backport/sigcheck.py on all 106 corpus signatures
+    (101 ACCEPT, 5 REJECT) and with exhaustive enumeration on 2,000 random
+    systems; corpus cost max 10 decision nodes against a 200,000 budget.
+  - every core/examples/*.e under `off` vs `error`: only the five
+    shouldfail/sig0*.e differ.  A published .ei differs only by the key line,
+    modulo the pre-existing run-to-run ordering noise (measured: two `off` runs
+    of one tree differ on 7 of 129 files too).
 
 Building this branch today
 --------------------------

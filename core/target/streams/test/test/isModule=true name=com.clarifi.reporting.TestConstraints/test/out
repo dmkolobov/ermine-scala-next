@@ -1,0 +1,17 @@
+[0m[[0minfo[0m] [0m+ Constraints.empty constraint: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.concrete constraint: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.resolution sound: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.split concrete sound: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.common subexpression sound: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.cancellation sound: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.subPartitions sound: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.destructiveSub sound: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.substitution sound: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.makeEmpty sound: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.unify sound: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.self-substitution sound: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.join example: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.similar partitions: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.add partitions: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.incorporate twice: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Constraints.queue rhs hash sorted: OK, passed 100 tests.[0m

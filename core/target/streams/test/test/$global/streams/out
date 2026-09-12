@@ -1,0 +1,39 @@
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.relational.TestOptimizer, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.TestSigEntail, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.util.TestGraph, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.TestRTag, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.writers.TestLegend, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.TestErmineModules, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.relational.TestProcessSymbols, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.sql.TestSqlEmitters, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.flatteners.TestFlatteners, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.writers.TestMarkdown, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.backends.TestPersistence, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.writers.TestErmineLegends, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.TestLenses, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.TestConstraints, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.TestErmine, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.util.TestStreamTUtils, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.TestSigEntailDiff, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mRunning TaskDef(com.clarifi.reporting.TestScopes, sbt.SubclassFingerprintWrapper@1dc71689, false, [SuiteSelector])[0m
+[0m[[0mdebug[0m] [0mSummary for ScalaCheck not available.[0m
+[0m[[0minfo[0m] [0mPassed: Total 735, Failed 0, Errors 0, Passed 735[0m
+[0m[[0mdebug[0m] [0mPassed tests:[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.backends.TestPersistence[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.flatteners.TestFlatteners[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.util.TestGraph[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.TestRTag[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.writers.TestLegend[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.TestErmineModules[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.relational.TestProcessSymbols[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.TestLenses[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.TestErmine[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.TestSigEntailDiff[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.TestScopes[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.sql.TestSqlEmitters[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.util.TestStreamTUtils[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.writers.TestMarkdown[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.relational.TestOptimizer[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.TestConstraints[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.writers.TestErmineLegends[0m
+[0m[[0mdebug[0m] [0m	com.clarifi.reporting.TestSigEntail[0m

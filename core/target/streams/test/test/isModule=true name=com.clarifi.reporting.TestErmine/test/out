@@ -1,0 +1,27 @@
+[0m[[0minfo[0m] [0m+ Ermine.Occurs.fun: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine.Occurs.Maybe: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine.Occurs.kind: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine.Maybe.Maybe: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine.Int.arithmetic: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine.generic arithmetic, primitive comparison: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.List: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.locals can be recycled: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.Native pairs are 2-tuples: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.Native pairs round-trip: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.Ops run: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.Different op types comparison: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine.DataCon.Argument.Kind: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine.Type.HigherKinded: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.Type.HigherKinded.Argument: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine.forall a. a : *: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.Field : rho -> * -> *: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.let-bound vars shouldn't unify across functions: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine.partitioning: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.explicitly typed expression: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.do syntax: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.date literals/SQL emitting round-trip: OK, passed 100 tests.[0m
+[0m[[0minfo[0m] [0m+ Ermine.:= as a name: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.circular.annotated: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.circular.application[1]: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.circular.application[2]: OK, proved property.[0m
+[0m[[0minfo[0m] [0m+ Ermine.circular.lambda: OK, proved property.[0m

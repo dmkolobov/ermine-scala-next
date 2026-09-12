@@ -1,6 +1,6 @@
 package com.clarifi.reporting.ermine.session
 
-import com.clarifi.reporting.ermine.{ V, Global, Runtime, Type, Kind, Requirements, Pretty }
+import com.clarifi.reporting.ermine.{ V, Global, Runtime, Type, Kind, Requirements, Pretty, SigEntail }
 import com.clarifi.reporting.ermine.Type.subType
 import com.clarifi.reporting.ermine.parsing.{ ModuleHeader }
 import com.clarifi.reporting.ermine.Pretty.{ prettyType, ppType, ppName, ppVar }
@@ -91,13 +91,23 @@ class SessionEnv(
   var classes:         Map[Global,ClassDef]           = Map(),
   var classOrigins:    Map[Global, List[Global]]      = Map(),
      _typeCheck:       Option[Boolean]                = None,
-     _useInterface:    Option[Boolean]                = None
+     _useInterface:    Option[Boolean]                = None,
+     _sigEntail:       Option[SigEntail.Mode]         = None
 ) { that =>
-  def copy = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck),Some(that.useInterface))
+  def copy = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck),Some(that.useInterface),Some(that.sigEntail))
 
   val typeCheck : Boolean = _typeCheck.getOrElse(java.lang.Boolean.getBoolean("ermine.typeCheck"))
   val useInterface : Boolean =
     _useInterface.getOrElse(java.lang.Boolean.parseBoolean(System.getProperty("ermine.useInterface","true")))
+
+  /** SIGNATURE ENTAILMENT (`tracker/SIG-ENTAIL-PLAN.md` S3): whether a declared
+    * signature's ROW constraints are checked against the body's obligations, and
+    * what a failure costs.  DEFAULT `error` (`-Dermine.sigEntail=off|warn|error`).
+    * Per session rather than global so that one JVM can hold a suite's `error`
+    * properties beside its `off` ones with no `System.setProperty`, and so a
+    * future language server can differ from a batch build; it reaches the checker
+    * as `SubstEnv.sigEntail` through `Session.subst`. */
+  val sigEntail : SigEntail.Mode = _sigEntail.getOrElse(SigEntail.defaultMode)
 
   def +=(sp: SessionEnv) {
     env             = env ++ sp.env
