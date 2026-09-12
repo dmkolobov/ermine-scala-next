@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 ap : forall (f: * -> *) a b. Control.Ap.Ap f -> f (a -> b) -> f a -> f b
 apFunctor : forall (f: * -> *). Control.Ap.Ap f -> Control.Functor.Functor f
 liftA : forall (f: * -> *) a b. Control.Ap.Ap f -> (a -> b) -> f a -> f b

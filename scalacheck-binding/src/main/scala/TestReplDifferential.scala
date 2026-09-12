@@ -16,7 +16,7 @@ import Prop._
   * Corpus-authoring note: Prelude WITHOUT Primitive — together they
   * make `+` ambiguous (the operator-imported-twice pin). */
 object TestReplDifferential extends Properties("REPL eval goldens") {
-  private val fx = ErmineFixture()
+  private val fx = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import fx._
 
   private val evalImps: Map[String, ImportSpec] =

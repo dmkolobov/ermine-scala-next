@@ -1,4 +1,5 @@
-cons_Bracket : forall (f1: rho) id (f2: rho) (r: rho) (rout: rho). (Has rout r, Has rout f2, Has rout f1) => (Builtin.Field f1 id, Builtin.Field f2 id) -> DrilldownList.DrilldownList r -> DrilldownList.DrilldownList rout
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
+cons_Bracket : forall (f1: rho) id (f2: rho) (r: rho) (rout: rho). rout <- (f1, f2, r) => (Builtin.Field f1 id, Builtin.Field f2 id) -> DrilldownList.DrilldownList r -> DrilldownList.DrilldownList rout
 empty_Bracket : DrilldownList.DrilldownList (||)
 fromDrilldown : forall (r: rho). DrilldownList.DrilldownList r -> Builtin.List (Builtin.String, Builtin.String)
 fromDrilldown' : forall (r: rho). DrilldownList.DrilldownList r -> Builtin.List (Builtin.String, Builtin.String, Builtin.PrimT)

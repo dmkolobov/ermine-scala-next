@@ -255,7 +255,7 @@ object TestLegend extends Properties("Legends & presentations") {
 
 object TestErmineLegends extends Properties("Ermine legends") {
   import com.clarifi.reporting.ermine.Prim
-  private val ermineFixture = ErmineFixture()
+  private val ermineFixture = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import ermineFixture._
 
   property("presentation coercion") = secure {

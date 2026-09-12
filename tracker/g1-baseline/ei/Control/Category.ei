@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 catEndoMonoid : forall (k: a1 -> a1 -> *) (a: a1). Control.Category.Category k -> Control.Monoid.Monoid (k a a)
 comp : forall (k: a1 -> a1 -> *) (b: a1) (c: a1) (a: a1). Control.Category.Category k -> k b c -> k a b -> k a c
 idC : forall (k: a1 -> a1 -> *) (a: a1). Control.Category.Category k -> k a a

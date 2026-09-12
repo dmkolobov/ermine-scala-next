@@ -238,12 +238,17 @@ melt3FullViaDeduped = melt3Deduped
 
 -- What a person writes, and what `Helpers.e` ships: "the input is the identity
 -- columns plus the three measures, the output is the identity columns plus a key
--- and a value".  TWO constraints, one existential.  It is a SPECIALISATION, not
--- an equivalent -- it fixes the shape of the answer rather than describing every
+-- and a value", plus the disjointness that sentence forgets -- `r | key`, the
+-- key column is not already in the input.  THREE constraints, two existentials
+-- (`r | key` is `exists c. c <- (r, key)`).  It is a SPECIALISATION, not an
+-- equivalent -- it fixes the shape of the answer rather than describing every
 -- intermediate -- so its body is written out, which proves the body has this
--- type.
+-- type.  Stage S3b (2026-09-11) added `r | key`: with two constraints only, the
+-- body's `combine` of the key column into `r` minus the other measures is not
+-- entailed, and `melt3Simple fa vf fa fb fc r` type-checked and failed at run
+-- time.
 melt3Simple : forall key val fa fb fc i r out t rel.
-              (r <- (i, fa, fb, fc), out <- (i, key, val), RelationalComb rel)
+              (r <- (i, fa, fb, fc), out <- (i, key, val), r | key, RelationalComb rel)
            => Field key String -> Field val t
            -> Field fa t -> Field fb t -> Field fc t
            -> rel r -> rel out

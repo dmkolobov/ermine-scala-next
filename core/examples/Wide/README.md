@@ -1,9 +1,10 @@
 # `core/examples/Wide` — generic helpers over wide tables
 
-Nine self-contained Ermine reports over **wide** fact tables — twenty to
+Ten self-contained Ermine reports over **wide** fact tables — twenty to
 thirty-six columns each — plus one shared library, `Helpers.e`, a module of
 machine-checked signature equivalences, `Signatures.e`, and three negative
-examples in `shouldfail/`.
+examples in `shouldfail/`.  (`Corrected.e`, the tenth, is narrow on purpose: it
+is a signature control, not a wide report.)
 
 `core/examples/Ai` is about **trees**: drilldowns, hierarchies, date-range
 calendars. This directory is about **width**. Its subject is the three report
@@ -49,7 +50,8 @@ figures are upper bounds and the spread between them is the contention.
 | `BranchDeposits.e` | bank deposits | 22 | 27 | `lookupLatest` against **two calendars** that share no dates; moving average; latest-per-key | 0.70 / 0.57 s |
 | `MediaSpend.e` | marketing spend | 23 | 26 | the **concise** pivot spelling (`pivotOnRow`), and the same pivot **with defaults** so the row can be summed | 0.60 / 0.52 s |
 | `ClaimsExperience.e` | insurance claims | **36** | **43** | the widest row in the corpus: three ratios in one call, three windows, a defaulted three-way pivot, and the tree's widest `melt3` | 2.60 / 2.83 / 2.23 s |
-| `Signatures.e` | the helpers' own types | — | — | four equivalence proofs: `RUnion2` **is** its three-constraint lattice (both directions); `rankWithin`'s five published ≡ the four written (both directions); `melt3`'s 22 inferred ≡ 20 after dedup ≡ 2 when written by hand; `withDerived2`'s eight ⊨ four | 0.18 s |
+| `Corrected.e` | the corrected `melt` signatures, called | 4 / 5 | — | the POSITIVE control for stage S3b: `melt2` and `melt3Simple` at a key column that is NOT one of the melted columns, which is what the constraint the two signatures gained (`r | key`) asks for.  Both evaluate to a `Success` whose header is the declared row; `melt2 fa vf fa fb r`, which the old signature accepted, is the negative | 0.4 s |
+| `Signatures.e` | the helpers' own types | — | — | four equivalence proofs: `RUnion2` **is** its three-constraint lattice (both directions); `rankWithin`'s five published ≡ the four written (both directions); `melt3`'s 22 inferred ≡ 20 after dedup, and 3 when written by hand (a SPECIALISATION, not an equivalent -- and three since stage S3b, the third being the `r | key` the hand-written pair forgot); `withDerived2`'s eight ⊨ four | 0.18 s |
 
 `shouldfail/` holds three modules that must NOT compile, with their diagnostics
 recorded verbatim in `shouldfail/RESULTS.md`: a pivot whose key column is also

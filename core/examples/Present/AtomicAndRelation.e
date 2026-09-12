@@ -354,8 +354,14 @@ twoScans = runScan (do
 --
 -- Its signature demands the relation be EXACTLY (group, child, parent, value):
 -- `s <- (d, c, p, v)`. That is unusually strict for this library, and it is why
--- the projection below is exact. The value column must be `Nullable Double`
--- because the sums it produces may be null when a parent has no small slices.
+-- the projection below is exact. Since stage S3b (2026-09-11) it also asks that
+-- the four columns the algorithm mints -- `cutoff`, `cutoffCount`, `cutoffChild`
+-- and `cutoffGroup` -- are OUTSIDE `s`, which any user row satisfies by
+-- construction because those four names are `private` to
+-- `Layout.Report.Relation`; the constraint had named only `cutoff`, and the
+-- private helper `others` needs all four (`SIG-3b-CORRECTIONS.md`). The value
+-- column must be `Nullable Double` because the sums it produces may be null when
+-- a parent has no small slices.
 slices : [ sliceId, sliceParent, sliceName, sliceWeight ]
 slices = relation [
   { sliceId = 1,  sliceParent = 0, sliceName = "Temperature",   sliceWeight = Some 0.195 },

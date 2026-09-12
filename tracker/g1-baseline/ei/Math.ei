@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 ensureNonnegativeWeight : (Builtin.Double, Builtin.Double) -> (Builtin.Double, Builtin.Double)
 harmonicQuotientSum : Builtin.Double -> (Builtin.Double, Builtin.Double) -> Builtin.Double
 weightedSum : Builtin.Double -> (Builtin.Double, Builtin.Double) -> Builtin.Double

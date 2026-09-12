@@ -40,7 +40,7 @@ import Prop.{ Result => _, _ }
   * Every property below FAILS on the pre-fix compiler on any host; the pre-fix answer is named.
   */
 object TestDateAndScan extends Properties("Date, dateDiff and Layout.Scan (F3)") {
-  private val fx = ErmineFixture()
+  private val fx = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import fx.{defAndEval, typeChecks, no}
 
   private val onlyTest = Map("Test" -> fx.all)

@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 flop : forall (p: a1 -> b1 -> *) (a: b1) (b: a1). Type.Eq.Flip p a b -> p b a
 refl : forall {k} (a: k). (Type.Eq.==) a a
 symm : forall (a: a1) (b: a1). (Type.Eq.==) a b -> (Type.Eq.==) b a

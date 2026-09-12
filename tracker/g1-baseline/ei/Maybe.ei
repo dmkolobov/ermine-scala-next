@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 ap' : forall a b. Builtin.Maybe (a -> b) -> Builtin.Maybe a -> Builtin.Maybe b
 bind' : forall a b. Builtin.Maybe a -> (a -> Builtin.Maybe b) -> Builtin.Maybe b
 catMaybes : forall a. Builtin.List (Builtin.Maybe a) -> Builtin.List a

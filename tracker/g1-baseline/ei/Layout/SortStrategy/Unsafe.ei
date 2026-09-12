@@ -1,2 +1,3 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 nativeSortStrategyData# : forall (r: a). Layout.SortStrategy.SortStrategy r -> Native.List.List# (Native.Pair.Pair# Builtin.String Layout.SortStrategy.SortDirection)
 sortStrategy# : forall (r: rho). Layout.SortStrategy.SortStrategy r -> Layout.SortStrategy.Unsafe.SortStrategy# r

@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 basic : forall (op: rho -> * -> *) (r: rho) a. (AsOp op, Builtin.Primitive a) => op r a -> Layout.Presentation.Presentation r a
 columnsUsed : forall (pr: rho -> * -> *) (r: rho) a. Layout.Presentation.AsPresentation pr => pr r a -> Builtin.List Builtin.String
 currency : forall (op: rho -> * -> *) (r: rho) n. (Builtin.PrimitiveNum n, AsOp op) => Builtin.String -> op r n -> Layout.Presentation.Presentation r n

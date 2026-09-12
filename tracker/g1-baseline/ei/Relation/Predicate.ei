@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 (!=) : forall {a} (opl: rho -> a -> *) (a1: rho) (v: a) (opr: rho -> a -> *) (b: rho) (c: rho). (exists (e: rho) (f: rho) (d: rho) (AsOp: (rho -> a -> *) -> b1). a1 <- (e, d), AsOp opr, AsOp opl, c <- (f, e, d), b <- (f, e)) => opl a1 v -> opr b v -> Builtin.Predicate c
 (&&) : forall (r: rho) (s: rho) (t: rho). Constraint.RUnion2 t r s => Builtin.Predicate r -> Builtin.Predicate s -> Builtin.Predicate t
 (<) : forall (opl: rho -> * -> *) (a: rho) v (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). c <- (d, e, f), b <- (e, f), AsOp opr, AsOp opl, a <- (d, e)) => opl a v -> opr b v -> Builtin.Predicate c

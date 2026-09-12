@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 dumpQuery : forall (f: * -> *) (rel: rho -> *) (r: rho). Builtin.Relational rel => Scanners.Scanner f -> rel r -> Builtin.IO Builtin.String
 dumpQueryInOrder : forall (f: * -> *) (rel: rho -> *) (r: rho). Builtin.Relational rel => Scanners.Scanner f -> rel r -> Relation.Sort.Sort r -> Builtin.IO Builtin.String
 mySql : forall (f: * -> *). Internal.SMEnv.SMEnv f -> Scanners.Scanner f

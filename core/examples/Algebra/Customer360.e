@@ -181,14 +181,23 @@ creditBySegment  = rename creditLimitEur segmentCredit
 
    `Relation.UnifyFields` exports exactly one function:
 
-       unify1 : (r <- (h,f,t), r2 <- (h,f2,t))
+       unify1 : (r2 <- (f1,f2,p), r <- (f2,p,u))          -- since stage S3b
              => Field f1 a -> Field f2 a -> [..r] -> [..r2] -> [..r]
        unify1 f1 f2 r r2 = join (rename f1 f2 (except {f2} r2)) r
 
-   Read the constraints. `r2 <- (h, f2, t)` and `r <- (h, f, t)` share BOTH
-   `h` and `t`, so the two operands must agree on every column but one each;
-   and `f1` -- the column actually being renamed -- appears in no constraint at
-   all. Feeding it the two sources this file exists to reconcile,
+   Read the constraints. Until 2026-09-11 they were `r <- (h, f, t)` and
+   `r2 <- (h, f2, t)`, which share BOTH `h` and `t` -- so the two operands had
+   to agree on every column but one each -- and `f1`, the column actually being
+   renamed, appeared in no constraint at all: `unify1 d c rr rr2` with `d` in
+   neither operand type-checked and failed at run time with
+   `Renaming non-existent attribute` (`SIG-1-SURVEY.md` item c1). Stage S3b
+   corrected them to the pair above, which says `f1` IS a column of the second
+   operand, and is otherwise WEAKER than what it replaced: the operands need
+   only share `f2 + p`, and `r` may carry anything else (`u`). The finding below
+   survives the correction unchanged -- and so does the call at the bottom of
+   this file, which the tighter reading the survey recommended
+   (`r2 <- (h, f1, f2, t)`) would have refused. Feeding it the two sources this
+   file exists to reconcile,
 
        unify1 crmAccountId customerId crm crmAccounts
 

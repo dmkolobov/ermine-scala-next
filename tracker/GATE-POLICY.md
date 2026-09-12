@@ -65,3 +65,6 @@ Never commit red. Never `lake build` while a `looptrace` binary runs.
 - A reviewer reads the implementer's gate logs (cite the path) and re-runs only the targeted suites for
   the code under review plus anything it disputes. Never a whole-corpus or whole-suite re-run for a review.
 - Briefs state a wall-clock budget (hours), and an agent that reaches it writes up and stops.
+- In a WORKTREE: `tracker/repl-classpath.txt` is checked in with absolute paths into the main checkout, and
+  `repl-smoke.sh`, `g1-validate.sh`, `lsp-smoke.sh`, `g1-diff.sh`, `perf-bench.sh` read it -- regenerate it
+  from the worktree's `target/ermine-classpath` (do not commit the result) or the gate tests the wrong build.

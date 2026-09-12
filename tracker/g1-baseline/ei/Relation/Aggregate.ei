@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 aggregateBy : forall (h: rho) n (rel: rho -> *) (r: rho). (r <- (h, t), Builtin.Relational rel) => (Builtin.Field h n -> Relation.Aggregate.Type.Aggregate h n) -> Builtin.Field h n -> rel r -> rel h
 aggregateByGroup : forall (r: rho) a (b: rho) (f: rho) (s: rho) (t: rho). (t <- (f, b), Has s r) => Relation.Aggregate.Type.Aggregate r a -> Relation.Row.Row b -> Builtin.Field f a -> Builtin.Relation s -> Builtin.Relation t
 avg : forall (op: rho -> * -> *) (r: rho) n. (exists (AsOp: (rho -> * -> *) -> a). AsOp op, Builtin.PrimitiveNum n) => op r n -> Relation.Aggregate.Type.Aggregate r n

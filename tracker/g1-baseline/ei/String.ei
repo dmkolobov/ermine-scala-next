@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 concat : Builtin.List Builtin.String -> Builtin.String
 drop : Builtin.Int -> Builtin.String -> Builtin.String
 lines : Builtin.String -> Builtin.List Builtin.String

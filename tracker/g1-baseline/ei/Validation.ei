@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 (>=>) : forall a b c. (a -> Either.Either Builtin.String b) -> (b -> Either.Either Builtin.String c) -> a -> Either.Either Builtin.String c
 always : forall b a. b -> a -> Either.Either Builtin.String b
 arr : forall a b. (a -> b) -> a -> Either.Either Builtin.String b

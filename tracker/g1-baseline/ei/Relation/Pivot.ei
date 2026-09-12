@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 catFulcrum : forall (k: a) (v1: b) (p1: rho) (v2: b) (p2: rho) (v3: c) (p: rho). (RUnion2 v3 v2 v1, p <- (p1, p2)) => Relation.Pivot.Fulcrum k v1 p1 -> Relation.Pivot.Fulcrum k v2 p2 -> Relation.Pivot.Fulcrum k v3 p
 consFulcrum : forall (f: rho) a (v1: rho) (k: rho) (v2: a1) (p: rho) (v3: b) (p': rho). (RUnion2 v3 v2 v1, p' <- (f, p)) => Builtin.Field f a -> Relation.Op.Type.Op v1 a -> Builtin.Record k -> Relation.Pivot.Fulcrum k v2 p -> Relation.Pivot.Fulcrum k v3 p'
 defaultFulcrum : forall (p: rho) (v: rho) a (k: rho). Relation.Row.Row p -> Builtin.Field v a -> Builtin.Field k Builtin.String -> Relation.Pivot.Fulcrum k v p

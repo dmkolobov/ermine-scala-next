@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 fmap : forall (f: * -> *) a b. Control.Functor.Functor f -> (a -> b) -> f a -> f b
 mapply : forall (f: * -> *) a b. Control.Functor.Functor f -> f (a -> b) -> a -> f b
 strength : forall (f: * -> *) x y. Control.Functor.Functor f -> (x, f y) -> f (x, y)

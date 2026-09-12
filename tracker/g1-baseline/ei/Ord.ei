@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 argmax : forall b a. (b -> b -> Ord.Ordering) -> (a -> b) -> a -> a -> a
 argmin : forall b a. (b -> b -> Ord.Ordering) -> (a -> b) -> a -> a -> a
 contramap : forall b a. (b -> a) -> (a -> a -> Ord.Ordering) -> b -> b -> Ord.Ordering

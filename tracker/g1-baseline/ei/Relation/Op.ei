@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 (%) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). a <- (d, e), c <- (d, e, f), b <- (e, f), Builtin.PrimitiveNum n, Relation.Op.AsOp opr, Relation.Op.AsOp opl) => opl a n -> opr b n -> Relation.Op.Type.Op c n
 (*) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). b <- (e, f), Builtin.PrimitiveNum n, c <- (d, e, f), Relation.Op.AsOp opl, Relation.Op.AsOp opr, a <- (d, e)) => opl a n -> opr b n -> Relation.Op.Type.Op c n
 (+) : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). Relation.Op.AsOp opr, Builtin.PrimitiveNum n, b <- (e, f), a <- (d, e), c <- (d, e, f), Relation.Op.AsOp opl) => opl a n -> opr b n -> Relation.Op.Type.Op c n

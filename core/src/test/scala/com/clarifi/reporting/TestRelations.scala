@@ -97,7 +97,7 @@ object TestErmineRelations extends Properties("Ermine relations") {
   import session.Session.{all => _, eval => _, _}
   import syntax.Single
 
-  val ermineFixture = ErmineFixture()
+  val ermineFixture = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import ermineFixture._
 
   def fumports(mod: String, names: String*): (String, ImportSpec) =

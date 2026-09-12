@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 prim# : forall a. Builtin.Prim a -> Builtin.PrimT
 primExpr# : forall a. Builtin.Primitive a => a -> Prim.PrimExpr#
 unsafePrim# : forall a. Builtin.Primitive a => Builtin.PrimT -> Builtin.Prim a

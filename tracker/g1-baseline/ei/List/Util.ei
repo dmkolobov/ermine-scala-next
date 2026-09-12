@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 distinct : forall a. (a -> a -> Ord.Ordering) -> Builtin.List a -> Builtin.List a
 ensureNonnegativeWeights : Builtin.List (Builtin.Double, Builtin.Double) -> Builtin.List (Builtin.Double, Builtin.Double)
 median : Builtin.List Builtin.Double -> Builtin.Maybe Builtin.Double

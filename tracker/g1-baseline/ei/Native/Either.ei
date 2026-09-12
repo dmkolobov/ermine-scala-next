@@ -1,2 +1,3 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 toEither# : forall a b. Either.Either a b -> Native.Either.Either# a b
 toEitherZ# : forall a b. Either.Either a b -> Native.Either.EitherZ# a b

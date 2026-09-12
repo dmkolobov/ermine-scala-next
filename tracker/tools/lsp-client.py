@@ -2731,6 +2731,42 @@ def main():
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("UndefTy.e")}})
     client.diagnostics_for(uri("UndefTy.e"))
 
+    # ---- SIG-3: the signature-entailment check is REPORTED IN THE EDITOR.
+    # `TolerantCheck` reaches `Subst.subsumeType` through its own
+    # `typeCheckExplicitBinding` call, inside `guard(Error)`, so the diagnostic
+    # arrives as an ordinary Error note with no editor-specific code -- and it
+    # must, or a file `bin/ermine` refuses would look clean in the IDE.  The
+    # fixture carries the defect and its honest twin, so this pins both halves:
+    # the position (the `!` that generated the obligation, not the signature and
+    # not the stdlib's `!`), the two-location message, and the SILENCE on the
+    # control.
+    open_doc("SigEntail.e")
+    ds = client.diagnostics_for(uri("SigEntail.e"))
+    if os.environ.get("ERMINE_SIGENTAIL", "error") == "off":
+        # the ESCAPE HATCH, over the wire: with the check off the file is clean, which is
+        # exactly the pre-S3 editor behaviour this fixture would have had.
+        check("SIG-3 under `off` the same file is clean", ds == [], repr(ds))
+    else:
+        check("SIG-3 the too-weak signature is one diagnostic",
+              len(ds) == 1, repr(ds))
+        check("SIG-3 the diagnostic is the entailment message",
+              len(ds) == 1 and
+              "the signature does not entail this row constraint" in ds[0]["message"],
+              repr(ds[:1]))
+        check("SIG-3 the diagnostic carries the second location",
+              len(ds) == 1 and "declared at" in ds[0]["message"], repr(ds[:1]))
+        check("SIG-3 the diagnostic is an error (severity 1)",
+              len(ds) == 1 and ds[0].get("severity") == 1, repr(ds[:1]))
+        # `tooWeak r = r ! health` is line 19 (0-based 18); the obligation is generated
+        # by the `!`, which is where the editor must put the squiggle -- and the SECONDARY
+        # location is the signature line above it (0-based 17), not the equation.
+        check("SIG-3 the diagnostic sits on the body's `!`, in this file",
+              len(ds) == 1 and ds[0]["range"]["start"]["line"] == 18, repr(ds[:1]))
+        check("SIG-3 the second location is the signature line, not the equation",
+              len(ds) == 1 and "SigEntail.e:18:11" in ds[0]["message"], repr(ds[:1]))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("SigEntail.e")}})
+    client.diagnostics_for(uri("SigEntail.e"))
+
     # Checks must neither read nor write interface files (a stale .ei would
     # let type errors through unreported, and writebacks litter workspaces).
     check("no .ei droppings", not list(FIXTURES.glob("*.ei")),

@@ -1,2 +1,3 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 filterAll : forall (r: rho) (a: rho -> *) (b: rho). (exists (c: rho). b <- (r, c), Builtin.RelationalComb a) => Builtin.Record r -> a b -> a b
 headFieldOr : forall a (h: rho) (r: rho). (exists (t: rho). r <- (h, t)) => a -> Builtin.Field h (Builtin.Nullable a) -> Builtin.List (Builtin.Record r) -> a

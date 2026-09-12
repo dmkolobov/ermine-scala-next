@@ -19,7 +19,9 @@ module Time.InterestAccrual where
 
    SHAPES EXERCISED
      * `dayCount` / `yearFrac365` / `yearFrac360` -- `Relation.Op.dateDiff`, whose
-       result-row is UNCONSTRAINED (see the note on `Helpers.dayCount`).
+       result row is the UNION of the two operands' (`RUnion2 out r r1`), which
+       `Helpers.dayCount` also carries since stage S3b; both date columns really
+       are columns of `receivables`, which is what makes these calls check.
      * `nearestBy` -- the reference rate as of the value date, per rate code.
      * `orElseNum` -- the nullable agreed rate falling back to base + surcharge.
        NOT `orZero`: a missing agreed rate is not a rate of zero.

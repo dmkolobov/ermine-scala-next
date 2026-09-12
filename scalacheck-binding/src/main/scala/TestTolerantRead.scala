@@ -29,7 +29,7 @@ import java.io.File
   *    checkFile hoists the import load out of Session.load.
   */
 object TestTolerantRead extends Properties("Tolerant read") {
-  private val fx = ErmineFixture()
+  private val fx = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import fx._
 
   /** The corpus sweep gets its OWN fixture.  ErmineFixture's loadModules
@@ -44,7 +44,7 @@ object TestTolerantRead extends Properties("Tolerant read") {
     * in three.  (The fixture's own scaladoc says one per Properties
     * instance; one per PROPERTY is what a writeback-shared baseEnv
     * actually needs.) */
-  private val sweepFx = ErmineFixture()
+  private val sweepFx = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
 
   private val stdlibRoot = new File("core/src/main/resources/modules")
 

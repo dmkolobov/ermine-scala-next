@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 cells : Builtin.Int -> Native.Magnitude.Magnitude Native.Magnitude.CellT
 cellsA : Builtin.Int -> Builtin.Int -> Native.Magnitude.Area
 cellsM : Builtin.Int -> Native.Magnitude.ErasedMagnitude

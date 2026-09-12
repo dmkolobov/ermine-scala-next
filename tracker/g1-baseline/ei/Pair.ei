@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 fst : forall a b. (a, b) -> a
 mapFst : forall a b c. (a -> b) -> (a, c) -> (b, c)
 mapSnd : forall a b c. (a -> b) -> (c, a) -> (c, b)

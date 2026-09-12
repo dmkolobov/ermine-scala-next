@@ -1,2 +1,3 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 mapStyleGrid : forall a b. (a -> b) -> Builtin.List (Builtin.Maybe Builtin.String, Builtin.List (Builtin.Maybe Builtin.String, a)) -> Builtin.List (Builtin.Maybe Builtin.String, Builtin.List (Builtin.Maybe Builtin.String, b))
 toStyleGrid# : forall a. Builtin.List (Builtin.Maybe Builtin.String, Builtin.List (Builtin.Maybe Builtin.String, a)) -> Layout.Report.StyleGrid.StyleGrid# a

@@ -683,7 +683,7 @@ log10_Op : forall (op: rho -> * -> *) (a: rho) n (b: rho). (exists (c: rho). AsO
 log1p : Double -> Double
 logBase_Op : forall (opl: rho -> * -> *) (a: rho) n (opr: rho -> * -> *) (b: rho) (c: rho). (exists (d: rho) (e: rho) (f: rho). AsOp opl, AsOp opr, PrimitiveNum n, a <- (d, e), b <- (e, f), c <- (d, e, f)) => opl a n -> opr b n -> Op c n
 log_Op : forall (op: rho -> * -> *) (a: rho) n (b: rho). (exists (c: rho). AsOp op, PrimitiveNum n, b <- (c, a)) => op a n -> Op b n
-lookbackJoin : forall (r: rho) (r1: rho) (a: rho) (b: rho). (exists (c1: rho) (c2: rho) (c: rho) (d: rho) (e: rho) (f: rho) (g: rho) (h: rho) (o: rho) (r2: rho) (t: rho). a <- (c2, r), a <- (h, g), b <- (h, g, f), o <- (g, f), r1 <- (c, e), r1 <- (c1, r), r2 <- (d, c), t <- (d, c, e), t <- (r, d, c1)) => (Field r Date -> Op r Date) -> Field r Date -> Relation r1 -> Relation a -> Relation b
+lookbackJoin : forall (r: rho) (r1: rho) (a: rho) (b: rho). (exists (c1: rho) (c2: rho) (c: rho) (d: rho) (e: rho) (f: rho) (g: rho) (h: rho) (o: rho) (r2: rho) (t: rho). a <- (c, r), a <- (h, g), b <- (h, g, f), o <- (g, f), r1 <- (c1, e), r1 <- (c2, r), r2 <- (d, c1), t <- (d, c1, e), t <- (r, d, c2)) => (Field r Date -> Op r Date) -> Field r Date -> Relation r1 -> Relation a -> Relation b
 lookupLatest : forall (h: rho) (r: rho). r <- (h, t) => Field h Date -> Relation h -> Relation r -> Relation r
 lookupLatest' : forall (keys: rho) (r: rho). r <- (keys, t) => (Date -> Relation keys -> Relation r) -> Date -> Date -> Relation keys -> Relation r
 lookupLatest1 : forall (h: rho) (r: rho). r <- (h, t) => Field h Date -> Date -> Relation r -> Relation r
@@ -858,8 +858,8 @@ parseInputVLateBinding : forall a (f: * -> *) z. (String -> Either String a) -> 
 parseInt : Int -> String -> Maybe Int
 parseLong : Int -> String -> Maybe Long
 parseShort : Int -> String -> Maybe Short
-partialLookup : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho) (r: rho). (r <- (key, base), kv <- (key, val), PrimitiveAtom a, RelationalComb rel) => Field key a -> Field val a -> rel kv -> rel r -> rel r
-partialLookup' : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho) (r: rho) (r2: rho). (r2 <- (key, val, base), r <- (key, base), kv <- (key, val), PrimitiveAtom a, RelationalComb rel) => Field key a -> Field val a -> rel kv -> rel r -> rel r2
+partialLookup : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho) (r: rho). (exists (r2: rho). PrimitiveAtom a, RelationalComb rel, kv <- (key, val), r <- (key, base), r2 <- (key, val, base)) => Field key a -> Field val a -> rel kv -> rel r -> rel r
+partialLookup' : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho) (r: rho) (r2: rho). (PrimitiveAtom a, r <- (key, base), kv <- (key, val), RelationalComb rel, r2 <- (key, val, base)) => Field key a -> Field val a -> rel kv -> rel r -> rel r2
 partialRecordOrd : forall (r: rho) (s: rho). s <- (r, o) => Sort r -> Record s -> Record s -> Ordering
 partition : forall a. List a -> (a -> Bool) -> (List a, List a)
 partitionEithers : forall a b. List (Either a b) -> (List a, List b)
@@ -1193,7 +1193,7 @@ uncurry : forall a b c. (a -> b -> c) -> (a, b) -> c
 undefined : forall a. a
 underlineColor : Color
 unfoldr : forall b a. (b -> Maybe (a, b)) -> b -> List a
-unify1 : forall (f1: rho) a (f2: rho) (r: rho) (r2: rho). (r2 <- (h, f2, t), r <- (h, f, t)) => Field f1 a -> Field f2 a -> Relation r -> Relation r2 -> Relation r
+unify1 : forall (f1: rho) a (f2: rho) (r: rho) (r2: rho). (r <- (f2, p, u), r2 <- (f1, f2, p)) => Field f1 a -> Field f2 a -> Relation r -> Relation r2 -> Relation r
 unifyCons : forall (a: rho) b (c: rho) (d: rho) (e: rho) (f: rho) (g: rho). (f <- (d, a), g <- (e, c)) => Field a b -> Field c b -> UnifyFields d e -> UnifyFields f g
 unifyEmpty : UnifyFields (||) (||)
 union : forall (a: rho -> *) (b: rho). RelationalComb a => a b -> a b -> a b

@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 (<$) : forall a b. a -> Builtin.IO b -> Builtin.IO a
 (<$>) : forall a b. (a -> b) -> Builtin.IO a -> Builtin.IO b
 (<*>) : forall a b. Builtin.IO (a -> b) -> Builtin.IO a -> Builtin.IO b

@@ -32,7 +32,7 @@ import Prop.{ Result => _, _ }
   *     catches a `MapView` that travels somewhere new rather than panicking here.
   */
 object TestRecordPrims extends Properties("record primitives forced (A1)") {
-  private val fx = ErmineFixture()
+  private val fx = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import fx.defAndEval
 
   /** Imports go in the STATEMENT text, not in this map: `loadStatements` renders an import

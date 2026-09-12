@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 (<$) : forall a b. a -> Builtin.Maybe b -> Builtin.Maybe a
 (<$>) : forall a b. (a -> b) -> Builtin.Maybe a -> Builtin.Maybe b
 (<*>) : forall a b. Builtin.Maybe (a -> b) -> Builtin.Maybe a -> Builtin.Maybe b

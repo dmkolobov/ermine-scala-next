@@ -1,6 +1,6 @@
 package com.clarifi.reporting.ermine.session
 
-import com.clarifi.reporting.ermine.{ V, Global, Runtime, Type, Kind, Requirements, Pretty }
+import com.clarifi.reporting.ermine.{ V, Global, Runtime, Type, Kind, Requirements, Pretty, SigEntail }
 import com.clarifi.reporting.ermine.surface.Span
 import com.clarifi.reporting.ermine.Type.subType
 import com.clarifi.reporting.ermine.parsing.{ ModuleHeader }
@@ -106,10 +106,11 @@ class SessionEnv(
   var classOrigins:    Map[Global, List[Global]]      = Map(),
      _typeCheck:       Option[Boolean]                = None,
      _useInterface:    Option[Boolean]                = None,
-     _foreignTolerant: Option[Boolean]                = None
+     _foreignTolerant: Option[Boolean]                = None,
+     _sigEntail:       Option[SigEntail.Mode]         = None
 ) { that =>
   def copy = {
-    val e = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck),Some(that.useInterface),Some(that.foreignTolerant))
+    val e = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck),Some(that.useInterface),Some(that.foreignTolerant),Some(that.sigEntail))
     // NOT the notes: a copy is what a forked load (SessionTask.fork) or a
     // fresh editor check runs in, and `+=` merges its notes back.  Carrying
     // them forward would report every module's warnings on every file.
@@ -128,6 +129,15 @@ class SessionEnv(
     * warning plus a stub instead of a dead module. */
   val foreignTolerant : Boolean =
     _foreignTolerant.getOrElse(java.lang.Boolean.getBoolean("ermine.foreign.tolerant"))
+
+  /** SIGNATURE ENTAILMENT (`tracker/SIG-ENTAIL-PLAN.md` S3): whether a declared
+    * signature's ROW constraints are checked against the body's obligations, and
+    * what a failure costs.  DEFAULT `error` (`-Dermine.sigEntail=off|warn|error`).
+    * Per session rather than global so that one JVM can hold a suite's `error`
+    * properties beside its `off` ones with no `System.setProperty`, and so the
+    * language server can differ from a batch build; it reaches the checker as
+    * `SubstEnv.sigEntail` through `Session.subst`. */
+  val sigEntail : SigEntail.Mode = _sigEntail.getOrElse(SigEntail.defaultMode)
 
   /** The tolerated failures, in the order they were declared.  Loads may
     * run on forked copies (SessionTask), so appending is synchronized. */

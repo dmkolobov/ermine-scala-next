@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 comonadFunctor : forall (f: * -> *). Control.Comonad.Comonad f -> Control.Functor.Functor f
 extend : forall (f: * -> *) a b. Control.Comonad.Comonad f -> (f a -> b) -> f a -> f b
 extract : forall (f: * -> *) a. Control.Comonad.Comonad f -> f a -> a

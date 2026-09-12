@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 mapM : forall (t: * -> *) (f: * -> *) a b. Control.Traversable.Traversable t -> Control.Monad.Monad f -> (a -> f b) -> t a -> f (t b)
 sequence : forall (t: * -> *) (f: * -> *) a. Control.Traversable.Traversable t -> Control.Monad.Monad f -> t (f a) -> f (t a)
 sequenceA : forall (t: * -> *) (f: * -> *) a. Control.Traversable.Traversable t -> Control.Ap.Ap f -> t (f a) -> f (t a)

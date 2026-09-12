@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 f2map : forall b c a a1. (b -> c) -> (a -> a1 -> b) -> a -> a1 -> c
 fromOrd# : forall a. Native.Ord.Ord# a -> a -> a -> Ord.Ordering
 fromOrdering# : Native.Ord.Ordering# -> Ord.Ordering
