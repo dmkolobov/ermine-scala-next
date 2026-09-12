@@ -31,6 +31,14 @@ object ErmineFixture {
    * loadModulesInSeries`); to flip a read-once flag, go through TestInterfaceKey.withProps,
    * whose whitelist names the only properties that are safe to set at runtime. */
 
+  /** THE ONE REASON a suite asks for a mode other than the shipped default: booting the
+    * standard library under `error` fails until the seven dishonest shipped signatures are
+    * corrected (branch `sig-fixes`), and a suite must fail for its own reason.  When the
+    * corrections land this becomes `None` and every use of it can go -- which is why it is one
+    * named value rather than twenty literals. */
+  val untilSigFixes: Option[com.clarifi.reporting.ermine.SigEntail.Mode] =
+    Some(com.clarifi.reporting.ermine.SigEntail.Off)
+
   /** Delete a staged temp workspace, deepest entry first.  Every suite that
     * calls `Files.createTempDirectory` must run this from a `finally`: without
     * it `core/test` leaves a tree in the system temp directory on every run
@@ -46,8 +54,22 @@ object ErmineFixture {
 /** I am not thread-safe, so use a separate one of me per `Properties`
   * instance.  Importing my symbols unqualified works quite well.
   */
+/** `sigEntail` is the SESSION OPTION of SIG-3 (`tracker/SIG-ENTAIL-PLAN.md`), not a system
+  * property: `SessionEnv.sigEntail` is a `val` read at construction, so a suite that wants a
+  * mode other than this fixture's constructs its own, and two fixtures with different modes
+  * coexist in one JVM.  `System.setProperty` could not do this -- see the rule above, and the
+  * read-once `val`s it names.
+  *
+  * THE DEFAULT IS THE SHIPPED DEFAULT (`None` inherits `-Dermine.sigEntail`, i.e. `error`), so
+  * a suite tests what ships unless it says otherwise.  A suite that BOOTS THE STANDARD LIBRARY
+  * while the library still has dishonest signatures cannot: it would fail on
+  * `DrilldownList.cons_Bracket` rather than on its own subject, so those fixtures pass
+  * `sigEntail = ErmineFixture.untilSigFixes` -- ONE value to delete when the corrections land
+  * (S3 review, landing checklist). */
 final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
-                               = Function const (())) {
+                               = Function const (()),
+                               sigEntail: Option[com.clarifi.reporting.ermine.SigEntail.Mode]
+                               = None) {
   // Supply is documented single-threaded; ScalaCheck runs properties on
   // a pool, so a shared instance races `lo` and hands two threads the
   // same id (the recurring eval:unbound-variable flake).  Per-thread
@@ -58,7 +80,8 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
   implicit val con: Printer = Printer.ignore
 
   lazy val baseEnv: SessionEnv = {
-    implicit val e : SessionEnv = new SessionEnv(_typeCheck = Some(true), _useInterface = Some(false))
+    implicit val e : SessionEnv = new SessionEnv(_typeCheck = Some(true), _useInterface = Some(false),
+                                                _sigEntail = sigEntail)
     Lib.preamble
     e.loadedModules = e.loadedModules + ("Test" -> CheckMethod.Interface)
     prepBaseEnv(e)
@@ -215,7 +238,7 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
 }
 
 object TestErmine extends Properties("Ermine") {
-  private val ermineFixture = ErmineFixture()
+  private val ermineFixture = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import ermineFixture._
 
   property("Occurs.fun") = no(sessionProof(implicit s => typeOf("a -> a a")))
@@ -397,7 +420,7 @@ trait ErmineModulesProperties {self: Properties =>
   // from.
   // `final` so it is a legal import path: Scala 3 rejects importing from a
   // non-final lazy value.
-  protected final lazy val ermineFixture: ErmineFixture = ErmineFixture()
+  protected final lazy val ermineFixture: ErmineFixture = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import ermineFixture._
 
   /** Modules to leave out of the load test, because they don't

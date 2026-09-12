@@ -22,7 +22,7 @@ import java.io.File
   * these pin both halves.
   */
 object TestEditorBuffers extends Properties("Editor buffers 5.3") {
-  private val fx = ErmineFixture()
+  private val fx = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
 
   private val path = "editor-buffer-test" + File.separator + "BufOne.e"
 

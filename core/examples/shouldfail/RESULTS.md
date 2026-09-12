@@ -205,32 +205,62 @@ Reproduce: `tracker/tools/corpus-run.sh <base>` on the previous build,
 | `inf07_record_drop.e` | `inf07_record_drop.e:1:1: Infinite row partition for 't^N'` | `inf07_record_drop.e:25:21: Row partitions are unsatisfiable at field 'Shouldfail.Inf07.a': two parts of one partition both contain it` |
 | `mis01_join_operands_irreconcilable.e` | `mis01_join_operands_irreconcilable.e:38:14: R2` | `mis01_join_operands_irreconcilable.e:38:14: Row partitions are unsatisfiable at field 'ShouldFail.Mis01.city': a part contains it but the whole does not` |
 
-## Pinned, class 6 SIGNATURE CONTEXT TOO WEAK (accepted today; 2026-09-10)
+## class 6 SIGNATURE CONTEXT TOO WEAK -- REJECTED since S3 (2026-09-11)
 
-Five modules that MUST NOT load; since LET-1 merged (cff6c42) all five DO (sig01..sig05), under every rule mode and with interface
-caching on or off. They are the S0 pin of `tracker/SIG-ENTAIL-PLAN.md`: a declared
-signature's row constraints are never checked against the body's obligations
-(`Subst.subsumeType` discards the skolem-mentioning wanteds, :535-536 and :553). Each
-accepted module's `crash` evaluates in the REPL to `<error: key not found: health>`
-(sig04: a record carrying that error in a field its printed type does not have; sig05 is
-the same hole through an expression annotation). sig03, the let-bound twin, is refused
-today at the call site -- but only because the renamer DROPS let-bound signatures
-(rename/Lower.scala:185-187, a regression of the new pipeline; see its header), so the
-binding is inferred. Until S3 lands, a corpus sweep must read the four as LOADED and not count them as a change;
-when S3 lands, flip this table, the four headers, and `TestSigEntail`'s KNOWN HOLE
-properties.
+Five modules that MUST NOT load, and since stage S3 of `tracker/SIG-ENTAIL-PLAN.md` none of
+them does.  They were pinned on 2026-09-10 as ACCEPTED: a declared signature's row
+constraints were never checked against the body's obligations (`Subst.subsumeType` discarded
+the skolem-mentioning wanteds, :535-536 and :553 at `a15a97e`), so each module loaded and
+its `crash` evaluated in the REPL to `<error: key not found: health>` -- sig04 to a record
+carrying that error in a field its printed TYPE does not have, sig05 the same hole through
+an expression annotation.  S3 implements the S2 decision procedure
+(`tracker/loopmodel/SIG-2-DESIGN.md`) inside `subsumeType` for user signatures only, with
+`-Dermine.sigEntail=error` as the DEFAULT; each module is now refused with a two-location
+diagnostic whose primary position is the term that generated the obligation and whose
+secondary ("declared at") is the DECLARED TYPE on the signature line -- not the equation's
+head, which is where the first implementation put it and which collapses onto the primary on a
+one-line body (S3 review M1).  Each header carries its own message verbatim; the witness
+sentence carries no ids and no positions at all, so it is reproducible run to run (review M2).
+
+sig03 is the let-bound twin.  Until LET-1 (`cff6c42`) it was refused at the CALL by
+ordinary inference, because the renamer DROPPED let-bound signatures; with LET-1 merged the
+signature reaches `typeCheckExplicitBinding` and S3 rejects it at the signature, which is
+where its header always said the blame belonged.
+
+MEASURED WITH THE STDLIB CORRECTIONS APPLIED (branch `sig-fixes`, the seven shipped
+signatures S1 found not entailed: `unify1`, `partialLookup`, `cons_Bracket`,
+`Keyed.softRelation`, `Keyed.keyValueTabular`, `Relation.cutoffs`, `Relation.others`).
+Without them the stdlib boot is refused first under `error` -- `DrilldownList.e:20:98` and
+`Relation.e:114:3` -- and no corpus module reaches its own diagnostic at all.  A sweep of
+the uncorrected tree under `error` therefore says nothing about these five; measure them
+with the corrections, or under `-Dermine.sigEntail=warn`, which reports the same
+diagnostics and accepts.
 
 | file | class | `all` | `cut` | `nongen` |
 |---|---|---|---|---|
-| `sig01_unconstrained_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | **ACCEPTED** | **ACCEPTED** | **ACCEPTED** |
-| `sig02_wrong_label_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | **ACCEPTED** | **ACCEPTED** | **ACCEPTED** |
-| `sig03_let_bound_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | **ACCEPTED** since LET-1 (cff6c42) honours let signatures; before it, rejected at the CALL (32:12) by ordinary inference | **ACCEPTED** | **ACCEPTED** |
-| `sig04_unconstrained_modify.e` | 6 SIGNATURE CONTEXT TOO WEAK | **ACCEPTED** | **ACCEPTED** | **ACCEPTED** |
-| `sig05_annotated_lambda.e` | 6 SIGNATURE CONTEXT TOO WEAK (annotation site) | **ACCEPTED** | **ACCEPTED** | **ACCEPTED** |
+| `sig01_unconstrained_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | **rejected** 70:17 (declared at 69:13) | **rejected** | **rejected** |
+| `sig02_wrong_label_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | **rejected** 45:18 (declared at 44:14) | **rejected** | **rejected** |
+| `sig03_let_bound_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | **rejected** 70:25 (declared at 69:21, `sig local`) | **rejected** | **rejected** |
+| `sig04_unconstrained_modify.e` | 6 SIGNATURE CONTEXT TOO WEAK | **rejected** 48:8 (declared at 47:8) | **rejected** | **rejected** |
+| `sig05_annotated_lambda.e` | 6 SIGNATURE CONTEXT TOO WEAK (annotation site) | **rejected** 48:19 (declared at 48:12, `ann <annot>`) | **rejected** | **rejected** |
 
-Control: `shouldfail-controls/control08_sig_declared.e` (loads). Command as at the top
-of this file, plus `-Dermine.genRules=<MODE>`; the REPL evidence needs `:load` of the
-module followed by `crash`.
+All five report `the signature does not entail this row constraint`, at the label class
+`health` (the one shape the plan's original refutation trick also decided), with the witness
+"every row empty".  The three rule-mode columns are MEASURED under
+`-Dermine.sigEntail=warn` (which reports the same diagnostic and accepts, so the five
+modules can be measured in one JVM against an uncorrected stdlib): all three modes produce
+byte-identical diagnostics at the positions above, which is expected -- the check reads the
+signature's own constraints and the body's residual, and `genRules` changes neither.
+`sig05` reports TWICE under `warn`, once per spelling (48:19 `crash`, 49:19 `crash2`);
+under `error` the module dies at the first.
+
+Controls, both of which MUST LOAD and do: `shouldfail-controls/control08_sig_declared.e`
+(the same bodies with honest signatures, in four spellings) and
+`shouldfail-controls/control09_let_signatures.e`.  Under `-Dermine.sigEntail=off` all five
+modules load again exactly as they did at S0 -- the escape hatch, pinned in
+`TestSigEntail`'s flag group.  Command as at the top of this file, plus
+`-Dermine.genRules=<MODE>`; the REPL evidence needs `:load` of the module followed by
+`crash`.
 
 ## 2026-09-11: error class 7, LET SIGNATURE (LET-1)
 

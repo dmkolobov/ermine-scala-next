@@ -4,7 +4,7 @@ import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.rename.{ NewPipeline, Renamer }
 import com.clarifi.reporting.ermine.surface.{ Anchors, SClassStatement, SDatabaseBlock, SEquation,
   SPat, SPAs, SPParen, SPSig, SPVar, SPrivateBlock, SStatement, Span }
-import com.clarifi.reporting.ermine.Pretty
+import com.clarifi.reporting.ermine.{ Pretty, SigEntail }
 import com.clarifi.reporting.ermine.lsp.{ Diagnostics, Documents, Json, QuickFix, Resident }
 import com.clarifi.reporting.ermine.session.{ Printer, Session => S, SessionEnv, TolerantCheck }
 
@@ -27,7 +27,11 @@ import java.io.File
   * accepts); these are the behaviours that need broken input.
   */
 object TestTolerantCheck extends Properties("Tolerant check") {
-  private val fx = ErmineFixture()
+  private val fx = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
+
+  /** SIG-3: the same fixture with the signature-entailment check ON, for the two properties
+    * that are about it.  A `val`, so the stdlib boots once. */
+  private lazy val fxError = ErmineFixture(sigEntail = Some(SigEntail.Error))
 
   private def header(body: String) =
     "module TC where\nimport Function\nimport List\nimport Primitive\n\n" + body
@@ -49,9 +53,10 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     * (6.2): the local binder types.  `check` itself must never grow
     * them — the batch entry's behaviour is frozen — which is what the
     * "the batch entry collects nothing" property pins. */
-  private def checkLocals(body: String, imports: List[String] = Nil)
+  private def checkLocals(body: String, imports: List[String] = Nil,
+                          mode: SigEntail.Mode = SigEntail.Off)
       : (TolerantCheck.Result, Renamer.Result) =
-    fx.session { implicit s =>
+    (if (mode == SigEntail.Off) fx else fxError).session { implicit s =>
       implicit val su: Supply = fx.supply
       implicit val con = fx.con
       val mods = List("Function", "List", "Primitive") ++ imports
@@ -114,6 +119,36 @@ object TestTolerantCheck extends Properties("Tolerant check") {
       // never inferred against unconstrained metas — they would typecheck to lies
       (!r.types.contains("mid") :| "mid was given a type anyway") &&
       (!r.types.contains("top") :| "top was given a type anyway")
+  }
+
+  /* ---- SIG-3: the signature-entailment check on the EDITOR's path -------------------- *
+   * `TolerantCheck` calls `typeCheckExplicitBinding` itself (:727, inside `guard(Error)`),
+   * so the check reaches the editor with no editor-specific code -- and must, or a file the
+   * batch loader refuses would look clean in the IDE.  The diagnostic arrives as an ordinary
+   * Error note, which is what `tracker/lsp-tests/sigentail.json` then pins over the wire. */
+
+  property("SIG-3: a signed binding whose context is too weak is one Error note, in the editor") = {
+    val r = checkLocals("field health : Int\n\n" +
+                        "healthOpt : forall r. {..r} -> Int\n" +
+                        "healthOpt r = r ! health\n", List("Field"), SigEntail.Error)._1
+    val es = errors(r)
+    ((es.size == 1) :| es.map(_.report.linesIterator.take(1).mkString).toString) &&
+      ((es.head.report contains "the signature does not entail this row constraint") :|
+        es.head.report) &&
+      ((es.head.report contains "declared at") :| es.head.report) &&
+      // the note carries a position in THIS file, not in the stdlib the `!` came from --
+      // and the two positions are the BODY's `!` (line 10) and the DECLARED TYPE on the
+      // signature line (line 9, column 13), not the equation's head twice (S3 review M1)
+      ((es.head.report startsWith "TC:10:17:") :| es.head.report) &&
+      ((es.head.report contains "declared at TC:9:13 (sig healthOpt)") :| es.head.report)
+  }
+
+  property("SIG-3: the honest twin draws no note on the editor's path") = {
+    val r = checkLocals("field health : Int\n\n" +
+                        "healthWith : forall r t. r <- ((|health|), t) => {..r} -> Int\n" +
+                        "healthWith r = r ! health\n", List("Field"), SigEntail.Error)._1
+    (r.notes.isEmpty :| r.notes.map(_.report).toString) &&
+      (r.types.contains("healthWith") :| s"types: ${r.types.keySet}")
   }
 
   property("an undefined term is one note per name, carrying its spelling") = {

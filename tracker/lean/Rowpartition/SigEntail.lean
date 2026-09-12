@@ -698,6 +698,91 @@ Records, for the record (`tracker/loopmodel/SIG-2-DESIGN.md` §4):
     SoftRelation joinKey W: t^A <- (v,i); r <- (k,t^A)  Q: r <- (i,k,v)
 -/
 
+/-! ## §9  The EMPTY LEFT-HAND SIDE, and why the compiler may normalise it away
+
+`Type` is wider than `Constraint`: `Part.apply` can build a partition whose LEFT-HAND SIDE is a
+literal column set (`Type.scala:421-424`), and the corpus has 269 of them in the skolem-free
+half of the residual, every one of the shape `(||) <- (p1..pk)` -- the EMPTY row on the left.
+`Constraint.lhs` is a `Var`, so that shape cannot be written here at all; what the compiler does
+instead (`SigEntail.scala`'s `encode`) is replace such a partition by one `pᵢ <- ()` per part,
+and TWO of the twenty-four corpus rejections depend on the replacement being verdict-preserving
+(`Time.Signatures.yearFrac365Simple` and `.yearFrac365Full`, whose `out` row is the union of the
+operand rows exactly because `(||) <- (f, e)` forces `f = e = ∅`).
+
+`Basic.Sat.eq_empty_of_dup` is NOT a licence for that rule -- it is about a REPEATED part -- so
+the equivalence is stated here (S3 review D1).  `emptyRow v` is the normalised form the encoder
+emits, and `sat_of_lhs_empty_iff` is the rule: with the whole pinned to `∅`, satisfying the
+partition is exactly satisfying "every part is empty", the concrete part included, and the
+disjointness half comes for free (empty sets are pairwise disjoint).  It is an EQUIVALENCE, so
+the replacement neither accepts nor rejects anything new. -/
+
+/-- The normalised form the encoder emits for each part of an empty-left-hand-side partition:
+`v <- ()`, which says `rho v = ∅`. -/
+def emptyRow (v : Var) : Constraint := ⟨v, [], ∅⟩
+
+@[simp] theorem sat_emptyRow (rho : Assign) (v : Var) : Sat rho (emptyRow v) ↔ rho v = ∅ := by
+  constructor
+  · intro h; simpa [emptyRow, parts] using h.1
+  · intro h
+    refine ⟨by simpa [emptyRow, parts] using h, ?_⟩
+    simp [emptyRow, parts]
+
+/-- A `foldr`-union of finsets is empty iff every entry is. -/
+theorem foldr_union_eq_empty_iff (L : List Row) :
+    L.foldr (· ∪ ·) ∅ = ∅ ↔ ∀ s ∈ L, s = ∅ := by
+  induction L with
+  | nil => simp
+  | cons a t ih =>
+      simp only [List.foldr_cons, Finset.union_eq_empty, List.mem_cons, forall_eq_or_imp, ih]
+
+/-- Empty rows are pairwise disjoint: the disjointness half of a partition whose whole is the
+empty row costs nothing. -/
+theorem pairwise_disjoint_of_all_empty {L : List Row} (h : ∀ s ∈ L, s = ∅) :
+    L.Pairwise Disjoint := by
+  induction L with
+  | nil => simp
+  | cons a t ih =>
+      have ha : a = ∅ := h a (by simp)
+      refine List.pairwise_cons.mpr ⟨fun b _ => ?_, ih (fun s hs => h s (by simp [hs]))⟩
+      subst ha
+      exact Finset.disjoint_left.mpr (by simp)
+
+/-- **THE EMPTY-LEFT-HAND-SIDE RULE.**  When the whole of a partition is the empty row,
+satisfying it is exactly "the concrete part is empty and every variable part is empty".  Both
+directions, so the compiler's normalisation is verdict-preserving; the disjointness half of
+`Sat` comes for free from `pairwise_disjoint_of_all_empty`. -/
+theorem sat_of_lhs_empty_iff {rho : Assign} {c : Constraint} (hz : rho c.lhs = ∅) :
+    Sat rho c ↔ (c.conc = ∅ ∧ ∀ v ∈ c.vars, rho v = ∅) := by
+  constructor
+  · intro h
+    have hu : (parts rho c).foldr (· ∪ ·) ∅ = ∅ := by rw [← h.1, hz]
+    have hall := (foldr_union_eq_empty_iff _).mp hu
+    exact ⟨hall _ mem_parts_conc, fun v hv => hall _ (mem_parts_of_mem_vars hv)⟩
+  · intro hcv
+    obtain ⟨hc, hv⟩ := hcv
+    have hall : ∀ s ∈ parts rho c, s = ∅ := by
+      intro s hs
+      simp only [parts, List.mem_cons, List.mem_map] at hs
+      rcases hs with h | ⟨v, hvm, hvs⟩
+      · exact h.trans hc
+      · rw [← hvs]; exact hv v hvm
+    exact ⟨by rw [hz, (foldr_union_eq_empty_iff _).mpr hall],
+           pairwise_disjoint_of_all_empty hall⟩
+
+/-- The rule as the ENCODER uses it: one partition with an empty whole against the list of
+`v <- ()` constraints it is replaced by. -/
+theorem sat_of_lhs_empty_iff_models {rho : Assign} {c : Constraint} (hz : rho c.lhs = ∅)
+    (hc : c.conc = ∅) : Sat rho c ↔ Models rho (c.vars.map emptyRow) := by
+  rw [sat_of_lhs_empty_iff hz]
+  constructor
+  · intro hcv d hd
+    obtain ⟨v, hvm, hvd⟩ := List.mem_map.mp hd
+    rw [← hvd]
+    exact (sat_emptyRow rho v).mpr (hcv.2 v hvm)
+  · intro h
+    refine ⟨hc, fun v hv => (sat_emptyRow rho v).mp (h _ ?_)⟩
+    exact List.mem_map.mpr ⟨v, hv, rfl⟩
+
 namespace Corpus
 
 /-- `sig01`: `healthOpt : forall r. {..r} -> Int` with body `r ! health`. -/

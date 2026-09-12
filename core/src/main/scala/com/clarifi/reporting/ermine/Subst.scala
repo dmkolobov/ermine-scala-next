@@ -92,7 +92,14 @@ trait Requirements {
  */
 class SubstEnv(
   val classes: Map[Global,Requirements] = Map(),
-  val defaults: List[Type] = List(int)
+  val defaults: List[Type] = List(int),
+  /** The signature-entailment mode for THIS session (S3; `SigEntail.Mode`).  A per-session
+    * option rather than a global read-once flag so that one JVM can run a suite's `error`
+    * properties beside its `off` ones with no `System.setProperty` (the fixture rule at the
+    * top of TestErmine.scala), and so the language server can differ from a batch build.
+    * `SessionEnv.sigEntail` is where it comes from; the process default is
+    * `-Dermine.sigEntail` (`error`). */
+  val sigEntail: SigEntail.Mode = SigEntail.defaultMode
 ) {
   var kinds:      Map[KindVar, Kind] = Map()
   var types:      Map[TypeVar, Type] = Map()
@@ -539,12 +546,25 @@ object Subst {
     val (qxs, qs) = unbindExists(Free, q)
     val (pxs, ps) = unbindExists(Free, substType(pz))
     val (ds, rs)  = ps.partition(p => Type.fskvs(p).isEmpty)
-    /* S1 PROBE, measurement only.  `rs` is the body's residual wanteds that mention one of
-     * the signature's skolems -- the obligations the loop below computes an answer for and
-     * then throws away (`entails` returns a Boolean nobody reads, and is class-only anyway,
-     * :313/:394).  Under `-Dermine.sigEntail=warn` and only for a user signature, print one
-     * line per element.  No verdict changes, here or anywhere. */
-    if (SigEntail.warn) sig.foreach(s => if (rs.nonEmpty) SigEntail.probe(s, qs, rs))
+    /* THE SIGNATURE-ENTAILMENT CHECK (S3; `SigEntail.enforce`, design `SIG-2-DESIGN.md`
+     * (d1)).  `rs` is the body's residual wanteds that mention one of the signature's
+     * skolems -- the obligations the loop below computes an answer for and then throws away
+     * (`entails` returns a Boolean nobody reads, and is class-only anyway, :313/:394) --
+     * and `ds` the skolem-free half, which `enforce` needs because `W` is the closure of
+     * `rs` under shared minted variables within `ps` (design (a3)).
+     *
+     * PLACEMENT.  Here, and only here:
+     *   - only for a USER SIGNATURE, i.e. when `sig` is defined: `typeCheck` :658 (`ann`)
+     *     and `typeCheckExplicitBinding` :676 (`sig`).  The `App` case (:943) subsumes an
+     *     argument against a function's domain and passes `None`; it must keep doing so.
+     *   - BEFORE `restrictTypes` (:557-560), which deletes the substitution entries a
+     *     wanted still needs and hides the skolems;
+     *   - reading the `qs`/`ps` captured at :546-548, never a re-`substType`d copy: that is
+     *     what makes "no wanted can mention a given's existential" true (design (a1)), and
+     *     it is the invariant S4's editor path must preserve.
+     * `:555-556`'s class-only `entails` loop, `mkSimplified` and `ds` are untouched: the
+     * check READS and never rewrites. */
+    sig.foreach(s => SigEntail.enforce(s, qs, rs, ds, sts, pxs))
     for (r <- rs)
       entails(qs,r)
     restrictTypes(qxs) // ?
@@ -649,7 +669,7 @@ object Subst {
     implicit val tml: Located = e
     kindCheck(delta(g), t, Star(e.loc.checked))
     val (q,p) = subsumeType(substType(t), substType(et),
-                            if (SigEntail.warn) Some(SigEntail.siteAt("ann", e.loc)) else None)
+                            if (hm.sigEntail.on) Some(SigEntail.siteAt("ann", e.loc)) else None)
     // TODO: ADD warnings here later if we need to check subsumption involving constraints
     ()
   }
@@ -667,7 +687,17 @@ object Subst {
     val args = rep(binding.arity) { VarT(fresh[Kind](li, None, Free, Star(li))) }
     val f = inferAltTypes(binding.loc, g, binding.alts, args) { r => args.foldRight(r)(Arrow(li, _, _)) }
     val (q,p) = subsumeType(typ, f,
-                            if (SigEntail.warn) Some(SigEntail.siteOf("sig", binding.v)) else None)
+                            if (hm.sigEntail.on)
+                              /* THE SECONDARY LOCATION is the DECLARED TYPE's own (`typ.loc`,
+                               * which the renamer built from the signature statement), not
+                               * `binding.v.loc` and not `binding.ty.loc`: both of those are the
+                               * EQUATION's head (`Lower.pairSigs` builds the `Annot` with the
+                               * implicit binding's `loc`, and `:804` below rebuilds it with the
+                               * binding's), so on a one-line body the diagnostic's two
+                               * locations collapsed onto one line and the second told the
+                               * reader nothing (S3 review M1). */
+                              Some(SigEntail.siteOf("sig", binding.v, typ.loc))
+                            else None)
     restrictKinds(kvs)
     restrictTypes(tvs)
     // _ <- unifyType(binding.ty, v.extract)

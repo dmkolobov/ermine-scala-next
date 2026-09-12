@@ -2744,6 +2744,13 @@ object Constraints {
 
   /** One label's problem, decided completely.  `(verdict, decision nodes)`.
     *
+    * A thin wrapper over `LabelSearch` since SIG-3: the engine below is shared with the
+    * signature-entailment check (`SigEntail`), which needs the same propagation and the
+    * same search over a FROZEN partial assignment and over a SYNTHETIC label (one that is
+    * in no `RHS.concr`; `tracker/loopmodel/SIG-2-DESIGN.md` (b2)).  This call is the
+    * shipped one and is unchanged: every mentioned label, every variable branched over in
+    * order of first appearance, `FALSE` before `TRUE`.
+    *
     * BLAME (S2 review V-13b): `firstAt`/`firstWhy` record the FIRST clash seen anywhere in
     * the search and are NOT reset between branches, so a search-refutation's blamed variable
     * need not belong to the branch that closes the proof.  Deliberate, and it changes
@@ -2753,29 +2760,81 @@ object Constraints {
     * real source position either way.  Resetting it per branch would pick a different
     * arbitrary clash, not a better one. */
   private def decideLabel(ps: List[(TypeVar, RHS)], l: Name, budget: Int): (LabelVerdict, Long) = {
+    val e = new LabelSearch(ps, _ contains l, Nil, budget)
+    if (e.size == 0) return ((LabelSat: LabelVerdict), 0L)
+    e.rootPropagate()
+    val verdict: LabelVerdict =
+      if (e.conflicted) LabelRefuted(l, e.blamedVar, e.blamedWhy)
+      else if (e.searchSat(e.everyVar)) LabelSat
+      else if (e.exhausted)
+        LabelNoVerdict(l, "search budget exhausted after " + e.nodesUsed + " decisions", true)
+      else if (e.checkFailed)
+        LabelNoVerdict(l, "a complete assignment failed its own check; no verdict is claimed", false)
+      else
+        LabelRefuted(l,
+          e.blamedVar,
+          "no assignment of this field to the parts satisfies every partition" +
+          " (complete search, " + e.nodesUsed + " cases; unit propagation alone does not see it)")
+    (verdict, e.nodesUsed)
+  }
+
+  /** THE PER-LABEL ONE-HOT ENGINE, lifted out of `decideLabel` at SIG-3 so that exactly
+    * one search decides both questions the compiler asks about a label:
+    *
+    *  - `Subst.solve`'s SATISFIABILITY of the live constraint set (`decideLabel` above,
+    *    unchanged: `hasLabel = _ contains l`, no frozen bits, every variable branched);
+    *  - `SigEntail`'s ENTAILMENT 2QBF (`tracker/loopmodel/SIG-2-DESIGN.md` (b3)): the
+    *    models of the givens enumerated over the RIGID variables (`enumerate`), each one
+    *    frozen into a second engine over the wanteds whose minted variables are then free
+    *    (`freeze` + `searchSat`).  The signature check also needs a label mentioned
+    *    NOWHERE -- the generic class -- which is why the label arrives as a predicate on
+    *    `RHS.concr` rather than as a `Name`: `_ => false` is that class.
+    *
+    * `extraVars` is for variables that must be BRANCHED OVER although no constraint in
+    * `ps` mentions them (a rigid variable of the wanteds that the givens never name: it is
+    * universally quantified, so every assignment of it must be tried).
+    *
+    * Bits are `0` unknown, `1` true, `2` false, as before.  Not thread-safe, single use per
+    * label class except through `reset()`; `nodesUsed` accumulates across calls so one
+    * budget covers a whole class. */
+  private[ermine] final class LabelSearch(ps: List[(TypeVar, RHS)],
+                                          hasLabel: Fields => Boolean,
+                                          extraVars: List[TypeVar],
+                                          budget: Long) {
     // ---- index the variables in order of FIRST APPEARANCE (so the search is
     // ---- a function of the partition list's order, not of a hash set's).
-    val index = new scala.collection.mutable.LinkedHashMap[TypeVar, Int]
-    def ix(v: TypeVar): Int = index.getOrElseUpdate(v, index.size)
-    val m     = ps.length
-    val lhsA  = new Array[Int](m)
-    val partA = new Array[Array[Int]](m)
-    val conA  = new Array[Boolean](m)
-    var i = 0
-    ps.foreach {
-      case (v, RHS(abstr, concr)) =>
-        lhsA(i)  = ix(v)
-        partA(i) = abstr.toList.map(ix).toArray
-        conA(i)  = concr contains l
-        i += 1
+    private val index = new scala.collection.mutable.LinkedHashMap[TypeVar, Int]
+    private def ix(v: TypeVar): Int = index.getOrElseUpdate(v, index.size)
+    private val m     = ps.length
+    private val lhsA  = new Array[Int](m)
+    private val partA = new Array[Array[Int]](m)
+    private val conA  = new Array[Boolean](m)
+    locally {
+      var i = 0
+      ps.foreach {
+        case (v, RHS(abstr, concr)) =>
+          lhsA(i)  = ix(v)
+          partA(i) = abstr.toList.map(ix).toArray
+          conA(i)  = hasLabel(concr)
+          i += 1
+      }
+      extraVars.foreach(v => ix(v))
     }
-    val n    = index.size
-    val vars = index.keysIterator.toArray
+    private val n    = index.size
+    private val vars = index.keysIterator.toArray
 
-    if (n == 0) return ((LabelSat: LabelVerdict), 0L)
+    /** How many variables the problem has; `0` means there is nothing to decide. */
+    def size: Int = n
+    /** Every variable, in index order -- the order `decideLabel` has always branched in. */
+    def everyVar: Array[Int] = Array.tabulate(n)(i => i)
+    /** The indices of `vs` that occur in this problem, in index order. */
+    def indicesOf(vs: Set[TypeVar]): Array[Int] =
+      (0 until n).filter(i => vs contains vars(i)).toArray
+    def varAt(i: Int): TypeVar = vars(i)
+    def bitAt(i: Int): Byte = bits(i)
 
     // partitions mentioning each variable, so propagation revisits only those
-    val occ: Array[Array[Int]] = {
+    private val occ: Array[Array[Int]] = {
       val b = Array.fill(n)(new scala.collection.mutable.ArrayBuffer[Int]())
       var k = 0
       while (k < m) {
@@ -2786,26 +2845,44 @@ object Constraints {
       b.map(_.toArray)
     }
 
-    val bits   = new Array[Byte](n)   // 0 unknown, 1 true, 2 false
-    val trail  = new Array[Int](n)
-    var tlen   = 0
-    val stack  = new Array[Int](m)
-    val queued = new Array[Boolean](m)
-    var slen   = 0
-    var conflict  = false
-    var firstAt   = -1
-    var firstWhy: String = null
-    var nodes     = 0L
-    var budgetOut = false
-    var checkFailed = false
+    private val bits   = new Array[Byte](n)   // 0 unknown, 1 true, 2 false
+    private val trail  = new Array[Int](n)
+    private var tlen   = 0
+    private val stack  = new Array[Int](m)
+    private val queued = new Array[Boolean](m)
+    private var slen   = 0
+    private var conflict  = false
+    private var firstAt   = -1
+    private var firstWhy: String = null
+    private var nodes     = 0L
+    private var budgetOut = false
+    private var cfailed   = false
+    private var found     = 0
 
-    def push(k: Int): Unit = if (!queued(k)) { queued(k) = true; stack(slen) = k; slen += 1 }
-    def clearQueue(): Unit = { while (slen > 0) { slen -= 1; queued(stack(slen)) = false } }
-    def note(at: Int, why: String): Unit = {
+    def conflicted: Boolean = conflict
+    def exhausted: Boolean  = budgetOut
+    def checkFailed: Boolean = cfailed
+    def nodesUsed: Long     = nodes
+    def blamedVar: TypeVar  = if (firstAt >= 0) vars(firstAt) else vars(0)
+    def blamedWhy: String   = firstWhy
+
+    /** Forget every assignment (not the node count: one budget spans a class). */
+    def reset(): Unit = {
+      while (tlen > 0) { tlen -= 1; bits(trail(tlen)) = 0 }
+      var i = 0
+      while (i < n) { bits(i) = 0; i += 1 }
+      clearQueue()
+      conflict = false; firstAt = -1; firstWhy = null; cfailed = false; found = 0
+      budgetOut = false
+    }
+
+    private def push(k: Int): Unit = if (!queued(k)) { queued(k) = true; stack(slen) = k; slen += 1 }
+    private def clearQueue(): Unit = { while (slen > 0) { slen -= 1; queued(stack(slen)) = false } }
+    private def note(at: Int, why: String): Unit = {
       conflict = true
       if (firstWhy eq null) { firstAt = at; firstWhy = why }
     }
-    def assign(u: Int, b: Byte, at: Int, why: String): Unit =
+    private def assign(u: Int, b: Byte, at: Int, why: String): Unit =
       if (bits(u) == 0) {
         bits(u) = b; trail(tlen) = u; tlen += 1
         val os = occ(u); var j = 0
@@ -2813,7 +2890,7 @@ object Constraints {
       } else if (bits(u) != b) note(at, why)
 
     /* `checkLabel`'s five rules, in `checkLabel`'s order, on the worklist. */
-    def propagate(): Unit = {
+    private def propagate(): Unit = {
       while (slen > 0 && !conflict) {
         slen -= 1
         val k = stack(slen); queued(k) = false
@@ -2862,7 +2939,7 @@ object Constraints {
     }
 
     /** A TOTAL assignment, checked against every partition directly. */
-    def verify(): Boolean = {
+    private def verify(): Boolean = {
       var k = 0
       var ok = true
       while (k < m && ok) {
@@ -2877,13 +2954,45 @@ object Constraints {
       ok
     }
 
-    def search(): Boolean = {
-      var u = -1
+    /** Queue every partition once and propagate: the root of any search. */
+    def rootPropagate(): Unit = {
+      var k = 0
+      while (k < m) { push(k); k += 1 }
+      propagate()
+    }
+
+    /** Fix these variables (ones the caller's other engine decided) and propagate.
+      * Variables this problem does not mention are ignored.  `false` = immediate clash. */
+    def freeze(vs: Iterable[(TypeVar, Boolean)]): Boolean = {
+      vs.foreach { case (v, b) =>
+        index.get(v).foreach { u =>
+          if (bits(u) == 0) {
+            bits(u) = (if (b) 1 else 2).toByte; trail(tlen) = u; tlen += 1
+            val os = occ(u); var j = 0
+            while (j < os.length) { push(os(j)); j += 1 }
+          } else if (bits(u) != (if (b) 1 else 2).toByte) note(u, "frozen both ways")
+        }
+      }
+      var k = 0
+      while (k < m) { push(k); k += 1 }
+      propagate()
+      !conflict
+    }
+
+    private def firstUnknown(order: Array[Int]): Int = {
       var z = 0
-      while (z < n && u < 0) { if (bits(z) == 0) u = z; z += 1 }
+      var u = -1
+      while (z < order.length && u < 0) { if (bits(order(z)) == 0) u = order(z); z += 1 }
+      u
+    }
+
+    /** Is there a total assignment extending the current one?  Branches over `order`
+      * (`everyVar` reproduces `decideLabel`'s shipped search exactly). */
+    def searchSat(order: Array[Int]): Boolean = {
+      val u = firstUnknown(order)
       if (u < 0) {
         val ok = verify()
-        if (!ok) checkFailed = true
+        if (!ok) cfailed = true
         return ok
       }
       nodes += 1
@@ -2897,7 +3006,7 @@ object Constraints {
         val os = occ(u); var j = 0
         while (j < os.length) { push(os(j)); j += 1 }
         propagate()
-        if (!conflict) res = search()
+        if (!conflict) res = searchSat(order)
         if (!res) {
           while (tlen > mark) { tlen -= 1; bits(trail(tlen)) = 0 }
           clearQueue()
@@ -2908,22 +3017,33 @@ object Constraints {
       res
     }
 
-    // ---- root propagation: every partition once ------------------------
-    var k = 0
-    while (k < m) { push(k); k += 1 }
-    propagate()
-    val verdict: LabelVerdict =
-      if (conflict) LabelRefuted(l, if (firstAt >= 0) vars(firstAt) else vars(0), firstWhy)
-      else if (search()) LabelSat
-      else if (budgetOut)
-        LabelNoVerdict(l, "search budget exhausted after " + nodes + " decisions", true)
-      else if (checkFailed)
-        LabelNoVerdict(l, "a complete assignment failed its own check; no verdict is claimed", false)
-      else
-        LabelRefuted(l,
-          if (firstAt >= 0) vars(firstAt) else vars(0),
-          "no assignment of this field to the parts satisfies every partition" +
-          " (complete search, " + nodes + " cases; unit propagation alone does not see it)")
-    (verdict, nodes)
+    /** EVERY total assignment of `order` extending the current one, each handed to `sink`
+      * (which must copy what it needs: the bits are this engine's own array).  `false` =
+      * the node budget or `limit` stopped the enumeration, so the models are incomplete. */
+    def enumerate(order: Array[Int], limit: Int)(sink: LabelSearch => Unit): Boolean = {
+      val u = firstUnknown(order)
+      if (u < 0) {
+        if (verify()) { found += 1; sink(this) }
+        return found < limit
+      }
+      nodes += 1
+      if (nodes > budget) { budgetOut = true; return false }
+      var ok = true
+      var b  = 2                                    // FALSE first, then TRUE
+      while (b >= 1 && ok) {
+        val mark = tlen
+        conflict = false
+        bits(u) = b.toByte; trail(tlen) = u; tlen += 1
+        val os = occ(u); var j = 0
+        while (j < os.length) { push(os(j)); j += 1 }
+        propagate()
+        if (!conflict) ok = enumerate(order, limit)(sink)
+        while (tlen > mark) { tlen -= 1; bits(trail(tlen)) = 0 }
+        clearQueue()
+        conflict = false
+        b -= 1
+      }
+      ok
+    }
   }
 }

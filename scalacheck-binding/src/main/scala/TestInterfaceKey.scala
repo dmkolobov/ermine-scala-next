@@ -149,24 +149,36 @@ object TestInterfaceKey extends Properties("Interface key") {
     * textually instead, which is the guard that matters: the failure mode is somebody
     * putting one INTO the key. */
   private val notInKey =
-    List("rowtrace", "loadinseries", "foreign", "typecheck", "useinterface", "tolerant")
+    List("rowtrace", "loadinseries", "foreign", "typecheck", "useinterface", "tolerant",
+         "sigentail")
 
   /** The key is a pure function of the format version and `GenRules.toString`;
     * no property that cannot change published bytes is in it.  This is the
     * regression guard: adding one to the key fails here. */
+  /** SIG-3: `sigEntail=error` is the ONE thing appended after `GenRules`, and only in that
+    * mode.  It belongs in the key because `error` can change what is published -- by
+    * REFUSING a module whose signature is not entailed -- but it must not be a `GenRules`
+    * field, whose `toString` IS the key's second half and where a new field invalidates
+    * every cached interface.  So `notInKey` is checked against the `GenRules` half alone;
+    * the suffix is checked exactly, here. */
+  private def sigEntailSuffix: String =
+    if (com.clarifi.reporting.ermine.SigEntail.defaultMode ==
+        com.clarifi.reporting.ermine.SigEntail.Error) "|sigEntail=error" else ""
+
   property("key is <format version>|<GenRules>, and holds no non-key flag") = secure {
     val k0 = Session.interfaceKey
-    val expected = Session.interfaceFormatVersion.toString + "|" + Constraints.GenRules.toString
+    val expected = Session.interfaceFormatVersion.toString + "|" + Constraints.GenRules.toString +
+                   sigEntailSuffix
     // the two that CAN be flipped safely: both are read once, into a `val`, when
     // `RowTrace` initialises, so setting them here changes nothing anywhere.
     val flipped = withProps(
       "ermine.rowTrace"       -> (!java.lang.Boolean.getBoolean("ermine.rowTrace")).toString,
       "ermine.rowTrace.draws" -> (!java.lang.Boolean.getBoolean("ermine.rowTrace.draws")).toString
     )(Session.interfaceKey)
-    val lower = k0.toLowerCase
+    val lower = Constraints.GenRules.toString.toLowerCase
     (k0 ?= expected)                                         :| s"key $k0" &&
     (flipped ?= k0)                                          :| s"flipped $flipped vs $k0" &&
-    (notInKey.filter(lower.contains) ?= Nil)                 :| s"key mentions a non-key flag: $k0" &&
+    (notInKey.filter(lower.contains) ?= Nil)                 :| s"GenRules mentions a non-key flag: $k0" &&
     (Session.interfaceHeader ?= "-- ermine-interface " + k0) :| Session.interfaceHeader
   }
 

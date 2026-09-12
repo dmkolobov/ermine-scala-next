@@ -339,3 +339,4 @@ import Rowpartition.Loop.PolicyTerm
 import Rowpartition.Loop.TopNormalise
 import Rowpartition.RoseTheory
 import Rowpartition.Determined
+import Rowpartition.SigEntail

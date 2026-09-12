@@ -19,7 +19,7 @@ object TestWriters extends Properties("writer API") {
   }
 
   property("toPrimExprNel survives Ermine foreign calls") = secure {
-    val ermineF = ErmineFixture()
+    val ermineF = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
     import ermineF._
     Prop.all(eval("foreignTrials", Map("Layout.Report.ChoiceTest" -> all))
              .extract[List[_]] map {

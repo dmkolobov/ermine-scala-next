@@ -1,6 +1,6 @@
 module ShouldFail.Sig01 where
 
-{- SHOULD FAIL -- error class 6, SIGNATURE CONTEXT TOO WEAK.  *** CURRENTLY ACCEPTED ***
+{- SHOULD FAIL -- error class 6, SIGNATURE CONTEXT TOO WEAK.  *** REJECTED (S3) ***
 
    Pinned 2026-09-10 (tracker/SIG-ENTAIL-PLAN.md, stage S0).  The declared signature
    promises `healthOpt` for EVERY row r; the body reads `health`, which needs
@@ -32,13 +32,33 @@ module ShouldFail.Sig01 where
    here the wanted set IS satisfiable; what is missing is entailment by the signature's
    givens, with the signature's variables rigid and the solver's minted remainder free.
 
-   Expected message once fixed (proposed wording; S3 settles it):
-       .../sig01_unconstrained_signature.e:<line of `r ! health`>: signature does not
-         entail the body's row constraint  r <- ((|health|), t)
-       with a second location "declared at" on the signature line.
+   REJECTED since S3 (2026-09-11, `tracker/loopmodel/SIG-3-IMPL.md`), at the DEFAULT
+   `-Dermine.sigEntail=error`.  Measured message, verbatim (ids vary per run):
 
-   Rule modes: ACCEPTED under all / cut / nongen.  Flip this header and RESULTS.md when
-   S3 lands.
+       core/examples/shouldfail/sig01_unconstrained_signature.e:70:17: the signature does
+       not entail this row constraint
+           wanted   r^579411S <- ((|ShouldFail.Sig01.health|), _^579413A)
+           given    (none)
+         no rows satisfying the givens satisfy it: take the column
+           `ShouldFail.Sig01.health` to be in none of the signature's rows (r) -- the
+           givens allow that, and no choice of _1 (the solver's own, which may be any rows)
+           then satisfies the wanted
+         declared at core/examples/shouldfail/sig01_unconstrained_signature.e:69:13
+           (sig healthOpt)
+
+   The primary position is the BODY's `!` (70:17), the secondary the DECLARED TYPE (69:13).
+   The witness is the label class `health` with every row empty -- the label is mentioned
+   literally, so this is the one shape the plan's original refutation trick also decided.
+
+   Rule modes: rejected under all / cut / nongen.  Under `-Dermine.sigEntail=off` the
+   module loads again and `crash` evaluates to the error below: that is the escape hatch,
+   pinned in `TestSigEntail`'s flag group.
+   HOW THE MESSAGE ABOVE WAS MEASURED: under the default `-Dermine.sigEntail=error` with
+   the seven stdlib signature corrections applied (branch `sig-fixes`), and under
+   `-Dermine.sigEntail=warn` on an uncorrected tree, where the text is identical with a
+   `warning:` prefix and the module then loads.  Without the stdlib corrections `error`
+   refuses `DrilldownList.e:20:98` during the boot and NO corpus module reaches its own
+   diagnostic, so a sweep of an uncorrected tree says nothing about this pin.
 -}
 
 import Prelude

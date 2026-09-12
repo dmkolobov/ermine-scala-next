@@ -14,9 +14,9 @@ import scalaparsers.Supply
 /** 4.1c: a whole module through the NEW pipeline into the REAL
   * typechecker, compared against the old load name-by-name. */
 object TestNewPipeline extends Properties("NewPipeline 4.1c") {
-  private val fx = ErmineFixture()
+  private val fx = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import fx._
-  private val fxChain = ErmineFixture()
+  private val fxChain = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
 
   private val src =
     """module NPT where

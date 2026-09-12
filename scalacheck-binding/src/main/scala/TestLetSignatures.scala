@@ -27,7 +27,7 @@ import scalaparsers.Death
   * `Subst.inferBindingGroupTypes` type checks against its body.
   */
 object TestLetSignatures extends Properties("Ermine let signatures") {
-  private val ermineFixture = ErmineFixture()
+  private val ermineFixture = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import ermineFixture._
 
   val imps: Map[String, ImportSpec] =

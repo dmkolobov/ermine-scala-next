@@ -16,13 +16,13 @@ import Prop._
   * parse->rename->reassoc->lower output, compared structurally modulo
   * variable ids and locations. */
 object TestLower extends Properties("Lower 3.4a") {
-  private val fx = ErmineFixture()
+  private val fx = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import fx._
   // the fixture writes loaded modules back into its baseEnv ("kind of
   // evil"); different import families get their own fixtures so one
   // family's transitive loads cannot shadow-poison another's reloads
-  private val fxAlt = ErmineFixture()
-  private val fxRel = ErmineFixture()
+  private val fxAlt = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
+  private val fxRel = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
 
   private val im: Map[String, ImportSpec] =
     Map("Builtin" -> all, "Test" -> all, "Primitive" -> all,

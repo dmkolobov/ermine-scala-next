@@ -17,8 +17,14 @@ cp="$(tr -d '\n' < tracker/repl-classpath.txt)"
 cp="$cp:$(tracker/tools/build-probejar.sh)" || exit 1
 export LSP_SMOKE_LOG="${LSP_SMOKE_LOG:-/tmp/lsp-smoke.log}"
 : > "$LSP_SMOKE_LOG"
+# SIG-3: the signature-entailment mode the SERVER runs in.  Unset means the shipped
+# default (`error`), which is what a user's editor does; `ERMINE_SIGENTAIL=off` drives the
+# same fixtures with the check off, and `tracker/lsp-tests/SigEntail.e`'s block in
+# lsp-client.py reads the same variable so its expectation follows the server's.
+export ERMINE_SIGENTAIL="${ERMINE_SIGENTAIL:-error}"
 timeout 120 python3 tracker/tools/lsp-client.py \
   "$JAVA_HOME/bin/java" -Dermine.lsp.log="$LSP_SMOKE_LOG" \
+  -Dermine.sigEntail="$ERMINE_SIGENTAIL" \
   -cp "$cp" com.clarifi.reporting.ermine.lsp.Main
 rc=$?
 [ $rc -eq 124 ] && echo "  FAIL  lsp (timed out; log: $LSP_SMOKE_LOG)"
