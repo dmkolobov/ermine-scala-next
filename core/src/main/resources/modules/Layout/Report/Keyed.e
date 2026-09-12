@@ -49,7 +49,9 @@ prefS oa = oa prefSDefaults |> (PrefSOptions o) -> prefs o
         prefs (Right a)  =  prefA_R a
 
 
-softRelation : (AsPresentation prk, AsPresentation prvd)
+softRelation : ( exists o
+               . o <- (k, v)
+               , AsPresentation prk, AsPresentation prvd )
             => prk k a -> prvd v b
             -> (Options (SoftRelationOptions kpsp k v b)
                         (SoftRelationDefaults kpsp' k v b))
@@ -60,7 +62,14 @@ softRelation pk pv oa = oa softRelationDefaults |>
       ((maybe (asPresentation pv) id $ pvSpecial ktup, pvss ktup),
        snd $ pvsp ktup ()))
 
-keyValueTabular : (Relational rel, Relational rel2)
+-- DEGENERATE (S3b, 2026-09-11): honest, but the four branches force pid = cid = r = (||),
+-- so the two drilldown branches are uncallable; splitting the wrapper is a ticket.
+keyValueTabular : ( exists o
+                  . r2 <- (k, v, i)
+                  , i <- (label, o)
+                  , r2 <- (k, v, pid, cid, i)
+                  , r2 <- (k, v, r, i)
+                  , Relational rel, Relational rel2 )
                => (Options (KeyValueTabularOptions u1 i label pid id cid r (rel2 root))
                            (KeyValueTabularOptions u2 i label pid id cid r (rel2 root)))
                -> Either (SoftRelation a b k v) (DynamicFulcrum k v)

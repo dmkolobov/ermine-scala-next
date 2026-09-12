@@ -37,19 +37,37 @@ CONC = re.compile(r'^\(\|(.*)\|\)$')
 NODE_BUDGET  = 400000
 MODEL_BUDGET = 20000
 
+NAMES = {}                      # var id -> the name the probe printed, for readable dumps
+
+def vn(i):
+    n = NAMES.get(i, '')
+    return ('%s^%d' % (n, i)) if n else str(i)
+
+def _files(root):
+    """S3b: a single FILE is accepted as well as a directory of sweep outputs."""
+    if os.path.isfile(root): return [root]
+    out = []
+    for d, _, ns in os.walk(root):
+        out += [os.path.join(d, n) for n in sorted(ns)
+                if n.endswith('.out') or n.endswith('.log') or n.endswith('.txt')]
+    return sorted(out)
+
 def read(root):
-    for n in sorted(os.listdir(root)):
-        if n.endswith('.out') or n.endswith('.log'):
-            for line in open(os.path.join(root, n), errors='replace'):
-                if line.startswith('sigEntail\t'):
-                    c = line.rstrip('\n').split('\t')
-                    if len(c) >= 8: yield c   # 8 columns + tid on stdout, 9 through RowTrace
+    for f in _files(root):
+        for line in open(f, errors='replace'):
+            i = line.find('sigEntail\t')
+            if i >= 0:                  # a logger stamp may precede the record
+                c = line[i:].rstrip('\n').split('\t')
+                if len(c) >= 8: yield c   # 8 columns + tid on stdout, 9 through RowTrace (S3 edit 10)
 
 def parse_part(t):
     m = CONC.match(t)
     if m: return ('c', frozenset(x for x in m.group(1).split(',') if x))
     m = VAR.match(t)
-    if m: return ('v', int(m.group(2)), m.group(3))
+    if m:
+        i = int(m.group(2))
+        if m.group(1): NAMES.setdefault(i, m.group(1))   # S3b: readable dumps
+        return ('v', i, m.group(3))
     return None
 
 def parse_constraints(t):
@@ -270,8 +288,6 @@ ck = collections.defaultdict(lambda: {'W': [], 'Q': None, 'DS': [], 'bad': 0, 'p
                                      'cq': None, 'cw': None})
 for c in read(root):
     _, mod, binding, pos, shape, lit, wanted, givens = c[:8]
-    # the `ds` column is the NINTH; a stdout record adds RowTrace's tid after it (10 columns)
-    # and a `-Dermine.rowTrace` record does not (9).  `> 9` dropped the traced spelling.
     free = c[8] if len(c) > 8 else ''
     if ' <- ' not in wanted: continue
     key = (mod, binding, givens)
@@ -360,11 +376,18 @@ for (mod, b), (v, ch) in sorted(best.items()):
     if v[0] == 'REJECT':
         lab, m = v[1]
         print("    class: %s" % ('generic (a label mentioned nowhere)' if lab is None else lab))
-        print("    witness (R-bits true): %s" % sorted(k for k,x in m.items() if x == 1))
+        print("    witness (rows holding the label): %s"
+              % sorted(vn(k) for k, x in m.items() if x == 1))
     if v[0] == 'NOVERDICT': print("    %s" % v[1])
-    print("    Q: %s" % [(c[0], c[1], sorted(c[2])) for c in ch['Q']])
-    print("    W: %s" % [(c[0], c[1], sorted(c[2])) for c in ch['W']])
+    def show(cs):                                   # S3b: readable, with names
+        return ['%s <- (%s)' % (vn(c[0]), ', '.join([vn(x) for x in c[1]] +
+                (['(|%s|)' % ','.join(sorted(c[2]))] if c[2] else []))) for c in cs]
+    print("    Q: %s" % show(ch['Q']))
+    print("    W: %s" % show(ch['W']))
+    print("    ds: %s" % show(ch['DS']))
     tg = tagsof(ch['Q']); tg.update({k: v for k, v in tagsof(ch['W']).items() if k not in tg})
     qv, wv = varsof(ch['Q']), varsof(ch['W'])
-    print("    F: %s   R: %s" % (sorted(v for v in wv - qv if tg.get(v,'') in ('A','')), sorted((qv|wv) - {v for v in wv - qv if tg.get(v,'') in ('A','')})))
+    print("    F: %s   R: %s" % (sorted(vn(v) for v in wv - qv if tg.get(v,'') in ('A','')),
+                                 sorted(vn(v) for v in (qv|wv) - {v for v in wv - qv if tg.get(v,'') in ('A','')})))
+    print("    at: %s" % ' '.join(sorted(set(ch['pos']))))
     if ch['bad']: print("    unreadable wanteds: %d" % ch['bad'])

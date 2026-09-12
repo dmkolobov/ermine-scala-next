@@ -104,7 +104,10 @@ rightJoinWithDefault ef d mout min = joinWithDefault ef d min mout
 -- partialLookup : (s | extra, key <- (base, t), r1 <- (key, s), r2 <- (key, extra), PrimitiveAtom a)
 --             => Field base a -> Field extra a
 --             -> Mem r2 -> Mem r1 -> Mem r1
-partialLookup : (RelationalComb rel, PrimitiveAtom a, kv <- (key,val), r <- (key,base))
+partialLookup : ( exists r2
+                . RelationalComb rel, PrimitiveAtom a
+                , kv <- (key,val), r <- (key,base)
+                , r2 <- (key,val,base) )
              => Field key a
              -> Field val a
              -> rel kv
