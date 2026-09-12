@@ -8,19 +8,13 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 4 COMPLETE — GATE G4 SIGNED OFF 2026-09-11 (the user: "G4
-looks good, postpone the worker thread for now").  7.0, 7.2, 7.1a, 7.1b, 7.4,
-7.5 DONE; 7.3 handed to PERF-ROADMAP; 7.6 PARKED BY THE USER'S DECISION — the
-worker thread is postponed (the wait sits on its 500 ms trigger and fast mode
-takes it to 56 ms); the 6.2 pattern-binder Subst hook WAITS for the user's
-parallel entailment-check work to land first (both are Tier-1 changes to
-Subst.scala and the hook's flag-off byte-identity should be proved against
-the baseline the entailment change leaves, not before it).  On Layout/
-Report.e a keystroke re-parses one statement: read 0.84 -> 0.05 s,
-keystroke-to-diagnostics 1.69 -> 0.93 s; a 44-line file 0.33 -> 0.17 s.
-NEXT: nothing — the loop is stopped.  Stage 5 is not drafted; its candidate
-material is the G4 evidence's "not satisfied" list plus whatever the
-entailment work changes in the checker.
+Status: INTERSTAGE ITEM 6.2b OPEN (2026-09-12) — the pattern-binder hover hook,
+the user's decision after the signature-entailment work landed (merge 51629452:
+SigEntail.scala, Constraints.scala, Subst.scala; g1-baseline RE-CUT; new baselines
+core/test 1061, corpus 88/70/0 of 158, 274 interfaces, lsp-smoke 551).  Stage 4
+is COMPLETE and G4 SIGNED OFF; the worker thread (7.6) is postponed by the user.
+NEXT: 6.2b implementer (brief tracker/loopmodel/briefs/brief-LSP-6.2b.md) ->
+reviewer (Tier 1 once) -> Tier 0 -> commit.  Stage 5 is not drafted.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
 
@@ -2134,6 +2128,32 @@ New, and specific to this stage:
 - It does not shorten the debounce before the check is shorter (Decision (e)).
 - It does not re-rank anything on a profiler share.  After 7.0, shares are for
   deciding where to look, never for deciding what was won.
+
+## Interstage item 6.2b — the pattern-binder hover hook (opened 2026-09-12; Tier 1)
+
+The fork parked at Stage 3 item 6.2 and kept parked through Stage 4 (Decision (f)),
+opened by the user on 2026-09-12 once the signature-entailment work had landed —
+sequenced AFTER it because both change `Subst.scala` and the hook's flag-off
+byte-identity is proved against the baseline the entailment change leaves.
+
+- [ ] **6.2b The hook.**  `SubstEnv.binderTypes` (def-site -> type) and a
+  `recordBinders` flag, OFF on every strict path; recorded in
+  `inferPatternType`'s `VarP` case and kept substituted where `hm.remembered`
+  is (`instantiateType`, `unbind`, `generalize`) — the 6.2 review's WORKABLE
+  shape; the first shape (record and zonk after the component) is REFUTED and
+  the item must show it fail before the workable one passes.  `TolerantCheck`
+  merges the zonked map into `locals` for binders the arity split does not
+  cover, asserting agreement where both do.  ACCEPTANCE: the 6.2 sweep goes to
+  every value-local binder kind typed (Arg-other 39/1791 -> all, CaseBound
+  0/117 -> all, DoBound 0/31 -> all; residual class stated if any); the 6.2
+  null-pins for these kinds FLIP; Tier 1 IDENTICAL (trace differential
+  sinmoved 0; 0 of 274 interfaces differ; g1 9/9) — batch observes nothing;
+  batch A/B inside the ~1% floor; editor A/B inside the 6.2 budget (≤ 5% of
+  the round trip) or the hook is PARKED with the number.  Brief:
+  tracker/loopmodel/briefs/brief-LSP-6.2b.md.
+
+**GATE (6.2b)**: Tier 1 green on the reviewer's own run; both A/Bs recorded;
+the coverage table; lsp-smoke grown; STOP and report to the user.
 
 ## Blocked / Awaiting
 
