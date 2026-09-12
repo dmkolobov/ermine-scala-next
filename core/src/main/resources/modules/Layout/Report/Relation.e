@@ -56,7 +56,7 @@ cutoffDrilldownRel
    : forall v p pt c ct d s.
    ( exists l
    . s <- (d, c, p, v)
-   , l <- ((|cutoff|), s))
+   , l <- ((|cutoff,cutoffCount,cutoffChild,cutoffGroup|), s))
   => Field v (Nullable Double)
   -> Field p pt
   -> Field c Int
@@ -89,7 +89,7 @@ private
      ( exists l e
      . s <- (e, p, v)
      , l <- ((|cutoff|), s)
-     , r <- (p, v, (|cutoff|)))
+     , r <- (p, (|cutoff|)))
     => Field v (Nullable Double)
     -> Field p pt
     -> Double
@@ -175,16 +175,17 @@ private
     aggregateByGroup_Agg (max_Agg groupFld) {parentFld} cutoffGroup (small valueFld parentFld cutoffPct rel)
 
   others
-     : forall v p pt s r d c.
-     ( s <- (p, v, d, c)
-     , l <- ((|cutoff|), s))
+     : forall v p pt s d c.
+     ( exists l
+     . s <- (p, v, d, c)
+     , l <- ((|cutoff,cutoffCount,cutoffChild,cutoffGroup|), s))
     => Field v (Nullable Double)
     -> Field p pt
     -> Field d String
     -> Field c Int
     -> Double
     -> Relation s
-    -> Relation r
+    -> Relation s
   others valueFld parentFld groupFld childFld cutoffPct rel =
       smallsum valueFld parentFld cutoffPct rel
         ** smallcount valueFld parentFld cutoffPct rel 

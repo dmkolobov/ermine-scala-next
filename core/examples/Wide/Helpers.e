@@ -305,10 +305,17 @@ pivotByWithDefault = pivotWithDefault_Piv
 -- 22-constraint residual over 19 existentials.  Written down as a person would
 -- say it -- "the input is the identity columns plus the three measures, the
 -- output is the identity columns plus a key and a value" -- it is TWO
--- constraints, and the body checks against them.  That is the same lesson as
--- `core/examples/incomplete/Signatures.e`: what the solver publishes and what
--- the function means can be very far apart, and the annotation is what closes
--- the gap.
+-- constraints, plus ONE the sentence forgets: `r | key`, the key column is not
+-- already in the input.  Stage S3b (2026-09-11) added it, because without it the
+-- signature is DISHONEST and the body does not check against it: each arm drops
+-- the other measures, `combine`s the literal name into the key column and
+-- renames the survivor to the value column, so it needs `key` disjoint from
+-- every melted column, and the two constraints give that only for `i` and
+-- `val`.  `melt2 fa vf fa fb r` type-checked before the fix and failed at run
+-- time with `Cannot union columns`.  That is the same lesson as
+-- `core/examples/incomplete/Signatures.e`, doubled: what the solver publishes
+-- and what the function means can be very far apart, and what a person writes
+-- down can be a little less than what the body needs.
 --
 -- The arity has to be fixed.  A melt over "whatever columns this row happens to
 -- have" would need to iterate a row variable and mint a union per field, which
@@ -316,7 +323,7 @@ pivotByWithDefault = pivotWithDefault_Piv
 
 -- | Melt two columns into key/value rows.
 melt2 : forall key val fa fb i r out t rel.
-        (r <- (i, fa, fb), out <- (i, key, val), RelationalComb rel)
+        (r <- (i, fa, fb), out <- (i, key, val), r | key, RelationalComb rel)
      => Field key String -> Field val t
      -> Field fa t -> Field fb t
      -> rel r -> rel out
@@ -326,7 +333,7 @@ melt2 kf vf fa fb r =
 
 -- | Melt three columns into key/value rows.
 melt3 : forall key val fa fb fc i r out t rel.
-        (r <- (i, fa, fb, fc), out <- (i, key, val), RelationalComb rel)
+        (r <- (i, fa, fb, fc), out <- (i, key, val), r | key, RelationalComb rel)
      => Field key String -> Field val t
      -> Field fa t -> Field fb t -> Field fc t
      -> rel r -> rel out
@@ -337,7 +344,7 @@ melt3 kf vf fa fb fc r =
 
 -- | Melt four columns into key/value rows.
 melt4 : forall key val fa fb fc fd i r out t rel.
-        (r <- (i, fa, fb, fc, fd), out <- (i, key, val), RelationalComb rel)
+        (r <- (i, fa, fb, fc, fd), out <- (i, key, val), r | key, RelationalComb rel)
      => Field key String -> Field val t
      -> Field fa t -> Field fb t -> Field fc t -> Field fd t
      -> rel r -> rel out

@@ -26,9 +26,16 @@ module Present.DrilldownExplorer where
                      identified by its own pair of columns, so the tree is
                      heterogeneous: divisions have division ids, units have unit
                      ids, teams have team ids, and none of them share a keyspace.
-                     `DrilldownList`'s `cons_Bracket` carries `Has rout f1`,
-                     `Has rout f2` and `Has rout r`, which is how it accumulates
-                     one row out of the pairs.
+                     `DrilldownList`'s `cons_Bracket` carries
+                     `rout <- (f1, f2, r)` -- the PARTITION, since stage S3b
+                     (2026-09-11) -- which is how it accumulates one row out of
+                     the pairs. It used to carry `Has rout f1`, `Has rout f2`
+                     and `Has rout r`, which asserted nothing at all:
+                     `DrilldownList.e` imports neither `Constraint` nor
+                     `Prelude`, so `Has` there was an ordinary implicitly
+                     quantified type VARIABLE, and even in scope `Has` gives
+                     membership where the body's two `append`s need
+                     DISJOINTNESS (`SIG-1-SURVEY.md` item c3).
 
    WHAT A SELECTOR IS. `Selector f z a` is an EVENT plus a SIGNAL:
 
@@ -216,8 +223,8 @@ divisionTree =
 -- ================================================ 2. the heterogeneous drilldown
 
 -- THREE pairs, one per level. `[...]_DDL` is `DrilldownList`'s bracket syntax;
--- each `cons` adds `Has rout f1`, `Has rout f2` and `Has rout r`, so the list's
--- own row grows to the union of all six columns.
+-- each `cons` asks for `rout <- (f1, f2, r)`, so the list's own row is the
+-- DISJOINT union of all six columns -- which these three pairs are.
 orgLevels : DrilldownList_DDL (| orgParent, orgId, unitParent, unitId
                                 , teamParent, teamId |)
 orgLevels = [ (orgParent,  orgId)

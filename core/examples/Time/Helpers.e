@@ -284,19 +284,37 @@ bucketBy startF endF dateF cal facts =
 -- wrapper now carries `dateAdd'`'s signature -- `RUnion2 t r1 r2`, the result
 -- row is the union of the operands' -- and that program is rejected statically.
 --
--- THE SIGNATURE BELOW STILL REPEATS THE HOLE, deliberately: `forall out` is
--- accepted for this body, so a caller who goes through `dayCount` rather than
--- through `dateDiff` still gets the deferred failure. Tightening it to
--- `RUnion2 out r r1 => …` was measured in F3 to load the whole `Time/` group
--- cleanly; it is left as a one-line follow-up rather than folded into a stdlib
--- stage, so that the example keeps showing what an unconstrained result row
--- costs.
-dayCount : forall r r1 out. Field r Date -> Field r1 Date -> Op out Int
+-- THE SIGNATURE BELOW NO LONGER REPEATS THE HOLE (stage S3b, 2026-09-11): the
+-- one-line follow-up the paragraph above left open is taken. The
+-- signature-entailment check rejects `forall r r1 out` for this body, because
+-- the obligations it incurs are exactly `RUnion2`'s three --
+--     out <- (ro, so, rs),  r <- (ro, rs),  r1 <- (so, rs)
+-- i.e. "out is the union of the two operand rows" -- and with `out` in no
+-- constraint a label of `out` outside both operands satisfies the (empty)
+-- givens and falsifies them. So `dayCount` now carries `RUnion2 out r r1`,
+-- the same constraint as `dateDiff`, and a caller who goes through `dayCount`
+-- is rejected statically exactly like one who goes through `dateDiff`. What
+-- the example shows is no longer the cost of the hole but its shape, and the
+-- shape is worth reading, because it is not the same for all five:
+--
+--   * with TWO date columns (`dayCount`, `monthsBetween`) the result row is the
+--     union of the operands', `RUnion2 out r r1`;
+--   * with one column and a CONSTANT (`monthsSince`, `daysSince`, `daysUntil`)
+--     the constant's row is the EMPTY one, and `RUnion2 out r (||)` collapses to
+--     `out = r`: there is nothing for `out` to be but the date column's own row,
+--     so the honest signature does not quantify over `out` at all. `Has out r`
+--     -- "the result row CONTAINS the column" -- was measured NOT to be enough:
+--     the skolem-free half of the residual carries `(||) <- (ro, rs)`, which
+--     forces the two remainders empty and pins `out` to `r`;
+--   * a difference DIVIDED by a literal (`yearFrac365`, `yearFrac360`) keeps the
+--     two-column shape, and `yearsOn` -- a one-column difference divided -- keeps
+--     the collapsed one.
+dayCount : forall r r1 out. RUnion2 out r r1 => Field r Date -> Field r1 Date -> Op out Int
 dayCount s e = dateDiff_Op days (col_Op s) (col_Op e)
 
 -- | Year fraction on the ACT/365 FIXED day-count convention: whole days divided
 -- by 365. What a sterling accrual uses.
-yearFrac365 : forall r r1 out. Field r Date -> Field r1 Date -> Op out Double
+yearFrac365 : forall r r1 out. RUnion2 out r r1 => Field r Date -> Field r1 Date -> Op out Double
 yearFrac365 s e = fromNumericOp_Op (dayCount s e) /_Op prim_Op 365.0
 
 -- | Whole MONTHS between two date columns -- the period index a cohort report
@@ -306,34 +324,34 @@ yearFrac365 s e = fromNumericOp_Op (dayCount s e) /_Op prim_Op 365.0
 -- and `dateDiff`; there is no `year`/`month`/`quarter` op, so a period label has
 -- to come from a calendar table (see `bucketBy`) and a period INDEX has to come
 -- from a difference like this one.
-monthsBetween : forall r r1 out. Field r Date -> Field r1 Date -> Op out Int
+monthsBetween : forall r r1 out. RUnion2 out r r1 => Field r Date -> Field r1 Date -> Op out Int
 monthsBetween s e = dateDiff_Op months (col_Op s) (col_Op e)
 
 -- | Whole months from a FIXED epoch to a date column: a dense integer month
 -- index over the whole table, which is what makes `shiftBy` (below) able to
 -- express "the same month last year" as arithmetic.
-monthsSince : forall r out. Date -> Field r Date -> Op out Int
+monthsSince : forall r. Date -> Field r Date -> Op r Int
 monthsSince d f = dateDiff_Op months (prim_Op d) (col_Op f)
 
 -- | Whole days from a fixed epoch to a date column.
-daysSince : forall r out. Date -> Field r Date -> Op out Int
+daysSince : forall r. Date -> Field r Date -> Op r Int
 daysSince d f = dateDiff_Op days (prim_Op d) (col_Op f)
 
 -- | Whole days from a date COLUMN up to a fixed date -- the mirror of
 -- `daysSince`, and the one a TENURE or AGE column needs ("how long ago was this
 -- person hired, as of the reporting date").
-daysUntil : forall r out. Field r Date -> Date -> Op out Int
+daysUntil : forall r. Field r Date -> Date -> Op r Int
 daysUntil f d = dateDiff_Op days (col_Op f) (prim_Op d)
 
 -- | Age or tenure in YEARS on a given date: days over 365.25, which is the
 -- convention an HR report uses and is not any of the accrual ones.
-yearsOn : forall r out. Date -> Field r Date -> Op out Double
+yearsOn : forall r. Date -> Field r Date -> Op r Double
 yearsOn d f = fromNumericOp_Op (daysUntil f d) /_Op prim_Op 365.25
 
 -- | Year fraction on ACT/360, the convention for USD and EUR deposits. The
 -- same numerator over a 360-day year, which is why an ACT/360
 -- deposit pays about 1.4% more interest than the same rate on ACT/365.
-yearFrac360 : forall r r1 out. Field r Date -> Field r1 Date -> Op out Double
+yearFrac360 : forall r r1 out. RUnion2 out r r1 => Field r Date -> Field r1 Date -> Op out Double
 yearFrac360 s e = fromNumericOp_Op (dayCount s e) /_Op prim_Op 360.0
 
 -- =============================================================== money, rates

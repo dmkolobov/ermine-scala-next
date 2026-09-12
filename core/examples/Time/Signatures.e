@@ -134,16 +134,30 @@ orZeroDeduped = orZeroFull
 
 -- The same tautology, from a date difference divided by a literal. Also gone
 -- since S3: the inferred residual is `yearFrac365Deduped`'s (1 -> 0).
-yearFrac365Full : (out <- (out), PrimitiveTemporal a)
+--
+-- `RUnion2 out r r1` is stage S3b (2026-09-11), and it is the one place in this
+-- file where what the compiler PUBLISHED was not merely noisy but WRONG. The
+-- residual it wrote for this body is the tautology and nothing else, so all three
+-- bindings here declared a result row `out` that no constraint touched -- and the
+-- body's own obligations are exactly `RUnion2`'s three (`out <- (ro,so,rs)`,
+-- `r <- (ro,rs)`, `r1 <- (so,rs)`: the result row is the UNION of the two date
+-- columns' rows). They were dropped, which is `Time/Helpers.e`'s `dayCount`
+-- finding in the file that documents `dayCount`. Two of them are invisible until
+-- the obligations are read together with the skolem-FREE half of the residual
+-- (`(||) <- (f, e)` and `t <- (e, d)`, which pin `out` to the division's row):
+-- the closure of `SIG-2-DESIGN.md` (a3), and the design predicted that restating
+-- the criterion under it could turn up a new item. It turned up these two
+-- (`SIG-3-IMPL.md` 7.4, `SIG-3b-CORRECTIONS.md`).
+yearFrac365Full : (out <- (out), RUnion2 out r r1, PrimitiveTemporal a)
                => Field r a -> Field r1 a -> Op out Double
 yearFrac365Full s e =
   fromNumericOp_Op (dateDiff_Op days (col_Op s) (col_Op e)) /_Op prim_Op 365.0
 
-yearFrac365Deduped : PrimitiveTemporal a => Field r a -> Field r1 a -> Op out Double
+yearFrac365Deduped : (RUnion2 out r r1, PrimitiveTemporal a) => Field r a -> Field r1 a -> Op out Double
 yearFrac365Deduped = yearFrac365Full
 
 -- What `Helpers.e` ships, specialised to `Date`.
-yearFrac365Simple : Field r Date -> Field r1 Date -> Op out Double
+yearFrac365Simple : RUnion2 out r r1 => Field r Date -> Field r1 Date -> Op out Double
 yearFrac365Simple s e =
   fromNumericOp_Op (dateDiff_Op days (col_Op s) (col_Op e)) /_Op prim_Op 365.0
 

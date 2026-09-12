@@ -173,7 +173,18 @@ rightOuter = unsafeRightJoin
 -- being translated (present in both operands), `val` the translation the table
 -- supplies. The result has the SAME header as the input -- `val` is folded into
 -- `key`, not added beside it.
-translate : (RelationalComb rel, PrimitiveAtom a, kv <- (key, val), r <- (key, o))
+--
+-- The third constraint is the one stage S3b (2026-09-11) had to add, here and in
+-- `Relation.partialLookup` itself: the fold goes through `partialLookup'`, whose
+-- result row is `key + val + o`, so the translation column must not ALREADY be
+-- one of the input's other columns. `kv <- (key, val)` makes `val` disjoint from
+-- `key` and `r <- (key, o)` makes `o` disjoint from `key`; neither makes `val`
+-- disjoint from `o`, and with `val` inside `o` the body's own row is
+-- unsatisfiable while the call was accepted anyway.
+translate : ( exists r2
+            . RelationalComb rel, PrimitiveAtom a
+            , kv <- (key, val), r <- (key, o)
+            , r2 <- (key, val, o) )
          => Field key a -> Field val a -> rel kv -> rel r -> rel r
 translate = partialLookup
 
@@ -377,13 +388,13 @@ scanCounts key cf r = count'_Sc cf (groupBy1_Sc key r)
    WHAT IS NOT HERE, AND WHY.
 
    `Relation.UnifyFields.unify1` is the stdlib's advertised way to make two
-   differently-named schemas joinable, and it CANNOT DO THAT. Its signature
+   differently-named schemas joinable, and it CANNOT DO THAT. Its signature was
 
-       unify1 : (r <- (h,f,t), r2 <- (h,f2,t))
+       unify1 : (r <- (h,f,t), r2 <- (h,f2,t))          -- before stage S3b
              => Field f1 a -> Field f2 a -> [..r] -> [..r2] -> [..r]
 
-   constrains the two operands to agree on everything but one column each
-   (`h` and `t` are shared), and leaves `f1` -- the column being renamed --
+   which constrains the two operands to agree on everything but one column each
+   (`h` and `t` are shared) and leaves `f1` -- the column being renamed --
    mentioned in NO constraint at all. Feeding it a source keyed on `custId` and
    a target keyed on `customerId` is rejected:
 
@@ -394,4 +405,17 @@ scanCounts key cf r = count'_Sc cf (groupBy1_Sc key r)
    in which case it is a self-semi-join under a key alias, not a unification.
    `Algebra/Customer360.e` documents the measurement; `alias` above is what
    the reports use instead.
+
+   Stage S3b (2026-09-11) corrected the signature to
+
+       unify1 : (r2 <- (f1,f2,p), r <- (f2,p,u))
+             => Field f1 a -> Field f2 a -> [..r] -> [..r2] -> [..r]
+
+   -- `f1` and `f2` are columns of the second operand, and the first carries `f2`
+   and the shared part `p` -- which says what the body does and no longer leaves
+   `f1` unconstrained. It does NOT make the function a unification: the operands
+   still have to share `f2 + p`, so the finding above stands, and the self-alias
+   call in `Customer360.e` still checks (a tighter reading that the survey
+   recommended, `r2 <- (h,f1,f2,t)` with `r <- (h,f2,t)`, would have refused it --
+   `tracker/loopmodel/SIG-3b-CORRECTIONS.md` 2).
    ------------------------------------------------------------------------ -}

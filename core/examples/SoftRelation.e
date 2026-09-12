@@ -18,6 +18,7 @@ import DrilldownList as DDL
 
 field idc : String
 field dt: String
+field dtGroup : String
 field pid : Int
 field cid : Int
 field k : String
@@ -51,8 +52,8 @@ ddWordstats = relation [
 ]
 
 ddWordstats2 = relation [
-  {dt = "12/31/2010" },
-  {dt = "01/31/2011" }
+  {dtGroup = "2010", dt = "12/31/2010" },
+  {dtGroup = "2011", dt = "01/31/2011" }
 ] ** ddWordstats
 
 private
@@ -94,7 +95,14 @@ keyValueTabularExample = vflow [
   atomShown "thanks"
 ]
 
-groupingDateDrilldown = [(pid, cid), (dt, dt)]_DDL
+-- TWO levels, and the second one needs TWO columns: `cons_Bracket` asks for
+-- `rout <- (f1, f2, r)` since stage S3b (2026-09-11), so a level whose parent and
+-- child are the SAME column is refused -- the body appends both to the list's row,
+-- and `(dt, dt)` would put `dt` in it twice.  It used to be `[(pid, cid), (dt, dt)]`,
+-- which type-checked only because the three `Has` constraints `cons_Bracket` carried
+-- asserted nothing at all (`SIG-1-SURVEY.md` item c3).  The date level is keyed on
+-- (year, date) instead, which is what a date drilldown means anyway.
+groupingDateDrilldown = [(pid, cid), (dtGroup, dt)]_DDL
 
 ddWordstatsRoots = ddWordstats2
 --ddWordstatsRoots = ddWordstats2 ** (relation [ {pid = 0} ])

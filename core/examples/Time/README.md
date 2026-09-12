@@ -1,9 +1,10 @@
 # `core/examples/Time` — dates, calendars, time series, money and nulls
 
-Nine self-contained Ermine reports, a shared library of **37 row-polymorphic
+Ten self-contained Ermine reports, a shared library of **37 row-polymorphic
 helpers** (`Helpers.e`), the residual signatures those helpers would otherwise
 have published (`Signatures.e`), and three negative modules under
-`shouldfail/`.
+`shouldfail/`.  (`Corrected.e`, the tenth, is a three-column signature control
+rather than a report.)
 
 They exist because the "as of" pattern — *the FX rate on the invoice date, the
 last reading before the review date, the salary-band policy in force in June* —
@@ -53,6 +54,7 @@ answer. That is what gate G4 in `tracker/loopmodel/E3-EXAMPLES.md` does.
 | `ReadingHistory.e` | two network calendars in April 2011 | 17 cols | **all eight** stdlib date-keyed combinators side by side plus the per-key one they lack, on a month where the UKMO and the NOAA networks disagree about which days exist |
 | `CohortRetention.e` | retention triangle | 16 cols | `monthsBetween`; `aggregateByGroup`; `Layout.Scan`'s `columns`/`keys` for a column set derived from the data; `Layout.Report.Keyed.tabular` with a pinned legend |
 | `DemandForecast.e` | electricity demand vs forecast | 16 cols | `movingAgg` instantiated four ways in one pipeline; `timeSeriesChart` and a four-series `chart_K`; `bucketBy` for seasons; `safeDiv` for a load factor against a rolling maximum that starts at zero |
+| `Corrected.e` | the corrected date-difference signatures, called | 3 cols | the POSITIVE control for stage S3b: `dayCount` under its new `RUnion2 out r r1` with both date columns really in the relation, and `daysUntil` at its adopted result type `Op r Int` (the `Has out r` form was measured dishonest under the closure)|
 | `FiscalTree.e` | service orders on a fiscal calendar held as a **tree of date ranges** | 18 cols | one relation serving as both a `drilldownTable` hierarchy and a set of ranges to `bucketBy` against; `nearestBy` with the fine relation drawn from the tree; all of `DateRange`, and `Ring`/`Num`/`Long`/`Int`/`Nullable` at the value level — with the two `Date.e` defects they expose |
 
 ## The two things a reader should take away

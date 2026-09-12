@@ -202,18 +202,27 @@ object SigEntail {
 
   /** One line per skolem-mentioning wanted:
     *
-    *   sigEntail \t module \t binding \t file:line:col \t shape \t lit|nolit \t wanted \t givens
+    *   sigEntail \t module \t binding \t file:line:col \t shape \t lit|nolit \t wanted \t givens \t ds
+    *
+    * The last column is the SKOLEM-FREE half of the residual (`ds`), added at S3b because
+    * the closure of SIG-2-DESIGN.md (a3) needs it: an obligation of `rs` and a member of
+    * `ds` that share a minted variable are ONE system, and `tracker/tools/sigcheck.py`
+    * reads exactly this column (`free = c[8]`).  Without it the oracle decides a strictly
+    * smaller system and two of the corpus's signatures come out ACCEPT that the check
+    * rejects (`SIG-3-IMPL.md` 7.4).  Same format as `sig-entail`'s probe, so one reader
+    * handles both branches.
     *
     * It goes through `RowTrace.log` when `-Dermine.rowTrace` is set -- so a traced run keeps
     * every record in one file and one order -- and to stdout otherwise, which is where
     * `tracker/tools/corpus-run.sh` captures it into the per-file `.out`.  Both spellings end
     * with `RowTrace`'s thread-id column, so one reader handles both. */
-  def probe(site: Site, qs: List[Type], rs: List[Type]): Unit = if (warn) {
+  def probe(site: Site, qs: List[Type], rs: List[Type], ds: List[Type] = Nil): Unit = if (warn) {
     val givens = one(qs.map(render).mkString("; "))
+    val free   = one(ds.map(render).mkString("; "))
     for (r <- rs) {
       val rec = "sigEntail\t" + site.module + "\t" + site.kind + ":" + site.binding + "\t" +
                 posOf(r.loc) + "\t" + shapeOf(r) + "\t" + (if (literal(r, qs)) "lit" else "nolit") +
-                "\t" + one(render(r)) + "\t" + givens
+                "\t" + one(render(r)) + "\t" + givens + "\t" + free
       if (RowTrace.enabled) RowTrace.log(rec)
       else System.out.println(rec + "\t" + RowTrace.tid)
     }

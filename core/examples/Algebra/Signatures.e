@@ -198,13 +198,32 @@ groupSumFullViaWritten = groupSumAsWritten
 -- adopted defaults), the signature `Helpers.e` actually carries defined as
 -- `= runningTotalFull`, and the reverse definition.
 --
--- BOTH DIRECTIONS CHECK, so the two sets are EQUIVALENT and NINETEEN OF THE
--- TWENTY-ONE inferred constraints carry nothing the other two do not. That is
--- the largest noise ratio measured anywhere in this repository -- the previous
--- record is `core/examples/incomplete/Signatures.e`'s fifteen against nine --
--- and it is the concrete cost of leaving a helper unsignatured: not a wrong
--- type, but a published interface with twenty-seven existential row variables
--- in it that every call site has to solve again.
+-- ONE DIRECTION CHECKS, and stage S3b (2026-09-11) had to correct the claim
+-- that both do. `runningTotalAsWritten` really does have the written type: the
+-- TWO constraints imply the twenty-one, which is what makes the signature
+-- `Helpers.e` carries legitimate, and NINETEEN OF THE TWENTY-ONE inferred
+-- constraints therefore carry nothing the other two do not. That is the largest
+-- noise ratio measured anywhere in this repository -- the previous record is
+-- `core/examples/incomplete/Signatures.e`'s fifteen against nine -- and it is
+-- the concrete cost of leaving a helper unsignatured: not a wrong type, but a
+-- published interface with twenty-seven existential row variables in it that
+-- every call site has to solve again.
+--
+-- The REVERSE direction does NOT check, and the compiler's accepting
+-- `runningTotalFullViaWritten` below was the signature-entailment hole rather
+-- than a proof: its two obligations
+--     r <- (rest, b, a)        -- the input holds the ordering and amount columns
+--     d <- (c, r)              -- the output is the input plus the total column
+-- were both DROPPED (SIG-1-SURVEY.md item c9; the check S3 adds refuses them).
+-- Neither follows from the twenty-one. `a` and `b` occur in none of them -- the
+-- paragraph below already says so about `a` -- and the second needs `c = m`,
+-- which nothing forces: the twenty-one give `d <- (p, n, m)` and `r <- (p, n)`,
+-- so `d = r + m` and the total column could be any `m`. So the two sets are NOT
+-- equivalent: the written pair is strictly STRONGER, a specialisation of the
+-- inferred set exactly as `Wide/Signatures.e`'s `melt3Simple` is one of
+-- `melt3Deduped`'s. The binding below therefore assumes the twenty-one PLUS
+-- those two facts, which is the honest form of "the twenty-one assumed, the two
+-- discharged", and the two extra members are the measurement of the gap.
 --
 -- One thing the inferred set does NOT say, which is worth noticing beside the
 -- `unify1` finding in `Customer360.e`: `Field a a1`, the ordering column,
@@ -251,8 +270,10 @@ runningTotalAsWritten : (r <- (ord, amt, rest), out <- (r, tot), PrimitiveNum n)
                      => Field ord k -> Field amt n -> Field tot n -> Mem r -> Mem out
 runningTotalAsWritten = runningTotalFull
 
--- And the other direction: the twenty-one assumed, the two discharged.
-runningTotalFullViaWritten : ( o <- (e, i, t)
+-- And the other direction: the twenty-one assumed PLUS the two facts they do
+-- not give (see above), the two discharged.
+runningTotalFullViaWritten : ( exists rest
+                             . o <- (e, i, t)
                              , j <- (e2, f2)
                              , c2 <- (rs, so)
                              , c11 <- (d1, e1, f1)
@@ -273,7 +294,9 @@ runningTotalFullViaWritten : ( o <- (e, i, t)
                              , j <- (k, i)
                              , l <- (c, e1, f1)
                              , h <- (i, g, ro, d2)
-                             , r1 <- (e, e1, f1) )
+                             , r1 <- (e, e1, f1)
+                             , r <- (a, b, rest)
+                             , d <- (c, r) )
                           => Field a a1 -> Field b a2 -> Field c a2 -> Mem r -> Mem d
 runningTotalFullViaWritten = runningTotalAsWritten
 

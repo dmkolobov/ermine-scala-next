@@ -544,7 +544,7 @@ object Subst {
      * then throws away (`entails` returns a Boolean nobody reads, and is class-only anyway,
      * :313/:394).  Under `-Dermine.sigEntail=warn` and only for a user signature, print one
      * line per element.  No verdict changes, here or anywhere. */
-    if (SigEntail.warn) sig.foreach(s => if (rs.nonEmpty) SigEntail.probe(s, qs, rs))
+    if (SigEntail.warn) sig.foreach(s => if (rs.nonEmpty) SigEntail.probe(s, qs, rs, ds))
     for (r <- rs)
       entails(qs,r)
     restrictTypes(qxs) // ?
