@@ -8,18 +8,19 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 4 COMPLETE — AWAITING GATE G4 SIGN-OFF (2026-09-11).
-7.0, 7.2, 7.1a, 7.1b, 7.4, 7.5 DONE; 7.3 handed to PERF-ROADMAP; 7.6 parked
-with its trigger measured (the wait sits ON 500 ms; fast mode takes it to 56
-ms — the user's call).  On Layout/Report.e a keystroke re-parses one
-statement: read 0.84 -> 0.05 s, keystroke-to-diagnostics 1.69 -> 0.93 s;
-a 44-line file 0.33 -> 0.17 s; the top-of-file cache cliff is gone; E8/E9/
-E10(5) closed.  Gate evidence (G4) recorded below; every gate green on the
-reviewer's own or method-checked run; batch byte-identical to the G3 build.
-NEXT: nothing — the loop stopped at G4.  Stage 5 is not drafted; its
-candidate material is the G4 evidence's "not satisfied" list and the
-user's parallel type-checker work.  The 6.2 pattern-binder fork remains
-the user's decision.
+Status: STAGE 4 COMPLETE — GATE G4 SIGNED OFF 2026-09-11 (the user: "G4
+looks good, postpone the worker thread for now").  7.0, 7.2, 7.1a, 7.1b, 7.4,
+7.5 DONE; 7.3 handed to PERF-ROADMAP; 7.6 PARKED BY THE USER'S DECISION — the
+worker thread is postponed (the wait sits on its 500 ms trigger and fast mode
+takes it to 56 ms); the 6.2 pattern-binder Subst hook WAITS for the user's
+parallel entailment-check work to land first (both are Tier-1 changes to
+Subst.scala and the hook's flag-off byte-identity should be proved against
+the baseline the entailment change leaves, not before it).  On Layout/
+Report.e a keystroke re-parses one statement: read 0.84 -> 0.05 s,
+keystroke-to-diagnostics 1.69 -> 0.93 s; a 44-line file 0.33 -> 0.17 s.
+NEXT: nothing — the loop is stopped.  Stage 5 is not drafted; its candidate
+material is the G4 evidence's "not satisfied" list plus whatever the
+entailment work changes in the checker.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
 
@@ -3563,6 +3564,11 @@ target.
 STOP.  The loop is stopped for sign-off, per the gate.
 
 ## Gate evidence (G4, recorded 2026-09-11)
+
+G4 SIGNED OFF 2026-09-11 by the user.  Worker thread (7.6) postponed by the
+user; the 6.2 pattern-binder hook sequenced AFTER the parallel entailment
+check (same file, same Tier-1 baseline).
+
 
 Stage 4 shipped in six item commits on branch scala3-migration — 7.0
 (6db2c3a), 7.2 (a15a97e), 7.1a (acaa922), 7.1b (02b35e1), 7.4 (775f1b4),
