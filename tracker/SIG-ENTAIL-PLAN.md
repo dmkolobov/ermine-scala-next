@@ -158,7 +158,7 @@ orchestrator's (FIX-THEN-ADVANCE edits applied; BLOCK -> a fix round to the impl
 
 - [x] S0 pin (2026-09-10)
 - [x] S1 survey (2026-09-11; STOP POINT FIRED: 7 stdlib signatures not entailed)
-- [ ] S2 design + Lean statement  (user reads before S3)
+- [x] S2 design + Lean statement (2026-09-11; STOPPED: the user reads SIG-2-DESIGN.md before S3)
 - [ ] S3 implement, flagged
 - [ ] S4 editor parity
 - [ ] S5 adoption (user decides the default)
@@ -186,6 +186,27 @@ orchestrator's (FIX-THEN-ADVANCE edits applied; BLOCK -> a fix round to the impl
   identical vs g1-baseline and off-vs-warn, repl-smoke 8/8 (with the WORKTREE classpath --
   tracker/repl-classpath.txt is checked in with absolute paths into the main checkout),
   TestLoopTrace 3/3, TestSigEntail 8/8 after this commit.
+
+- 2026-09-11 S2 DONE (design SIG-2-DESIGN.md 655 lines, Lean Rowpartition/SigEntail.lean 796 lines /
+  46 theorems / 0 sorry, build + audit 4670/0; review SIG-2-REVIEW.md FIX-THEN-ADVANCE, all ten
+  edits applied, Lean unchanged). Judgement: F = vars(W) ∩ pxs \ vars(Q); R = (vars(Q) ∪ vars(W)) \ F;
+  W = closure of rs under shared F variables (= rs on this corpus; S3 adds a ds column to the probe
+  and re-states the criterion). Procedure: per label class (literal labels + one generic), one-hot
+  propositional encoding, 2QBF by search with the solver's propagation rules; solver only for Q's
+  satisfiability on the rejecting path; unsat Q vacuous + own diagnostic; NO VERDICT = warn + accept,
+  REJECT outranks. Crux sigEntails_of_lsig. Executable oracle sigcheck.py: 309 signatures = 288
+  accept / 21 reject / 0 undecided (4 pins + 12 S1 (c) + 5 NEW in Time/Helpers.e: dayCount,
+  monthsBetween, monthsSince, daysSince, daysUntil -- S1's triage script never enforced shared
+  choices) => 17 dishonest signatures, 7 stdlib. Reviewer: brute force on 36,000 random systems and
+  an independent DPLL agree on all 309. Decided: ambient metas RIGID (conservative; S4 measures).
+  S3 checklist has 13 items incl. a core/test differential vs the oracle and the Part-shape contract.
+
+## Blocked / Awaiting the user (after S2)
+
+0. Read tracker/loopmodel/SIG-2-DESIGN.md before S3 starts (§(a) the judgement, §(b) the procedure,
+   §(e) the S3 checklist, "Open questions"). OQ1 (the five Time/Helpers holes) and OQ4 (warn vs error
+   default, now 17 signatures) are yours; OQ2 decided conservative; OQ6 (class constraints stay with
+   generalisation) needs a yes.
 
 ## Blocked / Awaiting the user (after S1)
 
