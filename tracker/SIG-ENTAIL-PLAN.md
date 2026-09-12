@@ -159,9 +159,9 @@ orchestrator's (FIX-THEN-ADVANCE edits applied; BLOCK -> a fix round to the impl
 - [x] S0 pin (2026-09-10)
 - [x] S1 survey (2026-09-11; STOP POINT FIRED: 7 stdlib signatures not entailed)
 - [x] S2 design + Lean statement (2026-09-11; STOPPED: the user reads SIG-2-DESIGN.md before S3)
-- [ ] S3 implement, flagged
-- [ ] S4 editor parity
-- [ ] S5 adoption (user decides the default)
+- [x] S3 implement (2026-09-11; DEFAULT error by the user's decision; S3b: 19 signatures corrected + 7 forced callers; S3c: class status note)
+- [ ] S4 editor parity -- PARTLY in S3 (TolerantCheck reaches the check; two properties; lsp-tests/SigEntail.e); remaining: the ambient-meta flavour measurement under warn, D5 (interfaceKey reads the process mode, the check the session mode)
+- [x] S5 adoption (the user: error; LANDED on scala3-migration 2026-09-12)
 - [ ] S6 back-port
 
 ## Iteration log
@@ -200,6 +200,14 @@ orchestrator's (FIX-THEN-ADVANCE edits applied; BLOCK -> a fix round to the impl
   choices) => 17 dishonest signatures, 7 stdlib. Reviewer: brute force on 36,000 random systems and
   an independent DPLL agree on all 309. Decided: ambient metas RIGID (conservative; S4 measures).
   S3 checklist has 13 items incl. a core/test differential vs the oracle and the Part-shape contract.
+
+- 2026-09-12 LANDED: sig-entail fast-forwarded onto scala3-migration. Merged tree gates: full
+  core/test alone 1061/1061; corpus batch error vs off differs in exactly the five pins; .ei error vs
+  off: 5 of 274 differ, bindings identical 3494 / order-only 26 / alpha 3 / other 0 (the same-config
+  floor is worse: other 27); repl-smoke 8/8; lsp-smoke 551; g1-validate EQUIVALENT, baseline re-cut.
+  Open: S4 remainder, S6 back-port (2.11 has the same subsumeType), the class-constraint hole
+  (SIG-3-CLASS-STATUS.md: same hole, pin it, fix constraint heads in the renamer, then the class
+  check), keyValueTabular's degenerate wrapper (ticket), cutoffs NO VERDICT (decidable in principle).
 
 ## Blocked / Awaiting the user (after S2)
 
