@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 bind' : forall r a a1. Control.Monad.Cont.Cont r a -> (a -> Control.Monad.Cont.Cont r a1) -> Control.Monad.Cont.Cont r a1
 contAp : forall r. Control.Ap.Ap (Control.Monad.Cont.Cont r)
 contFunctor : forall r. Control.Functor.Functor (Control.Monad.Cont.Cont r)

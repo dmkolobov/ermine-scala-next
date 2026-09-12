@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 adapt : forall z. Relation.Scan.RunScan Builtin.List z -> Relation.Scan.RunScan Vector.Vector z
 apScan : forall z a b. Relation.Scan.Scan z (a -> b) -> Relation.Scan.Scan z a -> Relation.Scan.Scan z b
 avgBy : forall z (op: rho -> * -> *) (r: rho) a c (a1: rho). (exists (AsOp: (rho -> * -> *) -> b) (c1: rho). AsOp op, a1 <- (c1, r), Builtin.PrimitiveNum a, Relation.Op.AsOp op) => Relation.Scan.RunScan Builtin.List z -> op r a -> Relation.Scan.Scan z (c, Builtin.Relation a1) -> Relation.Scan.Scan z (c, a)

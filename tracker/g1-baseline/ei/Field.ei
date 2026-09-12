@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 copyF : forall (a: rho) b (c: rho) (d: rho) (e: rho). (exists (f: rho). c <- (a, f), e <- (d, a)) => Builtin.Field a b -> Builtin.Record c -> Builtin.Record d -> Builtin.Record e
 ecopyF : forall (r: rho) a. Builtin.Field r a -> Field.EField a
 existentialF : forall a. Builtin.String -> Builtin.Prim a -> Field.EField a

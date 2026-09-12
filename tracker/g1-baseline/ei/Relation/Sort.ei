@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 append : forall (r1: rho) (r2: rho) (r: rho). r <- (r1, r2) => Relation.Sort.Sort r1 -> Relation.Sort.Sort r2 -> Relation.Sort.Sort r
 bottomK : forall (h: rho) (rel: rho -> *) (r: rho). (exists (c: rho). r <- (h, c), Builtin.RelationalComb rel) => Relation.Row.Row h -> Builtin.Int -> rel r -> rel r
 dualSort : (Builtin.Primitive b, Builtin.Primitive a) => Relation.Sort.SortOrder -> Relation.Sort.SortOrder -> Relation.Sort.MultiSortOrder#

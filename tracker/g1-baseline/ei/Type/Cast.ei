@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 downcast : forall a b. (Type.Cast.<:) a b -> b -> Builtin.Maybe a
 refl : forall a. (Type.Cast.<:) a a
 trans : forall b c a. (Type.Cast.<:) b c -> (Type.Cast.<:) a b -> (Type.Cast.<:) a c

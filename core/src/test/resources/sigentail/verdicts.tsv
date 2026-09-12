@@ -49,8 +49,8 @@ ACCEPT	Algebra.Signatures	sig:rot3B
 ACCEPT	Algebra.Signatures	sig:rot3C	
 ACCEPT	Algebra.Signatures	sig:runningTotalAsWritten	
 ACCEPT	Algebra.Signatures	sig:runningTotalFull	
-REJECT	Algebra.Signatures	sig:runningTotalFullViaWritten	*
-REJECT	DrilldownList	sig:cons_Bracket	*
+ACCEPT	Algebra.Signatures	sig:runningTotalFullViaWritten	
+ACCEPT	DrilldownList	sig:cons_Bracket	
 ACCEPT	Field	sig:getF	
 ACCEPT	Field	sig:getFieldOr	
 ACCEPT	Field	sig:modify	
@@ -152,7 +152,7 @@ ACCEPT	Relation	sig:lookupLatestWithin
 ACCEPT	Relation	sig:lookupLatestWithin1	
 ACCEPT	Relation	sig:nearestDate	
 ACCEPT	Relation	sig:nearestDateWithin	
-REJECT	Relation	sig:partialLookup	*
+ACCEPT	Relation	sig:partialLookup	
 ACCEPT	Relation	sig:partialLookup'	
 ACCEPT	Relation	sig:rightJoinOr	
 ACCEPT	Relation	sig:rightJoinWithDefault	
@@ -189,16 +189,16 @@ ACCEPT	Relation.Sort	sig:onlySome
 ACCEPT	Relation.Sort	sig:recordOrd	
 ACCEPT	Relation.Sort	sig:reorderSome	
 ACCEPT	Relation.Sort	sig:topK	
-REJECT	Relation.UnifyFields	sig:unify1	*
+ACCEPT	Relation.UnifyFields	sig:unify1	
 ACCEPT	Relation.Windowed	sig:windowed	
 ACCEPT	Report.Keyed	sig:drilldownBarChart	
-REJECT	Report.Keyed	sig:keyValueTabular	*
+ACCEPT	Report.Keyed	sig:keyValueTabular	
 ACCEPT	Report.Keyed	sig:pieChart	
-REJECT	Report.Keyed	sig:softRelation	*
+ACCEPT	Report.Keyed	sig:softRelation	
 ACCEPT	Report.Relation	sig:cutoffDrilldownRel	
-REJECT	Report.Relation	sig:cutoffs	*
+NOVERDICT	Report.Relation	sig:cutoffs	
 NOVERDICT	Report.Relation	sig:largers	
-REJECT	Report.Relation	sig:others	Layout.Report.Relation.cutoff
+ACCEPT	Report.Relation	sig:others	
 NOVERDICT	Report.Relation	sig:small	
 ACCEPT	Report.Relation	sig:smallcount	
 ACCEPT	Report.Relation	sig:smallgroup	
@@ -217,17 +217,17 @@ ACCEPT	Time.Helpers	sig:asOfWithin
 ACCEPT	Time.Helpers	sig:band3	
 ACCEPT	Time.Helpers	sig:band4	
 ACCEPT	Time.Helpers	sig:bucketBy	
-REJECT	Time.Helpers	sig:dayCount	*
-REJECT	Time.Helpers	sig:daysSince	*
-REJECT	Time.Helpers	sig:daysUntil	*
+ACCEPT	Time.Helpers	sig:dayCount	
+ACCEPT	Time.Helpers	sig:daysSince	
+ACCEPT	Time.Helpers	sig:daysUntil	
 ACCEPT	Time.Helpers	sig:fillForward	
 ACCEPT	Time.Helpers	sig:fxConvert	
 ACCEPT	Time.Helpers	sig:indexOf	
 ACCEPT	Time.Helpers	sig:latestPerKey	
 ACCEPT	Time.Helpers	sig:lookback	
 ACCEPT	Time.Helpers	sig:missing	
-REJECT	Time.Helpers	sig:monthsBetween	*
-REJECT	Time.Helpers	sig:monthsSince	*
+ACCEPT	Time.Helpers	sig:monthsBetween	
+ACCEPT	Time.Helpers	sig:monthsSince	
 ACCEPT	Time.Helpers	sig:movingAgg	
 ACCEPT	Time.Helpers	sig:movingMean	
 ACCEPT	Time.Helpers	sig:movingStdDev	
@@ -243,6 +243,9 @@ ACCEPT	Time.Helpers	sig:present
 ACCEPT	Time.Helpers	sig:runningSum	
 ACCEPT	Time.Helpers	sig:safeDiv	
 ACCEPT	Time.Helpers	sig:shiftBy	
+ACCEPT	Time.Helpers	sig:yearFrac360	
+ACCEPT	Time.Helpers	sig:yearFrac365	
+ACCEPT	Time.Helpers	sig:yearsOn	
 ACCEPT	Time.Signatures	sig:band3Full	
 ACCEPT	Time.Signatures	sig:band4Full	
 ACCEPT	Time.Signatures	sig:bucketBySimple	
@@ -264,8 +267,9 @@ ACCEPT	Time.Signatures	sig:safeDivSimple
 ACCEPT	Time.Signatures	sig:shiftByDeduped	
 ACCEPT	Time.Signatures	sig:shiftByFull	
 ACCEPT	Time.Signatures	sig:shiftBySimple	
-REJECT	Time.Signatures	sig:yearFrac365Full	*
-REJECT	Time.Signatures	sig:yearFrac365Simple	*
+ACCEPT	Time.Signatures	sig:yearFrac365Deduped	
+ACCEPT	Time.Signatures	sig:yearFrac365Full	
+ACCEPT	Time.Signatures	sig:yearFrac365Simple	
 ACCEPT	Tree	sig:fromRel	
 ACCEPT	Tree	sig:join	
 ACCEPT	Tree	sig:toRel	
@@ -274,9 +278,9 @@ ACCEPT	Validation	sig:consV
 ACCEPT	Wide.Helpers	sig:asOfDates	
 ACCEPT	Wide.Helpers	sig:denseWithin	
 ACCEPT	Wide.Helpers	sig:latestPerKey	
-REJECT	Wide.Helpers	sig:melt2	*
-REJECT	Wide.Helpers	sig:melt3	*
-REJECT	Wide.Helpers	sig:melt4	*
+ACCEPT	Wide.Helpers	sig:melt2	
+ACCEPT	Wide.Helpers	sig:melt3	
+ACCEPT	Wide.Helpers	sig:melt4	
 ACCEPT	Wide.Helpers	sig:movingAverage	
 ACCEPT	Wide.Helpers	sig:nTileWithin	
 ACCEPT	Wide.Helpers	sig:pivotBy	
@@ -294,7 +298,7 @@ ACCEPT	Wide.Helpers	sig:withDerived3
 ACCEPT	Wide.Signatures	sig:melt3Deduped	
 ACCEPT	Wide.Signatures	sig:melt3Full	
 ACCEPT	Wide.Signatures	sig:melt3FullViaDeduped	
-REJECT	Wide.Signatures	sig:melt3Simple	*
+ACCEPT	Wide.Signatures	sig:melt3Simple	
 ACCEPT	Wide.Signatures	sig:rankWithinFull	
 ACCEPT	Wide.Signatures	sig:rankWithinFullViaSugar	
 ACCEPT	Wide.Signatures	sig:rankWithinSugar	

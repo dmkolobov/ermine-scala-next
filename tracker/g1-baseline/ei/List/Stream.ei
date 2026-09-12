@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 (<:>) : forall a. a -> List.Stream.Stream a -> List.Stream.Stream a
 ap : Control.Ap.Ap List.Stream.Stream
 append : forall a. Builtin.List a -> List.Stream.Stream a -> List.Stream.Stream a

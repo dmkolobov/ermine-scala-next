@@ -1,1 +1,2 @@
-unify1 : forall (f1: rho) a (f2: rho) (r: rho) (r2: rho). (r2 <- (h, f2, t), r <- (h, f, t)) => Builtin.Field f1 a -> Builtin.Field f2 a -> Builtin.Relation r -> Builtin.Relation r2 -> Builtin.Relation r
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
+unify1 : forall (f1: rho) a (f2: rho) (r: rho) (r2: rho). (r <- (f2, p, u), r2 <- (f1, f2, p)) => Builtin.Field f1 a -> Builtin.Field f2 a -> Builtin.Relation r -> Builtin.Relation r2 -> Builtin.Relation r

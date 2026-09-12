@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 getCause : Native.Throwable.Throwable -> Builtin.Maybe Native.Throwable.Throwable
 throwableObject : (Type.Cast.<:) Native.Throwable.Throwable Native.Object.Object
 throwableSerializable : (Type.Cast.<:) Native.Throwable.Throwable Native.Serializable.Serializable

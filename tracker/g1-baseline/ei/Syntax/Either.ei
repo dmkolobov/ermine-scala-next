@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 (<$) : forall a e b. a -> Either.Either e b -> Either.Either e a
 (<$>) : forall a b e. (a -> b) -> Either.Either e a -> Either.Either e b
 (<*>) : forall e a b. Either.Either e (a -> b) -> Either.Either e a -> Either.Either e b

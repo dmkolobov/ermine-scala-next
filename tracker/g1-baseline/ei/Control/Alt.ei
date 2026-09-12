@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 alt : forall (f: * -> *) a. Control.Alt.Alt f -> f a -> f a -> f a
 altAp : forall (f: * -> *). Control.Alt.Alt f -> Control.Ap.Ap f
 altMonoid : forall (f: * -> *) a. Control.Alt.Alt f -> Control.Monoid.Monoid (f a)

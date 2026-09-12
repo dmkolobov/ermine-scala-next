@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 (<*>) : forall a b. Builtin.IO (a -> b) -> Builtin.IO a -> Builtin.IO b
 (>>=) : forall a a1. Builtin.IO a -> (a -> Builtin.IO a1) -> Builtin.IO a1
 catch : forall a. Builtin.IO a -> (Native.Throwable.Throwable -> Builtin.IO a) -> Builtin.IO a

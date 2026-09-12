@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 (++) : forall a. Builtin.List a -> Builtin.List a -> Builtin.List a
 and : Builtin.List Builtin.Bool -> Builtin.Bool
 any : forall a. (a -> Builtin.Bool) -> Builtin.List a -> Builtin.Bool

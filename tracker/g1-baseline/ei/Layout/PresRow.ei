@@ -1,2 +1,3 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 cons_Bracket : forall (o: rho -> * -> *) (ra: rho) a (r: rho) (r': rho). (exists (ro: rho) (so: rho) (rs: rho). r' <- (ro, so, rs), r <- (ro, rs), ra <- (so, rs), AsPresentation o) => o ra a -> Layout.PresRow.PresRow r -> Layout.PresRow.PresRow r'
 empty_Bracket : Layout.PresRow.PresRow (||)

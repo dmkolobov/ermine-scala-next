@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 aggregate : forall n a. (n -> n -> n) -> (a -> n) -> Tree.Tree a -> Tree.Tree (n, a)
 aggregateLeaves : forall n a. (n -> n -> n) -> (a -> Builtin.Maybe n) -> Tree.Tree a -> Tree.Tree (n, a)
 fillZero : forall n a. Tree.Tree (Builtin.Maybe n, a) -> Tree.Tree (n, a)

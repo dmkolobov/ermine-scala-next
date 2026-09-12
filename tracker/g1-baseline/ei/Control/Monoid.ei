@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 mappend : forall m. Control.Monoid.Monoid m -> m -> m -> m
 mempty : forall m. Control.Monoid.Monoid m -> m
 mproduct : forall m n. Control.Monoid.Monoid m -> Control.Monoid.Monoid n -> Control.Monoid.Monoid (m, n)

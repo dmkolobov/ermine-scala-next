@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 (!*) : forall (r: rho) (h: rho). (exists (t: rho). r <- (t, h)) => Builtin.Record r -> Relation.Row.Row h -> Builtin.Record h
 (#) : forall (rel: rho -> *) (r: rho) (r1: rho). (exists (c: rho). r <- (c, r1), Builtin.RelationalComb rel) => rel r -> Relation.Row.Row r1 -> rel r1
 (-#) : forall (rel: rho -> *) (r: rho) (r1: rho) (r2: rho). (r <- (r1, r2), Builtin.RelationalComb rel) => rel r -> Relation.Row.Row r1 -> rel r2

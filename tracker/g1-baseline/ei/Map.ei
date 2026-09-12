@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 (!) : forall k v. Map.Map k v -> k -> v
 delete : forall k v. k -> Map.Map k v -> Map.Map k v
 empty : forall k v. (k -> k -> Ord.Ordering) -> Map.Map k v

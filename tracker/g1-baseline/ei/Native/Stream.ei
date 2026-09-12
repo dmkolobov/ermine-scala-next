@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 (#::) : forall a. a -> Native.Stream.Stream a -> Native.Stream.Stream a
 concatMap : forall a b. (a -> Native.Stream.Stream b) -> Native.Stream.Stream a -> Native.Stream.Stream b
 cons : forall a. a -> Native.Stream.Stream a -> Native.Stream.Stream a

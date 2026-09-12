@@ -37,7 +37,7 @@ object ErmineFixture {
     * corrections land this becomes `None` and every use of it can go -- which is why it is one
     * named value rather than twenty literals. */
   val untilSigFixes: Option[com.clarifi.reporting.ermine.SigEntail.Mode] =
-    Some(com.clarifi.reporting.ermine.SigEntail.Off)
+    None  // LANDED 2026-09-11: sig-fixes merged; every fixture inherits the shipped default (error)
 
   /** Delete a staged temp workspace, deepest entry first.  Every suite that
     * calls `Files.createTempDirectory` must run this from a `finally`: without

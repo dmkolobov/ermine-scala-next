@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 (&) : forall (a: rho) (r: rho) (b: rho). (exists (c: rho) (d: rho) (e: rho). a <- (e, d), r <- (d, c), b <- (e, d, c)) => Builtin.Relation a -> Builtin.Record r -> Builtin.Relation b
 (&') : forall (a: rho) (r: rho). a <- (r, o) => Builtin.Relation a -> Builtin.Record r -> Builtin.Relation a
 (&'_Mem) : forall (a: rho) (r: rho). a <- (r, o) => Builtin.Mem a -> Builtin.Record r -> Builtin.Mem a

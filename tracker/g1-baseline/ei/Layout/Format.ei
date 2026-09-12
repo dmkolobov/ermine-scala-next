@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 alias : Builtin.List (Builtin.String, Builtin.String) -> Layout.Format.Format Builtin.String
 andCondition : forall a. Layout.Format.Condition a -> Layout.Format.Condition a -> Layout.Format.Condition a
 colored : forall a. Layout.Color.Color -> Layout.Color.Color -> Layout.Format.Format a -> Layout.Format.Format a

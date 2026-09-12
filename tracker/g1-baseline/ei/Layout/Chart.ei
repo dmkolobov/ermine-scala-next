@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 atomize : forall nm. Builtin.Maybe (Layout.Report.Atomic.Atomic nm) -> Native.Maybe.Maybe# (Layout.Report.Atomic.Atomic# nm)
 axisChartDataW : forall p p1. Layout.Chart.AxisLabel -> Layout.Format.Format p -> Builtin.Bool -> Layout.Chart.AxisLabel -> Layout.Format.Format p1 -> Builtin.Bool -> Layout.Chart.Type.Axis p -> Layout.Chart.Type.Axis p1 -> Builtin.Maybe Builtin.String -> Layout.Report.Direction.Direction -> Layout.Chart.Unsafe.ChartLegendOptions# -> Layout.Chart.Unsafe.ChartRenderHints# -> Builtin.List (Layout.Chart.Type.ChartSeries p p1) -> Layout.Chart.Unsafe.AxisChartData#
 axisLabel# : forall z. (forall t t'. Native.Maybe.Maybe# (Native.Either.EitherZ# (Layout.Report.Atomic.Atomic# t) (Layout.Report.Atomic.Atomic# t')) -> z) -> Layout.Chart.AxisLabel -> z

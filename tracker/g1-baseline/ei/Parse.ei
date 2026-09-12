@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 numberFormat : forall a. Builtin.FFI a -> Builtin.Maybe a
 parseBool : Builtin.String -> Builtin.Maybe Builtin.Bool
 parseByte : Builtin.Int -> Builtin.String -> Builtin.Maybe Builtin.Byte

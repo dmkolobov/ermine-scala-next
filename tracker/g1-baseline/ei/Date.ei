@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 decrementDate : Builtin.Int -> Date.TimeUnit -> Builtin.Date -> Builtin.Date
 formatExcelDate : Builtin.Date -> Builtin.String
 formatQuarter : Builtin.Date -> Builtin.String

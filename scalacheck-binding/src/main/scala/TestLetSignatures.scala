@@ -145,8 +145,10 @@ object TestLetSignatures extends Properties("Ermine let signatures") {
     "            local r = r ! health\n" +
     "        in local { position = 2.0 }"
 
-  property("KNOWN HOLE: a let signature with a too-weak context is ACCEPTED") =
-    typeChecks(rowTwin, "crash", rowImps)
+  // Flipped at S3 landing (2026-09-11): the entailment check now refuses the too-weak
+  // context on a let-bound signature exactly as on a top-level one (shouldfail/sig03).
+  property("a let signature with a too-weak row context is refused by the entailment check") =
+    no(typeChecks(rowTwin, "crash", rowImps))
 
   // Sharing the block machinery with the module path makes interleaved equations of one
   // name a refusal inside a `let` block too (LET-1 review edit 1): in the let channel the

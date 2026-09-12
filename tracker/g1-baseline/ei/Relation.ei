@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
 bottomKBy : forall (h: rho) (k: rho) (rel: rho -> *) (kv: rho). (exists (c: rho) (r: rho). r <- (h, c), kv <- (k, c, h), Builtin.Relational rel) => Relation.Row.Row h -> Relation.Row.Row k -> Builtin.Int -> rel kv -> Builtin.Mem kv
 copyColumn : forall (r1: rho) a (r2: rho) (rel: rho -> *) (ri: rho) (ro: rho). (Builtin.Relational rel, ro <- (r1, r2, t), ri <- (r1, t)) => Builtin.Field r1 a -> Builtin.Field r2 a -> rel ri -> rel ro
 count : forall (a: rho -> *) (b: rho). Builtin.RelationalComb a => a b -> a (|Field.Count|)
@@ -13,7 +14,7 @@ lastBy : forall (h: rho) (r: rho). (exists (c: rho). r <- (h, c)) => Relation.Ro
 leafRows : forall (parent: rho) n (child: rho) (r: rho). r <- (parent, child, t) => Builtin.Field parent n -> Builtin.Field child n -> Builtin.Relation r -> Builtin.Relation r
 leftJoinOr : forall (rel: rho -> *) (r1: rho) (r2: rho) (t: rho) (r3: rho). (r3 <- (r, s, t), r2 <- (s, t), r1 <- (r, s), Builtin.RelationalComb rel) => rel r1 -> rel r2 -> Builtin.Record t -> rel r3
 letRWithPK : forall (k: rho) (rel: rho -> *) (a: rho) (b: rho). (exists (c: rho). a <- (k, c), Builtin.Relational rel) => Relation.Row.Row k -> rel a -> (Builtin.Relation a -> Builtin.Relation b) -> Builtin.Relation b
-lookbackJoin : forall (r: rho) (r1: rho) (a: rho) (b: rho). (exists (r2: rho) (c: rho) (d: rho) (e: rho) (f: rho) (g: rho) (h: rho) (c1: rho) (t: rho) (c2: rho) (o: rho). r2 <- (d, c), t <- (d, c, e), b <- (h, g, f), o <- (g, f), a <- (h, g), a <- (c2, r), r1 <- (c1, r), t <- (r, d, c1), r1 <- (c, e)) => (Builtin.Field r Builtin.Date -> Relation.Op.Type.Op r Builtin.Date) -> Builtin.Field r Builtin.Date -> Builtin.Relation r1 -> Builtin.Relation a -> Builtin.Relation b
+lookbackJoin : forall (r: rho) (r1: rho) (a: rho) (b: rho). (exists (c: rho) (r2: rho) (c1: rho) (d: rho) (e: rho) (o: rho) (f: rho) (g: rho) (t: rho) (c2: rho) (h: rho). r1 <- (c1, e), b <- (h, g, f), r1 <- (c2, r), o <- (g, f), t <- (d, c1, e), t <- (r, d, c2), r2 <- (d, c1), a <- (h, g), a <- (c, r)) => (Builtin.Field r Builtin.Date -> Relation.Op.Type.Op r Builtin.Date) -> Builtin.Field r Builtin.Date -> Builtin.Relation r1 -> Builtin.Relation a -> Builtin.Relation b
 lookupLatest : forall (h: rho) (r: rho). r <- (h, t) => Builtin.Field h Builtin.Date -> Builtin.Relation h -> Builtin.Relation r -> Builtin.Relation r
 lookupLatest' : forall (keys: rho) (r: rho). r <- (keys, t) => (Builtin.Date -> Builtin.Relation keys -> Builtin.Relation r) -> Builtin.Date -> Builtin.Date -> Builtin.Relation keys -> Builtin.Relation r
 lookupLatest1 : forall (h: rho) (r: rho). r <- (h, t) => Builtin.Field h Builtin.Date -> Builtin.Date -> Builtin.Relation r -> Builtin.Relation r
@@ -22,27 +23,27 @@ lookupLatestWithin1 : forall (h: rho) (r: rho). r <- (h, t) => (Builtin.Field h 
 materialize : forall (a: rho -> *) (b: rho). Builtin.Relational a => a b -> Builtin.Relation b
 materializeWithPK : forall (k: rho) (rel: rho -> *) (a: rho). (exists (c: rho). a <- (k, c), Builtin.Relational rel) => Relation.Row.Row k -> rel a -> Builtin.Relation a
 maxBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Builtin.Primitive n, Builtin.Relational rel) => Builtin.Field r n -> rel r1 -> rel r
-maxRowBy : forall (r: rho) n (rel: rho -> *) (a: rho). (exists (b: rho). a <- (r, b), Builtin.Primitive n, Builtin.RelationalComb rel) => Builtin.Field r n -> rel a -> rel a
+maxRowBy : forall (r: rho) n (rel: rho -> *) (a: rho). (exists (b: rho). a <- (r, b), Builtin.RelationalComb rel, Builtin.Primitive n) => Builtin.Field r n -> rel a -> rel a
 meanBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Builtin.Relational rel, Builtin.PrimitiveNum n) => Builtin.Field r n -> rel r1 -> rel r
 mem : forall (r: rho). Builtin.List (Builtin.Record r) -> Builtin.Mem r
 memoRelWithPK : forall (k: rho) (r: rho). (exists (c: rho). r <- (k, c)) => Relation.Row.Row k -> Builtin.Relation r -> Builtin.Relation r
 minBy_A : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Builtin.Primitive n, Builtin.Relational rel) => Builtin.Field r n -> rel r1 -> rel r
-minRowBy : forall (r: rho) n (rel: rho -> *) (a: rho). (exists (b: rho). a <- (r, b), Builtin.Primitive n, Builtin.RelationalComb rel) => Builtin.Field r n -> rel a -> rel a
+minRowBy : forall (r: rho) n (rel: rho -> *) (a: rho). (exists (b: rho). a <- (r, b), Builtin.RelationalComb rel, Builtin.Primitive n) => Builtin.Field r n -> rel a -> rel a
 nearestDate : forall (rsparse: rho) (rfine: rho) (r: rho). r <- (rfine, rsparse) => Builtin.Field rsparse Builtin.Date -> Builtin.Relation rsparse -> Builtin.Field rfine Builtin.Date -> Builtin.Relation rfine -> Builtin.Relation r
 nearestDateWithin : forall (rsparse: rho) (rfine: rho) (r: rho). r <- (rfine, rsparse) => (Builtin.Field rsparse Builtin.Date -> Relation.Op.Type.Op rsparse Builtin.Date) -> Builtin.Field rsparse Builtin.Date -> Builtin.Relation rsparse -> Builtin.Field rfine Builtin.Date -> Builtin.Relation rfine -> Builtin.Relation r
 nonEmptyRelation : forall (r: rho). List.NonEmpty.NonEmpty (Builtin.Record r) -> Builtin.Relation r
-partialLookup : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho) (r: rho). (r <- (key, base), kv <- (key, val), Builtin.PrimitiveAtom a, Builtin.RelationalComb rel) => Builtin.Field key a -> Builtin.Field val a -> rel kv -> rel r -> rel r
-partialLookup' : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho) (r: rho) (r2: rho). (r2 <- (key, val, base), r <- (key, base), kv <- (key, val), Builtin.PrimitiveAtom a, Builtin.RelationalComb rel) => Builtin.Field key a -> Builtin.Field val a -> rel kv -> rel r -> rel r2
+partialLookup : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho) (r: rho). (exists (r2: rho). Builtin.RelationalComb rel, r <- (key, base), kv <- (key, val), Builtin.PrimitiveAtom a, r2 <- (key, val, base)) => Builtin.Field key a -> Builtin.Field val a -> rel kv -> rel r -> rel r
+partialLookup' : forall (key: rho) a (val: rho) (rel: rho -> *) (kv: rho) (r: rho) (r2: rho). (Builtin.PrimitiveAtom a, r <- (key, base), kv <- (key, val), Builtin.RelationalComb rel, r2 <- (key, val, base)) => Builtin.Field key a -> Builtin.Field val a -> rel kv -> rel r -> rel r2
 relation : forall (r: rho). Builtin.List (Builtin.Record r) -> Builtin.Relation r
 relationWithHeader : forall (r: rho). Relation.Row.Row r -> Builtin.List (Builtin.Record r) -> Builtin.Relation r
-rename' : forall (a: rho) b (c: rho) (rel: rho -> *) (r: rho) (d: rho). (exists (e: rho) (r2: rho). r2 <- (e, a), r <- (c, a, e), d <- (e, c), Builtin.RelationalComb rel) => Builtin.Field a b -> Builtin.Field c b -> rel r -> rel d
-replaceColumn : forall (r: rho) a (rel: rho -> *) (ra: rho) (rb: rho) (r2: rho). (exists (r1: rho) (r21: rho) (r3: rho). r3 <- (r21, r1, r), ra <- (r1, r), r3 <- (r, r2), Builtin.RelationalComb rel, rb <- (r21, r)) => Builtin.Field r a -> rel ra -> rel rb -> rel r2
+rename' : forall (a: rho) b (c: rho) (rel: rho -> *) (r: rho) (d: rho). (exists (e: rho) (r2: rho). d <- (e, c), r2 <- (e, a), r <- (c, a, e), Builtin.RelationalComb rel) => Builtin.Field a b -> Builtin.Field c b -> rel r -> rel d
+replaceColumn : forall (r: rho) a (rel: rho -> *) (ra: rho) (rb: rho) (r2: rho). (exists (r1: rho) (r3: rho) (r21: rho). ra <- (r1, r), r3 <- (r, r2), rb <- (r21, r), Builtin.RelationalComb rel, r3 <- (r21, r1, r)) => Builtin.Field r a -> rel ra -> rel rb -> rel r2
 rheader : forall (rel: rho -> *) (a: rho). Builtin.Relational rel => rel a -> Relation.Row.Row a
 rheader# : forall (a: rho). Native.Relation.Relation# -> Relation.Row.Row a
 rightJoinOr : forall (rel: rho -> *) (r1: rho) (r2: rho) (r: rho) (r3: rho). (r3 <- (r, s, t), r2 <- (s, t), r1 <- (r, s), Builtin.RelationalComb rel) => rel r1 -> rel r2 -> Builtin.Record r -> rel r3
 rightJoinWithDefault : forall (extra: rho) a (rel: rho -> *) (r2: rho) (r1: rho) (r3: rho). (exists (c: rho) (s: rho). Builtin.PrimitiveAtom a, r1 <- (c, s), r3 <- (c, s, extra), r2 <- (c, extra), Builtin.RelationalComb rel) => Builtin.Field extra a -> a -> rel r2 -> rel r1 -> rel r3
 row : forall (r: rho). Builtin.Record r -> Builtin.Relation r
-setColumn : forall (c: rho) a (op: rho -> * -> *) (s: rho) (rel: rho -> *) (r: rho) (t: rho). (exists (so: rho) (rs: rho) (o: rho) (ro: rho). t <- (rs, so, ro), Builtin.RelationalComb rel, r <- (rs, ro), c <- (rs, so), Relation.Op.AsOp op, r <- (o, s)) => Builtin.Field c a -> op s a -> rel r -> rel t
+setColumn : forall (c: rho) a (op: rho -> * -> *) (s: rho) (rel: rho -> *) (r: rho) (t: rho). (exists (ro: rho) (so: rho) (rs: rho) (o: rho). Builtin.RelationalComb rel, r <- (rs, ro), Relation.Op.AsOp op, r <- (o, s), t <- (rs, so, ro), c <- (rs, so)) => Builtin.Field c a -> op s a -> rel r -> rel t
 standardDeviationBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Builtin.PrimitiveNum n, Builtin.Relational rel) => Builtin.Field r n -> rel r1 -> rel r
 sumBy : forall (r: rho) n (rel: rho -> *) (r1: rho). (exists (t: rho). r1 <- (t, r), Builtin.PrimitiveNum n, Builtin.Relational rel) => Builtin.Field r n -> rel r1 -> rel r
 toMem : forall (a: rho -> *) (b: rho). Builtin.Relational a => a b -> Builtin.Mem b

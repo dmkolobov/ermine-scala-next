@@ -1,3 +1,4 @@
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 live : forall z. Layout.Writer.SelectorEvent z
 orEvent : forall z. Layout.Writer.SelectorEvent z -> Layout.Writer.SelectorEvent z -> Layout.Writer.SelectorEvent z
 writerAp : forall (f: * -> *) a. Layout.Writer.Writer f a -> Control.Ap.Ap f
