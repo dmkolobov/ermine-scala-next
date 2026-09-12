@@ -136,24 +136,32 @@ variables (`idy : a -> a`). What that covers:
   `arity` arrows, or NOTHING is recorded for that binding; and the argument's
   own type must be a monotype (a rank-N argument is skipped, because a `forall`
   on a local is what the rendering rule forbids);
-- **a pattern binder that carries a signature.**
+- **a pattern binder that carries a signature;**
+- **every OTHER pattern binder** — a lambda's argument, a `case` alternative's
+  binder, a `do` binder, and a variable nested inside a constructor, tuple or
+  `as` pattern. These have no arity to divide and their type exists only inside
+  `Subst.inferPatternType`, so since 6.2b the checker records it where it mints
+  it (`SubstEnv.binderTypes`, kept substituted as inference proceeds) behind a
+  flag the editor path alone sets. Batch never sets it and never reads it.
 
-Over the 253-file corpus that is 3156 of 5056 local binders — 62.4 %, with the
-three classes above complete (0 misses). What it does NOT cover is the other
-1900: **a lambda's argument, a `case` alternative's binder, a `do` binder, and a
-variable nested inside a constructor or tuple pattern.** Their types exist only
-inside `Subst.inferPatternType`, which mints a fresh variable per pattern into a
-copy of the body and writes nothing back, so the editor answers null rather than
-guessing. Recovering them is a change to the shared type checker and has not
-been made (`tracker/loopmodel/LSP3-6.2-LOCALS.md`).
+Over the corpus that is every value-local binder of every cleanly checked module
+— 5054 of 5083 over 253 modules, with `Arg` 4650/4678, `CaseBound` 116/117,
+`DoBound` 31/31, `LetBound` 165/165, `WhereBound` 92/92. The 29 that stay silent
+are ONE class and it is the rendering rule, not a gap in the mechanism: a
+variable bound to a RANK-N constructor field (`data Alt f = Alt (forall a. f a)
+…`) has a polymorphic type, and a `forall` on a local is what the rendering rule
+forbids (`tracker/loopmodel/LSP-6.2b-HOOK.md`).
 
 An equation's arguments are read off the binding's own type by its arity, so
 their type variables are the SAME ones the binding's hover shows:
 `konst : forall a b. a -> b -> a` gives `k : a` and `j : b`, never `a` and `a`.
-One caveat worth knowing: that agreement holds WITHIN a binding. A local's type
-variables are named independently of the ENCLOSING binding's, so the same letter
-in two hovers need not be the same variable — a `where` helper may hover
-`h : a -> a` inside a binding whose own hover calls that variable `b`.
+A binder the checker recorded shares its letters with the enclosing TOP-LEVEL
+binding's hover for the same reason. One caveat worth knowing: a `let`/`where`
+HEAD's own type is read from a different place and its variables are named
+independently, so the same letter in two hovers need not be the same variable —
+a `where` helper may hover `h : a -> a` inside a binding whose own hover calls
+that variable `b`, and a lambda argument inside that helper is named against the
+top-level binding rather than against `h`.
 
 In fast mode no local answers at all — nothing computes them.
 

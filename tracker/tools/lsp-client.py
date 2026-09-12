@@ -906,9 +906,53 @@ def main():
           hoverline("Locals.e", 34, 6) == "k : a", hoverline("Locals.e", 34, 6))
     check("hover konst's second argument agrees with it",
           hoverline("Locals.e", 34, 8) == "j : b", hoverline("Locals.e", 34, 8))
-    # the pattern binders the split cannot reach, absent BY MECHANISM
-    check("hover case binder -> null", hover("Locals.e", 26, 9) is None)
-    check("hover case-bound use -> null", hover("Locals.e", 26, 14) is None)
+    # --- 6.2b: the pattern binders the arity split cannot reach ----------
+    # The first two REPLACE 6.2's `hover case binder -> null` and
+    # `hover case-bound use -> null`, which were written to fail the day
+    # the `Subst` hook landed (6.2 review R-5).  Until it did, a `case`
+    # binder, a lambda argument, a `do` binder and a var nested in a
+    # constructor or tuple pattern all answered null, because
+    # `Lower.pattern` throws the binder's meta away and
+    # `inferPatternType` mints one nothing this side holds.  `SubstEnv.binderTypes` records it where it is minted
+    # and keeps it substituted, so each answers its own type now -- at its
+    # def-site AND at a use.
+    check("hover case binder at its def-site",
+          hoverline("Locals.e", 26, 9) == "r : Bool", hoverline("Locals.e", 26, 9))
+    check("hover case binder at a use",
+          hoverline("Locals.e", 26, 14) == "r : Bool", hoverline("Locals.e", 26, 14))
+    # a LAMBDA argument
+    check("hover lambda argument at its def-site",
+          hoverline("Locals.e", 42, 12) == "m : Bool", hoverline("Locals.e", 42, 12))
+    check("hover lambda argument at a use",
+          hoverline("Locals.e", 42, 17) == "m : Bool", hoverline("Locals.e", 42, 17))
+    # a var nested inside a CONSTRUCTOR pattern
+    check("hover var nested in a ConP at its def-site",
+          hoverline("Locals.e", 45, 9) == "inner : Bool", hoverline("Locals.e", 45, 9))
+    check("hover var nested in a ConP at a use",
+          hoverline("Locals.e", 45, 18) == "inner : Bool", hoverline("Locals.e", 45, 18))
+    # ... and inside a TUPLE pattern, both components
+    check("hover var nested in a tuple pattern",
+          hoverline("Locals.e", 49, 3) == "tfst : Bool", hoverline("Locals.e", 49, 3))
+    check("hover the tuple's second var at a use",
+          hoverline("Locals.e", 49, 26) == "tsnd : Bool", hoverline("Locals.e", 49, 26))
+    # an AS-pattern: the outer var is the whole pattern's type, the inner
+    # var is the constructor field's
+    check("hover as-pattern outer var",
+          hoverline("Locals.e", 52, 2) == "whole : Shape", hoverline("Locals.e", 52, 2))
+    check("hover as-pattern inner var at its def-site",
+          hoverline("Locals.e", 52, 16) == "wrapped : Bool", hoverline("Locals.e", 52, 16))
+    check("hover as-pattern inner var at a use",
+          hoverline("Locals.e", 52, 28) == "wrapped : Bool", hoverline("Locals.e", 52, 28))
+    # a `do` binder, which lowers to a lambda argument of `Syntax.Do.bind`
+    open_doc("LocalsDo.e")
+    do_ds = client.diagnostics_for(uri("LocalsDo.e"))
+    check("LocalsDo.e clean", do_ds == [], repr(do_ds))
+    check("hover do binder at its def-site",
+          hoverline("LocalsDo.e", 6, 2) == "dres : Bool", hoverline("LocalsDo.e", 6, 2))
+    check("hover do binder at a use",
+          hoverline("LocalsDo.e", 7, 8) == "dres : Bool", hoverline("LocalsDo.e", 7, 8))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("LocalsDo.e")}})
+    client.diagnostics_for(uri("LocalsDo.e"))
 
     # TYPE NAMES hover with their KIND: imported, own `data`, own alias.
     check("hover imported type Bool : *",
@@ -2228,6 +2272,12 @@ def main():
     client.notify("textDocument/didSave", {"textDocument": {"uri": uri("Locals.e")}})
     client.diagnostics_for(uri("Locals.e"))
     check("fast mode: hover on a local -> null", hover("Locals.e", 10, 6) is None)
+    # 6.2b: the hook is armed inside `checkWith` and fast mode never calls
+    # it, so a lambda argument and a `case` binder answer null there too.
+    check("fast mode: hover on a lambda argument -> null",
+          hover("Locals.e", 42, 12) is None)
+    check("fast mode: hover on a case binder -> null",
+          hover("Locals.e", 26, 9) is None)
     check("fast mode keeps the imported type's kind",
           hoverline("Locals.e", 8, 11) == "Builtin.Bool : *", hoverline("Locals.e", 8, 11))
 

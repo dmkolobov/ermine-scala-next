@@ -212,8 +212,17 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     "polyWhere x = idy x\n" +
     "  where idy u = u\n" +
     "\n" +
-    "doLocal m ma = (do a <- liftDo ma\n" +
-    "                   unit (a && True)) m\n" +
+    // 6.2b renamed this binder from `a`: `argEq`'s first argument is also
+    // spelled `a`, and `localsBySpelling` is keyed by spelling -- harmless
+    // while do binders had no type, a silent clobber once they do.
+    "doLocal m ma = (do dbind <- liftDo ma\n" +
+    "                   unit (dbind && True)) m\n" +
+    "\n" +
+    "tupLocal tp = case tp of\n" +
+    "  (tl, tr) -> tl && tr\n" +
+    "\n" +
+    "polyLam x = pl x\n" +
+    "  where pl = plz -> plz\n" +
     "\n" +
     "sigWhere x = sw x\n" +
     "  where sw : Bool -> Bool\n" +
@@ -247,19 +256,27 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     ((got.get("sl") ?= Some("Bool -> Bool")) :| s"signed let binder: $got")
   }
 
-  property("6.2: the pattern binders the split cannot reach are absent") = {
-    // A LAMBDA argument, a `case` binder, a `do` binder and a var nested
-    // in a constructor pattern lower to pattern vars whose meta
-    // inference never touches, and no equation head's arity reaches
-    // them.  A wrong type is worse than none, so they are absent rather
-    // than guessed.  If this property starts failing because they are
-    // PRESENT, the collection grew a new mechanism and the report must
-    // say which.
+  property("6.2b: every remaining pattern-binder kind gets a type") = {
+    // FLIPPED BY 6.2b.  Until the hook these were absent: a LAMBDA
+    // argument, a `case` binder, a `do` binder and a var nested in a
+    // constructor pattern lower to pattern vars whose meta inference
+    // never touches, and no equation head's arity reaches them.  The
+    // `Subst` hook records the type where the checker mints it, so every
+    // one of them now answers -- and answers the type the checker gave
+    // it, which is what the corpus-scale agreement check pins.
     val (r, rn) = kinds
     val got = localsBySpelling(r, rn)
-    val absent = List("q", "w", "whole", "h", "t")
-    ((absent.filter(got.contains) ?= Nil) :| s"unexpectedly present: $got") &&
-    // ... and the renamer DID record them, so the absence is about the
+    (r.notes.isEmpty :| ("the fixture must be clean: " +
+       r.notes.map(_.report.linesIterator.take(1).mkString).mkString(" ;; "))) &&
+    ((got.get("w")      ?= Some("Bool")) :| s"lambda argument: $got") &&
+    ((got.get("q")      ?= Some("Bool")) :| s"case binder: $got") &&
+    ((got.get("dbind")  ?= Some("Bool")) :| s"do binder: $got") &&
+    ((got.get("whole")  ?= Some("List Bool")) :| s"as-pattern outer var: $got") &&
+    ((got.get("h")      ?= Some("Bool")) :| s"var nested in a ConP: $got") &&
+    ((got.get("t")      ?= Some("List Bool")) :| s"the ConP's tail var: $got") &&
+    ((got.get("tl")     ?= Some("Bool")) :| s"var nested in a tuple pattern: $got") &&
+    ((got.get("tr")     ?= Some("Bool")) :| s"the tuple's second var: $got") &&
+    // ... and the renamer DID record them, so this is about the
     // collection and not about an empty binder table (anti-vacuity).
     ((rn.binders.values.count(b => b.kind == Renamer.Arg) >= 6) :|
       s"only ${rn.binders.values.count(b => b.kind == Renamer.Arg)} Arg binders") &&
@@ -290,16 +307,48 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     ((got.get("y") ?= Some("b")) :| s"g's second argument: $got")
   }
 
-  property("6.2: an argument the split cannot see stays absent") = {
-    // Conservative by construction: a var inside a constructor pattern
-    // has a type this arithmetic does not know, a lambda's argument is
-    // not an equation head's argument at all.
+  property("6.2b: an argument the split cannot see comes from the hook") = {
+    // FLIPPED BY 6.2b.  The arity split is still conservative -- a var
+    // inside a constructor pattern has a type its arithmetic does not
+    // know, and a lambda's argument is not an equation head's argument at
+    // all -- but the checker knows both, and the hook reads them from
+    // where it mints them.  `w` is the R-4 case: a lambda argument on an
+    // UNCONSTRAINED binding, so its type is a variable and it must render
+    // with the enclosing binding's own letter.
     val (r, rn) = checkLocals(
       "conP (Just q) = q\n" +
       "lam = (w -> w)\n", List("Bool"))
     val got = localsBySpelling(r, rn)
-    ((!got.contains("q")) :| s"a var inside a ConP was guessed: $got") &&
-    ((!got.contains("w")) :| s"a lambda argument was guessed: $got")
+    val lamTy = r.types.get("lam").map(t => Pretty.prettyType(t, -1).toString)
+    val conPTy = r.types.get("conP").map(t => Pretty.prettyType(t, -1).toString)
+    ((conPTy ?= Some("forall a. Maybe a -> a")) :| s"conP's own type: $conPTy") &&
+    ((got.get("q") ?= Some("a")) :| s"a var inside a ConP: $got") &&
+    ((lamTy ?= Some("forall a. a -> a")) :| s"lam's own type: $lamTy") &&
+    ((got.get("w") ?= Some("a")) :| s"a lambda argument: $got")
+  }
+
+  property("6.2b: a where-bound polymorphic local's LAMBDA argument shares its letters") = {
+    // Decision (a) / review R-4 for the hook's own binders: `pl = plz ->
+    // plz` under a polymorphic `where` head must print the same letter
+    // the head does, not restart the supply on its own.  `LocalTy.scope`
+    // carries the TOP-LEVEL binding's type into `Pretty.prettyTypeIn` --
+    // the frame the hook's entries live in after `generalize` rewrote
+    // them; see LSP-6.2b-HOOK.md Sec. 4 for why not the local head's.
+    val (r, rn) = kinds
+    val got = localsBySpelling(r, rn)
+    ((got.get("pl")  ?= Some("a -> a")) :| s"the where head: $got") &&
+    ((got.get("plz") ?= Some("a")) :| s"its lambda argument: $got")
+  }
+
+  property("6.2b: the split and the hook agree wherever both speak") = {
+    // Both mechanisms type every EQUATION argument: the split by
+    // arithmetic on the head's type, the hook from the checker itself.
+    // Where they overlap the split wins (it is the pinned 6.2 answer and
+    // it carries the letter agreement), and the two are compared rather
+    // than one quietly replacing the other.
+    val (r, _) = kinds
+    ((r.binderDisagreements ?= Nil) :| s"disagreement(s) at ${r.binderDisagreements}") &&
+    ((r.binderAgreed >= 8) :| s"only ${r.binderAgreed} binders compared (vacuous?)")
   }
 
   property("6.2: an explicit local signature shows as declared") = {
@@ -311,12 +360,18 @@ object TestTolerantCheck extends Properties("Tolerant check") {
   }
 
   property("6.2: a component that died contributes no locals") = {
+    // 6.2b: `dlam` is a HOOK binder (a lambda argument) inside the dead
+    // component.  The hook writes into the component's OWN SubstEnv and
+    // the merge only happens when inference returned, so a Death takes
+    // the half-solved record with it -- the same rule the 6.2 locals
+    // already obeyed, now pinned for the new class too.
     val (r, rn) = checkLocals(
-      "broken = (let bad = 1 True in bad)\n" +
+      "broken = (let bad = (dlam -> dlam) 1 True in bad)\n" +
       "healthy = (let good = 2 in good)\n")
     val got = localsBySpelling(r, rn)
     ((errors(r).size == 1) :| errors(r).map(_.report.linesIterator.take(1).mkString).toString) &&
     ((!got.contains("bad")) :| s"a dead component's local was published: $got") &&
+    ((!got.contains("dlam")) :| s"a dead component's HOOK binder was published: $got") &&
     ((got.get("good") ?= Some("Int")) :| s"the healthy component's local: $got")
   }
 
@@ -375,8 +430,15 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     // `six` carries a LOCAL, so the invisibility set is not vacuous on
     // the 6.2 half: without a let/where binder anywhere in the module
     // "warm locals == cold locals" would compare two empty maps.
+    // 6.2b: `seven` and `eight` carry a LAMBDA argument and a `case`
+    // binder, the classes only the `Subst` hook can type -- so the cache
+    // invariant ("whatever a hit hands back equals what a cold check
+    // would have said", Decision (b)) is asserted over the hook's
+    // entries too, positions included.
     "one = 1\ntwo = one\nthree : Int\nthree = two\nfour = three\n" +
-    "six = (let loc = four in loc)\n"
+    "six = (let loc = four in loc)\n" +
+    "nine = (lamb -> lamb) four\n" +
+    "ten = case four of\n  cb -> cb\n"
 
   property("reuse is invisible: an edit inside one definition") =
     invisible("body edit", base, base.replace("two = one", "two =  one"))
@@ -783,22 +845,39 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     }
   }
 
-  property("6.2: the 253-file sweep — every reachable local binder has a type") = secure {
-    // THE SWEEP.  For every clean corpus module, two classes must be
-    // COMPLETE — no misses, not "few":
-    //   (1) binding heads: LetBound and WhereBound;
-    //   (2) equation arguments: every bare-variable argument pattern of a
-    //       top-level or `where` equation (`eqArgSpans` above).
-    // Everything else is the residual the item documents, and it is a
-    // CLASS, not a number: a binder that lowers to a pattern var and has
-    // no equation head's arity over it — a lambda argument, a `case`
-    // binder, a `do` binder, a var nested in a constructor or product
-    // pattern, and a `let`-in-a-term equation's arguments.  Those are
-    // counted and printed.
+  property("6.2b: the 253-file sweep — EVERY value-local binder has a type") = secure {
+    // THE SWEEP.  6.2 required two classes to be complete and merely
+    // COUNTED the rest; 6.2b requires ALL FIVE renamer value-local kinds
+    // — Arg (equation and other), LetBound, WhereBound, DoBound,
+    // CaseBound — to be complete over every clean corpus module, because
+    // the hook records where the checker mints the type and there is no
+    // longer a class it cannot reach.  A residual, if one ever appears,
+    // is a named miss in the failure message, not a printed count.
+    //
+    // It also asserts the two mechanisms AGREE at corpus scale: every
+    // equation argument is typed twice over, once by 6.2's arity split
+    // and once by the hook, and a single disagreement fails the sweep.
     residentLock.synchronized {
       val docs = new Documents
       val files = corpusFiles
       var checked = 0
+      var agreed = 0
+      val disagreed = scala.collection.mutable.ListBuffer.empty[String]
+      // 6.2b (review R-4): the fourteen def-sites where the split and the
+      // hook differ, pinned as a SET.  A count would silently absorb a new
+      // disagreement replacing an old one (the review caught exactly that:
+      // the report named Interp.e:81:14, the tree produces Column.e:170:15).
+      val knownDisagreements = Set(
+        "Color.e:72:13", "Unsafe.e:152:19", "Unsafe.e:168:10",
+        "Column.e:160:14", "Column.e:170:15", "StyleGrid.e:17:18",
+        "Report.e:926:12", "Report.e:1593:23", "Op.e:181:15", "Op.e:181:17",
+        "Validation.e:26:14", "ForeignJdk.e:328:17",
+        "LetAndPatternMatching.e:8:17", "LetAndPatternMatching.e:9:17")
+      // 6.2b: the def-sites the hook dropped as RANK-N.  They are the
+      // item's whole residual class, and the sweep requires the misses to
+      // be exactly them -- so a binder that goes untyped for any OTHER
+      // reason fails, and the residual cannot quietly grow a second cause.
+      val rankN = scala.collection.mutable.Set.empty[String]
       val misses = scala.collection.mutable.ListBuffer.empty[String]
       val seen = scala.collection.mutable.Map.empty[String, Int].withDefaultValue(0)
       val hit  = scala.collection.mutable.Map.empty[String, Int].withDefaultValue(0)
@@ -812,6 +891,11 @@ object TestTolerantCheck extends Properties("Tolerant check") {
           // or went unchecked legitimately contributes none.
           if (!ch.notes.exists(_.severity == TolerantCheck.Error)) {
             checked += 1
+            agreed += ch.binderAgreed
+            ch.binderDisagreements foreach { k =>
+              disagreed += "%s:%d:%d".format(f.getName, k._1, k._2) }
+            ch.binderRankN foreach { k =>
+              rankN += "%s:%d:%d".format(f.getName, k._1, k._2) }
             val required = eqArgSpans(ch.module.statements)
               .map { case (sp, s) => (s.startLine, s.startCol) }.toSet
             ch.renamed.binders.values.foreach { b =>
@@ -827,8 +911,8 @@ object TestTolerantCheck extends Properties("Tolerant check") {
                          else b.kind.toString
                 seen(k) = seen(k) + 1
                 if (ch.locals.contains(at)) hit(k) = hit(k) + 1
-                else if (b.kind == Renamer.LetBound || b.kind == Renamer.WhereBound ||
-                         k == "Arg(equation)")
+                else
+                  // 6.2b: EVERY value-local kind is required now.
                   misses += "%s:%d:%d %s (%s)".format(
                     f.getName, b.defSite.startLine, b.defSite.startCol, b.spelling, k)
               }
@@ -838,8 +922,12 @@ object TestTolerantCheck extends Properties("Tolerant check") {
       }
       val summary = seen.keys.toList.sorted
         .map(k => "%s %d/%d".format(k, hit(k), seen(k))).mkString(", ")
-      println("### 6.2 sweep: " + checked + " clean modules of " + files.size +
-              " — " + summary + "; required-class misses " + misses.size)
+      println("### 6.2b sweep: " + checked + " clean modules of " + files.size +
+              " — " + summary + "; misses " + misses.size +
+              "; split-vs-hook agreed " + agreed + " disagreed " + disagreed.size)
+      if (misses.nonEmpty) println("### 6.2b misses: " + misses.mkString(" ;; "))
+      if (disagreed.nonEmpty) println("### 6.2b disagreements: " + disagreed.mkString(" ;; "))
+      val unexplained = misses.filterNot(m => rankN(m.split(" ").head))
       ((files.size >= 180) :| s"only ${files.size} corpus files") &&
       ((checked >= 150) :| s"only $checked modules checked cleanly") &&
       // anti-vacuity: the sweep must actually be looking at binders
@@ -849,9 +937,30 @@ object TestTolerantCheck extends Properties("Tolerant check") {
       // would pass at 0 misses covering nothing (6.2 review S-3)
       ((seen("Arg(equation)") >= 2000) :|
         s"only ${seen("Arg(equation)")} equation-argument binders seen: $summary") &&
-      ((misses.isEmpty) :|
-        "%d binder(s) of a REQUIRED class with no type: %s".format(
-          misses.size, misses.take(10).mkString(" ;; ")))
+      // 6.2b anti-vacuity for the classes the hook exists for: they must
+      // be SEEN in numbers, or "0 misses" would mean "nothing looked at".
+      ((seen("Arg(other)") >= 1500) :|
+        s"only ${seen("Arg(other)")} non-equation Arg binders seen: $summary") &&
+      ((seen("CaseBound") >= 100) :| s"only ${seen("CaseBound")} case binders seen: $summary") &&
+      ((seen("DoBound") >= 25) :| s"only ${seen("DoBound")} do binders seen: $summary") &&
+      // 6.2b: the split and the hook are compared everywhere both speak.
+      // The residual is a pinned SET, not zero, and the classes behind it are
+      // named in LSP-6.2b-HOOK.md: an alias the split leaves unexpanded, a
+      // DECLARED type against the skolemised instance inference checked the
+      // pattern at, and a published scheme whose domain is more general than
+      // the type the checker settled on.  The split still wins (Decision (a)
+      // wants the declaration, and it renders better), so this is a drift
+      // alarm: if the set moves, look at the new site AND the vanished one.
+      ((disagreed.toSet == knownDisagreements) :|
+        s"split-vs-hook disagreement set moved: new ${(disagreed.toSet -- knownDisagreements).mkString(" ;; ")}; gone ${(knownDisagreements -- disagreed.toSet).mkString(" ;; ")}") &&
+      ((agreed >= 2000) :| s"only $agreed binders compared (vacuous?)") &&
+      // 6.2b: the residual is ONE named class -- a variable bound to a
+      // RANK-N constructor field, which Decision (a) does not let a local
+      // hover as -- and every miss must be one of them.
+      ((rankN.nonEmpty) :| "no RANK-N binder seen (vacuous residual)") &&
+      ((unexplained.isEmpty) :|
+        "%d value-local binder(s) with no type and no rank-N reason: %s".format(
+          unexplained.size, unexplained.take(10).mkString(" ;; ")))
     }
   }
 

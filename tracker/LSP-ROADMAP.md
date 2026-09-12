@@ -8,19 +8,24 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: INTERSTAGE ITEM 6.2b OPEN (2026-09-12) — the pattern-binder hover hook,
-the user's decision after the signature-entailment work landed (merge 51629452:
-SigEntail.scala, Constraints.scala, Subst.scala; g1-baseline RE-CUT; new baselines
-core/test 1061, corpus 88/70/0 of 158, 274 interfaces, lsp-smoke 551).  Stage 4
-is COMPLETE and G4 SIGNED OFF; the worker thread (7.6) is postponed by the user.
-NEXT: 6.2b implementer (brief tracker/loopmodel/briefs/brief-LSP-6.2b.md) ->
-reviewer (Tier 1 once) -> Tier 0 -> commit.  Stage 5 is not drafted.
-· Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
-41b13cc).
+Status: INTERSTAGE ITEM 6.2b DONE (2026-09-12) — the pattern-binder hover hook is
+built, reviewed (ACCEPT WITH FIXES, all ten R-items applied) and green on every gate;
+STOPPED FOR THE USER on ONE number: the brief's editor budget (≤ 5 % of the round
+trip) reads OVER on the implementer's eight rounds (+58 ms / 6.4 %) and INSIDE on the
+reviewer's four (+34.5 ms / 3.9 %); the hook is ON in the editor as built.  The user
+decides ship (leave as is) or park (a second `checkWith` parameter, 13 lsp-smoke
+checks back to null, 1975 binders silent again; see LSP-6.2b-REVIEW.md §10).
+Baselines on THIS tree after the signature-entailment merge (51629452) and 6.2b:
+core/test 1063, corpus 89/79/0 of 168 (the merge's "88/70/0 of 158" was taken with
+sigEntail OFF before LET-1 added ten examples), 274 interfaces, lsp-smoke 565.
+Stage 4 is COMPLETE and G4 SIGNED OFF; the worker thread (7.6) is postponed by the
+user; Stage 5 is NOT drafted.
 
 ## Baselines (hard invariants — never commit red)
 
-- `sbt -batch core/test`: 1028/1028 at GATE G4 (2026-09-11; the first run hit
+- `sbt -batch core/test`: 1063/1063 after interstage item 6.2b (2026-09-12, the
+  reviewer's Tier 2, 1363 s, no intermittent; 1061 after the signature-entailment
+  merge 51629452); 1028/1028 at GATE G4 (2026-09-11; the first run hit
   exactly the E12 property and the single permitted re-run was clean); 1026
   after 7.4; 1020 after 7.1b; 1008
   after 7.2, 988 at G3, 943 at F4).  TWO KNOWN INTERMITTENTS, each red about
@@ -39,7 +44,8 @@ reviewer (Tier 1 once) -> Tier 0 -> commit.  Stage 5 is not drafted.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (542 after Stage 4 item 7.5,
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (565 after interstage item 6.2b,
+  2026-09-12; 551 after the signature-entailment merge; 542 after Stage 4 item 7.5,
   2026-09-11; 510 after 7.4; 494 after 7.1b; 480 after 7.2; 456 after 7.0; 454 at GATE G3;
   407 after 6.5; 344 after 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
@@ -2136,7 +2142,7 @@ opened by the user on 2026-09-12 once the signature-entailment work had landed �
 sequenced AFTER it because both change `Subst.scala` and the hook's flag-off
 byte-identity is proved against the baseline the entailment change leaves.
 
-- [ ] **6.2b The hook.**  `SubstEnv.binderTypes` (def-site -> type) and a
+- [x] **6.2b The hook.**  `SubstEnv.binderTypes` (def-site -> type) and a
   `recordBinders` flag, OFF on every strict path; recorded in
   `inferPatternType`'s `VarP` case and kept substituted where `hm.remembered`
   is (`instantiateType`, `unbind`, `generalize`) — the 6.2 review's WORKABLE
@@ -2152,8 +2158,48 @@ byte-identity is proved against the baseline the entailment change leaves.
   the round trip) or the hook is PARKED with the number.  Brief:
   tracker/loopmodel/briefs/brief-LSP-6.2b.md.
 
-**GATE (6.2b)**: Tier 1 green on the reviewer's own run; both A/Bs recorded;
-the coverage table; lsp-smoke grown; STOP and report to the user.
+  DONE 2026-09-12 (report tracker/loopmodel/LSP-6.2b-HOOK.md, outcome PARTIAL on
+  the perf line only; review tracker/loopmodel/LSP-6.2b-REVIEW.md, ACCEPT WITH
+  FIXES, R-1..R-10 applied).  THE REFUTATION RAN FIRST: one probe, two builds
+  differing in the three eager-substitution lines — the naive shape records the
+  bare meta, `hm.types` no longer holds it (`restrictTypes`), a lambda argument
+  hovers `a` and disagrees with the split's `Bool`; the workable shape records
+  `Bool` and agrees.  BUILT: `SubstEnv.binderTypes` + `recordBinders` (+41 lines
+  in `Subst.scala`, nothing existing changed), recorded in `inferPatternType`'s
+  `VarP` case, rewritten whole-map beside `remembered` at `instantiateType`,
+  `unbind`, `generalize`; the flag set ONLY by `TolerantCheck.checkWith(wantLocals
+  = true)`'s two inference blocks.  MERGE: the split wins where it speaks (the two
+  compared), the hook fills the rest, non-mono types go to `Result.binderRankN`.
+  COVERAGE (253 clean of 257 corpus modules): 3079 -> 5054 of 5083 local binders;
+  Arg(other) 48 -> 1776 of 1804, CaseBound 0 -> 116 of 117, DoBound 0 -> 31 of 31;
+  the 29 misses are EXACTLY the rank-N-constructor-field binders and the sweep
+  asserts that set.  AGREEMENT: 2869 sites typed by both, 14 differ (1 unexpanded
+  alias / 11 declared-vs-skolemised / 2 where the HOOK is right and the split's `a`
+  is a type `acc` does not have — E14), pinned as a SET (review R-4).  TIER 1
+  (reviewer's own run, in parallel per GATE-POLICY): 18 groups / 3 210 881
+  segments IDENTICAL, sinmoved 0 (before traces path-normalised, audited: the path
+  occurs only in the `loc` column); 0 of 274 interfaces differ, 3523 bindings
+  identical; g1 9/9 EQUIVALENT.  A/Bs (alone, load < 1.3): batch −0.12 % / −0.20 %
+  pooled (free); EDITOR implementer 8 rounds +58.0 ms (+6.40 %) round trip, +35 ms
+  typecheck; reviewer 4 rounds +34.5 ms (+3.93 %) round trip, +30 ms typecheck,
+  `read` unchanged — attribution 26.4 ms in the three rewrites over 17 905 calls on
+  a map of mean 6 / max 17 entries (`generalize` 10.5, `instantiateType` 8.3,
+  `unbind` 7.5), so a reverse index recovers at most 8 ms.  A cheaper placement at
+  `restrictTypes` was built and MEASURED WRONG (disagreements 14 -> 251).  TESTS:
+  TestTolerantCheck 49 -> 51, the two 6.2 null-pins FLIPPED, dead-component and
+  cache-invisibility pins gained hook binders; lsp-smoke 551 -> 565 (`Locals.e` +4
+  binders, new `LocalsDo.e`; fast mode still null).  Tier 2: core/test 1063/1063.
+  OBSERVED, not fixed: 93 of 5054 local types carry an unresolved kind meta
+  (`restrictKinds`, inherited from `remembered`, invisible — hover renders no
+  kinds).  Implementer 3h55 (277 tool uses), reviewer 1h29 (166), fix round by the
+  orchestrator.  Two orchestrator corrections mid-item: the brief carried the
+  stale one-JVM rule (lifted to GATE-POLICY's parallelism rules) and a stale corpus
+  baseline (158 -> 168).
+
+**GATE (6.2b)** — EVIDENCE RECORDED 2026-09-12, STOPPED FOR THE USER: Tier 1 green
+on the reviewer's own run; both A/Bs recorded (the editor number is the decision);
+the coverage table above; lsp-smoke 565.  Ship = leave the tree as committed.
+Park = the review's §10 recipe.
 
 ## Blocked / Awaiting
 
@@ -2173,8 +2219,9 @@ deletion + the debt list).
 
 (empty — G0 signed off 2026-08-30, user: “keep going”)
 
-**FORK 6.2 — pattern-binder types beyond equation arguments need a hook in
-`Subst.scala` (2026-09-10; the user's decision).**  Item 6.2 delivered hover on
+**FORK 6.2 — RESOLVED by interstage item 6.2b (2026-09-12; see its DONE paragraph; the
+ship/park call on the editor number is with the user).  Original entry:** pattern-binder
+types beyond equation arguments need a hook in `Subst.scala` (2026-09-10; the user's decision).  Item 6.2 delivered hover on
 `let`/`where` binders, signed pattern binders, EQUATION-ARGUMENT binders (the
 reviewer's option 4: the head's inferred type split by arity, no checker change
 — see the item's DONE paragraph for the coverage number) and kinds on type
@@ -3357,6 +3404,17 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-12 (INTERSTAGE 6.2b DONE — STOPPED FOR THE USER'S SHIP/PARK CALL): see
+  the item's DONE paragraph.  The night's shape held: refutation first, then the
+  workable hook; the reviewer refuted seven of the report's figures (none about
+  the mechanism), re-measured the one number that made it PARTIAL and found it
+  INSIDE the budget, and turned the disagreement COUNT into a SET pin after
+  catching the count hiding a substitution.  Baselines: core/test 1063/1063
+  (Tier 2, reviewer), TestLoopTrace 720/720, TestTolerantCheck 51/51, corpus
+  89/79/0 of 168 (verdicts identical both builds; .out text carries the batch
+  loader's documented nondeterminism, 21 vs a same-build control's 22),
+  repl-smoke 8/66 goldens untouched, lsp-smoke 565, boot 129, .ei 0.
+  Orchestrator Tier 0 re-run after the fix round: see the commit.
 - 2026-09-11 (GATE G4 EVIDENCE RECORDED — STAGE 4 COMPLETE, STOPPED FOR
   SIGN-OFF): the evidence run went in two phases so the user could start
   parallel type-checker work after the quiet timings (phase A ~50 min);

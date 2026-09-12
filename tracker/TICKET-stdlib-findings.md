@@ -774,6 +774,16 @@ E13. **`TestLegend."extra args are ignored"` is a seed-dependent flake in the `w
     (a year/day boundary in the formatter?) and either fix the formatter or pin the seed; not a quarantine
     candidate until then — a red that is exactly this property gets ONE re-run.  Not scheduled; small.
 
+E14. **The 6.2 arity split can hover a type the binder does not have.**  Recorded 2026-09-12 by the 6.2b review
+    (LSP-6.2b-REVIEW.md §3, follow-up 1).  `core/examples/guide/LetAndPatternMatching.e:8:17` and `:9:17`: in
+    `let go [] acc = acc / go (h::t) acc = go t (h + acc) in go xs 0` the split renders `go : List a -> a -> a`
+    and `acc : a` from the published scheme while the checker settled `acc : Int` — and 6.2b now puts `h : Int`,
+    `t : List Int` (the hook's answers) in the same three lines.  The split wins on purpose (Decision (a): a
+    declaration shows AS DECLARED, and it renders aliases better in the other 12 of the 14 disagreements), so this
+    is a precedence hole, not a hook bug.  *Fix.* Prefer the hook when the split's answer is a BARE type variable
+    and the hook's is not; keep the split otherwise.  Needs its own pin (the disagreement SET in the sweep would
+    shrink by exactly these two).  Editor path only; Tier 0.  Not scheduled.
+
 ## D. Claims in older documents that do not reproduce
 
 D1. `core/examples/Ai/README.md`'s RUnion table ("a helper bundling `RUnion3` and `RUnion2` does not finish")

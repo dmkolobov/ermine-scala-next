@@ -8,6 +8,7 @@ import com.clarifi.reporting.ermine.HasTermVars._
 import com.clarifi.reporting.ermine.Subst.{
   assertTypeClosed, inferImplicitBindingTypes, toGamma, typeCheckExplicitBinding, unbindAnnot }
 import com.clarifi.reporting.ermine.syntax._
+import com.clarifi.reporting.ermine.tools.G1Compare
 import com.clarifi.reporting.ermine.syntax.TypeDef.typeDefComponents
 import com.clarifi.reporting.ermine.surface.{ Anchors, Span, StatementExtents }
 import com.clarifi.reporting.ermine.parsing.ParseState
@@ -90,6 +91,37 @@ object TolerantCheck {
   final case class Result(notes: List[Note], types: Map[String, Type],
                           reused: Int = 0, components: Int = 0,
                           locals: Map[(Int, Int), LocalTy] = Map(),
+                          /** 6.2b: how many EQUATION-ARGUMENT binders the 6.2
+                            * arity split and the `Subst` hook BOTH typed, and
+                            * the def-sites where the two answers DIFFERED up to
+                            * renaming of free variables.  The split is a
+                            * reconstruction from the binding's published type
+                            * and the hook is the checker's own answer, so where
+                            * both speak the pair is compared rather than one
+                            * quietly replacing the other -- the 6.2 review's
+                            * own condition for trusting the split ("it should
+                            * be pinned against the checker on the corpus").
+                            * The split still WINS: it renders a declaration as
+                            * declared (Decision (a)) and unexpanded, where the
+                            * hook holds the skolemised, alias-expanded instance.
+                            * The corpus sweep pins both numbers; the classes
+                            * behind the residual are in LSP-6.2b-HOOK.md.
+                            * Filled only for FRESHLY inferred components (a
+                            * cache hit recomputes nothing), and empty unless
+                            * `wantLocals`. */
+                          binderAgreed: Int = 0,
+                          binderDisagreements: List[(Int, Int)] = Nil,
+                          /** 6.2b: the def-sites where the hook HAD the
+                            * checker's type for a pattern binder and dropped
+                            * it because it is not `mono` -- a variable bound
+                            * to a RANK-N constructor field (`data Alt f = Alt
+                            * (forall a. f a) ...`), which Decision (a) does
+                            * not let a local hover as.  It is this item's
+                            * whole residual class, and it is carried out
+                            * rather than merely skipped so that the corpus
+                            * sweep can assert EVERY untyped value-local binder
+                            * is one of these and nothing else. */
+                          binderRankN: List[(Int, Int)] = Nil,
                           /** 7.5, ticket E10(5): the file's own nullary
                             * type synonyms, resolved to the `Con` they
                             * name.  See `checkWith`. */
@@ -293,9 +325,9 @@ object TolerantCheck {
     * type.  That covers `let` and `where` heads (Renamer LetBound /
     * WhereBound) at every depth, and the module's top levels.
     *
-    * It does NOT cover PATTERN binders — Arg, CaseBound, DoBound, and
-    * the vars inside a constructor or product pattern.  Lower drops the
-    * binder's meta when it builds the pattern (`VarP(v.map(_ =>
+    * The ZONK does NOT cover PATTERN binders — Arg, CaseBound, DoBound,
+    * and the vars inside a constructor or product pattern.  Lower drops
+    * the binder's meta when it builds the pattern (`VarP(v.map(_ =>
     * annotOf(...)))`, Lower.scala): the pattern var carries an `Annot`,
     * and for an unsigned binder that annot is the shared
     * `Annot.annotAny` (`exists a. a`, `Loc.builtin`, id -1).
@@ -306,10 +338,18 @@ object TolerantCheck {
     * bound vars' ids).  Nothing writes that meta back to a `V` this side
     * can see, so `substType` on the binder's own meta returns an
     * unconstrained variable — not the binder's type, and worse than
-    * silence.  Making them reachable needs a recording hook where the
-    * type exists, which is `Subst.inferPatternType`: out of scope for
-    * this item by its brief (no `Subst.scala` change), written up in
-    * tracker/loopmodel/LSP3-6.2-LOCALS.md.
+    * silence.
+    *
+    * TWO MECHANISMS reach them instead.  6.2's arity split (see `args`)
+    * RECONSTRUCTS an equation's argument types from the binding's own
+    * type, with no checker change; and 6.2b's hook (see `hooked`) has
+    * the checker RECORD each pattern binder's type where it mints it,
+    * `SubstEnv.binderTypes`, behind `SubstEnv.recordBinders`, which only
+    * `checkWith(wantLocals = true)` sets.  Between them every value-local
+    * binder of a cleanly checked module has a type except one class: a
+    * variable bound to a RANK-N constructor field, whose type is not
+    * `mono` and which Decision (a) does not let a local hover as
+    * (`Result.binderRankN`; tracker/loopmodel/LSP-6.2b-HOOK.md).
     *
     * A SIGNED pattern binder is the exception and is collected: `\(x :
     * Int) -> ...` lowers to a `VarP` whose annot IS the declared type
@@ -323,13 +363,33 @@ object TolerantCheck {
     * def-site here. */
   private def collectLocals(bs: List[Binding], file: String,
                             published: TermVar => Option[Type])
-                           (implicit hm: SubstEnv, su: Supply): Map[(Int, Int), LocalTy] = {
+                           (implicit hm: SubstEnv, su: Supply)
+      : (Map[(Int, Int), LocalTy], Int, List[(Int, Int)], List[(Int, Int)]) = {
     val out = scala.collection.mutable.Map.empty[(Int, Int), LocalTy]
 
-    def record(l: scalaparsers.Loc, t: => LocalTy): Unit = l match {
-      case p: Pos if p.fileName == file => out += (p.line, p.column) -> t
-      case _ => ()
+    var agreed = 0
+    val disagreed = scala.collection.mutable.ListBuffer.empty[(Int, Int)]
+    val rankN = scala.collection.mutable.ListBuffer.empty[(Int, Int)]
+
+    /** A def-site in THIS module.  A `V` relocated to another file, and
+      * anything at `Loc.builtin` or `Inferred`, is not one. */
+    def keyOf(l: scalaparsers.Loc): Option[(Int, Int)] = l match {
+      case p: Pos if p.fileName == file => Some((p.line, p.column))
+      case _                            => None
     }
+
+    def record(l: scalaparsers.Loc, t: => LocalTy): Unit =
+      keyOf(l) foreach { k => out += k -> t }
+
+    /** 6.2b: what the `Subst` hook recorded for an UNSIGNED pattern binder,
+      * zonked in this component's own `SubstEnv`.  `SubstEnv.binderTypes` is
+      * written by `Subst.inferPatternType` and kept eagerly substituted (see
+      * the field's comment), so unlike the binder's own Lower meta -- which
+      * inference never touches -- this IS the type the checker gave it.
+      * Empty unless `hm.recordBinders`, which only `checkWith(wantLocals =
+      * true)` sets. */
+    def hooked(l: scalaparsers.Loc): Option[Type] =
+      keyOf(l) flatMap hm.binderTypes.get map Subst.substType
 
     /** A binding head: an IMPLICIT one reads its own meta, which
       * inference subsumed against the inferred type; an EXPLICIT one
@@ -406,7 +466,53 @@ object TolerantCheck {
         }
       }
 
-    def pat(p: Pattern): Unit = p match {
+    /** 6.2b: are the split's answer and the hook's the same type, up to the
+      * NAMING of their free variables?
+      *
+      * Var identity is the wrong test and measurably so: for a `where`-bound
+      * polymorphic local the split peels the local's own `Forall`
+      * STRUCTURALLY -- so its domain is that quantifier's Bound var -- while
+      * the hook's copy was rewritten by `generalize`, and the two are
+      * different `TypeVar`s standing for one variable.  Both render `a`, so
+      * hover agrees; only the comparator did not.  Opening every free type
+      * variable on both sides (`Bij.open1`/`open2`, which
+      * `G1Compare.alphaEq` binds pairwise on first encounter) is exactly
+      * "equal up to renaming", and it stays structural: a `Con` never
+      * matches a `VarT`, and a repeated variable must be repeated on the
+      * other side too. */
+    def sameUpToVarNaming(a: Type, b: Type): Boolean =
+      G1Compare.alphaEq(a, b, G1Compare.Bij.empty.copy(
+        open1 = Type.typeVars(a).map(_.id).toSet,
+        open2 = Type.typeVars(b).map(_.id).toSet)).isDefined
+
+    /** 6.2b: the hook's answer for one unsigned binder.
+      *
+      * The arity split ran FIRST for every binding whose arguments it can
+      * reach (`args` precedes `alt` at both call sites), so an entry that is
+      * already here is the SPLIT's, and it WINS: it is the shipped, pinned
+      * 6.2 answer and `scope` carries the letter agreement the split
+      * arranged.  Where both speak they must agree, so the two are compared
+      * and counted (`Result.binderAgreed`/`binderDisagreements`) rather than one
+      * silently replacing the other.  A NON-`mono` type is skipped, the same
+      * rule and the same test `args` uses: Decision (a) forbids a `forall` on
+      * a local.  That skip is NOT unreachable -- a variable bound to a RANK-N
+      * constructor field (`data Alt f = Alt (forall a. f a) ...`) has a
+      * polymorphic type and the checker knows it -- so the site is carried
+      * out in `Result.binderRankN`, and the corpus sweep asserts it is the
+      * ONLY reason a value-local binder goes untyped. */
+    def hook(v: V[Annot], scope: Option[Type]): Unit =
+      keyOf(v.loc) foreach { k =>
+        hooked(v.loc) foreach { t =>
+          out.get(k) match {
+            case Some(split) =>
+              if (sameUpToVarNaming(split.ty, t)) agreed += 1
+              else disagreed += k
+            case None => if (t.mono) out += k -> LocalTy(t, scope) else rankN += k
+          }
+        }
+      }
+
+    def pat(p: Pattern, scope: Option[Type]): Unit = p match {
       case VarP(v) =>
         // `Annot.annotAny`'s hole has id -1; a real signature does not.
         val declared = v.extract.body match {
@@ -414,26 +520,40 @@ object TolerantCheck {
           case _                     => true
         }
         if (declared) record(v.loc, LocalTy(Subst.substType(v.extract.body)))
-      case AsP(_, p1, p2)   => pat(p1); pat(p2)
-      case ConP(_, _, ps)   => ps.foreach(pat)
-      case ProductP(_, ps)  => ps.foreach(pat)
-      case StrictP(_, p1)   => pat(p1)
-      case LazyP(_, p1)     => pat(p1)
+        else hook(v, scope)
+      case AsP(_, p1, p2)   => pat(p1, scope); pat(p2, scope)
+      case ConP(_, _, ps)   => ps.foreach(pat(_, scope))
+      case ProductP(_, ps)  => ps.foreach(pat(_, scope))
+      case StrictP(_, p1)   => pat(p1, scope)
+      case LazyP(_, p1)     => pat(p1, scope)
       case _                => ()
     }
 
-    def alt(a: Alt): Unit = { a.patterns.foreach(pat); term(a.body) }
+    def alt(a: Alt, scope: Option[Type]): Unit = { a.patterns.foreach(pat(_, scope)); term(a.body, scope) }
 
-    def term(t: Term): Unit = t match {
-      case App(f, x)          => term(f); term(x)
-      case Sig(_, e, _)       => term(e)
-      case Rigid(e)           => term(e)
-      case Remember(_, e)     => term(e)
-      case Lam(_, p, b)       => pat(p); term(b)
-      case Case(_, e, alts)   => term(e); alts.foreach(alt)
+    /** `scope` is the TOP-LEVEL binding's hover type, threaded so that a
+      * binder the hook supplies renders with the letters that binding's own
+      * hover uses (`Pretty.prettyTypeIn`, Decision (a) / review R-4).  It is
+      * the right frame and it is the only one that works: the hook's map is
+      * rewritten at `generalize`, so a recorded type mentions the very
+      * `TypeVar`s the PUBLISHED scheme quantified.  A `let`/`where` head's
+      * own type is read from its Lower meta instead (`headType`) and lives in
+      * a different frame, so it is NOT pushed down as the scope for the
+      * binders inside it -- doing that printed a third letter for a second
+      * variable (`hh : a -> b` with its lambda argument `c`).  The arity
+      * split keeps using the local head, because its domains are peeled out
+      * of that very type; measured both ways, 6.2b report Sec. 4. */
+    def term(t: Term, scope: Option[Type]): Unit = t match {
+      case App(f, x)          => term(f, scope); term(x, scope)
+      case Sig(_, e, _)       => term(e, scope)
+      case Rigid(e)           => term(e, scope)
+      case Remember(_, e)     => term(e, scope)
+      case Lam(_, p, b)       => pat(p, scope); term(b, scope)
+      case Case(_, e, alts)   => term(e, scope); alts.foreach(alt(_, scope))
       case Let(_, is, es, b)  => (is ++ es).foreach { b2 =>
-                                   binding(b2); args(b2, headType(b2)); b2.alts.foreach(alt) }
-                                 term(b)
+                                   val h = headType(b2)
+                                   binding(b2); args(b2, h); b2.alts.foreach(alt(_, scope)) }
+                                 term(b, scope)
       case _                  => ()   // Var, literals, Product, EmptyRecord, Hole
     }
 
@@ -445,10 +565,11 @@ object TolerantCheck {
     // with; it falls back to the head's own type for a shape that has no
     // published entry.
     bs.foreach { b =>
-      args(b, published(b.v) getOrElse headType(b))
-      b.alts.foreach(alt)
+      val h = published(b.v) getOrElse headType(b)
+      args(b, h)
+      b.alts.foreach(alt(_, Some(h)))
     }
-    out.toMap
+    (out.toMap, agreed, disagreed.distinct.toList, rankN.distinct.toList)
   }
 
   def check(ps: ParseState, m: Module)(implicit s: SessionEnv, su: Supply): Result =
@@ -569,6 +690,11 @@ object TolerantCheck {
                       undefinedType = true)
     }
 
+    // 6.2b agreement counters; see `Result.binderAgreed`.
+    var agreed = 0
+    var disagreed: List[(Int, Int)] = Nil
+    var rankN: List[(Int, Int)] = Nil
+
     val preFailed = bs.collect { case b if termVars(b.alts).exists(free) => b.v }.toSet
     var failed: Set[TermVar] = preFailed
 
@@ -681,6 +807,10 @@ object TolerantCheck {
           // A FRESH SubstEnv per component (see the class comment).
           guard(Error) {
             Session.subst { implicit hm =>
+              // 6.2b: the hook is armed HERE and in the explicit block below,
+              // and nowhere else.  `check` and every batch entry leave it
+              // false, so `Subst` pays one boolean test per guarded site.
+              if (wantLocals) hm.recordBinders = true
               /* S5 review Q-1: `publishing = true`.  `comp` is a component of
                * `m.implicits` split by the same `implicitBindingComponents` that
                * `Subst.inferBindingGroupTypes` uses, so this IS the module's
@@ -699,12 +829,13 @@ object TolerantCheck {
               // 6.2: one zonk per local binder, INSIDE the block that
               // already exists, over the terms as inference saw them.
               (sub, if (wantLocals) collectLocals(cs, file, sub.get(_).map(_.extract))
-                    else Map.empty[(Int, Int), LocalTy])
+                    else (Map.empty[(Int, Int), LocalTy], 0, Nil, Nil))
             }
           } match {
-            case Some((sub, ls)) =>
+            case Some((sub, (ls, ag, dis, rkn))) =>
               subs = subs ++ sub
               locals = locals ++ ls
+              agreed += ag; disagreed = disagreed ++ dis; rankN = rankN ++ rkn
               if (notes.length == before) fpk foreach { f =>
                 fresh += f -> Entry(comp.flatMap(b => spelling(b.v).flatMap(sp =>
                   sub.get(b.v).map(sp -> _.extract))).toMap,
@@ -723,9 +854,14 @@ object TolerantCheck {
       else if (etm contains e.v)
         guard(Error) {
           Session.subst { implicit hm =>
+            if (wantLocals) hm.recordBinders = true
             val ep = Term.subTerm(subs, e)
             typeCheckExplicitBinding(Nil, ep)
-            if (wantLocals) locals = locals ++ collectLocals(List(ep), file, etm.get)
+            if (wantLocals) {
+              val (ls, ag, dis, rkn) = collectLocals(List(ep), file, etm.get)
+              locals = locals ++ ls; agreed += ag
+              disagreed = disagreed ++ dis; rankN = rankN ++ rkn
+            }
           }
         }
     }
@@ -747,7 +883,7 @@ object TolerantCheck {
       (subs.flatMap { case (v, v2) => v.name.map(_.string -> v2.extract) } ++
        etm.flatMap  { case (v, t)  => v.name.map(_.string -> t) } ++
        foreignTypes).toMap
-    (Result(notes.toList, types, reused, components, locals, ownTypes),
+    (Result(notes.toList, types, reused, components, locals, agreed, disagreed, rankN, ownTypes),
      Cache(scopeKey, fresh.toMap))
   }
 

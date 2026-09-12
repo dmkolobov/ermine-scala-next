@@ -104,6 +104,33 @@ class SubstEnv(
   var kinds:      Map[KindVar, Kind] = Map()
   var types:      Map[TypeVar, Type] = Map()
   var remembered: Map[Int, (Subst.Gamma, Type, Loc)] = Map()
+  /** 6.2b (LSP interstage item, tracker/loopmodel/LSP-6.2b-HOOK.md): the type
+    * `inferPatternType` minted for each PATTERN binder, keyed by the binder
+    * `V`'s def-site `(line, column)` -- the same key
+    * `TolerantCheck.Result.locals` uses.  The key carries NO file name; one
+    * `SubstEnv` sees exactly one module, and that single-module invariant is
+    * what makes the key safe (the 6.2b review's R-9).  EDITOR ONLY: nothing writes it
+    * unless `recordBinders` is set, which only
+    * `TolerantCheck.checkWith(wantLocals = true)` does, so every strict path
+    * (`Session.loadModule`, the REPL, every batch entry) pays one boolean
+    * test per guarded site and observes nothing.
+    *
+    * Kept EAGERLY SUBSTITUTED, exactly as `remembered` is, and for the same
+    * reason: `restrictTypes` deletes a pattern meta from `types` at the end
+    * of the `Lam` case and of `inferAltTypesPrime`, so a map holding the raw
+    * meta and zonked after the component returns an unconstrained variable
+    * (the 6.2 review's R-1 refutation, reproduced in the 6.2b report).
+    *
+    * The `instantiateType` line is on the checker's hottest path and it is
+    * MANDATORY there.  Taking it at `restrictTypes` instead -- with only the
+    * bindings about to disappear, which looks equivalent and is much cheaper
+    * -- was BUILT AND MEASURED, and it is wrong: `generalize` rewrites an
+    * entry's metas to the scheme's Bound variables, after which a binding this
+    * map never picked up can no longer be applied, and the corpus sweep's
+    * split-vs-hook disagreements went 14 -> 251 (6.2b report Sec. 9b). */
+  var binderTypes: Map[(Int, Int), Type] = Map()
+  /** 6.2b: OFF on every strict path.  See `binderTypes`. */
+  var recordBinders: Boolean = false
   def fskvs:      Traversable[TypeVar] = Type.fskvs(types)
   def kindVars:   Traversable[KindVar] = Kind.kindVars(kinds) ++ Kind.kindVars(types)
 }
@@ -192,6 +219,9 @@ object Subst {
     case None              =>
       hm.types = subType(Map(v -> e), hm.types) + (v -> e)
       hm.remembered = hm.remembered.map { case (k, (g, t, loc)) => (k, (subType(Map(v -> e), g), subType(Map(v -> e), t), loc)) }
+      // 6.2b: the site that makes the hook work at all -- see `SubstEnv.binderTypes`.
+      if (hm.recordBinders && hm.binderTypes.nonEmpty)
+        hm.binderTypes = hm.binderTypes.map { case (k, t) => (k, subType(Map(v -> e), t)) }
   }
 
   /**
@@ -617,6 +647,9 @@ object Subst {
       val nts = refreshList(ty, l, subKind(km, ts))
       val tm  = zipTypes(ts, nts)
       hm.remembered = hm.remembered map { case (k, (g, t, loc)) => (k, (Type.sub(km, tm, g), t subst (km, tm), loc)) }
+      // 6.2b: see `SubstEnv.binderTypes`.
+      if (hm.recordBinders && hm.binderTypes.nonEmpty)
+        hm.binderTypes = hm.binderTypes map { case (k, t) => (k, t.subst(km, tm)) }
       (nks,nts,q.subst(km,tm),b.subst(km,tm))
     case _ => (List(), List(), Exists(t.loc.inferred), t)
   }
@@ -1099,6 +1132,13 @@ object Subst {
     e match {
       case VarP(v) =>
         val (ks, ts, t) = unbindAnnot(g, v.extract)
+        // 6.2b: the ONE place a pattern binder's type exists.  `v.loc` is the
+        // def-site `Pos` Lower gave the binder (`Lower.Ctx.binderV`); an
+        // `Inferred`/builtin loc is not a def-site and is skipped.
+        if (hm.recordBinders) v.loc match {
+          case p: Pos => hm.binderTypes = hm.binderTypes + ((p.line, p.column) -> t)
+          case _      => ()
+        }
         Patterned(t, List(v as t), ks, List(), ts)
       case StrictP(_,p) => inferPatternType(g, p)
       case LazyP(_,p)   => inferPatternType(g, p)
@@ -1667,6 +1707,9 @@ object Subst {
     val xs = (typeVars(cs) -- nts -- gs).filter(_.ty != Skolem).toList
     val nxs = refreshList(Ambiguous(Bound), li, xs)
     hm.remembered = hm.remembered map { case (k, (g, t, loc)) => (k, (Type.sub(km, tm, g), t.subst(km,tm), loc)) }
+    // 6.2b: see `SubstEnv.binderTypes`.
+    if (hm.recordBinders && hm.binderTypes.nonEmpty)
+      hm.binderTypes = hm.binderTypes map { case (k, t) => (k, t.subst(km, tm)) }
     Forall(li,nks,nts, mkSimplified(tml.loc,nxs,subType(zipTypes(xs,nxs),cs),publishing), t.subst(km,tm))
   }
 

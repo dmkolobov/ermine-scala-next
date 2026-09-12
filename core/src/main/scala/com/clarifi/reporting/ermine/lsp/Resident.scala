@@ -180,7 +180,18 @@ final class Resident(val log: String => Unit) {
                            // names.  The add-signature quick fix's scope
                            // test reads it, so the file's own spelling of
                            // an aliased type counts as in scope.
-                           ownTypes: Map[String, Global] = Map())
+                           ownTypes: Map[String, Global] = Map(),
+                           // 6.2b: how many equation-argument binders the
+                           // arity split and the `Subst` hook both typed, the
+                           // def-sites where those two answers differed, and
+                           // the def-sites the hook dropped as RANK-N.
+                           // Carried so the corpus sweep can assert, at corpus
+                           // scale, that the two mechanisms agree and that
+                           // rank-N is the only reason a binder goes untyped;
+                           // see `TolerantCheck.Result.binderAgreed`.
+                           binderAgreed: Int = 0,
+                           binderDisagreements: List[(Int, Int)] = Nil,
+                           binderRankN: List[(Int, Int)] = Nil)
 
   /** Check one file against a fresh env copy, resolving imports first
     * against the file's own directory (workspace siblings), then the
@@ -490,7 +501,8 @@ final class Resident(val log: String => Unit) {
     Checked(e, mh.name, r.surface, r.renamed, r.diagnostics,
             importNotes ++ (if (fastMode) Nil else published), checked.types,
             checked.locals, r.scope, contents, root,
-            checked.reused, checked.components, checked.ownTypes)
+            checked.reused, checked.components, checked.ownTypes,
+            checked.binderAgreed, checked.binderDisagreements, checked.binderRankN)
   } }
 
   private def errorStatements(ss: List[SStatement]): List[SErrorStatement] = ss.flatMap {

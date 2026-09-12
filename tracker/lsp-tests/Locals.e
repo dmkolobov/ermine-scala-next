@@ -39,3 +39,16 @@ sigLetLocal x =
   let slet : Bool -> Bool
       slet y = y && True
   in slet x
+
+lamLocal = (m -> m && True)
+
+conLocal s = case s of
+  Circle inner -> inner
+  Square other -> other
+
+tupLocal bx = case bx of
+  (tfst, tsnd) -> tfst && tsnd
+
+asLocal t = case t of
+  whole@(Circle wrapped) -> wrapped
+  Square other2 -> other2
