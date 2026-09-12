@@ -356,7 +356,7 @@ final class Server(wire: Wire, log: String => Unit) {
   private var notifications = Map.empty[String, Json => Unit]
   private var exitCode      = Option.empty[Int]
 
-  private var idleQuietMs: Int          = 0
+  private var idleQuiet:   () => Int     = () => 0
   private var idlePending: () => Boolean = () => false
   private var idleWork:    () => Unit    = () => ()
 
@@ -367,9 +367,16 @@ final class Server(wire: Wire, log: String => Unit) {
     * stream has been quiet for `quietMillis`, `work` runs on the
     * dispatch thread, between messages.  With nothing pending the loop
     * blocks on the stream exactly as before, so this costs no latency
-    * on ordinary traffic. */
-  def onIdle(quietMillis: Int)(pending: => Boolean)(work: => Unit): Unit = {
-    idleQuietMs = quietMillis
+    * on ordinary traffic.
+    *
+    * 7.4: `quietMillis` is BY NAME and is re-evaluated on every loop
+    * iteration that has pending work, which is what lets the window be
+    * derived from what the pending work is measured to cost
+    * (`Diagnostics.Debounce`).  It is read exactly once per wait, just
+    * before the wait, so the value the caller computes is the value the
+    * loop actually waits. */
+  def onIdle(quietMillis: => Int)(pending: => Boolean)(work: => Unit): Unit = {
+    idleQuiet   = () => quietMillis
     idlePending = () => pending
     idleWork    = () => work
   }
@@ -391,7 +398,7 @@ final class Server(wire: Wire, log: String => Unit) {
   def run(): Option[Int] = {
     var open = true
     while (open && exitCode.isEmpty)
-      if (idlePending() && !wire.ready(idleQuietMs))
+      if (idlePending() && !wire.ready(idleQuiet()))
         try idleWork()
         catch { case e: Throwable => log("rpc: idle work crashed: " + stackTrace(e)) }
       else wire.receive() match {

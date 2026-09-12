@@ -20,8 +20,8 @@ code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 — or **package and install it**:
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.1.vsix
-code --install-extension ermine-lang-0.1.1.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.2.vsix
+code --install-extension ermine-lang-0.1.2.vsix
 ```
 
 Open the `ermine-scala` folder as your workspace. The extension finds
@@ -38,7 +38,7 @@ the status bar, the settings and the sbt warm-up.
 | | |
 |---|---|
 | Syntax highlighting | keywords, literals, comments, operators, constructors, declaration heads |
-| Diagnostics | on open, on save, and ~300 ms after you stop typing — no save needed. Every failure, not the first; an import that will not load is squiggled on its own `import` line |
+| Diagnostics | on open, on save, and after you stop typing — no save needed. The quiet window is adaptive: `clamp(150 ms, the document's own median check time, 300 ms)`, so a small file answers in 150 ms and only the biggest modules wait the full 300. Every failure, not the first; an import that will not load is squiggled on its own `import` line |
 | Go to definition | equations, signatures, local binders, `field` and `table` declarations, data constructors, foreign declarations, type names, fixity mentions, and `import` module names — same file, workspace siblings, and the stdlib |
 | Hover | the inferred or declared type of a top-level, imported or declared name; the **type of a local binder** — `let`, `where`, a binder with its own signature, and a plain-variable argument of an equation (when the binding's own type shows `arity` arrows and that argument's type is a monotype); the **kind** of a type name |
 | Find references / highlight | every mention of a local in its file; every mention of a global across the buffers you have OPEN |
@@ -58,21 +58,24 @@ workspace symbol picker.
 
 ## Three things that will surprise you
 
-**A stdlib definition opens in `core/target/…/classes/modules`, not in
-`core/src/main/resources/modules`.** The language server's resident session
-loads its 129 modules from the classpath, where `sbt core/copyResources` puts a
-COPY of the source tree, so that is where every stdlib position points — for
-go-to-definition and for the workspace symbol picker alike. Browsing is fine;
-**editing the file you land in is not** — the next `copyResources` overwrites
-it. Ticket E9 in `tracker/TICKET-stdlib-findings.md`.
+**The FIRST check of a file you just opened costs about 2.5 s; every keystroke
+after it costs about 0.9 s.** A fresh buffer has nothing to reuse, so the whole
+file is parsed and every binding group inferred; from the second check on, one
+statement re-parses and the inference cache keeps what the edit did not touch.
+The cache is the reason, and it is not free: about **1.6 MB of heap per open
+document** the size of the 1757-line `Layout/Report.e` (mostly the surface tree
+itself), released when you close the document, plus **30–70 ms** on that first
+check for building the statement index.
 
-**On a TAB-indented line every range is in the wrong units.** The parser
-expands a tab to the next eight-column stop and LSP counts characters, so a
-diagnostic, a hover target or a highlight on such a line lands to the right of
-the real text by seven columns per tab. Rename refuses outright on a name
-behind a tab rather than corrupting the file. Ermine sources are
-space-indented almost everywhere (one file in the 253-file corpus has tabs).
-Ticket E8.
+**Some edits check cold anyway.** The per-document inference cache is keyed on
+the file's SCOPE — its imports, its type/data/class/instance/field/foreign
+declarations, its fixity declarations, and its `private` and `database` blocks.
+Edit inside one of those, or inside a definition whose name is not a plain word
+(an operator, a backtick name, a spelling with `_` or `'` in it), and the whole
+cache drops and the file is re-inferred from scratch: about 1.6 s instead of
+0.9 s on that module. This is deliberate — those are the edits that can change
+what every other name in the file MEANS — and it is the one place where a
+keystroke is slower than the average.
 
 **A local binder inside a `case`, a `do` or a lambda still hovers empty.** Its
 type exists only inside the checker's pattern inference and is never written
@@ -82,11 +85,30 @@ hover — the last of those by reconstruction from the binding's own type, so it
 needs that type to show `arity` arrows and the argument's own type to be a
 monotype; a strict (`!x`) or lazy (`~x`) argument answers nothing.
 
+### Fixed in 0.1.2 (they used to be on this list)
+
+**Stdlib navigation lands in the source tree.** A stdlib definition, reference
+or workspace symbol used to open `core/target/…/classes/modules` — the copy the
+resident session actually loads — where an edit was lost at the next
+`copyResources`. The server now maps that back to
+`core/src/main/resources/modules`, deriving the pair from the class loader
+rather than hard-coding a Scala version, and falling back to the old behaviour
+when no source tree is there (ticket E9).
+
+**Tab-indented lines are in the right units.** A tab is one character to LSP and
+eight columns to the parser; every range on such a line used to land seven
+characters per tab to the right of the text it named, and rename refused
+outright behind a tab. The conversion now happens at the boundary in both
+directions, so diagnostics, hover, highlight and rename all land on the text
+(ticket E8).
+
 ## Fast mode
 
 `ermine.fastMode` (or **Ermine: Toggle Fast Mode**) skips type checking. On the
-largest stdlib module a check splits roughly 0.94 s read + 0.60 s typecheck, so
-this is about a third off the time to diagnostics.
+largest stdlib module a warm check now splits 0.05 s read + 0.53 s typecheck of
+a 0.61 s check — the read used to be 0.85 s of it — so fast mode takes most of
+the remaining time off, and, because the quiet window tracks the measured check
+time, it shortens the wait before the check as well.
 
 **Kept:** syntax errors, shadowing refusals, unknown operators, interleaved
 equations, every lowering diagnostic, import failures — and all navigation,
@@ -116,11 +138,13 @@ Three costs, in the order you meet them:
    through, and definition targets would land in interface text rather than
    source). The status bar tracks it. Requests that arrive before the boot
    starts answer empty immediately instead of queueing behind it.
-3. **Per-check cost.** ~1.7 s on the largest stdlib module (1757 lines) on a
-   quiet machine, ~1.9 s on a busy one, and well under that on ordinary files. Unchanged binding groups are not re-inferred
-   between keystrokes. Dispatch is single-threaded by design, so a hover or a
-   completion that arrives WHILE a check is running waits for it — up to about
-   1.5 s on that module, and imperceptible on a normal one.
+3. **Per-check cost.** ~0.9 s on the largest stdlib module (1757 lines,
+   `Layout/Report.e`) on a quiet machine — it was ~1.7 s before Stage 4 — and
+   0.17–0.42 s on ordinary files. One statement re-parses per keystroke and
+   unchanged binding groups are not re-inferred, so almost all of what is left
+   is the type check. Dispatch is single-threaded by design, so a hover or a
+   completion that arrives WHILE a check is running waits for it — about 0.54 s
+   on that module (it was 1.45 s), and imperceptible on a normal one.
 
 ## Settings
 

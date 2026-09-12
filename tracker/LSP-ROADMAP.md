@@ -8,26 +8,31 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: STAGE 4 OPEN (2026-09-10).  G3 SIGNED OFF 2026-09-10 (the user:
-"fold the stage 4 draft in and open it").  Stage 3 shipped 6.0-6.7 (6.2 as
-PARTIAL; the pattern-binder Subst.scala FORK stays under Blocked/Awaiting,
-the user's decision).  Stage 4 checklist 7.0-7.6 + GATE G4 below, folded in
-from the draft; the prior-art survey is tracker/loopmodel/STAGE4-PRIOR-ART.md.
-7.0 DONE: parse is 98% of the read (844 of 860 ms), per-statement
-parse work is ~58% of the check, VERDICT 7.1 (statement cache) with 7.2
-first; 7.3 re-ranked to the batch target.  7.2 DONE: the top-of-file cliff is
-gone (0/154 -> 115/154 reused; checkWith -40..-60%); the Stage-2 un-keyed-
-definition hole is closed.  NEXT: 7.1a (Tier 1: the high-water mark in
-scalaparsers), then 7.1b (the statement cache).  Orchestration as in Stage 3: brief -> fresh Opus
-implementer -> fresh Opus reviewer -> Tier 0 -> commit.
+Status: STAGE 4 COMPLETE — AWAITING GATE G4 SIGN-OFF (2026-09-11).
+7.0, 7.2, 7.1a, 7.1b, 7.4, 7.5 DONE; 7.3 handed to PERF-ROADMAP; 7.6 parked
+with its trigger measured (the wait sits ON 500 ms; fast mode takes it to 56
+ms — the user's call).  On Layout/Report.e a keystroke re-parses one
+statement: read 0.84 -> 0.05 s, keystroke-to-diagnostics 1.69 -> 0.93 s;
+a 44-line file 0.33 -> 0.17 s; the top-of-file cache cliff is gone; E8/E9/
+E10(5) closed.  Gate evidence (G4) recorded below; every gate green on the
+reviewer's own or method-checked run; batch byte-identical to the G3 build.
+NEXT: nothing — the loop stopped at G4.  Stage 5 is not drafted; its
+candidate material is the G4 evidence's "not satisfied" list and the
+user's parallel type-checker work.  The 6.2 pattern-binder fork remains
+the user's decision.
 · Seeded 2026-08-30 (session that shipped the scoping fix, commits f9cf42a /
 41b13cc).
 
 ## Baselines (hard invariants — never commit red)
 
-- `sbt -batch core/test`: all green — 1008/1008 after Stage 4 item 7.2
-  (2026-09-10; 988 at G3, 943 at F4); every full run since 6.0 has agreed
-  with its predecessor.
+- `sbt -batch core/test`: 1028/1028 at GATE G4 (2026-09-11; the first run hit
+  exactly the E12 property and the single permitted re-run was clean); 1026
+  after 7.4; 1020 after 7.1b; 1008
+  after 7.2, 988 at G3, 943 at F4).  TWO KNOWN INTERMITTENTS, each red about
+  one run in ten and unreachable from the editor/parser/solver code:
+  `TestInterfaceRoundTrip` (E12, cross-suite dep-cache race) and
+  `TestLegend."extra args are ignored"` (E13, seed-dependent date format).
+  A red that is exactly one of them gets ONE re-run; anything else is real.
   `Constraints.disjunction sound` is QUARANTINED behind
   `-Dermine.test.disjunction=true` (tracker/GATE-POLICY.md), so "green"
   means green; it was 761/762 with that failure visible at Stage 0.
@@ -39,8 +44,8 @@ implementer -> fresh Opus reviewer -> Tier 0 -> commit.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (480 after Stage 4 item 7.2,
-  2026-09-10; 456 after 7.0; 454 at GATE G3;
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (542 after Stage 4 item 7.5,
+  2026-09-11; 510 after 7.4; 494 after 7.1b; 480 after 7.2; 456 after 7.0; 454 at GATE G3;
   407 after 6.5; 344 after 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
   re-measured when Stage 3 was planned; 98 after the 2026-09-02
   declaration-navigation work, 181 after the LSP-FFI fix round; it read
@@ -1555,7 +1560,7 @@ New, and specific to this stage:
   the round trip and no cache can help; (iv) the header is parsed twice by
   two grammars (8 + 6 ms), worth 10-13% of the read AFTER 7.1b.
 
-- [ ] **7.1 Surface-tree cache keyed by statement extent** (conditional on 7.0's
+- [x] **7.1 Surface-tree cache keyed by statement extent** (conditional on 7.0's
   verdict; Decision (a) and (g)).  TWO ITERATIONS, because the first is a
   Tier-1 parser-library change and must be reviewed on its own.
 
@@ -1577,6 +1582,70 @@ New, and specific to this stage:
   the mark exceeds the extent for at least one real corpus statement (an
   anti-vacuity floor — a mark that never exceeds the extent has not been shown to
   work).  USELESS ON ITS OWN: it ships only as 7.1b's precondition, or not at all.
+  DONE 2026-09-10 as GREEN-CONDITIONAL (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP4-7.1a-MARK.md, LSP4-7.1a-REVIEW.md) — SHIPS ONLY AS
+  7.1b's PRECONDITION and comes out with it if 7.1b is reverted.  THE
+  DESIGN: `scalaparsers.Mark`, a shared mutable cell carried as
+  ParseState's seventh field so every copy of one parse shares it and
+  `attempt`'s rollback of the state VALUE cannot roll back the cell —
+  `furthest` is monotone over the whole parse and includes what committed,
+  rolled-back and peeked-at branches examined (pinned: a failed attempt
+  leaves offset 0 and the mark at 4).  THE AUDIT: 16 sites, 9 bumped
+  (rawSatisfy before its predicate, skipSatisfy, realEOF, offside, onside,
+  layoutEndsWith's eof, atLayoutBoundary's skipTrivia, rawTypeText's
+  scanner), 2 proven non-bumps (slice; Pos.bump's line read-ahead reaches
+  no Span), 5 not-a-parse.  ANTI-VACUITY: 6,954 of 6,954 corpus statements
+  have a mark past their extent — and one byte into the NEXT extent (the
+  grammar always depends on its successor's first byte); all 15 named
+  Report.e statements individually; deleting the atLayoutBoundary bump
+  changed no corpus count (the token layer consumes that trivia first), so
+  a fifth property runs it in isolation and a planted-bug matrix shows
+  each property falsifies exactly its site.  TIER 1 IDENTICAL: trace
+  differential 3,206,083 of 3,206,083 paired segments identical, sinmoved
+  0 in all 18 groups (not one Supply draw moved — the Decision (b) hazard,
+  measured); interface sweep 268/268, 3,481 bindings identical; g1-validate
+  9/9; corpus outputs byte-identical on 154/154.  THE COST, the one
+  criterion that moved: the first A/B put batch at +0.8..1.9% and the
+  editor read at +42 ms (+4.9%) — a seventh field copied per character
+  plus one compare per examined position; FIX ROUND: the strict path
+  constructs `MarkOff` (an empty `reach`; `furthest` = Int.MaxValue so a
+  wrong strict read refuses every reuse rather than claiming nothing was
+  examined) — every strict entry gets it by default and only
+  `SurfaceParsers.moduleMarked`, the editor read, installs a live cell;
+  batch then measured 12.14/11.78, 12.04/12.17, 12.09/11.98, 12.06/12.20
+  (before/after, both orders), pooled -0.4%, median-of-medians 0.00% —
+  the seventh field's copy per character is not measurable, the first
+  round's cost was the `reach` work; THE REVIEWER'S NUMBERS OF RECORD: batch
+  pooled +0.3..0.7% over eight pairs in two runs (inside the ~1% floor; an
+  honest upper bound of ~0.1 s, not exactly zero); editor read +20..+48 ms
+  pooled, +5..+90 per pair, positive in 5 of 5 pairs, typecheck control
+  exactly 0 — inside 7.1b's 200 ms gate and accepted as its precondition.
+  THE REVIEW'S FINDINGS: the layout-boundary site was bumped ONE BYTE
+  SHORT (the trivia skipper peeks i+1 to decide whether `-`/`{` opens a
+  comment; inputs differing only at that byte flip the decision while
+  the mark stops before it) — latent today because the token layer masks
+  it, fixed to cover the peek with a property in the shape of the witness;
+  the `rawTypeText` site had NO property coverage (deleting its bump left
+  10/10 green and every count unchanged) — one isolation property added;
+  the implementer's claim that removing the layout-boundary bump changed
+  no corpus count was FALSE (6,954 -> 6,893 into the next extent; 61
+  statements load-bearing) — corrected, and property (i) now asserts it.
+  Soundness confirmed: no path continues a parse with a different cell,
+  `furthest` is never read during a parse, both reasoned non-bumps hold.  THE
+  RECORD 7.1b CONSUMES: `readModuleTolerant(...).marks`, one
+  `StatementMark(startLine, startCol, startOffset, endOffset, examinedEnd,
+  markAtEntry)` per top-level statement; guard = reuse iff extent text
+  byte-identical AND no edit intersects [startOffset, startOffset +
+  examinedLength); `Nil` on the strict path.  The shared cumulative cell can never
+  produce a too-SMALL guard (reach is a max; cumulativity only widens by
+  the measured <= 23 bytes), and `markAtEntry` may refine only the END —
+  using it as the guard's start is the one unsound reading.  Obligations
+  written into 7.1b's brief: carry `examinedLength` relative, never
+  absolute offsets; the guard is forward-only, so start column and
+  enclosing layout depth stay in the reuse condition; join marks to
+  statements by POSITION, never by index; the 62 header extents get no
+  mark and slices re-parsed with MarkOff yield none; 7.2's reachable rule
+  governs the key.
 
   **7.1b — the cache (Tier 0 + Tier 2 at adoption).**  A new editor-path-only
   entry beside `NewPipeline.readModuleTolerant`; `SurfaceParsers.module` and
@@ -1621,6 +1690,79 @@ New, and specific to this stage:
   and replaced wholesale per check, so it is bounded, and the item says so with a
   measured heap figure [survey §1.9].  Tier 2 at adoption (it changes shipped
   editor behaviour), plus the seven targeted suites.
+  DONE 2026-09-11 (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP4-7.1b-CACHE.md, LSP4-7.1b-REVIEW.md).  THE STAGE'S
+  HEADLINE LANDED: on Layout/Report.e the READ fell from 0.84 s to 0.05 s
+  and the keystroke-to-diagnostics round trip from 1.68 s to 0.90 s
+  (interleaved before/after/before/after, typecheck control +3 ms,
+  97/154 components reused on every round) — a read Δ of -790 ms against
+  the 200 ms gate.  THE DESIGN: the key is (headWord, ordinal among
+  extents with that head word), recomputed lexically from the new text
+  each check (unreachable items are keyed by the scanner's head word too —
+  safe because a key only SELECTS a candidate and reuse additionally
+  demands byte-identical extent text, the same start column, the same
+  layout depth and a clean guard, so a collision can only cost a hit);
+  the guard is 7.1a's `examinedLength`, carried RELATIVE and carried
+  FORWARD into the new entry on a hit, evaluated directly on the bytes
+  (does the new buffer still hold what that parse examined, end-of-input
+  included) rather than from an edit list — exact for scattered edits;
+  the splice is the REAL DRIVER: `moduleP` runs unchanged (header, layout,
+  eof) and only statement BODIES are skipped — a hit advances offset, Pos
+  and bol from its entry and shifts every span by the line delta through
+  `Anchors.absSpan`; a miss re-parses IN SITU over the whole buffer, never
+  a slice.  THE END-SPAN RULE, corrected against the plan by measurement:
+  the whole-file parse ends a statement at its extent end for 59,167
+  corpus statements and at the next extent's start for only 3,502 (laid-
+  out blocks where virtualRightBrace's trivia skip is not rolled back) —
+  the plan's blanket re-derivation would have broken 59,167 to fix 3,502;
+  parsing misses in situ reproduces both by construction.  Header extents
+  are re-parsed every check (8 ms; they carry no mark).  THE
+  DIFFERENTIAL: seed 71, 253 files x up to 12 multi-edit steps = 2,613
+  steps (cold; char at top and mid; line at top; statement insert/delete;
+  a trivia comment in the lookahead region; merge; split; a private-block
+  edit; an unreachable-item edit; an end edit; revert-all): 54,274 hits /
+  19,374 misses (73.7% reused), 0 SModule mismatches (structural equality
+  including every Span), 0 diagnostic mismatches.  MISS DISTRIBUTION
+  (7.0's protocol): cold whole-file parse 752 ms; a body edit 29 ms
+  (528 of 529 reused); a keystroke inside the 10.7 KB private block 126
+  ms (the p99); an append at EOF 125 ms; a pure line shift 26.5 ms with
+  529/529 reused; the cold path pays +2.8 ms.  RETENTION: 1.6 MB per open
+  document for Report.e (the surface tree 1.58 MB, 529 entries 53 KB) plus
+  one ~76 KB previous buffer, replaced wholesale per check, dropped on
+  didClose.  The strict path: `Session.scala` untouched, `SurfaceParsers`
+  158 insertions / 0 deletions, corpus outputs 154/154 identical to the
+  pre-change class tree.  lsp-smoke 480 -> 494; TestSurfaceCache new.
+  THE REVIEW: ADVANCE — the seed-71 differential reproduced exactly and
+  two fresh seeds were equally clean; eleven constructed attacks (an edit
+  inside the guard but outside the extent; identical text at a different
+  start column or layout depth — where the guard alone would have said
+  yes; a statement moved past another; duplicate definitions; a header
+  edit; a file that fails to parse; key collisions) all came out as a
+  MISS with a correct tree; `SModule` equality confirmed total; the
+  end-span correction confirmed; the strict path frozen against the
+  reviewer's own pre-change build (154/154 byte-identical); read -788 ms
+  on a pair run in the opposite order.  Four LOW findings closed in a
+  small round: the cold-open cost was understated (measured with a warm
+  JIT — see the report for the cold-JVM figure), docs/lsp.md's latency
+  table updated to the post-cache numbers, a defensive guard against a
+  zero-length cache entry (a committed no-op in the statement driver
+  would not terminate), and the extent scan running twice per check
+  noted for G4.  Tier 2 (reviewer, pre-guard tree): 1019 total, 1018 passed, 1 failed —
+  the documented `TestInterfaceRoundTrip` cross-suite dep-cache flake,
+  which passes alone and is unreachable from 7.1b (the reviewer notes
+  GATE-POLICY misattributes it to an external process; amended); the
+  orchestrator's full run on the final tree is the policy's single re-run
+  (see the log line).  NET against
+  the Stage-3-opening baseline (G3: 0.86 read / 1.69 round trip): the
+  read is ~0.05 s and the round trip ~0.90 s, with 7.1a's +20..48 ms
+  precondition cost repaid sixteenfold; the roadmap's revert rule (7.1a
+  out with 7.1b) is NOT triggered.
+  Orchestrator's Tier 2 on the final tree: 1020 total, 1019 passed, 1
+  failed — a DIFFERENT pre-existing flake (`TestLegend` "extra args are
+  ignored", the writers module's seed-dependent date formatting, S2 review
+  V-4; alone 1 failure in 3 runs; ticket E13).  Two known intermittents
+  now stand in GATE-POLICY (E12, E13), each unreachable from this stage's
+  code and each getting the standing single re-run.
 
 - [x] **7.2 (b-lite) Anchored positions, so the 5.5 inference cache survives an
   edit that shifts lines.**  Independent of 7.0's verdict; small; it removes a
@@ -1723,7 +1865,7 @@ New, and specific to this stage:
   properties).  Ticket E11 filed and cross-referenced from
   ROW-CONSTRAINT-STATE.md.
 
-- [ ] **7.3 The parse constant factor — P5(c) reopened AS AN INVESTIGATION, with
+- [~] **7.3 The parse constant factor — P5(c) reopened AS AN INVESTIGATION, with
   a kill criterion.**  P5(c) named the target and stopped: the `Free` trampoline
   is 52.6 % of editor samples and `Parser.run` alone 23.2 % (ARITHMETIC, P2's
   profile), and P5(d) TRIED a localized fix and reverted it at 43 ms, below the
@@ -1751,7 +1893,19 @@ New, and specific to this stage:
   this item; nothing merged; the worktree is deleted.  Tier 0 on the main tree
   (which is untouched).
 
-- [ ] **7.4 Adaptive debounce, derived from the measured check time** (Decision
+  NOT STARTED IN STAGE 4 — DECIDED 2026-09-11 by 7.0's verdict and
+  Decision (g) ("7.1 and 7.3 are alternatives ranked by 7.0; the loop does
+  not start both").  7.1b landed the editor saving (read 0.84 -> 0.05 s), so
+  the editor no longer has a parse-constant-factor problem to attack; what
+  remains of 7.3 is a BATCH-target item (the 12.8 s boot is 7.5x the round
+  trip and no cache can help it), which 7.0's review argued is stronger
+  than the roadmap first stated, and it is handed to tracker/PERF-ROADMAP.md
+  as P5(c) reopened with the survey's tree-sitter-haskell evidence (§1.6,
+  §5(a′)) and 7.0's per-byte figure (10.9 µs/byte, sublinear in bytes) —
+  with its kill criterion intact.  The two cautions carried: 7.1b and 7.3
+  must never both be budgeted as editor savings; a parser rewrite is Tier 1
+  in scalaparsers with the P5(d) revert as its precedent.
+- [x] **7.4 Adaptive debounce, derived from the measured check time** (Decision
   (e); gated on 7.1b or 7.3 having landed a measured saving — if neither did, this
   item is skipped and the reason recorded).  Replace the fixed 300 ms with
   clangd's shape: `debounce = clamp(Min, RebuildRatio × measured_check_time, Max)`
@@ -1765,8 +1919,55 @@ New, and specific to this stage:
   and the item shows its output at the measured check times of the fast and slow
   file; the number, the rule and the reason are written into docs/lsp.md.
   Tier 0; Tier 2 at adoption (it changes shipped behaviour).
+  DONE 2026-09-11 (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP4-7.4-DEBOUNCE.md, LSP4-7.4-REVIEW.md).  THE POLICY:
+  D(C) = clamp(150 ms, 1 x C, 300 ms), C the median of the last five
+  measured check times of THAT document (carried on the Doc across edits,
+  dropped on didClose); no history -> 300, so a document's first check is
+  unchanged.  THE ARGUMENT, from the tables rather than clangd's constants:
+  Min 150 because a window below the inter-keystroke interval stops
+  coalescing and because every check here runs on the dispatch thread —
+  a hover waits for it — where clangd's 50 ms rides on a cancellable
+  worker; Max 300 rather than 500 because raising it would make Report.e
+  worse (0.90 -> 1.10 s) to buy pile-up protection the server already has
+  (single-threaded dispatch, one queue entry per uri, the versioned drop);
+  ratio 1 because it is live only in the 150..300 band and keeps D >= C,
+  bounding the check duty cycle near 50%.  OUTPUT at the measured check
+  times: 22-52 ms files -> 150; ~180 ms -> 170-199 (ratio live); Report.e's
+  580 ms and anything above 300 -> 300 — the function is flat at Max above
+  300 ms, so it can ONLY shorten a wait.  NO OSCILLATION: the feedback
+  path (longer D -> more text per check -> larger C) saturates at Max = the
+  old constant; measured D series monotone-then-flat on every file; a
+  cold open is outvoted by two warm samples.  BURST PIN: 8 keystrokes 20 ms
+  apart -> exactly one check at D=150 and at D=300, 3 arriving during a
+  check -> exactly two, through the real Server/Wire loop and again
+  through the scripted client (waited == policy on every debounce line).
+  INTERLEAVED A/B: Control/Monad/Reader.e (44 lines) 0.320 -> 0.172 s
+  (-46%) — the acceptance; List.e 0.358 -> 0.212; Options.e (438 lines)
+  0.470 -> 0.360 with D tracking C at 177 ms; Layout/Report.e 0.896 ->
+  0.906 (+11 ms, inside the spread) with read/typecheck unmoved and reuse
+  identical.  BENCH COMPARABILITY: perf-bench.sh editor PINS D=300 via a
+  new initializationOptions.debounce so its numbers stay comparable with
+  P1/G3/7.1b; perf-client.py harvests the window from the server's own
+  debounce log line.  lsp-smoke 494 -> 510; TestEditorBuffers +6.
+  THE REVIEW: ADVANCE — the acceptance reproduced (Reader.e 0.320 -> 0.173
+  s, -46%, spreads disjoint; Report.e +15 ms inside the spread, the window
+  300 on every round); the burst pin planted (Min=10 -> "Expected 1 but
+  got 4") and restored; every debounce line in a 61-line smoke run
+  re-derived from the policy with 0 disagreements; the bench pin does not
+  leak into the editor; Tier 2 1026/1026 on the first run, no
+  intermittent re-run needed.  Three documentation corrections in a
+  closing round: the Min argument overstated coalescing (at 40-60 wpm on
+  a file whose check is under 150 ms each character gets its own check —
+  bounded and acceptable, since the check is cheaper than the window);
+  the median CAN jump between regimes on one slow check and a period-2
+  check cost alternates 300/150 forever — harmless, the clamp is what
+  bounds the feedback; and "the first check is unchanged" is vacuous
+  because didOpen checks synchronously.  One audit relaxation: two
+  queued documents share the minimum window and check back to back, so
+  the client's `waited == policy` became `<=`.
 
-- [ ] **7.5 Ticket triage — which of E5-E10 this stage takes.**  One iteration,
+- [x] **7.5 Ticket triage — which of E5-E10 this stage takes.**  One iteration,
   and it takes only the ones that are editor-path Tier 0.  DISPOSITIONS:
   - **E8 (parser columns tab-expanded to 8-column stops)** — **TAKE**.  Every
     editor range on a tab-indented line is 7 columns right of the text per tab
@@ -1805,6 +2006,60 @@ New, and specific to this stage:
   grows); each deferred one has its disposition and tier written back into
   `tracker/TICKET-stdlib-findings.md` in the same commit, so the ticket file and
   the roadmap agree.
+  DONE 2026-09-11 (implementer + reviewer Opus; reports
+  tracker/loopmodel/LSP4-7.5-TICKETS.md, LSP4-7.5-REVIEW.md).  E8 FIXED: one bidirectional
+  parser-column <-> LSP-character conversion on the `Lines` 6.3 wrote (kept
+  on the DocIndex, so no second scan), routed through every range and
+  incoming position — diagnostics, definition and hit-test, references/
+  highlight/rename edits, symbols, completion's scopeAt; the `±1` grep
+  hits only the helper.  UTF-16 answered — not a bug here: `rawSatisfy`
+  feeds `Pos.bump` a Char, so a non-BMP character is two parser columns
+  AND two LSP characters; the tab (column 1 -> 8) was the whole
+  divergence.  Both mitigations removed: 6.3's tab rename refusal and
+  QuickFix's BehindTab.  The 6.3 extent classification's "6 behind a tab"
+  are now exact (71,248 = 70,903 exact + 39 backticked + 306
+  parenthesised + 0 other); two corpus round-trip properties, both
+  directions; fixtures Tab.e and GridExample.e opened as itself.
+  E9 FIXED: stdlib Locations rewritten from the target module tree to
+  `core/src/main/resources/modules` in `Definitions.location` alone, the
+  mapping DERIVED from the class-loader's `modules` entry (no Scala version
+  spelled), existence-checked, jar fallback to the target path (reasoned,
+  not pinned — no jar-only module is constructible in this build); pins
+  assert the source tree on definition, references' def-site and
+  workspace/symbol and that no location contains `/target/`; the E9 docs
+  caveat removed.  E10(5) FIXED: TolerantCheck publishes the file's own
+  nullary `type X = C` synonyms (only nullary-of-bare-Con — the soundness
+  argument) and the quick fix's scope test resolves the printed spelling
+  through them; the 6.6 sweep: offered 1166 -> 1183, CLEAN 1164 -> 1181,
+  PARSE-FAIL 0, TYPE-FAIL 2, out-of-scope refusals 117 -> 100, own-synonym
+  name occurrences 33 -> 0 (17 groups recovered; the rest also cite an
+  alias-imported or unnameable type and stay correctly refused).  E7
+  HALF: the "undefined type" note gained a flag and joins the import-
+  failure suppression (a fixture and a control); the OPERATOR half
+  deferred with three reasons — the three read diagnostics carry no
+  payload and tagging them reaches Reassoc/Lower shared with the strict
+  read (not Tier 0); a failed module has no export list to discriminate
+  against; 6.1 keeps syntax diagnostics deliberately.  WRITE-BACKS: E8,
+  E9, E10(5) FIXED with pins named; E7 half; E5 waits for the next Tier-2
+  CODE commit (not the G4 evidence run — corrected at commit); E6 Tier 2
+  + goldens, its own item; E10(1)-(3) Tier 1 with a re-cut g1-baseline;
+  E10(4) recorded.  lsp-smoke 510 -> 542; TestRenamer 32 -> 34; Report.e
+  round trip 0.927 -> 0.908 s (unmoved; read 0.055 both sides).
+  THE REVIEW: FIX-THEN-ADVANCE on prose only — E8 attacked past its pins
+  (an astral character probe confirms the UTF-16 reasoning; rename
+  behind TWO tabs applies correctly; every tab pin is a leading tab, mid-
+  line and double tabs verified live), E10(5) attacked with applied
+  types, chains (correctly refused: the module's own alias Con fails the
+  identity test — conservative, now documented) and shadowing; 15
+  signatures offered on Layout/Scan.e all applied and re-check clean;
+  the JAR-ONLY case IS constructible (the reviewer built it) and in it
+  stdlib navigation vanishes for a PRE-EXISTING reason (`isFile` rejects
+  a `jar:` fileName before the rewrite) — the ticket corrected; "E5 rides
+  with G4" was a category error (a gate is an evidence run; E5 waits for
+  the first Tier-2 code commit) — corrected; a miscount and a stale
+  scaladoc fixed by the orchestrator.  Not an adoption item (no flag, no
+  default; the one non-lsp file is reachable only from lsp/); G4 runs
+  Tier 2 regardless.
 
 - [ ] **7.6 PARKED, with triggers** (no work in this stage; listed so the forks
   do not go missing).
@@ -3081,6 +3336,61 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-11 (GATE G4 EVIDENCE RECORDED — STAGE 4 COMPLETE, STOPPED FOR
+  SIGN-OFF): the evidence run went in two phases so the user could start
+  parallel type-checker work after the quiet timings (phase A ~50 min);
+  the review was SLIMMED by agreement with the user — an independent
+  worst-case-wait measurement (n=12, three offsets, a fast-mode probe),
+  method-checks of the identity gates by reading and one byte-level spot
+  check, the record against its sources, no wholesale Tier 1/2 replay —
+  and it settled the one number on a threshold: the wait sits ON 7.6's
+  500 ms trigger and fast mode takes it to 56 ms.  Tier 1 for the stage
+  identical against a build of the G3 commit; Tier 2 1028/1028 on the E12
+  re-run.  vsix 0.1.2; G4-demo.txt; docs re-cut.  See "Gate evidence
+  (G4)".  Stage 5 is NOT drafted — the leftovers are listed there.
+- 2026-09-11 (7.5 DONE): see the item's DONE paragraph.  Three user-visible
+  tickets closed (tab-column ranges, stdlib navigation into the source
+  tree, the quick fix's synonym blindness), one half (undefined-type
+  notes join the import-failure suppression; the operator cascade
+  deferred with reasons), the rest written back with their tiers.  Review
+  FIX-THEN-ADVANCE on prose (a false jar-fallback sentence; "E5 rides
+  with G4" a category error), applied by the orchestrator.  Implementer
+  ~67 min, reviewer ~40 min.  Baselines: TestLoopTrace 720/720, corpus
+  85/69/0 over 154, repl-smoke 8/66, lsp-smoke 542, boot 129.
+- 2026-09-11 (7.4 DONE): see the item's DONE paragraph.  The debounce is
+  now derived from each document's own measured check time, clamped to
+  150..300 ms: a small file's round trip halves (0.32 -> 0.17 s), the big
+  file is unchanged by construction, and the bench pins 300 so the
+  roadmap's editor figures stay comparable.  Review ADVANCE (docs
+  corrections only; the burst pin shown to have teeth by planting);
+  Tier 2 1026/1026 first try.  Implementer ~43 + 5 min, reviewer ~50 min.
+  Baselines: TestLoopTrace 720/720, corpus 85/69/0 over 154, repl-smoke
+  8/66, lsp-smoke 510, boot 129.
+- 2026-09-11 (7.1b DONE — THE STAGE'S HEADLINE): see the 7.1b DONE
+  paragraph inside 7.1.  Read 0.84 -> 0.05 s, round trip 1.68 -> 0.90 s on
+  Report.e; worst site 2.2 -> 1.5 s; differential 2,613 steps 0 mismatches
+  on three seeds; strict path byte-identical; review ADVANCE with four LOW
+  findings closed in a small round.  7.3 marked not-started-in-Stage-4 and
+  handed to PERF-ROADMAP (Decision g).  Tier 2 surfaced two pre-existing
+  intermittents (E12 interface round-trip race; E13 TestLegend date flake),
+  recorded in GATE-POLICY with the single-re-run rule.  Implementer ~1h
+  + 28 min, reviewer ~2h.  Baselines: TestLoopTrace 720/720, corpus
+  85/69/0 over 154 byte-identical, repl-smoke 8/66, lsp-smoke 494,
+  g1-validate 9/9, boot 129.
+- 2026-09-11 (7.1a DONE as GREEN-CONDITIONAL — 7.1b's precondition): see
+  the 7.1a DONE paragraph inside 7.1.  The one criterion that moved was
+  "the counter is free": the first A/B put batch at +0.8..1.9% and the
+  editor read at +42 ms; the orchestrator's decision — batch pays NOTHING
+  (the strict path constructs a no-op mark; re-measured at +0.3..0.7%,
+  inside the floor) and the editor's +20..48 ms is 7.1b's down payment,
+  both coming out if 7.1b is reverted.  Tier 1 identical on both the
+  implementer's and the reviewer's runs (3,206,083 paired segments,
+  sinmoved 0; 268/268 interfaces byte-identical; g1 9/9).  The review
+  found the layout-boundary site bumped one byte short (latent) and the
+  rawTypeText site unpinned — both fixed with properties.  Implementer
+  ~2h30 + 40 + 27 min, reviewer ~1h54.  Baselines unchanged: TestLoopTrace
+  720/720, corpus 85/69/0 over 154 byte-identical, repl-smoke 8/66,
+  lsp-smoke 480, g1-validate 9/9, boot 129.
 - 2026-09-10 (7.2 DONE): see the item's DONE paragraph.  The cliff is
   gone (top-of-file edits reuse 115/154, more than a body edit's 97);
   the review found the change had WIDENED a Stage-2 hole (un-keyed
@@ -3249,6 +3559,108 @@ ONE NUMBER WORTH CARRYING FORWARD: after 5.5, parse+rename+lower is
 checklist's "inference dominates" assumed.  tracker/TICKET-perf-type-
 inference.md should be re-read against that before Stage 3 picks a
 target.
+
+STOP.  The loop is stopped for sign-off, per the gate.
+
+## Gate evidence (G4, recorded 2026-09-11)
+
+Stage 4 shipped in six item commits on branch scala3-migration — 7.0
+(6db2c3a), 7.2 (a15a97e), 7.1a (acaa922), 7.1b (02b35e1), 7.4 (775f1b4),
+7.5 (210de01) — each through a fresh Opus implementer, a fresh Opus
+reviewer re-running the item's tier once, and the orchestrator's own Tier
+0; 7.3 was not started (Decision (g): 7.0's verdict ranked 7.1 first, and
+7.3 is handed to PERF-ROADMAP as a batch-target item); 7.6 stays parked
+with its triggers.  The gate numbers below are the G4 reviewer's; the
+implementer's are in tracker/loopmodel/LSP4-G4-GATE.md.
+
+BATCH STRICTNESS FROZEN.  The parser library changed once (7.1a) and the
+whole stage's batch identity is checked in one comparison against a build
+of the G3 commit ed42f55: the trace differential IDENTICAL — 3,206,083 paired
+solver segments over 18 groups, all 16 record kinds, sinmoved 0, rc 0
+everywhere, the Lean model agreeing on every segment both sides (one
+normalisation named: the before build ran from a worktree, so the
+absolute root path in trace records is the one string replaced); the
+interface sweep 0 of 268 differ, 3,481 bindings identical; g1-validate
+9/9; the 154 corpus batch outputs byte-identical to the G3 build.  Session.scala untouched all stage;
+the REPL goldens byte-identical at every commit; TestTolerantRead's
+agreement property green throughout.
+
+THE READ, BEFORE AND AFTER (7.0's instrumented phase table, Report.e,
+50 reps after 20 warm-ups, load < 1.3):
+  parse 830 -> 37 ms (60.9% -> 6.1% of the check); read.total 845 -> 52
+  ms; checkWith 492 -> 529 (the untouched control, +7% — inside 7.0's 8%
+  between-JVM band, so nothing under ~80 ms in this table is a verdict);
+  check.total 1363 -> 608 ms; index 10 -> 11; rename 5.0 -> 4.5; lower 9.1
+  -> 8.8; header 8.1 -> 8.8; extents (one timed scan) 2.4 -> 2.3.
+  Reconciliation 99.94%.  The small file (Reader.e): parse 19.2 -> 2.7,
+  read 22.7 -> 6.2, check 30.7 -> 15.4 ms; round trip 0.333 -> 0.170 s.
+
+LATENCY AT GATE (the G4 reviewer's re-measurement)
+- keystroke -> diagnostics, Layout/Report.e (1757 lines): 0.925 s = 0.05
+  read + 0.54 typecheck + 0.30 debounce + 0.03 (adaptive window at its
+  ceiling); pinned at 300 for roadmap comparability 0.948 s — G3 was 1.69 s.
+- Control/Monad/Reader.e (44 lines): 0.170 s (window at the 150 ms floor) —
+  was 0.333.  Layout/Report/Keyed/Options.e (438 lines): 0.415 s, window
+  tracking the check at 173-300 ms.
+- the WORST SITE, a keystroke inside Report.e's 10.7 KB private block:
+  1.58 s = 0.17 read + 1.07 typecheck + 0.30 debounce; `reused 0 of 154`
+  because `private` is a scope word — an edit inside the block drops the
+  per-uri inference cache by design (the 7.2 operator/backtick family).
+- cold open of Report.e 2.47 s (2.37-3.00); boot 12.75-16.4 s, median 13.6.
+- WORST-CASE REQUEST WAIT DURING A CHECK — the number of record is the
+  G4 REVIEWER's independent measurement (n=12 per offset, load 0.6-0.9):
+  a hover sent 352 ms after the keystroke waits 502 ms median (482-551,
+  8 of 12 above 500), answered 0.86 s after the keystroke; sent mid-check
+  (+600 ms) 277 ms; sent inside the debounce window (+100 ms) 2.2 ms; idle
+  0.28 ms.  The implementer's 544 ms (n=5) was the high end of the same
+  band (two machines' check times).  G3 was 1.45 s.  It SITS ON 7.6's 500
+  ms unpark trigger rather than above it, and the trigger's precondition
+  is now ANSWERED: with fast mode ON the check is read-only (67 ms), the
+  7.4 window drops to its 150 ms floor and the worst-case wait is 56 ms —
+  9x under the trigger; fast-mode round trip 0.23 s.  So the fastMode-
+  first answer is yes, and the worker thread stays parked unless the user
+  wants full-check hover latency below ~0.5 s without fast mode.  The
+  residual is ~87% inference.  The user's decision for Stage 5.
+- idle hover 0.31 ms; completion 1.7 ms server-side / 6.1 round trip;
+  workspace/symbol 106 ms first / 1.3 ms warm; documentSymbol 21.5 ms;
+  code action 40.5 ms first / 0.7 after; index build 59 ms cold / 10.6 warm.
+- Observation, not a claim: one implementer probe run saw check times
+  degrade 0.59 -> 0.95 s under preceding hover traffic; the reviewer could
+  not reproduce it (36 interleaved hovers, typecheck flat over 57 checks).
+  Recorded for Stage 5.
+
+WHAT G4 ASKED FOR, AND WHERE IT IS CHECKED
+- 7.0's phase table before and after the stage: above.
+- an interleaved A/B for every adoption item: 7.2 (cliff checkWith 1.03 ->
+  0.43 s top-insert, steady state +6 ms), 7.1a (batch +0.3..0.7% pooled,
+  editor read +20..48 ms), 7.1b (read 0.8375 -> 0.0500 s, -788 ms), 7.4
+  (Reader.e 0.320 -> 0.173 s, Report.e +15 ms inside the spread) — each
+  the reviewer-of-record's figure, each clearing its floor or stated as
+  inside it.
+- the corpus differential for 7.1b: seed 71, 253 files x up to 12 edit
+  steps = 2,613 steps, 0 SModule mismatches and 0 diagnostic mismatches;
+  seeds 913 and 20260911 equally clean.
+- the reuse counts for 7.2: top-of-file insertion 0/154 -> 115/154.
+- the worst-case request wait, re-measured next to G3's 1.45 s: above.
+- a heap figure for 7.1b's retention: 1.6 MB per open document (Report.e).
+- REVERTED items: none.  7.1a's editor residual (+20..48 ms) is repaid by
+  7.1b sixteenfold; the revert rule was not triggered.
+- Tier 2 alone on the final tree: 1028 total — run 1 failed exactly the
+  E12 property (the interface round-trip cross-suite race), run 2, the
+  single permitted re-run, 1028/1028; E13 did not fire.  (1026 after 7.4
+  + 7.5's two TestRenamer corpus properties.)
+
+NOT SATISFIED, STATED PLAINLY
+- 7.3 not started in Stage 4 (handed to PERF-ROADMAP); 7.6 parked: the
+  6.2b pattern-binder hook remains the user's decision, and the worker
+  thread's trigger is met only on the straddle (502-544 ms vs 500) with
+  its precondition answered in fast mode's favour (56 ms) — the user's
+  decision.  The per-row attribution factors (G4 NUMBERS line 1a) are
+  PARTIAL by design: the survey's profile is of the pre-stage tree.
+- Two known test intermittents stand (E12, E13), each unreachable from
+  this stage's code and each getting the standing single re-run.
+- Open tickets from the stage: E5 (waits for the first Tier-2 code
+  commit), E6, E10(1)-(4), E11, E12, E13; E7's operator half deferred.
 
 STOP.  The loop is stopped for sign-off, per the gate.
 

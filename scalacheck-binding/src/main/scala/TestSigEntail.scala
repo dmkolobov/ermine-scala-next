@@ -58,10 +58,10 @@ object TestSigEntail extends Properties("Ermine signature entailment (pinned hol
     typeChecks(fields,
       "((r -> r ! health) : forall r t. r <- ((|health|), t) => {..r} -> Int) { position = 1.0, health = 10 }", imps)
 
-  // The let-bound twin is REFUSED today, at the call site -- because the renamer DROPS
-  // let-bound signatures (rename/Lower.scala:185-187; sig03's header) and the binding is
-  // inferred.  This pins ordinary inference, not the checker; a fix to the drop flips it.
-  property("let-bound unconstrained signature is refused today (at the call site)") =
-    no(typeChecks(fields,
-      "let local : forall r. {..r} -> Int\n    local r = r ! health\nin local { position = 2.0 }", imps))
+  // Since LET-1 (cff6c42) the renamer honours let-bound signatures, so the let-bound twin
+  // is sig01 in a let: ACCEPTED through the same hole.  Before LET-1 it was refused at the
+  // call site by ordinary inference, because the signature was dropped.
+  property("KNOWN HOLE S0 (flip to no(...) at S3): a let-bound unconstrained signature is accepted") =
+    typeChecks(fields,
+      "let local : forall r. {..r} -> Int\n    local r = r ! health\nin local { position = 2.0 }", imps)
 }

@@ -136,7 +136,9 @@ which also sets `cseMints = false`, changes 5 verdicts.)
 ## Positive controls
 
 `core/examples/shouldfail-controls/*.e` (control01, 04, 05, 06, 07) load cleanly under
-all three modes, so no mode rejects a program it should accept.
+all three modes, so no mode rejects a program it should accept.  `control09_let_signatures.e`
+was added 2026-09-11 for error class 7 and loads cleanly too (it is not a row-rule case, so
+it was measured under the defaults only).
 
 
 ## Note on message stability
@@ -205,7 +207,7 @@ Reproduce: `tracker/tools/corpus-run.sh <base>` on the previous build,
 
 ## Pinned, class 6 SIGNATURE CONTEXT TOO WEAK (accepted today; 2026-09-10)
 
-Five modules that MUST NOT load; four of them today DO (sig01, sig02, sig04, sig05), under every rule mode and with interface
+Five modules that MUST NOT load; since LET-1 merged (cff6c42) all five DO (sig01..sig05), under every rule mode and with interface
 caching on or off. They are the S0 pin of `tracker/SIG-ENTAIL-PLAN.md`: a declared
 signature's row constraints are never checked against the body's obligations
 (`Subst.subsumeType` discards the skolem-mentioning wanteds, :535-536 and :553). Each
@@ -222,10 +224,43 @@ properties.
 |---|---|---|---|---|
 | `sig01_unconstrained_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | **ACCEPTED** | **ACCEPTED** | **ACCEPTED** |
 | `sig02_wrong_label_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | **ACCEPTED** | **ACCEPTED** | **ACCEPTED** |
-| `sig03_let_bound_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | rejected (at the CALL, 32:12; let-signature DROPPED by the renamer, binding inferred) | rejected (same msg) | rejected (same msg) |
+| `sig03_let_bound_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | **ACCEPTED** since LET-1 (cff6c42) honours let signatures; before it, rejected at the CALL (32:12) by ordinary inference | **ACCEPTED** | **ACCEPTED** |
 | `sig04_unconstrained_modify.e` | 6 SIGNATURE CONTEXT TOO WEAK | **ACCEPTED** | **ACCEPTED** | **ACCEPTED** |
 | `sig05_annotated_lambda.e` | 6 SIGNATURE CONTEXT TOO WEAK (annotation site) | **ACCEPTED** | **ACCEPTED** | **ACCEPTED** |
 
 Control: `shouldfail-controls/control08_sig_declared.e` (loads). Command as at the top
 of this file, plus `-Dermine.genRules=<MODE>`; the REPL evidence needs `:load` of the
 module followed by `crash`.
+
+## 2026-09-11: error class 7, LET SIGNATURE (LET-1)
+
+Five new negatives pin a REGRESSION the corpus could not see: between 2026-08-31
+(`80df1eb`, the commit that made the split pipeline the only module path) and 2026-09-11,
+the renamer's lowering of a `let` block DISCARDED every signature in it, so a `let`-bound
+signature reached neither the type checker nor the editor.  **At `a15a97e` every one of
+these five modules LOADED** -- that is the regression, and it is why they exist.  A `where`
+on a top-level equation was never affected (it goes through the module path's own signature
+pairing), which is why `let02`/`let03` are here: the two NESTED shapes went through the
+`let` path and were dropped too.
+
+Fix and full account: `tracker/loopmodel/LET-1-FIX.md`.  Control:
+`core/examples/shouldfail-controls/control09_let_signatures.e` (the same five shapes with
+signatures their bodies satisfy) -- it MUST LOAD, and does.
+
+Measured 2026-09-11 on branch `let-signatures`, per file, interfaces off:
+
+```
+ERMINE_JAVA_OPTS=-Dermine.useInterface=false bin/ermine core/examples/shouldfail/let0N_*.e </dev/null
+```
+
+| case | error class | verdict | message (verbatim, `all`) | at a15a97e |
+|---|---|---|---|---|
+| `let01_let_signature_monomorphic.e` | 7 LET SIGNATURE | rejected | `let01_let_signature_monomorphic.e:34:6: error: failed to unify type Int with type String` | **LOADED** |
+| `let02_where_in_let.e` | 7 LET SIGNATURE | rejected | `let02_where_in_let.e:25:6: error: failed to unify type Int with type String` | **LOADED** |
+| `let03_let_in_where.e` | 7 LET SIGNATURE | rejected | `let03_let_in_where.e:19:17: error: failed to unify type Int with type String` | **LOADED** |
+| `let04_let_signature_too_general.e` | 7 LET SIGNATURE | rejected | `let04_let_signature_too_general.e:23:7: error: failed to unify type !a with type Int` | **LOADED** |
+| `let05_let_signature_no_definition.e` | 7 LET SIGNATURE | rejected | `let05_let_signature_no_definition.e:27:7: missing definition` | **LOADED** |
+
+These five are ordinary unification and lowering refusals, not row-rule refusals, so the
+`all` / `cut` / `nongen` matrix above does not apply to them: no row rule runs, and the
+message is the same under every mode.

@@ -147,12 +147,32 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
 
   private def rawTypeText(stopArrow: Boolean): Parser[STy] = for {
     p1 <- loc
-    text <- new Parser[String] {
+    text <- rawTypeTextScan(stopArrow)
+    p2 <- loc
+    _  <- optionalSpace.skipOptional
+  } yield STyError(Real(span2(p1, p2)), "unparsed:type:" + text.trim)
+
+  /** `rawTypeText`'s scanner, alone.  Named (and visible to the test module)
+    * so 7.1a's high-water mark at this site can be pinned in ISOLATION: inside
+    * `rawTypeText` the trailing `optionalSpace` examines the same byte through
+    * the primitives and masks it, which is why deleting this site's `reach`
+    * left every property green and every corpus count unchanged (review
+    * finding F3). */
+  private[reporting] def rawTypeTextScan(stopArrow: Boolean): Parser[String] =
+    new Parser[String] {
       def apply(s: ParseState, sup: Supply) = {
         val in = s.input; val n = in.length
         var i = s.offset; var depth = 0; var stop = false
+        // 7.1a: this scanner reads the input directly, looks one character
+        // PAST `i` in three branches and, at a newline, scans ahead to the
+        // next line's first significant column to apply the offside rule --
+        // all of it examination that no primitive sees.  `far` is the
+        // exclusive end of everything looked at; it is at most one character
+        // wider than the truth (the `i + 1` peek is counted every iteration).
+        var far = s.offset + 1
         while (!stop && i < n) {
           val c = in.charAt(i)
+          if (i + 2 > far) far = i + 2
           if (stopArrow && depth == 0 && c == '-' && i + 1 < n && in.charAt(i + 1) == '>') stop = true
           else if (c == '-' && i + 1 < n && in.charAt(i + 1) == '-') {
             while (i < n && in.charAt(i) != '\n') i += 1  // line comment
@@ -168,6 +188,7 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
           else if (c == '\n') {
             var j = i + 1
             while (j < n && (in.charAt(j) == ' ' || in.charAt(j) == '\t' || in.charAt(j) == '\r')) j += 1
+            if (j + 1 > far) far = j + 1
             if (j >= n || in.charAt(j) == '\n') { i = j }
             else {
               val col = j - (in.lastIndexOf('\n', j - 1) + 1) + 1
@@ -176,6 +197,8 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
           }
           else i += 1
         }
+        if (i + 1 > far) far = i + 1   // every inner advance, string bodies included
+        s.mark.reach(far)
         val text = in.substring(s.offset, i)
         if (text.trim.isEmpty) scalaz.Trampoline.done(scalaparsers.Fail(None, List(), Set("type text")))
         else {
@@ -188,9 +211,6 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
         }
       }
     }
-    p2 <- loc
-    _  <- optionalSpace.skipOptional
-  } yield STyError(Real(span2(p1, p2)), "unparsed:type:" + text.trim)
 
   // ---------------------------------------------------------------- names
 
@@ -851,14 +871,34 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
     * and the whole sepEndBy/virtualRightBrace driver dies, so the file
     * yields no SErrorStatement and the editor gets nothing. */
   def atLayoutBoundary: Parser[Unit] = get flatMap { st =>
-    val (i, _, col) = StatementExtents.skipTrivia(st.input, st.offset, st.loc.line, st.loc.column)
+    val (i, _, col, far) =
+      StatementExtents.skipTrivia(st.input, st.offset, st.loc.line, st.loc.column)
+    // 7.1a: THE site the high-water mark exists for.  `skipTrivia` reads the
+    // input DIRECTLY, bypassing every primitive, and the decision below uses
+    // the character at `i` -- the first significant character AFTER the
+    // statement, which on a whole-file parse belongs to the NEXT statement.
+    // That is Lean's `private def` counterexample in miniature: an edit to
+    // the next statement's first token changes where this one ends, so this
+    // statement's examined region must include `i`.
+    //
+    // `far`, not `i + 1` (review finding F1): the scan PEEKS at `i + 1` to
+    // decide whether a `-`/`{` opens a comment, so on `-x` it stops where on
+    // `--` it would have gone on -- the byte at `i + 1` flips the decision and
+    // must be inside the guard.  `skipTrivia` returns the exact extent it
+    // looked at rather than this site guessing it.
+    st.mark.reach(far)
     if (i >= st.input.length || col <= st.depth ||
         st.input.charAt(i) == ';' || st.input.charAt(i) == '}') unit(())
     else fail[Parser]("statement does not fill its layout item")
   }
 
   def statement: Parser[SStatement] =
-    optionalSpace.skipOptional >>
+    optionalSpace.skipOptional >> statementBody
+
+  /** `statement` without its leading whitespace skip, so the position at
+    * entry IS the statement's own start -- which is what 7.1a's mark record
+    * keys on (every alternative's first act is `p1 <- loc`). */
+  private def statementBody: Parser[SStatement] =
     // `.attempt` around the WHOLE real grammar, not just the binding
     // alternative: any committed failure — a broken `data` head as much
     // as a broken equation — must still reach the extent capture, which
@@ -934,8 +974,12 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
     }
   }
 
-  def module(fileName: String, contents: String, defaultName: String = "Surface"): Either[Err, SModule] = {
-    val p = for {
+  /** The whole-file grammar, parameterised by the statement parser so the
+    * editor's mark-recording wrapper can be dropped in without a second copy
+    * of the driver (7.1a).  `module` passes `statement` and is unchanged. */
+  private def moduleP(fileName: String, defaultName: String,
+                      stmt: Parser[SStatement]): Parser[SModule] =
+    for {
       h  <- header(defaultName)
       ss <- if (h.explicitLayout)
               // no stdlib witness; real support arrives with 2.3b
@@ -943,15 +987,270 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
             // .attempt: the item's leading whitespace skip may consume a
             // trailing comment and commit before discovering nothing
             // follows — roll back so the closing virtual brace can fire
-            else statement.attempt.scope("statement").sepEndBy(semi)
+            else stmt.attempt.scope("statement").sepEndBy(semi)
                    .between(virtualLeftBrace("statement"), virtualRightBrace)
       _  <- eof
     } yield SModule(fileName, h, ss)
+
+  def module(fileName: String, contents: String, defaultName: String = "Surface"): Either[Err, SModule] = {
     val ps = scalaparsers.ParseState.mk(fileName, contents, ())
-    p.run(ps, Supply.create.split) match {
+    moduleP(fileName, defaultName, statement).run(ps, Supply.create.split) match {
       case Left(err)      => Left(err)
       case Right((_, m))  => Right(m)
     }
+  }
+
+  /** ONE top-level statement's high-water mark (LSP Stage 4 item 7.1a), as
+    * the editor read records it and as 7.1b's cache consumes it.  Offsets are
+    * absolute in the file the parse ran over.
+    *
+    *  - `startOffset` / `endOffset`: where the statement's parse began and
+    *    where it left the offset (trailing trivia the token layer consumed
+    *    included, so `endOffset` is the whole-file parse's own end, not the
+    *    lexical extent's).
+    *  - `examinedEnd`: the parse's mark when this statement finished -- the
+    *    EXCLUSIVE end of every input position the parse had examined by then,
+    *    lookahead that was thrown away included.
+    *  - `markAtEntry`: the same number before the statement started, so a
+    *    consumer can see how much of `examinedEnd` this statement is
+    *    responsible for (the mark is one cumulative counter per parse; see
+    *    `examinedLength` below).
+    *
+    * `examinedLength` is the reuse guard 7.1b wants: reuse this statement iff
+    * its text is byte-identical AND no edit intersects
+    * `[startOffset, startOffset + examinedLength)`.  Because the mark is
+    * cumulative over the parse, `examinedEnd` is an UPPER bound on what this
+    * statement alone examined -- conservative in the safe direction (it can
+    * only refuse a reuse, never allow an unsound one).
+    *
+    * A mark at or past the end of the parse's input means the statement's
+    * examination was TRUNCATED by running out of input -- which is what a
+    * slice re-parse always does.  Such an entry's real dependency extends
+    * past its slice, so 7.1b must treat it as reaching at least to the next
+    * extent's start rather than trusting the number. */
+  final case class StatementMark(startLine: Int, startCol: Int,
+                                 startOffset: Int, endOffset: Int,
+                                 examinedEnd: Int, markAtEntry: Int) {
+    def examinedLength: Int = examinedEnd - startOffset
+    def consumedLength: Int = endOffset - startOffset
+  }
+
+  /** `module`, plus one `StatementMark` per top-level statement, in statement
+    * order (7.1a).  THE EDITOR PATH ONLY: `module` itself is untouched and the
+    * batch reader still calls it, so no batch output can depend on the mark.
+    *
+    * The wrapper is pure observation -- it runs `statement` on the state it
+    * was given and returns that parser's own result unchanged -- so the tree
+    * this produces is the tree `module` produces.  Records are keyed by the
+    * statement's start and reconciled against the statements that actually
+    * came out, because `sepEndBy`'s last iteration can parse a statement the
+    * driver then rolls back. */
+  def moduleMarked(fileName: String, contents: String, defaultName: String = "Surface")
+      : Either[Err, (SModule, List[StatementMark])] = {
+    val seen = scala.collection.mutable.LinkedHashMap.empty[(Int, Int), StatementMark]
+    def record(s: ParseState, end: Int, at: Int): Unit =
+      seen((s.loc.line, s.loc.column)) =
+        StatementMark(s.loc.line, s.loc.column, s.offset, end, s.mark.furthest, at)
+    val recording = optionalSpace.skipOptional >> new Parser[SStatement] {
+      def apply(s: ParseState, sup: Supply) = {
+        val at = s.mark.furthest
+        statementBody(s, sup).map {
+          case c: scalaparsers.Commit[Unit @unchecked, SStatement @unchecked] =>
+            record(s, c.s.offset, at)
+            c
+          // a statement that consumed NOTHING still gets a guard: without one
+          // 7.1b would cache it unguarded, which is the unsound direction
+          case p: scalaparsers.Pure[SStatement @unchecked] =>
+            record(s, s.offset, at)
+            p
+          case r => r
+        }
+      }
+    }
+    // the ONE place a live mark is installed: every other entry (the batch
+    // reader, the REPL, the interface parser, statementFailure's slice) keeps
+    // ParseState's default `MarkOff`, whose `reach` is empty
+    val ps = scalaparsers.ParseState.mk(fileName, contents, ())
+      .copy(mark = new scalaparsers.Mark)
+    moduleP(fileName, defaultName, recording).run(ps, Supply.create.split) match {
+      case Left(err)     => Left(err)
+      case Right((_, m)) =>
+        val marks = m.statements.flatMap { st =>
+          val sp = st.loc.span
+          seen.get((sp.startLine, sp.startCol))
+        }
+        Right((m, marks))
+    }
+  }
+
+  /** THE STATEMENT-EXTENT SURFACE CACHE (LSP Stage 4 item 7.1b): the
+    * editor's whole-file parse, with every top-level statement whose text
+    * and whose examined region are unchanged carried over from the
+    * previous read instead of re-parsed.  THE EDITOR PATH ONLY -- `module`,
+    * `readModule` and `Session` are untouched, and this entry is the only
+    * caller of the cache.
+    *
+    * THE DRIVER IS THE REAL DRIVER.  `moduleP` runs exactly as it does for
+    * `module` and `moduleMarked` -- the same header parse, the same
+    * `virtualLeftBrace`/`sepEndBy(semi)`/`virtualRightBrace` layout, the
+    * same final `eof` -- and only the STATEMENT BODIES are skipped.  A hit
+    * therefore needs no reassembly and no end-span rule: the statement's
+    * own top-level `Span` (its end included) comes back with it and is
+    * moved by the line delta, and a MISS is parsed by the driver in situ,
+    * at the real layout depth, with the real rest of the file after it, so
+    * its tree is the tree the whole-file parse would build by construction.
+    * That is what closes 7.0 §4.3's divergence (the 15 statements whose
+    * whole-file span end runs on to the next statement's start because
+    * `virtualRightBrace` skipped the trivia between them and did not roll
+    * it back): the slice never happens, so the slice's end never appears.
+    *
+    * A HIT ADVANCES THE STATE INSTEAD OF PARSING IT: offset by the entry's
+    * `consumedLength`, position to the entry's exit position moved by the
+    * line delta, `bol` to the entry's exit `bol`.  All three are inside
+    * the guard -- `endOffset <= examinedEnd` for every corpus statement --
+    * so an edit that could move any of them refuses the reuse.
+    *
+    * THE REUSE CONDITION, in one place (see `SurfaceCache` for why each
+    * conjunct is there): the scanner's extent starts where the parse
+    * stands, the extent text is byte-identical, the start COLUMN and the
+    * enclosing layout DEPTH and the `bol` at entry are what they were, and
+    * no edit intersects `[start, start + examinedLength)` -- 7.1a's mark,
+    * carried FORWARD into the new entry because a statement that is not
+    * parsed computes no mark of its own. */
+  def moduleCached(fileName: String, contents: String, defaultName: String,
+                   prev: Option[SurfaceCache.Cache])
+      : Either[Err, (SModule, List[StatementMark], SurfaceCache.Cache)] = {
+    val scan = StatementExtents.scan(contents)
+    val offs = new StatementExtents.Offsets(contents)
+    // (startLine, startCol) -> (key, start offset, extent length).  The
+    // header's own extents (`import`/`export`) are in here like any other
+    // and are simply never looked up: the header parser consumes them
+    // before the statement driver runs, so they are re-parsed every check
+    // -- 8 ms of 844 (7.0's table), and the alternative is a second cache
+    // for a second grammar (7.1a review F7(1): they carry no mark).
+    val at = scala.collection.mutable.HashMap.empty[(Int, Int), (SurfaceCache.Key, Int, Int)]
+    scan.items.iterator.zip(SurfaceCache.keysOf(scan.items).iterator).foreach { case (x, k) =>
+      val s = offs.offsetOf(x.startLine, x.startCol)
+      at((x.startLine, x.startCol)) = (k, s, offs.offsetOf(x.endLine, x.endCol) - s)
+    }
+    val old  = prev.getOrElse(SurfaceCache.Cache.empty)
+
+    val seen  = scala.collection.mutable.LinkedHashMap.empty[(Int, Int), SurfaceCache.Entry]
+    val marks = scala.collection.mutable.LinkedHashMap.empty[(Int, Int), StatementMark]
+    var hits = 0
+    var misses = 0
+
+    def reusable(e: SurfaceCache.Entry, start: Int, len: Int, s: ParseState): Boolean =
+      // REVIEW R-3, the one way this design could fail to TERMINATE rather than
+      // produce a wrong tree: a hit advances the offset by `consumedLength`, so
+      // an entry that consumed NOTHING would make the hit arm a committed
+      // no-op and `sepEndBy(semi)` would spin on it.  No such entry can be
+      // recorded (see `record` below) and none exists in the corpus (6,954 of
+      // 6,954 consume at least their extent); refusing to reuse one as well
+      // makes the property hold for a cache from ANY source, not just one this
+      // code built.
+      e.consumedLength > 0 &&
+      start == s.offset &&                     // the scanner and the parse agree on the start
+      e.extentLength == len &&
+      e.startCol == s.loc.column &&            // review F4: the guard is forward-only ...
+      e.depth == s.depth &&                    // ... so the layout context stays in the condition
+      e.bolAtEntry == s.bol &&
+      old.contents.regionMatches(e.startOffset, contents, start, len) &&   // (1) the extent text
+      SurfaceCache.examinedUnchanged(old.contents, e.startOffset,          // (2) the 7.1a guard
+                                     contents, start, e.examinedLength)
+
+    val cached = optionalSpace.skipOptional >> new Parser[SStatement] {
+      def apply(s: ParseState, sup: Supply) = {
+        val pos   = (s.loc.line, s.loc.column)
+        val entry = s.mark.furthest
+        val found = at.get(pos)
+        val hit = found.flatMap { case (k, start, len) =>
+          old.entries.get(k).filter(e => reusable(e, start, len, s))
+        }
+        hit match {
+          case Some(e) =>
+            val (k, start, len) = found.get
+            val delta   = s.loc.line - e.startLine
+            val tree    = SurfaceCache.Shift.statement(e.stmt, delta)
+            val endOff  = s.offset + e.consumedLength
+            val endLine = e.endLine + delta
+            // the mark is one cumulative cell per parse; a hit examines
+            // nothing, so bump it over what this statement examined WHEN IT
+            // WAS PARSED -- the following statement's mark is then no
+            // smaller than a whole-file parse would have made it
+            s.mark.reach(start + e.examinedLength)
+            val ns = s.copy(loc    = posAt(fileName, contents, endOff, endLine, e.endCol),
+                            offset = endOff,
+                            bol    = e.bolAtExit)
+            seen(pos) = e.copy(startOffset = start, extentLength = len,
+                               startLine = s.loc.line, startCol = s.loc.column,
+                               depth = s.depth, bolAtEntry = s.bol,
+                               endLine = endLine, stmt = tree)
+            marks(pos) = StatementMark(s.loc.line, s.loc.column, start, endOff,
+                                       start + e.examinedLength, entry)
+            hits += 1
+            scalaz.Trampoline.done(scalaparsers.Commit(ns, tree, Set()))
+          case None =>
+            def record(end: Int, exit: ParseState, tree: SStatement): Unit = {
+              found.foreach { case (k, start, len) =>
+                // `end > s.offset` (review R-3): never CACHE a statement that
+                // consumed nothing -- the `Pure` arm below is the only way one
+                // could be built, and reusing it would be a committed no-op
+                if (start == s.offset && end > s.offset)
+                  seen(pos) = SurfaceCache.Entry(k, start, len,
+                    s.loc.line, s.loc.column, s.depth, s.bol, exit.bol,
+                    exit.loc.line, exit.loc.column,
+                    end - s.offset, s.mark.furthest - s.offset, tree)
+              }
+              marks(pos) = StatementMark(s.loc.line, s.loc.column, s.offset, end,
+                                         s.mark.furthest, entry)
+              misses += 1
+            }
+            statementBody(s, sup).map {
+              case c: scalaparsers.Commit[Unit @unchecked, SStatement @unchecked] =>
+                record(c.s.offset, c.s, c.extract); c
+              case p: scalaparsers.Pure[SStatement @unchecked] =>
+                record(s.offset, s, p.extract); p
+              case r => r
+            }
+        }
+      }
+    }
+
+    val ps = scalaparsers.ParseState.mk(fileName, contents, ())
+      .copy(mark = new scalaparsers.Mark)
+    moduleP(fileName, defaultName, cached).run(ps, Supply.create.split) match {
+      case Left(err)     => Left(err)
+      case Right((_, m)) =>
+        // join by POSITION, never by index (7.1a review F6), and against
+        // the statements that actually came out: `sepEndBy`'s last
+        // iteration can parse -- or reuse -- a statement the driver then
+        // rolls back, and that one must not enter the cache
+        val kept = m.statements.flatMap { st =>
+          val sp = st.loc.span
+          seen.get((sp.startLine, sp.startCol))
+        }
+        val ms = m.statements.flatMap { st =>
+          val sp = st.loc.span
+          marks.get((sp.startLine, sp.startCol))
+        }
+        Right((m, ms,
+               SurfaceCache.Cache(contents, kept.map(e => e.key -> e).toMap, hits, misses)))
+    }
+  }
+
+  /** The `Pos` a parse holds at offset `off`, which is at (`line`, `col`).
+    * `Pos.bump` carries the CURRENT LINE's text and an end-of-input flag
+    * along with the line and column, and both are a function of the
+    * position alone: the line the offset sits on, up to the next newline,
+    * and whether there is no newline left after that line's start.  A hit
+    * does not run the parse that would have bumped them, so they are
+    * rebuilt here -- the same values, by the same rule. */
+  private def posAt(fileName: String, contents: String, off: Int, line: Int, col: Int): Pos = {
+    val ls = contents.lastIndexOf('\n', off - 1) + 1
+    val ix = contents.indexOf('\n', ls)
+    Pos(fileName, if (ix < 0) contents.substring(ls) else contents.substring(ls, ix),
+        line, col, ix < 0)
   }
 
   /** A bare TYPE expression (kindOf and friends, post-G1 D3). */

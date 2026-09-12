@@ -153,7 +153,9 @@ top-level path (`typeCheckExplicitBinding`) collects the same way inside its own
 
 A **signed** `let`/`where` binding is a local `ExplicitBinding`: `NewPipeline.assemble`'s
 `lowerLet`/`pairSigs` (`NewPipeline.scala:305-355`) pairs the local sig with its equation, unlike
-`Lower.bindings`, which drops `SSigStatement`.  This was found by the sweep, not by reading: the
+`Lower.bindings`, which drops `SSigStatement`.  [Dated 2026-09-10. Since LET-1 (2026-09-11) one shared
+`Lower.collectBlock`/`pairSigs`/`bindings` serves top level, `where` AND `let`; `lowerLet` is gone and a
+`let`-bound signature is honoured -- see `tracker/loopmodel/LET-1-FIX.md`.]  This was found by the sweep, not by reading: the
 first sweep run reported exactly 4 `WhereBound` misses (`Report.e:1154:11 scalafy`,
 `Op.e:177:9 unsafeROp`, `Signatures.e:289:9 tautHere`, `FreeReportDsl.e:197:9 go`), all four of
 them signed `where` bindings.  Reading a local explicit head's `V` meta would have been WRONG

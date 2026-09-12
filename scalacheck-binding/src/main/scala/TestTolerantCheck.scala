@@ -182,7 +182,12 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     "\n" +
     "sigWhere x = sw x\n" +
     "  where sw : Bool -> Bool\n" +
-    "        sw y = y && True\n"
+    "        sw y = y && True\n" +
+    "\n" +
+    "sigLet x =\n" +
+    "  let sl : Bool -> Bool\n" +
+    "      sl sly = sly && True\n" +
+    "  in sl x\n"
 
   private lazy val kinds: (TolerantCheck.Result, Renamer.Result) =
     checkLocals(kindsBody, List("Bool", "Syntax.Do"))
@@ -195,9 +200,16 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     ((got.get("y") ?= Some("Bool")) :| s"let binder: $got") &&
     ((got.get("z") ?= Some("Bool")) :| s"where binder: $got") &&
     ((got.get("idy") ?= Some("a -> a")) :| s"polymorphic where binder: $got") &&
-    // A SIGNED `let`/`where` binding is a local ExplicitBinding after
-    // `assemble`'s `lowerLet`, and shows AS DECLARED (Decision a).
-    ((got.get("sw") ?= Some("Bool -> Bool")) :| s"signed where binder: $got")
+    // A SIGNED `let`/`where` binding is a local ExplicitBinding after the
+    // block machinery (`Lower.bindings` -> `Lower.pairSigs`), and shows AS
+    // DECLARED (Decision a).  `sl` is the LET twin, and it is a pin with a
+    // history: until LET-1 a `let` block built `Let(..., Nil, body)`, so
+    // the signature never became an ExplicitBinding, `headType` fell back
+    // to the implicit binding's inferred meta, and hover on a signed `let`
+    // binder quietly showed the INFERRED type -- Decision (a) violated with
+    // no test to notice.  Only `sw` was asserted here.
+    ((got.get("sw") ?= Some("Bool -> Bool")) :| s"signed where binder: $got") &&
+    ((got.get("sl") ?= Some("Bool -> Bool")) :| s"signed let binder: $got")
   }
 
   property("6.2: the pattern binders the split cannot reach are absent") = {
@@ -1224,10 +1236,15 @@ object TestTolerantCheck extends Properties("Tolerant check") {
               // THE CHECK'S OWN env, not the resident one: a module this
               // file's imports dragged in has its origins only there, and
               // `Definitions.index` stores exactly these two maps.
+              // 7.5, ticket E10(5): `ownTypes` is the ninth argument, and
+              // it is the check's own -- the file's nullary type synonyms
+              // resolved to the `Con` each names, which is what lets the
+              // scope test see through `type Scan = Scan_S`.
               case Some(t) => QuickFix.sigEdit(text, g, t, c0.scope.canonicalTypes,
                                                c0.scope.canonicalTerms,
                                                c0.env.consOrigins,
-                                               c0.env.termNameOrigins, c0.name)
+                                               c0.env.termNameOrigins, c0.name,
+                                               c0.ownTypes)
             }
             (g, e)
           }

@@ -485,7 +485,6 @@ object QuickFix {
   case object NoType        extends SigSkip { def why = "the check gave the group no type" }
   case object HasSig        extends SigSkip { def why = "the group already has a signature" }
   case object NotLineStart  extends SigSkip { def why = "the equation does not start its line" }
-  case object BehindTab     extends SigSkip { def why = "the equation is behind a tab (ticket E8)" }
   case object Wrapped       extends SigSkip { def why = "the printer emitted a line break in the type" }
   case object NoHead        extends SigSkip { def why = "the head is not a form a signature can write" }
   final case class Unlexable(names: List[String]) extends SigSkip {
@@ -653,9 +652,21 @@ object QuickFix {
   }
 
   def inScope(scope: Map[Local, List[Name]], origins: Map[Global, List[Global]],
-              ownModule: String, g: Global): Boolean = {
+              ownModule: String, ownTypes: Map[String, Global], g: Global): Boolean = {
     val printed = printedName(g)
     (g.module == ownModule && printed == g.string) || {
+      val want = chase(origins, g)
+      // 7.5, ticket E10(5): THE FILE'S OWN TYPE SYNONYMS.  `scope` is what
+      // the IMPORTS put in scope, so a module that reaches a type only
+      // through a synonym of its own -- `Layout/Scan.e`'s
+      // `type Scan = Scan_S` over `import Relation.Scan as S` -- was
+      // refused a signature it can write.  `ownTypes` maps that spelling
+      // to the `Con` it names (TolerantCheck builds it; only a nullary
+      // synonym of a bare constructor is in it, so the identity below is
+      // the whole test), and the test is the same identity test the
+      // import case makes, never a spelling one.
+      ownTypes.get(printed).exists(h => (chase(origins, h) & want).nonEmpty)
+    } || {
       val key = Local(printed, g.fixity)
       scope.get(key).exists { ns =>
         val want = chase(origins, g)
@@ -715,7 +726,8 @@ object QuickFix {
   def sigEdit(text: String, g: Group, ty: Type,
               scopeTypes: Map[Local, List[Name]], scopeTerms: Map[Local, List[Name]],
               typeOrigins: Map[Global, List[Global]],
-              termOrigins: Map[Global, List[Global]], ownModule: String)
+              termOrigins: Map[Global, List[Global]], ownModule: String,
+              ownTypes: Map[String, Global] = Map())
       : Either[SigSkip, (String, TEdit)] =
     if (g.hasSig) Left(HasSig)
     else {
@@ -726,10 +738,14 @@ object QuickFix {
         val line = ls(li)
         val ws = line.takeWhile(_.isWhitespace)
         // The equation must START its line: the parser column is
-        // tab-expanded, so compare in the parser's units.
+        // tab-expanded, so compare in the parser's units.  7.5 (ticket
+        // E8) removed the extra `BehindTab` refusal beside this one: the
+        // comparison here is already in the parser's units, and the edit
+        // itself is a whole-line insertion at character 0 carrying the
+        // line's own leading whitespace, so a tab in that whitespace was
+        // never a units problem for it.
         val expanded = ws.foldLeft(1) { (c, ch) => if (ch == '\t') c + 8 - (c % 8) else c + 1 }
-        if (ws.contains('\t')) Left(BehindTab)
-        else if (expanded != g.eqCol) Left(NotLineStart)
+        if (expanded != g.eqCol) Left(NotLineStart)
         else {
           val r = render(ty)
           val (cons, flds) = mentioned(ty)
@@ -740,7 +756,7 @@ object QuickFix {
           else if (freeKinds(ty)) Left(FreeKind)
           else if (starArrow(ty)) Left(StarArrow)
           else {
-            val bad = cons.filterNot(inScope(scopeTypes, typeOrigins, ownModule, _))
+            val bad = cons.filterNot(inScope(scopeTypes, typeOrigins, ownModule, ownTypes, _))
               .map(printedName)
             val badF = flds.collect {
               case x: Global if !fieldInScope(scopeTerms, ownModule, x) => x.string
@@ -888,7 +904,8 @@ object QuickFix {
                     val gs = idx.module.toList.flatMap(groups).filterNot(_.hasSig).map { g =>
                       (g, idx.types.get(g.spelling).flatMap { t =>
                         sigEdit(d.text, g, t, idx.scopeTypes, idx.scopeTerms,
-                                idx.typeOrigins, idx.termOrigins, idx.moduleName) match {
+                                idx.typeOrigins, idx.termOrigins, idx.moduleName,
+                                idx.ownTypes) match {
                           case Right(r) => Some(r)
                           case Left(sk) => log("codeAction: no signature for " + g.spelling +
                                                " — " + sk.why); None

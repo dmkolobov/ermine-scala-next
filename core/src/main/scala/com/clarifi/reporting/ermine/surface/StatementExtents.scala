@@ -41,19 +41,38 @@ object StatementExtents {
 
   /** Skip whitespace and comments from `from`, whose 1-based position is
     * (`fromLine`, `fromCol`), and answer where the next significant
-    * character sits: (offset, line, column).  Columns advance the way
+    * character sits, plus how far the scan LOOKED:
+    * (offset, line, column, examinedEnd).  Columns advance the way
     * scalaparsers' Pos.bump advances them (tab to the next multiple of
     * 8), so the result can be compared against a layout depth.
     *
     * The splitter's statement-boundary check runs on this (5.2b); it is
     * the same lexical view `scan` takes, `--` treated as a comment
     * wherever it starts included.
+    *
+    * `examinedEnd` is the EXCLUSIVE end of every input position this scan
+    * read -- LSP Stage 4 item 7.1a's high-water mark, for the one caller
+    * (`SurfaceParsers.atLayoutBoundary`) that must record what this
+    * lexical pass examined on its behalf.  It is exact rather than
+    * `i + 1`, because the stop decision PEEKS one byte past the first
+    * significant character to see whether `-`/`{` opens a comment: on
+    * `-x` the scan stops and on `--` it keeps going, so the byte at
+    * `i + 1` decides, and a guard that ended at `i + 1` would exclude
+    * it (review finding F1).  Every read of `s` in this method goes
+    * through `advance`, `peek` or `notEnd`, and each of those records the
+    * position it read, so the value cannot be short of the truth.  The
+    * positions, lines and columns returned are exactly what they were
+    * before the mark existed: `notEnd` tests `i < n` as the loops did.
     */
-  def skipTrivia(s: String, from: Int, fromLine: Int, fromCol: Int): (Int, Int, Int) = {
+  def skipTrivia(s: String, from: Int, fromLine: Int, fromCol: Int): (Int, Int, Int, Int) = {
     val n = s.length
     var i = from; var line = fromLine; var col = fromCol
-    def peek(k: Int): Char = if (i + k < n) s.charAt(i + k) else ' '
+    var far = from
+    def look(at: Int): Unit = if (at + 1 > far) far = at + 1
+    def notEnd: Boolean = { look(i); i < n }   // the absence of a char at `i` is examined too
+    def peek(k: Int): Char = { look(i + k); if (i + k < n) s.charAt(i + k) else ' ' }
     def advance(): Unit = {
+      look(i)
       s.charAt(i) match {
         case '\n' => line += 1; col = 1
         case '\t' => col += 8 - col % 8
@@ -62,14 +81,14 @@ object StatementExtents {
       i += 1
     }
     var more = true
-    while (more && i < n) {
+    while (more && notEnd) {
       val c = s.charAt(i)
       if (c == ' ' || c == '\t' || c == '\r' || c == '\n') advance()
-      else if (c == '-' && peek(1) == '-') { while (i < n && s.charAt(i) != '\n') advance() }
+      else if (c == '-' && peek(1) == '-') { while (notEnd && s.charAt(i) != '\n') advance() }
       else if (c == '{' && peek(1) == '-') {
         advance(); advance()
         var depth = 1
-        while (i < n && depth > 0) {
+        while (notEnd && depth > 0) {
           if (peek(0) == '{' && peek(1) == '-') { advance(); advance(); depth += 1 }
           else if (peek(0) == '-' && peek(1) == '}') { advance(); advance(); depth -= 1 }
           else advance()
@@ -77,7 +96,7 @@ object StatementExtents {
       }
       else more = false
     }
-    (i, line, col)
+    (i, line, col, far)
   }
 
   /** A line-start index over ONE source string, so a run of position

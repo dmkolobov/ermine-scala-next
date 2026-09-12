@@ -149,13 +149,37 @@ object Definitions {
                             module: Option[SModule] = None,
                             types: Map[String, Type] = Map(),
                             termOrigins: Map[Global, List[Global]] = Map(),
-                            typeOrigins: Map[Global, List[Global]] = Map())
+                            typeOrigins: Map[Global, List[Global]] = Map(),
+                            // 7.5 (ticket E8): the line model of the text
+                            // this check read, which is the text every
+                            // stored column was measured in.  It is what
+                            // the boundary conversion converts AGAINST,
+                            // and it is the `Lines` the index already
+                            // builds -- kept rather than discarded, so
+                            // the retention is two small arrays per open
+                            // document (a line-start `Int` and a tab flag
+                            // per line) and a reference to the buffer
+                            // string `Documents` already holds.
+                            lines: Option[Lines] = None,
+                            // 7.5 (ticket E10(5)): the type names THIS
+                            // FILE declares, each mapped to the `Con` a
+                            // signature written with that spelling would
+                            // denote -- a `type` synonym resolved through
+                            // to its head.  The add-signature action's
+                            // scope test reads it; see `QuickFix.inScope`.
+                            ownTypes: Map[String, Global] = Map())
 
   // The per-document indexes live in Documents alongside the buffer text
   // and version (roadmap 5.3): a definition request and the check that
   // built the index must agree on what the file currently says.
 
   def install(server: Server, ermine: Resident, docs: Documents, log: String => Unit): Unit = {
+    // 7.5: ONE line source per server, shared by definition, references
+    // and workspace/symbol -- so the stdlib is read at most once whoever
+    // asks first (tickets E8, E9).
+    val src = new LineSource(docs)
+    log("positions: parser columns <-> LSP characters at the boundary; " +
+        "stdlib source tree " + SourceTree.describe)
     // Dispatch is single-threaded by design (roadmap decision 3), so a
     // request that arrives during the ~13s boot would sit behind it and
     // read to the editor as a hang.  Navigation has nothing to say until
@@ -168,7 +192,7 @@ object Definitions {
       val answer = for {
         occ <- occurrenceAt(docs, params)
         tgt <- occ.target
-        loc <- location(tgt)
+        loc <- location(tgt, src)
       } yield loc
       answer getOrElse Json.Null
     } }
@@ -202,7 +226,11 @@ object Definitions {
       line <- pos / "line" flatMap (_.int)
       chr  <- pos / "character" flatMap (_.int)
       idx  <- docs index uri
-      occ  <- hit(idx, line + 1, chr + 1)  // LSP is 0-based, Pos/Span 1-based
+      // LSP is 0-based and counts characters; a Span is 1-based and
+      // counts PARSER columns, which are tab-expanded (7.5, ticket E8).
+      // The conversion is against the text the index was built from --
+      // the text its columns were measured in.
+      occ  <- hit(idx, line + 1, toColumn(idx.lines, line + 1, chr))
     } yield occ
 
   /** The occurrence at a 1-based position; public since 6.3, because
@@ -226,14 +254,92 @@ object Definitions {
   /** A Target as an LSP Location.  Public since 6.3: the references set
     * for an imported name includes its def-site, which may be in a file
     * no buffer has open -- a real position all the same. */
-  def location(t: Target): Option[Json] = positionOf(t.loc) match {
+  def location(t: Target, src: LineSource): Option[Json] = positionOf(t.loc) match {
     case Some(p) if new java.io.File(p.fileName).isFile =>
-      val start = Json.obj("line" -> Json.num(p.line - 1), "character" -> Json.num(p.column - 1))
-      val end   = Json.obj("line" -> Json.num(p.line - 1), "character" -> Json.num(p.column - 1 + t.len))
+      // 7.5, ticket E9: the target tree back to the SOURCE tree, here, at
+      // the boundary, and nowhere else -- the session still boots from
+      // the classpath (Decision 5) and `V.loc` still says what it says.
+      val file  = SourceTree.rewrite(p.fileName)
+      // 7.5, ticket E8: the parser column converted against the line it
+      // names, in the file it names -- which for a stdlib target is a
+      // file no buffer has open (`LineSource` reads and memoizes it).
+      val lines = src(file)
+      val chr   = toCharacter(lines, p.line, p.column)
+      val start = Json.obj("line" -> Json.num(p.line - 1), "character" -> Json.num(chr))
+      val end   = Json.obj("line" -> Json.num(p.line - 1), "character" -> Json.num(chr + t.len))
       Some(Json.obj(
-        "uri"   -> Json.Str(java.nio.file.Paths.get(p.fileName).toUri.toString),
+        "uri"   -> Json.Str(java.nio.file.Paths.get(file).toUri.toString),
         "range" -> Json.obj("start" -> start, "end" -> end)))
     case _ => None
+  }
+
+  /** TICKET E9: a stdlib location points at the SOURCE tree.
+    *
+    * The resident session loads its 129 modules from the CLASSPATH, where
+    * `copyResources` has put a byte-for-byte copy of
+    * `core/src/main/resources/modules`; so every `V.loc`/`Con.loc` of a
+    * stdlib name names a file under `core/target/<scala>/classes/modules`
+    * and this server used to send that.  A user who edits the file
+    * `workspace/symbol` lands in loses the edit at the next
+    * `copyResources`.
+    *
+    * THE MAPPING IS DERIVED, never spelled.  Ask the class loader where
+    * `modules` actually is -- that is the copy the session read, whatever
+    * the Scala version or the output layout -- then walk UP to the
+    * directory that owns the `target` tree and look for
+    * `src/main/resources/modules` beside it.  That is one sbt convention
+    * (`target/<x>/classes` is built from `src/main/resources`) and it is
+    * checked before it is used: if the source directory is not there, or
+    * the particular file is not in it (a module shipped only in a jar,
+    * which reaches this code as a `Filesystem` path only when it was
+    * unpacked), the target path is returned UNCHANGED and navigation is
+    * exactly what it was.
+    *
+    * The two copies are byte-identical, so a column measured in one is a
+    * column in the other; if they ever diverge the mtime the user sees is
+    * the source file's own, which is the file they should be editing. */
+  object SourceTree {
+    import java.nio.file.{ Files, Path, Paths }
+
+    private def baseOf(p: Path): Option[Path] = {
+      var q = p
+      while (q != null && q.getFileName != null && q.getFileName.toString != "target")
+        q = q.getParent
+      if (q == null) None else Option(q.getParent)
+    }
+
+    private lazy val mapping: Option[(Path, Path)] =
+      try
+        for {
+          u    <- Option(getClass.getClassLoader.getResource("modules"))
+          if Option(u.getProtocol).exists(_ equalsIgnoreCase "file")
+          out  = Paths.get(u.toURI).toAbsolutePath.normalize
+          base <- baseOf(out)
+          src  = base.resolve("src").resolve("main").resolve("resources").resolve("modules")
+          if Files.isDirectory(src)
+        } yield (out, src.toAbsolutePath.normalize)
+      catch { case _: Exception => None }
+
+    /** The source-tree path for a build-output module path; the argument
+      * itself for anything else. */
+    def rewrite(fileName: String): String = mapping match {
+      case Some((out, src)) =>
+        try {
+          val p = Paths.get(fileName).toAbsolutePath.normalize
+          if (!p.startsWith(out)) fileName
+          else {
+            val s = src.resolve(out.relativize(p))
+            if (Files.isRegularFile(s)) s.toString else fileName
+          }
+        } catch { case _: Exception => fileName }
+      case None => fileName
+    }
+
+    /** For the log line and the report: what was derived, if anything. */
+    def describe: String = mapping match {
+      case Some((out, src)) => out.toString + " -> " + src.toString
+      case None             => "(no source tree found beside the classpath modules)"
+    }
   }
 
   private def spanLen(sp: Span): Int =
@@ -269,21 +375,33 @@ object Definitions {
     }
     def lineCount: Int = starts.length
 
+    /** Does this line contain a TAB?  A tab is the ONLY thing that makes
+      * a parser column and an LSP character index differ (see
+      * `character`), so this is where the corpus round-trip property
+      * looks for the lines that exercise the conversion at all. */
+    def tabbedLine(line: Int): Boolean =
+      line >= 1 && line <= starts.length && tabby(line - 1)
+
+    /** One line's text, newline excluded. */
+    def lineText(line: Int): String =
+      if (line < 1 || line > starts.length) ""
+      else text.substring(starts(line - 1), endOfLine(line))
+
     /** The character offset of a PARSER position, and whether a TAB lies
       * between the start of the line and it.
       *
       * A parser column is not a character index: `scalaparsers.Pos.bump`
       * advances a tab to the next multiple of 8
       * (`column + (8 - column % 8)`), so on a tab-indented line the two
-      * disagree — `core/examples/GridExample.e` indents four lines with a
+      * disagree — `core/examples/GridExample.e` indents three lines with a
       * tab and the naive arithmetic lands seven characters late, which is
       * how the corpus property found this.  The walk below is the
-      * parser's own rule.  `sawTab` matters as well as the offset: an LSP
-      * range built from a parser column on such a line is in the wrong
-      * units for the editor that receives it (the server's position model
-      * has been tab-blind since 0.5, and fixing THAT is not this item),
-      * so a name behind a tab is never treated as exact and never
-      * renamed. */
+      * parser's own rule.  Since Stage 4 item 7.5 (E8) every range and
+      * incoming position goes through `Lines.character`/`Lines.column`,
+      * the one bidirectional parser-column <-> LSP-character conversion,
+      * so a name behind a tab is exact, navigable and renameable like any
+      * other; `sawTab` is kept only as the signal that the conversion is
+      * non-trivial on this line. */
     def locate(line: Int, col: Int): (Int, Boolean) = {
       if (line < 1 || line > starts.length || col < 1) return (-1, false)
       if (!tabby(line - 1)) {
@@ -306,6 +424,67 @@ object Definitions {
 
     /** -1 when the position is not in this text. */
     def offset(line: Int, col: Int): Int = locate(line, col)._1
+
+    /** THE BOUNDARY CONVERSION (ticket E8), one direction: a PARSER
+      * column to an LSP character index.
+      *
+      * The two units differ in exactly one way, and this is the whole of
+      * it.  `scalaparsers.Pos.bump` advances a TAB to the next multiple
+      * of 8 (`column + (8 - column % 8)`) and every other character by
+      * one; LSP counts UTF-16 code units from the start of the line.
+      * `bump` is fed `si.charAt(so)` -- a `Char`, i.e. a UTF-16 code unit
+      * (`ParsingUtil.rawSatisfy`), and `bumps` advances by
+      * `String.length` -- so a non-BMP character is TWO parser columns
+      * and TWO LSP characters and the two models already agree on it.
+      * The UTF-16 rule the LSP spec is famous for is therefore NOT a bug
+      * in this server: the tab is the only divergence, and converting it
+      * is converting everything.  (A `\r` is an ordinary character to
+      * `bump`; it sits past the last real character of a CRLF line, where
+      * nothing is measured.)
+      *
+      * Parser columns are 1-based, LSP characters 0-based, so an
+      * untabbed line -- everything but one corpus file -- is `col - 1`
+      * and stays O(1).  A column that lands INSIDE a tab's expansion
+      * (nothing a token start can do; a defensive case) answers with the
+      * tab's own character.  A column past the end of the line keeps
+      * counting by ones, because that is what an exclusive end column is.
+      */
+    def character(line: Int, col: Int): Int = {
+      if (line < 1 || line > starts.length) return 0 max (col - 1)
+      if (!tabby(line - 1)) return 0 max (col - 1)
+      val start = starts(line - 1)
+      val end   = endOfLine(line)
+      var i = start
+      var c = 1
+      while (c < col && i < end) {
+        if (text.charAt(i) == '\t') c += 8 - (c % 8) else c += 1
+        i += 1
+      }
+      if (c > col) (i - 1 - start) max 0        // inside a tab's expansion
+      else if (c < col) (i - start) + (col - c) // past the end of the line
+      else i - start
+    }
+
+    /** THE BOUNDARY CONVERSION, the other direction: an LSP character
+      * index to a PARSER column.  The inverse of `character` on every
+      * position a token can start at, which is what the corpus
+      * round-trip property asserts. */
+    def column(line: Int, chr: Int): Int = {
+      if (line < 1 || line > starts.length) return chr + 1
+      if (!tabby(line - 1)) return chr + 1
+      val start = starts(line - 1)
+      val end   = endOfLine(line)
+      var i = start
+      var c = 1
+      var k = 0
+      while (k < chr && i < end) {
+        if (text.charAt(i) == '\t') c += 8 - (c % 8) else c += 1
+        i += 1
+        k += 1
+      }
+      c + (chr - k)
+    }
+
     /** Offset just past the last character of `line`, newline excluded. */
     def endOfLine(line: Int): Int = {
       if (line < 1 || line > starts.length) return text.length
@@ -314,6 +493,66 @@ object Definitions {
              (text.charAt(e - 1) == '\n' || text.charAt(e - 1) == '\r')) e -= 1
       e
     }
+  }
+
+  /** THE CONVERSION, as every caller in this server uses it: parser
+    * (line, column) out, LSP (line, character) in and back.
+    *
+    * The `Option` is the honest part.  A range is always converted
+    * against the text it was measured in, and that text is not always to
+    * hand -- a go-to-definition target in a module no buffer has open is
+    * the case, and `LineSource` below is what usually supplies it.  When
+    * it cannot, the answer is the `± 1` this server used everywhere
+    * before E8: right on every line without a tab, which is 252 of the
+    * 253 corpus files, and no worse than what it replaced. */
+  def toCharacter(ls: Option[Lines], line: Int, col: Int): Int =
+    ls.map(_.character(line, col)) getOrElse (0 max (col - 1))
+
+  def toColumn(ls: Option[Lines], line: Int, chr: Int): Int =
+    ls.map(_.column(line, chr)) getOrElse (chr + 1)
+
+  /** The line model of a file the server must convert a position IN.
+    *
+    * An OPEN buffer's text is free and is preferred -- it is the text the
+    * editor is showing.  Anything else is read from disk and MEMOIZED on
+    * (path, mtime, size), because the alternative is being wrong: a
+    * definition target in a tab-indented module is exactly the case E8 is
+    * about, and the server holds no copy of a file it never checked.
+    * This is not "work on the request path" in the sense the Stage-3
+    * invariant forbids -- nothing is parsed, renamed or checked; it is
+    * the boundary conversion reading the line it converts against, and
+    * `location` already stats that same file to decide whether the target
+    * exists at all.  `workspace/symbol`'s thousands of Locations are
+    * built ONCE (`Symbols.sessionGlobals`) and share the memo, so the
+    * whole stdlib costs 129 reads, once.  The memo is cleared wholesale
+    * rather than evicted one by one: it is a cache of source text, and
+    * the bound is what matters, not the policy. */
+  final class LineSource(docs: Documents) {
+    private val Cap = 256
+    private val memo = scala.collection.mutable.HashMap.empty[String, (Long, Long, Option[Lines])]
+    def apply(fileName: String): Option[Lines] =
+      // The index's own `Lines` is the text the CHECK read, which is the
+      // text every position this converts was measured in -- so it is
+      // preferred over the buffer even when the buffer has moved on, and
+      // it costs nothing (it is already built).  A file that is open but
+      // has never been checked has no index and pays one scan.
+      docs.byPath(fileName).flatMap(_.index).flatMap(_.lines) orElse
+      docs.byPath(fileName).map(d => new Lines(d.text)) orElse {
+        val f = new java.io.File(fileName)
+        val stamp = (f.lastModified, f.length)
+        memo.get(fileName) match {
+          case Some((m, n, ls)) if m == stamp._1 && n == stamp._2 => ls
+          case _ =>
+            val ls =
+              try Some(new Lines(new String(
+                    java.nio.file.Files.readAllBytes(f.toPath),
+                    java.nio.charset.StandardCharsets.UTF_8)))
+              catch { case _: java.io.IOException => None }
+            if (memo.size >= Cap) memo.clear()
+            memo += fileName -> (stamp._1, stamp._2, ls)
+            ls
+        }
+      }
   }
 
   /** The extent of the NAME, which is neither the extent of its span nor
@@ -337,7 +576,7 @@ object Definitions {
     * may replace the range with a bare new name. */
   def nameExtent(ls: Lines, sp: Span, spelling: String): (Int, Boolean) = {
     val text = ls.text
-    val (off, sawTab) = ls.locate(sp.startLine, sp.startCol)
+    val (off, _) = ls.locate(sp.startLine, sp.startCol)
     if (off < 0) (spanLen(sp), false)
     else {
       val eol = ls.endOfLine(sp.startLine)
@@ -346,9 +585,18 @@ object Definitions {
       // spelling, NOT by the span -- a token swallows the whitespace AND
       // the line comment after it (`sa  -- ^ select …` is one span), so
       // the span is no measure of a name at all.
+      // 7.5 (ticket E8): a name BEHIND A TAB is exact again.  6.3 made it
+      // inexact -- and so unrenameable -- for one reason only: an LSP
+      // range built from a parser column on a tabbed line was in the
+      // wrong units for the editor that received it.  That is now
+      // converted at the boundary (`Lines.character`/`Lines.column`), so
+      // the extent is measured at the right place AND published at the
+      // right place, and the local mitigation has nothing left to
+      // mitigate.  `exact` goes back to meaning what it says: the source
+      // at this position literally spells the name.
       if (spelling.nonEmpty && off + spelling.length <= eol &&
           text.regionMatches(off, spelling, 0, spelling.length))
-        (spelling.length, !sawTab)
+        (spelling.length, true)
       // NOT EXACT: the source writes the name in some other form.  Two
       // exist, and both are measured from the source itself.
       else if (off + 1 < eol && text.charAt(off) == '`' && text.charAt(off + 1) == '`') {
@@ -769,7 +1017,10 @@ object Definitions {
              // 6.6: four more references to tables this check already
              // holds -- the surface tree, the inferred types, and the
              // session's two origin maps.
-             Some(c.module), c.types, env.termNameOrigins, env.consOrigins)
+             Some(c.module), c.types, env.termNameOrigins, env.consOrigins,
+             // 7.5: the line model the columns above were measured in
+             // (E8), and the file's own type names (E10(5)).
+             Some(lines), c.ownTypes)
   }
 
   /** First entry wins per start position: a real occurrence outranks the

@@ -40,12 +40,31 @@ re-measurement applies to the numbers that go into the trackers, once, by the re
 ## Quarantines (a green suite must mean green)
 - `TestConstraints."disjunction sound"`: generator starvation (0 passed / 501 discarded, every run on record);
   the rule ships OFF. Registered only under `-Dermine.test.disjunction=true`; ticket D3.
-- `TestInterfaceRoundTrip`: passes alone; failed once under a concurrent process deleting `.ei` files in the same
-  tree. Not quarantined — the rule is that Tier 2 runs ALONE on the tree.
+- `TestInterfaceRoundTrip`: passes alone; fails roughly one full run in ten when ANOTHER SUITE in the same JVM
+  repopulates the process-global `Session.depCache` between the property's clear and its warm load — intra-run
+  cross-suite parallelism, not an external process (corrected 2026-09-11 after the third sighting, LSP Stage 4
+  item 7.1b's review R-5; the 6.0 determinism fix was for a different flake). Ticket E12. Not quarantined: a
+  Tier-2 red that is exactly this property gets ONE re-run, per the standing rule.
+- `TestLegend."extra args are ignored"` (writers): a seed-dependent date-formatting flake, ~1 run in 3 alone
+  (S2 review V-4; 7.1b's Tier 2). Ticket E13. Same rule: exactly this property red gets ONE re-run.
 
 ## Standing rules that stay
-Never commit red. One JVM per agent, three agents at most. Never `lake build` while a `looptrace` binary runs.
-Delete every `.ei` you cause. Disk: no `lake exe cache get`, no `require`, no new Lean project, CutSearch out.
-In a WORKTREE: `tracker/repl-classpath.txt` is checked in with absolute paths into the main checkout, and
-`repl-smoke.sh`, `g1-validate.sh`, `lsp-smoke.sh`, `g1-diff.sh`, `perf-bench.sh` read it -- regenerate it from
-the worktree's `target/ermine-classpath` (do not commit the result) or the gate tests the wrong build (S1 review, 2026-09-11).
+Never commit red. Never `lake build` while a `looptrace` binary runs.
+
+## Parallelism rules (the user, 2026-09-11: "We pretty much want the *opposite* in most cases: maximum
+## parallelism for quick turnaround")
+- DEFAULT IS PARALLEL. Agents, JVMs, sbt invocations and corpus runs all run concurrently. Independent
+  stages of different programmes run at the same time in their own worktrees. The implementer of stage
+  N+1 may start while the reviewer of stage N runs whenever N+1 does not build on N's code.
+- The ONE exception: a timing that will be written into a tracker (interleaved perf A/B, an editor latency
+  figure) runs alone, briefly, and says so. Everything else tolerates contention.
+- Corpus verdicts via `corpus-run.sh --batch` (about 20 s a side); split a per-file run across parallel
+  shells when one is really needed (a baseline being recorded), never serially.
+- Split suites across parallel sbt invocations rather than chaining them in one; or run the full
+  `core/test` once per LANDING and nothing else, never both.
+- A reviewer reads the implementer's gate logs (cite the path) and re-runs only the targeted suites for
+  the code under review plus anything it disputes. Never a whole-corpus or whole-suite re-run for a review.
+- Briefs state a wall-clock budget (hours), and an agent that reaches it writes up and stops.
+- In a WORKTREE: `tracker/repl-classpath.txt` is checked in with absolute paths into the main checkout, and
+  `repl-smoke.sh`, `g1-validate.sh`, `lsp-smoke.sh`, `g1-diff.sh`, `perf-bench.sh` read it -- regenerate it
+  from the worktree's `target/ermine-classpath` (do not commit the result) or the gate tests the wrong build.

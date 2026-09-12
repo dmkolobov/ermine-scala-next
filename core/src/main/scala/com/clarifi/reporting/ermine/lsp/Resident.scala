@@ -174,7 +174,13 @@ final class Resident(val log: String => Unit) {
                            // reused rather than only whether it agreed.
                            // The server already logs both numbers; this
                            // is the same pair, not a second count.
-                           reused: Int = 0, components: Int = 0)
+                           reused: Int = 0, components: Int = 0,
+                           // 7.5 (ticket E10(5)): this file's own nullary
+                           // type synonyms, resolved to the Con each one
+                           // names.  The add-signature quick fix's scope
+                           // test reads it, so the file's own spelling of
+                           // an aliased type counts as in scope.
+                           ownTypes: Map[String, Global] = Map())
 
   /** Check one file against a fresh env copy, resolving imports first
     * against the file's own directory (workspace siblings), then the
@@ -315,7 +321,13 @@ final class Resident(val log: String => Unit) {
     val failedImports = importFailures.map(_._1).toSet
     Phases.add("imports", tImports)
     val tRead0 = System.nanoTime
-    val r = NewPipeline.readModuleTolerant(file.toString, contents, mh)
+    // 7.1b: the EDITOR read, with the statement-extent cache.  The cache is
+    // this document's own and is replaced wholesale below; with none (a first
+    // open, or a file that is not an open buffer) this is the cold read
+    // `readModuleTolerant` performs, statement for statement.
+    val r = NewPipeline.readModuleCached(file.toString, contents, mh,
+                                         docs.surfaceFor(path.toString))
+    docs.putSurface(path.toString, r.surfaceCache)
     val tRead = System.nanoTime
     if (Phases.enabled) Phases.record("read.total", tRead - tRead0)
 
@@ -406,10 +418,15 @@ final class Resident(val log: String => Unit) {
     Phases.add("checkWith", tCheckWith)
     docs.putCache(path.toString, cache)
     val tCheck = System.nanoTime
+    // The surface reuse pair goes at the END of the line: perf-client.py's
+    // harvest regex ends at "components)", and lsp-smoke asserts this suffix.
+    val surfaceReuse = r.surfaceCache
+      .map(c => f", surface ${c.hits} of ${c.statements} statements").getOrElse("")
     log(f"check: ${mh.name} read ${(tRead - tRead0) / 1e9}%.2fs, " +
         (if (fastMode) "typecheck SKIPPED (fast mode)"
          else f"typecheck ${(tCheck - tRead) / 1e9}%.2fs " +
-              f"(reused ${checked.reused} of ${checked.components} components)"))
+              f"(reused ${checked.reused} of ${checked.components} components)") +
+        surfaceReuse)
 
     // A statement the splitter could not parse defines nothing, so every
     // reference to its head word is an undefined term — one syntax error
@@ -450,9 +467,20 @@ final class Resident(val log: String => Unit) {
     // needs one.  The cost is a real typo going quiet until the import
     // is fixed; the import failure is the error the user must act on
     // first, and it is now the one they see.
+    //
+    // 7.5, ticket E7: `undefinedType` joins the two flags.  A module that did
+    // not load contributes no TYPE names either, and `assertTypeClosed`'s
+    // note is one report listing every free type variable -- so it carries a
+    // FLAG rather than a `spelling` (there is no single name to put there),
+    // set where the note is built and never by matching its text.  The other
+    // half of that ticket -- the three READ diagnostics an unresolved
+    // OPERATOR cascades into -- is NOT here: see the ticket for why it is
+    // not a Tier-0 change and why the discriminator it would need does not
+    // exist.
     val published =
       if (failedImports.isEmpty) notes
-      else notes.filterNot(n => n.spelling.isDefined || n.dependsOnBroken)
+      else notes.filterNot(n =>
+        n.spelling.isDefined || n.dependsOnBroken || n.undefinedType)
 
     Phases.add("notes.post", tPost)
     // Fast mode drops what the CHECK found and keeps what the read
@@ -462,7 +490,7 @@ final class Resident(val log: String => Unit) {
     Checked(e, mh.name, r.surface, r.renamed, r.diagnostics,
             importNotes ++ (if (fastMode) Nil else published), checked.types,
             checked.locals, r.scope, contents, root,
-            checked.reused, checked.components)
+            checked.reused, checked.components, checked.ownTypes)
   } }
 
   private def errorStatements(ss: List[SStatement]): List[SErrorStatement] = ss.flatMap {

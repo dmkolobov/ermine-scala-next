@@ -76,7 +76,13 @@ EDIT_ANCHOR = "cellsA 0 "  # the digit right after this is what we cycle
 
 BOOT_DEADLINE = 180.0   # interface-free boot is ~13s; this is a hang guard
 ROUND_DEADLINE = 120.0
-DEBOUNCE = 0.300        # Diagnostics.scala's quiet window, a named term
+# Diagnostics.scala's quiet window.  Since LSP item 7.4 it is ADAPTIVE --
+# clamp(150, median check time, 300) per document -- so the figure is harvested
+# from the server's own `debounce:` log line per round instead of assumed.  This
+# constant remains the fallback for a pre-7.4 server (which logs no such line),
+# and it is what --pin-debounce passes to keep perf-bench's editor numbers
+# comparable with every figure taken while the window was a constant.
+DEBOUNCE = 0.300
 
 
 def die(msg):
@@ -183,6 +189,15 @@ def main():
     ap.add_argument("--log", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--stderr", default=None)
+    # 7.4: pin the server's quiet window (initializationOptions.debounce) so a
+    # bench measures with a KNOWN debounce.  perf-bench.sh passes 300.
+    ap.add_argument("--pin-debounce", type=int, default=None, metavar="MS")
+    # A module with ONE binding group (any small file: 7.0 measured
+    # Control/Monad/Reader.e at one component) cannot satisfy the reuse
+    # assertions -- an edit invalidates its only component every round.  The
+    # assertions are about the INFERENCE cache and are inapplicable at that
+    # size; this flag downgrades them to printed notes, and nothing else.
+    ap.add_argument("--allow-no-reuse", action="store_true")
     ap.add_argument("cmd", nargs=argparse.REMAINDER)
     a = ap.parse_args()
     cmd = a.cmd[1:] if a.cmd and a.cmd[0] == "--" else a.cmd
@@ -214,11 +229,14 @@ def main():
 
     client = Client(cmd, a.stderr or (a.out + ".stderr"))
     boot_deadline = time.monotonic() + BOOT_DEADLINE
-    rid = client.request("initialize", {
+    init_params = {
         "processId": os.getpid(),
         "rootUri": pathlib.Path.cwd().as_uri(),
         "capabilities": {},
-    })
+    }
+    if a.pin_debounce is not None:
+        init_params["initializationOptions"] = {"debounce": a.pin_debounce}
+    rid = client.request("initialize", init_params)
     init = client.wait_for(lambda m: m.get("id") == rid, "initialize", boot_deadline)
     sync = init["result"]["capabilities"]["textDocumentSync"]
     if sync.get("change") != 1:
@@ -289,14 +307,33 @@ def main():
         die("harvested %d 'check:' lines for %d rounds -- log format changed "
             "or -Dermine.lsp.log was not passed (%s)"
             % (len(checks), len(rounds), a.log))
+    # 7.4: the window each debounced check actually waited, from the server's
+    # own line.  didOpen checks IMMEDIATELY and logs none, so there must be
+    # exactly one line per didChange round.  A pre-7.4 server logs none at all,
+    # and then the fixed constant is the honest figure.
+    waits = [float(w) / 1000.0 for w in
+             re.findall(r"debounce: \S+ waited (\d+)ms", log)]
+    edit_rounds = [r for r in rounds if r["label"] == "didChange"]
+    if not waits:
+        print("  debounce: no 'debounce:' lines in the log -- using the fixed "
+              "%.3fs constant (a pre-7.4 server)" % DEBOUNCE)
+        waits = [DEBOUNCE] * len(edit_rounds)
+    elif len(waits) != len(edit_rounds):
+        die("harvested %d 'debounce:' lines for %d didChange rounds -- the log "
+            "format changed" % (len(waits), len(edit_rounds)))
+    else:
+        print("  debounce: harvested from the server, %s"
+              % ("all %.3fs" % waits[0] if len(set(waits)) == 1
+                 else "%.3f..%.3fs" % (min(waits), max(waits))))
+    wait_at = dict(zip((id(r) for r in edit_rounds), waits))
     for row, (read, chk, reused, comps) in zip(rounds, checks):
         row["read_s"] = float(read.replace(",", "."))
         row["typecheck_s"] = float(chk.replace(",", "."))
         row["reused"] = int(reused)
         row["components"] = int(comps)
-        # didOpen checks IMMEDIATELY; only didChange goes through the quiet
-        # window, so only didChange pays the debounce.
-        row["debounce_s"] = DEBOUNCE if row["label"] == "didChange" else 0.0
+        # Only didChange goes through the quiet window, so only didChange pays
+        # the debounce.
+        row["debounce_s"] = wait_at.get(id(row), 0.0)
         # Everything the check: line does not cover but the round trip pays:
         # the env copy, the nine-pass self-scrub, the header parse,
         # TolerantCheck.keys/StatementExtents.scan, Definitions.index, and the
@@ -305,10 +342,14 @@ def main():
                              - row["read_s"] - row["typecheck_s"])
 
     edits = rounds[1:]
-    if any(r["reused"] == 0 for r in edits):
+    waive = a.allow_no_reuse   # see --allow-no-reuse: inapplicable, not waived lightly
+    if waive:
+        print("  note: the reuse assertions are WAIVED (--allow-no-reuse); "
+              "reused %d of %d components" % (edits[0]["reused"], edits[0]["components"]))
+    if any(r["reused"] == 0 for r in edits) and not waive:
         die("a round reused NOTHING -- the scope key moved, so the edit was "
             "not the in-body edit this bench assumes")
-    if any(r["reused"] >= r["components"] for r in edits):
+    if any(r["reused"] >= r["components"] for r in edits) and not waive:
         die("a round reused EVERYTHING -- the edit changed no fingerprint, "
             "which is the flattering measurement PERF-ROADMAP warns about")
     if rounds[0]["diagnostics"] != 0 or any(r["diagnostics"] != 0 for r in edits):
@@ -319,13 +360,15 @@ def main():
     steady = edits[1:]
     summary = {
         "file": str(path), "rounds": a.rounds, "boot_s": boot_s,
-        "debounce_s": DEBOUNCE,
+        "debounce_s": median([r["debounce_s"] for r in steady]),
+        "pinned_debounce_ms": a.pin_debounce,
         "cold_open": rounds[0],
         "first_edit": edits[0],
         "steady_n": len(steady),
         "median_total_s": median([r["total_s"] for r in steady]),
         "median_read_s": median([r["read_s"] for r in steady]),
         "median_typecheck_s": median([r["typecheck_s"] for r in steady]),
+        "median_debounce_s": median([r["debounce_s"] for r in steady]),
         "median_residual_s": median([r["residual_s"] for r in steady]),
         "min_total_s": min(r["total_s"] for r in steady),
         "max_total_s": max(r["total_s"] for r in steady),
@@ -339,7 +382,7 @@ def main():
     print("    median %.3fs = read %.3fs + typecheck %.3fs + debounce %.3fs "
           "+ residual %.3fs"
           % (summary["median_total_s"], summary["median_read_s"],
-             summary["median_typecheck_s"], DEBOUNCE,
+             summary["median_typecheck_s"], summary["median_debounce_s"],
              summary["median_residual_s"]))
     print("    spread %.3fs..%.3fs, reused %d of %d components"
           % (summary["min_total_s"], summary["max_total_s"],
@@ -350,7 +393,8 @@ def main():
           "editor_min_s=%.3f editor_max_s=%.3f reused=%d/%d cold_open_s=%.3f"
           % (boot_s, a.rounds, len(steady), summary["median_total_s"],
              summary["median_read_s"], summary["median_typecheck_s"],
-             DEBOUNCE, summary["median_residual_s"], summary["min_total_s"],
+             summary["median_debounce_s"], summary["median_residual_s"],
+             summary["min_total_s"],
              summary["max_total_s"], summary["reused"], summary["components"],
              rounds[0]["total_s"]))
 

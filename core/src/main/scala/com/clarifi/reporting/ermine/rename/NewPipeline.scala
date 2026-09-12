@@ -1,8 +1,8 @@
 package com.clarifi.reporting.ermine.rename
 
 import com.clarifi.reporting.ermine.{
-  Annot, Bound, Global, ImplicitBinding, ExplicitBinding, Kind, Local, Name,
-  Pattern, Term, Type, V, Alt, Let }
+  Bound, Global, ImplicitBinding, ExplicitBinding, Kind, Local, Name,
+  Pattern, Term, Type, V }
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleHeader }
 import com.clarifi.reporting.ermine.session.{ Phases, SessionEnv }
 import com.clarifi.reporting.ermine.surface._
@@ -52,10 +52,22 @@ object NewPipeline {
     * so the editor can ask "would this new name already resolve here?"
     * without re-running `ModuleScope.importing`; nothing on the batch
     * path reads it, and computing it is where it always was. */
+  /** `marks` is the EDITOR read's per-statement high-water marks (LSP Stage 4
+    * item 7.1a), one per top-level statement of `surface`, in order; empty on
+    * the strict path, which calls `SurfaceParsers.module` and records nothing.
+    * Nothing in this pipeline reads it -- it is 7.1b's reuse guard, written
+    * here so the cache can be built beside this reader without touching it. */
   final case class Read(module: Module, ps: scalaparsers.ParseState[ErParseState],
                         surface: SModule, renamed: Renamer.Result,
                         diagnostics: List[Diag],
-                        scope: ModuleScope.Scope = ModuleScope.Scope.empty)
+                        scope: ModuleScope.Scope = ModuleScope.Scope.empty,
+                        marks: List[SurfaceParsers.StatementMark] = Nil,
+                        /** 7.1b: the statement-extent cache THIS read built,
+                          * to be handed back to the next read of the same
+                          * document.  `None` on every path but
+                          * `readModuleCached`; one per open document, replaced
+                          * wholesale per check. */
+                        surfaceCache: Option[SurfaceCache.Cache] = None)
 
   /** An assemble refusal with its position kept structurally, so the
     * strict path renders it exactly as before and the tolerant path can
@@ -80,7 +92,22 @@ object NewPipeline {
                         (implicit s: SessionEnv, su: Supply): Read =
     read(fileName, contents, mh, tolerant = true)
 
-  private def read(fileName: String, contents: String, mh: ModuleHeader, tolerant: Boolean)
+  /** The EDITOR read WITH THE STATEMENT-EXTENT CACHE (Stage 4 item 7.1b):
+    * `readModuleTolerant` in every respect except that the whole-file parse
+    * reuses the statements `prev` holds whose text and whose examined region
+    * the edit did not touch.  Every phase after the parse is the same
+    * traversal on the same shapes -- rename, reassoc, lower and check are
+    * NOT told which statements are new -- so a cached read and a cold one
+    * differ in nothing a caller can see but their time.  BESIDE
+    * `readModuleTolerant`, never a flag inside it (the Stage-4 invariant);
+    * `readModule` and `SurfaceParsers.module` are untouched. */
+  def readModuleCached(fileName: String, contents: String, mh: ModuleHeader,
+                       prev: Option[SurfaceCache.Cache])
+                      (implicit s: SessionEnv, su: Supply): Read =
+    read(fileName, contents, mh, tolerant = true, cached = true, prev = prev)
+
+  private def read(fileName: String, contents: String, mh: ModuleHeader, tolerant: Boolean,
+                   cached: Boolean = false, prev: Option[SurfaceCache.Cache] = None)
                   (implicit s: SessionEnv, su: Supply): Read = {
 
     // A module whose header does not parse leaves nothing to be tolerant
@@ -88,8 +115,19 @@ object NewPipeline {
     // 7.0(c): the whole-file surface parse.  `Phases` is inert unless
     // -Dermine.lsp.phases=true, which no batch JVM sets.
     val tParse = Phases.now
-    val sm = SurfaceParsers.module(fileName, contents, mh.name) match {
-      case Right(m)  => m
+    // THE BATCH PATH IS THE SAME CALL IT ALWAYS WAS (7.1a): `moduleMarked` is
+    // `module`'s grammar with an observation wrapper around the statement
+    // parser, and only the tolerant read takes it, so no strict output can
+    // depend on the high-water mark.
+    val noMarks: List[SurfaceParsers.StatementMark] = Nil
+    val parsed =
+      if (cached) SurfaceParsers.moduleCached(fileName, contents, mh.name, prev)
+                    .map { case (m, ms, c) => (m, ms, Some(c)) }
+      else if (tolerant) SurfaceParsers.moduleMarked(fileName, contents, mh.name)
+                    .map { case (m, ms) => (m, ms, None) }
+      else SurfaceParsers.module(fileName, contents, mh.name).map((_, noMarks, None))
+    val (sm, marks, sc) = parsed match {
+      case Right(p)  => p
       case Left(err) => throw Death(err.pretty)
     }
     Phases.add("parse", tParse)
@@ -172,6 +210,9 @@ object NewPipeline {
     val lctx = Lower(renamed, fileName, s.termNames, scope, termFix)
     val tctx = TyLower(renamed, fileName, mh.name, s.cons ++ s.privateCons, su, typeFix)
     lctx.lowerAnnot = (t: STy) => TyLower.annot(t, tctx)
+    // a LOCAL signature's named kind variables scope to the signature,
+    // the way a top-level statement's do (walk calls this per statement)
+    lctx.resetKindScope = () => tctx.resetKindScope()
     Phases.add("lowerctx", tCtx)
 
     // --- assemble (Lower/TyLower run inside it, statement by statement)
@@ -186,7 +227,7 @@ object NewPipeline {
     lctx.diags.result().foreach(d => ds += Diag(Phase.Lower, d.span, d.message))
     checkpoint()
 
-    Read(module, ps, sm, renamed, ds.toList, scope)
+    Read(module, ps, sm, renamed, ds.toList, scope, marks, sc)
   }
 
   /** A bare TYPE against the session (kindOf, post-G1 D3): parse,
@@ -239,6 +280,7 @@ object NewPipeline {
     val lctx = Lower(renamed, source, s.termNames, scope)
     val tctx = TyLower(renamed, source, "REPL", s.cons ++ s.privateCons, su)
     lctx.lowerAnnot = (t: com.clarifi.reporting.ermine.surface.STy) => TyLower.annot(t, tctx)
+    lctx.resetKindScope = () => tctx.resetKindScope()
     val tm = Lower.term(re, lctx)
     lctx.diags.result().headOption.foreach(d => die(d.span, d.message))
 
@@ -272,8 +314,9 @@ object NewPipeline {
   }
 
   // ------------------------------------------------------------- assembly
-  // moduleBody's `go` bucketing, ported; sig pairing per checkBindings
-  // (by shared V, Annot.plain, "missing definition" preserved).
+  // moduleBody's `go` bucketing, ported; the grouping and sig pairing
+  // per checkBindings live in `Lower` (shared with `let` blocks since
+  // LET-1): by shared V, Annot.plain, "missing definition" preserved.
 
   private def assemble(mh: ModuleHeader, sts: List[SStatement],
                        lctx: Lower.Ctx, tctx: TyLower.TCtx,
@@ -322,58 +365,26 @@ object NewPipeline {
     val topGroups = scala.collection.mutable.LinkedHashMap[V[Type], ImplicitBinding]()
     val topSigs   = List.newBuilder[(V[Type], Type, Span)]
 
-    def collectBlock(bs: List[SStatement]): (List[(V[Type], ImplicitBinding, Span)], List[(V[Type], Type, Span)]) = {
-      // the group's Span is its FIRST equation's head — the position a
-      // later re-opening of the name collides with (5.1; the cross-block
-      // refusal used to report Span(0,0,0,0), not a position at all)
-      val grouped = scala.collection.mutable.LinkedHashMap[String, (V[Type], List[Alt], Span)]()
-      val sigs = List.newBuilder[(V[Type], Type, Span)]
-      // equations of one name must be consecutive among equations —
-      // gatherBindings parity (an interleaved equation silently merging
-      // into an earlier group was a 4.2 regression, caught by the pin)
-      var lastEq: Option[String] = None
-      bs foreach { st => guard(st.loc.span) { st match {
-        case SEquation(l, n, args, body, wh) =>
-          if (grouped.contains(n.spelling) && !lastEq.contains(n.spelling))
-            throw Refusal(n.span, s"error: interleaved equations for ${n.spelling}")
-          lastEq = Some(n.spelling)
-          val v = grouped.get(n.spelling).map(_._1).getOrElse {
-            lctx.binderAtSite(n) getOrElse lctx.varFor(n)
-          }
-          val bodyT = wh match {
-            case None => Lower.term(body, lctx)
-            case Some(SWhere(wl, wss)) =>
-              val (wis, wes) = lowerLet(wss)
-              Let(lctx.pos(wl.span), wis, wes, Lower.term(body, lctx))
-          }
-          val alt = Alt(lctx.pos(l.span), args.map(Lower.pattern(_, lctx)), bodyT)
-          grouped(n.spelling) = grouped.get(n.spelling) match {
-            case Some((v0, as, sp0)) => (v0, as :+ alt, sp0)
-            case None                => (v, List(alt), n.span)
-          }
-        case SSigStatement(l, ns, t) =>
-          tctx.resetKindScope()
-          val ty = TyLower.annot(t, tctx).body
-          ns.foreach { n =>
-            val v = lctx.binderAtSite(n) getOrElse lctx.varFor(n)
-            sigs += ((v, ty, n.span))
-          }
-        case _ => ()
-      } } }
-      (grouped.values.toList.map { case (v, as, sp) => (v, ImplicitBinding(v.loc, v, as), sp) },
-       sigs.result())
+    // Grouping, signature lowering and pairing live in ONE place --
+    // `Lower`'s block machinery (LET-1) -- because the `let` blocks
+    // `Lower.term` lowers need exactly the same three steps, and the
+    // copy they used to have dropped every signature on the floor.
+    // This env is what makes the shared code refuse the way `assemble`
+    // refuses (`Refusal`, rendered by `read`) and tolerate the way it
+    // tolerates (one bad statement costs that statement only).  A
+    // statement that is neither an equation nor a signature is not
+    // dropped silently here: `walk` never puts one in a block.
+    val blockEnv: Lower.BlockEnv = new Lower.BlockEnv {
+      def refuse(sp: Span, message: String): Unit = throw Refusal(sp, message)
+      def guarded[A](sp: Span)(a: => A): Option[A] = guard(sp)(a)
     }
 
+    def collectBlock(bs: List[SStatement]): (List[(V[Type], ImplicitBinding, Span)], List[(V[Type], Type, Span)]) =
+      Lower.collectBlock(bs, lctx, blockEnv)
+
     def pairSigs(im: collection.Map[V[Type], ImplicitBinding],
-                 sigs: List[(V[Type], Type, Span)]): (List[ImplicitBinding], List[ExplicitBinding]) = {
-      val es = sigs.flatMap { case (v, ty, sp) => guard(sp) {
-        im.get(v) match {
-          case Some(i) => ExplicitBinding(i.loc, i.v, Annot.plain(i.loc, ty), i.alts)
-          case None    => throw Refusal(sp, "missing definition")
-        }
-      } }
-      ((im -- es.map(_.v)).values.toList, es)
-    }
+                 sigs: List[(V[Type], Type, Span)]): (List[ImplicitBinding], List[ExplicitBinding]) =
+      Lower.pairSigs(im, sigs, blockEnv)
 
     def bindingBlock(bs: List[SStatement], intoPrivate: Boolean): Unit = {
       val (groups, sigs) = collectBlock(bs)
@@ -501,10 +512,6 @@ object NewPipeline {
 
     def sigV(n: SName): V[Type] = lctx.binderAtSite(n) getOrElse lctx.varFor(n)
 
-    def lowerLet(ss: List[SStatement]): (List[ImplicitBinding], List[ExplicitBinding]) = {
-      val (groups, sigs) = collectBlock(ss)
-      pairSigs(scala.collection.mutable.LinkedHashMap(groups.map { case (v, b, _) => v -> b }: _*), sigs)
-    }
 
     walk(sts, intoPrivate = false)
 

@@ -1,8 +1,8 @@
 # `core/examples/Lang` — the language beyond relations
 
-**Ten** self-contained report modules about the **value-level language a report is
+**Eleven** self-contained report modules about the **value-level language a report is
 written in**, plus a shared library of **seventy-one generic bindings** (`Helpers.e`) and
-machine-checked proofs about their signatures (`Signatures.e`) — **twelve `.e` files** —
+machine-checked proofs about their signatures (`Signatures.e`) — **thirteen `.e` files** —
 with seven negative modules under `shouldfail/` and one `.slow` module that measures a
 compiler cliff (`ProjectionCliff.e`).
 
@@ -63,6 +63,7 @@ the same computation side by side.
 | `TreeAndMap.e` | a category tree flattened and re-rolled | 8 cols | `Tree.unfold`/`fold`/`aggregate`/`identify`; `Tree.toRootedRel`'s three-part partition with ids **minted** by the stdlib; `Tree.fromRel` under `Layout.Scan.runner`; `Map` in full; `Ord` as a composable value |
 | `ForeignJdk.e` | reaching the JVM | 10 cols | all six `foreign` forms (`data`, `constructor`, `method`, `function`, `value`, `subtype`) plus `private foreign`; `IO` vs `FFI` results; an overload narrowed by its declared type; `Random`'s seeded stream; `GUID` |
 | `TypesAndRows.e` | the language itself | **12 cols** | `data` with `(s : rho)` and `(f : * -> *)`; existentials; `private`; fixity; **every pattern form**; the whole row vocabulary; `Type.Eq`, `Type.Cast`, `Type.Remember`; `Void`/`absurd` |
+| `LetSignatures.e` | signatures on LOCAL bindings | 3 cols | a signature on a `let` binding, on a `where`, on a `where` inside a `let` and on a `let` inside a `where`; a local signature with a **row constraint**, one with an explicit **kind** (`forall (r: rho).`), one that monomorphises a row, and two adjacent signed bindings in one block.  Every one of them is a type inference would NOT infer, so the module loads only because local signatures are honoured AND checked — which between 2026-08-31 and 2026-09-11 they were not (LET-1) |
 | `Helpers.e` | 71 public generic bindings | — | 16 quantify over a row; **5** carry an explicit row constraint (`consRow`, `pRecord`, `withRunning`, `askField`, `localField`) |
 | `Signatures.e` | entailment proofs | — | **five** `xFull`/`xDeduped` pairs, a three-step `Has`-sugar round trip, **five** `xSimple` specialisations, two lemmas |
 

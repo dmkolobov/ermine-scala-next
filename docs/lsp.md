@@ -24,15 +24,19 @@ The advertised capabilities are `textDocumentSync` (FULL), `definitionProvider`,
 `renameProvider` (with `prepareProvider`), `documentSymbolProvider`,
 `workspaceSymbolProvider`, `completionProvider` (trigger character `.`, no
 `resolve`) and `codeActionProvider` (kinds `quickfix` and `source`).
-`tracker/lsp-tests/G3-demo.txt` is a scripted run over all of them, with the
-protocol traffic and the timings.
+`tracker/lsp-tests/G4-demo.txt` is a scripted run over all of them, with the
+protocol traffic and the timings; its last section is Stage 4's — the check's own
+log line on a keystroke, a top-of-file insertion, a coalesced burst, a tab-indented
+hover and a stdlib definition. (`G3-demo.txt` is kept as the Stage-3 artifact.)
 
 ## Diagnostics
 
-Published on `didOpen`, on `didSave`, and ~300 ms after the last `didChange` —
-no save required. Checking runs against the open BUFFER, for this file and its
-workspace siblings alike, so a cross-file check sees unsaved edits. Every check
-uses a fresh copy of the resident session, so a broken file poisons nothing.
+Published on `didOpen`, on `didSave`, and 150-300 ms after the last `didChange`
+— no save required; the exact wait is derived from what checking that file has
+been measured to cost (see **The debounce** under Latency). Checking runs against
+the open BUFFER, for this file and its workspace siblings alike, so a cross-file
+check sees unsaved edits. Every check uses a fresh copy of the resident session,
+so a broken file poisons nothing.
 
 A file gets **all** of its diagnostics, not just the first: every unparseable
 statement, every shadowing refusal, every unknown operator, and every
@@ -56,22 +60,23 @@ save is needed anywhere, but a squiggle that is already fixed can sit there
 until you go back to it.
 
 While an import has failed, the editor withholds the notes that are merely
-consequences of the names that never arrived: "undefined term" and "unchecked:
-depends on a broken definition" are suppressed for that check — the import
-failure is the error to act on, and a file's worth of undefined names on top of
-it is noise. (The same rule already applies while a statement is too broken to
-parse.) It is deliberately blunt: a genuine typo goes quiet until the import is
-fixed.
+consequences of the names that never arrived: "undefined term", "undefined type"
+and "unchecked: depends on a broken definition" are suppressed for that check —
+the import failure is the error to act on, and a file's worth of undefined names
+on top of it is noise. (The same rule already applies while a statement is too
+broken to parse.) It is deliberately blunt: a genuine typo goes quiet until the
+import is fixed. Every one of the three is recognised by a FLAG set where the
+note is built, never by matching its rendered text.
 
-**Two consequences of a missing import are NOT withheld.** An operator the
-module would have supplied still draws "unknown operator", plus the two
-lowering diagnostics that follow it — three per use. A type it would have
-supplied still draws "undefined type". Neither is a note the suppression filter
-can reach: the operator's three are read-phase DIAGNOSTICS rather than notes at
-all, and the type one is a note that carries no name — the flag the rule keys
-on. And the same three diagnostics are exactly right for a genuinely mistyped
-operator in a file whose imports are all fine, so telling the two apart needs a
-change the editor has not made.
+**One consequence of a missing import is NOT withheld.** An operator the module
+would have supplied still draws "unknown operator", plus the two lowering
+diagnostics that follow it — three per use. Those three are read-phase
+DIAGNOSTICS rather than notes, so the filter cannot reach them at all; and they
+are exactly right for a genuinely mistyped operator in a file whose imports are
+all fine, so telling the two cases apart would need a tag that says "unknown
+because a module did not load" — which nothing here can supply, since a module
+that failed to load contributes no export list to compare against. Ticket E7
+carries the argument.
 
 **One position is still wrong.** A refusal raised against a whole BINDING GROUP
 — rather than against a term inside it — carries the module's own position and
@@ -94,14 +99,16 @@ Names installed by Scala rather than declared in source — `Just`, `True`, `Int
 `Maybe`, the `Relation` type and the rest of `Builtin` — answer null, because
 there is no source to open.
 
-**A stdlib target opens the BUILD OUTPUT, not the source tree.** The resident
-session loads its 129 modules from the classpath, where `sbt core/copyResources`
-puts a copy of `core/src/main/resources/modules`, so a stdlib definition (and a
-stdlib workspace-symbol hit) is reported at
-`core/target/scala-3.3.8/classes/modules/Bool.e:19` rather than at the file you
-would edit. Reading is fine; **editing what you land in is not** — the next
-`copyResources` overwrites it. Tracked as ticket E9 in
-`tracker/TICKET-stdlib-findings.md`.
+**A stdlib target opens the SOURCE tree.** The resident session loads its 129
+modules from the classpath, where `sbt core/copyResources` puts a copy of
+`core/src/main/resources/modules` — so a stdlib name's recorded position is in
+that copy, and the server maps it back to
+`core/src/main/resources/modules/Bool.e` before it sends a `Location`. You land
+in the file you would edit, for definition, for references' def-site and for
+workspace symbols alike. The mapping is derived from where the class loader
+actually found `modules` (no Scala version is spelled anywhere); if the source
+tree is not there, or the particular module is not in it, the build-output path
+is sent unchanged.
 
 ## Hover
 
@@ -215,18 +222,28 @@ It refuses when:
   rename checks only its own file, since a local cannot leave it — so renaming
   a `let` binder still works while another buffer is mid-debounce.
 
-References and highlight are correct on all of those EXCEPT a name behind a tab,
-`` `literal` `` names included: their extent is the whole backticked token. The
-tab case is a column-model defect, not a rename one, and it is the next
-paragraph.
+References and highlight are correct on all of those, `` `literal` `` names
+included: their extent is the whole backticked token.
 
 **A note on columns.** The parser expands a tab to the next eight-column stop
-and LSP counts UTF-16 code units, so on a line with leading tabs every range
-this server produces — a diagnostic, a definition target, a hover hit-test, a
-highlight, a symbol — sits seven columns to the right per tab. Rename is the
-one request that refuses rather than risking a wrong edit. Ermine sources are
-space-indented almost everywhere: 6 of 71,248 corpus occurrences are in that
-class, all in `core/examples/GridExample.e`. Ticket E8.
+(`Pos.bump`) and LSP counts UTF-16 code units from the start of the line, so a
+parser column and an LSP character are DIFFERENT UNITS on any line with a tab in
+it — seven apart per tab. The server converts between them at its boundary and
+nowhere else: one helper over the line model the last check built
+(`Definitions.Lines.character` / `.column`), with every published range and
+every incoming position routed through it — diagnostics, definition targets,
+hover and reference hit-tests, highlight, rename edits, document and workspace
+symbols, and completion's scope lookup. A corpus property round-trips all 71,248
+occurrence columns, and every character of every tabbed line, through both
+directions. A name behind a tab is therefore renameable like any other.
+
+The UTF-16 rule is NOT a second bug here: the scanner feeds `Pos.bump` one
+`Char` at a time, so a non-BMP character is two parser columns and two LSP
+characters and the two models already agree about it. The tab is the whole
+difference. Ermine sources are space-indented almost everywhere — 6 of 71,248
+corpus occurrences are behind a tab, all in `core/examples/GridExample.e` — so
+the conversion is `col - 1` and O(1) on 252 of 253 corpus files. Ticket E8,
+fixed in Stage 4 item 7.5.
 
 ## Document symbols
 
@@ -361,7 +378,7 @@ scope-at-position layer carries value scopes only.
 
 **Staleness is accepted and stated.** Completion answers from the tables the
 last DEBOUNCED CHECK left behind, so a binder you have just typed is not offered
-until that check lands (~300 ms after you stop typing, plus the check itself).
+until that check lands (150-300 ms after you stop typing, plus the check itself).
 The word prefix and the context are read from the buffer as it is NOW, so the
 filtering is always current; only the set of names is as old as the last check.
 The alternative — checking on a completion request — would put a whole check on
@@ -448,19 +465,28 @@ test's, not yours:
 
 None of them can produce a wrong edit, only a missing one; each refusal is
 silent (the reason goes to the log). Fixing the printer would return **48
-groups** and the scope test **31 groups (33 name occurrences)** — ticket E10 in
-`tracker/TICKET-stdlib-findings.md`.
+groups** — ticket E10(1)-(3) in `tracker/TICKET-stdlib-findings.md`.
 
-A signature is also refused on a tab-indented equation, for the column reason
-above. No corpus group is in that class today.
+A tab-indented equation is no longer refused either: the insertion is a whole
+line at character 0 carrying the line's own leading whitespace, so it never had
+a units problem (ticket E8).
+
+The scope test used to refuse a type the file reaches only through a SYNONYM OF
+ITS OWN (`Layout/Scan.e` declares `type Scan = Scan_S` over `import
+Relation.Scan as S`), which cost 33 name occurrences over the corpus. Since
+Stage 4 item 7.5 the check carries the file's own nullary synonyms resolved to
+the constructor each one names, and the scope test resolves the printer's
+spelling through them — an identity test, never a spelling one, and only for
+`type X = C` with no parameters, which is the shape where writing `X` and
+writing `C` mean the same type. Ticket E10(5).
 
 ### Staleness is REFUSED here, not accepted
 
 Every other request in this server answers from a possibly-stale index, because
 a stale ANSWER is harmless. A code action is an EDIT: a signature inserted at a
 line the buffer no longer has is corruption. So while the index is older than
-the buffer — between a keystroke and the check ~300 ms later — the answer is an
-empty list. A request during the boot answers `[]` as well.
+the buffer — between a keystroke and the check 150-300 ms later — the answer is
+an empty list. A request during the boot answers `[]` as well.
 
 `context.only` is honoured. The server always answers with `CodeAction` objects,
 never the legacy `Command` form, and there is no `codeAction/resolve`.
@@ -470,14 +496,26 @@ never the legacy `Command` form, and there is no `codeAction/resolve`.
 Logging goes to the file named by `ERMINE_LSP_LOG` (or `-Dermine.lsp.log`);
 stdout is reserved for the protocol.
 
-## Fast mode
+## Fast mode and the pinned debounce
+
+`initializationOptions: { debounce: 300 }` pins the quiet window before a debounced
+check to a fixed number of milliseconds (1–10000; anything outside that range is
+refused and logged, never silently clamped) instead of deriving it from the measured
+check time. It exists for reproducibility, not for tuning — a measurement of record
+cannot have one of its own terms move underneath it, so `tracker/tools/perf-bench.sh`
+pins 300, the constant every editor figure in the roadmap was taken with. The
+derivation it switches off is described under **The debounce** in Latency.
 
 `initializationOptions: { fastMode: true }`, or a
 `workspace/didChangeConfiguration` carrying
 `{ settings: { ermine: { fastMode: true } } }`, skips type checking. On a
-1757-line module a check splits roughly 0.86 s read + 0.50 s typecheck on a
-quiet machine (0.94 + 0.60 on a busy one), so this takes about a third off the
-latency either way.
+1757-line module a WARM check now splits **0.05 s read + 0.53 s typecheck of a
+0.61 s check** on a quiet machine, so skipping the check is most of what is left,
+where before the surface cache (Stage 4 item 7.1b) the read was 0.84 s of it and
+fast mode took off about a third. It also shortens the WAIT, since item 7.4's
+window tracks the measured check time. A file opened for the FIRST time still
+pays its whole parse, so on a cold open fast mode drops the ~1.3 s first check
+and keeps the ~1.0 s read.
 
 Kept: every syntax, shadowing, unknown-operator and lowering diagnostic; import
 failures; go-to-definition, including to this module's own fields and
@@ -488,25 +526,129 @@ the module's own definitions, and hover on every local binder.
 
 ## Latency
 
-Re-measured 2026-09-10 on this machine (JDK 21, one-minute load average under
-1.5 at the start of every run) against
+**Re-measured whole at GATE G4** (2026-09-11, the final Stage-4 tree) on this
+machine: JDK 21, ONE JVM, the one-minute load average waited for and recorded
+**under 1.3 at the start of every run** (it sat at 1.18–1.29 all window).
+Unless a row says otherwise the file is
 `core/src/main/resources/modules/Layout/Report.e`, 1757 lines and the largest
-module in the stdlib. Small modules are far below all of it. Where a row gives
-a range, the two ends are a quiet machine and a busy one; nothing else about
-the measurement differs.
+module in the stdlib; small modules are far below all of it. The driver is
+`tracker/tools/perf-client.py`, the client `perf-bench.sh editor` uses, and a row
+that says *unpinned* let the adaptive window be whatever the policy chose and
+harvested it from the server's own `debounce:` line.
+
+Calibration, so the deltas below can be read honestly: `checkWith` — the phase
+Stage 4 never touched — measured 492 ms before the stage and 529 ms at G4, i.e.
+**+7 %, which is this machine's between-JVM drift** (item 7.0 measured that band
+at 8 %). Read-side changes below are −90 % and larger, far outside it; nothing
+smaller than ~80 ms in this table should be read as a verdict.
 
 | | | how |
 |---|---|---|
-| session boot | 12–15 s, once (129 modules) | six runs: 11.9 / 12.2 / 13.4 / 14.0 / 14.8 / 14.9 s |
-| keystroke to diagnostics | **≈1.7 s quiet, ≈1.9 s busy** — 0.86 read + 0.50 typecheck + 0.30 debounce on the quiet run | `perf-bench.sh editor -k 15`, median of rounds 2–15, 97 of 154 binding groups reused. 1.690–1.697 s at load ≈1.0; 1.859 s (spread 1.80–2.12) at load 1.3–2.2. The gap is the machine, not the build: an interleaved pair against a build of the Stage-3 opening commit (`78d860f`), on the same machine, measured 1.759 s before / 1.694 s after |
-| first check of a freshly opened file | 2.40 s | the same run's cold open |
-| **worst-case wait for a request sent DURING a check** | **1.47 s** | a hover sent 350 ms after the keystroke — just after the debounce fires — median of 3 (1.45 / 1.48 / 1.47); the answer lands 1.82 s after the keystroke. This is the number a worker-thread check would have to beat |
-| a hover on an idle server | 0.6 ms, client round trip | median of 10 |
-| a completion | **≈2.2 ms** server side, **6.5–6.9 ms** client round trip | prefix `f` at line 1504, 97 items of the module's scope. The server figure is its own log line (median of the same ten requests; 6.5 measured 2.5 ms); the round trip adds JSON encoding and the wire, and is the median of 10 measured by the client |
-| `workspace/symbol` | 61 ms first, then **1.6 ms** | the first query builds the 2157-name session list; warm figure is the median of 10 |
-| `documentSymbol` | 32 ms, client round trip | median of 10; 398 top-level symbols, 511 in all. This is the JSON round trip for the whole tree, not the build — the tree itself is built on the check path |
-| the index the requests read | 66 ms cold, **13–23 ms** warm | rebuilt on every check; 7980 occurrences + 511 symbols, from the server's own `index:` log line |
-| a code action | 52 ms on the first request after a check, then 0.7–1.1 ms | the edits are memoised per document version |
+| session boot | **13–14 s**, once (129 modules) | seven boots in the G4 window: 12.8 / 13.5 / 13.5 / 13.6 / 13.7 / 14.1 / 16.4 s |
+| **keystroke to diagnostics, the LARGEST module** | **0.93 s** — 0.05 read + 0.54 typecheck + **0.30 debounce** + 0.02 | `perf-client.py --rounds 70` UNPINNED, median of rounds 2–70, 97 of 154 binding groups and 528 of 529 statements reused every round, load 1.29. The policy asked for **300 ms every round** — the CEILING, because this file's median check (0.59–0.60 s) is over it. Pinned at 300 for the roadmap-comparable figure, `perf-bench.sh editor -k 15` gives **0.95 s** at load 1.24: on this file the pin changes nothing, which is the point of quoting both. It was **≈1.7 s** at GATE G3 |
+| keystroke to diagnostics, a SMALL module | **0.17 s** — 0.15 debounce + 0.02 check | `Control/Monad/Reader.e`, 44 lines, `perf-client.py --rounds 70` unpinned, median of rounds 2–70, load 1.27; the harvested window was the **150 ms FLOOR** every round (the server's own line reads `median 13–16ms of 5 checks`). It was **0.32 s** before item **7.4** made the window adaptive, of which 0.30 s was the fixed wait: 94 % of the round trip was the wait for a 20 ms check. 7.4's interleaved A/B moved it **0.3204 → 0.1719 s** (−149 ms, −46.4 %) with the read and typecheck segments unmoved as the control |
+| keystroke to diagnostics, a MID-SIZED module | **0.42 s** — 0.02 read + 0.08 typecheck + **0.22 debounce** + 0.09 | `Layout/Report/Keyed/Options.e`, 438 lines, 15 rounds unpinned, load 1.19. This file is the one that lands INSIDE the 150–300 ms band, so the window TRACKS the check rather than clamping, and you can watch it settle: 300 → 258 → 235 → 212 → 192 → … → **173 ms**. 7.4's own A/B pairs: this file **0.4703 → 0.3596 s** (−111 ms), `List.e` (341 lines, 7 of 13 groups reused) **0.3583 → 0.2124 s** (−146 ms, −40.7 %) |
+| keystroke to diagnostics, **WORST site** | **1.58 s** — 0.17 read + 1.07 typecheck + 0.30 debounce | one keystroke inside the 10.7 KB `private` block at the end of `Report.e`, 15 rounds unpinned, load 1.28. It is worst on BOTH axes: the slowest statement in the stdlib to re-parse (`parse` 154 ms against 37 ms at the ordinary site) **and** `reused 0 of 154` — `private` is one of the SCOPE words, so the block's text is part of the per-document inference key and an edit inside it drops the whole cache on purpose. Same family as the operator / backtick / `_` / `'` definitions below. It was ≈2.2 s before 7.1b |
+| first check of a freshly opened file | **2.47 s** | the cold open of the same runs, median of five (2.37 / 2.38 / 2.47 / 2.57 / 3.00). A first open has no cache to reuse, so it parses the whole file — the server's own line reads `read 0.9–1.4 s, surface 0 of 529` — and 7.1b makes it **30–70 ms SLOWER** (the extent scan, the line index and one cache entry per statement, all running interpreted), ~2 % of the open and the price of every keystroke after it |
+| **worst-case wait for a request sent DURING a check** | **0.54 s** | a hover sent 352 ms after the keystroke — just past the window, so the check is already running — timed send → answer, median of five (0.51 / 0.53 / 0.54 / 0.56 / 0.62), load 1.18; the answer lands **0.90 s** after the keystroke. It was **1.45 s** at GATE G3, and the whole of the difference is the read falling out of the check the request is queued behind. This is the number a worker-thread check would have to beat, and it is now only just above the 500 ms that fork sets as its trigger |
+| a hover on an idle server | **0.31 ms**, client round trip | median of 10 — the same request costs ~1750x less when nothing is checking, which is the entire content of the parked worker-thread fork |
+| a completion | **≈1.7 ms** server side, **6.1 ms** client round trip | prefix `f` at line 1504, 97 items of the 1332 in scope. The server figure is its own log line, warm (11.0 → 4.1 → 2.8 → … → 1.6 ms over ten requests); the round trip adds JSON encoding and the wire, median of 10 |
+| `workspace/symbol` | **106 ms** first, then **1.3 ms** | the first query builds the 2157-name session list. That first figure is the noisiest row here — 61 ms at G3, 106 and 161 ms in two G4 runs — because it is a `File.isFile` sweep of the module tree and moves with the OS page cache; the warm figure is the median of 10 |
+| `documentSymbol` | **22 ms**, client round trip | median of 10; 398 top-level symbols, 511 in all. This is the JSON round trip for the whole tree, not the build — the tree itself is built on the check path |
+| the index the requests read | **59 ms** cold, **9.6–15.4 ms** warm (median 10.6) | rebuilt on every check; 7980 occurrences + 511 symbols, from the server's own `index:` log line, 26 samples |
+| a code action | **41 ms** on the first request after a check, then **0.7 ms** | the edits are memoised per document version |
+
+**Where a warm check actually goes, after Stage 4.** The same run with
+`-Dermine.lsp.phases=true` (see **Logging**) splits the 0.61 s check as: parse
+**37 ms**, the rest of the read **15 ms** (header 8.8, rename 4.5, lower 5.0,
+scrub 2.1, …), `read.total` **52 ms = 8.5 %**; the extent scan and its line index
+**2.3 ms**; the inference-key map **3.3 ms**; the typecheck **529 ms = 87 %**;
+`Definitions.index` **11 ms**. Before the stage the same file read **845 ms** of a
+**1363 ms** check, and the parse alone was **61 %** of it. The read is no longer
+where an editor keystroke goes; inference is.
+
+**One observation, not a claim.** In one G4 probe run, ten hover requests issued
+between checks were followed by checks that got steadily slower (0.59 → 0.95 s)
+while an otherwise identical 70-round run stayed flat (0.50–0.56 s over 70
+checks). It reproduced once and was not chased; whether it is hover-induced
+allocation or machine noise is open. It is recorded here because it is the only
+thing in the G4 window that looked like a pattern and is not explained.
+
+**The debounce is derived from the measured check time** (item 7.4). A `didChange`
+does not check; it queues, and the check runs once the input stream has been quiet
+for D milliseconds. D is no longer a constant:
+
+    D = clamp(150 ms, C, 300 ms)
+
+where **C is the median of the last five measured check times of that document**.
+With no samples at all D is 300 ms, but that case is defensive rather than ordinary:
+`didOpen` and `didSave` check synchronously and pay no window, so the first DEBOUNCED
+check of a file already has the open's measurement to go on — on the 44-line module
+below the very first keystroke waited 150 ms off a single 144 ms sample.
+
+The floor is 150 ms because a window shorter than the gap between keystrokes
+coalesces nothing: it catches any burst faster than ~150 ms per character (a fast
+typist is ~120 ms, within-word digraphs 60–80 ms). It deliberately does NOT catch
+slower steady typing — at 40–60 wpm, ~200–300 ms per character, a file whose check is
+at or below the floor gets a check per character. That is accepted, because on such a
+file the check is cheaper than the window: a 20 ms check per 150 ms of quiet is at
+most a ~43 % duty cycle, a request waits at most one 20 ms check, and the squiggles
+are fresher for it. A check per character on an EXPENSIVE file is what must not
+happen, and the clamp prevents it — a file whose check exceeds 150 ms raises its own
+window to match.
+
+The ceiling stays 300 ms because that is the staleness a squiggle may carry, and
+because checks cannot pile up behind it: the queue holds one entry per document and a
+superseded check is dropped before it starts. Between the two, the window tracks the
+check time one-for-one, so at most half the dispatch thread goes to checking while
+you type. The effect, measured: a small file stopped waiting 300 ms for a 20 ms check
+(0.32 → 0.17 s), and the largest module did not move, because its check is 0.61 s and
+the policy asks for the ceiling.
+
+What bounds the feedback — a longer window coalesces more keystrokes, which can make
+the next check cost more, which lengthens the window — is the CLAMP, not the median.
+The median smooths; it does not bound. A document whose check cost alternates between
+100 ms and 400 ms will alternate its window between 150 and 300 ms, which is harmless
+precisely because those are the clamp values: the worst the feedback can do is the
+constant this server used before.
+
+The server logs the decision on every debounced check — `debounce: Report.e waited
+300ms (median 592ms of 5 checks, policy 300ms)` — so the window is auditable rather
+than assumed. It can also be pinned to a fixed value (see **Fast mode and the pinned
+debounce**); `tracker/tools/perf-bench.sh` pins 300 so its editor numbers stay
+comparable with every figure it recorded while the window was a constant.
+
+**Why a keystroke is now 0.05 s of parsing.** The server keeps the parsed
+statements of each open document and re-parses only those whose own text, or
+whose lookahead region — the bytes the parser actually examined, which reach
+into the next statement — the edit touched; everything else is carried over with
+its positions shifted by the lines the edit added or removed. One keystroke in a
+body therefore re-parses ONE of `Report.e`'s 529 top-level statements. The cost
+is memory: one parsed tree per OPEN document, about 1.6 MB for the largest
+stdlib file (~20x its source) and ~3.6 MB for the ten largest open at once,
+replaced wholesale on every check and dropped on `didClose`.
+
+**Which edits check COLD, and why.** The inference half of that reuse is keyed
+per document in two parts. Each top-level binding GROUP has its own key — its
+statements' text, each tagged with its offset from the group's own first line
+(item 7.2: the ABSOLUTE line is deliberately not in it, so a line shift costs
+nothing) — and everything that can change what the other names MEAN goes into a
+single SCOPE key shared by the whole document: the import list, every
+`type`/`data`/`class`/`instance`/`field`/`table`/`foreign`/`database`/`abstract`
+declaration, every fixity declaration, and every `private` block. Touch anything
+in the scope key and the whole per-document cache drops and the file is
+re-inferred from scratch — `reused 0 of 154` on `Report.e`, the WORST-site row in
+the table above.
+
+Two consequences worth knowing before they surprise you. An edit inside a
+`private` (or `database`) block always checks cold, because the block is one
+scope statement and its text is the key. And a top-level definition whose name
+is not a plain word — an operator, a backtick name, or a spelling containing `_`
+or `'` — has its text in the SCOPE key too, because the extent scanner's head
+word does not match the spelling the readers look the group up by; that
+conservative choice is item 7.2's, and the alternative it replaced was worse (a
+dependent silently holding a stale type). Everything else — ordinary equations,
+signatures, comments, whitespace, line shifts — reuses.
 
 Dispatch is single-threaded by design (a `SessionEnv` is not thread-safe), so
 requests are served one at a time — which is what the worst-case row measures.
@@ -548,7 +690,7 @@ client's), and `eglot-code-actions`. For fast mode, add
 
 - `tracker/tools/lsp-smoke.sh` runs the scripted client
   (`tracker/tools/lsp-client.py`) against the fixtures in `tracker/lsp-tests/` —
-  **480 checks** over everything above, including didChange without save, the
+  **542 checks** over everything above, including didChange without save, the
   sibling-buffer path, the import-failure diagnostics, local and kind hovers,
   references/highlight/rename with every refusal, the pinned symbol trees of
   `Decls.e`, `Syms.e`, `Scope.e` and the broken `Broken.e`, the workspace
@@ -562,12 +704,19 @@ client's), and `eglot-code-actions`. For fast mode, add
   highlight, a rename edit, documentSymbol, a code-action edit — asked once on
   the pristine buffer and again after a `didChange` that inserts three blank
   lines at the top with NO save, and required to have moved by exactly three.
+  Since 7.4 it also drives the real server loop through two keystroke BURSTS on
+  `Burst.e` and one on `Layout/Report.e`, asserting one check per burst and the
+  window the policy chose (the floor, the ceiling, the pin and the per-line
+  audit); and since 7.5 the tab-column pins on `Tab.e` and the stdlib-position
+  pins that require a definition, a reference def-site and every workspace
+  symbol to name `core/src/main/resources/modules` and no `/target/` path.
 - `tracker/tools/repl-smoke.sh` — **8 groups, 66 checks** against the byte-exact
   REPL goldens in `tracker/repl-tests/`. The editor path must never move them.
 - `tracker/tools/corpus-run.sh --batch <outdir>` — the batch verdicts over the
   154-file corpus: **85 LOADED / 69 REJECTED / 0 UNKNOWN**.
-- `tracker/tools/lsp-demo.sh > tracker/lsp-tests/G3-demo.txt` regenerates the
-  capability-by-capability transcript. It is evidence, not a test.
+- `tracker/tools/lsp-demo.sh > tracker/lsp-tests/G4-demo.txt` regenerates the
+  capability-by-capability transcript, thirteen sections ending in Stage 4's.
+  It is evidence, not a test, and it is reproducible modulo timings.
 
 Run the first three with `sbt core/test` before committing server changes
 (`tracker/LSP-ROADMAP.md`, Baselines).

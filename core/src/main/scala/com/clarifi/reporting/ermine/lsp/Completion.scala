@@ -532,11 +532,16 @@ object Completion {
           case Some((d, line, chr)) =>
             val ctx = contextAt(lineText(d.text, line), chr)
             // The position model is the server's own, everywhere:
-            // LSP is 0-based, a Span is 1-based, and a parser column is
-            // tab-expanded (ticket E8, inherited by every request since
-            // 0.5).  `scopeAt` is asked about the position the WORD
-            // starts at -- the position the name being typed occupies,
-            // and the one the corpus property pins.
+            // LSP is 0-based and counts characters, a Span is 1-based and
+            // counts PARSER columns, and a parser column is tab-expanded
+            // -- so the two are converted at the boundary and nowhere
+            // else (7.5, ticket E8; before it the whole server converted
+            // by `+ 1` and a completion on a tab-indented line asked
+            // `scopeAt` about the wrong column).  `scopeAt` is asked
+            // about the position the WORD starts at -- the position the
+            // name being typed occupies, and the one the corpus property
+            // pins.  `ctx` itself is computed on the LINE TEXT, in
+            // character units, and needs no conversion at all.
             val wordStart = chr - ctx.prefix.length
             // How many names were in scope BEFORE the prefix filter, for
             // the log: it costs nothing (the candidate list is built
@@ -582,7 +587,8 @@ object Completion {
                   // second away.
                   case None      => (Nil, true)
                   case Some(idx) =>
-                    val all = items(idx, line + 1, wordStart + 1)
+                    val all = items(idx, line + 1,
+                                    Definitions.toColumn(idx.lines, line + 1, wordStart))
                     candidates = all.size
                     if (p.isEmpty) {
                       // 6.5.5: an empty prefix answers with what is

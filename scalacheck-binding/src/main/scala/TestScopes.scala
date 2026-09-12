@@ -99,6 +99,12 @@ object TestScopes extends Properties("Ermine scoping") {
     forAll(small, small) { (x, y) =>
       evalInt(s"v = let me 0 = $x\n        me n = $y\n    in me 0 + me 1", "v") ?= x + y }
 
+  // Kept, and it means more than it did: until LET-1 the `let` lowering
+  // DROPPED the signature, so this pinned only that a signed `let` still
+  // parses and evaluates -- `f` was inferred and the declaration happened
+  // to agree.  The signature is now checked against the body
+  // (`TestLetSignatures` pins the checking itself), so this exercises the
+  // checker's explicit-binding path on top of the pairing.
   property("a signed let binding still pairs signature with definition") =
     forAll(small) { x =>
       evalInt(s"v = let f : Int -> Int\n        f q = q\n    in f $x", "v") ?= x }

@@ -57,7 +57,17 @@ object TolerantCheck {
     * rather than message matching: the caller must not have to parse
     * rendered report text to know what kind of note it holds. */
   final case class Note(report: String, severity: Int, spelling: Option[String] = None,
-                        span: Option[Span] = None, dependsOnBroken: Boolean = false)
+                        span: Option[Span] = None, dependsOnBroken: Boolean = false,
+                        /** 7.5, ticket E7: this note is `assertTypeClosed`'s
+                          * -- a TYPE name that did not resolve.  `spelling`
+                          * is the flag the import-failure rule keys on for
+                          * undefined TERMS, and it cannot carry this one:
+                          * `assertTypeClosed` dies ONCE with every free type
+                          * variable joined into one report, so there is no
+                          * single spelling to put there.  A flag is what
+                          * there is, and it is set by construction (never by
+                          * matching the rendered text -- 6.1's rule). */
+                        undefinedType: Boolean = false)
 
   /** `types` maps a top-level binding's spelling to the type checking
     * gave it — inferred for implicits, declared for explicits.  It is
@@ -79,7 +89,11 @@ object TolerantCheck {
 
   final case class Result(notes: List[Note], types: Map[String, Type],
                           reused: Int = 0, components: Int = 0,
-                          locals: Map[(Int, Int), LocalTy] = Map())
+                          locals: Map[(Int, Int), LocalTy] = Map(),
+                          /** 7.5, ticket E10(5): the file's own nullary
+                            * type synonyms, resolved to the `Con` they
+                            * name.  See `checkWith`. */
+                          ownTypes: Map[String, Global] = Map())
 
   /** Per-uri inference reuse (roadmap 5.5).  `scopeKey` covers
     * everything an SCC's inference depends on beyond its own text: the
@@ -323,9 +337,12 @@ object TolerantCheck {
       * needs no inference at all — `Subst.inferBindingGroupTypes` type
       * checks a COPY carrying the declared type and leaves this tree's
       * `V` holding Lower's untouched meta, so the meta is not an option
-      * here.  A local explicit binding is what `assemble`'s `lowerLet`
-      * makes of a SIGNED `let`/`where` binding (NewPipeline.scala:
-      * `pairSigs`). */
+      * here.  A local explicit binding is what the block machinery makes
+      * of a SIGNED `let`/`where` binding (`Lower.bindings` ->
+      * `Lower.pairSigs`, shared with the top level).  Until LET-1 that
+      * was true of `where` only: a `let` block built `Let(..., Nil, _)`
+      * and a signed `let` binder hovered as INFERRED, which Decision (a)
+      * forbids -- `TestTolerantCheck`'s `sigLet` twin pins it now. */
     def headType(b: Binding): Type = b match {
       case e: ExplicitBinding => Subst.substType(e.ty.body)
       case i                  => Subst.substType(i.v.extract)
@@ -487,6 +504,35 @@ object TolerantCheck {
     } }
     phase(m.tables)(Session.processTableStatement(mod))
 
+    // 7.5, ticket E10(5): THE FILE'S OWN TYPE NAMES, each mapped to the
+    // `Con` that writing that spelling in this file actually denotes.
+    //
+    // `ModuleScope.canonicalTypes` holds what the IMPORTS put in scope
+    // and nothing else, so the add-signature quick fix refused every type
+    // a module reaches only through a synonym of its own --
+    // `Layout/Scan.e` declares `type Scan = Scan_S` over
+    // `import Relation.Scan as S`, the printer writes `Scan`, and 29 of
+    // that file's groups were refused for a name the file can write.
+    //
+    // ONLY A NULLARY SYNONYM OF A BARE CONSTRUCTOR is published, and the
+    // narrowness is the soundness argument: `type X = C` means that `X`
+    // and `C` are the same type constructor, so a signature spelling `C`
+    // as `X` checks.  `type X = C Int` does NOT license writing `C` as
+    // `X`, and a synonym with parameters is not a type by itself at all;
+    // both fall out here rather than being accepted and then failing to
+    // check.  The substitution is `maps`, the map the type-def phase has
+    // just built (an imported constructor is a `Con` in it, which is how
+    // `Scan_S` becomes `Relation.Scan.Scan`); `data` and `class` names
+    // need no entry, since their `Global` already carries this module.
+    val ownTypes: Map[String, Global] =
+      m.types.collect {
+        case TypeStatement(_, v, kindArgs, typeArgs, body)
+          if kindArgs.isEmpty && typeArgs.isEmpty =>
+          (v.name.map(_.string), Session.subTypeMaps(maps, body))
+      }.collect {
+        case (Some(n), Type.Con(_, g, _, _)) => n -> g
+      }.toMap
+
     // LSP-FFI: the foreign phases above install stubs for whatever this
     // JVM could not resolve and leave positioned notes behind — warnings
     // for the bindings, information for an opaque `foreign data`.  Take
@@ -509,7 +555,19 @@ object TolerantCheck {
       notes += Note(v.report(Document.text("error: undefined term")).toString,
                     Error, v.name.map(_.string))
     }
-    guard(Error) { assertTypeClosed(bs) }
+    // 7.5, ticket E7: tagged, so `Resident.checkFile` can withhold it while
+    // an import failed -- the same rule, and the same accepted cost, that
+    // 6.1(b) already applies to undefined TERMS.  A module that did not load
+    // contributes no TYPES either, so a file that uses one gets this note
+    // for a name that could not have arrived, on top of the import failure
+    // that explains it.
+    try assertTypeClosed(bs)
+    catch {
+      case Death(e, _) => notes += Note(e.toString, Error, undefinedType = true)
+      case com.clarifi.reporting.ermine.parsing.Recoverable(e) =>
+        notes += Note("error: " + Option(e.getMessage).getOrElse(e.toString), Error,
+                      undefinedType = true)
+    }
 
     val preFailed = bs.collect { case b if termVars(b.alts).exists(free) => b.v }.toSet
     var failed: Set[TermVar] = preFailed
@@ -689,7 +747,8 @@ object TolerantCheck {
       (subs.flatMap { case (v, v2) => v.name.map(_.string -> v2.extract) } ++
        etm.flatMap  { case (v, t)  => v.name.map(_.string -> t) } ++
        foreignTypes).toMap
-    (Result(notes.toList, types, reused, components, locals), Cache(scopeKey, fresh.toMap))
+    (Result(notes.toList, types, reused, components, locals, ownTypes),
+     Cache(scopeKey, fresh.toMap))
   }
 
   def fingerprint(parts: String*): String = {

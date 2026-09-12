@@ -14,6 +14,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import urllib.parse
 import time
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -286,8 +287,11 @@ def main():
           and r["uri"] == uri("Good.e")
           and r["range"]["start"]["line"] == 2, repr(r))
     r = definition("Nav.e", 7, 12)  # "&&" imported from stdlib Bool
+    # TREE-DISTINGUISHING since 7.5 (ticket E9): `endswith("/Bool.e")` was
+    # true of the BUILD OUTPUT copy the session loads from and could not see
+    # the bug; `/resources/modules/` is only true of the source tree.
     check("def && -> Bool.e", r is not None
-          and r["uri"].endswith("/Bool.e")
+          and r["uri"].endswith("/resources/modules/Bool.e")
           and r["range"]["start"]["line"] in (6, 7), repr(r))
     check("def miss -> null", definition("Nav.e", 1, 0) is None)
 
@@ -413,10 +417,10 @@ def main():
 
     r = definition("Decls.e", 18, 14)    # `Left`, a constructor from Either.e
     check("def imported constructor -> Either.e", r is not None
-          and r["uri"].endswith("/Either.e"), repr(r))
+          and r["uri"].endswith("/resources/modules/Either.e"), repr(r))
     r = definition("Decls.e", 19, 13)    # `yyyymmdd`, a foreign function
     check("def foreign function -> Date.e", r is not None
-          and r["uri"].endswith("/Date.e"), repr(r))
+          and r["uri"].endswith("/resources/modules/Date.e"), repr(r))
 
     r = definition("Decls.e", 20, 11)    # `Alias` in the signature
     check("def own type alias -> its statement", r is not None
@@ -424,7 +428,7 @@ def main():
           and r["range"]["start"] == {"line": 13, "character": 5}, repr(r))
     r = definition("Decls.e", 22, 12)    # `Either` in the signature
     check("def imported type -> Either.e", r is not None
-          and r["uri"].endswith("/Either.e"), repr(r))
+          and r["uri"].endswith("/resources/modules/Either.e"), repr(r))
     r = definition("Decls.e", 11, 5)     # the `Shape` head itself
     check("def type head -> itself", r is not None
           and r["range"]["start"] == {"line": 11, "character": 5}, repr(r))
@@ -436,7 +440,7 @@ def main():
 
     r = definition("Decls.e", 3, 8)      # `import Either`
     check("def import -> the module's file", r is not None
-          and r["uri"].endswith("/Either.e")
+          and r["uri"].endswith("/resources/modules/Either.e")
           and r["range"]["start"] == {"line": 0, "character": 0}, repr(r))
 
     # A name that is genuinely undefined still says nothing.
@@ -871,6 +875,18 @@ def main():
           hoverline("Locals.e", 18, 8) == "strict : Bool -> Bool", hoverline("Locals.e", 18, 8))
     check("hover signed where binder at its signature",
           hoverline("Locals.e", 17, 8) == "strict : Bool -> Bool", hoverline("Locals.e", 17, 8))
+    # ... and so does a signed LET binder (LET-1).  Until then the `let`
+    # lowering dropped the signature, the binder was an ImplicitBinding,
+    # and `headType` answered the INFERRED type -- which agreed here by
+    # luck, so the fixture had no signed `let` at all and nothing pinned
+    # Decision (a) for one.  The three positions are the signature, the
+    # equation head and a use.
+    check("hover signed let binder at its signature",
+          hoverline("Locals.e", 38, 6) == "slet : Bool -> Bool", hoverline("Locals.e", 38, 6))
+    check("hover signed let binder at its def-site",
+          hoverline("Locals.e", 39, 6) == "slet : Bool -> Bool", hoverline("Locals.e", 39, 6))
+    check("hover signed let binder at a use",
+          hoverline("Locals.e", 40, 5) == "slet : Bool -> Bool", hoverline("Locals.e", 40, 5))
     # a polymorphic where-bound helper: the metas its component
     # generalised render as type VARIABLES, no `forall` on a local
     check("hover polymorphic where binder",
@@ -1486,11 +1502,11 @@ def main():
     soft = [s for s in r if s["name"] == "SoftRelation" and s["kind"] == 23]
     check("a stdlib TYPE is found in its source .e", len(soft) == 1
           and soft[0]["location"]["uri"].endswith(
-              "/modules/Layout/Report/SoftRelation.e")
+              "/resources/modules/Layout/Report/SoftRelation.e")
           and soft[0]["containerName"] == "Layout.Report.SoftRelation", repr(soft))
     rel = [s for s in r if s["name"] == "relation"]
     check("a stdlib TERM is found in its source .e", len(rel) == 1
-          and rel[0]["location"]["uri"].endswith("/modules/Relation.e")
+          and rel[0]["location"]["uri"].endswith("/resources/modules/Relation.e")
           and rel[0]["containerName"] == "Relation" and rel[0]["kind"] == 12, repr(rel))
     # `Relation` the TYPE is a Scala-installed builtin (Type.scala's
     # relationT, Global("Builtin","Relation")) with Loc.builtin, so it has
@@ -1503,7 +1519,8 @@ def main():
     so = [s for s in r if s["name"] == "SortOrder"]
     check("a lower-case query finds an upper-case stdlib type", len(so) == 1
           and so[0]["kind"] == 23
-          and so[0]["location"]["uri"].endswith("/modules/Relation/Sort.e"), repr(r))
+          and so[0]["location"]["uri"].endswith(
+              "/resources/modules/Relation/Sort.e"), repr(r))
 
     # A Scala-installed constructor has no source, so it is not a workspace
     # symbol; the SOURCE names that contain the same letters are.
@@ -2370,6 +2387,350 @@ def main():
     # shifted check must reuse, where before 7.2 it reused nothing at all.
     # Read from the server's own check line after shutdown, below.
 
+    # ---- 7.1b: THE STATEMENT-EXTENT SURFACE CACHE, end to end.
+    # The invariant is that a reused surface tree is what a fresh parse
+    # would give, so the client's form of the corpus differential is: drive
+    # a SEQUENCE of didChanges through one buffer -- a body edit, an edit
+    # ABOVE it (every statement below shifts a line), a MERGE of two
+    # statements and a SPLIT of one -- and then compare what the warm
+    # server publishes against what a COLD open of the same final text
+    # publishes.  The final text is deliberately broken, so the comparison
+    # is not [] == [].
+    splice_src = (FIXTURES / "Splice.e").read_text()
+    open_doc("Splice.e")
+    check("7.1b Splice.e clean on open",
+          client.diagnostics_for(uri("Splice.e")) == [])
+
+    s2 = splice_src.replace("where keep = b + 2", "where keep = b + 22")
+    change("Splice.e", s2, 2)
+    check("7.1b a body edit keeps the file clean",
+          client.diagnostics_for(uri("Splice.e")) == [])
+
+    s3 = s2.replace("import Prelude\n", "import Prelude\n\n")
+    change("Splice.e", s3, 3)
+    check("7.1b an edit ABOVE (a line shift) keeps the file clean",
+          client.diagnostics_for(uri("Splice.e")) == [])
+
+    s4 = s3.replace("\nspliceD x = x <^^> 4", "\n  spliceD x = x <^^> 4")
+    change("Splice.e", s4, 4)
+    ds_merge = client.diagnostics_for(uri("Splice.e"))
+
+    s5 = s4.replace("  let flag = x + 1\n  in flag", "  let flag = x + 1\nin flag")
+    change("Splice.e", s5, 5)
+    ds_warm = client.diagnostics_for(uri("Splice.e"))
+    check("7.1b the merge+split sequence reports something",
+          len(ds_warm) > 0, repr(ds_warm))
+
+    # the SAME text, on a server that has never seen it: didClose drops the
+    # document and its caches, so the re-open is a cold read
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Splice.e")}})
+    check("7.1b didClose clears the squiggles",
+          client.diagnostics_for(uri("Splice.e")) == [])
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": uri("Splice.e"), "languageId": "ermine", "version": 1, "text": s5}})
+    ds_cold = client.diagnostics_for(uri("Splice.e"))
+    check("7.1b the spliced diagnostics are the cold ones, exactly",
+          ds_warm == ds_cold,
+          "warm " + repr(ds_warm) + "\ncold " + repr(ds_cold))
+    check("7.1b the merge was reported too", len(ds_merge) > 0, repr(ds_merge))
+    check("7.1b Splice.e on disk untouched by the buffer edits",
+          (FIXTURES / "Splice.e").read_text() == splice_src)
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Splice.e")}})
+    client.diagnostics_for(uri("Splice.e"))
+
+    # ---- 7.4: THE ADAPTIVE DEBOUNCE, and the burst it exists to coalesce.
+    # The window is clamp(150, median measured check time of THIS document,
+    # 300) ms of quiet on the input stream, so the two things to pin through a
+    # real server are (i) that a burst of keystrokes closer together than the
+    # window still produces EXACTLY ONE check and one publish, at the small
+    # file's window and at the large file's, and (ii) that what the server
+    # logged as waited is what the policy says for the samples it had.
+    burst_src = (FIXTURES / "Burst.e").read_text()
+    open_doc("Burst.e")
+    check("7.4 Burst.e clean on open", client.diagnostics_for(uri("Burst.e")) == [])
+
+    def burst(name, text_of, n, gap, version0):
+        """n didChanges `gap` seconds apart, sent without waiting for any
+        publish, then the ONE publish they are expected to coalesce into."""
+        for k in range(n):
+            client.notify("textDocument/didChange", {
+                "textDocument": {"uri": name, "version": version0 + k},
+                "contentChanges": [{"text": text_of(k)}]})
+            time.sleep(gap)
+        return client.diagnostics_for(name)
+
+    # Eight keystrokes 20 ms apart -- a fast typist is ~120-300 ms per
+    # character, so 20 ms is well inside any window the policy can choose.
+    ds = burst(uri("Burst.e"),
+               lambda k: burst_src.replace("(y + 2)", "(y +" + " " * (k + 1) + "2)"),
+               8, 0.020, 2)
+    check("7.4 a burst of 8 keystrokes still publishes, and publishes clean",
+          ds == [], repr(ds))
+    # A SECOND burst, so that "one check per burst" is a rule and not an
+    # artefact of there having been only one: it must produce exactly one more.
+    ds = burst(uri("Burst.e"),
+               lambda k: burst_src.replace("(y + 2)", "(y  +" + " " * (k + 1) + "2)"),
+               8, 0.020, 10)
+    check("7.4 a second burst of 8 keystrokes is exactly one more check",
+          ds == [], repr(ds))
+    # The same burst against the LARGEST stdlib module, whose check is ~0.6 s
+    # and whose window is therefore the ceiling (300 ms) rather than the floor.
+    report = repo("core/src/main/resources/modules/Layout/Report.e")
+    report_uri = report.as_uri()
+    report_src = report.read_bytes().decode("utf-8")   # CRLF: never text mode
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": report_uri, "languageId": "ermine", "version": 1,
+        "text": report_src}})
+    check("7.4 Layout/Report.e clean on open",
+          client.diagnostics_for(report_uri) == [])
+    ds = burst(report_uri,
+               lambda k: report_src.replace("emptyReport = prefA [pixelsA 0 0, cellsA 0 0]",
+                                            "emptyReport = prefA [pixelsA 0 0, cellsA 0" +
+                                            " " * (k + 1) + "0]"),
+               6, 0.020, 2)
+    check("7.4 a burst on the largest module publishes, and publishes clean",
+          ds == [], repr(ds[:2]))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": report_uri}})
+    client.diagnostics_for(report_uri)
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Burst.e")}})
+    client.diagnostics_for(uri("Burst.e"))
+    check("7.4 Burst.e on disk untouched by the buffer edits",
+          (FIXTURES / "Burst.e").read_text() == burst_src)
+
+    # ---- 7.5, TICKET E8: THE BOUNDARY CONVERSION, parser column <-> LSP
+    # character.  `scalaparsers.Pos.bump` sends a tab to the next tab stop
+    # (column 1 -> column 8); LSP counts characters.  Until 7.5 the server
+    # converted by +-1 in BOTH directions and in EVERY feature, so on a
+    # tab-indented line a squiggle, a definition target, a hover hit-test, a
+    # highlight and a symbol were all seven characters right of the text, and
+    # 6.3 made rename REFUSE such a name rather than mis-edit it.  Tab.e is
+    # the fixture; `core/examples/GridExample.e` is the corpus instance (6 of
+    # 71,248 occurrences) and is pinned below as itself.
+    open_doc("Tab.e")
+    ds = client.diagnostics_for(uri("Tab.e"))
+    check("7.5 Tab.e reports its four diagnostics", len(ds) == 4, repr(ds))
+
+    def diag_with(ds, needle):
+        for d in ds:
+            if needle in d["message"]:
+                return d
+        return None
+
+    d = diag_with(ds, "unknown operator <+>")
+    # `\tTrue <+> False`: the operator is at CHARACTER 6 and at PARSER
+    # COLUMN 13.  A structured READ diagnostic, so this is the `fromDiag`
+    # path.
+    check("7.5 a structured diagnostic on a tabbed line squiggles the text",
+          d is not None and d["range"]["start"] == {"line": 24, "character": 6},
+          repr(d and d["range"]))
+    d = diag_with(ds, "undefined term")
+    # A note with no span: its position is recovered from the report's own
+    # `file:line:col:` prefix, which is a PARSER column (8) -- the
+    # `fromReport` path, which converts too.
+    check("7.5 a caret note on a tabbed line lands on the text",
+          d is not None and d["range"]["start"] == {"line": 19, "character": 1},
+          repr(d and d["range"]))
+
+    # NAVIGATION at the REAL character column.
+    r = definition("Tab.e", 10, 9)              # `go` in `tabbed = go where`
+    check("7.5 def go -> its binder behind a tab", r is not None
+          and r["uri"] == uri("Tab.e")
+          and r["range"] == {"start": {"line": 11, "character": 1},
+                             "end": {"line": 11, "character": 4}}, repr(r))
+    r = definition("Tab.e", 11, 1)              # the binder itself, at character 1
+    check("7.5 def at the character column of a tabbed binder hits", r is not None
+          and r["range"]["start"] == {"line": 11, "character": 1}, repr(r))
+    check("7.5 hover at the character column of a tabbed binder hits",
+          hoverline("Tab.e", 11, 1) == "go : Bool", repr(hoverline("Tab.e", 11, 1)))
+    # THE CONTROL, and it is the reviewer's own observation (6.3 review S5)
+    # inverted: character 8 on `\tgo = True` is inside `True`, and it is
+    # exactly the position that used to answer `go`.
+    check("7.5 the old parser-column position no longer answers the name",
+          definition("Tab.e", 11, 8) is None, repr(definition("Tab.e", 11, 8)))
+    check("7.5 character 8 of that line is `True`, and says so",
+          hoverline("Tab.e", 11, 8) == "Builtin.True : Bool",
+          repr(hoverline("Tab.e", 11, 8)))
+    check("7.5 the tab itself is not a name", definition("Tab.e", 11, 0) is None)
+
+    # RENAME BEHIND A TAB, which 6.3 refused (-32803, `nameExtent` non-exact)
+    # because the range would have been in the wrong units.  It is not a
+    # refusal any more, and prepareRename says so before the user types.
+    rid = client.request("textDocument/prepareRename", {
+        "textDocument": {"uri": uri("Tab.e")}, "position": {"line": 11, "character": 1}})
+    pr = client.response(rid).get("result")
+    check("7.5 prepareRename behind a tab offers the name (6.3 refused it)",
+          pr is not None and pr["placeholder"] == "go"
+          and pr["range"]["start"] == {"line": 11, "character": 1}, repr(pr))
+    rid = client.request("textDocument/rename", {
+        "textDocument": {"uri": uri("Tab.e")}, "position": {"line": 11, "character": 1},
+        "newName": "went"})
+    rr = client.response(rid)
+    es = list((rr.get("result") or {}).get("changes", {}).values())
+    es = sorted(es[0], key=lambda e: e["range"]["start"]["line"]) if es else []
+    check("7.5 rename behind a tab edits both sites, at their character columns",
+          [(e["range"]["start"]["line"], e["range"]["start"]["character"],
+            e["range"]["end"]["character"]) for e in es]
+          == [(10, 9, 11), (11, 1, 3)], repr(rr.get("error") or es))
+
+    # A DOCUMENT SYMBOL whose own line is untabbed still carries a child
+    # range that crosses the tabbed one; the selection columns are the
+    # untabbed ones and must not move.
+    rid = client.request("textDocument/documentSymbol",
+                         {"textDocument": {"uri": uri("Tab.e")}})
+    syms = client.response(rid).get("result") or []
+    tabbed_sym = [x for x in syms if x["name"] == "tabbed"]
+    check("7.5 an untabbed symbol's columns are unchanged by the conversion",
+          len(tabbed_sym) == 1
+          and tabbed_sym[0]["selectionRange"]["start"] == {"line": 10, "character": 0},
+          repr(tabbed_sym))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Tab.e")}})
+    client.diagnostics_for(uri("Tab.e"))
+
+    # THE CORPUS INSTANCE, as itself: `core/examples/GridExample.e` indents
+    # three lines with a tab, and each carries two `atomShown` occurrences --
+    # the 6 the 6.3 extent property counts.  `\t[atomShown` puts the name at
+    # CHARACTER 2 and at PARSER COLUMN 10.
+    grid = repo("core/examples/GridExample.e")
+    grid_uri = grid.as_uri()
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": grid_uri, "languageId": "ermine", "version": 1,
+        "text": grid.read_bytes().decode("utf-8")}})
+    check("7.5 GridExample.e checks clean",
+          client.diagnostics_for(grid_uri) == [], repr(client.seen[-1:]))
+
+    def grid_req(method, line, char, extra=None):
+        p = {"textDocument": {"uri": grid_uri},
+             "position": {"line": line, "character": char}}
+        if extra:
+            p.update(extra)
+        return client.response(client.request(method, p)).get("result")
+
+    r = grid_req("textDocument/definition", 64, 2)
+    check("7.5 definition at the character column of a name behind a tab",
+          r is not None and r["uri"].endswith("/modules/Layout/Report.e"), repr(r))
+    h = grid_req("textDocument/hover", 64, 2)
+    check("7.5 hover at the character column of a name behind a tab",
+          h is not None and "Layout.Report.atomShown :" in h["contents"]["value"],
+          repr(h))
+    check("7.5 the `[` before it is not a name",
+          grid_req("textDocument/definition", 64, 1) is None)
+    r = grid_req("textDocument/references", 64, 2,
+                 {"context": {"includeDeclaration": True}}) or []
+    tabbed_hits = sorted((x["range"]["start"]["line"], x["range"]["start"]["character"])
+                         for x in r if x["uri"] == grid_uri
+                         and x["range"]["start"]["line"] in (64, 65, 66))
+    check("7.5 all six tabbed occurrences are found at their character columns",
+          tabbed_hits == [(64, 2), (64, 26), (65, 2), (65, 27), (66, 2), (66, 32)],
+          repr(tabbed_hits))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": grid_uri}})
+    client.diagnostics_for(grid_uri)
+
+    # ---- 7.5, TICKET E9: A STDLIB TARGET OPENS THE SOURCE TREE.
+    # The resident session loads its 129 modules from the classpath copy
+    # (`core/target/<scala>/classes/modules`), so every stdlib `V.loc` names
+    # that copy -- and a user who edits the file they land in loses the edit
+    # at the next `copyResources`.  The mapping back is made at the LSP
+    # boundary (`Definitions.location`) and derived from where the class
+    # loader actually found `modules`, so no Scala version is spelled here
+    # either.  EVERY pin below is tree-distinguishing: the `endswith` pins
+    # this suite had before cannot see the bug at all.
+    src_root = repo("core/src/main/resources/modules").as_uri()
+
+    def in_source_tree(u):
+        return u is not None and u.startswith(src_root) and "/target/" not in u
+
+    r = definition("Nav.e", 7, 12)              # `&&`, from stdlib Bool
+    check("7.5 a stdlib definition target is in the SOURCE tree",
+          r is not None and in_source_tree(r["uri"]), repr(r))
+    rid = client.request("textDocument/references", {
+        "textDocument": {"uri": uri("Nav.e")}, "position": {"line": 7, "character": 12},
+        "context": {"includeDeclaration": True}})
+    rs = client.response(rid).get("result") or []
+    # The set spans the OPEN buffers (several of them mention `&&`); the one
+    # entry that is NOT in a buffer is the def-site `location` adds, and it
+    # is the one this ticket is about.
+    outside = [x for x in rs if "/modules/" in x["uri"] or "/target/" in x["uri"]]
+    check("7.5 the def-site a references request adds is in the SOURCE tree",
+          len(outside) == 1 and in_source_tree(outside[0]["uri"])
+          and outside[0]["uri"].endswith("/resources/modules/Bool.e"), repr(outside))
+    rid = client.request("workspace/symbol", {"query": "not"})
+    ws = client.response(rid).get("result") or []
+    ws_bool = [x for x in ws if x["containerName"] == "Bool" and x["name"] == "not"]
+    check("7.5 a workspace symbol's location is in the SOURCE tree",
+          len(ws_bool) == 1 and in_source_tree(ws_bool[0]["location"]["uri"]),
+          repr(ws_bool))
+    check("7.5 no workspace-symbol location is in the build output",
+          all("/target/" not in x["location"]["uri"] for x in ws),
+          repr([x["location"]["uri"] for x in ws if "/target/" in x["location"]["uri"]][:2]))
+    # The file the server sends is the one the user would edit, and it is
+    # really there.
+    check("7.5 the rewritten target file exists on disk",
+          pathlib.Path(urllib.parse.urlparse(ws_bool[0]["location"]["uri"]).path).is_file()
+          if ws_bool else False)
+
+    # ---- 7.5, TICKET E10(5): THE QUICK FIX SEES THROUGH THE FILE'S OWN
+    # TYPE SYNONYMS.  `Syn.e` reaches `Widget` only through `type Widget =
+    # Widget_W` over `import SynSrc as W`, so `ModuleScope.canonicalTypes`
+    # holds `Widget_W` and the printer writes `Widget`: the add-signature
+    # action used to refuse a signature the file can perfectly well write
+    # (33 name occurrences over the corpus, 29 of them `Scan` in
+    # `Layout/Scan.e`).
+    open_doc("SynSrc.e")
+    check("7.5 SynSrc.e clean", client.diagnostics_for(uri("SynSrc.e")) == [])
+    open_doc("Syn.e")
+    check("7.5 Syn.e clean", client.diagnostics_for(uri("Syn.e")) == [])
+    syn_src = raw("Syn.e")
+    r = code_actions("Syn.e", 14)               # `boxed = MkWidget_W`
+    a = act(r, "add signature: boxed : Widget")
+    check("7.5 a synonym-typed binding is offered its signature",
+          a is not None, repr(titles(r)))
+    check("7.5 the synonym signature goes above the equation",
+          a is not None and edits_of(a) == [{
+              "range": {"start": {"line": 14, "character": 0},
+                        "end": {"line": 14, "character": 0}},
+              "newText": "boxed : Widget\n"}], repr(a and edits_of(a)))
+    change("Syn.e", apply_ws(syn_src, a), 2)
+    check("7.5 the applied synonym signature re-checks clean",
+          client.diagnostics_for(uri("Syn.e")) == [])
+    change("Syn.e", syn_src, 3)
+    check("7.5 Syn.e clean again", client.diagnostics_for(uri("Syn.e")) == [])
+    # THE SOUNDNESS CONTROL.  `type Boxed a = Box_W a` says how to write
+    # `Box x`; it does NOT make the bare constructor `Box` writable, so
+    # `wrapped : Box Widget` stays refused.  Only a NULLARY synonym of a
+    # bare constructor is published, and this is the half that must not be.
+    r = code_actions("Syn.e", 16)               # `wrapped = MkBox_W MkWidget_W`
+    check("7.5 a PARAMETERISED synonym licenses no bare spelling",
+          not any(t.startswith("add signature: wrapped") for t in titles(r)),
+          repr(titles(r)))
+
+    # ---- 7.5, TICKET E7 (the half that is shippable): AN UNDEFINED TYPE IS
+    # WITHHELD WHILE AN IMPORT FAILED, the same rule 6.1(b) applies to
+    # undefined TERMS and for the same reason -- a module that did not load
+    # contributes no type names either, so "undefined type" is a consequence
+    # of the import failure rather than a second thing to fix.  The note
+    # cannot carry a `spelling` (`assertTypeClosed` dies once with every free
+    # type variable joined into one report), so it carries a FLAG set where it
+    # is built -- never a match on its text.  The OPERATOR half of E7 is
+    # deferred; the ticket says why.
+    open_doc("BadTy.e")
+    ds = client.diagnostics_for(uri("BadTy.e"))
+    check("7.5 a failed import is the only diagnostic, not the type it would supply",
+          len(ds) == 1 and "import NoSuchTypeModule failed" in ds[0]["message"], repr(ds))
+    check("7.5 no undefined-type cascade from a failed import",
+          not any("undefined type" in d["message"] for d in ds), repr(ds))
+    # THE CONTROL, and it is what keeps this from being a filter that deletes
+    # the note outright: with NO import failing, an undefined type is a real
+    # error and is still reported, at the name.
+    open_doc("UndefTy.e")
+    ds = client.diagnostics_for(uri("UndefTy.e"))
+    check("7.5 with no failed import an undefined type is still reported",
+          len(ds) == 1 and "undefined type" in ds[0]["message"]
+          and ds[0]["range"]["start"] == {"line": 7, "character": 8}, repr(ds))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("BadTy.e")}})
+    client.diagnostics_for(uri("BadTy.e"))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("UndefTy.e")}})
+    client.diagnostics_for(uri("UndefTy.e"))
+
     # Checks must neither read nor write interface files (a stale .ei would
     # let type errors through unreported, and writebacks litter workspaces).
     check("no .ei droppings", not list(FIXTURES.glob("*.ei")),
@@ -2405,19 +2766,97 @@ def main():
         check("7.2 the line-shifted check reuses every component",
               int(anchor_runs[1][0]) > 0 and anchor_runs[1][0] == anchor_runs[1][1],
               repr(anchor_runs[1]))
+    # 7.1b's own acceptance number, from the same log: every check reports
+    # what the surface cache did, the cold ones reuse NOTHING, and the
+    # keystroke ones reuse all but the edited statement and the one before
+    # it (the statement before an edit always misses -- its parse examines
+    # its successor's first byte, LSP4-7.1a-MARK.md §5).
+    splice_runs = re.findall(
+        r"check: Splice read [0-9.,]+s, typecheck [0-9.,]+s "
+        r"\(reused \d+ of \d+ components\), surface (\d+) of (\d+) statements", log1)
+    check("7.1b every Splice check reports the surface reuse", len(splice_runs) >= 6,
+          repr(splice_runs))
+    if len(splice_runs) >= 6:
+        check("7.1b the cold open reuses no statement", splice_runs[0][0] == "0",
+              repr(splice_runs[0]))
+        check("7.1b a body edit reuses all but the edited statement and its predecessor",
+              int(splice_runs[1][0]) >= int(splice_runs[1][1]) - 2 and
+              int(splice_runs[1][0]) > 0, repr(splice_runs[1]))
+        check("7.1b an edit above reuses across the line shift",
+              int(splice_runs[2][0]) > 0, repr(splice_runs[2]))
+        check("7.1b the re-open after didClose is cold again",
+              splice_runs[-1][0] == "0", repr(splice_runs[-1]))
+    check("7.1b no check reuses more statements than the file has",
+          all(int(h) <= int(n) for h, n in splice_runs), repr(splice_runs))
+    # 7.4's acceptance, from the server's own log.
+    # (a) THE BURST PIN: the eight keystrokes 20 ms apart produced exactly ONE
+    #     check of Burst.e beyond the didOpen -- one check, one publish, since
+    #     every `check:` line has a `diagnostics:` publish line of its own.
+    burst_checks = re.findall(r"check: Burst read ", log1)
+    burst_pubs = re.findall(r"diagnostics: (didOpen|didChange) Burst\.e -> ", log1)
+    check("7.4 sixteen keystrokes in two bursts produce exactly two checks",
+          len(burst_checks) == 3, repr(burst_checks) + " (one didOpen + two bursts)")
+    check("7.4 one check, one publish",
+          burst_pubs == ["didOpen", "didChange", "didChange"], repr(burst_pubs))
+    burst_waits = re.findall(r"debounce: Burst\.e waited (\d+)ms "
+                             r"\(median (\d+)ms of (\d+) checks, policy (\d+)ms\)", log1)
+    check("7.4 each burst waited exactly one window", len(burst_waits) == 2,
+          repr(burst_waits))
+    check("7.4 a small file's window is the FLOOR, 150 ms",
+          len(burst_waits) == 2 and burst_waits[-1][0] == "150"
+          and int(burst_waits[-1][1]) < 150, repr(burst_waits))
+    # The same for the largest module, whose window must be the CEILING.
+    rep_checks = re.findall(r"check: Layout\.Report read ", log1)
+    rep_waits = re.findall(r"debounce: Report\.e waited (\d+)ms "
+                           r"\(median (\d+)ms of (\d+) checks, policy (\d+)ms\)", log1)
+    check("7.4 a burst on the largest module is also exactly one check",
+          len(rep_checks) == 2, repr(rep_checks))
+    check("7.4 the largest module waits the CEILING, 300 ms",
+          len(rep_waits) == 1 and rep_waits[0][0] == "300"
+          and int(rep_waits[0][1]) > 300, repr(rep_waits))
+    # (b) THE POLICY, on every debounced check in the whole run: what was
+    #     waited is what clamp(150, median, 300) says for the samples the
+    #     server had, and the median is over at most five of them.
+    policy_rows = re.findall(r"debounce: \S+ waited (\d+)ms \(median (\d+)ms of "
+                             r"(\d+) checks, policy (\d+)ms\)", log1)
+    check("7.4 every debounced check logged its policy", len(policy_rows) >= 3,
+          repr(policy_rows[:3]))
+    # `waited <= policy`, not `==`: the loop has ONE quiet window and the queue
+    # can hold more than one document, so `Diagnostics.quiet()` waits the
+    # MINIMUM of the queued documents' windows and then runs their checks back
+    # to back.  A document whose own policy is 300 ms can therefore legitimately
+    # be checked after a 150 ms wait, because a cheaper sibling was owed a check
+    # too.  What must always hold is that nothing waits LONGER than its policy
+    # asked, and that the policy is the clamp of the median the server reports.
+    bad = [r for r in policy_rows
+           if not (int(r[0]) <= int(r[3])
+                   and int(r[3]) == min(300, max(150, int(r[1])))
+                   and 1 <= int(r[2]) <= 5)]
+    check("7.4 waited <= policy == clamp(150, median, 300) on every debounced "
+          "check, over at most 5 samples", bad == [], repr(bad[:3]))
     log2 = LOG + ".phases"
     pathlib.Path(log2).write_text("")
     cmd2 = [(("-Dermine.lsp.log=" + log2) if a.startswith("-Dermine.lsp.log=") else a)
             for a in sys.argv[1:]]
     cmd2.insert(1, "-Dermine.lsp.phases=true")
     c2 = Client(cmd2)
-    c2.response(c2.request("initialize", {"capabilities": {}}))
+    # 7.4: the same short run pins the debounce through the new
+    # initializationOption, which is what perf-bench.sh uses to keep measuring
+    # against a KNOWN window now that the shipped one is derived from the
+    # measured check time.
+    c2.response(c2.request("initialize", {"capabilities": {},
+                                          "initializationOptions": {"debounce": 250}}))
     c2.notify("initialized", {})
     c2.wait_for(lambda m: m.get("method") == "window/logMessage"
                 and "ready" in m["params"]["message"], "readiness logMessage")
     c2.notify("textDocument/didOpen", {"textDocument": {
         "uri": uri("Good.e"), "languageId": "ermine", "version": 1,
         "text": (FIXTURES / "Good.e").read_text()}})
+    c2.diagnostics_for(uri("Good.e"))
+    good_src = (FIXTURES / "Good.e").read_text()
+    c2.notify("textDocument/didChange", {
+        "textDocument": {"uri": uri("Good.e"), "version": 2},
+        "contentChanges": [{"text": good_src.replace("answer = 42", "answer =  42")}]})
     c2.diagnostics_for(uri("Good.e"))
     c2.response(c2.request("shutdown", None))
     c2.notify("exit", {})
@@ -2427,6 +2866,14 @@ def main():
           re.search(r"phases: .*\bparse=[0-9.]+ .*\bcheck\.total=[0-9.]+", text2)
           is not None,
           repr([l for l in text2.splitlines() if "phases:" in l][:1]))
+    check("7.4 initializationOptions.debounce pins the window",
+          "debounce PINNED at 250ms" in text2,
+          repr([l for l in text2.splitlines() if "debounce" in l][:2]))
+    pinned = re.findall(r"debounce: Good\.e waited (\d+)ms \(median \d+ms of \d+ "
+                        r"checks, policy (\d+)ms, PINNED at (\d+)ms\)", text2)
+    check("7.4 a pinned window is what the loop waits, whatever the policy says",
+          len(pinned) == 1 and pinned[0][0] == "250" and pinned[0][2] == "250"
+          and 150 <= int(pinned[0][1]) <= 300, repr(pinned))
 
     if failures:
         print("  FAIL  lsp")

@@ -1,7 +1,8 @@
 module ShouldFail.Sig03 where
 
-{- SHOULD FAIL -- error class 6, SIGNATURE CONTEXT TOO WEAK.  REJECTED today, at the
-   CALL SITE -- and NOT because the checker caught it.
+{- SHOULD FAIL -- error class 6, SIGNATURE CONTEXT TOO WEAK.  *** CURRENTLY ACCEPTED ***
+   (since LET-1, cff6c42, honours let-bound signatures: this is now sig01 in a let).
+   Before LET-1 it was REJECTED at the CALL SITE -- and NOT because the checker caught it:
 
    Pinned 2026-09-10; explained 2026-09-11 (S1, tracker/loopmodel/SIG-1-SURVEY.md and
    SIG-1-REVIEW.md).  sig01's shape on a LET-BOUND binding.  The module is refused with

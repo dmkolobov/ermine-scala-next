@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# The GATE G3 demo run: spawn the language server exactly the way lsp-smoke.sh
+# The GATE G4 demo run: spawn the language server exactly the way lsp-smoke.sh
 # does, drive tracker/tools/lsp-demo.py over the fixtures, and print the
 # transcript on stdout.
 #
-#   tracker/tools/lsp-demo.sh > tracker/lsp-tests/G3-demo.txt
+#   tracker/tools/lsp-demo.sh > tracker/lsp-tests/G4-demo.txt
 #
 # This is evidence, not a test: lsp-smoke.sh is the regression harness.
 set -uo pipefail
