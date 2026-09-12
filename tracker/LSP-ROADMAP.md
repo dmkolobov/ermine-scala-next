@@ -8,18 +8,13 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: INTERSTAGE ITEM 6.2b DONE (2026-09-12) — the pattern-binder hover hook is
-built, reviewed (ACCEPT WITH FIXES, all ten R-items applied) and green on every gate;
-STOPPED FOR THE USER on ONE number: the brief's editor budget (≤ 5 % of the round
-trip) reads OVER on the implementer's eight rounds (+58 ms / 6.4 %) and INSIDE on the
-reviewer's four (+34.5 ms / 3.9 %); the hook is ON in the editor as built.  The user
-decides ship (leave as is) or park (a second `checkWith` parameter, 13 lsp-smoke
-checks back to null, 1975 binders silent again; see LSP-6.2b-REVIEW.md §10).
-Baselines on THIS tree after the signature-entailment merge (51629452) and 6.2b:
-core/test 1063, corpus 89/79/0 of 168 (the merge's "88/70/0 of 158" was taken with
-sigEntail OFF before LET-1 added ten examples), 274 interfaces, lsp-smoke 565.
-Stage 4 is COMPLETE and G4 SIGNED OFF; the worker thread (7.6) is postponed by the
-user; Stage 5 is NOT drafted.
+Status: INTERSTAGE ITEM 6.2b SHIPPED (2026-09-12; the user: "Ship it") — the
+pattern-binder hover hook is ON in the editor as committed in 9972ccf9; GATE (6.2b)
+signed off on the reviewer's editor A/B (+34.5 ms / 3.9 % of the round trip, inside
+the 5 % budget; the implementer's +58 ms / 6.4 % recorded as the other reading).
+Baselines on THIS tree: core/test 1063, corpus 89/79/0 of 168, 274 interfaces,
+lsp-smoke 565.  Stage 4 is COMPLETE and G4 SIGNED OFF; the worker thread (7.6) is
+postponed by the user; Stage 5 is NOT drafted — nothing runs until the user opens it.
 
 ## Baselines (hard invariants — never commit red)
 
@@ -2196,7 +2191,7 @@ byte-identity is proved against the baseline the entailment change leaves.
   stale one-JVM rule (lifted to GATE-POLICY's parallelism rules) and a stale corpus
   baseline (158 -> 168).
 
-**GATE (6.2b)** — EVIDENCE RECORDED 2026-09-12, STOPPED FOR THE USER: Tier 1 green
+**GATE (6.2b)** — SIGNED OFF 2026-09-12 (the user: "Ship it"; the hook stays ON). Evidence: Tier 1 green
 on the reviewer's own run; both A/Bs recorded (the editor number is the decision);
 the coverage table above; lsp-smoke 565.  Ship = leave the tree as committed.
 Park = the review's §10 recipe.
@@ -2219,8 +2214,8 @@ deletion + the debt list).
 
 (empty — G0 signed off 2026-08-30, user: “keep going”)
 
-**FORK 6.2 — RESOLVED by interstage item 6.2b (2026-09-12; see its DONE paragraph; the
-ship/park call on the editor number is with the user).  Original entry:** pattern-binder
+**FORK 6.2 — RESOLVED by interstage item 6.2b (2026-09-12; see its DONE paragraph; shipped
+on the user's word).  Original entry:** pattern-binder
 types beyond equation arguments need a hook in `Subst.scala` (2026-09-10; the user's decision).  Item 6.2 delivered hover on
 `let`/`where` binders, signed pattern binders, EQUATION-ARGUMENT binders (the
 reviewer's option 4: the head's inferred type split by arity, no checker change
@@ -3404,7 +3399,7 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
-- 2026-09-12 (INTERSTAGE 6.2b DONE — STOPPED FOR THE USER'S SHIP/PARK CALL): see
+- 2026-09-12 (INTERSTAGE 6.2b DONE, then SHIPPED on the user's word the same day): see
   the item's DONE paragraph.  The night's shape held: refutation first, then the
   workable hook; the reviewer refuted seven of the report's figures (none about
   the mechanism), re-measured the one number that made it PARTIAL and found it
