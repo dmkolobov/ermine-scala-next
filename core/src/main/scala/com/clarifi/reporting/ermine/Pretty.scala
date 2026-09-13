@@ -202,8 +202,21 @@ object Pretty {
       foldrPP(xs, none, reduce) map (y => y getOrElse empty)
     }
 
+  /** Item E11a: a concrete row's labels print SORTED BY NAME.  `fields` is a
+    * `Set[Name]`, and `toList` hands them back in iteration order, which for
+    * anything past a four-element set is the hash order of the names -- so one
+    * and the same row printed `(|pTitle, pMinValue, pRegion|)` on one check of a
+    * module and `(|pMinValue, pRegion, pTitle|)` on the next (ticket E11, the
+    * 7.2 review's R-4).  Sorting here is a PRINTER change and reaches every
+    * output that shows a row -- hover, `browse`, the REPL, error messages and
+    * the published `.ei` -- which is intended: the order carried no
+    * information, and the interface writer and the editor must agree.
+    * `Name.toString` is the sort key (`Local`'s spelling; `Global`'s
+    * fixity-dependent spelling), not the rendered `ppName`, which depends on
+    * the ambient `Qualification`; every row that reaches here is a row of
+    * FIELD names, so the two orders coincide. */
   def formatRho(t: Type)(implicit q: Qualification) : Pretty[Document] = t match {
-    case ConcreteRho(_,fields) => fields.toList.traverse(n => ppName(n)) map (l => vcat(punctuate(text(","), l)))
+    case ConcreteRho(_,fields) => fields.toList.sortBy(_.toString).traverse(n => ppName(n)) map (l => vcat(punctuate(text(","), l)))
     case _ => ppType(t) map (text("..") :: _)
   }
 

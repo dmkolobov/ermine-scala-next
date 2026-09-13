@@ -1,6 +1,6 @@
 -- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 attr : forall (a: rho) b. Builtin.Field a b -> Relation.Process.Attribute
-medianBy : forall (v: rho) n (rel: rho -> *) (r: rho). (r <- (v, t), Builtin.Relational rel, Builtin.PrimitiveNum n) => Builtin.Field v n -> rel r -> Builtin.Mem v
+medianBy : forall (v: rho) n (rel: rho -> *) (r: rho). (Builtin.PrimitiveNum n, Builtin.Relational rel, r <- (v, t)) => Builtin.Field v n -> rel r -> Builtin.Mem v
 toMem : forall (a: rho -> *) (b: rho). Builtin.Relational a => a b -> Builtin.Mem b
-weightedHarmonicMeanBy : forall (w: rho) n (v: rho) (rel: rho -> *) (r: rho). (r <- (w, v, t), Builtin.Relational rel, Builtin.PrimitiveNum n) => Builtin.Field w n -> Builtin.Field v n -> rel r -> Builtin.Mem v
-weightedMeanBy : forall (w: rho) n (v: rho) (rel: rho -> *) (r: rho). (r <- (w, v, t), Builtin.Relational rel, Builtin.PrimitiveNum n) => Builtin.Field w n -> Builtin.Field v n -> rel r -> Builtin.Mem v
+weightedHarmonicMeanBy : forall (w: rho) n (v: rho) (rel: rho -> *) (r: rho). (Builtin.PrimitiveNum n, Builtin.Relational rel, r <- (w, v, t)) => Builtin.Field w n -> Builtin.Field v n -> rel r -> Builtin.Mem v
+weightedMeanBy : forall (w: rho) n (v: rho) (rel: rho -> *) (r: rho). (Builtin.PrimitiveNum n, Builtin.Relational rel, r <- (w, v, t)) => Builtin.Field w n -> Builtin.Field v n -> rel r -> Builtin.Mem v

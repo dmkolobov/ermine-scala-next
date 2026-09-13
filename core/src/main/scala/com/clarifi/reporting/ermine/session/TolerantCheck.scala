@@ -438,21 +438,12 @@ object TolerantCheck {
       * unedited module draw different ids (the `Supply` has moved), which is
       * how 6.6 found 145 of 223 "divergences" that were order alone.  A head
       * hover must not flicker, so the binders are re-ordered here by where
-      * they first appear in what is printed. */
-    def varOrder(t: Type): List[Int] = {
-      val acc = scala.collection.mutable.ListBuffer.empty[Int]
-      val seen = scala.collection.mutable.Set.empty[Int]
-      def go(x: Type): Unit = x match {
-        case VarT(v)               => if (seen.add(v.id)) acc += v.id
-        case AppT(f, a)            => go(f); go(a)
-        case Forall(_, _, _, q, b) => go(q); go(b)
-        case Exists(_, _, cs)      => cs.foreach(go)
-        case Part(_, l, r)         => go(l); r.foreach(go)
-        case Memory(_, b)          => go(b)
-        case _                     => ()
-      }
-      go(t); acc.toList
-    }
+      * they first appear in what is printed.
+      *
+      * E11a: the definition MOVED to `Canonical.varOrder`, because the
+      * publisher needs the same order (`Subst.generalize`) and the two must not
+      * drift.  This is the editor's name for it. */
+    def varOrder(t: Type): List[Int] = Canonical.varOrder(t)
 
     /** 6.2c: an ID-FREE key for one constraint, for ordering a kept set.
       *
@@ -468,22 +459,17 @@ object TolerantCheck {
       * same way.  A partition's right-hand side is sorted inside the key
       * because that list is id-keyed too (`AlphaEq.multi` backtracks over it
       * for the same reason); the RENDERING still prints it in the checker's
-      * order, which is the residual R-7 names and the 7.2 sweep would catch. */
-    def constraintKey(t: Type, pos: Map[Int, Int]): String = {
-      val local = scala.collection.mutable.Map.empty[Int, Int]
-      def go(x: Type): String = x match {
-        case VarT(v)               => pos.get(v.id).map("#" + _)
-                                        .orElse(v.name.map("@" + _.toString))
-                                        .getOrElse("?" + local.getOrElseUpdate(v.id, local.size))
-        case AppT(f, a)            => "(" + go(f) + " " + go(a) + ")"
-        case Forall(_, _, _, q, b) => "F[" + go(q) + "|" + go(b) + "]"
-        case Exists(_, _, cs)      => "E[" + cs.map(go).sorted.mkString(",") + "]"
-        case Part(_, l, r)         => "P[" + go(l) + "<-" + r.map(go).sorted.mkString(",") + "]"
-        case Memory(_, b)          => go(b)
-        case other                 => other.toString
-      }
-      go(t)
-    }
+      * order, which is the residual R-7 names and the 7.2 sweep would catch.
+      *
+      * E11a: the definition MOVED to `Canonical.constraintKey`, which also gave
+      * it the `ConcreteRho` and `Con` cases it was missing -- a row fell through
+      * to `other.toString`, which prints a `Set[Name]` in ITERATION order, so
+      * the key that exists to be id-free carried the label order after all.
+      * The ORDERING of a displayed scheme is `Canonical.scheme`'s now; this key
+      * survives as the IDENTITY of a constraint, for the kept/shown comparison
+      * below. */
+    def constraintKey(t: Type, pos: Map[Int, Int]): String =
+      Canonical.constraintKey(t, pos)
 
     /** 6.2c: the constraints of a published constraint set, as a list. */
     def constraintsOf(q: Type): List[Type] = q match {
@@ -511,18 +497,6 @@ object TolerantCheck {
     def constraintsKept(q: Type, visible: Set[Int]): List[Type] =
       constraintsOf(q).filter(c => Type.typeVars(c).forall(v => visible(v.id)))
 
-    /** 6.2c (review R-7): a kept constraint with its PARTITION right-hand side put
-      * in an id-free order.  That list is built from a set like every other list
-      * here, so `a <- (r, r2, s, k, v)` and `a <- (s, r, r2, k, v)` are the same
-      * constraint printed two ways by two checks of one unedited file (measured:
-      * `Report.e:1340:7`, `Tree.e:84:9`).  Ordering is by `constraintKey`, which
-      * reads a variable's position in the body and then its NAME -- never its id.
-      * `new Part` and not `Part.apply`: the smart constructor rewrites concrete
-      * rows, and this is a re-ordering for display, not a simplification. */
-    def normaliseConstraint(t: Type, pos: Map[Int, Int]): Type = t match {
-      case p: Part => new Part(p.loc, p.lhs, p.rhs.sortBy(constraintKey(_, pos)))
-      case other   => other
-    }
 
     /** 6.2c: a published scheme AS A LOCAL HEAD SHOWS IT.  Two display rules,
       * and nothing else -- the type itself is the checker's.
@@ -548,22 +522,31 @@ object TolerantCheck {
       *    module's top-level group only.  This rule is the EDITOR's, and the
       *    heads it fires on are pinned (`Result.headElided`) and cross-checked
       *    against the published set (`Result.headLost`, asserted empty).
-      * 2. The kept constraints are ordered by `constraintKey` and the
-      *    quantifier's variables by first occurrence (`varOrder`), so neither
-      *    the letters nor the constraint order depends on ids.
+      * 2. What survives the filter is put in THE canonical form
+      *    (`Canonical.scheme`, item E11a) -- the same form `Subst.generalize`
+      *    now publishes, so a local head and the `.ei` order one and the same
+      *    set the same way, and neither the letters nor the constraint order
+      *    depends on ids.  Before E11a this rule was a private re-ordering
+      *    here, with the universal binders ordered by first occurrence in the
+      *    CONSTRAINTS and then the body; the shared rule reads the BODY first,
+      *    which is what a reader of a signature reads first.
       *
       * `Forall.apply` collapses the result to the bare body when nothing is
       * left to quantify, so a monomorphic local head renders exactly the
       * string it rendered before 6.2c. */
     def displayScheme(t: Type): Type = t match {
       case Forall(l, ks, ts, q, body) =>
-        val bodyPos = varOrder(body).zipWithIndex.toMap
         val visible = ts.map(_.id).toSet ++ Type.typeVars(body).map(_.id)
-        val kept    = constraintsKept(q, visible).map(normaliseConstraint(_, bodyPos))
-                        .sortBy(c => constraintKey(c, bodyPos))
-        val keep    = if (kept.isEmpty) Exists(l.inferred) else Exists(l.inferred, Nil, kept)
-        val pos     = (varOrder(keep) ++ varOrder(body)).zipWithIndex.toMap
-        Forall(l, ks, ts.sortBy(v => pos.getOrElse(v.id, Int.MaxValue)), keep, body)
+        val kept    = constraintsKept(q, visible)
+        // `new Exists` and not `Exists.apply`: the smart constructor ends in
+        // `p.toSet.toList`, which is where 6.2c's careful constraint sort was
+        // being thrown away again (E11a; R-7 saw the symptom and read it as
+        // rule 1 only HIDING the residual).
+        val keep    = if (kept.isEmpty) Exists(l.inferred)
+                      else new Exists(l.inferred, Nil, kept)
+        // E11a review R-6: `-Dermine.canon=off` must reach hover too.
+        if (Canonical.atPublication) Canonical.scheme(Forall(l, ks, ts, keep, body))
+        else Forall(l, ks, ts, keep, body)
       case other => other
     }
 
@@ -1153,10 +1136,21 @@ object TolerantCheck {
       case _                                        => None
     }
 
+    /* E11a: the published types the EDITOR hands out, in the canonical form
+     * (`Canonical.scheme`).  The implicit half already is one -- its
+     * `generalize` above ran with `publishing = true` -- and re-applying the
+     * rule to it is an identity; the DECLARED half is not, because a
+     * declaration reaches here through `unbindAnnot` and `substType`, whose
+     * `Exists.apply` re-buckets the constraint list by the hash of the
+     * SUBSTITUTED types, so two cold checks of one unedited file ordered it two
+     * ways (ticket E11, measured on `Layout/Chart.e`'s `seriesW` and
+     * `Layout/Report/Keyed.e`'s `keyValueTabular`).  `Subst.inferBindingGroupTypes`
+     * does the same to what the BATCH loader publishes, so the hover and the
+     * `.ei` agree. */
     val types =
       (subs.flatMap { case (v, v2) => v.name.map(_.string -> v2.extract) } ++
        etm.flatMap  { case (v, t)  => v.name.map(_.string -> t) } ++
-       foreignTypes).toMap
+       foreignTypes).toMap.map { case (n, t) => (n, if (Canonical.atPublication) Canonical.scheme(t, dropHints = false) else t) }  // E11a R-6; hints already settled at publication
     (Result(notes.toList, types, reused, components, locals, agreed, disagreed, rankN,
             headAgreed, headDisagreed, headRequantified, headElided, headLost, headShown,
             ownTypes),

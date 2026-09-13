@@ -1,9 +1,9 @@
--- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 aggregate : forall n a. (n -> n -> n) -> (a -> n) -> Tree.Tree a -> Tree.Tree (n, a)
 aggregateLeaves : forall n a. (n -> n -> n) -> (a -> Builtin.Maybe n) -> Tree.Tree a -> Tree.Tree (n, a)
 fillZero : forall n a. Tree.Tree (Builtin.Maybe n, a) -> Tree.Tree (n, a)
 fold : forall a b. (a -> Builtin.List b -> b) -> Tree.Tree a -> b
-fromRel : forall z n (pid: rho) (cid: rho) (rel: rho -> *) (t: rho) (h: rho). (t <- (pid, cid, h), Builtin.Relational rel, Builtin.Primitive n) => Relation.Scan.RunScan Builtin.List z -> n -> Builtin.Field pid n -> Builtin.Field cid n -> rel t -> Control.Monad.Cont.Cont z (Tree.Tree (Builtin.Record h))
+fromRel : forall z n (pid: rho) (cid: rho) (rel: rho -> *) (t: rho) (h: rho). (Builtin.Primitive n, Builtin.Relational rel, t <- (pid, cid, h)) => Relation.Scan.RunScan Builtin.List z -> n -> Builtin.Field pid n -> Builtin.Field cid n -> rel t -> Control.Monad.Cont.Cont z (Tree.Tree (Builtin.Record h))
 identify : forall b a. List.Stream.Stream b -> Tree.Tree a -> Tree.Tree (b, a)
 join : forall (a1: rho) (b1: rho) (c1: rho). c1 <- (a1, b1) => Tree.Tree (Builtin.Record a1) -> Tree.Tree (Builtin.Record b1) -> Tree.Tree (Builtin.Record c1)
 map : forall a b. (a -> b) -> Tree.Tree a -> Tree.Tree b

@@ -1,26 +1,26 @@
--- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 append : forall (r1: rho) (r2: rho) (r: rho). r <- (r1, r2) => Relation.Sort.Sort r1 -> Relation.Sort.Sort r2 -> Relation.Sort.Sort r
-bottomK : forall (h: rho) (rel: rho -> *) (r: rho). (exists (c: rho). r <- (h, c), Builtin.RelationalComb rel) => Relation.Row.Row h -> Builtin.Int -> rel r -> rel r
-dualSort : (Builtin.Primitive b, Builtin.Primitive a) => Relation.Sort.SortOrder -> Relation.Sort.SortOrder -> Relation.Sort.MultiSortOrder#
+bottomK : forall (h: rho) (rel: rho -> *) (r: rho). (exists (c: rho). Builtin.RelationalComb rel, r <- (h, c)) => Relation.Row.Row h -> Builtin.Int -> rel r -> rel r
+dualSort : (Builtin.Primitive a, Builtin.Primitive b) => Relation.Sort.SortOrder -> Relation.Sort.SortOrder -> Relation.Sort.MultiSortOrder#
 empty : Relation.Sort.Sort (||)
 firstK : forall (r: rho). Builtin.Int -> Builtin.Relation r -> Builtin.Relation r
 intersect : forall a b c d e. Builtin.Eq a => Builtin.List (a, b, c) -> Builtin.List (a, d, e) -> Builtin.List (a, b, c)
 invert : forall (r: a). Relation.Sort.Sort r -> Relation.Sort.Sort r
 isAscending : Relation.Sort.SortOrder -> Builtin.Bool
-limit : forall (h: rho) (rel: rho -> *) (r: rho). (exists (c: rho). r <- (h, c), Builtin.RelationalComb rel) => Relation.Sort.Sort h -> Builtin.Maybe Builtin.Int -> Builtin.Maybe Builtin.Int -> rel r -> rel r
+limit : forall (h: rho) (rel: rho -> *) (r: rho). (exists (c: rho). Builtin.RelationalComb rel, r <- (h, c)) => Relation.Sort.Sort h -> Builtin.Maybe Builtin.Int -> Builtin.Maybe Builtin.Int -> rel r -> rel r
 minusS : forall a b c d e. Builtin.Eq a => Builtin.List (a, b, c) -> Builtin.List (a, d, e) -> Builtin.List (a, b, c)
 only : forall (r: rho) (s: rho). (exists (c: rho). r <- (s, c)) => Relation.Sort.Sort r -> Relation.Sort.Sort s -> Relation.Sort.Sort s
-onlySome : forall (r: rho) (s: rho) (rs: rho). (exists (c: rho) (c1: rho). s <- (rs, c1), r <- (rs, c)) => Relation.Sort.Sort r -> Relation.Sort.Sort s -> Relation.Sort.Sort rs
+onlySome : forall (r: rho) (s: rho) (rs: rho). (exists (c: rho) (c1: rho). r <- (rs, c), s <- (rs, c1)) => Relation.Sort.Sort r -> Relation.Sort.Sort s -> Relation.Sort.Sort rs
 ordering : forall (r: rho). Relation.Row.Row r -> Relation.Sort.Sort r
 pairwiseFilt : forall a b c d e f g. (Builtin.List a -> Builtin.Bool) -> (b -> c -> a) -> Builtin.List (b, d, e) -> Builtin.List (c, f, g) -> Builtin.List (b, d, e)
 partialRecordOrd : forall (r: rho) (s: rho). s <- (r, o) => Relation.Sort.Sort r -> Builtin.Record s -> Builtin.Record s -> Ord.Ordering
 recordOrd : forall (r: rho). Relation.Sort.Sort r -> Builtin.Record r -> Builtin.Record r -> Ord.Ordering
 reorder : forall (r: rho) (s: rho). (exists (c: rho). r <- (s, c)) => Relation.Sort.Sort r -> Relation.Sort.Sort s -> Relation.Sort.Sort r
 reorderSome : forall (r: rho) (s: rho). Relation.Sort.Sort r -> Relation.Sort.Sort s -> Relation.Sort.Sort r
-reorderSplit : forall (r: rho) (s: rho) (rs: rho) (ro: rho). (exists (c: rho). s <- (rs, c), r <- (rs, ro)) => Relation.Sort.Sort r -> Relation.Sort.Sort s -> (Relation.Sort.Sort rs, Relation.Sort.Sort ro)
+reorderSplit : forall (r: rho) (s: rho) (rs: rho) (ro: rho). (exists (c: rho). r <- (rs, ro), s <- (rs, c)) => Relation.Sort.Sort r -> Relation.Sort.Sort s -> (Relation.Sort.Sort rs, Relation.Sort.Sort ro)
 single : forall (f: rho) a. (Builtin.Field f a, Relation.Sort.SortOrder) -> Relation.Sort.Sort f
 singleSort : Builtin.Primitive a => Relation.Sort.SortOrder -> Relation.Sort.MultiSortOrder#
 toSort# : forall (r: a). Relation.Sort.Sort r -> Native.List.List# (Native.Pair.Pair# Builtin.String Relation.Sort.SortOrder#)
 toSortOrder# : Relation.Sort.SortOrder -> Relation.Sort.SortOrder#
 toTypedSort# : forall (r: a). Relation.Sort.Sort r -> Native.List.List# (Native.Pair.Pair# (Native.Pair.Pair# Builtin.String Builtin.PrimT) Relation.Sort.SortOrder#)
-topK : forall (h: rho) (rel: rho -> *) (r: rho). (exists (c: rho). r <- (h, c), Builtin.RelationalComb rel) => Relation.Row.Row h -> Builtin.Int -> rel r -> rel r
+topK : forall (h: rho) (rel: rho -> *) (r: rho). (exists (c: rho). Builtin.RelationalComb rel, r <- (h, c)) => Relation.Row.Row h -> Builtin.Int -> rel r -> rel r

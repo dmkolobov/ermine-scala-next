@@ -1,4 +1,4 @@
--- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 coerceSortStrategy : forall (r: rho) a (s: a1). Layout.Presentation.Presentation r a -> Layout.SortStrategy.SortStrategy s -> Layout.SortStrategy.SortStrategy r
 column# : forall n (k: rho) p d (v: a). Layout.Column.Column (n, Void.Bound (Layout.Legend.Legend k), p, d) k v -> Layout.Column.Unsafe.Table# Layout.Report.Atomic.EAtomic# Native.Relation.Relation#
 cosequence : forall rv a. Builtin.List (rv -> a) -> rv -> Builtin.List a

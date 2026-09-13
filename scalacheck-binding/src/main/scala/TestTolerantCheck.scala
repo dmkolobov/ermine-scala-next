@@ -4,7 +4,7 @@ import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.rename.{ NewPipeline, Renamer }
 import com.clarifi.reporting.ermine.surface.{ Anchors, SClassStatement, SDatabaseBlock, SEquation,
   SPat, SPAs, SPParen, SPSig, SPVar, SPrivateBlock, SStatement, Span }
-import com.clarifi.reporting.ermine.{ Pretty, SigEntail }
+import com.clarifi.reporting.ermine.{ Canonical, Pretty, SigEntail, Star }
 import com.clarifi.reporting.ermine.lsp.{ Diagnostics, Documents, Json, QuickFix, Resident }
 import com.clarifi.reporting.ermine.session.{ Printer, Session => S, SessionEnv, TolerantCheck }
 
@@ -1735,5 +1735,140 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     ((insertions >= 500) :| s"only $insertions insertions") &&
     ((scannerBad.isEmpty) :| s"${scannerBad.size} import-scanner disagreements: ${scannerBad.take(3)}") &&
     ((pct >= 95.0) :| f"only $pct%.2f%% of $insertions insertions clean")
+  }
+
+  // ---- E11a: a canonical FORM for published schemes ---------------------
+  //
+  // Ticket E11 / the 7.2 review's R-4: four COLD checks of an UNCHANGED
+  // `Present/WriterOutputs.e` in one JVM rendered `reportFor`'s published
+  // constraint part FOUR ways.  TWO causes, and this property separates them
+  // rather than tolerating either.
+  //
+  //   FORM  -- one and the same set printed differently, because every list a
+  //            published scheme carries came out of a SET and so followed the
+  //            ids the `Supply` had drawn by then: the labels inside a
+  //            concrete row, the constraints inside the `Exists`, the
+  //            existential binders (which is what assigns the LETTERS) and the
+  //            universal binders.  `Canonical.scheme` removes it at
+  //            publication; this property requires 0.
+  //   SET   -- the solver's order-dependent residual: two of the four rounds
+  //            keep a conjunct the other two dropped, entailed by its sibling.
+  //            Deleting it needs an entailment oracle (ROSE-COMPARISON.md rank
+  //            3 pass (ii), coNP-hard in general) and is interstage item E11b.
+  //            Pinned as a CEILING here, with the sets counted, so E11b's
+  //            arrival is visible and a regression is not.
+  //
+  // The FORM assertion compares RENDERED TEXT, byte for byte.  The ticket is
+  // explicit that it must not be closed by loosening a comparison to
+  // alpha-equivalence -- the user sees the rendering -- so nothing here is
+  // compared up to renaming; `Canonical.key` is used only to say WHICH
+  // renderings are required to be equal, never to excuse two that are not.
+  property("E11a: four cold checks of one module publish ONE form per constraint set") = secure {
+    residentLock.synchronized {
+      val f = new File("core/examples/Present/WriterOutputs.e")
+      val names = List("reportFor", "asDocument", "writerOutputs")
+      // didOpen ... didOpen, with a FRESH `Documents` each time: no per-uri
+      // inference cache survives, so every round is a cold check, and the
+      // session's `Supply` has advanced between them -- which is the whole
+      // repro.
+      val rounds: List[Map[String, (String, String)]] =
+        (1 to 4).toList.map { _ =>
+          val c = resident.checkFile(f.toPath, new Documents)
+          names.flatMap(n => c.types.get(n).map(t =>
+            n -> ((Pretty.prettyType(t, -1).toString, Canonical.key(t))))).toMap
+        }
+      val formSplits = names.flatMap { n =>
+        val seen = scala.collection.mutable.Map.empty[String, String]
+        rounds.flatMap(_.get(n)).flatMap { case (r, k) =>
+          seen.get(k) match {
+            case Some(r0) if r0 != r =>
+              Some(n + ": one constraint SET, two FORMS --\n    " + r0 + "\n    " + r)
+            case _ => seen(k) = r; None
+          }
+        }
+      }
+      val sets = names.map(n => n -> rounds.flatMap(_.get(n)).map(_._2).distinct.size)
+      val grew = sets.filter(_._2 > 3)
+      ((rounds.forall(_.size == names.size)) :|
+         ("a round published " + rounds.map(_.size).mkString("/") + " of " +
+          names.size + " heads -- the repro is vacuous")) &&
+      ((formSplits.isEmpty) :|
+         ("E11a FORM regression, " + formSplits.size + ":\n  " + formSplits.mkString("\n  "))) &&
+      ((grew.isEmpty) :|
+         ("the E11b SET class GREW past its pin (distinct published constraint sets over " +
+          "4 cold checks, ceiling 3): " + sets.mkString(", ") +
+          " -- interstage item E11b is what removes these, by deleting a conjunct the " +
+          "rest of the set entails; a CHANGE here is a solver-order change, not a form one"))
+    }
+  }
+
+  /** E11a, THE CORPUS HALF of the same question: two COLD checks of every clean
+    * module in one JVM, and the published types they render.  Three classes, and
+    * the item owns exactly one of them.
+    *
+    *   FORM  -- one constraint SET rendered two ways.  E11a's; REQUIRED 0.  The
+    *            comparison is of RENDERED TEXT (with the binder KIND annotations
+    *            blanked, so the class below is not counted twice) -- never up to
+    *            renaming, which the ticket forbids.
+    *   KIND  -- the two renderings differ ONLY in the KIND a binder is annotated
+    *            with: `(v34: f)` against `(v34: rho)`, an existential whose kind
+    *            one check left as a kind VARIABLE and the other solved.  That is
+    *            kind inference, not row-constraint form; it is pinned here so it
+    *            cannot grow unnoticed, and named as a follow-up in E11a-CANON.md.
+    *   SET   -- the published constraint set itself moved: the solver's
+    *            order-dependent residual, interstage item E11b.  Pinned as a
+    *            ceiling with its def-sites printed.
+    */
+  property("E11a: the corpus sweep — two cold checks publish ONE form") = secure {
+    residentLock.synchronized {
+      val files = corpusFiles
+      val form  = scala.collection.mutable.ListBuffer.empty[String]
+      val kind  = scala.collection.mutable.ListBuffer.empty[String]
+      val set   = scala.collection.mutable.ListBuffer.empty[String]
+      var bindings = 0
+      var identical = 0
+      var skipped = 0
+      // `t.map(_ => Star(...))` blanks every KIND: `ppTypeVarBinder` prints an
+      // annotation only for a binder whose kind is not `*`, so this is the same
+      // rendering with the kind annotations removed.
+      def shot(f: File): Option[Map[String, (String, String, String)]] =
+        try Some(resident.checkFile(f.toPath, new Documents).types.map { case (n, t) =>
+              n -> ((Pretty.prettyType(t, -1).toString,
+                     Pretty.prettyType(t.map(_ => Star(t.loc)), -1).toString,
+                     Canonical.key(t))) })
+        catch { case _: Throwable => None }
+      for (f <- files) (shot(f), shot(f)) match {
+        case (Some(a), Some(b)) =>
+          for (n <- (a.keySet & b.keySet).toList.sorted) {
+            bindings += 1
+            val (ra, ba1, ka) = a(n)
+            val (rb, bb1, kb) = b(n)
+            val where = f.getName + ":" + n
+            if (ra == rb)        identical += 1
+            else if (ka != kb)   set  += where
+            else if (ba1 != bb1) form += where
+            else                 kind += where
+          }
+        case _ => skipped += 1
+      }
+      println("### E11a corpus sweep: " + files.size + " files (" + skipped + " skipped), " +
+              bindings + " published bindings, " + identical + " identical on two cold checks; " +
+              "FORM " + form.size + ", KIND " + kind.size + ", SET " + set.size)
+      println("###   KIND (an existential's kind annotation): " + kind.mkString(", "))
+      println("###   SET  (E11b's target): " + set.mkString(", "))
+      ((files.size >= 250) :| s"only ${files.size} corpus files") &&
+      ((bindings >= 3500) :| s"only $bindings published bindings inspected") &&
+      ((form.isEmpty) :|
+         ("E11a FORM regression: " + form.size + " binding(s) render one constraint set two " +
+          "ways on two cold checks -- " + form.take(8).mkString(", "))) &&
+      ((kind.size <= 6) :|
+         ("the KIND class grew past its pin (6): " + kind.size + " -- " + kind.mkString(", ") +
+          "; an existential's kind is left as a kind VARIABLE by one check and solved by the " +
+          "other.  Kind inference, not E11a's form rule")) &&
+      ((set.size <= 10) :|
+         ("the E11b SET class grew past its pin (10): " + set.size + " -- " + set.mkString(", ") +
+          "; these are the solver's order-dependent residuals, which interstage item E11b " +
+          "deletes with an entailment oracle"))
+    }
   }
 }

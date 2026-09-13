@@ -1,4 +1,4 @@
--- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 harness : forall (f: * -> *) z. (Internal.SMEnv.SMEnv DB.DB -> Scanners.Scanner f) -> Runners.Runner f -> (Scanners.Scanner f -> Runners.Runner f -> Layout.Writer.Writer f z) -> Layout.Report.Report f z -> Builtin.IO ()
 harness' : forall (f: * -> *) z. (Internal.SMEnv.SMEnv DB.DB -> Scanners.Scanner f) -> Runners.Runner f -> (Scanners.Scanner f -> Runners.Runner f -> Layout.Writer.Writer f z) -> Layout.Report.Report f z -> Builtin.IO z
 harnessNoSM : forall (f: * -> *) z. (Internal.SMEnv.SMEnv DB.DB -> Scanners.Scanner f) -> Runners.Runner f -> (Scanners.Scanner f -> Runners.Runner f -> Layout.Writer.Writer f z) -> Layout.Report.Report f z -> Builtin.IO ()

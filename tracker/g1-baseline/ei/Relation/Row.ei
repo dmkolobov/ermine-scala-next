@@ -1,7 +1,7 @@
 -- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
-(!*) : forall (r: rho) (h: rho). (exists (t: rho). r <- (t, h)) => Builtin.Record r -> Relation.Row.Row h -> Builtin.Record h
-(#) : forall (rel: rho -> *) (r: rho) (r1: rho). (exists (c: rho). r <- (c, r1), Builtin.RelationalComb rel) => rel r -> Relation.Row.Row r1 -> rel r1
-(-#) : forall (rel: rho -> *) (r: rho) (r1: rho) (r2: rho). (r <- (r1, r2), Builtin.RelationalComb rel) => rel r -> Relation.Row.Row r1 -> rel r2
+(!*) : forall (r: rho) (h: rho). (exists (a: rho). r <- (h, a)) => Builtin.Record r -> Relation.Row.Row h -> Builtin.Record h
+(#) : forall (rel: rho -> *) (r: rho) (r1: rho). (exists (a: rho). Builtin.RelationalComb rel, r <- (r1, a)) => rel r -> Relation.Row.Row r1 -> rel r1
+(-#) : forall (rel: rho -> *) (r: rho) (r1: rho) (r2: rho). (Builtin.RelationalComb rel, r <- (r1, r2)) => rel r -> Relation.Row.Row r1 -> rel r2
 append : forall (r1: rho) (r2: rho) (r: rho). r <- (r1, r2) => Relation.Row.Row r1 -> Relation.Row.Row r2 -> Relation.Row.Row r
 cons_Bracket : forall a. a -> Builtin.List a -> Builtin.List a
 empty : Relation.Row.Row (||)
@@ -10,11 +10,11 @@ except : forall (r1: rho) (rel: rho -> *) (r: rho) (r2: rho). (Builtin.Relationa
 exceptT : forall (h: rho) (r: rho) (t: rho). r <- (h, t) => Relation.Row.Row h -> Builtin.Record r -> Builtin.Record t
 intersection : forall (r: rho) (r1: rho) (r2: rho). Relation.Row.Row r -> Relation.Row.Row r1 -> Relation.Row.Row r2
 minus : forall (t: rho) (r: rho) (s: rho). t <- (r, s) => Relation.Row.Row t -> Relation.Row.Row r -> Relation.Row.Row s
-project : forall (r1: rho) (rel: rho -> *) (r: rho). (exists (c: rho). r <- (r1, c), Builtin.RelationalComb rel) => Relation.Row.Row r1 -> rel r -> rel r1
+project : forall (r1: rho) (rel: rho -> *) (r: rho). (exists (c: rho). Builtin.RelationalComb rel, r <- (r1, c)) => Relation.Row.Row r1 -> rel r -> rel r1
 projectT : forall (h: rho) (r: rho). r <- (h, t) => Relation.Row.Row h -> Builtin.Record r -> Builtin.Record h
 rowUsed# : forall (r: rho). Native.TraversableColumns.TraversableColumns# r -> Relation.Row.Row r
 single : forall (r: rho) a. Builtin.Field r a -> Relation.Row.Row r
 single_Brace : forall (r: rho) a. Builtin.Field r a -> Relation.Row.Row r
 snoc : forall (r1: rho) (r2: rho) a (r: rho). r <- (r1, r2) => Relation.Row.Row r1 -> Builtin.Field r2 a -> Relation.Row.Row r
-snoc_Brace : forall (r1: rho) (r2: rho) a (r: rho). r <- (r2, r1) => Relation.Row.Row r1 -> Builtin.Field r2 a -> Relation.Row.Row r
+snoc_Brace : forall (r1: rho) (r2: rho) a (r: rho). r <- (r1, r2) => Relation.Row.Row r1 -> Builtin.Field r2 a -> Relation.Row.Row r
 spanT : forall (h: rho) (r: rho) (t: rho). r <- (h, t) => Relation.Row.Row h -> Builtin.Record r -> (Builtin.Record h, Builtin.Record t)

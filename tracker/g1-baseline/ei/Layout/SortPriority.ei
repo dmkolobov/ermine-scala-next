@@ -1,4 +1,4 @@
--- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 (^) : forall a. a -> Builtin.Int -> (a, Layout.SortPriority.SortPriority)
 (^!) : forall a. a -> Builtin.Int -> (a, Layout.SortPriority.SortPriority)
 (^') : forall (h: rho) a. Builtin.Field h a -> Builtin.Int -> ((Builtin.Field h a, Builtin.String), Layout.SortPriority.SortPriority)

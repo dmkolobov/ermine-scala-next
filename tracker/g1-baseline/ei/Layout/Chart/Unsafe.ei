@@ -1,4 +1,4 @@
--- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 axis# : forall l l' p. Native.Maybe.Maybe# (Native.Either.EitherZ# (Layout.Report.Atomic.Atomic# l) (Layout.Report.Atomic.Atomic# l')) -> Layout.Format.Format p -> Layout.Chart.Type.Axis p -> Native.Bool.Bool# -> Layout.Chart.Unsafe.Axis#
 axisChart# : forall x y. Native.List.List# (Layout.Chart.Type.ChartSeries# x y) -> Layout.Chart.Unsafe.AxisChartData# -> Layout.Chart.Unsafe.AxisChart#
 axisChartData# : Layout.Chart.Unsafe.Axis# -> Layout.Chart.Unsafe.Axis# -> Native.Maybe.Maybe# Builtin.String -> Layout.Chart.Unsafe.PlotOrientation# -> Layout.Chart.Unsafe.ChartLegendOptions# -> Native.Map.Map (Native.NonEmpty.NonEmpty# Prim.PrimExpr#) Layout.Color.Color -> Layout.Chart.Unsafe.ChartRenderHints# -> Layout.Chart.Unsafe.AxisChartData#

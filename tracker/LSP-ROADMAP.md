@@ -8,21 +8,22 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: INTERSTAGE ITEM E11a OPEN (2026-09-13) — a canonical FORM for published schemes
-(the user: "Let's fix E11 next, canonical form at publication").  E11 has two causes: the
-printed FORM of one constraint set depends on ids (label order in a concrete row, constraint
-order, existential and universal binder order) — E11a, open, brief
-tracker/loopmodel/briefs/brief-E11a.md, implementer running; and the residual SET itself is
-solver-order dependent (an entailed constraint kept in some rounds) — E11b, DRAFTED below,
-not opened.  E11a is an ADOPTION: every .ei moves (order/alpha only), REPL goldens re-cut,
-Tier 2 + interleaved batch A/B.  6.2c DONE + committed 8a8455ce (E14 fixed; Decision (a)
-amended for local heads).  Baselines: core/test 1067 (1068 with the 6.2c fix-round pin),
-corpus 89/79/0 of 168, 274 interfaces, lsp-smoke 573.  Stage 4 COMPLETE, G4 SIGNED OFF; the
-worker thread (7.6) postponed; Stage 5 NOT drafted.
+Status: INTERSTAGE ITEM E11a DONE (2026-09-13) — published schemes have a canonical FORM:
+two cold checks of every clean corpus module render 0 published bindings differently by form
+(129 before); two interface snapshots at different id bases are byte-identical except the SET
+class; inferred schemes' existentials take positional letters instead of solver hints (the
+user's call on review R-1; class-named and declared names kept).  Review
+ACCEPT WITH FIXES, all R-items applied.  E11 is HALF fixed: the SET half (the solver's
+order-dependent residual, 6-8 bindings, list in E11a-CANON.md §15 R-3) is E11b, DRAFTED below,
+opened only on the user's word.  Baselines: core/test 1070, TestTolerantCheck 58, corpus
+89/79/0 of 168, 274 interfaces (all re-cut: order/alpha), g1-baseline RE-CUT (order + letters),
+lsp-smoke 573.  Stage 4 COMPLETE, G4 SIGNED OFF; the worker thread (7.6) postponed; Stage 5
+NOT drafted.
 
 ## Baselines (hard invariants — never commit red)
 
-- `sbt -batch core/test`: 1067/1067 after interstage item 6.2c (2026-09-13, the
+- `sbt -batch core/test`: 1070/1070 after item E11a (2026-09-13, the orchestrator's and
+  the reviewer's runs, 23-28 min); 1067/1067 after interstage item 6.2c (2026-09-13, the
   reviewer's Tier 2, 26m39s; 1068 expected after the fix round's added pin); 1063/1063 after interstage item 6.2b (2026-09-12, the
   reviewer's Tier 2, 1363 s, no intermittent; 1061 after the signature-entailment
   merge 51629452); 1028/1028 at GATE G4 (2026-09-11; the first run hit
@@ -2288,7 +2289,7 @@ canonicaliser (`Rowpartition/Canonical.lean`, 93 theorems) and ROSE §4's specif
 (`Residual`, `REquiv`, `IsCanonicaliser`, `OrderIndependent`); formalising the Scala form
 against them is deferred by the user ("formalize more broadly later").
 
-- [ ] **E11a The form.**  In `Subst.generalize` when `publishing`: universal binders by first
+- [x] **E11a The form.**  In `Subst.generalize` when `publishing`: universal binders by first
   occurrence in the body, constraints by an id-free structural key shared with 6.2c's
   `displayScheme` (moved out of `TolerantCheck`), existentials by first occurrence in the
   ordered constraints, each partition's right-hand side ordered; row labels PRINT sorted by
@@ -2317,8 +2318,42 @@ against them is deferred by the user ("formalize more broadly later").
   call per published constraint has a cost; budgeted).  Opened only on the user's word after
   E11a lands.
 
-**GATE (E11a)**: reviewer's own Tier 2 and the interface classification; the FORM count at
-0 with the SET count recorded; goldens re-cut and justified; batch A/B; commit; report.
+  DONE 2026-09-13 (report tracker/loopmodel/E11a-CANON.md §1-15; review
+  tracker/loopmodel/E11a-REVIEW.md, ACCEPT WITH FIXES, R-1..R-10 applied by the orchestrator —
+  the implementer was stopped by an accidental interrupt during Tier 2 and the orchestrator
+  finished its report).  THE RULE (Type.scala `Canonical`, stated by hand in its header): body
+  variables coloured by first occurrence; constraints keyed by structure with labels sorted by
+  name and right-hand sides ordered; existentials coloured by iterated refinement over the keys
+  of the constraints that mention them (caps never reached on the corpus: refinement rounds
+  0/2/3/4 = 3570/468/7/2, tie rounds 0/1/2/3 = 1850/2169/26/2); universal and existential
+  binders ordered by first occurrence; an INFERRED scheme's existentials lose a lowercase
+  solver hint and take positional letters (review R-1: the hints varied run to run and the
+  form property was red 1 in 3), a capitalised class-named one (`AsOp opl`) is kept, and a
+  DECLARED signature's names are the user's and untouched.  Three
+  sites, all publication: `Subst.generalize` (inferred heads), `inferBindingGroupTypes`
+  (declared heads — needed: with `generalize` alone 97 of 129 stayed), the editor's `types` map;
+  `-Dermine.canon=publication|all|off` (R-6: `off` now reaches hover).  Intermediate
+  generalisations NOT canonicalised (`all` buys nothing and costs +2.2 % batch).  Labels PRINT
+  sorted by name (unconditional).  RESULT: corpus FORM 129 -> 0 (two cold checks per module),
+  SET 8 -> 6-8 (order-sensitive membership; union over runs is E11b's list); the E11 repro's four
+  renderings -> one per constraint SET; two-base byte identity 3517 of 3523 bindings; ei
+  before-vs-after: identical 2461, order-only 1000, alpha 15, "other" 47 = 43 equivalent (the
+  classifier's matcher AND parser both fail on them; follow-up) + 4 SET; `lookbackJoin`'s set
+  moved (9 -> 8 constraints) and the review hand-proved REquiv.  Id-independence: every `.id`,
+  `Set`, `Map`, `toList` in `Canonical` audited (no `hashCode`, nothing ordered by an id value);
+  adversarial probe 0 mismatches of 6,591 for id renumbering and scoped shuffles (10 on nested
+  rank-N foralls, out of scope, stated).  g1-baseline RE-CUT twice (order, then letters);
+  browse.txt 87 order / 7 alpha / 1 SET.  No REPL golden moved (none carries an unsorted
+  multi-label row).  Traces: after side agrees on every segment (18 groups); vs before the record
+  multisets differ in Ai/Wide/Algebra (the solver's path changed; verdicts and interfaces
+  equivalent; covered by KeyedSplit's every-run-order termination).  Batch A/B four rounds
+  +0.22 %; editor flat; per-file: no module slower by more than 40 ms absolute (Interp +29 %,
+  ClinicalTrial +12 %, both under 40 ms), the two headline speed-ups are variance.  Tier 2
+  1070/1070.  Implementer ~5 h (stopped), reviewer 1h07 (129 tool uses), fix round by the
+  orchestrator (R-1, R-6, report §15; TestTolerantCheck x3, g1 re-cut, lsp-smoke, one ei pair).
+
+**GATE (E11a)** — EVIDENCE RECORDED 2026-09-13: interface classification; the FORM count at 0
+with the SET count recorded; g1 re-cut and justified; batch A/B; committed.
 
 ## Blocked / Awaiting
 
@@ -3523,6 +3558,16 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-13 (ITEM E11a DONE — canonical FORM at publication): see the item's DONE
+  paragraph.  The implementer was lost to an accidental escape during its Tier 2 and
+  its remainder finished by hand; the reviewer (67 min, scoped to targeted re-runs
+  after the user objected to a 3.5 h budget) found the form property red one run in
+  three — the solver's name hints on existentials — and the user chose positional
+  letters.  The lesson recorded in memory and GATE-POLICY: a review re-runs the
+  targeted suites and attacks claims; it does not repeat the implementer's gates.
+  Baselines: core/test 1070/1070, TestTolerantCheck 58/58 (x3 after the fix),
+  TestLoopTrace 720/720, corpus 89/79/0 of 168, 274 interfaces (re-cut), g1 re-cut,
+  repl-smoke 8/66 goldens untouched, lsp-smoke 573, boot 129, .ei 0.
 - 2026-09-13 (INTERSTAGE 6.2c DONE — E14): see the item's DONE paragraph.  The
   orchestrator's probe re-diagnosed the ticket before opening it (heads fixed by a
   later use render right; the CONSTRAINED head is the shape), the implementer found

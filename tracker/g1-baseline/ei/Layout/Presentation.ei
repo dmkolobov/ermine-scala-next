@@ -1,18 +1,18 @@
--- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto
+-- ermine-interface 2|cut+label-early+resguard+splitkey+splitrow+resrow+rsbare+rssat+rsdecide+pol:smallcanon+budget:20000+topnorm+tauto|sigEntail=error
 basic : forall (op: rho -> * -> *) (r: rho) a. (AsOp op, Builtin.Primitive a) => op r a -> Layout.Presentation.Presentation r a
 columnsUsed : forall (pr: rho -> * -> *) (r: rho) a. Layout.Presentation.AsPresentation pr => pr r a -> Builtin.List Builtin.String
-currency : forall (op: rho -> * -> *) (r: rho) n. (Builtin.PrimitiveNum n, AsOp op) => Builtin.String -> op r n -> Layout.Presentation.Presentation r n
-dateRange : forall (o1: rho -> * -> *) (r1: rho) (o2: rho -> * -> *) (r2: rho) (r: rho). (AsOp o2, AsOp o1, r <- (r1, r2)) => o1 r1 Builtin.Date -> o2 r2 Builtin.Date -> Layout.Presentation.Presentation r (Builtin.Date, Builtin.Date)
+currency : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, Builtin.PrimitiveNum n) => Builtin.String -> op r n -> Layout.Presentation.Presentation r n
+dateRange : forall (o1: rho -> * -> *) (r1: rho) (o2: rho -> * -> *) (r2: rho) (r: rho). (AsOp o1, AsOp o2, r <- (r1, r2)) => o1 r1 Builtin.Date -> o2 r2 Builtin.Date -> Layout.Presentation.Presentation r (Builtin.Date, Builtin.Date)
 devolve : forall (r: rho) z a. (forall b. Relation.Op.Type.Op r b -> z) -> Layout.Presentation.Presentation r a -> z
 devolveShowOp : forall (r: rho) a. Layout.Presentation.Presentation r a -> Relation.Op.Type.Op r Builtin.String
-dualPresentation : forall a b (op1: rho -> * -> *) (r: rho) (op2: rho -> * -> *) (s: rho) (t: rho). (AsOp op2, AsOp op1, t <- (r, s)) => Layout.Format.Format (a, b) -> op1 r a -> op2 s b -> Layout.Presentation.Presentation t (a, b)
+dualPresentation : forall a b (op1: rho -> * -> *) (r: rho) (op2: rho -> * -> *) (s: rho) (t: rho). (AsOp op1, AsOp op2, t <- (r, s)) => Layout.Format.Format (a, b) -> op1 r a -> op2 s b -> Layout.Presentation.Presentation t (a, b)
 extractScalar : forall (pr: rho -> * -> *) (r: rho) a. Layout.Presentation.AsPresentation pr => pr r a -> Builtin.Record r -> Layout.Report.Atomic.Atomic a
-integralRound : forall (op: rho -> * -> *) (r: rho) n. (Builtin.PrimitiveNum n, AsOp op) => Builtin.Int -> op r n -> Layout.Presentation.Presentation r n
-markdown : forall (op: rho -> * -> *) (r: rho) a. (Builtin.Unscaled a, AsOp op) => op r a -> Layout.Presentation.Presentation r a
+integralRound : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, Builtin.PrimitiveNum n) => Builtin.Int -> op r n -> Layout.Presentation.Presentation r n
+markdown : forall (op: rho -> * -> *) (r: rho) a. (AsOp op, Builtin.Unscaled a) => op r a -> Layout.Presentation.Presentation r a
 ordering : forall (pr: rho -> * -> *) (r: rho) a. Layout.Presentation.AsPresentation pr => Relation.Sort.SortOrder -> pr r a -> Relation.Sort.Sort r
-percent : forall (op: rho -> * -> *) (r: rho) n. (Builtin.PrimitiveNum n, AsOp op) => op r n -> Layout.Presentation.Presentation r n
+percent : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, Builtin.PrimitiveNum n) => op r n -> Layout.Presentation.Presentation r n
 presentation : forall a (op: rho -> * -> *) (r: rho). AsOp op => Layout.Format.Format a -> op r a -> Layout.Presentation.Presentation r a
-round : forall (op: rho -> * -> *) (r: rho) n. (Builtin.PrimitiveNum n, AsOp op) => Builtin.Int -> op r n -> Layout.Presentation.Presentation r n
+round : forall (op: rho -> * -> *) (r: rho) n. (AsOp op, Builtin.PrimitiveNum n) => Builtin.Int -> op r n -> Layout.Presentation.Presentation r n
 rowUsed : forall (pr: rho -> * -> *) (r: rho) a. Layout.Presentation.AsPresentation pr => pr r a -> Relation.Row.Row r
-truncate : forall (op: rho -> * -> *) (r: rho) a. (Builtin.Primitive a, AsOp op) => Builtin.Int -> op r a -> Layout.Presentation.Presentation r a
-withMarkdown : forall a (op: rho -> * -> *) (r: rho). (Builtin.Unscaled a, AsOp op) => Layout.Format.Format a -> op r a -> Layout.Presentation.Presentation r a
+truncate : forall (op: rho -> * -> *) (r: rho) a. (AsOp op, Builtin.Primitive a) => Builtin.Int -> op r a -> Layout.Presentation.Presentation r a
+withMarkdown : forall a (op: rho -> * -> *) (r: rho). (AsOp op, Builtin.Unscaled a) => Layout.Format.Format a -> op r a -> Layout.Presentation.Presentation r a

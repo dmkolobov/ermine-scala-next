@@ -883,7 +883,17 @@ object Subst {
           (ds ++ ds0, subs ++ isp)
     }
     for (e <- esp) typeCheckExplicitBinding(g, subTerm(subs, e.copy(ty = Annot.plain(e.loc, substType(etm(e.v))))))
-    val el = esp.map({ e => e.v -> e.v.as(substType(etm(e.v))) }).toList
+    /* E11a: a DECLARED signature is published too, and it reaches the `.ei` through
+     * `substType` -- whose `Exists.apply` ends in `p.toSet.toList`, so the constraint
+     * list the interface carries is in the hash order of the SUBSTITUTED types, which
+     * follows the ids this run drew.  That is the other half of ticket E11's "16 of 249
+     * modules render a published type differently on a reuse with no edit": the
+     * generalisation above never touches an explicit binding.  Same rule, same place --
+     * the module's top-level group, where a signature is made. */
+    val el = esp.map({ e =>
+      val t = substType(etm(e.v))
+      e.v -> e.v.as(if (publishing && Canonical.atPublication) Canonical.scheme(t, dropHints = false) else t)  // declared: the user's names
+    }).toList
     is.foreach {
       case ImplicitBinding(_, v, _, Some(i)) =>
         hm.remembered = hm.remembered + (i -> (g, subs(v).extract, l))
@@ -1763,7 +1773,25 @@ object Subst {
     // 6.2b: see `SubstEnv.binderTypes`.
     if (hm.recordBinders && hm.binderTypes.nonEmpty)
       hm.binderTypes = hm.binderTypes map { case (k, t) => (k, t.subst(km, tm)) }
-    Forall(li,nks,nts, mkSimplified(tml.loc,nxs,subType(zipTypes(xs,nxs),cs),publishing), t.subst(km,tm))
+    val scheme = Forall(li,nks,nts, mkSimplified(tml.loc,nxs,subType(zipTypes(xs,nxs),cs),publishing), t.subst(km,tm))
+    /* E11a (ticket E11): the canonical FORM.  Every list the scheme above carries came out
+     * of a SET -- `ts`, `mkSimplified`'s constraints (through `Exists.apply`'s
+     * `p.toSet.toList`), its existentials, a partition's right-hand side -- so its ORDER is
+     * the order of the ids the `Supply` handed out, and two checks of one unedited module
+     * render one and the same set two ways.  `Canonical.scheme` re-orders those four lists
+     * against id-free keys; it adds, deletes and rewrites nothing.  Placed HERE and not in
+     * `Pretty` because the `.ei` carries the order too (the interface writer serialises
+     * this data), and an editor that agrees with the printer but not with the interface
+     * would only move the flicker.
+     *
+     * `publishing` is the same flag `deleteTautologies` reads: the module's TOP-LEVEL
+     * group, the one place a binding's signature is made.  An INTERMEDIATE generalisation
+     * is re-instantiated by the inference around it, so its order reaches the solver's
+     * queue -- measured both ways, `-Dermine.canon=all` against the default, in
+     * `tracker/loopmodel/E11a-CANON.md`. */
+    if (if (publishing) Canonical.atPublication else Canonical.atEveryGeneralisation)
+      Canonical.scheme(scheme)
+    else scheme
   }
 
   def generalizeKind(d: Delta, k: Kind)(implicit su: Supply): KindSchema = {

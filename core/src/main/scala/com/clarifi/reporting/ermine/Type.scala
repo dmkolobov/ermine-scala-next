@@ -785,3 +785,253 @@ object HasTypeVars {
     def sub(ks: PartialFunction[KindVar,Kind], ts: PartialFunction[TypeVar, Type], xs: V[A]): V[A] = xs.map(A.sub(ks, ts, _))
   }
 }
+
+/** Item E11a: the CANONICAL FORM of a published constrained scheme, and the
+  * ID-FREE keys that define it.
+  *
+  * The defect (ticket E11, LSP Stage 4 item 7.2's review R-4): four cold checks
+  * of ONE unedited module render one and the same constraint set four ways.
+  * Nothing about the set moves -- what moves is its FORM.  Every list a
+  * published scheme carries is built from a SET, so it comes out in id order:
+  * `Subst.generalize`'s `ts = typeVars(t) -- gs` (the universal binders, and
+  * `Pretty.ppForall` names them before it prints the body, so the LETTERS
+  * follow), `mkSimplified`'s constraint list (through `Exists.apply`'s
+  * `p.toSet.toList`), its existential binder list, and a partition's
+  * right-hand side.  Two checks of one file draw different ids -- the `Supply`
+  * has advanced -- so they order those lists differently.
+  *
+  * THE RULE, stated so a reader can apply it by hand to a scheme
+  * `forall <ts>. (exists <xs>. c1, ..., cn) => body`:
+  *
+  *   1. Every variable gets a COLOUR that mentions no id.  A variable the BODY
+  *      shows is `#i`, `i` its first-occurrence index in a pre-order walk of the
+  *      body.  An existential starts at its name (`@n`) or, nameless, at `?`,
+  *      and is then REFINED (step 2).
+  *   2. A constraint's KEY is its structure serialised with variables by
+  *      colour, a concrete row by its labels SORTED BY NAME, a constructor by
+  *      its name, and a partition's right-hand side by its members' keys
+  *      SORTED.  Refinement: an existential's next colour is the sorted
+  *      multiset of the keys of the constraints that mention it, with itself
+  *      marked; colours are then re-ranked to their sort position.  Repeat
+  *      until the partition of the existentials stops refining (a colour
+  *      refinement in the Weisfeiler-Leman sense; four rounds cap it).
+  *   3. Each partition's right-hand side is ordered CONCRETE ROW FIRST (labels
+  *      by name), then the rest by key.
+  *   4. The constraints are ordered by key.
+  *   5. The EXISTENTIAL binders are ordered by first occurrence in the ordered
+  *      constraints -- which is what assigns their letters.
+  *   6. The UNIVERSAL binders are ordered by first occurrence in the BODY, then
+  *      in the ordered constraints.
+  *
+  * Two schemes that differ only in the ids their `Supply` handed out get the
+  * same form, because no step reads an id: `.id` appears only as the KEY of a
+  * position map or of a colour map, never as a value that is compared or
+  * ordered.  Ties survive only between constraints (or right-hand-side members)
+  * that the refinement cannot tell apart, and those are isomorphic under the
+  * renaming their own order induces -- so they RENDER the same either way,
+  * which is what the ticket asks for.  It is not a proof of canonicity: colour
+  * refinement is incomplete for graph isomorphism in general, and
+  * `ROSE-COMPARISON.md` rank 3 asks for the key to be PROVED invariant.  The
+  * measurement that stands in for the proof is the corpus FORM count
+  * (`tracker/loopmodel/E11a-CANON.md`).
+  *
+  * This is a form and not a simplification: no constraint is added, deleted or
+  * rewritten, and `new Part` / `new Exists` are used deliberately -- the smart
+  * constructors rewrite concrete rows and re-`toSet` the constraint list, which
+  * is the very reordering this object exists to remove.  Deleting a redundant
+  * constraint is E11b's and needs an entailment oracle.
+  *
+  * `TolerantCheck.displayScheme` (item 6.2c) applies the SAME rule to a local
+  * head after its display filter, so the editor's heads and the published
+  * schemes have one canonical form.
+  */
+object Canonical {
+  import Type.typeVars
+
+  /** `publication` (the default) canonicalises the generalisation that
+    * publishes a module's top-level signatures and nothing else; `all` also
+    * canonicalises the INTERMEDIATE generalisations, whose residuals the
+    * inference around them re-instantiates, so their order feeds the solver's
+    * queue; `off` restores the pre-E11a form.  The choice is a measurement --
+    * see the report's "where it runs". */
+  private val mode: String = System.getProperty("ermine.canon", "publication")
+  val atPublication: Boolean         = mode != "off"
+  val atEveryGeneralisation: Boolean = mode == "all"
+
+  /** the type variables of `t`, in order of FIRST OCCURRENCE (6.2c's, moved
+    * here so the editor and the publisher share one definition). */
+  def varOrder(t: Type): List[Int] = {
+    val acc  = scala.collection.mutable.ListBuffer.empty[Int]
+    val seen = scala.collection.mutable.Set.empty[Int]
+    def go(x: Type): Unit = x match {
+      case VarT(v)               => if (seen.add(v.id)) acc += v.id
+      case AppT(f, a)            => go(f); go(a)
+      case Forall(_, _, _, q, b) => go(q); go(b)
+      case Exists(_, _, cs)      => cs.foreach(go)
+      case Part(_, l, r)         => go(l); r.foreach(go)
+      case Memory(_, b)          => go(b)
+      case _                     => ()
+    }
+    go(t); acc.toList
+  }
+
+  /** a variable's POSITION as a sort key: zero-padded, so `#0009` sorts before
+    * `#0011` and the order a reader sees is the order the body introduces. */
+  private def pad(p: Int): String = {
+    val s = p.toString
+    "#" + ("0" * math.max(0, 4 - s.length)) + s
+  }
+
+  /** a concrete row's labels, sorted by name -- the same order `Pretty` prints
+    * them in since this item. */
+  private def labels(fs: Set[Name]): String =
+    fs.toList.map(_.toString).sorted.mkString(",")
+
+  /** `t` serialised with every variable replaced by `colour`, and nameless
+    * variables the colour map does not cover by their first-occurrence order
+    * WITHIN `t`.  No id reaches the string. */
+  private def render(t: Type, colour: TypeVar => Option[String]): String = {
+    val local = scala.collection.mutable.Map.empty[Int, Int]
+    def go(x: Type): String = x match {
+      case VarT(v)               => colour(v) getOrElse ("?" + local.getOrElseUpdate(v.id, local.size))
+      case ConcreteRho(_, fs)    => "{" + labels(fs) + "}"
+      case Con(_, n, _, _)       => "C" + n.toString
+      case AppT(f, a)            => "(" + go(f) + " " + go(a) + ")"
+      case Forall(_, _, _, q, b) => "F[" + go(q) + "|" + go(b) + "]"
+      case Exists(_, _, cs)      => "E[" + cs.map(go).sorted.mkString(",") + "]"
+      case Part(_, l, r)         => "P[" + go(l) + "<-" + r.map(go).sorted.mkString(",") + "]"
+      case Memory(_, b)          => go(b)
+      case other                 => other.toString
+    }
+    go(t)
+  }
+
+  /** 6.2c's key, moved: one constraint serialised with each variable replaced
+    * by its position in the BODY's first-occurrence order (`pos`), by its name
+    * when the body does not mention it, and by its first-occurrence order
+    * within the constraint otherwise.  `TolerantCheck` compares kept sets with
+    * it; the ORDERING below uses the refined colours instead.
+    *
+    * The `ConcreteRho` and `Con` cases are E11a's correction: without them a
+    * row fell through to `other.toString`, which prints `fields` -- a
+    * `Set[Name]` -- in ITERATION order, so the key that exists to be id-free
+    * carried the very label order this item removes. */
+  def constraintKey(t: Type, pos: Map[Int, Int]): String =
+    render(t, v => pos.get(v.id).map(pad) orElse v.name.map("@" + _.toString))
+
+  /** an id-free colour for every variable of `cs`: `#i` for one the body shows,
+    * a refined `?k` for an existential.  See the rule, steps 1-2. */
+  private def colours(cs: List[Type], bodyPos: Map[Int, Int]): Map[Int, String] = {
+    val fixed: Map[Int, String] = bodyPos.map { case (id, p) => (id, pad(p)) }
+    val free = cs.flatMap(c => typeVars(c).toList).distinct.filterNot(v => fixed.contains(v.id))
+    if (free.isEmpty) fixed
+    else {
+      val occ: Map[Int, List[Type]] =
+        free.map(v => v.id -> cs.filter(c => typeVars(c).exists(_.id == v.id))).toMap
+      var col: Map[Int, String] =
+        free.map(v => v.id -> (v.name.map("@" + _.toString) getOrElse "?")).toMap
+      var seen  = -1
+      var round = 0
+      var more  = true
+      while (more && round < 4) {
+        val all = fixed ++ col
+        val raw = free.map { v =>
+          val sigs = occ(v.id).map(c =>
+            render(c, w => if (w.id == v.id) Some("!") else all.get(w.id))).sorted
+          v.id -> (col(v.id) + "|" + sigs.mkString("&"))
+        }.toMap
+        val rank = raw.values.toList.distinct.sorted.zipWithIndex.toMap
+        col = raw.map { case (id, s) => (id, "?" + rank(s)) }
+        if (rank.size == seen) more = false
+        seen  = rank.size
+        round = round + 1
+      }
+      fixed ++ col
+    }
+  }
+
+  /** the rule's step 3: a partition's right-hand side, concrete row first. */
+  private def orderRhs(t: Type, col: Map[Int, String]): Type = t match {
+    case p: Part =>
+      new Part(p.loc, p.lhs, p.rhs.sortBy {
+        case ConcreteRho(_, fs) => (0, labels(fs))
+        case other              => (1, render(other, v => col.get(v.id)))
+      })
+    case other => other
+  }
+
+  /** an ID-FREE FINGERPRINT of a whole scheme: two schemes with equal keys are
+    * the same constraint SET over the same body, whatever ids their `Supply`
+    * drew and in whatever order the solver left them.  It is the oracle that
+    * splits the E11 defect in two: two renderings of one key are a FORM
+    * difference (this item's, and 0 after it), two keys are a SET difference
+    * (E11b's residual).  Note what it is NOT: an entailment check.  Two
+    * different keys can still be two spellings of the same meaning -- that is
+    * exactly the redundancy E11b deletes -- so a difference in this key is a
+    * difference in the SET, not in what the set says. */
+  def key(t: Type): String = t match {
+    case Forall(_, ks, _, q, body) =>
+      val (_, _, cs0) = Exists.unfurl(q)
+      val bodyPos = varOrder(body).zipWithIndex.toMap
+      val col     = colours(cs0, bodyPos)
+      val cs1     = cs0.sortBy(render(_, v => col.get(v.id)))
+      val pos     = (varOrder(body) ++ cs1.flatMap(varOrder)).distinct.zipWithIndex.toMap
+      val c       = (v: TypeVar) => pos.get(v.id).map(pad)
+      "A[" + ks.length + "|" + render(body, c) + "|" + cs1.map(render(_, c)).sorted.mkString(";") + "]"
+    case other => render(other, _ => None)
+  }
+
+  /** THE canonical form of a published scheme: the rule, steps 3-6.  Anything
+    * that is not a `Forall` is already its own form. */
+  /** `dropHints`: an INFERRED scheme's existentials carry the solver's name hints,
+    * which differ run to run and made a canonical ORDER still render two ways
+    * (review R-1); a lowercase hint is replaced by a positional letter.  A
+    * capitalised hint is a class-named constraint variable (`AsOp opl`) and is
+    * kept -- stable, and the readable form.  A DECLARED signature's names are
+    * the user's and are never touched (`dropHints = false`). */
+  def scheme(t: Type, dropHints: Boolean = true): Type = t match {
+    case Forall(l, ks, ts, q, body) =>
+      val (ql, xs, cs0) = Exists.unfurl(q)
+      val bodyPos = varOrder(body).zipWithIndex.toMap
+      val col     = colours(cs0, bodyPos)
+      /* Refinement leaves a tie exactly between two constraints it cannot tell
+       * apart -- an AUTOMORPHISM of the set, two existentials with the same
+       * name and the same occurrence profile (`ChartsExample.stackedPair`'s two
+       * `AsOp`s).  A tie broken by the incoming list order is broken by ids, and
+       * the two orders do NOT render alike, because the binder order that names
+       * the letters is fixed by the constraints the tie does not touch.  So:
+       * re-sort against the POSITIONS the current order gives the existentials,
+       * to a fixpoint.  Each round is a function of the round before, so the
+       * result is still id-free; the cap keeps a cycle (never seen on the
+       * corpus) from depending on how long we iterate. */
+      var cs1 = cs0.map(orderRhs(_, col)).sortBy(render(_, v => col.get(v.id)))
+      var settled = false
+      var round   = 0
+      while (!settled && round < 4) {
+        val pos  = (varOrder(body) ++ cs1.flatMap(varOrder)).distinct.zipWithIndex.toMap
+        val pcol = (v: TypeVar) => pos.get(v.id).map(pad)
+        val next = cs1.map(orderRhs(_, pos.map { case (i, p) => (i, pad(p)) }))
+                      .sortBy(render(_, pcol))
+        settled = next.map(render(_, pcol)) == cs1.map(render(_, pcol))
+        cs1     = next
+        round   = round + 1
+      }
+      val xorder  = cs1.flatMap(varOrder).distinct.zipWithIndex.toMap
+      // E11a review R-1: an existential's NAME HINT is the solver's and differs
+      // run to run (`Pretty.fresh` prefers a hint over a positional letter), so a
+      // stable ORDER still rendered two ways.  Published existentials are nameless
+      // and take positional letters; universals keep theirs (a signature's, or the
+      // body's).  The user's call, 2026-09-13.
+      val nxs     = xs.sortBy(v => xorder.getOrElse(v.id, Int.MaxValue)).map { v =>
+        v.name match {
+          case Some(Local(n, _)) if dropHints && n.nonEmpty && n.head.isLower => v.copy(name = None)
+          case _ => v
+        }
+      }
+      val torder  = (varOrder(body) ++ cs1.flatMap(varOrder)).distinct.zipWithIndex.toMap
+      val nts     = ts.sortBy(v => torder.getOrElse(v.id, Int.MaxValue))
+      val nq      = if (nxs.isEmpty && cs1.length == 1) cs1.head else new Exists(ql, nxs, cs1)
+      Forall(l, ks, nts, nq, body)
+    case other => other
+  }
+}

@@ -728,7 +728,10 @@ E10. **`Pretty` writes four type shapes the grammar cannot read back.**  SPLIT, 
     printer writes interfaces): Tier 1 (interface sweep + g1-validate, baseline re-cut for the moved spellings).
     (5) is Tier 0.  Fixing (1)-(3) returns 48 groups to the signature action; (5) returns 33.  Not scheduled.
 
-E11. **Hover publishes a constraint set that depends on how many ids the session has drawn.**  Filed 2026-09-10
+E11. **[HALF FIXED — the FORM half — by item E11a (2026-09-13; commit in the roadmap's E11a DONE paragraph): published
+    schemes carry a canonical order and positional existential letters, labels print sorted, 129 -> 0 form differences
+    over two cold checks of the corpus. The SET half (the solver's order-dependent residual, 6-8 bindings) is E11b, drafted.]**
+    Hover publishes a constraint set that depends on how many ids the session has drawn.  Filed 2026-09-10
     from LSP Stage 4 item 7.2 (review `tracker/loopmodel/LSP4-7.2-REVIEW.md` R-4; the implementer's sweep first saw
     it as "2-3 of 249 modules publish different row constraints on two cold checks").  Reproduced: four cold checks
     (didOpen / hover / didClose, one JVM) of an UNCHANGED `core/examples/Present/WriterOutputs.e` render `reportFor`'s
