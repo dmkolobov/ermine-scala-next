@@ -774,7 +774,8 @@ E13. **`TestLegend."extra args are ignored"` is a seed-dependent flake in the `w
     (a year/day boundary in the formatter?) and either fix the formatter or pin the seed; not a quarantine
     candidate until then — a red that is exactly this property gets ONE re-run.  Not scheduled; small.
 
-E14. **The 6.2 arity split can hover a type the binder does not have.**  Recorded 2026-09-12 by the 6.2b review
+E14. **[FIXED in `8a8455ce` (LSP interstage item 6.2c, 2026-09-13): the head hovers its published scheme, constraints
+    included, and the split inherits; Decision (a) amended by the user for local heads.]** The 6.2 arity split can hover a type the binder does not have.  Recorded 2026-09-12 by the 6.2b review
     (LSP-6.2b-REVIEW.md §3, follow-up 1).  `core/examples/guide/LetAndPatternMatching.e:8:17` and `:9:17`: in
     `let go [] acc = acc / go (h::t) acc = go t (h + acc) in go xs 0` the split renders `go : List a -> a -> a`
     and `acc : a` from the published scheme while the checker settled `acc : Int` — and 6.2b now puts `h : Int`,
