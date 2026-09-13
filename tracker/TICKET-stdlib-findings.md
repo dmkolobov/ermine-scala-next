@@ -782,7 +782,11 @@ E14. **The 6.2 arity split can hover a type the binder does not have.**  Recorde
     declaration shows AS DECLARED, and it renders aliases better in the other 12 of the 14 disagreements), so this
     is a precedence hole, not a hook bug.  *Fix.* Prefer the hook when the split's answer is a BARE type variable
     and the hook's is not; keep the split otherwise.  Needs its own pin (the disagreement SET in the sweep would
-    shrink by exactly these two).  Editor path only; Tier 0.  Not scheduled.
+    shrink by exactly these two).  Editor path only; Tier 0.  SCHEDULED 2026-09-12 as LSP interstage item 6.2c
+    (brief tracker/loopmodel/briefs/brief-LSP-6.2c.md).  RE-DIAGNOSED by the orchestrator's probe before opening:
+    the head path renders later-fixed variables correctly (`g : a -> (a, Int)`), so the defect is the CONSTRAINED
+    local head (`*` is `Num n => n -> n -> n`) rendering a scheme-shaped type without its constraint while the
+    checker settled `Int`; the fix belongs at the head, and heads get the corpus cross-check equation arguments have.
 
 ## D. Claims in older documents that do not reproduce
 

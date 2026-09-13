@@ -8,13 +8,16 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: INTERSTAGE ITEM 6.2b SHIPPED (2026-09-12; the user: "Ship it") — the
-pattern-binder hover hook is ON in the editor as committed in 9972ccf9; GATE (6.2b)
-signed off on the reviewer's editor A/B (+34.5 ms / 3.9 % of the round trip, inside
-the 5 % budget; the implementer's +58 ms / 6.4 % recorded as the other reading).
-Baselines on THIS tree: core/test 1063, corpus 89/79/0 of 168, 274 interfaces,
-lsp-smoke 565.  Stage 4 is COMPLETE and G4 SIGNED OFF; the worker thread (7.6) is
-postponed by the user; Stage 5 is NOT drafted — nothing runs until the user opens it.
+Status: INTERSTAGE ITEM 6.2c OPEN (2026-09-12) — E14, a local head that hovers a type the
+checker did not settle (`go : List a -> a -> a` / `acc : a` beside `h : Int`, `xs : List Int`
+in guide/LetAndPatternMatching.e).  Opened on the user's word ("Let's fix E14. We can
+formalize more broadly later") straight after 6.2b SHIPPED (9972ccf9 + 336b5204).  The
+orchestrator's probe shows the head path is not generally stale (heads fixed by a LATER use
+render right); the constrained-local shape is what misrenders, and heads are the one class
+of local the 6.2b agreement check does not cross-check.  Brief
+tracker/loopmodel/briefs/brief-LSP-6.2c.md; implementer running.  Baselines: core/test 1063,
+corpus 89/79/0 of 168, 274 interfaces, lsp-smoke 565.  Stage 4 COMPLETE, G4 SIGNED OFF; the
+worker thread (7.6) postponed; Stage 5 NOT drafted.
 
 ## Baselines (hard invariants — never commit red)
 
@@ -2195,6 +2198,36 @@ byte-identity is proved against the baseline the entailment change leaves.
 on the reviewer's own run; both A/Bs recorded (the editor number is the decision);
 the coverage table above; lsp-smoke 565.  Ship = leave the tree as committed.
 Park = the review's §10 recipe.
+
+## Interstage item 6.2c — E14, the constrained local head (opened 2026-09-12; Tier 1 if `Subst.scala` changes)
+
+Found by the 6.2b review (LSP-6.2b-REVIEW.md §3): the 6.2 head hover and its arity split
+render `go : List a -> a -> a`, `acc : a` where the checker settled `Int`, now visible beside
+the hook's `h : Int`, `t : List Int`.  Ticket E14.  The orchestrator's probe
+(scratch e14/Heads.e): a head that mentions a variable fixed AFTER the let renders the settled
+type (`g : a -> (a, Int)`), so this is not the 6.2 review's R-1 mechanism reappearing; the
+CONSTRAINED local (`*` is `forall n. Num n => n -> n -> n`; `(go xs 1, go xs 1.5)` fails to
+unify) is the shape that misrenders, and no sweep compares heads against the checker.
+
+- [ ] **6.2c The head.**  FIRST the mechanism, by probe: what the head `V`'s meta is bound
+  to at the end of the component, the scheme the let group published (constraints
+  included), what the hook recorded for the argument, and whether `restrictTypes` touched
+  any of it.  THEN the fix at the head: a local head hovers the type the checker settled,
+  up to renaming, constraints included (the generalised scheme WITH its `Num` constraint,
+  or the settled monotype — whichever the probe shows the checker holds); the split
+  inherits; a signed local head still shows its declaration (Decision (a)).  Heads are
+  cross-checked at corpus scale like equation arguments: an eager record per implicit
+  local head behind `recordBinders`, compared with what the head hover renders over the
+  253 clean corpus modules, the disagreement SET pinned (R-4), anti-vacuity on heads
+  compared.  ACCEPTANCE: E14's two def-sites hover consistently with the hook (or the two
+  frames are explained in the rendering/docs); the head agreement set is empty or every
+  member classified; the 6.2b disagreement set moves by exactly the explained sites; new
+  TestTolerantCheck pins + lsp-smoke checks; Tier 1 IDENTICAL if `Subst.scala` changed;
+  batch A/B inside the ~1 % floor; editor A/B within noise of 6.2b's after-side figures.
+  Brief: tracker/loopmodel/briefs/brief-LSP-6.2c.md.
+
+**GATE (6.2c)**: reviewer's own Tier 1 (if owed) and Tier 2; both A/Bs; the head agreement
+table; the E14 hover before/after quoted from the real server; commit; report to the user.
 
 ## Blocked / Awaiting
 
