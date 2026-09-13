@@ -8,15 +8,17 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: INTERSTAGE ITEM 6.2c DONE (2026-09-13) — E14 fixed: a `let`/`where` head hovers the
-scheme the checker PUBLISHED for it, constraints included (`go : forall a. Num a => List a
--> a -> a`), under Decision (a) AMENDED by the user for local heads; heads are cross-checked
-at corpus scale for the first time (pinned sets); review ACCEPT WITH FIXES, all R-items
-applied in a fix round; Tier 1 IDENTICAL, Tier 2 1067/1067 (reviewer), orchestrator Tier 0
-green.  E15 filed (the hook shows a pattern binder's FIRST instantiation under a
-polymorphic local).  Baselines: core/test 1068 (1067 + the fix round's pin), corpus 89/79/0
-of 168, 274 interfaces, lsp-smoke 573.  Stage 4 COMPLETE, G4 SIGNED OFF; the worker thread
-(7.6) postponed; Stage 5 NOT drafted — nothing runs until the user opens it.
+Status: INTERSTAGE ITEM E11a OPEN (2026-09-13) — a canonical FORM for published schemes
+(the user: "Let's fix E11 next, canonical form at publication").  E11 has two causes: the
+printed FORM of one constraint set depends on ids (label order in a concrete row, constraint
+order, existential and universal binder order) — E11a, open, brief
+tracker/loopmodel/briefs/brief-E11a.md, implementer running; and the residual SET itself is
+solver-order dependent (an entailed constraint kept in some rounds) — E11b, DRAFTED below,
+not opened.  E11a is an ADOPTION: every .ei moves (order/alpha only), REPL goldens re-cut,
+Tier 2 + interleaved batch A/B.  6.2c DONE + committed 8a8455ce (E14 fixed; Decision (a)
+amended for local heads).  Baselines: core/test 1067 (1068 with the 6.2c fix-round pin),
+corpus 89/79/0 of 168, 274 interfaces, lsp-smoke 573.  Stage 4 COMPLETE, G4 SIGNED OFF; the
+worker thread (7.6) postponed; Stage 5 NOT drafted.
 
 ## Baselines (hard invariants — never commit red)
 
@@ -2270,6 +2272,53 @@ unify) is the shape that misrenders, and no sweep compares heads against the che
 **GATE (6.2c)** — EVIDENCE RECORDED 2026-09-13: reviewer's own Tier 1 and Tier 2 green;
 both A/Bs; the head agreement table; the E14 hover before/after quoted from the real server;
 committed.
+
+## Interstage item E11 — canonical publication (opened 2026-09-13; E11a ADOPTION, E11b drafted)
+
+Ticket E11: four cold checks of an unchanged `Present/WriterOutputs.e` render `reportFor`'s
+published constraint part four ways (7.2 review R-4).  Two causes.  FORM: the printed form of
+one and the same set follows ids — `ConcreteRho.fields` is a `Set[Name]` printed in iteration
+order; `generalize`'s binder lists and `mkSimplified`'s constraint list come from id-keyed
+sets, and the existential binder order is what assigns letters.  SET: the solver's residual is
+order-dependent — rounds 2-3 keep a constraint rounds 0-1 dropped, entailed by its sibling
+(ROSE-COMPARISON.md rank 3 pass (ii): needs an entailment oracle, coNP-hard in general, so a
+budget with keep-on-lapse).  The user chose canonical form at publication over a queue-order
+fix.  The Lean tree already carries a terminating, meaning-preserving non-generative
+canonicaliser (`Rowpartition/Canonical.lean`, 93 theorems) and ROSE §4's specification
+(`Residual`, `REquiv`, `IsCanonicaliser`, `OrderIndependent`); formalising the Scala form
+against them is deferred by the user ("formalize more broadly later").
+
+- [ ] **E11a The form.**  In `Subst.generalize` when `publishing`: universal binders by first
+  occurrence in the body, constraints by an id-free structural key shared with 6.2c's
+  `displayScheme` (moved out of `TolerantCheck`), existentials by first occurrence in the
+  ordered constraints, each partition's right-hand side ordered; row labels PRINT sorted by
+  name (`Pretty.formatRho`).  Whether intermediate generalisations get the same treatment is
+  decided by measurement (they feed the solver's queue).  ACCEPTANCE: the E11 repro's FORM
+  half is a test (N cold checks, rendered strings identical up to the SET class, which is
+  named in the failure message — no alpha-equivalence loosening, per the ticket); the
+  corpus FORM count (bindings rendering differently on two cold checks) is 0 and the SET count
+  is printed and pinned as E11b's target; `ei-classify` over 274 interfaces: only
+  identical / order-only / alpha-equivalent; two after-side snapshots at different id bases
+  byte-identical except the SET class; g1 EQUIVALENT; REPL goldens re-cut with before/after
+  per file, order-only; corpus verdicts 89/79/0 of 168 identical; after-side looptrace
+  agrees on every segment (IDENTICAL against before is NOT expected — the published order
+  feeds call sites; the blast radius is reported); batch A/B four interleaved rounds inside
+  the ~1 % floor, per-file corpus wall times with any > 20 % mover named; Tier 2.
+  Brief: tracker/loopmodel/briefs/brief-E11a.md.
+- [ ] **E11b The set (DRAFTED, not opened).**  At publication, delete a constraint the rest
+  of the set entails, under the existentials, using an entailment oracle (the signature
+  entailment machinery `SigEntail.scala` is the candidate — it decides declared-vs-inferred
+  row obligations today), with a per-scheme budget and KEEP on no-verdict; run to a fixpoint;
+  idempotent; the E11 repro's four rounds become one rendering; the corpus SET count from
+  E11a goes to 0 (or every survivor classified as beyond the oracle).  Faithfulness
+  (`REquiv` both ways, ROSE §4.2) argued per rule, Lean optional.  Every deletion changes an
+  `.ei`: the "complete per-label decision" tooling (ROW-CONSTRAINT-STATE.md A1) classifies
+  each as equivalent; anything weaker/stronger is a stop.  Tier 1 + Tier 2 + A/Bs (an oracle
+  call per published constraint has a cost; budgeted).  Opened only on the user's word after
+  E11a lands.
+
+**GATE (E11a)**: reviewer's own Tier 2 and the interface classification; the FORM count at
+0 with the SET count recorded; goldens re-cut and justified; batch A/B; commit; report.
 
 ## Blocked / Awaiting
 

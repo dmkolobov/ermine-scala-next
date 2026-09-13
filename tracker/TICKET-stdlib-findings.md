@@ -747,7 +747,9 @@ E11. **Hover publishes a constraint set that depends on how many ids the session
     the cheaper order); (3) it must NOT be closed by loosening a test to alpha-equivalence — the user sees the
     rendering.  Also the warning 7.1b's differential needs: rendered text is not a sound invisibility oracle
     (`scalacheck-binding/AlphaEq.scala` carries the comparator with counted controls).  Severity low/medium, editor
-    quality.  Cross-referenced from ROW-CONSTRAINT-STATE.md.  Not scheduled.
+    quality.  Cross-referenced from ROW-CONSTRAINT-STATE.md.  SCHEDULED 2026-09-13 as LSP interstage item E11 (the
+  user: canonical form at publication): E11a = the FORM (label/constraint/binder order at publication; brief
+  tracker/loopmodel/briefs/brief-E11a.md), E11b = the SET (entailment-based redundancy deletion, drafted, not opened).
 
 E12. **`TestInterfaceRoundTrip` is intermittent under whole-suite parallelism: other suites repopulate the
     process-global dep cache between its clear and its warm load.**  Filed 2026-09-11 from LSP Stage 4 item 7.1b's
