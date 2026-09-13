@@ -122,6 +122,37 @@ object TolerantCheck {
                             * sweep can assert EVERY untyped value-local binder
                             * is one of these and nothing else. */
                           binderRankN: List[(Int, Int)] = Nil,
+                          /** 6.2c: the same cross-check for BINDING HEADS.  A local
+                            * head is typed twice over too -- by the scheme
+                            * `inferImplicitBindingTypes` published for it
+                            * (`SubstEnv.headTypes`, which hover now shows) and by the
+                            * Lower meta that hover read until 6.2c -- and the two are
+                            * compared where both speak.  A pair AGREES when the meta is
+                            * the scheme's body up to renaming AND the scheme carries no
+                            * constraint the meta would drop; the def-sites where it does
+                            * not are the heads whose hover 6.2c changes in CONTENT, and
+                            * the corpus sweep pins them as a set.  `headRequantified` is
+                            * the cosmetic half: heads whose scheme quantifies at least
+                            * one variable, so the hover gains the `forall` a top-level
+                            * scheme's hover already shows.  Empty unless `wantLocals`. */
+                          headAgreed: Int = 0,
+                          headDisagreements: List[(Int, Int)] = Nil,
+                          headRequantified: Int = 0,
+                          /** 6.2c: local heads whose published constraint set
+                            * quantified its own existentials and was ELIDED from
+                            * the hover -- see `displayScheme`. */
+                          headElided: Int = 0,
+                          /** 6.2c (review R-5): the PIN on rule 1 -- the local heads
+                            * where a published constraint the reader can act on (every
+                            * variable either quantified by the scheme or visible in its
+                            * body) did NOT survive into the displayed scheme.  Asserted
+                            * EMPTY, on the fixture and over the corpus. */
+                          headLost: List[(Int, Int)] = Nil,
+                          /** 6.2c fix round: the def-sites whose hover SHOWS a
+                            * constraint -- the user-visible half of
+                            * `headDisagreements`, which since review R-6 counts every
+                            * head whose PUBLISHED scheme carries one, shown or elided. */
+                          headShown: List[(Int, Int)] = Nil,
                           /** 7.5, ticket E10(5): the file's own nullary
                             * type synonyms, resolved to the `Con` they
                             * name.  See `checkWith`. */
@@ -364,12 +395,20 @@ object TolerantCheck {
   private def collectLocals(bs: List[Binding], file: String,
                             published: TermVar => Option[Type])
                            (implicit hm: SubstEnv, su: Supply)
-      : (Map[(Int, Int), LocalTy], Int, List[(Int, Int)], List[(Int, Int)]) = {
+      : (Map[(Int, Int), LocalTy], Int, List[(Int, Int)], List[(Int, Int)],
+         Int, List[(Int, Int)], Int, Int, List[(Int, Int)], List[(Int, Int)]) = {
     val out = scala.collection.mutable.Map.empty[(Int, Int), LocalTy]
 
     var agreed = 0
     val disagreed = scala.collection.mutable.ListBuffer.empty[(Int, Int)]
     val rankN = scala.collection.mutable.ListBuffer.empty[(Int, Int)]
+    // 6.2c head counters; see `Result.headAgreed`.
+    var headAgreed = 0
+    var headRequantified = 0
+    var headElided = 0
+    val headDisagreed = scala.collection.mutable.ListBuffer.empty[(Int, Int)]
+    val headLost = scala.collection.mutable.ListBuffer.empty[(Int, Int)]
+    val headShown = scala.collection.mutable.ListBuffer.empty[(Int, Int)]
 
     /** A def-site in THIS module.  A `V` relocated to another file, and
       * anything at `Loc.builtin` or `Inferred`, is not one. */
@@ -391,7 +430,153 @@ object TolerantCheck {
     def hooked(l: scalaparsers.Loc): Option[Type] =
       keyOf(l) flatMap hm.binderTypes.get map Subst.substType
 
-    /** A binding head: an IMPLICIT one reads its own meta, which
+    /** 6.2c: the type variables of `t`, in order of FIRST OCCURRENCE.  The
+      * quantifier of a published scheme is built from `typeVars(t)`, a SET
+      * (`Subst.generalize`), so its binder ORDER follows variable ids -- and
+      * `Pretty.ppForall` names the binders before it prints the body, so the
+      * LETTERS a hover shows follow that order too.  Two checks of one
+      * unedited module draw different ids (the `Supply` has moved), which is
+      * how 6.6 found 145 of 223 "divergences" that were order alone.  A head
+      * hover must not flicker, so the binders are re-ordered here by where
+      * they first appear in what is printed. */
+    def varOrder(t: Type): List[Int] = {
+      val acc = scala.collection.mutable.ListBuffer.empty[Int]
+      val seen = scala.collection.mutable.Set.empty[Int]
+      def go(x: Type): Unit = x match {
+        case VarT(v)               => if (seen.add(v.id)) acc += v.id
+        case AppT(f, a)            => go(f); go(a)
+        case Forall(_, _, _, q, b) => go(q); go(b)
+        case Exists(_, _, cs)      => cs.foreach(go)
+        case Part(_, l, r)         => go(l); r.foreach(go)
+        case Memory(_, b)          => go(b)
+        case _                     => ()
+      }
+      go(t); acc.toList
+    }
+
+    /** 6.2c: an ID-FREE key for one constraint, for ordering a kept set.
+      *
+      * The constraint LIST inside a published `Exists` is id-keyed, exactly as
+      * the quantifier's binder list is (`Subst.generalize` builds both from
+      * sets), so two checks of one unedited file can print a kept set two ways
+      * -- the flicker rule 2 removes from the binders and the 6.2c REVIEW's R-7
+      * says rule 1 only HID for the constraints.  The key serialises the
+      * constraint structurally with every type variable replaced by its
+      * position in the BODY's first-occurrence order (`pos`), and by its
+      * first-occurrence order WITHIN the constraint when the body does not
+      * mention it: no id reaches the key, so two runs sort the same set the
+      * same way.  A partition's right-hand side is sorted inside the key
+      * because that list is id-keyed too (`AlphaEq.multi` backtracks over it
+      * for the same reason); the RENDERING still prints it in the checker's
+      * order, which is the residual R-7 names and the 7.2 sweep would catch. */
+    def constraintKey(t: Type, pos: Map[Int, Int]): String = {
+      val local = scala.collection.mutable.Map.empty[Int, Int]
+      def go(x: Type): String = x match {
+        case VarT(v)               => pos.get(v.id).map("#" + _)
+                                        .orElse(v.name.map("@" + _.toString))
+                                        .getOrElse("?" + local.getOrElseUpdate(v.id, local.size))
+        case AppT(f, a)            => "(" + go(f) + " " + go(a) + ")"
+        case Forall(_, _, _, q, b) => "F[" + go(q) + "|" + go(b) + "]"
+        case Exists(_, _, cs)      => "E[" + cs.map(go).sorted.mkString(",") + "]"
+        case Part(_, l, r)         => "P[" + go(l) + "<-" + r.map(go).sorted.mkString(",") + "]"
+        case Memory(_, b)          => go(b)
+        case other                 => other.toString
+      }
+      go(t)
+    }
+
+    /** 6.2c: the constraints of a published constraint set, as a list. */
+    def constraintsOf(q: Type): List[Type] = q match {
+      case Exists(_, _, cs) => cs
+      case t                => if (t.isTrivialConstraint) Nil else List(t)
+    }
+
+    /** 6.2c: the constraints of `q` a reader of THIS hover can act on -- the ones
+      * every one of whose type variables the scheme either quantifies or shows in
+      * its body.  Rule 1 keeps exactly these.
+      *
+      * The predicate is VISIBILITY and not "mentions an existential" (the fix
+      * round's second correction, after review R-1 replaced the first): an
+      * existential is never visible, so this is strictly stronger, and the
+      * difference is the class that made the 7.2 cache-invisibility property fail
+      * -- a constraint over AMBIGUOUS variables that the scheme does not quantify
+      * and the body does not show (`a1 <- (v1, k, r2, r, s)` on a head whose body
+      * mentions only `k`).  Two checks of one unedited file do not agree about
+      * those: the checker publishes a different row-constraint set (the 7.2
+      * sweep's own "publish different row constraints on two COLD checks"
+      * counter), so whether such a constraint is even present flickered.  A
+      * reader cannot act on a constraint whose variables appear nowhere in the
+      * type being hovered, so nothing actionable is hidden: `Num a` over a
+      * quantified `a` is kept, and `Result.headLost` is the pin that says so. */
+    def constraintsKept(q: Type, visible: Set[Int]): List[Type] =
+      constraintsOf(q).filter(c => Type.typeVars(c).forall(v => visible(v.id)))
+
+    /** 6.2c (review R-7): a kept constraint with its PARTITION right-hand side put
+      * in an id-free order.  That list is built from a set like every other list
+      * here, so `a <- (r, r2, s, k, v)` and `a <- (s, r, r2, k, v)` are the same
+      * constraint printed two ways by two checks of one unedited file (measured:
+      * `Report.e:1340:7`, `Tree.e:84:9`).  Ordering is by `constraintKey`, which
+      * reads a variable's position in the body and then its NAME -- never its id.
+      * `new Part` and not `Part.apply`: the smart constructor rewrites concrete
+      * rows, and this is a re-ordering for display, not a simplification. */
+    def normaliseConstraint(t: Type, pos: Map[Int, Int]): Type = t match {
+      case p: Part => new Part(p.loc, p.lhs, p.rhs.sortBy(constraintKey(_, pos)))
+      case other   => other
+    }
+
+    /** 6.2c: a published scheme AS A LOCAL HEAD SHOWS IT.  Two display rules,
+      * and nothing else -- the type itself is the checker's.
+      *
+      * 1. A constraint is KEPT when every type variable in it is one the scheme
+      *    QUANTIFIES or one its BODY SHOWS, and dropped otherwise.  It is a
+      *    FILTER, one constraint at a time (6.2c review R-1: the first version
+      *    erased the whole `Exists` as soon as one existential appeared anywhere
+      *    in it, and `Subst.generalize` puts the WHOLE published set in ONE
+      *    `Exists` -- so `Num a` was lost whenever a row residual stood beside
+      *    it, on 246 of 930 elision events).  What is dropped is the ambiguous
+      *    row residual a local's inferred set drags along (`Relation.e`'s locals
+      *    carry twenty): a constraint over variables that appear NOWHERE in the
+      *    type the reader is hovering, which no edit to this binding can
+      *    discharge, and which two checks of one unedited file do not even agree
+      *    about (see `constraintsKept`).  What is kept is every constraint the
+      *    head's own variables carry -- `Num a`, which is what E14 asked for.
+      *    NOTE (review R-2): the
+      *    `.ei` does NOT drop these; a top-level scheme publishes its
+      *    existential row constraints, and the deletion the report once cited
+      *    is C12's TAUTOLOGY deletion in `mkSimplified` under
+      *    `publishing = true`, which is a different predicate and runs for the
+      *    module's top-level group only.  This rule is the EDITOR's, and the
+      *    heads it fires on are pinned (`Result.headElided`) and cross-checked
+      *    against the published set (`Result.headLost`, asserted empty).
+      * 2. The kept constraints are ordered by `constraintKey` and the
+      *    quantifier's variables by first occurrence (`varOrder`), so neither
+      *    the letters nor the constraint order depends on ids.
+      *
+      * `Forall.apply` collapses the result to the bare body when nothing is
+      * left to quantify, so a monomorphic local head renders exactly the
+      * string it rendered before 6.2c. */
+    def displayScheme(t: Type): Type = t match {
+      case Forall(l, ks, ts, q, body) =>
+        val bodyPos = varOrder(body).zipWithIndex.toMap
+        val visible = ts.map(_.id).toSet ++ Type.typeVars(body).map(_.id)
+        val kept    = constraintsKept(q, visible).map(normaliseConstraint(_, bodyPos))
+                        .sortBy(c => constraintKey(c, bodyPos))
+        val keep    = if (kept.isEmpty) Exists(l.inferred) else Exists(l.inferred, Nil, kept)
+        val pos     = (varOrder(keep) ++ varOrder(body)).zipWithIndex.toMap
+        Forall(l, ks, ts.sortBy(v => pos.getOrElse(v.id, Int.MaxValue)), keep, body)
+      case other => other
+    }
+
+    /** 6.2c: the type the checker PUBLISHED for an implicit binding head --
+      * the generalised scheme, constraints included -- zonked in this
+      * component's own `SubstEnv`.  `SubstEnv.headTypes` is written by
+      * `Subst.inferImplicitBindingTypes` at the `generalize` that produces it.
+      * Empty unless `hm.recordBinders`. */
+    def headRecorded(l: scalaparsers.Loc): Option[Type] =
+      keyOf(l) flatMap hm.headTypes.get map (t => displayScheme(Subst.substType(t)))
+
+    /** A binding head: an IMPLICIT one reads the SCHEME the checker
+      * published for it (6.2c), falling back to its own meta, which
       * inference subsumed against the inferred type; an EXPLICIT one
       * reads its DECLARATION, which is what Decision (a) asks for and
       * needs no inference at all — `Subst.inferBindingGroupTypes` type
@@ -402,10 +587,23 @@ object TolerantCheck {
       * `Lower.pairSigs`, shared with the top level).  Until LET-1 that
       * was true of `where` only: a `let` block built `Let(..., Nil, _)`
       * and a signed `let` binder hovered as INFERRED, which Decision (a)
-      * forbids -- `TestTolerantCheck`'s `sigLet` twin pins it now. */
+      * forbids -- `TestTolerantCheck`'s `sigLet` twin pins it now.
+      *
+      * 6.2c: the meta is the WRONG answer for an implicit head and was the
+      * shipped one until this item.  `subsumeType(tp, rp)`
+      * (`Subst.inferImplicitBindingTypes`) binds Lower's meta to `rp`, the
+      * pre-generalisation rho; the `generalize` two statements later quantifies
+      * rp's free metas and moves the deferred constraints into the scheme's `q`,
+      * and NOTHING binds those metas afterwards.  So the meta's zonk is the rho
+      * for ever: one frame behind the published type, with the constraints
+      * dropped -- `go : List a -> a -> a` for a `go` the checker holds at
+      * `forall a. Num a => List a -> a -> a` (ticket E14).  The scheme is
+      * `headRecorded`; the meta remains the fallback for a head the record
+      * cannot key (an `Inferred` def-site, another file, a cache hit that
+      * re-inferred nothing). */
     def headType(b: Binding): Type = b match {
       case e: ExplicitBinding => Subst.substType(e.ty.body)
-      case i                  => Subst.substType(i.v.extract)
+      case i                  => headRecorded(i.v.loc) getOrElse Subst.substType(i.v.extract)
     }
 
     def binding(b: Binding): Unit = record(b.v.loc, LocalTy(headType(b)))
@@ -485,6 +683,66 @@ object TolerantCheck {
         open1 = Type.typeVars(a).map(_.id).toSet,
         open2 = Type.typeVars(b).map(_.id).toSet)).isDefined
 
+    /** 6.2c: the head cross-check, the equation arguments' one binding level up.
+      * Both answers for an implicit local head are compared where both speak: the
+      * SCHEME the checker published and the META hover read until 6.2c.
+      *
+      * The comparison is against the PUBLISHED scheme, NOT the displayed one
+      * (review R-6: reading `headRecorded` here meant `displayScheme` had already
+      * run, so an elided head's constraint set looked trivial and the pair was
+      * counted AGREED however much the hover had dropped -- the number then meant
+      * "the hover string changed in content", which is not what the sweep claimed).
+      * So: they AGREE when the meta is the scheme's body up to renaming AND the
+      * published scheme quantifies no constraint at all; they DISAGREE wherever the
+      * checker holds a constraint the pre-6.2c rho could not carry, whether or not
+      * rule 1 shows it.  A scheme that merely quantifies variables renders
+      * `forall a. ...` where the rho rendered `a`: a rendering change, not a
+      * disagreement, counted apart in `headRequantified`.
+      *
+      * `headElided` counts the heads where rule 1 dropped at least one published
+      * constraint, and `headLost` is its PIN (review R-5): a published constraint
+      * all of whose variables are the scheme's own binders or appear in its body is
+      * one the reader can act on, and it must survive into the displayed scheme.
+      * The two predicates are not the same computation -- the filter asks whether a
+      * constraint mentions an existential the set quantifies, this asks whether
+      * every variable is quantified-or-visible -- so the pin can, and before R-1
+      * did, fail. */
+    def headAgree(b: Binding): Unit = b match {
+      case _: ExplicitBinding => ()
+      case i => keyOf(i.v.loc) foreach { k =>
+        keyOf(i.v.loc) flatMap hm.headTypes.get map Subst.substType foreach { raw =>
+          val (_, qs, q, body) = Type.dequantify(raw)
+          if (qs.nonEmpty) headRequantified += 1
+          val published = constraintsOf(q)
+          val visible   = qs.map(_.id).toSet ++ Type.typeVars(body).map(_.id)
+          if (constraintsKept(q, visible).size < published.size) headElided += 1
+          // the def-sites where the hover SHOWS a constraint it did not show before
+          // 6.2c -- the user-visible half of `headDisagreements`, pinned as its own
+          // set because that is the claim the report's table makes.
+          if (!Type.dequantify(displayScheme(raw))._3.isTrivialConstraint) headShown += k
+          if (published.nonEmpty) {
+            // THE PIN, and it is deliberately NARROWER than the filter: a
+            // constraint over the scheme's OWN QUANTIFIED variables only -- `Num a`,
+            // `AsPresentation pr` -- is one no reading of rule 1 may drop.  The
+            // filter's own predicate (quantified OR shown in the body) is broader,
+            // so this is a different computation over the published set and can
+            // fail: before R-1 it failed at 246 elision events.
+            val bodyPos = varOrder(body).zipWithIndex.toMap
+            val quant   = qs.map(_.id).toSet
+            val shownKs = constraintsOf(Type.dequantify(displayScheme(raw))._3)
+                            .map(c => constraintKey(c, bodyPos)).toSet
+            if (published.exists(c => Type.typeVars(c).nonEmpty &&
+                                      Type.typeVars(c).forall(v => quant(v.id)) &&
+                                      !shownKs(constraintKey(c, bodyPos))))
+              headLost += k
+          }
+          if (q.isTrivialConstraint && sameUpToVarNaming(body, Subst.substType(i.v.extract)))
+            headAgreed += 1
+          else headDisagreed += k
+        }
+      }
+    }
+
     /** 6.2b: the hook's answer for one unsigned binder.
       *
       * The arity split ran FIRST for every binding whose arguments it can
@@ -552,6 +810,7 @@ object TolerantCheck {
       case Case(_, e, alts)   => term(e, scope); alts.foreach(alt(_, scope))
       case Let(_, is, es, b)  => (is ++ es).foreach { b2 =>
                                    val h = headType(b2)
+                                   headAgree(b2)
                                    binding(b2); args(b2, h); b2.alts.foreach(alt(_, scope)) }
                                  term(b, scope)
       case _                  => ()   // Var, literals, Product, EmptyRecord, Hole
@@ -569,7 +828,9 @@ object TolerantCheck {
       args(b, h)
       b.alts.foreach(alt(_, Some(h)))
     }
-    (out.toMap, agreed, disagreed.distinct.toList, rankN.distinct.toList)
+    (out.toMap, agreed, disagreed.distinct.toList, rankN.distinct.toList,
+     headAgreed, headDisagreed.distinct.toList, headRequantified, headElided,
+     headLost.distinct.toList, headShown.distinct.toList)
   }
 
   def check(ps: ParseState, m: Module)(implicit s: SessionEnv, su: Supply): Result =
@@ -694,6 +955,13 @@ object TolerantCheck {
     var agreed = 0
     var disagreed: List[(Int, Int)] = Nil
     var rankN: List[(Int, Int)] = Nil
+    // 6.2c head counters; see `Result.headAgreed`.
+    var headAgreed = 0
+    var headDisagreed: List[(Int, Int)] = Nil
+    var headRequantified = 0
+    var headElided = 0
+    var headLost: List[(Int, Int)] = Nil
+    var headShown: List[(Int, Int)] = Nil
 
     val preFailed = bs.collect { case b if termVars(b.alts).exists(free) => b.v }.toSet
     var failed: Set[TermVar] = preFailed
@@ -829,13 +1097,16 @@ object TolerantCheck {
               // 6.2: one zonk per local binder, INSIDE the block that
               // already exists, over the terms as inference saw them.
               (sub, if (wantLocals) collectLocals(cs, file, sub.get(_).map(_.extract))
-                    else (Map.empty[(Int, Int), LocalTy], 0, Nil, Nil))
+                    else (Map.empty[(Int, Int), LocalTy], 0, Nil, Nil, 0, Nil, 0, 0, Nil, Nil))
             }
           } match {
-            case Some((sub, (ls, ag, dis, rkn))) =>
+            case Some((sub, (ls, ag, dis, rkn, hag, hdis, hrq, hel, hlost, hshown))) =>
               subs = subs ++ sub
               locals = locals ++ ls
               agreed += ag; disagreed = disagreed ++ dis; rankN = rankN ++ rkn
+              headAgreed += hag; headDisagreed = headDisagreed ++ hdis
+              headRequantified += hrq; headElided += hel
+              headLost = headLost ++ hlost; headShown = headShown ++ hshown
               if (notes.length == before) fpk foreach { f =>
                 fresh += f -> Entry(comp.flatMap(b => spelling(b.v).flatMap(sp =>
                   sub.get(b.v).map(sp -> _.extract))).toMap,
@@ -858,9 +1129,12 @@ object TolerantCheck {
             val ep = Term.subTerm(subs, e)
             typeCheckExplicitBinding(Nil, ep)
             if (wantLocals) {
-              val (ls, ag, dis, rkn) = collectLocals(List(ep), file, etm.get)
+              val (ls, ag, dis, rkn, hag, hdis, hrq, hel, hlost, hshown) = collectLocals(List(ep), file, etm.get)
               locals = locals ++ ls; agreed += ag
               disagreed = disagreed ++ dis; rankN = rankN ++ rkn
+              headAgreed += hag; headDisagreed = headDisagreed ++ hdis
+              headRequantified += hrq; headElided += hel
+              headLost = headLost ++ hlost; headShown = headShown ++ hshown
             }
           }
         }
@@ -883,7 +1157,9 @@ object TolerantCheck {
       (subs.flatMap { case (v, v2) => v.name.map(_.string -> v2.extract) } ++
        etm.flatMap  { case (v, t)  => v.name.map(_.string -> t) } ++
        foreignTypes).toMap
-    (Result(notes.toList, types, reused, components, locals, agreed, disagreed, rankN, ownTypes),
+    (Result(notes.toList, types, reused, components, locals, agreed, disagreed, rankN,
+            headAgreed, headDisagreed, headRequantified, headElided, headLost, headShown,
+            ownTypes),
      Cache(scopeKey, fresh.toMap))
   }
 

@@ -191,7 +191,18 @@ final class Resident(val log: String => Unit) {
                            // see `TolerantCheck.Result.binderAgreed`.
                            binderAgreed: Int = 0,
                            binderDisagreements: List[(Int, Int)] = Nil,
-                           binderRankN: List[(Int, Int)] = Nil)
+                           binderRankN: List[(Int, Int)] = Nil,
+                           // 6.2c: the same, for local binding HEADS -- how many
+                           // the published scheme and the pre-6.2c meta agreed
+                           // on, the def-sites where they did not, and the two
+                           // counts behind the display rules; see
+                           // `TolerantCheck.Result.headAgreed`.
+                           headAgreed: Int = 0,
+                           headDisagreements: List[(Int, Int)] = Nil,
+                           headRequantified: Int = 0,
+                           headElided: Int = 0,
+                           headLost: List[(Int, Int)] = Nil,
+                           headShown: List[(Int, Int)] = Nil)
 
   /** Check one file against a fresh env copy, resolving imports first
     * against the file's own directory (workspace siblings), then the
@@ -502,7 +513,9 @@ final class Resident(val log: String => Unit) {
             importNotes ++ (if (fastMode) Nil else published), checked.types,
             checked.locals, r.scope, contents, root,
             checked.reused, checked.components, checked.ownTypes,
-            checked.binderAgreed, checked.binderDisagreements, checked.binderRankN)
+            checked.binderAgreed, checked.binderDisagreements, checked.binderRankN,
+            checked.headAgreed, checked.headDisagreements, checked.headRequantified,
+            checked.headElided, checked.headLost, checked.headShown)
   } }
 
   private def errorStatements(ss: List[SStatement]): List[SErrorStatement] = ss.flatMap {

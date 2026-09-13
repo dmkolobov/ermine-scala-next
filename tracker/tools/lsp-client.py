@@ -887,10 +887,13 @@ def main():
           hoverline("Locals.e", 39, 6) == "slet : Bool -> Bool", hoverline("Locals.e", 39, 6))
     check("hover signed let binder at a use",
           hoverline("Locals.e", 40, 5) == "slet : Bool -> Bool", hoverline("Locals.e", 40, 5))
-    # a polymorphic where-bound helper: the metas its component
-    # generalised render as type VARIABLES, no `forall` on a local
+    # a polymorphic where-bound helper.  6.2c: a local head hovers the
+    # SCHEME the checker published for it, quantifier and all -- the same
+    # rendering a TOP-LEVEL head has always had (`Locals.konst` below).
+    # Until 6.2c it hovered the pre-generalisation rho, `a -> a`, which is
+    # also how a monotype in an unsolved meta prints.
     check("hover polymorphic where binder",
-          hoverline("Locals.e", 21, 8) == "idy : a -> a", hoverline("Locals.e", 21, 8))
+          hoverline("Locals.e", 21, 8) == "idy : forall a. a -> a", hoverline("Locals.e", 21, 8))
     # an EQUATION's arguments, recovered from the head's own type
     check("hover equation arg at its def-site",
           hoverline("Locals.e", 23, 9) == "p : Bool", hoverline("Locals.e", 23, 9))
@@ -943,6 +946,44 @@ def main():
           hoverline("Locals.e", 52, 16) == "wrapped : Bool", hoverline("Locals.e", 52, 16))
     check("hover as-pattern inner var at a use",
           hoverline("Locals.e", 52, 28) == "wrapped : Bool", hoverline("Locals.e", 52, 28))
+    # --- 6.2c: the local HEAD hovers what the checker PUBLISHED --------
+    # Ticket E14.  `Subst.inferImplicitBindingTypes` binds Lower's meta to
+    # the PRE-GENERALISATION rho, and the `generalize` that follows moves
+    # the deferred constraints into the scheme and leaves the rho behind --
+    # so a constrained local hovered `List a -> a -> a` while the checker
+    # held `forall a. PrimitiveNum a => List a -> a -> a`, beside the
+    # hook's `h : Int` in the same three lines.  The scheme is recorded
+    # where it is published (`SubstEnv.headTypes`) and hover reads it.
+    open_doc("Heads.e")
+    heads_ds = client.diagnostics_for(uri("Heads.e"))
+    check("Heads.e clean", heads_ds == [], repr(heads_ds))
+    check("hover a CONSTRAINED local head at its def-site",
+          hoverline("Heads.e", 9, 6) == "go : forall a. PrimitiveNum a => List a -> a -> a",
+          hoverline("Heads.e", 9, 6))
+    check("hover the same head at a use",
+          hoverline("Heads.e", 11, 5) == "go : forall a. PrimitiveNum a => List a -> a -> a",
+          hoverline("Heads.e", 11, 5))
+    # the arity split inherits: the argument is peeled from the head's own
+    # type and printed in the head's frame, so its letter is the head's
+    check("hover its argument, in the head's frame",
+          hoverline("Heads.e", 9, 16) == "acc : a", hoverline("Heads.e", 9, 16))
+    # the hook's answers for the SAME let, which are the single instance
+    # the body takes -- the second frame, left standing (6.2c follow-up 1)
+    check("hover the hook's answer beside it",
+          hoverline("Heads.e", 10, 10) == "h : Int", hoverline("Heads.e", 10, 10))
+    # the controls: a head mentioning a variable the body fixes LATER
+    # still shows the settled type, and a settled local is unchanged
+    check("hover a head whose variable is fixed later",
+          hoverline("Heads.e", 15, 6) == "gl : forall a. a -> (a, Int)",
+          hoverline("Heads.e", 15, 6))
+    check("hover a local whose type is settled outright",
+          hoverline("Heads.e", 20, 6) == "zl : Int", hoverline("Heads.e", 20, 6))
+    # Decision (a): a SIGNED local head still shows its declaration
+    check("hover a signed local head",
+          hoverline("Heads.e", 26, 6) == "sg : Int -> Int", hoverline("Heads.e", 26, 6))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Heads.e")}})
+    client.diagnostics_for(uri("Heads.e"))
+
     # a `do` binder, which lowers to a lambda argument of `Syntax.Do.bind`
     open_doc("LocalsDo.e")
     do_ds = client.diagnostics_for(uri("LocalsDo.e"))

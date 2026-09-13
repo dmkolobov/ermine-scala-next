@@ -129,7 +129,41 @@ class SubstEnv(
     * map never picked up can no longer be applied, and the corpus sweep's
     * split-vs-hook disagreements went 14 -> 251 (6.2b report Sec. 9b). */
   var binderTypes: Map[(Int, Int), Type] = Map()
-  /** 6.2b: OFF on every strict path.  See `binderTypes`. */
+  /** 6.2c (LSP interstage item, tracker/loopmodel/LSP-6.2c-HEADS.md): the type
+    * `inferImplicitBindingTypes` PUBLISHED for each implicit binding head -- the
+    * GENERALISED SCHEME, constraints included -- keyed by the head `V`'s def-site
+    * `(line, column)`, the same key `binderTypes` and `TolerantCheck.Result.locals`
+    * use, and safe for the same reason (one `SubstEnv` sees one module; the 6.2b
+    * review's R-9).  EDITOR ONLY: written only under `recordBinders`.
+    *
+    * WHY IT EXISTS.  A local head's own `V` holds Lower's meta, and
+    * `subsumeType(tp, rp)` binds that meta to `rp` -- the UNBOUND, PRE-GENERALISATION
+    * rho.  `generalize` then quantifies rp's free metas into the scheme and moves the
+    * deferred constraints into its `q`, but it rewrites only the SCHEME: nothing ever
+    * binds those metas again, so a zonk of the head's meta returns the rho for ever,
+    * one frame behind the type the checker published and with the constraints gone
+    * (`let go [] acc = acc / go (h::t) acc = go t (h * acc)` hovered
+    * `List a -> a -> a` where the checker held `forall a. Num a => List a -> a -> a`
+    * -- ticket E14).  The published scheme is handed out in the substitution map the
+    * `Let` case applies to the BODY, so the head has no other way to reach it.
+    *
+    * Kept eagerly substituted at `instantiateType` ONLY, and deliberately NOT at
+    * `unbind`/`generalize` as `binderTypes` is: an entry here is a SCHEME whose
+    * quantified variables are `Bound`, and those two rewrites would drag it into
+    * whichever instance the body happened to take first.
+    *
+    * TWO LIMITS, both inherited and both editor-only (6.2c review R-10).  The KIND
+    * instantiation four lines up (`instantiateKind`: `hm.types = subKind(s, hm.types)`)
+    * rewrites `hm.types` and rewrites neither this map nor `binderTypes`, so a scheme
+    * recorded before one of its kind metas is solved keeps the unsolved kind meta --
+    * the asymmetry the 6.2b review flagged in its Sec. 1.7.  And the update below is a
+    * non-atomic read-modify-write on a shared `SubstEnv`, in a function whose own
+    * comment says generalisation runs on several loader threads: unreachable, because
+    * `recordBinders` is set only by `checkWith`, which the server drives
+    * single-threaded (Decision 3) with a fresh `SubstEnv` per component -- but that
+    * argument, and not the code, is what makes it safe. */
+  var headTypes: Map[(Int, Int), Type] = Map()
+  /** 6.2b: OFF on every strict path.  See `binderTypes` and `headTypes`. */
   var recordBinders: Boolean = false
   def fskvs:      Traversable[TypeVar] = Type.fskvs(types)
   def kindVars:   Traversable[KindVar] = Kind.kindVars(kinds) ++ Kind.kindVars(types)
@@ -220,8 +254,16 @@ object Subst {
       hm.types = subType(Map(v -> e), hm.types) + (v -> e)
       hm.remembered = hm.remembered.map { case (k, (g, t, loc)) => (k, (subType(Map(v -> e), g), subType(Map(v -> e), t), loc)) }
       // 6.2b: the site that makes the hook work at all -- see `SubstEnv.binderTypes`.
-      if (hm.recordBinders && hm.binderTypes.nonEmpty)
-        hm.binderTypes = hm.binderTypes.map { case (k, t) => (k, subType(Map(v -> e), t)) }
+      // 6.2c: and the only site that keeps a published head scheme's FREE metas live
+      // (`let g x = (x, y)` publishes `forall a. a -> (a, b)` before the body fixes
+      // `b` at `Int`) -- see `SubstEnv.headTypes`.  One boolean test on the strict path.
+      // 6.2c review R-8: the map is built only when there is something to rewrite,
+      // so an editor check with both maps still empty allocates nothing here either.
+      if (hm.recordBinders && (hm.binderTypes.nonEmpty || hm.headTypes.nonEmpty)) {
+        val sv = Map(v -> e)
+        if (hm.binderTypes.nonEmpty) hm.binderTypes = hm.binderTypes.map { case (k, t) => (k, subType(sv, t)) }
+        if (hm.headTypes.nonEmpty)   hm.headTypes   = hm.headTypes.map   { case (k, t) => (k, subType(sv, t)) }
+      }
   }
 
   /**
@@ -907,8 +949,19 @@ object Subst {
          * both ways in `S5-HYGIENE.md` "Follow-up: publishing-only deletion".  Threaded as a
          * PARAMETER, never a global: generalisation is re-entrant and runs on several
          * loader threads. */
-        b.v -> b.v.as(RowTrace.withBinding(b.v.toString)(
-                        generalize(omg, csp, substType(t).forget, publishing)))
+        val scheme = RowTrace.withBinding(b.v.toString)(
+                       generalize(omg, csp, substType(t).forget, publishing))
+        // 6.2c: the ONE place an implicit binding head's published type exists.  The
+        // map below hands it to the BODY (`inferType`'s `Let` case substitutes it in);
+        // the head's own `V` keeps Lower's meta, bound to the pre-generalisation rho,
+        // and is what hover read until this record.  `b.v.loc` is the def-site `Pos`
+        // Lower gave the head; an `Inferred`/builtin loc is not a def-site and is
+        // skipped, exactly as the pattern-binder hook does.  See `SubstEnv.headTypes`.
+        if (hm.recordBinders) b.v.loc match {
+          case p: Pos => hm.headTypes = hm.headTypes + ((p.line, p.column) -> scheme)
+          case _      => ()
+        }
+        b.v -> b.v.as(scheme)
     }).toMap)
   }
 

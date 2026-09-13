@@ -788,6 +788,17 @@ E14. **The 6.2 arity split can hover a type the binder does not have.**  Recorde
     local head (`*` is `Num n => n -> n -> n`) rendering a scheme-shaped type without its constraint while the
     checker settled `Int`; the fix belongs at the head, and heads get the corpus cross-check equation arguments have.
 
+E15. **The 6.2b hook shows a pattern binder's FIRST instantiation under a polymorphic local.**  Found by the 6.2c
+    implementer (LSP-6.2c-HEADS.md §6), confirmed with a witness by the 6.2c review (§6):
+    `let kk (h2 :: t2) = h2 in (kk (1::[]), kk (True::[]))` hovers `kk : forall a. List a -> a` but `h2 : Int`,
+    `t2 : List Int` — the first use's instance, so the answer is arbitrary and can contradict the head.  Mechanism:
+    `generalize` rewrites the binder's `binderTypes` entry to the scheme's Bound variable, then `unbind` rewrites it
+    again to whatever instance the body takes first.  A binder the arity split covers (`let k x = x in (k 1, k True)`,
+    `x : a`) does not show it; the binder must sit inside a constructor/tuple/as pattern (or be a lambda/case/do binder)
+    under a GENERALISED local.  E14's `h : Int` beside `go : forall a. Num a => ...` is this (docs/lsp.md "Two frames
+    in one let").  *Fix.* Stop `unbind`'s `binderTypes` rewrite for entries already in a scheme's frame (keep the Bound
+    variable), or record which generalisation owns an entry; `Subst.scala`, Tier 1; pin the witness.  Not scheduled.
+
 ## D. Claims in older documents that do not reproduce
 
 D1. `core/examples/Ai/README.md`'s RUnion table ("a helper bundling `RUnion3` and `RUnion2` does not finish")

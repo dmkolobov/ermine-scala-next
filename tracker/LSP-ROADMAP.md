@@ -8,20 +8,20 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: INTERSTAGE ITEM 6.2c OPEN (2026-09-12) — E14, a local head that hovers a type the
-checker did not settle (`go : List a -> a -> a` / `acc : a` beside `h : Int`, `xs : List Int`
-in guide/LetAndPatternMatching.e).  Opened on the user's word ("Let's fix E14. We can
-formalize more broadly later") straight after 6.2b SHIPPED (9972ccf9 + 336b5204).  The
-orchestrator's probe shows the head path is not generally stale (heads fixed by a LATER use
-render right); the constrained-local shape is what misrenders, and heads are the one class
-of local the 6.2b agreement check does not cross-check.  Brief
-tracker/loopmodel/briefs/brief-LSP-6.2c.md; implementer running.  Baselines: core/test 1063,
-corpus 89/79/0 of 168, 274 interfaces, lsp-smoke 565.  Stage 4 COMPLETE, G4 SIGNED OFF; the
-worker thread (7.6) postponed; Stage 5 NOT drafted.
+Status: INTERSTAGE ITEM 6.2c DONE (2026-09-13) — E14 fixed: a `let`/`where` head hovers the
+scheme the checker PUBLISHED for it, constraints included (`go : forall a. Num a => List a
+-> a -> a`), under Decision (a) AMENDED by the user for local heads; heads are cross-checked
+at corpus scale for the first time (pinned sets); review ACCEPT WITH FIXES, all R-items
+applied in a fix round; Tier 1 IDENTICAL, Tier 2 1067/1067 (reviewer), orchestrator Tier 0
+green.  E15 filed (the hook shows a pattern binder's FIRST instantiation under a
+polymorphic local).  Baselines: core/test 1068 (1067 + the fix round's pin), corpus 89/79/0
+of 168, 274 interfaces, lsp-smoke 573.  Stage 4 COMPLETE, G4 SIGNED OFF; the worker thread
+(7.6) postponed; Stage 5 NOT drafted — nothing runs until the user opens it.
 
 ## Baselines (hard invariants — never commit red)
 
-- `sbt -batch core/test`: 1063/1063 after interstage item 6.2b (2026-09-12, the
+- `sbt -batch core/test`: 1067/1067 after interstage item 6.2c (2026-09-13, the
+  reviewer's Tier 2, 26m39s; 1068 expected after the fix round's added pin); 1063/1063 after interstage item 6.2b (2026-09-12, the
   reviewer's Tier 2, 1363 s, no intermittent; 1061 after the signature-entailment
   merge 51629452); 1028/1028 at GATE G4 (2026-09-11; the first run hit
   exactly the E12 property and the single permitted re-run was clean); 1026
@@ -42,7 +42,8 @@ worker thread (7.6) postponed; Stage 5 NOT drafted.
 - `tracker/tools/repl-smoke.sh`: all suites PASS (8 groups / 66 checks as of
   2026-09-09 — `ffi` and `ffi-tolerant` were added by the LSP-FFI detour; the
   gate policy's "7/7" and this line's old "4 as of D2" were both stale)
-- `tracker/tools/lsp-smoke.sh`: all checks PASS (565 after interstage item 6.2b,
+- `tracker/tools/lsp-smoke.sh`: all checks PASS (573 after interstage item 6.2c,
+  2026-09-13; 565 after interstage item 6.2b,
   2026-09-12; 551 after the signature-entailment merge; 542 after Stage 4 item 7.5,
   2026-09-11; 510 after 7.4; 494 after 7.1b; 480 after 7.2; 456 after 7.0; 454 at GATE G3;
   407 after 6.5; 344 after 6.4; 306 after 6.3; 237 after 6.2; 207 after 6.1; 185 as of 2026-09-09,
@@ -674,6 +675,16 @@ STAGE-3 INVARIANTS (hard):
   `forall` on locals (the top-level's hover shows the scheme).  Explicit
   local signatures show as declared.  Rendering uses the same printer
   as top-level hover.
+  AMENDED 2026-09-13 (the user, on the 6.2c review's R-3; interstage item
+  6.2c): a `let`/`where` HEAD is a binding and renders its PUBLISHED SCHEME
+  — `forall` and class constraints included, row residuals that mention
+  only their own existentials elided — exactly as a top-level hover does
+  (`go : forall a. Num a => List a -> a -> a`).  Pattern binders and
+  equation arguments keep the monotype rule; an equation argument is read
+  off the displayed head, so it lives in the scheme's frame (`acc : a`),
+  while a pattern binder inside the body is the checker's instance
+  (`h : Int`) — two frames of one truth, documented in docs/lsp.md.
+  Explicit local signatures still show as declared.
 - (b) Local types are collected in the editor path only: `checkWith`
   grows a `wantLocals` parameter (default false; `check` keeps false).
   A reused 5.5 cache entry carries its locals: valid because the
@@ -2209,7 +2220,7 @@ type (`g : a -> (a, Int)`), so this is not the 6.2 review's R-1 mechanism reappe
 CONSTRAINED local (`*` is `forall n. Num n => n -> n -> n`; `(go xs 1, go xs 1.5)` fails to
 unify) is the shape that misrenders, and no sweep compares heads against the checker.
 
-- [ ] **6.2c The head.**  FIRST the mechanism, by probe: what the head `V`'s meta is bound
+- [x] **6.2c The head.**  FIRST the mechanism, by probe: what the head `V`'s meta is bound
   to at the end of the component, the scheme the let group published (constraints
   included), what the hook recorded for the argument, and whether `restrictTypes` touched
   any of it.  THEN the fix at the head: a local head hovers the type the checker settled,
@@ -2226,8 +2237,39 @@ unify) is the shape that misrenders, and no sweep compares heads against the che
   batch A/B inside the ~1 % floor; editor A/B within noise of 6.2b's after-side figures.
   Brief: tracker/loopmodel/briefs/brief-LSP-6.2c.md.
 
-**GATE (6.2c)**: reviewer's own Tier 1 (if owed) and Tier 2; both A/Bs; the head agreement
-table; the E14 hover before/after quoted from the real server; commit; report to the user.
+  DONE 2026-09-13 (report tracker/loopmodel/LSP-6.2c-HEADS.md §1-13; review
+  tracker/loopmodel/LSP-6.2c-REVIEW.md, ACCEPT WITH FIXES, R-1..R-10 applied).  MECHANISM
+  (probe first): `inferImplicitBindingTypes` binds the head's Lower meta to the
+  PRE-generalisation rho (`subsumeType(tp, rp)`); `generalize` builds the scheme with its
+  constraints but hands it only to the BODY (`b.v -> b.v.as(scheme)`), and nothing rebinds
+  the meta — the head hover read the meta, one frame behind and constraint-free.  NOT
+  `restrictTypes` (R-1 of 6.2 does not apply).  FIX: `SubstEnv.headTypes`, the published
+  scheme recorded at that `generalize` behind `recordBinders`, substituted at
+  `instantiateType` only; `headType` reads it.  DISPLAY (Decision (a) AMENDED by the user
+  2026-09-13: a HEAD renders its published scheme like a top-level hover): a constraint is
+  kept when every variable in it is quantified or shown by the body, dropped otherwise (the
+  ambiguous row residual a local drags along, which two checks of one file do not even
+  agree about) — a per-constraint FILTER after review R-1 found the first version erasing
+  the whole set (246 of 930 events lost `Num a` beside a residual); kept constraints and
+  quantifier binders ordered by body position (R-7), so hover no longer depends on the
+  checker's published-set nondeterminism (7.2 counters: 0 locals render differently on two
+  cold checks; 2 heads still PUBLISH different residuals, now invisible).  E14 hover:
+  `go : forall a. Num a => List a -> a -> a` at def and use; `acc : a` (scheme frame),
+  `h : Int` (instance frame, E15).  HEAD SWEEP (253 clean modules, 239 heads): agreed 174 /
+  disagreed 65 (the meta-vs-scheme gap; 57 are wholly-elided residual sets), usable
+  constraint lost 0 (R-5 pin), hover SHOWS a constraint 12 (pinned set; 5 recovered by
+  R-1).  6.2b's 14-site set UNCHANGED (agreed 2869).  TESTS: TestTolerantCheck 51 -> 56;
+  lsp-smoke 565 -> 573 (new fixture Heads.e; two pins moved `a -> a` -> `forall a. a -> a`
+  with the reason in place).  Tier 1 (reviewer): 18 groups / 3 210 881 segments IDENTICAL,
+  0 of 274 interfaces differ, g1 9/9; Tier 2 1067/1067.  A/Bs: batch inside the floor
+  (−0.18 % / +0.58 %, bracketing zero); editor +0.9..1.2 % on both runs, attributed to 4 ms
+  of a 1 210 ms check (0.33 %) — machine noise.  docs/lsp.md rewritten (R-4): heads,
+  the display rule, the rank-N reason, "Two frames in one let".  Implementer 1h55 + fix
+  round 50 min (220 tool uses), reviewer 1h48 (143).
+
+**GATE (6.2c)** — EVIDENCE RECORDED 2026-09-13: reviewer's own Tier 1 and Tier 2 green;
+both A/Bs; the head agreement table; the E14 hover before/after quoted from the real server;
+committed.
 
 ## Blocked / Awaiting
 
@@ -3432,6 +3474,18 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
   parked under Blocked/Awaiting.  STOPPED for the user's review of the
   plan before implementing anything.
 
+- 2026-09-13 (INTERSTAGE 6.2c DONE — E14): see the item's DONE paragraph.  The
+  orchestrator's probe re-diagnosed the ticket before opening it (heads fixed by a
+  later use render right; the CONSTRAINED head is the shape), the implementer found
+  the mechanism by probe (the scheme goes only to the body), the reviewer caught
+  the display rule erasing the constraint the item existed to show, and the fix
+  round found the review's own predicate insufficient (the checker publishes
+  different residual sets on two checks of one file) and replaced it with a
+  visibility filter plus ordering.  One Decision amended by the user (a: heads
+  render their scheme).  E15 filed.  Baselines: core/test 1067 (reviewer's Tier 2;
+  1068 after the fix round's pin), TestLoopTrace 720/720, TestTolerantCheck 56/56,
+  corpus 89/79/0 of 168 verdicts identical, repl-smoke 8/66 goldens untouched,
+  lsp-smoke 573, boot 129, .ei 0.
 - 2026-09-12 (INTERSTAGE 6.2b DONE, then SHIPPED on the user's word the same day): see
   the item's DONE paragraph.  The night's shape held: refutation first, then the
   workable hook; the reviewer refuted seven of the report's figures (none about

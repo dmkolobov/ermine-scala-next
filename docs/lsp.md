@@ -123,19 +123,41 @@ declaration head. Builtin type atoms (`->`, `*`, rho) have no constructor and
 answer null.
 
 A **local binder** hovers with the type the last check gave it, at its def-site
-and at every use, with no `forall` and with still-free metas rendered as type
-variables (`idy : a -> a`). What that covers:
+and at every use. A `let`/`where` HEAD shows the SCHEME the checker published
+for it — quantifier and constraints, exactly as a top-level hover shows one
+(`idy : forall a. a -> a`, `go : forall a. Num a => List a -> a -> a`). Every
+other local binder shows a monotype, with no `forall` and with still-free metas
+rendered as type variables (`acc : a`, `h : Int`). The head is the amendment to
+Stage-3 Decision (a) made for interstage item 6.2c: its old reading, a local's
+solved monotype read off the binder's own meta, is one frame BEHIND what the
+checker published — the constraints are moved into the scheme at generalisation
+and nothing binds the meta again, so `go` hovered `List a -> a -> a` where the
+checker held `forall a. Num a => List a -> a -> a` (ticket E14). What the local
+rule covers:
 
-- **a `let` or `where` binding** — its solved monotype, or its declaration when
-  it carries an explicit signature (shown AS DECLARED);
+- **a `let` or `where` binding** — its published scheme (constraints included),
+  or its declaration when it carries an explicit signature (shown AS DECLARED,
+  unchanged by the amendment). One display rule applies to the scheme, and only
+  to it: a constraint is shown when every type variable in it is one the scheme
+  quantifies or one its body shows, and is otherwise DROPPED. What that drops is
+  the ambiguous row residual a local's inferred constraint set drags along — a
+  constraint over variables that appear nowhere in the type being hovered, which
+  no edit to that binding can discharge and which two checks of one unedited
+  file do not even agree about (the checker's published row-constraint set is
+  id-ordered and varies between runs). What it keeps is every constraint the
+  head's own variables carry: `Num a`, `AsOp opl`, `a <- (r2, (|cutoff|))`. The
+  `.ei` a batch build publishes makes a DIFFERENT choice — it keeps the
+  existential row constraints and deletes provable tautologies instead — so the
+  two are not the same predicate and should not be read as one;
 - **an ARGUMENT of an equation**, top-level or in a `where`, at any depth —
   under three conditions, because the type is RECONSTRUCTED from the binding's
   own type rather than read off the binder: the argument must be a plain
   variable (`f !x` and `f ~x` answer null, and so does a variable inside a
   constructor or tuple pattern); the binding's type must unfold to exactly
   `arity` arrows, or NOTHING is recorded for that binding; and the argument's
-  own type must be a monotype (a rank-N argument is skipped, because a `forall`
-  on a local is what the rendering rule forbids);
+  own type must be a monotype — the reconstruction divides an arrow chain and
+  has no scheme to hand out, so a rank-N argument is skipped rather than
+  guessed;
 - **a pattern binder that carries a signature;**
 - **every OTHER pattern binder** — a lambda's argument, a `case` alternative's
   binder, a `do` binder, and a variable nested inside a constructor, tuple or
@@ -147,10 +169,13 @@ variables (`idy : a -> a`). What that covers:
 Over the corpus that is every value-local binder of every cleanly checked module
 — 5054 of 5083 over 253 modules, with `Arg` 4650/4678, `CaseBound` 116/117,
 `DoBound` 31/31, `LetBound` 165/165, `WhereBound` 92/92. The 29 that stay silent
-are ONE class and it is the rendering rule, not a gap in the mechanism: a
-variable bound to a RANK-N constructor field (`data Alt f = Alt (forall a. f a)
-…`) has a polymorphic type, and a `forall` on a local is what the rendering rule
-forbids (`tracker/loopmodel/LSP-6.2b-HOOK.md`).
+are ONE class and they are a limit of the two MECHANISMS, not of the rendering:
+both of them record MONOTYPES — the arity split divides the head's arrow chain
+(`d.mono`) and the hook records the meta `inferPatternType` minted (`t.mono`) —
+and a variable bound to a RANK-N constructor field (`data Alt f = Alt (forall
+a. f a) …`) has a polymorphic type that neither can express. (Until 6.2c this
+was justified by "no `forall` on a local"; that rule no longer holds for heads,
+and it was never the actual reason here.  `tracker/loopmodel/LSP-6.2b-HOOK.md`.)
 
 An equation's arguments are read off the binding's own type by its arity, so
 their type variables are the SAME ones the binding's hover shows:
@@ -162,6 +187,25 @@ independently, so the same letter in two hovers need not be the same variable �
 a `where` helper may hover `h : a -> a` inside a binding whose own hover calls
 that variable `b`, and a lambda argument inside that helper is named against the
 top-level binding rather than against `h`.
+
+**Two frames in one `let`.** A head and the ARGUMENTS of its equations are in
+the SCHEME's frame: the arguments are divided out of the head's own type, so
+
+```
+let go []       acc = acc
+    go (h :: t) acc = go t (h * acc)
+in go xs 1
+```
+
+hovers `go : forall a. Num a => List a -> a -> a` and `acc : a` — `acc` has the
+binding's quantified variable, which is what it has for every use of `go`. A
+PATTERN binder inside the body is in the INSTANCE frame instead: `h : Int` and
+`t : List Int` there, because the hook records the meta the checker minted and
+that record is carried along to the first instantiation the body takes of the
+scheme (`go xs 1`, hence `Int`). The two answers are consistent here — this
+`let` has exactly one use — and where a local is used at two types the hook
+shows the FIRST instantiation, which is ticket E15 and is not fixed: a binder
+of a polymorphic local can therefore read more specific than the binding is.
 
 In fast mode no local answers at all — nothing computes them.
 

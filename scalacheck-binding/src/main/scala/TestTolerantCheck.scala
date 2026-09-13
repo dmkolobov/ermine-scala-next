@@ -243,7 +243,13 @@ object TestTolerantCheck extends Properties("Tolerant check") {
        r.notes.map(_.report.linesIterator.take(1).mkString).mkString(" ;; "))) &&
     ((got.get("y") ?= Some("Bool")) :| s"let binder: $got") &&
     ((got.get("z") ?= Some("Bool")) :| s"where binder: $got") &&
-    ((got.get("idy") ?= Some("a -> a")) :| s"polymorphic where binder: $got") &&
+    // 6.2c: a local head hovers the SCHEME the checker published for it, so a
+    // polymorphic one shows its quantifier -- the way a top-level head's hover
+    // has always shown it (`Heads2.idt : forall a. a -> a` through the real
+    // server).  Until 6.2c it showed the pre-generalisation rho, `a -> a`,
+    // which is also what a MONOTYPE `a` prints and is the ambiguity E14 is
+    // about.  See `TolerantCheck.displayScheme`.
+    ((got.get("idy") ?= Some("forall a. a -> a")) :| s"polymorphic where binder: $got") &&
     // A SIGNED `let`/`where` binding is a local ExplicitBinding after the
     // block machinery (`Lower.bindings` -> `Lower.pairSigs`), and shows AS
     // DECLARED (Decision a).  `sl` is the LET twin, and it is a pin with a
@@ -336,7 +342,9 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     // them; see LSP-6.2b-HOOK.md Sec. 4 for why not the local head's.
     val (r, rn) = kinds
     val got = localsBySpelling(r, rn)
-    ((got.get("pl")  ?= Some("a -> a")) :| s"the where head: $got") &&
+    // 6.2c: the head's own hover is the published scheme (`forall a. a -> a`);
+    // the argument still prints the TOP-LEVEL binding's letter for it.
+    ((got.get("pl")  ?= Some("forall a. a -> a")) :| s"the where head: $got") &&
     ((got.get("plz") ?= Some("a")) :| s"its lambda argument: $got")
   }
 
@@ -349,6 +357,143 @@ object TestTolerantCheck extends Properties("Tolerant check") {
     val (r, _) = kinds
     ((r.binderDisagreements ?= Nil) :| s"disagreement(s) at ${r.binderDisagreements}") &&
     ((r.binderAgreed >= 8) :| s"only ${r.binderAgreed} binders compared (vacuous?)")
+  }
+
+  // ---- 6.2c: the local HEAD hovers what the checker published --------
+  //
+  // Ticket E14.  `Subst.inferImplicitBindingTypes` subsumes Lower's meta
+  // against `rp`, the PRE-GENERALISATION rho, and the `generalize` two
+  // statements later quantifies rp's free metas and moves the deferred
+  // constraints into the scheme -- rewriting the SCHEME only.  Nothing
+  // binds those metas again, so the meta's zonk is the rho for ever: one
+  // frame behind the published type, with the constraints gone.  The
+  // scheme is recorded at the generalisation (`SubstEnv.headTypes`,
+  // behind `recordBinders`) and is what `headType` reads now.
+
+  private val headsBody =
+    "conLocal xs =\n" +
+    "  let go2 [] acc2 = acc2\n" +
+    "      go2 (h2::t2) acc2 = go2 t2 (h2 * acc2)\n" +
+    "  in go2 xs 1\n" +
+    "\n" +
+    "pairLocal y2 =\n" +
+    "  let gl x2 = (x2, y2)\n" +
+    "  in (gl 1, y2 + 1)\n" +
+    "\n" +
+    "laterLocal y3 =\n" +
+    "  let zl = y3\n" +
+    "  in (zl, y3 && True)\n" +
+    "\n" +
+    "sigLocal x3 =\n" +
+    "  let sg : Int -> Int\n" +
+    "      sg n2 = n2 + 1\n" +
+    "  in sg x3\n"
+
+  private lazy val heads: (TolerantCheck.Result, Renamer.Result) =
+    checkLocals(headsBody, List("Bool"))
+
+  // 6.2c fix round (review R-1/R-5): ONE scheme with BOTH kinds of constraint.
+  // `gx`'s published set is `PrimitiveNum a` -- over a variable the scheme
+  // quantifies and the body shows -- beside `exists c. c <- (a1, b)`, the row
+  // residual `appendR` leaves behind, whose variable occurs nowhere else.  Rule 1
+  // must drop the second and KEEP the first; the first version of the rule erased
+  // the whole `Exists` and lost both.  Fixture shape from the review's witness.
+  private val mixedBody =
+    "mixLocal xs rr ss = gx xs 1 rr ss\n" +
+    "  where gx []         acc r s = acc\n" +
+    "        gx (hx :: tx) acc r s = const (gx tx (hx * acc) r s) (appendR r s)\n"
+
+  private lazy val mixed: (TolerantCheck.Result, Renamer.Result) =
+    checkLocals(mixedBody, List("Record"))
+
+  property("6.2c: a CONSTRAINED local head hovers its constraint, not a bare variable") = {
+    // THE E14 SHAPE, and the defect it names: `go2`'s `*` is
+    // `PrimitiveNum n => n -> n -> n`, so the published scheme carries a
+    // constraint -- and until 6.2c the head hovered `List a -> a -> a`,
+    // a type with no constraint and a variable nothing in the file
+    // quantifies, sitting in the editor beside the hook's `h2 : Int`.
+    val (r, rn) = heads
+    val got = localsBySpelling(r, rn)
+    (r.notes.isEmpty :| ("the fixture must be clean: " +
+       r.notes.map(_.report.linesIterator.take(1).mkString).mkString(" ;; "))) &&
+    ((got.get("go2") ?= Some("forall a. PrimitiveNum a => List a -> a -> a")) :|
+      s"the constrained local head: $got") &&
+    // THE SPLIT INHERITS: the argument is peeled from the head's own type
+    // and printed in the head's frame, so its letter is the head's.
+    ((got.get("acc2") ?= Some("a")) :| s"its argument: $got") &&
+    // THE SECOND FRAME, deliberately left standing: the hook records a
+    // pattern binder's meta where the checker mints it, and `unbind`
+    // carries that record into the FIRST instance the body takes of the
+    // scheme (`go2 xs 1`, hence `Int`).  So `h2 : Int` is this let's
+    // single use, and `acc2 : a` is the binding's own type.  The two are
+    // not in one frame and the 6.2b disagreement set says so at exactly
+    // these def-sites; the hook's frame-dragging is written up as a
+    // follow-up in LSP-6.2c-HEADS.md, not fixed here.
+    ((got.get("h2") ?= Some("Int")) :| s"the hook's answer beside it: $got") &&
+    ((got.get("t2") ?= Some("List Int")) :| s"the hook's answer beside it: $got")
+  }
+
+  property("6.2c: a head that mentions a variable fixed LATER still shows the settled type") = {
+    // THE CONTROL that says this is not the 6.2 review's R-1 mechanism:
+    // `gl`'s scheme is `forall a. a -> (a, b)` with `b` the enclosing
+    // lambda's meta, and `b` is fixed at `Int` AFTER the let group was
+    // generalised.  The record is kept eagerly substituted at
+    // `instantiateType` for exactly this reason, so the head still
+    // hovers `Int` in the second component -- as it did before 6.2c,
+    // which read the rho and got the same `Int` the same way.
+    val (r, rn) = heads
+    val got = localsBySpelling(r, rn)
+    ((got.get("gl") ?= Some("forall a. a -> (a, Int)")) :| s"the later-fixed head: $got") &&
+    ((got.get("x2") ?= Some("a")) :| s"its argument: $got") &&
+    // and a local whose own type is settled outright is unchanged: no
+    // quantifier, no constraint, `Forall.apply` collapses to the body.
+    ((got.get("zl") ?= Some("Bool")) :| s"the settled local: $got")
+  }
+
+  property("6.2c: a SIGNED local head still shows its declaration") = {
+    // Decision (a) is untouched: an explicit local reads its DECLARATION
+    // off the tree and never the record -- `headType`'s `ExplicitBinding`
+    // case comes first.
+    val (r, rn) = heads
+    val got = localsBySpelling(r, rn)
+    ((got.get("sg") ?= Some("Int -> Int")) :| s"the signed local head: $got") &&
+    ((got.get("n2") ?= Some("Int")) :| s"its argument: $got")
+  }
+
+  property("6.2c: a row residual is elided and a class constraint is KEPT, in one scheme") = {
+    // THE R-1 PIN.  Rule 1 is a FILTER over the published constraint set, one
+    // constraint at a time -- not an erase of the set because one member
+    // quantifies an existential.  `Subst.generalize` puts the WHOLE set in ONE
+    // `Exists`, so the erase lost `Num a` wherever a row residual stood beside it
+    // (246 of 930 elision events over the corpus).
+    val (r, rn) = mixed
+    val got = localsBySpelling(r, rn)
+    (r.notes.isEmpty :| ("the fixture must be clean: " +
+       r.notes.map(_.report.linesIterator.take(1).mkString).mkString(" ;; "))) &&
+    // the rendering is a Document and wraps at the printer's width; the pin is on
+    // the type, so whitespace is collapsed before comparing
+    ((got.get("gx").map(_.split("\\s+").mkString(" ")) ?= Some(
+       "forall a (a1: rho) (b: rho). PrimitiveNum a => List a -> a -> Record a1 -> Record b -> a")) :|
+      s"the mixed head: $got") &&
+    // the elision DID fire here (or the pin above proves nothing about rule 1)
+    ((r.headElided >= 1) :| s"rule 1 never fired: elided ${r.headElided}") &&
+    // and it dropped nothing the reader can act on
+    ((r.headLost ?= Nil) :| s"a usable constraint was elided at ${r.headLost}")
+  }
+
+  property("6.2c: the head record and the meta are compared wherever both speak") = {
+    // The heads' cross-check, the equation arguments' one level up.  On
+    // this fixture the only head whose hover changes in CONTENT is the
+    // constrained one; the others agree, which is what makes the pin
+    // above a statement about `go2` and not about the mechanism.
+    val (r, rn) = heads
+    val defSite = rn.binders.values.find(_.spelling == "go2")
+      .map(b => (b.defSite.startLine, b.defSite.startCol))
+    ((r.headDisagreements ?= defSite.toList) :|
+      s"head disagreements ${r.headDisagreements}, go2 at $defSite") &&
+    // `gl` and `zl`; `sg` is an ExplicitBinding and never reads the record.
+    ((r.headAgreed >= 2) :| s"only ${r.headAgreed} heads compared (vacuous?)") &&
+    ((r.headRequantified >= 2) :| s"only ${r.headRequantified} heads requantified")
   }
 
   property("6.2: an explicit local signature shows as declared") = {
@@ -877,6 +1022,72 @@ object TestTolerantCheck extends Properties("Tolerant check") {
       // item's whole residual class, and the sweep requires the misses to
       // be exactly them -- so a binder that goes untyped for any OTHER
       // reason fails, and the residual cannot quietly grow a second cause.
+      // 6.2c: the head cross-check's own set -- the local heads whose hover
+      // changes in CONTENT because the checker published a constraint the
+      // pre-generalisation rho could not show.  Pinned as a SET for the same
+      // reason (R-4).  A head that merely gained its `forall` is counted in
+      // `headRequantified`, not here; a head whose constraint quantified its
+      // own existentials had it ELIDED (`TolerantCheck.displayScheme`) and so
+      // agrees.
+      //
+      // FIX ROUND (review R-6): the comparison is against the PUBLISHED scheme, not
+      // the displayed one, so this set is now every local head the checker holds a
+      // CONSTRAINT for -- whether or not rule 1 shows it.  It grew 8 -> 65; nothing
+      // left it.  The 57 additions are the heads whose whole published set is
+      // ambiguous row residual, elided from the hover by rule 1 and counted here
+      // because the pre-6.2c rho could not carry it either.  The set the USER sees
+      // is `knownHeadShown` below.
+      val knownHeadDisagreements = Set(
+        "Accumulate.e:34:14", "ClinicalTrial.e:90:9", "Comprehensions.e:206:11",
+        "Comprehensions.e:207:17", "ForeignJdk.e:328:9", "Helpers.e:320:9", "Helpers.e:321:9",
+        "Helpers.e:322:9", "LetAndPatternMatching.e:8:7", "Op.e:178:9", "Op.e:181:9",
+        "Relation.e:222:7", "Relation.e:223:7", "Relation.e:254:7", "Relation.e:39:7",
+        "Relation.e:40:20", "Relation.e:41:20", "Relation.e:42:20", "Relation.e:43:20",
+        "Relation.e:44:20", "Relation.e:45:20", "Relation.e:47:7", "Report.e:1033:5",
+        "Report.e:1034:5", "Report.e:1038:5", "Report.e:1039:5", "Report.e:1111:11",
+        "Report.e:1337:7", "Report.e:1339:7", "Report.e:1366:7", "Report.e:1369:7",
+        "Report.e:1392:7", "Report.e:1394:7", "Report.e:1604:9", "Report.e:643:9",
+        "Report.e:690:7", "Report.e:772:2", "Report.e:774:8", "Report.e:775:8",
+        "Report.e:783:2", "Report.e:785:8", "Report.e:786:8", "Report.e:787:8",
+        "RunningState.e:240:7", "SalesDashboard.e:364:7", "Scan.e:150:9", "Scan.e:70:9",
+        "Signatures.e:260:9", "Signatures.e:261:9", "Signatures.e:262:9",
+        "SoftRelation.e:41:7", "SoftRelation.e:42:7", "SoftRelation.e:44:7",
+        "TextTables.e:246:28", "Tree.e:83:9", "Tree.e:84:15", "Tree.e:91:9",
+        "VarianceStyling.e:322:7", "WildChain.e:144:17", "WildChain.e:145:17",
+        "WildChain.e:146:17", "WildChain.e:147:17", "WildChain.e:148:17", "WildChain.e:149:17",
+        "WriterOutputs.e:204:7")
+      // FIX ROUND: the heads whose hover SHOWS a constraint -- the user-visible
+      // claim, and the table in LSP-6.2c-HEADS.md Sec. 5.  Every one read at source
+      // and hovered through the real server:
+      //   LetAndPatternMatching.e:8:7  go        + Num a                  <- ticket E14
+      //   Report.e:643:9               capture   + AsPresentation a
+      //   Report.e:1111:11             ope       + Primitive a
+      //   Report.e:1604:9              npair     + AsPresentation pr
+      //   Layout/Scan.e:70:9           go        + Primitive c
+      //   Relation/Scan.e:150:9        extractF  + Relational f
+      //   Relation/Op.e:178:9          showE     + PrimitiveString s
+      //   Relation/Op.e:181:9          comma     + (AsOp opl1, AsOp opl)   <- R-1 recovered
+      //   Accumulate.e:34:14           f         + RelationalComb a        <- R-1 recovered
+      //   SoftRelation.e:41:7          pickk     + RelationalComb a        <- R-1 recovered
+      //   Comprehensions.e:206:11      step      + a <- (b, (|balanceEur|))  <- R-1 recovered
+      //   Layout/Report/Relation.e:39:7 f        + a <- (r2, (|cutoff|))     <- R-1 recovered
+      // `Report.e:690:7` (`defaultLg`) LEFT this set in the fix round: its
+      // `a1 <- (i, k, v1)` names variables the displayed type shows nowhere, and two
+      // checks of that file do not agree about it (7.2's "publish different row
+      // constraints on two COLD checks") -- rule 1's visibility predicate drops it.
+      val knownHeadShown = Set(
+        "LetAndPatternMatching.e:8:7", "Report.e:643:9", "Report.e:1111:11",
+        "Report.e:1604:9", "Scan.e:70:9", "Scan.e:150:9", "Op.e:178:9", "Op.e:181:9",
+        "Accumulate.e:34:14", "SoftRelation.e:41:7", "Comprehensions.e:206:11",
+        "Relation.e:39:7")
+      var headAgreed = 0
+      var headRequantified = 0
+      var headElided = 0
+      val headDisagreed = scala.collection.mutable.ListBuffer.empty[String]
+      // 6.2c fix round (review R-5): the pin on rule 1 -- a published constraint
+      // the reader can act on must survive the elision.  Asserted EMPTY.
+      val headLost = scala.collection.mutable.ListBuffer.empty[String]
+      val headShown = scala.collection.mutable.ListBuffer.empty[String]
       val rankN = scala.collection.mutable.Set.empty[String]
       val misses = scala.collection.mutable.ListBuffer.empty[String]
       val seen = scala.collection.mutable.Map.empty[String, Int].withDefaultValue(0)
@@ -896,6 +1107,15 @@ object TestTolerantCheck extends Properties("Tolerant check") {
               disagreed += "%s:%d:%d".format(f.getName, k._1, k._2) }
             ch.binderRankN foreach { k =>
               rankN += "%s:%d:%d".format(f.getName, k._1, k._2) }
+            headAgreed += ch.headAgreed
+            headRequantified += ch.headRequantified
+            headElided += ch.headElided
+            ch.headDisagreements foreach { k =>
+              headDisagreed += "%s:%d:%d".format(f.getName, k._1, k._2) }
+            ch.headLost foreach { k =>
+              headLost += "%s:%d:%d".format(f.getName, k._1, k._2) }
+            ch.headShown foreach { k =>
+              headShown += "%s:%d:%d".format(f.getName, k._1, k._2) }
             val required = eqArgSpans(ch.module.statements)
               .map { case (sp, s) => (s.startLine, s.startCol) }.toSet
             ch.renamed.binders.values.foreach { b =>
@@ -927,6 +1147,14 @@ object TestTolerantCheck extends Properties("Tolerant check") {
               "; split-vs-hook agreed " + agreed + " disagreed " + disagreed.size)
       if (misses.nonEmpty) println("### 6.2b misses: " + misses.mkString(" ;; "))
       if (disagreed.nonEmpty) println("### 6.2b disagreements: " + disagreed.mkString(" ;; "))
+      println("### 6.2c heads: agreed " + headAgreed + ", disagreed " + headDisagreed.size +
+              ", requantified " + headRequantified + ", constraint elided " + headElided +
+              ", usable constraint lost " + headLost.size +
+              ", hover SHOWS a constraint " + headShown.size)
+      if (headDisagreed.nonEmpty)
+        println("### 6.2c head disagreements: " + headDisagreed.sorted.mkString(" ;; "))
+      if (headShown.nonEmpty)
+        println("### 6.2c heads showing a constraint: " + headShown.sorted.mkString(" ;; "))
       val unexplained = misses.filterNot(m => rankN(m.split(" ").head))
       ((files.size >= 180) :| s"only ${files.size} corpus files") &&
       ((checked >= 150) :| s"only $checked modules checked cleanly") &&
@@ -954,6 +1182,21 @@ object TestTolerantCheck extends Properties("Tolerant check") {
       ((disagreed.toSet == knownDisagreements) :|
         s"split-vs-hook disagreement set moved: new ${(disagreed.toSet -- knownDisagreements).mkString(" ;; ")}; gone ${(knownDisagreements -- disagreed.toSet).mkString(" ;; ")}") &&
       ((agreed >= 2000) :| s"only $agreed binders compared (vacuous?)") &&
+      // 6.2c: the SAME cross-check for binding heads.  The published scheme is
+      // what hover shows; the meta is what it showed until 6.2c; a pair differs
+      // only where the scheme carries a constraint (or a body) the rho could
+      // not show, and those def-sites are pinned as a set.
+      ((headDisagreed.toSet == knownHeadDisagreements) :|
+        s"head disagreement set moved: new ${(headDisagreed.toSet -- knownHeadDisagreements).mkString(" ;; ")}; gone ${(knownHeadDisagreements -- headDisagreed.toSet).mkString(" ;; ")}") &&
+      ((headShown.toSet == knownHeadShown) :|
+        s"head SHOWN set moved: new ${(headShown.toSet -- knownHeadShown).mkString(" ;; ")}; gone ${(knownHeadShown -- headShown.toSet).mkString(" ;; ")}") &&
+      ((headAgreed >= 150) :| s"only $headAgreed local heads compared (vacuous?)") &&
+      // 6.2c fix round (review R-5): rule 1 drops ambiguous row residuals and
+      // NOTHING ELSE.  Checked against the PUBLISHED set, not recomputed from the
+      // filter, so it can fail -- and before the R-1 fix it did, at 246 events.
+      ((headLost.isEmpty) :|
+        s"${headLost.size} head(s) lost a usable constraint to rule 1: ${headLost.take(8).mkString(" ;; ")}") &&
+      ((headElided >= 20) :| s"rule 1 fired only ${headElided} times (vacuous?)") &&
       // 6.2b: the residual is ONE named class -- a variable bound to a
       // RANK-N constructor field, which Decision (a) does not let a local
       // hover as -- and every miss must be one of them.
