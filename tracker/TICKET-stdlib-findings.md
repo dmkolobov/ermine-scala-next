@@ -228,6 +228,27 @@ B8. **A rank-2 function argument cannot be applied at all**: `oneWay nat a = nat
     `Control.*` dictionary and why `Data.Free` has no `foldFree` (a generic one loads only through a `Nat`
     data-field wrapper). (E5-REVIEW.)
 
+B9. **Inferred types of unsignatured bindings are generalised and PUBLISHED without a kind check, so an
+    ill-kinded scheme can reach the interface cache.**  Filed 2026-09-14 from E11c-kind
+    (tracker/loopmodel/E11c-KIND.md).  Witness: `core/examples/ChartsExample.e:stackedPair` publishes, at some id
+    bases, `forall {c} (sa: c) … (AsPresentation s) => s sr sa -> …` although `AsPresentation` is a monomorphic
+    builtin (session/Lib.scala:1100) that pins `sa` to `*`; the kind checker REJECTS that signature when it is
+    written down (`failed to unify kind * with kind !c`, under every setting), but the inference path never runs it:
+    `inferImplicitBindingTypes` (Subst.scala:905-963) generalises at :963 with no `kindCheck`, and `inferKind`'s
+    application rule (:566-575) generalises and re-instantiates an argument's kind at each node, severing it from
+    the parameter that fixes it.  Which of the two answers is published follows the id base (the E11a KIND class;
+    `-Dermine.solveDet` makes it stable at the right one for this binding, and does NOT fix the defect).  A six-line
+    module with no type declarations reproduces it (E11c-KIND.md §4, probe p5).  Unexploitable from source (every
+    higher-kind instantiation is rejected earlier); NOT established whether the `.ei` reader accepts the ill-kinded
+    scheme -- that is the path that matters.  Probably also the last E11a KIND survivor (`SoftSchema.e:pivoted`,
+    `(v34: f)` vs `(v34: rho)`).  *Ask.* (1) a WARN-mode probe first: run `kindCheck` on every inferred type at
+    publication and print one line per ill-kinded scheme, sweep the corpus, count (the SIG-1 pattern); (2) if the
+    count is small, the fix mirrors the signature path (`unbindAnnot` :709-717, `typeCheckExplicitBinding`
+    :757-759): kind-check the inferred type before `generalize`, flagged then default; Tier 1, every `.ei` move
+    classified; (3) the interface-reader question settled either way.  Severity: medium (a published type the
+    compiler itself rejects), low urgency (no source program reaches it).  FILED, NOT SCHEDULED -- the user
+    (2026-09-14): file it away for now; do after the E11c flip decision, never in the same commit.
+
 ## C. Wrong, misleading or missing API
 
 C1. **`Relation.UnifyFields.unify1` cannot unify differently-named schemas** — the one thing it is named for:
