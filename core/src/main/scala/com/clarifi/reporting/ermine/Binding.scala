@@ -104,12 +104,21 @@ object ImplicitBinding {
   // perform strongly connected component analysis to infer better types
   def implicitBindingComponents(xs: List[ImplicitBinding]): List[List[ImplicitBinding]] = {
     val vm = xs.map(b => b.v.id -> b).toMap
-    val sccs = SCC.tarjan(vm.keySet.toList) { i =>
+    /* E11c (`Constraints.GenRules.solveDet`, DEFAULT OFF): `vm.keySet.toList` and the
+     * `Set[Int].toList` below are both id-hash orders, so the order in which the module's
+     * binding groups are inferred -- and each group's position in the `Supply` -- follows
+     * the id BASE.  Under ON both are SOURCE order (`xs`'s own). */
+    val order = if (Constraints.GenRules.solveDet) xs.map(_.v.id) else vm.keySet.toList
+    val sccs = SCC.tarjan(order) { i =>
       termVars(vm(i).alts).toList.collect {
         case v if vm.contains(v.id) => v.id
       }
     }
-    sccs.reverse.map { xs => xs.toList.map(vm(_)) }
+    if (!Constraints.GenRules.solveDet) sccs.reverse.map { xs => xs.toList.map(vm(_)) }
+    else {
+      val ix = order.zipWithIndex.toMap
+      sccs.reverse.map { c => c.toList.sortBy(i => ix.getOrElse(i, Int.MaxValue)).map(vm(_)) }
+    }
   }
 
 }

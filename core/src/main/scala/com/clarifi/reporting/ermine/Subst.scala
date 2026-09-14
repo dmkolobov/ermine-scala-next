@@ -1627,7 +1627,15 @@ object Subst {
      * because refuting an unsatisfiable input before the saturation can
      * diverge on it is half the point (`Rowpartition/ResGuardDiverge.lean`). */
     if (GenRules.rowSoundDecide) decideLabels()
-    var ps = q.expand.toList
+    /* E11c, the SECOND of the two order reads (`GenRules.solveDet`, DEFAULT OFF).
+     * The SATURATED SET comes out of the finger
+     * tree in `(rhs.hashCode, lhs.hashCode)` order (`Constraints.scala:499`), which a
+     * constant shift of the id base PERMUTES, and `reduce` below folds RIGHT over it
+     * splicing into an accumulator later arms read -- so the residual is a function of
+     * the base.  Under ON read it in `canonKey` order instead: sorted rhs ids, sorted
+     * label keys, lhs id -- an id ORDER, which a constant shift leaves alone. */
+    var ps = { val ps0 = q.expand.toList
+               if (GenRules.solveDet) ps0.sortWith(Constraints.Q.canonLt) else ps0 }
     if (GenRules.rowSoundSat) checkSaturated(ps.map(_.tup))
     /* Trace-only dump of the POPULATION, not just its counts: the input constraint
      * list as `solve` received it (a `Part`'s right-hand side is a List, so this is

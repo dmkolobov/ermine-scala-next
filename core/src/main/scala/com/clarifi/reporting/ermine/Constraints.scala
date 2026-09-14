@@ -641,6 +641,13 @@ object Constraints {
       p._2.abstr.toList.map(_.id).sorted ++ (canonSep ::
         p._2.concr.toList.map(lblKey).sortWith(intListLt).flatten) ++ List(canonSep, p._1.id)
 
+    /** E11c: `canonKey`'s order on its own (no `graph.canonSort`, no arity
+      * prefix), exposed so that a SATURATED SET can be read out of a queue in a
+      * base-invariant order instead of the finger tree's `(rhs.hashCode, lhs.hashCode)`
+      * one.  Total on the partitions of one solve: two partitions with the same sorted
+      * abstract ids, the same concrete labels and the same lhs id are equal. */
+    def canonLt(a: Partition, b: Partition): Boolean = intListLt(canonKey(a), canonKey(b))
+
     private def smallCanonLt(a: Partition, b: Partition, graph: TypeVarGraph): Boolean = {
       val (aa, ba) = (arityOf(a), arityOf(b))
       if (aa != ba) aa < ba
@@ -1551,6 +1558,45 @@ object Constraints {
       * See `tracker/loopmodel/S5-HYGIENE.md` "Follow-up: publishing-only deletion". */
     val tautoDelete: Boolean = System.getProperty("ermine.tautoDelete", "true") == "true"
 
+    /** E11c (`tracker/loopmodel/E11c-SOLVEDET.md`, interstage item E11): make the ORDER
+      * IN WHICH BINDING GROUPS ARE INFERRED a function of the SOURCE rather than of the
+      * id base.  DEFAULT OFF; `-Dermine.solveDet=true` turns it on.
+      *
+      * WHAT IT FIXES.  `SCC.tarjan` drives Tarjan's outer loop with
+      * `comps.foreach`, `comps` being an immutable `Map[Int, Component]` keyed by a
+      * `TermVar`/`TypeVar` id (`V.hashCode` IS the id, `Vars.scala:109`), so the DFS roots
+      * -- and hence the order of the components it returns -- are read off a CHAMP trie
+      * whose shape is `improve(id)`.  Its two callers seed it the same way
+      * (`ImplicitBinding.implicitBindingComponents`, `TypeDef.typeDefComponents`: both
+      * `vm.keySet.toList` on an id-keyed `Map`) and both expand each component with
+      * `xs.toList` on a `Set[Int]`.  Two cold checks of ONE unchanged module in one JVM
+      * therefore infer its binding groups in two DIFFERENT ORDERS -- measured on
+      * `Relation.e`, where the first solve of one check is at 139:23 and of the other at
+      * 137:11 -- each group then draws different ids, and the row solver's queue order,
+      * which is `(rhs.hashCode, lhs.hashCode)` (`:499`), moves with them.  That is the
+      * mechanism behind the E11 SET class.
+      *
+      * Under ON the driver walks the vertex LIST it was handed, the callers hand it the
+      * ids in SOURCE order, and each component is expanded in source order too.  Tarjan
+      * is correct for any choice of roots, so this picks a different -- equally valid --
+      * topological order of the condensation and changes no dependency.
+      *
+      * THE SECOND SITE, and the one that moves the SET class: `Subst.solve` reads the
+      * SATURATED SET out of the queue as `q.expand.toList` (`Subst.scala:1630`), i.e. in
+      * that same `(rhs.hashCode, lhs.hashCode)` order, and `Subst.reduce` folds RIGHT over
+      * it splicing each existential into an accumulator the later arms read -- a fold that
+      * is not confluent, so a permutation of the list is a different residual.  Under ON
+      * the list is sorted by `Q.canonLt` (`canonKey`: sorted rhs ids, sorted label keys,
+      * lhs id) before the fold.  That is an id ORDER, which a constant shift of the base
+      * leaves alone, and it changes only the ORDER in which equally eligible splices are
+      * visited -- no rule, guard or verdict reads it.  Measured: the E11a corpus sweep's
+      * SET class 5 -> 2 over 4047 published bindings, `TestLoopTrace` 720/720 and every
+      * corpus verdict and message byte-identical.
+      *
+      * It is in this string, and so in `Session.interfaceKey`, because it CAN change what
+      * is published: an `.ei` written under ON must not be read back under OFF. */
+    val solveDet: Boolean = System.getProperty("ermine.solveDet", "false") == "true"
+
     override def toString =
       mode + (if (disjRule) "+disj" else "") + (if (labelCheck) "+label" else "") +
         (if (labelCheckEarly) "-early" else "") + (if (resGuard) "+resguard" else "") +
@@ -1572,7 +1618,8 @@ object Constraints {
         (if (dequeuePolicy != "shipped") "+pol:" + dequeuePolicy else "") +
         (if (solveBudget > 0) "+budget:" + solveBudget else "") +
         (if (topNormalise) "+topnorm" else "") +
-        (if (tautoDelete) "+tauto" else "")
+        (if (tautoDelete) "+tauto" else "") +
+        (if (solveDet) "+solvedet" else "")
   }
   case object Disjunction         extends Inference
   /** S4: a partition introduced by the written-partition normalisation

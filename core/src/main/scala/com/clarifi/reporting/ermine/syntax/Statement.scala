@@ -149,7 +149,11 @@ object TypeDef {
   // perform strongly connected component analysis to infer better kinds
   def typeDefComponents(xs: List[TypeDef]): List[List[TypeDef]] = {
     val vm = xs.map(b => b.v.id -> b).toMap
-    val sccs = SCC.tarjan(vm.keySet.toList) { s => {
+    /* E11c (`Constraints.GenRules.solveDet`, DEFAULT OFF): see
+     * `ImplicitBinding.implicitBindingComponents`.  The same two id-hash orders, here
+     * deciding the order in which KIND inference visits the module's type/data groups. */
+    val order = if (Constraints.GenRules.solveDet) xs.map(_.v.id) else vm.keySet.toList
+    val sccs = SCC.tarjan(order) { s => {
       val vars = vm(s) match {
         case DataStatement(_, _, _, typeArgs, cons) =>
           cons.foldLeft(Vars() : TypeVars)((acc, c) => acc ++ (allTypeVars(c._3) -- c._1)) -- typeArgs
@@ -158,7 +162,11 @@ object TypeDef {
       }
       vars.toList.collect { case v if vm.contains(v.id) => v.id }
     }}
-    sccs.reverse.map { xs => xs.toList.map(vm(_)) }
+    if (!Constraints.GenRules.solveDet) sccs.reverse.map { xs => xs.toList.map(vm(_)) }
+    else {
+      val ix = order.zipWithIndex.toMap
+      sccs.reverse.map { c => c.toList.sortBy(i => ix.getOrElse(i, Int.MaxValue)).map(vm(_)) }
+    }
   }
 }
 

@@ -44,7 +44,20 @@ object SCC {
         stack = rhs
       }
     }
-    comps.foreach { case (k,v) => if (!v.index.isDefined) connect(v) }
+    /* E11c (`Constraints.GenRules.solveDet`, DEFAULT OFF).  `comps` is an immutable
+     * `Map[Int, Component]` keyed by a variable id, and `Int.hashCode` is the id, so
+     * `comps.foreach` walks a CHAMP trie whose shape is `improve(id)`: the order in
+     * which Tarjan picks its DFS ROOTS, and therefore the order of the components it
+     * returns, is a function of the ABSOLUTE id base.  Under ON the driver walks the
+     * vertex list it was handed instead -- the callers pass it in SOURCE order.
+     * Tarjan is correct for ANY root order (the roots only decide which of several
+     * valid topological orders of the condensation comes out), so nothing here
+     * changes a dependency; `vertices` may repeat an id, which the `index` test
+     * already absorbs. */
+    if (Constraints.GenRules.solveDet)
+      vertices.foreach { i => val v = comps(i); if (!v.index.isDefined) connect(v) }
+    else
+      comps.foreach { case (k,v) => if (!v.index.isDefined) connect(v) }
     output
   }
 

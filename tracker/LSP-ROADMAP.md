@@ -2340,7 +2340,7 @@ against them is deferred by the user ("formalize more broadly later").
   batch +1.6-5 %.  THE USER'S DECISION (2026-09-13): NOT E11b.  Whack-a-mole against shapes (order-independence is
   coNP, ROSE 4.3).  Instead E11c below: make the solver's residual a function of the SOURCE by removing the id-base
   reads on the solve path; if that is not fruitful, the class is exempted by name and not chased further.
-- [ ] **E11c The cause (OPENED 2026-09-13, the user's word).**  Two cold checks of one module differ only in the
+- [x] **E11c The cause (OPENED 2026-09-13, the user's word; DONE flagged, default OFF, same day).**  Two cold checks of one module differ only in the
   id base (`smallcanon` is base-invariant, yet the SET class persists), so some choice on the solve path still
   reads an absolute id (`V.hashCode` is `38 + n * 17`, Type.scala:169: every hash-ordered `Set[TypeVar]` iteration
   is base-dependent).  Locate the first divergent solver step on `lookbackJoin` at two bases, audit every
@@ -2348,6 +2348,27 @@ against them is deferred by the user ("formalize more broadly later").
   cause is a local order read (default OFF this stage), and STOP if it is not.  ACCEPTANCE: brief
   tracker/loopmodel/briefs/brief-E11c.md; the E11a form test's SET count 0 under the flag over N cold checks and
   at two id bases; FORM stays 0; Tier 1 under ON with every `.ei` move classified; flag OFF byte-identical.
+  DONE 2026-09-13 (report tracker/loopmodel/E11c-SOLVEDET.md incl. §9 review corrections; review E11c-REVIEW.md
+  ACCEPT WITH FIXES, none blocking).  THE CAUSE IS TWO ORDER READS, both local: (1) `SCC.tarjan`'s driver iterates
+  an id-keyed `Map` (`V.hashCode` IS the id, Vars.scala:109; the brief's Type.scala:169 suspect is `ProductT`, base-
+  invariant), so binding-group and type-group order follow the id base; (2) `Subst.scala:1630`'s saturated set is
+  read out of the finger tree in `(rhs.hashCode, lhs.hashCode)` order (Murmur over ids, not monotone in a base
+  shift) and `reduce` folds RIGHT over it, non-confluently -- that one is the SET class.  FIX `-Dermine.solveDet`
+  (GenRules, in the interface key; default OFF): Tarjan walks the vertex list in source order; the saturated set is
+  sorted by `Q.canonLt` before `reduce`.  The tree is NOT re-keyed (D1 review T-2's range splits untouched) and no
+  Lean changes (the model replays per segment from the recorded base).  Five files, 79+/7-.  RESULT under ON: corpus
+  SET 5 -> 2 (a COUNT with rotating membership: cutoffGroupedFldsPosNegRel' every run -- the generative split case,
+  40 vs 41 existentials, beyond any re-ordering -- plus one of lookbackJoin / investmentTableData, an in-loop
+  `Set[Partition]` fold order, audit rows 33/35/37, deliberately untouched because it decides mint-vs-reuse); KIND
+  3 -> 1; FORM 0; `Relation.e` six cold checks 1 key ON vs 4 OFF.  Gates: OFF byte-identical (ei-diff 0 lines over
+  274, g1 no drift, core/test 1070/1070); ON: TestLoopTrace 720/720, corpus verdicts byte-identical 89/79/0, ei
+  OFF-vs-ON 7 of 274 differ (3516 identical / 1 order / 6 other, all six hand-classified: reportFor, lookbackJoin,
+  drilldownKeyValueTable2 each lose entailed conjuncts -- REquiv, strictly smaller).  OPEN DECISION before any flip
+  (review R-3, report §6a): `ChartsExample.e:stackedPair` publishes THREE FEWER implicit KIND binders under ON
+  (kind inference visits type groups in source order and generalises at the less general answer) -- a narrowing
+  the ei classifier does not cover.  Adoption would be Tier 2 (full core/test under ON, interleaved A/B, g1 re-cut,
+  looptrace A/B, a checked-in test recording 5 -> 2, the 2.11 back-port).  Orchestrator Tier 0 on the final tree:
+  compile, 720/720, 89/79/0, repl 23+5, lsp 573, g1 9 PASS.
 
 
   DONE 2026-09-13 (report tracker/loopmodel/E11a-CANON.md §1-15; review
