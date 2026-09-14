@@ -2306,7 +2306,20 @@ against them is deferred by the user ("formalize more broadly later").
   feeds call sites; the blast radius is reported); batch A/B four interleaved rounds inside
   the ~1 % floor, per-file corpus wall times with any > 20 % mover named; Tier 2.
   Brief: tracker/loopmodel/briefs/brief-E11a.md.
-- [ ] **E11b The set (DRAFTED, not opened).**  At publication, delete a constraint the rest
+  PROBE 2026-09-13 (tracker/loopmodel/E11b-PROBE.md, brief briefs/brief-E11b-probe.md): the PROVED
+  non-generative canonicaliser (Rowpartition/Canonical.lean, six rules) collapses NONE of the six
+  set-class bindings — on all twelve variant systems not one rule fires; they are already normal
+  forms.  The leftover differences need what the Lean does not have: definitional substitution
+  (four of six: `lookbackJoin`'s extra `t <- (r, c, h)` is associativity of disjoint union over
+  three survivors), existential projection (`reportFor`: a conjunct whose existential occurs
+  nowhere else — outside what a model-preserving rule may ever delete), un-splitting
+  (`cutoffGroupedFldsPosNegRel'`, generative).  So E11b is NOT a port of proved rules; it is the
+  ROSE rank-3 oracle.  PARKED pending the user; the cheap alternative is to exempt the set class
+  by name in the comparators (ei-classify, g1-diff, trace-ab) so reviews stop hand-classifying
+  `lookbackJoin`.  A Scala port of the six rules remains worthwhile as provably-safe hygiene
+  (`mkSimplified`'s `NormalPart` is Lean's `Constraint` field for field) but moves the SET count
+  by zero.
+- [ ] **E11b The set (DRAFTED, PARKED after the probe; not opened).**  At publication, delete a constraint the rest
   of the set entails, under the existentials, using an entailment oracle (the signature
   entailment machinery `SigEntail.scala` is the candidate — it decides declared-vs-inferred
   row obligations today), with a per-scheme budget and KEEP on no-verdict; run to a fixpoint;
