@@ -2366,7 +2366,15 @@ against them is deferred by the user ("formalize more broadly later").
   drilldownKeyValueTable2 each lose entailed conjuncts -- REquiv, strictly smaller).  OPEN DECISION before any flip
   (review R-3, report §6a): `ChartsExample.e:stackedPair` publishes THREE FEWER implicit KIND binders under ON
   (kind inference visits type groups in source order and generalises at the less general answer) -- a narrowing
-  the ei classifier does not cover.  Adoption would be Tier 2 (full core/test under ON, interleaved A/B, g1 re-cut,
+  the ei classifier does not cover.  RESOLVED 2026-09-14 (tracker/loopmodel/E11c-KIND.md): NEITHER published kind is principal and the
+  binders differ: `sa` is pinned to `*` by the scheme's own `AsPresentation s` (monomorphic builtin, Lib.scala:1100),
+  so OFF's `(sa: c)` is ILL-KINDED -- the kind checker rejects that signature when written down (probe p3, both
+  settings) -- and ON is right; `tdxfyf'`/`tdxfyf` are the phantom first parameter of `ChartOptions` (genuinely
+  kind-polymorphic), where ON defaults a free kind variable early: sound, unexploited (the only caller is in the
+  same file).  Root cause is `inferImplicitBindingTypes` generalising an inferred type it never kind-checks
+  (Subst.scala:905-963) plus `inferKind`'s application rule re-instantiating an argument's kind (:566-575) -- a
+  separate ticket, untouched by the flag; the mechanism is `implicitBindingComponents`, not `typeDefComponents`
+  (ChartsExample.e has no type declarations).  Verdict: a weak reason FOR the flip, not against.  Adoption would be Tier 2 (full core/test under ON, interleaved A/B, g1 re-cut,
   looptrace A/B, a checked-in test recording 5 -> 2, the 2.11 back-port).  Orchestrator Tier 0 on the final tree:
   compile, 720/720, 89/79/0, repl 23+5, lsp 573, g1 9 PASS.
 
