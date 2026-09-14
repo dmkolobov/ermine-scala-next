@@ -2330,6 +2330,26 @@ against them is deferred by the user ("formalize more broadly later").
   call per published constraint has a cost; budgeted).  Opened only on the user's word after
   E11a lands.
 
+  PHASE 1 DONE 2026-09-13 (tracker/loopmodel/E11b-ORACLE.md, review E11b-ORACLE-REVIEW.md ACCEPT WITH FIXES,
+  applied; briefs briefs/brief-E11b-oracle*.md).  Oracle chosen on the evidence: `SigEntail.check` with `pxs` =
+  the existentials PRIVATE to the candidate (`pxs = pubExts` is UNSOUND, witness `{(|k|) <- (x,y), a <- (x)}`),
+  row-only candidates, the concrete-lhs proxy EXISTENTIAL, greedy-first in E11a key order AFTER `Canonical.scheme`,
+  keep-on-lapse abandoning the whole scheme.  Ceiling as specified: SET 6 -> 5 (only `reportFor`; 9 of 31 sweep
+  pairs converge); the Yahoo three and `cutoffGroupedFldsPosNegRel'` reduce to irredundant cores that differ by a
+  fold/unfold over a UNIVERSAL, which deletion cannot touch; ~1/4 of constraint-carrying bindings lose constraints;
+  batch +1.6-5 %.  THE USER'S DECISION (2026-09-13): NOT E11b.  Whack-a-mole against shapes (order-independence is
+  coNP, ROSE 4.3).  Instead E11c below: make the solver's residual a function of the SOURCE by removing the id-base
+  reads on the solve path; if that is not fruitful, the class is exempted by name and not chased further.
+- [ ] **E11c The cause (OPENED 2026-09-13, the user's word).**  Two cold checks of one module differ only in the
+  id base (`smallcanon` is base-invariant, yet the SET class persists), so some choice on the solve path still
+  reads an absolute id (`V.hashCode` is `38 + n * 17`, Type.scala:169: every hash-ordered `Set[TypeVar]` iteration
+  is base-dependent).  Locate the first divergent solver step on `lookbackJoin` at two bases, audit every
+  id-dependent choice from `solve` to `mkSimplified`'s output as E11a audited `Canonical`, fix under a flag if the
+  cause is a local order read (default OFF this stage), and STOP if it is not.  ACCEPTANCE: brief
+  tracker/loopmodel/briefs/brief-E11c.md; the E11a form test's SET count 0 under the flag over N cold checks and
+  at two id bases; FORM stays 0; Tier 1 under ON with every `.ei` move classified; flag OFF byte-identical.
+
+
   DONE 2026-09-13 (report tracker/loopmodel/E11a-CANON.md §1-15; review
   tracker/loopmodel/E11a-REVIEW.md, ACCEPT WITH FIXES, R-1..R-10 applied by the orchestrator —
   the implementer was stopped by an accidental interrupt during Tier 2 and the orchestrator

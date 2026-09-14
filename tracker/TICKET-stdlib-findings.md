@@ -753,6 +753,8 @@ E11. **[HALF FIXED — the FORM half — by item E11a (2026-09-13; commit in the
     quality.  Cross-referenced from ROW-CONSTRAINT-STATE.md.  SCHEDULED 2026-09-13 as LSP interstage item E11 (the
   user: canonical form at publication): E11a = the FORM (label/constraint/binder order at publication; brief
   tracker/loopmodel/briefs/brief-E11a.md), E11b = the SET (entailment-based redundancy deletion, drafted, not opened).
+  E11b Phase 1 explored 2026-09-13 (tracker/loopmodel/E11b-ORACLE.md): the oracle closes 1 of 6 as specified; the user
+  chose NOT to chase shapes and opened E11c instead (remove the id-base reads on the solve path; roadmap E11 section).
 
 E12. **`TestInterfaceRoundTrip` is intermittent under whole-suite parallelism: other suites repopulate the
     process-global dep cache between its clear and its warm load.**  Filed 2026-09-11 from LSP Stage 4 item 7.1b's
