@@ -8,17 +8,16 @@ stop the loop. Full rationale: tracker/TICKET-scoping-renamer.md (LSP
 section) and tracker/TICKET-perf-type-inference.md (latency work, needed
 before type-at-point features).
 
-Status: INTERSTAGE ITEM E11a DONE (2026-09-13) — published schemes have a canonical FORM:
-two cold checks of every clean corpus module render 0 published bindings differently by form
-(129 before); two interface snapshots at different id bases are byte-identical except the SET
-class; inferred schemes' existentials take positional letters instead of solver hints (the
-user's call on review R-1; class-named and declared names kept).  Review
-ACCEPT WITH FIXES, all R-items applied.  E11 is HALF fixed: the SET half (the solver's
-order-dependent residual, 6-8 bindings, list in E11a-CANON.md §15 R-3) is E11b, DRAFTED below,
-opened only on the user's word.  Baselines: core/test 1070, TestTolerantCheck 58, corpus
-89/79/0 of 168, 274 interfaces (all re-cut: order/alpha), g1-baseline RE-CUT (order + letters),
-lsp-smoke 573.  Stage 4 COMPLETE, G4 SIGNED OFF; the worker thread (7.6) postponed; Stage 5
-NOT drafted.
+Status: LOOP IDLE (closed by the user 2026-09-13 after E11a).  Landed this arc, all on
+scala3-migration: 6.2b the pattern-binder hover hook (9972ccf9, shipped 336b5204); 6.2c E14
+the constrained local head (8a8455ce; Decision (a) amended for heads); E11a a canonical FORM for
+published schemes (b3da015e; ADOPTION, g1-baseline re-cut).  PARKED: E11b the SET half of E11
+(the entailment oracle at publication; the probe 59c8297e shows the proved six-rule
+canonicaliser fires 0 times on it) — to be explored in a separate session; the worker thread
+(7.6).  OPEN tickets from this arc: E15 (the hook shows a pattern binder's first
+instantiation), the ei-classify.py matcher+parser fix (review E11a).  Stage 5 NOT drafted.
+Baselines: core/test 1070, TestTolerantCheck 58, corpus 89/79/0 of 168, 274 interfaces,
+g1-baseline as re-cut by E11a, repl-smoke 8/66, lsp-smoke 573, boot 129.
 
 ## Baselines (hard invariants — never commit red)
 
