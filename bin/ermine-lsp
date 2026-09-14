@@ -19,6 +19,13 @@ opts=( )
 [[ -n ${ERMINE_LSP_LOG:-} ]] && opts+=( -Dermine.lsp.log="$ERMINE_LSP_LOG" )
 [[ -n ${ERMINE_JAVA_OPTS:-} ]] && read -r -a extra <<< "$ERMINE_JAVA_OPTS" && opts+=( "${extra[@]}" )
 
-: "${JAVA_HOME:=$HOME/.local/ermine-toolchain/jdk-21.0.12.1+1}"
-exec "$JAVA_HOME/bin/java" "${opts[@]}" -cp "$(cat "$cache")" \
+# JAVA_HOME if set; else the local toolchain if it is there; else java on PATH.
+if [[ -n ${JAVA_HOME:-} ]]; then
+  java="$JAVA_HOME/bin/java"
+elif [[ -x $HOME/.local/ermine-toolchain/jdk-21.0.12.1+1/bin/java ]]; then
+  java="$HOME/.local/ermine-toolchain/jdk-21.0.12.1+1/bin/java"
+else
+  java=java
+fi
+exec "$java" "${opts[@]}" -cp "$(cat "$cache")" \
   com.clarifi.reporting.ermine.lsp.Main "$@"

@@ -4,29 +4,85 @@ Syntax highlighting plus a client for `bin/ermine-lsp`: diagnostics as you type,
 go-to-definition, hover types, find references, rename, outlines, completion and
 two quick fixes.
 
-## Install
+The extension and the server live on the `scala3-migration` branch only. The
+`backport-2.11` branch builds the language on Scala 2.11 and has neither; see
+the top-level `README.md` for what each branch is for.
+
+## Building and installing
+
+### What you need
+
+| | |
+|---|---|
+| VS Code | 1.75 or newer (`engines.vscode` in `package.json`) |
+| Node.js and npm | for `npm install`, packaging and the tests. Nothing else in the repository needs Node |
+| A JDK, 17 or newer | runs the server. `bin/ermine-lsp` uses `$JAVA_HOME/bin/java` if `JAVA_HOME` is set and `java` from `PATH` otherwise |
+| sbt 1.x | builds the server's classpath once, on first run |
+| A checkout of `ermine-scala` on `scala3-migration` | the server is `bin/ermine-lsp` inside it; the extension is not self-contained |
+
+### 1. Build the server
+
+The server is the `core` module of the sbt build. Compile it once so the first
+editor session does not start with a cold sbt compile:
+
+```sh
+cd /path/to/ermine-scala
+sbt compile
+```
+
+`bin/ermine-lsp` then builds its classpath with sbt on first run and caches it
+in `target/ermine-classpath`. Delete that file after changing dependencies. You
+can check the server starts on its own before involving the editor:
+
+```sh
+tracker/tools/lsp-smoke.sh        # needs tracker/repl-classpath.txt, see the top-level README
+```
+
+### 2. Build the extension
 
 ```sh
 cd editor/vscode
 npm install
 ```
 
-Then either **run it from source** —
+### 3. Run it from source, or package and install it
+
+**From source**, in an Extension Development Host window:
 
 ```sh
 code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 ```
 
-— or **package and install it**:
+**Packaged**, as a `.vsix` you can install into any VS Code (the file is
+gitignored, so build it yourself):
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.2.vsix
-code --install-extension ermine-lang-0.1.2.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.3.vsix
+code --install-extension ermine-lang-0.1.3.vsix
 ```
 
+`npm run package` does the same. Upgrading is the same command with the new
+file; VS Code replaces the installed version.
+
+### 4. Open the workspace
+
 Open the `ermine-scala` folder as your workspace. The extension finds
-`bin/ermine-lsp` inside the first workspace folder; point `ermine.serverPath`
-elsewhere if your layout differs.
+`bin/ermine-lsp` inside the first workspace folder and starts it when the
+first `.e` file is opened. If the checkout is somewhere else, or you opened a
+different folder, set `ermine.serverPath` to the absolute path of that
+`bin/ermine-lsp`.
+
+The first start builds the classpath cache (visibly, as a cancellable
+notification) and then boots the session, about 12–14 s; the status bar tracks
+both. See "First run is slow, on purpose" below.
+
+### Checking the installation
+
+`npm test` in `editor/vscode` loads the extension the way the editor would and,
+if `target/ermine-classpath` exists, starts the real server and waits for its
+`session ready` line — see "Tests" at the end. In the editor itself, **Ermine:
+Show Language Server Output** shows the server's log, and `ermine.logFile`
+writes it to a file.
 
 ## What you get
 
@@ -40,7 +96,7 @@ the status bar, the settings and the sbt warm-up.
 | Syntax highlighting | keywords, literals, comments, operators, constructors, declaration heads |
 | Diagnostics | on open, on save, and after you stop typing — no save needed. The quiet window is adaptive: `clamp(150 ms, the document's own median check time, 300 ms)`, so a small file answers in 150 ms and only the biggest modules wait the full 300. Every failure, not the first; an import that will not load is squiggled on its own `import` line |
 | Go to definition | equations, signatures, local binders, `field` and `table` declarations, data constructors, foreign declarations, type names, fixity mentions, and `import` module names — same file, workspace siblings, and the stdlib |
-| Hover | the inferred or declared type of a top-level, imported or declared name; the **type of a local binder** — `let`, `where`, a binder with its own signature, and a plain-variable argument of an equation (when the binding's own type shows `arity` arrows and that argument's type is a monotype); the **kind** of a type name |
+| Hover | the inferred or declared type of a top-level, imported or declared name; the **type of every local binder** — `let` and `where` heads (with their full published scheme, constraints included), a binder with its own signature, a plain-variable argument of an equation, a lambda's argument, a `case` or `do` binder, and a variable nested inside a constructor or tuple pattern; the **kind** of a type name. Over the corpus that is 5054 of 5083 value-local binders; the 29 that stay silent are variables bound to a rank-N constructor field |
 | Find references / highlight | every mention of a local in its file; every mention of a global across the buffers you have OPEN |
 | Rename | one atomic `WorkspaceEdit` over that set, or a refusal with a reason — never a partial edit |
 | Outline / breadcrumbs | `textDocument/documentSymbol`, one symbol per top-level group, constructors nested under their type |
@@ -56,7 +112,7 @@ Names Scala installs rather than source declares (`Just`, `True`, `Int`,
 go-to-definition answers nothing on them and they are not listed in the
 workspace symbol picker.
 
-## Three things that will surprise you
+## Two things that will surprise you
 
 **The FIRST check of a file you just opened costs about 2.5 s; every keystroke
 after it costs about 0.9 s.** A fresh buffer has nothing to reuse, so the whole
@@ -77,15 +133,27 @@ cache drops and the file is re-inferred from scratch: about 1.6 s instead of
 what every other name in the file MEANS — and it is the one place where a
 keystroke is slower than the average.
 
-**A local binder inside a `case`, a `do` or a lambda still hovers empty.** Its
-type exists only inside the checker's pattern inference and is never written
-back where the editor can read it; hover answers nothing rather than guessing.
-`let`, `where`, signed binders and an equation's plain-variable arguments DO
-hover — the last of those by reconstruction from the binding's own type, so it
-needs that type to show `arity` arrows and the argument's own type to be a
-monotype; a strict (`!x`) or lazy (`~x`) argument answers nothing.
+### Fixed in 0.1.3 (server-side; the client did not change)
 
-### Fixed in 0.1.2 (they used to be on this list)
+**A local binder inside a `case`, a `do` or a lambda now hovers.** Its type
+used to exist only inside the checker's pattern inference and was never
+written back where the editor could read it. The checker now records it where
+it mints it, behind a flag only the editor path sets, so batch checking pays
+one boolean test and observes nothing. Coverage over the corpus went from 3079
+to 5054 of 5083 local binders; the 29 that remain are variables bound to a
+rank-N constructor field (`data Alt f = Alt (forall a. f a)`), whose
+polymorphic type neither mechanism can express. Two limits stay: a strict
+(`!x`) or lazy (`~x`) argument answers nothing, and a binder of a local that
+is used at two types shows its FIRST instantiation (ticket E15). `docs/lsp.md`
+has the exact rules.
+
+**A `let` or `where` head hovers its published scheme.** It used to show the
+type one frame early and without its constraints (`go : List a -> a -> a` for
+a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
+scheme the checker generalised, like a top-level hover does. Pattern binders
+and equation arguments stay monotypes.
+
+### Fixed in 0.1.2
 
 **Stdlib navigation lands in the source tree.** A stdlib definition, reference
 or workspace symbol used to open `core/target/…/classes/modules` — the copy the
