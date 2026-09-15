@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Print the JSON Schema (or the zod source) of an Ermine type.
+#
+#   bin/ermine-schema -i Ord 'Ordering'
+#   bin/ermine-schema --zod -i Either 'Either String Int'
+#
+# Only the modules named with -i (and their dependencies) are loaded, so this
+# starts in about a second rather than the REPL's thirteen.
+#
+# Builds the classpath with sbt on first run and caches it in
+# target/ermine-classpath; delete that file after changing dependencies.
+# Extra JVM flags can be passed in ERMINE_JAVA_OPTS.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$here"
+cache=target/ermine-classpath
+
+if [[ ! -s $cache ]] || [[ build.sbt -nt $cache ]]; then
+  mkdir -p target
+  sbt -batch 'export core/fullClasspath' 2>/dev/null |
+    grep -v '^\[' | grep -v '^$' | tail -1 | tr -d '\n' > "$cache"
+fi
+
+opts=( -Dermine.typeCheck=true )
+[[ -n ${ERMINE_JAVA_OPTS:-} ]] && read -r -a extra <<< "$ERMINE_JAVA_OPTS" && opts+=( "${extra[@]}" )
+
+exec java "${opts[@]}" -cp "$(cat "$cache")" \
+  com.clarifi.reporting.ermine.json.SchemaMain "$@"

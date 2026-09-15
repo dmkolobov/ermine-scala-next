@@ -1,0 +1,13 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$id" : "ermine:Layout.Report.Direction/Direction",
+  "$ref" : "#/$defs/Layout.Report.Direction.Direction",
+  "$defs" : {
+    "Layout.Report.Direction.Direction" : {
+      "enum" : [
+        "Horizontal",
+        "Vertical"
+      ]
+    }
+  }
+}

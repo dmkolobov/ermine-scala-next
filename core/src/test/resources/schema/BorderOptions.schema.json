@@ -1,0 +1,67 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$id" : "ermine:Layout.BorderOptions/BorderOptions Int",
+  "$ref" : "#/$defs/Layout.BorderOptions.BorderOptions_Int",
+  "$defs" : {
+    "Layout.BorderOptions.BorderOptions_Int" : {
+      "type" : "object",
+      "properties" : {
+        "tag" : {
+          "const" : "BorderOptions"
+        },
+        "args" : {
+          "type" : "array",
+          "prefixItems" : [
+            {
+              "anyOf" : [
+                {
+                  "type" : "integer"
+                },
+                {
+                  "type" : "null"
+                }
+              ]
+            },
+            {
+              "anyOf" : [
+                {
+                  "type" : "integer"
+                },
+                {
+                  "type" : "null"
+                }
+              ]
+            },
+            {
+              "anyOf" : [
+                {
+                  "type" : "integer"
+                },
+                {
+                  "type" : "null"
+                }
+              ]
+            },
+            {
+              "anyOf" : [
+                {
+                  "type" : "integer"
+                },
+                {
+                  "type" : "null"
+                }
+              ]
+            }
+          ],
+          "minItems" : 4,
+          "maxItems" : 4
+        }
+      },
+      "required" : [
+        "tag",
+        "args"
+      ],
+      "additionalProperties" : false
+    }
+  }
+}

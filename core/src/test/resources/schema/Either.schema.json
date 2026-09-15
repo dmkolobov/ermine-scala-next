@@ -1,0 +1,57 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$id" : "ermine:Either/Either String Int",
+  "$ref" : "#/$defs/Either.Either_String_Int",
+  "$defs" : {
+    "Either.Either_String_Int" : {
+      "oneOf" : [
+        {
+          "type" : "object",
+          "properties" : {
+            "tag" : {
+              "const" : "Left"
+            },
+            "args" : {
+              "type" : "array",
+              "prefixItems" : [
+                {
+                  "type" : "string"
+                }
+              ],
+              "minItems" : 1,
+              "maxItems" : 1
+            }
+          },
+          "required" : [
+            "tag",
+            "args"
+          ],
+          "additionalProperties" : false
+        },
+        {
+          "type" : "object",
+          "properties" : {
+            "tag" : {
+              "const" : "Right"
+            },
+            "args" : {
+              "type" : "array",
+              "prefixItems" : [
+                {
+                  "type" : "integer"
+                }
+              ],
+              "minItems" : 1,
+              "maxItems" : 1
+            }
+          },
+          "required" : [
+            "tag",
+            "args"
+          ],
+          "additionalProperties" : false
+        }
+      ]
+    }
+  }
+}

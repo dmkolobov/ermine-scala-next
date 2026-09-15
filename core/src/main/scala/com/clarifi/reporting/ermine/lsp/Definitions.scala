@@ -217,6 +217,15 @@ object Definitions {
         "value" -> Json.Str("```ermine\n" + text + "\n```")))
       answer getOrElse Json.Null
     } }
+
+    // tracker/JSON-API-DESIGN.md §3.5: the JSON Schema of an Ermine type,
+    // out of the resident session -- the editor-side twin of
+    // `bin/ermine-schema`, which pays a fresh boot for every question.  The
+    // whole handler is `json/Schema.scala`'s `LspSchema`: the exporter owns
+    // its own wire shape, this file only routes to it.
+    server.onRequest("ermine/schema") { params => ifReady {
+      com.clarifi.reporting.ermine.json.LspSchema.answer(ermine, params)
+    } }
   }
 
   private def occurrenceAt(docs: Documents, params: Json): Option[Occ] =

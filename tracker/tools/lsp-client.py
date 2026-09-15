@@ -415,6 +415,28 @@ def main():
     check("hover constructor head", r is not None
           and "Decls.Circle" in r["contents"]["value"], repr(r))
 
+    # --- ermine/schema (JSON API Stage 1b, tracker/JSON-API-DESIGN.md §3.5) ---
+    def schema(params):
+        rid = client.request("ermine/schema", params)
+        return client.response(rid).get("result")
+
+    r = schema({"module": "Ord", "type": "Ordering"})
+    check("ermine/schema exports an enum from the resident session",
+          r is not None and r.get("$id") == "ermine:Ord/Ordering"
+          and r.get("$defs", {}).get("Ord.Ordering", {}).get("enum") == ["LT", "EQ", "GT"],
+          repr(r))
+    r = schema({"module": "Either", "name": "Either"})
+    check("ermine/schema refuses an uninstantiated parameterised type",
+          r is not None and "error" in r and "type arguments" in r["error"], repr(r))
+    r = schema({"module": "Either", "type": "Either String Int"})
+    check("ermine/schema exports an instantiation as a tagged union",
+          r is not None
+          and "oneOf" in r.get("$defs", {}).get("Either.Either_String_Int", {}),
+          repr(r))
+    r = schema({"type": "Ordering"})
+    check("ermine/schema without a module is an error object",
+          r is not None and "module" in r.get("error", ""), repr(r))
+
     r = definition("Decls.e", 18, 14)    # `Left`, a constructor from Either.e
     check("def imported constructor -> Either.e", r is not None
           and r["uri"].endswith("/resources/modules/Either.e"), repr(r))

@@ -614,6 +614,67 @@ What landed, and where it departs from the text above.
   `Decode`, the `Json a` constraint, the document runner, the `:json` debug
   flag that would show partial documents with error nodes.
 
+### Stage 1b as built (2026-09-14, branch `json-schema`, off `json-encode`)
+
+The SCHEMA EXPORTER half of Stage 1 (named constructor fields are the other
+half, on their own branch).  What landed: `json/Schema.scala`
+(`Type => JSON Schema 2020-12`, plus `LspSchema` for the request),
+`json/Validate.scala` (a validator for exactly the subset the exporter
+emits), `json/Zod.scala` (`JSON Schema => TypeScript`, zod 3),
+`json/SchemaMain.scala` + `bin/ermine-schema`, the `ermine/schema` LSP
+request (one line in `lsp/Definitions.scala`, four checks in
+`tracker/tools/lsp-client.py`), eight committed fixtures under
+`core/src/test/resources/schema/` and `scalacheck-binding/.../TestSchema.scala`.
+
+Departures from §3.5 and decisions taken in code:
+
+- **`export` is a Scala 3 keyword**, so the method is `Schema.exportType`
+  (with a backticked `` `export` `` alias) -- the design note's spelling
+  needs backticks in Scala 3 source.
+- **Every `data` INSTANTIATION becomes a `$defs` entry** keyed
+  `Module.Type_Arg...` (`Test.Tree`, `Either.Either_String_Int`) and is
+  referenced by `$ref`, the ROOT included, so a recursive type terminates and
+  a zod file has one named `const` per type.  Structural types (`Maybe`,
+  `List`, tuples, records, relations) are inlined -- only a `data` can be
+  recursive.
+- **One constructor means no `oneOf`**: a single-constructor positional type
+  exports as the bare `{"tag":…,"args":[…]}` object.  `oneOf` starts at two.
+- **Determinism needed a printer change**: argonaut's `spaces2`/`nospaces`
+  iterate the field MAP, which is neither insertion nor sorted order, so the
+  canonical text is `Schema.text` = `pretty(PrettyParams.spaces2.copy(
+  preserveOrder = true))` and `Schema.compact` = `nospacesWithOrder`.
+  `$defs` are emitted sorted by key and record properties sorted by name, so
+  neither declaration order nor module load order is observable (property c).
+- **Type aliases**: `Type.expandAlias` reports `Unexpanded` whenever the
+  outermost head is not itself an alias, so `type Ints = List Int` comes back
+  as `Unexpanded(List Int)` -- an expansion all the same.  The exporter
+  iterates to a FIXED POINT on "the type stopped changing", with a fuel bound.
+- **Relation `[..r]`** exports the §3.4a columns+rows-as-arrays object, with
+  the column descriptors as `prefixItems` of consts and the column `type`
+  const spelled as the unqualified Ermine type name (`Int`, `Date`), with
+  `Nullable` unwrapped.  The ENCODER does not produce this yet (Stage 3's
+  `Write.doc`); the schema ships now so the TS side can be written against
+  it.  The `Inline`/`Deferred` arms are Stage 3 too.
+- **A constrained field type reads as rank-n before it reads as a row**: a
+  constructor field declared `Field h Int` or `{..r}` with a free row
+  variable arrives at the walker as a scheme, so the refusal says
+  "polymorphic (rank-n)" rather than "open row".  Both name the constructor
+  and the field index; only the wording differs.
+- **`z.lazy` + `: z.ZodTypeAny`** for recursion: `tsc --strict` refuses a
+  `const` whose inferred type depends on itself (TS7022), so a recursive def
+  is annotated and its `z.infer` is `any`.  The runtime check stays exact.
+- `x-ermine: {module, type, hash}` (§3.5's drift guard) is NOT implemented;
+  the fixtures' byte equality plays that role inside this repository.
+
+Gate (Stage 1 row of §5): `TestSchema` 19/19 + `TestJson` 26/26 = 45/45;
+schemas and zod committed for `Ordering`, `Either String Int`,
+`Relation.Sort.SortOrder`, `Layout.Report.Direction.Direction`,
+`Layout.BorderOptions.BorderOptions Int`, a user record, a user relation and a
+recursive user `data`; `npx tsc --noEmit --strict` green over all eight, and
+the compiled zod accepts/rejects the encoder's documents at runtime; the
+encode/schema consistency property green over 200 generated (type, value)
+pairs plus 100 shrinking ones; LSP smoke 577 checks, REPL smoke green.
+
 ## 4. Appendix: the de facto widget API (catalogue)
 
 Corrected per skeptic (§7): the writer also emits `registerSource`,

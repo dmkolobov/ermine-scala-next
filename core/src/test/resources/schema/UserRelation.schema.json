@@ -1,0 +1,87 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$id" : "ermine:Test/[..(|sfDate, sfInt, sfString|)]",
+  "type" : "object",
+  "properties" : {
+    "columns" : {
+      "type" : "array",
+      "prefixItems" : [
+        {
+          "type" : "object",
+          "properties" : {
+            "name" : {
+              "const" : "sfDate"
+            },
+            "type" : {
+              "const" : "Date"
+            }
+          },
+          "required" : [
+            "name",
+            "type"
+          ],
+          "additionalProperties" : false
+        },
+        {
+          "type" : "object",
+          "properties" : {
+            "name" : {
+              "const" : "sfInt"
+            },
+            "type" : {
+              "const" : "Int"
+            }
+          },
+          "required" : [
+            "name",
+            "type"
+          ],
+          "additionalProperties" : false
+        },
+        {
+          "type" : "object",
+          "properties" : {
+            "name" : {
+              "const" : "sfString"
+            },
+            "type" : {
+              "const" : "String"
+            }
+          },
+          "required" : [
+            "name",
+            "type"
+          ],
+          "additionalProperties" : false
+        }
+      ],
+      "minItems" : 3,
+      "maxItems" : 3
+    },
+    "rows" : {
+      "type" : "array",
+      "items" : {
+        "type" : "array",
+        "prefixItems" : [
+          {
+            "type" : "string",
+            "format" : "date"
+          },
+          {
+            "type" : "integer"
+          },
+          {
+            "type" : "string"
+          }
+        ],
+        "minItems" : 3,
+        "maxItems" : 3
+      }
+    }
+  },
+  "required" : [
+    "columns",
+    "rows"
+  ],
+  "additionalProperties" : false
+}

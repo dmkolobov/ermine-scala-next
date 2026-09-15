@@ -1,0 +1,14 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$id" : "ermine:Ord/Ordering",
+  "$ref" : "#/$defs/Ord.Ordering",
+  "$defs" : {
+    "Ord.Ordering" : {
+      "enum" : [
+        "LT",
+        "EQ",
+        "GT"
+      ]
+    }
+  }
+}
