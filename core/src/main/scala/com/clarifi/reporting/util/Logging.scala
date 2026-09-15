@@ -22,7 +22,7 @@ object Logging {
       }
     }
     else {
-      System.out.println( "logging config not found (" + filename + "), using defaults" );
+      System.err.println( "logging config not found (" + filename + "), using defaults" ); // stderr: bin/ermine-schema promises a clean stdout
       val props = new java.util.Properties();
       val logLevel = "WARN"
       props.put( "log4j.rootCategory", logLevel + ", stdout" )
