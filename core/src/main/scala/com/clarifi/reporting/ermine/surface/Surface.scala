@@ -197,8 +197,18 @@ final case class STableStatement(loc: SLoc, dbName: Option[String], names: List[
 final case class STypeAlias(loc: SLoc, name: SName, kindArgs: List[SName], typeArgs: List[SBinder], body: STy) extends SStatement
 final case class SDataStatement(loc: SLoc, name: SName, kindArgs: List[SName], typeArgs: List[SBinder],
                                 constructors: List[SConDef]) extends SStatement
-/** One data constructor: optional per-constructor forall, then fields. */
-final case class SConDef(loc: SLoc, exists: List[SBinder], name: SName, fields: List[STy])
+/** One data constructor: optional per-constructor forall, then fields.
+  *
+  * `fields` is always the positional list of field TYPES, in declaration
+  * order, whichever spelling was used -- so everything that only cares
+  * about arity or about the types (kind inference, the renamer's type
+  * walk, the LSP's enum/struct choice) is untouched by named fields.
+  * `fieldNames` is `Some(ns)` for the record spelling `C { f : t, .. }`
+  * (same length as `fields`, names distinct within the constructor) and
+  * `None` for the positional spelling `C t1 t2` (design note 3.1 item 2,
+  * Stage 1a). */
+final case class SConDef(loc: SLoc, exists: List[SBinder], name: SName, fields: List[STy],
+                         fieldNames: Option[List[SName]] = None)
 
 final case class SClassStatement(loc: SLoc, name: SName, kindArgs: List[SName], typeArgs: List[SBinder],
                                  context: List[STy], body: List[SStatement]) extends SStatement

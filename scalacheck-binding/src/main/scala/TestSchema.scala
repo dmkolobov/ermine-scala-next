@@ -120,7 +120,7 @@ object TestSchema extends Properties("Ermine JSON Schema") {
     else {
       val composites: List[Gen[Shape]] =
         listShape(depth) :: tupleShape(depth) :: recordShape ::
-        positionalData(depth) :: parameterisedData(depth) :: recursiveData ::
+        positionalData(depth) :: recordStyleData(depth) :: parameterisedData(depth) :: recursiveData ::
         (if (underMaybe) Nil else List(maybeShape(depth)))
       Gen.oneOf(leaves ++ composites).flatMap(identity)
     }
@@ -171,6 +171,30 @@ object TestSchema extends Properties("Ermine JSON Schema") {
       Shape(d, decl :: named.flatMap(_._2.flatMap(_.decls)),
             Gen.oneOf(named).flatMap { case (c, fs) =>
               Gen.sequence[List[String], String](fs.map(_.value))
+                .map(vs => (c :: vs).mkString("(", " ", ")")) })
+    }
+
+  /** `data Rn = Rnc1 { rnc1f0 : t, ... } | Rnc2 { ... }` (Stage 1a, named
+    * constructor fields): named properties in declaration order, a `tag`
+    * only from two constructors up, and a `Maybe`-headed field is an
+    * OPTIONAL key (Nothing -> absent).  Field names are unique per
+    * constructor so no two selectors collide.  Values are built
+    * POSITIONALLY: record construction syntax is not part of Stage 1. */
+  private def recordStyleData(depth: Int): Gen[Shape] =
+    for {
+      d     <- fresh("R")
+      arity <- Gen.choose(1, 3)
+      ctors <- Gen.listOfN(arity, Gen.choose(1, 3).flatMap(k => Gen.listOfN(k, shape(depth - 1))))
+    } yield {
+      val named = ctors.zipWithIndex.map { case (fs, i) =>
+        (d + "c" + (i + 1), fs.zipWithIndex.map { case (f, j) => (d.toLowerCase + "c" + (i + 1) + "f" + j, f) })
+      }
+      val decl = "data " + d + " = " + named.map { case (c, fs) =>
+        c + " { " + fs.map { case (n, f) => n + " : " + f.ty }.mkString(", ") + " }"
+      }.mkString(" | ")
+      Shape(d, decl :: named.flatMap(_._2.flatMap(_._2.decls)),
+            Gen.oneOf(named).flatMap { case (c, fs) =>
+              Gen.sequence[List[String], String](fs.map(_._2.value))
                 .map(vs => (c :: vs).mkString("(", " ", ")")) })
     }
 

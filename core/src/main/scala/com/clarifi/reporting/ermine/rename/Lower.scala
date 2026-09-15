@@ -106,6 +106,20 @@ object Lower {
     def resolve(n: SName): Resolution =
       resolutions.getOrElse(n.span, Unresolved(n.spelling))
 
+    /** Does the MODULE define this spelling with an equation or a
+      * signature?  `Renamer.collectHeads` records a binder only for those,
+      * which is why a generated definition (a record-field selector) has
+      * to ask: its own name is minted through the placeholder branch of
+      * `varFor` and would otherwise collide silently, to reappear as the
+      * loader's unpositioned `primOp: rebinding`. */
+    def definesTerm(spelling: String): Boolean = moduleTerms.contains(spelling)
+
+    /** Does this spelling already name an IMPORT?  The equation head's own
+      * refusal (`Renamer.topLevelHeads`, "would shadow global definition")
+      * asks the same question. */
+    def importsTerm(spelling: String): Boolean =
+      scope.canonicalTerms.get(Local(spelling)).exists(_.nonEmpty)
+
     /** A binder SITE is not an occurrence; join through the binder
       * table's def-site spans so the pattern V and its body references
       * share one core variable. */

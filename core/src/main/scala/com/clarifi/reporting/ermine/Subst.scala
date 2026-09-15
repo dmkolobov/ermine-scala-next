@@ -791,7 +791,7 @@ object Subst {
     val bspp = subType(bsp.map(b => b.v -> VarT(b.v)).toMap, bsp)
     // now that we all agree on variables, lets run inference
     bspp.zip(rks).foreach {
-      case (b@DataStatement(l, v, kindArgs, typeArgs, cons), rk) =>
+      case (b@DataStatement(l, v, kindArgs, typeArgs, cons, _), rk) =>
         implicit val tyl: Located = l
         unifyKind(substKind(b rho rk), substKind(v.extract))
         unifyKind(substKind(rk), Star(l.inferred))
@@ -821,8 +821,8 @@ object Subst {
         val gk = generalizeKind(Nil, substKind(b.v.extract))
         val typeArgs = b.typeArgs.map { a => a.map(substKind(_)) }
         (gk, b match {
-          case DataStatement(l, v, kindArgs, _,        cons) =>
-               DataStatement(l, v, kindArgs, typeArgs, cons.map { case (es, v, ts) => (es, v, ts.map(substType(_))) })
+          case DataStatement(l, v, kindArgs, _,        cons, sels) =>
+               DataStatement(l, v, kindArgs, typeArgs, cons.map { case (es, v, ts) => (es, v, ts.map(substType(_))) }, sels)
           case ClassBlock(l, v, kindArgs, _, ctx, privates, statements) =>
                ClassBlock(l, v, kindArgs, typeArgs, ctx, privates, statements.map {
                  case SigStatement(l,vs,t) => SigStatement(l,vs,substType(t))
@@ -1867,7 +1867,7 @@ object Subst {
     val ktds = inferTypeDefKindSchemas(tdsp)
     var conMap: Map[TypeVar, Type] = null
     val cons = ktds map {
-      case (ks, DataStatement(l, v, kindArgs, typeArgs, cons)) =>
+      case (ks, DataStatement(l, v, kindArgs, typeArgs, cons, _)) =>
         v -> Con(l, global(module, v), new ConDecl { def desc = "data" }, ks)
       case (ks, TypeStatement(l, v, kindArgs, typeArgs, body)) =>
         v -> Con(l, global(module, v), new TypeAliasDecl(kindArgs, typeArgs, { subType(preserveLoc(conMap - v), body) }), ks)
@@ -1876,7 +1876,7 @@ object Subst {
     }
     conMap = cons.toMap
     mapAccum_((cm._1 ++ conMap, cm._2), ktds.zip(cons)) {
-      case (s, ((_, DataStatement(l, v, kindArgs, typeArgs, cons)), (_, con))) =>
+      case (s, ((_, DataStatement(l, v, kindArgs, typeArgs, cons, _)), (_, con))) =>
         (s._1, s._2 ++ cons.map {
           case (es, v, fields) =>
             val g = global(module, v)

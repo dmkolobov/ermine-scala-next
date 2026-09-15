@@ -258,7 +258,10 @@ as *the* mapping; mirrored by the schema exporter and the params decoder):
 | `{..(\|f1..fn\|)}` closed record | object, unqualified keys, `additionalProperties:false` | keys in sorted order in both the encoder and the schema (`Rec` is an unordered `Map`, `Runtime.scala:161`); export fails on key collision across modules (§6) |
 | open row `{..r}` | export error unless instantiated | encoder still works (it sees the Rec) |
 | `data` all-nullary | string enum | |
-\1| single-constructor `data` with named fields | plain object, no `tag` | the common props shape (§3.1b); a `Maybe` field is an optional key; a field of type `Spread Json` is merged into the parent object and exports as unknown additional properties |\n| Relation r | `JData` → §3.4 | never inline in `toJson#` |
+| single-constructor `data` with named fields | plain object, no `tag` | the common props shape (§3.1b); a `Maybe` field is an optional key; a field of type `Spread Json` is merged into the parent object and exports as unknown additional properties. BUILT, Stage 1a (§3.7a), less `Spread` |
+| multi-constructor `data` with named fields | object, `"tag"` first, then the fields in declaration order | BUILT, Stage 1a (§3.7a) |
+| `data` with positional fields | `{"tag": C, "args": [...]}` | |
+| Relation r | `JData` → §3.4 | never inline in `toJson#` |
 | Fun / IO / FFI / existential field / foreign Prim (except the widget-support witnesses, §3.1a) | encode error with location; export error | `Layout/Report.e:73 Report`, `Field.e:22 EField`, `Control/Monad.e:7` are the kind of types that must never reach the boundary |
 | Bottom | encode error naming the path | fail the document on the wire. Alternative considered: an `{"error": path}` node so partially good documents survive (the REPL deliberately shows nested Bottoms, `Runtime.scala:142-152`); rejected for the wire because a widget cannot safely render a partial table; kept as a debug flag on the `:json` REPL command |
 
@@ -610,10 +613,94 @@ What landed, and where it departs from the text above.
   classifier does not yet reject existential fields (Stage 2), and the
   walker recognises the stdlib `Json` constructors by module name, so a
   user module named `Json` would collide.
-- **Not in Stage 0**: named constructor fields (Stage 1), `Schema`,
+- **Not in Stage 0**: named constructor fields (Stage 1a, §3.7a), `Schema`,
   `Decode`, the `Json a` constraint, the document runner, the `:json` debug
   flag that would show partial documents with error nodes.
 
+## 3.7a Stage 1a as built (2026-09-14, branch `json-fields`)
+
+**Named constructor fields with generated selector functions.**
+
+- **Syntax.** `SConDef` grows `fieldNames: Option[List[SName]]` and keeps
+  `fields` as the positional list of field TYPES, so kind inference, the
+  renamer's type walk and the LSP's enum/struct choice are untouched.  One
+  spelling per constructor: `C { f : t, .. }` or `C t1 t2`; mixing is a
+  parse error (the trailing atom is input the `|` level refuses), `C {}` and
+  a field name repeated in one constructor are located parse errors.  `{`
+  also opens a row-brace TYPE atom, so the brace parse is an `.attempt` and
+  `data R = R {a, b}` still parses positionally -- but only the PARSE
+  backtracks: once `{..}` has been read as fields the two refusals are
+  raised outside the attempt, or they would be swallowed and replaced by a
+  misleading row-brace error.
+- **Representation.** `DataStatement` grows `selectors: List[Selector]`
+  (default `Nil`, which is what keeps the dead `Subst.checkTypeDefComponent`
+  honest), one entry per distinct field NAME of the declaration:
+  `Selector(name, v: Option[TermVar], sites: List[(TermVar, Int)])`.  `v` is
+  `None` when no selector can be typed -- the field's type mentions one of
+  its constructor's existentials -- and the field is then still NAMED for
+  the registry and the wire.  `sites` carries every `(constructor, index)`
+  the selector reads, more than one when constructors of the type share the
+  name.  The field TYPE is deliberately NOT stored: `processTypeDefComponent`
+  reads it back out of `constructors` through `sites`, so a selector's type
+  is by construction the very `Type` `mkDataConstructor` gave that argument,
+  after the component's kind inference and substitution, with nothing to
+  keep in step.  `definedTerms` includes the selectors.
+- **How selectors enter the renamer.** Exactly as a constructor's own name
+  does.  `Renamer.collectHeads` records binders for equations and signatures
+  only, so a field name's span has no binder and `lctx.varFor` takes its
+  placeholder branch, keyed by SPELLING -- the same V every in-module
+  reference to the selector gets, which `processTypeDefComponent`'s term map
+  then rewrites to the installed primOp.  Imports, exports, `hiding` and
+  `private` therefore treat a selector like any other definition, and a
+  `private data` block makes its selectors private (one more line beside the
+  constructors).  Selectors are installed by `Session.mkFieldSelector`
+  (a `primOp` beside `mkDataConstructor`) with the runtime
+  `Runtime.selectData`, so the Full and the Interface load both get them and
+  the `.ei` format needs no change (pinned: TestNamedFields' interface-parity
+  property loads the same module with `useInterface` off, cold on and warm
+  on and compares the encoded documents).
+- **Collisions are refused AT THE FIELD.** The status quo for a
+  constructor/`field`-witness clash is the loader's unpositioned
+  `primOp: rebinding M.x`, or `error: loading would overwrite one existing
+  global: x` at file:1:1 (probed 2026-09-14; note "two equations of the same
+  name" is NOT an error in Ermine -- adjacent equations are alternatives,
+  and only separated ones give `error: interleaved equations for f`).  So the
+  selector case is refused earlier, as a positioned `Refusal` at the field
+  name: against another declaration of the module (a constructor, a `field`,
+  a `table`, a foreign name -- from a pre-scan of the surface statements, so
+  order does not matter), against a top-level equation or signature, against
+  an import (the equation head's own "would shadow global definition"), and
+  against another data type's selector.  A field name shared by two
+  constructors of ONE type with DIFFERENT types is refused the same way.
+- **Runtime unchanged.** `accumData` is untouched: positional construction
+  `Series "q1" [1.0]` and positional pattern matching work for a
+  record-style constructor, which is what property (e) pins.  A selector is
+  a `Fun` projecting one argument; applied to a constructor of the same type
+  that lacks the field (`radius Dot`) it is a `Bottom` reading
+  `Dot has no field radius`, not `whnfMatch`'s generic panic.  Record-style
+  CONSTRUCTION and update syntax are not in this stage.
+- **Wire form** (the §3.1 table's "named fields" row, now implemented): a
+  record-style constructor is an object keyed in DECLARATION order --
+  `{"name":"q1","points":[1.0]}` for a single-constructor type,
+  `{"tag":"Circle","radius":1.5}` for a union.  A named field whose
+  DECLARED type is headed by `Builtin.Maybe` and whose value is `Nothing` is
+  OMITTED (`Nullable` is not: its `Null` carries a `PrimT` and its JSON is
+  `null`, not an absent key); a field whose declared type is a type variable
+  keeps the walker's `null`.  Positional constructors keep `{"tag","args"}`
+  and all-nullary types keep the string enum, so a nullary constructor of a
+  record-style union is still `{"tag":"Dot","args":[]}`.  `Encode.reject`
+  and the stdlib sweep are unchanged.
+- **Noted, not changed**: a PHANTOM type parameter (one no field mentions)
+  gives the selector the scheme `forall {k} (a: k). T a -> t`, kind variable
+  and all -- but so does the constructor (`forall {k} (a: k). t -> T a`), so
+  the selector is consistent with what the type already had.  The LSP shows
+  selectors as `KField` children of the data symbol and as declaration
+  heads; record-style PRETTY PRINTING of the declaration is not built (rule
+  10), so `:browse` and hover still show positional fields.
+- **Gate**: TestNamedFields 14/14 (nine `forAll` properties over random
+  declarations), TestJson 27/27, the parser/renamer suites green, REPL and
+  LSP smokes green, corpus verdicts 89 LOADED / 79 REJECTED / 0 UNKNOWN over
+  168, unchanged.
 ### Stage 1b as built (2026-09-14, branch `json-schema`, off `json-encode`)
 
 The SCHEMA EXPORTER half of Stage 1 (named constructor fields are the other

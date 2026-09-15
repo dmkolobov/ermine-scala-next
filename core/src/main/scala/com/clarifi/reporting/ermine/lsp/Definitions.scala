@@ -756,7 +756,13 @@ object Definitions {
       def go(st: SStatement): Unit = st match {
         case x: SFieldStatement       => x.names.foreach(head)
         case x: STableStatement       => x.names.foreach(head)
-        case x: SDataStatement        => x.constructors.foreach(cd => head(cd.name))
+        case x: SDataStatement        =>
+          x.constructors.foreach { cd =>
+            head(cd.name)
+            // the generated field selectors are declaration heads too; the
+            // renamer keeps no binder for them either (Stage 1a)
+            cd.fieldNames.foreach(_.foreach(head))
+          }
         case SForeignBlock(_, items)  => items.foreach(foreignHeads)
         case SPrivateBlock(_, ss)     => ss.foreach(go)
         case SDatabaseBlock(_, _, ss) => ss.foreach(go)

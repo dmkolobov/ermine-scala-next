@@ -342,6 +342,15 @@ object Symbols {
             val cons = x.constructors.map { (cd: SConDef) =>
               sym(cd.name.spelling, KConstructor, termTy(cd.name.spelling), None,
                   rng(cd.loc.span), sel(cd.name), Nil) }
+            // Stage 1a: a record-style constructor's fields are generated
+            // top-level FUNCTIONS, so they belong in the outline beside the
+            // constructors; distinct by name, since one name shared by two
+            // constructors is one selector
+            val sels = x.constructors.flatMap(_.fieldNames.getOrElse(Nil))
+              .foldLeft(List.empty[SName]) { (acc, n) =>
+                if (acc.exists(_.spelling == n.spelling)) acc else acc :+ n }
+              .map(n => sym(n.spelling, KField, termTy(n.spelling), None,
+                            rng(n.span), sel(n), Nil))
             // ENUM when every constructor is nullary (`data Bool = True
             // | False`), STRUCT when any of them carries a field: the
             // distinction an editor's outline icon is actually for.
@@ -349,7 +358,7 @@ object Symbols {
                          KEnum else KStruct
             List(sym(x.name.spelling, kind, None,
                      detailOf(x.name.spelling, typeFixity),
-                     rng(x.loc.span), sel(x.name), cons.sortBy(_.pos)))
+                     rng(x.loc.span), sel(x.name), (cons ++ sels).sortBy(_.pos)))
           case x: SClassStatement =>
             List(sym(x.name.spelling, KInterface, None,
                      detailOf(x.name.spelling, typeFixity),

@@ -13,6 +13,11 @@ data Ser = Ser String (List Double)
 data Cfg = Cfg String Ser
 data Holder = Holder (Int -> Int)
 
+-- named constructor fields: an object on the wire, and one selector
+-- function per field name (Stage 1a)
+data Pt = Pt { px : Int, py : Int }
+data Fig = Disc { rad : Double, tip : Maybe Int } | Nought
+
 -- compact text of any value's encoding
 j : a -> String
 j v = render (toJson v)
@@ -31,3 +36,6 @@ rows = [{ x = 1, name = "a" }, { x = 2, name = "b" }]
 
 holder : List Holder
 holder = [Holder id]
+
+pt : Pt
+pt = Pt 3 4

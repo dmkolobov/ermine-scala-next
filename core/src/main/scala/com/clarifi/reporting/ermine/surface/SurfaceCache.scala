@@ -192,7 +192,8 @@ object SurfaceCache {
       case SDataStatement(l, n, ks, ts, cs) =>
         SDataStatement(loc(l, d), name(n, d), ks.map(name(_, d)), ts.map(binder(_, d)),
                        cs.map(c => SConDef(loc(c.loc, d), c.exists.map(binder(_, d)),
-                                           name(c.name, d), c.fields.map(ty(_, d)))))
+                                           name(c.name, d), c.fields.map(ty(_, d)),
+                                           c.fieldNames.map(_.map(name(_, d))))))
       case SClassStatement(l, n, ks, ts, ctx, body) =>
         SClassStatement(loc(l, d), name(n, d), ks.map(name(_, d)), ts.map(binder(_, d)),
                         ctx.map(ty(_, d)), body.map(stmt(_, d)))

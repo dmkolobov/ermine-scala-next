@@ -345,6 +345,26 @@ object Runtime {
     if (n == 0) Data(name, vals.reverse.toArray)
     else Fun(v => accumData(name, v :: vals, n - 1))
 
+  /** The runtime of a generated record-field selector (named constructor
+    * fields, tracker/JSON-API-DESIGN.md 3.1 item 2).  The representation
+    * stays POSITIONAL, so reading a field is projecting one argument;
+    * `sites` maps each constructor that carries the field to its index.
+    *
+    * A constructor of the same type that does NOT carry the field is
+    * well-typed and can reach here (`data Shape = Circle { radius :
+    * Double } | Dot`, `radius Dot`), so the miss is a named Bottom rather
+    * than `whnfMatch`'s generic "Panic: unexpected runtime value" -- the
+    * message has to say which constructor and which field. */
+  def selectData(field: String, sites: Map[Global, Int]): Runtime =
+    Fun(v => swhnf(v) match {
+      case Data(g, args) => sites.get(g) match {
+        case Some(i) => args(i)
+        case None    => Bottom(sys.error(g.string + " has no field " + field))
+      }
+      case b: Bottom => b
+      case other     => Bottom(sys.error("field " + field + ": not a data value: " + other))
+    })
+
   def recAsRecord(r: Rec): Record = r match {
     case Rec(tup) => tup.mapValues( toPrimExpr(_, false) ).toMap
   }

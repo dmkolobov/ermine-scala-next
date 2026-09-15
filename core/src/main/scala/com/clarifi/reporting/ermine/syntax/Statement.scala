@@ -138,11 +138,47 @@ case class TypeStatement(loc: Pos, v: TypeVar, kindArgs: List[KindVar], typeArgs
   def closeWith(s: List[TypeVar])(implicit su: Supply) = TypeStatement(loc, v, kindArgs, typeArgs, body.closeWith(v :: typeArgs ++ s))
 }
 // data v args = constructors
-case class DataStatement(loc: Pos, v: TypeVar, kindArgs: List[KindVar], typeArgs: List[TypeVar], constructors: List[(List[TypeVar], TermVar, List[Type])]) extends TypeDef {
-  override def definedTerms = constructors.map(_._2).toSet
-  def asRho(k: Kind) = DataStatement(loc, v as rho(k), kindArgs, typeArgs, constructors)
+/** `constructors` keeps its positional tuple shape whatever spelling the
+  * source used -- the runtime is positional either way (`accumData`), and
+  * kind inference, substitution and pattern matching all read it.
+  *
+  * `selectors` is the extra that named constructor fields add (design note
+  * 3.1 item 2, Stage 1a): one entry per distinct FIELD NAME of the whole
+  * declaration, carrying the sites it reads.  `Nil` for a positional-only
+  * declaration, which is what keeps every other `DataStatement(...)` call
+  * -- including the dead `Subst.checkTypeDefComponent` -- honest. */
+case class DataStatement(loc: Pos, v: TypeVar, kindArgs: List[KindVar], typeArgs: List[TypeVar],
+                         constructors: List[(List[TypeVar], TermVar, List[Type])],
+                         selectors: List[DataStatement.Selector] = Nil) extends TypeDef {
+  // selectors are module-level definitions like the constructors, so
+  // imports/exports/`hiding`/`private` treat them alike
+  override def definedTerms = constructors.map(_._2).toSet ++ selectors.flatMap(_.v)
+  def asRho(k: Kind) = DataStatement(loc, v as rho(k), kindArgs, typeArgs, constructors, selectors)
   def closeWith(s: List[TypeVar])(implicit su: Supply) =
-    DataStatement(loc, v, kindArgs, typeArgs, constructors.map { case (es, u, l) => (es, u, l.map(_.closeWith(v :: typeArgs ++ s ++ es))) })
+    DataStatement(loc, v, kindArgs, typeArgs,
+      constructors.map { case (es, u, l) => (es, u, l.map(_.closeWith(v :: typeArgs ++ s ++ es))) },
+      selectors)
+}
+
+object DataStatement {
+  /** One named field of a declaration, and the function that reads it.
+    *
+    * `v` is `None` when no selector can be typed: the field's type
+    * mentions one of its constructor's existential binders (Stage 1a rule
+    * 5).  The field is still NAMED -- the registry and the wire keep the
+    * name -- there is simply no top-level function for it.
+    *
+    * `sites` are the `(constructor, positional index)` pairs the selector
+    * reads, in declaration order; more than one when several constructors
+    * of the type share the field name (rule 3), in which case the field
+    * type is the same at every site (the renamer refuses otherwise).
+    *
+    * The field TYPE is deliberately not stored: `Session.processTypeDefComponent`
+    * reads it back out of `constructors` through `sites`, so a selector's
+    * type is by construction the very type `mkDataConstructor` gave that
+    * argument -- after the component's kind inference and type-map
+    * substitution, with nothing to keep in step. */
+  final case class Selector(name: String, v: Option[TermVar], sites: List[(TermVar, Int)])
 }
 
 object TypeDef {
@@ -155,7 +191,7 @@ object TypeDef {
     val order = if (Constraints.GenRules.solveDet) xs.map(_.v.id) else vm.keySet.toList
     val sccs = SCC.tarjan(order) { s => {
       val vars = vm(s) match {
-        case DataStatement(_, _, _, typeArgs, cons) =>
+        case DataStatement(_, _, _, typeArgs, cons, _) =>
           cons.foldLeft(Vars() : TypeVars)((acc, c) => acc ++ (allTypeVars(c._3) -- c._1)) -- typeArgs
         case TypeStatement(_, _, _, typeArgs, body) => allTypeVars(body) -- typeArgs
         case ClassBlock(_, _, _, typeArgs, ctx, _, stmts) => (allTypeVars(ctx) ++ allTypeVars(stmts)) -- typeArgs
@@ -236,7 +272,7 @@ object Statement {
       case ForeignSubtypeStatement(_, v, t)            => typeVars(v) ++ typeVars(t)
       case ClassBlock(_, v, _, typeArgs, ctx, _, body) => (typeVars(ctx) ++ typeVars(body)) -- (v :: typeArgs) //?
       case TypeStatement(_, _, _, typeArgs, body)      => typeVars(body) -- typeArgs
-      case DataStatement(_, v, _, typeArgs, cons)      =>
+      case DataStatement(_, v, _, typeArgs, cons, _)   =>
         cons.foldLeft(Vars() : TypeVars)((acc, tup) =>
           acc ++ (typeVars(tup._3) -- tup._1)
         ) -- (v :: typeArgs)
@@ -258,7 +294,7 @@ object Statement {
       case ForeignSubtypeStatement(_, v, t)            => allTypeVars(v) ++ allTypeVars(t)
       case ClassBlock(_, v, _, typeArgs, ctx, _, body) => (typeVars(ctx) ++ typeVars(body)) -- (v :: typeArgs) //?
       case TypeStatement(_, _, _, typeArgs, body)      => allTypeVars(body) -- typeArgs
-      case DataStatement(_, v, _, typeArgs, cons)      =>
+      case DataStatement(_, v, _, typeArgs, cons, _)   =>
         cons.foldLeft(Vars() : TypeVars)((acc, tup) =>
           acc ++ (typeVars(tup._3) -- tup._1)
         ) -- (v :: typeArgs)
@@ -294,9 +330,10 @@ object Statement {
            ClassBlock(l, v, kindArgs, subKind(ks, typeArgs), Type.sub(ks, ts, ctx), privates, Type.sub(ks, ts, body)).asInstanceOf[A]
       case TypeStatement(l, v, kindArgs, typeArgs, body) =>
            TypeStatement(l, v, kindArgs, subKind(ks, typeArgs), Type.sub(ks, ts, body)).asInstanceOf[A]
-      case DataStatement(l, v, kindArgs, typeArgs, cons) =>
+      case DataStatement(l, v, kindArgs, typeArgs, cons, sels) =>
            DataStatement(l, v, kindArgs, subKind(ks, typeArgs),
-             cons.map{ case (es, v, l) => (es map (subKind(ks, _)), v, Type.sub(ks, ts, l)) }).asInstanceOf[A]
+             cons.map{ case (es, v, l) => (es map (subKind(ks, _)), v, Type.sub(ks, ts, l)) },
+             sels).asInstanceOf[A]
       case r : ForeignDataStatement => r.asInstanceOf[A]
       case f : FixityStatement      => f.asInstanceOf[A]
     }

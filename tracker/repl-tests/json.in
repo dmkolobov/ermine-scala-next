@@ -11,5 +11,11 @@ j cfg
 j rows
 j viaJson
 j parsed
+j pt
+px pt
+j (Disc 1.5 (Just 2))
+j (Disc 1.5 Nothing)
+j Nought
+rad Nought
 :json holder
 :quit

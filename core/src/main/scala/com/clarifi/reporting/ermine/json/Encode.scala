@@ -51,10 +51,15 @@ trait JsonBuilder[J] {
   *  - Records -> object, unqualified keys in sorted order (`Rec` is an
   *    unordered map).  A native `Map` with string keys -> object, sorted.
   *  - A `data` value: every constructor of the type nullary -> the
-  *    constructor name as a string; otherwise `{"tag": C, "args": [...]}`
-  *    (named fields arrive with Stage 1).  Which of the two is decided by
-  *    the `DataConDecl` registry; a constructor the registry does not know
-  *    falls back on its own arity.
+  *    constructor name as a string.  Otherwise, a constructor whose fields
+  *    are NAMED (`C { f : t, .. }`) -> an object keyed in declaration
+  *    order, with a `"tag"` key first when the type has more than one
+  *    constructor and no tag when it has exactly one (the props shape,
+  *    design note 3.1b); a named field whose DECLARED type is `Maybe a`
+  *    and whose value is `Nothing` is OMITTED, and `Just x` gives `x`.
+  *    A positional constructor -> `{"tag": C, "args": [...]}`.  Which of
+  *    these is decided by the `DataConDecl` registry; a constructor the
+  *    registry does not know falls back on its own arity.
   *  - A value of the stdlib `Json` type encodes as itself.
   *  - A relation goes to the builder's `rel`.
   *  - Functions, IO actions, FFI values, foreign objects, `PrimT`
@@ -338,16 +343,64 @@ object Encode {
   }
 
   private def userData[J](path: String, g: Global, args: Array[Runtime], b: JsonBuilder[J]): Either[Error, Node[J]] = {
-    val asEnum = DataConDecl.forConstructor(g) match {
-      case Some(decl) => decl.isEnum
-      case None       => args.isEmpty
+    val decl = DataConDecl.forConstructor(g)
+    val asEnum = decl match {
+      case Some(d) => d.isEnum
+      case None    => args.isEmpty
     }
     if (asEnum) Right(Leaf(b.str(g.string)))
     else {
-      val kids = args.toList.zipWithIndex.map { case (a, i) => (path + "." + g.string + "[" + i + "]", a) }
-      val tag = b.str(g.string)
-      Right(Compound(kids, vs => b.obj(List("tag" -> tag, "args" -> b.arr(vs)))))
+      // Stage 1a: a constructor whose fields are NAMED encodes as an
+      // object keyed in declaration order.  The tag is what tells a
+      // discriminated union apart, so a single-constructor type (the
+      // props shape of design note 3.1b) drops it.
+      val named = for {
+        d <- decl
+        c <- d.constructor(g)
+        if c.fields.length == args.length && c.fields.nonEmpty && c.fields.forall(_._1.isDefined)
+      } yield (d.constructors.length > 1, c.fields.map { case (n, t) => (n.get, t) })
+      named match {
+        case Some((tagged, fields)) =>
+          // A Maybe field is an OPTIONAL key: `Nothing` drops out of the
+          // object rather than encoding as null.  Only the DECLARED type
+          // decides, so a field of a type variable that happens to hold
+          // Nothing still encodes as null, as the walker always did.
+          val kept = new ListBuffer[(String, Runtime)]
+          var bad: Option[Error] = None
+          fields.zipWithIndex.foreach { case ((n, t), i) =>
+            if (bad.isEmpty) {
+              val here = path + "." + n
+              if (isMaybe(t)) Runtime.swhnf(args(i)) match {
+                case Data(Global("Builtin", "Nothing", _), _) => ()
+                case bot: Bottom                              => bad = Some(bottom(here, bot))
+                case forced                                   => kept += ((n, forced))
+              } else kept += ((n, args(i)))
+            }
+          }
+          bad match {
+            case Some(e) => Left(e)
+            case None =>
+              val fs = kept.toList
+              val keys = if (tagged) "tag" :: fs.map(_._1) else fs.map(_._1)
+              val kids = fs.map { case (n, a) => (path + "." + n, a) }
+              val tag = b.str(g.string)
+              Right(Compound(kids, vs => b.obj(keys.zip(if (tagged) tag :: vs else vs))))
+          }
+        case None =>
+          val kids = args.toList.zipWithIndex.map { case (a, i) => (path + "." + g.string + "[" + i + "]", a) }
+          val tag = b.str(g.string)
+          Right(Compound(kids, vs => b.obj(List("tag" -> tag, "args" -> b.arr(vs)))))
+      }
     }
+  }
+
+  /** Is the DECLARED type of a field `Maybe a`?  (Stage 1a: `Nothing`
+    * drops the key.)  `Nullable a` is deliberately not included -- it is a
+    * database column type whose `Null` carries a `PrimT` and whose JSON is
+    * `null`, not an absent key. */
+  private def isMaybe(t: Type): Boolean = unfurl(t) match {
+    case (Type.Con(_, Global("Builtin", "Maybe", _), _, _), _ :: _) => true
+    case _                                                          => false
   }
 
   // ---------------------------------------------------------------------
