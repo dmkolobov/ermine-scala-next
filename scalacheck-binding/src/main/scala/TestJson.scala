@@ -87,6 +87,17 @@ object TestJson extends Properties("Ermine JSON") {
                 "[Circle 1.5, Rect 2.0 3.0, Dot]")
            == "[{\"tag\":\"Circle\",\"args\":[1.5]},{\"tag\":\"Rect\",\"args\":[2.0,3.0]},{\"tag\":\"Dot\",\"args\":[]}]")
   }
+  property("named constructor fields are an object in declaration order") = sessionProof { implicit s =>
+    // Stage 1a; the shape is property-tested in full by TestNamedFields
+    assert(json("data Series = Series { name : String, points : List Double }",
+                "Series \"q1\" [1.0, 2.5]")
+           == "{\"name\":\"q1\",\"points\":[1.0,2.5]}")
+    assert(json("data Shape = Circle { radius : Double } | Rect { w : Double, h : Double } | Dot",
+                "[Circle 1.5, Rect 2.0 3.0, Dot]")
+           == "[{\"tag\":\"Circle\",\"radius\":1.5}," +
+              "{\"tag\":\"Rect\",\"w\":2.0,\"h\":3.0}," +
+              "{\"tag\":\"Dot\",\"args\":[]}]")
+  }
   property("nesting goes through data, not records") = sessionProof { implicit s =>
     assert(json("data Series = Series String (List Double)\ndata Config = Config String (List Series)",
                 "Config \"Sales\" [Series \"q1\" [1.0, 2.5]]")

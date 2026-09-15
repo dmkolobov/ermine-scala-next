@@ -2,7 +2,8 @@ package com.clarifi.reporting.ermine.surface
 
 import com.clarifi.reporting.ermine.{ Fixity, Idfix, InfixL, InfixN, InfixR, Postfix, Prefix }
 import scalaparsers.{ ++, Err, Pos, Supply }
-import scalaparsers.Diagnostic.fail
+import scalaparsers.Diagnostic.{ fail, raise }
+import scalaparsers.Document.text
 
 /** The resolution-free parser, slice one (tracker/LSP-ROADMAP.md 2.3a):
   * module header, fixity statements, and lexically-split statement
@@ -670,13 +671,56 @@ object SurfaceParsers extends scalaparsers.Parsing[Unit] {
     p2 <- loc
   } yield STypeAlias(Real(span2(p1, p2)), v, ks, bs.toList, t)
 
+  /** `f : t` inside a record-style constructor.  The field name is an
+    * ordinary lowercase identifier and the type is a full `typ`, so
+    * `points : List Double` and `k : Int -> Int` both parse; the comma
+    * separator is what ends a field. */
+  private def conFieldDef: Parser[(SName, STy)] = for {
+    n <- spanned(identTok).map(x => SName(x._1, Plain, Idfix, x._2))
+    _ <- keyOp(":")
+    t <- typ(kindMode = false)
+  } yield (n, t)
+
+  /** The record spelling of a constructor's fields, `{ f1 : t1, f2 : t2 }`,
+    * or `None` when this constructor is not written that way.
+    *
+    * `brace` opens a BracedLayout, so a record may span lines without the
+    * layout algorithm inserting virtual semicolons.  `{` also opens a
+    * row-brace TYPE atom (`C {a, b}`), so the brace parse is an `.attempt`
+    * -- but only the PARSE is: once `{ .. }` has been read as fields the
+    * constructor IS record-style, and the two spelling refusals below are
+    * raised outside the attempt, where backtracking cannot swallow them
+    * and leave a misleading row-brace error in their place. */
+  private def conRecordDef: Parser[Option[List[(SName, STy)]]] =
+    (for {
+       p1 <- loc
+       fs <- brace(conFieldDef sepBy comma).map(_.toList)
+     } yield (p1, fs)).attempt.map(Some(_)).orElse(None).flatMap {
+      case None => unit(None)
+      case Some((p1, fs)) =>
+        // design note Stage 1a rule 1: `C {}` declares nothing
+        if (fs.isEmpty)
+          raise[Parser](p1, text("a record constructor needs at least one field"))
+        else fs.map(_._1.spelling).groupBy(x => x).collectFirst { case (n, xs) if xs.length > 1 => n } match {
+          case Some(n) => raise[Parser](p1, text("duplicate field " + n + " in one constructor"))
+          case None    => unit(Some(fs))
+        }
+    }
+
   private def dataConDef: Parser[SConDef] = for {
     p1 <- loc
     ex <- (keyword("forall") >> tyBinder.many << keyOp(".")).attempt.map(_.toList).orElse(Nil)
     n  <- defName
-    fs <- tyAtom(kindMode = false).many
+    // One spelling per constructor: a positional atom after a record brace
+    // leaves input that the `|`/statement level refuses, which is the "no
+    // mixing" parse error.
+    rs <- conRecordDef
+    fs <- rs match {
+            case Some(fs) => unit((fs.map(_._2), Some(fs.map(_._1))))
+            case None     => tyAtom(kindMode = false).many.map(ts => (ts.toList, None))
+          }
     p2 <- loc
-  } yield SConDef(Real(span2(p1, p2)), ex, n, fs.toList)
+  } yield SConDef(Real(span2(p1, p2)), ex, n, fs._1, fs._2)
 
   def dataStatementP: Parser[SStatement] = for {
     p1  <- loc

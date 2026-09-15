@@ -10,4 +10,11 @@ res4 : String = "{"tag":"Cfg","args":["S",{"tag":"Ser","args":["q",[1.0]]}]}"
 res5 : String = "[{"name":"a","x":1},{"name":"b","x":2}]"
 res6 : String = "[1,2]"
 res7 : String = "{"a":[1,2.5,null],"b":"s"}"
+res8 : String = "{"px":3,"py":4}"
+res9 : Int = 3
+res10 : String = "{"tag":"Disc","rad":1.5,"tip":2}"
+res11 : String = "{"tag":"Disc","rad":1.5}"
+res12 : String = "{"tag":"Nought","args":[]}"
+runtime error: Nought has no field rad
+Use ":stack" to see a stack trace
 error: cannot encode $[0].Holder[0]: a function has no JSON representation

@@ -900,8 +900,14 @@ object Session {
     val ktds = subst(implicit hm => inferTypeDefKindSchemas(tdsp))
     var conMap: Map[TypeVar,Type] = null
     val cons = ktds.map {
-      case (ks, DataStatement(l, v, kindArgs, typeArgs, cons)) =>
+      case (ks, DataStatement(l, v, kindArgs, typeArgs, cons, sels)) =>
         val tn = global(mn, v)
+        // Stage 1a: (constructor V id, positional index) -> the source name
+        // of that field.  Built from the DataStatement's selectors, which
+        // cover EVERY named field -- including an existential one, which
+        // gets no selector function but still has a name on the wire.
+        val fieldName: Map[(Int, Int), String] =
+          sels.flatMap(sel => sel.sites.map { case (cv, i) => ((cv.id, i), sel.name) }).toMap
         // the ordered constructors with their field types, kept on the Con
         // and in the encoder's registry (DataConDecl.scala); the field types
         // are substituted through this component's type map once it exists
@@ -909,7 +915,9 @@ object Session {
         val decl = DataConDecl.register(new DataConDecl(tn, l, kindArgs, typeArgs, {
           cons.map { case (es, cv, fs) =>
             DataConDecl.Constructor(global(mn, cv), es,
-              subTypeMaps((maps._1 ++ conMap, maps._2), fs).map((None, _)))
+              subTypeMaps((maps._1 ++ conMap, maps._2), fs).zipWithIndex.map {
+                case (t, i) => (fieldName.get((cv.id, i)), t)
+              })
           }
         }), cons.map(cv => global(mn, cv._2)))
         v -> addCon(Con(l, tn, decl, ks))
@@ -920,10 +928,21 @@ object Session {
     }
     conMap = cons.toMap
     mapAccum_((maps._1 ++ conMap, maps._2), ktds.zip(cons)) {
-      case (s, ((_, DataStatement(l, v, kindArgs, typeArgs, cons)), (_, con))) =>
-        (s._1, s._2 ++ cons.map {
-           case (es, v, fields) => v -> mkDataConstructor(v.loc,  global(mn, v), con.schema.forall, es, typeArgs, con, subTypeMaps(s, fields))
-        })
+      case (s, ((_, DataStatement(l, v, kindArgs, typeArgs, cons, sels)), (_, con))) =>
+        val subbed = cons.map { case (es, cv, fields) => (es, cv, subTypeMaps(s, fields)) }
+        val conVars = subbed.map {
+           case (es, v, fields) => v -> mkDataConstructor(v.loc,  global(mn, v), con.schema.forall, es, typeArgs, con, fields)
+        }
+        // the generated record-field selectors, installed exactly where and
+        // how the constructors are, so the Full and Interface loads both get
+        // them and neither needs a change to the .ei format
+        val byCon = subbed.map { case (_, cv, fs) => cv.id -> fs }.toMap
+        val selVars = sels.flatMap { sel => sel.v.map { sv =>
+          val (cv0, i0) = sel.sites.head
+          sv -> mkFieldSelector(sv.loc, global(mn, sv), sel.name, con.schema.forall, typeArgs, con,
+                                byCon(cv0.id)(i0), sel.sites.map { case (cv, i) => (global(mn, cv), i) })
+        } }
+        (s._1, s._2 ++ conVars ++ selVars)
       case (s, ((_, ClassBlock(l,v, kindArgs, typeArgs, ctx, privates, body)), (_, con))) =>
         addClass(l, con, typeArgs, subTypeMaps(s, ctx), _ => typeArgs.map(_ => Bottom(sys.error("hahahahah"))))
         s
@@ -956,6 +975,28 @@ object Session {
     primOp(loc, g, Runtime.accumData(g, Nil, f.length),
       Forall.mk(loc.inferred, ks, ts ++ es, Exists(loc.inferred),
         f.foldRight(con(ts.map(VarT(_)):_*))(Arrow(loc.inferred,_,_))))
+
+  /** A generated record-field selector (named constructor fields, design
+    * note 3.1 item 2, Stage 1a): `forall {k..} a.. . T a.. -> fieldType`.
+    *
+    * The constructor's own existentials are NOT quantified here -- a field
+    * whose type mentions one is refused a selector in the renamer, so
+    * `fieldType` only ever mentions the type's own arguments.  The type is
+    * the very `Type` `mkDataConstructor` gave that argument (both read the
+    * substituted constructor field list), so a selector cannot drift from
+    * the constructor it projects. */
+  def mkFieldSelector(
+    loc: Loc,
+    g: Global,
+    field: String,
+    ks: List[KindVar],
+    ts: List[TypeVar],
+    con: Type,
+    fieldType: Type,
+    sites: List[(Global, Int)])(implicit s: SessionEnv, su: Supply) =
+    primOp(loc, g, Runtime.selectData(field, sites.toMap),
+      Forall.mk(loc.inferred, ks, ts, Exists(loc.inferred),
+        Arrow(loc.inferred, con(ts.map(VarT(_)):_*), fieldType)))
 
   // assumes the binding group has had its cons replaced
   def loadModule(

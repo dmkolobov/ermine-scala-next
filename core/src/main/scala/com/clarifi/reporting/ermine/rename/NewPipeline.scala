@@ -356,6 +356,42 @@ object NewPipeline {
     var privateTerms = Set.empty[V[Type]]
     var privateTypes = Set.empty[V[Kind]]
     var ownTypeNames = Map.empty[Name, V[Kind]]
+    // every record-field selector this module generates, so a name reused
+    // by a second data type is refused where it is written
+    val selectorNames = scala.collection.mutable.Set.empty[String]
+
+    /* Every module-level TERM name that does not come from an equation or a
+     * signature -- data constructors, `field` and `table` names, foreign
+     * declarations.  `Renamer.collectHeads` records binders only for the
+     * two it skips, so nothing else in the pipeline knows this set; it
+     * exists so that a generated record-field selector colliding with one
+     * of them is refused AT THE FIELD, instead of arriving at the loader as
+     * the unpositioned `primOp: rebinding M.x`.  Order-independent by
+     * construction: the scan runs before any statement is lowered. */
+    val declaredTerms: Set[String] = {
+      val out = scala.collection.mutable.Set.empty[String]
+      def fgo(f: SForeign): Unit = f match {
+        case x: SForeignFunction    => out += x.name.spelling
+        case x: SForeignMethod      => out += x.name.spelling
+        case x: SForeignValue       => out += x.name.spelling
+        case x: SForeignConstructor => out += x.name.spelling
+        case x: SForeignSubtype     => out += x.name.spelling
+        case x: SForeignPrivate     => x.statements.foreach(fgo)
+        case _: SForeignData        => ()
+      }
+      def go(st: SStatement): Unit = st match {
+        case x: SFieldStatement       => out ++= x.names.map(_.spelling)
+        case x: STableStatement       => out ++= x.names.map(_.spelling)
+        case x: SDataStatement        => out ++= x.constructors.map(_.name.spelling)
+        case SForeignBlock(_, items)  => items.foreach(fgo)
+        case SPrivateBlock(_, ss)     => ss.foreach(go)
+        case SDatabaseBlock(_, _, ss) => ss.foreach(go)
+        case x: SClassStatement       => x.body.foreach(go)
+        case _ => ()
+      }
+      sts.foreach(go)
+      out.toSet
+    }
 
     // binding statements group per adjacency block (adjacent equations of
     // one spelling are one binding's alts); sigs pair MODULE-WIDE by the
@@ -454,10 +490,72 @@ object NewPipeline {
                 (evs, lctx.binderAtSite(cdef.name) getOrElse lctx.varFor(cdef.name),
                  cdef.fields.map(TyLower.ty(_, tctx)))
               }
-              dataStmts ::= DataStatement(lctx.pos(l.span), ownTypeVar(n), kvs, tvs, dcons)
+              // NAMED CONSTRUCTOR FIELDS (design note 3.1 item 2, Stage 1a):
+              // one selector per distinct field NAME of the declaration.
+              // The V comes from `lctx.varFor` at the field name's span --
+              // no renamer binder lives there, so that is the placeholder
+              // branch, keyed by spelling, exactly as a constructor's own
+              // name is minted; every in-module reference to the selector
+              // lands on the same V and `processTypeDefComponent`'s term
+              // map rewrites them all to the installed primOp.
+              val sels = {
+                // spelling -> (the field's type at its first site, the SName seen there,
+                //              the sites, whether a selector can be typed at all)
+                val seen = scala.collection.mutable.LinkedHashMap[String, (Type, SName, List[(V[Type], Int)], Boolean)]()
+                cons.zip(dcons).foreach { case (cdef, (evs, cv, ftys)) =>
+                  cdef.fieldNames.foreach { ns =>
+                    val evSet = evs.toSet
+                    ns.zip(ftys).zipWithIndex.foreach { case ((fn, fty), i) =>
+                      // rule 5: a field whose type mentions one of the
+                      // constructor's existentials cannot be given a type
+                      // outside the constructor, so it gets NO selector --
+                      // it stays a named field for the registry and the wire
+                      val typeable = (Type.typeVars(fty).toSet intersect evSet).isEmpty
+                      seen.get(fn.spelling) match {
+                        case None =>
+                          seen(fn.spelling) = (fty, fn, List((cv, i)), typeable)
+                        case Some((t0, n0, ss, ok0)) =>
+                          // rule 3: one name shared by several constructors of
+                          // ONE type is ONE selector, and the field type must
+                          // agree at every site
+                          if (!Type.equalType.equal(t0, fty))
+                            throw Refusal(fn.span, "error: field " + fn.spelling +
+                              " has different types in two constructors of " + n.spelling)
+                          seen(fn.spelling) = (t0, n0, ss :+ ((cv, i)), ok0 && typeable)
+                      }
+                    }
+                  }
+                }
+                seen.toList.map { case (sp, (_, fn, sites, typeable)) =>
+                  val v =
+                    if (!typeable) None
+                    else {
+                      // the collisions the loader would otherwise report
+                      // without a position (`primOp: rebinding`) or at
+                      // file:1:1 -- said here, at the field
+                      if (declaredTerms.contains(sp))
+                        throw Refusal(fn.span, "error: field selector " + sp +
+                          " collides with the declaration of " + sp)
+                      if (lctx.definesTerm(sp))
+                        throw Refusal(fn.span, "error: field selector " + sp +
+                          " collides with the definition of " + sp)
+                      if (lctx.importsTerm(sp))
+                        throw Refusal(fn.span, "error: field selector " + sp +
+                          " would shadow global definition (" + sp + ")")
+                      if (selectorNames.contains(sp))
+                        throw Refusal(fn.span, "error: field selector " + sp +
+                          " is already a field selector of another data type")
+                      selectorNames += sp
+                      Some(lctx.varFor(fn))
+                    }
+                  DataStatement.Selector(sp, v, sites)
+                }
+              }
+              dataStmts ::= DataStatement(lctx.pos(l.span), ownTypeVar(n), kvs, tvs, dcons, sels)
               if (intoPrivate) {
                 privateTypes = privateTypes + ownTypeNames(tctx.localTypeName(n.spelling))
                 privateTerms = privateTerms ++ dcons.map(_._2)  // constructors go private too
+                privateTerms = privateTerms ++ sels.flatMap(_.v) // and so do their selectors
               }
             case SForeignBlock(_, items) =>
               def privTerm(priv: Boolean, v: V[Type]): V[Type] = {

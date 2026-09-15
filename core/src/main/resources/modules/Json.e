@@ -11,9 +11,14 @@ module Json where
 -- section 3.1): numbers, strings, booleans, dates as ISO strings, Long as a
 -- decimal string, Maybe and Nullable as the value or null, lists and tuples
 -- as arrays, records as objects with sorted keys, an all-nullary data type
--- as its constructor name, any other data value as {"tag": C, "args": [..]},
--- a relation as JRel.  A function, an IO action, a foreign value or an
--- error inside the value is an error naming the path to it.
+-- as its constructor name, a relation as JRel.  A data constructor with
+-- NAMED fields (`data Pt = Pt { px : Int, py : Int }`) is an object keyed in
+-- declaration order, with a "tag" key first when the type has more than one
+-- constructor and none when it has exactly one; a named field of type
+-- `Maybe a` holding Nothing is left OUT of the object.  A POSITIONAL
+-- constructor is {"tag": C, "args": [..]}.  A function, an IO action, a
+-- foreign value or an error inside the value is an error naming the path
+-- to it.
 --
 -- `render` prints compactly and `pretty` with two-space indentation; both
 -- refuse a JRel node (its rows are resolved by the document writer, not
