@@ -543,6 +543,77 @@ not measurements.
 | Handle v2 (scope, TTL, spool, pushdown) | L |
 | Delete dead surface | S |
 
+## 3.7 Stage 0 as built (2026-09-14, branch `json-encode`; 2.11: `json-encode-2.11`)
+
+What landed, and where it departs from the text above.
+
+- **AST: argonaut 6.2.6**, not a hand-rolled `Json` ADT (the user's call: one
+  library, one version, published for both Scala 2.11 and Scala 3; the
+  `Json.Num` lexeme fix is moot because argonaut keeps numbers as Long or
+  BigDecimal).  The LSP's `lsp/Rpc.scala` ADT is untouched.  The Scala is
+  written in the 2.11-and-3 intersection (implicit-style typeclasses only,
+  no `given`/`enum`/`extension`), and the 2.11 branch carries a copy plus
+  the three hook sites.
+- **Registry: `DataConDecl.scala`** (a `ConDecl` on the data type's `Con`,
+  built in `Session.processTypeDefComponent` and `Lib.dataDecl`; constructors
+  by-name because the component's type map is completed after the `Con`
+  exists).  Plus a process-wide constructor-name -> declaration map,
+  because a runtime `Data` node carries only its constructor's `Global` and
+  the FFI primitive runs without a `SessionEnv`; last writer wins on a
+  reload, `SessionEnv.cons` stays the per-session truth.  `lsp/Resident`'s
+  per-module scrub of `cons` needs no change (the decl rides on the Con);
+  the global map keeps stale entries until the module re-registers.  The
+  dead `Subst.checkTypeDefComponent` (no callers) still builds the anonymous
+  decl.
+- **Walker: `json/Encode.scala`**, generic in a `JsonBuilder[J]` with two
+  instances: `ArgonautJson` (the wire, used by `:json` and the future runner;
+  `rel` refuses) and `ErmineJson` (the stdlib `Json` data type, what
+  `toJson#` returns; `rel` yields `JRel`).  Explicit stack: a 100,000-element
+  list of records and 2,000 nested lists encode (TestJson); depth is bounded
+  only by argonaut's printer, which recurses per level (`Json.fold`) and
+  overflows the default stack near 20,000 levels.  The mapping table in
+  §3.1 is implemented as written, with one refinement: a constructor the
+  registry does not know encodes by its own arity (nullary -> string).
+- **Ermine side**: the `Json` type and its constructors are declared in
+  `Lib.json` (a Lib primitive's type cannot name a type a module declares
+  later), `modules/Json.e` adds `toJson`, `render`, `pretty`, `parse` and
+  the builders `jnull`, `bool`, `num`, `int`, `str`, `arr`, `obj`, `rel`.
+  `JRel`'s row variable is existential, as `mkDataConstructor` does it.
+  The builder for null is `jnull`, not `null`: a top-level binding named
+  `null` loads inside a module but is "undefined term" in every REPL / `Session.eval`
+  expression (NullTest probe, 2026-09-14; not chased — a REPL-pipeline
+  quirk worth its own ticket).
+- **REPL**: `:json <expr>` type-checks, evaluates and pretty-prints; an
+  unencodable node prints `error: cannot encode <path>: <why>` with the path
+  to it (`$[0].Holder[0]`).  A bottom at the ROOT is the console's own
+  `runtime error: ...` (`ConsoleEnv.eval` inspects it before the encoder
+  runs).  An expression of type `IO a` is NOT run: the `IO` value is an
+  unknown constructor holding a `Fun`, so it fails at `$.IO[0]` with no side
+  effect.  Smoke: `tracker/repl-tests/json.in`.
+- **Gate (Stage 0 row of §5)**: TestJson 26/26 on both branches, full
+  `core/test` 1096/1096 (Scala 3) and 761/761 (2.11), corpus verdicts
+  identical to scala3-migration (89/79/0 over 168), REPL and LSP smokes
+  green.  The stdlib sweep run alone classifies all 96 registered `data`
+  types (Builtin excluded; more inside the full suite, where other suites'
+  example modules register too, the registry being process-wide), 80
+  constructor fields rejected with a location (18 functions, 11 rank-n fields, 8 `Field`
+  witnesses, 5 `PrimT` witnesses, 39 fields of foreign types: Presentation 7,
+  Magnitude 6, Format 3, the chart option witnesses, `Op`, `Relation#`,
+  `Record#`, Color, SortDirection, PresRow, Legend#, SelectorEvent,
+  Predicate, PrimExpr#) — the §3.1a hand-codec list, confirmed from the
+  declarations rather than estimated.  `replicate 1 100000` encodes.
+- **Two mapping details decided in code** (review finding, 2026-09-14): a
+  hand-built `JInt` (`Json.int`) is a JSON number while an auto-encoded
+  `Long` is a decimal string, the author's explicit choice versus the safe
+  default; a `JObj` with a repeated key keeps the last, as argonaut does.
+  Also noted, not fixed: `Constructor.existentials` is recorded but the
+  classifier does not yet reject existential fields (Stage 2), and the
+  walker recognises the stdlib `Json` constructors by module name, so a
+  user module named `Json` would collide.
+- **Not in Stage 0**: named constructor fields (Stage 1), `Schema`,
+  `Decode`, the `Json a` constraint, the document runner, the `:json` debug
+  flag that would show partial documents with error nodes.
+
 ## 4. Appendix: the de facto widget API (catalogue)
 
 Corrected per skeptic (§7): the writer also emits `registerSource`,

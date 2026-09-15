@@ -1,0 +1,15 @@
+:load tracker/repl-tests/Json.e
+:import JsonSmoke
+:json 1
+:json 7L
+:json "two"
+j (1, "a", True)
+j [Just 1, Nothing]
+j [Red, Blue]
+j [Circle 1.5, Dot]
+j cfg
+j rows
+j viaJson
+j parsed
+:json holder
+:quit

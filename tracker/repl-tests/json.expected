@@ -1,0 +1,13 @@
+Imports: Builtin, JsonSmoke, Layout, Prelude, REPL
+1
+"7"
+"two"
+res0 : String = "[1,"a",true]"
+res1 : String = "[1,null]"
+res2 : String = "["Red","Blue"]"
+res3 : String = "[{"tag":"Circle","args":[1.5]},{"tag":"Dot","args":[]}]"
+res4 : String = "{"tag":"Cfg","args":["S",{"tag":"Ser","args":["q",[1.0]]}]}"
+res5 : String = "[{"name":"a","x":1},{"name":"b","x":2}]"
+res6 : String = "[1,2]"
+res7 : String = "{"a":[1,2.5,null],"b":"s"}"
+error: cannot encode $[0].Holder[0]: a function has no JSON representation

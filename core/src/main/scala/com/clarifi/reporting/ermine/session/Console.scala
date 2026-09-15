@@ -454,6 +454,21 @@ object Console {
       def apply(s: String)(implicit e: ConsoleEnv): Unit =
         e.eval(e.pipelineTerm(s)) { r => writeLn(prettyRuntime(r)) }
     },
+    new Action(":json", List(), Some("<expr>"), "Evaluate an expression and print it as JSON") {
+      def apply(s: String)(implicit e: ConsoleEnv): Unit = {
+        import e.supply
+        val at = e.pipelineTerm(s).close(e.supply)
+        e.subst(implicit hm => inferType(List(), at)) match {
+          case Some(_) => e.eval(at) { r =>
+            com.clarifi.reporting.ermine.json.Encode.toArgonaut(r) match {
+              case Right(j)  => writeLn(j.spaces2)
+              case Left(err) => writeLn("error: " + err.report)
+            }
+          }
+          case None => ()
+        }
+      }
+    },
     new Action(":imports", List(), None, "Summarize the currently imports") {
       def apply(s: String)(implicit e: ConsoleEnv): Unit = {
         val modules = e.imports.toList.sortWith((p,q) => p._1 < q._1).map({

@@ -98,6 +98,10 @@ lazy val core = (project in file("core"))
       "org.scalaz"    %% "scalaz-concurrent" % scalazVersion,
       "org.scalaz"    %% "scalaz-iteratee"   % scalazVersion,
       "org.jline"      % "jline"             % "3.30.9",
+      // JSON AST for the encoder (core/json): 6.2.6 is the last argonaut
+      // published for both Scala 2.11 and Scala 3, so the 2.11 back-port
+      // pins the same version. tracker/JSON-API-DESIGN.md.
+      "io.argonaut"   %% "argonaut"          % "6.2.6",
       "commons-codec"  % "commons-codec"     % "1.19.0",
       // The old build used log4j 1.2.15; the 1.2 API now comes from the
       // Log4j 2 compatibility bridge instead of the dead 1.x line.

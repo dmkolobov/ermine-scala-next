@@ -901,7 +901,18 @@ object Session {
     var conMap: Map[TypeVar,Type] = null
     val cons = ktds.map {
       case (ks, DataStatement(l, v, kindArgs, typeArgs, cons)) =>
-        v -> addCon(Con(l, global(mn, v), new ConDecl { def desc = "data" }, ks))
+        val tn = global(mn, v)
+        // the ordered constructors with their field types, kept on the Con
+        // and in the encoder's registry (DataConDecl.scala); the field types
+        // are substituted through this component's type map once it exists
+        // (conMap is assigned below), hence the by-name argument
+        val decl = DataConDecl.register(new DataConDecl(tn, l, kindArgs, typeArgs, {
+          cons.map { case (es, cv, fs) =>
+            DataConDecl.Constructor(global(mn, cv), es,
+              subTypeMaps((maps._1 ++ conMap, maps._2), fs).map((None, _)))
+          }
+        }), cons.map(cv => global(mn, cv._2)))
+        v -> addCon(Con(l, tn, decl, ks))
       case (ks, ClassBlock(l, v, kindArgs, typeArgs, ctx, privates, body)) =>
         v -> addCon(Con(l, global(mn, v), ClassDecl, ks))
       case (ks, TypeStatement(l, v, kindArgs, typeArgs, body)) =>

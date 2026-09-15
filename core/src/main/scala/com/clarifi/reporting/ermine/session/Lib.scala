@@ -40,6 +40,12 @@ object Lib {
                 Forall.mk(builtin, tyConKinds, tyConArgs, Exists(builtin),
                 f.foldRight(tyCon(tyConArgs.map(VarT(_)):_*))(Arrow(builtin,_,_))))
     }
+    // the constructor registry the JSON encoder consults (DataConDecl.scala);
+    // the Con keeps its TypeConDecl because that carries the foreign class
+    DataConDecl.register(
+      new DataConDecl(tyCon.name, builtin, tyConKinds, tyConArgs,
+        constructors.map { case (n, f) => DataConDecl.Constructor(n, List(), f.map((None, _))) }),
+      constructors.map(_._1))
     addCon(tyCon)
   }
 
@@ -1414,7 +1420,67 @@ object Lib {
     })
   }
 
+  /** The stdlib `Json` type and the encoder's FFI (tracker/JSON-API-DESIGN.md
+    * §3.1 items 3 and 5, Stage 0).  Declared here rather than in
+    * `modules/Json.e` because `toJson#`'s type mentions `Json`, and a Lib
+    * primitive cannot name a type a module declares later; `Json.e` adds the
+    * unsuffixed wrappers on top, as `Prim.e` does over `PrimExpr#`.
+    *
+    *   data Json = JNull | JBool Bool | JNum Double | JInt Long | JStr String
+    *             | JArr (List Json) | JObj (List (String, Json)) | JRel [..r]
+    *   toJson#     : a -> Json          -- json.Encode, reflective + registry
+    *   renderJson# : Json -> String     -- compact
+    *   prettyJson# : Json -> String     -- two-space indented
+    *   parseJson#  : String -> Maybe Json
+    */
+  def json(implicit s: SessionEnv, su: Supply): Unit = {
+    import com.clarifi.reporting.ermine.json.Encode
+    val module = Encode.jsonModule
+    def c(n: String) = Global(module, n)
+    val jsonT = mkRuntimeCon(c("Json"), star, false)
+    // JRel's row variable is existential: it is bound by the constructor's
+    // type and never reaches the result, like a `data` statement's
+    // `forall r.` constructor (mkDataConstructor)
+    val r = freshType(rho)
+    val jrel = DataConDecl.Constructor(c("JRel"), List(r), List((None, relationT(VarT(r)))))
+    val ctors = List(
+      c("JNull") -> List(),
+      c("JBool") -> List(bool),
+      c("JNum")  -> List(double),
+      c("JInt")  -> List(long),
+      c("JStr")  -> List(string),
+      c("JArr")  -> List(list(jsonT)),
+      c("JObj")  -> List(list(ProductT(builtin, 2)(string, jsonT))))
+    ctors.foreach { case (n, f) =>
+      primOp(n, Runtime.accumData(n, List(), f.length),
+                f.foldRight(jsonT: Type)(Arrow(builtin,_,_)))
+    }
+    primOp(jrel.name, Runtime.accumData(jrel.name, List(), 1),
+      Forall(builtin, List(), List(r), Exists(builtin), relationT(VarT(r)) ->: jsonT))
+    DataConDecl.register(
+      new DataConDecl(jsonT.name, builtin, List(), List(),
+        ctors.map { case (n, f) => DataConDecl.Constructor(n, List(), f.map((None, _))) } :+ jrel),
+      ctors.map(_._1) :+ jrel.name)
+    addCon(jsonT)
+
+    primOp(c("toJson#"), Fun(v => Encode.toErmine(v)), FA(a => a ->: jsonT))
+    def rendered(pretty: Boolean) = Fun { v =>
+      Encode.render(v, pretty) match {
+        case Right(text) => Prim(text)
+        case Left(e)     => Bottom(sys.error(e.report))
+      }
+    }
+    primOp(c("renderJson#"), rendered(false), jsonT ->: string)
+    primOp(c("prettyJson#"), rendered(true),  jsonT ->: string)
+    primOp(c("parseJson#"), Fun { v =>
+      argonaut.Parse.parse(v.extract[String]) match {
+        case Right(j) => Data(Global("Builtin","Just"), Array(Encode.fromArgonaut(j)))
+        case Left(_)  => Nothing
+      }
+    }, string ->: maybe(jsonT))
+  }
+
   def preamble(implicit s: SessionEnv, su: Supply): Unit = {
-    cons; simple; relations; securitymaster; reports; prims; interop; refl
+    cons; simple; relations; securitymaster; reports; prims; interop; refl; json
   }
 }
