@@ -166,6 +166,23 @@ object TestJson extends Properties("Ermine JSON") {
     }
   }
 
+  property("Inline / Deferred wrappers and JInline / JDeferred keep their delivery") = sessionProof { implicit s =>
+    val lit = "(mkRelation# (toList# [{ x = 1 }]))"
+    val im = imps + ("Native.List" -> all)
+    def con(e: String): String = defAndEval("field x : Int", e, im) match {
+      case Data(Global("Json", n, _), _) => n
+      case other => sys.error("expected a Json node, got " + other)
+    }
+    val got = List(con("toJson (Inline " + lit + ")"), con("toJson (Deferred " + lit + ")"),
+                   con("toJson (Just (Inline " + lit + "))"), con("relInline " + lit),
+                   con("relDeferred " + lit), con("toJson (relDeferred " + lit + ")"))
+    assert(got == List("JInline", "JDeferred", "JInline", "JInline", "JDeferred", "JDeferred"), got)
+    Encode.render(defAndEval("field x : Int", "toJson [Inline " + lit + "]", im)) match {
+      case Left(Encode.Error("$[0]", msg)) => assert(msg.contains("relation"), msg)
+      case other => sys.error("expected a refusal at $[0], got " + other)
+    }
+  }
+
   // -- stack safety ---------------------------------------------------------
 
   property("a 100,000-element list encodes without growing the stack") = sessionProof { implicit s =>

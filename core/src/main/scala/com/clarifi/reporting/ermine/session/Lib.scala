@@ -1427,8 +1427,15 @@ object Lib {
     * unsuffixed wrappers on top, as `Prim.e` does over `PrimExpr#`.
     *
     *   data Json = JNull | JBool Bool | JNum Double | JInt Long | JStr String
-    *             | JArr (List Json) | JObj (List (String, Json)) | JRel [..r]
+    *             | JArr (List Json) | JObj (List (String, Json))
+    *             | JRel [..r] | JInline [..r] | JDeferred [..r]
     *   toJson#     : a -> Json          -- json.Encode, reflective + registry
+    *
+    * The three relation nodes differ only in delivery (design note §3.4a):
+    * `JRel` takes the request's default, `JInline` puts the rows in this
+    * response, `JDeferred` sends the columns and a token for the rows.
+    * `toJson#` maps a bare relation to `JRel` and the `Json.e` wrappers
+    * `Inline r` / `Deferred r` to `JInline` / `JDeferred`.
     *   renderJson# : Json -> String     -- compact
     *   prettyJson# : Json -> String     -- two-space indented
     *   parseJson#  : String -> Maybe Json
@@ -1441,8 +1448,12 @@ object Lib {
     // JRel's row variable is existential: it is bound by the constructor's
     // type and never reaches the result, like a `data` statement's
     // `forall r.` constructor (mkDataConstructor)
-    val r = freshType(rho)
-    val jrel = DataConDecl.Constructor(c("JRel"), List(r), List((None, relationT(VarT(r)))))
+    def relNode(n: String) = {
+      val r = freshType(rho)
+      (DataConDecl.Constructor(c(n), List(r), List((None, relationT(VarT(r))))),
+       Forall(builtin, List(), List(r), Exists(builtin), relationT(VarT(r)) ->: jsonT))
+    }
+    val rels = List(relNode("JRel"), relNode("JInline"), relNode("JDeferred"))
     val ctors = List(
       c("JNull") -> List(),
       c("JBool") -> List(bool),
@@ -1455,12 +1466,13 @@ object Lib {
       primOp(n, Runtime.accumData(n, List(), f.length),
                 f.foldRight(jsonT: Type)(Arrow(builtin,_,_)))
     }
-    primOp(jrel.name, Runtime.accumData(jrel.name, List(), 1),
-      Forall(builtin, List(), List(r), Exists(builtin), relationT(VarT(r)) ->: jsonT))
+    rels.foreach { case (decl, ty) =>
+      primOp(decl.name, Runtime.accumData(decl.name, List(), 1), ty)
+    }
     DataConDecl.register(
       new DataConDecl(jsonT.name, builtin, List(), List(),
-        ctors.map { case (n, f) => DataConDecl.Constructor(n, List(), f.map((None, _))) } :+ jrel),
-      ctors.map(_._1) :+ jrel.name)
+        ctors.map { case (n, f) => DataConDecl.Constructor(n, List(), f.map((None, _))) } ++ rels.map(_._1)),
+      ctors.map(_._1) ++ rels.map(_._1.name))
     addCon(jsonT)
 
     primOp(c("toJson#"), Fun(v => Encode.toErmine(v)), FA(a => a ->: jsonT))

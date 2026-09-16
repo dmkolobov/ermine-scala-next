@@ -5,13 +5,15 @@ module Json where
 -- (ermine/session/Lib.scala, `json`); this module adds the plain names.
 --
 --   data Json = JNull | JBool Bool | JNum Double | JInt Long | JStr String
---             | JArr (List Json) | JObj (List (String, Json)) | JRel [..r]
+--             | JArr (List Json) | JObj (List (String, Json))
+--             | JRel [..r] | JInline [..r] | JDeferred [..r]
 --
 -- `toJson` encodes any value by walking it (tracker/JSON-API-DESIGN.md
 -- section 3.1): numbers, strings, booleans, dates as ISO strings, Long as a
 -- decimal string, Maybe and Nullable as the value or null, lists and tuples
 -- as arrays, records as objects with sorted keys, an all-nullary data type
--- as its constructor name, a relation as JRel.  A data constructor with
+-- as its constructor name, a relation as JRel (or JInline / JDeferred when
+-- it is wrapped in Inline / Deferred, below).  A data constructor with
 -- NAMED fields (`data Pt = Pt { px : Int, py : Int }`) is an object keyed in
 -- declaration order, with a "tag" key first when the type has more than one
 -- constructor and none when it has exactly one; a named field of type
@@ -21,8 +23,21 @@ module Json where
 -- to it.
 --
 -- `render` prints compactly and `pretty` with two-space indentation; both
--- refuse a JRel node (its rows are resolved by the document writer, not
+-- refuse a relation node (its rows are resolved by the document writer, not
 -- here).  `parse` reads text back into a Json value.
+
+-- Delivery of a relation's rows in a document (tracker/JSON-API-DESIGN.md
+-- section 3.4a).  A bare relation takes the request's default; a wrapped one
+-- always gets what it asks for.  On the wire both arms carry the columns:
+--
+--   {"kind": "inline",   "columns": [..], "rows": [[..]], "rowCount": n}
+--   {"kind": "deferred", "columns": [..], "token": "..", "expires": ".."}
+--
+-- and the schema exporter gives a bare relation the union of the two, an
+-- Inline the first arm only and a Deferred the second only.
+
+data Inline r = Inline [..r]       -- the rows are in this response
+data Deferred r = Deferred [..r]   -- the columns now, the rows on re-request
 
 toJson : a -> Json
 toJson = toJson#
@@ -61,3 +76,9 @@ obj = JObj
 
 rel : [..r] -> Json
 rel = JRel
+
+relInline : [..r] -> Json
+relInline = JInline
+
+relDeferred : [..r] -> Json
+relDeferred = JDeferred

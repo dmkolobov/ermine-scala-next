@@ -19,6 +19,18 @@ import java.time.format.DateTimeFormatter
   * relation is the one node the walker cannot build itself (rows need the
   * runner's effect, design note §2.1, §3.4), so `rel` may refuse.
   */
+/** How a relation's rows reach the client (design note §3.4a, "switch 1").
+  * `ByRequest` is a bare relation (`JRel`, or a `Rel` met anywhere): the
+  * request's `data.default` decides.  `Inline` and `Deferred` come from the
+  * `Json.e` wrappers `Inline r` / `Deferred r` (or `JInline` / `JDeferred`)
+  * and always win over the request. */
+sealed abstract class Delivery(val name: String)
+object Delivery {
+  case object ByRequest extends Delivery("request")
+  case object Inline    extends Delivery("inline")
+  case object Deferred  extends Delivery("deferred")
+}
+
 trait JsonBuilder[J] {
   def nul: J
   def bool(b: Boolean): J
@@ -29,8 +41,10 @@ trait JsonBuilder[J] {
   def str(s: String): J
   def arr(xs: List[J]): J
   def obj(fields: List[(String, J)]): J
-  /** `r` is a `Rel` or `EmptyRel`, unevaluated. */
-  def rel(path: String, r: Runtime): Either[Encode.Error, J]
+  /** `r` evaluates to a `Rel` or `EmptyRel` but may not be evaluated yet
+    * (force it with `Runtime.swhnf`; a bottom is the builder's to report
+    * at `path`).  `delivery` is what the value asked for. */
+  def rel(path: String, r: Runtime, delivery: Delivery): Either[Encode.Error, J]
 }
 
 /** `Runtime => J`: the type-directed reflective encoder of
@@ -61,7 +75,10 @@ trait JsonBuilder[J] {
   *    these is decided by the `DataConDecl` registry; a constructor the
   *    registry does not know falls back on its own arity.
   *  - A value of the stdlib `Json` type encodes as itself.
-  *  - A relation goes to the builder's `rel`.
+  *  - A relation goes to the builder's `rel`: a bare relation or `JRel`
+  *    with `Delivery.ByRequest`, the wrappers `Json.Inline r` /
+  *    `Json.Deferred r` and the nodes `JInline` / `JDeferred` with their
+  *    own delivery.
   *  - Functions, IO actions, FFI values, foreign objects, `PrimT`
   *    witnesses and bottoms are errors that name the path to the offending
   *    node; a document with a hole in it does not go on the wire.
@@ -245,7 +262,7 @@ object Encode {
         val fs = m.toList.sortBy(_._1)
         Right(Compound(keyed(path, fs), objectOf(b, fs.map(_._1))))
 
-      case _: Rel | EmptyRel => b.rel(path, v).right.map(Leaf(_))
+      case _: Rel | EmptyRel => b.rel(path, v, Delivery.ByRequest).right.map(Leaf(_))
 
       case _: Fun => Left(Error(path, "a function has no JSON representation"))
 
@@ -337,7 +354,12 @@ object Encode {
               Right(Compound(keyed(path, fs), objectOf(b, fs.map(_._1))))
           }
         }
-      case "JRel"  => b.rel(path, args(0)).right.map(Leaf(_))
+      case "JRel"      => b.rel(path, args(0), Delivery.ByRequest).right.map(Leaf(_))
+      case "JInline"   => b.rel(path, args(0), Delivery.Inline).right.map(Leaf(_))
+      case "JDeferred" => b.rel(path, args(0), Delivery.Deferred).right.map(Leaf(_))
+      // the delivery wrappers of Json.e: `data Inline r = Inline [..r]`
+      case "Inline"   if args.length == 1 => b.rel(path, args(0), Delivery.Inline).right.map(Leaf(_))
+      case "Deferred" if args.length == 1 => b.rel(path, args(0), Delivery.Deferred).right.map(Leaf(_))
       case _       => userData(path, g, args, b)
     } else userData(path, g, args, b)
   }
@@ -475,7 +497,7 @@ object ArgonautJson extends JsonBuilder[argonaut.Json] {
   def str(s: String)     = Json.jString(s)
   def arr(xs: List[Json]) = Json.array(xs: _*)
   def obj(fields: List[(String, Json)]) = Json.obj(fields: _*)
-  def rel(path: String, r: Runtime) =
+  def rel(path: String, r: Runtime, delivery: Delivery) =
     Left(Encode.Error(path, "a relation has no inline encoding here; its rows are resolved by the document writer (design note §3.4a)"))
 }
 
@@ -496,5 +518,9 @@ object ErmineJson extends JsonBuilder[Runtime] {
   def arr(xs: List[Runtime]) = Data(con("JArr"), Array(list(xs)))
   def obj(fields: List[(String, Runtime)]) =
     Data(con("JObj"), Array(list(fields.map { case (k, v) => Arr(Array(Prim(k), v)) })))
-  def rel(path: String, r: Runtime) = Right(Data(con("JRel"), Array(r)))
+  def rel(path: String, r: Runtime, delivery: Delivery) = delivery match {
+    case Delivery.ByRequest => Right(Data(con("JRel"), Array(r)))
+    case Delivery.Inline    => Right(Data(con("JInline"), Array(r)))
+    case Delivery.Deferred  => Right(Data(con("JDeferred"), Array(r)))
+  }
 }
