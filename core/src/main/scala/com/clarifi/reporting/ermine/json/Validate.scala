@@ -30,8 +30,10 @@ import argonaut.Json
   * offset (`Z` or `+hh:mm`): RFC 3339's profile, loosened only in making
   * seconds optional.  A relation's `expires` in the wire's Timestamp format
   * `yyyy-MM-dd'T'HH:mm:ss.SSS'Z'` passes; zod's `.datetime()` is stricter
-  * (a `Z` offset only).  `uuid` is `UUID.fromString` (five hex groups; it
-  * does not insist on the canonical 8-4-4-4-12 widths).
+  * (a `Z` offset only).  `uuid` is the canonical 8-4-4-4-12 form: a regex and
+  * then `UUID.fromString`, because `UUID.fromString` ALONE also takes
+  * "1-1-1-1-1", which zod's `.uuid()` and the params decoder both refuse
+  * (J2a).
   *
   * Every message carries the JSON path of the instance node it is about
   * (`$.rows[0].name`), the same spelling `Encode.Error` uses.
@@ -48,6 +50,8 @@ object Validate {
 
   private val dateFmt     = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
   private val dateTimeFmt = java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME
+  private val uuidPattern =
+    java.util.regex.Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
   private def go(schema: Json, doc: Json, path: String,
                  defs: Map[String, Json], out: ListBuffer[String]): Unit = {
@@ -118,7 +122,10 @@ object Validate {
           // the encoder writes `...Z`, which ISO_OFFSET_DATE_TIME accepts
           try dateTimeFmt.parse(s) catch { case _: Throwable => bad("the string " + quote(s) + " is not a date-time") }
         case "uuid" =>
-          try { java.util.UUID.fromString(s); () } catch { case _: Throwable => bad("the string " + quote(s) + " is not a uuid") }
+          // the canonical 8-4-4-4-12 form only, as zod's .uuid() and the
+          // decoder insist: UUID.fromString alone also takes "1-1-1-1-1"
+          if (!uuidPattern.matcher(s).matches) bad("the string " + quote(s) + " is not a uuid")
+          else try { java.util.UUID.fromString(s); () } catch { case _: Throwable => bad("the string " + quote(s) + " is not a uuid") }
         case _ => () // every other format is an annotation, not an assertion
       }
     }

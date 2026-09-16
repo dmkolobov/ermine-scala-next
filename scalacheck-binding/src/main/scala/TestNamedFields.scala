@@ -2,8 +2,10 @@ package com.clarifi.reporting
 
 import com.clarifi.reporting.ermine._
 import com.clarifi.reporting.ermine.json.Encode
+import com.clarifi.reporting.ermine.lsp.{ Definitions, Symbols }
 import com.clarifi.reporting.ermine.session.{ Lib, Printer, Session, SessionEnv }
 import com.clarifi.reporting.ermine.session.Session.SourceFile
+import com.clarifi.reporting.ermine.surface.SurfaceParsers
 
 import java.nio.file.Files
 
@@ -491,5 +493,108 @@ object TestNamedFields extends Properties("Ermine named constructor fields") {
       (off.contains("nfiname") ?= true) :| ("named on the wire: " + off)
     }
     finally { Session.depCache.clear(); ErmineFixture.deleteTree(dir) }
+  }
+
+  // ------------------------------------------------------------ the outline
+  //
+  // (j) THE LSP SYMBOL TREE of a record-style `data`.  Found by J3b's landing
+  //     gate: the corpus property (TestRenamer 6.4, "siblings are sorted, and
+  //     no two of them straddle") only sees the modules that exist, and
+  //     `Layout/Doc.e` was the first one anywhere in the tree with record
+  //     constructors -- it showed the constructor's range STRADDLING its own
+  //     field symbols, which Stage 1a had made its SIBLINGS.  The fields are
+  //     the constructor's CHILDREN now, and these two properties pin the shape
+  //     where the syntax is GENERATED, so no later module has to discover it.
+
+  /** The invariants TestRenamer 6.4 asserts over the corpus, over random
+    * record-style declarations: every level sorted, no two siblings
+    * straddling, every range containing its selection and its children. */
+  property("the symbol tree of a generated record `data` is well formed") =
+    forAllNoShrink(genModule) { (ds: List[Decl]) =>
+      val src = "module NfSym where\n\n" + moduleSrc(ds) + "\n"
+      SurfaceParsers.module("NfSym.e", src, "NfSym") match {
+        case Left(e) => falsified :| ("the generated module does not parse: " + e + "\n" + src)
+        case Right(m) =>
+          val syms = Symbols.build(m, new Definitions.Lines(src), _ => None)
+          val problems = scala.collection.mutable.ListBuffer.empty[String]
+          def walk(parent: Option[Symbols.Sym], ss: List[Symbols.Sym]): Unit = {
+            ss.sliding(2).foreach {
+              case List(a, b) if !Symbols.beforeSym(a, b) =>
+                problems += ("unsorted: '" + a.name + "' " + a.range + " before '" + b.name + "' " + b.range)
+              case _ => ()
+            }
+            ss.combinations(2).foreach {
+              case List(a, b) if Symbols.overlaps(a.range, b.range) && a.range != b.range =>
+                problems += ("'" + a.name + "' " + a.range + " straddles '" + b.name + "' " + b.range)
+              case _ => ()
+            }
+            ss.foreach { s =>
+              if (!Symbols.containsRng(s.range, s.selection.asRange))
+                problems += ("'" + s.name + "' " + s.range + " excludes its selection " + s.selection)
+              parent.foreach { p =>
+                if (!Symbols.containsRng(p.range, s.range))
+                  problems += ("'" + s.name + "' " + s.range + " escapes parent '" + p.name + "' " + p.range)
+              }
+              walk(Some(s), s.children)
+            }
+          }
+          walk(None, syms)
+          // and the SHAPE: one symbol per declaration, its constructors as
+          // children, a record constructor's own field names as ITS children
+          // (a positional one has none), each of them a KField
+          val byName = syms.map(x => (x.name, x)).toMap
+          ds.foreach { d =>
+            byName.get(d.name) match {
+              case None => problems += ("no symbol for " + d.name)
+              case Some(ty) =>
+                if (ty.children.map(_.name) != d.cons.map(_.name))
+                  problems += (d.name + ": constructors " + ty.children.map(_.name) + " vs " + d.cons.map(_.name))
+                ty.children.zip(d.cons).foreach { case (cs, c) =>
+                  val want = if (c.record) c.fields.map(_._1) else Nil
+                  if (cs.children.map(_.name) != want)
+                    problems += (d.name + "." + c.name + ": fields " + cs.children.map(_.name) + " vs " + want)
+                  if (!cs.children.forall(_.kind == Symbols.KField))
+                    problems += (d.name + "." + c.name + ": a field symbol is not a KField")
+                }
+            }
+          }
+          val fields = ds.flatMap(_.cons.filter(_.record).flatMap(_.fields)).size
+          Prop.collect("record fields in the module: " + fields) {
+            problems.isEmpty :| (problems.size + " malformed: " + problems.take(4).mkString("; ") + "\n" + src)
+          }
+      }
+    }
+
+  /** The pin the property above cannot state: the exact tree of a record
+    * `data`, including a field NAME shared by two constructors -- one
+    * selector, two declaration sites, one symbol under each constructor. */
+  property("the symbol tree of a record `data`, exactly (the Layout.Doc shape)") = secure {
+    val src = "module NfSymPin where\n" +
+              "\n" +
+              "data NfPNode = NfPW { nfpa : Int, nfpb : Int }\n" +
+              "             | NfPV { nfpa : Int }\n" +
+              "             | NfPNil\n"
+    SurfaceParsers.module("NfSymPin.e", src, "NfSymPin") match {
+      case Left(e) => falsified :| ("the pin does not parse: " + e)
+      case Right(m) =>
+        val syms = Symbols.build(m, new Definitions.Lines(src), _ => None)
+        def shape(ss: List[Symbols.Sym]): List[(String, Int, List[(String, Int, List[Nothing])])] =
+          ss.map(s => (s.name, s.kind, s.children.map(c => (c.name, c.kind, Nil))))
+        val node = syms.find(_.name == "NfPNode")
+        val cons = node.map(_.children).getOrElse(Nil)
+        val straddles = cons.combinations(2).exists {
+          case List(a, b) => Symbols.overlaps(a.range, b.range) && a.range != b.range
+          case _          => false
+        }
+        val fieldsInside = cons.forall(c => c.children.forall(f => Symbols.containsRng(c.range, f.range)))
+        (shape(syms) ?= List(("NfPNode", Symbols.KStruct,
+                              List(("NfPW", Symbols.KConstructor, Nil),
+                                   ("NfPV", Symbols.KConstructor, Nil),
+                                   ("NfPNil", Symbols.KConstructor, Nil))))) &&
+          ((cons.map(c => c.children.map(_.name)) ?= List(List("nfpa", "nfpb"), List("nfpa"), Nil))) &&
+          ((cons.flatMap(_.children).forall(_.kind == Symbols.KField)) :| "a field is not a KField") &&
+          (!straddles :| ("constructors straddle: " + cons.map(c => c.name + " " + c.range))) &&
+          (fieldsInside :| "a field range escapes its constructor")
+    }
   }
 }

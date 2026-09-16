@@ -90,13 +90,115 @@ col       {"name": "<column>", "type": <Wire.columnTypes>, "nullable": <bool>}
 - Schema: a bare `[..r]` exports the union (`oneOf`, discriminated by `kind`), `Inline r`
   the inline arm only, `Deferred r` the deferred arm only.
 
+## Running a report: the curl walkthrough (J3c, 2026-09-16)
+
+`bin/ermine-serve` is the document runner behind the JDK's own HTTP server (no
+new dependency).  Transcript below is REAL output against the example report
+`core/src/test/resources/doc/Sales.e` with in-memory SQLite, elided only where
+marked `...`.
+
+```
+$ bin/ermine-serve --root core/src/test/resources/doc --preload Sales --port 8080
+listening on 8080                       # the only thing it writes to stdout
+
+$ curl -s localhost:8080/health
+{"status":"ok","version":1,"modules":["Bool","Builtin",...,"Relation.Sort","Sales",...]}
+
+$ curl -s localhost:8080/report/Sales -H 'Content-Type: application/json' \
+       -d '{"params": {"fromDay": "2026-01-05", "toDay": "2026-02-20",
+                       "onlyRegion": "north", "orderBy": "ByAmount"}}'
+{"version":1,"settings":{},"root":{"tag":"VFlow","children":[
+ {"tag":"Widget","name":"heading","props":
+   {"title":"Sales","sortColumn":"amount","matched":3,"total":4350.75}},
+ {"tag":"Grid","cells":[
+  [{"tag":"Widget","name":"table","props":{"kind":"inline","columns":[
+      {"name":"amount","type":"Double","nullable":false},
+      {"name":"day","type":"Date","nullable":false},
+      {"name":"region","type":"String","nullable":false},
+      {"name":"units","type":"Int","nullable":false}],
+      "rows":[[840.0,"2026-01-19","north",2],[1200.5,"2026-01-05","north",3],
+              [2310.25,"2026-02-14","north",7]],"rowCount":3}},
+   {"tag":"Widget","name":"table","props":{"kind":"inline","columns":[
+      {"name":"region","type":"String","nullable":false}],
+      "rows":[["east"],["north"],["south"],["west"]],"rowCount":4}}],
+  [{"tag":"Widget","name":"table","props":{"kind":"deferred","columns":[
+      {"name":"amount","type":"Double","nullable":false},
+      {"name":"item","type":"String","nullable":false},
+      {"name":"units","type":"Int","nullable":false}],
+      "token":"HyCqXpeUb93IWNkxqJnM2g","expires":"2026-09-16T15:20:12.814Z"}},
+   {"tag":"Widget","name":"text","props":"line items on demand"}]]}]}}
+
+$ curl -s localhost:8080/data/HyCqXpeUb93IWNkxqJnM2g
+{"kind":"inline","columns":[{"name":"amount","type":"Double","nullable":false},
+ {"name":"item","type":"String","nullable":false},
+ {"name":"units","type":"Int","nullable":false}],
+ "rows":[[75.5,"gizmo",1],[615.75,"doohickey",1],[840.0,"gizmo",2],
+         [1200.5,"widget",3],[1550.0,"widget",4],[1990.0,"widget",5],
+         [2310.25,"widget",7],[4100.0,"doohickey",11]],"rowCount":8}
+```
+
+A `Maybe` parameter may be left out of the object entirely; `data.default`
+chooses the delivery of the BARE relations and `data.threshold` defers the ones
+that are too big, while a `Deferred` wrapper in the report is deferred whatever
+the request says:
+
+```
+$ curl -s localhost:8080/report/Sales \
+       -d '{"params": {"fromDay": "2026-01-01", "toDay": "2026-12-31",
+                       "orderBy": "ByDay"},
+            "data": {"default": "inline", "threshold": 4}}'
+... "heading" props {"title":"Sales","sortColumn":"day","matched":8,"total":12682.0};
+    the 8-row table comes back "deferred" with a token, the 4-row regions table
+    is still "inline", the line items are "deferred" as always ...
+```
+
+Every failure is `{"error":{"path":..,"message":..}}`.  What `path` MEANS is
+decided by the status, and a client must read it that way:
+
+| Status | `path` |
+|---|---|
+| 400 | a JSON path into the REQUEST body: `$`, `$.params...`, `$.data.<key>` |
+| 404, 405, 413 | always `null` |
+| 500 | a JSON path into the RESPONSE document -- the node the report could not encode, or the relation whose scan failed -- when there is one, else `null`.  NEVER a place in the request: the parameters already satisfied the report's own type, so a 500's path is diagnostic, not something to correct and resend |
+
+
+```
+$ curl -s -w ' [%{http_code}]' localhost:8080/report/Nope -d '{}'
+{"error":{"path":null,"message":"no module named Nope"}} [404]
+
+$ curl -s -w ' [%{http_code}]' localhost:8080/report/Sales \
+       -d '{"params":{"fromDay":"nope","toDay":"2026-01-01","orderBy":"ByDay"}}'
+{"error":{"path":"$.params.fromDay","message":"the string \"nope\" is not a date yyyy-MM-dd"}} [400]
+
+$ curl -s -w ' [%{http_code}]' localhost:8080/report/Sales \
+       -d '{"params":{...},"data":{"strategy":"streamed"}}'
+{"error":{"path":"$.data.strategy","message":"the \"streamed\" strategy is not in version 1 of the wire; use \"buffered\""}} [400]
+
+$ curl -s -w ' [%{http_code}]' localhost:8080/data/notarealtokenatall00
+{"error":{"path":null,"message":"no such token, or it has expired"}} [404]
+
+$ curl -s -w ' [%{http_code}]' localhost:8080/report/Sales     # no body, wrong method
+{"error":{"path":null,"message":"this route takes POST"}} [405]
+```
+
+Note the ROW ORDER: a relation carries no sort order, so the rows are whatever
+the scan yields, and the deferred re-request re-scans -- the same rows, not
+necessarily the same order (J3b).  Flags: `--root DIR` and `--preload Module`
+(both repeatable), `--db URL`, `--dialect sqlite|mssql|mysql|postgres|vertica`,
+`--port N` (0 binds an ephemeral port and prints it), `--report-name NAME`,
+`--ttl SECONDS`, `--max-tokens N`, `--threads N`, `--max-body BYTES`,
+`--settings JSON`.  One INFO line per request on `ermine.json.http`
+(`POST /report/Sales status=200 ms=31 bytes=255`) beside J3b's per-relation
+lines on `ermine.json.doc`; both need a log4j configuration to be visible
+(`res/conf/log4j.prp`, absent from the repository).
+
 ## Stages
 
 | Id | Branch | What | Depends on | Phase |
 |---|---|---|---|---|
 | J3a | json-wrappers | Schema exporter: relation union/arms, `nullable` + `rowCount`, row-polymorphic relation arm, zod discriminated union, fixtures | contract | 1 -- LANDED |
-| J2a | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 |
-| J3b | json-doc | BUILT 2026-09-16 (report-J3b.md, design note §3.7c): `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 |
+| J2a | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 -- COMMITTED 40827243, json-encode merged in, landing |
+| J3b | json-doc | `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 -- BUILT bf832e46, landing |
 | J3c | json-runner | `json/Runner.scala` (boot, report lookup, `Params -> Node` check, decode, apply, write on one connection), HTTP server (`POST /report/<Module>`, `GET /data/<token>`), `bin/ermine-serve` | J2a, J3b | 2 |
 | J3d | json-client | BUILT 2026-09-16 (report-J3d.md, design note 3.7e): `modules/Layout/Widgets/{Format,Table,Drilldown,Scorecard}.e` + the `Layout/Widgets.e` umbrella (one module per widget: field selectors are module-global); `client/` TS package -- generated zod, dispatcher, legacy table adapters, `formatDisplay` port, `scorecard` end to end | J3a, J3b | 2 -- BUILT |
 | J3e | json-charts | Chart/stylebox prop types and adapters (`axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar`, `styleBox`; `treeMap` registered as unsupported) | J3d | 3 |
@@ -113,6 +215,35 @@ branch (they share `Lib.scala`).
 ## Handoff log
 
 - 2026-09-16 06:00 plan written; contract compiled; TestJson+TestSchema+TestNamedFields 61/61.
+- 2026-09-16 J3b built on `json-doc` (uncommitted): `Layout/Doc.e`, `json/Doc.scala`,
+  `json/Write.scala`, `json/PlanCache.scala`, `TestDoc`; the four suites 79/79; corpus
+  89/79/0 over 168; REPL and LSP smokes green; `*TestLoopTrace` 3 properties but the Lean
+  model replay SKIPPED (the executable is absent in this worktree). Two DB-layer bugs found:
+  `RecordMap.SharingKeySet.get` threw on every lookup on Scala 3 (fixed in this stage), and
+  `SqlExecution` reads a GUID column before `wasNull`, so a NULL GUID throws (NOT fixed).
+- 2026-09-16 J3b reviewed FIX-THEN-LAND (`review-J3b.md`); both required fixes applied in the
+  worktree: a refused row now leaves its scan by `Stop` so the driver tears it down (the
+  writer no longer throws through `EffectfulProcedure.withDriver`), and the `RecordMap`
+  comment / report / design note now state the real blast radius. `TestDoc` 20/20, the four
+  suites 81/81, and `*TestLoopTrace` re-run against the Lean binary built in the `json-wrappers`
+  worktree (`-Dermine.looptrace=`): **720/720 segments agree, 0 skipped**.
+  **For the landing**: the `RecordMap` line restores record EQUALITY for records
+  from a SQL scan, so `relational.uniqSorted`/`uniq` and `Set[Record]` deduplicate again — a
+  relational-engine behaviour change whose real gate is the full `core/test`, not the JSON
+  suites. A ticket for J3c: `relational/package.scala:121-128` needs
+  `try k(d) finally teardown()` so a scan that throws on its own is torn down too.
+- 2026-09-16 J3b landing gate (full `core/test` on bf832e46) found a REAL bug that
+  `Layout/Doc.e` exposed: `Renamer 3.2a.6.4 corpus: siblings are sorted, and no two of them
+  straddle` failed with 7 pairs, all record-style constructors straddling their own field
+  symbols. Root cause in Stage 1a's `lsp/Symbols.scala`: selectors were emitted as SIBLINGS of
+  the constructor whose span contains them. Fixed on `json-doc` (uncommitted, on top of the
+  commit): a field symbol is now a CHILD of the constructor that declares it, which is the LSP
+  Field-in-Struct shape and the one this builder already uses for every other container. No
+  `.e` fixture in `tracker/lsp-tests/` has a record `data`, so no pinned LSP expectation
+  changed and the smoke stays at 577 checks. Two new properties in `TestNamedFields` (random
+  declarations + an exact tree) pin the shape where the syntax is generated; mutation-checked
+  against the old shape. Also measured, not fixed: `TestTolerantCheck` alone on this tree x3,
+  E11a green every time (58/58), so the landing run's E11a failure did not reproduce here.
 - 2026-09-16 06:20 contract + plan committed a7e8e050 on json-s3-base; worktrees
   wt-json-wrappers / wt-json-decode / wt-json-doc created; J3a, J2a, J3b implementers launched.
   Later briefs (J3c, J3d, J3e, J2b, review, port) written, uncommitted in wt-json until the
@@ -135,6 +266,15 @@ branch (they share `Lib.scala`).
   since `data Inline r = Inline [..r]`. J3a found `Gen.pick` biased in ScalaCheck 1.15.4
   (first pool element almost never kept; `TestSchema.pickN` replaces it) and that
   `Session.toHeader` MatchErrors on a GUID column (pre-existing).
+- 2026-09-16 ~09:30 J2a review fixes applied on json-decode: the flaky `(e2)` depth probe
+  now reads back at three quarters of its measurement with a fixed 100,000-level in-memory
+  document, and the `tag`-field disagreement is refused by `Decode`, `Schema` AND `Encode`
+  alike (pinned in `(map)` and `(d)`). Two further test flakes found while verifying and
+  fixed: `TestJson` declared three different `data Shape`s and two `data Series` in one
+  process, which the PROCESS-GLOBAL `DataConDecl` registry turns into a cross-property race
+  (one red in twenty runs), and `TestDecode`'s null-wrapper equivalence had a hole for a
+  raw `Some(JNull)` inside a native container. json-encode f8a789d1 (J3a) then merged into
+  json-decode; see `tracker/json-stage3/report-J2a.md` for the post-merge gate numbers.
 - 2026-09-16 J3b built on `json-doc` (uncommitted): `Layout/Doc.e`, `json/Doc.scala`,
   `json/Write.scala`, `json/PlanCache.scala`, `TestDoc`; the four suites 79/79; corpus
   89/79/0 over 168; REPL and LSP smokes green; `*TestLoopTrace` 3 properties but the Lean
@@ -161,3 +301,16 @@ branch (they share `Lib.scala`).
   relational-engine behaviour change whose real gate is the full `core/test`, not the JSON
   suites. A ticket for J3c: `relational/package.scala:121-128` needs
   `try k(d) finally teardown()` so a scan that throws on its own is torn down too.
+- 2026-09-16 J3c BUILT on `json-runner` (uncommitted): `json/Runner.scala`, `json/Server.scala`,
+  `json/ServeMain.scala`, `bin/ermine-serve`, `core/src/test/resources/doc/Sales.e`,
+  `TestRunner` (16 properties, all green; two deliberate mutants falsify (a)/(c) and (b1)/(b6)).
+  Concurrency: evaluation serialised behind one monitor, scans and writes concurrent —
+  design note §3.7d. **Both DB tickets J3b handed on are FIXED**, each with a property:
+  `SqlEmitter.EmitUuid_Strings.getUuid` reads a SQL NULL as a null UUID instead of throwing
+  (so `SqlExecution.nextRecord`'s `wasNull` test can do its job), and
+  `relational/package.scala`'s `EffectfulProcedure.withDriver` now has `try k(d) finally
+  teardown()`. Two defects on the merged tip were also fixed in `TestDoc`: `(b-sql)`'s
+  `badNulls == List("UUID")` is now empty (the GUID fix moved the measurement), and `(d)`'s
+  `dImps` lacked the Stage 2a modules J2a added to `TestSchema.shape` (Date, GUID, Prim,
+  Native.Maybe, Native.Pair, Vector as V), which failed 13 of its 80 cases with "undefined
+  type" — a J2a/J3b merge gap, red on the tip before this stage touched anything.

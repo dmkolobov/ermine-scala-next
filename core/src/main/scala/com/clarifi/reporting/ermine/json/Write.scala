@@ -459,15 +459,16 @@ object Rows {
     * (`over`) or a row cannot be encoded (`error`), which ends the scan.
     *
     * A row error LEAVES BY `Stop` and is kept for the caller rather than
-    * thrown here.  Throwing out of the machine would unwind through
-    * `EffectfulProcedure.withDriver` (`relational/package.scala:121-128`),
-    * which has no `finally`: the scan's `teardown` (`rs.close; stmt.close`,
-    * `sql/SqlExecution.scala:90`) and `SqlScanner.scanRel`'s
-    * `cleanTempTables` would both be skipped, and under a pooled `Run[DB]`
-    * every refused row would leak a server-side cursor.  `Stop` is the exit
-    * the driver tears down correctly; `Write.inlined` rethrows the error once
-    * the scan has returned, so the failure, its message and its ERROR log
-    * line are unchanged. */
+    * thrown here.  Two reasons, of which only the second still bites: until
+    * stage J3c, `EffectfulProcedure.withDriver` (`relational/package.scala`)
+    * ran `teardown()` with NO `finally`, so throwing out of the machine
+    * skipped the scan's `rs.close`/`stmt.close` and `SqlScanner.scanRel`'s
+    * `cleanTempTables` and leaked a server-side cursor per refused row --
+    * that hole is closed, `withDriver` tears down in a `finally` now.  `Stop`
+    * stays the exit anyway, because it is what keeps the BUFFERED-prefix
+    * promise: the scan ends cleanly, `Write.inlined` rethrows the error once
+    * the scan has returned, and the failure, its message, its `WriteFailure`
+    * and its ERROR log line are the same whichever way the scan ended. */
   final class Sink(d: Doc.Data, limit: Long) {
     private val cols: Array[String] = d.columns.map(_.name).toArray
     var buffer = new java.lang.StringBuilder

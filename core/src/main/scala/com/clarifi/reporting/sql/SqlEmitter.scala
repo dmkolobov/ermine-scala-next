@@ -577,7 +577,18 @@ trait EmitConcat_AsConcat extends SqlEmitter {
 
 /** Pretend UUIDS are strings. */
 trait EmitUuid_Strings extends SqlEmitter {
-  def getUuid(rs: ResultSet, i: Int): UUID = java.util.UUID.fromString(rs.getString(i))
+  /** A SQL NULL reads back as a null UUID, NOT as an exception.  Every other
+    * column type's getter answers a zero and leaves `rs.wasNull` set, which is
+    * the only thing `SqlExecution.nextRecord` looks at -- it builds the cell
+    * BEFORE it asks -- so `UUID.fromString(null)` used to throw a
+    * NullPointerException for a NULL in a nullable GUID column, before anything
+    * could notice it was null (J3b's ticket for J3c).  `UuidExpr` holds the
+    * value without touching it, so the null never escapes: the `wasNull` test
+    * two lines later replaces the cell with `NullExpr`. */
+  def getUuid(rs: ResultSet, i: Int): UUID = {
+    val s = rs.getString(i)
+    if (s == null) null else java.util.UUID.fromString(s)
+  }
   def emitUuid(u: UUID): RawSql = raw("'") |+| u.toString |+| "'"
   def emitUuid(stmt: PreparedStatement, i: Int, u: UUID): Unit =
     stmt.setString(i, u.toString)

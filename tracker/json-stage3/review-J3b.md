@@ -389,3 +389,186 @@ Not required, but recommended while the files are open: pin `-0.0` in `(a-pin)`;
 `settings`/`DRaw` escaping caveat and the "deferred re-request row order is not stable" caveat
 to the J3c handoff section; note in the report that `TestDoc`'s log capture uses log4j 2 core
 APIs and scalacheck 1.15 generators, both of which the 2.11 port must re-check.
+
+---
+
+# Follow-up review (the delta on top of bf832e46)
+
+2026-09-16, same reviewer, about 35 minutes. Reviewed
+`git diff bf832e46` (`lsp/Symbols.scala`, `TestNamedFields.scala`, the three trackers) plus
+`git show bf832e46 -- .../json/Write.scala` for required fix 1 as committed. Re-ran
+`TestNamedFields + TestRenamer` in one sbt invocation and, because it pins my own fix 1, one
+mutation of `Write.scala` + `TestDoc`. Everything else is cited from the implementer's logs.
+Scratch: `rev2-named-renamer.log`, `rev2-testdoc-mutant.log`, `rev2-testdoc-reverted.log`.
+
+**Verdict for the delta: FIX-THEN-LAND** — two documentation fixes, no code change; see the end.
+
+## 1. Required fix 1 as committed — correct, and the new pin is not vacuous
+
+`Rows.Sink.push` now records the `RowError`, empties the buffer and returns `false`, so the
+machine leaves by `Stop`; `Write.inlined` rethrows `sink.error` first inside the existing
+`attempt` block. Checked: the row index is unchanged (`rows` is still not incremented on the
+error path); `error` and `over` are mutually exclusive (either `false` return stops the
+machine), so the test order is belt-and-braces rather than load-bearing; `Write.relation`'s
+re-request goes through the same `inlined`, so a refused row on a deferred re-scan is torn down
+too. The comment on `Sink` records the driver hole with its file:line, which is what a later
+reader needs.
+
+The `ListScanner` now appends to `teardowns` from the procedure's own teardown thunk, and (f)
+asserts `teardowns.length == scans.length` plus, for the two row-error shapes, that the failing
+scan was torn down. **I mutation-checked this myself**: restoring the `throw` in `push` gives
+`Failed: Total 20, Failed 1` on exactly (f), with the label `scans 3, teardowns 2`
+(`rev2-testdoc-mutant.log`). Reverted byte-for-byte (`Write.scala` md5
+`21865c25e7e24c8258dbacc7384d4678`, `git diff bf832e46 -- Write.scala` empty) and re-ran:
+**20/20** (`rev2-testdoc-reverted.log`).
+
+Two notes for the record, neither blocking:
+
+- The *other* new property, `(f-db) a refused row leaves the connection usable`, **does not
+  discriminate**: under the same mutation it still passed. SQLite tolerates a leaked
+  `ResultSet` on the connection, so that property pins the user-visible consequence, not the
+  teardown. The discriminating pin is (f)'s counter. Nobody should cite (f-db) as the proof.
+- `push` catches `RowError` only. Anything else escaping `Rows.cell`/`row` would still unwind
+  through the driver. Today that is unreachable (`cell` is exhaustive over the sealed
+  `PrimExpr`), but `case NonFatal(e)` there would close the hole for good and costs nothing.
+
+Required fix 2 (the comment and the three trackers) is applied and is accurate — the
+`RecordMap` comment now states the `Map.equals` consequence, names `Op.eval` / `SqlScanner`
+as prior callers, and says the real gate is a full `core/test`.
+
+## 2. The LSP fix: fields as children of their constructor
+
+**The choice is right, and I would have made the same one.** It matches what this builder
+already does for every container it has — a class's body (`SClassStatement`), a
+`private`/`foreign`/`database` block's statements, a data type's constructors — and it matches
+what LSP means by a Field member. It also leans on machinery that was already there for exactly
+this: `sym()` computes `covered = r union selection union children.ranges`, so a parent
+containing its children holds *by construction* rather than by the parser's spans lining up.
+
+The alternative — shortening the constructor's range — would also satisfy 6.4, but it is worse
+on three counts: `rng(cd.loc.span)` is shared by *every* constructor, so positional ones would
+lose their extent too; the constructor's full span is precisely what a cursor→symbol client
+(breadcrumbs, sticky scroll) needs; and it would move ranges that `lsp-client.py` pins. The
+children fix is strictly more local.
+
+**Blast radius — the conclusion is right, one stated reason is wrong.**
+
+- `termGroups` skipping `KField`: **confirmed.** `KField` is neither `KFunction` nor
+  `KVariable`, so it recurses into its (empty) children and contributes nothing — and it
+  contributed nothing before either, when constructors and fields were both leaves. The
+  cross-check property `TestRenamer 6.4 "term groups are exactly the renamer's moduleTerms"` is
+  green in my re-run.
+- `Definitions` untouched: **confirmed** — the diff is one hunk in `SDataStatement`; `sel(n)`
+  and `Definitions.nameExtent` are not touched.
+- "No `.e` fixture in `tracker/lsp-tests/` has a record `data`": **confirmed.** The only
+  `data … {` matches anywhere in the tree are `core/examples/Lang/Helpers.e:266` and
+  `core/examples/shouldfail/sk02_record_append_self.e:26`, and both are *positional*
+  constructors over a row type (`{..r}`), not named fields. So the smoke's 577 checks really
+  are untouched. **But that cuts both ways**: because no LSP fixture exercises a record `data`,
+  "577 unchanged" is consistency evidence, not safety evidence — the safety evidence is the
+  corpus property and the two new pins. Adding one record-style `data` to an `lsp-tests`
+  fixture would make the smoke cover the shape; cheap, optional, worth doing next time those
+  fixtures are touched.
+- **`report-J3b.md`'s "`workspace/symbol` answers from the resident session's globals, not
+  this tree" is false.** It answers from both: `Symbols.scala:607-625`, branch "(a) EVERY OPEN
+  DOCUMENT'S OWN DECLARATIONS, flattened out of the hierarchical tree" — `flatten(idx.symbols)`
+  per open document — plus (b) `sessionGlobals`. The real effect is measurable and tiny: the
+  old code de-duplicated a shared field name by spelling, the new one lists it under each
+  declaring constructor, so `flatten` gains exactly **one** symbol across the whole 258-file
+  corpus — `children`, declared by both `VFlow` and `HFlow` in `Doc.e`. That is precisely the
+  census the report quotes and my re-run reproduces (`symbols 8273 → 8274`,
+  `Field 1468 → 1469`, `sibling levels 8531 → 8532`, `straddling pairs 7 → 0`). So
+  `workspace/symbol` on `children` in an open `Doc.e` now returns two hits at two real
+  declaration sites instead of one — an improvement, and consistent with the new comment's own
+  reasoning; it cannot flood the 200-result cap the way re-exporters could, because it is one
+  hit per declaring constructor. Completion is unaffected: `Completion.scala:319` runs `dedup`
+  by label over exactly that list. The conclusion ("documentSymbol only, nothing breaks")
+  stands; the reason must be corrected, because that sentence is what a later agent will use to
+  decide whether the symbol tree is safe to change.
+
+**The two new properties are not vacuous.** The implementer's `sym-mutant.log` shows the old
+sibling shape falsifying all three: the corpus property with *exactly* the landing log's 7
+pairs (Widget/name, Widget/props, VFlow/children, Grid/cells, Tabbed/tabs), the
+generated-declaration property (`'NfC2x0x0' … straddles 'nfzfw' …`, plus the constructor list
+coming out as `List(NfC2x0x0, nfzfw, nfxpe, nfbjg, NfC2x0x1, NfC2x0x2)`), and the exact pin.
+Both falsify at seed 0. Coverage is reported rather than assumed — `Prop.collect` in my own run
+shows 14% of generated modules with 0 record fields and 86% with 1..12, so the generator really
+produces the shape. The exact pin covers the two things the property cannot state: a field name
+shared by two constructors (`nfpa` under both `NfPW` and `NfPV`) and a nullary constructor with
+no children. Both properties reuse `Symbols.beforeSym` / `overlaps` / `containsRng`, which
+already existed at bf832e46 — no forked copy of the invariants, which is what the common brief
+asks for.
+
+`Symbols.scala` is restored byte-identically after the implementer's mutation (md5
+`f1b9838178b19bdd3f8b7f9d63e8f6e8`, matching `sym-gate2`'s `Symbols.scala.fixed`).
+
+**My re-run**: `core/testOnly TestNamedFields TestRenamer` → **50/50** (16 + 34), corpus symbol
+census `files 258 | symbols 8274 | Field 1469 …`, `sibling levels 8532 | identical-range pairs
+1845 | straddling pairs 0` (`rev2-named-renamer.log`). The 1845 identical-range pairs are the
+pre-existing and tolerated shape (`field a b c : T` emits one symbol per name at the statement's
+span); only *overlapping-but-unequal* is forbidden, which is the right rule.
+
+The LSP smoke's first attempt is recorded as `FAIL (timed out)` in `sym-gate5-lsp.log` and
+passes with 577 checks in `sym-gate5-lsp3.log` after the cap was raised. The explanation (load
+average 29, the server log showing the client had driven the script to `shutdown`) is
+convincing, the script was not edited, and 577 is identical to the pre-change run — I accept it.
+Keep both logs in the landing record, not only the green one.
+
+## 3. E11a — I agree it should not block, but the wording should change
+
+**Agreed: no mechanism, and it belongs in the quarantine list.** The only change in this stage
+that can reach the checker at all is `Layout/Doc.e` entering `modules/` (the E11a sweep counts
+`259 files`, so it *is* in the population); the writer, `RecordMap.get` and
+`lsp/Symbols.scala` are not on the checker's path. Doc.e imports only `Json` and `List` and the
+diverging binding is `reportFor`, which is nowhere near it. And the decisive evidence is that
+E11a is green 3/3 **on this tree, with Doc.e present** (`e11a-run1..3.log`, 58/58 each) — a
+deterministic effect of a new module would survive isolation.
+
+**But "order-dependence under suite composition" is not what those logs show.** The three
+isolated runs on an unchanged tree report `SET 6 / SET 6 / SET 5` and `KIND 2 / 3 / 2`: the
+published-constraint counts move run to run at *fixed* suite composition. So the mechanism is
+run-to-run nondeterminism of the published constraint SET, not (only) cross-suite ordering —
+which is exactly E11b's territory, DRAFTED and PARKED by the user's decision
+(`LSP-ROADMAP.md:2321-2340`, "NOT E11b. Whack-a-mole against shapes"). If the quarantine entry
+says "suite composition", the next agent will isolate the suite, find the numbers still moving,
+and reopen a closed question. Write it as the SET-class nondeterminism, cite E11b, record the
+observed drift and the landing failure's exact shape (`SET class grew past its ceiling 3:
+(reportFor,4)`), and scope the re-run rule the way the two existing entries are scoped: exactly
+`TestTolerantCheck."E11a: four cold checks of one module publish ONE form per constraint set"`
+red gets ONE re-run; anything else red is real.
+
+`tracker/GATE-POLICY.md` has not been edited (`git diff bf832e46 -- tracker/GATE-POLICY.md` is
+empty), so this is an outstanding action rather than a done one.
+
+## Verdict for the delta
+
+**FIX-THEN-LAND.** Both fixes are documentation; the code is right and mutation-proved.
+
+1. **`tracker/json-stage3/report-J3b.md`, the "Blast radius" sentence of the symbol-tree
+   section.** It says `workspace/symbol` "answers from the resident session's globals, not this
+   tree". `Symbols.scala:607-625` flattens every open document's symbol tree as branch (a) of
+   that request. *Failure scenario*: the next agent to touch `lsp/Symbols.scala` reads this and
+   concludes the tree feeds only `documentSymbol`, so a change that duplicates, drops or
+   re-ranges symbols looks free when it actually moves workspace search results. *Fix*: say
+   instead that `workspace/symbol` flattens this tree for open documents, that the only
+   observable change is a field name shared by two constructors now answering at both
+   declaration sites (exactly one instance in the corpus — `children` in `Doc.e`, hence
+   `symbols 8273 → 8274`), and that completion is unaffected because `Completion.scala:319`
+   dedupes by label. While there: note that `(f-db) a refused row leaves the connection usable`
+   does not discriminate under mutation and that (f)'s teardown counter is the real pin.
+
+2. **`tracker/GATE-POLICY.md`, the Quarantines section — add the entry, with the mechanism
+   stated as the logs show it.** *Failure scenario*: without it, the standing "one re-run"
+   rule does not apply to this property, so the next landing whose full `core/test` hits it is
+   blocked or, worse, someone "fixes" E11b against the user's explicit decision not to.
+   *Fix*: add `TestTolerantCheck."E11a: four cold checks of one module publish ONE form per
+   constraint set"` — the published constraint SET is run-to-run nondeterministic (three
+   isolated runs on an unchanged tree: `SET 6 / 6 / 5`, `KIND 2 / 3 / 2`), seen at the J3b
+   landing as `SET class grew past its ceiling 3: (reportFor,4)`; ticket **E11b**, DRAFTED and
+   PARKED by the user's decision (`LSP-ROADMAP.md:2321-2340`); exactly this property red gets
+   ONE re-run.
+
+Not required: `case NonFatal(e)` instead of `case e: RowError` in `Rows.Sink.push`; a
+record-style `data` in one `tracker/lsp-tests` fixture so the LSP smoke actually covers the new
+shape; restore the trailing newline on `tracker/JSON-STAGE3-PLAN.md` (the diff ends with
+`\ No newline at end of file`).
