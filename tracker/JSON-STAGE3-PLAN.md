@@ -74,7 +74,10 @@ col       {"name": "<column>", "type": <Wire.columnTypes>, "nullable": <bool>}
 - Nodes are encoded by the GENERIC walker (named constructor fields): a multi-constructor
   `data` has `"tag"` first. `Layout.Doc.Node` therefore goes out as
   `{"tag":"Widget","name":"table","props":{...}}`, `{"tag":"VFlow","children":[...]}`, etc.
-  (Field names are settled by stage J3b; see its brief.)
+  SETTLED by J3b (2026-09-16), no field renamed: `Widget { name, props }`,
+  `VFlow { children }`, `HFlow { children }`, `Grid { cells }`, `Tabbed { tabs }`,
+  `Tab { label, content }` — and `Tab`, having one constructor, carries no `"tag"`:
+  `{"tag":"Tabbed","tabs":[{"label":"a","content":{...}}]}`.
 - `settings`: an object the runner is configured with (default `{}`), written verbatim.
 - `errors`: reserved as the LAST top-level key for the `Streamed` strategy; not in v1.
 - Request body (runner): `{"params": <JSON of the report's Params type>, "data":
@@ -91,9 +94,9 @@ col       {"name": "<column>", "type": <Wire.columnTypes>, "nullable": <bool>}
 
 | Id | Branch | What | Depends on | Phase |
 |---|---|---|---|---|
-| J3a | json-wrappers | Schema exporter: relation union/arms, `nullable` + `rowCount`, row-polymorphic relation arm, zod discriminated union, fixtures | contract | 1 -- LANDED |
-| J2a | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 -- COMMITTED 40827243, json-encode merged in, landing |
-| J3b | json-doc | `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 -- BUILT bf832e46, landing |
+| J3a | json-wrappers | Schema exporter: relation union/arms, `nullable` + `rowCount`, row-polymorphic relation arm, zod discriminated union, fixtures | contract | 1 |
+| J2a | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 |
+| J3b | json-doc | BUILT 2026-09-16 (report-J3b.md, design note §3.7c): `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 |
 | J3c | json-runner | `json/Runner.scala` (boot, report lookup, `Params -> Node` check, decode, apply, write on one connection), HTTP server (`POST /report/<Module>`, `GET /data/<token>`), `bin/ermine-serve` | J2a, J3b | 2 |
 | J3d | json-client | `modules/Layout/Widgets.e` prop types for the seven live widgets + one new widget; `client/` TS package: zod generated from those types, dispatcher, adapters to the legacy renderers, `formatDisplay` port, the new widget end to end | J3a, J3b | 2 |
 | J3e | json-charts | Chart/stylebox prop types and adapters (`axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar`, `styleBox`; `treeMap` registered as unsupported) | J3d | 3 |
@@ -141,3 +144,20 @@ branch (they share `Lib.scala`).
   (one red in twenty runs), and `TestDecode`'s null-wrapper equivalence had a hole for a
   raw `Some(JNull)` inside a native container. json-encode f8a789d1 (J3a) then merged into
   json-decode; see `tracker/json-stage3/report-J2a.md` for the post-merge gate numbers.
+- 2026-09-16 J3b built on `json-doc` (uncommitted): `Layout/Doc.e`, `json/Doc.scala`,
+  `json/Write.scala`, `json/PlanCache.scala`, `TestDoc`; the four suites 79/79; corpus
+  89/79/0 over 168; REPL and LSP smokes green; `*TestLoopTrace` 3 properties but the Lean
+  model replay SKIPPED (the executable is absent in this worktree). Two DB-layer bugs found:
+  `RecordMap.SharingKeySet.get` threw on every lookup on Scala 3 (fixed in this stage), and
+  `SqlExecution` reads a GUID column before `wasNull`, so a NULL GUID throws (NOT fixed).
+- 2026-09-16 J3b reviewed FIX-THEN-LAND (`review-J3b.md`); both required fixes applied in the
+  worktree: a refused row now leaves its scan by `Stop` so the driver tears it down (the
+  writer no longer throws through `EffectfulProcedure.withDriver`), and the `RecordMap`
+  comment / report / design note now state the real blast radius. `TestDoc` 20/20, the four
+  suites 81/81, and `*TestLoopTrace` re-run against the Lean binary built in the `json-wrappers`
+  worktree (`-Dermine.looptrace=`): **720/720 segments agree, 0 skipped**.
+  **For the landing**: the `RecordMap` line restores record EQUALITY for records
+  from a SQL scan, so `relational.uniqSorted`/`uniq` and `Set[Record]` deduplicate again — a
+  relational-engine behaviour change whose real gate is the full `core/test`, not the JSON
+  suites. A ticket for J3c: `relational/package.scala:121-128` needs
+  `try k(d) finally teardown()` so a scan that throws on its own is torn down too.
