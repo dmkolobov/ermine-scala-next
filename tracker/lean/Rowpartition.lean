@@ -264,6 +264,43 @@ first getting the module to build.
                                (`nd_derives_sound_on_vocab`, `Cut.CseStep.entails_iff`'s shape
                                for all four).  Both fragment identities are proved
                                (`loopRel_split`, `ndStep_split`)
+* `Rowpartition.SubsumeEscape` -- S1a of `tracker/PROMPT-subsume-termination.md`: the
+                               ESCAPING-SKOLEM CHECK at `Subst.scala:648`
+                               (`hm.fskvs.filter(stss) ++ hm.kindVars.filter(skss)`) as a
+                               function -- `Vars.scala`'s seen-set/callback protocol
+                               (`runV`, `runV_seen`, `runV_emitted_id`), the three walks
+                               (`Type.scala:648-661`, `:706-715`, `Kind.scala:16/59/65`,
+                               `KindSchema.scala:26`) and the `Map`/`List`/`V` instances.
+                               The walk follows NO BINDING (`Type.scala:653` reads the
+                               variable's KIND ANNOTATION), so the prompt's H2 is false as a
+                               reading of the code: the binding-following function
+                               `kvarsFollow` does diverge on a cyclic environment
+                               (`follow_diverges`) but the shipped one returns on the same
+                               input (`escs_total_on_cyclic`), and no theorem here has an
+                               acyclicity hypothesis.  The content is COST:
+                               `escs_cost_le_subPass` -- the whole check costs at most four
+                               substitution passes over `hm.types` plus one over `hm.kinds`,
+                               i.e. a constant factor of ONE `instantiateType`
+                               (`Subst.scala:254`) -- in NODE VISITS, not in time (`Vars.--`'s
+                               immutable-`Set` operations over a growing seen set and
+                               `Vars.filter`'s `Vector` materialisation are one step each in
+                               the model) -- and SHARING: `walk_exp_in_dag`, a
+                               shared representation of `4n+1` nodes whose walk costs
+                               `2^(n+1) - 1`, with the matching negative
+                               `subst_pays_the_same` (the substitution pass unfolds the same
+                               DAG, so that environment is not cheaply reachable).  The S2
+                               licence is `verdict_eq`: the per-skolem occurrence test
+                               `verdictR` gives the SAME verdict as the whole-environment
+                               walk under `SkolemCoherent` (id uniqueness, not acyclicity),
+                               and since `escs`'s elements are dead at `:649-657` nothing
+                               observable may change AT `:648` -- they are LIVE at
+                               `checkSkolemEscape` (`Subst.scala:361-367`, `hescs.mkString`
+                               printed at `:367`), which this file does not cover;
+                               `skolem_filter_redundant`, `escs_restrict_untouched` (entries
+                               whose CONTENT cannot mention a skolem may be skipped -- NOT
+                               entries selected by age: `instantiateType` rewrites every
+                               value on every binding, so S2 owes a re-stamping law) and
+                               `no_early_exit_on_empty` bound what the restriction buys
 -/
 import Rowpartition.Basic
 import Rowpartition.Rules
@@ -340,3 +377,4 @@ import Rowpartition.Loop.TopNormalise
 import Rowpartition.RoseTheory
 import Rowpartition.Determined
 import Rowpartition.SigEntail
+import Rowpartition.SubsumeEscape
