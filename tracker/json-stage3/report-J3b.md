@@ -68,6 +68,106 @@ data Tab  = Tab { label : String, content : Node }
    **Corrected after review — the blast radius is the relational engine, not just JSON.** (i) The JSON writer was *not* the first caller: `Op.eval` (`Op.scala:22`) indexes a record by name and `SqlScanner.scala:581` applies it to scanned records (`SqlScanner.scala:380`, `:424-425` build `RecordMap`s too); those paths were latently broken on Scala 3 with no Scala 3 coverage. (ii) `get` also backs `apply`, `contains`, `getOrElse` **and `Map.equals`**, and 2.13's `Map.equals` *catches* the `ClassCastException` and answers `false` — so two equal records out of a SQL scan compared **unequal, silently**, which disabled `relational.uniqSorted`/`uniq` (`relational/package.scala:35-58`) and any `Set[Record]` over scanned records. The fix restores record equality and therefore duplicate removal: a wrong-to-right **behaviour change in the relational engine**, whose real gate is the landing's full `core/test`, not the four JSON suites this stage ran. The 2.11 `RecordMap` is a different file and most likely infers `B` correctly there — the porter should confirm rather than port blindly.
 2. **NOT fixed — `sql/SqlExecution.scala:67-88` with `sql/SqlEmitter.scala:579` (`EmitUuid_Strings.getUuid`).** `nextRecord` builds the cell before asking `rs.wasNull`, so a NULL in a `GUID` column calls `UUID.fromString(null)` -> `NullPointerException`. Only GUID is affected. It is the DB layer's bug; **J3c should carry it as a ticket** — any report with a nullable GUID column fails its scan.
 
+## Landing-gate fix: the LSP symbol tree of a record-style `data`
+
+The landing's full `core/test` on bf832e46 falsified `Renamer 3.2a.6.4 corpus:
+siblings are sorted, and no two of them straddle` with 7 straddling pairs, all
+in `Layout/Doc.e`: `'Widget' Rng(31,13,32,11)` straddles `'name' Rng(31,22,31,27)`
+and `'props' Rng(31,37,31,43)`, and the same for VFlow/children, Grid/cells,
+Tabbed/tabs.
+
+**Root cause** (Stage 1a, commit 07975c76, `lsp/Symbols.scala`): a record-style
+constructor's field selectors were emitted as **siblings** of the constructor,
+under the data symbol — while a constructor's span runs to the start of the next
+constructor, so it *contains* its own fields' spans. Overlapping-but-not-equal
+sibling ranges are precisely what a client that maps a cursor to a symbol
+(breadcrumbs, sticky scroll, outline-follow-cursor) cannot resolve. No module in
+the corpus had a record-style `data` until `Layout/Doc.e`, so the corpus property
+had never seen one; **every user module with record constructors had the broken
+tree since Stage 1a**.
+
+**Fix** (`core/src/main/scala/com/clarifi/reporting/ermine/lsp/Symbols.scala`,
+the `SDataStatement` case): a field symbol is now a **child of the constructor
+that declares it**. That is what LSP means by Field members (Field inside the
+Class/Struct/Constructor that declares them) and it is what this builder already
+does for every other container — a class's methods, a `private`/`foreign`/
+`database` block's statements, a data type's constructors. `sym()` already unions
+children's ranges into the parent, so containment holds by construction; the
+constructor keeps its full span (valuable for cursor→symbol), which the
+alternative fix — shortening the constructor's range to its name — would have
+destroyed for positional constructors too. A field NAME shared by two
+constructors is one selector but two declaration sites, and each site lists under
+its own constructor (the old code de-duplicated by spelling, which threw away the
+second site).
+
+Blast radius (corrected by the follow-up review): `documentSymbol`, and
+`workspace/symbol` for OPEN documents -- `Symbols.scala:607-625` flattens every
+open document's tree as its branch (a), so the one observable change there is
+that a field name shared by two constructors now answers at both declaration
+sites instead of one (exactly one instance corpus-wide, `children` in `Doc.e`,
+hence `symbols 8273 -> 8274`); completion is unaffected because
+`Completion.scala:319` dedupes by label. `termGroups` (the moduleTerms
+cross-check) skips `KField` and recurses through `KConstructor`, so it is
+unchanged; `Definitions`' declaration-head list (the other half of Stage 1a) is
+untouched. Also noted by the review: `(f-db) a refused row leaves the
+connection usable` does not discriminate under the mutation (SQLite tolerates
+a leaked ResultSet); `(f)`'s teardown counter is the real pin.
+
+**No pinned expectation had to change.** `tracker/tools/lsp-client.py`'s symbol
+pins (`Decls.e`, `Syms.e`, `Broken.e`) and every fixture under
+`tracker/lsp-tests/` use positional constructors only — no `.e` fixture in the
+repository declares a record-style `data` — so the smoke's 577 checks are
+untouched and stay green.
+
+**New pins** (`TestNamedFields`, where the record syntax is generated):
+- *"the symbol tree of a generated record `data` is well formed"* — over random
+  declarations from the suite's own generator: every level sorted, no two
+  siblings straddling, every range containing its selection and its children,
+  and the shape (constructors are the type's children; a record constructor's
+  own field names, in declaration order, are ITS children; each is a `KField`;
+  a positional constructor has none). Coverage is printed: 84% of generated
+  modules carry at least one record field, up to 12.
+- *"the symbol tree of a record `data`, exactly (the Layout.Doc shape)"* — an
+  exact tree over a fixture with two record constructors that SHARE a field name
+  plus a nullary one, so the shared-name rule and the Enum/Struct choice are
+  pinned too.
+
+**Mutation check**: with `Symbols.scala` reverted to the sibling shape, the
+corpus property fails with exactly the 7 pairs from the landing log and both new
+properties fail (`sym-mutant.log`); restored byte-identically (md5
+`f1b9838178b19bdd3f8b7f9d63e8f6e8`) and green again.
+
+**Gates re-run after the symbol-tree fix** (logs in the same directory):
+
+| Gate | Result | Log |
+|---|---|---|
+| `core/compile core/copyResources` | success, no new warnings | `sym-gate1-compile.log` |
+| `TestDoc + TestJson + TestSchema + TestNamedFields + TestRenamer` | **117/117** (20 + 28 + 19 + 16 + 34); the corpus symbol properties now report **straddling pairs 0** (was 7) over 258 files, 8532 sibling levels | `sym-gate2-suites.log` |
+| `TestNamedFields` alone | 16/16, the two new properties among them | `sym-testnf1.log` |
+| mutation check (old sibling shape) | corpus property falsified with exactly the landing log's 7 pairs, both new properties falsified; restored byte-identically | `sym-mutant.log` |
+| LSP smoke | **PASS, 577 checks** (unchanged), no pinned expectation touched | `sym-gate5-lsp3.log` |
+
+The smoke needed one note: `lsp-smoke.sh` caps the client at 120 s, and the first
+attempt hit that cap under a load average of 29 from the sibling worktrees' builds
+(the server's own log shows the client had driven the entire script to `shutdown` /
+`exiting with code 0`, so nothing was stuck). Re-running the IDENTICAL client command
+with a 420 s cap: exit 0, `PASS lsp (577 checks)`. The script itself was not edited.
+
+The symbol census moved as the fix predicts: `Field 1468 -> 1469` and
+`symbols 8273 -> 8274`, because `Layout/Doc.e`'s `children` is declared by
+BOTH `VFlow` and `HFlow` and now lists under each constructor instead of once
+under the type; `sibling levels 8531 -> 8532` is the one constructor level that
+gained children.
+
+## E11a data point (not fixed, as instructed)
+
+`TestTolerantCheck` run ALONE on this tree, three times: E11a
+("four cold checks of one module publish ONE form per constraint set")
+**green all three times**, suite 58/58 each run
+(`e11a-run1.log`, `e11a-run2.log`, `e11a-run3.log`). The landing run's
+`SET class grew past its ceiling 3: (reportFor,4)` did not reproduce in
+isolation on this tree.
+
 ## Gates (Tier 0)
 
 Logs in `/tmp/claude-1000/-home-dmitry-research-caliper/c359de0f-018b-42eb-960e-7519d0922cee/scratchpad/j3b/`.

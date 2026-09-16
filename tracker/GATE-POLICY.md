@@ -47,6 +47,12 @@ re-measurement applies to the numbers that go into the trackers, once, by the re
   Tier-2 red that is exactly this property gets ONE re-run, per the standing rule.
 - `TestLegend."extra args are ignored"` (writers): a seed-dependent date-formatting flake, ~1 run in 3 alone
   (S2 review V-4; 7.1b's Tier 2). Ticket E13. Same rule: exactly this property red gets ONE re-run.
+- `TestTolerantCheck."E11a: four cold checks of one module publish ONE form per constraint set"`: the published
+  constraint SET of `reportFor` is run-to-run nondeterministic on an UNCHANGED tree (isolated runs 2026-09-16 gave
+  SET 6 / 6 / 5 and KIND 2 / 3 / 2), so its ceiling-3 pin trips now and then -- seen at the J3b landing as
+  "SET class grew past its ceiling 3: (reportFor,4)", green on re-run 3/3. The FORM half (0 splits) is the real
+  assertion and has never tripped. Ticket E11b (the entailment oracle that deletes the residual), drafted and PARKED
+  by the user (LSP-ROADMAP.md): do not "fix" it here. Same rule: exactly this property red gets ONE re-run.
 
 ## Standing rules that stay
 Never commit red. Never `lake build` while a `looptrace` binary runs.

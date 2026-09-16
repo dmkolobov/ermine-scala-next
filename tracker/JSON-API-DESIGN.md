@@ -694,9 +694,23 @@ What landed, and where it departs from the text above.
   gives the selector the scheme `forall {k} (a: k). T a -> t`, kind variable
   and all -- but so does the constructor (`forall {k} (a: k). t -> T a`), so
   the selector is consistent with what the type already had.  The LSP shows
-  selectors as `KField` children of the data symbol and as declaration
-  heads; record-style PRETTY PRINTING of the declaration is not built (rule
-  10), so `:browse` and hover still show positional fields.
+  selectors as `KField` symbols and as declaration heads; record-style
+  PRETTY PRINTING of the declaration is not built (rule 10), so `:browse`
+  and hover still show positional fields.
+  **Corrected 2026-09-16 (J3b's landing gate)**: those `KField` symbols were
+  children of the DATA symbol, i.e. SIBLINGS of the constructors, and a
+  constructor's span runs to the start of the next one — so every record
+  constructor's range straddled its own fields' ranges, which
+  `TestRenamer` 6.4 ("siblings are sorted, and no two of them straddle")
+  forbids and no cursor-to-symbol client can resolve.  It went unseen
+  because no module in the corpus had a record-style `data` until
+  `Layout/Doc.e`.  A field symbol is now a child of the CONSTRUCTOR that
+  declares it (`lsp/Symbols.scala`, the `SDataStatement` case), which is
+  what LSP means by Field members and what this builder already did for
+  every other container; a name shared by two constructors is one selector
+  with two declaration sites and lists under each.  Pinned by two new
+  properties in `TestNamedFields` (one over generated declarations, one
+  exact tree).
 - **Gate**: TestNamedFields 14/14 (nine `forAll` properties over random
   declarations), TestJson 27/27, the parser/renamer suites green, REPL and
   LSP smokes green, corpus verdicts 89 LOADED / 79 REJECTED / 0 UNKNOWN over
@@ -778,6 +792,86 @@ the compiled zod accepts/rejects the encoder's documents at runtime; the
 encode/schema consistency property green over 200 generated (type, value)
 pairs plus 100 shrinking ones; LSP smoke 577 checks, REPL smoke green.
 
+## 3.7c Stage 3 writer as built (2026-09-16, branch `json-doc`, stage J3b)
+
+The document types, the document writer, the row encoder and the deferred-token
+cache: `modules/Layout/Doc.e`, `core/json/Doc.scala`, `core/json/Write.scala`,
+`core/json/PlanCache.scala`, `scalacheck-binding/.../TestDoc.scala`.
+
+- **`Layout.Doc.Node`**: `Widget { name, props }`, `VFlow { children }`,
+  `HFlow { children }`, `Grid { cells }`, `Tabbed { tabs }`, with
+  `Tab { label, content }` — the names of §3.2 with no collision to rename
+  (the generic walker of §3.7a turns them into `{"tag":"Widget","name":…,
+  "props":…}`, and `Tab`, being a single-constructor type, has no `tag`).
+  `widget n p = Widget n (toJson p)`; `vflow`/`hflow`/`grid`/`tabbed` are the
+  constructors, `tabbed` taking `(label, node)` pairs.
+- **`Doc`** is a small JSON tree (`DNull DBool DLong DNum DStr DArr DObj DRaw`)
+  plus `Data(ext, columns, order, delivery, path)` for a relation.  `DocJson`
+  is the third `JsonBuilder` beside `ArgonautJson` and `ErmineJson`: it forces
+  the relation, reads the plan's header (`Typer.extTyper`, what `relation#`
+  uses) and keeps the `Ext` for the writer, so **column descriptors are known
+  before any scan**.  A header-less `EmptyRel` (`mkRelation# []`) is an encode
+  error at its path unless a per-path `Header` hint is supplied;
+  `Doc.headerOfType` turns a static `[a, b, c]` type into one (the only static
+  hint supported: inside a widget's `props : Json` there is no static type
+  left to read).
+- **`Write.doc[G](doc, out, cfg, cache)(implicit Scanner[G], Guard[G])`** is
+  ONE `G` action: text runs are appended as they come, each relation resolved
+  in document order.  For `G = DB` that is one `Connection`, proved by a test
+  that counts `Run[DB]`'s connections and compares the `Connection` each scan
+  receives.  `Guard[G]` (instances for `DB` and `Id`) is the one addition to
+  the design: `Scanner[G]` offers only a `Monad`, which cannot see the
+  exception a scan throws, and a failure has to name the relation.
+- **Row encoder**: `Rows.row` appends a `Record` as a JSON array in column
+  order straight to a `StringBuilder`, per `PrimExpr` case, no `Json` nodes.
+  The mapping is `Encode`'s on the value the runtime would lift the `PrimExpr`
+  to, with one deliberate difference: a `DateExpr` is a date by its CASE even
+  when the value inside is a `java.sql.Timestamp` (`PrimExpr.mapDate` makes
+  those), because the column descriptor says `Date`.  Strings are escaped per
+  RFC 8259 plus U+2028/U+2029 and any unpaired surrogate, so the text is
+  always valid UTF-8 and safe to inline in a `<script>`-free page.
+- **Delivery**: explicit `Inline`/`Deferred` wins, a bare relation takes
+  `cfg.default`, and a bare relation resolved inline whose scan yields a
+  (threshold+1)-th record STOPS there — the `Process` returns `Stop`, which
+  ends the scan (the SQL driver closes its result set) and the relation goes
+  out deferred instead.  `MemoryPlanCache` mints a 128-bit base64url token
+  with a TTL and `Write.relation(token, …)` writes exactly the inline object
+  the relation would have had.
+- **Buffered failure semantics**: a failure anywhere throws `WriteFailure`
+  (path, message, the relations already completed) when the action RUNS;
+  `out` then holds the document up to but not including the failed relation's
+  object — never a partial relation.  A runner that wants HTTP error semantics
+  writes into a buffer and sends it only when the action returns.  A row the
+  encoder REFUSES (a non-finite Double, a missing column) leaves its scan by
+  `Stop`, the same exit the threshold uses, and the error is raised after the
+  scan has returned: throwing from inside the machine would unwind through
+  `EffectfulProcedure.withDriver` (`relational/package.scala:121-128`, which
+  has no `finally`) and skip `rs.close`/`stmt.close` and `cleanTempTables` —
+  a leaked cursor per failed report under a pooled `Run[DB]`.  The hole that
+  remains is a scan that throws on its own; the cure is
+  `try k(d) finally teardown()` in that shared code, carried as a ticket for
+  J3c.
+- **Two latent bugs this stage had to find** (both outside the JSON code).
+  First, `record/RecordMap.scala`'s `SharingKeySet.get` inferred `Nothing` for
+  `indexValueSeq`'s type parameter and compiled to `checkcast
+  scala/runtime/Nothing$`, so EVERY lookup by key on a record from a SQL scan
+  threw `ClassCastException` on Scala 3 (fixed here, one line, with a pinning
+  property).  The JSON writer was NOT the first caller — `Op.eval`
+  (`Op.scala:22`) via `SqlScanner.scala:581` already indexed scanned records by
+  name, with no Scala 3 coverage — and since `get` also backs `apply`,
+  `contains` and `Map.equals`, which on 2.13 CATCHES the exception and answers
+  `false`, two equal scanned records compared unequal and
+  `relational.uniqSorted`/`uniq` and any `Set[Record]` silently stopped
+  deduplicating.  The fix restores relational-engine behaviour, so its real
+  gate is the landing's full `core/test`, not the JSON suites; the 2.11
+  `RecordMap` is a different file and probably does not need the line.
+  Second, `SqlExecution.nextRecord` calls the emitter's `getUuid` before it
+  checks `wasNull`, so a NULL in a `GUID` column throws
+  `NullPointerException` (NOT fixed here — it is the DB layer's, and stage J3c
+  should have it as a ticket).
+- **Numbers**: 100,000 rows x 10 columns write in ~1.9 s through the test
+  scanner (of which building the records is the larger half) into ~15 MB of
+  text, holding ~28 MB of heap: the writer holds the text, not the records.
 ## 3.7b Stage 2a as built (2026-09-16, branch `json-decode`)
 
 **The params decoder** (`core/json/Decode.scala`), the inverse of `Encode` on

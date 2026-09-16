@@ -196,10 +196,10 @@ lines on `ermine.json.doc`; both need a log4j configuration to be visible
 
 | Id | Branch | What | Depends on | Phase |
 |---|---|---|---|---|
-| J3a | json-wrappers | Schema exporter: relation union/arms, `nullable` + `rowCount`, row-polymorphic relation arm, zod discriminated union, fixtures | contract | 1 |
-| J2a | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 |
-| J3b | json-doc | BUILT 2026-09-16 (report-J3b.md, design note §3.7c): `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 |
-| J3c | json-runner | BUILT 2026-09-16 (report-J3c.md, design note §3.7d): `json/Runner.scala` (boot, report lookup, `Params -> Node` check, decode, apply, write on one connection), `json/Server.scala` + `json/ServeMain.scala` + `bin/ermine-serve` (`POST /report/<Module>`, `GET /data/<token>`, `GET /health`), `core/src/test/resources/doc/Sales.e`, `TestRunner` (16 properties). Fixed both DB tickets J3b left | J2a, J3b | 2 |
+| J3a | json-wrappers | Schema exporter: relation union/arms, `nullable` + `rowCount`, row-polymorphic relation arm, zod discriminated union, fixtures | contract | 1 -- LANDED |
+| J2a | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 -- COMMITTED 40827243, json-encode merged in, landing |
+| J3b | json-doc | `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 -- BUILT bf832e46, landing |
+| J3c | json-runner | `json/Runner.scala` (boot, report lookup, `Params -> Node` check, decode, apply, write on one connection), HTTP server (`POST /report/<Module>`, `GET /data/<token>`), `bin/ermine-serve` | J2a, J3b | 2 |
 | J3d | json-client | `modules/Layout/Widgets.e` prop types for the seven live widgets + one new widget; `client/` TS package: zod generated from those types, dispatcher, adapters to the legacy renderers, `formatDisplay` port, the new widget end to end | J3a, J3b | 2 |
 | J3e | json-charts | Chart/stylebox prop types and adapters (`axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar`, `styleBox`; `treeMap` registered as unsupported) | J3d | 3 |
 | J2b | json-spread | `Spread Json` wrapper (encode merge, schema additional properties, decode leftovers); then the builtin `Json a` constraint if time allows | J2a, J3a | 3 |
@@ -215,6 +215,35 @@ branch (they share `Lib.scala`).
 ## Handoff log
 
 - 2026-09-16 06:00 plan written; contract compiled; TestJson+TestSchema+TestNamedFields 61/61.
+- 2026-09-16 J3b built on `json-doc` (uncommitted): `Layout/Doc.e`, `json/Doc.scala`,
+  `json/Write.scala`, `json/PlanCache.scala`, `TestDoc`; the four suites 79/79; corpus
+  89/79/0 over 168; REPL and LSP smokes green; `*TestLoopTrace` 3 properties but the Lean
+  model replay SKIPPED (the executable is absent in this worktree). Two DB-layer bugs found:
+  `RecordMap.SharingKeySet.get` threw on every lookup on Scala 3 (fixed in this stage), and
+  `SqlExecution` reads a GUID column before `wasNull`, so a NULL GUID throws (NOT fixed).
+- 2026-09-16 J3b reviewed FIX-THEN-LAND (`review-J3b.md`); both required fixes applied in the
+  worktree: a refused row now leaves its scan by `Stop` so the driver tears it down (the
+  writer no longer throws through `EffectfulProcedure.withDriver`), and the `RecordMap`
+  comment / report / design note now state the real blast radius. `TestDoc` 20/20, the four
+  suites 81/81, and `*TestLoopTrace` re-run against the Lean binary built in the `json-wrappers`
+  worktree (`-Dermine.looptrace=`): **720/720 segments agree, 0 skipped**.
+  **For the landing**: the `RecordMap` line restores record EQUALITY for records
+  from a SQL scan, so `relational.uniqSorted`/`uniq` and `Set[Record]` deduplicate again — a
+  relational-engine behaviour change whose real gate is the full `core/test`, not the JSON
+  suites. A ticket for J3c: `relational/package.scala:121-128` needs
+  `try k(d) finally teardown()` so a scan that throws on its own is torn down too.
+- 2026-09-16 J3b landing gate (full `core/test` on bf832e46) found a REAL bug that
+  `Layout/Doc.e` exposed: `Renamer 3.2a.6.4 corpus: siblings are sorted, and no two of them
+  straddle` failed with 7 pairs, all record-style constructors straddling their own field
+  symbols. Root cause in Stage 1a's `lsp/Symbols.scala`: selectors were emitted as SIBLINGS of
+  the constructor whose span contains them. Fixed on `json-doc` (uncommitted, on top of the
+  commit): a field symbol is now a CHILD of the constructor that declares it, which is the LSP
+  Field-in-Struct shape and the one this builder already uses for every other container. No
+  `.e` fixture in `tracker/lsp-tests/` has a record `data`, so no pinned LSP expectation
+  changed and the smoke stays at 577 checks. Two new properties in `TestNamedFields` (random
+  declarations + an exact tree) pin the shape where the syntax is generated; mutation-checked
+  against the old shape. Also measured, not fixed: `TestTolerantCheck` alone on this tree x3,
+  E11a green every time (58/58), so the landing run's E11a failure did not reproduce here.
 - 2026-09-16 06:20 contract + plan committed a7e8e050 on json-s3-base; worktrees
   wt-json-wrappers / wt-json-decode / wt-json-doc created; J3a, J2a, J3b implementers launched.
   Later briefs (J3c, J3d, J3e, J2b, review, port) written, uncommitted in wt-json until the

@@ -339,18 +339,34 @@ object Symbols {
                      detailOf(x.name.spelling, typeFixity),
                      rng(x.loc.span), sel(x.name), Nil))
           case x: SDataStatement =>
+            // Stage 1a: a record-style constructor's named fields are
+            // generated top-level selector FUNCTIONS, and in the outline they
+            // are that CONSTRUCTOR's children -- the shape LSP gives a record
+            // (Field members inside the thing that declares them), and the
+            // shape this builder already uses for every other container: a
+            // class's methods, a `private` block's statements, a data type's
+            // constructors.
+            //
+            // They were SIBLINGS of the constructor until J3b's landing gate.
+            // A constructor's span runs to the start of the next one, so it
+            // CONTAINED its own fields' spans, and two siblings whose ranges
+            // overlap without being equal are exactly what a client mapping a
+            // cursor to a symbol cannot resolve (TestRenamer 6.4, "siblings
+            // are sorted, and no two of them straddle").  No stdlib module had
+            // a record-style `data` until `Layout/Doc.e`, so the corpus
+            // property had never seen one, while every user module with record
+            // constructors had the broken tree.
+            //
+            // A field NAME shared by two constructors is ONE selector but TWO
+            // declaration sites, and each site lists under its own
+            // constructor: that is what the source says, and either span is a
+            // real place to put the cursor.
             val cons = x.constructors.map { (cd: SConDef) =>
+              val fields = cd.fieldNames.getOrElse(Nil).map { (n: SName) =>
+                sym(n.spelling, KField, termTy(n.spelling), None,
+                    rng(n.span), sel(n), Nil) }
               sym(cd.name.spelling, KConstructor, termTy(cd.name.spelling), None,
-                  rng(cd.loc.span), sel(cd.name), Nil) }
-            // Stage 1a: a record-style constructor's fields are generated
-            // top-level FUNCTIONS, so they belong in the outline beside the
-            // constructors; distinct by name, since one name shared by two
-            // constructors is one selector
-            val sels = x.constructors.flatMap(_.fieldNames.getOrElse(Nil))
-              .foldLeft(List.empty[SName]) { (acc, n) =>
-                if (acc.exists(_.spelling == n.spelling)) acc else acc :+ n }
-              .map(n => sym(n.spelling, KField, termTy(n.spelling), None,
-                            rng(n.span), sel(n), Nil))
+                  rng(cd.loc.span), sel(cd.name), fields.sortBy(_.pos)) }
             // ENUM when every constructor is nullary (`data Bool = True
             // | False`), STRUCT when any of them carries a field: the
             // distinction an editor's outline icon is actually for.
@@ -358,7 +374,7 @@ object Symbols {
                          KEnum else KStruct
             List(sym(x.name.spelling, kind, None,
                      detailOf(x.name.spelling, typeFixity),
-                     rng(x.loc.span), sel(x.name), (cons ++ sels).sortBy(_.pos)))
+                     rng(x.loc.span), sel(x.name), cons.sortBy(_.pos)))
           case x: SClassStatement =>
             List(sym(x.name.spelling, KInterface, None,
                      detailOf(x.name.spelling, typeFixity),
