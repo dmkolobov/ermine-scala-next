@@ -88,3 +88,18 @@ Pitfalls learned the hard way:
   with `useInterface=false`, so it also guards inference behaviour.
 - Load-time sanity: ~12s uncached / ~6s cached on a quiet machine (2026-08-30,
   JDK 21, this hardware); re-baseline before comparing.
+
+- **The two whole-environment `Vars` walks on the explicit-signature path** (S0 of the
+  `subsume-termination` programme, `tracker/satterm/SUBSUME-STAGE0.md` §1.7, §5.5; NOT a fix for
+  that programme — the check terminates and the hang was a test-harness artefact). Both walk the
+  WHOLE of `hm.types` with no memo table, paying tree size rather than DAG size, and both are
+  measured in nanoseconds on the corrected instrumentation: `Subst.scala:648`'s
+  `hm.fskvs.filter(..) ++ hm.kindVars.filter(..)` costs **2.79 s of a 12.2 s `bin/ermine` boot
+  (23 %)** and **45.4 s in a 184 s 12-property suite run (24.7 %)**, two walks
+  per call over 171,286 calls; `Subst.scala:365`'s `fskvs(hm.types -- mask)` in
+  `checkSkolemEscape`, run once per ALTERNATIVE from `inferAltTypesPrime:1171`, costs 0.24 s over
+  2,226 calls (107 us per walk) in the same boot and 3.75 s over 40,013 calls (94 us per walk) in the suite -- so `:648` is 12.1x `:365`.
+  **Start at `:648`, not at `:365`** — the first S0 report said the reverse and was wrong: its
+  `:648` figures were floor-summed integer milliseconds over calls that are 96.7 % sub-
+  millisecond (S0 review finding 1). Roadmap P7 Step 1 is the right home: a memo table keyed on
+  object identity, or the `sks`/`sts`-restricted walk S1a proved gives the same verdict.
