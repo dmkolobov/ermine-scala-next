@@ -8,6 +8,10 @@ import { Schema as CellFormatSchemaRaw } from "./cellFormat";
 import { Schema as TablePropsSchemaRaw } from "./table";
 import { Schema as DrilldownTablePropsSchemaRaw } from "./drilldown";
 import { Schema as ScorecardPropsSchemaRaw } from "./scorecard";
+import { Schema as AxisChartPropsSchemaRaw } from "./axisChart";
+import { Schema as PieChartPropsSchemaRaw } from "./pieChart";
+import { Schema as StyleBoxPropsSchemaRaw } from "./styleBox";
+import { Schema as DrilldownBarPropsSchemaRaw } from "./drilldownBar";
 
 /** Layout.Doc.Node */
 export const DocNodeSchema: z.ZodTypeAny = DocNodeSchemaRaw;
@@ -19,10 +23,29 @@ export const TablePropsSchema: z.ZodTypeAny = TablePropsSchemaRaw;
 export const DrilldownTablePropsSchema: z.ZodTypeAny = DrilldownTablePropsSchemaRaw;
 /** Layout.Widgets.Scorecard.ScorecardProps */
 export const ScorecardPropsSchema: z.ZodTypeAny = ScorecardPropsSchemaRaw;
+/** Layout.Widgets.AxisChart.AxisChartProps */
+export const AxisChartPropsSchema: z.ZodTypeAny = AxisChartPropsSchemaRaw;
+/** Layout.Widgets.PieChart.PieChartProps */
+export const PieChartPropsSchema: z.ZodTypeAny = PieChartPropsSchemaRaw;
+/** Layout.Widgets.StyleBox.StyleBoxProps */
+export const StyleBoxPropsSchema: z.ZodTypeAny = StyleBoxPropsSchemaRaw;
+/** Layout.Widgets.DrilldownBar.DrilldownBarProps */
+export const DrilldownBarPropsSchema: z.ZodTypeAny = DrilldownBarPropsSchemaRaw;
 
 /** Widget registry name -> the zod its props are validated with. */
 export const WIDGET_PROP_SCHEMAS: Record<string, z.ZodTypeAny> = {
   table: TablePropsSchema,
   drilldownTable: DrilldownTablePropsSchema,
   scorecard: ScorecardPropsSchema,
+  axisChart: AxisChartPropsSchema,
+  pieChart: PieChartPropsSchema,
+  drilldownPieChart: PieChartPropsSchema,
+  styleBox: StyleBoxPropsSchema,
+  drilldownBar: DrilldownBarPropsSchema,
 };
+
+/** Registry names Stage 3 reserves that have NO renderer: the dispatcher's
+ *  error box naming the widget is the intended "unsupported" behaviour.
+ *  `runTreeMap` is undefined in the ermine-writers bundle and the Local
+ *  branch of HTMLWriter.treeMap is `sys.error("todo")`. */
+export const UNSUPPORTED_WIDGETS: readonly string[] = ["treeMap"];

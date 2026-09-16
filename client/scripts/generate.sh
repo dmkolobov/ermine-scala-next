@@ -21,6 +21,10 @@ types=(
   "Layout.Widgets.Table:TableProps:table:TablePropsSchema"
   "Layout.Widgets.Drilldown:DrilldownTableProps:drilldown:DrilldownTablePropsSchema"
   "Layout.Widgets.Scorecard:ScorecardProps:scorecard:ScorecardPropsSchema"
+  "Layout.Widgets.AxisChart:AxisChartProps:axisChart:AxisChartPropsSchema"
+  "Layout.Widgets.PieChart:PieChartProps:pieChart:PieChartPropsSchema"
+  "Layout.Widgets.StyleBox:StyleBoxProps:styleBox:StyleBoxPropsSchema"
+  "Layout.Widgets.DrilldownBar:DrilldownBarProps:drilldownBar:DrilldownBarPropsSchema"
 )
 
 mkdir -p "$out"
@@ -53,7 +57,18 @@ done
   echo "  table: TablePropsSchema,"
   echo "  drilldownTable: DrilldownTablePropsSchema,"
   echo "  scorecard: ScorecardPropsSchema,"
+  echo "  axisChart: AxisChartPropsSchema,"
+  echo "  pieChart: PieChartPropsSchema,"
+  echo "  drilldownPieChart: PieChartPropsSchema,"
+  echo "  styleBox: StyleBoxPropsSchema,"
+  echo "  drilldownBar: DrilldownBarPropsSchema,"
   echo "};"
+  echo
+  echo "/** Registry names Stage 3 reserves that have NO renderer: the dispatcher's"
+  echo " *  error box naming the widget is the intended \"unsupported\" behaviour."
+  echo " *  \`runTreeMap\` is undefined in the ermine-writers bundle and the Local"
+  echo " *  branch of HTMLWriter.treeMap is \`sys.error(\"todo\")\`. */"
+  echo "export const UNSUPPORTED_WIDGETS: readonly string[] = [\"treeMap\"];"
 } > "$out/index.ts"
 
 echo "generated ${#types[@]} zod modules + index.ts in $out"

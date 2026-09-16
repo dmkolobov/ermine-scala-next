@@ -7,18 +7,53 @@ import { JSDOM } from "jsdom";
 import fc from "fast-check";
 import type { CellFormat, CellCondition, Threshold, RGB } from "../src/props";
 import type { RunTabularArgs, HtmlWriter } from "../src/legacy";
+import type { RunPiechartArgs, RunStyleboxArgs, RunTimeSeriesArgs } from "../src/charts";
 import type { InlineRelation, WireCell } from "../src/relation";
+
+/** A chart renderer is called `(id, args)`, unlike runTabular's single map. */
+export interface ChartCall<A> {
+  id: string;
+  args: A;
+}
 
 export interface StubWriter extends HtmlWriter {
   calls: RunTabularArgs[];
+  /** J3e.  One list per RENDERER, keyed by the name the adapter calls -- the
+   *  aliases are recorded apart so a test can tell `runPiechart` from
+   *  `runPiechartDrilldown` even though the bundle makes them one function. */
+  timeSeries: ChartCall<RunTimeSeriesArgs>[];
+  drilldownBars: ChartCall<RunTimeSeriesArgs>[];
+  pies: ChartCall<RunPiechartArgs>[];
+  drilldownPies: ChartCall<RunPiechartArgs>[];
+  styleBoxes: ChartCall<RunStyleboxArgs>[];
 }
 
 export function stubHtmlWriter(): StubWriter {
   const calls: RunTabularArgs[] = [];
+  const timeSeries: ChartCall<RunTimeSeriesArgs>[] = [];
+  const drilldownBars: ChartCall<RunTimeSeriesArgs>[] = [];
+  const pies: ChartCall<RunPiechartArgs>[] = [];
+  const drilldownPies: ChartCall<RunPiechartArgs>[] = [];
+  const styleBoxes: ChartCall<RunStyleboxArgs>[] = [];
   return {
-    calls,
+    calls, timeSeries, drilldownBars, pies, drilldownPies, styleBoxes,
     runTabular(args: RunTabularArgs): void {
       calls.push(args);
+    },
+    runTimeSeries(id: string, args: RunTimeSeriesArgs): void {
+      timeSeries.push({ id, args });
+    },
+    runDrilldownBar(id: string, args: RunTimeSeriesArgs): void {
+      drilldownBars.push({ id, args });
+    },
+    runPiechart(id: string, args: RunPiechartArgs): void {
+      pies.push({ id, args });
+    },
+    runPiechartDrilldown(id: string, args: RunPiechartArgs): void {
+      drilldownPies.push({ id, args });
+    },
+    runStylebox(id: string, args: RunStyleboxArgs): void {
+      styleBoxes.push({ id, args });
     },
     getScrollbarDimensions: () => ({ sbw: 15, sbh: 15 }),
     showFullPrimaryColumn: () => false,

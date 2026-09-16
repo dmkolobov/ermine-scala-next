@@ -99,7 +99,7 @@ col       {"name": "<column>", "type": <Wire.columnTypes>, "nullable": <bool>}
 | J3b | json-doc | BUILT 2026-09-16 (report-J3b.md, design note §3.7c): `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 |
 | J3c | json-runner | `json/Runner.scala` (boot, report lookup, `Params -> Node` check, decode, apply, write on one connection), HTTP server (`POST /report/<Module>`, `GET /data/<token>`), `bin/ermine-serve` | J2a, J3b | 2 |
 | J3d | json-client | BUILT 2026-09-16 (report-J3d.md, design note 3.7e): `modules/Layout/Widgets/{Format,Table,Drilldown,Scorecard}.e` + the `Layout/Widgets.e` umbrella (one module per widget: field selectors are module-global); `client/` TS package -- generated zod, dispatcher, legacy table adapters, `formatDisplay` port, `scorecard` end to end | J3a, J3b | 2 -- BUILT |
-| J3e | json-charts | Chart/stylebox prop types and adapters (`axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar`, `styleBox`; `treeMap` registered as unsupported) | J3d | 3 |
+| J3e | json-charts | BUILT 2026-09-16 (report-J3e.md, design note 3.7e): `modules/Layout/Widgets/{Chart,AxisChart,PieChart,StyleBox,DrilldownBar}.e`; `client/src/charts.ts` — chart/stylebox adapters (`axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar`, `styleBox`; `treeMap` registered as unsupported) | J3d | 3 -- BUILT |
 | J2b | json-spread | `Spread Json` wrapper (encode merge, schema additional properties, decode leftovers); then the builtin `Json a` constraint if time allows | J2a, J3a | 3 |
 | P1..P3 | json-encode-2.11 | 2.11 ports: P1 = contract+J3a+J2a, P2 = J3b+J3c, P3 = J3d+J2b | landings | after each |
 
@@ -150,6 +150,31 @@ branch (they share `Lib.scala`).
   follow. `table` is a keyword: the smart constructor is `tabular`, the registry
   name is still "table". Property (a) 5/5, node suite 33/33 over a 200-document
   corpus, `tsc --strict` and `check-generated.sh` green.
+- 2026-09-16 J3e built on `json-charts` (uncommitted, off J3d c5f92b2d): five more Ermine
+  modules under `Layout/Widgets/` (`Chart` holds the shared meta/axis/series vocabulary,
+  one module per widget as J3d's field-selector rule requires), `client/src/charts.ts`,
+  `client/test/charts.test.ts`, four more generated zod modules, chart generators in
+  `TestWidgets`, and an `axisChart` + `pieChart` in `Doc/SalesReport.e`. All five live
+  renderers of design note 4.1 are now adapted and `treeMap` is registered as
+  unsupported (out of `defaultRegistry()`, `UNSUPPORTED_WIDGETS`). The ONE legacy callback
+  that could not be avoided is `styleBoxData` (`withStyleBoxData` has no local branch), so
+  the style box's grid renders but its cell-click popup does not. Scala 93/93
+  (TestWidgets 6), node 59/59, `tsc --strict` and `check-generated.sh` green.
+- 2026-09-16 J3e reviewed FIX-THEN-LAND (`review-J3e.md`); the one required fix applied in
+  the worktree: the PIE CHART'S SLICE LABEL was emitted raw where
+  `RelationRunner.runPieChartData` sends it FORMATTED (`lc.format.basicEval(labels)
+  extractNullableString ""`, RelationRunner.scala:240), so a non-`Default` `pieLabelFormat`
+  was silently inert and a Date label column would have put a `[y,m,d]` array in the legend.
+  `pieRows` now formats the raw cell with `format.ts` and stringifies (null -> ""),
+  threading a `FormatEnv` through `pieArgs`/`pieChartWidget` as `styleBoxWidget` already
+  does. New pin `(x-pie-label)`, `(x-pie)` switched to a non-`Default` label format, and
+  `(b)` now checks `row[0]`; reverting the fix fails all three. All eight optional items
+  taken too. Node **60/60**.
+  **A standing cost for later stages**: `tracker/tools/lsp-smoke.sh` boots a session of 129
+  stdlib modules and takes 89-116 s depending on load; J3e raised its hang guard 120 -> 240 s
+  after two timeouts. Every stage that adds modules moves this. The next agent that hits it
+  should NOT simply double the number again — it wants a subset boot for the smoke, or a
+  cached session.
 - 2026-09-16 J3b reviewed FIX-THEN-LAND (`review-J3b.md`); both required fixes applied in the
   worktree: a refused row now leaves its scan by `Stop` so the driver tears it down (the
   writer no longer throws through `EffectfulProcedure.withDriver`), and the `RecordMap`

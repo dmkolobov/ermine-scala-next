@@ -1,7 +1,8 @@
 module Doc.SalesReport where
 
--- The end-to-end fixture of stage J3d: a report that uses the legacy-backed
--- "table" widget and the new "scorecard" widget over one relation.
+-- The end-to-end fixture: a report that uses the legacy-backed "table",
+-- "axisChart" and "pieChart" widgets and the new "scorecard" widget over ONE
+-- relation (J3d built the first two, J3e added the charts).
 --
 --   sbt -batch 'core/Test/runMain com.clarifi.reporting.SalesReportDoc <file>'
 --
@@ -21,6 +22,9 @@ import Layout.Doc using vflow; type Node
 import Layout.Widgets.Format
 import Layout.Widgets.Table
 import Layout.Widgets.Scorecard
+import Layout.Widgets.Chart
+import Layout.Widgets.AxisChart
+import Layout.Widgets.PieChart
 
 field srRegion : String
 field srSales : Double
@@ -44,4 +48,17 @@ report =
         , TableColumn "srDelta" "Change" (Percentage False True 1 False) AlignRight NumberColumn
         ]
         Nothing [ColumnSort 1 True] True True sales)
+    , axisChart (AxisChartProps
+        (ChartMeta "Sales by region"
+          (ChartAxis "Region" "Region" Default (Scalar "String" False) True (Unscaled [Asc] []))
+          (ChartAxis "Sales" "Sales" (Round False False 1) (Scalar "Double" True) True
+                     (Scaled (Just 0.0) Nothing Linear))
+          Vertical (ChartLegendOptions LegendAbove) (ChartRenderHints False))
+        [ChartSeries [] ["srRegion"] "srSales" [] Nothing (Constant "Sales") [] Bar]
+        sales)
+    , pieChart (PieChartProps "Share of sales" "Sales" "srRegion" "srSales"
+                              Nothing Nothing Nothing
+                              Default (Round False False 1)
+                              (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
+                              (Inline sales))
     ]

@@ -940,6 +940,74 @@ server sends the same strings (`PruJS.scala:59` prints a `SortOrder` as
 `x.toString.toLowerCase`). The Ermine type keeps the boolean `ColumnSort.descending`; the
 translation belongs beside `alignmentOf`/`columnTypeOf` in `legacy.ts`.
 
+## 3.7e (continued) Stage 3 charts as built (2026-09-16, branch `json-charts`, stage J3e)
+
+The remaining live renderers of §4.1. New modules
+`core/src/main/resources/modules/Layout/Widgets/{Chart,AxisChart,PieChart,StyleBox,DrilldownBar}.e`
+(re-exported by `Layout/Widgets.e`), `client/src/charts.ts`, `client/test/charts.test.ts`,
+four more generated zod modules, and the chart generators in `TestWidgets`.
+`Doc/SalesReport.e` now also carries an `axisChart` and a `pieChart` over the same
+relation, so the end-to-end test covers a chart through SQLite.
+
+**The op-list handles become column names.** `selSeries`, `selCategory`, `selValue`,
+`selExtra` and the meta's `colors` (§4.2) exist only to build the POST payload
+`withTimeSeriesData` sends when a series' `data` is not an array
+(`ermine-htmlwriter.js:221-248`). On this path the rows travel with the document, so the
+prop types carry `seriesColumns`/`categoryColumns`/`valueColumn`/`extraColumns` instead and
+`client/src/charts.ts` builds the legacy positional rows
+`[[value…],[category…],[series…],cssColor|null, extra…]` (`RelationRunner.runRelation`
+~70-80) from the inline relation. The same for the pie
+(`[label, |value|, cssColor|null, child?, parent?]`) and for the style box, whose
+`cellCounts` — JSON inside a JSON STRING, `HTMLWriter.scala:1263` /
+`js/ermine/stylebox.js:87` — the adapter computes by doing client-side the
+`AggregateByGroupE` sum the server does relationally.
+
+**One callback could not be avoided: `styleBoxData`.** `withStyleBoxData`
+(`ermine-htmlwriter.js:297-319`) has no `Array.isArray` local branch, unlike
+`withTimeSeriesData` and `withPiechartData`. The 3x3 grid renders entirely from
+`cellCounts`, so the widget works with no request, but the cell-click popup would need a
+server: `relation` and `legend` go out as `null` and that POST fails into the legacy's own
+error callback. `tableData` is unreachable from writer-generated pages and `treeMapData`
+has no client caller, so this is the only one.
+
+**`treeMap` is registered as unsupported**, i.e. deliberately NOT in `defaultRegistry()`:
+`runTreeMap` is undefined in the bundle and `HTMLWriter.treeMap`'s Local branch is
+`sys.error("todo")`, so the dispatcher's error box naming the widget is the honest answer.
+`UNSUPPORTED_WIDGETS` states it in code.
+
+**Chart formats are §4.4's lossy tuple, and the loss is now enumerated.**
+`charts.ts::TUPLE_LOSS` has one row per `CellFormat` case saying whether
+`formatDisplay`'s styleMap has the name at all and what the pair cannot carry;
+`tupleIsLossless(f)` says whether THIS value survives. `(t-tuple)` drives 600 random
+formats through the real legacy function: where the tuple is lossless the two agree
+value for value, and where it is not the legacy must answer exactly what `Default`
+answers — so the documented loss is checked to BE the loss, not asserted. A chart
+therefore cannot format as the table beside it does; that is today's behaviour.
+
+**One value in a chart row is FORMATTED, not raw: the pie's slice label.**
+`RelationRunner.runPieChartData` builds position 0 as
+`lc.format.basicEval(labels) extractNullableString ""` (`RelationRunner.scala:240`) —
+always a String — and nothing in the browser formats it again: `args.labelFmt` reaches
+only `hcutil.pieLegendOptions` (`ermine-htmlwriter.js:2422`), whose merged options end
+with the pie's own `labelFormatter` interpolating `this.name` verbatim, and `this.name` is
+`r[0]` out of `processPieData`. So `pieRows` applies `pieLabelFormat` through `format.ts`
+and stringifies (a null label becomes `""`), the way `styleBoxCells` formats its
+aggregate. Everything else in a chart row travels raw, because Highcharts formats it from
+the tuple. (Found by the J3e review; the first cut sent the raw cell, which silently
+ignored the prop and would have rendered a `[y,m,d]` array for a Date label column.)
+
+**Departures worth recording.** An axis chart has ONE relation for all its series — a
+CHOICE, not a typing limit: a per-series `seriesRows : [..r]` with
+`chartSeries : List (ChartSeries r)` is typeable and strictly more general (different row
+SETS over the same columns, a deferred token each); what no spelling here can express is
+series over relations of different SHAPES, which would need an existential row.
+`structure` (`SeriesStructure.Complex`) is not modelled, so `isSeriesLevelDD` is false. The style
+box's `xBins`/`yBins` are pairs of NUMBERS rather than the server's pre-formatted strings
+— their only consumer, `formatBounds` (`stylebox.js:183`), calls `.toFixed(3)`, which
+throws on a string today. `cellCounts` keys the positions as the literal `xPosition` /
+`yPosition` the renderer reads, so any column name works (server-side the widget only works
+when the columns happen to be called that).
+
 ## 4. Appendix: the de facto widget API (catalogue)
 
 Corrected per skeptic (§7): the writer also emits `registerSource`,

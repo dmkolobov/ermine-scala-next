@@ -6,7 +6,9 @@ renders it; adapters onto the renderers that already exist in `ermine-writers`; 
 one widget (`scorecard`) that is native TypeScript, as the proof that adding one is
 cheap.
 
-Stage J3d of the JSON Stage 2/3 programme (`tracker/json-stage3/brief-J3d-client.md`).
+Stages J3d (`brief-J3d-client.md`: the dispatcher, the tables, the scorecard) and
+J3e (`brief-J3e-charts.md`: the charts and the style box) of the JSON Stage 2/3
+programme.
 
 ## The shape of a response
 
@@ -99,6 +101,7 @@ and an entry in `result.errors`.
 | `src/format.ts` | the port of `formatDisplay`, total over `CellFormat`. |
 | `src/dispatcher.ts` | `render`, the layout containers, the registry lookup, validation, the error box. |
 | `src/legacy.ts` | the `htmlwriter` interface, the `table` and `drilldownTable` adapters, and the two legacy format encodings. |
+| `src/charts.ts` | the `axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar` and `styleBox` adapters, the chart-side legacy argument types, `TUPLE_LOSS`, and the date/colour conversions. |
 | `src/widgets/scorecard.ts` | the new widget, plain DOM. |
 | `src/index.ts` | the public surface and `defaultRegistry()`. |
 
@@ -184,10 +187,67 @@ every relation anywhere in the props, and calls `render`.
 
 ### Names Stage 3 reserves
 
-`table`, `drilldownTable`, `scorecard` are built here. `axisChart`, `pieChart`,
-`drilldownPieChart`, `styleBox`, `drilldownBar` are stage J3e's, and `treeMap` is
-registered as unsupported. Until J3e lands, a document asking for one of those
-renders an error box naming it, which is the intended behaviour.
+`table`, `drilldownTable`, `scorecard`, `axisChart`, `pieChart`,
+`drilldownPieChart`, `styleBox` and `drilldownBar` are all built and registered.
+`treeMap` is **registered as unsupported**: it is the one reserved name with no
+renderer behind it at all — `runTreeMap` is undefined in the `ermine-writers`
+bundle and the Local branch of `HTMLWriter.treeMap` is `sys.error("todo")` — so it
+is deliberately left out of `defaultRegistry()` and a document asking for one gets
+the dispatcher's error box naming it. `UNSUPPORTED_WIDGETS` says so in code;
+`test/charts.test.ts` `(x-treemap)` pins it.
+
+## Charts and the style box
+
+`src/charts.ts` rebuilds, on the client, the argument objects
+`htmlwriter.runTimeSeries`, `runPiechart` / `runPiechartDrilldown`,
+`runDrilldownBar` and `runStylebox` are called with today. Three things about
+that path are worth knowing before reading it.
+
+**The op-list handles are gone.** `selSeries`, `selCategory`, `selValue`,
+`selExtra` and the meta's `colors` are f0 blobs the browser POSTs back to the
+server to *fetch* rows. The Ermine prop types replace them with COLUMN NAMES, and
+the adapter builds the legacy row shapes from the inline relation:
+
+```
+axis series data   [ [value..], [category..], [series..], "#rrggbb"|null, extra… ]
+pie relation       [ label, |value|, "#rrggbb"|null, child?, parent? ]
+style box          cellCounts, a JSON STRING of [{xPosition, yPosition, <aField>, styleBoxAggFormatted}]
+```
+
+Because the data is an array, `withTimeSeriesData` and `withPiechartData` take
+their local branches and never post.
+
+**One callback cannot be avoided.** `withStyleBoxData` has no local branch, so
+clicking a style-box cell always POSTs `styleBoxData`. The grid itself is built
+from `cellCounts`, which the adapter computes, so the widget renders with no
+request; `relation` and `legend` go out as `null` and the click-through popup does
+not work on this path. Nothing throws — the legacy logs through its own error
+callback.
+
+**Chart formats are the LOSSY tuple.** Axes, series, the pie's two formats and
+the style box's `aFormat` all read `HTMLWriter.jsLayoutFormat`'s `[name, arg]`
+pair, not the object form a table cell carries. `legacyFormatTuple` produces it
+and `charts.ts::TUPLE_LOSS` documents the loss per `CellFormat` case: five cases
+(`Verbatim`, `Markdown`, `Pr2`, `Conditional`, `Color`) become a name the legacy
+`formatDisplay` has no entry for and fall back to `Default` there, and
+`Percentage`/`Currency`/`Round`/`IntegralRound` lose their `color` and `negParens`
+flags. A chart therefore cannot format as the table beside it does; that is the
+legacy's behaviour, reproduced, not a regression. `runStylebox` applies
+`formatDisplay` to `aFormat` itself, so it is handed the tuple, never a value.
+
+**Dates.** The chart path wants the legacy `[y, m, d]` triple, and it is built
+client-side from the ISO cell, keyed on the relation column's declared type
+(`Date`/`Timestamp`), never on the shape of the string.
+
+**One value in a chart row is FORMATTED, not raw: the pie's slice label.**
+`RelationRunner.runPieChartData` builds position 0 as
+`lc.format.basicEval(labels) extractNullableString ""`, always a String, and
+nothing in the browser formats it again — `args.labelFmt` reaches only
+`hcutil.pieLegendOptions`, whose merged options end with the pie's own
+`labelFormatter` interpolating `this.name` (which is `r[0]`) verbatim. So
+`pieRows` applies `pieLabelFormat` with `format.ts` and stringifies, with a null
+label becoming `""`. Everything else in a chart row is the raw wire value,
+because Highcharts formats it from the tuple.
 
 ## Known gaps
 
@@ -203,3 +263,18 @@ renders an error box naming it, which is the intended behaviour.
   needs an engine, which is the host page's business.
 - There is no converter from the foreign `Layout.Format` to `CellFormat`: the former
   is a Scala ADT with no Ermine eliminator, so it would need a Scala-side fold.
+- **The style box's cell-click popup does not work** (`styleBoxData` has no local
+  branch, above). The grid does.
+- **An axis chart has ONE relation for all its series.** Server-side each
+  `ChartSeries` carries its own `Tabular`; here the series share `chartRows` and
+  each names its columns inside it. That is a choice, not a typing limit — a
+  per-series `seriesRows : [..r]` with `chartSeries : List (ChartSeries r)` is
+  typeable and strictly more general (different row SETS over the same columns,
+  and a deferred token per series). What no spelling here can express is series
+  over relations of different SHAPES, which would need an existential row.
+- **Series-level drilldown is not modelled.** `SeriesStructure.Complex`'s `trees`
+  is an f0 blob with no JSON equivalent, so `structure` is not emitted and
+  `isSeriesLevelDD` is always false — the Simple behaviour.
+- **The style box grid is fixed at 3x3** (`gridSize = 3`, `js/ermine/stylebox.js`),
+  so `rowLabels`/`columnLabels` want three entries and a position outside `0..2` is
+  dropped by the renderer.

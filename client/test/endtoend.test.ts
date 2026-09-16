@@ -80,4 +80,35 @@ test("(e2e) Doc.SalesReport renders its scorecard and its table", async (t) => {
   assert.deepStrictEqual(cells.get("APAC")!.map((c) => c.formatted), ["APAC", "$98.25", "(4%)"]);
   assert.deepStrictEqual(cells.get("AMER")!.map((c) => c.formatted), ["AMER", "$310.75", "50%"]);
   assert.deepStrictEqual(rows[0]!.map((c) => c.format.type), ["default", "currency", "percentage"]);
+
+  // ---- J3e: the axis chart and the pie, over the SAME relation
+  assert.equal(hw.timeSeries.length, 1);
+  const chart = hw.timeSeries[0]!.args;
+  assert.equal(chart.meta.title, "Sales by region");
+  assert.deepStrictEqual(chart.meta.range.format, ["Round", 1]);
+  assert.deepStrictEqual(chart.meta.range.constraints,
+    { scaled: true, lowerBound: 0, upperBound: null, displayScale: "Linear" });
+  assert.equal(chart.meta.legendOptions.location, "Above");
+  assert.equal(chart.series.length, 1);
+  assert.equal(chart.series[0]!.variant, "Bar");
+  assert.deepStrictEqual(chart.series[0]!.fmtSeries, ["Constant", "Sales"]);
+  // one point per relation row: [[value], [category], [""], null]
+  const points = new Map(
+    chart.series[0]!.data.map((r) => [String((r as unknown[][])[1]![0]), r as unknown[]]));
+  assert.deepStrictEqual([...points.keys()].sort(), ["AMER", "APAC", "EMEA"]);
+  assert.deepStrictEqual(points.get("EMEA"), [[120.5], ["EMEA"], [""], null]);
+  assert.deepStrictEqual(points.get("AMER"), [[310.75], ["AMER"], [""], null]);
+
+  assert.equal(hw.pies.length, 1);
+  const pie = hw.pies[0]!.args;
+  assert.equal(pie.title, "Share of sales");
+  assert.equal(pie.seriesName, "Sales");
+  assert.equal(pie.legendOptions.location, "RightTable");
+  assert.equal(pie.renderHints.enableDataLabels, true);
+  assert.deepStrictEqual(pie.dataFmt, ["Round", 1]);
+  assert.equal(pie.parentCol, null);
+  assert.equal(pie.childCol, null);
+  const slices = new Map(pie.relation.map((r) => [String((r as unknown[])[0]), r as unknown[]]));
+  assert.deepStrictEqual([...slices.keys()].sort(), ["AMER", "APAC", "EMEA"]);
+  assert.deepStrictEqual(slices.get("APAC"), ["APAC", 98.25, null]);
 });

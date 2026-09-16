@@ -3,7 +3,13 @@
 // A field whose Ermine type is `Maybe a` is an OPTIONAL key, so dropping it is not
 // a mutation any schema can refuse -- those are retyped or added to instead.
 
-export const OPTIONAL_KEYS = new Set(["rowGroup", "cardDelta"]);
+export const OPTIONAL_KEYS = new Set([
+  "rowGroup", "cardDelta",
+  // J3e's Maybe fields: Chart.AxisConstraints' bounds, ChartSeries' colour
+  // column, and the pie's colour/child/parent columns
+  "lowerBound", "upperBound", "colorColumn",
+  "pieColorColumn", "pieChildColumn", "pieParentColumn",
+]);
 
 export interface Mutation {
   path: string[];

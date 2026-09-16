@@ -36,6 +36,9 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     Map("Builtin" -> all, "Test" -> all, "Json" -> all, "List" -> all, "Maybe" -> all,
         "Layout.Doc" -> all, "Layout.Widgets.Format" -> all, "Layout.Widgets.Table" -> all,
         "Layout.Widgets.Drilldown" -> all, "Layout.Widgets.Scorecard" -> all,
+        "Layout.Widgets.Chart" -> all, "Layout.Widgets.AxisChart" -> all,
+        "Layout.Widgets.PieChart" -> all, "Layout.Widgets.StyleBox" -> all,
+        "Layout.Widgets.DrilldownBar" -> all,
         "Native.List" -> all)
 
   // =====================================================================
@@ -45,13 +48,25 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     * types a `field` declaration and an Ermine literal can both spell. */
   private val relFieldPool: List[(String, String)] =
     List(("wfName", "String"), ("wfValue", "Double"), ("wfCount", "Int"),
-         ("wfFlag", "Bool"), ("wfParent", "String"), ("wfChild", "String"))
+         ("wfFlag", "Bool"), ("wfParent", "String"), ("wfChild", "String"),
+         // J3e: a css colour column for the chart adapters.  Its Ermine type is
+         // String; "Color" only selects the literal generator, which mints both
+         // well-formed `#rrggbb` and junk, so the adapters' "#RRGGBB or null"
+         // invariant is exercised on both sides.
+         ("wfColor", "Color"))
+
+  /** The Ermine type a pool entry declares (`Color` is a String column). */
+  private def ermineType(ty: String): String = if (ty == "Color") "String" else ty
 
   private def litFor(ty: String): Gen[String] = ty match {
     case "Int"    => Gen.choose(0, 99999).map(_.toString)
     case "String" => Gen.alphaNumStr.map(s => "\"" + s.take(6) + "\"")
     case "Bool"   => Gen.oneOf("True", "False")
     case "Double" => Gen.choose(0, 99999).map(n => (n / 8.0).toString)
+    case "Color"  => Gen.frequency(
+                       (5, Gen.listOfN(6, Gen.oneOf("0123456789abcdef".toList))
+                             .map(cs => "\"#" + cs.mkString + "\"")),
+                       (1, Gen.oneOf("\"red\"", "\"\"", "\"#12345\"")))
   }
 
   /** A literal relation: its `field` declarations, the column names, the source. */
@@ -68,8 +83,25 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
       n    <- Gen.choose(1, 6)
       recs <- Gen.listOfN(n, Gen.sequence[List[String], String](
                 fs.map { case (f, t) => litFor(t).map(f + " = " + _) }).map(_.mkString("{ ", ", ", " }")))
-    } yield RelSrc(fs.map { case (f, t) => "field " + f + " : " + t },
+    } yield RelSrc(fs.map { case (f, t) => "field " + f + " : " + ermineType(t) },
                    fs.map(_._1),
+                   "(mkRelation# (toList# [" + recs.mkString(", ") + "]))")
+
+  /** The style box aggregates on two SMALL integer position columns (the grid is
+    * 3x3), so it gets its own relation rather than a slice of the pool. */
+  private val posRelSrc: Gen[RelSrc] =
+    for {
+      n    <- Gen.choose(1, 8)
+      recs <- Gen.listOfN(n, for {
+                x <- Gen.choose(0, 3)         // 3 is out of the grid on purpose
+                y <- Gen.choose(0, 3)
+                a <- Gen.choose(0, 9999)
+                s <- Gen.alphaNumStr
+              } yield "{ sbAmount = " + (a / 4.0) + ", sbLabel = \"" + s.take(4) +
+                      "\", sbX = " + x + ", sbY = " + y + " }")
+    } yield RelSrc(List("field sbAmount : Double", "field sbLabel : String",
+                        "field sbX : Int", "field sbY : Int"),
+                   List("sbAmount", "sbLabel", "sbX", "sbY"),
                    "(mkRelation# (toList# [" + recs.mkString(", ") + "]))")
 
   private val thresholdSrc: Gen[String] = Gen.oneOf(
@@ -207,7 +239,171 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
         f._1 + " (Inline " + r.expr + ")))",
       "scorecard", "Layout.Widgets.Scorecard", "ScorecardProps", "wrap-Inline" :: f._2)
 
-  val widgetSrc: Gen[WidgetSrc] = Gen.frequency((3, tableSrc), (2, drilldownSrc), (2, scorecardSrc))
+  // =====================================================================
+  // J3e: the chart and style-box generators
+
+  private def scalarTypeSrc(depth: Int): Gen[String] = {
+    val leaf = Gen.zip(Gen.oneOf("String", "Double", "Int", "Date"), bools)
+                  .map { case (n, num) => "(Scalar \"" + n + "\" " + num + ")" }
+    if (depth <= 0) leaf
+    else Gen.frequency((5, leaf),
+      (1, Gen.choose(1, 3).flatMap(k => Gen.listOfN(k, scalarTypeSrc(depth - 1)))
+            .map(ts => "(Compound [" + ts.mkString(", ") + "])")))
+  }
+
+  private def maybeDouble: Gen[String] =
+    Gen.frequency((1, Gen.const("Nothing")),
+                  (2, Gen.choose(0, 9999).map(n => "(Just " + (n / 16.0) + ")")))
+
+  /** An axis.  `nCats` is how many category components the domain has: the
+    * legacy `sortByCategory` compares that many, so the sort list is generated to
+    * match (categoryOrdering, ermine-htmlwriter.js:1589-1601). */
+  private def axisSrc(nCats: Int): Gen[(String, List[String])] =
+    for {
+      lbl <- Gen.alphaNumStr
+      tip <- Gen.alphaNumStr
+      f   <- cellFormatSrc(2)
+      st  <- scalarTypeSrc(1)
+      tk  <- bools
+      cs  <- Gen.frequency(
+               (1, for { lo <- maybeDouble; hi <- maybeDouble; sc <- Gen.oneOf("Linear", "Logarithmic") }
+                     yield ("(Scaled " + lo + " " + hi + " " + sc + ")", List("axis-scaled"))),
+               (1, for {
+                     ds <- Gen.listOfN(math.max(1, nCats), Gen.oneOf("Asc", "Desc"))
+                     k  <- Gen.choose(0, 2)
+                     ov <- Gen.listOfN(k, Gen.zip(Gen.alphaNumStr, Gen.alphaNumStr))
+                   } yield ("(Unscaled [" + ds.mkString(", ") + "] [" +
+                            ov.map { case (a, b) => "(\"" + a.take(3) + "\", \"" + b.take(3) + "\")" }.mkString(", ") +
+                            "])", List("axis-unscaled"))))
+    } yield ("(ChartAxis \"" + lbl.take(6) + "\" \"" + tip.take(6) + "\" " + f._1 + " " + st + " " +
+             tk + " " + cs._1 + ")", f._2 ++ cs._2)
+
+  private val legendSrc: Gen[String] =
+    Gen.oneOf("LegendDefault", "LegendAbove", "LegendOverlay", "LegendRightOverlay",
+              "LegendRightNotOverlay", "LegendRightTable", "LegendHidden")
+      .map(l => "(ChartLegendOptions " + l + ")")
+
+  private def metaSrc(nCats: Int): Gen[(String, List[String])] =
+    for {
+      t  <- Gen.alphaNumStr
+      d  <- axisSrc(nCats)
+      r  <- axisSrc(1)
+      or <- Gen.oneOf("Vertical", "Horizontal")
+      lg <- legendSrc
+      dl <- bools
+    } yield ("(ChartMeta \"" + t.take(6) + "\" " + d._1 + " " + r._1 + " " + or + " " + lg +
+             " (ChartRenderHints " + dl + "))", d._2 ++ r._2)
+
+  private val variantSrc: Gen[(String, List[String])] = Gen.oneOf(
+    List("Line", "Bar", "Step", "Scatter", "StackedBar", "StackedArea", "BoxAndWhiskers")
+      .map(v => Gen.const((v, List("variant-" + v)))) :+
+      Gen.alphaNumStr.map(z => ("(Bubble \"" + z.take(4) + "\")", List("variant-Bubble")))
+  ).flatMap(identity)
+
+  /** One ChartSeries over a generated relation.  Returns the source, the number
+    * of category components (the meta's sort list must match it) and the tags. */
+  private def seriesSrc(rel: RelSrc): Gen[(String, Int, List[String])] =
+    for {
+      ns   <- Gen.choose(0, 2)
+      ss   <- Gen.listOfN(ns, Gen.oneOf(rel.columns))
+      nc   <- Gen.choose(1, 2)
+      cs   <- Gen.listOfN(nc, Gen.oneOf(rel.columns))
+      // a series column naming a column the relation does not have is allowed
+      v    <- Gen.frequency((9, Gen.oneOf(rel.columns)), (1, Gen.const("wfAbsent")))
+      ne   <- Gen.choose(0, 2)
+      es   <- Gen.listOfN(ne, Gen.oneOf(rel.columns))
+      col  <- Gen.frequency((2, Gen.const("Nothing")),
+                            (3, Gen.oneOf(rel.columns).map(c => "(Just \"" + c + "\")")))
+      sf   <- cellFormatSrc(1)
+      efs  <- Gen.listOfN(es.length, cellFormatSrc(1))
+      va   <- variantSrc
+    } yield ("(ChartSeries [" + ss.map("\"" + _ + "\"").mkString(", ") + "] [" +
+             cs.map("\"" + _ + "\"").mkString(", ") + "] \"" + v + "\" [" +
+             es.map("\"" + _ + "\"").mkString(", ") + "] " + col + " " + sf._1 + " [" +
+             efs.map(_._1).mkString(", ") + "] " + va._1 + ")",
+             cs.length,
+             sf._2 ++ efs.flatMap(_._2) ++ va._2 ++
+               (if (col == "Nothing") List("color-absent") else List("color-column")))
+
+  val axisChartSrc: Gen[WidgetSrc] =
+    for {
+      r  <- relSrc
+      k  <- Gen.choose(1, 2)
+      ss <- Gen.listOfN(k, seriesSrc(r))
+      m  <- metaSrc(ss.map(_._2).max)
+    } yield WidgetSrc(r.decls,
+      "(axisChart (AxisChartProps " + m._1 + " [" + ss.map(_._1).mkString(", ") + "] " + r.expr + "))",
+      "axisChart", "Layout.Widgets.AxisChart", "AxisChartProps",
+      "wrap-bare" :: m._2 ++ ss.flatMap(_._3))
+
+  val drilldownBarSrc: Gen[WidgetSrc] =
+    for {
+      r   <- relSrc
+      s   <- seriesSrc(r)
+      m   <- metaSrc(s._2)
+      par <- Gen.oneOf(r.columns)
+      chi <- Gen.oneOf(r.columns)
+    } yield WidgetSrc(r.decls,
+      "(drilldownBar (DrilldownBarProps " + m._1 + " " + s._1 + " \"" + par + "\" \"" + chi + "\" " +
+        r.expr + "))",
+      "drilldownBar", "Layout.Widgets.DrilldownBar", "DrilldownBarProps",
+      "wrap-bare" :: m._2 ++ s._3)
+
+  /** Both pie registry names come off the same props type. */
+  private def pieSrcFor(ctor: String, name: String): Gen[WidgetSrc] =
+    for {
+      r    <- relSrc
+      ttl  <- Gen.alphaNumStr
+      sn   <- Gen.alphaNumStr
+      lbl  <- Gen.oneOf(r.columns)
+      vl   <- Gen.frequency((9, Gen.oneOf(r.columns)), (1, Gen.const("wfAbsent")))
+      col  <- Gen.frequency((2, Gen.const("Nothing")),
+                            (3, Gen.oneOf(r.columns).map(c => "(Just \"" + c + "\")")))
+      dd   <- Gen.oneOf(true, false)
+      chi  <- Gen.oneOf(r.columns)
+      par  <- Gen.oneOf(r.columns)
+      lf   <- cellFormatSrc(1)
+      vf   <- cellFormatSrc(1)
+      lg   <- legendSrc
+      dl   <- bools
+    } yield WidgetSrc(r.decls,
+      "(" + ctor + " (PieChartProps \"" + ttl.take(6) + "\" \"" + sn.take(6) + "\" \"" + lbl + "\" \"" +
+        vl + "\" " + col + " " +
+        (if (dd) "(Just \"" + chi + "\") (Just \"" + par + "\") " else "Nothing Nothing ") +
+        lf._1 + " " + vf._1 + " " + lg + " (ChartRenderHints " + dl + ") (Inline " + r.expr + ")))",
+      name, "Layout.Widgets.PieChart", "PieChartProps",
+      "wrap-Inline" :: (if (dd) "pie-drilldown" else "pie-flat") ::
+        (if (col == "Nothing") "color-absent" else "color-column") :: lf._2 ++ vf._2)
+
+  val pieSrc: Gen[WidgetSrc] = pieSrcFor("pieChart", "pieChart")
+  val drilldownPieSrc: Gen[WidgetSrc] = pieSrcFor("drilldownPieChart", "drilldownPieChart")
+
+  val styleBoxSrc: Gen[WidgetSrc] =
+    for {
+      r    <- posRelSrc
+      xt   <- Gen.alphaNumStr
+      yt   <- Gen.alphaNumStr
+      at   <- Gen.alphaNumStr
+      af   <- cellFormatSrc(1)
+      rl   <- Gen.listOfN(3, Gen.alphaNumStr.map(_.take(4)))
+      cl   <- Gen.listOfN(3, Gen.alphaNumStr.map(_.take(4)))
+      sn   <- bools
+      bins <- Gen.listOfN(3, Gen.zip(Gen.choose(0, 999), Gen.choose(0, 999)))
+    } yield {
+      def binList = bins.map { case (a, b) => "(" + (a / 8.0) + ", " + (b / 8.0) + ")" }.mkString("[", ", ", "]")
+      WidgetSrc(r.decls,
+        "(styleBox (StyleBoxProps \"" + xt.take(5) + "\" \"" + yt.take(5) + "\" \"sbAmount\" \"" +
+          at.take(5) + "\" " + af._1 + " \"sbX\" \"sbY\" [" +
+          rl.map("\"" + _ + "\"").mkString(", ") + "] [" + cl.map("\"" + _ + "\"").mkString(", ") +
+          "] " + sn + " " + binList + " " + binList + " (Inline " + r.expr + ")))",
+        "styleBox", "Layout.Widgets.StyleBox", "StyleBoxProps",
+        "wrap-Inline" :: ("shownumber-" + sn) :: af._2)
+    }
+
+  val widgetSrc: Gen[WidgetSrc] =
+    Gen.frequency((3, tableSrc), (2, drilldownSrc), (2, scorecardSrc),
+                  (3, axisChartSrc), (2, pieSrc), (2, drilldownPieSrc),
+                  (2, styleBoxSrc), (2, drilldownBarSrc))
 
   /** A whole document: a layout tree over generated widgets. */
   final case class DocSrc(decls: List[String], expr: String, widgets: List[WidgetSrc])
@@ -287,6 +483,12 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     List(("table", "Layout.Widgets.Table", "TableProps"),
          ("drilldownTable", "Layout.Widgets.Drilldown", "DrilldownTableProps"),
          ("scorecard", "Layout.Widgets.Scorecard", "ScorecardProps"),
+         ("axisChart", "Layout.Widgets.AxisChart", "AxisChartProps"),
+         // both pie registry names come off the ONE props type
+         ("pieChart", "Layout.Widgets.PieChart", "PieChartProps"),
+         ("drilldownPieChart", "Layout.Widgets.PieChart", "PieChartProps"),
+         ("styleBox", "Layout.Widgets.StyleBox", "StyleBoxProps"),
+         ("drilldownBar", "Layout.Widgets.DrilldownBar", "DrilldownBarProps"),
          ("$node", "Layout.Doc", "Node")).map { case (k, m, n) =>
       (k, Schema.exportNamed(m, n).fold(e => sys.error("exportNamed " + m + "." + n + ": " + e.report), identity))
     }.toMap
@@ -310,7 +512,11 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     * drop a key, retype a leaf, or add one.  `None` when the props hold nothing
     * a mutation could reach. */
   /** The prop fields declared `Maybe a`, whose key is optional on the wire. */
-  val optionalKeys: Set[String] = Set("rowGroup", "cardDelta")
+  val optionalKeys: Set[String] =
+    Set("rowGroup", "cardDelta",
+        // J3e's Maybe fields
+        "lowerBound", "upperBound", "colorColumn",
+        "pieColorColumn", "pieChildColumn", "pieParentColumn")
 
   def mutate(j: Json, seed: Long): Option[Json] = {
     val sites = new ListBuffer[List[String]]
@@ -370,7 +576,8 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
       val errs = Validate.check(schema, props)
       if (errs.nonEmpty) complain(name + " props rejected: " + errs.mkString("; ") + "\n" + props.nospaces.take(600))
       tags += ("widget-" + name)
-      props.field("rows").orElse(props.field("ddRows")).orElse(props.field("cards"))
+      List("rows", "ddRows", "cards", "chartRows", "barRows", "pieRows", "styleBoxRows")
+        .flatMap(props.field(_)).headOption
         .flatMap(_.field(Wire.Kind)).flatMap(_.string).foreach(k => tags += ("kind-" + k))
       // anti-vacuity: one mutation of these very props must be refused
       mutate(props, seed) match {
@@ -394,21 +601,31 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
       }
     }
 
-  property("(a-cov) over 120 fixed cases every widget, every CellFormat case and both deliveries occur") = secure {
-    val results = TestDoc.samples(caseA, 120, 8891L).zipWithIndex.map { case ((s, cfg), i) => checkA(s, cfg, i.toLong) }
+  property("(a-cov) over 200 fixed cases every widget, every CellFormat case and both deliveries occur") = secure {
+    val results = TestDoc.samples(caseA, 200, 8891L).zipWithIndex.map { case ((s, cfg), i) => checkA(s, cfg, i.toLong) }
     val bad = results.collect { case Left(m) => m }
     val tags = results.collect { case Right(t) => t }.flatten.toSet
-    val wantWidgets = Set("widget-table", "widget-drilldownTable", "widget-scorecard")
+    val wantWidgets = Set("widget-table", "widget-drilldownTable", "widget-scorecard",
+                          "widget-axisChart", "widget-pieChart", "widget-drilldownPieChart",
+                          "widget-styleBox", "widget-drilldownBar")
     val wantFormats = Set("Default", "Verbatim", "Markdown", "Constant", "Percentage", "Currency",
                           "Pr1", "Pr2", "DateRange", "Round", "IntegralRound", "Truncate",
                           "Conditional", "Color", "Alias")
     val wantKinds = Set("kind-inline", "kind-deferred")
     val wantWraps = Set("wrap-bare", "wrap-Inline")
-    (bad.isEmpty :| (bad.length + " of 120 failed:\n" + bad.take(2).mkString("\n---\n"))) &&
+    // J3e: every chart variant, both axis constraint arms, both pie shapes and
+    // both presence/absence of the optional colour column
+    val wantChart = Set("variant-Line", "variant-Bar", "variant-Step", "variant-Scatter",
+                        "variant-StackedBar", "variant-StackedArea", "variant-BoxAndWhiskers",
+                        "variant-Bubble", "axis-scaled", "axis-unscaled",
+                        "pie-flat", "pie-drilldown", "color-absent", "color-column",
+                        "shownumber-True", "shownumber-False")
+    (bad.isEmpty :| (bad.length + " of 200 failed:\n" + bad.take(2).mkString("\n---\n"))) &&
       ((wantWidgets -- tags).isEmpty :| ("widgets never generated: " + (wantWidgets -- tags))) &&
       ((wantFormats -- tags).isEmpty :| ("CellFormat cases never generated: " + (wantFormats -- tags))) &&
       ((wantKinds -- tags).isEmpty :| ("deliveries never seen: " + (wantKinds -- tags))) &&
       ((wantWraps -- tags).isEmpty :| ("relation wrappers never generated: " + (wantWraps -- tags))) &&
+      ((wantChart -- tags).isEmpty :| ("chart shapes never generated: " + (wantChart -- tags))) &&
       (tags.contains("mutant-rejected") :| "no mutation was ever refused -- (a) is vacuous")
   }
 
@@ -445,10 +662,39 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     (sb.toString.contains("\"cardFormat\":{\"tag\":\"Default\",\"args\":[]}") :| sb.toString)
   }
 
+  property("(a-pin4) the wire spelling of an axis chart: nullary variant, absent bounds") = secure {
+    val decls = List("field wfName : String", "field wfValue : Double",
+      "gv : Node",
+      "gv = axisChart (AxisChartProps " +
+        "(ChartMeta \"T\" (ChartAxis \"x\" \"x\" Default (Scalar \"String\" False) True (Unscaled [Asc] [])) " +
+        "(ChartAxis \"y\" \"y\" (Round False False 1) (Scalar \"Double\" True) True (Scaled Nothing (Just 9.0) Linear)) " +
+        "Vertical (ChartLegendOptions LegendAbove) (ChartRenderHints False)) " +
+        "[(ChartSeries [] [\"wfName\"] \"wfValue\" [] Nothing (Constant \"S\") [] Line)] " +
+        "(mkRelation# (toList# [{ wfName = \"a\", wfValue = 1.5 }])))").mkString("\n")
+    val rt = fixture.defAndEval(decls, "gv", imps)
+    val doc = Doc.fromRuntime(rt).fold(e => sys.error(e.report), identity)
+    val sb = new java.lang.StringBuilder
+    Write.doc[Id](Doc.document(doc), sb, WriteConfig(), cache())(new TestDoc.ListScanner, Guard.id)
+    val s = sb.toString
+    // a nullary constructor of a multi-constructor type is {"tag":..,"args":[]},
+    // a Maybe field that is Nothing has NO key at all, and Just carries the value
+    (s.contains("\"variant\":{\"tag\":\"Line\",\"args\":[]}") :| ("variant: " + s)) &&
+      (s.contains("\"constraints\":{\"tag\":\"Scaled\",\"upperBound\":9.0,\"displayScale\":\"Linear\"}")
+         :| ("range constraints: " + s)) &&
+      (s.contains("\"constraints\":{\"tag\":\"Unscaled\",\"sortOrders\":[\"Asc\"],\"tickOverrides\":[]}")
+         :| ("domain constraints: " + s)) &&
+      (!s.contains("lowerBound") :| ("a Nothing bound left a key behind: " + s)) &&
+      (!s.contains("colorColumn") :| ("a Nothing colorColumn left a key behind: " + s))
+  }
+
   property("(a-pin3) each prop type exports one schema with its row parameter free") = secure {
     val ids = List(("Layout.Widgets.Table", "TableProps"),
                    ("Layout.Widgets.Drilldown", "DrilldownTableProps"),
-                   ("Layout.Widgets.Scorecard", "ScorecardProps")).map { case (m, n) =>
+                   ("Layout.Widgets.Scorecard", "ScorecardProps"),
+                   ("Layout.Widgets.AxisChart", "AxisChartProps"),
+                   ("Layout.Widgets.PieChart", "PieChartProps"),
+                   ("Layout.Widgets.StyleBox", "StyleBoxProps"),
+                   ("Layout.Widgets.DrilldownBar", "DrilldownBarProps")).map { case (m, n) =>
       session { implicit env =>
         Session.loadModules(List(m))
         Schema.exportNamed(m, n).fold(e => "ERR " + e.report,
@@ -457,7 +703,11 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     }
     ids ?= List("ermine:Layout.Widgets.Table/TableProps r",
                 "ermine:Layout.Widgets.Drilldown/DrilldownTableProps r",
-                "ermine:Layout.Widgets.Scorecard/ScorecardProps r")
+                "ermine:Layout.Widgets.Scorecard/ScorecardProps r",
+                "ermine:Layout.Widgets.AxisChart/AxisChartProps r",
+                "ermine:Layout.Widgets.PieChart/PieChartProps r",
+                "ermine:Layout.Widgets.StyleBox/StyleBoxProps r",
+                "ermine:Layout.Widgets.DrilldownBar/DrilldownBarProps r")
   }
 }
 

@@ -40,6 +40,7 @@ import type { InlineRelation, WireCell } from "./relation";
 import { columnIndex } from "./relation";
 import { defaultFormatEnv, formatDisplay, type FormatEnv, type Formatted } from "./format";
 import type { Widget, WidgetContext } from "./dispatcher";
+import type { RunPiechartArgs, RunStyleboxArgs, RunTimeSeriesArgs } from "./charts";
 
 // --------------------------------------------------------------- the global
 
@@ -82,10 +83,24 @@ export interface RunTabularArgs {
   isDD: boolean;
 }
 
-/** As much of the `htmlwriter` global as the table adapters touch.  Typed from the
- *  Scala emission sites and from tables.js's own uses of it. */
+/** As much of the `htmlwriter` global as the adapters touch.  Typed from the
+ *  Scala emission sites and from the bundle's own uses of it.
+ *
+ *  Note the calling conventions differ: `runTabular` takes ONE map with the id
+ *  inside it, every chart renderer takes `(id, args)`.  `runPiechartDrilldown`
+ *  and `runDrilldownBar` are ALIASES (ermine-htmlwriter.js:2632, :2646) of
+ *  `runPiechart` and `runTimeSeries`; they are listed separately because that is
+ *  how the writer calls them and how a stub records them. */
 export interface HtmlWriter {
   runTabular(args: RunTabularArgs): void;
+  /** J3e.  `runDrilldownBar` is this same function. */
+  runTimeSeries?(id: string, args: RunTimeSeriesArgs): void;
+  runDrilldownBar?(id: string, args: RunTimeSeriesArgs): void;
+  runPiechart?(id: string, args: RunPiechartArgs): void;
+  runPiechartDrilldown?(id: string, args: RunPiechartArgs): void;
+  /** J3e.  Applies `formatDisplay` to `args.aFormat` ITSELF
+   *  (ermine-htmlwriter.js:3583), so it must be handed the TUPLE. */
+  runStylebox?(id: string, args: RunStyleboxArgs): void;
   getScrollbarDimensions?(): { sbw: number; sbh: number };
   showFullPrimaryColumn?(): boolean;
   tableScrollable?(): boolean;
@@ -158,12 +173,15 @@ export function legacyFormat(f: CellFormat): LegacyFormat {
   }
 }
 
+/** `[style name, argument]` -- HTMLWriter.jsLayoutFormat's pair. */
+export type LegacyFormatTuple = [string, unknown];
+
 /** HTMLWriter.jsLayoutFormat (~208-227): the TUPLE form the chart path and the
  *  legacy `formatDisplay` take.  Lossy by construction -- five of the fifteen
  *  cases become a style name `formatDisplay`'s styleMap does not have, and fall
- *  back to Default there.  Exported because the agreement property drives the
- *  legacy function through it, and because J3e's chart adapters need it. */
-export function legacyFormatTuple(f: CellFormat): [string, unknown] {
+ *  back to Default there.  `charts.ts::TUPLE_LOSS` documents the loss case by
+ *  case and `test/charts.test.ts` drives the real legacy function through it. */
+export function legacyFormatTuple(f: CellFormat): LegacyFormatTuple {
   switch (f.tag) {
     case "Default": return ["Default", null];
     case "Markdown": return ["MarkdownFmt", null];

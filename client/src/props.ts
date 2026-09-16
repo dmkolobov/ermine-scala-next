@@ -109,6 +109,135 @@ export interface ScorecardProps<R = import("./relation").InlineRelation> {
   cards: R;
 }
 
+// --------------------------------------------------------------- charts (J3e)
+
+/** Layout.Widgets.Chart.LegendLocation -- writers.ChartLegendLocation. */
+export type LegendLocation =
+  | "LegendDefault" | "LegendAbove" | "LegendOverlay" | "LegendRightOverlay"
+  | "LegendRightNotOverlay" | "LegendRightTable" | "LegendHidden";
+
+/** Layout.Widgets.Chart.ChartLegendOptions */
+export interface ChartLegendOptions {
+  legendLocation: LegendLocation;
+}
+
+/** Layout.Widgets.Chart.ChartRenderHints */
+export interface ChartRenderHints {
+  enableDataLabels: boolean;
+}
+
+/** Layout.Widgets.Chart.Orientation */
+export type Orientation = "Vertical" | "Horizontal";
+
+/** Layout.Widgets.Chart.DisplayScale */
+export type DisplayScale = "Linear" | "Logarithmic";
+
+/** Layout.Widgets.Chart.SortDir */
+export type SortDir = "Asc" | "Desc";
+
+/** Layout.Widgets.Chart.ScalarType */
+export type ScalarType =
+  | { tag: "Scalar"; typeName: string; typeNumeric: boolean }
+  | { tag: "Compound"; componentTypes: ScalarType[] };
+
+/** Layout.Widgets.Chart.AxisConstraints.  `lowerBound`/`upperBound` are `Maybe
+ *  Double`, so their keys are OPTIONAL. */
+export type AxisConstraints =
+  | { tag: "Scaled"; lowerBound?: number; upperBound?: number; displayScale: DisplayScale }
+  | { tag: "Unscaled"; sortOrders: SortDir[]; tickOverrides: [string, string][] };
+
+/** Layout.Widgets.Chart.ChartAxis */
+export interface ChartAxis {
+  axisLabel: string;
+  tooltipLabel: string;
+  axisFormat: CellFormat;
+  scalarType: ScalarType;
+  showTicks: boolean;
+  constraints: AxisConstraints;
+}
+
+/** Layout.Widgets.Chart.ChartVariant */
+export type ChartVariant =
+  | { tag: "Line"; args: [] }
+  | { tag: "Bar"; args: [] }
+  | { tag: "Step"; args: [] }
+  | { tag: "Scatter"; args: [] }
+  | { tag: "StackedBar"; args: [] }
+  | { tag: "StackedArea"; args: [] }
+  | { tag: "BoxAndWhiskers"; args: [] }
+  | { tag: "Bubble"; zLabel: string };
+
+/** Layout.Widgets.Chart.ChartSeries */
+export interface ChartSeries {
+  seriesColumns: string[];
+  categoryColumns: string[];
+  valueColumn: string;
+  extraColumns: string[];
+  colorColumn?: string;
+  seriesFormat: CellFormat;
+  extraFormats: CellFormat[];
+  variant: ChartVariant;
+}
+
+/** Layout.Widgets.Chart.ChartMeta */
+export interface ChartMeta {
+  chartTitle: string;
+  domainAxis: ChartAxis;
+  rangeAxis: ChartAxis;
+  orientation: Orientation;
+  legendOptions: ChartLegendOptions;
+  renderHints: ChartRenderHints;
+}
+
+/** Layout.Widgets.AxisChart.AxisChartProps -- one relation for every series. */
+export interface AxisChartProps<R = import("./relation").WireRelation> {
+  chartMeta: ChartMeta;
+  chartSeries: ChartSeries[];
+  chartRows: R;
+}
+
+/** Layout.Widgets.DrilldownBar.DrilldownBarProps -- one series, always. */
+export interface DrilldownBarProps<R = import("./relation").WireRelation> {
+  barMeta: ChartMeta;
+  barSeries: ChartSeries;
+  barParentColumn: string;
+  barChildColumn: string;
+  barRows: R;
+}
+
+/** Layout.Widgets.PieChart.PieChartProps -- `pieRows` is `Inline r`. */
+export interface PieChartProps<R = import("./relation").InlineRelation> {
+  pieTitle: string;
+  seriesName: string;
+  pieLabelColumn: string;
+  pieValueColumn: string;
+  pieColorColumn?: string;
+  pieChildColumn?: string;
+  pieParentColumn?: string;
+  pieLabelFormat: CellFormat;
+  pieValueFormat: CellFormat;
+  pieLegend: ChartLegendOptions;
+  pieHints: ChartRenderHints;
+  pieRows: R;
+}
+
+/** Layout.Widgets.StyleBox.StyleBoxProps -- `styleBoxRows` is `Inline r`. */
+export interface StyleBoxProps<R = import("./relation").InlineRelation> {
+  xTitle: string;
+  yTitle: string;
+  aggColumn: string;
+  aggTitle: string;
+  aggFormat: CellFormat;
+  xPositionColumn: string;
+  yPositionColumn: string;
+  rowLabels: string[];
+  columnLabels: string[];
+  showNumber: boolean;
+  xBins: [number, number][];
+  yBins: [number, number][];
+  styleBoxRows: R;
+}
+
 /** Layout.Doc.Node, the layout tree.  `props` is whatever the widget declares. */
 export type DocNode =
   | { tag: "Widget"; name: string; props: unknown }

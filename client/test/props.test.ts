@@ -9,12 +9,28 @@ import { z } from "zod";
 
 import {
   TablePropsSchema, DrilldownTablePropsSchema, ScorecardPropsSchema,
-  CellFormatSchema, DocNodeSchema, WIDGET_PROP_SCHEMAS,
+  AxisChartPropsSchema, PieChartPropsSchema, StyleBoxPropsSchema, DrilldownBarPropsSchema,
+  CellFormatSchema, DocNodeSchema, WIDGET_PROP_SCHEMAS, UNSUPPORTED_WIDGETS,
 } from "../src/generated";
+// the shared chart types live inside the generated axis-chart module, which is
+// where `ermine-schema --zod` inlines every $def it reaches
+import {
+  Layout_Widgets_Chart_AxisConstraints as AxisConstraintsSchema,
+  Layout_Widgets_Chart_ChartAxis as ChartAxisSchema,
+  Layout_Widgets_Chart_ChartMeta as ChartMetaSchema,
+  Layout_Widgets_Chart_ChartSeries as ChartSeriesSchema,
+  Layout_Widgets_Chart_ChartVariant as ChartVariantSchema,
+  Layout_Widgets_Chart_DisplayScale as DisplayScaleSchema,
+  Layout_Widgets_Chart_LegendLocation as LegendLocationSchema,
+  Layout_Widgets_Chart_Orientation as OrientationSchema,
+  Layout_Widgets_Chart_ScalarType as ScalarTypeSchema,
+  Layout_Widgets_Chart_SortDir as SortDirSchema,
+} from "../src/generated/axisChart";
 import { COLUMN_TYPES, InlineRelationSchema, DeferredRelationSchema, WireRelationSchema, isWireRelation } from "../src/relation";
 import { alignmentOf, columnTypeOf } from "../src/legacy";
+import { legacyAxis, legacyScalarType, legendLocationOf } from "../src/charts";
 import { evalCondition } from "../src/format";
-import type { CellCondition, ColumnAlign, ColumnKind, Threshold } from "../src/props";
+import type { CellCondition, ColumnAlign, ColumnKind, LegendLocation, Threshold } from "../src/props";
 
 // The vocabularies src/props.ts declares.  Kept here as literals on purpose: the
 // point of the pin is that the generated zod and these two lists must agree, so
@@ -207,7 +223,101 @@ test("(p-relation-guard) isWireRelation does not mistake a props record for a re
   assert.equal(isWireRelation(null), false);
 });
 
-test("(p-registry) every registry name has a generated schema", () => {
+test("(p-registry) every registry name has a generated schema, and treeMap has none", () => {
   assert.deepStrictEqual(Object.keys(WIDGET_PROP_SCHEMAS).sort(),
-    ["drilldownTable", "scorecard", "table"]);
+    ["axisChart", "drilldownBar", "drilldownPieChart", "drilldownTable", "pieChart",
+     "scorecard", "styleBox", "table"]);
+  // the two pie names share ONE props type, as Layout/Widgets/PieChart.e declares
+  assert.equal(WIDGET_PROP_SCHEMAS["pieChart"], WIDGET_PROP_SCHEMAS["drilldownPieChart"]);
+  // treeMap is the reserved name with no renderer: no schema either, so a
+  // document naming it cannot even get as far as validation
+  assert.equal(WIDGET_PROP_SCHEMAS["treeMap"], undefined);
+  assert.deepStrictEqual([...UNSUPPORTED_WIDGETS], ["treeMap"]);
+});
+
+// --------------------------------------------------------- J3e: the charts
+
+test("(p-charts) the four chart prop types as declared in Layout/Widgets/*.e", () => {
+  assert.deepStrictEqual(keysOf(AxisChartPropsSchema), ["chartMeta", "chartRows", "chartSeries"]);
+  assert.deepStrictEqual(optionalKeys(AxisChartPropsSchema), []);
+  // `chartRows` is a BARE relation: both arms, resolved by the dispatcher
+  assert.deepStrictEqual(
+    unwrap(unwrap(AxisChartPropsSchema).shape.chartRows).options.map((o: any) => o.shape.kind.value).sort(),
+    ["deferred", "inline"]);
+
+  assert.deepStrictEqual(keysOf(DrilldownBarPropsSchema),
+    ["barChildColumn", "barMeta", "barParentColumn", "barRows", "barSeries"]);
+  assert.deepStrictEqual(optionalKeys(DrilldownBarPropsSchema), []);
+
+  assert.deepStrictEqual(keysOf(PieChartPropsSchema),
+    ["pieChildColumn", "pieColorColumn", "pieHints", "pieLabelColumn", "pieLabelFormat",
+     "pieLegend", "pieParentColumn", "pieRows", "pieTitle", "pieValueColumn",
+     "pieValueFormat", "seriesName"]);
+  assert.deepStrictEqual(optionalKeys(PieChartPropsSchema),
+    ["pieChildColumn", "pieColorColumn", "pieParentColumn"],
+    "only the three `Maybe String` fields may be optional");
+  // `pieRows` is `Inline r`: the inline arm alone, no `kind: "deferred"` to handle
+  const pieRel = unwrap(unwrap(PieChartPropsSchema).shape.pieRows);
+  assert.deepStrictEqual(keysOf(pieRel), ["columns", "kind", "rowCount", "rows"]);
+  assert.equal(pieRel.safeParse({ kind: "deferred", columns: [], token: "t", expires: "2026-01-01T00:00:00.000Z" }).success, false);
+
+  assert.deepStrictEqual(keysOf(StyleBoxPropsSchema),
+    ["aggColumn", "aggFormat", "aggTitle", "columnLabels", "rowLabels", "showNumber",
+     "styleBoxRows", "xBins", "xPositionColumn", "xTitle", "yBins", "yPositionColumn", "yTitle"]);
+  assert.deepStrictEqual(optionalKeys(StyleBoxPropsSchema), []);
+  const sbRel = unwrap(unwrap(StyleBoxPropsSchema).shape.styleBoxRows);
+  assert.deepStrictEqual(keysOf(sbRel), ["columns", "kind", "rowCount", "rows"]);
+});
+
+test("(p-chart-types) the shared chart vocabulary, and every enum member reaches an adapter", () => {
+  assert.deepStrictEqual(keysOf(ChartMetaSchema),
+    ["chartTitle", "domainAxis", "legendOptions", "orientation", "rangeAxis", "renderHints"]);
+  assert.deepStrictEqual(keysOf(ChartAxisSchema),
+    ["axisFormat", "axisLabel", "constraints", "scalarType", "showTicks", "tooltipLabel"]);
+  assert.deepStrictEqual(keysOf(ChartSeriesSchema),
+    ["categoryColumns", "colorColumn", "extraColumns", "extraFormats", "seriesColumns",
+     "seriesFormat", "valueColumn", "variant"]);
+  assert.deepStrictEqual(optionalKeys(ChartSeriesSchema), ["colorColumn"]);
+
+  assert.deepStrictEqual(unionArms(ScalarTypeSchema), {
+    Scalar: ["typeName", "typeNumeric"], Compound: ["componentTypes"],
+  });
+  assert.deepStrictEqual(unionArms(AxisConstraintsSchema), {
+    Scaled: ["displayScale", "lowerBound", "upperBound"],
+    Unscaled: ["sortOrders", "tickOverrides"],
+  });
+  assert.deepStrictEqual(unionTags(ChartVariantSchema),
+    ["Bar", "BoxAndWhiskers", "Bubble", "Line", "Scatter", "StackedArea", "StackedBar", "Step"]);
+  // only Bubble is non-nullary
+  assert.deepStrictEqual(unionArms(ChartVariantSchema)["Bubble"], ["zLabel"]);
+
+  // ---- the enum MEMBERS, both directions.  A location added in Ermine that the
+  // adapter does not strip would reach Highcharts as a class name it has no rule
+  // for; a DisplayScale or SortDir added would travel unrecognised.
+  const locations = enumValues(LegendLocationSchema);
+  assert.deepStrictEqual(locations,
+    ["LegendAbove", "LegendDefault", "LegendHidden", "LegendOverlay",
+     "LegendRightNotOverlay", "LegendRightOverlay", "LegendRightTable"]);
+  const stripped = locations.map((l) => legendLocationOf(l as LegendLocation));
+  assert.deepStrictEqual(stripped.sort(),
+    ["Above", "Default", "Hidden", "Overlay", "RightNotOverlay", "RightOverlay", "RightTable"]);
+  stripped.forEach((s) => assert.ok(!s.startsWith("Legend"), `${s} kept its prefix`));
+  assert.deepStrictEqual(enumValues(OrientationSchema), ["Horizontal", "Vertical"]);
+  assert.deepStrictEqual(enumValues(DisplayScaleSchema), ["Linear", "Logarithmic"]);
+  assert.deepStrictEqual(enumValues(SortDirSchema), ["Asc", "Desc"]);
+
+  // every ScalarType arm is handled by the adapter (a missing case would fall
+  // off the switch and hand Highcharts `undefined`)
+  assert.deepStrictEqual(
+    legacyScalarType({ tag: "Scalar", typeName: "Int", typeNumeric: true }),
+    { name: "Int", isNumeric: true });
+  assert.equal(legacyScalarType({ tag: "Compound", componentTypes: [] }).name, "compound");
+  // and both AxisConstraints arms
+  const axis = (c: any): any => legacyAxis({
+    axisLabel: "l", tooltipLabel: "t", axisFormat: { tag: "Default", args: [] },
+    scalarType: { tag: "Scalar", typeName: "String", typeNumeric: false },
+    showTicks: true, constraints: c,
+  }).constraints;
+  assert.equal(axis({ tag: "Scaled", displayScale: "Logarithmic" }).scaled, true);
+  assert.equal(axis({ tag: "Unscaled", sortOrders: [], tickOverrides: [] }).scaled, false);
 });

@@ -23,11 +23,18 @@ export Layout.Widgets.Format
 export Layout.Widgets.Table
 export Layout.Widgets.Drilldown
 export Layout.Widgets.Scorecard
+export Layout.Widgets.Chart
+export Layout.Widgets.AxisChart
+export Layout.Widgets.PieChart
+export Layout.Widgets.StyleBox
+export Layout.Widgets.DrilldownBar
 import List using empty_Bracket; cons_Bracket
 
--- | The registry names Stage 3 reserves.  "table", "drilldownTable" and the new
--- "scorecard" are built (J3d); the charts and "styleBox" are J3e's, and "treeMap"
--- is registered as unsupported.
+-- | The registry names Stage 3 reserves.  Every one of them is built except
+-- "treeMap", which has no JS renderer at all (`runTreeMap` is undefined in the
+-- bundle and the Local branch of HTMLWriter.treeMap is `sys.error("todo")`): it
+-- is deliberately left OUT of the client registry, so a document asking for one
+-- gets the dispatcher's error box naming it.
 widgetNames : List String
 widgetNames = ["table", "drilldownTable", "axisChart", "pieChart",
                "drilldownPieChart", "styleBox", "drilldownBar", "treeMap",
