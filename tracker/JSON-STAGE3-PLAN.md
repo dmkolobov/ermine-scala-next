@@ -97,7 +97,7 @@ col       {"name": "<column>", "type": <Wire.columnTypes>, "nullable": <bool>}
 | J3c | json-runner | `json/Runner.scala` (boot, report lookup, `Params -> Node` check, decode, apply, write on one connection), HTTP server (`POST /report/<Module>`, `GET /data/<token>`), `bin/ermine-serve` | J2a, J3b | 2 |
 | J3d | json-client | `modules/Layout/Widgets.e` prop types for the seven live widgets + one new widget; `client/` TS package: zod generated from those types, dispatcher, adapters to the legacy renderers, `formatDisplay` port, the new widget end to end | J3a, J3b | 2 |
 | J3e | json-charts | Chart/stylebox prop types and adapters (`axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar`, `styleBox`; `treeMap` registered as unsupported) | J3d | 3 |
-| J2b | json-spread | `Spread Json` wrapper (encode merge, schema additional properties, decode leftovers); then the builtin `Json a` constraint if time allows | J2a, J3a | 3 |
+| J2b | json-spread | `Spread Json` wrapper (encode merge, schema additional properties, decode leftovers); then the builtin `Json a` constraint if time allows | J2a, J3a | 3 -- BUILT (Part 1; Part 2 = design only) |
 | P1..P3 | json-encode-2.11 | 2.11 ports: P1 = contract+J3a+J2a, P2 = J3b+J3c, P3 = J3d+J2b | landings | after each |
 
 Reviews: `brief-review.md`, one independent reviewer per stage before landing. Ports:
@@ -141,3 +141,12 @@ branch (they share `Lib.scala`).
   (one red in twenty runs), and `TestDecode`'s null-wrapper equivalence had a hole for a
   raw `Some(JNull)` inside a native container. json-encode f8a789d1 (J3a) then merged into
   json-decode; see `tracker/json-stage3/report-J2a.md` for the post-merge gate numbers.
+- 2026-09-16 ~12:00 J2b BUILT on json-spread (off json-decode d2177ca5): `Spread Json`
+  merges into the encoder's object, opens the exporter's (`additionalProperties: true`,
+  zod `.passthrough()`) and is gathered back by the decoder; `Spread` of anything but
+  `Json`, a second one per constructor and a positional one are refused by the exporter,
+  by `Decode.entry` and by `Encode.rejections` alike, at the same field. `TestSchema.shape`
+  grew a spread row, so the encode/schema property, the round trip and the agreement
+  property all carry spread types. **Part 2 (the builtin `Json a` constraint) is a DESIGN
+  ONLY** -- `tracker/json-stage3/J2b-constraint-design.md`; see `report-J2b.md` for the
+  gate numbers and the reason.

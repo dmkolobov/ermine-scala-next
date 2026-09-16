@@ -52,7 +52,11 @@ import scalaparsers.Supply
   *    one; a field whose DECLARED type is `Maybe a` is an optional key
   *    (absent -> `Nothing`, present -> `Just` of an `a`); positional <-
   *    `{"tag": C, "args": [..]}`.  Every object is closed: an unknown key is
-  *    an error.  The type's arguments are substituted into the field types.
+  *    an error -- EXCEPT a constructor with a field declared `Spread Json`
+  *    (Stage 2b), which is open: every key the constructor does not declare
+  *    is gathered, in document order, into the `JObj` that field holds, the
+  *    inverse of the encoder's merge.  The type's arguments are substituted
+  *    into the field types.
   *    The value is `Data(<the registry's constructor Global>, args)`, which
   *    is what `Runtime.accumData` builds.
   *  - the stdlib `Json` type <- any document, exactly as `Encode.fromArgonaut`
@@ -155,6 +159,11 @@ object Decode {
     * (a recursive type refers to itself this way). */
   private final class DataRef(val key: String, val table: mutable.HashMap[String, DataP]) extends Plan
   private case object JsonP extends Plan
+  /** A `Spread Json` constructor field (Stage 2b): it decodes no key of its
+    * own -- every key the constructor does not declare is gathered into the
+    * `JObj` it holds, in document order.  `con` is the registry's `Spread`
+    * constructor. */
+  private final case class SpreadP(con: Global) extends Plan
 
   private final class DataP(val typeName: String) {
     /** Constructor name -> Global, for an all-nullary type. */
@@ -200,6 +209,12 @@ object Decode {
       else if (g.module == Encode.jsonModule && g.string == "Json") { arity(g, args, 0, path); JsonP }
       else if (g.module == Encode.jsonModule && (g.string == "Inline" || g.string == "Deferred"))
         refuse(path, "a relation (" + g.string + ") cannot be decoded: its rows never come from the request")
+      // Stage 2b: a Spread is not a value of its own -- `constructor` takes
+      // the named field that declares it out of the plan before the walk
+      // reaches here, and there is no object to gather anywhere else
+      else if (g.module == Encode.jsonModule && g.string == "Spread")
+        refuse(path, "a Spread belongs in a named constructor field declared Spread Json, which gathers the " +
+                     "keys the constructor does not declare; there is nothing to gather into here")
       else if (g.module == "Native.List" && g.string == "List#") NativeListP(plan(arg1(g, args, path), path + "[]"))
       else if (g.module == "Vector" && g.string == "Vector") VectorP(plan(arg1(g, args, path), path + "[]"))
       else if (g.module == "Native.Maybe" && g.string == "Maybe#") {
@@ -335,26 +350,60 @@ object Decode {
         refuse(base, "an operator constructor has no stable discriminator tag " +
                      "(a tag must be an alphanumeric constructor name)")
       val ex = c.existentials.toSet
+      // the SPREAD flag comes off the type as DECLARED (`Encode.isSpread`,
+      // the encoder's own test), before the instantiation is substituted in
       val fields = c.fields.zipWithIndex.map { case ((nm, t0), i) =>
         if (Type.typeVars(t0).exists(ex)) refuse(at(i), "an existential cannot be decoded from JSON")
-        (nm, Type.subType(sub, t0), i)
+        (nm, Type.subType(sub, t0), i, Encode.isSpread(t0))
       }
       val named = fields.count(_._1.isDefined)
       if (named != 0 && named != fields.length)
         refuse(base, "constructor fields are partly named; name all of them or none")
+      // Stage 2b: at most one Spread field, named; the encoder and the
+      // exporter refuse the same two at the same field
+      val spreads = fields.filter(_._4)
+      spreads.drop(1).headOption foreach { f =>
+        refuse(at(f._3), "a constructor merges at most one Spread field (field " + spreads.head._3 + " is the first)")
+      }
+      if (spreads.nonEmpty && named != fields.length)
+        refuse(at(spreads.head._3), "a Spread field has nothing to gather into in a positional constructor; " +
+                                    "name the constructor's fields")
       if (named == fields.length && fields.nonEmpty) {
-        val fs = fields.map { case (nm, t, i) =>
+        val fs = fields.map { case (nm, t, i, isSpread) =>
           val k = nm.get
           if (tagged && k == "tag")
             refuse(at(i), "a field named tag collides with the discriminator of a type with several constructors")
-          declaredMaybe(t) match {
+          if (isSpread) FieldP(k, SpreadP(spreadCon(t, at(i))), optional = true)
+          else declaredMaybe(t) match {
             case Some(inner) => FieldP(k, plan(inner, at(i)), optional = true)
             case None        => FieldP(k, plan(t, at(i)), optional = false)
           }
         }
         ConP(c.name, Nil, Some(fs))
-      } else ConP(c.name, fields.map { case (_, t, i) => plan(t, at(i)) }, None)
+      } else ConP(c.name, fields.map { case (_, t, i, _) => plan(t, at(i)) }, None)
     }
+
+    /** A `Spread` field's constructor, at the instantiation: only `Spread
+      * Json` gathers keys (a record's or a data type's keys are known from
+      * its declaration, so the constructor can name them as fields).  The
+      * `Global` is the registry's, which is what `Runtime.accumData` builds
+      * and what a round trip compares against. */
+    private def spreadCon(t: Type, path: String): Global =
+      unfurl(resolve(t)) match {
+        case (Type.Con(_, g, decl, _), a :: Nil) =>
+          unfurl(resolve(a)) match {
+            case (Type.Con(_, j, _, _), Nil) if j.module == Encode.jsonModule && j.string == "Json" => ()
+            case _ => refuse(path, "only Spread Json gathers an object's spare keys, not Spread " +
+                                   Schema.renderType(a) + " (the keys of a record or a data type are known " +
+                                   "from its declaration: name them as fields)")
+          }
+          val d = decl match {
+            case dd: DataConDecl => Some(dd)
+            case _               => DataConDecl.forType(g)
+          }
+          d.flatMap(_.constructors.headOption).map(_.name).getOrElse(Global(Encode.jsonModule, "Spread"))
+        case _ => refuse(path, "Spread takes one type argument")
+      }
 
     /** `Some(a)` when the declared type is headed by `Builtin.Maybe` -- the
       * encoder's test for an optional key (Encode.isMaybe), and the
@@ -684,6 +733,10 @@ object Decode {
 
       case r: DataRef => data(path, r.table(r.key), j)
 
+      // never reached: `recordStyle` gathers a spread field's keys itself
+      case SpreadP(_) =>
+        Left(Error(path.render, "a Spread field is gathered by its constructor, not decoded on its own"))
+
       case JsonP =>
         j.array match {
           case Some(xs) => Right(Kids(indexed(path, xs, JsonP), vs => ErmineJson.arr(vs)))
@@ -742,24 +795,50 @@ object Decode {
       }
     }
 
+  /** One constructor field's contribution to the value: a constant (an
+    * absent optional key), the next decoded kid (wrapped in `Just` when the
+    * field is a `Maybe`), or the `Spread` gathering the keys the declaration
+    * does not name, which takes one kid per such key. */
+  private sealed abstract class Slot
+  private final case class Const(r: Runtime) extends Slot
+  private final case class Take(just: Boolean) extends Slot
+  private final case class Gather(con: Global, keys: List[String]) extends Slot
+
+  private def isSpreadField(f: FieldP): Boolean = f.plan match {
+    case SpreadP(_) => true
+    case _          => false
+  }
+
   private def recordStyle(path: Path, c: ConP, fs: List[FieldP], tagged: Boolean,
                           keys: List[String], m: Map[String, Json]): Either[Error, Step] = {
-    val allowed = fs.map(_.name).toSet ++ (if (tagged) Set("tag") else Set[String]())
-    closed(path, keys, allowed).right.flatMap { _ =>
-      fs.find(f => !f.optional && !m.contains(f.name)) match {
+    val spread = fs.exists(isSpreadField)
+    val allowed = fs.filterNot(isSpreadField).map(_.name).toSet ++ (if (tagged) Set("tag") else Set[String]())
+    // A constructor with a Spread field is OPEN: every key it does not
+    // declare is gathered into the spread instead of being refused (which
+    // is why the exporter drops `additionalProperties: false` for it).
+    val spare = if (spread) keys.filterNot(allowed.contains) else Nil
+    val check: Either[Error, Unit] = if (spread) Right(()) else closed(path, keys, allowed)
+    check.right.flatMap { _ =>
+      fs.find(f => !isSpreadField(f) && !f.optional && !m.contains(f.name)) match {
         case Some(f) => Left(Error(path.render, "the required key " + quote(f.name) + " is missing"))
         case None =>
-          val kids = fs.flatMap(f => m.get(f.name).map(v => Task(path / ("." + f.name), f.plan, v)).toList)
-          // per field: Left(a constant for an absent optional key), Right(wrap the next kid in Just?)
-          val slots: List[Either[Runtime, Boolean]] = fs.map { f =>
-            if (m.contains(f.name)) Right(f.optional) else Left(nothingV)
+          val kids = fs.flatMap { f =>
+            if (isSpreadField(f)) spare.map(k => Task(path / ("." + k), JsonP, m(k)))
+            else m.get(f.name).map(v => Task(path / ("." + f.name), f.plan, v)).toList
+          }
+          val slots: List[Slot] = fs.map { f =>
+            f.plan match {
+              case SpreadP(g) => Gather(g, spare)
+              case _          => if (m.contains(f.name)) Take(f.optional) else Const(nothingV)
+            }
           }
           val g = c.name
           Right(Kids(kids, vs => {
             val it = vs.iterator
             Data(g, slots.map {
-              case Left(k)     => k
-              case Right(just) => val v = it.next(); if (just) Data(justG, Array(v)) else v
+              case Const(k)          => k
+              case Take(just)        => val v = it.next(); if (just) Data(justG, Array(v)) else v
+              case Gather(sg, ks)    => Data(sg, Array(ErmineJson.obj(ks.map(k => (k, it.next())))))
             }.toArray)
           }))
       }

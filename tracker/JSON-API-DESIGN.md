@@ -258,7 +258,7 @@ as *the* mapping; mirrored by the schema exporter and the params decoder):
 | `{..(\|f1..fn\|)}` closed record | object, unqualified keys, `additionalProperties:false` | keys in sorted order in both the encoder and the schema (`Rec` is an unordered `Map`, `Runtime.scala:161`); export fails on key collision across modules (§6) |
 | open row `{..r}` | export error unless instantiated | encoder still works (it sees the Rec) |
 | `data` all-nullary | string enum | |
-| single-constructor `data` with named fields | plain object, no `tag` | the common props shape (§3.1b); a `Maybe` field is an optional key; a field of type `Spread Json` is merged into the parent object and exports as unknown additional properties. BUILT, Stage 1a (§3.7a), less `Spread` |
+| single-constructor `data` with named fields | plain object, no `tag` | the common props shape (§3.1b); a `Maybe` field is an optional key; a field of type `Spread Json` is merged into the parent object and exports as unknown additional properties. BUILT, Stage 1a (§3.7a); the `Spread` half BUILT in Stage 2b (§3.7b') |
 | multi-constructor `data` with named fields | object, `"tag"` first, then the fields in declaration order | BUILT, Stage 1a (§3.7a) |
 | `data` with positional fields | `{"tag": C, "args": [...]}` | |
 | Relation r | `JData` → §3.4 | never inline in `toJson#` |
@@ -879,6 +879,60 @@ the serializable fragment and the executable reading of what `Schema` exports.
   `DataConDecl` registry is process-global and last-writer-wins, so
   concurrently-running properties could encode each other's values with the
   wrong field list (seen once in twenty runs).
+
+## 3.7b' Stage 2b as built (2026-09-16, branch `json-spread`)
+
+(Numbered `3.7b'` and kept beside §3.7b: J3b's document writer takes §3.7c.)
+
+`Spread Json`: the §3.1b item 2 escape hatch for the long tail of options
+nobody wants to model, built as ONE rule shared by the encoder, the exporter
+and the params decoder.
+
+- **The type**: `data Spread a = Spread a` in `modules/Json.e` (an ordinary
+  Ermine declaration, like `Inline`/`Deferred`; no `Lib.scala` primitive).
+  Only `Spread Json` is meaningful. **`Spread` of a record or of any other
+  type is refused**, deliberately: a record's and a `data`'s keys are known
+  from their own declarations, so spreading one would be a second spelling of
+  fields the constructor can already name, with its own collision rule, its
+  own schema merge and its own decode split to maintain; `Json` is the one
+  case nothing else covers.
+- **Encode**: a NAMED constructor field whose DECLARED type is headed by
+  `Json.Spread` is merged -- the keys of the `JObj` it holds are written into
+  the constructor's own object, after every declared field, in the object's
+  order. Errors, each naming the path: a merged key that collides with a
+  DECLARED field name (an omitted `Maybe` field's name included -- the
+  decoder reads such a key back as the field) or with `tag`; a key the
+  spread repeats; a payload that is not an object; a second `Spread` field in
+  one constructor; a `Spread` in a positional constructor; a `Spread` value
+  anywhere else. The SPREAD field's own name is the one declared name that is
+  NOT reserved: it is no key of any document of the type, so it is merged and
+  gathered like any other, and reserving it would have made the encoder refuse
+  a document the schema declares legal and the decoder accepts (J2b review
+  finding 1).
+- **Schema**: the spread field is NOT a property and the arm carries
+  `additionalProperties: true` instead of the usual `false`; everything else
+  about the arm is unchanged, so in a multi-constructor type the arm that
+  carries the spread is open while its siblings stay closed. `Zod` renders
+  such an object `.passthrough()` -- zod's default STRIPS unknown keys, which
+  would throw the merged keys away.
+- **Decode**: a constructor with a spread field no longer refuses a key it
+  does not declare; every such key is gathered, in document order, into the
+  `JObj` that field holds. The inverse of the merge, so `decode(encode v)` is
+  `v` for a collision-free value.
+- **One rule, three places**: the three declaration-level refusals (a second
+  `Spread`, a positional `Spread`, `Spread` of anything but `Json`) are
+  refused by the exporter, by `Decode.entry` AND by `Encode.rejections` (the
+  stdlib sweep), at the same field index -- the pattern the `tag`-field
+  collision established in J2a. The spread test reads the type as DECLARED
+  (no alias expansion, which the encoder has no session for), so an alias for
+  `Spread Json` is not a spread field anywhere and all three refuse it.
+- **Tests**: `TestSchema.(s)` (80 random probes: merge order, an open arm,
+  `.passthrough()`, and a collision that names both) and `(s-pins)`;
+  `TestDecode.(s)` (60 probes: the gather, in document order) and `(s-pins)`;
+  four new poisons in `TestDecode.(d)`; and `TestSchema.shape` grew a
+  `spreadData` row, so the encode/schema property, the round trip and the
+  `Validate`-vs-`Decode` agreement all cover spread types (35 of the round
+  trip's 200 cases carry one).
 
 ## 4. Appendix: the de facto widget API (catalogue)
 

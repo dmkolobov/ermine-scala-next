@@ -39,6 +39,32 @@ module Json where
 data Inline r = Inline [..r]       -- the rows are in this response
 data Deferred r = Deferred [..r]   -- the columns now, the rows on re-request
 
+-- A named constructor field of declared type `Spread Json` is MERGED into
+-- the object its constructor writes (tracker/JSON-API-DESIGN.md section
+-- 3.1b item 2): the long tail of options nobody wants to model.
+--
+--   data HcConfig = HcConfig { hcTitle : String, hcExtra : Spread Json }
+--   HcConfig "t" (Spread (obj [("plotOptions", jnull)]))
+--     ==>  {"hcTitle": "t", "plotOptions": null}
+--
+-- The spread's keys go out AFTER the declared fields, in the object's own
+-- order.  A key that collides with a declared field name (or with the "tag"
+-- of a type with several constructors) is an error naming both, since the
+-- params decoder reads such a key back as the field -- the SPREAD field's
+-- own name excepted, which is no key of any document of the type and so is
+-- merged and gathered like any other.  A repeated key is an error too,
+-- and so is a Spread holding anything but an object.  A constructor carries
+-- at most one Spread field, and a positional constructor none (there is no
+-- object to merge into).  Only `Spread Json` is meaningful: a record's keys
+-- are known from its declaration, so spreading one would be no more than a
+-- second way to spell fields the constructor can already name.
+--
+-- The schema exporter drops `additionalProperties: false` from the parent
+-- object (zod `.passthrough()` instead of `.strict()`) and the spread field
+-- is not a property of it; the decoder gathers every key the declaration
+-- does not name back into the Spread, in document order.
+data Spread a = Spread a
+
 toJson : a -> Json
 toJson = toJson#
 

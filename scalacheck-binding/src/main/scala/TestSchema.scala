@@ -220,6 +220,7 @@ object TestSchema extends Properties("Ermine JSON Schema") {
       val composites: List[Gen[Shape]] =
         listShape(depth, rels) :: tupleShape(depth, rels) :: recordShape ::
         positionalData(depth, rels) :: recordStyleData(depth, rels) :: parameterisedData(depth, rels) :: recursiveData ::
+        spreadData(depth, rels) ::
         (if (underMaybe) Nil else List(maybeShape(depth, rels))) ++
         stage2Composites(depth, underMaybe)
       Gen.oneOf(leaves ++ composites).flatMap(identity)
@@ -370,6 +371,71 @@ object TestSchema extends Properties("Ermine JSON Schema") {
           ctors.flatten.map(_.rels).sum)
   }
 
+  // -- Stage 2b (`Spread Json`) ---------------------------------------------
+
+  /** The keys a generated `Spread` merges.  `sk<i>` collides with no field
+    * name any generator here produces (a collision is an ENCODE ERROR and
+    * has its own property, `(s)`), and they are distinct, since a merged
+    * object may not repeat a key. */
+  private def spreadKeys(n: Int): List[String] = (0 until n).toList.map(i => "sk" + i)
+
+  /** A merged object's source: `(Spread (obj [("sk0", <json>), ..]))`. */
+  private def spreadValue(keys: List[String]): Gen[String] =
+    Gen.sequence[List[String], String](keys.map(_ => jsonValue(1))).map { vs =>
+      "(Spread (obj " + keys.zip(vs).map { case (k, v) => "(\"" + k + "\", " + v + ")" }.mkString("[", ", ", "]") + "))"
+    }
+
+  /** `data Sn = Snc1 { snc1f0 : t, snc1sp : Spread Json } | Snc2 { .. }`
+    * (Stage 2b): ONE constructor carries a `Spread Json` field, at a random
+    * position among its others, so the property that the merged keys come
+    * AFTER every declared field whatever the field's index is exercised.
+    * The other constructors are ordinary, which is what puts an open arm
+    * beside a closed one in the same `oneOf`. */
+  private def spreadData(depth: Int, rels: Boolean): Gen[Shape] =
+    for {
+      d      <- fresh("S")
+      arity  <- Gen.choose(1, 2)
+      // every constructor needs at least one field (a record constructor with
+      // none is a parse error), except the one whose Spread field IS its only
+      // field -- the props shape of a widget that models nothing itself
+      ctors  <- Gen.listOfN(arity, Gen.choose(1, 2).flatMap(k => Gen.listOfN(k, shape(depth - 1, rels = rels))))
+      which  <- Gen.choose(0, arity - 1)
+      bare   <- Gen.frequency((1, Gen.const(true)), (3, Gen.const(false)))
+      pos    <- Gen.choose(0, 2)
+      keys   <- Gen.choose(0, 3).map(spreadKeys)
+      spread <- spreadValue(keys)
+    } yield {
+      val named = ctors.zipWithIndex.map { case (fs0, i) =>
+        val c = d + "c" + (i + 1)
+        val fs = if (i == which && bare) Nil else fs0
+        val ns = fs.zipWithIndex.map { case (f, j) => (d.toLowerCase + "c" + (i + 1) + "f" + j, f) }
+        // where the Spread field sits among the others (never past the end)
+        val at = if (i == which) Some(math.min(pos, ns.length)) else None
+        (c, ns, at)
+      }
+      def sp(c: String) = c.toLowerCase + "sp"
+      val decl = "data " + d + " = " + named.map { case (c, fs, at) =>
+        val decls = fs.map { case (n, f) => n + " : " + f.ty }
+        val all = at match {
+          case Some(k) => decls.take(k) ++ List(sp(c) + " : Spread Json") ++ decls.drop(k)
+          case None    => decls
+        }
+        c + " { " + all.mkString(", ") + " }"
+      }.mkString(" | ")
+      Shape(d, decl :: named.flatMap(_._2.flatMap(_._2.decls)),
+            Gen.oneOf(named).flatMap { case (c, fs, at) =>
+              Gen.sequence[List[String], String](fs.map(_._2.value)).map { vs =>
+                val all = at match {
+                  case Some(k) => vs.take(k) ++ List(spread) ++ vs.drop(k)
+                  case None    => vs
+                }
+                (c :: all).mkString("(", " ", ")")
+              }
+            },
+            // the relation count follows the fields that are KEPT
+            named.flatMap(_._2).map(_._2.rels).sum)
+    }
+
   /** `data Dn a = Dna a | Dnb a a`, exported at an instantiation: the
     * exporter substitutes the argument into the constructor field types, so
     * a type PARAMETER is never the "polymorphic" error. */
@@ -519,6 +585,215 @@ object TestSchema extends Properties("Ermine JSON Schema") {
     reports("wrong element", shp,
             Json.obj("tag" -> Json.jString("Rect"),
                      "args" -> Json.array(Json.jString("x"), Json.jNumber(2.5).get)), "$")
+  }
+
+  // ---------------------------------------------------------------------
+  // (s) Stage 2b: `Spread Json`
+
+  /** One probe of the merge: a single-constructor record-style type with a
+    * `Spread Json` field at a random position among `fields`, and a merged
+    * object whose `keys` either avoid the declared names or deliberately
+    * collide with one of them (`clash`). */
+  final case class SpreadCase(decls: List[String], ty: String, value: String, spreadField: String,
+                              fields: List[String], keys: List[String], clash: Option[String])
+
+  val spreadProbe: Gen[SpreadCase] =
+    for {
+      d     <- fresh("SQ")
+      k     <- Gen.choose(0, 3)
+      fs    <- Gen.listOfN(k, Gen.oneOf(prims))
+      pos   <- Gen.choose(0, 3)
+      n     <- Gen.choose(1, 3)
+      svs   <- Gen.listOfN(3, jsonValue(1))
+      bad   <- Gen.frequency((2, Gen.const(false)), (1, Gen.const(true)))
+      which <- Gen.choose(0, 2)
+      vs    <- Gen.sequence[List[String], String](fs.map(_.value))
+    } yield {
+      val names  = (0 until k).toList.map(i => d.toLowerCase + "f" + i)
+      val clash  = if (bad && names.nonEmpty) Some(names(which % names.length)) else None
+      val keys   = clash.map(c => c :: spreadKeys(n).tail).getOrElse(spreadKeys(n))
+      val at     = math.min(pos, k)
+      val spName = d.toLowerCase + "sp"
+      val decls  = names.zip(fs).map { case (nm, f) => nm + " : " + f.ty }
+      val decl   = "data " + d + " = " + d + " { " +
+                   (decls.take(at) ++ List(spName + " : Spread Json") ++ decls.drop(at)).mkString(", ") + " }"
+      val sv     = "(Spread (obj " + keys.zip(svs).map { case (kk, v) => "(\"" + kk + "\", " + v + ")" }
+                     .mkString("[", ", ", "]") + "))"
+      val args   = vs.take(at) ++ List(sv) ++ vs.drop(at)
+      SpreadCase(decl :: fs.flatMap(_.decls), d, (d :: args).mkString("(", " ", ")"),
+                 spName, names, keys, clash)
+    }
+
+  /** The complaint about one probe, or None.  A collision-free case must
+    * encode to the declared keys FOLLOWED BY the merged ones, validate
+    * against an OPEN object schema that does not mention the spread field,
+    * and render zod with `.passthrough()`; a colliding one must be an encode
+    * error at the merged key, naming it and the field it collides with. */
+  def spreadVerdict(c: SpreadCase): Option[String] = {
+    val decls = (c.decls.distinct ++ List("gv : " + c.ty, "gv = " + c.value)).mkString("\n")
+    try {
+      val (ty, rt) = defAndType(decls, "gv")
+      session { implicit env =>
+        loadStatements(decls, imps)
+        val sch = Schema.exportType(ty, "Test")
+        val doc = Encode.toArgonaut(rt)
+        (sch, doc, c.clash) match {
+          case (Left(e), _, _) => Some("export refused " + c.ty + ": " + e.report)
+          case (_, Left(e), Some(k)) =>
+            if (e.path == "$." + k && e.message.contains("collides") && e.message.contains(c.spreadField)) None
+            else Some("a collision on " + k + " was refused as " + e.report + " (expected a collision at $." + k + ")")
+          case (_, Right(j), Some(k)) =>
+            Some("a collision on " + k + " encoded anyway: " + j.nospacesWithOrder)
+          case (_, Left(e), None) => Some("encode refused " + c.ty + ": " + e.report)
+          case (Right(schema), Right(j), None) =>
+            val arm  = schema.field("$defs").flatMap(_.obj).flatMap(_.toList.headOption).map(_._2).getOrElse(schema)
+            val props = arm.field("properties").flatMap(_.obj).map(_.toList.map(_._1)).getOrElse(Nil)
+            val open  = arm.field("additionalProperties").flatMap(_.bool)
+            val zod   = Zod.render(schema)
+            val errs  = Validate.check(schema, j)
+            if (j.objectFieldsOrEmpty != c.fields ++ c.keys)
+              Some("merged in the wrong order: " + j.nospacesWithOrder + " (expected " +
+                   (c.fields ++ c.keys).mkString(", ") + ")")
+            else if (props.contains(c.spreadField)) Some("the spread field is a property: " + Schema.compact(arm))
+            else if (props != c.fields) Some("properties " + props.mkString(", ") + ", expected " + c.fields.mkString(", "))
+            else if (open != Some(true)) Some("additionalProperties is " + open + ", expected true: " + Schema.compact(arm))
+            else if (errs.nonEmpty) Some(errs.mkString("; ") + "\n  doc " + j.nospacesWithOrder +
+                                         "\n  schema " + Schema.compact(schema))
+            else zod match {
+              case Left(e) => Some("zod refused: " + e)
+              case Right(text) =>
+                if (text.contains(".passthrough()")) None
+                else Some("the zod of an open object is not .passthrough(): " + text)
+            }
+        }
+      }
+    } catch { case e: Throwable => Some("threw " + e + "\n" + decls) }
+  }
+
+  property("(s) a Spread Json field is merged, opens the object, and a collision names both (80 cases)") = {
+    val cases = samples(spreadProbe, 80, seed0 = 20260918L)
+    val bad = cases.flatMap(spreadVerdict)
+    val clashes = cases.count(_.clash.isDefined)
+    val merged  = cases.count(c => c.clash.isEmpty && c.fields.nonEmpty && c.keys.nonEmpty)
+    println("  spread: " + cases.length + " cases, " + clashes + " collisions, " + merged +
+            " merges beside declared fields")
+    (bad.isEmpty :| ("failed " + bad.length + "\n" + bad.take(3).mkString("\n---\n"))) &&
+      ((cases.length == 80) :| ("generated " + cases.length + " of 80 cases")) &&
+      // not vacuous in either direction
+      ((clashes >= 10) :| ("only " + clashes + " collisions")) &&
+      ((merged >= 20) :| ("only " + merged + " merges beside a declared field"))
+  }
+
+  property("(s-pins) the Spread refusals and the shape of an open object") = sessionProof { implicit s =>
+    val decls = List(
+      "data Sp1 = Sp1 { sp1a : Int, sp1b : Spread Json }",
+      "data Sp2 = Sp2a { sp2x : Int, sp2s : Spread Json } | Sp2b { sp2y : String }",
+      "data Sp5 = Sp5 { sp5a : Maybe Int, sp5b : Spread Json }").mkString("\n")
+    loadStatements(decls, imps)
+    def schema(ty: String): Json =
+      Schema.exportType(NewPipeline.replType("<spread>", ty, imps), "Test").fold(e => sys.error(e.report), identity)
+    def defOf(j: Json, name: String): Json =
+      j.field("$defs").flatMap(_.field(name)).getOrElse(sys.error(name + " is not a $defs entry of " + Schema.compact(j)))
+    def enc(expr: String): Either[Encode.Error, Json] = Encode.toArgonaut(Session.eval(expr, imps)._2)
+    def encErr(expr: String): Encode.Error = enc(expr).fold(identity, j => sys.error("encoded " + j.nospacesWithOrder))
+    def encOk(expr: String): Json = enc(expr).fold(e => sys.error(e.report), identity)
+
+    // the single-constructor arm: open, the spread field is no property
+    val s1 = defOf(schema("Sp1"), "Test.Sp1")
+    assert(Schema.compact(s1) ==
+      "{\"type\":\"object\",\"properties\":{\"sp1a\":{\"type\":\"integer\"}}," +
+      "\"required\":[\"sp1a\"],\"additionalProperties\":true}", Schema.compact(s1))
+    val z1 = Zod.render(schema("Sp1")).fold(e => sys.error(e), identity)
+    assert(z1.contains("z.object({ sp1a: z.number().int() }).passthrough()"), z1)
+    // the arm that carries the spread is open, its sibling stays closed
+    val s2 = defOf(schema("Sp2"), "Test.Sp2").field("oneOf").flatMap(_.array).get
+    assert(s2(0).field("additionalProperties") == Some(Json.jBool(true)), Schema.compact(s2(0)))
+    assert(s2(1).field("additionalProperties") == Some(Json.jBool(false)), Schema.compact(s2(1)))
+    // an omitted Maybe field still reserves its key: a merged key may not take it
+    assert(encErr("Sp5 Nothing (Spread (obj [(\"sp5a\", jnull)]))").path == "$.sp5a")
+    assert(encOk("Sp5 Nothing (Spread (obj [(\"k\", jnull)]))").nospacesWithOrder == "{\"k\":null}")
+    // The SPREAD field's own name is NOT reserved: it is no key of any
+    // document of the type, so it merges like any other and the decoder
+    // gathers it back (TestDecode's (s-pins) pins that direction).  Reserving
+    // it made the encoder refuse a document the schema declares legal and the
+    // decoder accepts -- J2b review finding 1.
+    assert(encOk("Sp1 1 (Spread (obj [(\"sp1b\", jnull)]))").nospacesWithOrder ==
+           "{\"sp1a\":1,\"sp1b\":null}")
+    // a merged key that takes the discriminator's place
+    assert(encErr("Sp2a 1 (Spread (obj [(\"tag\", jnull)]))").message.contains("the tag of Sp2a"))
+    // a Spread is nothing on its own, at the root or inside
+    assert(enc("(Spread (obj []))").isLeft)
+    assert(Schema.exportType(NewPipeline.replType("<spread>", "(Spread Json)", imps), "Test").isLeft)
+    // the declaration refusals the exporter, the decoder and the sweep share
+    def refusal(d: String, ty: String): String =
+      session { implicit env =>
+        loadStatements(d, imps)
+        Schema.exportType(NewPipeline.replType("<spread>", ty, imps), "Test").fold(e => e.path + " " + e.message, j =>
+          sys.error("exported " + Schema.compact(j)))
+      }
+    assert(refusal("data Sq1 = Sq1 { sq1a : Spread Json, sq1b : Spread Json }", "Sq1")
+             .startsWith("Sq1.Sq1[1] a constructor merges at most one Spread field"))
+    assert(refusal("data Sq2 = Sq2 Int (Spread Json)", "Sq2")
+             .startsWith("Sq2.Sq2[1] a Spread field has nothing to merge into"))
+    assert(refusal("data Sq3 = Sq3 { sq3a : Spread Int }", "Sq3")
+             .startsWith("Sq3.Sq3[0] only Spread Json is merged"))
+    // J3a's handoff note: a relation's arms and column descriptors are CLOSED
+    // objects, validated with `.strict()` on the client, so a spread must
+    // never target a relation position -- `Spread [..r]` is refused like any
+    // other non-`Json` argument, at the field
+    assert(refusal("field sfSpr : Int\ndata Sq7 = Sq7 { sq7a : Spread [sfSpr] }", "Sq7")
+             .startsWith("Sq7.Sq7[0] only Spread Json is merged"))
+    assert(refusal("field sfSpr : Int\ndata Sq8 = Sq8 { sq8a : Spread (Inline (|sfSpr|)) }", "Sq8")
+             .startsWith("Sq8.Sq8[0] only Spread Json is merged"))
+    // the stdlib sweep sees the same three, at the same field
+    val swept = session { implicit env =>
+      loadStatements(List("data Sq4 = Sq4 { sq4a : Spread Json, sq4b : Spread Json }",
+                          "data Sq5 = Sq5 Int (Spread Json)",
+                          "data Sq6 = Sq6 { sq6a : Spread Int }").mkString("\n"), imps)
+      List("Sq4", "Sq5", "Sq6").flatMap { n =>
+        DataConDecl.forType(Global("Test", n)).toList.flatMap(Encode.rejections)
+          .map(r => r.constructor.string + "[" + r.index + "] " + r.reason)
+      }
+    }
+    assert(swept.length == 3, swept.mkString("; "))
+    assert(swept(0).startsWith("Sq4[1] a constructor merges at most one Spread field"), swept.mkString("; "))
+    assert(swept(1).startsWith("Sq5[1] a Spread field has nothing to merge into"), swept.mkString("; "))
+    assert(swept(2).startsWith("Sq6[0] only Spread Json is merged"), swept.mkString("; "))
+    // A declaration with BOTH faults: the sweep lists every field, but the
+    // field the exporter and the decoder name gets the same reason there as
+    // here (the second Spread is tested before the positional one).
+    val both = session { implicit env =>
+      loadStatements("data Sq9 = Sq9 Int (Spread Json) (Spread Json)", imps)
+      DataConDecl.forType(Global("Test", "Sq9")).toList.flatMap(Encode.rejections)
+        .map(r => r.constructor.string + "[" + r.index + "] " + r.reason)
+    }
+    assert(both.length == 2 &&
+           both(0).startsWith("Sq9[1] a Spread field has nothing to merge into") &&
+           both(1).startsWith("Sq9[2] a constructor merges at most one Spread field"), both.mkString("; "))
+    assert(refusal("data Sq9b = Sq9b Int (Spread Json) (Spread Json)", "Sq9b")
+             .startsWith("Sq9b.Sq9b[2] a constructor merges at most one Spread field"))
+    // `Spread a` is a DECLARATION the sweep accepts (the argument is decided
+    // at the instantiation) and the exporter refuses at `Spread Int`, where
+    // the encoder also refuses the value; at `Spread Json` all three agree
+    val poly = session { implicit env =>
+      loadStatements("data Sa1 a = Sa1 { sa1x : Spread a }", imps)
+      DataConDecl.forType(Global("Test", "Sa1")).toList.flatMap(Encode.rejections)
+    }
+    assert(poly.isEmpty, poly.map(_.reason).mkString("; "))
+    assert(refusal("data Sa2 a = Sa2 { sa2x : Spread a }", "(Sa2 Int)")
+             .startsWith("Sa2.Sa2[0] only Spread Json is merged"))
+    assert(session { implicit env =>
+      loadStatements("data Sa3 a = Sa3 { sa3x : Spread a }", imps)
+      Schema.exportType(NewPipeline.replType("<spread>", "(Sa3 Json)", imps), "Test").isRight
+    })
+    assert(session { implicit env =>
+      loadStatements("data Sa4 a = Sa4 { sa4x : Spread a }\nsa4v : Sa4 Int\nsa4v = Sa4 (Spread 3)", imps)
+      Encode.toArgonaut(Session.eval("sa4v", imps)._2)
+        .fold(e => e.message, j => sys.error("encoded " + j.nospacesWithOrder))
+    }.contains("a Spread field carries a JSON object"))
+    // a well-formed spread field is NOT a rejection
+    assert(DataConDecl.forType(Global("Test", "Sp1")).toList.flatMap(Encode.rejections).isEmpty)
+    true
   }
 
   property("(b2) the validator checks the three formats it promises") = sessionProof { implicit s =>
@@ -1215,7 +1490,10 @@ object TestSchema extends Properties("Ermine JSON Schema") {
                          "field sfDate : Date", "field sfNote : Nullable String",
                          "data Tree = Leaf Int | Node Tree Tree",
                          // J3a: a widget props type, one schema for every row
-                         "data TableProps r = TableProps { title : String, rows : Inline r, detail : [..r] }"
+                         "data TableProps r = TableProps { title : String, rows : Inline r, detail : [..r] }",
+                         // J2b: a props type with the `Spread Json` escape hatch --
+                         // an OPEN object, zod `.passthrough()`
+                         "data ChartProps = ChartProps { chartTitle : String, chartExtra : Spread Json }"
                         ).mkString("\n")
     List(
       ("Ordering",       schemaOf(List("Ord"), "Ord", "Ordering")),
@@ -1230,6 +1508,7 @@ object TestSchema extends Properties("Ermine JSON Schema") {
       ("UserTableProps", session { implicit env =>
                            loadStatements(userDecls, imps)
                            Schema.exportNamed("Test", "TableProps") }),
+      ("UserSpread",     schemaAfter(userDecls, "ChartProps")),
       ("UserTree",       schemaAfter(userDecls, "Tree")))
   }
 

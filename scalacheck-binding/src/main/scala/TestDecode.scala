@@ -30,6 +30,9 @@ import argonaut.Json
   *       distribution printed;
   *  (d)  entry: poisoned types are refused at the poison's path, closed ones
   *       accepted;
+  *  (s)  Stage 2b: a constructor with a `Spread Json` field is OPEN -- the
+  *       keys it does not declare are gathered into the spread in document
+  *       order, which is the inverse of the encoder's merge;
   *  (e)  scale: 100,000 records, and documents far deeper than argonaut's
   *       own parser can read.
   */
@@ -174,7 +177,9 @@ object TestDecode extends Properties("Ermine JSON Decode") {
     ("GUID", _.contains("GUID")), ("Nullable", _.contains("Nullable")), ("Vector", _.contains("Vector_V")),
     ("List#", _.contains("List#")), ("Maybe#", _.contains("Maybe#")), ("Pair#", _.contains("Pair#")),
     ("Json", _.contains("Json")), ("record", _.contains("{sf")), ("record-style data", _.contains("c1 { ")),
-    ("Maybe", _.contains("Maybe ")))
+    ("Maybe", _.contains("Maybe ")),
+    // Stage 2b: a merged `Spread Json` field must reach the round trip too
+    ("Spread", _.contains("Spread Json")))
 
   property("(a) decode(ty, encode v) is v (200 cases)") = {
     val cases = samples(TestSchema.typeAndValue, 200, seed0 = 20260916L)
@@ -520,6 +525,14 @@ object TestDecode extends Properties("Ermine JSON Decode") {
     ("(Inline (|sfPoison|))",   "field sfPoison : Int", "relation", false, None),
     ("(Deferred (|sfPoison|))", "field sfPoison : Int", "relation", false, None),
     ("(Nullable Char)",      "", "PrimT witness", false, None),
+    // Stage 2b: a Spread is a constructor FIELD, one per constructor, named,
+    // of `Spread Json`; the decoder, the exporter and `Encode.rejections`
+    // refuse the other spellings at the field that carries them
+    ("(Spread Json)", "", "nothing to gather into", true, None),
+    ("Sy1", "data Sy1 = Sy1 { sy1a : Spread Json, sy1b : Spread Json }",
+     "at most one Spread field", true, Some("Sy1.Sy1[1]")),
+    ("Sy2", "data Sy2 = Sy2 Int (Spread Json)", "nothing to gather into", true, Some("Sy2.Sy2[1]")),
+    ("Sy3", "data Sy3 = Sy3 { sy3a : Spread Int }", "only Spread Json", true, Some("Sy3.Sy3[0]")),
     // a field named `tag` in a type with several constructors: refused by the
     // decoder, the exporter and the encoder alike, at the field it names
     ("Tg", "data Tg = Tga { tag : Int } | Tgb { tgx : Int }",
@@ -609,6 +622,97 @@ object TestDecode extends Properties("Ermine JSON Decode") {
       // not vacuous, and a floor rather than a pin: a relation is one leaf
       // among many, so the fixed seeds give 15 of 120 today
       ((bearing >= 10) :| ("only " + bearing + " of " + cases.length + " shapes carry a relation"))
+  }
+
+  // ---------------------------------------------------------------------
+  // (s) Stage 2b: what the encoder merged, the decoder gathers back
+
+  /** The complaint about one spread case, or None.  Three things: the round
+    * trip through the merged document; that a constructor with a spread
+    * field no longer REFUSES a key it does not declare (the validator agrees,
+    * since the exporter opened the object); and that such a key comes back
+    * in the spread, in document order, which re-encoding shows. */
+  def spreadGathers(c: TestSchema.SpreadCase): Option[String] = {
+    val decls = (c.decls.distinct ++ List("gv : " + c.ty, "gv = " + c.value)).mkString("\n")
+    try session { implicit s =>
+      loadStatements(decls, imps)
+      val (ty, rt) = Session.eval("gv", imps)
+      val schema = Schema.exportType(ty, "Test").fold(e => sys.error("export refused: " + e.report), identity)
+      val doc    = Encode.toArgonaut(rt).fold(e => sys.error("encode refused: " + e.report), identity)
+      val r1 = Decode.decode(ty, doc).fold(e => Some("decode refused " + Schema.compact(doc) + ": " + e.report),
+                                           r => same(r, rt))
+      // a key before every declared one and a key after every merged one
+      val open = Json.obj(((("zzA" -> Json.jNumber(1)) :: doc.obj.get.toList) :+ ("zzB" -> Json.jString("b"))): _*)
+      val r2 = Validate.check(schema, open) match {
+        case Nil => None
+        case es  => Some("the validator refused a key of an OPEN object: " + es.mkString("; "))
+      }
+      val want = c.fields ++ ("zzA" :: c.keys) ++ List("zzB")
+      val r3 = Decode.decode(ty, open).fold(
+        e => Some("decode refused the key it should gather: " + e.report),
+        back => Encode.toArgonaut(back).fold(e => Some("re-encode refused: " + e.report), j =>
+          if (j.objectFieldsOrEmpty == want) None
+          else Some("gathered " + j.objectFieldsOrEmpty.mkString(", ") + ", expected " + want.mkString(", "))))
+      List(r1, r2, r3).flatten.headOption.map(_ + "\n" + decls)
+    } catch { case e: Throwable => Some("threw " + e + "\n" + decls) }
+  }
+
+  property("(s) a spread constructor gathers the keys it does not declare, in document order (60 cases)") = {
+    val cases = samples(TestSchema.spreadProbe, 60, seed0 = 20260919L).filter(_.clash.isEmpty)
+    val bad = cases.flatMap(spreadGathers)
+    val merged = cases.count(c => c.fields.nonEmpty && c.keys.nonEmpty)
+    println("  spread gather: " + cases.length + " collision-free cases, " + merged +
+            " with both declared and merged keys")
+    (bad.isEmpty :| (bad.length + " failed\n" + bad.take(3).mkString("\n---\n"))) &&
+      ((cases.length >= 30) :| ("only " + cases.length + " collision-free cases")) &&
+      ((merged >= 15) :| ("only " + merged + " cases mix declared and merged keys"))
+  }
+
+  property("(s-pins) a closed constructor still refuses the key an open one gathers") = sessionProof { implicit s =>
+    loadStatements(List("data Sz1 = Sz1 { sz1a : Int }",
+                        "data Sz2 = Sz2 { sz2a : Int, sz2s : Spread Json }",
+                        "data Sz3 a = Sz3 { sz3a : Spread a }").mkString("\n"), imps)
+    def ty(n: String): Type = NewPipeline.replType("<spread>", n, imps)
+    def schema(n: String): Json = Schema.exportType(ty(n), "Test").fold(e => sys.error(e.report), identity)
+    val closed = Json.obj("sz1a" -> Json.jNumber(1), "zz" -> Json.jNull)
+    val open   = Json.obj("sz2a" -> Json.jNumber(1), "zz" -> Json.jNull)
+    // the closed type: both refuse the extra key, at the key
+    assert(Validate.check(schema("Sz1"), closed).exists(_.startsWith("$.zz")), Validate.check(schema("Sz1"), closed).mkString)
+    assert(Decode.decode(ty("Sz1"), closed).fold(e => e.path, _ => "accepted") == "$.zz")
+    // the open one: both take it, and it is the spread's
+    assert(Validate.check(schema("Sz2"), open).isEmpty, Validate.check(schema("Sz2"), open).mkString)
+    val back = Decode.decode(ty("Sz2"), open).fold(e => sys.error(e.report), identity)
+    assert(Encode.toArgonaut(back).fold(e => sys.error(e.report), _.nospacesWithOrder) ==
+           "{\"sz2a\":1,\"zz\":null}")
+    // the spread field of the decoded value is `Spread (JObj [("zz", JNull)])`
+    back match {
+      case Data(g, args) if g.string == "Sz2" && args.length == 2 =>
+        Runtime.swhnf(args(1)) match {
+          case Data(sg, sa) if sg == Global("Json", "Spread") && sa.length == 1 =>
+            assert(Encode.render(sa(0)).fold(e => sys.error(e.report), identity) == "{\"zz\":null}",
+                   Encode.render(sa(0)).toString)
+          case other => sys.error("the spread field decoded to " + other)
+        }
+      case other => sys.error("decoded to " + other)
+    }
+    // an empty spread is still a Spread of an empty object
+    val empty = Decode.decode(ty("Sz2"), Json.obj("sz2a" -> Json.jNumber(1))).fold(e => sys.error(e.report), identity)
+    assert(Encode.toArgonaut(empty).fold(e => sys.error(e.report), _.nospacesWithOrder) == "{\"sz2a\":1}")
+    // The SPREAD field's own name is a spare key like any other: the
+    // validator takes it, the decoder gathers it and the encoder writes it
+    // back unchanged, so all three agree about a document that names it
+    // (J2b review finding 1; TestSchema's (s-pins) pins the encode direction).
+    val own = Json.obj("sz2a" -> Json.jNumber(1), "sz2s" -> Json.jString("x"))
+    assert(Validate.check(schema("Sz2"), own).isEmpty, Validate.check(schema("Sz2"), own).mkString)
+    val ownBack = Decode.decode(ty("Sz2"), own).fold(e => sys.error(e.report), identity)
+    assert(Encode.toArgonaut(ownBack).fold(e => sys.error(e.report), _.nospacesWithOrder) ==
+           "{\"sz2a\":1,\"sz2s\":\"x\"}")
+    // a `Spread a` field is decided at the INSTANTIATION, as the exporter
+    // decides it: `Spread Json` plans, `Spread Int` is refused at the field
+    assert(Decode.entry(ty("(Sz3 Json)")).isRight)
+    assert(Decode.entry(ty("(Sz3 Int)")).fold(e => e.path + " " + e.message, _ => "accepted")
+             .startsWith("Sz3.Sz3[0] only Spread Json gathers"))
+    true
   }
 
   // ---------------------------------------------------------------------
