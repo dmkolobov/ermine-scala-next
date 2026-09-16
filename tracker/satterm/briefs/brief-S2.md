@@ -1,61 +1,79 @@
-# brief-S2 — the fix (Opus implementer, 5 h; needs S0 + a reviewed S1 theorem)
+# brief-S2 — the fix, REBRIEFED 2026-09-16 evening (Opus implementer, 4 h)
 
 Worktree `~/research/ermine/ermine-scala-wt-subsume-s2`, branch `subsume-s2` (off `subsume-termination`, which
-carries the landed S0 instrumentation and the reviewed S1 Lean). Read `brief-S-common.md`, Part B of the prompt,
-then `tracker/satterm/SUBSUME-STAGE0.md` (+ `-REVIEW`), and whichever of `SUBSUME-STAGE1A.md` /
-`SUBSUME-STAGE1B.md` (+ `-REVIEW`) is marked as the LICENSING theorem in the "Licence" section below. Report:
-`tracker/satterm/SUBSUME-STAGE2.md`.
+carries the landed S1a and S1b Lean; S0's instrumentation lands separately and you do not need it). Read
+`brief-S-common.md`, Part B of the prompt, then — in the S0 worktree
+`~/research/ermine/ermine-scala-wt-subsume-s0/tracker/satterm/` — `SUBSUME-STAGE0.md` and
+`SUBSUME-STAGE0-REVIEW.md` (read-only), and in this worktree `SUBSUME-STAGE1A.md`, `SUBSUME-STAGE1B.md` and
+their reviews. Report: `tracker/satterm/SUBSUME-STAGE2.md`.
 
-## Licence (filled in by the orchestrator from the reviewed S1 result)
+## Licence — why this stage is NOT the one Part C describes
 
-<!-- ORCHESTRATOR: one of the two paragraphs below stays; name the theorem(s), the file, and the reviewer's
-     verdict line. -->
+Part C's S2 ("a cheaper / memoised escape check", or "an occurs check at the binding site") is not licensed:
 
-- (A) S1 gives TERMINATION UNDER AN INVARIANT the solver keeps, plus an EQUIVALENCE theorem for the restricted
-  walk: theorem(s) `<name>` in `tracker/lean/Rowpartition/<file>.lean`, review `<path>` verdict `<LAND>`.
-  You implement the cheaper / memoised escape check at `Subst.scala:648` keeping the verdict BY CONSTRUCTION —
-  the equivalence theorem names what may change: nothing observable. The shape it licenses: `<orchestrator
-  fills: e.g. restrict the walk to the kinds of sks/sts and the types they occur in; memoise per object
-  identity; or a fast path when skss/stss are empty>`.
-- (B) S1 gives a REACHABLE VIOLATION (a cyclic binding / an invariant the solver does not keep): witness
-  `<name>` in `<file>`, review `<path>`. You fix the BINDING SITE with the theorem's invariant (an occurs check
-  or the guard the theorem names) and nothing else; `:648` is left alone.
+- **S1a** (`Rowpartition/SubsumeEscape.lean`, review LAND): the walk at `Subst.scala:648` follows no binding and
+  terminates unconditionally (`runV_steps`, `escs_cost_le_subPass`); `verdict_eq` is verdict-preserving tidying
+  only; `no_early_exit_on_empty` kills short-circuiting; the age-stamp restriction would ACCEPT an escaping
+  skolem. S1a's §4 says plainly: S1a licenses no asymptotic improvement to `:648`.
+- **S1b** (`Loop/RejectTerm.lean`, `Loop/EnvBound.lean`, review LAND): the loop is bounded at the shipped
+  defaults (`budgetSP_terminates`), `Subst.solve` terminates (`solveSeedP_terminates`), no cyclic binding is
+  reachable (`runsP_noAliasChain`), and the loop leaves at most one small entry per dequeue.
+- **S0** (review FIX-THEN-LAND, headline CONFIRMED and strengthened): the B1 program is REFUSED in 0.06–0.09 s
+  at 17 `Supply` id bases ("Row partitions are unsatisfiable at field 'Bad.startDate'"); `bin/ermine` refuses it
+  in 0.07 s; the reviewer's default-N run of the suite FINISHED green in 1,099 s. The "hang" is the test
+  harness: `ErmineFixture.no` (`scalacheck-binding/src/main/scala/TestErmine.scala:220-223`) rewrites a
+  result's status `False => True`, so a refutation property is `passed`, never `proved`, and ScalaCheck runs
+  `minSuccessfulTests = 100` full checks, each re-type-checking the whole import closure (~9.1 s each, one
+  library boot per test; `_useInterface=false`, `onlyTest`). H1 and H2 are refuted; H3 survives only as
+  "`:648` is where the sampler landed".
+
+So deliverable 1 of the prompt (the check terminates, with a proof of why) is met by S1a + S1b + S0, and no
+budget (S3) is needed. What remains to BUILD is the defect S0 actually found, plus the pins the programme
+promised. **No compiler change. Nothing under `core/src/main` changes in this stage.** If you find you need
+one, stop and say so in the report.
 
 ## What you build
 
-1. The fix, behind a flag `-Dermine.subsumeEscape=<mode>` (default = the SHIPPED behaviour; the new mode selected
-   by the flag), read once into a `val` like `RowTrace.enabled`; one-paragraph comment at the site naming the
-   theorem that licenses it. Nothing else in `Subst.scala` changes. No new dependency.
-2. Pins in `scalacheck-binding/src/main/scala/` (a new `TestSubsumeEscape.scala`, or in `TestDateAndScan.scala`
-   next to B1 — say which and why):
-   - the B1 program, REJECTED, on a deadline thread that FAILS rather than hangs (the `(iso)` idiom:
-     `TestRunner.scala:925-947` on branch `json-encode`, worktree `ermine-scala-wt-json` — a daemon thread joined
-     with a deadline, `AtomicReference` for the answer);
-   - a GENERATOR of unsatisfiable row programs: random `field`s, a relation missing a random NON-EMPTY subset of
-     them, a `combine_Op`/`col_Op` chain over the missing ones, source built the way `TestSchema.shape` does it
-     (`scalacheck-binding/src/main/scala/TestSchema.scala` on `json-encode`); each case on a deadline thread,
-     required to be REJECTED, never a hang, never an acceptance;
-   - the POSITIVE twins (the same programs with the relation carrying every field) required to CHECK;
-   - each pin run with the flag ON; and one run with the flag OFF that shows the deadline failing on B1 (skip it
-     under a system property so the shipped suite stays green — document the property).
-3. Gates, yourself: Tier 0 (compile+copyResources, `TestLoopTrace`, `corpus-run.sh --batch` verdicts against S0's
-   baseline listing byte for byte, `repl-smoke.sh`, `lsp-smoke.sh`) and Tier 1 (this touches `Subst.scala`):
-   `looptrace-corpus.sh` 18-group differential with `LOOPTRACE_PAR` using the existing looptrace binary,
-   `trace-ab.py` (all record kinds) flag ON vs OFF, `ei-diff.sh --batch` with `-Dermine.loadInSeries=true` both
-   sides, `g1-validate.sh`. Then the B1 property alone THREE times with the flag ON (each under a deadline) and
-   the pin suite. Everything harness-tracked in the background with logs under
-   `/home/dmitry/research/ermine/scratch-subsume/s2/`.
-4. The perf figure the adoption will need (NOT a gate here, one measurement): the wall clock of a stdlib boot
-   with the flag ON vs OFF, twice each, interleaved, load < 1.3 — `:648` runs on every explicit-signature check.
-
-## If the fix is not available
-
-If BOTH S1 lanes came back negative, or the upstream fix is out of reach (say exactly why: which theorem, which
-site, what it would take), say so plainly in the report with the theorem names and STOP; S3 follows. Do not
-build a budget in this stage.
+1. **A `proved` refutation combinator** in `ErmineFixture` (`TestErmine.scala:220-223`): e.g. `rejects(p: Prop)`
+   (or fix `no` in place — decide, and say why; `no` has 24 call sites in 5 files, listed below) that maps a
+   `False` result to `Proof` (with the "must fail" label kept) so ScalaCheck stops after ONE evaluation, and
+   maps `Proof`/`True` to `False`. Keep `Exception`/`Undecided` statuses as failures, as `no` does now. Apply it to
+   every `no(typeChecks(...))`/`no(defAndEval(...))`-style refutation whose body is deterministic (the 24 sites in
+   `TestScopes.scala`, `TestLetSignatures.scala`, `TestStage1Pins.scala`, `TestDateAndScan.scala`,
+   `TestSigEntail.scala`); a site whose body is a `forAll` over generated input keeps 100 iterations by design —
+   say which are which. Measure: the B1 suite alone at the DEFAULT `minSuccessfulTests` before and after
+   (S0/review: 1,099 s before; the after figure is yours), and the full `core/test` once in the background (this
+   landing's one full run; the review predicts ~915 s saved per full run — measure, don't inherit).
+2. **The deadline pin for B1** (the `(iso)` idiom: `TestRunner.scala:915-947` on branch `json-encode`, worktree
+   `~/research/ermine/ermine-scala-wt-json`, read-only): the B1 program checked on a daemon thread joined with a
+   deadline (choose it from S0's numbers with margin: the check is ~0.1 s inside a ~9 s closure re-check; a
+   60 s deadline says "diverged" loudly instead of wedging a run), required to be REJECTED with the row-label
+   message; its positive twin required to CHECK.
+3. **A generator of unsatisfiable row programs** (brief Part C: random `field`s, a relation missing a random
+   NON-EMPTY subset of them, a `combine_Op`/`col_Op` chain over the missing ones, source built the way
+   `TestSchema.shape` does on `json-encode`), each case on a deadline thread, required to be REJECTED never
+   accepted never hung; the positive twins required to check. Keep the sample SMALL and say why: each case
+   costs a closure re-check (~9 s) unless you can load the cases into one session — try `loadStatements` on a
+   shared fixture session first and report which you used. The suite must add no more than ~2 minutes to
+   `core/test`; state the number.
+4. **An LSP smoke case** (`tracker/tools/lsp-smoke.sh`, `tracker/lsp-tests/`): open the B1 program in the
+   resident session and receive a diagnostic within the debounce ceiling (the prompt's Gates section asks for
+   it; S0 says the hazard is not reproduced — this pins that). `lsp-smoke.sh` count before/after (577 expected
+   before).
+5. **Gates, yourself**: Tier 0 (compile+copyResources; `TestLoopTrace` with
+   `-Dermine.looptrace=/home/dmitry/research/ermine/ermine-scala-wt-json-wrappers/tracker/lean/.lake/build/bin/looptrace`
+   — baseline 720/720/720 per the S0 review; `corpus-run.sh --batch` verdicts 89/79/0 over 168 byte-for-byte
+   against S0's baseline listing `scratch-subsume/s0/` — cite the path you compare with; `repl-smoke.sh`;
+   `lsp-smoke.sh`). Tier 1 is NOT triggered (no solver/trace/Type.scala/executable Lean change) — say so. The
+   B1 suite alone three times at the default N after the change, each under a deadline. One full `core/test`
+   in the background with its wall clock.
+6. **Do NOT** touch `Subst.scala` (S0's instrumentation lands from its own branch), the `.ei` quarantine on
+   `json-encode` (a note in the report that `-Dermine.test.dateDiffReject` on json-encode can be lifted once
+   this lands is enough), or the LSP dispatch thread (out of scope, ticketed).
 
 ## Deliverables
 
-`SUBSUME-STAGE2.md` per the common brief: what changed and the theorem it rests on, the pins and their counts,
-every gate number with its log, the corpus verdict comparison, the perf figure, the flag and its default (OFF =
-shipped behaviour), and the stage's yes / no / bounded answer. List every changed file. No commits.
+`SUBSUME-STAGE2.md` per the common brief: the combinator and the 24 sites (before/after semantics per site),
+the pins and their counts, every gate number with its log, the before/after suite and full-run timings, the
+smoke case, and the stage's answer: YES, with the theorem and measurement it rests on. List every changed file.
+No commits.
