@@ -859,6 +859,87 @@ cache: `modules/Layout/Doc.e`, `core/json/Doc.scala`, `core/json/Write.scala`,
   scanner (of which building the records is the larger half) into ~15 MB of
   text, holding ~28 MB of heap: the writer holds the text, not the records.
 
+## 3.7e Stage 3 client as built (2026-09-16, branch `json-client`, stage J3d)
+
+The widget prop types and the TypeScript client. Files: the modules under
+`core/src/main/resources/modules/Layout/Widgets/` plus the `Layout/Widgets.e`
+umbrella, `client/` (the npm package), `core/src/test/resources/modules/Doc/
+SalesReport.e`, `scalacheck-binding/src/main/scala/TestWidgets.scala`.
+
+**One module per widget.** Ermine field selectors are MODULE-global: two `data`
+types in one module may not both declare `columns`, and a field name may not shadow
+a global in scope. So each widget's props live in their own module
+(`Layout.Widgets.Table`, `.Drilldown`, `.Scorecard`, with `.Format` holding the
+shared `CellFormat`), and `Layout/Widgets.e` re-exports them. J3e's chart widgets
+follow the same pattern. The smart constructor for the regular table is `tabular`,
+not `table`: `table` is an Ermine keyword. The registry NAME on the wire is still
+`"table"`.
+
+**`CellFormat` replaces the foreign `Format` on this path** (§3.1a). It is a pure
+Ermine mirror of the object form of `HTMLWriter.jsFormat`, all fifteen cases. The
+generic walker spells the discriminator `"tag"` with the CONSTRUCTOR NAME, so the
+legacy `"type"` is exactly the constructor with a lower-cased first letter. Three
+forced departures: `whenTrue`/`whenFalse` for Conditional's `then`/`else` (Ermine
+keywords), `aliases` as a list of pairs rather than an object (the walker has no map
+encoding), and `Currency` carries `places` (the legacy server reads it from
+`CurrencyObj.settings`, a table the client does not have). A converter FROM the
+foreign `Layout.Format` is out of scope: it is a Scala ADT with no Ermine
+eliminator, so it needs a Scala-side fold.
+
+**Relation fields.** `TableProps.rows` and `DrilldownTableProps.ddRows` are bare
+`[..r]` (the request's `data.default` decides), `ScorecardProps.cards` is
+`Inline r`. The row parameter is left FREE, so each widget has ONE schema whatever
+relation it is used with (J3a's generic arm).
+
+**The client.** `client/src/generated/` is zod written by
+`bin/ermine-schema --zod`, one module per exported type plus an index carrying
+`WIDGET_PROP_SCHEMAS` (registry name -> schema); `scripts/check-generated.sh`
+regenerates into a temp dir and diffs, which is §3.5's equality check.
+`src/dispatcher.ts` walks the `Node`, builds plain DOM for the layout constructors,
+and for a `Widget` looks the name up, validates props with the generated zod,
+deep-resolves every relation in them (so a widget added later resolves for free),
+and calls the renderer; nothing a widget does throws past it — an unknown name,
+invalid props, an unresolvable token and a renderer exception all render an error
+box. `src/legacy.ts` rebuilds, on the client, the argument object
+`HTMLWriter.tableRegular`/`drilldownTable` send to `htmlwriter.runTabular` today,
+including the `{formatted, raw, format}` cells; `src/format.ts` is the port of
+`formatDisplay` that computes `formatted`, which server-side is Scala
+(`htmlEval` + `Format.basicEval`) and is not on the wire. `src/widgets/scorecard.ts`
+is the new widget, plain DOM, no legacy code.
+
+**HTML escaping moved with the formatting** (§3.4's trust boundary is unchanged, its
+enforcement point is not). Today `HTMLWriter.htmlEval` decides, in Scala, what is escaped
+and what is raw, and ships the answer. On this path `client/src/format.ts` decides:
+`Default` and `Truncate` run the cell through `string_unhtml` (a detached `<span>`'s
+`innerHTML`/`textContent` — byte for byte the legacy's own sink, `utils.js:41-48`),
+`Verbatim` is the deliberate raw passthrough the legacy also has, and `Color`/`signSpan`
+mint the same spans `htmlEval` substitutes for its markers. The source of truth (DB
+content) and the escape hatch are the same; only the code that enforces it changed sides.
+
+**`formatted` is not byte-identical to the server's**, and is not meant to be: a Date or
+Timestamp cell arrives as its wire string rather than through `HTMLRunner.tabularDateFmt`'s
+`MMM-dd-yyyy`, and `htmlEval`'s fallback branch replaces every space with `&nbsp;` while
+the port (following the JS `formatDisplay`) does not. The cell's `format` key IS.
+
+**Structural relation resolution has a boundary worth knowing.** `resolveRelations`
+deep-walks the validated props and swaps out anything `isWireRelation` accepts, so a props
+record that reproduced a whole relation arm would be swallowed. The test therefore requires
+the WHOLE arm — `kind`, `columns` of real column descriptors, and `rows`+`rowCount` or
+`token`+`expires` — not just `kind` and `columns`; `TableColumn` already declares a field
+named `kind`, so the weaker test would have left a one-field-name margin for J3e's chart
+descriptors. Pinned by `(p-relation-guard)`.
+
+**What the client cannot reproduce**: column GROUPINGS (the `Legend`'s nested header
+rows) — the skeleton emits one header row and `args.legend` is `null`, which nothing
+in the local-relation path of `runTabular` reads.
+
+**One value the adapter translates, not passes**: `runTabular`'s `sorts` is
+`[column index, "asc" | "desc"]`, a STRING — DataTables builds the NAME of the comparator
+it calls out of that second element (`oSort[sDataType + "-" + aaSort[k][1]]`), and the
+server sends the same strings (`PruJS.scala:59` prints a `SortOrder` as
+`x.toString.toLowerCase`). The Ermine type keeps the boolean `ColumnSort.descending`; the
+translation belongs beside `alignmentOf`/`columnTypeOf` in `legacy.ts`.
+
 ## 4. Appendix: the de facto widget API (catalogue)
 
 Corrected per skeptic (§7): the writer also emits `registerSource`,

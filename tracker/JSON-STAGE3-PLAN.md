@@ -98,7 +98,7 @@ col       {"name": "<column>", "type": <Wire.columnTypes>, "nullable": <bool>}
 | J2a | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 |
 | J3b | json-doc | BUILT 2026-09-16 (report-J3b.md, design note §3.7c): `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 |
 | J3c | json-runner | `json/Runner.scala` (boot, report lookup, `Params -> Node` check, decode, apply, write on one connection), HTTP server (`POST /report/<Module>`, `GET /data/<token>`), `bin/ermine-serve` | J2a, J3b | 2 |
-| J3d | json-client | `modules/Layout/Widgets.e` prop types for the seven live widgets + one new widget; `client/` TS package: zod generated from those types, dispatcher, adapters to the legacy renderers, `formatDisplay` port, the new widget end to end | J3a, J3b | 2 |
+| J3d | json-client | BUILT 2026-09-16 (report-J3d.md, design note 3.7e): `modules/Layout/Widgets/{Format,Table,Drilldown,Scorecard}.e` + the `Layout/Widgets.e` umbrella (one module per widget: field selectors are module-global); `client/` TS package -- generated zod, dispatcher, legacy table adapters, `formatDisplay` port, `scorecard` end to end | J3a, J3b | 2 -- BUILT |
 | J3e | json-charts | Chart/stylebox prop types and adapters (`axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar`, `styleBox`; `treeMap` registered as unsupported) | J3d | 3 |
 | J2b | json-spread | `Spread Json` wrapper (encode merge, schema additional properties, decode leftovers); then the builtin `Json a` constraint if time allows | J2a, J3a | 3 |
 | P1..P3 | json-encode-2.11 | 2.11 ports: P1 = contract+J3a+J2a, P2 = J3b+J3c, P3 = J3d+J2b | landings | after each |
@@ -141,6 +141,15 @@ branch (they share `Lib.scala`).
   model replay SKIPPED (the executable is absent in this worktree). Two DB-layer bugs found:
   `RecordMap.SharingKeySet.get` threw on every lookup on Scala 3 (fixed in this stage), and
   `SqlExecution` reads a GUID column before `wasNull`, so a NULL GUID throws (NOT fixed).
+- 2026-09-16 J3d built on `json-client` (uncommitted): `Layout/Widgets.e` +
+  `Layout/Widgets/{Format,Table,Drilldown,Scorecard}.e`, `client/` (npm package,
+  node_modules gitignored, `package-lock.json` committed, zod 3.23.8 / typescript
+  5.6.3 pinned), `core/src/test/resources/modules/Doc/SalesReport.e`, `TestWidgets`
+  (5 properties) with `WidgetCorpus` and `SalesReportDoc` runMains. Field selectors
+  are MODULE-global in Ermine, so one module per widget -- the pattern J3e must
+  follow. `table` is a keyword: the smart constructor is `tabular`, the registry
+  name is still "table". Property (a) 5/5, node suite 33/33 over a 200-document
+  corpus, `tsc --strict` and `check-generated.sh` green.
 - 2026-09-16 J3b reviewed FIX-THEN-LAND (`review-J3b.md`); both required fixes applied in the
   worktree: a refused row now leaves its scan by `Stop` so the driver tears it down (the
   writer no longer throws through `EffectfulProcedure.withDriver`), and the `RecordMap`

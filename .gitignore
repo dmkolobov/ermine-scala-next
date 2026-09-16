@@ -6,3 +6,5 @@ project/project/
 *.ei
 .ermine_history
 target/ermine-classpath
+client/node_modules/
+client/dist/
