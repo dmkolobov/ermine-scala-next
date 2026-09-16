@@ -101,3 +101,12 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   lake build 872 jobs, Audit 4936 / 0. No Scala and no executable Lean changed, so the Scala Tier 0 items are
   unaffected by construction (the programme worktree compile at 478a369c+docs: exit 0). Title question, walk
   only: YES.
+- 2026-09-16 ~19:10: S1b LANDED. Review re-check LAND (two cosmetic residuals fixed by the orchestrator at
+  landing: §7 cross-references; EnvBound.lean docstring now says RunSupOkP is undischarged at the shipped
+  DEFAULTS since the default policy is smallcanon). Stage commit 4a04ad00 on `subsume-s1b`, merge with
+  `subsume-termination` clean, fast-forwarded. Landing gate on the merged tree
+  (scratch-subsume/orch/s1b-landing-tier0.log): lake build 874 jobs, Audit 4995 / 0 (= S1a's 4936 + S1b's 59),
+  Loop/Main.lean import closure contains none of the new modules. Programme tree now = 478a369c + docs + S1a + S1b.
+  Title question so far: walk YES (S1a); loop BOUNDED at shipped defaults, rest of Subst.solve YES, post-solve
+  PARTIAL (S1b). OPEN items carried: `runSP_*` soundness family still assumes rowSoundBare = false; no
+  termination theorem under -Dermine.dequeuePolicy=shipped. Waiting on S0 to brief S2.
