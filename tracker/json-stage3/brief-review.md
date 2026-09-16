@@ -22,7 +22,7 @@ For J3a also review the contract commit `a7e8e050` (`git show a7e8e050`) -- it l
    can any property pass vacuously? Where you doubt one, mutate the code under test locally
    (break one case), run that suite, confirm it fails, and REVERT the mutation.
 3. Dialect: the Scala must compile unchanged on Scala 2.11 (brief-J-common.md list). Grep
-   for `given`, `using`, `enum`, `extension`, `export`, `derives`, `.map` on `Either`,
+   for `given`, `using`, `enum`, `extension`, `export`, `derives`, `.map`/`.flatMap`/`.foreach`/`.getOrElse`/`.toOption` called directly on an `Either` (2.11's Either is not right-biased: only `.right.x`/`.left.x`/`.fold` -- the P1 porter found a `Zod.render(..) foreach` slip the J3a review's grep missed),
    `LazyList`, `CollectionConverters`, Java 9+ APIs (`List.of`, `isBlank`, `readString`,
    `java.net.http`), top-level defs, `?=>`, `*` wildcard imports, `as` import renames.
 4. Scope: nothing outside the stage's files changed without a stated reason; no files under

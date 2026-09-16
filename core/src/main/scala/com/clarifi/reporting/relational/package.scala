@@ -120,11 +120,27 @@ package object relational {
     override def foldLeftM[C](initial: C)(f: (C,A) => C): Id[C] =
       withDriver( d => driveLeftId(d.apply _)(machine)(x => x: A)(initial)(f))
 
+    /** `finally`, so a scan that throws ON ITS OWN -- a SQL error partway
+      * through a result set, a bottom in a literal, a consumer that raises --
+      * still closes what `setup` opened.  Without it `SqlExecution`'s
+      * `rs.close`/`stmt.close` and `SqlScanner.scanRel`'s `cleanTempTables`
+      * were skipped on every failing scan, leaking one server-side cursor
+      * per failure under a pooled `Run[DB]` (J3b's ticket for J3c; the
+      * document writer avoids the path for a REFUSED ROW by leaving its scan
+      * with `Stop` instead, which is orthogonal to this).  A teardown that
+      * throws now replaces the original exception, which is the usual price
+      * of `finally`.  A teardown that throws while an exception is already in
+      * flight is attached with `addSuppressed` instead of replacing it, so
+      * the reason the scan failed is never lost behind the reason closing it
+      * failed. */
     def withDriver[R](k: Driver[Id, K] => R): R = {
       val (d, teardown) = setup
-      val result = k(d)
-      teardown()
-      result
+      var thrown: Throwable = null
+      try k(d)
+      catch { case t: Throwable => thrown = t; throw t }
+      finally
+        if (thrown eq null) teardown()
+        else try teardown() catch { case t: Throwable => if (t ne thrown) thrown.addSuppressed(t) }
     }
 
     override def map[B](f: A => B): EffectfulProcedure[B] =

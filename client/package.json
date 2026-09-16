@@ -1,0 +1,29 @@
+{
+  "name": "ermine-report-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript client for Ermine JSON report documents: zod generated from the Ermine prop types, a node dispatcher, and adapters onto the legacy htmlwriter renderers.",
+  "license": "BSD-3-Clause",
+  "type": "commonjs",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "generate": "scripts/generate.sh",
+    "check-generated": "scripts/check-generated.sh",
+    "test": "npm run build && node --test \"dist/test/*.test.js\"",
+    "check-corpus": "scripts/check-corpus.sh"
+  },
+  "dependencies": {
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/jsdom": "21.1.7",
+    "@types/node": "22.9.0",
+    "fast-check": "3.23.1",
+    "jsdom": "25.0.1",
+    "typescript": "5.6.3"
+  }
+}

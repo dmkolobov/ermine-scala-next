@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Serve Ermine reports as JSON documents over HTTP (json/Runner.scala).
+#
+#   bin/ermine-serve --root core/src/test/resources/doc --preload Sales --port 8080
+#   curl -s localhost:8080/health
+#   curl -s localhost:8080/report/Sales \
+#        -H 'Content-Type: application/json' \
+#        -d '{"params": {"fromDay": "2026-01-01", "toDay": "2026-03-31",
+#                        "onlyRegion": null, "orderBy": "ByAmount"}}'
+#   curl -s localhost:8080/data/<token>
+#
+# --port 0 binds an ephemeral port and prints it ("listening on <port>"), the
+# only thing this program writes to stdout.
+#
+# Builds the classpath with sbt on first run and caches it in
+# target/ermine-classpath; delete that file after changing dependencies.
+# Extra JVM flags can be passed in ERMINE_JAVA_OPTS.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$here"
+cache=target/ermine-classpath
+
+if [[ ! -s $cache ]] || [[ build.sbt -nt $cache ]]; then
+  mkdir -p target
+  sbt -batch 'export core/fullClasspath' 2>/dev/null |
+    grep -v '^\[' | grep -v '^$' | tail -1 | tr -d '\n' > "$cache"
+fi
+
+opts=( -Dermine.typeCheck=true )
+[[ -n ${ERMINE_JAVA_OPTS:-} ]] && read -r -a extra <<< "$ERMINE_JAVA_OPTS" && opts+=( "${extra[@]}" )
+
+exec java "${opts[@]}" -cp "$(cat "$cache")" \
+  com.clarifi.reporting.ermine.json.ServeMain "$@"
