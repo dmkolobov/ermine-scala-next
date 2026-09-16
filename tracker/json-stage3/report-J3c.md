@@ -195,13 +195,62 @@ Suggestions taken:
 - **(i) `addSuppressed`.** `withDriver`'s `finally` no longer masks the original exception: a teardown that throws while an exception is in flight is attached to it, so "why the scan failed" is never lost behind "why closing it failed".
 - **(e) `/health` off the lock** (above).
 - **(c) a non-ASCII `settings` value.** Every other string the suite generates is alphanumeric, so no response body contained a multi-byte character and the `Content-Length` assertion could not have caught a `text.length` regression. `settings.note` is now `"café — ünïcode 🙂"` — two-, three- and four-byte characters, the last a surrogate *pair* — which makes every HTTP body in every property multi-byte, and `(c-routes)` asserts the bytes and the chars really differ.
-- **(g) HEAD carries a `Content-Length`.** The JDK's server suppresses it for HEAD even when a positive length is passed, so the header is set explicitly before `sendResponseHeaders`; that survives, and `(c-routes)` pins it against the GET body's byte length with an empty body.
+- **(g) HEAD carries a `Content-Length`.** The JDK's server suppresses it for HEAD even when a positive length is passed, so the header is set explicitly before `sendResponseHeaders`; that survives, and `(c-routes)` pins it against the GET body's byte length with an empty body. **Corrected after the landing's full `core/test`**: the pin first compared HEAD `/health` against a prior GET `/health`, which is not a constant — `/health`'s body lists the loaded modules, ScalaCheck runs this suite's properties concurrently over the one `runner`, and half of them compile a fresh module, so the two calls can legitimately see different module sets (it falsified once with `Some(1227)` against `Some(1214)`). The length equality now goes against the 404 body of an unknown route, which is a pure function of the path; HEAD `/health` is still checked for a 200, a positive `Content-Length` and an empty body, none of which race. The SERVER was not changed — the defect was in the pin.
 - **(f) `StackOverflowError` beside `NonFatal`** in `Server.dispatch`, so the "every failure has one shape" promise survives a future decoder that recurses deeper than argonaut's parser. Written as a guard (`case e: Throwable if NonFatal(e) || e.isInstanceOf[StackOverflowError]`) rather than a pattern alternative, for the 2.11 dialect.
 - **(l), (k), (d)** are one-liners in §3.7d: why a bad *signature* is 400 while a bad *value* is 500; that there are no CORS headers (J3d cannot call this from another origin); and that a 413 is sent without draining the body, and `Run[DB]` is not a pool.
 
 Not taken, deliberately: **(a)/(b)** — `(d)`'s warm-up and its round-2 overwrite. Both are gaps in the *assertion*, not the execution: the reviewer's own analysis notes that ScalaCheck runs the 16 properties concurrently over the one runner, so `(b2)`–`(b7)`, `(log)` and `(ex)` are compiling fresh modules under the lock while `(d)` runs. Changing `(d)` to race uncompiled modules would make its serial reference racy too, and I would rather not rewrite a green concurrency property at the end of the budget. **(h)** the double percent-decode in `Server.decode` buys nothing but is harmless — validation runs after it, which is what makes it safe. **(j)** taken, actually: `Allow` now reads `GET, HEAD`.
 
 Post-fix gates: `sbt -batch core/compile core/copyResources` success (`fix-gate1-compile.log`), `TestRunner` + `TestDoc` **36/36** (16 + 20, `fix-gate2.log`). The other gates were not re-run: gates 3, 4 and 5 cannot be moved by a lock's owner, three comments, a `settings` string or a HEAD header, and the reviewer cited them rather than re-running them for the same reason.
+
+## The `core/test` wedge, investigated (2026-09-16)
+
+The full `core/test` on three trees containing J3c wedged with one RUNNABLE thread burning CPU in
+`Subst.subsumeType -> SubstEnv.kindVars -> Kind.kindVars -> Type.vars`. **It is not J3c.**
+
+`sbt 'core/testOnly com.clarifi.reporting.TestDateAndScan'` — that suite ALONE, with no
+`TestRunner`, no `Runner`, no second `SessionEnv` in the JVM — hangs the same way, **twice out of
+two**, at 11 of its 12 properties. The missing one is always the same:
+`TestDateAndScan.scala:192`, *"a dateDiff combine over a relation WITHOUT the dates is now
+REJECTED (B1)"* — the `no(typeChecks(...))` property, the one that asks the checker to REFUTE.
+My `jstack` is frame-for-frame the coordinator's (`scratch/jstack1.txt`, `jstack2.txt`), down to
+`Subst.scala:648`'s `hm.kindVars`, and the thread went from 84 to 167 CPU-seconds in 45 wall
+seconds, so it is spinning, not progressing.
+
+No J3c code is on that path: a `typeChecks` property only loads and type-checks, and the entire
+production diff since the last green tree (`3eba80f8`) is the three new `json/*.scala` files, a
+comment in `json/Write.scala`, `relational/package.scala`'s `withDriver` and
+`SqlEmitter.getUuid` — none of them reachable from the type checker. `TestDateAndScan`'s only
+mention of `SqlEmitter` is in a comment.
+
+Where the cost is: `subsumeType` (`Subst.scala:613-658`) calls `hm.kindVars` on the WHOLE
+substitution environment through `HasKindVars.mapHasKindVars` (`Kind.scala:125`), a naive
+unmemoised structural walk of every kind in the env, once per call. On a refutation search that
+grows the env, that is at best quadratic and at worst exponential over shared kind DAGs. It is a
+type-checker performance cliff on one hard rejection case, and it belongs to whoever owns
+`Subst`, not to this stage. **Recommended: a ticket plus the `GATE-POLICY.md` quarantine the same
+document already gives `TestInterfaceRoundTrip`, and a bisect of `TestDateAndScan` alone against
+`3eba80f8` by whoever holds that tree** — I could not run that here without a second worktree and
+a full rebuild.
+
+Two real defects of mine surfaced while looking, and both are fixed:
+
+1. **`TestRunner` leaked its HTTP server.** The server was a suite-lifetime `lazy val` that
+   nothing ever stopped, so the JDK's non-daemon dispatcher thread, up to eight non-daemon pool
+   threads and a listening socket stayed alive in the shared `core/test` JVM for every suite that
+   ran afterwards. It is now `withServer { port => ... }`, started and stopped around each of the
+   four properties that need it (`http`/`httpHead` take the port), and `Server`'s pool threads are
+   daemons — the JDK dispatcher is what keeps `bin/ermine-serve` alive after `main` returns, so
+   the workers never needed to be.
+2. **Nothing pinned that a `Runner` boot leaves a fixture session usable.** New property
+   **(iso)**: after the runner has booted its own `SessionEnv` (its own `Lib.preamble`, its own
+   module roots, its own `Supply`, beside the process-global `Session.depCache` and `DataConDecl`
+   registry), an `ErmineFixture` still loads a module and type-checks an expression — on a daemon
+   thread joined with a 180 s deadline, so a future divergence FAILS the property instead of
+   wedging the run.
+
+Verified after both: `TestRunner` alone **17/17** in 25 s; `TestRunner` + `TestInterfaceRoundTrip`
++ `TestDoc` **38/38**, exit 0.
 
 ## Open issues
 
