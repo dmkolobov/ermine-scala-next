@@ -749,6 +749,31 @@ build and the audit, diffed the 16 `Flags` fields to confirm that exactly three 
 and checked that `shippedFlags` proves the same sentence the `({} : Flags)` form proved.
 
 
+### S1b -- the REJECTION path: the budget at the SHIPPED defaults, the environment it can leave, and no cyclic binding (2026-09-16)
+
+Stage S1b of the `subsume-termination` programme (`tracker/PROMPT-subsume-termination.md`,
+brief `tracker/satterm/briefs/brief-S1b.md`, report `tracker/satterm/SUBSUME-STAGE1B.md`): does
+REFUTATION terminate, how big is the `SubstEnv` a refused solve can leave, and can that
+environment be CYCLIC?  Two NEW modules, imported from `Rowpartition/Loop.lean`; every earlier
+module is unchanged, so nothing proved before is weakened.
+
+| module | what |
+|---|---|
+| `Rowpartition/Loop/RejectTerm.lean` | **The budget at the configuration the compiler actually ships, and the whole of `Subst.solve`.**  `Loop/PolicyTerm.lean`'s `budgetP_terminates` carries `s.flags.rowSoundBare = false` -- S2 layer (i) OFF -- and that flag has been DEFAULT ON since 2026-09-06, so at the shipped defaults no termination theorem covered `runSP`, the driver every adopted-default run and every corpus replay goes through.  `stepSP_cases` is the dichotomy that repairs it (layer (i) either passes, and the step IS `stepP`'s, or it DIES), `terminatesBP_of_finished_any` / `terminatesBP_of_over_any` are the two transport lemmas re-proved from it with the flag hypothesis DELETED rather than weakened, and **`budgetSP_terminates`** is `budgetP_terminates` without it: under a draw budget `b ≠ 0` every solve's loop stops, under any policy, with S2 layer (i) ON; **`budgetSP_terminates_of_buildQueue`** is the initial-state corollary, `PolicyTerm.lean:1059`'s proof verbatim minus the same hypothesis.  **STILL OPEN, and not repaired here:** `rowSoundBare = false` also gates the ten-declaration `runSP_*` SOUNDNESS family (`PolicyStep.lean:2046`-`:2209`, `NoFalseAccept.lean:791`/`:801`) -- `runSP_rejects_unsat`, `runSP_noLoss`, `runSP_models` and their siblings say NOTHING at the shipped defaults, and `PolicyStep.lean:2037`'s prose still calls that setting "the shipped setting".  They look mechanically closable from `stepSP_cases`, but that is a stage of its own; until it is done, do not cite a `runSP_*` soundness theorem at the shipped defaults.  Then **`solveSeedP_terminates`**: for some fuel the WHOLE of `Subst.solve` -- `buildQueue`, the `topNormalise` rewrite, `labelCheckEarly`, layer (iii)'s `labelDecide` with its two node budgets, the loop, and the late `labelClash` -- returns a verdict and never `FUEL`.  The layers around the loop need no hypothesis of their own: each is a TOTAL function in this model (`propagate`, `searchLabel`, `decideLabel` are structurally recursive), so the loop is the only one that can fail to stop |
+| `Rowpartition/Loop/EnvBound.lean` | **How big the environment can get, whether the escape walk can spin on it, and whether it can be cyclic.**  (2) `stepP_env_len_le` (one dequeue binds at most one variable) and `runsP_env_len_le` give `|env| ≤ |env₀| + n` after `n` dequeues; `EnvVal.termSize` / `envTermSize` / **`envTermSize_eq_len`** say the RANGE's total term size IS the cardinality, because `incorporateAll` writes only `VarT(u)` (`Constraints.scala:2139`) and `ConcreteRho(∅)` (`:2191`), both one node -- so no chain of bindings inside the loop can have an exponential substituted form; `envTermSize_le_card` is the vocabulary form through `NoConc.env_len_le_card`.  (3) `escWalk` / `escWalk_length_le` / `runsP_escWalk_le`: a bound on the ANSWER of the **`fskvs` half of `subsumeType:648` only**, over the loop's own entries only -- the `kindVars` half (`Subst.scala:169`, `Kind.scala:132-134`) is NOT modelled, because `EnvVal` carries no kind, and there is no equivalence theorem to `:648`.  What makes those entries cheap to walk is `envTermSize_eq_len` (one node each), not this bound; that the walk never follows a BINDING (`typeHasKindVars.vars` at `VarT(v)` reads the KIND ANNOTATION) is a code fact stated in the docstring, not a theorem.  (4) `SubstBlowup.chain_blowup`: the blow-up H1 needs EXISTS for the general `instantiateType` -- `n` unifications, `n+1` bindings, distinct keys, no bound variable in the range, every occurs check passed, and one entry of `2^(n+1)-1` nodes -- so a large `hm.types` is evidence about the type checker's own unifications, never about the row solver.  (5) `NoAliasChain`, **`noAliasChain_no_cycle`** (no variable reaches itself through any chain of bindings), `noAliasChain_instantiate`, **`stepP_noAliasChain`** (ONE step, under `QueueHygiene`) and **`runsP_noAliasChain`** (the run, with `stepP_queueHygiene`'s own side conditions named: `disjRule = false` and the per-state supply invariants `RunSupOkP`, which is a hypothesis here exactly as `Hygiene.run_queueHygiene` carries `RunSupOk`).  The loop's freedom from cyclic bindings rests on queue hygiene, NOT on an occurs check -- `Constraints.instantiate` calls `instantiateType` directly and never reaches `unifyType`'s `occursCheckType` |
+
+**What S1b settles.**  On the loop, the answer is **bounded**: `budgetSP_terminates` is the
+shipped-default termination statement, and it is a DRAW budget, so the fuel stays existential
+(`L5-TERMINATION.md` §R8.6b is untouched).  Off the loop, for the row fragment, the answer is
+**yes**: every other layer of `Subst.solve` is a total function.  `:648` as a WHOLE is not
+proved bounded here -- only the `fskvs` half's answer, over the loop's own entries, which are
+one node each.  H2 is REFUTED for this path twice over -- no cycle can be built
+(`stepP_noAliasChain` / `runsP_noAliasChain`, under their side conditions) and the walk would
+not follow one if it were -- and H1 is located: the only way `hm.types` gets big is the general
+`instantiateType`, reached from `unifyType`'s variable arms (`Subst.scala:313-318`), whose range
+can double at every binding (`chain_blowup`).
+
+
 ## The shared vocabulary
 
 All ten substantive modules are stated against the definitions in `Basic.lean`:
@@ -1260,6 +1285,79 @@ standard:
 `not_MintsBoundedOnSatKeyed2`, `keyed2_star_vs_shipped_res`, `W4_kloop_mints_unbounded`,
 `W4_not_TerminatesOnSatKeyedLoop`, `srsOf_eq_empty`, `concretizeSrs_eq_concretizeKeep`,
 `W3srs_eq`, `W3_carried`, `W3_not_mintable`, `W3_row_reuse`.
+
+### 2026-09-16: `SubsumeEscape` — the escaping-skolem check at `Subst.scala:648`
+
+Stage S1a of the `subsume-termination` programme (`tracker/PROMPT-subsume-termination.md`,
+brief `tracker/satterm/briefs/brief-S1a.md`, report `tracker/satterm/SUBSUME-STAGE1A.md`).
+The object is the last statement of `Subst.subsumeType`,
+
+```scala
+val escs = hm.fskvs.filter(v => stss.contains(v)) ++ hm.kindVars.filter(skss(_))   // :648
+if (escs nonEmpty) tml.die(...)                                                    // :649
+```
+
+with `SubstEnv.fskvs`/`kindVars` (`Subst.scala:168-169`), and the three walks behind them:
+`Type.typeHasKindVars.vars` (`Type.scala:648-661`), `Type.typeHasTypeVars.vars`
+(`:706-715`), `Kind.vars` (`Kind.scala:16, 59, 65`), `KindSchema`'s instance
+(`KindSchema.scala:26`), the `Map`/`List`/`V` instances (`Kind.scala:119-136`) and the
+`Vars` combinators (`Vars.scala:13-46`).
+
+**The settled reading.** `Type.scala:653` is `case VarT(v) => v.extract.vars` and `v : V[Kind]`,
+so `extract` is the type variable's KIND ANNOTATION, not its binding; `Kind.scala:65` emits a
+kind variable and stops. **No binding is followed**, so the prompt's hypothesis H2 ("cyclic
+substitution makes `vars` non-terminating") is false as a reading of the code, and the
+"acyclic substitution" invariant is vacuous for this walk — no theorem in the module has an
+acyclicity hypothesis.
+
+| theorem | what it says |
+|---|---|
+| `memN_iff`, `memN_false` | id membership as a `Bool`, the form every `Vars` set test takes (`V.equals` is id equality, `Vars.scala:105-107`) |
+| `mem_map_filter`, `fvId_nil/one/many/app`, `mem_fvId_minus` | membership bookkeeping for the collected-variable lists |
+| `fvE_subset_occE` | `--` only ever removes: the free variables are among the occurring ones |
+| `runV_seen` | **`Vars.apply(s,f)` returns `s` plus the expression's free variables** — for `++` by construction and for `--` because `(s \ t) ∪ (t ∩ s) = s` is what its last line recovers |
+| `runV_emitted_id` | **it emits exactly the free ids not already in the seen set**; unconditional |
+| `runV_emitted_subset` | everything emitted is free (the element-level direction that needs no hypothesis) |
+| `many_can_duplicate` | **refutes `Vars`'s own docstring** ("designed to avoid duplicates"): `Vars(vs: Iterable)` (`Vars.scala:60-65`) never updates its seen set inside its own loop, so a repeated element is emitted twice. Harmless on this path — `Kind.vars`/`Type.vars` build only `Vars(v)` singletons |
+| `runVC_val`, `runVC_steps`, `runV_steps` | the cost model MEASURED, not asserted: the instrumented run agrees with `runV` and takes exactly `costV e` steps, a number fixed by the expression alone |
+| `follow_diverges` | **H2's function really does diverge**: the binding-following variant `kvarsFollow` returns `none` for every fuel on the environment `a ↦ a a` |
+| `escs_total_on_cyclic`, `verdict_total_on_cyclic`, `escs_cyclic_other` | **but the shipped one returns on that same environment**: `escs = [1]`, verdict `true`; and `[]` when the call names no skolem. H2 refuted |
+| `costK_eq` | the kind walk costs exactly the kind's node count |
+| `costTV_le`, `subPass_pos` | auxiliary bounds |
+| `kvars_cost_le`, `kvarsL_cost_le` | **the kind-variable walk over a type costs at most twice one substitution pass over it** |
+| `tvars_cost_le`, `tvarsL_cost_le` | the same for the type-variable walk behind `Type.fskvs` |
+| `cost_tvarsTypes_le`, `cost_kvarsTypes_le`, `cost_kvarsKinds_le` | the same, lifted over the environment's maps (`Kind.scala:124-126`'s `foldRight`) |
+| `escs_cost_le_subPass` | **the headline.** The whole check costs at most `4·(one substitution pass over hm.types) + (one pass over hm.kinds) + 2·|types| + |kinds| + 4`. `instantiateType` runs such a pass on EVERY binding (`Subst.scala:254`), so `:648` is a constant factor of one unification step and cannot be asymptotically worse than the work that built the environment. **A bound on NODE VISITS, not on time**: `Vars.--`'s immutable-`Set` operations over a seen set that grows with the distinct variables, and `Vars.filter`/`nonEmpty`'s `Vector` materialisation through `ForeachIterable.iterator`, are one step each here against a singleton-map lookup per node in `Type.subst` |
+| `powD_size`, `powD_unfold`, `cost_dbl`, `subPass_dbl` | the sharing family: a `dlet`-DAG of `4n+1` nodes unfolds to the `n`-fold doubling, whose walk costs `2^(n+1) − 1` and whose substitution pass costs `3·2^n − 1` |
+| `walk_exp_in_dag` | **the witness.** The walk is EXPONENTIAL in the size of a shared representation, because `vars` has no memo table and visits every path |
+| `subst_pays_the_same` | **and the matching negative.** `Type.subst` unfolds the same DAG the same way, so such an environment is not cheaply reachable through `instantiateType`: memoising `:648` alone removes an exponential the unifier is paying anyway |
+| `SkolemCoherent`, `skolemCoherent_of_unique` | the invariant the equivalence needs — global id uniqueness (`Vars.scala:92-95`) plus "`unbind(Skolem, e1)` mints skolems", NOT acyclicity |
+| `isEmpty_false_iff`, `any_congr_mem`, `tvarsTypes_append`, `kvarsTypes_append`, `occE_tvarsTypes_append` | list plumbing |
+| `escs1_iff` | the type half of `escs` is nonempty exactly when one of the call's skolem type variables occurs in the environment |
+| `escs2_iff` | the kind half, with no hypothesis at all (`hm.kindVars` carries no `Skolem` filter) |
+| `verdict_iff`, `verdict_eq` | **THE EQUIVALENCE.** The per-skolem occurrence test `verdictR` gives the SAME verdict as the whole-environment walk. Since `escs`'s elements are never read AT `:648` (`:650-656` prints `e1`/`e2`; the line that printed `escs` is commented out at `:657`), what may change there is nothing observable. **It does not extend to `checkSkolemEscape` (`Subst.scala:361-367`)**, which runs the same `Type.fskvs` walk at `:365` and PRINTS `hescs.mkString(", ")` at `:367` |
+| `skolem_filter_redundant` | `Type.fskvs`'s `_.ty == Skolem` filter (`Type.scala:666`) is redundant under the same invariant: the id test already implies it |
+| `escs_restrict_untouched` | **the licence that actually buys something.** Entries whose CONTENT cannot mention this call's skolems may be skipped entirely. **`Untouched` is not discharged by insertion order**: `instantiateType` (`Subst.scala:254`) rewrites every value in `hm.types` on every binding, so an entry older than the `:614` draw can still come to mention a skolem drawn there, and skipping by age would ACCEPT an escaping skolem. Age is a sound proxy only for a mechanism that re-stamps an entry whenever `subType` changes its value; proving that law is S2's obligation |
+| `no_early_exit_on_empty` | **and its limit.** When the verdict is empty, every skolem is still tested against the whole environment: short-circuiting is not the fix |
+| `occE_tvarsTypes_right`, `skolemCoherent_shrink` | the invariant survives dropping entries |
+| `verdict_restrict_untouched` | the same licence stated on the SHIPPED `verdict`, with one hypothesis |
+| `kind_half_not_reducible_to_type_skolems`, `kindOnly_verdictR` | **one restriction that is NOT available: the kind half cannot be restricted to the entries the skolem TYPE variables occur in.** A one-entry environment whose type-variable walk emits nothing at all still has an escaping skolem kind variable inside a `Con`'s kind schema. This does NOT refute the brief's candidate `X` read so that "the types they occur in" includes KIND-LEVEL occurrence — there the skolem does occur in the entry's type — so a restriction keyed on kind-level occurrence stays open to S2 |
+
+**Proved in Lean:** every row above; 55 named theorems, all 55 checked with
+`#print axioms`, all `[propext, Classical.choice, Quot.sound]` or a subset. No `sorry`,
+`partial`, `unsafe`, `native_decide` or new axiom.
+
+**Stated on paper, not in Lean:** (i) that the Scala's `escs` value is observed only through
+`nonEmpty` — a reading of `Subst.scala:649-658`, which the model encodes by keeping ids only,
+**and true of `:648` ONLY**: `checkSkolemEscape` (`Subst.scala:361-367`) runs the same
+`Type.fskvs` walk at `:365`, over a freshly allocated `hm.types -- mask`, and PRINTS
+`hescs.mkString(", ")` at `:367`, so nothing in this module licenses a transformation there;
+(ii) that `Type.subst`'s recursion visits the nodes `subPass` counts — a reading of
+`Type.scala:215-250, 263, 333, 387, 441, 566`; (iii) that the skolems `sks`/`sts` minted at
+`:614` are fresh for the environment, which is what makes `Untouched` non-vacuous; (iv) that
+the physical-identity short-circuits (`Type.scala:229`, `Kind.scala:52-58`) are what create
+the sharing §6 measures.
+
 
 ## What is proved in Lean / what is proved on paper / what is cited
 

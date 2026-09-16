@@ -29,6 +29,14 @@ loop itself, as a total function, with an executable that prints the compiler's 
 * `Loop.Bridge`      -- a loop partition IS a `Rowpartition.Constraint`: the conversion both
                         ways, `champSort` proved a permutation, and `LPart.eqv` proved to be
                         equality of the constraints
+* `Loop.RejectTerm`  -- (S1b) the REJECTION path: what the draw budget guarantees at the
+                        SHIPPED defaults (S2 layer (i) ON), and the whole of `Subst.solve`
+                        around the loop -- `budgetSP_terminates`, `solveSeedP_terminates`
+* `Loop.EnvBound`    -- (S1b) the `SubstEnv` a refused solve can leave: at most one entry per
+                        dequeue, each of ONE node (`envTermSize_eq_len`), the escape walk over
+                        it linear (`escWalk_length_le`), the exponential blow-up that H1 needs
+                        exhibited for the GENERAL `instantiateType` (`chain_blowup`), and no
+                        cyclic binding (`stepP_noAliasChain`, `noAliasChain_no_cycle`)
 
 `Rowpartition/Loop/Main.lean` is the `looptrace` executable and is deliberately NOT imported
 here: it is the `lean_exe` root, and keeping it out lets `lake build Rowpartition` stay a
@@ -49,3 +57,5 @@ import Rowpartition.Loop.Seed
 import Rowpartition.Loop.Replay
 import Rowpartition.Loop.Conformance
 import Rowpartition.Loop.Bridge
+import Rowpartition.Loop.RejectTerm
+import Rowpartition.Loop.EnvBound
