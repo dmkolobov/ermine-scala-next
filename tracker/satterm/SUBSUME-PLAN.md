@@ -86,3 +86,7 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   and bounds the answer's length, not the cost; "NO enormous env" holds in term size only. Reviewer's signed
   answer: loop BOUNDED at shipped defaults (no theorem at all under -Dermine.dequeuePolicy=shipped), rest of
   Subst.solve YES, post-solve PARTIAL. Findings sent back to the S1b implementer (same agent).
+- 2026-09-16 ~18:00: S1a fixes applied (prose only; statements untouched; build 872 / audit 4936/0 unchanged;
+  report §7 "Review fixes"). Key correction for S2: the `Untouched` age-stamp idea would ACCEPT an escaping
+  skolem; only a content-based (re-stamp-on-substitute) restriction is licensed, and S1a licenses no asymptotic
+  improvement to :648. S1a reviewer re-checking the four findings. S1b fixes in flight. S0 still running.
