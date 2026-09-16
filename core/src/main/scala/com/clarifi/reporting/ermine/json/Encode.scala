@@ -69,8 +69,18 @@ trait JsonBuilder[J] {
   *    are NAMED (`C { f : t, .. }`) -> an object keyed in declaration
   *    order, with a `"tag"` key first when the type has more than one
   *    constructor and no tag when it has exactly one (the props shape,
-  *    design note 3.1b); a named field whose DECLARED type is `Maybe a`
-  *    and whose value is `Nothing` is OMITTED, and `Just x` gives `x`.
+  *    design note 3.1b) -- a field NAMED `tag` in a type with more than one
+  *    constructor is an encode error, since it would overwrite the
+  *    discriminator; a named field whose DECLARED type is `Maybe a`
+  *    and whose value is `Nothing` is OMITTED, and `Just x` gives `x`;
+  *    a named field whose DECLARED type is `Spread Json` is MERGED -- the
+  *    keys of the `JObj` it holds are written into the constructor's own
+  *    object, after the declared fields, in the object's order (Stage 2b),
+  *    and a merged key that collides with a declared field name -- the
+  *    spread field's OWN name excepted, since that is no key of any
+  *    document of the type -- or with `tag`, a repeated key, a payload that
+  *    is not an object, a second `Spread` field and a `Spread` anywhere
+  *    else are all errors.
   *    A positional constructor -> `{"tag": C, "args": [...]}`.  Which of
   *    these is decided by the `DataConDecl` registry; a constructor the
   *    registry does not know falls back on its own arity.
@@ -229,6 +239,32 @@ object Encode {
     sys.error("unreachable")
   }
 
+  /** The `(String, Json)` pairs of a `JObj`'s list argument, in the list's
+    * order: the object's own fields.  Used by the `JObj` node and by a
+    * `Spread` field, which merges exactly these into its parent. */
+  private def objFields(path: String, pairs: Runtime): Either[Error, List[(String, Runtime)]] =
+    spine(path, pairs).right.flatMap { ps =>
+      val fields = new ListBuffer[(String, Runtime)]
+      var i = 0
+      var bad: Option[Error] = None
+      ps.foreach { p =>
+        if (bad.isEmpty) Runtime.swhnf(p) match {
+          case Arr(kv) if kv.length == 2 => Runtime.swhnf(kv(0)) match {
+            case Prim(k: String) => fields += ((k, kv(1)))
+            case bot: Bottom     => bad = Some(bottom(path + "[" + i + "]", bot))
+            case other           => bad = Some(Error(path + "[" + i + "]", "an object key must be a string, not " + describe(other)))
+          }
+          case bot: Bottom => bad = Some(bottom(path + "[" + i + "]", bot))
+          case other       => bad = Some(Error(path + "[" + i + "]", "an object field must be a (String, Json) pair, not " + describe(other)))
+        }
+        i += 1
+      }
+      bad match {
+        case Some(e) => Left(e)
+        case None    => Right(fields.toList)
+      }
+    }
+
   private def bottom(path: String, b: Bottom): Error = {
     val t = b.thrown
     val msg = Option(t.getMessage).getOrElse(t.toString)
@@ -331,29 +367,18 @@ object Encode {
       case "JStr"  => step(path, args(0), b)
       case "JArr"  => step(path, args(0), b)
       case "JObj"  =>
-        spine(path, args(0)).right.flatMap { pairs =>
-          val fields = new ListBuffer[(String, Runtime)]
-          var i = 0
-          var bad: Option[Error] = None
-          pairs.foreach { p =>
-            if (bad.isEmpty) Runtime.swhnf(p) match {
-              case Arr(kv) if kv.length == 2 => Runtime.swhnf(kv(0)) match {
-                case Prim(k: String) => fields += ((k, kv(1)))
-                case bot: Bottom     => bad = Some(bottom(path + "[" + i + "]", bot))
-                case other           => bad = Some(Error(path + "[" + i + "]", "an object key must be a string, not " + describe(other)))
-              }
-              case bot: Bottom => bad = Some(bottom(path + "[" + i + "]", bot))
-              case other       => bad = Some(Error(path + "[" + i + "]", "an object field must be a (String, Json) pair, not " + describe(other)))
-            }
-            i += 1
-          }
-          bad match {
-            case Some(e) => Left(e)
-            case None =>
-              val fs = fields.toList
-              Right(Compound(keyed(path, fs), objectOf(b, fs.map(_._1))))
-          }
+        objFields(path, args(0)).right.map { fs =>
+          Compound(keyed(path, fs), objectOf(b, fs.map(_._1)))
         }
+      // `Spread` is only meaningful as a NAMED constructor field whose
+      // declared type is `Spread Json` (userData merges it into the object);
+      // anywhere else there is nothing to merge into, and writing the
+      // wrapper as `{"tag":"Spread","args":[..]}` would be a document no
+      // reader of the type expects.  The exporter and the decoder refuse
+      // the same positions at the declaration.
+      case "Spread" if args.length == 1 =>
+        Left(Error(path, "a Spread value belongs in a named constructor field declared Spread Json, " +
+                         "where its object is merged into the constructor's; it has no encoding on its own"))
       case "JRel"      => b.rel(path, args(0), Delivery.ByRequest).right.map(Leaf(_))
       case "JInline"   => b.rel(path, args(0), Delivery.Inline).right.map(Leaf(_))
       case "JDeferred" => b.rel(path, args(0), Delivery.Deferred).right.map(Leaf(_))
@@ -382,17 +407,52 @@ object Encode {
         if c.fields.length == args.length && c.fields.nonEmpty && c.fields.forall(_._1.isDefined)
       } yield (d.constructors.length > 1, c.fields.map { case (n, t) => (n.get, t) })
       named match {
+        // A field named `tag` in a type with SEVERAL constructors would
+        // overwrite the discriminator (the object would carry two "tag" keys,
+        // of which argonaut keeps the last), so the document is refused rather
+        // than written wrong.  The schema exporter and the params decoder
+        // refuse the same declaration, at the field (J2a review finding 2).
+        case Some((tagged, fields)) if tagged && fields.exists(_._1 == "tag") =>
+          Left(Error(path + ".tag", "the constructor " + g.string + " has a field named tag, which " +
+                                    "collides with the discriminator of a type with several constructors"))
         case Some((tagged, fields)) =>
           // A Maybe field is an OPTIONAL key: `Nothing` drops out of the
           // object rather than encoding as null.  Only the DECLARED type
           // decides, so a field of a type variable that happens to hold
           // Nothing still encodes as null, as the walker always did.
+          //
+          // A field whose declared type is headed by `Json.Spread` is MERGED
+          // (Stage 2b): its object's keys are written into THIS object,
+          // after the declared fields, in the object's own order.  At most
+          // one such field per constructor; the exporter, the decoder and
+          // `rejections` refuse a second one at the declaration.
+          val spreads = fields.zipWithIndex.filter { case ((_, t), _) => isSpread(t) }
           val kept = new ListBuffer[(String, Runtime)]
-          var bad: Option[Error] = None
+          var extra: List[(String, Runtime)] = Nil
+          var bad: Option[Error] =
+            if (spreads.length <= 1) None
+            else Some(Error(path + "." + spreads(1)._1._1,
+                            "the constructor " + g.string + " has " + spreads.length + " Spread fields (" +
+                            spreads.map(_._1._1).mkString(", ") + "); at most one can be merged into the object"))
+          // The names the merged keys may not take: every declared field that
+          // IS a key of the document (an omitted Maybe field included -- the
+          // decoder reads such a key back as the field, not as part of the
+          // spread) and the discriminator.  The SPREAD field's own name is
+          // NOT reserved: it is no key of any document of this type, so the
+          // decoder gathers it like any other spare key (J2b review finding 1
+          // -- reserving it made the encoder refuse a document the exporter
+          // declares legal and the decoder accepts).
+          val taken: Set[String] =
+            fields.filterNot { case (_, t) => isSpread(t) }.map(_._1).toSet ++
+            (if (tagged) Set("tag") else Set[String]())
           fields.zipWithIndex.foreach { case ((n, t), i) =>
             if (bad.isEmpty) {
               val here = path + "." + n
-              if (isMaybe(t)) Runtime.swhnf(args(i)) match {
+              if (isSpread(t)) spread(path, here, g, n, args(i), taken) match {
+                case Left(e)   => bad = Some(e)
+                case Right(ps) => extra = ps
+              }
+              else if (isMaybe(t)) Runtime.swhnf(args(i)) match {
                 case Data(Global("Builtin", "Nothing", _), _) => ()
                 case bot: Bottom                              => bad = Some(bottom(here, bot))
                 case forced                                   => kept += ((n, forced))
@@ -402,7 +462,7 @@ object Encode {
           bad match {
             case Some(e) => Left(e)
             case None =>
-              val fs = kept.toList
+              val fs = kept.toList ++ extra
               val keys = if (tagged) "tag" :: fs.map(_._1) else fs.map(_._1)
               val kids = fs.map { case (n, a) => (path + "." + n, a) }
               val tag = b.str(g.string)
@@ -425,6 +485,61 @@ object Encode {
     case _                                                          => false
   }
 
+  /** Is the DECLARED type of a field headed by `Json.Spread`?  (Stage 2b:
+    * its object is merged into the constructor's.)  Like `isMaybe`, this
+    * reads the type as WRITTEN -- no alias expansion, which the encoder has
+    * no session for.  The exporter and the decoder use the same test on the
+    * same declared type, so an alias for `Spread Json` is not a spread field
+    * anywhere: all three then refuse it, here at the value and there at the
+    * `Spread` type itself. */
+  def isSpread(t: Type): Boolean = unfurl(t) match {
+    case (Type.Con(_, g, _, _), _ :: Nil) => g.module == jsonModule && g.string == "Spread"
+    case _                                => false
+  }
+
+  /** The keys a `Spread` field merges into its parent object: the pairs of
+    * the `JObj` it holds, in the object's order, checked against the keys
+    * the constructor has already taken and against each other.  `path` is
+    * the PARENT object (a merged key is a key of it), `here` the field. */
+  private def spread(path: String, here: String, g: Global, field: String,
+                     v: Runtime, taken: Set[String]): Either[Error, List[(String, Runtime)]] =
+    Runtime.swhnf(v) match {
+      case bot: Bottom => Left(bottom(here, bot))
+      case Data(sg, sargs) if isJson(sg, "Spread") && sargs.length == 1 =>
+        Runtime.swhnf(sargs(0)) match {
+          case bot: Bottom => Left(bottom(here, bot))
+          case Data(og, oargs) if isJson(og, "JObj") && oargs.length == 1 =>
+            objFields(here, oargs(0)).right.flatMap { fs =>
+              var seen = Set[String]()
+              var bad: Option[Error] = None
+              fs.foreach { case (k, _) =>
+                if (bad.isEmpty) {
+                  if (taken.contains(k))
+                    bad = Some(Error(path + "." + k,
+                      "the key " + quote(k) + " merged from the Spread field " + field + " collides with " +
+                      (if (k == "tag") "the tag of " + g.string
+                       else "the declared field " + quote(k) + " of " + g.string)))
+                  else if (seen.contains(k))
+                    bad = Some(Error(path + "." + k,
+                      "the Spread field " + field + " of " + g.string + " repeats the key " + quote(k) +
+                      "; a merged object cannot say the same key twice"))
+                  else seen += k
+                }
+              }
+              bad match {
+                case Some(e) => Left(e)
+                case None    => Right(fs)
+              }
+            }
+          case other => Left(Error(here, "a Spread field carries a JSON object to merge into " + g.string +
+                                         ", not " + describe(other)))
+        }
+      case other => Left(Error(here, "the field " + field + " of " + g.string + " is declared Spread but holds " +
+                                     describe(other)))
+    }
+
+  private def quote(s: String): String = "\"" + s + "\""
+
   // ---------------------------------------------------------------------
   // the static side: which declared field types the encoder can carry
 
@@ -439,10 +554,41 @@ object Encode {
 
   def rejections(decl: DataConDecl): List[Rejected] =
     decl.constructors.flatMap { c =>
-      c.fields.zipWithIndex.flatMap { case ((_, t), i) =>
-        reject(t).map(Rejected(c.name, i, t, _))
+      val spreads = c.fields.zipWithIndex.filter { case ((_, t), _) => isSpread(t) }
+      c.fields.zipWithIndex.flatMap { case ((n, t), i) =>
+        val tagClash =
+          if (decl.constructors.length > 1 && n == Some("tag"))
+            Some("a field named tag collides with the discriminator of a type with several constructors")
+          else None
+        // The three declaration-level Spread refusals (Stage 2b); the
+        // exporter and the decoder refuse the same three, at the same field.
+        // Tested in THEIR order (a second Spread before a positional one) so
+        // that a declaration with both faults gets the same reason here as
+        // there, at the field they name -- the sweep additionally reports the
+        // first spread, since it lists every field rather than stopping.
+        val spreadClash =
+          if (!isSpread(t)) None
+          else if (spreads.head._2 != i)
+            Some("a constructor merges at most one Spread field (field " + spreads.head._2 + " is the first)")
+          else if (n.isEmpty)
+            Some("a Spread field has nothing to merge into in a positional constructor; name the constructor's fields")
+          else spreadArgument(t)
+        tagClash.orElse(spreadClash).orElse(if (isSpread(t)) None else reject(t)).map(Rejected(c.name, i, t, _))
       }
     }
+
+  /** `None` when a `Spread` field's argument may be merged: `Json` itself,
+    * or a type variable, which is decided at the instantiation (the exporter
+    * and the decoder see the substituted type and insist on `Json` there). */
+  def spreadArgument(t: Type): Option[String] = unfurl(t) match {
+    case (_, a :: Nil) => unfurl(a) match {
+      case (Type.Con(_, g, _, _), Nil) if g.module == jsonModule && g.string == "Json" => None
+      case (VarT(_), Nil) => None
+      case _ => Some("only Spread Json is merged into an object, not Spread " + Schema.renderType(a) +
+                     " (a record's or a data type's keys are known from its declaration: name them as fields)")
+    }
+    case _ => Some("Spread takes one type argument")
+  }
 
   private def unfurl(t: Type, args: List[Type] = Nil): (Type, List[Type]) = t match {
     case AppT(f, a)   => unfurl(f, a :: args)
@@ -465,6 +611,9 @@ object Encode {
         case _       => Some("the foreign type " + g)
       }
       else if (g.module == jsonModule && g.string == "Json") None
+      else if (g.module == jsonModule && g.string == "Spread")
+        Some("a Spread belongs in a NAMED constructor field declared Spread Json, whose object is merged " +
+             "into the constructor's; there is nothing to merge into here")
       else if (g.module == "Native.List" || g.module == "Vector") args.headOption.flatMap(reject)
       else if (g.module == "Native.Maybe") args.headOption.flatMap(reject)
       else if (g.module == "Native.Pair") args.flatMap(reject).headOption

@@ -26,7 +26,7 @@ import scalaparsers.Supply
   *    (Encode writes a Long as a decimal string: JSON numbers lose precision
   *    past 2^53); `Double`/`Float` -> `{"type":"number"}`; `Bool` ->
   *    `{"type":"boolean"}`; `String` -> `{"type":"string"}`; `Char` -> the
-  *    same with `maxLength: 1`; `Date` -> string/`format: date`;
+  *    same with `minLength: 1` and `maxLength: 1`; `Date` -> string/`format: date`;
   *    `Timestamp` -> string/`format: date-time`; `GUID` -> string/`format:
   *    uuid`.  (A relation's column `type` is the one place this walker does
   *    go through a `PrimT` -- `Type.primTypes`, then `Wire.columnType`,
@@ -59,8 +59,18 @@ import scalaparsers.Supply
   *    plus the named properties in declaration order; a field whose declared
   *    type is headed by `Builtin.Maybe` is OPTIONAL and its schema is the
   *    Maybe's PAYLOAD, not the `anyOf`-null (the encoder omits the key
-  *    instead of writing null); a single-constructor record-style type drops
-  *    the `tag` entirely.
+  *    instead of writing null); a field NAMED `tag` in a type with several
+  *    constructors is an export error (it would overwrite the discriminator);
+  *    a `Nullable a` or native `Maybe# a` field is
+  *    NOT optional -- the encoder writes its null -- so it stays required
+  *    with a nullable schema; a single-constructor record-style type drops
+  *    the `tag` entirely.  A field whose declared type is `Spread Json`
+  *    (Stage 2b) is NOT a property: the encoder merges its object's keys
+  *    into the constructor's, so the arm carries
+  *    `additionalProperties: true` (zod `.passthrough()`) instead of the
+  *    usual `false`, and nothing else about it changes.  At most one such
+  *    field per constructor, named, of `Spread Json`; a `Spread` anywhere
+  *    else is an export error.
   *  - the stdlib `Json` type -> `{}`: any JSON document.  Ermine owns no
   *    contract for it (§3.1b item 1).
   *  - a relation (revised in J3a; the wire contract of
@@ -292,6 +302,13 @@ object Schema {
       // are relations on the wire, never `$defs` entries or `{tag,args}`
       else if (g.module == Encode.jsonModule && g.string == "Inline") relation(arg1(g, args, path), path, InlineArm)
       else if (g.module == Encode.jsonModule && g.string == "Deferred") relation(arg1(g, args, path), path, DeferredArm)
+      // Stage 2b: a Spread has no schema of its own -- it is merged into the
+      // object of the constructor whose NAMED field declares it, and
+      // `constructor` takes that field out of the properties before the walk
+      // gets here.  Anywhere else there is nothing to merge into.
+      else if (g.module == Encode.jsonModule && g.string == "Spread")
+        reject(path, "a Spread belongs in a named constructor field declared Spread Json, whose object is " +
+                     "merged into the constructor's; there is nothing to merge into here")
       else if (g.module == "Native.List" && g.string == "List#") array(arg1(g, args, path), path + "[]")
       else if (g.module == "Vector" && g.string == "Vector") array(arg1(g, args, path), path + "[]")
       else if (g.module == "Native.Maybe" && g.string == "Maybe#") nullable(arg1(g, args, path), path)
@@ -315,7 +332,7 @@ object Schema {
       case "Double" | "Float" => Json.obj("type" -> Json.jString("number"))
       case "Bool"      => Json.obj("type" -> Json.jString("boolean"))
       case "String"    => Json.obj("type" -> Json.jString("string"))
-      case "Char"      => Json.obj("type" -> Json.jString("string"), "maxLength" -> Json.jNumber(1))
+      case "Char"      => Json.obj("type" -> Json.jString("string"), "minLength" -> Json.jNumber(1), "maxLength" -> Json.jNumber(1))
       case "Date"      => Json.obj("type" -> Json.jString("string"), "format" -> Json.jString("date"))
       case "Timestamp" => Json.obj("type" -> Json.jString("string"), "format" -> Json.jString("date-time"))
       case "GUID"      => Json.obj("type" -> Json.jString("string"), "format" -> Json.jString("uuid"))
@@ -526,20 +543,54 @@ object Schema {
         reject(base, "an operator constructor has no stable discriminator tag " +
                      "(a tag must be an alphanumeric constructor name)")
       val ex = c.existentials.toSet
+      // the SPREAD flag is read off the type as DECLARED, before the
+      // instantiation is substituted in (`Encode.isSpread`, the encoder's
+      // own test): a type PARAMETER that happens to be instantiated at
+      // `Spread Json` is not a spread field, and the walk below refuses it
+      // where it stands, exactly as the encoder refuses the value
       val fields = c.fields.zipWithIndex.map { case ((nm, t0), i) =>
         if (Type.typeVars(t0).exists(ex)) reject(path(i), "an existential has no JSON representation")
-        (nm, Type.subType(sub, t0), i)
+        (nm, Type.subType(sub, t0), i, Encode.isSpread(t0))
       }
       val named = fields.count(_._1.isDefined)
       if (named != 0 && named != fields.length)
         reject(base, "constructor fields are partly named; name all of them or none")
+      // Stage 2b: at most one Spread field, named, of `Spread Json`; the
+      // encoder and the decoder refuse the same three at the same field
+      val spreads = fields.filter(_._4)
+      spreads.drop(1).headOption foreach { f =>
+        reject(path(f._3), "a constructor merges at most one Spread field (field " + spreads.head._3 +
+                           " is the first)")
+      }
+      spreads.headOption foreach { f =>
+        if (named != fields.length)
+          reject(path(f._3), "a Spread field has nothing to merge into in a positional constructor; " +
+                             "name the constructor's fields")
+        spreadArgument(f._2, path(f._3))
+      }
       val tagProp = "tag" -> Json.obj("const" -> Json.jString(c.name.string))
       if (named == fields.length && fields.nonEmpty) {
         // record-style: named properties in declaration order; a Maybe
-        // field is an OPTIONAL key carrying the Maybe's payload schema
-        val props = fields.map { case (nm, t, i) =>
+        // field is an OPTIONAL key carrying the Maybe's payload schema; a
+        // Spread field is no property at all and opens the object
+        val props = fields.filterNot(_._4).map { case (nm, t, i, _) =>
           val k = nm.get
-          maybePayload(t) match {
+          // A field named `tag` in a type with several constructors would
+          // overwrite the discriminator: without this the arm came out with
+          // the `const` gone and `required: ["tag","tag"]`, and the encoder
+          // wrote two "tag" keys.  Refused in all three places (J2a review
+          // finding 2); `Encode` and `Decode` say the same.
+          if (!only && k == "tag")
+            reject(path(i), "a field named tag collides with the discriminator " +
+                            "of a type with several constructors")
+          // An OPTIONAL key is a field whose declared type is `Maybe a`, and
+          // only that: `Encode.isMaybe` is the encoder's test and it names
+          // `Builtin.Maybe` alone.  A `Nullable a` or a native `Maybe# a`
+          // field is written as `null`, not left out, so it is a required key
+          // whose schema admits null.  (Stage 2a: the decoder's agreement
+          // property caught this reading `maybePayload`, which is the wider
+          // test the nested-Maybe refusal wants.)
+          declaredMaybe(t) match {
             case Some(inner) => (k, walk(inner, path(i)), false)
             case None        => (k, walk(t, path(i)), true)
           }
@@ -550,14 +601,16 @@ object Schema {
           "properties" -> Json.obj(((if (only) Nil else List(tagProp)) ++
                                     props.map(p => (p._1, p._2))): _*),
           "required"   -> Json.array(required.map(Json.jString): _*),
-          "additionalProperties" -> Json.jBool(false))
+          // a spread field's keys are not in the declaration, so the object
+          // is OPEN: the exporter says so explicitly (zod `.passthrough()`)
+          "additionalProperties" -> Json.jBool(spreads.nonEmpty))
       } else {
         val n = fields.length
         val args =
           if (n == 0) Json.obj("type" -> Json.jString("array"), "maxItems" -> Json.jNumber(0))
           else Json.obj(
             "type"        -> Json.jString("array"),
-            "prefixItems" -> Json.array(fields.map { case (_, t, i) => walk(t, path(i)) }: _*),
+            "prefixItems" -> Json.array(fields.map { case (_, t, i, _) => walk(t, path(i)) }: _*),
             "minItems"    -> Json.jNumber(n),
             "maxItems"    -> Json.jNumber(n))
         Json.obj(
@@ -568,9 +621,31 @@ object Schema {
       }
     }
 
-    /** `Some(a)` when `t` is headed by `Builtin.Maybe` (or `Nullable`, or
-      * the native `Maybe#`) -- the test the record-style rule and the
-      * nested-Maybe refusal share. */
+    /** A `Spread` field's argument, at the instantiation: only `Json` can be
+      * merged.  A record's or a data type's keys are known from its own
+      * declaration, so spreading one would be a second spelling of fields
+      * the constructor can already name; `Json` is the case nothing else
+      * covers (design note §3.1b item 2). */
+    private def spreadArgument(t: Type, path: String): Unit = unfurl(t) match {
+      case (_, a :: Nil) => unfurl(resolve(a)) match {
+        case (Type.Con(_, g, _, _), Nil) if g.module == Encode.jsonModule && g.string == "Json" => ()
+        case _ => reject(path, "only Spread Json is merged into an object, not Spread " + renderType(a) +
+                               " (the keys of a record or a data type are known from its declaration: " +
+                               "name them as fields)")
+      }
+      case _ => reject(path, "Spread takes one type argument")
+    }
+
+    /** `Some(a)` when `t` is headed by `Builtin.Maybe` ALONE: the encoder's
+      * optional-key test (`Encode.isMaybe`). */
+    private def declaredMaybe(t: Type): Option[Type] = unfurl(resolve(t)) match {
+      case (Type.Con(_, Global("Builtin", "Maybe", _), _, _), a :: Nil) => Some(a)
+      case _ => None
+    }
+
+    /** `Some(a)` when `t` is headed by `Builtin.Maybe`, `Nullable` or the
+      * native `Maybe#` -- everything that encodes to a bare null, which is
+      * what the nested-Maybe refusal is about. */
     private def maybePayload(t: Type): Option[Type] = unfurl(resolve(t)) match {
       case (Type.Con(_, g, _, _), a :: Nil)
         if (g.module == "Builtin" && (g.string == "Maybe" || g.string == "Nullable")) ||

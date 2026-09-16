@@ -258,7 +258,7 @@ as *the* mapping; mirrored by the schema exporter and the params decoder):
 | `{..(\|f1..fn\|)}` closed record | object, unqualified keys, `additionalProperties:false` | keys in sorted order in both the encoder and the schema (`Rec` is an unordered `Map`, `Runtime.scala:161`); export fails on key collision across modules (§6) |
 | open row `{..r}` | export error unless instantiated | encoder still works (it sees the Rec) |
 | `data` all-nullary | string enum | |
-| single-constructor `data` with named fields | plain object, no `tag` | the common props shape (§3.1b); a `Maybe` field is an optional key; a field of type `Spread Json` is merged into the parent object and exports as unknown additional properties. BUILT, Stage 1a (§3.7a), less `Spread` |
+| single-constructor `data` with named fields | plain object, no `tag` | the common props shape (§3.1b); a `Maybe` field is an optional key; a field of type `Spread Json` is merged into the parent object and exports as unknown additional properties. BUILT, Stage 1a (§3.7a); the `Spread` half BUILT in Stage 2b (§3.7b') |
 | multi-constructor `data` with named fields | object, `"tag"` first, then the fields in declaration order | BUILT, Stage 1a (§3.7a) |
 | `data` with positional fields | `{"tag": C, "args": [...]}` | |
 | Relation r | `JData` → §3.4 | never inline in `toJson#` |
@@ -694,9 +694,23 @@ What landed, and where it departs from the text above.
   gives the selector the scheme `forall {k} (a: k). T a -> t`, kind variable
   and all -- but so does the constructor (`forall {k} (a: k). t -> T a`), so
   the selector is consistent with what the type already had.  The LSP shows
-  selectors as `KField` children of the data symbol and as declaration
-  heads; record-style PRETTY PRINTING of the declaration is not built (rule
-  10), so `:browse` and hover still show positional fields.
+  selectors as `KField` symbols and as declaration heads; record-style
+  PRETTY PRINTING of the declaration is not built (rule 10), so `:browse`
+  and hover still show positional fields.
+  **Corrected 2026-09-16 (J3b's landing gate)**: those `KField` symbols were
+  children of the DATA symbol, i.e. SIBLINGS of the constructors, and a
+  constructor's span runs to the start of the next one — so every record
+  constructor's range straddled its own fields' ranges, which
+  `TestRenamer` 6.4 ("siblings are sorted, and no two of them straddle")
+  forbids and no cursor-to-symbol client can resolve.  It went unseen
+  because no module in the corpus had a record-style `data` until
+  `Layout/Doc.e`.  A field symbol is now a child of the CONSTRUCTOR that
+  declares it (`lsp/Symbols.scala`, the `SDataStatement` case), which is
+  what LSP means by Field members and what this builder already did for
+  every other container; a name shared by two constructors is one selector
+  with two declaration sites and lists under each.  Pinned by two new
+  properties in `TestNamedFields` (one over generated declarations, one
+  exact tree).
 - **Gate**: TestNamedFields 14/14 (nine `forAll` properties over random
   declarations), TestJson 27/27, the parser/renamer suites green, REPL and
   LSP smokes green, corpus verdicts 89 LOADED / 79 REJECTED / 0 UNKNOWN over
@@ -858,6 +872,305 @@ cache: `modules/Layout/Doc.e`, `core/json/Doc.scala`, `core/json/Write.scala`,
 - **Numbers**: 100,000 rows x 10 columns write in ~1.9 s through the test
   scanner (of which building the records is the larger half) into ~15 MB of
   text, holding ~28 MB of heap: the writer holds the text, not the records.
+## 3.7b Stage 2a as built (2026-09-16, branch `json-decode`)
+
+**The params decoder** (`core/json/Decode.scala`), the inverse of `Encode` on
+the serializable fragment and the executable reading of what `Schema` exports.
+
+- **Two phases.** `Decode.compile(ty)` walks the TYPE once -- the exporter's
+  walk, the same alias expansion to a fixed point, the same `unfurl`, the same
+  `$defs`-keyed handling of a `data` instantiation (`Schema.defName`) so a
+  recursive type terminates -- and returns a `Decoder` that needs no
+  `SessionEnv` to run. `entry(ty)` is that walk alone (the expanded type, or
+  why it has no decoding); `decode(ty, j)` is compile-then-run. The RUN phase
+  keeps an explicit stack, so neither a 100,000-element list nor a document
+  nested past the parser's own depth grows the JVM stack, and JSON paths are
+  parent-linked and rendered only for an error (eager path strings cost the
+  square of the depth).
+- **Refused at compile time**, each naming the offending part of the type:
+  a type variable (including a PHANTOM data parameter -- the exporter accepts
+  one, a decoded value has no type to carry it), a `forall`, an open row, a
+  function, `IO`, `FFI`, a `Field`/`Prim`/`PrimT` witness, a foreign type, a
+  relation and the `Inline`/`Deferred` wrappers (rows never come from the
+  request), an existential field, a nested `Maybe (Maybe a)`, a `Nullable` of
+  a type with no `PrimT` witness for its `Null`, an operator constructor, and
+  a record-style field named `tag` in a type with several constructors.
+- **Refused at run time** with the JSON path into the INPUT (`$`, `.key`,
+  `[i]`, a positional constructor's arguments as `.args[i]`): a missing key is
+  reported at the object, an unknown key at the key, a bad tag at `.tag`.
+- **Values are what evaluation produces**, which the round-trip property
+  pins: `Data` through the registry's constructor `Global`; `Bool` as
+  `Data(True/False)`; `Nullable`'s `Null` carrying `primTypes(t).withNull`,
+  the witness `Null Int` and a database read both carry; `Date` a
+  `java.util.Date` at UTC midnight, `Timestamp` a `java.sql.Timestamp`;
+  `List#`, `Maybe#` and `Pair#` storing `extract`ed elements as `::#`/`Just#`/
+  `toPair#` do, but `Vector` storing what `Session.whnfForeign` gives (its
+  builders are foreign, and an empty `Arr` -- the unit value -- arrives there
+  as Scala's `()`).
+- **Decisions in code.** An integer may be written `1.0` or `1e2` (JSON
+  Schema's `integer`) but not `1.5`; `Long` is a decimal string only; a
+  `Timestamp` is any ISO-8601 date-time WITH an offset (the encoder's
+  `...SSS'Z'` included; zod's `.datetime()` is stricter, `Z` only) and keeps
+  sub-millisecond nanos; a `Date` is `ISO_LOCAL_DATE`, strict, so `2026-02-30`
+  is refused; a `GUID` must be the canonical 8-4-4-4-12 form. `Prim`'s
+  argument is BY NAME and turns a throw into a `Bottom`, so every conversion
+  is forced into a `val` first: a decode either fails with an `Error` or
+  yields a value with no bottom in it (the agreement property checks that).
+  `java.sql.Timestamp.from` MULTIPLIES AND WRAPS out-of-range instants (JDK
+  21: year 999999999 comes back as year 169104628), so the instant is
+  validated with `toEpochMilli` first.
+- **Four bugs the new properties found in Stage 1 code**, fixed here:
+  (1) the exporter made a record-style field of type `Nullable a` or `Maybe# a`
+  an OPTIONAL key, but the encoder only omits a `Maybe` field and writes
+  `null` for those two -- `Schema.constructor` now uses the encoder's test
+  (`Builtin.Maybe` alone); (2) `Char` exported `maxLength: 1` without
+  `minLength: 1`, so `""` validated and zod accepted it while the decoder
+  refused; (3) `Validate`'s `uuid` format took `UUID.fromString`, which also
+  accepts `"1-1-1-1-1"`, where zod's `.uuid()` and the decoder want the
+  canonical form. `Validate` learned `minLength`, `Zod` renders `.min(n)`.
+  (4) a record-style field NAMED `tag` in a type with several constructors
+  overwrote the discriminator: the exporter emitted an arm whose `tag` had lost
+  its `const` and whose `required` read `["tag","tag"]`, and the encoder wrote
+  two `"tag"` keys, of which argonaut keeps the last. The decoder refused it
+  from the start; `Schema.constructor` and `Encode.userData` now refuse it too
+  -- the exporter and the decoder at the declaration (`T.C[i]`), the encoder at
+  the value's own `$.tag` -- all three saying "collides with the
+  discriminator", so no path produces the broken document. A DECLARATION-level
+  refusal (the parser/`Session`, beside Stage 1a's other selector refusals)
+  would be better still and is a separate ticket.
+- **Known gaps, pinned as such** (the validator accepts what the decoder
+  refuses, because the schema cannot say it): `Int` has no bounds in the
+  schema, `Long` only a digit pattern, `Double`/`Float` no finite range, and
+  Java's `$` in a `pattern` also matches before a final newline where
+  ECMAScript's does not. Adding `minimum`/`maximum` to the `Int` schema would
+  close the first and move every committed fixture, so it is left for after
+  the Stage 3 landings.
+- **The non-injective spots kept on purpose**: `Maybe Json` (and
+  `Maybe# Json`) -- `Just JNull` and `Nothing` both encode as `null` and the
+  decoder reads `null` as `Nothing` -- and, inherited from Stage 0, a
+  whole-valued `JNum` (`JNum 2.0` renders as `2.0` and reads back as `JInt 2`,
+  which is `parseJson#`'s own rule, so `TestSchema`'s `Json` generator always
+  gives a `num` a fractional part). Nested `Maybe (Maybe a)` is refused for
+  exactly this reason; a raw-JSON parameter was judged worth the loss. A
+  record-style `Maybe` FIELD is injective even so (absent / `null` / value).
+- **Tests**: `scalacheck-binding/TestDecode.scala`, ten properties over
+  TestSchema's generated declarations and values -- round trip (200 cases and
+  a shrinking one), agreement with `Validate` over 1,950 documents (the
+  encoding plus twelve single mutations of it per case), the error-path
+  distribution, `entry` on poisoned types, 100,000 records, and a 100,000-level
+  document (far past what argonaut's own parser reads). The generator vocabulary in
+  `TestSchema` grew the rows it lacked (Short, Byte, Float, Char, Date,
+  Timestamp, GUID, Nullable, Vector, `List#`, `Maybe#`, `Pair#`, `Json`),
+  which is what found the Stage 1 bugs above. The round trip compares JVM
+  classes as well as structure, and excuses only the payload ambiguity just
+  described -- the null WRAPPER is still compared, so answering a `Maybe`'s
+  `Nothing` where a native `Maybe#`'s belongs fails (checked by mutation).
+  Two test-hygiene fixes came with the review: `(e2)` reads back at three
+  quarters of its measured parser depth instead of at the boundary (the
+  measurement swings 4,100-21,000 between runs with the JIT state, and sitting
+  on it overflowed one gate run in fifteen), and `TestJson` no longer declares
+  three different `data Shape`s and two `data Series` in one process -- the
+  `DataConDecl` registry is process-global and last-writer-wins, so
+  concurrently-running properties could encode each other's values with the
+  wrong field list (seen once in twenty runs).
+## 3.7c Stage 3 writer as built (2026-09-16, branch `json-doc`, stage J3b)
+
+The document types, the document writer, the row encoder and the deferred-token
+cache: `modules/Layout/Doc.e`, `core/json/Doc.scala`, `core/json/Write.scala`,
+`core/json/PlanCache.scala`, `scalacheck-binding/.../TestDoc.scala`.
+
+- **`Layout.Doc.Node`**: `Widget { name, props }`, `VFlow { children }`,
+  `HFlow { children }`, `Grid { cells }`, `Tabbed { tabs }`, with
+  `Tab { label, content }` — the names of §3.2 with no collision to rename
+  (the generic walker of §3.7a turns them into `{"tag":"Widget","name":…,
+  "props":…}`, and `Tab`, being a single-constructor type, has no `tag`).
+  `widget n p = Widget n (toJson p)`; `vflow`/`hflow`/`grid`/`tabbed` are the
+  constructors, `tabbed` taking `(label, node)` pairs.
+- **`Doc`** is a small JSON tree (`DNull DBool DLong DNum DStr DArr DObj DRaw`)
+  plus `Data(ext, columns, order, delivery, path)` for a relation.  `DocJson`
+  is the third `JsonBuilder` beside `ArgonautJson` and `ErmineJson`: it forces
+  the relation, reads the plan's header (`Typer.extTyper`, what `relation#`
+  uses) and keeps the `Ext` for the writer, so **column descriptors are known
+  before any scan**.  A header-less `EmptyRel` (`mkRelation# []`) is an encode
+  error at its path unless a per-path `Header` hint is supplied;
+  `Doc.headerOfType` turns a static `[a, b, c]` type into one (the only static
+  hint supported: inside a widget's `props : Json` there is no static type
+  left to read).
+- **`Write.doc[G](doc, out, cfg, cache)(implicit Scanner[G], Guard[G])`** is
+  ONE `G` action: text runs are appended as they come, each relation resolved
+  in document order.  For `G = DB` that is one `Connection`, proved by a test
+  that counts `Run[DB]`'s connections and compares the `Connection` each scan
+  receives.  `Guard[G]` (instances for `DB` and `Id`) is the one addition to
+  the design: `Scanner[G]` offers only a `Monad`, which cannot see the
+  exception a scan throws, and a failure has to name the relation.
+- **Row encoder**: `Rows.row` appends a `Record` as a JSON array in column
+  order straight to a `StringBuilder`, per `PrimExpr` case, no `Json` nodes.
+  The mapping is `Encode`'s on the value the runtime would lift the `PrimExpr`
+  to, with one deliberate difference: a `DateExpr` is a date by its CASE even
+  when the value inside is a `java.sql.Timestamp` (`PrimExpr.mapDate` makes
+  those), because the column descriptor says `Date`.  Strings are escaped per
+  RFC 8259 plus U+2028/U+2029 and any unpaired surrogate, so the text is
+  always valid UTF-8 and safe to inline in a `<script>`-free page.
+- **Delivery**: explicit `Inline`/`Deferred` wins, a bare relation takes
+  `cfg.default`, and a bare relation resolved inline whose scan yields a
+  (threshold+1)-th record STOPS there — the `Process` returns `Stop`, which
+  ends the scan (the SQL driver closes its result set) and the relation goes
+  out deferred instead.  `MemoryPlanCache` mints a 128-bit base64url token
+  with a TTL and `Write.relation(token, …)` writes exactly the inline object
+  the relation would have had.
+- **Buffered failure semantics**: a failure anywhere throws `WriteFailure`
+  (path, message, the relations already completed) when the action RUNS;
+  `out` then holds the document up to but not including the failed relation's
+  object — never a partial relation.  A runner that wants HTTP error semantics
+  writes into a buffer and sends it only when the action returns.  A row the
+  encoder REFUSES (a non-finite Double, a missing column) leaves its scan by
+  `Stop`, the same exit the threshold uses, and the error is raised after the
+  scan has returned: throwing from inside the machine would unwind through
+  `EffectfulProcedure.withDriver` (`relational/package.scala:121-128`, which
+  has no `finally`) and skip `rs.close`/`stmt.close` and `cleanTempTables` —
+  a leaked cursor per failed report under a pooled `Run[DB]`.  The hole that
+  remains is a scan that throws on its own; the cure is
+  `try k(d) finally teardown()` in that shared code, carried as a ticket for
+  J3c.
+- **Two latent bugs this stage had to find** (both outside the JSON code).
+  First, `record/RecordMap.scala`'s `SharingKeySet.get` inferred `Nothing` for
+  `indexValueSeq`'s type parameter and compiled to `checkcast
+  scala/runtime/Nothing$`, so EVERY lookup by key on a record from a SQL scan
+  threw `ClassCastException` on Scala 3 (fixed here, one line, with a pinning
+  property).  The JSON writer was NOT the first caller — `Op.eval`
+  (`Op.scala:22`) via `SqlScanner.scala:581` already indexed scanned records by
+  name, with no Scala 3 coverage — and since `get` also backs `apply`,
+  `contains` and `Map.equals`, which on 2.13 CATCHES the exception and answers
+  `false`, two equal scanned records compared unequal and
+  `relational.uniqSorted`/`uniq` and any `Set[Record]` silently stopped
+  deduplicating.  The fix restores relational-engine behaviour, so its real
+  gate is the landing's full `core/test`, not the JSON suites; the 2.11
+  `RecordMap` is a different file and probably does not need the line.
+  Second, `SqlExecution.nextRecord` calls the emitter's `getUuid` before it
+  checks `wasNull`, so a NULL in a `GUID` column throws
+  `NullPointerException` (NOT fixed here — it is the DB layer's, and stage J3c
+  should have it as a ticket).
+- **Numbers**: 100,000 rows x 10 columns write in ~1.9 s through the test
+  scanner (of which building the records is the larger half) into ~15 MB of
+  text, holding ~28 MB of heap: the writer holds the text, not the records.
+
+## 3.7d Stage 3 runner as built (2026-09-16, branch `json-runner`, stage J3c)
+
+Files: `core/.../ermine/json/Runner.scala` (the runner, `RunError`, `Request`,
+`RunnerConfig`), `Server.scala` (the JDK `com.sun.net.httpserver` face),
+`ServeMain.scala` + `bin/ermine-serve` (the CLI),
+`core/src/test/resources/doc/Sales.e` (the example report),
+`scalacheck-binding/.../TestRunner.scala` (16 properties).
+
+### The pipeline
+
+```
+request JSON -> Request.parse -> Decode (compiled once per report)
+             -> report : Params -> Node -> Doc.fromRuntime
+             -> Write.doc inside ONE Run[DB].run -> one JSON object
+```
+
+Boot is one `SessionEnv` for the process: `Lib.preamble`, then `Layout.Doc`
+and the configured `--preload` modules.  Module sources come from the
+`--root` directories, in order, before the classpath.  Per REPORT, once and
+cached by module name: `Session.eval(<report name>)` for `(Type, Runtime)`,
+`Decode.reportSignature` to split `Params -> Result`, a check that the result
+is `Layout.Doc.Node` with aliases expanded, and `Decode.compile` for the
+parameter decoder.  A REFUSAL is not cached, so a module the operator is
+about to add or a signature they are about to correct is retried.
+
+### The wire, as implemented
+
+```
+POST /report/<Module.Name>   body {"params": .., "data": {..}}   -> the document
+GET  /data/<token>                                               -> the inline object
+GET  /health                 -> {"status":"ok","version":1,"modules":[..]}
+```
+
+Every response is `application/json; charset=utf-8` with a `Content-Length`;
+`Buffered` means the document is written into a `StringBuilder` and sent only
+when the write returned, so no partial document ever reaches a client.  A
+failure is `{"error":{"path":..,"message":..}}` with `path` null when there is
+none:
+
+| Status | When | `path` |
+|---|---|---|
+| 400 | body not JSON / not an object / an unknown key at either level; `strategy: "streamed"`; a parameter the type refuses; a report whose type is not `Params -> Node` | `$`, `$.data.<key>`, `$.params...` |
+| 404 | no such module, no binding of that name in it, no such route, unknown or expired token | null |
+| 405 | the route used with another method (with `Allow`) | null |
+| 413 | body over `--max-body` | null |
+| 500 | the report threw, produced an unencodable document, or a scan failed | the DOCUMENT path, when there is one |
+
+### Decisions taken in code
+
+1. **A report that throws and a report that builds something unwritable are
+   the same 500.**  An Ermine `error` inside the value reaches `Encode` as a
+   `Bottom` and comes back as an `Encode.Error`, not as an exception, so the
+   two cannot be told apart — and neither is the client's fault.  (J3b's
+   sketch suggested a 400 for an encode error; a 400 would have made "a report
+   that throws" a 400 too.)  The error's `path` is then the path in the
+   RESPONSE document, which is why the body carries `path` separately from
+   the status rather than pretending it is a request path.
+2. **Unknown keys are refused** at the top level and inside `data`, so a
+   client's `"treshold"` is an error instead of silence.
+3. **A missing `params` key is `null`**, which is what a report over `Maybe`,
+   `Json` or `()` wants; anything else refuses it at `$.params`.
+4. **Module names are validated** (dot-separated identifiers) before they
+   reach `SourceFile.filesystem`, which turns a name into a path.
+5. **One evaluation at a time; scans and writes concurrent.**  See below.
+6. **No `Doc.fromRuntime` hints.**  The runner knows the report's RESULT type
+   (`Node`), never the type of a relation buried in a widget's props, so it
+   has nothing to build a header hint from: a header-less `mkRelation# []` is
+   a 500 that names `mkRelationWithHeader#` (pinned).
+7. `MethodNotAllowed` (405) and `TooLarge` (413) live in `RunError` beside the
+   runner's own three, so every body a client can see has one shape.
+8. **A bad report SIGNATURE is a 400, a bad report VALUE is a 500.**  Neither
+   is the client's fault, so the split is not about blame: the brief fixes the
+   signature case at 400, and it is the one where retrying is pointless and
+   the message says so, whereas a value that will not encode may depend on the
+   very parameters that just type-checked.
+
+### Concurrency
+
+Evaluation is serialised behind one monitor: `Session.loadModules`,
+`Session.eval`, the parameter decode, the application of the report and
+`Doc.fromRuntime` (which forces the value).  Module loading mutates the
+`SessionEnv`'s maps field by field and the process-global `DataConDecl`
+registry, `Supply` is documented single-threaded, and `Runtime.Thunk.state` is
+a non-volatile `var` whose whitehole latch guards against a cycle, not against
+a data race.  Everything after that — the scan, the row encoding, the plan
+cache — is concurrent: nothing in `Doc`/`Write`/`Rows` reads the session, each
+request has its own `Appendable`, `MemoryPlanCache` is synchronized, and
+`Run[DB]` gives each thread its own connection.  So N requests overlap on the
+database and queue on the interpreter, which is where the cheap part is.  The
+HTTP server uses a fixed pool (default 16) because the JDK server's default
+executor would run every exchange on the dispatcher thread.
+
+The monitor is PROCESS-WIDE (`Runner.evalLock` on the companion object), not
+per instance: `DataConDecl`'s two registries are static and last-writer-wins
+per `Global`, so two runners in one JVM -- two tenants, or a test fixture --
+must exclude each other as well.  `GET /health` is the one path that does not
+take it, reading a volatile snapshot of the loaded modules instead, so a
+liveness probe cannot queue behind the slow report it is probing.
+
+Three things J3d should know before it writes a browser client: there are **no
+CORS headers**, so the client must be served from the same origin or go through
+a proxy; a **413 is sent without draining the request body**, so a client still
+uploading sees the connection close (curl reports the 413 and then exits 56);
+and `Run[DB]` is **not a pool** -- each request opens and closes a JDBC
+connection, and `--threads` bounds how many exist at once.
+
+### Verified
+
+`TestRunner`, 16 properties over report modules GENERATED as Ermine source
+(random parameter type and value from `TestSchema.shape`, one to three literal
+relations in each of the six delivery forms, a random `data` configuration):
+end to end in process, the error paths, the same requests over HTTP giving
+byte-identical bodies, concurrent requests agreeing with serial ones, one
+connection per request, the example report, and the two DB-layer tickets J3b
+handed on (a NULL GUID column, and a scan that throws being torn down) — both
+now fixed, in `SqlEmitter.EmitUuid_Strings.getUuid` and
+`relational/package.scala`'s `EffectfulProcedure.withDriver`.
 
 ## 3.7e Stage 3 client as built (2026-09-16, branch `json-client`, stage J3d)
 
@@ -1007,6 +1320,59 @@ box's `xBins`/`yBins` are pairs of NUMBERS rather than the server's pre-formatte
 throws on a string today. `cellCounts` keys the positions as the literal `xPosition` /
 `yPosition` the renderer reads, so any column name works (server-side the widget only works
 when the columns happen to be called that).
+## 3.7b' Stage 2b as built (2026-09-16, branch `json-spread`)
+
+(Numbered `3.7b'` and kept beside §3.7b: J3b's document writer takes §3.7c.)
+
+`Spread Json`: the §3.1b item 2 escape hatch for the long tail of options
+nobody wants to model, built as ONE rule shared by the encoder, the exporter
+and the params decoder.
+
+- **The type**: `data Spread a = Spread a` in `modules/Json.e` (an ordinary
+  Ermine declaration, like `Inline`/`Deferred`; no `Lib.scala` primitive).
+  Only `Spread Json` is meaningful. **`Spread` of a record or of any other
+  type is refused**, deliberately: a record's and a `data`'s keys are known
+  from their own declarations, so spreading one would be a second spelling of
+  fields the constructor can already name, with its own collision rule, its
+  own schema merge and its own decode split to maintain; `Json` is the one
+  case nothing else covers.
+- **Encode**: a NAMED constructor field whose DECLARED type is headed by
+  `Json.Spread` is merged -- the keys of the `JObj` it holds are written into
+  the constructor's own object, after every declared field, in the object's
+  order. Errors, each naming the path: a merged key that collides with a
+  DECLARED field name (an omitted `Maybe` field's name included -- the
+  decoder reads such a key back as the field) or with `tag`; a key the
+  spread repeats; a payload that is not an object; a second `Spread` field in
+  one constructor; a `Spread` in a positional constructor; a `Spread` value
+  anywhere else. The SPREAD field's own name is the one declared name that is
+  NOT reserved: it is no key of any document of the type, so it is merged and
+  gathered like any other, and reserving it would have made the encoder refuse
+  a document the schema declares legal and the decoder accepts (J2b review
+  finding 1).
+- **Schema**: the spread field is NOT a property and the arm carries
+  `additionalProperties: true` instead of the usual `false`; everything else
+  about the arm is unchanged, so in a multi-constructor type the arm that
+  carries the spread is open while its siblings stay closed. `Zod` renders
+  such an object `.passthrough()` -- zod's default STRIPS unknown keys, which
+  would throw the merged keys away.
+- **Decode**: a constructor with a spread field no longer refuses a key it
+  does not declare; every such key is gathered, in document order, into the
+  `JObj` that field holds. The inverse of the merge, so `decode(encode v)` is
+  `v` for a collision-free value.
+- **One rule, three places**: the three declaration-level refusals (a second
+  `Spread`, a positional `Spread`, `Spread` of anything but `Json`) are
+  refused by the exporter, by `Decode.entry` AND by `Encode.rejections` (the
+  stdlib sweep), at the same field index -- the pattern the `tag`-field
+  collision established in J2a. The spread test reads the type as DECLARED
+  (no alias expansion, which the encoder has no session for), so an alias for
+  `Spread Json` is not a spread field anywhere and all three refuse it.
+- **Tests**: `TestSchema.(s)` (80 random probes: merge order, an open arm,
+  `.passthrough()`, and a collision that names both) and `(s-pins)`;
+  `TestDecode.(s)` (60 probes: the gather, in document order) and `(s-pins)`;
+  four new poisons in `TestDecode.(d)`; and `TestSchema.shape` grew a
+  `spreadData` row, so the encode/schema property, the round trip and the
+  `Validate`-vs-`Decode` agreement all cover spread types (35 of the round
+  trip's 200 cases carry one).
 
 ## 4. Appendix: the de facto widget API (catalogue)
 

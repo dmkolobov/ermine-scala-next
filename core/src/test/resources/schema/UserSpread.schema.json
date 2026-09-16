@@ -1,0 +1,19 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$id" : "ermine:Test/ChartProps",
+  "$ref" : "#/$defs/Test.ChartProps",
+  "$defs" : {
+    "Test.ChartProps" : {
+      "type" : "object",
+      "properties" : {
+        "chartTitle" : {
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "chartTitle"
+      ],
+      "additionalProperties" : true
+    }
+  }
+}

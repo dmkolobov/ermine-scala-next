@@ -82,10 +82,19 @@ object TestJson extends Properties("Ermine JSON") {
   property("an all-nullary data type is a string enum") = sessionProof { implicit s =>
     assert(json("data Colour = Red | Green | Blue", "[Red, Blue]") == "[\"Red\",\"Blue\"]")
   }
+  // ONE DECLARATION PER NAME IN THIS PROCESS.  `DataConDecl` is a process-global
+  // constructor -> declaration map (last writer wins, DataConDecl.scala), the
+  // value walker reads it, and ScalaCheck runs these properties concurrently in
+  // one JVM -- so two properties declaring `data Shape` differently in `module
+  // Test` could encode each other's values with the wrong field list (seen once
+  // in 15 gate runs: "named constructor fields are an object in declaration
+  // order" got the positional encoding).  Every declaration below is therefore
+  // named for the property that owns it; TestNamedFields' `Nf` prefixes are the
+  // same rule.
   property("a data value with fields is tag + positional args") = sessionProof { implicit s =>
-    assert(json("data Shape = Circle Double | Rect Double Double | Dot",
-                "[Circle 1.5, Rect 2.0 3.0, Dot]")
-           == "[{\"tag\":\"Circle\",\"args\":[1.5]},{\"tag\":\"Rect\",\"args\":[2.0,3.0]},{\"tag\":\"Dot\",\"args\":[]}]")
+    assert(json("data ShapeP = CircleP Double | RectP Double Double | DotP",
+                "[CircleP 1.5, RectP 2.0 3.0, DotP]")
+           == "[{\"tag\":\"CircleP\",\"args\":[1.5]},{\"tag\":\"RectP\",\"args\":[2.0,3.0]},{\"tag\":\"DotP\",\"args\":[]}]")
   }
   property("named constructor fields are an object in declaration order") = sessionProof { implicit s =>
     // Stage 1a; the shape is property-tested in full by TestNamedFields
@@ -99,9 +108,9 @@ object TestJson extends Properties("Ermine JSON") {
               "{\"tag\":\"Dot\",\"args\":[]}]")
   }
   property("nesting goes through data, not records") = sessionProof { implicit s =>
-    assert(json("data Series = Series String (List Double)\ndata Config = Config String (List Series)",
-                "Config \"Sales\" [Series \"q1\" [1.0, 2.5]]")
-           == "{\"tag\":\"Config\",\"args\":[\"Sales\",[{\"tag\":\"Series\",\"args\":[\"q1\",[1.0,2.5]]}]]}")
+    assert(json("data SeriesP = SeriesP String (List Double)\ndata Config = Config String (List SeriesP)",
+                "Config \"Sales\" [SeriesP \"q1\" [1.0, 2.5]]")
+           == "{\"tag\":\"Config\",\"args\":[\"Sales\",[{\"tag\":\"SeriesP\",\"args\":[\"q1\",[1.0,2.5]]}]]}")
   }
   property("a parameterised data type") = sessionProof { implicit s =>
     assert(json("data Duo a b = Duo a b", "Duo 1 \"x\"")
@@ -112,8 +121,8 @@ object TestJson extends Properties("Ermine JSON") {
     val decl = DataConDecl.forConstructor(Global("Test", "Green"))
     assert(decl.isDefined, "Test.Green registered")
     assert(decl.get.isEnum && decl.get.constructors.map(_.name.string) == List("Red", "Green", "Blue"))
-    json("data Shape = Circle Double | Dot", "Dot")
-    val shape = DataConDecl.forConstructor(Global("Test", "Circle")).get
+    json("data ShapeR = CircleR Double | DotR", "DotR")
+    val shape = DataConDecl.forConstructor(Global("Test", "CircleR")).get
     assert(!shape.isEnum)
     assert(shape.constructors.head.fields.map(_._2) == List(Type.double))
   }

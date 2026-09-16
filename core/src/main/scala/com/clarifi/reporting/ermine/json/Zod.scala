@@ -42,7 +42,10 @@ import argonaut.Json
   * `oneOf` of objects that all pin `tag` -> `z.discriminatedUnion("tag", ...)`
   * (a relation's delivery arms all pin `kind`: `z.discriminatedUnion("kind",
   * ...)`, J3a), any other `anyOf` -> `z.union`, `minLength` -> `.min`,
-  * an object -> `z.object({...}).strict()`, `prefixItems` -> `z.tuple`, the
+  * an object -> `z.object({...}).strict()` -- or `.passthrough()` when the
+  * schema says `additionalProperties: true`, which is the exporter's object
+  * with a `Spread Json` field (J2b), since zod's default would STRIP the
+  * merged keys -- `prefixItems` -> `z.tuple`, the
   * empty schema `{}` (the stdlib `Json` type) -> `z.unknown()`.
   */
 object Zod {
@@ -212,7 +215,12 @@ object Zod {
         case Some("object") =>
           val props = j.field("properties").flatMap(_.obj).map(_.toList).getOrElse(Nil)
           val required = j.field("required").flatMap(_.array).map(_.flatMap(_.string).toSet).getOrElse(Set[String]())
-          val closed = j.field("additionalProperties").flatMap(_.bool).contains(false)
+          val additional = j.field("additionalProperties").flatMap(_.bool)
+          val closed = additional.contains(false)
+          // `additionalProperties: true` is the exporter's spread object
+          // (Stage 2b): zod's default STRIPS unknown keys, which would throw
+          // the merged keys away, so such an object is `.passthrough()`
+          val open   = additional.contains(true)
           val rendered = props.map { kv =>
             expr(kv._2).right.map { e =>
               key(kv._1) + ": " + e + (if (required.contains(kv._1)) "" else ".optional()")
@@ -222,7 +230,7 @@ object Zod {
             case Some(e) => Left(e)
             case None    =>
               Right("z.object({ " + rendered.map(_.right.get).mkString(", ") + " })" +
-                    (if (closed) ".strict()" else ""))
+                    (if (closed) ".strict()" else if (open) ".passthrough()" else ""))
           }
         case Some(other) => Left("unsupported type " + quote(other))
         case None        =>
