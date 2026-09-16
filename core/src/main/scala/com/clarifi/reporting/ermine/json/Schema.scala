@@ -26,7 +26,7 @@ import scalaparsers.Supply
   *    (Encode writes a Long as a decimal string: JSON numbers lose precision
   *    past 2^53); `Double`/`Float` -> `{"type":"number"}`; `Bool` ->
   *    `{"type":"boolean"}`; `String` -> `{"type":"string"}`; `Char` -> the
-  *    same with `maxLength: 1`; `Date` -> string/`format: date`;
+  *    same with `minLength: 1` and `maxLength: 1`; `Date` -> string/`format: date`;
   *    `Timestamp` -> string/`format: date-time`; `GUID` -> string/`format:
   *    uuid`.  (`Session.toHeader` reads a column's `PrimT` through
   *    `PrimT.withName`, which spells the UUID type "UUID" while the `Con` is
@@ -56,7 +56,11 @@ import scalaparsers.Supply
   *    plus the named properties in declaration order; a field whose declared
   *    type is headed by `Builtin.Maybe` is OPTIONAL and its schema is the
   *    Maybe's PAYLOAD, not the `anyOf`-null (the encoder omits the key
-  *    instead of writing null); a single-constructor record-style type drops
+  *    instead of writing null); a field NAMED `tag` in a type with several
+  *    constructors is an export error (it would overwrite the discriminator);
+  *    a `Nullable a` or native `Maybe# a` field is
+  *    NOT optional -- the encoder writes its null -- so it stays required
+  *    with a nullable schema; a single-constructor record-style type drops
   *    the `tag` entirely.
   *  - the stdlib `Json` type -> `{}`: any JSON document.  Ermine owns no
   *    contract for it (§3.1b item 1).
@@ -192,7 +196,7 @@ object Schema {
       case "Double" | "Float" => Json.obj("type" -> Json.jString("number"))
       case "Bool"      => Json.obj("type" -> Json.jString("boolean"))
       case "String"    => Json.obj("type" -> Json.jString("string"))
-      case "Char"      => Json.obj("type" -> Json.jString("string"), "maxLength" -> Json.jNumber(1))
+      case "Char"      => Json.obj("type" -> Json.jString("string"), "minLength" -> Json.jNumber(1), "maxLength" -> Json.jNumber(1))
       case "Date"      => Json.obj("type" -> Json.jString("string"), "format" -> Json.jString("date"))
       case "Timestamp" => Json.obj("type" -> Json.jString("string"), "format" -> Json.jString("date-time"))
       case "GUID"      => Json.obj("type" -> Json.jString("string"), "format" -> Json.jString("uuid"))
@@ -372,7 +376,22 @@ object Schema {
         // field is an OPTIONAL key carrying the Maybe's payload schema
         val props = fields.map { case (nm, t, i) =>
           val k = nm.get
-          maybePayload(t) match {
+          // A field named `tag` in a type with several constructors would
+          // overwrite the discriminator: without this the arm came out with
+          // the `const` gone and `required: ["tag","tag"]`, and the encoder
+          // wrote two "tag" keys.  Refused in all three places (J2a review
+          // finding 2); `Encode` and `Decode` say the same.
+          if (!only && k == "tag")
+            reject(path(i), "a field named tag collides with the discriminator " +
+                            "of a type with several constructors")
+          // An OPTIONAL key is a field whose declared type is `Maybe a`, and
+          // only that: `Encode.isMaybe` is the encoder's test and it names
+          // `Builtin.Maybe` alone.  A `Nullable a` or a native `Maybe# a`
+          // field is written as `null`, not left out, so it is a required key
+          // whose schema admits null.  (Stage 2a: the decoder's agreement
+          // property caught this reading `maybePayload`, which is the wider
+          // test the nested-Maybe refusal wants.)
+          declaredMaybe(t) match {
             case Some(inner) => (k, walk(inner, path(i)), false)
             case None        => (k, walk(t, path(i)), true)
           }
@@ -401,9 +420,16 @@ object Schema {
       }
     }
 
-    /** `Some(a)` when `t` is headed by `Builtin.Maybe` (or `Nullable`, or
-      * the native `Maybe#`) -- the test the record-style rule and the
-      * nested-Maybe refusal share. */
+    /** `Some(a)` when `t` is headed by `Builtin.Maybe` ALONE: the encoder's
+      * optional-key test (`Encode.isMaybe`). */
+    private def declaredMaybe(t: Type): Option[Type] = unfurl(resolve(t)) match {
+      case (Type.Con(_, Global("Builtin", "Maybe", _), _, _), a :: Nil) => Some(a)
+      case _ => None
+    }
+
+    /** `Some(a)` when `t` is headed by `Builtin.Maybe`, `Nullable` or the
+      * native `Maybe#` -- everything that encodes to a bare null, which is
+      * what the nested-Maybe refusal is about. */
     private def maybePayload(t: Type): Option[Type] = unfurl(resolve(t)) match {
       case (Type.Con(_, g, _, _), a :: Nil)
         if (g.module == "Builtin" && (g.string == "Maybe" || g.string == "Nullable")) ||

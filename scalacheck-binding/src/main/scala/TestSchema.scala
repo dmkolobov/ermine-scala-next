@@ -41,7 +41,17 @@ object TestSchema extends Properties("Ermine JSON Schema") {
 
   val imps: Map[String, ImportSpec] =
     Map("Builtin" -> all, "Test" -> all, "Json" -> all, "List" -> all,
-        "Maybe" -> all, "Function" -> all, "Int" -> all, "Num" -> all)
+        "Maybe" -> all, "Function" -> all, "Int" -> all, "Num" -> all) ++
+    stage2Imports
+
+  /** Stage 2a's shapes (Timestamp, GUID, a Nullable's `Null` witness, the
+    * native collections, Vector) need these.  Vector is ALIASED: a plain
+    * `import Vector` makes every `[..]` literal ambiguous (its `empty_Bracket`
+    * hook against List's), so its names are spelled `fromList_V`/`Vector_V`. */
+  private def stage2Imports: Map[String, ImportSpec] =
+    Map("Date" -> all, "GUID" -> all, "Prim" -> all, "Native.List" -> all,
+        "Native.Maybe" -> all, "Native.Pair" -> all,
+        "Vector" -> ((Some("V"), List(), false): ImportSpec))
 
   // ---------------------------------------------------------------------
   // running one generated case
@@ -97,16 +107,31 @@ object TestSchema extends Properties("Ermine JSON Schema") {
     Shape("Long",   Nil, Gen.choose(0L, Long.MaxValue).map(_.toString + "L")),
     Shape("Double", Nil, Gen.choose(0, 100000000).map(n => (n / 100.0).toString)),
     Shape("Bool",   Nil, Gen.oneOf("True", "False")),
-    Shape("String", Nil, litString))
+    Shape("String", Nil, litString),
+    // Stage 2a: the rest of the scalar rows of the section 3.1 table
+    Shape("Short",  Nil, Gen.choose(0, 32767).map(_.toString + "s")),
+    Shape("Byte",   Nil, Gen.choose(0, 127).map(_.toString + "b")),
+    Shape("Float",  Nil, Gen.choose(0, 10000000).map(n => (n / 100.0).toString + "f")),
+    Shape("Char",   Nil, Gen.alphaNumChar.map(c => "'" + c + "'")),
+    Shape("Date",   Nil, for { y <- Gen.choose(1900, 2100); m <- Gen.choose(1, 12); d <- Gen.choose(1, 28) }
+                         yield "@" + y + "/" + m + "/" + d),
+    Shape("Timestamp", Nil, Gen.choose(-2208988800000L, 4102444800000L).map(ms =>
+      if (ms < 0) "(timestampFromLong (0L - " + (-ms) + "L))" else "(timestampFromLong " + ms + "L)")),
+    Shape("GUID",   Nil, Gen.zip(Gen.choose(Long.MinValue, Long.MaxValue), Gen.choose(Long.MinValue, Long.MaxValue))
+                           .map(p => "(stringGuid \"" + new java.util.UUID(p._1, p._2) + "\")")))
 
   /** The record field pool.  A field's TYPE is fixed by its NAME, so two
     * records generated into one module always agree about a shared key --
     * which is what `field` declarations require. */
   private val fieldPool: List[(String, String)] =
     List(("sfInt", "Int"), ("sfLong", "Long"), ("sfDouble", "Double"),
-         ("sfBool", "Bool"), ("sfString", "String"))
+         ("sfBool", "Bool"), ("sfString", "String")) ++
+    // Stage 2a: the other column types, and nullable columns
+    List(("sfShort", "Short"), ("sfByte", "Byte"), ("sfDate", "Date"), ("sfTimestamp", "Timestamp"),
+         ("sfGuid", "GUID"), ("sfNullInt", "Nullable Int"), ("sfNullString", "Nullable String"),
+         ("sfNullDate", "Nullable Date"))
 
-  private def primFor(ty: String): Shape = prims.find(_.ty == ty).get
+  private def primFor(ty: String): Shape = prims.find(_.ty == ty).getOrElse(nullableOf(ty.stripPrefix("Nullable ")))
 
   private def listOfGen(g: Gen[String]): Gen[String] =
     Gen.choose(0, 3).flatMap(n => Gen.listOfN(n, g)).map(_.mkString("[", ", ", "]"))
@@ -115,16 +140,64 @@ object TestSchema extends Properties("Ermine JSON Schema") {
     * the mapping rejects on purpose (both layers encode to `null`). */
   def shape(depth: Int, underMaybe: Boolean = false): Gen[Shape] = {
     val leaves: List[Gen[Shape]] =
-      Gen.oneOf(prims) :: Gen.const(Shape("()", Nil, Gen.const("()"))) :: enumData :: Nil
+      Gen.oneOf(prims) :: Gen.const(Shape("()", Nil, Gen.const("()"))) :: enumData :: Nil ++
+      stage2Leaves(underMaybe)
     if (depth <= 0) Gen.oneOf(leaves).flatMap(identity)
     else {
       val composites: List[Gen[Shape]] =
         listShape(depth) :: tupleShape(depth) :: recordShape ::
         positionalData(depth) :: recordStyleData(depth) :: parameterisedData(depth) :: recursiveData ::
-        (if (underMaybe) Nil else List(maybeShape(depth)))
+        (if (underMaybe) Nil else List(maybeShape(depth))) ++
+        stage2Composites(depth, underMaybe)
       Gen.oneOf(leaves ++ composites).flatMap(identity)
     }
   }
+
+  // -- Stage 2a (the params decoder) ----------------------------------------
+
+  /** The column types a `Nullable` can wrap (it needs a `PrimT` witness for
+    * its `Null`).  `Nullable` is itself a null-carrying layer, so it is never
+    * generated directly under a `Maybe`. */
+  private val nullableElems: List[String] =
+    List("Int", "Long", "Double", "Bool", "String", "Short", "Byte", "Date", "Timestamp", "GUID")
+
+  private def nullableOf(elem: String): Shape = {
+    val p = primFor(elem)
+    Shape("(Nullable " + elem + ")", Nil,
+          Gen.frequency((1, Gen.const("(Null " + elem + ")")), (3, p.value.map(v => "(Some " + v + ")"))))
+  }
+
+  /** A stdlib `Json` value: the escape hatch, any document.  A `num` always
+    * has a fractional part: a whole `JNum` re-reads as a `JInt` (`parse`'s
+    * rule), which the decoder inherits on purpose. */
+  private def jsonValue(depth: Int): Gen[String] = {
+    val leaf = Gen.oneOf(
+      Gen.const("jnull"),
+      Gen.oneOf("True", "False").map(b => "(bool " + b + ")"),
+      Gen.choose(0L, 1000000L).map(n => "(int " + n + "L)"),
+      Gen.choose(0, 10000).map(n => "(num " + (n + 0.25) + ")"),
+      litString.map(s => "(str " + s + ")"))
+    if (depth <= 0) leaf
+    else Gen.frequency(
+      (3, leaf),
+      (1, Gen.choose(0, 3).flatMap(n => Gen.listOfN(n, jsonValue(depth - 1))).map(vs => "(arr " + vs.mkString("[", ", ", "]") + ")")),
+      (1, Gen.choose(0, 3).flatMap(n => Gen.listOfN(n, jsonValue(depth - 1))).map { vs =>
+        "(obj " + vs.zipWithIndex.map { case (v, i) => "(\"k" + i + "\", " + v + ")" }.mkString("[", ", ", "]") + ")" }))
+  }
+
+  private def stage2Leaves(underMaybe: Boolean): List[Gen[Shape]] =
+    Gen.const(Shape("Json", Nil, jsonValue(2))) ::
+    (if (underMaybe) Nil else List(Gen.oneOf(nullableElems).map(nullableOf)))
+
+  private def stage2Composites(depth: Int, underMaybe: Boolean): List[Gen[Shape]] = List(
+    shape(depth - 1).map(a => Shape("(Vector_V " + a.ty + ")", a.decls, listOfGen(a.value).map(l => "(fromList_V " + l + ")"))),
+    shape(depth - 1).map(a => Shape("(List# " + a.ty + ")", a.decls, listOfGen(a.value).map(l => "(toList# " + l + ")"))),
+    Gen.zip(shape(depth - 1), shape(depth - 1)).map { case (a, b) =>
+      Shape("(Pair# " + a.ty + " " + b.ty + ")", a.decls ++ b.decls,
+            Gen.zip(a.value, b.value).map(v => "(toPair# (" + v._1 + ", " + v._2 + "))")) }) ++
+    (if (underMaybe) Nil else List(shape(depth - 1, underMaybe = true).map { a =>
+      Shape("(Maybe# " + a.ty + ")", a.decls,
+            Gen.frequency((1, Gen.const("Nothing#")), (3, a.value.map(v => "(Just# " + v + ")")))) }))
 
   private def maybeShape(depth: Int): Gen[Shape] =
     shape(depth - 1, underMaybe = true).map { a =>
@@ -576,7 +649,7 @@ object TestSchema extends Properties("Ermine JSON Schema") {
     assert(sch("Double")    == "{\"type\":\"number\"}", sch("Double"))
     assert(sch("Bool")      == "{\"type\":\"boolean\"}", sch("Bool"))
     assert(sch("String")    == "{\"type\":\"string\"}", sch("String"))
-    assert(sch("Char")      == "{\"type\":\"string\",\"maxLength\":1}", sch("Char"))
+    assert(sch("Char")      == "{\"type\":\"string\",\"minLength\":1,\"maxLength\":1}", sch("Char"))
     assert(sch("Date")      == "{\"type\":\"string\",\"format\":\"date\"}", sch("Date"))
     assert(sch("Timestamp") == "{\"type\":\"string\",\"format\":\"date-time\"}", sch("Timestamp"))
     assert(sch("GUID")      == "{\"type\":\"string\",\"format\":\"uuid\"}", sch("GUID"))

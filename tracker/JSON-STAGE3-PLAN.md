@@ -90,7 +90,7 @@ col       {"name": "<column>", "type": <Wire.columnTypes>, "nullable": <bool>}
 | Id | Branch | What | Depends on | Phase |
 |---|---|---|---|---|
 | J3a | json-wrappers | Schema exporter: relation union/arms, `nullable` + `rowCount`, row-polymorphic relation arm, zod discriminated union, fixtures | contract | 1 |
-| J2a | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 |
+| J2a BUILT | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 |
 | J3b | json-doc | `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 |
 | J3c | json-runner | `json/Runner.scala` (boot, report lookup, `Params -> Node` check, decode, apply, write on one connection), HTTP server (`POST /report/<Module>`, `GET /data/<token>`), `bin/ermine-serve` | J2a, J3b | 2 |
 | J3d | json-client | `modules/Layout/Widgets.e` prop types for the seven live widgets + one new widget; `client/` TS package: zod generated from those types, dispatcher, adapters to the legacy renderers, `formatDisplay` port, the new widget end to end | J3a, J3b | 2 |
@@ -104,3 +104,8 @@ branch (they share `Lib.scala`).
 ## Handoff log
 
 - 2026-09-16 06:00 plan written; contract compiled; TestJson+TestSchema+TestNamedFields 61/61.
+- 2026-09-16 J2a built (uncommitted in `ermine-scala-wt-json-decode`): `json/Decode.scala`,
+  `TestDecode` (10 properties), the Stage 2a generator rows in `TestSchema`, and three
+  Stage 1 fixes the new properties found (the exporter's optional-key rule for a
+  `Nullable`/`Maybe#` named field, `Char`'s `minLength`, `Validate`'s `uuid` form).
+  Design note §3.7b. Tier 0 green; see `tracker/json-stage3/report-J2a.md`.

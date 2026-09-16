@@ -18,7 +18,7 @@ import argonaut.Json
   * Supported: `$ref` (into the root document's `$defs` only), `type`, `enum`,
   * `const`, `properties`, `required`, `additionalProperties: false`, `items`,
   * `prefixItems`, `minItems`, `maxItems`, `minimum`, `maximum`, `pattern`,
-  * `maxLength`, `anyOf`, `oneOf`.  `format` is NOT a validation keyword in
+  * `minLength`, `maxLength`, `anyOf`, `oneOf`.  `format` is NOT a validation keyword in
   * JSON Schema and is not treated as one here either, with one exception the
   * tests need: `date`, `date-time` and `uuid` strings are parsed with
   * `java.time` / `java.util.UUID`, because those three formats are the whole
@@ -39,6 +39,8 @@ object Validate {
 
   private val dateFmt     = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
   private val dateTimeFmt = java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME
+  private val uuidPattern =
+    java.util.regex.Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
   private def go(schema: Json, doc: Json, path: String,
                  defs: Map[String, Json], out: ListBuffer[String]): Unit = {
@@ -91,6 +93,10 @@ object Validate {
 
     // strings
     doc.string foreach { s =>
+      schema.field("minLength").flatMap(_.number) foreach { m =>
+        val n = m.truncateToInt
+        if (s.length < n) bad("the string is " + s.length + " characters, shorter than minLength " + n)
+      }
       schema.field("maxLength").flatMap(_.number) foreach { m =>
         val n = m.truncateToInt
         if (s.length > n) bad("the string is " + s.length + " characters, longer than maxLength " + n)
@@ -105,7 +111,10 @@ object Validate {
           // the encoder writes `...Z`, which ISO_OFFSET_DATE_TIME accepts
           try dateTimeFmt.parse(s) catch { case _: Throwable => bad("the string " + quote(s) + " is not a date-time") }
         case "uuid" =>
-          try { java.util.UUID.fromString(s); () } catch { case _: Throwable => bad("the string " + quote(s) + " is not a uuid") }
+          // the canonical 8-4-4-4-12 form only, as zod's .uuid() and the
+          // decoder insist: UUID.fromString alone also takes "1-1-1-1-1"
+          if (!uuidPattern.matcher(s).matches) bad("the string " + quote(s) + " is not a uuid")
+          else try { java.util.UUID.fromString(s); () } catch { case _: Throwable => bad("the string " + quote(s) + " is not a uuid") }
         case _ => () // every other format is an annotation, not an assertion
       }
     }

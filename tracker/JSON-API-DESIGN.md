@@ -762,6 +762,108 @@ the compiled zod accepts/rejects the encoder's documents at runtime; the
 encode/schema consistency property green over 200 generated (type, value)
 pairs plus 100 shrinking ones; LSP smoke 577 checks, REPL smoke green.
 
+## 3.7b Stage 2a as built (2026-09-16, branch `json-decode`)
+
+**The params decoder** (`core/json/Decode.scala`), the inverse of `Encode` on
+the serializable fragment and the executable reading of what `Schema` exports.
+
+- **Two phases.** `Decode.compile(ty)` walks the TYPE once -- the exporter's
+  walk, the same alias expansion to a fixed point, the same `unfurl`, the same
+  `$defs`-keyed handling of a `data` instantiation (`Schema.defName`) so a
+  recursive type terminates -- and returns a `Decoder` that needs no
+  `SessionEnv` to run. `entry(ty)` is that walk alone (the expanded type, or
+  why it has no decoding); `decode(ty, j)` is compile-then-run. The RUN phase
+  keeps an explicit stack, so neither a 100,000-element list nor a document
+  nested past the parser's own depth grows the JVM stack, and JSON paths are
+  parent-linked and rendered only for an error (eager path strings cost the
+  square of the depth).
+- **Refused at compile time**, each naming the offending part of the type:
+  a type variable (including a PHANTOM data parameter -- the exporter accepts
+  one, a decoded value has no type to carry it), a `forall`, an open row, a
+  function, `IO`, `FFI`, a `Field`/`Prim`/`PrimT` witness, a foreign type, a
+  relation and the `Inline`/`Deferred` wrappers (rows never come from the
+  request), an existential field, a nested `Maybe (Maybe a)`, a `Nullable` of
+  a type with no `PrimT` witness for its `Null`, an operator constructor, and
+  a record-style field named `tag` in a type with several constructors.
+- **Refused at run time** with the JSON path into the INPUT (`$`, `.key`,
+  `[i]`, a positional constructor's arguments as `.args[i]`): a missing key is
+  reported at the object, an unknown key at the key, a bad tag at `.tag`.
+- **Values are what evaluation produces**, which the round-trip property
+  pins: `Data` through the registry's constructor `Global`; `Bool` as
+  `Data(True/False)`; `Nullable`'s `Null` carrying `primTypes(t).withNull`,
+  the witness `Null Int` and a database read both carry; `Date` a
+  `java.util.Date` at UTC midnight, `Timestamp` a `java.sql.Timestamp`;
+  `List#`, `Maybe#` and `Pair#` storing `extract`ed elements as `::#`/`Just#`/
+  `toPair#` do, but `Vector` storing what `Session.whnfForeign` gives (its
+  builders are foreign, and an empty `Arr` -- the unit value -- arrives there
+  as Scala's `()`).
+- **Decisions in code.** An integer may be written `1.0` or `1e2` (JSON
+  Schema's `integer`) but not `1.5`; `Long` is a decimal string only; a
+  `Timestamp` is any ISO-8601 date-time WITH an offset (the encoder's
+  `...SSS'Z'` included; zod's `.datetime()` is stricter, `Z` only) and keeps
+  sub-millisecond nanos; a `Date` is `ISO_LOCAL_DATE`, strict, so `2026-02-30`
+  is refused; a `GUID` must be the canonical 8-4-4-4-12 form. `Prim`'s
+  argument is BY NAME and turns a throw into a `Bottom`, so every conversion
+  is forced into a `val` first: a decode either fails with an `Error` or
+  yields a value with no bottom in it (the agreement property checks that).
+  `java.sql.Timestamp.from` MULTIPLIES AND WRAPS out-of-range instants (JDK
+  21: year 999999999 comes back as year 169104628), so the instant is
+  validated with `toEpochMilli` first.
+- **Four bugs the new properties found in Stage 1 code**, fixed here:
+  (1) the exporter made a record-style field of type `Nullable a` or `Maybe# a`
+  an OPTIONAL key, but the encoder only omits a `Maybe` field and writes
+  `null` for those two -- `Schema.constructor` now uses the encoder's test
+  (`Builtin.Maybe` alone); (2) `Char` exported `maxLength: 1` without
+  `minLength: 1`, so `""` validated and zod accepted it while the decoder
+  refused; (3) `Validate`'s `uuid` format took `UUID.fromString`, which also
+  accepts `"1-1-1-1-1"`, where zod's `.uuid()` and the decoder want the
+  canonical form. `Validate` learned `minLength`, `Zod` renders `.min(n)`.
+  (4) a record-style field NAMED `tag` in a type with several constructors
+  overwrote the discriminator: the exporter emitted an arm whose `tag` had lost
+  its `const` and whose `required` read `["tag","tag"]`, and the encoder wrote
+  two `"tag"` keys, of which argonaut keeps the last. The decoder refused it
+  from the start; `Schema.constructor` and `Encode.userData` now refuse it too
+  -- the exporter and the decoder at the declaration (`T.C[i]`), the encoder at
+  the value's own `$.tag` -- all three saying "collides with the
+  discriminator", so no path produces the broken document. A DECLARATION-level
+  refusal (the parser/`Session`, beside Stage 1a's other selector refusals)
+  would be better still and is a separate ticket.
+- **Known gaps, pinned as such** (the validator accepts what the decoder
+  refuses, because the schema cannot say it): `Int` has no bounds in the
+  schema, `Long` only a digit pattern, `Double`/`Float` no finite range, and
+  Java's `$` in a `pattern` also matches before a final newline where
+  ECMAScript's does not. Adding `minimum`/`maximum` to the `Int` schema would
+  close the first and move every committed fixture, so it is left for after
+  the Stage 3 landings.
+- **The non-injective spots kept on purpose**: `Maybe Json` (and
+  `Maybe# Json`) -- `Just JNull` and `Nothing` both encode as `null` and the
+  decoder reads `null` as `Nothing` -- and, inherited from Stage 0, a
+  whole-valued `JNum` (`JNum 2.0` renders as `2.0` and reads back as `JInt 2`,
+  which is `parseJson#`'s own rule, so `TestSchema`'s `Json` generator always
+  gives a `num` a fractional part). Nested `Maybe (Maybe a)` is refused for
+  exactly this reason; a raw-JSON parameter was judged worth the loss. A
+  record-style `Maybe` FIELD is injective even so (absent / `null` / value).
+- **Tests**: `scalacheck-binding/TestDecode.scala`, ten properties over
+  TestSchema's generated declarations and values -- round trip (200 cases and
+  a shrinking one), agreement with `Validate` over 1,950 documents (the
+  encoding plus twelve single mutations of it per case), the error-path
+  distribution, `entry` on poisoned types, 100,000 records, and a 100,000-level
+  document (far past what argonaut's own parser reads). The generator vocabulary in
+  `TestSchema` grew the rows it lacked (Short, Byte, Float, Char, Date,
+  Timestamp, GUID, Nullable, Vector, `List#`, `Maybe#`, `Pair#`, `Json`),
+  which is what found the Stage 1 bugs above. The round trip compares JVM
+  classes as well as structure, and excuses only the payload ambiguity just
+  described -- the null WRAPPER is still compared, so answering a `Maybe`'s
+  `Nothing` where a native `Maybe#`'s belongs fails (checked by mutation).
+  Two test-hygiene fixes came with the review: `(e2)` reads back at three
+  quarters of its measured parser depth instead of at the boundary (the
+  measurement swings 4,100-21,000 between runs with the JIT state, and sitting
+  on it overflowed one gate run in fifteen), and `TestJson` no longer declares
+  three different `data Shape`s and two `data Series` in one process -- the
+  `DataConDecl` registry is process-global and last-writer-wins, so
+  concurrently-running properties could encode each other's values with the
+  wrong field list (seen once in twenty runs).
+
 ## 4. Appendix: the de facto widget API (catalogue)
 
 Corrected per skeptic (§7): the writer also emits `registerSource`,

@@ -193,6 +193,7 @@ object Zod {
             case _           => ()
           }
           str("pattern") foreach { p => b ++= ".regex(/" + p.replace("/", "\\/") + "/)" }
+          num("minLength") foreach { m => b ++= ".min(" + m.toInt + ")" }
           num("maxLength") foreach { m => b ++= ".max(" + m.toInt + ")" }
           Right(b.toString)
         case Some("array") =>
