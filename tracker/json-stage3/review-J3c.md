@@ -329,3 +329,121 @@ implemented as specified, the concurrency claims are true as far as the interpre
 concerned, both DB tickets are correctly fixed and properly pinned, the properties
 discriminate (three independent mutants, one of them mine), and the suites are green on a
 re-run I did myself (103/103).
+
+---
+
+# Follow-up: the uncommitted delta on a407aa0c (2026-09-16)
+
+Scope: `git diff` at tip `a407aa0c` — `Server.scala` (+6/-2, daemon workers),
+`TestRunner.scala` (+95/-25, `withServer` per property, ported `http`/`httpHead`, new (iso)),
+`report-J3c.md` (+49, the wedge investigation). ~25 min. The four required fixes from the
+main review are in the tree (`Runner.evalLock` at `Runner.scala:287`, the plan's per-status
+`path` table, the two `withDriver` comments, 16 properties in §3.7d), and the extra
+`(c-routes)` pins in `a407aa0c` take up suggestions (c) and (g) — the non-ASCII
+`settingsNote` with an explicit "the response is pure ASCII, so the pin is vacuous" guard,
+and HEAD's `Content-Length`. Good.
+
+**Re-run.** `sbt -batch core/compile core/copyResources 'core/testOnly …TestRunner'`:
+**17/17, 0 failed**, 22 s — `<scratch>/review-j3c/rerun2-testrunner.log`.
+
+## The daemon change is safe for `bin/ermine-serve` — probed, not reasoned
+
+`Server.scala:49-53` makes the fixed pool's workers daemons, on the claim that the JDK's own
+dispatcher is what holds the process open. I verified that on a live server rather than from
+the comment: started `bin/ermine-serve --port 0`, waited past `main` returning, and took a
+`jcmd Thread.print`:
+
+```
+"HTTP-Dispatcher" #59 prio=5 ...          <- no `daemon` marker
+"DestroyJavaVM"   #60 prio=5 ...          <- main, returned, waiting on non-daemons
+"ermine-serve-1".."ermine-serve-6"  daemon prio=5 ...
+```
+
+`HTTP-Dispatcher` is the only non-daemon application thread besides `DestroyJavaVM`, and the
+process was still alive and answering `/health` 200 thirty-one seconds after `main` returned.
+So the lifetime is unchanged and the pool no longer pins a JVM that embeds a `Server`.
+
+The mechanism is worth writing down because it is inherited, not set: the JDK's
+`ServerImpl.start()` creates the dispatcher with a plain `new Thread(...)`, and `Thread`'s
+constructor copies `parent.isDaemon()`. `ServeMain.main` runs on the non-daemon `main`
+thread, so the dispatcher is non-daemon — and the same rule holds on JDK 8, so the 2.11 port
+behaves identically. The latent footgun is the converse: an embedder that calls
+`Server.start()` from a *daemon* thread now gets a daemon dispatcher AND daemon workers, and
+the whole server evaporates at JVM exit with nothing non-daemon left to notice. One sentence
+of comment, suggestion (m) below; not a fix.
+
+Shutdown is still orderly: `Server.stop(delay)` runs `http.stop(delay)` before
+`pool.shutdown()`, so an in-flight exchange keeps its grace period; only a JVM exit can now
+cut a worker off mid-response, and for `bin/ermine-serve` that means the process was being
+killed anyway.
+
+## Per-property start/stop keeps (c), (c-routes), (d), (e) as strong
+
+Not one assertion changed: `withServer { port => … }` wraps each property body whole, every
+request is the same request against the same `runner`, and only the port plumbing moved from
+a suite-lifetime `lazy val` to a parameter. (e) and (a) never touched the socket and are
+untouched here. Three details I checked:
+
+- `finally s.stop(0)` runs only after `f` has returned, and in (d) that is after all eight
+  client threads are joined (`threads.foreach(_.join(180000L))` is inside the block), so the
+  zero grace period cannot cut a live exchange.
+- ScalaCheck runs this suite's properties concurrently, so up to four servers can now
+  co-exist: four dispatchers, up to 32 pool threads, four ephemeral sockets. That is more
+  concurrent threads than the old single server, but they are daemons, bounded, and released
+  in a `finally` — the right trade against leaking one server into every suite that follows.
+- (log) now starts and stops the server *inside* `capturingLog`. Harmless: the capture only
+  listens on `ermine.json.http`/`ermine.json.doc`, `Server`/`HttpServer` log nothing else at
+  INFO, and the assertions filter to the module path, `/nope` and `relation $.props`.
+
+The leak being fixed was real and the diagnosis is right: a `lazy val` server that nothing
+stopped left a non-daemon dispatcher, up to eight non-daemon pool threads and a listening
+socket in the shared `core/test` JVM for every later suite.
+
+## (iso) is a sound pin, and it fails rather than hangs
+
+- **Fails, not hangs.** The work runs on a thread explicitly `setDaemon(true)` and joined
+  with `join(180000L)`; on a timeout `answer` still holds the `"did not finish"` sentinel and
+  the `?=` fails with that string and the elapsed milliseconds. It cannot wedge a run, which
+  is the whole point. 180 s is far above the real cost (the entire suite is 22 s), so it will
+  not flake.
+- **Not vacuous.** Three independent ways to fail — a boot failure, an exception out of the
+  fixture (`"threw …"`), or the sentinel — and the `bootedOk` guard forces the `lazy val`
+  runner and checks `Layout.Doc` really loaded, so the fixture provably runs *after* a second
+  `SessionEnv` exists. Without that guard the property could pass on a JVM where the runner
+  never booted; with it, it cannot.
+- **What it is.** An example pin (one module, one expression), not a generator-driven
+  property — which the testing standard allows beside the generated ones and which is the
+  right shape for "does a second `SessionEnv` poison the first". It should not be read as a
+  general isolation property; it pins one load and one type-check.
+
+## The `core/test` wedge
+
+Out of scope and correctly so: the delta claims no fix for it, and nothing in it could be
+one. The report's new section is an investigation ending in a recommendation (a ticket, the
+`GATE-POLICY.md` quarantine, and a bisect of `TestDateAndScan` alone by whoever owns that
+tree), which is the right disposition given that both the implementer and the coordinator
+reproduced the hang with that suite alone, the coordinator on the landed `json-encode` tree.
+I did not re-verify the `subsumeType`/`kindVars` cost analysis; it is plausible and it is
+labelled as an analysis, not a finding.
+
+## Suggestions (none required)
+
+(m) `Server.scala:49-53`: add a sentence that the dispatcher inherits its daemon flag from
+whichever thread calls `start()`, so an embedder must call it from a non-daemon thread (or
+keep its own non-daemon thread) — otherwise daemon workers plus a daemon dispatcher means the
+server disappears at JVM exit.
+
+(n) (iso)'s scaladoc: say it is an example pin, and that a timeout leaves the daemon thread
+running Ermine work in the shared JVM for the rest of the run (acceptable — the property has
+already failed — but worth knowing when reading a later suite's failure).
+
+(o) `withServer` uses `stop(0)`; `stop(1)` would give an exchange a grace second if some
+future property ever leaves one outstanding.
+
+# Verdict on the delta
+
+**LAND.** The daemon change is safe and I verified the mechanism it relies on against a
+running server; the per-property server fixes a real leak into the shared `core/test` JVM
+without weakening a single assertion in (c), (c-routes), (d) or (e); and (iso) is a
+well-guarded pin that fails loudly on a deadline instead of wedging. `TestRunner` 17/17 on my
+own re-run. The three suggestions above are comments, not code.

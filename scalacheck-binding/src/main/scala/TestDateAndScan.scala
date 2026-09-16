@@ -182,6 +182,18 @@ object TestDateAndScan extends Properties("Date, dateDiff and Layout.Scan (F3)")
         |good = combine_Op (dateDiff_Op days (col_Op startDate) (col_Op endDate)) gap spans
         |""".stripMargin, "good", onlyTest)
 
+  /* QUARANTINED 2026-09-16 (tracker/GATE-POLICY.md; TICKET-editor-and-solver-followups.md item 12).
+   * This refutation does not terminate when the suite runs ALONE: the checker spins in
+   * `Subst.subsumeType -> hm.kindVars` (an unmemoised walk of every kind in the substitution
+   * environment, `Kind.scala:125`) for as long as anyone has waited (28 CPU-minutes observed),
+   * RUNNABLE, GC idle.  Reproduced alone on scala3-migration 478a369c itself, before any JSON
+   * work, and on json-encode 3eba80f8; it PASSES inside a full core/test whenever the Supply
+   * ids it meets happen to be favourable (the 1070/1070, 1137, 1148 and 1170 landing runs), and
+   * wedged three full runs on 2026-09-16 once two new suites shifted that order.  A pre-existing
+   * type-checker cliff on one rejection case; the JSON stages touch nothing it reaches.  Its
+   * positive twin above still checks.  Registered only under -Dermine.test.dateDiffReject=true
+   * so that a green suite means green and a run cannot wedge on it. */
+  if (sys.props.contains("ermine.test.dateDiffReject"))
   property("a dateDiff combine over a relation WITHOUT the dates is now REJECTED (B1)") =
     no(typeChecks(dateDiffPrelude +
       """

@@ -596,14 +596,19 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   // =====================================================================
   // (c) over HTTP
 
-  lazy val server: Server = {
+  /** A server for the duration of one property, ALWAYS stopped again.  It used
+    * to be a suite-lifetime `lazy val` that nothing ever stopped, which left
+    * the JDK server's non-daemon dispatcher thread, up to eight non-daemon
+    * pool threads and a listening socket alive in the shared `core/test` JVM
+    * for every suite that ran after this one. */
+  def withServer[A](f: Int => A): A = {
     val s = Server(runner, 0, 8, 1024 * 1024)
     s.start()
-    s
+    try f(s.boundPort) finally s.stop(0)
   }
 
-  def http(method: String, path: String, body: Option[String]): (Int, String) = {
-    val url = new java.net.URL("http://127.0.0.1:" + server.boundPort + path)
+  def http(port: Int, method: String, path: String, body: Option[String]): (Int, String) = {
+    val url = new java.net.URL("http://127.0.0.1:" + port + path)
     val c = url.openConnection.asInstanceOf[java.net.HttpURLConnection]
     c.setRequestMethod(method)
     c.setConnectTimeout(20000)
@@ -638,8 +643,8 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
 
   /** A HEAD, which by RFC 7230 carries the Content-Length a GET would and no
     * body; `http()` cannot check it because it asserts header == body bytes. */
-  def httpHead(path: String): (Int, Option[Int], Int) = {
-    val url = new java.net.URL("http://127.0.0.1:" + server.boundPort + path)
+  def httpHead(port: Int, path: String): (Int, Option[Int], Int) = {
+    val url = new java.net.URL("http://127.0.0.1:" + port + path)
     val c = url.openConnection.asInstanceOf[java.net.HttpURLConnection]
     c.setRequestMethod("HEAD")
     c.setConnectTimeout(20000)
@@ -652,19 +657,20 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     (status, len, body)
   }
 
-  private def overHttp: (String, String) => (Int, String) =
-    (m, b) => http("POST", Server.ReportPrefix + m, Some(b))
-  private def overHttpGet: String => (Int, String) =
-    t => http("GET", Server.DataPrefix + t, None)
+  private def overHttp(port: Int): (String, String) => (Int, String) =
+    (m, b) => http(port, "POST", Server.ReportPrefix + m, Some(b))
+  private def overHttpGet(port: Int): String => (Int, String) =
+    t => http(port, "GET", Server.DataPrefix + t, None)
 
   property("(c) over HTTP: the same requests, byte-identical bodies and the right statuses") = secure {
+   withServer { port =>
     val cases = TestSchema.samples(caseGen, 10, 7717L)
     val checks = cases.map { c =>
       try {
         val params = paramsOf(c)
         writeModule(c.module, c.source)
         val (s1, t1) = render(runner, c.module, c.body(params))
-        val (s2, t2) = http("POST", Server.ReportPrefix + c.module, Some(c.body(params)))
+        val (s2, t2) = http(port, "POST", Server.ReportPrefix + c.module, Some(c.body(params)))
         if (s1 != 200 || s2 != 200) complain("statuses " + s1 + " / " + s2 + "\n" + t1.take(300) + "\n" + t2.take(300))
         if (masked(t1) != masked(t2))
           complain("bodies differ\n in-process " + masked(t1).take(400) + "\n over HTTP  " + masked(t2).take(400))
@@ -673,22 +679,32 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     }
     val bad = checks.collect { case Left(m) => m }
     // the same case run through checkA, but every call over the socket
-    val end2end = TestSchema.samples(caseGen, 6, 3313L).map(c => checkA(c, overHttp, overHttpGet))
+    val end2end = TestSchema.samples(caseGen, 6, 3313L).map(c => checkA(c, overHttp(port), overHttpGet(port)))
     val bad2 = end2end.collect { case Left(m) => m }
     (bad.isEmpty :| bad.take(2).mkString("\n---\n")) &&
       (bad2.isEmpty :| bad2.take(2).mkString("\n---\n"))
+   }
   }
 
   property("(c-routes) health, method and size limits, and unknown routes") = secure {
-    val health = http("GET", Server.Health, None)
+   withServer { port =>
+    val health = http(port, "GET", Server.Health, None)
     val hj = parsed(health._2)
-    val wrongMethod = http("GET", Server.ReportPrefix + "RgAbsent", None)
-    val unknownRoute = http("GET", "/nope", None)
-    val unknownModule = http("POST", Server.ReportPrefix + "RgAbsent", Some("{}"))
-    val tooBig = http("POST", Server.ReportPrefix + "RgAbsent",
+    val wrongMethod = http(port, "GET", Server.ReportPrefix + "RgAbsent", None)
+    val unknownRoute = http(port, "GET", "/nope", None)
+    val unknownModule = http(port, "POST", Server.ReportPrefix + "RgAbsent", Some("{}"))
+    val tooBig = http(port, "POST", Server.ReportPrefix + "RgAbsent",
                       Some("{\"params\":\"" + ("x" * (1024 * 1024 + 16)) + "\"}"))
-    val headHealth = httpHead(Server.Health)
-    val doc = http("POST", Server.ReportPrefix + "Sales",
+    // The length pin goes against an UNKNOWN ROUTE, not against /health.
+    // /health's body lists the loaded modules, ScalaCheck runs this suite's
+    // properties concurrently over the one `runner`, and half of them compile
+    // a fresh module -- so the GET and the HEAD can legitimately see different
+    // module sets and different lengths (this pin failed exactly that way on
+    // the landing's full core/test).  The 404 body of `/nope` is a pure
+    // function of the path, so GET and HEAD agree whenever they are taken.
+    val headRoute  = httpHead(port, "/nope")
+    val headHealth = httpHead(port, Server.Health)
+    val doc = http(port, "POST", Server.ReportPrefix + "Sales",
                    Some("{\"" + Request.Params + "\":{\"fromDay\":\"2026-01-05\",\"toDay\":\"2026-02-20\"," +
                         "\"orderBy\":\"ByDay\"}}"))
     ((health._1 ?= 200) :| ("health " + health._2)) &&
@@ -700,15 +716,23 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
       ((doc._2.getBytes("UTF-8").length > doc._2.length) :|
         ("the response is pure ASCII (" + doc._2.length + " chars), so the Content-Length pin is vacuous")) &&
       // HEAD: the length a GET would have carried, and no body
+      ((headRoute._1 ?= 404) :| ("HEAD /nope " + headRoute)) &&
+      ((headRoute._2 ?= Some(unknownRoute._2.getBytes("UTF-8").length)) :|
+        ("HEAD Content-Length " + headRoute + " for a GET body of " + unknownRoute._2.getBytes("UTF-8").length +
+         " bytes: " + unknownRoute._2)) &&
+      ((headRoute._3 ?= 0) :| ("HEAD sent a body of " + headRoute._3 + " bytes")) &&
+      // the 200 route too, but only that a length is there and the body is not:
+      // its exact value is not stable across concurrent properties
       ((headHealth._1 ?= 200) :| ("HEAD /health " + headHealth)) &&
-      ((headHealth._2 ?= Some(health._2.getBytes("UTF-8").length)) :| ("HEAD Content-Length " + headHealth)) &&
-      ((headHealth._3 ?= 0) :| ("HEAD sent a body of " + headHealth._3 + " bytes")) &&
+      (headHealth._2.exists(_ > 0) :| ("HEAD /health carried no Content-Length: " + headHealth)) &&
+      ((headHealth._3 ?= 0) :| ("HEAD /health sent a body of " + headHealth._3 + " bytes")) &&
       ((hj.field("status").flatMap(_.string) ?= Some("ok")) :| health._2) &&
       ((hj.field(Wire.Version).flatMap(_.number).flatMap(_.toInt) ?= Some(Wire.version)) :| health._2) &&
       ((wrongMethod._1 ?= 405) :| ("GET /report gave " + wrongMethod._1)) &&
       ((unknownRoute._1 ?= 404) :| ("an unknown route gave " + unknownRoute._1)) &&
       ((unknownModule._1 ?= 404) :| ("an unknown module gave " + unknownModule._1)) &&
       ((tooBig._1 ?= 413) :| ("an oversized body gave " + tooBig._1 + ": " + tooBig._2.take(200)))
+   }
   }
 
   /** Capture what a logger says while `body` runs (log4j 2 core under the
@@ -753,9 +777,11 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     // warm the report up outside the capture, so the load's own chatter is not in it
     render(runner, m, "{\"" + Request.Params + "\":1}")
     val (res, lines) = capturingLog(List("ermine.json.http", "ermine.json.doc")) {
-      val ok = http("POST", Server.ReportPrefix + m, Some("{\"" + Request.Params + "\":1}"))
-      val no = http("GET", "/nope", None)
-      (ok._1, no._1)
+      withServer { port =>
+        val ok = http(port, "POST", Server.ReportPrefix + m, Some("{\"" + Request.Params + "\":1}"))
+        val no = http(port, "GET", "/nope", None)
+        (ok._1, no._1)
+      }
     }
     val mine = lines.filter(l => l.contains(Server.ReportPrefix + m) || l.contains("/nope") ||
                                 l.contains("relation $.props "))
@@ -774,6 +800,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   // (d) concurrency
 
   property("(d) concurrent requests answer what the same requests answer one at a time") = secure {
+   withServer { port =>
     val cases = TestSchema.samples(caseGen, 8, 5150L)
     val bodies = cases.map { c =>
       writeModule(c.module, c.source)
@@ -791,7 +818,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
             start.await()
             // twice over, and through the socket: the pool is what serves them
             (0 until 2).foreach { _ =>
-              val (st, text) = http("POST", Server.ReportPrefix + c.module, Some(b))
+              val (st, text) = http(port, "POST", Server.ReportPrefix + c.module, Some(b))
               if (st != 200) errors.add(c.module + " gave " + st + ": " + text.take(200))
               results.put(i, masked(text))
             }
@@ -807,6 +834,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
       (mismatched.isEmpty :| ("concurrent bodies differ for " + mismatched.map(_._2) +
                               mismatched.headOption.map(p => "\n want " + p._1.take(300) +
                                 "\n got  " + Option(results.get(p._2)).map(_.take(300))).getOrElse("")))
+   }
   }
 
   // =====================================================================
@@ -881,6 +909,40 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
         // the regions relation has only 4 rows, so it stays inline
         ((all(1).field(Wire.RowCount).flatMap(_.number).flatMap(_.toInt) ?= Some(4)) :| all(1).nospaces)
     }
+  }
+
+  // =====================================================================
+  // (iso) a Runner boot and a fixture session in one JVM
+
+  /** A `Runner` boots a SECOND, independent `SessionEnv` in the shared test
+    * JVM -- its own `Lib.preamble`, its own module roots, its own `Supply` --
+    * beside every `ErmineFixture`, and `Session.depCache` and the
+    * `DataConDecl` registry are PROCESS-GLOBAL.  This pins that a fixture can
+    * still load a module and type-check an expression afterwards, and that it
+    * finishes in a BOUNDED time rather than diverging: the point is to fail
+    * loudly instead of wedging a `core/test` run, so the work happens on a
+    * daemon thread that is joined with a deadline. */
+  property("(iso) after a Runner has booted, a fixture session still type-checks, within a bound") = secure {
+    val bootedOk = runner.bootFailure.isEmpty && runner.loadedModules.contains("Layout.Doc")
+    val fx = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
+    val answer = new java.util.concurrent.atomic.AtomicReference[String]("did not finish")
+    val t0 = System.currentTimeMillis
+    val th = new Thread(new Runnable {
+      def run(): Unit = answer.set(
+        try {
+          fx.session { implicit env =>
+            fx.loadStatements("import Layout.Scan as LS\n\nisoUse = removeK_LS\n", Map("Test" -> fx.all))
+            fx.typeOf("isoUse", Map("Test" -> fx.all))
+          }
+          "ok"
+        } catch { case e: Throwable => "threw " + e })
+    })
+    th.setDaemon(true)
+    th.start()
+    th.join(180000L)
+    val ms = System.currentTimeMillis - t0
+    (bootedOk :| ("the runner did not boot: " + runner.bootFailure)) &&
+      ((answer.get ?= "ok") :| ("a fixture type-check after a Runner boot: " + answer.get + ", " + ms + " ms"))
   }
 
   // =====================================================================

@@ -46,7 +46,11 @@ final class Server(val runner: Runner, port: Int, threads: Int, maxBody: Int, ba
     private val n = new AtomicInteger(0)
     def newThread(r: Runnable): Thread = {
       val t = new Thread(r, "ermine-serve-" + n.incrementAndGet())
-      t.setDaemon(false)
+      // DAEMON: `HttpServer.start` runs its own non-daemon dispatcher thread,
+      // and that is what keeps `bin/ermine-serve` alive after `main` returns.
+      // These are only request workers, so a JVM that embeds a `Server` and
+      // forgets to `stop` it (a test, a tool) is not held open by the pool.
+      t.setDaemon(true)
       t
     }
   })
