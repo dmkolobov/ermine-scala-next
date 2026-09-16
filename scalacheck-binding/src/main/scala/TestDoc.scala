@@ -611,7 +611,15 @@ object TestDoc extends Properties("JSON document writer (J3b)") {
 
   private val dImps: Map[String, ImportSpec] =
     Map("Builtin" -> all, "Test" -> all, "Json" -> all, "List" -> all, "Maybe" -> all, "Function" -> all,
-        "Int" -> all, "Num" -> all, "Layout.Doc" -> all, "Native.List" -> all)
+        "Int" -> all, "Num" -> all, "Layout.Doc" -> all, "Native.List" -> all) ++
+    // Stage 2a (J2a) widened `TestSchema.shape` to Date, GUID, Prim, the
+    // native collections and Vector; without their modules 13 of (d)'s 80
+    // generated cases fail to parse with "undefined type".  `TestSchema.imps`
+    // gained them in the same commit; this map did not, because the two
+    // stages were built on separate branches (found by J3c on the merged tip).
+    // Vector is ALIASED: a plain `import Vector` makes every `[..]` literal ambiguous.
+    Map("Date" -> all, "GUID" -> all, "Prim" -> all, "Native.Maybe" -> all, "Native.Pair" -> all,
+        "Vector" -> ((Some("V"), List(), false): ImportSpec))
 
   private val relFieldPool: List[(String, String)] =
     List(("rfInt", "Int"), ("rfStr", "String"), ("rfBool", "Bool"), ("rfDbl", "Double"), ("rfLong", "Long"))
