@@ -78,3 +78,11 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   "X unsound for the kind half" claim; (4) escs is live at Subst.scala:365-367, not covered by verdict_eq.
   Reviewer's conclusion for S2: S1a licenses NO asymptotic improvement to :648; its deliverable is the proof
   that making :648 cheaper cannot be the fix. Findings sent back to the S1a implementer (same agent).
+- 2026-09-16 ~17:50: S1b REVIEW = FIX-THEN-LAND (`SUBSUME-STAGE1B-REVIEW.md`; reviewer re-ran: build 873 no-op,
+  audit 4733/0, 44 axiom prints byte-identical, Main.lean closure 60 modules none new, 5 vacuity mutations all
+  fail). Theorems correct; eight prose findings, chiefly: report:318 false — `rowSoundBare = false` also gates
+  `budgetP_terminates_of_buildQueue` and the ten `runSP_*` soundness declarations (OPEN item: the shipped-default
+  soundness family still carries a hypothesis the defaults violate); `escWalk` models only the fskvs half of :648
+  and bounds the answer's length, not the cost; "NO enormous env" holds in term size only. Reviewer's signed
+  answer: loop BOUNDED at shipped defaults (no theorem at all under -Dermine.dequeuePolicy=shipped), rest of
+  Subst.solve YES, post-solve PARTIAL. Findings sent back to the S1b implementer (same agent).
