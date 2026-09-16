@@ -348,3 +348,11 @@ branch (they share `Lib.scala`).
   `dImps` lacked the Stage 2a modules J2a added to `TestSchema.shape` (Date, GUID, Prim,
   Native.Maybe, Native.Pair, Vector as V), which failed 13 of its 80 cases with "undefined
   type" — a J2a/J3b merge gap, red on the tip before this stage touched anything.
+- 2026-09-16 12:21 LANDED: json-encode = 5d0a2614, full core/test 1196/1196 on that tree (1130 at the
+  start; the one quarantined refutation removed, TestRunner 17, TestWidgets 6, TestDoc 20, TestDecode 13,
+  TestSchema 27, TestNamedFields 16, TestJson 28 added). client/scripts/check-corpus.sh on the landed tree:
+  60/60 node tests over a 200-document corpus of all eight widgets. 2.11: json-encode-2.11 = d75dfb1f
+  (P1 c8d0dac1, P2 438eeb0c, P3 d75dfb1f), full core/test 858/858. Nothing pushed; nothing merged into
+  scala3-migration or backport-2.11. Stage worktrees wt-json-{wrappers,decode,doc,runner,client,spread,
+  charts} are all ancestors of 5d0a2614 and can be removed. Orchestrator note: the last runs were started
+  with nohup and finished unnoticed for three hours -- background jobs must be harness-tracked or polled.
