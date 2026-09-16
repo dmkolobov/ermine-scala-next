@@ -220,7 +220,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
         Some("\"" + Request.Default + "\":\"" + (if (default == Delivery.Deferred) Wire.Deferred else Wire.Inline) + "\""),
         Some("\"" + Request.StrategyK + "\":\"" + Strategy.Buffered.name + "\""),
         threshold.map(t => "\"" + Request.Threshold + "\":" + t)).flatten.mkString(",")
-      "{\"" + Request.Params + "\":" + params.nospaces + ",\"" + Request.Data + "\":{" + data + "}}"
+      "{\"" + Request.Params + "\":" + params.nospacesWithOrder + ",\"" + Request.Data + "\":{" + data + "}}"
     }
   }
 
