@@ -384,3 +384,19 @@ involving their variable, and after this fix neither re-emits one. By reading th
 to it post-fix; by experiment, 6,000 alias-biased satisfiable solves post-fix died zero times,
 and the 141 pre-fix deaths in that population were all the `ConcreteRho` form. That is a
 reading plus a measurement, not a proof — the proof is (a).
+
+## 12. `subsumeType` does not terminate on one dateDiff refutation (found 2026-09-16, JSON Stage 3 landings)
+
+`TestDateAndScan."a dateDiff combine over a relation WITHOUT the dates is now REJECTED (B1)"` asks the checker
+to refuse `combine_Op (dateDiff_Op days (col_Op startDate) (col_Op endDate)) gap people` with `people : [ name ]`.
+Run ALONE (`sbt 'core/testOnly com.clarifi.reporting.TestDateAndScan'`) the property never returns: one RUNNABLE
+thread in `Subst.subsumeType (Subst.scala:648) -> SubstEnv.kindVars (:169) -> Kind.kindVars (Kind.scala:96) ->
+HasKindVars.mapHasKindVars.vars (:125) -> Type.vars (Type.scala:649-653)` recursing, 28 CPU-minutes observed,
+GC idle. Reproduced on scala3-migration 478a369c (pre-JSON), json-encode 3eba80f8 and json-runner 85d95531;
+inside a full core/test it passes when the Supply ids it meets are favourable (every landing run up to 1170/1170)
+and wedged three full runs on 2026-09-16 when two new suites shifted the order. `subsumeType` recomputes
+`hm.kindVars` over the WHOLE substitution environment per call, unmemoised; on a refutation search that grows the
+env that is quadratic at best and exponential over shared kind DAGs. Quarantined 2026-09-16 behind
+`-Dermine.test.dateDiffReject=true` (GATE-POLICY.md). Owner: whoever owns `Subst`; not a JSON item. Evidence:
+jstacks and logs under the 2026-09-16 session scratchpad (`land/j3c-full-coretest.log`, `das-on-json-encode.log`,
+`das-on-scala3-migration.log`), tracker/json-stage3/report-J3c.md "core/test wedge, investigated".
