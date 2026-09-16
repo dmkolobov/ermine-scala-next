@@ -687,6 +687,14 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     val unknownModule = http("POST", Server.ReportPrefix + "RgAbsent", Some("{}"))
     val tooBig = http("POST", Server.ReportPrefix + "RgAbsent",
                       Some("{\"params\":\"" + ("x" * (1024 * 1024 + 16)) + "\"}"))
+    // The length pin goes against an UNKNOWN ROUTE, not against /health.
+    // /health's body lists the loaded modules, ScalaCheck runs this suite's
+    // properties concurrently over the one `runner`, and half of them compile
+    // a fresh module -- so the GET and the HEAD can legitimately see different
+    // module sets and different lengths (this pin failed exactly that way on
+    // the landing's full core/test).  The 404 body of `/nope` is a pure
+    // function of the path, so GET and HEAD agree whenever they are taken.
+    val headRoute  = httpHead("/nope")
     val headHealth = httpHead(Server.Health)
     val doc = http("POST", Server.ReportPrefix + "Sales",
                    Some("{\"" + Request.Params + "\":{\"fromDay\":\"2026-01-05\",\"toDay\":\"2026-02-20\"," +
@@ -700,9 +708,16 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
       ((doc._2.getBytes("UTF-8").length > doc._2.length) :|
         ("the response is pure ASCII (" + doc._2.length + " chars), so the Content-Length pin is vacuous")) &&
       // HEAD: the length a GET would have carried, and no body
+      ((headRoute._1 ?= 404) :| ("HEAD /nope " + headRoute)) &&
+      ((headRoute._2 ?= Some(unknownRoute._2.getBytes("UTF-8").length)) :|
+        ("HEAD Content-Length " + headRoute + " for a GET body of " + unknownRoute._2.getBytes("UTF-8").length +
+         " bytes: " + unknownRoute._2)) &&
+      ((headRoute._3 ?= 0) :| ("HEAD sent a body of " + headRoute._3 + " bytes")) &&
+      // the 200 route too, but only that a length is there and the body is not:
+      // its exact value is not stable across concurrent properties
       ((headHealth._1 ?= 200) :| ("HEAD /health " + headHealth)) &&
-      ((headHealth._2 ?= Some(health._2.getBytes("UTF-8").length)) :| ("HEAD Content-Length " + headHealth)) &&
-      ((headHealth._3 ?= 0) :| ("HEAD sent a body of " + headHealth._3 + " bytes")) &&
+      (headHealth._2.exists(_ > 0) :| ("HEAD /health carried no Content-Length: " + headHealth)) &&
+      ((headHealth._3 ?= 0) :| ("HEAD /health sent a body of " + headHealth._3 + " bytes")) &&
       ((hj.field("status").flatMap(_.string) ?= Some("ok")) :| health._2) &&
       ((hj.field(Wire.Version).flatMap(_.number).flatMap(_.toInt) ?= Some(Wire.version)) :| health._2) &&
       ((wrongMethod._1 ?= 405) :| ("GET /report gave " + wrongMethod._1)) &&
