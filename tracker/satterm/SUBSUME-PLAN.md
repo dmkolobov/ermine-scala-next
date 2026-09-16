@@ -95,3 +95,9 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   false`, which the shipped defaults violate — S2 must not cite it at the defaults); escWalk scope, env-bound
   wording, blow-up site (:313-318), README looptrace row corrected; report §8 = reviewer's signed answer. S1b
   reviewer re-checking. S0 still running.
+- 2026-09-16 ~18:45: S1a LANDED. Review re-check LAND (§7 of the review; two report-only nits fixed by the
+  orchestrator at landing). Stage commit 228fb504 on `subsume-s1a`, merge c806dbea, `subsume-termination`
+  fast-forwarded to c806dbea. Landing gate on the merged tree (scratch-subsume/orch/s1a-landing-tier0.log):
+  lake build 872 jobs, Audit 4936 / 0. No Scala and no executable Lean changed, so the Scala Tier 0 items are
+  unaffected by construction (the programme worktree compile at 478a369c+docs: exit 0). Title question, walk
+  only: YES.
