@@ -110,3 +110,16 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   Title question so far: walk YES (S1a); loop BOUNDED at shipped defaults, rest of Subst.solve YES, post-solve
   PARTIAL (S1b). OPEN items carried: `runSP_*` soundness family still assumes rowSoundBare = false; no
   termination theorem under -Dermine.dequeuePolicy=shipped. Waiting on S0 to brief S2.
+- 2026-09-16 ~19:30: S0 DONE (stopped at budget+; uncommitted on `subsume-s0`: Subst.scala +239/−2 behind
+  `-Dermine.subsumeTrace`, report 714 lines). HEADLINE CONTRADICTS THE PREMISE: the B1 check REFUSES in
+  0.06–0.10 s at all 16 Supply id bases (`bin/ermine repro/Bad.e`: "Row partitions are unsatisfiable at field
+  'Bad.startDate'"); H1 refuted (types.size max 1,566 in every run; tree/DAG ≤ 4.39; slowest walk 29 ms;
+  :648 2.2 s + :365 3.9 s of a 184 s suite), H2 refuted (0 cycles in 984,024 walks; strict case classes),
+  H3 survives only as "nothing grows or diverges; :648 is one of five sampler landing places". The "hang":
+  `ErmineFixture.no` maps Proof→False/False→True so a rejection is `passed` not `proved`; ScalaCheck runs 100
+  full checks, each re-type-checking the import closure (~9.1 s, linear in N, one library boot per test);
+  `-minSuccessfulTests 1` → 12/12 green. LSP hazard not reproduced. Baselines: corpus 89/79/0 over 168;
+  TestLoopTrace 3/3 but model-agreement property self-skipped (no looptrace binary) — reviewer to run it with
+  the wt-json-wrappers binary. Not done: filtered repro pair, "another suite ahead" control, solveDet at N=16.
+  S0 reviewer launched (Opus) with the harness explanation as the point to dispute hardest. S2/S3 premises
+  (memoised :648 / budget) fail on this evidence if the review confirms; S2 to be re-briefed accordingly.
