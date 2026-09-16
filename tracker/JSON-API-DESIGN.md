@@ -694,9 +694,23 @@ What landed, and where it departs from the text above.
   gives the selector the scheme `forall {k} (a: k). T a -> t`, kind variable
   and all -- but so does the constructor (`forall {k} (a: k). t -> T a`), so
   the selector is consistent with what the type already had.  The LSP shows
-  selectors as `KField` children of the data symbol and as declaration
-  heads; record-style PRETTY PRINTING of the declaration is not built (rule
-  10), so `:browse` and hover still show positional fields.
+  selectors as `KField` symbols and as declaration heads; record-style
+  PRETTY PRINTING of the declaration is not built (rule 10), so `:browse`
+  and hover still show positional fields.
+  **Corrected 2026-09-16 (J3b's landing gate)**: those `KField` symbols were
+  children of the DATA symbol, i.e. SIBLINGS of the constructors, and a
+  constructor's span runs to the start of the next one — so every record
+  constructor's range straddled its own fields' ranges, which
+  `TestRenamer` 6.4 ("siblings are sorted, and no two of them straddle")
+  forbids and no cursor-to-symbol client can resolve.  It went unseen
+  because no module in the corpus had a record-style `data` until
+  `Layout/Doc.e`.  A field symbol is now a child of the CONSTRUCTOR that
+  declares it (`lsp/Symbols.scala`, the `SDataStatement` case), which is
+  what LSP means by Field members and what this builder already did for
+  every other container; a name shared by two constructors is one selector
+  with two declaration sites and lists under each.  Pinned by two new
+  properties in `TestNamedFields` (one over generated declarations, one
+  exact tree).
 - **Gate**: TestNamedFields 14/14 (nine `forAll` properties over random
   declarations), TestJson 27/27, the parser/renamer suites green, REPL and
   LSP smokes green, corpus verdicts 89 LOADED / 79 REJECTED / 0 UNKNOWN over

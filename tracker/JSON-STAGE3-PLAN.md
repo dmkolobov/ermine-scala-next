@@ -124,3 +124,15 @@ branch (they share `Lib.scala`).
   relational-engine behaviour change whose real gate is the full `core/test`, not the JSON
   suites. A ticket for J3c: `relational/package.scala:121-128` needs
   `try k(d) finally teardown()` so a scan that throws on its own is torn down too.
+- 2026-09-16 J3b landing gate (full `core/test` on bf832e46) found a REAL bug that
+  `Layout/Doc.e` exposed: `Renamer 3.2a.6.4 corpus: siblings are sorted, and no two of them
+  straddle` failed with 7 pairs, all record-style constructors straddling their own field
+  symbols. Root cause in Stage 1a's `lsp/Symbols.scala`: selectors were emitted as SIBLINGS of
+  the constructor whose span contains them. Fixed on `json-doc` (uncommitted, on top of the
+  commit): a field symbol is now a CHILD of the constructor that declares it, which is the LSP
+  Field-in-Struct shape and the one this builder already uses for every other container. No
+  `.e` fixture in `tracker/lsp-tests/` has a record `data`, so no pinned LSP expectation
+  changed and the smoke stays at 577 checks. Two new properties in `TestNamedFields` (random
+  declarations + an exact tree) pin the shape where the syntax is generated; mutation-checked
+  against the old shape. Also measured, not fixed: `TestTolerantCheck` alone on this tree x3,
+  E11a green every time (58/58), so the landing run's E11a failure did not reproduce here.
