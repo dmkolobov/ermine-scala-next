@@ -960,6 +960,124 @@ cache: `modules/Layout/Doc.e`, `core/json/Doc.scala`, `core/json/Write.scala`,
   scanner (of which building the records is the larger half) into ~15 MB of
   text, holding ~28 MB of heap: the writer holds the text, not the records.
 
+## 3.7d Stage 3 runner as built (2026-09-16, branch `json-runner`, stage J3c)
+
+Files: `core/.../ermine/json/Runner.scala` (the runner, `RunError`, `Request`,
+`RunnerConfig`), `Server.scala` (the JDK `com.sun.net.httpserver` face),
+`ServeMain.scala` + `bin/ermine-serve` (the CLI),
+`core/src/test/resources/doc/Sales.e` (the example report),
+`scalacheck-binding/.../TestRunner.scala` (16 properties).
+
+### The pipeline
+
+```
+request JSON -> Request.parse -> Decode (compiled once per report)
+             -> report : Params -> Node -> Doc.fromRuntime
+             -> Write.doc inside ONE Run[DB].run -> one JSON object
+```
+
+Boot is one `SessionEnv` for the process: `Lib.preamble`, then `Layout.Doc`
+and the configured `--preload` modules.  Module sources come from the
+`--root` directories, in order, before the classpath.  Per REPORT, once and
+cached by module name: `Session.eval(<report name>)` for `(Type, Runtime)`,
+`Decode.reportSignature` to split `Params -> Result`, a check that the result
+is `Layout.Doc.Node` with aliases expanded, and `Decode.compile` for the
+parameter decoder.  A REFUSAL is not cached, so a module the operator is
+about to add or a signature they are about to correct is retried.
+
+### The wire, as implemented
+
+```
+POST /report/<Module.Name>   body {"params": .., "data": {..}}   -> the document
+GET  /data/<token>                                               -> the inline object
+GET  /health                 -> {"status":"ok","version":1,"modules":[..]}
+```
+
+Every response is `application/json; charset=utf-8` with a `Content-Length`;
+`Buffered` means the document is written into a `StringBuilder` and sent only
+when the write returned, so no partial document ever reaches a client.  A
+failure is `{"error":{"path":..,"message":..}}` with `path` null when there is
+none:
+
+| Status | When | `path` |
+|---|---|---|
+| 400 | body not JSON / not an object / an unknown key at either level; `strategy: "streamed"`; a parameter the type refuses; a report whose type is not `Params -> Node` | `$`, `$.data.<key>`, `$.params...` |
+| 404 | no such module, no binding of that name in it, no such route, unknown or expired token | null |
+| 405 | the route used with another method (with `Allow`) | null |
+| 413 | body over `--max-body` | null |
+| 500 | the report threw, produced an unencodable document, or a scan failed | the DOCUMENT path, when there is one |
+
+### Decisions taken in code
+
+1. **A report that throws and a report that builds something unwritable are
+   the same 500.**  An Ermine `error` inside the value reaches `Encode` as a
+   `Bottom` and comes back as an `Encode.Error`, not as an exception, so the
+   two cannot be told apart — and neither is the client's fault.  (J3b's
+   sketch suggested a 400 for an encode error; a 400 would have made "a report
+   that throws" a 400 too.)  The error's `path` is then the path in the
+   RESPONSE document, which is why the body carries `path` separately from
+   the status rather than pretending it is a request path.
+2. **Unknown keys are refused** at the top level and inside `data`, so a
+   client's `"treshold"` is an error instead of silence.
+3. **A missing `params` key is `null`**, which is what a report over `Maybe`,
+   `Json` or `()` wants; anything else refuses it at `$.params`.
+4. **Module names are validated** (dot-separated identifiers) before they
+   reach `SourceFile.filesystem`, which turns a name into a path.
+5. **One evaluation at a time; scans and writes concurrent.**  See below.
+6. **No `Doc.fromRuntime` hints.**  The runner knows the report's RESULT type
+   (`Node`), never the type of a relation buried in a widget's props, so it
+   has nothing to build a header hint from: a header-less `mkRelation# []` is
+   a 500 that names `mkRelationWithHeader#` (pinned).
+7. `MethodNotAllowed` (405) and `TooLarge` (413) live in `RunError` beside the
+   runner's own three, so every body a client can see has one shape.
+8. **A bad report SIGNATURE is a 400, a bad report VALUE is a 500.**  Neither
+   is the client's fault, so the split is not about blame: the brief fixes the
+   signature case at 400, and it is the one where retrying is pointless and
+   the message says so, whereas a value that will not encode may depend on the
+   very parameters that just type-checked.
+
+### Concurrency
+
+Evaluation is serialised behind one monitor: `Session.loadModules`,
+`Session.eval`, the parameter decode, the application of the report and
+`Doc.fromRuntime` (which forces the value).  Module loading mutates the
+`SessionEnv`'s maps field by field and the process-global `DataConDecl`
+registry, `Supply` is documented single-threaded, and `Runtime.Thunk.state` is
+a non-volatile `var` whose whitehole latch guards against a cycle, not against
+a data race.  Everything after that — the scan, the row encoding, the plan
+cache — is concurrent: nothing in `Doc`/`Write`/`Rows` reads the session, each
+request has its own `Appendable`, `MemoryPlanCache` is synchronized, and
+`Run[DB]` gives each thread its own connection.  So N requests overlap on the
+database and queue on the interpreter, which is where the cheap part is.  The
+HTTP server uses a fixed pool (default 16) because the JDK server's default
+executor would run every exchange on the dispatcher thread.
+
+The monitor is PROCESS-WIDE (`Runner.evalLock` on the companion object), not
+per instance: `DataConDecl`'s two registries are static and last-writer-wins
+per `Global`, so two runners in one JVM -- two tenants, or a test fixture --
+must exclude each other as well.  `GET /health` is the one path that does not
+take it, reading a volatile snapshot of the loaded modules instead, so a
+liveness probe cannot queue behind the slow report it is probing.
+
+Three things J3d should know before it writes a browser client: there are **no
+CORS headers**, so the client must be served from the same origin or go through
+a proxy; a **413 is sent without draining the request body**, so a client still
+uploading sees the connection close (curl reports the 413 and then exits 56);
+and `Run[DB]` is **not a pool** -- each request opens and closes a JDBC
+connection, and `--threads` bounds how many exist at once.
+
+### Verified
+
+`TestRunner`, 16 properties over report modules GENERATED as Ermine source
+(random parameter type and value from `TestSchema.shape`, one to three literal
+relations in each of the six delivery forms, a random `data` configuration):
+end to end in process, the error paths, the same requests over HTTP giving
+byte-identical bodies, concurrent requests agreeing with serial ones, one
+connection per request, the example report, and the two DB-layer tickets J3b
+handed on (a NULL GUID column, and a scan that throws being torn down) — both
+now fixed, in `SqlEmitter.EmitUuid_Strings.getUuid` and
+`relational/package.scala`'s `EffectfulProcedure.withDriver`.
+
 ## 4. Appendix: the de facto widget API (catalogue)
 
 Corrected per skeptic (§7): the writer also emits `registerSource`,

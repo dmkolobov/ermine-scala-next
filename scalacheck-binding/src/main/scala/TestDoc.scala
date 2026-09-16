@@ -125,9 +125,10 @@ object TestDoc extends Properties("JSON document writer (J3b)") {
   /** A `Scanner[Id]` that yields exactly the records a literal plan holds, in
     * order, through the same `EffectfulProcedure` shape the SQL scanner uses
     * (one driver pull per record), counting pulls per scan and recording the
-    * scans whose TEARDOWN ran -- `withDriver` only runs it when the machine
-    * finishes, which is what the sink's `Stop` exit buys (the SQL scanner
-    * closes its result set and statement there).  A `Table` plan is a scan
+    * scans whose TEARDOWN ran -- `withDriver` runs it in a `finally` as of
+    * J3c, and the sink's `Stop` exit is what makes a refused row end the scan
+    * cleanly rather than unwind through it (the SQL scanner closes its result
+    * set and statement there).  A `Table` plan is a scan
     * that THROWS; `generated` supplies records for marked plans lazily. */
   final class ListScanner extends Scanner[Id]()(scalaz.Id.id) {
     val scans = new ListBuffer[(Ext[Nothing, Nothing], Long)]
@@ -340,14 +341,14 @@ object TestDoc extends Properties("JSON document writer (J3b)") {
   }
 
   /** What (b) may draw, measured by (b-sql) on this SQLite build:
-    *  - every column type, but a NULL in a GUID column is not readable back
-    *    (`SqlExecution` calls `getUuid` before it looks at `wasNull`, and
-    *    `UUID.fromString(null)` throws) -- so GUID columns here are not nullable;
+    *  - every column type, NULLABLE GUID INCLUDED since J3c fixed
+    *    `SqlEmitter.EmitUuid_Strings.getUuid` (it used to call
+    *    `UUID.fromString(null)` before `SqlExecution` looked at `wasNull`, so
+    *    a NULL in a GUID column threw and this list had to exclude it);
     *  - strings without a NUL or a lone surrogate (JDBC cannot carry those);
     *  - doubles of moderate magnitude (the emitter's literals lose 1e300 and
     *    1e-300; the extremes and the ordinary values survive). */
-  val sqliteExact: List[Boolean => PrimT] =
-    primCtors.dropRight(1) ++ List((b: Boolean) => UuidT(false))
+  val sqliteExact: List[Boolean => PrimT] = primCtors
 
   /** A string with an unpaired surrogate in it: JDBC has no UTF-8 for it. */
   def loneSurrogate(s: String): Boolean = {
@@ -503,7 +504,8 @@ object TestDoc extends Properties("JSON document writer (J3b)") {
     ((badStrings == excluded) :| ("SQLite loses exactly the strings " + badStrings.map(esc) +
       ", (b) excludes " + excluded.map(esc))) &&
       (badTypes.isEmpty :| ("column types lost: " + badTypes)) &&
-      ((badNulls == List("UUID")) :| ("nulls lost: " + badNulls)) &&
+      // was List("UUID") until J3c fixed the emitter's `getUuid`
+      (badNulls.isEmpty :| ("nulls lost: " + badNulls)) &&
       (badDoubles.isEmpty :| ("(b) would draw doubles SQLite loses: " + badDoubles))
   }
 
@@ -611,7 +613,15 @@ object TestDoc extends Properties("JSON document writer (J3b)") {
 
   private val dImps: Map[String, ImportSpec] =
     Map("Builtin" -> all, "Test" -> all, "Json" -> all, "List" -> all, "Maybe" -> all, "Function" -> all,
-        "Int" -> all, "Num" -> all, "Layout.Doc" -> all, "Native.List" -> all)
+        "Int" -> all, "Num" -> all, "Layout.Doc" -> all, "Native.List" -> all) ++
+    // Stage 2a (J2a) widened `TestSchema.shape` to Date, GUID, Prim, the
+    // native collections and Vector; without their modules 13 of (d)'s 80
+    // generated cases fail to parse with "undefined type".  `TestSchema.imps`
+    // gained them in the same commit; this map did not, because the two
+    // stages were built on separate branches.  Vector is ALIASED: a plain
+    // `import Vector` makes every `[..]` literal ambiguous.
+    Map("Date" -> all, "GUID" -> all, "Prim" -> all, "Native.Maybe" -> all, "Native.Pair" -> all,
+        "Vector" -> ((Some("V"), List(), false): ImportSpec))
 
   private val relFieldPool: List[(String, String)] =
     List(("rfInt", "Int"), ("rfStr", "String"), ("rfBool", "Bool"), ("rfDbl", "Double"), ("rfLong", "Long"))
@@ -950,8 +960,10 @@ object TestDoc extends Properties("JSON document writer (J3b)") {
             ((mine.count(_.startsWith("INFO relation " + tag)) ?= at)) &&
             (mine.exists(l => l.startsWith("ERROR relation " + badPath + " failed")) :| ("log " + mine)) &&
             // EVERY scan that started was torn down, the one that refused a row
-            // included: the sink leaves by `Stop`, never by an exception through
-            // `EffectfulProcedure.withDriver` (which has no `finally`)
+            // included: the sink leaves by `Stop` rather than by an exception
+            // through `EffectfulProcedure.withDriver` (which tears down in a
+            // `finally` as of J3c, so `how == 0` -- a scan that throws on its
+            // own -- is now torn down too)
             ((S.teardowns.length ?= S.scans.length) :| ("scans " + S.scans.length + ", teardowns " + S.teardowns.length)) &&
             (((how == 0) || S.teardowns.exists(_ eq bad.ext)) :| "the failing scan was not torn down")
         case other => falsified :| ("expected a WriteFailure, got " + other)
