@@ -1,0 +1,92 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$id" : "ermine:Test/Deferred (|sfDate, sfInt, sfNote|)",
+  "type" : "object",
+  "properties" : {
+    "kind" : {
+      "const" : "deferred"
+    },
+    "columns" : {
+      "type" : "array",
+      "prefixItems" : [
+        {
+          "type" : "object",
+          "properties" : {
+            "name" : {
+              "const" : "sfDate"
+            },
+            "type" : {
+              "const" : "Date"
+            },
+            "nullable" : {
+              "const" : false
+            }
+          },
+          "required" : [
+            "name",
+            "type",
+            "nullable"
+          ],
+          "additionalProperties" : false
+        },
+        {
+          "type" : "object",
+          "properties" : {
+            "name" : {
+              "const" : "sfInt"
+            },
+            "type" : {
+              "const" : "Int"
+            },
+            "nullable" : {
+              "const" : false
+            }
+          },
+          "required" : [
+            "name",
+            "type",
+            "nullable"
+          ],
+          "additionalProperties" : false
+        },
+        {
+          "type" : "object",
+          "properties" : {
+            "name" : {
+              "const" : "sfNote"
+            },
+            "type" : {
+              "const" : "String"
+            },
+            "nullable" : {
+              "const" : true
+            }
+          },
+          "required" : [
+            "name",
+            "type",
+            "nullable"
+          ],
+          "additionalProperties" : false
+        }
+      ],
+      "minItems" : 3,
+      "maxItems" : 3
+    },
+    "token" : {
+      "type" : "string",
+      "minLength" : 1
+    },
+    "expires" : {
+      "type" : "string",
+      "format" : "date-time"
+    }
+  },
+  "required" : [
+    "kind",
+    "columns",
+    "token",
+    "expires"
+  ],
+  "additionalProperties" : false
+}

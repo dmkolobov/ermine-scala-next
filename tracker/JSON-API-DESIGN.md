@@ -742,6 +742,22 @@ Departures from §3.5 and decisions taken in code:
   `Nullable` unwrapped.  The ENCODER does not produce this yet (Stage 3's
   `Write.doc`); the schema ships now so the TS side can be written against
   it.  The `Inline`/`Deferred` arms are Stage 3 too.
+  **Revised in J3a** (2026-09-16, branch `json-wrappers`): a relation now
+  exports the DELIVERY UNION of the wire contract in
+  `tracker/JSON-STAGE3-PLAN.md` -- a bare `[..r]` is `oneOf [inline arm,
+  deferred arm]`, `Json.Inline r` the inline arm alone, `Json.Deferred r` the
+  deferred arm alone; each arm is a closed object with a `kind` const, the
+  `columns`, and `rows`+`rowCount` (integer, minimum 0) or
+  `token`+`expires`; a column descriptor gained a third const, `nullable`,
+  and its `type` is now `Wire.columnType` of the field's `PrimT` rather than
+  a type name read off the `Con`.  A relation over a row VARIABLE exports a
+  GENERIC arm (any columns from `Wire.columnTypes`, rows of scalar cells)
+  instead of being an error, so a widget props type `data TableProps r =
+  TableProps { rows : Inline r }` has one schema for every `r`; the root of
+  an export may leave a data type's row parameters abstract (`exportNamed`,
+  `bin/ermine-schema -i Json Inline`), and a `$defs` key spells every type
+  variable `_` (`Test.TableProps__`).  An open row outside a relation is
+  still an error.
 - **A constrained field type reads as rank-n before it reads as a row**: a
   constructor field declared `Field h Int` or `{..r}` with a free row
   variable arrives at the walker as a scheme, so the refusal says

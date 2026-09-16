@@ -18,11 +18,20 @@ import argonaut.Json
   * Supported: `$ref` (into the root document's `$defs` only), `type`, `enum`,
   * `const`, `properties`, `required`, `additionalProperties: false`, `items`,
   * `prefixItems`, `minItems`, `maxItems`, `minimum`, `maximum`, `pattern`,
-  * `maxLength`, `anyOf`, `oneOf`.  `format` is NOT a validation keyword in
-  * JSON Schema and is not treated as one here either, with one exception the
-  * tests need: `date`, `date-time` and `uuid` strings are parsed with
-  * `java.time` / `java.util.UUID`, because those three formats are the whole
-  * reason the encoder writes a string where a client expects a moment.
+  * `minLength` (J3a: a deferred relation's `token`), `maxLength`, `anyOf`,
+  * `oneOf`.  `format` is NOT a validation keyword in JSON Schema and is not
+  * treated as one here either, with one exception the tests need: `date`,
+  * `date-time` and `uuid` strings are parsed with `java.time` /
+  * `java.util.UUID`, because those three formats are the whole reason the
+  * encoder writes a string where a client expects a moment.  Exactly:
+  * `date` is `DateTimeFormatter.ISO_LOCAL_DATE` (`yyyy-MM-dd`, a real
+  * calendar day); `date-time` is `ISO_OFFSET_DATE_TIME` -- a date, `T`, a
+  * time with optional seconds and fraction (0-9 digits), and a REQUIRED
+  * offset (`Z` or `+hh:mm`): RFC 3339's profile, loosened only in making
+  * seconds optional.  A relation's `expires` in the wire's Timestamp format
+  * `yyyy-MM-dd'T'HH:mm:ss.SSS'Z'` passes; zod's `.datetime()` is stricter
+  * (a `Z` offset only).  `uuid` is `UUID.fromString` (five hex groups; it
+  * does not insist on the canonical 8-4-4-4-12 widths).
   *
   * Every message carries the JSON path of the instance node it is about
   * (`$.rows[0].name`), the same spelling `Encode.Error` uses.
@@ -91,6 +100,10 @@ object Validate {
 
     // strings
     doc.string foreach { s =>
+      schema.field("minLength").flatMap(_.number) foreach { m =>
+        val n = m.truncateToInt
+        if (s.length < n) bad("the string is " + s.length + " characters, shorter than minLength " + n)
+      }
       schema.field("maxLength").flatMap(_.number) foreach { m =>
         val n = m.truncateToInt
         if (s.length > n) bad("the string is " + s.length + " characters, longer than maxLength " + n)

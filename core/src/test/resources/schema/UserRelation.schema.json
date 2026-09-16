@@ -1,87 +1,202 @@
 {
   "$schema" : "https://json-schema.org/draft/2020-12/schema",
   "$id" : "ermine:Test/[..(|sfDate, sfInt, sfString|)]",
-  "type" : "object",
-  "properties" : {
-    "columns" : {
-      "type" : "array",
-      "prefixItems" : [
-        {
-          "type" : "object",
-          "properties" : {
-            "name" : {
-              "const" : "sfDate"
-            },
-            "type" : {
-              "const" : "Date"
-            }
-          },
-          "required" : [
-            "name",
-            "type"
-          ],
-          "additionalProperties" : false
+  "oneOf" : [
+    {
+      "type" : "object",
+      "properties" : {
+        "kind" : {
+          "const" : "inline"
         },
-        {
-          "type" : "object",
-          "properties" : {
-            "name" : {
-              "const" : "sfInt"
+        "columns" : {
+          "type" : "array",
+          "prefixItems" : [
+            {
+              "type" : "object",
+              "properties" : {
+                "name" : {
+                  "const" : "sfDate"
+                },
+                "type" : {
+                  "const" : "Date"
+                },
+                "nullable" : {
+                  "const" : false
+                }
+              },
+              "required" : [
+                "name",
+                "type",
+                "nullable"
+              ],
+              "additionalProperties" : false
             },
-            "type" : {
-              "const" : "Int"
+            {
+              "type" : "object",
+              "properties" : {
+                "name" : {
+                  "const" : "sfInt"
+                },
+                "type" : {
+                  "const" : "Int"
+                },
+                "nullable" : {
+                  "const" : false
+                }
+              },
+              "required" : [
+                "name",
+                "type",
+                "nullable"
+              ],
+              "additionalProperties" : false
+            },
+            {
+              "type" : "object",
+              "properties" : {
+                "name" : {
+                  "const" : "sfString"
+                },
+                "type" : {
+                  "const" : "String"
+                },
+                "nullable" : {
+                  "const" : false
+                }
+              },
+              "required" : [
+                "name",
+                "type",
+                "nullable"
+              ],
+              "additionalProperties" : false
             }
-          },
-          "required" : [
-            "name",
-            "type"
           ],
-          "additionalProperties" : false
+          "minItems" : 3,
+          "maxItems" : 3
         },
-        {
-          "type" : "object",
-          "properties" : {
-            "name" : {
-              "const" : "sfString"
-            },
-            "type" : {
-              "const" : "String"
-            }
-          },
-          "required" : [
-            "name",
-            "type"
-          ],
-          "additionalProperties" : false
-        }
-      ],
-      "minItems" : 3,
-      "maxItems" : 3
-    },
-    "rows" : {
-      "type" : "array",
-      "items" : {
-        "type" : "array",
-        "prefixItems" : [
-          {
-            "type" : "string",
-            "format" : "date"
-          },
-          {
-            "type" : "integer"
-          },
-          {
-            "type" : "string"
+        "rows" : {
+          "type" : "array",
+          "items" : {
+            "type" : "array",
+            "prefixItems" : [
+              {
+                "type" : "string",
+                "format" : "date"
+              },
+              {
+                "type" : "integer"
+              },
+              {
+                "type" : "string"
+              }
+            ],
+            "minItems" : 3,
+            "maxItems" : 3
           }
-        ],
-        "minItems" : 3,
-        "maxItems" : 3
-      }
+        },
+        "rowCount" : {
+          "type" : "integer",
+          "minimum" : 0
+        }
+      },
+      "required" : [
+        "kind",
+        "columns",
+        "rows",
+        "rowCount"
+      ],
+      "additionalProperties" : false
+    },
+    {
+      "type" : "object",
+      "properties" : {
+        "kind" : {
+          "const" : "deferred"
+        },
+        "columns" : {
+          "type" : "array",
+          "prefixItems" : [
+            {
+              "type" : "object",
+              "properties" : {
+                "name" : {
+                  "const" : "sfDate"
+                },
+                "type" : {
+                  "const" : "Date"
+                },
+                "nullable" : {
+                  "const" : false
+                }
+              },
+              "required" : [
+                "name",
+                "type",
+                "nullable"
+              ],
+              "additionalProperties" : false
+            },
+            {
+              "type" : "object",
+              "properties" : {
+                "name" : {
+                  "const" : "sfInt"
+                },
+                "type" : {
+                  "const" : "Int"
+                },
+                "nullable" : {
+                  "const" : false
+                }
+              },
+              "required" : [
+                "name",
+                "type",
+                "nullable"
+              ],
+              "additionalProperties" : false
+            },
+            {
+              "type" : "object",
+              "properties" : {
+                "name" : {
+                  "const" : "sfString"
+                },
+                "type" : {
+                  "const" : "String"
+                },
+                "nullable" : {
+                  "const" : false
+                }
+              },
+              "required" : [
+                "name",
+                "type",
+                "nullable"
+              ],
+              "additionalProperties" : false
+            }
+          ],
+          "minItems" : 3,
+          "maxItems" : 3
+        },
+        "token" : {
+          "type" : "string",
+          "minLength" : 1
+        },
+        "expires" : {
+          "type" : "string",
+          "format" : "date-time"
+        }
+      },
+      "required" : [
+        "kind",
+        "columns",
+        "token",
+        "expires"
+      ],
+      "additionalProperties" : false
     }
-  },
-  "required" : [
-    "columns",
-    "rows"
-  ],
-  "additionalProperties" : false
+  ]
 }

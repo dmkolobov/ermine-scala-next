@@ -1,7 +1,8 @@
 package com.clarifi.reporting
 
 import com.clarifi.reporting.ermine._
-import com.clarifi.reporting.ermine.json.{ Encode, Schema, Validate, Zod }
+import com.clarifi.reporting.ermine.json.{ ArgonautJson, Delivery, Encode, JsonBuilder, Schema, Validate, Wire, Zod }
+import com.clarifi.reporting.relational.{ ExtRel, SmallLit }
 import com.clarifi.reporting.ermine.rename.NewPipeline
 import com.clarifi.reporting.ermine.session.{ Session, SessionEnv }
 
@@ -67,18 +68,27 @@ object TestSchema extends Properties("Ermine JSON Schema") {
 
   /** The schema of a type expression parsed against a freshly loaded `Test`
     * module -- what a user record, relation or recursive `data` needs. */
-  def schemaAfter(decls: String, tyExpr: String): Either[Schema.Error, Json] =
+  def schemaAfter(decls: String, tyExpr: String, im: Map[String, ImportSpec] = imps): Either[Schema.Error, Json] =
     session { implicit env =>
-      loadStatements(decls, imps)
-      Schema.exportType(NewPipeline.replType("<gate>", tyExpr, imps), "Test")
+      loadStatements(decls, im)
+      Schema.exportType(NewPipeline.replType("<gate>", tyExpr, im), "Test")
     }
+
+  /** The relation properties' imports (J3a): `mkRelation#`/`toList#`, the
+    * `Prim` witnesses a `Null` names, and the Date/Timestamp/GUID
+    * constructors. */
+  val relImps: Map[String, ImportSpec] =
+    imps ++ Map("Native.List" -> all, "Date" -> all, "GUID" -> all, "Prim" -> all)
 
   // ---------------------------------------------------------------------
   // the generator: random Ermine types with random values of them
 
   /** One generated type: its source, the declarations it needs (deduplicated
-    * before they are emitted) and a generator of value source. */
-  final case class Shape(ty: String, decls: List[String], value: Gen[String])
+    * before they are emitted) and a generator of value source.  `rels`
+    * counts the relation positions in the TYPE (J3a): a shape with any is
+    * not encodable by `Encode.toArgonaut` and only the relation properties
+    * below generate one. */
+  final case class Shape(ty: String, decls: List[String], value: Gen[String], rels: Int = 0)
 
   private val counter = new java.util.concurrent.atomic.AtomicInteger(0)
   /** A name no other declaration in the process has used.  The counter, not
@@ -108,46 +118,125 @@ object TestSchema extends Properties("Ermine JSON Schema") {
 
   private def primFor(ty: String): Shape = prims.find(_.ty == ty).get
 
+  /** `n` distinct elements of `xs`, uniformly.  NOT `Gen.pick`: ScalaCheck
+    * 1.15.4's reservoir step computes `x & Long.MaxValue % count`, which
+    * parses as `x & (Long.MaxValue % count)`, so the replacement index is
+    * badly biased and the FIRST element is almost never kept -- found by
+    * (r-a)'s coverage check, which never met the pool's first column. */
+  def pickN[A](n: Int, xs: List[A]): Gen[List[A]] =
+    Gen.listOfN(xs.length, Gen.choose(0L, Long.MaxValue)).map(keys => xs.zip(keys).sortBy(_._2).take(n).map(_._1))
+
+  /** A relation column (J3a): the field's name and declared type, the header
+    * `PrimT` a table over it carries -- the document writer reads a column
+    * descriptor off that, through `Wire.columnType` -- and a generator of
+    * value source.  All ten column types, each plain and `Nullable`; as in
+    * `fieldPool`, a name fixes the type.  Negative numbers are written
+    * `(0s - 5s)`, the only spelling a constructor argument accepts. */
+  final case class Col(name: String, ty: String, prim: PrimT, value: Gen[String])
+
+  private def signed(n: Long, suffix: String): String =
+    if (n < 0) "(0" + suffix + " - " + (-n) + suffix + ")" else n.toString + suffix
+
+  private val hexGuid: Gen[String] =
+    Gen.listOfN(32, Gen.oneOf("0123456789abcdef".toList)).map { cs =>
+      val s = cs.mkString
+      s.substring(0, 8) + "-" + s.substring(8, 12) + "-" + s.substring(12, 16) + "-" +
+        s.substring(16, 20) + "-" + s.substring(20)
+    }
+
+  private val baseColumns: List[(String, PrimT, Gen[String])] = List(
+    ("Int",       PrimT.IntT(false),       Gen.choose(-100000L, 100000L).map(signed(_, ""))),
+    ("Long",      PrimT.LongT(false),      Gen.choose(-Long.MaxValue, Long.MaxValue).map(signed(_, "L"))),
+    ("Double",    PrimT.DoubleT(false),    Gen.choose(-100000000L, 100000000L).map(n =>
+                                             if (n < 0) "(0.0 - " + ((-n) / 100.0) + ")" else (n / 100.0).toString)),
+    ("Bool",      PrimT.BooleanT(false),   Gen.oneOf("True", "False")),
+    ("String",    PrimT.StringT(0, false), litString),
+    ("Short",     PrimT.ShortT(false),     Gen.choose(-32767L, 32767L).map(signed(_, "s"))),
+    ("Byte",      PrimT.ByteT(false),      Gen.choose(-127L, 127L).map(signed(_, "b"))),
+    ("Date",      PrimT.DateT(false),      for { y <- Gen.choose(1900, 2100); m <- Gen.choose(1, 12); d <- Gen.choose(1, 28) }
+                                           yield "(yyyymmdd " + y + " " + m + " " + d + ")"),
+    ("Timestamp", PrimT.TimestampT(false), Gen.choose(-2208988800000L, 4102444800000L)
+                                             .map(n => "(timestampFromLong " + signed(n, "L") + ")")),
+    ("GUID",      PrimT.UuidT(false),      hexGuid.map(g => "(stringGuid \"" + g + "\")")))
+
+  val columnPool: List[Col] = baseColumns.flatMap { case (t, p, v) =>
+    List(Col("sc" + t, t, p, v),
+         Col("scN" + t, "Nullable " + t, p.withNull,
+             Gen.frequency((1, Gen.const("(Null " + t + ")")), (3, v.map(x => "(Some " + x + ")")))))
+  }
+
+  /** One to six distinct columns, in sorted name order (the wire's). */
+  val columnsGen: Gen[List[Col]] =
+    Gen.choose(1, 6).flatMap(n => pickN(n, columnPool)).map(_.sortBy(_.name))
+
+  def recordGen(cols: List[Col]): Gen[String] =
+    Gen.sequence[List[String], String](cols.map(_.value))
+      .map(vs => cols.zip(vs).map { case (c, v) => c.name + " = " + v }.mkString("{ ", ", ", " }"))
+
+  def fieldDecls(cols: List[Col]): List[String] = cols.map(c => "field " + c.name + " : " + c.ty)
+  def rowType(cols: List[Col]): String = cols.map(_.name).mkString("[", ", ", "]")
+  /** The row itself, `(|a, b|)`: what `Inline` and `Deferred` take (`data
+    * Inline r = Inline [..r]`), so `Inline (|a, b|)` is `Inline` of `[a, b]`. */
+  def rowOf(cols: List[Col]): String = cols.map(_.name).mkString("(|", ", ", "|)")
+
   private def listOfGen(g: Gen[String]): Gen[String] =
     Gen.choose(0, 3).flatMap(n => Gen.listOfN(n, g)).map(_.mkString("[", ", ", "]"))
 
   /** `depth` bounds nesting; `underMaybe` keeps `Maybe (Maybe a)` out, which
-    * the mapping rejects on purpose (both layers encode to `null`). */
-  def shape(depth: Int, underMaybe: Boolean = false): Gen[Shape] = {
+    * the mapping rejects on purpose (both layers encode to `null`).  `rels`
+    * adds relations -- bare, `Inline` and `Deferred`, over random closed rows
+    * of the column pool -- as a fourth leaf, anywhere in the tree (J3a). */
+  def shape(depth: Int, underMaybe: Boolean = false, rels: Boolean = false): Gen[Shape] = {
     val leaves: List[Gen[Shape]] =
-      Gen.oneOf(prims) :: Gen.const(Shape("()", Nil, Gen.const("()"))) :: enumData :: Nil
+      Gen.oneOf(prims) :: Gen.const(Shape("()", Nil, Gen.const("()"))) :: enumData ::
+      (if (rels) List(relationShape) else Nil)
     if (depth <= 0) Gen.oneOf(leaves).flatMap(identity)
     else {
       val composites: List[Gen[Shape]] =
-        listShape(depth) :: tupleShape(depth) :: recordShape ::
-        positionalData(depth) :: recordStyleData(depth) :: parameterisedData(depth) :: recursiveData ::
-        (if (underMaybe) Nil else List(maybeShape(depth)))
+        listShape(depth, rels) :: tupleShape(depth, rels) :: recordShape ::
+        positionalData(depth, rels) :: recordStyleData(depth, rels) :: parameterisedData(depth, rels) :: recursiveData ::
+        (if (underMaybe) Nil else List(maybeShape(depth, rels)))
       Gen.oneOf(leaves ++ composites).flatMap(identity)
     }
   }
 
-  private def maybeShape(depth: Int): Gen[Shape] =
-    shape(depth - 1, underMaybe = true).map { a =>
+  private def maybeShape(depth: Int, rels: Boolean): Gen[Shape] =
+    shape(depth - 1, underMaybe = true, rels = rels).map { a =>
       Shape("(Maybe " + a.ty + ")", a.decls,
-            Gen.frequency((1, Gen.const("Nothing")), (3, a.value.map(v => "(Just " + v + ")"))))
+            Gen.frequency((1, Gen.const("Nothing")), (3, a.value.map(v => "(Just " + v + ")"))), a.rels)
     }
 
-  private def listShape(depth: Int): Gen[Shape] =
-    shape(depth - 1).map(a => Shape("(List " + a.ty + ")", a.decls, listOfGen(a.value)))
+  private def listShape(depth: Int, rels: Boolean): Gen[Shape] =
+    shape(depth - 1, rels = rels).map(a => Shape("(List " + a.ty + ")", a.decls, listOfGen(a.value), a.rels))
 
-  private def tupleShape(depth: Int): Gen[Shape] =
-    Gen.choose(2, 3).flatMap(n => Gen.listOfN(n, shape(depth - 1))).map { as =>
+  private def tupleShape(depth: Int, rels: Boolean): Gen[Shape] =
+    Gen.choose(2, 3).flatMap(n => Gen.listOfN(n, shape(depth - 1, rels = rels))).map { as =>
       Shape(as.map(_.ty).mkString("(", ", ", ")"), as.flatMap(_.decls),
-            Gen.sequence[List[String], String](as.map(_.value)).map(_.mkString("(", ", ", ")")))
+            Gen.sequence[List[String], String](as.map(_.value)).map(_.mkString("(", ", ", ")")),
+            as.map(_.rels).sum)
     }
 
   private def recordShape: Gen[Shape] =
-    Gen.choose(1, fieldPool.length).flatMap(n => Gen.pick(n, fieldPool)).map { chosen =>
+    Gen.choose(1, fieldPool.length).flatMap(n => pickN(n, fieldPool)).map { chosen =>
       val fs = chosen.toList.sortBy(_._1)
       Shape(fs.map(_._1).mkString("{", ", ", "}"),
             fs.map { case (n, t) => "field " + n + " : " + t },
             Gen.sequence[List[String], String](fs.map(f => primFor(f._2).value))
               .map(vs => fs.map(_._1).zip(vs).map(kv => kv._1 + " = " + kv._2).mkString("{ ", ", ", " }")))
+    }
+
+  /** A relation over random columns, bare or wrapped, holding one to three
+    * literal records: the J3a leaf. */
+  private def relationShape: Gen[Shape] =
+    for {
+      cols <- columnsGen
+      w    <- Gen.oneOf("Inline", "Deferred", "")
+    } yield {
+      def wrap(s: String) = if (w.isEmpty) s else "(" + w + " " + s + ")"
+      Shape(if (w.isEmpty) rowType(cols) else wrap(rowOf(cols)), fieldDecls(cols),
+            Gen.choose(1, 3).flatMap(k => Gen.listOfN(k, recordGen(cols)))
+              .map(rs => wrap("(mkRelation# (toList# " + rs.mkString("[", ", ", "]") + "))")),
+            1)
     }
 
   private def enumData: Gen[Shape] =
@@ -159,20 +248,23 @@ object TestSchema extends Properties("Ermine JSON Schema") {
       Shape(d, List("data " + d + " = " + cons.mkString(" | ")), Gen.oneOf(cons))
     }
 
-  private def positionalData(depth: Int): Gen[Shape] =
+  private def positionalData(depth: Int, rels: Boolean): Gen[Shape] =
     for {
       d     <- fresh("D")
       arity <- Gen.choose(1, 3)
-      ctors <- Gen.listOfN(arity, Gen.choose(0, 2).flatMap(k => Gen.listOfN(k, shape(depth - 1))))
-    } yield {
-      val named = ctors.zipWithIndex.map { case (fs, i) => (d + "c" + (i + 1), fs) }
-      val decl = "data " + d + " = " +
-        named.map { case (c, fs) => (c :: fs.map(_.ty)).mkString(" ") }.mkString(" | ")
-      Shape(d, decl :: named.flatMap(_._2.flatMap(_.decls)),
-            Gen.oneOf(named).flatMap { case (c, fs) =>
-              Gen.sequence[List[String], String](fs.map(_.value))
-                .map(vs => (c :: vs).mkString("(", " ", ")")) })
-    }
+      ctors <- Gen.listOfN(arity, Gen.choose(0, 2).flatMap(k => Gen.listOfN(k, shape(depth - 1, rels = rels))))
+    } yield positionalDecl(d, ctors)
+
+  private def positionalDecl(d: String, ctors: List[List[Shape]]): Shape = {
+    val named = ctors.zipWithIndex.map { case (fs, i) => (d + "c" + (i + 1), fs) }
+    val decl = "data " + d + " = " +
+      named.map { case (c, fs) => (c :: fs.map(_.ty)).mkString(" ") }.mkString(" | ")
+    Shape(d, decl :: named.flatMap(_._2.flatMap(_.decls)),
+          Gen.oneOf(named).flatMap { case (c, fs) =>
+            Gen.sequence[List[String], String](fs.map(_.value))
+              .map(vs => (c :: vs).mkString("(", " ", ")")) },
+          ctors.flatten.map(_.rels).sum)
+  }
 
   /** `data Rn = Rnc1 { rnc1f0 : t, ... } | Rnc2 { ... }` (Stage 1a, named
     * constructor fields): named properties in declaration order, a `tag`
@@ -180,37 +272,41 @@ object TestSchema extends Properties("Ermine JSON Schema") {
     * OPTIONAL key (Nothing -> absent).  Field names are unique per
     * constructor so no two selectors collide.  Values are built
     * POSITIONALLY: record construction syntax is not part of Stage 1. */
-  private def recordStyleData(depth: Int): Gen[Shape] =
+  private def recordStyleData(depth: Int, rels: Boolean): Gen[Shape] =
     for {
       d     <- fresh("R")
       arity <- Gen.choose(1, 3)
-      ctors <- Gen.listOfN(arity, Gen.choose(1, 3).flatMap(k => Gen.listOfN(k, shape(depth - 1))))
-    } yield {
-      val named = ctors.zipWithIndex.map { case (fs, i) =>
-        (d + "c" + (i + 1), fs.zipWithIndex.map { case (f, j) => (d.toLowerCase + "c" + (i + 1) + "f" + j, f) })
-      }
-      val decl = "data " + d + " = " + named.map { case (c, fs) =>
-        c + " { " + fs.map { case (n, f) => n + " : " + f.ty }.mkString(", ") + " }"
-      }.mkString(" | ")
-      Shape(d, decl :: named.flatMap(_._2.flatMap(_._2.decls)),
-            Gen.oneOf(named).flatMap { case (c, fs) =>
-              Gen.sequence[List[String], String](fs.map(_._2.value))
-                .map(vs => (c :: vs).mkString("(", " ", ")")) })
+      ctors <- Gen.listOfN(arity, Gen.choose(1, 3).flatMap(k => Gen.listOfN(k, shape(depth - 1, rels = rels))))
+    } yield recordStyleDecl(d, ctors)
+
+  private def recordStyleDecl(d: String, ctors: List[List[Shape]]): Shape = {
+    val named = ctors.zipWithIndex.map { case (fs, i) =>
+      (d + "c" + (i + 1), fs.zipWithIndex.map { case (f, j) => (d.toLowerCase + "c" + (i + 1) + "f" + j, f) })
     }
+    val decl = "data " + d + " = " + named.map { case (c, fs) =>
+      c + " { " + fs.map { case (n, f) => n + " : " + f.ty }.mkString(", ") + " }"
+    }.mkString(" | ")
+    Shape(d, decl :: named.flatMap(_._2.flatMap(_._2.decls)),
+          Gen.oneOf(named).flatMap { case (c, fs) =>
+            Gen.sequence[List[String], String](fs.map(_._2.value))
+              .map(vs => (c :: vs).mkString("(", " ", ")")) },
+          ctors.flatten.map(_.rels).sum)
+  }
 
   /** `data Dn a = Dna a | Dnb a a`, exported at an instantiation: the
     * exporter substitutes the argument into the constructor field types, so
     * a type PARAMETER is never the "polymorphic" error. */
-  private def parameterisedData(depth: Int): Gen[Shape] =
+  private def parameterisedData(depth: Int, rels: Boolean): Gen[Shape] =
     for {
       d <- fresh("P")
-      a <- shape(depth - 1)
+      a <- shape(depth - 1, rels = rels)
     } yield {
       val decl = "data " + d + " a = " + d + "a a | " + d + "b a a"
       Shape("(" + d + " " + a.ty + ")", decl :: a.decls,
             Gen.oneOf(
               a.value.map(v => "(" + d + "a " + v + ")"),
-              Gen.zip(a.value, a.value).map(p => "(" + d + "b " + p._1 + " " + p._2 + ")")).flatMap(identity))
+              Gen.zip(a.value, a.value).map(p => "(" + d + "b " + p._1 + " " + p._2 + ")")).flatMap(identity),
+            a.rels)
     }
 
   /** `data Tn = Tna Int | Tnb Tn Tn ...` with a random branching arity: the
@@ -364,17 +460,29 @@ object TestSchema extends Properties("Ermine JSON Schema") {
   // ---------------------------------------------------------------------
   // (c) determinism
 
-  property("(c) exporting twice is byte-identical") = forAllNoShrink(shape(3)) { (sh: Shape) =>
-    val decls = sh.decls.distinct.mkString("\n")
-    val a = schemaAfter(decls, sh.ty)
-    val b = schemaAfter(decls, sh.ty)
-    (a, b) match {
-      case (Right(x), Right(y)) =>
-        (Schema.text(x) == Schema.text(y)) :| ("not identical for " + sh.ty)
-      case (Left(x), Left(y)) => (x == y) :| "errors differ"
-      case _                  => falsified :| ("one export refused for " + sh.ty)
+  /** (c), extended by J3a: the shapes now include relations (bare, `Inline`,
+    * `Deferred`) anywhere in the tree, and the second export sees the
+    * declarations in REVERSE order in a session that loaded another module
+    * and exported another type first -- so neither declaration order nor
+    * load order may reach the text. */
+  property("(c) exporting twice is byte-identical across declaration and load order") =
+    forAllNoShrink(shape(3, rels = true)) { (sh: Shape) =>
+      val decls = sh.decls.distinct
+      val a = schemaAfter(decls.mkString("\n"), sh.ty, relImps)
+      val b = session { implicit env =>
+        ermineFixture.loadModules(List("Relation.Sort"))
+        Schema.exportType(NewPipeline.replType("<gate>", "SortOrder", Map("Builtin" -> all, "Relation.Sort" -> all)),
+                          "Relation.Sort")
+        loadStatements(decls.reverse.mkString("\n"), relImps)
+        Schema.exportType(NewPipeline.replType("<gate>", sh.ty, relImps), "Test")
+      }
+      (a, b) match {
+        case (Right(x), Right(y)) =>
+          (Schema.text(x) == Schema.text(y)) :| ("not identical for " + sh.ty)
+        case (Left(x), Left(y)) => (x == y) :| "errors differ"
+        case _                  => falsified :| ("one export refused for " + sh.ty + ": " + a + " / " + b)
+      }
     }
-  }
 
   property("(c2) $defs order and property order do not follow declaration order") =
     sessionProof { implicit s =>
@@ -438,9 +546,9 @@ object TestSchema extends Properties("Ermine JSON Schema") {
   // ---------------------------------------------------------------------
   // (e) zod
 
-  property("(e) Zod.render succeeds and names every $defs entry") =
-    forAllNoShrink(shape(3)) { (sh: Shape) =>
-      schemaAfter(sh.decls.distinct.mkString("\n"), sh.ty) match {
+  property("(e) Zod.render succeeds and names every $defs entry (relations included)") =
+    forAllNoShrink(shape(3, rels = true)) { (sh: Shape) =>
+      schemaAfter(sh.decls.distinct.mkString("\n"), sh.ty, relImps) match {
         case Left(e) => falsified :| ("export refused " + sh.ty + ": " + e.report)
         case Right(schema) => Zod.render(schema) match {
           case Left(e) => falsified :| ("zod refused " + sh.ty + ": " + e + "\n" + Schema.compact(schema))
@@ -482,6 +590,521 @@ object TestSchema extends Properties("Ermine JSON Schema") {
     }
 
   // ---------------------------------------------------------------------
+  // J3a: relations -- the delivery union, the wrappers, the generic arm
+  //
+  // The wire objects (tracker/JSON-STAGE3-PLAN.md, keys from `Wire`) are
+  // built HERE, by hand, the way the document writer builds them: columns
+  // from the header `PrimT`s through `Wire.columnType`, cells by `Encode` on
+  // evaluated Ermine values.  The schema side is `Schema.export` and nothing
+  // else, so an agreement is between two independent spellings of the plan.
+
+  def columnsDoc(cols: List[Col]): Json =
+    Json.array(cols.map(c => Json.obj(
+      Wire.Name     -> Json.jString(c.name),
+      Wire.Type     -> Json.jString(Wire.columnType(c.prim)),
+      Wire.Nullable -> Json.jBool(c.prim.nullable))): _*)
+
+  def inlineDoc(cols: List[Col], rows: List[Json]): Json =
+    Json.obj(Wire.Kind     -> Json.jString(Wire.Inline),
+             Wire.Columns  -> columnsDoc(cols),
+             Wire.Rows     -> Json.array(rows: _*),
+             Wire.RowCount -> Json.jNumber(rows.length))
+
+  def deferredDoc(cols: List[Col], token: String, expires: String): Json =
+    Json.obj(Wire.Kind    -> Json.jString(Wire.Deferred),
+             Wire.Columns -> columnsDoc(cols),
+             Wire.Token   -> Json.jString(token),
+             Wire.Expires -> Json.jString(expires))
+
+  /** 128 to 256 random bits, base64url without padding: the plan's token. */
+  val tokenGen: Gen[String] =
+    Gen.choose(16, 32).flatMap(n => Gen.listOfN(n, Gen.choose(-128, 127))).map { bs =>
+      java.util.Base64.getUrlEncoder.withoutPadding.encodeToString(bs.map(_.toByte).toArray)
+    }
+
+  /** One relation instance: columns, record literals (none a fifth of the
+    * time), a token and an expiry instant. */
+  final case class RelCase(cols: List[Col], records: List[String], token: String, expiresMillis: Long)
+
+  val relCase: Gen[RelCase] =
+    for {
+      cols <- columnsGen
+      k    <- Gen.frequency((1, Gen.const(0)), (4, Gen.choose(1, 4)))
+      recs <- Gen.listOfN(k, recordGen(cols))
+      tok  <- tokenGen
+      ms   <- Gen.choose(0L, 4102444800000L)
+    } yield RelCase(cols, recs, tok, ms)
+
+  /** The case as module source: its fields, the records as `gv`, the expiry
+    * as the Timestamp `gx`. */
+  def relDecls(c: RelCase): List[String] =
+    fieldDecls(c.cols) ++ List(
+      "gv : List " + c.cols.map(_.name).mkString("{", ", ", "}"),
+      "gv = " + c.records.mkString("[", ", ", "]"),
+      "gx : Timestamp",
+      "gx = timestampFromLong " + c.expiresMillis + "L")
+
+  def encodeIn(expr: String)(implicit env: SessionEnv): Json =
+    Encode.toArgonaut(Session.eval(expr, relImps)._2).fold(e => sys.error(e.report), identity)
+
+  def exportIn(ty: String)(implicit env: SessionEnv): Json =
+    Schema.exportType(NewPipeline.replType("<gate>", ty, relImps), "Test")
+      .fold(e => sys.error("export refused " + ty + ": " + e.report), identity)
+
+  /** The rows of a loaded case: each record of `gv` encoded by `Encode`,
+    * its values read in column order. */
+  def rowsIn(c: RelCase)(implicit env: SessionEnv): List[Json] =
+    encodeIn("gv").array.get.map { o =>
+      Json.array(c.cols.map(col => o.field(col.name).getOrElse(sys.error("no " + col.name + " in " + o.nospaces))): _*)
+    }
+
+  /** The case's inline and deferred documents; `expires` is `Encode`'s
+    * spelling of `gx`. */
+  def relDocs(c: RelCase)(implicit env: SessionEnv): (Json, Json) =
+    (inlineDoc(c.cols, rowsIn(c)), deferredDoc(c.cols, c.token, encodeIn("gx").string.get))
+
+  // -- zod samples for the node runtime check ----------------------------
+
+  /** `ERMINE_ZOD_SAMPLES=<dir>` makes the relation properties write, per
+    * sampled case, the zod of the schema and the documents with the verdict
+    * the Scala validator gave (`<name>.zod.ts`, `<name>.docs.json`), for a
+    * node script to replay against the compiled zod. */
+  private val zodSamples: Option[java.io.File] =
+    Option(System.getenv("ERMINE_ZOD_SAMPLES")).filter(_.nonEmpty).map(new java.io.File(_))
+
+  private def writeText(f: java.io.File, s: String): Unit = {
+    val w = new java.io.PrintWriter(f, "UTF-8")
+    try w.write(s) finally w.close()
+  }
+
+  def dumpZod(name: String, schema: Json, docs: List[(String, Json, Boolean)]): Unit =
+    zodSamples foreach { dir =>
+      dir.mkdirs()
+      Zod.render(schema) foreach { src => writeText(new java.io.File(dir, name + ".zod.ts"), src) }
+      writeText(new java.io.File(dir, name + ".docs.json"),
+        Json.array(docs.map { case (why, d, ok) =>
+          Json.obj("why" -> Json.jString(why), "accept" -> Json.jBool(ok), "doc" -> d) }: _*).nospacesWithOrder)
+    }
+
+  // -- (r-a) the arms ------------------------------------------------------
+
+  property("(r-a) an inline / deferred document validates against [..r] and its own wrapper, not the other (150 cases)") = {
+    val cases = samples(relCase, 150, 20260916L)
+    val kinds = scala.collection.mutable.Set[String]()
+    var rows = 0; var nulls = 0; var empty = 0
+    val bad = cases.zipWithIndex.flatMap { case (c, idx) =>
+      try session { implicit env =>
+        loadStatements(relDecls(c).mkString("\n"), relImps)
+        val rt = rowType(c.cols)
+        val (both, inl, dfr) = (exportIn(rt), exportIn("Inline " + rowOf(c.cols)), exportIn("Deferred " + rowOf(c.cols)))
+        val (i, d) = relDocs(c)
+        val rs = i.field(Wire.Rows).get.array.get
+        rows += rs.length
+        nulls += rs.map(_.array.get.count(_.isNull)).sum
+        if (rs.isEmpty) empty += 1
+        else c.cols.foreach(col => kinds += Wire.columnType(col.prim) + (if (col.prim.nullable) "?" else ""))
+        val verdicts = List(
+          ("inline vs " + rt,               i, both, true),
+          ("inline vs Inline " + rowOf(c.cols),     i, inl,  true),
+          ("inline vs Deferred " + rowOf(c.cols),   i, dfr,  false),
+          ("deferred vs " + rt,                     d, both, true),
+          ("deferred vs Deferred " + rowOf(c.cols), d, dfr,  true),
+          ("deferred vs Inline " + rowOf(c.cols),   d, inl,  false))
+        if (idx < 20) {
+          dumpZod("ra" + idx + "_rel", both, verdicts.filter(_._3 eq both).map(v => (v._1, v._2, v._4)))
+          dumpZod("ra" + idx + "_inline", inl, verdicts.filter(_._3 eq inl).map(v => (v._1, v._2, v._4)))
+          dumpZod("ra" + idx + "_deferred", dfr, verdicts.filter(_._3 eq dfr).map(v => (v._1, v._2, v._4)))
+        }
+        verdicts.flatMap { case (what, doc, schema, want) =>
+          val errs = Validate.check(schema, doc)
+          if (errs.isEmpty == want) Nil
+          else List(what + (if (want) " rejected: " + errs.mkString("; ") else " accepted") +
+                    "\n  doc " + doc.nospacesWithOrder + "\n  schema " + Schema.compact(schema))
+        }
+      } catch { case e: Throwable => List("threw " + e + "\n" + relDecls(c).mkString("\n")) }
+    }
+    println("  (r-a) " + cases.length + " cases, " + rows + " rows, " + nulls + " null cells, " +
+            empty + " empty relations, column kinds with rows: " + kinds.size + "/20")
+    (bad.isEmpty :| bad.take(3).mkString("\n---\n")) &&
+      ((kinds.size == 20) :| ("column kinds never met with a row: " +
+        columnPool.map(c => Wire.columnType(c.prim) + (if (c.prim.nullable) "?" else "")).filterNot(kinds).mkString(", "))) &&
+      ((nulls > 0 && empty > 0 && rows > cases.length) :| "the sample has no nulls, no empty relation or few rows")
+  }
+
+  // -- (r-b) one mutation is always rejected --------------------------------
+
+  private def setKey(o: Json, k: String, v: Json): Json = {
+    val fs = o.obj.get.toList
+    if (fs.exists(_._1 == k)) Json.obj(fs.map(kv => if (kv._1 == k) (k, v) else kv): _*)
+    else Json.obj((fs :+ ((k, v))): _*)
+  }
+  private def dropKey(o: Json, k: String): Json = Json.obj(o.obj.get.toList.filterNot(_._1 == k): _*)
+  private def mapAt(a: Json, i: Int)(f: Json => Json): Json =
+    Json.array(a.array.get.zipWithIndex.map { case (x, j) => if (j == i) f(x) else x }: _*)
+
+  /** A cell no column of `c`'s type admits. */
+  private def wrongCell(c: Col, rnd: scala.util.Random): Json = rnd.nextInt(3) match {
+    case 0 => Json.jEmptyObject
+    case 1 => Json.array(Json.jNumber(1))
+    case _ => Wire.columnType(c.prim) match {
+      case "Int" | "Short" | "Byte" | "Double" => Json.jString("1")
+      case "Bool"                              => Json.jString("true")
+      case _                                   => Json.jNumber(1) // Long, String, dates, GUID: string cells
+    }
+  }
+
+  /** One random mutation of a valid relation document over the PINNED arm:
+    * its name and the mutated document.  Every one of them breaks the
+    * contract; which are available depends on the arm and on whether there
+    * are rows to break. */
+  def mutatePinned(doc: Json, cols: List[Col], rnd: scala.util.Random): (String, Json) = {
+    val inline = doc.field(Wire.Kind).flatMap(_.string).contains(Wire.Inline)
+    val rows = doc.field(Wire.Rows).flatMap(_.array).getOrElse(Nil)
+    val n = cols.length
+    val colsJ = doc.field(Wire.Columns).get
+    val options =
+      List("wrong kind", "dropped key", "extra key", "wrong nullable", "wrong column type") ++
+      (if (!inline) List("empty token", "bad expires")
+       else List("row length", "bad rowCount") ++ (if (rows.nonEmpty) List("cell type") else Nil))
+    val m = options(rnd.nextInt(options.length))
+    val i = rnd.nextInt(n)
+    val out = m match {
+      case "wrong kind" =>
+        setKey(doc, Wire.Kind, Json.jString(List(if (inline) Wire.Deferred else Wire.Inline, "streamed", "Inline")(rnd.nextInt(3))))
+      case "dropped key" =>
+        val ks = doc.objectFieldsOrEmpty
+        dropKey(doc, ks(rnd.nextInt(ks.length)))
+      case "extra key" =>
+        if (rnd.nextBoolean) setKey(doc, "extra", Json.jBool(true))
+        else setKey(doc, Wire.Columns, mapAt(colsJ, i)(c => setKey(c, "extra", Json.jNumber(1))))
+      case "wrong nullable" =>
+        setKey(doc, Wire.Columns, mapAt(colsJ, i)(c => setKey(c, Wire.Nullable, Json.jBool(!cols(i).prim.nullable))))
+      case "wrong column type" =>
+        val others = Wire.columnTypes.filterNot(_ == Wire.columnType(cols(i).prim))
+        setKey(doc, Wire.Columns, mapAt(colsJ, i)(c => setKey(c, Wire.Type, Json.jString(others(rnd.nextInt(others.length))))))
+      case "empty token" => setKey(doc, Wire.Token, Json.jString(""))
+      case "bad expires" =>
+        setKey(doc, Wire.Expires, Json.jString(List("2026-09-16", "tomorrow", "2026-09-16T12:00:00", "2026-09-16 12:00:00.000Z")(rnd.nextInt(4))))
+      case "row length" =>
+        if (rows.isEmpty) setKey(doc, Wire.Rows, Json.array(Json.array(List.fill(n + 1)(Json.jNull): _*)))
+        else setKey(doc, Wire.Rows, mapAt(doc.field(Wire.Rows).get, rnd.nextInt(rows.length)) { r =>
+          val cells = r.array.get
+          Json.array((if (rnd.nextBoolean) cells :+ Json.jNull else cells.init): _*)
+        })
+      case "bad rowCount" =>
+        setKey(doc, Wire.RowCount, if (rnd.nextBoolean) Json.jNumber(-1) else Json.jString(rows.length.toString))
+      case "cell type" =>
+        setKey(doc, Wire.Rows, mapAt(doc.field(Wire.Rows).get, rnd.nextInt(rows.length))(r => mapAt(r, i)(_ => wrongCell(cols(i), rnd))))
+    }
+    (m, out)
+  }
+
+  property("(r-b) a single random mutation of a valid relation document is rejected (150 cases, 300 mutants)") = {
+    val cases = samples(relCase, 150, 20260917L)
+    val mix = scala.collection.mutable.Map[String, Int]().withDefaultValue(0)
+    val bad = cases.zipWithIndex.flatMap { case (c, idx) =>
+      val rnd = new scala.util.Random(7919L * idx)
+      try session { implicit env =>
+        loadStatements(relDecls(c).mkString("\n"), relImps)
+        val rt = rowType(c.cols)
+        val (both, inl, dfr) = (exportIn(rt), exportIn("Inline " + rowOf(c.cols)), exportIn("Deferred " + rowOf(c.cols)))
+        val (i, d) = relDocs(c)
+        val (mi, iMut) = mutatePinned(i, c.cols, rnd)
+        val (md, dMut) = mutatePinned(d, c.cols, rnd)
+        mix(mi) += 1; mix(md) += 1
+        if (idx < 20) {
+          dumpZod("rb" + idx + "_rel", both, List(("valid inline", i, true), ("valid deferred", d, true),
+                                                   ("inline: " + mi, iMut, false), ("deferred: " + md, dMut, false)))
+          dumpZod("rb" + idx + "_inline", inl, List(("valid inline", i, true), ("inline: " + mi, iMut, false)))
+          dumpZod("rb" + idx + "_deferred", dfr, List(("valid deferred", d, true), ("deferred: " + md, dMut, false)))
+        }
+        List((i, iMut, mi, inl), (d, dMut, md, dfr)).flatMap { case (orig, mut, m, arm) =>
+          val sane = Validate.check(arm, orig).isEmpty && Validate.check(both, orig).isEmpty
+          val armErrs = Validate.check(arm, mut)
+          val bothErrs = Validate.check(both, mut)
+          if (!sane) List("the unmutated document is rejected: " + orig.nospacesWithOrder)
+          else if (armErrs.isEmpty || bothErrs.isEmpty)
+            List("mutation '" + m + "' accepted by " + (if (armErrs.isEmpty) "the arm" else "the union") +
+                 "\n  " + mut.nospacesWithOrder + "\n  from " + orig.nospacesWithOrder)
+          else Nil
+        }
+      } catch { case e: Throwable => List("threw " + e + "\n" + relDecls(c).mkString("\n")) }
+    }
+    val mixText = mix.toList.sortBy(_._1).map { case (k, v) => k + " " + v }.mkString(", ")
+    println("  (r-b) mutation mix over " + mix.values.sum + " mutants: " + mixText)
+    (bad.isEmpty :| bad.take(3).mkString("\n---\n")) &&
+      ((mix.size == 10) :| ("some mutation never drawn: " + mixText))
+  }
+
+  // -- the document writer, played by the test --------------------------------
+
+  /** `ArgonautJson` everywhere but a relation, where it plays the document
+    * writer over a LITERAL relation: the object for the delivery the walker
+    * passed (`ByRequest` alternates inline and deferred), column descriptors
+    * from the column pool by name (from `emptyCols` when there are no rows)
+    * and each cell the `Encode`d `PrimExpr` of the relation's record.  So a
+    * document it writes agrees with a schema only if the walker's delivery
+    * (Json.Inline / Json.Deferred recognition) agrees with the exporter's. */
+  final class DocBuilder(emptyCols: List[Col], token: String, expires: String) extends JsonBuilder[Json] {
+    val seen = new scala.collection.mutable.ListBuffer[(String, Delivery, Int)]
+    private var inlineNext = true
+    def nul                = ArgonautJson.nul
+    def bool(b: Boolean)   = ArgonautJson.bool(b)
+    def int(i: Int)        = ArgonautJson.int(i)
+    def long(l: Long)      = ArgonautJson.long(l)
+    def num(d: Double)     = ArgonautJson.num(d)
+    def str(s: String)     = ArgonautJson.str(s)
+    def arr(xs: List[Json]) = ArgonautJson.arr(xs)
+    def obj(fields: List[(String, Json)]) = ArgonautJson.obj(fields)
+    def rel(path: String, r: Runtime, delivery: Delivery): Either[Encode.Error, Json] = {
+      val records: List[Record] = Runtime.swhnf(r) match {
+        case EmptyRel => Nil
+        case rl: Rel => rl.extract[relational.Ext[Nothing, Nothing]] match {
+          case ExtRel(SmallLit(tups), _) => tups.head :: tups.tail.toList
+          case other => return Left(Encode.Error(path, "not a literal relation: " + other))
+        }
+        case other => return Left(Encode.Error(path, "not a relation: " + other))
+      }
+      val cols =
+        if (records.isEmpty) emptyCols
+        else records.head.keys.toList.sorted.map(n => columnPool.find(_.name == n).getOrElse(sys.error("no pool column " + n)))
+      val rows = records.map(rec => Json.array(cols.map(c =>
+        Encode.toArgonaut(Prim(rec(c.name))).fold(e => sys.error(e.report), identity)): _*))
+      val asInline = delivery match {
+        case Delivery.Inline    => true
+        case Delivery.Deferred  => false
+        case Delivery.ByRequest => inlineNext = !inlineNext; !inlineNext
+      }
+      seen += ((path, delivery, rows.length))
+      Right(if (asInline) inlineDoc(cols, rows) else deferredDoc(cols, token, expires))
+    }
+  }
+
+  def encodeWith(expr: String, b: DocBuilder)(implicit env: SessionEnv): Json =
+    Encode.encode(Session.eval(expr, relImps)._2, b).fold(e => sys.error(e.report), identity)
+
+  // -- (r-c) one schema for every row ----------------------------------------
+
+  /** A random props type with ONE row parameter: 1-3 relation fields over
+    * `r` (bare, Inline, Deferred), 0-2 other fields, in random order, and
+    * three random instantiations of `r`. */
+  final case class PropsCase(d: String, fields: List[(String, Either[(Shape, String), String])],
+                             insts: List[RelCase])
+
+  val propsCase: Gen[PropsCase] =
+    for {
+      d      <- fresh("W")
+      k      <- Gen.choose(0, 2)
+      plain  <- Gen.listOfN(k, shape(1))
+      nrel   <- Gen.choose(1, 3)
+      wraps  <- Gen.listOfN(nrel, Gen.oneOf("Inline", "Deferred", ""))
+      keys   <- Gen.listOfN(k + nrel, Gen.choose(0, 1000000))
+      pvs    <- Gen.sequence[List[String], String](plain.map(_.value))
+      insts  <- Gen.listOfN(3, relCase)
+    } yield {
+      val tagged: List[Either[(Shape, String), String]] = plain.zip(pvs).map(Left(_)) ++ wraps.map(Right(_))
+      val ordered = tagged.zip(keys).sortBy(_._2).map(_._1)
+      PropsCase(d, ordered.zipWithIndex.map { case (f, i) => (d.toLowerCase + "f" + i, f) }, insts)
+    }
+
+  def propsDecls(p: PropsCase): List[String] = {
+    val decl = "data " + p.d + " r = " + p.d + " { " + p.fields.map {
+      case (n, Left((sh, _))) => n + " : " + sh.ty
+      case (n, Right(w))      => n + " : " + (if (w.isEmpty) "[..r]" else w + " r")
+    }.mkString(", ") + " }"
+    decl :: p.fields.flatMap(_._2.left.toOption.toList.flatMap(_._1.decls))
+  }
+
+  def propsValue(p: PropsCase): String =
+    (p.d :: p.fields.map {
+      case (_, Left((_, v))) => v
+      case (_, Right(w))     => if (w.isEmpty) "(mkRelation# (toList# gv))" else "(" + w + " (mkRelation# (toList# gv)))"
+    }).mkString("(", " ", ")")
+
+  /** A generic-arm mutation: the ones the generic arm can see (it pins no
+    * column, so a wrong `nullable` or row length is not one). */
+  def mutateGeneric(doc: Json, rnd: scala.util.Random): (String, Json) = {
+    val inline = doc.field(Wire.Kind).flatMap(_.string).contains(Wire.Inline)
+    val colsJ = doc.field(Wire.Columns).get
+    val n = colsJ.array.get.length
+    val rows = doc.field(Wire.Rows).flatMap(_.array).getOrElse(Nil)
+    val options = List("wrong kind", "dropped key", "extra key", "type outside the vocabulary", "nullable not a boolean") ++
+      (if (inline) List("bad rowCount") ++ (if (rows.nonEmpty) List("cell not a scalar") else Nil) else List("empty token"))
+    val m = options(rnd.nextInt(options.length))
+    val i = rnd.nextInt(n)
+    val out = m match {
+      case "wrong kind"  => setKey(doc, Wire.Kind, Json.jString(if (inline) Wire.Deferred else Wire.Inline))
+      case "dropped key" => val ks = doc.objectFieldsOrEmpty; dropKey(doc, ks(rnd.nextInt(ks.length)))
+      case "extra key"   =>
+        if (rnd.nextBoolean) setKey(doc, "extra", Json.jBool(true))
+        else setKey(doc, Wire.Columns, mapAt(colsJ, i)(c => setKey(c, "extra", Json.jNumber(1))))
+      case "type outside the vocabulary" =>
+        setKey(doc, Wire.Columns, mapAt(colsJ, i)(c => setKey(c, Wire.Type, Json.jString(List("Char", "UUID", "int")(rnd.nextInt(3))))))
+      case "nullable not a boolean" =>
+        setKey(doc, Wire.Columns, mapAt(colsJ, i)(c => setKey(c, Wire.Nullable, Json.jString("true"))))
+      case "bad rowCount" => setKey(doc, Wire.RowCount, Json.jNumber(-1))
+      case "empty token"  => setKey(doc, Wire.Token, Json.jString(""))
+      case "cell not a scalar" =>
+        setKey(doc, Wire.Rows, mapAt(doc.field(Wire.Rows).get, rnd.nextInt(rows.length))(r =>
+          mapAt(r, rnd.nextInt(n))(_ => if (rnd.nextBoolean) Json.jEmptyObject else Json.array())))
+    }
+    (m, out)
+  }
+
+  property("(r-c) a props type with a row parameter: one schema, valid for every instantiation (40 types x 3 rows)") = {
+    val cases = samples(propsCase, 40, 20260918L)
+    val mix = scala.collection.mutable.Map[String, Int]().withDefaultValue(0)
+    var docs = 0; var rels = 0; var withRows = 0
+    val bad = cases.zipWithIndex.flatMap { case (p, idx) =>
+      val rnd = new scala.util.Random(104729L * idx)
+      try {
+        val perInst = p.insts.zipWithIndex.map { case (inst, j) =>
+          session { implicit env =>
+            val decls = (propsDecls(p) ++ relDecls(inst) ++ List("gp = " + propsValue(p))).distinct.mkString("\n")
+            loadStatements(decls, relImps)
+            val schema = Schema.exportNamed("Test", p.d).fold(e => sys.error("exportNamed refused " + p.d + ": " + e.report), identity)
+            val b = new DocBuilder(inst.cols, inst.token, encodeIn("gx").string.get)
+            val doc = encodeWith("gp", b)
+            docs += 1; rels += b.seen.length; withRows += b.seen.count(_._3 > 0)
+            // the literal relation's PrimExpr cells are the Ermine values' cells
+            val direct = rowsIn(inst)
+            val viaRel = doc.field(p.fields.find(_._2.isRight).get._1).get
+            val relRows = viaRel.field(Wire.Rows).flatMap(_.array)
+            val errs = Validate.check(schema, doc)
+            // a generic mutation of one relation field
+            val (rf, _) = p.fields.filter(_._2.isRight)(rnd.nextInt(p.fields.count(_._2.isRight)))
+            val (m, mutRel) = mutateGeneric(doc.field(rf).get, rnd)
+            mix(m) += 1
+            val mutDoc = setKey(doc, rf, mutRel)
+            val mutErrs = Validate.check(schema, mutDoc)
+            if (idx < 10) dumpZod("rc" + idx + "_" + j, schema, List(("valid", doc, true), (rf + ": " + m, mutDoc, false)))
+            val problems =
+              (if (errs.nonEmpty) List("rejected: " + errs.mkString("; ") + "\n  doc " + doc.nospacesWithOrder) else Nil) ++
+              (if (mutErrs.isEmpty) List("mutation '" + m + "' of " + rf + " accepted: " + mutDoc.nospacesWithOrder) else Nil) ++
+              (if (b.seen.length != p.fields.count(_._2.isRight)) List("the writer met " + b.seen.length + " relations") else Nil) ++
+              (if (relRows.exists(_ != direct)) List("PrimExpr cells differ from the Ermine values' cells:\n  " +
+                                                     relRows.get.map(_.nospaces) + "\n  " + direct.map(_.nospaces)) else Nil)
+            (Schema.text(schema), problems.map(_ + "\n" + decls))
+          }
+        }
+        val texts = perInst.map(_._1).distinct
+        (if (texts.length == 1) Nil else List("the schema of " + p.d + " depends on the row:\n" + texts.mkString("\n---\n"))) ++
+          perInst.flatMap(_._2)
+      } catch { case e: Throwable => List("threw " + e + "\n" + propsDecls(p).mkString("\n")) }
+    }
+    println("  (r-c) " + cases.length + " props types, " + docs + " documents, " + rels + " relations (" +
+            withRows + " with rows); generic mutation mix: " +
+            mix.toList.sortBy(_._1).map { case (k, v) => k + " " + v }.mkString(", "))
+    (bad.isEmpty :| bad.take(3).mkString("\n---\n")) && ((withRows > 0) :| "no relation with rows")
+  }
+
+  // -- (r-d) relations at concrete rows inside random data -------------------
+
+  /** A random `data` (record-style or positional, one or two constructors)
+    * whose first constructor has a relation field -- bare or wrapped, at a
+    * concrete row -- among fields that may hold more relations anywhere in
+    * their own trees. */
+  val relData: Gen[Shape] =
+    for {
+      d     <- fresh("Q")
+      named <- Gen.oneOf(true, false)
+      k     <- Gen.choose(0, 2)
+      first <- Gen.listOfN(k, shape(2, rels = true))
+      rel   <- relationShape
+      pos   <- Gen.choose(0, k)
+      more  <- Gen.choose(0, 1)
+      rest  <- Gen.listOfN(more, Gen.choose(1, 2).flatMap(j => Gen.listOfN(j, shape(2, rels = true))))
+    } yield {
+      val ctors = (first.take(pos) ++ (rel :: first.drop(pos))) :: rest
+      if (named) recordStyleDecl(d, ctors) else positionalDecl(d, ctors)
+    }
+
+  property("(r-d) data with relations inside: exports, its zod renders, the written document validates (100 cases)") = {
+    val cases = samples(relData.flatMap(sh => sh.value.map(v => (sh, v))), 100, 20260919L)
+    val met = scala.collection.mutable.Map[String, Int]().withDefaultValue(0)
+    val bad = cases.zipWithIndex.flatMap { case ((sh, v), idx) =>
+      val decls = (sh.decls.distinct ++ List("gv : " + sh.ty, "gv = " + v, "gx : Timestamp",
+                                             "gx = timestampFromLong " + (1700000000000L + idx) + "L")).mkString("\n")
+      try session { implicit env =>
+        loadStatements(decls, relImps)
+        val schema = exportIn(sh.ty)
+        val b = new DocBuilder(Nil, "tok" + idx + "AAAAAAAAAAAAAAAAAA", encodeIn("gx").string.get)
+        val doc = encodeWith("gv", b)
+        b.seen.foreach(s => met(s._2.name) += 1)
+        val errs = Validate.check(schema, doc)
+        val zod = Zod.render(schema)
+        if (idx < 30) dumpZod("rd" + idx, schema, List(("written", doc, true)))
+        (if (errs.isEmpty) Nil else List("rejected: " + errs.mkString("; ") + "\n  doc " + doc.nospacesWithOrder +
+                                         "\n  schema " + Schema.compact(schema) + "\n" + decls)) ++
+          zod.left.toOption.toList.map(e => "zod refused: " + e + "\n" + decls)
+      } catch { case e: Throwable => List("threw " + e + "\n" + decls) }
+    }
+    println("  (r-d) " + cases.length + " data types; relations written by delivery: " +
+            met.toList.sortBy(_._1).map { case (k, n) => k + " " + n }.mkString(", "))
+    (bad.isEmpty :| bad.take(3).mkString("\n---\n")) &&
+      ((List("inline", "deferred", "request").forall(met(_) > 0)) :| ("a delivery was never written: " + met))
+  }
+
+  // -- pins beside the properties ---------------------------------------------
+
+  property("(r-pins) the wrapper shapes, the generic key, the refusals") = sessionProof { implicit s =>
+    val decls = List(
+      "field sfInt : Int", "field sfNote : Nullable String",
+      "data TableProps r = TableProps { title : String, rows : Inline r }",
+      "data Page r = Page { body : TableProps r, more : Deferred r, plain : [..r] }",
+      "data Mixed a r = Mixed a (Inline r)",
+      "data OpenRec r = OpenRec {..r}").mkString("\n")
+    session { implicit env =>
+      loadStatements(decls, relImps)
+      def refused(e: Either[Schema.Error, Json]): Schema.Error =
+        e.fold(identity, j => sys.error("exported " + Schema.compact(j)))
+      // a wrapper is neither a $defs entry nor a {tag,args} object
+      val inl = exportIn("Inline (|sfInt, sfNote|)")
+      assert(inl.field("$defs").isEmpty, Schema.compact(inl))
+      assert(inl.field("properties").get.objectFieldsOrEmpty ==
+             List(Wire.Kind, Wire.Columns, Wire.Rows, Wire.RowCount), Schema.compact(inl))
+      assert(Schema.compact(inl).contains(
+        "{\"type\":\"object\",\"properties\":{\"name\":{\"const\":\"sfNote\"},\"type\":{\"const\":\"String\"}," +
+        "\"nullable\":{\"const\":true}},\"required\":[\"name\",\"type\",\"nullable\"],\"additionalProperties\":false}"),
+        Schema.compact(inl))
+      val dfr = exportIn("Deferred (|sfInt|)")
+      assert(dfr.field("properties").get.objectFieldsOrEmpty ==
+             List(Wire.Kind, Wire.Columns, Wire.Token, Wire.Expires), Schema.compact(dfr))
+      assert(exportIn("[sfInt]").field("oneOf").flatMap(_.array).map(_.length) == Some(2))
+      // one generic schema, keyed `_`, whatever the variable is called
+      val tp = Schema.exportNamed("Test", "TableProps").fold(e => sys.error(e.report), identity)
+      assert(tp.field("$id").flatMap(_.string) == Some("ermine:Test/TableProps r"), Schema.compact(tp))
+      assert(tp.field("$defs").get.objectFieldsOrEmpty == List("Test.TableProps__"), Schema.compact(tp))
+      val tq = exportIn("TableProps q")
+      assert(Schema.text(tq.field("$defs").get) == Schema.text(tp.field("$defs").get))
+      val page = Schema.exportNamed("Test", "Page").fold(e => sys.error(e.report), identity)
+      assert(page.field("$defs").get.objectFieldsOrEmpty == List("Test.Page__", "Test.TableProps__"), Schema.compact(page))
+      assert(Schema.text(page.field("$defs").get.field("Test.TableProps__").get) ==
+             Schema.text(tp.field("$defs").get.field("Test.TableProps__").get))
+      // the bare relation field is the delivery union, discriminated by `kind`
+      assert(Zod.render(page).right.get.contains("z.discriminatedUnion(\"kind\""), Zod.render(page))
+      // a *-kinded parameter cannot be left abstract; an open RECORD stays an error
+      val mixed = refused(Schema.exportNamed("Test", "Mixed"))
+      assert(mixed.path == "$" && mixed.message.contains("type arguments") &&
+             mixed.message.contains("the parameter a has kind *"), mixed)
+      val open = refused(Schema.exportNamed("Test", "OpenRec"))
+      assert(open.path == "OpenRec.OpenRec[0]" && open.message.contains("open row"), open)
+      // no column type outside the vocabulary can reach the exporter: `field`
+      // itself accepts only Type.primTypes (and Nullable of one)
+      assert(scala.util.Try(session { implicit e2 => loadStatements("field sfChar : Char", relImps) }).isFailure)
+      // a partially applied builtin is still not a value type
+      val mb = refused(Schema.exportType(NewPipeline.replType("<gate>", "Maybe", relImps), "Test"))
+      assert(mb.message.contains("partially applied"), mb)
+    }
+  }
+
+  property("(r-pins) the validator's minLength") = sessionProof { implicit s =>
+    val tok = Json.obj("type" -> Json.jString("string"), "minLength" -> Json.jNumber(1))
+    assert(Validate.check(tok, Json.jString("a")).isEmpty)
+    assert(Validate.check(tok, Json.jString("")).nonEmpty)
+  }
+
+  // ---------------------------------------------------------------------
   // the gate fixtures (§5 Stage 1) and the CI equality check
 
   private val fixtureDir = new java.io.File("core/src/test/resources/schema")
@@ -512,7 +1135,11 @@ object TestSchema extends Properties("Ermine JSON Schema") {
     * under core/src/test/resources/schema/ and regenerated here. */
   private def gates: List[(String, Either[Schema.Error, Json])] = {
     val userDecls = List("field sfInt : Int", "field sfString : String", "field sfBool : Bool",
-                         "field sfDate : Date", "data Tree = Leaf Int | Node Tree Tree").mkString("\n")
+                         "field sfDate : Date", "field sfNote : Nullable String",
+                         "data Tree = Leaf Int | Node Tree Tree",
+                         // J3a: a widget props type, one schema for every row
+                         "data TableProps r = TableProps { title : String, rows : Inline r, detail : [..r] }"
+                        ).mkString("\n")
     List(
       ("Ordering",       schemaOf(List("Ord"), "Ord", "Ordering")),
       ("Either",         schemaOf(List("Either"), "Either", "Either String Int")),
@@ -521,6 +1148,11 @@ object TestSchema extends Properties("Ermine JSON Schema") {
       ("BorderOptions",  schemaOf(List("Layout.BorderOptions"), "Layout.BorderOptions", "BorderOptions Int")),
       ("UserRecord",     schemaAfter(userDecls, "{sfInt, sfString, sfBool, sfDate}")),
       ("UserRelation",   schemaAfter(userDecls, "[sfInt, sfString, sfDate]")),
+      ("UserInline",     schemaAfter(userDecls, "Inline (|sfDate, sfInt, sfNote|)")),
+      ("UserDeferred",   schemaAfter(userDecls, "Deferred (|sfDate, sfInt, sfNote|)")),
+      ("UserTableProps", session { implicit env =>
+                           loadStatements(userDecls, imps)
+                           Schema.exportNamed("Test", "TableProps") }),
       ("UserTree",       schemaAfter(userDecls, "Tree")))
   }
 
