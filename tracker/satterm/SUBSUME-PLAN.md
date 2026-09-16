@@ -46,3 +46,8 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   extracts the type variable's KIND annotation (`Kind.scala:135` is the same pattern for `V[A]`), and
   `Kind.scala:65` gives `VarK(v).vars = Vars(v)` — so, as read, the kind-variable walk follows no binding at all.
   Part B's H2 wording ("follows a variable's binding") is therefore questioned in brief-S0/S1a; the agents settle it.
+- 2026-09-16 ~afternoon: docs commit 1813172a on `subsume-termination`; stage branches `subsume-s0`/`s1a`/`s1b`
+  and worktrees created at it; `.lake` copied into s1a and s1b (no-op `lake build` 871 jobs confirms the cache;
+  disk now 8.2 G free). Three Opus agents launched concurrently: S0 implementer (3 h), S1a prover (4 h),
+  S1b prover (4 h). Scratch dirs `~/research/ermine/scratch-subsume/{s0,s1a,s1b}`. Reviewers launch per stage on
+  completion with `briefs/brief-review.md`. S2/S3 briefs to be written from Part C after S0/S1 report.
