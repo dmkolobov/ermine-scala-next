@@ -138,3 +138,10 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   case, Tier 0 + one full core/test; NO compiler change. Licence: S1a + S1b landed, S0 headline confirmed by
   review. Branch `subsume-s2`, worktree `wt-subsume-s2`; S2 implementer launched (Opus, 4 h) in parallel with
   S0's fixes (S2 does not build on S0's code). S3 NOT needed on this evidence.
+- 2026-09-16 ~21:50: S0 fixes applied: nanosecond accumulators — :648 CORRECTED to 2.79 s (23 %) of the
+  bin/ermine run and 45.42 s (24.7 %) of the 184 s suite (fskvs 21.07 s + kindVars 24.35 s; 265 µs per
+  subsumeType; max 5.8 ms), 12.1× :365 (the old floor-sum was 15.7–21× low); unchanged: 1,566 / 0 cycles /
+  0 budget hits / 0.07 s refusal / 100 repetitions. Subst.scala now +157/−2 (inline defs, measure removed,
+  Walk model in scratch patch). §0.2 gives six replacement sentences for SUBSUME-STAGE1A.md (:289, :396, :488),
+  SUBSUME-STAGE1A-REVIEW.md (:226, :262), SUBSUME-STAGE1B-REVIEW.md (:215) — to be applied by the orchestrator
+  at S0's landing. Ticket line added to TICKET-perf-type-inference.md (start at :648). S0 reviewer re-checking.
