@@ -123,3 +123,18 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   the wt-json-wrappers binary. Not done: filtered repro pair, "another suite ahead" control, solveDet at N=16.
   S0 reviewer launched (Opus) with the harness explanation as the point to dispute hardest. S2/S3 premises
   (memoised :648 / budget) fail on this evidence if the review confirms; S2 to be re-briefed accordingly.
+- 2026-09-16 ~20:15: S0 REVIEW = FIX-THEN-LAND, headline CONFIRMED and strengthened: the reviewer's default-N
+  run of the suite FINISHED green in 1,099 s ("never returns" refuted by a completed run); bin/ermine refuses
+  Bad.e in 0.07 s; TestLoopTrace with the model binary 720/720/720 (the real baseline); a preceding suite makes
+  the repetitions no cheaper (11.4 s vs 9.3 s per test). Must-fix: (1) every :648 cost figure was floor-summed
+  integer ms — corrected estimate puts :648 at tens of seconds, 10–25 % of a suite, INVERTING the ":365 costlier"
+  comparison quoted in the landed S1A report and both Lean reviews (to be corrected at S0's landing from S0's
+  §0.2 replacement sentences); (2) the TestLoopTrace baseline cited a non-existent log. Findings sent to the S0
+  implementer. Reviewer's signed answer: YES as a measurement; not signed: any :648 share, "terminates" as a
+  theorem (that is S1a/S1b's), "no input can diverge" (fixture env never swept over id bases; base-16 boot 2×
+  outlier). Recommended next stage: a harness stage, not Part C's S2, and no S3.
+- 2026-09-16 ~20:25: brief-S2 REWRITTEN (3fe4e8c3) as the harness stage: `proved` refutation combinator at
+  TestErmine.scala:220-223 (24 `no(` sites in 5 files), B1 deadline pin, small unsat generator + twins, LSP smoke
+  case, Tier 0 + one full core/test; NO compiler change. Licence: S1a + S1b landed, S0 headline confirmed by
+  review. Branch `subsume-s2`, worktree `wt-subsume-s2`; S2 implementer launched (Opus, 4 h) in parallel with
+  S0's fixes (S2 does not build on S0's code). S3 NOT needed on this evidence.
