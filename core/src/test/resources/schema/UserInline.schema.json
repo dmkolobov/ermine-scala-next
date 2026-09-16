@@ -1,0 +1,115 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$id" : "ermine:Test/Inline (|sfDate, sfInt, sfNote|)",
+  "type" : "object",
+  "properties" : {
+    "kind" : {
+      "const" : "inline"
+    },
+    "columns" : {
+      "type" : "array",
+      "prefixItems" : [
+        {
+          "type" : "object",
+          "properties" : {
+            "name" : {
+              "const" : "sfDate"
+            },
+            "type" : {
+              "const" : "Date"
+            },
+            "nullable" : {
+              "const" : false
+            }
+          },
+          "required" : [
+            "name",
+            "type",
+            "nullable"
+          ],
+          "additionalProperties" : false
+        },
+        {
+          "type" : "object",
+          "properties" : {
+            "name" : {
+              "const" : "sfInt"
+            },
+            "type" : {
+              "const" : "Int"
+            },
+            "nullable" : {
+              "const" : false
+            }
+          },
+          "required" : [
+            "name",
+            "type",
+            "nullable"
+          ],
+          "additionalProperties" : false
+        },
+        {
+          "type" : "object",
+          "properties" : {
+            "name" : {
+              "const" : "sfNote"
+            },
+            "type" : {
+              "const" : "String"
+            },
+            "nullable" : {
+              "const" : true
+            }
+          },
+          "required" : [
+            "name",
+            "type",
+            "nullable"
+          ],
+          "additionalProperties" : false
+        }
+      ],
+      "minItems" : 3,
+      "maxItems" : 3
+    },
+    "rows" : {
+      "type" : "array",
+      "items" : {
+        "type" : "array",
+        "prefixItems" : [
+          {
+            "type" : "string",
+            "format" : "date"
+          },
+          {
+            "type" : "integer"
+          },
+          {
+            "anyOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        ],
+        "minItems" : 3,
+        "maxItems" : 3
+      }
+    },
+    "rowCount" : {
+      "type" : "integer",
+      "minimum" : 0
+    }
+  },
+  "required" : [
+    "kind",
+    "columns",
+    "rows",
+    "rowCount"
+  ],
+  "additionalProperties" : false
+}

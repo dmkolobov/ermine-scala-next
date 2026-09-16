@@ -178,6 +178,11 @@ object TestDecode extends Properties("Ermine JSON Decode") {
 
   property("(a) decode(ty, encode v) is v (200 cases)") = {
     val cases = samples(TestSchema.typeAndValue, 200, seed0 = 20260916L)
+    // J3a put relations in the vocabulary behind `shape`'s `rels` flag, which
+    // `typeAndValue` leaves false: a relation is not encodable by
+    // `Encode.toArgonaut` and not decodable at all, and `(d3)` below is where
+    // that pair of refusals is checked.
+    val withRels = cases.count(_._1.rels > 0)
     val bad = cases.flatMap { case (sh, v) => roundTrip(sh, v) }
     val seen = vocabulary.map { case (name, hit) => (name, cases.count { case (sh, v) => hit(source(sh, v)) }) }
     println("  decode round trip: " + cases.length + " cases; vocabulary " +
@@ -185,6 +190,7 @@ object TestDecode extends Properties("Ermine JSON Decode") {
     val missing = seen.filter(_._2 == 0).map(_._1)
     (bad.isEmpty :| (bad.length + " failed\n" + bad.take(3).mkString("\n---\n"))) &&
       ((cases.length == 200) :| ("generated " + cases.length + " of 200 cases")) &&
+      ((withRels == 0) :| (withRels + " cases carry a relation: typeAndValue is meant to be relation-free")) &&
       (missing.isEmpty :| ("never generated: " + missing.mkString(", ")))
   }
 
@@ -355,6 +361,7 @@ object TestDecode extends Properties("Ermine JSON Decode") {
 
   property("(b)+(c) Validate accepts iff decode succeeds; errors at the mutation or its parent (150 cases x 13 documents)") = {
     val cases = samples(TestSchema.typeAndValue, 150, seed0 = 20260917L)
+    val withRels = cases.count(_._1.rels > 0) // relation-free by construction; see (a) and (d3)
     val tallies = cases.zipWithIndex.map { case ((sh, v), i) => agreement(sh, v, 7000L + i) }
     val valid = tallies.map(_.valid).sum
     val invalid = tallies.map(_.invalid).sum
@@ -371,7 +378,8 @@ object TestDecode extends Properties("Ermine JSON Decode") {
     (dis.isEmpty :| (dis.length + " disagreements\n" + dis.take(3).mkString("\n---\n"))) &&
       (strays.isEmpty :| ("errors reported away from the mutation: " + strays.mkString(", "))) &&
       // not vacuous: both verdicts occur, in quantity
-      ((valid > 150 && invalid > 300) :| ("valid " + valid + ", invalid " + invalid))
+      ((valid > 150 && invalid > 300) :| ("valid " + valid + ", invalid " + invalid)) &&
+      ((withRels == 0) :| (withRels + " cases carry a relation: the agreement property is meant to be relation-free"))
   }
 
   property("(b2) the validator gaps the agreement property skips, pinned") = sessionProof { implicit s =>
@@ -509,6 +517,8 @@ object TestDecode extends Properties("Ermine JSON Decode") {
     ("(Prim Int)",           "", "PrimT", true, None),
     ("(Maybe (Maybe Int))",  "", "nested Maybe", true, None),
     ("[sfPoison]",           "field sfPoison : Int", "relation", false, None),
+    ("(Inline (|sfPoison|))",   "field sfPoison : Int", "relation", false, None),
+    ("(Deferred (|sfPoison|))", "field sfPoison : Int", "relation", false, None),
     ("(Nullable Char)",      "", "PrimT witness", false, None),
     // a field named `tag` in a type with several constructors: refused by the
     // decoder, the exporter and the encoder alike, at the field it names
@@ -566,6 +576,40 @@ object TestDecode extends Properties("Ermine JSON Decode") {
         }
       } catch { case ex: Throwable => falsified :| ("threw " + ex + " for " + sh.ty) }
     }
+
+  /** J3a gave a relation a schema (the delivery union, or one arm for a
+    * `Json.Inline` / `Json.Deferred` wrapper); a relation's rows never come
+    * from the request, so the decoder refuses every one of them.  This is the
+    * one deliberate disagreement between the exporter and `entry` that is
+    * generated rather than pinned: `shape(2, rels = true)` puts relations,
+    * bare and wrapped, anywhere in the tree. */
+  /** The verdicts of one relation-bearing case: the complaint, or None. */
+  def relationCase(sh: Shape): Option[String] =
+    try session { implicit s =>
+      loadStatements(sh.decls.distinct.mkString("\n"), imps)
+      val ty = NewPipeline.replType("<rels>", sh.ty, imps)
+      (Decode.entry(ty), Schema.exportType(ty, "Test")) match {
+        case (Left(e), Right(_)) if sh.rels > 0 =>
+          if (e.message.contains("relation")) None
+          else Some("entry refused " + sh.ty + " for the wrong reason: " + e.report)
+        case (Right(_), Right(_)) if sh.rels == 0 => None
+        case (Left(e), Left(x)) if sh.rels > 0 =>
+          Some("the exporter refused a relation type " + sh.ty + ": " + x.report + " (entry: " + e.report + ")")
+        case (Right(_), _) if sh.rels > 0 => Some("entry ACCEPTED the relation type " + sh.ty)
+        case (l, r) => Some("entry " + l + ", export " + r.left.map(_.report) + " for " + sh.ty)
+      }
+    } catch { case ex: Throwable => Some("threw " + ex + " for " + sh.ty) }
+
+  property("(d3) a relation-bearing type is exported by the schema and refused by entry (120 cases)") = {
+    val cases = samples(TestSchema.shape(2, rels = true), 120, seed0 = 20260918L)
+    val bad = cases.flatMap(relationCase)
+    val bearing = cases.count(_.rels > 0)
+    println("  decode vs J3a's relation export: " + cases.length + " shapes, " + bearing + " carry a relation")
+    (bad.isEmpty :| (bad.length + " wrong verdicts\n" + bad.take(3).mkString("\n---\n"))) &&
+      // not vacuous, and a floor rather than a pin: a relation is one leaf
+      // among many, so the fixed seeds give 15 of 120 today
+      ((bearing >= 10) :| ("only " + bearing + " of " + cases.length + " shapes carry a relation"))
+  }
 
   // ---------------------------------------------------------------------
   // (e) scale

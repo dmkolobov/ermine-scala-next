@@ -39,7 +39,9 @@ import argonaut.Json
   * `format: date` -> `z.string().date()`, `date-time` -> `.datetime()`,
   * `uuid` -> `.uuid()`, an `anyOf` with a null arm -> `.nullable()`, a
   * property absent from `required` -> `.optional()`, `enum` -> `z.enum`, an
-  * `oneOf` of objects that all pin `tag` -> `z.discriminatedUnion("tag", ...)`,
+  * `oneOf` of objects that all pin `tag` -> `z.discriminatedUnion("tag", ...)`
+  * (a relation's delivery arms all pin `kind`: `z.discriminatedUnion("kind",
+  * ...)`, J3a), any other `anyOf` -> `z.union`, `minLength` -> `.min`,
   * an object -> `z.object({...}).strict()`, `prefixItems` -> `z.tuple`, the
   * empty schema `{}` (the stdlib `Json` type) -> `z.unknown()`.
   */
@@ -168,11 +170,15 @@ object Zod {
       }
       else if (oneOf.isDefined) {
         val alts = oneOf.get
-        val tagged = alts.nonEmpty && alts.forall(a =>
-          a.field("properties").flatMap(_.field("tag")).flatMap(_.field("const")).flatMap(_.string).isDefined)
+        // a data type's constructors pin `tag`; a relation's delivery
+        // arms pin `kind` (Wire.Kind)
+        val discriminator = List("tag", Wire.Kind).find(d => alts.nonEmpty && alts.forall(a =>
+          a.field("properties").flatMap(_.field(d)).flatMap(_.field("const")).flatMap(_.string).isDefined))
         seq(alts).right.map { es =>
-          if (tagged) "z.discriminatedUnion(\"tag\", [" + es.mkString(", ") + "])"
-          else "z.union([" + es.mkString(", ") + "])"
+          discriminator match {
+            case Some(d) => "z.discriminatedUnion(" + quote(d) + ", [" + es.mkString(", ") + "])"
+            case None    => "z.union([" + es.mkString(", ") + "])"
+          }
         }
       }
       else tyName match {

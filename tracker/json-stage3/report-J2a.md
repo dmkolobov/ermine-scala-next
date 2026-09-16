@@ -7,7 +7,7 @@ Branch `json-decode`, worktree `~/research/ermine/ermine-scala-wt-json-decode`, 
 | File | What |
 |---|---|
 | `core/src/main/scala/com/clarifi/reporting/ermine/json/Decode.scala` (new, 760 lines) | `compile` / `entry` / `decode` / `reportSignature`: type-directed `JSON => Runtime` |
-| `scalacheck-binding/src/main/scala/TestDecode.scala` (new, ~500 lines) | ten properties: round trip, agreement with `Validate`, error paths, `entry`, scale |
+| `scalacheck-binding/src/main/scala/TestDecode.scala` (new, ~560 lines) | eleven properties: round trip, agreement with `Validate`, error paths, `entry`, relations vs J3a's export, scale |
 | `scalacheck-binding/src/main/scala/TestSchema.scala` | Stage 2a GENERATOR ROWS only (new `prims`, `fieldPool`, leaf and composite entries, the imports they need) plus one changed pin (`Char`) |
 | `core/.../json/Schema.scala` | three fixes the new properties found (below) |
 | `core/.../json/Validate.scala` | `minLength`; the `uuid` format is the canonical form |
@@ -73,6 +73,7 @@ Adding `minimum`/`maximum` to the `Int` schema would close the first but moves f
 | (map) | the mapping decisions above, one assertion each, plus `reportSignature` | 20 pins |
 | (d) | poisoned types (10 poisons x 6 contexts) refused by `entry` at the poison's path with the expected wording, and the exporter refuses the same ones bar the two deliberate differences (`Nullable Char`, a relation) | 100 |
 | (d2) | every closed generated type accepted by both `entry` and the exporter | 100 |
+| (d3) | (post-merge) every relation-bearing shape from J3a's `shape(2, rels = true)` is exported by the schema and refused by `entry`; every relation-free one is accepted by both | 120 cases, 15 of them relation-bearing |
 | (e) | 100,000 records (2.7 MB) decode | 0.5-1.0 s |
 | (e2) | argonaut's parser reads 4,100-21,000 nested arrays depending on the JVM's mood; three quarters of the measurement is read back, and a FIXED 100,000 levels decode in memory as `Json` and as a recursive record-style `data`, with a bad node at the bottom reported with its full path | 100,000 levels |
 
@@ -82,20 +83,48 @@ Generator additions in `TestSchema`: `Short`, `Byte`, `Float`, `Char`, `Date`, `
 
 Error-path distribution over the 1,409 invalid documents: `replace` same 443, `tweak` same 343, `add key` same 156, `drop key` parent 138, `append element` parent 122 / same 44, `drop element` parent 100, `retag` same 55 / sibling 8. Only `retag` reports away from the mutation, at a sibling key in the same object.
 
-## Gates
+## Gates (post-merge with json-encode f8a789d1 = J3a)
+
+`json-encode` f8a789d1 (the contract + J3a's relation arms) was merged into `json-decode`
+40827243; the numbers below are from the merged tree. Pre-merge numbers are in the git
+history of this file.
 
 Logs in `/tmp/claude-1000/-home-dmitry-research-caliper/c359de0f-018b-42eb-960e-7519d0922cee/scratchpad/j2a/` (`scratch/` below).
 
 | # | Gate | Result | Log |
 |---|---|---|---|
-| 1 | `sbt -batch core/compile core/copyResources` | success every run | `scratch/gate23.log`, `scratch/gate2-final.log`, `scratch/rep*.log` |
-| 2 | `TestDecode` + `TestJson` + `TestSchema` + `TestNamedFields` | **71/71** (61 on the base + 10 new). After the review fixes: **12 consecutive green runs** (`rep15`-`rep26`, three of them cold compile-and-test in one JVM), against 2 reds in the 14 runs before them — `rep8` (the `TestJson` registry race) and `rep12` (the `(a2)` equivalence hole), both fixed | `scratch/rep11.log` … `scratch/rep26.log`, `scratch/fix2.log` |
-| 3 | `core/testOnly *TestLoopTrace` | 3/3 properties pass, but the 720-case model differential SKIPPED: no `looptrace` binary exists in any checkout; this stage touches no solver, `Type.scala` or Lean code | `scratch/gate23.log` |
-| 4 | `corpus-run.sh --batch` + `corpus-verdicts.py` | **89 LOADED / 79 REJECTED / 0 UNKNOWN over 168**, unchanged; re-run after the `Encode` change | `scratch/corpus-verdicts.log`, `scratch/corpus-verdicts2.log` |
-| 5 | `tracker/tools/repl-smoke.sh` | green (all files PASS, including the 20 `json` checks); re-run after the `Encode` change | `scratch/repl-smoke.log`, `scratch/repl-smoke2.log` |
-| 5 | `tracker/tools/lsp-smoke.sh` | green, 577 checks; re-run after the `Schema` change | `scratch/lsp-smoke.log`, `scratch/lsp-smoke2.log` |
+| 1 | `sbt -batch core/compile core/copyResources` | success | `scratch/merge-compile.log`, `scratch/merge-suites2.log` |
+| 2 | `TestDecode` + `TestJson` + `TestSchema` + `TestNamedFields` | **78/78, twice** (TestDecode 11 — the 10 of J2a plus `(d3)` for J3a's relation export —, TestJson 28, TestSchema 25, TestNamedFields 14; the 77 the coordinator expected plus `(d3)`). The **schema fixture gate says 11 fixtures match**. Before the merge the same four suites were 71/71 over 13 consecutive runs (`rep15`–`rep27`), after two reds that the review round fixed | `scratch/merge-suites2.log`, `scratch/merge-suites3.log` |
+| 3 | `core/testOnly *TestLoopTrace` | 3/3 properties, the 720-case model differential SKIPPED: no `looptrace` binary in this checkout; neither this stage nor J3a touches the solver, `Type.scala`'s constraint construction or Lean | `scratch/merge-looptrace.log` |
+| 4 | `corpus-run.sh --batch` + `corpus-verdicts.py` | **89 LOADED / 79 REJECTED / 0 UNKNOWN over 168**, unchanged | `scratch/corpus-verdicts3.log` |
+| 5 | `tracker/tools/repl-smoke.sh` | green, all nine files PASS (including the 20 `json` checks) | `scratch/repl-smoke3.log` |
+| 5 | `tracker/tools/lsp-smoke.sh` | green, 577 checks | `scratch/lsp-smoke3.log` |
 
 `tracker/repl-classpath.txt` was regenerated for the smokes and restored with `git checkout`.
+
+### The merge with J3a (f8a789d1)
+
+Conflicts and how they were resolved:
+
+| File | Resolution |
+|---|---|
+| `TestSchema.scala` (2 hunks) | J3a's `rels`-threaded `shape` kept, with J2a's `stage2Leaves(underMaybe)` appended to the leaves and `stage2Composites(depth, underMaybe)` to the composites; J2a's Stage 2a block kept whole beside J3a's `maybeShape(depth, rels)`. The Stage 2a composites pass `rels = false` inward ON PURPOSE: a foreign builder stores what `whnfForeign` gives it, which unwraps a `Rel` to its raw `Ext`, so a relation inside a `Vector` is not a value the walker can write. `recordShape` already uses J3a's `pickN`; nothing J2a added draws from a pool with `Gen.pick` (there is no `Gen.pick` left in the suite). |
+| `Validate.scala` (header) | J3a's fuller format paragraph kept, with its `uuid` clause CORRECTED to the code both sides now share: the canonical 8-4-4-4-12 form (regex + `UUID.fromString`), because `UUID.fromString` alone also takes `"1-1-1-1-1"`. The body merged cleanly: one `minLength` block, J2a's canonical `uuid` check. |
+| `JSON-STAGE3-PLAN.md` (2 hunks) | Stage table: J3a's rows, with the J2a row updated to `COMMITTED 40827243, json-encode merged in, landing`. Handoff log is append-only: J3a's entries kept verbatim, J2a's superseded line replaced by one new entry for the review round and this merge. |
+| `Schema.scala`, `Zod.scala`, `JSON-API-DESIGN.md` | auto-merged; checked by hand — `Char`'s `minLength`, the `tag`-field refusal and `declaredMaybe` all survive beside J3a's relation arms; `Zod` has exactly one `minLength` line (both sides added it identically); both §3.7b and J3a's revision of the Stage 1b relation paragraph are present. |
+
+Adapted after the merge (staged with it): `TestDecode` gained **`(d3)`**, which draws 120
+shapes from J3a's `shape(2, rels = true)` and asserts that every relation-bearing one is
+EXPORTED by the schema and REFUSED by `Decode.entry` with a message naming a relation,
+while every relation-free one is accepted by both; 15 of the 120 carry a relation today and
+the property fails below 10, so it cannot pass vacuously. `Inline (|sfPoison|)` and
+`Deferred (|sfPoison|)` joined `(d)`'s poison list beside the bare relation (the exporter
+accepts all three, `entry` refuses all three). `(a)` and `(b)` now assert that their cases
+are relation-free — `TestSchema.typeAndValue` leaves `rels` false, so no relation reaches
+the round trip or the agreement property, and flipping that default would fail here loudly
+instead of drowning `(b)` in disagreements. The agreement numbers moved slightly with J3a's
+unbiased `pickN` (537 valid / 1,409 invalid / 4 pinned gaps / **0 disagreements**, from
+535 / 1,409 / 6).
 
 ## Review round (FIX-THEN-LAND verdict, `tracker/json-stage3/review-J2a.md`)
 

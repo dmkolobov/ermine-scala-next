@@ -20,6 +20,8 @@ produced by a new document runner (new code, not ermine-writers).
   89 LOADED / 79 REJECTED / 0 UNKNOWN over 168.
 - An independent review before a landing commit. Never push. Never merge into
   `scala3-migration`/`backport-2.11`. Commit only reviewed green stages.
+- Models (the user, 2026-09-16): the orchestrator runs on Fable; every implementer, reviewer
+  and porter agent is launched on Opus.
 - Parked, NOT to be worked: a binding named `null` is undefined in REPL expressions;
   the 2.11 fused parser rejects an operator constructor with no fixity in scope.
 
@@ -89,13 +91,17 @@ col       {"name": "<column>", "type": <Wire.columnTypes>, "nullable": <bool>}
 
 | Id | Branch | What | Depends on | Phase |
 |---|---|---|---|---|
-| J3a | json-wrappers | Schema exporter: relation union/arms, `nullable` + `rowCount`, row-polymorphic relation arm, zod discriminated union, fixtures | contract | 1 |
-| J2a BUILT | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 |
-| J3b | json-doc | `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 |
+| J3a | json-wrappers | Schema exporter: relation union/arms, `nullable` + `rowCount`, row-polymorphic relation arm, zod discriminated union, fixtures | contract | 1 -- LANDED |
+| J2a | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 -- COMMITTED 40827243, json-encode merged in, landing |
+| J3b | json-doc | `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 -- BUILT bf832e46, landing |
 | J3c | json-runner | `json/Runner.scala` (boot, report lookup, `Params -> Node` check, decode, apply, write on one connection), HTTP server (`POST /report/<Module>`, `GET /data/<token>`), `bin/ermine-serve` | J2a, J3b | 2 |
 | J3d | json-client | `modules/Layout/Widgets.e` prop types for the seven live widgets + one new widget; `client/` TS package: zod generated from those types, dispatcher, adapters to the legacy renderers, `formatDisplay` port, the new widget end to end | J3a, J3b | 2 |
+| J3e | json-charts | Chart/stylebox prop types and adapters (`axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar`, `styleBox`; `treeMap` registered as unsupported) | J3d | 3 |
 | J2b | json-spread | `Spread Json` wrapper (encode merge, schema additional properties, decode leftovers); then the builtin `Json a` constraint if time allows | J2a, J3a | 3 |
 | P1..P3 | json-encode-2.11 | 2.11 ports: P1 = contract+J3a+J2a, P2 = J3b+J3c, P3 = J3d+J2b | landings | after each |
+
+Reviews: `brief-review.md`, one independent reviewer per stage before landing. Ports:
+`brief-port-211.md`.
 
 Phase 1 runs J3a, J2a, J3b concurrently. Phase 2 starts each stage as its dependencies land.
 2.11 ports run concurrently with later Scala 3 stages, one port agent at a time on the 2.11
@@ -104,8 +110,34 @@ branch (they share `Lib.scala`).
 ## Handoff log
 
 - 2026-09-16 06:00 plan written; contract compiled; TestJson+TestSchema+TestNamedFields 61/61.
-- 2026-09-16 J2a built (uncommitted in `ermine-scala-wt-json-decode`): `json/Decode.scala`,
-  `TestDecode` (10 properties), the Stage 2a generator rows in `TestSchema`, and three
-  Stage 1 fixes the new properties found (the exporter's optional-key rule for a
-  `Nullable`/`Maybe#` named field, `Char`'s `minLength`, `Validate`'s `uuid` form).
-  Design note §3.7b. Tier 0 green; see `tracker/json-stage3/report-J2a.md`.
+- 2026-09-16 06:20 contract + plan committed a7e8e050 on json-s3-base; worktrees
+  wt-json-wrappers / wt-json-decode / wt-json-doc created; J3a, J2a, J3b implementers launched.
+  Later briefs (J3c, J3d, J3e, J2b, review, port) written, uncommitted in wt-json until the
+  first landing.
+- 2026-09-16 ~08:00 J2a BUILT (71/71), J3b BUILT (79/79), J3a BUILT (67/67; zod replay 370/0),
+  all corpus 89/79/0. Reports saved by the orchestrator (subagent harness blocks .md writes).
+  Reviews: J2a FIX-THEN-LAND (flaky (e2) depth probe; unpinned `tag`-field disagreement),
+  J3b FIX-THEN-LAND (RowError must exit via Stop so the driver tears down; RecordMap comment
+  and two gate figures corrected), fixes dispatched to the implementers; J3a review running.
+  Process slip: briefs written after a7e8e050 were not in the stage worktrees; copied there.
+  J3b found and fixed a Scala 3 inference bug in record/RecordMap.scala (SharingKeySet.get ->
+  Nothing cast) that silently broke record equality / uniq dedup on the relational side: the
+  landing full core/test is its real gate. Tickets for J3c: NULL in a GUID column NPEs in
+  SqlExecution.nextRecord; EffectfulProcedure.withDriver lacks finally around teardown.
+- 2026-09-16 ~08:30 J3a reviewed FIX-THEN-LAND (one fix: `Gen.hexChar` absent from the 2.11
+  scalacheck; applied by the orchestrator, 67/67) and COMMITTED on json-wrappers with the
+  contract, the briefs and review-J3a.md; landing gate (full core/test) running. J3b committed
+  bf832e46 on json-doc after its fixes (81/81, looptrace 720/720), full core/test running.
+  NOTE for J3b/J3d: the wrappers take a ROW, not a relation -- `Inline (|a, b|)` / `Inline r`,
+  since `data Inline r = Inline [..r]`. J3a found `Gen.pick` biased in ScalaCheck 1.15.4
+  (first pool element almost never kept; `TestSchema.pickN` replaces it) and that
+  `Session.toHeader` MatchErrors on a GUID column (pre-existing).
+- 2026-09-16 ~09:30 J2a review fixes applied on json-decode: the flaky `(e2)` depth probe
+  now reads back at three quarters of its measurement with a fixed 100,000-level in-memory
+  document, and the `tag`-field disagreement is refused by `Decode`, `Schema` AND `Encode`
+  alike (pinned in `(map)` and `(d)`). Two further test flakes found while verifying and
+  fixed: `TestJson` declared three different `data Shape`s and two `data Series` in one
+  process, which the PROCESS-GLOBAL `DataConDecl` registry turns into a cross-property race
+  (one red in twenty runs), and `TestDecode`'s null-wrapper equivalence had a hole for a
+  raw `Some(JNull)` inside a native container. json-encode f8a789d1 (J3a) then merged into
+  json-decode; see `tracker/json-stage3/report-J2a.md` for the post-merge gate numbers.

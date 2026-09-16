@@ -28,10 +28,12 @@ import scalaparsers.Supply
   *    `{"type":"boolean"}`; `String` -> `{"type":"string"}`; `Char` -> the
   *    same with `minLength: 1` and `maxLength: 1`; `Date` -> string/`format: date`;
   *    `Timestamp` -> string/`format: date-time`; `GUID` -> string/`format:
-  *    uuid`.  (`Session.toHeader` reads a column's `PrimT` through
-  *    `PrimT.withName`, which spells the UUID type "UUID" while the `Con` is
-  *    `Builtin.GUID`; this walker never goes through `PrimT`, so the
-  *    mismatch cannot arise.)
+  *    uuid`.  (A relation's column `type` is the one place this walker does
+  *    go through a `PrimT` -- `Type.primTypes`, then `Wire.columnType`,
+  *    which spells `UuidT` "GUID", the Ermine type name.  It does NOT go
+  *    through `PrimT.withName`, which `Session.toHeader` uses and which has
+  *    no "GUID" case at all: a `table` statement with a GUID column throws a
+  *    MatchError there, a bug older than this file.)
   *  - `Maybe a` / `Nullable a` -> `{"anyOf":[a,{"type":"null"}]}`; a nested
   *    `Maybe (Maybe a)` is an error, as it is for the encoder (both layers
   *    encode to the same `null`, so the shape is not invertible).
@@ -44,8 +46,9 @@ import scalaparsers.Supply
   *    field witnesses' types in SORTED key order (`Rec` is an unordered map,
   *    so the encoder sorts too), `required` = every key,
   *    `additionalProperties: false`.
-  *  - an open row (a row variable or a `Part`) -> an error: there is no
-  *    schema for "some fields".  Export at an instantiation.
+  *  - an open row (a row variable or a `Part`) in a RECORD -> an error:
+  *    there is no schema for "some fields".  Export at an instantiation.
+  *    (In a relation an open row is the generic arm, below.)
   *  - a `data` type: one `$defs` entry per INSTANTIATION reached, referenced
   *    by `$ref`, so a recursive type terminates.  All-nullary ->
   *    `{"enum":[...]}` in declaration order.  Positional constructors ->
@@ -64,19 +67,40 @@ import scalaparsers.Supply
   *    the `tag` entirely.
   *  - the stdlib `Json` type -> `{}`: any JSON document.  Ermine owns no
   *    contract for it (§3.1b item 1).
-  *  - a relation `[..r]` over a closed row -> the columns + rows-as-arrays
-  *    object of §3.4a.  NOTE: the ENCODER does not produce this yet.  Stage 0
-  *    refuses a relation on the wire (`ArgonautJson.rel`) and `toJson#` makes
-  *    a `JRel` node the document writer resolves; the inline shape lands with
-  *    Stage 3's `Write.doc`.  The schema is exported now so the TS side can
-  *    be written against it, and the `Inline`/`Deferred` wrapper arms of
-  *    §3.4a are Stage 3 too.
+  *  - a relation (revised in J3a; the wire contract of
+  *    tracker/JSON-STAGE3-PLAN.md, keys from `Wire`) -> the §3.4a delivery
+  *    union.  The INLINE arm is `{"kind":"inline","columns":[..],"rows":
+  *    [[..]..],"rowCount":n}`, the DEFERRED arm `{"kind":"deferred",
+  *    "columns":[..],"token":"..","expires":"<date-time>"}`, both closed
+  *    objects with every key required; `rowCount` is an integer >= 0,
+  *    `token` a non-empty string.  A bare `[..r]` exports
+  *    `{"oneOf":[inline, deferred]}` (the request decides), `Json.Inline r`
+  *    the inline arm alone and `Json.Deferred r` the deferred arm alone --
+  *    the two wrappers are recognised by their `Global` BEFORE the `data`
+  *    path, so they are never `$defs` entries or `{tag,args}` objects.
+  *    Over a CLOSED row the `columns` are pinned: `prefixItems` in sorted
+  *    key order, each `{"name":const,"type":const,"nullable":const}` where
+  *    `type` is `Wire.columnType` of the field's `PrimT` with `Nullable`
+  *    unwrapped (the writer's spelling of a header column) and `nullable`
+  *    is true exactly for a `Nullable t` field; each row is a tuple of the
+  *    field schemas in that order.  Over a row VARIABLE the arm is GENERIC:
+  *    `columns` an array of `{"name":string,"type":enum,"nullable":boolean}`
+  *    and `rows` arrays of `string|number|boolean|null` cells, so a props
+  *    type `data TableProps r = TableProps { rows : Inline r }` has one
+  *    schema for all `r`.  The document writer (J3b) produces these objects;
+  *    `Encode.toArgonaut` still refuses a relation.
+  *  - the ROOT may leave a data type's ROW parameters abstract: `TableProps`
+  *    named bare (`exportNamed`, `bin/ermine-schema`, the LSP request) is
+  *    exported as `TableProps r` with `r` free; a missing `*` parameter is
+  *    refused (`abstractRowParameters`).  In a `$defs` key every type
+  *    variable is spelled `_` (`Test.TableProps__`).
   *  - `Arrow`, `IO`, `FFI`, `Field`, a `Prim`/`PrimT` witness, any other
   *    foreign type, a rank-n (`Forall`) field and an existentially bound
   *    field are errors carrying the path to the offending node -- for a
   *    constructor field, `<Type>.<Constructor>[<index>]`, the same spelling
   *    `Encode.Error` uses.  The vocabulary is `Encode.reject`'s.
-  *  - a type variable anywhere -> "polymorphic; export at an instantiation".
+  *  - a type variable anywhere but a relation's row -> "polymorphic; export
+  *    at an instantiation".
   *    A data type's own parameters are NOT variables by the time they are
   *    walked: the instantiation's arguments are substituted into the
   *    constructor field types first.
@@ -115,12 +139,46 @@ object Schema {
 
   private final class Reject(val error: Error) extends RuntimeException(error.report, null, false, false)
 
+  /** Which arms of the relation union a relation position admits. */
+  private sealed abstract class Arms
+  private case object BothArms    extends Arms
+  private case object InlineArm   extends Arms
+  private case object DeferredArm extends Arms
+
+  /** The generic arm's `columns`: any number of descriptors, each naming a
+    * column, a type from the vocabulary and a nullability. */
+  private val genericColumns: Json = Json.obj(
+    "type"  -> Json.jString("array"),
+    "items" -> Json.obj(
+      "type"       -> Json.jString("object"),
+      "properties" -> Json.obj(
+        Wire.Name     -> Json.obj("type" -> Json.jString("string")),
+        Wire.Type     -> Json.obj("enum" -> Json.array(Wire.columnTypes.map(Json.jString): _*)),
+        Wire.Nullable -> Json.obj("type" -> Json.jString("boolean"))),
+      "required"   -> Json.array(Json.jString(Wire.Name), Json.jString(Wire.Type), Json.jString(Wire.Nullable)),
+      "additionalProperties" -> Json.jBool(false)))
+
+  /** The generic arm's `rows`: arrays of scalar cells.  Every column type's
+    * cell is one of these (numbers, booleans, strings for Long and the
+    * dates and GUIDs, null); which one a column holds is the client's to
+    * read off its descriptor. */
+  private val genericRows: Json = Json.obj(
+    "type"  -> Json.jString("array"),
+    "items" -> Json.obj(
+      "type"  -> Json.jString("array"),
+      "items" -> Json.obj("anyOf" -> Json.array(
+        Json.obj("type" -> Json.jString("string")),
+        Json.obj("type" -> Json.jString("number")),
+        Json.obj("type" -> Json.jString("boolean")),
+        Json.obj("type" -> Json.jString("null"))))))
+
   /** The JSON Schema 2020-12 document for `ty`, as declared in `module`
     * (which resolves a record's unqualified field names and names the
     * `$id`). */
-  def exportType(ty: Type, module: String)(implicit s: SessionEnv): Either[Error, Json] = {
+  def exportType(ty0: Type, module: String)(implicit s: SessionEnv): Either[Error, Json] = {
     val ctx = new Ctx(module, s)
     try {
+      val ty = ctx.abstractRowParameters(ty0)
       val root = ctx.walk(ty, "$")
       val head = List(
         "$schema" -> Json.jString(dialect),
@@ -134,8 +192,11 @@ object Schema {
 
   /** The schema of a data type named by the module it is declared in, for
     * the `{module, name}` form of the LSP request and `bin/ermine-schema`'s
-    * bare-name argument.  Only a type with no parameters can be named this
-    * way; a parameterised one needs an instantiation. */
+    * bare-name argument.  A type with no parameters, or whose parameters are
+    * all ROW-kinded (a widget's props, `data TableProps r = ...`), can be
+    * named this way: the row parameters are left abstract (see
+    * `abstractRowParameters`).  A type with a `*`-kinded parameter needs an
+    * instantiation. */
   def exportNamed(module: String, name: String)(implicit s: SessionEnv): Either[Error, Json] =
     s.cons.get(Global(module, name)) match {
       case Some(c) => exportType(c, module)
@@ -153,6 +214,64 @@ object Schema {
     val open = mutable.HashSet[String]()
 
     def reject(path: String, why: String): Nothing = throw new Reject(Error(path, why))
+
+    /** The ROOT of an export may be a `data` type constructor applied to
+      * fewer arguments than it has parameters -- `TableProps` named bare by
+      * `exportNamed`, `bin/ermine-schema -i M TableProps` or the LSP request.
+      * When every missing parameter is row-kinded the type is applied to the
+      * declaration's own parameter variables, which the walker meets only
+      * inside a relation (the generic arm) and refuses anywhere else (an open
+      * record), so the one schema holds for every instantiation.  A missing
+      * `*`-kinded parameter is refused here, by name: there is no schema for
+      * "some type".  Anything else is returned unchanged (aliases and all,
+      * so `$id` still names the type as it was written) for the walker. */
+    def abstractRowParameters(t0: Type): Type = {
+      val t = resolve(t0)
+      unfurl(t) match {
+        case (c @ Type.Con(_, g, decl, schema), args) if g.module != "Builtin" =>
+          val data = decl match {
+            case d: DataConDecl => Some(d)
+            case _              => DataConDecl.forType(g)
+          }
+          data match {
+            case Some(d) if args.length < d.typeArgs.length =>
+              val kinds = parameterKinds(d, schema)
+              val missing = d.typeArgs.zip(kinds).drop(args.length)
+              missing.find(p => !isRow(p._2)) foreach { case (v, k) =>
+                reject("$", g.string + " takes " + d.typeArgs.length + " type " +
+                            (if (d.typeArgs.length == 1) "argument" else "arguments") +
+                            ", applied to " + args.length + "; export at an instantiation (only a ROW " +
+                            "parameter can be left abstract, and the parameter " +
+                            v.name.map(_.string).getOrElse("_") + " has kind " + renderKind(k) + ")")
+              }
+              missing.foldLeft(t) { case (f, (v, _)) => AppT(f, VarT(v)) }
+            case _ => t0
+          }
+        case _ => t0
+      }
+    }
+
+    /** A declaration's parameter kinds: the parameter's own kind when it is
+      * already known, else the kind the type constructor was checked at
+      * (`rho -> * -> *` read off as a list). */
+    private def parameterKinds(d: DataConDecl, schema: KindSchema): List[Kind] = {
+      def arrows(k: Kind): List[Kind] = k match {
+        case ArrowK(_, i, o) => i :: arrows(o)
+        case _               => Nil
+      }
+      val checked = arrows(schema.body)
+      d.typeArgs.zipWithIndex.map { case (v, i) =>
+        v.extract match {
+          case VarK(_) => checked.lift(i).getOrElse(v.extract)
+          case k       => k
+        }
+      }
+    }
+
+    private def isRow(k: Kind): Boolean = k match {
+      case Rho(_) => true
+      case _      => false
+    }
 
     def walk(t0: Type, path: String): Json = {
       val t = resolve(t0)
@@ -173,6 +292,10 @@ object Schema {
     private def con(g: Global, decl: ConDecl, args: List[Type], path: String): Json =
       if (g.module == "Builtin") builtin(g, args, path)
       else if (g.module == Encode.jsonModule && g.string == "Json") Json.jEmptyObject
+      // the delivery wrappers of Json.e, BEFORE the generic data path: they
+      // are relations on the wire, never `$defs` entries or `{tag,args}`
+      else if (g.module == Encode.jsonModule && g.string == "Inline") relation(arg1(g, args, path), path, InlineArm)
+      else if (g.module == Encode.jsonModule && g.string == "Deferred") relation(arg1(g, args, path), path, DeferredArm)
       else if (g.module == "Native.List" && g.string == "List#") array(arg1(g, args, path), path + "[]")
       else if (g.module == "Vector" && g.string == "Vector") array(arg1(g, args, path), path + "[]")
       else if (g.module == "Native.Maybe" && g.string == "Maybe#") nullable(arg1(g, args, path), path)
@@ -204,7 +327,7 @@ object Schema {
       case "List"      => array(arg1(g, args, path), path + "[]")
       case "Vector"    => array(arg1(g, args, path), path + "[]")
       case "Record"    => record(arg1(g, args, path), path)
-      case "Relation"  => relation(arg1(g, args, path), path)
+      case "Relation"  => relation(arg1(g, args, path), path, BothArms)
       case "IO"        => reject(path, "an IO action has no JSON representation")
       case "FFI"       => reject(path, "an FFI value has no JSON representation")
       case "Field"     => reject(path, "a Field witness has no JSON representation")
@@ -282,50 +405,94 @@ object Schema {
         "additionalProperties" -> Json.jBool(false))
     }
 
-    /** §3.4a: `{"columns":[{name,type}...],"rows":[[...]...]}`.  Column
-      * order is the row's sorted key order, the same order the record
-      * encoder uses, and `rows` are arrays in that order. */
-    private def relation(row: Type, path: String): Json = {
-      val fs = rowFields(row, path)
-      val n = fs.length
-      val cols = fs.map { case (k, t) =>
+    /** §3.4a / the plan's wire contract: a relation position is
+      *
+      * {{{
+      *   {"kind":"inline",  "columns":[col...],"rows":[[cell...]...],"rowCount":n}
+      *   {"kind":"deferred","columns":[col...],"token":"...","expires":"<date-time>"}
+      * }}}
+      *
+      * a bare `[..r]` the `oneOf` of both (the request decides), `Inline r`
+      * the first alone, `Deferred r` the second alone.  Over a CLOSED row the
+      * columns are pinned one by one (`prefixItems` of consts, in the row's
+      * sorted key order, the order the record encoder and a `Header` both
+      * use) and each row is a tuple of the field schemas in that order.
+      * Over a row VARIABLE the arm is generic: any columns from the
+      * vocabulary, any rows of scalar cells, which is what lets one widget
+      * props type (`data TableProps r = TableProps { rows : Inline r }`) have
+      * one schema for every `r`.  Keys come from `Wire`. */
+    private def relation(row0: Type, path: String, arms: Arms): Json = {
+      val (columns, rows) = resolve(row0) match {
+        case VarT(_) => (genericColumns, genericRows) // a Relation's argument is rho-kinded
+        case _ =>
+          val fs = rowFields(row0, path)
+          val n = fs.length
+          val cols = fs.map { case (k, t) => column(k, t, path + "." + k) }
+          val rowSchema =
+            if (n == 0) Json.obj("type" -> Json.jString("array"), "maxItems" -> Json.jNumber(0))
+            else Json.obj(
+              "type"        -> Json.jString("array"),
+              "prefixItems" -> Json.array(fs.map { case (k, t) => walk(t, path + ".rows[]." + k) }: _*),
+              "minItems"    -> Json.jNumber(n),
+              "maxItems"    -> Json.jNumber(n))
+          (Json.obj(
+             "type"        -> Json.jString("array"),
+             "prefixItems" -> Json.array(cols: _*),
+             "minItems"    -> Json.jNumber(n),
+             "maxItems"    -> Json.jNumber(n)),
+           Json.obj("type" -> Json.jString("array"), "items" -> rowSchema))
+      }
+      def arm(kind: String, rest: List[(String, Json)]): Json = {
+        val props = (Wire.Kind -> Json.obj("const" -> Json.jString(kind))) :: (Wire.Columns -> columns) :: rest
         Json.obj(
           "type"       -> Json.jString("object"),
-          "properties" -> Json.obj(
-            "name" -> Json.obj("const" -> Json.jString(k)),
-            "type" -> Json.obj("const" -> Json.jString(columnType(t)))),
-          "required"   -> Json.array(Json.jString("name"), Json.jString("type")),
+          "properties" -> Json.obj(props: _*),
+          "required"   -> Json.array(props.map(p => Json.jString(p._1)): _*),
           "additionalProperties" -> Json.jBool(false))
       }
-      val rowSchema =
-        if (n == 0) Json.obj("type" -> Json.jString("array"), "maxItems" -> Json.jNumber(0))
-        else Json.obj(
-          "type"        -> Json.jString("array"),
-          "prefixItems" -> Json.array(fs.map { case (k, t) => walk(t, path + ".rows[]." + k) }: _*),
-          "minItems"    -> Json.jNumber(n),
-          "maxItems"    -> Json.jNumber(n))
+      lazy val inline = arm(Wire.Inline, List(
+        Wire.Rows     -> rows,
+        Wire.RowCount -> Json.obj("type" -> Json.jString("integer"), "minimum" -> Json.jNumber(0))))
+      lazy val deferred = arm(Wire.Deferred, List(
+        Wire.Token    -> Json.obj("type" -> Json.jString("string"), "minLength" -> Json.jNumber(1)),
+        Wire.Expires  -> Json.obj("type" -> Json.jString("string"), "format" -> Json.jString("date-time"))))
+      arms match {
+        case InlineArm   => inline
+        case DeferredArm => deferred
+        case BothArms    => Json.obj("oneOf" -> Json.array(inline, deferred))
+      }
+    }
+
+    /** One pinned column descriptor: `name`, `type` and `nullable`, all
+      * consts, nothing else allowed. */
+    private def column(name: String, t: Type, path: String): Json = {
+      val (ty, isNull) = resolve(t) match {
+        case Type.Nullable(u) => (u, true)
+        case u                => (u, false)
+      }
       Json.obj(
         "type"       -> Json.jString("object"),
         "properties" -> Json.obj(
-          "columns" -> Json.obj(
-            "type"        -> Json.jString("array"),
-            "prefixItems" -> Json.array(cols: _*),
-            "minItems"    -> Json.jNumber(n),
-            "maxItems"    -> Json.jNumber(n)),
-          "rows"    -> Json.obj("type" -> Json.jString("array"), "items" -> rowSchema)),
-        "required"   -> Json.array(Json.jString("columns"), Json.jString("rows")),
+          Wire.Name     -> Json.obj("const" -> Json.jString(name)),
+          Wire.Type     -> Json.obj("const" -> Json.jString(columnType(ty, path))),
+          Wire.Nullable -> Json.obj("const" -> Json.jBool(isNull))),
+        "required"   -> Json.array(Json.jString(Wire.Name), Json.jString(Wire.Type), Json.jString(Wire.Nullable)),
         "additionalProperties" -> Json.jBool(false))
     }
 
-    /** The column descriptor's `type`: the unqualified Ermine name of the
-      * column type with `Nullable` unwrapped.  Nullability stays visible in
-      * the row schema (an `anyOf` with null), so this is a label for the
-      * client's formatter, not a second source of truth. */
-    private def columnType(t: Type): String = resolve(t) match {
-      case Type.Nullable(u)        => columnType(u)
-      case Type.Con(_, g, _, _)    => g.string
-      case u                       => renderType(u)
-    }
+    /** The column descriptor's `type` (`Nullable` already unwrapped by the
+      * caller; nullability is the descriptor's own `nullable` flag): the
+      * field type's `PrimT` -- `Type.primTypes`, the table `field`
+      * declarations are checked against -- spelled by `Wire.columnType`,
+      * which is how the document writer spells a header's `PrimT`.  So the
+      * two sides share one spelling rather than agreeing on names.  A type
+      * with no `PrimT` cannot be a declared field; the refusal is defensive. */
+    private def columnType(t: Type, path: String): String =
+      Type.primTypes.get(resolve(t)) match {
+        case Some(p) => Wire.columnType(p)
+        case None    => reject(path, "a relation column must have one of the column types " +
+                                     Wire.columnTypes.mkString(", ") + " (or Nullable of one), not " + renderType(t))
+      }
 
     // -- data -------------------------------------------------------------
 
@@ -483,7 +650,13 @@ object Schema {
     * with its arguments appended, sanitised to `[A-Za-z0-9_.]`.  `data Tree
     * a` at `Int` in module `Test` is `Test.Tree_Int`.  Structural types
     * (`Maybe`, `List`, records, tuples) never get a key -- they are inlined,
-    * so only a `data` instantiation can be recursive. */
+    * so only a `data` instantiation can be recursive.
+    *
+    * A type VARIABLE is spelled `_` whatever it is called (J3a): the only
+    * variables an export survives are row parameters left abstract, which
+    * reach nothing but a relation's generic arm, so `TableProps r`,
+    * `TableProps s` and the `r` of an enclosing `data Page r = Page
+    * (TableProps r)` are one schema and get one key, `Test.TableProps__`. */
   def defName(g: Global, args: List[Type]): String =
     sanitise(g.module + "." + g.string + args.map(a => "_" + keyOf(a)).mkString)
 
@@ -491,7 +664,7 @@ object Schema {
     case (Type.Con(_, g, _, _), as)  => (g.string :: as.map(keyOf)).mkString("_")
     case (ProductT(_, n), as)        => ("Tuple" + n :: as.map(keyOf)).mkString("_")
     case (ConcreteRho(_, fs), _)     => ("Row" :: fs.toList.map(_.string).sorted).mkString("_")
-    case (VarT(v), _)                => v.name.map(_.string).getOrElse("_")
+    case (VarT(_), _)                => "_"
     case (Arrow(_), as)              => ("Fun" :: as.map(keyOf)).mkString("_")
     case (other, _)                  => "T"
   }
@@ -519,6 +692,16 @@ object Schema {
     case (_: Exists, _)             => "exists"
     case (_: Part, _)               => "<partition>"
     case (other, _)                 => other.toString
+  }
+
+  private def renderKind(k: Kind): String = k match {
+    case Rho(_)            => "rho"
+    case Star(_)           => "*"
+    case ArrowK(_, i, o)   =>
+      (i match { case _: ArrowK => "(" + renderKind(i) + ")"; case _ => renderKind(i) }) + " -> " + renderKind(o)
+    case Constraint(_)     => "constraint"
+    case VarK(_)           => "an unresolved kind"
+    case other             => other.toString
   }
 
   private def paren(t: Type): String = {
