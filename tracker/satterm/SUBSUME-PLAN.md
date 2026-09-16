@@ -90,3 +90,8 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   report §7 "Review fixes"). Key correction for S2: the `Untouched` age-stamp idea would ACCEPT an escaping
   skolem; only a content-based (re-stamp-on-substitute) restriction is licensed, and S1a licenses no asymptotic
   improvement to :648. S1a reviewer re-checking the four findings. S1b fixes in flight. S0 still running.
+- 2026-09-16 ~18:15: S1b fixes applied: +`budgetSP_terminates_of_buildQueue`, +`runsP_noAliasChain` (46 decls,
+  build 873, audit 4735/0); `runSP_*` soundness family recorded as an OPEN item (still carries `rowSoundBare =
+  false`, which the shipped defaults violate — S2 must not cite it at the defaults); escWalk scope, env-bound
+  wording, blow-up site (:313-318), README looptrace row corrected; report §8 = reviewer's signed answer. S1b
+  reviewer re-checking. S0 still running.
