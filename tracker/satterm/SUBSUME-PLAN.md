@@ -71,3 +71,10 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   the walk follows no binding). Answer: loop BOUNDED, rest of `Subst.solve` YES, post-solve row fragment yes
   (escape walk a theorem; `SigEntail.enforce` not covered). Reports S0 "landed mid-write": check runs 0.06 s,
   property runs it 100×; :648+:365 ~2 % of the pathological CPU. S1b reviewer launched (Opus).
+- 2026-09-16 ~17:30: S1a REVIEW = FIX-THEN-LAND (`SUBSUME-STAGE1A-REVIEW.md`; reviewer re-ran: build 872,
+  audit 4936/0, 55 axiom prints standard, 4 vacuity mutations all fail). Lean sound and unweakened; four PROSE
+  fixes: (1) `Untouched` age-stamp discharge is false (instantiateType :254 rewrites every value in place) — an
+  age-stamped skip could ACCEPT an escaping skolem; (2) cost theorem bounds node visits, not time; (3) narrow the
+  "X unsound for the kind half" claim; (4) escs is live at Subst.scala:365-367, not covered by verdict_eq.
+  Reviewer's conclusion for S2: S1a licenses NO asymptotic improvement to :648; its deliverable is the proof
+  that making :648 cheaper cannot be the fix. Findings sent back to the S1a implementer (same agent).
