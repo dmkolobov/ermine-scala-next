@@ -169,7 +169,32 @@ object RecordMap extends scala.collection.MapFactory[RecordMap] {
                                   values: ValueSeq[B])
       extends RecordMap[A, B] {
 
-    def get(key: A): Option[B] = keyCache get key map (indexValueSeq(values, _))
+    // Scala 3 inference bug, found by stage J3b, fixed by the explicit `[B]`.
+    // `indexValueSeq`'s type parameter appears only under `ValueSeq`, which is
+    // `Array[AnyRef]` whatever it is, so nothing constrains it from the argument,
+    // and `map`'s own result type is still being inferred so nothing is pushed in
+    // either: it was solved as `Nothing` and the `asInstanceOf` compiled to
+    // `checkcast scala/runtime/Nothing$`, so EVERY successful lookup threw a
+    // ClassCastException.  `iterator` below is fine (its declared
+    // `Iterator[(A, B)]` fixes the parameter).
+    //
+    // THE BLAST RADIUS IS THE RELATIONAL ENGINE, not just JSON.  `get` is the
+    // primitive behind `apply`, `contains`, `getOrElse` AND `Map.equals` -- and
+    // 2.13's `Map.equals` CATCHES the ClassCastException and answers `false`, so
+    // two equal records that came out of a SQL scan compared UNEQUAL, silently.
+    // That disabled `relational.uniqSorted` / `uniq` (`relational/package.scala`
+    // 35-58, both spelled `r == now` / `m contains rest`) and any `Set[Record]`
+    // over scanned records; this line restores record equality and therefore
+    // duplicate removal.  It is a wrong-to-right BEHAVIOUR CHANGE whose real gate
+    // is a full `core/test`, not the JSON suites.
+    //
+    // Nor was the JSON writer the first caller: `Op.eval` (`Op.scala:22`) indexes
+    // a record by name and `SqlScanner.scala:581` applies it to scanned records
+    // (`SqlScanner.scala:380` and `:424-425` build `RecordMap`s too).  Those paths
+    // were latently broken on Scala 3 and are fixed here; they simply had no
+    // Scala 3 coverage.  The 2.11 branch's `RecordMap` is a different file and
+    // most likely infers `B` correctly there: check before porting this line.
+    def get(key: A): Option[B] = keyCache get key map (i => indexValueSeq[B](values, i))
 
     def iterator: Iterator[(A, B)] =
       keyCache.iterator map { case (k, i) => (k, indexValueSeq(values, i)) }
