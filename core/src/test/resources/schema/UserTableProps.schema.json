@@ -1,0 +1,232 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$id" : "ermine:Test/TableProps r",
+  "$ref" : "#/$defs/Test.TableProps__",
+  "$defs" : {
+    "Test.TableProps__" : {
+      "type" : "object",
+      "properties" : {
+        "title" : {
+          "type" : "string"
+        },
+        "rows" : {
+          "type" : "object",
+          "properties" : {
+            "kind" : {
+              "const" : "inline"
+            },
+            "columns" : {
+              "type" : "array",
+              "items" : {
+                "type" : "object",
+                "properties" : {
+                  "name" : {
+                    "type" : "string"
+                  },
+                  "type" : {
+                    "enum" : [
+                      "Bool",
+                      "Byte",
+                      "Date",
+                      "Double",
+                      "GUID",
+                      "Int",
+                      "Long",
+                      "Short",
+                      "String",
+                      "Timestamp"
+                    ]
+                  },
+                  "nullable" : {
+                    "type" : "boolean"
+                  }
+                },
+                "required" : [
+                  "name",
+                  "type",
+                  "nullable"
+                ],
+                "additionalProperties" : false
+              }
+            },
+            "rows" : {
+              "type" : "array",
+              "items" : {
+                "type" : "array",
+                "items" : {
+                  "anyOf" : [
+                    {
+                      "type" : "string"
+                    },
+                    {
+                      "type" : "number"
+                    },
+                    {
+                      "type" : "boolean"
+                    },
+                    {
+                      "type" : "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "rowCount" : {
+              "type" : "integer",
+              "minimum" : 0
+            }
+          },
+          "required" : [
+            "kind",
+            "columns",
+            "rows",
+            "rowCount"
+          ],
+          "additionalProperties" : false
+        },
+        "detail" : {
+          "oneOf" : [
+            {
+              "type" : "object",
+              "properties" : {
+                "kind" : {
+                  "const" : "inline"
+                },
+                "columns" : {
+                  "type" : "array",
+                  "items" : {
+                    "type" : "object",
+                    "properties" : {
+                      "name" : {
+                        "type" : "string"
+                      },
+                      "type" : {
+                        "enum" : [
+                          "Bool",
+                          "Byte",
+                          "Date",
+                          "Double",
+                          "GUID",
+                          "Int",
+                          "Long",
+                          "Short",
+                          "String",
+                          "Timestamp"
+                        ]
+                      },
+                      "nullable" : {
+                        "type" : "boolean"
+                      }
+                    },
+                    "required" : [
+                      "name",
+                      "type",
+                      "nullable"
+                    ],
+                    "additionalProperties" : false
+                  }
+                },
+                "rows" : {
+                  "type" : "array",
+                  "items" : {
+                    "type" : "array",
+                    "items" : {
+                      "anyOf" : [
+                        {
+                          "type" : "string"
+                        },
+                        {
+                          "type" : "number"
+                        },
+                        {
+                          "type" : "boolean"
+                        },
+                        {
+                          "type" : "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "rowCount" : {
+                  "type" : "integer",
+                  "minimum" : 0
+                }
+              },
+              "required" : [
+                "kind",
+                "columns",
+                "rows",
+                "rowCount"
+              ],
+              "additionalProperties" : false
+            },
+            {
+              "type" : "object",
+              "properties" : {
+                "kind" : {
+                  "const" : "deferred"
+                },
+                "columns" : {
+                  "type" : "array",
+                  "items" : {
+                    "type" : "object",
+                    "properties" : {
+                      "name" : {
+                        "type" : "string"
+                      },
+                      "type" : {
+                        "enum" : [
+                          "Bool",
+                          "Byte",
+                          "Date",
+                          "Double",
+                          "GUID",
+                          "Int",
+                          "Long",
+                          "Short",
+                          "String",
+                          "Timestamp"
+                        ]
+                      },
+                      "nullable" : {
+                        "type" : "boolean"
+                      }
+                    },
+                    "required" : [
+                      "name",
+                      "type",
+                      "nullable"
+                    ],
+                    "additionalProperties" : false
+                  }
+                },
+                "token" : {
+                  "type" : "string",
+                  "minLength" : 1
+                },
+                "expires" : {
+                  "type" : "string",
+                  "format" : "date-time"
+                }
+              },
+              "required" : [
+                "kind",
+                "columns",
+                "token",
+                "expires"
+              ],
+              "additionalProperties" : false
+            }
+          ]
+        }
+      },
+      "required" : [
+        "title",
+        "rows",
+        "detail"
+      ],
+      "additionalProperties" : false
+    }
+  }
+}

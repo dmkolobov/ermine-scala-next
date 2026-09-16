@@ -69,7 +69,9 @@ trait JsonBuilder[J] {
   *    are NAMED (`C { f : t, .. }`) -> an object keyed in declaration
   *    order, with a `"tag"` key first when the type has more than one
   *    constructor and no tag when it has exactly one (the props shape,
-  *    design note 3.1b); a named field whose DECLARED type is `Maybe a`
+  *    design note 3.1b) -- a field NAMED `tag` in a type with more than one
+  *    constructor is an encode error, since it would overwrite the
+  *    discriminator; a named field whose DECLARED type is `Maybe a`
   *    and whose value is `Nothing` is OMITTED, and `Just x` gives `x`.
   *    A positional constructor -> `{"tag": C, "args": [...]}`.  Which of
   *    these is decided by the `DataConDecl` registry; a constructor the
@@ -382,6 +384,14 @@ object Encode {
         if c.fields.length == args.length && c.fields.nonEmpty && c.fields.forall(_._1.isDefined)
       } yield (d.constructors.length > 1, c.fields.map { case (n, t) => (n.get, t) })
       named match {
+        // A field named `tag` in a type with SEVERAL constructors would
+        // overwrite the discriminator (the object would carry two "tag" keys,
+        // of which argonaut keeps the last), so the document is refused rather
+        // than written wrong.  The schema exporter and the params decoder
+        // refuse the same declaration, at the field (J2a review finding 2).
+        case Some((tagged, fields)) if tagged && fields.exists(_._1 == "tag") =>
+          Left(Error(path + ".tag", "the constructor " + g.string + " has a field named tag, which " +
+                                    "collides with the discriminator of a type with several constructors"))
         case Some((tagged, fields)) =>
           // A Maybe field is an OPTIONAL key: `Nothing` drops out of the
           // object rather than encoding as null.  Only the DECLARED type
@@ -439,8 +449,12 @@ object Encode {
 
   def rejections(decl: DataConDecl): List[Rejected] =
     decl.constructors.flatMap { c =>
-      c.fields.zipWithIndex.flatMap { case ((_, t), i) =>
-        reject(t).map(Rejected(c.name, i, t, _))
+      c.fields.zipWithIndex.flatMap { case ((n, t), i) =>
+        val tagClash =
+          if (decl.constructors.length > 1 && n == Some("tag"))
+            Some("a field named tag collides with the discriminator of a type with several constructors")
+          else None
+        tagClash.orElse(reject(t)).map(Rejected(c.name, i, t, _))
       }
     }
 
