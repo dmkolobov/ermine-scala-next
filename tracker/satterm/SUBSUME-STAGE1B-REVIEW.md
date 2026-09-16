@@ -212,8 +212,9 @@ Three overstatements, all in the same place:
 
 **Failure scenario.** S2 cites `escWalk_length_le` as licence that "the loop's share of `:648`
 is already linear, so only the rest of the map needs the memo table" (§6 item 1 says almost
-this), skips the `kindVars` half, and memoises the wrong traversal — the one S0 measured at
-2,044 ms rather than the one at 3,457 ms.
+this), skips the `kindVars` half, and memoises the wrong traversal — on S0's CORRECTED
+nanosecond figures the `fskvs` half is 21.1 s and the `kindVars` half 24.3 s
+(`SUBSUME-STAGE0.md` §0.2), not 2,044 ms and 3,457 ms.
 
 **Fix.** Say in both the docstring and §5 that `escWalk` is the `fskvs` half ONLY, that the
 theorem bounds the answer's size and not the walk's cost, and that the `kindVars` half is

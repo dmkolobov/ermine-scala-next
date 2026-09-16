@@ -222,8 +222,9 @@ factor and, at `minus` nodes, a `|binders| · log |seen|` one. The report DOES d
 *Failure scenario.* S0 or S2 reads "a constant factor of ONE unification step", concludes `:648`
 cannot be a hot spot, and stops instrumenting it — when a bound on node visits does not by itself
 forbid `:648` being several times more expensive per node than the substitution passes it is
-compared with. (As it happens S0's independent measurement vindicates the conclusion — `:648` is
-2.2 s of a 184 s suite — so this is a wording fix, not a result change.)
+compared with. (S0's independent measurement has since been CORRECTED — `:648` is 45 s of a 184 s
+suite, 25 %, not 2.2 s (`SUBSUME-STAGE0.md` §0.2) — which makes this wording fix MORE
+important, not less: a bound on node visits must not be read as a bound on time.)
 
 *Fix.* In §0 bullet 3, the H3 row, and the README row, say "node visits, not time" and name the two
 omissions (`Vars.--`'s immutable-`Set` operations; `Vars.filter`'s `Vector` materialisation) in the
@@ -258,9 +259,10 @@ the prose that overreaches).
 `val hescs = fskvs(hm.types -- mask).filter(ss(_))` at `:365` — and at `:367` it **prints**
 `hescs.mkString(", ")`. The report's "the elements are dead, the verdict is all that reaches the
 program" is true of `:648` and false of `:365`. The only warning in the report is item 2's
-parenthetical "other callers are not covered", which does not name the site. S0's measurements make
-this urgent rather than pedantic: in the 12-property suite `:365` costs **3.9 s** against `:648`'s
-**2.2 s**, and two of its five RUNNABLE stack samples land there — so `:365` is the site S2 will be
+parenthetical "other callers are not covered", which does not name the site. S0's CORRECTED measurements make
+this urgent rather than pedantic: in the 12-property suite `:365` costs **3.7 s** against `:648`'s
+**45 s** — the ordering is the OPPOSITE of the figure this review was given
+(`SUBSUME-STAGE0.md` §0.2) — and two of the six RUNNABLE stack samples land there — so `:365` is the site S2 will be
 most tempted to transform, and it is the one where a verdict-only equivalence is not enough.
 
 *Fix.* Name `Subst.scala:361-367` explicitly in §4 (both in the opening "elements are dead" sentence
