@@ -891,3 +891,92 @@ nondeterminism is parked by the user, `-Dermine.solveDet` stays default OFF, and
    deadline hit — is gone with the `Walk` model (§3). **A flag-OFF run of the suite confirms
    the facility is silent and the result unchanged**: `<s>/flagoff.log`, zero instrumentation
    records, `Total 12, Failed 0`.
+
+---
+
+## Landing gates (orchestrator's gate run, 2026-09-16)
+
+Run by the orchestrator on the tree being landed — `~/research/ermine/ermine-scala-wt-subsume-s0`
+at **00abe6e6** (branch `subsume-s0`, merged with `subsume-termination`) — with the pre-change
+tree `~/research/ermine/ermine-scala-wt-subsume` at **7f2a00a5** (branch `subsume-termination`,
+Scala byte-identical to `scala3-migration` 478a369c) as the A side of every differential. The
+only Scala difference between the two trees is `Subst.scala` **+157 / −2**, all of it behind
+`-Dermine.subsumeTrace` (**default OFF**). Logs, traces and snapshots are under
+`<g>` = `/home/dmitry/research/ermine/scratch-subsume/gates-s0/`. Nothing was committed, and the only file either tree gained is this section: `tracker/repl-classpath.txt` was regenerated from each worktree's own `target/ermine-classpath` per GATE-POLICY's worktree rule and **restored afterwards** (`git checkout`), so both trees are otherwise clean and `find core -name '*.ei'` is 0 on both.
+
+**Tier 1 was run in full even though S0 ships no behaviour change**, because `Subst.scala` is in
+the diff and the policy keys Tier 1 on the file, not on the intent.
+
+| # | gate | command | result | log |
+|---|---|---|---|---|
+| a | compile (Tier 0) | `sbt core/compile core/copyResources` | **rc=0**, `[success] Total time: 2 s` + `0 s` (tree already built at 17:40; `SubsumeTrace$.class` present in `core/target/scala-3.3.8/classes`) | `<g>/compile-s0.log` |
+| b | model agreement (Tier 0) | `sbt -Dermine.looptrace=<wt-json-wrappers>/tracker/lean/.lake/build/bin/looptrace 'core/testOnly *TestLoopTrace'` | **720 solves / 720 segments / 720 agree**; `skipped=0 hashdiff=0 eqdiff=0 nonpart=0 rejected=36 fuel=0`; both negative controls firing (id base +1: **46 of 720**; `--flags=nongen`: **58 of 720**); `Passed: Total 3, Failed 0, Errors 0, Passed 3`. Identical to §6.1's baseline and to `GATE-POLICY.md:14` | `<g>/looptrace-test.log` |
+| c | corpus verdicts (Tier 0) | `tracker/tools/corpus-run.sh --batch <g>/corpus-s0` then `corpus-verdicts.py` | **89 LOADED / 79 REJECTED / 0 UNKNOWN over 168**; the per-file verdict **and message** listing `diff`s against S0's baseline listing (`scratch-subsume/s0/corpus-base`) at **0 lines** — byte-identical, no file differs | `<g>/corpus-s0.log`, `<g>/verdicts-s0.txt`, `<g>/verdicts-baseline.txt`, `<g>/verdicts-diff.txt` (empty) |
+| d | REPL smoke (Tier 0) | `tracker/tools/repl-smoke.sh` | **8 / 8 groups PASS, 66 checks, 0 FAIL** — the recorded baseline (`E11a-CANON.md:343`, "8 groups / 66 checks") | `<g>/repl-smoke.log` |
+| d | LSP smoke (Tier 0) | `tracker/tools/lsp-smoke.sh` | **`PASS lsp (573 checks)`**, rc=0. **The brief's "577" is not this tree's number** — see the note below; the pre-change tree gives the identical **573** | `<g>/lsp-smoke.log`, control `<g>/lsp-smoke-A.log` |
+| e | L2 corpus differential (Tier 1) | `LOOPTRACE_BIN=<wt-json-wrappers>/…/looptrace LOOPTRACE_PAR=3 tracker/tools/looptrace-corpus.sh <g>/looptrace` | **18 groups, 3,210,869 segments, `agree` = `segments` on EVERY group**; per group `skip=0`, `hashdiff=0`, `eqdiff=0`, `fuel=0`, `rc=0`, `timeouts=0`, `dropped=0`; `incomplete` 1,905,712 / 1,905,712 with 0 dropped. Wall 20 min (`LOOPTRACE_PAR=3`), model binary from `ermine-scala-wt-json-wrappers` | `<g>/looptrace-corpus.log`, `<g>/looptrace/results.txt` |
+| f | trace A/B, all record kinds (Tier 1) | `tracker/tools/trace-ab.py` on `boot` and `Wide`, both sides `-Dermine.loadInSeries=true`, identical JVM flags | **IDENTICAL on both groups**: `boot` 54,209 / 54,209, `Wide` 116,420 / 116,420, `sinmoved=0`, exit **0**, **0 differing segments** across all sixteen record kinds | `<g>/trace-ab-boot.txt`, `<g>/trace-ab-Wide.txt`, traces `<g>/trace-A|B/`, normalised `<g>/norm-A|B/` |
+| g | interface sweep (Tier 1) | `tracker/tools/ei-diff.sh --batch --snapshot <g>/ei-{A,B} "-Dermine.loadInSeries=true"`, one side per tree, then byte-compare + `ei-classify.py` | **274 interfaces on each side, 0 present on one side only, 0 of 274 differing by `cmp`**; `ei-classify.py`: `0 of 274 interfaces differ`, `bindings by verdict: {'identical': 3523}` | `<g>/ei-A.log`, `<g>/ei-B.log`, `<g>/ei-names.diff` (empty), `<g>/ei-content.diff`, `<g>/ei-classify.txt` |
+| h | G1 signature drift (Tier 1) | `tracker/tools/g1-validate.sh` | **rc=0, 9 / 9 PASS, 0 FAIL** — seven mutation fixtures, the two-boot self-agreement (`129 files, 1447 signatures, EQUIVALENT`) and the hard baseline-drift check (`no drift from tracker/g1-baseline`). The checked-in `tracker/g1-baseline` was NOT re-cut | `<g>/g1-validate.log` |
+
+### Notes on the two figures that are not the ones the brief predicted
+
+**`lsp-smoke.sh` 573, not 577 — NOT a regression.** Every recorded run in the trackers since LSP
+6.2c is **573** (`E11a-CANON.md:344`, `:461`, `:570`; `E11a-REVIEW.md:535`, `:571`;
+`LSP-6.2c-HEADS.md:235`, `:514`; `LSP-6.2c-REVIEW.md:476`; `E11c-SOLVEDET.md:403`). The 577
+appears once, in `tracker/PROMPT-subsume-termination.md:82`, in the **Tier 2 adoption** list,
+immediately before "*and* a new smoke case that opens the B1 program in the resident session" —
+i.e. 577 is the target **after a fix stage adds that fixture**. S0 adds no fixture, and the
+control settles it: the **pre-change tree scores the same 573** (`<g>/lsp-smoke-A.log`). Green.
+
+**`trace-ab.py` needs the worktree path normalised, and that is what makes it IDENTICAL.** Run
+raw, the two traces differ on 46,223 of `boot`'s 54,209 segments — and the only differing field
+is the **absolute path of the tree** inside every `sin`/`solve`/`rsound` location record
+(`…/ermine-scala-wt-subsume/core/target/…` against `…/ermine-scala-wt-subsume-s0/core/target/…`),
+because the stdlib is loaded from each worktree's own `target`. With
+`sed 's|/home/dmitry/research/ermine/<tree>/|<TREE>/|g'` applied to both sides, **every segment of
+both groups is IDENTICAL**. Two controls back this up: the record-kind census is equal
+side-for-side over both groups (`solve`/`sin`/`rsound` 170,629 each, `learn` 62,300, `slbl` 40,501,
+`svar` 27,497, `step` 20,936, `ramb` 19,992, `sat` 18,469, `scon` 16,861, `inpart` 14,003, `in`
+13,652, `concr` 3,244, `splice` 2,974, `detm` 2,974, `ex` 2,467 — all sixteen kinds), and a
+**same-build control** (the pre-change tree's `boot` traced twice) is **54,209 IDENTICAL,
+`sinmoved=0`** — the method's noise floor on this group is zero (`<g>/trace-ab-control.txt`).
+
+### Per-group detail of gate (e), `<g>/looptrace/results.txt`
+
+| group | files | segments | agree | skip | model |
+|---|---|---|---|---|---|
+| boot | 0 | 54,209 | 54,209 | 0 | 1.7 s |
+| top | 15 | 92,747 | 92,747 | 0 | 3.6 s |
+| Ai | 11 | 83,964 | 83,964 | 0 | 30 s |
+| Wide | 12 | 116,420 | 116,420 | 0 | 572 s |
+| Wide-shouldfail | 4 | 55,787 | 55,787 | 0 | 1.9 s |
+| Present | 14 | 131,406 | 131,406 | 0 | 64 s |
+| Present-shouldfail | 7 | 59,503 | 59,503 | 0 | 1.8 s |
+| Time | 12 | 125,386 | 125,386 | 0 | 136 s |
+| Time-shouldfail | 5 | 55,908 | 55,908 | 0 | 1.9 s |
+| Algebra | 13 | 101,039 | 101,039 | 0 | 71 s |
+| Algebra-shouldfail | 7 | 55,401 | 55,401 | 0 | 2.1 s |
+| Lang | 15 | 94,542 | 94,542 | 0 | 12 s |
+| Lang-shouldfail | 8 | 58,789 | 58,789 | 0 | 1.5 s |
+| shouldfail | 50 | 56,291 | 56,291 | 0 | 1.8 s |
+| bugs | 2 | 54,245 | 54,245 | 0 | 1.6 s |
+| guide | 2 | 54,254 | 54,254 | 0 | 1.5 s |
+| shouldfail-controls | 7 | 55,266 | 55,266 | 0 | 1.6 s |
+| incomplete (per file) | 35 | 1,905,712 | 1,905,712 | 0 | 125 s |
+| **total** | | **3,210,869** | **3,210,869** | **0** | |
+
+`.ei` hygiene: every interface written under `core/` by these gates was deleted afterwards —
+`find core -name '*.ei'` is **0** on both trees.
+
+### Verdict
+
+**GREEN. No gate deviates from its expected number**, and the two figures that differ from the
+brief's prediction are explained above and are not regressions: `lsp-smoke` 573 is this tree's
+recorded baseline on BOTH trees (the brief's 577 is its Tier-2 adoption target, which assumes a
+smoke fixture S0 does not add), and `trace-ab`'s raw cross-worktree difference is the embedded
+absolute tree path, which normalises to **0 differing segments across all sixteen record kinds**,
+against a same-build control whose noise floor is zero. The instrumentation is inert with the
+flag off, exactly as §6 claims: identical verdicts, identical published interfaces, identical
+traces, identical inferred signatures, and the Lean model still reproduces every one of
+3,210,869 solves.
