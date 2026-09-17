@@ -290,7 +290,9 @@ object Subst {
             tml.die("error: skolem variables escape:", text("Type would have been:") :/+: prettyType(t, -1))
       }
 
-      val hescs = fskvs(hm.types -- mask).filter(ss(_))
+      // S0 diagnosis: the OTHER whole-`hm.types` walk on this path (`Type.fskvs`),
+      // timed only when `-Dermine.subsumeTrace=true`; `cse` is `body` otherwise.
+      val hescs = SubsumeTrace.cse(hm)(fskvs(hm.types -- mask).filter(ss(_)))
       if (hescs nonEmpty)
         tml.die("error: skolem variables escape in environment", hescs.mkString(", "))
     }
@@ -539,6 +541,10 @@ object Subst {
    * flag set by an enclosing signature check would wrongly claim it.  Under `off` nothing
    * reads it.  See SIG-1-SURVEY.md's caller table. */
   def subsumeType(e1: Type, e2: Type, sig: Option[SigEntail.Site] = None)(implicit hm: SubstEnv, su: Supply, tml: Located): (Type, Type) = {
+    // S0 DIAGNOSIS (tracker/satterm/briefs/brief-S0.md on scala3-migration), default OFF:
+    // `0L` and no work unless `-Dermine.subsumeTrace=true`.  See `object SubsumeTrace` at
+    // the foot of this file.
+    val stid = SubsumeTrace.enter(hm, sig)
     val (sks, sts, qz, r1) = unbind(Skolem, e1)
     val (tks, tts, pz, r2) = unbind(Free, e2)
     val r3 = unifyType(r1, r2)
@@ -573,7 +579,9 @@ object Subst {
     restrictTypes(tts)
     val skss = sks.toSet
     val stss = sts.toSet
-    val escs = hm.fskvs.filter(v => stss.contains(v)) ++ hm.kindVars.filter(skss(_))
+    SubsumeTrace.atEscape(stid, sks, sts, hm)   // S0 diagnosis; no-op unless -Dermine.subsumeTrace=true
+    val escs = SubsumeTrace.phaseFskvs(hm.fskvs.filter(v => stss.contains(v))) ++
+               SubsumeTrace.phaseKindVars(hm.kindVars.filter(skss(_)))
     if (escs nonEmpty)
       tml.die(vsep(List(
         text("type t1 did not subsume t2: "),
@@ -2053,4 +2061,165 @@ object Subst {
       if (publishing) deleteTautologies(pruned, pubExts) else (pruned, pubExts)
     Exists(l, keptExts, kept)
   }
+}
+
+
+/* ========================================================================== *
+ * S0 DIAGNOSTIC INSTRUMENTATION -- `subsume-termination` programme, stage S0
+ * (`tracker/satterm/briefs/brief-S0.md` on `scala3-migration`; this branch has
+ * no `tracker/` tree).  MEASUREMENT ONLY: nothing here can change a verdict,
+ * and the stage's brief forbids a fix.
+ *
+ * BACK-PORT NOTE (backport/SUBSUME-2.11.md).  This is `scala3-migration`
+ * bef7e7a7's `object SubsumeTrace`, with ONE dialect change: Scala 3's
+ * `inline def f(inline body: A)` has no 2.11 equivalent, so every entry point
+ * that WRAPS an expression is an `@inline def` with a BY-NAME parameter.  The
+ * guard is the same -- the first act of each is `if (!enabled)` -- and the
+ * timing and the records are byte-identical; what 2.11 cannot do is elide the
+ * by-name thunk when the flag is OFF, so each of the THREE wrapped call sites
+ * -- `cse` (:295) and `phaseFskvs` / `phaseKindVars` (:583-584) -- allocates
+ * one `Function0` per call.  `enter` (:547) and `atEscape` (:582) take strict
+ * parameters and allocate nothing (P211 review F-5).  That cost is ACCEPTED
+ * here: this is a diagnostic, the allocation is a few nanoseconds against a
+ * walk measured in hundreds of microseconds, and the flag-OFF full `core/test`
+ * is in the report.
+ *
+ * DEFAULT OFF, the `RowTrace.enabled` idiom: `enabled` is a `val` read once
+ * from `-Dermine.subsumeTrace`, output goes to `-Dermine.subsumeTrace.out=
+ * <file>` (stderr when unset).
+ *
+ * TIMING IS IN NANOSECONDS AND ACCUMULATED (S0 review, finding 1).  The first
+ * version of `phase` logged `(nanos / 1000000L)` per call and the report summed
+ * those integers; 96.7 % of calls are sub-millisecond, so each contributed 0 and
+ * every `:648` total was a floor-sum understating the true cost by about an
+ * order of magnitude.  There is now one `AtomicLong` of NANOS and one of MAX
+ * NANOS per phase, nothing is logged inside a timed region, and the totals ride
+ * on the `escape` record next to `cseNanos`.
+ *
+ * WHAT IT MEASURES AND WHICH HYPOTHESIS EACH NUMBER SEPARATES (H1/H2/H3 of
+ * `tracker/PROMPT-subsume-termination.md`):
+ *   types/kinds   the size of the substitution the escape check walks.  A size
+ *                 still GROWING from call to call is H3; a fixed size with one
+ *                 walk that never returns is H1.
+ *   sks/sts       the skolems `escs` is filtered by.
+ *   fskvsNs/kvNs  the TRUE cost of the two halves of the escape check (here
+ *                 `Subst.scala:578-579`; `:648` on scala3-migration), summed in
+ *                 nanos, with their per-call maxima.
+ *   cseNs         the same for `checkSkolemEscape`'s whole-environment walk
+ *                 (here `:295`; `:365` on scala3-migration).
+ *   the budget counters, so that "does this path exhaust a budget?" is answered
+ *   by a number rather than by reading the solver.
+ *
+ * The DAG-time cost model that produced `treeKV`/`dagKV`/`depthKV`/`cyclicKV`
+ * (0 cycles in 984,400 walks, tree/DAG ratio <= 4.39) is NOT here, exactly as
+ * on scala3-migration: it was 110 lines of hand-copied `Type.vars`, nothing
+ * pinned it, and its answers are already recorded and reviewer-confirmed.
+ * ========================================================================== */
+object SubsumeTrace {
+  /** `-Dermine.subsumeTrace=true`.  Read once, like `RowTrace.enabled`. */
+  val enabled: Boolean = System.getProperty("ermine.subsumeTrace", "false") == "true"
+  private val path: String = System.getProperty("ermine.subsumeTrace.out", "")
+
+  private lazy val w: java.io.PrintWriter =
+    if (path.isEmpty) new java.io.PrintWriter(new java.io.OutputStreamWriter(System.err), true)
+    else new java.io.PrintWriter(new java.io.BufferedWriter(new java.io.FileWriter(path, true)), true)
+
+  private val calls = new java.util.concurrent.atomic.AtomicLong(0L)
+  private val t0 = System.nanoTime
+
+  /** The escape check's two halves and `checkSkolemEscape`'s walk, in NANOS, plus
+    * the worst single call of each.  Never read by the compiler. */
+  private val fskvsNanos = new java.util.concurrent.atomic.AtomicLong(0L)
+  private val fskvsMax   = new java.util.concurrent.atomic.AtomicLong(0L)
+  private val kvNanos    = new java.util.concurrent.atomic.AtomicLong(0L)
+  private val kvMax      = new java.util.concurrent.atomic.AtomicLong(0L)
+  private val cseCalls   = new java.util.concurrent.atomic.AtomicLong(0L)
+  private val cseNanos   = new java.util.concurrent.atomic.AtomicLong(0L)
+  private val cseMax     = new java.util.concurrent.atomic.AtomicLong(0L)
+
+  private def bump(total: java.util.concurrent.atomic.AtomicLong,
+                   max: java.util.concurrent.atomic.AtomicLong, d: Long): Unit = {
+    total.addAndGet(d)
+    var m = max.get
+    while (d > m && !max.compareAndSet(m, d)) m = max.get
+  }
+
+  def log(s: String): Unit =
+    if (enabled) w.synchronized {
+      w.println(((System.nanoTime - t0) / 1000000L).toString + "\t" + Thread.currentThread.getId + "\t" + s)
+      w.flush()
+    }
+
+  /** One line per `subsumeType` ENTRY, so that "one call that never returns" and
+    * "many calls that each return" -- which produce the SAME jstack -- are told
+    * apart by counting.  `enter` and `escape` records are equal in number in a
+    * run that completes; a growing gap is the signature of a call that hangs. */
+  @inline def enter(hm: SubstEnv, sig: Option[SigEntail.Site]): Long =
+    if (!enabled) 0L else enterSlow(hm, sig)
+
+  private def enterSlow(hm: SubstEnv, sig: Option[SigEntail.Site]): Long = {
+    val id = calls.incrementAndGet()
+    log("enter\tcall=" + id +
+        "\tsig=" + sig.map(s => s.kind + ":" + s.module + "." + s.binding).getOrElse("-") +
+        "\ttypes=" + hm.types.size + "\tkinds=" + hm.kinds.size)
+    id
+  }
+
+  /** The state the escape check in `subsumeType` is about to walk, and the
+    * running nanosecond totals of every walk so far. */
+  @inline def atEscape(id: Long, sks: List[KindVar], sts: List[TypeVar], hm: SubstEnv): Unit =
+    if (enabled) atEscapeSlow(id, sks, sts, hm)
+
+  private def atEscapeSlow(id: Long, sks: List[KindVar], sts: List[TypeVar], hm: SubstEnv): Unit =
+    log("escape\tcall=" + id + "\ttypes=" + hm.types.size + "\tkinds=" + hm.kinds.size +
+        "\tsks=" + sks.size + "\tsts=" + sts.size +
+        "\trowSoundBudgetHits=" + GenRules.rowSoundBudgetHits.get +
+        "\trowSoundNodes=" + GenRules.rowSoundNodes.get +
+        "\tsolveBudgetHits=" + GenRules.solveBudgetHits.get +
+        "\tfskvsNs=" + fskvsNanos.get + "\tfskvsMaxNs=" + fskvsMax.get +
+        "\tkvNs=" + kvNanos.get + "\tkvMaxNs=" + kvMax.get +
+        "\tcseCalls=" + cseCalls.get + "\tcseNs=" + cseNanos.get + "\tcseMaxNs=" + cseMax.get)
+
+  /** `checkSkolemEscape`'s environment walk (`Subst.scala:295` on this branch,
+    * `:365` on scala3-migration): the OTHER whole-`hm.types` traversal the
+    * rejection path runs. */
+  @inline def cse[A](hm: SubstEnv)(body: => A): A =
+    if (!enabled) body
+    else {
+      val t = System.nanoTime
+      val r = body
+      cseCalls.incrementAndGet()
+      bump(cseNanos, cseMax, System.nanoTime - t)
+      r
+    }
+
+  /** Time the FIRST half of the escape check (`hm.fskvs.filter(...)`).  By-name,
+    * evaluated exactly once, in the same order as the unguarded expression.
+    * NOTHING is logged inside the timed region -- that was finding 1's second
+    * defect. */
+  @inline def phaseFskvs[A](body: => A): A =
+    if (!enabled) body
+    else {
+      val t = System.nanoTime
+      val r = body
+      bump(fskvsNanos, fskvsMax, System.nanoTime - t)
+      r
+    }
+
+  /** Time the SECOND half of the escape check (`hm.kindVars.filter(...)`). */
+  @inline def phaseKindVars[A](body: => A): A =
+    if (!enabled) body
+    else {
+      val t = System.nanoTime
+      val r = body
+      bump(kvNanos, kvMax, System.nanoTime - t)
+      r
+    }
+
+  /** One summary line, for a caller that wants the totals without parsing a trace. */
+  def summary: String =
+    "fskvsMs=" + (fskvsNanos.get / 1000000L) + "\tfskvsMaxUs=" + (fskvsMax.get / 1000L) +
+    "\tkindVarsMs=" + (kvNanos.get / 1000000L) + "\tkindVarsMaxUs=" + (kvMax.get / 1000L) +
+    "\tcseCalls=" + cseCalls.get + "\tcseMs=" + (cseNanos.get / 1000000L) +
+    "\tcseMaxUs=" + (cseMax.get / 1000L) + "\tsubsumeCalls=" + calls.get
 }

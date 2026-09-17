@@ -111,15 +111,20 @@ object TestScopes extends Properties("Ermine scoping") {
 
   // -- what still must not parse ----------------------------------------------
 
+  /* THE ONE SITE THAT KEEPS `no` (`backport/SUBSUME-2.11.md`).  Its body is
+   * `forAll(imported) { ... }` and EVERY generated import name must fail; mapping the
+   * first draw to `Proof` would short-circuit the generator and silently drop the other
+   * ninety-nine.  Every other `no(` site on this branch takes no generated input and is
+   * `rejects`. */
   property("a top-level definition still may not shadow an import") =
     forAll(imported) { n =>
       no(sessionProof(implicit s => loadStatements(s"$n = 1", imps))) }
 
   property("let bindings do not leak into the enclosing scope") =
-    no(typeChecks("v = let q = 1 in q", "q", imps))
+    rejects(typeChecks("v = let q = 1 in q", "q", imps))
 
   property("where bindings do not leak into the enclosing scope") =
-    no(typeChecks("v = q where q = 1", "q", imps))
+    rejects(typeChecks("v = q where q = 1", "q", imps))
 
   // -- an import in scope under two names (here: id and id_F) ----------------
 
@@ -128,10 +133,10 @@ object TestScopes extends Properties("Ermine scoping") {
         "Prelude" -> all, "Function" -> ((Some("F"), List[Explicit[Global]](), false)))
 
   property("shadowing may not capture references through another alias (where)") =
-    no(typeChecks("v = id_F 5 where id x = 99", "v", aliasImps))
+    rejects(typeChecks("v = id_F 5 where id x = 99", "v", aliasImps))
 
   property("shadowing may not capture references through another alias (let)") =
-    no(typeChecks("v = let a = id_F 5\n        id x = 99\n    in a", "v", aliasImps))
+    rejects(typeChecks("v = let a = id_F 5\n        id x = 99\n    in a", "v", aliasImps))
 
   property("shadowing an aliased import is fine when no reference is captured") =
     forAll(small) { x =>
@@ -150,7 +155,7 @@ object TestScopes extends Properties("Ermine scoping") {
   // -- data constructors stay unshadowable; ordinary operators do not --------
 
   property("a data constructor operator may not be shadowed") =
-    no(typeChecks("v = let (::) a b = 7 in 1", "v", aliasImps))
+    rejects(typeChecks("v = let (::) a b = 7 in 1", "v", aliasImps))
 
   property("an operator with its own fixity declaration can still be let-bound") =
     forAll(small, small) { (x, y) =>

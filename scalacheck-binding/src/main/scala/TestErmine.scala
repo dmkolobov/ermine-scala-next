@@ -167,9 +167,138 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
     p
   } catch { case _ : Throwable => false: Prop }
 
+  /** Invert a property: the body must FAIL.
+    *
+    * `no` leaves a refuted result *passed* (status `True`), not *proved*, so ScalaCheck keeps
+    * drawing until `minSuccessfulTests` (100).  That is the RIGHT semantics for a body that
+    * consumes generated input -- `no(forAll(g) { ... })`, where every draw must fail -- and it
+    * is the WRONG semantics for a body that takes no input.
+    *
+    * For a DETERMINISTIC refutation use `rejects`, which is proved by one evaluation.
+    *
+    * BACK-PORT NOTE, and it matters for what the change below is WORTH on this branch
+    * (`backport/SUBSUME-2.11.md`).  On `scala3-migration` those hundred draws are a hundred
+    * complete re-checks of the program, each re-reading the module's whole import closure
+    * (~9 s), which is what made the B1 rejection property look like a hang -- 1,099 s to the
+    * second.  HERE THEY ARE NOT, and the reason is NOT `Prop.secure`: that is eager in BOTH
+    * scalacheck versions (`try pv(p) catch ..`, as `TestRunner.scala:50-57` on
+    * `json-encode-2.11` already records).  What differs is how `Properties` STORES a property,
+    * verified in both shipped jars with `javap`:
+    *
+    *   1.11.3  PropertySpecifier.update(String, Prop)                <- BY VALUE
+    *   1.15.4  PropertySpecifier.update(String, Function0[Prop])     <- BY NAME
+    *
+    * So here the whole right-hand side of `property(..) = ..` is evaluated ONCE, where it is
+    * written -- in the suite object's static initialiser -- and the stored `Prop` is a constant
+    * `Result` that the other ninety-nine draws only re-wrap; on `scala3-migration` the by-name
+    * `update` re-evaluates that right-hand side per draw, which is where the 1,099 s went.
+    * `sessionProof`/`sessionProp`/`typeChecks` are ordinary expressions, so on this branch the
+    * check runs ONCE however many tests ScalaCheck asks for.  So `rejects` buys no wall clock
+    * here; what it buys is the same STATUS and the same harness as the Scala 3 branch -- a
+    * refutation reads `OK, proved property` -- and it is already right for the day a suite
+    * defers its property with a lazy `secure` shadow (the `def secure` idiom of the JSON suites
+    * on `json-encode-2.11`, and of `TestRowRefusals` here). */
   def no(p: Prop): Prop = p map { r =>
     r.copy(status = r.status match {case False => True; case _ => False},
            labels = r.labels + "must fail")
+  }
+
+  /** A DETERMINISTIC refutation: the body must fail, and ONE evaluation settles it.
+    *
+    * Same verdict as `no` -- refused is green, accepted/thrown/undecided is red -- but a
+    * refusal maps to `Proof` rather than `True`, and ScalaCheck stops at the first test on a
+    * proved property exactly as it does for `sessionProof`.  Use it wherever the body takes no
+    * generated input; `no` stays for `no(forAll(...))`, where proving the first draw would
+    * silently drop the other ninety-nine.
+    *
+    * WHAT IS LOST, said plainly: a deterministic property run 100 times was run at 100
+    * different `Supply` id bases, and under `no` EVERY one of those hundred had to fail -- so a
+    * refutation that some id order made ACCEPT at one base in a hundred turned the property
+    * red.  `rejects` makes that assertion ONCE PER PROGRAM instead of a hundred times, and
+    * `TestRowRefusals` trades the lost breadth the other way: sixteen fresh id bases over
+    * sixteen DIFFERENT generated programs instead of a hundred bases over one.
+    *
+    * BACK-PORT NOTE: on this branch the lost breadth was never there to lose.  scalacheck
+    * 1.11.3 stores a property BY VALUE (`PropertySpecifier.update(String, Prop)`; see `no`
+    * above), so the hundred draws of a `sessionProof` body were a hundred re-wraps of ONE
+    * evaluation at ONE id base, not a hundred checks.  `TestRowRefusals`' sixteen bases are
+    * therefore a net gain here, not a trade. */
+  def rejects(p: Prop): Prop = p map { r =>
+    r.copy(status = r.status match {case False => Proof; case _ => False},
+           labels = r.labels + "must fail")
+  }
+
+  /** Run `body` on a daemon thread and join it with a deadline; answer what happened.
+    *
+    * The point is to FAIL LOUDLY instead of wedging the run: a check that really did diverge
+    * becomes a red property in bounded time instead of holding a `core/test` thread until
+    * somebody kills the JVM (the `(iso)` idiom, `TestRunner.scala` on `json-encode-2.11`).
+    * The thread is a daemon, so a diverged check cannot keep the JVM alive either.
+    *
+    * The outcome is one of `"refused: <message>"`, `"accepted"`, `"threw <t>"` or
+    * `"did not finish in <ms> ms"`, with the elapsed milliseconds.
+    *
+    * The one leak is the intended one: a genuinely diverged check leaves one spinning daemon
+    * thread for the life of the JVM (no `interrupt()` is attempted, and the checker would not
+    * honour one), which can slow the rest of that run -- but that run is already red. */
+  def bounded(ms: Long)(body: => Unit): (String, Long) = {
+    val answer = new java.util.concurrent.atomic.AtomicReference[String](null)
+    val t0 = System.currentTimeMillis
+    val th = new Thread(new Runnable {
+      def run(): Unit = answer.set(
+        try { body; "accepted" }
+        catch { case e: Death => "refused: " + e.getMessage
+                case e: Throwable => "threw " + e })
+    })
+    th.setDaemon(true)
+    th.setName("ermine-bounded-check")
+    th.start()
+    th.join(ms)
+    (Option(answer.get).getOrElse("did not finish in " + ms + " ms"),
+     System.currentTimeMillis - t0)
+  }
+
+  /** Load a generated module into `s` and say what happened: `"accepted"`, or
+    * `"refused: <message>"`.  Compose with `bounded` for a deadline. */
+  def outcomeOf(moduleName: String, src: String)(implicit s: SessionEnv): String =
+    try { loadNamed(moduleName, src); "accepted" }
+    catch { case e: Death => "refused: " + e.getMessage }
+
+  /** Load a generated module under its OWN name into the session it is handed.  A refusal is
+    * a `Death`, as everywhere else in the fixture -- `bounded` turns it into an outcome
+    * string, and a plain `try` will do where no deadline is wanted.
+    *
+    * WHY A SEPARATE PATH.  `loadStatements` above exists for one program at a time: it names
+    * every case `module Test`, parses it against the session's import environment and calls
+    * `loadModule` directly, and a case loaded into a fresh `mkEnv` re-reads and re-type-checks
+    * the whole import closure (a library boot, tens of seconds).  A generator that wants twenty
+    * cases cannot pay that.  Under its OWN module name a case collides with nothing, so the
+    * cases can all go into ONE warm session and the closure is read once.  `moduleName` must be
+    * unique in the PROCESS, because the dep cache keys a `Literal` by module name
+    * (`Session.scala:295-308`: `hashCode`/`equals` are the default module name's).  The entry
+    * is evicted before and after so the cache does not grow with the sample.
+    *
+    * A FAILED load leaves the imports loaded -- `Session.load` loads the deps before `d.make`
+    * runs -- which is what makes the second and later cases of a generated sample cheap.
+    *
+    * BACK-PORT NOTE (`backport/SUBSUME-2.11.md`).  On `scala3-migration` this method's
+    * docstring argues at length that dropping `ErmineFixture.literalLock` is sound, because
+    * there `loadStatements` takes that lock around a dep-cache eviction and `TestDateAndScan`
+    * holds the same lock for a whole property body with the JVM DEFAULT TIMEZONE changed.
+    * NEITHER IS TRUE ON THE 2.11 LINE: `loadStatements` above never touches `Session.depCache`
+    * and takes no lock, and no suite here changes the default timezone (`TestDateAndScan` is
+    * not back-ported).  `ErmineFixture.literalLock` does not exist on `backport-2.11` at all;
+    * on `json-encode-2.11` it exists and is taken by exactly one property -- `TestNamedFields`'
+    * interface-cache case, which CLEARS the whole dep cache -- and a `loadNamed` in flight
+    * during that clear can be made to re-read a dependency, never to reach a different verdict.
+    * What survives of the argument is the part about this branch's data structure:
+    * `Session.depCache` is a `HashMap with SynchronizedMap` (`Session.scala:101`), so this
+    * unlocked `-=` can neither corrupt it nor race another property's, and a `Literal`'s
+    * identity IS its module name, which every caller here mints uniquely. */
+  def loadNamed(moduleName: String, src: String)(implicit s: SessionEnv): Unit = {
+    val file = Session.Literal("module " + moduleName + " where\n" + src + "\n", moduleName)
+    try { Session.depCache -= file; Session.load(file, Some(moduleName)); () }
+    finally Session.depCache -= file
   }
 
   def sessionProp(v: SessionEnv => Any): Prop =
@@ -191,11 +320,11 @@ object TestErmine extends Properties("Ermine") {
   private val ermineFixture = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import ermineFixture._
 
-  property("Occurs.fun") = no(sessionProof(implicit s => typeOf("a -> a a")))
+  property("Occurs.fun") = rejects(sessionProof(implicit s => typeOf("a -> a a")))
   property("Occurs.Maybe") =
-    no(sessionProof(implicit s => typeOf("x -> maybe (Just x) Just x",Map("Builtin" -> all, "Maybe" -> all))))
-  property("Occurs.kind") = no(sessionProof(implicit s => kindOf("forall f. f f")))
-  property("Maybe.Maybe") = no(sessionProof(implicit s => kindOf("Maybe Maybe")))
+    rejects(sessionProof(implicit s => typeOf("x -> maybe (Just x) Just x",Map("Builtin" -> all, "Maybe" -> all))))
+  property("Occurs.kind") = rejects(sessionProof(implicit s => kindOf("forall f. f f")))
+  property("Maybe.Maybe") = rejects(sessionProof(implicit s => kindOf("Maybe Maybe")))
   // Tests parsing of integers and calling of simple prelude functions also checks prefix -
   property("Int.arithmetic") = forAll((x: Short, y: Short) => {
     def str(x: Short) = if (x < 0) "neg " + x.toInt.abs else x.toString
@@ -250,7 +379,7 @@ object TestErmine extends Properties("Ermine") {
                    "Relation.Op" -> all, "Relation.Predicate" -> all)
     sessionProof(implicit s => typeOf("prim 42 < prim 43", imps)) &&
     sessionProof(implicit s => typeOf("prim 42L < prim 43L", imps)) &&
-    no(sessionProof(implicit s => typeOf("prim 42 < prim 43L", imps)))
+    rejects(sessionProof(implicit s => typeOf("prim 42 < prim 43L", imps)))
   }
 
   /*property("primexprs/runtime round trip") = {
@@ -264,11 +393,11 @@ object TestErmine extends Properties("Ermine") {
   }*/
 
   property("DataCon.Argument.Kind") =
-    no(sessionProof(implicit s => loadStatements("data O (f : * -> *) = N | S f")))
+    rejects(sessionProof(implicit s => loadStatements("data O (f : * -> *) = N | S f")))
 
   property("Type.HigherKinded") = sessionProof(implicit s => kindAfter("type L = List", "L Int"))
 
-  property("Type.HigherKinded.Argument") = no(sessionProof(implicit s => loadStatements("type L (f : * -> *) = List f")))
+  property("Type.HigherKinded.Argument") = rejects(sessionProof(implicit s => loadStatements("type L (f : * -> *) = List f")))
 
   property("forall a. a : *") = sessionProof(implicit s =>
     kindOf("forall a. a") match {
