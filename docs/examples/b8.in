@@ -1,0 +1,5 @@
+import GUID
+import IO
+:json guid
+:type guid
+:quit

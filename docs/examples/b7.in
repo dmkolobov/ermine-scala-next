@@ -1,0 +1,10 @@
+:load /tmp/claude-1000/-home-dmitry-research-caliper/c359de0f-018b-42eb-960e-7519d0922cee/scratchpad/guide/Guide.e
+import Guide
+:json clash
+:json repeated
+:json notAnObject
+:json twoSpreads
+:json posSpread
+:json guid
+:json points
+:quit

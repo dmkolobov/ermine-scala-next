@@ -1,0 +1,18 @@
+:load /tmp/claude-1000/-home-dmitry-research-caliper/c359de0f-018b-42eb-960e-7519d0922cee/scratchpad/guide/Guide.e
+:import Guide
+:json pt
+:json (Disc 1.5 (Just 2))
+:json holder
+:json id
+:json (error "boom")
+:json [error "boom"]
+:json boxed
+j boxed
+render (obj [("a", arr [int 1L, num 2.5, jnull]), ("b", str "s"), ("ok", bool True)])
+pretty (obj [("a", arr [int 1L, num 2.5]), ("b", str "s")])
+j (parse "{\"a\":[1,2.5,null],\"b\":\"s\"}")
+j (parse "not json")
+j points
+j inlinePoints
+j deferredPoints
+:quit

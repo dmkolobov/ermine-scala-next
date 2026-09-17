@@ -1,0 +1,12 @@
+:load /tmp/claude-1000/-home-dmitry-research-caliper/c359de0f-018b-42eb-960e-7519d0922cee/scratchpad/guide/Guide.e
+:import Guide
+:import Json
+render (obj [("a", arr [int 1L, num 2.5, jnull]), ("b", str "s"), ("ok", bool True)])
+pretty (obj [("a", arr [int 1L, num 2.5]), ("b", str "s")])
+j (parse "{\"a\":[1,2.5,null],\"b\":\"s\"}")
+j (parse "not json")
+j (toJson [1, 2])
+:type toJson
+:type render
+:type parse
+:quit
