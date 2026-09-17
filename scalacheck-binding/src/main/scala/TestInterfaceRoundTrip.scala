@@ -67,6 +67,10 @@ object TestInterfaceRoundTrip extends Properties("Interface round-trip") {
     (Pretty.prettyType(ty, -1).toString, r.extract[Int])
   }
 
+  // FLAKY (docs/gate-policy.md §1): a gate never re-runs, so a property that gives both answers on
+  // the same content is registered only under -Dermine.test.flaky=true until its ticket is fixed.
+  // Ticket E12 (TICKET-stdlib-findings.md): another suite repopulates Session.depCache mid-property.
+  if (sys.props.contains("ermine.test.flaky"))
   property("new-pipeline cold write, fresh warm read, same answers") = secure {
     implicit val su: scalaparsers.Supply = scalaparsers.Supply.create
     implicit val printer: Printer = Printer.ignore

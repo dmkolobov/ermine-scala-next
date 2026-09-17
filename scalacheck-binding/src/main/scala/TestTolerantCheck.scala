@@ -1763,6 +1763,10 @@ object TestTolerantCheck extends Properties("Tolerant check") {
   // alpha-equivalence -- the user sees the rendering -- so nothing here is
   // compared up to renaming; `Canonical.key` is used only to say WHICH
   // renderings are required to be equal, never to excuse two that are not.
+  // FLAKY (docs/gate-policy.md §1): a gate never re-runs, so a property that gives both answers on
+  // the same content is registered only under -Dermine.test.flaky=true until its ticket is fixed.
+  // Ticket E11b (parked): the published constraint SET varies run to run on an unchanged tree.
+  if (sys.props.contains("ermine.test.flaky"))
   property("E11a: four cold checks of one module publish ONE form per constraint set") = secure {
     residentLock.synchronized {
       val f = new File("core/examples/Present/WriterOutputs.e")

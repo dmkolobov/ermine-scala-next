@@ -828,6 +828,15 @@ E15. **The 6.2b hook shows a pattern binder's FIRST instantiation under a polymo
     in one let").  *Fix.* Stop `unbind`'s `binderTypes` rewrite for entries already in a scheme's frame (keep the Bound
     variable), or record which generalisation owns an entry; `Subst.scala`, Tier 1; pin the witness.  Not scheduled.
 
+E16. **`TestJson."nesting past the depth where nf overflows still encodes"` sits at the stack limit.**  Red twice on
+    2026-09-17 at `836eb61f` (`java.lang.StackOverflowError`: the full `core/test` and a one-suite-at-a-time
+    session, logs `docs/gate-audit-data/measurements.tsv` rows `core-test-full` and `per-suite`), while the same
+    code (`ac2606a0`; `836eb61f` adds only `docs/`) was green in the M2 landing (SUBSUME-M2.md:157).  The
+    property's own comment says argonaut's printer bounds the RENDERED depth "at a few thousand levels on the
+    default stack", and it renders 2,000: whether it overflows depends on the thread's stack and JIT state.
+    Registered only under `-Dermine.test.flaky=true` (docs/gate-policy.md §1).  *Fix.* Render on a thread with an
+    explicit stack size, or assert the walker's depth separately from the printer's.  Not scheduled.
+
 ## D. Claims in older documents that do not reproduce
 
 D1. `core/examples/Ai/README.md`'s RUnion table ("a helper bundling `RUnion3` and `RUnion2` does not finish")

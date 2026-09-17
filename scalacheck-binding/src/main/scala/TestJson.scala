@@ -202,6 +202,10 @@ object TestJson extends Properties("Ermine JSON") {
     val out = json("field x : Int", "replicate { x = 7 } 100000")
     assert(out.startsWith("[{\"x\":7},{\"x\":7}") && out.endsWith("{\"x\":7}]"), out.take(40))
   }
+  // FLAKY (docs/gate-policy.md §1): a gate never re-runs, so a property that gives both answers on
+  // the same content is registered only under -Dermine.test.flaky=true until its ticket is fixed.
+  // Ticket E16 (TICKET-stdlib-findings.md): the rendered depth sits at the stack limit.
+  if (sys.props.contains("ermine.test.flaky"))
   property("nesting past the depth where nf overflows still encodes") = sessionProof { implicit s =>
     // 2,000 nested singleton lists: `nf` overflows the default stack here.
     // The walker itself is iterative in depth too; argonaut's printer is

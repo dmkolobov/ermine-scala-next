@@ -1,0 +1,168 @@
+Accumulate.e.out	LOADED	
+Ai_BatteryCycling.e.out	LOADED	
+Ai_ClinicalTrial.e.out	LOADED	
+Ai_Common.e.out	LOADED	
+Ai_FiscalCalendar.e.out	LOADED	
+Ai_GridTelemetry.e.out	LOADED	
+Ai_HeadcountPlan.e.out	LOADED	
+Ai_IncidentSeverity.e.out	LOADED	
+Ai_RevenueByPeriod.e.out	LOADED	
+Ai_SalesByRegion.e.out	LOADED	
+Ai_SupplyChainInventory.e.out	LOADED	
+Ai_TelescopeTime.e.out	LOADED	
+Algebra_BillOfMaterials.e.out	LOADED	
+Algebra_Comprehensions.e.out	LOADED	
+Algebra_Customer360.e.out	LOADED	
+Algebra_Deduplication.e.out	LOADED	
+Algebra_Helpers.e.out	LOADED	
+Algebra_InventorySnapshots.e.out	LOADED	
+Algebra_KeyDiscipline.e.out	LOADED	
+Algebra_LedgerScan.e.out	LOADED	
+Algebra_ManagerChains.e.out	LOADED	
+Algebra_OrderLedger.e.out	LOADED	
+Algebra_RateStatistics.e.out	LOADED	
+Algebra_Signatures.e.out	LOADED	
+Algebra_SoftSchema.e.out	LOADED	
+Algebra_shouldfail_alg01_default_record_missing_column.e.out	REJECTED	core/examples/Algebra/shouldfail/alg01_default_record_missing_column.e:43:7: error: failed to unify type (|customerName,
+Algebra_shouldfail_alg02_difference_mismatched_headers.e.out	REJECTED	core/examples/Algebra/shouldfail/alg02_difference_mismatched_headers.e:41:7: error: failed to unify type (|allocatedQty,
+Algebra_shouldfail_alg03_unify_cross_schema.e.out	REJECTED	core/examples/Algebra/shouldfail/alg03_unify_cross_schema.e:49:7: Row partitions are unsatisfiable at field 'Algebra.Shouldfail.Alg03.customerId': the whole contains it but no part does
+Algebra_shouldfail_alg04_dedupe_key_contains_order.e.out	REJECTED	core/examples/Algebra/shouldfail/alg04_dedupe_key_contains_order.e:45:7: Fields appear twice in row: Algebra.Shouldfail.Alg04.eventVersion
+Algebra_shouldfail_alg05_join1_two_shared_columns.e.out	REJECTED	core/examples/Algebra/shouldfail/alg05_join1_two_shared_columns.e:70:7: Row partitions are unsatisfiable at field 'Algebra.Shouldfail.Alg05.readingDate': the whole contains it but no part does
+Algebra_shouldfail_alg06_semijoin_probe_missing_key.e.out	REJECTED	core/examples/Algebra/shouldfail/alg06_semijoin_probe_missing_key.e:66:7: Row partitions are unsatisfiable at field 'Algebra.Shouldfail.Alg06.customerId': a part contains it but the whole does not
+ChartsExample.e.out	LOADED	
+GridExample.e.out	LOADED	
+GroupBy.e.out	LOADED	
+HelloWorld.e.out	LOADED	
+Holes.e.out	LOADED	
+Interp.e.out	REJECTED	core/examples/Interp.e:24:29: error: unknown operator ==
+Lang_Corrected.e.out	LOADED	
+Lang_CsvIntake.e.out	LOADED	
+Lang_DoNotation.e.out	LOADED	
+Lang_ForeignJdk.e.out	LOADED	
+Lang_FreeReportDsl.e.out	LOADED	
+Lang_Helpers.e.out	LOADED	
+Lang_LetSignatures.e.out	LOADED	
+Lang_ProjectionCliff.e.out	LOADED	
+Lang_ReaderParams.e.out	LOADED	
+Lang_RunningState.e.out	LOADED	
+Lang_Signatures.e.out	LOADED	
+Lang_StatementParser.e.out	LOADED	
+Lang_TextTables.e.out	LOADED	
+Lang_TreeAndMap.e.out	LOADED	
+Lang_TypesAndRows.e.out	LOADED	
+Lang_shouldfail_lang01_parser_row_mismatch.e.out	REJECTED	core/examples/Lang/shouldfail/lang01_parser_row_mismatch.e:27:1: error: failed to unify type (|jobQty,
+Lang_shouldfail_lang02_reader_field_twice.e.out	REJECTED	core/examples/Lang/shouldfail/lang02_reader_field_twice.e:24:13: Fields appear twice in row: Lang.Shouldfail.Lang02.assetRef
+Lang_shouldfail_lang03_running_column_exists.e.out	REJECTED	core/examples/Lang/shouldfail/lang03_running_column_exists.e:27:14: Fields appear twice in row: Lang.Shouldfail.Lang03.runningSum
+Lang_shouldfail_lang04_wrong_monad.e.out	REJECTED	core/examples/Lang/shouldfail/lang04_wrong_monad.e:26:27: error: failed to unify type Maybe with type List
+Lang_shouldfail_lang05_traverse_row_mismatch.e.out	REJECTED	core/examples/Lang/shouldfail/lang05_traverse_row_mismatch.e:28:1: error: failed to unify type (|orderQty,
+Lang_shouldfail_lang06_escaping_existential.e.out	REJECTED	core/examples/Lang/shouldfail/lang06_escaping_existential.e:22:1: error: skolem variables escape:
+Lang_shouldfail_lang07_kind_variable_written.e.out	REJECTED	core/examples/Lang/shouldfail/lang07_kind_variable_written.e:28:34: error: failed to unify kind * with kind !k
+LayoutTesting.e.out	LOADED	
+PieChartLegendExample.e.out	LOADED	
+PivotTest.e.out	LOADED	
+Present_AtomicAndRelation.e.out	LOADED	
+Present_DrilldownExplorer.e.out	LOADED	
+Present_FulcrumPanel.e.out	LOADED	
+Present_Helpers.e.out	LOADED	
+Present_ProjectionCost.e.out	LOADED	
+Present_SalesDashboard.e.out	LOADED	
+Present_SevenReads.e.out	LOADED	
+Present_Signatures.e.out	LOADED	
+Present_SortShowcase.e.out	LOADED	
+Present_StyleGridHeatmap.e.out	LOADED	
+Present_ValidationReport.e.out	LOADED	
+Present_VarianceStyling.e.out	LOADED	
+Present_WildChain.e.out	LOADED	
+Present_WriterOutputs.e.out	LOADED	
+Present_shouldfail_box01_position_in_legend.e.out	REJECTED	core/examples/Present/shouldfail/box01_position_in_legend.e:49:7: Fields appear twice in row: Present.Shouldfail.Box01.xPos
+Present_shouldfail_box02_treemap_same_measure.e.out	REJECTED	core/examples/Present/shouldfail/box02_treemap_same_measure.e:37:7: Fields appear twice in row: Present.Shouldfail.Box02.nodeImpact
+Present_shouldfail_chart01_series_not_in_relation.e.out	REJECTED	core/examples/Present/shouldfail/chart01_series_not_in_relation.e:47:7: Row partitions are unsatisfiable at field 'Present.Shouldfail.Chart01.channelName': a part contains it but the whole does not
+Present_shouldfail_fmt01_currency_on_string.e.out	REJECTED	core/examples/Present/shouldfail/fmt01_currency_on_string.e:31:7: No instance for (PrimitiveNum String)
+Present_shouldfail_leg01_legend_column_missing.e.out	REJECTED	core/examples/Present/shouldfail/leg01_legend_column_missing.e:39:7: error: failed to unify type (|amountUsd,
+Present_shouldfail_leg02_column_twice.e.out	REJECTED	core/examples/Present/shouldfail/leg02_column_twice.e:30:7: Fields appear twice in row: Present.Shouldfail.Leg02.amountUsd
+Sample.e.out	REJECTED	core/examples/Sample.e:12:1: panic: trailing virtual semicolon
+SoftRelation.e.out	LOADED	
+Time_CohortRetention.e.out	LOADED	
+Time_Corrected.e.out	LOADED	
+Time_DemandForecast.e.out	LOADED	
+Time_EmployeeTenure.e.out	LOADED	
+Time_FiscalTree.e.out	LOADED	
+Time_Helpers.e.out	LOADED	
+Time_InterestAccrual.e.out	LOADED	
+Time_MultiCurrencyPnl.e.out	LOADED	
+Time_ReadingHistory.e.out	LOADED	
+Time_SensorSeries.e.out	LOADED	
+Time_Signatures.e.out	LOADED	
+Time_SubscriptionWaterfall.e.out	LOADED	
+Time_shouldfail_asof01_key_not_in_fact.e.out	REJECTED	core/examples/Time/shouldfail/asof01_key_not_in_fact.e:69:7: Row partitions are unsatisfiable at field 'Time.Shouldfail.AsOf01.network': the whole contains it but no part does
+Time_shouldfail_bucket01_calendar_overlaps_facts.e.out	REJECTED	core/examples/Time/shouldfail/bucket01_calendar_overlaps_facts.e:77:7: Row partitions are unsatisfiable at field 'Time.Shouldfail.Bucket01.region': a part contains it but the whole does not
+Time_shouldfail_date01_datediff_free_row.e.out	REJECTED	core/examples/Time/shouldfail/date01_datediff_free_row.e:55:7: Row partitions are unsatisfiable at field 'Time.Shouldfail.Date01.startDate': the whole contains it but no part does
+Time_shouldfail_null01_nullable_rate_into_double.e.out	REJECTED	core/examples/Time/shouldfail/null01_nullable_rate_into_double.e:50:7: error: failed to unify type Double with type (Nullable
+Wide_BranchDeposits.e.out	LOADED	
+Wide_ClaimsExperience.e.out	LOADED	
+Wide_Corrected.e.out	LOADED	
+Wide_Helpers.e.out	LOADED	
+Wide_Leaderboard.e.out	LOADED	
+Wide_MediaSpend.e.out	LOADED	
+Wide_RevenueShare.e.out	LOADED	
+Wide_SalesLedger.e.out	LOADED	
+Wide_Signatures.e.out	LOADED	
+Wide_SurveyPanel.e.out	LOADED	
+Wide_TrialBalance.e.out	LOADED	
+Wide_WardRoster.e.out	LOADED	
+Wide_shouldfail_pivot01_key_column_is_also_value.e.out	REJECTED	core/examples/Wide/shouldfail/pivot01_key_column_is_also_value.e:36:7: Fields appear twice in row: Wide.Shouldfail.Pivot01.period
+Wide_shouldfail_win01_window_on_absent_column.e.out	REJECTED	core/examples/Wide/shouldfail/win01_window_on_absent_column.e:32:7: Row partitions are unsatisfiable at field 'Wide.Shouldfail.Win01.divisionName': a part contains it but the whole does not
+Wide_shouldfail_win02_running_total_ordered_by_measure.e.out	REJECTED	core/examples/Wide/shouldfail/win02_running_total_ordered_by_measure.e:36:7: Fields appear twice in row: Wide.Shouldfail.Win02.amount
+Yahoo.e.out	REJECTED	
+YahooExtras.e.out	LOADED	
+shouldfail_der01_rename_onto_existing_column.e.out	REJECTED	core/examples/shouldfail/der01_rename_onto_existing_column.e:41:7: Row partitions are unsatisfiable at field 'Shouldfail.Der01.b': the whole contains it but no part does
+shouldfail_der02_copy_column_onto_existing.e.out	REJECTED	core/examples/shouldfail/der02_copy_column_onto_existing.e:39:7: Row partitions are unsatisfiable at field 'Shouldfail.Der02.b': the whole contains it but no part does
+shouldfail_der03_row_remainder_readded.e.out	REJECTED	core/examples/shouldfail/der03_row_remainder_readded.e:43:7: Fields appear twice in row: Shouldfail.Der03.b
+shouldfail_der04_helper_drop_then_add.e.out	REJECTED	core/examples/shouldfail/der04_helper_drop_then_add.e:40:7: Row partitions are unsatisfiable at field 'Shouldfail.Der04.b': the whole contains it but no part does
+shouldfail_der05_join_pinned_to_left_header.e.out	REJECTED	core/examples/shouldfail/der05_join_pinned_to_left_header.e:55:7: Row partitions are unsatisfiable at field 'Shouldfail.Der05.c': the whole contains it but no part does
+shouldfail_der06_shared_two_var_remainder.e.out	REJECTED	core/examples/shouldfail/der06_shared_two_var_remainder.e:66:7: Row partitions are unsatisfiable at field 'Shouldfail.Der06.b': the whole contains it but no part does
+shouldfail_der07_shared_three_var_remainder.e.out	REJECTED	core/examples/shouldfail/der07_shared_three_var_remainder.e:44:7: Row partitions are unsatisfiable at field 'Shouldfail.Der07.b': the whole contains it but no part does
+shouldfail_der08_shared_remainder_relations.e.out	REJECTED	core/examples/shouldfail/der08_shared_remainder_relations.e:42:7: Row partitions are unsatisfiable at field 'Shouldfail.Der08.b': the whole contains it but no part does
+shouldfail_dup01_partition_literal.e.out	REJECTED	core/examples/shouldfail/dup01_partition_literal.e:25:7: Fields appear twice in row: Shouldfail.Dup01.a
+shouldfail_dup02_signature_chain.e.out	REJECTED	core/examples/shouldfail/dup02_signature_chain.e:26:7: Row partitions are unsatisfiable at field 'Shouldfail.Dup02.a': a part contains it but the whole does not
+shouldfail_dup03_join1_shared_column.e.out	REJECTED	core/examples/shouldfail/dup03_join1_shared_column.e:30:7: Row partitions are unsatisfiable at field 'Shouldfail.Dup03.x': the whole contains it but no part does
+shouldfail_dup04_joinby_shared_column.e.out	REJECTED	core/examples/shouldfail/dup04_joinby_shared_column.e:30:7: Row partitions are unsatisfiable at field 'Shouldfail.Dup04.x': the whole contains it but no part does
+shouldfail_dup05_row_witness.e.out	REJECTED	core/examples/shouldfail/dup05_row_witness.e:23:5: Fields appear twice in row: Shouldfail.Dup05.a
+shouldfail_dup06_cons_existing_field.e.out	REJECTED	core/examples/shouldfail/dup06_cons_existing_field.e:22:7: Fields appear twice in row: Shouldfail.Dup06.a
+shouldfail_dup07_append_overlapping_rows.e.out	REJECTED	core/examples/shouldfail/dup07_append_overlapping_rows.e:23:5: Fields appear twice in row: Shouldfail.Dup07.b
+shouldfail_dup08_copy_column_onto_itself.e.out	REJECTED	core/examples/shouldfail/dup08_copy_column_onto_itself.e:24:7: Fields appear twice in row: Shouldfail.Dup08.a
+shouldfail_inc01_project_from_emptied_row.e.out	REJECTED	core/examples/shouldfail/inc01_project_from_emptied_row.e:31:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc01.amount': a part contains it but the whole does not
+shouldfail_inc02_project_from_columnless_relation.e.out	REJECTED	core/examples/shouldfail/inc02_project_from_columnless_relation.e:29:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc02.amount': a part contains it but the whole does not
+shouldfail_inc03_project_absent_field.e.out	REJECTED	core/examples/shouldfail/inc03_project_absent_field.e:34:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc03.shipDate': a part contains it but the whole does not
+shouldfail_inc04_except_absent_field.e.out	REJECTED	core/examples/shouldfail/inc04_except_absent_field.e:34:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc04.shipDate': the whole contains it but no part does
+shouldfail_inc05_filter_absent_field.e.out	REJECTED	core/examples/shouldfail/inc05_filter_absent_field.e:35:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc05.region': a part contains it but the whole does not
+shouldfail_inc06_filter_dropped_column.e.out	REJECTED	core/examples/shouldfail/inc06_filter_dropped_column.e:36:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc06.amount': the whole contains it but no part does
+shouldfail_inc07_has_helper_missing_column.e.out	REJECTED	core/examples/shouldfail/inc07_has_helper_missing_column.e:37:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc07.customerId': a part contains it but the whole does not
+shouldfail_inc08_project_absent_from_join_result.e.out	REJECTED	core/examples/shouldfail/inc08_project_absent_from_join_result.e:48:12: Row partitions are unsatisfiable at field 'ShouldFail.Inc08.regionName': the whole contains it but no part does
+shouldfail_inf01_partition_literal.e.out	REJECTED	core/examples/shouldfail/inf01_partition_literal.e:26:7: Row partitions are unsatisfiable at field 'Shouldfail.Inf01.a': two parts of one partition both contain it
+shouldfail_inf02_substitution_chain.e.out	REJECTED	core/examples/shouldfail/inf02_substitution_chain.e:25:7: Row partitions are unsatisfiable at field 'Shouldfail.Inf02.b': a part contains it but the whole does not
+shouldfail_inf03_union_shrunken.e.out	REJECTED	core/examples/shouldfail/inf03_union_shrunken.e:23:18: Row partitions are unsatisfiable at field 'Shouldfail.Inf03.a': two parts of one partition both contain it
+shouldfail_inf04_except_recursive.e.out	REJECTED	core/examples/shouldfail/inf04_except_recursive.e:20:10: Row partitions are unsatisfiable at field 'Shouldfail.Inf04.a': a part contains it but the whole does not
+shouldfail_inf05_union_two_fields.e.out	REJECTED	core/examples/shouldfail/inf05_union_two_fields.e:23:18: Row partitions are unsatisfiable at field 'Shouldfail.Inf05.a': a part contains it but the whole does not
+shouldfail_inf06_row_minus.e.out	REJECTED	core/examples/shouldfail/inf06_row_minus.e:26:17: Row partitions are unsatisfiable at field 'Shouldfail.Inf06.a': two parts of one partition both contain it
+shouldfail_inf07_record_drop.e.out	REJECTED	core/examples/shouldfail/inf07_record_drop.e:25:21: Row partitions are unsatisfiable at field 'Shouldfail.Inf07.a': two parts of one partition both contain it
+shouldfail_let01_let_signature_monomorphic.e.out	REJECTED	core/examples/shouldfail/let01_let_signature_monomorphic.e:34:6: error: failed to unify type Int with type String
+shouldfail_let02_where_in_let.e.out	REJECTED	core/examples/shouldfail/let02_where_in_let.e:25:6: error: failed to unify type Int with type String
+shouldfail_let03_let_in_where.e.out	REJECTED	core/examples/shouldfail/let03_let_in_where.e:19:17: error: failed to unify type Int with type String
+shouldfail_let04_let_signature_too_general.e.out	REJECTED	core/examples/shouldfail/let04_let_signature_too_general.e:23:7: error: failed to unify type !a with type Int
+shouldfail_let05_let_signature_no_definition.e.out	REJECTED	core/examples/shouldfail/let05_let_signature_no_definition.e:27:7: missing definition
+shouldfail_mis01_join_operands_irreconcilable.e.out	REJECTED	core/examples/shouldfail/mis01_join_operands_irreconcilable.e:38:14: Row partitions are unsatisfiable at field 'ShouldFail.Mis01.city': the whole contains it but no part does
+shouldfail_mis02_join_result_annotation.e.out	REJECTED	core/examples/shouldfail/mis02_join_result_annotation.e:42:1: error: failed to unify type (|orderId,
+shouldfail_mis03_union_mismatched_headers.e.out	REJECTED	core/examples/shouldfail/mis03_union_mismatched_headers.e:33:7: error: failed to unify type (|amount,
+shouldfail_mis04_record_append_annotation.e.out	REJECTED	core/examples/shouldfail/mis04_record_append_annotation.e:30:1: error: failed to unify type (|orderId|) with type (|amount,
+shouldfail_sig01_unconstrained_signature.e.out	REJECTED	core/examples/shouldfail/sig01_unconstrained_signature.e:70:17: the signature does not entail this row constraint
+shouldfail_sig02_wrong_label_signature.e.out	REJECTED	core/examples/shouldfail/sig02_wrong_label_signature.e:45:18: the signature does not entail this row constraint
+shouldfail_sig03_let_bound_signature.e.out	REJECTED	core/examples/shouldfail/sig03_let_bound_signature.e:70:25: the signature does not entail this row constraint
+shouldfail_sig04_unconstrained_modify.e.out	REJECTED	core/examples/shouldfail/sig04_unconstrained_modify.e:48:8: the signature does not entail this row constraint
+shouldfail_sig05_annotated_lambda.e.out	REJECTED	core/examples/shouldfail/sig05_annotated_lambda.e:48:19: the signature does not entail this row constraint
+shouldfail_sk01_row_append_self.e.out	REJECTED	core/examples/shouldfail/sk01_row_append_self.e:1:1: core/examples/shouldfail/sk01_row_append_self.e:33:20: Cannot unify skolem variable with empty relation
+shouldfail_sk02_record_append_self.e.out	REJECTED	core/examples/shouldfail/sk02_record_append_self.e:1:1: core/examples/shouldfail/sk02_record_append_self.e:26:20: Cannot unify skolem variable with empty relation
+shouldfail_sk03_field_copy_append_self.e.out	REJECTED	core/examples/shouldfail/sk03_field_copy_append_self.e:1:1: <checkout>/core/target/scala-3.3.8/classes/modules/Field.e:22:24: Cannot unify skolem variable with empty relation
+shouldfail_sk04_derived_skolem_substitution.e.out	REJECTED	core/examples/shouldfail/sk04_derived_skolem_substitution.e:1:1: core/examples/shouldfail/sk04_derived_skolem_substitution.e:47:20: Cannot unify skolem variable with empty relation
+shouldfail_sk05_derived_skolem_field_copy.e.out	REJECTED	core/examples/shouldfail/sk05_derived_skolem_field_copy.e:1:1: <checkout>/core/target/scala-3.3.8/classes/modules/Field.e:22:24: Cannot unify skolem variable with empty relation
+syntaxExample.e.out	LOADED	

@@ -1,3 +1,7 @@
+> **SUPERSEDED 2026-09-17 by `docs/gate-policy.md`** (tiers, the no-re-run rule, `scripts/gate.sh`), on the
+> evidence in `docs/gate-audit.md`.  Kept for its history.  The "ONE re-run" allowances below no longer apply:
+> E12, E13 and the E11a pin (and E16) are registered only under `-Dermine.test.flaky=true`.
+
 # Gate policy (adopted 2026-09-08, the user's decision)
 
 Why: an audit of the loop-model programme's gates (2026-09-08) found the model differential, the Lean build +

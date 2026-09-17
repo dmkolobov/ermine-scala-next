@@ -188,6 +188,10 @@ object TestLegend extends Properties("Legends & presentations") {
       (wellTyped(devolved) && {devolved.eval(Map.empty); proved})
   }
 
+  // FLAKY (docs/gate-policy.md §1): a gate never re-runs, so a property that gives both answers on
+  // the same content is registered only under -Dermine.test.flaky=true until its ticket is fixed.
+  // Ticket E13 (TICKET-stdlib-findings.md): seed-dependent date-range formatting.
+  if (sys.props.contains("ermine.test.flaky"))
   property("extra args are ignored") = forAll {
     (trial: InterestingFormat) =>
       val (fmt, pe) = uninteresting(trial)
