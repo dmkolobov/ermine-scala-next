@@ -148,11 +148,11 @@ object TestLetSignatures extends Properties("Ermine let signatures") {
   // Flipped at S3 landing (2026-09-11): the entailment check now refuses the too-weak
   // context on a let-bound signature exactly as on a top-level one (shouldfail/sig03).
   property("a let signature with a too-weak row context is refused by the entailment check") =
-    no(typeChecks(rowTwin, "crash", rowImps))
+    rejects(typeChecks(rowTwin, "crash", rowImps))
 
   // Sharing the block machinery with the module path makes interleaved equations of one
   // name a refusal inside a `let` block too (LET-1 review edit 1): in the let channel the
   // refusal is recorded and lowering continues, so the message is what surfaces.
   property("interleaved equations of one name are refused in a let block") =
-    no(typeChecks("v = let f 0 = 1\n        g y = y\n        f 1 = 2\n    in f 1", "v", imps))
+    rejects(typeChecks("v = let f 0 = 1\n        g y = y\n        f 1 = 2\n    in f 1", "v", imps))
 }

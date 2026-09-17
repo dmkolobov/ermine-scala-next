@@ -194,6 +194,30 @@ def main():
         check("Bad.e severity", d["severity"] == 1)
         check("Bad.e message", "failed to unify" in d["message"], d["message"])
 
+    # SUBSUME S2: the row-unsatisfiable program (B1) in the editor.  The programme this
+    # case comes from began with a report that a user who types this line gets "a server
+    # that pins a core forever and answers nothing until Ermine: Restart Language Server"
+    # (tracker/PROMPT-subsume-termination.md Part B).  Stage 0 could not reproduce it --
+    # the resident session refuses the module in 0.06-0.09 s -- and nothing pinned that.
+    # This does: a diagnostic ARRIVES, it is the row-label refusal, and it arrives in
+    # bounded time.  The bound is loose on purpose (the point is "not forever", and this
+    # runs on a loaded build machine); the measured milliseconds go in the detail so a
+    # regression is visible in the log even when the check still passes.
+    t0 = time.perf_counter()
+    open_doc("RowUnsat.e")
+    ds = client.diagnostics_for(uri("RowUnsat.e"))
+    row_ms = (time.perf_counter() - t0) * 1000.0
+    check("RowUnsat.e one diagnostic", len(ds) == 1, repr(ds))
+    if len(ds) == 1:
+        d = ds[0]
+        check("RowUnsat.e severity", d["severity"] == 1, repr(d.get("severity")))
+        check("RowUnsat.e is the row-label refusal",
+              "Row partitions are unsatisfiable" in d["message"], d["message"])
+        check("RowUnsat.e points inside the file",
+              0 <= d["range"]["start"]["line"] < 18, repr(d["range"]))
+    check("RowUnsat.e answered within 20s of the didOpen", row_ms < 20000.0,
+          "%.0f ms" % row_ms)
+
     # didSave goes through the same check; use it for the parse error.
     client.notify("textDocument/didSave", {"textDocument": {"uri": uri("Ugly.e")}})
     ds = client.diagnostics_for(uri("Ugly.e"))

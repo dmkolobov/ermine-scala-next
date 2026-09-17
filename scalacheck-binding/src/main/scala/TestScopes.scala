@@ -122,10 +122,10 @@ object TestScopes extends Properties("Ermine scoping") {
       no(sessionProof(implicit s => loadStatements(s"$n = 1", imps))) }
 
   property("let bindings do not leak into the enclosing scope") =
-    no(typeChecks("v = let q = 1 in q", "q", imps))
+    rejects(typeChecks("v = let q = 1 in q", "q", imps))
 
   property("where bindings do not leak into the enclosing scope") =
-    no(typeChecks("v = q where q = 1", "q", imps))
+    rejects(typeChecks("v = q where q = 1", "q", imps))
 
   // -- an import in scope under two names (here: id and id_F) ----------------
 
@@ -178,7 +178,7 @@ object TestScopes extends Properties("Ermine scoping") {
   // -- data constructors stay unshadowable; ordinary operators do not --------
 
   property("a data constructor operator may not be shadowed") =
-    no(typeChecks("v = let (::) a b = 7 in 1", "v", aliasImps))
+    rejects(typeChecks("v = let (::) a b = 7 in 1", "v", aliasImps))
 
   property("an operator with its own fixity declaration can still be let-bound") =
     forAll(small, small) { (x, y) =>
