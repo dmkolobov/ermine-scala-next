@@ -212,3 +212,6 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   full core/test running in the main checkout (scratch-subsume/orch/m1-scala3-full-coretest.log). M2 (json-encode
   merge + B1 gate lift) and P211 (2.11 port + json-encode-2.11 merge) launched in parallel (Opus); report stubs
   pre-created at wt-json/tracker/satterm/SUBSUME-M2.md and wt-backport|wt-json211/backport/SUBSUME-2.11.md.
+- 2026-09-17 ~02:25: M1 DONE: full core/test on `scala3-migration` at d278c900 = 1072 / 1072, 0 failed, 0 errors,
+  wall 1,141 s under contention (M2 and P211 compiling at the same time; S2 measured 524 s alone), 378 properties
+  `proved` (scratch-subsume/orch/m1-scala3-full-coretest.log). M2 and P211 running.
