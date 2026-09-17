@@ -217,9 +217,112 @@ final case class ErmineFixture(prepBaseEnv: SessionEnv => Unit
     p
   } catch { case _ : Throwable => false: Prop }
 
+  /** Invert a property: the body must FAIL.
+    *
+    * `no` leaves a refuted result *passed* (status `True`), not *proved*, so ScalaCheck keeps
+    * drawing until `minSuccessfulTests` (100).  That is the RIGHT semantics for a body that
+    * consumes generated input -- `no(forAll(g) { ... })`, where every draw must fail -- and it
+    * is the WRONG semantics for a body that takes no input: a hundred identical checks of one
+    * fixed program, each of which re-reads and re-type-checks the module's whole import
+    * closure (~9 s: `tracker/satterm/SUBSUME-STAGE0.md` §6.2).  That is what made the B1
+    * rejection property look like a hang -- it is not a hang, it is 100 x 9.1 s, 1,099 s to
+    * the second (`SUBSUME-STAGE0-REVIEW.md` §2.2).
+    *
+    * For a DETERMINISTIC refutation use `rejects`, which is proved by one evaluation. */
   def no(p: Prop): Prop = p map { r =>
     r.copy(status = r.status match {case False => True; case _ => False},
            labels = r.labels + "must fail")
+  }
+
+  /** A DETERMINISTIC refutation: the body must fail, and ONE evaluation settles it.
+    *
+    * Same verdict as `no` -- refused is green, accepted/thrown/undecided is red -- but a
+    * refusal maps to `Proof` rather than `True`, and ScalaCheck stops at the first test on a
+    * proved property exactly as it does for `sessionProof`.  Use it wherever the body takes no
+    * generated input; `no` stays for `no(forAll(...))`, where proving the first draw would
+    * silently drop the other ninety-nine.
+    *
+    * WHAT IS LOST, said plainly (S2 review F-2): a deterministic property run 100 times was run
+    * at 100 different `Supply` id bases, and under `no` EVERY one of those hundred had to fail
+    * -- so a refutation that some id order made ACCEPT at one base in a hundred turned the
+    * property red.  That is a real assertion, not accidental coverage, and it is exactly the
+    * failure mode this programme cares about; the S0 review's §4.4 records a measured 2x id-base
+    * outlier, so id-order sensitivity here is measured rather than imagined.  `rejects` makes
+    * that assertion ONCE PER PROGRAM instead of a hundred times, and `TestRowRefusals` trades
+    * the lost breadth the other way: sixteen fresh id bases over sixteen DIFFERENT generated
+    * programs, in 69 % less wall clock, instead of a hundred bases over one. */
+  def rejects(p: Prop): Prop = p map { r =>
+    r.copy(status = r.status match {case False => Proof; case _ => False},
+           labels = r.labels + "must fail")
+  }
+
+  /** Run `body` on a daemon thread and join it with a deadline; answer what happened.
+    *
+    * The point is to FAIL LOUDLY instead of wedging the run: a check that really did diverge
+    * becomes a red property in bounded time instead of holding a `core/test` thread until
+    * somebody kills the JVM (the `(iso)` idiom, `TestRunner.scala` on `json-encode`).  The
+    * thread is a daemon, so a diverged check cannot keep the JVM alive either.
+    *
+    * The outcome is one of `"refused: <message>"`, `"accepted"`, `"threw <t>"` or
+    * `"did not finish in <ms> ms"`, with the elapsed milliseconds.
+    *
+    * The one leak is the intended one: a genuinely diverged check leaves one spinning daemon
+    * thread for the life of the JVM (no `interrupt()` is attempted, and the checker would not
+    * honour one), which can slow the rest of that run -- but that run is already red. */
+  def bounded(ms: Long)(body: => Unit): (String, Long) = {
+    val answer = new java.util.concurrent.atomic.AtomicReference[String](null)
+    val t0 = System.currentTimeMillis
+    val th = new Thread(new Runnable {
+      def run(): Unit = answer.set(
+        try { body; "accepted" }
+        catch { case e: Death => "refused: " + e.getMessage
+                case e: Throwable => "threw " + e })
+    })
+    th.setDaemon(true)
+    th.setName("ermine-bounded-check")
+    th.start()
+    th.join(ms)
+    (Option(answer.get).getOrElse("did not finish in " + ms + " ms"),
+     System.currentTimeMillis - t0)
+  }
+
+  /** Load a generated module into `s` and say what happened: `"accepted"`, or
+    * `"refused: <message>"`.  Compose with `bounded` for a deadline. */
+  def outcomeOf(moduleName: String, src: String)(implicit s: SessionEnv): String =
+    try { loadNamed(moduleName, src); "accepted" }
+    catch { case e: Death => "refused: " + e.getMessage }
+
+  /** Load a generated module under its OWN name into the session it is handed.  A refusal is
+    * a `Death`, as everywhere else in the fixture -- `bounded` turns it into an outcome
+    * string, and a plain `try` will do where no deadline is wanted.
+    *
+    * `loadStatements` exists for one program at a time: every case is `module Test`, so the
+    * fixture evicts the process-global dep cache around it and takes `literalLock` -- and a
+    * case loaded into a fresh `mkEnv` re-reads and re-type-checks the whole import closure,
+    * about 9 s a case.  A generator that wants twenty cases cannot pay that.  Under its own
+    * module name a case collides with nothing, so the cases can go into ONE warm session and
+    * the closure is read once; `moduleName` must be unique in the PROCESS, because the dep
+    * cache keys a `Literal` by module name (`Session.scala:328-341`).  The entry is evicted
+    * afterwards so the cache does not grow with the sample.  No `literalLock`: the lock is
+    * there for the shared `"Test"` key, which this path does not use.
+    *
+    * A FAILED load leaves the imports loaded -- `Session.scala:872-875` loads the deps before
+    * `d.make` runs, and `:608` records the module only on success -- which is what makes the
+    * second and later cases of a generated sample cheap.
+    *
+    * WHY DROPPING THE LOCK IS SOUND, and the ONE THING IT COSTS YOU (S2 review F-5).  Sound
+    * because `Session.depCache` is a `ConcurrentHashMap` (`Session.scala:110`), so this unlocked
+    * `-=` can neither corrupt it nor race `loadStatements`' locked eviction, and because a
+    * `Literal`'s identity IS its module name (`Session.scala:328-341`), which every caller here
+    * mints uniquely -- so this path never touches the shared `"Test"` key the lock exists for.
+    * What it costs: `literalLock` is also the fence `TestDateAndScan.underZone` takes so that no
+    * module load is in flight while it has the JVM DEFAULT TIMEZONE changed.  A `loadNamed` load
+    * can be in flight during that window.  It can only change the date VALUES a module computes,
+    * never whether it type-checks -- so **assert on VERDICTS here, never on date values**. */
+  def loadNamed(moduleName: String, src: String)(implicit s: SessionEnv): Unit = {
+    val file = Session.Literal("module " + moduleName + " where\n" + src + "\n", moduleName)
+    try { Session.depCache -= file; Session.load(file, Some(moduleName)); () }
+    finally Session.depCache -= file
   }
 
   def sessionProp(v: SessionEnv => Any): Prop =
@@ -241,11 +344,11 @@ object TestErmine extends Properties("Ermine") {
   private val ermineFixture = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
   import ermineFixture._
 
-  property("Occurs.fun") = no(sessionProof(implicit s => typeOf("a -> a a")))
+  property("Occurs.fun") = rejects(sessionProof(implicit s => typeOf("a -> a a")))
   property("Occurs.Maybe") =
-    no(sessionProof(implicit s => typeOf("x -> maybe (Just x) Just x",Map("Builtin" -> all, "Maybe" -> all))))
-  property("Occurs.kind") = no(sessionProof(implicit s => kindOf("forall f. f f")))
-  property("Maybe.Maybe") = no(sessionProof(implicit s => kindOf("Maybe Maybe")))
+    rejects(sessionProof(implicit s => typeOf("x -> maybe (Just x) Just x",Map("Builtin" -> all, "Maybe" -> all))))
+  property("Occurs.kind") = rejects(sessionProof(implicit s => kindOf("forall f. f f")))
+  property("Maybe.Maybe") = rejects(sessionProof(implicit s => kindOf("Maybe Maybe")))
   // Tests parsing of integers and calling of simple prelude functions also checks prefix -
   property("Int.arithmetic") = forAll((x: Short, y: Short) => {
     def str(x: Short) = if (x < 0) "neg " + x.toInt.abs else x.toString
@@ -300,7 +403,7 @@ object TestErmine extends Properties("Ermine") {
                    "Relation.Op" -> all, "Relation.Predicate" -> all)
     sessionProof(implicit s => typeOf("prim 42 < prim 43", imps)) &&
     sessionProof(implicit s => typeOf("prim 42L < prim 43L", imps)) &&
-    no(sessionProof(implicit s => typeOf("prim 42 < prim 43L", imps)))
+    rejects(sessionProof(implicit s => typeOf("prim 42 < prim 43L", imps)))
   }
 
   /*property("primexprs/runtime round trip") = {
@@ -314,11 +417,11 @@ object TestErmine extends Properties("Ermine") {
   }*/
 
   property("DataCon.Argument.Kind") =
-    no(sessionProof(implicit s => loadStatements("data O (f : * -> *) = N | S f")))
+    rejects(sessionProof(implicit s => loadStatements("data O (f : * -> *) = N | S f")))
 
   property("Type.HigherKinded") = sessionProof(implicit s => kindAfter("type L = List", "L Int"))
 
-  property("Type.HigherKinded.Argument") = no(sessionProof(implicit s => loadStatements("type L (f : * -> *) = List f")))
+  property("Type.HigherKinded.Argument") = rejects(sessionProof(implicit s => loadStatements("type L (f : * -> *) = List f")))
 
   property("forall a. a : *") = sessionProof(implicit s =>
     kindOf("forall a. a") match {

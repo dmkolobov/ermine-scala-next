@@ -99,7 +99,7 @@ object TestStage1Pins extends Properties("Ermine stage1 pins") {
       "g 5", imps)
 
   property("after a do rebinding the outer type no longer applies") =
-    no(typeChecks(
+    rejects(typeChecks(
       "h w = (w + 1, orElse 0 ((do w <- liftDo (Just True); unit (w + 1)) maybeMonad))",
       "h 5", imps))
 

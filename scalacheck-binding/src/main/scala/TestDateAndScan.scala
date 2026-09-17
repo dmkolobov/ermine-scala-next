@@ -41,7 +41,7 @@ import Prop.{ Result => _, _ }
   */
 object TestDateAndScan extends Properties("Date, dateDiff and Layout.Scan (F3)") {
   private val fx = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
-  import fx.{defAndEval, typeChecks, no}
+  import fx.{defAndEval, typeChecks, rejects}
 
   private val onlyTest = Map("Test" -> fx.all)
 
@@ -195,13 +195,92 @@ object TestDateAndScan extends Properties("Date, dateDiff and Layout.Scan (F3)")
    * so that a green suite means green and a run cannot wedge on it. */
   if (sys.props.contains("ermine.test.dateDiffReject"))
   property("a dateDiff combine over a relation WITHOUT the dates is now REJECTED (B1)") =
-    no(typeChecks(dateDiffPrelude +
+    rejects(typeChecks(dateDiffPrelude +
       """
         |people : [ name ]
         |people = relation [ { name = "Ada" } ]
         |
         |bad = combine_Op (dateDiff_Op days (col_Op startDate) (col_Op endDate)) gap people
         |""".stripMargin, "bad", onlyTest))
+
+  // -------------------------------------------------- B1: the same pair, under a DEADLINE
+  /* The programme that produced these properties started from a report that the B1 refusal
+   * HANGS (`tracker/PROMPT-subsume-termination.md` Part B).  It does not: the module is
+   * refused in 0.06-0.09 s by the compiler and at every one of 17 `Supply` id bases
+   * (`SUBSUME-STAGE0.md` §1.3, §1.6), the escape check at `Subst.scala:648` returns on every
+   * one of 492,200 traced calls, and `Rowpartition/SubsumeEscape.lean`'s `runV_steps` proves
+   * that walk total.  What did not return in bounded time was the PROPERTY, and `rejects`
+   * above is that fix.
+   *
+   * This pins the thing the report was actually worried about, which nothing pinned before:
+   * that a refusal ARRIVES, in bounded time, and is the ROW-LABEL one.  The work runs on a
+   * daemon thread joined with a deadline (the `(iso)` idiom of `TestRunner.scala` on
+   * `json-encode`), so a future divergence is a red property in three minutes instead of a
+   * wedged landing run.
+   *
+   * TWO BOUNDS, because one of them cannot be tight.  The outer 180 s covers a COLD session:
+   * the first load into a fresh `mkEnv` reads the whole import closure, ~20 s measured alone
+   * and more when eight properties of this suite are loading at once.  The inner 30 s covers
+   * the twin's WARM check, which is the number that means something -- 0.1-0.2 s in every
+   * measurement -- and it is the bound a divergence would blow.
+   *
+   * WHY `loadNamed` AND NOT `typeChecks`.  The first version of this pin used `typeChecks`,
+   * whose `loadStatements` takes `ErmineFixture.literalLock` (every case is `module Test`, so
+   * the shared dep-cache key must be serialised).  `underZone` above holds that same lock for
+   * a whole property body, several library-scale loads long, and ScalaCheck runs this suite's
+   * properties on a pool: the deadline then bounded the QUEUE rather than the check, and two
+   * of three runs went red at exactly 60,000 ms with nothing wrong
+   * (`scratch-subsume/s2/b1-after-{1,3}.log`).  `loadNamed` gives the pin its own module names
+   * and takes no lock, so the deadline bounds the check.  It also means a load can be in
+   * flight while `underZone` has the default zone changed -- which can only change the date
+   * VALUES a generated module computes, never whether it type-checks, and a verdict is all
+   * this property asserts. */
+
+  private val b1Bad = dateDiffPrelude +
+    """
+      |people : [ name ]
+      |people = relation [ { name = "Ada" } ]
+      |
+      |bad = combine_Op (dateDiff_Op days (col_Op startDate) (col_Op endDate)) gap people
+      |""".stripMargin
+
+  private val b1Good = dateDiffPrelude +
+    """
+      |spans : [ name, startDate, endDate ]
+      |spans = relation [ { name = "Ada", startDate = @2011/1/1, endDate = @2011/1/31 } ]
+      |
+      |good = combine_Op (dateDiff_Op days (col_Op startDate) (col_Op endDate)) gap spans
+      |""".stripMargin
+
+  /** Module names must be unique in the PROCESS (the dep cache keys a `Literal` by module
+    * name), and this property is evaluated once -- but count anyway, so that a re-evaluation
+    * could never collide. */
+  private val b1Counter = new java.util.concurrent.atomic.AtomicInteger(0)
+
+  property("(B1-bound) the refusal arrives under a deadline, names the row, and the twin checks") =
+    secure {
+      val k       = b1Counter.incrementAndGet()
+      val badOut  = new java.util.concurrent.atomic.AtomicReference[String]("did not run")
+      val goodOut = new java.util.concurrent.atomic.AtomicReference[String]("did not run")
+      val warmMs  = new java.util.concurrent.atomic.AtomicLong(-1L)
+      val (finished, totalMs) = fx.bounded(180000L) {
+        val env = fx.mkEnv
+        badOut.set(fx.outcomeOf("SubsumeB1Bad" + k, b1Bad)(env))
+        val t = System.currentTimeMillis
+        goodOut.set(fx.outcomeOf("SubsumeB1Good" + k, b1Good)(env))
+        warmMs.set(System.currentTimeMillis - t)
+      }
+      ((finished == "accepted") :|
+         ("the bounded pair did not finish: " + finished + " after " + totalMs + " ms")) &&
+      (badOut.get.startsWith("refused: ") :|
+         ("the B1 program was not refused: " + badOut.get)) &&
+      (badOut.get.contains("Row partitions are unsatisfiable") :|
+         ("refused, but not by the row-label check: " + badOut.get)) &&
+      ((goodOut.get == "accepted") :|
+         ("the positive twin did not check: " + goodOut.get)) &&
+      ((warmMs.get >= 0L && warmMs.get < 30000L) :|
+         ("the WARM twin check took " + warmMs.get + " ms (the cold pair took " + totalMs + " ms)"))
+    }
 
   // ------------------------------------------------------- C5: the re-exports
 

@@ -11,7 +11,7 @@ import Prop.{ Result => _, _ }
   * the body's obligations (`Subst.subsumeType` discarded the skolem-mentioning wanteds), so
   * `healthOpt : forall r. {..r} -> Int` with body `r ! health` was accepted and
   * `healthOpt {position = 2.0}` failed at run time with "key not found: health".  S3 closed
-  * it: the four KNOWN HOLE properties below are `no(...)` now, and the last group pins the
+  * it: the four KNOWN HOLE properties below are `rejects(...)` now, and the last group pins the
   * flag itself -- under `-Dermine.sigEntail=off` (here, the session option) the old
   * behaviour is back, byte for byte, which is what makes the flag a real escape hatch.
   *
@@ -45,28 +45,28 @@ object TestSigEntail extends Properties("Ermine signature entailment") {
       "healthWith { position = 1.0, health = 10 }", imps)
 
   property("control: inference alone refuses a record lacking the field") =
-    no(typeChecks(fields + "healthInf r = r ! health",
+    rejects(typeChecks(fields + "healthInf r = r ! health",
                   "healthInf { position = 2.0 }", imps))
 
   property("S3: an unconstrained row signature is REJECTED") =
-    no(typeChecks(sig01, "healthOpt { position = 2.0 }", imps))
+    rejects(typeChecks(sig01, "healthOpt { position = 2.0 }", imps))
 
   property("S3: a wrong-label row signature is REJECTED") =
-    no(typeChecks(fields + "field mana : Nullable Int\n" +
+    rejects(typeChecks(fields + "field mana : Nullable Int\n" +
       "wrongLabel : forall r t. r <- ((|mana|), t) => {..r} -> Int\nwrongLabel r = r ! health",
       "wrongLabel { position = 2.0, mana = Null Int }", imps))
 
   property("S3: a record-to-record unconstrained signature (modify) is REJECTED") =
-    no(typeChecks(fields + "bump : forall r. {..r} -> {..r}\nbump = modify health (h -> h)",
+    rejects(typeChecks(fields + "bump : forall r. {..r} -> {..r}\nbump = modify health (h -> h)",
                   "bump { position = 2.0 }", imps))
 
   /* The ANNOTATION site (`Subst.typeCheck`, the `ann` `Site`).  At S0 this was a
    * `Prop.throws[NoSuchElementException]`: the program was ACCEPTED and then crashed when
    * the fixture evaluated it.  Under the check it never gets that far -- the module is
-   * refused -- so the shape changes to `no(typeChecks(...))`, which is the same statement
+   * refused -- so the shape changes to `rejects(typeChecks(...))`, which is the same statement
    * the other three make. */
   property("S3: an unconstrained row ANNOTATION is REJECTED") =
-    no(typeChecks(fields,
+    rejects(typeChecks(fields,
       "((r -> r ! health) : forall r. {..r} -> Int) { position = 2.0 }", imps))
 
   property("control: an honest row annotation type-checks at a satisfying record") =
@@ -78,7 +78,7 @@ object TestSigEntail extends Properties("Ermine signature entailment") {
   // the signature was dropped and ordinary inference refused the CALL instead; this
   // property pins the check, not that older accident.
   property("S3: a let-bound unconstrained signature is REJECTED") =
-    no(typeChecks(fields,
+    rejects(typeChecks(fields,
       "let local : forall r. {..r} -> Int\n    local r = r ! health\nin local { position = 2.0 }", imps))
 
   property("control: an honest let-bound signature still loads") =
@@ -104,7 +104,7 @@ object TestSigEntail extends Properties("Ermine signature entailment") {
    * property is the pin: the same program, checked in two SEPARATE SESSIONS of one JVM, must
    * produce the same refusal text once the ids are normalised away -- and, since it is the one
    * property that reads the message at all, it also pins that the refusal is THIS check's
-   * (the four `no(typeChecks(...))` above only say "refused"). */
+   * (the four `rejects(typeChecks(...))` above only say "refused"). */
   private def refusalText(p: String, e: String): String =
     ermineFixture.run { implicit s =>
       ermineFixture.loadStatements(p, imps)
