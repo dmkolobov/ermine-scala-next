@@ -245,3 +245,10 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   report §7). M2 reviewer launched (Opus). P211 reviewer still running. Then: commit the gate lift + follow-ups on
   json-encode; commit the port on backport-2.11 (explicit path list), merge into json-encode-2.11, commit the
   TestNamedFields:416 addition there; fast-forward scala3-migration to the final plan log; final report.
+- 2026-09-16 22:35 MDT: P211 REVIEW = FIX-THEN-LAND (backport/SUBSUME-2.11-REVIEW.md; reviewer re-ran: converted
+  suites 69/69, TestRowRefusals proved on both branches, flag-OFF writes no file, both mutations red, revert
+  byte-identical; B1 acceptance on 2.11 REPRODUCED — Relation/Op.e:150-151 dateDiff signature commented out —
+  a pre-existing back-port gap, not this port's). Findings: F-1 (code) TestRowRefusals:209 `getOrElse(Nil)` +
+  scalacheck 1.11's `Prop.all(Nil) = proved` = vacuous pass on generator failure; F-2 the one-evaluation
+  mechanism is `PropertySpecifier.update` by value (1.11) vs Function0 (1.15), not `secure`; F-3..F-6 doc.
+  Extra gap: `sbt211` in backport/env-2.11.sh also has the unbound `_ERM_ROOT` bug. Sent to the porter.
