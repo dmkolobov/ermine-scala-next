@@ -175,3 +175,14 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
    into `json-encode-2.11` (worktree `ermine-scala-wt-json211`); full test there.
 5. Nothing pushed to any remote at any step.
 - 2026-09-16 ~23:45: S2 implementer still running (launched ~20:30, 4 h budget). Reviewer launches on its report.
+- 2026-09-17 ~00:20: S2 DONE (uncommitted on `subsume-s2`): `ErmineFixture.rejects` (False→Proof, one
+  evaluation; `no` kept for the one forAll-bodied site TestScopes.scala:122), `bounded(ms)` deadline idiom,
+  `loadNamed`/`outcomeOf` (shared warm session, no literalLock); 21 live `no(` sites in 6 files, 20 converted
+  (TestRelations.scala's 7 are inside a block comment — dead code). Timings: B1 suite alone at default N
+  1,282 s → 181–195 s (13/13); full core/test 1,698 s (1070/1070) → 524 s (1071 + TestLegend quarantine on its
+  allowed re-run) = 1,174 s saved (69 %). Pins: (B1-bound) 4/4; new TestRowRefusals (16 unsat programs + twins,
+  32 loads in one session, ~20 s, mutation-falsified); LSP smoke RowUnsat.e + 5 checks, server answers 58 ms
+  after didOpen (lsp-smoke 573 → 578). Finding kept: a deadline pin wrapping loadStatements measures
+  literalLock contention, not the check. Gates Tier 0 green (TestLoopTrace 720/720/720; corpus 89/79/0, 0
+  verdicts differ; repl-smoke PASS); Tier 1 not triggered (nothing under core/src/main). Answer YES with S1b
+  §8's limits carried. S2 reviewer launched (Opus).
