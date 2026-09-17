@@ -608,3 +608,46 @@ verified at the source.
 **Nothing else was touched.** No compiler source, no gate input, no theorem, no other suite: the
 only file whose behaviour changed is `TestRowRefusals.scala`, and it was re-run alone, twice
 green and twice deliberately red. `find core -name '*.ei'` = 0. No commits.
+
+---
+
+## Landing gates (orchestrator's gate run, 2026-09-17)
+
+Run by the orchestrator on the tree being landed — `~/research/ermine/ermine-scala-wt-subsume-s2`
+at **28e4761c** (branch `subsume-s2`, the S2 stage commit merged with `subsume-termination`, so
+this is the first run that carries S0's `Subst.scala` instrumentation AND S2's harness changes
+together). Logs are under `<g>` = `/home/dmitry/research/ermine/scratch-subsume/gates-s2/`.
+Nothing was committed. `tracker/repl-classpath.txt` was regenerated from this worktree's
+`target/ermine-classpath` before the smoke gates and restored with `git checkout` afterwards, per
+GATE-POLICY's worktree rule; `git status` is clean apart from this section.
+
+**Tier 1 is NOT triggered.** `git diff --stat ccaf3b45..HEAD -- core/src/main` is **empty** —
+nothing under `core/src/main` has changed since the S0 landing commit (`ccaf3b45`), which ran
+Tier 1 in full and was green. The whole S2 diff is test sources (`scalacheck-binding/src/main`),
+an LSP test fixture (`tracker/lsp-tests/RowUnsat.e`), `tracker/tools/lsp-client.py` and tracker
+documents.
+
+| # | gate | command | result | log |
+|---|---|---|---|---|
+| a | compile (Tier 0) | `sbt core/compile core/copyResources core/Test/compile` | **rc=0**, three `[success]` (11 s / 0 s / 1 s, wall 15 s). **15 warnings, no new one**: the set is byte-identical (after stripping the worktree prefix) to the S0 tree's `scratch-subsume/s0/compile5.log` — all fifteen are the pre-existing `Subst.scala` deprecation/exhaustivity warnings | `<g>/compile.log` |
+| b | model agreement (Tier 0) | `sbt -Dermine.looptrace=<wt-json-wrappers>/tracker/lean/.lake/build/bin/looptrace 'core/testOnly *TestLoopTrace'` | **720 solves / 720 segments / 720 agree**; `#summary segments=720 replayed=720 skipped=0 hashdiff=0 eqdiff=0 nonpart=0 rejected=36 fuel=0`; both negative controls firing (id base +1: **46 of 720**; `--flags=nongen`: **58 of 720**); `Passed: Total 3, Failed 0, Errors 0, Passed 3`, rc=0, 31 s. Identical to the S0 landing's line and to `GATE-POLICY.md:14` | `<g>/looptrace-test.log` |
+| c | the B1 suite at the DEFAULT `minSuccessfulTests`, under a 10-minute deadline | `timeout 600 sbt 'core/testOnly com.clarifi.reporting.TestDateAndScan'` | **`Passed: Total 13, Failed 0, Errors 0, Passed 13`**, rc=0, and **every one of the 13 properties reports `OK, proved property`** (0 of 13 report `OK, passed N tests`). **329 s of sbt time, 5 min 33 s wall** — inside the deadline, which did not fire. Slower than the implementer's 181–195 s because it deliberately ran alongside three other JVMs (load average 6–9); it is a bound, not a timing for the tracker | `<g>/b1-dateandscan.log` |
+| d | the generated row-refusal property | `sbt 'core/testOnly *TestRowRefusals'` | **1/1 proved**: `+ unsatisfiable row programs (S2).(rr) every unsatisfiable row program is refused, and its twin checks, in bounded time: OK, proved property`; `Passed: Total 1, Failed 0, Errors 0, Passed 1`, rc=0, 31 s sbt / 40 s wall | `<g>/rowrefusals.log` |
+| e | corpus verdicts (Tier 0) | `tracker/tools/corpus-run.sh --batch <g>/corpus-s2` then `corpus-verdicts.py` | **89 LOADED / 79 REJECTED / 0 UNKNOWN over 168** — unmoved. 168 per-file outputs, one JVM, exit 0, 68 s | `<g>/corpus-s2.log`, `<g>/corpus-s2/`, `<g>/verdicts-s2.txt` |
+| e′ | the same, diffed against S0's baseline dir `scratch-subsume/s0/corpus-base` | `corpus-verdicts.py <baseline> <g>/corpus-s2` (raw); then both single-dir listings with the worktree prefix normalised to `<TREE>` and `diff -u` (normalised) | **RAW: `2 of 168 files differ`, 0 of them a VERDICT change** — both are `MESSAGE`-only on `sk03`/`sk05`, and the only differing text is the absolute worktree prefix `…-subsume-s0` vs `…-subsume-s2` inside the embedded `…/classes/modules/Field.e:22:24` location. **NORMALISED: 0 diff lines** — the per-file verdict+message listing is byte-identical to S0's baseline | `<g>/verdicts-diff-raw.txt`, `<g>/verdicts-diff-normalised.txt` (empty), `<g>/verdicts-baseline.txt`, `<g>/verdicts-{baseline,s2}.norm.txt` |
+| f | REPL smoke (Tier 0) | `tracker/tools/repl-smoke.sh` | **8 / 8 groups PASS, 66 checks, 0 FAIL** (aliasing 2, ffi 5, ffi-tolerant 9, pipedeof 12, relations 6, scoping 4, smoke 23, tauto 5), rc=0, 186 s | `<g>/repl-smoke.log` |
+| f | LSP smoke (Tier 0) | `tracker/tools/lsp-smoke.sh` | **`PASS lsp (578 checks)`**, rc=0, 80 s — the expected 578, i.e. the recorded 573 plus this stage's five new `RowUnsat.e` checks | `<g>/lsp-smoke.log` |
+
+`.ei` hygiene: `find core -name '*.ei'` is **0** after the run (it was 0 before it; the batch corpus
+run and the smoke gates left none).
+
+### Verdict
+
+**GREEN. No gate deviates from its expected number.** Every figure the implementer reported in §4
+re-measured identically on the merged tree: 720/720/720 with controls 46 and 58, 89/79/0 over 168
+with a byte-identical normalised listing, 66 REPL checks in 8 groups, 578 LSP checks, 13/13 B1
+properties all *proved*, 1/1 `(rr)` proved. The only numbers that differ from §4 are wall clocks
+(this run was deliberately contended, four JVMs at once), and no wall clock is a gate here — the
+B1 suite's only requirement was to finish inside the 10-minute deadline, which it did with four
+and a half minutes to spare. Tier 1 was not run and is not owed: `core/src/main` is untouched
+since `ccaf3b45`, which ran it.
