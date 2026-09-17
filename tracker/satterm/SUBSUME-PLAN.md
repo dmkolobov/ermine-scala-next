@@ -240,3 +240,8 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   run 1 had ONE red: TestRunner `(iso)` timed out queueing on literalLock behind TestDateAndScan's loads —
   S2 §2.3's rule; controls green). Follow-ups requested from the M2 implementer before review: convert
   TestNamedFields.scala:393 to `rejects` (parity with P211's :416), give `(iso)` `loadNamed`. Then M2 reviewer.
+- 2026-09-16 22:20 MDT: M2 follow-ups applied (TestNamedFields:393 → `rejects`, proved; TestRunner `(iso)` via
+  `loadNamed` under a unique name, 17/17; trio TestDateAndScan+TestRunner+TestNamedFields in one JVM 46/46;
+  report §7). M2 reviewer launched (Opus). P211 reviewer still running. Then: commit the gate lift + follow-ups on
+  json-encode; commit the port on backport-2.11 (explicit path list), merge into json-encode-2.11, commit the
+  TestNamedFields:416 addition there; fast-forward scala3-migration to the final plan log; final report.
