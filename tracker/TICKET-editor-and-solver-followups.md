@@ -385,7 +385,7 @@ to it post-fix; by experiment, 6,000 alias-biased satisfiable solves post-fix di
 and the 141 pre-fix deaths in that population were all the `ConcreteRho` form. That is a
 reading plus a measurement, not a proof — the proof is (a).
 
-## 12. `subsumeType` does not terminate on one dateDiff refutation (found 2026-09-16, JSON Stage 3 landings)
+## 12. `subsumeType` does not terminate on one dateDiff refutation (found 2026-09-16, JSON Stage 3 landings) — CLOSED 2026-09-17: IT TERMINATES; the test harness did not
 
 `TestDateAndScan."a dateDiff combine over a relation WITHOUT the dates is now REJECTED (B1)"` asks the checker
 to refuse `combine_Op (dateDiff_Op days (col_Op startDate) (col_Op endDate)) gap people` with `people : [ name ]`.
@@ -400,3 +400,33 @@ env that is quadratic at best and exponential over shared kind DAGs. Quarantined
 `-Dermine.test.dateDiffReject=true` (GATE-POLICY.md). Owner: whoever owns `Subst`; not a JSON item. Evidence:
 jstacks and logs under the 2026-09-16 session scratchpad (`land/j3c-full-coretest.log`, `das-on-json-encode.log`,
 `das-on-scala3-migration.log`), tracker/json-stage3/report-J3c.md "core/test wedge, investigated".
+
+**CLOSED 2026-09-17 (M2 of the `subsume-termination` programme; `tracker/satterm/SUBSUME-M2.md`).**
+The premise above is refuted, by measurement and by proof, and the quarantine is lifted.
+
+* **The check returns.** S0 instrumented `Subst.scala` behind `-Dermine.subsumeTrace` (default OFF,
+  `tracker/satterm/SUBSUME-STAGE0.md` §3) and ran the B1 module through `bin/ermine`: it is REFUSED
+  in **0.06-0.09 s** ("Row partitions are unsatisfiable at field 'Bad.startDate'") at every one of
+  seventeen `Supply` id bases, and the escape check at `:648` RETURNED on all **492,200** traced
+  calls, with `hm.types` never exceeding 1,566 entries, 0 cycles in 984,400 walks and 0 budget hits
+  (§1.3, §1.5, §1.6, §1.8). The S0 review reproduced it and also ran the suite ALONE at the default
+  `minSuccessfulTests` to a GREEN finish in 1,099 s -- "never returns" is refuted by a completed run.
+* **And it cannot fail to return.** `runV_steps` in `tracker/lean/Rowpartition/SubsumeEscape.lean`
+  proves the `:648` walk is a total function of the expression, following no binding (the jstack
+  frames above are a hot loop, not a cycle: `VarT(v) => v.extract.vars` reads the variable's KIND
+  annotation). `Rowpartition/Loop/{RejectTerm,EnvBound}.lean` bound the row loop at the shipped
+  defaults. Both audited with no non-standard axiom.
+* **What actually took twenty minutes** was the harness: `ErmineFixture.no` rewrote a refutation to
+  *passed*, not *proved*, so ScalaCheck ran **100 complete checks** of this one fixed program, each
+  re-reading the import closure (~9.1 s). S2's `ErmineFixture.rejects` gives the identical verdict as
+  *proved*, in one evaluation: the suite ALONE went **1,282 s -> 181-195 s**, and a full `core/test`
+  on `scala3-migration` **1,698 s -> 524 s** (`tracker/satterm/SUBSUME-STAGE2.md` §2.1, §4.1).
+* **The editor hazard is a gate, not a worry.** The resident language server answers this exact
+  program with the row-label diagnostic **58 ms** after the `didOpen` (`tracker/lsp-tests/RowUnsat.e`,
+  five checks in `tracker/tools/lsp-client.py`).
+* **What remains, and where it lives.** `:648` is still an unmemoised whole-environment walk and it is
+  expensive -- 2.79 s of a 12.2 s `bin/ermine` boot (23 %), 45.4 s of a 184 s suite run (24.7 %), 12.1x
+  the `:365` walk. That is a PERFORMANCE item, not a termination one, and it is filed in
+  `tracker/TICKET-perf-type-inference.md` (P7 Step 1: a memo table keyed on object identity, or the
+  `sks`/`sts`-restricted walk S1a proved gives the same verdict). Nothing about it is a reason to gate
+  a test.

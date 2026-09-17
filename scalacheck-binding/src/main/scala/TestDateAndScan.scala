@@ -182,18 +182,18 @@ object TestDateAndScan extends Properties("Date, dateDiff and Layout.Scan (F3)")
         |good = combine_Op (dateDiff_Op days (col_Op startDate) (col_Op endDate)) gap spans
         |""".stripMargin, "good", onlyTest)
 
-  /* QUARANTINED 2026-09-16 (tracker/GATE-POLICY.md; TICKET-editor-and-solver-followups.md item 12).
-   * This refutation does not terminate when the suite runs ALONE: the checker spins in
-   * `Subst.subsumeType -> hm.kindVars` (an unmemoised walk of every kind in the substitution
-   * environment, `Kind.scala:125`) for as long as anyone has waited (28 CPU-minutes observed),
-   * RUNNABLE, GC idle.  Reproduced alone on scala3-migration 478a369c itself, before any JSON
-   * work, and on json-encode 3eba80f8; it PASSES inside a full core/test whenever the Supply
-   * ids it meets happen to be favourable (the 1070/1070, 1137, 1148 and 1170 landing runs), and
-   * wedged three full runs on 2026-09-16 once two new suites shifted that order.  A pre-existing
-   * type-checker cliff on one rejection case; the JSON stages touch nothing it reaches.  Its
-   * positive twin above still checks.  Registered only under -Dermine.test.dateDiffReject=true
-   * so that a green suite means green and a run cannot wedge on it. */
-  if (sys.props.contains("ermine.test.dateDiffReject"))
+  /* UNQUARANTINED 2026-09-17 (M2 of the `subsume-termination` programme,
+   * tracker/satterm/SUBSUME-M2.md).  From 2026-09-16 (commit dd9e0316) this refutation was
+   * registered only under `-Dermine.test.dateDiffReject`, because it "did not terminate" when
+   * the suite ran alone.  The programme showed that the checker was never what ran long: the
+   * module is REFUSED in 0.06-0.09 s by the compiler at every one of seventeen `Supply` id
+   * bases and the escape check at `Subst.scala:648` returns on all 492,200 traced calls
+   * (`tracker/satterm/SUBSUME-STAGE0.md` §1.3, §1.6, §1.8), and `runV_steps` in
+   * `tracker/lean/Rowpartition/SubsumeEscape.lean` proves that walk total.  What did not finish
+   * was the PROPERTY: `ErmineFixture.no` rewrote a refutation to *passed*, so ScalaCheck ran a
+   * hundred complete checks of this one fixed program.  `rejects` (S2,
+   * `tracker/satterm/SUBSUME-STAGE2.md` §1.1) gives the same verdict as *proved*, in one
+   * evaluation, and the `(B1-bound)` pin below bounds the refusal in wall clock. */
   property("a dateDiff combine over a relation WITHOUT the dates is now REJECTED (B1)") =
     rejects(typeChecks(dateDiffPrelude +
       """

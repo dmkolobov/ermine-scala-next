@@ -390,7 +390,7 @@ object TestNamedFields extends Properties("Ermine named constructor fields") {
   // (f) existential fields get no selector; their siblings do
   property("an existential field gets no selector, a sibling still does") = {
     val src = "data NfH = forall e. NfHidden { nfsecret : e, nfshown : Int }"
-    no(typeChecks(src, "nfsecret", imps)) &&
+    rejects(typeChecks(src, "nfsecret", imps)) &&
     typeChecks(src, "nfshown", imps) &&
     sessionProof { implicit s =>
       loadStatements(src, imps)

@@ -914,6 +914,8 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   // =====================================================================
   // (iso) a Runner boot and a fixture session in one JVM
 
+  private val isoCounter = new java.util.concurrent.atomic.AtomicInteger(0)
+
   /** A `Runner` boots a SECOND, independent `SessionEnv` in the shared test
     * JVM -- its own `Lib.preamble`, its own module roots, its own `Supply` --
     * beside every `ErmineFixture`, and `Session.depCache` and the
@@ -921,18 +923,35 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     * still load a module and type-check an expression afterwards, and that it
     * finishes in a BOUNDED time rather than diverging: the point is to fail
     * loudly instead of wedging a `core/test` run, so the work happens on a
-    * daemon thread that is joined with a deadline. */
+    * daemon thread that is joined with a deadline.
+    *
+    * WHY `loadNamed` AND NOT `loadStatements` (changed 2026-09-17, M2).  The first version
+    * loaded through `ErmineFixture.loadStatements`, which names every program `module Test`
+    * and therefore takes the process-global `ErmineFixture.literalLock`
+    * (`TestErmine.scala:152`) to serialise the shared dep-cache key.  `TestDateAndScan`'s
+    * `underZone` and its B1 refutation hold that same lock through library-scale loads, and
+    * ScalaCheck runs the suites on a pool -- so in a full `core/test` this deadline bounded
+    * the QUEUE, not the check, and it expired at 180,004 ms with nothing wrong
+    * (`tracker/satterm/SUBSUME-M2.md` §4.2: green alone 17/17, green with the contending
+    * suites in one JVM, green on the next full run).  That is exactly the red S2 found inside
+    * its own first deadline pin and wrote down as a rule -- *"a deadline pin that wraps
+    * `loadStatements` is measuring lock contention"*, `tracker/satterm/SUBSUME-STAGE2.md`
+    * §2.3.  `loadNamed` gives this pin its own module name and takes no lock, so the 180 s
+    * bounds the load and the type-check.  The assertions are unchanged. */
   property("(iso) after a Runner has booted, a fixture session still type-checks, within a bound") = secure {
     val bootedOk = runner.bootFailure.isEmpty && runner.loadedModules.contains("Layout.Doc")
     val fx = ErmineFixture(sigEntail = ErmineFixture.untilSigFixes)
+    // a module name is a PROCESS-global dep-cache key; this property is evaluated once, but
+    // count anyway so that a re-evaluation could never collide with itself
+    val mod = "IsoUse" + isoCounter.incrementAndGet()
     val answer = new java.util.concurrent.atomic.AtomicReference[String]("did not finish")
     val t0 = System.currentTimeMillis
     val th = new Thread(new Runnable {
       def run(): Unit = answer.set(
         try {
           fx.session { implicit env =>
-            fx.loadStatements("import Layout.Scan as LS\n\nisoUse = removeK_LS\n", Map("Test" -> fx.all))
-            fx.typeOf("isoUse", Map("Test" -> fx.all))
+            fx.loadNamed(mod, "import Layout.Scan as LS\n\nisoUse = removeK_LS\n")
+            fx.typeOf("isoUse", Map(mod -> fx.all))
           }
           "ok"
         } catch { case e: Throwable => "threw " + e })

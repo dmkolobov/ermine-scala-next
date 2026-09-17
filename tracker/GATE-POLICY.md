@@ -53,15 +53,14 @@ re-measurement applies to the numbers that go into the trackers, once, by the re
   "SET class grew past its ceiling 3: (reportFor,4)", green on re-run 3/3. The FORM half (0 splits) is the real
   assertion and has never tripped. Ticket E11b (the entailment oracle that deletes the residual), drafted and PARKED
   by the user (LSP-ROADMAP.md): do not "fix" it here. Same rule: exactly this property red gets ONE re-run.
-- `TestDateAndScan."a dateDiff combine over a relation WITHOUT the dates is now REJECTED (B1)"`: the refutation
-  does not terminate when the suite runs alone -- `Subst.subsumeType -> hm.kindVars` walks every kind in the
-  substitution environment unmemoised and spins for as long as anyone waits (RUNNABLE, GC idle, 28 CPU-minutes
-  seen). Reproduced ALONE on scala3-migration 478a369c (no JSON work) and on json-encode 3eba80f8; inside a full
-  core/test it passes when the Supply ids it meets are favourable (every landing run through 1170/1170) and wedged
-  three full runs on 2026-09-16 once TestRunner and TestWidgets shifted that order -- a wedge, not a red, so the
-  one-re-run rule cannot apply. Registered only under -Dermine.test.dateDiffReject=true; the positive twin (WITH the
-  dates checks) stays. Ticket: TICKET-editor-and-solver-followups.md item 12 (a type-checker termination/perf item
-  for whoever owns Subst; not a JSON item).
+
+LIFTED 2026-09-17 (M2, `tracker/satterm/SUBSUME-M2.md`): `TestDateAndScan."a dateDiff combine over a relation
+WITHOUT the dates is now REJECTED (B1)"` was quarantined on 2026-09-16 (commit dd9e0316) behind
+`-Dermine.test.dateDiffReject=true` as a checker that "does not terminate". It terminates: the `subsume-termination`
+programme measured the refusal at 0.06-0.09 s at seventeen Supply id bases (`satterm/SUBSUME-STAGE0.md`) and proved
+the escape walk total (`lean/Rowpartition/SubsumeEscape.lean`, `runV_steps`); what ran for twenty minutes was
+ScalaCheck evaluating a *passed* refutation a hundred times, fixed by `ErmineFixture.rejects`
+(`satterm/SUBSUME-STAGE2.md`). The property runs unconditionally again and the suite alone takes ~3 min on scala3-migration (S2) and, on this branch, 4 min 08 s quiet / 8 min 34 s under contention (M2 review).
 
 ## Standing rules that stay
 Never commit red. Never `lake build` while a `looptrace` binary runs.
