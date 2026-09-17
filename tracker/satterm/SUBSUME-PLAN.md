@@ -145,3 +145,9 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   Walk model in scratch patch). §0.2 gives six replacement sentences for SUBSUME-STAGE1A.md (:289, :396, :488),
   SUBSUME-STAGE1A-REVIEW.md (:226, :262), SUBSUME-STAGE1B-REVIEW.md (:215) — to be applied by the orchestrator
   at S0's landing. Ticket line added to TICKET-perf-type-inference.md (start at :648). S0 reviewer re-checking.
+- 2026-09-16 ~22:20: S0 REVIEW re-check = LAND (§7 of the review; both corrected totals re-derived by the
+  reviewer from the nanosecond traces: 2.785 s CLI, 45.418 s suite; flag-OFF zero records on the rebuilt tree).
+  Three cosmetic residuals: two doc nits fixed by the orchestrator at landing; `SubsumeTrace.cse` counting inside
+  the timed region (~0.03 %) NOTED, not applied (a code change). Landing in progress: stage commit on
+  `subsume-s0`, merge, the six §0.2 replacement sentences applied to the landed S1A report and both Lean reviews
+  as a doc commit, then Tier 0 + Tier 1 gates on the merged tree (Subst.scala changed) run by a gate agent.
