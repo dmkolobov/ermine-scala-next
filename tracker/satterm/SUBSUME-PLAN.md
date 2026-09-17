@@ -198,3 +198,9 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   `subsume-termination` into `subsume-s2`, Tier 0 on the merged tree (S0's Subst.scala + S2's tests together:
   compile, B1 suite alone at default N, TestRowRefusals, TestLoopTrace with the binary, corpus --batch, smokes),
   commit, fast-forward; then the closing sequence (M1 ff into scala3-migration + full core/test; M2 brief; P211 brief).
+- 2026-09-17 ~01:25: S2 REVIEW re-check = LAND (§6 of the review; residual R-1 cross-reference fixed by the
+  orchestrator at landing). Stage commit b69b13de on `subsume-s2` (+ a follow-up restoring
+  tracker/repl-classpath.txt, staged by mistake), merge 2ab2b3c4 with `subsume-termination` clean. Tier 0 gate
+  agent running on the merged tree (S0 instrumentation + S2 harness together). On GREEN: fast-forward, then the
+  closing sequence: M1 = fast-forward `scala3-migration` (still at the base 478a369c) + one full core/test in the
+  main checkout; M2 (brief-M2-json-encode.md) and P211 (brief-P211-port.md) launched in parallel.
