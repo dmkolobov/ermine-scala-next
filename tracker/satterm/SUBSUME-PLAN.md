@@ -186,3 +186,10 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   literalLock contention, not the check. Gates Tier 0 green (TestLoopTrace 720/720/720; corpus 89/79/0, 0
   verdicts differ; repl-smoke PASS); Tier 1 not triggered (nothing under core/src/main). Answer YES with S1b
   §8's limits carried. S2 reviewer launched (Opus).
+- 2026-09-17 ~00:50: S2 REVIEW = FIX-THEN-LAND (`SUBSUME-STAGE2-REVIEW.md`; reviewer re-ran B1 suite alone at
+  default N 189 s 13/13 all `proved`, TestRowRefusals 16 s, lsp-smoke 578 with the RowUnsat diagnostic at 78 ms,
+  two mutations red; census 21 sites / 6 files confirmed; TestRelations.scala dead by nested block comment).
+  Findings: F-1 (code, one conjunct) TestRowRefusals asserts only "refused:", not the row-label cause; F-2..F-7
+  prose (sweep claim, `failsMatching` idiom uncited, model-vs-Scala wording in §5.1 + buildQueue hypothesis,
+  literalLock docstring, run order, added-cost figure). Reviewer's signed answer: YES for this path, with S1b §8's
+  limits. Findings sent to the S2 implementer.
