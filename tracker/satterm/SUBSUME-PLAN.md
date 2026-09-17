@@ -252,3 +252,9 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   scalacheck 1.11's `Prop.all(Nil) = proved` = vacuous pass on generator failure; F-2 the one-evaluation
   mechanism is `PropertySpecifier.update` by value (1.11) vs Function0 (1.15), not `secure`; F-3..F-6 doc.
   Extra gap: `sbt211` in backport/env-2.11.sh also has the unbound `_ERM_ROOT` bug. Sent to the porter.
+- 2026-09-16 22:55 MDT: M2 REVIEW = FIX-THEN-LAND with doc-only findings (ticket:411 984,024→984,400; GATE-POLICY
+  suite timing qualified per branch; report §4 timestamps; commit named paths only — docs/JSON-GUIDE.md is
+  pre-existing untracked). Reviewer re-ran: B1 suite alone 13/13 all `proved` in 4:08, TestRunner 17/17,
+  TestNamedFields 16/16, lsp-smoke 582 (81 ms diagnostic); merge resolutions verified byte-for-byte. Applied by
+  the orchestrator and COMMITTED on `json-encode` (gate lift + TestNamedFields:393 + (iso) loadNamed + report +
+  review) on top of merge 9ec3406d. json-encode = 2afeb426 + d278c900 + this commit; full run 1,199/1,199.
