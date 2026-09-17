@@ -72,8 +72,8 @@ case "${1:-}" in
   compare)
     a="${2:?dirA}"; b="${3:?dirB}"; rc=0
     "$JAVA_HOME/bin/java" -cp "$cp" com.clarifi.reporting.ermine.tools.G1Compare "$a/ei" "$b/ei" || rc=1
-    diff -u "$a/browse.txt" "$b/browse.txt" > /tmp/g1-browse.diff || { echo "DIFF browse: /tmp/g1-browse.diff"; rc=1; }
-    diff -u "$a/groups.txt" "$b/groups.txt" > /tmp/g1-groups.diff || { echo "DIFF groups: /tmp/g1-groups.diff"; rc=1; }
+    diff -u "$a/browse.txt" "$b/browse.txt" > "${TMPDIR:-/tmp}/g1-browse.diff" || { echo "DIFF browse: ${TMPDIR:-/tmp}/g1-browse.diff"; rc=1; }
+    diff -u "$a/groups.txt" "$b/groups.txt" > "${TMPDIR:-/tmp}/g1-groups.diff" || { echo "DIFF groups: ${TMPDIR:-/tmp}/g1-groups.diff"; rc=1; }
     if [[ $rc -eq 0 ]]; then echo "G1 COMPARE: EQUIVALENT"; else echo "G1 COMPARE: DIFFERS"; fi
     exit $rc;;
   *) echo "usage: g1-diff.sh run <old|new> <outdir> | compare <a> <b> | refresh-modules" >&2; exit 2;;

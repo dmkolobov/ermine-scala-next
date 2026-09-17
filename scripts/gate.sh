@@ -48,8 +48,11 @@ take_lock() {  # take_lock PATH: a symlink whose target is our pid; creating it 
 common_root() { local c; c=$(git rev-parse --path-format=absolute --git-common-dir) || return 1; dirname "$c"; }
 
 tree_key() {  # tree SHA of HEAD + every uncommitted/untracked change, without touching the real index
+  # A FRESH index, not a copy of the worktree's: a copy carries stat data, and an edit that keeps a
+  # file's size within the same mtime second is then invisible to `git add` (a same-size mutant got
+  # HEAD's key and a cached PASS).  Hashing every file costs ~0.2 s.
   local idx; idx=$(mktemp) || return 1
-  cp "$(git rev-parse --git-dir)/index" "$idx" 2>/dev/null
+  GIT_INDEX_FILE=$idx git read-tree HEAD || { rm -f "$idx"; return 1; }
   # the cache and mutation runs live at the main checkout's root: never part of anyone's content
   GIT_INDEX_FILE=$idx git add -A -- . ':!.gate-cache' ':!.mutation-runs' >/dev/null 2>&1 &&
     GIT_INDEX_FILE=$idx git write-tree

@@ -16,10 +16,10 @@ for d in tracker/g1-oracle-tests/*/; do
   name=$(basename "$d")
   case "$name" in eq-*) want=equal;; diff-*) want=differ;; *) continue;; esac
   if "$JAVA_HOME/bin/java" -cp "$cp" com.clarifi.reporting.ermine.tools.G1Compare \
-       --pair "$d/a/M.ei" "$d/b/M.ei" --expect "$want" > /tmp/g1-fix-$name.log 2>&1; then
+       --pair "$d/a/M.ei" "$d/b/M.ei" --expect "$want" > "${TMPDIR:-/tmp}/g1-fix-$name.log" 2>&1; then
     echo "  PASS  fixture $name"
   else
-    echo "  FAIL  fixture $name"; tail -5 /tmp/g1-fix-$name.log; fail=1
+    echo "  FAIL  fixture $name"; tail -5 "${TMPDIR:-/tmp}/g1-fix-$name.log"; fail=1
   fi
 done
 
@@ -40,9 +40,9 @@ done
 # substitution-representation change would move.  See PERF-ROADMAP.md P7.
 
 echo "-- double run (2 full-inference boots + compare) --"
-tracker/tools/g1-diff.sh run new /tmp/g1-selfA && \
-tracker/tools/g1-diff.sh run new /tmp/g1-selfB && \
-tracker/tools/g1-diff.sh compare /tmp/g1-selfA /tmp/g1-selfB \
+tracker/tools/g1-diff.sh run new "${TMPDIR:-/tmp}/g1-selfA" && \
+tracker/tools/g1-diff.sh run new "${TMPDIR:-/tmp}/g1-selfB" && \
+tracker/tools/g1-diff.sh compare "${TMPDIR:-/tmp}/g1-selfA" "${TMPDIR:-/tmp}/g1-selfB" \
   && echo "  PASS  double-run self-agreement" \
   || { echo "  FAIL  double-run self-agreement"; fail=1; }
 
@@ -53,9 +53,9 @@ tracker/tools/g1-diff.sh compare /tmp/g1-selfA /tmp/g1-selfB \
 # whether or not they agree with yesterday.  A red here is a Decision 9 stop --
 # explain it or revert it; never re-cut the baseline to make it green.
 echo "-- baseline drift (fresh run vs tracker/g1-baseline) --"
-if tracker/tools/g1-diff.sh compare /tmp/g1-selfA tracker/g1-baseline > /tmp/g1-baseline-cmp.log 2>&1; then
+if tracker/tools/g1-diff.sh compare "${TMPDIR:-/tmp}/g1-selfA" tracker/g1-baseline > "${TMPDIR:-/tmp}/g1-baseline-cmp.log" 2>&1; then
   echo "  PASS  no drift from tracker/g1-baseline"
 else
-  echo "  FAIL  drift from tracker/g1-baseline"; tail -12 /tmp/g1-baseline-cmp.log; fail=1
+  echo "  FAIL  drift from tracker/g1-baseline"; tail -12 "${TMPDIR:-/tmp}/g1-baseline-cmp.log"; fail=1
 fi
 exit $fail

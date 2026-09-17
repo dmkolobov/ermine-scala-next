@@ -23,7 +23,7 @@ fail=0
 for input in tracker/repl-tests/*.in; do
   name=$(basename "$input" .in)
   expected="tracker/repl-tests/$name.expected"
-  raw="/tmp/repl-smoke-$name.raw"
+  raw="${TMPDIR:-/tmp}/repl-smoke-$name.raw"
   # F1/A2: a TIMEOUT and an exit-code check.  `Console.other` used to reopen the
   # `|>` continuation for any line merely CONTAINING "case"/"let"/"where" and to
   # treat `readLine`'s null at EOF as a non-blank line, so a piped session could
@@ -55,11 +55,11 @@ for input in tracker/repl-tests/*.in; do
     fail=1
     continue
   fi
-  if diff -u "$expected" <(printf '%s\n' "$actual") > /tmp/repl-smoke-$name.diff 2>&1; then
+  if diff -u "$expected" <(printf '%s\n' "$actual") > "${TMPDIR:-/tmp}/repl-smoke-$name.diff" 2>&1; then
     echo "  PASS  $name ($(grep -c . "$expected") checks)"
   else
     echo "  FAIL  $name"
-    cat /tmp/repl-smoke-$name.diff
+    cat "${TMPDIR:-/tmp}/repl-smoke-$name.diff"
     fail=1
   fi
 done
