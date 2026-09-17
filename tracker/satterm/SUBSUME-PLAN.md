@@ -151,3 +151,12 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   the timed region (~0.03 %) NOTED, not applied (a code change). Landing in progress: stage commit on
   `subsume-s0`, merge, the six §0.2 replacement sentences applied to the landed S1A report and both Lean reviews
   as a doc commit, then Tier 0 + Tier 1 gates on the merged tree (Subst.scala changed) run by a gate agent.
+- 2026-09-16 ~23:20: S0 LANDED. Stage commit bef7e7a7, §0.2 corrections 00abe6e6, merge d30cf94b, gate
+  section commit on top; `subsume-termination` fast-forwarded. Landing gates (gate agent, logs
+  scratch-subsume/gates-s0/): compile rc=0; TestLoopTrace with the model binary 720/720/720 (controls 46, 58);
+  corpus 89/79/0 over 168, per-file verdict+message listing byte-identical to S0's baseline; repl-smoke 66/66;
+  lsp-smoke 573 (the prompt's 577 is the post-S2 target, pre-change tree also 573); looptrace-corpus 18 groups
+  3,210,869 segments all agree, 0 skip/hashdiff/eqdiff/fuel; trace-ab boot 54,209 and Wide 116,420 IDENTICAL
+  after worktree-path normalisation (same-build control noise floor 0); ei-diff --snapshot 274/274 identical,
+  3523 bindings identical; g1-validate 9/9. Programme tree = 478a369c + docs + S1a + S1b + S0. Disk 7.0 G.
+  S2 (harness stage) implementer still running; S3 not needed.
