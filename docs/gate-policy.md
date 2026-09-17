@@ -52,8 +52,8 @@ A higher tier includes every gate of the tiers below it.
 | tier | when | gates | wall clock (measured 2026-09-17, cold cache) |
 |---|---|---|---|
 | **commit** | before every `git commit` | `compile`, `corpus`, `lsp` | ~2.5 min: compile 5 s incremental / 74 s clean, corpus 42 s, lsp 44 s |
-| **pr** | on the merge result, before a branch lands on `json-encode` or `scala3-migration` | + `suites`, `g1`, `lean` | + ~16 min: suites 11.3 min, g1 2.3 min, lean 3.9 min (cached while `tracker/lean` is unchanged) |
-| **nightly** | on the tip of each live line | + `looptrace-corpus`, and the gates on probation: `looptrace`, `repl` | + ~22 min: looptrace-corpus 20 min, looptrace 15 s, repl 2 min |
+| **pr** | on the merge result, before a branch lands on `json-encode` or `scala3-migration` | + `suites`, `lean` | + ~15 min: suites 11.3 min, lean 3.9 min (cached while `tracker/lean` is unchanged) |
+| **nightly** | on the tip of each live line | + `looptrace-corpus` | + ~20 min |
 
 Why each gate is where it is (catch rates are real defects caught per machine-hour; see the audit):
 
@@ -64,13 +64,20 @@ Why each gate is where it is (catch rates are real defects caught per machine-ho
 - **pr.**
   - `suites` holds every per-suite catch in the window: 7 real defects (2 UNSURE) and 5 harness defects
     (1 UNSURE).
-  - `g1` has the second-best rate (0.67/h), but at 2.3 min it would double the commit tier.
   - `lean` only matters when `tracker/lean` changes, and its subtree key makes it free when it has not.
 - **nightly.**
   - `looptrace-corpus` is the only full-corpus model agreement, but at 20 min it caught 0.5 defects in
-    16 machine-hours.
-  - `looptrace` and `repl` have **zero catches** on record (146 and 196 recorded runs). They are on
-    probation: the mutation harness decides whether each is fixed or deleted (§5).
+    16 machine-hours, and it missed both mutants it was given (E20 owes it a seed-drawn run; under
+    2 of 4 it goes).
+- **deleted 2026-09-17,** on the mutation evidence (`docs/gate-audit.md` §6):
+  - `repl` (`repl-smoke.sh`): zero catches on record in 196 runs (6.5 machine-hours), 1 of 4 mutants.
+  - `looptrace` (a standalone `TestLoopTrace` run): zero catches in 146 runs, 2 of 4 mutants, and
+    redundant — `TestLoopTrace` runs inside `suites`, where a SKIPPED line is a FAIL.
+  - `g1` (`g1-validate.sh`): 0 of 8 mutants, in two different scopes. Its two real catches on record
+    both came from comparing two builds during an intended change, which is instrument use. Ticket E19
+    is the fix that would make it a gate again: record the baseline over `core/examples` too.
+  All three stay in `tracker/tools` and anyone can run them; they are just not required, and a green
+  one is not evidence.
 
 The 2.11 line (`backport-2.11`, `json-encode-2.11`) has its own toolchain. Its full `core/test` (193 s) is
 that line's `pr` gate, run through `backport/env-2.11.sh`. It is not in this registry.
@@ -83,6 +90,10 @@ that line's `pr` gate, run through `backport/env-2.11.sh`. It is not in this reg
   mutation score.
 - **Ask first:** a gate whose single run exceeds 20 min needs the user's approval before it is added to
   any tier.
+- **One heavy gate at a time.** `suites` and `looptrace-corpus` each hold several GB. Running both at
+  once on this machine (15 GB) let the kernel OOM-kill the user's language server on 2026-09-17. The
+  harness waits for `MUTATE_MIN_MEM_GB` (default 6) free before each build and each gate, and heavy
+  gates run with `--lanes 1`.
 
 ## 4. Instruments are not gates
 
@@ -93,6 +104,8 @@ required and never cited as gate evidence:
 - `trace-ab.py`: compiler-vs-compiler trace A/B.
 - `perf-bench.sh`: interleaved perf A/B. It refuses to run while any ermine JVM is alive, the user's
   editor included, and it has never moved in the record.
+- `g1-validate.sh` / `g1-diff.sh`: stdlib signature drift against `tracker/g1-baseline` (E19).
+- `repl-smoke.sh`: REPL transcripts against `tracker/repl-tests/*.expected`.
 - `sql-render.sh`, `sigcheck.py` / `sigentail-*.py`, `keptdef-sweep.sh`, `splitkey-sweep.sh`,
   `res-guard-bench.sh`, `splice-audit.sh`, `corpus-experiments.sh`, `lsp-demo.sh`.
 
@@ -115,8 +128,16 @@ Every gate that declares a mutation scope (`GATE_SCOPE` in `scripts/gates.sh`) m
   `scripts/mutations.equivalent` with the reason. It is never used to wave a survivor through.
 - **When to run it:** whenever a gate's definition or scope changes, and in the nightly job with a new
   seed.
+- **A gate's scope is what it can SEE, not what it runs over.** `g1` boots the stdlib, and the stdlib
+  has no concrete-label row constraints, so row-solver mutants are invisible to it: its scope excludes
+  `Constraints.scala`, and the corpus gate (which loads `core/examples`, 39% of whose solve inputs
+  carry a concrete label) owns that code instead.
 - **Not mutation-tested:** `compile` (a type-correct mutant compiles by construction) and `lean` (the
   operators are Scala-only). Each says so in the registry.
+- **Scores, 2026-09-17** (one mutant per class per gate, seed 1; `docs/gate-audit.md` §6):
+  corpus 2/4 (+1 equivalent), lsp 3/4 (+1 equivalent), suites 3/4. The gates that could not catch their
+  own mutants were deleted. Every remaining survivor is listed in `scripts/mutations.equivalent` with
+  its reason or ticketed in `tracker/TICKET-stdlib-findings.md` (E17, E18, E19).
 
 ## 6. What changed from 2026-09-08
 

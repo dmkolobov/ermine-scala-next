@@ -12,6 +12,7 @@ Re-recording is for an INTENDED change and belongs in the same commit, with the 
 """
 import os
 import re
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True  # never leave __pycache__ in tracker/tools
@@ -24,10 +25,24 @@ spec = importlib.util.spec_from_file_location(
 cv = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cv)
 
-CHECKOUT = re.compile(r"/[^\s:]*/ermine-scala[^/\s:]*/")
+# Any absolute path into THIS checkout, plus (for expectations recorded elsewhere) any path that
+# looks like another checkout of this repo.  Matching only `ermine-scala*` was not enough: the
+# mutation harness runs gates in scratch worktrees with unrelated names, and every module whose
+# refusal quotes a stdlib path then "differed" -- a false red for any mutant (2026-09-17).
+def _root():
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
+    except Exception:
+        return None
+
+
+CHECKOUT = re.compile(r"/[^\s:]*/(?:ermine-scala[^/\s:]*|lane-[0-9]+)/")
+ROOT = _root()
 
 
 def norm(msg):
+    if ROOT:
+        msg = msg.replace(ROOT + "/", "<checkout>/")
     return CHECKOUT.sub("<checkout>/", msg).strip()
 
 

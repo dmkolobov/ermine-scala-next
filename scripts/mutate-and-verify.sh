@@ -32,12 +32,17 @@ lanes run are HEAD's too, except scripts/gate.sh and scripts/gates.sh, which com
   --out DIR         default .mutation-runs/<commit>-s<seed> at the main checkout root
   --keep-lanes      leave the scratch worktrees in place
   --plan-only       print the first-choice mutant of every slot and stop (no build, no gate runs)
+  --mutants FILE    run exactly the mutants in FILE (JSONL as mutate.py prints them, e.g. the
+                    survivors of an earlier run) against every selected gate, instead of planning
+                    new ones.  This is how you ask "does any other gate catch this one?"
 
-Env: MUTATE_MIN_MEM_GB (default 4): a lane waits before a build or a gate run until the machine has
+Env: MUTATE_MIN_MEM_GB (default 6): a lane waits before a build or a gate run until the machine has
 this much MemAvailable, so the harness never starves other work on the machine.
 
-Survivors listed in scripts/mutations.equivalent (`<mutant id> <reason>`) are reported as
-EQUIVALENT instead: only for mutants shown not to change behaviour, with the reason written down.
+Survivors listed in scripts/mutations.equivalent (`<gate> <mutant id> <reason>`) are reported as
+EQUIVALENT instead: only for a mutant shown not to change what THAT gate is checking, with the
+reason written down.  The gate is part of the key because a mutant can be inert for one gate and
+live for another (tracing is off in a corpus load and on in a trace replay).
 
 Output: one line per mutant; then a per-gate table; then a banner naming every survivor.
 exit: 0 every mutant caught; 1 a mutant SURVIVED or a baseline was red; 2 usage;
@@ -45,7 +50,7 @@ exit: 0 every mutant caught; 1 a mutant SURVIVED or a baseline was red; 2 usage;
 EOF
 }
 
-gates_arg=""; tier=pr; n=1; seed=1; classes=obo,swap,guard,mapord; lanes=2; out=""; keep=0; planonly=0
+gates_arg=""; tier=pr; n=1; seed=1; classes=obo,swap,guard,mapord; lanes=2; out=""; keep=0; planonly=0; mutants_file=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
@@ -58,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     --out) out="$2"; shift 2 ;;
     --keep-lanes) keep=1; shift ;;
     --plan-only) planonly=1; shift ;;
+    --mutants) mutants_file="$2"; shift 2 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
@@ -73,7 +79,7 @@ for g in $gates; do [[ -n ${GATE_TIER[$g]:-} ]] || { echo "unknown gate $g" >&2;
 # lanes check out HEAD and mutants carry HEAD's line numbers, so every scoped source must be committed
 for g in $gates; do
   # shellcheck disable=SC2086
-  if [[ -n ${GATE_SCOPE[$g]:-} ]] && ! git diff --quiet HEAD -- ${GATE_SCOPE[$g]}; then
+  if [[ -z $mutants_file && -n ${GATE_SCOPE[$g]:-} ]] && ! git diff --quiet HEAD -- ${GATE_SCOPE[$g]}; then
     echo "mutate: $g's scope has uncommitted changes; mutants are drawn from HEAD (commit first)"; exit 3
   fi
 done
@@ -108,7 +114,7 @@ printf 'gate\tclass\tverdict\tid\tsite\tseconds\tbefore\tafter\n' > "$results"
 # lanes share the machine with whatever else runs (the user's editor included): a lane starts a
 # build or a gate only while MemAvailable stays above MUTATE_MIN_MEM_GB (default 4)
 wait_for_memory() {
-  local want=$(( ${MUTATE_MIN_MEM_GB:-4} * 1048576 ))
+  local want=$(( ${MUTATE_MIN_MEM_GB:-6} * 1048576 ))
   while (( $(awk '/MemAvailable/ {print $2}' /proc/meminfo) < want )); do sleep 15; done
 }
 
@@ -133,7 +139,7 @@ done
 # 1. baselines (in lane 1: same content as the commit, so scripts/gate.sh re-uses any cached run) ----
 declare -A broken=()
 for g in $gates; do
-  if [[ -z ${GATE_SCOPE[$g]:-} ]]; then
+  if [[ -z ${GATE_SCOPE[$g]:-} && -z $mutants_file ]]; then
     echo "mutate: $g has no mutation scope (${GATE_NOSCOPE[$g]:-not declared}); skipped"
     printf '%s\t-\tNOT-MUTATION-TESTED\t-\t-\t-\t-\t%s\n' "$g" "${GATE_NOSCOPE[$g]:-}" >> "$results"
     continue
@@ -150,6 +156,15 @@ for g in $gates; do
     continue
   fi
   # 2. plan: one job per (gate, class, slot), each carrying its pool of candidate sites
+  if [[ -n $mutants_file ]]; then   # --mutants: one job per listed mutant, no candidate search
+    k=0
+    while IFS= read -r m; do
+      [[ -n $m ]] || continue
+      python3 -c 'import json,sys; m=json.loads(sys.argv[1]); print(m["class"])' "$m" > /dev/null || continue
+      printf '%s\n' "$m" > "$out/jobs/$g.given$k.0"; k=$((k + 1))
+    done < "$mutants_file"
+    continue
+  fi
   cand="$out/candidates-$g.jsonl"
   # shellcheck disable=SC2086
   python3 "$HERE/mutate.py" candidates --gate "$g" --seed "$seed" --classes "$classes" ${GATE_SCOPE[$g]} > "$cand"
@@ -200,7 +215,7 @@ run_lane() {
         3) verdict=UNAVAILABLE ;;
         *) verdict="ERROR-$rc" ;;
       esac
-      if [[ $verdict == SURVIVED ]] && grep -q "^$id " "$HERE/mutations.equivalent" 2>/dev/null; then verdict=EQUIVALENT; fi
+      if [[ $verdict == SURVIVED ]] && grep -q "^$g $id " "$HERE/mutations.equivalent" 2>/dev/null; then verdict=EQUIVALENT; fi
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$g" "$c" "$verdict" "$id" "$site" "$((SECONDS - t0))" \
         "$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["before"].strip())' "$m")" \
         "$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["after"].strip())' "$m")" >> "$results"

@@ -837,6 +837,36 @@ E16. **`TestJson."nesting past the depth where nf overflows still encodes"` sits
     Registered only under `-Dermine.test.flaky=true` (docs/gate-policy.md §1).  *Fix.* Render on a thread with an
     explicit stack size, or assert the walker's depth separately from the printer's.  Not scheduled.
 
+E17. **No test reads the order of names in the `$defs` clash error (`json/Zod.scala:61`).**  Found by
+    `scripts/mutate-and-verify.sh` on 2026-09-17 (mutant `mapord-7938cc81d2`): appending `.reverse` to
+    `clash.toList.sortBy(_._1)` changes the message a user sees and the full `core/test` stayed green
+    (1195/1195).  *Fix.* A property in `TestSchema` that provokes two `$defs` names sanitising to one
+    TypeScript identifier and pins the message.  Not scheduled.
+
+E18. **No gate reads the label order `SigEntail` searches in (`SigEntail.scala:499`).**  Found by the
+    same run (mutant `mapord-25d83b6eee`): reversing `(qRows ++ wRows).flatMap(_.conc).distinct
+    .sortBy(_.toString)` leaves all 168 corpus verdicts and their refusal text unchanged.  The comment
+    two lines below says this order decides WHICH refuting model `LabelSearch` finds, so a change here
+    is meant to be visible somewhere.  *Fix.* Either pin the chosen model in `TestSigEntail`, or show
+    that the choice cannot reach a message and delete the sort's claim to matter.  Not scheduled.
+
+E19. **The signature baseline covers the stdlib only, which is the corpus that cannot show row behaviour.**
+    `tracker/g1-baseline` records the 129 stdlib modules' `.ei` plus `:browse`; TICKET-row-constraint-
+    decision.md 7.9 measured 0 of 383 stdlib solve inputs carrying a concrete label against 39% in
+    `core/examples`.  On 2026-09-17 `g1-validate.sh` caught 0 of 8 injected mutants (four in
+    `Constraints.scala`, four in `Subst.scala`/`SigEntail.scala`), so it was deleted as a gate.
+    *Fix.* Record the baseline over `core/examples` as well (G1Compare already compares up to renaming
+    and ordering, which is what made the stdlib baseline stable), and re-run the mutation harness
+    against it.  Cost: one extra corpus boot, about 45 s.  Not scheduled.
+
+E20. **`looptrace-corpus` has no seed-drawn mutation score.**  On 2026-09-17 it was given the two mutants
+    the standalone `TestLoopTrace` gate had missed and missed both: `Subst.scala:1599` (a line that only
+    decides whether a `rsound env` record is written) and `Subst.scala:890` (binding-group order, which
+    no solve replay reaches).  That is a biased sample -- they were picked as known survivors -- and a
+    proper run of four seed-drawn mutants costs about 1.7 hours at 26 minutes a gate run, so it was not
+    done.  *Fix.* Run `scripts/mutate-and-verify.sh --gates looptrace-corpus -n 1 --lanes 1` in a
+    nightly job.  Under 2 of 4 the gate goes, like `repl`, `looptrace` and `g1` did.
+
 ## D. Claims in older documents that do not reproduce
 
 D1. `core/examples/Ai/README.md`'s RUnion table ("a helper bundling `RUnion3` and `RUnion2` does not finish")

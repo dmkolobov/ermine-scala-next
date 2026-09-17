@@ -1,2 +1,5 @@
-# Equivalent mutants: `<mutant id> <reason>`, one per line.
-# Only for a mutant SHOWN not to change behaviour (say how); never to wave a survivor through.
+# Equivalent mutants: `<gate> <mutant id> <reason>`, one per line.
+# Only for a mutant SHOWN not to change what that gate checks -- say how, and cite the evidence.
+# Never a way to wave a survivor through: an unexplained survivor is a broken gate.
+corpus swap-8516a3e982 parsing/package.scala:31 unions three Sets (`val keywords = startingKeywords ++ otherKeywords ++ unusedKeywords`, all three `Set(...)`); Set union is commutative and `keywords` is only asked for membership, so the mutant is the same value.
+lsp mapord-f17d840f03 Symbols.scala:579 sorts the cached `globals` list, but every response is re-sorted at Symbols.scala:653 by (match tier, lowercased name, container) and only then capped at 200, so the mutant cannot change any answer the protocol carries. The sort at 579 is redundant.

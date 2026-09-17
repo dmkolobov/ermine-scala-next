@@ -14,6 +14,11 @@ declare -A GATE_TIER=() GATE_TIMEOUT=() GATE_DESC=() GATE_SCOPE=() GATE_NOSCOPE=
 
 E=core/src/main/scala/com/clarifi/reporting/ermine
 
+# Gate DEFINITIONS (this directory) come from the checkout that runs the gate; the tree under test
+# supplies the product code and tracker/tools.  The mutation harness relies on this: its lanes are
+# checkouts of the commit being mutated, and the checker must not be the mutated copy.
+GATE_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 gate_def() {  # gate_def NAME TIER TIMEOUT "DESC"
   GATE_ORDER="$GATE_ORDER $1"; GATE_TIER[$1]=$2; GATE_TIMEOUT[$1]=$3; GATE_DESC[$1]=$4
 }
@@ -91,23 +96,11 @@ gate_compile() {
   return $rc
 }
 
-gate_def looptrace nightly 900 "TestLoopTrace: compiler solve loop vs the Lean loop model, 720 solves (never skipped)"
-GATE_SCOPE[looptrace]="$E/Subst.scala"
-gate_looptrace() {
-  local bin; bin=$(looptrace_bin) || { echo "SUMMARY no looptrace binary built from this tree's tracker/lean (run the lean gate)"; return 3; }
-  sbt -batch -J-Xmx3g -Dermine.looptrace="$bin" 'core/testOnly *TestLoopTrace'; local rc=$?
-  local line; line=$(grep -oE '[0-9]+ solves .*[0-9]+ agree' "$GATE_LOG" | tail -1)
-  if grep -q 'SKIPPED' "$GATE_LOG"; then echo "SUMMARY FAIL: the property SKIPPED (a skip is not a pass)"; return 1; fi
-  [[ -n $line ]] || { echo "SUMMARY FAIL: no agreement summary in the log"; return 1; }
-  echo "SUMMARY $line"
-  return $rc
-}
-
 gate_def corpus commit 900 "every core/examples module: verdict + refusal text vs tracker/corpus-verdicts.expected"
 GATE_SCOPE[corpus]="$E/Subst.scala $E/Type.scala $E/Constraints.scala $E/SigEntail.scala $E/Kind.scala $E/KindSchema.scala $E/Term.scala $E/Pattern.scala $E/Binding.scala $E/rename/*.scala $E/parsing/*.scala"
 gate_corpus() {
   tracker/tools/corpus-run.sh --batch "$GATE_OUT/corpus" || { echo "SUMMARY corpus-run failed"; return 1; }
-  local rc; python3 scripts/corpus-check.py "$GATE_OUT/corpus" tracker/corpus-verdicts.expected; rc=$?
+  local rc; python3 "$GATE_SCRIPTS/corpus-check.py" "$GATE_OUT/corpus" tracker/corpus-verdicts.expected; rc=$?
   rm -f "$GATE_OUT"/corpus/batch.log
   return $rc
 }
@@ -127,14 +120,13 @@ gate_lsp() {
   return $rc
 }
 
-gate_def g1 pr 1200 "tracker/tools/g1-validate.sh: G1 comparator fixtures + stdlib signatures vs tracker/g1-baseline"
-GATE_SCOPE[g1]="$E/Subst.scala $E/Type.scala $E/Constraints.scala $E/SigEntail.scala $E/Pretty.scala"
-gate_g1() {
-  with_own_classpath tracker/tools/g1-validate.sh; local rc=$?
-  echo "SUMMARY $(grep -c '^  PASS' "$GATE_LOG") pass, $(grep -c '^  FAIL' "$GATE_LOG") fail"
-  return $rc
-}
-
+# DELETED 2026-09-17 (docs/gate-audit.md §6): `g1` (tracker/tools/g1-validate.sh) was a pr gate.
+# It caught two real defects in the record, both while comparing two builds during an intended change,
+# but as a gate on one commit it caught 0 of 8 injected mutants -- 4 from the row solver (invisible:
+# it boots the stdlib, which has no concrete-label row constraints) and, after its scope was corrected
+# to inference and rendering, 4 more from Subst.scala and SigEntail.scala.  It stays as an instrument:
+# run it when signatures are expected to move, and read its diff.  Ticket E19 is the fix that would
+# make it a gate again (record the baseline over core/examples, where the rows are).
 gate_def suites pr 2400 "full sbt core/test (every suite; TestLoopTrace against the Lean binary, never skipped)"
 GATE_SCOPE[suites]="core/src/main/scala/**/*.scala parsers/src/main/scala/**/*.scala"
 gate_suites() {
@@ -182,4 +174,8 @@ sys.exit(0 if ok else 1)
 PY
 }
 
-gate_def repl nightly 900 "tracker/tools/repl-smoke.sh: REPL transcripts vs tracker/repl-tests/*.expected"
+# DELETED 2026-09-17 (docs/gate-audit.md): `repl` (tracker/tools/repl-smoke.sh) and `looptrace`
+# (a standalone TestLoopTrace run) were gates until today.  Neither has a catch on record -- 196 and
+# 146 recorded runs, 6.5 and 0.9 machine-hours -- and in the mutation run repl caught 1 of 4 mutants
+# in its own scope and looptrace 2 of 4.  TestLoopTrace still runs, inside `suites`, where a SKIPPED
+# line is a FAIL; repl-smoke.sh stays as an instrument anyone can run.

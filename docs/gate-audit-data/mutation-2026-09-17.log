@@ -1,0 +1,189 @@
+mutate: commit b0ffb5db seed=1 n=1 classes=obo,swap,guard,mapord lanes=2 out=/home/dmitry/research/ermine/scratch-gate-audit/mutation-s1
+mutate: baseline gate corpus CACHED-PASS 43s 89 loaded / 79 rejected / 0 unknown of 168; 0 differ from expected
+mutate: baseline gate lsp CACHED-PASS 44s PASS  lsp (582 checks)
+mutate: baseline gate looptrace CACHED-PASS 29s 720 solves (20 seed x 6 bases + 600 generated); 720 segments; 720 agree
+mutate: baseline gate g1 CACHED-PASS 282s 9 pass, 0 fail
+mutate: baseline gate repl CACHED-PASS 165s 9 pass, 0 fail
+mutate: baseline gate suites CACHED-PASS 654s Passed: Total 1195, Failed 0, Errors 0
+mutant corpus guard guard-406ead7b36 CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2216 67s
+mutant corpus mapord mapord-25d83b6eee CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/SigEntail.scala:499 78s
+mutant corpus obo obo-44f767811e CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/parsing/ModuleParsers.scala:26 35s
+mutant corpus swap swap-8516a3e982 CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/parsing/package.scala:31 88s
+mutant g1 guard guard-575241c2e2 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2273 234s
+mutant g1 mapord mapord-9d53077f60 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:641 233s
+mutant g1 obo obo-045c6df44e SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:3032 213s
+mutant g1 swap swap-537c4f06d7 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2992 209s
+mutant looptrace mapord mapord-f6a972bfe9 CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:1664 38s
+mutant looptrace obo obo-c62b48da22 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:1599 34s
+mutant looptrace swap swap-19fc4805ae SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:890 36s
+mutant looptrace guard guard-d426065d36 CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:1306 212s
+mutant lsp guard guard-b4adfbefbf CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/lsp/Completion.scala:335 78s
+mutant lsp obo obo-581f85fec6 CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/lsp/Definitions.scala:606 36s
+mutant lsp mapord mapord-f17d840f03 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/lsp/Symbols.scala:579 83s
+mutant lsp swap swap-8b43cda053 CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/surface/StatementExtents.scala:261 78s
+mutant repl guard guard-fa9ba7bc2e SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/session/Console.scala:774 191s
+mutant repl mapord mapord-12e2819474 CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/Pretty.scala:219 193s
+mutant repl obo obo-574e2930c8 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Pretty.scala:371 205s
+mutant repl swap swap-f2568cd5b2 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Pretty.scala:416 236s
+mutant suites guard guard-60daf6caef CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2347 603s
+mutant suites mapord mapord-7938cc81d2 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/json/Zod.scala:61 1403s
+mutant suites obo obo-4707449b6c CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:3058 1290s
+mutant suites swap swap-28b1944d8c CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/surface/StatementExtents.scala:231 1048s
+
+gate               caught survived stillborn equivalent   no-site  other
+corpus                  4        0         0          0         0  
+g1                      0        4         0          0         0  
+looptrace               2        2         0          0         0  
+lsp                     3        1         0          0         0  
+repl                    1        3         0          0         0  
+suites                  3        1         0          0         0  
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!! SILENTLY BROKEN GATES: 11 mutant(s) survived or a baseline was red
+!!! g1               guard    SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2273
+!!!     - val nproc = if (keepDefs) nproc0 ++ pps.filter(defs) else nproc0
+!!!     + val nproc = if (keepDefs) nproc0 ++ pps else nproc0
+!!! g1               mapord   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:641
+!!!     - p._2.abstr.toList.map(_.id).sorted ++ (canonSep ::
+!!!     + p._2.abstr.toList.map(_.id).sorted.reverse ++ (canonSep ::
+!!! g1               obo      SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:3032
+!!!     - while (z < order.length && u < 0) { if (bits(order(z)) == 0) u = order(z); z += 1 }
+!!!     + while (z < order.length && u <= 0) { if (bits(order(z)) == 0) u = order(z); z += 1 }
+!!! g1               swap     SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2992
+!!!     - while (k < m && ok) {
+!!!     + while (m < k && ok) {
+!!! looptrace        obo      SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:1599
+!!!     - if (RowTrace.enabled && (facts > 0 || opaque > 0))
+!!!     + if (RowTrace.enabled && (facts > 0 || opaque >= 0))
+!!! looptrace        swap     SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:890
+!!!     - (ds ++ ds0, subs ++ isp)
+!!!     + (ds0 ++ ds, subs ++ isp)
+!!! lsp              mapord   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/lsp/Symbols.scala:579
+!!!     - }.sortBy(s => (s.lower, s.module))
+!!!     + }.sortBy(s => (s.lower, s.module)).reverse
+!!! repl             guard    SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/session/Console.scala:774
+!!!     - case command(name, arg) if name.length > 1 =>
+!!!     + case command(name, arg) =>
+!!! repl             obo      SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Pretty.scala:371
+!!!     - case Thunk(t)    => ppRuntime(t, d + 1)
+!!!     + case Thunk(t)    => ppRuntime(t, d)
+!!! repl             swap     SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Pretty.scala:416
+!!!     - _ <- (ks ++ ts).traverse[Pretty, Name](fresh _)
+!!!     + _ <- (ts ++ ks).traverse[Pretty, Name](fresh _)
+!!! suites           mapord   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/json/Zod.scala:61
+!!!     - clash.toList.sortBy(_._1).map { case (id, ns) =>
+!!!     + clash.toList.sortBy(_._1).reverse.map { case (id, ns) =>
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+harness exit=1
+
+[exited with code 0]
+mutate: commit b0ffb5db seed=1 n=1 classes=obo,swap,guard,mapord lanes=1 out=/home/dmitry/research/ermine/scratch-gate-audit/cross-corpus2
+mutate: baseline gate corpus CACHED-PASS 43s 89 loaded / 79 rejected / 0 unknown of 168; 0 differ from expected
+mutant corpus given0 guard-575241c2e2 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2273 69s
+mutant corpus given1 mapord-9d53077f60 CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:641 68s
+mutant corpus given2 obo-045c6df44e SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:3032 70s
+mutant corpus given3 swap-537c4f06d7 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2992 68s
+mutant corpus given4 obo-c62b48da22 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:1599 74s
+mutant corpus given5 swap-19fc4805ae SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:890 69s
+mutant corpus given6 mapord-f17d840f03 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/lsp/Symbols.scala:579 69s
+mutant corpus given7 guard-fa9ba7bc2e SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/session/Console.scala:774 69s
+mutant corpus given8 obo-574e2930c8 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Pretty.scala:371 68s
+mutant corpus given9 swap-f2568cd5b2 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Pretty.scala:416 68s
+
+gate               caught survived stillborn equivalent   no-site  other
+corpus                  1        9         0          0         0  
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!! SILENTLY BROKEN GATES: 9 mutant(s) survived or a baseline was red
+!!! corpus           given0   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2273
+!!!     - val nproc = if (keepDefs) nproc0 ++ pps.filter(defs) else nproc0
+!!!     + val nproc = if (keepDefs) nproc0 ++ pps else nproc0
+!!! corpus           given2   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:3032
+!!!     - while (z < order.length && u < 0) { if (bits(order(z)) == 0) u = order(z); z += 1 }
+!!!     + while (z < order.length && u <= 0) { if (bits(order(z)) == 0) u = order(z); z += 1 }
+!!! corpus           given3   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2992
+!!!     - while (k < m && ok) {
+!!!     + while (m < k && ok) {
+!!! corpus           given4   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:1599
+!!!     - if (RowTrace.enabled && (facts > 0 || opaque > 0))
+!!!     + if (RowTrace.enabled && (facts > 0 || opaque >= 0))
+!!! corpus           given5   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:890
+!!!     - (ds ++ ds0, subs ++ isp)
+!!!     + (ds0 ++ ds, subs ++ isp)
+!!! corpus           given6   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/lsp/Symbols.scala:579
+!!!     - }.sortBy(s => (s.lower, s.module))
+!!!     + }.sortBy(s => (s.lower, s.module)).reverse
+!!! corpus           given7   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/session/Console.scala:774
+!!!     - case command(name, arg) if name.length > 1 =>
+!!!     + case command(name, arg) =>
+!!! corpus           given8   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Pretty.scala:371
+!!!     - case Thunk(t)    => ppRuntime(t, d + 1)
+!!!     + case Thunk(t)    => ppRuntime(t, d)
+!!! corpus           given9   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Pretty.scala:416
+!!!     - _ <- (ks ++ ts).traverse[Pretty, Name](fresh _)
+!!!     + _ <- (ts ++ ks).traverse[Pretty, Name](fresh _)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+mutate: commit b0ffb5db seed=1 n=1 classes=obo,swap,guard,mapord lanes=1 out=/home/dmitry/research/ermine/scratch-gate-audit/corpus-recheck
+mutate: baseline gate corpus CACHED-PASS 43s 89 loaded / 79 rejected / 0 unknown of 168; 0 differ from expected
+mutant corpus guard guard-406ead7b36 CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2216 56s
+mutant corpus mapord mapord-25d83b6eee SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/SigEntail.scala:499 69s
+mutant corpus obo obo-44f767811e CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/parsing/ModuleParsers.scala:26 26s
+mutant corpus swap swap-8516a3e982 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/parsing/package.scala:31 65s
+
+gate               caught survived stillborn equivalent   no-site  other
+corpus                  2        2         0          0         0  
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!! SILENTLY BROKEN GATES: 2 mutant(s) survived or a baseline was red
+!!! corpus           mapord   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/SigEntail.scala:499
+!!!     - val labels  = (qRows ++ wRows).flatMap(_.conc).distinct.sortBy(_.toString)
+!!!     + val labels  = (qRows ++ wRows).flatMap(_.conc).distinct.sortBy(_.toString).reverse
+!!! corpus           swap     SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/parsing/package.scala:31
+!!!     - val keywords = startingKeywords ++ otherKeywords ++ unusedKeywords
+!!!     + val keywords = otherKeywords ++ startingKeywords ++ unusedKeywords
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+corpus recheck exit=1
+
+[exited with code 0]
+mutate: commit b0ffb5db seed=1 n=1 classes=obo,swap,guard,mapord lanes=1 out=/home/dmitry/research/ermine/scratch-gate-audit/g1-rescope
+mutate: baseline gate g1 CACHED-PASS 282s 9 pass, 0 fail
+mutant g1 guard guard-a2d82f07d1 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/SigEntail.scala:343 185s
+mutant g1 mapord mapord-8707b56c7d SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:2183 185s
+mutant g1 obo obo-616ae116f1 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/SigEntail.scala:714 188s
+mutant g1 swap swap-19fc4805ae SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:890 191s
+
+gate               caught survived stillborn equivalent   no-site  other
+g1                      0        4         0          0         0  
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!! SILENTLY BROKEN GATES: 4 mutant(s) survived or a baseline was red
+!!! g1               guard    SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/SigEntail.scala:343
+!!!     - val kept = vs.filterNot(dups.contains)
+!!!     + val kept = vs
+!!! g1               mapord   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:2183
+!!!     - \t + eU.map(_.toString).sorted.mkString(" "))
+!!!     + \t + eU.map(_.toString).sorted.reverse.mkString(" "))
+!!! g1               obo      SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/SigEntail.scala:714
+!!!     - else (if (ms.length <= mintedShown) ms.mkString(", ")
+!!!     + else (if (ms.length < mintedShown) ms.mkString(", ")
+!!! g1               swap     SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:890
+!!!     - (ds ++ ds0, subs ++ isp)
+!!!     + (ds0 ++ ds, subs ++ isp)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+mutate: commit b0ffb5db seed=1 n=1 classes=obo,swap,guard,mapord lanes=1 out=/home/dmitry/research/ermine/scratch-gate-audit/lt-corpus-check
+mutate: baseline gate looptrace-corpus CACHED-PASS 1964s 18/18 groups agree over 3210869 segments
+mutant looptrace-corpus given0 obo-c62b48da22 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:1599 1586s
+mutant looptrace-corpus given1 swap-19fc4805ae SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:890 1548s
+
+gate               caught survived stillborn equivalent   no-site  other
+looptrace-corpus        0        2         0          0         0  
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!! SILENTLY BROKEN GATES: 2 mutant(s) survived or a baseline was red
+!!! looptrace-corpus given0   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:1599
+!!!     - if (RowTrace.enabled && (facts > 0 || opaque > 0))
+!!!     + if (RowTrace.enabled && (facts > 0 || opaque >= 0))
+!!! looptrace-corpus given1   SURVIVED         core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:890
+!!!     - (ds ++ ds0, subs ++ isp)
+!!!     + (ds0 ++ ds, subs ++ isp)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

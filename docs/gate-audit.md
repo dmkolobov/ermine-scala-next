@@ -57,8 +57,10 @@ This is an estimate. An aborted run counts as a full run, and runs the user star
 ### 1.3 Catches
 
 Two read-only agents searched `git log --all` (1,160 commits: 2015-2019 upstream, 2026 this programme),
-`tracker/**/*.md` and both 2.11 branches' reports, and classified every evidence item. I spot-checked 8
-of their cited commits and quotes against the repository, and all 8 matched. Their full reports, with a
+`tracker/**/*.md` and both 2.11 branches' reports, and classified every evidence item. I checked 16 of
+their roughly 60 cited commits and quotes against the repository myself (c895bf2e, 7a4254d7, 80df1eba,
+4943c72c, 65c037c1, 3a2dd069, ac74137a, 3665e06b, 1ca4df9f, faf6e285, afa7c613, 3be37bf9, and four
+tracker quotes); all 16 matched. The other rows are as the agents reported them. Their full reports, with a
 verbatim quote and source for every row, are `docs/gate-audit-data/history-scripts.md` and
 `history-suites.md`.
 
@@ -281,3 +283,62 @@ defect in the code it claims to guard, which the record cannot show for a gate t
   magnitude.
 - **The weights are a choice.** UNSURE counts as half and GATE-DEFECT equals REAL-DEFECT. With UNSURE at
   0 or 1, the ritual list is unchanged, because every row on it has zero sure catches.
+
+## 6. Mutation results, 2026-09-17
+
+The record above says what a gate HAS caught. This says what it CAN catch: `scripts/mutate-and-verify.sh`
+injects one mutant per bug class into each gate's declared scope and demands the gate go red. Commit
+`b0ffb5db`, seed 1, 24 mutants; the run log is `docs/gate-audit-data/mutation-2026-09-17.log`.
+
+| gate | caught | survived | what survived |
+|---|---:|---:|---|
+| corpus | 2 (+1 equivalent) | 1 | `SigEntail.scala:499` label order; `parsing/package.scala:31` is a Set union, so that mutant is the same value |
+| suites | 3 | 1 | `json/Zod.scala:61`, the order of names in a "$defs names clash" error |
+| lsp | 3 | 1, equivalent | `Symbols.scala:579` sorts a cached list that `Symbols.scala:653` re-sorts per response, so no answer can change |
+| looptrace | 2 | 2 | a `RowTrace`-only line; `Subst.scala:890`, binding-group order, which the property never reaches |
+| repl | 1 | 3 | two `Pretty.scala` printing paths and the REPL's `:command` guard |
+| looptrace-corpus | 0 | 2 | the two mutants `looptrace` missed also survive the 26-minute corpus replay: the `RowTrace`-only line, and `Subst.scala:890`. BIASED SAMPLE: these two were chosen because a related gate missed them, not drawn by seed |
+| g1 | 0 | 4 | all four row-solver mutants in `Constraints.scala`; then 0 of 4 again after its scope was corrected to inference and rendering (`SigEntail.scala:343`, `:714`, `Subst.scala:2183`, `:890`) |
+
+**What the run changed.**
+
+- **`g1` was claiming code it cannot see.** It boots the stdlib, and the stdlib has no concrete-label
+  row constraints (TICKET-row-constraint-decision.md §7.9: 0 of 383 stdlib solve inputs carry one,
+  against 39% in `core/examples`). Its scope no longer includes `Constraints.scala`; the corpus gate,
+  which loads the examples, does. A cross-check confirms the split: of the four g1 survivors, the corpus
+  gate catches the `canonKey` ordering mutant (`Constraints.scala:641`) that g1 missed.
+- **`repl`, `looptrace` and `g1` are deleted as gates.** Zero catches on record for the first two, and
+  mutation scores of 1 of 4, 2 of 4 and 0 of 8. `TestLoopTrace` still runs inside `suites`; all three
+  scripts remain as instruments. Ticket E19 records the fix that would make `g1` a gate again: its
+  baseline covers the stdlib, which structurally cannot exhibit row behaviour, so it should cover
+  `core/examples` too.
+- **The `lsp` survivor turned out to be an equivalent mutant.** My first fix added an order assertion
+  to `tracker/tools/lsp-client.py`; it failed on the UNMUTATED server, which is how I learned that the
+  sort at `Symbols.scala:579` is dead: line 653 re-sorts every response by (match tier, name,
+  container) before the 200-cap. The assertion is reverted and the mutant is recorded in
+  `scripts/mutations.equivalent` with that evidence. The redundant sort is left alone.
+- **Three survivors are ticketed, not fixed:** E17 (`Zod.scala:61`), E18 (`SigEntail.scala:499`) and
+  E20 (`looptrace-corpus` has no seed-drawn mutation score: four of its own mutants cost 1.7 hours,
+  so the nightly job owes one).
+- **`looptrace-corpus` keeps its place on a condition.** It is the only check that the Lean loop model
+  still matches the compiler over the real corpus, and deleting it would leave that unchecked. It
+  missed both mutants it was given, so E20 schedules a proper four-mutant run in the nightly job: under
+  2 of 4 and it goes the way of the other three.
+
+**Three defects the harness found in the checking machinery itself**, all fixed in the commits named:
+
+1. **A racy lock** (`7e8012dd`): two concurrent gate runs in one worktree both proceeded, deleted each
+   other's `.ei` files and swapped `tracker/repl-classpath.txt` twice, producing a FAIL ("84 .ei files,
+   expected 129") that had nothing to do with the code under test.
+2. **A content key that missed an edit** (`b0ffb5db`): the key came from a copy of the git index, whose
+   stat data hid a same-size edit made within the same mtime second. A mutant got HEAD's key and a
+   CACHED-PASS for code that never ran.
+3. **A false red in the corpus gate** (this commit): its path normaliser only recognised checkouts named
+   `ermine-scala*`, so in the harness's scratch lanes two modules' refusal text always "differed". That
+   turned every corpus mutant into a catch: the first run read 4 of 4, the honest number is 2 of 4.
+   Found only because an LSP-only mutant "failed" the corpus gate, which is impossible.
+
+**Cost of the run.** 24 mutants, about 2.5 hours of machine time, plus 11 re-runs for the cross-check and
+the corrected corpus numbers. Two lanes at once was too much for a 15 GB machine: at 12:22 the kernel
+OOM-killed the user's language server while `suites` and `looptrace-corpus` overlapped. The harness now
+waits for 6 GB free and heavy gates run one lane at a time.
