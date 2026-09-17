@@ -204,3 +204,11 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   agent running on the merged tree (S0 instrumentation + S2 harness together). On GREEN: fast-forward, then the
   closing sequence: M1 = fast-forward `scala3-migration` (still at the base 478a369c) + one full core/test in the
   main checkout; M2 (brief-M2-json-encode.md) and P211 (brief-P211-port.md) launched in parallel.
+- 2026-09-17 ~01:50: S2 LANDED (gates GREEN on the merged tree: compile 15 pre-existing warnings; TestLoopTrace
+  720/720/720; B1 suite at default N 13/13 all `proved` in 329 s under contention; TestRowRefusals 1/1; corpus
+  89/79/0 over 168, normalised listing byte-identical to S0's baseline; repl-smoke 66/66; lsp-smoke 578; Tier 1
+  not triggered, core/src/main unchanged since ccaf3b45). `subsume-termination` = d278c900.
+  CLOSING SEQUENCE STARTED: M1 = `scala3-migration` fast-forwarded to d278c900 (it was at the base 478a369c);
+  full core/test running in the main checkout (scratch-subsume/orch/m1-scala3-full-coretest.log). M2 (json-encode
+  merge + B1 gate lift) and P211 (2.11 port + json-encode-2.11 merge) launched in parallel (Opus); report stubs
+  pre-created at wt-json/tracker/satterm/SUBSUME-M2.md and wt-backport|wt-json211/backport/SUBSUME-2.11.md.
