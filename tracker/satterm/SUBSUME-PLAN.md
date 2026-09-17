@@ -160,3 +160,18 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   after worktree-path normalisation (same-build control noise floor 0); ei-diff --snapshot 274/274 identical,
   3523 bindings identical; g1-validate 9/9. Programme tree = 478a369c + docs + S1a + S1b + S0. Disk 7.0 G.
   S2 (harness stage) implementer still running; S3 not needed.
+
+## Closing sequence (the user, 2026-09-16 late evening) — starts after S2's review and fixes land
+
+1. Land S2 on `subsume-termination` (review LAND, fixes applied, gates green, one commit).
+2. Merge `subsume-termination` into `scala3-migration` (main checkout `ermine-scala`); one full `core/test`
+   on the receiving branch before it counts as done.
+3. Merge `scala3-migration` into `json-encode` (worktree `ermine-scala-wt-json`); full `core/test` there; then
+   lift the `-Dermine.test.dateDiffReject` gate (commit dd9e0316) since the property is fast once S2's
+   combinator is in.
+4. 2.11 line: port the Scala pieces (S0 instrumentation, S2 harness fix, pins, smoke case) by hand onto
+   `backport-2.11` (worktree `ermine-scala-wt-backport`) in the 2.11-and-3 dialect, the way the JSON stages
+   were ported (Opus porter + reviewer); Lean/docs copy unchanged; full 2.11 test; then merge `backport-2.11`
+   into `json-encode-2.11` (worktree `ermine-scala-wt-json211`); full test there.
+5. Nothing pushed to any remote at any step.
+- 2026-09-16 ~23:45: S2 implementer still running (launched ~20:30, 4 h budget). Reviewer launches on its report.
