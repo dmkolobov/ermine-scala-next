@@ -123,3 +123,78 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   the wt-json-wrappers binary. Not done: filtered repro pair, "another suite ahead" control, solveDet at N=16.
   S0 reviewer launched (Opus) with the harness explanation as the point to dispute hardest. S2/S3 premises
   (memoised :648 / budget) fail on this evidence if the review confirms; S2 to be re-briefed accordingly.
+- 2026-09-16 ~20:15: S0 REVIEW = FIX-THEN-LAND, headline CONFIRMED and strengthened: the reviewer's default-N
+  run of the suite FINISHED green in 1,099 s ("never returns" refuted by a completed run); bin/ermine refuses
+  Bad.e in 0.07 s; TestLoopTrace with the model binary 720/720/720 (the real baseline); a preceding suite makes
+  the repetitions no cheaper (11.4 s vs 9.3 s per test). Must-fix: (1) every :648 cost figure was floor-summed
+  integer ms — corrected estimate puts :648 at tens of seconds, 10–25 % of a suite, INVERTING the ":365 costlier"
+  comparison quoted in the landed S1A report and both Lean reviews (to be corrected at S0's landing from S0's
+  §0.2 replacement sentences); (2) the TestLoopTrace baseline cited a non-existent log. Findings sent to the S0
+  implementer. Reviewer's signed answer: YES as a measurement; not signed: any :648 share, "terminates" as a
+  theorem (that is S1a/S1b's), "no input can diverge" (fixture env never swept over id bases; base-16 boot 2×
+  outlier). Recommended next stage: a harness stage, not Part C's S2, and no S3.
+- 2026-09-16 ~20:25: brief-S2 REWRITTEN (3fe4e8c3) as the harness stage: `proved` refutation combinator at
+  TestErmine.scala:220-223 (24 `no(` sites in 5 files), B1 deadline pin, small unsat generator + twins, LSP smoke
+  case, Tier 0 + one full core/test; NO compiler change. Licence: S1a + S1b landed, S0 headline confirmed by
+  review. Branch `subsume-s2`, worktree `wt-subsume-s2`; S2 implementer launched (Opus, 4 h) in parallel with
+  S0's fixes (S2 does not build on S0's code). S3 NOT needed on this evidence.
+- 2026-09-16 ~21:50: S0 fixes applied: nanosecond accumulators — :648 CORRECTED to 2.79 s (23 %) of the
+  bin/ermine run and 45.42 s (24.7 %) of the 184 s suite (fskvs 21.07 s + kindVars 24.35 s; 265 µs per
+  subsumeType; max 5.8 ms), 12.1× :365 (the old floor-sum was 15.7–21× low); unchanged: 1,566 / 0 cycles /
+  0 budget hits / 0.07 s refusal / 100 repetitions. Subst.scala now +157/−2 (inline defs, measure removed,
+  Walk model in scratch patch). §0.2 gives six replacement sentences for SUBSUME-STAGE1A.md (:289, :396, :488),
+  SUBSUME-STAGE1A-REVIEW.md (:226, :262), SUBSUME-STAGE1B-REVIEW.md (:215) — to be applied by the orchestrator
+  at S0's landing. Ticket line added to TICKET-perf-type-inference.md (start at :648). S0 reviewer re-checking.
+- 2026-09-16 ~22:20: S0 REVIEW re-check = LAND (§7 of the review; both corrected totals re-derived by the
+  reviewer from the nanosecond traces: 2.785 s CLI, 45.418 s suite; flag-OFF zero records on the rebuilt tree).
+  Three cosmetic residuals: two doc nits fixed by the orchestrator at landing; `SubsumeTrace.cse` counting inside
+  the timed region (~0.03 %) NOTED, not applied (a code change). Landing in progress: stage commit on
+  `subsume-s0`, merge, the six §0.2 replacement sentences applied to the landed S1A report and both Lean reviews
+  as a doc commit, then Tier 0 + Tier 1 gates on the merged tree (Subst.scala changed) run by a gate agent.
+- 2026-09-16 ~23:20: S0 LANDED. Stage commit bef7e7a7, §0.2 corrections 00abe6e6, merge d30cf94b, gate
+  section commit on top; `subsume-termination` fast-forwarded. Landing gates (gate agent, logs
+  scratch-subsume/gates-s0/): compile rc=0; TestLoopTrace with the model binary 720/720/720 (controls 46, 58);
+  corpus 89/79/0 over 168, per-file verdict+message listing byte-identical to S0's baseline; repl-smoke 66/66;
+  lsp-smoke 573 (the prompt's 577 is the post-S2 target, pre-change tree also 573); looptrace-corpus 18 groups
+  3,210,869 segments all agree, 0 skip/hashdiff/eqdiff/fuel; trace-ab boot 54,209 and Wide 116,420 IDENTICAL
+  after worktree-path normalisation (same-build control noise floor 0); ei-diff --snapshot 274/274 identical,
+  3523 bindings identical; g1-validate 9/9. Programme tree = 478a369c + docs + S1a + S1b + S0. Disk 7.0 G.
+  S2 (harness stage) implementer still running; S3 not needed.
+
+## Closing sequence (the user, 2026-09-16 late evening) — starts after S2's review and fixes land
+
+1. Land S2 on `subsume-termination` (review LAND, fixes applied, gates green, one commit).
+2. Merge `subsume-termination` into `scala3-migration` (main checkout `ermine-scala`); one full `core/test`
+   on the receiving branch before it counts as done.
+3. Merge `scala3-migration` into `json-encode` (worktree `ermine-scala-wt-json`); full `core/test` there; then
+   lift the `-Dermine.test.dateDiffReject` gate (commit dd9e0316) since the property is fast once S2's
+   combinator is in.
+4. 2.11 line: port the Scala pieces (S0 instrumentation, S2 harness fix, pins, smoke case) by hand onto
+   `backport-2.11` (worktree `ermine-scala-wt-backport`) in the 2.11-and-3 dialect, the way the JSON stages
+   were ported (Opus porter + reviewer); Lean/docs copy unchanged; full 2.11 test; then merge `backport-2.11`
+   into `json-encode-2.11` (worktree `ermine-scala-wt-json211`); full test there.
+5. Nothing pushed to any remote at any step.
+- 2026-09-16 ~23:45: S2 implementer still running (launched ~20:30, 4 h budget). Reviewer launches on its report.
+- 2026-09-17 ~00:20: S2 DONE (uncommitted on `subsume-s2`): `ErmineFixture.rejects` (False→Proof, one
+  evaluation; `no` kept for the one forAll-bodied site TestScopes.scala:122), `bounded(ms)` deadline idiom,
+  `loadNamed`/`outcomeOf` (shared warm session, no literalLock); 21 live `no(` sites in 6 files, 20 converted
+  (TestRelations.scala's 7 are inside a block comment — dead code). Timings: B1 suite alone at default N
+  1,282 s → 181–195 s (13/13); full core/test 1,698 s (1070/1070) → 524 s (1071 + TestLegend quarantine on its
+  allowed re-run) = 1,174 s saved (69 %). Pins: (B1-bound) 4/4; new TestRowRefusals (16 unsat programs + twins,
+  32 loads in one session, ~20 s, mutation-falsified); LSP smoke RowUnsat.e + 5 checks, server answers 58 ms
+  after didOpen (lsp-smoke 573 → 578). Finding kept: a deadline pin wrapping loadStatements measures
+  literalLock contention, not the check. Gates Tier 0 green (TestLoopTrace 720/720/720; corpus 89/79/0, 0
+  verdicts differ; repl-smoke PASS); Tier 1 not triggered (nothing under core/src/main). Answer YES with S1b
+  §8's limits carried. S2 reviewer launched (Opus).
+- 2026-09-17 ~00:50: S2 REVIEW = FIX-THEN-LAND (`SUBSUME-STAGE2-REVIEW.md`; reviewer re-ran B1 suite alone at
+  default N 189 s 13/13 all `proved`, TestRowRefusals 16 s, lsp-smoke 578 with the RowUnsat diagnostic at 78 ms,
+  two mutations red; census 21 sites / 6 files confirmed; TestRelations.scala dead by nested block comment).
+  Findings: F-1 (code, one conjunct) TestRowRefusals asserts only "refused:", not the row-label cause; F-2..F-7
+  prose (sweep claim, `failsMatching` idiom uncited, model-vs-Scala wording in §5.1 + buildQueue hypothesis,
+  literalLock docstring, run order, added-cost figure). Reviewer's signed answer: YES for this path, with S1b §8's
+  limits. Findings sent to the S2 implementer.
+- 2026-09-17 ~01:05: S2 fixes applied (F-1 cause conjunct in TestRowRefusals, 48 assertions, both mutations red
+  for the right reason; F-2..F-7 prose/docstrings; report §8). S2 reviewer re-checking. On LAND: merge
+  `subsume-termination` into `subsume-s2`, Tier 0 on the merged tree (S0's Subst.scala + S2's tests together:
+  compile, B1 suite alone at default N, TestRowRefusals, TestLoopTrace with the binary, corpus --batch, smokes),
+  commit, fast-forward; then the closing sequence (M1 ff into scala3-migration + full core/test; M2 brief; P211 brief).

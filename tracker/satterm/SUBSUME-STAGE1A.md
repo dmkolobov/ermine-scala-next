@@ -286,8 +286,12 @@ at all.** `verdict_eq` and `skolem_filter_redundant` are verdict-preserving *tid
 — and `no_early_exit_on_empty` proves the short-circuit never fires on a no-escape run, which
 is every successful signature check. `verdict_restrict_untouched` is the only asymptotic
 licence, and it now requires S2 to build **and prove** a re-stamping mechanism rather than to
-test an entry's age. Together with S0's measurement that `:648` is ~1 % of the hang, the honest
-reading is that **S2's brief should not be "make `:648` cheaper"**; this stage's real
+test an entry's age. S0's cost measurement has been CORRECTED (S0 review finding 1; `SUBSUME-STAGE0.md` §0.2):
+the first figure was a floor-sum of integer milliseconds and `:648` in fact costs 45 s of a
+184 s suite run (25 %), about 12 times `checkSkolemEscape:365`. The honest reading is
+unchanged and rests on this stage's THEOREM rather than on that number: **S2's brief should
+not be "make `:648` cheaper"**, because making it cheaper cannot be the fix for a check that
+terminates — this stage's real
 deliverable for S2 is the proof that making it cheaper cannot be the fix.
 
 **May change — nothing observable is at stake, AT `:648`.** `escs`'s elements are dead there:
@@ -392,9 +396,10 @@ is needed for this walk.
    `follow_diverges` also gives you the shape of an occurs-check violation, should you find one
    reachable — but note that such a violation would *not* manifest here.
 3. **For S2.** Items 1–3 of §4 are licensed; items 4–7 are forbidden or futile — and after
-   review Finding 1 item 3 is the only one of the three with any asymptotic content, so, taken
-   with S0's measurement that `:648` is ~1 % of the hang, **"make `:648` cheaper" is not a
-   brief this stage supports**. The one hypothesis you must discharge in Scala, `Untouched`, is
+   review Finding 1 item 3 is the only one of the three with any asymptotic content, so, and — notwithstanding S0's
+CORRECTED measurement that `:648` is 25 % of a suite run, not ~1 % (`SUBSUME-STAGE0.md` §0.2) —
+**"make `:648` cheaper" is still not a brief this stage supports**, because it is a performance
+item and not a fix. The one hypothesis you must discharge in Scala, `Untouched`, is
    about the CONTENT of the entries you skip; discharging it needs a re-stamping law
    (`instantiateType` rewrites every value on every binding) and that law needs its own proof.
    Note also that `checkSkolemEscape` (`Subst.scala:361-367`) — the costlier site by S0's
@@ -485,8 +490,9 @@ at all.** `verdict_eq` and `skolem_filter_redundant` are verdict-preserving tidy
 still walks the whole environment); `no_early_exit_on_empty` proves the short-circuit never
 fires on a no-escape run, which is every successful signature check; and
 `verdict_restrict_untouched`, the only asymptotic licence, now requires S2 to build **and
-prove** a re-stamping mechanism. With S0's measurement that `:648` is ~1 % of the hang, S2's
-brief should not be "make `:648` cheaper" — this stage's deliverable for S2 is the proof that
+prove** a re-stamping mechanism. S0's measurement has been corrected to 25 % of a suite run (§0.2 there), which
+strengthens the PERFORMANCE case and changes nothing here: S2's brief should still not be
+"make `:648` cheaper" — this stage's deliverable for S2 is the proof that
 making it cheaper cannot be the fix. Repeated in §6 item 3.
 
 ### Post-fix build and audit
