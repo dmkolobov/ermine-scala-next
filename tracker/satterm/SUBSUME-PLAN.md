@@ -258,3 +258,8 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   TestNamedFields 16/16, lsp-smoke 582 (81 ms diagnostic); merge resolutions verified byte-for-byte. Applied by
   the orchestrator and COMMITTED on `json-encode` (gate lift + TestNamedFields:393 + (iso) loadNamed + report +
   review) on top of merge 9ec3406d. json-encode = 2afeb426 + d278c900 + this commit; full run 1,199/1,199.
+- 2026-09-16 23:10 MDT: P211 fixes applied on both 2.11 worktrees (F-1 `sys.error` on an empty sample; F-2
+  mechanism = PropertySpecifier.update by value; F-3..F-6 docs; sbt211 gap recorded), shared files cmp-identical,
+  TestRowRefusals proved on both, mutation red. P211 reviewer re-checking. On LAND: commit the seven listed paths
+  on `backport-2.11`, `git merge backport-2.11` into `json-encode-2.11` (trivial by identity), commit
+  TestNamedFields:416 there, then fast-forward scala3-migration to the final plan log and write the final report.
