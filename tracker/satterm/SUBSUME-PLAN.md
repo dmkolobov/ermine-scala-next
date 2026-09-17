@@ -263,3 +263,31 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   TestRowRefusals proved on both, mutation red. P211 reviewer re-checking. On LAND: commit the seven listed paths
   on `backport-2.11`, `git merge backport-2.11` into `json-encode-2.11` (trivial by identity), commit
   TestNamedFields:416 there, then fast-forward scala3-migration to the final plan log and write the final report.
+- 2026-09-16 23:30 MDT: P211 REVIEW re-check = LAND (§6). COMMITTED: `backport-2.11` 10383f1c (seven named paths:
+  Subst.scala +171/−2, TestErmine +136/−7, TestScopes, TestSigEntail, TestRowRefusals new, report, review);
+  `json-encode-2.11` = merge 7e5cd3db (shared files identical to backport-2.11; residual deltas exactly the
+  pre-existing 10/20-line branch differences) + 07c578a7 (TestNamedFields:416 → `rejects`). Full 2.11 runs on
+  this content: backport 736/736 (125 s), json211 859/859 (354 s).
+
+## CLOSED 2026-09-16 23:30 MDT — final state
+
+| branch | tip | full core/test | contents |
+|---|---|---|---|
+| `subsume-termination` | this commit | — | programme branch (docs + S1a + S1b + S0 + S2); `scala3-migration` fast-forwarded to it |
+| `scala3-migration` | = `subsume-termination` | 1072/1072 (1,141 s under contention; S2 alone 524 s) | M1 |
+| `json-encode` | ac2606a0 | 1,199/1,199 (1,218 s) | merge 9ec3406d + gate lift + TestNamedFields:393 + (iso) loadNamed |
+| `backport-2.11` | 10383f1c | 736/736 (125 s) | P211 port |
+| `json-encode-2.11` | 07c578a7 | 859/859 (354 s) | merge 7e5cd3db + TestNamedFields:416 |
+
+Title question — does the checker terminate on the refused row program? **YES.** The B1 program is refused in
+0.06–0.09 s at 17 id bases (S0, reviewed); the escaping-skolem walk at Subst.scala:648 terminates unconditionally
+and follows no binding (S1a, `runV_steps`, `escs_total_on_cyclic`); the solver loop is bounded at the shipped
+defaults and `Subst.solve` terminates (S1b, `budgetSP_terminates`, `solveSeedP_terminates`), no cyclic binding is
+reachable (`runsP_noAliasChain`); the "28-minute hang" was `ErmineFixture.no` reporting a rejection as `passed`
+so ScalaCheck ran 100 closure re-checks (S2 fixed with `rejects`). No S3 budget was needed. Limits carried (S1b
+§8): theorems are model-level, tied to the compiler by the L2 differential (measured); no termination theorem for
+`subsumeType` as a whole nor under `-Dermine.dequeuePolicy=shipped`; the `runSP_*` soundness family still assumes
+`rowSoundBare = false`. Open items: `:648` = 25 % of a suite run (TICKET-perf-type-inference, start at :648);
+`SubsumeTrace.cse` counts inside its timed region (~0.03 %); the 2.11 line still ACCEPTS the B1 program (dateDiff
+signature never back-ported); `backport/env-2.11.sh` `ermine211`/`sbt211` unbound `_ERM_ROOT`; stage worktrees
+`wt-subsume-{s0,s1a,s1b,s2}` and branches `subsume-*` left for the user to delete. Nothing pushed anywhere.
