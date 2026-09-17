@@ -1,0 +1,16 @@
+gate	executions	note
+corpus	152	corpus-run.sh executions (per-file and --batch mixed)
+repl-smoke	196	
+lsp-smoke	238	
+looptrace-corpus	49	
+trace-ab	38	
+ei-diff	58	
+g1-validate	60	
+perf-bench	72	
+lean	129	full `lake build` (no target); 849 targeted builds are Lean development, not gate runs
+TestLoopTrace	146	targeted testOnly executions; full core/test runs are charged in the suites rows
+core/test (full)	181	
+compile	663	includes every development compile
+sql-render	13	
+2.11-suite	22	sbt211 full test executions
+sigentail-survey	19	sigentail-*.py executions

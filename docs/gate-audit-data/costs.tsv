@@ -1,0 +1,13 @@
+gate	seconds	source
+corpus	41.9	measured: corpus-run.sh --batch + corpus-verdicts.py
+repl-smoke	119.7	measured: tracker/tools/repl-smoke.sh (8 groups)
+lsp-smoke	43.9	measured: tracker/tools/lsp-smoke.sh
+g1-validate	135.2	measured: tracker/tools/g1-validate.sh
+ei-diff	891.5	measured: ei-diff.sh --batch, two sides
+lean	235.5	measured: lake build 233.2 (871 jobs replayed, nothing changed) + Audit.lean 2.3
+looptrace-corpus	1198.7	measured: all 18 groups, LOOPTRACE_PAR=3
+trace-ab	26.7	measured: 18 group traces, each against itself
+perf-bench	160	NOT measured: refused (another ermine JVM, the user's LSP server, was running); estimate 4 x (3 boots x ~12 s + start)
+sql-render	60	NOT measured: instrument, one probe module per run; estimate
+2.11-suite	193	NOT measured today (other branch/toolchain): the full 2.11 core/test took 193 s on 2026-09-16 (scratch-subsume/p211/bp-full-core-test-before.log)
+sigentail-survey	30	NOT measured: one-shot survey instrument; estimate

@@ -1,0 +1,58 @@
+compile              663 executions in 26 sessions
+core/test (full)     181 executions in 23 sessions
+testOnly (any)       515 executions in 19 sessions
+TestLoopTrace        146 executions in 10 sessions
+corpus-run           152 executions in 13 sessions
+repl-smoke           196 executions in 20 sessions
+lsp-smoke            238 executions in 20 sessions
+looptrace-corpus      49 executions in  3 sessions
+trace-ab              38 executions in  4 sessions
+ei-diff               58 executions in 10 sessions
+g1-validate           60 executions in 12 sessions
+perf-bench            72 executions in  4 sessions
+lake build           978 executions in 11 sessions
+Audit.lean           292 executions in 10 sessions
+sql-render            13 executions in  2 sessions
+keptdef/splitkey      13 executions in  3 sessions
+
+testOnly targets (suite name fragments):
+  TestLoopTrace                154
+  TestTolerantCheck            135
+  TestRenamer                  69
+  TestTolerantRead             68
+  TestEditorBuffers            46
+  TestLower                    45
+  TestReplDifferential         40
+  TestSurfaceParsers           37
+  TestSigEntail                26
+  TestDateAndScan              24
+  TestStage1Pins               21
+  TestNewPipeline              19
+  TestSigEntailDiff            17
+  TestSurfaceCache             16
+  TestStatementExtents         15
+  TestQuickFix                 15
+  TestLetSignatures            15
+  TestInterfaceConcreteRow     14
+  TestRowRefusals              13
+  TestNamedFields              12
+  TestInterfaceKey             11
+  TestScopes                   9
+  TestJson                     9
+  TestConstraints              8
+  TestInterfaceRoundTrip       8
+  LoopTrace                    7
+  TestSchema                   6
+  TestLocalsProbe              6
+  TestParserLoops              5
+  TestRunner                   5
+  TestSurfaceLexer             4
+  TestStreamTUtils             4
+  TestLegend                   3
+  TestSurface                  3
+  TestErmine                   3
+  TestReassoc                  2
+  TestRecordPrims              2
+  TestMarkdown                 1
+  TestSolve                    1
+  TestErmineRelations          1
