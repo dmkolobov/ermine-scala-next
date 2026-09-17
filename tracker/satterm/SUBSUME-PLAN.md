@@ -215,3 +215,18 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
 - 2026-09-17 ~02:25: M1 DONE: full core/test on `scala3-migration` at d278c900 = 1072 / 1072, 0 failed, 0 errors,
   wall 1,141 s under contention (M2 and P211 compiling at the same time; S2 measured 524 s alone), 378 properties
   `proved` (scratch-subsume/orch/m1-scala3-full-coretest.log). M2 and P211 running.
+- (clock note: the machine is on MDT; entries above stamped "2026-09-17 ~00:20–02:25" were guessed and correspond
+  to 2026-09-16 ~18:30–20:30 MDT; the order is right.)
+- 2026-09-16 21:10 MDT: P211 DONE (uncommitted on both 2.11 worktrees; report backport/SUBSUME-2.11.md on both):
+  Subst.scala +168/−2 (`@inline def` + by-name instead of Scala 3 `inline def`), TestErmine +127/−7 (two
+  docstrings REWRITTEN: no literalLock on 2.11; eager `secure`), TestScopes, TestSigEntail, TestRowRefusals new;
+  json-encode-2.11 additionally TestNamedFields:416. Census 19 live sites / 3 files on backport-2.11, 18
+  converted (TestScopes:116 forAll kept); +1 on json211. Findings: (1) scalacheck 1.11.3 `Prop.secure` is EAGER
+  so `rejects` buys status parity, not time (129 s before/after); (2) `bounded` + eager secure = class-init
+  deadlock (16 × 180 s), fixed with the documented lazy `secure` shadow; (3) THE 2.11 LINE STILL ACCEPTS THE B1
+  PROGRAM — Relation/Op.e's dateDiff signature is commented out there (F3 never back-ported) — so the generator
+  uses `coalesce'` and no (B1-bound) pin / dateDiffReject gate exists on 2.11. Gates: backport-2.11 full
+  735/735 (193 s) → 736/736 (125 s); json-encode-2.11 859/859 (354 s); converted suites 69/69 and 83/83 all
+  `proved`; TestRowRefusals proved on both; flag OFF zero records; mutation red. Six shared files byte-identical
+  across the two worktrees. Open: `ermine211` in backport/env-2.11.sh broken (`unset _ERM_BP`). P211 reviewer
+  launched (Opus). M2 still running.
