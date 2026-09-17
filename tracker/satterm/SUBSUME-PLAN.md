@@ -230,3 +230,13 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   `proved`; TestRowRefusals proved on both; flag OFF zero records; mutation red. Six shared files byte-identical
   across the two worktrees. Open: `ermine211` in backport/env-2.11.sh broken (`unset _ERM_BP`). P211 reviewer
   launched (Opus). M2 still running.
+- 2026-09-16 21:40 MDT: M2 DONE (report wt-json/tracker/satterm/SUBSUME-M2.md): merge of scala3-migration
+  d278c900 into json-encode = 9ec3406d, NO textual conflict (Subst.scala keeps json's five `sels` lines + S0's
+  +157/−2; lsp-client.py both blocks); the one semantic conflict — json's dateDiffReject guard above S2's
+  `rejects` — resolved by the gate lift (uncommitted: TestDateAndScan.scala, GATE-POLICY.md LIFTED paragraph,
+  ticket item 12 CLOSED). Gates: compile; B1 suite alone 13/13 (519 s under contention); TestRowRefusals 48
+  assertions; TestLoopTrace 720/720/720; corpus 89/79/0, 0 verdicts differ; repl-smoke 86; lsp-smoke 582
+  (577 + 5; RowUnsat diagnostic 129 ms); check-corpus.sh 60/60; full core/test 1,199/1,199 in 1,218 s (run 2;
+  run 1 had ONE red: TestRunner `(iso)` timed out queueing on literalLock behind TestDateAndScan's loads —
+  S2 §2.3's rule; controls green). Follow-ups requested from the M2 implementer before review: convert
+  TestNamedFields.scala:393 to `rejects` (parity with P211's :416), give `(iso)` `loadNamed`. Then M2 reviewer.
