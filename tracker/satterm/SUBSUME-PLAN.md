@@ -193,3 +193,8 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   prose (sweep claim, `failsMatching` idiom uncited, model-vs-Scala wording in §5.1 + buildQueue hypothesis,
   literalLock docstring, run order, added-cost figure). Reviewer's signed answer: YES for this path, with S1b §8's
   limits. Findings sent to the S2 implementer.
+- 2026-09-17 ~01:05: S2 fixes applied (F-1 cause conjunct in TestRowRefusals, 48 assertions, both mutations red
+  for the right reason; F-2..F-7 prose/docstrings; report §8). S2 reviewer re-checking. On LAND: merge
+  `subsume-termination` into `subsume-s2`, Tier 0 on the merged tree (S0's Subst.scala + S2's tests together:
+  compile, B1 suite alone at default N, TestRowRefusals, TestLoopTrace with the binary, corpus --batch, smokes),
+  commit, fast-forward; then the closing sequence (M1 ff into scala3-migration + full core/test; M2 brief; P211 brief).
