@@ -867,6 +867,14 @@ E20. **`looptrace-corpus` has no seed-drawn mutation score.**  On 2026-09-17 it 
     done.  *Fix.* Run `scripts/mutate-and-verify.sh --gates looptrace-corpus -n 1 --lanes 1` in a
     nightly job.  Under 2 of 4 the gate goes, like `repl`, `looptrace` and `g1` did.
 
+E21. **`TestDecode.(e2)` measures the parser's own stack depth, and the measurement moves.**  The J2a
+    review already said so -- "`TestDecode.(e2)` is flaky and will intermittently redden the gate"
+    (tracker/json-stage3/review-J2a.md:118) -- and it reddened the 2026-09-17 landing gate on an
+    unchanged tree with `java.lang.RuntimeException: the parser probe over-measured: 4097` (1195 total,
+    0 failed, 1 error).  Registered only under `-Dermine.test.flaky=true`.  *Fix.* Decide the depth from
+    a fixed budget instead of probing for the JVM's current limit, or run the probe on a thread with an
+    explicit stack size.  Not scheduled.
+
 ## D. Claims in older documents that do not reproduce
 
 D1. `core/examples/Ai/README.md`'s RUnion table ("a helper bundling `RUnion3` and `RUnion2` does not finish")

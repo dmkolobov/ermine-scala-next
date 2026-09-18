@@ -738,6 +738,10 @@ object TestDecode extends Properties("Ermine JSON Decode") {
     lo
   }
 
+  // FLAKY (docs/gate-policy.md §1, ticket E21): the probe measures the parser's own stack depth, and
+  // that measurement moves with JIT state -- it raised "the parser probe over-measured: 4097" on the
+  // 2026-09-17 landing run of an unchanged tree.  Registered only under -Dermine.test.flaky=true.
+  if (sys.props.contains("ermine.test.flaky"))
   property("(e2) nesting to the parser's depth and far beyond decodes without growing the stack") = sessionProof { implicit s =>
     loadStatements("data Nest = Nest { kids : List Nest }", imps)
     val nestTy = Session.eval("[] : List Nest", imps)._1 match { case AppT(_, e) => e; case o => sys.error("" + o) }
