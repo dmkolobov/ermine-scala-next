@@ -109,6 +109,17 @@ export interface ScorecardProps<R = import("./relation").InlineRelation> {
   cards: R;
 }
 
+/** Layout.Widgets.Headline.HeadlineProps -- no relation: `headlineOf` scanned
+ *  one server-side (Layout.Fetch) and the three numbers ARE the props. */
+export interface HeadlineProps {
+  headlineTitle: string;
+  scope: string;
+  rowCount: number;
+  total: number;
+  largest: number;
+  headlineFormat: CellFormat;
+}
+
 // --------------------------------------------------------------- charts (J3e)
 
 /** Layout.Widgets.Chart.LegendLocation -- writers.ChartLegendLocation. */

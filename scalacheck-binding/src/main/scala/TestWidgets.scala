@@ -36,6 +36,7 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     Map("Builtin" -> all, "Test" -> all, "Json" -> all, "List" -> all, "Maybe" -> all,
         "Layout.Doc" -> all, "Layout.Widgets.Format" -> all, "Layout.Widgets.Table" -> all,
         "Layout.Widgets.Drilldown" -> all, "Layout.Widgets.Scorecard" -> all,
+        "Layout.Widgets.Headline" -> all,
         "Layout.Widgets.Chart" -> all, "Layout.Widgets.AxisChart" -> all,
         "Layout.Widgets.PieChart" -> all, "Layout.Widgets.StyleBox" -> all,
         "Layout.Widgets.DrilldownBar" -> all,
@@ -239,6 +240,27 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
         f._1 + " (Inline " + r.expr + ")))",
       "scorecard", "Layout.Widgets.Scorecard", "ScorecardProps", "wrap-Inline" :: f._2)
 
+  /** J3g: the headline.  Its props carry NO relation -- `headlineOf` scanned one
+    * in Ermine and only the three numbers travel -- so this generator is the
+    * simplest one here: the widget is a record of two strings, three numbers and
+    * a format. */
+  val headlineSrc: Gen[WidgetSrc] =
+    for {
+      t   <- Gen.alphaNumStr
+      sc  <- Gen.alphaNumStr
+      n   <- Gen.choose(0, 9999)
+      // non-negative, like every other literal here: a bare `-1.5` argument is
+      // parsed as the operator `-` ("unknown operator -"), and the negative
+      // cases are covered where they belong, in TestRunner's (fxl-headline)
+      // where the numbers sit inside a record literal
+      tot <- Gen.choose(0, 99999).map(_ / 8.0)
+      max <- Gen.choose(0, 99999).map(_ / 8.0)
+      f   <- cellFormatSrc(2)
+    } yield WidgetSrc(List(),
+      "(headline (HeadlineProps \"" + t.take(8) + "\" \"" + sc.take(8) + "\" " + n + " " + tot + " " +
+        max + " " + f._1 + "))",
+      "headline", "Layout.Widgets.Headline", "HeadlineProps", "no-relation" :: f._2)
+
   // =====================================================================
   // J3e: the chart and style-box generators
 
@@ -401,7 +423,7 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     }
 
   val widgetSrc: Gen[WidgetSrc] =
-    Gen.frequency((3, tableSrc), (2, drilldownSrc), (2, scorecardSrc),
+    Gen.frequency((3, tableSrc), (2, drilldownSrc), (2, scorecardSrc), (2, headlineSrc),
                   (3, axisChartSrc), (2, pieSrc), (2, drilldownPieSrc),
                   (2, styleBoxSrc), (2, drilldownBarSrc))
 
@@ -483,6 +505,7 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     List(("table", "Layout.Widgets.Table", "TableProps"),
          ("drilldownTable", "Layout.Widgets.Drilldown", "DrilldownTableProps"),
          ("scorecard", "Layout.Widgets.Scorecard", "ScorecardProps"),
+         ("headline", "Layout.Widgets.Headline", "HeadlineProps"),
          ("axisChart", "Layout.Widgets.AxisChart", "AxisChartProps"),
          // both pie registry names come off the ONE props type
          ("pieChart", "Layout.Widgets.PieChart", "PieChartProps"),
@@ -606,6 +629,7 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     val bad = results.collect { case Left(m) => m }
     val tags = results.collect { case Right(t) => t }.flatten.toSet
     val wantWidgets = Set("widget-table", "widget-drilldownTable", "widget-scorecard",
+                          "widget-headline",
                           "widget-axisChart", "widget-pieChart", "widget-drilldownPieChart",
                           "widget-styleBox", "widget-drilldownBar")
     val wantFormats = Set("Default", "Verbatim", "Markdown", "Constant", "Percentage", "Currency",

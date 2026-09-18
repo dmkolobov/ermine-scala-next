@@ -1,9 +1,11 @@
 package com.clarifi.reporting
 
 import argonaut.{ Json, Parse }
+import com.clarifi.machines.Process
 import com.clarifi.reporting.backends.{ DB, Runners, Scanners }
 import com.clarifi.reporting.ermine.json._
-import com.clarifi.reporting.relational.SMEnv
+import com.clarifi.reporting.relational.{ Ext, ExtRel, Scanner, SMEnv, SmallLit }
+import scalaz.Monoid
 import java.io.File
 import org.scalacheck.{ Gen, Prop, Properties }
 import org.scalacheck.Prop._
@@ -932,7 +934,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   private def str(j: Option[Json]): Option[String] = j.flatMap(_.string)
   private def params(p: String): String = "{\"" + Request.Params + "\":" + p + "}"
 
-  property("(fx1) FetchHeadline: the heading's numbers are the scanned rows', and an empty scan changes the layout") = secure {
+  property("(fx1) FetchHeadline: the headline widget scans for its own numbers, and an empty scan changes the layout") = secure {
     val (st, text) = render(runner, "FetchHeadline", params("{\"onlyRegion\":\"north\"}"))
     val (st2, text2) = render(runner, "FetchHeadline", params("{\"onlyRegion\":\"nowhere\"}"))
     val (st3, text3) = render(runner, "FetchHeadline", params("{}"))
@@ -945,21 +947,28 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
       val root2 = parsed(text2).field(Wire.Root).get
       val head3 = parsed(text3).field(Wire.Root).get.field("children").get.arrayOrEmpty.head.field("props").get
       ((str(root.field("tag")) ?= Some("VFlow")) :| text.take(200)) &&
-        ((str(head.field("hlScope")) ?= Some("in north")) :| head.nospaces) &&
-        ((num(head.field("hlCount")) ?= Some(3.0)) :| head.nospaces) &&
-        ((num(head.field("hlTotal")) ?= Some(4350.75)) :| head.nospaces) &&
-        ((num(head.field("hlLargest")) ?= Some(2310.25)) :| head.nospaces) &&
-        // the table under the heading is the same plan, delivered as a relation object
-        ((table.length ?= 1) :| ("relation objects under the heading: " + table.length)) &&
+        // J3g: the numbers come from `headlineOf`, a widget constructor that
+        // scans, INSIDE the vflowF -- not from a scan hoisted above the layout
+        ((str(kids.head.field("name")) ?= Some("headline")) :| kids.head.nospaces) &&
+        ((str(head.field("scope")) ?= Some("in north")) :| head.nospaces) &&
+        ((num(head.field("rowCount")) ?= Some(3.0)) :| head.nospaces) &&
+        ((num(head.field("total")) ?= Some(4350.75)) :| head.nospaces) &&
+        ((num(head.field("largest")) ?= Some(2310.25)) :| head.nospaces) &&
+        // the table under the headline is the same plan, delivered as a relation object
+        ((table.length ?= 1) :| ("relation objects under the headline: " + table.length)) &&
         ((num(table.head.field(Wire.RowCount)) ?= Some(3.0)) :| table.head.nospaces) &&
-        // an empty scan: no table at all, one text widget
+        // an empty scan: no table at all, a headline of zeros built by the PURE
+        // constructor (there is nothing to scan)
         ((str(root2.field("tag")) ?= Some("Widget")) :| text2.take(200)) &&
-        ((str(root2.field("name")) ?= Some("text")) :| text2.take(200)) &&
-        ((str(root2.field("props")) ?= Some("no sales in nowhere")) :| text2.take(200)) &&
+        ((str(root2.field("name")) ?= Some("headline")) :| text2.take(200)) &&
+        ((num(root2.field("props").flatMap(_.field("rowCount"))) ?= Some(0.0)) :| text2.take(300)) &&
+        ((num(root2.field("props").flatMap(_.field("total"))) ?= Some(0.0)) :| text2.take(300)) &&
+        ((str(root2.field("props").flatMap(_.field("scope"))) ?= Some("in nowhere")) :| text2.take(300)) &&
         ((rels(root2).length ?= 0) :| text2.take(200)) &&
-        ((num(head3.field("hlCount")) ?= Some(8.0)) :| head3.nospaces) &&
-        ((num(head3.field("hlTotal")) ?= Some(12682.0)) :| head3.nospaces) &&
-        ((str(head3.field("hlScope")) ?= Some("everywhere")) :| head3.nospaces)
+        ((num(head3.field("rowCount")) ?= Some(8.0)) :| head3.nospaces) &&
+        ((num(head3.field("total")) ?= Some(12682.0)) :| head3.nospaces) &&
+        ((num(head3.field("largest")) ?= Some(4100.0)) :| head3.nospaces) &&
+        ((str(head3.field("scope")) ?= Some("everywhere")) :| head3.nospaces)
     }
   }
 
@@ -1059,6 +1068,371 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     ((st ?= 500) :| ("status " + st + ": " + text.take(300))) &&
       (msg.contains("RgFetchBad") :| ("message does not name the report: " + msg)) &&
       ((st2 ?= 200) :| "the runner did not serve the next request")
+  }
+
+  // =====================================================================
+  // (fxl) J3g: `Fetch Node` IS the report type -- the lifts, the order they
+  // scan in, the laws of `map_Fetch`/`bind_Fetch`, `Params -> Node` as sugar,
+  // what a failing report costs in connections, and the scanning widget.
+
+  /** A `Scanner[DB]` that delegates to SQLite and records, per thread, a mark
+    * per scan IN THE ORDER THE SCANS HAPPEN.  A literal relation reaches the
+    * scanner as `ExtRel(SmallLit(rows), _)` -- the shape `TestDoc.ListScanner`
+    * matches -- so the `rgName` of its first row is the mark, and a generated
+    * leaf that carries a distinct one says which leaf this scan is. */
+  final class RecordingScanner(under: Scanner[DB]) extends Scanner[DB]()(under.M) {
+    private val seen = new ThreadLocal[ListBuffer[String]] {
+      override def initialValue: ListBuffer[String] = new ListBuffer[String]
+    }
+    /** The marks of this thread's scans since `clear()`, in scan order. */
+    def marks: List[String] = seen.get.toList
+    def clear(): Unit = seen.get.clear()
+
+    private def note(r: Ext[Nothing, Nothing]): Unit = r match {
+      case ExtRel(SmallLit(tups), _) =>
+        tups.list.toList.headOption.flatMap(_.get("rgName")).foreach(p => seen.get += p.extractNullableString(""))
+      case _ => ()
+    }
+    def scanExt[A: Monoid](r: Ext[Nothing, Nothing], f: Process[Record, A],
+                           order: List[(String, SortOrder)]): DB[A] = { note(r); under.scanExt(r, f, order) }
+    def scanRel[A: Monoid](r: com.clarifi.reporting.relational.Relation[Nothing, Nothing], f: Process[Record, A],
+                           order: List[(String, SortOrder)]): DB[A] = under.scanRel(r, f, order)
+    def scanMem[A: Monoid](m: com.clarifi.reporting.relational.Mem[Nothing, Nothing], f: Process[Record, A],
+                           order: List[(String, SortOrder)]): DB[A] = under.scanMem(m, f, order)
+  }
+
+  private val recording = new RecordingScanner(Scanners.SQLite(SMEnv.dummySmenv))
+
+  /** A third runner, whose scanner records what it scanned and in what order.
+    * Its own `CountingRun`, so the connection counts of (e) and (fxl-conn)
+    * are not this one's. */
+  lazy val orderRunner: Runner = new Runner(RunnerConfig(
+    roots     = List(moduleRoot.getPath, exampleRoot),
+    run       = new CountingRun,
+    scanner   = recording,
+    settings  = settings,
+    ttlMillis = 600000L,
+    maxTokens = 4096))
+
+  /** The imports a generated `Fetch` report needs: the document vocabulary,
+    * the lifts, the widget prop types (TestWidgets' generator writes their
+    * constructors) and the relation primitives. */
+  private val fetchImports: String =
+    List("import Builtin", "import Json", "import List", "import Maybe", "import Function",
+         "import Int", "import Num", "import Field", "import Prim",
+         "import Native.List", "import Native.Relation", "import Native.Pair",
+         "import Layout.Doc", "import Layout.Fetch",
+         "import Layout.Widgets.Format", "import Layout.Widgets.Table",
+         "import Layout.Widgets.Drilldown", "import Layout.Widgets.Scorecard",
+         "import Layout.Widgets.Headline", "import Layout.Widgets.Chart",
+         "import Layout.Widgets.AxisChart", "import Layout.Widgets.PieChart",
+         "import Layout.Widgets.StyleBox", "import Layout.Widgets.DrilldownBar",
+         "import RgFields").mkString("\n")
+
+  /** The leaf marks, "Lf00".."Lf99", as they appear in a rendered document. */
+  private val markRe = "Lf[0-9][0-9]".r
+  private def marksIn(text: String): List[String] = markRe.findAllIn(text).toList
+
+  /** One leaf of an (fxl-order) tree: a scan of a one-row literal relation
+    * whose `rgName` is the leaf's mark, and whose continuation puts the mark
+    * IT RECEIVED into a widget.  So the document says which rows reached
+    * which continuation, and `RecordingScanner` says in what order the scans
+    * ran; the property is that the two agree with the source order. */
+  private def leafDecl(i: Int): String = {
+    val m = "Lf%02d".format(i)
+    "leaf" + i + " : Fetch Node\n" +
+    "leaf" + i + " = scanRelation (mkRelation# (toList# [{ rgKey = " + i + ", rgName = \"" + m + "\" }]))\n" +
+    "                             (rows -> done (widget \"leaf\" (map_List (r -> r ! rgName) rows)))\n"
+  }
+
+  /** A composition of leaves.  Every node preserves the order of its
+    * children, which is what (fxl-order) checks. */
+  sealed abstract class FTree {
+    def leaves: List[Int]
+    def src: String
+    def kinds: List[String]
+  }
+  final case class FLeaf(i: Int) extends FTree {
+    def leaves = List(i); def src = "leaf" + i; def kinds = List("leaf")
+  }
+  final case class FVflow(kids: List[FTree]) extends FTree {
+    def leaves = kids.flatMap(_.leaves)
+    def src = "(vflowF [" + kids.map(_.src).mkString(", ") + "])"
+    def kinds = "vflowF" :: kids.flatMap(_.kinds)
+  }
+  final case class FSeq(kids: List[FTree]) extends FTree {
+    def leaves = kids.flatMap(_.leaves)
+    def src = "(map_Fetch hflow (sequence_Fetch [" + kids.map(_.src).mkString(", ") + "]))"
+    def kinds = "sequence_Fetch" :: kids.flatMap(_.kinds)
+  }
+  final case class FHflow(kids: List[FTree]) extends FTree {
+    def leaves = kids.flatMap(_.leaves)
+    def src = "(hflowF [" + kids.map(_.src).mkString(", ") + "])"
+    def kinds = "hflowF" :: kids.flatMap(_.kinds)
+  }
+  final case class FGrid(rows: List[List[FTree]]) extends FTree {
+    def leaves = rows.flatten.flatMap(_.leaves)
+    def src = "(gridF [" + rows.map(r => r.map(_.src).mkString("[", ", ", "]")).mkString(", ") + "])"
+    def kinds = "gridF" :: rows.flatten.flatMap(_.kinds)
+  }
+  final case class FTabs(kids: List[FTree]) extends FTree {
+    def leaves = kids.flatMap(_.leaves)
+    def src = "(tabbedF [" + kids.zipWithIndex.map { case (k, i) => "(\"t" + i + "\", " + k.src + ")" }.mkString(", ") + "])"
+    def kinds = "tabbedF" :: kids.flatMap(_.kinds)
+  }
+  final case class FBind(a: FTree, b: FTree) extends FTree {
+    def leaves = a.leaves ++ b.leaves
+    def src = "(bind_Fetch " + a.src + " (x -> map_Fetch (y -> grid [[x], [y]]) " + b.src + "))"
+    def kinds = "bind_Fetch" :: a.kinds ++ b.kinds
+  }
+
+  /** Random trees, numbering their leaves left to right. */
+  private def ftree(depth: Int, next: () => Int): Gen[FTree] = {
+    val leaf = Gen.const(()).map(_ => FLeaf(next()))
+    if (depth <= 0) leaf
+    else {
+      def kids(max: Int): Gen[List[FTree]] =
+        Gen.choose(2, max).flatMap(n => Gen.sequence[List[FTree], FTree]((0 until n).toList.map(_ => ftree(depth - 1, next))))
+      Gen.frequency(
+        (3, leaf),
+        (2, kids(3).map(ks => FVflow(ks))),
+        (2, kids(3).map(ks => FSeq(ks))),
+        (2, kids(3).map(ks => FHflow(ks))),
+        (1, Gen.zip(kids(2), kids(2)).map(p => FGrid(List(p._1, p._2)))),
+        (1, kids(2).map(ks => FTabs(ks))),
+        (2, Gen.zip(ftree(depth - 1, next), ftree(depth - 1, next)).map(p => FBind(p._1, p._2))))
+    }
+  }
+
+  /** A tree with its leaves numbered 0..n-1 from the left. */
+  private val orderCase: Gen[FTree] = Gen.choose(1, 3).flatMap { d =>
+    Gen.const(()).flatMap { _ =>
+      val c = new java.util.concurrent.atomic.AtomicInteger(0)
+      ftree(d, () => c.getAndIncrement())
+    }
+  }
+
+  property("(fxl-order) a tree of vflowF/hflowF/tabbedF/sequence_Fetch/bind_Fetch scans left to right") = secure {
+    val trees = TestDoc.samples(orderCase, 24, 77101L)
+    val bad = new ListBuffer[String]
+    val sizes = new ListBuffer[Int]
+    val kinds = new ListBuffer[String]
+    trees.zipWithIndex.foreach { case (t, i) =>
+      val want = t.leaves.map(n => "Lf%02d".format(n))
+      sizes += want.length
+      kinds ++= t.kinds
+      val m = freshModule("RgOrd")
+      writeModule(m, "module " + m + " where\n\n" + fetchImports + "\n\n" +
+                     t.leaves.map(leafDecl).mkString("\n") + "\n" +
+                     "report : Int -> Fetch Node\nreport p = " + t.src + "\n")
+      recording.clear()
+      val (st, text) = render(orderRunner, m, params("1"))
+      val scanned = recording.marks
+      val inDoc = marksIn(text)
+      if (st != 200) bad += ("status " + st + ": " + text.take(300) + "\n" + t.src)
+      else if (scanned != want) bad += ("scan order " + scanned + " for " + want + "\n" + t.src)
+      else if (inDoc != want) bad += ("document order " + inDoc + " for " + want + "\n" + t.src)
+    }
+    // the distribution, once: a tree of one leaf could not tell an order from
+    // its reverse, so most cases must have several
+    val dist = sizes.toList.groupBy(identity).map(p => (p._1, p._2.length)).toList.sortBy(_._1)
+    val kindCount = kinds.toList.groupBy(identity).map(p => (p._1, p._2.length)).toList.sortBy(_._1)
+    val multi = sizes.count(_ >= 2)
+    // the distribution, once, so the reader can see the property is not passing
+    // on trees of one leaf (which could not tell an order from its reverse)
+    println("  (fxl-order) " + trees.length + " trees, " + sizes.sum + " leaf scans; leaves per tree " +
+            dist.map(p => p._1 + "x" + p._2).mkString(" ") + "; nodes " +
+            kindCount.map(p => p._1 + "=" + p._2).mkString(" "))
+    (bad.isEmpty :| (bad.length + " of " + trees.length + " failed:\n" + bad.take(2).mkString("\n---\n"))) &&
+      ((multi >= 18) :| ("only " + multi + " of " + trees.length + " trees had two or more leaves; sizes " + dist)) &&
+      (List("vflowF", "hflowF", "gridF", "sequence_Fetch", "tabbedF", "bind_Fetch").forall(k => kindCount.exists(_._1 == k)) :|
+        ("a combinator never occurred: " + kindCount)) &&
+      ((sizes.sum >= 40) :| ("only " + sizes.sum + " leaf scans in all; sizes " + dist))
+  }
+
+  /** A pure document body from TestWidgets' generator, with the `field`
+    * declarations it needs. */
+  private val bodyGen: Gen[TestWidgets.DocSrc] = TestWidgets.docSrc(1)
+
+  private def fetchModule(name: String, decls: List[String], reportTy: String, body: String): String =
+    "module " + name + " where\n\n" + fetchImports + "\n\n" +
+    decls.distinct.mkString("\n") + "\n\n" +
+    "report : Int -> " + reportTy + "\nreport p = " + body + "\n"
+
+  /** Render two generated reports against the same request and compare the
+    * bodies byte for byte, tokens and expiry times masked. */
+  private def sameDocument(declsA: List[String], tyA: String, bodyA: String,
+                           declsB: List[String], tyB: String, bodyB: String,
+                           req: String): Option[String] = {
+    val a = freshModule("RgLawA")
+    val b = freshModule("RgLawB")
+    writeModule(a, fetchModule(a, declsA, tyA, bodyA))
+    writeModule(b, fetchModule(b, declsB, tyB, bodyB))
+    val (sa, ta) = render(runner, a, req)
+    val (sb, tb) = render(runner, b, req)
+    if (sa != 200) Some("left status " + sa + ": " + ta.take(300) + "\n" + bodyA)
+    else if (sb != 200) Some("right status " + sb + ": " + tb.take(300) + "\n" + bodyB)
+    else if (masked(ta) != masked(tb)) Some("documents differ\n left  " + masked(ta).take(400) +
+                                            "\n right " + masked(tb).take(400))
+    else None
+  }
+
+  /** The request body for the (fxl) comparisons: a random delivery default and
+    * threshold, so the deferred arm is compared too. */
+  private val reqGen: Gen[String] = for {
+    dflt <- Gen.oneOf(Wire.Inline, Wire.Deferred)
+    thr  <- Gen.frequency((2, Gen.const(None: Option[Long])), (1, Gen.choose(0L, 3L).map(t => Some(t))))
+  } yield "{\"" + Request.Params + "\":1,\"" + Request.Data + "\":{\"" + Request.Default + "\":\"" + dflt + "\"" +
+          thr.map(t => ",\"" + Request.Threshold + "\":" + t).getOrElse("") + "}}"
+
+  property("(fxl-laws) map_Fetch/bind_Fetch over done are the document their right-hand sides are") = secure {
+    val cases = TestDoc.samples(Gen.zip(bodyGen, bodyGen, reqGen), 12, 90211L)
+    val bad = new ListBuffer[String]
+    val kinds = new ListBuffer[String]
+    cases.foreach { case (s1, s2, req) =>
+      val decls = s1.decls ++ s2.decls
+      // (1) map_Fetch f (done a) == done (f a)
+      sameDocument(decls, "Fetch Node", "map_Fetch (n -> vflow [n, " + s2.expr + "]) (done " + s1.expr + ")",
+                   decls, "Fetch Node", "done (vflow [" + s1.expr + ", " + s2.expr + "])", req)
+        .foreach(w => bad += ("(map/done) " + w))
+      // (2) bind_Fetch (done a) k == k a
+      sameDocument(decls, "Fetch Node", "bind_Fetch (done " + s1.expr + ") (x -> vflowF [done x, done " + s2.expr + "])",
+                   decls, "Fetch Node", "vflowF [done " + s1.expr + ", done " + s2.expr + "]", req)
+        .foreach(w => bad += ("(bind/done) " + w))
+      // (3) bind_Fetch m done == m, over an m that scans
+      val m = "(scanRelation (mkRelation# (toList# [{ rgKey = 1, rgName = \"Lf00\" }])) " +
+              "(rows -> done (vflow [" + s1.expr + ", widget \"leaf\" (map_List (r -> r ! rgName) rows)])))"
+      sameDocument(decls, "Fetch Node", "bind_Fetch " + m + " done", decls, "Fetch Node", m, req)
+        .foreach(w => bad += ("(bind/right) " + w))
+      kinds += (if (req.contains("\"" + Wire.Deferred + "\"")) "deferred" else "inline")
+    }
+    val ks = kinds.toList.toSet
+    (bad.isEmpty :| (bad.length + " of " + (cases.length * 3) + " comparisons failed:\n" + bad.take(2).mkString("\n---\n"))) &&
+      ((ks == Set("inline", "deferred")) :| ("only these request defaults occurred: " + ks))
+  }
+
+  property("(fxl-sugar) a pure `Params -> Node` report and the same body under `done` render the same bytes") = secure {
+    val cases = TestDoc.samples(Gen.zip(bodyGen, reqGen), 20, 55507L)
+    val bad = new ListBuffer[String]
+    val tags = new ListBuffer[String]
+    cases.foreach { case (s, req) =>
+      sameDocument(s.decls, "Node", s.expr, s.decls, "Fetch Node", "done (" + s.expr + ")", req) match {
+        case Some(w) => bad += w
+        case None    =>
+          val a = freshModule("RgSugar")
+          writeModule(a, fetchModule(a, s.decls, "Node", s.expr))
+          val (_, text) = render(runner, a, req)
+          if (text.contains("\"" + Wire.Deferred + "\"")) tags += "deferred"
+          if (text.contains("\"" + Wire.Inline + "\"")) tags += "inline"
+      }
+    }
+    val seen = tags.toList.toSet
+    (bad.isEmpty :| (bad.length + " of " + cases.length + " differed:\n" + bad.take(2).mkString("\n---\n"))) &&
+      ((seen == Set("inline", "deferred")) :| ("delivery arms compared: " + seen))
+  }
+
+  property("(fxl-conn) a report that fails to evaluate opens NO connection, pure or fetching") = secure {
+    val pure = freshModule("RgNoConnP")
+    writeModule(pure, "module " + pure + " where\n\nimport Error\nimport Layout.Doc\n\n" +
+                      "report : Int -> Node\nreport n = error \"boom before any row\"\n")
+    val fetch = freshModule("RgNoConnF")
+    writeModule(fetch, "module " + fetch + " where\n\nimport Error\nimport Layout.Doc\nimport Layout.Fetch\n\n" +
+                       "report : Int -> Fetch Node\nreport n = error \"boom before any scan\"\n")
+    // warm both: the FIRST request for a module loads and evaluates it, which
+    // is not what is being counted
+    render(runner, pure, params("1")); render(runner, fetch, params("1"))
+    val before = counting.openedHere
+    val (stP, textP) = render(runner, pure, params("1"))
+    val afterPure = counting.openedHere
+    val (stF, textF) = render(runner, fetch, params("1"))
+    val afterFetch = counting.openedHere
+    // ...and one that does scan opens exactly one
+    render(runner, "FetchFragments", params("{\"tabsFor\":[\"north\"],\"topN\":1}"))
+    val beforeOk = counting.openedHere
+    val (stOk, textOk) = render(runner, "FetchFragments", params("{\"tabsFor\":[\"north\"],\"topN\":1}"))
+    val afterOk = counting.openedHere
+    ((stP ?= 500) :| ("pure status " + stP + ": " + textP.take(200))) &&
+      ((stF ?= 500) :| ("fetching status " + stF + ": " + textF.take(200))) &&
+      ((afterPure - before ?= 0) :| ("a failing pure report opened " + (afterPure - before) + " connections")) &&
+      ((afterFetch - afterPure ?= 0) :| ("a failing fetching report opened " + (afterFetch - afterPure) + " connections")) &&
+      ((stOk ?= 200) :| ("FetchFragments status " + stOk + ": " + textOk.take(300))) &&
+      ((afterOk - beforeOk ?= 1) :| ("a scanning report opened " + (afterOk - beforeOk) + " connections"))
+  }
+
+  /** A literal relation of `rgKey`/`rgAmount` rows, with the three numbers
+    * `headlineOf` must produce computed here in Scala.
+    *
+    * The ALL-NEGATIVE arm is explicit (R1): with the mixed arm alone about a
+    * tenth of the values are negative, so 20 samples never held a non-empty
+    * relation whose values are all below zero -- and that is exactly the shape
+    * in which a `largest` folded from 0.0 rather than from a row reports a
+    * number that is in no row. */
+  private val headlineCase: Gen[(List[Double], String)] = {
+    val mixed  = Gen.choose(0, 6).flatMap(n => Gen.listOfN(n, Gen.choose(-9999, 99999).map(_ / 8.0)))
+    val allNeg = Gen.choose(1, 4).flatMap(n => Gen.listOfN(n, Gen.choose(-9999, -1).map(_ / 8.0)))
+    Gen.frequency((3, mixed), (1, allNeg)).map { xs =>
+      (xs, xs.zipWithIndex.map { case (x, i) => "{ rgKey = " + i + ", rgAmount = " + x + " }" }.mkString(", "))
+    }
+  }
+
+  property("(fxl-headline) headlineOf's three numbers are the scanned rows'") = secure {
+    val cases = TestDoc.samples(headlineCase, 20, 31337L)
+    val bad = new ListBuffer[String]
+    var empties = 0
+    cases.foreach { case (xs, rows) =>
+      if (xs.isEmpty) empties += 1
+      val m = freshModule("RgHead")
+      writeModule(m, "module " + m + " where\n\n" + fetchImports + "\n\n" +
+                     "report : Int -> Fetch Node\n" +
+                     "report p = headlineOf \"T\" \"everywhere\" rgAmount (mkRelation# (toList# [" + rows + "]))\n")
+      val (st, text) = render(runner, m, params("1"))
+      if (st != 200) bad += ("status " + st + ": " + text.take(300))
+      else {
+        val props = parsed(text).field(Wire.Root).flatMap(_.field("props")).getOrElse(Json.jNull)
+        val wantCount = xs.length.toDouble
+        val wantTotal = xs.foldLeft(0.0)(_ + _)
+        // the maximum of the rows, and 0.0 only when there are none
+        val wantLargest = if (xs.isEmpty) 0.0 else xs.max
+        if (num(props.field("rowCount")) != Some(wantCount)) bad += ("rowCount " + props.nospaces + " for " + xs)
+        else if (num(props.field("total")).map(t => math.abs(t - wantTotal) < 1e-9) != Some(true))
+          bad += ("total " + props.nospaces + " for " + xs)
+        else if (num(props.field("largest")).map(t => math.abs(t - wantLargest) < 1e-9) != Some(true))
+          bad += ("largest " + props.nospaces + " for " + xs)
+        else if (str(props.field("scope")) != Some("everywhere")) bad += ("scope " + props.nospaces)
+      }
+    }
+    (bad.isEmpty :| (bad.length + " of " + cases.length + " wrong:\n" + bad.take(3).mkString("\n"))) &&
+      ((empties >= 1) :| "no empty relation was generated: the 0-row case is untested") &&
+      (cases.exists(c => c._1.nonEmpty && c._1.forall(_ < 0)) :|
+        "no all-negative relation was generated: a `largest` folded from 0.0 would pass unseen") &&
+      ((cases.count(_._1.length >= 2) >= 10) :| "too few multi-row cases")
+  }
+
+  property("(fx5) FetchFragments: three fragments, five scans, one document") = secure {
+    val (st, text) = render(runner, "FetchFragments", params("{\"tabsFor\":[\"north\",\"south\"],\"topN\":2}"))
+    if (st != 200) falsified :| ("status " + st + ": " + text.take(400))
+    else {
+      val root = parsed(text).field(Wire.Root).get
+      val kids = root.field("children").map(_.arrayOrEmpty).getOrElse(Nil)
+      val heads = kids.headOption.map(_.field("children").map(_.arrayOrEmpty).getOrElse(Nil)).getOrElse(Nil)
+      val tabs = kids.lift(1).flatMap(_.field("tabs")).map(_.arrayOrEmpty).getOrElse(Nil)
+      val running = tabs.headOption.flatMap(_.field("content")).map(c => rowMaps(rels(c).head)).getOrElse(Nil)
+      val pie = tabs.lift(1).flatMap(_.field("content")).map(c => rowMaps(rels(c).head)).getOrElse(Nil)
+      def headProps(i: Int) = heads.lift(i).flatMap(_.field("props")).getOrElse(Json.jNull)
+      ((str(root.field("tag")) ?= Some("VFlow")) :| text.take(200)) &&
+        ((heads.length ?= 2) :| ("headlines: " + heads.length)) &&
+        // fragment 1, twice: north has 3 sales of 4350.75, south 2 of 2605.75
+        ((str(headProps(0).field("scope")) ?= Some("north")) :| headProps(0).nospaces) &&
+        ((num(headProps(0).field("rowCount")) ?= Some(3.0)) :| headProps(0).nospaces) &&
+        ((num(headProps(0).field("total")) ?= Some(4350.75)) :| headProps(0).nospaces) &&
+        ((num(headProps(1).field("rowCount")) ?= Some(2.0)) :| headProps(1).nospaces) &&
+        ((num(headProps(1).field("total")) ?= Some(2605.75)) :| headProps(1).nospaces) &&
+        // fragment 2: eight rows, the running total closing at the whole total
+        ((running.length ?= 8) :| running.toString) &&
+        ((running.flatMap(r => num(r.get("runTotal"))).max ?= 12682.0) :| running.toString) &&
+        // fragment 3: two regions and an Other slice
+        ((pie.flatMap(r => str(r.get("region"))).toSet ?= Set("north", "east", "Other")) :| pie.toString)
+    }
   }
 
   // =====================================================================

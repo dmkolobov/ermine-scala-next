@@ -25,6 +25,7 @@ types=(
   "Layout.Widgets.PieChart:PieChartProps:pieChart:PieChartPropsSchema"
   "Layout.Widgets.StyleBox:StyleBoxProps:styleBox:StyleBoxPropsSchema"
   "Layout.Widgets.DrilldownBar:DrilldownBarProps:drilldownBar:DrilldownBarPropsSchema"
+  "Layout.Widgets.Headline:HeadlineProps:headline:HeadlinePropsSchema"
 )
 
 mkdir -p "$out"
@@ -62,6 +63,7 @@ done
   echo "  drilldownPieChart: PieChartPropsSchema,"
   echo "  styleBox: StyleBoxPropsSchema,"
   echo "  drilldownBar: DrilldownBarPropsSchema,"
+  echo "  headline: HeadlinePropsSchema,"
   echo "};"
   echo
   echo "/** Registry names Stage 3 reserves that have NO renderer: the dispatcher's"

@@ -3,12 +3,13 @@
 The TypeScript client for Ermine JSON report documents: one zod schema per widget,
 generated from the Ermine prop types; a dispatcher that walks the document and
 renders it; adapters onto the renderers that already exist in `ermine-writers`; and
-one widget (`scorecard`) that is native TypeScript, as the proof that adding one is
-cheap.
+two widgets (`scorecard`, `headline`) that are native TypeScript, as the proof that
+adding one is cheap.
 
 Stages J3d (`brief-J3d-client.md`: the dispatcher, the tables, the scorecard) and
 J3e (`brief-J3e-charts.md`: the charts and the style box) of the JSON Stage 2/3
-programme.
+programme; J3g (`brief-J3g-lift.md`) added the headline, the widget whose Ermine
+constructor scans.
 
 ## The shape of a response
 
@@ -102,7 +103,8 @@ and an entry in `result.errors`.
 | `src/dispatcher.ts` | `render`, the layout containers, the registry lookup, validation, the error box. |
 | `src/legacy.ts` | the `htmlwriter` interface, the `table` and `drilldownTable` adapters, and the two legacy format encodings. |
 | `src/charts.ts` | the `axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar` and `styleBox` adapters, the chart-side legacy argument types, `TUPLE_LOSS`, and the date/colour conversions. |
-| `src/widgets/scorecard.ts` | the new widget, plain DOM. |
+| `src/widgets/scorecard.ts` | the `scorecard` widget, plain DOM: cards from an `Inline` relation. |
+| `src/widgets/headline.ts` | the `headline` widget, plain DOM: a title, a scope and three figures. Its props carry NO relation -- the Ermine constructor `headlineOf` scanned one server-side (J3g). |
 | `src/index.ts` | the public surface and `defaultRegistry()`. |
 
 ## Formatting a cell
@@ -182,12 +184,17 @@ Three edits, plus the generate step.
    (`src/widgets/sparkline.ts`) as a `Widget<SparklineProps>`, and add one line to
    `defaultRegistry()` in `src/index.ts`.
 
+A smart constructor may also return `Layout.Fetch.Fetch Node` instead of `Node` and
+read the rows it needs while the report is being built (`headlineOf`, stage J3g);
+nothing changes on this side, because what reaches the client is still the props
+that scan produced.
+
 The dispatcher needs nothing: it looks the schema up by name, validates, resolves
 every relation anywhere in the props, and calls `render`.
 
 ### Names Stage 3 reserves
 
-`table`, `drilldownTable`, `scorecard`, `axisChart`, `pieChart`,
+`table`, `drilldownTable`, `scorecard`, `headline`, `axisChart`, `pieChart`,
 `drilldownPieChart`, `styleBox` and `drilldownBar` are all built and registered.
 `treeMap` is **registered as unsupported**: it is the one reserved name with no
 renderer behind it at all — `runTreeMap` is undefined in the `ermine-writers`

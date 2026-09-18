@@ -204,6 +204,7 @@ lines on `ermine.json.doc`; both need a log4j configuration to be visible
 | J3e | json-charts | Chart/stylebox prop types and adapters (`axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar`, `styleBox`; `treeMap` registered as unsupported) | J3d | 3 |
 | J2b | json-spread | `Spread Json` wrapper (encode merge, schema additional properties, decode leftovers); then the builtin `Json a` constraint if time allows | J2a, J3a | 3 -- BUILT (Part 1; Part 2 = design only) |
 | P1..P3 | json-encode-2.11 | 2.11 ports: P1 = contract+J3a+J2a, P2 = J3b+J3c, P3 = J3d+J2b | landings | after each |
+| J3g | json-unify | `Fetch Node` as THE report type: the lifts `map_Fetch`/`bind_Fetch`/`sequence_Fetch` and the layout lifts `vflowF`/`hflowF`/`gridF`/`tabbedF` in `modules/Layout/Fetch.e`; `json/Runner.scala` one path (`Params -> Node` is sugar for `done`, the first evaluation step runs before any connection); `Layout.Widgets.Headline` -- the widget whose constructor scans -- and its client component; `FetchHeadline` rewritten, `FetchFragments` added; six `TestRunner` properties | J3f | 4 -- BUILT (below) |
 | J3f | json-fetch | `modules/Layout/Fetch.e` (`Fetch a`: `scanRelation`, `scanRelationInOrder`, `scan`/`runScan`, a `Relation.Scan` runner) and its interpreter in `json/Runner.scala` (`Params -> Fetch Node` beside `Params -> Node`); four example reports `core/src/test/resources/doc/Fetch*.e`; six `TestRunner` properties | J3c, J3d, J3e | 4 -- BUILT (below) |
 
 Reviews: `brief-review.md`, one independent reviewer per stage before landing. Ports:
@@ -379,4 +380,22 @@ branch (they share `Lib.scala`).
   by `bin/ermine :load` (`count`, `descending`, `columns` are global selectors) -- renamed. Gate:
   `scripts/gate.sh status` on the commit. NOT landed on json-encode; no 2.11 port; `Layout.Scan`
   (the `Report f z` runner) left as is.
+- 2026-09-18 J3g BUILT on `json-unify` (worktree `ermine-scala-wt-json-unify`, from json-encode babac791),
+  NOT committed: `Fetch Node` is the report type and `Params -> Node` is sugar for `done` of it.
+  `modules/Layout/Fetch.e` gained `map_Fetch`, `bind_Fetch`, `sequence_Fetch` (left to right) and the
+  layout lifts `vflowF` / `hflowF` / `gridF` / `tabbedF` (it now imports `Layout.Doc`; `Doc` does not
+  import `Fetch`), so a scan no longer has to be hoisted above its layout. `json/Runner.scala` has ONE
+  path: `Report.fetching`, `build` and the `build`+`write` branch are gone, `evalStep` reads a value
+  that is neither `Done` nor `Scan` as the document itself, and the FIRST step (decode, apply, force)
+  runs under `evalLock` BEFORE `cfg.run.run` -- so a report that fails to evaluate opens no connection
+  (pure or fetching), and only a `Scan` opens one. New widget `Layout.Widgets.Headline` (`headline`
+  pure, `headlineOf` a `Fetch Node` that scans, counts, sums and maxes; registry name "headline",
+  in `widgetNames`, client component `client/src/widgets/headline.ts` + generated zod + registry line).
+  Its title prop is `headlineTitle`, not `title`: with `title`, `title p` on a `ScorecardProps` in a
+  module importing `Layout.Widgets` fails to unify (probed). Examples: `FetchHeadline.e` rewritten
+  around `headlineOf`/`vflowF` (the "text" widget is gone; an empty scan gives the PURE headline of
+  zeros) and `FetchFragments.e` added (three fragments of type `... -> Fetch Node`, five scans, one
+  document). Properties: `TestRunner` (fxl-order), (fxl-laws), (fxl-sugar), (fxl-conn), (fxl-headline),
+  (fx5), (fx1) updated; `TestWidgets` generates the headline too. Gates in report-J3g.md. Open: the
+  2.11 port; `Layout.Scan` and the legacy Report/Writer path untouched.
 - 2026-09-18 J3f LANDED: json-encode fast-forwarded to 23cccbc1 (the gated tree itself; scripts/gate.sh status 23cccbc1: compile, corpus, lsp, suites 1200/1200 PASS). The user confirmed it coexists with the legacy Report/Writer path (untouched; full core/test green). Worktree ermine-scala-wt-json-fetch can be removed. Open: the 2.11 port.

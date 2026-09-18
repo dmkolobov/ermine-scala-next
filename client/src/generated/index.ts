@@ -12,6 +12,7 @@ import { Schema as AxisChartPropsSchemaRaw } from "./axisChart";
 import { Schema as PieChartPropsSchemaRaw } from "./pieChart";
 import { Schema as StyleBoxPropsSchemaRaw } from "./styleBox";
 import { Schema as DrilldownBarPropsSchemaRaw } from "./drilldownBar";
+import { Schema as HeadlinePropsSchemaRaw } from "./headline";
 
 /** Layout.Doc.Node */
 export const DocNodeSchema: z.ZodTypeAny = DocNodeSchemaRaw;
@@ -31,6 +32,8 @@ export const PieChartPropsSchema: z.ZodTypeAny = PieChartPropsSchemaRaw;
 export const StyleBoxPropsSchema: z.ZodTypeAny = StyleBoxPropsSchemaRaw;
 /** Layout.Widgets.DrilldownBar.DrilldownBarProps */
 export const DrilldownBarPropsSchema: z.ZodTypeAny = DrilldownBarPropsSchemaRaw;
+/** Layout.Widgets.Headline.HeadlineProps */
+export const HeadlinePropsSchema: z.ZodTypeAny = HeadlinePropsSchemaRaw;
 
 /** Widget registry name -> the zod its props are validated with. */
 export const WIDGET_PROP_SCHEMAS: Record<string, z.ZodTypeAny> = {
@@ -42,6 +45,7 @@ export const WIDGET_PROP_SCHEMAS: Record<string, z.ZodTypeAny> = {
   drilldownPieChart: PieChartPropsSchema,
   styleBox: StyleBoxPropsSchema,
   drilldownBar: DrilldownBarPropsSchema,
+  headline: HeadlinePropsSchema,
 };
 
 /** Registry names Stage 3 reserves that have NO renderer: the dispatcher's

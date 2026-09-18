@@ -28,6 +28,7 @@ export Layout.Widgets.AxisChart
 export Layout.Widgets.PieChart
 export Layout.Widgets.StyleBox
 export Layout.Widgets.DrilldownBar
+export Layout.Widgets.Headline
 import List using empty_Bracket; cons_Bracket
 
 -- | The registry names Stage 3 reserves.  Every one of them is built except
@@ -38,4 +39,4 @@ import List using empty_Bracket; cons_Bracket
 widgetNames : List String
 widgetNames = ["table", "drilldownTable", "axisChart", "pieChart",
                "drilldownPieChart", "styleBox", "drilldownBar", "treeMap",
-               "scorecard"]
+               "scorecard", "headline"]

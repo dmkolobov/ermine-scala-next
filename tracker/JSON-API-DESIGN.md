@@ -507,8 +507,32 @@ and a list transformed in memory and returned to SQL through `Relation.relation`
 | delivery | a relation that survives into the final Node is still a plan and follows §3.4a; only the rows a `Scan` asked for are read early | -- |
 | failure | a throwing continuation is the same 500 as a throwing report; a throwing scan is `ScanFailed(n)`, a 500 naming the report and the scan's position | -- |
 
-Cost: a fetching report whose evaluation fails has opened its connection for nothing (still one per
-request, `TestRunner (fx-conn)`). Examples: `core/src/test/resources/doc/Fetch{Headline,Running,Tabs,TopN}.e`.
+Cost: a fetching report whose evaluation fails used to have opened its connection for nothing.
+J3g removed that (§3.4c): the FIRST evaluation step runs before `cfg.run.run`, so a report that
+fails to evaluate opens no connection at all, and one that scans opens exactly one
+(`TestRunner (fx-conn)`, `(fxl-conn)`). Examples:
+`core/src/test/resources/doc/Fetch{Headline,Running,Tabs,TopN,Fragments}.e`.
+
+### 3.4c `Fetch Node` as the report type (J3g, 2026-09-18)
+
+J3f left `Fetch` usable only above a layout: `Node` is what every layout combinator takes, so a
+scan had to be hoisted to the top of the report (`scanRelation r (rows -> done (vflow [..]))`)
+and no widget's smart constructor could scan. J3g lifts the layout instead. `Fetch` is still the
+J3f type (§3.4b decisions stand: a separate CPS type, no `Monad` instance, the same interpreter),
+and a report is now written as one `Fetch Node`, cut into fragments of type `... -> Fetch Node`.
+
+| Decision | Choice | Rejected |
+|---|---|---|
+| lifts | plain functions in `modules/Layout/Fetch.e`: `map_Fetch`, `bind_Fetch`, `sequence_Fetch` (left to right), and the layouts `vflowF`, `hflowF`, `gridF`, `tabbedF` over `Fetch Node` (`Layout.Fetch` imports `Layout.Doc`; `Doc` does not import `Fetch`) | a `Monad Fetch` instance: `Relation.Scan` still only wants `RunScan_S`, `Cont` is still the monad over the continuation, and `do` notation would not make `vflowF` shorter |
+| the report type | `Params -> Fetch Node`. `Params -> Node` is SUGAR: `resultKind` still classifies it, but the runner reads a value that is neither `Done` nor `Scan` as the document itself, so there is ONE interpreter and no `fetching` flag on `Report` | two render paths (J3f's `build`+`write` beside `renderFetch`): two orderings, two error vocabularies, two things to keep in step |
+| where the connection opens | the first evaluation step (decode, apply, force) runs under `evalLock` BEFORE `cfg.run.run`. `Done`/a bare `Node` is written on the one connection the write opens; only a `Scan` opens one to continue evaluating in | keeping J3f's "evaluate inside the connection": a report that throws before any scan paid for a connection |
+| a widget that scans | `Layout.Widgets.Headline`: `headline : HeadlineProps -> Node` (pure) beside `headlineOf : ... -> Field h Double -> rel r -> Fetch Node`, which scans, counts, sums and takes the maximum. Registry name `"headline"`, client component `client/src/widgets/headline.ts` | a `Fetch`-valued field inside `Node`: the wire and the generated zod stay what `Node` says |
+| the prop names | `headlineTitle`, not `title`: `Layout.Widgets` re-exports every widget module into one scope, and `Layout.Widgets.Scorecard` already owns `title` (`Layout.Widgets.Chart` spells `chartTitle` for the same reason). Verified: with `title`, `title p` on a `ScorecardProps` in a module importing `Layout.Widgets` fails to unify | -- |
+| order | `sequence_Fetch` and the layout lifts scan left to right, in the order the children are written (`TestRunner (fxl-order)`) | no order guarantee: a running total or a rank would be unreproducible |
+
+Cost: a widget that owns its scan reads the relation itself, so a report that also shows the rows
+in a table scans twice (`FetchHeadline.e` says so). `Fetch` has one operation, so nothing about a
+widget makes this special; a caller holding the numbers uses `headline` and scans once.
 
 ### 3.5 Schema export and zod
 

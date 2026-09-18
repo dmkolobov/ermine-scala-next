@@ -200,6 +200,36 @@ test("(w-scorecard) the new widget's DOM, asserted directly", async () => {
   assert.equal(t2.querySelectorAll(".ermine-scorecard-delta").length, 0);
 });
 
+test("(w-headline) the headline's DOM: the count raw, the two measurements through the format", async () => {
+  const { document, target } = newDom();
+  const props = {
+    headlineTitle: "Sales",
+    scope: "in north",
+    rowCount: 3,
+    total: 4350.75,
+    largest: 2310.25,
+    headlineFormat: { tag: "Currency", color: false, negParens: false, symbol: "$", places: 2 },
+  };
+  const result = await render(target, parseDocument(docOf({ tag: "Widget", name: "headline", props })),
+    defaultRegistry(), { document, fetchData: async () => rel });
+  assert.deepStrictEqual(result.errors, []);
+  const section = target.querySelector("section.ermine-headline") as HTMLElement;
+  assert.ok(section);
+  assert.equal(section.querySelector(".ermine-headline-title")?.textContent, "Sales");
+  assert.equal(section.querySelector(".ermine-headline-scope")?.textContent, "in north");
+  const figures = Array.from(section.querySelectorAll(".ermine-headline-figure"));
+  assert.deepStrictEqual(figures.map((f) => f.getAttribute("data-figure")), ["rowCount", "total", "largest"]);
+  assert.deepStrictEqual(figures.map((f) => f.querySelector("dt")?.textContent), ["Rows", "Total", "Largest"]);
+  const env = defaultFormatEnv(document);
+  const fmt = formatDisplay(props.headlineFormat as CellFormat, env);
+  // the count is printed as it arrives; the two measurements are formatted
+  assert.deepStrictEqual(figures.map((f) => f.querySelector("dd")?.textContent),
+    ["3", String(fmt([props.total])), String(fmt([props.largest]))]);
+  // ...and the format is the one that was sent: a plain String() of the numbers is not it
+  assert.notDeepStrictEqual(figures.map((f) => f.querySelector("dd")?.textContent),
+    ["3", String(props.total), String(props.largest)]);
+});
+
 test("(w-sorts) both sort directions reach runTabular as the strings DataTables names its comparator with", async () => {
   for (const [descending, want] of [[true, "desc"], [false, "asc"]] as const) {
     const { document, target } = newDom();
