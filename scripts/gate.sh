@@ -53,8 +53,13 @@ tree_key() {  # tree SHA of HEAD + every uncommitted/untracked change, without t
   # HEAD's key and a cached PASS).  Hashing every file costs ~0.2 s.
   local idx; idx=$(mktemp) || return 1
   GIT_INDEX_FILE=$idx git read-tree HEAD || { rm -f "$idx"; return 1; }
-  # the cache and mutation runs live at the main checkout's root: never part of anyone's content
-  GIT_INDEX_FILE=$idx git add -A -- . ':!.gate-cache' ':!.mutation-runs' >/dev/null 2>&1 &&
+  # the cache and mutation runs live at the main checkout's root: never part of anyone's content.
+  # Exclude them only when they are NOT gitignored: `git add` treats a negative pathspec as naming
+  # the path, and naming an ignored directory (.gitignore has `.gate-cache/`) is an error, which in
+  # the main checkout made every key computation fail (2026-09-18).  Ignored paths stay out anyway.
+  local ex=() p
+  for p in .gate-cache .mutation-runs; do git check-ignore -q "$p" 2>/dev/null || ex+=(":!$p"); done
+  GIT_INDEX_FILE=$idx git add -A -- . "${ex[@]}" >/dev/null 2>&1 &&
     GIT_INDEX_FILE=$idx git write-tree
   local rc=$?; rm -f "$idx"; return $rc
 }

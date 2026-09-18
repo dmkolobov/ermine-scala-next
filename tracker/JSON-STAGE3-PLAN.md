@@ -379,3 +379,4 @@ branch (they share `Lib.scala`).
   by `bin/ermine :load` (`count`, `descending`, `columns` are global selectors) -- renamed. Gate:
   `scripts/gate.sh status` on the commit. NOT landed on json-encode; no 2.11 port; `Layout.Scan`
   (the `Report f z` runner) left as is.
+- 2026-09-18 J3f LANDED: json-encode fast-forwarded to 23cccbc1 (the gated tree itself; scripts/gate.sh status 23cccbc1: compile, corpus, lsp, suites 1200/1200 PASS). The user confirmed it coexists with the legacy Report/Writer path (untouched; full core/test green). Worktree ermine-scala-wt-json-fetch can be removed. Open: the 2.11 port.
