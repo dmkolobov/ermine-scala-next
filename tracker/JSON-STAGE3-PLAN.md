@@ -204,6 +204,7 @@ lines on `ermine.json.doc`; both need a log4j configuration to be visible
 | J3e | json-charts | Chart/stylebox prop types and adapters (`axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar`, `styleBox`; `treeMap` registered as unsupported) | J3d | 3 |
 | J2b | json-spread | `Spread Json` wrapper (encode merge, schema additional properties, decode leftovers); then the builtin `Json a` constraint if time allows | J2a, J3a | 3 -- BUILT (Part 1; Part 2 = design only) |
 | P1..P3 | json-encode-2.11 | 2.11 ports: P1 = contract+J3a+J2a, P2 = J3b+J3c, P3 = J3d+J2b | landings | after each |
+| J3f | json-fetch | `modules/Layout/Fetch.e` (`Fetch a`: `scanRelation`, `scanRelationInOrder`, `scan`/`runScan`, a `Relation.Scan` runner) and its interpreter in `json/Runner.scala` (`Params -> Fetch Node` beside `Params -> Node`); four example reports `core/src/test/resources/doc/Fetch*.e`; six `TestRunner` properties | J3c, J3d, J3e | 4 -- BUILT (below) |
 
 Reviews: `brief-review.md`, one independent reviewer per stage before landing. Ports:
 `brief-port-211.md`.
@@ -356,3 +357,25 @@ branch (they share `Lib.scala`).
   scala3-migration or backport-2.11. Stage worktrees wt-json-{wrappers,decode,doc,runner,client,spread,
   charts} are all ancestors of 5d0a2614 and can be removed. Orchestrator note: the last runs were started
   with nohup and finished unnoticed for three hours -- background jobs must be harness-tracked or polled.
+- 2026-09-18 J3f BUILT on `json-fetch` (worktree `ermine-scala-wt-json-fetch`, from json-encode 6c44d72d):
+  `scanRelation` / `scanRelationInOrder` for the JSON runner. The user's question: `Params -> Node` never
+  sees a row, so the old `Report.e:617` bridge (rows to a continuation, list back to SQL via `relation`)
+  had no counterpart. Design (design note §3.4b): a SEPARATE type `Layout.Fetch.Fetch a` -- `Done a |
+  Scan Sort# Relation# (List Record# -> Fetch a)` -- with `done`, `scanRelation`, `scanRelationInOrder`,
+  `scan`/`scanInOrder`/`runScan` (Cont, as before) and `runner : RunScan_S List (Fetch a)` for
+  `Relation.Scan`; NO monad instance (the user: "before we just passed in a continuation"); `Node` and
+  the generated zod untouched. `Runner.scala`: `Params -> Fetch Node` accepted beside `Params -> Node`
+  (`resultKind`), `renderFetch` evaluates and writes inside one `Run[DB].run`, each step under
+  `evalLock`, each scan outside it, `ScanFailed(n)` for a throwing scan; `Layout.Fetch` is loaded at
+  boot. Examples, each a report a pure one cannot be, `core/src/test/resources/doc/`: `FetchHeadline`
+  (heading numbers from the rows; an empty scan yields a text widget instead of a table),
+  `FetchRunning` (`scanRelationInOrder` by day, running total + sequence number folded in Ermine,
+  `relation`'d and `join`ed to `targets` IN SQL), `FetchTabs` (one tab per region found by a scan, each
+  tab's table a plan that still defers: 4 tokens, north resolves to 3 rows), `FetchTopN` (SQL aggregate
+  scanned largest-first, top N + "Other" slice for a pie, second scan of targets in the same `do`);
+  `FetchData` holds the two literal relations. `TestRunner` 23/23 (17 + (fx1)-(fx4), (fx-conn): one
+  connection for a report with two scans and an inline relation, (fx-err): a throwing continuation is a
+  500 naming the report; (b3) gained the `Int -> Fetch Int` refusal). Three Ermine name clashes found
+  by `bin/ermine :load` (`count`, `descending`, `columns` are global selectors) -- renamed. Gate:
+  `scripts/gate.sh status` on the commit. NOT landed on json-encode; no 2.11 port; `Layout.Scan`
+  (the `Report f z` runner) left as is.

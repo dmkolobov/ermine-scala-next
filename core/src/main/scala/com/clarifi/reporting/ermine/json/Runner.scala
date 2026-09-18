@@ -1,14 +1,16 @@
 package com.clarifi.reporting.ermine.json
 
 import argonaut.{ Json, Parse }
-import com.clarifi.reporting.Run
+import com.clarifi.reporting.{ Record, Run, SortOrder }
 import com.clarifi.reporting.backends.{ DB, Runners, Scanners }
-import com.clarifi.reporting.relational.{ SMEnv, Scanner }
-import com.clarifi.reporting.ermine.{ AppT, Global, Memory, Runtime, Type }
+import com.clarifi.reporting.relational.{ ClosedExt, Ext, SMEnv, Scanner }
+import com.clarifi.reporting.ermine.{ AppT, Data, Global, InfixR, Memory, Prim, Runtime, Type }
 import com.clarifi.reporting.ermine.session.{ Lib, Printer, Session, SessionEnv }
 import com.clarifi.reporting.ermine.syntax.Explicit
+import com.clarifi.machines.{ Plan, Process }
 import scala.collection.immutable.List
-import scala.util.control.NonFatal
+import scala.collection.mutable.ListBuffer
+import scala.util.control.{ NonFatal, NoStackTrace }
 import scalaparsers.{ Death, Supply }
 
 /** How a request failed, with the HTTP status it maps to and the JSON body
@@ -42,8 +44,8 @@ sealed abstract class RunError(val status: Int) {
 }
 
 /** The request is wrong: a body that is not JSON, an unknown key, a
-  * parameter the report's type refuses, a report whose type is not
-  * `Params -> Layout.Doc.Node`. */
+  * parameter the report's type refuses, a report whose type is neither
+  * `Params -> Layout.Doc.Node` nor `Params -> Layout.Fetch.Fetch Layout.Doc.Node`. */
 final case class BadRequest(at: String, message: String) extends RunError(400) {
   def path: Option[String] = Some(at)
 }
@@ -229,6 +231,17 @@ object RunnerConfig {
   * and must be discarded (the HTTP server keeps a `StringBuilder` per
   * request and sends it only on `Right`).
   *
+  * A FETCHING REPORT (`Params -> Layout.Fetch.Fetch Node`, stage J3f) asks
+  * for rows WHILE it is evaluated: `Scan order plan k` is one relation to
+  * execute, whose rows go to `k` as an Ermine list, and `Done node` is the
+  * document.  So for such a report the evaluation moves inside the same
+  * `Run[DB].run` as the write (`renderFetch`): each evaluation step -- the
+  * application of the report, of a continuation to its rows, and the final
+  * walk into a `Doc` -- takes `evalLock` on its own, and each scan runs
+  * OUTSIDE the lock, so a slow query blocks no other report.  A relation
+  * that survives into the final Node is still a plan and is delivered as
+  * the request asks; only the rows a `Scan` asked for are read early.
+  *
   * CONCURRENCY (the decision the brief asks to document).  Two locks' worth
   * of state, one lock -- and the lock is PROCESS-WIDE (`Runner.evalLock`),
   * not per instance, because part of what it guards is:
@@ -302,7 +315,7 @@ final class Runner(val cfg: RunnerConfig) {
         env.loadFile = Session.SourceFile.inOrder((fs :+ env.loadFile): _*)
       }
       Lib.preamble
-      Session.loadModules(NodeModule :: cfg.preload)
+      Session.loadModules(NodeModule :: FetchModule :: cfg.preload)
       snapshot()
       None
     } catch {
@@ -339,9 +352,10 @@ final class Runner(val cfg: RunnerConfig) {
 
   def render(module: String, req: Request, out: Appendable): Either[RunError, WriteStats] =
     report(module).right.flatMap { rep =>
-      build(rep, req).right.flatMap { root =>
-        val wcfg = WriteConfig(default = req.default, strategy = req.strategy,
-                               threshold = req.threshold, clock = cfg.clock)
+      val wcfg = WriteConfig(default = req.default, strategy = req.strategy,
+                             threshold = req.threshold, clock = cfg.clock)
+      if (rep.fetching) renderFetch(rep, req, out, wcfg)
+      else build(rep, req).right.flatMap { root =>
         write(Doc.document(root, cfg.settings), out, wcfg)
       }
     }
@@ -436,14 +450,18 @@ final class Runner(val cfg: RunnerConfig) {
             evaluated.right.flatMap { case (ty, fn) =>
               Decode.reportSignature(ty).left.map(e => signatureRefusal(module, e.message)).right.flatMap {
                 case (paramTy, resultTy) =>
-                  if (!isNode(resultTy))
-                    Left(signatureRefusal(module, "a report returns " + NodeModule + ".Node, not " +
-                                                  Schema.renderType(resultTy)))
-                  else Decode.compile(paramTy).left.map { e =>
-                    BadRequest("$." + Request.Params,
-                               "the parameter type " + Schema.renderType(paramTy) +
-                               " of " + module + "." + cfg.reportName + " has no JSON reading: " + e.report)
-                  }.right.map(d => new Report(module, paramTy, resultTy, d, fn))
+                  resultKind(resultTy) match {
+                    case None =>
+                      Left(signatureRefusal(module, "a report returns " + NodeModule + ".Node or " +
+                                                    FetchModule + ".Fetch " + NodeModule + ".Node, not " +
+                                                    Schema.renderType(resultTy)))
+                    case Some(fetching) =>
+                      Decode.compile(paramTy).left.map { e =>
+                        BadRequest("$." + Request.Params,
+                                   "the parameter type " + Schema.renderType(paramTy) +
+                                   " of " + module + "." + cfg.reportName + " has no JSON reading: " + e.report)
+                      }.right.map(d => new Report(module, paramTy, resultTy, d, fn, fetching))
+                  }
               }
             }
           }
@@ -453,13 +471,16 @@ final class Runner(val cfg: RunnerConfig) {
   private def signatureRefusal(module: String, why: String): RunError =
     BadRequest("$", module + "." + cfg.reportName + " is not a report: " + why)
 
+  private def decode(rep: Report, req: Request): Either[RunError, Runtime] =
+    rep.decoder(req.params).left.map(e => BadRequest("$." + Request.Params + e.path.substring(1), e.message))
+
   /** Decode the parameters, apply the report and walk the value into a
     * `Doc`.  All of it under `evalLock`; the relations inside the `Doc` are
     * plans, not rows, so the scan happens outside. */
   private def build(rep: Report, req: Request): Either[RunError, Doc] =
     evalLock.synchronized {
-      rep.decoder(req.params) match {
-        case Left(e) => Left(BadRequest("$." + Request.Params + e.path.substring(1), e.message))
+      decode(rep, req) match {
+        case Left(e) => Left(e)
         case Right(v) =>
           try Doc.fromRuntime(Runtime.swhnf(rep.fn).apply1(v)) match {
             // a bottom inside the value (an Ermine `error`, a failed foreign
@@ -483,17 +504,117 @@ final class Runner(val cfg: RunnerConfig) {
       case NonFatal(e)     => Left(Failed(messageOf(e)))
     }
 
+  // ---------------------------------------------------------------------
+  // a fetching report: Params -> Layout.Fetch.Fetch Node
+
+  /** Decode, then evaluate AND write inside one `Run[DB].run`: the
+    * evaluation scans.  The ordering of the plain path (decode, evaluate,
+    * then open the connection) cannot hold here, so a fetching report whose
+    * evaluation fails has opened a connection for nothing; that is the cost
+    * of asking for rows early, and it is the same one connection either way. */
+  private def renderFetch(rep: Report, req: Request, out: Appendable, wcfg: WriteConfig): Either[RunError, WriteStats] =
+    decode(rep, req).right.flatMap { v =>
+      val M = cfg.scanner.M
+      val action: DB[Either[RunError, WriteStats]] =
+        M.bind(interpret(rep, () => Runtime.swhnf(rep.fn).apply1(v))) {
+          case Left(e)     => M.point(Left(e): Either[RunError, WriteStats])
+          case Right(root) =>
+            M.map(Write.doc[DB](Doc.document(root, cfg.settings), out, wcfg, plans)(cfg.scanner, Guard.db))(
+              st => Right(st): Either[RunError, WriteStats])
+        }
+      try cfg.run.run(action)
+      catch {
+        case s: ScanFailed   => Left(Failed(rep.module + "." + cfg.reportName + ": scan " + s.n + " failed: " +
+                                            messageOf(s.getCause)))
+        case f: WriteFailure => Left(Failed("cannot write " + f.path + ": " + f.message, Some(f.path)))
+        case NonFatal(e)     => Left(Failed(messageOf(e)))
+      }
+    }
+
+  /** The interpreter of `Fetch`: a loop of evaluation steps (under
+    * `evalLock`) and scans (outside it), as one `DB` action.  `next` is the
+    * value of the step: the report applied to its parameters, then a
+    * continuation applied to the rows it asked for; it is FORCED under the
+    * lock, never before. */
+  private def interpret(rep: Report, first: () => Runtime): DB[Either[RunError, Doc]] = {
+    val M = cfg.scanner.M
+    def step(next: () => Runtime, n: Int): DB[Either[RunError, Doc]] =
+      M.bind(M.map(M.point(()))(_ => evalStep(rep, next, n))) {
+        case Left(e)                       => M.point(Left(e): Either[RunError, Doc])
+        case Right(Left(doc))              => M.point(Right(doc): Either[RunError, Doc])
+        case Right(Right((order, ext, k))) =>
+          val rows = new ListBuffer[Record]
+          val collect: Process[Record, Unit] =
+            (Plan.await[Record] flatMap { (r: Record) => rows += r; Plan.emit(()) }).repeatedly
+          def wrap(e: Throwable): Throwable = new ScanFailed(n, e)
+          val scan: DB[Unit] =
+            try Guard.db.guard(cfg.scanner.scanExt(ext, collect, order)(scalaz.std.anyVal.unitInstance))(wrap)
+            catch { case NonFatal(e) => throw wrap(e) }
+          M.bind(scan)(_ => step(() => k.apply1(rowsRuntime(rows.toList)), n + 1))
+      }
+    step(first, 1)
+  }
+
+  /** One evaluation step, under `evalLock`: `Left` a failure; `Right(Left(doc))`
+    * the report is `Done` and its Node walked; `Right(Right((order, plan, k)))`
+    * it asks for a `Scan`. */
+  private def evalStep(rep: Report, next: () => Runtime, n: Int)
+      : Either[RunError, Either[Doc, (List[(String, SortOrder)], Ext[Nothing, Nothing], Runtime)]] =
+    evalLock.synchronized {
+      def failed(why: String): RunError = Failed(rep.module + "." + cfg.reportName + " failed: " + why)
+      try Runtime.swhnf(next()) match {
+        case Data(DoneCon, Array(node)) =>
+          Doc.fromRuntime(node) match {
+            case Left(e)  => Left(Failed(rep.module + "." + cfg.reportName +
+                                         " produced a document that cannot be encoded: " + e.message, Some(e.path)))
+            case Right(d) => Right(Left(d))
+          }
+        case Data(ScanCon, Array(srt, rel, k)) =>
+          val order = Runtime.swhnf(srt).extract[List[(String, SortOrder)]]
+          Runtime.swhnf(rel) match {
+            case Prim(c: ClosedExt) => Right(Right((order, c.out, k)))
+            case other              => Left(failed("scan " + n + " is not a relation: " + other))
+          }
+        case other => Left(failed("step " + n + " is neither Done nor Scan: " + other))
+      } catch {
+        case Death(d, _) => Left(failed(d.toString))
+        case NonFatal(e) => Left(failed(messageOf(e)))
+      }
+    }
+
+  /** The rows as the Ermine `List Record#` a `Scan` continuation takes:
+    * what `Native.List.fromList#` builds from the writer's
+    * `scanRelationDMTL` argument, cell by cell through `fromPrimExpr`. */
+  private def rowsRuntime(rows: List[Record]): Runtime =
+    rows.foldRight(Lib.Nil: Runtime) { (r, acc) =>
+      Data(ConsCon, Array(Prim(r.map { case (c, v) => (c, Runtime.fromPrimExpr(v)) }), acc))
+    }
+
   private def isNode(t: Type): Boolean = unfurl(t, List()) match {
     case (Type.Con(_, Global(NodeModule, "Node", _), _, _), Nil) => true
     case _                                                       => false
+  }
+
+  /** `Some(false)` for `Node`, `Some(true)` for `Fetch Node`, `None` for
+    * anything else. */
+  private def resultKind(t: Type): Option[Boolean] = unfurl(t, List()) match {
+    case (Type.Con(_, Global(NodeModule, "Node", _), _, _), Nil)               => Some(false)
+    case (Type.Con(_, Global(FetchModule, "Fetch", _), _, _), List(a)) if isNode(a) => Some(true)
+    case _                                                                     => None
   }
 
   private final class Report(val module: String,
                              val paramTy: Type,
                              val resultTy: Type,
                              val decoder: Decode.Decoder,
-                             val fn: Runtime)
+                             val fn: Runtime,
+                             val fetching: Boolean)
 }
+
+/** A `Scan` of a fetching report threw: `n` is its position in the report
+  * (1 = the first relation asked for), the cause is the scanner's. */
+final class ScanFailed(val n: Int, cause: Throwable)
+    extends RuntimeException("scan " + n + " failed: " + cause.getMessage, cause) with NoStackTrace
 
 object Runner {
   /** The evaluation monitor, ONE PER PROCESS.  A `Runner` has its own
@@ -508,8 +629,13 @@ object Runner {
     * tenant, or a test fixture) is serialised against the first. */
   private[json] val evalLock = new Object
 
-  private[json] val Builtin    = "Builtin"
-  private[json] val NodeModule = "Layout.Doc"
+  private[json] val Builtin     = "Builtin"
+  private[json] val NodeModule  = "Layout.Doc"
+  private[json] val FetchModule = "Layout.Fetch"
+  /** The constructors of `Layout.Fetch.Fetch`, as the evaluator names them. */
+  private[json] val DoneCon: Global = Global(FetchModule, "Done")
+  private[json] val ScanCon: Global = Global(FetchModule, "Scan")
+  private[json] val ConsCon: Global = Global(Builtin, "::", InfixR(5))
 
   private[json] val everything: (Option[String], List[Explicit[Global]], Boolean) = (None, List(), false)
 

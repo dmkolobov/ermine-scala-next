@@ -2,8 +2,9 @@ module Layout.Doc where
 
 -- The layout vocabulary of a JSON report document (tracker/JSON-API-DESIGN.md
 -- sections 3.2 and 3.4a; tracker/JSON-STAGE3-PLAN.md, "Wire contract").
--- A report is a function `report : Params -> Node`; the document runner
--- evaluates it and encodes the Node with the generic walker, so these
+-- A report is a function `report : Params -> Node` (or `Params -> Fetch Node`
+-- when it needs rows while it is built: module Layout.Fetch); the document
+-- runner evaluates it and encodes the Node with the generic walker, so these
 -- record-style constructors ARE the wire:
 --
 --   {"tag": "Widget", "name": "table", "props": {..}}

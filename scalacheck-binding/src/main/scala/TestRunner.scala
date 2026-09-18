@@ -496,7 +496,9 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
       ("RgPoly",   "report : a -> Node\nreport _ = widget \"w\" 1\n",            "polymorphic"),
       ("RgNotFn",  "report : Node\nreport = widget \"w\" 1\n",                   "not"),
       ("RgWrongR", "report : Int -> Int\nreport n = n\n",                        "Layout.Doc.Node"),
-      ("RgBadP",   "report : (Int -> Int) -> Node\nreport _ = widget \"w\" 1\n", "function"))
+      ("RgBadP",   "report : (Int -> Int) -> Node\nreport _ = widget \"w\" 1\n", "function"),
+      // J3f: a fetching report must still end in a Node
+      ("RgFetchI", "import Layout.Fetch\nreport : Int -> Fetch Int\nreport n = done n\n", "Layout.Doc.Node"))
     cases.foldLeft(proved: Prop) { case (acc, (m, body, want)) =>
       writeModule(m, head.format(m) + body)
       val (st, text) = render(runner, m, "{}")
@@ -909,6 +911,154 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
         // the regions relation has only 4 rows, so it stays inline
         ((all(1).field(Wire.RowCount).flatMap(_.number).flatMap(_.toInt) ?= Some(4)) :| all(1).nospaces)
     }
+  }
+
+  // =====================================================================
+  // (fx) fetching reports (J3f): core/src/test/resources/doc/Fetch*.e over
+  // `Layout.Fetch`, each a report that a pure `Params -> Node` cannot be
+
+  /** The relation objects of a document: `relationObjects` takes every
+    * object with a "kind" key, and a table's column descriptors have one too
+    * (`Layout.Widgets.Table.ColumnKind`), so this keeps the delivery kinds only. */
+  def rels(j: Json): List[Json] =
+    relationObjects(j).filter(o => str(o.field(Wire.Kind)).exists(k => k == Wire.Inline || k == Wire.Deferred))
+
+  /** The inline rows of a relation object as maps keyed by column name. */
+  def rowMaps(rel: Json): List[Map[String, Json]] = {
+    val cols = rel.field(Wire.Columns).map(_.arrayOrEmpty.flatMap(_.field(Wire.Name)).flatMap(_.string)).getOrElse(Nil)
+    rel.field(Wire.Rows).map(_.arrayOrEmpty).getOrElse(Nil).map(r => cols.zip(r.arrayOrEmpty).toMap)
+  }
+  private def num(j: Option[Json]): Option[Double] = j.flatMap(_.number).flatMap(_.toDouble)
+  private def str(j: Option[Json]): Option[String] = j.flatMap(_.string)
+  private def params(p: String): String = "{\"" + Request.Params + "\":" + p + "}"
+
+  property("(fx1) FetchHeadline: the heading's numbers are the scanned rows', and an empty scan changes the layout") = secure {
+    val (st, text) = render(runner, "FetchHeadline", params("{\"onlyRegion\":\"north\"}"))
+    val (st2, text2) = render(runner, "FetchHeadline", params("{\"onlyRegion\":\"nowhere\"}"))
+    val (st3, text3) = render(runner, "FetchHeadline", params("{}"))
+    if (st != 200 || st2 != 200 || st3 != 200) falsified :| ("statuses " + st + "/" + st2 + "/" + st3 + ": " + text.take(300) + text2.take(300) + text3.take(300))
+    else {
+      val root = parsed(text).field(Wire.Root).get
+      val kids = root.field("children").map(_.arrayOrEmpty).getOrElse(Nil)
+      val head = kids.head.field("props").get
+      val table = rels(kids(1))
+      val root2 = parsed(text2).field(Wire.Root).get
+      val head3 = parsed(text3).field(Wire.Root).get.field("children").get.arrayOrEmpty.head.field("props").get
+      ((str(root.field("tag")) ?= Some("VFlow")) :| text.take(200)) &&
+        ((str(head.field("hlScope")) ?= Some("in north")) :| head.nospaces) &&
+        ((num(head.field("hlCount")) ?= Some(3.0)) :| head.nospaces) &&
+        ((num(head.field("hlTotal")) ?= Some(4350.75)) :| head.nospaces) &&
+        ((num(head.field("hlLargest")) ?= Some(2310.25)) :| head.nospaces) &&
+        // the table under the heading is the same plan, delivered as a relation object
+        ((table.length ?= 1) :| ("relation objects under the heading: " + table.length)) &&
+        ((num(table.head.field(Wire.RowCount)) ?= Some(3.0)) :| table.head.nospaces) &&
+        // an empty scan: no table at all, one text widget
+        ((str(root2.field("tag")) ?= Some("Widget")) :| text2.take(200)) &&
+        ((str(root2.field("name")) ?= Some("text")) :| text2.take(200)) &&
+        ((str(root2.field("props")) ?= Some("no sales in nowhere")) :| text2.take(200)) &&
+        ((rels(root2).length ?= 0) :| text2.take(200)) &&
+        ((num(head3.field("hlCount")) ?= Some(8.0)) :| head3.nospaces) &&
+        ((num(head3.field("hlTotal")) ?= Some(12682.0)) :| head3.nospaces) &&
+        ((str(head3.field("hlScope")) ?= Some("everywhere")) :| head3.nospaces)
+    }
+  }
+
+  property("(fx2) FetchRunning: rows in day order, running total and sequence folded in Ermine, joined back in SQL") = secure {
+    val (st, text) = render(runner, "FetchRunning", params("{\"newestFirst\":false}"))
+    val (st2, text2) = render(runner, "FetchRunning", params("{\"newestFirst\":true}"))
+    if (st != 200 || st2 != 200) falsified :| ("statuses " + st + "/" + st2 + ": " + text.take(300) + text2.take(300))
+    else {
+      val rel = rels(parsed(text).field(Wire.Root).get).head
+      val rows = rowMaps(rel)
+      def at(rs: List[Map[String, Json]], n: Int) = rs.find(r => num(r.get("seqNo")) == Some(n.toDouble)).getOrElse(Map())
+      val first = at(rows, 1)
+      val last = at(rows, 8)
+      val rows2 = rowMaps(rels(parsed(text2).field(Wire.Root).get).head)
+      val first2 = at(rows2, 1)
+      ((rel.field(Wire.Columns).map(_.arrayOrEmpty.flatMap(_.field(Wire.Name)).flatMap(_.string)) ?=
+          Some(List("amount", "day", "region", "runningAmount", "seqNo", "target"))) :| rel.nospaces) &&
+        ((rows.length ?= 8) :| ("rows " + rows.length + ": " + rel.nospaces.take(300))) &&
+        ((str(first.get("day")) ?= Some("2026-01-05")) :| first.toString) &&
+        ((num(first.get("runningAmount")) ?= Some(1200.5)) :| first.toString) &&
+        // the join brought the region's target from the OTHER relation
+        ((num(first.get("target")) ?= Some(4000.0)) :| first.toString) &&
+        ((str(last.get("region")) ?= Some("west")) :| last.toString) &&
+        ((num(last.get("runningAmount")) ?= Some(12682.0)) :| last.toString) &&
+        ((num(last.get("target")) ?= Some(2500.0)) :| last.toString) &&
+        // descending: the newest sale is first and starts the running total
+        ((str(first2.get("day")) ?= Some("2026-03-17")) :| first2.toString) &&
+        ((num(first2.get("runningAmount")) ?= Some(1550.0)) :| first2.toString)
+    }
+  }
+
+  property("(fx3) FetchTabs: one tab per region found by a scan, each over a plan that still defers") = secure {
+    val (st, text) = render(runner, "FetchTabs", params("{\"showUnits\":true}"))
+    val (st2, text2) = render(runner, "FetchTabs",
+      params("{\"showUnits\":false}") .dropRight(1) + ",\"" + Request.Data + "\":{\"default\":\"deferred\"}}")
+    if (st != 200 || st2 != 200) falsified :| ("statuses " + st + "/" + st2 + ": " + text.take(300) + text2.take(300))
+    else {
+      val root = parsed(text).field(Wire.Root).get
+      val tabs = root.field("tabs").map(_.arrayOrEmpty).getOrElse(Nil)
+      val labels = tabs.flatMap(t => str(t.field("label")))
+      val counts = tabs.map(t => num(rels(t.field("content").get).head.field(Wire.RowCount)))
+      val tabs2 = parsed(text2).field(Wire.Root).get.field("tabs").map(_.arrayOrEmpty).getOrElse(Nil)
+      val kinds2 = tabs2.map(t => str(rels(t.field("content").get).head.field(Wire.Kind)))
+      val northTok = tabs2.find(t => str(t.field("label")) == Some("north"))
+        .flatMap(t => str(rels(t.field("content").get).head.field(Wire.Token))).getOrElse("")
+      val (gst, gbody) = fetch(runner, northTok)
+      ((str(root.field("tag")) ?= Some("Tabbed")) :| text.take(200)) &&
+        ((labels ?= List("east", "north", "south", "west")) :| labels.toString) &&
+        ((counts ?= List(Some(2.0), Some(3.0), Some(2.0), Some(1.0))) :| counts.toString) &&
+        // the request asked for deferred delivery: every tab's relation is a token
+        ((kinds2 ?= List.fill(4)(Some(Wire.Deferred))) :| kinds2.toString) &&
+        ((gst ?= 200) :| "the north tab's token did not resolve") &&
+        ((num(parsed(gbody).field(Wire.RowCount)) ?= Some(3.0)) :| gbody.take(200))
+    }
+  }
+
+  property("(fx4) FetchTopN: two scans in one do block: top N plus an Other slice, and a count over both") = secure {
+    val (st, text) = render(runner, "FetchTopN", params("{\"keep\":2}"))
+    val (st2, text2) = render(runner, "FetchTopN", params("{\"keep\":0}"))
+    if (st != 200 || st2 != 200) falsified :| ("statuses " + st + "/" + st2 + ": " + text.take(300) + text2.take(300))
+    else {
+      val root = parsed(text).field(Wire.Root).get
+      val kids = root.field("children").map(_.arrayOrEmpty).getOrElse(Nil)
+      val rows = rowMaps(rels(kids.head).head)
+      val labels = rows.flatMap(r => str(r.get("region")))
+      val total = rows.flatMap(r => num(r.get("amount"))).sum
+      val other = rows.find(r => str(r.get("region")) == Some("Other")).flatMap(r => num(r.get("amount")))
+      val met = num(kids(1).field("props"))
+      val rows2 = rowMaps(rels(parsed(text2).field(Wire.Root).get).head)
+      // a literal relation's rows come back in the scanner's order, not the list's
+      ((labels.toSet ?= Set("north", "east", "Other")) :| labels.toString) &&
+        ((other ?= Some(4155.75)) :| rows.toString) &&
+        ((math.abs(total - 12682.0) < 1e-9) :| ("the slices do not add up: " + total)) &&
+        ((met ?= Some(2.0)) :| kids(1).nospaces) &&
+        ((rows2.length ?= 1) :| rows2.toString) &&
+        ((rows2.headOption.flatMap(r => num(r.get("amount"))) ?= Some(12682.0)) :| rows2.toString)
+    }
+  }
+
+  property("(fx-conn) a fetching report opens ONE connection, however many scans and relations") = secure {
+    val warm = render(runner, "FetchTopN", params("{\"keep\":1}"))
+    val before = counting.openedHere
+    val (st, text) = render(runner, "FetchTopN", params("{\"keep\":1}"))
+    val afterPost = counting.openedHere
+    ((warm._1 ?= 200) :| ("the warm-up request failed: " + warm._2.take(200))) &&
+      ((st ?= 200) :| ("status " + st + ": " + text.take(200))) &&
+      ((afterPost - before ?= 1) :| ("a fetching POST opened " + (afterPost - before) + " connections"))
+  }
+
+  property("(fx-err) a fetching report whose continuation throws is a 500 naming the report, and the next request works") = secure {
+    writeModule("RgFetchBad",
+      "module RgFetchBad where\n\nimport Error\nimport Layout.Doc\nimport Layout.Fetch\nimport FetchData\n\n" +
+      "report : Int -> Fetch Node\nreport n = scanRelation sales (rows -> error \"boom after the scan\")\n")
+    val (st, text) = render(runner, "RgFetchBad", params("1"))
+    val msg = parsed(text).field("error").flatMap(_.field("message")).flatMap(_.string).getOrElse("")
+    val (st2, _) = render(runner, "FetchTabs", params("{\"showUnits\":false}"))
+    ((st ?= 500) :| ("status " + st + ": " + text.take(300))) &&
+      (msg.contains("RgFetchBad") :| ("message does not name the report: " + msg)) &&
+      ((st2 ?= 200) :| "the runner did not serve the next request")
   }
 
   // =====================================================================

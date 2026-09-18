@@ -488,6 +488,28 @@ via `Tabular.takeAll` → `Process.wrapping`, `core/writers/Tabular.scala:62,307
 The NDJSON endpoint and Handle v2 in §3.4 become an optimisation for relations
 above the threshold, not a v1 deliverable.
 
+
+### 3.4b Fetching reports: `Params -> Fetch Node` (J3f, 2026-09-18)
+
+`Layout.Doc.Node` never sees a row: a relation in a widget's props is a plan the writer scans
+after evaluation (§3.4a). That is what makes deferral possible, and it is also why nothing like
+the old `Layout.Report.scanRelation` (`Report.e:617`, CPS over the writer's effect,
+`Writer.scala:246`) existed here: a heading with a total, a layout whose shape is in the data,
+and a list transformed in memory and returned to SQL through `Relation.relation` (a `SmallLit`,
+`Runtime.scala:386`) all need rows while the report is built.
+
+| Decision | Choice | Rejected |
+|---|---|---|
+| where the continuation lives | a separate type `data Fetch a = Done a \| Scan Sort# Relation# (List Record# -> Fetch a)` in `modules/Layout/Fetch.e`; `Node` and the client's zod schema untouched | a `Scan` constructor inside `Node`: an existential function field in the exported wire type (`client/src/generated/doc.ts` is generated from `Node` and `check-generated.sh` fails the build if stale) |
+| monad | none; CPS as before. `Relation.Scan` needs only a `RunScan` over a fixed result type, and `Cont` is over the continuation, not over `a` | a `Monad Fetch` instance: only needed to lift `vflow` over `Fetch`, which is not offered; a scan is hoisted above its layout, or several go in one `do` under `runScan` |
+| row type erasure | `Sort#` / `Relation#` / `Record#`, as `scanRelationDMTL` erased it; `unsafeRecordIn#` restores `{..r}` | an existential row in the constructor |
+| interpreter | `Runner.renderFetch`: decode, then evaluate AND write inside one `Run[DB].run`; every evaluation step (`evalStep`) takes `evalLock`, every scan runs outside it; rows go to the continuation as the Ermine list `fromList#` would build (`rowsRuntime`) | evaluating before the connection opens (impossible: the evaluation scans); holding `evalLock` across a scan (a slow query would block every other report) |
+| delivery | a relation that survives into the final Node is still a plan and follows §3.4a; only the rows a `Scan` asked for are read early | -- |
+| failure | a throwing continuation is the same 500 as a throwing report; a throwing scan is `ScanFailed(n)`, a 500 naming the report and the scan's position | -- |
+
+Cost: a fetching report whose evaluation fails has opened its connection for nothing (still one per
+request, `TestRunner (fx-conn)`). Examples: `core/src/test/resources/doc/Fetch{Headline,Running,Tabs,TopN}.e`.
+
 ### 3.5 Schema export and zod
 
 - `core/json/Schema.scala`: walk a **monomorphic** `Type` with `Subst.unfurlApp`
