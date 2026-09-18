@@ -34,7 +34,7 @@ final case class WriteConfig(default: Delivery = Delivery.Inline,
                              strategy: Strategy = Strategy.Buffered,
                              threshold: Option[Long] = None,
                              clock: () => Long = WriteConfig.systemClock) {
-  require(default != Delivery.ByRequest, "the default delivery is inline or deferred")
+  require(default == Delivery.Inline || default == Delivery.Deferred, "the default delivery is inline or deferred")
   require(threshold.forall(_ >= 0L), "a threshold is a row count")
 }
 object WriteConfig {
@@ -84,50 +84,41 @@ object Guard {
   }
 }
 
-/** The document writer (design note §3.4a; tracker/JSON-STAGE3-PLAN.md "Wire
-  * contract").  `Write.doc` turns a `Doc` into text inside ONE `G` action:
-  * pure nodes are appended as they come, and each relation, in document
-  * order, is resolved by the delivery policy:
+/** The document as steps (design note §3.4a, §3.4d;
+  * tracker/JSON-STAGE3-PLAN.md "Wire contract").  `Write.steps` turns a
+  * `Doc` into the `Emit`/`Splice`/`Token` steps that print it, and
+  * `Write.doc` runs them through `Interp.run` -- the one driver, which a
+  * fetching report's scans go through too (J3h).  Pure nodes are appended
+  * as they come, and each relation, in document order, is resolved HERE by
+  * the delivery policy, once:
   *
   *  - explicit `Inline`/`Deferred` wins; `ByRequest` takes `cfg.default`;
-  *  - INLINE (Buffered): `S.scanExt(ext, rows, order)` appends each record
-  *    as a JSON array to a per-relation buffer; once the scan has returned,
+  *  - INLINE (Buffered, `Step.Splice`): `S.scanExt(ext, rows, order)`
+  *    appends each record as a JSON array to a per-relation buffer; once the
+  *    scan has returned,
   *    `{"kind":"inline","columns":[..],"rows":[..],"rowCount":n}` goes to
   *    `out`;
   *  - a bare relation resolved inline with `cfg.threshold = Some(t)` whose
   *    scan yields a (t+1)-th record stops there: the process STOPS, which
   *    ends the scan (the SQL driver closes its result set; the text buffered
   *    so far is dropped) and the relation goes out deferred;
-  *  - DEFERRED: no scan; `cache.put` mints a token and
+  *  - DEFERRED (`Step.Token`): no scan; `cache.put` mints a token and
   *    `{"kind":"deferred","columns":[..],"token":..,"expires":..}` is
   *    written.
   *
   * For `G = DB` the whole write is one `Connection => WriteStats`, so every
   * relation scans on the one connection `Run[DB].run` supplies, sequentially.
   *
-  * FAILURE.  Any exception while the action runs -- a scan that throws, a
-  * non-finite Double in a row, a record lacking a declared column -- is
-  * rethrown as a `WriteFailure` naming the relation's path (and, for a row,
-  * the row index and column), after an ERROR log line.  A row the encoder
-  * refuses ends its scan by `Stop`, exactly as the threshold does, so the
-  * scan is torn down (result set, statement, temp tables) before the failure
-  * is raised; a scan that throws on its own is the scanner's to tear down.
-  * `out` then holds a
-  * PREFIX of the document that ends before the failed relation's object:
-  * nothing of that relation, nothing after it.  The prefix is not valid JSON
-  * on its own; a runner that wants HTTP error semantics writes into a buffer
-  * and sends it only when the action returns (which is what Buffered
-  * promises: no partial document reaches the client).
-  *
-  * Every relation is logged at INFO on `ermine.json.doc` as
-  * `relation <path> <delivery> rows=<n> bytes=<b> ms=<t>`.
-  *
-  * Stack: the action is a right-nested chain of binds, one per text run and
-  * per relation, so for `DB` its depth grows with the number of RELATIONS
-  * (not rows, not nodes); thousands are fine.
+  * FAILURE, the stats and the stack are the driver's and are described on
+  * `Interp`: one `WriteFailure` naming the path, a `RelationStats` per
+  * relation in execution order, an INFO line each, and `out` holding a
+  * PREFIX that ends before the failed relation's object -- nothing of that
+  * relation, nothing after it.  The prefix is not valid JSON on its own; a
+  * runner that wants HTTP error semantics writes into a buffer and sends it
+  * only when the action returns (which is what Buffered promises: no partial
+  * document reaches the client).
   */
 object Write {
-  private val log = org.apache.log4j.Logger.getLogger("ermine.json.doc")
 
   // ---------------------------------------------------------------------
   // the document as text runs and relations
@@ -190,37 +181,35 @@ object Write {
   // ---------------------------------------------------------------------
   // the writer
 
+  /** The steps that print `d`: a maximal run of text is one `Emit`, and each
+    * relation is the `Splice` or the `Token` its delivery resolves to -- so
+    * `resolve` is consulted once, here, and not again while the action runs. */
+  def steps(d: Doc, cfg: WriteConfig): List[Step] =
+    segments(d).map {
+      case Text(t)        => Step.Emit(t)
+      case Relation(data) => resolve(data.delivery, cfg) match {
+        case (Delivery.Deferred, _) => Step.Token(data)
+        case (_, threshold)         => Step.Splice(data, threshold)
+      }
+    }
+
   /** Write `d` to `out` inside one `G` action; see the object comment. */
   def doc[G[_]](d: Doc, out: Appendable, cfg: WriteConfig, cache: PlanCache)
-               (implicit S: Scanner[G], X: Guard[G]): G[WriteStats] = {
-    val M = S.M
-    val segs = segments(d)
-    final class State { var bytes = 0L; val done = new scala.collection.mutable.ListBuffer[RelationStats] }
-    def go(rest: List[Segment], st: State): G[WriteStats] = rest match {
-      case Nil => delay(M)(WriteStats(st.done.toList, st.bytes))
-      case Text(t) :: tl =>
-        M.bind(delay(M) { out.append(t); st.bytes += Rows.utf8Length(t) })(_ => go(tl, st))
-      case Relation(data) :: tl =>
-        M.bind(one(data, out, cfg, cache, st.done.toList))({ rs =>
-          st.done += rs
-          st.bytes += rs.bytes
-          go(tl, st)
-        })
-    }
-    M.bind(delay(M)(new State))(st => go(segs, st))
-  }
+               (implicit S: Scanner[G], X: Guard[G]): G[WriteStats] =
+    Interp.run(steps(d, cfg), out, cfg, cache)
 
   /** The deferred re-request: exactly the inline object the relation behind
     * `token` would have been written as (no threshold: the client asked for
     * the rows), or `None` when the token is unknown or has expired.  The
-    * clock is read when the action runs. */
+    * clock is read when the action runs.  One `Splice` step, one run. */
   def relation[G[_]](token: String, out: Appendable, cache: PlanCache, clock: () => Long = WriteConfig.systemClock)
                     (implicit S: Scanner[G], X: Guard[G]): G[Option[WriteStats]] = {
     val M = S.M
-    M.bind(delay(M)(cache.get(token, clock())))({
+    M.bind(M.map(M.point(()))(_ => cache.get(token, clock())))({
       case None    => M.point(None: Option[WriteStats])
       case Some(e) =>
-        M.map(inlined(e.data, None, out, cache, clock, Nil))(rs => Some(WriteStats(List(rs), rs.bytes)): Option[WriteStats])
+        M.map(Interp.run(List(Step.Splice(e.data, None)), out, WriteConfig(clock = clock), cache))(
+          st => Some(st): Option[WriteStats])
     })
   }
 
@@ -233,105 +222,6 @@ object Write {
     case explicit => (explicit, None)
   }
 
-  private def one[G[_]](d: Doc.Data, out: Appendable, cfg: WriteConfig, cache: PlanCache,
-                        completed: List[RelationStats])
-                       (implicit S: Scanner[G], X: Guard[G]): G[RelationStats] =
-    resolve(d.delivery, cfg) match {
-      case (Delivery.Deferred, _) => delay(S.M) {
-        val start = cfg.clock()
-        attempt(d.path, completed, start, cfg.clock)(deferred(d, out, cache, start, cfg.clock, 0L, false))
-      }
-      case (_, threshold) => inlined(d, threshold, out, cache, cfg.clock, completed)
-    }
-
-  private def inlined[G[_]](d: Doc.Data, threshold: Option[Long], out: Appendable, cache: PlanCache,
-                           clock: () => Long, completed: List[RelationStats])
-                          (implicit S: Scanner[G], X: Guard[G]): G[RelationStats] = {
-    val M = S.M
-    M.bind(delay(M)((clock(), new Rows.Sink(d, threshold.getOrElse(Long.MaxValue))))) { case (start, sink) =>
-      def fail(e: Throwable): Throwable = failure(d.path, completed, start, clock, e)
-      val scan: G[Unit] =
-        try X.guard(S.scanExt(d.ext, sink.process, d.order)(scalaz.std.anyVal.unitInstance))(fail)
-        catch { case NonFatal(e) => throw fail(e) }
-      M.bind(scan) { _ =>
-        delay(M) {
-          attempt(d.path, completed, start, clock) {
-            // a row the encoder refused: the sink left the scan by `Stop` (so the
-            // driver tore it down) and kept the error for here
-            if (sink.error != null) throw sink.error
-            else if (sink.over) deferred(d, out, cache, start, clock, sink.rows + 1, true)
-            else {
-              val head = new java.lang.StringBuilder
-              head.append("{\"").append(Wire.Kind).append("\":\"").append(Wire.Inline).append("\",")
-              columns(head, d)
-              head.append(",\"").append(Wire.Rows).append("\":[")
-              val tail = "],\"" + Wire.RowCount + "\":" + sink.rows + "}"
-              val bytes = Rows.utf8Length(head) + Rows.utf8Length(sink.buffer) + tail.length
-              out.append(head)
-              out.append(sink.buffer)
-              out.append(tail)
-              logged(RelationStats(d.path, Delivery.Inline, d.columns.length, sink.rows, sink.rows,
-                                   bytes, clock() - start, false))
-            }
-          }
-        }
-      }
-    }
-  }
-
-  private def deferred(d: Doc.Data, out: Appendable, cache: PlanCache, start: Long, clock: () => Long,
-                       scanned: Long, over: Boolean): RelationStats = {
-    val (token, expires) = cache.put(d)
-    val sb = new java.lang.StringBuilder
-    sb.append("{\"").append(Wire.Kind).append("\":\"").append(Wire.Deferred).append("\",")
-    columns(sb, d)
-    sb.append(",\"").append(Wire.Token).append("\":")
-    Rows.string(sb, token)
-    sb.append(",\"").append(Wire.Expires).append("\":\"")
-    Rows.timestampFmt.formatTo(expires, sb)
-    sb.append("\"}")
-    out.append(sb)
-    logged(RelationStats(d.path, Delivery.Deferred, d.columns.length, 0L, scanned,
-                         Rows.utf8Length(sb), clock() - start, over))
-  }
-
-  private def columns(sb: java.lang.StringBuilder, d: Doc.Data): Unit = {
-    sb.append('"').append(Wire.Columns).append("\":[")
-    var first = true
-    d.columns.foreach { c =>
-      if (!first) sb.append(',')
-      first = false
-      sb.append("{\"").append(Wire.Name).append("\":")
-      Rows.string(sb, c.name)
-      sb.append(",\"").append(Wire.Type).append("\":\"").append(c.typeName)
-      sb.append("\",\"").append(Wire.Nullable).append("\":").append(c.nullable).append('}')
-    }
-    sb.append(']')
-  }
-
-  private def logged(rs: RelationStats): RelationStats = {
-    if (log.isInfoEnabled) log.info(rs.line)
-    rs
-  }
-
-  private def failure(path: String, completed: List[RelationStats], start: Long, clock: () => Long,
-                      e: Throwable): WriteFailure = e match {
-    case f: WriteFailure => f
-    case other =>
-      val msg = other match {
-        case r: Rows.RowError => r.getMessage
-        case _                => Option(other.getMessage).getOrElse(other.toString)
-      }
-      log.error("relation " + path + " failed ms=" + (clock() - start) + ": " + msg)
-      WriteFailure(path, msg, completed, other)
-  }
-
-  private def attempt[A](path: String, completed: List[RelationStats], start: Long, clock: () => Long)(body: => A): A =
-    try body catch { case NonFatal(e) => throw failure(path, completed, start, clock, e) }
-
-  /** `a`, evaluated when the action runs (for a lazy `G` such as `DB`). */
-  private def delay[G[_], A](M: scalaz.Monad[G])(a: => A): G[A] =
-    M.map(M.point(()))(_ => a)
 }
 
 /** The row encoder: one `Record` as a JSON array in column order, appended
@@ -466,7 +356,7 @@ object Rows {
     * `cleanTempTables` and leaked a server-side cursor per refused row --
     * that hole is closed, `withDriver` tears down in a `finally` now.  `Stop`
     * stays the exit anyway, because it is what keeps the BUFFERED-prefix
-    * promise: the scan ends cleanly, `Write.inlined` rethrows the error once
+    * promise: the scan ends cleanly, `Interp.inlined` rethrows the error once
     * the scan has returned, and the failure, its message, its `WriteFailure`
     * and its ERROR log line are the same whichever way the scan ended. */
   final class Sink(d: Doc.Data, limit: Long) {

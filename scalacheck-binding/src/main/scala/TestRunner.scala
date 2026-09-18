@@ -1088,17 +1088,32 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     def marks: List[String] = seen.get.toList
     def clear(): Unit = seen.get.clear()
 
-    private def note(r: Ext[Nothing, Nothing]): Unit = r match {
+    private def note(r: Ext[Nothing, Nothing]): Boolean = r match {
       case ExtRel(SmallLit(tups), _) =>
-        tups.list.toList.headOption.flatMap(_.get("rgName")).foreach(p => seen.get += p.extractNullableString(""))
-      case _ => ()
+        val mark = tups.list.toList.headOption.flatMap(_.get("rgName")).map(_.extractNullableString(""))
+        mark.foreach(m => seen.get += m)
+        mark == Some(RecordingScanner.Boom)
+      case _ => false
     }
+    /** A literal relation whose first row's `rgName` is `Boom` is a scan that
+      * THROWS WHEN THE ACTION RUNS.  It is the only way a generated Ermine
+      * report can fail a scan -- the stdlib has no `table` primitive, so a
+      * plan over a table that is not there cannot be written in Ermine -- and
+      * (ip-fail) needs one on both sides of the driver (a `Call` and a
+      * `Splice`).  No other property generates that name. */
     def scanExt[A: Monoid](r: Ext[Nothing, Nothing], f: Process[Record, A],
-                           order: List[(String, SortOrder)]): DB[A] = { note(r); under.scanExt(r, f, order) }
+                           order: List[(String, SortOrder)]): DB[A] =
+      if (note(r)) (_ => throw new RuntimeException("the scan of " + RecordingScanner.Boom + " failed"))
+      else under.scanExt(r, f, order)
     def scanRel[A: Monoid](r: com.clarifi.reporting.relational.Relation[Nothing, Nothing], f: Process[Record, A],
                            order: List[(String, SortOrder)]): DB[A] = under.scanRel(r, f, order)
     def scanMem[A: Monoid](m: com.clarifi.reporting.relational.Mem[Nothing, Nothing], f: Process[Record, A],
                            order: List[(String, SortOrder)]): DB[A] = under.scanMem(m, f, order)
+  }
+
+  object RecordingScanner {
+    /** The `rgName` of the first row of a literal relation whose scan throws. */
+    val Boom = "BOOM"
   }
 
   private val recording = new RecordingScanner(Scanners.SQLite(SMEnv.dummySmenv))
@@ -1433,6 +1448,156 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
         // fragment 3: two regions and an Other slice
         ((pie.flatMap(r => str(r.get("region"))).toSet ?= Set("north", "east", "Other")) :| pie.toString)
     }
+  }
+
+  // =====================================================================
+  // (ip) J3h: ONE step interpreter.  The rows a `Fetch` asks for and the rows
+  // a relation puts on the wire are read by the same driver (`Interp.run`),
+  // so they are counted in one `WriteStats`, logged the same way, and fail
+  // the same way.
+
+  /** `render`, keeping the `WriteStats` the runner answered: what a `Call`, a
+    * `Splice` and a `Token` each leave in `relations` is what (ip-stats) is
+    * about, and nothing else in the suite looks at it. */
+  def renderStats(r: Runner, module: String, body: String): (Int, String, Option[WriteStats]) = {
+    val out = new java.lang.StringBuilder
+    r.renderText(module, body, out) match {
+      case Left(e)   => (e.status, e.body, None)
+      case Right(st) => (200, out.toString, Some(st))
+    }
+  }
+
+  /** A report with N scans and M wire relations: the scans are
+    * `scanRelation`s of literal relations (1-5 rows each), and the widgets
+    * that carry the wire relations follow them in the same `vflowF`.  So the
+    * document is `{"tag":"VFlow","children":[<N leaf widgets>, <M relation
+    * widgets>]}` and the wire relations sit at `$.children[N+j].props`. */
+  final case class StatsCase(fetches: List[Rel], wires: List[Rel], dflt: Delivery, threshold: Option[Long]) {
+    def source(module: String): String = {
+      val leaves = fetches.zipWithIndex.map { case (r, i) =>
+        "(scanRelation " + r.source + " (rows -> done (widget \"f" + i + "\" (map_List (x -> x ! rgKey) rows))))" }
+      val widgets = wires.zipWithIndex.map { case (r, j) =>
+        "(done (widget \"w" + j + "\" " + r.source + "))" }
+      "module " + module + " where\n\n" + fetchImports + "\n\n" +
+      "report : Int -> Fetch Node\nreport p = vflowF [ " +
+      (leaves ++ widgets).mkString("\n                  , ") + " ]\n"
+    }
+
+    def body: String = {
+      val data = List(
+        Some("\"" + Request.Default + "\":\"" +
+             (if (dflt == Delivery.Deferred) Wire.Deferred else Wire.Inline) + "\""),
+        threshold.map(t => "\"" + Request.Threshold + "\":" + t)).flatten.mkString(",")
+      "{\"" + Request.Params + "\":1,\"" + Request.Data + "\":{" + data + "}}"
+    }
+
+    /** What `WriteStats.relations` must be, as (path, delivery, rows).  The
+      * fetch entries carry the rows the CONTINUATION received, which is every
+      * row of the relation whatever `data.threshold` says: the threshold is
+      * the wire's, not the report's (J3h decision 3). */
+    def want: List[(String, String, Long)] =
+      fetches.zipWithIndex.map { case (r, i) =>
+        ("$.fetch[" + (i + 1) + "]", Delivery.Fetched.name, r.rows.length.toLong) } ++
+      wires.zipWithIndex.map { case (r, j) =>
+        val d = r.delivery(dflt, threshold)
+        ("$.children[" + (fetches.length + j) + "].props", d.name,
+         if (d == Delivery.Deferred) 0L else r.rows.length.toLong) }
+  }
+
+  private val statsCase: Gen[StatsCase] = for {
+    nf <- Gen.choose(1, 3)
+    fs <- Gen.listOfN(nf, relGen.map(r => Rel(r.cols, r.rows, "bare")))
+    nw <- Gen.choose(1, 3)
+    ws <- Gen.listOfN(nw, relGen)
+    d  <- Gen.oneOf(Delivery.Inline: Delivery, Delivery.Deferred: Delivery)
+    t  <- Gen.frequency((2, Gen.const(None: Option[Long])), (1, Gen.choose(0L, 4L).map(x => Some(x))))
+  } yield StatsCase(fs, ws, d, t)
+
+  property("(ip-stats) one WriteStats: a $.fetch[n] entry per scan in scan order, then the wire relations in document order") = secure {
+    val cases = TestDoc.samples(statsCase, 16, 60607L)
+    val bad = new ListBuffer[String]
+    val arms = new ListBuffer[String]
+    var scans = 0
+    var fetchRows = 0L
+    var multi = 0
+    cases.foreach { c =>
+      val m = freshModule("RgStats")
+      writeModule(m, c.source(m))
+      val (st, text, stats) = renderStats(runner, m, c.body)
+      scans += c.fetches.length
+      fetchRows += c.fetches.map(_.rows.length.toLong).sum
+      if (c.fetches.length >= 2) multi += 1
+      arms ++= c.wires.map(r => r.delivery(c.dflt, c.threshold).name)
+      if (st != 200) bad += ("status " + st + ": " + text.take(300) + "\n" + c.source(m))
+      else stats match {
+        case None => bad += "a 200 with no stats"
+        case Some(s) =>
+          val got = s.relations.map(rs => (rs.path, rs.delivery.name, rs.rows))
+          val fetched = s.relations.take(c.fetches.length)
+          val wire = s.relations.drop(c.fetches.length)
+          if (got != c.want) bad += ("relations\n want " + c.want + "\n got  " + got)
+          else if (fetched.exists(_.bytes != 0L)) bad += ("a fetch scan wrote bytes: " + fetched)
+          else if (wire.exists(_.bytes <= 0L)) bad += ("a wire relation wrote no bytes: " + wire)
+          else if (s.bytes != text.getBytes("UTF-8").length.toLong)
+            bad += ("stats bytes " + s.bytes + " vs " + text.getBytes("UTF-8").length)
+      }
+    }
+    val seen = arms.toList.toSet
+    println("  (ip-stats) " + cases.length + " reports, " + scans + " fetch scans over " + fetchRows +
+            " rows, " + arms.length + " wire relations " + arms.toList.groupBy(identity).map(p => p._1 + "x" + p._2.length).toList.sorted.mkString(" "))
+    (bad.isEmpty :| (bad.length + " of " + cases.length + " wrong:\n" + bad.take(2).mkString("\n---\n"))) &&
+      ((multi >= 6) :| ("only " + multi + " reports scanned more than once: the order of the fetch entries is barely tested")) &&
+      ((fetchRows >= 30L) :| ("only " + fetchRows + " rows were fetched in all")) &&
+      ((seen == Set(Wire.Inline, Wire.Deferred)) :| ("wire deliveries seen: " + seen))
+  }
+
+  property("(ip-fail) a scan that throws is one `cannot write <path>` 500: $.fetch[n] for a fetch scan, the document path for a wire relation") = secure {
+    val boom = "(mkRelation# (toList# [{ rgKey = 0, rgName = \"" + RecordingScanner.Boom + "\" }]))"
+    val good = "(mkRelation# (toList# [{ rgKey = 1, rgName = \"Lf01\" }]))"
+    def leaf(r: String) = "(scanRelation " + r + " (rows -> done (widget \"leaf\" (map_List (x -> x ! rgName) rows))))"
+    def mod(name: String, body: String) =
+      "module " + name + " where\n\n" + fetchImports + "\n\nreport : Int -> Fetch Node\nreport p = " + body + "\n"
+    // the SECOND scan of the report throws
+    val mf = freshModule("RgBoomF")
+    writeModule(mf, mod(mf, "vflowF [ " + leaf(good) + ", " + leaf(boom) + " ]"))
+    val (stF, textF) = render(orderRunner, mf, params("1"))
+    val eF = parsed(textF).field("error").getOrElse(Json.jNull)
+    // ...and a WIRE relation that throws, after a fetch scan that did not
+    val mw = freshModule("RgBoomW")
+    writeModule(mw, mod(mw, "vflowF [ " + leaf(good) + ", done (widget \"w\" " + boom + ") ]"))
+    val (stW, textW) = render(orderRunner, mw, params("1"))
+    val eW = parsed(textW).field("error").getOrElse(Json.jNull)
+    def msg(e: Json) = e.field("message").flatMap(_.string).getOrElse("")
+    def at(e: Json) = e.field("path").flatMap(_.string).getOrElse("")
+    ((stF ?= 500) :| ("fetch-scan status " + stF + ": " + textF.take(300))) &&
+      ((at(eF) ?= "$.fetch[2]") :| ("fetch-scan path " + textF.take(300))) &&
+      ((msg(eF).startsWith("cannot write $.fetch[2]: ") && msg(eF).contains(RecordingScanner.Boom)) :|
+        ("fetch-scan message " + msg(eF))) &&
+      ((stW ?= 500) :| ("wire-scan status " + stW + ": " + textW.take(300))) &&
+      ((at(eW) ?= "$.children[1].props") :| ("wire-scan path " + textW.take(300))) &&
+      ((msg(eW).startsWith("cannot write $.children[1].props: ")) :| ("wire-scan message " + msg(eW)))
+  }
+
+  property("(ip-stack) a report of 2,000 sequential scans renders: the driver's work list, not the JVM stack") = secure {
+    val n = 2000
+    val m = freshModule("RgDeep")
+    writeModule(m, "module " + m + " where\n\n" + fetchImports + "\nimport Bool\nimport Eq\n\n" +
+      "one : Fetch Node\n" +
+      "one = scanRelation (mkRelation# (toList# [{ rgKey = 1, rgName = \"Lf00\" }]))\n" +
+      "                   (rows -> done (widget \"leaf\" (map_List (x -> x ! rgKey) rows)))\n\n" +
+      "deep : Int -> Fetch Node\n" +
+      "deep k = if (k == 0) one (bind_Fetch one (x -> deep (k - 1)))\n\n" +
+      "report : Int -> Fetch Node\nreport p = deep " + (n - 1) + "\n")
+    val t0 = System.nanoTime
+    val (st, text, stats) = renderStats(runner, m, params("1"))
+    val ms = (System.nanoTime - t0) / 1000000
+    val paths = stats.map(_.relations.map(_.path)).getOrElse(Nil)
+    println("  (ip-stack) " + n + " sequential scans in " + ms + " ms, " + paths.length + " fetch entries")
+    ((st ?= 200) :| ("status " + st + ": " + text.take(300))) &&
+      ((paths.length ?= n) :| ("relations " + paths.length)) &&
+      ((paths.take(3) ?= List("$.fetch[1]", "$.fetch[2]", "$.fetch[3]")) :| paths.take(3).toString) &&
+      ((paths.lastOption ?= Some("$.fetch[" + n + "]")) :| paths.lastOption.toString) &&
+      (stats.exists(_.relations.forall(_.rows == 1L)) :| "a scan did not deliver its one row")
   }
 
   // =====================================================================

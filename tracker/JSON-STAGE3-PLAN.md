@@ -205,6 +205,7 @@ lines on `ermine.json.doc`; both need a log4j configuration to be visible
 | J2b | json-spread | `Spread Json` wrapper (encode merge, schema additional properties, decode leftovers); then the builtin `Json a` constraint if time allows | J2a, J3a | 3 -- BUILT (Part 1; Part 2 = design only) |
 | P1..P3 | json-encode-2.11 | 2.11 ports: P1 = contract+J3a+J2a, P2 = J3b+J3c, P3 = J3d+J2b | landings | after each |
 | J3g | json-unify | `Fetch Node` as THE report type: the lifts `map_Fetch`/`bind_Fetch`/`sequence_Fetch` and the layout lifts `vflowF`/`hflowF`/`gridF`/`tabbedF` in `modules/Layout/Fetch.e`; `json/Runner.scala` one path (`Params -> Node` is sugar for `done`, the first evaluation step runs before any connection); `Layout.Widgets.Headline` -- the widget whose constructor scans -- and its client component; `FetchHeadline` rewritten, `FetchFragments` added; six `TestRunner` properties | J3f | 4 -- BUILT (below) |
+| J3h | json-unify | ONE step interpreter (`json/Interp.scala`): `Eval`/`Call`/`Emit`/`Splice`/`Token` and one driver `Interp.run`; `Write.doc` = steps + run, `Runner.render` = first `Eval` then run; a fetch scan is a `$.fetch[n]` `RelationStats` and a `WriteFailure` like any relation; `ScanFailed`, `interpret`, `renderFetch`, `write` gone; `TestRunner` (ip-stats)/(ip-fail)/(ip-stack), `TestDoc` (ip-fail)/(ip-stack) | J3g | 4 -- BUILT (below) |
 | J3f | json-fetch | `modules/Layout/Fetch.e` (`Fetch a`: `scanRelation`, `scanRelationInOrder`, `scan`/`runScan`, a `Relation.Scan` runner) and its interpreter in `json/Runner.scala` (`Params -> Fetch Node` beside `Params -> Node`); four example reports `core/src/test/resources/doc/Fetch*.e`; six `TestRunner` properties | J3c, J3d, J3e | 4 -- BUILT (below) |
 
 Reviews: `brief-review.md`, one independent reviewer per stage before landing. Ports:
@@ -398,4 +399,23 @@ branch (they share `Lib.scala`).
   document). Properties: `TestRunner` (fxl-order), (fxl-laws), (fxl-sugar), (fxl-conn), (fxl-headline),
   (fx5), (fx1) updated; `TestWidgets` generates the headline too. Gates in report-J3g.md. Open: the
   2.11 port; `Layout.Scan` and the legacy Report/Writer path untouched.
+- 2026-09-18 J3h BUILT on `json-unify` (worktree `ermine-scala-wt-json-unify`, on J3g 5e37cced),
+  NOT committed: one loop over one step type. New `core/src/main/scala/com/clarifi/reporting/ermine/json/Interp.scala`
+  holds `Step` (`Eval`, `Call`, `Emit`, `Splice`, `Token`) and the driver `Interp.run`, which is now
+  the only place a scan happens. `Write.doc` = `Interp.run(Write.steps(d, cfg), ..)` (the delivery is
+  resolved once, when the steps are built); `Write.relation` is a one-`Splice` run; `Runner.render`
+  takes the first `Eval` under `evalLock` outside the connection (J3g) and then runs the stream in one
+  `cfg.run.run`. `Runner.interpret`, `renderFetch`, `write` and `ScanFailed` are gone; `evalStep`
+  answers `List[Step]`, and an evaluation failure inside the driver travels as `Runner.Abort`.
+  Decisions (design note 3.4d): a fetch scan yields a `RelationStats` at `$.fetch[n]` with the new
+  `Delivery.Fetched`, `bytes` 0, in execution order before the wire relations; its failure is a
+  `WriteFailure` at that path, so the 500 is `cannot write $.fetch[n]: ..` (a throwing CONTINUATION is
+  still `<module>.report failed: ..`); `data.threshold` does NOT cap a fetch scan; byte-identical
+  output. Properties: `TestRunner` (ip-stats), (ip-fail), (ip-stack); `TestDoc` (ip-fail), (ip-stack).
+  Gates in report-J3h.md. OPEN TICKET (J3h decision 3): **a cap on fetched rows** -- a `Fetch` scan
+  reads every row of its plan, so a report that scans a large relation materialises it in the JVM;
+  `data.threshold` deliberately does not apply (half a list is a wrong answer). A cap needs a way for
+  the report to say what to do when it hits one (a `Fetch` that fails, or one that says "truncated"),
+  which is a wire and a language question, not a driver one. Also open: the 2.11 port; `Layout.Scan`
+  and the legacy Report/Writer path untouched.
 - 2026-09-18 J3f LANDED: json-encode fast-forwarded to 23cccbc1 (the gated tree itself; scripts/gate.sh status 23cccbc1: compile, corpus, lsp, suites 1200/1200 PASS). The user confirmed it coexists with the legacy Report/Writer path (untouched; full core/test green). Worktree ermine-scala-wt-json-fetch can be removed. Open: the 2.11 port.

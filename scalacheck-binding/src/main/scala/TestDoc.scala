@@ -2,7 +2,8 @@ package com.clarifi.reporting
 
 import com.clarifi.reporting.ermine.{ Runtime, Rel, Global, Bottom }
 import com.clarifi.reporting.ermine.json.{ Doc, DocJson, Write, WriteConfig, WriteFailure, WriteStats, PlanCache,
-                                           MemoryPlanCache, Delivery, Encode, ArgonautJson, JsonBuilder, Wire, Rows, Guard }
+                                           MemoryPlanCache, Delivery, Encode, ArgonautJson, JsonBuilder, Wire, Rows, Guard,
+                                           Interp, Step }
 import com.clarifi.reporting.ermine.session.Session
 import com.clarifi.reporting.relational.{ Ext, ExtRel, ExtMem, SmallLit, RelEmpty, Table, Scanner, SMEnv, Relation, Mem,
                                           EffectfulProcedure }
@@ -1056,5 +1057,114 @@ object TestDoc extends Properties("JSON document writer (J3b)") {
       (stats.relations.map(_.rows) ?= List(100000L)) &&
       (Parse.parse(firstRow).toOption.map(_.arrayOrEmpty.length) ?= Some(10)) &&
       ((S.scans.map(_._2).toList) ?= List(100000L))
+  }
+
+  // =====================================================================
+  // (ip) J3h: the one step driver (`json/Interp.scala`)
+
+  /** A step program shaped like a fetching report's: an `Eval` that answers
+    * one `Call`, whose continuation is the next `Eval`, and a last `Eval`
+    * that answers the document's `Splice` steps.  It is what `Runner` builds,
+    * with the Ermine taken out. */
+  private def fetchProgram(calls: List[(String, Ext[Nothing, Nothing])], wire: List[Step],
+                           heard: ListBuffer[(String, Int)]): List[Step] = calls match {
+    case Nil => List(Step.Eval(() => wire))
+    case (path, ext) :: tl =>
+      List(Step.Eval(() => List(Step.Call(Nil, ext, path, { (rows: List[Record]) =>
+        heard += ((path, rows.length))
+        fetchProgram(tl, wire, heard)
+      }))))
+  }
+
+  private val progGen: Gen[(List[Rel0], List[Rel0], Int)] =
+    for {
+      nf <- Gen.choose(1, 3)
+      fs <- Gen.listOfN(nf, relGen(sqlName, sqliteExact, 3, 6))
+      nw <- Gen.choose(1, 3)
+      ws <- Gen.listOfN(nw, relGen(sqlName, sqliteExact, 3, 6))
+      at <- Gen.choose(0, nf + nw - 1)
+    } yield (fs, ws, at)
+
+  property("(ip-fail) a step that throws fails the run at its own path, listing exactly the steps completed before it") =
+    forAllNoShrink(progGen, Gen.choose(0, 1000000)) { (c: (List[Rel0], List[Rel0], Int), salt: Int) =>
+      val (fs, ws, at) = c
+      val tag = "$ip" + salt + "_"
+      // a `Table` plan is the scan the test scanner throws on
+      val badExt: Ext[Nothing, Nothing] = ExtRel(Table(Map("x" -> IntT(false)), TableName("boom")), "")
+      val fetchPaths = fs.indices.toList.map(i => "$.fetch[" + (i + 1) + "]")
+      val wirePaths  = ws.indices.toList.map(j => tag + "[" + j + "]")
+      val calls = fs.zipWithIndex.map { case (r, i) => (fetchPaths(i), if (i == at) badExt else r.ext) }
+      val splices = ws.zipWithIndex.map { case (r, j) =>
+        val d = dataOf(r, Delivery.Inline, wirePaths(j))
+        Step.Splice(if (fs.length + j == at) d.copy(ext = badExt) else d, None)
+      }
+      val heard = new ListBuffer[(String, Int)]
+      val sb = new java.lang.StringBuilder
+      val S = new ListScanner
+      val res = try Right(Interp.run[Id](fetchProgram(calls, splices, heard), sb, WriteConfig(), bigCache())(S, Guard.id))
+                catch { case e: Throwable => Left(e) }
+      val paths = fetchPaths ++ wirePaths
+      val doneCalls = math.min(at, fs.length)
+      // the text: nothing at all while the failure is in a fetch scan (a `Call`
+      // writes no bytes), else every wire relation before it
+      val prefix =
+        if (at < fs.length) ""
+        else {
+          val ok = new java.lang.StringBuilder
+          Interp.run[Id](splices.take(at - fs.length), ok, WriteConfig(), bigCache())(new ListScanner, Guard.id)
+          ok.toString
+        }
+      res match {
+        case Left(f: WriteFailure) =>
+          ((f.path ?= paths(at)) :| ("path " + f.path)) &&
+            ((f.completed.map(_.path) ?= paths.take(at)) :| ("completed " + f.completed.map(_.path))) &&
+            ((f.completed.count(_.delivery == Delivery.Fetched) ?= doneCalls) :|
+              ("fetch entries in completed: " + f.completed.map(rs => (rs.path, rs.delivery.name)))) &&
+            ((f.completed.filter(_.delivery == Delivery.Fetched).map(_.rows) ?=
+                fs.take(doneCalls).map(_.records.length.toLong)) :| ("fetched rows " + f.completed.map(_.rows))) &&
+            ((heard.toList ?= fetchPaths.take(doneCalls).zip(fs.take(doneCalls).map(_.records.length))) :|
+              ("the continuations heard " + heard.toList)) &&
+            ((f.message.contains("the scan of boom failed")) :| ("message " + f.message)) &&
+            ((sb.toString ?= prefix) :| ("output " + sb.toString.take(200)))
+        case other => falsified :| ("expected a WriteFailure, got " + other)
+      }
+    }
+
+  /** ON ITS OWN THREAD, WITH A STACK THIS PROPERTY CHOOSES.  The driver's
+    * action is a right-nested chain of binds, one per STEP, and for a strict
+    * `G` (here `Id`) the whole chain runs on the JVM stack -- as it did
+    * before J3h, which changed the loop, not its shape.  On the test pool's
+    * default stack the ceiling of both is around two thousand relations and
+    * moves with the JIT: measured in one run
+    * (`tracker/json-stage3/logs/j3h-stack-probe.log`), the J3g loop survived
+    * 2,240 relations on its coldest measurement and 6,208 warm, the J3h
+    * driver 2,048 cold and 8,128 warm, and both wrote 2,000 relations. A
+    * property must not depend on which side of that line the JIT leaves it,
+    * so the write runs on a thread with a stack named here; what it pins is
+    * that the depth grows with RELATIONS and not with rows, nodes or bytes
+    * (a thousand rows and a deep document in every relation would overflow
+    * anything if it did). */
+  property("(ip-stack) 2,000 inline relations in one document") = secure {
+    val n = 2000
+    val r = Rel0(List("ca" -> IntT(false)), List(Map("ca" -> IntExpr(false, 7))))
+    val datas = (0 until n).toList.map(i => dataOf(r, Delivery.Inline, "$[" + i + "]"))
+    val sb = new java.lang.StringBuilder
+    @volatile var outcome: Either[Throwable, WriteStats] = Left(new RuntimeException("the thread did not run"))
+    val body = new Runnable {
+      def run(): Unit =
+        outcome = try Right(Write.doc[Id](Doc.DArr(datas), sb, WriteConfig(), bigCache())(new ListScanner, Guard.id))
+                  catch { case e: Throwable => Left(e) }
+    }
+    val t = new Thread(null, body, "ip-stack", 16L * 1024 * 1024)
+    t.start()
+    t.join(120000L)
+    outcome match {
+      case Left(e) => falsified :| ("the write did not finish: " + e)
+      case Right(stats) =>
+        ((stats.relations.length ?= n) :| ("relations " + stats.relations.length)) &&
+          ((stats.relations.map(_.path).lastOption ?= Some("$[" + (n - 1) + "]"))) &&
+          ((stats.bytes ?= sb.toString.getBytes("UTF-8").length.toLong)) &&
+          (sb.toString.startsWith("[{\"kind\":\"inline\"") :| sb.toString.take(60))
+    }
   }
 }

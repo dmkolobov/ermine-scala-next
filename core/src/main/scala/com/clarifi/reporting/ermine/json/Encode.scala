@@ -23,12 +23,19 @@ import java.time.format.DateTimeFormatter
   * `ByRequest` is a bare relation (`JRel`, or a `Rel` met anywhere): the
   * request's `data.default` decides.  `Inline` and `Deferred` come from the
   * `Json.e` wrappers `Inline r` / `Deferred r` (or `JInline` / `JDeferred`)
-  * and always win over the request. */
+  * and always win over the request.
+  *
+  * `Fetched` is not a delivery a VALUE can ask for and never reaches a
+  * builder: it is how a `RelationStats` says that the rows of that scan went
+  * to the report itself (a `Fetch` step, J3h) and not on to the client.  The
+  * wire's own vocabulary is `Wire.Inline` / `Wire.Deferred`, not these names;
+  * nothing exported -- the schema, the zod, the client -- reads this type. */
 sealed abstract class Delivery(val name: String)
 object Delivery {
   case object ByRequest extends Delivery("request")
   case object Inline    extends Delivery("inline")
   case object Deferred  extends Delivery("deferred")
+  case object Fetched   extends Delivery("fetched")
 }
 
 trait JsonBuilder[J] {
@@ -671,5 +678,7 @@ object ErmineJson extends JsonBuilder[Runtime] {
     case Delivery.ByRequest => Right(Data(con("JRel"), Array(r)))
     case Delivery.Inline    => Right(Data(con("JInline"), Array(r)))
     case Delivery.Deferred  => Right(Data(con("JDeferred"), Array(r)))
+    // `Fetched` is a statistic, not a value's delivery: the walker never asks
+    case Delivery.Fetched   => Left(Encode.Error(path, "a fetched relation has no encoding: its rows went to the report"))
   }
 }

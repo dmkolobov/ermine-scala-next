@@ -534,6 +534,68 @@ Cost: a widget that owns its scan reads the relation itself, so a report that al
 in a table scans twice (`FetchHeadline.e` says so). `Fetch` has one operation, so nothing about a
 widget makes this special; a caller holding the numbers uses `headline` and scans once.
 
+### 3.4d One interpreter: call, splice and token as one step stream (J3h, 2026-09-18)
+
+Until J3h there were two loops over one thing. `Write.doc` walked a document and, per relation,
+scanned a plan and applied a SCALA continuation (splice the rows in, or mint a token);
+`Runner.interpret` walked a `Fetch` and, per `Scan`, scanned a plan and applied an ERMINE
+continuation. They met only when the second finished and called the first. Each had its own
+failure type (`WriteFailure` with a path, `ScanFailed(n)`), and only the first had stats, log
+lines and a threshold. J3h keeps one loop over one step type (`json/Interp.scala`), so a fetch
+scan is logged and measured like a wire relation and a later kind of work -- a cached `Fetch`
+behind a token, a batched `ScanMany` -- is a new step, not a third loop.
+
+| Step | What the driver does | Built by | Was |
+|---|---|---|---|
+| `Eval(next)` | force `next()` and push the steps it answers | NOT the runner today -- see below; `TestDoc.fetchProgram` builds them | `evalStep` |
+| `Call(order, ext, path, k)` | scan `ext` OUTSIDE the lock, collect every record, record a `RelationStats` for `path`, push `k(rows)` (the runner's continuation: one evaluation step under `evalLock`, answering the next steps) | `Runner.evalStep` on a `Scan` | `interpret` |
+| `Emit(text)` | append the text | `Write.steps` | `Write.doc`'s `Text` |
+| `Splice(data, threshold)` | scan into a `Rows.Sink` and write the inline object at `data.path`; over the threshold it writes the deferred handle instead | `Write.steps` | `Write.inlined` |
+| `Token(data)` | `cache.put` and write the deferred handle | `Write.steps` | `Write.deferred` |
+
+The `Eval` row is the one step the runner does not build (R2): a report's FIRST evaluation is
+`render`'s own call to `Runner.evalStep`, which must happen before the driver starts (it is what
+decides whether a connection is opened at all, §3.4c), and every later one is the `Call`'s
+continuation, which the driver invokes after the scan and which answers the next steps directly.
+`Eval` is therefore the driver's arm for a step stream that extends itself without a `Call` --
+what a cached `Fetch` behind a token or a batched `ScanMany` would push -- and today only
+`TestDoc (ip-fail)`'s generated programs build one. Wrapping the `Call` continuation in an
+`Eval` would make the row literally true at the price of one more bind per scan on a chain that
+is already 2,000 deep in `(ip-stack)`; the row says what happens instead.
+
+What the lock covers: the runner's evaluation holds `evalLock` for forcing the value and for
+WALKING it (`Doc.fromRuntime` reads the runtime), and nothing else. Turning the walked `Doc` into
+the text runs of `Write.steps` reads no session state and happens outside the lock, as it did
+before J3h -- it matters for a fetching report that folds its scanned rows into pure widgets
+(`FetchRunning`, `FetchTopN`), whose printing would otherwise queue every other request.
+
+`Interp.run(steps, out, cfg, cache)` consumes the stream inside one `G` action. `Write.doc` is
+now `Interp.run(Write.steps(d, cfg), ..)`; `Write.relation` (the `/data/<token>` re-request) is a
+one-`Splice` run; `Runner.render` is "first `Eval` under the lock and outside the connection
+(§3.4c), then `Interp.run` inside one `cfg.run.run`". `Runner.interpret`, `renderFetch`, `write`
+and `ScanFailed` are gone; `evalStep` answers STEPS instead of a `Doc`-or-scan, and `Write.one`,
+`inlined`, `deferred` moved to `Interp` unchanged.
+
+Four decisions this change makes:
+
+| Decision | Choice | Rejected |
+|---|---|---|
+| **Stats** | a `Call` yields a `RelationStats` like a wire relation: `path` = `$.fetch[n]` (n = the scan's 1-based position in the report, the number `ScanFailed` used), `delivery` = a new `Delivery.Fetched`, `rows` = the records handed to the continuation, `columns` = 0 and `bytes` = 0 (nothing of it goes on the wire), `millis` from the scan's start. It is logged on `ermine.json.doc` in the same `line` shape, and `WriteStats.relations` holds it IN EXECUTION ORDER, so the fetch scans come before the wire relations (`TestRunner (ip-stats)`) | a separate list or a separate log: two places to look for "what did this request read". `Delivery` is not on the wire (`Wire.Inline`/`Wire.Deferred` are the wire's words) and nothing exported reads it, so the enum could take the fourth case |
+| **Failure** | one exception type. A fetch scan that throws is `WriteFailure("$.fetch[n]", ..)` with `completed` = every step finished before it, fetch scans included; the 500 is therefore `cannot write $.fetch[n]: <why>`, the same sentence a wire relation gets, and the response's `error.path` is `$.fetch[n]`. A throwing CONTINUATION (Ermine) is unchanged: `<module>.report failed: ..`. The driver knows nothing of `RunError`, so an evaluation failure travels through it as `Runner.Abort` and is unwrapped outside | keeping `ScanFailed`: a second failure vocabulary for the same event, and a 500 whose path field was `null` although the failure had a perfectly good path |
+| **Threshold** | `data.threshold` does NOT apply to a `Call`: a fetch scan reads every row, as J3f and J3g did. `(ip-stats)` pins it (its cases include thresholds of 0..4 and the fetch entries still carry every row) | capping a fetch scan: the report asked for the rows to compute with; half a list is a wrong answer, not a smaller one. A cap belongs with a way to say what the report should do when it hits one -- the open ticket "a cap on fetched rows" in the plan |
+| **Order of effects** | byte-identical to J3g for every document: the wire relations still scan in document order, after the last `Eval`; nothing is reordered, nothing is batched | reordering scans (e.g. all scans of a document first): the wire contract says rows arrive in document order, and a deferred token minted early would change what `/data/<token>` returns |
+
+Stack: the action is a right-nested chain of binds, one per STEP -- the shape `Write.doc` had
+before J3h, with scans now in the same chain. Steps that an `Eval` or a `Call` answers go on a
+work LIST, not on the JVM stack, so 2,000 sequential scans are 2,000 binds and no deeper
+(`TestRunner (ip-stack)`: 2,000 scans through SQLite in 16 s). For a strict `G` (the `Id`
+scanner of the tests) the whole chain still runs on the JVM stack, and the ceiling is around two
+thousand relations, JIT-dependent: measured in one run, the J3g loop survived 2,240 relations
+cold and 6,208 warm, the J3h driver 2,048 cold and 8,128 warm
+(`tracker/json-stage3/logs/j3h-stack-probe.log`). J3h did not change that ceiling; it did not
+raise it either, which would need a `BindRec`/trampolined driver and a `Scanner` that promises
+one.
+
 ### 3.5 Schema export and zod
 
 - `core/json/Schema.scala`: walk a **monomorphic** `Type` with `Subst.unfurlApp`

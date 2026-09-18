@@ -3,13 +3,11 @@ package com.clarifi.reporting.ermine.json
 import argonaut.{ Json, Parse }
 import com.clarifi.reporting.{ Record, Run, SortOrder }
 import com.clarifi.reporting.backends.{ DB, Runners, Scanners }
-import com.clarifi.reporting.relational.{ ClosedExt, Ext, SMEnv, Scanner }
+import com.clarifi.reporting.relational.{ ClosedExt, SMEnv, Scanner }
 import com.clarifi.reporting.ermine.{ AppT, Data, Global, InfixR, Memory, Prim, Runtime, Type }
 import com.clarifi.reporting.ermine.session.{ Lib, Printer, Session, SessionEnv }
 import com.clarifi.reporting.ermine.syntax.Explicit
-import com.clarifi.machines.{ Plan, Process }
 import scala.collection.immutable.List
-import scala.collection.mutable.ListBuffer
 import scala.util.control.{ NonFatal, NoStackTrace }
 import scalaparsers.{ Death, Supply }
 
@@ -207,9 +205,11 @@ object RunnerConfig {
   * `writers/Ermine.scala`:
   *
   * {{{
-  *   request JSON -> Decode -> report : Params -> Fetch Node -> first step
-  *                          -> (a scan? interpret inside Run[DB].run)
-  *                          -> Write.doc on that same connection -> one JSON object
+  *   request JSON -> Decode -> report : Params -> Fetch Node
+  *                          -> first Eval (under evalLock, no connection yet)
+  *                          -> Interp.run inside ONE Run[DB].run:
+  *                                Call  (rows for the report)   -> Eval -> ...
+  *                                Emit / Splice / Token          -> one JSON object
   * }}}
   *
   * BOOT.  One `SessionEnv` for the process: `Lib.preamble`, then
@@ -226,21 +226,21 @@ object RunnerConfig {
   * afterwards.  The four are cached per module: a request pays for a type
   * walk only the first time.
   *
-  * PER REQUEST, ONE PATH (J3g).  Decode `$.params`, then take the FIRST
-  * EVALUATION STEP -- apply the report and force the result -- under
-  * `evalLock` and before any connection is opened.  A `Params -> Node`
-  * report, and a fetching one that never scans, end there: the value is the
-  * document and the write opens the one connection.  A `Scan order plan k`
-  * is one relation to execute, whose rows go to `k` as an Ermine list; the
-  * rest of the evaluation then happens INSIDE one `Run[DB].run` together
-  * with the write (`renderFetch`), each further step taking `evalLock` on
-  * its own and each scan running OUTSIDE it, so a slow query blocks no
-  * other report.  `Strategy.Buffered` means the caller gets the text only
-  * when the write returns: `out` holds a prefix after a failure and must be
-  * discarded (the HTTP server keeps a `StringBuilder` per request and sends
-  * it only on `Right`).  A relation that survives into the final Node is
-  * still a plan and is delivered as the request asks; only the rows a
-  * `Scan` asked for are read early, and a report that fails to evaluate
+  * PER REQUEST, ONE PATH (J3g), ONE LOOP (J3h).  Decode `$.params`, then
+  * take the FIRST EVALUATION STEP -- apply the report and force the result
+  * -- under `evalLock` and before any connection is opened.  It answers a
+  * list of `Step`s: a `Params -> Node` report, and a fetching one that never
+  * scans, answer the document's `Emit`/`Splice`/`Token` steps; a
+  * `Scan order plan k` answers one `Call`, whose rows go to `k` as an Ermine
+  * list and whose continuation is the next evaluation step.  `Interp.run`
+  * consumes the stream inside ONE `Run[DB].run`, each evaluation step taking
+  * `evalLock` on its own and every scan running OUTSIDE it, so a slow query
+  * blocks no other report.  `Strategy.Buffered` means the caller gets the
+  * text only when the run returns: `out` holds a prefix after a failure and
+  * must be discarded (the HTTP server keeps a `StringBuilder` per request
+  * and sends it only on `Right`).  A relation that survives into the final
+  * Node is still a plan and is delivered as the request asks; only the rows
+  * a `Scan` asked for are read early, and a report that fails to evaluate
   * opens no connection at all.
   *
   * CONCURRENCY (the decision the brief asks to document).  Two locks' worth
@@ -351,25 +351,25 @@ final class Runner(val cfg: RunnerConfig) {
   def renderText(module: String, body: String, out: Appendable): Either[RunError, WriteStats] =
     parseBody(body).right.flatMap(j => render(module, j, out))
 
-  /** ONE PATH (J3g).  A report is `Params -> Fetch Node`; a report typed
-    * `Params -> Node` is read as `done` of its value, so the difference is in
-    * the FIRST STEP'S VALUE, not in the report's type.
+  /** ONE PATH (J3g), ONE LOOP (J3h).  A report is `Params -> Fetch Node`; a
+    * report typed `Params -> Node` is read as `done` of its value, so the
+    * difference is in the FIRST STEP'S VALUE, not in the report's type.
     *
     * Decode, then take that first step -- apply the report to its parameters
     * and force the result -- under `evalLock` and BEFORE `cfg.run.run` opens a
-    * connection.  `Done` (or a bare `Node`) is the whole document and the
-    * connection is opened by the write; only a `Scan` opens one to evaluate
-    * in.  A report whose evaluation fails therefore costs no connection,
+    * connection.  It answers the STEPS that follow: the document's
+    * `Emit`/`Splice`/`Token` when the report is finished, or one `Call` when
+    * it asks for rows.  `Interp.run` then consumes them inside one
+    * `cfg.run.run`, whichever they are, so the scans of a `Fetch` and the
+    * relations of the document are read, logged and counted by the same
+    * loop.  A report whose evaluation fails therefore costs no connection,
     * whether it scans or not. */
   def render(module: String, req: Request, out: Appendable): Either[RunError, WriteStats] =
     report(module).right.flatMap { rep =>
       val wcfg = WriteConfig(default = req.default, strategy = req.strategy,
                              threshold = req.threshold, clock = cfg.clock)
       decode(rep, req).right.flatMap { v =>
-        evalStep(rep, () => Runtime.swhnf(rep.fn).apply1(v), 1).right.flatMap {
-          case Left(doc)              => write(Doc.document(doc, cfg.settings), out, wcfg)
-          case Right((order, ext, k)) => renderFetch(rep, order, ext, k, out, wcfg)
-        }
+        evalStep(rep, () => Runtime.swhnf(rep.fn).apply1(v), 1, wcfg).right.flatMap(ss => drive(ss, out, wcfg))
       }
     }
 
@@ -487,112 +487,90 @@ final class Runner(val cfg: RunnerConfig) {
   private def decode(rep: Report, req: Request): Either[RunError, Runtime] =
     rep.decoder(req.params).left.map(e => BadRequest("$." + Request.Params + e.path.substring(1), e.message))
 
-  private def write(d: Doc, out: Appendable, wcfg: WriteConfig): Either[RunError, WriteStats] =
-    try Right(cfg.run.run(Write.doc[DB](d, out, wcfg, plans)(cfg.scanner, Guard.db)))
+  /** Run a step stream on ONE connection (J3h): the pure path's document
+    * steps, or the `Call` the first evaluation step asked for and everything
+    * it leads to.  Every failure a driver run can raise arrives here -- a
+    * scan or a row through `WriteFailure`, the Ermine side through `Abort`,
+    * which carries the `RunError` the evaluation step made. */
+  private def drive(steps: List[Step], out: Appendable, wcfg: WriteConfig): Either[RunError, WriteStats] =
+    try Right(cfg.run.run(Interp.run[DB](steps, out, wcfg, plans)(cfg.scanner, Guard.db)))
     catch {
+      case a: Abort        => Left(a.error)
       case f: WriteFailure => Left(Failed("cannot write " + f.path + ": " + f.message, Some(f.path)))
       case NonFatal(e)     => Left(Failed(messageOf(e)))
     }
 
   // ---------------------------------------------------------------------
-  // the rest of a report that asked for rows: Layout.Fetch.Fetch Node
+  // the report as steps: Layout.Fetch.Fetch Node
 
-  /** The first step said `Scan`, so evaluation continues INSIDE one
-    * `Run[DB].run` -- the scans are the reason -- and the write happens in
-    * the same connection.  A report that never scans never reaches here, and
-    * one that fails before its first scan has opened nothing (`render`): the
-    * connection is opened for the scan that was asked for, not on the chance
-    * of one. */
-  private def renderFetch(rep: Report,
-                          order: List[(String, SortOrder)],
-                          ext: Ext[Nothing, Nothing],
-                          k: Runtime,
-                          out: Appendable,
-                          wcfg: WriteConfig): Either[RunError, WriteStats] = {
-    val M = cfg.scanner.M
-    val action: DB[Either[RunError, WriteStats]] =
-      M.bind(interpret(rep, order, ext, k)) {
-        case Left(e)     => M.point(Left(e): Either[RunError, WriteStats])
-        case Right(root) =>
-          M.map(Write.doc[DB](Doc.document(root, cfg.settings), out, wcfg, plans)(cfg.scanner, Guard.db))(
-            st => Right(st): Either[RunError, WriteStats])
-      }
-    try cfg.run.run(action)
-    catch {
-      case s: ScanFailed   => Left(Failed(rep.module + "." + cfg.reportName + ": scan " + s.n + " failed: " +
-                                          messageOf(s.getCause)))
-      case f: WriteFailure => Left(Failed("cannot write " + f.path + ": " + f.message, Some(f.path)))
-      case NonFatal(e)     => Left(Failed(messageOf(e)))
+  /** One evaluation step as the STEPS that follow it: the document's when the
+    * report is finished (`Done`, or a bare `Node`), or the one `Call` it asks
+    * for (`Scan`), whose continuation is this same function on the rows.  `n`
+    * is the scan's 1-based position in the report -- what `$.fetch[n]` counts
+    * -- so the numbering is the report's and the driver only carries the path.
+    *
+    * WHAT THE LOCK COVERS (R1).  `evaluate` holds `evalLock` for the forcing
+    * and the WALK (`Doc.fromRuntime` reads the runtime, so it must); turning
+    * the walked `Doc` into the text runs of `Write.steps` reads nothing of the
+    * session and happens HERE, outside the lock, as it did before J3h.  It
+    * matters for a fetching report that folds its scanned rows into pure
+    * widgets (`FetchRunning`, `FetchTopN`): serialising those rows under a
+    * PROCESS-WIDE lock would queue every other request's evaluation behind
+    * this one's printing.
+    *
+    * The first step is taken by `render`, outside any connection, and its
+    * failure is a `Left`; every later step is taken INSIDE the driver, where
+    * a `Left` cannot be returned, so `stepping` throws it as an `Abort`. */
+  private def evalStep(rep: Report, next: () => Runtime, n: Int, wcfg: WriteConfig): Either[RunError, List[Step]] =
+    evaluate(rep, next, n, wcfg).right.map {
+      case Left(d)      => Write.steps(Doc.document(d, cfg.settings), wcfg)
+      case Right(steps) => steps
     }
-  }
 
-  /** The interpreter of `Fetch`: a loop of scans (outside `evalLock`) and
-    * evaluation steps (under it), as one `DB` action, started from the scan
-    * the first step asked for.  `next` is the value of a step -- a
-    * continuation applied to the rows it asked for -- and it is FORCED under
-    * the lock, never before. */
-  private def interpret(rep: Report,
-                        order0: List[(String, SortOrder)],
-                        ext0: Ext[Nothing, Nothing],
-                        k0: Runtime): DB[Either[RunError, Doc]] = {
-    val M = cfg.scanner.M
-    def scanning(order: List[(String, SortOrder)], ext: Ext[Nothing, Nothing], k: Runtime,
-                 n: Int): DB[Either[RunError, Doc]] = {
-      val rows = new ListBuffer[Record]
-      val collect: Process[Record, Unit] =
-        (Plan.await[Record] flatMap { (r: Record) => rows += r; Plan.emit(()) }).repeatedly
-      def wrap(e: Throwable): Throwable = new ScanFailed(n, e)
-      val scan: DB[Unit] =
-        try Guard.db.guard(cfg.scanner.scanExt(ext, collect, order)(scalaz.std.anyVal.unitInstance))(wrap)
-        catch { case NonFatal(e) => throw wrap(e) }
-      M.bind(scan)(_ => step(() => k.apply1(rowsRuntime(rows.toList)), n + 1))
-    }
-    def step(next: () => Runtime, n: Int): DB[Either[RunError, Doc]] =
-      M.bind(M.map(M.point(()))(_ => evalStep(rep, next, n))) {
-        case Left(e)                       => M.point(Left(e): Either[RunError, Doc])
-        case Right(Left(doc))              => M.point(Right(doc): Either[RunError, Doc])
-        case Right(Right((order, ext, k))) => scanning(order, ext, k, n)
-      }
-    scanning(order0, ext0, k0, 1)
-  }
-
-  /** One evaluation step, under `evalLock`: `Left` a failure; `Right(Left(doc))`
-    * the report is finished and its Node walked; `Right(Right((order, plan, k)))`
-    * it asks for a `Scan`.
+  /** The part of a step that must hold `evalLock`: force the value, and walk
+    * it when the report is finished (`Left` a `Doc`) or read the scan it asks
+    * for (`Right` one `Call`).
     *
     * A value that is neither `Done` nor `Scan` IS the Node: that is how a
     * report typed `Params -> Node` is read as `done` of its value without a
     * second path (J3g).  `resultKind` has already refused anything else, so
     * the walker is not being asked to guess. */
-  private def evalStep(rep: Report, next: () => Runtime, n: Int)
-      : Either[RunError, Either[Doc, (List[(String, SortOrder)], Ext[Nothing, Nothing], Runtime)]] =
+  private def evaluate(rep: Report, next: () => Runtime, n: Int, wcfg: WriteConfig)
+      : Either[RunError, Either[Doc, List[Step]]] =
     evalLock.synchronized {
       def failed(why: String): RunError = Failed(rep.module + "." + cfg.reportName + " failed: " + why)
+      def document(node: Runtime): Either[RunError, Either[Doc, List[Step]]] =
+        Doc.fromRuntime(node) match {
+          case Left(e)  => Left(Failed(rep.module + "." + cfg.reportName +
+                                       " produced a document that cannot be encoded: " + e.message, Some(e.path)))
+          case Right(d) => Right(Left(d))
+        }
       try Runtime.swhnf(next()) match {
-        case Data(DoneCon, Array(node)) =>
-          Doc.fromRuntime(node) match {
-            case Left(e)  => Left(Failed(rep.module + "." + cfg.reportName +
-                                         " produced a document that cannot be encoded: " + e.message, Some(e.path)))
-            case Right(d) => Right(Left(d))
-          }
+        case Data(DoneCon, Array(node)) => document(node)
         case Data(ScanCon, Array(srt, rel, k)) =>
           val order = Runtime.swhnf(srt).extract[List[(String, SortOrder)]]
           Runtime.swhnf(rel) match {
-            case Prim(c: ClosedExt) => Right(Right((order, c.out, k)))
+            case Prim(c: ClosedExt) =>
+              Right(Right(List(Step.Call(order, c.out, fetchPath(n),
+                                         rows => stepping(rep, () => k.apply1(rowsRuntime(rows)), n + 1, wcfg)))))
             case other              => Left(failed("scan " + n + " is not a relation: " + other))
           }
         // not a Fetch constructor: the report is a `Params -> Node`, and its
         // value is the document
-        case other =>
-          Doc.fromRuntime(other) match {
-            case Left(e)  => Left(Failed(rep.module + "." + cfg.reportName +
-                                         " produced a document that cannot be encoded: " + e.message, Some(e.path)))
-            case Right(d) => Right(Left(d))
-          }
+        case other => document(other)
       } catch {
         case Death(d, _) => Left(failed(d.toString))
         case NonFatal(e) => Left(failed(messageOf(e)))
       }
+    }
+
+  /** `evalStep` inside the driver: a failure leaves as an `Abort`, which
+    * `drive` unwraps into the same `RunError` the first step would have
+    * returned. */
+  private def stepping(rep: Report, next: () => Runtime, n: Int, wcfg: WriteConfig): List[Step] =
+    evalStep(rep, next, n, wcfg) match {
+      case Left(e)      => throw new Abort(e)
+      case Right(steps) => steps
     }
 
   /** The rows as the Ermine `List Record#` a `Scan` continuation takes:
@@ -623,10 +601,14 @@ final class Runner(val cfg: RunnerConfig) {
                              val fn: Runtime)
 }
 
-/** A `Scan` of a fetching report threw: `n` is its position in the report
-  * (1 = the first relation asked for), the cause is the scanner's. */
-final class ScanFailed(val n: Int, cause: Throwable)
-    extends RuntimeException("scan " + n + " failed: " + cause.getMessage, cause) with NoStackTrace
+/** A `RunError` on its way out of `Interp.run`.  The driver knows steps,
+  * an `Appendable` and `WriteFailure`; a failure of the ERMINE side (a
+  * report or a continuation that throws, a document that cannot be encoded)
+  * is none of those, so it travels through the driver as this and `drive`
+  * unwraps it.  J3h: `ScanFailed` is gone -- a fetch scan that throws is a
+  * `WriteFailure` at `$.fetch[n]`, like any other relation. */
+private[json] final class Abort(val error: RunError)
+    extends RuntimeException(error.message) with NoStackTrace
 
 object Runner {
   /** The evaluation monitor, ONE PER PROCESS.  A `Runner` has its own
@@ -650,6 +632,13 @@ object Runner {
   private[json] val ConsCon: Global = Global(Builtin, "::", InfixR(5))
 
   private[json] val everything: (Option[String], List[Explicit[Global]], Boolean) = (None, List(), false)
+
+  /** Where the n-th scan of a report is, for its `RelationStats`, its log
+    * line and any failure: `$.fetch[n]`, 1-based, in the order the report
+    * asked for them.  It is not a path into the document (the rows of a
+    * fetch scan are not in the document); it is the path into the REPORT the
+    * `Delivery.Fetched` entries of `WriteStats.relations` are named by. */
+  private[json] def fetchPath(n: Int): String = "$.fetch[" + n + "]"
 
   /** A module name is dot-separated identifiers.  It reaches
     * `SourceFile.filesystem`, which splits it on `.` and joins the pieces
