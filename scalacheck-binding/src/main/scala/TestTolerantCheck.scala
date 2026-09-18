@@ -1055,7 +1055,13 @@ object TestTolerantCheck extends Properties("Tolerant check") {
         "TextTables.e:246:28", "Tree.e:83:9", "Tree.e:84:15", "Tree.e:91:9",
         "VarianceStyling.e:322:7", "WildChain.e:144:17", "WildChain.e:145:17",
         "WildChain.e:146:17", "WildChain.e:147:17", "WildChain.e:148:17", "WildChain.e:149:17",
-        "WriterOutputs.e:204:7")
+        "WriterOutputs.e:204:7",
+        // J3g (2026-09-18): `let xs = map_List (getF f) rows` in `headlineOf`
+        // (Layout/Widgets/Headline.e), a local head under the row constraint
+        // `r <- (h, t)` -- the same class as Relation.e:39:7 above.  Found by
+        // the pr-tier sweep when the module was added; not a hover shown to
+        // the user (it is not in `knownHeadShown`).
+        "Headline.e:63:9")
       // FIX ROUND: the heads whose hover SHOWS a constraint -- the user-visible
       // claim, and the table in LSP-6.2c-HEADS.md Sec. 5.  Every one read at source
       // and hovered through the real server:
