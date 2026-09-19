@@ -43,6 +43,10 @@ object Main {
       val ermine = new Resident(log)
       val docs   = new Documents
       var shutdownSeen = false
+      // LSP-STALENESS step 2: whether the client lets the server register a
+      // file watcher (`client/registerCapability`); read at initialize, used
+      // at initialized.
+      var watchDynamic = false
 
       def logMessage(messageType: Int, message: String): Unit =
         server.notify("window/logMessage",
@@ -114,6 +118,9 @@ object Main {
         log("module roots: " +
             (if (ermine.moduleRoots.isEmpty) "none (no moduleRoots option, no workspace folder with a stdlib)"
              else ermine.moduleRoots.mkString(", ")))
+        watchDynamic =
+          (params / "capabilities" flatMap (_ / "workspace") flatMap (_ / "didChangeWatchedFiles")
+                  flatMap (_ / "dynamicRegistration") flatMap (_.bool)) getOrElse false
         Json.obj(
           "capabilities" -> Json.obj(
             "textDocumentSync" -> Json.obj(
@@ -149,7 +156,11 @@ object Main {
             // declares: a client asking `only: ["refactor"]` must not be
             // told we have something we then do not send.
             "codeActionProvider"        -> Json.obj(
-              "codeActionKinds" -> Json.Arr(List(Json.Str("quickfix"), Json.Str("source"))))),
+              "codeActionKinds" -> Json.Arr(List(Json.Str("quickfix"), Json.Str("source")))),
+            // LSP-STALENESS step 2: the manual reload, for a client that does
+            // not watch files (or a save the watcher missed).
+            "executeCommandProvider"    -> Json.obj(
+              "commands" -> Json.Arr(List(Json.Str("ermine.reloadModules"))))),
           "serverInfo" -> Json.obj(
             "name"    -> Json.Str("ermine-lsp"),
             "version" -> Json.Str("0.1")))
@@ -162,7 +173,47 @@ object Main {
       // silent 13s is indistinguishable from a hang.
       ermine.announce = (m: String) => logMessage(3, m)
 
+      // LSP-STALENESS step 2: what follows a reload, whoever asked for it.
+      // The workspace-symbol table, the inference caches and the published
+      // diagnostics all describe the session before the reload.
+      def afterReload(how: String, r: Option[Resident.Reloaded]): Unit = r match {
+        case None                  => log(s"$how: session not booted; nothing to reload")
+        case Some(x) if x.nothing  => log(s"$how: no loaded module changed")
+        case Some(x) =>
+          log(f"$how: reloaded ${x.modules.mkString(", ")} in ${x.seconds}%.1fs" +
+              x.failure.fold("")(f => "; FAILED: " + f))
+          Symbols.forgetSession()
+          docs.dropCaches()
+          Diagnostics.recheckAll(server, ermine, docs, log)
+          x.failure match {
+            case None    => logMessage(3, s"Ermine: reloaded ${x.modules.size} module(s): ${x.modules.mkString(", ")}")
+            case Some(f) => logMessage(1, s"Ermine: reload of ${x.modules.mkString(", ")} failed: $f " +
+                                          "-- the session lacks them until a save succeeds")
+          }
+      }
+
       server.onNotification("initialized") { _ =>
+        // Watch every .e file the client can see, through the client's own
+        // watcher (`vscode-languageclient` turns this registration into a
+        // FileSystemWatcher).  Asked BEFORE the boot: the reply queues behind
+        // it, and an event that arrives before the session is up finds
+        // nothing loaded and is a no-op -- the boot reads the disk as it is.
+        if (watchDynamic)
+          server.ask("client/registerCapability", Json.obj(
+            "registrations" -> Json.Arr(List(Json.obj(
+              "id"     -> Json.Str("ermine.watch.e"),
+              "method" -> Json.Str("workspace/didChangeWatchedFiles"),
+              "registerOptions" -> Json.obj(
+                "watchers" -> Json.Arr(List(Json.obj("globPattern" -> Json.Str("**/*.e")))))))))) { reply =>
+            reply / "error" match {
+              case Some(e) => log("watch: client refused the **/*.e watcher registration: " + e)
+              case None    => log("watch: client registered the **/*.e watcher")
+            }
+          }
+        else
+          log("watch: client does not register file watchers dynamically; " +
+              "workspace/didChangeWatchedFiles is honoured if it sends them anyway, " +
+              "and ermine.reloadModules is the manual way")
         try {
           val r = ermine.boot()
           logMessage(3, f"Ermine session ready: ${r.modules} modules in ${r.seconds}%.1fs")
@@ -189,6 +240,37 @@ object Main {
           (settings flatMap (_ / "ermine") flatMap (_ / "fastMode") flatMap (_.bool)) orElse
             (settings flatMap (_ / "fastMode") flatMap (_.bool)),
           "didChangeConfiguration")
+      }
+
+      // LSP-STALENESS step 2: a file the resident loaded changed on disk.
+      // Created counts as changed (a module deleted then restored comes back
+      // this way); deleted is scrubbed and not loaded back.
+      server.onNotification("workspace/didChangeWatchedFiles") { params =>
+        val changes = params / "changes" flatMap (_.arr) getOrElse Nil
+        def paths(types: Set[Int]): Set[java.nio.file.Path] = changes.flatMap { c =>
+          for {
+            t <- c / "type" flatMap (_.int) if types(t)
+            u <- c / "uri" flatMap (_.str)
+            p <- docs.pathFor(u) if p.toString endsWith ".e"
+          } yield p
+        }.toSet
+        val changed = paths(Set(1, 2))
+        val removed = paths(Set(3))
+        log(s"watch: ${changed.size} created/changed, ${removed.size} deleted")
+        afterReload("watch", ermine.reload(changed, removed))
+      }
+
+      request("workspace/executeCommand") { params =>
+        params / "command" flatMap (_.str) match {
+          case Some("ermine.reloadModules") =>
+            val r = ermine.reloadStale()
+            afterReload("reload command", r)
+            Json.obj(
+              "reloaded" -> Json.Arr(r.toList.flatMap(_.modules).map(Json.Str(_))),
+              "failure"  -> (r.flatMap(_.failure).map(Json.Str(_)) getOrElse Json.Null))
+          case other =>
+            throw RpcError(Rpc.InvalidParams, "unknown command: " + other.getOrElse("(none)"))
+        }
       }
 
       Diagnostics.install(server, ermine, docs, log)

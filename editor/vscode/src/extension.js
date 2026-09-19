@@ -223,6 +223,27 @@ async function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand("ermine.restartServer", () => restart(context)),
     vscode.commands.registerCommand("ermine.showOutput", () => channel && channel.show(true)),
+    // The server re-reads every stdlib module whose file changed since it was
+    // loaded (it also does this on its own for saves the file watcher reports;
+    // this is for the ones it did not see).
+    vscode.commands.registerCommand("ermine.reloadModules", async () => {
+      if (!client) return;
+      try {
+        const r = await client.sendRequest("workspace/executeCommand", {
+          command: "ermine.reloadModules",
+          arguments: [],
+        });
+        const n = r && r.reloaded ? r.reloaded.length : 0;
+        vscode.window.setStatusBarMessage(
+          n === 0 ? "Ermine: no loaded module changed"
+                  : `Ermine: reloaded ${n} module(s)${r.failure ? " — with a failure, see the output" : ""}`,
+          4000
+        );
+        if (r && r.failure) log(`reload failed: ${r.failure}`);
+      } catch (err) {
+        log(`reload failed: ${err}`);
+      }
+    }),
     vscode.commands.registerCommand("ermine.toggleFastMode", async () => {
       const now = config().get("fastMode", false);
       await config().update("fastMode", !now, vscode.ConfigurationTarget.Workspace);

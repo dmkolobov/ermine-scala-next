@@ -112,10 +112,24 @@ The session's modules then come from the source tree, so a module added under
 `modules/` is importable without `sbt core/copyResources` or a restart, and a
 document in another checkout (a worktree opened beside the workspace) resolves
 the modules its own tree has, and the boot did not load, against that tree. A
-client that sends neither boots from the classpath copy as before. What does
-NOT refresh yet: a module the boot already loaded keeps the text it was read
-with until **Ermine: Restart Language Server**; invalidation on change is the
-next step of tracker/LSP-STALENESS.md.
+client that sends neither boots from the classpath copy as before.
+
+**A loaded module that changes on disk is reloaded.** After `initialized` the
+server registers a `**/*.e` watcher with the client (dynamic registration,
+which VS Code's client supports; a client without it can still send
+`workspace/didChangeWatchedFiles`). On an event for a file the session loaded,
+that module and every loaded module importing it, transitively, are scrubbed
+from the resident session and loaded back from disk; a deleted file is scrubbed
+and not loaded back. Then the workspace-symbol table and every open document's
+inference cache are dropped and the open documents are re-checked, so their
+diagnostics describe the session after the change. The server reports each
+reload as a `window/logMessage` (a warning when the load failed: the session
+lacks those modules until a later save succeeds, and a document importing one
+reports the import). **Ermine: Reload Modules** (`workspace/executeCommand`,
+`ermine.reloadModules`) does the same for every loaded file whose modification
+time moved since it was read, for saves no event reported. Files the session did
+not load (workspace siblings, another checkout's stdlib) need none of this: each
+check reads them fresh.
 
 **A stdlib target opens the SOURCE tree.** When the stdlib was read from the
 classpath copy (no folder, no roots) a stdlib name's recorded position is in

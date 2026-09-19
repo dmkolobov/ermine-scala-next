@@ -282,6 +282,13 @@ object Diagnostics {
         publish(server, uri, ds)
     }
 
+  /** LSP-STALENESS step 2: after the resident session reloaded modules,
+    * every open document is checked again and its diagnostics republished,
+    * so a squiggle about a stdlib name that just changed does not outlive
+    * the change.  Synchronous, on the dispatch thread, like a didSave. */
+  def recheckAll(server: Server, ermine: Resident, docs: Documents, log: String => Unit): Unit =
+    docs.all foreach (d => run(server, ermine, docs, log, "reload", d.uri))
+
   /** ONE check, as the LSP diagnostics it publishes.  Split out of `run`
     * (6.1(c)) so a property can drive the editor path in this JVM
     * instead of over a socket: `run` adds the timing line and the

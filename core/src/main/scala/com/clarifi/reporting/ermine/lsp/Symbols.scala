@@ -514,11 +514,15 @@ object Symbols {
 
   private var globals: Option[List[GlobalSym]] = None
 
-  /** The session's globals, built ONCE.  It cannot go stale: the
-    * resident session is interface-free and loads its 129 modules at
-    * boot and never again (Decision 5), and every check runs against a
-    * COPY of that env (`Resident.withEnv`), so nothing a check does
-    * reaches this table. */
+  /** LSP-STALENESS step 2: the resident session reloaded modules, so the
+    * table is rebuilt by the next query. */
+  def forgetSession(): Unit = globals = None
+
+  /** The session's globals, built ONCE per session state: the resident
+    * session is interface-free, every check runs against a COPY of its env
+    * (`Resident.withEnv`) so nothing a check does reaches this table, and
+    * the one thing that changes the resident -- a module reload (step 2 of
+    * the staleness arc) -- calls `forgetSession`. */
   def sessionGlobals(env: SessionEnv, src: Definitions.LineSource,
                      log: String => Unit): List[GlobalSym] =
     globals getOrElse {

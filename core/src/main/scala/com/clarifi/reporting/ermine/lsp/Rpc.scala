@@ -394,6 +394,21 @@ final class Server(wire: Wire, log: String => Unit) {
   def notify(method: String, params: Json): Unit =
     wire.send(Json.obj("jsonrpc" -> Json.Str("2.0"), "method" -> Json.Str(method), "params" -> params))
 
+  private var clientRequestId = 0
+  private var clientPending   = Map.empty[Int, Json => Unit]
+
+  /** A request TO the client (`client/registerCapability`, LSP-STALENESS
+    * step 2).  The reply arrives on the dispatch loop like any other message
+    * and `k` runs there, with the whole reply; nothing blocks on it.  Ids
+    * are the server's own counter and never collide with the client's,
+    * which live in a different direction. */
+  def ask(method: String, params: Json)(k: Json => Unit): Unit = {
+    clientRequestId += 1
+    clientPending += clientRequestId -> k
+    wire.send(Json.obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.num(clientRequestId),
+                       "method" -> Json.Str(method), "params" -> params))
+  }
+
   /** Some(code) after stop(code); None when the client closed the stream. */
   def run(): Option[Int] = {
     var open = true
@@ -424,7 +439,14 @@ final class Server(wire: Wire, log: String => Unit) {
         (method, id) match {
           case (Some(m), Some(reqId)) => request(m, reqId, params)
           case (Some(m), None)        => notification(m, params)
-          case (None, Some(_))        => log("rpc: dropping response from client (we sent no request)")
+          case (None, Some(rid))      =>
+            rid.int.flatMap(i => clientPending.get(i).map(i -> _)) match {
+              case Some((i, k)) =>
+                clientPending -= i
+                try k(msg)
+                catch { case e: Throwable => log("rpc: reply handler for #" + i + " crashed: " + stackTrace(e)) }
+              case None => log("rpc: dropping response from client (we sent no such request)")
+            }
           case (None, None)           => respondError(Json.Null, InvalidRequest, "message has neither method nor id")
         }
     }

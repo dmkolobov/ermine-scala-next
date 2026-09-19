@@ -146,13 +146,144 @@ final class Resident(val log: String => Unit) {
   def builtinEnv: SessionEnv = boot().builtins
 
   /** The RESIDENT env itself, if the session is up -- never a copy, and
-    * never a boot.  6.4's `workspace/symbol` walks it ONCE to build the
-    * session's searchable name list; it cannot go stale, because the
-    * session is interface-free and loads its modules exactly once
-    * (Decision 5) and every check runs against a `withEnv` copy.  `None`
-    * while booting, so a query during boot answers the empty list rather
-    * than queueing behind a thirteen-second load. */
+    * never a boot.  6.4's `workspace/symbol` walks it to build the
+    * session's searchable name list, once per session state: the session
+    * is interface-free, every check runs against a `withEnv` copy, and the
+    * one thing that changes it -- `reload`, below -- tells `Symbols` to
+    * forget.  `None` while booting, so a query during boot answers the
+    * empty list rather than queueing behind a thirteen-second load. */
   def loadedEnv: Option[SessionEnv] = booted.map(_.env)
+
+  // ------------------------------------------------------------------
+  // LSP-STALENESS step 2: invalidation.  The resident holds the boot
+  // closure for the server's life; when a file it was read from changes
+  // on disk, the module and every loaded module that imports it
+  // (transitively) are scrubbed out of the RESIDENT env and loaded back
+  // from disk -- the `:reload` idea (`Session.reloadChangedModules`), done
+  // here rather than by calling it because that routine reads the
+  // process-global dependency cache, which every per-check copy also fills
+  // with the workspace siblings it loaded, and would load THOSE into the
+  // resident too.  Everything below runs on the dispatch thread.
+
+  /** Modules a reload scrubbed and could not load back (a stdlib file saved
+    * broken, a module deleted).  While non-empty the resident lacks them --
+    * a check that imports one loads it into its copy and reports the
+    * failure on the import -- and the next reload retries them. */
+  private var pendingReload = Set.empty[String]
+
+  /** What the resident is missing after a failed reload. */
+  def pending: Set[String] = pendingReload
+
+  /** Where the resident read each of its modules from, by normalized path. */
+  private def loadedByPath(env: SessionEnv): Map[java.nio.file.Path, String] =
+    env.loadedFiles.toList.collect {
+      case (Session.Filesystem(f, _), m) => Resident.normalize(f) -> m
+    }.toMap
+
+  /** `roots` plus every loaded module that imports one of them, transitively.
+    * The import sets come from the dependency cache the loads filled, keyed
+    * by the very SourceFiles `loadedFiles` holds. */
+  private def dependentsOf(env: SessionEnv, roots: Set[String]): Set[String] = {
+    val imports: Map[String, Set[String]] = env.loadedFiles.toList.flatMap {
+      case (sf, m) => Session.depCache.get(sf).map { case (_, d) => m -> d.imports }
+    }.toMap
+    var seen     = roots
+    var frontier = roots
+    while (frontier.nonEmpty) {
+      val next = imports.collect { case (m, is) if !seen(m) && (is & frontier).nonEmpty => m }.toSet
+      seen ++= next
+      frontier = next
+    }
+    seen
+  }
+
+  /** Scrub `direct` (and the pending set) with their dependents and load
+    * them back through the resident's loader chain -- so a file deleted from
+    * the first root falls back to the next root that has it, and a module
+    * gone from every root fails.  A load that dies leaves the scrubbed
+    * modules pending. */
+  private def reloadModules(direct: Set[String]): Resident.Reloaded = {
+    val r = booted.get
+    implicit val env: SessionEnv = r.env
+    val dirty = dependentsOf(env, direct ++ pendingReload)
+    if (dirty.isEmpty) Resident.Reloaded(Nil, 0.0, None)
+    else {
+      val t0 = System.nanoTime
+      scrub(env, dirty)
+      pendingReload = dirty
+      val failure =
+        try { Session.loadModules(dirty.toList.sorted); pendingReload = Set(); None }
+        catch {
+          case Death(err, _)                                        => Some(err.toString)
+          case com.clarifi.reporting.ermine.parsing.Recoverable(x)  =>
+            Some("error: " + Option(x.getMessage).getOrElse(x.toString))
+          case scala.util.control.NonFatal(e)                       => Some(e.toString)
+        }
+      Phases.reset()
+      Resident.Reloaded(dirty.toList.sorted, (System.nanoTime - t0) / 1e9, failure)
+    }
+  }
+
+  /** `workspace/didChangeWatchedFiles`: the loaded modules read from
+    * `changed` (created or changed) and `removed` files, with their
+    * dependents, reloaded.  Files the resident did not load -- workspace
+    * siblings, another checkout's stdlib, a module only a check copy ever
+    * loaded -- are not its business and are ignored here (the next check
+    * reads them fresh anyway).  A deleted file's module is scrubbed and
+    * loaded back through the chain: from the next root that has it, or
+    * not at all.  `None` while the session is not up. */
+  def reload(changed: Set[java.nio.file.Path], removed: Set[java.nio.file.Path]): Option[Resident.Reloaded] =
+    booted map { r =>
+      val byPath = loadedByPath(r.env)
+      // A path names a loaded module two ways: it IS the file the module was
+      // read from, or it is `<root>/A/B.e` for a module `A.B` the resident
+      // holds from elsewhere -- a file deleted from the first root and read
+      // back from the classpath copy, then restored, comes back as a CREATED
+      // event for a path nobody loaded, and must reload `A.B` all the same.
+      def modulesOf(p: java.nio.file.Path): Set[String] = {
+        val n = Resident.normalize(p)
+        byPath.get(n).toSet ++
+          Resident.moduleUnder(moduleRoots, n).filter(r.env.loadedModules.contains)
+      }
+      reloadModules((changed ++ removed).flatMap(modulesOf))
+    }
+
+  /** The manual command (`ermine.reloadModules`): every loaded file whose
+    * modification time is not the one its load recorded -- a save no client
+    * reported -- plus whatever a failed reload left pending. */
+  def reloadStale(): Option[Resident.Reloaded] = booted map { r =>
+    val stale = r.env.loadedFiles.toList.collect {
+      case (sf: Session.Filesystem, m) if Session.depCache.get(sf).map(_._1) != sf.lastModified => m
+    }.toSet
+    reloadModules(stale)
+  }
+
+  /** Scrub `modules` out of `e` down to their builtin state.  Only what the
+    * SOURCE declares goes: `Lib` installs builtins under the module they
+    * belong to -- `asOp` and class `AsOp` are `Global("Relation.Op", ...)`,
+    * declared in Scala and merely COMMENTED in `Relation/Op.e` -- so a scrub
+    * by module name alone would delete them and re-reading the file could
+    * not put them back.  `Session.reloadChangedModules` guards its scrub
+    * with `builtinEnv.contains` for exactly this reason; this mirrors it.
+    * Used per check on the module being checked (on the copy) and by the
+    * reloads above (on the resident). */
+  private def scrub(e: SessionEnv, modules: Set[String]): Unit = {
+    val b = builtinEnv
+    def mine(g: Global) = modules(g.module)
+    e.env = e.env filter { case (v, _) => v.name match {
+      case Some(g: Global) => !mine(g) || b.env.contains(v)
+      case _               => true
+    } }
+    e.termNames       = e.termNames       filterNot { case (g, _) => mine(g) && !b.termNames.contains(g) }
+    e.termNameOrigins = e.termNameOrigins filterNot { case (g, _) => mine(g) && !b.termNameOrigins.contains(g) }
+    e.cons            = e.cons            filterNot { case (g, _) => mine(g) && !b.cons.contains(g) }
+    e.privateCons     = e.privateCons     filterNot { case (g, _) => mine(g) && !b.privateCons.contains(g) }
+    e.consOrigins     = e.consOrigins     filterNot { case (g, _) => mine(g) && !b.consOrigins.contains(g) }
+    e.classes         = e.classes         filterNot { case (g, _) => mine(g) && !b.classes.contains(g) }
+    e.classOrigins    = e.classOrigins    filterNot { case (g, _) => mine(g) && !b.classOrigins.contains(g) }
+    e.loadedFiles     = e.loadedFiles     filterNot { case (_, n) => modules(n) }
+    e.loadedModules   = e.loadedModules -- modules
+  }
 
   /** Everything textDocument/definition and hover need from one check:
     * the post-load env (termNames carry inferred types and true def
@@ -310,30 +441,8 @@ final class Resident(val log: String => Unit) {
     // Layout/Report.e).  Scrub the module out of the COPY first, the way
     // :reload's scrubber does (Session.reloadChangedModules).
     val tScrub = Phases.now
-    if (e.loadedModules contains mh.name) {
-      // Scrub only what the SOURCE declares.  `Lib` installs builtins under the
-      // module they belong to -- `asOp` and class `AsOp` are `Global("Relation.Op",
-      // ...)`, declared in Scala and merely COMMENTED in `Relation/Op.e` -- so a
-      // scrub by module name alone deletes them, and re-reading the file cannot
-      // put them back.  `Session.reloadChangedModules` guards its scrub with
-      // `|| builtinEnv.contains(...)` for exactly this reason; mirror it, which is
-      // what the comment below always claimed this code did.
-      val b = builtinEnv
-      def mine(g: Global) = g.module == mh.name
-      e.env = e.env filter { case (v, _) => v.name match {
-        case Some(g: Global) => !mine(g) || b.env.contains(v)
-        case _               => true
-      } }
-      e.termNames       = e.termNames       filterNot { case (g, _) => mine(g) && !b.termNames.contains(g) }
-      e.termNameOrigins = e.termNameOrigins filterNot { case (g, _) => mine(g) && !b.termNameOrigins.contains(g) }
-      e.cons            = e.cons            filterNot { case (g, _) => mine(g) && !b.cons.contains(g) }
-      e.privateCons     = e.privateCons     filterNot { case (g, _) => mine(g) && !b.privateCons.contains(g) }
-      e.consOrigins     = e.consOrigins     filterNot { case (g, _) => mine(g) && !b.consOrigins.contains(g) }
-      e.classes         = e.classes         filterNot { case (g, _) => mine(g) && !b.classes.contains(g) }
-      e.classOrigins    = e.classOrigins    filterNot { case (g, _) => mine(g) && !b.classOrigins.contains(g) }
-      e.loadedFiles     = e.loadedFiles     filterNot { case (_, n) => n == mh.name }
-      e.loadedModules   = e.loadedModules - mh.name
-    }
+    // Only what the SOURCE declares is scrubbed (see `scrub`).
+    if (e.loadedModules contains mh.name) scrub(e, Set(mh.name))
     Phases.add("scrub", tScrub)
 
     // Session.load's own import step (Session.scala:718), hoisted so the
@@ -558,7 +667,25 @@ final class Resident(val log: String => Unit) {
 }
 
 object Resident {
-  import java.nio.file.{ Files, Path }
+  import java.nio.file.{ Files, Path, Paths }
+
+  /** LSP-STALENESS step 2: what one reload did -- the modules scrubbed (and,
+    * unless `failure`, loaded back), in name order. */
+  final case class Reloaded(modules: List[String], seconds: Double, failure: Option[String]) {
+    def nothing: Boolean = modules.isEmpty
+  }
+
+  def normalize(fileName: String): Path = Paths.get(fileName).toAbsolutePath.normalize
+  def normalize(p: Path): Path          = p.toAbsolutePath.normalize
+
+  /** The module name a `.e` path spells under one of `roots` (`<root>/A/B.e`
+    * is `A.B`), if it is under one. */
+  def moduleUnder(roots: List[String], p: Path): Option[String] =
+    roots.iterator.map(Paths.get(_)).map(normalize).collectFirst {
+      case r if p.startsWith(r) && p.toString.endsWith(".e") =>
+        val rel = r.relativize(p).toString
+        rel.substring(0, rel.length - 2).replace(java.io.File.separatorChar, '.')
+    }
 
   /** The stdlib source directory of an sbt checkout: `core/src/main/resources/
     * modules` beneath it.  ONE convention, the same one `Definitions.SourceTree`

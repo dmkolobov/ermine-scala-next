@@ -153,6 +153,19 @@ a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
 
+### 0.1.4
+
+**Stdlib edits are live.** The server reads the stdlib from
+`core/src/main/resources/modules` under the workspace (not the build output),
+registers a watcher on every `.e` file, and when a file it has loaded changes
+on disk it reloads that module and the modules that import it, then re-checks
+the open documents. A save that the watcher did not report (or a change made
+outside the editor) is picked up by **Ermine: Reload Modules**, which reloads
+every loaded file whose modification time moved. No `sbt core/copyResources`,
+no restart. If a reloaded file does not load (saved broken, or deleted), the
+server says so and the session lacks those modules until a later save
+succeeds.
+
 ### Fixed in 0.1.2
 
 **Stdlib navigation lands in the source tree.** A stdlib definition, reference

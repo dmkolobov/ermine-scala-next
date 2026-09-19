@@ -122,6 +122,14 @@ final class Documents {
   def putCache(fileName: String, c: TolerantCheck.Cache): Unit =
     byPath(fileName) foreach { d => docs += d.uri -> d.copy(cache = c) }
 
+  /** LSP-STALENESS step 2: after the resident session reloaded modules,
+    * every inference cache is dropped.  Its keys are the document's own
+    * text and import list, not the stdlib's contents, so a component reused
+    * across a reload would carry the types of before it.  The surface caches
+    * are pure parses of the document and stay. */
+  def dropCaches(): Unit =
+    docs = docs.map { case (u, d) => u -> d.copy(cache = TolerantCheck.Cache.empty) }
+
   /** 7.1b: the surface cache for a path, and its replacement. */
   def surfaceFor(fileName: String): Option[SurfaceCache.Cache] =
     byPath(fileName).flatMap(_.surface)

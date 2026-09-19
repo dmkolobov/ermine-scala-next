@@ -10,6 +10,7 @@ Usage: lsp-client.py <java> <args...>   (the full server command line)
 """
 import atexit
 import json
+import signal
 import os
 import pathlib
 import re
@@ -46,6 +47,7 @@ class Client:
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         self.next_id = 0
         self.seen = []  # notifications observed while waiting for something else
+        self.server_requests = []  # requests the SERVER made of us (step 2: watcher registration)
 
     def send(self, msg):
         body = json.dumps(msg).encode("utf-8")
@@ -84,6 +86,12 @@ class Client:
         """Read until pred matches; anything else is stashed in self.seen."""
         for _ in range(50):
             msg = self.read_message()
+            if "method" in msg and "id" in msg:
+                # A request from the server (client/registerCapability): answer
+                # it at once, as a client that supports it would, and keep it.
+                self.server_requests.append(msg)
+                self.send({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+                continue
             if pred(msg):
                 return msg
             self.seen.append(msg)
@@ -131,6 +139,12 @@ def classpath_modules_dir():
 
 
 SMOKE_DERIVED = repo("core/src/main/resources/modules/SmokeDerived.e")
+# STALENESS step 2: the stdlib module the watch scenario EDITS ON DISK.  `Byte`
+# is in the boot closure and has exactly one dependent, Prelude, so a reload is
+# two modules; the appended block is restored at exit and stripped at start.
+WATCHED_FILE = repo("core/src/main/resources/modules/Byte.e")
+WATCHED_ORIG = b""   # set by plant_temp_modules
+WATCHED_BLOCK = b"\n-- SMOKE (tracker/tools/lsp-client.py): removed at exit\nsmokeAdded : Int\nsmokeAdded = 1\n"
 CLASSPATH_MODULES = classpath_modules_dir()
 CLASSPATH_SHADOW = (CLASSPATH_MODULES / "Shadow.e") if CLASSPATH_MODULES else None
 
@@ -145,6 +159,15 @@ def plant_temp_modules():
                     pass
     remove()          # a leftover from a killed run
     atexit.register(remove)
+    if WATCHED_BLOCK in WATCHED_FILE.read_bytes():          # likewise
+        WATCHED_FILE.write_bytes(WATCHED_FILE.read_bytes().replace(WATCHED_BLOCK, b""))
+    global WATCHED_ORIG
+    WATCHED_ORIG = WATCHED_FILE.read_bytes()
+
+    def restore_watched():
+        if not WATCHED_FILE.exists() or WATCHED_FILE.read_bytes() != WATCHED_ORIG:
+            WATCHED_FILE.write_bytes(WATCHED_ORIG)
+    atexit.register(restore_watched)
     SMOKE_DERIVED.write_text(
         "module SmokeDerived where\n\n"
         "-- TEMPORARY: written by tracker/tools/lsp-client.py for one smoke run and\n"
@@ -159,6 +182,9 @@ def plant_temp_modules():
 
 
 def main():
+    # lsp-smoke.sh runs this under `timeout`, whose SIGTERM would skip the
+    # atexit cleanup above; turn it into an exit so the planted files go.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     plant_temp_modules()
     client = Client(sys.argv[1:])
 
@@ -168,7 +194,8 @@ def main():
     # tracker/lsp-tests/roots/ holds a module nothing else has (`RootOnly`), so
     # the resolution of `Roots.e` below is the root's doing or nobody's.
     r = client.response(client.request("initialize", {
-        "capabilities": {},
+        # STALENESS step 2: a client that lets the server register a watcher.
+        "capabilities": {"workspace": {"didChangeWatchedFiles": {"dynamicRegistration": True}}},
         "rootUri": repo("").as_uri(),
         "workspaceFolders": [{"uri": repo("").as_uri(), "name": "ermine-scala"}],
         "initializationOptions": {"moduleRoots": [str(FIXTURES / "roots")]}}))
@@ -198,6 +225,9 @@ def main():
           caps.get("codeActionProvider") ==
           {"codeActionKinds": ["quickfix", "source"]},
           repr(caps.get("codeActionProvider")))
+    check("initialize.executeCommandProvider offers ermine.reloadModules",
+          caps.get("executeCommandProvider") == {"commands": ["ermine.reloadModules"]},
+          repr(caps.get("executeCommandProvider")))
     sync = caps.get("textDocumentSync", {})
     # 5.3: TextDocumentSync FULL — didChange carries the whole document
     check("initialize.sync", sync.get("openClose") is True and sync.get("save") is True
@@ -235,6 +265,14 @@ def main():
         and "ready" in m["params"]["message"], "readiness logMessage")
     check("boot.reports 129 modules", "129 modules" in ready["params"]["message"],
           ready["params"]["message"])
+    # STALENESS step 2: the watcher registration was asked for, before the
+    # boot, for every .e file.
+    regs = [r for r in client.server_requests if r.get("method") == "client/registerCapability"]
+    check("watch: the server registered a **/*.e watcher through the client",
+          len(regs) == 1 and [w["globPattern"] for reg in regs[0]["params"]["registrations"]
+                              if reg["method"] == "workspace/didChangeWatchedFiles"
+                              for w in reg["registerOptions"]["watchers"]] == ["**/*.e"],
+          repr(regs))
     # The boot names its roots, option first, the workspace's stdlib second, and
     # the classpath is not among them (it is the chain's last link, not a root).
     roots_lines = [l for l in pathlib.Path(LOG).read_text(errors="replace").splitlines()
@@ -743,6 +781,140 @@ def main():
           and r["range"]["start"] == {"line": 9, "character": 0}, repr(r))
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Shadowed.e")}})
     client.diagnostics_for(uri("Shadowed.e"))
+
+    # ---- STALENESS step 2: A LOADED MODULE CHANGES ON DISK.  `Byte` was read
+    # at boot (through the workspace root); Prelude imports it.  Each event
+    # below must reload exactly those two, and `Watched.e` (imports Byte, uses
+    # the appended `smokeAdded`) must see the disk's current text every time:
+    # clean after an append, "undefined" after a revert, an import failure
+    # while the file is gone, and the manual command doing the same with no
+    # event at all.  The server announces every reload with a logMessage AFTER
+    # re-checking the open documents, so waiting for it drains those too.
+    watched_uri = WATCHED_FILE.as_uri()
+    added_line = len((WATCHED_ORIG + WATCHED_BLOCK).decode().splitlines()) - 1
+
+    def watch_event(kind):
+        client.notify("workspace/didChangeWatchedFiles",
+                      {"changes": [{"uri": watched_uri, "type": kind}]})
+
+    def reload_message():
+        return client.wait_for(
+            lambda m: m.get("method") == "window/logMessage"
+            and m["params"]["message"].startswith("Ermine: reload"), "reload logMessage")["params"]
+
+    def watched_diags():
+        open_doc("Watched.e")
+        ds = client.diagnostics_for(uri("Watched.e"))
+        return ds
+
+    def close_watched():
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Watched.e")}})
+        client.diagnostics_for(uri("Watched.e"))
+
+    # (1) append + changed event -> Byte and Prelude reloaded, Watched.e clean
+    WATCHED_FILE.write_bytes(WATCHED_ORIG + WATCHED_BLOCK)
+    watch_event(2)
+    msg = reload_message()
+    check("watch: a changed event reloads the module and its one dependent",
+          msg["type"] == 3 and "2 module(s): Byte, Prelude" in msg["message"], repr(msg))
+    ds = watched_diags()
+    check("watch: Watched.e is clean against the appended definition", ds == [], repr(ds))
+    r = definition("Watched.e", 5, 11)   # `smokeAdded` in `useAdded = smokeAdded`
+    check("watch: its definition is the appended line of the source-tree file",
+          r is not None and r["uri"] == watched_uri
+          and r["range"]["start"] == {"line": added_line, "character": 0}, repr(r))
+    close_watched()
+    # (2) revert + changed event -> the name is gone again
+    WATCHED_FILE.write_bytes(WATCHED_ORIG)
+    watch_event(2)
+    msg = reload_message()
+    check("watch: the revert reloads the same two", "Byte, Prelude" in msg["message"], repr(msg))
+    ds = watched_diags()
+    check("watch: Watched.e reports the reverted name undefined",
+          len(ds) == 1 and "undefined term" in ds[0]["message"], repr(ds))
+    close_watched()
+    # (3) a BROKEN save + changed event -> scrubbed, the load dies, the
+    # session says so as a warning, and a check that imports the module
+    # reports the import failure (the check copy tries the load itself)
+    WATCHED_FILE.write_bytes(WATCHED_ORIG + b"\nsmokeAdded : Int\nsmokeAdded = = 1\n")
+    watch_event(2)
+    msg = reload_message()
+    check("watch: a broken save fails the reload, as a warning naming the modules",
+          msg["type"] == 1 and "Byte, Prelude" in msg["message"] and "failed" in msg["message"],
+          repr(msg))
+    ds = watched_diags()
+    check("watch: while the file is broken, Watched.e's import of it fails",
+          len(ds) == 1 and "import Byte failed" in ds[0]["message"], repr(ds))
+    close_watched()
+    # (4) a good save + changed event -> the pending two come back
+    WATCHED_FILE.write_bytes(WATCHED_ORIG + WATCHED_BLOCK)
+    watch_event(2)
+    msg = reload_message()
+    check("watch: the next good save reloads what the failure left pending",
+          msg["type"] == 3 and "2 module(s): Byte, Prelude" in msg["message"], repr(msg))
+    ds = watched_diags()
+    check("watch: Watched.e is clean again", ds == [], repr(ds))
+    close_watched()
+    # (4b) delete + deleted event -> the chain's NEXT link, the classpath
+    # copy, is what Byte is read from now (it has no smokeAdded); then the
+    # file restored + created event -> the source copy again, by module name
+    # (the resident held Byte from the classpath path, not this one)
+    WATCHED_FILE.unlink()
+    watch_event(3)
+    msg = reload_message()
+    check("watch: a deleted file's module is read back from the next root, the classpath copy",
+          msg["type"] == 3 and "2 module(s): Byte, Prelude" in msg["message"], repr(msg))
+    ds = watched_diags()
+    check("watch: Watched.e sees the classpath copy (no appended name)",
+          len(ds) == 1 and "undefined term" in ds[0]["message"], repr(ds))
+    close_watched()
+    WATCHED_FILE.write_bytes(WATCHED_ORIG + WATCHED_BLOCK)
+    watch_event(1)
+    msg = reload_message()
+    check("watch: the restored file's created event reloads its module by name",
+          msg["type"] == 3 and "2 module(s): Byte, Prelude" in msg["message"], repr(msg))
+    ds = watched_diags()
+    check("watch: Watched.e is clean against the restored source copy", ds == [], repr(ds))
+    close_watched()
+    # (4c) revert + changed event -> back to undefined; the file is what it was
+    WATCHED_FILE.write_bytes(WATCHED_ORIG)
+    watch_event(2)
+    reload_message()
+    ds = watched_diags()
+    check("watch: reverted again, undefined again",
+          len(ds) == 1 and "undefined term" in ds[0]["message"], repr(ds))
+    close_watched()
+    # (5) the manual command, with NO event: append, ask, clean
+    WATCHED_FILE.write_bytes(WATCHED_ORIG + WATCHED_BLOCK)
+    rid = client.request("workspace/executeCommand", {"command": "ermine.reloadModules"})
+    msg = reload_message()
+    resp = client.response(rid)
+    check("reload command: reloads the files whose mtime moved, and says which",
+          resp.get("result", {}).get("reloaded") == ["Byte", "Prelude"]
+          and resp["result"].get("failure") is None and "Byte, Prelude" in msg["message"],
+          repr(resp))
+    ds = watched_diags()
+    check("reload command: Watched.e sees the appended definition", ds == [], repr(ds))
+    close_watched()
+    # (6) revert, ask again, undefined again; then the file is what it was
+    WATCHED_FILE.write_bytes(WATCHED_ORIG)
+    rid = client.request("workspace/executeCommand", {"command": "ermine.reloadModules"})
+    reload_message()
+    client.response(rid)
+    ds = watched_diags()
+    check("reload command: the revert is seen too",
+          len(ds) == 1 and "undefined term" in ds[0]["message"], repr(ds))
+    close_watched()
+    check("watch: the watched file is byte-for-byte what it was",
+          WATCHED_FILE.read_bytes() == WATCHED_ORIG)
+    # (7) an event for a file the resident never loaded is a no-op, and an
+    # unknown command is refused
+    client.notify("workspace/didChangeWatchedFiles",
+                  {"changes": [{"uri": uri("Good.e"), "type": 2}]})
+    rid = client.request("workspace/executeCommand", {"command": "ermine.noSuchCommand"})
+    resp = client.response(rid)
+    check("reload command: an unknown command is an error, not a reload",
+          "error" in resp and "noSuchCommand" in resp["error"]["message"], repr(resp))
 
     # 6.1(c): an import list naming something the module does not export
     # is the editor's own check (batch gets it from Dep.checkNames), and it
@@ -3032,6 +3204,14 @@ def main():
     log1 = pathlib.Path(LOG).read_text(errors="replace")
     check("no phases line without -Dermine.lsp.phases",
           "phases:" not in log1)
+    check("watch: nine reloads of Byte and Prelude in the log, one of them failed",
+          log1.count("reloaded Byte, Prelude in") == 9
+          and log1.count("reloaded Byte, Prelude in") == log1.count("watch: reloaded") + log1.count("reload command: reloaded")
+          and log1.count("; FAILED: ") == 1,
+          repr([l for l in log1.splitlines() if "reloaded Byte" in l]))
+    check("watch: an event for an unloaded file reloads nothing",
+          "watch: no loaded module changed" in log1,
+          repr([l for l in log1.splitlines() if "watch:" in l][-3:]))
     # 7.2's ACCEPTANCE NUMBER, from the server's own check line: the first
     # Anchor check is the cold didOpen and reuses nothing; the second is the
     # same text with three blank lines at the top, and before 7.2 it reused
@@ -3196,6 +3376,9 @@ def main():
           re.search(r"phases: .*\bparse=[0-9.]+ .*\bcheck\.total=[0-9.]+", text2)
           is not None,
           repr([l for l in text2.splitlines() if "phases:" in l][:1]))
+    check("watch: a client without dynamic registration is asked for no watcher",
+          c2.server_requests == [] and "does not register file watchers dynamically" in text2,
+          repr(c2.server_requests))
     check("roots: a client that sends no folder boots from the classpath",
           "no module roots; the stdlib is read from the classpath" in text2,
           repr([l for l in text2.splitlines() if "module roots" in l][:2]))
