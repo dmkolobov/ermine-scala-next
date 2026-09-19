@@ -218,6 +218,12 @@ object Main {
         try {
           val r = ermine.boot()
           logMessage(3, f"Ermine session ready: ${r.modules} modules in ${r.seconds}%.1fs")
+          // LSP-STALENESS step 3: are the classes this server runs older than
+          // the Scala sources of the checkout it serves?  Said once here, as
+          // a warning, and on every diagnostic a stale build could explain.
+          val stamp = BuildStamp.status(ermine.moduleRoots)
+          log("stamp: " + BuildStamp.describe(ermine.moduleRoots, stamp))
+          stamp foreach (s => logMessage(2, BuildStamp.bootMessage(s)))
         } catch {
           case e: Throwable =>
             log("boot failed: " + Rpc.stackTrace(e))
@@ -265,6 +271,8 @@ object Main {
       request("workspace/executeCommand") { params =>
         params / "command" flatMap (_.str) match {
           case Some("ermine.reloadModules") =>
+            // Step 3: the command is also "look again" for the build stamp.
+            BuildStamp.forget()
             val r = ermine.reloadStale()
             afterReload("reload command", r)
             Json.obj(

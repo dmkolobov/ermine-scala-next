@@ -19,7 +19,7 @@ Workaround before this arc: `sbt core/compile core/copyResources` in the main ch
 |---|---|---|---|
 | 1 | Source roots ahead of the classpath | `Resident.moduleRoots`, set by `Main` at `initialize` (`initializationOptions.moduleRoots`, then `Resident.rootsUnder` of every `workspaceFolders`/`rootUri` folder = `<folder>/core/src/main/resources/modules` when it exists), installed at boot as `SourceFile.inOrder(roots..., classpath)`; per check `Resident.checkoutRootOf(document)` (nearest ancestor with that directory) goes after the siblings and before the resident chain | DONE 2026-09-18 (evidence below) |
 | 2 | Invalidate on change | after `initialized` the server registers a `**/*.e` watcher through `client/registerCapability` (when the client's `didChangeWatchedFiles.dynamicRegistration` says it may); on `workspace/didChangeWatchedFiles` the loaded modules read from the changed/deleted files plus their transitive dependents (import sets from `Session.depCache`, keyed by the resident's own `loadedFiles`) are scrubbed from the RESIDENT env (`Resident.scrub`, the per-check scrub generalised) and loaded back (`Session.loadModules`); a load that dies leaves them `pending`, retried on the next event; then `Symbols.forgetSession`, `Documents.dropCaches`, `Diagnostics.recheckAll`. Manual: `workspace/executeCommand ermine.reloadModules` = every loaded file whose mtime is not the one its load recorded (+ pending); extension 0.1.4 adds **Ermine: Reload Modules** | DONE 2026-09-19 (evidence below) |
-| 3 | "Not built" diagnostic | when a source module resolves but the classes on the classpath predate it (new Scala natives), say so instead of a unification error | open |
+| 3 | "Not built" diagnostic | `BuildStamp`: newest `.class` under the class loader's `core/target/<scala>/classes` (once) vs the `.scala` files under `core/src/main/scala` of the first root's checkout (else the classes' checkout), memoised 5 s and re-read on `ermine.reloadModules`; boot sends a type-2 logMessage naming the count, the newest source and both times; `Diagnostics.check` appends a one-line hint to every diagnostic the build could explain (`undefined term`, `does not export`, `Module not found`, `class/member/field/constructor missing`, `unloadable`) | DONE 2026-09-19 (evidence below) |
 
 ## Step 1: what changes for whom
 
@@ -49,7 +49,8 @@ Gate runs on the worktree (`scripts/gate.sh`), 2026-09-18:
 |---|---|---|---|---|
 | 1bdf9cd7 (step 1) | PASS 36s | PASS 48s, 0 differ of 168 | PASS 49s, 587 checks (582 + 5) | PASS 881s, 1216/1216 |
 | + review fixes (3ca335c8) | PASS 12s | PASS 48s, 0 differ of 168 | PASS 49s, 598 checks (587 + 11) | PASS 774s, 1216/1216 |
-| step 2 (branch lsp-watch) | PASS 5s | PASS 49s, 0 differ of 168 | PASS 52s, 622 checks (598 + 24) | see handoff |
+| step 2 (lsp-watch, 16e2f1d3) | PASS 5s | PASS 49s, 0 differ of 168 | PASS 52s, 622 checks (598 + 24) | PASS 749s, 1216/1216 |
+| step 3 (branch lsp-stamp) | PASS 8s | PASS 42s, 0 differ of 168 | PASS 46s, 628 checks (622 + 6) | see handoff |
 
 What the 16 new smoke checks pin (`tracker/tools/lsp-client.py`, `roots:` names). The first
 server is initialised with `rootUri` + `workspaceFolders` = the checkout and
@@ -118,6 +119,23 @@ re-scrubs and retries one module at a time so one broken file costs only its clo
 the QuickFix signature memo (keyed `(uri, version)`, which a reload does not bump) is
 forgotten on reload; deletion wording in docs and Main.
 
+### Step 3 evidence (2026-09-19)
+
+The smoke moves the mtime of one Scala source (`core/src/main/scala/com/clarifi/reporting/
+Attribute.scala`) to "now" before the first server boots and puts it back after the boot
+warning (and again around the diagnostic pin); `ermine.reloadModules` re-reads the stamp.
+
+| Pin | Result |
+|---|---|
+| boot with one source newer than the classes | log `stamp: NOT BUILT: 1 Scala source(s) under <wt>/core/src/main/scala newer than the classes (.../Attribute.scala at <t>; classes .../classes at <t'>)`; `window/logMessage` type 2 `Ermine: not built -- 1 Scala source(s) ... Attribute.scala ... sbt core/compile` |
+| `Watched.e` (undefined term) while stale | message ends `not built: the compiled classes (<t'>) are older than 1 Scala source(s) under core/src/main/scala, newest Attribute.scala (<t>); if this name was added in Scala, run sbt core/compile and restart the server` |
+| the same after the mtime is put back and the command re-reads the stamp | no hint |
+| second server, fresh | `stamp: the compiled classes (<t'>) are newer than every Scala source under <wt>/core/src/main/scala` |
+| the Scala file afterwards | original mtime, byte for byte untouched |
+
+One stat walk of 177 `.scala` files per five seconds while checks run; the 2753 `.class`
+files are walked once at boot.
+
 ## Decisions
 
 | Decision | Why |
@@ -135,5 +153,5 @@ forgotten on reload; deletion wording in docs and Main.
 - STALE-6: a reload publishes fresh diagnostics for every open document synchronously on the dispatch thread; with many open documents and a Prelude-level change this is one long turn (the boot's cost, once). Measured on the smoke: see evidence.
 - STALE-7: `Resident.normalize` does not resolve symlinks or case, so a `moduleRoots` entry spelled through a symlink (or in another case than the folder VS Code watches) never matches an event's path; workspace-derived roots match by construction. `toRealPath` when the path exists, if it ever bites.
 - STALE-8: 0.1.3 extension users get the watcher and the reloads with the new server (the client library handles both); only the palette entry **Ermine: Reload Modules** needs 0.1.4.
-- STALE-2: step 3 ("not built" diagnostic).
+- STALE-2: DONE (step 3). Only `core` is compared; a name added in `parsers/` or `machines/` Scala is not covered.
 - STALE-3: `Resident.checkoutRootOf` walks to the filesystem root on every check of a file outside any checkout (a handful of `stat`s); memoise per directory if it ever shows in the phase timers.

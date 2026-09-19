@@ -134,6 +134,21 @@ them, or a path under `files.watcherExclude`, needs the command. Files the sessi
 not load (workspace siblings, another checkout's stdlib) need none of this: each
 check reads them fresh.
 
+**A build older than its Scala sources says so.** The Scala half of the
+language (foreign bindings, the builtins installed by Scala) is whatever the
+classpath was compiled from, and a name added in Scala but not compiled surfaces
+as an ordinary "undefined term" or "does not export". So the server compares the
+newest compiled class under `core/target/…/classes` with the Scala sources under
+`core/src/main/scala` of the checkout it serves (the workspace's, or the one the
+classes were built in). If any source is newer, the boot sends a warning
+(`Ermine: not built -- N Scala source(s) … are newer than the compiled
+classes`), and every diagnostic a stale build could explain (an undefined term, a
+missing export, a missing or unloadable foreign class or member) ends with one
+line: `not built: … run sbt core/compile and restart the server`. The sources are
+re-scanned at most every five seconds and on **Ermine: Reload Modules**; the
+class stamp is taken once, since what the server runs does not change while it
+runs. A fresh build costs nothing but that scan.
+
 **A stdlib target opens the SOURCE tree.** When the stdlib was read from the
 classpath copy (no folder, no roots) a stdlib name's recorded position is in
 that copy, and the server maps it back to

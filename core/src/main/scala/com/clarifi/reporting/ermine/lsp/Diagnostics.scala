@@ -334,7 +334,18 @@ object Diagnostics {
       // `TolerantCheck.Note` carries for an undefined term, which is what
       // an add-import action keys on (never the rendered message text --
       // 6.1's rule).
-      stored(docs, uri, ds)
+      //
+      // LSP-STALENESS step 3: while the compiled classes are older than the
+      // checkout's Scala sources, a diagnostic a stale build could explain
+      // (an undefined term, a missing export, a foreign class that is not
+      // there) says so in one appended line.  `status` is memoised for five
+      // seconds, so this is a stat walk of core/src/main/scala at most that
+      // often, and nothing at all when the build is fresh.
+      val hinted = BuildStamp.status(ermine.moduleRoots) match {
+        case None    => ds
+        case Some(s) => ds.map { case (j, sp) => (BuildStamp.annotate(j, s), sp) }
+      }
+      stored(docs, uri, hinted)
     } catch {
       // 7.5, ticket E8: this path has no index to convert against (the check
       // DIED -- a header that will not parse, an import that will not load),

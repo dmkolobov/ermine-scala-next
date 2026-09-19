@@ -149,6 +149,11 @@ WATCHED_ORIG = b""   # set by plant_temp_modules
 # leaves it, and the next run restores from it FIRST -- so a broken or missing
 # Byte.e from a killed run is never taken for the original.
 WATCHED_BACKUP = WATCHED_FILE.with_name(WATCHED_FILE.name + ".smoke-orig")
+# STALENESS step 3: the Scala source whose MTIME the smoke moves to "now" so
+# the compiled classes look older than the source tree; its original times
+# are put back at exit (mtime only: sbt then sees nothing to recompile).
+STAMP_FILE = repo("core/src/main/scala/com/clarifi/reporting/Attribute.scala")
+STAMP_ORIG = None   # os.stat_result, set by plant_temp_modules
 WATCHED_BLOCK = b"\n-- SMOKE (tracker/tools/lsp-client.py): removed at exit\nsmokeAdded : Int\nsmokeAdded = 1\n"
 CLASSPATH_MODULES = classpath_modules_dir()
 CLASSPATH_SHADOW = (CLASSPATH_MODULES / "Shadow.e") if CLASSPATH_MODULES else None
@@ -180,6 +185,17 @@ def plant_temp_modules():
         except FileNotFoundError:
             pass
     atexit.register(restore_watched)
+    global STAMP_ORIG
+    STAMP_ORIG = STAMP_FILE.stat()
+    atexit.register(restore_stamp)
+
+
+def touch_stamp():
+    os.utime(STAMP_FILE, None)
+
+
+def restore_stamp():
+    os.utime(STAMP_FILE, ns=(STAMP_ORIG.st_atime_ns, STAMP_ORIG.st_mtime_ns))
     SMOKE_DERIVED.write_text(
         "module SmokeDerived where\n\n"
         "-- TEMPORARY: written by tracker/tools/lsp-client.py for one smoke run and\n"
@@ -198,6 +214,9 @@ def main():
     # atexit cleanup above; turn it into an exit so the planted files go.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     plant_temp_modules()
+    # STALENESS step 3: the first server boots with one Scala source newer
+    # than its classes, and must say so; the mtime goes back right after.
+    touch_stamp()
     client = Client(sys.argv[1:])
 
     # STALENESS step 1 (tracker/LSP-STALENESS.md): the workspace folder the way
@@ -285,6 +304,17 @@ def main():
                               if reg["method"] == "workspace/didChangeWatchedFiles"
                               for w in reg["registerOptions"]["watchers"]] == ["**/*.e"],
           repr(regs))
+    # STALENESS step 3: the boot warns that the build is older than a source.
+    nb = client.wait_for(lambda m: m.get("method") == "window/logMessage"
+                         and "not built" in m["params"]["message"], "not-built warning")
+    check("stamp: a Scala source newer than the classes is announced at boot, as a warning",
+          nb["params"]["type"] == 2 and "1 Scala source(s)" in nb["params"]["message"]
+          and "Attribute.scala" in nb["params"]["message"]
+          and "sbt core/compile" in nb["params"]["message"], repr(nb["params"]))
+    restore_stamp()
+    # the command is also "look again" for the stamp, so the rest of the
+    # run checks against a fresh build
+    client.response(client.request("workspace/executeCommand", {"command": "ermine.reloadModules"}))
     # The boot names its roots, option first, the workspace's stdlib second, and
     # the classpath is not among them (it is the chain's last link, not a root).
     roots_lines = [l for l in pathlib.Path(LOG).read_text(errors="replace").splitlines()
@@ -919,6 +949,27 @@ def main():
     close_watched()
     check("watch: the watched file is byte-for-byte what it was",
           WATCHED_FILE.read_bytes() == WATCHED_ORIG)
+    # ---- STALENESS step 3: while a Scala source is newer than the classes,
+    # a diagnostic the build could explain carries the hint; once the build
+    # is fresh again, it does not.  The command re-reads the stamp.
+    touch_stamp()
+    client.response(client.request("workspace/executeCommand", {"command": "ermine.reloadModules"}))
+    ds = watched_diags()
+    check("stamp: an undefined term carries the not-built hint while the build is stale",
+          len(ds) == 1 and "undefined term" in ds[0]["message"]
+          and "not built: the compiled classes" in ds[0]["message"]
+          and "Attribute.scala" in ds[0]["message"]
+          and "sbt core/compile" in ds[0]["message"], repr(ds))
+    close_watched()
+    restore_stamp()
+    client.response(client.request("workspace/executeCommand", {"command": "ermine.reloadModules"}))
+    ds = watched_diags()
+    check("stamp: the hint is gone once the classes are newer again",
+          len(ds) == 1 and "undefined term" in ds[0]["message"]
+          and "not built" not in ds[0]["message"], repr(ds))
+    close_watched()
+    check("stamp: the touched Scala source has its original mtime back",
+          STAMP_FILE.stat().st_mtime_ns == STAMP_ORIG.st_mtime_ns)
     # (7) an event for a file the resident never loaded is a no-op, and an
     # unknown command is refused
     client.notify("workspace/didChangeWatchedFiles",
@@ -3221,6 +3272,11 @@ def main():
           and log1.count("reloaded Byte, Prelude in") == log1.count("watch: reloaded") + log1.count("reload command: reloaded")
           and log1.count("; FAILED: ") == 1,
           repr([l for l in log1.splitlines() if "reloaded Byte" in l]))
+    check("stamp: the log records the stale boot and the fresh state after it",
+          log1.count("stamp: NOT BUILT: 1 Scala source(s)") == 1
+          and "stamp: the compiled classes (" not in log1.split("stamp: NOT BUILT")[0]
+          and log1.count("stamp: ") == 1,
+          repr([l for l in log1.splitlines() if "stamp:" in l]))
     check("watch: an event for an unloaded file reloads nothing",
           "watch: no loaded module changed" in log1,
           repr([l for l in log1.splitlines() if "watch:" in l][-3:]))
@@ -3388,6 +3444,9 @@ def main():
           re.search(r"phases: .*\bparse=[0-9.]+ .*\bcheck\.total=[0-9.]+", text2)
           is not None,
           repr([l for l in text2.splitlines() if "phases:" in l][:1]))
+    check("stamp: the second server, booted fresh, records classes newer than every source",
+          "stamp: the compiled classes (" in text2 and "NOT BUILT" not in text2,
+          repr([l for l in text2.splitlines() if "stamp:" in l]))
     check("watch: a client without dynamic registration is asked for no watcher",
           c2.server_requests == [] and "does not register file watchers dynamically" in text2,
           repr(c2.server_requests))
