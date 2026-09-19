@@ -154,6 +154,7 @@ WATCHED_BACKUP = WATCHED_FILE.with_name(WATCHED_FILE.name + ".smoke-orig")
 # are put back at exit (mtime only: sbt then sees nothing to recompile).
 STAMP_FILE = repo("core/src/main/scala/com/clarifi/reporting/Attribute.scala")
 STAMP_ORIG = None   # os.stat_result, set by plant_temp_modules
+STAMP_BACKUP = STAMP_FILE.with_name(STAMP_FILE.name + ".smoke-mtime")
 WATCHED_BLOCK = b"\n-- SMOKE (tracker/tools/lsp-client.py): removed at exit\nsmokeAdded : Int\nsmokeAdded = 1\n"
 CLASSPATH_MODULES = classpath_modules_dir()
 CLASSPATH_SHADOW = (CLASSPATH_MODULES / "Shadow.e") if CLASSPATH_MODULES else None
@@ -185,17 +186,24 @@ def plant_temp_modules():
         except FileNotFoundError:
             pass
     atexit.register(restore_watched)
+    # The stamp file's original times go to a sidecar before the first touch,
+    # for the same reason as Byte.e's bytes: a killed run leaves the touched
+    # mtime, and the next run must not record THAT as the original (sbt hashes
+    # sources, so nothing else ever puts it back).
     global STAMP_ORIG
+    if STAMP_BACKUP.exists():                                # a killed run
+        a, m = (int(x) for x in STAMP_BACKUP.read_text().split())
+        os.utime(STAMP_FILE, ns=(a, m))
     STAMP_ORIG = STAMP_FILE.stat()
-    atexit.register(restore_stamp)
+    STAMP_BACKUP.write_text("%d %d" % (STAMP_ORIG.st_atime_ns, STAMP_ORIG.st_mtime_ns))
 
-
-def touch_stamp():
-    os.utime(STAMP_FILE, None)
-
-
-def restore_stamp():
-    os.utime(STAMP_FILE, ns=(STAMP_ORIG.st_atime_ns, STAMP_ORIG.st_mtime_ns))
+    def restore_stamp_and_forget():
+        restore_stamp()
+        try:
+            STAMP_BACKUP.unlink()
+        except FileNotFoundError:
+            pass
+    atexit.register(restore_stamp_and_forget)
     SMOKE_DERIVED.write_text(
         "module SmokeDerived where\n\n"
         "-- TEMPORARY: written by tracker/tools/lsp-client.py for one smoke run and\n"
@@ -207,6 +215,14 @@ def restore_stamp():
             "module Shadow where\n\n"
             "which : Int\n"
             "which = 2\n")
+
+
+def touch_stamp():
+    os.utime(STAMP_FILE, None)
+
+
+def restore_stamp():
+    os.utime(STAMP_FILE, ns=(STAMP_ORIG.st_atime_ns, STAMP_ORIG.st_mtime_ns))
 
 
 def main():

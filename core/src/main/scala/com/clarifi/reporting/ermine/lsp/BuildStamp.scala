@@ -16,7 +16,12 @@ import java.nio.file.{ Files, Path, Paths }
   *
   * The classes stamp is the newest `.class` under the directory the class
   * loader serves `modules` from (`core/target/<scala>/classes`), taken ONCE:
-  * what the server runs does not change while it runs.  The sources are
+  * what the server runs does not change while it runs.  The proxy is mtime,
+  * and sbt's zinc stamps sources by CONTENT HASH: a source whose mtime moved
+  * with no change in it (a `git checkout` between branches where the file
+  * is the same, `cp` without `-p`) stays "newer than the classes" until a
+  * compile that writes a class, because `sbt core/compile` on such a tree
+  * does nothing -- acceptable for a hint that says "if".  The sources are
   * `core/src/main/scala` of the checkout the first module root belongs to
   * (the workspace's), or of the checkout the classes were built in when
   * there are no roots; scanned at most every five seconds, and again on
@@ -95,13 +100,18 @@ object BuildStamp {
     }
   }
 
+  /** A file deleted mid-walk (a `git checkout` while a check runs) is not
+    * a stale build and must not cost the check its diagnostics: the scan's
+    * I/O errors answer "fresh" and are seen again five seconds later. */
   private def compute(roots: List[String]): Option[Stale] =
-    for {
-      classes <- classesMillis
-      dir     <- scalaDir(roots)
-      (n, (newest, t)) <- scan(dir, ".scala", classes)
-      if n > 0
-    } yield Stale(dir, n, newest, t, classes)
+    try
+      for {
+        classes <- classesMillis
+        dir     <- scalaDir(roots)
+        (n, (newest, t)) <- scan(dir, ".scala", classes)
+        if n > 0
+      } yield Stale(dir, n, newest, t, classes)
+    catch { case _: java.io.IOException | _: java.io.UncheckedIOException => None }
 
   private def time(ms: Long): String =
     java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault)
@@ -132,8 +142,9 @@ object BuildStamp {
 
   /** The diagnostics a stale build can explain: a name that is not there,
     * an export that is not there, a foreign class or member that is not
-    * there or will not link. */
-  private val explained = List("undefined term", "does not export", "Module not found",
+    * there or will not link.  Not "Module not found": a module is a `.e`
+    * file, never a name added in Scala. */
+  private val explained = List("undefined term", "does not export",
                                "class missing", "member missing", "field missing",
                                "constructor missing", "unloadable")
 

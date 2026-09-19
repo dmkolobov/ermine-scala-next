@@ -147,7 +147,12 @@ missing export, a missing or unloadable foreign class or member) ends with one
 line: `not built: … run sbt core/compile and restart the server`. The sources are
 re-scanned at most every five seconds and on **Ermine: Reload Modules**; the
 class stamp is taken once, since what the server runs does not change while it
-runs. A fresh build costs nothing but that scan.
+runs. A fresh build costs nothing but that scan. The stamp is modification time,
+and sbt compares sources by content: a Scala file whose time moved with no change
+in it (a branch switch that leaves it identical, a copy without preserved times)
+reads as newer until a compile actually writes a class, so the warning can
+outlive an `sbt core/compile` that had nothing to do. The hint says "if" for
+that reason.
 
 **A stdlib target opens the SOURCE tree.** When the stdlib was read from the
 classpath copy (no folder, no roots) a stdlib name's recorded position is in

@@ -50,7 +50,7 @@ Gate runs on the worktree (`scripts/gate.sh`), 2026-09-18:
 | 1bdf9cd7 (step 1) | PASS 36s | PASS 48s, 0 differ of 168 | PASS 49s, 587 checks (582 + 5) | PASS 881s, 1216/1216 |
 | + review fixes (3ca335c8) | PASS 12s | PASS 48s, 0 differ of 168 | PASS 49s, 598 checks (587 + 11) | PASS 774s, 1216/1216 |
 | step 2 (lsp-watch, 16e2f1d3) | PASS 5s | PASS 49s, 0 differ of 168 | PASS 52s, 622 checks (598 + 24) | PASS 749s, 1216/1216 |
-| step 3 (branch lsp-stamp) | PASS 8s | PASS 42s, 0 differ of 168 | PASS 46s, 628 checks (622 + 6) | see handoff |
+| step 3 (branch lsp-stamp) | PASS 8s | PASS 42s, 0 differ of 168 | PASS 46s, 628 checks (622 + 6) | see below |
 
 What the 16 new smoke checks pin (`tracker/tools/lsp-client.py`, `roots:` names). The first
 server is initialised with `rootUri` + `workspaceFolders` = the checkout and
@@ -133,8 +133,15 @@ warning (and again around the diagnostic pin); `ermine.reloadModules` re-reads t
 | second server, fresh | `stamp: the compiled classes (<t'>) are newer than every Scala source under <wt>/core/src/main/scala` |
 | the Scala file afterwards | original mtime, byte for byte untouched |
 
-One stat walk of 177 `.scala` files per five seconds while checks run; the 2753 `.class`
+One stat walk of 178 `.scala` files per five seconds while checks run; the 2758 `.class`
 files are walked once at boot.
+
+Review (Fable, read-only, 2026-09-19): server sound; two smoke defects fixed (the temp-module
+planting had slipped into `restore_stamp`, so the first server booted without `SmokeDerived`
+and the roots pins passed only through per-check discovery; a killed run left the touched
+mtime as the next run's "original" -- now a sidecar, as for Byte.e); scan I/O errors answer
+"fresh" instead of costing a check its diagnostics; "Module not found" dropped from the
+explained list; the mtime-vs-content-hash limitation documented (STALE-9).
 
 ## Decisions
 
@@ -154,4 +161,5 @@ files are walked once at boot.
 - STALE-7: `Resident.normalize` does not resolve symlinks or case, so a `moduleRoots` entry spelled through a symlink (or in another case than the folder VS Code watches) never matches an event's path; workspace-derived roots match by construction. `toRealPath` when the path exists, if it ever bites.
 - STALE-8: 0.1.3 extension users get the watcher and the reloads with the new server (the client library handles both); only the palette entry **Ermine: Reload Modules** needs 0.1.4.
 - STALE-2: DONE (step 3). Only `core` is compared; a name added in `parsers/` or `machines/` Scala is not covered.
+- STALE-9: the stamp is mtime and zinc stamps sources by content hash, so a `.scala` whose mtime moved without a content change (branch switch leaving it identical, `cp` without `-p`, a killed smoke before the sidecar existed) reads as "newer" until some compile writes a class; `sbt core/compile` on such a tree does nothing. Accepted for a hint that says "if"; a content-hash stamp (zinc's `inc_compile_3.zip`?) is the fix if it ever bites.
 - STALE-3: `Resident.checkoutRootOf` walks to the filesystem root on every check of a file outside any checkout (a handful of `stat`s); memoise per directory if it ever shows in the phase timers.
