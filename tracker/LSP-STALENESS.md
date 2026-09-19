@@ -143,6 +143,41 @@ mtime as the next run's "original" -- now a sidecar, as for Byte.e); scan I/O er
 "fresh" instead of costing a check its diagnostics; "Module not found" dropped from the
 explained list; the mtime-vs-content-hash limitation documented (STALE-9).
 
+## Coverage: TestLspRobustness (2026-09-19)
+
+Before this suite the server shell had no JVM tests (Rpc, Server, Documents, Resident's reload,
+BuildStamp: only the 628-check smoke), and the check path had semantic properties (TestTolerantCheck,
+65) but no "never dark" one. `scalacheck-binding/src/main/scala/TestLspRobustness.scala`, 18
+properties, 36 s including one resident boot, runs inside the `suites` gate.
+
+| Part | Property | Oracle |
+|---|---|---|
+| A wire | print∘parse = id on generated JSON (nested, unicode, control chars, escapes) | structural equality |
+| A wire | one `send` is one `receive`; five frames back to back arrive in order | Content-Length counts UTF-8 bytes |
+| A wire | `Json.parse` is total on random ASCII, unicode and mutated-JSON text | no throw |
+| A wire | `Wire.receive` is total on random bytes | no throw |
+| A dispatcher | random traffic (requests to echo/throwing/refusing/unknown handlers, known/unknown/`$/` notifications, unparseable frames, id-only replies, method-less id-less messages): every request answered, each garbage frame one id-null error (ParseError/InvalidRequest), response shape fits a request with that id (ids may repeat: a client bug the server must survive), loop runs to EOF | counts and shapes over the server's own output, re-read through `Wire` |
+| A dispatcher | echo returns its params through the codec | equality |
+| A dispatcher | `Server.ask` replies dispatch to their handler once; a stray reply is logged and dropped | handler log |
+| B never dark | a corpus module (stdlib + core/examples, 253 files) under 1-3 random edits (truncate, drop/insert/dup/swap lines, replace a char, splice another file; 27 junk lines incl. 80 open parens, a 3000-char comment, NUL bytes, U+2028, CJK) through `Diagnostics.check` against a warmed resident: returns, < 30 s, every range non-negative/ordered/inside the buffer, non-empty message, severity 1-4; then the ORIGINAL text in the same `Documents` publishes exactly the cold result | cold vs warm equality (cache poisoning) |
+| C roots | `moduleUnder` inverts `<root>/A/B.e`; `.txt` and other roots answer None | generated names |
+| C roots | `checkoutRootOf` finds the checkout's stdlib from a stdlib file and from `tracker/lsp-tests`; a temp dir has none | fixed paths |
+| C roots | the resident (booted with a temp root and the source stdlib root ahead of the classpath) read `Bool` and `Layout` from the source tree | `loadedFiles` |
+| C reload | a random loaded module with a small importer closure: the reloaded set equals the closure computed independently by fixpoint over `depCache`, no failure, nothing pending, and `(loadedModules, termNames, cons, classes)` key sets are unchanged | fixpoint oracle vs the server's BFS |
+| C reload | paths the resident never loaded reload nothing | tables unchanged |
+| C reload | temp modules `Rob.Leaf` <- `Rob.Dep` under the temp root: a broken save fails, leaves both pending and out of the tables; a delete keeps them pending; a good save reloads both and the tables equal the start | `pending`, `Reloaded`, tables |
+| C reload | `reloadStale` on a settled tree reloads nothing; after a write with a moved mtime it reloads exactly the pair | `Reloaded` |
+| C stamp | `annotate` appends only to explainable messages and keeps range/severity/source; `scalaDir` skips a root that is not a checkout | generated diagnostics |
+
+First run: 16/18; the two falsifications were oracle bugs (a `Map` keyed by id kept the last of two
+same-id requests; an ordering assumption between properties ScalaCheck runs in parallel). No server
+defect found by the suite. Second run 18/18.
+
+Not covered here (still smoke-only): navigation, hover, completion, rename, symbols, quick-fix
+requests over the wire; the debounce loop end to end (TestEditorBuffers has the policy);
+watcher registration and `didChangeWatchedFiles` handling in `Main` (the JVM suite drives
+`Resident.reload` directly).
+
 ## Decisions
 
 | Decision | Why |
