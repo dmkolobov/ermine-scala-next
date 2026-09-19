@@ -183,6 +183,7 @@ object Main {
           log(f"$how: reloaded ${x.modules.mkString(", ")} in ${x.seconds}%.1fs" +
               x.failure.fold("")(f => "; FAILED: " + f))
           Symbols.forgetSession()
+          QuickFix.forgetSession()
           docs.dropCaches()
           Diagnostics.recheckAll(server, ermine, docs, log)
           x.failure match {
@@ -244,7 +245,8 @@ object Main {
 
       // LSP-STALENESS step 2: a file the resident loaded changed on disk.
       // Created counts as changed (a module deleted then restored comes back
-      // this way); deleted is scrubbed and not loaded back.
+      // this way); a deleted file's module is scrubbed and loaded back from
+      // the next root that has it, or left pending.
       server.onNotification("workspace/didChangeWatchedFiles") { params =>
         val changes = params / "changes" flatMap (_.arr) getOrElse Nil
         def paths(types: Set[Int]): Set[java.nio.file.Path] = changes.flatMap { c =>

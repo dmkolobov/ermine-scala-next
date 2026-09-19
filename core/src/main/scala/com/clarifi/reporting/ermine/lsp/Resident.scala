@@ -211,14 +211,30 @@ final class Resident(val log: String => Unit) {
       val t0 = System.nanoTime
       scrub(env, dirty)
       pendingReload = dirty
-      val failure =
-        try { Session.loadModules(dirty.toList.sorted); pendingReload = Set(); None }
+      def load(ms: List[String]): Option[String] =
+        try { Session.loadModules(ms); None }
         catch {
           case Death(err, _)                                        => Some(err.toString)
           case com.clarifi.reporting.ermine.parsing.Recoverable(x)  =>
             Some("error: " + Option(x.getMessage).getOrElse(x.toString))
           case scala.util.control.NonFatal(e)                       => Some(e.toString)
         }
+      // The batch first (one parallel load, the fast path).  When it dies --
+      // `loadModules` resolves the whole batch's dependencies before loading
+      // any of it, so one broken file kills the batch -- scrub again (a
+      // failed make may have left partial state) and load ONE AT A TIME, so
+      // a broken file costs only its own closure and the rest of the batch
+      // comes back; what still fails stays pending.
+      val failure = load(dirty.toList.sorted) match {
+        case None => pendingReload = Set(); None
+        case Some(first) =>
+          scrub(env, dirty)
+          val errors = dirty.toList.sorted.flatMap { m =>
+            if (env.loadedModules contains m) None else load(List(m)).map(m -> _)
+          }
+          pendingReload = dirty.filterNot(env.loadedModules.contains)
+          Some(if (errors.isEmpty) first else errors.map { case (m, e) => m + ": " + e }.mkString("; "))
+      }
       Phases.reset()
       Resident.Reloaded(dirty.toList.sorted, (System.nanoTime - t0) / 1e9, failure)
     }

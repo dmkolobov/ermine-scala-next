@@ -144,6 +144,11 @@ SMOKE_DERIVED = repo("core/src/main/resources/modules/SmokeDerived.e")
 # two modules; the appended block is restored at exit and stripped at start.
 WATCHED_FILE = repo("core/src/main/resources/modules/Byte.e")
 WATCHED_ORIG = b""   # set by plant_temp_modules
+# The sidecar: the file's original bytes, written before the first edit and
+# deleted at a clean exit.  A run killed with SIGKILL (timeout --kill-after)
+# leaves it, and the next run restores from it FIRST -- so a broken or missing
+# Byte.e from a killed run is never taken for the original.
+WATCHED_BACKUP = WATCHED_FILE.with_name(WATCHED_FILE.name + ".smoke-orig")
 WATCHED_BLOCK = b"\n-- SMOKE (tracker/tools/lsp-client.py): removed at exit\nsmokeAdded : Int\nsmokeAdded = 1\n"
 CLASSPATH_MODULES = classpath_modules_dir()
 CLASSPATH_SHADOW = (CLASSPATH_MODULES / "Shadow.e") if CLASSPATH_MODULES else None
@@ -159,14 +164,21 @@ def plant_temp_modules():
                     pass
     remove()          # a leftover from a killed run
     atexit.register(remove)
-    if WATCHED_BLOCK in WATCHED_FILE.read_bytes():          # likewise
-        WATCHED_FILE.write_bytes(WATCHED_FILE.read_bytes().replace(WATCHED_BLOCK, b""))
     global WATCHED_ORIG
+    if WATCHED_BACKUP.exists():                              # a killed run
+        WATCHED_FILE.write_bytes(WATCHED_BACKUP.read_bytes())
     WATCHED_ORIG = WATCHED_FILE.read_bytes()
+    assert WATCHED_BLOCK not in WATCHED_ORIG and b"smokeAdded" not in WATCHED_ORIG, \
+        "Byte.e carries a smoke edit and no backup exists: restore it from git first"
+    WATCHED_BACKUP.write_bytes(WATCHED_ORIG)
 
     def restore_watched():
         if not WATCHED_FILE.exists() or WATCHED_FILE.read_bytes() != WATCHED_ORIG:
             WATCHED_FILE.write_bytes(WATCHED_ORIG)
+        try:
+            WATCHED_BACKUP.unlink()
+        except FileNotFoundError:
+            pass
     atexit.register(restore_watched)
     SMOKE_DERIVED.write_text(
         "module SmokeDerived where\n\n"

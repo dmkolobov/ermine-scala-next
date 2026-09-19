@@ -238,7 +238,9 @@ Three costs, in the order you meet them:
 | `ermine.trace.server` | `off` | Trace LSP traffic to the output channel |
 
 Commands: **Ermine: Restart Language Server**, **Ermine: Toggle Fast Mode**,
-**Ermine: Show Language Server Output**.
+**Ermine: Show Language Server Output**, **Ermine: Reload Modules** (the last
+is declared by the server and registered by the language client; the
+extension only adds the status-bar line).
 
 There is no setting for the completion trigger character, the code-action
 kinds or anything else the protocol negotiates: the server advertises them and

@@ -119,15 +119,18 @@ server registers a `**/*.e` watcher with the client (dynamic registration,
 which VS Code's client supports; a client without it can still send
 `workspace/didChangeWatchedFiles`). On an event for a file the session loaded,
 that module and every loaded module importing it, transitively, are scrubbed
-from the resident session and loaded back from disk; a deleted file is scrubbed
-and not loaded back. Then the workspace-symbol table and every open document's
+from the resident session and loaded back through the loader chain, so a file
+deleted from the source tree is read back from the classpath copy, and a module
+gone from every root stays missing until it reappears. Then the workspace-symbol table and every open document's
 inference cache are dropped and the open documents are re-checked, so their
 diagnostics describe the session after the change. The server reports each
 reload as a `window/logMessage` (a warning when the load failed: the session
 lacks those modules until a later save succeeds, and a document importing one
 reports the import). **Ermine: Reload Modules** (`workspace/executeCommand`,
 `ermine.reloadModules`) does the same for every loaded file whose modification
-time moved since it was read, for saves no event reported. Files the session did
+time moved since it was read, for saves no event reported; VS Code's client
+watches only inside the workspace folders, so a `moduleRoots` directory outside
+them, or a path under `files.watcherExclude`, needs the command. Files the session did
 not load (workspace siblings, another checkout's stdlib) need none of this: each
 check reads them fresh.
 

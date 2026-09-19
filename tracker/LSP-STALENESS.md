@@ -108,6 +108,16 @@ The file is byte-for-byte restored at exit (also on a `timeout` kill: SIGTERM ->
 Nine reloads, one FAILED, each 0.0-0.1 s (`Byte` + `Prelude`); every reload re-checked
 the open fixtures (`diagnostics: reload <file>` lines) before its logMessage.
 
+Review (Fable, read-only, 2026-09-19): server side sound; ONE blocker in extension 0.1.4 --
+`vscode-languageclient`'s ExecuteCommandFeature registers every server-declared command as
+a VS Code command itself (`lib/common/executeCommand.js:49`), so the extension's own
+`registerCommand("ermine.reloadModules")` would throw inside `client.start()`; fixed by
+dropping it (the status line moved to `middleware.executeCommand`). Also applied: a
+sidecar backup makes the smoke's Byte.e cleanup SIGKILL-safe; a failed batch reload
+re-scrubs and retries one module at a time so one broken file costs only its closure;
+the QuickFix signature memo (keyed `(uri, version)`, which a reload does not bump) is
+forgotten on reload; deletion wording in docs and Main.
+
 ## Decisions
 
 | Decision | Why |
@@ -123,5 +133,7 @@ the open fixtures (`diagnostics: reload <file>` lines) before its logMessage.
 - STALE-4: an open, UNSAVED buffer of a stdlib file is not what the resident holds (the reload reads disk on save); a check of that file itself uses the buffer, its importers see the saved text. Expected; documented.
 - STALE-5: `Ready.builtins` is copied before the roots are installed, so `builtinEnv.loadFile` is the bare classpath loader; harmless while only `.contains` reads it.
 - STALE-6: a reload publishes fresh diagnostics for every open document synchronously on the dispatch thread; with many open documents and a Prelude-level change this is one long turn (the boot's cost, once). Measured on the smoke: see evidence.
+- STALE-7: `Resident.normalize` does not resolve symlinks or case, so a `moduleRoots` entry spelled through a symlink (or in another case than the folder VS Code watches) never matches an event's path; workspace-derived roots match by construction. `toRealPath` when the path exists, if it ever bites.
+- STALE-8: 0.1.3 extension users get the watcher and the reloads with the new server (the client library handles both); only the palette entry **Ermine: Reload Modules** needs 0.1.4.
 - STALE-2: step 3 ("not built" diagnostic).
 - STALE-3: `Resident.checkoutRootOf` walks to the filesystem root on every check of a file outside any checkout (a handful of `stat`s); memoise per directory if it ever shows in the phase timers.

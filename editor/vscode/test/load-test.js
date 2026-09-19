@@ -230,7 +230,12 @@ async function main() {
 
   console.log("4. activation registered what package.json promises");
   const manifest = require(path.join(EXT_ROOT, "package.json"));
-  const promised = manifest.contributes.commands.map((c) => c.command).sort();
+  // A command the SERVER declares (executeCommandProvider) is registered by
+  // vscode-languageclient when the client starts, not by activate(); it is
+  // contributed for the palette entry only.
+  const SERVER_DECLARED = ["ermine.reloadModules"];
+  const promised = manifest.contributes.commands.map((c) => c.command)
+    .filter((c) => !SERVER_DECLARED.includes(c)).sort();
   const registered = recorded.commands.map((c) => c.id).sort();
   check("every contributed command is registered",
         JSON.stringify(promised) === JSON.stringify(registered),

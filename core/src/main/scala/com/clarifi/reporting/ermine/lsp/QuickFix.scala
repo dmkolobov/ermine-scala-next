@@ -836,6 +836,12 @@ object QuickFix {
     * is stated in `docs/lsp.md`. */
   val MaxImports = 8
 
+  private var memo: Option[(String, Long, List[(Group, Option[(String, TEdit)])])] = None
+
+  /** LSP-STALENESS step 2: the resident session reloaded modules; the
+    * signature texts rendered against it are forgotten. */
+  def forgetSession(): Unit = memo = None
+
   def install(server: Server, ermine: Resident, docs: Documents, log: String => Unit): Unit = {
 
     // ONE MEMO, of the last document a code action was asked about: its
@@ -846,8 +852,10 @@ object QuickFix {
     // of them refused) and 0.1 ms once it is cached.  The key is
     // (uri, version), the same pair the staleness refusal already turns
     // on: an edit invalidates it by construction, and dispatch is
-    // single-threaded so no lock is needed.
-    var memo: Option[(String, Long, List[(Group, Option[(String, TEdit)])])] = None
+    // single-threaded so no lock is needed.  It lives on the object (below
+    // `install`) because a module reload re-checks a document WITHOUT a new
+    // version (LSP-STALENESS step 2), and the rendered types must not
+    // survive that: `forgetSession` drops it.
 
     server.onRequest("textDocument/codeAction") { params =>
       val t0 = System.nanoTime
