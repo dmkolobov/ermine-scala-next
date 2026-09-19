@@ -8,6 +8,7 @@ prints repl-smoke-style "  PASS/FAIL  lsp (N checks)" lines.
 
 Usage: lsp-client.py <java> <args...>   (the full server command line)
 """
+import atexit
 import json
 import os
 import pathlib
@@ -109,7 +110,56 @@ def repo(rel):
     return HERE.parent.parent / rel
 
 
+# STALENESS step 1: two modules that exist for the length of one run.
+#  * `SmokeDerived` goes into the WORKSPACE STDLIB, core/src/main/resources/
+#    modules/, and nowhere else: never copied to target, so it resolves through
+#    the root derived from the workspace folder (first server) or through the
+#    document's own checkout root (second server), or not at all.
+#  * a second `Shadow` goes into the CLASSPATH COPY, core/target/<scala>/classes/
+#    modules/, differing from tracker/lsp-tests/roots/Shadow.e in where `which`
+#    is defined: which of the two a server navigates to says which loader won.
+# Both are removed at exit, whatever the exit; a leftover shows in `git status`
+# (the source one) and says in its text who wrote it.
+def classpath_modules_dir():
+    args = sys.argv[1:]
+    for i, a in enumerate(args):
+        if a in ("-cp", "-classpath") and i + 1 < len(args):
+            for entry in args[i + 1].split(os.pathsep):
+                if re.search(r"/core/target/[^/]+/classes$", entry):
+                    return pathlib.Path(entry) / "modules"
+    return None
+
+
+SMOKE_DERIVED = repo("core/src/main/resources/modules/SmokeDerived.e")
+CLASSPATH_MODULES = classpath_modules_dir()
+CLASSPATH_SHADOW = (CLASSPATH_MODULES / "Shadow.e") if CLASSPATH_MODULES else None
+
+
+def plant_temp_modules():
+    def remove():
+        for f in (SMOKE_DERIVED, CLASSPATH_SHADOW):
+            if f is not None:
+                try:
+                    f.unlink()
+                except FileNotFoundError:
+                    pass
+    remove()          # a leftover from a killed run
+    atexit.register(remove)
+    SMOKE_DERIVED.write_text(
+        "module SmokeDerived where\n\n"
+        "-- TEMPORARY: written by tracker/tools/lsp-client.py for one smoke run and\n"
+        "-- removed at its exit.  If you can read this in `git status`, delete it.\n\n"
+        "derived : Int\n"
+        "derived = 3\n")
+    if CLASSPATH_SHADOW is not None:
+        CLASSPATH_SHADOW.write_text(
+            "module Shadow where\n\n"
+            "which : Int\n"
+            "which = 2\n")
+
+
 def main():
+    plant_temp_modules()
     client = Client(sys.argv[1:])
 
     # STALENESS step 1 (tracker/LSP-STALENESS.md): the workspace folder the way
@@ -668,6 +718,31 @@ def main():
           and r["range"]["start"] == {"line": 8, "character": 0}, repr(r))
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Roots.e")}})
     client.diagnostics_for(uri("Roots.e"))
+    # The DERIVED root: `SmokeDerived` is in the workspace stdlib source tree
+    # only (see plant_temp_modules), and this server was told the workspace.
+    open_doc("Derived.e")
+    ds = client.diagnostics_for(uri("Derived.e"))
+    check("roots: Derived.e is clean (a source-tree-only module resolves through the workspace root)",
+          ds == [], repr(ds))
+    r = definition("Derived.e", 5, 13)   # `derived` in `useDerived = derived`
+    check("roots: its definition opens the SOURCE-tree file, which has no target copy",
+          r is not None and r["uri"] == SMOKE_DERIVED.as_uri()
+          and r["range"]["start"] == {"line": 6, "character": 0}, repr(r))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Derived.e")}})
+    client.diagnostics_for(uri("Derived.e"))
+    # The ORDER: `Shadow` exists under the option root AND in the classpath
+    # copy; the root's `which` is on line 10, the classpath twin's on line 4.
+    check("roots: the classpath copy was found on the command line",
+          CLASSPATH_SHADOW is not None and CLASSPATH_SHADOW.is_file(), repr(CLASSPATH_SHADOW))
+    open_doc("Shadowed.e")
+    ds = client.diagnostics_for(uri("Shadowed.e"))
+    check("roots: Shadowed.e is clean", ds == [], repr(ds))
+    r = definition("Shadowed.e", 5, 11)   # `which` in `useWhich = which`
+    check("roots: a module in a root AND on the classpath comes from the root",
+          r is not None and r["uri"] == (FIXTURES / "roots" / "Shadow.e").as_uri()
+          and r["range"]["start"] == {"line": 9, "character": 0}, repr(r))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Shadowed.e")}})
+    client.diagnostics_for(uri("Shadowed.e"))
 
     # 6.1(c): an import list naming something the module does not export
     # is the editor's own check (batch gets it from Dep.checkNames), and it
@@ -3075,6 +3150,44 @@ def main():
     check("roots: with no roots the same import is 'Module not found'",
           len(ds2) == 1 and "import RootOnly failed" in ds2[0]["message"]
           and "Module not found: 'RootOnly'" in ds2[0]["message"], repr(ds2))
+
+    def c2_open(name):
+        c2.notify("textDocument/didOpen", {"textDocument": {
+            "uri": uri(name), "languageId": "ermine", "version": 1,
+            "text": (FIXTURES / name).read_text()}})
+        return c2.diagnostics_for(uri(name))
+
+    def c2_definition(name, line, char):
+        rid = c2.request("textDocument/definition", {
+            "textDocument": {"uri": uri(name)}, "position": {"line": line, "character": char}})
+        return c2.response(rid).get("result")
+
+    # With no roots the classpath twin of `Shadow` is the one found (its
+    # `which` is on line 4), and E9's rewrite leaves the path alone because
+    # no source-tree Shadow.e exists to map it to.
+    ds2 = c2_open("Shadowed.e")
+    check("roots: no roots -> Shadowed.e still clean, off the classpath copy", ds2 == [], repr(ds2))
+    r = c2_definition("Shadowed.e", 5, 11)
+    check("roots: no roots -> `which` navigates to the classpath copy's line 4",
+          r is not None and CLASSPATH_SHADOW is not None and r["uri"] == CLASSPATH_SHADOW.as_uri()
+          and r["range"]["start"] == {"line": 3, "character": 0}, repr(r))
+    # The PER-CHECK checkout root: this server booted with no roots, yet a
+    # document inside a checkout resolves a module its own source tree has and
+    # the boot did not load.
+    ds2 = c2_open("Derived.e")
+    check("roots: no roots -> Derived.e clean through the document's own checkout root",
+          ds2 == [], repr(ds2))
+    r = c2_definition("Derived.e", 5, 13)
+    check("roots: no roots -> its definition is the source-tree file",
+          r is not None and r["uri"] == SMOKE_DERIVED.as_uri(), repr(r))
+    # E9 under a classpath boot, which the first server no longer exercises:
+    # a stdlib target is mapped back to the source tree.
+    ds2 = c2_open("Nav.e")
+    check("roots: no roots -> Nav.e clean", ds2 == [], repr(ds2))
+    r = c2_definition("Nav.e", 7, 12)   # `&&`, from stdlib Bool
+    check("7.5 (E9) under a classpath boot a stdlib definition target is in the SOURCE tree",
+          r is not None and in_source_tree(r["uri"]) and r["uri"].endswith("/resources/modules/Bool.e"),
+          repr(r))
     c2.response(c2.request("shutdown", None))
     c2.notify("exit", {})
     c2.proc.wait(timeout=30)

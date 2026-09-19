@@ -103,7 +103,11 @@ there is no source to open.
 the workspace folders the editor opened (`workspaceFolders`, or `rootUri`) and,
 for each that has `core/src/main/resources/modules` beneath it, puts that
 directory AHEAD of the classpath in the module loader; `initializationOptions.
-moduleRoots`, a list of directories, adds roots explicitly and they go first.
+moduleRoots`, a list of directories (absolute, or relative to the server's
+working directory), adds roots explicitly and they go first. A folder that is
+not a checkout, such as a directory that merely holds several checkouts,
+implies no root; the modules the boot did not load still resolve per check
+against the checkout each document is in.
 The session's modules then come from the source tree, so a module added under
 `modules/` is importable without `sbt core/copyResources` or a restart, and a
 document in another checkout (a worktree opened beside the workspace) resolves

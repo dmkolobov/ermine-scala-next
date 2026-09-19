@@ -266,8 +266,10 @@ object Definitions {
   def location(t: Target, src: LineSource): Option[Json] = positionOf(t.loc) match {
     case Some(p) if new java.io.File(p.fileName).isFile =>
       // 7.5, ticket E9: the target tree back to the SOURCE tree, here, at
-      // the boundary, and nowhere else -- the session still boots from
-      // the classpath (Decision 5) and `V.loc` still says what it says.
+      // the boundary, and nowhere else -- `V.loc` still says what it says.
+      // Since the staleness arc's step 1 a session with source roots reads
+      // the stdlib from the source tree and this is a no-op; it still does
+      // the work for a client that sent no folder and no roots.
       val file  = SourceTree.rewrite(p.fileName)
       // 7.5, ticket E8: the parser column converted against the line it
       // names, in the file it names -- which for a stdlib target is a
@@ -284,7 +286,9 @@ object Definitions {
 
   /** TICKET E9: a stdlib location points at the SOURCE tree.
     *
-    * The resident session loads its 129 modules from the CLASSPATH, where
+    * WITHOUT SOURCE ROOTS (tracker/LSP-STALENESS.md: a client that sent no
+    * workspace folder and no `moduleRoots`), the resident session loads its
+    * 129 modules from the CLASSPATH, where
     * `copyResources` has put a byte-for-byte copy of
     * `core/src/main/resources/modules`; so every `V.loc`/`Con.loc` of a
     * stdlib name names a file under `core/target/<scala>/classes/modules`

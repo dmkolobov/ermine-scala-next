@@ -95,9 +95,17 @@ object Main {
         // `rootUri` counted as a folder for a client that sends only that.  Set
         // here and read at `initialized`, when the session boots, so a client
         // that sends neither gets the classpath and nothing else changes.
+        // A relative entry resolves against the server's working directory (the
+        // checkout `bin/ermine-lsp` runs in); one that is not a path at all is
+        // logged and dropped, the way a root that is not a directory is skipped
+        // at boot -- never a failed handshake.
         val explicitRoots =
           params / "initializationOptions" flatMap (_ / "moduleRoots") flatMap (_.arr) map
-            (_ flatMap (_.str) map (r => java.nio.file.Paths.get(r).toAbsolutePath.normalize.toString)) getOrElse Nil
+            (_ flatMap (_.str) flatMap { r =>
+              try Some(java.nio.file.Paths.get(r).toAbsolutePath.normalize.toString)
+              catch { case e: java.nio.file.InvalidPathException =>
+                log("module root dropped, not a path: " + r + " (" + e.getMessage + ")"); None }
+            }) getOrElse Nil
         val folderUris =
           (params / "workspaceFolders" flatMap (_.arr) map (_ flatMap (f => f / "uri" flatMap (_.str))) getOrElse Nil) ++
           (params / "rootUri" flatMap (_.str)).toList
