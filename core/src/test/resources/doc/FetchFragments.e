@@ -51,8 +51,9 @@ data Query = Query { tabsFor : List String, topN : Int }
 regionHeadline : String -> Fetch Node
 regionHeadline r = headlineOf "Sales" r amount (filterEq region r sales)
 
--- fragment 2: the running total, folded in Ermine over rows delivered in
--- day order and joined back to the targets IN SQL (FetchRunning's body).
+-- fragment 2: a fold in Ermine over rows delivered in day order, joined
+-- back to the targets IN SQL (FetchRunning's body; a running total itself
+-- is a `Relation.Windowed` job -- the fold stands for per-row Ermine code).
 withRunning : List {region, day, amount, units} -> List {region, day, amount, runTotal, rowNo}
 withRunning rows = reverse (snd (foldl step ((0.0, 0), []) rows))
   where step ((tot, n), acc) r =

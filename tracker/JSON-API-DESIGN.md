@@ -498,6 +498,16 @@ the old `Layout.Report.scanRelation` (`Report.e:617`, CPS over the writer's effe
 and a list transformed in memory and returned to SQL through `Relation.relation` (a `SmallLit`,
 `Runtime.scala:386`) all need rows while the report is built.
 
+Correction (2026-09-18, after landing): what a scan is FOR is narrower than J3f's examples
+suggested. Running totals, ranks, row numbers, n-tiles and cumulative shares are window functions
+(`Relation.Windowed`, emitted by `SqlScanner` as window columns; `core/examples/Wide/Leaderboard.e`),
+so `FetchRunning` and `FetchFragments`' running table illustrate the round trip through
+`Relation.relation`, not a necessity. A scan is needed when (a) the SHAPE of the output depends on
+the data -- a column per distinct key (a crosstab: a table's row type is fixed at compile time, so
+its column set cannot come from a query), a tab or a chart per group (`FetchTabs`); (b) arbitrary
+Ermine code runs per row; (c) the computation recurses over the rows (a tree of unbounded depth);
+(d) the layout itself is chosen by the data (`FetchHeadline`'s empty arm).
+
 | Decision | Choice | Rejected |
 |---|---|---|
 | where the continuation lives | a separate type `data Fetch a = Done a \| Scan Sort# Relation# (List Record# -> Fetch a)` in `modules/Layout/Fetch.e`; `Node` and the client's zod schema untouched | a `Scan` constructor inside `Node`: an existential function field in the exported wire type (`client/src/generated/doc.ts` is generated from `Node` and `check-generated.sh` fails the build if stale) |
@@ -528,7 +538,7 @@ and a report is now written as one `Fetch Node`, cut into fragments of type `...
 | where the connection opens | the first evaluation step (decode, apply, force) runs under `evalLock` BEFORE `cfg.run.run`. `Done`/a bare `Node` is written on the one connection the write opens; only a `Scan` opens one to continue evaluating in | keeping J3f's "evaluate inside the connection": a report that throws before any scan paid for a connection |
 | a widget that scans | `Layout.Widgets.Headline`: `headline : HeadlineProps -> Node` (pure) beside `headlineOf : ... -> Field h Double -> rel r -> Fetch Node`, which scans, counts, sums and takes the maximum. Registry name `"headline"`, client component `client/src/widgets/headline.ts` | a `Fetch`-valued field inside `Node`: the wire and the generated zod stay what `Node` says |
 | the prop names | `headlineTitle`, not `title`: `Layout.Widgets` re-exports every widget module into one scope, and `Layout.Widgets.Scorecard` already owns `title` (`Layout.Widgets.Chart` spells `chartTitle` for the same reason). Verified: with `title`, `title p` on a `ScorecardProps` in a module importing `Layout.Widgets` fails to unify | -- |
-| order | `sequence_Fetch` and the layout lifts scan left to right, in the order the children are written (`TestRunner (fxl-order)`) | no order guarantee: a running total or a rank would be unreproducible |
+| order | `sequence_Fetch` and the layout lifts scan left to right, in the order the children are written (`TestRunner (fxl-order)`) | no order guarantee: a fold over ordered rows would be unreproducible (a running total or a rank as such is `Relation.Windowed`'s job, §3.4b correction) |
 
 Cost: a widget that owns its scan reads the relation itself, so a report that also shows the rows
 in a table scans twice (`FetchHeadline.e` says so). `Fetch` has one operation, so nothing about a

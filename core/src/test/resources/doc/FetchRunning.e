@@ -1,15 +1,17 @@
 module FetchRunning where
 
--- A RUNNING TOTAL, FOLDED IN ERMINE, JOINED BACK IN SQL.
+-- A LIST FOLDED IN ERMINE, JOINED BACK IN SQL.
 --
--- `groupBy {region} (sumBy amount)` is one number per region: correct, and
--- not a running total.  There is no order inside a relational aggregate,
--- so no aggregate in this stdlib produces a cumulative column or a row
--- number.  What the relation CAN do is deliver its rows in order, and that
--- is `scanRelationInOrder`: the rows come sorted by `day`, a fold gives
--- each one the total so far and its sequence number, `relation` turns the
--- list back into a relation, and `join` takes THAT to the targets -- in
+-- The point of this example is the ROUND TRIP, not the running total: the
+-- rows come sorted by `day` through `scanRelationInOrder`, a fold in Ermine
+-- gives each one the total so far and its sequence number, `relation` turns
+-- the list back into a relation, and `join` takes THAT to the targets -- in
 -- SQL, on the same connection, as a `VALUES` literal joined to a table.
+--
+-- A running total and a row number by themselves do NOT need this:
+-- `Relation.Windowed` computes them in SQL (`windowedAggregate` over a
+-- window sorted by `day`, `rowNumber`).  Read the fold as a stand-in for any
+-- per-row Ermine computation the algebra cannot express.
 --
 --   {"params": {"newestFirst": false}}   day order, running up to 12682.0
 --   {"params": {"newestFirst": true}}    newest first

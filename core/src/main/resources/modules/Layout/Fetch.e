@@ -70,8 +70,12 @@ scanRelation : Relational rel => rel r -> (List {..r} -> Fetch a) -> Fetch a
 scanRelation r f = scanRelationInOrder empty r f
 
 -- | Execute a relation and hand its rows, sorted as `srt` says, to the
--- continuation: what a running total, a rank or a top-N needs, and what no
--- relational aggregate can say (there is no order inside a group).
+-- continuation.  NOT the way to get a running total or a rank: those are
+-- window functions (`Relation.Windowed`: `rank`, `rowNumber`, `nTile`, a
+-- `windowedAggregate` over a partition, a sort and a frame), computed in
+-- SQL.  Ordered rows in Ermine are for what the algebra cannot express: a
+-- shape that depends on the data (a column per distinct key, a tab per
+-- group), arbitrary Ermine code per row, or a recursion over the rows.
 scanRelationInOrder : (Has r s, Relational rel) => Sort s -> rel r -> (List {..r} -> Fetch a) -> Fetch a
 scanRelationInOrder srt r f = Scan (toSort# srt) (relation# r) (rows -> f (map_List unsafeRecordIn# rows))
 
