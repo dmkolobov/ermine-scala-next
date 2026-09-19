@@ -6,6 +6,12 @@ module Layout.Widgets where
 --
 --   tabular p   ==>   {"tag":"Widget","name":"table","props":{..}}
 --
+-- The registry NAME is a value beside the props, `tableName : WidgetName (TableProps r)`,
+-- and `widget tableName p` is the only way a smart constructor spells it: the
+-- phantom parameter ties the string to the props type, so a name applied to the
+-- wrong props is a type error here rather than an error box in the browser
+-- (`Layout.Doc.WidgetName`; `rawWidget` is the untyped escape hatch).
+--
 -- The props go out through the GENERIC walker (Json.toJson), so the record-style
 -- declarations ARE the wire, and
 --

@@ -11,4 +11,4 @@ data Filters = Filters { minAmount : Double, tags : List String }
 data P = P { scope : Scope, filters : Filters, limit : Maybe Int }
 
 report : P -> Node
-report p = widget "echo" p
+report p = rawWidget "echo" p

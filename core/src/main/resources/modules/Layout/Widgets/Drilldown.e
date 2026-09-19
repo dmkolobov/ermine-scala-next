@@ -14,7 +14,7 @@ module Layout.Widgets.Drilldown where
 
 import Layout.Widgets.Table using type TableColumn; type ColumnSort
 import List using empty_Bracket; cons_Bracket
-import Layout.Doc using widget; type Node
+import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 
 data DrilldownTableProps r = DrilldownTableProps { ddColumns : List TableColumn
                                                  , parentColumn : String
@@ -25,8 +25,12 @@ data DrilldownTableProps r = DrilldownTableProps { ddColumns : List TableColumn
                                                  , ddScroll : Bool
                                                  , ddRows : [..r] }
 
+-- | The registry name, tied to the props type.
+drilldownTableName : WidgetName (DrilldownTableProps r)
+drilldownTableName = WidgetName "drilldownTable"
+
 drilldownTable : DrilldownTableProps r -> Node
-drilldownTable p = widget "drilldownTable" p
+drilldownTable p = widget drilldownTableName p
 
 -- | Every knob at its legacy default.
 simpleDrilldownTable : List TableColumn -> String -> String -> String -> [..r]

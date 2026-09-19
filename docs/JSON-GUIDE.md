@@ -925,8 +925,13 @@ data Node = Widget { name : String, props : Json }
 
 data Tab = Tab { label : String, content : Node }
 
-widget : String -> a -> Node
-widget n p = Widget n (toJson p)
+data WidgetName p = WidgetName String     -- the registry name, tied to its props type
+
+widget : WidgetName p -> p -> Node        -- `widget tableName t`: the name and the type agree
+widget (WidgetName n) p = Widget n (toJson p)
+
+rawWidget : String -> a -> Node           -- the escape hatch: any name, any props, no check
+rawWidget n p = Widget n (toJson p)
 
 vflow  : List Node -> Node
 hflow  : List Node -> Node
@@ -1058,9 +1063,9 @@ report q =
       items = Deferred (relation (map_List (s -> { item = sItem s, amount = sAmount s,
                                               units = sUnits s }) sales))
   in vflow
-       [ widget "heading" (Heading "Sales" (columnOf (orderBy q)) (length picked) total)
-       , grid [ [ widget "table" byDay, widget "table" regions ]
-              , [ widget "table" items, widget "text" "line items on demand" ] ]
+       [ rawWidget "heading" (Heading "Sales" (columnOf (orderBy q)) (length picked) total)
+       , grid [ [ rawWidget "table" byDay, rawWidget "table" regions ]
+              , [ rawWidget "table" items, rawWidget "text" "line items on demand" ] ]
        ]
 ```
 
@@ -1744,8 +1749,9 @@ errors: [{"path":"$.root","widget":"scorecard",
 Three edits plus the generate step:
 
 1. **Ermine** — a new module under `Layout/Widgets/`, ONE PER WIDGET (field
-   selectors are module-global), declaring the props `data` and a smart
-   constructor `foo p = widget "foo" p`; then `export Layout.Widgets.Foo` from
+   selectors are module-global), declaring the props `data`, its registry name
+   `fooName : WidgetName FooProps; fooName = WidgetName "foo"`, and a smart
+   constructor `foo p = widget fooName p`; then `export Layout.Widgets.Foo` from
    `Layout/Widgets.e`. A relation field is `[..r]` when the request may defer it,
    `Inline r` when the widget cannot work without the rows; leave the row
    parameter free.

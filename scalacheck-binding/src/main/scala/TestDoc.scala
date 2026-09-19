@@ -653,11 +653,11 @@ object TestDoc extends Properties("JSON document writer (J3b)") {
         case "list" => "[" + r + ", " + r + "]"
         case other  => "(" + other + " " + r + ")"
       }
-      Src(fs.map { case (f, t) => "field " + f + " : " + t }, "(widget \"table\" " + e + ")", List(form))
+      Src(fs.map { case (f, t) => "field " + f + " : " + t }, "(rawWidget \"table\" " + e + ")", List(form))
     }
 
   private val propsSrc: Gen[Src] =
-    TestSchema.shape(2).flatMap(sh => sh.value.map(v => Src(sh.decls, "(widget \"w\" (" + v + " : " + sh.ty + "))", Nil)))
+    TestSchema.shape(2).flatMap(sh => sh.value.map(v => Src(sh.decls, "(rawWidget \"w\" (" + v + " : " + sh.ty + "))", Nil)))
 
   private def nodeSrc(depth: Int): Gen[Src] = {
     val leaf = Gen.frequency((1, propsSrc), (2, relSrc))

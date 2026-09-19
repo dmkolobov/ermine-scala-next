@@ -154,15 +154,23 @@ Three edits, plus the generate step.
 
    import Json using type Inline
    import Layout.Widgets.Format using type CellFormat
-   import Layout.Doc using widget; type Node
+   import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 
    data SparklineProps r = SparklineProps { sparkTitle : String
                                           , sparkValue : String
                                           , sparkPoints : Inline r }
 
+   sparklineName : WidgetName (SparklineProps r)   -- the registry name, tied to the props type
+   sparklineName = WidgetName "sparkline"
+
    sparkline : SparklineProps r -> Node
-   sparkline p = widget "sparkline" p
+   sparkline p = widget sparklineName p
    ```
+
+   `WidgetName p` is a phantom type: `widget sparklineName x` type-checks only when `x`
+   is a `SparklineProps`, so the string and the type cannot drift apart in Ermine. The
+   untyped `rawWidget "name" x` remains for tests and for a name the registry does not
+   know yet; the client validates either the same way.
 
    Then `export Layout.Widgets.Sparkline` from `Layout/Widgets.e`. A relation field
    is `[..r]` when the request may defer it, `Inline r` when the widget cannot work

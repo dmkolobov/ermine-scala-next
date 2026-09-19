@@ -28,7 +28,7 @@ module Layout.Widgets.StyleBox where
 import Json using type Inline
 import Layout.Widgets.Format using type CellFormat
 import List using empty_Bracket; cons_Bracket
-import Layout.Doc using widget; type Node
+import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 
 data StyleBoxProps r = StyleBoxProps { xTitle : String
                                      , yTitle : String
@@ -44,5 +44,9 @@ data StyleBoxProps r = StyleBoxProps { xTitle : String
                                      , yBins : List (Double, Double)
                                      , styleBoxRows : Inline r }
 
+-- | The registry name, tied to the props type.
+styleBoxName : WidgetName (StyleBoxProps r)
+styleBoxName = WidgetName "styleBox"
+
 styleBox : StyleBoxProps r -> Node
-styleBox p = widget "styleBox" p
+styleBox p = widget styleBoxName p

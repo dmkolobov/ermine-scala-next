@@ -53,4 +53,4 @@ report q = runScan (do
                                        Default (Currency False False "$" 2)
                                        (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
                                        (Inline slices))
-             , widget "metTargets" met ])))
+             , rawWidget "metTargets" met ])))

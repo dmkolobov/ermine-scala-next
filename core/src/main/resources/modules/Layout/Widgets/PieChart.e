@@ -23,7 +23,7 @@ module Layout.Widgets.PieChart where
 import Json using type Inline
 import Layout.Widgets.Chart using type ChartLegendOptions; type ChartRenderHints
 import Layout.Widgets.Format using type CellFormat
-import Layout.Doc using widget; type Node
+import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 
 data PieChartProps r = PieChartProps { pieTitle : String
                                      , seriesName : String
@@ -39,11 +39,19 @@ data PieChartProps r = PieChartProps { pieTitle : String
                                      , pieRows : Inline r }
 
 -- | registry name "pieChart".
+-- | The registry name, tied to the props type.
+pieChartName : WidgetName (PieChartProps r)
+pieChartName = WidgetName "pieChart"
+
 pieChart : PieChartProps r -> Node
-pieChart p = widget "pieChart" p
+pieChart p = widget pieChartName p
 
 -- | registry name "drilldownPieChart".  The same props; the child/parent columns
 -- are what make the legacy renderer draw its breadcrumb trail, so a drilldown pie
 -- without them is just a pie.
+-- | The registry name, tied to the props type.
+drilldownPieChartName : WidgetName (PieChartProps r)
+drilldownPieChartName = WidgetName "drilldownPieChart"
+
 drilldownPieChart : PieChartProps r -> Node
-drilldownPieChart p = widget "drilldownPieChart" p
+drilldownPieChart p = widget drilldownPieChartName p

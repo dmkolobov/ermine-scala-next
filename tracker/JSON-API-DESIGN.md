@@ -227,7 +227,9 @@ and the convention that works without it.
    needs the runner's effect; delivery is chosen per relation with the
    `Inline`/`Deferred` wrappers, or per request by default (§3.4a). Escape hatch for widgets that need raw JSON.
 4. **Document types** (`modules/Layout/Doc.e`): `data Node = Widget String Json | VFlow (List Node) | HFlow (List Node) | Grid … | Tabbed (List (String, Node)) | …`,
-   `widget : String -> a -> Node; widget k p = Widget k (toJson# p)`. A report is
+   `widget : WidgetName p -> p -> Node; widget (WidgetName k) p = Widget k (toJson# p)` with
+   `data WidgetName p = WidgetName String` a phantom-typed registry name each widget module exports
+   (2026-09-18; the untyped form is `rawWidget : String -> a -> Node`). A report is
    `report : Params -> Node` (or `-> IO Node` where IO is needed). Layout
    combinators are ordinary constructors, not Writer methods.
 5. **Minimal FFI** (load-verified reflectively like everything else,

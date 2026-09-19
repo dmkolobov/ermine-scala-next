@@ -23,14 +23,18 @@ module Layout.Widgets.AxisChart where
 
 import Layout.Widgets.Chart using type ChartMeta; type ChartSeries
 import List using empty_Bracket; cons_Bracket
-import Layout.Doc using widget; type Node
+import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 
 data AxisChartProps r = AxisChartProps { chartMeta : ChartMeta
                                        , chartSeries : List ChartSeries
                                        , chartRows : [..r] }
 
+-- | The registry name, tied to the props type.
+axisChartName : WidgetName (AxisChartProps r)
+axisChartName = WidgetName "axisChart"
+
 axisChart : AxisChartProps r -> Node
-axisChart p = widget "axisChart" p
+axisChart p = widget axisChartName p
 
 -- | One series over one relation.
 simpleAxisChart : ChartMeta -> ChartSeries -> [..r] -> AxisChartProps r

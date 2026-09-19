@@ -116,7 +116,7 @@ report q =
       items = Deferred (relation (map_List (s -> { item = sItem s, amount = sAmount s,
                                               units = sUnits s }) sales))
   in vflow
-       [ widget "heading" (Heading "Sales" (columnOf (orderBy q)) (length picked) total)
-       , grid [ [ widget "table" byDay, widget "table" regions ]
-              , [ widget "table" items, widget "text" "line items on demand" ] ]
+       [ rawWidget "heading" (Heading "Sales" (columnOf (orderBy q)) (length picked) total)
+       , grid [ [ rawWidget "table" byDay, rawWidget "table" regions ]
+              , [ rawWidget "table" items, rawWidget "text" "line items on demand" ] ]
        ]

@@ -782,6 +782,25 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
       (!s.contains("colorColumn") :| ("a Nothing colorColumn left a key behind: " + s))
   }
 
+  /** The phantom-typed registry name (Layout.Doc.WidgetName): `widget scorecardName`
+    * applied to a HeadlineProps is refused by the TYPE CHECKER at load, the matching
+    * props are accepted, and the untyped `rawWidget` accepts anything (the client
+    * validates it instead).  A pin, beside (a): the guarantee is the compiler's. */
+  property("(a-pin6) a WidgetName is tied to its props type: the wrong props are refused at load") = secure {
+    // loadNamed supplies the `module <name> where` header itself
+    def mod(name: String, body: String) =
+      "import Layout.Doc\nimport Layout.Widgets\n\nn : Node\nn = " + body + "\n"
+    val hp = "(HeadlineProps \"t\" \"s\" 1 2.0 3.0 Default)"
+    val outcomes = session { implicit env =>
+      List(fixture.outcomeOf("WnOk",  mod("WnOk",  "widget headlineName " + hp)),
+           fixture.outcomeOf("WnBad", mod("WnBad", "widget scorecardName " + hp)),
+           fixture.outcomeOf("WnRaw", mod("WnRaw", "rawWidget \"scorecard\" " + hp)))
+    }
+    (outcomes(0) ?= "accepted") &&
+    ((outcomes(1).startsWith("refused: ") && outcomes(1).contains("unify")) :| ("WnBad: " + outcomes(1))) &&
+    (outcomes(2) ?= "accepted")
+  }
+
   property("(a-pin3) each prop type exports one schema with its row parameter free") = secure {
     val ids = List(("Layout.Widgets.Table", "TableProps"),
                    ("Layout.Widgets.Drilldown", "DrilldownTableProps"),

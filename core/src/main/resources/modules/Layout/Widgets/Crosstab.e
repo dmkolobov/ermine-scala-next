@@ -56,7 +56,7 @@ module Layout.Widgets.Crosstab where
 
 import Control.Monoid using mappend
 import Field using getF
-import Layout.Doc using widget; type Node
+import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 import Layout.Fetch using {type Fetch; done; scanRelation}
 import Layout.Widgets.Format using type CellFormat
 import List using {foldl; map_List; sum'; empty_Bracket; cons_Bracket}
@@ -82,8 +82,12 @@ data CrosstabProps = CrosstabProps { crosstabTitle : String
                                    , grandTotal : Double
                                    , crosstabFormat : CellFormat }
 
+-- | The registry name, tied to the props type.
+crosstabName : WidgetName CrosstabProps
+crosstabName = WidgetName "crosstab"
+
 crosstab : CrosstabProps -> Node
-crosstab p = widget "crosstab" p
+crosstab p = widget crosstabName p
 
 -- | What `crosstabOf` scans: the relation, the two key fields, the measure,
 -- the headings, and the format the cells are shown with.  Server-side only.

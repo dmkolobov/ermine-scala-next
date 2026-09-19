@@ -8,4 +8,4 @@ import List using empty_Bracket; cons_Bracket
 data P = P { who : String }
 
 report : P -> Node
-report p = vflow [widget "text" "fine", widget "broken" id]
+report p = vflow [rawWidget "text" "fine", rawWidget "broken" id]

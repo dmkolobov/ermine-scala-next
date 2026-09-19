@@ -12,7 +12,7 @@ module Layout.Widgets.Scorecard where
 
 import Json using type Inline
 import Layout.Widgets.Format using type CellFormat
-import Layout.Doc using widget; type Node
+import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 
 data ScorecardProps r = ScorecardProps { title : String
                                        , cardLabel : String   -- relation column
@@ -21,8 +21,12 @@ data ScorecardProps r = ScorecardProps { title : String
                                        , cardFormat : CellFormat
                                        , cards : Inline r }
 
+-- | The registry name, tied to the props type.
+scorecardName : WidgetName (ScorecardProps r)
+scorecardName = WidgetName "scorecard"
+
 scorecard : ScorecardProps r -> Node
-scorecard p = widget "scorecard" p
+scorecard p = widget scorecardName p
 
 -- | No delta column.
 simpleScorecard : String -> String -> String -> CellFormat -> Inline r -> ScorecardProps r

@@ -15,7 +15,7 @@ module Layout.Widgets.Table where
 
 import Layout.Widgets.Format using type CellFormat; Default
 import List using empty_Bracket; cons_Bracket
-import Layout.Doc using widget; type Node
+import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 
 -- | runTabular's `colAlignments`: "left" | "right" after the adapter.
 data ColumnAlign = AlignLeft | AlignRight
@@ -45,8 +45,12 @@ data TableProps r = TableProps { columns : List TableColumn
 
 -- | `table` is an Ermine KEYWORD, so the smart constructor cannot be called that;
 -- the registry name on the wire is still "table".
+-- | The registry name, tied to the props type.
+tableName : WidgetName (TableProps r)
+tableName = WidgetName "table"
+
 tabular : TableProps r -> Node
-tabular p = widget "table" p
+tabular p = widget tableName p
 
 -- | Every knob at its legacy default.
 simpleTable : List TableColumn -> [..r] -> TableProps r

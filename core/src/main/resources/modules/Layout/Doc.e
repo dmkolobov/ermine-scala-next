@@ -37,9 +37,25 @@ data Node = Widget { name : String, props : Json }
 
 data Tab = Tab { label : String, content : Node }
 
--- a widget of the client's registry, its props encoded by toJson
-widget : String -> a -> Node
-widget n p = Widget n (toJson p)
+-- | The name a widget is registered under on the client, TIED TO THE PROPS
+-- TYPE it renders.  `p` is a phantom: a `WidgetName CrosstabProps` applies
+-- only to a `CrosstabProps`, so the string and the type travel together and
+-- `widget crosstabName (ScorecardProps ..)` is a type error, not an error
+-- box in the browser.  Each widget module exports its name (`tableName`,
+-- `scorecardName`, ..) beside its props, and its smart constructor is
+-- `widget thatName`.  Nothing of this is on the wire: the client still
+-- looks the name up as a string.
+data WidgetName p = WidgetName String
+
+-- | A widget of the client's registry, its props encoded by toJson.
+widget : WidgetName p -> p -> Node
+widget (WidgetName n) p = Widget n (toJson p)
+
+-- | The escape hatch: any name, any props, no check.  For a test, or for a
+-- widget the registry does not know yet; an unregistered name draws the
+-- client's error box.
+rawWidget : String -> a -> Node
+rawWidget n p = Widget n (toJson p)
 
 vflow : List Node -> Node
 vflow = VFlow

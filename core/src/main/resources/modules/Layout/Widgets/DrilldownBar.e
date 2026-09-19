@@ -14,7 +14,7 @@ module Layout.Widgets.DrilldownBar where
 -- client/src/charts.ts appends them in that order.
 
 import Layout.Widgets.Chart using type ChartMeta; type ChartSeries
-import Layout.Doc using widget; type Node
+import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 
 data DrilldownBarProps r = DrilldownBarProps { barMeta : ChartMeta
                                              , barSeries : ChartSeries
@@ -22,5 +22,9 @@ data DrilldownBarProps r = DrilldownBarProps { barMeta : ChartMeta
                                              , barChildColumn : String
                                              , barRows : [..r] }
 
+-- | The registry name, tied to the props type.
+drilldownBarName : WidgetName (DrilldownBarProps r)
+drilldownBarName = WidgetName "drilldownBar"
+
 drilldownBar : DrilldownBarProps r -> Node
-drilldownBar p = widget "drilldownBar" p
+drilldownBar p = widget drilldownBarName p

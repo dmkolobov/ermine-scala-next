@@ -213,8 +213,8 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
       "module " + module + " where\n\n" + importLines + "\n\n" +
       shape.decls.distinct.mkString("\n") + "\n\n" +
       "report : " + shape.ty + " -> Node\n" +
-      "report p = vflow [ widget \"params\" p" +
-      rels.zipWithIndex.map { case (r, i) => ", widget \"r" + i + "\" " + r.source }.mkString +
+      "report p = vflow [ rawWidget \"params\" p" +
+      rels.zipWithIndex.map { case (r, i) => ", rawWidget \"r" + i + "\" " + r.source }.mkString +
       " ]\n"
 
     def body(params: Json): String = {
@@ -495,10 +495,10 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   property("(b3) a report that is not Params -> Node is a 400 naming the reason") = secure {
     val head = "module %s where\n\nimport Builtin\nimport Int\nimport Json\nimport List\nimport Layout.Doc\n\n"
     val cases = List(
-      ("RgPoly",   "report : a -> Node\nreport _ = widget \"w\" 1\n",            "polymorphic"),
-      ("RgNotFn",  "report : Node\nreport = widget \"w\" 1\n",                   "not"),
+      ("RgPoly",   "report : a -> Node\nreport _ = rawWidget \"w\" 1\n",            "polymorphic"),
+      ("RgNotFn",  "report : Node\nreport = rawWidget \"w\" 1\n",                   "not"),
       ("RgWrongR", "report : Int -> Int\nreport n = n\n",                        "Layout.Doc.Node"),
-      ("RgBadP",   "report : (Int -> Int) -> Node\nreport _ = widget \"w\" 1\n", "function"),
+      ("RgBadP",   "report : (Int -> Int) -> Node\nreport _ = rawWidget \"w\" 1\n", "function"),
       // J3f: a fetching report must still end in a Node
       ("RgFetchI", "import Layout.Fetch\nreport : Int -> Fetch Int\nreport n = done n\n", "Layout.Doc.Node"))
     cases.foldLeft(proved: Prop) { case (acc, (m, body, want)) =>
@@ -513,7 +513,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   property("(b4) a report that throws is a 500, and the runner still serves the next request") = secure {
     writeModule("RgBoom",
       "module RgBoom where\n\nimport Builtin\nimport Error\nimport Int\nimport Json\nimport List\n" +
-      "import Layout.Doc\n\nreport : Int -> Node\nreport n = widget \"w\" (error \"boom\")\n")
+      "import Layout.Doc\n\nreport : Int -> Node\nreport n = rawWidget \"w\" (error \"boom\")\n")
     val (st, text) = render(runner, "RgBoom", "{\"" + Request.Params + "\":1}")
     val err = parsed(text).field("error").getOrElse(Json.jNull)
     val msg = err.field("message").flatMap(_.string).getOrElse("")
@@ -529,7 +529,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     val m = freshModule("RgExp")
     val rel = Rel(List(colPool.head), List(List(("\"a\"", Json.jString("a")))), "Deferred")
     writeModule(m, "module " + m + " where\n\n" + importLines + "\n\n" +
-                   "report : Int -> Node\nreport n = widget \"r\" " + rel.source + "\n")
+                   "report : Int -> Node\nreport n = rawWidget \"r\" " + rel.source + "\n")
     val (st, text) = render(clockedRunner, m, "{\"" + Request.Params + "\":1}")
     if (st != 200) falsified :| ("render " + st + ": " + text)
     else {
@@ -549,7 +549,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   property("(b6) the request body itself: shape, unknown keys, and the streamed strategy") = secure {
     val m = freshModule("RgReq")
     writeModule(m, "module " + m + " where\n\n" + importLines + "\n\n" +
-                   "report : Int -> Node\nreport n = widget \"w\" n\n")
+                   "report : Int -> Node\nreport n = rawWidget \"w\" n\n")
     def at(body: String): (Int, Option[String], String) = {
       val (st, text) = render(runner, m, body)
       val e = parsed(text).field("error").getOrElse(Json.jNull)
@@ -584,7 +584,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   property("(b7) a header-less empty relation is a 500 naming the hint, not a broken document") = secure {
     val m = freshModule("RgEmpty")
     writeModule(m, "module " + m + " where\n\n" + importLines + "\n\n" +
-                   "report : Int -> Node\nreport n = widget \"r\" (mkRelation# (toList# []))\n")
+                   "report : Int -> Node\nreport n = rawWidget \"r\" (mkRelation# (toList# []))\n")
     val (st, text) = render(runner, m, "{\"" + Request.Params + "\":1}")
     val e = parsed(text).field("error").getOrElse(Json.jNull)
     val msg = e.field("message").flatMap(_.string).getOrElse("")
@@ -777,7 +777,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     val m = freshModule("RgLog")
     val rel = Rel(List(colPool.head), List(List(("\"a\"", Json.jString("a")))), "bare")
     writeModule(m, "module " + m + " where\n\n" + importLines + "\n\n" +
-                   "report : Int -> Node\nreport n = widget \"r\" " + rel.source + "\n")
+                   "report : Int -> Node\nreport n = rawWidget \"r\" " + rel.source + "\n")
     // warm the report up outside the capture, so the load's own chatter is not in it
     render(runner, m, "{\"" + Request.Params + "\":1}")
     val (res, lines) = capturingLog(List("ermine.json.http", "ermine.json.doc")) {
@@ -1158,7 +1158,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     val m = "Lf%02d".format(i)
     "leaf" + i + " : Fetch Node\n" +
     "leaf" + i + " = scanRelation (mkRelation# (toList# [{ rgKey = " + i + ", rgName = \"" + m + "\" }]))\n" +
-    "                             (rows -> done (widget \"leaf\" (map_List (r -> r ! rgName) rows)))\n"
+    "                             (rows -> done (rawWidget \"leaf\" (map_List (r -> r ! rgName) rows)))\n"
   }
 
   /** A composition of leaves.  Every node preserves the order of its
@@ -1317,7 +1317,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
         .foreach(w => bad += ("(bind/done) " + w))
       // (3) bind_Fetch m done == m, over an m that scans
       val m = "(scanRelation (mkRelation# (toList# [{ rgKey = 1, rgName = \"Lf00\" }])) " +
-              "(rows -> done (vflow [" + s1.expr + ", widget \"leaf\" (map_List (r -> r ! rgName) rows)])))"
+              "(rows -> done (vflow [" + s1.expr + ", rawWidget \"leaf\" (map_List (r -> r ! rgName) rows)])))"
       sameDocument(decls, "Fetch Node", "bind_Fetch " + m + " done", decls, "Fetch Node", m, req)
         .foreach(w => bad += ("(bind/right) " + w))
       kinds += (if (req.contains("\"" + Wire.Deferred + "\"")) "deferred" else "inline")
@@ -1667,9 +1667,9 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   final case class StatsCase(fetches: List[Rel], wires: List[Rel], dflt: Delivery, threshold: Option[Long]) {
     def source(module: String): String = {
       val leaves = fetches.zipWithIndex.map { case (r, i) =>
-        "(scanRelation " + r.source + " (rows -> done (widget \"f" + i + "\" (map_List (x -> x ! rgKey) rows))))" }
+        "(scanRelation " + r.source + " (rows -> done (rawWidget \"f" + i + "\" (map_List (x -> x ! rgKey) rows))))" }
       val widgets = wires.zipWithIndex.map { case (r, j) =>
-        "(done (widget \"w" + j + "\" " + r.source + "))" }
+        "(done (rawWidget \"w" + j + "\" " + r.source + "))" }
       "module " + module + " where\n\n" + fetchImports + "\n\n" +
       "report : Int -> Fetch Node\nreport p = vflowF [ " +
       (leaves ++ widgets).mkString("\n                  , ") + " ]\n"
@@ -1746,7 +1746,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   property("(ip-fail) a scan that throws is one `cannot write <path>` 500: $.fetch[n] for a fetch scan, the document path for a wire relation") = secure {
     val boom = "(mkRelation# (toList# [{ rgKey = 0, rgName = \"" + RecordingScanner.Boom + "\" }]))"
     val good = "(mkRelation# (toList# [{ rgKey = 1, rgName = \"Lf01\" }]))"
-    def leaf(r: String) = "(scanRelation " + r + " (rows -> done (widget \"leaf\" (map_List (x -> x ! rgName) rows))))"
+    def leaf(r: String) = "(scanRelation " + r + " (rows -> done (rawWidget \"leaf\" (map_List (x -> x ! rgName) rows))))"
     def mod(name: String, body: String) =
       "module " + name + " where\n\n" + fetchImports + "\n\nreport : Int -> Fetch Node\nreport p = " + body + "\n"
     // the SECOND scan of the report throws
@@ -1756,7 +1756,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     val eF = parsed(textF).field("error").getOrElse(Json.jNull)
     // ...and a WIRE relation that throws, after a fetch scan that did not
     val mw = freshModule("RgBoomW")
-    writeModule(mw, mod(mw, "vflowF [ " + leaf(good) + ", done (widget \"w\" " + boom + ") ]"))
+    writeModule(mw, mod(mw, "vflowF [ " + leaf(good) + ", done (rawWidget \"w\" " + boom + ") ]"))
     val (stW, textW) = render(orderRunner, mw, params("1"))
     val eW = parsed(textW).field("error").getOrElse(Json.jNull)
     def msg(e: Json) = e.field("message").flatMap(_.string).getOrElse("")
@@ -1776,7 +1776,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     writeModule(m, "module " + m + " where\n\n" + fetchImports + "\nimport Bool\nimport Eq\n\n" +
       "one : Fetch Node\n" +
       "one = scanRelation (mkRelation# (toList# [{ rgKey = 1, rgName = \"Lf00\" }]))\n" +
-      "                   (rows -> done (widget \"leaf\" (map_List (x -> x ! rgKey) rows)))\n\n" +
+      "                   (rows -> done (rawWidget \"leaf\" (map_List (x -> x ! rgKey) rows)))\n\n" +
       "deep : Int -> Fetch Node\n" +
       "deep k = if (k == 0) one (bind_Fetch one (x -> deep (k - 1)))\n\n" +
       "report : Int -> Fetch Node\nreport p = deep " + (n - 1) + "\n")

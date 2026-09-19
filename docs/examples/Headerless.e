@@ -9,4 +9,4 @@ import Native.Relation
 data P = P { who : String }
 
 report : P -> Node
-report p = widget "table" (mkRelation# (toList# []))
+report p = rawWidget "table" (mkRelation# (toList# []))

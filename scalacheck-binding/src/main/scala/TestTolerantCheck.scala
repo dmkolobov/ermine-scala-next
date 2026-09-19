@@ -1063,16 +1063,16 @@ object TestTolerantCheck extends Properties("Tolerant check") {
         // the user (it is not in `knownHeadShown`).  J3i moved it from 63:9 to
         // 78:9: `headlineOf` now takes a `HeadlineSource`, whose declaration
         // sits above the `let`.
-        "Headline.e:78:9",
+        "Headline.e:82:9",
         // J3i (2026-09-18): the eight `let` bindings of `crosstabOf`
-        // (Layout/Widgets/Crosstab.e:119-126) -- `rk`, `ck`, `mv`, `rls`,
+        // (Layout/Widgets/Crosstab.e:123-130; +4 when the WidgetName declarations were added above the constructors) -- `rk`, `ck`, `mv`, `rls`,
         // `cls`, `cellSums`, `rowSums`, `colSums`, every one a local head
         // under the row constraint `r <- (h1, h2, h3, t)`, the same class as
-        // Headline.e:78:9 and Relation.e:39:7.  None is a hover shown to the
+        // Headline.e:82:9 and Relation.e:39:7.  None is a hover shown to the
         // user (none is in `knownHeadShown`).  The review fixes moved them
         // down eleven lines (the CASE paragraph of the module header).
-        "Crosstab.e:119:9", "Crosstab.e:120:9", "Crosstab.e:121:9", "Crosstab.e:122:9",
-        "Crosstab.e:123:9", "Crosstab.e:124:9", "Crosstab.e:125:9", "Crosstab.e:126:9")
+        "Crosstab.e:123:9", "Crosstab.e:124:9", "Crosstab.e:125:9", "Crosstab.e:126:9",
+        "Crosstab.e:127:9", "Crosstab.e:128:9", "Crosstab.e:129:9", "Crosstab.e:130:9")
       // FIX ROUND: the heads whose hover SHOWS a constraint -- the user-visible
       // claim, and the table in LSP-6.2c-HEADS.md Sec. 5.  Every one read at source
       // and hovered through the real server:

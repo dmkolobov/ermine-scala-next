@@ -32,7 +32,7 @@ import Bool
 import Double
 import Field using getF
 import Int
-import Layout.Doc using widget; type Node
+import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 import Layout.Fetch using {type Fetch; done; scanRelation}
 import Layout.Widgets.Format using {type CellFormat; Default}
 import List using {length; sum'; foldl; map_List; empty_Bracket; cons_Bracket}
@@ -49,8 +49,12 @@ data HeadlineProps = HeadlineProps { headlineTitle : String
                                    , largest : Double
                                    , headlineFormat : CellFormat }
 
+-- | The registry name, tied to the props type.
+headlineName : WidgetName HeadlineProps
+headlineName = WidgetName "headline"
+
 headline : HeadlineProps -> Node
-headline p = widget "headline" p
+headline p = widget headlineName p
 
 -- | The largest of the values, folded from the FIRST one: over rows that are
 -- all negative (a loss, a delta) the maximum is negative too, and 0.0 -- a

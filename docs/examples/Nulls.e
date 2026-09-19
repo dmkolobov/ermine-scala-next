@@ -16,6 +16,6 @@ field stamp : Timestamp
 data P = P { who : Maybe String }
 
 report : P -> Node
-report p = widget "table" (relation
+report p = rawWidget "table" (relation
   [ { city = "a", score = Some 1.5, ident = 9007199254740993L, stamp = timestampFromLong 1767625445123L }
   , { city = "b", score = Null Double, ident = 0L, stamp = timestampFromLong 0L } ])
