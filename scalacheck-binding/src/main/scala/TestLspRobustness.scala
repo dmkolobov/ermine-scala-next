@@ -37,8 +37,16 @@ import java.nio.file.{ Files, Path, Paths }
   */
 object TestLspRobustness extends Properties("LSP robustness") {
 
-  override def overrideParameters(p: Test.Parameters): Test.Parameters =
-    p.withMinSuccessfulTests(40)
+  override def overrideParameters(p: Test.Parameters): Test.Parameters = {
+    val q = p.withMinSuccessfulTests(40)
+    // -Dlsp.robust.seed=<base64 from a "failing seed" line> replays a run
+    sys.props.get("lsp.robust.seed").flatMap(s => org.scalacheck.rng.Seed.fromBase64(s).toOption)
+      .fold(q)(q.withInitialSeed)
+  }
+
+  private def trace(e: Throwable): String =
+    e.getClass.getName + ": " + e.getMessage + "\n    " +
+      e.getStackTrace.take(12).map(_.toString).mkString("\n    ")
 
   private val quiet: String => Unit = _ => ()
 
@@ -110,6 +118,53 @@ object TestLspRobustness extends Properties("LSP robustness") {
       Json.parse(s) match { case Left(_) | Right(_) => true }
     }
 
+  /** Frames with every way a header can be wrong: the length negative, zero,
+    * short, long, non-numeric, duplicated, missing, bare-LF terminated, the
+    * blank line missing, and one that claims more than the frame limit. */
+  private val genFrame: Gen[(String, Array[Byte])] = {
+    val body = genText.map(_.getBytes(UTF_8))
+    def hdr(len: String, sep: String = "\r\n", blank: Boolean = true) =
+      ("Content-Length: " + len + sep + (if (blank) sep else "")).getBytes(UTF_8)
+    body.flatMap { b =>
+      Gen.oneOf[(String, Array[Byte])](
+        ("exact", hdr(b.length.toString) ++ b),
+        ("exact-lf", hdr(b.length.toString, "\n") ++ b),
+        ("short", hdr(math.max(0, b.length - 1).toString) ++ b),
+        ("long", hdr((b.length + 1).toString) ++ b),
+        ("zero", hdr("0") ++ b),
+        ("negative", hdr("-1") ++ b),
+        ("nan", hdr("many") ++ b),
+        ("dup", ("Content-Length: 1\r\n" + "Content-Length: " + b.length + "\r\n\r\n").getBytes(UTF_8) ++ b),
+        ("missing", ("Content-Type: x\r\n\r\n").getBytes(UTF_8) ++ b),
+        ("noblank", hdr(b.length.toString, blank = false) ++ b),
+        ("huge", hdr((Wire.MaxFrame.toLong + 1).toString) ++ b),
+        ("max-int", hdr(Int.MaxValue.toString) ++ b))
+    }
+  }
+
+  property("A: a frame's header decides what the wire reads, and a header cannot make it allocate") =
+    forAll(genFrame) { case (kind, bytes) =>
+      val w = new Wire(new ByteArrayInputStream(bytes), OutputStream.nullOutputStream, quiet)
+      val t0 = System.nanoTime
+      val r  = w.receive()
+      val ms = (System.nanoTime - t0) / 1000000L
+      val bodyLen = bytes.length - (new String(bytes, UTF_8).indexOf("\n\n") match {
+        case -1 => new String(bytes, UTF_8).indexOf("\r\n\r\n") + 4
+        case i  => i + 2 })
+      val ok = kind match {
+        case "exact" | "exact-lf" | "dup" => r.exists(_.getBytes(UTF_8).length == bodyLen)
+        // one byte short may cut a multi-byte character, which decodes to a
+        // replacement: only the LENGTH IN CHARACTERS is comparable
+        case "short"                      => r.exists(_.length <= new String(bytes, UTF_8).length)
+        case "zero"                       => r == Some("")
+        case "long"                       => r.isEmpty      // eof inside the body
+        case "negative" | "nan" | "missing" | "noblank" => r.isEmpty
+        case "huge" | "max-int"           => r.isEmpty && ms < 1000
+        case _                            => true           // a shrunk kind
+      }
+      ok :| s"$kind: got ${r.map(_.length)} in ${ms}ms"
+    }
+
   property("A: the wire never throws on arbitrary bytes") =
     forAll(Gen.listOf(Gen.chooseNum(0, 255).map(_.toByte)).map(_.toArray)) { bytes =>
       val w = new Wire(new ByteArrayInputStream(bytes), OutputStream.nullOutputStream, quiet)
@@ -152,8 +207,9 @@ object TestLspRobustness extends Properties("LSP robustness") {
     out.toByteArray
   }
 
-  /** Run one Server over the traffic; answer (exit, every message it sent, the log). */
-  private def serve(ts: List[Traffic]): (Option[Int], List[Json], List[String]) = {
+  /** Run one Server over the traffic; answer (exit, every message it sent,
+    * the log, how many known notifications the handler saw). */
+  private def serve(ts: List[Traffic], stopAt: Option[Int] = None): (Option[Int], List[Json], List[String], Int) = {
     val out = new ByteArrayOutputStream
     val log = List.newBuilder[String]
     val server = new Server(new Wire(new ByteArrayInputStream(encode(ts)), out, log += _), log += _)
@@ -161,49 +217,71 @@ object TestLspRobustness extends Properties("LSP robustness") {
     server.onRequest("echo")   { p => p }
     server.onRequest("boom")   { _ => throw new RuntimeException("boom") }
     server.onRequest("refuse") { _ => throw RpcError(Rpc.RequestFailed, "refused") }
+    server.onRequest("stop")   { _ => server.stop(stopAt.getOrElse(0)); Json.Null }
     server.onNotification("known") { _ => notes += 1 }
     val exit = server.run()
-    (exit, frames(out.toByteArray).map(t => Json.parse(t).fold(e => sys.error("server sent unparseable JSON: " + e), identity)), log.result())
+    (exit, frames(out.toByteArray).map(t => Json.parse(t).fold(e => sys.error("server sent unparseable JSON: " + e), identity)), log.result(), notes)
+  }
+
+  /** What the server must send for one message, in arrival order: the
+    * server is single-threaded and answers as it reads. */
+  private def expected(t: Traffic): Option[Json => Boolean] = t match {
+    case Req(i, "echo", p)   => Some(j => id(j) == Some(Json.num(i)) && (j / "result") == Some(p))
+    case Req(i, "boom", _)   => Some(j => id(j) == Some(Json.num(i)) && errCode(j) == Some(Rpc.InternalError))
+    case Req(i, "refuse", _) => Some(j => id(j) == Some(Json.num(i)) && errCode(j) == Some(Rpc.RequestFailed))
+    case Req(i, _, _)        => Some(j => id(j) == Some(Json.num(i)) && errCode(j) == Some(Rpc.MethodNotFound))
+    case Garbage(_)          => Some(j => id(j) == Some(Json.Null) && errCode(j) == Some(Rpc.ParseError))
+    case NoMethodNoId        => Some(j => id(j) == Some(Json.Null) && errCode(j) == Some(Rpc.InvalidRequest))
+    case Note(_, _) | Reply(_, _) => None
   }
 
   private def id(j: Json): Option[Json]     = j / "id"
   private def errCode(j: Json): Option[Int] = j / "error" flatMap (_ / "code") flatMap (_.int)
 
-  property("A: the dispatcher answers every request exactly once and survives to EOF, whatever arrives") =
+  property("A: the dispatcher answers every message in order, once, with the right shape, and runs to EOF") =
     forAll(Gen.listOf(genTraffic)) { ts =>
-      val (exit, sent, _) = serve(ts)
-      val reqs    = ts.collect { case r: Req => r }
-      val garbage = ts.count { case _: Garbage => true; case NoMethodNoId => true; case _ => false }
-      val responses = sent.filter(j => id(j).isDefined)
-      // A client may reuse an id (its bug, not the server's): a response is
-      // well shaped if it fits ANY request that carried that id.
-      val byId: Map[Json, List[Req]] = reqs.groupBy(r => (Json.num(r.id): Json))
-      val answered = reqs.forall(r => responses.exists(j => id(j) == Some(Json.num(r.id))))
-      def fits(j: Json, r: Req): Boolean = r.method match {
-        case "echo"   => (j / "result") == Some(r.params)
-        case "boom"   => errCode(j) == Some(Rpc.InternalError)
-        case "refuse" => errCode(j) == Some(Rpc.RequestFailed)
-        case _        => errCode(j) == Some(Rpc.MethodNotFound)
-      }
-      val shapes = responses.forall { j =>
-        id(j) match {
-          case Some(Json.Null) => errCode(j).exists(c => c == Rpc.ParseError || c == Rpc.InvalidRequest)
-          case Some(i)         => byId.get(i).exists(_.exists(fits(j, _)))
-          case None            => true
-        }
-      }
-      val nullIds = responses.count(j => id(j) == Some(Json.Null))
+      val (exit, sent, log, notes) = serve(ts)
+      val want = ts.flatMap(expected)
+      val positional = sent.size == want.size && sent.zip(want).forall { case (j, p) => p(j) }
+      val known   = ts.count { case Note("known", _) => true; case _ => false }
+      val unknown = ts.count { case Note("unknown", _) => true; case _ => false }
+      val optional = ts.count { case Note("$/optional", _) => true; case _ => false }
       (exit.isEmpty :| "run() must return None at EOF (no stop() was called)") &&
-      (answered :| "a request went unanswered") &&
-      (shapes :| "a response had the wrong shape for its request") &&
-      ((nullIds == garbage) :| s"garbage frames: $garbage, id-null errors: $nullIds") &&
-      ((responses.size == reqs.size + garbage) :| s"${responses.size} responses for ${reqs.size} requests and $garbage garbage frames")
+      (positional :| s"${sent.size} messages sent for ${want.size} expected; first mismatch at ${sent.zip(want).indexWhere { case (j, p) => !p(j) }}") &&
+      ((notes == known) :| s"$known known notifications, handler saw $notes") &&
+      ((log.count(_ contains "ignoring notification unknown") == unknown) :| "unknown notifications are logged, one each") &&
+      ((!log.exists(_ contains "ignoring notification $/")) :| s"$optional optional notifications must not be logged")
+    }
+
+  property("A: stop() from a handler ends the loop with that code, and later messages are not answered") =
+    forAll(Gen.listOf(genTraffic), Gen.listOf(genTraffic), Gen.chooseNum(0, 9)) { (before, after, code) =>
+      val ts = before ++ List(Req(99, "stop", Json.Null)) ++ after
+      val (exit, sent, _, _) = serve(ts, Some(code))
+      val want = before.flatMap(expected) :+ ((j: Json) => id(j) == Some(Json.num(99)) && (j / "result") == Some(Json.Null))
+      (exit == Some(code)) :| s"exit $exit" &&
+        (sent.size == want.size && sent.zip(want).forall { case (j, p) => p(j) }) :| s"${sent.size} sent, ${want.size} expected before the stop"
+    }
+
+  property("A: idle work runs when the stream is quiet, and a throwing work is logged and does not end the loop") =
+    forAll(Gen.chooseNum(0, 4), Gen.oneOf(true, false)) { (pending0, throwing) =>
+      val out = new ByteArrayOutputStream
+      val log = List.newBuilder[String]
+      // one notification, then EOF: the loop sees a quiet stream after it
+      val server = new Server(new Wire(new ByteArrayInputStream(encode(List(Note("known", Json.Null)))), out, quiet), log += _)
+      var pending = pending0
+      var ran = 0
+      server.onNotification("known") { _ => () }
+      server.onIdle(5)(pending > 0) { pending -= 1; ran += 1; if (throwing) throw new RuntimeException("idle boom") }
+      val exit = server.run()
+      (exit.isEmpty :| "EOF ends the loop") &&
+        ((ran == pending0) :| s"idle work ran $ran times for $pending0 pending") &&
+        ((log.result().count(_ contains "idle work crashed") == (if (throwing) pending0 else 0)) :| "crashes are logged, one each")
     }
 
   property("A: an echo answers with its own params, byte for byte through the codec") =
     forAll(Gen.listOfN(3, genJson(3))) { ps =>
       val ts = ps.zipWithIndex.map { case (p, i) => Req(i + 1, "echo", p) }
-      val (_, sent, _) = serve(ts)
+      val (_, sent, _, _) = serve(ts)
       sent.map(j => j / "result") == ps.map(Some(_))
     }
 
@@ -239,15 +317,27 @@ object TestLspRobustness extends Properties("LSP robustness") {
     (walk(stdlibRoot) ++ walk(new File("core/examples").getAbsoluteFile))
       .filterNot(f => Option(f.getParentFile).exists(d => notGoodCode(d.getName)))
 
+  /** The LSP fixtures, broken ON PURPOSE (review B1): the corpus is silent
+    * by construction, so without these the cold-vs-warm comparison could
+    * only see a poisoned cache ADD diagnostics, never suppress them. */
+  private lazy val fixtureFiles: List[File] = walk(new File("tracker/lsp-tests").getAbsoluteFile)
+
   private def stdlibModules: List[String] = {
     val root = stdlibRoot.getPath + File.separator
     walk(stdlibRoot).map(_.getPath.stripPrefix(root).stripSuffix(".e").replace(File.separator, ".")).sorted
   }
 
-  /** A second root, outside every checkout, that part C writes modules into. */
+  /** A second root, outside every checkout, that part C writes modules into;
+    * removed, contents and all, when the JVM exits (`deleteOnExit` would
+    * leave a non-empty directory behind). */
   private lazy val extraRoot: Path = {
     val d = Files.createTempDirectory("ermine-lsp-robust")
-    d.toFile.deleteOnExit()
+    Runtime.getRuntime.addShutdownHook(new Thread(() => {
+      val s = Files.walk(d)
+      try s.sorted(java.util.Comparator.reverseOrder[Path]).forEach(p => Files.deleteIfExists(p))
+      catch { case _: java.io.IOException => () }
+      finally s.close()
+    }))
     d
   }
 
@@ -325,26 +415,51 @@ object TestLspRobustness extends Properties("LSP robustness") {
   }
 
   private def sane(ds: List[Json], text: String): List[String] = {
-    val nLines = text.count(_ == '\n') + 1
+    val lines  = text.split("\n", -1)
+    val nLines = lines.length
     def at(d: Json, w: String, f: String) = (d / "range" flatMap (_ / w) flatMap (_ / f) flatMap (_.int)) getOrElse -1
+    // an END may sit one past the line: "unexpected end of input" on a
+    // truncated buffer ends one character after the last one, and editors
+    // clamp it (Bool.e truncated to `other`: 25:5-25:6 on a 5-char line)
+    def inLine(l: Int, c: Int, slack: Int) = l >= 0 && l < nLines && c >= 0 && c <= lines(l).length + slack
     ds.flatMap { d =>
       val (sl, sc, el, ec) = (at(d, "start", "line"), at(d, "start", "character"), at(d, "end", "line"), at(d, "end", "character"))
       val msg = (d / "message" flatMap (_.str)) getOrElse ""
       val sev = (d / "severity" flatMap (_.int)) getOrElse -1
       List(
         if (sl < 0 || sc < 0 || el < 0 || ec < 0) Some("negative position " + d) else None,
-        if (sl >= nLines + 1 || el >= nLines + 1) Some(s"line beyond the buffer ($sl-$el of $nLines)") else None,
+        if (sl >= nLines || el >= nLines) Some(s"line beyond the buffer ($sl-$el of $nLines)") else None,
+        // E8: a character is a position IN the line's text (end may sit one past it)
+        if (!inLine(sl, sc, 0) || !inLine(el, ec, 1)) Some(s"character beyond its line ($sl:$sc-$el:$ec)") else None,
         if (el < sl || (el == sl && ec < sc)) Some("end before start " + d) else None,
         if (msg.trim.isEmpty) Some("empty message") else None,
         if (sev < 1 || sev > 4) Some("severity " + sev) else None).flatten
     }
   }
 
-  property("B: NEVER DARK -- a mutated corpus module is checked, in bounded time, with sane ranges, and poisons nothing") =
-    forAll(Gen.chooseNum(0, 100000), Gen.nonEmptyListOf(genEdit).map(_.take(3))) { (pick, edits) =>
+  /** A diagnostic as a comparable string: the build-stamp hint stripped
+    * (its five-second memo could straddle the two checks), and the ids of
+    * unification variables blanked -- FINDING ROBUST-1: the SIG-3 message
+    * ("the signature does not entail this row constraint") prints raw
+    * metavariables, `r^776214S`, so two checks of the SAME text publish
+    * different messages (tracker/lsp-tests/SigEntail.e, found by this
+    * property with an identity edit).  Everything else must match exactly. */
+  private def key(d: Json): String = Json.print(d match {
+    case Json.Obj(fs) => Json.Obj(fs.map {
+      case ("message", Json.Str(m)) =>
+        "message" -> Json.Str(m.split("\n\nnot built:")(0).replaceAll("\\^[0-9]+", "^N"))
+      case f => f })
+    case other => other
+  })
+
+  property("B: NEVER DARK -- a mutated corpus or fixture module is checked, in bounded time, with sane ranges, and poisons nothing") =
+    forAll(Gen.chooseNum(0, 100000), Gen.nonEmptyListOf(genEdit).map(_.take(3))) { (pick0, edits) =>
       residentLock.synchronized {
-        val files = corpusFiles
-        val f     = files(pick % files.size)
+        val pick  = math.abs(pick0)   // the shrinker may go negative
+        // half the picks from the fixtures, which HAVE diagnostics, so the
+        // cold-vs-warm comparison sees suppression as well as addition
+        val files = if (pick % 2 == 0) corpusFiles else fixtureFiles
+        val f     = files((pick / 2) % files.size)
         val orig  = new String(Files.readAllBytes(f.toPath), UTF_8)
         val mut   = edits.foldLeft(orig)((t, e) => applyEdit(t, e, files))
         val uri   = f.toURI.toString
@@ -357,12 +472,20 @@ object TestLspRobustness extends Properties("LSP robustness") {
         val dsMut = try Right(diagnose(f, docs)) catch { case e: Throwable => Left(e) }
         val ms = (System.nanoTime - t0) / 1000000L
         docs.put(uri, orig, 3)
-        val warm = diagnose(f, docs)
-        val problems = dsMut.toOption.map(sane(_, mut)).getOrElse(Nil)
-        (dsMut.isRight :| s"${f.getName} with $edits: the check THREW ${dsMut.left.toOption.map(e => e.getClass.getName + ": " + e.getMessage)}") &&
+        val warmOr = try Right(diagnose(f, docs)) catch { case e: Throwable => Left(e) }
+        val warm = warmOr.getOrElse(Nil)
+        val problems = try dsMut.toOption.map(sane(_, mut)).getOrElse(Nil) catch { case e: Throwable => List("sane threw: " + trace(e)) }
+        val same = warm.map(key).sorted == cold.map(key).sorted
+        // what the run actually exercised, in the report
+        collect(if (mut == orig) "edit was an identity" else "text changed")(
+        collect(if (cold.isEmpty) "cold: silent" else "cold: has diagnostics")(
+        collect(if (dsMut.toOption.exists(_.nonEmpty)) "mutated: has diagnostics" else "mutated: silent")(
+        (dsMut.isRight :| s"${f.getName} with $edits: the check THREW ${dsMut.left.toOption.map(trace)}") &&
+        (warmOr.isRight :| s"${f.getName} after $edits: the check of the ORIGINAL text THREW ${warmOr.left.toOption.map(trace)}") &&
         ((ms < 30000L) :| s"${f.getName} with $edits took ${ms}ms") &&
         (problems.isEmpty :| s"${f.getName} with $edits: $problems") &&
-        ((warm == cold) :| s"${f.getName}: after $edits the original publishes ${warm.size} diagnostic(s), cold ${cold.size}")
+        (same :| s"${f.getName}: after $edits the original publishes ${warm.size} diagnostic(s), cold ${cold.size}" +
+                  (if (warm.size == cold.size) s"\n    cold: ${cold.map(key).sorted}\n    warm: ${warm.map(key).sorted}" else "")))))
       }
     }
 
@@ -402,12 +525,22 @@ object TestLspRobustness extends Properties("LSP robustness") {
   private def tables(env: SessionEnv) =
     (env.loadedModules.keySet, env.termNames.keySet, env.cons.keySet, env.classes.keySet)
 
-  private def importsOf(env: SessionEnv): Map[String, Set[String]] =
-    env.loadedFiles.toList.flatMap { case (sf, m) => S.depCache.get(sf).map { case (_, d) => m -> d.imports } }.toMap
+  /** The import graph read OFF THE SOURCES with a regular expression --
+    * not off `Session.depCache`, which is what the server reads (review
+    * S3): `import X` / `export X` at the start of a line, block comments
+    * blanked first.  Only Filesystem-loaded modules have a source to read. */
+  private def importsOf(env: SessionEnv): Map[String, Set[String]] = {
+    val header = """(?m)^\s*(?:import|export)\s+([A-Z][\w.]*)""".r
+    env.loadedFiles.toList.collect { case (S.Filesystem(f, _), m) if new File(f).isFile =>
+      val text = new String(Files.readAllBytes(Paths.get(f)), UTF_8).replaceAll("(?s)\\{-.*?-\\}", "")
+      m -> header.findAllMatchIn(text).map(_.group(1)).toSet
+    }.toMap
+  }
 
   /** Loaded modules whose "imported by" closure is small enough to reload
-    * in well under a second; computed the SLOW way (fixpoint), which is the
-    * oracle the property compares the server's BFS against. */
+    * in well under a second; computed the SLOW way (fixpoint over the
+    * source-read graph), which is the oracle the property compares the
+    * server's depCache BFS against. */
   private def cheapModules(env: SessionEnv): List[(String, Set[String])] = {
     val imps = importsOf(env)
     def closure(m: String): Set[String] = {
@@ -444,6 +577,9 @@ object TestLspRobustness extends Properties("LSP robustness") {
     }
   }
 
+  private def leafTerms(env: SessionEnv): Set[String] =
+    env.termNames.keySet.collect { case g if g.module == "Rob.Leaf" => g.string }
+
   property("C: a broken save leaves the module and its dependents pending; the next good save brings them back") = secure {
     residentLock.synchronized {
       val env = resident.loadedEnv.get
@@ -453,7 +589,9 @@ object TestLspRobustness extends Properties("LSP robustness") {
       val leaf = extraRoot.resolve("Rob").resolve("Leaf.e")
       write(leaf, leafGood)
       if (!env.loadedModules.contains("Rob.Dep")) S.loadModules(List("Rob.Dep"))
+      resident.reloadStale()
       val before = tables(env)
+      try {
       // broken
       write(leaf, "module Rob.Leaf where\n\nleaf : Int\nleaf = = 1\n")
       val r1 = resident.reload(Set(leaf), Set()).get
@@ -463,9 +601,14 @@ object TestLspRobustness extends Properties("LSP robustness") {
       // deleted: still pending, still gone
       Files.delete(leaf)
       val r2 = resident.reload(Set(), Set(leaf)).get
-      // good again
-      write(leaf, leafGood)
+      // good again, with one MORE name: the witness that the disk was read
+      // (`leaf` itself must stay: Rob.Dep uses it)
+      write(leaf, leafGood + "leaf3 : Int\nleaf3 = 3\n")
       val r3 = resident.reload(Set(leaf), Set()).get
+      val terms3 = leafTerms(env)
+      // and back to the original, so the tables can be compared
+      write(leaf, leafGood)
+      val r4 = resident.reload(Set(leaf), Set()).get
       val after = tables(env)
       ((r1.modules == List("Rob.Dep", "Rob.Leaf")) :| s"r1 $r1") &&
         (r1.failure.isDefined :| "the broken save must fail") &&
@@ -473,8 +616,10 @@ object TestLspRobustness extends Properties("LSP robustness") {
         (gone :| "scrubbed modules must be out of the tables while pending") &&
         ((r2.failure.isDefined && r2.modules == List("Rob.Dep", "Rob.Leaf")) :| s"r2 $r2") &&
         ((r3.failure.isEmpty && r3.modules == List("Rob.Dep", "Rob.Leaf")) :| s"r3 $r3") &&
-        (resident.pending.isEmpty :| "nothing pending after the good save") &&
+        ((terms3 == Set("leaf", "leaf3")) :| s"after the extended save Rob.Leaf defines $terms3") &&
+        ((r4.failure.isEmpty && resident.pending.isEmpty) :| "nothing pending after the good save") &&
         ((after == before) :| "tables differ after break/delete/restore")
+      } finally { write(leaf, leafGood); resident.reloadStale() }
     }
   }
 
@@ -489,22 +634,84 @@ object TestLspRobustness extends Properties("LSP robustness") {
       if (!env.loadedModules.contains("Rob.Dep")) S.loadModules(List("Rob.Dep"))
       resident.reloadStale()   // settle
       val quiet0 = resident.reloadStale().get
-      write(leaf, leafGood.replace("leaf = 1", "leaf = 2"))
-      Files.setLastModifiedTime(leaf, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis + 2000))
-      val r = resident.reloadStale().get
-      (quiet0.nothing :| s"a settled tree reloads nothing, got $quiet0") &&
-        ((r.modules == List("Rob.Dep", "Rob.Leaf") && r.failure.isEmpty) :| s"got $r")
+      try {
+        write(leaf, leafGood + "leaf2 : Int\nleaf2 = 2\n")
+        Files.setLastModifiedTime(leaf, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis + 2000))
+        val r = resident.reloadStale().get
+        val terms = leafTerms(env)
+        (quiet0.nothing :| s"a settled tree reloads nothing, got $quiet0") &&
+          ((r.modules == List("Rob.Dep", "Rob.Leaf") && r.failure.isEmpty) :| s"got $r") &&
+          ((terms == Set("leaf", "leaf2")) :| s"the re-read Rob.Leaf defines $terms")
+      } finally { write(leaf, leafGood); resident.reloadStale() }
     }
   }
 
+  /** STALENESS step 2, end to end in this JVM (review S5): a document that
+    * uses a name from a module that just changed on disk.  The inference
+    * cache keys on the document's own text, so after the reload the stale
+    * answer can be reused; `Documents.dropCaches` is what makes the next
+    * check see the change, and `Diagnostics.recheckAll` is what publishes
+    * it for every open document. */
+  property("C: after a reload, dropCaches makes the next check see the change and recheckAll publishes it") = secure {
+    residentLock.synchronized {
+      val env = resident.loadedEnv.get
+      implicit val s: SessionEnv = env
+      implicit val su: Supply = resident.supply
+      implicit val con: Printer = resident.printer
+      val leaf = extraRoot.resolve("Rob").resolve("Leaf.e")
+      val use  = extraRoot.resolve("Rob").resolve("Use.e")
+      // Rob.Leaf starts with an extra name that Use.e depends on; the save
+      // under test removes it (Rob.Dep uses only `leaf` and stays healthy)
+      write(leaf, leafGood + "leaf2 : Int\nleaf2 = 2\n")
+      write(use, "module Rob.Use where\n\nimport Rob.Leaf\n\nuseIt : Int\nuseIt = leaf2\n")
+      if (!env.loadedModules.contains("Rob.Leaf")) S.loadModules(List("Rob.Leaf"))
+      resident.reloadStale()
+      try {
+        val docs = new Documents
+        val uri  = use.toUri.toString
+        docs.put(uri, new String(Files.readAllBytes(use), UTF_8), 1)
+        val d0 = Diagnostics.check(resident, docs, uri, use, quiet)
+        write(leaf, leafGood)
+        val r  = resident.reload(Set(leaf), Set()).get
+        val stale = Diagnostics.check(resident, docs, uri, use, quiet)      // may reuse the cached answer
+        docs.dropCaches()
+        val fresh = Diagnostics.check(resident, docs, uri, use, quiet)
+        // recheckAll publishes through a Server: read what it sent
+        val out = new ByteArrayOutputStream
+        val server = new Server(new Wire(new ByteArrayInputStream(Array()), out, quiet), quiet)
+        Diagnostics.recheckAll(server, resident, docs, quiet)
+        val published = frames(out.toByteArray).map(t => Json.parse(t).toOption.get)
+          .filter(j => (j / "method" flatMap (_.str)) == Some("textDocument/publishDiagnostics"))
+        val forUse = published.filter(j => (j / "params" flatMap (_ / "uri") flatMap (_.str)) == Some(uri))
+        val count  = forUse.headOption.flatMap(j => j / "params" flatMap (_ / "diagnostics") flatMap (_.arr)).map(_.size)
+        collect(if (stale.isEmpty) "without dropCaches: stale answer reused" else "without dropCaches: change seen")(
+          (d0.isEmpty :| s"before the change: $d0") &&
+          ((r.modules.contains("Rob.Leaf") && r.failure.isEmpty) :| s"reload $r") &&
+          ((fresh.size == 1 && (fresh.head / "message" flatMap (_.str)).exists(_ contains "undefined term")) :| s"after dropCaches: $fresh") &&
+          ((published.size == 1 && count == Some(1)) :| s"recheckAll published ${published.size} for the one open document, ${count} diagnostic(s)"))
+      } finally { write(leaf, leafGood); Files.deleteIfExists(use); resident.reloadStale() }
+    }
+  }
+
+  property("C: Documents answers garbage URIs with None and never throws") =
+    forAll(Gen.oneOf("", "http://x/y.e", "file:", "::", "file:///a b.e", "file:///%zz.e", "not a uri", "file:///", "\u0000")) { u =>
+      val docs = new Documents
+      (docs.pathFor(u).isEmpty || u.startsWith("file:///")) && docs.put(u, "module X where\n", 1).forall(_ => u.startsWith("file:///"))
+    }
+
   property("C: BuildStamp.annotate appends only to messages the build can explain and keeps every other field") =
-    forAll(genJson(2), Gen.oneOf("undefined term x", "does not export", "class missing: a.b", "failed to unify", "expected term atom", "")) { (extra, msg) =>
+    forAll(genJson(2), Gen.oneOf(
+        ("x.e:3:1: error: undefined term", true), ("Module 'Bool' does not export term 'q'.", true),
+        ("warning: class missing: a.b", true), ("member unloadable: p.q", true),
+        ("failed to unify Int with String", false), ("expected term atom", false), ("", false),
+        ("import X failed: Module not found: 'X'", false))) { (extra, mx) =>
+      val (msg, expect) = mx
       val d = Json.obj("range" -> extra, "severity" -> Json.num(1), "message" -> Json.Str(msg), "source" -> Json.Str("ermine"))
       val s = BuildStamp.Stale(Paths.get("/tmp/scala"), 2, Paths.get("/tmp/scala/A.scala"), 2000L, 1000L)
       val a = BuildStamp.annotate(d, s)
       val m = (a / "message" flatMap (_.str)).get
       (a / "range" == Some(extra)) && (a / "severity" == d / "severity") && (a / "source" == d / "source") &&
-        (if (BuildStamp.explains(msg)) m.startsWith(msg + "\n\nnot built:") && m.contains("A.scala") else m == msg)
+        (if (expect) m.startsWith(msg + "\n\nnot built:") && m.contains("A.scala") else m == msg)
     }
 
   property("C: BuildStamp.scalaDir prefers the stdlib root's checkout and skips a root that is not one") = secure {

@@ -227,6 +227,13 @@ object Json {
   }
 }
 
+object Wire {
+  /** The largest frame the server reads: 64 MiB, well above any document
+    * a full-sync didChange carries and well below what would matter to
+    * the heap. */
+  val MaxFrame: Int = 64 << 20
+}
+
 object Rpc {
   val ParseError     = -32700
   val InvalidRequest = -32600
@@ -256,6 +263,7 @@ final case class RpcError(code: Int, message: String)
   * bytes, not characters.
   */
 final class Wire(in: InputStream, out: OutputStream, log: String => Unit) {
+  import Wire.MaxFrame
 
   /** One framed message body, or None once the client closes the stream. */
   def receive(): Option[String] = {
@@ -284,6 +292,14 @@ final class Wire(in: InputStream, out: OutputStream, log: String => Unit) {
       else if (len < 0) {
         // Without a length there is no way back in sync on the stream.
         log("wire: headers without Content-Length; closing")
+        None
+      } else if (len > MaxFrame) {
+        // TestLspRobustness (review S2): the buffer is sized by the header,
+        // so a client that says two gigabytes would have this JVM try to
+        // allocate two gigabytes -- an OutOfMemoryError nothing catches.
+        // A frame that size is a broken client, and after it the stream
+        // cannot be resynchronised any more than after a missing length.
+        log(s"wire: Content-Length $len exceeds the $MaxFrame-byte frame limit; closing")
         None
       } else {
         val buf   = new Array[Byte](len)

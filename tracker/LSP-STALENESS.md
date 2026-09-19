@@ -147,8 +147,9 @@ explained list; the mtime-vs-content-hash limitation documented (STALE-9).
 
 Before this suite the server shell had no JVM tests (Rpc, Server, Documents, Resident's reload,
 BuildStamp: only the 628-check smoke), and the check path had semantic properties (TestTolerantCheck,
-65) but no "never dark" one. `scalacheck-binding/src/main/scala/TestLspRobustness.scala`, 18
-properties, 36 s including one resident boot, runs inside the `suites` gate.
+65) but no "never dark" one. `scalacheck-binding/src/main/scala/TestLspRobustness.scala`, 23
+properties, ~35 s including one resident boot, runs inside the `suites` gate. Replay a run
+with `-Dlsp.robust.seed=<the "failing seed" line>`.
 
 | Part | Property | Oracle |
 |---|---|---|
@@ -156,22 +157,34 @@ properties, 36 s including one resident boot, runs inside the `suites` gate.
 | A wire | one `send` is one `receive`; five frames back to back arrive in order | Content-Length counts UTF-8 bytes |
 | A wire | `Json.parse` is total on random ASCII, unicode and mutated-JSON text | no throw |
 | A wire | `Wire.receive` is total on random bytes | no throw |
-| A dispatcher | random traffic (requests to echo/throwing/refusing/unknown handlers, known/unknown/`$/` notifications, unparseable frames, id-only replies, method-less id-less messages): every request answered, each garbage frame one id-null error (ParseError/InvalidRequest), response shape fits a request with that id (ids may repeat: a client bug the server must survive), loop runs to EOF | counts and shapes over the server's own output, re-read through `Wire` |
+| A wire | structured frames: exact / bare-LF / duplicated header read the body; short reads a prefix; long, negative, non-numeric, missing, no blank line close the stream; a `Content-Length` above the 64 MiB limit (or `Int.MaxValue`) closes it in under a second WITHOUT allocating | body length, timing |
+| A dispatcher | random traffic (requests to echo/throwing/refusing/unknown handlers, known/unknown/`$/` notifications, unparseable frames, id-only replies, method-less id-less messages): the server's output equals, POSITIONALLY, the expected response per message (echo result = params; InternalError / RequestFailed / MethodNotFound; ParseError or InvalidRequest with a null id for garbage; nothing for notifications and replies), ids may repeat, the known-notification handler ran once per known notification, unknown ones are logged once each and `$/` ones never, the loop runs to EOF | the server's own output, re-read through `Wire`, against a sequence built from the input |
+| A dispatcher | `stop(n)` from a handler: `run()` returns `Some(n)`, everything before it was answered, nothing after | positional |
+| A dispatcher | `onIdle` work runs once per pending unit when the stream is quiet; a throwing work is logged and the loop continues to EOF | counts, log |
 | A dispatcher | echo returns its params through the codec | equality |
 | A dispatcher | `Server.ask` replies dispatch to their handler once; a stray reply is logged and dropped | handler log |
-| B never dark | a corpus module (stdlib + core/examples, 253 files) under 1-3 random edits (truncate, drop/insert/dup/swap lines, replace a char, splice another file; 27 junk lines incl. 80 open parens, a 3000-char comment, NUL bytes, U+2028, CJK) through `Diagnostics.check` against a warmed resident: returns, < 30 s, every range non-negative/ordered/inside the buffer, non-empty message, severity 1-4; then the ORIGINAL text in the same `Documents` publishes exactly the cold result | cold vs warm equality (cache poisoning) |
+| B never dark | a corpus module (stdlib + core/examples, 253 files) OR an LSP fixture (67 files, broken on purpose, half the picks) under 1-3 random edits (truncate, drop/insert/dup/swap lines, replace a char, splice another file; 27 junk lines incl. 80 open parens, a 3000-char comment, NUL bytes, U+2028, CJK) through `Diagnostics.check` against a warmed resident: returns, < 30 s, every range non-negative, ordered, inside the buffer and inside its line (end may sit one past: E8), non-empty message, severity 1-4; then the ORIGINAL text in the same `Documents` publishes the cold result as a multiset (build-stamp hint stripped, metavariable ids blanked: ROBUST-1) | cold vs warm; the report `collect`s how many picks had diagnostics cold (the suppression direction) and after the edit |
 | C roots | `moduleUnder` inverts `<root>/A/B.e`; `.txt` and other roots answer None | generated names |
 | C roots | `checkoutRootOf` finds the checkout's stdlib from a stdlib file and from `tracker/lsp-tests`; a temp dir has none | fixed paths |
 | C roots | the resident (booted with a temp root and the source stdlib root ahead of the classpath) read `Bool` and `Layout` from the source tree | `loadedFiles` |
-| C reload | a random loaded module with a small importer closure: the reloaded set equals the closure computed independently by fixpoint over `depCache`, no failure, nothing pending, and `(loadedModules, termNames, cons, classes)` key sets are unchanged | fixpoint oracle vs the server's BFS |
+| C reload | a random loaded module with a small importer closure: the reloaded set equals the closure computed by fixpoint over an import graph READ OFF THE SOURCES with a regex (not `depCache`, which the server reads), no failure, nothing pending, and `(loadedModules, termNames, cons, classes)` key sets are unchanged | independent graph |
 | C reload | paths the resident never loaded reload nothing | tables unchanged |
-| C reload | temp modules `Rob.Leaf` <- `Rob.Dep` under the temp root: a broken save fails, leaves both pending and out of the tables; a delete keeps them pending; a good save reloads both and the tables equal the start | `pending`, `Reloaded`, tables |
-| C reload | `reloadStale` on a settled tree reloads nothing; after a write with a moved mtime it reloads exactly the pair | `Reloaded` |
+| C reload | temp modules `Rob.Leaf` <- `Rob.Dep` under the temp root: a broken save fails, leaves both pending and out of the tables; a delete keeps them pending; a save that ADDS a name reloads both and the new name is in `termNames` (the disk was read); the original save brings the tables back to the start | `pending`, `Reloaded`, tables, names |
+| C reload | `reloadStale` on a settled tree reloads nothing; after a write with a moved mtime it reloads exactly the pair and the added name is there | `Reloaded`, names |
+| C step 2 | `Rob.Use` (open document) uses a name of `Rob.Leaf`; the name is removed on disk and the module reloaded: after `Documents.dropCaches` the check reports one undefined term, and `Diagnostics.recheckAll` through a `Server` publishes exactly one `publishDiagnostics` with it | the server's own output |
+| C input | `Documents.pathFor`/`put` on garbage URIs answer None and never throw | no throw |
 | C stamp | `annotate` appends only to explainable messages and keeps range/severity/source; `scalaDir` skips a root that is not a checkout | generated diagnostics |
 
-First run: 16/18; the two falsifications were oracle bugs (a `Map` keyed by id kept the last of two
-same-id requests; an ordering assumption between properties ScalaCheck runs in parallel). No server
-defect found by the suite. Second run 18/18.
+Runs: 16/18 (two oracle bugs: a `Map` keyed by id kept the last of two same-id requests; an
+ordering assumption between properties ScalaCheck runs in parallel), 18/18; then the Fable review
+(no vacuous property; the never-dark pool was silent by construction so suppression was blind;
+notifications were never asserted; positional oracle; independent graph; witnesses that the disk
+was read; step-2 end to end; kill-safe temp dir) and, by reading, the frame-size hole: `Wire`
+allocated a buffer of whatever `Content-Length` said, so a client claiming 2 GB was an
+OutOfMemoryError nothing catches -- FIXED, 64 MiB limit (`Wire.MaxFrame`), pinned by the frame
+property. Strengthened suite: 19/23 (three witnesses of mine renamed the name `Rob.Dep` uses, so the
+reload correctly failed; the new column bound flagged an end-of-input diagnostic one past the last
+character, allowed as slack), then ROBUST-1 below (a real server finding), then 23/23 twice.
 
 Not covered here (still smoke-only): navigation, hover, completion, rename, symbols, quick-fix
 requests over the wire; the debounce loop end to end (TestEditorBuffers has the policy);
@@ -196,5 +209,6 @@ watcher registration and `didChangeWatchedFiles` handling in `Main` (the JVM sui
 - STALE-7: `Resident.normalize` does not resolve symlinks or case, so a `moduleRoots` entry spelled through a symlink (or in another case than the folder VS Code watches) never matches an event's path; workspace-derived roots match by construction. `toRealPath` when the path exists, if it ever bites.
 - STALE-8: 0.1.3 extension users get the watcher and the reloads with the new server (the client library handles both); only the palette entry **Ermine: Reload Modules** needs 0.1.4.
 - STALE-2: DONE (step 3). Only `core` is compared; a name added in `parsers/` or `machines/` Scala is not covered.
+- ROBUST-1 (found by TestLspRobustness B, identity edit on `tracker/lsp-tests/SigEntail.e`): the SIG-3 diagnostic "the signature does not entail this row constraint" prints raw metavariables with their ids (`wanted   r^776214S <- ((|SigEntail.health|), _^776216A)`), so two checks of the same text publish two different messages -- the squiggle's text changes on every keystroke. E11a canonicalised the constraint FORM but not this rendering. Fix: print the wanted/given constraints through the canonical pretty-printer (fresh letters), as hover does. The suite blanks `^<digits>` when comparing.
 - STALE-9: the stamp is mtime and zinc stamps sources by content hash, so a `.scala` whose mtime moved without a content change (branch switch leaving it identical, `cp` without `-p`, a killed smoke before the sidecar existed) reads as "newer" until some compile writes a class; `sbt core/compile` on such a tree does nothing. Accepted for a hint that says "if"; a content-hash stamp (zinc's `inc_compile_3.zip`?) is the fix if it ever bites.
 - STALE-3: `Resident.checkoutRootOf` walks to the filesystem root on every check of a file outside any checkout (a handful of `stat`s); memoise per directory if it ever shows in the phase timers.
