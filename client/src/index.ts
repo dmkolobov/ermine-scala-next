@@ -15,6 +15,7 @@ export * from "./legacy";
 export * from "./charts";
 export { scorecardWidget, deltaDirection } from "./widgets/scorecard";
 export { headlineWidget, HEADLINE_FIGURES } from "./widgets/headline";
+export { crosstabWidget, EMPTY_CELL, TOTAL_LABEL } from "./widgets/crosstab";
 export { WIDGET_PROP_SCHEMAS, UNSUPPORTED_WIDGETS } from "./generated";
 
 import type { Registry } from "./dispatcher";
@@ -23,6 +24,7 @@ import { drilldownTableWidget, tableWidget } from "./legacy";
 import { axisChartWidget, drilldownBarWidget, pieChartWidget, styleBoxWidget } from "./charts";
 import { scorecardWidget } from "./widgets/scorecard";
 import { headlineWidget } from "./widgets/headline";
+import { crosstabWidget } from "./widgets/crosstab";
 
 /** Every widget Stage 3 ships.
  *
@@ -38,6 +40,7 @@ export function defaultRegistry(env?: FormatEnv): Registry {
     drilldownTable: drilldownTableWidget(env) as Registry[string],
     scorecard: scorecardWidget(env) as Registry[string],
     headline: headlineWidget(env) as Registry[string],
+    crosstab: crosstabWidget(env) as Registry[string],
     axisChart: axisChartWidget() as Registry[string],
     pieChart: pieChartWidget(false, env) as Registry[string],
     drilldownPieChart: pieChartWidget(true, env) as Registry[string],

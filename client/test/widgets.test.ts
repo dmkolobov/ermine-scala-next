@@ -230,6 +230,74 @@ test("(w-headline) the headline's DOM: the count raw, the two measurements throu
     ["3", String(props.total), String(props.largest)]);
 });
 
+test("(w-crosstab) a 2x3 matrix with a gap: the header row, the row labels, the formatted cells and the em dash", async () => {
+  const { document, target } = newDom();
+  const props = {
+    crosstabTitle: "Sales by region and month",
+    rowHeader: "Region",
+    colHeader: "Month",
+    crosstabRowLabels: ["north", "south"],
+    crosstabColLabels: ["2026-01", "2026-02", "2026-03"],
+    // south sold nothing in March: a pair NO ROW HAD, which is not a zero
+    cells: [[2040.5, 2310.25, 1000], [615.75, 1990, null]],
+    rowTotals: [5350.75, 2605.75],
+    colTotals: [2656.25, 4300.25, 1000],
+    grandTotal: 7956.5,
+    crosstabFormat: { tag: "Currency", color: false, negParens: false, symbol: "$", places: 2 },
+  };
+  const result = await render(target, parseDocument(docOf({ tag: "Widget", name: "crosstab", props })),
+    defaultRegistry(), { document, fetchData: async () => rel });
+  assert.deepStrictEqual(result.errors, []);
+
+  const section = target.querySelector("section.ermine-crosstab") as HTMLElement;
+  assert.ok(section);
+  assert.equal(section.querySelector(".ermine-crosstab-title")?.textContent, "Sales by region and month");
+  // the corner cell says what each axis is
+  assert.equal(section.querySelector(".ermine-crosstab-row-header")?.textContent, "Region");
+  assert.equal(section.querySelector(".ermine-crosstab-col-header")?.textContent, "Month");
+  // the header row: the corner, one <th> per column label, and the totals column
+  assert.deepStrictEqual(
+    Array.from(section.querySelectorAll("thead th")).slice(1).map((th) => th.textContent),
+    ["2026-01", "2026-02", "2026-03", "Total"]);
+
+  const env = defaultFormatEnv(document);
+  const fmt = formatDisplay(props.crosstabFormat as CellFormat, env);
+  const bodyRows = Array.from(section.querySelectorAll("tbody tr"));
+  assert.deepStrictEqual(bodyRows.map((tr) => tr.querySelector("th")?.textContent), ["north", "south"]);
+  // every cell through crosstabFormat, the missing pair as an em dash
+  assert.deepStrictEqual(
+    bodyRows.map((tr) => Array.from(tr.querySelectorAll("td")).map((td) => td.textContent)),
+    [[String(fmt([2040.5])), String(fmt([2310.25])), String(fmt([1000])), String(fmt([5350.75]))],
+     [String(fmt([615.75])), String(fmt([1990])), "—", String(fmt([2605.75]))]]);
+  // ...and the format is the one that was sent: String() of the numbers is not it
+  assert.notEqual(bodyRows[0]!.querySelectorAll("td")[0]!.textContent, String(2040.5));
+  // only the missing pair is marked empty
+  assert.equal(section.querySelectorAll("td.ermine-crosstab-empty").length, 1);
+  assert.equal(section.querySelector("td.ermine-crosstab-empty")?.textContent, "—");
+  // the totals row
+  assert.deepStrictEqual(
+    Array.from(section.querySelectorAll("tfoot td")).map((td) => td.textContent),
+    [String(fmt([2656.25])), String(fmt([4300.25])), String(fmt([1000])), String(fmt([7956.5]))]);
+  assert.equal(section.querySelector("tfoot th")?.textContent, "Total");
+  assert.equal(section.querySelector(".ermine-crosstab-no-rows"), null);
+});
+
+test("(w-crosstab-empty) a scan that found no rows is two empty axes and no grid", async () => {
+  const { document, target } = newDom();
+  const props = {
+    crosstabTitle: "Sales", rowHeader: "Region", colHeader: "Month",
+    crosstabRowLabels: [], crosstabColLabels: [], cells: [],
+    rowTotals: [], colTotals: [], grandTotal: 0,
+    crosstabFormat: { tag: "Default", args: [] },
+  };
+  const result = await render(target, parseDocument(docOf({ tag: "Widget", name: "crosstab", props })),
+    defaultRegistry(), { document, fetchData: async () => rel });
+  assert.deepStrictEqual(result.errors, []);
+  const section = target.querySelector("section.ermine-crosstab") as HTMLElement;
+  assert.equal(section.querySelectorAll("tbody tr").length, 0);
+  assert.equal(section.querySelector(".ermine-crosstab-no-rows")?.textContent, "no rows");
+});
+
 test("(w-sorts) both sort directions reach runTabular as the strings DataTables names its comparator with", async () => {
   for (const [descending, want] of [[true, "desc"], [false, "asc"]] as const) {
     const { document, target } = newDom();

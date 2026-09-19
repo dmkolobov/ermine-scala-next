@@ -49,7 +49,7 @@ data Query = Query { tabsFor : List String, topN : Int }
 -- fragment 1: the headline of one region.  The widget's own constructor
 -- scans; the fragment is a function of the region name.
 regionHeadline : String -> Fetch Node
-regionHeadline r = headlineOf "Sales" r amount (filterEq region r sales)
+regionHeadline r = headlineOf (HeadlineSource "Sales" r amount (filterEq region r sales))
 
 -- fragment 2: a fold in Ermine over rows delivered in day order, joined
 -- back to the targets IN SQL (FetchRunning's body; a running total itself

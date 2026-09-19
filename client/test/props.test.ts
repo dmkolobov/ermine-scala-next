@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import {
   TablePropsSchema, DrilldownTablePropsSchema, ScorecardPropsSchema, HeadlinePropsSchema,
+  CrosstabPropsSchema,
   AxisChartPropsSchema, PieChartPropsSchema, StyleBoxPropsSchema, DrilldownBarPropsSchema,
   CellFormatSchema, DocNodeSchema, WIDGET_PROP_SCHEMAS, UNSUPPORTED_WIDGETS,
 } from "../src/generated";
@@ -130,6 +131,29 @@ test("(p-headline) HeadlineProps as declared; no relation at all", () => {
   }).success, false);
 });
 
+test("(p-crosstab) CrosstabProps as declared; a cell is a number OR null", () => {
+  assert.deepStrictEqual(keysOf(CrosstabPropsSchema),
+    ["cells", "colHeader", "colTotals", "crosstabColLabels", "crosstabFormat", "crosstabRowLabels",
+     "crosstabTitle", "grandTotal", "rowHeader", "rowTotals"]);
+  // nothing is optional: a `Maybe` INSIDE a list is a nullable element, not an
+  // absent key -- the encoder omits a key only for a named Maybe FIELD
+  assert.deepStrictEqual(optionalKeys(CrosstabPropsSchema), []);
+  const ok = {
+    crosstabTitle: "T", rowHeader: "Region", colHeader: "Month",
+    crosstabRowLabels: ["north", "south"], crosstabColLabels: ["jan", "feb", "mar"],
+    cells: [[1.5, null, 2.5], [null, 3, 4]],
+    rowTotals: [4, 7], colTotals: [1.5, 3, 6.5], grandTotal: 11,
+    crosstabFormat: { tag: "Default", args: [] },
+  };
+  assert.equal(CrosstabPropsSchema.safeParse(ok).success, true);
+  // a null is a pair no row had; a STRING there is not a cell
+  assert.equal(CrosstabPropsSchema.safeParse({ ...ok, cells: [["x", null, 2.5], [null, 3, 4]] }).success, false);
+  // ...and the matrix is a matrix: a bare number is not a row
+  assert.equal(CrosstabPropsSchema.safeParse({ ...ok, cells: [1.5, 2.5] }).success, false);
+  // the totals carry no nulls
+  assert.equal(CrosstabPropsSchema.safeParse({ ...ok, rowTotals: [4, null] }).success, false);
+});
+
 test("(p-format) every CellFormat constructor and its fields", () => {
   assert.deepStrictEqual(unionArms(CellFormatSchema), {
     Default: ["args"],
@@ -240,7 +264,7 @@ test("(p-relation-guard) isWireRelation does not mistake a props record for a re
 
 test("(p-registry) every registry name has a generated schema, and treeMap has none", () => {
   assert.deepStrictEqual(Object.keys(WIDGET_PROP_SCHEMAS).sort(),
-    ["axisChart", "drilldownBar", "drilldownPieChart", "drilldownTable", "headline",
+    ["axisChart", "crosstab", "drilldownBar", "drilldownPieChart", "drilldownTable", "headline",
      "pieChart", "scorecard", "styleBox", "table"]);
   // the two pie names share ONE props type, as Layout/Widgets/PieChart.e declares
   assert.equal(WIDGET_PROP_SCHEMAS["pieChart"], WIDGET_PROP_SCHEMAS["drilldownPieChart"]);

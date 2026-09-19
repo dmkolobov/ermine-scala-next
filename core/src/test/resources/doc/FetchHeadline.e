@@ -57,7 +57,7 @@ report q =
       -- nothing to scan: the pure constructor, with the numbers in hand
       (done (headline (HeadlineProps "Sales" (place q) 0 0.0 0.0 Default)))
       (vflowF
-        [ headlineOf "Sales" (place q) amount (picked q)
+        [ headlineOf (HeadlineSource "Sales" (place q) amount (picked q))
         , done (tabular (simpleTable [ textColumn "region" "Region"
                                      , textColumn "day" "Day"
                                      , numberColumn "amount" "Amount" (Currency False False "$" 2) ]

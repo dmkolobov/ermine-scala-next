@@ -36,7 +36,7 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     Map("Builtin" -> all, "Test" -> all, "Json" -> all, "List" -> all, "Maybe" -> all,
         "Layout.Doc" -> all, "Layout.Widgets.Format" -> all, "Layout.Widgets.Table" -> all,
         "Layout.Widgets.Drilldown" -> all, "Layout.Widgets.Scorecard" -> all,
-        "Layout.Widgets.Headline" -> all,
+        "Layout.Widgets.Headline" -> all, "Layout.Widgets.Crosstab" -> all,
         "Layout.Widgets.Chart" -> all, "Layout.Widgets.AxisChart" -> all,
         "Layout.Widgets.PieChart" -> all, "Layout.Widgets.StyleBox" -> all,
         "Layout.Widgets.DrilldownBar" -> all,
@@ -261,6 +261,50 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
         max + " " + f._1 + "))",
       "headline", "Layout.Widgets.Headline", "HeadlineProps", "no-relation" :: f._2)
 
+  /** J3i: the crosstab.  Like the headline its props carry NO relation --
+    * `crosstabOf` scanned one server-side and only the matrix travels -- and
+    * unlike every other widget here a cell may be ABSENT: an Ermine `Nothing`
+    * INSIDE a list is `null` on the wire, not a dropped key (the encoder's
+    * omit-the-key rule is for a named field).  The totals are computed from
+    * the generated cells, so a generated document is a crosstab that adds up.
+    *
+    * Non-negative literals, for `headlineSrc`'s reason: a bare `-1.5` as an
+    * argument parses as the operator `-`.  The signed cases live in
+    * TestRunner's (fxc-1), where the numbers sit inside a record literal. */
+  val crosstabSrc: Gen[WidgetSrc] =
+    for {
+      t    <- Gen.alphaNumStr
+      rh   <- Gen.alphaNumStr
+      ch   <- Gen.alphaNumStr
+      nr   <- Gen.choose(0, 3)
+      nc   <- Gen.choose(0, 3)
+      rls  <- Gen.listOfN(nr, Gen.alphaNumStr.map(_.take(4)))
+      cls  <- Gen.listOfN(nc, Gen.alphaNumStr.map(_.take(4)))
+      cs   <- Gen.listOfN(nr, Gen.listOfN(nc, Gen.frequency(
+                (1, Gen.const(None: Option[Double])),
+                (3, Gen.choose(0, 99999).map(v => Some(v / 8.0))))))
+      f    <- cellFormatSrc(2)
+    } yield {
+      // distinct labels, as `crosstabOf` produces them
+      val rowLabels = rls.zipWithIndex.map { case (l, i) => "r" + i + l }
+      val colLabels = cls.zipWithIndex.map { case (l, i) => "c" + i + l }
+      def lits(xs: List[String]) = xs.map(x => "\"" + x + "\"").mkString("[", ", ", "]")
+      val cells = cs.map(row => row.map {
+        case None    => "Nothing"
+        case Some(v) => "(Just " + v + ")"
+      }.mkString("[", ", ", "]")).mkString("[", ", ", "]")
+      val rowTotals = cs.map(_.flatten.sum)
+      val colTotals = (0 until nc).toList.map(j => cs.flatMap(_.lift(j).flatten).sum)
+      val gap = cs.exists(_.exists(_.isEmpty))
+      WidgetSrc(List(),
+        "(crosstab (CrosstabProps \"" + t.take(8) + "\" \"" + rh.take(8) + "\" \"" + ch.take(8) + "\" " +
+          lits(rowLabels) + " " + lits(colLabels) + " " + cells + " " +
+          rowTotals.mkString("[", ", ", "]") + " " + colTotals.mkString("[", ", ", "]") + " " +
+          rowTotals.sum + " " + f._1 + "))",
+        "crosstab", "Layout.Widgets.Crosstab", "CrosstabProps",
+        "no-relation" :: (if (gap) "crosstab-gap" else "crosstab-full") :: f._2)
+    }
+
   // =====================================================================
   // J3e: the chart and style-box generators
 
@@ -424,6 +468,7 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
 
   val widgetSrc: Gen[WidgetSrc] =
     Gen.frequency((3, tableSrc), (2, drilldownSrc), (2, scorecardSrc), (2, headlineSrc),
+                  (2, crosstabSrc),
                   (3, axisChartSrc), (2, pieSrc), (2, drilldownPieSrc),
                   (2, styleBoxSrc), (2, drilldownBarSrc))
 
@@ -506,6 +551,7 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
          ("drilldownTable", "Layout.Widgets.Drilldown", "DrilldownTableProps"),
          ("scorecard", "Layout.Widgets.Scorecard", "ScorecardProps"),
          ("headline", "Layout.Widgets.Headline", "HeadlineProps"),
+         ("crosstab", "Layout.Widgets.Crosstab", "CrosstabProps"),
          ("axisChart", "Layout.Widgets.AxisChart", "AxisChartProps"),
          // both pie registry names come off the ONE props type
          ("pieChart", "Layout.Widgets.PieChart", "PieChartProps"),
@@ -629,7 +675,7 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     val bad = results.collect { case Left(m) => m }
     val tags = results.collect { case Right(t) => t }.flatten.toSet
     val wantWidgets = Set("widget-table", "widget-drilldownTable", "widget-scorecard",
-                          "widget-headline",
+                          "widget-headline", "widget-crosstab",
                           "widget-axisChart", "widget-pieChart", "widget-drilldownPieChart",
                           "widget-styleBox", "widget-drilldownBar")
     val wantFormats = Set("Default", "Verbatim", "Markdown", "Constant", "Percentage", "Currency",
@@ -650,6 +696,10 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
       ((wantKinds -- tags).isEmpty :| ("deliveries never seen: " + (wantKinds -- tags))) &&
       ((wantWraps -- tags).isEmpty :| ("relation wrappers never generated: " + (wantWraps -- tags))) &&
       ((wantChart -- tags).isEmpty :| ("chart shapes never generated: " + (wantChart -- tags))) &&
+      // J3i: both crosstab shapes -- one with an absent cell and one without --
+      // so the `null` arm of `cells` is not merely declared
+      ((Set("crosstab-gap", "crosstab-full") -- tags).isEmpty :|
+        ("crosstab shapes never generated: " + (Set("crosstab-gap", "crosstab-full") -- tags))) &&
       (tags.contains("mutant-rejected") :| "no mutation was ever refused -- (a) is vacuous")
   }
 
@@ -684,6 +734,27 @@ object TestWidgets extends Properties("widget prop types (J3d)") {
     val sb = new java.lang.StringBuilder
     Write.doc[Id](Doc.document(doc), sb, WriteConfig(), cache())(new TestDoc.ListScanner, Guard.id)
     (sb.toString.contains("\"cardFormat\":{\"tag\":\"Default\",\"args\":[]}") :| sb.toString)
+  }
+
+  property("(a-pin5) the wire spelling of a crosstab: a Nothing INSIDE a list is a null ELEMENT") = secure {
+    val decls = List("gv : Node",
+      "gv = crosstab (CrosstabProps \"T\" \"Region\" \"Month\" [\"north\", \"south\"] [\"jan\", \"feb\"] " +
+        "[[Just 1.5, Nothing], [Nothing, Just 2.0]] [1.5, 2.0] [1.5, 2.0] 3.5 Default)").mkString("\n")
+    val rt = fixture.defAndEval(decls, "gv", imps)
+    val doc = Doc.fromRuntime(rt).fold(e => sys.error(e.report), identity)
+    val sb = new java.lang.StringBuilder
+    Write.doc[Id](Doc.document(doc), sb, WriteConfig(), cache())(new TestDoc.ListScanner, Guard.id)
+    // the pair no row had is `null` where the number would be -- NOT an absent
+    // key (that is what a named `Maybe` FIELD does, e.g. ScorecardProps.cardDelta
+    // in (a-pin)), and not a hole in the array
+    val want =
+      "{\"version\":1,\"settings\":{},\"root\":{\"tag\":\"Widget\",\"name\":\"crosstab\",\"props\":" +
+      "{\"crosstabTitle\":\"T\",\"rowHeader\":\"Region\",\"colHeader\":\"Month\"," +
+      "\"crosstabRowLabels\":[\"north\",\"south\"],\"crosstabColLabels\":[\"jan\",\"feb\"]," +
+      "\"cells\":[[1.5,null],[null,2.0]]," +
+      "\"rowTotals\":[1.5,2.0],\"colTotals\":[1.5,2.0],\"grandTotal\":3.5," +
+      "\"crosstabFormat\":{\"tag\":\"Default\",\"args\":[]}}}}"
+    (sb.toString ?= want) :| ("got " + sb.toString)
   }
 
   property("(a-pin4) the wire spelling of an axis chart: nullary variant, absent bounds") = secure {

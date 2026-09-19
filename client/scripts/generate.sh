@@ -26,6 +26,7 @@ types=(
   "Layout.Widgets.StyleBox:StyleBoxProps:styleBox:StyleBoxPropsSchema"
   "Layout.Widgets.DrilldownBar:DrilldownBarProps:drilldownBar:DrilldownBarPropsSchema"
   "Layout.Widgets.Headline:HeadlineProps:headline:HeadlinePropsSchema"
+  "Layout.Widgets.Crosstab:CrosstabProps:crosstab:CrosstabPropsSchema"
 )
 
 mkdir -p "$out"
@@ -64,6 +65,7 @@ done
   echo "  styleBox: StyleBoxPropsSchema,"
   echo "  drilldownBar: DrilldownBarPropsSchema,"
   echo "  headline: HeadlinePropsSchema,"
+  echo "  crosstab: CrosstabPropsSchema,"
   echo "};"
   echo
   echo "/** Registry names Stage 3 reserves that have NO renderer: the dispatcher's"

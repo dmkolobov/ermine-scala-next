@@ -18,6 +18,16 @@ module Layout.Widgets where
 -- types in one module may not both declare `columns` -- so each widget's props
 -- live in their own module under Layout/Widgets/ and this module re-exports them.
 -- J3e's chart widgets should each get a module here too.
+--
+-- TWO SHAPES.  A widget whose props the caller already holds is one record and
+-- one smart constructor (`tabular`, `scorecard`, ...).  A widget that has to
+-- READ ROWS to work its props out is two records and a function between them:
+-- the wire props, plus a SOURCE record of the fields and the relation the
+-- constructor scans, plus `...Of : ...Source -> Fetch Node`
+-- (`Layout.Widgets.Headline`, `Layout.Widgets.Crosstab`; design note 3.4c).
+-- The source is server-side by design: no registry, no schema, nothing of it on
+-- the wire.  Because this module re-exports everything, a field name two widget
+-- modules both want has to be prefixed (`headlineTitle`, `crosstabRowLabels`).
 
 export Layout.Widgets.Format
 export Layout.Widgets.Table
@@ -29,6 +39,7 @@ export Layout.Widgets.PieChart
 export Layout.Widgets.StyleBox
 export Layout.Widgets.DrilldownBar
 export Layout.Widgets.Headline
+export Layout.Widgets.Crosstab
 import List using empty_Bracket; cons_Bracket
 
 -- | The registry names Stage 3 reserves.  Every one of them is built except
@@ -39,4 +50,4 @@ import List using empty_Bracket; cons_Bracket
 widgetNames : List String
 widgetNames = ["table", "drilldownTable", "axisChart", "pieChart",
                "drilldownPieChart", "styleBox", "drilldownBar", "treeMap",
-               "scorecard", "headline"]
+               "scorecard", "headline", "crosstab"]

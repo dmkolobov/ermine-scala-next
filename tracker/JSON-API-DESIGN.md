@@ -536,13 +536,39 @@ and a report is now written as one `Fetch Node`, cut into fragments of type `...
 | lifts | plain functions in `modules/Layout/Fetch.e`: `map_Fetch`, `bind_Fetch`, `sequence_Fetch` (left to right), and the layouts `vflowF`, `hflowF`, `gridF`, `tabbedF` over `Fetch Node` (`Layout.Fetch` imports `Layout.Doc`; `Doc` does not import `Fetch`) | a `Monad Fetch` instance: `Relation.Scan` still only wants `RunScan_S`, `Cont` is still the monad over the continuation, and `do` notation would not make `vflowF` shorter |
 | the report type | `Params -> Fetch Node`. `Params -> Node` is SUGAR: `resultKind` still classifies it, but the runner reads a value that is neither `Done` nor `Scan` as the document itself, so there is ONE interpreter and no `fetching` flag on `Report` | two render paths (J3f's `build`+`write` beside `renderFetch`): two orderings, two error vocabularies, two things to keep in step |
 | where the connection opens | the first evaluation step (decode, apply, force) runs under `evalLock` BEFORE `cfg.run.run`. `Done`/a bare `Node` is written on the one connection the write opens; only a `Scan` opens one to continue evaluating in | keeping J3f's "evaluate inside the connection": a report that throws before any scan paid for a connection |
-| a widget that scans | `Layout.Widgets.Headline`: `headline : HeadlineProps -> Node` (pure) beside `headlineOf : ... -> Field h Double -> rel r -> Fetch Node`, which scans, counts, sums and takes the maximum. Registry name `"headline"`, client component `client/src/widgets/headline.ts` | a `Fetch`-valued field inside `Node`: the wire and the generated zod stay what `Node` says |
+| a widget that scans | `Layout.Widgets.Headline`: `headline : HeadlineProps -> Node` (pure) beside `headlineOf : HeadlineSource h rel r -> Fetch Node` (J3i; positional arguments until then), which scans, counts, sums and takes the maximum. Registry name `"headline"`, client component `client/src/widgets/headline.ts` | a `Fetch`-valued field inside `Node`: the wire and the generated zod stay what `Node` says |
 | the prop names | `headlineTitle`, not `title`: `Layout.Widgets` re-exports every widget module into one scope, and `Layout.Widgets.Scorecard` already owns `title` (`Layout.Widgets.Chart` spells `chartTitle` for the same reason). Verified: with `title`, `title p` on a `ScorecardProps` in a module importing `Layout.Widgets` fails to unify | -- |
 | order | `sequence_Fetch` and the layout lifts scan left to right, in the order the children are written (`TestRunner (fxl-order)`) | no order guarantee: a fold over ordered rows would be unreproducible (a running total or a rank as such is `Relation.Windowed`'s job, §3.4b correction) |
 
 Cost: a widget that owns its scan reads the relation itself, so a report that also shows the rows
 in a table scans twice (`FetchHeadline.e` says so). `Fetch` has one operation, so nothing about a
 widget makes this special; a caller holding the numbers uses `headline` and scans once.
+
+**The Fetch widget shape (J3i, 2026-09-18).** A widget whose constructor scans is TWO records and
+one function between them: the WIRE props (registered in `widgetNames`, schema-checked by the
+exported zod, rendered by a client component) and a SOURCE record of what the constructor needs to
+work the props out -- the fields and the relation -- with `...Of : ...Source -> Fetch Node` between
+them. The source is server-side by design: no registry, no schema, nothing of it on the wire, and
+nothing on the client knows the type exists. It is a record rather than a list of positional
+arguments for the reason the props are one: a crosstab's constructor takes eight things, and three
+of them are `Field`s that would otherwise be told apart by position alone. `HeadlineSource` and
+`CrosstabSource` are the two; `headlineOf` took positional arguments until J3i.
+
+`Layout.Widgets.Crosstab` is the case that makes the shape necessary rather than tidy. A table can
+show any number of ROWS from a query, because `TableProps.rows` is a plan and only the rows are
+data -- but its COLUMNS are the `TableColumn` list a report writes at compile time, and a
+relation's row type is fixed then too. A table whose columns are the distinct values of a data
+column therefore cannot come out of the algebra at all: the column set is in the rows. So
+`crosstabOf` scans, sorts the distinct keys of both axes, sums the measure per pair, and sends a
+MATRIX -- `cells : List (List (Maybe Double))` beside two label lists -- which is also why the
+crosstab cannot reuse the table renderer: what the wire carries is not a relation. A `Nothing` cell
+is a pair NO ROW HAD, which is not a zero; inside a list it goes out as `null` (the encoder's
+omit-the-key rule is for a named `Maybe` FIELD, and there is no key to omit inside an array), and
+the exported zod says `z.array(z.array(z.number().nullable()))`. Keys are `String`: a caller with
+an `Int` or `Date` key projects it first, which also lets the caller pick a spelling that sorts the
+way the report should read (`"2026-01"`, not `"Jan"`). Examples:
+`core/src/test/resources/doc/FetchCrosstab.e`; properties `TestRunner (fxc-1)`, `(fx6)`,
+`TestWidgets (a-pin5)`, `client/test/widgets.test.ts (w-crosstab)`.
 
 ### 3.4d One interpreter: call, splice and token as one step stream (J3h, 2026-09-18)
 

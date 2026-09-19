@@ -6,11 +6,19 @@ module Layout.Widgets.Headline where
 --
 -- This is the widget whose SMART CONSTRUCTOR SCANS (stage J3g).  `headline`
 -- is the pure one, for a caller that already has the numbers; `headlineOf`
--- takes the relation instead and is a `Fetch Node`, so it reads the rows
+-- takes a SOURCE record instead -- the fields and the relation it needs to
+-- work the numbers out -- and is a `Fetch Node`, so it reads the rows
 -- itself and can sit inside a layout:
 --
---     vflowF [ headlineOf "Sales" "in north" amount northSales
+--     vflowF [ headlineOf (HeadlineSource "Sales" "in north" amount northSales)
 --            , done (tabular (simpleTable cols northSales)) ]
+--
+-- Two records and one function between them is the shape of every widget
+-- that scans (stage J3i; `Layout.Widgets.Crosstab` is the other one):
+-- `HeadlineProps` is the WIRE -- registered, schema-checked, rendered --
+-- and `HeadlineSource` is server-side only, known to no registry.  Its
+-- field names are prefixed because `CrosstabSource` wants the same three
+-- (`Layout.Widgets` re-exports both modules into one scope).
 --
 -- Before J3g that was impossible: every layout combinator took a `Node`, so
 -- a scan had to be hoisted above the whole layout and a widget could not
@@ -52,13 +60,21 @@ biggest : List Double -> Double
 biggest []        = 0.0
 biggest (y :: ys) = foldl (a b -> if (b > a) b a) y ys
 
--- | Scan `rs`, and make the headline out of what it found: the row count,
--- the sum of `f` over the rows, and the largest `f` (see `biggest`: the
--- maximum of the rows, 0.0 only when there are none).  The format is
--- `Default`; build the props by hand for another one.
-headlineOf : (Relational rel, r <- (h, t))
-          => String -> String -> Field h Double -> rel r -> Fetch Node
-headlineOf ttl scp f rs =
-  scanRelation rs (rows ->
-    let xs = map_List (getF f) rows
-    in done (headline (HeadlineProps ttl scp (length rows) (sum' xs) (biggest xs) Default)))
+-- | What `headlineOf` scans: the relation, the field to measure, and the
+-- two strings the widget shows.  Server-side only -- nothing on the wire
+-- knows this type.
+data HeadlineSource h rel r = HeadlineSource { headlineSourceTitle : String
+                                             , headlineScope : String   -- what the numbers are about
+                                             , headlineMeasure : Field h Double
+                                             , headlineSource : rel r }
+
+-- | Scan the source, and make the headline out of what it found: the row
+-- count, the sum of the measure over the rows, and the largest of them (see
+-- `biggest`: the maximum of the rows, 0.0 only when there are none).  The
+-- format is `Default`; build the props by hand for another one.
+headlineOf : (Relational rel, r <- (h, t)) => HeadlineSource h rel r -> Fetch Node
+headlineOf s =
+  scanRelation (headlineSource s) (rows ->
+    let xs = map_List (getF (headlineMeasure s)) rows
+    in done (headline (HeadlineProps (headlineSourceTitle s) (headlineScope s)
+                                     (length rows) (sum' xs) (biggest xs) Default)))

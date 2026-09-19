@@ -3,13 +3,14 @@
 The TypeScript client for Ermine JSON report documents: one zod schema per widget,
 generated from the Ermine prop types; a dispatcher that walks the document and
 renders it; adapters onto the renderers that already exist in `ermine-writers`; and
-two widgets (`scorecard`, `headline`) that are native TypeScript, as the proof that
-adding one is cheap.
+three widgets (`scorecard`, `headline`, `crosstab`) that are native TypeScript, as the
+proof that adding one is cheap.
 
 Stages J3d (`brief-J3d-client.md`: the dispatcher, the tables, the scorecard) and
 J3e (`brief-J3e-charts.md`: the charts and the style box) of the JSON Stage 2/3
 programme; J3g (`brief-J3g-lift.md`) added the headline, the widget whose Ermine
-constructor scans.
+constructor scans, and J3i (`brief-J3i-crosstab.md`) the crosstab, the widget a
+query cannot produce at all.
 
 ## The shape of a response
 
@@ -105,6 +106,7 @@ and an entry in `result.errors`.
 | `src/charts.ts` | the `axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar` and `styleBox` adapters, the chart-side legacy argument types, `TUPLE_LOSS`, and the date/colour conversions. |
 | `src/widgets/scorecard.ts` | the `scorecard` widget, plain DOM: cards from an `Inline` relation. |
 | `src/widgets/headline.ts` | the `headline` widget, plain DOM: a title, a scope and three figures. Its props carry NO relation -- the Ermine constructor `headlineOf` scanned one server-side (J3g). |
+| `src/widgets/crosstab.ts` | the `crosstab` widget, plain DOM: a `<table>` of row labels x column labels with totals. Its props carry a MATRIX, not a relation -- `crosstabOf` scanned one server-side and the column set IS the data (J3i) -- so it does not go through the table adapter. A `null` cell is a pair no row had and shows as an em dash. |
 | `src/index.ts` | the public surface and `defaultRegistry()`. |
 
 ## Formatting a cell
@@ -184,18 +186,35 @@ Three edits, plus the generate step.
    (`src/widgets/sparkline.ts`) as a `Widget<SparklineProps>`, and add one line to
    `defaultRegistry()` in `src/index.ts`.
 
-A smart constructor may also return `Layout.Fetch.Fetch Node` instead of `Node` and
-read the rows it needs while the report is being built (`headlineOf`, stage J3g);
-nothing changes on this side, because what reaches the client is still the props
-that scan produced.
+**A widget whose constructor scans** is two records and a function between them
+(stages J3g, J3i). The props above are the wire half; beside them the Ermine module
+declares a SOURCE record -- the fields and the relation the constructor needs -- and
+
+```
+crosstabOf : (Relational rel, r <- (h1, h2, h3, t))
+          => CrosstabSource h1 h2 h3 rel r -> Fetch Node
+```
+
+reads the rows while the report is being built and returns the props wrapped in a
+`Node`. Nothing changes on this side: the source record is server-side by design, no
+registry or schema knows it, and what reaches the client is still the props the scan
+produced. It is what a widget whose SHAPE is in the data needs -- `crosstab`'s columns
+are the distinct values of a data column, which no query can name in advance.
+
+One naming rule follows from the Ermine side: field selectors are global and
+`Layout/Widgets.e` re-exports every widget module into one scope, so a field name two
+widget modules both want has to be prefixed (`headlineTitle` because the scorecard owns
+`title`, `crosstabRowLabels` because the style box owns `rowLabels`). The generated zod
+and `src/props.ts` carry whatever Ermine settled on.
 
 The dispatcher needs nothing: it looks the schema up by name, validates, resolves
 every relation anywhere in the props, and calls `render`.
 
 ### Names Stage 3 reserves
 
-`table`, `drilldownTable`, `scorecard`, `headline`, `axisChart`, `pieChart`,
-`drilldownPieChart`, `styleBox` and `drilldownBar` are all built and registered.
+`table`, `drilldownTable`, `scorecard`, `headline`, `crosstab`, `axisChart`,
+`pieChart`, `drilldownPieChart`, `styleBox` and `drilldownBar` are all built and
+registered.
 `treeMap` is **registered as unsupported**: it is the one reserved name with no
 renderer behind it at all — `runTreeMap` is undefined in the `ermine-writers`
 bundle and the Local branch of `HTMLWriter.treeMap` is `sys.error("todo")` — so it

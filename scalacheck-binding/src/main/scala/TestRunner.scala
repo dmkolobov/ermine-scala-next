@@ -69,7 +69,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     * declared once so a module does not pay for them. */
   writeModule("RgFields",
     "module RgFields where\n\nfield rgKey : Int\nfield rgName : String\n" +
-    "field rgAmount : Double\nfield rgFlag : Bool\n")
+    "field rgAmount : Double\nfield rgFlag : Bool\nfield rgCat : String\n")
 
   /** A `Run[DB]` over fresh in-memory SQLite connections that counts them
     * (property (e)); `ThreadLocalRunDB`, so one `run` is one connection and
@@ -1139,7 +1139,8 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
          "import Layout.Doc", "import Layout.Fetch",
          "import Layout.Widgets.Format", "import Layout.Widgets.Table",
          "import Layout.Widgets.Drilldown", "import Layout.Widgets.Scorecard",
-         "import Layout.Widgets.Headline", "import Layout.Widgets.Chart",
+         "import Layout.Widgets.Headline", "import Layout.Widgets.Crosstab",
+         "import Layout.Widgets.Chart",
          "import Layout.Widgets.AxisChart", "import Layout.Widgets.PieChart",
          "import Layout.Widgets.StyleBox", "import Layout.Widgets.DrilldownBar",
          "import RgFields").mkString("\n")
@@ -1399,7 +1400,8 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
       val m = freshModule("RgHead")
       writeModule(m, "module " + m + " where\n\n" + fetchImports + "\n\n" +
                      "report : Int -> Fetch Node\n" +
-                     "report p = headlineOf \"T\" \"everywhere\" rgAmount (mkRelation# (toList# [" + rows + "]))\n")
+                     "report p = headlineOf (HeadlineSource \"T\" \"everywhere\" rgAmount " +
+                     "(mkRelation# (toList# [" + rows + "])))\n")
       val (st, text) = render(runner, m, params("1"))
       if (st != 200) bad += ("status " + st + ": " + text.take(300))
       else {
@@ -1421,6 +1423,196 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
       (cases.exists(c => c._1.nonEmpty && c._1.forall(_ < 0)) :|
         "no all-negative relation was generated: a `largest` folded from 0.0 would pass unseen") &&
       ((cases.count(_._1.length >= 2) >= 10) :| "too few multi-row cases")
+  }
+
+  // ------------------------------------------------------------------
+  // (fxc) J3i: the crosstab, the widget a query cannot write.  Its columns
+  // are the distinct values of a data column, so its shape is in the rows and
+  // its constructor has to scan for them.
+
+  /** The imports a generated crosstab report needs on top of `fetchImports`:
+    * `relationWithHeader` (the EMPTY case -- `relation []` has no header, so a
+    * literal relation of no rows cannot say what its columns are) and the row
+    * literal syntax that names them. */
+  private val crossImports: String =
+    fetchImports + "\nimport Relation\nimport Relation.Row hiding empty_Bracket; cons_Bracket"
+
+  /** One (fxc-1) case: the rows of a literal relation as (row key, column key,
+    * measure).  The keys come from SMALL alphabets (4 x 3 = twelve possible
+    * pairs, up to nine rows), so a pair no row has (a GAP) and two rows on one
+    * pair (a COLLISION) are both common; the property asserts below that both
+    * actually occurred.  The measures are signed -- inside a record literal a
+    * negative number parses, which as a bare argument it would not.
+    *
+    * R2 (review): each alphabet holds a pair that differs ONLY BY CASE
+    * (`"ann"`/`"Ann"`, `"x"`/`"X"`).  `primOrd` on a String compares both
+    * sides lower-cased, so `distinct`/`sort`/the sum maps merge them into one
+    * label -- the first spelling in row order -- and the oracle below says so.
+    * With a case-sensitive oracle the property is RED on these alphabets. */
+  private val xtCase: Gen[List[(String, String, Double)]] =
+    Gen.choose(0, 9).flatMap(n => Gen.listOfN(n, Gen.zip(
+      Gen.oneOf("ann", "Ann", "bob", "cy"), Gen.oneOf("x", "X", "y"),
+      Gen.choose(-9999, 99999).map(_ / 8.0))))
+
+  /** The KEYS one axis of `crosstabOf` carries: `primOrd` on a String compares
+    * both sides lower-cased (`PrimExpr.scala`), so `distinct primOrd` gives one
+    * label per LOWER-CASED key and `sort primOrd` puts them in that order (R2).
+    * Which SPELLING the label takes is the one the scan met first, and a
+    * relation is a set of rows -- so the property checks the keys and that each
+    * label is a spelling the data had, not which of them won. */
+  private def xtKeys(keys: List[String]): List[String] = keys.map(_.toLowerCase).distinct.sorted
+
+  /** The measures of the rows at this pair of labels, matched the way the sum
+    * maps match their keys: on lower case (R2). */
+  private def xtAt(rows: List[(String, String, Double)], r: String, c: String): List[Double] =
+    rows.filter(t => t._1.toLowerCase == r.toLowerCase && t._2.toLowerCase == c.toLowerCase).map(_._3)
+
+  /** The sum of the measures of the rows at this pair, or None when no row is
+    * there -- the oracle for one cell. */
+  private def xtCell(rows: List[(String, String, Double)], r: String, c: String): Option[Double] = {
+    val hits = xtAt(rows, r, c)
+    if (hits.isEmpty) None else Some(hits.sum)
+  }
+
+  private def xtSource(rows: List[(String, String, Double)]): String =
+    if (rows.isEmpty) "(relationWithHeader {rgName, rgCat, rgAmount} [])"
+    else "(mkRelation# (toList# [" + rows.map { case (r, c, m) =>
+      "{ rgName = \"" + r + "\", rgCat = \"" + c + "\", rgAmount = " + m + " }" }.mkString(", ") + "]))"
+
+  property("(fxc-1) crosstabOf: the axes are the sorted distinct keys (case-insensitively, R2), each cell the sum of its rows, a pair with no row null") = secure {
+    val cases = TestDoc.samples(xtCase, 30, 42017L)
+    val bad = new ListBuffer[String]
+    var empties = 0
+    var gaps = 0
+    var collisions = 0
+    var caseMerges = 0
+    cases.foreach { rows =>
+      val wantRowKeys = xtKeys(rows.map(_._1))
+      val wantColKeys = xtKeys(rows.map(_._2))
+      if (rows.isEmpty) empties += 1
+      if (wantRowKeys.exists(r => wantColKeys.exists(c => xtAt(rows, r, c).isEmpty))) gaps += 1
+      if (wantRowKeys.exists(r => wantColKeys.exists(c => xtAt(rows, r, c).length >= 2))) collisions += 1
+      // a case that holds two spellings of one key: the label lists are SHORTER
+      // than the case-sensitive distinct ones, which is the merge R2 documents
+      if (rows.map(_._1).distinct.length > wantRowKeys.length ||
+          rows.map(_._2).distinct.length > wantColKeys.length) caseMerges += 1
+      val m = freshModule("RgXt")
+      writeModule(m, "module " + m + " where\n\n" + crossImports + "\n\n" +
+                     "report : Int -> Fetch Node\n" +
+                     "report p = crosstabOf (CrosstabSource \"T\" \"R\" \"C\" rgName rgCat rgAmount " +
+                     xtSource(rows) + " Default)\n")
+      val (st, text) = render(runner, m, params("1"))
+      if (st != 200) bad += ("status " + st + ": " + text.take(300) + "\n" + xtSource(rows))
+      else {
+        val props = parsed(text).field(Wire.Root).flatMap(_.field("props")).getOrElse(Json.jNull)
+        def strings(k: String) = props.field(k).map(_.arrayOrEmpty.flatMap(_.string)).getOrElse(Nil)
+        def doubles(k: String) = props.field(k).map(_.arrayOrEmpty.flatMap(_.number).flatMap(_.toDouble)).getOrElse(Nil)
+        val gotCells = props.field("cells").map(_.arrayOrEmpty.map(_.arrayOrEmpty)).getOrElse(Nil)
+        def near(a: Double, b: Double) = math.abs(a - b) < 1e-9
+        // the axes the document sent, which the cells are then indexed by: one
+        // label per lower-cased key, in that order, each a spelling the data had
+        val gotRows = strings("crosstabRowLabels")
+        val gotCols = strings("crosstabColLabels")
+        val rowsOk = gotRows.map(_.toLowerCase) == wantRowKeys && gotRows.forall(l => rows.exists(_._1 == l))
+        val colsOk = gotCols.map(_.toLowerCase) == wantColKeys && gotCols.forall(l => rows.exists(_._2 == l))
+        val wantCells = gotRows.map(r => gotCols.map(c => xtCell(rows, r, c)))
+        val cellsOk = gotCells.length == wantCells.length && gotCells.zip(wantCells).forall { case (gr, wr) =>
+          gr.length == wr.length && gr.zip(wr).forall {
+            case (g, None)    => g.isNull
+            case (g, Some(v)) => g.number.flatMap(_.toDouble).exists(x => near(x, v))
+          }
+        }
+        val wantRowTotals = gotRows.map(r => rows.filter(_._1.toLowerCase == r.toLowerCase).map(_._3).sum)
+        val wantColTotals = gotCols.map(c => rows.filter(_._2.toLowerCase == c.toLowerCase).map(_._3).sum)
+        if (!rowsOk) bad += ("row labels " + gotRows + " for keys " + wantRowKeys + " of " + rows.map(_._1))
+        else if (!colsOk) bad += ("column labels " + gotCols + " for keys " + wantColKeys + " of " + rows.map(_._2))
+        else if (!cellsOk) bad += ("cells " + props.field("cells").map(_.nospaces).getOrElse("-") + " for " + wantCells)
+        else if (!doubles("rowTotals").corresponds(wantRowTotals)(near)) bad += ("row totals " + doubles("rowTotals") + " for " + wantRowTotals)
+        else if (!doubles("colTotals").corresponds(wantColTotals)(near)) bad += ("column totals " + doubles("colTotals") + " for " + wantColTotals)
+        else if (!num(props.field("grandTotal")).exists(g => near(g, rows.map(_._3).sum)))
+          bad += ("grand total " + props.nospaces + " for " + rows.map(_._3).sum)
+        else if (str(props.field("crosstabTitle")) != Some("T")) bad += ("title " + props.nospaces)
+      }
+    }
+    // the distribution, once: a run in which no case had a gap would be a run
+    // in which the `null` cell was never produced, and one with no collision
+    // would never have summed two rows into one cell
+    println("  (fxc-1) " + cases.length + " crosstabs; " + empties + " empty, " + gaps +
+            " with a gap, " + collisions + " with a collision, " + caseMerges +
+            " with two spellings of one key; rows per case " +
+            cases.map(_.length).groupBy(identity).toList.sortBy(_._1).map(p => p._1 + "x" + p._2.length).mkString(" "))
+    (bad.isEmpty :| (bad.length + " of " + cases.length + " wrong:\n" + bad.take(3).mkString("\n"))) &&
+      ((empties >= 1) :| "no empty relation was generated: the two-empty-axes case is untested") &&
+      ((gaps >= 5) :| ("only " + gaps + " cases had a pair with no row: the null cell is barely tested")) &&
+      ((collisions >= 5) :| ("only " + collisions + " cases had two rows on one pair: the summing is barely tested")) &&
+      // R2: without this the alphabets could go back to one spelling per key and
+      // the case-insensitive merge would be stated but never exercised
+      ((caseMerges >= 5) :| ("only " + caseMerges + " cases held two spellings of one key: the case merge is barely tested"))
+  }
+
+  /** R1 (review): the per-key sums fold STRICTLY.  `sumsBy` was `foldMap`,
+    * which is `foldr` (List.e:67,46) and so builds a stack frame per ROW: the
+    * reviewer's probe through `bin/ermine-serve` rendered a crosstab over
+    * 2,000 inline rows and got `500 .. cannot encode $.cells[0][0]: .. infinite
+    * loop detected` at 5,000 and 20,000, while `headlineOf` over 100,000 rows
+    * of the same relation answered 200
+    * (`tracker/json-stage3/logs/review-j3i-stack-probe.log`).  20,000 rows is
+    * above every ceiling measured there, so this property renders only with
+    * the strict `foldl` -- it is the pin on this side of J3h's `(ip-stack)`
+    * promise that the depth grows with RELATIONS and not with rows. */
+  property("(fxc-2) a crosstab over 20,000 rows renders: the per-key sums fold strictly") = secure {
+    val n = 20000
+    val m = freshModule("RgXtBig")
+    writeModule(m, "module " + m + " where\n\n" + crossImports + "\n\n" +
+                   "report : Int -> Fetch Node\n" +
+                   "report p = crosstabOf (CrosstabSource \"T\" \"R\" \"C\" rgName rgCat rgAmount " +
+                   "(mkRelation# (toList# (map_List (i -> { rgName = \"a\", rgCat = \"b\", rgAmount = 1.0 }) " +
+                   "(take " + n + " (from 0))))) Default)\n")
+    val (st, text) = render(runner, m, params("1"))
+    if (st != 200) falsified :| ("status " + st + " over " + n + " rows: " + text.take(400))
+    else {
+      val props = parsed(text).field(Wire.Root).flatMap(_.field("props")).getOrElse(Json.jNull)
+      // one row label, one column label, and every row in the one cell
+      ((props.field("cells").map(_.nospaces) ?= Some("[[" + n.toDouble + "]]")) :| props.nospaces.take(300)) &&
+        ((num(props.field("grandTotal")) ?= Some(n.toDouble)) :| props.nospaces.take(300))
+    }
+  }
+
+  property("(fx6) FetchCrosstab: the example's matrix, its gaps, and the headline beside it") = secure {
+    val (st, text) = render(runner, "FetchCrosstab", params("{\"measureUnits\":false}"))
+    val (st2, text2) = render(runner, "FetchCrosstab", params("{\"measureUnits\":true}"))
+    if (st != 200 || st2 != 200) falsified :| ("statuses " + st + "/" + st2 + ": " + text.take(300) + text2.take(300))
+    else {
+      val kids = parsed(text).field(Wire.Root).flatMap(_.field("children")).map(_.arrayOrEmpty).getOrElse(Nil)
+      val xt = kids.headOption.flatMap(_.field("props")).getOrElse(Json.jNull)
+      val head = kids.lift(1).flatMap(_.field("props")).getOrElse(Json.jNull)
+      val cells = xt.field("cells").map(_.arrayOrEmpty.map(_.arrayOrEmpty.map(c => if (c.isNull) None else c.number.flatMap(_.toDouble)))).getOrElse(Nil)
+      val xt2 = parsed(text2).field(Wire.Root).flatMap(_.field("children")).map(_.arrayOrEmpty).getOrElse(Nil)
+                  .headOption.flatMap(_.field("props")).getOrElse(Json.jNull)
+      def strings(j: Json, k: String) = j.field(k).map(_.arrayOrEmpty.flatMap(_.string)).getOrElse(Nil)
+      def doubles(j: Json, k: String) = j.field(k).map(_.arrayOrEmpty.flatMap(_.number).flatMap(_.toDouble)).getOrElse(Nil)
+      ((str(kids.headOption.flatMap(_.field("name"))) ?= Some("crosstab")) :| text.take(200)) &&
+        // the axes are the data's: four regions, three months that have sales
+        ((strings(xt, "crosstabRowLabels") ?= List("east", "north", "south", "west")) :| xt.nospaces) &&
+        ((strings(xt, "crosstabColLabels") ?= List("2026-01", "2026-02", "2026-03")) :| xt.nospaces) &&
+        // north sold twice in January (2 rows in one cell) and not at all in March (a gap)
+        ((cells ?= List(List(None, Some(75.5), Some(4100.0)),
+                        List(Some(2040.5), Some(2310.25), None),
+                        List(Some(615.75), Some(1990.0), None),
+                        List(None, None, Some(1550.0)))) :| xt.nospaces) &&
+        ((doubles(xt, "rowTotals") ?= List(4175.5, 4350.75, 2605.75, 1550.0)) :| xt.nospaces) &&
+        ((doubles(xt, "colTotals") ?= List(2656.25, 4375.75, 5650.0)) :| xt.nospaces) &&
+        ((num(xt.field("grandTotal")) ?= Some(12682.0)) :| xt.nospaces) &&
+        ((str(xt.field("crosstabFormat").flatMap(_.field("tag"))) ?= Some("Currency")) :| xt.nospaces) &&
+        // the second widget in the same vflowF scanned the same relation
+        ((str(kids.lift(1).flatMap(_.field("name"))) ?= Some("headline")) :| text.take(200)) &&
+        ((num(head.field("rowCount")) ?= Some(8.0)) :| head.nospaces) &&
+        ((num(head.field("total")) ?= Some(12682.0)) :| head.nospaces) &&
+        // the parameter picks the other measure: the same shape, the units summed
+        ((num(xt2.field("grandTotal")) ?= Some(34.0)) :| xt2.nospaces) &&
+        ((strings(xt2, "crosstabColLabels") ?= List("2026-01", "2026-02", "2026-03")) :| xt2.nospaces) &&
+        ((str(xt2.field("crosstabFormat").flatMap(_.field("tag"))) ?= Some("IntegralRound")) :| xt2.nospaces)
+    }
   }
 
   property("(fx5) FetchFragments: three fragments, five scans, one document") = secure {

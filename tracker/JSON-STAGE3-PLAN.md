@@ -206,6 +206,7 @@ lines on `ermine.json.doc`; both need a log4j configuration to be visible
 | P1..P3 | json-encode-2.11 | 2.11 ports: P1 = contract+J3a+J2a, P2 = J3b+J3c, P3 = J3d+J2b | landings | after each |
 | J3g | json-unify | `Fetch Node` as THE report type: the lifts `map_Fetch`/`bind_Fetch`/`sequence_Fetch` and the layout lifts `vflowF`/`hflowF`/`gridF`/`tabbedF` in `modules/Layout/Fetch.e`; `json/Runner.scala` one path (`Params -> Node` is sugar for `done`, the first evaluation step runs before any connection); `Layout.Widgets.Headline` -- the widget whose constructor scans -- and its client component; `FetchHeadline` rewritten, `FetchFragments` added; six `TestRunner` properties | J3f | 4 -- BUILT (below) |
 | J3h | json-unify | ONE step interpreter (`json/Interp.scala`): `Eval`/`Call`/`Emit`/`Splice`/`Token` and one driver `Interp.run`; `Write.doc` = steps + run, `Runner.render` = first `Eval` then run; a fetch scan is a `$.fetch[n]` `RelationStats` and a `WriteFailure` like any relation; `ScanFailed`, `interpret`, `renderFetch`, `write` gone; `TestRunner` (ip-stats)/(ip-fail)/(ip-stack), `TestDoc` (ip-fail)/(ip-stack) | J3g | 4 -- BUILT (below) |
+| J3i | json-crosstab | the crosstab -- `Layout.Widgets.Crosstab`, the widget whose COLUMNS are the distinct values of a data column, so no query can produce it: `crosstabOf` scans, sorts both axes, sums per pair and sends a matrix (`cells : List (List (Maybe Double))`, a `Nothing` is `null`); the FETCH WIDGET SHAPE (a source record -> `...Of` -> props record) applied to it and to the headline (`HeadlineSource`); client `crosstab.ts`; `FetchCrosstab.e`; `TestRunner` (fxc-1)/(fx6), `TestWidgets` (a-pin5) + the pool, client (w-crosstab)/(p-crosstab) | J3g | 4 -- BUILT (below) |
 | J3f | json-fetch | `modules/Layout/Fetch.e` (`Fetch a`: `scanRelation`, `scanRelationInOrder`, `scan`/`runScan`, a `Relation.Scan` runner) and its interpreter in `json/Runner.scala` (`Params -> Fetch Node` beside `Params -> Node`); four example reports `core/src/test/resources/doc/Fetch*.e`; six `TestRunner` properties | J3c, J3d, J3e | 4 -- BUILT (below) |
 
 Reviews: `brief-review.md`, one independent reviewer per stage before landing. Ports:
@@ -418,5 +419,34 @@ branch (they share `Lib.scala`).
   the report to say what to do when it hits one (a `Fetch` that fails, or one that says "truncated"),
   which is a wire and a language question, not a driver one. Also open: the 2.11 port; `Layout.Scan`
   and the legacy Report/Writer path untouched.
+- 2026-09-18 J3i BUILT on `json-crosstab` (worktree `ermine-scala-wt-json-unify`, from json-encode
+  3cae9678), NOT committed: the crosstab and the Fetch widget SHAPE. New
+  `modules/Layout/Widgets/Crosstab.e`: `CrosstabProps` (title, the two axis headings, two sorted
+  distinct label lists, `cells : List (List (Maybe Double))` row-major, `rowTotals`/`colTotals`/
+  `grandTotal`, `crosstabFormat`) + `crosstab` + `CrosstabSource` + `crosstabOf : CrosstabSource ..
+  -> Fetch Node`, registry name `"crosstab"` in `widgetNames`. `headlineOf` now takes a
+  `HeadlineSource h rel r` instead of four positional arguments, so both scanning widgets read alike;
+  the headline's WIRE props are unchanged. Decisions: the source record is server-side only (no
+  registry, no zod); a `Maybe` inside a LIST is `null` on the wire, not an omitted key (verified,
+  `TestWidgets (a-pin5)`, zod `z.array(z.array(z.number().nullable()))`); keys are `String`, the
+  caller projects and so picks the sort order; field names two widget modules both want are prefixed
+  (`crosstabRowLabels` -- the style box owns `rowLabels`, VERIFIED clash -- and
+  `crosstabSourceTitle`/`crosstabMeasure`/`crosstabSource` against `HeadlineSource`'s). Client:
+  `src/widgets/crosstab.ts` (a `<table>`, an em dash for a `null` cell), generate.sh + props.ts +
+  registry. Example `core/src/test/resources/doc/FetchCrosstab.e` (regions x months, a parameter
+  choosing the measure, a `headlineOf` beside it). Properties: `TestRunner` (fxc-1) + (fx6),
+  `TestWidgets` (a-pin5) + the crosstab in the pool and in (a-cov), client (w-crosstab),
+  (w-crosstab-empty), (p-crosstab). Review FIX-THEN-LAND, both fixes applied: R1 `sumsBy` folds
+  STRICTLY (`foldl` over `unionWith_M`, not `foldMap` = `foldr`, whose stack grew with the ROWS --
+  a crosstab over 5,000 inline rows was a 500), pinned by `TestRunner (fxc-2)` over 20,000 rows;
+  R2 the case-insensitive merge is documented and tested (mixed-case keys in (fxc-1), the oracle
+  keyed on lower case). Gates in report-J3i.md. OPEN TICKET (review R2): **a case-sensitive
+  `Ord String`** -- `primOrd` compares strings lower-cased (`PrimExpr.scala:641` via
+  `primLt#`), so a crosstab (and anything else using `distinct`/`sort` over String keys) merges
+  "North" and "north" into one label whose spelling the scan's order picks, while Ermine's `==`
+  and a SQL `GROUP BY` keep them apart. The stdlib has no case-sensitive `Ord String`; adding one
+  is a `Lib.scala` change shared with the 2.11 branch, and whether `primOrd` should ignore case at
+  all is a language question for the user, not a stage decision. Also open: the 2.11 port; the
+  client corpus fixtures still not regenerated.
 - 2026-09-18 J3f LANDED: json-encode fast-forwarded to 23cccbc1 (the gated tree itself; scripts/gate.sh status 23cccbc1: compile, corpus, lsp, suites 1200/1200 PASS). The user confirmed it coexists with the legacy Report/Writer path (untouched; full core/test green). Worktree ermine-scala-wt-json-fetch can be removed. Open: the 2.11 port.
 - 2026-09-18 J3g+J3h LANDED: json-encode fast-forwarded to 58c52fbb (J3g 5e37cced, J3h a772df7e, pin 58c52fbb). pr tier on the landed tree: compile, corpus 89/79/0 of 168, lsp 582 checks, suites 1211/1211 PASS; lean UNAVAILABLE (no Lean tree here). The first full run failed 1 of 1211: TestTolerantCheck 6.2c `knownHeadDisagreements` needed `Headline.e:63:9` (a new stdlib module with a row-constrained local `let` head moves that catalogue; expect it for any new Layout/Widgets module with a local head). Worktree ermine-scala-wt-json-unify can be removed. Open: 2.11 port; client corpus fixtures not regenerated; a cap on fetched rows.

@@ -120,6 +120,25 @@ export interface HeadlineProps {
   headlineFormat: CellFormat;
 }
 
+/** Layout.Widgets.Crosstab.CrosstabProps -- no relation either: `crosstabOf`
+ *  scanned one server-side and sent the MATRIX its rows imply.  `cells` is
+ *  `crosstabRowLabels` x `crosstabColLabels`, row-major; a `null` cell is a
+ *  pair NO ROW HAD, which is not a zero (an Ermine `Nothing` inside a list
+ *  encodes as `null` -- the encoder's omit-the-key rule is for a named field).
+ *  The label lists come sorted and distinct. */
+export interface CrosstabProps {
+  crosstabTitle: string;
+  rowHeader: string;
+  colHeader: string;
+  crosstabRowLabels: string[];
+  crosstabColLabels: string[];
+  cells: (number | null)[][];
+  rowTotals: number[];
+  colTotals: number[];
+  grandTotal: number;
+  crosstabFormat: CellFormat;
+}
+
 // --------------------------------------------------------------- charts (J3e)
 
 /** Layout.Widgets.Chart.LegendLocation -- writers.ChartLegendLocation. */
