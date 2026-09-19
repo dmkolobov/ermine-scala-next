@@ -112,7 +112,16 @@ def repo(rel):
 def main():
     client = Client(sys.argv[1:])
 
-    r = client.response(client.request("initialize", {"capabilities": {}}))
+    # STALENESS step 1 (tracker/LSP-STALENESS.md): the workspace folder the way
+    # VS Code sends it (rootUri and workspaceFolders both), from which the server
+    # derives core/src/main/resources/modules, plus one extra root by option.
+    # tracker/lsp-tests/roots/ holds a module nothing else has (`RootOnly`), so
+    # the resolution of `Roots.e` below is the root's doing or nobody's.
+    r = client.response(client.request("initialize", {
+        "capabilities": {},
+        "rootUri": repo("").as_uri(),
+        "workspaceFolders": [{"uri": repo("").as_uri(), "name": "ermine-scala"}],
+        "initializationOptions": {"moduleRoots": [str(FIXTURES / "roots")]}}))
     caps = r.get("result", {}).get("capabilities", {})
     check("initialize.definitionProvider", caps.get("definitionProvider") is True)
     check("initialize.hoverProvider", caps.get("hoverProvider") is True)
@@ -176,6 +185,14 @@ def main():
         and "ready" in m["params"]["message"], "readiness logMessage")
     check("boot.reports 129 modules", "129 modules" in ready["params"]["message"],
           ready["params"]["message"])
+    # The boot names its roots, option first, the workspace's stdlib second, and
+    # the classpath is not among them (it is the chain's last link, not a root).
+    roots_lines = [l for l in pathlib.Path(LOG).read_text(errors="replace").splitlines()
+                   if "module roots ahead of the classpath" in l]
+    check("roots: the boot lists the option root, then the workspace stdlib",
+          len(roots_lines) == 1 and roots_lines[0].endswith(
+              ": " + str(FIXTURES / "roots") + ", " + str(repo("core/src/main/resources/modules"))),
+          repr(roots_lines))
 
     def open_doc(name):
         client.notify("textDocument/didOpen", {"textDocument": {
@@ -635,6 +652,22 @@ def main():
     for name in ("BadImport.e", "BadSib.e"):
         client.notify("textDocument/didClose", {"textDocument": {"uri": uri(name)}})
         client.diagnostics_for(uri(name))
+
+    # ---- STALENESS step 1: a module that exists ONLY under a source root
+    # given at initialize resolves, and its definition opens the file under
+    # that root.  Neither the fixture directory's sibling loader nor the
+    # classpath looks in tracker/lsp-tests/roots/; the second server at the
+    # end of this run, booted with no roots, must refuse the same import.
+    open_doc("Roots.e")
+    ds = client.diagnostics_for(uri("Roots.e"))
+    check("roots: Roots.e is clean (RootOnly resolved through the moduleRoots option)",
+          ds == [], repr(ds))
+    r = definition("Roots.e", 5, 10)   # `fromRoot` in `useRoot = fromRoot`
+    check("roots: definition of a root module's name opens the file under the root",
+          r is not None and r["uri"] == (FIXTURES / "roots" / "RootOnly.e").as_uri()
+          and r["range"]["start"] == {"line": 8, "character": 0}, repr(r))
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri("Roots.e")}})
+    client.diagnostics_for(uri("Roots.e"))
 
     # 6.1(c): an import list naming something the module does not export
     # is the editor's own check (batch gets it from Dep.checkNames), and it
@@ -3031,6 +3064,17 @@ def main():
         "textDocument": {"uri": uri("Good.e"), "version": 2},
         "contentChanges": [{"text": good_src.replace("answer = 42", "answer =  42")}]})
     c2.diagnostics_for(uri("Good.e"))
+    # STALENESS step 1, the negative: this server was given no folder and no
+    # moduleRoots, so it boots from the classpath alone and `import RootOnly`
+    # is the "Module not found" it always was.  Proves the first server's
+    # clean Roots.e came from the root, not from something else on the path.
+    c2.notify("textDocument/didOpen", {"textDocument": {
+        "uri": uri("Roots.e"), "languageId": "ermine", "version": 1,
+        "text": (FIXTURES / "Roots.e").read_text()}})
+    ds2 = c2.diagnostics_for(uri("Roots.e"))
+    check("roots: with no roots the same import is 'Module not found'",
+          len(ds2) == 1 and "import RootOnly failed" in ds2[0]["message"]
+          and "Module not found: 'RootOnly'" in ds2[0]["message"], repr(ds2))
     c2.response(c2.request("shutdown", None))
     c2.notify("exit", {})
     c2.proc.wait(timeout=30)
@@ -3039,6 +3083,9 @@ def main():
           re.search(r"phases: .*\bparse=[0-9.]+ .*\bcheck\.total=[0-9.]+", text2)
           is not None,
           repr([l for l in text2.splitlines() if "phases:" in l][:1]))
+    check("roots: a client that sends no folder boots from the classpath",
+          "no module roots; the stdlib is read from the classpath" in text2,
+          repr([l for l in text2.splitlines() if "module roots" in l][:2]))
     check("7.4 initializationOptions.debounce pins the window",
           "debounce PINNED at 250ms" in text2,
           repr([l for l in text2.splitlines() if "debounce" in l][:2]))

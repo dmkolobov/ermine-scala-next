@@ -83,6 +83,21 @@ final class Resident(val log: String => Unit) {
     * dispatch makes it a plain var, not a race. */
   var fastMode: Boolean = false
 
+  /** SOURCE ROOTS (tracker/LSP-STALENESS.md, step 1): directories the stdlib
+    * is read from AHEAD of the classpath.  Without them the session boots
+    * from `core/target/<scala>/classes/modules`, the `copyResources` copy,
+    * so a module added or changed under `core/src/main/resources/modules`
+    * is invisible until the next `sbt core/copyResources` and a restart --
+    * the editor said "Module not found" on an import that was right there
+    * in the tree.  Main fills this from `initialize`, BEFORE `initialized`
+    * boots the session: `initializationOptions.moduleRoots` verbatim, then
+    * `Resident.rootsUnder` of every workspace folder.  A root that is not a
+    * directory is logged and skipped, never an error: the classpath stays
+    * LAST in the chain, so the worst case is exactly what the server did
+    * before.  Order is precedence -- the first loader that has the module
+    * wins -- and it is the order given here. */
+  var moduleRoots: List[String] = Nil
+
   /** Boot if not yet booted.  Failures propagate (and leave this
     * un-booted, so a later call retries). */
   def boot(): Ready = booted getOrElse {
@@ -105,6 +120,13 @@ final class Resident(val log: String => Unit) {
                      _foreignTolerant = Some(true))
     Lib.preamble
     val builtins = env.copy
+    val (roots, missingRoots) = moduleRoots.distinct.partition(r => new java.io.File(r).isDirectory)
+    missingRoots foreach (r => log("session: module root skipped, not a directory: " + r))
+    if (roots.nonEmpty) {
+      env.loadFile = Session.SourceFile.inOrder(
+        (roots.map(r => Session.SourceFile.filesystem(r) _) :+ env.loadFile): _*)
+      log("session: module roots ahead of the classpath: " + roots.mkString(", "))
+    } else log("session: no module roots; the stdlib is read from the classpath")
     val loaded = Session.loadModules(List("Prelude", "Layout"))
     val r = Ready(env, builtins, loaded.size, (System.nanoTime - t0) / 1e9)
     booted = Some(r)
@@ -263,14 +285,23 @@ final class Resident(val log: String => Unit) {
       while (i > 0 && d.isDefined) { d = Option(d.get.getParent); i -= 1 }
       d map (_.toString) getOrElse dir
     }
-    e.loadFile =
+    val siblings: List[Session.SourceFile.Loader] =
       if (root == dir)
-        Session.SourceFile.inOrder(
-          docs.loaderFor(dir), Session.SourceFile.filesystem(dir) _, e.loadFile)
+        List(docs.loaderFor(dir), Session.SourceFile.filesystem(dir) _)
       else
-        Session.SourceFile.inOrder(
-          docs.loaderFor(dir),  Session.SourceFile.filesystem(dir) _,
-          docs.loaderFor(root), Session.SourceFile.filesystem(root) _, e.loadFile)
+        List(docs.loaderFor(dir),  Session.SourceFile.filesystem(dir) _,
+             docs.loaderFor(root), Session.SourceFile.filesystem(root) _)
+    // Staleness step 1, per check: the CHECKOUT this document lives in.  The
+    // boot roots come from the workspace the editor opened; a document from
+    // another checkout (a worktree opened beside the main one) resolves the
+    // modules its own tree has and the boot did not load against THAT tree,
+    // not against the classpath copy.  After the siblings and before the
+    // resident's own chain: a sibling still wins, and a module the boot
+    // already loaded is not re-read (invalidation is step 2).
+    val checkout: List[Session.SourceFile.Loader] =
+      Resident.checkoutRootOf(path).filterNot(moduleRoots.contains).toList
+        .map(r => Session.SourceFile.filesystem(r) _)
+    e.loadFile = Session.SourceFile.inOrder((siblings ++ checkout :+ e.loadFile): _*)
     // EVERY module implicitly imports ITSELF (ModuleParsers.scala:34),
     // and the resident session holds the whole Prelude/Layout closure —
     // so checking a stdlib file that is already loaded would put its own
@@ -523,5 +554,36 @@ final class Resident(val log: String => Unit) {
     case SPrivateBlock(_, ss2)     => errorStatements(ss2)
     case SDatabaseBlock(_, _, ss2) => errorStatements(ss2)
     case _                         => Nil
+  }
+}
+
+object Resident {
+  import java.nio.file.{ Files, Path }
+
+  /** The stdlib source directory of an sbt checkout: `core/src/main/resources/
+    * modules` beneath it.  ONE convention, the same one `Definitions.SourceTree`
+    * reads the other way (`target/<x>/classes` is built from
+    * `src/main/resources`), and checked before it is used: a folder without
+    * that directory contributes no root. */
+  private val stdlibRel = List("core", "src", "main", "resources", "modules")
+
+  private def stdlibUnder(dir: Path): Option[String] = {
+    val d = stdlibRel.foldLeft(dir)(_ resolve _)
+    if (Files.isDirectory(d)) Some(d.toAbsolutePath.normalize.toString) else None
+  }
+
+  /** The module roots a workspace folder implies (its stdlib source, if any). */
+  def rootsUnder(folder: Path): List[String] = stdlibUnder(folder).toList
+
+  /** The stdlib root of the checkout a document is in: the nearest ancestor
+    * directory that has one.  None for a file outside any checkout. */
+  def checkoutRootOf(doc: Path): Option[String] = {
+    var d     = Option(doc.toAbsolutePath.normalize.getParent)
+    var found = Option.empty[String]
+    while (found.isEmpty && d.isDefined) {
+      found = stdlibUnder(d.get)
+      d     = d flatMap (p => Option(p.getParent))
+    }
+    found
   }
 }

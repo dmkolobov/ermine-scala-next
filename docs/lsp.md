@@ -99,16 +99,30 @@ Names installed by Scala rather than declared in source — `Just`, `True`, `Int
 `Maybe`, the `Relation` type and the rest of `Builtin` — answer null, because
 there is no source to open.
 
-**A stdlib target opens the SOURCE tree.** The resident session loads its 129
-modules from the classpath, where `sbt core/copyResources` puts a copy of
-`core/src/main/resources/modules` — so a stdlib name's recorded position is in
+**The stdlib is read from the source tree.** At `initialize` the server takes
+the workspace folders the editor opened (`workspaceFolders`, or `rootUri`) and,
+for each that has `core/src/main/resources/modules` beneath it, puts that
+directory AHEAD of the classpath in the module loader; `initializationOptions.
+moduleRoots`, a list of directories, adds roots explicitly and they go first.
+The session's modules then come from the source tree, so a module added under
+`modules/` is importable without `sbt core/copyResources` or a restart, and a
+document in another checkout (a worktree opened beside the workspace) resolves
+the modules its own tree has, and the boot did not load, against that tree. A
+client that sends neither boots from the classpath copy as before. What does
+NOT refresh yet: a module the boot already loaded keeps the text it was read
+with until **Ermine: Restart Language Server**; invalidation on change is the
+next step of tracker/LSP-STALENESS.md.
+
+**A stdlib target opens the SOURCE tree.** When the stdlib was read from the
+classpath copy (no folder, no roots) a stdlib name's recorded position is in
 that copy, and the server maps it back to
 `core/src/main/resources/modules/Bool.e` before it sends a `Location`. You land
 in the file you would edit, for definition, for references' def-site and for
 workspace symbols alike. The mapping is derived from where the class loader
 actually found `modules` (no Scala version is spelled anywhere); if the source
 tree is not there, or the particular module is not in it, the build-output path
-is sent unchanged.
+is sent unchanged. With source roots the position is in the source tree already
+and the mapping has nothing to do.
 
 ## Hover
 

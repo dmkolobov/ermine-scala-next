@@ -87,6 +87,25 @@ object Main {
           } else
             log(s"debounce pin of ${ms}ms ignored (outside 1..10000ms); the adaptive policy stands")
         }
+        // Staleness step 1 (tracker/LSP-STALENESS.md): the SOURCE ROOTS the
+        // session reads the stdlib from, ahead of the classpath copy.  Explicit
+        // `initializationOptions.moduleRoots` first, in the order given; then
+        // what every workspace folder implies (`Resident.rootsUnder`:
+        // `core/src/main/resources/modules` beneath it, when that exists), with
+        // `rootUri` counted as a folder for a client that sends only that.  Set
+        // here and read at `initialized`, when the session boots, so a client
+        // that sends neither gets the classpath and nothing else changes.
+        val explicitRoots =
+          params / "initializationOptions" flatMap (_ / "moduleRoots") flatMap (_.arr) map
+            (_ flatMap (_.str) map (r => java.nio.file.Paths.get(r).toAbsolutePath.normalize.toString)) getOrElse Nil
+        val folderUris =
+          (params / "workspaceFolders" flatMap (_.arr) map (_ flatMap (f => f / "uri" flatMap (_.str))) getOrElse Nil) ++
+          (params / "rootUri" flatMap (_.str)).toList
+        val impliedRoots = folderUris.distinct flatMap docs.pathFor flatMap Resident.rootsUnder
+        ermine.moduleRoots = (explicitRoots ++ impliedRoots).distinct
+        log("module roots: " +
+            (if (ermine.moduleRoots.isEmpty) "none (no moduleRoots option, no workspace folder with a stdlib)"
+             else ermine.moduleRoots.mkString(", ")))
         Json.obj(
           "capabilities" -> Json.obj(
             "textDocumentSync" -> Json.obj(
