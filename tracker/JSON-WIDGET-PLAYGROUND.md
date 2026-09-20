@@ -1,8 +1,8 @@
 # JSON widget playground: edit a widget, see it rendered, inside VS Code
 
-> **STATUS: WP-1, WP-2, WP-3, WP-4 AND WP-5 STAGE A ARE BUILT; EVERYTHING ELSE IS DESIGN
-> ONLY.** No other ticket has been started. WP-5 is being built in three reviewed stages;
-> stages B and C are not started. What each built ticket is, and the only files it changes --
+> **STATUS: WP-1, WP-2, WP-3, WP-4 AND WP-5 STAGES A AND B ARE BUILT; EVERYTHING ELSE IS
+> DESIGN ONLY.** No other ticket has been started. WP-5 is being built in three reviewed
+> stages; stage C is not started. What each built ticket is, and the only files it changes --
 > this document aside, which every ticket touches:
 >
 > - **WP-1**: `send` synchronised, `onRequestDeferred`, `$/cancelRequest` routed, the incoming
@@ -47,9 +47,68 @@
 >   `afterReload` post), `TestLspRobustness.scala`.
 >   NOT stage A, and named as seams in `Preview.scala`: the watchdog and the "stuck" state,
 >   `ermine.preview.maxDocumentBytes`, `ermine/schema {binding}` on the queue,
->   `ermine/preview/reports`, work-done progress (stage B); the launcher's `-Xmx` and
+>   `ermine/preview/reports`, work-done progress (stage B, below); the launcher's `-Xmx` and
 >   `ermine.maxHeap`, the `lsp-client.py` smoke and the measured instruments (stage C);
 >   profiles, `connect`, `disconnect` and the held connection (WP-13, WP-14).
+> - **WP-5 stage B**: the five things stage A named as seams.
+>   (1) THE WATCHDOG AND THE STUCK STATE (§2.5): a daemon `java.util.Timer`, created by the
+>   first arming and not before, armed when a job that owes an answer starts. THE CLOCK
+>   COVERS THE EVALUATION AND NOT THE BOOT: the boot is bracketed -- disarmed as it begins and
+>   re-armed as it ends, however it ends -- for a render and for a schema alike, because §2.5's
+>   watchdog row is about "a non-terminating evaluation" while the boot is a row of its own
+>   with its own progress report, and a boot is seconds (Q6 measures 2.3-7.3 s) that the
+>   timeout's wording does not account for. Each arming carries an epoch, so a task whose
+>   `cancel()` lost the race into `run` does nothing. After
+>   `ermine.preview.timeoutSeconds` (default 60) the in-flight request is answered with a 500
+>   "evaluation did not finish", the preview is marked STUCK, EVERY JOB ALREADY IN THE QUEUE
+>   is answered with the same refusal in its own shape (the thread is wedged, so nothing else
+>   would ever read them), and every later `ermine/render` and `ermine/schema` is answered
+>   the same way WITHOUT queueing -- with the message the arming that FIRED was built from,
+>   repeated, not rebuilt from a setting that may have changed. The
+>   watchdog's answer and the job's own cannot both reach the wire or the log: one claim
+>   under the queue's monitor decides which, with `Rpc.Answer`'s one-shot as the backstop.
+>   The notification is `window/showMessage` (LSP's own server-to-client notification) from
+>   the timer thread through the synchronised `send`, as §4 requires ("the render watchdog
+>   therefore uses a `Timer` thread and the synchronised `send`, not the idle slot"); it NAMES
+>   the **Ermine: Restart Language Server** action (`ermine.restartServer`) in its text rather
+>   than carrying it as a clickable item, because the LSP shape that carries actions
+>   (`window/showMessageRequest`) is a REQUEST and `ask` is dispatch-thread-only (§2.3). The
+>   button itself is the panel's banner, WP-7, which is where resolution A4 already put it.
+>   (2) `ermine.preview.maxDocumentBytes` (default 16 MB, §2.3), counted in UTF-8 bytes over
+>   the writer's buffer -- no second copy of an over-large document -- and answered 500
+>   "document too large for the panel" before `send`.
+>   (3) `ermine/schema` WITH A `binding` KEY is a preview-queue job answered by
+>   `Runner.paramSchema` from the render session (§6); the `type`/`name` forms still answer
+>   synchronously from the resident. A schema job is an `Answering` like a render, so cancel,
+>   shutdown and a dead thread all answer it; "latest wins" is a rule about renders, so a
+>   newer render does not displace it. It never changes the root set: it answers from the
+>   session a render booted, and boots one over `ermine.moduleRoots` alone only if there is
+>   none -- `ermine/schema` carries no `uri` and no `roots` (§4), so those are the only roots
+>   it can know.
+>   (4) `ermine/preview/reports {uri}` (§3.2) on the DISPATCH thread, in `Definitions.scala`
+>   beside the index it reads: the stored symbol tree's top-level term groups, filtered by
+>   `Runner.resultKind` on the codomain after at most one `->` (retried on the type's normal
+>   form, which is what expands an alias), rendered as hover renders a type. A file with no
+>   index is checked once from disk, and the index of that check is not stored.
+>   (5) BOOT PROGRESS (§2.5): `window/workDoneProgress/create` from the DISPATCH thread when
+>   it enqueues a render and no session is up, then `$/progress` begin/end from the preview
+>   thread around the boot, `cancellable: false`, guarded by the client's
+>   `window.workDoneProgress` capability. No `$/progress` is sent for a token whose `create`
+>   the client REFUSED -- PER TOKEN, so a client that refuses one create is asked again on the
+>   next boot rather than written off -- and no second `create` is issued while an earlier one
+>   is UNANSWERED, which means a client that never answers one turns boot progress off for
+>   itself for the life of the server (the alternative is `Server.ask`'s continuation map
+>   growing without bound). Either way the render proceeds; only the progress is lost. TWO BOOTS REPORT NOTHING, stated rather than
+>   hidden: one that follows a root-set change INSIDE one render, because the dispatch thread
+>   cannot predict it without doing preview-thread work (the inferred root is a file read and
+>   a header parse) -- Q6's case; and one a SCHEMA job pays, because §2.5's progress row is
+>   about renders and `ermine/schema` carries nothing the dispatch thread could key a token to.
+>   Files: `lsp/Preview.scala`, `lsp/Definitions.scala` (the `ermine/schema` split and
+>   `ermine/preview/reports`), `lsp/Main.scala` (the two settings, the capability, the
+>   install order), `lsp/Rpc.scala` (one type alias), `TestLspRobustness.scala`.
+>   NOT stage B: the launcher's `-Xmx`/`-XX:+ExitOnOutOfMemoryError` and `ermine.maxHeap`,
+>   the `lsp-client.py` smoke and the measured instruments -- RSS, boot seconds and heap
+>   after a watchdog fire (stage C).
 >
 > **Which suites were run, and what they said, is recorded in each ticket's commit message, not
 > here**: a banner that names a suite goes stale the moment the next ticket runs a different
@@ -200,6 +259,7 @@ What the preview thread costs, and where it is paid:
 |---|---|---|
 | Construction | `new Runner(RunnerConfig(roots = ermine.moduleRoots ++ inferredRoot(uri) ++ roots, run = delegatingRun, scanner = scannerFor(profile)))` on the preview thread, on the first `ermine/render` (lazy: no profile read, no driver class, no connection before then) | `Runner.scala:171-179`; resident roots at `Main.scala:106-117`. Passing `run` explicitly avoids the default `Runners.liteDB`, which is a `def` (`Backends.scala:39`) forcing the `lazy val` `DB.sqliteTestDB` (`DB.scala:140`) and loading the SQLite driver (`Runner.scala:174`) |
 | Roots | `moduleRoots` (the resident's own, so both sessions register equal shapes, §2.2), then the picked report's **inferred root** (the server derives it as `checkFile` does: parse the header, walk up one directory per extra segment of the module name, `Resident.scala:428-434`), then `ermine.preview.roots` -- `type: array of string`, `scope: "resource"` (*external*: per-folder), default `[]`, resolved by the extension against the workspace folder that owns the picked report (`getConfiguration("ermine", folderUri)`, *external*) and sent as **absolute** paths in every `ermine/render`, because a relative root would resolve against the server's cwd (`Main.scala:102-104`), which is `server.root` (`extension.js:151`). Distinct, then the classpath (`Runner.scala:313-316`). A single-segment module anywhere previews with **no setting**; empty means "the report's own tree and the stdlib". A change to the set **discards the `Runner`**: roots are immutable config (`:171`) | |
+| Settings spelling (WP-7) | **`initialize` and a settings push do not agree, and the extension must send both**: the server reads `ermine.preview.timeoutSeconds` / `ermine.preview.maxDocumentBytes` from `initializationOptions.preview.*` (no `ermine` wrapper -- `initializationOptions` is already the server's own object, as `fastMode` and `debounce` are), and from a `workspace/didChangeConfiguration` push as either `settings.ermine.preview.*` or `settings.preview.*` | as built, WP-5 stage B |
 | Reads saved files, not buffers | `Runner` loads through `Session.SourceFile.filesystem` (`:315`); the resident's checks read open buffers (`Resident.scala:397-400`) but the resident env itself loads from disk too | the preview follows **saves**; the panel says so with an "unsaved: Chart.e" hint (§5) |
 | Always typechecks | `Runner` is `_typeCheck = Some(true)` (`Runner.scala:288`) and must be: `Session.eval` infers the report's type (`Session.scala:830`) and `Decode.reportSignature` consumes it (`Runner.scala:464`). `ermine.fastMode` skips the typecheck in **checks** only (`Main.scala:65-70`), so in fast mode a type error has no squiggle and the preview shows a 500 "module does not load": the banner is the only diagnostic, and says so (§5) | |
 | Foreign tolerance OFF | `Runner` leaves `_foreignTolerant` unset -> default off (`SessionState.scala:130`) | a module with an unresolved foreign binding is a warning plus a stub in the editor (`Session.scala:1405-1411`) and a load failure in the preview (500 banner, §5). That is `bin/ermine-serve`'s behaviour, i.e. the deploy shape; stated, not hidden |
@@ -646,6 +706,10 @@ approval under `:91`. Each WP done-when in §14 names its tier.
 | Q4 | how a module whose LOAD FAILED is invalidated once it is fixed | WP-7 |
 | Q5 | §2.4 and §4 disagree: the 404 "not under a module root" is unreachable for a readable file | nothing; decide before WP-7 |
 | Q6 | a roots change discards the `Runner`, and the inferred root is part of the roots, so previewing two reports in two directories re-boots the render session each time | nothing; decide before WP-7 |
+| Q7 | `ermine/schema {module, binding}` carries no `uri` and no `roots`, so a schema asked before the first render cannot see a workspace module | nothing; decide before WP-8 |
+| Q8 | §2.5 asks the watchdog's NOTIFICATION to carry the **Restart Language Server** button, and no LSP server-to-client notification carries an action | nothing; decide before WP-7 |
+| Q9 | `ermine.preview.timeoutSeconds: 0` turns the watchdog off entirely as built: is an off switch wanted at all, and should `0` be it? | nothing |
+| Q10 | what `stuck` means if the wedged job DOES come back: as built it never clears | nothing; decide before WP-6 |
 
 **Q4, in full** (found by the WP-4 review, 2026-09-20). A module that failed to load is in
 neither `loadedFiles` nor `loadedModules`, and `Runner.invalidate` derives its module set from
@@ -700,6 +764,75 @@ least-recently-used, which multiplies the memory of §2.2 by however many are ke
 (iii) drop `inferredRoot` from the **discard key** while keeping it in the roots -- unsound
 as stated, because the runner's loader chain really is different, so it would mean rebuilding
 only the loader, which `RunnerConfig` does not allow today.
+
+**Q7, in full** (found while building WP-5 stage B, 2026-09-20). §4's row gives
+`ermine/schema` the keys `{module, binding}` and nothing else, and §6 says the binding form is
+answered from the render session. But the render session's roots are computed per render from
+`moduleRoots ++ inferredRoot(uri) ++ request roots` (§2.4), and a schema request names no
+`uri` and no `roots`, so it cannot compute them. **As built**: a schema job answers from the
+session A RENDER BOOTED, whatever its roots are, and boots one over `ermine.moduleRoots` alone
+only when there is none. It must not do anything else: calling `ensureSession` with a
+root set of its own would DISCARD the render session whenever the sets differed (§2.4), making
+a schema request cost the next render a boot. TWO CONSEQUENCES OF THE FALLBACK, both found by
+the stage B review: (a) it can answer WRONGLY and not merely "no module named ..." -- if a
+module of the SAME NAME exists under the resident's `moduleRoots`, the schema exported is that
+module's, not the workspace report's, and the difference is invisible to the client; this
+cannot arise once a render has booted the session, which is the only order §6's loop uses;
+(b) the session it boots has the resident's roots, so the FIRST RENDER after it discards that
+session and boots again (§2.4's root-set rule), which is a second boot the user waits for. In §6's own loop the render comes first (the
+panel renders, then the extension writes the params skeleton from the schema), so the failing
+order is the unusual one; §3 step 6's refresh is also after a render. Options, none built:
+(i) accept, and have the extension render before it asks (it already holds the picked (file,
+binding)); (ii) give `ermine/schema`'s binding form a `uri` and `roots` like `ermine/render`,
+so it computes the same root set -- new wire surface, §4's to decide; (iii) let the preview
+remember the last root set it booted and re-boot with it, which differs from (i) only after a
+`discard`. It blocks nothing: WP-8 is where the extension decides when to ask.
+
+**Q8, in full** (same origin). §2.5 says the watchdog answers the request "in a notification
+carrying the **Ermine: Restart Language Server** button (`ermine.restartServer`)", and §4 says
+"the render watchdog therefore uses a `Timer` thread and the synchronised `send`, not the idle
+slot" -- i.e. `notify`, never `ask` (§2.3's thread rule). Those cannot all hold: the LSP
+specification's server-to-client NOTIFICATION that shows a message, `window/showMessage`, has
+only `{type, message}` (*external*); the shape that carries actions,
+`window/showMessageRequest`, is a REQUEST whose response names the chosen action, and `ask` is
+dispatch-thread-only. **As built**: `window/showMessage` with `type: 1`, whose text NAMES the
+action -- "run \"Ermine: Restart Language Server\" (ermine.restartServer)" -- and the clickable
+button is the panel's banner, which is where resolution A4 already puts it ("Lands in WP-7").
+Options, none built: (i) accept -- the message names the command, the panel has the button;
+(ii) issue `window/showMessageRequest` from the dispatch thread, which needs a way to wake that
+thread with no client traffic: the one idle slot is the diagnostics debounce's (§4), so it
+would mean a second idle hook in `Rpc.scala` and a dispatch loop that polls while a message is
+pending; (iii) a custom `ermine/preview/stuck` notification carrying `{message, command,
+title}`, which the extension turns into a button -- a new §4 row, and not a standard LSP
+mechanism. It blocks nothing: WP-7 owns the banner either way.
+
+**Q9, in full** (found while building WP-5 stage B, 2026-09-20). `applySettings` accepts
+`ermine.preview.timeoutSeconds` in 0..3600 and treats **0 as "no watchdog at all"**: no timer
+is armed, a render may run for ever, and the preview never becomes stuck. Nothing in §2.5 asks
+for an off switch; the argument there is the opposite one -- "the watchdog exists so the user
+is told at 60 s rather than at OOM" -- and a developer who turns it off gets a preview whose
+only remaining bound is `-Xmx` and the restart that follows it (stage C). It was built this
+way because a range that starts at 1 has no way to say "do not watch", and because the
+group-D properties need a way to disable the watchdog while they set a queue up. Options,
+none built: (i) keep it, and document 0 in the setting's description as "no watchdog";
+(ii) refuse 0 like any other out-of-range value, and give the properties their own seam
+instead of the setting; (iii) keep 0 but say it once through `window/showMessage` when it is
+applied, so a preview that will never time out is never a silent surprise. It blocks nothing.
+
+**Q10, in full** (same origin). §2.5 says the watchdog "marks the preview stuck, and every
+later `ermine/render` is answered the same way without queueing", and says nothing about the
+state ever ending: as built `stuck` is set once and never cleared, so the remedy is the server
+restart the notification names. But the wedged evaluation CAN come back -- a `Fetch` that was
+merely slow, a scan that hit the 300 s statement timeout (§2.5's own row) -- and the preview
+thread is then alive, idle and refusing everything until the user restarts a process that is
+working. After the stage B fix the queue is EMPTY at that moment (the watchdog drains it), so
+clearing `stuck` would leave no half-answered state behind. Options, none built: (i) keep it
+permanent, which is what §2.5's sentence literally says and what the restart action assumes;
+(ii) clear `stuck` when the wedged job finally ends, and send a second notification saying the
+preview is working again; (iii) clear it only when the job ends AND the session is discarded,
+so nothing evaluated under a poisoned heap survives -- which is also what WP-6's cooperative
+cancel does to the runner. It blocks nothing, and WP-6 is where the same question is asked of
+a cancel.
 
 ## 14. Tickets, in dependency order
 

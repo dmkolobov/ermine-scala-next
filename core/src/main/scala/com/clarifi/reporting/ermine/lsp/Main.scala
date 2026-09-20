@@ -71,11 +71,24 @@ object Main {
         }
       }
 
+      // WP-5: the preview thread and its queue (JSON-WIDGET-PLAYGROUND §2.3).
+      // Built BEFORE `initialize`, which reads the client's
+      // `window.workDoneProgress` capability and the `ermine.preview.*`
+      // settings into it, and before `afterReload`, which posts to it.  It
+      // registers `ermine/render` and `$/cancelRequest` and boots nothing
+      // until the first render arrives.
+      val preview = Preview.install(server, () => ermine.moduleRoots, log)
+
       request("initialize") { params =>
         log("initialize received")
         applyFastMode(
           params / "initializationOptions" flatMap (_ / "fastMode") flatMap (_.bool),
           "initializationOptions")
+        // WP-5 stage B: `ermine.preview.timeoutSeconds` (§2.5) and
+        // `ermine.preview.maxDocumentBytes` (§2.3), which arrive the two
+        // ways `ermine.fastMode` does.  The preview validates and logs
+        // them; out of range is refused, not clamped.
+        preview.applySettings(params / "initializationOptions", "initializationOptions")
         // 7.4: `ermine.debounce` PINS the quiet window, in milliseconds,
         // instead of deriving it from the measured check time.  It exists for
         // reproducibility, not for tuning: tracker/tools/perf-bench.sh is the
@@ -121,6 +134,15 @@ object Main {
         watchDynamic =
           (params / "capabilities" flatMap (_ / "workspace") flatMap (_ / "didChangeWatchedFiles")
                   flatMap (_ / "dynamicRegistration") flatMap (_.bool)) getOrElse false
+        // WP-5 stage B (§2.5): whether the client can show server-initiated
+        // work-done progress.  Absent means no, per the specification, and
+        // the boot then reports nothing at all -- no
+        // `window/workDoneProgress/create`, no `$/progress`.
+        preview.progressCapable =
+          (params / "capabilities" flatMap (_ / "window") flatMap (_ / "workDoneProgress")
+                  flatMap (_.bool)) getOrElse false
+        log("preview: work-done progress " +
+            (if (preview.progressCapable) "is supported by the client" else "not supported by the client; the boot is silent"))
         Json.obj(
           "capabilities" -> Json.obj(
             "textDocumentSync" -> Json.obj(
@@ -172,12 +194,6 @@ object Main {
       // Let the session speak to the client, not just to the log file: a
       // silent 13s is indistinguishable from a hang.
       ermine.announce = (m: String) => logMessage(3, m)
-
-      // WP-5: the preview thread and its queue (JSON-WIDGET-PLAYGROUND §2.3).
-      // Built here, BEFORE `afterReload`, which posts to it; it registers
-      // `ermine/render` and `$/cancelRequest` and boots nothing until the
-      // first render arrives.
-      val preview = Preview.install(server, () => ermine.moduleRoots, log)
 
       // WP-5, §3 step 3: the paths a reload touched, as the preview names
       // files.  The watcher hands us its own; the `ermine.reloadModules`
@@ -271,6 +287,9 @@ object Main {
           (settings flatMap (_ / "ermine") flatMap (_ / "fastMode") flatMap (_.bool)) orElse
             (settings flatMap (_ / "fastMode") flatMap (_.bool)),
           "didChangeConfiguration")
+        // The same two spellings for `ermine.preview.*` (WP-5 stage B).
+        preview.applySettings(
+          (settings flatMap (_ / "ermine")) orElse settings, "didChangeConfiguration")
       }
 
       // LSP-STALENESS step 2: a file the resident loaded changed on disk.
@@ -308,7 +327,7 @@ object Main {
       }
 
       Diagnostics.install(server, ermine, docs, log)
-      Definitions.install(server, ermine, docs, log)
+      Definitions.install(server, ermine, docs, log, preview)
       References.install(server, ermine, docs, log)
       Symbols.install(server, ermine, docs, log)
       Completion.install(server, ermine, docs, log)

@@ -857,7 +857,15 @@ object Runner {
     case _                                                                          => None
   }
 
-  private[json] def unfurl(t: Type, args: List[Type]): (Type, List[Type]) = t match {
+  /** The application spine of a type, arguments outermost-last.
+    *
+    * `private[ermine]` and not `private[json]` since WP-5 stage B: the
+    * language server applies `resultKind` to a binding's CODOMAIN to list
+    * a file's report-typed bindings (JSON-WIDGET-PLAYGROUND §3.2), and the
+    * codomain is this walk's answer.  Widened rather than copied, so that
+    * the picker and `compile` cannot drift apart about what the head of a
+    * type is. */
+  private[ermine] def unfurl(t: Type, args: List[Type]): (Type, List[Type]) = t match {
     case AppT(f, a)   => unfurl(f, a :: args)
     case Memory(_, u) => unfurl(u, args)
     case other        => (other, args)

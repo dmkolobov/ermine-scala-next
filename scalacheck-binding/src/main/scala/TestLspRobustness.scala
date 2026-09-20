@@ -1,7 +1,7 @@
 package com.clarifi.reporting
 
 import com.clarifi.reporting.ermine.{ DataConDecl, Global }
-import com.clarifi.reporting.ermine.lsp.{ BuildStamp, Diagnostics, Documents, Json, Preview, Resident, Rpc, RpcError, Server, Wire }
+import com.clarifi.reporting.ermine.lsp.{ BuildStamp, Definitions, Diagnostics, Documents, Json, Preview, Resident, Rpc, RpcError, Server, Wire }
 import com.clarifi.reporting.ermine.session.{ Printer, Session => S, SessionEnv }
 
 import org.scalacheck._
@@ -1707,13 +1707,31 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * on it exactly as `Main` installs one, a dispatch thread running
     * `server.run()`, and one test-only SYNCHRONOUS request (`wp5/ping`) --
     * the witness that a render in flight does not block that thread. */
-  private final class Bench {
+  private final class Bench(warm: Boolean = true) {
     val sink   = new LogSink
     val feed   = new Feed
     val frames = new FrameSink
     val server = new Server(new Wire(feed, frames, sink.add), sink.add)
     val preview: Preview = Preview.install(server, () => List(stdlibRoot.getPath), sink.add)
+    // WP-5 stage B (§2.5): this bench's client DECLARES
+    // `window.workDoneProgress`, as `Main` would from the `initialize`
+    // capabilities, and the very first render below is therefore the one
+    // booting render of the whole group -- which is what makes the boot's
+    // create / begin / end observable without paying a second boot for it.
+    preview.progressCapable = true
     server.onRequest("wp5/ping") { _ => Json.Str("pong") }
+
+    /** `Definitions.install` on this bench's server, so the two requests
+      * stage B routes through it -- `ermine/schema` and
+      * `ermine/preview/reports` -- can be asked over this wire, by the same
+      * registration `Main` makes.  LAZY, and forced only by the properties
+      * that need it: its handlers reach the RESIDENT, so a property that
+      * forces it holds `residentLock` (the group's lock order). */
+    lazy val docs: Documents = {
+      val d = new Documents
+      Definitions.install(server, resident, d, sink.add, preview)
+      d
+    }
 
     private val dispatch = {
       val t = new Thread(new Runnable { def run(): Unit = { server.run(); () } }, "wp5-dispatch")
@@ -1764,10 +1782,49 @@ object TestLspRobustness extends Properties("LSP robustness") {
           found
       }
 
+    /** An ANSWER to our request `id` -- a message with that id and NO
+      * `method`.  The `method` test is not decoration: since stage B the
+      * server sends requests of its OWN (`window/workDoneProgress/create`,
+      * §2.5), whose ids are `Server.ask`'s counter and start at 1, which is
+      * also where these properties' request ids start.  Without it the
+      * first progress request would be read as the first render's answer. */
     def answer(id: Int, ms: Long = 180000L): Option[Json] =
-      await(ms)(j => (j / "id" flatMap (_.int)) == Some(id))
+      await(ms)(j => (j / "id" flatMap (_.int)) == Some(id) && (j / "method").isEmpty)
     def notification(method: String, ms: Long = 60000L): Option[Json] =
       await(ms)(j => (j / "method" flatMap (_.str)) == Some(method))
+
+    /** The first REQUEST the server sent us with this method (an `id` and a
+      * `method`), waiting at most `ms`. */
+    def serverRequest(method: String, ms: Long = 60000L): Option[Json] =
+      await(ms)(j => (j / "method" flatMap (_.str)) == Some(method) && (j / "id").isDefined)
+
+    /** Answer a request the SERVER sent us with a JSON-RPC error -- the one
+      * thing a client does that this bench could not do before (review S1:
+      * a `window/workDoneProgress/create` the client refuses). */
+    def replyError(id: Json, code: Int, message: String): Unit =
+      send(Json.obj("jsonrpc" -> Json.Str("2.0"), "id" -> id,
+                    "error" -> Json.obj("code" -> Json.num(code), "message" -> Json.Str(message))))
+
+    /** Every message this bench has received and not matched, including
+      * whatever is still buffered.  ONLY MEANINGFUL once every thread that
+      * could still send has been joined (`stop`), which is what makes the
+      * "nothing else was ever sent" half of a property a fact rather than a
+      * wait. */
+    def remaining(): List[Json] = {
+      var more = frames.poll(0L)
+      while (more.isDefined) { seen += more.get; more = frames.poll(0L) }
+      seen.toList
+    }
+
+    /** Every message so far whose `method` is `m`, in wire order, matched
+      * or not.  A server-sent notification nothing awaits stays in `seen`
+      * for the life of the bench, which is what lets the progress property
+      * read the frames of a boot that happened in this initializer. */
+    def sightings(m: String): List[Json] = {
+      var more = frames.poll(0L)
+      while (more.isDefined) { seen += more.get; more = frames.poll(0L) }
+      seen.toList filter (j => (j / "method" flatMap (_.str)) == Some(m))
+    }
 
     /** The queue's depth once it reaches `n`, or whatever it was when the
       * bound ran out.  The dispatch thread enqueues ASYNCHRONOUSLY -- a
@@ -1787,7 +1844,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     /** §2.4's lazy boot, paid ONCE and inside this initializer, so that no
       * property pays it under `literalLock` and the figure below is the
       * group's one boot. */
-    val bootMillis: Long = {
+    val bootMillis: Long = if (!warm) 0L else {
       val p  = writeFixture("WpWarm", wpSimple("WpWarm", 1))
       val t0 = System.currentTimeMillis
       render(1, p, "report", "1", 0)
@@ -2119,6 +2176,690 @@ object TestLspRobustness extends Properties("LSP robustness") {
     } }
   }
 
+
+  // ------------------------------------------- WP-5 stage B (§2.3, §2.5, §6)
+
+  /** A module with TWO report-typed bindings and one binding that is not a
+    * report: what §3.2's filter has to separate.  `total` returns an `Int`,
+    * which `Runner.resultKind` refuses, and the two reports differ in shape
+    * (`Int -> Node` and a widget-free `Node` flow) so that neither is found
+    * by matching the other's text. */
+  private def wpTwoReports(module: String): String =
+    "module " + module + " where\n\nimport Builtin\nimport Int\nimport Json\nimport List\n" +
+    "import Layout.Doc\n\n" +
+    "total : Int -> Int\ntotal n = n\n\n" +
+    "reportA : Int -> Node\nreportA n = rawWidget \"a\" (total n)\n\n" +
+    "reportB : Int -> Node\nreportB n = vflow [ rawWidget \"b\" (total n) ]\n\n" +
+    // review S8: a report-TYPED binding the module does not export.
+    // `Session.loadModule` subtracts the module's private terms from
+    // `termNames`, and `Runner.compile` looks the binding up there, so this
+    // one can never be rendered by name and the picker must not offer it.
+    "private\n  reportHidden : Int -> Node\n  reportHidden n = rawWidget \"h\" (total n)\n"
+
+  /** Everything a `FrameSink` holds right now.  Only called after the one
+    * thread that could write to it has been joined or has answered. */
+  private def drain(fs: FrameSink): List[Json] = {
+    val b = List.newBuilder[Json]
+    var j = fs.poll(0L)
+    while (j.isDefined) { b += j.get; j = fs.poll(0L) }
+    b.result()
+  }
+
+  private def methodOf(j: Json): Option[String] = j / "method" flatMap (_.str)
+
+  property("D: the watchdog answers a render that will not finish, names the restart action, and leaves the preview stuck") = secure {
+    previewLock.synchronized { timedD("watchdog and the stuck state") {
+      // ITS OWN BENCH, not the shared one: §2.5's stuck state is per-
+      // `Preview` and is never cleared (only a server restart clears it),
+      // so marking the group's shared preview stuck would cost every later
+      // property its render session.  It costs NO BOOT: the render is held
+      // in `beforeJob`, which runs before the job does any work at all, so
+      // this bench never builds a `Runner`.
+      val b = new Bench(warm = false)
+      val started = new java.util.concurrent.CountDownLatch(1)
+      val release = new java.util.concurrent.CountDownLatch(1)
+      try {
+        // A SHORT DEADLINE, and no verdict depends on it: the property
+        // waits up to two minutes for the watchdog's answer and fails only
+        // if it never comes.  What the small value buys is that the wait is
+        // over in a fraction of a second when the watchdog works.
+        b.preview.timeoutMillis = 300L
+        b.preview.beforeJob = {
+          case _: Preview.Render =>
+            started.countDown()
+            release.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+            // THE RELEASED JOB THROWS rather than returns: it must not go
+            // on to boot a render session (seconds this property has no use
+            // for), and a crash exercises the very path that must NOT answer
+            // a second time -- `runJob`'s crash handler, then its `finally`,
+            // both of which find the watchdog's claim already taken.
+            throw new RuntimeException("wp5 stage B: the wedged render is let go")
+          case _ => ()
+        }
+        val wedged = previewRoot.resolve("WpWedged.e")
+        b.render(1, wedged, "report", "1", 201)
+        val inFlight = started.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        val a1    = b.answer(1, 120000L)
+        val note  = b.notification("window/showMessage", 60000L)
+        val isStuck = b.preview.isStuck
+        // §2.5: "every later `ermine/render` is answered the same way
+        // WITHOUT queueing" -- the same §4 failure, and a queue that never
+        // grew.
+        b.render(2, wedged, "report", "1", 202)
+        val a2     = b.answer(2, 60000L)
+        val queued = b.preview.queuedRenders
+        // ... and the DISPATCH thread is untouched by all of it: a
+        // synchronous request it serves itself is answered while the
+        // preview sits wedged (§2.5: "The resident keeps answering until
+        // then: it does not take `evalLock` and is on another thread").
+        b.request(3, "wp5/ping", Json.Null)
+        val pong = b.answer(3, 60000L)
+        // Let the wedged job go and JOIN EVERY THREAD: after `stop` nothing
+        // can send another frame, so "no second answer" below is a fact
+        // about a finished stream and not a wait that might have been short.
+        release.countDown()
+        val stopped = b.stop()
+        val answers1 = b.remaining().count(j =>
+          (j / "id" flatMap (_.int)) == Some(1) && methodOf(j).isEmpty)
+        (inFlight :| "the render never reached the preview thread") &&
+          ((okOf(a1) ?= Some(false)) :| ("the watchdog answered " + show(a1))) &&
+          ((statusOf(a1) ?= Some(500)) :| ("its status: " + show(a1))) &&
+          (msgOf(a1).exists(_.contains("evaluation did not finish")) :|
+            ("the watchdog's message: " + show(a1))) &&
+          ((genOf(a1) ?= Some(201)) :| ("it must still echo the generation: " + show(a1))) &&
+          (note.isDefined :| "no window/showMessage notification was sent") &&
+          ((note flatMap (_ / "params") flatMap (_ / "type") flatMap (_.int) ?= Some(1)) :|
+            ("the notification is not an error: " + show(note))) &&
+          ((note flatMap (_ / "params") flatMap (_ / "message") flatMap (_.str))
+            .exists(m => m.contains("Ermine: Restart Language Server") && m.contains("ermine.restartServer")) :|
+            ("the notification does not carry the restart action: " + show(note))) &&
+          (isStuck :| "the preview is not marked stuck") &&
+          ((okOf(a2) ?= Some(false)) :| ("a render after the watchdog fired answered " + show(a2))) &&
+          ((msgOf(a2) ?= msgOf(a1)) :| ("it was not answered the same way: " + show(a2))) &&
+          ((genOf(a2) ?= Some(202)) :| ("generation: " + show(a2))) &&
+          ((queued ?= 0) :| ("a render refused while stuck left " + queued + " in the queue")) &&
+          ((pong flatMap (_ / "result") flatMap (_.str) ?= Some("pong")) :|
+            ("the dispatch thread stopped answering while the preview was stuck: " + show(pong))) &&
+          (stopped :| "the bench's threads did not stop") &&
+          ((answers1 ?= 0) :| ("the released job answered request 1 a SECOND time: " + answers1 + " extra frame(s)"))
+      } finally {
+        b.preview.beforeJob = _ => ()
+        release.countDown()
+        b.stop()
+      }
+    } }
+  }
+
+  property("D: a document over ermine.preview.maxDocumentBytes is a 500 before it is sent, and the default renders") = secure {
+    previewLock.synchronized { timedD("document size cap") {
+      val m   = writeFixture("WpBig", wpSimple("WpBig", 8801))
+      val was = bench.preview.maxDocumentBytes
+      try {
+        // A CAP NO DOCUMENT CAN MEET.  The write is ordered before the
+        // render's dequeue by the queue's own monitor, so the preview
+        // thread reads this value and not the old one.
+        bench.preview.maxDocumentBytes = 64L
+        bench.render(82, m, "report", "1", 121)
+        val capped = bench.answer(82)
+        // ... and with the default (§2.3: 16 MB) the very same render is a
+        // document, which is what says the property is not vacuous.
+        bench.preview.maxDocumentBytes = was
+        bench.render(83, m, "report", "1", 122)
+        val full = bench.answer(83)
+        ((okOf(capped) ?= Some(false)) :| ("a capped render answered " + show(capped))) &&
+          ((statusOf(capped) ?= Some(500)) :| ("status " + show(capped))) &&
+          (msgOf(capped).exists(_.contains("document too large for the panel")) :|
+            ("the message: " + show(capped))) &&
+          (msgOf(capped).exists(_.contains("maxDocumentBytes")) :|
+            ("the message does not name the setting: " + show(capped))) &&
+          ((genOf(capped) ?= Some(121)) :| ("generation " + show(capped))) &&
+          ((okOf(full) ?= Some(true)) :| ("the same render under the default cap: " + show(full))) &&
+          (docOf(full).exists(_.contains("8801")) :|
+            ("the document: " + docOf(full).map(_.take(300)))) &&
+          ((was ?= Preview.DefaultMaxDocumentBytes) :|
+            ("the default cap is " + was + ", not §2.3's 16 MB"))
+      } finally bench.preview.maxDocumentBytes = was
+    } }
+  }
+
+  property("D: ermine/schema with a binding is answered from the render session, and the type/name forms still answer from the resident") = secure {
+    previewLock.synchronized {
+      // LOCK ORDER (see the section note): `previewLock`, then
+      // `residentLock` -- both handlers below reach the resident, one to
+      // answer the `name` form and one because `Definitions.install` is
+      // forced here.
+      residentLock.synchronized { timedD("ermine/schema {binding}") {
+        val _ = resident
+        val d = bench.docs
+        val sales = writeFixture("WpSales", wpSalesSource("Sales"))
+        // Render first: §6's schema job answers from the session a render
+        // booted (`ermine/schema` carries no `uri` and no `roots`), and the
+        // group's one boot has already happened, so this costs a compile.
+        bench.render(84, sales, "report", wpSalesParams, 131)
+        val rendered = bench.answer(84)
+        bench.request(85, "ermine/schema",
+          Json.obj("module" -> Json.Str("WpSales"), "binding" -> Json.Str("report")))
+        val schema = bench.answer(85)
+        // THE ORACLE, and why it is this one.  §11 words it as "equals
+        // `exportNamed("Sales", "Query")` under the render env".  That env
+        // belongs to the preview thread and this suite cannot enter it
+        // without booting a second `Runner` inside a 60 s group -- but the
+        // equality it stands for is WITNESSED BY THE ANSWER.
+        // `Schema.exportNamed(m, n)` IS `exportType(s.cons(m.n), m)`
+        // (`Schema.scala`), and `exportType` stamps
+        // `"$id": "ermine:" + module + "/" + renderType(ty)`.  So an answer
+        // whose `$id` is exactly `ermine:WpSales/Query` was exported from a
+        // type that renders as the bare name `Query` in `WpSales` -- the
+        // very `Con` `exportNamed("WpSales", "Query")` would have looked up
+        // -- and `exportType` is a function of `(ty, module, env)`, so the
+        // two calls produce the same JSON.  The four properties and the
+        // `required` set below are `Query`'s own (`doc/Sales.e`), so the
+        // answer is not merely SOME schema.
+        val id     = schema flatMap (_ / "result") flatMap (_ / "$id") flatMap (_.str)
+        val ref    = schema flatMap (_ / "result") flatMap (_ / "$ref") flatMap (_.str)
+        // The exporter emits the record under `$defs` and points `$ref` at
+        // it, which is the shape `TestSchema` pins for every `data`.
+        val body   = schema flatMap (_ / "result") flatMap (_ / "$defs") flatMap (_ / "WpSales.Query")
+        val keys   = body flatMap (_ / "properties") collect { case Json.Obj(fs) => fs.map(_._1).sorted }
+        val req    = body flatMap (_ / "required") flatMap (_.arr) map (_ flatMap (_.str))
+        // The `type`/`name` forms are UNCHANGED: still synchronous, still
+        // the resident's, still over the same wire (§4: "the `type`/`name`
+        // forms stay on the resident").
+        bench.request(86, "ermine/schema",
+          Json.obj("module" -> Json.Str("Ord"), "name" -> Json.Str("Ordering")))
+        val named = bench.answer(86, 120000L)
+        val namedId = named flatMap (_ / "result") flatMap (_ / "$id") flatMap (_.str)
+        ((okOf(rendered) ?= Some(true)) :| ("the render that boots the session: " + show(rendered))) &&
+          ((id ?= Some("ermine:WpSales/Query")) :|
+            ("the schema's $id says it is not Query's: " + show(schema))) &&
+          ((ref ?= Some("#/$defs/WpSales.Query")) :|
+            ("the schema does not point at Query's definition: " + show(schema))) &&
+          ((keys ?= Some(List("fromDay", "onlyRegion", "orderBy", "toDay"))) :|
+            ("the schema's properties: " + show(schema))) &&
+          ((req map (_.sorted) ?= Some(List("fromDay", "orderBy", "toDay"))) :|
+            ("Query's required fields are the three non-Maybe ones: " + show(schema))) &&
+          ((namedId ?= Some("ermine:Ord/Ordering")) :|
+            ("the name form no longer answers from the resident: " + show(named))) &&
+          ((d ne null) :| "no Documents")
+      } }
+    }
+  }
+
+  property("D: a schema job queues behind a render and is not displaced by a newer render") = secure {
+    // SPLIT from a property whose title claimed more than it checked
+    // (review M1): "answered rather than stranded" is now two properties of
+    // its own -- the shutdown drain below, and the watchdog drain above --
+    // and this one is about the QUEUE's ordering rules and nothing else.
+    previewLock.synchronized {
+      residentLock.synchronized { timedD("the schema job in the queue") {
+        val _ = resident
+        val _d = bench.docs
+        val sales = writeFixture("WpSales", wpSalesSource("Sales"))
+        val held    = 141
+        val started = new java.util.concurrent.CountDownLatch(1)
+        val release = new java.util.concurrent.CountDownLatch(1)
+        bench.preview.beforeJob = {
+          case r: Preview.Render if r.req.generation == Json.num(held) =>
+            started.countDown(); release.await(180L, java.util.concurrent.TimeUnit.SECONDS); ()
+          case _ => ()
+        }
+        val queuedBehind =
+          try {
+            bench.render(87, sales, "report", wpSalesParams, held)
+            val inFlight = started.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+            bench.request(88, "ermine/schema",
+              Json.obj("module" -> Json.Str("WpSales"), "binding" -> Json.Str("report")))
+            // The dispatch thread enqueues ASYNCHRONOUSLY, so the depth is
+            // waited for, exactly as `awaitQueued` does for renders; the
+            // verdict is the value, never how long it took.
+            val deadline = System.currentTimeMillis + 60000L
+            while (bench.preview.queuedSchemas == 0 && System.currentTimeMillis < deadline)
+              Thread.sleep(5L)
+            val one = bench.preview.queuedSchemas
+            // §2.5's "latest wins" is a rule about RENDERS: a newer render
+            // replaces the queued render and leaves the schema where it is.
+            bench.render(89, sales, "report", wpSalesParams, 142)
+            bench.render(90, sales, "report", wpSalesParams, 143)
+            val displaced = bench.answer(89, 60000L)
+            val still     = bench.preview.queuedSchemas
+            release.countDown()
+            val schema    = bench.answer(88)
+            val last      = bench.answer(90)
+            (inFlight, one, displaced, still, schema, last)
+          } finally {
+            bench.preview.beforeJob = _ => ()
+            release.countDown()
+          }
+        val (inFlight, one, displaced, still, schema, last) = queuedBehind
+        (inFlight :| "the held render never reached the preview thread") &&
+          ((one ?= 1) :| ("a schema sent behind a held render left " + one + " queued, not 1")) &&
+          ((errCode(displaced) ?= Some(-32800)) :| ("the displaced render answered " + show(displaced))) &&
+          ((still ?= 1) :| ("a newer render displaced the queued SCHEMA: " + still + " left")) &&
+          ((schema flatMap (_ / "result") flatMap (_ / "$id") flatMap (_.str) ?= Some("ermine:WpSales/Query")) :|
+            ("the schema queued behind the render answered " + show(schema))) &&
+          ((okOf(last) ?= Some(true)) :| ("the surviving queued render: " + show(last)))
+      } }
+    }
+  }
+
+  property("D: a schema job queued or in flight when the preview shuts down is answered, not stranded") = secure {
+    previewLock.synchronized { timedD("the schema job at shutdown") {
+        // Its own `Preview`, because stopping the shared one would cost
+        // every other property its session; no boot, because the job in
+        // flight is held in `beforeJob`.
+        val own  = new Preview(() => Nil, (_, _) => (), (_, _, _) => (), quiet)
+        val hold = new java.util.concurrent.CountDownLatch(1)
+        val ran  = new java.util.concurrent.CountDownLatch(1)
+        // Held, then THROWN rather than returned: a released schema job
+        // would go on to boot a render session of its own (§6's fallback
+        // roots), which this half has no use for and would pay seconds for.
+        own.beforeJob = { case _: Preview.Schema =>
+                            ran.countDown()
+                            hold.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+                            throw new RuntimeException("wp5 stage B: the held schema job is let go")
+                          case _ => () }
+        val first  = new Answers
+        val second = new Answers
+        own.schema(Json.num(1), Json.obj("module" -> Json.Str("M"), "binding" -> Json.Str("r")), first.answer)
+        val reached = ran.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        own.schema(Json.num(2), Json.obj("module" -> Json.Str("M"), "binding" -> Json.Str("r")), second.answer)
+        own.shutdown()
+        val drained = second.await(60000L)
+        hold.countDown()
+        val firstAnswer = first.await(60000L)
+        val stopped = own.awaitStopped(30000L)
+        (reached :| "the schema job never reached the preview thread") &&
+          ((drained.map(_.left.toOption.map(_._1)) ?= Some(Some(Rpc.RequestCancelled))) :|
+            ("a schema queued at shutdown was answered " + answerText(drained))) &&
+          (firstAnswer.isDefined :| "the schema in flight at shutdown was never answered") &&
+          (stopped :| "the second preview did not stop")
+    } }
+  }
+
+  property("D: a job already QUEUED when the watchdog fires is answered with the stuck refusal, not stranded") = secure {
+    previewLock.synchronized { timedD("the watchdog drains the queue") {
+      // REVIEW M1.  The preview thread is wedged for good, so a job that was
+      // already in the queue has no reader at all: `render`/`schema` refuse
+      // only NEW requests, and `shutdown`'s drain is "when the user quits".
+      // It is §6's ordinary loop -- the extension renders, then asks for the
+      // params schema -- so the stranded request is the happy path.
+      val b = new Bench(warm = false)
+      val holdA   = new java.util.concurrent.CountDownLatch(1)
+      val holdB   = new java.util.concurrent.CountDownLatch(1)
+      val startA  = new java.util.concurrent.CountDownLatch(1)
+      val startB  = new java.util.concurrent.CountDownLatch(1)
+      try {
+        // THE WATCHDOG IS OFF while the queue is built, and armed only for
+        // the job that wedges, so that "did the queue fill before the fire"
+        // is not a race: a job's deadline is fixed when IT starts, and job
+        // B starts only after this property has released A.
+        b.preview.timeoutMillis = 0L
+        b.preview.beforeJob = {
+          case r: Preview.Render if r.req.generation == Json.num(301) =>
+            startA.countDown()
+            holdA.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+            // THE DEADLINE IS SET HERE, on the preview thread, for the job
+            // that comes NEXT.  A's own arming already happened, with the
+            // watchdog off, and A throws on the next line -- so A has no
+            // tail (no boot, no render) that could run under the short
+            // deadline and be fired on, which would drain B and C for the
+            // wrong reason.
+            b.preview.timeoutMillis = 300L
+            throw new RuntimeException("wp5 stage B: the first render is let go")
+          case r: Preview.Render if r.req.generation == Json.num(302) =>
+            startB.countDown()
+            // WEDGED: the watchdog is what answers this job, exactly as an
+            // unstoppable evaluation would be.  The latch is released only
+            // by this property's `finally`, and the job then THROWS rather
+            // than returning -- it must not go on to boot, and its crash
+            // exercises the path that must not answer a second time.
+            holdB.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+            throw new RuntimeException("wp5 stage B: the wedged render is let go")
+          case _ => ()
+        }
+        val f = previewRoot.resolve("WpDrain.e")
+        b.render(1, f, "report", "1", 301)
+        val heldA = startA.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        // built while A is held and the watchdog is off: B is the render
+        // that will wedge, C the schema queued behind it
+        b.render(2, f, "report", "1", 302)
+        // WAITED FOR, and this is not decoration: the render travels over
+        // the wire and is enqueued by the DISPATCH thread, asynchronously,
+        // while the schema below is posted straight onto the queue by this
+        // thread.  Without this the two can be enqueued in either order,
+        // and a schema that lands FIRST is simply run -- which is a
+        // property that proves nothing about the drain.
+        val queuedFirst = b.awaitQueued(1, 60000L)
+        // The schema job is posted DIRECTLY, not over the wire: this bench
+        // installs no `Definitions` (that would drag the resident into a
+        // property about the queue), and `ermine/schema`'s wire route is
+        // pinned by the two properties above.  `Preview.schema` is the
+        // dispatch thread's entry point and this property thread is
+        // playing that part, exactly as the M1/M2 crash properties do.
+        val schemaAnswer = new Answers
+        b.preview.schema(Json.num(3),
+          Json.obj("module" -> Json.Str("WpDrain"), "binding" -> Json.Str("report")),
+          schemaAnswer.answer)
+        val deadline = System.currentTimeMillis + 60000L
+        while ((b.preview.queuedRenders != 1 || b.preview.queuedSchemas != 1) &&
+               System.currentTimeMillis < deadline) Thread.sleep(5L)
+        val queuedR = b.preview.queuedRenders
+        val queuedS = b.preview.queuedSchemas
+        // Let A go; its own `beforeJob` arms the next job's watchdog.
+        holdA.countDown()
+        val aAnswer = b.answer(1, 120000L)
+        val wedged  = startB.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        // B is wedged with C behind it; the watchdog must answer BOTH
+        val bAnswer = b.answer(2, 120000L)
+        val cAnswer = schemaAnswer.await(120000L)
+        val left    = b.preview.queuedRenders + b.preview.queuedSchemas
+        val stuck   = b.preview.isStuck
+        (heldA :| "the first render never reached the preview thread") &&
+          ((queuedFirst ?= 1) :| ("the render was not queued before the schema was posted: " + queuedFirst)) &&
+          ((queuedR ?= 1) :| ("the render did not queue (" + queuedR + "): the fire beat the setup")) &&
+          ((queuedS ?= 1) :| ("the schema did not queue (" + queuedS + "): the fire beat the setup")) &&
+          ((okOf(aAnswer) ?= Some(false)) :| ("the first render was never answered: " + show(aAnswer))) &&
+          (wedged :| "the second render never reached the preview thread") &&
+          (stuck :| "the preview is not marked stuck") &&
+          ((statusOf(bAnswer) ?= Some(500)) :| ("the wedged render answered " + show(bAnswer))) &&
+          (msgOf(bAnswer).exists(_.contains("evaluation did not finish")) :|
+            ("the wedged render's message: " + show(bAnswer))) &&
+          ((cAnswer collect { case Right(j) => j } flatMap (_ / "error") flatMap (_.str))
+            .exists(_.contains("evaluation did not finish")) :|
+            ("STRANDED or wrongly shaped: the schema queued behind the wedged render answered " +
+             answerText(cAnswer))) &&
+          ((left ?= 0) :| ("the watchdog left " + left + " job(s) in the queue"))
+      } finally {
+        b.preview.beforeJob = _ => ()
+        holdA.countDown()
+        holdB.countDown()
+        b.stop()
+      }
+    } }
+  }
+
+  property("D: the watchdog answers a CANCELLED in-flight request -32800, and the preview is stuck all the same") = secure {
+    previewLock.synchronized { timedD("watchdog over a cancelled request") {
+      // §2.5 says two things that meet here: an in-flight `$/cancelRequest`
+      // leaves the work running and replaces its EVENTUAL answer with
+      // -32800, and the watchdog IS that eventual answer.  The client that
+      // asked for the cancellation gets it; the preview is stuck all the
+      // same, because the evaluation really is not coming back.
+      val b = new Bench(warm = false)
+      val holdA = new java.util.concurrent.CountDownLatch(1)
+      val holdB = new java.util.concurrent.CountDownLatch(1)
+      val startA = new java.util.concurrent.CountDownLatch(1)
+      val startB = new java.util.concurrent.CountDownLatch(1)
+      try {
+        // The same construction as the drain property: the queue is built
+        // with the watchdog OFF, and the deadline is set on the preview
+        // thread for the job that is meant to be fired on, by a job that
+        // throws immediately afterwards and so has no tail of its own.
+        b.preview.timeoutMillis = 0L
+        b.preview.beforeJob = {
+          case r: Preview.Render if r.req.generation == Json.num(311) =>
+            startA.countDown()
+            holdA.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+            b.preview.timeoutMillis = 1500L
+            throw new RuntimeException("wp5 stage B: the first render is let go")
+          case r: Preview.Render if r.req.generation == Json.num(312) =>
+            startB.countDown()
+            holdB.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+            throw new RuntimeException("wp5 stage B: the wedged render is let go")
+          case _ => ()
+        }
+        val f = previewRoot.resolve("WpCancelled.e")
+        b.render(1, f, "report", "1", 311)
+        val heldA = startA.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        b.render(2, f, "report", "1", 312)
+        // waited for before the schema is posted, so that the schema is
+        // really BEHIND the render (see the drain property)
+        val queuedFirst = b.awaitQueued(1, 60000L)
+        // a schema behind it, so the drain is checked on this path too
+        val schemaAnswer = new Answers
+        b.preview.schema(Json.num(3),
+          Json.obj("module" -> Json.Str("WpCancelled"), "binding" -> Json.Str("report")),
+          schemaAnswer.answer)
+        val deadline = System.currentTimeMillis + 60000L
+        while ((b.preview.queuedRenders != 1 || b.preview.queuedSchemas != 1) &&
+               System.currentTimeMillis < deadline) Thread.sleep(5L)
+        val queuedR = b.preview.queuedRenders
+        val queuedS = b.preview.queuedSchemas
+        holdA.countDown()
+        val aAnswer = b.answer(1, 120000L)
+        val wedged  = startB.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        // B is in flight and wedged; cancel it, and PROVE the dispatch
+        // thread handled the cancel -- its loop is strictly sequential, so
+        // a pong to a request sent afterwards can only follow it.  If the
+        // cancel somehow lost the 1.5s race the answer below is the stuck
+        // refusal and this property fails loudly rather than vacuously.
+        b.notifyServer("$/cancelRequest", Json.obj("id" -> Json.num(2)))
+        b.request(98, "wp5/ping", Json.Null)
+        val pong = b.answer(98, 60000L)
+        val bAnswer = b.answer(2, 120000L)
+        val cAnswer = schemaAnswer.await(120000L)
+        val stuck   = b.preview.isStuck
+        val note    = b.notification("window/showMessage", 60000L)
+        val left    = b.preview.queuedRenders + b.preview.queuedSchemas
+        (heldA :| "the first render never reached the preview thread") &&
+          ((queuedFirst ?= 1) :| ("the render was not queued before the schema was posted: " + queuedFirst)) &&
+          ((queuedR ?= 1) :| ("the render did not queue (" + queuedR + ")")) &&
+          ((queuedS ?= 1) :| ("the schema did not queue (" + queuedS + ")")) &&
+          ((okOf(aAnswer) ?= Some(false)) :| ("the first render: " + show(aAnswer))) &&
+          (wedged :| "the second render never reached the preview thread") &&
+          ((pong flatMap (_ / "result") flatMap (_.str) ?= Some("pong")) :|
+            ("the dispatch thread never acknowledged the cancel: " + show(pong))) &&
+          ((errCode(bAnswer) ?= Some(-32800)) :|
+            ("a CANCELLED in-flight request the watchdog fired on answered " + show(bAnswer))) &&
+          (stuck :| "the preview is not stuck: a cancelled request does not make the evaluation come back") &&
+          (note.isDefined :| "no window/showMessage notification was sent") &&
+          ((cAnswer collect { case Right(j) => j } flatMap (_ / "error") flatMap (_.str))
+            .exists(_.contains("evaluation did not finish")) :|
+            ("the schema queued behind it answered " + answerText(cAnswer))) &&
+          ((left ?= 0) :| ("the watchdog left " + left + " job(s) in the queue"))
+      } finally {
+        b.preview.beforeJob = _ => ()
+        holdA.countDown()
+        holdB.countDown()
+        b.stop()
+      }
+    } }
+  }
+
+  property("D: the boot is not watched by the watchdog, and a create the client refused sends no $/progress") = secure {
+    previewLock.synchronized { timedD("boot bracket and a refused token") {
+      // REVIEW M2 and S1, on ONE bench and therefore ONE extra boot: both
+      // claims are about what happens AROUND a real boot, and a boot is the
+      // most expensive thing in this group (§11's 60 s cap).  Its own bench,
+      // because it must boot and the shared one is already booted.
+      val b = new Bench(warm = false)
+      val bootHeld = new java.util.concurrent.CountDownLatch(1)
+      try {
+        // Shorter than any boot: had the boot been watched, this fires
+        // inside it, answers 500 and marks a healthy preview stuck -- which
+        // is exactly what the stage B review reproduced.
+        b.preview.timeoutMillis = 300L
+        // THE SEAM, inside the bracket: after the watchdog has been called
+        // off and before the boot.  It raises the timeout so that the
+        // RE-ARM that follows the boot cannot fire on the ordinary compile
+        // and render work, which would confuse "the boot was watched" with
+        // "the render was slow".  The boot itself is unwatched whatever
+        // this does.
+        // ... and HOLDS the preview thread there, so the refusal below is
+        // processed before `beginProgress` ever reads it.  `unwatched` runs
+        // this seam before `beginProgress`, which is what makes the latch
+        // an ordering and not a hope.
+        b.preview.duringBoot = () => {
+          b.preview.timeoutMillis = 300000L
+          bootHeld.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+          ()
+        }
+        val m  = writeFixture("WpBoot", wpSimple("WpBoot", 7701))
+        // The client REFUSES the progress token: the create is sent by the
+        // DISPATCH thread when the render is enqueued, so it is on the wire
+        // before the preview thread has started the job.
+        val t0 = System.currentTimeMillis
+        b.render(1, m, "report", "1", 401)
+        val create = b.serverRequest("window/workDoneProgress/create", 60000L)
+        create flatMap (_ / "id") foreach (id =>
+          b.replyError(id, Rpc.InternalError, "this client will not show progress"))
+        // THE REFUSAL IS PROVED PROCESSED, not assumed: the dispatch loop
+        // is strictly sequential (`Server.run` reads and handles one
+        // message at a time), so an answer to a request sent AFTER the
+        // reply can only have been produced after the reply's continuation
+        // ran.  A pong is that proof.
+        b.request(99, "wp5/ping", Json.Null)
+        val pong = b.answer(99, 60000L)
+        bootHeld.countDown()
+        val first = b.answer(1, 300000L)
+        val took  = System.currentTimeMillis - t0
+        val stuck = b.preview.isStuck
+        // and a later render still works
+        b.render(2, m, "report", "1", 402)
+        val second   = b.answer(2)
+        val progress = b.sightings("$/progress").size
+        ((okOf(first) ?= Some(true)) :| ("a render whose BOOT outlasted the timeout answered " + show(first))) &&
+          ((!stuck) :| "the watchdog marked a healthy preview stuck during its boot") &&
+          ((okOf(second) ?= Some(true)) :| ("the render after the boot: " + show(second))) &&
+          (create.isDefined :| "no window/workDoneProgress/create was sent, so the refusal half is vacuous") &&
+          ((pong flatMap (_ / "result") flatMap (_.str) ?= Some("pong")) :|
+            ("the dispatch thread never acknowledged the refusal, so its ordering is unproven: " + show(pong))) &&
+          ((progress ?= 0) :| ("a create the client REFUSED still produced " + progress + " $/progress notification(s)")) &&
+          // NOT VACUOUS: the boot really did outlast the 300ms deadline.
+          // The figure is asserted, not assumed -- a boot that somehow came
+          // back inside the deadline fails here rather than passing quietly.
+          ((took > 300L) :| ("the whole render took " + took + "ms, which is inside the 300ms deadline: " +
+                             "this property proved nothing"))
+      } finally {
+        b.preview.duringBoot = () => ()
+        bootHeld.countDown()
+        b.stop()
+      }
+    } }
+  }
+
+  property("D: ermine/preview/reports lists the report-typed bindings of a file and nothing else") = secure {
+    previewLock.synchronized {
+      // `withDepCache` and not a bare `residentLock` (review nit 5): this
+      // property's answer comes from a COLD `Resident.checkFile`, which
+      // loads the fixture's imports through the process-global
+      // `Session.depCache` -- the very cache four other suites clear under
+      // `ErmineFixture.literalLock`.  The declared lock order holds:
+      // `previewLock`, then `residentLock`, then `literalLock`.
+      withDepCache { timedD("ermine/preview/reports") {
+        val _d = bench.docs
+        val sales = writeFixture("WpSales", wpSalesSource("Sales"))
+        val two   = writeFixture("WpTwo", wpTwoReports("WpTwo"))
+        val before = bench.sink.result().count(_.contains("preview/reports: no index for"))
+        bench.request(91, "ermine/preview/reports",
+          Json.obj("uri" -> Json.Str(sales.toUri.toString)))
+        val one = bench.answer(91, 120000L)
+        bench.request(92, "ermine/preview/reports",
+          Json.obj("uri" -> Json.Str(two.toUri.toString)))
+        val both = bench.answer(92, 120000L)
+        bench.request(93, "ermine/preview/reports", Json.obj("nope" -> Json.Bool(true)))
+        val bad = bench.answer(93, 60000L)
+        val after = bench.sink.result().count(_.contains("preview/reports: no index for"))
+        def listed(j: Option[Json]): Option[List[(String, String)]] =
+          j flatMap (_ / "result") flatMap (_ / "reports") flatMap (_.arr) map (_ flatMap { r =>
+            for { b <- r / "binding" flatMap (_.str); t <- r / "type" flatMap (_.str) } yield (b, t) })
+        val salesList = listed(one)
+        val twoList   = listed(both)
+        ((one flatMap (_ / "result") flatMap (_ / "module") flatMap (_.str) ?= Some("WpSales")) :|
+          ("the module: " + show(one))) &&
+          ((salesList map (_.map(_._1)) ?= Some(List("report"))) :|
+            ("§11: report and nothing else -- got " + show(one))) &&
+          (salesList.flatMap(_.headOption).exists { case (_, t) =>
+             t.startsWith("Query") && t.endsWith("Node") } :|
+            ("the rendered type is not Query -> Node: " + show(one))) &&
+          ((twoList map (_.map(_._1)) ?= Some(List("reportA", "reportB"))) :|
+            ("two reports beside a non-report: " + show(both))) &&
+          // review S8: `reportHidden` is report-TYPED and lives in a
+          // `private` block, so `Session.loadModule` keeps it out of
+          // `termNames` and `Runner.compile` could never render it by name.
+          // Offering it would be a pick that always 404s.
+          ((twoList map (_.map(_._1)) map (_.contains("reportHidden")) ?= Some(false)) :|
+            ("a PRIVATE report-typed binding was offered to the picker: " + show(both))) &&
+          ((bad flatMap (_ / "result") flatMap (_ / "error") flatMap (_.str)).isDefined :|
+            ("a request with no uri answered " + show(bad))) &&
+          // §3.2's "a file with no index is checked once by the server for
+          // this request": two files with no index, two cold checks, and no
+          // third from the malformed request.
+          (((after - before) ?= 2) :| ("the two requests cost " + (after - before) + " cold checks, not 2"))
+      } }
+    }
+  }
+
+  property("D: the boot reports work-done progress, and only to a client that declared the capability") = secure {
+    previewLock.synchronized { timedD("boot progress") {
+      // THE GROUP'S ONE BOOT is the shared bench's first render, and this
+      // bench's client declares `window.workDoneProgress` (see `Bench`), so
+      // the create / begin / end of §2.5 are already on this wire and no
+      // second boot is paid for them.  Every later render finds a session
+      // and must add nothing.
+      val _ = bench.bootMillis
+      val creates = bench.sightings("window/workDoneProgress/create")
+      val progress = bench.sightings("$/progress")
+      val kinds = progress flatMap (_ / "params") flatMap (_ / "value") flatMap (_ / "kind") flatMap (_.str)
+      val token = creates.headOption flatMap (_ / "params") flatMap (_ / "token") flatMap (_.str)
+      val sameToken = progress flatMap (_ / "params") flatMap (_ / "token") flatMap (_.str)
+      val title = progress.headOption flatMap (_ / "params") flatMap (_ / "value") flatMap (_ / "title") flatMap (_.str)
+      val cancellable = progress.headOption flatMap (_ / "params") flatMap (_ / "value") flatMap (_ / "cancellable") flatMap (_.bool)
+      // A LATER, NON-BOOTING RENDER adds none of it.
+      val m = writeFixture("WpProg", wpSimple("WpProg", 6601))
+      bench.render(94, m, "report", "1", 151)
+      val again = bench.answer(94)
+      val creates2  = bench.sightings("window/workDoneProgress/create").size
+      val progress2 = bench.sightings("$/progress").size
+      // WITHOUT THE CAPABILITY, nothing at all -- and the guard is the
+      // capability and nothing else, which the second half pins by flipping
+      // only that.  Neither costs a boot: `beforeJob` throws before the job
+      // looks at anything, so no `Runner` is ever built, and the `create`
+      // is the DISPATCH thread's, sent when the job is ENQUEUED.
+      def createdWith(capable: Boolean, renders: Int): List[Json] = {
+        val fs = new FrameSink
+        val p  = Preview.install(new Server(new Wire(new Feed, fs, quiet), quiet), () => Nil, quiet)
+        p.progressCapable = capable
+        p.beforeJob = { case _: Preview.Render => throw new RuntimeException("wp5 stage B: no boot here")
+                        case _ => () }
+        var i = 0
+        while (i < renders) {
+          val a = new Answers
+          p.render(Json.num(i + 1), crashParams(161 + i), a.answer)
+          val _answered = a.await(60000L)    // the answer is the sync point
+          i += 1
+        }
+        p.shutdown()
+        val _stopped = p.awaitStopped(30000L)
+        drain(fs) filter (j => methodOf(j) == Some("window/workDoneProgress/create"))
+      }
+      val silent = createdWith(false, 1)
+      val noisy  = createdWith(true, 1)
+      // REVIEW S6: a client that never ANSWERS a create must not be sent a
+      // second one.  Two renders, neither of which boots (the seam throws)
+      // and neither of which is answered by this bench's absent client:
+      // one create, not two, because `Server.ask` keeps a continuation per
+      // request and a non-answering client plus a failing boot retried on
+      // every render would grow that map for the life of the process.
+      val repeated = createdWith(true, 2)
+      ((creates.size ?= 1) :| ("the one boot asked for " + creates.size + " progress tokens")) &&
+        (token.exists(_.startsWith("ermine-preview-boot-")) :|
+          ("the create carries no token: " + creates.headOption.map(Json.print))) &&
+        ((kinds ?= List("begin", "end")) :| ("the boot's $/progress kinds were " + kinds)) &&
+        ((sameToken.distinct ?= token.toList) :|
+          ("the progress notifications do not carry the create's token: " + sameToken)) &&
+        ((title ?= Some("Ermine preview: booting the render session")) :| ("the title: " + title)) &&
+        ((cancellable ?= Some(false)) :| ("§2.5 asks for cancellable: false, got " + cancellable)) &&
+        ((okOf(again) ?= Some(true)) :| ("the later render: " + show(again))) &&
+        ((creates2 ?= 1) :| ("a render that booted nothing asked for another token (" + creates2 + ")")) &&
+        ((progress2 ?= 2) :| ("a render that booted nothing reported progress (" + progress2 + " notifications)")) &&
+        ((silent.size ?= 0) :| ("a client without the capability was sent " + silent.size + " create(s)")) &&
+        ((noisy.size ?= 1) :| ("a client WITH the capability was sent " + noisy.size + " create(s), not 1")) &&
+        ((repeated.size ?= 1) :| ("a client that answered no create was sent " + repeated.size +
+                                  " of them over two renders, not 1"))
+    } }
+  }
+
   // ---- M1 and M2 of the stage A review: the thread's own failure modes ----
 
   /** A recording `Rpc.Answer`: every call is kept, in order, and awaited
@@ -2172,7 +2913,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     val evil = new RuntimeException("wp5 crash probe") {
       override def getMessage: String = throw new IllegalStateException("message blew up")
     }
-    val p = new Preview(() => Nil, (_, _) => (),
+    val p = new Preview(() => Nil, (_, _) => (), (_, _, _) => (),
       s => if (s.contains("job crashed")) throw new RuntimeException("log blew up") else sink.add(s))
     p.beforeJob = {
       case r: Preview.Render if r.req.generation == Json.num(1) => throw evil
@@ -2213,7 +2954,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     // scrub (rule A10: the profile's own `url`, `user` and host).
     val sink   = new LogSink
     val secret = "jdbc:sqlserver://db.example.internal:1433;databaseName=x;user=sa;password=hunter2"
-    val p = new Preview(() => Nil, (_, _) => (), sink.add)
+    val p = new Preview(() => Nil, (_, _) => (), (_, _, _) => (), sink.add)
     p.beforeJob = {
       case _: Preview.Render => throw new RuntimeException("No suitable driver found for " + secret)
       case _                 => ()

@@ -261,9 +261,13 @@ object Rpc {
     * one a `$/cancelRequest` named (JSON-WIDGET-PLAYGROUND §2.5). */
   val RequestCancelled = -32800
 
+  /** What a deferred request is answered WITH: `Left((code, message))` for
+    * a JSON-RPC error, `Right(result)` for a result. */
+  type Answered = Either[(Int, String), Json]
+
   /** How a deferred request handler answers: `Left((code, message))` or
     * `Right(result)`, from any thread, exactly once. */
-  type Answer = Either[(Int, String), Json] => Unit
+  type Answer = Answered => Unit
 
   /** Methods whose incoming body never reaches the log (rule A6 of
     * tracker/JSON-WIDGET-PLAYGROUND.md §8.1): `ermine/preview/connect`

@@ -1,6 +1,8 @@
 package com.clarifi.reporting.ermine.lsp
 
-import com.clarifi.reporting.ermine.{ Fixity, Global, Idfix, KindSchema, Local, Name, Pretty, Type, V }
+import com.clarifi.reporting.ermine.{ AppT, Arrow, Fixity, Global, Idfix, KindSchema, Local, Memory,
+  Name, Pretty, Type, V }
+import com.clarifi.reporting.ermine.json.Runner
 import com.clarifi.reporting.ermine.rename.Renamer
 import com.clarifi.reporting.ermine.session.{ Phases, TolerantCheck }
 import com.clarifi.reporting.ermine.surface.{ SClassStatement, SDatabaseBlock,
@@ -173,7 +175,8 @@ object Definitions {
   // and version (roadmap 5.3): a definition request and the check that
   // built the index must agree on what the file currently says.
 
-  def install(server: Server, ermine: Resident, docs: Documents, log: String => Unit): Unit = {
+  def install(server: Server, ermine: Resident, docs: Documents, log: String => Unit,
+              preview: Preview): Unit = {
     // 7.5: ONE line source per server, shared by definition, references
     // and workspace/symbol -- so the stdlib is read at most once whoever
     // asks first (tickets E8, E9).
@@ -223,9 +226,178 @@ object Definitions {
     // `bin/ermine-schema`, which pays a fresh boot for every question.  The
     // whole handler is `json/Schema.scala`'s `LspSchema`: the exporter owns
     // its own wire shape, this file only routes to it.
-    server.onRequest("ermine/schema") { params => ifReady {
-      com.clarifi.reporting.ermine.json.LspSchema.answer(ermine, params)
-    } }
+    //
+    // WP-5 STAGE B (JSON-WIDGET-PLAYGROUND §4, §6) SPLITS THE ROUTE BY KEY.
+    // With a `binding` key the request is a PREVIEW-QUEUE job, answered
+    // from the render session: `Runner.paramSchema` compiles the report and
+    // exports the schema from the very `paramTy` the decoder was compiled
+    // from, and the resident could not answer it at all -- the preview
+    // roots exist only in the render session (so a workspace report module
+    // would be module-not-found here), and the binding mode EVALUATES a
+    // module's top level, which §2.3 keeps off this thread.  The `type` and
+    // `name` forms are unchanged, still synchronous, still on the resident.
+    //
+    // The registration is DEFERRED for both: `Server` consults the
+    // synchronous map first, so one method cannot be registered both ways,
+    // and the resident branch answers before it returns exactly as it did.
+    //
+    // THE KEY'S PRESENCE DECIDES, not its type (review nit 4): a request
+    // that says `"binding": 123` asked for the binding form and got it
+    // wrong, and it must earn THAT form's error ("a \"binding\" naming the
+    // report") rather than fall through to the resident and be told it
+    // needs a "type" or a "name" it never mentioned.
+    server.onRequestDeferredWithId("ermine/schema") { (id, params, answer) =>
+      params / "binding" match {
+        case Some(_) => preview.schema(id, params, answer)
+        case None    => answer(Right(ifReady {
+          com.clarifi.reporting.ermine.json.LspSchema.answer(ermine, params)
+        }))
+      }
+    }
+
+    // WP-5 stage B, §3.2: the report-typed bindings of one file, for the
+    // picker.  ON THE DISPATCH THREAD and never on the preview's: it reads
+    // the RESIDENT's document index, which this thread owns.
+    server.onRequest("ermine/preview/reports") { params =>
+      reports(ermine, docs, log, params)
+    }
+  }
+
+  // ----------------------------------------- ermine/preview/reports (§3.2)
+
+  /** `ermine/preview/reports {uri}` -> `{module, reports: [{binding, type}]}`
+    * or `{error}` (§3.2, §4).
+    *
+    * A LOOKUP, not an analysis: the symbol tree `Definitions.index` builds
+    * on every check carries, per top-level term group, the type the check
+    * inferred for that spelling, and this filters those with the same test
+    * the runner applies to a compiled report (`Runner.resultKind`, public
+    * since WP-4).  So the picker's list and the runner's 400 cannot
+    * disagree about what a report is.
+    *
+    * THE ONE EXCEPTION, which §3.2 states and this honours: a file with no
+    * index -- never opened, never checked -- is checked ONCE here, from
+    * disk, a cold check of a couple of seconds on this thread.  It is the
+    * only preview request that analyses on the dispatch thread, and it is a
+    * user command (the picker), not a navigation request that fires on a
+    * keystroke.  The index is NOT stored: the document is not open, and
+    * `Documents` holds indexes for buffers.
+    *
+    * `{error}` AND NEVER AN EXCEPTION, for EVERY failure and not only the
+    * anticipated ones (review S3): a URI that is not a file, a file that
+    * cannot be read, a check that died -- and equally a printer or a symbol
+    * walk that threw, which would otherwise leave the dispatcher answering
+    * a JSON-RPC `InternalError` the extension has no branch for.  The
+    * picker also accepts a typed binding name (§3.2), so an error here
+    * costs the developer the list and not the feature. */
+  private def reports(ermine: Resident, docs: Documents, log: String => Unit, params: Json): Json =
+    try params / "uri" flatMap (_.str) match {
+      case None => Json.obj("error" -> Json.Str("\"uri\" is a string naming the report's file"))
+      case Some(uri) => indexFor(ermine, docs, log, uri) match {
+        case Left(why)   => Json.obj("error" -> Json.Str(why))
+        case Right(idx)  =>
+          implicit val su: scalaparsers.Supply = ermine.supply
+          val hidden = privateNames(idx.symbols)
+          val rs = Symbols.termGroups(idx.symbols) filterNot (s => hidden(s.name)) flatMap { s =>
+            s.ty filter isReportType map (t => Json.obj(
+              "binding" -> Json.Str(s.name),
+              // Rendered the way HOVER renders it (`Symbols.detailJson`
+              // does the same): the picker shows `binding : type` and the
+              // two spellings of one type must agree.
+              "type"    -> Json.Str(Pretty.prettyType(t, -1).toString)))
+          }
+          Json.obj("module" -> Json.Str(idx.moduleName), "reports" -> Json.Arr(rs))
+      }
+    }
+    catch { case e: Throwable =>
+      log("preview/reports: failed: " + Preview.scrubUrls(Rpc.stackTrace(e)))
+      Json.obj("error" -> Json.Str(Preview.scrubUrls(
+        "cannot list the reports of this file: " + Option(e.getMessage).getOrElse(e.getClass.getName))))
+    }
+
+  /** The term names a `private` block hides, which the picker must NOT
+    * offer (review S8).  MEASURED against what the runner can actually do,
+    * not guessed: `Session.loadModule` ends with
+    * `s.termNames = (tmp ++ s.termNames) -- gptms` (`Session.scala`, where
+    * `gptms` is the module's `privateTerms` qualified), and
+    * `Runner.compile` refuses a binding whose `Global(module, binding)` is
+    * not in `env.termNames` -- so a private report can NEVER be rendered by
+    * name, and listing one would offer the developer a pick that always
+    * 404s.  Excluded, therefore.
+    *
+    * UNAMBIGUOUS FROM THE TREE: `Symbols.build` gives a `private` block one
+    * `KNamespace` symbol whose name is exactly "private" and whose `detail`
+    * is None, while the other `KNamespace` -- a `database` block -- is
+    * named after the database (or "database") and always carries
+    * `detail = Some("database")`.  Nothing else builds a `KNamespace`.
+    *
+    * By NAME and not by identity, because `termGroups` merges a signature
+    * and its equations into one symbol: the group this returns and the
+    * group the filter above sees are equal spellings, not the same object.
+    * A module cannot have a private and a public binding of one spelling
+    * (they are one binding scope, `collectHeads` walks into the block), so
+    * the name is a key here. */
+  private def privateNames(ss: List[Symbols.Sym]): Set[String] =
+    ss.flatMap { s =>
+      if (s.kind == Symbols.KNamespace && s.name == "private" && s.detail.isEmpty)
+        Symbols.termGroups(s.children).map(_.name)
+      else privateNames(s.children).toList
+    }.toSet
+
+  /** The stored index for `uri`, or one cold check from disk (§3.2). */
+  private def indexFor(ermine: Resident, docs: Documents, log: String => Unit,
+                       uri: String): Either[String, DocIndex] =
+    docs index uri match {
+      case Some(idx) => Right(idx)
+      case None => Documents.pathFor(uri) match {
+        case None => Left("not a file: URI: " + uri)
+        case Some(p) if !ermine.ready => Left("the session is still booting")
+        case Some(p) =>
+          log("preview/reports: no index for " + p.getFileName + "; checking it once from disk")
+          // SCRUBBED, both of them (review S2; rule A5 of §8.1 covers what a
+          // log sees as well as what a client sees).  A check reads the
+          // file's `database` blocks and can fail inside the backend, so
+          // the message and the trace are exactly the shape that carries a
+          // JDBC URL.
+          try Right(index(p.toString, ermine.checkFile(p, docs)))
+          catch { case e: Throwable =>
+            log("preview/reports: the check of " + p + " failed: " +
+                Preview.scrubUrls(Rpc.stackTrace(e)))
+            Left(Preview.scrubUrls("cannot check " + p + ": " +
+                                   Option(e.getMessage).getOrElse(e.getClass.getName))) }
+      }
+    }
+
+  /** Is this the type of a previewable binding (§3.2)?  `Runner.resultKind`
+    * applied to the CODOMAIN after at most one `->`, which is exactly what
+    * `Runner.compile` applies it to (`Decode.reportSignature` splits the one
+    * arrow, `Runner.compile` tests what it returns).
+    *
+    * ALIASES: a type written through a `type` synonym -- `type Chart = Node`,
+    * or a synonym for the whole `Params -> Node` -- is not a `Con` the test
+    * recognises, so a first test that fails is retried on the type's normal
+    * form, which is what expands an alias (`Type.Con.nfWith` ->
+    * `ConDecl.expandAlias`).  The normal form is taken SECOND and only on a
+    * miss, so the overwhelmingly common case (a signature written out) pays
+    * nothing, and a normalisation that throws leaves the binding off the
+    * list rather than erroring the whole request.
+    *
+    * IT IS A CANDIDATE LIST, as §3.2 says: "at most one `->`" admits a
+    * zero-argument `x : Node`, which `Runner` refuses at render with a 400
+    * naming the reason ("a report must be a function Params -> Node").  The
+    * picker offering one more binding than the runner will take is the safe
+    * direction; offering one FEWER would hide a real report. */
+  private def isReportType(t: Type)(implicit su: scalaparsers.Supply): Boolean =
+    try Runner.resultKind(codomain(t)).isDefined ||
+        Runner.resultKind(codomain(t.nf)).isDefined
+    catch { case _: Throwable => false }
+
+  /** `Runner.unfurl` and not a copy of it (review nit 1): the runner's own
+    * spine walk, widened to `private[ermine]` so this file can apply
+    * `resultKind` to what `resultKind` is applied to there. */
+  private def codomain(t: Type): Type = Runner.unfurl(t, Nil) match {
+    case (Arrow(_), _ :: r :: Nil) => r
+    case _                         => t
   }
 
   private def occurrenceAt(docs: Documents, params: Json): Option[Occ] =
