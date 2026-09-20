@@ -2,7 +2,7 @@
   "name": "ermine-lang",
   "displayName": "Ermine",
   "description": "Ermine language support: syntax highlighting, diagnostics, navigation, hover types, references, rename, symbols, completion and quick fixes, backed by bin/ermine-lsp.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "clarifi",
   "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {
@@ -60,6 +60,37 @@
           "default": true,
           "markdownDescription": "Build the sbt classpath cache in a cancellable background task before starting the server. With this off, a cold `target/ermine-classpath` makes the server appear to hang while sbt runs."
         },
+        "ermine.maxHeap": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "markdownDescription": "Maximum JVM heap for the language server, as `ERMINE_LSP_XMX` for `bin/ermine-lsp` — a non-zero number and a `k`, `m`, `g` or `t` suffix (`2g`, `512m`), with a 64m floor. Empty means the launcher's own default of `2g`. **Changing it restarts the language server**, because `-Xmx` is fixed when the process starts."
+        },
+        "ermine.preview.roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "Extra module roots for the preview's render session, resolved against the workspace folder that owns the picked report and sent as absolute paths with every render. Empty means the report's own tree and the stdlib, which is enough for a single-segment module anywhere. A change discards the render session, so the next render pays a boot."
+        },
+        "ermine.preview.timeoutSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "maximum": 3600,
+          "scope": "window",
+          "markdownDescription": "How long a preview render may evaluate before the server answers it \"evaluation did not finish\" and marks the preview stuck. **`0` = no watchdog**: a runaway render is then bounded only by the heap cap, nothing drains the preview queue, and every later render or schema request waits behind the wedge until the process dies. Raise the number rather than turning it off. A change reaches a running server at once and applies to the next render; no restart."
+        },
+        "ermine.preview.maxDocumentBytes": {
+          "type": "number",
+          "default": 16777216,
+          "minimum": 1024,
+          "maximum": 1099511627776,
+          "scope": "window",
+          "markdownDescription": "Largest rendered document the server will send, in UTF-8 bytes. A document over the cap is refused with a 500 instead of being written to the wire. The server accepts 1KiB to 1TiB and ignores anything outside that. A change reaches a running server at once; no restart."
+        },
         "ermine.trace.server": {
           "type": "string",
           "enum": [
@@ -88,6 +119,14 @@
       {
         "command": "ermine.reloadModules",
         "title": "Ermine: Reload Modules"
+      },
+      {
+        "command": "ermine.previewReport",
+        "title": "Ermine: Preview Report..."
+      },
+      {
+        "command": "ermine.renderReport",
+        "title": "Ermine: Render Report to JSON"
       }
     ]
   },
@@ -98,7 +137,8 @@
     "@types/vscode": "^1.75.0"
   },
   "scripts": {
-    "test": "node test/load-test.js && python3 test/grammar-test.py",
+    "test": "node --test test/preview-core.test.js && node test/load-test.js && python3 test/grammar-test.py",
+    "test:preview": "node --test test/preview-core.test.js",
     "test:load": "node test/load-test.js",
     "test:grammar": "python3 test/grammar-test.py",
     "package": "vsce package"

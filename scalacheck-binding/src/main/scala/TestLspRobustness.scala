@@ -1982,6 +1982,10 @@ object TestLspRobustness extends Properties("LSP robustness") {
   private def statusOf(j: Option[Json]): Option[Int]   = resultOf(j) flatMap (_ / "status") flatMap (_.int)
   private def genOf(j: Option[Json]): Option[Int]      = resultOf(j) flatMap (_ / "generation") flatMap (_.int)
   private def msgOf(j: Option[Json]): Option[String]   = resultOf(j) flatMap (_ / "message") flatMap (_.str)
+  /** Q15's machine-readable `reason`.  `None` means THE KEY IS ABSENT, which
+    * is the discriminator itself: only the preview's own front half mints
+    * one, so a 404 out of the `Runner` has none. */
+  private def reasonOf(j: Option[Json]): Option[String] = resultOf(j) flatMap (_ / "reason") flatMap (_.str)
   private def docOf(j: Option[Json]): Option[String]   = resultOf(j) flatMap (_ / "document") map Json.print
   private def errCode(j: Option[Json]): Option[Int]    = j flatMap (_ / "error") flatMap (_ / "code") flatMap (_.int)
   private def modulesOf(j: Option[Json]): Option[List[String]] =
@@ -2236,7 +2240,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * nothing a readable file could do.  The two causes below are the two
     * this group can build cheaply: a file that cannot be read, and a file
     * whose module header does not parse. */
-  property("D: a file that cannot be placed under a root is a 404 saying why, a non-file URI a 400, and both echo the generation") = secure {
+  property("D: a file that cannot be placed under a root is a 404 saying why AND carrying Q15's reason, a non-file URI a 400, and both echo the generation") = secure {
     previewLock.synchronized {
       // `residentLock` and `bench.docs`, added 2026-09-20 with the Q8/Q10
       // batch.  A PRE-EXISTING ORDERING HAZARD, surfaced rather than
@@ -2301,6 +2305,22 @@ object TestLspRobustness extends Properties("LSP robustness") {
         "uri" -> Json.Str(gone.toUri.toString), "binding" -> Json.Str("report"),
         "roots" -> Json.Str(previewRoot.toString)))
       val a7 = bench.answer(56)
+      // Q15 (DECIDED by the user on 2026-09-20): the placement failures
+      // carry a machine-readable `reason` and THE RUNNER'S 404 DOES NOT --
+      // the absence is the discriminator the extension's Q11 trigger reads,
+      // in place of matching the message text.  So the negative case is the
+      // point of this block: a module that LOADS, asked for a binding it
+      // does not have.
+      val loads = writeFixture("WpReason", wpSimple("WpReason", 7701))
+      bench.render(57, loads, "notAReport", "1", 87)
+      val a8 = bench.answer(57)
+      // ... and the same placement refusal in `ermine/schema`'s own shape.
+      bench.request(58, "ermine/schema", Json.obj(
+        "uri" -> Json.Str(gone.toUri.toString), "binding" -> Json.Str("report"),
+        "roots" -> Json.Arr(Nil)))
+      val a9 = bench.answer(58)
+      val a9reason = a9 flatMap (_ / "result") flatMap (_ / "reason") flatMap (_.str)
+      val a2reason = reasonOf(a2)
       ((okOf(a1) ?= Some(false)) :| ("a file under no root answered " + show(a1))) &&
         ((statusOf(a1) ?= Some(404)) :| ("status " + show(a1))) &&
         ((msgOf(a1) ?= Some("cannot read Gone.e")) :| show(a1)) &&
@@ -2323,7 +2343,20 @@ object TestLspRobustness extends Properties("LSP robustness") {
         ((genOf(a6) ?= Some(86)) :| ("generation " + show(a6))) &&
         ((a7 flatMap (_ / "result") flatMap (_ / "error") flatMap (_.str))
            .exists(_.contains("roots")) :|
-          ("ermine/schema did not refuse the same bad roots: " + show(a7)))
+          ("ermine/schema did not refuse the same bad roots: " + show(a7))) &&
+        // Q15: the vocabulary, per case, on the render shape ...
+        ((reasonOf(a1) ?= Some("unreadable")) :| ("the reason for a file that is gone: " + show(a1))) &&
+        ((reasonOf(a4) ?= Some("no-module-header")) :| ("the reason for a bad header: " + show(a4))) &&
+        ((a2reason ?= Some("not-a-file-uri")) :| ("the reason for a non-file URI: " + show(a2))) &&
+        // ... and NOT on a 404 the Runner decided: the absence is the rule.
+        ((statusOf(a8) ?= Some(404)) :| ("a missing binding answered " + show(a8))) &&
+        ((reasonOf(a8) ?= None) :| ("a Runner 404 must carry NO reason: " + show(a8))) &&
+        ((genOf(a8) ?= Some(87)) :| ("generation " + show(a8))) &&
+        // ... and the schema shape carries it beside `error`.
+        ((a9reason ?= Some("unreadable")) :| ("ermine/schema carries no reason: " + show(a9))) &&
+        // A bad-`roots` 400 is the CLIENT's error, not a placement decision,
+        // so it carries none either.
+        ((reasonOf(a3) ?= None) :| ("a bad-roots 400 must carry no reason: " + show(a3)))
     } }
     }
   }

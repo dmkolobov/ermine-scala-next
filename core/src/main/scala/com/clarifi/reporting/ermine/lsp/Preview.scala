@@ -451,7 +451,22 @@ final class Preview(moduleRoots: () => List[String],
     *    boot for nothing.
     * An ORDINARY (un-wedged) failure sets this too and nothing happens: the
     * `finally` reads it only when the stuck state was cleared for this job.
-    * The un-wedged case is Q14's and is the user's. */
+    * The un-wedged case is Q14's and is the user's.
+    *
+    * WHAT THE RULE OVER-COVERS, named rather than left to be found (doc nit
+    * from the WP-7 review): "status >= 500 out of `renderText`/`paramSchema`"
+    * is `Failed`, and `Runner` also mints `Failed` where NOTHING WAS FORCED
+    * AT ALL -- "module <X> does not load" (a parse or type error under the
+    * render session's own roots) and a runner that did not boot are the two
+    * that reach here.  Those thunks cannot have been poisoned, so the
+    * discard that follows a watchdog fire on one of them buys nothing and
+    * costs ONE BOOT.  It is deliberately left over-covering: the test that
+    * would separate the two cases is a message match on `Runner`'s text, and
+    * the over-fire is in the SAFE direction -- a load that was slow enough
+    * to wedge the preview HAS been evaluating (the loader typechecks, which
+    * forces), so the case that looks purely static is not reliably static.
+    * The cost is bounded by one boot per watchdog fire and is paid only on
+    * the recovery path, never on an ordinary failure. */
   private var evalFailed: Boolean         = false
   /** LAZY, and it matters beyond this object.  `Supply.create` advances a
     * PROCESS-GLOBAL block counter by 1024 (`scalaparsers/Supply.scala`), and
@@ -1323,11 +1338,13 @@ final class Preview(moduleRoots: () => List[String],
         // would decode against the file as it is.
         scanForMovedFiles()
         path match {
-          case None    => Left(CannotServe(400, "not a file: URI: " + uri))
+          case None    => Left(CannotServe(400, "not a file: URI: " + uri, Some(Reason.NotAFileUri)))
           case Some(p) => Session.moduleUnder(roots, p) match {
-            case None         => Left(CannotServe(404, cannotPlace(p, placed)))
+            case None         =>
+              val no = cannotPlace(p, placed)
+              Left(CannotServe(404, no.message, Some(no.reason)))
             case Some(module) => shadowedPick(roots, module, p) match {
-              case Some(why) => Left(CannotServe(ShadowedStatus, why))
+              case Some(why) => Left(CannotServe(ShadowedStatus, why, Some(Reason.Shadowed)))
               case None      => Right(module)
             }
           }
@@ -1465,7 +1482,7 @@ final class Preview(moduleRoots: () => List[String],
     * the size cap. */
   private def doRender(r: Render): Unit =
     placeAndSession(r.req.uri, r.req.roots, r.progress, r) match {
-      case Left(no)      => finish(r, failure(r.req.generation, no.status, no.message, None))
+      case Left(no)      => finish(r, failure(r.req.generation, no.status, no.message, None, no.reason))
       case Right(module) =>
         // §4 / §7.2: WP-13's `disconnect` leaves the delegate unset and
         // every render answers 503 until the extension connects again.
@@ -1536,7 +1553,7 @@ final class Preview(moduleRoots: () => List[String],
     * front half. */
   private def doSchema(s: Schema): Unit =
     placeAndSession(s.req.uri, s.req.roots, s.progress, s) match {
-      case Left(no)      => finish(s, schemaError(no.message))
+      case Left(no)      => finish(s, schemaError(no.message, no.reason))
       case Right(module) =>
         runner.paramSchema(module, s.req.binding) match {
           // DD-1, by the same rule as `doRender`: `paramSchema` COMPILES the
@@ -1718,13 +1735,15 @@ final class Preview(moduleRoots: () => List[String],
     * and the client can map a name back to it, but nothing here puts a
     * server-side directory on the wire.  `failure` scrubs the result like
     * every other message (§8 rule A5). */
-  private def cannotPlace(p: Path, placed: Option[Either[String, Placed]]): String =
-    if (!p.toString.endsWith(".e")) "not an Ermine source file: " + fileName(p)
+  private def cannotPlace(p: Path, placed: Option[Either[Unplaceable, Placed]]): Unplaceable =
+    if (!p.toString.endsWith(".e"))
+      Unplaceable(Reason.NotErmineSource, "not an Ermine source file: " + fileName(p))
     else placed match {
-      case Some(Left(why)) => why
+      case Some(Left(no)) => no
       // Unreachable as built -- an inferred root IS a root and `p` is under
       // it -- but a general sentence rather than a wrong one if it ever is.
-      case _               => "cannot be placed under any module root: " + fileName(p)
+      case _              =>
+        Unplaceable(Reason.NotPlaced, "cannot be placed under any module root: " + fileName(p))
     }
 
   /** A path's last segment, for a message.  The filesystem root has none,
@@ -1762,7 +1781,7 @@ final class Preview(moduleRoots: () => List[String],
     * `rootSet` has to compare that name with what the configured roots make
     * of the path, and the header is parsed HERE; answering only the root
     * would mean reading and parsing the file a second time. */
-  private def inferredRoot(p: Path): Either[String, Placed] = {
+  private def inferredRoot(p: Path): Either[Unplaceable, Placed] = {
     val name = fileName(p)
     // The `SourceFile` is built INSIDE the `try` as it was before Q5: this
     // method answers a `Left`, never throws, and nothing on the way to the
@@ -1773,7 +1792,7 @@ final class Preview(moduleRoots: () => List[String],
         Right((f, f.contents))
       } catch { case e: Throwable =>
         log("preview: cannot read " + p + ": " + messageOf(e))
-        Left("cannot read " + name)
+        Left(Unplaceable(Reason.Unreadable, "cannot read " + name))
       }
     opened match {
       case Left(why) => Left(why)
@@ -1787,7 +1806,7 @@ final class Preview(moduleRoots: () => List[String],
             Right(mh.name)
           } catch { case e: Throwable =>
             log("preview: no module header parsed from " + p + ": " + messageOf(e))
-            Left("no module header could be read from " + name)
+            Left(Unplaceable(Reason.NoModuleHeader, "no module header could be read from " + name))
           }
         header match {
           case Left(why) => Left(why)
@@ -1798,10 +1817,11 @@ final class Preview(moduleRoots: () => List[String],
             val tooDeep =
               "the module header of " + name + " names " + module +
               ", which is deeper than the directories above it"
-            if (i > 0) { log("preview: no root inferred for " + p + ": " + tooDeep); Left(tooDeep) }
+            val deeper = Unplaceable(Reason.HeaderDeeperThanPath, tooDeep)
+            if (i > 0) { log("preview: no root inferred for " + p + ": " + tooDeep); Left(deeper) }
             else d match {
               case Some(r) => Right(Placed(r.toString, module))
-              case None    => log("preview: no root inferred for " + p + ": " + tooDeep); Left(tooDeep)
+              case None    => log("preview: no root inferred for " + p + ": " + tooDeep); Left(deeper)
             }
         }
     }
@@ -2169,8 +2189,12 @@ final class Preview(moduleRoots: () => List[String],
     if (t ne null) try t.cancel() catch { case _: Throwable => () }
   }
 
-  private def schemaError(message: String): Json =
-    Json.obj("error" -> Json.Str(scrubUrls(message)))
+  /** §4's `{error}` shape, with Q15's `reason` beside it when the front
+    * half decided the failure (and never otherwise), so a schema and a
+    * render say the same thing in their own shapes. */
+  private def schemaError(message: String, reason: Option[String] = None): Json =
+    Json.Obj(List("error" -> Json.Str(scrubUrls(message))) ++
+             reason.toList.map(r => "reason" -> Json.Str(r)))
 
   /** DECLARED LAST, and it must be: starting a thread publishes `this`, so
     * every field the thread reads has to be initialised first.  A daemon, so
@@ -2351,14 +2375,70 @@ object Preview {
     * shape -- §4's `{ok:false, status, message, generation}` for a render,
     * `{error}` for a schema.  That is the whole of "they cannot drift":
     * both know the same reasons and neither can invent one. */
-  private[lsp] final case class CannotServe(status: Int, message: String)
+  private[lsp] final case class CannotServe(status: Int, message: String,
+                                            reason: Option[String] = None)
+
+  /** Q15 (DECIDED by the user on 2026-09-20): A MACHINE-READABLE `reason`
+    * BESIDE `status`, on exactly the failures THIS FILE'S OWN FRONT HALF
+    * decides -- the ones about PLACING the picked file, before `Runner` is
+    * asked anything.
+    *
+    * WHY IT EXISTS: §4 gave a placement 404 ("cannot read Sales.e") and a
+    * `Runner` 404 ("no binding named reprot", on a module that DID load)
+    * the same wire shape, so the extension's Q11 trigger -- re-render the
+    * picked report when its own file appears or changes while its last
+    * answer was a PLACEMENT 404 -- could only be got at by matching the
+    * message TEXT, which no client should do.
+    *
+    * THE ABSENCE IS THE DISCRIMINATOR: a 404 from the `Runner` carries NO
+    * `reason` key at all, and an old server carries none anywhere, so a
+    * client that reads `reason` as "placement" degrades to never triggering
+    * rather than to triggering wrongly.
+    *
+    * THE VOCABULARY IS CLOSED AND STABLE -- it is wire contract, so these
+    * spellings do not change and nothing outside this object's front half
+    * mints one:
+    *   - `not-a-file-uri`            400, the URI names no file at all;
+    *   - `not-ermine-source`         404, the path is not a `.e` file;
+    *   - `unreadable`                404, the file cannot be read (deleted,
+    *                                 or permissions): the case a stale pick
+    *                                 sends, and Q11's own case;
+    *   - `no-module-header`          404, its header does not parse;
+    *   - `header-deeper-than-path`   404, its module name is deeper than
+    *                                 the directories above it;
+    *   - `not-placed`                404, the general fallback, unreachable
+    *                                 as built (an inferred root IS a root);
+    *   - `shadowed`                  409, Q7's shadowed pick: the root
+    *                                 chain resolves the name to ANOTHER
+    *                                 file, and nothing was loaded.
+    * `json/Runner.scala` and `RunError` are UNTOUCHED, so `bin/ermine-serve`
+    * and every HTTP answer are exactly as they were. */
+  private[lsp] object Reason {
+    val NotAFileUri        = "not-a-file-uri"
+    val NotErmineSource    = "not-ermine-source"
+    val Unreadable         = "unreadable"
+    val NoModuleHeader     = "no-module-header"
+    val HeaderDeeperThanPath = "header-deeper-than-path"
+    val NotPlaced          = "not-placed"
+    val Shadowed           = "shadowed"
+  }
+
+  /** Why a pick could not be PLACED: the wire `reason` and the human
+    * message, together, so a site that mints one cannot forget the other.
+    * `inferredRoot`'s three refusals and `cannotPlace`'s own two are all of
+    * them. */
+  private[lsp] final case class Unplaceable(reason: String, message: String)
 
   /** §4's failure shape.  On the companion since stage B, because each
     * `Answering` builds its own refusal. */
-  private def failure(generation: Json, status: Int, message: String, path: Option[String]): Json =
+  private def failure(generation: Json, status: Int, message: String, path: Option[String],
+                      reason: Option[String] = None): Json =
     Json.Obj(List("ok" -> Json.Bool(false), "status" -> Json.num(status),
                   "message" -> Json.Str(scrubUrls(message))) ++
              path.toList.map(p => "path" -> Json.Str(p)) ++
+             // Q15: APPENDED after `path` and before `generation`, so that
+             // no existing key of §4's shape moves.
+             reason.toList.map(r => "reason" -> Json.Str(r)) ++
              List("generation" -> generation))
 
   /** Q8's marker, APPENDED so that neither §4 shape's existing key order

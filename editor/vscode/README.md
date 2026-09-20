@@ -112,6 +112,68 @@ Names Scala installs rather than source declares (`Just`, `True`, `Int`,
 go-to-definition answers nothing on them and they are not listed in the
 workspace symbol picker.
 
+## Preview (no panel yet)
+
+A **report** is any top-level binding whose type is `Node`, `Params -> Node`,
+`Fetch Node` or `Params -> Fetch Node`. The preview renders one, on the
+server, in a second session of its own, and re-renders it when a file it
+depends on is saved — with no JVM restart and no build.
+
+At 0.1.5 there is **no webview panel** (that is a later ticket) and **no
+params files** (likewise): the answer is shown as JSON in an ordinary editor
+tab, and a report with required parameters therefore shows the refusal that
+names the first missing key rather than a document.
+
+| Command | |
+|---|---|
+| **Ermine: Preview Report...** | picks a `.e` file (the active editor's first), then a binding from the list the server computes **by type** — `binding : type`, with a free-text fallback for a binding it did not list. The pick is remembered per workspace and renders immediately |
+| **Ermine: Render Report to JSON** | renders the remembered pick again into the same tab (and runs the picker if nothing is picked yet) |
+
+One untitled JSON tab is reused and updated in place. A successful render
+shows the document; a refusal shows the whole `{ok:false, status, message,
+path}` answer, because `message` and `path` together are the diagnostic. A
+report with required parameters and no parameters yet reads
+
+```json
+{
+  "ok": false,
+  "status": 400,
+  "message": "the required key \"fromDay\" is missing",
+  "path": "$.params",
+  "generation": 1
+}
+```
+
+— the missing key is named in the message, at the path of the object that
+should have held it; a key that is present but of the wrong type is reported
+at its own path, `"$.params.fromDay"`.
+
+The loop after that is automatic: saving a file the report depends on makes
+the server send `ermine/preview/invalidated`, and the tab re-renders. Every
+render carries a generation counter and an answer behind the current one is
+discarded, so a save during a render never shows a stale document. A report
+whose file the server cannot even read — picked before it existed, or moved
+away and back — is watched at its own path and re-renders when it reappears.
+
+An automatic re-render **updates the tab where it is and never pulls it in
+front of what you are editing**; only the two commands reveal it. The tab is
+untitled and the updates leave it dirty, so closing it offers to save a
+throwaway render: choose **Don't Save**. (A real panel is a later ticket; this
+is one of the reasons for it.)
+
+A status bar item on the right says which report is picked, and turns into a
+warning when the preview is **stuck** (a render that never finished — the
+server's watchdog) with an error notification offering **Restart Language
+Server**, or **offline** when the server has stopped — which wins over
+"stuck", because a wedged server exits about two minutes after the watchdog
+fires. When it comes back the last render is re-sent.
+
+Settings: `ermine.preview.roots` (per folder), `ermine.preview.timeoutSeconds`
+(`0` turns the watchdog off, which is rarely what you want — see its
+description) and `ermine.preview.maxDocumentBytes`. All three reach a running
+server at once, with no restart; `ermine.maxHeap` is the one that needs a
+fresh process, and changing it restarts the server.
+
 ## Two things that will surprise you
 
 **The FIRST check of a file you just opened costs about 2.5 s; every keystroke
@@ -152,6 +214,13 @@ type one frame early and without its constraints (`go : List a -> a -> a` for
 a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
+
+### 0.1.5
+
+**The preview loop, with no panel.** Two commands, one untitled JSON tab, a
+status bar item and four new settings — see "Preview (no panel yet)" above.
+The webview panel and parameter files are separate tickets; nothing here
+renders a document into a view.
 
 ### 0.1.4
 
@@ -235,12 +304,17 @@ Three costs, in the order you meet them:
 | `ermine.fastMode` | `false` | Skip type checking |
 | `ermine.logFile` | *(off)* | Sets `ERMINE_LSP_LOG` |
 | `ermine.warmClasspathOnStart` | `true` | Build the sbt cache visibly, before starting |
+| `ermine.maxHeap` | *(launcher's `2g`)* | `-Xmx` for the server, as `ERMINE_LSP_XMX`; changing it restarts the server |
+| `ermine.preview.roots` | `[]` | Extra module roots for the preview, per workspace folder, sent absolute |
+| `ermine.preview.timeoutSeconds` | `60` | The preview's evaluation watchdog; `0` turns it off (no restart needed) |
+| `ermine.preview.maxDocumentBytes` | `16777216` | Largest rendered document the server will send |
 | `ermine.trace.server` | `off` | Trace LSP traffic to the output channel |
 
 Commands: **Ermine: Restart Language Server**, **Ermine: Toggle Fast Mode**,
-**Ermine: Show Language Server Output**, **Ermine: Reload Modules** (the last
-is declared by the server and registered by the language client; the
-extension only adds the status-bar line).
+**Ermine: Show Language Server Output**, **Ermine: Reload Modules** (declared
+by the server and registered by the language client; the extension only adds
+the status-bar line), **Ermine: Preview Report...** and **Ermine: Render
+Report to JSON**.
 
 There is no setting for the completion trigger character, the code-action
 kinds or anything else the protocol negotiates: the server advertises them and
@@ -269,12 +343,25 @@ fast-mode checks. Run it with `core/test` and `repl-smoke.sh` before committing.
 ## Tests
 
 ```sh
-npm test           # both of the below
-npm run test:load  # loads and activates the extension, then talks to the server
+npm test              # all three of the below
+npm run test:preview  # the preview loop's decisions, pure functions, no server
+npm run test:load     # loads and activates the extension, then talks to the server
 npm run test:grammar
 ```
 
-Neither needs VS Code.
+None of them needs VS Code.
+
+**`test/preview-core.test.js`** covers `src/preview-core.js`, which holds the
+preview loop's decisions and imports no editor API: root absolutisation, the
+generation discard, the stuck state machine (the highest `seq` wins, the mark
+resets on a restart, an answer's marker is per-request, an accepted clear
+always re-renders), the two re-render rules, the three request builders —
+including that a render and a schema for one pick carry the SAME roots — both
+quick-pick lists, the status bar's text and precedence, the two settings
+payloads and the `ermine.maxHeap` spelling. What is NOT there is the glue that
+needs an editor to observe: when a document is created or revealed, the
+watcher's registration, the coalescing timer. It runs under `node --test` with
+no `node_modules` at all.
 
 **`test/load-test.js`** stubs the `vscode` module in the loader and calls
 `activate()` exactly as the editor would, then checks that every command
