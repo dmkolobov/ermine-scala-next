@@ -228,14 +228,6 @@ final class Preview(moduleRoots: () => List[String],
     log("preview: " + key + " ignored: it is " + want + ", but a " + jsonType(got) +
         " arrived (" + how + ")")
 
-  private def jsonType(j: Json): String = j match {
-    case Json.Null    => "null"
-    case Json.Bool(_) => "boolean"
-    case Json.Num(_)  => "number"
-    case Json.Str(_)  => "string"
-    case Json.Arr(_)  => "array"
-    case Json.Obj(_)  => "object"
-  }
 
   // --------------------------------------------- the boot's progress (§2.5)
 
@@ -450,6 +442,27 @@ final class Preview(moduleRoots: () => List[String],
     * EVALUATES a workspace module's top level, which §2.3 keeps off the
     * dispatch thread.
     *
+    * Q7 (decided by the user on 2026-09-20): THE BINDING FORM IDENTIFIES
+    * THE REPORT THE WAY A RENDER DOES -- `{uri, binding, roots}`, not
+    * `{module, binding}` -- and `doSchema` computes the module and the root
+    * set with exactly the functions a render uses (`placeAndSession`).  So a
+    * schema and the render that follows it share ONE session in either
+    * order, §6's first-pick order (the panel picks, the extension asks for
+    * the schema, THEN renders) works for a workspace module, and a
+    * same-named module under another root can no longer be described by
+    * mistake.  A request that carries `binding` but no `uri` is an `{error}`
+    * naming the missing key: the old form is not kept alive, because there
+    * is no extension code to keep compatible yet (WP-7/WP-8) and keeping it
+    * would keep its wrong-module hazard.
+    *
+    * THE PROGRESS TOKEN (§2.5's row, and Q7's second consequence): a schema
+    * can now be the job that BOOTS -- a first pick asks for the schema
+    * before it renders -- so it mints a `window/workDoneProgress/create`
+    * token through the very same `mintBootToken`, on the very same thread,
+    * under the very same at-most-one-outstanding rule.  It is three lines
+    * and no new mechanism; before Q7 a schema-triggered boot reported
+    * nothing, which was right only while a schema could not carry roots.
+    *
     * HOW IT MEETS THE QUEUE'S OTHER RULES, each one a decision:
     *  - LATEST WINS is a rule about RENDERS (§2.5 says so in those words):
     *    a schema job is not replaced by a newer render, and does not
@@ -477,7 +490,12 @@ final class Preview(moduleRoots: () => List[String],
     SchemaRequest.parse(params) match {
       case Left(why) => answer(Right(schemaError(why)))
       case Right(req) =>
-        val job = Schema(id, req.module, req.binding, answer)
+        // Minted OUTSIDE the lock and only on a peek that says a boot is
+        // possible, exactly as `render` does it and for the same two
+        // reasons (see `render`'s comment): `answerAll` releases the token
+        // of every job it refuses, and minting reaches `Wire.send`.
+        val token = if (lock.synchronized(alive && !stopping && !stuck)) mintBootToken() else null
+        val job = Schema(id, req, token, answer)
         val acted = lock.synchronized {
           if (!alive)        refuse(job, Left((Rpc.InternalError, "the preview thread is not running")),
                                      "the preview thread is not running")
@@ -513,10 +531,10 @@ final class Preview(moduleRoots: () => List[String],
       j.answer(a)
     }
 
-  private def releaseToken(j: Answering): Unit = j match {
-    case r: Render if r.progress ne null => bootToken.compareAndSet(r.progress, null); ()
-    case _                               => ()
-  }
+  private def releaseToken(j: Answering): Unit =
+    // Q7: `progress` is on `Answering` rather than on `Render`, so a
+    // SCHEMA's token is released by the very line a render's is.
+    if (j.progress ne null) { bootToken.compareAndSet(j.progress, null); () }
 
   /** §2.5's boot progress, the DISPATCH THREAD's half: if the client can
     * show work-done progress and there is no render session, ask it to
@@ -765,8 +783,8 @@ final class Preview(moduleRoots: () => List[String],
       // The progress token this job carried, used or not, is spent: clear
       // it so the next boot can mint one (see `bootToken`).
       guard(job match {
-        case r: Render if r.progress ne null => bootToken.compareAndSet(r.progress, null); ()
-        case _                               => ()
+        case a: Answering => releaseToken(a)
+        case _            => ()
       })
       job match {
         case a: Answering =>
@@ -868,125 +886,257 @@ final class Preview(moduleRoots: () => List[String],
     cancelTimer()
   }
 
-  /** One render, §4's two answer shapes.  In order: the root set and the
-    * session it implies, the mtime scan, the uri, the connection, the
-    * document. */
-  private def doRender(r: Render): Unit = {
+  /** THE FRONT HALF OF A RENDER AND OF A SCHEMA, one function so the two
+    * cannot drift (Q7, decided by the user on 2026-09-20).  It answers
+    * either "this cannot be served, and here is why" or the MODULE the
+    * request names; the session itself is the field `runner`, which the
+    * `ensureSession` inside has booted, found, or discarded and re-booted.
+    *
+    * IN ORDER, and every step is the one `doRender` already had: the path
+    * from the URI, the report's own inferred root (Q5's four honest reasons
+    * kept in its `Left`), the root set of §2.4 (Q6's rule lives inside
+    * `rootSet`), the session those roots imply, §2.5's mtime scan, the
+    * module the FINAL roots make of the path -- and, new with Q7, the
+    * SHADOW test below.
+    *
+    * WHY A SCHEMA GOES THROUGH IT TOO.  Before Q7 `ermine/schema` carried
+    * `{module, binding}` and could compute no root set at all, so it
+    * answered from whatever session a render had booted and otherwise
+    * booted one over `moduleRoots` alone: it could describe a SAME-NAMED
+    * module under a resident root instead of the workspace report,
+    * invisibly, and the first render then paid a second boot to replace
+    * that session.  The request now carries `{uri, binding, roots}` and
+    * this method is the whole of the difference -- a schema and the render
+    * that follows it compute the same roots from the same functions, so
+    * they share ONE session in either order.
+    *
+    * WHAT EACH CALLER STILL DOES ON ITS OWN: its ANSWER SHAPE (§4's
+    * `{ok:false, status, message, generation}` for a render, `{error}` for
+    * a schema), the 503 "not connected" (§7.2 -- a render scans, a schema
+    * does not), and the work itself: `renderText` under the document-size
+    * cap, or `paramSchema`. */
+  private def placeAndSession(uri: String, reqRoots: List[String],
+                              progress: Json, job: Answering): Either[CannotServe, String] = {
     // N3: normalised ONCE, here, so that the module lookup, the inferred
     // root and the discard key below all speak of the same spelling.
-    val path  = Documents.pathFor(r.req.uri) map Session.normalize
+    val path  = Documents.pathFor(uri) map Session.normalize
     // Q5 (decided 2026-09-20, option (i)): the inferred root is computed
     // ONCE, here, and its FAILURE is kept -- it is the only thing that can
     // explain the 404 below, and re-deriving it there would read the file a
     // second time.
     val placed = path map inferredRoot
-    val roots  = rootSet(r.req, path, placed flatMap (_.toOption))
+    val roots  = rootSet(reqRoots, path, placed flatMap (_.toOption))
     // The boot inside is UNWATCHED and the watchdog is re-armed as it ends,
     // by `ensureSession` itself (review M2): nothing is needed here.
-    ensureSession(roots, r.progress, r) match {
-      case Left(why) => finish(r, failure(r.req.generation, 500, why, None))
+    ensureSession(roots, progress, job) match {
+      case Left(why) => Left(CannotServe(500, why))
       case Right(_) =>
+        // The same mtime scan at the head of every job that will read a
+        // module (§2.5): a schema exported from a module that moved on disk
+        // would describe the file as it was, and the render that follows
+        // would decode against the file as it is.
         scanForMovedFiles()
         path match {
-          case None =>
-            finish(r, failure(r.req.generation, 400, "not a file: URI: " + r.req.uri, None))
+          case None    => Left(CannotServe(400, "not a file: URI: " + uri))
           case Some(p) => Session.moduleUnder(roots, p) match {
-            case None =>
-              finish(r, failure(r.req.generation, 404, cannotPlace(p, placed), None))
-            case Some(module) =>
-              // §4 / §7.2: WP-13's `disconnect` leaves the delegate unset and
-              // every render answers 503 until the extension connects again.
-              // `DelegatingRun` would throw and `Runner.drive` would call it
-              // 500, so the question is asked HERE, as its scaladoc asks.
-              //
-              // UNREACHABLE IN STAGE A, and therefore UNTESTED: the boot
-              // wires a target and stage A has no `disconnect` to remove it,
-              // so `connected` is true from the first render onwards.  This
-              // is a WP-13 seam -- the first thing that makes it reachable
-              // is the `disconnect` job, and that ticket owns the property
-              // that pins the 503.
-              if (!delegating.connected)
-                finish(r, failure(r.req.generation, 503, "not connected", None))
-              else {
-                val body = "{\"" + RunRequest.Params + "\":" + Json.print(r.req.params) + "}"
-                val out  = new java.lang.StringBuilder
-                runner.renderText(module, r.req.binding, body, out) match {
-                  case Left(e) =>
-                    finish(r, failure(r.req.generation, e.status, scrubUrls(e.message), e.path))
-                  case Right(_) =>
-                    // THE DOCUMENT-SIZE CAP (§2.3), measured BEFORE the
-                    // answer and therefore before `Wire.send`, whose monitor
-                    // is held for the length of a write and which the
-                    // dispatch thread's next `publishDiagnostics` queues
-                    // behind.  Counted in UTF-8 BYTES because that is what
-                    // `Content-Length` counts and what the panel would have
-                    // to parse -- and counted over the `StringBuilder` the
-                    // writer filled, without materialising a second copy of
-                    // a document that is by hypothesis too big.
-                    val bytes = utf8Length(out)
-                    val cap   = maxDocumentBytes
-                    if (bytes > cap)
-                      finish(r, failure(r.req.generation, 500,
-                        "document too large for the panel: " + bytes +
-                        " bytes exceeds ermine.preview.maxDocumentBytes (" + cap + ")", None))
-                    else Json.parse(out.toString) match {
-                      case Left(why) =>
-                        finish(r, failure(r.req.generation, 500,
-                          "the rendered document is not JSON: " + why, None))
-                      case Right(doc) =>
-                        finish(r, document(r.req.generation, doc, dirtyGeneration.get != r.dirtyAt))
-                    }
-                }
-              }
+            case None         => Left(CannotServe(404, cannotPlace(p, placed)))
+            case Some(module) => shadowedPick(roots, module, p) match {
+              case Some(why) => Left(CannotServe(ShadowedStatus, why))
+              case None      => Right(module)
+            }
           }
         }
     }
   }
 
-  /** `ermine/schema {module, binding}` (§4, §6), on the preview thread:
+  /** Q7, PART 2 (decided by the user on 2026-09-20): A SHADOWED PICK IS AN
+    * ERROR, NOT A SILENT SUBSTITUTION.
+    *
+    * The resident's `moduleRoots` keep LEADING the root set -- §2.2 wants
+    * both sessions to register EQUAL SHAPES for a shared module name, and
+    * putting the resident's own roots first is what buys that -- so a
+    * picked file whose header names a module a resident root also has is
+    * NOT the file the loader would read.  Q6 made the REQUEST's own roots
+    * safe; this is what remained, and the answer is an error naming both
+    * files rather than a silent substitution.
+    *
+    * THE TEST is the loader's own question over the FINAL root chain: does
+    * `<root>/A/B.e`, first root that has it, answer the file that was
+    * PICKED?  When it does not, neither a render nor a schema may use the
+    * other file.
+    *
+    * WHICH CASES CAN STILL SHADOW, after Q6 and as built:
+    *  - A RESIDENT `moduleRoots` ENTRY, always.  It precedes every other
+    *    root in BOTH branches of `rootSet`, so it wins whatever the request
+    *    says.  This is the case the Q6 review found, and this is its answer;
+    *  - a CONFIGURED root, but only when NO root could be inferred for the
+    *    pick (an unreadable file, a header that does not parse, a module
+    *    name deeper than the directories above it) and the path is under a
+    *    configured root all the same: `rootSet` then has no inferred root to
+    *    splice in, so an earlier configured root's copy of that name leads.
+    *    Before Q7 that rendered the other file silently.
+    * WHICH CANNOT, which is Q6's guarantee restated -- AND ONLY WHEN A ROOT
+    * COULD BE INFERRED, which is the qualifier the whole sentence turns on:
+    * an earlier entry of `ermine.preview.roots` cannot shadow a pick WHOSE
+    * OWN ROOT WAS INFERRED.  Either the configured chain already resolves
+    * the module back to the picked file (`configuredPlaces`, test (b)) and
+    * there is nothing to shadow, or it does not and the file's OWN inferred
+    * root is spliced in AHEAD of `req.roots`, where it out-ranks them.
+    * Without an inferred root there is nothing to splice, and then a
+    * configured root CAN shadow and earns the 409 -- the second case in the
+    * list above, and the reason that list and this one must be read
+    * together.  The
+    * case worth spelling out because it looks dangerous and is not: the
+    * inferred root EQUALS a LATER configured root -- the file is picked in
+    * `B` while `A`, listed first, has the same module name.  Test (b) fails,
+    * `B` goes in ahead of `A`, and the pick wins; the Q6 property "one name,
+    * two roots" is exactly that case and is unchanged by this.
+    *
+    * WHAT IS PRINTED, and why it is allowed.  The SHADOWING FILE'S PATH and
+    * the ROOT it sits under, beside the picked file's NAME.  Rule A5 (§8.1)
+    * is about JDBC URLs, hosts and credentials -- and this message goes
+    * through the same scrub every other one does -- while a message that
+    * said only "something shadows this" would leave the developer with no
+    * way to find it.  The shadowing file is an Ermine source file in a
+    * directory the CLIENT or the SERVER configured as a module root; it is
+    * not a secret, and naming it is the only useful thing this answer can
+    * say.  The picked file is named by its NAME alone, because the REQUEST
+    * supplied its URI and nothing here needs to echo a server-side spelling
+    * back.
+    *
+    * TWO PATHS THAT SPELL THE SAME FILE ARE NOT A SHADOW (review must-fix,
+    * 2026-09-20).  `Session.normalize` is `toAbsolutePath.normalize`
+    * (`Session.scala:733-735`) -- PURELY SYNTACTIC, it does not resolve a
+    * symbolic link -- so one directory reachable under two spellings would
+    * otherwise refuse a legitimate pick: `moduleRoots` says
+    * `/data/proj/reports`, the editor sends `/home/me/proj/reports/Rpt.e`
+    * through a link, `resolvedUnder` answers the first spelling, and the
+    * strings differ though the FILE is the same one. That configuration
+    * rendered before Q7 and must go on rendering. So the string test is the
+    * FAST path and `sameFile` -- one `Files.isSameFile` syscall, on the
+    * would-be-refusal path only -- is what decides.
+    *
+    * IT COSTS WHAT `resolvedFile` COSTS -- at most one `File.exists` per
+    * root, no read, and the one `isSameFile` above -- and it runs BEFORE
+    * THE LOAD: when this answers, nothing of the wrong file has been
+    * parsed, typechecked or evaluated.
+    *
+    * IT RUNS AFTER `ensureSession`, NOT BEFORE (orchestrator's decision,
+    * 2026-09-20, recorded here rather than left to the next reader): moving
+    * it ahead of the boot would change which refusal WINS among the 400,
+    * the 404 and the 500 a failed boot answers, and the boot is not wasted
+    * work -- it is the session the next request reuses. */
+  private def shadowedPick(roots: List[String], module: String, p: Path): Option[String] =
+    resolvedUnder(roots, module) match {
+      case Some((root, other)) if other != p && !sameFile(other, p) =>
+        val why =
+          // "is module X under this session's roots" and NOT "declares
+          // module X": `module` is what `Session.moduleUnder` makes of the
+          // path over the FINAL chain, which is the file's own header in
+          // every case but one -- a pick whose header could not be read at
+          // all, where there is no inferred root and the name is the
+          // chain's.  A message that claimed the file declared it would be
+          // wrong in exactly the case this check newly catches.
+          "shadowed pick: " + fileName(p) + " is module " + module +
+          " under this session's roots, but the module root " + root +
+          " comes first in the chain and resolves " + module + " to " + other +
+          ", so that file, and not the one picked, is what would be loaded. Nothing was loaded."
+        log("preview: " + why + " (the picked file is " + p + ")")
+        Some(why)
+      // `None` is NOT a shadow: `moduleUnder` has already answered, so the
+      // path is under some root, and whatever the chain cannot resolve is
+      // the LOAD's to complain about in its own words.
+      case _ => None
+    }
+
+  /** Do these two paths name the SAME FILE on disk?  `false` on ANY
+    * throwable, which is the conservative answer everywhere it is used: a
+    * path that cannot be stat'ed (it vanished between the resolve and this
+    * call, or the filesystem refuses) is not evidence that two spellings
+    * agree.  Asked only when the two strings already DIFFER, so the syscall
+    * is off every ordinary path. */
+  private def sameFile(a: Path, b: Path): Boolean =
+    try java.nio.file.Files.isSameFile(a, b) catch { case _: Throwable => false }
+
+  /** One render, §4's two answer shapes.  The front half -- roots, session,
+    * mtime scan, module, Q7's shadow test -- is `placeAndSession`, shared
+    * with `doSchema`; what is left here is the connection, the document and
+    * the size cap. */
+  private def doRender(r: Render): Unit =
+    placeAndSession(r.req.uri, r.req.roots, r.progress, r) match {
+      case Left(no)      => finish(r, failure(r.req.generation, no.status, no.message, None))
+      case Right(module) =>
+        // §4 / §7.2: WP-13's `disconnect` leaves the delegate unset and
+        // every render answers 503 until the extension connects again.
+        // `DelegatingRun` would throw and `Runner.drive` would call it
+        // 500, so the question is asked HERE, as its scaladoc asks.
+        //
+        // UNREACHABLE IN STAGE A, and therefore UNTESTED: the boot
+        // wires a target and stage A has no `disconnect` to remove it,
+        // so `connected` is true from the first render onwards.  This
+        // is a WP-13 seam -- the first thing that makes it reachable
+        // is the `disconnect` job, and that ticket owns the property
+        // that pins the 503.
+        if (!delegating.connected)
+          finish(r, failure(r.req.generation, 503, "not connected", None))
+        else {
+          val body = "{\"" + RunRequest.Params + "\":" + Json.print(r.req.params) + "}"
+          val out  = new java.lang.StringBuilder
+          runner.renderText(module, r.req.binding, body, out) match {
+            case Left(e) =>
+              finish(r, failure(r.req.generation, e.status, scrubUrls(e.message), e.path))
+            case Right(_) =>
+              // THE DOCUMENT-SIZE CAP (§2.3), measured BEFORE the
+              // answer and therefore before `Wire.send`, whose monitor
+              // is held for the length of a write and which the
+              // dispatch thread's next `publishDiagnostics` queues
+              // behind.  Counted in UTF-8 BYTES because that is what
+              // `Content-Length` counts and what the panel would have
+              // to parse -- and counted over the `StringBuilder` the
+              // writer filled, without materialising a second copy of
+              // a document that is by hypothesis too big.
+              val bytes = utf8Length(out)
+              val cap   = maxDocumentBytes
+              if (bytes > cap)
+                finish(r, failure(r.req.generation, 500,
+                  "document too large for the panel: " + bytes +
+                  " bytes exceeds ermine.preview.maxDocumentBytes (" + cap + ")", None))
+              else Json.parse(out.toString) match {
+                case Left(why) =>
+                  finish(r, failure(r.req.generation, 500,
+                    "the rendered document is not JSON: " + why, None))
+                case Right(doc) =>
+                  finish(r, document(r.req.generation, doc, dirtyGeneration.get != r.dirtyAt))
+              }
+          }
+        }
+    }
+
+  /** `ermine/schema {uri, binding, roots}` (§4, §6), on the preview thread:
     * `Runner.paramSchema`, which compiles the report through the very cache
     * a render uses and exports the schema from the very `paramTy` the
     * decoder was compiled from -- so the params file's squiggles and the
     * 400s a bad value earns cannot disagree.
     *
-    * WHICH SESSION, and the one thing §6 does not say.  `ermine/schema`
-    * carries `{module, binding}` and NOTHING ELSE: no `uri`, no `roots`
-    * (§4's row).  So this job cannot compute the root set a render computes,
-    * and the rule is therefore:
-    *  - if a session is up, ANSWER FROM IT, whatever its roots are.  It
-    *    must not call `ensureSession` with a root set of its own, because a
-    *    root set that differed would DISCARD the render session (§2.4) and
-    *    the next render would pay a boot for a schema request;
-    *  - if no session is up, boot one over the resident's module roots
-    *    alone -- the only roots this request can know.  A schema asked for
-    *    a WORKSPACE module before the first render then answers "no module
-    *    named ..." rather than a wrong schema.  In the loop §6 describes the
-    *    render comes first (the panel renders, then the extension asks for
-    *    the schema to write the params skeleton), so this is the unusual
-    *    order, and it is honest about it.
-    * Stated in the report rather than improvised further: giving
-    * `ermine/schema` a `uri` or `roots` key would fix it and is new wire
-    * surface, which is §4's to decide. */
+    * WHICH SESSION: the one `placeAndSession` answers with, which is the
+    * one a render with these roots would use.  That is Q7's whole point and
+    * it replaces the old fallback ("answer from whatever session a render
+    * booted, else boot one over `moduleRoots` alone"), whose two failures
+    * the stage B review had written down: it could describe the WRONG
+    * module of that name, and the first render after it paid a second boot.
+    *
+    * `{error}` AND NOT §4's `{ok:false, ...}`: the shape is the request's,
+    * not the reason's.  The REASONS are now a render's own, word for word
+    * (Q5's honest 404 texts included), because they come from the shared
+    * front half. */
   private def doSchema(s: Schema): Unit =
-    ensureSchemaSession(s) match {
-      case Left(why) => finish(s, schemaError(why))
-      case Right(()) =>
-        // The same mtime scan a render runs at its head (§2.5): a schema
-        // exported from a module that moved on disk would describe the file
-        // as it was, and the render that follows would decode against the
-        // file as it is.
-        scanForMovedFiles()
-        runner.paramSchema(s.module, s.binding) match {
+    placeAndSession(s.req.uri, s.req.roots, s.progress, s) match {
+      case Left(no)      => finish(s, schemaError(no.message))
+      case Right(module) =>
+        runner.paramSchema(module, s.req.binding) match {
           case Left(e)  => finish(s, schemaError(scrubUrls(e.message)))
           case Right(j) => finish(s, com.clarifi.reporting.ermine.json.LspSchema.toLsp(j))
         }
-    }
-
-  private def ensureSchemaSession(s: Schema): Either[String, Unit] =
-    if (runner != null) Right(())
-    else ensureSession(moduleRoots().flatMap(normalRoot).distinct, null, s) match {
-      case Left(why) => Left(why)
-      case Right(_)  => Right(())
     }
 
   /** §3 steps 4 and 5.  The notification goes out only for a non-empty dirty
@@ -1033,8 +1183,10 @@ final class Preview(moduleRoots: () => List[String],
     * change of roots and throw away a booted session for nothing.
     * Absolutising also matters for the request's own entries: a relative one
     * would resolve against the server's working directory, which is the
-    * checkout `bin/ermine-lsp` runs in.  `req.roots` arrive normalised from
-    * `RenderRequest.parse`, which refuses the entries that cannot be.  A
+    * checkout `bin/ermine-lsp` runs in.  `reqRoots` arrive normalised from
+    * the request parser (`Preview.rootEntries`, shared by `ermine/render`
+    * and `ermine/schema` since Q7), which refuses the entries that cannot
+    * be.  A
     * resident root that cannot be made into a path is logged and dropped,
     * which is what `Main` does with the same value at `initialize`.
     *
@@ -1044,7 +1196,7 @@ final class Preview(moduleRoots: () => List[String],
     * `[M, A, B]` for a report under `A`, `[M, B, A]` for one under `B` --
     * and §2.4's discard-on-change then re-booted the render session on every
     * switch, for ever, for nothing.  The rule now: if the CONFIGURED roots
-    * (`moduleRoots` then `req.roots`, normalised) already place the file
+    * (`moduleRoots` then the request's, normalised) already place the file
     * under the module name its OWN HEADER declares, the inferred root is not
     * added; otherwise it is added exactly as before.
     *
@@ -1055,17 +1207,17 @@ final class Preview(moduleRoots: () => List[String],
     * POSITION: the chain is the configured order, the same list for every
     * report under a configured root, which is what makes the session
     * survive a switch. */
-  private def rootSet(req: RenderRequest, path: Option[Path],
+  private def rootSet(reqRoots: List[String], path: Option[Path],
                       placed: Option[Placed]): List[String] = {
     // ONE call to `moduleRoots()`: it is a function the server supplies and
     // two calls could answer differently, which would make the two branches
     // below disagree about the set.
     val resident   = moduleRoots().flatMap(normalRoot)
-    val configured = (resident ++ req.roots).distinct
+    val configured = (resident ++ reqRoots).distinct
     val redundant  =
       (for { p <- path; pl <- placed } yield configuredPlaces(configured, p, pl.module)) == Some(true)
     if (redundant) configured
-    else (resident ++ placed.map(_.root).toList ++ req.roots).distinct
+    else (resident ++ placed.map(_.root).toList ++ reqRoots).distinct
   }
 
   /** Q6's test, in TWO parts, and both are needed for the rule to be sound.
@@ -1101,7 +1253,17 @@ final class Preview(moduleRoots: () => List[String],
     * It costs at most one `File.exists` per configured root and reads no
     * file: the header was already parsed once, by `inferredRoot`. */
   private def configuredPlaces(configured: List[String], p: Path, module: String): Boolean =
-    Session.moduleUnder(configured, p) == Some(module) && resolvedFile(configured, module) == Some(p)
+    Session.moduleUnder(configured, p) == Some(module) && (resolvedFile(configured, module) match {
+      // THE SAME `sameFile` TOLERANCE Q7's shadow test needs, and for the
+      // same reason (`Session.normalize` does not follow a symbolic link).
+      // The stakes are lower here -- a mismatch only splices the inferred
+      // root in, which is benign and costs a re-boot -- but the question
+      // ("does the configured chain resolve this name back to THIS file?")
+      // is the same question, and two answers to it would be the drift this
+      // pair of tests exists to prevent.
+      case Some(f) => f == p || sameFile(f, p)
+      case None    => false
+    })
 
   /** The file the LOADER would read for `module` over `roots`: the first
     * root that has `<root>/A/B.e`, normalised.  This is
@@ -1111,10 +1273,18 @@ final class Preview(moduleRoots: () => List[String],
     * made, which answers "the configured roots do not resolve it here" and
     * therefore keeps today's behaviour. */
   private def resolvedFile(roots: List[String], module: String): Option[Path] =
-    try roots.iterator.map(r => Session.SourceFile.filesystem(r)(module)).find(_.isDefined).flatten match {
-      case Some(Session.Filesystem(f, _)) => Some(Session.normalize(f))
-      case _                              => None
-    }
+    resolvedUnder(roots, module) map (_._2)
+
+  /** `resolvedFile`, with the ROOT that answered beside the file it
+    * answered with.  Q7's shadow message has to say WHICH root shadows the
+    * pick, and this walk is the only place that knows. */
+  private def resolvedUnder(roots: List[String], module: String): Option[(String, Path)] =
+    try roots.iterator.map(r => (r, Session.SourceFile.filesystem(r)(module)))
+             .find(_._2.isDefined)
+             .flatMap {
+               case (r, Some(Session.Filesystem(f, _))) => Some((r, Session.normalize(f)))
+               case _                                   => None
+             }
     catch { case e: Throwable => log("preview: cannot resolve " + module + ": " + messageOf(e)); None }
 
   /** THE 404's MESSAGE (Q5, decided by the user on 2026-09-20 as option (i):
@@ -1618,6 +1788,15 @@ object Preview {
       * `$/cancelRequest` names (`Rpc.onRequestDeferredWithId`). */
     def id: Json
     def answer: Rpc.Answer
+    /** The `window/workDoneProgress/create` token the DISPATCH thread
+      * minted for this job because no session was up when it was enqueued,
+      * or `null` (§2.5).  ON THE TRAIT since Q7 rather than on `Render`: a
+      * SCHEMA can be the job that boots -- a first pick asks for the schema
+      * before it renders -- and it mints its token through the very same
+      * `mintBootToken`, under the very same at-most-one-outstanding rule.
+      * It travels on the job so that the preview thread needs no shared
+      * state to know which token its boot belongs to. */
+    def progress: Json
     /** This job's own shape for "it did not work": §4's `{ok: false, ...}`
       * for a render, `ermine/schema`'s `{error}` for a schema.  The
       * watchdog and the stuck refusal both go through it, so that a client
@@ -1626,22 +1805,39 @@ object Preview {
     def refusal(message: String): Json
   }
 
-  /** `progress` is the `window/workDoneProgress/create` token the DISPATCH
-    * thread minted for this render because no session was up when it was
-    * enqueued, or `null` (§2.5).  It travels on the job so that the preview
-    * thread needs no shared state to know which token its boot belongs to. */
   final case class Render(id: Json, req: RenderRequest, dirtyAt: Long,
                           progress: Json, answer: Rpc.Answer) extends Answering {
     def refusal(message: String): Json = failure(req.generation, 500, message, None)
   }
 
-  final case class Schema(id: Json, module: String, binding: String,
-                          answer: Rpc.Answer) extends Answering {
+  /** Q7: a schema job carries the same three things a render does -- the
+    * file, the binding and the roots -- because it resolves the report the
+    * way a render does (`Preview.placeAndSession`). */
+  final case class Schema(id: Json, req: SchemaRequest,
+                          progress: Json, answer: Rpc.Answer) extends Answering {
     def refusal(message: String): Json = Json.obj("error" -> Json.Str(scrubUrls(message)))
   }
 
   final case class Invalidate(paths: Set[Path]) extends Job
   case object DiscardSession extends Job
+
+  /** Q7's answer to a SHADOWED PICK: the picked file is not the file this
+    * session's root chain resolves its module to (`Preview.shadowedPick`).
+    * 409 CONFLICT is the HTTP status for "the request cannot be applied to
+    * the current state of the target" (*external*), which is exactly this:
+    * nothing about the request is malformed (400), the module is found
+    * (404), and the render could not fail either (500) because it was never
+    * run.  It costs no new vocabulary anywhere -- `failure` takes a status
+    * NUMBER, and `json/Runner.scala`'s `RunError`, which the HTTP server
+    * shares, is not on this path and is untouched. */
+  private[lsp] val ShadowedStatus = 409
+
+  /** What the shared front half answers when it cannot serve a request:
+    * ONE reason, in ONE status, which each caller then dresses in its own
+    * shape -- §4's `{ok:false, status, message, generation}` for a render,
+    * `{error}` for a schema.  That is the whole of "they cannot drift":
+    * both know the same reasons and neither can invent one. */
+  private[lsp] final case class CannotServe(status: Int, message: String)
 
   /** §4's failure shape.  On the companion since stage B, because each
     * `Answering` builds its own refusal. */
@@ -1672,15 +1868,23 @@ object Preview {
     n
   }
 
-  /** `ermine/schema`'s binding form (§4, §6). */
-  final case class SchemaRequest(module: String, binding: String)
+  /** `ermine/schema`'s binding form (§4, §6), Q7's shape: THE SAME THREE
+    * KEYS A RENDER IDENTIFIES ITS REPORT BY.  `module` is gone, and a
+    * request that still sends `binding` without `uri` is an `{error}`
+    * naming the key it is missing -- not a compatibility path back to the
+    * old form, because there is no extension code to be compatible with
+    * yet (WP-7/WP-8) and the old form's hazard was the point of Q7: a
+    * module NAME alone cannot say which of two files of that name is
+    * meant. */
+  final case class SchemaRequest(uri: String, binding: String, roots: List[String])
 
   object SchemaRequest {
     def parse(params: Json): Either[String, SchemaRequest] =
-      (params / "module" flatMap (_.str), params / "binding" flatMap (_.str)) match {
-        case (None, _) => Left("ermine/schema needs a \"module\"")
+      (params / "uri" flatMap (_.str), params / "binding" flatMap (_.str)) match {
+        case (None, _) => Left("ermine/schema needs a \"uri\" naming the report's file")
         case (_, None) => Left("ermine/schema needs a \"binding\" naming the report")
-        case (Some(m), Some(b)) => Right(SchemaRequest(m, b))
+        case (Some(u), Some(b)) =>
+          rootEntries(params).right.map(rs => SchemaRequest(u, b, rs))
       }
   }
 
@@ -1701,31 +1905,61 @@ object Preview {
         case (None, _) => Left("\"uri\" is a string naming the report's file")
         case (_, None) => Left("\"binding\" is a string naming the report binding to render")
         case (Some(uri), Some(binding)) =>
-          roots(params).right.map(rs => RenderRequest(
+          rootEntries(params).right.map(rs => RenderRequest(
             uri, binding,
             params / "params" getOrElse Json.Null,
             rs,
             params / "generation" getOrElse Json.Null))
       }
+  }
 
-    /** `ermine.preview.roots`, absolutised, or WHICH ENTRY IS WRONG (S2).
-      * A bad entry is a 400 naming it and not a silent drop: the value comes
-      * from a per-folder setting the developer wrote, and a root that is
-      * quietly ignored is a preview that mysteriously cannot find a module.
-      *
-      * An EMPTY string is refused for its own reason: `Paths.get("")`
-      * normalises to the server's working directory, which is the checkout
-      * `bin/ermine-lsp` runs in, so an empty entry would silently add a
-      * whole source tree as a module root. */
-    private def roots(params: Json): Either[String, List[String]] = {
-      val asked = (params / "roots" flatMap (_.arr) getOrElse Nil) flatMap (_.str)
-      val each  = asked.map { r =>
-        if (r.trim.isEmpty)
-          Left("\"roots\" has an empty entry; each root is an absolute directory path")
-        else
-          try Right(Session.normalize(r).toString)
-          catch { case e: Throwable =>
-            Left("\"roots\" entry \"" + r + "\" is not a path: " + messageOf(e)) }
+  /** `ermine.preview.roots`, absolutised, or WHICH ENTRY IS WRONG (S2).
+    * A bad entry is a refusal naming it and not a silent drop: the value
+    * comes from a per-folder setting the developer wrote, and a root that is
+    * quietly ignored is a preview that mysteriously cannot find a module.
+    *
+    * An EMPTY string is refused for its own reason: `Paths.get("")`
+    * normalises to the server's working directory, which is the checkout
+    * `bin/ermine-lsp` runs in, so an empty entry would silently add a
+    * whole source tree as a module root.
+    *
+    * IT REFUSES THE SHAPE AS WELL AS THE ENTRIES (review nit, 2026-09-20).
+    * The first cut read `roots` as `_.arr getOrElse Nil` and the entries as
+    * `flatMap (_.str)`, so a `roots` that was not an array, and an entry
+    * that was not a string, were both SILENTLY DROPPED -- the very thing
+    * the paragraph above says must not happen, and worse than a bad path,
+    * because the request then renders under a root set the developer did
+    * not ask for.  Both now name what is wrong and neither echoes the
+    * VALUE: `jsonType` says what kind of thing it was, which is what
+    * `illTyped` says about a setting.
+    *
+    * ON THE COMPANION since Q7, not inside `RenderRequest`: `ermine/schema`
+    * carries `roots` too, and it must read them by the SAME rules -- a
+    * second copy is exactly the drift Q7's shared front half exists to
+    * prevent.  Each request still dresses the refusal in its own shape (a
+    * 400 for a render, `{error}` for a schema). */
+  private def rootEntries(params: Json): Either[String, List[String]] = {
+    // ABSENT and `null` are "no roots", which is what a client that has none
+    // sends; anything else must really be an array.
+    val asked: Either[String, List[Json]] = params / "roots" match {
+      case None | Some(Json.Null) => Right(Nil)
+      case Some(j) => j.arr match {
+        case Some(xs) => Right(xs)
+        case None     => Left("\"roots\" is an array of absolute directory paths, not a " + jsonType(j))
+      }
+    }
+    asked.right.flatMap { xs =>
+      val each = xs.map { j =>
+        j.str match {
+          case None => Left("\"roots\" has an entry that is a " + jsonType(j) +
+                            "; each root is a string naming an absolute directory")
+          case Some(r) if r.trim.isEmpty =>
+            Left("\"roots\" has an empty entry; each root is an absolute directory path")
+          case Some(r) =>
+            try Right(Session.normalize(r).toString)
+            catch { case e: Throwable =>
+              Left("\"roots\" entry \"" + r + "\" is not a path: " + messageOf(e)) }
+        }
       }
       each.collectFirst { case Left(why) => why } match {
         case Some(why) => Left(why)
@@ -1744,6 +1978,19 @@ object Preview {
     if (s == null) "" else JdbcUrl.replaceAllIn(s, "<url>")
 
   private val JdbcUrl = "(?i)jdbc:[^\\s\"'\\]),]*".r
+
+  /** What KIND of JSON value this is, for a message that must say what is
+    * wrong without echoing what was sent.  ON THE COMPANION since the Q7
+    * review: `rootEntries` needs it too, and the class reaches it through
+    * `import Preview._` exactly as it reaches `failure`. */
+  private def jsonType(j: Json): String = j match {
+    case Json.Null    => "null"
+    case Json.Bool(_) => "boolean"
+    case Json.Num(_)  => "number"
+    case Json.Str(_)  => "string"
+    case Json.Arr(_)  => "array"
+    case Json.Obj(_)  => "object"
+  }
 
   /** A throwable as one line.  `Runner.messageOf` is `private[json]`; this
     * is the same shape for the two places here that need it. */

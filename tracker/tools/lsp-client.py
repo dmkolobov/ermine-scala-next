@@ -3276,8 +3276,9 @@ def main():
 
     # ---- WP-5 (tracker/JSON-WIDGET-PLAYGROUND.md 11, row "End to end"): THE
     # PREVIEW, over the wire.  reports -> render -> edit -> invalidated ->
-    # render: differs, and `ermine/schema` in its binding mode on a report
-    # whose parameter type is `Query`.
+    # render: differs, `ermine/schema` in its binding mode on a report whose
+    # parameter type is `Query`, and (Q7) a schema asked BEFORE any render of
+    # a second report in the same root.
     #
     # ON A COPY of core/src/test/resources/doc/Sales.e under a temp root of
     # this run's own, for the reason every other fixture here has a restore
@@ -3389,7 +3390,12 @@ def main():
     # (6) `ermine/schema` IN ITS BINDING MODE (4, 6), answered from the render
     # session the renders above booted: the domain of `report : Query -> Node`
     # is `Query`, with its own four fields and its own three required ones.
-    rid = client.request("ermine/schema", {"module": "Sales", "binding": "report"})
+    # Q7 (decided 2026-09-20): the binding form carries `{uri, binding, roots}`,
+    # the same three keys a render identifies its report by, and resolves the
+    # module with the same functions -- so this finds the session the renders
+    # above booted rather than one of its own.
+    rid = client.request("ermine/schema", {
+        "uri": sales_uri, "binding": "report", "roots": [str(preview_root)]})
     sch = client.response(rid).get("result")
     check("ermine/schema {module, binding} answers the report's parameter type",
           sch is not None and sch.get("$id") == "ermine:Sales/Query"
@@ -3399,6 +3405,23 @@ def main():
           sorted(query.get("properties", {})) == ["fromDay", "onlyRegion", "orderBy", "toDay"]
           and sorted(query.get("required", [])) == ["fromDay", "orderBy", "toDay"],
           repr(sch)[:400])
+
+    # (7) Q7's FIRST-PICK ORDER (6, "First pick"): the schema asked BEFORE any
+    # render of the report, which is how the extension writes the params
+    # skeleton for a report nobody has previewed yet.  Before Q7 this could
+    # not work at all -- the request carried no `uri` and no `roots`, so a
+    # workspace module was "no module named ...".  A SECOND report in the SAME
+    # temp root, so the root set does not move and the gate still pays ONE
+    # render-session boot (2.4, Q6's rule): the only cost is one compile.
+    second_file = preview_root / "Sales2.e"
+    second_file.write_text(sales_src.replace("module Sales where", "module Sales2 where"))
+    rid = client.request("ermine/schema", {
+        "uri": second_file.as_uri(), "binding": "report", "roots": [str(preview_root)]})
+    sch2 = client.response(rid).get("result")
+    check("ermine/schema before any render of a report answers its parameter type",
+          sch2 is not None and sch2.get("$id") == "ermine:Sales2/Query"
+          and sorted(sch2.get("$defs", {}).get("Sales2.Query", {}).get("properties", {}))
+              == ["fromDay", "onlyRegion", "orderBy", "toDay"], repr(sch2)[:400])
 
     # Checks must neither read nor write interface files (a stale .ei would
     # let type errors through unreported, and writebacks litter workspaces).

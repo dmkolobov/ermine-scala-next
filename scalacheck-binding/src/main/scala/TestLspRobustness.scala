@@ -1668,6 +1668,21 @@ object TestLspRobustness extends Properties("LSP robustness") {
   private lazy val q6RootB: Path   = tempRoot("ermine-wp5-q6b")
   private lazy val q6Outside: Path = tempRoot("ermine-wp5-q6c")
 
+  /** Q7's directories (§13 Q7, §2.4 "Roots").  `q7Pick` is a CONFIGURED
+    * root, named by the request; `q7Shadow` is handed to a bench as one of
+    * the RESIDENT's own `moduleRoots`, which lead the chain whatever the
+    * request says -- after Q6 that is the one root that can still shadow a
+    * pick, so it is the only way to build the case. */
+  private lazy val q7Pick: Path   = tempRoot("ermine-wp5-q7pick")
+  private lazy val q7Shadow: Path = tempRoot("ermine-wp5-q7shadow")
+
+  /** Q7's must-fix case: `q7Real` is a real directory and `q7LinkHome` is
+    * where the SYMBOLIC LINK to it is made, so that one directory is
+    * reachable under two spellings -- which is what
+    * `Session.normalize`, being purely syntactic, cannot see through. */
+  private lazy val q7Real: Path     = tempRoot("ermine-wp5-q7real")
+  private lazy val q7LinkHome: Path = tempRoot("ermine-wp5-q7link")
+
   /** Write a fixture and make sure its modification time MOVED.  A
     * filesystem stamp has a granularity, and `Runner.staleFiles`' test is
     * `depCache(sf)._1 != lastModified`: two writes inside one tick would
@@ -1733,12 +1748,20 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * on it exactly as `Main` installs one, a dispatch thread running
     * `server.run()`, and one test-only SYNCHRONOUS request (`wp5/ping`) --
     * the witness that a render in flight does not block that thread. */
-  private final class Bench(warm: Boolean = true) {
+  private final class Bench(warm: Boolean = true, residentRoots: List[Path] = Nil) {
     val sink   = new LogSink
     val feed   = new Feed
     val frames = new FrameSink
     val server = new Server(new Wire(feed, frames, sink.add), sink.add)
-    val preview: Preview = Preview.install(server, () => List(stdlibRoot.getPath), sink.add)
+    // `residentRoots` (Q7 part 2): extra entries for the `moduleRoots`
+    // function `Main` supplies from the RESIDENT's own roots.  They LEAD the
+    // render session's chain in both branches of `Preview.rootSet` (§2.2
+    // wants both sessions to register equal shapes), which is the one way a
+    // pick can still be shadowed after Q6 -- so it is the one way to build
+    // that case here.  `Nil` for every other bench, which is stage A's
+    // behaviour exactly.
+    val preview: Preview =
+      Preview.install(server, () => stdlibRoot.getPath :: residentRoots.map(_.toString), sink.add)
     // WP-5 stage B (§2.5): this bench's client DECLARES
     // `window.workDoneProgress`, as `Main` would from the `initialize`
     // capabilities, and the very first render below is therefore the one
@@ -1791,6 +1814,24 @@ object TestLspRobustness extends Properties("LSP robustness") {
 
     def render(id: Int, path: Path, binding: String, params: String, generation: Int): Unit =
       request(id, "ermine/render", renderOf(path.toUri.toString, binding, params, generation))
+
+    /** `ermine/schema`'s binding form in Q7's shape -- `{uri, binding,
+      * roots}`, the same three keys a render identifies its report by, and
+      * the SAME roots `renderOf` names, so that a schema and a render on
+      * this bench share one session. */
+    def schemaOf(uri: String, binding: String): Json =
+      Json.obj("uri" -> Json.Str(uri), "binding" -> Json.Str(binding),
+               "roots" -> Json.Arr(List(Json.Str(previewRoot.toString))))
+
+    def schema(id: Int, path: Path, binding: String): Unit =
+      request(id, "ermine/schema", schemaOf(path.toUri.toString, binding))
+
+    /** A schema naming roots of its own: `renderWith`'s counterpart, and
+      * used only by benches of their own, for the same reason. */
+    def schemaWith(id: Int, path: Path, binding: String, roots: List[Path]): Unit =
+      request(id, "ermine/schema", Json.obj(
+        "uri" -> Json.Str(path.toUri.toString), "binding" -> Json.Str(binding),
+        "roots" -> Json.Arr(roots map (r => Json.Str(r.toString)))))
 
     /** A render naming roots of its own (Q6): the one thing `renderOf`
       * deliberately cannot do, because the shared bench's root set must
@@ -2225,6 +2266,26 @@ object TestLspRobustness extends Properties("LSP robustness") {
       val a3 = bench.answer(52)
       bench.request(53, "ermine/render", bench.renderOf(badHeader.toUri.toString, "report", "1", 84))
       val a4 = bench.answer(53)
+      // Q7 review nit: the SHAPE is refused too, and not silently dropped.
+      // `roots` that is not an array, and an entry that is not a string,
+      // both used to fall through `_.arr getOrElse Nil` / `flatMap (_.str)`
+      // and render under a root set the developer did not ask for.
+      bench.request(54, "ermine/render", Json.obj(
+        "uri" -> Json.Str(gone.toUri.toString), "binding" -> Json.Str("report"),
+        "params" -> Json.num(1), "roots" -> Json.Str(previewRoot.toString),
+        "generation" -> Json.num(85)))
+      val a5 = bench.answer(54)
+      bench.request(55, "ermine/render", Json.obj(
+        "uri" -> Json.Str(gone.toUri.toString), "binding" -> Json.Str("report"),
+        "params" -> Json.num(1), "roots" -> Json.Arr(List(Json.num(7))),
+        "generation" -> Json.num(86)))
+      val a6 = bench.answer(55)
+      // and the SAME two refusals reach `ermine/schema`, in ITS shape --
+      // one `rootEntries`, two answer shapes (Q7).
+      bench.request(56, "ermine/schema", Json.obj(
+        "uri" -> Json.Str(gone.toUri.toString), "binding" -> Json.Str("report"),
+        "roots" -> Json.Str(previewRoot.toString)))
+      val a7 = bench.answer(56)
       ((okOf(a1) ?= Some(false)) :| ("a file under no root answered " + show(a1))) &&
         ((statusOf(a1) ?= Some(404)) :| ("status " + show(a1))) &&
         ((msgOf(a1) ?= Some("cannot read Gone.e")) :| show(a1)) &&
@@ -2236,7 +2297,18 @@ object TestLspRobustness extends Properties("LSP robustness") {
         ((genOf(a2) ?= Some(82)) :| ("generation " + show(a2))) &&
         ((statusOf(a3) ?= Some(400)) :| ("an empty roots entry answered " + show(a3))) &&
         (msgOf(a3).exists(_.contains("roots")) :| ("the 400 does not name the setting: " + show(a3))) &&
-        ((genOf(a3) ?= Some(83)) :| ("generation " + show(a3)))
+        ((genOf(a3) ?= Some(83)) :| ("generation " + show(a3))) &&
+        ((statusOf(a5) ?= Some(400)) :| ("a non-array roots answered " + show(a5))) &&
+        (msgOf(a5).exists(m => m.contains("roots") && m.contains("string")) :|
+          ("the 400 for a non-array roots: " + show(a5))) &&
+        ((genOf(a5) ?= Some(85)) :| ("generation " + show(a5))) &&
+        ((statusOf(a6) ?= Some(400)) :| ("a non-string roots entry answered " + show(a6))) &&
+        (msgOf(a6).exists(m => m.contains("roots") && m.contains("number")) :|
+          ("the 400 for a number in roots: " + show(a6))) &&
+        ((genOf(a6) ?= Some(86)) :| ("generation " + show(a6))) &&
+        ((a7 flatMap (_ / "result") flatMap (_ / "error") flatMap (_.str))
+           .exists(_.contains("roots")) :|
+          ("ermine/schema did not refuse the same bad roots: " + show(a7)))
     } }
   }
 
@@ -2445,14 +2517,17 @@ object TestLspRobustness extends Properties("LSP robustness") {
         val _ = resident
         val d = bench.docs
         val sales = writeFixture("WpSales", wpSalesSource("Sales"))
-        // Render first: §6's schema job answers from the session a render
-        // booted (`ermine/schema` carries no `uri` and no `roots`), and the
-        // group's one boot has already happened, so this costs a compile.
+        // Render first, THEN the schema -- the order §6's loop uses, and
+        // the one that was already supported.  Since Q7 the schema carries
+        // `{uri, binding, roots}` and computes the same root set the render
+        // did, so it finds the same session: the group's one boot has
+        // already happened and this costs a compile.  `bench.boots` below is
+        // the assertion that it did not boot a second one.
         bench.render(84, sales, "report", wpSalesParams, 131)
         val rendered = bench.answer(84)
-        bench.request(85, "ermine/schema",
-          Json.obj("module" -> Json.Str("WpSales"), "binding" -> Json.Str("report")))
+        bench.schema(85, sales, "report")
         val schema = bench.answer(85)
+        val shared = bench.boots
         // THE ORACLE, and why it is this one.  §11 words it as "equals
         // `exportNamed("Sales", "Query")` under the render env".  That env
         // belongs to the preview thread and this suite cannot enter it
@@ -2493,6 +2568,8 @@ object TestLspRobustness extends Properties("LSP robustness") {
             ("Query's required fields are the three non-Maybe ones: " + show(schema))) &&
           ((namedId ?= Some("ermine:Ord/Ordering")) :|
             ("the name form no longer answers from the resident: " + show(named))) &&
+          ((shared ?= 1) :| ("the schema did not share the render's session: " + shared +
+                             " boot(s) on the group's bench")) &&
           ((d ne null) :| "no Documents")
       } }
     }
@@ -2520,8 +2597,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
           try {
             bench.render(87, sales, "report", wpSalesParams, held)
             val inFlight = started.await(180L, java.util.concurrent.TimeUnit.SECONDS)
-            bench.request(88, "ermine/schema",
-              Json.obj("module" -> Json.Str("WpSales"), "binding" -> Json.Str("report")))
+            bench.schema(88, sales, "report")
             // The dispatch thread enqueues ASYNCHRONOUSLY, so the depth is
             // waited for, exactly as `awaitQueued` does for renders; the
             // verdict is the value, never how long it took.
@@ -2573,9 +2649,12 @@ object TestLspRobustness extends Properties("LSP robustness") {
                           case _ => () }
         val first  = new Answers
         val second = new Answers
-        own.schema(Json.num(1), Json.obj("module" -> Json.Str("M"), "binding" -> Json.Str("r")), first.answer)
+        val sreq = Json.obj("uri" -> Json.Str(previewRoot.resolve("WpHeld.e").toUri.toString),
+                            "binding" -> Json.Str("r"),
+                            "roots" -> Json.Arr(List(Json.Str(previewRoot.toString))))
+        own.schema(Json.num(1), sreq, first.answer)
         val reached = ran.await(180L, java.util.concurrent.TimeUnit.SECONDS)
-        own.schema(Json.num(2), Json.obj("module" -> Json.Str("M"), "binding" -> Json.Str("r")), second.answer)
+        own.schema(Json.num(2), sreq, second.answer)
         own.shutdown()
         val drained = second.await(60000L)
         hold.countDown()
@@ -2650,9 +2729,8 @@ object TestLspRobustness extends Properties("LSP robustness") {
         // dispatch thread's entry point and this property thread is
         // playing that part, exactly as the M1/M2 crash properties do.
         val schemaAnswer = new Answers
-        b.preview.schema(Json.num(3),
-          Json.obj("module" -> Json.Str("WpDrain"), "binding" -> Json.Str("report")),
-          schemaAnswer.answer)
+        b.preview.schema(Json.num(3), b.schemaOf(f.toUri.toString, "report"),
+                         schemaAnswer.answer)
         val deadline = System.currentTimeMillis + 60000L
         while ((b.preview.queuedRenders != 1 || b.preview.queuedSchemas != 1) &&
                System.currentTimeMillis < deadline) Thread.sleep(5L)
@@ -2730,9 +2808,8 @@ object TestLspRobustness extends Properties("LSP robustness") {
         val queuedFirst = b.awaitQueued(1, 60000L)
         // a schema behind it, so the drain is checked on this path too
         val schemaAnswer = new Answers
-        b.preview.schema(Json.num(3),
-          Json.obj("module" -> Json.Str("WpCancelled"), "binding" -> Json.Str("report")),
-          schemaAnswer.answer)
+        b.preview.schema(Json.num(3), b.schemaOf(f.toUri.toString, "report"),
+                         schemaAnswer.answer)
         val deadline = System.currentTimeMillis + 60000L
         while ((b.preview.queuedRenders != 1 || b.preview.queuedSchemas != 1) &&
                System.currentTimeMillis < deadline) Thread.sleep(5L)
@@ -3082,6 +3159,230 @@ object TestLspRobustness extends Properties("LSP robustness") {
           ((d2.contains("9222") && !d2.contains("9111")) :|
             ("THE FILE PICKED IN THE SECOND ROOT RENDERED THE OTHER ROOT'S COPY: " + d2.take(400)))
       } finally { b6.stop(); () }
+    } }
+  }
+
+  // ------------------------------- Q7 -------------------------------------
+
+  /** Q7 PART 1 (§13, DECIDED by the user on 2026-09-20; §4's `ermine/schema`
+    * row, §6's "first pick").  The binding form now carries
+    * `{uri, binding, roots}` and resolves the report with EXACTLY the
+    * functions a render uses (`Preview.placeAndSession`), so the FIRST-PICK
+    * order -- ask for the schema, write the params skeleton from it, then
+    * render -- works for a workspace module and costs ONE boot across both.
+    *
+    * ITS OWN BENCH, like the Q6 properties: this one must BOOT, and the
+    * shared bench is booted already (the boot-progress property asserts its
+    * single `create`).  `docs` is forced so the `ermine/schema` route is
+    * registered on this bench's server by the same `Definitions.install`
+    * `Main` makes -- hence `residentLock`, the group's declared order.
+    *
+    * WHAT FALSIFIES IT: a schema that computes its roots without the
+    * request's -- which is what `ensureSchemaSession` did before Q7: boot
+    * over `moduleRoots` alone.  PROBED, by restoring exactly that rule for
+    * `Schema` jobs inside `placeAndSession` (2026-09-20): this property and
+    * three others fell, and the line here was
+    * `Expected Some(ermine:WpSales/Query) but got None` /
+    * `a schema asked BEFORE any render answered
+    * {"jsonrpc":"2.0","id":1,"result":{"error":"cannot be placed under any
+    * module root: WpSales.e"}}`. */
+  property("D (Q7): a schema asked BEFORE any render boots the session and answers the params schema") = secure {
+    previewLock.synchronized {
+      residentLock.synchronized { timedD("Q7: schema first, then render") {
+        val _     = resident
+        val sales = writeFixture("WpSales", wpSalesSource("Sales"))
+        val b7    = new Bench(warm = false)
+        try {
+          val _d = b7.docs
+          b7.schema(1, sales, "report")
+          val sch              = b7.answer(1, 300000L)
+          val bootsAfterSchema = b7.boots
+          // The render that follows, with the SAME roots: it must find the
+          // session the schema booted, not boot one of its own.
+          b7.render(2, sales, "report", wpSalesParams, 401)
+          val rendered         = b7.answer(2, 300000L)
+          val bootsAfterRender = b7.boots
+          // The same oracle the wire property above argues for: an answer
+          // whose `$id` is `ermine:WpSales/Query` was exported from the type
+          // that renders as the bare name `Query` in `WpSales`.
+          val id   = sch flatMap (_ / "result") flatMap (_ / "$id") flatMap (_.str)
+          val ref  = sch flatMap (_ / "result") flatMap (_ / "$ref") flatMap (_.str)
+          val body = sch flatMap (_ / "result") flatMap (_ / "$defs") flatMap (_ / "WpSales.Query")
+          val keys = body flatMap (_ / "properties") collect { case Json.Obj(fs) => fs.map(_._1).sorted }
+          val req  = body flatMap (_ / "required") flatMap (_.arr) map (_ flatMap (_.str))
+          ((id ?= Some("ermine:WpSales/Query")) :|
+            ("a schema asked BEFORE any render answered " + show(sch))) &&
+            ((ref ?= Some("#/$defs/WpSales.Query")) :|
+              ("the schema does not point at Query's definition: " + show(sch))) &&
+            ((keys ?= Some(List("fromDay", "onlyRegion", "orderBy", "toDay"))) :|
+              ("the schema's properties: " + show(sch))) &&
+            ((req map (_.sorted) ?= Some(List("fromDay", "orderBy", "toDay"))) :|
+              ("Query's required fields are the three non-Maybe ones: " + show(sch))) &&
+            ((bootsAfterSchema ?= 1) :|
+              ("the schema booted " + bootsAfterSchema + " render session(s), not 1")) &&
+            ((okOf(rendered) ?= Some(true)) :|
+              ("the render that follows the schema: " + show(rendered))) &&
+            ((genOf(rendered) ?= Some(401)) :| show(rendered)) &&
+            ((bootsAfterRender ?= 1) :|
+              ("the session booted " + bootsAfterRender + " time(s) across a schema and the " +
+               "render after it, not once"))
+        } finally { b7.stop(); () }
+      } }
+    }
+  }
+
+  /** Q7 PART 1's other half: the OLD `{module, binding}` form is gone rather
+    * than kept as a compatibility path, because there is no extension code
+    * to be compatible with yet (WP-7/WP-8) and keeping it would keep its
+    * wrong-module hazard.  A request with `binding` and no `uri` is an
+    * `{error}` NAMING the key it lacks -- it still routes to the preview,
+    * since `Definitions` branches on `binding`'s presence -- and the
+    * `type`/`name` forms still answer synchronously from the resident.
+    *
+    * The shared bench, and nothing queues: the refusal is `SchemaRequest`'s
+    * and is made on the dispatch thread, so this costs no boot and no
+    * compile. */
+  property("D (Q7): ermine/schema with a binding but no uri names the missing key, and the type/name forms are untouched") = secure {
+    previewLock.synchronized {
+      residentLock.synchronized { timedD("Q7: the missing uri, and the resident's forms") {
+        val _ = resident
+        val d = bench.docs
+        bench.request(191, "ermine/schema",
+          Json.obj("module" -> Json.Str("WpSales"), "binding" -> Json.Str("report")))
+        val missing = bench.answer(191, 120000L)
+        bench.request(192, "ermine/schema",
+          Json.obj("module" -> Json.Str("Ord"), "type" -> Json.Str("Ordering")))
+        val typed = bench.answer(192, 120000L)
+        bench.request(193, "ermine/schema",
+          Json.obj("module" -> Json.Str("Ord"), "name" -> Json.Str("Ordering")))
+        val named = bench.answer(193, 120000L)
+        val err     = missing flatMap (_ / "result") flatMap (_ / "error") flatMap (_.str)
+        val typedId = typed flatMap (_ / "result") flatMap (_ / "$id") flatMap (_.str)
+        val namedId = named flatMap (_ / "result") flatMap (_ / "$id") flatMap (_.str)
+        (err.exists(_.contains("\"uri\"")) :|
+          ("a binding without a uri answered " + show(missing))) &&
+          ((err.exists(_.contains("WpSales")) ?= false) :|
+            ("the refusal served, or echoed, the module name it must no longer take: " + show(missing))) &&
+          ((typedId ?= Some("ermine:Ord/Ordering")) :|
+            ("the type form no longer answers from the resident: " + show(typed))) &&
+          ((namedId ?= Some("ermine:Ord/Ordering")) :|
+            ("the name form no longer answers from the resident: " + show(named))) &&
+          ((d ne null) :| "no Documents")
+      } }
+    }
+  }
+
+  /** Q7 PART 2 (DECIDED by the user on 2026-09-20; §2.2, §2.4 "Roots"): A
+    * SHADOWED PICK IS AN ERROR, NOT A SILENT SUBSTITUTION.
+    *
+    * The resident's `moduleRoots` keep LEADING the render session's chain --
+    * §2.2 wants both sessions to register equal shapes for a shared module
+    * name -- so a picked file whose header names a module a RESIDENT root
+    * also has is not the file the loader would read.  After Q6 that is the
+    * only root that can still shadow a pick: an earlier entry of
+    * `ermine.preview.roots` cannot, because either the configured chain
+    * already resolves the module back to the picked file or the file's own
+    * inferred root is spliced in ahead of those roots (the Q6 property "one
+    * name, two roots" is that case).  So the bench is built with a resident
+    * root of its own, holding the shadowing copy.
+    *
+    * WHAT IS ASSERTED: the render is `{ok:false, status: 409}` naming BOTH
+    * files and the root that shadows, with the generation echoed and NO
+    * document; the schema is `{error}` with THE SAME TEXT; nothing of the
+    * shadowing file is served; and a non-shadowed module on the same bench
+    * still renders, from its own contents, without a second boot. */
+  property("D (Q7): a pick shadowed by a resident module root is refused, and names both files") = secure {
+    previewLock.synchronized {
+      residentLock.synchronized { timedD("Q7: the shadowed pick") {
+        val _      = resident
+        val shadow = writeFixtureIn(q7Shadow, "WpQ7Dup",  wpSimple("WpQ7Dup", 7777))
+        val pick   = writeFixtureIn(q7Pick,   "WpQ7Dup",  wpSimple("WpQ7Dup", 8888))
+        val free   = writeFixtureIn(q7Pick,   "WpQ7Free", wpSimple("WpQ7Free", 6543))
+        val roots  = List(q7Pick)
+        val b7     = new Bench(warm = false, residentRoots = List(q7Shadow))
+        try {
+          val _d = b7.docs
+          b7.renderWith(1, pick, "report", "1", 411, roots)
+          val rendered = b7.answer(1, 300000L)
+          b7.schemaWith(2, pick, "report", roots)
+          val sch = b7.answer(2, 300000L)
+          b7.renderWith(3, free, "report", "1", 412, roots)
+          val other = b7.answer(3, 300000L)
+          val boots = b7.boots
+          val msg   = msgOf(rendered).getOrElse("")
+          val err   = (sch flatMap (_ / "result") flatMap (_ / "error") flatMap (_.str)).getOrElse("")
+          val shown = S.normalize(shadow).toString
+          val root  = S.normalize(q7Shadow).toString
+          ((okOf(rendered) ?= Some(false)) :| ("the shadowed render answered " + show(rendered))) &&
+            ((statusOf(rendered) ?= Some(409)) :| ("its status: " + show(rendered))) &&
+            ((genOf(rendered) ?= Some(411)) :| show(rendered)) &&
+            ((docOf(rendered) ?= None) :|
+              ("A SHADOWED PICK WAS RENDERED: " + show(rendered))) &&
+            (msg.contains("WpQ7Dup.e") :| ("the message does not name the picked file: " + msg)) &&
+            (msg.contains(shown) :| ("the message does not name the shadowing file: " + msg)) &&
+            (msg.contains(root) :| ("the message does not say which root shadows: " + msg)) &&
+            ((err ?= msg) :|
+              ("the schema's error is not the render's reason: [" + err + "] vs [" + msg + "]")) &&
+            ((okOf(other) ?= Some(true)) :|
+              ("a NON-shadowed module on the same bench: " + show(other))) &&
+            (docOf(other).exists(_.contains("6543")) :|
+              ("the non-shadowed render did not carry its own contents: " + show(other))) &&
+            ((boots ?= 1) :| ("the bench booted " + boots + " render session(s), not 1"))
+        } finally { b7.stop(); () }
+      } }
+    }
+  }
+
+  /** Q7 PART 2, the TOLERANCE the review's must-fix added: TWO SPELLINGS OF
+    * ONE FILE ARE NOT A SHADOW.  `Session.normalize` is
+    * `toAbsolutePath.normalize` (`Session.scala:733-735`) and does not
+    * follow a symbolic link, so a workspace reached through one --
+    * `moduleRoots` holds the real directory, the editor sends the link's
+    * spelling -- makes `resolvedUnder` answer one spelling while the pick
+    * carries the other.  A string test alone then refuses a legitimate pick
+    * 409, naming two paths that are the SAME FILE; that configuration
+    * rendered before Q7 and must go on rendering.  `Preview.sameFile`
+    * (`Files.isSameFile`, false on any throwable, asked only when the
+    * strings already differ) is what decides.
+    *
+    * SKIPPED LOUDLY where the platform refuses symbolic links (Windows
+    * without the privilege, some filesystems): the `collect` label below
+    * says so in the suite's own report rather than failing or passing
+    * quietly.
+    *
+    * WHAT FALSIFIES IT: `shadowedPick` without its `sameFile` arm -- the
+    * resident root holds the real directory and therefore LEADS the chain,
+    * so the pick through the link is refused as a shadow of itself. */
+  property("D (Q7): a pick that reaches its root through a symlink is not shadowed by that root's own spelling") = secure {
+    previewLock.synchronized { timedD("Q7: two spellings of one file") {
+      val real = writeFixtureIn(q7Real, "WpQ7Link", wpSimple("WpQ7Link", 5150))
+      val link =
+        try {
+          val l = q7LinkHome.resolve("reports")
+          if (!Files.exists(l, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            Files.createSymbolicLink(l, q7Real)
+          Right(l)
+        } catch { case e: Throwable => Left(String.valueOf(e)) }
+      link match {
+        case Left(why) =>
+          collect("D (Q7): SYMLINKS UNAVAILABLE -- the two-spellings case did NOT run: " + why)(proved)
+        case Right(l) =>
+          // The RESIDENT root is the REAL directory, so it leads the chain
+          // (§2.2); the request names the LINK, and the pick arrives through
+          // it -- which is the shape the review's must-fix describes.
+          val b7 = new Bench(warm = false, residentRoots = List(q7Real))
+          try {
+            val through = l.resolve("WpQ7Link.e")
+            b7.renderWith(1, through, "report", "1", 421, List(l))
+            val a = b7.answer(1, 300000L)
+            ((okOf(a) ?= Some(true)) :|
+              ("A PICK THROUGH A SYMLINK WAS REFUSED AS A SHADOW OF ITSELF: " + show(a))) &&
+              ((genOf(a) ?= Some(421)) :| show(a)) &&
+              (docOf(a).exists(_.contains("5150")) :|
+                ("the pick through the link did not render its own contents: " + show(a))) &&
+              ((real ne null) :| "no fixture was written")
+          } finally { b7.stop(); () }
+      }
     } }
   }
 

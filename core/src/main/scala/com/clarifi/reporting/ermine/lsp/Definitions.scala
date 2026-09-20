@@ -243,9 +243,17 @@ object Definitions {
     //
     // THE KEY'S PRESENCE DECIDES, not its type (review nit 4): a request
     // that says `"binding": 123` asked for the binding form and got it
-    // wrong, and it must earn THAT form's error ("a \"binding\" naming the
-    // report") rather than fall through to the resident and be told it
-    // needs a "type" or a "name" it never mentioned.
+    // wrong, and it must earn a BINDING-FORM error rather than fall through
+    // to the resident and be told it needs a "type" or a "name" it never
+    // mentioned.  Q7 (decided 2026-09-20) changed what the binding form
+    // carries -- `{uri, binding, roots}`, so that it resolves the report
+    // exactly as a render does -- and not which key routes it.  WHICH error
+    // it earns is `SchemaRequest.parse`'s order and not this branch's, and
+    // the order is `uri` first: `{"binding": 123}` is answered "needs a
+    // \"uri\"", `{uri, "binding": 123}` is answered "needs a \"binding\"
+    // naming the report", and a `{module, binding}` request -- the old
+    // shape -- still comes HERE and is told it lacks a `uri`, rather than
+    // being served from the wrong module of that name.
     server.onRequestDeferredWithId("ermine/schema") { (id, params, answer) =>
       params / "binding" match {
         case Some(_) => preview.schema(id, params, answer)
