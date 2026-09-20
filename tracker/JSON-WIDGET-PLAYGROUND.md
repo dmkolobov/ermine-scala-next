@@ -110,6 +110,35 @@
 >   the `lsp-client.py` smoke and the measured instruments -- RSS, boot seconds and heap
 >   after a watchdog fire (stage C).
 >
+> - **Q4 AND Q5 FOLLOW-UP (2026-09-20)**: the two open questions of §13 the user decided,
+>   both built as option (i).
+>   **Q4** (a follow-up to WP-4): `Runner` keeps a private PENDING-LOAD set -- the modules a
+>   `compile` tried to LOAD and could not (a parse error, a type error, a broken import, a
+>   file that vanished mid-load), bounded at `Runner.maxPendingLoads` = 32 with oldest-first
+>   eviction -- and any `invalidate` whose paths name a module (a loaded one through
+>   `loadedFiles`, or an UNLOADED one under a root) unions that set into its answer, so the
+>   save that FIXES a broken report finally names it and `ermine/preview/invalidated` goes
+>   out. A successful compile takes the module back out; a 404 for a module no root has and a
+>   malformed module name are refused before any load and are NOT recorded, so §11's "(inv1)
+>   `invalidate` of an unloaded path is a no-op" stays true whenever nothing is pending.
+>   `invalidateStale` does NOT union the set: the render it heads retries the load anyway, and
+>   the mtime scan must go on sending no notification. Known and accepted cost, written into
+>   the code: while a report is broken, saving ANY `.e` file under a root costs one extra
+>   render attempt of that report (up to 32 names can ride along on one `invalidate`).
+>   `bin/ermine-serve` never calls `invalidate`, so its behaviour is unchanged. Two tightenings
+>   from this follow-up's own review: `invalidate0` PRUNES loaded modules out of the set before
+>   it reads it (a pending module can be pulled back in as another module's dependency), and the
+>   pre-load 404 CLEARS a module whose file no root has any more.
+>   **Q5**: `inferredRoot` STAYS in the root set (§2.4's zero-configuration promise) and the
+>   404 is made honest instead -- "not an Ermine source file: <name>", "cannot read <name>",
+>   "no module header could be read from <name>", or "the module header of <name> names
+>   <module>, which is deeper than the directories above it" -- in place of "not under a module
+>   root", which was true of nothing a readable file could do. The message names the FILE and
+>   never a directory, and still goes through `failure`'s scrub; `generation` is echoed as
+>   before.
+>   Files: `json/Runner.scala`, `lsp/Preview.scala`, `TestRunner.scala`,
+>   `TestLspRobustness.scala`.
+>
 > **Which suites were run, and what they said, is recorded in each ticket's commit message, not
 > here**: a banner that names a suite goes stale the moment the next ticket runs a different
 > set, and a claim about a suite THIS tree has not run is worse than no claim.
@@ -298,7 +327,7 @@ Dropped from earlier drafts, on this evidence: "never stalls diagnostics" is nar
 | 1 | client | the `**/*.e` watcher the server registered fires for any `.e` in the workspace, stdlib or not | `Main.scala:199-208` |
 | 2 | dispatch | `workspace/didChangeWatchedFiles` reloads the resident's own closure (unchanged) | `Main.scala:256-268`; `Resident.scala:251`, `:243-250` ("files the resident did not load ... are ignored here") |
 | 3 | dispatch | `afterReload` (`Main.scala:179`), which both the watch handler (`:268`) and the `ermine.reloadModules` command (`:277`) call, posts `invalidate(changed ++ removed)` to the preview thread (a no-op before the preview has booted), so the manual reload path invalidates too | new |
-| 4 | preview | `Runner.invalidate(paths)`, under `evalLock` (`TestRunner` runs properties concurrently over one runner, `TestRunner.scala:112`, `:806`): paths -> modules through the render session's **own** `loadedFiles` (`Session.Filesystem`, as `Resident.loadedByPath` does, `Resident.scala:178-183`) plus `Resident.moduleUnder(cfg.roots, p)` for a file restored after deletion (`:699-704`, `:262-265`); closure through `depCache` imports as `dependentsOf` does (`:186-197`); scrub the closure (§3.1); evict every `(module, binding)` key of those modules from `reports` (`Runner.scala:296`). **No eager reload**: the next render's `compile` loads on demand (`:432-436`) | new; because eviction is keyed on the render session's loaded set, a workspace report module (`Sales`) is covered -- the resident's reload set could never name it |
+| 4 | preview | `Runner.invalidate(paths)`, under `evalLock` (`TestRunner` runs properties concurrently over one runner, `TestRunner.scala:112`, `:806`): paths -> modules through the render session's **own** `loadedFiles` (`Session.Filesystem`, as `Resident.loadedByPath` does, `Resident.scala:178-183`) plus `Resident.moduleUnder(cfg.roots, p)` for a file restored after deletion (`:699-704`, `:262-265`); closure through `depCache` imports as `dependentsOf` does (`:186-197`); scrub the closure (§3.1); evict every `(module, binding)` key of those modules from `reports` (`Runner.scala:296`). **No eager reload**: the next render's `compile` loads on demand (`:432-436`). **Q4 (2026-09-20)**: a `compile` whose module LOAD failed records that module in a private, per-`Runner` pending set (bounded, oldest first), and an `invalidate` whose paths name a module -- loaded through `loadedFiles`, or UNLOADED under a root -- unions that set into its answer, so the save that FIXES a broken report names it here and step 5 sends it; a successful compile takes it back out, and `invalidateStale` does not union it | new; because eviction is keyed on the render session's loaded set, a workspace report module (`Sales`) is covered -- the resident's reload set could never name it |
 | 5 | preview | if the dirty set is non-empty: `ermine/preview/invalidated {modules}` | new |
 | 6 | extension | if the picked report's module is in `modules` (the set includes dependents, so saving `Layout/Widgets/Foo.e` names every report that imports it), re-send `ermine/render` with the last params, and re-request the params schema (§6) | new |
 | 7 | preview | render; answer; the panel repaints | §4 |
@@ -362,7 +391,7 @@ All new methods are `ermine/...`, beside `ermine/schema` (`Definitions.scala:226
 
 | Method | Direction | Shape | Notes |
 |---|---|---|---|
-| `ermine/render` | request | `{uri, binding, params, roots, generation}` -> `{ok: true, document, generation, stale?}` or `{ok: false, status, message, path?, generation}` | `uri` -> module via `Resident.moduleUnder(cfg.roots, path)`; a file under no root is `404 "not under a module root"`; `roots` are the absolute `ermine.preview.roots` (§2.4). Delivery is always inline, buffered, no threshold (`Runner.scala:72-80`): **no `data` field on this wire**. `status`/`message`/`path` are `RunError`'s (`Runner.scala:25-65`: `BadRequest` 400 at `:47`, `NotFound` 404 at `:51`, `Failed` 500 at `:55`): 400 with a JSON path for a bad param or a binding that is not a report (`:466-470`, `:472-476`), 404 for module or binding (`:447`, with the request's binding in the text), 500 for load, eval, scan, write, and for a document over the size cap (§2.3). The message never carries a JDBC URL (§8, rule A5). Answered through `onRequestDeferred` from the preview thread |
+| `ermine/render` | request | `{uri, binding, params, roots, generation}` -> `{ok: true, document, generation, stale?}` or `{ok: false, status, message, path?, generation}` | `uri` -> module via `Resident.moduleUnder(cfg.roots, path)`; a file that cannot be PLACED under any root is a **404 whose message says why** (Q5, decided 2026-09-20): it is not a `.e` file, it cannot be read, its module header does not parse, or its module name is deeper than the directories above it. A readable `.e` file whose header parses is always under its OWN inferred root (§2.4), so the 404 is unreachable for it -- which is why the old text, "not under a module root", was true of nothing. The message names the file, never a directory. `roots` are the absolute `ermine.preview.roots` (§2.4). Delivery is always inline, buffered, no threshold (`Runner.scala:72-80`): **no `data` field on this wire**. `status`/`message`/`path` are `RunError`'s (`Runner.scala:25-65`: `BadRequest` 400 at `:47`, `NotFound` 404 at `:51`, `Failed` 500 at `:55`): 400 with a JSON path for a bad param or a binding that is not a report (`:466-470`, `:472-476`), 404 for module or binding (`:447`, with the request's binding in the text), 500 for load, eval, scan, write, and for a document over the size cap (§2.3). The message never carries a JDBC URL (§8, rule A5). Answered through `onRequestDeferred` from the preview thread |
 | `ermine/preview/reports` | request | `{uri}` -> `{module, reports: [{binding, type}]}` or `{error}` | §3.2; dispatch thread; a lookup, or one cold check for an unopened file |
 | `ermine/preview/invalidated` | notification, server -> client | `{modules}` | §3 step 5 |
 | `ermine/schema` | request, extended | `{module, binding}` alongside `type`/`name` | **with a `binding` key the request is a preview-queue job** answered from the render session (§6); the `type`/`name` forms stay on the resident (`Schema.scala:807-816`) |
@@ -665,8 +694,8 @@ approval under `:91`. Each WP done-when in §14 names its tier.
 |---|---|---|---|---|
 | Wire / dispatcher | `TestLspRobustness` A-group | a deferred handler answering from another thread still yields "every message answered in order, once" -- the synchronous answers keep their positions and every deferred one is answered exactly once, in any order; two threads calling `send` concurrently produce frames a `Wire` reads back intact; a body for a redacted method never appears in the captured log, an unredacted one does, and neither a JSON array nor a non-string `method` logs a body either; a parse error quotes at most one character of the input or a number token, and no two-character upper-case window of the input appears in it (the marker check of §4), with the same claim re-checked through `Server.handle` on an unparseable frame carrying a secret; `$/cancelRequest` reaches a registered handler while other `$/` notifications are dropped with no answer and no `ignoring notification` line (they do get the ordinary `">>"` line, like every other incoming message) | `suites` (**pr**): `scalacheck-binding/src/main/scala` is in core's test sources (`build.sbt:88-90`) | seconds |
 | Registration flag | group D in `TestLspRobustness` | check a buffer whose `data Heading` gained a field; `DataConDecl.forConstructor(Global("Sales", "Heading"))` still has four fields | **pr** | seconds |
-| Render session | group D, under `residentLock` as B/C are (`:34`, `:307`) | render `Sales.report`; mutate the report file; `invalidate`; render again: the document differs. Mutate a **widget** module the report imports: the report is in the invalidated set. Render a module whose evaluation throws: the resident still answers a check (`Resident.checkFile`, `Resident.scala:401`) and the next render works. A `$/cancelRequest` for a queued render answers `-32800` and the queue is empty. `ermine/schema {module: "Sales", binding: "report"}` from the queue equals `exportNamed("Sales", "Query")` under the render env. `ermine/preview/reports` on `Sales.e` lists `report : Query -> Node` and nothing else | **pr**; group D boots a render session, seconds each, MEASURED in WP-5 and kept under 60 s total or the suite is split | seconds to a minute |
-| Runner | `TestRunner` (`:112`, `:806` already runs properties concurrently over one runner) | `invalidate` of an unloaded path is a no-op; `invalidate` then `render` reloads the module (loaded-set delta); two report-typed bindings in one module render two documents; `new Runner(cfg)` with an explicit `run` loads no JDBC driver (`CountingRun`, `TestRunner.scala:77`) | **pr** | seconds |
+| Render session | group D, under `residentLock` as B/C are (`:34`, `:307`) | render `Sales.report`; mutate the report file; `invalidate`; render again: the document differs. Mutate a **widget** module the report imports: the report is in the invalidated set. Render a module whose evaluation throws: the resident still answers a check (`Resident.checkFile`, `Resident.scala:401`) and the next render works. A `$/cancelRequest` for a queued render answers `-32800` and the queue is empty. `ermine/schema {module: "Sales", binding: "report"}` from the queue equals `exportNamed("Sales", "Query")` under the render env. `ermine/preview/reports` on `Sales.e` lists `report : Query -> Node` and nothing else. **(Q4)** A report whose LOAD failed is a 500 "does not load"; the file is fixed; `invalidate` of its path sends `ermine/preview/invalidated` NAMING it and the next render is `{ok:true}` with the fixed content. **(Q5)** The 404 for a file that cannot be placed names the cause -- "cannot read Gone.e" for a file that is not there, "no module header could be read from WpBadHeader.e" for one whose header does not parse | **pr**; group D boots a render session, seconds each, MEASURED in WP-5 and kept under 60 s total or the suite is split | seconds to a minute |
+| Runner | `TestRunner` (`:112`, `:806` already runs properties concurrently over one runner) | `invalidate` of an unloaded path is a no-op; `invalidate` then `render` reloads the module (loaded-set delta); two report-typed bindings in one module render two documents; `new Runner(cfg)` with an explicit `run` loads no JDBC driver (`CountingRun`, `TestRunner.scala:77`); **(Q4)** a module whose LOAD FAILED renders 500 and is named by the next `invalidate` -- of its own path, of the path of a broken module it IMPORTS, and of a loaded healthy module's path -- while a file under no root and a directory still name nothing, and the fix renders 200 and takes it back out; a module that is pending and then LOADED as another module's dependency is pruned and NOT named; a pending module whose file is DELETED is named while the file is there and not after the retry's 404 | **pr** | seconds |
 | Emitters | `TestSqlEmitters` | the SQLite string for a windowed relation contains `over (`; no emitter output contains `TODO`; `UnsupportedOnDialect` for `tryCast` on SQLite | **pr** | seconds |
 | Classifier | new, with a fake driver | §8.3 | **pr** | seconds |
 | End to end | `tracker/tools/lsp-client.py`, run by `tracker/tools/lsp-smoke.sh` (`scripts/gates.sh:115-120`) | `reports`, render, edit, `invalidated`, render: differs; the schema binding mode on `Sales` (domain is `Query`) | `lsp` (**commit**): adds one preview boot to a 44 s gate; if the gate passes ~90 s it moves to `pr` under the 3-minute budget | ~1 min |
@@ -703,13 +732,14 @@ approval under `:91`. Each WP done-when in §14 names its tier.
 | Q1 | which global the writers bundle puts on `window` (`htmlwriter` vs `ermine_htmlwriter`) | WP-11 |
 | Q2 | recycling defaults (renders / idle minutes) for a held MSSQL connection | WP-14 |
 | Q3 | is `Windows-ROOT` needed, or is the internal CA in the JDK's `cacerts` | WP-12 |
-| Q4 | how a module whose LOAD FAILED is invalidated once it is fixed | WP-7 |
-| Q5 | §2.4 and §4 disagree: the 404 "not under a module root" is unreachable for a readable file | nothing; decide before WP-7 |
+| Q4 | how a module whose LOAD FAILED is invalidated once it is fixed | **DECIDED 2026-09-20** (option (i), built); resolved |
+| Q5 | §2.4 and §4 disagree: the 404 "not under a module root" is unreachable for a readable file | **DECIDED 2026-09-20** (option (i), built); resolved |
 | Q6 | a roots change discards the `Runner`, and the inferred root is part of the roots, so previewing two reports in two directories re-boots the render session each time | nothing; decide before WP-7 |
 | Q7 | `ermine/schema {module, binding}` carries no `uri` and no `roots`, so a schema asked before the first render cannot see a workspace module | nothing; decide before WP-8 |
 | Q8 | §2.5 asks the watchdog's NOTIFICATION to carry the **Restart Language Server** button, and no LSP server-to-client notification carries an action | nothing; decide before WP-7 |
 | Q9 | `ermine.preview.timeoutSeconds: 0` turns the watchdog off entirely as built: is an off switch wanted at all, and should `0` be it? | nothing |
 | Q10 | what `stuck` means if the wedged job DOES come back: as built it never clears | nothing; decide before WP-6 |
+| Q11 | a report whose module did NOT EXIST when it was first rendered is still not named when its file appears | nothing; decide before WP-7 |
 
 **Q4, in full** (found by the WP-4 review, 2026-09-20). A module that failed to load is in
 neither `loadedFiles` nor `loadedModules`, and `Runner.invalidate` derives its module set from
@@ -736,6 +766,46 @@ It does not block WP-4 or WP-5: `Runner.invalidate` is exactly as specified in �
 wins -- (i) would make a *failed* module no longer count as unloaded, which is a change to what
 is loaded, not to the rule.
 
+**DECIDED by the user on 2026-09-20: option (i), and BUILT** as a follow-up to WP-4. `Runner`
+keeps a private `pendingLoad` set, added to at the one place a load is ATTEMPTED (`compile`,
+after `Session.loadModules`, when the module is still not in `env.loadedModules`) and removed
+from whenever a `compile` leaves the module loaded -- so a 404 for an unknown binding, a 400
+signature refusal and an evaluation error all take a module OUT, while a module no root has and
+a malformed module name are refused before any load and are never recorded. `invalidate` unions
+the set into its answer whenever its paths name at least one module: a loaded one through
+`loadedFiles`, or an UNLOADED one under a root (which is what the fix to a broken report looks
+like on the wire). A pending module is NAMED and nothing else -- not scrubbed, nothing evicted
+for it -- which is all `Preview` needs to send `ermine/preview/invalidated`; that job is
+unchanged. `invalidateStale` does NOT union the set, because the render it heads is about to
+retry the load anyway and because the mtime scan must go on sending no notification. The set is
+bounded at `Runner.maxPendingLoads` = 32, oldest first. The cost, stated rather than hidden:
+while a report is broken, saving ANY `.e` file under a root costs one extra render attempt of
+it. The loop still only CLOSES in the extension (WP-7), which now has an `invalidated`
+notification to act on. "`invalidate` of an unloaded path is a no-op" holds exactly whenever
+nothing is pending, and its other two paths -- a file under no root, a directory -- name nothing
+even when something is.
+
+**TWO TIGHTENINGS, found by the review of this follow-up (2026-09-20) and BUILT.**
+(1) *A pending module can be LOADED.* Report `A` imports a broken `W`, so `A` is pending; `W` is
+fixed; a later `compile(B, _)` for a `B` that imports `A` loads `A` as a DEPENDENCY, and nothing
+but `compile(A, _)` would have taken `A` out -- so every module-naming `invalidate` from then on
+named a module that was loaded and healthy (the reviewer's probe:
+`invalidate(B.e) = List(Q4A, ...)   (A is loaded and healthy: true)`). `invalidate0` now PRUNES
+the loaded modules out of the set, under `evalLock`, before the `nonEmpty` gate and before the
+union, which makes the set's invariant true wherever it is read: **it holds only modules that
+are not loaded**.
+(2) *A pending module whose file is DELETED.* It stayed pending for the life of the `Runner` and
+every module-naming `invalidate` carried the dead name, because the retry's pre-load 404 ("no
+module named X") did not clear it. That branch now clears it: a file no root has cannot be fixed
+by a save of something else, and the retry IS the answer to "is it back?".
+**The cost, stated:** in the worst case up to `Runner.maxPendingLoads` = 32 names ride along on
+one `invalidate`, so a client with several broken reports open pays one render attempt for each.
+**The partial-load doubt is SETTLED** (this review): `Session.loadModule` writes every env table
+only after type inference and the overwrite checks, so a load that died leaves nothing of the
+module behind -- the retry is an ordinary load and no scrub of a failed module is needed
+(probed with a module of two `data` declarations and a late failing term: retried 200, including
+when the fix widens the data shape and when broken and fixed a second time).
+
 **Q5, in full** (found while building WP-5 stage A, 2026-09-20). §2.4 puts the picked
 report's **own inferred root** in the render session's root set, and §4 promises
 `404 "not under a module root"` for a file under none of them. Together these cannot both
@@ -744,12 +814,27 @@ module name implies, so the 404 is unreachable for it. **As built**: both, liter
 404 therefore fires exactly when no root can be **inferred** -- an unreadable, non-existent
 or unparseable file (a report the developer deleted while the panel still points at it), or
 a path that is not a `.e` file at all. That is a real case and the group-D property pins it,
-but it is not what §4's sentence sounds like. Options, none built: (i) reword §4 to say what
+but it is not what §4's sentence sounds like. Options: (i) reword §4 to say what
 the 404 means (no root could be inferred and none was configured); (ii) drop `inferredRoot`
 from §2.4 and require `ermine.preview.roots` for anything outside `moduleRoots`, which makes
 the 404 mean what it says and costs every single-segment module a setting -- the thing §2.4
 added `inferredRoot` to avoid. It blocks nothing: WP-7 is where the picker decides what to
 send, so the answer is wanted before that.
+
+**DECIDED by the user on 2026-09-20: option (i), and BUILT.** `inferredRoot` stays in the root
+set -- it is §2.4's zero-configuration promise and WP-7's done-when -- and the 404 is made
+honest instead. `Preview.inferredRoot` now answers `Either[String, String]`, carrying the
+REASON it could infer nothing, and the render's 404 says it: "not an Ermine source file:
+`<name>`" (the path is not a `.e` file, which is the one case `moduleUnder` refuses on its
+own), "cannot read `<name>`" (deleted or unreadable -- the stale-pick case), "no module header
+could be read from `<name>`", or "the module header of `<name>` names `<module>`, which is
+deeper than the directories above it". The FILE NAME only: the exception's own text carries an
+absolute path (`Session.Filesystem.contents` dies with "File '<path>' does not exist.", and a
+parser error carries the source name it was built with), so it goes to the server log and not
+to the wire; the message still passes through `failure`'s scrub and `generation` is still
+echoed. The root is inferred ONCE per render, before `rootSet`, so the honest message costs no
+second read of the file. **Q6 remains open and is linked**: the inferred root is exactly why
+previewing a report in a second directory discards and re-boots the render session.
 
 **Q6, in full** (same origin). §2.4 makes the root set immutable config and says a change to
 it **discards the `Runner`**; `inferredRoot` puts the picked report's own directory in that
@@ -833,6 +918,26 @@ preview is working again; (iii) clear it only when the job ends AND the session 
 so nothing evaluated under a poisoned heap survives -- which is also what WP-6's cooperative
 cancel does to the runner. It blocks nothing, and WP-6 is where the same question is asked of
 a cancel.
+
+**Q11, in full** (found by the Q4 review, 2026-09-20). Q4's pending set records a module only
+when a LOAD WAS ATTEMPTED for it. A module that no root has is refused BEFORE any load --
+`compile`'s `NotFound("no module named X")`, `json/Runner.scala` -- so it is never recorded, and
+the `moduleUnder` half of `invalidate`'s `direct` set is filtered by `loadedModules`, which such
+a module is also not in. So a report the extension picks before its file exists, or one whose
+file is deleted and then RESTORED, renders 404 and then **nothing names it when the file
+appears**: no `ermine/preview/invalidated` goes out and the panel keeps its 404 banner until the
+user picks the report again. It is the same shape as Q4 and outside Q4's wording, which is about
+the 500 "module does not load". Options, none built:
+(i) accept it -- the 404 case is rarer than the 500 case, and a developer who has just created
+the file is about to pick it anyway;
+(ii) remember the NOT-FOUND module names in a second bounded set, and name one only when an
+invalidated path maps through `Session.moduleUnder` to exactly that module name -- precise, no
+over-notification (unlike the pending set, which rides along on any module-naming path), and
+§11's "(inv1) `invalidate` of an unloaded path is a no-op" stays true for every path nobody ever
+asked for;
+(iii) the extension re-renders on file-CREATION events for the picked report's own path, which
+is **WP-7**, the extension, and needs no server change.
+It blocks nothing; the answer is wanted before WP-7, which is where the loop closes.
 
 ## 14. Tickets, in dependency order
 

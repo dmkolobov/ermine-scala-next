@@ -47,6 +47,8 @@ import scala.util.control.NonFatal
   *    path nothing loaded, invalidation followed by a reload from disk and
   *    the importers' closure, two report-typed bindings in one module, and
   *    a runner that boots and compiles without opening a connection.
+  *  - (pend) Q4's follow-up to WP-4: a module whose LOAD FAILED is named by
+  *    the next `invalidate`, and a fix takes it back out.
   */
 object TestRunner extends Properties("JSON document runner (J3c)") {
 
@@ -1889,6 +1891,23 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   // ORDER note writes down.  Nothing that holds `literalLock` can name
   // `Runner.evalLock` (it is `private[json]`), so the two orders cannot
   // cross.
+  //
+  // WHAT `literalLock` ALSO EXCLUDES SINCE Q4 (2026-09-20), and it is a
+  // wider claim than it was: `(inv1)`'s and `(pend)`'s `?= Set.empty` now
+  // depend on there being NO CONCURRENT LOAD FAILURE anywhere in this
+  // suite, not only on no concurrent `invalidate`.  A `compile` whose module
+  // fails to LOAD records that module in the runner's pending set, and every
+  // later `invalidate` whose paths name ANY module unions that set into its
+  // answer -- so a module left pending by one property turns another
+  // property's empty answer into a non-empty one.  THE RULE FOR ANY NEW
+  // PROPERTY: if it deliberately makes a module fail to LOAD on the shared
+  // `runner`, it must hold `literalLock` like these three, and it must leave
+  // the pending set EMPTY when it ends -- fix the file and render it again,
+  // in a `finally`, as `(pend)` does.  The refusals the rest of the suite
+  // provokes are all safe by construction: `RgAbsent`, `rgLowercase` and
+  // `../etc/passwd` are refused BEFORE a load is attempted, and an unknown
+  // binding, a signature refusal and an evaluation error all follow a load
+  // that SUCCEEDED, so none of them is ever recorded.
 
   /** Write a module and answer its path, with its modification time made to
     * MOVE.  `Session`'s staleness test is `depCache(sf)._1 != lastModified`
@@ -1913,6 +1932,42 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   private def wp4Widget(module: String, n: Int): String =
     "module " + module + " where\n\nimport Builtin\nimport Int\n\n" +
     "widgetNumber : Int\nwidgetNumber = " + n + "\n"
+
+  /** A report module that PARSES and does not TYPE: the body is the `Int`
+    * parameter where the signature promises a `Node`.  Its load dies, so the
+    * module ends up in neither `loadedFiles` nor `loadedModules` -- Q4's
+    * case, and the one a fix has to reach. */
+  private def wp4BrokenReport(module: String): String =
+    "module " + module + " where\n\nimport Builtin\nimport Int\nimport Json\nimport List\n" +
+    "import Layout.Doc\n\nreport : Int -> Node\nreport n = n\n"
+
+  /** The same for a WIDGET module: a `String` where the signature says
+    * `Int`.  A report that imports it cannot load either, and it is the
+    * REPORT that must be named (the widget is not one). */
+  private def wp4BrokenWidget(module: String): String =
+    "module " + module + " where\n\nimport Builtin\nimport Int\n\n" +
+    "widgetNumber : Int\nwidgetNumber = \"not an Int\"\n"
+
+  /** The repair for `wp4BrokenReport`: the same module name, a report that
+    * types, and a number the document has to carry. */
+  private def wp4FixedReport(module: String, n: Int): String =
+    "module " + module + " where\n\nimport Builtin\nimport Int\nimport Json\nimport List\n" +
+    "import Layout.Doc\n\nreport : Int -> Node\nreport p = rawWidget \"w\" " + n + "\n"
+
+  /** A widget module that gets its number from ANOTHER widget module and
+    * re-exposes it under `expose`.  The middle link of the import CHAIN the
+    * "pending and loaded" case needs: it declares NO report, so nothing but
+    * a load of something that imports it ever loads it. */
+  private def wp4ChainedWidget(module: String, from: String, binding: String, expose: String): String =
+    "module " + module + " where\n\nimport Builtin\nimport Int\nimport " + from + "\n\n" +
+    expose + " : Int\n" + expose + " = " + binding + "\n"
+
+  /** A report over a binding of another module, named.  The far end of the
+    * chain: rendering THIS loads the middle link as a dependency. */
+  private def wp4ReportOver(module: String, from: String, binding: String): String =
+    "module " + module + " where\n\nimport Builtin\nimport Int\nimport Json\nimport List\n" +
+    "import Layout.Doc\nimport " + from + "\n\n" +
+    "report : Int -> Node\nreport p = rawWidget \"w\" " + binding + "\n"
 
   private def wp4Report(module: String, widget: String, extra: String): String =
     "module " + module + " where\n\nimport Builtin\nimport Int\nimport Json\nimport List\n" +
@@ -1981,6 +2036,179 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
         (dirty2.contains(rep) :| ("the importer " + rep + " is not in the closure of " + wid + ": " + dirty2)) &&
         ((doc3 != doc2) :| ("the imported module's change did not reach the document: " + doc3.take(300))) &&
         (doc3.contains("4222") :| ("the document lacks the imported module's new number: " + doc3.take(300)))
+    }
+  }
+
+  /** Q4 (JSON-WIDGET-PLAYGROUND §13), decided by the user on 2026-09-20 as
+    * option (i).  A module whose load FAILED is in neither `loadedFiles` nor
+    * `loadedModules`, which are the two maps `invalidate` reads, so before
+    * this the save that FIXED a broken report invalidated nothing and the
+    * panel kept its 500 banner for ever.  The runner now remembers such a
+    * module and NAMES it from any `invalidate` whose paths name a module at
+    * all -- loaded, or unloaded under a root.
+    *
+    * Eight claims, in the order they are checked: (a) a fresh report module
+    * with a type error renders 500 and is not loaded; (b) `invalidate` of
+    * its own path names it although nothing loaded that path; (c) the fix
+    * renders 200 and takes it back out, so an unrelated unloaded path under
+    * a root names nothing again; (d) a report whose IMPORT is broken is
+    * named by an `invalidate` of the IMPORT's path -- the case the extension
+    * actually meets, because the developer fixes the widget, not the report;
+    * (e) a LOADED, healthy module's path names the pending report too, which
+    * is the "saving any `.e` file retries the broken report" cost, stated;
+    * (g) a module that is PENDING AND LOADED -- pulled back in as the
+    * DEPENDENCY of a later load, with no `compile` of its own -- is NOT
+    * named, because `invalidate0` prunes the loaded ones out first (the Q4
+    * review's MUST-FIX 1); (h) a pending module whose FILE IS DELETED is
+    * named while the file is there and stops being named once the retry's
+    * pre-load 404 has seen it gone (MUST-FIX 2); (f) with nothing pending,
+    * (inv1)'s three kinds of path answer exactly as they did before Q4.
+    *
+    * WHAT (inv1)'s THREE PATHS DO WHILE SOMETHING IS PENDING, asserted in
+    * the middle of the property because it is the whole hinge of the design:
+    * ONLY the unloaded `.e` under a root names a module.  A file under no
+    * root and a directory name nothing, so they stay no-ops even then.
+    *
+    * IT LEAVES THE PENDING SET EMPTY, IN A `finally`.  `(inv1)` runs
+    * concurrently over this same runner and asserts an EMPTY answer for a
+    * path under a root, so a module left pending here would fail it -- and a
+    * property that fails PART-WAY must not cascade into another property's
+    * verdict, which is why the repair is a `finally` and not the last few
+    * lines of the happy path.  The lock this shares with (inv1) and (inv2)
+    * orders them but does not undo state.
+    *
+    * The `literalLock` and freshness argument is the section note's. */
+  property("(pend) a module whose LOAD FAILED is named by the next invalidate, and a fix takes it back out") = secure {
+    val r = runner // force the boot BEFORE literalLock: see the note above
+    ErmineFixture.literalLock.synchronized {
+      val n     = counter.incrementAndGet()
+      val rep   = "WpBroken" + n
+      val wid   = "WpPendWidget" + n
+      val imp   = "WpPendReport" + n
+      val w2    = "WpPendW2" + n
+      val a     = "WpPendA" + n
+      val b     = "WpPendB" + n
+      val gone  = "WpPendGone" + n
+      val never = new File(moduleRoot, "WpPendNever" + n + ".e").toPath.toAbsolutePath.normalize
+      val outside  = new File("/nonexistent-root/WpPendAlien.e").toPath.toAbsolutePath.normalize
+      val notAFile = moduleRoot.toPath.toAbsolutePath.normalize
+      try {
+        // (a) a report module that does not TYPE
+        val repPath = rewriteModule(rep, wp4BrokenReport(rep))
+        val (stBad, txtBad) = render(r, rep, wp4Body)
+        val loadedBad = r.loadedModules.contains(rep)
+
+        // (b) ... is named by an invalidate of its own path, although nothing
+        // ever loaded that path: before Q4 this answered the empty set
+        val named = r.invalidate(Set(repPath))
+
+        // (c) ... and the fix takes it back out
+        rewriteModule(rep, wp4FixedReport(rep, 8801))
+        val (stFix, txtFix) = render(r, rep, wp4Body)
+        val quiet1 = r.invalidate(Set(never))
+
+        // (d) the report whose IMPORT is broken: the closure cannot reach it
+        // (nothing loaded either file), so only the pending set can name it
+        val widPath = rewriteModule(wid, wp4BrokenWidget(wid))
+        rewriteModule(imp, wp4Report(imp, wid, ""))
+        val (stImp, txtImp) = render(r, imp, wp4Body)
+        val byImport = r.invalidate(Set(widPath))
+
+        // what (inv1)'s other two kinds of path do WHILE something is pending
+        val stillNothing = r.invalidate(Set(outside, notAFile))
+
+        // (e) a LOADED, healthy module's path names the pending report too
+        val byLoaded = r.invalidate(Set(repPath))
+
+        // and the fix to the IMPORT takes the report back out
+        rewriteModule(wid, wp4Widget(wid, 8822))
+        val (stImp2, txtImp2) = render(r, imp, wp4Body)
+
+        // (g) PENDING AND LOADED, the case the Q4 review found (MUST-FIX 1).
+        // `a` imports the broken `w2`, so a render of `a` leaves `a` pending.
+        // `w2` is then FIXED and nothing re-renders `a`.  A render of `b`,
+        // which imports `a`, loads `a` as a DEPENDENCY -- so `a` is now
+        // loaded and healthy while no `compile(a, _)` has ever run, and only
+        // the prune at the head of `invalidate0` can take it out.  Without
+        // that prune every module-naming invalidate from here on names `a`.
+        rewriteModule(w2, wp4BrokenWidget(w2))
+        rewriteModule(a, wp4ChainedWidget(a, w2, "widgetNumber", "aNum"))
+        val (stA, txtA) = render(r, a, wp4Body)
+        rewriteModule(w2, wp4Widget(w2, 8833))
+        val bPath = rewriteModule(b, wp4ReportOver(b, a, "aNum"))
+        val (stB, txtB) = render(r, b, wp4Body)
+        val aLoaded = r.loadedModules.contains(a)
+        val afterPrune = r.invalidate(Set(bPath))
+
+        // (h) A PENDING MODULE WHOSE FILE IS DELETED (MUST-FIX 2).  It is
+        // named while the file is there and the fix could still arrive; once
+        // the file is gone the retry's pre-load 404 is the answer to "is it
+        // back?", and it clears the name rather than carrying it for the life
+        // of the runner.
+        rewriteModule(gone, wp4BrokenReport(gone))
+        val (stGone, txtGone) = render(r, gone, wp4Body)
+        val goneNamed = r.invalidate(Set(never))
+        val deleted = new File(moduleRoot, gone + ".e").delete()
+        val (stGone2, txtGone2) = render(r, gone, wp4Body)
+        val afterDelete = r.invalidate(Set(never))
+
+        // (f) nothing pending: (inv1)'s three paths, unchanged
+        val quiet2 = r.invalidate(Set(never, outside, notAFile))
+
+        ((stBad ?= 500) :| ("a report that does not type rendered " + stBad + ": " + txtBad.take(300))) &&
+          (txtBad.contains("does not load") :| ("the 500 is not a load failure: " + txtBad.take(300))) &&
+          ((!loadedBad) :| (rep + " is loaded although its load failed")) &&
+          (named.contains(rep) :| ("invalidating the broken module's own path answered " + named)) &&
+          ((stFix ?= 200) :| ("the fixed module rendered " + stFix + ": " + txtFix.take(300))) &&
+          (txtFix.contains("8801") :| ("the fixed document: " + txtFix.take(300))) &&
+          ((quiet1 ?= Set.empty[String]) :|
+            ("an unrelated unloaded path still named the fixed module: " + quiet1)) &&
+          ((stImp ?= 500) :| ("a report with a broken import rendered " + stImp + ": " + txtImp.take(300))) &&
+          (byImport.contains(imp) :|
+            ("invalidating the broken IMPORT's path answered " + byImport + ", which does not name " + imp)) &&
+          ((!byImport.contains(wid)) :|
+            ("the unloaded widget was named as invalidated: " + byImport)) &&
+          ((stillNothing ?= Set.empty[String]) :|
+            ("a file under no root and a directory named " + stillNothing + " with something pending")) &&
+          (byLoaded.contains(rep) :| ("a loaded module's own path answered " + byLoaded)) &&
+          (byLoaded.contains(imp) :|
+            ("a loaded module's path did not carry the pending report: " + byLoaded)) &&
+          ((stImp2 ?= 200) :| ("the report whose import was fixed rendered " + stImp2 + ": " + txtImp2.take(300))) &&
+          (txtImp2.contains("8822") :| ("the re-rendered document: " + txtImp2.take(300))) &&
+          ((stA ?= 500) :| ("the chained module with a broken import rendered " + stA + ": " + txtA.take(300))) &&
+          ((stB ?= 200) :| ("the importer of the pending module rendered " + stB + ": " + txtB.take(300))) &&
+          (txtB.contains("8833") :| ("the importer's document: " + txtB.take(300))) &&
+          (aLoaded :| (a + " was not loaded as a dependency of " + b + ": the prune case is vacuous")) &&
+          (afterPrune.contains(b) :| ("invalidating the importer's own path answered " + afterPrune)) &&
+          ((!afterPrune.contains(a)) :|
+            ("a module that is LOADED and healthy is still named as pending: " + afterPrune)) &&
+          ((stGone ?= 500) :| ("the to-be-deleted module rendered " + stGone + ": " + txtGone.take(300))) &&
+          (goneNamed.contains(gone) :| ("the broken module was not named before its file went: " + goneNamed)) &&
+          (deleted :| ("could not delete " + gone + ".e")) &&
+          ((stGone2 ?= 404) :| ("a deleted module rendered " + stGone2 + ": " + txtGone2.take(300))) &&
+          ((afterDelete ?= Set.empty[String]) :|
+            ("a module whose file is gone is still named: " + afterDelete)) &&
+          ((quiet2 ?= Set.empty[String]) :|
+            ("with nothing pending, (inv1)'s three paths answered " + quiet2))
+      } finally {
+        // REPAIR, whatever happened above (review S4).  `(inv1)` and this
+        // property both assert an EMPTY answer over the SHARED runner, so a
+        // module left pending by a failure part-way through here would
+        // cascade into another property's verdict.  Every module this one
+        // breaks is put back and rendered: a render that LOADS the module is
+        // what takes it out of the pending set, and a 404 for a missing
+        // binding does so just as well as a 200.
+        try {
+          rewriteModule(rep,  wp4FixedReport(rep, 8801))
+          rewriteModule(wid,  wp4Widget(wid, 8822))
+          rewriteModule(w2,   wp4Widget(w2, 8833))
+          rewriteModule(imp,  wp4Report(imp, wid, ""))
+          rewriteModule(a,    wp4ChainedWidget(a, w2, "widgetNumber", "aNum"))
+          rewriteModule(b,    wp4ReportOver(b, a, "aNum"))
+          rewriteModule(gone, wp4FixedReport(gone, 8844))
+          List(rep, imp, a, b, gone).foreach(m => render(r, m, wp4Body))
+        } catch { case _: Throwable => () }
+      }
     }
   }
 

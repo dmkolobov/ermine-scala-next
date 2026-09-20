@@ -307,6 +307,85 @@ final class Runner(val cfg: RunnerConfig) {
     * session in the JVM, so two runners must exclude each other too. */
   private val evalLock = Runner.evalLock
 
+  /** Q4 of JSON-WIDGET-PLAYGROUND §13, decided by the user on 2026-09-20
+    * as option (i): the modules a `compile` TRIED TO LOAD and that DID NOT
+    * END UP LOADED -- a parse error, a type error, a broken module they
+    * import, a file that vanished mid-load.  Such a module is
+    * in neither `loadedFiles` nor `loadedModules`, and those two maps are
+    * where `invalidate` derives its answer from, so without this set the
+    * save that FIXES a broken report invalidates nothing: `invalidate`
+    * answers the empty set, no `ermine/preview/invalidated` goes out, the
+    * editor never re-renders and the panel keeps its 500 banner (§3 steps
+    * 4-6).  `lsp.Resident` meets the same shape and answers it the same
+    * way -- `pendingReload`, `Resident.scala:179`.
+    *
+    * THE RULE, in three parts:
+    *  - `compile` ADDS a module when a LOAD WAS ATTEMPTED for it and the
+    *    module is not in `env.loadedModules` afterwards, and REMOVES it
+    *    whenever the module IS loaded afterwards -- so the three refusals
+    *    that can only follow a SUCCESSFUL load (a 404 for an unknown
+    *    binding, a 400 signature refusal, an evaluation error) take the
+    *    module OUT rather than putting it in.  A request for a module NO
+    *    ROOT HAS, and a malformed module name, are refused before any load
+    *    is attempted and are not recorded at all: neither is a module that
+    *    broke, and recording them would make `invalidate` of a path nothing
+    *    ever tried to load stop being a no-op.
+    *  - `invalidate` UNIONS this set into its answer whenever its paths
+    *    name at least one module: a loaded one through `loadedFiles`, or an
+    *    UNLOADED one under a root (which is what the fix to a broken report
+    *    looks like on the wire).  An `invalidate` that names nothing at all
+    *    is still a no-op, so §11's "(inv1) `invalidate` of an unloaded path
+    *    is a no-op" holds exactly whenever nothing is pending.
+    *  - `invalidateStale` does NOT union it; see that method for why.
+    *
+    * Pending modules are NAMED and nothing else: nothing here scrubs them
+    * and nothing is evicted for them (a failed compile caches no `Report`).
+    * Naming them is the whole point -- it is what makes `Preview` send
+    * `ermine/preview/invalidated` so the editor re-renders.
+    *
+    * A PENDING MODULE CAN BE LOADED AGAIN WITHOUT ANY `compile` OF ITS OWN
+    * (found by the Q4 review, 2026-09-20).  Report `A` imports a broken `W`,
+    * so `A` is pending; `W` is fixed; a later `compile(B, _)` for a `B` that
+    * imports `A` loads `A` as a DEPENDENCY, and nothing but `compile(A, _)`
+    * would have taken `A` out.  Left alone, every module-naming `invalidate`
+    * from then on would name a module that is loaded and healthy.  So
+    * `invalidate0` PRUNES the loaded modules out of this set, under
+    * `evalLock`, before it reads it: `pendingLoad --= pendingLoad.filter(
+    * env.loadedModules.contains)`.  The invariant that buys is worth stating
+    * plainly -- **at every point this set is READ, it holds only modules
+    * that are not loaded**.
+    *
+    * THE KNOWN AND ACCEPTED COST: while a report is broken, saving ANY `.e`
+    * file under a root triggers one extra render attempt of that report.
+    * One of those saves is the fix, and the try is what finds it.  In the
+    * worst case up to `Runner.maxPendingLoads` such names ride along on one
+    * `invalidate`, so a client with several broken reports open pays a
+    * render attempt for each.
+    *
+    * BOUNDED at `Runner.maxPendingLoads`, OLDEST FIRST: the names are the
+    * client's to choose and a client that asks for many distinct broken
+    * modules must not grow this without end.  Insertion order, not access
+    * order, so re-asking for a module already pending does not refresh its
+    * place in the queue.
+    *
+    * PER RUNNER, and every touch is under `evalLock` (a `LinkedHashSet` is
+    * not thread-safe).  A discarded session is a NEW `Runner` -- §2.4's
+    * root-set change constructs one, it does not reset this one -- whose set
+    * starts empty, so nothing ever clears this explicitly.
+    *
+    * `bin/ermine-serve` never calls `invalidate`, so for the HTTP server
+    * this set is written, bounded and never read: its behaviour is
+    * unchanged. */
+  private val pendingLoad = scala.collection.mutable.LinkedHashSet.empty[String]
+
+  /** Record a module whose load failed, evicting the oldest if the set is
+    * full.  Under `evalLock`. */
+  private def notePending(module: String): Unit = {
+    pendingLoad += module
+    while (pendingLoad.size > Runner.maxPendingLoads && pendingLoad.nonEmpty)
+      pendingLoad -= pendingLoad.head
+  }
+
   /** What `GET /health` reads.  DECLARED BEFORE `booted`, whose initialiser
     * calls `snapshot()`: a field initialiser further down would run later and
     * blank it again. */
@@ -504,8 +583,21 @@ final class Runner(val cfg: RunnerConfig) {
     * another thread's load could refresh a file this one has just decided is
     * stale, and the scrub would then be a scrub for no reason.
     *
-    * The preview thread calls this at the head of every render. */
-  def invalidateStale(): Set[String] = evalLock.synchronized { invalidate(staleFiles) }
+    * The preview thread calls this at the head of every render.
+    *
+    * Q4: THE PENDING SET IS NOT UNIONED IN HERE, though every path this
+    * hands on names a loaded module and would therefore trigger the union.
+    * Three reasons, and they agree.  (1) This scan is the head of a render
+    * that is ABOUT TO RE-ATTEMPT the load anyway, so a pending module needs
+    * no help from it.  (2) Its answer is only ever LOGGED -- `Preview`
+    * sends no `ermine/preview/invalidated` for it, by design, because the
+    * render it heads answers with the reloaded document -- and a log line
+    * claiming a module was invalidated by a scan that did not touch it is
+    * false.  (3) Keeping the union out keeps the scan's answer exactly what
+    * it was before Q4, so `Preview` cannot start sending a notification it
+    * did not send before. */
+  def invalidateStale(): Set[String] =
+    evalLock.synchronized { invalidate0(staleFiles, withPending = false) }
 
   /** Forget the modules `paths` names, and everything loaded that imports
     * one of them: the answer is the module names invalidated, which
@@ -564,7 +656,13 @@ final class Runner(val cfg: RunnerConfig) {
     * no edge and is not collected as an importer.  Nothing in the product
     * ever clears that cache -- four TEST suites do, which is why the
     * properties that pin this hold `ErmineFixture.literalLock`. */
-  def invalidate(paths: Set[java.nio.file.Path]): Set[String] = evalLock.synchronized {
+  def invalidate(paths: Set[java.nio.file.Path]): Set[String] =
+    invalidate0(paths, withPending = true)
+
+  /** `invalidate`, with the one switch `invalidateStale` needs: whether the
+    * Q4 pending set joins the answer (see `pendingLoad`). */
+  private def invalidate0(paths: Set[java.nio.file.Path], withPending: Boolean): Set[String] =
+    evalLock.synchronized {
     if (booted.isDefined || (builtins eq null)) Set()
     else {
       val byPath = Session.loadedByPath(env)
@@ -573,15 +671,41 @@ final class Runner(val cfg: RunnerConfig) {
         byPath.get(n).toSet ++ Session.moduleUnder(cfg.roots, n).filter(env.loadedModules.contains)
       }
       val direct = paths.flatMap(modulesOf)
-      if (direct.isEmpty) Set()
+      // Q4 (review MUST-FIX 1): PRUNE FIRST.  A module can be pending and
+      // LOADED at once -- a later load can pull it in as a dependency of
+      // something else, and only a `compile` OF IT would have taken it out
+      // (see `pendingLoad`).  Dropping the loaded ones here, before the
+      // `nonEmpty` gate and before the union, is what keeps the set's one
+      // invariant true wherever it is read: it holds only modules that are
+      // not loaded.  Under `evalLock` like everything else in this method.
+      if (withPending) pendingLoad --= pendingLoad.filter(env.loadedModules.contains)
+      // Q4: "these paths NAME a module" is WIDER than `direct`, and only for
+      // the pending set.  `direct` is exactly what it always was -- a module
+      // this session never loaded is nothing to scrub and nothing to evict --
+      // but a path spelling an UNLOADED module under a root is still a save
+      // of a file this session cares about, and it is precisely what the fix
+      // to a module whose load failed looks like.  The extra `moduleUnder`
+      // walk is skipped when nothing is pending, which is also what makes
+      // this change invisible to (inv1) in that case.
+      val namesAModule = direct.nonEmpty || (withPending && pendingLoad.nonEmpty &&
+        paths.exists(p => Session.moduleUnder(cfg.roots, Session.normalize(p)).isDefined))
+      if (!namesAModule) Set()
       else {
-        val dirty = Session.dependentsOf(env, direct)
-        Session.scrub(env, builtins, dirty)
-        val keys = reports.keySet.iterator
-        while (keys.hasNext) if (dirty(keys.next()._1)) keys.remove()
-        snapshot()
-        log.info("invalidate: " + dirty.toList.sorted.mkString(", "))
-        dirty
+        val dirty =
+          if (direct.isEmpty) Set.empty[String]
+          else {
+            val d = Session.dependentsOf(env, direct)
+            Session.scrub(env, builtins, d)
+            val keys = reports.keySet.iterator
+            while (keys.hasNext) if (d(keys.next()._1)) keys.remove()
+            snapshot()
+            d
+          }
+        val pending = if (withPending) pendingLoad.toSet -- dirty else Set.empty[String]
+        if (dirty.nonEmpty || pending.nonEmpty)
+          log.info("invalidate: " +
+                   (dirty.toList.sorted ++ pending.toList.sorted.map(_ + " (pending)")).mkString(", "))
+        dirty ++ pending
       }
     }
   }
@@ -606,17 +730,70 @@ final class Runner(val cfg: RunnerConfig) {
       }
   }
 
+  /** `compileOnce`, with the REMOVAL half of Q4's pending-load bookkeeping
+    * (the recording half is inside, at the one place a load is attempted).
+    *
+    * WHICH FAILURES COUNT.  A module is recorded when a LOAD WAS ATTEMPTED
+    * for it and it is not in `env.loadedModules` afterwards, and removed
+    * whenever it IS loaded afterwards:
+    *  - RECORDED: `Session.loadModules` died -- a parse error, a type error,
+    *    a broken module this one imports, a file that vanished mid-load.
+    *    That is the whole of Q4's case: the 500 "module does not load".
+    *  - NOT RECORDED: a 404 for an unknown binding, a 400 signature refusal,
+    *    a 400 for a parameter type with no JSON reading, and an evaluation
+    *    error -- each is reached only after the module LOADED, so each
+    *    REMOVES it instead.  Nor the two refusals that precede any load: a
+    *    malformed module name (no save can fix a name) and a module NO ROOT
+    *    HAS.  The second is deliberate: recording it would make `invalidate`
+    *    of a path nothing ever tried to load stop being a no-op -- §11's
+    *    (inv1) -- for every client that ever asked for a module that does
+    *    not exist.  That branch also CLEARS the module (review MUST-FIX 2),
+    *    so a pending module whose file is DELETED stops being named as soon
+    *    as the next render asks for it.  What is still NOT covered, and is
+    *    Q11 in the tracker: a module that was never there in the first place
+    *    and whose file APPEARS later -- its 404 precedes any load, so
+    *    nothing records it and nothing names it when the file arrives.
+    *
+    * A RETRY AFTER A FAILED LOAD IS AN ORDINARY LOAD.  A failed
+    * `Session.loadModules` leaves the modules that DID load loaded (`make`
+    * writes `loadedFiles`/`loadedModules` only after `loadModule` returns,
+    * `Session.scala:607-608`) and the failing one unloaded, so the next
+    * attempt recomputes `deps`, skips what is loaded and loads the rest --
+    * the state every first load starts from.  `(pend)` in `TestRunner` and
+    * the group-D property exercise exactly that retry.  The Q4 review
+    * SETTLED the residual doubt: `Session.loadModule` writes every env table
+    * only after type inference and the overwrite checks, so a load that died
+    * leaves nothing of the module behind and no scrub is needed.
+    *
+    * THE REMOVAL IS IN A `finally` (review S1): the steps after a successful
+    * load -- `Decode.reportSignature`, `Decode.compile`, `snapshot` -- are
+    * outside any `try`, so an exception thrown THROUGH `compileOnce` must
+    * not leave a module that IS loaded sitting in the pending set.
+    *
+    * Called under `evalLock`. */
+  private def compile(module: String, binding: String): Either[RunError, Report] =
+    try compileOnce(module, binding)
+    finally if (env.loadedModules.contains(module)) { pendingLoad -= module; () }
+
   /** Load the module, find the binding, split and check its type, compile
-    * the parameter decoder.  Called under `evalLock`.
+    * the parameter decoder.  Called under `evalLock`, from `compile`.
     *
     * A refusal is NOT cached: a 404 for a module the operator is about to
     * drop in, or a 400 for a signature they are about to correct, must not
     * outlive the fix.  Only a report that works is remembered. */
-  private def compile(module: String, binding: String): Either[RunError, Report] =
+  private def compileOnce(module: String, binding: String): Either[RunError, Report] =
     if (!moduleNameOk(module))
       Left(NotFound("no module named " + module))
-    else if (!env.loadedModules.contains(module) && env.loadFile(module).isEmpty)
+    else if (!env.loadedModules.contains(module) && env.loadFile(module).isEmpty) {
+      // Q4 (review MUST-FIX 2): this 404 also CLEARS the module.  A module
+      // whose file no root has any more cannot be fixed by a save of
+      // something else, so leaving it pending would put a dead name on every
+      // module-naming `invalidate` for the life of this runner and cost the
+      // editor a render attempt each time.  The retry that lands here IS the
+      // answer to "is it back?", and the answer is no.
+      pendingLoad -= module
       Left(NotFound("no module named " + module))
+    }
     else {
       val loadFailed =
         try { Session.loadModules(List(module)); None }
@@ -625,6 +802,11 @@ final class Runner(val cfg: RunnerConfig) {
           case NonFatal(e) => Some(messageOf(e))
         }
       snapshot()
+      // Q4: a load was ATTEMPTED here and only here.  If the module is not
+      // loaded now, the next `invalidate` must name it (see `pendingLoad`).
+      // The test is the loaded set and not `loadFailed`, so that a load that
+      // "succeeded" without producing the module counts too.
+      if (!env.loadedModules.contains(module)) notePending(module)
       loadFailed match {
         case Some(why) => Left(Failed("module " + module + " does not load: " + why))
         case None =>
@@ -797,6 +979,13 @@ object Runner {
     * One lock, therefore, not one per instance: a second runner (a second
     * tenant, or a test fixture) is serialised against the first. */
   private[json] val evalLock = new Object
+
+  /** How many failed-to-load modules a `Runner` remembers (Q4, see
+    * `pendingLoad`).  Small on purpose: the set exists so that ONE broken
+    * report the editor is looking at is re-rendered when it is fixed, and a
+    * client with more than a handful of distinct broken modules open is
+    * past the case this serves. */
+  private[json] val maxPendingLoads: Int = 32
 
   private[json] val Builtin     = "Builtin"
   private[json] val NodeModule  = "Layout.Doc"

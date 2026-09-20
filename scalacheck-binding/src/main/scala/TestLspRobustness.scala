@@ -1703,6 +1703,14 @@ object TestLspRobustness extends Properties("LSP robustness") {
     "module WpBoom where\n\nimport Builtin\nimport Error\nimport Int\nimport Layout.Doc\n\n" +
     "report : Int -> Node\nreport n = error \"wp5 stage A: this report throws\"\n"
 
+  /** A report module that PARSES and does not TYPE (Q4): the body is the
+    * `Int` parameter where the signature promises a `Node`.  Its LOAD dies,
+    * so the module ends up in neither `loadedFiles` nor `loadedModules` --
+    * which is what made the save that FIXES it invalidate nothing. */
+  private def wpBrokenReport(module: String): String =
+    "module " + module + " where\n\nimport Builtin\nimport Int\nimport Json\nimport List\n" +
+    "import Layout.Doc\n\nreport : Int -> Node\nreport n = n\n"
+
   /** The shared bench: a `Server` over a real `Wire`, a `Preview` installed
     * on it exactly as `Main` installs one, a dispatch thread running
     * `server.run()`, and one test-only SYNCHRONOUS request (`wp5/ping`) --
@@ -1959,6 +1967,52 @@ object TestLspRobustness extends Properties("LSP robustness") {
     }
   }
 
+  /** Q4 of JSON-WIDGET-PLAYGROUND §13, decided by the user on 2026-09-20 as
+    * option (i), end to end over the wire: the panel's own loop for the case
+    * it could not close before.  A report whose LOAD fails is in neither
+    * `loadedFiles` nor `loadedModules`, so `Runner.invalidate` -- which
+    * reads exactly those two -- answered the empty set for the save that
+    * fixed it, `Preview` sent no `ermine/preview/invalidated` (§3 step 5
+    * sends nothing for an empty set), and the extension never re-rendered.
+    *
+    * NO `literalLock`: the verdict does not depend on the import closure.
+    * The broken module is loaded by nothing, so `invalidate` never reaches
+    * `Session.dependentsOf` and the process-global `Session.depCache` cannot
+    * change the answer -- the pending set alone names the module.
+    *
+    * IT LEAVES THE PENDING SET EMPTY, which the properties around it need:
+    * D1 asserts that an `invalidated` names EXACTLY `List("WpSales")`, and a
+    * module still pending here would be named alongside it. */
+  property("D: a report whose LOAD failed is named by the invalidate for its fix, and the next render carries it") = secure {
+    previewLock.synchronized { timedD("the broken report's fix") {
+      val m = "WpFixMe"
+      val p = writeFixture(m, wpBrokenReport(m))
+      bench.render(100, p, "report", "1", 111)
+      val a1 = bench.answer(100)
+      // the fix on disk, then the save the client's watcher reports
+      writeFixture(m, wpSimple(m, 9902))
+      bench.preview.invalidate(Set(p))
+      // matched on its CONTENT, not just its method: the bench is shared and
+      // an earlier property's notification could still be buffered
+      val inv = bench.await(60000L)(j =>
+        (j / "method" flatMap (_.str)) == Some("ermine/preview/invalidated") &&
+        modulesOf(Some(j)).exists(_.contains(m)))
+      bench.render(101, p, "report", "1", 112)
+      val a2 = bench.answer(101)
+      ((okOf(a1) ?= Some(false)) :| ("the broken report rendered " + show(a1))) &&
+        ((statusOf(a1) ?= Some(500)) :| ("status " + show(a1))) &&
+        (msgOf(a1).exists(_.contains("does not load")) :|
+          ("the 500 is not a load failure: " + show(a1))) &&
+        ((genOf(a1) ?= Some(111)) :| ("generation " + show(a1))) &&
+        ((modulesOf(inv) ?= Some(List(m))) :|
+          ("ermine/preview/invalidated for the fix said " + show(inv))) &&
+        ((okOf(a2) ?= Some(true)) :| ("the render after the fix: " + show(a2))) &&
+        ((genOf(a2) ?= Some(112)) :| ("generation " + show(a2))) &&
+        (docOf(a2).exists(_.contains("9902")) :|
+          ("the document does not carry the fixed content: " + docOf(a2).map(_.take(300))))
+    } }
+  }
+
   property("D: a render whose evaluation throws is a 500, the resident still checks, and the next render works") = secure {
     previewLock.synchronized {
       val boom = writeFixture("WpBoom", wpBoom)
@@ -2094,7 +2148,14 @@ object TestLspRobustness extends Properties("LSP robustness") {
     } }
   }
 
-  property("D: a file under no module root is a 404, a non-file URI a 400, and both echo the generation") = secure {
+  /** Q5 (JSON-WIDGET-PLAYGROUND §13), decided by the user on 2026-09-20 as
+    * option (i): `inferredRoot` STAYS in the root set -- it is §2.4's
+    * zero-configuration promise -- and the 404's message says what is
+    * actually wrong instead of "not under a module root", which was true of
+    * nothing a readable file could do.  The two causes below are the two
+    * this group can build cheaply: a file that cannot be read, and a file
+    * whose module header does not parse. */
+  property("D: a file that cannot be placed under a root is a 404 saying why, a non-file URI a 400, and both echo the generation") = secure {
     previewLock.synchronized { timedD("404 and 400") {
       // A path under none of `moduleRoots ++ inferredRoot(uri) ++ roots`.
       // It must not EXIST: §2.4 puts the file's OWN inferred root in the
@@ -2102,6 +2163,13 @@ object TestLspRobustness extends Properties("LSP robustness") {
       // exactly when no root can be inferred -- a deleted or unreadable
       // report, which is what an extension holding a stale pick sends.
       val gone = outsideRoot.resolve("Gone.e")
+      // ... and one that EXISTS, outside every root, whose header cannot be
+      // parsed: `module` commits the header branch and the name that follows
+      // is not one, so no root is inferred and none is ADDED (a file whose
+      // header parsed would add its own directory and discard this group's
+      // session, §2.4).
+      val badHeader = outsideRoot.resolve("WpBadHeader.e")
+      write(badHeader, "module 1Bad where\n\nreport = 1\n")
       bench.request(50, "ermine/render", bench.renderOf(gone.toUri.toString, "report", "1", 81))
       val a1 = bench.answer(50)
       bench.request(51, "ermine/render", bench.renderOf("untitled:Untitled-1", "report", "1", 82))
@@ -2115,10 +2183,15 @@ object TestLspRobustness extends Properties("LSP robustness") {
         "params" -> Json.num(1), "roots" -> Json.Arr(List(Json.Str(""))),
         "generation" -> Json.num(83)))
       val a3 = bench.answer(52)
+      bench.request(53, "ermine/render", bench.renderOf(badHeader.toUri.toString, "report", "1", 84))
+      val a4 = bench.answer(53)
       ((okOf(a1) ?= Some(false)) :| ("a file under no root answered " + show(a1))) &&
         ((statusOf(a1) ?= Some(404)) :| ("status " + show(a1))) &&
-        ((msgOf(a1) ?= Some("not under a module root")) :| show(a1)) &&
+        ((msgOf(a1) ?= Some("cannot read Gone.e")) :| show(a1)) &&
         ((genOf(a1) ?= Some(81)) :| ("generation " + show(a1))) &&
+        ((statusOf(a4) ?= Some(404)) :| ("an unparseable header answered " + show(a4))) &&
+        ((msgOf(a4) ?= Some("no module header could be read from WpBadHeader.e")) :| show(a4)) &&
+        ((genOf(a4) ?= Some(84)) :| ("generation " + show(a4))) &&
         ((statusOf(a2) ?= Some(400)) :| ("a non-file URI answered " + show(a2))) &&
         ((genOf(a2) ?= Some(82)) :| ("generation " + show(a2))) &&
         ((statusOf(a3) ?= Some(400)) :| ("an empty roots entry answered " + show(a3))) &&

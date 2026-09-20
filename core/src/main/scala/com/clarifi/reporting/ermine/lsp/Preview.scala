@@ -875,7 +875,12 @@ final class Preview(moduleRoots: () => List[String],
     // N3: normalised ONCE, here, so that the module lookup, the inferred
     // root and the discard key below all speak of the same spelling.
     val path  = Documents.pathFor(r.req.uri) map Session.normalize
-    val roots = rootSet(r.req, path)
+    // Q5 (decided 2026-09-20, option (i)): the inferred root is computed
+    // ONCE, here, and its FAILURE is kept -- it is the only thing that can
+    // explain the 404 below, and re-deriving it there would read the file a
+    // second time.
+    val placed = path map inferredRoot
+    val roots  = rootSet(r.req, placed flatMap (_.toOption))
     // The boot inside is UNWATCHED and the watchdog is re-armed as it ends,
     // by `ensureSession` itself (review M2): nothing is needed here.
     ensureSession(roots, r.progress, r) match {
@@ -887,7 +892,7 @@ final class Preview(moduleRoots: () => List[String],
             finish(r, failure(r.req.generation, 400, "not a file: URI: " + r.req.uri, None))
           case Some(p) => Session.moduleUnder(roots, p) match {
             case None =>
-              finish(r, failure(r.req.generation, 404, "not under a module root", None))
+              finish(r, failure(r.req.generation, 404, cannotPlace(p, placed), None))
             case Some(module) =>
               // §4 / §7.2: WP-13's `disconnect` leaves the delegate unset and
               // every render answers 503 until the extension connects again.
@@ -1031,8 +1036,43 @@ final class Preview(moduleRoots: () => List[String],
     * `RenderRequest.parse`, which refuses the entries that cannot be.  A
     * resident root that cannot be made into a path is logged and dropped,
     * which is what `Main` does with the same value at `initialize`. */
-  private def rootSet(req: RenderRequest, path: Option[Path]): List[String] =
-    (moduleRoots().flatMap(normalRoot) ++ path.flatMap(inferredRoot).toList ++ req.roots).distinct
+  private def rootSet(req: RenderRequest, inferred: Option[String]): List[String] =
+    (moduleRoots().flatMap(normalRoot) ++ inferred.toList ++ req.roots).distinct
+
+  /** THE 404's MESSAGE (Q5, decided by the user on 2026-09-20 as option (i):
+    * keep `inferredRoot` in the root set -- it is §2.4's zero-configuration
+    * promise -- and make the 404 say what is actually wrong instead).
+    *
+    * §2.4 puts the picked report's OWN inferred root in the root set, so any
+    * readable `.e` file whose module header parses is under a root by
+    * construction and this message is unreachable for it.  What reaches it
+    * is a file that could not be PLACED at all, and the four ways that
+    * happens are cheap to tell apart, so each says so:
+    *   - the path is not an Ermine source file (`moduleUnder` requires `.e`);
+    *   - the file cannot be read -- deleted, or unreadable: the case an
+    *     extension holding a stale pick sends;
+    *   - its module header does not parse;
+    *   - its module name is deeper than the directories above it.
+    * The last three are `inferredRoot`'s own three refusals, carried here
+    * rather than swallowed.
+    *
+    * NO ABSOLUTE PATH: the file's NAME only.  The request supplied the URI
+    * and the client can map a name back to it, but nothing here puts a
+    * server-side directory on the wire.  `failure` scrubs the result like
+    * every other message (§8 rule A5). */
+  private def cannotPlace(p: Path, placed: Option[Either[String, String]]): String =
+    if (!p.toString.endsWith(".e")) "not an Ermine source file: " + fileName(p)
+    else placed match {
+      case Some(Left(why)) => why
+      // Unreachable as built -- an inferred root IS a root and `p` is under
+      // it -- but a general sentence rather than a wrong one if it ever is.
+      case _               => "cannot be placed under any module root: " + fileName(p)
+    }
+
+  /** A path's last segment, for a message.  The filesystem root has none,
+    * and "null" in an answer would be worse than a vague noun. */
+  private def fileName(p: Path): String =
+    Option(p.getFileName).map(_.toString).getOrElse("the file")
 
   private def normalRoot(r: String): Option[String] =
     try Some(Session.normalize(r).toString)
@@ -1043,31 +1083,66 @@ final class Preview(moduleRoots: () => List[String],
     * check's siblings.  `p` is already absolute and normalised, so what
     * comes back is too.
     *
-    * NONE, never a guess, in three cases: the file cannot be read; its
+    * A `Left`, never a guess, in three cases: the file cannot be read; its
     * header cannot be parsed; or the module name has MORE segments than the
     * path has parent directories (`module A.B.C` in `/tmp`), where the walk
     * runs out and the loop's `d.isDefined` guard ends it empty.
     * `Resident.checkFile` falls back to the file's own directory in that
     * last case; the preview does not, because a guessed root puts the file
     * under a root under a WRONG module name and the render would then fail
-    * with a message about the wrong module.  None leaves the other roots to
-    * answer, and a 404 if none of them does. */
-  private def inferredRoot(p: Path): Option[String] =
-    try {
-      val file     = Session.Filesystem(p.toString, exotic = true)
-      val contents = file.contents
-      implicit val su: Supply = headerSupply
-      val (_, mh) = Session.parse(
-        ModuleParsers.moduleHeader(file.defaultModuleName),
-        ErParseState.mk(file.toString, contents, file.defaultModuleName))
-      var d = Option(p.getParent)
-      var i = mh.name.split('.').length - 1
-      while (i > 0 && d.isDefined) { d = Option(d.get.getParent); i -= 1 }
-      if (i > 0) None else d.map(_.toString)
-    } catch { case e: Throwable =>
-      log("preview: no root inferred for " + p + ": " + messageOf(e))
-      None
+    * with a message about the wrong module.  A `Left` leaves the other roots
+    * to answer, and a 404 if none of them does.
+    *
+    * Q5: THE `Left` CARRIES THE REASON, in the words the 404 says (see
+    * `cannotPlace`).  It names the FILE and never its directory, and never
+    * the exception's own text: `Session.Filesystem.contents` dies with
+    * "File '<absolute path>' does not exist." and a parser error carries the
+    * source name it was built with, so neither may be quoted.  The absolute
+    * path goes to the LOG, which is the server's own and is scrubbed. */
+  private def inferredRoot(p: Path): Either[String, String] = {
+    val name = fileName(p)
+    // The `SourceFile` is built INSIDE the `try` as it was before Q5: this
+    // method answers a `Left`, never throws, and nothing on the way to the
+    // contents may escape it.
+    val opened =
+      try {
+        val f = Session.Filesystem(p.toString, exotic = true)
+        Right((f, f.contents))
+      } catch { case e: Throwable =>
+        log("preview: cannot read " + p + ": " + messageOf(e))
+        Left("cannot read " + name)
+      }
+    opened match {
+      case Left(why) => Left(why)
+      case Right((file, text)) =>
+        val header =
+          try {
+            implicit val su: Supply = headerSupply
+            val (_, mh) = Session.parse(
+              ModuleParsers.moduleHeader(file.defaultModuleName),
+              ErParseState.mk(file.toString, text, file.defaultModuleName))
+            Right(mh.name)
+          } catch { case e: Throwable =>
+            log("preview: no module header parsed from " + p + ": " + messageOf(e))
+            Left("no module header could be read from " + name)
+          }
+        header match {
+          case Left(why) => Left(why)
+          case Right(module) =>
+            var d = Option(p.getParent)
+            var i = module.split('.').length - 1
+            while (i > 0 && d.isDefined) { d = Option(d.get.getParent); i -= 1 }
+            val tooDeep =
+              "the module header of " + name + " names " + module +
+              ", which is deeper than the directories above it"
+            if (i > 0) { log("preview: no root inferred for " + p + ": " + tooDeep); Left(tooDeep) }
+            else d match {
+              case Some(r) => Right(r.toString)
+              case None    => log("preview: no root inferred for " + p + ": " + tooDeep); Left(tooDeep)
+            }
+        }
     }
+  }
 
   /** The render session for `roots`, booting it if there is none and
     * discarding the one in hand if the root set moved (§2.4: roots are
@@ -1259,8 +1334,9 @@ final class Preview(moduleRoots: () => List[String],
     * by a watched job rather than an unwatched one.
     *
     * WHAT THE CLOCK STILL COVERS, and it is not nothing: everything a
-    * render does BEFORE this bracket, which is `rootSet` -- and that reads
-    * the report's file and parses its module header (`inferredRoot`).  At
+    * render does BEFORE this bracket, which is `inferredRoot` and the
+    * `rootSet` built from it -- and `inferredRoot` reads the report's file
+    * and parses its module header.  At
     * the 60 s default it is noise; at a deliberately short
     * `ermine.preview.timeoutSeconds` a slow filesystem could be fired on
     * before a session is ever built, and the message would say "evaluation
