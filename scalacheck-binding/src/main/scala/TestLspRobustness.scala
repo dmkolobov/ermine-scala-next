@@ -1,5 +1,6 @@
 package com.clarifi.reporting
 
+import com.clarifi.reporting.ermine.{ DataConDecl, Global }
 import com.clarifi.reporting.ermine.lsp.{ BuildStamp, Diagnostics, Documents, Json, Resident, Rpc, RpcError, Server, Wire }
 import com.clarifi.reporting.ermine.session.{ Printer, Session => S, SessionEnv }
 
@@ -1207,5 +1208,215 @@ object TestLspRobustness extends Properties("LSP robustness") {
   property("C: BuildStamp.scalaDir prefers the stdlib root's checkout and skips a root that is not one") = secure {
     BuildStamp.scalaDir(List(extraRoot.toString, stdlibRoot.getPath)) ==
       Some(stdlibRoot.toPath.getParent.getParent.resolve("scala").toAbsolutePath.normalize)
+  }
+
+  // ================================================= D. the registration flag
+
+  /** WP-3 (`tracker/JSON-WIDGET-PLAYGROUND.md` §2.2, §11 "Registration flag").
+    * `DataConDecl`'s two maps are PROCESS-WIDE: the JSON encoder reaches them
+    * for a runtime `Data` node that has no env in hand (`toJson#`), so whatever
+    * wrote a constructor's shape last is what every encode in the JVM sees.
+    * Four things write them, and three load DISK.  The fourth was the editor:
+    * a check runs `Session.processTypeDefComponent` over the OPEN BUFFER
+    * (`TolerantCheck.scala:862`) on every debounced keystroke, so a `data`
+    * half-way through an edit used to overwrite the saved shape -- and NOTHING
+    * SAYS SO, which is the point of the fixture below: `rawWidget : String ->
+    * a -> Node` (`Layout/Doc.e:57`) takes the partially applied constructor,
+    * so a `Heading` given a fifth field leaves the check silent while every
+    * later encode of a four-argument `Heading` falls off the `c.fields.length
+    * == args.length` guard (`json/Encode.scala:414`) and encodes as
+    * `{"tag","args"}`.  The marker term below is what gives the property a
+    * second, visible grip on "the check really read THIS text".
+    *
+    * CONCURRENCY.  `core/test` is unforked and parallel and the registry is
+    * global, so this property must leave it as it found it: it re-registers
+    * the entry it saw before the check in a `finally`, on the failing path
+    * too.  Another suite may legitimately register `Sales.Heading` while this
+    * runs -- `TestRunner`'s runner loads the same `core/src/test/resources/doc`
+    * (`TestRunner.scala:112`, `:875`) -- and that is harmless in both
+    * directions: every other writer loads the SAME FILE, so the shape it
+    * writes is the four-field one this property asserts, and entries differ
+    * only in `Supply`-minted ids, which no reader looks at
+    * (`json/Encode.scala:399-414` reads `isEnum`, `constructor(g)` and field
+    * names).  The verdict is a field COUNT for that reason, not an identity.
+    * Nothing in the tree registers a `Sales.Heading` of any other shape. */
+  private val docRoot      = new File("core/src/test/resources/doc").getAbsoluteFile
+  private val salesFile    = new File(docRoot, "Sales.e")
+  private val salesHeading = Global("Sales", "Heading")
+
+  /** The fixture's `data Heading`, and the same block with a fifth field: the
+    * half-typed buffer.  Matched as TEXT, so that an edit to the fixture
+    * falsifies this property instead of silently emptying it. */
+  private val headingDecl =
+    "data Heading = Heading\n  { title      : String\n  , sortColumn : String\n" +
+    "  , matched    : Int\n  , total      : Double\n  }\n"
+  private val headingDeclPlus =
+    "data Heading = Heading\n  { title      : String\n  , sortColumn : String\n" +
+    "  , matched    : Int\n  , total      : Double\n  , extra      : Int\n  }\n"
+
+  /** Appended to the CHECKED buffer, and the check must report it AT ITS OWN
+    * POSITION: the added field alone draws no diagnostic (see above), so
+    * without this the property could pass against a check that never read the
+    * buffer at all.  MEASURED, and the reason the match is positional: the
+    * rendered message for this one is
+    * `Sales.e:125:13: error: undefined term\n\n            ^` -- the product
+    * prints an EMPTY source line for the `Loc` an unresolved term carries
+    * (`Subst.scala:1921` -> `Locations.scala:89`), so the name is nowhere in
+    * the text and only the range identifies which term was reported.
+    * It proves the term phase ran -- it does NOT prove the five-field
+    * component survived its `guard(Error)` (`TolerantCheck.scala:857-862`
+    * skips a component that dies), which is what the registering control in
+    * the property proves.  The control's text leaves the marker OUT: an
+    * undefined term is a Death in a strict load, and a Death before
+    * `loadModule` would leave the control silently vacuous too. */
+  private val markerTerm = "\nwp3Marker = wp3NoSuchTerm\n"
+
+  /** Fields of `Sales.Heading` as the registry has it RIGHT NOW: -1 = no
+    * entry at all, -2 = forcing the by-name constructor list threw. */
+  private def headingFieldsNow(): Int =
+    try DataConDecl.forConstructor(salesHeading)
+          .flatMap(_.constructor(salesHeading)).map(_.fields.length) getOrElse -1
+    catch { case _: Throwable => -2 }
+
+  /** PRE-EXISTING PRODUCT HAZARD, named here and deliberately NOT fixed (it is
+    * nobody's ticket and certainly not WP-3's): `DataConDecl.register`
+    * publishes a decl into the process-wide maps BEFORE
+    * `processTypeDefComponent` assigns the `conMap` that the decl's BY-NAME
+    * `constructors` substitutes through (`Session.scala:985-1009`), so another
+    * thread that forces `constructors` inside that window can throw.
+    * `TestRunner` registers `Sales.Heading` from the same file in this same
+    * unforked, parallel JVM, so the window is reachable from here.  Re-read a
+    * bounded number of times on THAT outcome only: -1 and any field count are
+    * verdicts, not races, and are never retried. */
+  private def headingFieldsSettled(): Int = {
+    var n = headingFieldsNow()
+    var tries = 0
+    while (n == -2 && tries < 20) { Thread.sleep(25L); n = headingFieldsNow(); tries += 1 }
+    n
+  }
+
+  /** Register `Sales` from a disk root by loading it into a `copy` of the
+    * resident env -- `copy` CARRIES `registerDecls` (`SessionState.scala:113`)
+    * and the boot env has it on, so this registers, exactly as the resident's
+    * own boot and a render session do. */
+  private def registerSalesFrom(root: String): Unit = {
+    implicit val s: SessionEnv = resident.loadedEnv.get.copy
+    implicit val su: Supply = resident.supply
+    implicit val pr: Printer = resident.printer
+    s.loadFile = S.SourceFile.inOrder(
+      (m: String) => S.SourceFile.filesystem(root)(m), s.loadFile)
+    S.loadModules(List("Sales"))
+  }
+
+  /** THE VACUITY GUARD.  Load `text` as module `Sales` from its own root on a
+    * NON-registering copy, and answer how many fields the `Heading` decl that
+    * load built has -- read off the `Con` in that copy's own `cons` table,
+    * which is where `processTypeDefComponent` puts it.  -1 = no such `Con`,
+    * or one carrying no `DataConDecl`.
+    *
+    * That decl IS the `built` value of `Session.scala:985-1002`: the object
+    * the `if (se.registerDecls)` one line below it would have published.  So
+    * five fields here says the component was processable and did reach the
+    * registration site, and the property's "still four" is the FLAG's doing
+    * rather than a component that died in `guard(Error)`. */
+  private def controlDeclFields(root: Path, text: String): Int = {
+    write(root.resolve("Sales.e"), text)
+    implicit val s: SessionEnv = resident.loadedEnv.get.copyNotRegistering
+    implicit val su: Supply = resident.supply
+    implicit val pr: Printer = resident.printer
+    s.loadFile = S.SourceFile.inOrder(
+      (m: String) => S.SourceFile.filesystem(root.toString)(m), s.loadFile)
+    S.loadModules(List("Sales"))
+    s.cons.get(salesHeading).map(_.decl).collect { case d: DataConDecl => d }
+      .flatMap(_.constructor(salesHeading)).map(_.fields.length) getOrElse -1
+  }
+
+  property("D: a check of a buffer whose `data Heading` gained a field leaves the process-wide registry alone") = secure {
+    // NO `withDepCache`: this property's verdict is the `DataConDecl` registry,
+    // not `Session.depCache`.  A foreign clear can cost it a re-parse; it
+    // cannot change what it asserts.
+    residentLock.synchronized {
+      val controlRoot = Files.createTempDirectory("ermine-wp3-control")
+      registerSalesFrom(docRoot.getPath)
+      val before       = DataConDecl.forConstructor(salesHeading)
+      val beforeFields = headingFieldsSettled()
+      try {
+        val orig    = new String(Files.readAllBytes(salesFile.toPath), UTF_8)
+        val control = orig.replace(headingDecl, headingDeclPlus)
+        val mut     = control + markerTerm
+        // 1. THE CHECK, down the product's own path, i.e. a NON-registering
+        // copy (`Resident.withEnv`).  Nothing is written to disk.
+        val uri  = salesFile.toURI.toString
+        val docs = new Documents
+        docs.put(uri, mut, 1)
+        val ds   = try Right(diagnose(salesFile, docs)) catch { case e: Throwable => Left(e) }
+        val said = ds.toOption.toList.flatten
+        val afterCheck = headingFieldsSettled()
+        // the marker's own position, 0-based as LSP counts: this is what
+        // makes the conjunct below match THE MARKER and not merely some
+        // "undefined term" somewhere else in Sales.e.
+        val markerLine = mut.split("\n", -1).indexWhere(_ startsWith "wp3Marker")
+        val markerCol  = "wp3Marker = ".length
+        def at(d: Json, f: String): Option[Int] =
+          d / "range" flatMap (_ / "start") flatMap (_ / f) flatMap (_.int)
+        def atMarker(d: Json): Boolean =
+          at(d, "line") == Some(markerLine) && at(d, "character") == Some(markerCol) &&
+            (d / "message" flatMap (_.str)).exists(_ contains "undefined term")
+        // 2. THE CONTROL, run AFTER the verdict above is taken: the same
+        // five-field `data Heading`, loaded on another copy, with the decl it
+        // builds read off that copy's `Con` (see `controlDeclFields`).
+        //
+        // The copy is deliberately NON-registering rather than registering:
+        // `TestRunner` renders `Sales` in this same unforked JVM and reads
+        // THIS registry entry at runtime through `toJson#` ->
+        // `Encode.userData` (`json/Encode.scala:400`), asserting on the
+        // heading's `title` (`TestRunner.scala:897`).  A five-field window in
+        // the shared registry, however short and however faithfully restored,
+        // is a flake in another suite; proving the same thing off the `Con`
+        // costs nothing and opens no window.  It also re-confirms the flag
+        // from the other side: this load builds a five-field decl and the
+        // registry below is still four.
+        val ctl = try Right(controlDeclFields(controlRoot, control))
+                  catch { case e: Throwable => Left(trace(e)) }
+        val afterControl = headingFieldsSettled()
+        // one label carrying EVERY measurement, on the whole conjunction:
+        // `&&` short-circuits, so without it a failure in the first conjunct
+        // hides what the later ones measured and costs a whole run to learn.
+        (((control != orig) :| "Sales.e no longer contains this property's `data Heading` block verbatim") &&
+          ((beforeFields ?= 4) :| s"the disk load registered $beforeFields field(s) for Sales.Heading, not 4") &&
+          (ds.isRight :| s"the check of the mutated buffer THREW ${ds.left.toOption.map(trace)}") &&
+          ((markerLine >= 0) :| "the marker line is not in the buffer this property built") &&
+          (said.exists(atMarker) :|
+             s"no undefined-term diagnostic at the marker ($markerLine:$markerCol), " +
+             s"so the check did not read THIS buffer: ${said.map(key)}") &&
+          ((afterCheck ?= 4) :|
+             "the buffer's five-field Heading reached DataConDecl.forConstructor(Global(\"Sales\",\"Heading\"))") &&
+          ((ctl ?= Right(5)) :|
+             s"the same five-field Heading did not survive a load on a copy ($ctl), so the verdict above is vacuous") &&
+          ((afterControl ?= 4) :| "the control's own non-registering load reached the registry")) :|
+          (s"measured: before=$beforeFields afterCheck=$afterCheck control=$ctl " +
+           s"afterControl=$afterControl marker=$markerLine:$markerCol diagnostics=${said.size}")
+      } finally {
+        // Leave the registry as it was found, on EVERY path including the
+        // failing one: `core/test` is unforked and parallel, and `TestRunner`
+        // reads these same entries.  Restoring `Sales.Heading` ALONE is
+        // enough: the only write this property makes is the ground-truth DISK
+        // load, whose `Sales.Sort` and `Sales.Query` are the fixture's own
+        // shapes, so `Sales.Heading` is the single entry that can be wrong --
+        // and only on the path where the flag regressed, which is exactly
+        // what this restore is here for.
+        try before match {
+          case Some(d) => DataConDecl.register(d, d.constructors.map(_.name))
+          case None    => registerSalesFrom(docRoot.getPath)
+        } catch {
+          // the by-name `constructors` can itself throw (the hazard named over
+          // `headingFieldsSettled`), and a throw out of a `finally` would mask
+          // the labelled verdict: fall back to a fresh disk load, quietly
+          case _: Throwable =>
+            try registerSalesFrom(docRoot.getPath) catch { case _: Throwable => () }
+        }
+        ErmineFixture.deleteTree(controlRoot)
+      }
+    }
   }
 }

@@ -139,8 +139,15 @@ final class Resident(val log: String => Unit) {
     r
   }
 
-  /** Run f against a fresh copy of the resident env (booting on demand). */
-  def withEnv[A](f: SessionEnv => A): A = f(boot().env.copy)
+  /** Run f against a fresh copy of the resident env (booting on demand).
+    *
+    * WP-3: the copy does NOT write the process-wide constructor registry
+    * (`SessionState.registerDecls`).  This is the ONE place a per-request
+    * copy is made -- `checkFile` below and `json/Schema.answer` are its
+    * only callers -- and what it checks is the OPEN BUFFER, on every
+    * debounced keystroke.  The resident's own boot and its reloads read
+    * DISK and keep registering; so does everything else in the JVM. */
+  def withEnv[A](f: SessionEnv => A): A = f(boot().env.copyNotRegistering)
 
   /** The post-`Lib.preamble` env: names Scala installs, not source. */
   def builtinEnv: SessionEnv = boot().builtins

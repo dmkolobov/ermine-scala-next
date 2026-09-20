@@ -982,14 +982,23 @@ object Session {
         // and in the encoder's registry (DataConDecl.scala); the field types
         // are substituted through this component's type map once it exists
         // (conMap is assigned below), hence the by-name argument
-        val decl = DataConDecl.register(new DataConDecl(tn, l, kindArgs, typeArgs, {
+        val built = new DataConDecl(tn, l, kindArgs, typeArgs, {
           cons.map { case (es, cv, fs) =>
             DataConDecl.Constructor(global(mn, cv), es,
               subTypeMaps((maps._1 ++ conMap, maps._2), fs).zipWithIndex.map {
                 case (t, i) => (fieldName.get((cv.id, i)), t)
               })
           }
-        }), cons.map(cv => global(mn, cv._2)))
+        })
+        // WP-3: the Con always carries the decl; whether the PROCESS-WIDE
+        // registry is written too is the session's call.  The editor's
+        // tolerant check runs this for every `data` in an open buffer, on
+        // every debounced keystroke, and must not publish a half-typed
+        // shape to a JSON encode running elsewhere in the JVM
+        // (SessionState.scala `registerDecls`).
+        val decl =
+          if (se.registerDecls) DataConDecl.register(built, cons.map(cv => global(mn, cv._2)))
+          else built
         v -> addCon(Con(l, tn, decl, ks))
       case (ks, ClassBlock(l, v, kindArgs, typeArgs, ctx, privates, body)) =>
         v -> addCon(Con(l, global(mn, v), ClassDecl, ks))

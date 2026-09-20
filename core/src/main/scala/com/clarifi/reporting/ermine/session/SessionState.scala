@@ -107,10 +107,22 @@ class SessionEnv(
      _typeCheck:       Option[Boolean]                = None,
      _useInterface:    Option[Boolean]                = None,
      _foreignTolerant: Option[Boolean]                = None,
-     _sigEntail:       Option[SigEntail.Mode]         = None
+     _sigEntail:       Option[SigEntail.Mode]         = None,
+     _registerDecls:   Option[Boolean]                = None
 ) { that =>
-  def copy = {
-    val e = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck),Some(that.useInterface),Some(that.foreignTolerant),Some(that.sigEntail))
+  def copy: SessionEnv = copyWith(Some(that.registerDecls))
+
+  /** `copy`, with declaration registration OFF: the copy the language
+    * server runs a request against (`Resident.withEnv`), and the only
+    * caller that wants a copy to differ from what it was copied from.
+    * See `registerDecls` below. */
+  def copyNotRegistering: SessionEnv = copyWith(Some(false))
+
+  /** The one constructor call behind both, so a field added to
+    * `SessionEnv` is carried by `copy` and by `copyNotRegistering` at
+    * once. */
+  private def copyWith(registerDecls: Option[Boolean]): SessionEnv = {
+    val e = new SessionEnv(that.env, that.termNames, that.termNameOrigins, that.cons, that.privateCons, that.consOrigins, that.loadFile, that.loadedFiles, that.loadedModules, that.classes, that.classOrigins, Some(that.typeCheck),Some(that.useInterface),Some(that.foreignTolerant),Some(that.sigEntail),registerDecls)
     // NOT the notes: a copy is what a forked load (SessionTask.fork) or a
     // fresh editor check runs in, and `+=` merges its notes back.  Carrying
     // them forward would report every module's warnings on every file.
@@ -138,6 +150,29 @@ class SessionEnv(
     * language server can differ from a batch build; it reaches the checker as
     * `SubstEnv.sigEntail` through `Session.subst`. */
   val sigEntail : SigEntail.Mode = _sigEntail.getOrElse(SigEntail.defaultMode)
+
+  /** WIDGET PREVIEW WP-3 (`tracker/JSON-WIDGET-PLAYGROUND.md` §2.2): whether a
+    * `data` declaration this session checks is written into the PROCESS-WIDE
+    * constructor registry (`DataConDecl.register`, `DataConDecl.scala`), which
+    * the JSON encoder reads for a runtime `Data` node that has no env in reach
+    * (`json/Encode.scala` `userData`, through `toJson#`).
+    *
+    * DEFAULT ON, and no system property: every load that means to publish a
+    * module's shape keeps writing it -- `bin/ermine`, the REPL, `core/test`,
+    * both `Lib.preamble`s, the resident's own boot and reloads, and a render
+    * session.  A process-wide `-D` would be the wrong shape for this flag: the
+    * point is that two envs in ONE JVM differ, and turning registration off
+    * globally would silently break `toJson#` for everybody.
+    *
+    * The language server's per-request copies (`Resident.withEnv`, via
+    * `copyNotRegistering`) turn it OFF.  Those check the OPEN BUFFER on every
+    * debounced keystroke, so a half-typed `data` there would overwrite the
+    * shape a JSON encode elsewhere in the JVM reads, and no invalidation fires
+    * for a `didChange`.  A check copy's own readers are unaffected: the `Con`
+    * it builds carries the decl, and `json/Schema` and `json/Decode` read the
+    * `Con` before they fall back to the registry; a check never evaluates, so
+    * `toJson#` never runs on a copy. */
+  val registerDecls : Boolean = _registerDecls.getOrElse(true)
 
   /** The tolerated failures, in the order they were declared.  Loads may
     * run on forked copies (SessionTask), so appending is synchronized. */

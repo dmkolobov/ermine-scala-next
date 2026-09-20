@@ -1,13 +1,19 @@
 # JSON widget playground: edit a widget, see it rendered, inside VS Code
 
-> **STATUS: WP-1 AND WP-2 ARE BUILT; EVERYTHING ELSE IS DESIGN ONLY.** WP-1 (`Rpc.scala`:
+> **STATUS: WP-1, WP-2 AND WP-3 ARE BUILT; EVERYTHING ELSE IS DESIGN ONLY.** WP-1 (`Rpc.scala`:
 > `send` synchronised, `onRequestDeferred`, `$/cancelRequest` routed, the incoming log line
 > moved after the parse and redacted by method; the `TestLspRobustness` A group) is written
 > and its suite is green. WP-2 (`scrub` and `dependentsOf` lifted from `Resident` into
 > `Session` with `builtins` a parameter; `Resident` calls them at its four sites) is written
-> and the `TestLspRobustness` C group is green, unchanged. No other ticket has been started;
+> and the `TestLspRobustness` C group is green, unchanged. WP-3 (`SessionEnv._registerDecls`,
+> default on and carried by `copy`; the registration in `processTypeDefComponent` consults it;
+> `Resident.withEnv` -- the one per-request copy site -- takes a `copyNotRegistering` copy) is
+> written, with the one `TestLspRobustness` D property, and `TestJson`, `TestSchema` and
+> `TestNamedFields` are unchanged and green. No other ticket has been started;
 > the only files WP-1 changes are `Rpc.scala`, `TestLspRobustness.scala` and this document,
-> and the only files WP-2 changes are `Session.scala`, `Resident.scala` and this document.
+> the only files WP-2 changes are `Session.scala`, `Resident.scala` and this document, and
+> the only files WP-3 changes are `SessionState.scala`, `Session.scala`, `Resident.scala`,
+> `TestLspRobustness.scala` and this document.
 > The work lives on branch `widget-preview` in the worktree
 > `ermine-scala-wt-widget-preview`, forked from `json-encode` at `a0830244`; this document is
 > committed there. Every claim about this codebase is MINED from reading the source at that
