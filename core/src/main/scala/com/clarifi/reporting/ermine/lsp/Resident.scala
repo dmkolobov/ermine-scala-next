@@ -180,23 +180,6 @@ final class Resident(val log: String => Unit) {
       case (Session.Filesystem(f, _), m) => Resident.normalize(f) -> m
     }.toMap
 
-  /** `roots` plus every loaded module that imports one of them, transitively.
-    * The import sets come from the dependency cache the loads filled, keyed
-    * by the very SourceFiles `loadedFiles` holds. */
-  private def dependentsOf(env: SessionEnv, roots: Set[String]): Set[String] = {
-    val imports: Map[String, Set[String]] = env.loadedFiles.toList.flatMap {
-      case (sf, m) => Session.depCache.get(sf).map { case (_, d) => m -> d.imports }
-    }.toMap
-    var seen     = roots
-    var frontier = roots
-    while (frontier.nonEmpty) {
-      val next = imports.collect { case (m, is) if !seen(m) && (is & frontier).nonEmpty => m }.toSet
-      seen ++= next
-      frontier = next
-    }
-    seen
-  }
-
   /** Scrub `direct` (and the pending set) with their dependents and load
     * them back through the resident's loader chain -- so a file deleted from
     * the first root falls back to the next root that has it, and a module
@@ -205,11 +188,11 @@ final class Resident(val log: String => Unit) {
   private def reloadModules(direct: Set[String]): Resident.Reloaded = {
     val r = booted.get
     implicit val env: SessionEnv = r.env
-    val dirty = dependentsOf(env, direct ++ pendingReload)
+    val dirty = Session.dependentsOf(env, direct ++ pendingReload)
     if (dirty.isEmpty) Resident.Reloaded(Nil, 0.0, None)
     else {
       val t0 = System.nanoTime
-      scrub(env, dirty)
+      Session.scrub(env, builtinEnv, dirty)
       pendingReload = dirty
       def load(ms: List[String]): Option[String] =
         try { Session.loadModules(ms); None }
@@ -228,7 +211,7 @@ final class Resident(val log: String => Unit) {
       val failure = load(dirty.toList.sorted) match {
         case None => pendingReload = Set(); None
         case Some(first) =>
-          scrub(env, dirty)
+          Session.scrub(env, builtinEnv, dirty)
           val errors = dirty.toList.sorted.flatMap { m =>
             if (env.loadedModules contains m) None else load(List(m)).map(m -> _)
           }
@@ -272,33 +255,6 @@ final class Resident(val log: String => Unit) {
       case (sf: Session.Filesystem, m) if Session.depCache.get(sf).map(_._1) != sf.lastModified => m
     }.toSet
     reloadModules(stale)
-  }
-
-  /** Scrub `modules` out of `e` down to their builtin state.  Only what the
-    * SOURCE declares goes: `Lib` installs builtins under the module they
-    * belong to -- `asOp` and class `AsOp` are `Global("Relation.Op", ...)`,
-    * declared in Scala and merely COMMENTED in `Relation/Op.e` -- so a scrub
-    * by module name alone would delete them and re-reading the file could
-    * not put them back.  `Session.reloadChangedModules` guards its scrub
-    * with `builtinEnv.contains` for exactly this reason; this mirrors it.
-    * Used per check on the module being checked (on the copy) and by the
-    * reloads above (on the resident). */
-  private def scrub(e: SessionEnv, modules: Set[String]): Unit = {
-    val b = builtinEnv
-    def mine(g: Global) = modules(g.module)
-    e.env = e.env filter { case (v, _) => v.name match {
-      case Some(g: Global) => !mine(g) || b.env.contains(v)
-      case _               => true
-    } }
-    e.termNames       = e.termNames       filterNot { case (g, _) => mine(g) && !b.termNames.contains(g) }
-    e.termNameOrigins = e.termNameOrigins filterNot { case (g, _) => mine(g) && !b.termNameOrigins.contains(g) }
-    e.cons            = e.cons            filterNot { case (g, _) => mine(g) && !b.cons.contains(g) }
-    e.privateCons     = e.privateCons     filterNot { case (g, _) => mine(g) && !b.privateCons.contains(g) }
-    e.consOrigins     = e.consOrigins     filterNot { case (g, _) => mine(g) && !b.consOrigins.contains(g) }
-    e.classes         = e.classes         filterNot { case (g, _) => mine(g) && !b.classes.contains(g) }
-    e.classOrigins    = e.classOrigins    filterNot { case (g, _) => mine(g) && !b.classOrigins.contains(g) }
-    e.loadedFiles     = e.loadedFiles     filterNot { case (_, n) => modules(n) }
-    e.loadedModules   = e.loadedModules -- modules
   }
 
   /** Everything textDocument/definition and hover need from one check:
@@ -457,8 +413,8 @@ final class Resident(val log: String => Unit) {
     // Layout/Report.e).  Scrub the module out of the COPY first, the way
     // :reload's scrubber does (Session.reloadChangedModules).
     val tScrub = Phases.now
-    // Only what the SOURCE declares is scrubbed (see `scrub`).
-    if (e.loadedModules contains mh.name) scrub(e, Set(mh.name))
+    // Only what the SOURCE declares is scrubbed (see `Session.scrub`).
+    if (e.loadedModules contains mh.name) Session.scrub(e, builtinEnv, Set(mh.name))
     Phases.add("scrub", tScrub)
 
     // Session.load's own import step (Session.scala:718), hoisted so the

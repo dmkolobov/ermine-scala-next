@@ -722,6 +722,76 @@ object Session {
   def loadModulesInSeries(moduleNames: List[String])(implicit s: SessionEnv, su: Supply, con: Printer) =
     for (m <- moduleNames) load(SourceFile.forModule(m), Some(m))
 
+  /** `roots` plus every loaded module that imports one of them, transitively.
+    * The import sets come from the dependency cache the loads filled, keyed
+    * by the very SourceFiles `loadedFiles` holds.
+    *
+    * Lifted out of `lsp.Resident` (WP-2) so a second session -- the widget
+    * preview's render session -- can compute the same closure over its own
+    * `loadedFiles` without going through the resident.
+    *
+    * The caller owns `env`; this locks nothing.  A `SessionEnv` is mutable
+    * and not thread-safe, so the calling thread must be the only one using
+    * that env while this runs (the resident: the dispatch loop; WP-4's
+    * `Runner.invalidate`: under `evalLock`). */
+  def dependentsOf(env: SessionEnv, roots: Set[String]): Set[String] = {
+    val imports: Map[String, Set[String]] = env.loadedFiles.toList.flatMap {
+      case (sf, m) => Session.depCache.get(sf).map { case (_, d) => m -> d.imports }
+    }.toMap
+    var seen     = roots
+    var frontier = roots
+    while (frontier.nonEmpty) {
+      val next = imports.collect { case (m, is) if !seen(m) && (is & frontier).nonEmpty => m }.toSet
+      seen ++= next
+      frontier = next
+    }
+    seen
+  }
+
+  /** Scrub `modules` out of `e` down to their builtin state, `builtins`
+    * being the env as it stands after that session's own `Lib.preamble`
+    * and BEFORE any module is read.  Only what the SOURCE declares goes:
+    * `Lib` installs builtins under the module they belong to -- `asOp` and
+    * class `AsOp` are `Global("Relation.Op", ...)`, declared in Scala and
+    * merely COMMENTED in `Relation/Op.e` -- so a scrub by module name alone
+    * would delete them and re-reading the file could not put them back.
+    * `reloadChangedModules` below guards its own scrub the same way, against
+    * the "lib" session it takes as its `builtinEnv` parameter; this mirrors
+    * it.
+    *
+    * A wrong `builtins` fails SILENTLY, not loudly: pass `e` itself, or a
+    * snapshot taken after modules were read, and every `b.<table>.contains` guard
+    * is true, so nothing is removed from `env`, `termNames`, `cons` or the
+    * rest -- only `loadedFiles` and `loadedModules` shrink, and the stale
+    * names stay in scope.  Doc, not a `require`: `builtins` must be the
+    * post-`Lib.preamble`, pre-load snapshot of the SAME session as `e`.
+    *
+    * The caller owns `e`; this locks nothing.  A `SessionEnv` is mutable and
+    * not thread-safe, so the calling thread must be the only one using that
+    * env while this runs (the resident: the dispatch loop; WP-4's
+    * `Runner.invalidate`: under `evalLock`).
+    *
+    * Lifted out of `lsp.Resident` (WP-2), which passes its own post-preamble
+    * snapshot: it scrubs per check on the module being checked (on the copy)
+    * and on the resident env when a reload runs. */
+  def scrub(e: SessionEnv, builtins: SessionEnv, modules: Set[String]): Unit = {
+    val b = builtins
+    def mine(g: Global) = modules(g.module)
+    e.env = e.env filter { case (v, _) => v.name match {
+      case Some(g: Global) => !mine(g) || b.env.contains(v)
+      case _               => true
+    } }
+    e.termNames       = e.termNames       filterNot { case (g, _) => mine(g) && !b.termNames.contains(g) }
+    e.termNameOrigins = e.termNameOrigins filterNot { case (g, _) => mine(g) && !b.termNameOrigins.contains(g) }
+    e.cons            = e.cons            filterNot { case (g, _) => mine(g) && !b.cons.contains(g) }
+    e.privateCons     = e.privateCons     filterNot { case (g, _) => mine(g) && !b.privateCons.contains(g) }
+    e.consOrigins     = e.consOrigins     filterNot { case (g, _) => mine(g) && !b.consOrigins.contains(g) }
+    e.classes         = e.classes         filterNot { case (g, _) => mine(g) && !b.classes.contains(g) }
+    e.classOrigins    = e.classOrigins    filterNot { case (g, _) => mine(g) && !b.classOrigins.contains(g) }
+    e.loadedFiles     = e.loadedFiles     filterNot { case (_, n) => modules(n) }
+    e.loadedModules   = e.loadedModules -- modules
+  }
+
   /** REPL :reload in a box.
     *
     * @param builtinEnv A "lib" session containing loaded builtins,
