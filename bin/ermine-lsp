@@ -41,6 +41,17 @@ opts=( )
 # editor cannot run at all.  (A bad -Xmx inside ERMINE_JAVA_OPTS is the JVM's
 # own to refuse: it prints "Invalid maximum heap size" and exits 1 before any
 # LSP frame, which the client sees as a server that died at startup.)
+# AND A FLOOR, because the spelling test alone is not enough (review nit): 1k
+# and 1m are heap sizes by spelling and no use here.  64m is THIS LAUNCHER's
+# floor, not the JVM's: HotSpot starts happily on far less (32m, say), it is
+# the RESIDENT SESSION that cannot boot in it (129 modules, 22 MiB live and
+# ~775 MiB of RSS before a full GC, section 2.2), and only at a few MB or less
+# does the JVM itself refuse ("Too small maximum heap", exit 1 before any LSP
+# frame).  Below the floor is refused exactly like a misspelling, out loud,
+# and 2g is used.  Only a k or an m can be under it (any non-zero g or t is at
+# least 1 GiB), so the test is two integer comparisons and never an
+# overflowing one: a number of more than 18 digits is large, not small,
+# whatever bash makes of it.
 ejo=( )
 [[ -n ${ERMINE_JAVA_OPTS:-} ]] && read -r -a ejo <<< "$ERMINE_JAVA_OPTS"
 have_xmx=0
@@ -56,6 +67,17 @@ if (( ! have_xmx )); then
   if [[ ! $xmx =~ ^[1-9][0-9]*[kKmMgGtT]$ ]]; then
     echo "ermine-lsp: ERMINE_LSP_XMX=\"$xmx\" is not a JVM heap size (a non-zero number and a k, m, g or t suffix, e.g. 2g, 512m, 2097152k); using 2g" >&2
     xmx=2g
+  else
+    small=0
+    n=${xmx%[kKmMgGtT]}
+    case "$xmx" in
+      *[kK]) if (( ${#n} <= 18 )) && (( n < 65536 )); then small=1; fi ;;
+      *[mM]) if (( ${#n} <= 18 )) && (( n < 64 ));    then small=1; fi ;;
+    esac
+    if (( small )); then
+      echo "ermine-lsp: ERMINE_LSP_XMX=\"$xmx\" is below this launcher's 64m floor (a heap that small cannot boot the resident session, and at a few MB or less the JVM refuses to start at all); using 2g" >&2
+      xmx=2g
+    fi
   fi
   opts+=( -Xmx"$xmx" )
 fi

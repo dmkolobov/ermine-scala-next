@@ -1643,8 +1643,12 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * exit like `previewRoot` (S6: the earlier shape called
     * `Files.createTempDirectory` inside the property and left one behind on
     * every run). */
-  private lazy val outsideRoot: Path = {
-    val d = Files.createTempDirectory("ermine-wp5-outside")
+  private lazy val outsideRoot: Path = tempRoot("ermine-wp5-outside")
+
+  /** A temp directory removed at JVM exit -- `outsideRoot`'s own body, named
+    * because Q6 needs three more of them. */
+  private def tempRoot(prefix: String): Path = {
+    val d = Files.createTempDirectory(prefix)
     Runtime.getRuntime.addShutdownHook(new Thread(() => {
       val s = Files.walk(d)
       try s.sorted(java.util.Comparator.reverseOrder[Path]).forEach(p => Files.deleteIfExists(p))
@@ -1654,14 +1658,28 @@ object TestLspRobustness extends Properties("LSP robustness") {
     d
   }
 
+  /** Q6's directories (§2.4 "Roots", §13 Q6).  `q6RootA` and `q6RootB` are
+    * both CONFIGURED -- every Q6 request names both, in that order -- and
+    * `q6Outside` is named by nothing, which is the zero-configuration case.
+    * They are not `previewRoot`: the shared bench's root set must not move
+    * (see the section note and the boot-progress property, which asserts
+    * that the group booted exactly once). */
+  private lazy val q6RootA: Path   = tempRoot("ermine-wp5-q6a")
+  private lazy val q6RootB: Path   = tempRoot("ermine-wp5-q6b")
+  private lazy val q6Outside: Path = tempRoot("ermine-wp5-q6c")
+
   /** Write a fixture and make sure its modification time MOVED.  A
     * filesystem stamp has a granularity, and `Runner.staleFiles`' test is
     * `depCache(sf)._1 != lastModified`: two writes inside one tick would
     * leave an edited file looking current and cost a property its verdict
     * for the clock's reason (the hazard `TestRunner.rewriteModule` writes
     * down). */
-  private def writeFixture(name: String, text: String): Path = {
-    val p = previewRoot.resolve(name + ".e")
+  private def writeFixture(name: String, text: String): Path =
+    writeFixtureIn(previewRoot, name, text)
+
+  /** `writeFixture` into a directory other than `previewRoot` (Q6). */
+  private def writeFixtureIn(dir: Path, name: String, text: String): Path = {
+    val p = dir.resolve(name + ".e")
     val before = if (Files.exists(p)) p.toFile.lastModified else 0L
     write(p, text)
     if (p.toFile.lastModified <= before && !p.toFile.setLastModified(before + 2000L))
@@ -1773,6 +1791,28 @@ object TestLspRobustness extends Properties("LSP robustness") {
 
     def render(id: Int, path: Path, binding: String, params: String, generation: Int): Unit =
       request(id, "ermine/render", renderOf(path.toUri.toString, binding, params, generation))
+
+    /** A render naming roots of its own (Q6): the one thing `renderOf`
+      * deliberately cannot do, because the shared bench's root set must
+      * never move.  Only the Q6 properties use it, each on a bench of its
+      * own. */
+    def renderWith(id: Int, path: Path, binding: String, params: String,
+                   generation: Int, roots: List[Path]): Unit =
+      request(id, "ermine/render", Json.obj(
+        "uri" -> Json.Str(path.toUri.toString), "binding" -> Json.Str(binding),
+        "params" -> Json.parse(params).getOrElse(Json.Null),
+        "roots" -> Json.Arr(roots map (r => Json.Str(r.toString))),
+        "generation" -> Json.num(generation)))
+
+    /** HOW A BOOT IS OBSERVED (Q6): `Preview.ensureSession` logs
+      * "preview: render session booted in ..." on the ONE path that builds a
+      * `Runner`, and this bench's log is a `LogSink`.  No product surface is
+      * added for the test: the line is stage A's own and the count is the
+      * number of times a session was built on this bench.  Read it after the
+      * answer to the render that would have booted -- the preview thread
+      * writes the line before it renders, and the answer is the
+      * happens-before edge. */
+    def boots: Int = sink.result().count(_.startsWith("preview: render session booted"))
 
     /** The first message satisfying `p`, waiting at most `ms`: a bounded
       * wait, generous by design, that fails on a hang and nothing else. */
@@ -2930,6 +2970,118 @@ object TestLspRobustness extends Properties("LSP robustness") {
         ((noisy.size ?= 1) :| ("a client WITH the capability was sent " + noisy.size + " create(s), not 1")) &&
         ((repeated.size ?= 1) :| ("a client that answered no create was sent " + repeated.size +
                                   " of them over two renders, not 1"))
+    } }
+  }
+
+  // ------------------------------- Q6 -------------------------------------
+
+  /** Q6 (§13, DECIDED by the user on 2026-09-20; §2.4 "Roots").  The root
+    * set used to be `moduleRoots ++ inferredRoot(file) ++ request roots`, so
+    * two reports in two directories that are BOTH configured produced two
+    * different LISTS of the same directories -- `[M, A, B]` and `[M, B, A]`
+    * -- and §2.4's discard-on-change re-booted the render session on every
+    * switch.  The rule now: when the configured roots already place the file
+    * under the name its header declares AND resolve that name back to this
+    * very file, the inferred root is not added.
+    *
+    * ITS OWN BENCH, not the shared one: these requests name roots the shared
+    * bench never names, and a root-set change on it would discard the
+    * group's one session and falsify the boot-progress property (which
+    * asserts exactly one `window/workDoneProgress/create` for the group's
+    * one boot).
+    *
+    * WHAT FALSIFIES IT: on the old `rootSet` the three renders below boot
+    * three times, once each. */
+  property("D (Q6): two reports in two CONFIGURED directories share one render session") = secure {
+    previewLock.synchronized { timedD("Q6: two configured directories") {
+      val a = writeFixtureIn(q6RootA, "WpQ6A", wpSimple("WpQ6A", 9101))
+      val c = writeFixtureIn(q6RootB, "WpQ6B", wpSimple("WpQ6B", 9102))
+      val roots = List(q6RootA, q6RootB)
+      val b6 = new Bench(warm = false)
+      try {
+        b6.renderWith(1, a, "report", "1", 301, roots)
+        val a1 = b6.answer(1, 300000L)
+        b6.renderWith(2, c, "report", "1", 302, roots)
+        val a2 = b6.answer(2, 300000L)
+        b6.renderWith(3, a, "report", "1", 303, roots)
+        val a3 = b6.answer(3, 300000L)
+        val boots = b6.boots
+        ((okOf(a1) ?= Some(true)) :| ("the report under the first root: " + show(a1))) &&
+          ((okOf(a2) ?= Some(true)) :| ("the report under the second root: " + show(a2))) &&
+          ((okOf(a3) ?= Some(true)) :| ("back to the first root: " + show(a3))) &&
+          ((genOf(a1) ?= Some(301)) :| show(a1)) &&
+          ((genOf(a2) ?= Some(302)) :| show(a2)) &&
+          ((genOf(a3) ?= Some(303)) :| show(a3)) &&
+          ((boots ?= 1) :| ("the render session booted " + boots +
+                            " time(s) over three renders in two configured directories"))
+      } finally { b6.stop(); () }
+    } }
+  }
+
+  /** Q6's zero-configuration half, which the rule does NOT change: a file
+    * under none of the configured roots still gets its own inferred root
+    * (§2.4: "a single-segment module anywhere previews with no setting"),
+    * and that DOES move the root set, so it re-boots -- the existing
+    * behaviour, pinned so the Q6 branch cannot quietly swallow it. */
+  property("D (Q6): a report outside every configured root still renders, and re-boots") = secure {
+    previewLock.synchronized { timedD("Q6: zero configuration") {
+      val inside  = writeFixtureIn(q6RootA, "WpQ6Cfg",  wpSimple("WpQ6Cfg", 9103))
+      val outside = writeFixtureIn(q6Outside, "WpQ6Zero", wpSimple("WpQ6Zero", 9104))
+      val roots   = List(q6RootA, q6RootB)
+      val b6 = new Bench(warm = false)
+      try {
+        b6.renderWith(1, inside, "report", "1", 321, roots)
+        val a1 = b6.answer(1, 300000L)
+        val boots1 = b6.boots
+        b6.renderWith(2, outside, "report", "1", 322, roots)
+        val a2 = b6.answer(2, 300000L)
+        val boots2 = b6.boots
+        ((okOf(a1) ?= Some(true)) :| ("the configured report: " + show(a1))) &&
+          ((okOf(a2) ?= Some(true)) :| ("the report under no configured root: " + show(a2))) &&
+          ((boots1 ?= 1) :| ("the first render booted " + boots1 + " time(s)")) &&
+          ((boots2 ?= 2) :| ("the inferred root did not move the root set: " + boots2 +
+                             " boot(s) after a render outside every configured root"))
+      } finally { b6.stop(); () }
+    } }
+  }
+
+  /** Q6's SOUNDNESS half: the same module NAME under two configured roots.
+    *
+    * The loader does not resolve a module through `Session.moduleUnder`; it
+    * walks the root chain asking each root for `<root>/WpQ6Dup.e` and takes
+    * the first that exists (`Session.SourceFile.filesystem`, chained by
+    * `inOrder` in `Runner`).  So "the configured roots place this path under
+    * the name its header declares" is NOT enough to drop the inferred root:
+    * with `A` before `B` in the configured order, a file picked in `B` would
+    * be rendered from `A`'s copy, silently.  `Preview.configuredPlaces`
+    * therefore asks the loader's own question as well -- do the configured
+    * roots resolve that name back to THIS file -- and the picked file's own
+    * tree still goes in front of `req.roots` when they do not.
+    *
+    * BOTH DIRECTIONS, and each costs a boot (the two root sets differ, which
+    * is exactly the point): picked under the EARLIER root, where the rule
+    * fires and the configured chain already answers with the picked file;
+    * picked under the LATER root, where it must not fire. */
+  property("D (Q6): with one module name under two configured roots, the PICKED file is rendered") = secure {
+    previewLock.synchronized { timedD("Q6: one name, two roots") {
+      val inA = writeFixtureIn(q6RootA, "WpQ6Dup", wpSimple("WpQ6Dup", 9111))
+      val inB = writeFixtureIn(q6RootB, "WpQ6Dup", wpSimple("WpQ6Dup", 9222))
+      val roots = List(q6RootA, q6RootB)
+      val b6 = new Bench(warm = false)
+      try {
+        b6.renderWith(1, inA, "report", "1", 331, roots)
+        val a1 = b6.answer(1, 300000L)
+        b6.renderWith(2, inB, "report", "1", 332, roots)
+        val a2 = b6.answer(2, 300000L)
+        val d1 = docOf(a1).getOrElse("(no document)")
+        val d2 = docOf(a2).getOrElse("(no document)")
+        ((okOf(a1) ?= Some(true)) :| ("the copy under the earlier root: " + show(a1))) &&
+          ((okOf(a2) ?= Some(true)) :| ("the copy under the later root: " + show(a2))) &&
+          ((d1.contains("9111") && !d1.contains("9222")) :|
+            ("the file picked in the first root did not render its own contents: " + d1.take(400))) &&
+          ((d2.contains("9222") && !d2.contains("9111")) :|
+            ("THE FILE PICKED IN THE SECOND ROOT RENDERED THE OTHER ROOT'S COPY: " + d2.take(400)))
+      } finally { b6.stop(); () }
     } }
   }
 

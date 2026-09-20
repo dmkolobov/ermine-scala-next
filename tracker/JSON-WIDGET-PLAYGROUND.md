@@ -128,7 +128,7 @@
 >   after a watchdog fire (stage C).
 >
 > - **WP-5 stage C**: the launcher's heap policy, the smoke, and the measured instruments.
->   (1) `bin/ermine-lsp:20-63` adds `-Xmx${ERMINE_LSP_XMX:-2g}` and
+>   (1) `bin/ermine-lsp:20-84` adds `-Xmx${ERMINE_LSP_XMX:-2g}` and
 >   `-XX:+ExitOnOutOfMemoryError`. THE TWO FLAGS ARE DECIDED SEPARATELY, on WORDS of
 >   `ERMINE_JAVA_OPTS` and never on a substring of it: `-Xmx` is skipped when a word already
 >   sets the maximum heap (`-Xmx...` or `-XX:MaxHeapSize=...`), while
@@ -193,6 +193,20 @@
 >   before.
 >   Files: `json/Runner.scala`, `lsp/Preview.scala`, `TestRunner.scala`,
 >   `TestLspRobustness.scala`.
+>
+> - **Q6 FOLLOW-UP (2026-09-20)**: the third open question the user decided, BUILT. The
+>   render's root set no longer puts the picked report's INFERRED root ahead of
+>   `ermine.preview.roots` when the CONFIGURED roots already place the file -- so two reports
+>   in two configured directories give the SAME list and §2.4's discard-on-change stops
+>   re-booting the render session on every switch. "Place" is two tests, and the second is the
+>   sound one: the configured roots must name the path with the module name its own header
+>   declares, AND must resolve that name back to THIS file, which is the question the LOADER
+>   asks. Zero configuration is untouched, `ermine/schema` is untouched, and the SET of roots
+>   never changes -- only the order, which is the behaviour change §2.4 records. Three
+>   group-D properties. Riding along: `bin/ermine-lsp` gains a 64m FLOOR under
+>   `ERMINE_LSP_XMX` (`1k` and `1m` are heap sizes by spelling and "Too small maximum heap" to
+>   the JVM), and §2.5's and §2.2's instrument figures are corrected against their logs.
+>   Files: `lsp/Preview.scala`, `TestLspRobustness.scala`, `bin/ermine-lsp`, this document.
 >
 > **Which suites were run, and what they said, is recorded in each ticket's commit message, not
 > here**: a banner that names a suite goes stale the moment the next ticket runs a different
@@ -300,7 +314,7 @@ it becomes mandatory the day a second registry *reader* appears.
 `Control.Monad`, `Control.Monad.Cont`, `Function`, `List`, `Pair`, `Relation.Sort`,
 `Relation.Scan` (`Fetch.e:45-55`), so a large fraction of the resident's modules is loaded
 twice. **Was unmeasured; MEASURED 2026-09-20 below.** No launcher set a heap cap until
-WP-5 stage C (`bin/ermine-lsp:18-31` as this was written, `:18-43` now; the extension still
+WP-5 stage C (`bin/ermine-lsp:18-31` as this was written, `:18-84` now; the extension still
 sets only `ERMINE_LSP_LOG`, `extension.js:145-146`), so the cap was the JDK default,
 a quarter of RAM (*external*): 3984 MB on the 15.6 GB dev box (`tracker/PERF-ROADMAP.md:139`;
 MEASURED again 2026-09-20, `java -XshowSettings:vm -version` says 3.89G),
@@ -310,7 +324,7 @@ MEASURED again 2026-09-20, `java -XshowSettings:vm -version` says 3.89G),
 extension exports as `ERMINE_LSP_XMX` beside `ERMINE_LSP_LOG`, restarting the server on a
 change as `serverPath` does (`extension.js:275-280`). Two windows on an 8 GB laptop are then
 4 GB of JVM heap by construction. **The launcher half is BUILT** (WP-5 stage C,
-`bin/ermine-lsp:18-43`); the `ermine.maxHeap` SETTING and its export as `ERMINE_LSP_XMX` are
+`bin/ermine-lsp:18-84`); the `ermine.maxHeap` SETTING and its export as `ERMINE_LSP_XMX` are
 WP-7's row in §14 ("the `ermine.maxHeap` export"), so until WP-7 the variable is honoured but
 only an environment that already carries it reaches the server.
 
@@ -332,7 +346,7 @@ did: 775 MiB before the preview boot, 740 MiB after it, while the live set went 
 | a second render of the same report, warm | 0.0 s | 342 MiB (349928 kB) | 342 MiB (350628 kB) | 29 MiB (30010K) |
 
 **The second session costs about 60 MiB of RSS and 8 MiB of live heap** on this fixture,
-against a 2 GB cap. That is far less than "a large fraction of the resident's modules is
+against a 2 GiB cap. That is far less than "a large fraction of the resident's modules is
 loaded twice" suggests, and the reason is the `Session.depCache` row of the table above:
 both sessions load through that one process-global cache, and the render session holds
 `Lib.preamble`,
@@ -377,7 +391,7 @@ What the preview thread costs, and where it is paid:
 | Item | Decision | Evidence |
 |---|---|---|
 | Construction | `new Runner(RunnerConfig(roots = ermine.moduleRoots ++ inferredRoot(uri) ++ roots, run = delegatingRun, scanner = scannerFor(profile)))` on the preview thread, on the first `ermine/render` (lazy: no profile read, no driver class, no connection before then) | `Runner.scala:171-179`; resident roots at `Main.scala:106-117`. Passing `run` explicitly avoids the default `Runners.liteDB`, which is a `def` (`Backends.scala:39`) forcing the `lazy val` `DB.sqliteTestDB` (`DB.scala:140`) and loading the SQLite driver (`Runner.scala:174`) |
-| Roots | `moduleRoots` (the resident's own, so both sessions register equal shapes, §2.2), then the picked report's **inferred root** (the server derives it as `checkFile` does: parse the header, walk up one directory per extra segment of the module name, `Resident.scala:428-434`), then `ermine.preview.roots` -- `type: array of string`, `scope: "resource"` (*external*: per-folder), default `[]`, resolved by the extension against the workspace folder that owns the picked report (`getConfiguration("ermine", folderUri)`, *external*) and sent as **absolute** paths in every `ermine/render`, because a relative root would resolve against the server's cwd (`Main.scala:102-104`), which is `server.root` (`extension.js:151`). Distinct, then the classpath (`Runner.scala:313-316`). A single-segment module anywhere previews with **no setting**; empty means "the report's own tree and the stdlib". A change to the set **discards the `Runner`**: roots are immutable config (`:171`) | |
+| Roots | `moduleRoots` (the resident's own, so both sessions register equal shapes, §2.2), then the picked report's **inferred root** (the server derives it as `checkFile` does: parse the header, walk up one directory per extra segment of the module name, `Resident.scala:428-434`), then `ermine.preview.roots` -- `type: array of string`, `scope: "resource"` (*external*: per-folder), default `[]`, resolved by the extension against the workspace folder that owns the picked report (`getConfiguration("ermine", folderUri)`, *external*) and sent as **absolute** paths in every `ermine/render`, because a relative root would resolve against the server's cwd (`Main.scala:102-104`), which is `server.root` (`extension.js:151`). Distinct, then the classpath (`Runner.scala:313-316`). A single-segment module anywhere previews with **no setting**; empty means "the report's own tree and the stdlib". A change to the set **discards the `Runner`**: roots are immutable config (`:171`). **Q6, decided 2026-09-20 and BUILT** (§13): the inferred root is added only when the CONFIGURED roots -- `moduleRoots` then `ermine.preview.roots`, normalised and distinct -- do not already PLACE the file, and "place" is two tests, both required (`Preview.scala:1058-1069`, `:1103-1118`). (1) `Session.moduleUnder(configured, path)` answers the very module name the file's HEADER declares: `moduleUnder` takes the FIRST root in the list that contains the path (`Session.scala:739-744`, `collectFirst`), so `/w` listed before `/w/sub` makes `/w/sub/Rpt.e` "sub.Rpt" and the file must go under its own root instead. (2) THE SOUND HALF: those same roots must resolve that NAME back to THIS file. The loader never asks `moduleUnder`; it walks the chain asking each root for `<root>/A/B.e` and takes the first that EXISTS (`Session.scala:378-382`, chained at `Runner.scala:415-416`), so without this test a report picked under a later root would be rendered from an earlier root's copy of the same module name, silently. When both hold, the inferred root IS one of the configured entries (if `path == r/<module>.e` then `inferredRoot(path) == r`), so dropping it changes the SET not at all -- only its POSITION -- and the chain becomes the plain configured order, the same list for every report under a configured root, which is what stops the switch re-booting. Otherwise it is added exactly as before, ahead of `ermine.preview.roots`, so the picked file's own tree keeps the first say. **THE BEHAVIOUR CHANGE, plainly**: when the same module NAME exists under two configured roots, the CONFIGURED ORDER now decides which one the session resolves, not the picked file's own tree. The picked report's OWN module is exempt -- test (2) is exactly the statement that the configured order already answers with the picked file, and when it does not, the inferred root goes in and the picked file wins as before. Any OTHER name -- a widget two roots both define -- now follows the configured order. **WHAT THAT LOOKS LIKE TO A USER, stated rather than left to be discovered**: a report that used to load its OWN directory's copy of such a module can now pick up the other root's copy, and if the two have drifted the render fails to typecheck -- a 500 about a module the developer did not edit. Nothing warns about the ambiguity: neither the loader nor the preview notices that two configured roots offer the same module name, so the only signal is the error itself. Test D "one name, two roots" pins both directions for the picked report's own module, which is the case the rule makes safe | |
 | Settings spelling (WP-7) | **`initialize` and a settings push do not agree, and the extension must send both**: the server reads `ermine.preview.timeoutSeconds` / `ermine.preview.maxDocumentBytes` from `initializationOptions.preview.*` (no `ermine` wrapper -- `initializationOptions` is already the server's own object, as `fastMode` and `debounce` are), and from a `workspace/didChangeConfiguration` push as either `settings.ermine.preview.*` or `settings.preview.*` | as built, WP-5 stage B |
 | Reads saved files, not buffers | `Runner` loads through `Session.SourceFile.filesystem` (`:315`); the resident's checks read open buffers (`Resident.scala:397-400`) but the resident env itself loads from disk too | the preview follows **saves**; the panel says so with an "unsaved: Chart.e" hint (§5) |
 | Always typechecks | `Runner` is `_typeCheck = Some(true)` (`Runner.scala:288`) and must be: `Session.eval` infers the report's type (`Session.scala:830`) and `Decode.reportSignature` consumes it (`Runner.scala:464`). `ermine.fastMode` skips the typecheck in **checks** only (`Main.scala:65-70`), so in fast mode a type error has no squiggle and the preview shows a 500 "module does not load": the banner is the only diagnostic, and says so (§5) | |
@@ -461,16 +475,17 @@ stayed inside the heap.
 
 | case | when the watchdog answered | heap and RSS just after the fire | what followed |
 |---|---|---|---|
-| `WpChain`, `-Xmx2g` (the launcher default), **three runs** | 12.0 / 12.1 / 12.2 s -- the 10 s clock plus the ~2 s session boot the clock deliberately does NOT cover (the bracket above) | RSS 1.91 / 1.93 / 2.02 GiB; G1 heap 1.77 GiB committed, 422 / 518 / 673 MiB used | used 1.58-1.73 GiB at +30 s (4.65 cores busy), 1.91 GiB at +60 s (2.15 cores), and **GONE before +120 s in the two runs that were allowed to get there: exit code 3**, `-XX:+ExitOnOutOfMemoryError`. The remaining run -- the EARLIEST, the one whose watchdog answered at 12.2 s -- sampled only to +60 s and was killed by the instrument there while it was still alive, so it says nothing about +120 s |
+| `WpChain`, `-Xmx2g` (the launcher default), **three runs, and every triple below is in RUN ORDER, earliest first** | 12.2 / 12.1 / 12.0 s -- the 10 s clock plus the ~2 s session boot the clock deliberately does NOT cover (the bracket above) | RSS 1.93 / 2.02 / 1.91 GiB; G1 heap committed 1.77 / 1.78 / 1.77 GiB (1.77 in two of the three runs; the 12.1 s run committed 1.78), 518 / 673 / 421 MiB used | used 1.58-1.73 GiB at +30 s (4.65 cores busy), 1.91 GiB at +60 s (2.15 cores), and **GONE before +120 s in the two runs that were allowed to get there: exit code 3**, `-XX:+ExitOnOutOfMemoryError`. The remaining run -- the EARLIEST, the one whose watchdog answered at 12.2 s -- sampled only to +60 s and was killed by the instrument there while it was still alive, so it says nothing about +120 s |
 | `WpSpin`, `-Xmx2g` | 12.5 s | RSS 2.31 GiB; heap 2.00 GiB committed, 1.98 GiB used | gone about 5 s later, before the next request could be answered |
 | `WpBlow`, `ERMINE_LSP_XMX=256m` (the launcher's variable, honoured) | it never fired: the shipped 60 s clock was still running when the OOM arrived | heap 256 MiB committed, 254 MiB used at the last sample, +6.4 s | **exit code 3 after 8.6 s**, stderr EMPTY, and the JVM's own line written UNFRAMED to STDOUT |
-| `WpRegex`, `-Xmx2g` -- the review's candidate for a spin INSIDE ONE PRIMITIVE | **it never fired: the render ANSWERED `{"ok":true,...}` in 2.1 s**, almost all of it the session boot | -- | the document carried the input back unchanged (`"aaaa...!"`, no match); at +30, +60 and +120 s the process was IDLE -- **0.00 cores busy**, RSS flat at 699 MiB, heap flat at 213 MiB used, 29 MiB live after a full GC -- and it answered a second hover before the instrument killed it |
+| `WpRegex`, `-Xmx2g` -- the review's candidate for a spin INSIDE ONE PRIMITIVE | **it never fired: the render ANSWERED `{"ok":true,...}` in 2.1 s**, almost all of it the session boot | -- | the document carried the input back unchanged (`"aaaa...!"`, no match); at +30, +60 and +120 s the process was IDLE -- **0.00 cores busy**, RSS between 699 and 703 MiB (703 at +30 s, 699 at +60 and +120 s), heap used between 212 and 213 MiB, 29 MiB live after a full GC -- and it answered a second hover before the instrument killed it |
 
 **PROVENANCE, because the file names moved.** The two EARLIER `WpChain` runs (watchdog at
 12.2 s and 12.1 s) were made before the program was split into a file of its own, and their
 logs therefore record the file name `WpSpin.e`. The LATEST run (12.0 s) was made as
-`WpChain.e` after the split, and it is the one whose numbers lead each cell above (1.91 GiB,
-422 MiB, 4.65 and 2.15 cores). The `WpSpin` row is a DIFFERENT program -- the bare self-call
+`WpChain.e` after the split, and it is the run the triples above end on (1.91 GiB, 421 MiB)
+and the ONLY one whose instrument recorded processor occupancy, so 4.65 and 2.15 cores are
+its figures and not the other two runs'. The `WpSpin` row is a DIFFERENT program -- the bare self-call
 -- and has one run, made after the split.
 
 What the watchdog does was measured on `WpChain` in all three runs, and it is §2.5's own row:
@@ -499,6 +514,11 @@ Three things this adds to, or takes back from, the mined text above:
    `^(a|a?)+$`, `(x+x+)+y`, `(a*)*b`, `(a|a?)+b`, `([a-z]+)+#`, `(a+)+\z`, `(?:a+)+b`,
    `(a|aa)+c`, over 47 pattern/input combinations, anchored and unanchored, with and without
    the required trailing literal actually present in the input, every one under 2 ms.
+   **That twelve-pattern sweep is NOT REPRODUCIBLE FROM THE RECORD**: it was run as a scratch
+   `java` program whose OUTPUT was never saved, so the numbers in this sentence rest on the
+   run and not on a log. The finding the row depends on is the one in the table above, which
+   IS on the record: `WpRegex` through the real server answered `{"ok":true}` in 2.1 s and the
+   process was idle for two minutes afterwards.
    JDK 21's `Pattern` defeats the classic cases. So: no witness either way, and the promise
    keeps its CPU-bound clause.
 2. **The cap is not only a ceiling on runaways; a stuck preview OCCUPIES it.** RSS reached
@@ -893,7 +913,7 @@ approval under `:91`. Each WP done-when in §14 names its tier.
 |---|---|---|---|---|
 | Wire / dispatcher | `TestLspRobustness` A-group | a deferred handler answering from another thread still yields "every message answered in order, once" -- the synchronous answers keep their positions and every deferred one is answered exactly once, in any order; two threads calling `send` concurrently produce frames a `Wire` reads back intact; a body for a redacted method never appears in the captured log, an unredacted one does, and neither a JSON array nor a non-string `method` logs a body either; a parse error quotes at most one character of the input or a number token, and no two-character upper-case window of the input appears in it (the marker check of §4), with the same claim re-checked through `Server.handle` on an unparseable frame carrying a secret; `$/cancelRequest` reaches a registered handler while other `$/` notifications are dropped with no answer and no `ignoring notification` line (they do get the ordinary `">>"` line, like every other incoming message) | `suites` (**pr**): `scalacheck-binding/src/main/scala` is in core's test sources (`build.sbt:88-90`) | seconds |
 | Registration flag | group D in `TestLspRobustness` | check a buffer whose `data Heading` gained a field; `DataConDecl.forConstructor(Global("Sales", "Heading"))` still has four fields | **pr** | seconds |
-| Render session | group D, under `residentLock` as B/C are (`:34`, `:307`) | render `Sales.report`; mutate the report file; `invalidate`; render again: the document differs. Mutate a **widget** module the report imports: the report is in the invalidated set. Render a module whose evaluation throws: the resident still answers a check (`Resident.checkFile`, `Resident.scala:401`) and the next render works. A `$/cancelRequest` for a queued render answers `-32800` and the queue is empty. `ermine/schema {module: "Sales", binding: "report"}` from the queue equals `exportNamed("Sales", "Query")` under the render env. `ermine/preview/reports` on `Sales.e` lists `report : Query -> Node` and nothing else. **(Q4)** A report whose LOAD failed is a 500 "does not load"; the file is fixed; `invalidate` of its path sends `ermine/preview/invalidated` NAMING it and the next render is `{ok:true}` with the fixed content. **(Q5)** The 404 for a file that cannot be placed names the cause -- "cannot read Gone.e" for a file that is not there, "no module header could be read from WpBadHeader.e" for one whose header does not parse | **pr**; group D boots a render session, seconds each, MEASURED in WP-5 and kept under 60 s total or the suite is split | seconds to a minute |
+| Render session | group D, under `residentLock` as B/C are (`:34`, `:307`) | render `Sales.report`; mutate the report file; `invalidate`; render again: the document differs. Mutate a **widget** module the report imports: the report is in the invalidated set. Render a module whose evaluation throws: the resident still answers a check (`Resident.checkFile`, `Resident.scala:401`) and the next render works. A `$/cancelRequest` for a queued render answers `-32800` and the queue is empty. `ermine/schema {module: "Sales", binding: "report"}` from the queue equals `exportNamed("Sales", "Query")` under the render env. `ermine/preview/reports` on `Sales.e` lists `report : Query -> Node` and nothing else. **(Q4)** A report whose LOAD failed is a 500 "does not load"; the file is fixed; `invalidate` of its path sends `ermine/preview/invalidated` NAMING it and the next render is `{ok:true}` with the fixed content. **(Q5)** The 404 for a file that cannot be placed names the cause -- "cannot read Gone.e" for a file that is not there, "no module header could be read from WpBadHeader.e" for one whose header does not parse. **(Q6)** Two fresh reports in two DIFFERENT directories, both named as `roots` on every request, render first / second / first again, all `ok:true`, and the session boots exactly ONCE across the three (counted from `Preview`'s own "render session booted" log line; each of the three properties runs on a bench of ITS OWN, not the group's shared one, because these requests move the root set and the shared bench's must never move). A report under NO configured root still renders and DOES re-boot, which is §2.4's zero configuration unchanged. One module NAME under two configured roots: the PICKED file is the one rendered, whichever root it is in | **pr**; group D boots a render session, seconds each, MEASURED in WP-5 and kept under 60 s total or the suite is split | seconds to a minute |
 | Runner | `TestRunner` (`:112`, `:806` already runs properties concurrently over one runner) | `invalidate` of an unloaded path is a no-op; `invalidate` then `render` reloads the module (loaded-set delta); two report-typed bindings in one module render two documents; `new Runner(cfg)` with an explicit `run` loads no JDBC driver (`CountingRun`, `TestRunner.scala:77`); **(Q4)** a module whose LOAD FAILED renders 500 and is named by the next `invalidate` -- of its own path, of the path of a broken module it IMPORTS, and of a loaded healthy module's path -- while a file under no root and a directory still name nothing, and the fix renders 200 and takes it back out; a module that is pending and then LOADED as another module's dependency is pruned and NOT named; a pending module whose file is DELETED is named while the file is there and not after the retry's 404 | **pr** | seconds |
 | Emitters | `TestSqlEmitters` | the SQLite string for a windowed relation contains `over (`; no emitter output contains `TODO`; `UnsupportedOnDialect` for `tryCast` on SQLite | **pr** | seconds |
 | Classifier | new, with a fake driver | §8.3 | **pr** | seconds |
@@ -933,7 +953,7 @@ approval under `:91`. Each WP done-when in §14 names its tier.
 | Q3 | is `Windows-ROOT` needed, or is the internal CA in the JDK's `cacerts` | WP-12 |
 | Q4 | how a module whose LOAD FAILED is invalidated once it is fixed | **DECIDED 2026-09-20** (option (i), built); resolved |
 | Q5 | §2.4 and §4 disagree: the 404 "not under a module root" is unreachable for a readable file | **DECIDED 2026-09-20** (option (i), built); resolved |
-| Q6 | a roots change discards the `Runner`, and the inferred root is part of the roots, so previewing two reports in two directories re-boots the render session each time | nothing; decide before WP-7 |
+| Q6 | a roots change discards the `Runner`, and the inferred root is part of the roots, so previewing two reports in two directories re-boots the render session each time | **DECIDED 2026-09-20** (the refinement, built); resolved |
 | Q7 | `ermine/schema {module, binding}` carries no `uri` and no `roots`, so a schema asked before the first render cannot see a workspace module | nothing; decide before WP-8 |
 | Q8 | §2.5 asks the watchdog's NOTIFICATION to carry the **Restart Language Server** button, and no LSP server-to-client notification carries an action | nothing; decide before WP-7 |
 | Q9 | `ermine.preview.timeoutSeconds: 0` turns the watchdog off entirely as built: is an off switch wanted at all, and should `0` be it? | nothing |
@@ -1051,6 +1071,39 @@ least-recently-used, which multiplies the memory of §2.2 by however many are ke
 as stated, because the runner's loader chain really is different, so it would mean rebuilding
 only the loader, which `RunnerConfig` does not allow today.
 
+**DECIDED by the user on 2026-09-20: a REFINEMENT of (i), and BUILT.** Not "accept", and not
+the cache of (ii): the inferred root is not added AT ALL when the configured roots already
+place the file, which removes the re-boot in the case that caused the question -- two reports
+in two directories that are both in `ermine.preview.roots` -- and leaves everything else
+alone. WHAT WAS BUILT, in four lines. `Preview.rootSet` now computes the CONFIGURED roots
+first (`moduleRoots` then the request's, normalised, distinct) and adds the inferred root only
+when `configuredPlaces` is false. `configuredPlaces` is two tests and both are needed:
+`Session.moduleUnder(configured, path)` must answer the module name the file's own HEADER
+declares (it takes the first root in the list that CONTAINS the path, so a root above the
+file's own would name it something else), and `resolvedFile` -- the LOADER's question, the
+first configured root that has `<root>/A/B.e` -- must answer THIS file, which is what keeps a
+report picked under a later root from being rendered out of an earlier root's copy of the same
+module name. `inferredRoot` answers `Either[String, Placed]` so the header's module name is
+available beside the root and the file is read and parsed ONCE, with Q5's four honest failure
+reasons unchanged. `ensureSchemaSession` is untouched, the wire is untouched (404 texts, the
+400s, the 503, the generation echo), and zero configuration is untouched: a file under none of
+the configured roots still gets its own root and still re-boots, which one of the three new
+group-D properties pins. **IT NEVER CHANGES THE SET, ONLY THE ORDER** -- when the test passes,
+the inferred root is provably one of the configured entries, so `distinct` would have dropped
+the duplicate anyway and only its POSITION was ever at stake -- and §2.4 records the one
+consequence: for a module NAME that exists under two configured roots, the configured order
+now decides, where the inferred root used to give the picked file's directory the first say
+ahead of `ermine.preview.roots`. The picked report's own module is exempt by the second test.
+
+**THE CACHE OF OPTION (ii) IS NOT BUILT**, and the number that decision would turn on is now
+measured: stage C's instrument (§2.2) puts a second session at **about 60 MiB of RSS and 8 MiB
+of live heap** on the `Sales` fixture, against the launcher's 2 GiB default. That is small
+enough that keeping two or three `Runner`s would cost little heap -- and it is also small
+enough that the refinement above removes the switch cost without spending any. If a later
+ticket wants (ii) as well (for roots that genuinely differ -- a report outside every
+configured root), those are the figures to argue from, and the fixture is not a real
+workspace's report.
+
 **Q7, in full** (found while building WP-5 stage B, 2026-09-20). §4's row gives
 `ermine/schema` the keys `{module, binding}` and nothing else, and §6 says the binding form is
 answered from the render session. But the render session's roots are computed per render from
@@ -1073,6 +1126,13 @@ binding)); (ii) give `ermine/schema`'s binding form a `uri` and `roots` like `er
 so it computes the same root set -- new wire surface, §4's to decide; (iii) let the preview
 remember the last root set it booted and re-boot with it, which differs from (i) only after a
 `discard`. It blocks nothing: WP-8 is where the extension decides when to ask.
+**A THIRD CONSEQUENCE, found by the Q6 review (2026-09-20) and recorded here because it is
+the same question, not a new one**: the resident's `moduleRoots` always LEAD the root set,
+so a PICKED report whose header names a module that also exists under a resident root is
+not the file the render loads -- the resident's copy is. Q6's refinement leaves that exactly
+as it was (the inferred root was always spliced after `moduleRoots`, never before them), and
+whether the picked file should out-rank `moduleRoots` is part of this same decision. Nothing
+is built for it.
 
 **Q8, in full** (same origin). §2.5 says the watchdog answers the request "in a notification
 carrying the **Ermine: Restart Language Server** button (`ermine.restartServer`)", and §4 says

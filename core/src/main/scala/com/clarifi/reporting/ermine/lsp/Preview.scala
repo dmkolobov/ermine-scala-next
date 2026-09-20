@@ -880,7 +880,7 @@ final class Preview(moduleRoots: () => List[String],
     // explain the 404 below, and re-deriving it there would read the file a
     // second time.
     val placed = path map inferredRoot
-    val roots  = rootSet(r.req, placed flatMap (_.toOption))
+    val roots  = rootSet(r.req, path, placed flatMap (_.toOption))
     // The boot inside is UNWATCHED and the watchdog is re-armed as it ends,
     // by `ensureSession` itself (review M2): nothing is needed here.
     ensureSession(roots, r.progress, r) match {
@@ -1024,7 +1024,8 @@ final class Preview(moduleRoots: () => List[String],
   }
 
   /** The roots of §2.4, in order and distinct: the resident's own, then the
-    * report's inferred root, then the request's.
+    * report's inferred root, then the request's -- EXCEPT when the
+    * configured roots already place the file, which is Q6.
     *
     * EVERY ENTRY IS NORMALISED FIRST (N3).  `distinct` decides the set, and
     * the set is the discard key of §2.4 -- two spellings of one directory
@@ -1035,9 +1036,86 @@ final class Preview(moduleRoots: () => List[String],
     * checkout `bin/ermine-lsp` runs in.  `req.roots` arrive normalised from
     * `RenderRequest.parse`, which refuses the entries that cannot be.  A
     * resident root that cannot be made into a path is logged and dropped,
-    * which is what `Main` does with the same value at `initialize`. */
-  private def rootSet(req: RenderRequest, inferred: Option[String]): List[String] =
-    (moduleRoots().flatMap(normalRoot) ++ inferred.toList ++ req.roots).distinct
+    * which is what `Main` does with the same value at `initialize`.
+    *
+    * Q6 (decided by the user on 2026-09-20).  The inferred root was spliced
+    * in AHEAD of `req.roots`, so two reports in two directories that are
+    * BOTH configured produced two different LISTS of the same directories --
+    * `[M, A, B]` for a report under `A`, `[M, B, A]` for one under `B` --
+    * and §2.4's discard-on-change then re-booted the render session on every
+    * switch, for ever, for nothing.  The rule now: if the CONFIGURED roots
+    * (`moduleRoots` then `req.roots`, normalised) already place the file
+    * under the module name its OWN HEADER declares, the inferred root is not
+    * added; otherwise it is added exactly as before.
+    *
+    * IT NEVER CHANGES THE SET, ONLY THE ORDER.  `configuredPlaces` is true
+    * only when some configured root `r` satisfies `p == r/<module>.e`, and
+    * that `r` IS `inferredRoot(p)` -- so the entry the branch drops is one
+    * `distinct` would have collapsed anyway.  What the branch drops is its
+    * POSITION: the chain is the configured order, the same list for every
+    * report under a configured root, which is what makes the session
+    * survive a switch. */
+  private def rootSet(req: RenderRequest, path: Option[Path],
+                      placed: Option[Placed]): List[String] = {
+    // ONE call to `moduleRoots()`: it is a function the server supplies and
+    // two calls could answer differently, which would make the two branches
+    // below disagree about the set.
+    val resident   = moduleRoots().flatMap(normalRoot)
+    val configured = (resident ++ req.roots).distinct
+    val redundant  =
+      (for { p <- path; pl <- placed } yield configuredPlaces(configured, p, pl.module)) == Some(true)
+    if (redundant) configured
+    else (resident ++ placed.map(_.root).toList ++ req.roots).distinct
+  }
+
+  /** Q6's test, in TWO parts, and both are needed for the rule to be sound.
+    *
+    * (a) `Session.moduleUnder(configured, p) == Some(module)`: the name the
+    * render will derive for this very path from the FINAL root set is the
+    * name its header declares.  `moduleUnder` answers for the FIRST root in
+    * the list that contains `p` (`Session.scala:739-744`, `collectFirst`),
+    * so a root ABOVE the file's own -- `/w` before `/w/sub` for
+    * `/w/sub/Rpt.e` whose header says `module Rpt` -- answers `sub.Rpt`,
+    * which is not what the file says it is, and the inferred root must then
+    * go in so that the file is read under its own name.
+    *
+    * (b) THE SOUNDNESS HALF, without which (a) alone is wrong.  The LOADER
+    * does not resolve a module through `moduleUnder`; it walks the root
+    * chain asking each for `<root>/A/B.e` and takes the FIRST that EXISTS
+    * (`Session.SourceFile.filesystem`, `:378-382`, chained by `inOrder` at
+    * `Runner.scala:415-416`).  So if a module of the SAME NAME exists under
+    * an EARLIER configured root, dropping the inferred root would make the
+    * render load THAT file -- a different file from the one the user picked,
+    * with no error anywhere.  (b) asks the chain the loader's own question:
+    * does `configured` resolve `module` back to THIS path?  When it does,
+    * the inferred root cannot change the answer and is not needed; when it
+    * does not, the inferred root goes in as before and, sitting ahead of
+    * `req.roots`, keeps the picked file's own tree winning.
+    *
+    * WHAT IS NOT PINNED, stated rather than hidden: (b) covers the picked
+    * report's OWN module name.  For any OTHER name -- a widget two roots
+    * both define -- the configured order now decides, where the inferred
+    * root used to give the picked file's directory the first say ahead of
+    * `req.roots`.  §2.4 says so.
+    *
+    * It costs at most one `File.exists` per configured root and reads no
+    * file: the header was already parsed once, by `inferredRoot`. */
+  private def configuredPlaces(configured: List[String], p: Path, module: String): Boolean =
+    Session.moduleUnder(configured, p) == Some(module) && resolvedFile(configured, module) == Some(p)
+
+  /** The file the LOADER would read for `module` over `roots`: the first
+    * root that has `<root>/A/B.e`, normalised.  This is
+    * `SourceFile.inOrder`'s own rule (`find (_ isDefined)`) over the very
+    * `SourceFile.filesystem` loaders `Runner` chains, asked without building
+    * a session.  `None` when no root has it -- and when a path cannot be
+    * made, which answers "the configured roots do not resolve it here" and
+    * therefore keeps today's behaviour. */
+  private def resolvedFile(roots: List[String], module: String): Option[Path] =
+    try roots.iterator.map(r => Session.SourceFile.filesystem(r)(module)).find(_.isDefined).flatten match {
+      case Some(Session.Filesystem(f, _)) => Some(Session.normalize(f))
+      case _                              => None
+    }
+    catch { case e: Throwable => log("preview: cannot resolve " + module + ": " + messageOf(e)); None }
 
   /** THE 404's MESSAGE (Q5, decided by the user on 2026-09-20 as option (i):
     * keep `inferredRoot` in the root set -- it is §2.4's zero-configuration
@@ -1060,7 +1138,7 @@ final class Preview(moduleRoots: () => List[String],
     * and the client can map a name back to it, but nothing here puts a
     * server-side directory on the wire.  `failure` scrubs the result like
     * every other message (§8 rule A5). */
-  private def cannotPlace(p: Path, placed: Option[Either[String, String]]): String =
+  private def cannotPlace(p: Path, placed: Option[Either[String, Placed]]): String =
     if (!p.toString.endsWith(".e")) "not an Ermine source file: " + fileName(p)
     else placed match {
       case Some(Left(why)) => why
@@ -1098,8 +1176,13 @@ final class Preview(moduleRoots: () => List[String],
     * the exception's own text: `Session.Filesystem.contents` dies with
     * "File '<absolute path>' does not exist." and a parser error carries the
     * source name it was built with, so neither may be quoted.  The absolute
-    * path goes to the LOG, which is the server's own and is scrubbed. */
-  private def inferredRoot(p: Path): Either[String, String] = {
+    * path goes to the LOG, which is the server's own and is scrubbed.
+    *
+    * Q6: THE `Right` CARRIES THE HEADER'S MODULE NAME BESIDE THE ROOT.
+    * `rootSet` has to compare that name with what the configured roots make
+    * of the path, and the header is parsed HERE; answering only the root
+    * would mean reading and parsing the file a second time. */
+  private def inferredRoot(p: Path): Either[String, Placed] = {
     val name = fileName(p)
     // The `SourceFile` is built INSIDE the `try` as it was before Q5: this
     // method answers a `Left`, never throws, and nothing on the way to the
@@ -1137,7 +1220,7 @@ final class Preview(moduleRoots: () => List[String],
               ", which is deeper than the directories above it"
             if (i > 0) { log("preview: no root inferred for " + p + ": " + tooDeep); Left(tooDeep) }
             else d match {
-              case Some(r) => Right(r.toString)
+              case Some(r) => Right(Placed(r.toString, module))
               case None    => log("preview: no root inferred for " + p + ": " + tooDeep); Left(tooDeep)
             }
         }
@@ -1600,6 +1683,13 @@ object Preview {
         case (Some(m), Some(b)) => Right(SchemaRequest(m, b))
       }
   }
+
+  /** What `Preview.inferredRoot` answers when it COULD place a file: the
+    * root the header implies, and the module name the header declares.  The
+    * name is carried beside the root because Q6's rule has to compare it
+    * with what the CONFIGURED roots make of the same path, and the header is
+    * parsed once, inside `inferredRoot`. */
+  private[lsp] final case class Placed(root: String, module: String)
 
   /** `ermine/render`'s parameters (§4). */
   final case class RenderRequest(uri: String, binding: String, params: Json,
