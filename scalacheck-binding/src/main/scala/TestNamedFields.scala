@@ -480,19 +480,25 @@ object TestNamedFields extends Properties("Ermine named constructor fields") {
                   "Json" -> ((None, List[com.clarifi.reporting.ermine.syntax.Explicit[Global]](), false)))
       Encode.render(Session.eval("nfidoc", m)._2).fold(e => "error: " + e.report, identity)
     }
-    try ErmineFixture.literalLock.synchronized {
-      Session.depCache.clear()
-      val off = answer(false)
-      Session.depCache.clear()
-      val coldOn = answer(true)                 // writes NfI.ei
-      val wroteEi = Files.exists(dir.resolve("NfI.ei"))
-      Session.depCache.clear()
-      val warmOn = answer(true)                 // reads it back
-      (off ?= coldOn) :| "interfaces off vs cold on" &&
-      (off ?= warmOn) :| ("interfaces off vs warm on (ei written: " + wroteEi + ")") &&
-      (off.contains("nfiname") ?= true) :| ("named on the wire: " + off)
+    // The lock wraps the try/finally, not the other way round: the
+    // clear() in the finally empties a cache other suites are reading, so
+    // it must happen while `literalLock` is still held (found by the WP-2
+    // depCache-interference work; TestLspRobustness's `withDepCache`).
+    ErmineFixture.literalLock.synchronized {
+      try {
+        Session.depCache.clear()
+        val off = answer(false)
+        Session.depCache.clear()
+        val coldOn = answer(true)                 // writes NfI.ei
+        val wroteEi = Files.exists(dir.resolve("NfI.ei"))
+        Session.depCache.clear()
+        val warmOn = answer(true)                 // reads it back
+        (off ?= coldOn) :| "interfaces off vs cold on" &&
+        (off ?= warmOn) :| ("interfaces off vs warm on (ei written: " + wroteEi + ")") &&
+        (off.contains("nfiname") ?= true) :| ("named on the wire: " + off)
+      }
+      finally { Session.depCache.clear(); ErmineFixture.deleteTree(dir) }
     }
-    finally { Session.depCache.clear(); ErmineFixture.deleteTree(dir) }
   }
 
   // ------------------------------------------------------------ the outline

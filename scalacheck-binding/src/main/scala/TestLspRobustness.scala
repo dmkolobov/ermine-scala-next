@@ -33,7 +33,9 @@ import java.nio.file.{ Files, Path, Paths }
   *
   * Everything that touches the resident holds `residentLock`: ScalaCheck
   * runs a Properties object's properties on a pool and `Resident.supply`
-  * is one single-threaded Supply.
+  * is one single-threaded Supply.  Everything whose VERDICT reads
+  * `Session.depCache` holds `ErmineFixture.literalLock` as well and
+  * re-primes the cache first -- see `withDepCache`.
   */
 object TestLspRobustness extends Properties("LSP robustness") {
 
@@ -668,6 +670,104 @@ object TestLspRobustness extends Properties("LSP robustness") {
   private val residentLock = new Object
   private val stdlibRoot   = new File("core/src/main/resources/modules").getAbsoluteFile
 
+  /** THE SECOND LOCK, and why the properties below need it.  A TEST-
+    * ENVIRONMENT defect, not a product one -- the same class as ticket E12
+    * (`TestInterfaceRoundTrip.scala:70-72`).
+    *
+    * `core/test` is unforked and parallel (`build.sbt:94`), and four suites
+    * empty the process-global `Session.depCache` under
+    * `ErmineFixture.literalLock`: `TestInterfaceRoundTrip:86`, `:95`;
+    * `TestInterfaceKey:78`, `:90` (inside its `load`/`loadInSeries`);
+    * `TestNamedFields:489-500` (its `finally` clear was OUTSIDE the lock
+    * until this work moved it in); `TestInterfaceConcreteRow:94`, `:248`,
+    * `:420` (`:94` via its callers, inside the lock at `:109`).  The
+    * resident's reload machinery READS that cache:
+    * `Session.dependentsOf` builds its "imported by" graph from
+    * `Session.depCache.get(sf)` over the env's `loadedFiles` and silently
+    * drops a module on a miss, and `Resident.reloadStale`'s test
+    * (`depCache.get(sf).map(_._1) != sf.lastModified`) calls every file
+    * stale once its entry is gone.  So a clear from another suite makes a
+    * reload of `Byte` report only `Byte`: the gate's red run,
+    * `.gate-cache/8be3d4139568faec7f818dae18134694852accd0/suites/gate.log:2074-2082`,
+    * `Byte: reloaded List(Byte), closure HashSet(Prelude, Layout.Validation,
+    * Byte, Syntax.Reader, Control.Monad.Reader)` after 31 good draws, whose
+    * seed replays 40/40 green when this suite runs alone.  Nothing in the
+    * PRODUCT ever clears the cache (`Documents` evicts Buffer keys only).
+    *
+    * Two defences, and both are needed: `literalLock` keeps a clearing
+    * suite out while the property runs, and `primeDepCache` repairs a clear
+    * that landed BEFORE it started, which exclusion cannot.
+    *
+    * LOCK ORDER, fixed here and nowhere else in this file: `residentLock`
+    * first, then `literalLock`.  It cannot deadlock: `residentLock` is
+    * `private` to this object, so no code that holds `literalLock` -- every
+    * holder is in another suite or in `ErmineFixture` -- can even name it,
+    * let alone wait on it, and this file never takes them the other way
+    * round.  A LAZY VAL'S INITIALIZER MONITOR IS A LOCK TOO, so `resident`
+    * -- whose initializer boots a session and loads 176 modules, tens of
+    * seconds -- is forced under `residentLock` and BEFORE `literalLock` is
+    * taken, never inside it: otherwise the first property to run would hold
+    * every clearing suite off for the whole boot.  Nothing initialized
+    * under `literalLock` takes `residentLock` back; the one lazy val
+    * elsewhere whose initializer TAKES `literalLock`,
+    * `TestInterfaceConcreteRow.corpus` (`:229`), is forced as a
+    * call-by-value argument (`prop2(corpus)`, `:372`) before its property's
+    * own locked block, and nothing in this file names it.
+    *
+    * WHAT THIS STILL DOES NOT COVER, stated rather than fixed:
+    * `TestTolerantCheck` keeps its own resident (`:912`) behind its own
+    * private `residentLock` (`:883`) and loads through the same process-
+    * global cache without ever taking `literalLock` -- as do
+    * `TestNewPipeline`, `TestLower`, `TestTolerantRead`, `TestStage1Pins`
+    * and `TestEditorBuffers`, the list `TestInterfaceConcreteRow:225-228`
+    * already writes down (F4-REVIEW R-1, ticket E4).  They add entries and
+    * read them; they do not clear, which is why the re-prime is the half of
+    * this defence that does the work. */
+  private def withDepCache[A](body: => A): A =
+    residentLock.synchronized {
+      val _ = resident      // force the boot here: see LOCK ORDER above
+      ErmineFixture.literalLock.synchronized {
+        // the result is dropped HERE on purpose: a file that could not be
+        // re-primed leaves the property exactly where it stood before this
+        // defence existed, and its own labels then show the shortfall
+        val _ = primeDepCache()
+        body
+      }
+    }
+
+  /** What one re-prime did: entries put back, and the files it could not
+    * put back, each with the reason. */
+  private final case class Primed(ok: Int, failed: List[String]) {
+    def missing: Int = ok + failed.size
+  }
+
+  /** Put back the resident's own `loadedFiles` entries that a foreign
+    * `clear()` removed, through the product's own `Session.dep` -- the
+    * module-header parse whose `SourceFile.cache` fills `depCache`
+    * (`Session.scala:403-406`) -- never by writing invented values into the
+    * map.  An entry that is merely STALE (a property just rewrote the file)
+    * is left alone: staleness is what `reloadStale` is for, and repairing
+    * it here would hide the very thing two properties assert.
+    *
+    * PER FILE, and a failure is not fatal: `S.dep` reads and parses the
+    * header, so a file deleted or left unparseable by another property
+    * throws.  Such a file simply stays missing -- which is precisely the
+    * behaviour every property had before this defence existed -- instead of
+    * erroring the whole property from a repair step.  The names are
+    * RETURNED, not swallowed: `ok` counts only entries actually put back,
+    * so the teeth property's `primed > 0` keeps its teeth, and that
+    * property also asserts that nothing failed. */
+  private def primeDepCache(): Primed = {
+    implicit val s: SessionEnv = resident.loadedEnv.get
+    implicit val su: Supply = resident.supply
+    val missing = s.loadedFiles.toList.filter { case (sf, _) => S.depCache.get(sf).isEmpty }
+    val failed = missing.flatMap { case (sf, m) =>
+      try { S.dep(sf, Nil, Some(m)); None }
+      catch { case scala.util.control.NonFatal(e) => Some(m + ": " + e.toString) }
+    }
+    Primed(missing.size - failed.size, failed)
+  }
+
   private def walk(f: File): List[File] =
     if (f.isDirectory) f.listFiles.toList.sortBy(_.getName).flatMap(walk)
     else if (f.getName endsWith ".e") List(f) else Nil
@@ -914,7 +1014,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
 
   property("C: reloading a loaded module reloads exactly its importers' closure and leaves the tables as they were") =
     forAll(Gen.chooseNum(0, 100000)) { pick =>
-      residentLock.synchronized {
+      withDepCache {
         val env    = resident.loadedEnv.get
         val cheap  = cheapModules(env)
         val (m, closure) = cheap(pick % cheap.size)
@@ -930,6 +1030,35 @@ object TestLspRobustness extends Properties("LSP robustness") {
       }
     }
 
+  /** TEETH for the two defences above (WP-2 follow-up): clear the cache
+    * under the locks -- exactly what a concurrent `TestInterfaceRoundTrip`
+    * does -- and the reload must STILL report the whole closure.  Without
+    * `primeDepCache` this fails with the gate's own label; measured by the
+    * scratch probe in the WP-2 report: "A (clear, no prime): Byte: reloaded
+    * List(Byte), closure HashSet(Prelude, Layout.Validation, Byte,
+    * Syntax.Reader, Control.Monad.Reader)". */
+  property("C: a cleared depCache is re-primed, so a reload still reports the whole importers' closure") = secure {
+    residentLock.synchronized {
+      val _ = resident      // force the boot here: see LOCK ORDER above
+      ErmineFixture.literalLock.synchronized {
+        val env   = resident.loadedEnv.get
+        val cheap = cheapModules(env)
+        // the widest cheap closure, pinned: deterministic, and not the
+        // trivial one-module case the defect would still get right
+        val (m, closure) = cheap.sortBy { case (n, c) => (-c.size, n) }.head
+        val path  = env.loadedFiles.collectFirst { case (S.Filesystem(f, _), `m`) => Paths.get(f) }.get
+        S.depCache.clear()
+        val primed = primeDepCache()
+        val r      = resident.reload(Set(path), Set()).get
+        ((closure.size >= 3) :| s"the pinned module $m has a closure of only ${closure.size}") &&
+          ((primed.ok > 0) :| s"the clear left ${primed.missing} entries and re-primed ${primed.ok}") &&
+          (primed.failed.isEmpty :| s"could not re-prime ${primed.failed.size}: ${primed.failed.take(3)}") &&
+          (r.failure.isEmpty :| s"$m: ${r.failure}") &&
+          ((r.modules.toSet == closure) :| s"$m: reloaded ${r.modules}, closure $closure")
+      }
+    }
+  }
+
   property("C: a path the resident never loaded reloads nothing") = secure {
     residentLock.synchronized {
       val before = tables(resident.loadedEnv.get)
@@ -942,7 +1071,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     env.termNames.keySet.collect { case g if g.module == "Rob.Leaf" => g.string }
 
   property("C: a broken save leaves the module and its dependents pending; the next good save brings them back") = secure {
-    residentLock.synchronized {
+    withDepCache {
       val env = resident.loadedEnv.get
       implicit val s: SessionEnv = env
       implicit val su: Supply = resident.supply
@@ -985,7 +1114,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   }
 
   property("C: reloadStale sees a save no event reported, and only that") = secure {
-    residentLock.synchronized {
+    withDepCache {
       val env = resident.loadedEnv.get
       implicit val s: SessionEnv = env
       implicit val su: Supply = resident.supply
@@ -1014,7 +1143,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * check see the change, and `Diagnostics.recheckAll` is what publishes
     * it for every open document. */
   property("C: after a reload, dropCaches makes the next check see the change and recheckAll publishes it") = secure {
-    residentLock.synchronized {
+    withDepCache {
       val env = resident.loadedEnv.get
       implicit val s: SessionEnv = env
       implicit val su: Supply = resident.supply
