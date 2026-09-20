@@ -50,6 +50,25 @@ object TestLspRobustness extends Properties("LSP robustness") {
 
   private val quiet: String => Unit = _ => ()
 
+  /** A log sink safe to append from several threads, and the sink every
+    * harness in this file uses.  Since WP-1 the "<<" line inside
+    * `Wire.send` runs on whatever thread answered, so a deferred answer's
+    * thread and the dispatch thread append CONCURRENTLY; a `ListBuffer`
+    * would drop a line under that and falsify property A at random (a lost
+    * "ignoring notification unknown" is the way it would show).  Read the
+    * result only after every answering thread has been joined -- the queue
+    * gives the happens-before edge, the join gives the completeness. */
+  private final class LogSink {
+    private val lines = new java.util.concurrent.ConcurrentLinkedQueue[String]
+    val add: String => Unit = s => { lines.add(s); () }
+    def result(): List[String] = {
+      val b  = List.newBuilder[String]
+      val it = lines.iterator
+      while (it.hasNext) b += it.next()
+      b.result()
+    }
+  }
+
   // ================================================================ A. wire
 
   private val genText: Gen[String] =
@@ -181,6 +200,25 @@ object TestLspRobustness extends Properties("LSP robustness") {
   final case class Garbage(text: String)                      extends Traffic
   final case class Reply(id: Int, result: Json)               extends Traffic
   case object NoMethodNoId                                    extends Traffic
+  /** A request to the DEFERRED handler `serve` registers (WP-1,
+    * `Server.onRequestDeferred`).  `mode` says how that handler answers:
+    *
+    *   ok     another thread answers `Right(params)`
+    *   err    another thread answers `Left((RequestFailed, ...))`
+    *   twice  another thread calls `answer` TWICE -- exactly one response
+    *   crash  the handler throws BEFORE answering -- InternalError, once
+    *   late   the handler answers, THEN throws -- the answer stands
+    *
+    * Its id lives at `DeferBase` and above, an id space nothing else in
+    * this file mints, so an answer to one is recognisable in the output
+    * whatever order it arrives in. */
+  final case class Defer(id: Int, mode: String, params: Json) extends Traffic
+
+  /** The first id `Defer` uses.  `genTraffic` and the reply generators mint
+    * ids of at most 50, so `id >= DeferBase` identifies a deferred answer
+    * and nothing else. */
+  val DeferBase = 1000
+  val DeferModes = List("ok", "err", "twice", "crash", "late")
 
   private val genTraffic: Gen[Traffic] = Gen.frequency(
     (5, for { id <- Gen.chooseNum(1, 50); m <- Gen.oneOf("echo", "boom", "refuse", "nosuch"); p <- genJson(2) } yield Req(id, m, p)),
@@ -202,25 +240,52 @@ object TestLspRobustness extends Properties("LSP robustness") {
       case Note(m, p)     => w.send(Json.obj("jsonrpc" -> Json.Str("2.0"), "method" -> Json.Str(m), "params" -> p))
       case Reply(id, r)   => w.send(Json.obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.num(id), "result" -> r))
       case NoMethodNoId   => w.send(Json.obj("jsonrpc" -> Json.Str("2.0"), "params" -> Json.Null))
+      case Defer(id, m, p) => w.send(Json.obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.num(id),
+        "method" -> Json.Str("later"), "params" -> Json.obj("mode" -> Json.Str(m), "v" -> p)))
       case Garbage(t)     => raw(t)
     }
     out.toByteArray
   }
 
   /** Run one Server over the traffic; answer (exit, every message it sent,
-    * the log, how many known notifications the handler saw). */
-  private def serve(ts: List[Traffic], stopAt: Option[Int] = None): (Option[Int], List[Json], List[String], Int) = {
+    * the log, how many known notifications the handler saw, how many
+    * answering threads were still alive after the joins -- which must be
+    * 0, or the run's output is only part of what the server sent). */
+  private def serve(ts: List[Traffic], stopAt: Option[Int] = None): (Option[Int], List[Json], List[String], Int, Int) = {
     val out = new ByteArrayOutputStream
-    val log = List.newBuilder[String]
-    val server = new Server(new Wire(new ByteArrayInputStream(encode(ts)), out, log += _), log += _)
+    val log = new LogSink
+    val server = new Server(new Wire(new ByteArrayInputStream(encode(ts)), out, log.add), log.add)
     var notes = 0
     server.onRequest("echo")   { p => p }
     server.onRequest("boom")   { _ => throw new RuntimeException("boom") }
     server.onRequest("refuse") { _ => throw RpcError(Rpc.RequestFailed, "refused") }
     server.onRequest("stop")   { _ => server.stop(stopAt.getOrElse(0)); Json.Null }
     server.onNotification("known") { _ => notes += 1 }
+    // WP-1: one deferred handler, answering off the dispatch thread.  Every
+    // thread it starts is joined before the output is read, so "what the
+    // server sent" is the whole of what it sent.
+    val threads = new java.util.concurrent.CopyOnWriteArrayList[Thread]
+    server.onRequestDeferred("later") { (p, answer) =>
+      val v = (p / "v") getOrElse Json.Null
+      def spawn(body: => Unit): Unit = {
+        val t = new Thread(() => body)
+        threads.add(t)
+        t.start()
+      }
+      (p / "mode" flatMap (_.str)) match {
+        case Some("err")   => spawn(answer(Left((Rpc.RequestFailed, "refused later"))))
+        case Some("twice") => spawn { answer(Right(v)); answer(Right(Json.Str("second answer"))) }
+        case Some("crash") => throw new RuntimeException("deferred boom")
+        case Some("late")  => answer(Right(v)); throw new RuntimeException("thrown after the answer")
+        case _             => spawn(answer(Right(v)))
+      }
+    }
     val exit = server.run()
-    (exit, frames(out.toByteArray).map(t => Json.parse(t).fold(e => sys.error("server sent unparseable JSON: " + e), identity)), log.result(), notes)
+    threads.forEach(t => t.join(30000))
+    var stuck = 0
+    threads.forEach(t => if (t.isAlive) stuck += 1)
+    (exit, frames(out.toByteArray).map(t => Json.parse(t).fold(e => sys.error("server sent unparseable JSON: " + e), identity)),
+     log.result(), notes, stuck)
   }
 
   /** What the server must send for one message, in arrival order: the
@@ -232,22 +297,92 @@ object TestLspRobustness extends Properties("LSP robustness") {
     case Req(i, _, _)        => Some(j => id(j) == Some(Json.num(i)) && errCode(j) == Some(Rpc.MethodNotFound))
     case Garbage(_)          => Some(j => id(j) == Some(Json.Null) && errCode(j) == Some(Rpc.ParseError))
     case NoMethodNoId        => Some(j => id(j) == Some(Json.Null) && errCode(j) == Some(Rpc.InvalidRequest))
+    // A deferred answer can arrive at any point in the stream, so it has no
+    // POSITION to expect; `deferKey` states what is expected of it instead.
+    case Defer(_, _, _)           => None
     case Note(_, _) | Reply(_, _) => None
   }
+
+  /** What a deferred request must be answered, as an (id, error-code or
+    * result) pair: order-free, so it can be compared as a multiset. */
+  private def deferKey(d: Defer): (Int, Either[Int, Json]) = d.mode match {
+    case "err"   => (d.id, Left(Rpc.RequestFailed))
+    case "crash" => (d.id, Left(Rpc.InternalError))
+    case _       => (d.id, Right(d.params))        // ok, twice, late
+  }
+
+  /** The same pair, read off a message the server sent. */
+  private def answerKey(j: Json): (Int, Either[Int, Json]) =
+    (id(j).flatMap(_.int).getOrElse(-1),
+     errCode(j).map(Left(_)).getOrElse(Right((j / "result") getOrElse Json.Null)))
+
+  private def isDeferredAnswer(j: Json): Boolean =
+    id(j).flatMap(_.int).exists(_ >= DeferBase)
+
+  private def bag[A](xs: List[A]): Map[A, Int] = xs.groupBy(identity).map { case (k, v) => k -> v.size }
+
+  private val genDefer: Gen[Traffic] =
+    for {
+      i <- Gen.chooseNum(DeferBase, DeferBase + 50)
+      m <- Gen.oneOf(DeferModes)
+      p <- genJson(2)
+    } yield Defer(i, m, p)
+
+  /** The dispatcher's traffic with deferred requests SPLICED IN at random
+    * points.  Spliced, not substituted: a `Gen.frequency` between the two
+    * would have thinned the pre-existing mix (echo / boom / refuse /
+    * garbage / replies) by the deferred share, so `Gen.listOf(genTraffic)`
+    * is generated at full volume and the deferred items are inserted into
+    * it.  Kept separate from `genTraffic` itself so the properties that
+    * expect every answer at a fixed POSITION (the `stop()` one) are
+    * unaffected. */
+  private val genTrafficWithDeferred: Gen[List[Traffic]] =
+    for {
+      base <- Gen.listOf(genTraffic)
+      defs <- Gen.listOf(genDefer)
+      at   <- Gen.listOfN(defs.size, Gen.chooseNum(0, base.size))
+    } yield defs.zip(at).foldLeft(base) { case (acc, (d, i)) =>
+      val k = math.min(i, acc.size)
+      acc.take(k) ++ (d :: acc.drop(k))
+    }
 
   private def id(j: Json): Option[Json]     = j / "id"
   private def errCode(j: Json): Option[Int] = j / "error" flatMap (_ / "code") flatMap (_.int)
 
+  /** WP-1 extends this with `Defer`, a request whose answer is handed to
+    * another thread.  What "in order, once" can still mean then, exactly:
+    *
+    *   - SYNCHRONOUS traffic is unchanged.  Every answer that is not a
+    *     deferred one must still be the n-th expected answer, in arrival
+    *     order, and there must be exactly as many as expected.  With no
+    *     `Defer` in the list this is the property as it stood, character
+    *     for character: `late` is then empty and `prompt` is `sent`.
+    *     Deferred answers must therefore not DISTURB that order, which is
+    *     the part of "in order" that survives a second thread.
+    *   - a DEFERRED answer has no position -- the thread that sends it may
+    *     be scheduled anywhere, before or after later synchronous answers --
+    *     so what is asserted of it is exactly-once and shape: the multiset
+    *     of (id, error-code-or-result) pairs the server sent for deferred
+    *     requests equals the multiset the requests asked for.  `twice`
+    *     (two `answer` calls) and `late` (an answer then a throw) are in
+    *     that generator, so a second response would show up as a count of
+    *     2 against an expected 1.
+    */
   property("A: the dispatcher answers every message in order, once, with the right shape, and runs to EOF") =
-    forAll(Gen.listOf(genTraffic)) { ts =>
-      val (exit, sent, log, notes) = serve(ts)
+    forAll(genTrafficWithDeferred) { ts =>
+      val (exit, sent, log, notes, stuck) = serve(ts)
+      val (late, prompt) = sent.partition(isDeferredAnswer)
       val want = ts.flatMap(expected)
-      val positional = sent.size == want.size && sent.zip(want).forall { case (j, p) => p(j) }
+      val positional = prompt.size == want.size && prompt.zip(want).forall { case (j, p) => p(j) }
+      val wantLate = bag(ts.collect { case d: Defer => deferKey(d) })
+      val gotLate  = bag(late.map(answerKey))
       val known   = ts.count { case Note("known", _) => true; case _ => false }
       val unknown = ts.count { case Note("unknown", _) => true; case _ => false }
       val optional = ts.count { case Note("$/optional", _) => true; case _ => false }
       (exit.isEmpty :| "run() must return None at EOF (no stop() was called)") &&
-      (positional :| s"${sent.size} messages sent for ${want.size} expected; first mismatch at ${sent.zip(want).indexWhere { case (j, p) => !p(j) }}") &&
+      ((stuck == 0) :| s"$stuck answering threads were still alive after the join: the output is incomplete") &&
+      (positional :| s"${prompt.size} messages sent for ${want.size} expected; first mismatch at ${prompt.zip(want).indexWhere { case (j, p) => !p(j) }}") &&
+      ((gotLate == wantLate) :| s"deferred answers: sent $gotLate, expected $wantLate") &&
       ((notes == known) :| s"$known known notifications, handler saw $notes") &&
       ((log.count(_ contains "ignoring notification unknown") == unknown) :| "unknown notifications are logged, one each") &&
       ((!log.exists(_ contains "ignoring notification $/")) :| s"$optional optional notifications must not be logged")
@@ -256,7 +391,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   property("A: stop() from a handler ends the loop with that code, and later messages are not answered") =
     forAll(Gen.listOf(genTraffic), Gen.listOf(genTraffic), Gen.chooseNum(0, 9)) { (before, after, code) =>
       val ts = before ++ List(Req(99, "stop", Json.Null)) ++ after
-      val (exit, sent, _, _) = serve(ts, Some(code))
+      val (exit, sent, _, _, _) = serve(ts, Some(code))
       val want = before.flatMap(expected) :+ ((j: Json) => id(j) == Some(Json.num(99)) && (j / "result") == Some(Json.Null))
       (exit == Some(code)) :| s"exit $exit" &&
         (sent.size == want.size && sent.zip(want).forall { case (j, p) => p(j) }) :| s"${sent.size} sent, ${want.size} expected before the stop"
@@ -265,9 +400,9 @@ object TestLspRobustness extends Properties("LSP robustness") {
   property("A: idle work runs when the stream is quiet, and a throwing work is logged and does not end the loop") =
     forAll(Gen.chooseNum(0, 4), Gen.oneOf(true, false)) { (pending0, throwing) =>
       val out = new ByteArrayOutputStream
-      val log = List.newBuilder[String]
+      val log = new LogSink
       // one notification, then EOF: the loop sees a quiet stream after it
-      val server = new Server(new Wire(new ByteArrayInputStream(encode(List(Note("known", Json.Null)))), out, quiet), log += _)
+      val server = new Server(new Wire(new ByteArrayInputStream(encode(List(Note("known", Json.Null)))), out, quiet), log.add)
       var pending = pending0
       var ran = 0
       server.onNotification("known") { _ => () }
@@ -281,25 +416,251 @@ object TestLspRobustness extends Properties("LSP robustness") {
   property("A: an echo answers with its own params, byte for byte through the codec") =
     forAll(Gen.listOfN(3, genJson(3))) { ps =>
       val ts = ps.zipWithIndex.map { case (p, i) => Req(i + 1, "echo", p) }
-      val (_, sent, _, _) = serve(ts)
+      val (_, sent, _, _, _) = serve(ts)
       sent.map(j => j / "result") == ps.map(Some(_))
     }
 
   property("A: a reply to a server request runs its handler once; a reply to nothing is dropped") =
     forAll(Gen.chooseNum(1, 20), Gen.chooseNum(1, 20)) { (k, stray) =>
       val out = new ByteArrayOutputStream
-      val log = List.newBuilder[String]
+      val log = new LogSink
       // the server asks first; the client's replies are the whole input
       val replies = new ByteArrayOutputStream
       val rw = new Wire(new ByteArrayInputStream(Array()), replies, quiet)
       (1 to k) foreach (i => rw.send(Json.obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.num(i), "result" -> Json.num(i * 10))))
       rw.send(Json.obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.num(k + stray), "result" -> Json.Null))
-      val server = new Server(new Wire(new ByteArrayInputStream(replies.toByteArray), out, quiet), log += _)
+      val server = new Server(new Wire(new ByteArrayInputStream(replies.toByteArray), out, quiet), log.add)
       var got = List.empty[(Int, Option[Int])]
       (1 to k) foreach (i => server.ask("client/x", Json.Null) { r => got ::= (i, r / "result" flatMap (_.int)) })
       server.run()
       (got.reverse == (1 to k).toList.map(i => (i, Some(i * 10)))) :| s"handlers saw $got" &&
         log.result().exists(_ contains "dropping response") :| "the stray reply was not logged as dropped"
+    }
+
+  // --- WP-1: a second sending thread -----------------------------------
+
+  /** An OutputStream that widens the window between the header write and
+    * the body write of one `Wire.send`.  The sink under it is a plain
+    * ByteArrayOutputStream, whose own writes are each atomic, so the only
+    * thing this can break is `send`'s framing: without `send`'s monitor
+    * one thread's header lands between the other's header and body and the
+    * reader resynchronises on garbage. */
+  private final class Yielding(sink: ByteArrayOutputStream) extends OutputStream {
+    def write(b: Int): Unit = { Thread.`yield`(); sink.write(b) }
+    override def write(b: Array[Byte], off: Int, len: Int): Unit = { Thread.`yield`(); sink.write(b, off, len) }
+    override def write(b: Array[Byte]): Unit = { Thread.`yield`(); sink.write(b, 0, b.length) }
+  }
+
+  property("A: two threads sending at once produce frames a Wire reads back intact") =
+    forAll(Gen.listOfN(8, genJson(2)), Gen.listOfN(8, genJson(2))) { (as, bs) =>
+      val sink = new ByteArrayOutputStream
+      val w    = new Wire(new ByteArrayInputStream(Array()), new Yielding(sink), quiet)
+      val gate = new java.util.concurrent.CountDownLatch(1)
+      def sender(who: Int, js: List[Json]) = new Thread(() => {
+        gate.await()
+        js.zipWithIndex foreach { case (j, i) =>
+          w.send(Json.obj("from" -> Json.num(who), "seq" -> Json.num(i), "v" -> j))
+        }
+      })
+      val ts = List(sender(0, as), sender(1, bs))
+      ts foreach (_.start())
+      gate.countDown()
+      ts foreach (_.join(30000))
+      val got = frames(sink.toByteArray).map(Json.parse)
+      val bad = got.collect { case Left(e) => e }
+      // every frame is whole and parses
+      (bad.isEmpty :| s"${bad.size} unparseable frames: ${bad.take(2)}") &&
+      ((got.size == as.size + bs.size) :| s"${got.size} frames for ${as.size + bs.size} sends") && {
+        val ok = got.collect { case Right(j) => j }
+        // nothing lost, nothing duplicated, nothing altered
+        val want = bag(List(0 -> as, 1 -> bs).flatMap { case (who, js) =>
+          js.zipWithIndex.map { case (j, i) => (who, i, j) } })
+        val have = bag(ok.map(j => ((j / "from" flatMap (_.int)).getOrElse(-1),
+                                    (j / "seq"  flatMap (_.int)).getOrElse(-1),
+                                    (j / "v") getOrElse Json.Null)))
+        // and each thread's own frames are in that thread's send order
+        val inOrder = List(0, 1) forall { who =>
+          ok.filter(j => (j / "from" flatMap (_.int)) == Some(who))
+            .flatMap(j => j / "seq" flatMap (_.int)) == (0 until (if (who == 0) as.size else bs.size)).toList
+        }
+        ((have == want) :| "a frame was lost, duplicated or altered") &&
+        (inOrder :| "one thread's frames are out of its own send order")
+      }
+    }
+
+  // --- WP-1: redaction by method (rule A6) ---------------------------------
+
+  /** Every line one Server logs for this traffic: both directions, the way
+    * ERMINE_LSP_LOG would capture them. */
+  private def logOf(ts: List[Traffic]): List[String] = {
+    val out = new ByteArrayOutputStream
+    val log = new LogSink
+    val server = new Server(new Wire(new ByteArrayInputStream(encode(ts)), out, log.add), log.add)
+    // both answer the same secret-free answer, so the runs differ only in
+    // the method NAME -- which is the whole of what redaction keys on
+    val answer: Json => Json = _ => Json.obj("ok" -> Json.Bool(true), "host" -> Json.Str("db.example.invalid"))
+    server.onRequest("ermine/preview/connect")(answer)
+    server.onRequest("ermine/preview/other")(answer)
+    server.run()
+    log.result()
+  }
+
+  /** `encode` writes a `Garbage` item as a RAW frame, whatever it holds, so
+    * it is also how this file sends a well-formed message of a shape the
+    * `Traffic` cases cannot express -- a JSON array, or an object whose
+    * `method` is not a string. */
+  private def rawFrame(text: String): List[Traffic] = List(Garbage(text))
+
+  property("A: a connect body never reaches the log; the same body under another method does") =
+    forAll(Gen.listOfN(12, Gen.alphaNumChar).map(_.mkString), genJson(1)) { (pw, extra) =>
+      val body = Json.obj(
+        "profile" -> Json.obj("url"  -> Json.Str("jdbc:sqlserver://sql.example.invalid;databaseName=rpt"),
+                              "user" -> Json.Str("reporting")),
+        "password" -> Json.Str(pw),
+        "extra"    -> extra)
+      // a whole round trip: the request in, the answer out
+      val red  = logOf(List(Req(7, "ermine/preview/connect", body)))
+      val open = logOf(List(Req(7, "ermine/preview/other",   body)))
+      val big  = logOf(List(Req(8, "ermine/preview/other", Json.obj("doc" -> Json.Str("x" * 5000)))))
+      val bigIn = big.filter(_ startsWith ">> ")
+      // S1: two shapes this dispatcher cannot read a method out of, both
+      // carrying the same connect body.  Rule A6 is absolute, so neither
+      // may be logged, however they are answered.
+      val batch = logOf(rawFrame("[" + Json.print(Json.obj("method" -> Json.Str("ermine/preview/connect"),
+                                                      "params" -> body)) + "]"))
+      val nonStr = logOf(rawFrame(Json.print(Json.obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.num(9),
+        "method" -> Json.arr(Json.Str("ermine/preview/connect")), "params" -> body))))
+      (Rpc.Redacted.contains("ermine/preview/connect") :| "Rpc.Redacted must hold the connect method") &&
+      (batch.contains(">> <non-object message> [redacted]") :| s"a JSON array must log no body: $batch") &&
+      ((!batch.exists(_ contains pw)) :| s"a batch leaked the password: ${batch.filter(_ contains pw)}") &&
+      (nonStr.contains(">> <non-string method> [redacted]") :| s"a non-string method must log no body: $nonStr") &&
+      ((!nonStr.exists(_ contains pw)) :| s"a non-string method leaked the password: ${nonStr.filter(_ contains pw)}") &&
+      (red.contains(">> ermine/preview/connect [redacted]") :| s"no redacted line in $red") &&
+      ((!red.exists(_ contains pw)) :| s"the password is in the log: ${red.filter(_ contains pw)}") &&
+      ((!red.exists(l => (l startsWith ">>") && (l contains "\"password\""))) :| "the connect body is in the log") &&
+      (open.exists(l => (l startsWith ">> ") && (l contains pw)) :| "an unredacted method must still log its body") &&
+      // the clipping is the one Wire has always used
+      (bigIn.forall(l => (l contains "...[") && (l endsWith " chars]") && l.length < 2100) :|
+        s"the incoming line is clipped as before: ${bigIn.map(_.length)}")
+    }
+
+  // --- WP-1: what a parse error may quote ----------------------------------
+
+  /** The unparseable branch of `Server.handle` logs the PARSER'S ERROR and
+    * nothing else, because the body could be a mangled connect (rule A6 of
+    * tracker/JSON-WIDGET-PLAYGROUND.md).  That is only safe while the error
+    * itself carries no input text, and this property is the pin.  It has two
+    * halves, one per reading of the claim:
+    *
+    *   SHAPE.  The single-quoted fragment is the only way input text can
+    *   enter a parse error at all: `unexpected character '<c>'`
+    *   (Rpc.scala:121) and `malformed number '<token>'` (:144) are the only
+    *   messages that interpolate one, the offsets are numbers, and since
+    *   WP-1 the two escape errors (:170, :173) quote nothing.  So every
+    *   fragment is at most ONE character, or a number token -- which
+    *   `number()` can only have read from OUTSIDE a string, being entered
+    *   from `value()` alone (:120), and which can run longer than one
+    *   character ("-1.e+" is a malformed one).
+    *
+    *   PROVENANCE.  No substring of a string literal in the input, two
+    *   characters or more, appears ANYWHERE in the error.  The check is
+    *   sound rather than approximate because of the alphabets: every fixed
+    *   word in every parser message is lower-case ASCII, the only digits
+    *   are the offset's, and no message quotes two upper-case characters
+    *   running.  An upper-case PAIR in the error can therefore only have
+    *   been echoed from the input, and an accidental collision with the
+    *   fixed text ("of" inside "offset") cannot be upper case.  The
+    *   generator plants upper-case runs inside string literals and inside
+    *   the \u escapes -- exactly where the two escape errors used to echo
+    *   from -- so a regression of either shows up here.
+    */
+  private val quotedFragment = "'([^']*)'".r
+  private def numberToken(f: String): Boolean =
+    f.nonEmpty && f.forall(c => "+-.0123456789eE".indexOf(c.toInt) >= 0)
+
+  /** Inputs that reach every fail() in the parser, escapes included, with
+    * upper-case markers inside the string literals. */
+  private val genParserInput: Gen[String] = {
+    val marked: Gen[String] = Gen.listOf(Gen.frequency(
+      (3, Gen.listOfN(6, Gen.alphaUpperChar).map(_.mkString)),
+      (2, Gen.listOfN(4, Gen.oneOf('Z', 'Y', 'X', 'W', '0', '9', 'a', 'f', '+', '-')).map("\\u" + _.mkString)),
+      (2, Gen.oneOf('n', 'q', 'u', '\\', '"', 'x', '1', 'Q', 'W').map(c => "\\" + c)),
+      (1, genText))).map(_.mkString).map("\"" + _ + "\"")
+    Gen.frequency(
+      (2, Gen.asciiStr),
+      (2, genText),
+      (4, marked),
+      (2, marked.flatMap(m => Gen.oneOf("{\"K\":" + m + "}", "[" + m + "]", m + m))),
+      (2, arbJson.arbitrary.map(Json.print).flatMap(mutate)),
+      (1, Gen.listOf(Gen.chooseNum(0, 255).map(_.toByte)).map(bs => new String(bs.toArray, UTF_8))))
+  }
+
+  property("A: a parse error quotes at most one input character or a number token, and never a string's text") =
+    forAll(genParserInput) { s =>
+      Json.parse(s) match {
+        case Right(_)  => Prop.passed
+        case Left(err) =>
+          val frags   = quotedFragment.findAllMatchIn(err).map(_.group(1)).toList
+          val shape   = frags.forall(f => f.length <= 1 || numberToken(f))
+          val planted = s.sliding(2).filter(w => w.length == 2 && w.forall(c => c >= 'A' && c <= 'Z')).toSet
+          val leaked  = planted.filter(w => err.contains(w))
+          (shape :| s"'$err' quotes $frags: neither one character nor a number token") &&
+          (leaked.isEmpty :| s"'$err' echoes $leaked, which is input text from inside a string")
+      }
+    }
+
+  /** The same claim one level up: not `Json.parse` in isolation but a whole
+    * frame through `Server.handle`, which is where a parse error meets the
+    * log file (`ERMINE_LSP_LOG`).  An unparseable connect body must leave
+    * nothing of the password behind -- not in a ">>" line (there is none),
+    * not in the "rpc: unparseable message" line, and not in the "<<" line,
+    * which carries the same parser text back to the client.
+    *
+    * The marker alphabet is upper-case ASCII WITHOUT J, S, O or N, because
+    * the only upper-case letters in anything the server writes for this
+    * traffic are the "JSON" of "invalid JSON: ".  No two-character window
+    * of the secret can occur inside that word, so a hit is an echo and
+    * never a collision. */
+  property("A: an unparseable frame carrying a secret leaves no trace of it in the log") =
+    forAll(Gen.listOfN(10, Gen.oneOf("ABCDEFGHIKLMPQRTUVWXYZ".toList)).map(_.mkString),
+           Gen.chooseNum(0, 4)) { (pw, shape) =>
+      val bodies = List(
+        "{\"method\":\"ermine/preview/connect\",\"params\":{\"password\":\"" + pw + "\"",  // unterminated
+        "{\"password\":\"" + pw + "\\uQQQQ\"}",                                            // bad \u escape
+        "{\"password\":\"" + pw + "\\Q\"}",                                                // bad escape
+        "{\"password\" \"" + pw + "\"}",                                                   // expected ':'
+        "{\"password\":\"" + pw + "\"}}}")                                                 // trailing content
+      val text   = bodies(shape)
+      val log    = logOf(rawFrame(text))
+      val pairs  = pw.sliding(2).toSet
+      val leaked = log.filter(l => (l contains pw) || pairs.exists(w => l contains w))
+      (Json.parse(text).isLeft :| s"the witness must not parse: $text") &&
+      (log.exists(_ contains "rpc: unparseable message") :| s"no parse-error line in $log") &&
+      ((!log.exists(_ startsWith ">>")) :| s"an unparseable frame must log no incoming body: ${log.filter(_ startsWith ">>")}") &&
+      (leaked.isEmpty :| s"the log carries the secret: $leaked")
+    }
+
+  // --- WP-1: $/cancelRequest is routed, the other $/ notifications are not --
+
+  property("A: $/cancelRequest reaches its handler; other $/ notifications are dropped without an answer") =
+    forAll(Gen.chooseNum(1, 50), Gen.listOf(Gen.oneOf("$/progress", "$/setTrace", "$/somethingElse")), Gen.chooseNum(0, 6)) {
+      (cancelId, others, at) =>
+        val notes = others.map(m => Note(m, Json.Null))
+        val where = math.min(at, notes.size)
+        val ts    = notes.take(where) ++ List(Note("$/cancelRequest", Json.obj("id" -> Json.num(cancelId)))) ++ notes.drop(where)
+        val out   = new ByteArrayOutputStream
+        val log   = new LogSink
+        val server = new Server(new Wire(new ByteArrayInputStream(encode(ts)), out, log.add), log.add)
+        var cancelled = List.empty[Int]
+        server.onNotification("$/cancelRequest") { p => cancelled ::= (p / "id" flatMap (_.int)).getOrElse(-1) }
+        val exit = server.run()
+        val sent = frames(out.toByteArray)
+        val lines = log.result()
+        (exit.isEmpty :| "EOF ends the loop") &&
+        ((cancelled == List(cancelId)) :| s"the cancel handler saw $cancelled, not List($cancelId)") &&
+        (sent.isEmpty :| s"a notification must not be answered, but ${sent.size} messages were sent") &&
+        ((lines.count(_ startsWith ">> ") == ts.size) :| s"${ts.size} notifications were sent to the server") &&
+        ((!lines.exists(_ contains "ignoring notification $")) :| s"unregistered $$/ notifications are dropped silently: ${lines.filter(_ contains "ignoring")}")
     }
 
   // =========================================================== B. never dark
