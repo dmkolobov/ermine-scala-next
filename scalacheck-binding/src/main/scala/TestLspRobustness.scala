@@ -164,15 +164,51 @@ object TestLspRobustness extends Properties("LSP robustness") {
     }
   }
 
+  /** Where a frame's body begins: after the FIRST blank line, whichever
+    * terminator makes it.
+    *
+    * Preferring `"\n\n"` wherever it occurred was a defect (found 2026-09-20):
+    * a CRLF header followed by a body whose first byte is LF puts a `"\n\n"`
+    * one byte BEFORE the body -- the header's last LF next to the body's
+    * first -- so the frame was measured one byte short and the `exact` and
+    * `dup` kinds failed on frames `Wire` had read perfectly.  A body holding
+    * `"\n\n"` anywhere did the same.  Measured rate: 0.45% of frames, about
+    * one run in six.  `exact-lf` was never affected: its own header ends in
+    * LF LF, which is the first occurrence.
+    *
+    * The result is a CHAR index used against `bytes.length`, and that stays
+    * sound because every header here is ASCII: the header's length in
+    * characters is its length in bytes, and only the body can carry a
+    * multi-byte character -- all of it after this offset. */
+  private def bodyStart(text: String): Int = {
+    val crlf = text.indexOf("\r\n\r\n")
+    val lflf = text.indexOf("\n\n")
+    if (crlf >= 0 && (lflf < 0 || crlf <= lflf)) crlf + 4 else lflf + 2
+  }
+
+  /** NO SHRINKING, deliberately.  `genFrame` mints the header and the body
+    * together, so the two agree by construction; the shrinker does not know
+    * that and cuts the ARRAY while leaving the KIND alone, which is an input
+    * the generator can never produce -- a header promising more bytes than
+    * the array holds.  Such a frame is an EOF inside the body, so `receive`
+    * answers None, and the report then blames whatever kind survived the
+    * shrink.  That is what printed the misleading
+    *
+    *     exact: got None in 0ms
+    *     ARG_0: (exact,[B@61446e4b)  ARG_0_ORIGINAL: (exact,[B@50249cc7)
+    *
+    * in `.gate-cache/4aa4c4d5390f57c3649f243cd521c3d2745fabde/suites/gate.log`
+    * -- an `exact` frame from this generator cannot make `receive` answer
+    * None -- and sent the first diagnosis of the real defect (`bodyStart`,
+    * above) down the wrong path.  ARG_0 and ARG_0_ORIGINAL differing is the
+    * fingerprint. */
   property("A: a frame's header decides what the wire reads, and a header cannot make it allocate") =
-    forAll(genFrame) { case (kind, bytes) =>
+    forAllNoShrink(genFrame) { case (kind, bytes) =>
       val w = new Wire(new ByteArrayInputStream(bytes), OutputStream.nullOutputStream, quiet)
       val t0 = System.nanoTime
       val r  = w.receive()
       val ms = (System.nanoTime - t0) / 1000000L
-      val bodyLen = bytes.length - (new String(bytes, UTF_8).indexOf("\n\n") match {
-        case -1 => new String(bytes, UTF_8).indexOf("\r\n\r\n") + 4
-        case i  => i + 2 })
+      val bodyLen = bytes.length - bodyStart(new String(bytes, UTF_8))
       val ok = kind match {
         case "exact" | "exact-lf" | "dup" => r.exists(_.getBytes(UTF_8).length == bodyLen)
         // one byte short may cut a multi-byte character, which decodes to a
@@ -181,11 +217,47 @@ object TestLspRobustness extends Properties("LSP robustness") {
         case "zero"                       => r == Some("")
         case "long"                       => r.isEmpty      // eof inside the body
         case "negative" | "nan" | "missing" | "noblank" => r.isEmpty
+        // TICKET (found 2026-09-20, unfixed): `ms < 1000` is an
+        // environment-dependent check inside a gate -- its answer depends on
+        // machine load, which `docs/gate-policy.md` §1 excludes from a gate
+        // and §4 calls an instrument.  A GC pause on a loaded builder can
+        // fail this line with nothing wrong.  Left as it stands on purpose.
         case "huge" | "max-int"           => r.isEmpty && ms < 1000
-        case _                            => true           // a shrunk kind
+        // Every kind `genFrame` mints is matched above, and with shrinking
+        // off nothing else can reach here, so this is the invariant and not
+        // a pass.  It used to read `true`, which is how a shrunk frame
+        // slipped through as a success.
+        case other                        => sys.error("unknown frame kind: " + other)
       }
       ok :| s"$kind: got ${r.map(_.length)} in ${ms}ms"
     }
+
+  /** REGRESSION, no randomness: the four frames that the old body-offset
+    * arithmetic got wrong, each pinning what `Wire` must return and where the
+    * body must be measured from.  Rows 1-3 fail under that arithmetic and
+    * pass under `bodyStart`; that is measured, not assumed -- the same four
+    * frames were run through the old expression in a scratch probe on
+    * 2026-09-20 and it rejected exactly these three while accepting the
+    * fourth (`.../scratchpad/probe-2.log`: "a body starting with LF: the wire
+    * is right, the oracle is wrong", "a body containing LF LF: ...", "dup
+    * with a body starting with LF is rejected the same way" and "exact-lf
+    * with a body starting with LF is accepted", all four proved). */
+  property("A: a body that begins with, or contains, a newline is framed and measured exactly") = {
+    val cases = List(
+      ("exact, body begins with LF",    "Content-Length: 3\r\n\r\n",                     "\nab"),
+      ("dup, body begins with LF",      "Content-Length: 1\r\nContent-Length: 2\r\n\r\n", "\nz"),
+      ("exact, body contains LF LF",    "Content-Length: 4\r\n\r\n",                     "a\n\nb"),
+      ("exact-lf, body begins with LF", "Content-Length: 3\n\n",                         "\nab"))
+    cases.map { case (name, header, body) =>
+      val want  = body.getBytes(UTF_8)
+      val bytes = header.getBytes(UTF_8) ++ want
+      val r     = new Wire(new ByteArrayInputStream(bytes), OutputStream.nullOutputStream, quiet).receive()
+      val at    = bodyStart(new String(bytes, UTF_8))
+      ((r == Some(body)) :| s"$name: the wire returned ${r.map(_.getBytes(UTF_8).length)} bytes, not ${want.length}") &&
+        ((at == header.length) :| s"$name: the body was located at $at, the header is ${header.length} bytes") &&
+        ((bytes.length - at == want.length) :| s"$name: measured ${bytes.length - at} body bytes, not ${want.length}")
+    }.reduce(_ && _)
+  }
 
   property("A: the wire never throws on arbitrary bytes") =
     forAll(Gen.listOf(Gen.chooseNum(0, 255).map(_.toByte)).map(_.toArray)) { bytes =>
