@@ -722,6 +722,40 @@ object Session {
   def loadModulesInSeries(moduleNames: List[String])(implicit s: SessionEnv, su: Supply, con: Printer) =
     for (m <- moduleNames) load(SourceFile.forModule(m), Some(m))
 
+  /** A `.e` path as the loader names it: absolute and normalized.
+    *
+    * MOVED here from `lsp.Resident` (WP-4 review S5), unchanged, so that
+    * `json.Runner.invalidate` -- which is `bin/ermine-serve`'s class, not the
+    * language server's -- can name a loaded file the same way the resident
+    * does without the `json` package importing `lsp`.  `Resident.normalize`
+    * and `Resident.moduleUnder` forward here, so every existing caller and
+    * every `Resident.…` reference in the design documents still resolves. */
+  def normalize(fileName: String): java.nio.file.Path =
+    java.nio.file.Paths.get(fileName).toAbsolutePath.normalize
+  def normalize(p: java.nio.file.Path): java.nio.file.Path = p.toAbsolutePath.normalize
+
+  /** The module name a `.e` path spells under one of `roots` (`<root>/A/B.e`
+    * is `A.B`), if it is under one.  MOVED from `lsp.Resident` (S5). */
+  def moduleUnder(roots: List[String], p: java.nio.file.Path): Option[String] =
+    roots.iterator.map(java.nio.file.Paths.get(_)).map(normalize).collectFirst {
+      case r if p.startsWith(r) && p.toString.endsWith(".e") =>
+        val rel = r.relativize(p).toString
+        rel.substring(0, rel.length - 2).replace(separatorChar, '.')
+    }
+
+  /** Where `env` read each of its modules from, by normalized path -- the
+    * half of a file-change event that a session can answer for itself.
+    * MOVED from `lsp.Resident`'s private copy (S5), which took the env as a
+    * parameter and touched no resident state; `Resident.reload` and
+    * `Runner.invalidate` are its two callers.
+    *
+    * The caller owns `env`; this locks nothing (the resident: the dispatch
+    * thread; `Runner.invalidate`: under `evalLock`). */
+  def loadedByPath(env: SessionEnv): Map[java.nio.file.Path, String] =
+    env.loadedFiles.toList.collect {
+      case (Session.Filesystem(f, _), m) => normalize(f) -> m
+    }.toMap
+
   /** `roots` plus every loaded module that imports one of them, transitively.
     * The import sets come from the dependency cache the loads filled, keyed
     * by the very SourceFiles `loadedFiles` holds.

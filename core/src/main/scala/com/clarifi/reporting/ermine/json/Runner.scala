@@ -293,7 +293,14 @@ final class Runner(val cfg: RunnerConfig) {
   val plans: MemoryPlanCache =
     new MemoryPlanCache(cfg.ttlMillis, cfg.maxTokens, cfg.clock, new java.security.SecureRandom)
 
-  private val reports = new java.util.concurrent.ConcurrentHashMap[String, Report]
+  /** The compiled reports, keyed by the PAIR `(module, binding)` (WP-4).  A
+    * module may declare several report-typed bindings -- `report`,
+    * `emptyReport`, `wideReport` -- and the editor's preview picks one by
+    * TYPE, not by name (JSON-WIDGET-PLAYGROUND §3.2); `cfg.reportName` is
+    * only the default the HTTP route `POST /report/<Module>` supplies.
+    *
+    * `invalidate` evicts from here by module. */
+  private val reports = new java.util.concurrent.ConcurrentHashMap[(String, String), Report]
   /** The monitor every use of the session and of a `Runtime` is taken under.
     * PROCESS-WIDE (`Runner.evalLock`), not per runner: part of what it guards
     * -- the `DataConDecl` registry -- is a pair of static maps shared by every
@@ -308,6 +315,20 @@ final class Runner(val cfg: RunnerConfig) {
   /** Refresh the snapshot.  Called under `evalLock`, so it never races a load. */
   private def snapshot(): Unit = loadedSnapshot = env.loadedModules.keySet
 
+  /** THIS SESSION'S post-`Lib.preamble`, pre-load env (WP-4), the guard
+    * `Session.scrub` takes as its `builtins`: `Lib` installs names under the
+    * module they belong to -- `asOp` and class `AsOp` are
+    * `Global("Relation.Op", ...)`, declared in Scala and merely COMMENTED in
+    * `Relation/Op.e` -- so a scrub by module name alone would delete them
+    * and re-reading the file could not put them back.  `Session.scrub` says
+    * a WRONG snapshot fails silently, so it is taken here and nowhere else.
+    *
+    * DECLARED BEFORE `booted`, whose initialiser assigns it: a field
+    * initialiser further down would run later and blank it again.  `null`
+    * only when the boot died before the preamble returned, which is also a
+    * `booted` failure, and `invalidate` answers the empty set either way. */
+  @volatile private var builtins: SessionEnv = null
+
   private val booted: Option[String] = evalLock.synchronized {
     try {
       if (cfg.roots.nonEmpty) {
@@ -316,6 +337,7 @@ final class Runner(val cfg: RunnerConfig) {
         env.loadFile = Session.SourceFile.inOrder((fs :+ env.loadFile): _*)
       }
       Lib.preamble
+      builtins = env.copy
       Session.loadModules(NodeModule :: FetchModule :: cfg.preload)
       snapshot()
       None
@@ -339,17 +361,29 @@ final class Runner(val cfg: RunnerConfig) {
   // ---------------------------------------------------------------------
   // POST /report/<module>
 
-  /** Render `module`'s report against a request body already parsed as JSON.
-    * The document is appended to `out`; on a `Left`, `out` holds a prefix
-    * that must be discarded. */
+  /** Render `module`'s DEFAULT report -- the binding `cfg.reportName` names
+    * -- against a request body already parsed as JSON.  The document is
+    * appended to `out`; on a `Left`, `out` holds a prefix that must be
+    * discarded.
+    *
+    * This is the HTTP route's entry point (`Server.scala`'s
+    * `POST /report/<Module>`); the preview passes a binding explicitly. */
   def render(module: String, body: Json, out: Appendable): Either[RunError, WriteStats] =
-    Request.parse(body).right.flatMap(req => render(module, req, out))
+    render(module, cfg.reportName, body, out)
+
+  /** Render one `(module, binding)` pair (WP-4). */
+  def render(module: String, binding: String, body: Json, out: Appendable): Either[RunError, WriteStats] =
+    Request.parse(body).right.flatMap(req => render(module, binding, req, out))
 
   /** The same from the request body's TEXT: argonaut's parser is recursive,
     * so a deeply nested body overflows the stack (J2a measured ~4,200 levels
     * on a default stack).  That is a 400, not a crash. */
   def renderText(module: String, body: String, out: Appendable): Either[RunError, WriteStats] =
-    parseBody(body).right.flatMap(j => render(module, j, out))
+    renderText(module, cfg.reportName, body, out)
+
+  /** The same, for one `(module, binding)` pair. */
+  def renderText(module: String, binding: String, body: String, out: Appendable): Either[RunError, WriteStats] =
+    parseBody(body).right.flatMap(j => render(module, binding, j, out))
 
   /** ONE PATH (J3g), ONE LOOP (J3h).  A report is `Params -> Fetch Node`; a
     * report typed `Params -> Node` is read as `done` of its value, so the
@@ -365,7 +399,11 @@ final class Runner(val cfg: RunnerConfig) {
     * loop.  A report whose evaluation fails therefore costs no connection,
     * whether it scans or not. */
   def render(module: String, req: Request, out: Appendable): Either[RunError, WriteStats] =
-    report(module).right.flatMap { rep =>
+    render(module, cfg.reportName, req, out)
+
+  /** The same, for one `(module, binding)` pair (WP-4). */
+  def render(module: String, binding: String, req: Request, out: Appendable): Either[RunError, WriteStats] =
+    report(module, binding).right.flatMap { rep =>
       val wcfg = WriteConfig(default = req.default, strategy = req.strategy,
                              threshold = req.threshold, clock = cfg.clock)
       decode(rep, req).right.flatMap { v =>
@@ -403,20 +441,129 @@ final class Runner(val cfg: RunnerConfig) {
     }
 
   // ---------------------------------------------------------------------
+  // WP-4: what the editor's preview session asks of a runner besides a
+  // render -- the parameter schema of one binding, and invalidation.
+
+  /** The JSON Schema of `(module, binding)`'s PARAMETER type
+    * (JSON-WIDGET-PLAYGROUND §6): the report is compiled first -- through
+    * the same cache a render uses, so the schema costs a load only when the
+    * render would have -- and the schema is then exported from the very
+    * `paramTy` the decoder was compiled from.  The params file's squiggles
+    * and the 400s a bad value earns therefore cannot disagree.
+    *
+    * ONE `evalLock` SECTION over BOTH halves (review S2), not one per half:
+    * the export reads the session's `cons`, and between a compile and an
+    * export that took the lock separately an `invalidate` could scrub the
+    * very module whose type is about to be walked, so a schema request that
+    * raced a save would 500 for a reason the client cannot act on.  A Java
+    * monitor is reentrant and `report` takes this same monitor, so calling
+    * it from inside costs nothing but re-entry. */
+  def paramSchema(module: String, binding: String): Either[RunError, Json] =
+    evalLock.synchronized {
+      report(module, binding).right.flatMap { rep =>
+        Schema.exportType(rep.paramTy, module)(env).left.map { e =>
+          Failed("the parameter type " + Schema.renderType(rep.paramTy) + " of " + module + "." +
+                 binding + " has no JSON schema: " + e.message, Some(e.path))
+        }
+      }
+    }
+
+  /** Forget the modules `paths` names, and everything loaded that imports
+    * one of them: the answer is the module names invalidated, which
+    * `JSON-WIDGET-PLAYGROUND` §3 step 5 sends on to the editor so it can
+    * re-render the reports that moved.
+    *
+    * THE ALGORITHM, in order:
+    *  1. `paths` -> modules through THIS session's own `loadedFiles`
+    *     (`Session.loadedByPath`: where each module was read from), plus
+    *     `Session.moduleUnder(cfg.roots, p)` for a path no load ever read --
+    *     the file deleted from the first root, served from the second, and
+    *     then restored, which arrives as a creation of a path nobody loaded
+    *     and must still invalidate `A.B`.  That second rule is filtered by
+    *     `loadedModules`, so a path naming a module this session never
+    *     loaded contributes nothing;
+    *  2. nothing named -> the empty set, and NOTHING is touched;
+    *  3. otherwise the closure through `Session.dependentsOf`: the modules
+    *     themselves plus every loaded module that imports one of them,
+    *     transitively;
+    *  4. `Session.scrub` of that closure against this runner's own
+    *     `builtins` snapshot -- the names are out of the env and the
+    *     modules out of `loadedModules`;
+    *  5. EVICTION.  Every `reports` entry whose MODULE is in the closure
+    *     goes.  That covers both halves of what a stale cached report is: a
+    *     report of a changed module, and a report of an unchanged module
+    *     that IMPORTS a changed one -- the second is in the closure exactly
+    *     because `dependentsOf` collects importers, so one test on the key's
+    *     module is the whole rule.  (A cached `Report` holds the evaluated
+    *     closure of its binding, so leaving one behind would keep rendering
+    *     the old widget after its module was scrubbed.)
+    *  6. refresh the `/health` snapshot and answer the closure.
+    *
+    * NO EAGER RELOAD: the next `render`/`paramSchema` for an evicted pair
+    * calls `compile`, which loads the module from disk on demand -- and
+    * answers 404 if the file is gone, which is what a deletion should do.
+    *
+    * `plans` IS DELIBERATELY LEFT ALONE.  A token is a bearer credential for
+    * the rows of one relation already delivered, not a cache of the module:
+    * the route that mints tokens is the HTTP server's, which never calls
+    * this, and the preview mints none (every preview render is
+    * `Delivery.Inline`, buffered, no threshold -- JSON-WIDGET-PLAYGROUND
+    * §2.4).  So a token minted before an invalidate goes on resolving
+    * against the plan it was minted for until its TTL expires, which is what
+    * `GET /data/<token>` promises, and clearing the cache here would turn a
+    * save in the editor into a 404 for an unrelated client's re-request.
+    *
+    * Under `evalLock`, like every other use of this session: `invalidate`
+    * mutates the env, and a render on another thread must not be walking it.
+    *
+    * A boot that failed invalidates nothing: every request answers 500 from
+    * `bootFailed` regardless, and there is no `builtins` snapshot to scrub
+    * against.
+    *
+    * The import edges come from the process-global `Session.depCache`
+    * (`dependentsOf` reads it): a module whose entry is missing contributes
+    * no edge and is not collected as an importer.  Nothing in the product
+    * ever clears that cache -- four TEST suites do, which is why the
+    * properties that pin this hold `ErmineFixture.literalLock`. */
+  def invalidate(paths: Set[java.nio.file.Path]): Set[String] = evalLock.synchronized {
+    if (booted.isDefined || (builtins eq null)) Set()
+    else {
+      val byPath = Session.loadedByPath(env)
+      def modulesOf(p: java.nio.file.Path): Set[String] = {
+        val n = Session.normalize(p)
+        byPath.get(n).toSet ++ Session.moduleUnder(cfg.roots, n).filter(env.loadedModules.contains)
+      }
+      val direct = paths.flatMap(modulesOf)
+      if (direct.isEmpty) Set()
+      else {
+        val dirty = Session.dependentsOf(env, direct)
+        Session.scrub(env, builtins, dirty)
+        val keys = reports.keySet.iterator
+        while (keys.hasNext) if (dirty(keys.next()._1)) keys.remove()
+        snapshot()
+        log.info("invalidate: " + dirty.toList.sorted.mkString(", "))
+        dirty
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------
 
   private def bootFailed: Option[RunError] =
     booted.map(why => Failed("the runner did not boot: " + why))
 
-  /** The compiled report for `module`, looked up once and kept. */
-  private def report(module: String): Either[RunError, Report] = bootFailed match {
+  /** The compiled report for one `(module, binding)` pair, looked up once
+    * and kept.  `invalidate` is what takes an entry back out. */
+  private def report(module: String, binding: String): Either[RunError, Report] = bootFailed match {
     case Some(e) => Left(e)
     case None =>
-      val hit = reports.get(module)
+      val key = (module, binding)
+      val hit = reports.get(key)
       if (hit ne null) Right(hit)
       else evalLock.synchronized {
-        val again = reports.get(module)
+        val again = reports.get(key)
         if (again ne null) Right(again)
-        else compile(module).right.map { r => reports.put(module, r); r }
+        else compile(module, binding).right.map { r => reports.put(key, r); r }
       }
   }
 
@@ -426,7 +573,7 @@ final class Runner(val cfg: RunnerConfig) {
     * A refusal is NOT cached: a 404 for a module the operator is about to
     * drop in, or a 400 for a signature they are about to correct, must not
     * outlive the fix.  Only a report that works is remembered. */
-  private def compile(module: String): Either[RunError, Report] =
+  private def compile(module: String, binding: String): Either[RunError, Report] =
     if (!moduleNameOk(module))
       Left(NotFound("no module named " + module))
     else if (!env.loadedModules.contains(module) && env.loadFile(module).isEmpty)
@@ -442,9 +589,9 @@ final class Runner(val cfg: RunnerConfig) {
       loadFailed match {
         case Some(why) => Left(Failed("module " + module + " does not load: " + why))
         case None =>
-          val g = Global(module, cfg.reportName)
+          val g = Global(module, binding)
           if (!env.termNames.contains(g))
-            Left(NotFound("module " + module + " has no binding named " + cfg.reportName))
+            Left(NotFound("module " + module + " has no binding named " + binding))
           else {
             // THE BARE NAME, never an ascribed expression: on the 2.11 branch
             // `Session.eval` runs the fused `phrase(term)` without Console's
@@ -455,25 +602,26 @@ final class Runner(val cfg: RunnerConfig) {
             // expression at all -- there is no `NewPipeline.replType` here for
             // the 2.11 port to replace with `SchemaParse.typeExpr`.
             val evaluated =
-              try Right(Session.eval(cfg.reportName, Map(Builtin -> everything, module -> everything)))
+              try Right(Session.eval(binding, Map(Builtin -> everything, module -> everything)))
               catch {
-                case Death(d, _) => Left(Failed("cannot evaluate " + module + "." + cfg.reportName + ": " + d.toString))
-                case NonFatal(e) => Left(Failed("cannot evaluate " + module + "." + cfg.reportName + ": " + messageOf(e)))
+                case Death(d, _) => Left(Failed("cannot evaluate " + module + "." + binding + ": " + d.toString))
+                case NonFatal(e) => Left(Failed("cannot evaluate " + module + "." + binding + ": " + messageOf(e)))
               }
             evaluated.right.flatMap { case (ty, fn) =>
-              Decode.reportSignature(ty).left.map(e => signatureRefusal(module, e.message)).right.flatMap {
+              Decode.reportSignature(ty).left.map(e => signatureRefusal(module, binding, e.message)).right.flatMap {
                 case (paramTy, resultTy) =>
                   resultKind(resultTy) match {
                     case None =>
-                      Left(signatureRefusal(module, "a report returns " + NodeModule + ".Node or " +
-                                                    FetchModule + ".Fetch " + NodeModule + ".Node, not " +
-                                                    Schema.renderType(resultTy)))
+                      Left(signatureRefusal(module, binding,
+                                            "a report returns " + NodeModule + ".Node or " +
+                                            FetchModule + ".Fetch " + NodeModule + ".Node, not " +
+                                            Schema.renderType(resultTy)))
                     case Some(_) =>
                       Decode.compile(paramTy).left.map { e =>
                         BadRequest("$." + Request.Params,
                                    "the parameter type " + Schema.renderType(paramTy) +
-                                   " of " + module + "." + cfg.reportName + " has no JSON reading: " + e.report)
-                      }.right.map(d => new Report(module, paramTy, resultTy, d, fn))
+                                   " of " + module + "." + binding + " has no JSON reading: " + e.report)
+                      }.right.map(d => new Report(module, binding, paramTy, resultTy, d, fn))
                   }
               }
             }
@@ -481,8 +629,8 @@ final class Runner(val cfg: RunnerConfig) {
       }
     }
 
-  private def signatureRefusal(module: String, why: String): RunError =
-    BadRequest("$", module + "." + cfg.reportName + " is not a report: " + why)
+  private def signatureRefusal(module: String, binding: String, why: String): RunError =
+    BadRequest("$", module + "." + binding + " is not a report: " + why)
 
   private def decode(rep: Report, req: Request): Either[RunError, Runtime] =
     rep.decoder(req.params).left.map(e => BadRequest("$." + Request.Params + e.path.substring(1), e.message))
@@ -538,10 +686,10 @@ final class Runner(val cfg: RunnerConfig) {
   private def evaluate(rep: Report, next: () => Runtime, n: Int, wcfg: WriteConfig)
       : Either[RunError, Either[Doc, List[Step]]] =
     evalLock.synchronized {
-      def failed(why: String): RunError = Failed(rep.module + "." + cfg.reportName + " failed: " + why)
+      def failed(why: String): RunError = Failed(rep.module + "." + rep.binding + " failed: " + why)
       def document(node: Runtime): Either[RunError, Either[Doc, List[Step]]] =
         Doc.fromRuntime(node) match {
-          case Left(e)  => Left(Failed(rep.module + "." + cfg.reportName +
+          case Left(e)  => Left(Failed(rep.module + "." + rep.binding +
                                        " produced a document that cannot be encoded: " + e.message, Some(e.path)))
           case Right(d) => Right(Left(d))
         }
@@ -581,20 +729,8 @@ final class Runner(val cfg: RunnerConfig) {
       Data(ConsCon, Array(Prim(r.map { case (c, v) => (c, Runtime.fromPrimExpr(v)) }), acc))
     }
 
-  private def isNode(t: Type): Boolean = unfurl(t, List()) match {
-    case (Type.Con(_, Global(NodeModule, "Node", _), _, _), Nil) => true
-    case _                                                       => false
-  }
-
-  /** `Some(false)` for `Node`, `Some(true)` for `Fetch Node`, `None` for
-    * anything else. */
-  private def resultKind(t: Type): Option[Boolean] = unfurl(t, List()) match {
-    case (Type.Con(_, Global(NodeModule, "Node", _), _, _), Nil)               => Some(false)
-    case (Type.Con(_, Global(FetchModule, "Fetch", _), _, _), List(a)) if isNode(a) => Some(true)
-    case _                                                                     => None
-  }
-
   private final class Report(val module: String,
+                             val binding: String,
                              val paramTy: Type,
                              val resultTy: Type,
                              val decoder: Decode.Decoder,
@@ -658,6 +794,28 @@ object Runner {
         ok
       }
     }
+  }
+
+  private def isNode(t: Type): Boolean = unfurl(t, List()) match {
+    case (Type.Con(_, Global(NodeModule, "Node", _), _, _), Nil) => true
+    case _                                                       => false
+  }
+
+  /** `Some(false)` for `Node`, `Some(true)` for `Fetch Node`, `None` for
+    * anything else -- the test a binding's RESULT type has to pass to be a
+    * report at all.
+    *
+    * PUBLIC, and on the companion rather than on an instance, since WP-4:
+    * the language server applies it to the types its document index already
+    * holds, to list a file's report-typed bindings for the preview picker
+    * (JSON-WIDGET-PLAYGROUND §3.2) -- a lookup on the dispatch thread, with
+    * no `Runner` in reach and nothing evaluated.  `compile` applies the same
+    * function to the type the evaluator inferred, so the picker's list and
+    * the runner's 400 cannot disagree about what a report is. */
+  def resultKind(t: Type): Option[Boolean] = unfurl(t, List()) match {
+    case (Type.Con(_, Global(NodeModule, "Node", _), _, _), Nil)                    => Some(false)
+    case (Type.Con(_, Global(FetchModule, "Fetch", _), _, _), List(a)) if isNode(a) => Some(true)
+    case _                                                                          => None
   }
 
   private[json] def unfurl(t: Type, args: List[Type]): (Type, List[Type]) = t match {

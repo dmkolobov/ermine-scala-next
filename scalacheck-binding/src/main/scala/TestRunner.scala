@@ -42,6 +42,11 @@ import scala.util.control.NonFatal
   *    the curl walkthrough in the plan.
   *  - (sql) the two DB-layer tickets J3b handed on: a NULL in a GUID column,
   *    and a scan that throws being torn down.
+  *  - (inv1, inv2, bind, nodb) WP-4, the editor preview's four (§11 row
+  *    "Runner" of tracker/JSON-WIDGET-PLAYGROUND.md): invalidation of a
+  *    path nothing loaded, invalidation followed by a reload from disk and
+  *    the importers' closure, two report-typed bindings in one module, and
+  *    a runner that boots and compiles without opening a connection.
   */
 object TestRunner extends Properties("JSON document runner (J3c)") {
 
@@ -269,6 +274,16 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   def render(r: Runner, module: String, body: String): (Int, String) = {
     val out = new java.lang.StringBuilder
     r.renderText(module, body, out) match {
+      case Left(e)  => (e.status, e.body)
+      case Right(_) => (200, out.toString)
+    }
+  }
+
+  /** The same for one `(module, binding)` pair (WP-4); the three-argument
+    * form above is the HTTP route's, which supplies `cfg.reportName`. */
+  def render(r: Runner, module: String, binding: String, body: String): (Int, String) = {
+    val out = new java.lang.StringBuilder
+    r.renderText(module, binding, body, out) match {
       case Left(e)  => (e.status, e.body)
       case Right(_) => (200, out.toString)
     }
@@ -1843,6 +1858,183 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     val ms = System.currentTimeMillis - t0
     (bootedOk :| ("the runner did not boot: " + runner.bootFailure)) &&
       ((answer.get ?= "ok") :| ("a fixture type-check after a Runner boot: " + answer.get + ", " + ms + " ms"))
+  }
+
+  // =====================================================================
+  // (wp4) the report cache keyed by (module, binding), the parameter
+  // schema, and invalidation -- what the editor's preview session asks of
+  // a `Runner` besides a render (tracker/JSON-WIDGET-PLAYGROUND.md §2.4,
+  // §3, §6, §11 row "Runner").
+  //
+  // THE SECOND LOCK, and why the two invalidation properties take it.
+  // `core/test` is unforked and parallel (`build.sbt:94`), and four suites
+  // empty the process-global `Session.depCache` under
+  // `ErmineFixture.literalLock` -- `TestInterfaceRoundTrip`,
+  // `TestInterfaceKey`, `TestNamedFields`, `TestInterfaceConcreteRow`; the
+  // list, the evidence and the gate's red run are written down in
+  // `TestLspRobustness.withDepCache`.  `Runner.invalidate` reads that cache
+  // through `Session.dependentsOf`, which silently drops a module on a
+  // miss, so a foreign clear would cost the IMPORTER half of (inv2)
+  // exactly as it cost the LSP's C properties.
+  //
+  // The defence is EXCLUSION plus FRESHNESS rather than the re-prime
+  // `withDepCache` also needs: every module these properties depend on is
+  // written and LOADED INSIDE the locked block, so its dep-cache entry is
+  // made after the last moment a foreign clear could have run, and a clear
+  // that landed earlier can only have emptied entries for modules named
+  // nowhere here.  A missing entry only ever SHRINKS the closure
+  // `dependentsOf` answers, so it can cost a conjunct nothing this asserts.
+  // The runner is forced OUTSIDE the lock: its boot is seconds, and holding
+  // every clearing suite off for it is the mistake `withDepCache`'s LOCK
+  // ORDER note writes down.  Nothing that holds `literalLock` can name
+  // `Runner.evalLock` (it is `private[json]`), so the two orders cannot
+  // cross.
+
+  /** Write a module and answer its path, with its modification time made to
+    * MOVE.  `Session`'s staleness test is `depCache(sf)._1 != lastModified`
+    * and a filesystem's stamp has a granularity: two writes inside one tick
+    * would leave a changed file looking current, which is a property that
+    * fails for the clock's reason rather than the runner's. */
+  private def rewriteModule(name: String, source: String): java.nio.file.Path = {
+    val f = new File(moduleRoot, name + ".e")
+    val before = if (f.exists) f.lastModified else 0L
+    writeModule(name, source)
+    // and LOUDLY if the stamp cannot be moved: a silent failure here would
+    // leave the rewritten file looking current, and (inv2) would report the
+    // runner as broken for the filesystem's reason
+    if (f.lastModified <= before && !f.setLastModified(before + 2000L))
+      complain("could not move the modification time of " + f + " past " + before +
+               "; it is still " + f.lastModified)
+    f.toPath.toAbsolutePath.normalize
+  }
+
+  private val wp4Body = "{\"" + Request.Params + "\":1}"
+
+  private def wp4Widget(module: String, n: Int): String =
+    "module " + module + " where\n\nimport Builtin\nimport Int\n\n" +
+    "widgetNumber : Int\nwidgetNumber = " + n + "\n"
+
+  private def wp4Report(module: String, widget: String, extra: String): String =
+    "module " + module + " where\n\nimport Builtin\nimport Int\nimport Json\nimport List\n" +
+    "import Layout.Doc\nimport " + widget + "\n\n" +
+    "report : Int -> Node\nreport n = vflow [ rawWidget \"w\" widgetNumber" + extra + " ]\n"
+
+  property("(inv1) invalidate of a path this session never loaded is a no-op") = secure {
+    val r = runner // force the boot BEFORE literalLock: see the note above
+    ErmineFixture.literalLock.synchronized {
+      val before   = r.loadedModules
+      val unloaded = new File(moduleRoot, "WpNeverLoaded.e").toPath.toAbsolutePath.normalize
+      val outside  = new File("/nonexistent-root/WpAlien.e").toPath.toAbsolutePath.normalize
+      val notAFile = moduleRoot.toPath.toAbsolutePath.normalize
+      val got      = r.invalidate(Set(unloaded, outside, notAFile))
+      val after    = r.loadedModules
+      // `before -- after` and not `before == after`: the other properties
+      // of this suite run CONCURRENTLY over this runner and load modules
+      // as they go, so the loaded set grows under us.  Nothing but
+      // `invalidate` ever takes a module OUT, and the three properties
+      // that call it hold this lock.
+      ((got ?= Set.empty[String]) :| ("invalidate answered " + got)) &&
+        (((before -- after) ?= Set.empty[String]) :|
+          ("a no-op invalidate unloaded " + (before -- after))) &&
+        (before.nonEmpty :| "the runner has loaded nothing at all: the property is vacuous")
+    }
+  }
+
+  property("(inv2) invalidate then render reloads from disk, and invalidating an imported module names its importer") = secure {
+    val r = runner // force the boot BEFORE literalLock: see the note above
+    ErmineFixture.literalLock.synchronized {
+      val n   = counter.incrementAndGet()
+      val wid = "WpWidget" + n
+      val rep = "WpReport" + n
+      val widPath = rewriteModule(wid, wp4Widget(wid, 4211))
+      val repPath = rewriteModule(rep, wp4Report(rep, wid, ""))
+
+      val (st1, doc1) = render(r, rep, wp4Body)
+
+      // (i) the report's OWN file changes.  Until `invalidate` the compiled
+      // report is cached, and the runner answers the OLD document -- which
+      // is what makes the reload below a real observation and not a
+      // re-render that would have happened anyway.
+      rewriteModule(rep, wp4Report(rep, wid, ", rawWidget \"x\" 4233"))
+      val (stC, docC) = render(r, rep, wp4Body)
+      val dirty1      = r.invalidate(Set(repPath))
+      val unloaded1   = !r.loadedModules.contains(rep)
+      val (st2, doc2) = render(r, rep, wp4Body)
+      val reloaded1   = r.loadedModules.contains(rep)
+
+      // (ii) a module the report IMPORTS changes: the closure must name the
+      // REPORT, or the editor would never re-render it (§3 step 6)
+      rewriteModule(wid, wp4Widget(wid, 4222))
+      val dirty2      = r.invalidate(Set(widPath))
+      val (st3, doc3) = render(r, rep, wp4Body)
+
+      ((List(st1, stC, st2, st3) ?= List(200, 200, 200, 200)) :|
+        ("statuses " + List(st1, stC, st2, st3) + ": " + List(doc1, docC, doc2, doc3).map(_.take(200)))) &&
+        (doc1.contains("4211") :| ("the first document does not carry the widget's number: " + doc1.take(300))) &&
+        ((docC ?= doc1) :| "the compiled report is not cached: the document moved without an invalidate") &&
+        (dirty1.contains(rep) :| ("invalidating " + repPath + " answered " + dirty1)) &&
+        (unloaded1 :| (rep + " was still loaded after its own invalidate")) &&
+        (reloaded1 :| (rep + " was not loaded back by the next render")) &&
+        ((doc2 != doc1) :| ("the document did not follow the file: " + doc2.take(300))) &&
+        (doc2.contains("4233") :| ("the reloaded document lacks the new widget: " + doc2.take(300))) &&
+        (dirty2.contains(wid) :| ("invalidating " + widPath + " answered " + dirty2)) &&
+        (dirty2.contains(rep) :| ("the importer " + rep + " is not in the closure of " + wid + ": " + dirty2)) &&
+        ((doc3 != doc2) :| ("the imported module's change did not reach the document: " + doc3.take(300))) &&
+        (doc3.contains("4222") :| ("the document lacks the imported module's new number: " + doc3.take(300)))
+    }
+  }
+
+  property("(bind) two report-typed bindings in one module render two documents, and the default is still cfg.reportName") = secure {
+    val m = freshModule("WpTwo")
+    writeModule(m,
+      "module " + m + " where\n\nimport Builtin\nimport Int\nimport Json\nimport List\nimport Layout.Doc\n\n" +
+      "report : Int -> Node\nreport n = rawWidget \"w\" 7001\n\n" +
+      "wideReport : Int -> Node\nwideReport n = rawWidget \"w\" 7002\n\n" +
+      "notAReport : Int\nnotAReport = 3\n")
+    val (sa, da) = render(runner, m, "report", wp4Body)
+    val (sb, db) = render(runner, m, "wideReport", wp4Body)
+    val (sd, dd) = render(runner, m, wp4Body)          // no binding: cfg.reportName
+    val (sx, dx) = render(runner, m, "noSuchBinding", wp4Body)
+    val (sy, dy) = render(runner, m, "notAReport", wp4Body)
+    ((List(sa, sb, sd) ?= List(200, 200, 200)) :| ("statuses " + List(sa, sb, sd) + ": " + List(da, db, dd).map(_.take(200)))) &&
+      (da.contains("7001") :| da.take(300)) &&
+      (db.contains("7002") :| db.take(300)) &&
+      ((da != db) :| "two bindings of one module rendered the same document") &&
+      ((dd ?= da) :| "the binding-less render is not the cfg.reportName one") &&
+      ((sx ?= 404) :| ("an unknown binding gave " + sx + ": " + dx)) &&
+      (dx.contains("noSuchBinding") :| ("the 404 does not name the binding asked for: " + dx)) &&
+      ((sy ?= 400) :| ("a binding that is not a report gave " + sy + ": " + dy)) &&
+      (dy.contains("notAReport") :| ("the 400 does not name the binding asked for: " + dy))
+  }
+
+  property("(nodb) a Runner given an explicit run opens no connection to boot, to compile or to export a schema") = secure {
+    // the spec's own instrument: `CountingRun` loads the JDBC driver class
+    // in `freshResource`, so a count of zero IS "no driver was loaded".
+    // Passing `run` explicitly is what avoids `RunnerConfig`'s default
+    // `Runners.liteDB`, a `def` that forces `DB.sqliteTestDB` and its
+    // `Class.forName` (JSON-WIDGET-PLAYGROUND §2.4).
+    val own = new CountingRun
+    val r = new Runner(RunnerConfig(roots = List(exampleRoot), run = own,
+                                    scanner = Scanners.SQLite(SMEnv.dummySmenv)))
+    val booted  = r.bootFailure
+    val atBoot  = own.opened.get
+    val schema  = r.paramSchema("Sales", "report")
+    val absent  = r.paramSchema("Sales", "noSuchBinding")
+    val atCompile = own.opened.get
+    val out = new java.lang.StringBuilder
+    val drawn = r.renderText("Sales",
+      "{\"" + Request.Params + "\":{\"fromDay\":\"2026-01-05\",\"toDay\":\"2026-02-20\",\"orderBy\":\"ByDay\"}}", out)
+    val atRender = own.opened.get
+    ((booted ?= None) :| ("the runner did not boot: " + booted)) &&
+      ((atBoot ?= 0) :| ("booting opened " + atBoot + " connections")) &&
+      ((schema.isRight ?= true) :| ("paramSchema: " + schema.left.toOption.map(_.body))) &&
+      (schema.right.toOption.map(_.nospaces).exists(_.contains("fromDay")) :|
+        ("the schema is not Query's: " + schema.right.toOption.map(_.nospaces.take(300)))) &&
+      ((absent.left.toOption.map(_.status) ?= Some(404)) :| ("an unknown binding's schema: " + absent)) &&
+      ((atCompile ?= 0) :| ("compiling a report and exporting its schema opened " + atCompile + " connections")) &&
+      // and the counter is live, so the zeros above are not vacuous
+      ((drawn.isRight ?= true) :| ("the render failed: " + drawn.left.toOption.map(_.body))) &&
+      ((atRender ?= 1) :| ("a render opened " + atRender + " connections"))
   }
 
   // =====================================================================

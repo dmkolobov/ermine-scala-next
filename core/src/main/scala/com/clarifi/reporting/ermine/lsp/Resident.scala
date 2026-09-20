@@ -181,12 +181,6 @@ final class Resident(val log: String => Unit) {
   /** What the resident is missing after a failed reload. */
   def pending: Set[String] = pendingReload
 
-  /** Where the resident read each of its modules from, by normalized path. */
-  private def loadedByPath(env: SessionEnv): Map[java.nio.file.Path, String] =
-    env.loadedFiles.toList.collect {
-      case (Session.Filesystem(f, _), m) => Resident.normalize(f) -> m
-    }.toMap
-
   /** Scrub `direct` (and the pending set) with their dependents and load
     * them back through the resident's loader chain -- so a file deleted from
     * the first root falls back to the next root that has it, and a module
@@ -240,7 +234,7 @@ final class Resident(val log: String => Unit) {
     * not at all.  `None` while the session is not up. */
   def reload(changed: Set[java.nio.file.Path], removed: Set[java.nio.file.Path]): Option[Resident.Reloaded] =
     booted map { r =>
-      val byPath = loadedByPath(r.env)
+      val byPath = Session.loadedByPath(r.env)
       // A path names a loaded module two ways: it IS the file the module was
       // read from, or it is `<root>/A/B.e` for a module `A.B` the resident
       // holds from elsewhere -- a file deleted from the first root and read
@@ -646,7 +640,7 @@ final class Resident(val log: String => Unit) {
 }
 
 object Resident {
-  import java.nio.file.{ Files, Path, Paths }
+  import java.nio.file.{ Files, Path }
 
   /** LSP-STALENESS step 2: what one reload did -- the modules scrubbed (and,
     * unless `failure`, loaded back), in name order. */
@@ -654,17 +648,20 @@ object Resident {
     def nothing: Boolean = modules.isEmpty
   }
 
-  def normalize(fileName: String): Path = Paths.get(fileName).toAbsolutePath.normalize
-  def normalize(p: Path): Path          = p.toAbsolutePath.normalize
+  /** WP-4 review S5: `normalize`, `moduleUnder` and the former private
+    * `loadedByPath` now live in `Session`, beside `dependentsOf` and
+    * `scrub`, because `json.Runner.invalidate` needs all three and the
+    * `json` package -- `bin/ermine-serve`'s -- must not import `lsp`.  What
+    * is left here are FORWARDERS, kept so that every call site in this
+    * package, in `Main`, in the tests and every `Resident.moduleUnder`
+    * reference in the design documents still resolves. */
+  def normalize(fileName: String): Path = Session.normalize(fileName)
+  def normalize(p: Path): Path          = Session.normalize(p)
 
   /** The module name a `.e` path spells under one of `roots` (`<root>/A/B.e`
-    * is `A.B`), if it is under one. */
+    * is `A.B`), if it is under one.  Forwarder; see above. */
   def moduleUnder(roots: List[String], p: Path): Option[String] =
-    roots.iterator.map(Paths.get(_)).map(normalize).collectFirst {
-      case r if p.startsWith(r) && p.toString.endsWith(".e") =>
-        val rel = r.relativize(p).toString
-        rel.substring(0, rel.length - 2).replace(java.io.File.separatorChar, '.')
-    }
+    Session.moduleUnder(roots, p)
 
   /** The stdlib source directory of an sbt checkout: `core/src/main/resources/
     * modules` beneath it.  ONE convention, the same one `Definitions.SourceTree`

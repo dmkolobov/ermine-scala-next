@@ -1,19 +1,35 @@
 # JSON widget playground: edit a widget, see it rendered, inside VS Code
 
-> **STATUS: WP-1, WP-2 AND WP-3 ARE BUILT; EVERYTHING ELSE IS DESIGN ONLY.** WP-1 (`Rpc.scala`:
-> `send` synchronised, `onRequestDeferred`, `$/cancelRequest` routed, the incoming log line
-> moved after the parse and redacted by method; the `TestLspRobustness` A group) is written
-> and its suite is green. WP-2 (`scrub` and `dependentsOf` lifted from `Resident` into
-> `Session` with `builtins` a parameter; `Resident` calls them at its four sites) is written
-> and the `TestLspRobustness` C group is green, unchanged. WP-3 (`SessionEnv._registerDecls`,
-> default on and carried by `copy`; the registration in `processTypeDefComponent` consults it;
-> `Resident.withEnv` -- the one per-request copy site -- takes a `copyNotRegistering` copy) is
-> written, with the one `TestLspRobustness` D property, and `TestJson`, `TestSchema` and
-> `TestNamedFields` are unchanged and green. No other ticket has been started;
-> the only files WP-1 changes are `Rpc.scala`, `TestLspRobustness.scala` and this document,
-> the only files WP-2 changes are `Session.scala`, `Resident.scala` and this document, and
-> the only files WP-3 changes are `SessionState.scala`, `Session.scala`, `Resident.scala`,
-> `TestLspRobustness.scala` and this document.
+> **STATUS: WP-1, WP-2, WP-3 AND WP-4 ARE BUILT; EVERYTHING ELSE IS DESIGN ONLY.** No other
+> ticket has been started. What each built ticket is, and the only files it changes -- this
+> document aside, which every ticket touches:
+>
+> - **WP-1**: `send` synchronised, `onRequestDeferred`, `$/cancelRequest` routed, the incoming
+>   log line moved after the parse and redacted by method; the `TestLspRobustness` A group.
+>   Files: `Rpc.scala`, `TestLspRobustness.scala`.
+> - **WP-2**: `scrub` and `dependentsOf` lifted from `Resident` into `Session` with `builtins`
+>   a parameter; `Resident` calls them at its four sites. Files: `Session.scala`,
+>   `Resident.scala`.
+> - **WP-3**: `SessionEnv._registerDecls`, default on and carried by `copy`; the registration in
+>   `processTypeDefComponent` consults it; `Resident.withEnv` -- the one per-request copy site
+>   -- takes a `copyNotRegistering` copy; the one `TestLspRobustness` D property. Files:
+>   `SessionState.scala`, `Session.scala`, `Resident.scala`, `TestLspRobustness.scala`.
+> - **WP-4**: `Runner` with `reports` keyed by `(module, binding)`,
+>   `report`/`compile`/`render`/`renderText` per pair with `cfg.reportName` still the HTTP
+>   route's default, `paramSchema(module, binding)`, `Runner.resultKind` public on the
+>   companion, a `builtins` snapshot after the runner's own preamble, and
+>   `invalidate(paths): Set[String]` under `evalLock` -- scrub the closure, evict `reports`, no
+>   eager reload; `Backends.scannerFor(dialect, variant)`; `lsp/DelegatingRun.scala`; the four
+>   `TestRunner` properties of §11's "Runner" row. Files: `json/Runner.scala`,
+>   `backends/Backends.scala`, the new `lsp/DelegatingRun.scala`, `TestRunner.scala`, and --
+>   for the review's layering item only -- `Session.scala` and `Resident.scala`, where
+>   `normalize`, `moduleUnder` and `loadedByPath` move into `Session` beside
+>   `dependentsOf`/`scrub` and `Resident` keeps forwarders, so that `json` does not import
+>   `lsp`.
+>
+> **Which suites were run, and what they said, is recorded in each ticket's commit message, not
+> here**: a banner that names a suite goes stale the moment the next ticket runs a different
+> set, and a claim about a suite THIS tree has not run is worse than no claim.
 > The work lives on branch `widget-preview` in the worktree
 > `ermine-scala-wt-widget-preview`, forked from `json-encode` at `a0830244`; this document is
 > committed there. Every claim about this codebase is MINED from reading the source at that
@@ -603,11 +619,47 @@ approval under `:91`. Each WP done-when in §14 names its tier.
 | Q1 | which global the writers bundle puts on `window` (`htmlwriter` vs `ermine_htmlwriter`) | WP-11 |
 | Q2 | recycling defaults (renders / idle minutes) for a held MSSQL connection | WP-14 |
 | Q3 | is `Windows-ROOT` needed, or is the internal CA in the JDK's `cacerts` | WP-12 |
+| Q4 | how a module whose LOAD FAILED is invalidated once it is fixed | WP-7 |
+
+**Q4, in full** (found by the WP-4 review, 2026-09-20). A module that failed to load is in
+neither `loadedFiles` nor `loadedModules`, and `Runner.invalidate` derives its module set from
+exactly those two (`json/Runner.scala`, step 1 of its doc comment: `Session.loadedByPath`, then
+`Session.moduleUnder(cfg.roots, p)` filtered by `loadedModules`). So after a render answers 500
+"module does not load", saving the fix invalidates NOTHING: `invalidate` answers the empty set,
+no `ermine/preview/invalidated` goes out (§3 step 5 sends nothing for an empty set), the
+extension never re-renders (§3 step 6), and the panel keeps the 500 banner until the user picks
+the report again. The same is true of a file the broken module imports. The resident meets the
+same shape and compensates with a `pendingReload` set -- the modules a reload scrubbed and could
+not load back, retried by the next reload (`lsp/Resident.scala:179`, `:182`, `:197`, `:219`);
+`Runner` has no equivalent, because until WP-4 it never scrubbed. Options, none built:
+(i) a `pendingLoad` set in `Runner`, named by every `compile` that fails, returned by any
+`invalidate` whose paths name a module under a root whether or not it is loaded -- the resident's
+answer, in the runner; a `Runner` change, so a **follow-up to WP-4**;
+(ii) the extension re-renders on ANY `.e` save while its last answer was a load failure -- no
+server change, one wasted render per save in the broken state; lands in **WP-7**, the extension;
+(iii) the server sends `invalidated` for every watched change while the last render failed to
+load -- the same rule, moved to the server, where it knows what "the last render" was; lands in
+**WP-5**, the `Preview` object that owns the queue and the notification.
+Whichever is chosen, the loop only closes in the extension, which is why the table says WP-7.
+It does not block WP-4 or WP-5: `Runner.invalidate` is exactly as specified in §3 step 4 and
+§11's Runner row ("`invalidate` of an unloaded path is a no-op") stays true whichever option
+wins -- (i) would make a *failed* module no longer count as unloaded, which is a change to what
+is loaded, not to the rule.
 
 ## 14. Tickets, in dependency order
 
 Every ticket lands on `widget-preview` in `ermine-scala-wt-widget-preview`. Costs are
 estimates from the shape of the change, not measurements; tiers are `docs/gate-policy.md`'s.
+
+**This table is authoritative for ticket numbers.** `JSON-WIDGET-PLAYGROUND-RESOLUTIONS.md`
+numbers them differently, and the offset is not constant: its own table
+(`RESOLUTIONS:380-392`) INSERTS two tickets, `WP-2b NEW` (`:384`, `_registerDecls`) and
+`WP-4b NEW` (`:387`, cooperative cancel), which this table numbers WP-3 and WP-6. So its
+"WP-3" (`:385`, and `:84`, `:155` in the prose) and its "WP-4" (`:386`, and `:151`) are ONE
+behind -- they are this table's WP-4 and WP-5 -- and everything after its inserted `WP-4b` is
+further behind still: its "WP-5" (`:388`, the picker and `ermine.preview.roots`) is this
+table's **WP-7**, and its "WP-6 / WP-7" (`:390`, the bundle and the host reducer) are this
+table's WP-9 and WP-10. Read the ticket here.
 
 | # | Ticket | Done when | Tier / cost |
 |---|---|---|---|
