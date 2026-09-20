@@ -1,8 +1,25 @@
 # JSON widget playground: edit a widget, see it rendered, inside VS Code
 
-> **STATUS: WP-1, WP-2, WP-3, WP-4 AND WP-5 STAGES A AND B ARE BUILT; EVERYTHING ELSE IS
-> DESIGN ONLY.** No other ticket has been started. WP-5 is being built in three reviewed
-> stages; stage C is not started. What each built ticket is, and the only files it changes --
+> **STATUS: WP-1, WP-2, WP-3, WP-4 AND WP-5 (STAGES A, B AND C) ARE BUILT; EVERYTHING
+> ELSE IS DESIGN ONLY.** No other ticket has been started. WP-5 was built in three reviewed
+> stages. **THREE DEVIATIONS from its §14 row, each named in full rather than folded away:**
+> (i) the row's last done-when reads "an allocating loop ends in a clean exit the client
+> restarts", and only the CLEAN EXIT half was exercised (measured: exit code 3, §2.5); "the
+> client restarts it" is `vscode-languageclient`'s documented behaviour (*external*, up to
+> 5 times in 3 minutes) and nothing in this repository runs VS Code, so it is asserted from
+> the documentation and NOT measured.
+> (ii) "heap after a watchdog fire (allocating and NON-ALLOCATING loop)": the allocating case
+> is measured, the non-allocating case **has no witness**. Two `swhnf` loops that should have
+> had a constant live set both reached `-Xmx` and exited instead, and the one candidate for a
+> loop INSIDE a primitive (catastrophic regex backtracking) did not spin on JDK 21. So the
+> row's "non-allocating loop" was measured as far as it can be here, and what it measured is
+> that the case could not be constructed -- §2.5 says so with its numbers.
+> (iii) the row also says "and the `ermine.maxHeap` setting". Only the SERVER end is built:
+> the launcher honours `ERMINE_LSP_XMX`. The VS Code setting and the export that would give
+> it a value are DEFERRED TO WP-7. The justification is that a setting with no export is
+> inert -- both halves live in `editor/vscode` and are one change -- not that WP-7's row
+> claims them; WP-7 is simply where they now are. No `editor/vscode` file is touched by WP-5.
+> What each built ticket is, and the only files it changes --
 > this document aside, which every ticket touches:
 >
 > - **WP-1**: `send` synchronised, `onRequestDeferred`, `$/cancelRequest` routed, the incoming
@@ -109,6 +126,44 @@
 >   NOT stage B: the launcher's `-Xmx`/`-XX:+ExitOnOutOfMemoryError` and `ermine.maxHeap`,
 >   the `lsp-client.py` smoke and the measured instruments -- RSS, boot seconds and heap
 >   after a watchdog fire (stage C).
+>
+> - **WP-5 stage C**: the launcher's heap policy, the smoke, and the measured instruments.
+>   (1) `bin/ermine-lsp:20-63` adds `-Xmx${ERMINE_LSP_XMX:-2g}` and
+>   `-XX:+ExitOnOutOfMemoryError`. THE TWO FLAGS ARE DECIDED SEPARATELY, on WORDS of
+>   `ERMINE_JAVA_OPTS` and never on a substring of it: `-Xmx` is skipped when a word already
+>   sets the maximum heap (`-Xmx...` or `-XX:MaxHeapSize=...`), while
+>   `-XX:+ExitOnOutOfMemoryError` is ALWAYS added unless a word already names it with either
+>   sign, because §2.5's whole recovery story depends on it (one line to reverse). §2.2's
+>   sentence is ambiguous about that second flag and this is the reading, written down.
+>   The word test is not decoration: a substring test on the variable made
+>   `-Dermine.lsp.log=/tmp/-Xmx-logs/a.log` drop BOTH flags silently (the review's probe).
+>   An `ERMINE_LSP_XMX` that is not a heap size (`^[1-9][0-9]*[kKmMgGtT]$`: a non-zero number
+>   and a k/m/g/t suffix, which is what the JVM takes) is refused on stderr and `2g` used: a
+>   launcher that refuses to start is a server the editor cannot run at all, whereas a bad
+>   `-Xmx` inside `ERMINE_JAVA_OPTS` is the JVM's own to refuse ("Invalid maximum heap size",
+>   exit 1, before any LSP frame).
+>   Nothing else in the launcher moved: the classpath cache, `ERMINE_LSP_LOG` and the
+>   `JAVA_HOME` search are untouched. **No other way of starting the server goes through it**:
+>   `tracker/tools/lsp-smoke.sh`, `lsp-demo.sh` and `perf-client.py` build the `java` command
+>   line themselves from `tracker/repl-classpath.txt`, and `TestLspRobustness` starts no
+>   process at all, so the `lsp` gate is not affected by the cap and does not test it.
+>   (2) `tracker/tools/lsp-client.py` gains §11's "End to end" row as twelve checks against
+>   a COPY of `core/src/test/resources/doc/Sales.e` under a temp root of the run's own:
+>   `ermine/preview/reports` lists `report : Query -> Node` and nothing else; `ermine/render`
+>   answers `{ok:true, document, generation}`; the file is edited on disk and a
+>   `workspace/didChangeWatchedFiles` event goes in, exactly as the staleness section's own
+>   scenario does it; `ermine/preview/invalidated` names `Sales`; the second render's document
+>   differs, and differs BY THE EDIT; `ermine/schema {module, binding}` answers
+>   `ermine:Sales/Query` with `Query`'s four fields and three required ones. THE SMOKE NOW
+>   DECLARES `window.workDoneProgress`, so the boot's `window/workDoneProgress/create` is
+>   asked for and answered and the `$/progress` begin/end pair is checked; the second server
+>   in that file declares no capabilities and is the negative case.
+>   MEASURED: the gate went from 628 checks in 44.5 s to 640 checks in 46.7 s, so it stays a
+>   `commit` gate (§11's rule was "if it passes ~90 s it moves to `pr`"); `scripts/gates.sh`
+>   is unchanged.
+>   (3) The instruments of §2.2 and §2.5 are measured and written there.
+>   Files: `bin/ermine-lsp`, `tracker/tools/lsp-client.py`, this document. NO Scala, NO
+>   `editor/vscode`, NO gate registry change.
 >
 > - **Q4 AND Q5 FOLLOW-UP (2026-09-20)**: the two open questions of §13 the user decided,
 >   both built as option (i).
@@ -244,16 +299,51 @@ it becomes mandatory the day a second registry *reader* appears.
 `Layout.Fetch` closure and the picked report's closure. `Layout.Fetch` imports `Native.*`,
 `Control.Monad`, `Control.Monad.Cont`, `Function`, `List`, `Pair`, `Relation.Sort`,
 `Relation.Scan` (`Fetch.e:45-55`), so a large fraction of the resident's modules is loaded
-twice. **Unmeasured.** No launcher sets a heap cap today (`bin/ermine-lsp:18-31`; the
-extension sets only `ERMINE_LSP_LOG`, `extension.js:145-146`), so the cap is the JDK default,
-a quarter of RAM (*external*): 3984 MB on the 15.6 GB dev box (`tracker/PERF-ROADMAP.md:139`),
+twice. **Was unmeasured; MEASURED 2026-09-20 below.** No launcher set a heap cap until
+WP-5 stage C (`bin/ermine-lsp:18-31` as this was written, `:18-43` now; the extension still
+sets only `ERMINE_LSP_LOG`, `extension.js:145-146`), so the cap was the JDK default,
+a quarter of RAM (*external*): 3984 MB on the 15.6 GB dev box (`tracker/PERF-ROADMAP.md:139`;
+MEASURED again 2026-09-20, `java -XshowSettings:vm -version` says 3.89G),
 ~2 GB on an 8 GB laptop, and §5's two-windows row makes that four sessions. WP-5 caps it:
 `-Xmx${ERMINE_LSP_XMX:-2g}` and `-XX:+ExitOnOutOfMemoryError` in the launcher unless
 `ERMINE_JAVA_OPTS` already names `-Xmx`; a setting `ermine.maxHeap` (default `"2g"`) the
 extension exports as `ERMINE_LSP_XMX` beside `ERMINE_LSP_LOG`, restarting the server on a
 change as `serverPath` does (`extension.js:275-280`). Two windows on an 8 GB laptop are then
-4 GB of JVM heap by construction. WP-5's done-when records RSS and boot seconds before and
-after the preview boot and writes the figures here.
+4 GB of JVM heap by construction. **The launcher half is BUILT** (WP-5 stage C,
+`bin/ermine-lsp:18-43`); the `ermine.maxHeap` SETTING and its export as `ERMINE_LSP_XMX` are
+WP-7's row in §14 ("the `ermine.maxHeap` export"), so until WP-7 the variable is honoured but
+only an environment that already carries it reaches the server.
+
+**MEASURED 2026-09-20 (WP-5 stage C). An instrument, never gate evidence.** One run on the
+15.6 GB dev box (JDK 21.0.12.1, load under 1.5, `-Xmx2g` from the new launcher default),
+driven by a scratch client over one `bin/ermine-lsp` process: `VmRSS` from
+`/proc/<pid>/status`, heap from `jcmd <pid> GC.heap_info`, and EVERY POINT READ TWICE -- as
+it stands, and again after `jcmd <pid> GC.run` -- because RSS alone is dominated by garbage
+nobody has asked the collector for, and can FALL across a boot that really costs memory. It
+did: 775 MiB before the preview boot, 740 MiB after it, while the live set went UP.
+
+**UNITS, once, for this section and §2.5: MiB is kB/1024 and GiB is MiB/1024**, which is what
+`/proc/<pid>/status` and `jcmd` report in; nothing here is a power of ten.
+
+| point | seconds | RSS | RSS after a full GC | live heap after a full GC |
+|---|---|---|---|---|
+| the resident session ready, 129 modules | 11.4 s (`Ermine session ready: 129 modules in 11.4s`) | 775 MiB (793488 kB) | 282 MiB (288436 kB) | 22 MiB (22576K) |
+| after the first `ermine/render` of `Sales`, which boots the render session | the render 2.2 s, of which the session boot 1.9 s (`preview: render session booted in 1.9s`) | 740 MiB (758072 kB) | 342 MiB (349964 kB) | 30 MiB (30519K) |
+| a second render of the same report, warm | 0.0 s | 342 MiB (349928 kB) | 342 MiB (350628 kB) | 29 MiB (30010K) |
+
+**The second session costs about 60 MiB of RSS and 8 MiB of live heap** on this fixture,
+against a 2 GB cap. That is far less than "a large fraction of the resident's modules is
+loaded twice" suggests, and the reason is the `Session.depCache` row of the table above:
+both sessions load through that one process-global cache, and the render session holds
+`Lib.preamble`,
+the `Layout.Doc`/`Layout.Fetch` closure and one compiled report rather than 129 modules. The
+boot the user waits for is still the RESIDENT's 11.4 s; the preview's 1.9 s happens behind
+§2.5's progress bar. `Sales`'s rendered document is 1242 bytes, four orders of magnitude
+under `ermine.preview.maxDocumentBytes`. `ERMINE_LSP_XMX=256m` still boots the resident
+(11.8 s, RSS 412 MiB, 22 MiB live), so the 2 GiB default is a ceiling and not a requirement.
+STILL UNMEASURED: a second WINDOW (§5's row), a report whose closure is larger than
+`Sales`'s, and anything on a machine that is not this one. A STUCK preview is a different
+number entirely -- it occupies the whole cap; see §2.5.
 
 ### 2.3 Which thread
 
@@ -305,7 +395,7 @@ What the preview thread costs, and where it is paid:
 | Fresh files, whoever saved them | at the head of every render the session runs `reloadStale`'s test (`Resident.scala:271-273`: `depCache(sf)._1 != sf.lastModified`) over its **own** `loadedFiles` -- one `stat` per loaded file, ~150 files, milliseconds -- and invalidates what moved, so edits from outside VS Code and clients without dynamic watchers (`Main.scala:214-217`) are seen without the watcher |
 | The held connection is used by one thread only | so `DB.transaction`'s `setAutoCommit` toggling (`DB.scala:19-29`, called per scan from `SqlScanner.scala:193-195`) is never interleaved, and `fromPersistentConnection` handing every caller the same `Connection` (`Backends.scala:49-51`) is safe |
 | A scan hang ends by itself | the existing 300 s `setQueryTimeout` (`SqlExecution.scala:50`) raises an `SQLException`; the render answers 500; the preview thread is free again |
-| A non-terminating **evaluation** | pure Ermine loops run under `Runner.evalLock` (`Runner.scala:538-540`) and cannot be stopped from outside (*external*: `Thread.stop` throws on JDK 21). The honest promise: **a runaway evaluation blocks no LSP request until it exhausts the heap cap, then the server exits and the client restarts it**. A watchdog (`java.util.Timer`) answers the request after `ermine.preview.timeoutSeconds` (default 60) with "evaluation did not finish", in a notification carrying the **Ermine: Restart Language Server** button (`ermine.restartServer`, `extension.js:241`), marks the preview stuck, and every later `ermine/render` is answered the same way without queueing. An allocating loop (a fold over an infinite list; `swhnf` builds thunk chains as it goes, `Runtime.scala:215-238`) then hits `-Xmx` (§2.2) and `-XX:+ExitOnOutOfMemoryError` (*external*: since JDK 8u92) turns the OOM into a clean exit that `vscode-languageclient` restarts, up to 5 times in 3 minutes (*external*); the panel recovers as §7.2 describes. A CPU-bound loop pins one core for the process life until the user restarts. The resident keeps answering until then: it does not take `evalLock` and is on another thread. The watchdog exists so the user is told at 60 s rather than at OOM. WP-6 makes cancel real (next row) |
+| A non-terminating **evaluation** | pure Ermine loops run under `Runner.evalLock` (`Runner.scala:538-540`) and cannot be stopped from outside (*external*: `Thread.stop` throws on JDK 21). The honest promise: **a runaway evaluation blocks no LSP request until it exhausts the heap cap, then the server exits and the client restarts it**. A watchdog (`java.util.Timer`) answers the request after `ermine.preview.timeoutSeconds` (default 60) with "evaluation did not finish", in a notification carrying the **Ermine: Restart Language Server** button (`ermine.restartServer`, `extension.js:241`), marks the preview stuck, and every later `ermine/render` is answered the same way without queueing. An allocating loop (a fold over an infinite list; `swhnf` builds thunk chains as it goes, `Runtime.scala:215-238`) then hits `-Xmx` (§2.2) and `-XX:+ExitOnOutOfMemoryError` (*external*: since JDK 8u92) turns the OOM into a clean exit that `vscode-languageclient` restarts, up to 5 times in 3 minutes (*external*); the panel recovers as §7.2 describes. A CPU-bound loop pins one core for the process life until the user restarts (**MEASURED 2026-09-20: NO WITNESS EITHER WAY. Every loop that goes through `swhnf` reached `-Xmx` instead of pinning a core for ever, and the one candidate for a loop INSIDE a primitive did not spin at all. The claim is neither confirmed nor refuted; see the measured block below**). The resident keeps answering until then: it does not take `evalLock` and is on another thread. The watchdog exists so the user is told at 60 s rather than at OOM. WP-6 makes cancel real (next row) |
 | Cooperative cancel (WP-6, gated on a perf A/B) | a `@volatile` cancel flag on a per-thread evaluation context, checked at the head of `Runtime.swhnf` (`Runtime.scala:215`): `if (cancelled) throw Cancelled`. The watchdog and an in-flight `$/cancelRequest` set it. The unwinding thunk writes `Bottom` back into the thunks on its chain (`:231`, `:238`), which poisons the render session's stdlib thunks, so a cancel **discards the `Runner`** (the next render boots a new one) and the runaway's chains become garbage; the resident is untouched. Cost: one volatile read per force on the evaluator's hot loop, hence a Tier-2 instrument run (`perf-bench.sh`, an interleaved A/B; it "has never moved", `docs/gate-policy.md:105`) before adoption. Unverified: that every Ermine loop passes through `swhnf` (a loop inside one primitive would not) |
 | `$/cancelRequest` | queued: removed and answered `-32800`; in flight: marked, its eventual answer replaced by `-32800`, the work not interrupted until WP-6 (no hook into `SqlExecution` either way); during a boot: honoured when the boot ends (answer `-32800`, boot kept) |
 | `stale` | a **hint**; `invalidated` is the mechanism. A `@volatile` generation counter is bumped by `invalidate`, snapshotted at render start and compared just before `send`; a mismatch sets `"stale": true`, and the `invalidated` notification that follows makes the extension re-render (§3). An `invalidate` that lands after the comparison is not lost, only its banner is late. **AS BUILT (WP-5 stage A), DIFFERS FROM THE LETTER ABOVE -- for the user to confirm**: the counter is bumped when an `invalidate` is **posted** (on the dispatch thread) and snapshotted when a render is **enqueued**, not when it starts. The literal reading cannot work on a single-threaded queue: an `invalidate` that ran as a job could never move the counter *during* a render, so `stale` would be dead code; and a snapshot taken at render *start* would call a render fresh that was enqueued before an invalidate still queued behind it. Bumping per post can flag a render whose invalidation turns out empty -- a false positive, which is what "a hint" permits. The WP-5 stage A review judged this strictly better than the literal reading |
@@ -314,8 +404,117 @@ What the preview thread costs, and where it is paid:
 What a restart costs, stated once: a fresh process, the ~13 s boot (`Resident.scala:24`),
 every per-document inference cache (cold first check ~2.5 s against ~0.9 s warm,
 `editor/vscode/README.md:117-118`), the workspace-symbol table, the held connection and its
-`##` tables (§7.2), and the compiled report. WP-5's done-when measures heap after a watchdog
-fire for an allocating and a non-allocating loop and writes the figures here.
+`##` tables (§7.2), and the compiled report.
+
+**MEASURED 2026-09-20 (WP-5 stage C). An instrument, never gate evidence.** Each case is one
+run on the 15.6 GB dev box (JDK 21.0.12.1, load 1.0-2.9), one `bin/ermine-lsp` process per
+run driven by a scratch client, `VmRSS` from `/proc/<pid>/status`, heap from
+`jcmd <pid> GC.heap_info`, cores busy from the `utime`+`stime` delta in `/proc/<pid>/stat`.
+Units are §2.2's (MiB = kB/1024). `ermine.preview.timeoutSeconds` was set to **10** through
+`initializationOptions` for the three WATCHDOG cases; the `WpBlow` case below ran with the
+SHIPPED 60 s clock, which is why no watchdog answer appears in its row. Four report modules,
+written for this and kept OUT OF THE TREE because no gate needs them:
+
+```
+module WpChain where
+import Int; import Json; import List using {length; repeat}; import Layout.Doc
+
+report : Int -> Node
+report n = rawWidget "chain" (length (repeat n))
+
+module WpSpin where
+import Int; import Json; import Layout.Doc
+
+spin : Int -> Int
+spin n = spin n
+
+report : Int -> Node
+report n = rawWidget "spin" (spin n)
+
+module WpBlow where
+import Int; import Json; import List using {iterate; length}; import Layout.Doc
+
+grow : List Int            -- a TOP-LEVEL binding, so the head of the infinite
+grow = iterate (x -> x) 1  -- list is retained for the render session's life
+
+report : Int -> Node
+report n = rawWidget "blow" (length grow)
+
+module WpRegex where
+import Int; import Json; import Layout.Doc
+import List using {replicate}; import String using {concat; replaceAll}
+
+input : String             -- 40 'a's and a final '!' the pattern cannot consume
+input = replaceAll "a$" "!" (concat (replicate "a" 41))
+
+report : Int -> Node
+report n = rawWidget "regex" (replaceAll "(a+)+$" "x" input)
+```
+(the `import` lines are one per line in the files; joined here to keep four modules on one
+screen)
+
+`WpChain` folds over the stdlib's CYCLIC list (`repeat a = t where t = a :: t`,
+`List.e:29-30`) with `length = foldl (x _ -> x + 1) 0` over a bang-patterned accumulator
+(`:49-51`, `:119-120`), so ON PAPER its live set is one cons cell and one `Int`; `WpSpin`
+re-enters with the very argument thunk it was given and builds no datum at all. Neither
+stayed inside the heap.
+
+| case | when the watchdog answered | heap and RSS just after the fire | what followed |
+|---|---|---|---|
+| `WpChain`, `-Xmx2g` (the launcher default), **three runs** | 12.0 / 12.1 / 12.2 s -- the 10 s clock plus the ~2 s session boot the clock deliberately does NOT cover (the bracket above) | RSS 1.91 / 1.93 / 2.02 GiB; G1 heap 1.77 GiB committed, 422 / 518 / 673 MiB used | used 1.58-1.73 GiB at +30 s (4.65 cores busy), 1.91 GiB at +60 s (2.15 cores), and **GONE before +120 s in the two runs that were allowed to get there: exit code 3**, `-XX:+ExitOnOutOfMemoryError`. The remaining run -- the EARLIEST, the one whose watchdog answered at 12.2 s -- sampled only to +60 s and was killed by the instrument there while it was still alive, so it says nothing about +120 s |
+| `WpSpin`, `-Xmx2g` | 12.5 s | RSS 2.31 GiB; heap 2.00 GiB committed, 1.98 GiB used | gone about 5 s later, before the next request could be answered |
+| `WpBlow`, `ERMINE_LSP_XMX=256m` (the launcher's variable, honoured) | it never fired: the shipped 60 s clock was still running when the OOM arrived | heap 256 MiB committed, 254 MiB used at the last sample, +6.4 s | **exit code 3 after 8.6 s**, stderr EMPTY, and the JVM's own line written UNFRAMED to STDOUT |
+| `WpRegex`, `-Xmx2g` -- the review's candidate for a spin INSIDE ONE PRIMITIVE | **it never fired: the render ANSWERED `{"ok":true,...}` in 2.1 s**, almost all of it the session boot | -- | the document carried the input back unchanged (`"aaaa...!"`, no match); at +30, +60 and +120 s the process was IDLE -- **0.00 cores busy**, RSS flat at 699 MiB, heap flat at 213 MiB used, 29 MiB live after a full GC -- and it answered a second hover before the instrument killed it |
+
+**PROVENANCE, because the file names moved.** The two EARLIER `WpChain` runs (watchdog at
+12.2 s and 12.1 s) were made before the program was split into a file of its own, and their
+logs therefore record the file name `WpSpin.e`. The LATEST run (12.0 s) was made as
+`WpChain.e` after the split, and it is the one whose numbers lead each cell above (1.91 GiB,
+422 MiB, 4.65 and 2.15 cores). The `WpSpin` row is a DIFFERENT program -- the bare self-call
+-- and has one run, made after the split.
+
+What the watchdog does was measured on `WpChain` in all three runs, and it is §2.5's own row:
+the request is answered `{"ok":false,"status":500,"message":"evaluation did not finish after
+10s; the preview is stuck until the language server is restarted -- run \"Ermine: Restart
+Language Server\" (ermine.restartServer)","generation":1}`; `window/showMessage` type 1
+carries the same text; **the resident answered a `textDocument/hover` in 0.00 s while the
+preview thread was wedged** (`Good.answer : Int`); and the next `ermine/render` was refused
+with the same message, its own generation echoed, without queueing.
+
+Three things this adds to, or takes back from, the mined text above:
+
+1. **NO `swhnf` LOOP STAYED INSIDE THE HEAP -- and that is all this shows.** Both loops that
+   reach `Runtime.swhnf` grew without bound, which the mechanism there explains: `swhnf`
+   carries a `chain: List[Thunk]` that only `writeback` unwinds (`Runtime.scala:215`, `:237`,
+   `:247`), and every updatable thunk it enters is whiteholed with a `pending` thread set and
+   a `latch` before the recursive call (`:229-237`) -- so a self-call that never reaches a
+   value adds a frame, a thunk, a set and a latch per step and lets go of none of them. A fold
+   over an infinite list is only the most obvious instance. **The CPU-bound exception is NOT
+   disproved**: the row's "a CPU-bound loop pins one core" would need a loop that takes no
+   `swhnf` step, i.e. one inside a single primitive, and the review's candidate for that --
+   catastrophic regex backtracking through `replaceAll#` (the foreign method onto
+   `java.lang.String.replaceAll`, `String.e:68-69`, `:103`) -- **did not spin**: `(a+)+$`
+   against 40 a's and a `!` answered in under a millisecond, and so did twelve further
+   patterns tried directly against JDK 21 -- `(a+)+b`, `^(a+)+$`, `(a|a)+$`, `(a|aa)+$`,
+   `^(a|a?)+$`, `(x+x+)+y`, `(a*)*b`, `(a|a?)+b`, `([a-z]+)+#`, `(a+)+\z`, `(?:a+)+b`,
+   `(a|aa)+c`, over 47 pattern/input combinations, anchored and unanchored, with and without
+   the required trailing literal actually present in the input, every one under 2 ms.
+   JDK 21's `Pattern` defeats the classic cases. So: no witness either way, and the promise
+   keeps its CPU-bound clause.
+2. **The cap is not only a ceiling on runaways; a stuck preview OCCUPIES it.** RSS reached
+   2.3 GiB within a minute of the fire under `-Xmx2g`, and the whole server -- resident,
+   caches, held connection -- goes with it about two minutes after the fire. That, and not
+   the 60 MiB of §2.2, is the number a user with two windows should think about. It is also a
+   different user story from "blocks no LSP request", which is Q13.
+3. **`-XX:+ExitOnOutOfMemoryError`'s termination line goes to the JVM's STDOUT**, which for a
+   server on stdio is the PROTOCOL CHANNEL: measured, the last bytes before EOF were
+   `Terminating due to java.lang.OutOfMemoryError: Java heap space\n`, unframed, straight
+   after a well-formed `$/progress` frame. `Main.stealStdout` does not and cannot cover it --
+   it replaces `System.out` at the Java level, and this line is written by the VM itself.
+   That is Q12. What a client makes of the trailer is *external* and was not exercised. Nor
+   was "`vscode-languageclient` restarts it, up to 5 times in 3 minutes": the client library's
+   documented behaviour (*external*), and nothing in this repository runs VS Code. What WAS
+   measured is the clean exit itself -- exit code 3, and no process left behind.
 
 Dropped from earlier drafts, on this evidence: "never stalls diagnostics" is narrowed to
 "never blocks the dispatch thread"; "cancellable" is narrowed to the rows above.
@@ -678,7 +877,7 @@ query-authoring tooling, not part of the loop: **optional, last** (WP-19).
 |---|---|
 | No internet in the loop | no CDN script in the webview; `client/node_modules/` is gitignored (`.gitignore:9`) and absent here, so `webpack`, `ts-loader` and their closure need a vendored copy or an internal registry |
 | Driver artifact | `mssql-jdbc`, classifier `jre11` (§7.3), in the offline Ivy/Coursier cache before `sbt` resolves; `bin/ermine-lsp` rebuilds its classpath cache when `build.sbt` is newer (`bin/ermine-lsp:12-16`, same as `bin/ermine-serve:21-27`) |
-| Every launcher is bash | `bin/ermine`, `bin/ermine-lsp`, `bin/ermine-schema`, `bin/ermine-serve`; the default server path is `bin/ermine-lsp` under the first folder (`package.json:43-47`; `extension.js:49-55`). **Windows gets native `.cmd`/PowerShell wrappers** (`bin/ermine-lsp.cmd` at least, doing what `bin/ermine-lsp:12-31` does: the classpath cache, `-Dermine.lsp.log`, the heap cap of §2.2, `ERMINE_JAVA_OPTS`); `resolveServer` picks the wrapper when `process.platform === "win32"` (*external*). No WSL |
+| Every launcher is bash | `bin/ermine`, `bin/ermine-lsp`, `bin/ermine-schema`, `bin/ermine-serve`; the default server path is `bin/ermine-lsp` under the first folder (`package.json:43-47`; `extension.js:49-55`). **Windows gets native `.cmd`/PowerShell wrappers** (`bin/ermine-lsp.cmd` at least, doing what `bin/ermine-lsp:12-74` does: the classpath cache, `-Dermine.lsp.log`, the heap cap of §2.2 -- `-Xmx` and `-XX:+ExitOnOutOfMemoryError`, `:20-63` since WP-5 stage C -- and `ERMINE_JAVA_OPTS`); `resolveServer` picks the wrapper when `process.platform === "win32"` (*external*). No WSL |
 | Consequences of a Windows host | the extension host stays on Windows, so `SecretStorage` is backed by the OS credential store (*external*) and the JVM truststore is the Windows JDK's (`Windows-ROOT`, Q3, §7.3). Portability note, not a live question: on a Linux host `SecretStorage` is backed by the keyring (*external*) and the truststore by that JDK's `cacerts` |
 
 ## 11. Testing
@@ -698,7 +897,7 @@ approval under `:91`. Each WP done-when in §14 names its tier.
 | Runner | `TestRunner` (`:112`, `:806` already runs properties concurrently over one runner) | `invalidate` of an unloaded path is a no-op; `invalidate` then `render` reloads the module (loaded-set delta); two report-typed bindings in one module render two documents; `new Runner(cfg)` with an explicit `run` loads no JDBC driver (`CountingRun`, `TestRunner.scala:77`); **(Q4)** a module whose LOAD FAILED renders 500 and is named by the next `invalidate` -- of its own path, of the path of a broken module it IMPORTS, and of a loaded healthy module's path -- while a file under no root and a directory still name nothing, and the fix renders 200 and takes it back out; a module that is pending and then LOADED as another module's dependency is pruned and NOT named; a pending module whose file is DELETED is named while the file is there and not after the retry's 404 | **pr** | seconds |
 | Emitters | `TestSqlEmitters` | the SQLite string for a windowed relation contains `over (`; no emitter output contains `TODO`; `UnsupportedOnDialect` for `tryCast` on SQLite | **pr** | seconds |
 | Classifier | new, with a fake driver | §8.3 | **pr** | seconds |
-| End to end | `tracker/tools/lsp-client.py`, run by `tracker/tools/lsp-smoke.sh` (`scripts/gates.sh:115-120`) | `reports`, render, edit, `invalidated`, render: differs; the schema binding mode on `Sales` (domain is `Query`) | `lsp` (**commit**): adds one preview boot to a 44 s gate; if the gate passes ~90 s it moves to `pr` under the 3-minute budget | ~1 min |
+| End to end | `tracker/tools/lsp-client.py`, run by `tracker/tools/lsp-smoke.sh` (`scripts/gates.sh:115-120`) | `reports`, render, edit, `invalidated`, render: differs; the schema binding mode on `Sales` (domain is `Query`) | `lsp` (**commit**). **BUILT AND MEASURED 2026-09-20 (WP-5 stage C)**: 628 checks in 44.5 s before, 640 checks in 46.7 s after -- one preview boot of 1.6 s and one cold check of the copied `Sales.e`. The rule "if the gate passes ~90 s it moves to `pr`" is NOT triggered, so the gate stays at `commit` and `scripts/gates.sh` is unchanged. Under `docs/gate-policy.md` §5 ("gates must catch their mutants ... whenever a gate's definition or scope changes"): the gate's DEFINITION (`gate_lsp`) and its `GATE_SCOPE` string are both unchanged -- checks were added INSIDE `lsp-client.py`, and the files they newly reach (`lsp/Preview.scala`, `lsp/Definitions.scala`) were already inside `$E/lsp/*.scala` -- so the declaration needs no edit, and the gate's catch surface can only grow (before this, no smoke request reached `Preview.scala` at all). The harness was NOT run here: its lanes check out HEAD and run HEAD's `tracker/tools`, so it must follow the commit. The command is `scripts/mutate-and-verify.sh --gates lsp --classes obo,swap,guard,mapord -n 1 --seed 2` | ~1 min |
 | Host page | `client` `npm test` (the existing harness plus the `applyMessage` reducer, §5) | every message sequence the extension can send leaves a consistent state (no document and a banner, or a document and its dimming flag) | new `gate_client` in `scripts/gates.sh`, entering at **nightly** per policy; promotion after one recorded catch | seconds |
 | Instruments | results written into this document, never gate evidence | the credential gate (§8.4); the `##` count (`tempdb.sys.tables`) after an hour and after Disconnect; RSS and boot seconds before/after preview boot (§2.2); heap after a watchdog fire (§2.5); the bundle checklist (§5); the `perf-bench.sh` A/B for WP-6 | none | human / machine-dependent |
 
@@ -740,6 +939,8 @@ approval under `:91`. Each WP done-when in §14 names its tier.
 | Q9 | `ermine.preview.timeoutSeconds: 0` turns the watchdog off entirely as built: is an off switch wanted at all, and should `0` be it? | nothing |
 | Q10 | what `stuck` means if the wedged job DOES come back: as built it never clears | nothing; decide before WP-6 |
 | Q11 | a report whose module did NOT EXIST when it was first rendered is still not named when its file appears | nothing; decide before WP-7 |
+| Q12 | the JVM's own OOM termination line is written to STDOUT -- the LSP protocol channel -- unframed, after the last frame (MEASURED, §2.5) | nothing; decide before WP-7 |
+| Q13 | a stuck preview takes the WHOLE SERVER down at `-Xmx` about two minutes after the watchdog fires (MEASURED, §2.5), which is not the story §2.5 tells | nothing; decide with WP-6 |
 
 **Q4, in full** (found by the WP-4 review, 2026-09-20). A module that failed to load is in
 neither `loadedFiles` nor `loadedModules`, and `Runner.invalidate` derives its module set from
@@ -938,6 +1139,61 @@ asked for;
 (iii) the extension re-renders on file-CREATION events for the picked report's own path, which
 is **WP-7**, the extension, and needs no server change.
 It blocks nothing; the answer is wanted before WP-7, which is where the loop closes.
+
+**Q12, in full** (MEASURED by WP-5 stage C, 2026-09-20). With `-XX:+ExitOnOutOfMemoryError`
+the JVM writes `Terminating due to java.lang.OutOfMemoryError: Java heap space` and exits.
+Measured, that line lands on **fd 1**, unframed, immediately after a well-formed `$/progress`
+frame and immediately before EOF -- and fd 1 is the LSP protocol channel. The repository
+treats stdout as sacred: `Main.stealStdout` (`lsp/Main.scala:22-37`) replaces `System.out`
+with a sink that turns every stray `println` into a log line "(decision 4)", and
+`lsp-client.py`'s phase-timer check exists to assert that timings never reach stdout. Neither
+covers this line, and NOT because anyone forgot: `System.setOut` rebinds a Java field, while
+this line is written by the VM itself to the file descriptor. No JVM flag redirects only that
+message (`-XX:+DisplayVMOutputToStderr` moves all VM output and is *external*, unverified
+here). Options, none built:
+(i) ACCEPT it. The process is exiting anyway, the bytes arrive after the last complete frame,
+and what a client does with a trailing fragment before EOF is *external*: a
+client's reader would at worst log a parse error on a stream that is about to close. Cost:
+nothing; risk: a client that treats malformed input as fatal reports the wrong cause;
+(ii) MAKE fd 1 SAFE IN THE PROCESS. At startup `Main` duplicates fd 1, points the `Wire` at
+the duplicate and reopens fd 1 on the log (or `/dev/null`), so nothing the VM or a native
+library writes to fd 1 can reach the client. This is what `stealStdout` does one level up, and
+it would subsume it. Cost: a small native-ish dance (`FileDescriptor`/`FileOutputStream`, or
+an `ERMINE_LSP_*` wrapper doing `3>&1 1>log`), plus every framing test now has to know which
+descriptor is the wire;
+(iii) DROP `-XX:+ExitOnOutOfMemoryError` and handle the OOM in-process: catch it where the
+preview thread already catches `Throwable`, answer the request, log, and call `System.exit`
+ourselves after a clean shutdown. Cost: an `OutOfMemoryError` caught in a thrashing JVM is
+not reliably actionable (that is the flag's whole reason for existing), and §2.5's recovery
+would depend on code that runs with no heap left.
+It blocks nothing; the answer is wanted before WP-7, which is when a user first sees the
+panel go dark.
+
+**Q13, in full** (MEASURED by WP-5 stage C, 2026-09-20). §2.5 promises that "a runaway
+evaluation blocks no LSP request until it exhausts the heap cap", and the watchdog is there so
+that the user is told at 60 s rather than at OOM. Measured, the second half arrives much
+sooner than that wording suggests: under the launcher's `-Xmx2g` default a stuck preview took
+the WHOLE SERVER down **about two minutes after the watchdog fired** (`WpChain`, two runs,
+exit code 3), taking the resident session, its per-document inference caches, the
+workspace-symbol table and -- once WP-13/WP-14 exist -- the held connection and its `##`
+tables with it. Between the fire and the exit the process also held 2.3 GiB of RSS, which on
+an 8 GB laptop with two windows is most of the machine. The watchdog's message ("the preview
+is stuck until the language server is restarted") is therefore true but understated: the
+restart is coming anyway, and the user does not choose when. Options, none built:
+(i) ACCEPT and SAY SO. The panel's stuck banner (WP-7) and the `window/showMessage` text say
+that the server will restart itself shortly and that unsaved editor state is not at risk.
+Cost: a wording change; the resident still dies;
+(ii) PRIORITISE WP-6 (cooperative cancel). The flag at the head of `Runtime.swhnf` is what
+makes the runaway stop allocating at all; with it, the watchdog's answer is the end of the
+incident rather than the start of a two-minute countdown. Cost: WP-6's own perf A/B gate, and
+the `Runner` discard it already specifies;
+(iii) EXIT DELIBERATELY AT THE FIRE. When the watchdog fires, answer, notify, and shut the
+server down cleanly instead of waiting for the OOM -- a predictable restart at 60 s in place
+of an unpredictable one at 60 s + 2 min, and it makes Q12 moot. Cost: it throws away a
+resident that was working, and a preview that would have finished at 61 s never gets to.
+It blocks nothing; the answer is wanted with WP-6. If the primitive-loop case of §2.5's
+finding 1 ever finds a witness, this question gains a second shape -- a stuck preview that
+does NOT end in an exit and so never restarts at all.
 
 ## 14. Tickets, in dependency order
 

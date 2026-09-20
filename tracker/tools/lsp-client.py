@@ -14,8 +14,10 @@ import signal
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 import time
 
@@ -242,7 +244,16 @@ def main():
     # the resolution of `Roots.e` below is the root's doing or nobody's.
     r = client.response(client.request("initialize", {
         # STALENESS step 2: a client that lets the server register a watcher.
-        "capabilities": {"workspace": {"didChangeWatchedFiles": {"dynamicRegistration": True}}},
+        # WP-5 (JSON-WIDGET-PLAYGROUND 2.5): and one that can show
+        # server-initiated work-done progress, which is what turns the preview
+        # boot's `window/workDoneProgress/create` on.  THE SMOKE DECLARES IT --
+        # the alternative, asserting that no create arrives, would leave the
+        # progress path of stage B untested over the wire, and `wait_for`
+        # already answers a server request like the client it stands for.  The
+        # SECOND server in this file declares no capabilities at all and is the
+        # negative case (`c2.server_requests == []`).
+        "capabilities": {"workspace": {"didChangeWatchedFiles": {"dynamicRegistration": True}},
+                         "window": {"workDoneProgress": True}},
         "rootUri": repo("").as_uri(),
         "workspaceFolders": [{"uri": repo("").as_uri(), "name": "ermine-scala"}],
         "initializationOptions": {"moduleRoots": [str(FIXTURES / "roots")]}}))
@@ -3262,6 +3273,132 @@ def main():
               len(ds) == 1 and "SigEntail.e:18:11" in ds[0]["message"], repr(ds[:1]))
     client.notify("textDocument/didClose", {"textDocument": {"uri": uri("SigEntail.e")}})
     client.diagnostics_for(uri("SigEntail.e"))
+
+    # ---- WP-5 (tracker/JSON-WIDGET-PLAYGROUND.md 11, row "End to end"): THE
+    # PREVIEW, over the wire.  reports -> render -> edit -> invalidated ->
+    # render: differs, and `ermine/schema` in its binding mode on a report
+    # whose parameter type is `Query`.
+    #
+    # ON A COPY of core/src/test/resources/doc/Sales.e under a temp root of
+    # this run's own, for the reason every other fixture here has a restore
+    # path: the scenario EDITS the report on disk, and the checkout's copy is
+    # a test resource other suites read.  The temp root is what the render's
+    # `roots` names, so the module resolves there while the session's stdlib
+    # still comes from the roots the server booted with (2.4).
+    #
+    # The client declared `window.workDoneProgress` at initialize, so 2.5's
+    # boot progress is on this wire: the server ASKS
+    # `window/workDoneProgress/create`, `Client.wait_for` answers it as it
+    # answers `client/registerCapability`, and the `$/progress` begin/end pair
+    # is checked below.
+    preview_root = pathlib.Path(tempfile.mkdtemp(prefix="ermine-lsp-smoke-preview-"))
+    atexit.register(shutil.rmtree, preview_root, True)
+    sales_src = repo("core/src/test/resources/doc/Sales.e").read_text()
+    sales_file = preview_root / "Sales.e"
+    sales_file.write_text(sales_src)
+    sales_uri = sales_file.as_uri()
+    sales_params = {"fromDay": "2026-01-05", "toDay": "2026-02-20",
+                    "onlyRegion": "north", "orderBy": "ByAmount"}
+
+    # (1) THE PICKER'S LIST (3.2), on the dispatch thread.  The file is not
+    # open, so the server checks it once from disk to answer this.
+    rid = client.request("ermine/preview/reports", {"uri": sales_uri})
+    rp = client.response(rid).get("result")
+    check("preview/reports names the module of the file",
+          rp is not None and rp.get("module") == "Sales", repr(rp)[:300])
+    listed = [(x.get("binding"), x.get("type")) for x in (rp or {}).get("reports", [])]
+    check("preview/reports lists `report : Query -> Node` and nothing else",
+          len(listed) == 1 and listed[0][0] == "report"
+          and listed[0][1].startswith("Query") and "->" in listed[0][1]
+          and listed[0][1].endswith("Node"), repr(listed))
+
+    def preview_render(generation):
+        rid = client.request("ermine/render", {
+            "uri": sales_uri, "binding": "report", "params": sales_params,
+            "roots": [str(preview_root)], "generation": generation})
+        return client.response(rid).get("result")
+
+    # (2) THE FIRST RENDER boots the render session (2.4) and answers 4's
+    # success shape.
+    first = preview_render(1)
+    check("render: the first render answers ok and echoes its generation",
+          first is not None and first.get("ok") is True
+          and first.get("generation") == 1, repr(first)[:300])
+    check("render: the answer carries a document",
+          isinstance((first or {}).get("document"), dict), repr(first)[:300])
+
+    # (3) 2.5's BOOT PROGRESS, which only this client's capability turns on.
+    creates = [q for q in client.server_requests
+               if q.get("method") == "window/workDoneProgress/create"]
+    token = creates[0]["params"]["token"] if len(creates) == 1 else None
+    check("progress: the boot asked the client for exactly one token",
+          len(creates) == 1 and isinstance(token, str)
+          and token.startswith("ermine-preview-boot-"), repr(creates))
+    prog = [m["params"] for m in client.seen
+            if m.get("method") == "$/progress" and m["params"].get("token") == token]
+    check("progress: begin then end for that token, titled and not cancellable",
+          [q["value"]["kind"] for q in prog] == ["begin", "end"]
+          and prog[0]["value"]["title"] == "Ermine preview: booting the render session"
+          and prog[0]["value"]["cancellable"] is False, repr(prog))
+
+    # (4) THE LOOP (3): the report is edited on disk and the watcher event goes
+    # in; the preview answers with the module the save dirtied.  The
+    # modification time is forced forward because this write can land in the
+    # same second as the one above, and a reload that compares mtimes would
+    # then see nothing (the hazard TestLspRobustness.writeFixture writes down).
+    before_mtime = sales_file.stat().st_mtime
+    sales_file.write_text(sales_src.replace('Heading "Sales"', 'Heading "Sales (edited)"'))
+    # UNCONDITIONALLY, not "only if it did not move": Python reads the
+    # modification time in NANOSECONDS and Java's File.lastModified reports
+    # MILLISECONDS, so a second write that looks strictly later here can still
+    # look unchanged there, and the guarded form would never fire.
+    os.utime(sales_file, (before_mtime + 2, before_mtime + 2))
+    client.notify("workspace/didChangeWatchedFiles",
+                  {"changes": [{"uri": sales_uri, "type": 2}]})
+
+    def _no_invalidated(*_):
+        raise AssertionError(
+            "no ermine/preview/invalidated within 120s: the watcher path is dead")
+
+    # A BOUNDED wait.  `wait_for` blocks on a read with no deadline of its own,
+    # so a preview that never posted the invalidation would turn this 47 s gate
+    # into lsp-smoke.sh's 240 s timeout and report nothing about why.  One
+    # thread and one blocking read is exactly what SIGALRM is for.
+    _prev_alrm = signal.signal(signal.SIGALRM, _no_invalidated)
+    signal.alarm(120)
+    try:
+        inv = client.wait_for(lambda m: m.get("method") == "ermine/preview/invalidated",
+                              "ermine/preview/invalidated")
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, _prev_alrm)
+    check("invalidated: the save names the edited module, and only it",
+          inv["params"].get("modules") == ["Sales"], repr(inv))
+
+    # (5) THE SECOND RENDER DIFFERS, and differs BY THE EDIT.
+    second = preview_render(2)
+    check("render: the second render answers ok and echoes its generation",
+          second is not None and second.get("ok") is True
+          and second.get("generation") == 2, repr(second)[:300])
+    check("render: the document differs after the edit",
+          (second or {}).get("document") != (first or {}).get("document"))
+    check("render: it differs BY THE EDIT, which is in neither document before it",
+          "Sales (edited)" in json.dumps((second or {}).get("document"))
+          and "Sales (edited)" not in json.dumps((first or {}).get("document")))
+
+    # (6) `ermine/schema` IN ITS BINDING MODE (4, 6), answered from the render
+    # session the renders above booted: the domain of `report : Query -> Node`
+    # is `Query`, with its own four fields and its own three required ones.
+    rid = client.request("ermine/schema", {"module": "Sales", "binding": "report"})
+    sch = client.response(rid).get("result")
+    check("ermine/schema {module, binding} answers the report's parameter type",
+          sch is not None and sch.get("$id") == "ermine:Sales/Query"
+          and sch.get("$ref") == "#/$defs/Sales.Query", repr(sch)[:300])
+    query = (sch or {}).get("$defs", {}).get("Sales.Query", {})
+    check("the schema's domain is Query: its four fields, three of them required",
+          sorted(query.get("properties", {})) == ["fromDay", "onlyRegion", "orderBy", "toDay"]
+          and sorted(query.get("required", [])) == ["fromDay", "orderBy", "toDay"],
+          repr(sch)[:400])
 
     # Checks must neither read nor write interface files (a stale .ei would
     # let type errors through unreported, and writebacks litter workspaces).

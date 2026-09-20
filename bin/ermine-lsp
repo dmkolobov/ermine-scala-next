@@ -17,7 +17,50 @@ fi
 
 opts=( )
 [[ -n ${ERMINE_LSP_LOG:-} ]] && opts+=( -Dermine.lsp.log="$ERMINE_LSP_LOG" )
-[[ -n ${ERMINE_JAVA_OPTS:-} ]] && read -r -a extra <<< "$ERMINE_JAVA_OPTS" && opts+=( "${extra[@]}" )
+# WP-5 (tracker/JSON-WIDGET-PLAYGROUND.md sections 2.2 and 2.5).  Two sessions
+# live in this JVM once a preview is booted -- the resident and the render
+# session -- and nothing capped the heap, so the cap was the JDK default of a
+# quarter of RAM.  -Xmx makes it the same on every machine, and
+# -XX:+ExitOnOutOfMemoryError turns an allocating runaway into a CLEAN EXIT the
+# editor's client restarts, in place of a process that thrashes and answers
+# nothing.
+#
+# THE TWO FLAGS ARE DECIDED SEPARATELY, and the test is on WORDS, never on a
+# substring of the whole variable: a -Dermine.lsp.log=/tmp/-Xmx-logs/a.log used
+# to silence BOTH of them.
+#  * -Xmx is skipped when a word of ERMINE_JAVA_OPTS already sets the maximum
+#    heap (-Xmx... or -XX:MaxHeapSize=...): that caller has chosen a size.
+#  * -XX:+ExitOnOutOfMemoryError is ALWAYS added unless a word of
+#    ERMINE_JAVA_OPTS already names ExitOnOutOfMemoryError with either sign,
+#    because section 2.5's recovery depends on it: without it an OOM leaves a
+#    thrashing process that answers nothing.  One line to reverse if the user
+#    would rather a caller's -Xmx took the whole heap decision.
+# An ERMINE_LSP_XMX that is not a heap size (a non-zero number and a k/m/g/t
+# suffix, which is what the JVM accepts) is REFUSED OUT LOUD and 2g used --
+# never exit here, because a launcher that refuses to start is a server the
+# editor cannot run at all.  (A bad -Xmx inside ERMINE_JAVA_OPTS is the JVM's
+# own to refuse: it prints "Invalid maximum heap size" and exits 1 before any
+# LSP frame, which the client sees as a server that died at startup.)
+ejo=( )
+[[ -n ${ERMINE_JAVA_OPTS:-} ]] && read -r -a ejo <<< "$ERMINE_JAVA_OPTS"
+have_xmx=0
+have_exit=0
+for word in ${ejo[@]+"${ejo[@]}"}; do
+  case "$word" in
+    -Xmx*|-XX:MaxHeapSize=*)                                  have_xmx=1 ;;
+    -XX:+ExitOnOutOfMemoryError|-XX:-ExitOnOutOfMemoryError)   have_exit=1 ;;
+  esac
+done
+if (( ! have_xmx )); then
+  xmx=${ERMINE_LSP_XMX:-2g}
+  if [[ ! $xmx =~ ^[1-9][0-9]*[kKmMgGtT]$ ]]; then
+    echo "ermine-lsp: ERMINE_LSP_XMX=\"$xmx\" is not a JVM heap size (a non-zero number and a k, m, g or t suffix, e.g. 2g, 512m, 2097152k); using 2g" >&2
+    xmx=2g
+  fi
+  opts+=( -Xmx"$xmx" )
+fi
+(( have_exit )) || opts+=( -XX:+ExitOnOutOfMemoryError )
+opts+=( ${ejo[@]+"${ejo[@]}"} )
 
 # JAVA_HOME if set; else the local toolchain if it is there; else java on PATH.
 if [[ -n ${JAVA_HOME:-} ]]; then

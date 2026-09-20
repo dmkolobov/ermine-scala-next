@@ -51,7 +51,7 @@ A higher tier includes every gate of the tiers below it.
 
 | tier | when | gates | wall clock (measured 2026-09-17, cold cache) |
 |---|---|---|---|
-| **commit** | before every `git commit` | `compile`, `corpus`, `lsp` | ~2.5 min: compile 5 s incremental / 74 s clean, corpus 42 s, lsp 44 s |
+| **commit** | before every `git commit` | `compile`, `corpus`, `lsp` | ~2.5 min: compile 5 s incremental / 74 s clean, corpus 42 s, lsp 47 s (640 checks; MEASURED 2026-09-20 after WP-5 stage C added the preview section to `lsp-client.py` -- 44 s / 628 checks before it) |
 | **pr** | on the merge result, before a branch lands on `json-encode` or `scala3-migration` | + `suites`, `lean` | + ~15 min: suites 11.3 min, lean 3.9 min (cached while `tracker/lean` is unchanged) |
 | **nightly** | on the tip of each live line | + `looptrace-corpus` | + ~20 min |
 
