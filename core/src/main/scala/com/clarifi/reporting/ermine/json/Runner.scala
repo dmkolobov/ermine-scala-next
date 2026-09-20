@@ -468,6 +468,45 @@ final class Runner(val cfg: RunnerConfig) {
       }
     }
 
+  /** The files THIS session loaded whose modification time is no longer the
+    * one their load recorded -- a save nobody reported.  `Resident.reloadStale`
+    * asks the same question of the resident's own `loadedFiles` with the same
+    * test (`Session.depCache.get(sf).map(_._1) != sf.lastModified`); this is
+    * that question for the render session, whose files the resident does not
+    * know about.
+    *
+    * WP-5 (JSON-WIDGET-PLAYGROUND §2.5, "Fresh files, whoever saved them")
+    * is the caller: the preview runs `invalidate(staleFiles)` at the head of
+    * every render -- one `stat` per loaded file -- so an edit made outside
+    * the editor, or by a client that registers no file watcher, is seen
+    * without a watcher.  It is on `Runner` and not in `lsp/` because
+    * `loadedFiles` belongs to this session's env, which nothing outside this
+    * class may touch.
+    *
+    * Under `evalLock`, like every other read of the env: a load on another
+    * thread would otherwise be walking the very map this iterates.  A boot
+    * that failed has no files and answers the empty set. */
+  private def staleFiles: Set[java.nio.file.Path] = evalLock.synchronized {
+    if (booted.isDefined) Set()
+    else env.loadedFiles.toList.collect {
+      case (sf @ Session.Filesystem(f, _), _)
+        if Session.depCache.get(sf).map(_._1) != sf.lastModified => Session.normalize(f)
+    }.toSet
+  }
+
+  /** The mtime scan of JSON-WIDGET-PLAYGROUND §2.5, whole, under ONE
+    * `evalLock` section: what moved on disk, forgotten, and the modules that
+    * answer named back.  `evalLock` is a reentrant Java monitor, so the
+    * `invalidate` inside pays only re-entry.
+    *
+    * It is one method rather than a public `staleFiles` plus a call to
+    * `invalidate` because the gap between two sections is a gap in which
+    * another thread's load could refresh a file this one has just decided is
+    * stale, and the scrub would then be a scrub for no reason.
+    *
+    * The preview thread calls this at the head of every render. */
+  def invalidateStale(): Set[String] = evalLock.synchronized { invalidate(staleFiles) }
+
   /** Forget the modules `paths` names, and everything loaded that imports
     * one of them: the answer is the module names invalidated, which
     * `JSON-WIDGET-PLAYGROUND` §3 step 5 sends on to the editor so it can

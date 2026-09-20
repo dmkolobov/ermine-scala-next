@@ -173,10 +173,33 @@ object Main {
       // silent 13s is indistinguishable from a hang.
       ermine.announce = (m: String) => logMessage(3, m)
 
+      // WP-5: the preview thread and its queue (JSON-WIDGET-PLAYGROUND §2.3).
+      // Built here, BEFORE `afterReload`, which posts to it; it registers
+      // `ermine/render` and `$/cancelRequest` and boots nothing until the
+      // first render arrives.
+      val preview = Preview.install(server, () => ermine.moduleRoots, log)
+
+      // WP-5, §3 step 3: the paths a reload touched, as the preview names
+      // files.  The watcher hands us its own; the `ermine.reloadModules`
+      // command has none, so the modules the resident reloaded are turned
+      // back into the files IT read them from.  Both are posted whatever the
+      // resident did with them -- a workspace report module the resident
+      // never loaded (`Sales`) is exactly the case §3 step 4 exists for, and
+      // the resident's reload set could never name it.
+      def pathsOfModules(ms: Set[String]): Set[java.nio.file.Path] =
+        if (ms.isEmpty) Set.empty
+        else ermine.loadedEnv.fold(Set.empty[java.nio.file.Path])(e =>
+          com.clarifi.reporting.ermine.session.Session.loadedByPath(e).collect {
+            case (p, m) if ms(m) => p
+          }.toSet)
+
       // LSP-STALENESS step 2: what follows a reload, whoever asked for it.
       // The workspace-symbol table, the inference caches and the published
       // diagnostics all describe the session before the reload.
-      def afterReload(how: String, r: Option[Resident.Reloaded]): Unit = r match {
+      def afterReload(how: String, r: Option[Resident.Reloaded],
+                      touched: Set[java.nio.file.Path]): Unit = {
+      preview.invalidate(touched ++ pathsOfModules(r.toList.flatMap(_.modules).toSet))
+      r match {
         case None                  => log(s"$how: session not booted; nothing to reload")
         case Some(x) if x.nothing  => log(s"$how: no loaded module changed")
         case Some(x) =>
@@ -191,6 +214,7 @@ object Main {
             case Some(f) => logMessage(1, s"Ermine: reload of ${x.modules.mkString(", ")} failed: $f " +
                                           "-- the session lacks them until a save succeeds")
           }
+      }
       }
 
       server.onNotification("initialized") { _ =>
@@ -265,7 +289,7 @@ object Main {
         val changed = paths(Set(1, 2))
         val removed = paths(Set(3))
         log(s"watch: ${changed.size} created/changed, ${removed.size} deleted")
-        afterReload("watch", ermine.reload(changed, removed))
+        afterReload("watch", ermine.reload(changed, removed), changed ++ removed)
       }
 
       request("workspace/executeCommand") { params =>
@@ -274,7 +298,7 @@ object Main {
             // Step 3: the command is also "look again" for the build stamp.
             BuildStamp.forget()
             val r = ermine.reloadStale()
-            afterReload("reload command", r)
+            afterReload("reload command", r, Set.empty)
             Json.obj(
               "reloaded" -> Json.Arr(r.toList.flatMap(_.modules).map(Json.Str(_))),
               "failure"  -> (r.flatMap(_.failure).map(Json.Str(_)) getOrElse Json.Null))
@@ -298,6 +322,7 @@ object Main {
 
       server.onNotification("exit") { _ =>
         log("exit received")
+        preview.shutdown()
         server.stop(if (shutdownSeen) 0 else 1)
       }
 

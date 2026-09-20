@@ -256,6 +256,10 @@ object Rpc {
     * capture) answer with this; the ones about the request itself (an
     * invalid or wrong-case new name, an operator) answer InvalidParams. */
   val RequestFailed  = -32803
+  /** LSP's own code for a request the server will not finish because it was
+    * cancelled: the queued render a newer one replaced, and the in-flight
+    * one a `$/cancelRequest` named (JSON-WIDGET-PLAYGROUND §2.5). */
+  val RequestCancelled = -32800
 
   /** How a deferred request handler answers: `Left((code, message))` or
     * `Right(result)`, from any thread, exactly once. */
@@ -403,7 +407,7 @@ final class Server(wire: Wire, log: String => Unit) {
   import Rpc._
 
   private var requests      = Map.empty[String, Json => Json]
-  private var deferred      = Map.empty[String, (Json, Rpc.Answer) => Unit]
+  private var deferred      = Map.empty[String, (Json, Json, Rpc.Answer) => Unit]
   private var notifications = Map.empty[String, Json => Unit]
   private var exitCode      = Option.empty[Int]
 
@@ -447,6 +451,19 @@ final class Server(wire: Wire, log: String => Unit) {
     * A method registered both here and with `onRequest` is served by
     * `onRequest`: the synchronous map is consulted first. */
   def onRequestDeferred(method: String)(h: (Json, Rpc.Answer) => Unit): Unit =
+    deferred += method -> ((_: Json, params: Json, answer: Rpc.Answer) => h(params, answer))
+
+  /** The same, for a handler that needs THE REQUEST'S OWN ID as well as its
+    * params -- everything `onRequestDeferred` promises holds unchanged.
+    *
+    * WP-5 (JSON-WIDGET-PLAYGROUND §2.5) is why it exists: `$/cancelRequest`
+    * names a request by id, so the preview's queue has to know which id each
+    * queued render belongs to in order to remove and answer THAT one.  The
+    * id is not in the params of any LSP request -- it is the envelope's --
+    * and nothing else in this dispatcher hands it to a handler, because
+    * every other handler answers before it returns and never has to name
+    * itself afterwards. */
+  def onRequestDeferredWithId(method: String)(h: (Json, Json, Rpc.Answer) => Unit): Unit =
     deferred += method -> h
 
   /** Deferred work: when `pending` says there is some AND the input
@@ -618,7 +635,7 @@ final class Server(wire: Wire, log: String => Unit) {
   /** One deferred request: mint the exactly-once `answer`, hand it over,
     * and answer the handler's own crash with it (see `onRequestDeferred`). */
   private def deferredRequest(method: String, id: Json, params: Json,
-                              h: (Json, Rpc.Answer) => Unit): Unit = {
+                              h: (Json, Json, Rpc.Answer) => Unit): Unit = {
     val sent = new java.util.concurrent.atomic.AtomicBoolean(false)
     val answer: Rpc.Answer = a =>
       if (!sent.compareAndSet(false, true))
@@ -627,7 +644,7 @@ final class Server(wire: Wire, log: String => Unit) {
         case Right(result)         => respond(id, result)
         case Left((code, message)) => respondError(id, code, message)
       }
-    try h(params, answer)
+    try h(id, params, answer)
     catch {
       case RpcError(code, message) => answer(Left((code, message)))
       case e: Throwable            =>

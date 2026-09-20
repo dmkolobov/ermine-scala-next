@@ -176,6 +176,18 @@ final class Documents {
     byPath(fileName) map (_.source)
   }
 
+  def pathFor(uri: String): Option[Path] = Documents.pathFor(uri)
+}
+
+object Documents {
+  /** A `file:` URI as a path; None for any other scheme and for anything
+    * that is not a URI at all.
+    *
+    * WP-5: lifted here from the instance method above, which forwards, so
+    * that the preview thread -- which must never read an open buffer, and so
+    * has no business holding a `Documents` -- can turn `ermine/render`'s
+    * `uri` into a path with the server's one answer to that question
+    * (JSON-WIDGET-PLAYGROUND §4).  It reads no state and never did. */
   def pathFor(uri: String): Option[Path] =
     try {
       val u = new java.net.URI(uri)

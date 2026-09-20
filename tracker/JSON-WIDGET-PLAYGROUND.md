@@ -1,8 +1,9 @@
 # JSON widget playground: edit a widget, see it rendered, inside VS Code
 
-> **STATUS: WP-1, WP-2, WP-3 AND WP-4 ARE BUILT; EVERYTHING ELSE IS DESIGN ONLY.** No other
-> ticket has been started. What each built ticket is, and the only files it changes -- this
-> document aside, which every ticket touches:
+> **STATUS: WP-1, WP-2, WP-3, WP-4 AND WP-5 STAGE A ARE BUILT; EVERYTHING ELSE IS DESIGN
+> ONLY.** No other ticket has been started. WP-5 is being built in three reviewed stages;
+> stages B and C are not started. What each built ticket is, and the only files it changes --
+> this document aside, which every ticket touches:
 >
 > - **WP-1**: `send` synchronised, `onRequestDeferred`, `$/cancelRequest` routed, the incoming
 >   log line moved after the parse and redacted by method; the `TestLspRobustness` A group.
@@ -26,6 +27,29 @@
 >   `normalize`, `moduleUnder` and `loadedByPath` move into `Session` beside
 >   `dependentsOf`/`scrub` and `Resident` keeps forwarders, so that `json` does not import
 >   `lsp`.
+> - **WP-5 stage A**: the preview thread and the `Preview` object in `lsp/` -- one daemon
+>   thread owning the render session, lazy boot of the `Runner` on the first `ermine/render`
+>   with the roots of §2.4 and a local in-memory SQLite behind a `DelegatingRun`,
+>   `ermine/render` answered through `onRequestDeferred` with §4's two shapes (`uri` ->
+>   module, `inferredRoot`, absolute `roots`, the root-change discard, 404 / 400 / 503, no
+>   JDBC URL in a message), the queue of §2.5 (one in flight, at most one queued render,
+>   latest wins, `-32800` for the replaced one, jobs in queue order, `generation` echoed),
+>   `$/cancelRequest` for a queued and for an in-flight render, the mtime scan at the head of
+>   every render, the `stale` counter, and `invalidate` posted from `afterReload` with
+>   `ermine/preview/invalidated`; the `TestLspRobustness` D render-session properties.
+>   The preview thread cannot end abnormally (a pre-allocated last-resort answer in a
+>   `finally`, every step of the crash handler guarded, a bounded outer catch-all, and a
+>   render refused with an error rather than queued if the thread is gone), and every line
+>   it logs is scrubbed of JDBC URLs by construction (rule A5 covers logs).
+>   Files: the new `lsp/Preview.scala`, `Rpc.scala` (a deferred handler that is given the
+>   request's id, and the `-32800` constant), `Documents.scala` (`pathFor` lifted to the
+>   companion), `json/Runner.scala` (`invalidateStale`), `Main.scala` (the install and the
+>   `afterReload` post), `TestLspRobustness.scala`.
+>   NOT stage A, and named as seams in `Preview.scala`: the watchdog and the "stuck" state,
+>   `ermine.preview.maxDocumentBytes`, `ermine/schema {binding}` on the queue,
+>   `ermine/preview/reports`, work-done progress (stage B); the launcher's `-Xmx` and
+>   `ermine.maxHeap`, the `lsp-client.py` smoke and the measured instruments (stage C);
+>   profiles, `connect`, `disconnect` and the held connection (WP-13, WP-14).
 >
 > **Which suites were run, and what they said, is recorded in each ticket's commit message, not
 > here**: a banner that names a suite goes stale the moment the next ticket runs a different
@@ -195,7 +219,7 @@ What the preview thread costs, and where it is paid:
 | A non-terminating **evaluation** | pure Ermine loops run under `Runner.evalLock` (`Runner.scala:538-540`) and cannot be stopped from outside (*external*: `Thread.stop` throws on JDK 21). The honest promise: **a runaway evaluation blocks no LSP request until it exhausts the heap cap, then the server exits and the client restarts it**. A watchdog (`java.util.Timer`) answers the request after `ermine.preview.timeoutSeconds` (default 60) with "evaluation did not finish", in a notification carrying the **Ermine: Restart Language Server** button (`ermine.restartServer`, `extension.js:241`), marks the preview stuck, and every later `ermine/render` is answered the same way without queueing. An allocating loop (a fold over an infinite list; `swhnf` builds thunk chains as it goes, `Runtime.scala:215-238`) then hits `-Xmx` (§2.2) and `-XX:+ExitOnOutOfMemoryError` (*external*: since JDK 8u92) turns the OOM into a clean exit that `vscode-languageclient` restarts, up to 5 times in 3 minutes (*external*); the panel recovers as §7.2 describes. A CPU-bound loop pins one core for the process life until the user restarts. The resident keeps answering until then: it does not take `evalLock` and is on another thread. The watchdog exists so the user is told at 60 s rather than at OOM. WP-6 makes cancel real (next row) |
 | Cooperative cancel (WP-6, gated on a perf A/B) | a `@volatile` cancel flag on a per-thread evaluation context, checked at the head of `Runtime.swhnf` (`Runtime.scala:215`): `if (cancelled) throw Cancelled`. The watchdog and an in-flight `$/cancelRequest` set it. The unwinding thunk writes `Bottom` back into the thunks on its chain (`:231`, `:238`), which poisons the render session's stdlib thunks, so a cancel **discards the `Runner`** (the next render boots a new one) and the runaway's chains become garbage; the resident is untouched. Cost: one volatile read per force on the evaluator's hot loop, hence a Tier-2 instrument run (`perf-bench.sh`, an interleaved A/B; it "has never moved", `docs/gate-policy.md:105`) before adoption. Unverified: that every Ermine loop passes through `swhnf` (a loop inside one primitive would not) |
 | `$/cancelRequest` | queued: removed and answered `-32800`; in flight: marked, its eventual answer replaced by `-32800`, the work not interrupted until WP-6 (no hook into `SqlExecution` either way); during a boot: honoured when the boot ends (answer `-32800`, boot kept) |
-| `stale` | a **hint**; `invalidated` is the mechanism. A `@volatile` generation counter is bumped by `invalidate`, snapshotted at render start and compared just before `send`; a mismatch sets `"stale": true`, and the `invalidated` notification that follows makes the extension re-render (§3). An `invalidate` that lands after the comparison is not lost, only its banner is late |
+| `stale` | a **hint**; `invalidated` is the mechanism. A `@volatile` generation counter is bumped by `invalidate`, snapshotted at render start and compared just before `send`; a mismatch sets `"stale": true`, and the `invalidated` notification that follows makes the extension re-render (§3). An `invalidate` that lands after the comparison is not lost, only its banner is late. **AS BUILT (WP-5 stage A), DIFFERS FROM THE LETTER ABOVE -- for the user to confirm**: the counter is bumped when an `invalidate` is **posted** (on the dispatch thread) and snapshotted when a render is **enqueued**, not when it starts. The literal reading cannot work on a single-threaded queue: an `invalidate` that ran as a job could never move the counter *during* a render, so `stale` would be dead code; and a snapshot taken at render *start* would call a render fresh that was enqueued before an invalidate still queued behind it. Bumping per post can flag a render whose invalidation turns out empty -- a false positive, which is what "a hint" permits. The WP-5 stage A review judged this strictly better than the literal reading |
 | Boot progress | the first render, and every post-discard boot, reports "Ermine preview: booting the render session" through LSP work-done progress (`window/workDoneProgress/create`, then `$/progress` begin / end, `cancellable: false`, *external*: LSP 3.15+), guarded by the client's `window.workDoneProgress` capability. The `create` request is sent by the dispatch thread when it enqueues the job (§2.3); the `$/progress` notifications go from the preview thread through the synchronised `send` |
 
 What a restart costs, stated once: a fresh process, the ~13 s boot (`Resident.scala:24`),
@@ -620,6 +644,8 @@ approval under `:91`. Each WP done-when in §14 names its tier.
 | Q2 | recycling defaults (renders / idle minutes) for a held MSSQL connection | WP-14 |
 | Q3 | is `Windows-ROOT` needed, or is the internal CA in the JDK's `cacerts` | WP-12 |
 | Q4 | how a module whose LOAD FAILED is invalidated once it is fixed | WP-7 |
+| Q5 | §2.4 and §4 disagree: the 404 "not under a module root" is unreachable for a readable file | nothing; decide before WP-7 |
+| Q6 | a roots change discards the `Runner`, and the inferred root is part of the roots, so previewing two reports in two directories re-boots the render session each time | nothing; decide before WP-7 |
 
 **Q4, in full** (found by the WP-4 review, 2026-09-20). A module that failed to load is in
 neither `loadedFiles` nor `loadedModules`, and `Runner.invalidate` derives its module set from
@@ -645,6 +671,35 @@ It does not block WP-4 or WP-5: `Runner.invalidate` is exactly as specified in �
 §11's Runner row ("`invalidate` of an unloaded path is a no-op") stays true whichever option
 wins -- (i) would make a *failed* module no longer count as unloaded, which is a change to what
 is loaded, not to the rule.
+
+**Q5, in full** (found while building WP-5 stage A, 2026-09-20). §2.4 puts the picked
+report's **own inferred root** in the render session's root set, and §4 promises
+`404 "not under a module root"` for a file under none of them. Together these cannot both
+bite: any readable file whose header parses is, by construction, under the root its own
+module name implies, so the 404 is unreachable for it. **As built**: both, literally. The
+404 therefore fires exactly when no root can be **inferred** -- an unreadable, non-existent
+or unparseable file (a report the developer deleted while the panel still points at it), or
+a path that is not a `.e` file at all. That is a real case and the group-D property pins it,
+but it is not what §4's sentence sounds like. Options, none built: (i) reword §4 to say what
+the 404 means (no root could be inferred and none was configured); (ii) drop `inferredRoot`
+from §2.4 and require `ermine.preview.roots` for anything outside `moduleRoots`, which makes
+the 404 mean what it says and costs every single-segment module a setting -- the thing §2.4
+added `inferredRoot` to avoid. It blocks nothing: WP-7 is where the picker decides what to
+send, so the answer is wanted before that.
+
+**Q6, in full** (same origin). §2.4 makes the root set immutable config and says a change to
+it **discards the `Runner`**; `inferredRoot` puts the picked report's own directory in that
+set. So previewing report A in one directory and report B in another discards and re-boots
+the render session on every switch, in both directions, for ever. **MEASURED**: 2.3-7.3 s per
+boot for the group-D fixture (`TestLspRobustness`, the render-session group's own `collect`
+label across four runs), which loads `Lib.preamble`, `Layout.Doc` and `Layout.Fetch` over the
+stdlib source root. A real workspace's report is **unmeasured** and will be slower. Options,
+none built: (i) accept -- a developer works on one report at a time, and the panel shows
+progress (stage B); (ii) keep a small map of `Runner`s keyed by root set, evicting the
+least-recently-used, which multiplies the memory of §2.2 by however many are kept;
+(iii) drop `inferredRoot` from the **discard key** while keeping it in the roots -- unsound
+as stated, because the runner's loader chain really is different, so it would mean rebuilding
+only the loader, which `RunnerConfig` does not allow today.
 
 ## 14. Tickets, in dependency order
 
