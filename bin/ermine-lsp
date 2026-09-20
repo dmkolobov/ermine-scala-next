@@ -15,6 +15,17 @@ if [[ ! -s $cache ]] || [[ build.sbt -nt $cache ]]; then
     grep -v '^\[' | grep -v '^$' | tail -1 | tr -d '\n' > "$cache"
 fi
 
+# JAVA_HOME if set; else the local toolchain if it is there; else java on PATH.
+# DECIDED FIRST, because one of the flags below depends on WHICH java this is
+# (see the DisplayVMOutputToStderr probe).
+if [[ -n ${JAVA_HOME:-} ]]; then
+  java="$JAVA_HOME/bin/java"
+elif [[ -x $HOME/.local/ermine-toolchain/jdk-21.0.12.1+1/bin/java ]]; then
+  java="$HOME/.local/ermine-toolchain/jdk-21.0.12.1+1/bin/java"
+else
+  java=java
+fi
+
 opts=( )
 [[ -n ${ERMINE_LSP_LOG:-} ]] && opts+=( -Dermine.lsp.log="$ERMINE_LSP_LOG" )
 # WP-5 (tracker/JSON-WIDGET-PLAYGROUND.md sections 2.2 and 2.5).  Two sessions
@@ -56,10 +67,12 @@ ejo=( )
 [[ -n ${ERMINE_JAVA_OPTS:-} ]] && read -r -a ejo <<< "$ERMINE_JAVA_OPTS"
 have_xmx=0
 have_exit=0
+have_vmout=0
 for word in ${ejo[@]+"${ejo[@]}"}; do
   case "$word" in
     -Xmx*|-XX:MaxHeapSize=*)                                  have_xmx=1 ;;
     -XX:+ExitOnOutOfMemoryError|-XX:-ExitOnOutOfMemoryError)   have_exit=1 ;;
+    -XX:+DisplayVMOutputToStderr|-XX:-DisplayVMOutputToStderr) have_vmout=1 ;;
   esac
 done
 if (( ! have_xmx )); then
@@ -82,15 +95,95 @@ if (( ! have_xmx )); then
   opts+=( -Xmx"$xmx" )
 fi
 (( have_exit )) || opts+=( -XX:+ExitOnOutOfMemoryError )
-opts+=( ${ejo[@]+"${ejo[@]}"} )
 
-# JAVA_HOME if set; else the local toolchain if it is there; else java on PATH.
-if [[ -n ${JAVA_HOME:-} ]]; then
-  java="$JAVA_HOME/bin/java"
-elif [[ -x $HOME/.local/ermine-toolchain/jdk-21.0.12.1+1/bin/java ]]; then
-  java="$HOME/.local/ermine-toolchain/jdk-21.0.12.1+1/bin/java"
-else
-  java=java
+# Q12 (tracker/JSON-WIDGET-PLAYGROUND.md section 13), MEASURED 2026-09-20.
+# -XX:+ExitOnOutOfMemoryError makes the VM print
+#   Terminating due to java.lang.OutOfMemoryError: Java heap space
+# and by default it prints it to FD 1 -- which for a server on stdio is the LSP
+# PROTOCOL CHANNEL, unframed, right after the last good frame.  Main's
+# stealStdout cannot cover it: that rebinds the Java System.out field, while
+# this line is written by the VM itself to the descriptor.
+# -XX:+DisplayVMOutputToStderr moves VM output to FD 2, which an editor shows
+# as the server's stderr and nothing parses as a frame.  MEASURED with the
+# WpBlow fixture at ERMINE_LSP_XMX=256m: WITHOUT it stdout ended
+# '...{"kind":"end"}}Terminating due to ...' and stderr was EMPTY; WITH it
+# stdout ended at the last complete frame and the line arrived on stderr.
+# Exit code 3 either way.
+#
+# IT IS PROBED, NOT ASSUMED, AND THE PROBE CANNOT STOP THE SERVER STARTING.
+# An unrecognised -XX option makes the JVM print "Unrecognized VM option" and
+# exit 1 BEFORE any LSP frame, which the editor sees as a server that died at
+# startup.  -XX:+IgnoreUnrecognizedVMOptions is NOT the answer: it would
+# silence every future typo in this file too.  Instead one
+# `java -XX:+DisplayVMOutputToStderr -version` decides, and its verdict is
+# cached beside the classpath, keyed on the java binary's PATH, MTIME and SIZE,
+# so a toolchain upgrade or a different JAVA_HOME re-probes rather than
+# inheriting the old answer.  The probe runs under `timeout 10` where that
+# command exists, because a `java -version` that HANGS would otherwise hang the
+# launcher and the editor would wait for a server that never spoke; a probe
+# that did NOT answer (timeout, or a shell that could not run it) is NOT
+# cached, so one slow start does not cost this checkout the flag for ever; and
+# the cache is written to a temp file and `mv -f`d into place, so a launcher
+# killed mid-write leaves the old verdict rather than a half-line the next run
+# would read as "no".
+#
+# NOT "NEVER FAILS BECAUSE OF IT" -- THE TWO RESIDUAL CASES, NAMED (review).
+# Ordinary trouble is handled: no such java, an unwritable target/, or a probe
+# that times out all leave `vmout` unset and the flag unadded.  What is NOT
+# covered is a java whose PATH, MTIME and SIZE are all stable while the JVM
+# BEHIND IT changes -- a `jenv`, `asdf` or `update-alternatives` shim, or any
+# wrapper script that dispatches on an environment variable.  The cache is then
+# keyed to the shim and can carry `yes` for a JVM that would reject the flag,
+# and that JVM exits 1 before any LSP frame.  TO RECOVER: delete
+# target/ermine-vmout-probe, or put -XX:-DisplayVMOutputToStderr in
+# ERMINE_JAVA_OPTS, which suppresses this block entirely.  The second case is
+# the mirror: a shim in front of an ACCEPTING JVM cached as `no` merely loses
+# the flag, which costs only Q12's benefit.
+probe_cache=target/ermine-vmout-probe
+if (( ! have_vmout )); then
+  jreal="$java"
+  if jfound=$(command -v "$java" 2>/dev/null); then jreal="$jfound"; fi
+  jkey="$jreal $(stat -L -c '%Y:%s' -- "$jreal" 2>/dev/null || echo '?')"
+  vmout=""
+  if [[ -s $probe_cache ]] && [[ "$(sed -n 1p "$probe_cache" 2>/dev/null)" == "$jkey" ]]; then
+    vmout="$(sed -n 2p "$probe_cache" 2>/dev/null)"
+  fi
+  if [[ $vmout != yes && $vmout != no ]]; then
+    # `timeout` is coreutils and is not guaranteed; without it the probe runs
+    # bare, which is what this line did before and is still better than not
+    # probing at all.
+    if command -v timeout >/dev/null 2>&1; then vmprobe=( timeout 10 ); else vmprobe=( ); fi
+    rc=0
+    ${vmprobe[@]+"${vmprobe[@]}"} "$java" -XX:+DisplayVMOutputToStderr -version >/dev/null 2>&1 || rc=$?
+    # ONLY A DECIDED VERDICT IS CACHED (review).  `java -version` answers 0
+    # for "I accept this option" and 1 for "Unrecognized VM option"; ANY other
+    # status is not an answer -- 124 is `timeout` giving up, 126/127 are the
+    # shell failing to run it at all, and 128+n is a signal.  Caching one of
+    # those as `no` would make a single slow or interrupted start permanently
+    # cost this checkout the flag, which is what the first cut did.  An
+    # undecided probe means NO FLAG FOR THIS RUN and NO CACHE WRITE, so the
+    # next run asks again.
+    case $rc in
+      0) vmout=yes ;;
+      1) vmout=no  ;;
+      *) vmout=undecided ;;
+    esac
+    if [[ $vmout == yes || $vmout == no ]]; then
+      # ATOMIC: a temp file in the same directory, then `mv -f`.  A reader
+      # never sees a partial verdict, and a concurrent launcher either wins or
+      # loses the rename whole.
+      { mkdir -p target &&
+        tmp="$probe_cache.$$.tmp" &&
+        printf '%s\n%s\n' "$jkey" "$vmout" > "$tmp" &&
+        mv -f "$tmp" "$probe_cache"; } 2>/dev/null || rm -f "$probe_cache.$$.tmp" 2>/dev/null || true
+    fi
+  fi
+  # An explicit `if` and not `[[ ... ]] && opts+=( ... )`: this is the LAST
+  # statement of an `if` body under `set -e`, and a trailing test that answers
+  # false there is the kind of thing that ends a launcher for no reason.
+  if [[ $vmout == yes ]]; then opts+=( -XX:+DisplayVMOutputToStderr ); fi
 fi
+
+opts+=( ${ejo[@]+"${ejo[@]}"} )
 exec "$java" "${opts[@]}" -cp "$(cat "$cache")" \
   com.clarifi.reporting.ermine.lsp.Main "$@"

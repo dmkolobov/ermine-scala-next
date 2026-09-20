@@ -27,7 +27,7 @@ import scalaparsers.Supply
   * | state | thread | how it is safe |
   * |---|---|---|
   * | `runner`, `delegating`, `rootsInUse`, `headerSupply`, `armed` | THE PREVIEW THREAD ALONE | never read or written anywhere else; no lock, because there is no second reader.  `SessionEnv` is not thread-safe and this is the whole reason the thread exists (§2.3).  `armed` is the watchdog task this thread scheduled: only this thread arms and disarms one, and the TIMER thread never touches the field, only the task object it was handed |
-  * | `jobs`, `inFlight`, `cancelledInFlight`, `stopping`, `answeredInFlight`, `stuck` | dispatch thread posts and cancels, preview thread consumes, TIMER thread fires | every access is inside `lock.synchronized`; the monitor is also the wait/notify channel.  Nothing that can block on the client -- an `Rpc.Answer`, a `notify` -- is ever called while holding it.  `answeredInFlight` moved under the lock in stage B: the watchdog answers from the timer thread, so the one-shot flag has a second writer and the log line `Rpc.deferredRequest` prints for a second answer is what it exists to keep out |
+  * | `jobs`, `inFlight`, `cancelledInFlight`, `stopping`, `answeredInFlight`, `stuck`, `stuckWhy`, `stuckJob` | dispatch thread posts and cancels, preview thread consumes, TIMER thread fires | every access is inside `lock.synchronized`; the monitor is also the wait/notify channel.  Nothing that can block on the client -- an `Rpc.Answer`, a `notify` -- is ever called while holding it.  `answeredInFlight` moved under the lock in stage B: the watchdog answers from the timer thread, so the one-shot flag has a second writer and the log line `Rpc.deferredRequest` prints for a second answer is what it exists to keep out |
   * | `dirtyGeneration` | bumped by the dispatch thread, read by both | an `AtomicLong`.  It is the `stale` hint of §2.5 and nothing else depends on its value |
   * | `sessionUp`, `bootToken` | written by the preview thread, read by the dispatch thread | `@volatile`.  They are the ONLY thing the dispatch side learns about the render session, and it learns exactly one bit: "is there a session, so will the job I am about to enqueue boot one?" (§2.5's progress rule -- the `create` request is the dispatch thread's, the `$/progress` notifications the preview thread's).  A stale read costs at most one progress token that is never begun, never a wrong answer |
   * | `timeoutMillis`, `maxDocumentBytes`, `progressCapable` | written by the dispatch thread at `initialize` or a settings push, read by the preview and timer threads | `@volatile`.  Each is one scalar with no invariant tying it to another, so a read that crosses a write sees the old value or the new one and both are legal |
@@ -103,11 +103,67 @@ final class Preview(moduleRoots: () => List[String],
     * being queued -- queueing behind a thread that will never come back is
     * a client waiting for ever -- and nothing new is posted to the queue.
     *
-    * IT IS NEVER CLEARED.  §2.5's remedy is a server restart, and the
-    * notification the watchdog sends says so; a preview that un-stuck
-    * itself would be claiming the runaway evaluation had stopped, which
-    * nothing in this process can know. */
+    * IT CLEARS WHEN THE WEDGED JOB RETURNS, and at no other time (Q10,
+    * decided 2026-09-20).  §2.5's remedy is still the server restart the
+    * watchdog's message names, because a runaway evaluation usually never
+    * comes back -- but it CAN (a `Fetch` that was merely slow, a scan that
+    * hit the 300 s statement timeout), and a preview thread that is alive,
+    * idle and refusing every render until the user restarts a process that
+    * is working is a worse answer than saying so.  `stuckJob` is what makes
+    * "the wedged job" a fact rather than a guess, and `runJob`'s `finally`
+    * is where it is read; `clearStuck` is the one place this field, and the
+    * two beside it, are put back.  What does NOT clear it is written in
+    * `isFatal`: anything that is a `java.lang.Error` or is not `NonFatal`,
+    * and any other job's ending.
+    *
+    * AND IF THE JOB FAILED, THE RECOVERY DISCARDS THE RENDER SESSION
+    * (DM-1, corrected by DD-1 of the second review): `Runtime.swhnf`
+    * memoises a `NonFatal` failure into every thunk on the chain, so the
+    * session's shared bindings would re-throw it for ever.  "FAILED" means
+    * THE OUTCOME, not an escaping throw: the path that matters returns
+    * NORMALLY with a 500, because `Encode` and `Runner` net the failure
+    * (see `evalFailed`).  `runJob`'s `finally` is where the clear and the
+    * discard are ordered. */
   private var stuck = false
+
+  /** THE JOB THE WATCHDOG FIRED ON, or `null` (Q10).  Written under `lock`
+    * by the timer thread in `fire` and by `clearStuck`; read under `lock`
+    * by `runJob`'s `finally`, which is the preview thread's.
+    *
+    * IT IS WHY RECOVERY IS NOT A GUESS.  Without it the only thing the
+    * preview thread could say as a job ended is "a job ended while the
+    * preview was stuck", which is true of the NEXT job too -- and the next
+    * job cannot run, because the wedged one owns this thread, so the field
+    * looks redundant until WP-6 makes a wedged job abandonable and it stops
+    * being.  Holding the reference costs the job's `Rpc.Answer` and its
+    * request until the state clears, which is the same lifetime `inFlight`
+    * already gives it. */
+  private var stuckJob: Answering = null
+
+  /** WHICH STATE CHANGE IS THE LATER ONE (IM-1 of the Q8-Q12 review).
+    * Bumped under `lock` in the SAME step that flips `stuck` -- `fire`'s
+    * claim and `clearStuck` -- and carried on the `ermine/preview/stuck`
+    * notification as `seq`.
+    *
+    * IT EXISTS BECAUSE THE TWO EDGES ARE SENT BY DIFFERENT THREADS WITH NO
+    * ORDERING BETWEEN THEM.  `{stuck: true}` is the TIMER thread's, the
+    * LAST of `fire`'s sends; `{stuck: false}` is the PREVIEW thread's, the
+    * FIRST of `recovered`'s.  A job released the instant the watchdog fired
+    * can therefore put the FALSE on the wire first -- `Wire.send` is
+    * synchronised, so the frames do not tear, but nothing decides which
+    * enters the monitor first -- and a client reading them in arrival order
+    * would latch a stuck banner on a healthy preview with no falling edge
+    * ever to follow.  With `seq` the client keeps the highest it has seen
+    * and ignores the rest, and the wire order stops mattering (§4).
+    *
+    * IT IS PER-PROCESS AND STARTS AT 0 IN EVERY ONE (DD-2 of the second
+    * review).  A restart is the remedy the watchdog's own message names, so
+    * a fresh server WILL send `{stuck: true, seq: 1}` -- and a client that
+    * obeyed "keep the highest seq" across the restart would ignore it for
+    * the life of its session.  §4's rule therefore has a second clause: the
+    * client RESETS its high-water mark when the language client goes
+    * Stopped -> Running (§5's own row for that transition). */
+  private var stuckSeq: Long = 0L
 
   /** Whether the preview thread is still consuming the queue.  `loop`'s
     * outermost `finally` clears it -- however the thread ended, including by
@@ -360,6 +416,43 @@ final class Preview(moduleRoots: () => List[String],
   private var runner: Runner              = null
   private var delegating: DelegatingRun   = null
   private var rootsInUse: List[String]    = Nil
+
+  /** DID THE JOB NOW RUNNING ANSWER WITH AN *EVALUATION* FAILURE? (DD-1 of
+    * the second Q8-Q12 review.)  PREVIEW THREAD ONLY: cleared by `runJob`
+    * before the job starts, set by `doRender`/`doSchema` where they answer,
+    * read by `runJob`'s `finally`.  No lock, because there is no second
+    * reader -- the same argument as `runner` above.
+    *
+    * THE RULE, and it is narrow on purpose: it is set for a `RunError` of
+    * STATUS >= 500 out of `renderText`/`paramSchema`, which is exactly
+    * `Runner`'s `Failed` -- and `Failed` is minted at precisely the sites
+    * that net a FORCING failure: `Session.eval` dying (`Runner.scala:845`),
+    * the step driver's `Abort`/`WriteFailure`/`NonFatal`
+    * (`:883-886` -- and `Abort` carries the step's own error, which is how
+    * `Encode`'s `Left(bottom(...))` for a memoised `Bottom` arrives), the
+    * writer (`:508`) and a document that cannot be encoded (`:929-930`).
+    *
+    * WHAT IS DELIBERATELY EXCLUDED, each because nothing of the report was
+    * forced:
+    *  - `BadRequest` (400): a params object that does not decode
+    *    (`Runner.scala:873`), a binding whose signature is not a report.
+    *    The decode happens BEFORE the report function is applied;
+    *  - `NotFound` (404): no module, or no binding of that name -- refused
+    *    before any load;
+    *  - the 400 / 404 / 409 / 500 this file's own `placeAndSession`
+    *    answers: a URI that is not a file, a pick that cannot be placed, a
+    *    shadowed pick (nothing is loaded, it says so), and a boot that
+    *    FAILED -- which `ensureSession` has already thrown away, so there
+    *    is nothing left to discard;
+    *  - the 503 "not connected";
+    *  - THIS FILE'S OWN 500s after a SUCCESSFUL render: the document-size
+    *    cap and "the rendered document is not JSON". The evaluation
+    *    completed and wrote real values back; discarding there would cost a
+    *    boot for nothing.
+    * An ORDINARY (un-wedged) failure sets this too and nothing happens: the
+    * `finally` reads it only when the stuck state was cleared for this job.
+    * The un-wedged case is Q14's and is the user's. */
+  private var evalFailed: Boolean         = false
   /** LAZY, and it matters beyond this object.  `Supply.create` advances a
     * PROCESS-GLOBAL block counter by 1024 (`scalaparsers/Supply.scala`), and
     * metavariable ids are what several diagnostics print and at least one
@@ -416,7 +509,13 @@ final class Preview(moduleRoots: () => List[String],
                                    "the preview thread is not running")
           else if (stopping) refuse(job, Left((Rpc.RequestCancelled, "the preview is shutting down")),
                                     "the preview is shutting down")
-          else if (stuck)  refuse(job, Right(job.refusal(stuckWhy)), stuckWhy)
+          // `stuckRefusal` and NOT `refusal` (Q8, decided 2026-09-20): this
+          // is one of exactly four answers that carry `"stuck": true`, the
+          // marker WP-7's banner reads to know it may show the restart
+          // button.  The crash handler's 500 must not carry it (the job was
+          // SERVED and failed), which is why the flag is a second method on
+          // `Answering` and not a field of the shape `refusal` builds.
+          else if (stuck)  refuse(job, Right(job.stuckRefusal(stuckWhy)), stuckWhy)
           else {
             // §2.5 allows ONE queued render, so this removes at most one --
             // but it removes and answers every one it finds rather than the
@@ -501,7 +600,9 @@ final class Preview(moduleRoots: () => List[String],
                                      "the preview thread is not running")
           else if (stopping) refuse(job, Left((Rpc.RequestCancelled, "the preview is shutting down")),
                                     "the preview is shutting down")
-          else if (stuck)    refuse(job, Right(job.refusal(stuckWhy)), stuckWhy)
+          // Q8's marker, beside `error` in `ermine/schema`'s own shape; see
+          // the same line in `render`.
+          else if (stuck)    refuse(job, Right(job.stuckRefusal(stuckWhy)), stuckWhy)
           else { jobs.enqueue(job); lock.notifyAll(); Nil }
         }
         answerAll("schema", acted)
@@ -754,8 +855,26 @@ final class Preview(moduleRoots: () => List[String],
     *     `Rpc.Answer` is one-shot, so a redundant call would be harmless,
     *     but `answeredInFlight` avoids it anyway: `Rpc.deferredRequest` logs
     *     "second answer ... ignored", and a line of that per successful
-    *     render is noise the log does not need. */
-  private def runJob(job: Job): Unit =
+    *     render is noise the log does not need.
+    *
+    * AND, SINCE Q10, IT IS WHERE THE STUCK STATE ENDS.  The `finally`
+    * below is the one place in this file that knows a job has REALLY
+    * finished, which is the only evidence §2.5's wedge is over; see
+    * `recovered` for what it costs a client that was never told. */
+  private def runJob(job: Job): Unit = {
+    /** Whether the job died on a `java.lang.Error` (Q10).  The inner catch
+      * swallows every `Throwable`, so by the `finally` below "how did this
+      * end" is gone unless it is written down here.  `Unit`-returning and
+      * one boolean, so the recording itself cannot fail. */
+    var fatal = false
+    /** Whether the job ended by THROWING at all (DM-1 of the Q8-Q12
+      * review).  Distinct from `fatal`, and it decides something else
+      * entirely: not "may the preview be believed" but "is the render
+      * SESSION still usable".  See the discard in the `finally`. */
+    var threw = false
+    // Cleared HERE, before anything of the job runs, so that what the
+    // `finally` reads is this job's outcome and never the last one's.
+    evalFailed = false
     try {
       try {
         // ARMED BEFORE `beforeJob` and before any work: the watchdog's
@@ -772,8 +891,18 @@ final class Preview(moduleRoots: () => List[String],
         }
       } catch {
         case e: Throwable =>
+          // Q10(b): FIRST, and by a store that cannot throw.  Everything
+          // after it can fail, and a `finally` that then announced
+          // "recovered" because it could not remember an
+          // `OutOfMemoryError` is the one outcome this rule exists to
+          // forbid.
+          fatal = isFatal(e)
+          threw = true
           guard(log("preview: job crashed: " + Rpc.stackTrace(e)))
           job match {
+            // `refusal` and NOT `stuckRefusal` (Q8): this job was SERVED
+            // and failed.  A client that saw `"stuck": true` here would
+            // offer a restart for an ordinary broken report.
             case a: Answering => guard(finish(a, a.refusal("the preview failed: " + messageOf(e))))
             case _            => ()
           }
@@ -801,7 +930,264 @@ final class Preview(moduleRoots: () => List[String],
         case _ => ()
       }
       try lock.synchronized { inFlight = null } catch { case _: Throwable => () }
+      // Q10, LAST, and after `inFlight` is cleared: the wedge is over only
+      // if the job that just ended is the one the watchdog fired on, and
+      // only if it ended in a way that leaves this JVM able to keep its
+      // promises (`isFatal`).  `clearStuck` decides both halves under
+      // `lock` and answers the sequence number it minted, or 0;
+      // `recovered` is the only thing that reaches the client, and it is
+      // outside the lock and guarded, like every other send in this file.
+      job match {
+        case a: Answering if fatal =>
+          // The wedge is PERMANENT, so nothing will ever match this job
+          // again -- but the field would hold its `Rpc.Answer` closure and
+          // its request JSON for the life of the process (review nit).
+          guard(forgetStuckJob(a))
+        case a: Answering =>
+          var seq = 0L
+          try seq = clearStuck("the job the watchdog fired on returned", a)
+          catch { case _: Throwable => () }
+          if (seq > 0L) {
+            // DM-1 OF THE Q8-Q12 REVIEW: A JOB THAT ENDED BY THROWING
+            // POISONED THE SESSION, so recovery DISCARDS it.
+            // `Runtime.swhnf` captures a `NonFatal` throw as
+            // `Bottom(throw e)` (`Runtime.scala:231`) and `writeback`
+            // memoises that value into EVERY thunk on the chain
+            // (`:245-250`) -- including the render session's SHARED
+            // bindings, which outlive this render.  Leaving the session
+            // alive would mean those bindings re-throw the OLD failure for
+            // ever while this method tells the panel the preview is serving
+            // renders again.  §2.5's own WP-6 row says the same thing of a
+            // cancel ("poisons the render session's stdlib thunks, so a
+            // cancel DISCARDS the `Runner`"); it is the same mechanism and
+            // it deserves the same answer.
+            //
+            // THE WITNESS IS THE OUTCOME, NOT `threw` (DD-1 of the second
+            // Q8-Q12 review, which found the first cut's witness wrong).
+            // The poisoning path that MATTERS returns NORMALLY: `Encode`
+            // turns a `Bottom` into `Left(bottom(...))`
+            // (`Encode.scala:295`, `:242`, `:514`) and `Runner` nets every
+            // `NonFatal` failure into `Left(Failed(...))`
+            // (`Runner.scala:508`, `:845`, `:883-886`, `:929-930`), which
+            // `doRender` answers as a 500 BY RETURNING.  So after a wedge
+            // that came back FAILED, `threw` is false -- and the first cut
+            // kept the poisoned session and announced recovery over it.
+            // `threw` still counts, for what escapes those nets; `evalFailed`
+            // is the rest, and its rule is on the field.
+            //
+            // THE ORDER IS FORCED, and `clearStuck`'s scaladoc says why:
+            // the clear comes FIRST, and the discard is the private
+            // preview-thread method, never `discard()`.
+            //
+            // IT RUNS UNWATCHED: `disarm()` is the first thing this
+            // `finally` did, so nothing is timing the discard.  That is
+            // free today (`DelegatingRun.clear()` closes nothing), and
+            // WP-14 must not make it otherwise -- see that ticket's row.
+            var rebuilt = false
+            if (threw || evalFailed) {
+              // TRUTHFULLY (review S2): `discardSession` on a preview that
+              // never booted does nothing and logs nothing, so there is no
+              // session to say was discarded.  The next render boots either
+              // way, which is what the plain recovery message already says.
+              rebuilt = runner != null
+              if (rebuilt)
+                guard(discardSession("the evaluation the watchdog fired on " +
+                                     (if (threw) "ended by throwing" else "failed") +
+                                     ", so its thunks hold a memoised failure"))
+            }
+            guard(recovered(seq, rebuilt))
+          }
+        case _ => ()
+      }
     }
+  }
+
+  /** Let go of the job the watchdog fired on WITHOUT leaving the stuck
+    * state (review nit).  Used on the FATAL path, where the wedge stands
+    * for the life of the process: nothing can ever match this job again, so
+    * the only thing the reference still does is retain the request's JSON
+    * and its `Rpc.Answer` closure.  `stuck` and `stuckWhy` are untouched --
+    * the refusals still repeat the message that fired. */
+  private def forgetStuckJob(job: Answering): Unit = lock.synchronized {
+    if (stuckJob eq job) stuckJob = null
+  }
+
+  /** AFTER THIS THROWABLE, MAY THE PREVIEW BE SAID TO BE WORKING AGAIN?
+    * (Q10(b), decided 2026-09-20; CORRECTED by the Q8-Q12 review.)  TWO
+    * INDEPENDENT REASONS, one per half of the test, and neither subsumes
+    * the other:
+    *
+    *  1. `e.isInstanceOf[Error]` -- IS THIS JVM STILL BELIEVABLE?
+    *     `java.lang.Error`'s own contract is the argument (*external*, its
+    *     javadoc: "indicates serious problems that a reasonable application
+    *     should not try to catch"), and it covers every class §2.5's
+    *     failure story names -- `OutOfMemoryError` through
+    *     `VirtualMachineError`, `LinkageError`, `AssertionError` -- plus
+    *     whatever a future JDK adds, with no list here to go stale.
+    *     `scala.util.control.NonFatal` ALONE would not do: it classes an
+    *     `AssertionError` as non-fatal, so an assertion that blew up inside
+    *     the evaluator would announce "recovered".
+    *  2. `!NonFatal(e)` -- DID THE RUNTIME GET TO CLEAN UP?  This half is
+    *     about `Runtime.swhnf`, not about the JVM, and `isInstanceOf[Error]`
+    *     MISSES IT (the review's finding): `swhnf`'s ONE capture is
+    *     `catch { case NonFatal(e) => r = Bottom(throw e) }`
+    *     (`Runtime.scala:231`), so a throwable that is NOT `NonFatal`
+    *     escapes the force WITHOUT reaching `writeback` -- and leaves every
+    *     thunk on the chain in state `Whitehole` with THIS thread still in
+    *     its `pending` queue (`:229-237`).  A later force of one of those
+    *     thunks ON THE SAME THREAD takes the `pending.exists(sameId)`
+    *     branch and memoises `Whitehole.result`, which is
+    *     `Bottom(sys.error("infinite loop detected"))` (`:196`) -- a
+    *     PERMANENT, and wrong, diagnosis.  `NonFatal`'s complement is
+    *     exactly that set: `VirtualMachineError`, `ThreadDeath`,
+    *     `InterruptedException`, `LinkageError`, `ControlThrowable`.  The
+    *     last two of those are not `Error`s, which is why the first half is
+    *     not enough.
+    *
+    * THE `StackOverflowError` ASYMMETRY IS DELIBERATE and its reason is (2),
+    * not the heap: a stack overflow usually leaves a perfectly healthy JVM,
+    * but it is a `VirtualMachineError` and therefore NOT `NonFatal`, so it
+    * unwound the chain without writeback and left whiteholes behind.  A
+    * session carrying those is not one to call recovered.
+    *
+    * WHY THE WIDE SIDE IS THE SAFE SIDE.  Refusing to clear costs exactly
+    * the behaviour this preview had before Q10 -- the restart the
+    * watchdog's message names -- while clearing wrongly tells a user the
+    * preview works when it does not.  THE CASE THAT MAKES (1) CONCRETE:
+    * `bin/ermine-lsp` adds `-XX:+ExitOnOutOfMemoryError`, so in the shipped
+    * server an OOM usually ends the process before anything here runs --
+    * but the unforked gate JVM has no such flag, nor does a user who sets
+    * `-XX:-ExitOnOutOfMemoryError`, and an exhausted heap that keeps
+    * running is precisely where "recovered" must not be said.
+    *
+    * THE "WRAPPED `Error`" GAP IS NARROWER THAN THE FIRST CUT CLAIMED
+    * (review): an `Error` wrapped in an ordinary exception reads as
+    * non-fatal here, but the WRAPPER was `NonFatal`, so `swhnf` DID capture
+    * it and DID write it back -- there are no whiteholes, only a poisoned
+    * `Bottom`, and the recovery path discards the session for exactly that
+    * (see `runJob`'s `threw`).  What is left of the gap is (1) alone:
+    * a JVM that may be sick is called healthy.  Unwrapping causes would be
+    * a guess about a chain this file did not build. */
+  private def isFatal(e: Throwable): Boolean =
+    e.isInstanceOf[Error] || !scala.util.control.NonFatal(e)
+
+  /** LEAVE THE STUCK STATE (Q10).  The ONE place `stuck`, `stuckWhy` and
+    * `stuckJob` are put back, so that WP-6's cooperative cancel -- which
+    * ends a wedged evaluation deliberately -- reuses this rather than
+    * writing a second, subtly different version of it.
+    *
+    * `onlyFor` is the job whose ending justifies the clear, or `null` for
+    * "whatever the watchdog fired on" (WP-6's case: the canceller knows the
+    * wedge is over without knowing which job it was).  A non-null `onlyFor`
+    * that is not `stuckJob` clears NOTHING: some other job ended.
+    *
+    * IT ANSWERS THE SEQUENCE NUMBER IT MINTED, or 0 if this call did not
+    * clear.  The number is minted in the SAME LOCKED STEP as the flip, so
+    * the `seq` on the wire orders exactly as the state did (IM-1 of the
+    * Q8-Q12 review; `fire` mints its own the same way).  It sends nothing
+    * to the client: a notification reaches `Wire.send`, whose monitor a
+    * slow client holds for the length of a document, and this file never
+    * takes that while holding `lock`.  The caller notifies, outside the
+    * lock (`recovered`).  The log line is this method's, because every
+    * caller would write the same one -- and it is emitted after the monitor
+    * is released, like every other line here.
+    *
+    * THE ORDERING TRAP, FOR WP-6 (found by the Q8-Q12 review).  A caller
+    * that wants to clear the state AND then post work -- a discard, say --
+    * must CLEAR FIRST and must not reach the queue through `post`,
+    * `discard()` or `invalidate`: all three refuse while `stuck`, so a
+    * discard posted before the clear is silently dropped and a discard
+    * posted after it lands behind whatever else has arrived.  The recovery
+    * path in `runJob` does both things on the PREVIEW THREAD, calling the
+    * private `discardSession` directly, which is neither queued nor
+    * refusable.  WP-6's cancel runs on the TIMER or DISPATCH thread and has
+    * no such shortcut: it must clear here and then either post the discard
+    * (now that the guard is open) or hand it to the preview thread, and
+    * whichever it picks it should say so here. */
+  private def clearStuck(reason: String, onlyFor: Answering): Long = {
+    val seq = lock.synchronized {
+      if (!stuck || ((onlyFor ne null) && (stuckJob ne onlyFor))) 0L
+      else {
+        stuck = false; stuckWhy = null; stuckJob = null
+        // `Long` here and `Json.num`'s `Int` on the wire: the counter
+        // advances once per watchdog fire and once per clear IN ONE
+        // PROCESS, so 2^31 of them is not a number a language server
+        // reaches.  Kept as a `Long` all the same because the field costs
+        // nothing and an overflow would be silent.
+        stuckSeq += 1
+        stuckSeq
+      }
+    }
+    if (seq > 0L) guard(log("preview: no longer stuck (" + seq + "): " + reason))
+    seq
+  }
+
+  /** THE PREVIEW IS WORKING AGAIN (Q8(b) and Q10(c), (e)), from the PREVIEW
+    * THREAD, through `notify` and never `ask` (§2.3's rule), outside `lock`
+    * and with every send separately guarded.
+    *
+    * TWO MESSAGES, because they are for two different readers.
+    * `ermine/preview/stuck {stuck: false, message}` is §4's own row and is
+    * what WP-7's banner listens to -- it is the counterpart of the
+    * `{stuck: true}` the watchdog sends, and the panel needs the falling
+    * edge as much as the rising one.  `window/showMessage` of the INFO type
+    * is what any LSP client shows without knowing anything about this
+    * server, exactly as the watchdog's own error-type message is.
+    *
+    * IT ASKS FOR A RE-RENDER, and that is not politeness (Q10(e)).  Every
+    * `invalidate` posted while the preview was stuck was DROPPED at the
+    * `!stuck` guard in `invalidate`, so the client has missed every
+    * `ermine/preview/invalidated` of that whole interval and its §3 step 6
+    * loop was never triggered.  What the next render DOES get right by
+    * itself is the CONTENT of every module the render session has loaded:
+    * §2.5's mtime scan runs at the head of every render and reloads what
+    * moved on disk.  What it cannot get right is a module the session never
+    * loaded -- the fix to a report whose load failed, Q4's case -- so the
+    * re-render has to be asked for.
+    *
+    * `dirtyGeneration` IS DELIBERATELY NOT BUMPED, and the reasoning is
+    * recorded because "bump the counter" is the obvious reflex and it is
+    * inert here.  `stale` is `dirtyGeneration.get != r.dirtyAt`, comparing
+    * the value at the render's ENQUEUE with the value at its ANSWER.
+    * Nothing can be enqueued while stuck (`render`, `schema` and `post` all
+    * refuse), so the first post-recovery render is enqueued AFTER any bump
+    * this method could make and would snapshot the bumped value -- the two
+    * reads agree and no `stale` appears.  A bump would therefore either do
+    * nothing at all, or, if it were made to straddle the enqueue, flag a
+    * render that really was fresh.  The honest mechanism for "you have
+    * missed some invalidations" is this notification, and the honest
+    * mechanism for "the files moved" is the mtime scan; `stale` stays what
+    * §2.5 calls it, a hint about invalidations that landed DURING a
+    * render.
+    *
+    * `seq` is the number `clearStuck` minted under `lock` (IM-1): it is
+    * what lets a client that receives this notification and the watchdog's
+    * `{stuck: true}` OUT OF ORDER -- two threads, two independent sends --
+    * decide which is the later state. `rebuilt` says whether the session
+    * was discarded with the recovery (DM-1), so the message can be honest
+    * about the first render costing a boot. */
+  private def recovered(seq: Long, rebuilt: Boolean): Unit = {
+    // SILENT WHILE STOPPING (Q10(c)).  A `shutdown` is under way -- the
+    // wedged job was released by the drain, or the thread is ending -- and
+    // a "the preview recovered" banner on the way out would be true for
+    // less than a second and wrong afterwards.  The state is cleared all
+    // the same, and the log line `clearStuck` wrote says it happened.
+    if (lock.synchronized(stopping)) ()
+    else {
+      // "the next render will boot a fresh one" is TRUE whether or not
+      // there WAS a session to throw away: `discardSession` on an empty
+      // preview does nothing, and an empty preview boots on its next
+      // render either way.
+      val why = scrubUrls(RecoveredMessage + (if (rebuilt) " " + RebuiltMessage else ""))
+      guard(notify(StuckNotification, Json.obj(
+        "stuck"   -> Json.Bool(false),
+        "message" -> Json.Str(why),
+        "seq"     -> Json.num(seq.toInt))))
+      guard(notify(ShowMessage, Json.obj(
+        "type"    -> Json.num(3),              // Info
+        "message" -> Json.Str(why))))
+    }
+  }
 
   /** The preview thread's whole life.  `runJob` guards everything of its
     * own, so the catch below is for the QUEUE MACHINERY failing -- an
@@ -1050,11 +1436,26 @@ final class Preview(moduleRoots: () => List[String],
     }
 
   /** Do these two paths name the SAME FILE on disk?  `false` on ANY
-    * throwable, which is the conservative answer everywhere it is used: a
-    * path that cannot be stat'ed (it vanished between the resolve and this
-    * call, or the filesystem refuses) is not evidence that two spellings
-    * agree.  Asked only when the two strings already DIFFER, so the syscall
-    * is off every ordinary path. */
+    * throwable: a path that cannot be stat'ed (it vanished between the
+    * resolve and this call, or the filesystem refuses) is not evidence that
+    * two spellings agree.  Asked only when the two strings already DIFFER,
+    * so the syscall is off every ordinary path.
+    *
+    * `false` IS NOT "THE CONSERVATIVE ANSWER" IN ONE DIRECTION -- the two
+    * callers move in OPPOSITE directions from it, and the earlier wording
+    * here said otherwise (review nit, 2026-09-20):
+    *  - `shadowedPick` reads `false` as "these really are two files" and
+    *    REFUSES the render, loudly, with a 409.  Falling back to `false`
+    *    there is the SAFE answer about the wrong file but the STRICT one
+    *    about the user: a stat that failed costs a legitimate pick its
+    *    render;
+    *  - `configuredPlaces` reads `false` as "the configured chain does not
+    *    resolve this name back to this file" and SPLICES THE INFERRED ROOT
+    *    IN, which serves the render and costs at most one session re-boot.
+    * So the same failure is strict on one path and permissive on the other.
+    * That is not an inconsistency to fix: each caller wants "I could not
+    * establish that these are one file", and what follows from it is the
+    * caller's, not this method's. */
   private def sameFile(a: Path, b: Path): Boolean =
     try java.nio.file.Files.isSameFile(a, b) catch { case _: Throwable => false }
 
@@ -1084,6 +1485,10 @@ final class Preview(moduleRoots: () => List[String],
           val out  = new java.lang.StringBuilder
           runner.renderText(module, r.req.binding, body, out) match {
             case Left(e) =>
+              // DD-1: the ONE place a render learns that the EVALUATION
+              // failed.  `>= 500` is `Runner`'s `Failed`; see `evalFailed`
+              // for why a 400 and a 404 are not this.
+              if (e.status >= 500) evalFailed = true
               finish(r, failure(r.req.generation, e.status, scrubUrls(e.message), e.path))
             case Right(_) =>
               // THE DOCUMENT-SIZE CAP (§2.3), measured BEFORE the
@@ -1134,7 +1539,12 @@ final class Preview(moduleRoots: () => List[String],
       case Left(no)      => finish(s, schemaError(no.message))
       case Right(module) =>
         runner.paramSchema(module, s.req.binding) match {
-          case Left(e)  => finish(s, schemaError(scrubUrls(e.message)))
+          // DD-1, by the same rule as `doRender`: `paramSchema` COMPILES the
+          // report, which evaluates the binding, so its `Failed` is a
+          // forcing failure exactly as a render's is.
+          case Left(e)  =>
+            if (e.status >= 500) evalFailed = true
+            finish(s, schemaError(scrubUrls(e.message)))
           case Right(j) => finish(s, com.clarifi.reporting.ermine.json.LspSchema.toLsp(j))
         }
     }
@@ -1639,13 +2049,24 @@ final class Preview(moduleRoots: () => List[String],
   private def fire(job: Answering, epoch: Long, why: String): Unit = {
     var mine      = false
     var cancelled = false
+    var seq       = 0L
     var queued    = List.empty[Job]
     try lock.synchronized {
       if ((inFlight eq job) && epoch == armEpoch && !answeredInFlight) {
         answeredInFlight = true
         stuck    = true
         stuckWhy = why
+        // Q10: WHICH job this fired on, so that `runJob`'s `finally` can
+        // tell "the wedged evaluation came back" from "some later job
+        // ended".  Written in the same locked step as `stuck` itself, so
+        // the pair is never half-set.
+        stuckJob = job
         mine     = true
+        // IM-1: minted HERE, inside the same locked step as the flip, so
+        // that this rising edge and any later falling one are ordered by a
+        // number even though they are sent by two different threads.
+        stuckSeq += 1
+        seq      = stuckSeq
         // §2.5: "in flight: marked, its eventual answer replaced by
         // -32800".  THIS is that eventual answer, so the client that asked
         // for the cancellation gets the cancellation it asked for -- but
@@ -1663,13 +2084,20 @@ final class Preview(moduleRoots: () => List[String],
     if (mine) {
       guard(log("preview: WATCHDOG: " + why +
                 (if (cancelled) " (the request was cancelled; answering -32800)" else "")))
+      // Q8: `stuckRefusal` -- `"stuck": true` -- on the answer this
+      // watchdog sends and on each of the queue's.  NOT on the `-32800`
+      // branch above it: a JSON-RPC ERROR carries `{code, message}` and no
+      // result object at all, so there is nowhere to put a marker and the
+      // client learns the state from `ermine/preview/stuck` instead.  The
+      // same is true of every other -32800 here (a displaced render, a
+      // cancelled one, the shutdown drain).
       guard(if (cancelled) job.answer(Left((Rpc.RequestCancelled, "cancelled")))
-            else job.answer(Right(job.refusal(why))))
+            else job.answer(Right(job.stuckRefusal(why))))
       queued foreach {
         case a: Answering =>
           guard(releaseToken(a))
           guard(log("preview: queued job " + Json.print(a.id) + " refused: the preview is stuck"))
-          guard(a.answer(Right(a.refusal(why))))
+          guard(a.answer(Right(a.stuckRefusal(why))))
         // An `Invalidate` or a `DiscardSession` owes nobody an answer, and
         // a wedged session will never apply either: dropped, not kept.
         case _ => ()
@@ -1677,14 +2105,34 @@ final class Preview(moduleRoots: () => List[String],
       // §2.5's notification, from the TIMER thread through `notify` (§4:
       // "the render watchdog therefore uses a `Timer` thread and the
       // synchronised `send`").  `window/showMessage` is the LSP's own
-      // server-to-client NOTIFICATION for this; `ask` -- which
-      // `window/showMessageRequest` would need for a real button -- is
-      // dispatch-thread-only and this thread may not call it.  So the
-      // action is NAMED, and the BUTTON is the panel's, in the extension
-      // (WP-7's banner states; resolution A4 says the button lands there).
+      // server-to-client NOTIFICATION for this, and it is KEPT because it
+      // is what ANY LSP client shows without knowing this server at all.
+      // `ask` -- which `window/showMessageRequest` would need for a
+      // clickable item -- is dispatch-thread-only and this thread may not
+      // call it; and even from the dispatch thread it would not help, for
+      // the reason Q8 records: the response names the chosen action TO THE
+      // SERVER, and the LSP gives a server no way to make the client run
+      // the client-side `ermine.restartServer` command (*external*,
+      // unverified here).  So the action is NAMED in the text, and the
+      // BUTTON is the panel's, in the extension (WP-7's banner states;
+      // resolution A4 says the button lands there).
       guard(notify(ShowMessage, Json.obj(
         "type"    -> Json.num(1),              // Error
-        "message" -> Json.Str(why))))
+        // SCRUBBED like every other thing this file sends (review nit).
+        // `why` is built by `timedOutMessage` from a constant and a number
+        // and carries no URL today; rule A5 is structural, not a per-site
+        // judgement, and WP-13 will widen what a message may contain.
+        "message" -> Json.Str(scrubUrls(why)))))
+      // Q8(b): and the panel's own row (§4), BESIDE the standard one and
+      // not instead of it -- `window/showMessage` has no place to carry a
+      // state flag, and WP-7's banner needs the rising edge to know it may
+      // offer the button at all (a refusal's `"stuck": true` only tells it
+      // about requests it made).  Timer thread, `notify`, outside `lock`,
+      // guarded, through the scrub.
+      guard(notify(StuckNotification, Json.obj(
+        "stuck"   -> Json.Bool(true),
+        "message" -> Json.Str(scrubUrls(why)),
+        "seq"     -> Json.num(seq.toInt))))
     }
   }
 
@@ -1699,8 +2147,16 @@ final class Preview(moduleRoots: () => List[String],
     * seconds (`applySettings`), so the only fractional values here are a
     * test's, and a test that injects 300 ms is told "0s", which is true. */
   private def timedOutMessage(millis: Long): String =
-    "evaluation did not finish after " + (millis / 1000L) + "s; the preview is stuck " +
-    "until the language server is restarted -- run \"" + RestartTitle + "\" (" + RestartCommand + ")"
+    // REWORDED once Q10 existed (review SHOULD-FIX 2).  The old text said
+    // "the preview is stuck until the language server is restarted", which
+    // was the whole truth before the state could clear and is now only the
+    // worst case: the wedge ends by itself if the evaluation ever finishes.
+    // Saying the false thing first would train a user to restart a server
+    // that was about to recover.  Both substrings §2.5 and the group-D
+    // property pin -- the title and the command id -- are kept.
+    "evaluation did not finish after " + (millis / 1000L) + "s; the preview is stuck. " +
+    "It recovers by itself if that evaluation ever finishes; if it does not, restart the " +
+    "language server -- run \"" + RestartTitle + "\" (" + RestartCommand + ")"
 
   /** End the watchdog's thread IF ONE WAS EVER STARTED (review S7).  It
     * READS the field and never creates one: a `Preview` that shut down
@@ -1757,6 +2213,36 @@ object Preview {
   private val WorkDoneCreate = "window/workDoneProgress/create"
   private val Progress       = "$/progress"
   private val ShowMessage    = "window/showMessage"
+
+  /** Q8(b), decided 2026-09-20: §4's own server-to-client notification for
+    * the stuck state, `{stuck: true|false, message}`.  `true` from the
+    * watchdog's `fire`, `false` from `recovered` when Q10's wedged job
+    * comes back; both beside a `window/showMessage`, never instead of one.
+    * WP-7's banner is the reader, and the RESTART BUTTON is its, for the
+    * reason Q8 records -- an LSP client's answer to a
+    * `window/showMessageRequest` names the chosen action TO THE SERVER,
+    * and nothing in the protocol lets a server make the client run the
+    * client-side `ermine.restartServer` (*external*). */
+  private val StuckNotification = "ermine/preview/stuck"
+
+  /** What `recovered` says, in both of its messages (Q10).  It names the
+    * ONE thing the user has to do that the server cannot: re-render, because
+    * every `ermine/preview/invalidated` of the stuck interval was dropped
+    * unsent.  No path, no file name, nothing a scrub would have to remove --
+    * and it goes through the scrub all the same. */
+  private val RecoveredMessage =
+    "Ermine preview: the evaluation the watchdog gave up on has finished, and the preview " +
+    "is serving renders again. Files saved while it was stuck were not announced, and any " +
+    "params schema asked for meanwhile was refused, so re-render the report and ask for its " +
+    "schema again."
+
+  /** The second half of `recovered`'s text, added only when the wedged job
+    * ended by THROWING and the render session was therefore discarded
+    * (DM-1).  True whether or not a session existed: an empty preview boots
+    * on its next render either way. */
+  private val RebuiltMessage =
+    "The render session was discarded because that evaluation ended in an error, so the " +
+    "next render boots a fresh one."
   private val BootTitle      = "Ermine preview: booting the render session"
   private val RestartTitle   = "Ermine: Restart Language Server"
   private val RestartCommand = "ermine.restartServer"
@@ -1798,16 +2284,41 @@ object Preview {
       * state to know which token its boot belongs to. */
     def progress: Json
     /** This job's own shape for "it did not work": §4's `{ok: false, ...}`
-      * for a render, `ermine/schema`'s `{error}` for a schema.  The
-      * watchdog and the stuck refusal both go through it, so that a client
-      * gets a failure in the shape of the request it made rather than a
-      * JSON-RPC error it has no branch for. */
+      * for a render, `ermine/schema`'s `{error}` for a schema.  So that a
+      * client gets a failure in the shape of the request it made rather
+      * than a JSON-RPC error it has no branch for.
+      *
+      * THE CRASH HANDLER'S SHAPE, and since Q8 that is all it is: a job
+      * that RAN and failed. */
     def refusal(message: String): Json
+
+    /** The SAME shape plus `"stuck": true` (Q8, decided 2026-09-20): the
+      * marker a client reads to know this failure is §2.5's WEDGE and not
+      * an ordinary one, so that WP-7's banner may offer the restart button
+      * beside it.
+      *
+      * A SECOND METHOD AND NOT A FLAG ON `refusal`, which is the whole
+      * point: `refusal` is also what the job CRASH handler answers with,
+      * and a crash is a report that failed, not a preview that is stuck.
+      * One shared builder with the marker in it would have put `"stuck":
+      * true` on every 500 a broken report produces -- the design review
+      * caught exactly that -- and no test over the stuck paths alone would
+      * have seen it.  EXACTLY FOUR CALLERS: the two stuck refusals in
+      * `render` and `schema`, the watchdog's own answer, and the answers
+      * its queue drain sends.
+      *
+      * NOTHING CARRIES IT ON A `-32800` PATH -- a displaced render, a
+      * cancelled one, the shutdown drain, and the watchdog's answer to a
+      * request that had been CANCELLED -- because a JSON-RPC error has no
+      * result object to put it in.  Those clients learn the state from
+      * `ermine/preview/stuck` instead. */
+    def stuckRefusal(message: String): Json
   }
 
   final case class Render(id: Json, req: RenderRequest, dirtyAt: Long,
                           progress: Json, answer: Rpc.Answer) extends Answering {
     def refusal(message: String): Json = failure(req.generation, 500, message, None)
+    def stuckRefusal(message: String): Json = withStuck(refusal(message))
   }
 
   /** Q7: a schema job carries the same three things a render does -- the
@@ -1816,6 +2327,9 @@ object Preview {
   final case class Schema(id: Json, req: SchemaRequest,
                           progress: Json, answer: Rpc.Answer) extends Answering {
     def refusal(message: String): Json = Json.obj("error" -> Json.Str(scrubUrls(message)))
+    // Q8: BESIDE `error`, which is the whole of `ermine/schema`'s failure
+    // shape -- there is no `ok`/`status` here to hang it off.
+    def stuckRefusal(message: String): Json = withStuck(refusal(message))
   }
 
   final case class Invalidate(paths: Set[Path]) extends Job
@@ -1846,6 +2360,18 @@ object Preview {
                   "message" -> Json.Str(scrubUrls(message))) ++
              path.toList.map(p => "path" -> Json.Str(p)) ++
              List("generation" -> generation))
+
+  /** Q8's marker, APPENDED so that neither §4 shape's existing key order
+    * moves: a render failure keeps `{ok, status, message, path?,
+    * generation}` and gains `stuck` after it, and `ermine/schema`'s
+    * `{error}` gains it beside.  A `Json` that is not an object is handed
+    * back untouched -- unreachable from the two callers, and a `match` with
+    * no default would be a crash on the one path in this file that must not
+    * have one. */
+  private def withStuck(j: Json): Json = j match {
+    case Json.Obj(fs) => Json.Obj(fs ::: List("stuck" -> Json.Bool(true)))
+    case other        => other
+  }
 
   /** How many UTF-8 BYTES a rendered document is, without building them
     * (§2.3's cap): the document is by hypothesis the largest thing in this

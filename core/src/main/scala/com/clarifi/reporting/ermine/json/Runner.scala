@@ -655,7 +655,23 @@ final class Runner(val cfg: RunnerConfig) {
     * (`dependentsOf` reads it): a module whose entry is missing contributes
     * no edge and is not collected as an importer.  Nothing in the product
     * ever clears that cache -- four TEST suites do, which is why the
-    * properties that pin this hold `ErmineFixture.literalLock`. */
+    * properties that pin this hold `ErmineFixture.literalLock`.
+    *
+    * DO NOT REMOVE THE `Session.moduleUnder(cfg.roots, ...)` HALF OF STEP 1
+    * AS REDUNDANT (noted 2026-09-20 by the Q7 review, which nearly did).
+    * Besides the restored-file case its doc comment names, it is the ONLY
+    * rule that matches a save under a SYMLINKED root against a
+    * real-spelled `loadedFiles` key.  `Session.normalize` is
+    * `toAbsolutePath.normalize` and purely syntactic -- it does not follow
+    * a symbolic link (the same fact `Preview.sameFile` exists for) -- so
+    * when the editor reports `/home/me/proj/reports/Rpt.e` through a link
+    * and the session loaded it as `/data/proj/reports/Rpt.e`, `byPath` MISSES
+    * and this second rule is what still names `Rpt`.  It works because it
+    * asks a question about the PATH's shape under the roots rather than
+    * about a stored spelling, and because `cfg.roots` and the reported
+    * path share the link's spelling whenever the client is consistent with
+    * itself.  Removing it would make every save under such a root a silent
+    * no-op. */
   def invalidate(paths: Set[java.nio.file.Path]): Set[String] =
     invalidate0(paths, withPending = true)
 

@@ -2237,7 +2237,22 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * this group can build cheaply: a file that cannot be read, and a file
     * whose module header does not parse. */
   property("D: a file that cannot be placed under a root is a 404 saying why, a non-file URI a 400, and both echo the generation") = secure {
-    previewLock.synchronized { timedD("404 and 400") {
+    previewLock.synchronized {
+      // `residentLock` and `bench.docs`, added 2026-09-20 with the Q8/Q10
+      // batch.  A PRE-EXISTING ORDERING HAZARD, surfaced rather than
+      // introduced by that batch: Q7 gave this property an `ermine/schema`
+      // request over the WIRE, and that method is registered by
+      // `Definitions.install`, which this bench performs only when its lazy
+      // `docs` is FORCED.  Four other properties force it; this one
+      // assumed one of them had run first.  ScalaCheck fixes no order, so a
+      // schedule that reached this property first answered
+      // `-32601 unknown method: ermine/schema` and falsified it (observed,
+      // failing seed `YlZ37frhgP4zqEwGfDld01-JkvZE_cSKVHUB6On2PgB=`).
+      // Forcing it here makes the property self-contained, and the lock is
+      // the group's declared order -- `previewLock`, then `residentLock` --
+      // because that initializer reaches the resident.
+      residentLock.synchronized { timedD("404 and 400") {
+      val _d = bench.docs
       // A path under none of `moduleRoots ++ inferredRoot(uri) ++ roots`.
       // It must not EXIST: §2.4 puts the file's OWN inferred root in the
       // set, so a readable file always has a root, and the 404 is reachable
@@ -2310,6 +2325,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
            .exists(_.contains("roots")) :|
           ("ermine/schema did not refuse the same bad roots: " + show(a7)))
     } }
+    }
   }
 
   property("D: the dispatch thread answers while a render is in flight") = secure {
@@ -2392,14 +2408,37 @@ object TestLspRobustness extends Properties("LSP robustness") {
 
   private def methodOf(j: Json): Option[String] = j / "method" flatMap (_.str)
 
-  property("D: the watchdog answers a render that will not finish, names the restart action, and leaves the preview stuck") = secure {
-    previewLock.synchronized { timedD("watchdog and the stuck state") {
+  /** Q8's marker on an ANSWER (`"stuck": true` in the result), and whether
+    * the key is there at all.  The second is what catches the shared-
+    * `refusal` bug: an ordinary 500 that gained the flag has `Some(true)`
+    * for the first and would pass any test that only looked for it. */
+  private def stuckOf(j: Option[Json]): Option[Boolean] =
+    resultOf(j) flatMap (_ / "stuck") flatMap (_.bool)
+  private def hasStuckKey(j: Option[Json]): Boolean =
+    (resultOf(j) flatMap (_ / "stuck")).isDefined
+
+  /** Q8's notification: `ermine/preview/stuck {stuck, message}` with the
+    * value asked for.  A BOUNDED, generous wait, like every other wait in
+    * this group: it fails on a notification that never comes and on
+    * nothing else. */
+  private def stuckNote(b: Bench, want: Boolean, ms: Long): Option[Json] =
+    b.await(ms)(j => methodOf(j) == Some("ermine/preview/stuck") &&
+                     (j / "params" flatMap (_ / "stuck") flatMap (_.bool)) == Some(want))
+
+  private def noteText(j: Option[Json]): Option[String] =
+    j flatMap (_ / "params") flatMap (_ / "message") flatMap (_.str)
+  private def noteType(j: Option[Json]): Option[Int] =
+    j flatMap (_ / "params") flatMap (_ / "type") flatMap (_.int)
+
+  property("D: the watchdog answers a render that will not finish, names the restart action, marks the preview stuck, and clears it when the wedged job returns") = secure {
+    previewLock.synchronized { timedD("watchdog, the stuck state and the recovery") {
       // ITS OWN BENCH, not the shared one: §2.5's stuck state is per-
-      // `Preview` and is never cleared (only a server restart clears it),
-      // so marking the group's shared preview stuck would cost every later
-      // property its render session.  It costs NO BOOT: the render is held
-      // in `beforeJob`, which runs before the job does any work at all, so
-      // this bench never builds a `Runner`.
+      // `Preview`, so marking the group's shared preview stuck would cost
+      // every later property its render session -- and since Q10 the state
+      // CLEARS again, which would leave the shared bench in a state no
+      // other property could predict either way.  It costs NO BOOT: every
+      // render here is held or thrown in `beforeJob`, which runs before the
+      // job does any work at all, so this bench never builds a `Runner`.
       val b = new Bench(warm = false)
       val started = new java.util.concurrent.CountDownLatch(1)
       val release = new java.util.concurrent.CountDownLatch(1)
@@ -2410,15 +2449,26 @@ object TestLspRobustness extends Properties("LSP robustness") {
         // over in a fraction of a second when the watchdog works.
         b.preview.timeoutMillis = 300L
         b.preview.beforeJob = {
-          case _: Preview.Render =>
+          case r: Preview.Render if r.req.generation == Json.num(201) =>
             started.countDown()
             release.await(180L, java.util.concurrent.TimeUnit.SECONDS)
             // THE RELEASED JOB THROWS rather than returns: it must not go
             // on to boot a render session (seconds this property has no use
             // for), and a crash exercises the very path that must NOT answer
             // a second time -- `runJob`'s crash handler, then its `finally`,
-            // both of which find the watchdog's claim already taken.
+            // both of which find the watchdog's claim already taken.  A
+            // `RuntimeException` is NOT a `java.lang.Error`, so Q10's rule
+            // says this job's ending DOES clear the stuck state; the OOM
+            // half below is the other side of that rule.
             throw new RuntimeException("wp5 stage B: the wedged render is let go")
+          // Q10, THE THIRD RENDER: after the recovery this one is really
+          // RUN, not refused, and it crashes.  Its answer is the ordinary
+          // §4 500 -- and it must carry NO `stuck` key, because a report
+          // that was served and failed is not a wedged preview.  This is
+          // the conjunct that fails if `refusal` and `stuckRefusal` are
+          // ever merged back into one builder.
+          case r: Preview.Render if r.req.generation == Json.num(203) =>
+            throw new RuntimeException("wp5: an ordinary crash, after the recovery")
           case _ => ()
         }
         val wedged = previewRoot.resolve("WpWedged.e")
@@ -2426,6 +2476,8 @@ object TestLspRobustness extends Properties("LSP robustness") {
         val inFlight = started.await(180L, java.util.concurrent.TimeUnit.SECONDS)
         val a1    = b.answer(1, 120000L)
         val note  = b.notification("window/showMessage", 60000L)
+        // Q8(b): §4's own row, beside the standard one and not instead of it.
+        val rise  = stuckNote(b, true, 60000L)
         val isStuck = b.preview.isStuck
         // §2.5: "every later `ermine/render` is answered the same way
         // WITHOUT queueing" -- the same §4 failure, and a queue that never
@@ -2439,10 +2491,22 @@ object TestLspRobustness extends Properties("LSP robustness") {
         // then: it does not take `evalLock` and is on another thread").
         b.request(3, "wp5/ping", Json.Null)
         val pong = b.answer(3, 60000L)
-        // Let the wedged job go and JOIN EVERY THREAD: after `stop` nothing
-        // can send another frame, so "no second answer" below is a fact
-        // about a finished stream and not a wait that might have been short.
+        // ---- Q10: THE WEDGED JOB COMES BACK ----------------------------
+        // The NOTIFICATION is the synchronisation, not a sleep: it is sent
+        // by the preview thread at the very end of the job's `finally`, so
+        // its arrival is the happens-before edge for everything below.
         release.countDown()
+        val fall     = stuckNote(b, false, 120000L)
+        val recovery = b.notification("window/showMessage", 60000L)
+        val cleared  = b.preview.isStuck
+        // A render AFTER the recovery is SERVED (it reaches `beforeJob` and
+        // crashes there), not refused -- and that is what says the state
+        // really ended rather than merely stopped being reported.
+        b.render(4, wedged, "report", "1", 203)
+        val a3 = b.answer(4, 120000L)
+        // JOIN EVERY THREAD: after `stop` nothing can send another frame,
+        // so "no second answer" below is a fact about a finished stream
+        // and not a wait that might have been short.
         val stopped = b.stop()
         val answers1 = b.remaining().count(j =>
           (j / "id" flatMap (_.int)) == Some(1) && methodOf(j).isEmpty)
@@ -2452,25 +2516,443 @@ object TestLspRobustness extends Properties("LSP robustness") {
           (msgOf(a1).exists(_.contains("evaluation did not finish")) :|
             ("the watchdog's message: " + show(a1))) &&
           ((genOf(a1) ?= Some(201)) :| ("it must still echo the generation: " + show(a1))) &&
+          ((stuckOf(a1) ?= Some(true)) :| ("Q8: the watchdog's own answer carries no stuck marker: " + show(a1))) &&
           (note.isDefined :| "no window/showMessage notification was sent") &&
-          ((note flatMap (_ / "params") flatMap (_ / "type") flatMap (_.int) ?= Some(1)) :|
-            ("the notification is not an error: " + show(note))) &&
-          ((note flatMap (_ / "params") flatMap (_ / "message") flatMap (_.str))
+          ((noteType(note) ?= Some(1)) :| ("the notification is not an error: " + show(note))) &&
+          (noteText(note)
             .exists(m => m.contains("Ermine: Restart Language Server") && m.contains("ermine.restartServer")) :|
             ("the notification does not carry the restart action: " + show(note))) &&
+          (rise.isDefined :| "Q8: no ermine/preview/stuck {stuck:true} notification was sent") &&
+          (noteText(rise).exists(_.contains("evaluation did not finish")) :|
+            ("Q8: the stuck notification carries no message: " + show(rise))) &&
           (isStuck :| "the preview is not marked stuck") &&
           ((okOf(a2) ?= Some(false)) :| ("a render after the watchdog fired answered " + show(a2))) &&
           ((msgOf(a2) ?= msgOf(a1)) :| ("it was not answered the same way: " + show(a2))) &&
           ((genOf(a2) ?= Some(202)) :| ("generation: " + show(a2))) &&
+          ((stuckOf(a2) ?= Some(true)) :| ("Q8: a refused render carries no stuck marker: " + show(a2))) &&
           ((queued ?= 0) :| ("a render refused while stuck left " + queued + " in the queue")) &&
           ((pong flatMap (_ / "result") flatMap (_.str) ?= Some("pong")) :|
             ("the dispatch thread stopped answering while the preview was stuck: " + show(pong))) &&
+          (fall.isDefined :|
+            "Q10: the wedged job returned and no ermine/preview/stuck {stuck:false} was sent") &&
+          (noteText(fall).exists(_.contains("re-render")) :|
+            ("Q10: the recovery notification does not ask for a re-render: " + show(fall))) &&
+          ((noteType(recovery) ?= Some(3)) :|
+            ("Q10: the recovery window/showMessage is not the INFO type: " + show(recovery))) &&
+          (noteText(recovery).exists(_.contains("re-render")) :|
+            ("Q10: the recovery message does not say saves need a re-render: " + show(recovery))) &&
+          ((cleared ?= false) :| "Q10: the wedged job returned and the preview is still stuck") &&
+          ((statusOf(a3) ?= Some(500)) :| ("Q10: the render after the recovery answered " + show(a3))) &&
+          (msgOf(a3).exists(_.contains("the preview failed")) :|
+            ("Q10: it was refused, not served: " + show(a3))) &&
+          ((!hasStuckKey(a3)) :|
+            ("Q8: an ordinary crash 500 carries a stuck key: " + show(a3))) &&
           (stopped :| "the bench's threads did not stop") &&
           ((answers1 ?= 0) :| ("the released job answered request 1 a SECOND time: " + answers1 + " extra frame(s)"))
       } finally {
         b.preview.beforeJob = _ => ()
         release.countDown()
         b.stop()
+      }
+    } }
+  }
+
+  /** Q10(b), BOTH HALVES of `Preview.isFatal`, one scenario run twice.
+    *
+    * A job that ends on a throwable the preview may not treat as "the
+    * evaluation came back" must leave the state stuck and announce nothing.
+    * `marker` is a string the crash log must contain, so that a run in
+    * which the throwable never reached the handler fails LOUDLY instead of
+    * passing vacuously.
+    *
+    * ITS OWN BARE `Preview`, not a `Bench`, for one reason that matters:
+    * every NOTIFICATION it sends is recorded, so "none was sent" is read
+    * off a list after the preview thread has been JOINED rather than waited
+    * for.  It boots nothing (`beforeJob` never returns normally) and costs
+    * milliseconds. */
+  private def stuckSurvives(what: String, marker: String)(thrower: () => Nothing): Prop = {
+      val notes = new java.util.concurrent.ConcurrentLinkedQueue[(String, Json)]
+      val sink  = new LogSink
+      val p = new Preview(() => Nil, (m, j) => { notes.add((m, j)); () }, (_, _, _) => (), sink.add)
+      val started = new java.util.concurrent.CountDownLatch(1)
+      val release = new java.util.concurrent.CountDownLatch(1)
+      try {
+        p.timeoutMillis = 300L
+        p.beforeJob = {
+          case _: Preview.Render =>
+            started.countDown()
+            release.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+            // ALLOCATED HERE AND THROWN, in a process that is perfectly
+            // healthy: what is under test is the CLASSIFICATION, not the
+            // JVM's behaviour in a real exhaustion or a real non-local
+            // return, neither of which a property could stage.
+            thrower()
+          case _ => ()
+        }
+        val a = new Answers
+        p.render(Json.num(1), crashParams(401), a.answer)
+        val inFlight = started.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        val fired    = a.await(120000L)
+        val wasStuck = p.isStuck
+        release.countDown()
+        // THE JOIN IS THE SYNCHRONISATION.  `shutdown` wakes the preview
+        // thread and `awaitStopped` joins it, so the released job's whole
+        // `finally` -- the one place that could have cleared the state or
+        // sent a recovery -- has certainly run by the time anything below
+        // is read.  `shutdown` itself never clears `stuck`.
+        //
+        // WHICH CONJUNCTS ARE DECISIVE, stated because this join races the
+        // release: `stillStuck` and `saidCleared` below are read after the
+        // join and `clearStuck` is suppressed by nothing, so they falsify a
+        // wrong classification whichever order the two threads took.  The
+        // `fell` and `info` conjuncts are secondary -- Q10(c) silences
+        // `recovered` once `stopping` is set, so a `shutdown` that won the
+        // race would make them pass vacuously.  They are kept because they
+        // cost nothing and catch a recovery announced without a clear.
+        p.shutdown()
+        val stopped = p.awaitStopped(30000L)
+        val stillStuck = p.isStuck
+        val sent = { val b = List.newBuilder[(String, Json)]
+                     val it = notes.iterator
+                     while (it.hasNext) b += it.next()
+                     b.result() }
+        val rose = sent.exists { case (m, j) =>
+          m == "ermine/preview/stuck" && (j / "stuck" flatMap (_.bool)) == Some(true) }
+        val fell = sent.exists { case (m, j) =>
+          m == "ermine/preview/stuck" && (j / "stuck" flatMap (_.bool)) == Some(false) }
+        val info = sent.exists { case (m, j) =>
+          m == "window/showMessage" && (j / "type" flatMap (_.int)) == Some(3) }
+        val saidCleared = sink.result().exists(_.contains("no longer stuck"))
+        val crashed = sink.result().exists(_.contains(marker))
+        (inFlight :| "the render never reached the preview thread") &&
+          ((fired.map(_.isRight) ?= Some(true)) :|
+            ("the watchdog did not answer the wedged render: " + answerText(fired))) &&
+          ((fired.collect { case Right(j) => j } flatMap (_ / "stuck") flatMap (_.bool) ?= Some(true)) :|
+            ("Q8: the watchdog's answer carries no stuck marker: " + answerText(fired))) &&
+          (wasStuck :| "the preview was never marked stuck, so this property is vacuous") &&
+          (rose :| "Q8: no ermine/preview/stuck {stuck:true} was sent") &&
+          (crashed :| ("the " + what + " never reached the crash handler, so this property is " +
+                       "vacuous: " + sink.result().mkString(" | ").take(400))) &&
+          (stopped :| "the preview thread did not stop when asked") &&
+          (stillStuck :| ("Q10: a " + what + " CLEARED the stuck state")) &&
+          ((!fell) :| ("Q10: a " + what + " announced ermine/preview/stuck {stuck:false}")) &&
+          ((!info) :| ("Q10: a " + what + " announced a recovery window/showMessage")) &&
+          ((!saidCleared) :| ("Q10: the log says the state cleared: " +
+                              sink.result().filter(_.contains("stuck")).mkString(" | ")))
+      } finally {
+        p.beforeJob = _ => ()
+        release.countDown()
+        p.shutdown()
+        p.awaitStopped(30000L)
+      }
+  }
+
+  property("D (Q10): a wedged job released by an Error, or by anything the runtime does not capture, leaves the preview stuck") = secure {
+    previewLock.synchronized { timedD("Q10: isFatal keeps the stuck state") {
+      // HALF ONE of `isFatal`: is this JVM still believable?
+      // `OutOfMemoryError` is the case §2.5's own measured story is about,
+      // and the gate JVM (and a user who sets `-XX:-ExitOnOutOfMemoryError`)
+      // has no flag that would have ended the process first.
+      stuckSurvives("OutOfMemoryError", "OutOfMemoryError")(
+        () => throw new OutOfMemoryError("wp5 Q10: the wedged render is let go by an Error")) &&
+      // HALF TWO, and the one `isInstanceOf[Error]` ALONE would have missed
+      // (the Q8-Q12 review's DM-2): `Runtime.swhnf`'s only capture is
+      // `NonFatal`, so a `ControlThrowable` -- which is not an `Error` --
+      // escapes a force WITHOUT `writeback` and leaves whiteholed thunks
+      // that a later force on this same thread turns into a permanent
+      // "infinite loop detected".  A session carrying those is not one to
+      // call recovered.  `!NonFatal(e)` is the half that catches it, and
+      // dropping that half falsifies exactly this conjunct.
+      stuckSurvives("ControlThrowable", "WpControlThrowable")(
+        // A NAMED subclass, not an anonymous one: `scala.util.control.ControlThrowable`
+        // is abstract, and `Rpc.stackTrace` prints `toString`, which is the CLASS NAME
+        // -- an anon class would print `TestLspRobustness$$anon$N` and make the vacuity
+        // marker unfindable.
+        () => throw new WpControlThrowable("wp5 Q10: not NonFatal"))
+    } }
+  }
+
+  property("D (DD-1): a wedge that comes back FAILED discards the render session; one that comes back OK keeps it") = secure {
+    previewLock.synchronized { timedD("DD-1: the poisoned session is discarded") {
+      // DM-1, AS CORRECTED BY DD-1 OF THE SECOND Q8-Q12 REVIEW.
+      // `Runtime.swhnf` memoises a failure into EVERY thunk on the chain
+      // (`Runtime.scala:231`, `:245-250`), including the render session's
+      // SHARED bindings, so a wedge that came back FAILED leaves a session
+      // whose bindings re-throw the old failure for ever -- while Q10's
+      // recovery tells the panel the preview serves renders again. §2.5's
+      // WP-6 row says the same of a cancel.
+      //
+      // THE FIRST CUT KEYED THIS ON `threw`, WHICH IS THE WRONG WITNESS and
+      // is what this property now pins: the path that matters RETURNS
+      // NORMALLY. `Encode` turns a `Bottom` into `Left(bottom(...))` and
+      // `Runner` nets every `NonFatal` failure into `Left(Failed(...))`, so
+      // `doRender` answers a 500 by RETURNING and `threw` is false. Scenario
+      // (b) below is exactly that, and it is the reachable one; the throwing
+      // scenario (d) only proves the mechanism.
+      //
+      // THREE WEDGES AND TWO BOOTS, on ONE bench, in this order so that the
+      // boot count is unambiguous and nothing is paid twice. The `boots`
+      // counter reads `Preview`'s own "render session booted" log line, and
+      // a bench with no session could not witness a discard at all
+      // (`discardSession` on an empty preview does nothing and logs
+      // nothing), which is why this property boots. Measured cost is in §11.
+      val b = new Bench(warm = true)
+      // Each wedge gets its own pair of latches: `beforeJob` is one function
+      // for the life of the bench and the generations select the scenario.
+      val startA = new java.util.concurrent.CountDownLatch(1)
+      val holdA  = new java.util.concurrent.CountDownLatch(1)
+      val startB = new java.util.concurrent.CountDownLatch(1)
+      val holdB  = new java.util.concurrent.CountDownLatch(1)
+      val startD = new java.util.concurrent.CountDownLatch(1)
+      val holdD  = new java.util.concurrent.CountDownLatch(1)
+      def discards = b.sink.result().count(_.startsWith("preview: discarding the render session"))
+      try {
+        val good = previewRoot.resolve("WpWarm.e")
+        val boom = writeFixture("WpBoom", wpBoom)
+        val booted0 = b.boots
+        b.preview.beforeJob = {
+          case r: Preview.Render if r.req.generation == Json.num(511) =>
+            startA.countDown(); holdA.await(180L, java.util.concurrent.TimeUnit.SECONDS); ()
+          case r: Preview.Render if r.req.generation == Json.num(512) =>
+            startB.countDown(); holdB.await(180L, java.util.concurrent.TimeUnit.SECONDS); ()
+          case r: Preview.Render if r.req.generation == Json.num(514) =>
+            startD.countDown()
+            holdD.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+            throw new RuntimeException("wp5 DD-1: the wedged render throws")
+          case _ => ()
+        }
+
+        // ---- (a) THE CONTROL: the wedged job comes back OK ---------------
+        // It renders a healthy report and RETURNS. Nothing was poisoned, so
+        // the session must survive: this is the conjunct that stops the fix
+        // from degenerating into "discard after every wedge".
+        b.preview.timeoutMillis = 300L
+        b.render(70, good, "report", "1", 511)
+        val heldA     = startA.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        val firedA    = b.answer(70, 120000L)
+        val discardsA = discards
+        holdA.countDown()
+        val fallA     = stuckNote(b, false, 180000L)
+        val keptBoots = b.boots
+        val keptDiscards = discards
+
+        // ---- (b) THE REACHABLE CASE: it comes back FAILED, by RETURNING --
+        // `WpBoom`'s report forces `error`, which `Runner` nets into
+        // `Failed` -- a 500 answered by a normal return, with `threw` false.
+        b.preview.timeoutMillis = 300L
+        b.render(71, boom, "report", "1", 512)
+        val heldB  = startB.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        val firedB = b.answer(71, 120000L)
+        holdB.countDown()
+        val fallB  = stuckNote(b, false, 180000L)
+        val afterB = b.boots
+        val discardedB = b.sink.result().exists(l =>
+          l.startsWith("preview: discarding the render session") && l.contains("failed"))
+
+        // ---- (c) ... and the next render really does pay a boot ----------
+        b.preview.timeoutMillis = 0L
+        b.render(72, good, "report", "1", 513)
+        val after  = b.answer(72, 300000L)
+        val booted = b.boots
+
+        // ---- (d) THE THROWING WEDGE still discards too -------------------
+        // No boot: `beforeJob` throws before the job does any work, and
+        // nothing renders after it.
+        b.preview.timeoutMillis = 300L
+        b.render(73, good, "report", "1", 514)
+        val heldD = startD.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        val firedD = b.answer(73, 120000L)
+        holdD.countDown()
+        val fallD  = stuckNote(b, false, 180000L)
+        val discardsD = discards
+
+        (heldA :| "the control render never reached the preview thread") &&
+          ((booted0 ?= 1) :| ("the bench booted " + booted0 + " session(s), not 1")) &&
+          ((statusOf(firedA) ?= Some(500)) :| ("the watchdog did not answer the control: " + show(firedA))) &&
+          (fallA.isDefined :| "no recovery after the control wedge came back") &&
+          // THE CONTROL'S WHOLE POINT:
+          ((keptDiscards ?= discardsA) :|
+            ("DD-1: a wedge that came back OK discarded the session anyway (" +
+             discardsA + " -> " + keptDiscards + " discard lines)")) &&
+          ((keptBoots ?= 1) :| ("the control re-booted: boots = " + keptBoots)) &&
+          ((noteText(fallA).exists(_.contains("discarded")) ?= false) :|
+            ("DD-1: the control's recovery claims a discard: " + show(fallA))) &&
+          (heldB :| "the failing render never reached the preview thread") &&
+          ((statusOf(firedB) ?= Some(500)) :| ("the watchdog did not answer the wedge: " + show(firedB))) &&
+          (fallB.isDefined :| "no recovery after the failing wedge came back") &&
+          (discardedB :|
+            ("DD-1: a wedge that came back FAILED BY RETURNING kept its poisoned session; " +
+             "discard lines: " + b.sink.result().filter(_.contains("discarding")).mkString(" | ").take(300))) &&
+          (noteText(fallB).exists(_.contains("discarded")) :|
+            ("DD-1: the recovery does not say the session was discarded: " + show(fallB))) &&
+          ((afterB ?= 1) :| ("the discard itself booted something: " + afterB)) &&
+          ((okOf(after) ?= Some(true)) :| ("the render after the recovery: " + show(after))) &&
+          ((booted ?= 2) :| ("DD-1: the next render did NOT boot a fresh session (boots = " +
+                             booted + ", expected 2)")) &&
+          (heldD :| "the throwing render never reached the preview thread") &&
+          ((statusOf(firedD) ?= Some(500)) :| ("the watchdog did not answer the throwing wedge: " + show(firedD))) &&
+          (fallD.isDefined :| "no recovery after the throwing wedge") &&
+          ((discardsD ?= discards) :| "the discard count moved after it was read") &&
+          (b.sink.result().exists(l =>
+            l.startsWith("preview: discarding the render session") && l.contains("ended by throwing")) :|
+            ("DM-1: a wedge that ended by THROWING kept its session: " +
+             b.sink.result().filter(_.contains("discarding")).mkString(" | ").take(300)))
+      } finally {
+        b.preview.beforeJob = _ => ()
+        holdA.countDown(); holdB.countDown(); holdD.countDown()
+        b.stop()
+      }
+    } }
+  }
+
+  property("D (IM-1): the two stuck edges carry a seq, so a collision that puts them on the wire backwards is still readable") = secure {
+    previewLock.synchronized { timedD("IM-1: the stuck notification's seq") {
+      // IM-1 OF THE Q8-Q12 REVIEW.  `{stuck:true}` is the TIMER thread's,
+      // the LAST of `fire`'s sends; `{stuck:false}` is the PREVIEW
+      // thread's, the FIRST of `recovered`'s.  Nothing orders them, so a
+      // job released the instant the watchdog fires can put the FALSE on
+      // the wire first -- and a client reading arrival order would latch a
+      // stuck banner on a healthy preview with no falling edge to follow.
+      // The existing properties cannot see it: they hold the wedged job
+      // until the rising edge has ARRIVED.
+      //
+      // THE COLLISION IS STAGED, not raced for: this bench's `notify`
+      // BLOCKS the timer thread inside the `{stuck:true}` send until the
+      // recovery has been sent, which is the worst order the wire can
+      // produce.  No boot: `beforeJob` never returns normally.
+      val notes    = new java.util.concurrent.ConcurrentLinkedQueue[(String, Json)]
+      val rising   = new java.util.concurrent.CountDownLatch(1)  // the timer thread is in the send
+      val letRise  = new java.util.concurrent.CountDownLatch(1)  // ... and may now finish it
+      val note: (String, Json) => Unit = (m, j) => {
+        if (m == "ermine/preview/stuck" && (j / "stuck" flatMap (_.bool)) == Some(true)) {
+          rising.countDown()
+          letRise.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        }
+        notes.add((m, j)); ()
+      }
+      val sink = new LogSink
+      val p = new Preview(() => Nil, note, (_, _, _) => (), sink.add)
+      val started = new java.util.concurrent.CountDownLatch(1)
+      val release = new java.util.concurrent.CountDownLatch(1)
+      try {
+        p.timeoutMillis = 300L
+        p.beforeJob = {
+          case _: Preview.Render =>
+            started.countDown()
+            release.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+            throw new RuntimeException("wp5 IM-1: the wedged render is let go")
+          case _ => ()
+        }
+        val a = new Answers
+        p.render(Json.num(1), crashParams(601), a.answer)
+        val inFlight = started.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        // The timer thread is now parked INSIDE the rising send, so `stuck`
+        // is set and `fire` has nothing left to do.
+        val held = rising.await(180L, java.util.concurrent.TimeUnit.SECONDS)
+        release.countDown()
+        // The preview thread clears and sends the FALLING edge while the
+        // rising one is still in flight.  Waiting for it is what makes the
+        // backwards order a fact rather than a hope.
+        def stuckEdges(): List[(Boolean, Long)] = {
+          val bu = List.newBuilder[(Boolean, Long)]
+          val it = notes.iterator
+          while (it.hasNext) { val (m, j) = it.next()
+            if (m == "ermine/preview/stuck")
+              for (v <- j / "stuck" flatMap (_.bool); q <- j / "seq" flatMap (_.int))
+                bu += ((v, q.toLong)) }
+          bu.result()
+        }
+        def awaitEdges(n: Int): List[(Boolean, Long)] = {
+          val deadline = System.currentTimeMillis + 120000L
+          var got = stuckEdges()
+          while (got.size < n && System.currentTimeMillis < deadline) {
+            Thread.sleep(5L); got = stuckEdges()
+          }
+          got
+        }
+        val fellFirst = awaitEdges(1).map(_._1) == List(false)
+        letRise.countDown()
+        // WAITED FOR, not joined: `awaitStopped` joins the PREVIEW thread,
+        // and the rising edge is the TIMER thread's -- it records itself
+        // only after `letRise`, so reading the list straight after the
+        // join would race it.
+        val edges = awaitEdges(2)
+        p.shutdown()
+        val stopped = p.awaitStopped(30000L)
+        val arrivalOrder = edges.map(_._1)
+        val highest = if (edges.isEmpty) None else Some(edges.maxBy(_._2))
+        (inFlight :| "the render never reached the preview thread") &&
+          (held :| "the rising edge was never sent, so the collision was not staged") &&
+          (fellFirst :| ("the falling edge did not arrive FIRST while the rising one was held, " +
+                         "so the collision was not staged backwards")) &&
+          (stopped :| "the preview thread did not stop when asked") &&
+          ((edges.size ?= 2) :| ("both edges must carry a seq; got " + edges)) &&
+          ((arrivalOrder ?= List(false, true)) :|
+            ("the collision was not staged BACKWARDS, so this property is vacuous: " + arrivalOrder)) &&
+          ((edges.map(_._2).distinct.size ?= 2) :|
+            ("the two edges share a seq, so a client cannot order them: " + edges)) &&
+          ((highest.map(_._1) ?= Some(false)) :|
+            ("IM-1: the HIGHEST seq does not say stuck:false, so a client that keeps the " +
+             "highest would latch a stuck banner on a healthy preview: " + edges))
+      } finally {
+        p.beforeJob = _ => ()
+        release.countDown()
+        letRise.countDown()
+        p.shutdown()
+        p.awaitStopped(30000L)
+      }
+    } }
+  }
+
+  property("D (Q9): timeoutSeconds 0 is the off switch, and an out-of-range or ill-typed value leaves the field alone") = secure {
+    previewLock.synchronized { timedD("Q9: applySettings on timeoutSeconds") {
+      // Q9 (decided 2026-09-20: PROSE ONLY, nothing built).  `0` stays the
+      // off switch, so this pins what it does and what the two refusals do
+      // not do.  It boots nothing and renders nothing: a `Preview` that is
+      // only asked about its settings never touches a `Runner`, and
+      // `applySettings` is a dispatch-thread method, which is the part this
+      // property plays.
+      val sink = new LogSink
+      val p = new Preview(() => Nil, (_, _) => (), (_, _, _) => (), sink.add)
+      def push(v: Json): Unit =
+        p.applySettings(Some(Json.obj("preview" -> Json.obj("timeoutSeconds" -> v))),
+                        "a test")
+      try {
+        val shipped = p.timeoutMillis
+        push(Json.num(0))
+        val off  = p.timeoutMillis
+        val said = sink.result().count(_.contains("timeoutSeconds = 0"))
+        val offSaidSo = sink.result().exists(_.contains("(the watchdog is off)"))
+        // OUT OF RANGE: 3601 is one second past §2.5's ceiling, and the
+        // field must be exactly what `0` left it.
+        push(Json.num(3601))
+        val afterHigh = p.timeoutMillis
+        // ILL-TYPED: the seconds as a STRING, which is the shape a
+        // hand-edited settings.json produces (review S5's case).
+        push(Json.Str("60"))
+        val afterString = p.timeoutMillis
+        val refusals = sink.result().count(_.contains("timeoutSeconds"))
+        val namedRange = sink.result().exists(l => l.contains("3601") && l.contains("ignored"))
+        val namedType  = sink.result().exists(l => l.contains("timeoutSeconds ignored") &&
+                                                   l.contains("string"))
+        p.shutdown()
+        val stopped = p.awaitStopped(30000L)
+        ((shipped ?= Preview.DefaultTimeoutSeconds * 1000L) :|
+          ("the shipped default is " + shipped + " ms, not §2.5's " + Preview.DefaultTimeoutSeconds + " s")) &&
+          ((off ?= 0L) :| ("timeoutSeconds 0 left the field at " + off + " ms")) &&
+          ((said ?= 1) :| ("applying 0 logged it " + said + " times, not once")) &&
+          (offSaidSo :| ("the log does not say the watchdog is off: " +
+                         sink.result().mkString(" | ").take(400))) &&
+          ((afterHigh ?= 0L) :| ("3601 was not refused: the field moved to " + afterHigh + " ms")) &&
+          (namedRange :| ("3601 was dropped silently: " + sink.result().mkString(" | ").take(400))) &&
+          ((afterString ?= 0L) :| ("a string was not refused: the field moved to " + afterString + " ms")) &&
+          (namedType :| ("an ill-typed value was dropped silently: " +
+                         sink.result().mkString(" | ").take(400))) &&
+          ((refusals >= 3) :| ("fewer log lines than settings pushed: " + refusals)) &&
+          (stopped :| "the preview thread did not stop when asked")
+      } finally {
+        p.shutdown()
+        p.awaitStopped(30000L)
       }
     } }
   }
@@ -2755,10 +3237,18 @@ object TestLspRobustness extends Properties("LSP robustness") {
           ((statusOf(bAnswer) ?= Some(500)) :| ("the wedged render answered " + show(bAnswer))) &&
           (msgOf(bAnswer).exists(_.contains("evaluation did not finish")) :|
             ("the wedged render's message: " + show(bAnswer))) &&
+          ((stuckOf(bAnswer) ?= Some(true)) :|
+            ("Q8: the wedged render's answer carries no stuck marker: " + show(bAnswer))) &&
           ((cAnswer collect { case Right(j) => j } flatMap (_ / "error") flatMap (_.str))
             .exists(_.contains("evaluation did not finish")) :|
             ("STRANDED or wrongly shaped: the schema queued behind the wedged render answered " +
              answerText(cAnswer))) &&
+          // Q8: the DRAIN's answers carry the marker too -- `ermine/schema`'s
+          // shape has only `error`, so `stuck` sits beside it.  A client
+          // whose schema request was refused because the preview wedged
+          // needs the same banner the render got.
+          ((cAnswer collect { case Right(j) => j } flatMap (_ / "stuck") flatMap (_.bool) ?= Some(true)) :|
+            ("Q8: the drained schema's {error} carries no stuck marker: " + answerText(cAnswer))) &&
           ((left ?= 0) :| ("the watchdog left " + left + " job(s) in the queue"))
       } finally {
         b.preview.beforeJob = _ => ()
@@ -2830,7 +3320,19 @@ object TestLspRobustness extends Properties("LSP robustness") {
         val cAnswer = schemaAnswer.await(120000L)
         val stuck   = b.preview.isStuck
         val note    = b.notification("window/showMessage", 60000L)
+        val rise    = stuckNote(b, true, 60000L)
         val left    = b.preview.queuedRenders + b.preview.queuedSchemas
+        // Q10, ON THIS PATH TOO: the wedged request was CANCELLED, so its
+        // own answer was the -32800 the client asked for -- but the state
+        // still clears when the evaluation comes back, because "was this
+        // request cancelled" and "is the preview wedged" are independent
+        // (the watchdog's own comment says so).  The notification is the
+        // synchronisation; `b.stop()` in the `finally` must not run first,
+        // or `recovered` would be silent (Q10(c)).
+        holdB.countDown()
+        val fall     = stuckNote(b, false, 120000L)
+        val recovery = b.notification("window/showMessage", 60000L)
+        val cleared  = b.preview.isStuck
         (heldA :| "the first render never reached the preview thread") &&
           ((queuedFirst ?= 1) :| ("the render was not queued before the schema was posted: " + queuedFirst)) &&
           ((queuedR ?= 1) :| ("the render did not queue (" + queuedR + ")")) &&
@@ -2841,12 +3343,27 @@ object TestLspRobustness extends Properties("LSP robustness") {
             ("the dispatch thread never acknowledged the cancel: " + show(pong))) &&
           ((errCode(bAnswer) ?= Some(-32800)) :|
             ("a CANCELLED in-flight request the watchdog fired on answered " + show(bAnswer))) &&
+          // Q8: a JSON-RPC ERROR has no result object, so there is nowhere
+          // to put the marker and none is invented -- the client learns the
+          // state from `ermine/preview/stuck` instead.  `bAnswer` carries an
+          // `error` and no `result` at all, which is what this asserts.
+          (((bAnswer flatMap (_ / "result")) ?= None) :|
+            ("Q8: the -32800 answer grew a body: " + show(bAnswer))) &&
           (stuck :| "the preview is not stuck: a cancelled request does not make the evaluation come back") &&
           (note.isDefined :| "no window/showMessage notification was sent") &&
+          (rise.isDefined :| "Q8: no ermine/preview/stuck {stuck:true} notification was sent") &&
           ((cAnswer collect { case Right(j) => j } flatMap (_ / "error") flatMap (_.str))
             .exists(_.contains("evaluation did not finish")) :|
             ("the schema queued behind it answered " + answerText(cAnswer))) &&
-          ((left ?= 0) :| ("the watchdog left " + left + " job(s) in the queue"))
+          ((cAnswer collect { case Right(j) => j } flatMap (_ / "stuck") flatMap (_.bool) ?= Some(true)) :|
+            ("Q8: the drained schema's {error} carries no stuck marker: " + answerText(cAnswer))) &&
+          ((left ?= 0) :| ("the watchdog left " + left + " job(s) in the queue")) &&
+          (fall.isDefined :|
+            "Q10: the cancelled-then-wedged job returned and no ermine/preview/stuck {stuck:false} was sent") &&
+          ((noteType(recovery) ?= Some(3)) :|
+            ("Q10: the recovery window/showMessage is not the INFO type: " + show(recovery))) &&
+          ((cleared ?= false) :|
+            "Q10: the wedged job returned and the preview is still stuck")
       } finally {
         b.preview.beforeJob = _ => ()
         holdA.countDown()
@@ -3388,6 +3905,16 @@ object TestLspRobustness extends Properties("LSP robustness") {
 
   // ---- M1 and M2 of the stage A review: the thread's own failure modes ----
 
+  /** A `ControlThrowable` this suite can throw (the class in
+    * `scala.util.control` is abstract).  It is the witness for the half of
+    * `Preview.isFatal` that `isInstanceOf[Error]` does NOT cover: it is not
+    * an `Error`, but it is not `NonFatal` either, so `Runtime.swhnf` would
+    * not have captured it and the chain it unwound is left whiteholed.
+    * NAMED so that its class name appears in the crash log, which is what
+    * the property uses to prove it was not vacuous. */
+  private final class WpControlThrowable(message: String)
+    extends scala.util.control.ControlThrowable(message)
+
   /** A recording `Rpc.Answer`: every call is kept, in order, and awaited
     * with a bounded wait. */
   private final class Answers {
@@ -3462,6 +3989,14 @@ object TestLspRobustness extends Properties("LSP robustness") {
          ("the render after it answered " + answerText(r2))) &&
       ((r2.collect { case Right(j) => j }.flatMap(_ / "status").flatMap(_.int) ?= Some(500)) :|
          ("its status: " + answerText(r2))) &&
+      // Q8, and THIS is the conjunct that catches the shared-`refusal` bug
+      // the design review found: the crash handler answers through
+      // `Answering.refusal`, and if the `"stuck": true` marker were put
+      // THERE rather than in `stuckRefusal`, every ordinary 500 from a
+      // broken report would tell the panel the preview is wedged and offer
+      // a restart.  The stuck properties would all still pass.
+      ((r2.collect { case Right(j) => j }.flatMap(_ / "stuck") ?= None) :|
+         ("Q8: an ordinary crash 500 carries a stuck marker: " + answerText(r2))) &&
       (alive :| "the preview thread did not survive the two crashes") &&
       ((queued ?= 0) :| ("it left " + queued + " render(s) queued")) &&
       (stopped :| "the preview thread did not stop when asked")

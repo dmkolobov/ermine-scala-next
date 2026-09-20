@@ -242,6 +242,50 @@
 >   `lsp/Definitions.scala` (one comment), `TestLspRobustness.scala`, `tracker/tools/lsp-client.py`,
 >   this document.
 >
+> - **Q8, Q9, Q10, Q11 AND Q12 FOLLOW-UP (2026-09-20)**: five more open questions the user decided ("per the
+>   orchestrator's recommendations"), each as CHANGED BY AN INDEPENDENT DESIGN REVIEW that ran first and
+>   rewrote three of them. **Q13 is untouched and stays the user's.**
+>   **Q8** (BUILT): a STUCK-ONLY `"stuck": true` marker on exactly four answers -- the two refusals `render`
+>   and `schema` send while stuck, the watchdog's own, and its queue drain's -- through a second
+>   `Answering.stuckRefusal` method, so the job CRASH handler's 500 cannot carry it (the review's must-fix:
+>   the first recommendation put the flag on the shared `refusal`). Plus `ermine/preview/stuck
+>   {stuck, message}`, a new §4 notification, sent BESIDE the existing `window/showMessage` and never instead
+>   of it. The `-32800` paths carry no marker and cannot: a JSON-RPC error has no result object.
+>   **Q9** (PROSE ONLY, no mechanism, one cheap property): `0` stays the off switch; the question's own claim
+>   that the group-D properties need the SETTING is struck (they set the FIELD); nothing sends these settings
+>   until WP-7 (VERIFIED: `extension.js` sends `fastMode` only).
+>   **Q10** (BUILT): `stuck` clears when the job the watchdog fired on RETURNS -- never on a `java.lang.Error`
+>   (`e.isInstanceOf[Error]`, chosen over `NonFatal`, which calls an `AssertionError` non-fatal) -- silently
+>   while stopping, with the late job's own answer still discarded, and with a notification that asks for a
+>   re-render because every `invalidate` of the wedge was dropped. `dirtyGeneration` is NOT bumped, and Q10's
+>   text says why it would be inert.
+>   **Q11** (NOTHING BUILT): the orchestrator's server-side recommendation was WITHDRAWN by the review and the
+>   case is the extension's (WP-7, §3 step 6); the two reasons are recorded in Q11.
+>   **Q12** (MEASURED, then BUILT, step 1 only): `-XX:+DisplayVMOutputToStderr` moves the VM's OOM
+>   termination line off fd 1 -- measured on the `WpBlow` fixture, stdout ends at the last complete frame and
+>   stderr, EMPTY before, carries the line -- and `bin/ermine-lsp` now adds it behind a cached one-off probe
+>   keyed on the java binary. NO descriptor duplication -- nothing in this repository goes through the
+>   launcher, so a second wire descriptor would ship untested on the one path a mistake in it
+>   would break everything (an earlier portability reason was WITHDRAWN: `bin/ermine-lsp` is
+>   itself bash, so on Windows neither mechanism ships today -- that is WP-17's gap). Q12 is NOT moot under any Q13 outcome: the measured run died BEFORE any fire.
+>   **THE BATCH'S OWN DESIGN+IMPLEMENTATION REVIEW (2026-09-20) WAS RED AND CHANGED THREE
+>   THINGS**, each folded into the texts above: (DM-1) "a job that came back of its own accord
+>   poisoned nothing" was FALSE -- `Runtime.swhnf` memoises a `NonFatal` throw into every thunk
+>   on the chain, so a wedge that ends by an exception poisons the session's shared bindings,
+>   exactly as §2.5's WP-6 row already says of a cancel; recovery now DISCARDS the render
+>   session when the job THREW, and the same mechanism is recorded as new open question **Q14**
+>   for the transient-failure case, which is not built; (DM-2) `isFatal` is
+>   `isInstanceOf[Error] || !NonFatal(e)`, because `swhnf`'s only capture is `NonFatal` and the
+>   complement escapes a force WITHOUT writeback, leaving whiteholed thunks that later read as a
+>   permanent "infinite loop detected" -- `ControlThrowable` and `InterruptedException` are in
+>   that complement and are not `Error`s; (IM-1) the two `ermine/preview/stuck` edges are sent
+>   by two threads with nothing ordering them, so both now carry a monotonic `seq` minted in the
+>   same locked step as the state flip, and §4 states the client contract (keep the highest
+>   `seq`; the notification is authoritative; the answer marker is per-request; the
+>   `window/showMessage` is advisory).
+>   Files: `lsp/Preview.scala`, `json/Runner.scala` (one comment), `bin/ermine-lsp`,
+>   `TestLspRobustness.scala`, this document. No `editor/vscode` file, no gate registry change.
+>
 > **Which suites were run, and what they said, is recorded in each ticket's commit message, not
 > here**: a banner that names a suite goes stale the moment the next ticket runs a different
 > set, and a claim about a suite THIS tree has not run is worse than no claim.
@@ -443,7 +487,7 @@ What the preview thread costs, and where it is paid:
 | Fresh files, whoever saved them | at the head of every render the session runs `reloadStale`'s test (`Resident.scala:271-273`: `depCache(sf)._1 != sf.lastModified`) over its **own** `loadedFiles` -- one `stat` per loaded file, ~150 files, milliseconds -- and invalidates what moved, so edits from outside VS Code and clients without dynamic watchers (`Main.scala:214-217`) are seen without the watcher |
 | The held connection is used by one thread only | so `DB.transaction`'s `setAutoCommit` toggling (`DB.scala:19-29`, called per scan from `SqlScanner.scala:193-195`) is never interleaved, and `fromPersistentConnection` handing every caller the same `Connection` (`Backends.scala:49-51`) is safe |
 | A scan hang ends by itself | the existing 300 s `setQueryTimeout` (`SqlExecution.scala:50`) raises an `SQLException`; the render answers 500; the preview thread is free again |
-| A non-terminating **evaluation** | pure Ermine loops run under `Runner.evalLock` (`Runner.scala:538-540`) and cannot be stopped from outside (*external*: `Thread.stop` throws on JDK 21). The honest promise: **a runaway evaluation blocks no LSP request until it exhausts the heap cap, then the server exits and the client restarts it**. A watchdog (`java.util.Timer`) answers the request after `ermine.preview.timeoutSeconds` (default 60) with "evaluation did not finish", in a notification carrying the **Ermine: Restart Language Server** button (`ermine.restartServer`, `extension.js:241`), marks the preview stuck, and every later `ermine/render` is answered the same way without queueing. An allocating loop (a fold over an infinite list; `swhnf` builds thunk chains as it goes, `Runtime.scala:215-238`) then hits `-Xmx` (§2.2) and `-XX:+ExitOnOutOfMemoryError` (*external*: since JDK 8u92) turns the OOM into a clean exit that `vscode-languageclient` restarts, up to 5 times in 3 minutes (*external*); the panel recovers as §7.2 describes. A CPU-bound loop pins one core for the process life until the user restarts (**MEASURED 2026-09-20: NO WITNESS EITHER WAY. Every loop that goes through `swhnf` reached `-Xmx` instead of pinning a core for ever, and the one candidate for a loop INSIDE a primitive did not spin at all. The claim is neither confirmed nor refuted; see the measured block below**). The resident keeps answering until then: it does not take `evalLock` and is on another thread. The watchdog exists so the user is told at 60 s rather than at OOM. WP-6 makes cancel real (next row) |
+| A non-terminating **evaluation** | pure Ermine loops run under `Runner.evalLock` (`Runner.scala:538-540`) and cannot be stopped from outside (*external*: `Thread.stop` throws on JDK 21). The honest promise: **a runaway evaluation blocks no LSP request until it exhausts the heap cap, then the server exits and the client restarts it**. A watchdog (`java.util.Timer`) answers the request after `ermine.preview.timeoutSeconds` (default 60) with "evaluation did not finish", in a notification carrying the **Ermine: Restart Language Server** button (`ermine.restartServer`, `extension.js:241`), marks the preview stuck, and every later `ermine/render` is answered the same way without queueing (**Q8, decided 2026-09-20**: those answers, and the watchdog's own, and the ones its queue drain sends, carry `"stuck": true`, and an `ermine/preview/stuck {stuck: true}` notification goes out beside the `window/showMessage`; **Q10, decided 2026-09-20**: the stuck state CLEARS if the job the watchdog fired on ever returns -- never on a `java.lang.Error` -- and a `{stuck: false}` notification plus an INFO `window/showMessage` then asks the client to re-render, because every `invalidate` posted during the wedge was dropped). An allocating loop (a fold over an infinite list; `swhnf` builds thunk chains as it goes, `Runtime.scala:215-238`) then hits `-Xmx` (§2.2) and `-XX:+ExitOnOutOfMemoryError` (*external*: since JDK 8u92) turns the OOM into a clean exit that `vscode-languageclient` restarts, up to 5 times in 3 minutes (*external*); the panel recovers as §7.2 describes. A CPU-bound loop pins one core for the process life until the user restarts (**MEASURED 2026-09-20: NO WITNESS EITHER WAY. Every loop that goes through `swhnf` reached `-Xmx` instead of pinning a core for ever, and the one candidate for a loop INSIDE a primitive did not spin at all. The claim is neither confirmed nor refuted; see the measured block below**). The resident keeps answering until then: it does not take `evalLock` and is on another thread. The watchdog exists so the user is told at 60 s rather than at OOM. WP-6 makes cancel real (next row) |
 | Cooperative cancel (WP-6, gated on a perf A/B) | a `@volatile` cancel flag on a per-thread evaluation context, checked at the head of `Runtime.swhnf` (`Runtime.scala:215`): `if (cancelled) throw Cancelled`. The watchdog and an in-flight `$/cancelRequest` set it. The unwinding thunk writes `Bottom` back into the thunks on its chain (`:231`, `:238`), which poisons the render session's stdlib thunks, so a cancel **discards the `Runner`** (the next render boots a new one) and the runaway's chains become garbage; the resident is untouched. Cost: one volatile read per force on the evaluator's hot loop, hence a Tier-2 instrument run (`perf-bench.sh`, an interleaved A/B; it "has never moved", `docs/gate-policy.md:105`) before adoption. Unverified: that every Ermine loop passes through `swhnf` (a loop inside one primitive would not) |
 | `$/cancelRequest` | queued: removed and answered `-32800`; in flight: marked, its eventual answer replaced by `-32800`, the work not interrupted until WP-6 (no hook into `SqlExecution` either way); during a boot: honoured when the boot ends (answer `-32800`, boot kept) |
 | `stale` | a **hint**; `invalidated` is the mechanism. A `@volatile` generation counter is bumped by `invalidate`, snapshotted at render start and compared just before `send`; a mismatch sets `"stale": true`, and the `invalidated` notification that follows makes the extension re-render (§3). An `invalidate` that lands after the comparison is not lost, only its banner is late. **AS BUILT (WP-5 stage A), DIFFERS FROM THE LETTER ABOVE -- for the user to confirm**: the counter is bumped when an `invalidate` is **posted** (on the dispatch thread) and snapshotted when a render is **enqueued**, not when it starts. The literal reading cannot work on a single-threaded queue: an `invalidate` that ran as a job could never move the counter *during* a render, so `stale` would be dead code; and a snapshot taken at render *start* would call a render fresh that was enqueued before an invalidate still queued behind it. Bumping per post can flag a render whose invalidation turns out empty -- a false positive, which is what "a hint" permits. The WP-5 stage A review judged this strictly better than the literal reading |
@@ -525,8 +569,13 @@ its figures and not the other two runs'. The `WpSpin` row is a DIFFERENT program
 What the watchdog does was measured on `WpChain` in all three runs, and it is §2.5's own row:
 the request is answered `{"ok":false,"status":500,"message":"evaluation did not finish after
 10s; the preview is stuck until the language server is restarted -- run \"Ermine: Restart
-Language Server\" (ermine.restartServer)","generation":1}`; `window/showMessage` type 1
-carries the same text; **the resident answered a `textDocument/hover` in 0.00 s while the
+Language Server\" (ermine.restartServer)","generation":1}` -- **THAT IS THE WORDING AT THE TIME
+OF THE MEASUREMENT; Q10 reworded it** (2026-09-20), because "stuck until the language server is
+restarted" became the worst case rather than the only one once the state could clear: the text
+now says the preview recovers by itself if the evaluation ever finishes and names the restart
+as what to do if it does not. The status, the shape, the generation echo and both restart
+substrings are unchanged, and nothing else in this block is affected. `window/showMessage`
+type 1 carries the same text; **the resident answered a `textDocument/hover` in 0.00 s while the
 preview thread was wedged** (`Good.answer : Int`); and the next `ermine/render` was refused
 with the same message, its own generation echoed, without queueing.
 
@@ -582,7 +631,7 @@ Dropped from earlier drafts, on this evidence: "never stalls diagnostics" is nar
 | 3 | dispatch | `afterReload` (`Main.scala:179`), which both the watch handler (`:268`) and the `ermine.reloadModules` command (`:277`) call, posts `invalidate(changed ++ removed)` to the preview thread (a no-op before the preview has booted), so the manual reload path invalidates too | new |
 | 4 | preview | `Runner.invalidate(paths)`, under `evalLock` (`TestRunner` runs properties concurrently over one runner, `TestRunner.scala:112`, `:806`): paths -> modules through the render session's **own** `loadedFiles` (`Session.Filesystem`, as `Resident.loadedByPath` does, `Resident.scala:178-183`) plus `Resident.moduleUnder(cfg.roots, p)` for a file restored after deletion (`:699-704`, `:262-265`); closure through `depCache` imports as `dependentsOf` does (`:186-197`); scrub the closure (§3.1); evict every `(module, binding)` key of those modules from `reports` (`Runner.scala:296`). **No eager reload**: the next render's `compile` loads on demand (`:432-436`). **Q4 (2026-09-20)**: a `compile` whose module LOAD failed records that module in a private, per-`Runner` pending set (bounded, oldest first), and an `invalidate` whose paths name a module -- loaded through `loadedFiles`, or UNLOADED under a root -- unions that set into its answer, so the save that FIXES a broken report names it here and step 5 sends it; a successful compile takes it back out, and `invalidateStale` does not union it | new; because eviction is keyed on the render session's loaded set, a workspace report module (`Sales`) is covered -- the resident's reload set could never name it |
 | 5 | preview | if the dirty set is non-empty: `ermine/preview/invalidated {modules}` | new |
-| 6 | extension | if the picked report's module is in `modules` (the set includes dependents, so saving `Layout/Widgets/Foo.e` names every report that imports it), re-send `ermine/render` with the last params, and re-request the params schema (§6) | new |
+| 6 | extension | if the picked report's module is in `modules` (the set includes dependents, so saving `Layout/Widgets/Foo.e` names every report that imports it), re-send `ermine/render` with the last params, and re-request the params schema (§6). **Q11 (decided 2026-09-20, option (iii)): and ALSO re-render when the picked report's OWN FILE is created or changed while its last answer was a PLACEMENT 404**, which no `invalidated` can announce -- a file with no readable header has no module NAME for the notification to carry, and since Q5/Q7 it is refused at placement before `Runner` is ever asked. NOT on a `Runner` 404 (a missing BINDING on a module that loaded): that module is in `loadedModules`, so `invalidated` already fires for it and the extra trigger would double-render | new |
 | 7 | preview | render; answer; the panel repaints | §4 |
 
 ### 3.1 The scrub, shared
@@ -644,10 +693,11 @@ All new methods are `ermine/...`, beside `ermine/schema` (`Definitions.scala:226
 
 | Method | Direction | Shape | Notes |
 |---|---|---|---|
-| `ermine/render` | request | `{uri, binding, params, roots, generation}` -> `{ok: true, document, generation, stale?}` or `{ok: false, status, message, path?, generation}` | `uri` -> module via `Resident.moduleUnder(cfg.roots, path)`; a file that cannot be PLACED under any root is a **404 whose message says why** (Q5, decided 2026-09-20): it is not a `.e` file, it cannot be read, its module header does not parse, or its module name is deeper than the directories above it. A readable `.e` file whose header parses is always under its OWN inferred root (§2.4), so the 404 is unreachable for it -- which is why the old text, "not under a module root", was true of nothing. **THE 400 AND 404 TEXTS NAME THE FILE AND NEVER A DIRECTORY** (Q5's convention; the 409 below is the one exception and says why). `roots` are the absolute `ermine.preview.roots` (§2.4). Delivery is always inline, buffered, no threshold (`Runner.scala:72-80`): **no `data` field on this wire**. `status`/`message`/`path` are `RunError`'s (`Runner.scala:25-65`: `BadRequest` 400 at `:47`, `NotFound` 404 at `:51`, `Failed` 500 at `:55`): 400 with a JSON path for a bad param or a binding that is not a report (`:466-470`, `:472-476`), 404 for module or binding (`:447`, with the request's binding in the text), 500 for load, eval, scan, write, and for a document over the size cap (§2.3). **409 (Q7, decided 2026-09-20)** for a SHADOWED PICK: the final root chain resolves the picked file's module name to a different file, so neither this render nor a schema may use it, and nothing is loaded. **THE 409 IS THE ONE TEXT THAT PRINTS A PATH**, and the orchestrator's decision on the apparent contradiction with the sentence above is recorded here: Q5's file-name-only convention governs the 400 and 404 texts; the 409 prints the SHADOWING file's path and the root it sits under because that is the only useful thing it can say (the picked file is still named by its name alone -- the request supplied its URI), and rule A5 (§8.1) covers **URLs, hosts and passwords**, not a source path under a directory the client or the server configured as a module root. 409 costs no new vocabulary: `Preview.failure` takes a status NUMBER and `RunError`, which the HTTP server shares, is not on this path. The message never carries a JDBC URL (§8, rule A5). Answered through `onRequestDeferred` from the preview thread |
+| `ermine/render` | request | `{uri, binding, params, roots, generation}` -> `{ok: true, document, generation, stale?}` or `{ok: false, status, message, path?, generation, stuck?}` | `uri` -> module via `Resident.moduleUnder(cfg.roots, path)`; a file that cannot be PLACED under any root is a **404 whose message says why** (Q5, decided 2026-09-20): it is not a `.e` file, it cannot be read, its module header does not parse, or its module name is deeper than the directories above it. A readable `.e` file whose header parses is always under its OWN inferred root (§2.4), so the 404 is unreachable for it -- which is why the old text, "not under a module root", was true of nothing. **THE 400 AND 404 TEXTS NAME THE FILE AND NEVER A DIRECTORY** (Q5's convention; the 409 below is the one exception and says why). `roots` are the absolute `ermine.preview.roots` (§2.4). Delivery is always inline, buffered, no threshold (`Runner.scala:72-80`): **no `data` field on this wire**. `status`/`message`/`path` are `RunError`'s (`Runner.scala:25-65`: `BadRequest` 400 at `:47`, `NotFound` 404 at `:51`, `Failed` 500 at `:55`): 400 with a JSON path for a bad param or a binding that is not a report (`:466-470`, `:472-476`), 404 for module or binding (`:447`, with the request's binding in the text), 500 for load, eval, scan, write, and for a document over the size cap (§2.3). **409 (Q7, decided 2026-09-20)** for a SHADOWED PICK: the final root chain resolves the picked file's module name to a different file, so neither this render nor a schema may use it, and nothing is loaded. **THE 409 IS THE ONE TEXT THAT PRINTS A PATH**, and the orchestrator's decision on the apparent contradiction with the sentence above is recorded here: Q5's file-name-only convention governs the 400 and 404 texts; the 409 prints the SHADOWING file's path and the root it sits under because that is the only useful thing it can say (the picked file is still named by its name alone -- the request supplied its URI), and rule A5 (§8.1) covers **URLs, hosts and passwords**, not a source path under a directory the client or the server configured as a module root. 409 costs no new vocabulary: `Preview.failure` takes a status NUMBER and `RunError`, which the HTTP server shares, is not on this path. The message never carries a JDBC URL (§8, rule A5). **`stuck: true` (Q8, decided 2026-09-20)** is present on EXACTLY the failures that mean §2.5's WEDGE -- the refusal `render` sends while stuck, the watchdog's own answer, and the answers its queue drain sends -- and on NOTHING ELSE, in particular not on the job crash handler's 500, which is a report that ran and failed. The `-32800` paths (a displaced render, a cancelled one, the shutdown drain, and the watchdog's answer to a request that had been CANCELLED) are JSON-RPC ERRORS with no result object, so they carry no marker and the client learns the state from `ermine/preview/stuck` instead. Answered through `onRequestDeferred` from the preview thread |
 | `ermine/preview/reports` | request | `{uri}` -> `{module, reports: [{binding, type}]}` or `{error}` | §3.2; dispatch thread; a lookup, or one cold check for an unopened file |
 | `ermine/preview/invalidated` | notification, server -> client | `{modules}` | §3 step 5 |
-| `ermine/schema` | request, extended | `{uri, binding, roots}` -> the schema, or `{error}`, alongside `type`/`name` | **with a `binding` key the request is a preview-queue job** answered from the render session (§6); the `type`/`name` forms stay on the resident (`Schema.scala:807-816`). **Q7, decided 2026-09-20**: the binding form carries the same three keys a render identifies its report by, and resolves it through the SAME function, so a schema and a render share one session in either order. Its `{error}` texts are a render's reasons word for word -- Q5's "cannot read `<name>`", "no module header could be read from `<name>`", "not an Ermine source file: `<name>`", the 409 shadow text -- scrubbed, file names only. `{module, binding}` is GONE: a request with `binding` and no `uri` is `{error}` naming the key. **CONSEQUENCE FOR THE EXTENSION (WP-7/WP-8)**: because a schema now computes the root set the same way, a schema whose `roots` DIFFER from the last render's DISCARDS that session and boots another, exactly as a render with different roots does (§2.4). The extension must send the SAME `roots` on both, for the same picked report |
+| `ermine/preview/stuck` | notification, server -> client | `{stuck: true \| false, message, seq}` | **Q8, decided 2026-09-20.** `true` from the watchdog's `fire` (TIMER thread), `false` from Q10's recovery (PREVIEW thread), each **beside** a `window/showMessage` and never instead of one -- the standard message is what any LSP client shows, this row is what a BANNER can hold. Both through `notify`, never `ask` (§2.3), outside the queue's monitor, guarded, scrubbed. WP-7's panel reads it, and the **Ermine: Restart Language Server** button is the panel's: the LSP shape that carries actions (`window/showMessageRequest`) is a REQUEST whose answer names the chosen action TO THE SERVER, and the protocol gives a server no way to make the client run the client-side `ermine.restartServer` (*external*, unverified here). **THE CLIENT CONTRACT, four rules (IM-1 of the Q8-Q12 review):** (1) `seq` is a monotonic counter minted in the SAME locked step that flips the state, so a client KEEPS THE HIGHEST `seq` IT HAS SEEN AND IGNORES ANYTHING LOWER -- the two edges are sent by different threads with nothing ordering them, and a collision really can put the `false` on the wire before the `true`. **`seq` IS PER-PROCESS AND RESTARTS AT 1**, so the client RESETS its high-water mark when the language client goes **Stopped -> Running** (§5's own row for that transition): a restart is the remedy the watchdog's message names, and a client that kept the old mark across one would ignore the fresh server's `{stuck: true, seq: 1}` for the life of its session (DD-2 of the second review); (2) this notification is **AUTHORITATIVE** for the stuck state; (3) the `"stuck": true` marker on an ANSWER is **per-request**, not a state: it says why THAT request was refused, and one stale stuck refusal may legitimately arrive after a clear (it was decided before it); (4) the `window/showMessage` that accompanies each edge is **advisory** and may arrive in either order relative to it -- it carries no `seq` and a client must not derive state from it |
+| `ermine/schema` | request, extended | `{uri, binding, roots}` -> the schema, or `{error, stuck?}`, alongside `type`/`name` | **with a `binding` key the request is a preview-queue job** answered from the render session (§6); the `type`/`name` forms stay on the resident (`Schema.scala:807-816`). **Q7, decided 2026-09-20**: the binding form carries the same three keys a render identifies its report by, and resolves it through the SAME function, so a schema and a render share one session in either order. Its `{error}` texts are a render's reasons word for word -- Q5's "cannot read `<name>`", "no module header could be read from `<name>`", "not an Ermine source file: `<name>`", the 409 shadow text -- scrubbed, file names only. `{module, binding}` is GONE: a request with `binding` and no `uri` is `{error}` naming the key. **CONSEQUENCE FOR THE EXTENSION (WP-7/WP-8)**: because a schema now computes the root set the same way, a schema whose `roots` DIFFER from the last render's DISCARDS that session and boots another, exactly as a render with different roots does (§2.4). The extension must send the SAME `roots` on both, for the same picked report. **`stuck: true` (Q8) sits BESIDE `error`** on the two refusals that mean the wedge -- the one `schema` sends while stuck, and the one the watchdog's queue drain sends -- and on no other `{error}` |
 | `ermine/preview/connect` | request | `{profile: {id, dialect, driver, url, user?, scanner, settings}, password?}` -> `{ok: true, host}` or `{ok: false, class: "auth" \| "driver" \| "connect", kept, message}` | §8. The **body is never logged** (WP-1). Absent `user` means `DriverManager.getConnection(url)` (the local SQLite case) |
 | `ermine/preview/disconnect` | request | `{}` -> `{ok: true}` | closes the held connection and discards the `Runner` (§7.2); the next render answers `{ok: false, status: 503, message: "not connected"}` until the extension connects again |
 | `ermine/preview/disconnected` | notification, server -> client | `{reason}` | after a recycle or a failed scan that closed the connection; the extension reconnects (§7.2) |
@@ -681,11 +731,12 @@ load from it under its CSP, *external*).
 | Host page CSP | `default-src 'none'; script-src ${cspSource}; style-src ${cspSource} 'unsafe-inline'; img-src ${cspSource} data:` | the legacy renderers inject styles |
 | Legacy renderers | a second `<script>` from a second `localResourceRoots` entry at the `ermine-writers` checkout's built bundle; the host passes the global into `render`'s env, read as `ctx.env.htmlwriter` (`client/src/legacy.ts:327-333`) | without it `scorecard`/`headline`/`crosstab` render and `table`/`drilldownTable`/charts show the dispatcher's error box, the designed "unsupported" behaviour (`JSON-GUIDE.md:1648-1652`) |
 | **The writers global** | **open (Q1)**: `client/src/index.ts:5` documents `window.htmlwriter`; the writers entry assigns `window.ermine_htmlwriter` (`../ermine-writers/writers/js/htmlwriter.js:11`) and the object `legacy.ts` types is `const htmlwriter = {}` (`ermine-htmlwriter.js:45`). Never observed in a real browser here | WP-11 |
-| Host-page logic | the extension <-> webview message protocol (`render`, `error`, `stale`, `reloadBundle`, `unsaved`, `switching`, `offline`) is the only new logic on the client side; its state transition is a pure `applyMessage(state, msg)` in `client/src/host/`, built by the same webpack config and run under `node --test` beside `client/test/harness.ts` (`client/package.json:16`) | the DOM output of `parseDocument -> render` is already covered in jsdom; scroll, `retainContextWhenHidden` and panel lifetime are VS Code's behaviour, not ours; `@vscode/test-electron` downloads VS Code and is impossible offline (§10) |
+| Host-page logic | the extension <-> webview message protocol (`render`, `error`, `stale`, `stuck`, `reloadBundle`, `unsaved`, `switching`, `offline`) is the only new logic on the client side; its state transition is a pure `applyMessage(state, msg)` in `client/src/host/`, built by the same webpack config and run under `node --test` beside `client/test/harness.ts` (`client/package.json:16`) | the DOM output of `parseDocument -> render` is already covered in jsdom; scroll, `retainContextWhenHidden` and panel lifetime are VS Code's behaviour, not ours; `@vscode/test-electron` downloads VS Code and is impossible offline (§10) |
 | Initial state | before the first render: "Pick a report: **Ermine: Preview Report...**"; while a render runs: a thin progress bar, the last document kept | |
 | Errors | `{ok: false}` -> a banner with `status`, `message`, `path`; the last good document stays below, dimmed. A load failure shows there **and**, for the same file, in Problems through the resident's own diagnostics (`Main.scala:188`) -- unless fast mode is on, when the banner adds "fast mode is on: type errors are not shown in Problems" (`config().get("fastMode")`, the same read as `extension.js:69-71`) and the preview status item carries the "(fast)" suffix | |
 | Unsaved | a non-blocking hint "unsaved: Chart.e" in the banner area whenever a `.e` document in the workspace is dirty (`workspace.textDocuments.some(d => d.isDirty && d.languageId === "ermine")`, *external*): the preview follows saves (§2.4) and that must be visible, not documented. Rendering is never refused for it: a buffer closed without saving would leave nothing dirty and the hole open, and the two-file loop (widget module + renderer) is mid-edit as a normal state | |
 | Stale | `stale: true` -> the banner "re-rendering" until the next answer | §2.5 |
+| **Stuck (Q8, decided 2026-09-20)** | `stuck: true` on an answer, or `ermine/preview/stuck {stuck: true}`, -> a banner carrying the message and **the Restart Language Server button** (`ermine.restartServer`, the extension's own command): this is where resolution A4 puts it, because the LSP cannot make a client run a client-side command from a `window/showMessageRequest` answer (*external*). `ermine/preview/stuck {stuck: false}` (Q10: the wedged evaluation came back) clears the banner, and its message asks for a re-render -- every `invalidated` of the stuck interval was dropped unsent, so the panel's document may be behind the files. The standard `window/showMessage` arrives beside each of them and needs no panel. **THE `seq` IS PER-PROCESS**: the panel keeps the highest it has seen and ignores lower ones, and RESETS that mark on the **Stopped -> Running** transition in the row below, because a restarted server counts from 1 again (§4's rule (1), DD-2) | §2.5, §13 Q8/Q10 |
 | Switching | during a profile or roots switch (§7.2): the last document dimmed under "switching to `<id>`" | |
 | Server stopped | on the client's `Stopped` state (`onDidChangeState`, *external*): banner "server stopped -- last document kept", status "Ermine: preview offline", the document dimmed. On `Running`: the reconnect flow of §7.2 and a re-send of the last render. Scroll and drilldown are lost, as for a bundle change (a hot restart, not a hot reload). By construction every input the loop needs -- picked (file, binding), params path, active profile id, last document, `generation` -- lives in the extension; the server holds nothing across a restart except the database | |
 | Lifetime | `retainContextWhenHidden: true` (*external*; costs memory, keeps drilldown state); a bundle change re-sets `webview.html` and **loses** scroll and drilldown state -- accepted | |
@@ -947,7 +998,7 @@ approval under `:91`. Each WP done-when in §14 names its tier.
 |---|---|---|---|---|
 | Wire / dispatcher | `TestLspRobustness` A-group | a deferred handler answering from another thread still yields "every message answered in order, once" -- the synchronous answers keep their positions and every deferred one is answered exactly once, in any order; two threads calling `send` concurrently produce frames a `Wire` reads back intact; a body for a redacted method never appears in the captured log, an unredacted one does, and neither a JSON array nor a non-string `method` logs a body either; a parse error quotes at most one character of the input or a number token, and no two-character upper-case window of the input appears in it (the marker check of §4), with the same claim re-checked through `Server.handle` on an unparseable frame carrying a secret; `$/cancelRequest` reaches a registered handler while other `$/` notifications are dropped with no answer and no `ignoring notification` line (they do get the ordinary `">>"` line, like every other incoming message) | `suites` (**pr**): `scalacheck-binding/src/main/scala` is in core's test sources (`build.sbt:88-90`) | seconds |
 | Registration flag | group D in `TestLspRobustness` | check a buffer whose `data Heading` gained a field; `DataConDecl.forConstructor(Global("Sales", "Heading"))` still has four fields | **pr** | seconds |
-| Render session | group D, under `residentLock` as B/C are (`:34`, `:307`) | render `Sales.report`; mutate the report file; `invalidate`; render again: the document differs. Mutate a **widget** module the report imports: the report is in the invalidated set. Render a module whose evaluation throws: the resident still answers a check (`Resident.checkFile`, `Resident.scala:401`) and the next render works. A `$/cancelRequest` for a queued render answers `-32800` and the queue is empty. `ermine/schema {uri, binding: "report", roots}` from the queue equals `exportNamed("Sales", "Query")` under the render env, on the session the render before it booted. `ermine/preview/reports` on `Sales.e` lists `report : Query -> Node` and nothing else. **(Q4)** A report whose LOAD failed is a 500 "does not load"; the file is fixed; `invalidate` of its path sends `ermine/preview/invalidated` NAMING it and the next render is `{ok:true}` with the fixed content. **(Q5)** The 404 for a file that cannot be placed names the cause -- "cannot read Gone.e" for a file that is not there, "no module header could be read from WpBadHeader.e" for one whose header does not parse. **(Q6)** Two fresh reports in two DIFFERENT directories, both named as `roots` on every request, render first / second / first again, all `ok:true`, and the session boots exactly ONCE across the three (counted from `Preview`'s own "render session booted" log line; each of the three properties runs on a bench of ITS OWN, not the group's shared one, because these requests move the root set and the shared bench's must never move). A report under NO configured root still renders and DOES re-boot, which is §2.4's zero configuration unchanged. One module NAME under two configured roots: the PICKED file is the one rendered, whichever root it is in. **(Q7)** A schema asked FIRST, on a fresh bench, boots the session and answers the params schema of a workspace report (`$id`, `$ref`, the four properties, the three required), and the render that follows answers `ok` -- ONE boot across both, counted from `Preview`'s own log line. `ermine/schema` with a `binding` and NO `uri` is an `{error}` naming the key, while the `type` and `name` forms still answer `ermine:Ord/Ordering` from the resident. A pick SHADOWED by a resident `moduleRoots` entry (the bench is given one of its own, holding a copy of the same module name) is `{ok:false, status: 409}` with no document, naming the picked file, the shadowing file and the root; the schema answers `{error}` with the SAME text; and a non-shadowed module on that bench still renders its own contents with no second boot. A pick that reaches its root THROUGH A SYMLINK, while the resident root holds the real spelling, still renders its own contents -- the `sameFile` tolerance of the review's must-fix -- or SKIPS LOUDLY with a `collect` label where the platform refuses symbolic links. The 400/404 property also pins the two bad-`roots` SHAPES the first cut dropped silently: `roots` that is not an array, and an entry that is not a string, are each a 400 naming `roots` and what kind of value it was, and the same refusal reaches `ermine/schema` in its `{error}` shape | **pr**; group D boots a render session, seconds each, MEASURED in WP-5 and kept under 60 s total or the suite is split. **MEASURED with Q7's four properties (2026-09-20), three runs**: **18.2 s** for `core/testOnly ...TestLspRobustness` ALONE; **25.7 s** and **46.7 s** for two runs of the same tree with `TestRunner` and `TestSchema` in the same JVM. The spread is CONTENTION, not Q7: in the 46.7 s run the four Q7 properties cost 7.4 s of it (shadowed pick 1.6 s, two spellings 5.8 s, schema-first and the missing-uri case the rest) while one pre-existing property, `ermine/schema {binding}`, took 16.3 s against a fraction of that alone -- it holds `residentLock` and the other two suites take the process-wide `Runner.evalLock`. **THE COMBINED RUN NOW CROSSES 45 s, so this is flagged rather than fixed here**: the split §11 asks for is available and NOT taken -- either group D moves to a suite class of its own (it then stops sharing a JVM with `TestRunner`/`TestSchema`, which is where the spread comes from) or it is cut into the queue/watchdog properties and the root-set ones (Q6 and Q7, each already on a bench of its own). The 60 s ceiling in this row is not breached on any of the three runs | seconds to a minute |
+| Render session | group D, under `residentLock` as B/C are (`:34`, `:307`) | render `Sales.report`; mutate the report file; `invalidate`; render again: the document differs. Mutate a **widget** module the report imports: the report is in the invalidated set. Render a module whose evaluation throws: the resident still answers a check (`Resident.checkFile`, `Resident.scala:401`) and the next render works. A `$/cancelRequest` for a queued render answers `-32800` and the queue is empty. `ermine/schema {uri, binding: "report", roots}` from the queue equals `exportNamed("Sales", "Query")` under the render env, on the session the render before it booted. `ermine/preview/reports` on `Sales.e` lists `report : Query -> Node` and nothing else. **(Q4)** A report whose LOAD failed is a 500 "does not load"; the file is fixed; `invalidate` of its path sends `ermine/preview/invalidated` NAMING it and the next render is `{ok:true}` with the fixed content. **(Q5)** The 404 for a file that cannot be placed names the cause -- "cannot read Gone.e" for a file that is not there, "no module header could be read from WpBadHeader.e" for one whose header does not parse. **(Q6)** Two fresh reports in two DIFFERENT directories, both named as `roots` on every request, render first / second / first again, all `ok:true`, and the session boots exactly ONCE across the three (counted from `Preview`'s own "render session booted" log line; each of the three properties runs on a bench of ITS OWN, not the group's shared one, because these requests move the root set and the shared bench's must never move). A report under NO configured root still renders and DOES re-boot, which is §2.4's zero configuration unchanged. One module NAME under two configured roots: the PICKED file is the one rendered, whichever root it is in. **(Q7)** A schema asked FIRST, on a fresh bench, boots the session and answers the params schema of a workspace report (`$id`, `$ref`, the four properties, the three required), and the render that follows answers `ok` -- ONE boot across both, counted from `Preview`'s own log line. `ermine/schema` with a `binding` and NO `uri` is an `{error}` naming the key, while the `type` and `name` forms still answer `ermine:Ord/Ordering` from the resident. A pick SHADOWED by a resident `moduleRoots` entry (the bench is given one of its own, holding a copy of the same module name) is `{ok:false, status: 409}` with no document, naming the picked file, the shadowing file and the root; the schema answers `{error}` with the SAME text; and a non-shadowed module on that bench still renders its own contents with no second boot. A pick that reaches its root THROUGH A SYMLINK, while the resident root holds the real spelling, still renders its own contents -- the `sameFile` tolerance of the review's must-fix -- or SKIPS LOUDLY with a `collect` label where the platform refuses symbolic links. The 400/404 property also pins the two bad-`roots` SHAPES the first cut dropped silently: `roots` that is not an array, and an entry that is not a string, are each a 400 naming `roots` and what kind of value it was, and the same refusal reaches `ermine/schema` in its `{error}` shape (that property now holds `residentLock` and forces the bench's `docs`: its Q7 half asks `ermine/schema` over the WIRE, and the handler exists only once `Definitions.install` has run -- see the row's note below). **(Q8, decided 2026-09-20)** The watchdog property now also asserts `"stuck": true` on the fired answer and on a later REFUSED render, an `ermine/preview/stuck {stuck: true}` notification, and -- the conjunct that catches the shared-`refusal` bug -- that a render SERVED after the recovery whose evaluation crashes carries NO `stuck` key; the crash-handler property carries the same negative conjunct on its own 500; the watchdog-drain and cancelled-then-wedged properties assert the marker on the drained schema's `{error}` and its absence from the `-32800` (which has no `result` at all). **(Q10)** The watchdog property now releases the wedged job and waits for `ermine/preview/stuck {stuck: false}` and an INFO `window/showMessage` asking for a re-render, then proves the state really ended by getting a THIRD render SERVED; the cancelled-then-wedged property does the same after its -32800. A property OF ITS OWN pins the other side of Q10(b): a wedged job released by throwing an `OutOfMemoryError` leaves the preview stuck, logs no "no longer stuck", and announces nothing -- read off a recording `notify` and a log after the preview thread has been JOINED. **(Q9)** One property, no bench and no boot, over `applySettings`: `0` sets the field and logs once; `3601` and an ill-typed `timeoutSeconds` are each refused out loud and leave the field alone. **(DM-1, as corrected by DD-1)** A property of its own, and the only one in the group that pays TWO boots, because nothing cheaper is a real witness (`discardSession` on a preview that never booted does nothing and logs nothing). FOUR scenarios on ONE booted bench, in an order that keeps the boot count unambiguous: **(a) the CONTROL** -- a wedged render that comes back `ok: true` must NOT discard and must NOT re-boot, and its recovery message must not claim a discard; **(b) THE REACHABLE CASE** -- a wedged render of `WpBoom` comes back with a 500 **by returning normally** (`threw` is false), and the recovery must log the discard and say so in its message; **(c)** the next render then really does boot (`boots` 1 -> 2, counted from `Preview`'s own log line); **(d)** a wedge released by THROWING discards too, at no extra boot. (b) is what the first cut got wrong and what the throwing scenario alone could never have caught. **(DM-2)** The `isFatal` property runs its scenario TWICE, once released by an `OutOfMemoryError` and once by a `ControlThrowable` -- the second is not an `Error` and is exactly what `isInstanceOf[Error]` alone missed. **(IM-1)** A property STAGES the notification collision rather than racing for it: the bench's `notify` parks the TIMER thread inside the `{stuck:true}` send until the preview thread has sent `{stuck:false}`, asserts the arrival order really was `false, true` (or the property is vacuous), and then asserts that the HIGHEST `seq` says `stuck:false` | **pr**; group D boots a render session, seconds each, MEASURED in WP-5 and kept under 60 s total or the suite is split. **MEASURED with Q7's four properties (2026-09-20), three runs**: **18.2 s** for `core/testOnly ...TestLspRobustness` ALONE; **25.7 s** and **46.7 s** for two runs of the same tree with `TestRunner` and `TestSchema` in the same JVM. The spread is CONTENTION, not Q7. **THOSE Q7 FIGURES WERE WRONG AND ARE CORRECTED HERE (2026-09-20, against the run's own log)**: the sentence said "the four Q7 properties cost 7.4 s of it (shadowed pick 1.6 s, two spellings 5.8 s, schema-first and the missing-uri case the rest)", which cannot be read at all -- 1.6 + 5.8 is already 7.4, leaving nothing for "the rest". The log says **shadowed pick 1.6 s, two spellings 5.8 s, schema-first 3.4 s, the missing uri 0.0 s = 10.8 s**, not 7.4 s. Meanwhile one pre-existing property, `ermine/schema {binding}`, took 16.3 s in that run against a fraction of that alone -- it holds `residentLock` while the other two suites take the process-wide `Runner.evalLock`, which is where the spread comes from. **RE-MEASURED 2026-09-20 WITH THE Q8/Q9/Q10 PROPERTIES**, four runs: group D was **34.7 s** for `core/testOnly ...TestLspRobustness` ALONE (61 properties, 47 s of suite wall time; that figure PREDATES the `docs`-ordering fix above and the review's own properties), and **34.4 s**, **18.6 s**, **37.5 s** on three runs with `TestRunner` and `TestSchema` in the same JVM (128 properties, 79 s / 59 s / 66 s). The **18.6-37.5 s** spread across runs of the SAME tree is the contention this row already describes and nothing else. The five properties added across the batch and its review cost **5.7 s between them**: `watchdog, the stuck state and the recovery` 0.3 s, `Q10: isFatal keeps the stuck state` 0.3 s, `Q9: applySettings on timeoutSeconds` 0.0 s, `IM-1: the stuck notification's seq` 0.3 s -- none of those four boots a render session -- and **`DM-1: the poisoned session is discarded` 4.8 s, which is two boots and is the whole of the increase**. **RE-MEASURED AGAIN AFTER THE BATCH'S TWO REVIEWS (2026-09-20)**, which added the DD-1, DM-2 and IM-1 properties: **23.2 s** and **40.4 s** for `core/testOnly ...TestLspRobustness` ALONE on two runs (63 properties, 46 s and 56 s of suite wall time). The 17 s between those two runs is not the new properties -- `DD-1: the poisoned session is discarded` cost 4.9 s in both -- it is **the RESIDENT's own ~13 s boot landing on whichever property forces it first**, which in the 40.4 s run was the pre-existing `Q7: the missing uri, and the resident's forms` (16.4 s there, 0.0 s when something else has already paid it). That is the same scheduling effect this row describes above, now with a named instance. *The combined figure for the final tree -- with `TestRunner` and `TestSchema` in the same JVM -- is reported to the orchestrator and deliberately NOT written here: it can only be known after the run that must be the last thing to touch this tree, and a tracker edit after a green run would break that rule.* **The 45 s line is not crossed on any run, and THE SPLIT IS THEREFORE NOT TAKEN.** It remains available if a later batch crosses it again: either group D moves to a suite class of its own, or it is cut into the queue/watchdog properties and the root-set ones (Q6 and Q7, each already on a bench of its own). **ONE PRE-EXISTING ORDERING HAZARD WAS SURFACED AND FIXED** while measuring this: the 400/404 property asks `ermine/schema` over the wire (Q7 gave it that conjunct) but never forced the bench's lazy `docs`, so a schedule that ran it before any property that does answered `-32601 unknown method: ermine/schema`; it now forces `docs` under `residentLock` like the three properties that already did. The 60 s ceiling in this row is not breached on any run | seconds to a minute |
 | Runner | `TestRunner` (`:112`, `:806` already runs properties concurrently over one runner) | `invalidate` of an unloaded path is a no-op; `invalidate` then `render` reloads the module (loaded-set delta); two report-typed bindings in one module render two documents; `new Runner(cfg)` with an explicit `run` loads no JDBC driver (`CountingRun`, `TestRunner.scala:77`); **(Q4)** a module whose LOAD FAILED renders 500 and is named by the next `invalidate` -- of its own path, of the path of a broken module it IMPORTS, and of a loaded healthy module's path -- while a file under no root and a directory still name nothing, and the fix renders 200 and takes it back out; a module that is pending and then LOADED as another module's dependency is pruned and NOT named; a pending module whose file is DELETED is named while the file is there and not after the retry's 404 | **pr** | seconds |
 | Emitters | `TestSqlEmitters` | the SQLite string for a windowed relation contains `over (`; no emitter output contains `TODO`; `UnsupportedOnDialect` for `tryCast` on SQLite | **pr** | seconds |
 | Classifier | new, with a fake driver | §8.3 | **pr** | seconds |
@@ -989,12 +1040,13 @@ approval under `:91`. Each WP done-when in §14 names its tier.
 | Q5 | §2.4 and §4 disagree: the 404 "not under a module root" is unreachable for a readable file | **DECIDED 2026-09-20** (option (i), built); resolved |
 | Q6 | a roots change discards the `Runner`, and the inferred root is part of the roots, so previewing two reports in two directories re-boots the render session each time | **DECIDED 2026-09-20** (the refinement, built); resolved |
 | Q7 | `ermine/schema {module, binding}` carries no `uri` and no `roots`, so a schema asked before the first render cannot see a workspace module | **DECIDED 2026-09-20** (the request carries `uri`/`binding`/`roots` and shares the render's resolution; a shadowed pick is an error), built; resolved |
-| Q8 | §2.5 asks the watchdog's NOTIFICATION to carry the **Restart Language Server** button, and no LSP server-to-client notification carries an action | nothing; decide before WP-7 |
-| Q9 | `ermine.preview.timeoutSeconds: 0` turns the watchdog off entirely as built: is an off switch wanted at all, and should `0` be it? | nothing |
-| Q10 | what `stuck` means if the wedged job DOES come back: as built it never clears | nothing; decide before WP-6 |
-| Q11 | a report whose module did NOT EXIST when it was first rendered is still not named when its file appears | nothing; decide before WP-7 |
-| Q12 | the JVM's own OOM termination line is written to STDOUT -- the LSP protocol channel -- unframed, after the last frame (MEASURED, §2.5) | nothing; decide before WP-7 |
+| Q8 | §2.5 asks the watchdog's NOTIFICATION to carry the **Restart Language Server** button, and no LSP server-to-client notification carries an action | **DECIDED 2026-09-20** (the orchestrator's recommendation as changed by the design review: a STUCK-ONLY `"stuck": true` marker plus `ermine/preview/stuck`), built; resolved |
+| Q9 | `ermine.preview.timeoutSeconds: 0` turns the watchdog off entirely as built: is an off switch wanted at all, and should `0` be it? | **DECIDED 2026-09-20** (the orchestrator's recommendation as changed by the design review: option (i), PROSE ONLY -- nothing built but one property over the existing `applySettings`); resolved |
+| Q10 | what `stuck` means if the wedged job DOES come back: as built it never clears | **DECIDED 2026-09-20** (the orchestrator's recommendation as changed by the design review: option (ii), clear when the fired-on job RETURNS and never on a `java.lang.Error`), built; resolved |
+| Q11 | a report whose module did NOT EXIST when it was first rendered is still not named when its file appears | **DECIDED 2026-09-20** (the design review WITHDREW the orchestrator's server-side recommendation: option (iii), the extension's, nothing built in `Runner`); resolved |
+| Q12 | the JVM's own OOM termination line is written to STDOUT -- the LSP protocol channel -- unframed, after the last frame (MEASURED, §2.5) | **DECIDED 2026-09-20** (the orchestrator's recommendation as changed by the design review: step 1 only -- `-XX:+DisplayVMOutputToStderr`, MEASURED to work, added behind a cached probe; no descriptor duplication), built; resolved |
 | Q13 | a stuck preview takes the WHOLE SERVER down at `-Xmx` about two minutes after the watchdog fires (MEASURED, §2.5), which is not the story §2.5 tells | nothing; decide with WP-6 |
+| Q14 | a render that fails by a TRANSIENT error leaves that failure MEMOISED in the render session's thunks, so a binding of a module nobody edits re-throws the old error for the life of the session | nothing; decide with WP-12/WP-13 |
 
 **Q4, in full** (found by the WP-4 review, 2026-09-20). A module that failed to load is in
 neither `loadedFiles` nor `loadedModules`, and `Runner.invalidate` derives its module set from
@@ -1285,6 +1337,53 @@ pending; (iii) a custom `ermine/preview/stuck` notification carrying `{message, 
 title}`, which the extension turns into a button -- a new §4 row, and not a standard LSP
 mechanism. It blocks nothing: WP-7 owns the banner either way.
 
+**THE QUESTION'S OWN RATIONALE WAS WRONG, and the correction is the first thing to record
+(design review, 2026-09-20).** Option (ii) is not blocked by REACHABILITY. The dispatch
+thread is perfectly able to `ask`: the very next `ermine/render` a stuck preview refuses is
+handled ON that thread, and it could issue a `window/showMessageRequest` there with no idle
+hook and no polling at all. What actually kills (ii) is the SHAPE OF THE ANSWER: the response
+to `window/showMessageRequest` names the chosen action **to the server**, and the LSP gives a
+server no way to make the client run a CLIENT-SIDE command -- `ermine.restartServer` is the
+extension's own, registered in `extension.js`, and `workspace/executeCommand` runs the other
+way round (*external*, unverified here). So the button would light up and do nothing unless
+the extension implemented it, and if the extension is implementing it, WP-7's banner is the
+better place: it is visible without a modal, it survives the message being dismissed, and
+resolution A4 already put it there.
+
+**DECIDED by the user on 2026-09-20 ("per the orchestrator's recommendations"), AS CHANGED BY
+THE DESIGN REVIEW, and BUILT**: option (i) is kept -- the message NAMES the action and the
+button is the panel's -- and option (iii) is added ALONGSIDE it, not instead of it, in the
+narrow form the review specified. Two things ship.
+
+**(1) A STUCK-ONLY MARKER ON THE ANSWER.** `"stuck": true` rides on §4's render failure shape
+and beside `ermine/schema`'s `error`, on **exactly four** answers: the two refusals `render`
+and `schema` send while stuck, the watchdog's own answer, and each answer of the queue drain
+the watchdog performs. **NOT on the job CRASH handler's 500**, and not on any other refusal.
+That distinction is the whole design and it is enforced by the TYPE: `Answering` has two
+methods, `refusal` (the crash handler's) and `stuckRefusal` (`withStuck(refusal(...))`), and
+the marker lives only in the second. The review's must-fix was exactly this -- the first
+recommendation put the flag inside the shared `refusal`, which would have told the panel that
+every ordinary 500 from a broken report was a wedged preview, and no test over the stuck paths
+alone would have noticed. The crash-handler property now carries the conjunct that does
+(§11).
+**THE `-32800` PATHS CARRY NO MARKER, and cannot**: a displaced render, a cancelled one, the
+shutdown drain, and the watchdog's answer to a request that had already been CANCELLED are
+JSON-RPC ERRORS -- `{code, message}` and no result object -- so there is nowhere to put a
+field. Those clients learn the state from the notification below instead. Written down here
+because it looks like an omission and is a consequence of the wire shape.
+
+**(2) `ermine/preview/stuck {stuck: true|false, message}`**, a new §4 notification row.
+`true` is sent by the watchdog's `fire`, from the TIMER thread, **beside** the existing
+`window/showMessage` and not instead of it -- the standard message is what any LSP client
+shows without knowing this server at all, and the custom one is what carries a state a banner
+can hold. `false` is sent at Q10's recovery, from the PREVIEW thread, together with a
+`window/showMessage` of the INFO type. Both go through `notify` and never `ask` (§2.3's
+thread rule), outside the queue's monitor, each send separately guarded, and through the §8.1
+scrub.
+
+Files: `lsp/Preview.scala`, `TestLspRobustness.scala`, this document. No `editor/vscode` file:
+the button is WP-7's, fed by this field and this notification.
+
 **Q9, in full** (found while building WP-5 stage B, 2026-09-20). `applySettings` accepts
 `ermine.preview.timeoutSeconds` in 0..3600 and treats **0 as "no watchdog at all"**: no timer
 is armed, a render may run for ever, and the preview never becomes stuck. Nothing in §2.5 asks
@@ -1297,6 +1396,50 @@ none built: (i) keep it, and document 0 in the setting's description as "no watc
 (ii) refuse 0 like any other out-of-range value, and give the properties their own seam
 instead of the setting; (iii) keep 0 but say it once through `window/showMessage` when it is
 applied, so a preview that will never time out is never a silent surprise. It blocks nothing.
+
+**ONE OF THE QUESTION'S OWN REASONS IS FALSE, and is struck here rather than carried forward
+(design review, 2026-09-20).** "It was built this way ... because the group-D properties need
+a way to disable the watchdog while they set a queue up" is not true of any property in the
+suite: every one of them writes `Preview.timeoutMillis` -- the `private[reporting]` FIELD and
+test seam -- directly, and not one of them ever calls `applySettings`. So the setting owes the
+tests nothing, and option (ii) was never blocked by them. It is refused on its own merits
+below.
+
+**DECIDED by the user on 2026-09-20, AS CHANGED BY THE DESIGN REVIEW: option (i), and NO
+MECHANISM IS BUILT.** `0` stays the off switch and keeps its existing log line,
+"`timeoutSeconds = 0 (the watchdog is off)`". No `window/showMessage` on apply -- option (iii)
+is refused because `workspace/didChangeConfiguration` fires on edits to unrelated settings and
+a modal that reappears whenever the user changes their font size is worse than the silence it
+replaces; the log line is the record, and WP-7 will document "0 = no watchdog" in the
+setting's own description, which is where a developer looks before they type it.
+
+**NOTHING SENDS THESE SETTINGS YET, which is why this costs nothing today.** VERIFIED in the
+extension as it stands: `editor/vscode/src/extension.js:159` sends
+`initializationOptions: { fastMode: ... }` and `:266-267` sends
+`settings: { ermine: { fastMode: ... } }` -- `fastMode` and nothing else. `timeoutSeconds` and
+`maxDocumentBytes` reach `Preview.applySettings` only from a client that writes them by hand,
+until WP-7 exports them.
+
+**WHAT `0` DOES NOT REMOVE, stated because "off" reads as "unbounded" and it is not:**
+ - **the heap bound is still there and can arrive first.** MEASURED (§2.5): the `WpBlow` run
+   died at **8.6 s** with the shipped **60 s** clock still running. A watchdog turned off
+   changes nothing about `-Xmx` or `-XX:+ExitOnOutOfMemoryError`; for an allocating runaway
+   the clock was never the binding constraint;
+ - **nothing drains the queue.** `fire` is the ONLY drain -- `render` and `schema` refuse NEW
+   requests once stuck, but a job already queued behind a wedged one has no other reader, and
+   a schema job has no displacement rule that would remove it either. With the watchdog off
+   there is no `fire`, so a wedge accumulates **one blocked client request per schema asked**
+   (§6's ordinary loop asks for one per pick) until the process dies. That is the real cost of
+   the off switch, and it is the argument for raising the value rather than turning it off.
+
+**THE HONEST REMEDY FOR A LEGITIMATELY SLOW SCAN is Q10 plus a bigger number**, not `0`: Q10
+makes a wedge that resolves itself end by itself, so a timeout set slightly too low now costs
+a banner and a re-render rather than a restart.
+
+**ONE PROPERTY WAS ADDED** (§11, group D; no bench, no boot, 0.0 s): `0` sets the field and
+logs it once; `3601` and a `timeoutSeconds` that is a STRING are each refused, out loud,
+naming what arrived, and leave the field exactly where `0` left it. There was no property on
+`applySettings` at all before this.
 
 **Q10, in full** (same origin). §2.5 says the watchdog "marks the preview stuck, and every
 later `ermine/render` is answered the same way without queueing", and says nothing about the
@@ -1312,6 +1455,159 @@ preview is working again; (iii) clear it only when the job ends AND the session 
 so nothing evaluated under a poisoned heap survives -- which is also what WP-6's cooperative
 cancel does to the runner. It blocks nothing, and WP-6 is where the same question is asked of
 a cancel.
+
+**DECIDED by the user on 2026-09-20, AS CHANGED BY THE DESIGN REVIEW: option (ii), and
+BUILT.** `stuck` clears WHEN THE JOB THE WATCHDOG FIRED ON ACTUALLY RETURNS, and at no other
+time. Not option (iii) as written -- the discard is not conditioned on the heap -- but **the
+recovery DOES discard the render session when the wedged job ended by THROWING**, which is
+option (iii)'s mechanism applied for the reason that actually holds. The first cut of this
+text said "a job that came back of its own accord poisoned nothing"; **that was FALSE for the
+exception case** and item 1b below is the correction.
+
+**WHAT WAS BUILT, in seven parts.**
+ 1. **WHICH job.** `fire` records `stuckJob` in the same locked step that sets `stuck`, and
+    `runJob`'s `finally` -- the one place in the file that knows a job has really finished --
+    clears the three fields through ONE `clearStuck(reason, onlyFor)` under the queue's
+    monitor, only when the job that just ended IS that one. `clearStuck` takes `null` for
+    "whatever the watchdog fired on", which is the shape WP-6's cancel will reuse rather than
+    write a second, subtly different version of. It also mints the `seq` of item 6.
+ 1b. **A WEDGE THAT COMES BACK *FAILED* LOSES ITS SESSION; ONE THAT COMES BACK *OK* KEEPS IT**
+    (DM-1 of the first Q8-Q12 review, **with its witness corrected by DD-1 of the second**).
+    `Runtime.swhnf` captures a `NonFatal` failure as `Bottom(throw e)` (`Runtime.scala:231`)
+    and `writeback` memoises that value into EVERY thunk on the chain (`:245-250`) --
+    including the render session's SHARED bindings, which outlive the render. So a wedge that
+    came back failed leaves a session in which those bindings re-throw the OLD failure for
+    ever, while the recovery tells the panel the preview is serving renders again. **§2.5's
+    own WP-6 row already says this of a cancel** -- "the unwinding thunk writes `Bottom` back
+    into the thunks on its chain, which poisons the render session's stdlib thunks, so a
+    cancel **discards the `Runner`**" -- and it is the same mechanism, so it gets the same
+    answer.
+    **THE FIRST CUT KEYED THE DISCARD ON `threw`, AND THAT WAS THE WRONG WITNESS.** The
+    poisoning path that MATTERS returns NORMALLY: `Encode` turns a `Bottom` into
+    `Left(bottom(...))` (`Encode.scala:295`, `:242`, `:514`, and `Doc.scala:212-214`) and
+    `Runner` nets every `NonFatal` failure into `Left(Failed(...))` (`Runner.scala:508`,
+    `:845`, `:883-886`, `:929-930`), which `doRender` answers as a **500 by returning**. So
+    after a wedge that came back FAILED, `threw` was false, nothing was discarded, and the
+    panel was told the preview served again over memoised failures. The only throws
+    `runJob`'s catch ever sees are what escapes those nets -- an `Error`, a `ControlThrowable`,
+    or this file's own front half -- which is why a property that throws from `beforeJob`
+    proves the mechanism and **not** its reachability.
+    **THE WITNESS IS NOW THE OUTCOME.** `doRender` and `doSchema` record, where they answer,
+    whether the answer was an EVALUATION failure, and `runJob`'s `finally` discards when the
+    stuck state was cleared for this job AND (`threw` OR that flag). **THE RULE IS A `RunError`
+    OF STATUS >= 500 out of `renderText`/`paramSchema`, which is exactly `Runner`'s `Failed`**,
+    and `Failed` is minted at precisely the sites that net a FORCING failure (the four cited
+    above). Deliberately excluded, each because nothing of the report was forced: `BadRequest`
+    (400) -- a params object that does not decode (`Runner.scala:873`), a binding whose
+    signature is not a report -- and `NotFound` (404), both decided before or beside forcing;
+    this file's own 400/404/409 from placement and its 500 for a boot that failed (which
+    `ensureSession` has already thrown away); the 503; and **this file's own 500s after a
+    SUCCESSFUL render** -- the document-size cap and "the rendered document is not JSON" --
+    where the evaluation completed and wrote real values back.
+    **IT FIRES ONLY AFTER A WATCHDOG FIRE.** An ordinary, un-wedged 500 sets the flag and
+    nothing happens, because the `finally` reads it only when the stuck state was cleared for
+    that job. The un-wedged case is **Q14's**, and it is the user's.
+    **WHAT THIS COSTS, plainly**: a slow scan that ends in its own 300 s `setQueryTimeout`
+    (§2.5's row) AFTER a watchdog fire now costs ONE re-boot of the render session -- §2.2
+    measures a boot at 1.9-7.3 s -- because that answer is a `Failed` and this rule cannot
+    tell it from a memoised failure without looking inside the session. The same failure
+    WITHOUT a fire costs nothing. A wedge that comes back with `ok: true` costs nothing
+    either, and a property pins that.
+    **THE ORDERING TRAP, found by the review and written into `clearStuck`'s scaladoc for
+    WP-6**: `post`, `discard()` and `invalidate` all refuse while `stuck`, so a discard posted
+    BEFORE the clear is silently dropped and one posted after it lands behind whatever else
+    has arrived. The recovery therefore clears FIRST and then calls the private,
+    preview-thread `discardSession` directly, which is neither queued nor refusable. WP-6's
+    cancel runs on another thread and has no such shortcut.
+ 2. **NEVER ON A `java.lang.Error`, AND NEVER ON ANYTHING THE RUNTIME DOES NOT CAPTURE.** The
+    test is `e.isInstanceOf[Error] || !NonFatal(e)` -- **TWO independent halves**. The first
+    cut had only the first, which the review (DM-2) showed was not enough.
+     - `isInstanceOf[Error]` asks **is this JVM still believable**. `java.lang.Error`'s own
+       contract is the argument (*external*, its javadoc: "indicates serious problems that a
+       reasonable application should not try to catch"); it covers `OutOfMemoryError` through
+       `VirtualMachineError`, `LinkageError` and `AssertionError`, plus whatever a future JDK
+       adds, with no list here to go stale. `NonFatal` alone would not do: it classes an
+       `AssertionError` as non-fatal, so an assertion that blew up inside the evaluator would
+       announce "recovered".
+     - `!NonFatal(e)` asks **did the runtime get to clean up**, and it is about
+       `Runtime.swhnf`, not about the JVM. `swhnf`'s ONE capture is
+       `catch { case NonFatal(e) => r = Bottom(throw e) }` (`Runtime.scala:231`), so a
+       throwable that is NOT `NonFatal` escapes a force WITHOUT reaching `writeback`, leaving
+       every thunk on the chain in state `Whitehole` with the preview thread still in its
+       `pending` queue (`:229-237`). A later force of one of those thunks **on that same
+       thread** takes the `pending.exists(sameId)` branch and memoises `Whitehole.result` --
+       `Bottom(sys.error("infinite loop detected"))` (`:196`) -- a permanent and WRONG
+       diagnosis. `NonFatal`'s complement is exactly `VirtualMachineError`, `ThreadDeath`,
+       `InterruptedException`, `LinkageError`, `ControlThrowable`, and **the last two are not
+       `Error`s**, which is why the first half misses them.
+    **THE `StackOverflowError` ASYMMETRY IS DELIBERATE, and its reason is the SECOND half, not
+    the heap**: a stack overflow usually leaves a healthy JVM, but it is a
+    `VirtualMachineError` and therefore not `NonFatal`, so it unwound without writeback and
+    left whiteholes behind. Refusing to clear costs exactly the behaviour this preview had
+    before Q10 -- the restart the watchdog already names -- while clearing wrongly tells a
+    user the preview works when it does not. THE CASE THAT MAKES THE FIRST HALF CONCRETE: the
+    launcher adds `-XX:+ExitOnOutOfMemoryError`, so in the shipped server an OOM usually ends
+    the process first -- but the unforked gate JVM has no such flag, nor does a user who sets
+    `-XX:-ExitOnOutOfMemoryError`.
+    **THE "WRAPPED `Error`" GAP IS NARROWER THAN THE FIRST CUT CLAIMED** (review): such an
+    `Error` reads as non-fatal here, but the WRAPPER *was* `NonFatal`, so `swhnf` did capture
+    it and did write it back -- there are no whiteholes, only a poisoned `Bottom`, and item 1b
+    discards the session for exactly that. What is left of the gap is the first half alone: a
+    JVM that may be sick is called healthy. Unwrapping causes would be a guess about a chain
+    this file did not build.
+ 3. **SILENT WHILE STOPPING.** During a `shutdown` the state is cleared and nothing is sent:
+    a "the preview recovered" banner on the way out would be true for under a second. Every
+    send is separately guarded, as every send in this file is.
+ 4. **THE LATE JOB'S OWN ANSWER IS STILL DISCARDED**, exactly as before: the client already
+    has the watchdog's answer, `finish` finds the claim taken, logs "finished after the
+    watchdog answered it" once, and sends nothing. Recovery changes who may be served NEXT,
+    not who answered THEN.
+ 5. **THE CLIENT IS TOLD TO RE-RENDER AND TO ASK FOR THE SCHEMA AGAIN** (Q8's notification,
+    `{stuck: false}`, plus a `window/showMessage` of the INFO type). It is not politeness:
+    every `invalidate` posted while the preview was stuck was DROPPED at the `!stuck` guard in
+    `Preview.invalidate`, so the extension missed every `ermine/preview/invalidated` of that
+    whole interval and §3 step 6 never fired -- **and every `ermine/schema` asked meanwhile
+    was REFUSED**, by `schema`'s own stuck branch or by the watchdog's queue drain, which in
+    §6's loop is one per pick. When the session was also discarded (item 1b) the message says
+    so, so the user is not surprised by the boot the next render pays.
+ 6. **A SEQUENCE NUMBER ON BOTH EDGES** (IM-1 of the Q8-Q12 review). `{stuck: true}` is the
+    TIMER thread's, the LAST of `fire`'s sends; `{stuck: false}` is the PREVIEW thread's, the
+    FIRST of `recovered`'s. **Nothing ordered them**, so a job released the instant the
+    watchdog fired could put the FALSE on the wire first and a client reading arrival order
+    would latch a stuck banner on a healthy preview with no falling edge ever to follow --
+    and the existing properties could not see it, because they hold the wedged job until the
+    rising edge has ARRIVED. A monotonic `seq` is now minted in the SAME locked step that
+    flips the state (`fire`'s claim, and `clearStuck`) and carried on the notification, so the
+    wire order stops mattering. §4's row states the client contract.
+
+**`dirtyGeneration` IS NOT BUMPED AT RECOVERY, and the reasoning is recorded because "bump the
+counter" is the obvious reflex and it is INERT here.** `stale` is
+`dirtyGeneration.get != r.dirtyAt`, comparing the value when a render is ENQUEUED with the
+value when it is ANSWERED. Nothing can be enqueued while stuck (`render`, `schema` and `post`
+all refuse), so the first post-recovery render is enqueued AFTER any bump this path could
+make and would snapshot the bumped value -- the two reads agree and no `stale` appears. A bump
+would therefore either do nothing at all or, if it were contrived to straddle the enqueue,
+flag a render that really was fresh. WHAT MAKES THE FIRST POST-RECOVERY RENDER HONEST IS
+ALREADY THERE: §2.5's mtime scan runs at the head of every render and reloads every LOADED
+module whose file moved on disk, which is every save made during the wedge. WHAT IT CANNOT
+COVER is a module the session never loaded -- the fix to a report whose load failed, Q4's
+case -- and that is exactly what the re-render the notification asks for is for.
+
+**THRASHING, stated rather than discovered later.** A second wedge immediately after a
+recovery thrashes: stuck -> recovered, once per render, for as long as `timeoutSeconds` is
+below a legitimately slow scan. The remedy is to raise the timeout (Q9), not to turn the
+watchdog off. And "recovered" can still be **seconds** from the `-Xmx` exit that §2.5
+measured: the `WpBlow` run reached the cap in 8.6 s, so a job that comes back after a fire is
+not evidence that the heap is healthy -- which is the second reason (2) above is as wide as
+it is.
+
+**THE WATCHDOG'S OWN MESSAGE IS UNCHANGED**, and that is a decision: it still says "the
+preview is stuck until the language server is restarted -- run \"Ermine: Restart Language
+Server\"". It is now the WORST CASE rather than the only case, and it is quoted verbatim in
+§2.5's MEASURED block and pinned by a group-D property. The falling edge corrects it with its
+own message and its own notification, which is where a banner should read it from.
+
+Files: `lsp/Preview.scala`, `TestLspRobustness.scala`, this document.
 
 **Q11, in full** (found by the Q4 review, 2026-09-20). Q4's pending set records a module only
 when a LOAD WAS ATTEMPTED for it. A module that no root has is refused BEFORE any load --
@@ -1332,6 +1628,41 @@ asked for;
 (iii) the extension re-renders on file-CREATION events for the picked report's own path, which
 is **WP-7**, the extension, and needs no server change.
 It blocks nothing; the answer is wanted before WP-7, which is where the loop closes.
+
+**DECIDED by the user on 2026-09-20: option (iii), the EXTENSION's, and NOTHING IS BUILT IN
+`Runner`.** The orchestrator's original recommendation was option (ii) -- a second bounded
+not-found set in `Runner` -- and the design review WITHDREW it. Two reasons, both about the
+code as it now stands and both recorded so that nobody proposes (ii) again:
+
+1. **THE SET WOULD NEVER BE POPULATED THROUGH THE PREVIEW.** Since Q5 and Q7 a picked FILE
+   that cannot be read is refused AT PLACEMENT -- `Preview.inferredRoot` answers "cannot read
+   `<name>`" and `placeAndSession` turns that into the 404 -- **before `Runner` is asked
+   anything at all**. `Runner.compile`'s `NotFound("no module named X")`, which is what (ii)
+   would have recorded, is reached only by a caller that already has a module NAME, and the
+   preview never has one for a file it could not read. And even if the set existed and were
+   filled some other way, `ermine/preview/invalidated {modules}` is keyed on module NAMES:
+   for a file with no readable header there is no name to send, so the notification could not
+   name it either.
+2. **A MISSING IMPORT IS ALREADY Q4's.** A report whose file exists but whose import does not
+   is a LOAD FAILURE, which Q4's pending set records and Q4's `invalidate` already names when
+   the import is created.
+
+What is genuinely left is exactly one path: **the picked report's OWN file appearing or
+reappearing**, which the extension is watching anyway because it is the file the user picked.
+So WP-7 re-renders when that path is created or changed while its last answer was a
+**PLACEMENT 404 ONLY** -- one of Q5's four reasons ("cannot read `<name>`", "not an Ermine
+source file", "no module header could be read from", "names `<module>`, which is deeper than
+the directories above it"), which `Preview` answers before `Runner` is asked. **A 404 from
+the `Runner` is DELIBERATELY EXCLUDED** (review SHOULD-FIX 6): a `Runner` 404 is "no binding
+named X" on a module that DID load, so that module is in `loadedModules` and an edit to its
+file already sends `ermine/preview/invalidated`; adding the extra trigger would double-render
+on every save of a report whose binding was mistyped. One trigger, one render. That item is
+added to WP-7's row in §14 and to §3 step 6.
+
+**THE BLIND SPOT BOTH OPTIONS SHARED, so that (iii) is not sold as more than it is**: a report
+under a preview root that lies OUTSIDE the workspace folders depends on what the client's file
+watcher reports, and VS Code's watcher is scoped to the workspace (*external*, not exercised
+here). Neither a server-side set nor an extension-side watcher sees a creation nobody reports.
 
 **Q12, in full** (MEASURED by WP-5 stage C, 2026-09-20). With `-XX:+ExitOnOutOfMemoryError`
 the JVM writes `Terminating due to java.lang.OutOfMemoryError: Java heap space` and exits.
@@ -1362,6 +1693,78 @@ would depend on code that runs with no heap left.
 It blocks nothing; the answer is wanted before WP-7, which is when a user first sees the
 panel go dark.
 
+**DECIDED by the user on 2026-09-20, AS CHANGED BY THE DESIGN REVIEW: option (ii), but ONLY
+ITS FIRST STEP -- the JVM flag -- MEASURED FIRST AND THEN BUILT. The descriptor-duplication
+step is NOT built.**
+
+**THE PROBE (a), MEASURED 2026-09-20.** `"$java" -XX:+DisplayVMOutputToStderr -version` on
+this JDK (Temurin 21.0.12.1+1) exits **0**, so the option is recognised here.
+
+**THE INSTRUMENT (b), MEASURED 2026-09-20**, alone on the machine, the same `wp5c-instrument.py
+--mode blow` driver and the same `WpBlow` fixture as stage C, at `ERMINE_LSP_XMX=256m`, this
+time with `ERMINE_JAVA_OPTS="-XX:+DisplayVMOutputToStderr"`. The driver already captured
+stderr to a file (`--stderr`), so nothing was added to it. **The line MOVES.**
+
+| | stage C baseline | with the flag |
+|---|---|---|
+| exit code | 3 | 3 |
+| time to the exit | 8.6 s | 8.7 s |
+| last bytes on **stdout** | `...{"kind":"end"}}` **`Terminating due to java.lang.OutOfMemoryError: Java heap space\n`** | `...{"kind":"end"}}` -- a complete frame and then EOF |
+| **stderr** | **EMPTY (0 bytes)** | `Terminating due to java.lang.OutOfMemoryError: Java heap space` (63 bytes) |
+
+So the unframed trailer leaves the protocol channel entirely and lands where an editor already
+shows a server's stderr. **AND IT FIXES A SECOND THING NOBODY HAD NAMED**: today the crash is
+UNEXPLAINED in the client's output channel, because stderr was empty (measured, both runs of
+stage C and this one's baseline) -- the client saw a stream that stopped. After the flag the
+reason is there to read.
+
+**WHAT WAS BUILT (c): `bin/ermine-lsp` adds `-XX:+DisplayVMOutputToStderr`, behind a guard that
+cannot stop the server from starting.** An unrecognised `-XX` option makes the JVM print
+"Unrecognized VM option" and exit **1 before any LSP frame**, which the editor sees as a server
+that died at startup -- so the flag is added only when a cached one-off
+`java -XX:+DisplayVMOutputToStderr -version` probe says this java accepts it. The verdict is
+cached beside the classpath (`target/ermine-vmout-probe`), keyed on the java binary's PATH,
+MTIME and SIZE, so a different `JAVA_HOME` or a toolchain upgraded in place re-probes instead
+of inheriting the answer. If the probe cannot run at all -- no such java, an unwritable
+`target/` -- the flag is simply not added. **`-XX:+IgnoreUnrecognizedVMOptions` is NOT used**:
+it would silence every future typo in that file as well. The flag is never added when a WORD of
+`ERMINE_JAVA_OPTS` already names `DisplayVMOutputToStderr` with either sign, which is the same
+word test the other two flags use. **PROBED with stub javas** (ten checks, all green): an
+accepting stub gets the flag; a rejecting stub does not; a second run with the same java hits
+the cache and invokes java ONCE, not twice; a changed java path re-keys the cache; the same
+path with a moved mtime re-probes; `-XX:-...` and `-XX:+...` in `ERMINE_JAVA_OPTS` are each
+honoured exactly once; a java that does not exist gets no flag.
+**AND CONFIRMED END TO END, MEASURED 2026-09-20**: the same `WpBlow` instrument re-run through the
+MODIFIED launcher with NO `ERMINE_JAVA_OPTS` at all -- exit code 3 after 8.5 s, stdout ending at the last
+complete `$/progress` frame, stderr carrying the 63-byte termination line, and
+`target/ermine-vmout-probe` holding the real java's key and `yes`. The launcher does it by itself.
+
+**THE DESCRIPTOR-DUPLICATION STEP IS NOT BUILT, and this is why.** Option (ii)'s second half is
+`Main` dup()ing fd 1, pointing `Wire` at the duplicate and reopening fd 1 on the log.
+**THE REASON IS THAT NOTHING WOULD EXERCISE IT**: no harness in this repository goes through
+`bin/ermine-lsp` at all (`lsp-smoke.sh`, `lsp-demo.sh` and `perf-client.py` each build the
+`java` command line themselves from `tracker/repl-classpath.txt`, and `TestLspRobustness`
+starts no process), so a second wire descriptor would ship untested, on the one path a
+mistake in it would break everything. The flag achieves the measured outcome with one word
+and needs no new descriptor at all.
+**A PORTABILITY ARGUMENT WAS OFFERED FIRST AND IS WITHDRAWN** (review): "POSIX-only while §10's
+deployment machines are Windows" does not distinguish the two options, because `bin/ermine-lsp`
+is ITSELF a bash script and is what `extension.js` launches -- on Windows today NEITHER
+mechanism ships. That is WP-17's gap, not an argument for the flag; see its row in §14.
+**AND A POINT IN THE FLAG'S FAVOUR THE REVIEW ADDED**: `-XX:+DisplayVMOutputToStderr` moves the
+VM's WHOLE tty stream, not just the OOM line -- and every line of that stream on fd 1 was, by
+construction, unframed bytes in the protocol channel. So nothing legitimate is lost by moving
+it, and more than the one measured line is gained.
+
+**IT IS NOT MOOT UNDER ANY Q13 OUTCOME, correcting this document's own claim.** Q13's option
+(iii) says an exit at the watchdog's fire "makes Q12 moot". It does not: the MEASURED `WpBlow`
+run **died at 8.6 s, BEFORE any watchdog fire at all** (the shipped 60 s clock was still
+running). An OOM that arrives before the watchdog is untouched by anything Q13 decides, so the
+line on fd 1 is Q12's to fix whichever way Q13 goes.
+
+Files: `bin/ermine-lsp`, this document. NO Scala, NO `editor/vscode`, NO gate registry change;
+the instrument is machine-dependent and is never gate evidence.
+
 **Q13, in full** (MEASURED by WP-5 stage C, 2026-09-20). §2.5 promises that "a runaway
 evaluation blocks no LSP request until it exhausts the heap cap", and the watchdog is there so
 that the user is told at 60 s rather than at OOM. Measured, the second half arrives much
@@ -1382,11 +1785,96 @@ incident rather than the start of a two-minute countdown. Cost: WP-6's own perf 
 the `Runner` discard it already specifies;
 (iii) EXIT DELIBERATELY AT THE FIRE. When the watchdog fires, answer, notify, and shut the
 server down cleanly instead of waiting for the OOM -- a predictable restart at 60 s in place
-of an unpredictable one at 60 s + 2 min, and it makes Q12 moot. Cost: it throws away a
+of an unpredictable one at 60 s + 2 min. (This option was first written down as one that
+"makes Q12 moot"; it does not -- see the note below.) Cost: it throws away a
 resident that was working, and a preview that would have finished at 61 s never gets to.
 It blocks nothing; the answer is wanted with WP-6. If the primitive-loop case of §2.5's
 finding 1 ever finds a witness, this question gains a second shape -- a stuck preview that
 does NOT end in an exit and so never restarts at all.
+
+**Q13 IS STILL OPEN AND IS THE USER'S.** Nothing below chooses among (i), (ii) and (iii); it
+records what the questions decided on 2026-09-20 changed about the ground Q13 stands on, so
+that whoever answers it is not reading a stale map.
+
+ - **WHAT Q8 AND Q10 COST OR BUY UNDER OPTION (iii).** If the server exits at the fire there
+   is no preview left to hold a stuck state, so Q10's recovery never happens and Q8's
+   `{stuck: false}` is never sent; the `{stuck: true}` edge and the `"stuck": true` marker
+   still go out, once, immediately before the process ends -- which is precisely what tells
+   the panel to show a banner rather than go blank. So (iii) does not waste Q8; it makes
+   Q10's falling edge unreachable. Under (i) and (ii) both are load-bearing. The code is
+   written either way and would simply stop firing.
+ - **Q12 IS NOT MOOT UNDER ANY OPTION.** The MEASURED `WpBlow` run died at **8.6 s, before
+   any watchdog fire**, so an exit at the fire cannot come first; the JVM's OOM line on fd 1
+   is reached by a path no Q13 option intercepts. Q12 is therefore decided and built
+   independently.
+ - **A LEGITIMATELY SLOW SCAN ARGUES AGAINST (iii); THE HEAP ARGUES FOR IT.** §2.5's own rows
+   allow an evaluation to take up to the 300 s statement timeout, and Q10 exists because a
+   wedged job really can come back -- under (iii) that render costs a HARD kill of the whole
+   server (resident, caches, and once WP-13/WP-14 exist the held connection) for being slower
+   than `ermine.preview.timeoutSeconds`, where under (i) and (ii) it costs a banner and a
+   re-render. **The counterweight, which this batch itself supplies**: "recovered" can be
+   SECONDS from the `-Xmx` exit -- the `WpBlow` run reached the cap in 8.6 s -- so a job that
+   comes back after a fire is NOT evidence that the heap is healthy, and Q10's falling edge
+   can be followed by an exit the user did not choose either way. Both facts are inputs; this
+   note weighs neither.
+ - **THE POISONED SESSION (DM-1, and Q14) IS AN INPUT TO (ii) AND (iii).** A wedge that ends
+   by throwing memoises its failure into the render session's shared thunks
+   (`Runtime.scala:231`, `:245-250`), which is why recovery now discards the session and why
+   §2.5's WP-6 row already discards the `Runner` on a cancel. Under (ii) that discard is
+   WP-6's own and already specified; under (iii) the whole process goes, so the question does
+   not arise; under (i) it is the behaviour built here. Q14 asks the same question of an
+   ordinary transient failure and is open.
+ - **(ii) IS OTHERWISE UNCHANGED**: WP-6's cooperative cancel still needs its perf A/B, and
+   `clearStuck` was deliberately written with a `null` "whatever the watchdog fired on" case,
+   and with the ordering trap documented in its scaladoc, so that a cancel reuses it rather
+   than writing a second one.
+
+**Q14, in full** (found by the Q8-Q12 review while deciding Q10's DM-1, 2026-09-20; **widened
+by the second review's DD-1**; NOTHING IS BUILT and nothing here decides it). Q10's item 1b
+discards the render session when the job the WATCHDOG fired on comes back FAILED, because
+`Runtime.swhnf` captures a `NonFatal` failure as `Bottom(throw e)` (`Runtime.scala:231`) and
+`writeback` memoises it into every thunk on the chain (`:245-250`). **That mechanism is not
+special to a wedge, and it is not special to a rare failure either.** It is **EVERY
+NON-THROWING RENDER FAILURE -- the common path**: `Encode` turns a `Bottom` into
+`Left(bottom(...))` (`Encode.scala:295`, `:242`, `:514`; `Doc.scala:212-214`) and `Runner` nets
+every `NonFatal` failure into `Left(Failed(...))` (`:508`, `:845`, `:883-886`, `:929-930`), so
+an ordinary report that dies while being forced answers a 500 **by returning** and leaves its
+memoised failure behind. The consequence is that a shared binding forced during that render
+keeps the old failure, so a LATER render of a module **nobody edited** re-throws it, and no
+`invalidate` clears it because no file changed. Today the render answers 500 and the session
+lives on.
+**AFTER DD-1, THE WEDGE CASE IS COVERED AND THIS IS THE REST**: when the watchdog has fired,
+Q10's recovery discards the session on exactly this outcome. When it has NOT fired -- which is
+every ordinary failing render, the case a developer meets while iterating -- nothing discards,
+and that is this question. It matters most for a failure that is TRANSIENT and has nothing to
+do with the source (a dropped connection, a scan that hit the 300 s `setQueryTimeout`, a driver
+reloading -- all of which arrive once WP-12/WP-13 put a real database behind the delegate),
+because a deterministic failure re-thrown is simply the right answer given again.
+
+**IT IS PRE-EXISTING AND IT IS NOT THE PREVIEW'S ALONE**: `Runner` is the same class
+`bin/ermine-serve` uses, and its `reports` cache and session outlive a request there too. WP-5
+only made it easy to notice, because a preview session is long-lived by design and a developer
+re-renders the same report.
+
+Options, none built:
+(i) **ACCEPT.** Most evaluation failures are DETERMINISTIC -- a type error, a bad param, a
+report that divides by zero -- and for those, re-throwing the memoised value is exactly right
+and costs nothing. A transient failure is rarer, and the remedy the user already has is
+"change something and save", which invalidates.
+(ii) **DISCARD THE RENDER SESSION AFTER EVERY EVALUATION 500.** Simple, uniform, and the same
+line DM-1 already added. Cost: a boot (§2.2: 1.9-7.3 s measured) after every failing render,
+including the deterministic ones the developer is iterating on, which is exactly when a fast
+loop matters most.
+(iii) **DISCARD ONLY FOR ERROR CLASSES KNOWN TO BE TRANSIENT.** §8.3's classifier already
+sorts driver failures into `auth` / `driver` / `connect`, and `connect` is the transient one.
+Cost: a list to keep, and a failure it does not recognise is silently (i).
+(iv) **MAKE THE SCAN'S FAILURE NOT MEMOISE.** Narrowest and deepest: the value a failing
+`scanRelation` yields would have to be a thunk the runtime does not write back, which is a
+change to `Runtime`/`Runner`, not to the preview, and would need its own argument about what
+else depends on memoised bottoms.
+
+It blocks nothing. The answer is wanted with **WP-12/WP-13**, when a render first talks to a
+database that can drop a connection.
 
 ## 14. Tickets, in dependency order
 
@@ -1411,16 +1899,16 @@ table's WP-9 and WP-10. Read the ticket here.
 | WP-4 | `Runner`: `reports` keyed by `(module, binding)`, `report`/`compile(module, binding)`, `cfg.reportName` the default for the HTTP route; `paramSchema(module, binding)`; `resultKind` public; `builtins` snapshot after its preamble; `invalidate(paths: Set[Path]): Set[String]` under `evalLock` (scrub the closure, evict `reports`, no eager reload); `Backends.scannerFor(dialect, variant)`; a `delegatingRun: RunDB` in `lsp/` | the four `TestRunner` properties in §11; `bin/ermine-serve` behaviour unchanged (`TestRunner` green) | pr / ~1 day |
 | WP-5 | the preview thread and `Preview` object in `lsp/`: lazy boot on first `ermine/render`, daemon thread, `uri` -> module, `inferredRoot`, absolute `roots`, queue with one in flight / one queued / latest wins, `generation` echo, mtime scan per render, `stale` generation counter, watchdog with the restart button, document-size cap, `invalidate` posted from `afterReload`, `ermine/preview/invalidated`, `ermine/schema {binding}` routed to the queue, `ermine/preview/reports` on the dispatch thread, work-done progress; launcher `-Xmx${ERMINE_LSP_XMX:-2g}` + `-XX:+ExitOnOutOfMemoryError` and the `ermine.maxHeap` setting | group D properties; `lsp-client.py` smoke; RSS, boot seconds and heap after a watchdog fire (allocating and non-allocating loop) MEASURED and written into §2.2/§2.5; a render whose evaluation loops is answered by the watchdog and the resident still answers a hover; an allocating loop ends in a clean exit the client restarts | pr + commit + instruments / ~3 days |
 | WP-6 | cooperative cancel: the flag checked at the head of `Runtime.swhnf`, set by the watchdog and by an in-flight `$/cancelRequest`; the `Runner` discarded on cancel | a looping render is cancelled within a second and the next render boots a new session; the resident's tables are unchanged; **adopted only if** the `perf-bench.sh` interleaved A/B shows no movement (instrument, written here) | pr + instrument / ~1 day; gated |
-| WP-7 | extension: **Ermine: Preview Report...** as a (file, binding) picker over `ermine/preview/reports` with per-workspace memory and free-text fallback, **Ermine: Render Report to JSON** into an untitled editor tab, `ermine.preview.roots` (resource scope, absolutised), re-render on `invalidated`, the `ermine.maxHeap` export | on `core/src/test/resources/doc/Sales.e` with no setting the picker offers `report : Query -> Node`; the tab shows a 400 naming `$.params.fromDay` (WP-8 turns it into a document); saving `Sales.e` updates the tab with no restart; no webview | manual + commit smoke / ~1 day |
+| WP-7 | extension: **Ermine: Preview Report...** as a (file, binding) picker over `ermine/preview/reports` with per-workspace memory and free-text fallback, **Ermine: Render Report to JSON** into an untitled editor tab, `ermine.preview.roots` (resource scope, absolutised), re-render on `invalidated`, the `ermine.maxHeap` export; **(Q11, decided 2026-09-20) re-render when the picked report's own file is created or changed while its last answer was a PLACEMENT 404** (not a `Runner` 404: that module loaded, so `invalidated` already covers it and a second trigger would double-render) -- no server change, and the only residual case the notification cannot cover; **(Q8/Q10) the stuck banner of §5**, fed by `"stuck": true` on a refusal and by `ermine/preview/stuck`, carrying the **Ermine: Restart Language Server** button and clearing on `{stuck: false}`; **(Q9) the `ermine.preview.timeoutSeconds` and `maxDocumentBytes` exports, with "0 = no watchdog" in the setting's description** | on `core/src/test/resources/doc/Sales.e` with no setting the picker offers `report : Query -> Node`; the tab shows a 400 naming `$.params.fromDay` (WP-8 turns it into a document); saving `Sales.e` updates the tab with no restart; no webview | manual + commit smoke / ~1 day |
 | WP-8 | params: `.ermine/preview/<Module>/<binding>.params.json`, the skeleton from the schema on first pick, `<binding>.schema.json` beside it with a relative `$schema`, `$schema` stripped before sending, re-render on save, the orphan message, the one `.gitignore` line | `Sales` renders a document on first pick with no hand-written JSON; completion and a red squiggle for a wrong key in `Sales/report.params.json`; saving it re-renders; renaming the binding shows "no params for"; `git status` shows the params file and not the schema | commit smoke + manual / ~1 day |
 | WP-9 | webpack browser bundle: config, `npm run bundle` / `bundle:watch`, `devtool: 'source-map'`, output under `client/dist/browser/` | `npm test` unchanged; the bundle checklist of §5 passes under a CSP without `unsafe-eval` | nightly (`npm test`) + checklist / ~half a day |
 | WP-10 | webview panel: host page, CSP, `localResourceRoots`, the `applyMessage` reducer and its `node --test`, banner states (initial, error, stale, unsaved, switching, offline, fast mode), `retainContextWhenHidden`, bundle watcher -> reload; `gate_client` registered at nightly | `Sales` renders inline; editing `client/src/widgets/scorecard.ts` updates the panel without a restart; a 400 from a bad param shows `path` in the banner; the reducer property passes; `scripts/gate.sh run nightly` runs `gate_client` | nightly + manual / ~2 days |
 | WP-11 | Q1 and the legacy renderers in the panel | `table` renders through `runTabular`; the global's name is written into `client/src/index.ts` and `legacy.ts` | checklist / ~half a day |
 | WP-12 | `mssql-jdbc` `jre11` in `build.sbt`; one real connect to the work server from the preview; `sqlPrimT`'s `"date"` mapping checked; Q3 answered | a connect succeeds (MEASURED, with the truststore answer written into §7.3); the first-connect TLS behaviour is recorded as observed | instrument / ~half a day plus the wait for the server |
 | WP-13 | profiles (user scope only) + `ermine/preview/connect` + the four-way classifier with `kept` + `Throwable` catch and scrub + URL credential refusal + `SecretStorage` keyed by `sha256(url + "\0" + user)` + trace-`verbose` refusal in the one `connect()` + **Forget Database Password**; no `untrustedWorkspaces` declaration; the Settings-Sync answer written into §8.2 | the credential gate (§8.4) passes in full; the fake-driver classifier test passes; a workspace-scope profile is ignored and named once | pr + instrument / ~2 days |
-| WP-14 | held connection lifecycle: the §7.2 switch sequence, Disconnect command, `disconnected` notification, extension-driven reconnect, re-render after every connect, recycling defaults (Q2), reconnect on `Running`, status-bar item `id (dialect) @ host`, the file-backed SQLite profile documented | a 1-hour session against MSSQL leaves no `##` tables after Disconnect (count in `tempdb.sys.tables`, MEASURED); a profile switch mid-render discards the old answer; killing the server and letting the client restart it ends in a rendered document; no password *field* in `lsp/Preview.scala` (code review), the driver's `Connection` acknowledged to hold it until close | instrument + manual / ~1.5 days |
+| WP-14 | held connection lifecycle: the §7.2 switch sequence, Disconnect command, `disconnected` notification, extension-driven reconnect, re-render after every connect, recycling defaults (Q2), reconnect on `Running`, status-bar item `id (dialect) @ host`, the file-backed SQLite profile documented. **THE CLOSE THIS TICKET PUTS IN `discardSession` MUST NOT BLOCK** (review S3, 2026-09-20): Q10's recovery calls `discardSession` from `runJob`'s `finally`, AFTER `disarm()`, so it runs with no watchdog over it and with the stuck state ALREADY CLEARED -- a `Connection.close()` that hangs on a dead socket would wedge the preview thread in a state nothing would fire on and nothing would refuse. It is free today (`DelegatingRun.clear()` closes nothing); this ticket owns giving that close a timeout, or moving it off the preview thread | a 1-hour session against MSSQL leaves no `##` tables after Disconnect (count in `tempdb.sys.tables`, MEASURED); a profile switch mid-render discards the old answer; killing the server and letting the client restart it ends in a rendered document; no password *field* in `lsp/Preview.scala` (code review), the driver's `Connection` acknowledged to hold it until close | instrument + manual / ~1.5 days |
 | WP-15 | SQLite emitter gaps: `EmitOver_UsingOver` mixin, bracket names, parenthesised joins | `TestSqlEmitters` pins each string; a windowed report previews on SQLite with rows | pr / ~half a day |
 | WP-16 | engine gaps: `UnsupportedOnDialect` at the §9.2 sites, 500 banner, deploy-dialect badge | no emitter output contains `TODO`; `tryCast` on SQLite shows the banner naming `tryCast` and `sqlite` | pr / ~1 day |
-| WP-17 | closed-environment packaging: vendored `client/node_modules` or internal registry, driver jar offline, `bin/ermine-lsp.cmd` (and a PowerShell twin) with `resolveServer` choosing it on Windows | a fresh clone on a work machine runs WP-7 and WP-10 with no network and no WSL; the credential gate passes on Windows | manual / ~1 day |
+| WP-17 | closed-environment packaging: vendored `client/node_modules` or internal registry, driver jar offline, `bin/ermine-lsp.cmd` (and a PowerShell twin) with `resolveServer` choosing it on Windows. **THE WINDOWS WRAPPERS MUST CARRY THE JVM POLICY, not just the classpath** (Q12, 2026-09-20): `-Xmx${ERMINE_LSP_XMX:-2g}` with the 64m floor, `-XX:+ExitOnOutOfMemoryError`, AND `-XX:+DisplayVMOutputToStderr` behind the same cached, java-keyed probe `bin/ermine-lsp` uses -- §10 says the deployment machines are Windows, so that is exactly where Q12's unframed OOM line on the protocol channel matters, and today neither the flag nor the cap reaches them | a fresh clone on a work machine runs WP-7 and WP-10 with no network and no WSL; the credential gate passes on Windows | manual / ~1 day |
 | WP-18 | docs: `docs/JSON-GUIDE.md` §9/§10/§12 (the guide's `Runner.scala:259-280` reference at `:1571` has drifted to `:287-288`), `client/README.md` "Adding a widget" (`ermine/schema` from the render session replaces eleven boots), `editor/vscode/README.md` | the three documents describe the loop as built; MEASURED figures replace the mined ones here | none / ~half a day |
 | WP-19 | **optional, out of the loop**: dual-emit T-SQL diff in the panel via `dumpRel` / `dumpClosed` | only if relation authoring in the panel is asked for | -- |
