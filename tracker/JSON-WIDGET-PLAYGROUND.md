@@ -1,11 +1,25 @@
 # JSON widget playground: edit a widget, see it rendered, inside VS Code
 
 > **STATUS: WP-1, WP-2, WP-3, WP-4, WP-5 (STAGES A, B AND C), WP-7 (WITH Q15's SERVER-SIDE
-> `reason` KEY) AND WP-6 STAGE 1 ARE BUILT; EVERYTHING ELSE IS DESIGN ONLY.**
+> `reason` KEY) AND WP-6 STAGES 1 AND 2 ARE BUILT; EVERYTHING ELSE IS DESIGN ONLY.**
 > **WP-6 (cooperative cancel) was FUNDED by the user on 2026-09-20, as Q13's option (ii), and its
 > STAGE 1 -- the mechanism -- is BUILT behind `ermine.preview.cancelOnTimeout`, DEFAULT FALSE.
-> STAGE 2 (the evaluator perf instrument, designed in §11's Instruments row) and STAGE 3
-> (ADOPTION, which is flipping that default) are NOT built, and stage 3 is the USER's call.
+> STAGE 2 -- the evaluator perf instrument -- IS BUILT AND RUN (2026-09-20), AND ITS WRITE-UP WAS
+> REVIEWED (DESIGN RED / IMPLEMENTATION RED) AND CORRECTED WITHOUT RE-MEASURING:
+> `tracker/tools/eval-bench.sh`, an interleaved A/B over two worktrees with the editor closed.
+> **ITS FIGURES ARE IN §11's Instruments section, and what they support is weaker than the first
+> write-up said.** On the ordinary build-and-fold workload the stage 1 commit is not
+> distinguishable from the machine; on the `swhnf`-densest workload -- re-folding a list whose
+> cells are already `Evaluated` -- **W2 moved +5.8 % and +4.9 % in the same direction in two runs
+> with the pair order reversed, every estimator agrees in sign, a central estimate is about +5 %,
+> and NO test on 5 forks per side reaches conventional significance** (stratified permutation
+> p = 0.089, Mann-Whitney p = 0.095, bootstrap CI includes zero). **The instrument SUGGESTS a
+> cost of roughly 5 %; it does not ESTABLISH one**, and the delta belongs to the whole stage 1
+> commit rather than to the one volatile load. STAGE 3 (ADOPTION, which is flipping that default)
+> is NOT built and is the USER's call; note that the flip adds no PER-FORCE cost, because the
+> check is in the binary either way -- though it is not behaviourally free, since with the switch
+> on a taken cancel DISCARDS the render session unconditionally and the watchdog becomes
+> two-phase, with `isFatal`'s documented exception riding on that discard (§14(d) and (f), §11).
 > Stage 1 was built to the DESIGN REVIEW's shape and not to §14's earlier letter, in four places
 > that row now names.**
 > No other ticket has been started. WP-5 was built in three reviewed
@@ -550,7 +564,7 @@ What the preview thread costs, and where it is paid:
 | A non-terminating **evaluation** | pure Ermine loops run under `Runner.evalLock` (`Runner.scala:538-540`) and cannot be stopped from outside (*external*: `Thread.stop` throws on JDK 21). The honest promise: **a runaway evaluation blocks no LSP request until it exhausts the heap cap, then the server exits and the client restarts it**. A watchdog (`java.util.Timer`) answers the request after `ermine.preview.timeoutSeconds` (default 60) with "evaluation did not finish", in a notification carrying the **Ermine: Restart Language Server** button (`ermine.restartServer`, `extension.js:241`), marks the preview stuck, and every later `ermine/render` is answered the same way without queueing (**Q8, decided 2026-09-20**: those answers, and the watchdog's own, and the ones its queue drain sends, carry `"stuck": true`, and an `ermine/preview/stuck {stuck: true}` notification goes out beside the `window/showMessage`; **Q10, decided 2026-09-20**: the stuck state CLEARS if the job the watchdog fired on ever returns -- never on a `java.lang.Error` -- and a `{stuck: false}` notification plus an INFO `window/showMessage` then asks the client to re-render, because every `invalidate` posted during the wedge was dropped). An allocating loop (a fold over an infinite list; `swhnf` builds thunk chains as it goes, `Runtime.scala:215-238`) then hits `-Xmx` (§2.2) and `-XX:+ExitOnOutOfMemoryError` (*external*: since JDK 8u92) turns the OOM into a clean exit that `vscode-languageclient` restarts, up to 5 times in 3 minutes (*external*); the panel recovers as §7.2 describes. A CPU-bound loop pins one core for the process life until the user restarts (**MEASURED 2026-09-20: NO WITNESS EITHER WAY. Every loop that goes through `swhnf` reached `-Xmx` instead of pinning a core for ever, and the one candidate for a loop INSIDE a primitive did not spin at all. The claim is neither confirmed nor refuted; see the measured block below**). The resident keeps answering until then: it does not take `evalLock` and is on another thread. The watchdog exists so the user is told at 60 s rather than at OOM. WP-6 makes cancel real (next row) |
 | **Cooperative cancel -- WP-6 STAGE 1, BUILT 2026-09-20, behind `ermine.preview.cancelOnTimeout`, DEFAULT FALSE** | **AS BUILT, and it departs from this row's earlier text in four places the design review found; §14's WP-6 row carries the reasons.** ONE GLOBAL `Runtime.cancelTarget: Thread` beside `Runtime.cancelWhy: Cancelled`, both `@volatile` and both `private[Runtime]`. **THE WRITE ORDER IS ENFORCED, not asked of the caller** (S1/S2 of the stage 1 review): the fields are `private[Runtime]` and every write goes through `Runtime.armCancel(target, why)` -- reason first, target second, and it REFUSES (answering `false`) when another thread's arming is live, which a caller must then say out loud and fall back from -- or `Runtime.disarmCancel(target)`, which clears only that target's own arming, in the reverse order. `swhnf` still reads the field DIRECTLY: a method with a monitor in it is exactly what must not be on every force. And the check is at the **HEAD** of `Runtime.swhnf`, unconditionally, on every call: `val ct = cancelTarget; if ((ct ne null) && (ct eq Thread.currentThread)) throw cancelWhy`. **NOT a per-thread context and NOT `Thread.interrupt`**: `Preview.takeJob` reads an `InterruptedException` as "stop", `ForeignClasses.Recoverable` and the backends react to an interrupt, third-party code may clear the flag, and a JDBC driver may abort its connection on one. **NOT inside `swhnf`'s `case old =>` branch**, which the review proposed as the cheaper placement and then FALSIFIED: `json/Encode.scala`'s `spine` walks a list with `while (true) { Runtime.swhnf(cur) ... }`, and on a CYCLIC list (`repeat a = t where t = a :: t`, `List.e:29-30`) every thunk it re-reads is already `Evaluated`, so that branch is never entered again and a check there would never fire. `Cancelled` is a **`ControlThrowable`**: stackless, EXCLUDED by `NonFatal` so `swhnf`'s own capture does not memoise it as a `Bottom`, and NOT an `Error` (`ForeignClasses.Recoverable` swallows an arbitrary `Error` into a failed reflective lookup, `ForeignClasses.scala:26` is the arm that lets a `ControlThrowable` through). **FIVE CATCHES THAT WOULD HAVE SWALLOWED IT** gained `case c: Cancelled => throw c` as their first arm, and without them the cancel silently does not work: `Prim.apply` and `Box.apply` (`Runtime.scala`), `IO.Unsafe.eval` (`session/Lib.scala`, which would hand the cancel to the Ermine program's own error continuation), the foreign invoke (`session/Session.scala`, which re-wraps what it catches as a `RuntimeException` -- which IS `NonFatal`, so `swhnf` would capture and memoise it) and -- **the fifth, FOUND BY THE STAGE 1 REVIEW (DM-3) and not by the build** -- `Bottom.thrown` (`Runtime.scala`). A `Bottom`'s body is usually a bare `throw`, but two in `core` FORCE (`session/Lib.scala`'s stdlib `error`, `Bottom(error(s.extract[String]))`, and its `pipe#` failure, `Bottom(... + rel.whnf)`), and `thrown` is what `json/Encode.scala`, `json/Doc.scala`, `Pretty.ppRuntime` and `Bottom.toString` all call -- so a cancel raised by that forcing was CAUGHT AND RETURNED AS A VALUE: a bogus error node inside a 200, or a job that "succeeded" with the cancel's own text in its document. Bounded (the next `swhnf` re-throws), and now closed. **THE WATCHDOG IS TWO-PHASE.** At `timeoutMillis`, PHASE 1 arms the flag and does NOTHING else: no answer, no stuck mark, no queue drain, no notification. If the cancel TAKES (phase 2a), `Preview.runJob` answers 500 with the timed-out text reworded ("evaluation did not finish after Ns, so it was CANCELLED ..."), **without** §4's `stuck` marker, then **DISCARDS THE RENDER SESSION UNCONDITIONALLY** -- the escape leaves WHITEHOLED thunks with this thread still in their `pending` queue, and a later same-thread force of one would memoise `Bottom(sys.error("infinite loop detected"))` -- and clears the flag. If it has NOT taken after `graceMillis` (1000 ms, a constant with a test seam, not a user setting), PHASE 2b **CLEARS THE FLAG FIRST** and then does exactly what the watchdog did before WP-6: claim, stuck, `stuckJob`, `seq`, drain, `stuckRefusal`, `window/showMessage`, `{stuck: true}` -- and Q10's recovery applies to it unchanged. **WHAT THE CANCEL CANNOT STOP, because none of it reaches `swhnf`**: a loop inside ONE primitive, the relational row loop (`relational/package.scala`'s `driveLeftId`), a JDBC scan, and a thread parked in `SessionTask`'s `future.get` or in a thunk's `latch.await`. Phase 2b is the fallback for every one of them, which is why it is not optional. **A USER `$/cancelRequest` STILL DOES NOT INTERRUPT** -- `Preview.cancel` is untouched (queued: removed and `-32800`; in flight: marked, answer replaced). **THE FLAG IS CLEARED IN FIVE PLACES**, and the list is the review's: (1) **BEFORE THE ANSWER on the cancel path** -- `runJob`'s `Cancelled` arm does `clearCancel` then `discardSession` then `finish`, because the answer says the preview is serving renders again and the session was rebuilt, and both must be TRUE when it goes on the wire (DM-1: with the clear only in the `finally`, a client could read the answer while the flag still named the preview thread; MEASURED by the review as two reds in three runs); (2) phase 2b, before it falls back; (3) `runJob`'s `finally`, for EVERY job, as the idempotent catch-all; (4) `Preview.cancelTimer`, which both `shutdown` and the death drain call -- **DM-2: the fourth path, and the one no other clear reaches**, because a `shutdown()` inside the grace cancels the timer so phase 2b never runs while the preview thread is wedged and reaches neither the `finally` nor `takeJob`; harmless in the shipped server, but in the UNFORKED test JVM one stale target makes every later `swhnf` in every suite take the slow side of the branch for the life of the process; (5) `Preview.takeJob`, which logs loudly and clears if it ever finds one armed. A slow scan that legitimately finishes after the fire must not die at its next force.
 
-**THE CONVERSE CASE, DERIVED BY READING AND UNVERIFIED (S3 of the stage 1 review).** The cancel unwinds the PREVIEW thread's chain without `writeback`, so every thunk it passed is left `Whitehole` **with its `CountDownLatch` never counted down**. `discardSession` throws the `Runner` away but releases no latch. So ANOTHER thread that later reaches one of those thunks -- a scan's chunk producer, `SessionTask`'s pool -- takes `swhnf`'s `Whitehole` branch, finds itself absent from `pending`, and parks on `t.latch.await` **for ever**. They are daemon threads, so the JVM can still exit; what leaks is one thread and whatever its queue retains, per cancelled render that had a concurrent scan. Not reachable in stage 1 (the stage A backend opens one connection per run and the properties run no concurrent scan), which is why it is unverified; WP-13/WP-14 are where it becomes reachable, and WP-14's row carries it. Cost: one volatile load and one predictable null-branch per force, in the binary whether the switch is on or off. **`perf-bench.sh` CANNOT MEASURE IT** -- it is a typechecker bench; §11's Instruments row designs the evaluator instrument stage 2 runs, and stage 3, flipping the default, is the user's |
+**THE CONVERSE CASE, DERIVED BY READING AND UNVERIFIED (S3 of the stage 1 review).** The cancel unwinds the PREVIEW thread's chain without `writeback`, so every thunk it passed is left `Whitehole` **with its `CountDownLatch` never counted down**. `discardSession` throws the `Runner` away but releases no latch. So ANOTHER thread that later reaches one of those thunks -- a scan's chunk producer, `SessionTask`'s pool -- takes `swhnf`'s `Whitehole` branch, finds itself absent from `pending`, and parks on `t.latch.await` **for ever**. They are daemon threads, so the JVM can still exit; what leaks is one thread and whatever its queue retains, per cancelled render that had a concurrent scan. Not reachable in stage 1 (the stage A backend opens one connection per run and the properties run no concurrent scan), which is why it is unverified; WP-13/WP-14 are where it becomes reachable, and WP-14's row carries it. Cost: one volatile load and one predictable null-branch per force, in the binary whether the switch is on or off. **`perf-bench.sh` CANNOT MEASURE IT** -- it is a typechecker bench. §11's Instruments section carries the instrument that DID, `tracker/tools/eval-bench.sh`, and its figures (BUILT AND RUN 2026-09-20, write-up reviewed and corrected): nothing distinguishable on an ordinary build-and-fold workload, and on the `swhnf`-densest one a suggested but NOT established ~5 %, which belongs to the whole stage 1 commit and not to this row's load alone. Stage 3, flipping the default, is the user's -- and the flip adds no PER-FORCE cost, because the check is in the binary either way, but it is not behaviourally free: §14(d) and (f) are what it turns on (the unconditional session discard on a taken cancel, the two-phase watchdog, and `isFatal`'s exception, which is sound only while that discard is unconditional) |
 | `$/cancelRequest` | queued: removed and answered `-32800`; in flight: marked, its eventual answer replaced by `-32800`, the work not interrupted until WP-6 (no hook into `SqlExecution` either way); during a boot: honoured when the boot ends (answer `-32800`, boot kept) |
 | `stale` | a **hint**; `invalidated` is the mechanism. A `@volatile` generation counter is bumped by `invalidate`, snapshotted at render start and compared just before `send`; a mismatch sets `"stale": true`, and the `invalidated` notification that follows makes the extension re-render (§3). An `invalidate` that lands after the comparison is not lost, only its banner is late. **AS BUILT (WP-5 stage A), DIFFERS FROM THE LETTER ABOVE -- for the user to confirm**: the counter is bumped when an `invalidate` is **posted** (on the dispatch thread) and snapshotted when a render is **enqueued**, not when it starts. The literal reading cannot work on a single-threaded queue: an `invalidate` that ran as a job could never move the counter *during* a render, so `stale` would be dead code; and a snapshot taken at render *start* would call a render fresh that was enqueued before an invalidate still queued behind it. Bumping per post can flag a render whose invalidation turns out empty -- a false positive, which is what "a hint" permits. The WP-5 stage A review judged this strictly better than the literal reading |
 | Boot progress | the first render **or schema** (Q7, decided 2026-09-20: a first pick boots on the SCHEMA request, which is exactly when the user is waiting, so a schema job mints its token through the same dispatch-side `mintBootToken` and under the same at-most-one-outstanding-`create` rule), and every post-discard boot, reports "Ermine preview: booting the render session" through LSP work-done progress (`window/workDoneProgress/create`, then `$/progress` begin / end, `cancellable: false`, *external*: LSP 3.15+), guarded by the client's `window.workDoneProgress` capability. The `create` request is sent by the dispatch thread when it enqueues the job (§2.3); the `$/progress` notifications go from the preview thread through the synchronised `send` |
@@ -1067,9 +1081,9 @@ approval under `:91`. Each WP done-when in §14 names its tier.
 | Classifier | new, with a fake driver | §8.3 | **pr** | seconds |
 | End to end | `tracker/tools/lsp-client.py`, run by `tracker/tools/lsp-smoke.sh` (`scripts/gates.sh:115-120`) | `reports`, render, edit, `invalidated`, render: differs; the schema binding mode on `Sales` (domain is `Query`); **(Q7)** the same binding request in its new shape (`uri`, `binding`, `roots`), and one more check: the schema of a SECOND report asked BEFORE any render of it -- §6's first-pick order -- placed in the SAME temp root so Q6's rule keeps the gate to one render-session boot | `lsp` (**commit**). **Q7 RE-MEASURED 2026-09-20, one direct run each side, exactly as `gate_lsp` runs it** (`with_own_classpath` from `target/ermine-classpath`, restored byte-identically, sha256 checked): **640 checks in 46.7 s before, 641 checks in 47 s after** -- one request changed shape, one check added, and the gate is still a `commit` gate by the same rule. **BUILT AND MEASURED 2026-09-20 (WP-5 stage C)**: 628 checks in 44.5 s before, 640 checks in 46.7 s after -- one preview boot of 1.6 s and one cold check of the copied `Sales.e`. The rule "if the gate passes ~90 s it moves to `pr`" is NOT triggered, so the gate stays at `commit` and `scripts/gates.sh` is unchanged. Under `docs/gate-policy.md` §5 ("gates must catch their mutants ... whenever a gate's definition or scope changes"): the gate's DEFINITION (`gate_lsp`) and its `GATE_SCOPE` string are both unchanged -- checks were added INSIDE `lsp-client.py`, and the files they newly reach (`lsp/Preview.scala`, `lsp/Definitions.scala`) were already inside `$E/lsp/*.scala` -- so the declaration needs no edit, and the gate's catch surface can only grow (before this, no smoke request reached `Preview.scala` at all). The harness was NOT run here: its lanes check out HEAD and run HEAD's `tracker/tools`, so it must follow the commit. The command is `scripts/mutate-and-verify.sh --gates lsp --classes obo,swap,guard,mapord -n 1 --seed 2` | ~1 min |
 | Host page | `client` `npm test` (the existing harness plus the `applyMessage` reducer, §5) | every message sequence the extension can send leaves a consistent state (no document and a banner, or a document and its dimming flag) | new `gate_client` in `scripts/gates.sh`, entering at **nightly** per policy; promotion after one recorded catch | seconds |
-| Instruments | results written into this document, never gate evidence | the credential gate (§8.4); the `##` count (`tempdb.sys.tables`) after an hour and after Disconnect; RSS and boot seconds before/after preview boot (§2.2); heap after a watchdog fire (§2.5); the bundle checklist (§5); **WP-6 STAGE 2's EVALUATOR A/B (designed by the stage 1 design review, 2026-09-20; NOT BUILT)** | none | human / machine-dependent |
+| Instruments | results written into this document, never gate evidence | the credential gate (§8.4); the `##` count (`tempdb.sys.tables`) after an hour and after Disconnect; RSS and boot seconds before/after preview boot (§2.2); heap after a watchdog fire (§2.5); the bundle checklist (§5); **WP-6 STAGE 2's EVALUATOR A/B: BUILT AS `tracker/tools/eval-bench.sh` AND RUN 2026-09-20; the figures, the deviations and what each number is a number OF are in the section below** | none | human / machine-dependent |
 
-**WP-6 STAGE 2: THE PERF INSTRUMENT, AS DESIGNED AND NOT AS BUILT.** §2.5's WP-6 row used to
+**WP-6 STAGE 2: THE PERF INSTRUMENT, AS DESIGNED AND AS BUILT.** §2.5's WP-6 row used to
 name `perf-bench.sh` for this. **`perf-bench.sh` CANNOT ANSWER IT**: it is a TYPECHECKER bench,
 and what WP-6 adds is one volatile load and one branch at the head of `Runtime.swhnf` -- the
 EVALUATOR's hottest function, which a typechecker bench barely enters. It would report "no
@@ -1106,6 +1120,313 @@ movement" whatever the cost was. The instrument stage 2 runs instead:
    whether C2 has compiled `swhnf` and whether it has hoisted the load out of the loop is the
    whole question, so an iteration that finishes in the interpreter measures nothing. Report
    what was done (a warm-up count, `-XX:+PrintCompilation`, or a stated duration per iteration).
+
+**AS BUILT AND RUN, 2026-09-20; AND REVIEWED, WHICH RETURNED DESIGN RED / IMPLEMENTATION RED.**
+The instrument is `tracker/tools/eval-bench.sh`, written from scratch for this (nothing was
+copied to a new path; it CALLS `scripts/liveness.sh` and nothing else). It never runs sbt and
+never writes into a tree: it reads each side's own `target/ermine-classpath` and starts a plain
+`java -cp` REPL, so sbt's JVM is not in any number. It REFUSES to run -- exit 3, nothing started
+-- when `scripts/liveness.sh` reports a foreign Ermine JVM or an sbt, and it re-checks BEFORE
+EVERY FORK. **The review confirmed the arithmetic, the order-swap relabelling and the run
+hygiene, and returned RED on the CONCLUSIONS: a threshold that was one draw of a high-variance
+statistic was written up as a resolution, an upper bound was read as an estimate, and four
+sentences were false against the logs they cited. Everything below is the corrected text; the
+figures themselves did not change, and NO new measurement was taken to produce this revision.**
+
+| Item | As built |
+|---|---|
+| The two trees | **A** = `325c3d09` in a throwaway detached worktree, `ermine-scala-wt-wp6-perfA`, a fresh checkout and so a clean build of every subproject. **B** = `0ee08425` in `ermine-scala-wt-widget-preview`, whose **`core` was cleaned and rebuilt** for this (`sbt core/clean core/compile core/copyResources`) 76 seconds after A's build, same sbt 1.10.7, same JDK. **SCOPED CLAIM, corrected by the review**: neither side is an incremental build of the other, and **B's `core` is not an incremental build of itself** -- but B's `f0`, `parsers`, `machines` and `scalaz-compat` were NOT cleaned and are pre-existing incremental artefacts, and all five class directories are on the classpath. `wp6-s2-buildA.log` compiles f0 (11 files), parsers (14), scalaz-compat (3), machines (12) and core (179); `wp6-s2-buildB.log` compiles core (179) only |
+| The driver | ONE copy of ONE file drives both sides -- the script is not copied into the trees at all, it is pointed at each tree's classpath, so there is only one thing to check. The two `target/ermine-classpath` files are identical once the tree prefix is stripped (21 entries each) and both `modules/` directories hold 64 entries; no `.e` module differs between the commits (`git diff 325c3d09 0ee08425`) |
+| The workload | TWO, not one, both pure and both evaluated as a single REPL expression over a pipe. **W1 BUILD-AND-FOLD** `sum (range 0 200000)`: a strict left fold (`foldl f !z`, `List.e:49-52`) over a lazily produced list -- every cons cell built and forced once. **W2 REFOLD** `(xs -> sum xs + sum xs) (range 0 200000)`: the same list folded TWICE through one shared lambda binding, so the second fold walks cells that are already `Evaluated` -- `swhnf`'s shortest path and therefore its DENSEST. W2 exists because it is the shape §14's WP-6 row says the check sits at the head FOR. **That W2 does what it claims is MEASURED**: A-side W2/W1 = 2.027/1.217, and net of the stated fixed overhead 1.937/1.127 = 1.72, so the second fold costs about 0.72x the first rather than 1.0x -- the cells were reused, not rebuilt |
+| What the timer measures | the interval between writing one expression to the REPL's stdin and reading its answer line: parse + typecheck + evaluation of ONE line. A fixed per-iteration overhead of about **90 ms** rides on every figure -- DERIVED from a 4-point sizing probe (N = 100 k / 200 k / 400 k / 800 k, 3 reps each) as the intercept of a straight line. **UNVERIFIED: that probe's output was not retained** (`tracker/tools/../../` scratch only held the script, `wp6-s2-proto.sh`). It cancels in a difference ONLY IF it is identical on both sides, which is an assumption and not a measurement |
+| The repetitions | K = 15 per workload per fork, first 5 discarded, fork figure = median of the last 10. Side figure = median of the five fork medians. 100 measured iterations per workload per side per run |
+| The heap and flags | identical on both sides: `-Dermine.typeCheck=true -Dermine.useInterface=false -XX:+UseG1GC -Xms2g -Xmx2g`. `useInterface=false` also means NO `.ei` file is written into either tree |
+| The forks | 5 per side, INTERLEAVED A,B,A,B,... as designed |
+| The machine | Temurin `openjdk 21.0.12.1 2026-08-18 LTS` (`21.0.12.1+1-LTS`) on both sides. CPU governor **`powersave`** -- recorded, not changed. `liveness.sh` read `sbt=0 console=0 lsp=0 serve=0 ermine-jvm=0` before every one of the 30 forks |
+
+**WHAT A -> B IS, stated correctly (the review's finding, and the earlier text was wrong).** The
+A/B compares TWO COMMITS, not one line of code. `Runtime.scala` gains the head check in `swhnf`
+**and** a `case c: Cancelled => throw c` arm prepended to the catch in `Prim.apply`, `Box.apply`
+and `Bottom.thrown`; `Prim.apply` and `Box.apply` are on the path of every primitive application.
+Those arms cost nothing on the non-throwing path, but they change those methods' bytecode size
+and exception tables, **and their sizes were never measured here**. So every delta below is the
+WHOLE STAGE 1 COMMIT'S EFFECT ON EVALUATION, and the instrument cannot apportion it between the
+head check and the catch arms. (For a decision about shipping the commit that is arguably the
+right comparison; for a sentence about "one volatile load" it is not.) Separating them needs a
+third tree with only the head check reverted -- NOT RUN, costed below.
+
+**THE NOISE STATISTIC WAS NAMED IN WRITING BEFORE THE FIRST MEASURED RUN**, in
+`tracker/tools/eval-bench.sh`'s header. **The evidence is a filesystem mtime and a hash, because
+the script is UNTRACKED**: mtime **19:11:16**, sha256
+**`31a17568cbc178c3daea15cd4354bd084ec682eb30236e52baa2b5533a76f3e3`**, against a first measured
+fork at **19:16:45** (`wp6-s2-noise.log:2`) and a smoke run at 19:11:43 that used it. *The script has since been edited to fix three bugs the review found, so its hash no longer
+matches; the two values above are the pre-registration record and are what a later reader should
+check the claim against. Committing the script would make this checkable without them.*
+**THE THREE RUNS ABOVE WERE DRIVEN BY THE PRE-EDIT SCRIPT** (sha256 `31a17568cbc178c3daea15cd4354bd084ec682eb30236e52baa2b5533a76f3e3` in full). **The version
+in the tree is `626d6157bc0c7de2b85556641c292e009bcf0231f3c814a4ee1438b60e981774`; its fixes were checked by reading and by exercising every path that starts no
+JVM (`--help`, the four usage errors, the liveness parse against `scripts/liveness.sh:140`), and
+it has NEVER driven a fork end to end. The next run is also its first exercise.** The statistic, verbatim
+from that header: `spread_AA = |median(A2) - median(A1)| / median(A1)`, as a percent, where A1
+and A2 are the two SIDES of a run in which BOTH sides are the SAME tree and `median(X)` is the
+median of that side's five fork medians -- deliberately the SAME statistic the A/B run reports as
+`B/A - 1`, computed where the true answer is known to be zero. The decision rule is the design's,
+unchanged: **no movement iff `|median(B) - median(A)| <= max(spread_AA, 2 % of median(A))`**, per
+workload.
+
+**THREE BUGS IN THE INSTRUMENT ITSELF, FOUND BY THE REVIEW AND FIXED AFTERWARDS. None of them
+can have moved a recorded figure, and the evidence for that is in the logs.** (1) The coprocess
+EXIT trap was `trap 'kill "$REPL_PID" 2>/dev/null' EXIT`, and bash UNSETS `REPL_PID` once the
+coprocess has gone, so under `set -u` the trap itself raised `REPL_PID: unbound variable` and
+**the kill never ran** -- a failed fork could leave a JVM behind. It fired exactly once, at
+`wp6-s2-measure.log:52`, in the DIAG B stage, i.e. AFTER every measured run; and a leaked JVM
+would in any case have been caught by the next fork's liveness re-check as `console=N` and
+refused the run, which never happened. (2) The liveness guard FAILED OPEN: a missing or broken
+`scripts/liveness.sh` yielded an empty line, every count defaulted to 0, and the function returned
+success -- so the refusal could have been silently disabled. It never was (`scripts/liveness.sh`
+was present and answered on all 30 forks). (3) `EVAL_BENCH_TIMEOUT` was documented as a
+per-ITERATION cap but was a cap on ONE LINE READ, so a fork that kept emitting output could run
+unbounded -- **which is exactly what happened to both diagnostic forks**, and is why condition 4
+is only half-evidenced. All three are fixed, plus three nits (`--help` printed three lines of
+code; a value-less `--a` exited 1 rather than the documented 2; a failed run left partial rows at
+the `<label>.csv` path where a later analysis could read a half-run as a run -- they are now
+`<label>.csv.partial`). The fixes were verified WITHOUT starting a JVM.
+
+**THREE THINGS THE FIX PASS LEFT KNOWN AND UNFIXED**, recorded rather than quietly carried:
+(i) the per-iteration deadline is computed with an `awk` fork INSIDE the timed window, and
+`remaining` forks `awk` again per read, which adds an estimated **0.1-0.5 % to every iteration**.
+It is identical on both sides, so a RATIO from the edited script is still comparable -- but
+**absolute seconds from it are NOT byte-comparable with the 2026-09-20 figures above**, and a run
+that mixes the two would be wrong. The fix is to hoist the deadline above `t0` and use
+`EPOCHREALTIME` integer arithmetic instead of `awk`; NOT DONE. (ii) `abandon()`'s `rm -f` branch
+is unreachable, because `$CSV` always holds at least its header row -- so a refusal before the
+FIRST fork leaves a header-only `.partial` file rather than no file. Harmless, untidy, NOT DONE.
+(iii) `abandon()`'s parameter is named `why` but carries an exit CODE. NOT DONE.
+
+**THE FIGURES.** Every time is SECONDS OF WALL CLOCK for ONE evaluation of the named expression
+in an already-booted session; every percentage is of the A-side median. `B/A` above 1 means the
+STAGE 1 TREE (the whole commit; the switch off and nothing armed) is SLOWER. All three runs are
+5 forks per side, K=15 with the first 5 discarded, 100 measured iterations per workload per side.
+
+| Run | Workload | A median (s) | B median (s) | B/A | delta (ms) | fork-median range A / B | pairs B>A |
+|---|---|---|---|---|---|---|---|
+| **NOISE, A vs A** (the same tree both sides; the two columns are A1 and A2, and neither is the stage 1 tree) | W1 | 1.018 | 0.945 | 0.9286 | -72.7 | 0.364 (35.8 %) / 0.907 (95.9 %) | 2/5 |
+| **NOISE, A vs A** | W2 | 1.696 | 1.644 | 0.9696 | -51.6 | 0.470 (27.7 %) / 0.592 (36.0 %) | 3/5 |
+| **A/B** (A first in each pair) | W1 | 1.217 | 1.252 | 1.0287 | +34.9 | 0.114 (9.4 %) / 0.147 (11.7 %) | 4/5 |
+| **A/B** | W2 | 2.027 | 2.144 | **1.0577** | +116.9 | 0.239 (11.8 %) / 0.232 (10.8 %) | 4/5 |
+| **A/B ORDER-SWAPPED** (B first in each pair; the table's A and B columns are re-labelled so that B is still the stage 1 tree) | W1 | 1.206 | 1.188 | 0.9856 | -17.5 | 0.245 / 0.260 | 2/5 |
+| **A/B ORDER-SWAPPED** | W2 | 1.948 | 2.043 | **1.0487** | +94.8 | 0.286 / 0.247 | 3/5 |
+
+**THE VERDICT FOR W2, IN THE REVIEW'S OWN WORDS AND ASKED FOR VERBATIM.** *"W2 moved +5.8% and
++4.9% in the same direction in two runs with the pair order reversed, and every estimator (fork
+medians, pooled mean, pooled median, per-fork minima, every leave-one-fork-out) agrees in sign; a
+central estimate is about +5%. No test on 5 forks per side reaches conventional significance --
+exact stratified permutation over both runs p = 0.089, Mann-Whitney on the A-first run p = 0.095,
+sign tests p = 0.38 and 1.0 -- and a hierarchical bootstrap CI on the ratio includes zero in both
+runs. The instrument suggests a cost of roughly 5% on the swhnf-densest workload; it does not
+establish one."*
+
+**THE TESTS.** Computed by the STAGE 2 REVIEW and **RE-DERIVED HERE from the same CSVs; every
+EXACT figure reproduced exactly** once the review's convention is applied -- **the review's
+p-values are TWO-SIDED, and two-sided is the figure that answers the pre-registered rule, which
+takes an absolute value**. All the tests below are exact (no sampling); the bootstrap interval is
+resampled, so it reproduces only to within Monte Carlo error (my [-4.0 %, +14.8 %] against the
+review's [-4.2 %, +14.9 %], and [-5.2 %, +13.0 %] against [-5.2 %, +12.9 %]).
+
+| Run / workload | permutation, median diff | Mann-Whitney exact | sign test | paired permutation |
+|---|---|---|---|---|
+| A/B W1 (+2.87 %) | p = 0.1190 | U = 18, p = 0.3095 | 4/5, p = 0.375 | p = 0.625 |
+| A/B W2 (+5.77 %) | p = 0.1190 | U = 21, p = 0.0952 | 4/5, p = 0.375 | p = 0.250 |
+| SWAP W1 (-1.45 %) | p = 1.000 | p = 1.000 | 2/5, p = 1.0 | p = 1.000 |
+| SWAP W2 (+4.87 %) | p = 0.5238 | U = 15, p = 0.6905 | 3/5, p = 1.0 | p = 0.625 |
+
+Pooling both A/B runs with run as a block (exact stratified permutation, 63 504 relabellings,
+statistic = mean of the two blocks' `B/A - 1`): **W2 observed +5.32 %, p = 0.0887**; W1 observed
++0.71 %, p = 0.818. One-sided, the same computation gives W2 p = 0.054 (and Mann-Whitney
+one-sided on the A-first run p = 0.048). **The pre-registered rule takes an absolute value, so the
+two-sided p is the one that answers the registered question; the one-sided figures answer a
+directional question chosen after the data were seen, and are recorded only so that a reader who
+quotes one knows which it is.** Hierarchical bootstrap of the ratio (resample forks,
+then iterations, 20 000 reps, my re-derivation): A/B W2 95 % CI **[-4.0 %, +14.8 %]**, SWAP W2
+**[-5.2 %, +13.0 %]** -- both include zero. Estimator agreement, W2: leave-one-fork-out A/B +4.03/+5.61/+4.72/+6.31/
++4.57 % and SWAP +4.31/+3.34/+2.07/+8.37/+8.28 %, all positive; pooled 50 iterations A/B mean
++4.84 % and median +5.57 %, SWAP +4.36 % and +4.73 %.
+
+**W1: NOT DISTINGUISHABLE, AND NOT AT A STATED RESOLUTION.** Every test gives p >= 0.12 and the
+estimators disagree in sign (the fork-median headline for the swap run is -1.45 % while its
+pooled mean is +3.06 %, and its leave-one-out spans -4.63 % to +4.51 %). **The earlier phrase
+"at this instrument's resolution, which is 7.1 %" is WITHDRAWN**: 7.1 % was one draw, and one
+wild fork set it (noise A2 fork 4 = 1.836 s against a side median of 0.945 s). The true statement
+is that **this instrument cannot resolve a few percent at 5 forks per side**, on either workload.
+
+**THE THRESHOLD IS ONE DRAW, AND BOTH DRAWS WERE LOW.** `spread_AA` is a single realisation of a
+high-variance statistic. Splitting the noise run's own ten fork medians every possible way (252
+splits) and recomputing `|med2 - med1| / med1` gives, for **W2**, null median **8.75 %**, p90
+**12.04 %**, max **14.76 %** -- and the drawn value was **3.04 %**, below the median of its own
+null. For **W1** the null is median **11.22 %**, p90 **26.53 %**, max **36.12 %**, and the drawn
+value was **7.14 %**, also below its own null median. A second noise pair could plausibly have
+returned 8-9 % for W2, under which the same rule reads "no movement". **The W2 verdict is a
+coin-flip on one draw, and that is why the sentence above is "suggests", not "establishes".**
+**ONLY W2's VERDICT IS SENSITIVE TO ITS OWN DRAW, and the asymmetry is worth being precise about.**
+A LOW threshold makes "movement" easier and "no movement" HARDER to declare. W1 drew low (7.14 %
+against a null median of 11.22 %) and was declared no-movement anyway, so its verdict survives its
+draw and would survive a typical one. W2 also drew low (3.04 % against 8.75 %), and there the draw
+is load-bearing: at the null's median draw the same rule would have read "no movement" for W2.
+
+**AND THE CAVEAT IS SYMMETRIC, which the first write-up got wrong by stating it only for W1.**
+The noise run ran first and its conditions were not those of the runs it calibrates, and that
+cuts BOTH ways: the large absolute W1 threshold makes **"no movement" easier to declare for W1**,
+and the low W2 draw makes **"movement" easier to declare for W2**. Each verdict is flattered by
+the draw in its own direction. Stating it for one workload only reads as advocacy.
+
+**THE RULE ALSO GIVES OPPOSITE VERDICTS TO EQUALLY STRONG EVIDENCE.** Inside the same A-first run,
+W1 (+2.87 %) and W2 (+5.77 %) have IDENTICAL permutation p-values (0.1190) and identical sign
+counts (4/5). The rule separates them only because the noise run happened to return 7.14 % for one
+and 3.04 % for the other. The rank test does mildly favour W2 (Mann-Whitney 0.095 against 0.310).
+
+**THE MACHINE WAS NOT STATIONARY, and the noise run got the worst of it.** Per-fork 1-minute load
+averages read off each run's own `liveness` lines: **noise 0.68 -> 2.55 -> 2.94 -> 2.06 -> 3.26 ->
+2.84 -> 2.54 -> 2.26 -> 4.23 -> 8.46**, while the A/B run held 3.11-4.53 and the swap run
+3.07-7.37. Fork medians drift upward through the noise run at +5.6 %/fork and +13.1 %/fork (W1)
+and +3.5 % and +7.2 %/fork (W2); in the A/B run the slopes are within +/-1 %/fork. **The noise
+floor was not a floor, it was a ramp.** The earlier sentence *"load 0.68 at the start and 4.22 at
+the end of the last run (the tail is this bench's own JVMs)"* is withdrawn twice over: it quoted
+the wrong run's end and the attribution to the bench's own JVMs was never established.
+**FOR THE RECORD, and it is the orchestrator's error, not the box's**: another read-only agent
+and the orchestrator were doing light shell and web work on this machine during the noise run
+(19:16-19:26). Nothing Ermine ran -- all 30 liveness lines read `sbt=0 console=0 lsp=0 serve=0
+ermine-jvm=0` -- but the box was not quiet, and the noise run is the run that paid for it.
+
+**THE FIRST FORK OF A RUN IS CONTAMINATED even after five warm-ups.** In the swap run, fork 1 of
+the stage 1 tree has W2 warm-ups of **3.15, 2.64, 3.14, 3.33, 3.28 s** against that fork's
+measured median of **2.094 s**. Dropping fork 1 from both sides moves **A/B W2 from +5.77 % to
++4.03 %** (and A/B W1 from +2.87 % to +2.57 %, SWAP W2 from +4.87 % to +4.31 %). Recorded as a
+known artefact of this instrument; no figure above drops it, because dropping a fork after the
+numbers are in is the thing the pre-registered rule exists to prevent.
+
+**CONDITION 1: THE `swhnf` COUNT PER ITERATION, AND WHAT THE DERIVED PER-CALL COST DOES AND DOES
+NOT SHOW.** The count is **DERIVED, NOT MEASURED** -- a counting build would mean editing
+`Runtime.scala`, which this run was not allowed to do -- and it is a LOWER BOUND. Per list element
+the evaluator must at least: force the list argument to match `(x :: xs)` (`Pattern.scala:135`'s
+`r.whnf`), and, because that argument is an unevaluated `Thunk`, re-enter `swhnf`'s own
+tail-recursive head to write the result back (`Runtime.scala:378`) -- 2; force the scrutinee of
+`case start >= end of` inside `range` -- 1; force the strict accumulator of `foldl f !z` -- 1.
+`swhnf` is `@annotation.tailrec` (`Runtime.scala:332`), so its self-calls are jumps back to the
+head and EACH ONE RE-RUNS THE CHECK. That is **>= 4 per element**, so at N = 200 000: **>= 8 x 10^5
+checks per W1 iteration** and **>= 1.6 x 10^6 per W2 iteration**.
+
+| Workload | delta per iteration (A/B run / swap run) | checks per iteration (derived lower bound) | derived cost per check (upper bound, with sign) |
+|---|---|---|---|
+| W1 | +34.9 ms / -17.5 ms | >= 8 x 10^5 | <= +44 ns / **-22 ns** |
+| W2 | +116.9 ms / +94.8 ms | >= 1.6 x 10^6 | <= +73 ns / <= +59 ns |
+
+**THE EARLIER SENTENCE "which is far too large for one volatile load" IS STRUCK; IT WAS AN INVALID
+INFERENCE** (the review's must-fix). A LOWER bound on the count gives an UPPER bound on the cost,
+and an upper bound of 73 ns is entirely compatible with a true cost of 1 ns. Refuting "it is the
+load" would need an UPPER bound on the count, which is not in evidence. **The bound is also very
+likely a gross undercount**: `Runtime.appl` (`Runtime.scala:396-399`) calls `swhnf(v)` once per
+spine step, so `foldl f (f z x) xs` and `(+) z x` alone add about five more per element before any
+pattern machinery. W2 spends about 5.1 microseconds per element-visit; W2 has 4 x 10^5 element-visits per
+iteration (200 000 cells walked twice), so at a realistic **40-100 `swhnf` calls per element-visit
+the derived figure falls to 2.4-7.3 ns** -- 116.9 ms / (4 x 10^5 x 40) = 7.3 ns and / (4 x 10^5 x
+100) = 2.9 ns on the A-first run, 5.9 ns and 2.4 ns on the swap run -- which is the range of a
+volatile load acting as a compiler barrier in the hottest loop. *(An earlier revision printed
+"1.5-7 ns"; the arithmetic is above and the slip was the review's, repeated here uncorrected.)* **What the bound actually
+shows is that the count is too crude to decide the question.** A counting build decides it and is
+**NOT BUILT** (costed below).
+
+**CONDITION 4: THE JIT STATE -- HALF-EVIDENCED, and three earlier sentences about it were false.**
+A diagnostic fork per side ran under `-XX:+PrintCompilation` (it measures nothing; the flag
+perturbs). What the logs actually show:
+
+- `Runtime$::swhnf` is **216 bytes** on A and **260 bytes** on B (+44), reaching **tier 4 (C2)** at
+  **16 432 ms** (A, `wp6-s2-c2-A.log:15690`) and **20 559 ms** (B, `:15360`), with OSR tier-4
+  compiles at 16 745 ms and 21 118 ms.
+- **THE BOOT HAD ALREADY FINISHED.** The `Loaded 129 modules` line sits at **~16 289 ms** on A
+  (`wp6-s2-c2-A.log:15148`, between compilation stamps 16 287 and 16 289) and **~20 244 ms** on B
+  (`wp6-s2-c2-B.log:14654`). So `swhnf` reaches C2 **inside the FIRST WARM-UP ITERATION**, about
+  140-320 ms after the boot -- *not* "during the boot", as the first write-up said. The conclusion
+  survives, because the first MEASURED iteration is the sixth; the stated reason did not.
+- **THE "11-13 s boot" FIGURE IS WITHDRAWN AS UNVERIFIED**: no artifact retains it, and the two
+  logs that do carry a boot time say 16.3 s and 20.2 s under `PrintCompilation`.
+- **"Neither log shows any later `swhnf` compilation or `made not entrant`" WAS FALSE FOR B.**
+  After B's tier-4 compile there are `20609 ... 3 ... made not entrant`, `20908 ... % 2`,
+  `21118 ... % 4` and `21167 ... % 2 ... made not entrant` (`wp6-s2-c2-B.log:15367,15435,15527,
+  15528`). VERIFIED BENIGN in the only sense that matters here: every retirement names **tier 3 or
+  tier 2**, i.e. a lower-tier version being displaced once tier 4 exists, and no tier-4 `swhnf`
+  method is retired in either log.
+- **NEITHER DIAGNOSTIC FORK COMPLETED.** A failed at W2 iteration 4 (`exit 5`, a read timeout whose
+  mechanism is **unverified** -- no GC log, no thread dump); B was stopped by hand at W1 iteration
+  3 with **two warm-up rows** in its CSV. So on B there is no compilation evidence at all from
+  inside the measured window. **Condition 4 is therefore HALF-EVIDENCED**: the tier-4 timestamps
+  are real and both precede the first measured iteration, and the claim that nothing deoptimised
+  *during the measured window* rests on A's partial log alone.
+
+**THE BYTECODE READING, WEAKENED TO WHAT IS SHOWN.** 216 -> 260 bytes is measured. On this JDK
+`MaxInlineSize` is 35 and `FreqInlineSize` is 325, so both sizes sit in the same coarse class and
+**the bytecode-size threshold story alone is excluded** -- that is all. The earlier claim that
+"the obvious 'it stopped being inlinable' story is EXCLUDED" is too strong: `InlineSmallCode`
+(compiled native size) and the caller's node-count and inline budget both scale with callee size,
+and a 20 % growth of the evaluator's hottest method can change what else fits alongside it.
+**UNVERIFIED: the `-XX:+PrintFlagsFinal` output for those two flags was not retained** -- they are
+HotSpot defaults and almost certainly right, but nothing on disk proves it for this JVM.
+
+**SIX DEVIATIONS FROM THE DESIGN, each named as a deviation rather than folded away.**
+
+1. **TWO WORKLOADS, NOT ONE.** The design says "a pure fold dominated by `swhnf`". W1 is that
+   fold. W2 was ADDED because W1 alone would have answered the wrong question: the check sits at
+   the HEAD of `swhnf` precisely for the already-`Evaluated` path, and W1 barely exercises it.
+2. **A THIRD RUN, ORDER-SWAPPED, WAS ADDED.** The design interleaves at fork level but always runs
+   A first inside a pair, which leaves a within-pair position effect unmeasured. Estimated
+   position effect: second-minus-first was +5.77 % in run 1 and -4.64 % in run 2, averaging
+   +0.5 %, against an averaged tree effect of +5.3 %. The control is right in SHAPE and powerless
+   in SIZE: one replicate of each order constrains nothing quantitatively, and in the swap run the
+   two sides trend in OPPOSITE directions across forks (+1.2 %/fork and -3.0 %/fork on W2), which
+   a common box drift cannot produce.
+3. **THE `swhnf` COUNT IS A DERIVED LOWER BOUND, NOT A COUNT**, so the per-call figures are bounds
+   rather than values -- and, as above, too crude to settle what they were first used to settle.
+4. **THE DRIVER IS ONE FILE POINTED AT TWO CLASSPATHS**, not two copies checked by sha256. That is
+   stronger for the driver, but condition 3's concern is broader than the driver ("if the harness
+   is also rebuilt or edited between sides"), so it is a departure, not a strict improvement.
+5. **ONLY `core` WAS CLEAN-REBUILT ON B** (see the table above); the design's clean-build
+   requirement is met for A in full and for B's `core` only.
+6. **THE WRITE-UP WAS REVISED AFTER REVIEW WITHOUT RE-MEASURING.** Every figure in it comes from
+   the three runs of 2026-09-20; the corrections are to claims, not to data.
+
+**WHAT THIS A/B ACTUALLY DECIDES, stated as a fact about the mechanism and not as a
+recommendation.** Flipping `ermine.preview.cancelOnTimeout` adds **no per-force cost at all**: the
+head check and the three catch arms are in the binary either way, and the switch only governs
+whether the watchdog ARMS `cancelTarget` after a timeout -- at which point one render is already
+wedged and the branch is taken on one thread for at most a grace period. So these figures bear on
+**whether stage 1's check is acceptable to carry in the evaluator at all**, which is a question
+about the commit that is already on this branch. They do not bear on the PER-FORCE cost of the
+flip, because the flip has none. **They are also not the whole of the flip's cost**: turning the
+switch on turns on §14(d) and (f) -- the UNCONDITIONAL discard of the render session on a taken
+cancel (a boot, and every memoised thunk in it, per cancelled render), the two-phase watchdog, and
+`isFatal`'s documented exception, which is sound only for as long as that discard stays
+unconditional. Those are behavioural costs and this instrument says nothing about them.
+
+**WHAT WOULD MAKE THIS DECISIVE -- NOT RUN, and the user's to choose.** Costed by the review from
+this run's own logs (about 65 s per fork; a 5+5-fork run took 9.3-11.0 min wall). Every one of
+these needs the editor closed.
+
+| # | What | Machine time | What it buys |
+|---|---|---|---|
+| 1 | **A counting build**: one scratch worktree of B with a static counter in `swhnf`, one untimed fork | clean `core` ~40 s + 1 fork ~2 min = **~3 min** | turns `>= 4`/element into a real count and settles whether `<= 73 ns` is or is not compatible with the volatile load. Highest value per minute. Needs permission to edit Scala in a throwaway tree |
+| 2 | **A second A-vs-A noise pair, AFTER the A/B pairs**, under the same load | **~11 min** | two draws of `spread_AA` instead of one; would expose or refute the 3.04 % low draw. Still not a distribution |
+| 3 | **15 forks per side, both orders** | 2 runs x 30 forks x 65 s = **~65 min** | the decisive experiment. From the observed fork-median CV of 4.6 % (A-side W2), detecting a 5 % shift at 80 % power / alpha 0.05 needs ~13-14 forks per side; at 15 the p = 0.089 either becomes a result or collapses |
+| 4 | **`performance` governor** for the duration (`cpupower frequency-set -g performance`, root) | **~0 min**, pair with #3 | cuts the fork-to-fork spread that is the whole problem. Alone it changes the numbers without making them decisive |
+| 5 | **Isolate the head check**: a third tree = `0ee08425` with ONLY the `swhnf` head check reverted, A/B against B | clean `core` ~40 s + **~11 min** | separates the head check from the `Prim.apply` / `Box.apply` / `Bottom.thrown` catch arms, and makes the attribution language true instead of assumed |
+| 6 | **A denser micro-workload** (four folds over one shared list, or `length` over a range sized to ~2 s/iteration) | **~0 extra**, replaces W2 | raises the signal against the ~90 ms fixed overhead. Not comparable with the existing figures |
+| 7 | **Discard fork 1 of each run** | **0 min**, re-analysis only | removes the demonstrably contaminated first fork; moves A/B W2 to +4.03 % |
+
+Cheapest package the review names: **#1 + #2 + #7, about 14 minutes of machine time**; full
+confidence **#1 + #3 + #4 + #5, about 80 minutes**. None of it was run.
+
+**WHAT THIS RUN DOES NOT MEASURE.** The ARMED case: every figure above is the unarmed path
+(`cancelTarget` null). It does not measure a render session, the LSP, or anything with IO in it.
+It cannot apportion its own delta between the head check and the catch arms. And it is a
+ONE-MACHINE, ONE-DAY, `powersave`-governor, 5-fork instrument: evidence about this box on this
+afternoon, not a portable constant.
 
 It is an INSTRUMENT and never gate evidence (`docs/gate-policy.md:28-29`, `:98-101`). Its result
 is an input to STAGE 3 -- flipping `ermine.preview.cancelOnTimeout` -- which is the user's call
@@ -1920,8 +2241,9 @@ adds to them:
    countdown is back. So (ii) narrows Q13, it does not close it;
  - **IT IS THREE STAGES AND ONLY THE FIRST IS BUILT.** Stage 1 is the mechanism, default OFF,
    which costs a load and a branch per force and changes NOTHING about how the server behaves
-   until the switch is set. Stage 2 measures that cost (§11's Instruments row; `perf-bench.sh`
-   is blind to it). STAGE 3 IS THE DEFAULT, and it is the user's, under the standing rule that
+   until the switch is set. Stage 2 MEASURED that cost (§11's Instruments section; `perf-bench.sh`
+   is blind to it): not distinguishable on an ordinary fold, a suggested but not established
+   ~5 % on the `swhnf`-densest one, and the flip itself adds nothing further. STAGE 3 IS THE DEFAULT, and it is the user's, under the standing rule that
    no default is flipped without them;
  - **(iii) IS NOT TAKEN AND IS NOT DEAD.** An exit at the fire remains the only answer for the
    cases the cancel cannot reach, and this document keeps its argument above: a legitimately
@@ -2123,7 +2445,7 @@ table's WP-9 and WP-10. Read the ticket here.
 | WP-3 | `_registerDecls` on `SessionEnv` (default on, carried by `copy`), consulted at `Session.scala:915`, off on every `Resident.withEnv` copy | the group-D registration property in §11; `TestJson`, `TestSchema`, `TestNamedFields` unchanged | pr / ~2 h |
 | WP-4 | `Runner`: `reports` keyed by `(module, binding)`, `report`/`compile(module, binding)`, `cfg.reportName` the default for the HTTP route; `paramSchema(module, binding)`; `resultKind` public; `builtins` snapshot after its preamble; `invalidate(paths: Set[Path]): Set[String]` under `evalLock` (scrub the closure, evict `reports`, no eager reload); `Backends.scannerFor(dialect, variant)`; a `delegatingRun: RunDB` in `lsp/` | the four `TestRunner` properties in §11; `bin/ermine-serve` behaviour unchanged (`TestRunner` green) | pr / ~1 day |
 | WP-5 | the preview thread and `Preview` object in `lsp/`: lazy boot on first `ermine/render`, daemon thread, `uri` -> module, `inferredRoot`, absolute `roots`, queue with one in flight / one queued / latest wins, `generation` echo, mtime scan per render, `stale` generation counter, watchdog with the restart button, document-size cap, `invalidate` posted from `afterReload`, `ermine/preview/invalidated`, `ermine/schema {binding}` routed to the queue, `ermine/preview/reports` on the dispatch thread, work-done progress; launcher `-Xmx${ERMINE_LSP_XMX:-2g}` + `-XX:+ExitOnOutOfMemoryError` and the `ermine.maxHeap` setting | group D properties; `lsp-client.py` smoke; RSS, boot seconds and heap after a watchdog fire (allocating and non-allocating loop) MEASURED and written into §2.2/§2.5; a render whose evaluation loops is answered by the watchdog and the resident still answers a hover; an allocating loop ends in a clean exit the client restarts | pr + commit + instruments / ~3 days |
-| WP-6 | **cooperative cancel. STAGE 1 IS BUILT (2026-09-20), AND REVIEWED: the independent design-and-implementation review returned RED with four MUST-FIX items (DM-1 the answer-before-clear ordering, DM-2 the `shutdown`-inside-the-grace leak, DM-3 `Bottom.thrown`, and the `previewLock` race in the new suite's own `R` properties), all fixed here; STAGE 2 AND STAGE 3 ARE NOT BUILT.** This row was AMENDED to the reviewed design, which departs from its own earlier letter in four places, each recorded here rather than folded away. **(a) THE FLAG.** ONE GLOBAL `@volatile Runtime.cancelTarget: Thread` beside `@volatile Runtime.cancelWhy: Cancelled`, and the check is at the **HEAD of `Runtime.swhnf`**, unconditionally, on every call -- one volatile load and one predictable null-branch; `Thread.currentThread` is reached only while a cancel is armed. NOT a per-thread evaluation context and NOT `Thread.interrupt`: `Preview.takeJob` reads an `InterruptedException` as "stop", `ForeignClasses.Recoverable` and the backends react to an interrupt, third-party code may clear the flag, a JDBC driver may abort its connection. NOT inside `swhnf`'s `case old =>` branch: the design review proposed that cheaper placement and then FALSIFIED it -- `json/Encode.scala`'s `spine` walks a list with `while (true) { Runtime.swhnf(cur) }`, and on a CYCLIC list every thunk it re-reads is already `Evaluated`, so that branch is never entered. **(b) `Cancelled` IS A `ControlThrowable`**: stackless, EXCLUDED by `NonFatal` so `swhnf`'s own capture does not memoise it, and NOT an `Error` -- `ForeignClasses.Recoverable` swallows an arbitrary `Error` into a failed reflective lookup and lets a `ControlThrowable` through (`ForeignClasses.scala:26`, verified by reading before it was relied on). **(c) THE FIVE CATCHES THAT WOULD HAVE SWALLOWED IT**, which this row did not name and without which a cancel silently does not work: `Prim.apply` and `Box.apply` (`Runtime.scala`), `IO.Unsafe.eval` (`session/Lib.scala` -- it would hand the cancel to Ermine-level error handling), the foreign invoke (`session/Session.scala` -- it re-wraps as a `RuntimeException`, which IS `NonFatal` and would be memoised) and **`Bottom.thrown` (`Runtime.scala`), THE FIFTH, FOUND BY THE STAGE 1 REVIEW (DM-3)**: two `Bottom` bodies in `core` FORCE, and `thrown` is what `Encode`, `Doc`, `Pretty.ppRuntime` and `toString` call, so a cancel could be caught there and RETURNED AS A VALUE. Each gained `case c: Cancelled => throw c` as its FIRST arm and was NOT otherwise narrowed. **THE EARLIER CLAIM THAT "every other `catch` of `Throwable` ... was audited and passes a `Cancelled` through" WAS FALSE and is corrected here**: the audit covered `catch` clauses on the call path and missed a by-name body that forces INSIDE one. With `Bottom.thrown` closed, the sweep stands for the rest. **(d) THE WATCHDOG IS TWO-PHASE**, and only when the switch is on; off, `fire` behaves EXACTLY as before. Phase 1 at `timeoutMillis`: arm the flag and NOTHING else -- no answer, no stuck mark, no drain, no notification. Phase 2a, the cancel took: answer 500 with the timed-out text reworded, WITHOUT §4's `stuck` marker (`refusal`, not `stuckRefusal`), **DISCARD THE SESSION UNCONDITIONALLY** -- the escape leaves WHITEHOLED thunks with this thread in `pending`, which a later same-thread force would memoise as "infinite loop detected", and the discard must not ride on the stuck machinery because `stuck` was never set and `clearStuck` returns 0 -- then clear the flag. Phase 2b, `graceMillis` (1000 ms, a constant) later and still in flight: CLEAR THE FLAG FIRST, then do exactly what the watchdog did before, and Q10's recovery applies unchanged. **(e) A USER `$/cancelRequest` DOES NOT INTERRUPT** -- a deliberate departure from this row's earlier text, for three recorded reasons: the extension passes no `CancellationToken` today so nothing sends one, a discard costs a boot, and the watchdog covers the case that matters. `userAsked` is on the `Cancelled` class for a future client and nothing sets it true. **(f) `isFatal` GAINS ONE DOCUMENTED EXCEPTION**: a `Cancelled` is NOT fatal for the stuck machinery, although it is a `ControlThrowable` and so fails that method's half (2). It is sound ONLY because the cancel path discards the session unconditionally; if that discard is ever made conditional the exception must go with it, and `isFatal`'s scaladoc says so. **(g) WHAT THE MECHANISM CANNOT CANCEL**, because none of it reaches `swhnf`: a loop inside ONE primitive, the relational row loop (`relational/package.scala`'s `driveLeftId`), a JDBC scan, and a thread parked in `SessionTask`'s `future.get` or a thunk's `latch.await`. **Phase 2b is the fallback for all of them.** **(h) THE FLAG IS CLEARED IN FIVE PLACES**: before the ANSWER on the cancel path (DM-1 -- `clearCancel`, `discardSession`, then `finish`, so the answer's claim is true when it is sent), at phase 2b before the fallback, in `runJob`'s `finally` for every job, in `Preview.cancelTimer` (DM-2 -- the `shutdown`-inside-the-grace path that no other clear reaches, and the one that matters in the unforked test JVM), and in `Preview.takeJob`, which logs loudly. **THE WRITES THEMSELVES ARE BEHIND `Runtime.armCancel` / `Runtime.disarmCancel`** (S1/S2), which enforce the order and the identity guard in one place and let an arm be REFUSED when another thread's is live; the fields are `private[Runtime]` and `swhnf` reads them directly. **(i) THE SWITCH** is `ermine.preview.cancelOnTimeout`, read by `applySettings` by both routes like the other two settings, ill-typed values refused out loud, DEFAULT FALSE. It is NOT exported in `editor/vscode/package.json`: an export is only useful once the default is a live question, which is stage 3's, and adding it now would offer the user a switch this document says is not theirs to flip yet. **DEFAULT-OFF DOES NOT MAKE THE CHANGE FREE** -- the load and the branch are in the binary regardless; stage 2 measures them | **STAGE 1 (done 2026-09-20)**: `TestPreviewCancel`'s nine properties (§11) pass, `TestLspRobustness` is unchanged and still inside its cap, and a looping render is cancelled and the next render boots a new session, MEASURED. **STAGE 2**: the evaluator A/B of §11's Instruments row, run in two worktrees with the editor closed. **STAGE 3, THE USER'S**: the default is flipped only by them, on stage 2's figures | pr (stage 1, done) + instrument (stage 2) + the user (stage 3) |
+| WP-6 | **cooperative cancel. STAGE 1 IS BUILT (2026-09-20), AND REVIEWED: the independent design-and-implementation review returned RED with four MUST-FIX items (DM-1 the answer-before-clear ordering, DM-2 the `shutdown`-inside-the-grace leak, DM-3 `Bottom.thrown`, and the `previewLock` race in the new suite's own `R` properties), all fixed here; **STAGE 2 IS BUILT AND RUN (2026-09-20)** -- `tracker/tools/eval-bench.sh`, figures in §11's Instruments section -- **AND STAGE 3 IS NOT BUILT AND IS THE USER'S.** This row was AMENDED to the reviewed design, which departs from its own earlier letter in four places, each recorded here rather than folded away. **(a) THE FLAG.** ONE GLOBAL `@volatile Runtime.cancelTarget: Thread` beside `@volatile Runtime.cancelWhy: Cancelled`, and the check is at the **HEAD of `Runtime.swhnf`**, unconditionally, on every call -- one volatile load and one predictable null-branch; `Thread.currentThread` is reached only while a cancel is armed. NOT a per-thread evaluation context and NOT `Thread.interrupt`: `Preview.takeJob` reads an `InterruptedException` as "stop", `ForeignClasses.Recoverable` and the backends react to an interrupt, third-party code may clear the flag, a JDBC driver may abort its connection. NOT inside `swhnf`'s `case old =>` branch: the design review proposed that cheaper placement and then FALSIFIED it -- `json/Encode.scala`'s `spine` walks a list with `while (true) { Runtime.swhnf(cur) }`, and on a CYCLIC list every thunk it re-reads is already `Evaluated`, so that branch is never entered. **(b) `Cancelled` IS A `ControlThrowable`**: stackless, EXCLUDED by `NonFatal` so `swhnf`'s own capture does not memoise it, and NOT an `Error` -- `ForeignClasses.Recoverable` swallows an arbitrary `Error` into a failed reflective lookup and lets a `ControlThrowable` through (`ForeignClasses.scala:26`, verified by reading before it was relied on). **(c) THE FIVE CATCHES THAT WOULD HAVE SWALLOWED IT**, which this row did not name and without which a cancel silently does not work: `Prim.apply` and `Box.apply` (`Runtime.scala`), `IO.Unsafe.eval` (`session/Lib.scala` -- it would hand the cancel to Ermine-level error handling), the foreign invoke (`session/Session.scala` -- it re-wraps as a `RuntimeException`, which IS `NonFatal` and would be memoised) and **`Bottom.thrown` (`Runtime.scala`), THE FIFTH, FOUND BY THE STAGE 1 REVIEW (DM-3)**: two `Bottom` bodies in `core` FORCE, and `thrown` is what `Encode`, `Doc`, `Pretty.ppRuntime` and `toString` call, so a cancel could be caught there and RETURNED AS A VALUE. Each gained `case c: Cancelled => throw c` as its FIRST arm and was NOT otherwise narrowed. **THE EARLIER CLAIM THAT "every other `catch` of `Throwable` ... was audited and passes a `Cancelled` through" WAS FALSE and is corrected here**: the audit covered `catch` clauses on the call path and missed a by-name body that forces INSIDE one. With `Bottom.thrown` closed, the sweep stands for the rest. **(d) THE WATCHDOG IS TWO-PHASE**, and only when the switch is on; off, `fire` behaves EXACTLY as before. Phase 1 at `timeoutMillis`: arm the flag and NOTHING else -- no answer, no stuck mark, no drain, no notification. Phase 2a, the cancel took: answer 500 with the timed-out text reworded, WITHOUT §4's `stuck` marker (`refusal`, not `stuckRefusal`), **DISCARD THE SESSION UNCONDITIONALLY** -- the escape leaves WHITEHOLED thunks with this thread in `pending`, which a later same-thread force would memoise as "infinite loop detected", and the discard must not ride on the stuck machinery because `stuck` was never set and `clearStuck` returns 0 -- then clear the flag. Phase 2b, `graceMillis` (1000 ms, a constant) later and still in flight: CLEAR THE FLAG FIRST, then do exactly what the watchdog did before, and Q10's recovery applies unchanged. **(e) A USER `$/cancelRequest` DOES NOT INTERRUPT** -- a deliberate departure from this row's earlier text, for three recorded reasons: the extension passes no `CancellationToken` today so nothing sends one, a discard costs a boot, and the watchdog covers the case that matters. `userAsked` is on the `Cancelled` class for a future client and nothing sets it true. **(f) `isFatal` GAINS ONE DOCUMENTED EXCEPTION**: a `Cancelled` is NOT fatal for the stuck machinery, although it is a `ControlThrowable` and so fails that method's half (2). It is sound ONLY because the cancel path discards the session unconditionally; if that discard is ever made conditional the exception must go with it, and `isFatal`'s scaladoc says so. **(g) WHAT THE MECHANISM CANNOT CANCEL**, because none of it reaches `swhnf`: a loop inside ONE primitive, the relational row loop (`relational/package.scala`'s `driveLeftId`), a JDBC scan, and a thread parked in `SessionTask`'s `future.get` or a thunk's `latch.await`. **Phase 2b is the fallback for all of them.** **(h) THE FLAG IS CLEARED IN FIVE PLACES**: before the ANSWER on the cancel path (DM-1 -- `clearCancel`, `discardSession`, then `finish`, so the answer's claim is true when it is sent), at phase 2b before the fallback, in `runJob`'s `finally` for every job, in `Preview.cancelTimer` (DM-2 -- the `shutdown`-inside-the-grace path that no other clear reaches, and the one that matters in the unforked test JVM), and in `Preview.takeJob`, which logs loudly. **THE WRITES THEMSELVES ARE BEHIND `Runtime.armCancel` / `Runtime.disarmCancel`** (S1/S2), which enforce the order and the identity guard in one place and let an arm be REFUSED when another thread's is live; the fields are `private[Runtime]` and `swhnf` reads them directly. **(i) THE SWITCH** is `ermine.preview.cancelOnTimeout`, read by `applySettings` by both routes like the other two settings, ill-typed values refused out loud, DEFAULT FALSE. It is NOT exported in `editor/vscode/package.json`: an export is only useful once the default is a live question, which is stage 3's, and adding it now would offer the user a switch this document says is not theirs to flip yet. **DEFAULT-OFF DOES NOT MAKE THE CHANGE FREE** -- the load and the branch are in the binary regardless, and FLIPPING THE DEFAULT ADDS NO PER-FORCE COST for the same reason. Stage 2 measured what carrying them costs: nothing distinguishable on an ordinary fold, and a suggested but not established ~5 % on the `swhnf`-densest workload (§11) | **STAGE 1 (done 2026-09-20)**: `TestPreviewCancel`'s nine properties (§11) pass, `TestLspRobustness` is unchanged and still inside its cap, and a looping render is cancelled and the next render boots a new session, MEASURED. **STAGE 2 (done 2026-09-20; its WRITE-UP reviewed RED and corrected without re-measuring)**: the evaluator A/B of §11's Instruments row, BUILT as `tracker/tools/eval-bench.sh` and RUN in two worktrees with the editor closed (`lsp=0 console=0 serve=0 ermine-jvm=0` checked before every one of the 30 forks). THE ANSWER IS NOT ONE NUMBER, AND IT IS WEAKER THAN A NUMBER: on the ordinary build-and-fold workload nothing is distinguishable (+2.9 % and -1.4 % in two runs, every test p >= 0.12, estimators disagreeing in sign). On the `swhnf`-densest workload -- re-folding a list whose cells are already `Evaluated`, which is the shape the head placement exists for -- **W2 moved +5.8 % and +4.9 % in the same direction in two runs with the pair order reversed, and every estimator (fork medians, pooled mean, pooled median, per-fork minima, every leave-one-fork-out) agrees in sign; a central estimate is about +5 %. No test on 5 forks per side reaches conventional significance -- exact stratified permutation over both runs p = 0.089, Mann-Whitney on the A-first run p = 0.095, sign tests p = 0.38 and 1.0 -- and a hierarchical bootstrap CI on the ratio includes zero in both runs. The instrument suggests a cost of roughly 5 % on the swhnf-densest workload; it does not establish one.** Two further corrections the review forced: the delta is the WHOLE STAGE 1 COMMIT's effect on evaluation (the head check PLUS the `case c: Cancelled => throw c` arms in `Prim.apply`, `Box.apply` and `Bottom.thrown`, whose bytecode sizes were never measured), not the head check alone; and the derived <= 73 ns per check is an UPPER bound from a LOWER bound on the count, so it is compatible with a true cost of 1 ns and cannot be used to argue the load is not the cause -- at a realistic 40-100 `swhnf` calls per element-visit it falls to 2.4-7.3 ns. The check does add 44 bytes of bytecode to `swhnf` (216 -> 260), which excludes the bytecode-size inlining threshold story and nothing more. §11 carries the table, the tests, the six deviations, what is MEASURED versus DERIVED versus UNVERIFIED, and the costed options that would make this decisive (none run). **STAGE 3, THE USER'S**: the default is flipped only by them, on stage 2's figures | pr (stage 1, done) + instrument (stage 2) + the user (stage 3) |
 | WP-7 | extension: **Ermine: Preview Report...** as a (file, binding) picker over `ermine/preview/reports` with per-workspace memory and free-text fallback, **Ermine: Render Report to JSON** into an untitled editor tab, `ermine.preview.roots` (resource scope, absolutised), re-render on `invalidated`, the `ermine.maxHeap` export; **(Q11, decided 2026-09-20) re-render when the picked report's own file is created or changed while its last answer was a PLACEMENT 404** (not a `Runner` 404: that module loaded, so `invalidated` already covers it and a second trigger would double-render), told apart by **Q15's `reason` key** (§4) -- ONE SMALL SERVER CHANGE, in `lsp/Preview.scala` only, decided by the user after WP-7's review showed no client-side test could be exact; **(Q8/Q10) the stuck banner of §5**, fed by `"stuck": true` on a refusal and by `ermine/preview/stuck`, carrying the **Ermine: Restart Language Server** button and clearing on `{stuck: false}`, **with the `seq` high-water mark RESET on the language client's Stopped -> Running transition** (§4's rule (1), DD-2: `seq` is per-process and restarts at 1, so a client that kept the old mark across the restart the watchdog's own message asks for would ignore the fresh server's `{stuck: true, seq: 1}` for the life of its session); **(Q9) the `ermine.preview.timeoutSeconds` and `maxDocumentBytes` exports, with "0 = no watchdog" in the setting's description** | on `core/src/test/resources/doc/Sales.e` with no setting the picker offers `report : Query -> Node`; **the tab shows `{"status": 400, "path": "$.params", "message": "the required key \"fromDay\" is missing"}`** (WP-8 turns it into a document); saving `Sales.e` updates the tab with no restart; moving `Sales.e` away and back re-renders it by itself; no webview. **THE 400's WORDING IS THE MEASURED ONE and this row was amended (2026-09-20)**; AS FIRST WRITTEN it read "the tab shows a 400 naming `$.params.fromDay`", which no client can produce: a MISSING required key is reported at the path of the OBJECT that should have held it with the key in the message (`json/Decode.scala:723-725`), and `$.params.fromDay` is the path of a key that is PRESENT and ill-typed -- `{"fromDay": 5}` answers "expected a date string yyyy-MM-dd, found the number 5" there, which is WP-8's case, measured. A per-key path for a missing key would be a change in `json/Decode.scala` and was NOT made | manual + commit smoke / ~1 day |
 | WP-8 | params: `.ermine/preview/<Module>/<binding>.params.json`, the skeleton from the schema on first pick, `<binding>.schema.json` beside it with a relative `$schema`, `$schema` stripped before sending, re-render on save, the orphan message, the one `.gitignore` line | `Sales` renders a document on first pick with no hand-written JSON; completion and a red squiggle for a wrong key in `Sales/report.params.json`; saving it re-renders; renaming the binding shows "no params for"; `git status` shows the params file and not the schema | commit smoke + manual / ~1 day |
 | WP-9 | webpack browser bundle: config, `npm run bundle` / `bundle:watch`, `devtool: 'source-map'`, output under `client/dist/browser/` | `npm test` unchanged; the bundle checklist of §5 passes under a CSP without `unsafe-eval` | nightly (`npm test`) + checklist / ~half a day |
