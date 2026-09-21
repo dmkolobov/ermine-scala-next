@@ -710,8 +710,17 @@ final class Runner(val cfg: RunnerConfig) {
         val dirty =
           if (direct.isEmpty) Set.empty[String]
           else {
-            val d = Session.dependentsOf(env, direct)
-            Session.scrub(env, builtins, d)
+            // WP-25: `scrub` may unload MORE than it is asked to (it closes
+            // the set over re-exporters) and returns the set it scrubbed BY
+            // -- a superset of what was passed; `direct` is already filtered
+            // to loaded modules above, so here that set IS what went.
+            // The compiled reports evicted here, the `invalidate:` log line
+            // and the set this answers to `ermine/preview/invalidated` must
+            // all be THAT set: a report compiled against a module the widening
+            // took would otherwise stay cached against names that are gone.
+            // With the dep-cache edges intact `dependentsOf` is already closed
+            // and this equals `d` -- WP-26 is the case where it is not.
+            val d = Session.scrub(env, builtins, Session.dependentsOf(env, direct))
             val keys = reports.keySet.iterator
             while (keys.hasNext) if (d(keys.next()._1)) keys.remove()
             snapshot()

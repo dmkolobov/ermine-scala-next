@@ -807,23 +807,265 @@ object Session {
     *
     * Lifted out of `lsp.Resident` (WP-2), which passes its own post-preamble
     * snapshot: it scrubs per check on the module being checked (on the copy)
-    * and on the resident env when a reload runs. */
-  def scrub(e: SessionEnv, builtins: SessionEnv, modules: Set[String]): Unit = {
-    val b = builtins
-    def mine(g: Global) = modules(g.module)
+    * and on the resident env when a reload runs.
+    *
+    * WP-25 (`tracker/JSON-WIDGET-PLAYGROUND.md` §14, §13 Q20): ANY SET IS
+    * SAFE TO UNLOAD.  `scrub` used to rely, unchecked, on its caller
+    * handing it a set CLOSED UNDER IMPORTERS: `e.env` goes by each `V`'s
+    * OWN defining module while every name table goes by the KEY's module,
+    * so a set holding a DEFINER but not its RE-EXPORTERS deleted
+    * `Control.Functor.Functor` from `env` and left `Control.Monad.Functor`
+    * naming it -- and the next read of a module whose spelling collapses to
+    * the origin died in `Subst.assertTermClosed` with `undefined term`
+    * inside a stdlib file.  It now closes the set over re-exporters itself
+    * (`reExportClosure`) and repairs the re-export chains a scrub cuts
+    * (`reorigin`).
+    *
+    * WHAT "SAFE" MEANS HERE, exactly: afterwards **no name outlives the
+    * entity it names, and any module can be read** -- a spelling resolves to
+    * what it would resolve to on a session where these modules were never
+    * loaded, or fails to resolve out loud.  It does **NOT** mean "not
+    * stale".  A surviving module that merely IMPORTS a scrubbed one keeps
+    * its own values and its own `Type.Con`s, and a `Con` carries the `decl`
+    * it was built with (`Type.Con.equals` compares only the name, so nothing
+    * fails to unify, but `Pattern.scala:139,159` read that `decl`).  Making
+    * a session not stale is the CALLER's question and the reason
+    * `dependentsOf` exists; this method does not answer it.  Likewise the
+    * process-wide constructor registry (`DataConDecl.register`) has no
+    * `unregister` and `scrub` leaves it untouched, as it always has.
+    *
+    * THE RETURN VALUE is the set it scrubbed BY: `modules` unioned with the
+    * closure, hence a SUPERSET of the argument.  It is **not** "what left
+    * `loadedModules`" -- a module the caller names but this session never
+    * loaded comes back in the result with nothing to show for it, and a
+    * second scrub of an already-unloaded module returns it again.
+    * Intersect with the caller's pre-scrub `loadedModules` for what actually
+    * left.  **A caller that reloads must reload the RETURNED set**, not the
+    * one it passed; a caller that only wanted the module out of a throwaway
+    * copy (`lsp.Resident.checkFile`) may ignore it.  Pinned by `TestScrub`. */
+  def scrub(e: SessionEnv, builtins: SessionEnv, modules: Set[String]): Set[String] = {
+    val b  = builtins
+    val ms = reExportClosure(e, b, modules)
+    def mine(g: Global) = ms(g.module)
     e.env = e.env filter { case (v, _) => v.name match {
       case Some(g: Global) => !mine(g) || b.env.contains(v)
       case _               => true
     } }
     e.termNames       = e.termNames       filterNot { case (g, _) => mine(g) && !b.termNames.contains(g) }
-    e.termNameOrigins = e.termNameOrigins filterNot { case (g, _) => mine(g) && !b.termNameOrigins.contains(g) }
     e.cons            = e.cons            filterNot { case (g, _) => mine(g) && !b.cons.contains(g) }
     e.privateCons     = e.privateCons     filterNot { case (g, _) => mine(g) && !b.privateCons.contains(g) }
-    e.consOrigins     = e.consOrigins     filterNot { case (g, _) => mine(g) && !b.consOrigins.contains(g) }
     e.classes         = e.classes         filterNot { case (g, _) => mine(g) && !b.classes.contains(g) }
+    // DEAD BY CONSTRUCTION (WP-25 review N4): no source-level `instance`
+    // statement exists -- `instance` is in `parsing/package.scala`'s
+    // `startingKeywords` and no parser consumes it -- so `s.classes` is
+    // written only by `loadModule` below and by `Lib`, always under the
+    // class's OWN name, and `classOrigins` has NO writer anywhere in the
+    // repo.  Both lines are kept for the day one appears; neither has ever
+    // removed an entry.
     e.classOrigins    = e.classOrigins    filterNot { case (g, _) => mine(g) && !b.classOrigins.contains(g) }
-    e.loadedFiles     = e.loadedFiles     filterNot { case (_, n) => modules(n) }
-    e.loadedModules   = e.loadedModules -- modules
+    e.loadedFiles     = e.loadedFiles     filterNot { case (_, n) => ms(n) }
+    e.loadedModules   = e.loadedModules -- ms
+
+    // THE NET.  `reExportClosure` only widens to modules this session has
+    // LOADED, because a module it never loaded cannot be unloaded and
+    // cannot be read back.  If such a module's key named something that
+    // went, dropping the key is the only honest move left.  MEASURED to
+    // remove NOTHING on the stdlib -- every key whose module is outside
+    // `loadedModules` (`Double`, `Field`, `IO.Unsafe`, `Native.Function`,
+    // `Layout.Presentation`, ...) is a BUILTIN, and builtins never leave
+    // `env` -- so this is a net under the closure and not the mechanism.
+    // The `forall` decides without allocating when there is nothing to do.
+    def net[K, A](m: Map[K, A])(ok: ((K, A)) => Boolean): Map[K, A] =
+      if (m forall ok) m else m filter ok
+    e.termNames   = net(e.termNames)  { case (_, v) => e.env.contains(v) }
+    e.cons        = net(e.cons)       { case (_, c) => e.cons.contains(c.name) }
+    e.privateCons = net(e.privateCons){ case (_, c) => e.cons.contains(c.name) || e.privateCons.contains(c.name) }
+    e.classes     = net(e.classes)    { case (_, c) => e.classes.contains(c.name) }
+
+    // THE `*Origins` TABLES, LAST, because they are repaired against the
+    // names that survived above.  See `reorigin`.
+    e.termNameOrigins = reorigin(e.termNameOrigins, b.termNameOrigins, ms, mine, e.termNames.contains)
+    e.consOrigins     = reorigin(e.consOrigins, b.consOrigins, ms, mine,
+                                 g => e.cons.contains(g) || e.privateCons.contains(g))
+    ms
+  }
+
+  /** WP-25, round 2: the `*Origins` half, and it is a REPAIR rather than a
+    * deletion.
+    *
+    * `termNameOrigins`/`consOrigins` are name->NAME: `Prelude.Nil#` records
+    * that `Prelude` imported the spelling from `Native`, and `Native.Nil#`
+    * records that `Native` imported it from `Native.List`.
+    * `ModuleScope.collapseNames` walks that chain to its GREATEST ANCESTOR
+    * whenever a module reaches one spelling by two or more import paths, and
+    * `Renamer.resolveGlobal` (`rename/Renamer.scala:158-164`) resolves ONLY a
+    * one-element answer -- it compares NAMES, not entities, and calls
+    * anything else `Ambiguous`, which `Lower.varFor` turns into a placeholder
+    * and `assertTermClosed` into `undefined term`.
+    *
+    * So scrubbing a module that is a re-exporting INTERMEDIATE breaks the
+    * chain in the MIDDLE: the link `Native.Nil# -> Native.List.Nil#` goes,
+    * the walk stops at the dead `Native.Nil#`, and a module importing both
+    * `Prelude` and `Native.List` -- which reads fine on a whole session --
+    * gets two names where it used to get one and dies.  `reExportClosure`
+    * cannot prevent this: it reasons about ENTITY ownership, and
+    * `Prelude.Nil#`'s entity is `Native.List`'s (the definer), so `Prelude`
+    * correctly stays loaded while the NAME-level edge through `Native` is
+    * cut.  MEASURED on the resident's 130-module session: a scrub of
+    * `{Native}` changes the walk's answer for **111** live names, and
+    * `module T where import Prelude; import Native.List; t = Nil#` then dies
+    * with `undefined term` where it loads clean on the unscrubbed session
+    * (`scratchpad/wp25-splice.log`).
+    *
+    * WHAT THIS DOES: for every key that is STILL A NAME and that points at a
+    * scrubbed name, replace that ancestor by ITS OWN greatest ancestors,
+    * computed over the table AS IT WAS BEFORE this scrub -- so the walk
+    * reaches exactly the name it reached before.  MEASURED: 111 changed
+    * answers -> 0.
+    *
+    * WHAT IT DELIBERATELY DOES NOT DO: it does not remove a dead ancestor
+    * that IS a greatest ancestor.  `Relation.append` names both
+    * `Relation.Row.append` and `Relation.Sort.append`; scrubbing
+    * `Relation.Row` leaves the first dead, and the spelling stays ambiguous
+    * -- which is what it was BEFORE the scrub too (MEASURED: that module
+    * dies identically on an unscrubbed session).  Deleting the entry, or
+    * filtering the dead name out of it, were both measured: deleting leaves
+    * the real failure above untouched while making the table look clean, and
+    * filtering turns a legitimately ambiguous spelling into a resolvable one.
+    * Neither is the walk a fresh load performs; this is.
+    *
+    * IT IS THE ONE PART THAT DOES NOT SELF-HEAL (review N5).  A repaired
+    * entry belongs to a module that was NOT scrubbed, so reloading the
+    * scrubbed module does not rewrite it: after `{Native}` is loaded back,
+    * `Prelude.Nil#` still records `Native.List.Nil#` where a fresh load
+    * records `Native.Nil#`.  That is walk-equivalent -- the greatest
+    * ancestor is the same either way, and the witness reads -- and the entry
+    * is rewritten when `Prelude` itself is next read.  MEASURED by the
+    * WP-25 review: 0 walk movement and the witness OK after the reload.
+    *
+    * WHAT IT CANNOT KEEP, stated because it is a real limitation and not an
+    * oversight: `lsp/Definitions.canonWith` chases only SINGLE-element
+    * entries and stops at a multi-element one, so where a dead ancestor had
+    * two greatest ancestors the repaired entry becomes two-element and that
+    * chase stops one step early, at a different LIVE name.  No value can
+    * prevent it: the answer it used to give was the dead name itself.
+    * MEASURED on the 130-module session: exactly **2** of 3 701 names in
+    * scope (`Prelude.head#`, `Prelude.tail#`, whose `Native.head#`/
+    * `Native.tail#` each have two greatest ancestors), **0** for every
+    * importer-closed set, and **0 buckets split** in every shape measured.
+    * Pinned by `TestScrub`.
+    *
+    * COST: one pass, fused with the module filter this replaces, and the
+    * patch is `kept ++ fix` over the handful of repaired entries rather than
+    * a rebuild of the 16 000-entry map.  For a set that is CLOSED UNDER
+    * IMPORTERS -- every product caller with intact dependency edges -- it
+    * repairs nothing at all, because a key whose ancestor was scrubbed is
+    * then itself scrubbed (MEASURED: 0 repairs on `dependentsOf` of
+    * `Maybe`, `Native` and `Control.Functor`). */
+  private def reorigin(m: Map[Global, List[Global]], bm: Map[Global, List[Global]],
+                       ms: Set[String], mine: Global => Boolean,
+                       live: Global => Boolean): Map[Global, List[Global]] = {
+    val anc = greatestAncestors(m)          // over the PRE-scrub table
+    def cut(g: Global, o: Global) = o != g && ms(o.module) && !live(o)
+    var fix = Map.empty[Global, List[Global]]
+    val kept = m filter { case (g, os) =>
+      if (mine(g) && !bm.contains(g)) false
+      else {
+        // `ms(o.module)` first: it is a lookup in a set of a few strings and
+        // it is false for almost every origin, so the two map lookups run
+        // only for the entries that could possibly need a repair
+        if (os.exists(cut(g, _)) && live(g)) {
+          val spliced = os.flatMap(o => if (cut(g, o)) anc(o) else List(o)).distinct
+          if (spliced != os) fix += g -> spliced
+        }
+        true
+      }
+    }
+    if (fix.isEmpty) kept else kept ++ fix
+  }
+
+  /** `ModuleScope.collapseNames`' own greatest-ancestor walk, memoised, over
+    * a given origins table.  The depth cap is `Definitions.canonWith`'s: the
+    * real chains are two or three long, and a cap is cheaper than proving the
+    * table acyclic.
+    *
+    * THE MEMO IS KEYED BY `g` ALONE, not by `(g, depth)` (review N6).  That
+    * is sound while the table is ACYCLIC, which the import graph makes it
+    * (`Session.acyclic`): every chain then reaches its greatest ancestors
+    * well inside the cap, so the depth a name is first reached at cannot
+    * change its answer.  Over a table with a cycle the walk still
+    * TERMINATES -- the cap sees to that, and the review measured a real
+    * scrub over an injected 2-cycle at 4.4 ms -- but the answer would then
+    * depend on iteration order. */
+  private def greatestAncestors(m: Map[Global, List[Global]]): Global => List[Global] = {
+    val memo = scala.collection.mutable.HashMap.empty[Global, List[Global]]
+    def go(g: Global, d: Int): List[Global] = memo.get(g) match {
+      case Some(r) => r
+      case None =>
+        val up = m.getOrElse(g, List(g))
+        val r  = if (d <= 0 || up == List(g)) List(g) else up.flatMap(go(_, d - 1)).distinct
+        memo.put(g, r)
+        r
+    }
+    go(_, 32)
+  }
+
+  /** WP-25: `modules` closed over RE-EXPORTERS -- the set `scrub` must
+    * actually unload if `modules` is to be safe.
+    *
+    * A module RE-EXPORTS when one of its name keys holds an entity that
+    * belongs to ANOTHER module: `Control.Monad.Functor` is a key under
+    * `Control.Monad` whose `V` is `Control.Functor`'s, because `export`
+    * aliases the ORIGIN's entity rather than minting a new one.  Unloading
+    * the definer alone deletes that `V` from `env` -- the `env` filter goes
+    * by the `V`'s own module -- and leaves the re-exporter's key naming it.
+    *
+    * WHY THE CLOSURE AND NOT A DROP, since dropping the dangling keys is
+    * the smaller change and was the first proposal: MEASURED to be WORSE.
+    * The spelling then leaves scope while its re-exporter stays in
+    * `loadedFiles` LOOKING LOADED, so `loadModules` will not read it back
+    * (`-- loaded`), and the next module that imports only the re-exporter
+    * cannot find the name.  Over the 30 seeded subsets of `TestScrub` the
+    * drop turned 0 reload failures into 8, and ROBUST-3's own reproduction
+    * (`{Control.Functor, Maybe}`) still died with the same message.
+    *
+    * IT IS NOT THE IMPORTER CLOSURE, and must not be.  A module that
+    * merely USES a name it does not re-export keeps its own values and
+    * dangles nothing; it is STALE, which is the CALLER's question
+    * (`dependentsOf`) and not this one.  That difference is what keeps the
+    * editor path affordable: over the resident's 130-module session the
+    * re-export closure of one module is at most 6 modules and 1.8 on
+    * average, where the importer closure reaches 96 and averages 25.8
+    * (MEASURED, `scratchpad/wp25-cost.log`).
+    *
+    * Computed from THIS SESSION's own tables -- never `Session.depCache`,
+    * which is process-global and which WP-26 says can lose edges under the
+    * resident.  Linear in the tables per round; the rounds are bounded by
+    * the length of a re-export chain (2 on the stdlib). */
+  private def reExportClosure(e: SessionEnv, b: SessionEnv, modules: Set[String]): Set[String] = {
+    var ms   = modules
+    var grew = true
+    while (grew) {
+      var add = Set.empty[String]
+      // a key under `km` naming an entity of `om`: `km` must go too --
+      // unless the entity is a BUILTIN (those never leave `env`, so the
+      // key never dangles) or `km` is not loaded (see THE NET above).
+      // `builtin` is BY NAME and tested LAST (review N3): it is a map
+      // lookup, and `ms(om)` is false for almost every one of the ~3 700
+      // entries this runs over on every round.
+      def consider(km: String, om: String, builtin: => Boolean): Unit =
+        if (ms(om) && !ms(km) && !add(km) && e.loadedModules.contains(km) && !builtin) add += km
+      e.termNames foreach { case (g, v) => v.name match {
+        case Some(o: Global) => consider(g.module, o.module, b.env.contains(v))
+        case _               => ()
+      } }
+      e.cons        foreach { case (g, c) => consider(g.module, c.name.module, b.cons.contains(c.name)) }
+      e.privateCons foreach { case (g, c) => consider(g.module, c.name.module, b.privateCons.contains(c.name)) }
+      e.classes     foreach { case (g, c) => consider(g.module, c.name.module, b.classes.contains(c.name)) }
+      grew = add.nonEmpty
+      ms   = ms ++ add
+    }
+    ms
   }
 
   /** REPL :reload in a box.
