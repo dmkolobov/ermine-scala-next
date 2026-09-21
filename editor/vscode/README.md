@@ -57,8 +57,8 @@ code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 gitignored, so build it yourself):
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.7.vsix
-code --install-extension ermine-lang-0.1.7.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.8.vsix
+code --install-extension ermine-lang-0.1.8.vsix
 ```
 
 `npm run package` does the same. Upgrading is the same command with the new
@@ -119,10 +119,11 @@ A **report** is any top-level binding whose type is `Node`, `Params -> Node`,
 server, in a second session of its own, and re-renders it when a file it
 depends on is saved — with no JVM restart and no build.
 
-At 0.1.7 there is **no webview panel** (that is a later ticket) and **no
-params files** (likewise): the answer is shown as JSON in an ordinary editor
-tab, and a report with required parameters therefore shows the refusal that
-names the first missing key rather than a document.
+At 0.1.8 there is **no webview panel** (that is a later ticket): the answer is
+shown as JSON in an ordinary editor tab. Parameters come from a file you write
+yourself — see **Params files** below; with no such file the render still sends
+empty parameters, so a report with required ones shows the refusal that names
+the first missing key rather than a document.
 
 | Command | |
 |---|---|
@@ -182,6 +183,90 @@ is sent to the server). The first three reach a running server at once, with
 no restart; `ermine.maxHeap` is the one that needs a fresh process, and
 changing it restarts the server.
 
+## Params files
+
+A report that takes parameters reads them from an ordinary file in your
+workspace:
+
+```
+<workspace folder>/.ermine/preview/<Module>/<binding>.params.json
+```
+
+so `Sales.report` reads `.ermine/preview/Sales/report.params.json`. The
+directory is one entry per module — `Layout.Widgets.Foo` is one directory
+name, not three — and the file is named after the binding. **You write it
+yourself at 0.1.8**; the extension does not create one, does not write a JSON
+schema beside it and does not add a `.gitignore` (those are the next ticket).
+The file is ordinary committed source: whoever clones the repository renders
+the same first document.
+
+**Local workspaces only.** The params file is addressed by its path on your
+own machine, so a `vscode-remote:` or virtual workspace is not supported by
+this feature — the file is neither read nor watched there. (Everything else
+about the preview is local too: the language server is a process on the same
+machine.)
+
+**It is read from DISK at the moment a render is sent, not from the editor
+buffer.** The preview follows saves, like every other part of the loop, so an
+unsaved edit changes nothing until you save it. Saving it re-renders the
+report in place, and so does a change from outside the editor — a `git
+checkout`, a script, another program. One save costs one render, whichever of
+the two notices it first.
+
+A `"$schema"` key at the TOP level of the file is stripped before the
+parameters are sent, so you can point your editor at a JSON schema without the
+server refusing the request: every request key is closed, and MEASURED against
+a real server, a `$schema` that reaches it answers `400 the key "$schema" is
+not allowed here`. Nested `$schema` keys are NOT stripped — only the top-level
+one — and would be refused the same way.
+
+**It is preview-only.** `bin/ermine-serve` never reads these files: the HTTP
+runner takes its parameters from the request body and nothing else. A
+committed preview default must not quietly become a production one.
+
+**Never put a credential in one.** It is committed to the repository AND its
+value is written into the render body that reaches the language server's log
+(`ermine.logFile`). The extension warns once per file when a top-level key
+looks like one — it matches `pass`, `pwd`, `secret`, `token` and `apiKey` —
+and never blocks, because a report may legitimately take a `token` parameter.
+That check is on the KEY NAME only: it says nothing about a key called
+`connectionString`, `dsn`, `jwt`, `auth`, `bearer`, `privateKey` or
+`credential`.
+
+What happens when the file is not usable, and each is said in the Ermine
+output channel once per report rather than once per render:
+
+| | |
+|---|---|
+| there is no file | the report renders with empty parameters `{}` — exactly what it did before 0.1.8 |
+| the report is not inside any workspace folder | the same, and the reason is named once. Nothing is read or written outside the folders you opened |
+| the file is not valid JSON | **the report is NOT rendered.** The tab shows the parse error and the file's path; rendering yesterday's parameters under today's file would look like it worked |
+| the file is empty | the same refusal, with its own sentence: an empty file is not `{}`, it is a truncated write or an interrupted checkout |
+| the file is over 1 MiB | the same refusal, naming the size |
+| the file exists but cannot be read | the same refusal. A file that is there and unreadable is not a file that is absent |
+| the file is bigger than 1 MiB | the same refusal, **without reading it**: the size is checked first, so a huge file cannot be pulled into the editor before the cap looks at it |
+| the read does not finish within 5 seconds | the same refusal, named. A read that hangs is not a read that failed, and the render must not wait for ever |
+| the file was deleted | the next render sends `{}` and says so |
+| a value has the wrong type, or a key does not belong | the server answers `400` and the tab shows it, with the key named in `message` and, for a present-but-wrong value, the path in `path` |
+
+A refusal is not a wedge: nothing is marked, nothing is restarted, and the
+next save tries again.
+
+**If the report wedged the language server, saving its params file without
+changing them asks before re-rendering.** Re-formatting the file, running
+format-on-save or moving its `$schema` line does not change what is sent, so
+the preview treats it the way it treats a restart: the **Render anyway** /
+**Not now** question of 0.1.6, and the status bar stays `Ermine preview:
+held`. Changing an actual value clears the hold and renders.
+
+**It asks once.** If you answer **Not now**, further saves that still change
+nothing do not ask again — they say so in the output channel and the status
+bar keeps reading `held`. Editing a real value, restarting the language
+server, or rendering it yourself all make it ask (or render) again. The same
+holds for the other things that are not evidence of change: learning a
+report's module name, and an `ermine.preview.roots` edit that resolves to the
+same list.
+
 ## Two things that will surprise you
 
 **The FIRST check of a file you just opened costs about 2.5 s; every keystroke
@@ -222,6 +307,40 @@ type one frame early and without its constraints (`go : List a -> a -> a` for
 a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
+
+### 0.1.8
+
+**A report's parameters come from a file you write.**
+`.ermine/preview/<Module>/<binding>.params.json` in the workspace folder that
+holds the report is read from disk when a render is sent, and its contents are
+sent as the report's parameters; saving it, or changing it from outside the
+editor, re-renders the report in place. A top-level `"$schema"` key is
+stripped before sending. There is still no skeleton, no generated schema file
+and no `.gitignore` — you write the file, the extension reads it. See **Params
+files** above for where it lives, what is refused and what must never go in
+one.
+
+Nothing is written to disk by this version, and nothing about it reaches
+`bin/ermine-serve`: the HTTP runner does not read these files and never will.
+
+**A params save while a report is *held* asks first if nothing changed.** A
+report that wedged the server is not re-rendered automatically (0.1.6); since
+0.1.8 that also covers everything that is not evidence that something
+changed — a params file saved without changing what it sends (a re-format,
+format-on-save, a moved `$schema` line), an `ermine.preview.roots` edit that
+resolves to the same list, and learning a report's module name. You get the
+same **Render anyway** / **Not now** question, asked once rather than once per
+save. Editing a real value clears the hold and renders straight away.
+
+Two smaller things that come with it. A params file whose whole content is
+`null` is now sent as `null` rather than as `{}` — which is what a report
+whose parameter type is a `Maybe` wants, and what the older coercion would
+have turned into an unexplainable 400. And changing the parameters a report
+was rendered with now counts as "something changed" for the wedge question of
+0.1.6: if the report that wedged the server is one whose parameters you have
+since edited, the restart re-renders it instead of asking. Re-formatting the
+file, or pointing its `$schema` line somewhere else, is not a change — the
+comparison is of what is actually sent.
 
 ### 0.1.7
 
@@ -428,10 +547,17 @@ restart timer's whole lifecycle — its arm, its disarms, the stale-timer rule
 and the 30-second floor — an async model of the restart itself, which is
 where the interleavings live (a restart during the first-run classpath
 warm-up, during a stop, one taking over another), the two settings payloads and the `ermine.maxHeap`
-spelling. What is NOT there is the glue that
-needs an editor to observe: when a document is created or revealed, the
-watcher's registration, the coalescing timer. It runs under `node --test` with
-no `node_modules` at all.
+spelling. Since 0.1.8 it also covers the params file: where one lives, which
+workspace folder owns the report, what its text becomes, what each refusal
+says, and which render triggers must ask before re-rendering a report that
+wedged — and a second async model, of the render's own send path, because
+reading the file puts an `await` between deciding to render and sending, and
+every way the world can move in that gap (the pick changes, the roots change
+*in place*, a newer render starts, the server is restarted or merely stops,
+the window is torn down) is driven by hand there. What
+is NOT there is the glue that needs an editor to observe: when a document is
+created or revealed, the watcher's registration, the coalescing timer. It runs
+under `node --test` with no `node_modules` at all.
 
 **`test/load-test.js`** stubs the `vscode` module in the loader and calls
 `activate()` exactly as the editor would, then checks that every command

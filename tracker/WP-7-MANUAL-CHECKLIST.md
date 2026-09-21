@@ -25,13 +25,19 @@ carries WP-22(c)'s automatic restart (**§2.28-2.32c, TEN steps**), which is
 OFF by default (`ermine.preview.restartAfterStuckSeconds` = 0) precisely
 because none of these steps has ever been run -- §2.28 is the step that
 checks the default changes nothing, and the other nine are the only things
-that can observe the feature at all.**
+that can observe the feature at all. **AND SINCE 2026-09-21 IT CARRIES WP-8
+S2'S PARAMS FILES (§2.33-2.42, TEN STEPS), WHICH ARE EQUALLY UNRUN.** S2
+writes nothing to disk, so every step below starts by asking YOU to write the
+file; the measured part of it (that a real server renders what a real file on
+disk turns into) is in section 6 of `tracker/JSON-WIDGET-PLAYGROUND.md`, and
+what stays here is everything that needs an editor: the watcher, the save, the
+tab, the notification, the status bar.**
 
 ## 0. Before you start
 
 | | |
 |---|---|
-| The extension | `editor/vscode` in this worktree, version **0.1.7** (0.1.6 plus WP-22(c)'s automatic restart, §2.28-2.32c, which is OFF by default) |
+| The extension | `editor/vscode` in this worktree, version **0.1.8** (0.1.7 plus WP-8 S2's params files, §2.33-2.42, which write nothing to disk) |
 | `node_modules` | **Already there.** The build session copied it from `/home/dmitry/research/ermine/ermine-scala/editor/vscode/node_modules` (there is no network here, and it is gitignored, so it is in neither `git status` nor the commit). If it goes missing, copy it again the same way |
 | The server | `target/ermine-classpath` already exists here, so the first start does **not** shell out to sbt |
 | Do NOT package or install | this is an Extension Development Host session; nothing touches your installed 0.1.4 |
@@ -213,6 +219,83 @@ kills the server on your behalf and the wedged process still dies by itself at
 `restartAfterStuckSeconds`, not `killAfterStuckSeconds` as the design review
 called it.
 
+### Params files (WP-8 S2, 0.1.8) -- NEVER RUN BY ANYONE
+
+**WHAT THESE STEPS ARE FOR.** A report's parameters now come from
+`<workspace folder>/.ermine/preview/<Module>/<binding>.params.json`, read from
+DISK when a render is sent. **S2 WRITES NOTHING**: the skeleton, the generated
+`report.schema.json` and the `.gitignore` are S3, so every step here begins
+with you writing the file by hand. The PURE half is unit-tested (`npm run
+test:preview`, 216 tests as of 0.1.8, after the independent review and its delta round) and the SEND half was measured against a
+real server without an editor (section 6 of the ticket). What no test and no
+instrument can reach is below.
+
+Set up once, from the worktree root:
+
+```sh
+mkdir -p .ermine/preview/Sales
+cat > .ermine/preview/Sales/report.params.json <<'JSON'
+{
+  "$schema": "./report.schema.json",
+  "fromDay": "2026-01-05",
+  "toDay": "2026-02-20",
+  "onlyRegion": "north",
+  "orderBy": "ByAmount"
+}
+JSON
+```
+
+**WHERE EVERY FILE IN THIS SECTION GOES.** §2.33-2.39 and §2.42 use the
+`Sales` report and write only under the worktree root, in
+`.ermine/preview/Sales/`. §2.40 needs `/tmp/wp7` to be OUTSIDE the workspace
+and writes nothing. §2.41 and §2.41b need `/tmp/wp7` to BE a workspace folder
+and write under `/tmp/wp7/.ermine/preview/WpSpin/`. The two are contradictory
+on purpose -- do §2.40 first, then add the folder.
+
+(The `$schema` line points at a file S3 writes and that does not exist yet.
+That is deliberate: it must be stripped before sending either way, and **you
+should see VS Code complain that the schema cannot be resolved** -- which is
+not the extension's message and not a render failure. Delete the whole
+`.ermine` directory when you are done; it is not in `.gitignore` until S3.)
+
+| # | Step | What you should see |
+|---|---|---|
+| 2.33 | With the file above in place, **Ermine: Preview Report...** -> `Sales.e` -> `report` | **a DOCUMENT**, not the 400 of §1.4: the tab holds `{"kind": "doc", ...}`. The Ermine channel logs one render line naming the file it read: `preview: render Sales.report (generation 1; the report was picked; params from <path>/.ermine/preview/Sales/report.params.json)`. **MEASURED without an editor**: the same file, read the same way and sent to a real server, answers `ok=true` with a document of **1242 bytes as the server sends it**; the review's own run reports 1220, which is the same document with the deferred fetch's per-render `token` and `expires` masked for comparison. Do not treat either number as a checksum -- the point of the step is that a DOCUMENT comes back where §1.4 got a 400 |
+| 2.34 | Edit the file -- change `"toDay"` to `"2026-01-20"` -- and SAVE | the SAME tab updates in place, with one render line whose reason is `the params file was saved`, and the document has fewer rows. **ONE render, not two**: the editor's save event and the file watcher both fire for one save and the 150 ms coalescing window collapses them. If you see two `preview: render` lines for one save, that is the defect this step exists for |
+| 2.35 | Change it from OUTSIDE the editor: `sed -i s/2026-01-20/2026-02-20/ .ermine/preview/Sales/report.params.json` | the tab re-renders by itself within a second or two, reason `the params file was changed outside the editor`. This is the path `onDidSaveTextDocument` cannot see and the watcher exists for; it is also what a `git checkout` does |
+| 2.36 | Break it: delete the comma after `"fromDay": "2026-01-05"` and SAVE | **NOTHING IS RENDERED.** The tab shows the refusal -- `{"ok": false, "status": null, "message": "The params file is not valid JSON, so the report was not rendered: ...", "path": "<the file>", "paramsProblem": "invalid-json", "generation": N}` -- and the status bar leaves the spinner and goes back to `$(json) Ermine: Sales.report`. **`status` is null on purpose**: no server was asked. Fix the comma and save; it renders again |
+| 2.37 | Empty the file (`: > .ermine/preview/Sales/report.params.json`) | the same shape with `"paramsProblem": "empty"` and its own sentence -- an empty file is a truncated write, not `{}` |
+| 2.38 | Delete the file (`rm .ermine/preview/Sales/report.params.json`) | the tab re-renders with EMPTY parameters, which for `Sales` is §1.4's 400 naming `fromDay`, and the channel says `no params file at <path> -- rendering with empty parameters` ONCE. Render again (**Ermine: Render Report to JSON**) and the sentence is NOT repeated: it is one line per report, not one per render |
+| 2.39 | Put the file back with a WRONG key -- add `"fromDy": "2026-01-05"` beside the right one | the server's own 400: `{"ok": false, "status": 400, "message": "the key \"fromDy\" is not allowed here", ...}`. **MEASURED without an editor**, that exact message. The status bar must NOT turn orange, nothing is marked as having wedged, and the next save tries again |
+| 2.40 | **A REPORT OUTSIDE EVERY WORKSPACE FOLDER.** `/tmp/wp7` must NOT be a workspace folder for this step -- if you added it in §2.7, remove it (**File > Remove Folder from Workspace**) before you start. Pick `/tmp/wp7/WpSpin.e` through the active editor (open the file, then **Ermine: Preview Report...**; it is offered first even though the workspace scan cannot see it) | the channel says ONCE `The report "/tmp/wp7/WpSpin.e" is not inside the workspace folder ...` and renders with empty parameters, and **no `.ermine` directory appears anywhere** -- in particular not in the first workspace folder, which is what `ermine.preview.roots` falls back to and what a params file must never do (review G1). Check with `ls -a /tmp/wp7` (nothing) and `git status` in the worktree (nothing) |
+| 2.41 | **THE WEDGE QUESTION AND THE PARAMS -- IT HAS ITS OWN SETUP, AND §2.40's MUST BE UNDONE FIRST.** This step needs `WpSpin.report` to HAVE a params file, which §2.40's configuration makes impossible. So: **File > Add Folder to Workspace... > `/tmp/wp7`**, then write `/tmp/wp7/.ermine/preview/WpSpin/report.params.json` holding `5` (the report takes an `Int`), pick `WpSpin.report` and let it wedge as in §2.15 until the status bar reads `held`. Now EDIT the params file to `7` and save it | the channel logs `preview: the wedge mark is cleared (the parameters changed)` and the status bar leaves `held`: changing what is actually SENT is evidence of change, exactly like an `.e` save, and the render goes |
+| 2.41b | **AND A RE-FORMAT WHILE HELD ASKS INSTEAD OF RENDERING (S2 review M6 -- the user's own sentence).** Wedge it again, and while the status bar reads `held` save the params file with the SAME value but different bytes: `7` -> `  7  ` (or add a `$schema` line, or run format-on-save) | **NOTHING RENDERS.** The channel logs `preview: render N is HELD (params-file: nothing about WpSpin.report has changed since it wedged the preview)` and the **Render anyway / Not now** question of §2.16 appears -- the same question, the same `held` status bar. Press **Render anyway** and it renders (and wedges again). **If the report re-renders with no question, that is the loop this ticket exists to close**: the first cut of S2 did exactly that, and recorded it as expected behaviour |
+| 2.41c | **THE QUESTION IS ASKED ONCE, NOT ONCE PER SAVE (delta re-review D3).** Press **Not now** on §2.41b's question, then save the same unchanged params file twice more -- or turn format-on-save on and type in it | **NO second and third notification.** Each further save logs `preview: not asking again — this question was already answered "Not now" for these parameters; the preview stays held until they change or you render it yourself`, and the status bar keeps reading `$(warning) Ermine preview: held`. Then: **change a value** and save -- it renders immediately (the mark clears); or **restart the language server** -- you are asked AGAIN, because a restart is a new event and is never remembered; or run **Ermine: Render Report to JSON** -- it renders, and the next unchanged save asks once more. **AND A WINDOW RELOAD ASKS AGAIN**: the refusal is in-process only and is deliberately NOT mirrored into `workspaceState` the way the mark is, so **Developer: Reload Window** while held leaves the report held (§2.23) and the next unchanged save asks once more. **A notification per keystroke-and-save is the failure this step exists to catch** |
+| 2.41d | **A ROOTS CHANGE THAT CHANGES NOTHING ALSO ASKS (delta re-review D1).** While `held`, edit `ermine.preview.roots` to a value that RESOLVES to the same list (add a trailing slash, or re-order nothing -- anything that makes VS Code fire the change without moving the resolved absolute paths) | **NOTHING RENDERS** and the question appears, as in §2.41b, with `(roots: ...)` in the channel line. A roots change that really moves the list clears the mark and renders without asking. This was MEASURED as 1,218 of 5,097 violating sequences in an exhaustive exploration of the reducers over a 13-event alphabet (579,194 sequences); the reviewer's wider 15-event alphabet counts 1,851 for the same family. Nobody has seen either half in an editor |
+| 2.42 | **A CREDENTIAL-LOOKING KEY.** Add `"apiToken": "hunter2"` to `Sales`'s params file and save | ONE warning notification naming the key, saying the file is committed and reaches the server's log, and saying it checks the key NAME only. **The render still happens** (U5: warn, never block) and the server answers a 400 because `apiToken` is not a `Query` field. Save the file again: the warning does NOT come back -- once per file per session |
+
+**REMOTE AND VIRTUAL WORKSPACES ARE OUT OF SCOPE AND WILL NOT WORK** (S2
+review M7): the params file is addressed with `vscode.Uri.file(fsPath)`,
+which discards the scheme and the authority, so on a `vscode-remote:` or a
+virtual workspace the read and the watcher both point at a local path that is
+not there. Everything in this section assumes a local folder. Nobody has run
+any of it either way.
+
+**WHAT §2.33-2.42 CANNOT TELL YOU, and it is the same class of thing as
+§2.32b.** After the independent review's round, **exactly ONE source mutant
+of twenty-seven survives the whole unit suite**: `installParamsWatcher`
+returning before it registers anything (a guard that is kept and neutered --
+the shape pin sees the function, not whether its body runs), and so would a
+`RelativePattern` rooted at the wrong place. **§2.35 is the only thing that
+can observe either**, which is why it is in this list and not only in the
+table. The other two are 0.1.7's and are unchanged (the coalescer clear
+before an automatic restart, and the restart guard). Also unobservable here:
+that `workspace.fs.readFile` answers `FileNotFound` with that `code`; that
+`stat` answers a size at all; that a read can hang, which is what the new
+5-second bound is for; and that a params file over 1 MiB is refused before it
+is read (the review MEASURED both sides of the cap over the wire, but the
+`stat` that now precedes the read is VS Code's).
+
 ## 3. Deviations to read before ticking anything
 
 1. **`$.params.fromDay` is not what a MISSING key answers.** §14's done-when
@@ -237,7 +320,17 @@ called it.
    under which a report whose parameters are all optional RENDERS instead of
    being refused.
 
-3. **The Q11 trigger is EXACT, and the server changed to make it so.** §3
+3. **WP-8 S2 MOVED ONE MEASURED SHAPE, AND IT IS THE `null` ROW OF THE TABLE
+   ABOVE.** WP-7 sent `params: null` for "no parameters" and the builder
+   turned it into `{}`; at 0.1.8 "no parameters" is spelled `undefined` and
+   still becomes `{}`, while a params FILE whose whole content is `null` is
+   sent as `null` -- which is what a report whose parameter type is a `Maybe`
+   wants (`docs/JSON-GUIDE.md:1295-1297`). MEASURED 2026-09-21 against a real
+   server: such a file on disk answers `400 "expected an object (Query), found
+   null"` for `Sales`, which is the row above, reached now by a file rather
+   than by a builder. Nothing about the no-file case changed.
+
+4. **The Q11 trigger is EXACT, and the server changed to make it so.** §3
    step 6 wants a re-render when the picked file is created or changed while
    its last answer was a PLACEMENT 404, and NOT on a `Runner` 404. The wire
    used to give both the same `{ok:false, status:404, message}`, and WP-7's

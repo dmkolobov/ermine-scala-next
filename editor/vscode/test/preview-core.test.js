@@ -14,6 +14,41 @@
 // threads, a `seq` that restarts at 1 in a fresh process), so it gets both
 // table tests for the named cases and a generated-sequence test for the
 // invariants.
+//
+// ---------------------------------------------------------------------------
+// THE RULE FOR EVERY MODEL IN THIS FILE, WRITTEN DOWN AFTER IT WAS BROKEN
+// THREE TIMES:
+//
+//     A MODEL MUST MUTATE, OMIT AND CAPTURE EXACTLY WHAT THE GLUE MUTATES,
+//     OMITS AND CAPTURES.  A model that supplies something `src/extension.js`
+//     never produces is not a weaker test, it is a test of a different
+//     program, and it reports GREEN on a defect that is live in the
+//     extension.
+//
+// The three:
+//   1. WP-22(c)'s M1 -- the model hand-wrote the restart reducer's events and
+//      supplied `at` on exactly the events the glue OMITTED it from, so no
+//      test could see that the floor's stretch was dead code in the shipped
+//      extension. Fixed by making the model call `core.restartEvents.*`, the
+//      same builders the glue calls, and by pinning that the glue has no
+//      hand-written event left.
+//   2. WP-22(c)'s delta review -- the model's `stopQuietly` always settled,
+//      so the bound that a hung stop needs was untested until the model was
+//      given the timed-out outcome the glue can really see.
+//   3. WP-8 S2's M1 -- the model REPLACED the pick object to test a roots
+//      change, while the glue MUTATES `picked.roots` in place. The arm under
+//      test could not fire in the real extension at all, and the test passed
+//      (MEASURED by the independent review: the glue's shape answered
+//      `{"send":true}` where the model answered `roots-changed`). Fixed by
+//      giving the model the glue's own mutators (`rootsChangeInPlace`,
+//      `serverStopped`, `serverRestarted`, `tearDown`) and by moving the
+//      capture into one pure snapshot both call (`core.renderAttempt`).
+//
+// So: when a model reaches for a module global the glue holds, it must reach
+// for it the same way, at the same moment, and change it the same way. Where
+// that cannot be checked by reading, the "glue pins" test at the bottom of
+// this file reads `src/extension.js` and says so.
+// ---------------------------------------------------------------------------
 
 const { test } = require("node:test");
 const assert = require("node:assert");
@@ -87,8 +122,16 @@ test("requests: WP-7 sends an EMPTY params object, not null, and carries the gen
   // MEASURED against a real server: `null` answers "expected an object
   // (Query), found null" and names no key, while `{}` answers 'the required
   // key "fromDay" is missing', which is what the ticket's done-when wants.
+  //
+  // WP-8 S2 CHANGED THE SENTINEL FOR "NO PARAMS" FROM `null` TO `undefined`,
+  // AND THIS LINE IS THE ONLY TEST IT MOVED. The measured behaviour above is
+  // unchanged -- "no params" is still `{}` on the wire -- but a params FILE
+  // may legitimately hold `null` (a `Maybe`-rooted report; S1's skeleton
+  // mints exactly that), and coercing it here would have turned a correct
+  // file into a 400. `renderNow` passes what it read, and passes `{}` itself
+  // when there is no file.
   assert.deepStrictEqual(core.renderParams(PICK, undefined, 7).params, {});
-  assert.deepStrictEqual(core.renderParams(PICK, null, 7).params, {});
+  assert.strictEqual(core.renderParams(PICK, null, 7).params, null);
   assert.deepStrictEqual(core.renderParams(PICK, { fromDay: "2026-01-05" }, 7).params, { fromDay: "2026-01-05" });
   assert.strictEqual(core.renderParams(PICK, null, 7).generation, 7);
   assert.deepStrictEqual(core.reportsParams(PICK.uri), { uri: "file:///w/doc/Sales.e" });
@@ -615,9 +658,17 @@ test("guard: fingerprints -- roots keep their order, params do not keep their ke
   assert.strictEqual(core.paramsFingerprint({ a: 1, b: [2, { d: 4, c: 3 }] }),
                      core.paramsFingerprint({ b: [2, { c: 3, d: 4 }], a: 1 }));
   assert.notStrictEqual(core.paramsFingerprint({ a: 1 }), core.paramsFingerprint({ a: 2 }));
-  // WP-8's hook: no params exist yet, so every mark carries the same one.
+  // WP-8's hook. `undefined` means NOTHING WAS SENT and still maps to `{}`,
+  // which is what every mark WP-22 and 0.1.7 wrote carries -- a mark
+  // restored from `workspaceState` after an upgrade must keep meaning "no
+  // params". `null` is a VALUE and is its own fingerprint since the S2
+  // review's M3: a params file holding `null` is what a `Maybe`-rooted
+  // report wants, and collapsing it into `{}` meant a report that wedged
+  // with no file could not be un-held by writing one.
   assert.strictEqual(core.paramsFingerprint(undefined), core.paramsFingerprint({}));
-  assert.strictEqual(core.paramsFingerprint(null), core.paramsFingerprint({}));
+  assert.notStrictEqual(core.paramsFingerprint(null), core.paramsFingerprint({}));
+  assert.notStrictEqual(core.paramsFingerprint(null), core.paramsFingerprint(undefined));
+  assert.strictEqual(core.paramsFingerprint(null), core.paramsFingerprint(null));
 
   const cyclic = { a: 1 };
   cyclic.self = cyclic;
@@ -844,17 +895,42 @@ test("guard: a mark that is not a mark is not consulted and never survives a red
   }
 });
 
-test("guard: the CONSULTATION -- only the restart trigger is ever refused", () => {
+test("guard: the CONSULTATION -- an EVIDENCE trigger renders, anything else consults the mark", () => {
+  // **THE POLICY CHANGED TWICE AND THIS TEST RECORDS BOTH CHANGES.**
+  //
+  // As written for WP-22 it said "only the restart trigger is ever refused",
+  // and it pinned FAIL-OPEN for every other string including `undefined`.
+  // WP-8 S2's delta re-review falsified both halves:
+  //   D1 -- `roots` schedules on `affectsConfiguration` but its guard event
+  //         clears only when the roots FINGERPRINT moved, so a setting
+  //         edited to an equal list rendered a held report (MEASURED over
+  //         579,194 generated sequences: 2,631 of 5,097 violations);
+  //   D2 -- fail-open meant that FORGETTING to forward the trigger through
+  //         the coalescer neutered both consultation sites for every
+  //         automatic render, and that mutant survived all 210 tests.
+  // So the rule is now: a trigger may be permitted only if it is DECLARED
+  // and its guard event clears the mark WHENEVER it schedules.
   const mark = wedged(PICK);
   assert.strictEqual(core.shouldAutoRender(mark, PICK, core.TRIGGER_RESTART), false,
                      "the one case the ticket exists for");
   assert.strictEqual(core.shouldAutoRender(null, PICK, core.TRIGGER_RESTART), true);
 
-  // T3, T4, T5, T6 are each evidence of change or of recovery, and T1/T2
-  // are consent. None of them consults the mark.
-  for (const trigger of ["recovered", "invalidated", "file-event", "roots", "explicit", "answer", undefined]) {
+  // The evidence triggers: each clears the mark before it schedules.
+  // `TRIGGER_ANSWER` is NOT among them -- see the vocabulary test below.
+  for (const trigger of [core.TRIGGER_RECOVERED, core.TRIGGER_INVALIDATED, core.TRIGGER_FILE_EVENT,
+                         core.TRIGGER_EXPLICIT]) {
     assert.strictEqual(core.shouldAutoRender(mark, PICK, trigger), true, String(trigger));
   }
+  // The unconfirmed ones, `roots` now among them.
+  for (const trigger of core.UNCONFIRMED_TRIGGERS) {
+    assert.strictEqual(core.shouldAutoRender(mark, PICK, trigger), false, String(trigger));
+  }
+  // AND ANYTHING UNDECLARED IS REFUSED AND NAMED.
+  for (const trigger of [undefined, null, "", 0, "restarted", "params", "RESTART"]) {
+    assert.strictEqual(core.shouldAutoRender(mark, PICK, trigger), false, String(trigger));
+    assert.match(core.triggerProblem(trigger), /not one of the declared render triggers/);
+  }
+  for (const trigger of core.RENDER_TRIGGERS) assert.strictEqual(core.triggerProblem(trigger), null, trigger);
 });
 
 test("guard: a mark whose key does not match the current pick is never consulted", () => {
@@ -2829,6 +2905,307 @@ test("glue pins: extension.js keeps the shape the models assume", () => {
   assert.ok(clears > 0 && stops > 0 && clears < stops,
     pin("restart() awaits the stop before clearing `client`",
         "that two restarts cannot stop the same client twice (M2)"));
+
+  // ------------------------------------------------- WP-8 S2's own pins
+  //
+  // S2 put an `await` inside the send path, so the ORDER of four statements
+  // in `renderNow` is now load-bearing and no behavioural test in this file
+  // can see that order in the real source. These pin it.
+  const renderBody = src.slice(src.indexOf("async function renderNow("), src.indexOf("async function showAnswer("));
+  const at = (needle) => renderBody.indexOf(needle);
+  const read = at("await prepareParams(");
+  const gap = at("core.mayStillSend(");
+  const refusal = at("prepared.refusal");
+  const paramsEvent = at('type: "params"');
+  const latch = at("inFlightRender = {");
+  const wire = at('sendRequest("ermine/render"');
+  const acted = renderBody.search(/if\s*\(\s*!verdict\.send\s*\)/);
+  assert.ok(read > 0 && gap > read,
+    pin("renderNow no longer re-checks core.mayStillSend AFTER reading the params",
+        "that a pick change, a restart or a newer render during the read abandons this one " +
+        "instead of sending stale parameters for the wrong pick (WP-8 S2)"));
+  // AND THE ANSWER IS ACTED ON. Asking and ignoring the answer is exactly
+  // the mutant a "does it call it?" pin cannot see (MEASURED while writing
+  // these: with only the check above, deleting the `if` block survived the
+  // whole suite).
+  assert.ok(acted > gap && acted < at("prepared.refusal"),
+    pin("renderNow computes the gap verdict and does not act on it",
+        "the same: a render whose world moved must ABANDON, not merely notice"));
+  // P3 OF THE DELTA RE-REVIEW: calling the function and DISCARDING its
+  // answer on the next line survived both pins above (`core.mayStillSend(`
+  // was present, and so was an `if (!verdict.send)` reading a `verdict`
+  // that came from somewhere else). So the binding itself is pinned.
+  assert.ok(/const verdict = core\.mayStillSend\(/.test(renderBody),
+    pin("`verdict` is no longer ASSIGNED FROM core.mayStillSend",
+        "that the object the abandon branch reads is the one the gap check answered (P3)"));
+  assert.ok(!/^\s*core\.mayStillSend\(/m.test(renderBody),
+    pin("core.mayStillSend is called for its side effect somewhere in renderNow",
+        "the same: it has no side effect, so such a call is an answer being thrown away (P3)"));
+  assert.ok(refusal > gap,
+    pin("renderNow decides a params refusal before it re-checks the gap",
+        "that a refusal about the OLD pick's file is not shown over the new pick (WP-8 S2)"));
+  assert.ok(paramsEvent > gap && paramsEvent < latch,
+    pin("the guard's `params` event is no longer fed between the gap check and the send",
+        "that changing the parameters CLEARS the wedge mark and a re-format does not (WP-22, WP-8)"));
+  // AND IT IS FED THIS RENDER'S OWN PARAMS. Feeding it `lastParamsSent`
+  // instead compares the value with itself and never clears anything, with
+  // the shape entirely intact (MEASURED: that mutant survived every other
+  // test in this file).
+  assert.ok(/\{ type: "params", pick: sentPick, params: prepared\.params \}/.test(renderBody),
+    pin("the `params` guard event is built from something other than `prepared.params`",
+        "the same: the mark must be compared against the params THIS render is sending"));
+  assert.ok(latch > gap && wire > latch,
+    pin("the in-flight latch is taken before the gap is re-checked, or after the request is sent",
+        "that a render which is never sent cannot mark a report as having died mid-render (M1, WP-8 S2)"));
+
+  // ---- THE SNAPSHOT (S2 review M1 and M2) ----------------------------------
+  //
+  // FOUR MUTANTS SURVIVED THE WHOLE SUITE by swapping one captured value for
+  // the live global in an object literal written AFTER the await
+  // (`clientEpoch: sentEpoch` -> `clientEpoch`, `pick: sentPick` -> `picked`,
+  // `generation: mine` -> `generation`, and the request taking `picked`).
+  // The STRUCTURAL answer is that there is no such literal any more: one
+  // frozen snapshot is built BEFORE the await and everything after it reads
+  // that. These pins hold that shape; the regexes are the belt.
+  const snapshot = renderBody.indexOf("core.renderAttempt(");
+  assert.ok(snapshot > 0 && snapshot < read,
+    pin("renderNow no longer takes core.renderAttempt's snapshot BEFORE the read",
+        "that the roots, the pick, the generation and the epoch a render is decided on cannot " +
+        "move under it -- the roots are MUTATED IN PLACE by the settings handler, so a captured " +
+        "reference compares an array with itself (M1)"));
+  assert.ok(/core\.renderAttempt\(generation, picked, clientEpoch, stopCount, stuckState\.highWater\)/.test(renderBody),
+    pin("the snapshot is built from something other than the five live values",
+        "the same: it is a SNAPSHOT of the globals at send, taken where reading them is correct"));
+  assert.ok(/core\.mayStillSend\(\s*attempt,/.test(renderBody),
+    pin("the gap check is handed something other than the snapshot",
+        "that no value it compares can be the live global by accident (M2)"));
+  assert.ok(/core\.previewNow\(generation, picked, clientEpoch, stopCount, !!sentClient\)/.test(renderBody),
+    pin("the gap check's LIVE side is not read through core.previewNow",
+        "the same, from the other direction: the live side must be read at the comparison -- and " +
+        "with the CLIENT THE VERDICT SAW, which is the one the request is then sent to"));
+  assert.ok(/core\.renderRequest\(attempt, prepared\.params\)/.test(renderBody),
+    pin("the request is no longer built from the snapshot",
+        "that the uri, the binding, the roots and the generation on the wire all come from the " +
+        "render that was decided on, not from whatever is current after the read (M2's R9/R10)"));
+  assert.ok(/const sentPick = attempt\.pick;/.test(renderBody) && !/const sentPick = picked;/.test(renderBody),
+    pin("renderNow captures the live pick object instead of the snapshot's copy",
+        "the same (M1): `picked.roots` is mutated in place by the roots handler"));
+
+  // ---- M6: the second place the ONE consultation is reached from -----------
+  const consult = renderBody.indexOf("core.mayAutoRender(");
+  assert.ok(consult > paramsEvent && consult < latch,
+    pin("renderNow no longer consults core.shouldAutoRender between the guard's `params` event " +
+        "and the send",
+        "the USER'S OWN SENTENCE: a report that wedged and did not change is not re-rendered " +
+        "without a confirmation. This is the moment the extension KNOWS nothing changed, because " +
+        "it has just computed the fingerprint (S2 review M6)"));
+  // MATCHED AS THE WHOLE STATEMENT, not as a call: `if (false && !core.may...)`
+  // keeps every word and neuters it (MEASURED -- that mutant survived a pin
+  // that only looked for the call).
+  assert.ok(/const permitted = core\.mayAutoRender\(wedgeMark, sentPick, trigger, scheduledAt\);/.test(renderBody) &&
+            /if \(!permitted\.render\) \{/.test(renderBody),
+    pin("the consultation is neutered, or asked about something other than (the mark, this " +
+        "render's pick, this render's trigger, and WHEN it was scheduled)",
+        "that a held report is not re-rendered by a trigger with no evidence -- and not by one " +
+        "whose evidence PREDATES the mark either (delta re-review D1/D2, families B and C)"));
+  assert.ok(/holdRender\(trigger\)/.test(renderBody),
+    pin("the held render no longer asks the SAME question the restart asks, with the trigger " +
+        "that asked",
+        "that there is one question and one `held` state, not two (M6) -- and that D3 can tell a " +
+        "params re-format (asked once) from a restart (asked every time)"));
+
+  // ---- D2's BUG line, and D3's memory, each pinned at its own site --------
+  assert.ok(/const triggerBug = core\.triggerProblem\(trigger\);/.test(renderBody) &&
+            /if \(triggerBug\) log\("preview: BUG — " \+ triggerBug\);/.test(renderBody),
+    pin("renderNow no longer says out loud that a render was triggered by something nothing " +
+        "declared",
+        "that an undeclared trigger is a BUG a human can see, not a silent hold -- the same " +
+        "philosophy as the restart reducer's clockless arm (D2)"));
+  const holdBody = src.slice(src.indexOf("function holdRender("), src.indexOf("function applyGuard("));
+  assert.ok(/core\.shouldAskHeld\(heldRefusedToken, wedgeMark, picked, trigger\)/.test(holdBody),
+    pin("holdRender no longer consults what the user last refused",
+        "that format-on-save asks ONCE and not once per save (D3)"));
+  assert.ok(/heldRefusedToken = asking\.token;/.test(holdBody),
+    pin("holdRender no longer remembers a refusal",
+        "the same (D3): a memory that is never written is never consulted either"));
+  assert.ok(/heldRefusedToken = undefined;\s+\/\/ consent resets it/.test(holdBody),
+    pin("consent no longer resets what was refused",
+        "that after \"Render anyway\" the next unchanged save asks again (D3)"));
+
+  // ---- M5: the stop counter ----------------------------------------------
+  assert.ok(/stopCount \+= 1;/.test(src.slice(src.indexOf("function onClientStopped("))),
+    pin("onClientStopped no longer counts the stop",
+        "the defence against a library-internal restart on the SAME client object, which moves " +
+        "no epoch and would otherwise reach the fresh server unguarded (M5, UNVERIFIED)"));
+
+  // ---- M4: learning the module renders ------------------------------------
+  const refresh = src.slice(src.indexOf("async function refreshModule("), src.indexOf("function installWatcher("));
+  assert.ok(/scheduleRender\(.*TRIGGER_MODULE_LEARNED\)/.test(refresh),
+    pin("learning the module name no longer schedules a render",
+        "that a params file sitting on disk is not ignored for ever by a pick whose module " +
+        "arrived late (M4)"));
+
+  // P14: `scheduleRender` FORWARDS what it was given. Passing `undefined`
+  // instead neutered both consultation sites for every automatic render and
+  // survived the whole suite -- which is also why `shouldAutoRender` now
+  // fails CLOSED on an undeclared trigger (D2), so this mutant is caught
+  // twice: here, and by the behaviour if it ever gets past here.
+  const coalescer = src.slice(src.indexOf("function scheduleRender("), src.indexOf("async function renderNow("));
+  assert.ok(/const scheduledAt = Date\.now\(\);/.test(coalescer),
+    pin("scheduleRender no longer records WHEN the evidence arrived",
+        "that a render whose evidence predates the mark is held rather than sent (families B/C)"));
+  assert.ok(/renderNow\(reason, false, trigger, scheduledAt\)/.test(coalescer),
+    pin("scheduleRender no longer forwards its trigger and schedule time to renderNow",
+        "that the consultation knows WHICH trigger is rendering and WHEN it was decided (P14)"));
+
+  // ---- every trigger the glue passes is one the core knows ----------------
+  const triggers = (src.match(/core\.TRIGGER_[A-Z_]+/g) || []).map((t) => t.replace("core.", ""));
+  assert.ok(triggers.length >= 9, pin("only " + triggers.length + " trigger constants are used", "the same"));
+  for (const t of triggers) {
+    assert.ok(Object.prototype.hasOwnProperty.call(core, t),
+      pin("extension.js uses core." + t + ", which preview-core.js does not export",
+          "that `shouldAutoRender`'s refused set is decided over a vocabulary both files agree on"));
+  }
+  // A literal string where a trigger belongs is how the vocabulary rots.
+  assert.ok(!/scheduleRender\([^;]*,\s*"[a-z-]+"\s*\)/.test(src),
+    pin("a render trigger is passed as a bare string instead of a core.TRIGGER_* constant",
+        "the same"));
+  // AND EACH SITE PASSES ITS OWN, because a trigger that claims the wrong
+  // kind is how the consultation gets bypassed while every constant is still
+  // in use (MEASURED: the params save passing TRIGGER_INVALIDATED survived a
+  // pin that only checked the vocabulary).
+  for (const [what, needle] of [
+    ["the params file save", /scheduleRender\("the params file was saved", core\.TRIGGER_PARAMS_FILE\)/],
+    ["the params file watcher", /the params file was \$\{what\} outside the editor`, core\.TRIGGER_PARAMS_FILE\)/],
+    ["learning the module name", /scheduleRender\("the module name was learned", core\.TRIGGER_MODULE_LEARNED\)/],
+    ["the invalidated notification", /scheduleRender\(`invalidated: \$\{picked\.module\}`, core\.TRIGGER_INVALIDATED\)/],
+    ["the Q11 watcher", /core\.TRIGGER_FILE_EVENT\)/],
+    ["the roots change", /scheduleRender\("ermine\.preview\.roots changed", core\.TRIGGER_ROOTS\)/],
+    ["the picker", /renderNow\("the report was picked", true, core\.TRIGGER_EXPLICIT\)/],
+    ["the render command", /renderNow\("Ermine: Render Report to JSON", true, core\.TRIGGER_EXPLICIT\)/],
+    ["Render anyway", /renderNow\("Render anyway", true, core\.TRIGGER_EXPLICIT\)/],
+  ]) {
+    assert.ok(needle.test(src),
+      pin(what + " no longer names its own trigger",
+          "that a trigger which brings NO evidence of change cannot claim to bring some, and so " +
+          "cannot walk past the consultation (M6)"));
+  }
+
+  // ---- nits 3, 6 and 7 ----------------------------------------------------
+  assert.ok(/vscode\.workspace\.fs\.stat\(/.test(src) && /paramsTooLargeToRead\(/.test(src),
+    pin("the params file is read without asking its size first",
+        "that a gigabyte params file cannot be materialised in the extension host before the " +
+        "cap looks at it (review nit 3)"));
+  assert.ok(/Promise\.race\(\[reading, bounded\]\)/.test(src),
+    pin("the params read is no longer bounded",
+        "that a read which never settles cannot leave the spinner on for the life of the window " +
+        "-- a hang is not a throw (review nit 7, and stopQuietly's own lesson)"));
+  // P11: the bound exists and must also be USED. Reading the file through
+  // the unbounded helper instead left `readParamsFileBounded` in the source,
+  // unreferenced, and every pin above green.
+  assert.ok(/await readParamsFileBounded\(paths\.paramsPath\)/.test(src),
+    pin("prepareParams reads the params file through the UNBOUNDED helper",
+        "the same (P11): the bound is worth nothing if the read does not go through it"));
+  // ---- the four the review found SURVIVING, each now pinned ---------------
+  //
+  // R11/R12/R13/R14 are glue assignments: no model reaches them, so a pin is
+  // the only thing that can. Each message says what the assignment buys.
+  // EVERY EXIT, PINNED WHERE IT IS. A count pin passes when one exit of five
+  // loses its guard or its release (MEASURED: both mutants survived it).
+  const RELEASE = "if (mine === generation) renderInFlight = false;";
+  for (const [what, from, until] of [
+    ["the abandon path", "if (!verdict.send) {", "  // Said only now"],
+    ["the refusal path", "if (prepared.refusal) {", "  // WP-22's `params` event"],
+    ["the held path", "const permitted = core.mayAutoRender(", "  lastParamsSent ="],
+  ]) {
+    const start = renderBody.indexOf(from);
+    const exit = renderBody.slice(start, renderBody.indexOf(until, start));
+    assert.ok(start > 0 && exit.indexOf(RELEASE) >= 0,
+      pin(what + " of renderNow no longer releases the spinner under its generation guard",
+          "that a render which stops here leaves the status bar idle, and that it cannot switch " +
+          "off a NEWER render's spinner (R5, R11)"));
+  }
+  assert.ok(/lastParamsSent = prepared\.params;/.test(renderBody),
+    pin("renderNow no longer remembers the params it sent",
+        "that a wedge mark minted by a LATER event (a stuck notification, a Stopped edge) carries " +
+        "the params that were in force, which is what makes editing them clear it (R12)"));
+  const setSites = [
+    ["function onClientStopped(", "function installPreviewHandlers("],
+    ['c.onNotification("ermine/preview/stuck"', "// Section 5's \"Server stopped\" row"],
+    ["function fireRestart(", "function releaseInFlight("],
+  ];
+  for (const [from, until] of setSites) {
+    const start = src.indexOf(from);
+    const body = src.slice(start, src.indexOf(until, start));
+    assert.ok(start > 0 && /params: core\.markParamsFor\(/.test(body),
+      pin(from.replace(/[({"].*/, "") + " feeds the guard a SET event with no `params:`",
+          "that every way a wedge is marked records the params that were in force -- a mark " +
+          "without them can never be cleared by changing them (R13)"));
+  }
+  const noticeBody = src.slice(src.indexOf("function paramsNoticeOnce("), src.indexOf("function forgetParamsNotices("));
+  assert.ok(/paramsNotices\.has\(key\)/.test(noticeBody) && /paramsNotices\.add\(key\)/.test(noticeBody),
+    pin("paramsNoticeOnce no longer remembers what it has already said",
+        "that a save-driven loop does not repeat the same sentence in the channel every few " +
+        "seconds, which is how a real message gets missed (R6)"));
+  const prepare = src.slice(src.indexOf("async function prepareParams("), src.indexOf("function onClientStopped("));
+  assert.ok(/core\.meansFileMissing\(err\)/.test(prepare),
+    pin("prepareParams no longer asks core.meansFileMissing what the read failure meant",
+        "that a file which EXISTS and could not be read REFUSES, instead of rendering `{}` over " +
+        "parameters that are really there (R14)"));
+
+  // P8: the variable is READ by the watcher and must also be WRITTEN by the
+  // answer path -- deleting the write left the read pinned and the value
+  // for ever undefined, which disarms the watcher just as thoroughly.
+  assert.ok(/\n  lastServerAnswer = answer;/.test(src),
+    pin("renderNow no longer records the server's answer as the last SERVER answer",
+        "that the Q11 watcher has something to ask about at all (P8)"));
+  assert.ok(/core\.shouldRerenderOnFileEvent\(picked, lastServerAnswer, where\)/.test(src),
+    pin("the Q11 watcher no longer asks about the last SERVER answer",
+        "that a params refusal -- which no server gave -- cannot disarm the watcher that brings a " +
+        "deleted report back to life (review nit 5)"));
+  const teardown = src.slice(src.indexOf("function disposePreview("), src.indexOf("function restorePick("));
+  assert.ok(/picked = undefined;/.test(teardown) && /previewDisposed = true;/.test(teardown),
+    pin("the teardown no longer clears the pick",
+        "that a render sitting in its file read abandons instead of sending into a disposed " +
+        "window -- and that `pick-cleared` is reachable at all (review nit 6)"));
+  assert.ok(/vscode\.workspace\.fs\.readFile\(/.test(src),
+    pin("the params file is no longer read through vscode.workspace.fs",
+        "that the preview reads SAVED files and not editor buffers (section 2.4), asynchronously. " +
+        "IT DOES NOT PROTECT REMOTE OR VIRTUAL WORKSPACES: `Uri.file(fsPath)` drops the scheme and " +
+        "the authority, so this is local-only and section 6 says so (S2 review M7)"));
+  // G1: the folder is the one that CONTAINS the report. `rootsFor`'s
+  // folders[0] fallback is fine for a SETTING and is not for a file. Pinned
+  // at each of the three sites rather than by a count, because a count
+  // survives replacing ONE of them (MEASURED: it did).
+  for (const [fn, until] of [
+    ["function paramsPathsFor(", "function paramsNoticeOnce("],
+    ["function installParamsWatcher(", "function disposeWatchers("],
+    ["onDidSaveTextDocument(", "// WP-22 (c): the grace, read once at activation"],
+  ]) {
+    const start = src.indexOf(fn);
+    const body = src.slice(start, src.indexOf(until, start));
+    assert.ok(start > 0 && /core\.paramsFolderFor\(/.test(body),
+      pin(fn.replace(/[({].*/, "") + " no longer asks core.paramsFolderFor which folder owns the report",
+          "that nothing reads -- and in S3 writes -- `.ermine/preview` inside an unrelated " +
+          "workspace folder just because it is folders[0] (G1)"));
+    // The COMMENTS are stripped first: they say "never `folders[0]`", which
+    // a naive search reads as the thing it is forbidding.
+    const code = body.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.ok(!/folders\[0\]|workspaceRoot\(\)|workspaceFolderPaths\(\)\[0\]/.test(code),
+      pin(fn.replace(/[({].*/, "") + " reaches for the FIRST workspace folder", "the same (G1)"));
+  }
+  // Both re-render triggers go through the coalescer, or one save renders twice.
+  const saveHandler = src.slice(src.indexOf("onDidSaveTextDocument("), src.indexOf("onDidSaveTextDocument(") + 2000);
+  assert.ok(/shouldRerenderOnParamsSave\(/.test(saveHandler) && /scheduleRender\(/.test(saveHandler),
+    pin("the params save no longer re-renders through scheduleRender",
+        "that a save which fires BOTH the document event and the watcher costs ONE render"));
+  const watcherBody = src.slice(src.indexOf("function installParamsWatcher("), src.indexOf("function disposeWatchers("));
+  assert.ok(watcherBody.length > 0 && /scheduleRender\(/.test(watcherBody) && !/renderNow\(/.test(watcherBody),
+    pin("the params watcher no longer re-renders through scheduleRender",
+        "the same: one save, one render"));
+  assert.ok(/onDidDelete\(/.test(watcherBody),
+    pin("the params watcher no longer watches for the file being DELETED",
+        "that deleting the params file renders with `{}` rather than with the last file's contents"));
 });
 
 test("2b: a stop that TIMED OUT still reaches the guard's one consultation, and holds", async () => {
@@ -4481,3 +4858,1355 @@ test("schemaFile: the S3 OBLIGATION -- a copy tracks its original only WITHIN on
               correct.$defs["Test.Tree-params-root"].oneOf[0].properties, "note"));
   assert.deepStrictEqual(core.skeletonFrom(fresh, TODAY).value, { tag: "Leaf", args: [0], note: "" });
 });
+
+// ======================================================= WP-8 S2: SENDING IT
+//
+// S1 decided WHERE a params file lives and WHAT its text becomes.  S2 is the
+// glue: read it off the disk at SEND time, send it, re-render when it
+// changes.  Three kinds of test live below, in this order:
+//
+//   1. the new PURE decisions -- which workspace folder owns the report, what
+//      a failed read means, and the one this stage exists for, "after the
+//      read, may this render still be sent?";
+//   2. an ASYNC MODEL of `renderNow`'s send path, in the style of
+//      `restartModel` above, because the read puts an `await` between
+//      deciding to render and sending -- and a decision applied to state that
+//      moved under it is the defect this code base has already been bitten by
+//      three times (WP-22's M1, its M2, and the final re-check's timed-out
+//      stop).  Every interleaving is driven by hand and each of the four
+//      mutants the brief names is run against the same sequences;
+//   3. the guard's `params` event end to end: what clears the wedge mark and
+//      what must not.
+
+// ------------------------------------------------------ paramsFolderFor (G1)
+
+test("S2: the workspace folder is the one CONTAINING the report, never folders[0] (G1)", () => {
+  // `rootsFor` falls back to folders[0] for a SETTING. Doing that for a FILE
+  // would read -- and in S3 write -- `.ermine/preview/` inside whichever
+  // repository happens to be first in the window.
+  const folders = ["/first", "/w"];
+  assert.strictEqual(core.paramsFolderFor("/w/doc/Sales.e", folders, "posix"), "/w");
+  assert.strictEqual(core.paramsFolderFor("/tmp/wp7/WpSpin.e", folders, "posix"), null);
+  assert.strictEqual(core.paramsFolderFor("/w/doc/Sales.e", [], "posix"), null);
+  assert.strictEqual(core.paramsFolderFor("/w/doc/Sales.e", undefined, "posix"), null);
+  assert.strictEqual(core.paramsFolderFor(undefined, folders, "posix"), null);
+  // A folder is not inside itself, and a prefix sibling is not a parent.
+  assert.strictEqual(core.paramsFolderFor("/w", ["/w"], "posix"), null);
+  assert.strictEqual(core.paramsFolderFor("/workspace-old/S.e", ["/workspace"], "posix"), null);
+});
+
+test("S2: with nested workspace folders the INNERMOST one owns the report", () => {
+  // VS Code allows a folder nested inside another in one window (external).
+  // The params file belongs beside the report, in the folder the developer
+  // actually opened it from.
+  const nested = ["/w", "/w/sub", "/elsewhere"];
+  assert.strictEqual(core.paramsFolderFor("/w/sub/doc/Sales.e", nested, "posix"), "/w/sub");
+  assert.strictEqual(core.paramsFolderFor("/w/doc/Sales.e", nested, "posix"), "/w");
+  // Order in the array must not decide it.
+  assert.strictEqual(core.paramsFolderFor("/w/sub/doc/Sales.e", nested.slice().reverse(), "posix"), "/w/sub");
+});
+
+test("S2: the folder rule is tested on win32 too, case-insensitively", () => {
+  const folders = ["C:\\First", "C:\\W"];
+  assert.strictEqual(core.paramsFolderFor("C:\\w\\doc\\Sales.e", folders, "win32"), "C:\\W");
+  assert.strictEqual(core.paramsFolderFor("D:\\other\\Sales.e", folders, "win32"), null);
+});
+
+test("S2: the params path is also answered as a folder-relative GLOB, for the watcher", () => {
+  const p = core.paramsPaths(SALES_PICK, "/w", "posix");
+  // `createFileSystemWatcher(new RelativePattern(folder, glob))` is what
+  // reports a file whose DIRECTORY does not exist yet -- `.ermine/preview/`
+  // is not there until S3 or the developer writes it.
+  assert.strictEqual(p.relativeGlob, ".ermine/preview/Sales/report.params.json");
+  // A glob is forward-slashed on every platform: it is not a path.
+  const win = core.paramsPaths(
+    core.makePick("file:///c/w/Sales.e", "C:\\w\\doc\\Sales.e", "report", "Sales", []), "C:\\w", "win32");
+  assert.strictEqual(win.relativeGlob, ".ermine/preview/Sales/report.params.json");
+  assert.strictEqual(win.paramsPath, "C:\\w\\.ermine\\preview\\Sales\\report.params.json");
+});
+
+// ----------------------------------------------------------- meansFileMissing
+
+test("S2: a read failure that means NO SUCH FILE, and every one that does not", () => {
+  // Missing is the ordinary case and renders with `{}`. Everything else is a
+  // file we could not read, which REFUSES -- rendering `{}` over parameters
+  // that exist is the silent-wrong-document failure S1 refused an empty file
+  // for.
+  for (const code of ["FileNotFound", "ENOENT", "ENOTDIR", "EntryNotFound"]) {
+    assert.strictEqual(core.meansFileMissing({ code }), true, code);
+    assert.strictEqual(core.meansFileMissing({ name: code }), true, "name " + code);
+  }
+  assert.strictEqual(core.meansFileMissing({ code: "EACCES" }), false);
+  assert.strictEqual(core.meansFileMissing({ code: "NoPermissions" }), false);
+  assert.strictEqual(core.meansFileMissing(new Error("something went wrong")), false);
+  assert.strictEqual(core.meansFileMissing({}), false);
+  assert.strictEqual(core.meansFileMissing(undefined), false);
+  assert.strictEqual(core.meansFileMissing(null), false);
+});
+
+// ---------------------------------------------------------------- the gap
+
+const OTHER_PICK = core.makePick("file:///w/doc/Other.e", "/w/doc/Other.e", "report", "Other", ["/w/doc"]);
+
+function atSend(over) {
+  return Object.assign({ generation: 7, pick: SALES_PICK, clientEpoch: 3 }, over);
+}
+function atNow(over) {
+  return Object.assign({ generation: 7, pick: SALES_PICK, clientEpoch: 3, hasClient: true }, over);
+}
+
+test("S2: THE ASYNC GAP -- every way the world can move under a render, named", () => {
+  assert.deepStrictEqual(core.mayStillSend(atSend(), atNow()), { send: true, reason: null, why: null });
+
+  const cases = [
+    ["pick-cleared", atNow({ pick: undefined })],
+    ["pick-changed", atNow({ pick: OTHER_PICK })],
+    ["roots-changed", atNow({ pick: core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report", "Sales", ["/w/other"]) })],
+    ["superseded", atNow({ generation: 8 })],
+    ["server-restarted", atNow({ clientEpoch: 4 })],
+    ["no-client", atNow({ hasClient: false })],
+  ];
+  for (const [reason, now] of cases) {
+    const v = core.mayStillSend(atSend(), now);
+    assert.strictEqual(v.send, false, reason);
+    assert.strictEqual(v.reason, reason);
+    assert.ok(typeof v.why === "string" && v.why.length > 10, reason + ": " + v.why);
+    assert.ok(core.ABANDON_REASONS.indexOf(v.reason) >= 0, "the vocabulary is closed: " + v.reason);
+  }
+  // Nothing at all to send.
+  assert.strictEqual(core.mayStillSend(undefined, atNow()).send, false);
+  assert.strictEqual(core.mayStillSend(atSend(), undefined).send, false);
+  assert.strictEqual(core.mayStillSend(atSend({ pick: undefined }), atNow()).reason, "pick-cleared");
+});
+
+test("S2: the gap's order is most-specific-first, so the channel says something useful", () => {
+  // Picking RENDERS, so a pick change always bumps the generation too. If the
+  // generation were tested first every pick change would be reported as
+  // "superseded", which names the symptom and not the event.
+  const v = core.mayStillSend(atSend(), atNow({ pick: OTHER_PICK, generation: 8, clientEpoch: 4 }));
+  assert.strictEqual(v.reason, "pick-changed");
+  assert.match(v.why, /Other\.report/);
+  // A restart does NOT bump the generation, so it is distinguishable.
+  assert.strictEqual(core.mayStillSend(atSend(), atNow({ clientEpoch: 4 })).reason, "server-restarted");
+  // The same pick object, re-made with the same fields, is the same pick:
+  // the test is on the KEY and the roots, not on identity.
+  const sameAgain = core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report", "Sales", ["/w/doc"]);
+  assert.strictEqual(core.mayStillSend(atSend(), atNow({ pick: sameAgain })).send, true);
+});
+
+// -------------------------------------------------------------- the refusal
+
+test("S2: a params refusal is shown in the tab through the SAME path every failure takes", () => {
+  const bad = core.paramsToSend('{"fromDay": ');
+  assert.ok(bad.problem, "the fixture must actually be invalid JSON");
+  const answer = core.paramsRefusalAnswer(bad.problem, "/w/.ermine/preview/Sales/report.params.json", 9);
+
+  assert.strictEqual(core.isOk(answer), false);
+  // NOT a placement 404: `status` is null, because no server was asked.
+  assert.strictEqual(answer.status, null);
+  assert.strictEqual(core.isPlacement404(answer), false);
+  // The named reason travels under its OWN key: `reason` is the server's
+  // closed vocabulary on this wire (section 4, Q15) and minting a
+  // client-side value into it would make the two indistinguishable later.
+  assert.strictEqual(answer.reason, undefined);
+  assert.strictEqual(answer.paramsProblem, "invalid-json");
+  assert.strictEqual(answer.path, "/w/.ermine/preview/Sales/report.params.json");
+  assert.strictEqual(answer.generation, 9);
+  assert.match(answer.message, /not valid JSON/);
+  assert.match(answer.message, /Nothing was sent to the language server/);
+
+  // The tab shows the whole object, which is where the diagnostic lives.
+  const shown = JSON.parse(core.tabContent(answer));
+  assert.strictEqual(shown.paramsProblem, "invalid-json");
+  assert.strictEqual(shown.ok, false);
+});
+
+test("S2: every paramsToSend refusal dresses as an answer, and each one names itself", () => {
+  const cases = [
+    ["invalid-json", "{"],
+    ["empty", "   \n "],
+    ["too-large", "[" + '"x",'.repeat(400) + '"x"]'],
+  ];
+  for (const [reason, text] of cases) {
+    const out = reason === "too-large" ? core.paramsToSend(text, 64) : core.paramsToSend(text);
+    assert.strictEqual(out.problem.reason, reason, JSON.stringify(out));
+    const answer = core.paramsRefusalAnswer(out.problem, "/p.json", 1);
+    assert.strictEqual(answer.paramsProblem, reason);
+    assert.strictEqual(core.isOk(answer), false);
+  }
+  // It also accepts the whole `{problem: ...}` wrapper, since that is what
+  // `paramsToSend` answers and what the glue holds.
+  assert.strictEqual(core.paramsRefusalAnswer(core.paramsToSend("{"), "/p.json", 1).paramsProblem, "invalid-json");
+});
+
+test("S2: one notice per distinct problem per pick, and the missing-file sentence", () => {
+  const a = core.paramsNoticeKey(SALES_PICK, "missing");
+  assert.strictEqual(a, core.paramsNoticeKey(SALES_PICK, "missing"));
+  assert.notStrictEqual(a, core.paramsNoticeKey(SALES_PICK, "no-module"));
+  assert.notStrictEqual(a, core.paramsNoticeKey(OTHER_PICK, "missing"));
+  // The key is the mark key's, so a pick with a different BINDING on the
+  // same file is a different pick here too.
+  const otherBinding = core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report2", "Sales", ["/w/doc"]);
+  assert.notStrictEqual(a, core.paramsNoticeKey(otherBinding, "missing"));
+
+  const notice = core.paramsMissingNotice("/w/.ermine/preview/Sales/report.params.json");
+  assert.match(notice, /no params file at/);
+  assert.match(notice, /empty parameters/);
+  assert.match(notice, /report\.params\.json/);
+});
+
+// ------------------------------------------------------------ markParamsFor
+
+test("S2: the mark carries the params of the render that is OUT, else the last sent", () => {
+  assert.deepStrictEqual(core.markParamsFor(undefined, { a: 1 }), { a: 1 });
+  assert.deepStrictEqual(core.markParamsFor({ b: 2 }, { a: 1 }), { b: 2 });
+  // `null` IS a value: a params file holding `null` is what a `Maybe`-rooted
+  // report wants, so it must not fall through to the last one sent.
+  assert.strictEqual(core.markParamsFor(null, { a: 1 }), null);
+  assert.strictEqual(core.markParamsFor(undefined, undefined), undefined);
+});
+
+// ------------------------------------------- the async model of the send path
+//
+// A FAITHFUL MODEL OF `renderNow`'s FIRST HALF, statement for statement, with
+// the two awaits it now has -- the params READ and the request itself -- held
+// open by hand.  It calls the real pure decisions (`mayStillSend`,
+// `guardReduce`, `renderParams`, `isCurrentGeneration`, `stuckEventApplies`)
+// rather than restating them, so what is modelled is the ORDER and nothing
+// else: what is captured before the read, what is re-checked after it, when
+// the wedge latch is taken, and what is released on every exit.
+//
+// THE FOUR MUTANTS the brief names are options on the same model, so each is
+// run against the SAME interleavings as the real code:
+//   `mutantNoGap`            the read happens and the re-check does not;
+//   `mutantGuardNotFed`      no `params` event, so nothing clears the mark;
+//   `mutantRefusalSends`     a refusal that renders anyway;
+//   (the fourth, both save events rendering twice, is the coalescer's and is
+//    modelled separately below -- it is not on this path at all.)
+
+function sendModel(opts) {
+  const o = opts || {};
+  // ITS OWN PICK OBJECT, always. `rootsChangeInPlace` below mutates it the
+  // way the glue mutates `picked`, and a model that mutated a shared
+  // constant would leak into every later test -- which it did, once,
+  // immediately.
+  const seed = o.pick || SALES_PICK;
+  const m = {
+    generation: 0,
+    picked: core.makePick(seed.uri, seed.fsPath, seed.binding, seed.module, seed.roots),
+    clientEpoch: 1,
+    stopCount: 0,
+    hasClient: true,
+    disposed: false,
+    mark: null,
+    lastParamsSent: undefined,
+    inFlight: null,
+    renderInFlight: false,
+    lastAnswer: undefined,
+    lastServerAnswer: undefined,
+    stuck: core.initialStuckState(),
+    restart: core.initialRestartState(o.restart || 0),
+    reads: [],      // one per render, settled with a `prepareParams` result
+    wires: [],      // one per request that actually reached the wire
+    sent: [],
+    tabs: [],
+    held: [],
+    asked: [],
+    heldRefusedToken: undefined,
+    log: [],
+    arms: [],
+  };
+
+  m.renderNow = async function renderNow(reason, reveal, trigger, scheduledAt) {
+    if (!m.picked) return;
+    if (!m.hasClient) { m.log.push("no client"); return; }
+    m.generation += 1;
+    // THE SNAPSHOT, built by the SAME function the glue builds it with.
+    const attempt = core.renderAttempt(
+      m.generation, m.picked, m.clientEpoch, m.stopCount, m.stuck.highWater);
+    const mine = attempt.generation;
+    const sentPick = attempt.pick;
+    m.renderInFlight = true;
+
+    const read = deferred();
+    m.reads.push({ generation: mine, settle: read.settle });
+    const prepared = await read.promise;
+
+    const verdict = o.mutantNoGap
+      ? { send: true, reason: null, why: null }
+      : core.mayStillSend(
+          attempt,
+          core.previewNow(m.generation, m.picked, m.clientEpoch, m.stopCount, m.hasClient));
+    if (!verdict.send) {
+      m.log.push("abandoned " + mine + " (" + verdict.reason + ")");
+      if (mine === m.generation) m.renderInFlight = false;
+      return;
+    }
+    if (prepared.refusal && !o.mutantRefusalSends) {
+      const refusal = core.paramsRefusalAnswer(prepared.refusal, prepared.path, mine);
+      m.lastAnswer = refusal;                       // and NOT `lastServerAnswer`
+      if (mine === m.generation) m.renderInFlight = false;
+      m.tabs.push(refusal);
+      m.log.push("refused " + mine + " (" + refusal.paramsProblem + ")");
+      return;
+    }
+    if (!o.mutantGuardNotFed) {
+      m.mark = core.guardReduce(m.mark, { type: "params", pick: sentPick, params: prepared.params }).mark;
+    }
+    // WP-22's ONE CONSULTATION, from its second place (S2 review M6), and
+    // since the delta re-review through `mayAutoRender`, which also asks
+    // whether the mark was minted AFTER this render was scheduled.
+    const permitted = o.mutantNoHeldCheck
+      ? { render: true, why: null }
+      : core.mayAutoRender(m.mark, sentPick, trigger, scheduledAt);
+    if (!permitted.render) {
+      m.log.push("held " + mine + " (" + trigger + ")");
+      m.held.push({ generation: mine, trigger, mark: m.mark, why: permitted.why });
+      // D3: the glue asks `shouldAskHeld` here and remembers a refusal.
+      const asking = core.shouldAskHeld(m.heldRefusedToken, m.mark, sentPick, trigger);
+      m.asked.push({ generation: mine, trigger, ask: asking.ask, why: asking.why });
+      if (mine === m.generation) m.renderInFlight = false;
+      return;
+    }
+    m.lastParamsSent = prepared.params;
+    m.inFlight = { generation: mine, pick: sentPick, params: prepared.params };
+    const request = core.renderRequest(attempt, prepared.params);
+    m.sent.push(request);
+    m.log.push("sent " + mine);
+
+    const wire = deferred();
+    m.wires.push({ generation: mine, settle: wire.settle });
+    let answer = await wire.promise;
+    if (answer && answer.__reject) {
+      if (core.rejectionMeansServerGone(answer.err)) {
+        m.mark = core.guardReduce(m.mark, {
+          type: "clientState", to: "Stopped", renderInFlight: true,
+          pick: sentPick, params: prepared.params, at: 1,
+        }).mark;
+      }
+      if (m.inFlight && m.inFlight.generation === mine) m.inFlight = null;
+      answer = core.errorAnswer(answer.err, mine);
+    } else if (m.inFlight && m.inFlight.generation === mine) {
+      m.inFlight = null;
+    }
+    if (mine === m.generation) m.renderInFlight = false;
+    if (!core.isCurrentGeneration(m.generation, answer)) {
+      m.log.push("stale answer " + mine);
+      return;
+    }
+    m.lastAnswer = answer;
+    m.lastServerAnswer = answer;
+    const stuckEvent = {
+      type: "answer",
+      stuck: !!(answer && answer.stuck === true),
+      message: answer && answer.message,
+      seqAtSend: attempt.seqAtSend,
+    };
+    const applies = core.stuckEventApplies(m.stuck, stuckEvent);
+    m.mark = core.guardReduce(m.mark, {
+      type: "answer", stuck: stuckEvent.stuck, applies,
+      pick: sentPick, params: prepared.params, at: 1,
+    }).mark;
+    const r = core.restartReduce(m.restart, core.restartEvents.answer(stuckEvent.stuck, applies, 100000));
+    m.restart = r.state;
+    if (r.effects.arm) m.arms.push(r.effects);
+    m.stuck = core.stuckReduce(m.stuck, stuckEvent).state;
+    m.tabs.push(answer);
+  };
+
+  /** `prepareParams` answered: a file that was read and parsed. */
+  m.readOk = (i, params, path) =>
+    m.reads[i].settle({ params, path: path || "/w/.ermine/preview/Sales/report.params.json", read: true, warnings: [] });
+  /** `prepareParams` answered: no file, `{}` and one notice. */
+  m.readMissing = (i) =>
+    m.reads[i].settle({ params: {}, path: "/w/.ermine/preview/Sales/report.params.json",
+                        notice: { reason: "missing", line: "no params file" } });
+  /** `prepareParams` answered: a refusal. */
+  m.readRefusal = (i, reason) =>
+    m.reads[i].settle({ refusal: { reason: reason || "invalid-json", message: "the params file is not valid JSON" },
+                        path: "/w/.ermine/preview/Sales/report.params.json" });
+  m.answerWith = (i, answer) => m.wires[i].settle(answer);
+  m.rejectWith = (i, err) => m.wires[i].settle({ __reject: true, err });
+  /**
+   * THE GLUE'S OWN MUTATIONS, spelled exactly as `extension.js` spells them.
+   * `rootsChangeInPlace` is the one the S2 review's M1 turned on: the roots
+   * handler assigns `picked.roots`, it does NOT replace the pick.
+   */
+  m.rootsChangeInPlace = (roots) => { m.picked.roots = roots.slice(); };
+  m.serverStopped = () => { m.stopCount += 1; };            // onClientStopped
+  m.serverRestarted = () => { m.clientEpoch += 1; };        // startClient
+  m.tearDown = () => { m.disposed = true; m.picked = undefined; };   // disposePreview
+  /** "Not now": the glue stores the token the question was shown with. */
+  m.notNow = () => { m.heldRefusedToken = core.heldPromptToken(m.mark); };
+  return m;
+}
+
+
+test("S2 ASYNC: the ordinary interleaving -- read, nothing moved, send what was read", async () => {
+  const m = sendModel();
+  m.renderNow("a save", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  // THE LATCH IS NOT TAKEN WHILE READING: nothing is on the wire, so a
+  // server death here is not "died mid-render".
+  assert.strictEqual(m.inFlight, null, "the wedge latch must not be held during the read");
+  assert.strictEqual(m.renderInFlight, true, "the spinner IS on: reading is this render working");
+  m.readOk(0, { fromDay: "2026-01-05", toDay: "2026-03-17", orderBy: "ByDay" });
+  await flush();
+  assert.strictEqual(m.sent.length, 1);
+  assert.deepStrictEqual(m.sent[0].params, { fromDay: "2026-01-05", toDay: "2026-03-17", orderBy: "ByDay" });
+  assert.strictEqual(m.sent[0].generation, 1);
+  assert.ok(m.inFlight, "the latch is taken for the request that IS out");
+  assert.deepStrictEqual(m.inFlight.params, m.sent[0].params);
+  m.answerWith(0, { ok: true, document: { t: "doc" }, generation: 1 });
+  await flush();
+  assert.strictEqual(m.inFlight, null, "a settled answer releases the latch");
+  assert.strictEqual(m.renderInFlight, false);
+  assert.strictEqual(m.tabs.length, 1);
+  assert.strictEqual(m.tabs[0].ok, true);
+});
+
+test("S2 ASYNC: a PICK CHANGE during the read abandons -- the old file is never sent", async () => {
+  const m = sendModel();
+  m.renderNow("a save", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  // The user picks another report while we are reading.
+  m.picked = OTHER_PICK;
+  m.generation += 1;                       // picking renders, so it bumps too
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  assert.deepStrictEqual(m.sent, [], "Sales's parameters must never be sent for Other");
+  assert.strictEqual(m.inFlight, null, "no latch is taken for a render that is never sent");
+  assert.match(m.log.join("|"), /abandoned 1 \(pick-changed\)/);
+});
+
+test("S2 ASYNC: a NEWER RENDER during the read abandons the older one, and only it", async () => {
+  const m = sendModel();
+  m.renderNow("a save", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  m.renderNow("another save", false, core.TRIGGER_INVALIDATED);             // the coalescer let a second one through
+  await flush();
+  assert.strictEqual(m.reads.length, 2);
+  m.readOk(0, { fromDay: "old" });         // the OLDER read finishes first
+  await flush();
+  assert.deepStrictEqual(m.sent, [], "the superseded render must not reach the wire");
+  assert.match(m.log.join("|"), /abandoned 1 \(superseded\)/);
+  m.readOk(1, { fromDay: "new" });
+  await flush();
+  assert.strictEqual(m.sent.length, 1);
+  assert.deepStrictEqual(m.sent[0].params, { fromDay: "new" });
+  assert.strictEqual(m.sent[0].generation, 2);
+});
+
+test("S2 ASYNC: a RESTART during the read abandons -- the fresh server is not fed behind the guard", async () => {
+  const m = sendModel();
+  m.renderNow("the server restarted", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  m.clientEpoch = 2;                       // restart(): a new client is current
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  assert.deepStrictEqual(m.sent, []);
+  assert.match(m.log.join("|"), /abandoned 1 \(server-restarted\)/);
+  // The same hole `fireRestart` clears the coalesced render for: a request
+  // slipped into the fresh server here would never pass WP-22's one
+  // consultation site.
+  assert.strictEqual(m.inFlight, null);
+});
+
+test("S2 ASYNC: the client going away, and the roots changing, each abandon too", async () => {
+  const gone = sendModel();
+  gone.renderNow("x", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  gone.hasClient = false;
+  gone.readOk(0, {});
+  await flush();
+  assert.deepStrictEqual(gone.sent, []);
+  assert.match(gone.log.join("|"), /abandoned 1 \(no-client\)/);
+
+  // THE ROOTS CHANGE **IN PLACE**, WHICH IS THE ONLY SHAPE THE GLUE
+  // PRODUCES (S2 review M1). The first cut of this test REPLACED the pick
+  // object -- a shape `extension.js` never creates -- and so it passed while
+  // the arm it was testing could not fire in the real extension at all.
+  const roots = sendModel();
+  roots.renderNow("x", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  roots.rootsChangeInPlace(["/w/doc", "/w/extra"]);
+  roots.readOk(0, {});
+  await flush();
+  assert.deepStrictEqual(roots.sent, []);
+  assert.match(roots.log.join("|"), /abandoned 1 \(roots-changed\)/);
+});
+
+test("S2 ASYNC: M1 -- the snapshot COPIES the roots, so an in-place change is seen", () => {
+  // THE DEFECT, REPRODUCED AT THE PURE LEVEL. `const sentPick = picked` is a
+  // REFERENCE; the roots handler is `picked.roots = rootsFor(...)`, an
+  // in-place mutation of that same object. Comparing `atSend.pick.roots`
+  // with `now.pick.roots` then compared an array with ITSELF.
+  const live = core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "report", "Sales", ["/w/doc"]);
+  const reference = live;                       // what the first cut captured
+  const snapshot = core.renderAttempt(1, live, 1, 0, 0);   // what it captures now
+  live.roots = ["/w/doc", "/w/extra"];          // extension.js's roots handler
+
+  assert.strictEqual(
+    core.mayStillSend({ generation: 1, pick: reference, clientEpoch: 1, stopCount: 0 },
+                      core.previewNow(1, live, 1, 0, true)).send,
+    true, "MEASURED: the reference cannot see its own mutation -- this is the bug");
+  const verdict = core.mayStillSend(snapshot, core.previewNow(1, live, 1, 0, true));
+  assert.strictEqual(verdict.send, false);
+  assert.strictEqual(verdict.reason, "roots-changed");
+
+  // The snapshot is frozen all the way down, so nothing can edit it later.
+  assert.ok(Object.isFrozen(snapshot) && Object.isFrozen(snapshot.pick) && Object.isFrozen(snapshot.pick.roots));
+  assert.deepStrictEqual(snapshot.pick.roots, ["/w/doc"]);
+
+  // AND THE ROOTS ARRAY ITSELF IS A COPY, not the same array frozen: a
+  // snapshot that shared it would still see an ASSIGNMENT (which is what the
+  // roots handler does today) and would be blind to a MUTATION of the array
+  // in place -- a difference nothing in the glue relies on today and
+  // everything would rely on tomorrow.
+  const shared = core.makePick("file:///w/S.e", "/w/S.e", "report", "S", ["/w"]);
+  const snap2 = core.renderAttempt(1, shared, 1, 0, 0);
+  assert.notStrictEqual(snap2.pick.roots, shared.roots, "the arrays must not be the same object");
+  shared.roots.push("/w/extra");
+  assert.deepStrictEqual(snap2.pick.roots, ["/w"]);
+  assert.strictEqual(
+    core.mayStillSend(snap2, core.previewNow(1, shared, 1, 0, true)).reason, "roots-changed");
+  // And the request built from it carries the roots as they were AT SEND.
+  assert.deepStrictEqual(core.renderRequest(snapshot, {}).roots, ["/w/doc"]);
+  assert.strictEqual(core.renderRequest(snapshot, {}).generation, 1);
+});
+
+test("S2 ASYNC: M5 -- a stop the library performs on the same client is seen", async () => {
+  // `clientEpoch` moves only inside our own `startClient`. A restart
+  // performed by `vscode-languageclient`'s default close action on the SAME
+  // client object moves nothing -- so the counter `onClientStopped` bumps is
+  // what notices. UNVERIFIED library behaviour; this is the defence.
+  const m = sendModel();
+  m.renderNow("x", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  m.serverStopped();                            // onClientStopped, no epoch change
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  assert.deepStrictEqual(m.sent, []);
+  assert.match(m.log.join("|"), /abandoned 1 \(server-stopped\)/);
+  assert.ok(core.ABANDON_REASONS.indexOf("server-stopped") >= 0);
+});
+
+test("S2 ASYNC: a TEARDOWN during the read abandons -- `pick-cleared` is reachable now", async () => {
+  // Review nit 6: `picked` was never cleared, so this arm was dead and a
+  // render in its read survived `deactivate()` and sent into a disposed
+  // window. `disposePreview` now clears the pick, which is the event the
+  // arm was documented for.
+  const m = sendModel();
+  m.renderNow("x", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  m.tearDown();
+  m.readOk(0, {});
+  await flush();
+  assert.deepStrictEqual(m.sent, []);
+  assert.match(m.log.join("|"), /abandoned 1 \(pick-cleared\)/);
+});
+
+test("S2 ASYNC: a REFUSAL shows in the tab, sends nothing, and releases everything", async () => {
+  const m = sendModel();
+  m.renderNow("a save", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readRefusal(0, "invalid-json");
+  await flush();
+  assert.deepStrictEqual(m.sent, [], "G7: the render does not happen");
+  assert.strictEqual(m.inFlight, null, "nothing was taken, so nothing is held");
+  assert.strictEqual(m.renderInFlight, false, "the status bar goes back to its idle state");
+  assert.strictEqual(m.tabs.length, 1);
+  assert.strictEqual(m.tabs[0].paramsProblem, "invalid-json");
+  assert.strictEqual(m.tabs[0].generation, 1);
+  assert.strictEqual(m.lastAnswer.ok, false);
+  // A refusal is not a placement 404, so it cannot arm the Q11 watcher.
+  assert.strictEqual(core.isPlacement404(m.lastAnswer), false);
+});
+
+test("S2 ASYNC: a refusal for a pick that has MOVED is not shown either", async () => {
+  // The verdict is taken BEFORE the refusal is shown, on purpose: the file
+  // that would not parse is the OLD report's, and a banner about it over the
+  // new report's render is a lie.
+  const m = sendModel();
+  m.renderNow("a save", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  m.picked = OTHER_PICK;
+  m.generation += 1;
+  m.readRefusal(0);
+  await flush();
+  assert.deepStrictEqual(m.tabs, []);
+  assert.deepStrictEqual(m.sent, []);
+  assert.match(m.log.join("|"), /abandoned 1 \(pick-changed\)/);
+});
+
+test("S2 ASYNC: a missing params file sends `{}` -- exactly what WP-7 measured", async () => {
+  const m = sendModel();
+  m.renderNow("the report was picked", false, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  assert.deepStrictEqual(m.sent[0].params, {}, "MEASURED (WP-7): `{}` names the first missing key, `null` names none");
+  m.answerWith(0, { ok: false, status: 400, message: 'the required key "fromDay" is missing', path: "$.params", generation: 1 });
+  await flush();
+  assert.strictEqual(m.tabs[0].status, 400);
+});
+
+test("S2 ASYNC: a params file holding `null` is sent AS null, not coerced to `{}`", async () => {
+  // `docs/JSON-GUIDE.md:1295-1297`: a `Maybe`-rooted report wants null, and
+  // S1's skeleton mints exactly that. WP-7's `null -> {}` coercion would have
+  // turned a correct file into a 400 nobody could explain.
+  const m = sendModel();
+  m.renderNow("a save", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  const parsed = core.paramsToSend("null");
+  assert.strictEqual(parsed.params, null);
+  m.readOk(0, parsed.params);
+  await flush();
+  assert.strictEqual(m.sent[0].params, null);
+});
+
+test("S2 ASYNC: MUTANT -- the params are read but the gap is not re-checked", async () => {
+  // This is the defect the whole stage is about: the decision to render is
+  // applied to state that moved under it.
+  for (const move of ["pick", "generation", "epoch"]) {
+    const m = sendModel({ mutantNoGap: true });
+    m.renderNow("a save", false, core.TRIGGER_INVALIDATED);
+    await flush();
+    if (move === "pick") { m.picked = OTHER_PICK; m.generation += 1; }
+    if (move === "generation") m.generation += 1;
+    if (move === "epoch") m.clientEpoch = 2;
+    m.readOk(0, { fromDay: "2026-01-05" });
+    await flush();
+    assert.strictEqual(m.sent.length, 1, "the mutant sends (" + move + ")");
+    if (move === "pick") {
+      // The wrong report's parameters, on the wrong pick's URI's behalf.
+      assert.strictEqual(m.sent[0].uri, SALES_PICK.uri);
+      assert.notStrictEqual(m.picked.uri, m.sent[0].uri);
+    }
+  }
+  // And the shipped code sends none of them -- the assertions above are the
+  // mutant's; the three interleaving tests above are the real code's.
+});
+
+test("S2 ASYNC: MUTANT -- a refusal that still sends renders yesterday's parameters", async () => {
+  const m = sendModel({ mutantRefusalSends: true });
+  m.renderNow("a save", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  m.readRefusal(0, "invalid-json");
+  await flush();
+  assert.strictEqual(m.sent.length, 1, "the mutant renders a file that does not parse");
+  // `prepared.params` is undefined on a refusal, so what reaches the wire is
+  // `{}` -- a document that looks like it worked, which is exactly why G7
+  // makes an unparseable file a refusal.
+  assert.deepStrictEqual(m.sent[0].params, {});
+  assert.deepStrictEqual(m.tabs, []);
+});
+
+test("S2 ASYNC: a server death during the request still marks, and carries the params", async () => {
+  const m = sendModel();
+  m.renderNow("a save", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  m.rejectWith(0, new Error("Connection got disposed"));
+  await flush();
+  assert.ok(m.mark, "M1: a rejection we cannot read as the peer's own answer marks");
+  assert.strictEqual(m.mark.reason, core.WEDGE_DIED_MID_RENDER);
+  // AND THE MARK CARRIES THE PARAMS THAT WERE SENT, which is what makes
+  // changing them clear it.
+  assert.strictEqual(m.mark.paramsFingerprint, core.paramsFingerprint({ fromDay: "2026-01-05" }));
+  assert.notStrictEqual(m.mark.paramsFingerprint, core.paramsFingerprint({ fromDay: "2026-02-01" }));
+});
+
+// -------------------------------------- the wedge guard, fed with real params
+
+test("S2 GUARD: a params CHANGE clears the wedge mark; a re-format does NOT", async () => {
+  // WP-22 put `paramsFingerprint` in the mark's VALUE so that changing the
+  // parameters CLEARS the mark rather than minting a second one, and said
+  // WP-8 would hand it the params actually sent. This is that, end to end.
+  const ORIGINAL = '{\n  "$schema": "./report.schema.json",\n  "fromDay": "2026-01-05",\n' +
+                   '  "toDay": "2026-03-17",\n  "orderBy": "ByDay"\n}\n';
+  const REFORMATTED = '{"orderBy":"ByDay","toDay":"2026-03-17","fromDay":"2026-01-05",' +
+                      '"$schema":"./somewhere/else/report.schema.json"}';
+  const CHANGED = '{"$schema":"./report.schema.json","fromDay":"2026-02-01",' +
+                  '"toDay":"2026-03-17","orderBy":"ByDay"}';
+
+  const m = sendModel();
+  // 1. render, and the server answers that the preview is wedged.
+  m.renderNow("the report was picked", false, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readOk(0, core.paramsToSend(ORIGINAL).params);
+  await flush();
+  m.answerWith(0, { ok: false, status: 500, message: "evaluation did not finish", generation: 1, stuck: true });
+  await flush();
+  assert.ok(m.mark, "the wedged answer marks");
+  assert.strictEqual(m.mark.paramsFingerprint, core.paramsFingerprint(core.paramsToSend(ORIGINAL).params));
+
+  // 2. the developer re-formats the file and moves its `$schema` line.
+  //    The mark STAYS, because nothing the server sees has changed -- and
+  //    since the S2 review's M6 the render is therefore HELD rather than
+  //    sent: this is the user's own sentence about a report that wedged
+  //    "and it didn't change".
+  m.renderNow("the params file was saved", false, core.TRIGGER_PARAMS_FILE);
+  await flush();
+  m.readOk(1, core.paramsToSend(REFORMATTED).params);
+  await flush();
+  assert.ok(m.mark, "a re-format and a changed $schema line are NOT a parameter change");
+  assert.strictEqual(m.sent.length, 1, "and so the wedge is not re-issued");
+  assert.strictEqual(m.held.length, 1);
+
+  // 3. now a real change, and the mark goes.
+  m.renderNow("the params file was saved", false, core.TRIGGER_PARAMS_FILE);
+  await flush();
+  m.readOk(2, core.paramsToSend(CHANGED).params);
+  await flush();
+  assert.strictEqual(m.mark, null, "changing fromDay clears the wedge mark");
+});
+
+test("S2 GUARD: while HELD, saving a changed params file clears the hold", async () => {
+  const m = sendModel();
+  m.renderNow("picked", false, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  m.answerWith(0, { ok: false, status: 500, message: "stuck", generation: 1, stuck: true });
+  await flush();
+  assert.ok(core.markMatches(m.mark, m.picked), "the pick is held");
+  assert.strictEqual(core.statusBarState({ pick: m.picked, mark: m.mark }).text, "$(warning) Ermine preview: held");
+  assert.strictEqual(core.shouldAutoRender(m.mark, m.picked, core.TRIGGER_RESTART), false);
+
+  m.renderNow("the params file was saved", false, core.TRIGGER_PARAMS_FILE);
+  await flush();
+  m.readOk(1, { fromDay: "2026-02-01" });
+  await flush();
+  assert.strictEqual(m.mark, null);
+  // And the status bar leaves `held` -- the report is no longer the one that
+  // wedged with nothing changed since.
+  assert.strictEqual(core.statusBarState({ pick: m.picked, mark: m.mark }).text, "$(json) Ermine: Sales.report");
+  assert.strictEqual(core.shouldAutoRender(m.mark, m.picked, core.TRIGGER_RESTART), true);
+});
+
+test("S2 GUARD: MUTANT -- the guard is not fed, so a params change never clears the mark", async () => {
+  const m = sendModel({ mutantGuardNotFed: true });
+  m.renderNow("picked", false, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  m.answerWith(0, { ok: false, status: 500, message: "stuck", generation: 1, stuck: true });
+  await flush();
+  assert.ok(m.mark);
+  m.renderNow("the params file was saved", false, core.TRIGGER_PARAMS_FILE);
+  await flush();
+  m.readOk(1, { fromDay: "2026-02-01" });
+  await flush();
+  assert.ok(m.mark, "the mutant keeps the mark over a real parameter change");
+  // The cost of that: the restart after it holds a report whose parameters
+  // the developer already fixed, and the only way out is the question.
+  assert.strictEqual(core.shouldAutoRender(m.mark, m.picked, core.TRIGGER_RESTART), false);
+});
+
+test("S2 GUARD: a params event for ANOTHER pick's mark clears it, and an empty file cannot", async () => {
+  // `guardReduce`'s own rows, reached with real `paramsToSend` output rather
+  // than with hand-written objects.
+  const marked = core.guardReduce(null, {
+    type: "answer", stuck: true, applies: true, pick: SALES_PICK,
+    params: core.paramsToSend('{"fromDay":"2026-01-05"}').params, at: 1,
+  }).mark;
+  assert.ok(marked);
+  // A refusal has no params at all, so the glue sends no event and the mark
+  // cannot move: an unparseable file is not evidence that anything changed.
+  assert.ok(core.paramsToSend("{").problem);
+  assert.strictEqual(core.guardReduce(marked, { type: "params", pick: SALES_PICK, params: undefined }).mark, null,
+                     "an event with NO params is a different fingerprint and so a clear -- which is why the " +
+                     "glue must not send one for a refusal");
+  // The same params keep it.
+  const same = core.guardReduce(marked, {
+    type: "params", pick: SALES_PICK, params: core.paramsToSend('{"fromDay":"2026-01-05"}').params });
+  assert.strictEqual(same.mark, marked);
+});
+
+test("S2: a 400 on bad params marks NOTHING, arms nothing, and leaves the latch released", async () => {
+  // The server's 400 is authoritative and is a report that ran and was
+  // refused, not a wedge. MEASURED shape (section 6's control C).
+  const m = sendModel({ restart: 20 });
+  m.renderNow("a save", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  m.readOk(0, { fromDay: 5, toDay: "2026-03-17", orderBy: "ByDay" });
+  await flush();
+  m.answerWith(0, {
+    ok: false, status: 400, generation: 1,
+    message: "expected a date string yyyy-MM-dd, found the number 5",
+    path: "$.params.fromDay",
+  });
+  await flush();
+  assert.strictEqual(m.mark, null, "a 400 is not a wedge");
+  assert.deepStrictEqual(m.arms, [], "and it arms no automatic restart");
+  assert.strictEqual(m.inFlight, null, "the latch is released by the settled answer");
+  assert.strictEqual(m.renderInFlight, false);
+  assert.strictEqual(m.stuck.stuck, false);
+  // The tab shows the whole refusal, which is where `path` and `message` are.
+  const shown = JSON.parse(core.tabContent(m.tabs[0]));
+  assert.strictEqual(shown.path, "$.params.fromDay");
+  assert.match(shown.message, /found the number 5/);
+  // And a MISSING key is reported at its object's path with the key in the
+  // message -- the deviation WP-7 measured and section 3 of the checklist
+  // records.
+  const missing = { ok: false, status: 400, message: 'the required key "toDay" is missing', path: "$.params", generation: 2 };
+  // (the tab is JSON, so the message's own quotes arrive escaped)
+  assert.match(core.tabContent(missing), /\\"toDay\\" is missing/);
+});
+
+// ---------------------------------------------------- the coalescing window
+
+/**
+ * A MODEL OF `scheduleRender`'s 150 ms window, with a virtual clock.  The
+ * window is glue -- it is a `setTimeout` in extension.js -- but WHAT IT
+ * DECIDES (two triggers inside it cost one render) is testable, and S2 adds a
+ * second trigger for the same file: `onDidSaveTextDocument` AND the params
+ * file watcher both fire for one save in the editor.
+ */
+function coalesceModel(windowMs) {
+  const renders = [];
+  let timer = null;
+  let now = 0;
+  return {
+    renders,
+    schedule(reason) { timer = { at: now + windowMs, reason }; },
+    tick(ms) {
+      now += ms;
+      if (timer && now >= timer.at) { renders.push(timer.reason); timer = null; }
+    },
+    cancel() { timer = null; },
+  };
+}
+
+/** The real number, read out of the glue, so the model cannot drift from it. */
+const COALESCE_MS = (() => {
+  const fs = require("node:fs");
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  const m = /const COALESCE_MS = (\d+);/.exec(src);
+  assert.ok(m, "source pin: extension.js no longer declares COALESCE_MS");
+  return Number(m[1]);
+})();
+
+test("S2: ONE save that fires BOTH triggers costs ONE render", () => {
+  const m = coalesceModel(COALESCE_MS);
+  // The editor reports the save; the file system watcher reports the same
+  // write. Whichever order they arrive in, and however close together.
+  m.schedule("the params file was saved");
+  m.tick(5);
+  m.schedule("the params file was changed outside the editor");
+  m.tick(COALESCE_MS + 1);
+  assert.deepStrictEqual(m.renders, ["the params file was changed outside the editor"]);
+  // The window is a coalescer, not a rate limiter: two real edits far apart
+  // are two renders.
+  m.schedule("edit one");
+  m.tick(COALESCE_MS + 1);
+  m.schedule("edit two");
+  m.tick(COALESCE_MS + 1);
+  assert.strictEqual(m.renders.length, 3);
+});
+
+test("S2: MUTANT -- both save events rendering directly costs TWO renders for one save", () => {
+  // The mutant is "call renderNow instead of scheduleRender", which is what
+  // a reader who did not know about the window would write.
+  const direct = [];
+  const renderNow = (reason) => direct.push(reason);
+  renderNow("the params file was saved");
+  renderNow("the params file was changed outside the editor");
+  assert.strictEqual(direct.length, 2, "the mutant renders twice");
+  // Two renders for one save means the second one supersedes the first,
+  // which the server answers -32800 for -- a wasted boot's worth of work on
+  // a save-driven loop.
+  const m = coalesceModel(COALESCE_MS);
+  m.schedule("a"); m.tick(5); m.schedule("b"); m.tick(COALESCE_MS + 1);
+  assert.strictEqual(m.renders.length, 1, "the real code coalesces them");
+});
+
+
+// ================================ WP-8 S2, the independent review's must-fixes
+//
+// M6 IS THE USER'S OWN SENTENCE: "We'd want some sort of confirmation before
+// rendering a report which wedged and was killed the first time around AND IT
+// DIDN'T CHANGE."  The first cut of S2 re-issued the wedge when a params file
+// was SAVED while `held` and its parameters had not moved -- a re-format, a
+// format-on-save, a touched `$schema` line -- and the tracker recorded that as
+// settled.  It is not settled; it is the loop.
+
+test("S2 M6: the trigger vocabulary -- which triggers consult the mark and which do not", () => {
+  const mark = core.guardReduce(null, {
+    type: "answer", stuck: true, applies: true, pick: SALES_PICK, params: { a: 1 }, at: 1 }).mark;
+  assert.ok(core.markMatches(mark, SALES_PICK));
+
+  // THE REFUSED SET IS CLOSED: a trigger that brings no evidence of change.
+  for (const trigger of core.UNCONFIRMED_TRIGGERS) {
+    assert.strictEqual(core.shouldAutoRender(mark, SALES_PICK, trigger), false, trigger);
+  }
+  assert.deepStrictEqual(core.UNCONFIRMED_TRIGGERS.slice().sort(),
+                         ["answer", "module-learned", "params-file", "restart", "roots"]);
+  // `answer` is in the refused set although `stuckReduce` can never emit a
+  // rerender for one (final re-check, nit 5): the trigger carries no
+  // evidence -- it is the server describing the render we just sent -- and
+  // a trigger kept out by a comment nobody re-reads is how D1 happened.
+  // It costs nothing today, which this asserts rather than assumes.
+  assert.strictEqual(core.shouldAutoRender(mark, SALES_PICK, core.TRIGGER_ANSWER), false);
+  const answerRerenders = core.stuckReduce(core.initialStuckState(),
+    { type: "answer", stuck: true, seqAtSend: 0 }).effects.rerender;
+  assert.strictEqual(answerRerenders, false, "so the refused set cannot change any behaviour today");
+  // Everything else renders, mark or no mark -- and `undefined` is NOT in
+  // that list any more (D2): an undeclared trigger is refused and named.
+  for (const trigger of [core.TRIGGER_EXPLICIT, core.TRIGGER_INVALIDATED, core.TRIGGER_FILE_EVENT,
+                         core.TRIGGER_RECOVERED]) {
+    assert.strictEqual(core.shouldAutoRender(mark, SALES_PICK, trigger), true, String(trigger));
+  }
+  assert.strictEqual(core.shouldAutoRender(mark, SALES_PICK, undefined), false, "D2: fail CLOSED");
+  // A mark that is not this pick's is never consulted, whatever the trigger.
+  for (const trigger of core.RENDER_TRIGGERS) {
+    assert.strictEqual(core.shouldAutoRender(mark, OTHER_PICK, trigger), true, trigger);
+  }
+});
+
+test("S2 M6: EVERY evidence trigger really does clear the mark BEFORE it renders", () => {
+  // The review asked for this to be proven rather than asserted: the
+  // refused set is safe only if the triggers left OUT of it cannot reach
+  // the consultation with a mark still standing.
+  const wedged = () => core.guardReduce(null, {
+    type: "answer", stuck: true, applies: true, pick: SALES_PICK, params: { a: 1 }, at: 1 }).mark;
+
+  // `invalidated` naming the pick's module -> cleared by the guard.
+  let m = core.guardReduce(wedged(), { type: "invalidated", modules: ["Sales"], pick: SALES_PICK }).mark;
+  assert.strictEqual(m, null, "invalidated");
+  // The Q11 watcher feeds a `save` event for the report's own `.e` file.
+  m = core.guardReduce(wedged(), { type: "save", path: SALES_PICK.fsPath }).mark;
+  assert.strictEqual(m, null, "file-event");
+  // A roots change, when the fingerprint moved.
+  const movedRoots = core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report", "Sales", ["/w/doc", "/w/extra"]);
+  m = core.guardReduce(wedged(), { type: "roots", pick: movedRoots }).mark;
+  assert.strictEqual(m, null, "roots");
+  // The recovery notification.
+  m = core.guardReduce(wedged(), { type: "notification", stuck: false, applies: true, pick: SALES_PICK }).mark;
+  assert.strictEqual(m, null, "recovered");
+
+  // AND THE ONE THAT DOES NOT CLEAR, WHICH IS WHY IT IS NOT AN EVIDENCE
+  // TRIGGER ANY MORE (D1): a `roots` event whose fingerprint did not move
+  // KEEPS the mark. The glue schedules on `affectsConfiguration` either way,
+  // so before D1 this rendered a held report -- and the justification
+  // recorded for it proves the opposite, because if the resolved list is the
+  // session's discard key and it did not move then nothing that matters
+  // changed. MEASURED: 2,631 of 5,097 violating sequences were this one.
+  const same = core.guardReduce(wedged(), { type: "roots", pick: SALES_PICK });
+  assert.ok(same.mark, "the same roots keep the mark");
+  assert.strictEqual(core.shouldAutoRender(same.mark, SALES_PICK, core.TRIGGER_ROOTS), false,
+                     "so the trigger must consult it");
+  // THE MEMBERSHIP RULE, as an assertion rather than a sentence: a trigger
+  // may stay OUT of the refused set only if its guard event cleared.
+  const clearsWhenItSchedules = {
+    [core.TRIGGER_INVALIDATED]: true, [core.TRIGGER_FILE_EVENT]: true,
+    [core.TRIGGER_RECOVERED]: true, [core.TRIGGER_ROOTS]: false,
+  };
+  for (const [trigger, clears] of Object.entries(clearsWhenItSchedules)) {
+    assert.strictEqual(core.UNCONFIRMED_TRIGGERS.indexOf(trigger) < 0, clears,
+                       trigger + ": out of the refused set iff it clears whenever it schedules");
+  }
+});
+
+test("S2 M6: a params save while HELD with an unchanged fingerprint ASKS, it does not render", async () => {
+  const m = sendModel();
+  m.renderNow("picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  m.answerWith(0, { ok: false, status: 500, message: "evaluation did not finish", generation: 1, stuck: true });
+  await flush();
+  assert.ok(core.markMatches(m.mark, m.picked), "the report wedged the preview");
+
+  // Format-on-save rewrites the file; the PARAMETERS are identical.
+  m.renderNow("the params file was saved", false, core.TRIGGER_PARAMS_FILE);
+  await flush();
+  m.readOk(1, { fromDay: "2026-01-05" });
+  await flush();
+  assert.strictEqual(m.sent.length, 1, "the wedge is NOT re-issued");
+  assert.strictEqual(m.held.length, 1);
+  assert.strictEqual(m.held[0].trigger, core.TRIGGER_PARAMS_FILE);
+  assert.ok(m.mark, "and the mark stands, so the status bar still reads held");
+  assert.strictEqual(m.renderInFlight, false, "the spinner is released");
+  assert.strictEqual(m.inFlight, null, "nothing was taken");
+
+  // A REAL change clears the mark at the same site and renders.
+  m.renderNow("the params file was saved", false, core.TRIGGER_PARAMS_FILE);
+  await flush();
+  m.readOk(2, { fromDay: "2026-02-01" });
+  await flush();
+  assert.strictEqual(m.mark, null);
+  assert.strictEqual(m.sent.length, 2);
+  assert.deepStrictEqual(m.sent[1].params, { fromDay: "2026-02-01" });
+});
+
+test("S2 M6: an EXPLICIT render while held is never refused -- asking for it IS the consent", async () => {
+  const m = sendModel();
+  m.renderNow("picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  m.answerWith(0, { ok: false, status: 500, message: "stuck", generation: 1, stuck: true });
+  await flush();
+  assert.ok(m.mark);
+  // "Render anyway" clears the mark before `renderNow` (holdRender does it),
+  // but even without that the explicit trigger is never consulted.
+  m.renderNow("Render anyway", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readOk(1, { fromDay: "2026-01-05" });
+  await flush();
+  assert.strictEqual(m.sent.length, 2);
+  assert.deepStrictEqual(m.held, []);
+});
+
+test("S2 M6: MUTANT -- without the second consultation the wedge is re-issued silently", async () => {
+  const m = sendModel({ mutantNoHeldCheck: true });
+  m.renderNow("picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  m.answerWith(0, { ok: false, status: 500, message: "stuck", generation: 1, stuck: true });
+  await flush();
+  m.renderNow("the params file was saved", false, core.TRIGGER_PARAMS_FILE);
+  await flush();
+  m.readOk(1, { fromDay: "2026-01-05" });          // a re-format: nothing changed
+  await flush();
+  assert.strictEqual(m.sent.length, 2, "the mutant re-renders the report that wedged the server");
+  assert.deepStrictEqual(m.held, []);
+});
+
+test("S2 M4: the module is learned -> a render is scheduled, and it respects the hold", async () => {
+  // Until the module was known there was no params PATH, so the first render
+  // went out with `{}` and a params file on disk was ignored for ever
+  // (review M4: "there is no next render").
+  const noModule = core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "report", null, ["/w/doc"]);
+  assert.strictEqual(core.paramsPaths(noModule, "/w", "posix").problem.reason, "no-module");
+  const learned = core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "report", "Sales", ["/w/doc"]);
+  assert.strictEqual(core.paramsPaths(learned, "/w", "posix").paramsPath,
+                     "/w/.ermine/preview/Sales/report.params.json");
+
+  // It carries no evidence of change, so it is in the refused set.
+  const mark = core.guardReduce(null, {
+    type: "answer", stuck: true, applies: true, pick: learned, params: {}, at: 1 }).mark;
+  assert.strictEqual(core.shouldAutoRender(mark, learned, core.TRIGGER_MODULE_LEARNED), false);
+  assert.strictEqual(core.shouldAutoRender(null, learned, core.TRIGGER_MODULE_LEARNED), true);
+
+  const m = sendModel({ pick: learned });
+  m.renderNow("the module name was learned", false, core.TRIGGER_MODULE_LEARNED);
+  await flush();
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  assert.strictEqual(m.sent.length, 1, "with no mark it renders, and now it finds the file");
+  assert.deepStrictEqual(m.sent[0].params, { fromDay: "2026-01-05" });
+});
+
+test("S2 M3: the three params the fingerprint used to collapse are three marks", () => {
+  // MEASURED before the fix: fp(null) == fp({}) == fp(undefined). So a report
+  // that wedged with NO FILE could not be un-held by writing a file holding
+  // `null`, and one that wedged on `null` could not be un-held by replacing
+  // it with `{}` or by deleting the file.
+  const wedged = (params) => core.guardReduce(null, {
+    type: "answer", stuck: true, applies: true, pick: SALES_PICK, params, at: 1 }).mark;
+  const clears = (mark, params) =>
+    core.guardReduce(mark, { type: "params", pick: SALES_PICK, params }).mark === null;
+
+  assert.ok(clears(wedged(undefined), null), "no file -> a file holding null IS a change");
+  assert.ok(clears(wedged(null), {}), "null -> {} IS a change");
+  assert.ok(clears(wedged(null), undefined), "null -> no params at all IS a change");
+  assert.ok(!clears(wedged(null), null), "and null -> null is not");
+  assert.ok(!clears(wedged({}), undefined), "`undefined` still means `{}`, for the marks 0.1.7 wrote");
+});
+
+test("S2 nits: the read failures VS Code spells differently, and the name fallback", () => {
+  // nit 1: `FileNotADirectory` is VS Code's spelling of node's `ENOTDIR`, so
+  // the same physical state must classify the same way whichever provider
+  // answered.
+  for (const code of ["FileNotFound", "FileNotADirectory", "ENOENT", "ENOTDIR", "EntryNotFound"]) {
+    assert.strictEqual(core.meansFileMissing({ code }), true, code);
+  }
+  // nit 2: `name` has been seen rendered as "EntryNotFound (FileSystemError)".
+  assert.strictEqual(core.meansFileMissing({ name: "EntryNotFound (FileSystemError)" }), true);
+  assert.strictEqual(core.meansFileMissing({ name: "FileNotFound (FileSystemError)" }), true);
+  // Something IS there and we could not read it: still a refusal.
+  for (const code of ["EACCES", "NoPermissions", "EISDIR", "FileIsADirectory", "EBUSY"]) {
+    assert.strictEqual(core.meansFileMissing({ code }), false, code);
+  }
+  assert.strictEqual(core.meansFileMissing({ name: "Error" }), false);
+});
+
+test("S2 nits: the cap is applied BEFORE the file is materialised", () => {
+  // nit 3: `readFile` pulls the whole file into the extension host, and the
+  // text cap only runs afterwards. A 1 GiB params file would kill the host
+  // the way a 64 MiB frame kills the server.
+  const over = core.paramsTooLargeToRead(core.PARAMS_MAX_BYTES + 1);
+  assert.strictEqual(over.reason, "too-large");
+  assert.match(over.message, /1048577 bytes/);
+  assert.match(over.message, /not read/);
+  // The boundary is the same `>` the text cap uses (MEASURED by the review:
+  // exactly 1 MiB reaches the server).
+  assert.strictEqual(core.paramsTooLargeToRead(core.PARAMS_MAX_BYTES), null);
+  // A provider that cannot stat must still work: an unusable answer means
+  // "carry on and let the text cap decide".
+  for (const size of [undefined, null, -1, NaN, Infinity, "big"]) {
+    assert.strictEqual(core.paramsTooLargeToRead(size), null, String(size));
+  }
+  // And it dresses as an answer like every other refusal.
+  assert.strictEqual(core.paramsRefusalAnswer(over, "/p.json", 4).paramsProblem, "too-large");
+});
+
+test("S2 nits: a read that never settles is a named refusal, not a stuck spinner", () => {
+  // nit 7, and `stopQuietly`'s own lesson: a hang is not a throw.
+  const out = core.paramsReadTimedOut("/w/.ermine/preview/Sales/report.params.json", 5000);
+  assert.strictEqual(out.reason, "timed-out");
+  assert.match(out.message, /did not finish being read within 5s/);
+  assert.match(out.message, /Save it again to retry/);
+  assert.strictEqual(core.PARAMS_READ_TIMEOUT_MS, 5000);
+  assert.strictEqual(core.paramsRefusalAnswer(out, "/p.json", 2).status, null);
+});
+
+test("S2 nits: a params refusal does NOT disarm the Q11 watcher", async () => {
+  // nit 5: `shouldRerenderOnFileEvent` asks whether the last SERVER answer
+  // was a placement 404. A refusal decided in the extension is not an answer
+  // from any server, and overwriting it lost the render that brings a
+  // deleted report back to life.
+  const placement404 = { ok: false, status: 404, reason: "unreadable", message: "cannot read Sales.e", generation: 1 };
+  assert.strictEqual(core.shouldRerenderOnFileEvent(SALES_PICK, placement404, SALES_PICK.fsPath), true);
+
+  const m = sendModel();
+  m.renderNow("x", false, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  m.answerWith(0, placement404);
+  await flush();
+  assert.strictEqual(m.lastServerAnswer, placement404);
+
+  m.renderNow("the params file was saved", false, core.TRIGGER_PARAMS_FILE);
+  await flush();
+  m.readRefusal(1, "invalid-json");
+  await flush();
+  assert.strictEqual(m.lastAnswer.paramsProblem, "invalid-json", "the tab shows the refusal");
+  assert.strictEqual(m.lastServerAnswer, placement404, "and the watcher still knows it is watching");
+  assert.strictEqual(core.shouldRerenderOnFileEvent(m.picked, m.lastServerAnswer, m.picked.fsPath), true);
+  assert.strictEqual(core.shouldRerenderOnFileEvent(m.picked, m.lastAnswer, m.picked.fsPath), false,
+                     "which is exactly what the single variable used to answer");
+});
+
+
+// ================== WP-8 S2, the DELTA re-review: D1, D2, D3 and families B/C
+//
+// The delta re-review drove the REAL reducers, in the glue's real order, over
+// every sequence of 13 events up to depth 5 -- 579,194 of them -- and asked one
+// question of each: did a render reach the wire for a report whose mark was
+// still standing, without the user asking?  It found 5,097 that did.  The three
+// families are D1 (a `roots` change that moved nothing), and B/C (an evidence
+// trigger that cleared the mark and scheduled, after which the report wedged
+// AGAIN inside the coalescing window and the read).
+
+test("S2 D1: a roots change that moves NOTHING consults the mark", async () => {
+  const m = sendModel();
+  m.renderNow("picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  m.answerWith(0, { ok: false, status: 500, message: "stuck", generation: 1, stuck: true });
+  await flush();
+  assert.ok(core.markMatches(m.mark, m.picked), "the report wedged");
+
+  // `ermine.preview.roots` was edited to a list that RESOLVES the same. The
+  // glue feeds the guard, which KEEPS the mark, and schedules regardless.
+  m.mark = core.guardReduce(m.mark, { type: "roots", pick: m.picked }).mark;
+  assert.ok(m.mark, "the guard keeps a mark whose roots fingerprint did not move");
+  m.renderNow("ermine.preview.roots changed", false, core.TRIGGER_ROOTS);
+  await flush();
+  m.readOk(1, { fromDay: "2026-01-05" });
+  await flush();
+  assert.strictEqual(m.sent.length, 1, "the wedge is NOT re-issued");
+  assert.strictEqual(m.held.length, 1);
+  assert.strictEqual(m.held[0].trigger, core.TRIGGER_ROOTS);
+
+  // And a roots change that DOES move clears the mark, so it renders.
+  const n = sendModel();
+  n.renderNow("picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  n.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  n.answerWith(0, { ok: false, status: 500, message: "stuck", generation: 1, stuck: true });
+  await flush();
+  n.rootsChangeInPlace(["/w/doc", "/w/extra"]);
+  n.mark = core.guardReduce(n.mark, { type: "roots", pick: n.picked }).mark;
+  assert.strictEqual(n.mark, null);
+  n.renderNow("ermine.preview.roots changed", false, core.TRIGGER_ROOTS);
+  await flush();
+  n.readOk(1, { fromDay: "2026-01-05" });
+  await flush();
+  assert.strictEqual(n.sent.length, 2);
+});
+
+test("S2 D2: an undeclared trigger is refused and named, not permitted", async () => {
+  // THE MUTANT THIS EXISTS FOR: `scheduleRender` forwarding `undefined`
+  // instead of its trigger neutered BOTH consultation sites for every
+  // automatic render and survived all 210 tests.
+  assert.match(core.triggerProblem(undefined), /not one of the declared render triggers/);
+  assert.match(core.triggerProblem("restarted"), /restarted/);
+  assert.strictEqual(core.isRenderTrigger(core.TRIGGER_ROOTS), true);
+  assert.strictEqual(core.isRenderTrigger("Roots"), false);
+
+  const m = sendModel();
+  m.renderNow("picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  m.answerWith(0, { ok: false, status: 500, message: "stuck", generation: 1, stuck: true });
+  await flush();
+  m.renderNow("a trigger nobody declared", false, undefined);
+  await flush();
+  m.readOk(1, { fromDay: "2026-01-05" });
+  await flush();
+  assert.strictEqual(m.sent.length, 1, "fail CLOSED: the held report is not re-rendered");
+  assert.strictEqual(m.held.length, 1);
+
+  // AND EVERY TRIGGER THE GLUE REALLY PASSES IS DECLARED. Read out of the
+  // source, so adding a call site with a new spelling fails here.
+  const fs = require("node:fs");
+  const glue = fs.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  const used = new Set((glue.match(/core\.TRIGGER_[A-Z_]+/g) || []).map((t) => t.replace("core.", "")));
+  assert.ok(used.size >= 7, "only " + used.size + " trigger constants are used");
+  for (const name of used) {
+    assert.ok(core.RENDER_TRIGGERS.indexOf(core[name]) >= 0, name + " is not a declared render trigger");
+  }
+  // `applyStuck`'s own third argument used to be a bare string that
+  // OVERLAPPED this vocabulary by luck ("restart", "recovered", "answer").
+  assert.ok(used.has("TRIGGER_ANSWER") && used.has("TRIGGER_RECOVERED") && used.has("TRIGGER_RESTART"));
+});
+
+test("S2 families B/C: a mark minted AFTER the render was scheduled holds it", () => {
+  // `invalidated` clears the mark and schedules; inside the 150 ms window
+  // and the file read the report wedges AGAIN. The trigger is evidence and
+  // the mark stands, so the consultation alone would permit it -- and the
+  // request would reach a server that has just wedged.
+  const pick = SALES_PICK;
+  const markAt = (at) => core.guardReduce(null, {
+    type: "answer", stuck: true, applies: true, pick, params: { a: 1 }, at }).mark;
+
+  assert.strictEqual(core.markMintedAfter(markAt(2000), pick, 1000), true);
+  assert.strictEqual(core.markMintedAfter(markAt(500), pick, 1000), false, "an OLDER mark is the one the guard already asked about");
+  assert.strictEqual(core.markMintedAfter(markAt(1000), pick, 1000), false, "same instant: not newer");
+  assert.strictEqual(core.markMintedAfter(null, pick, 1000), false);
+  assert.strictEqual(core.markMintedAfter(markAt(2000), OTHER_PICK, 1000), false, "another pick's mark is never consulted");
+
+  // FAIL OPEN on anything it cannot compare: this arm refines an
+  // already-safe decision, and a spurious hold on a broken clock is a worse
+  // trade than the one it fixes.
+  assert.strictEqual(core.markMintedAfter(markAt(2000), pick, undefined), false);
+  assert.strictEqual(core.markMintedAfter(markAt(2000), pick, NaN), false);
+  assert.strictEqual(core.markMintedAfter(markAt(null), pick, 1000), false);
+
+  // End to end through the one function the glue calls.
+  assert.deepStrictEqual(core.mayAutoRender(markAt(2000), pick, core.TRIGGER_INVALIDATED, 1000).render, false);
+  assert.match(core.mayAutoRender(markAt(2000), pick, core.TRIGGER_INVALIDATED, 1000).why, /wedged the preview again AFTER/);
+  assert.strictEqual(core.mayAutoRender(markAt(500), pick, core.TRIGGER_INVALIDATED, 1000).render, true);
+  // An EXPLICIT render is never held by it: asking for it is the consent.
+  assert.strictEqual(core.mayAutoRender(markAt(2000), pick, core.TRIGGER_EXPLICIT, 1000).render, true);
+});
+
+test("S2 families B/C: the sequence the explorer found, walked end to end", async () => {
+  const m = sendModel();
+  // 1. a render wedges the preview.
+  m.renderNow("picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  m.answerWith(0, { ok: false, status: 500, message: "stuck", generation: 1, stuck: true });
+  await flush();
+  assert.ok(m.mark);
+
+  // 2. the developer saves the `.e` file: `invalidated` CLEARS the mark and
+  //    schedules a render at T.
+  m.mark = core.guardReduce(m.mark, { type: "invalidated", modules: ["Sales"], pick: m.picked }).mark;
+  assert.strictEqual(m.mark, null);
+  const scheduledAt = 1000;
+  m.renderNow("invalidated: Sales", false, core.TRIGGER_INVALIDATED, scheduledAt);
+  await flush();
+
+  // 3. INSIDE the window, the server answers an older render `stuck: true`
+  //    and the mark is re-minted, at a time AFTER T.
+  m.mark = core.guardReduce(m.mark, {
+    type: "answer", stuck: true, applies: true, pick: m.picked, params: { fromDay: "2026-01-05" },
+    at: scheduledAt + 50 }).mark;
+  assert.ok(m.mark, "the report wedged again while the render waited");
+
+  // 4. the read finishes and the render is HELD, not sent.
+  m.readOk(1, { fromDay: "2026-01-05" });
+  await flush();
+  assert.strictEqual(m.sent.length, 1);
+  assert.strictEqual(m.held.length, 1);
+  assert.match(m.held[0].why, /AFTER this render was scheduled/);
+});
+
+test("S2 D3: \"Not now\" is remembered for a params re-format and NOT for a restart", () => {
+  const pick = SALES_PICK;
+  const mark = core.guardReduce(null, {
+    type: "answer", stuck: true, applies: true, pick, params: { a: 1 }, at: 1000 }).mark;
+  const token = core.heldPromptToken(mark);
+  assert.ok(typeof token === "string" && token.length > 20);
+  assert.strictEqual(core.heldPromptToken(null), null);
+  assert.strictEqual(core.heldPromptToken({ key: "x" }), null, "only a real mark has a token");
+
+  // Nothing refused yet: ask.
+  assert.strictEqual(core.shouldAskHeld(undefined, mark, pick, core.TRIGGER_PARAMS_FILE).ask, true);
+  // Refused once: a second re-format of the same file does not ask again.
+  const again = core.shouldAskHeld(token, mark, pick, core.TRIGGER_PARAMS_FILE);
+  assert.strictEqual(again.ask, false);
+  assert.match(again.why, /already answered "Not now"/);
+  // A RESTART is a new event -- the user pressed the button, or the server
+  // died again -- and always asks.
+  for (const trigger of [core.TRIGGER_RESTART, core.TRIGGER_MODULE_LEARNED, core.TRIGGER_ROOTS]) {
+    assert.strictEqual(core.shouldAskHeld(token, mark, pick, trigger).ask, true, trigger);
+  }
+  // A NEW mark for the same pick (the wedge happened again) asks.
+  const reMinted = core.guardReduce(null, {
+    type: "answer", stuck: true, applies: true, pick, params: { a: 1 }, at: 9999 }).mark;
+  assert.strictEqual(core.shouldAskHeld(token, reMinted, pick, core.TRIGGER_PARAMS_FILE).ask, true);
+  // A mark that is not this pick's is never asked about at all.
+  assert.strictEqual(core.shouldAskHeld(token, mark, OTHER_PICK, core.TRIGGER_PARAMS_FILE).ask, false);
+  assert.strictEqual(core.shouldAskHeld(undefined, null, pick, core.TRIGGER_PARAMS_FILE).ask, false);
+});
+
+test("S2 D3: the second re-format while held logs instead of asking, and the hold stays", async () => {
+  const m = sendModel();
+  m.renderNow("picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readOk(0, { fromDay: "2026-01-05" });
+  await flush();
+  m.answerWith(0, { ok: false, status: 500, message: "stuck", generation: 1, stuck: true });
+  await flush();
+
+  // First re-format: held, and the question is asked.
+  m.renderNow("the params file was saved", false, core.TRIGGER_PARAMS_FILE);
+  await flush();
+  m.readOk(1, { fromDay: "2026-01-05" });
+  await flush();
+  assert.strictEqual(m.asked.length, 1);
+  assert.strictEqual(m.asked[0].ask, true);
+  m.notNow();                                    // the user dismisses it
+
+  // Second re-format: still held, and NOT asked again.
+  m.renderNow("the params file was saved", false, core.TRIGGER_PARAMS_FILE);
+  await flush();
+  m.readOk(2, { fromDay: "2026-01-05" });
+  await flush();
+  assert.strictEqual(m.sent.length, 1, "nothing is rendered either way");
+  assert.strictEqual(m.asked.length, 2);
+  assert.strictEqual(m.asked[1].ask, false, "the same question is not asked twice");
+  assert.ok(core.markMatches(m.mark, m.picked), "and the status bar still reads held");
+  assert.strictEqual(core.statusBarState({ pick: m.picked, mark: m.mark }).text,
+                     "$(warning) Ermine preview: held");
+
+  // A RESTART after that asks again.
+  const asking = core.shouldAskHeld(m.heldRefusedToken, m.mark, m.picked, core.TRIGGER_RESTART);
+  assert.strictEqual(asking.ask, true);
+});
+

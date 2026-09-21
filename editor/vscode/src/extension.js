@@ -506,6 +506,13 @@ CLIENT_STATE[(State && State.Starting) || 3] = "Starting";
 let picked;
 let generation = 0;
 let lastAnswer;
+/**
+ * The last answer a SERVER gave, which is not always what is on screen: a
+ * params refusal (WP-8 S2) is shown in the tab but was decided here, and the
+ * Q11 watcher's question -- "is the picked report sitting on a PLACEMENT
+ * 404?" -- is about the server's view and nothing else (S2 review nit 5).
+ */
+let lastServerAnswer;
 let stuckState = core.initialStuckState();
 /**
  * WP-22: ONE wedge mark, for the current pick, or null. Every transition
@@ -520,6 +527,27 @@ let wedgeMark = null;
  * this flag -- and the held status bar item says so the whole time.
  */
 let heldPromptOpen = false;
+/**
+ * D3 (delta re-review): WHAT THE USER LAST ANSWERED "Not now" TO, as
+ * `core.heldPromptToken`'s string, or undefined.
+ *
+ * Without it, format-on-save asks once per save: the params file is
+ * rewritten, the fingerprint does not move, the mark stands, and the
+ * question comes back. With it, the same question for the same mark and the
+ * same parameters is asked ONCE; the `held` status bar keeps saying so, and
+ * each suppressed re-ask is one line in the channel rather than a
+ * notification. Anything that changes the situation -- a new mark (a fresh
+ * `at`), another pick, parameters that really moved (which clears the mark),
+ * or the user rendering it themselves -- produces a different token, or no
+ * mark at all, and the question comes back.
+ *
+ * **IT IS IN-PROCESS ONLY, DELIBERATELY.** Unlike the mark itself it is not
+ * mirrored into `workspaceState`, so reloading the window asks once more.
+ * That is the safe side: the mark IS restored, so the report is still held,
+ * and one question after a reload is cheaper than persisting a refusal the
+ * user may not remember giving.
+ */
+let heldRefusedToken;
 /**
  * WP-22 (c): the grace timer's state, and the timer itself.
  *
@@ -553,6 +581,21 @@ let restartTimer;
  */
 let inFlightRender = null;
 let renderInFlight = false;
+/**
+ * HOW MANY TIMES THE LANGUAGE CLIENT HAS BEEN SEEN TO STOP (S2 review M5).
+ *
+ * `clientEpoch` moves only when WE build a new client. `clientOptions`
+ * configures no `errorHandler` and no `maxRestartCount`, so
+ * `vscode-languageclient`'s DEFAULT close action applies and may restart the
+ * server process on the SAME client object -- and then a render whose file
+ * read spans that restart would see the same pick, the same generation and
+ * the same epoch, and would reach the fresh process WITHOUT passing WP-22's
+ * one consultation site. THE LIBRARY'S BEHAVIOUR HERE IS UNVERIFIED (its
+ * source is unread, per the project rule, and nobody has run this
+ * extension), so this counter is a DEFENCE, not a fix for a measured bug: it
+ * costs one integer and closes the hole whichever way the library behaves.
+ */
+let stopCount = 0;
 let moduleRefreshInFlight = false;
 let coalesceTimer;
 /** @type {vscode.StatusBarItem | undefined} */
@@ -564,6 +607,32 @@ let pickWatchers = [];
 let extContext;
 /** Root problems already reported, so the warning really is once (S5). */
 const warnedRoots = new Set();
+/**
+ * WP-8 S2. THE PARAMS ACTUALLY SENT on the last render, or `undefined` if
+ * none has been sent yet -- which is what the wedge mark carries, so that
+ * changing the parameters CLEARS the mark instead of minting a second one
+ * (WP-22's `paramsFingerprint`, whose hook this is).
+ *
+ * `null` IS A VALUE: a params file holding `null` is what a `Maybe`-rooted
+ * report wants, so "nothing has been sent" cannot be spelled `null`.
+ */
+let lastParamsSent;
+/**
+ * WP-8 S2: what we have already said about THIS pick's params file, so that
+ * "one line per distinct problem" is one line and not one per render -- a
+ * save-driven loop renders every few seconds and a repeated sentence in the
+ * channel is how a real message gets missed. Cleared on a pick change, and
+ * the `missing` entry is dropped again whenever a file IS read, so a file
+ * that is deleted a second time is announced a second time.
+ */
+let paramsNotices = new Set();
+/**
+ * U5: the credential warning is once per FILE per session, not per pick and
+ * not per render. It survives a pick change deliberately -- the hazard is a
+ * property of the file, and re-warning about the same file when the developer
+ * comes back to that report is noise they will learn to dismiss.
+ */
+const warnedCredentialFiles = new Set();
 
 /**
  * LAZY on purpose: a second status bar item that says "no report picked"
@@ -587,6 +656,8 @@ function previewItem() {
 }
 
 function setPreviewStatus() {
+  // Nothing is shown after a teardown, and the item may already be disposed.
+  if (previewDisposed) return;
   const view = core.statusBarState({
     stuck: stuckState.stuck,
     message: stuckState.message,
@@ -651,6 +722,183 @@ function rootsFor(uri) {
   }
 }
 
+// ------------------------------------------------- params files (WP-8, S2)
+//
+// A report's parameters are an ordinary committed file,
+// `<workspace folder>/.ermine/preview/<Module>/<binding>.params.json`
+// (section 6). S2 READS ONE AND SENDS IT. It writes nothing -- no skeleton,
+// no `<binding>.schema.json`, no `.gitignore`, and it asks for no schema:
+// that is S3. Everything decidable from data alone is in `preview-core.js`;
+// what is here is the disk, the watcher and the notifications.
+//
+// IT READS THE FILE FROM DISK, NOT FROM THE EDITOR BUFFER (section 2.4: the
+// preview "reads saved files, not buffers"), through `vscode.workspace.fs`,
+// which is why every render's send path now has an `await` in it that was
+// not there before -- see `core.mayStillSend` for what that costs and how it
+// is paid.
+
+/** Every workspace folder's own path, for `core.paramsFolderFor` (G1). */
+function workspaceFolderPaths() {
+  const folders = vscode.workspace.workspaceFolders;
+  const out = [];
+  for (const folder of folders || []) {
+    const p = folder && folder.uri && folder.uri.fsPath;
+    if (typeof p === "string" && p) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Where THIS pick's params file would live, or the named reason it has none.
+ *
+ * THE FOLDER IS THE ONE THAT CONTAINS THE REPORT, never `folders[0]` (G1):
+ * `rootsFor` falls back to the first folder for a SETTING, which is
+ * defensible, and doing the same for a FILE would read -- and later write --
+ * inside an unrelated repository that happens to be first in the window.
+ */
+function paramsPathsFor(pick) {
+  if (!pick) return core.paramsPaths(pick, undefined);
+  return core.paramsPaths(pick, core.paramsFolderFor(pick.fsPath, workspaceFolderPaths()));
+}
+
+/** One channel line per distinct params problem per pick, and no more. */
+function paramsNoticeOnce(pick, reason, line) {
+  const key = core.paramsNoticeKey(pick, reason);
+  if (paramsNotices.has(key)) return false;
+  paramsNotices.add(key);
+  log("preview: " + line);
+  return true;
+}
+
+/**
+ * A pick change -- or learning the module name, which MOVES the params
+ * directory -- makes every earlier notice about a different file.
+ * `lastParamsSent` is NOT cleared here: it is what the wedge mark compares
+ * against, and it is reset only where the pick itself changes.
+ */
+function forgetParamsNotices() {
+  paramsNotices = new Set();
+}
+
+/**
+ * THE READ ITSELF, and the only place S2 touches the disk.
+ *
+ * `vscode.workspace.fs.readFile` rather than `fs.readFileSync`, for ONE
+ * reason: it is asynchronous, which is what the extension host wants. The
+ * bytes are decoded as UTF-8 here and the BOM is `paramsToSend`'s problem
+ * (review I-2), because the byte CAP has to count the BOM.
+ *
+ * **THIS IS LOCAL WORKSPACES ONLY, AND THE CLAIM THAT IT WAS NOT IS
+ * WITHDRAWN (S2 review M7).** `vscode.Uri.file(fsPath)` DISCARDS the scheme
+ * and the authority, so on a `vscode-remote:` or a virtual workspace this
+ * addresses a local path that does not exist -- `workspace.fs` is the right
+ * API and it is being handed the wrong Uri. The whole extension is
+ * `fsPath`-based (the pick, `paramsPaths`, `shouldRerenderOnParamsSave`,
+ * `rootsFor`, and the server it spawns is a local process), so making this
+ * one call remote-correct would fix nothing by itself; doing it properly
+ * means carrying the workspace folder's OWN `Uri` through the pick and
+ * joining with `Uri.joinPath`, which is a ticket and not a line. Recorded as
+ * a stated limitation in section 6 rather than pretended away.
+ */
+async function readParamsFile(fsPath) {
+  const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(fsPath));
+  return Buffer.from(bytes).toString("utf8");
+}
+
+/**
+ * The file's size WITHOUT reading it, or null when the provider cannot say.
+ * A `stat` that throws is not an error here: the read that follows will
+ * produce the real one, and a provider with no `stat` must still work.
+ */
+async function paramsFileSize(fsPath) {
+  try {
+    const st = await vscode.workspace.fs.stat(vscode.Uri.file(fsPath));
+    return st && typeof st.size === "number" ? st.size : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * A READ THAT NEVER SETTLES IS NOT A READ THAT THREW -- `stopQuietly`'s own
+ * lesson (WP-22(c) review F1), applied to the new await (S2 review nit 7).
+ * Both arms of the race are handled, so a read that rejects after the bound
+ * cannot surface as an unhandled rejection.
+ */
+async function readParamsFileBounded(fsPath, ms) {
+  const limit = typeof ms === "number" && ms > 0 ? ms : core.PARAMS_READ_TIMEOUT_MS;
+  let timer;
+  const bounded = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ timedOut: true }), limit);
+  });
+  const reading = Promise.resolve()
+    .then(() => readParamsFile(fsPath))
+    .then((text) => ({ text }), (err) => ({ err }));
+  const outcome = await Promise.race([reading, bounded]);
+  clearTimeout(timer);
+  return outcome;
+}
+
+/**
+ * THE PARAMS FOR ONE RENDER, as data: `{params}` or `{refusal}`, plus what
+ * the glue should SAY about it. Nothing is logged or shown from in here --
+ * the caller emits after `core.mayStillSend` has agreed the render is still
+ * the current one, so a notification can never describe a report the user
+ * has already moved away from.
+ *
+ * THE FOUR OUTCOMES (section 6's own list):
+ *   no params FILE                -> `{}`, exactly what WP-7 sends today,
+ *                                    said once per pick;
+ *   a `paramsPaths` PROBLEM       -> `{}`, said once per distinct reason;
+ *   a `paramsToSend` PROBLEM      -> a REFUSAL: the render does not happen
+ *                                    (G7), and the tab shows why;
+ *   a read error that is NOT "no   -> a REFUSAL too, and this is S2's own
+ *   such file"                       decision: rendering `{}` over a params
+ *                                    file that exists but could not be read
+ *                                    would show a document that looks right
+ *                                    and is not, which is exactly why S1
+ *                                    made an EMPTY file a refusal rather
+ *                                    than `{}`.
+ */
+async function prepareParams(pick) {
+  const paths = paramsPathsFor(pick);
+  if (paths.problem) {
+    return { params: {}, notice: { reason: paths.problem.reason, line: paths.problem.message } };
+  }
+  // THE CAP, BEFORE THE FILE IS MATERIALISED (review nit 3): `readFile`
+  // pulls the whole thing into the extension host, and a 1 GiB params file
+  // would kill the host the way a 64 MiB frame kills the server.
+  const tooBig = core.paramsTooLargeToRead(await paramsFileSize(paths.paramsPath));
+  if (tooBig) return { path: paths.paramsPath, refusal: tooBig };
+
+  const outcome0 = await readParamsFileBounded(paths.paramsPath);
+  if (outcome0.timedOut) {
+    return { path: paths.paramsPath, refusal: core.paramsReadTimedOut(paths.paramsPath) };
+  }
+  if (outcome0.err) {
+    const err = outcome0.err;
+    if (core.meansFileMissing(err)) {
+      return {
+        params: {},
+        path: paths.paramsPath,
+        notice: { reason: "missing", line: core.paramsMissingNotice(paths.paramsPath) },
+      };
+    }
+    return {
+      path: paths.paramsPath,
+      refusal: {
+        reason: "unreadable",
+        message: 'The params file "' + paths.paramsPath + '" exists but could not be read (' +
+                 (err && err.message ? err.message : String(err)) + "), so the report was NOT rendered: " +
+                 "rendering it with empty parameters would show a document that looks right and is not.",
+      },
+    };
+  }
+  const outcome = core.paramsToSend(outcome0.text);
+  if (outcome.problem) return { path: paths.paramsPath, refusal: outcome.problem };
+  return { params: outcome.params, warnings: outcome.warnings, path: paths.paramsPath, read: true };
+}
+
 /**
  * THE `Stopped` EDGE, IN ONE PLACE, because it now has TWO sources (final
  * re-check must-fix).
@@ -683,6 +931,9 @@ function rootsFor(uri) {
  */
 function onClientStopped(why, from) {
   log(`preview: the language server stopped (${why})`);
+  // M5: bumped on EVERY stop, including one the library performs by itself
+  // on the same client object, which `clientEpoch` cannot see.
+  stopCount += 1;
   // WP-22: the server died while a render of the pick was in flight. It may
   // never have fired the watchdog -- at a small -Xmx the JVM exits first
   // (MEASURED, section 2.5: WpBlow at 256m, exit 3 at 8.6 s, no fire). M1:
@@ -696,13 +947,16 @@ function onClientStopped(why, from) {
       to: "Stopped",
       renderInFlight: inFlightRender !== null,
       pick: core.markPickFor(inFlightRender && inFlightRender.pick, picked),
+      // WP-8: the mark carries the params that were in force, so that
+      // changing them later CLEARS it rather than minting a second one.
+      params: core.markParamsFor(inFlightRender ? inFlightRender.params : undefined, lastParamsSent),
       at: Date.now(),
     })
   );
   applyRestart(core.restartReduce(restartState, core.restartEvents.clientState("Stopped")));
   applyStuck(
     core.stuckReduce(stuckState, { type: "clientState", from: from, to: "Stopped" }),
-    "restart"
+    core.TRIGGER_RESTART
   );
 }
 
@@ -726,7 +980,7 @@ function installPreviewHandlers(c, epoch) {
     // suppressed -- the notification IS the evidence).
     applyGuard(core.guardReduce(wedgeMark, { type: "invalidated", modules, pick: picked }));
     if (core.shouldRerenderOnInvalidated(picked, modules)) {
-      scheduleRender(`invalidated: ${picked.module}`);
+      scheduleRender(`invalidated: ${picked.module}`, core.TRIGGER_INVALIDATED);
     } else if (picked.module && modules.length) {
       // Section 3.2's own words for the case where nothing happens (S3).
       vscode.window.setStatusBarMessage(`Ermine: not used by ${core.pickLabel(picked)}`, 4000);
@@ -759,6 +1013,7 @@ function installPreviewHandlers(c, epoch) {
         // N2: the render that is IN FLIGHT is the better claim about what
         // wedged; the current pick is the fallback when nothing is running.
         pick: core.markPickFor(inFlightRender && inFlightRender.pick, picked),
+        params: core.markParamsFor(inFlightRender ? inFlightRender.params : undefined, lastParamsSent),
         at: Date.now(),
       })
     );
@@ -766,7 +1021,7 @@ function installPreviewHandlers(c, epoch) {
     // the falling one disarms it (Q10's recovery), and the notification
     // `applyStuck` is about to show has to be able to say so.
     applyRestart(core.restartReduce(restartState, core.restartEvents.notification(event.stuck, applies, Date.now())));
-    applyStuck(core.stuckReduce(stuckState, event), "recovered");
+    applyStuck(core.stuckReduce(stuckState, event), core.TRIGGER_RECOVERED);
   });
 
   // Section 5's "Server stopped" row, and DD-2's `seq` reset. The library
@@ -792,6 +1047,7 @@ function installPreviewHandlers(c, epoch) {
         // A fresh process knows nothing about the last one: the answer we
         // are holding described a server that is gone.
         lastAnswer = undefined;
+        lastServerAnswer = undefined;
       }
       // WP-22 (c): the client leaving Running for ANY reason disarms the
       // grace -- the server died by itself, or the user restarted it, or we
@@ -800,7 +1056,7 @@ function installPreviewHandlers(c, epoch) {
       applyRestart(core.restartReduce(restartState, core.restartEvents.clientState(to)));
       applyStuck(
         core.stuckReduce(stuckState, { type: "clientState", from, to }),
-        "restart"
+        core.TRIGGER_RESTART
       );
     });
   }
@@ -851,10 +1107,19 @@ function applyStuck(result, trigger) {
     log(`preview: a schema re-request belongs here (WP-8) for ${core.pickLabel(picked)}`);
   }
   if (fx.rerender) {
-    if (core.shouldAutoRender(wedgeMark, picked, trigger)) {
-      scheduleRender(trigger === core.TRIGGER_RESTART ? "the language server restarted" : "the preview recovered");
+    // THE SAME FUNCTION THE SEND POINT ASKS (D1/D2 of the delta re-review).
+    // No `scheduledAt` here on purpose: the render is being scheduled at
+    // this instant, so "was the mark minted after it was scheduled" is
+    // vacuous and `mayAutoRender` degrades to the consultation alone.
+    const permitted = core.mayAutoRender(wedgeMark, picked, trigger);
+    if (permitted.render) {
+      scheduleRender(
+        trigger === core.TRIGGER_RESTART ? "the language server restarted" : "the preview recovered",
+        trigger === core.TRIGGER_RESTART ? core.TRIGGER_RESTART : core.TRIGGER_RECOVERED
+      );
     } else {
-      holdRender();
+      log("preview: not re-rendering — " + permitted.why);
+      holdRender(trigger);
     }
   }
   setPreviewStatus();
@@ -868,10 +1133,20 @@ function applyStuck(result, trigger) {
  * when the notification is dismissed or times out, and only the exact
  * "Render anyway" string clears the mark. Escape is never consent.
  */
-function holdRender() {
+function holdRender(trigger) {
   const message = core.heldMessage(wedgeMark, picked, core.restartedByUs(restartState));
   if (!message) return;              // a mark that is not this pick's is never consulted
   log("preview: HELD — " + message);
+  // D3: the same question, for the same mark and the same parameters, is
+  // asked ONCE. A RESTART always asks again -- the user pressed the button
+  // or the server died, and either is a new event the user did not cause by
+  // saving a file -- and so do the other unconfirmed triggers; only a params
+  // save is remembered, because a formatter can repeat it every few seconds.
+  const asking = core.shouldAskHeld(heldRefusedToken, wedgeMark, picked, trigger);
+  if (!asking.ask) {
+    log("preview: not asking again — " + asking.why);
+    return;
+  }
   if (heldPromptOpen) {
     log("preview: the question is already on screen; not asking again");
     return;
@@ -886,11 +1161,16 @@ function holdRender() {
     const verdict = core.promptAnswerApplies(asked, picked, wedgeMark, choice);
     if (!verdict.render) {
       log(`preview: still held (${verdict.why})`);
+      // D3: remember WHAT was refused, so a formatter cannot ask again for
+      // the same mark and the same parameters. `asking.token` is the mark's
+      // identity as it was when the question was SHOWN.
+      heldRefusedToken = asking.token;
       return;
     }
     if (verdict.why) log(`preview: rendering anyway (${verdict.why})`);
+    heldRefusedToken = undefined;                        // consent resets it
     applyGuard(core.guardReduce(wedgeMark, { type: "render", explicit: true }));
-    renderNow("Render anyway", true).catch((err) =>
+    renderNow("Render anyway", true, core.TRIGGER_EXPLICIT).catch((err) =>
       log(`preview: render failed: ${err && err.stack ? err.stack : err}`)
     );
   };
@@ -1045,7 +1325,14 @@ function fireRestart(fx) {
   // "killed-by-us" ONLY IF NOTHING ELSE GOT THERE FIRST: `guardReduce`'s
   // SET is idempotent per key, so a pick already marked "watchdog" or
   // "died-mid-render" keeps that reason and its own `at`.
-  applyGuard(core.guardReduce(wedgeMark, { type: "killedByUs", pick, at: Date.now() }));
+  applyGuard(
+    core.guardReduce(wedgeMark, {
+      type: "killedByUs",
+      pick,
+      params: core.markParamsFor(inFlightRender ? inFlightRender.params : undefined, lastParamsSent),
+      at: Date.now(),
+    })
+  );
   if (!core.markMatches(wedgeMark, pick)) {
     refuse(
       "the wedge mark could not be set for " + core.pickLabel(pick) +
@@ -1080,39 +1367,201 @@ function releaseInFlight(generationOfThisRender) {
   if (inFlightRender && inFlightRender.generation === generationOfThisRender) inFlightRender = null;
 }
 
-function scheduleRender(reason) {
+function scheduleRender(reason, trigger) {
   if (!picked) return;
   if (coalesceTimer) clearTimeout(coalesceTimer);
+  // WHEN THE EVIDENCE ARRIVED (delta re-review, families B and C). A render
+  // can sit here for 150 ms and then in its params read while the report
+  // wedges the server AGAIN; `core.mayAutoRender` compares this against the
+  // mark's own `at`, so a change that was real when it was scheduled is not
+  // treated as evidence about a server that has since wedged.
+  //
+  // IT IS TAKEN ON EVERY CALL, so it is LAST-WINS exactly as the trigger is,
+  // and the two therefore come from the SAME call and cannot describe
+  // different events. FIRST-WINS was not chosen: it would date the render by
+  // an event the window has since superseded, so a mark minted between the
+  // first and the last trigger would look older than the render and the hold
+  // would not fire -- the opposite of what this is for.
+  const scheduledAt = Date.now();
   coalesceTimer = setTimeout(() => {
     coalesceTimer = undefined;
-    renderNow(reason).catch((err) => log(`preview: render failed: ${err && err.stack ? err.stack : err}`));
+    // THE TRIGGER TRAVELS WITH THE REASON, because the consultation at the
+    // end of `renderNow` asks WHICH trigger is rendering, not what it would
+    // print (S2 review M6).
+    //
+    // **LAST WINS INSIDE THE WINDOW, AND THE RULE THAT MAKES THAT SOUND IS
+    // D1's** (delta re-review): every trigger that is NOT in
+    // `UNCONFIRMED_TRIGGERS` has already cleared the mark by the time it
+    // schedules -- that is exactly the membership rule -- so a window whose
+    // last event is an evidence trigger has a cleared mark, and one whose
+    // last event is unconfirmed consults it. Before D1, `roots` broke that:
+    // it could arrive last, with the mark standing, and be permitted.
+    // Keeping the most CONSERVATIVE label instead would change nothing
+    // under the rule and would hide which event actually asked for the
+    // render, which is what the channel line is for.
+    renderNow(reason, false, trigger, scheduledAt)
+      .catch((err) => log(`preview: render failed: ${err && err.stack ? err.stack : err}`));
   }, COALESCE_MS);
 }
 
-async function renderNow(reason, reveal) {
+async function renderNow(reason, reveal, trigger, scheduledAt) {
   if (!picked) return;
   if (!client) {
     log("preview: no language client — nothing to render with");
     return;
   }
+  // D2: a trigger nothing declared is a BUG, said out loud, and is then
+  // treated as bringing NO evidence of change -- `shouldAutoRender` fails
+  // CLOSED on it. It used to fail open, and a mutant that simply forgot to
+  // forward the trigger through the coalescer neutered both consultation
+  // sites for every automatic render and survived the whole suite.
+  const triggerBug = core.triggerProblem(trigger);
+  if (triggerBug) log("preview: BUG — " + triggerBug);
   generation += 1;
-  const mine = generation;
+  // ONE SNAPSHOT, TAKEN BEFORE THE READ, AND THE ONLY THING THE REST OF THIS
+  // FUNCTION READS (S2 review M1 and M2). It COPIES the pick, roots array
+  // included, because the roots handler mutates `picked.roots` IN PLACE --
+  // which made the `roots-changed` arm compare an array with itself and
+  // never fire. And because it is built HERE, before the await, there is no
+  // object literal after the await in which a captured value can be swapped
+  // for the live global without the swap being visible.
+  const attempt = core.renderAttempt(generation, picked, clientEpoch, stopCount, stuckState.highWater);
+  const mine = attempt.generation;
   // PER REQUEST, not a module global (review S2): `renderNow` is re-entrant
-  // and a second render must not rewrite the first one's mark.
-  const sentAtMark = stuckState.highWater;
-  // N2: the pick this request is ABOUT, captured at send. A stuck answer
-  // that arrives a minute later must not mark whatever is current then.
-  const sentPick = picked;
-  // M1: the latch the `Stopped` handler reads, cleared only on a settled
-  // result below.
-  inFlightRender = { generation: mine, pick: sentPick };
+  // and a second render must not rewrite the first one's mark. N2: the pick
+  // this request is ABOUT is the snapshot's, so a stuck answer arriving a
+  // minute later cannot mark whatever is current then.
+  const sentAtMark = attempt.seqAtSend;
+  const sentPick = attempt.pick;
+  // The spinner starts now -- reading a file IS this render working -- but
+  // the WEDGE LATCH is NOT taken here: nothing is on the wire yet, and a
+  // render that never gets sent must not be able to mark a report as having
+  // died mid-render. It is taken immediately before `sendRequest`.
   renderInFlight = true;
   setPreviewStatus();
-  log(`preview: render ${core.pickLabel(picked)} (generation ${mine}; ${reason})`);
+
+  // ------------------------------------------------ WP-8 S2: the params
+  //
+  // THE GENERATION IS TAKEN BEFORE THE READ, and that is deliberate: this
+  // render supersedes whatever was in flight the moment it is decided on, so
+  // an older answer landing during the read is discarded rather than
+  // overwriting what this one is about to show (including a refusal).
+  let prepared;
+  try {
+    prepared = await prepareParams(sentPick);
+  } catch (err) {
+    // `prepareParams` handles the read's own failures; this covers the
+    // shapes nothing here can anticipate (the editor's file system API
+    // missing, a Uri it will not build). It must not escape: an exception
+    // out of `renderNow` would leave the spinner running for ever, and
+    // "release whatever was taken" is the whole discipline of this path.
+    prepared = {
+      refusal: {
+        reason: "unreadable",
+        message: "The parameters could not be prepared (" +
+                 (err && err.message ? err.message : String(err)) + "), so the report was not rendered.",
+      },
+    };
+  }
+
+  // THE ASYNC GAP. Everything the snapshot holds could have moved under us;
+  // `core.mayStillSend` is where that is decided, once, purely. The snapshot
+  // is the one taken before the read; the live side is read here and nowhere
+  // else.
+  // THE CLIENT THE VERDICT SAW is the one the request goes to. Everything
+  // between here and `sendRequest` is synchronous, so the two cannot differ
+  // today -- capturing it says so, and keeps saying it if a statement with
+  // an await is ever added between them.
+  const sentClient = client;
+  const verdict = core.mayStillSend(
+    attempt,
+    core.previewNow(generation, picked, clientEpoch, stopCount, !!sentClient)
+  );
+  if (!verdict.send) {
+    log(`preview: render ${mine} was abandoned while its parameters were read (${verdict.why})`);
+    if (mine === generation) renderInFlight = false;
+    setPreviewStatus();
+    return;
+  }
+
+  // Said only now, so nothing ever describes a report the user has left.
+  if (prepared.notice) paramsNoticeOnce(sentPick, prepared.notice.reason, prepared.notice.line);
+  if (prepared.read) {
+    // A file that was read is a file that is there: forget that we once said
+    // it was missing, so a LATER deletion is announced again.
+    paramsNotices.delete(core.paramsNoticeKey(sentPick, "missing"));
+  }
+  // U5: one warning per FILE per session, and NEVER a refusal -- a report
+  // may legitimately take a `token` parameter, and a block the developer
+  // cannot override is a feature that gets turned off.
+  const warning = (prepared.warnings || [])[0];
+  if (warning && !warnedCredentialFiles.has(prepared.path)) {
+    warnedCredentialFiles.add(prepared.path);
+    log(`preview: ${prepared.path}: ${warning}`);
+    vscode.window.showWarningMessage("Ermine: " + warning);
+  }
+
+  if (prepared.refusal) {
+    // G7: the render DOES NOT HAPPEN. The tab shows the named refusal
+    // through the same path every other failure takes, the status bar goes
+    // back to its idle state, and nothing was taken that has to be released
+    // -- the wedge latch was never set and no request is out.
+    const refusal = core.paramsRefusalAnswer(prepared.refusal, prepared.path, mine);
+    log(`preview: render ${mine} REFUSED (${refusal.paramsProblem}): ${refusal.message}`);
+    // NOT `lastServerAnswer` (review nit 5): that one is the last answer a
+    // SERVER gave, and `shouldRerenderOnFileEvent` reads it to decide
+    // whether the picked report is sitting on a placement 404. A params
+    // refusal overwriting it would disarm the Q11 watcher and lose the
+    // render that brings a deleted report back.
+    lastAnswer = refusal;
+    if (mine === generation) renderInFlight = false;
+    await showAnswer(refusal, reveal === true);
+    setPreviewStatus();
+    return;
+  }
+
+  // WP-22's `params` event, with the params ACTUALLY SENT (after the
+  // `$schema` strip), which is why re-formatting a file or changing its
+  // `$schema` line keeps the same fingerprint and does not clear the mark.
+  applyGuard(core.guardReduce(wedgeMark, { type: "params", pick: sentPick, params: prepared.params }));
+
+  // WP-22's ONE CONSULTATION, REACHED FROM ITS SECOND PLACE (S2 review M6,
+  // and the user's own sentence: a report that wedged "and it didn't
+  // change" must not be re-rendered without a confirmation).
+  //
+  // THIS IS THE MOMENT THE EXTENSION KNOWS whether anything changed: the
+  // fingerprint has just been computed and handed to the guard. If the mark
+  // STILL stands for this pick, then the bytes of the params file moved and
+  // the parameters did not -- a re-format, a format-on-save, a touched
+  // `$schema` line -- and re-issuing the render that wedged the server is
+  // exactly the loop WP-22 exists to close. `shouldAutoRender` is the SAME
+  // function `applyStuck` consults; only its trigger vocabulary grew.
+  const permitted = core.mayAutoRender(wedgeMark, sentPick, trigger, scheduledAt);
+  if (!permitted.render) {
+    log(`preview: render ${mine} is HELD (${trigger}: ${permitted.why})`);
+    if (mine === generation) renderInFlight = false;
+    setPreviewStatus();
+    holdRender(trigger);
+    return;
+  }
+
+  lastParamsSent = prepared.params;
+  // M1: the latch the `Stopped` handler reads, cleared only on a settled
+  // result below. It carries the params too, so a wedge is marked with what
+  // the server was actually given.
+  inFlightRender = { generation: mine, pick: sentPick, params: prepared.params };
+  log(
+    `preview: render ${attempt.label} (generation ${mine}; ${reason}; ` +
+      `${prepared.read ? "params from " + prepared.path : "empty parameters"})`
+  );
 
   let answer;
   try {
-    answer = await client.sendRequest("ermine/render", core.renderParams(picked, null, mine));
+    // THE REQUEST IS BUILT FROM THE SNAPSHOT, not from the globals (review
+    // M2's R9/R10, which swapped each for a live value and survived every
+    // test): the uri, the binding, the roots and the generation all come
+    // from the one object this render was decided on.
+    answer = await sentClient.sendRequest("ermine/render", core.renderRequest(attempt, prepared.params));
     releaseInFlight(mine);
   } catch (err) {
     // M1, and the half of it that does not depend on the ordering at all:
@@ -1129,6 +1578,9 @@ async function renderNow(reason, reveal) {
           to: "Stopped",
           renderInFlight: true,
           pick: sentPick,
+          // WP-8: and the params THIS render sent, so that editing them
+          // clears the mark this rejection is about to set.
+          params: prepared.params,
           at: Date.now(),
         })
       );
@@ -1152,8 +1604,11 @@ async function renderNow(reason, reveal) {
   }
 
   lastAnswer = answer;
+  // Review nit 5: the Q11 watcher asks whether the last SERVER answer was a
+  // placement 404, and a params refusal is not an answer from any server.
+  lastServerAnswer = answer;
   if (core.isPlacement404(answer)) {
-    log(`preview: the pick cannot be placed (${answer.reason}); watching ${picked.fsPath} for it to come back`);
+    log(`preview: the pick cannot be placed (${answer.reason}); watching ${attempt.pick.fsPath} for it to come back`);
   }
   const stuckEvent = {
     type: "answer",
@@ -1173,6 +1628,9 @@ async function renderNow(reason, reveal) {
       applies: answerApplies,
       // N2: the pick this ANSWER is about, not whatever is current now.
       pick: sentPick,
+      // WP-8: and the params THIS render sent, not whatever the next one
+      // will. A mark minted here is cleared by changing exactly these.
+      params: prepared.params,
       at: Date.now(),
     })
   );
@@ -1180,7 +1638,7 @@ async function renderNow(reason, reveal) {
   // over the wire), and the two are ONE incident -- the second of them
   // re-arms nothing, because only the rising edge arms.
   applyRestart(core.restartReduce(restartState, core.restartEvents.answer(stuckEvent.stuck, answerApplies, Date.now())));
-  applyStuck(core.stuckReduce(stuckState, stuckEvent), "answer");
+  applyStuck(core.stuckReduce(stuckState, stuckEvent), core.TRIGGER_ANSWER);
   await showAnswer(answer, reveal === true);
   if (core.isOk(answer) && !picked.module) refreshModule();
   setPreviewStatus();
@@ -1240,7 +1698,19 @@ async function refreshModule() {
       picked.module = String(answer.module);
       rememberPick();
       log(`preview: learned the module name ${picked.module}`);
+      // WP-8: the module IS the params directory, so a pick that had none
+      // had no params path either (`no-module`) and no watcher on one. Both
+      // exist from here on, and the next render will find the file.
+      forgetParamsNotices();
+      installWatcher();
       setPreviewStatus();
+      // AND RENDER (S2 review M4). Until the module was known there was no
+      // params PATH, so this render went out with `{}` and a params file
+      // sitting on disk was ignored -- and nothing else would have
+      // scheduled another. It carries NO evidence of change, so it is one
+      // of the triggers the consultation can refuse: a report that wedged
+      // and has not changed is not re-rendered by learning its name.
+      scheduleRender("the module name was learned", core.TRIGGER_MODULE_LEARNED);
     }
   } catch (err) {
     log(`preview: could not learn the module name: ${err && err.message ? err.message : err}`);
@@ -1263,7 +1733,12 @@ function installWatcher() {
       path.basename(picked.fsPath)
     );
     const watcher = vscode.workspace.createFileSystemWatcher(pattern);
-    if (!watcher) return;
+    if (!watcher) {
+      // Not a reason to skip the PARAMS watcher below: the two are
+      // independent triggers on two different files.
+      installParamsWatcher();
+      return;
+    }
     const fire = (uri) => {
       if (!picked) return;
       const where = uri && uri.fsPath ? uri.fsPath : picked.fsPath;
@@ -1273,13 +1748,65 @@ function installWatcher() {
       // loaded -- so it clears the mark through the same rule, whether or
       // not it goes on to render.
       applyGuard(core.guardReduce(wedgeMark, { type: "save", path: where }));
-      if (core.shouldRerenderOnFileEvent(picked, lastAnswer, where)) {
-        scheduleRender("the picked report's own file appeared or changed after a placement 404");
+      if (core.shouldRerenderOnFileEvent(picked, lastServerAnswer, where)) {
+        scheduleRender("the picked report's own file appeared or changed after a placement 404",
+                       core.TRIGGER_FILE_EVENT);
       }
     };
     pickWatchers = [watcher, watcher.onDidCreate(fire), watcher.onDidChange(fire)];
   } catch (err) {
     log(`preview: could not watch ${picked.fsPath}: ${err && err.message ? err.message : err}`);
+  }
+  installParamsWatcher();
+}
+
+/**
+ * WP-8 S2: a watcher on the PARAMS FILE, for the edits `onDidSaveTextDocument`
+ * cannot see -- a `git checkout`, a script, another editor, the file being
+ * deleted. It is installed beside the Q11 watcher, disposed with it, and
+ * re-created whenever the pick changes or its module name is learned, since
+ * the module is the directory the file lives in.
+ *
+ * THE PATTERN IS RELATIVE TO THE WORKSPACE FOLDER, not to the params
+ * DIRECTORY, and that is the whole reason `paramsPaths` answers a
+ * `relativeGlob`: `.ermine/preview/<Module>/` does not exist until somebody
+ * writes it, and a watcher rooted at a directory that is not there cannot
+ * report the file appearing inside it (*external*, and UNVERIFIED here like
+ * everything about a real editor).
+ *
+ * BOTH TRIGGERS GO THROUGH `scheduleRender`, so a save that fires the
+ * document event AND the watcher inside the 150 ms window costs ONE render.
+ *
+ * **LOCAL WORKSPACES ONLY** (S2 review M7), for the same reason as
+ * `readParamsFile`: `vscode.Uri.file(folder)` drops the scheme and the
+ * authority, so on a remote or virtual workspace this pattern is rooted at a
+ * local path that is not there. Stated, not pretended away.
+ */
+function installParamsWatcher() {
+  if (!picked) return;
+  const folder = core.paramsFolderFor(picked.fsPath, workspaceFolderPaths());
+  const paths = core.paramsPaths(picked, folder);
+  if (paths.problem || !folder) return;
+  try {
+    const pattern = new vscode.RelativePattern(vscode.Uri.file(folder), paths.relativeGlob);
+    const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+    if (!watcher) return;
+    const fire = (what) => () => {
+      if (!picked) return;
+      scheduleRender(`the params file was ${what} outside the editor`, core.TRIGGER_PARAMS_FILE);
+    };
+    pickWatchers.push(
+      watcher,
+      watcher.onDidCreate(fire("created")),
+      watcher.onDidChange(fire("changed")),
+      // A DELETED params file is not an error: the next render sends `{}`
+      // and says so once, which is WP-7's own behaviour for a report that
+      // never had one.
+      watcher.onDidDelete(fire("deleted"))
+    );
+    log(`preview: watching ${paths.paramsPath} for parameter changes`);
+  } catch (err) {
+    log(`preview: could not watch the params file: ${err && err.message ? err.message : err}`);
   }
 }
 
@@ -1294,7 +1821,21 @@ function disposeWatchers() {
   pickWatchers = [];
 }
 
+/**
+ * TEARDOWN IS A STATE, NOT AN EVENT (S2 review nit 6). `picked` used to be
+ * assigned in two places and cleared in none, so `mayStillSend`'s
+ * `pick-cleared` arm -- documented as "a teardown" -- was unreachable, and a
+ * render sitting in its file read SURVIVED `deactivate()` and went on to
+ * send and to touch a status bar item that was being disposed. The new await
+ * widened a window that already existed.
+ */
+let previewDisposed = false;
+
 function disposePreview() {
+  previewDisposed = true;
+  // The render in its read now sees `pick-cleared` and abandons, which is
+  // the case that arm was written for.
+  picked = undefined;
   if (coalesceTimer) {
     clearTimeout(coalesceTimer);
     coalesceTimer = undefined;
@@ -1305,6 +1846,7 @@ function disposePreview() {
   // would ask -- which fails safe (nothing renders, and the status bar
   // still reads `held`) but leaves the user with no question to answer.
   heldPromptOpen = false;
+  heldRefusedToken = undefined;
   inFlightRender = null;
   // WP-22 (c): the grace dies with the window. The reducer is asked rather
   // than the timer merely cleared, so nothing that runs after this can see
@@ -1325,6 +1867,13 @@ function restorePick(context) {
   try {
     const uri = vscode.Uri.parse(saved.uri);
     picked = core.makePick(saved.uri, uri.fsPath, saved.binding, saved.module, rootsFor(uri));
+    // WP-8: a fresh window has sent nothing and said nothing. The restored
+    // MARK keeps its own `paramsFingerprint` -- it was written with the
+    // params that were in force when the report wedged -- so the first
+    // render after a reload compares against that and clears it if the file
+    // changed while the window was closed.
+    forgetParamsNotices();
+    lastParamsSent = undefined;
     // WP-22: the mark is restored NEXT TO THE PICK IT BELONGS TO, and
     // `guardReduce` discards it if its key or its roots do not match what
     // was just restored. `restorePick` renders nothing, so a restored mark
@@ -1422,12 +1971,18 @@ async function pickReport(context) {
   // N5: a question about the OLD pick is now meaningless. M2 makes
   // answering it a no-op; this makes the NEXT restart able to ask again.
   heldPromptOpen = false;
+  heldRefusedToken = undefined;
   lastAnswer = undefined;
+  lastServerAnswer = undefined;
+  // WP-8: another report, another params file. Nothing has been sent for
+  // this pick yet, and nothing we said about the last one's file applies.
+  forgetParamsNotices();
+  lastParamsSent = undefined;
   rememberPick();
   installWatcher();
   setPreviewStatus();
   // The user asked for this one, so it reveals the tab.
-  await renderNow("the report was picked", true);
+  await renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
 }
 
 async function renderCommand(context) {
@@ -1440,7 +1995,7 @@ async function renderCommand(context) {
   }
   // WP-22: asking for a render IS the confirmation (T2).
   applyGuard(core.guardReduce(wedgeMark, { type: "render", explicit: true }));
-  await renderNow("Ermine: Render Report to JSON", true);
+  await renderNow("Ermine: Render Report to JSON", true, core.TRIGGER_EXPLICIT);
 }
 
 // ----------------------------------------------------------------- activate
@@ -1499,7 +2054,7 @@ async function activate(context) {
           // WP-22: a different root set is a different render, so the mark
           // no longer describes what would run (T5 is never suppressed).
           applyGuard(core.guardReduce(wedgeMark, { type: "roots", pick: picked }));
-          scheduleRender("ermine.preview.roots changed");
+          scheduleRender("ermine.preview.roots changed", core.TRIGGER_ROOTS);
         } catch (err) {
           log(`preview: could not re-resolve the roots: ${err && err.message ? err.message : err}`);
         }
@@ -1528,13 +2083,27 @@ async function activate(context) {
   // because it errs towards asking LESS.
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument((document) => {
-      if (!wedgeMark) return;
-      applyGuard(
-        core.guardReduce(wedgeMark, {
-          type: "save",
-          path: document && (document.fileName || (document.uri && document.uri.fsPath)),
-        })
-      );
+      const saved = document && (document.fileName || (document.uri && document.uri.fsPath));
+      if (wedgeMark) applyGuard(core.guardReduce(wedgeMark, { type: "save", path: saved }));
+      // WP-8 S2, G9: saving THIS pick's params file re-renders it. The
+      // decision is `core.shouldRerenderOnParamsSave`'s (a path compare,
+      // case-insensitive on win32); the folder is the one that CONTAINS the
+      // report, never `folders[0]`.
+      //
+      // IT IS NOT SUPPRESSED WHILE HELD, and that follows WP-22's own rule
+      // rather than bending it: the guard is consulted at exactly ONE site
+      // (the restart's automatic re-render), and every other automatic
+      // trigger -- `invalidated`, the Q11 watcher, a roots change -- is
+      // "self-evidently a change" and is not suppressed either. Editing a
+      // params file is the developer doing something. If what they did
+      // changed the parameters, the render's own `params` event CLEARS the
+      // mark on the way out; if it did not (a re-format), the mark stands
+      // and the status bar still says `held` while the render runs.
+      if (!picked || !saved) return;
+      const folder = core.paramsFolderFor(picked.fsPath, workspaceFolderPaths());
+      if (core.shouldRerenderOnParamsSave(picked, saved, folder)) {
+        scheduleRender("the params file was saved", core.TRIGGER_PARAMS_FILE);
+      }
     })
   );
 

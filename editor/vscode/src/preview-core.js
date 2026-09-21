@@ -163,7 +163,18 @@ function renderParams(pick, params, generation) {
     //                   done-when is after.
     // `{}` is also the better answer for a report whose parameters are all
     // optional: it DECODES and the report renders, where `null` refuses.
-    params: params === undefined || params === null ? {} : params,
+    //
+    // WP-8 S2 MOVED THE SENTINEL FROM `null` TO `undefined`, AND THE REASON
+    // IS A PARAMS FILE THAT REALLY SAYS `null`. "No params" is now spelled
+    // `undefined` and still becomes `{}` -- WP-7's measured behaviour, which
+    // is what the missing-file case sends. But a report whose parameter type
+    // is a `Maybe X` WANTS `null` (`docs/JSON-GUIDE.md:1295-1297`, and S1's
+    // skeleton mints exactly that for such a root), and a file holding `null`
+    // is a file whose content we must send. Coercing it here would have sent
+    // `{}` instead and turned a correct params file into a 400 nobody could
+    // explain. Nothing passes `null` any more: `renderNow` passes what it
+    // read, and the no-file case passes `{}` itself.
+    params: params === undefined ? {} : params,
     roots: pick.roots.slice(),
     generation: generation,
   };
@@ -518,12 +529,29 @@ function rootsFingerprint(roots) {
 }
 
 /**
- * WP-8's hook, exported now and fed later: no params exist until WP-8, so
- * today every mark carries the fingerprint of `{}` and a params change can
- * never be observed.  WP-8 passes the params it actually sends.
+ * WP-8's hook, exported by WP-22 and fed by WP-8 S2: the params a render
+ * ACTUALLY SENT, after the `$schema` strip.
+ *
+ * `undefined` IS "NOTHING WAS SENT" AND `null` IS A VALUE (S2 review M3).
+ * The first cut collapsed both into `{}`, which contradicted S2's own
+ * sentinel decision one function away (`renderParams`, `markParamsFor`) and
+ * MEASURED as a real hole: `fp(null)`, `fp({})` and `fp(undefined)` were one
+ * digest, so a report that wedged with NO FILE was not un-held by writing a
+ * file holding `null`, and one that wedged on `null` was not un-held by
+ * replacing it with `{}` or by deleting the file. A params file whose whole
+ * content is `null` is what a `Maybe`-rooted report wants
+ * (`docs/JSON-GUIDE.md:1295-1297`), so it is a value like any other.
+ *
+ * `undefined` still maps to `{}` rather than to a fourth digest, and that is
+ * DELIBERATE COMPATIBILITY: every mark WP-22 and 0.1.7 wrote carries
+ * `fingerprint({})` because nothing fed this function, and a mark persisted
+ * in `workspaceState` by 0.1.7 must keep meaning "no params" when 0.1.8
+ * reads it back. So an upgrade behaves as it did: the first render of a
+ * restored pick that sends `{}` (no params file) leaves the mark standing,
+ * and one that sends anything else clears it.
  */
 function paramsFingerprint(params) {
-  return fingerprint(params === undefined || params === null ? {} : params);
+  return fingerprint(params === undefined ? {} : params);
 }
 
 /** A value is a mark only if every field is the shape the guard wrote. */
@@ -732,12 +760,234 @@ function stuckEventApplies(state, event) {
 
 /**
  * THE ONE CONSULTATION.  `trigger` names which of section 3/5's render
- * triggers is asking; only the restart one is ever refused, and only for a
- * mark that is THIS pick's.
+ * triggers is asking; a trigger that brings NO EVIDENCE OF CHANGE is refused
+ * for a mark that is THIS pick's, and every other trigger is permitted.
+ *
+ * IT IS STILL ONE FUNCTION, AND SINCE WP-8 S2 IT IS REACHED FROM TWO PLACES
+ * (the S2 review's M6, which is the user's own sentence: *"We'd want some
+ * sort of confirmation before rendering a report which wedged and was killed
+ * the first time around AND IT DIDN'T CHANGE"*).  The second place is
+ * `renderNow` itself, immediately after the guard has been fed the params
+ * that are about to be sent -- the one moment at which the extension KNOWS
+ * whether anything changed, because it has just computed the fingerprint.
+ * Adding a second decision would have been the mistake; asking the same
+ * question from a second place is not.
+ *
+ * **THE RULE THAT DECIDES MEMBERSHIP, AND IT IS THE DELTA RE-REVIEW'S D1**:
+ *
+ *     A TRIGGER MAY STAY OUT OF `UNCONFIRMED_TRIGGERS` ONLY IF, WHENEVER THE
+ *     GLUE SCHEDULES IT, THE GUARD EVENT IT FED HAS CLEARED THE MARK.
+ *
+ * Under that rule the membership is forced, and three of the four "evidence"
+ * triggers qualify while the fourth does not:
+ *   `invalidated`     the glue schedules IFF `shouldRerenderOnInvalidated`,
+ *                     and `guardReduce` clears on exactly that condition --
+ *                     one predicate, both sides;
+ *   `file-event`      the Q11 watcher watches the picked report's own `.e`
+ *                     path and feeds `save` with it, which clears
+ *                     unconditionally for a `.e` file;
+ *   `recovered`       the rerender effect exists only for an ACCEPTED
+ *                     `{stuck:false}`, and the same acceptance clears;
+ *   `roots`           **DOES NOT QUALIFY, AND WAS WRONGLY OUT.** The glue
+ *                     schedules on `affectsConfiguration`, but `guardReduce`
+ *                     clears only when the roots FINGERPRINT moved. A
+ *                     setting edited to an equal resolved list therefore
+ *                     rendered a held report. The justification recorded for
+ *                     leaving it out proves the opposite: if the resolved
+ *                     list is the render session's discard key and it did
+ *                     not move, then nothing that matters changed, which is
+ *                     precisely when the question must be asked. MEASURED by
+ *                     the delta re-review's exhaustive explorer: adding it
+ *                     removes 2,631 of 5,097 violating sequences.
+ * And the ones that never qualified:
+ *   `restart`         the Stopped -> Running re-render (WP-22 (b));
+ *   `params-file`     a params file was saved or changed on disk. If the
+ *                     fingerprint had moved, `guardReduce`'s `params` event
+ *                     would already have CLEARED the mark and this cannot
+ *                     refuse; reaching here with the mark still standing
+ *                     means the bytes changed and the parameters did not --
+ *                     a re-format, a format-on-save, a moved `$schema` line;
+ *   `module-learned`  the module name arrived and the params file could be
+ *                     found at last. Nothing about the report changed.
+ * `explicit` is consent and is never refused.
+ *
+ * **AND AN UNKNOWN TRIGGER IS REFUSED, NOT PERMITTED (D2).** This function
+ * used to fail OPEN on anything it did not recognise -- `undefined`, `null`,
+ * `""`, a typo -- and a mutant that simply forgot to forward the trigger
+ * through the coalescer therefore neutered BOTH consultation sites for every
+ * automatic render and survived all 210 tests. A trigger outside the closed
+ * `RENDER_TRIGGERS` is now treated as unconfirmed AND reported as a BUG by
+ * `triggerProblem`, which the glue logs loudly -- the same philosophy as the
+ * restart reducer's clockless arm: the defect it names costs a whole feature
+ * silently. The cost of the new policy is one spurious question if anyone
+ * ever adds a trigger and forgets to declare it; the cost of the old one was
+ * the loop this ticket exists to close.
  */
+const TRIGGER_EXPLICIT = "explicit";
+const TRIGGER_PARAMS_FILE = "params-file";
+const TRIGGER_MODULE_LEARNED = "module-learned";
+const TRIGGER_INVALIDATED = "invalidated";
+const TRIGGER_FILE_EVENT = "file-event";
+const TRIGGER_ROOTS = "roots";
+const TRIGGER_RECOVERED = "recovered";
+/**
+ * `applyStuck`'s third argument is a render trigger like any other -- it is
+ * forwarded to `shouldAutoRender` -- and one of its three call sites passes
+ * this. `stuckReduce` never emits `rerender` for an `answer` event (rule (3)
+ * refuses one and a wedged one only raises), so it cannot reach the
+ * consultation today; it is declared anyway, because "it happens not to
+ * collide" is not a vocabulary (D2).
+ *
+ * **AND IT IS UNCONFIRMED, which costs nothing today and is the safe side of
+ * the one way it could ever matter** (final re-check, nit 5): if
+ * `stuckReduce` ever grew a rerender on an answer, that render would carry
+ * no evidence that anything had changed -- an answer is the server
+ * describing the render we just sent -- and a trigger kept out of the
+ * refused set by a comment nobody re-reads is exactly how D1 happened.
+ */
+const TRIGGER_ANSWER = "answer";
+
+/** Every trigger the glue may pass. Anything else is a BUG, not a default. */
+const RENDER_TRIGGERS = [
+  TRIGGER_RESTART, TRIGGER_EXPLICIT, TRIGGER_PARAMS_FILE, TRIGGER_MODULE_LEARNED,
+  TRIGGER_INVALIDATED, TRIGGER_FILE_EVENT, TRIGGER_ROOTS, TRIGGER_RECOVERED,
+  TRIGGER_ANSWER,
+];
+
+/** The ones that bring no evidence of change, and therefore consult the mark. */
+const UNCONFIRMED_TRIGGERS = [
+  TRIGGER_RESTART, TRIGGER_PARAMS_FILE, TRIGGER_MODULE_LEARNED, TRIGGER_ROOTS, TRIGGER_ANSWER,
+];
+
+function isRenderTrigger(trigger) {
+  return typeof trigger === "string" && RENDER_TRIGGERS.indexOf(trigger) >= 0;
+}
+
+/**
+ * The BUG line for a trigger nothing declared, or null. The glue says it out
+ * loud: a render that is silently held for ever is worse than a noisy line.
+ */
+function triggerProblem(trigger) {
+  if (isRenderTrigger(trigger)) return null;
+  return "a render was triggered by " + printable(typeof trigger === "string" ? trigger : typeName(trigger)) +
+         ", which is not one of the declared render triggers (" + RENDER_TRIGGERS.join(", ") +
+         "). It is treated as bringing no evidence of change, so a report that wedged is held " +
+         "rather than re-rendered. Whoever added the trigger must declare it in preview-core.js.";
+}
+
 function shouldAutoRender(mark, pick, trigger) {
-  if (trigger !== TRIGGER_RESTART) return true;
+  // D2: unknown -> unconfirmed. Known-and-not-unconfirmed -> permitted.
+  if (isRenderTrigger(trigger) && UNCONFIRMED_TRIGGERS.indexOf(trigger) < 0) return true;
   return !markMatches(mark, pick);
+}
+
+/**
+ * WAS THE MARK MINTED AFTER THIS RENDER WAS SCHEDULED? (the delta
+ * re-review's families B and C, and option (b) of its DOC must-fix.)
+ *
+ * The consultation above asks "does a mark stand?". That is not enough for a
+ * render that was SCHEDULED on real evidence and then sat in the 150 ms
+ * coalescing window and the params read while the report wedged AGAIN:
+ * `invalidated` clears the mark and schedules, a `{stuck:true}` or a
+ * `Stopped` edge re-mints one, and the render then fires with a mark
+ * standing and a trigger that is not unconfirmed. MEASURED by the explorer:
+ * 2,466 of the 5,097 violating sequences are exactly that.
+ *
+ * THE OUTCOME WAS DEFENSIBLE AND IS STILL NOT WHAT WE WANT. The evidence was
+ * real when the render was scheduled -- but by the time it would be sent the
+ * report has wedged the server again, and sending it is the one thing WP-22
+ * exists to stop. The server would refuse it anyway while stuck; what the
+ * developer wants there is the question, not a refusal in the tab.
+ *
+ * So a non-explicit render also asks when the mark is NEWER than the trigger
+ * that scheduled it. `scheduledAt` comes from the glue (`scheduleRender`
+ * takes `Date.now()` on every call).
+ *
+ * **WHAT IT DOES WHEN IT CANNOT COMPARE, corrected after the final re-check
+ * found this comment claiming one thing while the code did another.** A mark
+ * with no `at`, and a missing or non-numeric `scheduledAt`, answer FALSE --
+ * fail OPEN, because this arm refines an already-safe decision. **A CLOCK
+ * THAT MOVED BACKWARDS DOES NOT, and there is no check for one**: a mark
+ * whose `at` then lies in the FUTURE of `scheduledAt` answers TRUE and the
+ * render is HELD (MEASURED). That is the right trade -- it costs ONE
+ * question on a machine whose clock jumped, against a wedge re-issued
+ * silently -- but the sentence that used to stand here claimed the
+ * opposite, so the behaviour is written down as what it is: fail CLOSED on
+ * a backwards clock, fail OPEN on a missing value.
+ *
+ * MEASURED, and the reason no RESTORED mark can cause a spurious hold: a
+ * mark read back from `workspaceState` carries the `at` of the session that
+ * minted it, which is in the PAST of anything this session schedules, so it
+ * answers FALSE.
+ */
+function markMintedAfter(mark, pick, scheduledAt) {
+  if (!markMatches(mark, pick)) return false;
+  if (typeof scheduledAt !== "number" || !isFinite(scheduledAt)) return false;
+  if (typeof mark.at !== "number" || !isFinite(mark.at)) return false;
+  return mark.at > scheduledAt;
+}
+
+/**
+ * MAY THIS RENDER GO, ALL IN? (D1, D2 and families B/C in one answer.)
+ *
+ * The glue calls THIS, not the two halves, so that the second consultation
+ * site cannot drift from the first, and so that a caller cannot ask one
+ * question and forget the other.
+ */
+function mayAutoRender(mark, pick, trigger, scheduledAt) {
+  if (trigger === TRIGGER_EXPLICIT) return { render: true, why: null };
+  if (!shouldAutoRender(mark, pick, trigger)) {
+    return { render: false, why: "nothing about " + pickLabel(pick) + " has changed since it wedged the preview" };
+  }
+  if (markMintedAfter(mark, pick, scheduledAt)) {
+    return {
+      render: false,
+      why: pickLabel(pick) + " wedged the preview again AFTER this render was scheduled, so the " +
+           "change that scheduled it is not evidence about the server it would now reach",
+    };
+  }
+  return { render: true, why: null };
+}
+
+/**
+ * D3: HOW A REFUSED QUESTION IS REMEMBERED, so that format-on-save does not
+ * ask once per keystroke-and-save.
+ *
+ * The token is the MARK's identity plus the params it carries. A second
+ * re-format of the same file, against the same mark, produces the same token
+ * and is not asked about again; anything that changes the situation --
+ * the mark cleared and re-minted (a new `at`), another pick, parameters that
+ * really moved (which clears the mark anyway) -- produces a different token
+ * and asks.
+ */
+function heldPromptToken(mark) {
+  if (!isMark(mark)) return null;
+  return String(mark.key) + MARK_SEPARATOR + String(mark.at) + MARK_SEPARATOR + String(mark.paramsFingerprint);
+}
+
+/**
+ * Should the held question be shown again, given what was last refused?
+ *
+ * ONLY `params-file` IS REMEMBERED, and that is a decision with an argument.
+ * A params save under a formatter can repeat every few seconds and is not a
+ * new event; a RESTART is -- either the user pressed the button or the
+ * server died again -- and WP-22 already answers one question per restart.
+ * `module-learned` happens at most once per pick, and a `roots` edit is the
+ * developer typing in a settings file. So those three always ask.
+ */
+function shouldAskHeld(lastRefusedToken, mark, pick, trigger) {
+  const token = heldPromptToken(mark);
+  if (token === null || !markMatches(mark, pick)) {
+    return { ask: false, token: null, why: "there is no mark for this report to ask about" };
+  }
+  if (trigger !== TRIGGER_PARAMS_FILE) return { ask: true, token, why: null };
+  if (lastRefusedToken !== token) return { ask: true, token, why: null };
+  return {
+    ask: false,
+    token,
+    why: 'this question was already answered "Not now" for these parameters; the preview stays held ' +
+         "until they change or you render it yourself",
+  };
 }
 
 /**
@@ -868,6 +1118,26 @@ function rejectionMeansServerGone(err) {
  */
 function markPickFor(inFlightPick, currentPick) {
   return inFlightPick || currentPick;
+}
+
+/**
+ * `markPickFor`'s other half (WP-8 S2): the PARAMS the mark should carry.
+ *
+ * WP-22 put `paramsFingerprint` in the mark's VALUE so that changing the
+ * parameters CLEARS the mark rather than minting a second one, and said
+ * WP-8's job was to hand it the params actually sent. This is that hand-off:
+ * the render that is in flight is the better claim about what wedged -- its
+ * params are the ones the server is chewing on -- and the last params we sent
+ * are the fallback when nothing is running.
+ *
+ * `null` IS A VALUE HERE, not "nothing": a params file holding `null` is what
+ * a `Maybe`-rooted report wants. So the ABSENT case is `undefined` and only
+ * `undefined`, and the call sites spell it `inFlightRender ? its params :
+ * undefined` rather than with the `&&` idiom `markPickFor` takes, which would
+ * collapse "no render is out" and "the render that is out sends null".
+ */
+function markParamsFor(inFlightParams, lastParams) {
+  return inFlightParams === undefined ? lastParams : inFlightParams;
 }
 
 /**
@@ -2111,6 +2381,15 @@ function paramsPaths(pick, folderPath, flavour) {
     // and WP-13/WP-14's `*.db` in whatever workspace folder they land in.
     gitignorePath: p.join(previewDir, ".gitignore"),
     schemaRef: "./" + schemaName,
+    // S2: THE SAME FILE, SPELLED AS A GLOB RELATIVE TO THE WORKSPACE FOLDER.
+    // `createFileSystemWatcher` takes a `RelativePattern(folder, pattern)`,
+    // and a pattern is forward-slashed on every platform (*external*: VS
+    // Code's glob syntax, which is not a path). Watching the folder with
+    // this pattern rather than the params DIRECTORY with a file name is
+    // what makes a file whose directory DOES NOT EXIST YET still reported
+    // when it appears -- the `.ermine/preview/<Module>/` tree is not there
+    // until S3 (or the developer) writes it.
+    relativeGlob: PREVIEW_SEGMENTS.concat([moduleName, paramsName]).join("/"),
   };
   // BELT AND BRACES, and the property test's teeth: every path answered is
   // inside the folder it was derived from. The whitelists above already make
@@ -2144,6 +2423,364 @@ function shouldRerenderOnParamsSave(pick, savedPath, folderPath, flavour) {
   const paths = paramsPaths(pick, folderPath, flavour);
   if (paths.problem) return false;
   return comparablePath(p, savedPath) === comparablePath(p, paths.paramsPath);
+}
+
+// ------------------------------------------------- params files (WP-8, S2)
+//
+// S2 SENDS THE FILE.  S1 decided WHERE a params file lives and WHAT its text
+// turns into; S2 is the glue's half -- read it off the disk at SEND time,
+// send it, and re-render when it changes -- and everything in it that can be
+// a decision about data is here rather than in `src/extension.js`.
+//
+// S2 WRITES NOTHING.  No skeleton, no `.schema.json`, no `.gitignore`, and
+// no `ermine/schema` request: those are S3.  A params file exists here only
+// because a developer wrote one and committed it.
+//
+// THE THREE DECISIONS S2 ADDS, and why each is here and not there:
+//   1. WHICH WORKSPACE FOLDER owns the report (`paramsFolderFor`).  Section 6
+//      says "the workspace folder of the picked report", and `rootsFor`'s
+//      fallback to `folders[0]` is exactly what review G1 refuses for a file
+//      on disk -- `folders[0]` would mint `.ermine/` in an unrelated repo.
+//   2. WHETHER A FAILED READ MEANS THE FILE IS NOT THERE (`meansFileMissing`).
+//      "Not there" is the ordinary case and renders with `{}`; anything else
+//      is a file we could not read, which is a refusal for S1's own reason:
+//      rendering `{}` over parameters that exist shows a document that looks
+//      right and is not.
+//   3. WHETHER THIS RENDER MAY STILL BE SENT AFTER THE READ (`mayStillSend`).
+//      This is the one S2 exists to get right; see its comment.
+
+/**
+ * WHICH WORKSPACE FOLDER OWNS THIS REPORT (review G1, multi-root).
+ *
+ * NEVER `folders[0]`.  `rootsFor` falls back to the first folder for a file
+ * outside every folder, and for a SETTING that is defensible -- a window-scope
+ * value has to come from somewhere.  For a FILE ON DISK it is not: it would
+ * write `.ermine/preview/<Module>/` into whichever repository happens to be
+ * first in the window.  A report outside every folder gets no params file at
+ * all, which `paramsPaths` then names `no-workspace-folder`.
+ *
+ * THE INNERMOST CONTAINING FOLDER WINS.  VS Code permits a folder nested
+ * inside another in one window (*external*, documented as allowed), and the
+ * params file belongs to the folder the developer actually opened the report
+ * from -- the deeper one, whose `.ermine/preview` is the one beside it.
+ * `getWorkspaceFolder` is documented to answer the same way; this function
+ * exists so the answer is testable without an editor, and so that the code
+ * that WRITES paths and the code that DECIDES containment use one rule
+ * (`isInsideFolder`, a prefix compare on normalised absolute paths).
+ *
+ * @param {string} fsPath the picked report's absolute path
+ * @param {string[]} folderPaths every workspace folder's absolute path
+ * @returns {string|null} the folder, or null when the report is in none
+ */
+function paramsFolderFor(fsPath, folderPaths, flavour) {
+  const p = pathFlavour(flavour);
+  if (typeof fsPath !== "string" || !fsPath) return null;
+  let best = null;
+  let bestLength = -1;
+  for (const folder of Array.isArray(folderPaths) ? folderPaths : []) {
+    if (typeof folder !== "string" || !folder) continue;
+    if (!isInsideFolder(p, folder, fsPath)) continue;
+    const length = comparablePath(p, folder).length;
+    if (length > bestLength) {
+      best = folder;
+      bestLength = length;
+    }
+  }
+  return best;
+}
+
+/**
+ * DOES THIS READ FAILURE MEAN "THERE IS NO SUCH FILE"?
+ *
+ * The ordinary case -- no params file -- must render with `{}` exactly as
+ * WP-7 does today, and every OTHER failure (a permission, a directory where
+ * a file should be, a filesystem that went away) must NOT, because rendering
+ * `{}` over parameters that exist but could not be read is precisely the
+ * silent-wrong-document failure S1 refused an empty file for.
+ *
+ * THE CODES, and where each comes from: `FileNotFound` is
+ * `vscode.FileSystemError.FileNotFound`'s `code` (*external*, VS Code's own
+ * documented shape, UNVERIFIED here -- nobody has run this extension);
+ * `ENOENT` and `ENOTDIR` are node's, which is what a fallback read or a test
+ * double produces. `ENOTDIR` counts as missing on purpose: a params
+ * directory that is a FILE means the path does not exist as a file either,
+ * and the developer sees `git status` rather than a preview refusal --
+ * **and `FileNotADirectory` is VS Code's spelling of that same physical
+ * state** (S2 review nit 1: without it the same situation classified
+ * differently depending on which filesystem provider answered).
+ * `FileIsADirectory` / `EISDIR` is deliberately NOT here: something IS at
+ * that path, and `{}` would hide it.
+ * Anything else -- including an error with no code at all -- is NOT missing,
+ * which is the direction that refuses rather than renders.
+ *
+ * THE `name` FALLBACK IS A SUBSTRING TEST (review nit 2): VS Code has been
+ * seen to render `name` as `"EntryNotFound (FileSystemError)"`, which an
+ * exact match would miss. `code` is still the primary test, so this only
+ * matters when there is no code at all.
+ */
+const MISSING_FILE_CODES = [
+  "FileNotFound", "FileNotADirectory", "ENOENT", "ENOTDIR", "EntryNotFound",
+];
+
+function meansFileMissing(err) {
+  if (!err) return false;
+  const code = err.code !== undefined && err.code !== null ? String(err.code) : null;
+  if (code && MISSING_FILE_CODES.indexOf(code) >= 0) return true;
+  const name = typeof err.name === "string" ? err.name : null;
+  if (!name) return false;
+  return MISSING_FILE_CODES.some((known) => name.indexOf(known) >= 0);
+}
+
+/**
+ * THE CAP, APPLIED BEFORE THE FILE IS MATERIALISED (review nit 3).
+ *
+ * `paramsToSend` caps the TEXT, which means `workspace.fs.readFile` has
+ * already pulled the whole file into the extension host: the cap's own
+ * comment reasons about a 64 MiB frame killing the SERVER, and a 1 GiB
+ * params file kills the HOST the same way. So the glue `stat`s first and
+ * asks this; the text cap stays as the authority (a file that grows between
+ * the stat and the read is still refused, and a provider that cannot stat is
+ * simply read).
+ *
+ * A stat that ANSWERS NOTHING USEFUL -- no size, a negative, a NaN -- reads
+ * as "carry on and let the text cap decide", because refusing on a stat we
+ * could not understand would refuse every provider that does not implement
+ * it.
+ */
+function paramsTooLargeToRead(size, maxBytes) {
+  const cap = typeof maxBytes === "number" && maxBytes > 0 ? maxBytes : PARAMS_MAX_BYTES;
+  if (typeof size !== "number" || !isFinite(size) || size < 0) return null;
+  if (size <= cap) return null;
+  return problem("too-large",
+                 "The params file is " + size + " bytes and the preview sends at most " + cap +
+                 " bytes of parameters, so it was not read and the report was not rendered.").problem;
+}
+
+/** How long the params read may take before the render gives up (review nit 7). */
+const PARAMS_READ_TIMEOUT_MS = 5000;
+
+/**
+ * A READ THAT NEVER SETTLES IS NOT A READ THAT THREW (review nit 7, and it
+ * is `stopQuietly`'s own lesson from the WP-22 (c) review: "it also hangs,
+ * and a hang is not a throw"). A `readFile` on a dead remote provider would
+ * otherwise leave the spinner on "rendering" for the life of the window,
+ * because everything that releases it is after the await.
+ */
+function paramsReadTimedOut(paramsPath, ms) {
+  return problem("timed-out",
+                 "The params file " + printable(paramsPath) + " did not finish being read within " +
+                 Math.round((typeof ms === "number" ? ms : PARAMS_READ_TIMEOUT_MS) / 1000) +
+                 "s, so the report was not rendered. Save it again to retry.").problem;
+}
+
+/** The reasons `mayStillSend` can refuse with, closed and in its own order. */
+const ABANDON_REASONS = [
+  "pick-cleared", "pick-changed", "roots-changed", "superseded",
+  "server-restarted", "server-stopped", "no-client",
+];
+
+/**
+ * THE SNAPSHOT A RENDER IS DECIDED ON, taken BEFORE the read, and the only
+ * thing the rest of `renderNow` is allowed to read.
+ *
+ * **IT IS A SNAPSHOT AND NOT A VIEW, AND THAT IS THE S2 REVIEW'S M1.**  The
+ * first cut captured `const sentPick = picked` -- a REFERENCE -- while the
+ * roots handler MUTATES `picked.roots` IN PLACE.  `mayStillSend` then
+ * compared an array with itself and the `roots-changed` arm could not fire
+ * in the real glue at all (MEASURED: `{"send":true}` where the model, which
+ * REPLACED the pick object, answered `roots-changed`).  The render went out
+ * carrying the NEW roots under the OLD generation -- booting a render
+ * session the 150 ms-later render boots again.  So the pick is COPIED here,
+ * its roots array included, and the copy is frozen.
+ *
+ * IT IS ALSO WHAT MAKES THE GAP CHECK HARD TO NEUTER (review M2).  Four
+ * mutants survived the whole suite by swapping one captured value for the
+ * live global in an object literal written AFTER the await
+ * (`clientEpoch: sentEpoch` -> `clientEpoch`, `pick: sentPick` -> `picked`,
+ * `generation: mine` -> `generation`, and the request builder taking
+ * `picked`).  There is no such literal any more: everything after the await
+ * reads this object, which was built BEFORE it, where reading a live global
+ * is not merely allowed but correct.
+ *
+ * @param {number} generation this render's own counter
+ * @param {object} pick the current pick, copied
+ * @param {number} clientEpoch the epoch of the client this render belongs to
+ * @param {number} stopCount how many times the client has been seen to stop
+ * @param {number} seqAtSend `stuckState.highWater` at send (rule (1)/(3))
+ */
+function renderAttempt(generation, pick, clientEpoch, stopCount, seqAtSend) {
+  const copied = pick && typeof pick === "object"
+    ? Object.freeze(makePick(pick.uri, pick.fsPath, pick.binding, pick.module, pick.roots))
+    : null;
+  if (copied) Object.freeze(copied.roots);
+  return Object.freeze({
+    generation: generation,
+    pick: copied,
+    clientEpoch: clientEpoch,
+    stopCount: stopCount,
+    seqAtSend: seqAtSend,
+    key: markKey(copied),
+    label: pickLabel(copied),
+  });
+}
+
+/**
+ * The live state `mayStillSend` compares the snapshot against: the module
+ * globals, read at the moment of the comparison and nowhere else.
+ */
+function previewNow(generation, pick, clientEpoch, stopCount, hasClient) {
+  return {
+    generation: generation,
+    pick: pick,
+    clientEpoch: clientEpoch,
+    stopCount: stopCount,
+    hasClient: hasClient === true,
+  };
+}
+
+/**
+ * The `ermine/render` request for an ATTEMPT, so that the pick and the
+ * generation on the wire cannot come from anywhere but the snapshot (review
+ * M2's R9 and R10, which swapped each for a live global and survived).
+ */
+function renderRequest(attempt, params) {
+  return renderParams(attempt.pick, params, attempt.generation);
+}
+
+/**
+ * AFTER THE READ, MAY THIS RENDER STILL BE SENT?
+ *
+ * THIS IS THE FUNCTION S2 EXISTS TO GET RIGHT.  Reading the params file puts
+ * an `await` between "we decided to render THIS pick" and "we send it", and a
+ * decision applied to state that moved under it is the defect this code base
+ * has already been bitten by three times: WP-22's M1 (the mark depended on
+ * which of two events the library delivered first), M2 (a restart inside the
+ * classpath warm-up left two clients), and the final re-check's timed-out
+ * stop (an edge dropped as stale by the very guard that fixed M2).  So the
+ * decision is a function of two snapshots rather than a pile of `if`s in the
+ * middle of an async function, and the test file drives the interleavings.
+ *
+ * WHAT MOVES, AND WHAT EACH MEANS:
+ *   `pick-cleared`     nothing is picked any more (a teardown);
+ *   `pick-changed`     the user picked another report while we were reading:
+ *                      the params we just read are the OLD report's, and
+ *                      sending them is the wrong-params-for-the-wrong-pick
+ *                      failure in its purest form;
+ *   `roots-changed`    `ermine.preview.roots` moved. The root set is the
+ *                      render session's discard key (section 2.4), so this
+ *                      request would boot a session the next one throws away;
+ *   `superseded`       a NEWER render started while we read. Its answer is
+ *                      the one the tab wants, and this one's would be
+ *                      discarded by the generation check anyway -- but only
+ *                      after it had cost a render on the server;
+ *   `server-restarted` the client was replaced (a crash, the Restart button,
+ *                      WP-22 (c)'s own timer). The fresh server has not been
+ *                      consulted about the wedge mark, and a request slipped
+ *                      into it here would reach it WITHOUT passing WP-22's one
+ *                      consultation site -- the same hole `fireRestart` clears
+ *                      the coalesced render for;
+ *   `server-stopped`   the client STOPPED and came back without being
+ *                      replaced. A DEFENCE AGAINST UNVERIFIED LIBRARY
+ *                      BEHAVIOUR (review M5): `clientEpoch` moves only inside
+ *                      our own `startClient`, and `vscode-languageclient` is
+ *                      configured with no `errorHandler` and no
+ *                      `maxRestartCount`, so its default close action may
+ *                      restart the server process on the SAME client object.
+ *                      Its source is unread (project rule) and nobody has run
+ *                      this extension, so this is not measured -- but the
+ *                      counter costs one integer and the hole it would leave
+ *                      is the exact one `server-restarted` exists to close;
+ *   `no-client`        there is nothing to send with.
+ *
+ * THE ORDER IS MOST-SPECIFIC-FIRST, because the reason is what the channel
+ * prints: a pick change also bumps the generation (picking renders), so
+ * testing the generation first would report every pick change as
+ * "superseded" and tell the reader nothing.
+ *
+ * IT IS DELIBERATELY NOT THE CALLER'S JOB TO RE-CHECK ANY OF THIS: the glue
+ * calls it once, and the ONE thing it may add is a null check on the client
+ * handle it is about to use.
+ *
+ * @param {{generation, pick, clientEpoch}} atSend the snapshot taken BEFORE the read
+ * @param {{generation, pick, clientEpoch, hasClient}} now the snapshot after it
+ */
+function mayStillSend(atSend, now) {
+  const refuse = (reason, why) => ({ send: false, reason, why });
+  if (!atSend || typeof atSend !== "object" || !now || typeof now !== "object") {
+    return refuse("pick-cleared", "there is no render to send");
+  }
+  const wasKey = markKey(atSend.pick);
+  const isKey = markKey(now.pick);
+  if (wasKey === null || isKey === null) {
+    return refuse("pick-cleared", "no report is picked any more");
+  }
+  if (wasKey !== isKey) {
+    return refuse("pick-changed",
+                  "the pick changed to " + pickLabel(now.pick) + " while the parameters were being read");
+  }
+  if (rootsFingerprint(atSend.pick && atSend.pick.roots) !== rootsFingerprint(now.pick && now.pick.roots)) {
+    return refuse("roots-changed", "ermine.preview.roots changed while the parameters were being read");
+  }
+  if (atSend.generation !== now.generation) {
+    return refuse("superseded",
+                  "render " + printable(now.generation) + " started while the parameters were being read");
+  }
+  if (atSend.clientEpoch !== now.clientEpoch) {
+    return refuse("server-restarted", "the language server was restarted while the parameters were being read");
+  }
+  if (atSend.stopCount !== now.stopCount) {
+    return refuse("server-stopped", "the language server stopped while the parameters were being read");
+  }
+  if (now.hasClient === false) {
+    return refuse("no-client", "the language client went away while the parameters were being read");
+  }
+  return { send: true, reason: null, why: null };
+}
+
+/**
+ * A PARAMS REFUSAL, DRESSED AS AN ANSWER so the tab shows it the way it shows
+ * every other failure (`tabContent` -> the whole `{ok:false, ...}` object).
+ *
+ * `status` IS NULL AND THAT IS THE POINT: no server was asked, so there is no
+ * HTTP-shaped status to quote, and a reader can tell this refusal from a 400
+ * by that alone. The named reason travels under `paramsProblem` rather than
+ * under `reason`, because `reason` is the SERVER's closed vocabulary on this
+ * wire (section 4, Q15) and `isPlacement404` switches on it; minting a
+ * client-side value into it would make a preview refusal indistinguishable
+ * from a placement one for any code written later.
+ *
+ * `path` IS THE PARAMS FILE, not a JSON path. On a server refusal `path` is
+ * where in the REQUEST the fault is; here the fault is a file, and its path is
+ * the one thing the developer needs in order to act.
+ */
+function paramsRefusalAnswer(problem, paramsPath, generation) {
+  const p = problem && problem.problem ? problem.problem : problem;
+  return {
+    ok: false,
+    status: null,
+    message: (p && p.message ? String(p.message) : "the params file could not be used") +
+             " Nothing was sent to the language server.",
+    path: typeof paramsPath === "string" ? paramsPath : null,
+    paramsProblem: p && p.reason ? String(p.reason) : "unknown",
+    generation: generation,
+  };
+}
+
+/**
+ * The key under which the glue remembers that it has already said something
+ * about this pick's params, so "one line per distinct problem per pick" is
+ * once and not once per render. Pure so that the rule is testable and so that
+ * two notices about different picks can never collide.
+ */
+function paramsNoticeKey(pick, reason) {
+  return String(markKey(pick)) + MARK_SEPARATOR + String(reason);
+}
+
+/** The sentence for "there is no params file here", said once per pick. */
+function paramsMissingNotice(paramsPath) {
+  return "no params file at " + printable(paramsPath) +
+         " -- rendering with empty parameters. Write one there (it is ordinary committed source) " +
+         "to give this report its parameters.";
 }
 
 /**
@@ -3008,6 +3645,7 @@ module.exports = {
   paramsFingerprint,
   rejectionMeansServerGone,
   markPickFor,
+  markParamsFor,
   promptAnswerApplies,
   SETTLED_BY_PEER_CODES,
   MARK_SEPARATOR,
@@ -3044,6 +3682,36 @@ module.exports = {
   // WP-8 S1: params files, all pure, none of it wired yet.
   paramsPaths,
   shouldRerenderOnParamsSave,
+  // WP-8 S2: the decisions the SENDING glue makes, still pure.
+  paramsFolderFor,
+  meansFileMissing,
+  renderAttempt,
+  previewNow,
+  renderRequest,
+  mayStillSend,
+  paramsRefusalAnswer,
+  paramsNoticeKey,
+  paramsMissingNotice,
+  paramsTooLargeToRead,
+  paramsReadTimedOut,
+  PARAMS_READ_TIMEOUT_MS,
+  ABANDON_REASONS,
+  TRIGGER_EXPLICIT,
+  TRIGGER_PARAMS_FILE,
+  TRIGGER_MODULE_LEARNED,
+  TRIGGER_INVALIDATED,
+  TRIGGER_FILE_EVENT,
+  TRIGGER_ROOTS,
+  TRIGGER_RECOVERED,
+  TRIGGER_ANSWER,
+  RENDER_TRIGGERS,
+  UNCONFIRMED_TRIGGERS,
+  isRenderTrigger,
+  triggerProblem,
+  markMintedAfter,
+  mayAutoRender,
+  heldPromptToken,
+  shouldAskHeld,
   isCurrentSchemaAnswer,
   skeletonFrom,
   schemaFileFor,
