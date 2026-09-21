@@ -330,3 +330,19 @@ test("(w-skeleton) the table skeleton for a drilldown carries the extra + column
   assert.equal(el.querySelectorAll("tbody td").length, 3);
   assert.equal(el.querySelectorAll("th .sticky").length, 2);
 });
+
+test("(w-no-writer) the missing-writer box names the REAL global and its DOMContentLoaded timing", async () => {
+  // WP-9 / Q1.  `client/src/index.ts` documented `window.htmlwriter`; the
+  // writers entry assigns `window.ermine_htmlwriter`, and only inside a
+  // `DOMContentLoaded` listener (`ermine-writers/writers/js/htmlwriter.js:10-13`,
+  // READ).  The LOOKUP was never wrong -- it is `ctx.env.htmlwriter`, an env key
+  // the HOST fills -- so this pins the one thing that did change: the text a
+  // developer reads out of the error box when the host read the global too early.
+  const { document, target } = newDom();
+  const result = await render(target, parseDocument(docOf({ tag: "Widget", name: "table", props: tableProps })),
+    defaultRegistry(), { document, fetchData: async () => rel, htmlwriter: undefined });
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0]!.message, /window\.ermine_htmlwriter/);
+  assert.match(result.errors[0]!.message, /DOMContentLoaded/);
+  assert.ok(target.querySelector(".ermine-widget-error"));
+});
