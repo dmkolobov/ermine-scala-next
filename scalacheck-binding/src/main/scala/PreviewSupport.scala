@@ -11,21 +11,25 @@ import scalaparsers.{ Death, Supply }
 
 /** THE SHARED LSP/PREVIEW TEST HARNESS, and nothing else.
   *
-  * IT EXISTS BECAUSE TWO SUITES NOW NEED IT.  `TestLspRobustness` group D
-  * (WP-5) and `TestPreviewCancel` (WP-6) each drive a `Preview` over a real
-  * `Wire`; group D is MEASURED at 23-40 s against §11's 60 s cap, so WP-6's
-  * properties are a suite of their own with a time budget of their own
-  * rather than five more seconds on that figure.  Everything here was MOVED
-  * out of `TestLspRobustness` unchanged (the object-level `private`
+  * IT WAS EXTRACTED FOR A SECOND SUITE THAT NO LONGER EXISTS, AND IS KEPT
+  * BECAUSE `TestLspRobustness` USES IT.  The second suite was
+  * `TestPreviewCancel` (WP-6), which drove a `Preview` over a real `Wire`
+  * of its own rather than adding five more seconds to `TestLspRobustness`
+  * group D, MEASURED at 23-40 s against §11's 60 s cap; WP-24 REMOVED that
+  * suite together with WP-6's cancel (tracker/JSON-WIDGET-PLAYGROUND.md,
+  * Q13).  So group D (WP-5) is the ONE caller today.  Everything here was
+  * MOVED out of `TestLspRobustness` unchanged (the object-level `private`
   * modifiers aside, which had to go: this object is `private[reporting]`
-  * and its members are reached from both suites).  No behaviour of any
+  * and its members were reached from both suites).  No behaviour of any
   * existing property changed with the move.
   *
-  * THE LOCK ORDER IS THE SAME IN BOTH SUITES AND IS FIXED HERE:
-  * `previewLock`, then `residentLock`, then `ErmineFixture.literalLock`.
-  * `core/test` is UNFORKED and PARALLEL, so the two suites really do run at
-  * once in one JVM, and a lock taken the other way round in either of them
-  * is a deadlock.  Nothing outside this file may take them in another order.
+  * THE LOCK ORDER IS FIXED HERE, and stays fixed although one suite takes
+  * it today: `previewLock`, then `residentLock`, then
+  * `ErmineFixture.literalLock`.  `core/test` is UNFORKED and PARALLEL, so a
+  * second suite sharing this harness really would run at once with group D
+  * in one JVM -- which is how `TestPreviewCancel` ran while it existed --
+  * and a lock taken the other way round in either of them is a deadlock.
+  * Nothing outside this file may take them in another order.
   *
   * WHAT STAYED BEHIND, on purpose: everything that is about ONE group's
   * subject -- group B's corpus and edit grammar, group C's reload fixtures,

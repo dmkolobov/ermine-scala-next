@@ -57,10 +57,12 @@ object TestLspRobustness extends Properties("LSP robustness") {
 
   // THE SHARED HARNESS -- `quiet`, `LogSink`, the resident and its lock,
   // the preview bench and its lock, the temp-root and fixture helpers, and
-  // the small answer/notification accessors -- MOVED to `PreviewSupport`
-  // so that `TestPreviewCancel` (WP-6) can drive a `Preview` in a suite of
-  // its own without growing this one's measured wall time.  Nothing about
-  // any property below changed with the move.
+  // the small answer/notification accessors -- was MOVED to
+  // `PreviewSupport` so that a SECOND suite, `TestPreviewCancel` (WP-6),
+  // could drive a `Preview` of its own without growing this one's measured
+  // wall time.  WP-24 removed that suite together with WP-6's cancel, and
+  // the extraction was kept because THIS suite uses it.  Nothing about any
+  // property below changed with the move.
   import PreviewSupport._
 
 
@@ -1505,7 +1507,8 @@ object TestLspRobustness extends Properties("LSP robustness") {
 
   // The group's harness and `previewLock` -- with the whole of the
   // concurrency argument, the lock order and the "why one bench" note --
-  // now live in `PreviewSupport`, shared with `TestPreviewCancel`.
+  // now live in `PreviewSupport`, of which this suite is the only caller
+  // since WP-24 removed `TestPreviewCancel`.
 
 
 
@@ -2064,7 +2067,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
       // this was the only request that moved the set.
       //
       // EXPOSED BY, NOT CAUSED BY, `TestPreviewCancel` (WP-6): that suite
-      // holds the same shared `previewLock`, which changed the pool's
+      // HELD the same shared `previewLock`, which changed the pool's
       // interleaving so that this property ran BEFORE `ermine/schema
       // {binding}` instead of after it.  The order was never guaranteed; the
       // dependence was latent.  What the SERVER should do here is recorded

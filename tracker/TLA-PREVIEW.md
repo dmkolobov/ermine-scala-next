@@ -31,7 +31,8 @@ Properties: S1-S13 and L1-L5 in the exploration's section 2, each marked stated-
 
 1. Fetch `tla2tools.jar` once. Reported from documentation as one self-contained file needing Java 11+; JDK 21 is at `~/.local/ermine-toolchain/jdk-21.0.12.1+1`. UNVERIFIED until downloaded and run. No TLA+ tool is on this machine today.
 2. Model the QUEUE ONLY: render/schema/cancel/invalidate, `takeJob`, `runJob`'s `finally`, shutdown, thread death. Properties S1-S4, S10, L1. Bounds: 2 requests, 2 invalidates, 2 timer fires, 1 crash, all 5 outcomes, `CancelOn` FALSE then TRUE.
-3. CALIBRATE: re-introduce WP-5B (delete the drain from `fireStuck` in the model) and confirm TLC produces the stranded-job counterexample. If it cannot re-find a defect already fixed, the MODEL is wrong.
+3. CALIBRATE: re-introduce WP-5B (delete the drain from `fireStuck` in the model -- the name is
+   `0ee08425`'s; in the restored tree that drain is inside `fire`, `Preview.scala:2069`) and confirm TLC produces the stranded-job counterexample. If it cannot re-find a defect already fixed, the MODEL is wrong.
 4. Only then put the two conclusions that are BY READING ONLY in commit 0ee08425 to the checker: phase 2b colliding with clear -> discard -> answer, and "a Preview can cancel a second time".
 5. Process as for every ticket here: one implementer, a separate reviewer, design reviewed as well as implementation.
 
@@ -46,6 +47,26 @@ The exploration's summary line says "6 unconditional yes, 3 conditional, 1 no". 
 | no | the watchdog clock covering the boot: a budget decision, invisible to an untimed model |
 
 The last two "yes" rows are not past defects; they are open by-reading conclusions.
+
+## 2026-09-20 (evening): the first "Drop it if" bullet HAS FIRED -- the ticket is NOT dropped here
+
+**WP-24 removed WP-6 stage 1 from the tree** (the user's decision; `tracker/JSON-WIDGET-PLAYGROUND.md`,
+Q13 re-decided). So the first bullet below did not merely become likely, it FIRED: there is no
+`ermine.preview.cancelOnTimeout`, no cancel and **no two-phase watchdog** -- the watchdog is one
+phase again: `fire` (`Preview.scala:2069`) claims the job under `lock` and does the stuck mark, the
+`seq` mint, the drain and the notification inline. (`fireStuck`, used below, was the name
+`0ee08425` gave the second half of the split watchdog; it is not a method in the restored tree.)
+This note records what that does to the ticket. **Nothing here
+is a decision to drop or to keep: re-judging TLA-1 is the USER's, at the start of that session.**
+
+| Item | State after WP-24 |
+|---|---|
+| Scope line "WP-6's two-phase cancel" | **GONE from the scope.** Delete it when the model is written; the exploration and `tracker/tla/preview.tla` still carry it, and both are explicitly maps rather than truth |
+| Step 4 of "The first session" -- the two conclusions that are BY READING ONLY in `0ee08425` (phase 2b colliding with `clear -> discard -> answer`; a second cancel after a successful one) | **BOTH MOOT.** Neither mechanism exists. Step 4 has no content left and should be struck; steps 1-3 are untouched |
+| "Defect replay" table, rows *phase 2b collision* and *second cancel* | moot for the same reason; the other nine rows stand, including *WP-7 lost recovery re-render*, which is now the LIVE question (Q17) |
+| What remains in scope | the QUEUE and its jobs, EXACTLY-ONCE answering, the crash contract, the watchdog / `stuck` / `seq` protocol with its arm epoch, and the CLIENT REDUCER (`preview-core.js`) with unordered delivery. That is still four actors and still the part the exploration called the payoff |
+| What WP-22 would ADD, if it is built | a CLIENT ACTOR that kills and restarts the server (the mark, the grace timer, the one consultation site). **So the protocol does not shrink under the new decision -- it grows on the client side**, which is an argument for keeping the ticket rather than against it |
+| The orchestrator's recommendation, for the user to accept or refuse | **KEEP, with the scope reduced as above** (queue + exactly-once + crash + watchdog/stuck/seq + reducer), and re-derive every line reference at that session's HEAD as the last section already says |
 
 ## Drop it if
 
