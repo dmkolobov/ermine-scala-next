@@ -462,9 +462,12 @@ private[reporting] object PreviewSupport {
       * is the ONE render `renderingD` cannot cover: it forces this lazy val
       * before taking the lock, precisely so that no property pays a boot
       * under it.  What the exclusion costs is one hold of `literalLock` for
-      * the length of this boot -- MEASURED at 2.6 s on the red gate run --
-      * once per JVM, against the 23.7 s the longest wrapped property holds
-      * it for anyway.
+      * the length of this boot -- MEASURED at 2.3-2.9 s -- once per JVM,
+      * against the 4.7-5.6 s that the longest wrapped property (`DD-1`)
+      * holds it for anyway.  NOT the red run's 23.7 s: that figure is the
+      * RESIDENT's own boot landing on whichever property forces it first
+      * and is not a bound on this lock at all -- `renderingD` says so, and
+      * the two blocks must not disagree about one number.
       *
       * THE LOCK ORDER IS KEPT: every force of `bench` happens under
       * `previewLock` (and, for the resident properties, under

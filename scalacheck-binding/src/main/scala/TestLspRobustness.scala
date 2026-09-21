@@ -774,7 +774,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * render AND every schema (`lsp/Preview.scala:1339`), which is
     * `Runner.invalidateStale` (`json/Runner.scala:599`) -- one
     * `Session.depCache.get` plus one `File.lastModified` per loaded file
-    * (`Runner.staleFiles`, `:568-575`; ~20 files for a render session),
+    * (`Runner.staleFiles`, `:568-574`; ~20 files for a render session),
     * then `invalidate0` builds the importer graph from that same cache.  So
     * a foreign `clear()` is dangerous to a property that never mentions the
     * cache at all, and `renderingD` below is where group D takes the lock
@@ -798,11 +798,14 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * THERE IS A SECOND ONE, `PreviewSupport.bench`'s: its `bootMillis`
     * warm-up render is itself a render and so takes `literalLock` (see
     * `renderingD`, and `Bench.bootMillis` for why).  It cannot deadlock
-    * either way round: every force of `bench` is under `previewLock`, so
-    * only one thread is ever inside that initializer, and the one group-D
-    * property that forces it while already holding `literalLock` -- this
-    * very `withDepCache` at `ermine/preview/reports`, through `timedD`'s
-    * `bench.bootMillis` -- re-enters a Java monitor it already owns.
+    * either way round: EVERY group-D property forces `bench` -- `timedD`'s
+    * `collect` label reads `bench.bootMillis`, so even a property that
+    * never renders touches it -- and every one of those forces is under
+    * `previewLock`, so only one thread is ever inside that initializer.
+    * `renderingD` forces it BEFORE taking `literalLock`; the one group-D
+    * property that can reach it while already HOLDING `literalLock` is
+    * this very `withDepCache` at `ermine/preview/reports`, through that
+    * same `bench.bootMillis`, and it re-enters a monitor it already owns.
     *
     * WHAT THIS STILL DOES NOT COVER, stated rather than fixed:
     * `TestTolerantCheck` keeps its own resident (`:912`) behind its own
@@ -1612,7 +1615,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * STALE, and by the time `invalidate0` runs the cache is empty, so
     * `Session.dependentsOf` (`session/Session.scala:771-783`) finds no
     * importer edges at all and the dirty set is an arbitrary suffix that is
-    * NOT closed under importers.  `Session.scrub` (`:811-830`) is then
+    * NOT closed under importers.  `Session.scrub` (`:811-827`) is then
     * asymmetric in exactly the wrong way -- it filters `env` by the V's OWN
     * defining module but `termNames` by the KEY's module -- so it deletes a
     * definer's name while every re-exporter's key survives pointing at it,
@@ -1640,16 +1643,26 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * session) and, when `withResident` is set, `resident` (176 modules,
     * tens of seconds) are forced HERE, before `literalLock` is taken;
     * otherwise the first property to run would hold the four clearing
-    * suites off for the whole of a boot.  `withResident` also TAKES
+    * suites off for the whole of a boot.  EVERY group-D property forces
+    * the shared `bench` in any case -- `timedD`'s `collect` label reads
+    * `bench.bootMillis` -- so what this line decides is not WHETHER the
+    * boot is paid here but WHERE, namely outside the lock.  `withResident` also TAKES
     * `residentLock`, which is what keeps the order right for the
     * properties whose BODY takes it -- taking `literalLock` first and
     * `residentLock` inside it would deadlock against group C's
     * `withDepCache`, which takes them the declared way round.  It is
     * re-entrant for the properties that already hold `residentLock`
-    * themselves.  Nothing that holds `literalLock` can name `previewLock`
-    * or `residentLock`: both are `PreviewSupport`'s, and no other suite in
-    * `scalacheck-binding/src/main/scala` mentions either (checked
-    * 2026-09-20), so there is no cycle to deadlock on.
+    * themselves.  IT IS A WIDENING, and that is worth saying: on `D: a
+    * render whose evaluation throws ...` the only thing that used to hold
+    * `residentLock` was the single `resident.checkFile` call inside the
+    * body, and `withResident = true` now holds it for the WHOLE body.
+    * That is what the order requires, and the property measures 0.1 s,
+    * but it is a change beyond the lock fix itself.  Nothing that holds `literalLock` can take `previewLock`
+    * or `residentLock`: both are `PreviewSupport`'s, and nothing else in
+    * `scalacheck-binding/src/main/scala` ACQUIRES either (checked
+    * 2026-09-20 -- `TestTolerantCheck.scala:883` declares a `private
+    * residentLock` of its OWN, a different object, which `withDepCache`
+    * above already names), so there is no cycle to deadlock on.
     *
     * WHAT IT COSTS: group D and the four clearing suites are now mutually
     * exclusive for as long as each wrapped property runs, so the bound on
@@ -1665,11 +1678,21 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * whichever property forces it first (§11 names the effect), and
     * `withResident` forces it BEFORE `literalLock` is taken, which is the
     * whole reason that parameter exists -- the same property costs
-    * 1.9-2.7 s on these runs.  The WEDGE properties are NOT wrapped
-    * and cannot hold the lock for the length of a wedge: they hold their
-    * render in `beforeJob`, which runs before the job does any work, so
-    * they never build a `Runner` and never read the cache (see the list
-    * below).  `TestDateAndScan.underZone` takes `literalLock` as its fence
+    * 1.9-2.7 s on these runs.
+    *
+    * CAN A WEDGE HOLD THE LOCK FOR THE LENGTH OF THE WEDGE?  Not in the
+    * NOT-WRAPPED list below: those properties hold or throw their render
+    * in `beforeJob`, which runs before the job does any work, so they
+    * never build a `Runner`, never read the cache and never take this
+    * lock at all.  `DD-1` IS A WEDGE PROPERTY AND IS WRAPPED -- its
+    * generations 511 and 512 RETURN NORMALLY from `beforeJob`, so those
+    * jobs go on to boot and render, which is exactly why it is the
+    * longest hold.  WHAT BOUNDS IT: the property releases its own latches
+    * (`holdA`, `holdB`, `holdD`) from its own body on its own thread and
+    * waits for nothing any other suite controls, and each wedge is fired
+    * on by its own 300 ms watchdog -- so the hold is the property's own
+    * wall time, 4.7-5.6 s MEASURED, not an unbounded wedge.
+    * `TestDateAndScan.underZone` takes `literalLock` as its fence
     * for a JVM-default-timezone change, so the exclusion runs the other way
     * too, and that is a gain: a render is a module load, which is what that
     * fence exists to keep out of the window.
@@ -1682,7 +1705,12 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * `IM-1: the stuck notification's seq`, `the schema job at shutdown`:
     * every job they post is held or thrown in `beforeJob`, so `doRender` /
     * `doSchema` never run and no `Runner` is ever built.  `Q9:
-    * applySettings on timeoutSeconds`: no bench, no boot, no job.  `Q7: the
+    * applySettings on timeoutSeconds`: no bench OF ITS OWN, no boot and no
+    * job -- it builds a bare `Preview` and only pushes settings at it.  (It
+    * still FORCES the shared `bench`, as EVERY group-D property does:
+    * `timedD`'s own `collect` label reads `bench.bootMillis`.  "NOT
+    * WRAPPED" here means "never reads `Session.depCache`", never "does not
+    * touch `bench`".)  `Q7: the
     * missing uri, and the resident's forms`: its binding form is refused by
     * `SchemaRequest.parse` on the DISPATCH thread before any job is
     * enqueued (`lsp/Preview.scala:603-605`), and its `type`/`name` forms
