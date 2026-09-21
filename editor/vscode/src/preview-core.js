@@ -431,7 +431,15 @@ const MARK_SEPARATOR = "␟";
 /** The closed reason vocabulary. A restored value carrying anything else is not a mark. */
 const WEDGE_WATCHDOG = "watchdog";
 const WEDGE_DIED_MID_RENDER = "died-mid-render";
-const WEDGE_REASONS = [WEDGE_WATCHDOG, WEDGE_DIED_MID_RENDER];
+// WP-22 (c): OUR OWN restart, and the reason a mark carries only when no
+// truer one exists. The restart we cause takes the same Stopped -> Running
+// path a crash takes, so it lands on the consultation below and ASKS; this
+// reason is what makes that true even in the case where nothing else had
+// marked the pick. It is never written over an existing reason -- "watchdog"
+// and "died-mid-render" say what happened, and "killed-by-us" only says what
+// we did about it.
+const WEDGE_KILLED_BY_US = "killed-by-us";
+const WEDGE_REASONS = [WEDGE_WATCHDOG, WEDGE_DIED_MID_RENDER, WEDGE_KILLED_BY_US];
 
 /**
  * The ONE trigger the mark is consulted for.  It is a constant rather than
@@ -552,6 +560,8 @@ function guardEffects(over) {
  *   answer        `{stuck:true, applies}` for the current pick  -> "watchdog"
  *   notification  `{stuck:true, applies}`                       -> "watchdog"
  *   clientState   `Stopped` while a render was in flight        -> "died-mid-render"
+ *   killedByUs    WP-22 (c)'s grace expired and we are about    -> "killed-by-us"
+ *                 to restart the server ourselves
  * CLEAR
  *   notification  `{stuck:false}` -- the job came back; LOAD-BEARING, without
  *                 it a 300 s scan under a 60 s watchdog is held for ever
@@ -624,6 +634,14 @@ function guardReduce(mark, event) {
       if (event.to === "Stopped" && event.renderInFlight === true) return set(WEDGE_DIED_MID_RENDER);
       return keep;
 
+    case "killedByUs":
+      // WP-22 (c). THE RESTART WE ARE ABOUT TO CAUSE MUST LAND ON THIS MARK
+      // -- that is the whole reason the glue sends this event BEFORE it
+      // calls `restart(context)`. SET is idempotent per key, so a pick that
+      // is already marked keeps its own reason and its own `at`: this row
+      // only covers the case where nothing else got there first.
+      return set(WEDGE_KILLED_BY_US);
+
     case "invalidated":
       // The server's own dependency closure named the pick's module.
       return shouldRerenderOnInvalidated(pick, event.modules)
@@ -663,7 +681,19 @@ function guardReduce(mark, event) {
     case "restore": {
       // Activation: `workspaceState` hands back whatever was written last.
       const saved = isMark(event.mark) ? event.mark : null;
-      if (!saved) return { mark: null, effects: guardEffects({}) };
+      if (!saved) {
+        // F4 OF THE WP-22(c) REVIEW, and it is N3's own rule applied to the
+        // branch that was missed: a value that is PRESENT but is not a mark
+        // -- most concretely, one written by a NEWER extension whose reason
+        // vocabulary this one does not know -- must be CLEARED, so that
+        // `applyGuard` removes the stale `workspaceState` key instead of
+        // re-discarding it on every activation for ever. NOTHING stored is
+        // not a clear: it is the ordinary case and must stay silent.
+        const stored = event.mark !== undefined && event.mark !== null;
+        return stored
+          ? { mark: null, effects: guardEffects({ cleared: true, why: "the remembered mark is not one this version understands" }) }
+          : { mark: null, effects: guardEffects({}) };
+      }
       if (key === null || saved.key !== key) {
         return { mark: null, effects: guardEffects({ cleared: true, why: "the remembered mark is not this pick's" }) };
       }
@@ -710,10 +740,20 @@ function shouldAutoRender(mark, pick, trigger) {
   return !markMatches(mark, pick);
 }
 
-function heldPhrase(reason) {
-  return reason === WEDGE_DIED_MID_RENDER
-    ? "was still rendering when the language server stopped"
-    : "wedged the preview: the watchdog fired and the server did not come back";
+/**
+ * `weRestarted` (review N2) BEATS THE REASON, because the reason is usually
+ * `watchdog` even when WP-22(c) restarted the server: the accepted rising
+ * edge that ARMS the grace is the same event that MARKS the pick, and
+ * `killed-by-us` never overwrites a mark that already exists. Telling the
+ * user "the server did not come back" after we brought it back is simply
+ * false, and the truthful sentence was the one almost nobody would see.
+ */
+function heldPhrase(reason, weRestarted) {
+  if (weRestarted === true || reason === WEDGE_KILLED_BY_US) {
+    return "wedged the preview, and the language server was restarted to clear it";
+  }
+  if (reason === WEDGE_DIED_MID_RENDER) return "was still rendering when the language server stopped";
+  return "wedged the preview: the watchdog fired and the server did not come back";
 }
 
 /**
@@ -721,10 +761,10 @@ function heldPhrase(reason) {
  * to ask about -- a mark that is not this pick's is never consulted and
  * never spoken about.
  */
-function heldMessage(mark, pick) {
+function heldMessage(mark, pick, weRestarted) {
   if (!markMatches(mark, pick)) return null;
   return (
-    "Ermine: " + pickLabel(pick) + " " + heldPhrase(mark.reason) +
+    "Ermine: " + pickLabel(pick) + " " + heldPhrase(mark.reason, weRestarted) +
     ". Nothing has changed since, so it was NOT re-rendered automatically."
   );
 }
@@ -852,6 +892,654 @@ function promptAnswerApplies(askedKey, pickNow, markNow, choice) {
     return { render: true, why: "the mark was already cleared" };
   }
   return { render: true, why: null };
+}
+
+// -------------------------------------------- WP-22 (c): the restart timer
+//
+// THE USER'S DECISION, in four words: "the extension may restart." The
+// wedge is contained in the CALLER ("responsiblity for solving this happens
+// with the *caller*"), so when the preview has been stuck for long enough
+// the EXTENSION restarts its own language server through the path it
+// already has (`restart(context)` -> `stopQuietly` -> `startClient`).
+//
+// WHY THERE IS A TIMER AT ALL, rather than a restart on `{stuck:true}`:
+// Q10's recovery. The watchdog answers a render after
+// `ermine.preview.timeoutSeconds` (default 60) and marks the preview stuck,
+// and the job may STILL come back -- a 300 s scan under a 60 s watchdog is
+// slow, not wedged -- at which point the server sends `{stuck:false}` and
+// everything is fine. Killing on the rising edge would kill that render
+// every time. So: arm a grace on the rising edge, disarm it on the falling
+// one. THE GRACE IS POLICY AND THE EXTENSION IS WHERE POLICY BELONGS; the
+// server is not changed by any of this and knows nothing about it (Q18: it
+// keeps no self-defence, and `bin/ermine-serve` and every non-VS-Code
+// client are unprotected).
+//
+// WHAT THIS REDUCER IS AND IS NOT. It owns the timer's LIFECYCLE and holds
+// NO CLOCK: the glue owns `setTimeout` and hands the expiry back as an
+// event carrying the SERIAL of the arm it belongs to. Every arm mints a new
+// serial, so a timer armed for an earlier incident -- one the glue failed
+// to cancel, or one that had already been queued when the disarm ran --
+// cannot fire: its serial is not the live one. (The watchdog's own
+// arm-epoch idea, `Preview.scala`, in eleven lines of JavaScript.)
+//
+// THE MIRROR, AND WHY IT IS NOT A SECOND TRUTH. The fire condition is
+// "still stuck, still Running", so this reducer tracks those two flags --
+// by EXACTLY `stuckReduce`'s rules, over the SAME events, with the SAME
+// `applies` discipline the guard uses (a stale notification must not arm
+// anything). It does not re-derive the acceptance: the glue computes
+// `stuckEventApplies` ONCE and hands the answer to both reducers. A
+// property pins the mirror against `stuckReduce` event for event, exactly
+// as stage 1 pins `stuckEventApplies` against it.
+//
+// THE PICK IS NOT PART OF THIS. A pick change does NOT disarm, and the
+// argument is the one the ticket's own §2.5 makes: THE WEDGE IS THE
+// SERVER'S STATE, NOT THE PICK'S. Once the preview is stuck the server
+// refuses EVERY later render the same way, for every pick, and
+// `ermine/preview/stuck` is per PROCESS (its `seq` restarts at 1 in a fresh
+// one). Picking another report changes which report is refused and nothing
+// else. Disarming there would also be the worst kind of silent failure:
+// §4's rule (5) was WITHDRAWN, so there is ONE rising edge per incident --
+// a disarm with no way back would leave the server wedged for the rest of
+// the session precisely when the user is trying to work around it. What IS
+// pick-scoped is the guard's MARK, and it stays pick-scoped: a pick change
+// clears it, the new pick's own refusal marks it again, and the glue
+// refuses to fire at all if it cannot attribute the wedge to a pick.
+//
+// THE HARD FLOOR. `RESTART_FLOOR_MS` is a last-resort rate limit: whatever
+// the setting says and whatever state anything else gets into, two
+// restarts cannot happen closer together than this. It is not the design's
+// bound -- the guard is, because every restart we cause lands on a mark and
+// ASKS -- it is the bound that survives a bug in the guard, in the glue or
+// in the library. 30 s is chosen against three MEASURED numbers: the
+// server's boot is ~14 s (`test/load-test.js`: "129 modules in 14.1s"), so
+// a storm cannot run faster than about two restarts a minute even if
+// everything else fails; the default watchdog is 60 s, so the floor cannot
+// bite a default configuration at all; and the only configurations it can
+// bite are deliberately aggressive ones (`timeoutSeconds` 5 with a grace
+// under ~15 s), where the refusal is logged and the Restart Language Server
+// button is still there. A clock that moves BACKWARDS refuses too (the
+// difference is negative, which is below the floor) -- the safe direction.
+
+const RESTART_GRACE_MAX = 3600;
+const RESTART_FLOOR_MS = 30000;
+
+/**
+ * `ermine.preview.restartAfterStuckSeconds`, validated the way
+ * `previewSettings` validates the two the server reads: nonsense is NAMED
+ * rather than guessed at, and the outcome is stated.
+ *
+ * NONSENSE FALLS BACK TO 0 = OFF, not to some default grace: a value nobody
+ * can parse must not start killing servers. A value ABOVE the maximum is
+ * CLAMPED rather than dropped, because the intent (restart eventually) is
+ * unambiguous and a grace over an hour is indistinguishable from one.
+ *
+ * THE MAXIMUM IS ALSO LOAD-BEARING, not decoration: the glue turns these
+ * seconds into `setTimeout(..., seconds * 1000)`, and a delay over 2^31-1
+ * ms does not wait -- Node's documented behaviour is to run the timeout
+ * IMMEDIATELY. An unclamped `1e9` would therefore restart the server at
+ * once, which is the exact opposite of what it asks for. 3600 s is four
+ * orders of magnitude clear of that.
+ */
+function restartGraceSetting(raw) {
+  const name = "ermine.preview.restartAfterStuckSeconds";
+  const problems = [];
+  if (raw === undefined || raw === null || raw === "") return { seconds: 0, problems };
+  if (typeof raw !== "number" || !isFinite(raw)) {
+    problems.push(
+      name + " is a whole number of seconds, not a " + typeName(raw) +
+      " (" + printable(raw) + "); the automatic restart stays OFF"
+    );
+    return { seconds: 0, problems };
+  }
+  if (Math.floor(raw) !== raw) {
+    problems.push(name + " of " + raw + " is not a whole number of seconds; the automatic restart stays OFF");
+    return { seconds: 0, problems };
+  }
+  if (raw < 0) {
+    problems.push(name + " of " + raw + " is not a length of time; the automatic restart stays OFF");
+    return { seconds: 0, problems };
+  }
+  if (raw > RESTART_GRACE_MAX) {
+    problems.push(
+      name + " of " + raw + " is above the maximum of " + RESTART_GRACE_MAX +
+      " seconds (one hour) and was clamped to it"
+    );
+    return { seconds: RESTART_GRACE_MAX, problems };
+  }
+  return { seconds: raw, problems };
+}
+
+/**
+ * `seconds` is the validated setting; `armed` is the SERIAL of the live arm
+ * or null; `serial` is the last serial minted; `stuck` and `running` are the
+ * mirror; `lastFireAt` is the clock value the glue passed with the last
+ * fire, and the floor's only memory. It outlives our own restarts on
+ * purpose -- the extension host is not reloaded by them.
+ */
+function initialRestartState(seconds) {
+  return {
+    // N6: the clamp lives here and in the `setting` case as well as in
+    // `restartGraceSetting`, so the number the reducer STORES can never be
+    // one `setTimeout` would run immediately, whoever hands it over.
+    seconds: clampGrace(seconds),
+    armed: null,
+    // The seconds THIS arm was made for, which is not always the setting:
+    // an arm inside the floor waits for the floor instead (review D2), and
+    // the user is shown this number rather than the setting.
+    armedFor: 0,
+    serial: 0,
+    stuck: false,
+    running: true,
+    lastFireAt: null,
+    // D3: only a restart that actually STARTED sets `lastFireAt`, and a
+    // refusal is remembered so that something other than the output channel
+    // can say so.
+    lastRefusal: null,
+    // N2 AND DELTA REVIEW (d): A ONE-SHOT TOKEN, NOT A MOOD. `restartPending`
+    // is minted by `fired` and CONSUMED by the single Stopped -> Running
+    // that restart causes, which turns it into `restartedByUs` for exactly
+    // that edge -- the edge the held question is asked on. Before this it
+    // survived for ever, so a SPONTANEOUS death ten minutes later was
+    // described to the user as "the language server was restarted to clear
+    // it", which we had not done.
+    restartPending: false,
+    restartedByUs: false,
+  };
+}
+
+function clampGrace(seconds) {
+  if (typeof seconds !== "number" || !isFinite(seconds) || seconds <= 0) return 0;
+  return Math.min(Math.floor(seconds), RESTART_GRACE_MAX);
+}
+
+const NO_RESTART_EFFECTS = {
+  arm: false, disarm: false, fire: false, refused: false,
+  // Not a state: a defect in the CALLER, which the glue logs as a BUG line.
+  bug: null,
+  // `seconds` is what the USER is told; `ms` is what the glue gives
+  // `setTimeout`. They differ only when the floor stretched the arm.
+  seconds: 0, ms: 0, serial: 0, why: null,
+};
+
+function restartEffects(over) {
+  return Object.assign({}, NO_RESTART_EFFECTS, over);
+}
+
+/**
+ * EVERY EVENT THIS REDUCER TAKES IS BUILT HERE, AND THE CLOCK IS AN
+ * ARGUMENT (delta review M1).
+ *
+ * THE BUG THIS EXISTS TO MAKE IMPOSSIBLE: the arm-time floor stretch --
+ * review D2's whole point, that the number on the notification is the
+ * number the restart will actually happen at -- reads `event.at`, and the
+ * three events that can ARM were sent from `extension.js` as bare object
+ * literals WITHOUT a clock. So the stretch never ran in the shipped
+ * extension, the announced number was the raw setting, and the expiry-time
+ * backstop -- documented as "normally unreachable" -- was the only path
+ * that ever ran. The outcome stayed correct (the floor still held); the
+ * SENTENCE THE USER READ did not. `runGlue` in the test file supplied `at`
+ * on exactly the events the glue omitted it from, so no test could see it.
+ *
+ * SO: `extension.js` constructs NO reducer event of its own, the test
+ * model calls THESE SAME BUILDERS, and a builder that is handed no clock
+ * where a clock decides something produces `at: null`, which `arm()`
+ * reports as a BUG rather than silently treating as zero.
+ */
+const restartEvents = {
+  /** `ermine/preview/stuck`, with rule (1)/(3)'s acceptance already computed. */
+  notification: (stuck, applies, at) => ({
+    type: "notification", stuck: stuck === true, applies: applies !== false, at: clockOf(at),
+  }),
+  /** The `stuck` marker on a render's own answer. */
+  answer: (stuck, applies, at) => ({
+    type: "answer", stuck: stuck === true, applies: applies !== false, at: clockOf(at),
+  }),
+  /** Any transition the language client reports. */
+  clientState: (to) => ({ type: "clientState", to }),
+  /** `ermine.preview.restartAfterStuckSeconds` changed (or was read at activation). */
+  setting: (seconds, at) => ({ type: "setting", seconds, at: clockOf(at) }),
+  /** The one timer went off, carrying the serial of the arm it belongs to. */
+  expiry: (serial, at) => ({ type: "expiry", serial, at: clockOf(at) }),
+  /** `restart(context)` was actually started. */
+  fired: (at) => ({ type: "fired", at: clockOf(at) }),
+  /** `fireRestart` refused, and why. */
+  fireRefused: (why, at) => ({ type: "fireRefused", why, at: clockOf(at) }),
+  /** The window is going away. */
+  deactivate: () => ({ type: "deactivate" }),
+};
+
+function clockOf(at) {
+  return typeof at === "number" && isFinite(at) ? at : null;
+}
+
+/**
+ * THE WHOLE EVENT TABLE, and every row of it is a test.
+ *
+ * ARM  (one grace per incident, a new serial each time; the delay is
+ *       `max(the setting, what is left of the floor)`, so the number the
+ *       user is shown is the one the restart will actually happen at)
+ *   notification `{stuck:true, applies}`  on the RISING edge, while Running
+ *                                         and `seconds > 0`
+ *   answer       `{stuck:true, applies}`  same, for the wedged answer -- it
+ *                                         arrives BEFORE the notification
+ *                                         (MEASURED over the wire) and the
+ *                                         two are one incident, so the
+ *                                         second of them re-arms nothing
+ *   setting      a CHANGE to another non-zero value WHILE ARMED: re-armed
+ *                at the new value, from now
+ *   setting      a CHANGE from 0 to non-zero WHILE THE PREVIEW IS STUCK and
+ *                the client is Running: armed there and then (review D1)
+ *   expiry       inside the floor: RE-ARMED for what is left of it (review
+ *                D2), never disarmed -- an incident must not be stranded
+ * DISARM
+ *   notification `{stuck:false, applies}` Q10's recovery -- LOAD-BEARING:
+ *                                         without it a slow-but-finite
+ *                                         render is killed for being slow
+ *   clientState  Stopped                  the server died by itself
+ *   clientState  Starting                 the client left Running
+ *   clientState  Running                  a fresh process; `stuckReduce`
+ *                                         resets, so there is nothing stuck
+ *   setting      a change to 0            the user turned it off
+ *   deactivate   the window is going away
+ * FIRE (the glue then marks the pick and calls `restart(context)`, and
+ *       REPORTS BACK -- `fired` or `fireRefused` -- because only a restart
+ *       that actually started may consume the floor, review D3)
+ *   expiry       serial === armed, still stuck, still Running, `seconds > 0`,
+ *                and the floor has passed
+ * AFTER THE FIRE (the glue's answer)
+ *   fired        the restart was started: `lastFireAt` is set HERE and
+ *                nowhere else, and `restartedByUs` goes true so the held
+ *                question can say who restarted the server
+ *   fireRefused  `fireRestart` refused (no pick to attribute the wedge to,
+ *                no extension context, the mark did not take, or a restart
+ *                was already under way): the floor's memory is UNTOUCHED
+ *                and the reason is kept for the status bar, because a
+ *                refusal that only reaches the output channel leaves a
+ *                wedged server and a user who is told nothing
+ * NOTHING AT ALL
+ *   expiry       a serial that is not the live arm's -- A STALE TIMER, and
+ *                the live arm SURVIVES it
+ *   expiry       no live arm
+ *   expiry       carrying no clock (the floor must not be unfalsifiable)
+ *   anything     the event was not accepted (`applies === false`)
+ *   setting      the same value again -- VS Code fires a configuration
+ *                event for every `ermine.*` key, and re-arming on each of
+ *                them would extend a grace for as long as the user keeps
+ *                typing in settings.json
+ *
+ * TURNING THE SETTING ON MID-INCIDENT ARMS (review D1, and the first build
+ * had this the other way round). Reaching for the setting BECAUSE the
+ * preview is wedged is the likeliest moment anyone touches it, and §4's
+ * rule (5) withdrawal means there is no second rising edge to save them --
+ * the first build stranded exactly that user. The old justification ("it
+ * keeps 'armed implies a rising edge' true, which is what makes the serial
+ * mean something") did not hold: the reducer already re-arms on a setting
+ * change while armed, and EVERY arm mints a fresh serial unconditionally,
+ * so nothing about the serial depended on it. The guard still bounds every
+ * restart that follows.
+ *
+ * THE FLOOR NEVER STRANDS AN INCIDENT (review D2). It is applied TWICE and
+ * in neither place does it disarm: at ARM time the delay is stretched to
+ * `lastFireAt + RESTART_FLOOR_MS`, so the notification the user reads names
+ * the real number rather than one the floor is about to refuse; and at
+ * EXPIRY -- reachable when the arm carried no clock, or the system clock
+ * moved -- the timer is RE-ARMED for what is left, with a new serial.
+ */
+function restartReduce(state, event) {
+  const s = state || initialRestartState(0);
+  const keep = { state: s, effects: restartEffects({}) };
+  if (!event || typeof event !== "object") return keep;
+
+  let seconds = s.seconds;
+  let armed = s.armed;
+  let armedFor = s.armedFor;
+  let serial = s.serial;
+  let stuck = s.stuck;
+  let running = s.running;
+  let lastFireAt = s.lastFireAt;
+  let lastRefusal = s.lastRefusal;
+  let restartPending = s.restartPending;
+  let restartedByUs = s.restartedByUs;
+  let fx = {};
+
+  // The clock the glue passed with THIS event, or null. The reducer never
+  // reads a clock of its own; it only compares numbers it was handed.
+  const at = typeof event.at === "number" && isFinite(event.at) ? event.at : null;
+
+  const disarm = (why) => {
+    if (armed === null) return;
+    armed = null;
+    armedFor = 0;
+    fx = { disarm: true, why };
+  };
+  // A new serial EVERY time, so the timer the glue is about to set is the
+  // only one that can fire. The glue clears the timer it holds before
+  // setting a new one, so an `arm` effect is a disarm of the previous one
+  // as well.
+  //
+  // THE DELAY IS THE LARGER OF THE SETTING AND WHAT IS LEFT OF THE FLOOR
+  // (review D2): the floor is going to refuse an earlier fire anyway, and a
+  // notification that says "in 5 s" for a restart that cannot happen for 24
+  // more is a lie the user has no way to correct. With no clock on the
+  // event the setting is used and the expiry-time check is the backstop.
+  const arm = (why) => {
+    const wanted = seconds * 1000;
+    // THE CLOCK IS REQUIRED WHEN IT DECIDES SOMETHING (delta review M1). An
+    // arm with a previous restart behind it has to know how much of the
+    // floor is left; without a clock it cannot, and the first build quietly
+    // used zero, which is how D2's stretch came to be dead code in the
+    // shipped glue. It still ARMS -- refusing to arm would turn a reporting
+    // defect into a broken feature, and the expiry-time backstop still
+    // enforces the floor -- but it says BUG, out loud, and a test pins it.
+    const clockless = at === null && lastFireAt !== null;
+    const floorLeft = lastFireAt !== null && at !== null ? lastFireAt + RESTART_FLOOR_MS - at : 0;
+    const ms = Math.max(wanted, floorLeft);
+    serial = serial + 1;
+    armed = serial;
+    armedFor = Math.ceil(ms / 1000);
+    lastRefusal = null;
+    restartPending = false;
+    restartedByUs = false;
+    fx = {
+      arm: true,
+      seconds: armedFor,
+      ms,
+      serial,
+      // The channel's arm line says the same thing the notification says.
+      why: ms > wanted ? why + "; " + floorReason(armedFor, seconds) : why,
+    };
+    if (clockless) {
+      fx.bug =
+        "restartReduce was asked to arm with no clock on the event, so the 30 s floor could not be " +
+        "taken into account and the time the user is shown may be too short; every event must be built " +
+        "by core.restartEvents.*";
+    }
+  };
+  const rise = () => {
+    stuck = true;
+    if (running && seconds > 0) arm("the preview is stuck and nothing has come back");
+  };
+
+  switch (event.type) {
+    case "notification":
+      if (event.applies === false) return keep;
+      if (event.stuck === true) {
+        if (stuck) return keep;                 // one rising edge per incident
+        rise();
+        break;
+      }
+      stuck = false;
+      // The incident is over: a refusal from it no longer describes
+      // anything, and neither does "we restarted it".
+      lastRefusal = null;
+      restartPending = false;
+      restartedByUs = false;
+      disarm("the wedged render came back (ermine/preview/stuck {stuck:false})");
+      break;
+
+    case "answer":
+      // Rule (3): the marker on an ANSWER is per-request, and `applies` is
+      // the same predicate the banner and the guard use.
+      if (event.applies === false || event.stuck !== true) return keep;
+      if (stuck) return keep;
+      rise();
+      break;
+
+    case "clientState":
+      if (event.to === "Running") {
+        stuck = false;
+        running = true;
+        // THE TOKEN IS CONSUMED HERE (delta review (d)): this edge, and no
+        // later one, is the one our restart caused, and it is the edge the
+        // held question is asked on -- so `restartedByUs` is true for it
+        // and false for every Running after it.
+        restartedByUs = restartPending;
+        restartPending = false;
+        lastRefusal = null;
+        disarm("the language server is running again");
+        break;
+      }
+      if (event.to === "Stopped") {
+        running = false;
+        disarm("the language server stopped");
+        break;
+      }
+      // `Starting`: `stuckReduce` moves nothing here and neither does the
+      // mirror, but the client has left Running, so a grace armed for the
+      // process that is going away is dropped.
+      disarm("the language client left Running");
+      break;
+
+    case "setting": {
+      const next = clampGrace(event.seconds);
+      if (next === seconds) return keep;
+      seconds = next;
+      if (seconds === 0) {
+        disarm("ermine.preview.restartAfterStuckSeconds was set to 0");
+        break;
+      }
+      // D1: armed -> re-armed at the new value; NOT armed but the preview
+      // is stuck right now -> armed here, because that is the moment anyone
+      // reaches for this setting and there will be no second rising edge.
+      if (armed !== null) arm("ermine.preview.restartAfterStuckSeconds changed to " + seconds + " s");
+      else if (stuck && running) arm("ermine.preview.restartAfterStuckSeconds was turned on while the preview was stuck");
+      break;
+    }
+
+    case "expiry": {
+      // A STALE TIMER CAN NEVER FIRE, and it must not disarm the live one
+      // either: the state is returned untouched.
+      if (armed === null) {
+        return { state: s, effects: restartEffects({ why: "the grace had already been disarmed" }) };
+      }
+      if (event.serial !== armed) {
+        return {
+          state: s,
+          effects: restartEffects({
+            why: "a timer armed for an earlier incident fired (serial " + String(event.serial) + ", live " + String(armed) + ")",
+          }),
+        };
+      }
+      // Defence in depth: every one of these should already have disarmed.
+      if (!stuck) {
+        disarm("the preview is no longer stuck");
+        break;
+      }
+      if (!running) {
+        disarm("the language server is not running");
+        break;
+      }
+      if (!(seconds > 0)) {
+        disarm("ermine.preview.restartAfterStuckSeconds is 0");
+        break;
+      }
+      if (at === null) {
+        disarm("the expiry carried no clock, so the floor could not be checked");
+        break;
+      }
+      // D2: INSIDE THE FLOOR, RE-ARM FOR WHAT IS LEFT OF IT -- never
+      // disarm. A disarm here stranded the incident for the rest of the
+      // session, because §4's rule (5) withdrawal means no second rising
+      // edge comes to re-arm it. Normally unreachable now that the arm
+      // stretches itself; a clock that moved, or an arm that carried none,
+      // still gets here.
+      if (lastFireAt !== null && at - lastFireAt < RESTART_FLOOR_MS) {
+        const left = Math.max(1, lastFireAt + RESTART_FLOOR_MS - at);
+        serial = serial + 1;
+        armed = serial;
+        armedFor = Math.ceil(left / 1000);
+        fx = {
+          arm: true,
+          seconds: armedFor,
+          ms: left,
+          serial,
+          why:
+            "the last restart was " + Math.round((at - lastFireAt) / 1000) +
+            " s ago and no two may be closer than " + Math.round(RESTART_FLOOR_MS / 1000) +
+            " s, so the restart waits another " + armedFor + " s",
+        };
+        break;
+      }
+      armed = null;
+      armedFor = 0;
+      // D3: `lastFireAt` is NOT set here. The glue may still refuse this
+      // fire (nothing to attribute the wedge to, no context, the mark did
+      // not take, a restart already under way), and a refusal must not make
+      // the floor block a later legitimate restart. It is set by the
+      // `fired` event the glue sends back.
+      fx = {
+        fire: true,
+        seconds,
+        ms: 0,
+        serial: event.serial,
+        why: "the preview has been stuck for " + seconds + " s",
+      };
+      break;
+    }
+
+    // D3: THE GLUE'S ANSWER TO A FIRE. `restart(context)` was actually
+    // started, so the floor's memory moves and the held question the
+    // restart is about to raise can say who restarted the server (N2).
+    case "fired":
+      lastFireAt = at !== null ? at : lastFireAt;
+      lastRefusal = null;
+      // Minted, not spent: the Stopped -> Running this restart causes is
+      // what turns it into `restartedByUs`, once.
+      restartPending = true;
+      break;
+
+    // D3: the fire was REFUSED by the glue. The floor's memory is untouched
+    // -- nothing was restarted -- and the reason is kept so the status bar
+    // can say the preview is stuck AND that the automatic restart did not
+    // happen. A refusal that only reaches the output channel leaves a
+    // wedged server and a user who is told nothing.
+    case "fireRefused":
+      lastRefusal = typeof event.why === "string" && event.why ? event.why : "the automatic restart did not happen";
+      fx = { refused: true, why: lastRefusal };
+      break;
+
+    case "deactivate":
+      disarm("the extension is shutting down");
+      break;
+
+    default:
+      return keep;
+  }
+
+  return {
+    state: {
+      seconds, armed, armedFor, serial, stuck, running,
+      lastFireAt, lastRefusal, restartPending, restartedByUs,
+    },
+    effects: restartEffects(fx),
+  };
+}
+
+/**
+ * How many seconds the armed grace has, or 0 when nothing is armed.
+ *
+ * It is `armedFor`, NOT the setting: an arm made inside the floor waits for
+ * the floor instead, and the number the user is shown has to be the one the
+ * restart will actually happen at (review D2).
+ */
+function restartArmedSeconds(state) {
+  const s = state || initialRestartState(0);
+  return s.armed === null ? 0 : s.armedFor;
+}
+
+/**
+ * F1 OF THE WP-22(c) REVIEW. WHO MAY RESTART, AND WHEN.
+ *
+ * Stage 2's first build took a plain `restartInFlight` latch around
+ * `restart(context)`, and the reviewer found the one way stage 2 could make
+ * an EXISTING feature worse: `stopQuietly` awaits `client.stop()` with no
+ * bound and catches only a THROW, so a `stop()` that never settles left the
+ * latch true for the life of the window -- and then **Ermine: Restart
+ * Language Server**, the command AND the button on our own stuck
+ * notification, returned early for ever. In exactly the situation the
+ * button exists for.
+ *
+ * TWO CHANGES, and this is the pure half:
+ *
+ *  1. **THE USER ALWAYS WINS.** A restart asked for by a person is never
+ *     refused. It SUPERSEDES one that is already under way -- the glue
+ *     mints a new epoch, and the older run abandons at its next checkpoint
+ *     rather than starting a second client beside the new one.
+ *  2. **THE TIMER NEVER STACKS.** An automatic restart is refused while any
+ *     restart is under way, and the refusal is reported back to
+ *     `restartReduce` as `fireRefused`, so the floor is not consumed by a
+ *     restart that never started (D3).
+ *
+ * The other half is the glue's, and cannot be pure: `stopQuietly` now
+ * bounds its wait, so the latch is time-limited even without this.
+ */
+const RESTART_BY_USER = "user";
+const RESTART_BY_TIMER = "timer";
+
+function restartAttempt(underway, source) {
+  const who = source === RESTART_BY_TIMER ? RESTART_BY_TIMER : RESTART_BY_USER;
+  if (!underway) return { proceed: true, supersedes: false, why: null };
+  const running = underway.source === RESTART_BY_TIMER ? "an automatic restart" : "a restart";
+  if (who === RESTART_BY_TIMER) {
+    return { proceed: false, supersedes: false, why: running + " is already under way" };
+  }
+  return { proceed: true, supersedes: true, why: "the user asked while " + running + " was under way, so it takes over" };
+}
+
+/** The reason the last automatic restart did NOT happen, or null (D3). */
+function restartProblem(state) {
+  const s = state || initialRestartState(0);
+  return s.armed === null && typeof s.lastRefusal === "string" ? s.lastRefusal : null;
+}
+
+/** Did WE restart the server for the incident that is still open? (N2) */
+function restartedByUs(state) {
+  return !!(state && state.restartedByUs);
+}
+
+/**
+ * What the user is told while the grace runs, and how to stop it.
+ *
+ * IT SAYS THE MANUAL RESTART IS OPTIONAL (review N1). The server's own
+ * stuck message ends by telling the user to run **Ermine: Restart Language
+ * Server**, and appending "it will be restarted automatically" to that
+ * without a word between them told them to do it by hand and that they need
+ * not, in one breath.
+ */
+function floorReason(armedFor, asked) {
+  return (
+    "not before " + armedFor + " s, because the language server was restarted less than " +
+    Math.round(RESTART_FLOOR_MS / 1000) + " s ago and restarts are limited to one every " +
+    Math.round(RESTART_FLOOR_MS / 1000) + " s (you asked for " + asked + " s)"
+  );
+}
+
+function restartNotice(seconds, asked) {
+  if (typeof seconds !== "number" || !(seconds > 0)) return null;
+  // DELTA REVIEW: a user who set 5 and is told 25 has to be told WHY, or
+  // the number looks like a bug in the setting they just typed.
+  const stretched = typeof asked === "number" && asked > 0 && seconds > asked
+    ? " It is " + floorReason(seconds, asked) + "."
+    : "";
+  return (
+    "You do not need to do that by hand: the language server will be restarted automatically in " +
+    seconds + " s unless the render comes back." + stretched +
+    " Set ermine.preview.restartAfterStuckSeconds to 0 to stop that."
+  );
+}
+
+/**
+ * The stuck notification's text, with the grace on it when one is armed.
+ *
+ * THE JOIN IS PUNCTUATED (review N1): the server's message ends
+ * `... (ermine.restartServer)` with no terminator, and a bare space made
+ * one run-on sentence out of two.
+ */
+function stuckNotificationText(message, armedSeconds, asked) {
+  const text = String(message || "the preview is stuck").trim();
+  const notice = restartNotice(armedSeconds, asked);
+  if (!notice) return "Ermine: " + text;
+  return "Ermine: " + (/[.!?]$/.test(text) ? text : text + ".") + " " + notice;
 }
 
 // ------------------------------------------------------------- settings
@@ -1100,10 +1788,20 @@ function statusBarState(view) {
     };
   }
   if (v.stuck) {
+    // WP-22 (c): while the grace runs the tooltip says so, and says how to
+    // stop it. `restartIn` is 0 whenever nothing is armed -- which is
+    // always, with the setting at its default of 0.
+    const notice = restartNotice(v.restartIn, v.restartAsked);
+    // D3: a refusal is not a log line. If the automatic restart was asked
+    // for and did not happen, the thing the user is looking at says so.
+    const problem = typeof v.restartProblem === "string" && v.restartProblem
+      ? "The automatic restart did not happen: " + v.restartProblem + "."
+      : null;
+    const extra = notice || problem;
     return {
       hidden: false,
       text: "$(warning) Ermine preview: stuck",
-      tooltip: v.message || "the preview is stuck",
+      tooltip: (v.message || "the preview is stuck") + (extra ? "\n" + extra : ""),
       severity: "warning",
     };
   }
@@ -1112,7 +1810,7 @@ function statusBarState(view) {
       hidden: false,
       text: "$(warning) Ermine preview: held",
       tooltip:
-        label + " " + heldPhrase(v.mark.reason) + ".\n" +
+        label + " " + heldPhrase(v.mark.reason, v.restartedByUs) + ".\n" +
         "Nothing has changed since, so the restart did not re-render it.\n" +
         'Render it anyway with "Ermine: Render Report to JSON", or save the file you fixed.',
       severity: "warning",
@@ -1160,6 +1858,21 @@ module.exports = {
   TRIGGER_RESTART,
   WEDGE_WATCHDOG,
   WEDGE_DIED_MID_RENDER,
+  WEDGE_KILLED_BY_US,
+  restartGraceSetting,
+  initialRestartState,
+  restartReduce,
+  restartArmedSeconds,
+  restartProblem,
+  restartedByUs,
+  restartAttempt,
+  restartEvents,
+  RESTART_BY_USER,
+  RESTART_BY_TIMER,
+  restartNotice,
+  stuckNotificationText,
+  RESTART_GRACE_MAX,
+  RESTART_FLOOR_MS,
   previewSettings,
   initializationOptions,
   didChangeConfigurationParams,

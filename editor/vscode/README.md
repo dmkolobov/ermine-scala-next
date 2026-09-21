@@ -57,8 +57,8 @@ code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 gitignored, so build it yourself):
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.6.vsix
-code --install-extension ermine-lang-0.1.6.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.7.vsix
+code --install-extension ermine-lang-0.1.7.vsix
 ```
 
 `npm run package` does the same. Upgrading is the same command with the new
@@ -119,7 +119,7 @@ A **report** is any top-level binding whose type is `Node`, `Params -> Node`,
 server, in a second session of its own, and re-renders it when a file it
 depends on is saved — with no JVM restart and no build.
 
-At 0.1.6 there is **no webview panel** (that is a later ticket) and **no
+At 0.1.7 there is **no webview panel** (that is a later ticket) and **no
 params files** (likewise): the answer is shown as JSON in an ordinary editor
 tab, and a report with required parameters therefore shows the refusal that
 names the first missing key rather than a document.
@@ -170,11 +170,17 @@ fires. When it comes back the last render is re-sent — **unless it is the
 render that wedged the server and nothing has changed since**, and then you
 are asked first (0.1.6, below).
 
+A stuck preview can also be ended by the extension itself, by restarting the
+language server after a grace — `ermine.preview.restartAfterStuckSeconds`,
+**off by default** (0.1.7, below).
+
 Settings: `ermine.preview.roots` (per folder), `ermine.preview.timeoutSeconds`
 (`0` turns the watchdog off, which is rarely what you want — see its
-description) and `ermine.preview.maxDocumentBytes`. All three reach a running
-server at once, with no restart; `ermine.maxHeap` is the one that needs a
-fresh process, and changing it restarts the server.
+description), `ermine.preview.maxDocumentBytes` and
+`ermine.preview.restartAfterStuckSeconds` (client-side only; nothing about it
+is sent to the server). The first three reach a running server at once, with
+no restart; `ermine.maxHeap` is the one that needs a fresh process, and
+changing it restarts the server.
 
 ## Two things that will surprise you
 
@@ -216,6 +222,48 @@ type one frame early and without its constraints (`go : List a -> a -> a` for
 a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
+
+### 0.1.7
+
+**The extension can restart a wedged language server itself, and by default
+does not.** A render that never finishes leaves the preview stuck until the
+JVM runs out of heap — about two minutes after the watchdog fires — and a
+wedge that allocates nothing never ends at all. With
+`ermine.preview.restartAfterStuckSeconds` set to a number of seconds, the
+extension starts a grace when the preview goes stuck and, if nothing has come
+back when it expires, stops and restarts its own language client. The grace is
+cancelled if the render returns (a slow report is not a wedged one), if the
+server stops or is restarted for any other reason, or if you set the number
+back to 0. **The default is 0 = never**, because nobody has yet run this
+extension in a real editor: the steps that would check it are in
+`tracker/WP-7-MANUAL-CHECKLIST.md` and none of them has been run.
+
+The report that wedged is remembered before the restart happens, so the fresh
+server does **not** re-render it: the same **Render anyway** / **Not now**
+question from 0.1.6 is what you get, and the status bar reads
+`Ermine preview: held`. While the grace runs, the stuck notification and the
+status bar tooltip say when the restart will happen and which setting stops
+it — and if you set the number while the preview is *already* stuck, that
+incident is restarted too.
+
+Two restarts are never closer together than 30 seconds, whatever the setting
+says; a grace that would land inside those 30 seconds waits for them, and
+tells you the longer number *and why it is longer* rather than one it cannot
+keep. **Your own "Ermine: Restart Language Server" is never refused or
+delayed by any of this** — if an automatic restart is already running, or is
+stuck waiting for a server that will not stop, yours takes over, and the
+extension is left talking to exactly one language server. That is not quite
+the same as only one *process*: if a stop times out, the extension says so
+in its output channel, tells you the old server may still be alive, and
+names the check (`ps -ef | grep lsp.Main`) so you can end it yourself. If a
+restart cannot happen (nothing is picked, so nothing would hold the
+re-render afterwards), you are told, in a notification and in the status bar
+tooltip, not only in the output channel.
+
+One thing to know if you ever go back to **0.1.6**: a report that wedged
+under 0.1.7 may be remembered in a form 0.1.6 does not recognise, and 0.1.6
+will then re-render it once after a restart instead of asking. Save the file
+or pick another report first, or just let the one prompt happen.
 
 ### 0.1.6
 
@@ -323,6 +371,7 @@ Three costs, in the order you meet them:
 | `ermine.maxHeap` | *(launcher's `2g`)* | `-Xmx` for the server, as `ERMINE_LSP_XMX`; changing it restarts the server |
 | `ermine.preview.roots` | `[]` | Extra module roots for the preview, per workspace folder, sent absolute |
 | `ermine.preview.timeoutSeconds` | `60` | The preview's evaluation watchdog; `0` turns it off (no restart needed) |
+| `ermine.preview.restartAfterStuckSeconds` | `0` *(never)* | How long the preview may stay stuck before the extension restarts the language server itself; client-side only, never sent to the server |
 | `ermine.preview.maxDocumentBytes` | `16777216` | Largest rendered document the server will send |
 | `ermine.trace.server` | `off` | Trace LSP traffic to the output channel |
 
@@ -374,8 +423,12 @@ resets on a restart, an answer's marker is per-request, an accepted clear
 always re-renders), the two re-render rules, the three request builders —
 including that a render and a schema for one pick carry the SAME roots — both
 quick-pick lists, the status bar's text and precedence (now including
-`held`), the wedge guard's whole lifecycle and its one consultation, the two
-settings payloads and the `ermine.maxHeap` spelling. What is NOT there is the glue that
+`held`), the wedge guard's whole lifecycle and its one consultation, the
+restart timer's whole lifecycle — its arm, its disarms, the stale-timer rule
+and the 30-second floor — an async model of the restart itself, which is
+where the interleavings live (a restart during the first-run classpath
+warm-up, during a stop, one taking over another), the two settings payloads and the `ermine.maxHeap`
+spelling. What is NOT there is the glue that
 needs an editor to observe: when a document is created or revealed, the
 watcher's registration, the coalescing timer. It runs under `node --test` with
 no `node_modules` at all.

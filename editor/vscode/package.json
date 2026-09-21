@@ -2,7 +2,7 @@
   "name": "ermine-lang",
   "displayName": "Ermine",
   "description": "Ermine language support: syntax highlighting, diagnostics, navigation, hover types, references, rename, symbols, completion and quick fixes, backed by bin/ermine-lsp.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publisher": "clarifi",
   "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {
@@ -82,6 +82,14 @@
           "maximum": 3600,
           "scope": "window",
           "markdownDescription": "How long a preview render may evaluate before the server answers it \"evaluation did not finish\" and marks the preview stuck. **`0` = no watchdog**: a runaway render is then bounded only by the heap cap, nothing drains the preview queue, and every later render or schema request waits behind the wedge until the process dies. Raise the number rather than turning it off. A change reaches a running server at once and applies to the next render; no restart."
+        },
+        "ermine.preview.restartAfterStuckSeconds": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 3600,
+          "scope": "window",
+          "markdownDescription": "How long the preview may stay stuck before **the extension restarts the language server itself**, in seconds. **`0` = never, and that is the default.**\n\nThe grace starts when the preview goes stuck and is cancelled if the render comes back (a slow report is not a wedged one), if the server stops or is restarted for any other reason, or if you set this back to 0. Setting it to a number while the preview is *already* stuck arms it there and then. When it expires the extension stops and restarts its own client; the report that wedged is remembered, so the fresh server does **not** re-render it \u2014 it asks first.\n\nTwo restarts are never closer together than 30 seconds, whatever this is set to; a value above 3600 is clamped to it, and a value that is not a whole number of seconds is refused and leaves the feature off."
         },
         "ermine.preview.maxDocumentBytes": {
           "type": "number",

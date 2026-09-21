@@ -89,6 +89,32 @@ function reportSettingProblems(problems) {
   for (const problem of problems) log("settings: " + problem);
 }
 
+/**
+ * WP-22 (c)'s grace, in seconds, or 0 = never.
+ *
+ * IT IS NOT IN `settingValues`, DELIBERATELY: the server has no such
+ * setting and nothing about this feature is on the wire. It is read here,
+ * validated by `core.restartGraceSetting`, and used only by this file.
+ *
+ * A refusal is said OUT LOUD once per distinct problem -- the setting
+ * decides whether we restart the user's language server, so a value that
+ * was thrown away must not be discoverable only in the output channel --
+ * and repeating it on every unrelated `ermine.*` edit would be noise.
+ */
+let warnedRestartSetting;
+
+function restartGraceValue() {
+  const result = core.restartGraceSetting(config().get("preview.restartAfterStuckSeconds", 0));
+  reportSettingProblems(result.problems);
+  const problem = result.problems.length ? result.problems[0] : undefined;
+  if (problem && problem !== warnedRestartSetting) {
+    warnedRestartSetting = problem;
+    vscode.window.showWarningMessage("Ermine: " + problem);
+  }
+  if (!problem) warnedRestartSetting = undefined;
+  return result.seconds;
+}
+
 // ------------------------------------------------------- classpath warm-up
 
 /**
@@ -142,7 +168,31 @@ function log(message) {
   if (channel) channel.appendLine(message);
 }
 
-async function startClient(context) {
+/**
+ * THE START EPOCH (delta review M2), and why it is not just the restart's.
+ *
+ * `startClient` AWAITS `warmClasspath`, which on a cold checkout runs sbt
+ * for minutes behind a cancellable progress notification, and only after
+ * that does it construct the client and assign the module global. A restart
+ * that arrives inside that window used to find `client` already cleared,
+ * skip the stop, and race into its OWN `startClient`: two clients, two
+ * server JVMs, one of them referenced by nothing, never stopped, and with
+ * its handlers still wired to these shared globals. Which one won was
+ * decided by whichever warm-up finished last.
+ *
+ * So every attempt to bring a client up takes an epoch, `startClient`
+ * re-checks it after every await and bails before constructing anything,
+ * `restart` re-checks it after `startClient` and stops a stray if one
+ * slipped through, and EVERY HANDLER a client registers checks it too: a
+ * notification from a client that is no longer the current one must not
+ * reach `applyStuck`, `applyGuard` or `applyRestart`.
+ */
+let startEpoch = 0;
+/** The epoch of the client in `client`, so a stale client's events are ignored. */
+let clientEpoch = 0;
+
+async function startClient(context, epoch) {
+  const mine = typeof epoch === "number" ? epoch : (startEpoch += 1);
   const server = resolveServer();
   if (!server) {
     log("no workspace folder and no ermine.serverPath — not starting");
@@ -159,6 +209,13 @@ async function startClient(context) {
 
   setStatus("Ermine: preparing…", "Checking the classpath cache");
   await warmClasspath(server.root, server.command);
+  // CHECKPOINT (M2): the warm-up can take minutes. If anything asked for a
+  // newer client while we were in it, this one must not exist at all --
+  // nothing has been constructed yet, so bailing here is free.
+  if (mine !== startEpoch) {
+    log("start: superseded during the classpath warm-up — not starting this client");
+    return;
+  }
 
   const env = { ...process.env };
   const logFile = config().get("logFile", "").trim();
@@ -211,11 +268,12 @@ async function startClient(context) {
     },
   };
 
-  client = new LanguageClient("ermine", "Ermine Language Server", serverOptions, clientOptions);
+  const started = new LanguageClient("ermine", "Ermine Language Server", serverOptions, clientOptions);
 
   // The server reports boot progress and readiness through window/logMessage;
   // mirror it into the status bar so a 13s boot reads as progress, not a hang.
-  client.onNotification("window/logMessage", (params) => {
+  started.onNotification("window/logMessage", (params) => {
+    if (mine !== clientEpoch) return;               // M2: not the current client
     const message = String((params && params.message) || "");
     if (/ready/i.test(message)) {
       setStatus(`Ermine${fastModeSuffix()}`, message);
@@ -224,16 +282,22 @@ async function startClient(context) {
     }
   });
 
-  installPreviewHandlers(client);
+  installPreviewHandlers(started, mine);
+
+  // CURRENT FROM HERE, and before `start()`, so this client's own first
+  // transitions are not thrown away by the epoch guards.
+  client = started;
+  clientEpoch = mine;
 
   setStatus("Ermine: starting session…", "Loading the Prelude/Layout closure (~13s)");
 
   // Deliberately not awaited by activate(): VS Code should never wait on the
   // handshake, let alone on the session boot behind it.
-  client.start().then(
+  started.start().then(
     () => log("language client started"),
     (err) => {
       log(`language client failed to start: ${err && err.stack ? err.stack : err}`);
+      if (mine !== clientEpoch) return;             // M2: a newer client owns the status bar
       setStatus("Ermine: server failed", String(err), true);
       vscode.window
         .showErrorMessage("Ermine: the language server failed to start.", "Show Output")
@@ -247,23 +311,129 @@ async function startClient(context) {
 /**
  * stop() throws if the client never reached `running` — which is exactly the
  * case after a failed start, and exactly when teardown still has to work.
+ *
+ * F1 OF THE WP-22(c) REVIEW: IT ALSO HANGS, AND A HANG IS NOT A THROW.
+ * `client.stop()` is a promise that a wedged or half-dead server can leave
+ * unsettled for ever, and a `try/catch` never sees that. Everything after
+ * this call — clearing `client`, starting a new one, releasing the restart
+ * guard — then waits for ever too. So the wait is BOUNDED, and when the
+ * bound is reached we say so LOUDLY and carry on: a new server beside a
+ * possibly-live old one is recoverable and visible; an editor whose Restart
+ * command does nothing for the rest of the session is neither.
+ *
+ * The 5 s bound is not tuned, and cannot be from here: MEASURED, this
+ * server answers a hover in 0.00 s while its preview is wedged (§2.5), and
+ * `Preview.shutdown()` drains without joining the preview thread (READ), so
+ * a healthy `shutdown`/`exit` is far under it. Whether `client.stop()` even
+ * sends those, and whether it kills the process afterwards, is
+ * `vscode-languageclient`'s own behaviour and is UNVERIFIED here.
  */
-async function stopQuietly(c) {
-  if (!c) return;
-  try {
-    await c.stop();
-  } catch (err) {
-    log(`stop skipped (${err && err.message ? err.message : err})`);
+const STOP_TIMEOUT_MS = 5000;
+
+async function stopQuietly(c, timeoutMs) {
+  if (!c) return "none";
+  const limit = typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : STOP_TIMEOUT_MS;
+  // BOTH ARMS ARE HANDLED HERE, so a `stop()` that rejects AFTER the race
+  // has been decided cannot surface as an unhandled rejection.
+  const stopping = Promise.resolve()
+    .then(() => c.stop())
+    .then(
+      () => "stopped",
+      (err) => {
+        log(`stop skipped (${err && err.message ? err.message : err})`);
+        return "threw";
+      }
+    );
+  let timer;
+  const bounded = new Promise((resolve) => {
+    timer = setTimeout(() => resolve("timed-out"), limit);
+  });
+  const outcome = await Promise.race([stopping, bounded]);
+  clearTimeout(timer);
+  if (outcome === "timed-out") {
+    log(
+      `stop: the language server did not stop within ${Math.round(limit / 1000)}s — carrying on anyway. ` +
+        "THE OLD SERVER PROCESS MAY STILL BE ALIVE: check with `ps -ef | grep lsp.Main`, " +
+        "and kill the older pid by hand if there are two."
+    );
   }
+  return outcome;
 }
 
-async function restart(context) {
-  if (client) {
-    log("restarting…");
-    await stopQuietly(client);
-    client = undefined;
+/**
+ * TWO RESTARTS MUST NOT RUN AT ONCE (WP-22 (c)), AND THE USER'S MUST NEVER
+ * BE THE ONE THAT IS REFUSED (review F1).
+ *
+ * Four callers reach this: the **Ermine: Restart Language Server** command
+ * (which is also the button on our own stuck notification), a
+ * `serverPath`/`logFile`/`maxHeap` change, the grace timer's fire, and the
+ * command again while any of those is still running. Two interleaved
+ * `stopQuietly`/`startClient` pairs would leave two clients and very
+ * possibly two server processes behind, so they are serialised — but the
+ * first build serialised them with a plain latch, and a `stop()` that never
+ * settled left that latch true for ever and disabled the button for the
+ * rest of the session, in exactly the situation the button exists for.
+ *
+ * SO: `core.restartAttempt` decides (pure, tested). The TIMER is refused
+ * while anything is under way and reports that refusal back to the reducer
+ * (D3). A USER restart always proceeds and SUPERSEDES: it mints a new
+ * epoch, and the older run — which is sitting in a bounded `stopQuietly` —
+ * abandons at its checkpoint instead of starting a second client. The
+ * client is cleared BEFORE the await as well, so a superseding restart can
+ * never stop the same client twice.
+ */
+/** `{source, epoch}` while a restart is under way, or null. */
+let restartUnderway = null;
+
+async function restart(context, source) {
+  const who = source === core.RESTART_BY_TIMER ? core.RESTART_BY_TIMER : core.RESTART_BY_USER;
+  const attempt = core.restartAttempt(restartUnderway, who);
+  if (!attempt.proceed) {
+    log(`restart: refused (${attempt.why})`);
+    return attempt;
   }
-  await startClient(context);
+  if (attempt.supersedes) log(`restart: ${attempt.why}`);
+  // ONE COUNTER FOR BOTH (M2): a restart and the `startClient` it runs share
+  // an epoch, so "superseded" means the same thing on both sides of the
+  // await and a start that is still in its classpath warm-up can be told
+  // that it has been.
+  startEpoch += 1;
+  const mine = startEpoch;
+  restartUnderway = { source: who, epoch: mine };
+  try {
+    if (client) {
+      log("restarting…");
+      const going = client;
+      // CLEARED BEFORE THE AWAIT: a superseding restart must not find this
+      // client and stop it a second time.
+      client = undefined;
+      const outcome = await stopQuietly(going);
+      // THE EDGE, SYNTHESISED (final re-check must-fix). On the timed-out
+      // path the old client's real `Stopped` arrives after `clientEpoch`
+      // has moved and is dropped as stale, and nothing else would ever
+      // report it. Sent on every outcome -- see `onClientStopped` for why
+      // that is safe and why guessing is not.
+      onClientStopped(`the stop returned "${outcome}"`, "Running");
+    }
+    if (mine !== startEpoch) {
+      log("restart: superseded by a newer one — not starting a second client");
+      return attempt;
+    }
+    await startClient(context, mine);
+    // AND AFTER (M2): `startClient` bails by itself if it is superseded
+    // during its warm-up, but it can also be superseded AFTER it has put a
+    // client up. Then that client is a stray -- nothing else will ever stop
+    // it -- and the newer restart is bringing its own.
+    if (mine !== startEpoch && client && clientEpoch === mine) {
+      const stray = client;
+      client = undefined;
+      log("restart: a newer restart arrived after this one started a client — stopping the stray");
+      await stopQuietly(stray);
+    }
+  } finally {
+    if (restartUnderway && restartUnderway.epoch === mine) restartUnderway = null;
+  }
+  return attempt;
 }
 
 // ------------------------------------------------------------------ preview
@@ -294,7 +464,22 @@ async function restart(context) {
 // inputs changed or that the job came back, and consulted at exactly one
 // site -- `applyStuck`'s `rerender` effect for the `restart` trigger --
 // where the automatic render is replaced by one non-modal question.
-// NOTHING HERE HAS BEEN OBSERVED IN A REAL EDITOR BY ANYONE.
+//
+// WP-22 (c), THE RESTART, in one more paragraph. "The extension may
+// restart" (the user). A wedged render leaves the preview stuck until the
+// JVM hits -Xmx -- MEASURED at about two minutes after the watchdog fires,
+// with the heap thrashing meanwhile -- and for a wedge that allocates
+// nothing, for ever. So the extension arms a grace on the rising edge of
+// the stuck state and, if nothing has come back when it expires, restarts
+// its own language server through `restart(context)`. THE GRACE IS WHAT
+// KEEPS Q10's RECOVERY: a slow-but-finite render answers `{stuck:false}`
+// and disarms it. THE GUARD ABOVE IS WHAT KEEPS IT BOUNDED: every restart
+// we cause is preceded by a mark, so the `Running` edge it produces asks
+// instead of re-rendering, and a client-initiated `stop()` is (INFERRED,
+// UNVERIFIED) not counted by the library's crash limiter, which makes the
+// guard the only bound there is. `ermine.preview.restartAfterStuckSeconds`
+// DEFAULTS TO 0 = NEVER. NOTHING HERE HAS BEEN OBSERVED IN A REAL EDITOR BY
+// ANYONE.
 
 const PICK_KEY = "ermine.preview.pick";
 // WP-22's wedge mark, mirrored beside the pick. The MODULE GLOBAL below is
@@ -335,6 +520,21 @@ let wedgeMark = null;
  * this flag -- and the held status bar item says so the whole time.
  */
 let heldPromptOpen = false;
+/**
+ * WP-22 (c): the grace timer's state, and the timer itself.
+ *
+ * `restartState` is `core.restartReduce`'s -- the seconds, the live arm's
+ * SERIAL, the stuck/running mirror and the floor's memory of the last fire.
+ * `restartTimer` is the only clock: the reducer holds none, and the expiry
+ * comes back to it as an event carrying the serial it was armed with, so a
+ * timer left over from an earlier incident cannot fire.
+ *
+ * `lastFireAt` lives in `restartState` and therefore survives our own
+ * restarts -- the extension host is not reloaded by them -- which is what
+ * makes the floor a real bound rather than a per-incident one.
+ */
+let restartState = core.initialRestartState(0);
+let restartTimer;
 /**
  * M1 (WP-22 review). THE IN-FLIGHT RENDER, AS A FACT THE ORDER CANNOT
  * TAKE AWAY: `{generation, pick}` while an `ermine/render` is out, or null.
@@ -394,6 +594,16 @@ function setPreviewStatus() {
     rendering: renderInFlight,
     pick: picked,
     mark: wedgeMark,
+    // WP-22 (c): 0 unless a grace is armed, which with the default setting
+    // of 0 is always.
+    restartIn: core.restartArmedSeconds(restartState),
+    // What the user ASKED for, so a grace the floor stretched can say why
+    // it is longer than that.
+    restartAsked: restartState.seconds,
+    // D3 and N2: why the automatic restart did not happen, and whether the
+    // server the user is looking at came back because WE restarted it.
+    restartProblem: core.restartProblem(restartState),
+    restartedByUs: core.restartedByUs(restartState),
   });
   if (view.hidden) {
     if (previewStatus) previewStatus.hide();
@@ -441,10 +651,74 @@ function rootsFor(uri) {
   }
 }
 
-function installPreviewHandlers(c) {
+/**
+ * THE `Stopped` EDGE, IN ONE PLACE, because it now has TWO sources (final
+ * re-check must-fix).
+ *
+ * The epoch guard that fixed M2 also drops a LEGITIMATE edge on one path:
+ * when `stopQuietly` hits `STOP_TIMEOUT_MS`, `restart` carries on,
+ * `startClient` moves `clientEpoch`, and the old client's LATE `Stopped` is
+ * then dropped as stale. Nothing else ever reports it, so `stuckReduce`
+ * never leaves `running: true`, the new client's `Running` produces
+ * `rerender: false`, and WP-22's ONE CONSULTATION IS NEVER REACHED: no held
+ * question, no offline status, no `died-mid-render` mark, and `lastAnswer`
+ * -- an answer from a process that is gone -- survives into the new one. It
+ * failed safe (nothing auto-rendered) and it was still wrong.
+ *
+ * So `restart()` SYNTHESISES the edge itself after every stop attempt, and
+ * both callers run this one function rather than two copies of it.
+ *
+ * **IT IS SENT UNCONDITIONALLY, and that is the decision.** The alternative
+ * -- send it only when the outcome was not a clean "stopped" -- needs the
+ * extension to know whether the library emitted the edge, which is exactly
+ * the thing that is UNVERIFIED here (its source is unread, and nobody has
+ * run this extension). Sending it always removes that guess, and costs
+ * nothing, because everything it touches is idempotent for a second
+ * `Stopped`: `guardReduce`'s SET is idempotent per key (and by then
+ * `inFlightRender` is usually already null, so it does not even set);
+ * `restartReduce` sets `running: false` and disarms, both no-ops the second
+ * time; `stuckReduce` gates its `offline` effect on `s.running`, so only
+ * the FIRST of the two logs or changes the status bar; and
+ * `lastAnswer = undefined` is idempotent by construction.
+ */
+function onClientStopped(why, from) {
+  log(`preview: the language server stopped (${why})`);
+  // WP-22: the server died while a render of the pick was in flight. It may
+  // never have fired the watchdog -- at a small -Xmx the JVM exits first
+  // (MEASURED, section 2.5: WpBlow at 256m, exit 3 at 8.6 s, no fire). M1:
+  // `inFlightRender` -- unlike `renderInFlight` -- is NOT cleared by the
+  // rejection that this same death causes, so this does not depend on which
+  // of the two the library delivers first, and `renderNow`'s catch marks it
+  // too.
+  applyGuard(
+    core.guardReduce(wedgeMark, {
+      type: "clientState",
+      to: "Stopped",
+      renderInFlight: inFlightRender !== null,
+      pick: core.markPickFor(inFlightRender && inFlightRender.pick, picked),
+      at: Date.now(),
+    })
+  );
+  applyRestart(core.restartReduce(restartState, core.restartEvents.clientState("Stopped")));
+  applyStuck(
+    core.stuckReduce(stuckState, { type: "clientState", from: from, to: "Stopped" }),
+    "restart"
+  );
+}
+
+function installPreviewHandlers(c, epoch) {
+  // M2 (delta review): EVERY handler below belongs to ONE client, and a
+  // client that is no longer the current one must not reach the reducers.
+  // Without this a stray client -- one started while another restart was in
+  // its classpath warm-up -- keeps feeding `applyStuck`, `applyGuard` and
+  // `applyRestart` from a server nothing references any more.
+  const mine = typeof epoch === "number" ? epoch : clientEpoch;
+  const stale = () => mine !== clientEpoch;
+
   // Section 3 step 5-6. The set already includes dependents, so saving a
   // widget module names every report that imports it.
   c.onNotification("ermine/preview/invalidated", (params) => {
+    if (stale()) return;
     const modules = params && Array.isArray(params.modules) ? params.modules : [];
     if (!picked) return;
     // WP-22: the server's own dependency closure is the exact "the report's
@@ -464,6 +738,7 @@ function installPreviewHandlers(c) {
   // `window/showMessage` beside it is advisory and has no handler here, so
   // no state can be derived from it.
   c.onNotification("ermine/preview/stuck", (params) => {
+    if (stale()) return;
     const event = {
       type: "notification",
       stuck: !!(params && params.stuck === true),
@@ -487,6 +762,10 @@ function installPreviewHandlers(c) {
         at: Date.now(),
       })
     );
+    // WP-22 (c), and BEFORE `applyStuck`: the rising edge arms the grace,
+    // the falling one disarms it (Q10's recovery), and the notification
+    // `applyStuck` is about to show has to be able to say so.
+    applyRestart(core.restartReduce(restartState, core.restartEvents.notification(event.stuck, applies, Date.now())));
     applyStuck(core.stuckReduce(stuckState, event), "recovered");
   });
 
@@ -495,37 +774,32 @@ function installPreviewHandlers(c) {
   // transition INTO Running.
   if (typeof c.onDidChangeState === "function") {
     c.onDidChangeState((event) => {
-      const to = CLIENT_STATE[event && event.newState];
-      if (!to) return;
+      const from = CLIENT_STATE[event && event.oldState] || String(event && event.oldState);
+      const to = CLIENT_STATE[event && event.newState] || String(event && event.newState);
+      const dropped = stale();
+      // EVERY transition is logged, dropped ones included, with the client's
+      // epoch (final re-check). Whether a fresh `LanguageClient` emits an
+      // initial `Stopped -> Starting` at all is *external* and UNVERIFIED --
+      // nobody has run this extension -- and this line is what lets a human
+      // settle it while ticking the manual checklist.
+      log(`client ${mine}: state ${from} -> ${to}${dropped ? " (DROPPED: a newer client is current)" : ""}`);
+      if (dropped || !CLIENT_STATE[event && event.newState]) return;
       if (to === "Stopped") {
-        // WP-22: the server died while a render of the pick was in flight.
-        // It may never have fired the watchdog -- at a small -Xmx the JVM
-        // exits first (MEASURED, section 2.5: WpBlow at 256m, exit 3 at
-        // 8.6 s, no fire). M1: `inFlightRender` -- unlike `renderInFlight`
-        // -- is NOT cleared by the rejection that this same death causes,
-        // so this branch does not depend on which of the two the library
-        // delivers first, and `renderNow`'s catch marks it too.
-        applyGuard(
-          core.guardReduce(wedgeMark, {
-            type: "clientState",
-            to: "Stopped",
-            renderInFlight: inFlightRender !== null,
-            pick: core.markPickFor(inFlightRender && inFlightRender.pick, picked),
-            at: Date.now(),
-          })
-        );
+        onClientStopped("the language client reported it", from);
+        return;
       }
       if (to === "Running" && !stuckState.running) {
         // A fresh process knows nothing about the last one: the answer we
         // are holding described a server that is gone.
         lastAnswer = undefined;
       }
+      // WP-22 (c): the client leaving Running for ANY reason disarms the
+      // grace -- the server died by itself, or the user restarted it, or we
+      // did -- and entering Running disarms it too, because `stuckReduce`
+      // resets the stuck state for the fresh process.
+      applyRestart(core.restartReduce(restartState, core.restartEvents.clientState(to)));
       applyStuck(
-        core.stuckReduce(stuckState, {
-          type: "clientState",
-          from: CLIENT_STATE[event && event.oldState],
-          to,
-        }),
+        core.stuckReduce(stuckState, { type: "clientState", from, to }),
         "restart"
       );
     });
@@ -548,8 +822,18 @@ function applyStuck(result, trigger) {
   const fx = result.effects;
   if (fx.raised) {
     log("preview: STUCK — " + stuckState.message);
+    // WP-22 (c): when a grace is armed the notification says so, and says
+    // which setting turns it off. The button below does the same thing
+    // sooner, and stays exactly as it was.
     vscode.window
-      .showErrorMessage("Ermine: " + stuckState.message, "Restart Language Server")
+      .showErrorMessage(
+        core.stuckNotificationText(
+          stuckState.message,
+          core.restartArmedSeconds(restartState),
+          restartState.seconds
+        ),
+        "Restart Language Server"
+      )
       .then((choice) => {
         if (choice) vscode.commands.executeCommand("ermine.restartServer");
       });
@@ -585,7 +869,7 @@ function applyStuck(result, trigger) {
  * "Render anyway" string clears the mark. Escape is never consent.
  */
 function holdRender() {
-  const message = core.heldMessage(wedgeMark, picked);
+  const message = core.heldMessage(wedgeMark, picked, core.restartedByUs(restartState));
   if (!message) return;              // a mark that is not this pick's is never consulted
   log("preview: HELD — " + message);
   if (heldPromptOpen) {
@@ -655,6 +939,136 @@ function rememberWedge() {
   } catch (err) {
     log(`preview: could not remember the wedge mark: ${err && err.message ? err.message : err}`);
   }
+}
+
+/**
+ * WP-22 (c)'s GLUE, and the only clock in the feature.
+ *
+ * `core.restartReduce` decides; this arms and cancels the one `setTimeout`,
+ * says what happened in the channel, and -- on a fire -- does the two
+ * things the decision cannot do for itself: make sure the guard has a mark
+ * for the pick that wedged, and call `restart(context)`.
+ */
+function applyRestart(result) {
+  restartState = result.state;
+  const fx = result.effects;
+  // DELTA REVIEW M1: the reducer says BUG when this file hands it an event
+  // that is missing something only this file can supply. It is loud on
+  // purpose -- the defect it names cost a whole feature silently.
+  if (fx.bug) log("preview: BUG — " + fx.bug);
+  if (fx.disarm) {
+    clearRestartTimer();
+    log("preview: the automatic restart is disarmed (" + fx.why + ")");
+  }
+  if (fx.arm) {
+    // `ms` is the exact delay and `seconds` is what the user is told; they
+    // differ when the floor stretched this arm (review D2).
+    armRestartTimer(fx.serial, fx.ms);
+    log(`preview: the language server will be restarted in ${fx.seconds}s unless the preview recovers (${fx.why})`);
+  }
+  if (fx.refused) {
+    // D3: a refusal is not a log line. The status bar's stuck tooltip
+    // carries it too, and the user is told once, without a button.
+    log("preview: the automatic restart did NOT happen (" + fx.why + ")");
+    vscode.window.showWarningMessage(
+      "Ermine: the preview is stuck and the automatic restart did not happen — " + fx.why +
+        '. Run "Ermine: Restart Language Server" when you are ready.'
+    );
+  }
+  if (fx.fire) fireRestart(fx);
+  else if (fx.why && !fx.arm && !fx.disarm && !fx.refused) log("preview: the restart timer fired and did nothing (" + fx.why + ")");
+  setPreviewStatus();
+}
+
+function clearRestartTimer() {
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = undefined;
+  }
+}
+
+/**
+ * The expiry goes back to the reducer as an EVENT carrying the serial this
+ * arm was minted with, so a timer that survived its disarm -- already
+ * queued when the cancel ran, or simply missed -- is recognised as stale
+ * and does nothing.
+ */
+function armRestartTimer(serial, ms) {
+  clearRestartTimer();
+  restartTimer = setTimeout(() => {
+    restartTimer = undefined;
+    applyRestart(core.restartReduce(restartState, core.restartEvents.expiry(serial, Date.now())));
+  }, Math.max(0, ms));
+}
+
+/**
+ * THE RESTART ITSELF, AND THE RULE THAT MAKES IT SAFE: it never happens
+ * without a mark.
+ *
+ * The restart we cause produces exactly the `Stopped` then `Running` edges
+ * a crash produces, and the `Running` edge asks for a re-render of the
+ * current pick (`stuckReduce`'s `rerender: !s.running`). WP-22 (a)+(b)
+ * turn that into a question instead -- but only for a pick that is MARKED.
+ * So the mark is set HERE, before anything is stopped, and if the wedge
+ * cannot be attributed to a pick at all the restart does not happen: a
+ * restart nothing would hold is the loop this whole ticket exists to close.
+ */
+function fireRestart(fx) {
+  // D3: EVERY EXIT FROM HERE TELLS THE REDUCER WHAT HAPPENED. Only a
+  // restart that actually started may move the floor's memory, and a
+  // refusal has to reach something the user looks at.
+  const refuse = (why) => {
+    log("preview: NOT restarting the language server — " + why);
+    applyRestart(core.restartReduce(restartState, core.restartEvents.fireRefused(why, Date.now())));
+  };
+  // N2's rule: the render that is in flight is the better claim about what
+  // wedged; the current pick is the fallback.
+  const pick = core.markPickFor(inFlightRender && inFlightRender.pick, picked);
+  if (!pick) {
+    refuse(
+      "nothing is picked and no render is in flight, so the wedge cannot be attributed to a report " +
+        "and nothing would hold the re-render afterwards"
+    );
+    return;
+  }
+  if (!extContext) {
+    refuse("there is no extension context to start a client with");
+    return;
+  }
+  // F1: the timer never stacks on a restart that is already under way, and
+  // it asks the same pure function `restart` asks, so the two agree.
+  const attempt = core.restartAttempt(restartUnderway, core.RESTART_BY_TIMER);
+  if (!attempt.proceed) {
+    refuse(attempt.why);
+    return;
+  }
+  // "killed-by-us" ONLY IF NOTHING ELSE GOT THERE FIRST: `guardReduce`'s
+  // SET is idempotent per key, so a pick already marked "watchdog" or
+  // "died-mid-render" keeps that reason and its own `at`.
+  applyGuard(core.guardReduce(wedgeMark, { type: "killedByUs", pick, at: Date.now() }));
+  if (!core.markMatches(wedgeMark, pick)) {
+    refuse(
+      "the wedge mark could not be set for " + core.pickLabel(pick) +
+        ", and a restart with no mark re-renders the report that wedged"
+    );
+    return;
+  }
+  // A render coalesced against the server we are about to stop has no
+  // meaning any more, and it would reach the FRESH server without passing
+  // the one consultation site.
+  if (coalesceTimer) {
+    clearTimeout(coalesceTimer);
+    coalesceTimer = undefined;
+  }
+  log(
+    `preview: RESTARTING the language server — ${fx.why} ` +
+      `(ermine.preview.restartAfterStuckSeconds = ${fx.seconds}; ${core.pickLabel(pick)} is held)`
+  );
+  // The floor's memory moves HERE, and only here: the restart has started.
+  applyRestart(core.restartReduce(restartState, core.restartEvents.fired(Date.now())));
+  restart(extContext, core.RESTART_BY_TIMER).catch((err) =>
+    log(`preview: the automatic restart failed: ${err && err.stack ? err.stack : err}`)
+  );
 }
 
 /**
@@ -748,17 +1162,24 @@ async function renderNow(reason, reveal) {
     seqAtSend: sentAtMark,
   };
   // WP-22, and the same acceptance test the banner uses: a stuck refusal
-  // decided BEFORE a clear raises no banner and marks nothing.
+  // decided BEFORE a clear raises no banner and marks nothing. It is
+  // computed ONCE and handed to all three reducers, so they cannot disagree
+  // about whether this event happened.
+  const answerApplies = core.stuckEventApplies(stuckState, stuckEvent);
   applyGuard(
     core.guardReduce(wedgeMark, {
       type: "answer",
       stuck: stuckEvent.stuck,
-      applies: core.stuckEventApplies(stuckState, stuckEvent),
+      applies: answerApplies,
       // N2: the pick this ANSWER is about, not whatever is current now.
       pick: sentPick,
       at: Date.now(),
     })
   );
+  // WP-22 (c): the wedged ANSWER arrives before the notification (MEASURED
+  // over the wire), and the two are ONE incident -- the second of them
+  // re-arms nothing, because only the rising edge arms.
+  applyRestart(core.restartReduce(restartState, core.restartEvents.answer(stuckEvent.stuck, answerApplies, Date.now())));
   applyStuck(core.stuckReduce(stuckState, stuckEvent), "answer");
   await showAnswer(answer, reveal === true);
   if (core.isOk(answer) && !picked.module) refreshModule();
@@ -885,6 +1306,14 @@ function disposePreview() {
   // still reads `held`) but leaves the user with no question to answer.
   heldPromptOpen = false;
   inFlightRender = null;
+  // WP-22 (c): the grace dies with the window. The reducer is asked rather
+  // than the timer merely cleared, so nothing that runs after this can see
+  // a state that still thinks a restart is coming. `applyRestart` is NOT
+  // used: it would touch a status bar item that is being disposed.
+  const stopped = core.restartReduce(restartState, core.restartEvents.deactivate());
+  restartState = stopped.state;
+  if (stopped.effects.disarm) log("preview: the automatic restart is disarmed (" + stopped.effects.why + ")");
+  clearRestartTimer();
   disposeWatchers();
 }
 
@@ -1023,7 +1452,7 @@ async function activate(context) {
   context.subscriptions.push(channel, status);
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("ermine.restartServer", () => restart(context)),
+    vscode.commands.registerCommand("ermine.restartServer", () => restart(context, core.RESTART_BY_USER)),
     vscode.commands.registerCommand("ermine.showOutput", () => channel && channel.show(true)),
     vscode.commands.registerCommand("ermine.toggleFastMode", async () => {
       const now = config().get("fastMode", false);
@@ -1075,13 +1504,19 @@ async function activate(context) {
           log(`preview: could not re-resolve the roots: ${err && err.message ? err.message : err}`);
         }
       }
+      // WP-22 (c): the grace is read here and nowhere else. A change to 0
+      // disarms a grace that is already running; a change to another
+      // non-zero value re-arms it at the new value, from now.
+      if (event.affectsConfiguration("ermine.preview.restartAfterStuckSeconds")) {
+        applyRestart(core.restartReduce(restartState, core.restartEvents.setting(restartGraceValue(), Date.now())));
+      }
       // These three only take effect on a fresh process.
       if (
         event.affectsConfiguration("ermine.serverPath") ||
         event.affectsConfiguration("ermine.logFile") ||
         event.affectsConfiguration("ermine.maxHeap")
       ) {
-        await restart(context);
+        await restart(context, core.RESTART_BY_USER);
       }
     })
   );
@@ -1103,10 +1538,17 @@ async function activate(context) {
     })
   );
 
+  // WP-22 (c): the grace, read once at activation. DEFAULT 0 = never, so
+  // by default this whole feature does nothing at all.
+  restartState = core.initialRestartState(restartGraceValue());
+
   restorePick(context);
 
-  // Not awaited on purpose — activation must not wait on the server.
-  startClient(context);
+  // Not awaited on purpose — activation must not wait on the server. It
+  // takes an epoch like every other start (M2), so a restart during the
+  // first run's classpath warm-up supersedes it instead of racing it.
+  startEpoch += 1;
+  startClient(context, startEpoch);
 }
 
 function deactivate() {

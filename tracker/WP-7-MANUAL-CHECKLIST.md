@@ -20,13 +20,18 @@ This checklist ticks §14's WP-7 done-when and the two behaviours the ticket
 adds to it (stuck/recover, offline/online), and -- since 2026-09-20 --
 **WP-22's wedge guard (§2.15-2.27), which is equally unrun**: it was built
 after this file was written, its pure half is unit-tested, and not one of its
-editor steps has been observed by anyone either.
+editor steps has been observed by anyone either. **Since 2026-09-21 it also
+carries WP-22(c)'s automatic restart (**§2.28-2.32c, TEN steps**), which is
+OFF by default (`ermine.preview.restartAfterStuckSeconds` = 0) precisely
+because none of these steps has ever been run -- §2.28 is the step that
+checks the default changes nothing, and the other nine are the only things
+that can observe the feature at all.**
 
 ## 0. Before you start
 
 | | |
 |---|---|
-| The extension | `editor/vscode` in this worktree, version **0.1.6** (0.1.5 plus WP-22's wedge guard, §2.15-2.27) |
+| The extension | `editor/vscode` in this worktree, version **0.1.7** (0.1.6 plus WP-22(c)'s automatic restart, §2.28-2.32c, which is OFF by default) |
 | `node_modules` | **Already there.** The build session copied it from `/home/dmitry/research/ermine/ermine-scala/editor/vscode/node_modules` (there is no network here, and it is gitignored, so it is in neither `git status` nor the commit). If it goes missing, copy it again the same way |
 | The server | `target/ermine-classpath` already exists here, so the first start does **not** shell out to sbt |
 | Do NOT package or install | this is an Extension Development Host session; nothing touches your installed 0.1.4 |
@@ -130,8 +135,9 @@ Language Server** button in our own stuck notification took the same path, so
 the one remedy offered during a wedge was itself a loop trigger (§13's Q17,
 READ from the code and unobserved). The extension now keeps ONE mark for the
 current pick and asks before re-rendering it. **The decision is unit-tested
-(`npm run test:preview`, 67 tests); the ARRIVAL of every editor event below
-is unobserved, and these steps are the only thing that can observe it.**
+(`npm run test:preview`, 96 tests as of 0.1.7); the ARRIVAL of every editor
+event below is unobserved, and these steps are the only thing that can
+observe it.**
 
 Use the same `WpSpin` fixture and `"ermine.preview.timeoutSeconds": 5` as
 §2.7-2.12 above, and start from a wedged preview. §2.26 and §2.27 need a
@@ -153,16 +159,59 @@ different setup and say so in the step.
 | 2.26 | **THE `died-mid-render` CASE, AND THE ONLY STEP THAT CAN OBSERVE M1.** Every step above runs at `timeoutSeconds: 5`, so the watchdog always wins and the mark is always set by the stuck edge. To get the OTHER reason, starve the heap instead: set `"ermine.maxHeap": "256m"` (the server restarts), set `"ermine.preview.timeoutSeconds": 600` so the watchdog CANNOT fire first, and render a report that allocates without bound -- §2.5's `WpBlow` shape, MEASURED there as exit code 3 at 8.6 s with no watchdog fire | the JVM dies mid-render: **no** stuck notification and **no** `Ermine preview: stuck`, but the channel logs `preview: render N was lost with the connection (...)` and/or the `Stopped` edge, then `preview: remembering that WpBlow.report wedged the preview (died-mid-render)`. After the restart the tab does **NOT** re-render, the status bar reads `held`, and the question names *…was still rendering when the language server stopped*. **This is the case the guard would lose if the mark depended on which of the two the library delivers first** (WP-22 review M1): the extension now marks from BOTH, and `guardReduce`'s SET is idempotent, so you should see exactly one mark however the race falls. Put `ermine.maxHeap` back to `""` afterwards |
 | 2.27 | **THE `{stuck:false}` RECOVERY CLEAR, which is the load-bearing one.** Wedge a report that is SLOW rather than infinite: set `"ermine.preview.timeoutSeconds": 5` and render something that takes ~30 s (a large fold, not a loop). The watchdog fires at 5 s and the preview is marked stuck; then the job FINISHES | the channel logs `preview: no longer stuck`, the toast `Ermine: the preview recovered`, `preview: the wedge mark is cleared (the preview recovered: the wedged job returned)`, and an automatic re-render with reason `the preview recovered`. **Without this clear a slow report would be held for ever** -- a 300 s scan under a 60 s watchdog is the real case (§13's Q10) -- and the status bar must leave both `stuck` and `held`. A restart after it re-renders without a question |
 
+### The automatic restart (WP-22(c), 0.1.7) -- NEVER RUN BY ANYONE
+
+**WHAT THESE STEPS ARE FOR.** A wedged render used to end only when the JVM
+hit `-Xmx` -- MEASURED at about two minutes after the watchdog fires, with the
+heap thrashing meanwhile -- and a wedge that allocates nothing, or a preview
+thread that is BLOCKED, never ended at all. The extension can now end it
+itself: `ermine.preview.restartAfterStuckSeconds` seconds after the preview
+goes stuck it stops and restarts its own language client, through the same
+`restart(context)` the **Restart Language Server** button uses. **THE DEFAULT
+IS 0 = NEVER**, and it is 0 *because this checklist has never been run*: the
+design review advised default OFF until a human has seen it work, the user
+confirmed the feature and has NOT been asked about the default, and the
+orchestrator will ask once §2.28-2.32c have been ticked. Nothing here is a
+server change; `bin/ermine-serve` and every non-VS-Code client still get
+nothing (§13's Q18).
+
+| # | Step | What you should see |
+|---|---|---|
+| 2.28 | **THE DEFAULT CHANGES NOTHING.** Leave `ermine.preview.restartAfterStuckSeconds` unset (or 0), set `"ermine.preview.timeoutSeconds": 5`, and wedge `WpSpin.report` as in §2.7 | exactly §2.7-2.12's behaviour and not one line more: the stuck notification's text is the SAME sentence as 2.7 with **nothing** appended about a restart, the status bar tooltip likewise, and the channel logs no `preview: the language server will be restarted in …` line. The server still dies by itself at `-Xmx` about two minutes later. **If anything restarts here, the default is not what this document says it is** |
+| 2.29 | **THE FEATURE.** Set `"ermine.preview.restartAfterStuckSeconds": 20` with `"ermine.preview.timeoutSeconds": 5` still in place, and wedge `WpSpin.report` again | at ~5 s the stuck notification reads, IN FULL AND WITH NO WORDS ELIDED (quote it here so this step can catch a run-on -- review N1 -- the server's own message ends `(ermine.restartServer)` with no full stop and ours is joined onto it): `Ermine: evaluation did not finish after 5s; the preview is stuck. It recovers by itself if that evaluation ever finishes; if it does not, restart the language server -- run "Ermine: Restart Language Server" (ermine.restartServer). You do not need to do that by hand: the language server will be restarted automatically in 20 s unless the render comes back. Set ermine.preview.restartAfterStuckSeconds to 0 to stop that.` -- **one full stop before "You do not need"**, and the last two sentences also on the status bar tooltip's own line; the channel logs `preview: the language server will be restarted in 20s unless the preview recovers (…)`. At ~25 s the channel logs `preview: RESTARTING the language server — the preview has been stuck for 20 s (ermine.preview.restartAfterStuckSeconds = 20; WpSpin.report is held)`, the status bar goes through `Ermine: preview offline` and comes back reading `$(warning) Ermine preview: held` -- **the tab does NOT re-render** and the §2.16 question appears instead, exactly as it does after a hand-pressed restart. **The whole incident is ~25 s instead of ~2 minutes at `-Xmx`** |
+| 2.30 | **A SLOW RENDER IS NOT KILLED.** Keep the grace at 20 and `timeoutSeconds` at 5, and render something that takes ~10 s but FINISHES (a large fold, not a loop -- §2.27's fixture shape) | the watchdog marks it stuck at 5 s and the notification says a restart is coming, and then the job returns: the channel logs `preview: no longer stuck`, `preview: the automatic restart is disarmed (the wedged render came back (ermine/preview/stuck {stuck:false}))` and an automatic re-render with reason `the preview recovered`. **NO restart happens.** This is why there is a grace at all -- without the disarm a 300 s scan under a 60 s watchdog would be killed for being slow (§13's Q10) |
+| 2.31 | **TURNING IT OFF MID-GRACE DISARMS.** Wedge `WpSpin.report` with the grace at 20, and within those 20 seconds set `ermine.preview.restartAfterStuckSeconds` back to `0` | the channel logs `preview: the automatic restart is disarmed (ermine.preview.restartAfterStuckSeconds was set to 0)` and **nothing restarts** -- the status bar stays `stuck` and the server dies by itself at `-Xmx` as before. Editing the setting to a different NON-ZERO value instead re-arms it at the new value, counted from that moment (the channel says so) |
+| 2.31b | **TURNING IT ON WHILE ALREADY WEDGED ARMS (review D1).** With the setting at its default `0`, wedge `WpSpin.report` and leave it wedged; then set `ermine.preview.restartAfterStuckSeconds` to `20` | the channel logs `preview: the language server will be restarted in 20s unless the preview recovers (ermine.preview.restartAfterStuckSeconds was turned on while the preview was stuck)` and the restart happens ~20 s later, exactly as in 2.29. **This is the likeliest moment anyone touches this setting** -- they reach for it because the preview is wedged -- and the first build did nothing at all here, because it waited for a rising edge that was already in the past |
+| 2.31c | **THE FLOOR DEFERS, IT DOES NOT CANCEL, AND SAYS SO (review D2, and the delta review's M1).** Set `"ermine.preview.timeoutSeconds": 5` and the grace to `5`, wedge it, let the restart happen, press **Render anyway**, and let it wedge a second time | the second notification does NOT say 5 s: it says something like `…restarted automatically in 27 s unless the render comes back. It is not before 27 s, because the language server was restarted less than 30 s ago and restarts are limited to one every 30 s (you asked for 5 s).` -- the number is 30 minus however long the second wedge took to arrive -- and the channel's arm line carries the same reason. The restart then happens at that number. **Nothing is stranded**: the first build refused the second restart and disarmed, leaving the preview stuck for the rest of the session with a notification promising a restart in 5 s. **AND THE NUMBER IS THE THING TO WATCH**: the delta review found that the stretch, though written, never ran in the shipped extension, because the three events that arm were sent without a clock -- the outcome was right and only the sentence was wrong, which is exactly the kind of defect this step exists to catch. If you see `5 s` here, that regression is back |
+| 2.32a | **THE STATE LOG, and the one UNVERIFIED thing a human can settle in a second.** Watch the Ermine output channel through any restart | every transition the language client reports is logged as `client N: state <from> -> <to>`, with `(DROPPED: a newer client is current)` on the ones the epoch guard ignores. **WHETHER A FRESH `LanguageClient` EMITS AN INITIAL `Stopped -> Starting` AT ALL IS UNVERIFIED** -- the library's source is unread and nobody has run this extension -- and this line is what settles it: note what the FIRST client of a session logs before it reaches `Running`, and write it into this row |
+| 2.32 | **NO DOUBLE RESTART.** Wedge it with the grace at 20 and press **Restart Language Server** after ~10 s, before the grace expires | ONE restart: the edge out of `Running` disarms the grace, so the channel logs `preview: the automatic restart is disarmed (…)` -- **either `(the language server stopped)` or `(the language client left Running)`, and both are correct** (review N5: which one you get depends on whether the library reports `Starting` first, which nobody here has observed) -- and there is no later `preview: RESTARTING the language server` line. If the two ever do collide, the AUTOMATIC one is refused (`restart: refused (a restart is already under way)`) and you should see exactly one `restarting…` line and one new server process, never two. **THE OPPOSITE ORDER IS THE ONE THAT MATTERS (review F1): press the button WHILE an automatic restart is under way and the button must still work** -- the channel logs `restart: the user asked while an automatic restart was under way, so it takes over` and then `restart: superseded by a newer one — not starting a second client` from the older one. **The user's restart is never the one that is refused**; if you ever see it refused, that is a regression of the command the whole feature leans on |
+| 2.32b | **THE STOP THAT DOES NOT COME BACK (review F1), and the two glue paths no test can reach (review N4).** There is no way to make this happen on purpose from the UI; watch for it whenever a restart takes more than five seconds | the channel logs `stop: the language server did not stop within 5s — carrying on anyway. THE OLD SERVER PROCESS MAY STILL BE ALIVE: check with ps -ef \| grep lsp.Main, and kill the older pid by hand if there are two.` and a NEW server starts regardless. Run the `ps` check it names. **AND THE REST OF THE RESTART MUST STILL HAPPEN (final re-check must-fix): the held question IS asked.** On this path the old client's real `Stopped` arrives after a newer client is current and is dropped as stale -- you will see it in the channel as `client N: state Running -> Stopped (DROPPED: a newer client is current)` -- so `restart` reports the edge itself, logged as `preview: the language server stopped (the stop returned "timed-out")`. What follows must look exactly like §2.29: `Ermine: preview offline`, then the `held` status bar and ONE question. If the tab re-renders by itself, or nothing is asked at all, that is the defect this step exists for. **Two other pieces of glue have no test and can only be seen here**: that a render coalesced in the 150 ms before an automatic restart is dropped rather than sent to the fresh server (you would see a `preview: render …` line just after `preview: RESTARTING …` -- there should be none), and the restart guard above. The review's own mutation run removed each of them from the source and the whole unit suite stayed green |
+
+| 2.32c | **RESTART DURING THE FIRST-RUN CLASSPATH WARM-UP (delta review M2).** With no `target/ermine-classpath` (delete it, or use a fresh checkout), open a `.e` file so the extension activates, and while the **"Ermine: building the classpath cache (first run, sbt)"** progress notification is on screen run **Ermine: Restart Language Server** -- twice, if you are quick | **EXACTLY ONE `lsp.Main` PROCESS AFTERWARDS** (`ps -ef \| grep lsp.Main`), and the channel logs `start: superseded during the classpath warm-up — not starting this client` for each superseded attempt. The warm-up can run for MINUTES, and before this fix a restart arriving inside it found the client already cleared, skipped the stop, and raced into its own start: two clients, two JVMs, one referenced by nothing and never stopped, with its handlers still wired to the extension's state. Nothing in the unit suite can see this; an async model of the same control flow can, and does (`restartModel` in `test/preview-core.test.js`), but only this step sees the real thing |
+
+**WHAT THESE TEN STEPS CANNOT TELL YOU, and it matters**: whether
+`client.stop()` really kills a wedged server process, or only stops talking
+to it. The server should answer `shutdown`/`exit` promptly even while the
+preview is wedged (READ: `Preview.shutdown()` drains and returns without
+joining the preview thread; the preview thread is a daemon; MEASURED: the
+dispatch thread answered a hover in 0.00 s while wedged) -- but the library's
+own behaviour is *external* and UNVERIFIED here. **So while you run §2.29 and
+§2.32, watch the process list**: `ps -ef | grep lsp.Main` should show exactly
+ONE server after each restart. Two would mean the old JVM outlived the stop,
+and a non-allocating wedge would then never go away.
+
 **THE HOLES TO KNOW WHILE TICKING THESE**, each of them a design decision
 rather than a bug: a second VS Code window on the same folder keeps its own
 mark (per extension host; cross-window `Memento` visibility is *external* and
 unverified), `bin/ermine-serve` and every non-VS-Code client are unprotected
 (§13's Q18), and "it didn't change" is a PROXY -- the two signals used are the
 server's own `invalidated` and any `.e` save, and both err towards asking
-less. **WP-22(c) IS NOT BUILT**: nothing here kills the server on your behalf,
-so the wedged process still dies by itself at `-Xmx` (or when you press
-Restart), and there is no `ermine.preview.killAfterStuckSeconds` setting to
-find.
+less. **IF THE AUTOMATIC RESTART EVER DOES NOT HAPPEN** -- nothing is picked, or a restart is already under way -- you get a warning notification and the stuck tooltip says `The automatic restart did not happen: …`; it is not only an output-channel line (review D3). **WP-22(c) IS BUILT AS OF 0.1.7 BUT IS OFF BY DEFAULT** (§2.28-2.32):
+with `ermine.preview.restartAfterStuckSeconds` at its default of 0 nothing
+kills the server on your behalf and the wedged process still dies by itself at
+`-Xmx` (or when you press Restart). The setting is spelled
+`restartAfterStuckSeconds`, not `killAfterStuckSeconds` as the design review
+called it.
 
 ## 3. Deviations to read before ticking anything
 
