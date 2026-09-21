@@ -1,6 +1,13 @@
-// The bridge to the renderers that already exist: the `htmlwriter` global
+// The bridge to the renderers that already exist: the legacy writer object
 // (ermine-writers, writers/js/ermine-htmlwriter.js:3571-3596) and the DOM that
 // HTMLWriter.scala emits around them.
+//
+// NOTHING HERE READS A GLOBAL.  The writer arrives as `env.htmlwriter`, which
+// the host page fills; on a browser page that value is `window.ermine_htmlwriter`
+// -- NOT `window.htmlwriter`, which two comments in this package claimed until
+// WP-9 -- and it is assigned only inside a `DOMContentLoaded` listener
+// (`writers/js/htmlwriter.js:10-13`, READ).  So a host page that reads it too
+// early passes `undefined` and gets `requireHtmlWriter`'s error box below.
 //
 // The adapters here do, on the client, exactly what `tableRegular` (~1034-1060) and
 // `drilldownTable` (~1064-1096) do on the server:
@@ -327,7 +334,10 @@ export function tableSkeleton(
 function requireHtmlWriter(ctx: WidgetContext): HtmlWriter {
   const hw = ctx.env.htmlwriter as HtmlWriter | undefined;
   if (!hw || typeof hw.runTabular !== "function") {
-    throw new Error("env.htmlwriter with a runTabular function is required by this widget");
+    throw new Error(
+      "env.htmlwriter with a runTabular function is required by this widget " +
+      "(on a browser page that is window.ermine_htmlwriter, which the writers " +
+      "bundle assigns only on DOMContentLoaded)");
   }
   return hw;
 }

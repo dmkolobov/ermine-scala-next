@@ -43,10 +43,19 @@ npm run typecheck          # tsc --noEmit, strict
 npm run build && node --test "dist/test/*.test.js"
 ```
 
-That command is green from a clean checkout. Three of the tests need FIXTURES that the
-Scala side writes — property (b)'s 200-document corpus, its negative half, and the
-end-to-end document — and they SKIP, naming the command that would produce them, when the
-fixtures are absent: **33 passed, 3 skipped**. Write the fixtures and all 36 run:
+**One prerequisite that is not optional**: the suite needs a sibling `../ermine-writers`
+checkout, or `ERMINE_WRITERS` pointing at one. `(c-legacy)` compares this port against the
+real `formatDisplay` and **hard-fails** without it (`test/format.test.ts:67-70` calls
+`assert.fail`, not `t.skip`, unlike the four chart tests beside it, which do skip). That
+is long-standing, not new.
+
+With that checkout present, the command above is green. Eight of the tests skip, each
+naming what would make it run: three need FIXTURES the Scala side writes — property (b)'s
+200-document corpus, its negative half, and the end-to-end document — and five need the
+browser bundle, which `npm run bundle` builds. That is **90 tests, 82 passed, 8 skipped**
+(MEASURED 2026-09-21 on node v24.20.0; the count this paragraph carried before WP-9 was
+33/3 and was stale by 29 passing tests). `npm run test:bundle` builds the bundle first and
+gives 87 passed, 3 skipped; writing the fixtures as well runs all 90:
 
 ```sh
 scripts/check-corpus.sh    # writes both fixtures with sbt, then npm ci + tsc + the suite
@@ -81,16 +90,72 @@ import { parseDocument, render, defaultRegistry, httpFetchData } from "ermine-re
 const doc = parseDocument(await (await fetch("/report/Doc.SalesReport", { method: "POST" })).json());
 const result = await render(document.getElementById("report")!, doc, defaultRegistry(), {
   document,
-  htmlwriter: (window as any).htmlwriter,       // the legacy bundle, for table widgets
+  htmlwriter: (window as any).ermine_htmlwriter, // the legacy bundle, for table widgets
   fetchData: httpFetchData("/report", (url) => fetch(url)),
 });
 result.errors.forEach((e) => console.warn(e.widget, e.path, e.message));
 ```
 
+The legacy global is **`window.ermine_htmlwriter`** — not `window.htmlwriter`, which this
+README and `src/index.ts` both said until WP-9 — and it is assigned **only inside a
+`DOMContentLoaded` listener** (`ermine-writers/writers/js/htmlwriter.js:10-13`). A page
+that reads it at script-evaluation time gets `undefined`, and a `table` or a chart then
+shows the "this widget needs the legacy renderers" error box rather than anything that
+looks like a timing problem, so **wait for the event before calling `render`**.
+`window.ermine_htmlwriter_conf` is set at module top level and is a red herring for a
+readiness probe. Nothing in this package reads a global: `render` takes the writer
+through `env.htmlwriter` and the host decides where it came from.
+
 `render` never throws on a widget's behalf. An unknown widget name, props the
 schema refuses, a deferred token that will not resolve and a renderer that throws
 all leave an error box (`div.ermine-widget-error`, `data-widget=<name>`) in the tree
 and an entry in `result.errors`.
+
+## The browser bundle
+
+```sh
+npm run bundle          # tsc, then webpack -> dist/browser/
+npm run bundle:watch    # tsc --watch AND webpack --watch together, writing to disk
+npm run test:bundle     # build the bundle, then the whole suite including test/bundle.test.ts
+```
+
+`bundle:watch` is `node scripts/bundle-watch.js`: one full `tsc` build first (a type error
+aborts there), then both watchers, with Ctrl-C stopping the pair. It has to drive both
+because **webpack watches `dist/src/`, not the sources** — a bare `webpack --watch` rebuilds
+nothing when you edit a `.ts` file, and fails outright from a clean checkout with
+`Module not found: Can't resolve './dist/src/index.js'`. That is the cost of the tsc-first
+decision below, and it is paid once, in that script, rather than by everyone who forgets.
+
+Two entries, no loaders (WP-9):
+
+| Output | Global it defines | What it is |
+|---|---|---|
+| `dist/browser/ermine-client.js` (+ `.map`) | `window.ErmineClient` | this package's whole public surface — `parseDocument`, `render`, `defaultRegistry`, everything `src/index.ts` exports |
+| `dist/browser/ermine-host.js` (+ `.map`) | `window.ErmineHost` | the preview panel's presentation reducer (`src/host/`): `applyMessage`, `presentation`, `initialHostState`. A SECOND entry because a webview page under `script-src ${cspSource}` with no nonce may carry no inline `<script>` at all |
+
+**`devtool` is `'source-map'`, and that is load-bearing.** `mode: 'development'`
+defaults to `devtool: 'eval'`, which wraps every module in an `eval("…")` call; a VS Code
+webview CSP without `'unsafe-eval'` blocks all of them and the bundle silently never
+initialises. `test/bundle.test.ts` `(b-no-eval)` asserts the static half of that — no
+`eval(` and no `new Function` in either output — and `(b-sourcemap)` asserts the map is a
+separate file rather than an inline `data:` URI. Nothing here has run in a browser or a
+webview.
+
+**Webpack's input is the `tsc` output**, `dist/src/*.js`, not the TypeScript sources, so
+`bundle` is `npm run build && webpack` and the dependency closure is `webpack` +
+`webpack-cli` and nothing else — which is what a closed-network machine has to carry.
+Source-map frames are therefore `.js` (tsconfig has `sourceMap: false`); switching to
+`ts-loader` for `.ts` frames is four commented lines in `webpack.config.js` plus one
+devDependency.
+
+**`mode` is `development` only.** Nothing is minified. Whether a `production` build is
+ever wanted is not decided and is not WP-9's: the panel loads the bundle from the
+developer's own workspace, so bytes buy nothing, and minified frames would make WP-10's
+error boxes harder to read.
+
+**The output is not committed.** `client/dist/` is gitignored, so a fresh clone has no
+bundle and `test/bundle.test.ts` skips, naming `npm run bundle`. Whether the built bundle
+should be committed instead is open, and belongs to WP-17 (closed-environment packaging).
 
 ## The files
 
@@ -108,6 +173,7 @@ and an entry in `result.errors`.
 | `src/widgets/headline.ts` | the `headline` widget, plain DOM: a title, a scope and three figures. Its props carry NO relation -- the Ermine constructor `headlineOf` scanned one server-side (J3g). |
 | `src/widgets/crosstab.ts` | the `crosstab` widget, plain DOM: a `<table>` of row labels x column labels with totals. Its props carry a MATRIX, not a relation -- `crosstabOf` scanned one server-side and the column set IS the data (J3i) -- so it does not go through the table adapter. A `null` cell is a pair no row had and shows as an em dash. |
 | `src/index.ts` | the public surface and `defaultRegistry()`. |
+| `src/host/` | the preview panel's PRESENTATION reducer — `applyMessage`, `presentation`, `initialHostState` — bundled as `ermine-host.js`. It decides what the panel SHOWS and nothing else: every decision (is this answer current, should we re-render, did the wedge clear) stays in the extension's `preview-core.js`, so the two reducers cannot disagree. Skeleton only; WP-10 owns the panel. |
 
 ## Formatting a cell
 

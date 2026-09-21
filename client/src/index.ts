@@ -2,9 +2,30 @@
 //
 //   const doc = parseDocument(await res.json());
 //   await render(target, doc, defaultRegistry(), {
-//     document, htmlwriter: window.htmlwriter,
+//     document, htmlwriter: window.ermine_htmlwriter,
 //     fetchData: httpFetchData("/report", url => fetch(url)),
 //   });
+//
+// THE LEGACY GLOBAL IS `window.ermine_htmlwriter`, and this comment said
+// `window.htmlwriter` until WP-9.  Corrected by READING the writers entry
+// point, `ermine-writers/writers/js/htmlwriter.js:10-13`:
+//
+//   document.addEventListener('DOMContentLoaded', () => {
+//     window.Object.assign(window, {ermine_htmlwriter, ermine_htmlwriter_conf});
+//     window.jQuery = $;
+//   });
+//
+// so the name is one half of it and THE TIMING IS THE OTHER: the assignment
+// happens only on `DOMContentLoaded`, and a host page that reads the global at
+// script-evaluation time gets `undefined` -- which arrives here as the designed
+// "this widget needs the legacy renderers" error box, not as a timing bug.  A
+// host page must wait for the event (or poll) before it calls `render`.
+// `window.ermine_htmlwriter_conf` IS set at module top level and is therefore a
+// RED HERRING for a readiness probe.
+//
+// Nothing in this package reads a global: `render` takes the writer through
+// `env.htmlwriter` and the HOST decides where it came from.  The name above is
+// documentation, and what WP-10's host page has to get right.
 
 export * from "./props";
 export * from "./relation";
