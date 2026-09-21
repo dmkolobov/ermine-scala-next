@@ -1,5 +1,7 @@
 # WP-9 as built — the webpack browser bundle
 
+> **FOLDED INTO `tracker/JSON-WIDGET-PLAYGROUND.md` ON 2026-09-21 -- all nine edits of the closing section, plus the WP-10 and WP-17 rows. THAT DOCUMENT IS NOW THE AUTHORITY; this file is kept as the build's own record.**
+
 Branch `wp9-bundle`, forked from `widget-preview` at `f8fb9de7`. Everything below is inside
 `client/` except this file. **NOTHING HERE HAS RUN IN A BROWSER OR A VS CODE WEBVIEW**: no
 CSP has been enforced against these bundles, no panel has loaded them, and the third row of
