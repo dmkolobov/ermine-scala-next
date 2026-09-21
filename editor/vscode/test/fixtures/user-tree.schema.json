@@ -1,0 +1,60 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$id" : "ermine:Test/Tree",
+  "$ref" : "#/$defs/Test.Tree",
+  "$defs" : {
+    "Test.Tree" : {
+      "oneOf" : [
+        {
+          "type" : "object",
+          "properties" : {
+            "tag" : {
+              "const" : "Leaf"
+            },
+            "args" : {
+              "type" : "array",
+              "prefixItems" : [
+                {
+                  "type" : "integer"
+                }
+              ],
+              "minItems" : 1,
+              "maxItems" : 1
+            }
+          },
+          "required" : [
+            "tag",
+            "args"
+          ],
+          "additionalProperties" : false
+        },
+        {
+          "type" : "object",
+          "properties" : {
+            "tag" : {
+              "const" : "Node"
+            },
+            "args" : {
+              "type" : "array",
+              "prefixItems" : [
+                {
+                  "$ref" : "#/$defs/Test.Tree"
+                },
+                {
+                  "$ref" : "#/$defs/Test.Tree"
+                }
+              ],
+              "minItems" : 2,
+              "maxItems" : 2
+            }
+          },
+          "required" : [
+            "tag",
+            "args"
+          ],
+          "additionalProperties" : false
+        }
+      ]
+    }
+  }
+}

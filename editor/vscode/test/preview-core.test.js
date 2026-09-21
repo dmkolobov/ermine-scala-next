@@ -2925,3 +2925,1559 @@ test("2b: a stop that TIMED OUT still reaches the guard's one consultation, and 
   assert.strictEqual(late.effects.offline, true,
                      "a late Stopped would be WRONG after the new client is up -- hence the epoch guard");
 });
+
+// =========================================================== WP-8 S1: params files
+//
+// The pure core of section 6's params files: where they go, what a first
+// skeleton holds, what the `.schema.json` beside them looks like, and what is
+// actually put on the wire.  S1 IS PURE -- none of this is wired into
+// `src/extension.js` and none of it touches a disk, so every case below is a
+// value in and a value out.
+//
+// THE SALES FIXTURE WAS READ-DERIVED AND HAS SINCE BEEN CONFIRMED AGAINST A
+// REAL SERVER.  `test/fixtures/sales-query.schema.json` was built by reading
+// `core/src/main/scala/com/clarifi/reporting/ermine/json/Schema.scala`
+// (`exportType` :184-196, the root splice :195, `dataType` :512-536, `constructor` :571-616, the
+// builtins :327-339), `core/src/test/resources/doc/Sales.e:53-63` and the
+// commit-tier `lsp` gate's own assertions (`tracker/tools/lsp-client.py:3398-3407`,
+// which pin `$id`, `$ref` and Query's four properties and three required keys).
+// The S1 REVIEW (2026-09-21) then started a real `bin/ermine-lsp`, sent one
+// `ermine/schema`, and MEASURED the answer to be BYTE-IDENTICAL to this file --
+// same bytes, same key order, so `schemaFileText` exposes no ordering
+// difference either.  The capture driver is
+// `scratchpad/wp8-review/capture.py` (about 40 s, no sbt) and the captured
+// answer is `scratchpad/wp8-review/real-schema.json`.  S2's obligation to
+// capture and diff is therefore DISCHARGED; re-running it is cheap if a
+// change to the exporter ever makes it worth doing again.
+//
+// `test/fixtures/user-tree.schema.json` is a VERBATIM COPY of the committed
+// exporter golden `core/src/test/resources/schema/UserTree.schema.json`
+// (sha256 c0439f25...), copied here so the node tests can read it without
+// reaching across the repository.  It is the recursive case the S1 review's
+// D-1 turns on: `Test.Tree` is the root `$ref`'s target AND what the `Node`
+// arm's `args` refer to.
+
+const fs = require("node:fs");
+const SALES_SCHEMA = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "fixtures", "sales-query.schema.json"), "utf8"));
+
+/** One fixed "today", so every expectation below is a constant (U2: the clock
+  * is the glue's, and a pure function is handed the date). */
+const TODAY = "2026-09-21";
+
+const SALES_PICK = core.makePick(
+  "file:///w/doc/Sales.e", "/w/doc/Sales.e", "report", "Sales", ["/w/doc"]);
+
+/** The 32-bit xorshift the WP-22 tests use. NOT the LCG of the older ones:
+  * ticket WP-27 records that its low bits are badly skewed, and every draw
+  * below is a small modulus. */
+function wp8Rnd(seed0) {
+  let seed = seed0 | 0;
+  return (n) => {
+    seed ^= seed << 13; seed |= 0;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5; seed |= 0;
+    return (seed >>> 0) % n;
+  };
+}
+
+// ------------------------------------------------------- paramsPaths (G1-G4, G6)
+
+test("paramsPaths: the layout is a directory per module and a file per binding", () => {
+  const p = core.paramsPaths(SALES_PICK, "/w", "posix");
+  assert.strictEqual(p.problem, undefined, JSON.stringify(p));
+  assert.strictEqual(p.previewDir, "/w/.ermine/preview");
+  assert.strictEqual(p.dir, "/w/.ermine/preview/Sales");
+  assert.strictEqual(p.paramsPath, "/w/.ermine/preview/Sales/report.params.json");
+  assert.strictEqual(p.schemaPath, "/w/.ermine/preview/Sales/report.schema.json");
+  assert.strictEqual(p.gitignorePath, "/w/.ermine/preview/.gitignore");
+  // RELATIVE, and a sibling: the two files are written next to each other and
+  // VS Code resolves a relative `$schema` against the document.
+  assert.strictEqual(p.schemaRef, "./report.schema.json");
+});
+
+test("paramsPaths: a dotted module is ONE directory, never a path (section 6)", () => {
+  const pick = core.makePick("file:///w/L/R.e", "/w/L/R.e", "report", "Layout.Widgets.Foo", []);
+  const p = core.paramsPaths(pick, "/w", "posix");
+  assert.strictEqual(p.dir, "/w/.ermine/preview/Layout.Widgets.Foo");
+  assert.strictEqual(p.paramsPath, "/w/.ermine/preview/Layout.Widgets.Foo/report.params.json");
+});
+
+test("paramsPaths: the win32 flavour is tested HERE, on Linux, or it is not tested", () => {
+  const pick = core.makePick("file:///c/w/Sales.e", "C:\\w\\doc\\Sales.e", "report", "Sales", []);
+  const p = core.paramsPaths(pick, "C:\\w", "win32");
+  assert.strictEqual(p.problem, undefined, JSON.stringify(p));
+  assert.strictEqual(p.dir, "C:\\w\\.ermine\\preview\\Sales");
+  assert.strictEqual(p.paramsPath, "C:\\w\\.ermine\\preview\\Sales\\report.params.json");
+  // The REF is a URL fragment in the file, not a path: it stays forward-slashed.
+  assert.strictEqual(p.schemaRef, "./report.schema.json");
+});
+
+test("paramsPaths: a report outside every workspace folder gets NO file (G1)", () => {
+  // WP-7's own stuck fixture lives at /tmp/wp7/WpSpin.e -- outside the
+  // workspace -- and `rootsFor` falls back to folders[0]. Doing the same here
+  // would mint `.ermine/` in an unrelated repository.
+  const outside = core.makePick("file:///tmp/wp7/WpSpin.e", "/tmp/wp7/WpSpin.e", "report", "WpSpin", []);
+  const p = core.paramsPaths(outside, "/w", "posix");
+  assert.strictEqual(p.problem.reason, "outside-workspace");
+  assert.match(p.problem.message, /not inside the workspace folder/);
+  assert.match(p.problem.message, /empty parameters/);
+
+  const noFolder = core.paramsPaths(SALES_PICK, undefined, "posix");
+  assert.strictEqual(noFolder.problem.reason, "no-workspace-folder");
+  assert.strictEqual(core.paramsPaths(SALES_PICK, "   ", "posix").problem.reason, "no-workspace-folder");
+});
+
+test("paramsPaths: a sibling folder whose name is a prefix is NOT the workspace", () => {
+  const pick = core.makePick("file:///workspace-old/S.e", "/workspace-old/S.e", "report", "S", []);
+  assert.strictEqual(core.paramsPaths(pick, "/workspace", "posix").problem.reason, "outside-workspace");
+});
+
+test("paramsPaths: the workspace folder itself is not a report inside it", () => {
+  const pick = core.makePick("file:///w", "/w", "report", "S", []);
+  assert.strictEqual(core.paramsPaths(pick, "/w", "posix").problem.reason, "outside-workspace");
+});
+
+test("paramsPaths: a relative path on either side is refused, never resolved against cwd", () => {
+  const pick = core.makePick("file:///w/S.e", "doc/S.e", "report", "S", []);
+  assert.strictEqual(core.paramsPaths(pick, "/w", "posix").problem.reason, "outside-workspace");
+  const abs = core.makePick("file:///w/S.e", "/w/S.e", "report", "S", []);
+  assert.strictEqual(core.paramsPaths(abs, "w", "posix").problem.reason, "outside-workspace");
+});
+
+test("paramsPaths: a pick with no module name has no directory to live in (G6)", () => {
+  const pick = core.makePick("file:///w/S.e", "/w/S.e", "report", null, []);
+  const p = core.paramsPaths(pick, "/w", "posix");
+  assert.strictEqual(p.problem.reason, "no-module");
+  assert.match(p.problem.message, /empty parameters/);
+});
+
+test("paramsPaths: no pick at all", () => {
+  assert.strictEqual(core.paramsPaths(null, "/w", "posix").problem.reason, "no-pick");
+  assert.strictEqual(core.paramsPaths(undefined, "/w", "posix").problem.reason, "no-pick");
+});
+
+test("paramsPaths: every binding review G3 names is refused, by name", () => {
+  const cases = [
+    ["<+>",          "an operator binding"],
+    ["|>",           "an operator binding with a pipe"],
+    ["a/b",          "a forward slash"],
+    ["a\\b",         "a backslash"],
+    ["a:b",          "a colon (an NTFS stream, a drive on Windows)"],
+    ["a\u0000b",     "a NUL byte"],
+    [".hidden",      "a leading dot"],
+    ["trailing.",    "a trailing dot (Windows silently strips it)"],
+    ["trailing ",    "a trailing space (likewise)"],
+    ["",             "the empty string"],
+    ["..",           "the parent directory"],
+    ["/abs",         "an absolute path"],
+    ["x".repeat(core.MAX_NAME_LENGTH + 1), "over-long"],
+    ["\u00e9t\u00e9", "a non-ASCII name"],
+  ];
+  for (const [binding, why] of cases) {
+    const pick = core.makePick("file:///w/S.e", "/w/S.e", binding, "S", []);
+    const p = core.paramsPaths(pick, "/w", "posix");
+    assert.strictEqual(p.problem && p.problem.reason, "unsafe-binding", why + " must be refused");
+    assert.match(p.problem.message, /empty parameters/, why + " must say what happens instead");
+  }
+  // and the length that is exactly allowed is allowed
+  const ok = core.makePick("file:///w/S.e", "/w/S.e", "x".repeat(core.MAX_NAME_LENGTH), "S", []);
+  assert.strictEqual(core.paramsPaths(ok, "/w", "posix").problem, undefined);
+});
+
+test("paramsPaths: a module name that is not a dotted run of plain names is refused", () => {
+  const bad = ["..", "a/b", "a\\b", ".a", "a.", "a..b", "", "a b", "a\u0000b",
+               "x".repeat(core.MAX_NAME_LENGTH + 1), "/abs", "C:\\x"];
+  for (const moduleName of bad) {
+    const pick = core.makePick("file:///w/S.e", "/w/S.e", "report", moduleName, []);
+    const p = core.paramsPaths(pick, "/w", "posix");
+    // an empty module name is `null`-ish to makePick, so it lands on no-module
+    const reason = p.problem && p.problem.reason;
+    assert.ok(reason === "unsafe-module" || reason === "no-module",
+              JSON.stringify(moduleName) + " came back as " + reason);
+  }
+  const ok = core.makePick("file:///w/S.e", "/w/S.e", "report", "A.B'.C_1", []);
+  assert.strictEqual(core.paramsPaths(ok, "/w", "posix").problem, undefined);
+});
+
+test("paramsPaths: a Windows device name is refused as ANY segment, extension or not (G4)", () => {
+  for (const moduleName of ["CON", "con", "Nul", "AUX", "COM1", "lpt9", "PRN"]) {
+    const pick = core.makePick("file:///w/S.e", "/w/S.e", "report", moduleName, []);
+    assert.strictEqual(core.paramsPaths(pick, "/w", "posix").problem.reason, "reserved-name",
+                       moduleName + " is a device name");
+  }
+  for (const binding of ["NUL", "nul", "com1", "LPT9", "aux", "prn"]) {
+    // as a BINDING the segment is `NUL.params.json`: Windows reads the device
+    // name off the part before the FIRST dot, so the extension does not save it
+    const pick = core.makePick("file:///w/S.e", "/w/S.e", binding, "S", []);
+    const p = core.paramsPaths(pick, "/w", "posix");
+    assert.strictEqual(p.problem.reason, "reserved-name", binding + ".params.json is a device name");
+    assert.match(p.problem.message, /rename the module or the binding/);
+  }
+  // LOOKALIKES ARE NOT REFUSED: the list is exactly Windows', not a prefix match
+  for (const name of ["COM0", "COM10", "LPT10", "CONS", "NULL", "AUXILIARY"]) {
+    const pick = core.makePick("file:///w/S.e", "/w/S.e", "report", name, []);
+    assert.strictEqual(core.paramsPaths(pick, "/w", "posix").problem, undefined, name + " is not reserved");
+  }
+});
+
+test("paramsPaths: the dotted module `CON.Reports` IS refused -- the rule reads before the dot", () => {
+  // `.ermine/preview/CON.Reports` is ONE directory named `CON.Reports`, and
+  // Windows reads the device name off the part before the FIRST dot, so this
+  // one is refused too. Recorded because it is the case the rule is least
+  // obvious in, and because it is a real cost: a module legitimately called
+  // `Con.Something` gets no params file. Refusing is the safe direction --
+  // the report still renders, with empty parameters.
+  const pick = core.makePick("file:///w/S.e", "/w/S.e", "report", "CON.Reports", []);
+  assert.strictEqual(core.paramsPaths(pick, "/w", "posix").problem.reason, "reserved-name");
+});
+
+// -------------------------------------- shouldRerenderOnParamsSave, isCurrentSchemaAnswer
+
+test("params save: saving THIS pick's params file re-renders, and only it (G9)", () => {
+  const f = (saved, flavour, folder) => core.shouldRerenderOnParamsSave(
+    SALES_PICK, saved, folder === undefined ? "/w" : folder, flavour);
+  assert.strictEqual(f("/w/.ermine/preview/Sales/report.params.json", "posix"), true);
+  assert.strictEqual(f("/w/.ermine/preview/Sales/./report.params.json", "posix"), true, "normalised");
+  assert.strictEqual(f("/w/.ermine/preview/Sales/other.params.json", "posix"), false);
+  assert.strictEqual(f("/w/.ermine/preview/Other/report.params.json", "posix"), false);
+  assert.strictEqual(f("/w/doc/Sales.e", "posix"), false);
+  // the GENERATED schema file is not the params file: saving it changes nothing
+  assert.strictEqual(f("/w/.ermine/preview/Sales/report.schema.json", "posix"), false);
+  assert.strictEqual(f("", "posix"), false);
+  assert.strictEqual(f(null, "posix"), false);
+  // a pick with no derivable params file can never match a save
+  assert.strictEqual(core.shouldRerenderOnParamsSave(SALES_PICK, "/w/x.json", undefined, "posix"), false);
+});
+
+test("params save: the compare is case-INSENSITIVE on win32 and case-SENSITIVE on posix", () => {
+  const winPick = core.makePick("file:///c/Sales.e", "C:\\w\\doc\\Sales.e", "report", "Sales", []);
+  assert.strictEqual(core.shouldRerenderOnParamsSave(
+    winPick, "c:\\W\\.ermine\\PREVIEW\\sales\\Report.Params.JSON", "C:\\w", "win32"), true,
+    "one file on Windows: a save that did not re-render would look broken");
+  assert.strictEqual(core.shouldRerenderOnParamsSave(
+    SALES_PICK, "/w/.ermine/preview/sales/report.params.json", "/w", "posix"), false,
+    "two different files on Linux");
+});
+
+test("schema answer: a late answer whose pick has moved is dropped (D7)", () => {
+  const at = core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "report", "Sales", ["/w/doc"]);
+  const same = core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "report", "Sales", ["/w/doc"]);
+  assert.strictEqual(core.isCurrentSchemaAnswer(at, same), true, "the same pick, rebuilt");
+  const moved = {
+    uri: core.makePick("file:///w/doc/Other.e", "/w/doc/Sales.e", "report", "Sales", ["/w/doc"]),
+    binding: core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "other", "Sales", ["/w/doc"]),
+    // the header changed: same file, same binding, a DIFFERENT directory to write into
+    module: core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "report", "Sales2", ["/w/doc"]),
+    moduleLost: core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "report", null, ["/w/doc"]),
+    // the loader chain is the render session's discard key (section 2.4)
+    roots: core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "report", "Sales", ["/w/lib"]),
+    rootOrder: core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "report", "Sales", ["/w/doc", "/w/lib"]),
+  };
+  for (const key of Object.keys(moved)) {
+    assert.strictEqual(core.isCurrentSchemaAnswer(at, moved[key]), false, key + " moved");
+  }
+  assert.strictEqual(core.isCurrentSchemaAnswer(null, same), false);
+  assert.strictEqual(core.isCurrentSchemaAnswer(at, null), false);
+  assert.strictEqual(core.isCurrentSchemaAnswer(null, null), false, "no pick is not the current pick");
+});
+
+// ------------------------------------------------------------- skeletonFrom
+
+test("skeleton: THE SALES CASE -- the done-when of S1, from the read-derived fixture", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  const out = core.skeletonFrom(SALES_SCHEMA, TODAY, paths.schemaRef);
+  assert.strictEqual(out.problem, undefined, JSON.stringify(out));
+  assert.deepStrictEqual(out.value, {
+    $schema: "./report.schema.json",
+    fromDay: TODAY,
+    toDay: TODAY,
+    orderBy: "ByDay",
+  });
+  assert.strictEqual(out.embeddable, true);
+  // `onlyRegion : Maybe String` is OMITTED, not null: docs/JSON-GUIDE.md shows
+  // the 400 a null in its place earns ("expected ..., found null").
+  assert.ok(!Object.prototype.hasOwnProperty.call(out.value, "onlyRegion"));
+  // `$schema` FIRST, so the file opens with the line that makes the rest of it
+  // validate.
+  assert.deepStrictEqual(Object.keys(out.value), ["$schema", "fromDay", "toDay", "orderBy"]);
+  // `ByDay` is the FIRST constructor of `data Sort = ByDay | ByAmount | ByUnits`
+  // (Sales.e:53), which is what `enum`'s member order is (Schema.scala:527).
+  assert.strictEqual(SALES_SCHEMA.$defs["Sales.Sort"].enum[0], "ByDay");
+  // U2/D4, said out loud: TODAY selects NONE of Sales's 2026-01-05..2026-03-17
+  // rows. What the server then answers was MEASURED by the S1 review against a
+  // real render, and it is NOT an empty document -- it is
+  //   ok=false, status=500, "Sales.report produced a document that cannot be
+  //   encoded: an empty relation built from no rows carries no columns; give it
+  //   a header (mkRelationWithHeader#) or a static hint"
+  //   at $.children[1].cells[0][0].props
+  // and the same review's controls show the skeleton itself DECODES: a
+  // wrong-typed date and a missing key each earn a 400 naming the key, and the
+  // gate's in-range params render ok=true. So this is a property of `Sales.e`
+  // and of empty relations, not of the skeleton. What to do about it is the
+  // USER'S -- section 13, Q21 -- and WP-8's first done-when clause is BLOCKED
+  // on that answer. The assertion below is the part that is true and stays.
+  assert.ok(out.value.fromDay > "2026-03-17", "the skeleton's range is after every Sales row");
+});
+
+test("skeleton: with no schemaRef there is no `$schema` key", () => {
+  const out = core.skeletonFrom(SALES_SCHEMA, TODAY);
+  assert.deepStrictEqual(Object.keys(out.value), ["fromDay", "toDay", "orderBy"]);
+  assert.strictEqual(out.embeddable, true, "it COULD carry one; it just was not given a ref");
+});
+
+test("skeleton: the first step is the `$ref` hop -- the root has no properties (D2)", () => {
+  assert.strictEqual(SALES_SCHEMA.properties, undefined, "the fixture pins the shape the walker must handle");
+  assert.strictEqual(SALES_SCHEMA.$ref, "#/$defs/Sales.Query");
+  const noDefs = { $schema: "d", $ref: "#/$defs/Nope" };
+  assert.strictEqual(core.skeletonFrom(noDefs, TODAY).problem.reason, "unsupported");
+  const badRef = { $ref: "http://example/schema#/definitions/X" };
+  assert.strictEqual(core.skeletonFrom(badRef, TODAY).problem.reason, "unsupported");
+});
+
+test("skeleton: a multi-constructor type is the FIRST arm, tagged as the decoder wants", () => {
+  // `data Scope = Everything | OneRegion { regionName : String }`
+  // (docs/JSON-GUIDE.md): a NULLARY constructor of a MIXED union is still
+  // `{"tag":..,"args":[]}` -- only an ALL-nullary type is a bare string.
+  const schema = {
+    $ref: "#/$defs/M.Scope",
+    $defs: {
+      "M.Scope": {
+        oneOf: [
+          { type: "object",
+            properties: { tag: { const: "Everything" }, args: { type: "array", maxItems: 0 } },
+            required: ["tag", "args"], additionalProperties: false },
+          { type: "object",
+            properties: { tag: { const: "OneRegion" }, regionName: { type: "string" } },
+            required: ["tag", "regionName"], additionalProperties: false },
+        ],
+      },
+    },
+  };
+  assert.deepStrictEqual(core.skeletonFrom(schema, TODAY).value, { tag: "Everything", args: [] });
+  // and the record-style arm, when it is first
+  const swapped = { $ref: "#/$defs/M.Scope",
+                    $defs: { "M.Scope": { oneOf: schema.$defs["M.Scope"].oneOf.slice().reverse() } } };
+  assert.deepStrictEqual(core.skeletonFrom(swapped, TODAY).value, { tag: "OneRegion", regionName: "" });
+});
+
+test("skeleton: a positional constructor is prefixItems, one skeleton per position", () => {
+  const schema = {
+    $ref: "#/$defs/M.P",
+    $defs: {
+      "M.P": { type: "object",
+               properties: { tag: { const: "P" },
+                             args: { type: "array", minItems: 3, maxItems: 3,
+                                     prefixItems: [{ type: "integer" }, { type: "string" },
+                                                   { type: "boolean" }] } },
+               required: ["tag", "args"], additionalProperties: false },
+    },
+  };
+  assert.deepStrictEqual(core.skeletonFrom(schema, TODAY).value, { tag: "P", args: [0, "", false] });
+  // a bare tuple root (`report : (Int, String) -> Node`) is an ARRAY, so no
+  // `$schema` key can go in it
+  const tuple = { type: "array", minItems: 2, maxItems: 2,
+                  prefixItems: [{ type: "integer" }, { type: "string" }] };
+  const out = core.skeletonFrom(tuple, TODAY, "./report.schema.json");
+  assert.deepStrictEqual(out.value, [0, ""]);
+  assert.strictEqual(out.embeddable, false);
+});
+
+test("skeleton: a list is empty and a unit is the empty array", () => {
+  assert.deepStrictEqual(core.skeletonFrom({ type: "array", items: { type: "string" } }, TODAY).value, []);
+  // `()` and a nullary positional constructor's `args` are both `maxItems: 0`,
+  // and the decoder wants "an array of exactly 0"
+  assert.deepStrictEqual(core.skeletonFrom({ type: "array", maxItems: 0 }, TODAY).value, []);
+});
+
+test("skeleton: the scalar vocabulary, each read off Schema.scala", () => {
+  const value = (node) => core.skeletonFrom(node, TODAY).value;
+  assert.strictEqual(value({ type: "string" }), "");
+  assert.strictEqual(value({ type: "integer" }), 0);
+  assert.strictEqual(value({ type: "number" }), 0);
+  assert.strictEqual(value({ type: "boolean" }), false);
+  assert.strictEqual(value({ type: "null" }), null);
+  assert.strictEqual(value({ type: "string", format: "date" }), TODAY);
+  // the EXPORTER'S OWN spelling (Encode.scala:203), because the decoder's
+  // ISO_OFFSET_DATE_TIME (Decode.scala:461) demands an offset
+  assert.strictEqual(value({ type: "string", format: "date-time" }), TODAY + "T00:00:00.000Z");
+  assert.strictEqual(value({ type: "string", format: "uuid" }), core.NIL_UUID);
+  assert.match(core.NIL_UUID, /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+               "the canonical 8-4-4-4-12 form Decode.scala:463 demands");
+  // `Long` is a decimal STRING with a pattern `""` does not match
+  assert.strictEqual(value({ type: "string", pattern: "^-?[0-9]+$" }), "0");
+  // `Char` is minLength 1 / maxLength 1, and `""` fails it
+  assert.strictEqual(value({ type: "string", minLength: 1, maxLength: 1 }), "x");
+  // `Short`/`Byte` carry a range 0 is inside
+  assert.strictEqual(value({ type: "integer", minimum: -32768, maximum: 32767 }), 0);
+  // a range that excludes 0 still gets a value inside it
+  assert.strictEqual(value({ type: "integer", minimum: 5, maximum: 9 }), 5);
+  assert.strictEqual(value({ type: "integer", maximum: -3 }), -3);
+  // a `Json` position is `{}` -- anything goes, and null is the shortest
+  assert.strictEqual(value({}), null);
+  assert.strictEqual(value({ type: "string", enum: ["a", "b"] }), "a");
+  assert.strictEqual(value({ const: 7 }), 7);
+});
+
+test("skeleton: a pattern that is not the exporter's own Long is a refusal, not a guess", () => {
+  const out = core.skeletonFrom({ type: "string", pattern: "^[a-f]{4}$" }, TODAY);
+  assert.strictEqual(out.problem.reason, "unsupported");
+  assert.match(out.problem.message, /write the params file by hand/);
+});
+
+test("skeleton: `anyOf [a, null]` takes NULL -- a required Nullable's default is absent", () => {
+  // `Nullable a` and a native `Maybe# a` are REQUIRED keys whose schema admits
+  // null (Schema.scala:585-591); only a declared `Builtin.Maybe` field is an
+  // OPTIONAL key, and that is the `required` test, not this one.
+  //
+  // SETTLED BY THE S1 REVIEW: `null`, not the payload's skeleton. Rule 2 is
+  // "the smallest value that decodes" and this is the same "absent" answer an
+  // optional `Maybe` key gets by omission. The payload was not merely longer,
+  // it was WRONG as a default: `""` for a `Nullable String` filter means
+  // "match the empty string", not "no filter", and a date means a real range.
+  const schema = { type: "object",
+                   properties: { at: { anyOf: [{ type: "string", format: "date" }, { type: "null" }] } },
+                   required: ["at"], additionalProperties: false };
+  assert.deepStrictEqual(core.skeletonFrom(schema, TODAY).value, { at: null });
+  // `oneOf` keeps the first-that-yields rule: the exporter never puts a null
+  // arm in one, and a recursive union needs its base case.
+  assert.strictEqual(core.skeletonFrom({ oneOf: [{ type: "string" }, { type: "null" }] }, TODAY).value, "");
+  // a `Maybe X` params ROOT is then `null`, which is exactly what
+  // docs/JSON-GUIDE.md says a report over `Maybe` wants
+  const root = { $schema: "d", anyOf: [{ type: "integer" }, { type: "null" }] };
+  assert.deepStrictEqual(core.skeletonFrom(root, TODAY, "./r.json"), { value: null, embeddable: false });
+  // an anyOf with no null arm still takes the first that yields
+  assert.strictEqual(core.skeletonFrom({ anyOf: [{ type: "boolean" }, { type: "string" }] }, TODAY).value,
+                     false);
+});
+
+test("skeleton: a recursive required type has NO finite default, and is named", () => {
+  // `data Chain = Chain { next : Chain }`
+  const schema = {
+    $ref: "#/$defs/M.Chain",
+    $defs: { "M.Chain": { type: "object", properties: { next: { $ref: "#/$defs/M.Chain" } },
+                          required: ["next"], additionalProperties: false } },
+  };
+  const out = core.skeletonFrom(schema, TODAY);
+  assert.strictEqual(out.problem.reason, "recursive");
+  assert.match(out.problem.message, /M\.Chain/, "the refusal NAMES the type");
+});
+
+test("skeleton: a recursive type with a base case still gets one -- the arm fails, not the call", () => {
+  // `data Tree = Leaf | Node { left : Tree, right : Tree }`: `oneOf` tries the
+  // next arm when one recurses, which is the whole reason a failed branch is
+  // not fatal.
+  const schema = {
+    $ref: "#/$defs/M.Tree",
+    $defs: {
+      "M.Tree": { oneOf: [
+        { type: "object", properties: { tag: { const: "Node" },
+                                        left: { $ref: "#/$defs/M.Tree" },
+                                        right: { $ref: "#/$defs/M.Tree" } },
+          required: ["tag", "left", "right"], additionalProperties: false },
+        { type: "object", properties: { tag: { const: "Leaf" }, args: { type: "array", maxItems: 0 } },
+          required: ["tag", "args"], additionalProperties: false },
+      ] },
+    },
+  };
+  assert.deepStrictEqual(core.skeletonFrom(schema, TODAY).value, { tag: "Leaf", args: [] });
+});
+
+test("skeleton: recursion behind an OPTIONAL key or a list is no recursion at all", () => {
+  const optional = {
+    $ref: "#/$defs/M.R",
+    $defs: { "M.R": { type: "object", properties: { n: { type: "integer" }, next: { $ref: "#/$defs/M.R" } },
+                      required: ["n"], additionalProperties: false } },
+  };
+  assert.deepStrictEqual(core.skeletonFrom(optional, TODAY).value, { n: 0 }, "the Maybe key is omitted");
+  const list = {
+    $ref: "#/$defs/M.F",
+    $defs: { "M.F": { type: "object", properties: { kids: { type: "array", items: { $ref: "#/$defs/M.F" } } },
+                      required: ["kids"], additionalProperties: false } },
+  };
+  assert.deepStrictEqual(core.skeletonFrom(list, TODAY).value, { kids: [] }, "an empty list stops the walk");
+});
+
+test("skeleton: a non-object root gets a value and says NO `$schema` can go in it (G5)", () => {
+  const ref = "./report.schema.json";
+  // `report : Int -> Node` -- WP-7's own WpSpin fixture
+  const int = core.skeletonFrom({ $schema: "d", $id: "ermine:WpSpin/Int", type: "integer" }, TODAY, ref);
+  assert.deepStrictEqual(int, { value: 0, embeddable: false });
+  // an all-nullary enum root
+  const en = core.skeletonFrom({ $ref: "#/$defs/M.S", $defs: { "M.S": { enum: ["ByDay", "ByAmount"] } } },
+                               TODAY, ref);
+  assert.deepStrictEqual(en, { value: "ByDay", embeddable: false });
+  // `Json` / `Maybe X` / `()` roots
+  assert.deepStrictEqual(core.skeletonFrom({ $schema: "d", $id: "x" }, TODAY, ref),
+                         { value: null, embeddable: false });
+  assert.deepStrictEqual(core.skeletonFrom({ type: "array", maxItems: 0 }, TODAY, ref),
+                         { value: [], embeddable: false });
+});
+
+test("skeleton: the arguments it refuses", () => {
+  assert.strictEqual(core.skeletonFrom(null, TODAY).problem.reason, "not-a-schema");
+  assert.strictEqual(core.skeletonFrom("{}", TODAY).problem.reason, "not-a-schema");
+  assert.strictEqual(core.skeletonFrom([], TODAY).problem.reason, "not-a-schema");
+  for (const bad of [undefined, "", "today", "2026-9-21", "2026-09-21T00:00:00Z", 20260921]) {
+    assert.strictEqual(core.skeletonFrom(SALES_SCHEMA, bad).problem.reason, "bad-today",
+                       JSON.stringify(bad) + " is not YYYY-MM-DD");
+  }
+});
+
+test("skeleton: an unsatisfiable schema is named, not looped over", () => {
+  const closed = { type: "object", properties: {}, required: ["x"], additionalProperties: false };
+  assert.strictEqual(core.skeletonFrom(closed, TODAY).problem.reason, "unsatisfiable");
+  assert.strictEqual(core.skeletonFrom({ oneOf: [] }, TODAY).problem.reason, "unsatisfiable");
+  assert.strictEqual(core.skeletonFrom({ enum: [] }, TODAY).problem.reason, "unsatisfiable");
+  assert.strictEqual(core.skeletonFrom(false, TODAY).problem.reason, "not-a-schema",
+                     "a boolean is not a schema DOCUMENT, whatever it is inside one");
+  // a required key with no schema of its own, in an OPEN object, is allowed
+  const open = { type: "object", properties: {}, required: ["x"], additionalProperties: true };
+  assert.deepStrictEqual(core.skeletonFrom(open, TODAY).value, { x: null });
+});
+
+test("skeleton: a schema deeper than the stack is a refusal, not a crash", () => {
+  let node = { type: "string" };
+  for (let i = 0; i < core.MAX_SKELETON_DEPTH + 5; i++) {
+    node = { type: "object", properties: { a: node }, required: ["a"], additionalProperties: false };
+  }
+  assert.strictEqual(core.skeletonFrom(node, TODAY).problem.reason, "too-deep");
+});
+
+test("skeleton: the schema it was handed is not touched", () => {
+  const before = JSON.stringify(SALES_SCHEMA);
+  core.skeletonFrom(SALES_SCHEMA, TODAY, "./report.schema.json");
+  assert.strictEqual(JSON.stringify(SALES_SCHEMA), before);
+});
+
+// ------------------------------------------------------ schemaFileFor / schemaFileText
+
+test("schemaFile: `$id` is dropped and `$schema`/`$ref`/`$defs` are kept (U1)", () => {
+  const file = core.schemaFileFor(SALES_SCHEMA);
+  assert.strictEqual(file.$id, undefined, "a custom-scheme base URI may defeat $ref resolution (D3)");
+  assert.strictEqual(file.$schema, "https://json-schema.org/draft/2020-12/schema", "the DIALECT stays");
+  assert.strictEqual(file.$ref, "#/$defs/Sales.Query", "recursion needs $ref and $defs");
+  assert.deepStrictEqual(Object.keys(file.$defs), ["Sales.Query", "Sales.Sort"]);
+});
+
+test("schemaFile: `$schema` is injected into the object the root `$ref` NAMES, not the root (D1)", () => {
+  const file = core.schemaFileFor(SALES_SCHEMA);
+  const query = file.$defs["Sales.Query"];
+  assert.deepStrictEqual(query.properties.$schema, { type: "string" });
+  assert.deepStrictEqual(Object.keys(query.properties),
+                         ["$schema", "fromDay", "toDay", "onlyRegion", "orderBy"]);
+  assert.strictEqual(query.additionalProperties, false, "the object stays CLOSED: a wrong key still squiggles");
+  assert.deepStrictEqual(query.required, ["fromDay", "toDay", "orderBy"], "`$schema` is OPTIONAL");
+  assert.strictEqual(file.properties, undefined,
+                     "a `properties` at the root would do nothing: additionalProperties only sees its sibling");
+  // THE POINT OF THE WHOLE EDIT: the skeleton we write carries a `$schema`
+  // line, and the schema we write beside it must allow that line.
+  const out = core.skeletonFrom(SALES_SCHEMA, TODAY, "./report.schema.json");
+  assert.ok(Object.prototype.hasOwnProperty.call(
+    file.$defs["Sales.Query"].properties, "$schema"), JSON.stringify(out.value));
+});
+
+test("schemaFile: an INLINE object root is injected at the root -- there it IS the sibling", () => {
+  // `report : {..(|a, b|)} -> Node` (a Record params type, Schema.scala:412):
+  // the exporter splices the record's own fields next to $schema/$id, so the
+  // document root carries `properties` AND `additionalProperties: false`.
+  // D1 named only the `$ref` case; this is the same defect one level up.
+  const record = { $schema: "d", $id: "ermine:M/{..}", type: "object",
+                   properties: { a: { type: "string" }, b: { type: "integer" } },
+                   required: ["a", "b"], additionalProperties: false };
+  const file = core.schemaFileFor(record);
+  assert.deepStrictEqual(Object.keys(file.properties), ["$schema", "a", "b"]);
+  assert.strictEqual(file.$id, undefined);
+});
+
+test("schemaFile: EVERY arm of a multi-constructor root is injected", () => {
+  // The developer may retag the file to any arm, and the `$schema` line has to
+  // survive that. An optional key on every arm cannot make two arms match one
+  // value: the `tag` consts still discriminate.
+  const schema = { $ref: "#/$defs/M.S", $defs: { "M.S": { oneOf: [
+    { type: "object", properties: { tag: { const: "A" } }, required: ["tag"], additionalProperties: false },
+    { type: "object", properties: { tag: { const: "B" } }, required: ["tag"], additionalProperties: false },
+  ] } } };
+  const file = core.schemaFileFor(schema);
+  for (const arm of file.$defs["M.S"].oneOf) {
+    assert.deepStrictEqual(arm.properties.$schema, { type: "string" });
+  }
+});
+
+test("schemaFile: an OPEN object and a non-object root are left alone", () => {
+  // A `Spread Json` field makes the object open (Schema.scala:620): it already
+  // admits any key, so injecting would change what the file MEANS.
+  const open = { $id: "x", $ref: "#/$defs/M.T", $defs: { "M.T": {
+    type: "object", properties: { a: { type: "string" } }, required: ["a"], additionalProperties: true } } };
+  assert.deepStrictEqual(core.schemaFileFor(open).$defs["M.T"].properties, { a: { type: "string" } });
+
+  const int = { $schema: "d", $id: "ermine:M/Int", type: "integer" };
+  assert.deepStrictEqual(core.schemaFileFor(int), { $schema: "d", type: "integer" });
+
+  const already = { $ref: "#/$defs/M.T", $defs: { "M.T": {
+    type: "object", properties: { $schema: { type: "number" } }, required: [], additionalProperties: false } } };
+  assert.deepStrictEqual(core.schemaFileFor(already).$defs["M.T"].properties.$schema, { type: "number" },
+                         "an existing declaration is not overwritten");
+
+  assert.strictEqual(core.schemaFileFor(null), null);
+  assert.strictEqual(core.schemaFileFor("x"), "x");
+});
+
+test("schemaFile: the input is never mutated and the edit is idempotent", () => {
+  const before = JSON.stringify(SALES_SCHEMA);
+  const once = core.schemaFileFor(SALES_SCHEMA);
+  assert.strictEqual(JSON.stringify(SALES_SCHEMA), before, "the server's schema is the glue's, not ours");
+  const twice = core.schemaFileFor(once);
+  assert.strictEqual(core.schemaFileText(twice), core.schemaFileText(once),
+                     "D8 compares BYTES, so the second run must produce the same ones");
+});
+
+test("schemaFile: the text is stable and ends in a newline (D8's write-if-different)", () => {
+  const text = core.schemaFileText(core.schemaFileFor(SALES_SCHEMA));
+  assert.ok(text.endsWith("\n"), "so git and every POSIX tool behave");
+  assert.strictEqual(text, core.schemaFileText(core.schemaFileFor(SALES_SCHEMA)));
+  assert.match(text, /^\{\n  "\$schema"/, "two-space, one key per line, diffable");
+  assert.deepStrictEqual(JSON.parse(text), core.schemaFileFor(SALES_SCHEMA));
+});
+
+test("gitignore: the generated file ignores what is GENERATED and not the params (U7)", () => {
+  const lines = core.paramsGitignoreText.split("\n");
+  assert.ok(lines.indexOf("*.schema.json") >= 0, "the schema is generated on every change");
+  assert.ok(lines.indexOf("*.db") >= 0, "WP-13/WP-14's local database file");
+  assert.ok(!lines.some((l) => /^[^#]*params\.json/.test(l)),
+            "the params file is COMMITTED: `git status` showing it is a done-when");
+  assert.ok(core.paramsGitignoreText.endsWith("\n"));
+  assert.match(core.paramsGitignoreText, /^# Generated by the Ermine preview/,
+               "a generated file says so in its first line");
+});
+
+// -------------------------------------------------------------- paramsToSend
+
+test("paramsToSend: the ordinary case, and the `$schema` strip (G20)", () => {
+  const out = core.paramsToSend('{"$schema":"./report.schema.json","fromDay":"2026-01-05","toDay":"2026-02-20"}');
+  assert.deepStrictEqual(out.params, { fromDay: "2026-01-05", toDay: "2026-02-20" });
+  assert.deepStrictEqual(out.warnings, []);
+  // every request key is closed (json/Runner.scala:101-103), so the line that
+  // makes the EDITOR work would be a 400 from the SERVER
+  assert.ok(!Object.prototype.hasOwnProperty.call(out.params, "$schema"));
+});
+
+test("paramsToSend: ONLY the top-level `$schema`, and ONLY when the root is an object", () => {
+  const nested = core.paramsToSend('{"a":{"$schema":"keep me"},"b":[{"$schema":"me too"}]}');
+  assert.deepStrictEqual(nested.params, { a: { $schema: "keep me" }, b: [{ $schema: "me too" }] });
+  // a non-object root has no top-level key to strip
+  assert.deepStrictEqual(core.paramsToSend('[{"$schema":"x"}]').params, [{ $schema: "x" }]);
+  assert.strictEqual(core.paramsToSend('5').params, 5);
+  assert.strictEqual(core.paramsToSend('"ByDay"').params, "ByDay");
+  assert.strictEqual(core.paramsToSend('null').params, null);
+  assert.strictEqual(core.paramsToSend('true').params, true);
+  assert.deepStrictEqual(core.paramsToSend('[]').params, []);
+  // the remaining keys keep their order
+  assert.deepStrictEqual(Object.keys(core.paramsToSend('{"b":1,"$schema":"x","a":2}').params), ["b", "a"]);
+});
+
+test("paramsToSend: invalid JSON is a REFUSAL and the render does not happen (G7)", () => {
+  const out = core.paramsToSend('{"fromDay": }');
+  assert.strictEqual(out.params, undefined);
+  assert.strictEqual(out.problem.reason, "invalid-json");
+  assert.match(out.problem.message, /not valid JSON/);
+  assert.ok(out.problem.message.length > "The params file is not valid JSON, so the report was not rendered: ".length,
+            "the parser's own message travels with the refusal");
+  // a control character from a broken file never reaches a message raw
+  assert.ok(core.paramsToSend('{\u0007').problem.message.indexOf("\u0007") < 0);
+});
+
+test("paramsToSend: an EMPTY file is named, and is not silently `{}`", () => {
+  for (const text of ["", "   ", "\n\n", "\t \r\n"]) {
+    const out = core.paramsToSend(text);
+    assert.strictEqual(out.problem.reason, "empty", JSON.stringify(text));
+    assert.match(out.problem.message, /empty/);
+    assert.match(out.problem.message, /\{\}/, "and says what to write instead");
+  }
+  // WHY, since the tracker did not settle it: a MISSING params key decodes as
+  // null server-side (docs/JSON-GUIDE.md), but a missing key is a file that
+  // does not EXIST -- S3's case, which sends `{}`. A file that exists and is
+  // empty is a truncated write, and rendering it as `{}` would throw away
+  // parameters the developer believes are there and show a document that
+  // looks fine.
+  assert.deepStrictEqual(core.paramsToSend("{}").params, {}, "an EXPLICIT {} is not the same event");
+});
+
+test("paramsToSend: the cap is on UTF-8 BYTES of the text, with a named refusal (U6)", () => {
+  assert.strictEqual(core.PARAMS_MAX_BYTES, 1024 * 1024, "1 MiB; the only other bound closes the connection");
+  const big = '{"a":"' + "x".repeat(core.PARAMS_MAX_BYTES) + '"}';
+  const out = core.paramsToSend(big);
+  assert.strictEqual(out.problem.reason, "too-large");
+  assert.match(out.problem.message, /was not sent and the report was not rendered/);
+  // BYTES, not UTF-16 units: eight astral characters are 32 bytes
+  const astral = '{"a":"' + "\u{1F600}".repeat(8) + '"}';
+  assert.strictEqual(Buffer.byteLength(astral, "utf8"), 32 + 8);
+  assert.strictEqual(core.paramsToSend(astral, 39).problem.reason, "too-large");
+  assert.strictEqual(core.paramsToSend(astral, 40).problem, undefined);
+  assert.strictEqual(core.paramsToSend("{}", 0).problem, undefined, "a nonsense cap falls back to the default");
+});
+
+test("paramsToSend: a credential-looking top-level key WARNS and never blocks (U5)", () => {
+  const out = core.paramsToSend('{"password":"hunter2","apiKey":"k","api_key":"k","x":1}');
+  assert.deepStrictEqual(out.params, { password: "hunter2", apiKey: "k", api_key: "k", x: 1 },
+                         "NOTHING is blocked: a report may legitimately take a token");
+  assert.strictEqual(out.warnings.length, 1, "one warning per file, not per key");
+  assert.match(out.warnings[0], /"password", "apiKey", "api_key"/);
+  for (const key of ["pass", "passwd", "PASSWORD", "pwd", "secret", "clientSecret", "token",
+                     "apiKey", "api_key", "api-key", "APIKEY"]) {
+    assert.ok(core.CREDENTIAL_KEY.test(key), key + " must be flagged");
+    assert.strictEqual(core.paramsToSend(JSON.stringify({ [key]: 1 })).warnings.length, 1, key);
+  }
+  for (const key of ["fromDay", "region", "orderBy", "passenger"]) {
+    // `passenger` CONTAINS "pass" and is flagged: the rule is a substring
+    // match on purpose (U5's own regex), and over-warning costs a sentence.
+    const flagged = core.paramsToSend(JSON.stringify({ [key]: 1 })).warnings.length;
+    assert.strictEqual(flagged, key === "passenger" ? 1 : 0, key);
+  }
+  // NESTED keys are not scanned: the rule is top-level, like the strip
+  assert.deepStrictEqual(core.paramsToSend('{"db":{"password":"x"}}').warnings, []);
+  assert.strictEqual(core.paramsToSend('{"$schema":"./x.json","token":1}').warnings.length, 1,
+                     "the stripped key is not scanned, the rest is");
+});
+
+test("paramsToSend: the warning says what the hazard IS, not just that there is one", () => {
+  const text = core.credentialKeyWarning(["password"]);
+  assert.match(text, /committed to the repository/, "section 8: a params file is committed");
+  assert.match(text, /log/, "and the render body reaches ERMINE_LSP_LOG (Rpc.scala:244)");
+  assert.match(text, /Nothing is blocked/);
+  // THE TEXT MUST MATCH THE REGEX (the S1 review's nit 5). U5 fixed the
+  // pattern verbatim, so it is NOT widened here -- instead the warning says
+  // what it actually looks for and names what it does NOT, so nobody reads
+  // its silence as a clearance.
+  assert.match(text, /KEY NAME only/);
+  for (const missed of ["connectionString", "dsn", "jwt", "auth", "bearer", "privateKey", "credential"]) {
+    assert.ok(!core.CREDENTIAL_KEY.test(missed), missed + " is NOT matched by U5's pattern");
+    assert.ok(text.indexOf(missed) >= 0, "so the warning must name " + missed + " as a blind spot");
+  }
+  assert.ok(text.indexOf("connection string") < 0,
+            "the old text claimed a connection string was covered; the regex cannot match one");
+  assert.match(core.credentialKeyWarning(["a", "b"]), /^The keys "a", "b" look/);
+  assert.match(core.credentialKeyWarning(["a"]), /^The key "a" looks/);
+});
+
+test("paramsToSend: what is not text", () => {
+  for (const bad of [undefined, null, 5, {}, []]) {
+    assert.strictEqual(core.paramsToSend(bad).problem.reason, "not-text", JSON.stringify(bad));
+  }
+});
+
+// ------------------------------------------------ the fingerprint is WP-22's (G19)
+
+test("fingerprint: WP-8 CALLS WP-22's `paramsFingerprint` and mints no second one", () => {
+  const fp = (text) => core.paramsFingerprint(core.paramsToSend(text).params);
+  const canonical = fp('{"$schema":"./report.schema.json","fromDay":"2026-01-05","toDay":"2026-02-20"}');
+
+  // A RE-FORMAT does not clear the wedge mark...
+  assert.strictEqual(fp('{\n  "$schema" : "./report.schema.json",\n  "fromDay":"2026-01-05",\n' +
+                        '  "toDay" : "2026-02-20"\n}\n'), canonical, "re-formatted");
+  // ...nor does REORDERING the keys (canonicalJson sorts them)...
+  assert.strictEqual(fp('{"toDay":"2026-02-20","fromDay":"2026-01-05","$schema":"./report.schema.json"}'),
+                     canonical, "reordered");
+  // ...nor does changing the `$schema` LINE, which is stripped before the
+  // fingerprint is taken: it is not part of the value that is sent.
+  assert.strictEqual(fp('{"$schema":"./somewhere/else.json","fromDay":"2026-01-05","toDay":"2026-02-20"}'),
+                     canonical, "a different $schema");
+  assert.strictEqual(fp('{"fromDay":"2026-01-05","toDay":"2026-02-20"}'), canonical, "no $schema at all");
+
+  // A REAL VALUE CHANGE DOES clear it.
+  assert.notStrictEqual(fp('{"fromDay":"2026-01-06","toDay":"2026-02-20"}'), canonical, "a changed date");
+  assert.notStrictEqual(fp('{"fromDay":"2026-01-05","toDay":"2026-02-20","onlyRegion":"north"}'), canonical,
+                        "a key added");
+  assert.notStrictEqual(fp('{"fromDay":"2026-01-05"}'), canonical, "a key removed");
+  assert.notStrictEqual(fp('{"fromDay":"2026-01-05","toDay":20260220}'), canonical, "a type changed");
+});
+
+test("fingerprint: a params value is stored as a DIGEST and nowhere appears in it (WP-22 M3)", () => {
+  const secret = "hunter2-s3cr3t-c0nnection-string";
+  const fp = core.paramsFingerprint(core.paramsToSend(JSON.stringify({ password: secret })).params);
+  assert.match(fp, /^[0-9a-f]{64}$/, "a SHA-256, because the mark goes into workspaceState on disk");
+  assert.ok(fp.indexOf(secret) < 0);
+  assert.ok(fp.indexOf("password") < 0);
+  for (const piece of ["hunter2", "s3cr3t", "c0nnection"]) assert.ok(fp.indexOf(piece) < 0, piece);
+});
+
+// ------------------------------------------------------------------ properties
+//
+// A SMALL VALIDATOR FOR THE EXPORTER'S VOCABULARY AND NOTHING ELSE.  It is
+// here, in the test, rather than in `preview-core.js`, because the rule is
+// "never validate client-side twice" (review G7): the server's 400 is
+// authoritative at run time.  What this one is for is the property below --
+// the skeleton this code writes must be a value the schema accepts, or the
+// first render of a fresh checkout is a 400 with our own file's name on it.
+
+function jsonEqual(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+
+function validates(node, value, defs, depth) {
+  if (depth > 400) return false;
+  if (node === true) return true;
+  if (node === false) return false;
+  if (!node || typeof node !== "object" || Array.isArray(node)) return false;
+  if (typeof node.$ref === "string") {
+    const name = node.$ref.replace("#/$defs/", "");
+    if (!Object.prototype.hasOwnProperty.call(defs, name)) return false;
+    return validates(defs[name], value, defs, depth + 1);
+  }
+  if (Object.prototype.hasOwnProperty.call(node, "const")) return jsonEqual(node.const, value);
+  if (Array.isArray(node.enum)) return node.enum.some((e) => jsonEqual(e, value));
+  // `oneOf` is EXACTLY one, which is what the tag consts of a multi-constructor
+  // type give; `anyOf` is at least one.
+  if (Array.isArray(node.oneOf)) {
+    return node.oneOf.filter((s) => validates(s, value, defs, depth + 1)).length === 1;
+  }
+  if (Array.isArray(node.anyOf)) return node.anyOf.some((s) => validates(s, value, defs, depth + 1));
+  const type = Array.isArray(node.type) ? node.type[0] : node.type;
+  if (type === undefined) return true;
+  if (type === "null") return value === null;
+  if (type === "boolean") return typeof value === "boolean";
+  if (type === "integer" || type === "number") {
+    if (typeof value !== "number") return false;
+    if (type === "integer" && !Number.isInteger(value)) return false;
+    if (typeof node.minimum === "number" && value < node.minimum) return false;
+    if (typeof node.maximum === "number" && value > node.maximum) return false;
+    return true;
+  }
+  if (type === "string") {
+    if (typeof value !== "string") return false;
+    if (typeof node.minLength === "number" && value.length < node.minLength) return false;
+    if (typeof node.maxLength === "number" && value.length > node.maxLength) return false;
+    if (typeof node.pattern === "string" && !new RegExp(node.pattern).test(value)) return false;
+    // FORMAT IS CHECKED, though JSON Schema calls it an annotation: the
+    // decoder is not an annotation (Decode.scala:551-573).
+    if (node.format === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    if (node.format === "date-time" && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+    if (node.format === "uuid" &&
+        !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(value)) return false;
+    return true;
+  }
+  if (type === "array") {
+    if (!Array.isArray(value)) return false;
+    if (typeof node.minItems === "number" && value.length < node.minItems) return false;
+    if (typeof node.maxItems === "number" && value.length > node.maxItems) return false;
+    const prefix = Array.isArray(node.prefixItems) ? node.prefixItems : [];
+    for (let i = 0; i < value.length; i++) {
+      const sub = i < prefix.length ? prefix[i] : node.items;
+      if (sub !== undefined && !validates(sub, value[i], defs, depth + 1)) return false;
+    }
+    return true;
+  }
+  if (type === "object") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const properties = node.properties && typeof node.properties === "object" ? node.properties : {};
+    for (const key of (Array.isArray(node.required) ? node.required : [])) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) return false;
+    }
+    for (const key of Object.keys(value)) {
+      if (Object.prototype.hasOwnProperty.call(properties, key)) {
+        if (!validates(properties[key], value[key], defs, depth + 1)) return false;
+      } else if (node.additionalProperties === false) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+test("validator: the little validator has teeth (it is the property's only oracle)", () => {
+  const defs = SALES_SCHEMA.$defs;
+  assert.strictEqual(validates(SALES_SCHEMA, { fromDay: TODAY, toDay: TODAY, orderBy: "ByDay" }, defs, 0), true);
+  assert.strictEqual(validates(SALES_SCHEMA, { fromDay: TODAY, toDay: TODAY }, defs, 0), false, "a missing required key");
+  assert.strictEqual(validates(SALES_SCHEMA, { fromDay: TODAY, toDay: TODAY, orderBy: "Nope" }, defs, 0), false, "a bad enum");
+  assert.strictEqual(validates(SALES_SCHEMA, { fromDay: "nope", toDay: TODAY, orderBy: "ByDay" }, defs, 0), false, "a bad date");
+  assert.strictEqual(validates(SALES_SCHEMA, { fromDay: TODAY, toDay: TODAY, orderBy: "ByDay", nope: 1 }, defs, 0),
+                     false, "an extra key under additionalProperties:false");
+  // AND THE WHOLE POINT OF D1: the `$schema` line is refused by the RAW schema
+  // and accepted by the one we WRITE.
+  const withRef = { $schema: "./report.schema.json", fromDay: TODAY, toDay: TODAY, orderBy: "ByDay" };
+  assert.strictEqual(validates(SALES_SCHEMA, withRef, defs, 0), false, "D1: the raw schema squiggles our own line");
+  const file = core.schemaFileFor(SALES_SCHEMA);
+  assert.strictEqual(validates(file, withRef, file.$defs, 0), true, "and the written file does not");
+});
+
+/**
+ * A GENERATOR OF SCHEMAS IN THE EXPORTER'S VOCABULARY, and only it: `$defs`
+ * entries that are an `enum` (an all-nullary `data`), one arm (a
+ * single-constructor `data`) or a `oneOf` of arms, each arm record-style or
+ * positional exactly as `json/Schema.scala:571-616` writes them, over the
+ * builtins of `:327-339`.  A def may reference a LATER def or ITSELF, so
+ * recursive types -- with and without a base case -- are drawn.
+ */
+/** Is this the exporter's `Nullable` shape? (The generator must not nest one
+  * inside another; the exporter refuses that at `Schema.scala:368-370`.) */
+function isPlainNullable(node) {
+  return !!node && typeof node === "object" && Array.isArray(node.anyOf) &&
+         node.anyOf.some((a) => a && a.type === "null");
+}
+
+function generateSchema(rnd) {
+  const defCount = 1 + rnd(4);
+  const names = [];
+  for (let i = 0; i < defCount; i++) names.push("M.T" + i);
+  const defs = {};
+
+  const leaf = () => {
+    switch (rnd(11)) {
+      case 0: return { type: "string" };
+      case 1: return { type: "integer" };
+      case 2: return { type: "integer", minimum: -128, maximum: 127 };
+      case 3: return { type: "number" };
+      case 4: return { type: "boolean" };
+      case 5: return { type: "string", format: "date" };
+      case 6: return { type: "string", format: "date-time" };
+      case 7: return { type: "string", format: "uuid" };
+      case 8: return { type: "string", pattern: "^-?[0-9]+$" };            // Long
+      case 9: return { type: "string", minLength: 1, maxLength: 1 };       // Char
+      default: return {};                                                  // Json
+    }
+  };
+  const value = (self, depth) => {
+    if (depth > 3) return leaf();
+    switch (rnd(7)) {
+      case 0: return { $ref: "#/$defs/" + names[self + rnd(defCount - self)] };
+      case 1: return { type: "array", items: value(self, depth + 1) };
+      case 2: {
+        const n = 1 + rnd(3);
+        const items = [];
+        for (let i = 0; i < n; i++) items.push(value(self, depth + 1));
+        return { type: "array", prefixItems: items, minItems: n, maxItems: n };
+      }
+      case 3: {
+        // `Maybe (Maybe a)` and `Nullable (Nullable a)` are REFUSED by the
+        // exporter ("both layers encode to null", `Schema.scala:368-370`), so
+        // the payload here is never itself a nullable.
+        let payload = value(self, depth + 1);
+        if (isPlainNullable(payload)) payload = leaf();
+        return { anyOf: [payload, { type: "null" }] };
+      }
+      case 4: return { type: "array", maxItems: 0 };                          // ()
+      default: return leaf();
+    }
+  };
+  const arm = (self, tag, only) => {
+    const n = rnd(4);
+    const named = n > 0 && rnd(2) === 0;
+    if (named) {
+      const properties = only ? {} : { tag: { const: tag } };
+      const required = only ? [] : ["tag"];
+      for (let i = 0; i < n; i++) {
+        const key = "f" + i;
+        properties[key] = value(self, 0);
+        if (rnd(3) !== 0) required.push(key);                  // else a Maybe: OPTIONAL
+      }
+      // A `Spread Json` FIELD MAKES THE OBJECT OPEN (`Schema.scala:606`,
+      // `additionalProperties -> Json.jBool(spreads.nonEmpty)`; the real
+      // example is the committed `UserSpread.schema.json`). The S1 review
+      // measured this branch at COUNT 0 over the shipped 4000 draws -- and it
+      // is exactly the branch `allowSchemaKey` short-circuits on, and the one
+      // where a nested `$schema` is legitimately legal. A Spread field is NOT
+      // a property of its own, so only the flag changes.
+      const open = rnd(5) === 0;
+      return { type: "object", properties: properties, required: required,
+               additionalProperties: !open ? false : true };
+    }
+    const items = [];
+    for (let i = 0; i < n; i++) items.push(value(self, 0));
+    const args = n === 0
+      ? { type: "array", maxItems: 0 }
+      : { type: "array", prefixItems: items, minItems: n, maxItems: n };
+    return { type: "object", properties: { tag: { const: tag }, args: args },
+             required: ["tag", "args"], additionalProperties: false };
+  };
+  for (let i = 0; i < defCount; i++) {
+    if (rnd(4) === 0) {
+      const members = [];
+      for (let k = 0; k <= rnd(3); k++) members.push("C" + k);
+      defs[names[i]] = { enum: members };
+    } else {
+      const arms = 1 + rnd(3);
+      const body = [];
+      for (let k = 0; k < arms; k++) body.push(arm(i, "C" + k, arms === 1));
+      defs[names[i]] = arms === 1 ? body[0] : { oneOf: body };
+    }
+  }
+  const root = rnd(4) === 0 ? value(0, 0) : { $ref: "#/$defs/" + names[0] };
+  return Object.assign({ $schema: "https://json-schema.org/draft/2020-12/schema",
+                         $id: "ermine:M/T" }, root, { $defs: defs });
+}
+
+test("PROPERTY: a skeleton is a problem or a value the schema ACCEPTS", () => {
+  const rnd = wp8Rnd(20260921);
+  let problems = 0, values = 0, recursive = 0, embedded = 0;
+  for (let i = 0; i < 4000; i++) {
+    const schema = generateSchema(rnd);
+    const before = JSON.stringify(schema);
+    const file = core.schemaFileFor(schema);
+    const out = core.skeletonFrom(schema, TODAY, "./report.schema.json");
+    assert.strictEqual(JSON.stringify(schema), before, "the schema is not touched");
+    if (out.problem) {
+      problems++;
+      if (out.problem.reason === "recursive") recursive++;
+      assert.ok(out.problem.message.length > 0, JSON.stringify(out.problem));
+      continue;
+    }
+    values++;
+    // WITHOUT the `$schema` line, the value must satisfy the schema AS EXPORTED
+    const bare = core.skeletonFrom(schema, TODAY);
+    assert.strictEqual(validates(schema, bare.value, schema.$defs, 0), true,
+                       "the skeleton must decode: " + JSON.stringify(bare.value) + " against " + before);
+    // WITH it -- which is what is actually written -- it must satisfy the
+    // schema FILE. This is D1's whole point, as a property.
+    if (out.embeddable) {
+      embedded++;
+      assert.strictEqual(out.value.$schema, "./report.schema.json");
+      assert.strictEqual(validates(file, out.value, file.$defs, 0), true,
+                         "the `$schema` line must not squiggle: " + JSON.stringify(out.value) +
+                         " against " + JSON.stringify(file));
+    } else {
+      assert.ok(!core.schemaFileText(out.value).includes('"$schema"') || typeof out.value !== "object",
+                "a non-embeddable skeleton carries no $schema key we put there");
+    }
+  }
+  // MEASURED on this seed: values=3882, problems=118 (ALL OF THEM `recursive` --
+  // the generator emits only the exporter's vocabulary, so `unsupported`,
+  // `unsatisfiable` and `too-deep` are reachable from a hand-edited schema and
+  // are covered by the table tests above, not from here), embedded=2203. The
+  // generator has to reach all four or the property is only testing the easy half.
+  assert.deepStrictEqual(
+    [values > 2000, problems > 100, recursive > 50, embedded > 1000],
+    [true, true, true, true],
+    "values=" + values + " problems=" + problems + " recursive=" + recursive + " embedded=" + embedded);
+});
+
+test("PROPERTY: `schemaFileFor` never mutates its input and is idempotent", () => {
+  const rnd = wp8Rnd(424243);
+  for (let i = 0; i < 2000; i++) {
+    const schema = generateSchema(rnd);
+    const before = JSON.stringify(schema);
+    const once = core.schemaFileFor(schema);
+    assert.strictEqual(JSON.stringify(schema), before);
+    assert.strictEqual(once.$id, undefined);
+    const twice = core.schemaFileFor(once);
+    assert.strictEqual(core.schemaFileText(twice), core.schemaFileText(once));
+    // and nothing it answers shares structure with what it was given
+    once.$defs = null;
+    assert.strictEqual(JSON.stringify(schema), before);
+  }
+});
+
+/** Any JSON value, for the round-trip property. */
+function generateJson(rnd, depth) {
+  if (depth > 3) return rnd(2) === 0 ? rnd(100) : "s" + rnd(10);
+  switch (rnd(9)) {
+    case 0: return null;
+    case 1: return rnd(2) === 0;
+    case 2: return rnd(1000) - 500;
+    case 3: return (rnd(1000) - 500) / 8;
+    case 4: return ["", "s", "\u00e9\u{1F600}", "a b", '"q"', "\u0000"][rnd(6)];
+    case 5: {
+      const out = [];
+      for (let i = rnd(4); i > 0; i--) out.push(generateJson(rnd, depth + 1));
+      return out;
+    }
+    default: {
+      const out = {};
+      const keys = ["a", "b", "$schema", "token", "", "x.y", "\u00e9"];
+      for (let i = rnd(5); i > 0; i--) out[keys[rnd(keys.length)]] = generateJson(rnd, depth + 1);
+      return out;
+    }
+  }
+}
+
+test("PROPERTY: `paramsToSend(JSON.stringify(x))` round-trips any JSON value", () => {
+  const rnd = wp8Rnd(9090909);
+  let stripped = 0, warned = 0;
+  for (let i = 0; i < 4000; i++) {
+    const original = generateJson(rnd, 0);
+    const out = core.paramsToSend(JSON.stringify(original));
+    assert.strictEqual(out.problem, undefined, JSON.stringify(original));
+    const expected = original;
+    if (expected && typeof expected === "object" && !Array.isArray(expected) &&
+        Object.prototype.hasOwnProperty.call(expected, "$schema")) {
+      stripped++;
+      const copy = Object.assign({}, expected);
+      delete copy.$schema;
+      assert.deepStrictEqual(out.params, copy);
+    } else {
+      assert.deepStrictEqual(out.params, JSON.parse(JSON.stringify(expected)));
+    }
+    if (out.warnings.length) {
+      warned++;
+      assert.strictEqual(out.warnings.length, 1, "one warning per file");
+    }
+  }
+  // MEASURED on this seed: stripped=359, warned=338.
+  assert.ok(stripped > 100 && warned > 100, "stripped=" + stripped + " warned=" + warned);
+});
+
+test("PROPERTY: `paramsPaths` never answers a path outside the workspace folder", () => {
+  const rnd = wp8Rnd(777777);
+  // The hostile alphabet, plus the shapes that are legal, so the property is
+  // not vacuously about refusals.
+  const pieces = ["..", ".", "/", "\\", ":", "\u0000", "Sales", "report", "%2e%2e", "~",
+                  "C:", "CON", "NUL", "com1", " ", "'", "\u00e9", "x", "*", "?", "|", "<", ">", '"'];
+  const clean = ["Sales", "report", "Layout", "Widgets", "x", "T1", "_a", "b'", "."];
+  const draw = () => {
+    // A THIRD OF THE DRAWS ARE PLAUSIBLE NAMES, deliberately: with the hostile
+    // alphabet alone the property is only ever about refusals, and the thing it
+    // has to pin is what the ACCEPTED paths look like.
+    const alphabet = rnd(3) === 0 ? pieces : clean;
+    let s = "";
+    for (let i = rnd(5); i >= 0; i--) s += alphabet[rnd(alphabet.length)];
+    return s;
+  };
+  const folders = { posix: "/w/space", win32: "C:\\w space" };
+  const files = { posix: "/w/space/doc/S.e", win32: "C:\\w space\\doc\\S.e" };
+  let accepted = 0, refused = 0;
+  for (let i = 0; i < 6000; i++) {
+    const flavour = rnd(2) === 0 ? "posix" : "win32";
+    const p = path[flavour];
+    const pick = core.makePick("file:///x", files[flavour], draw(), draw(), []);
+    const out = core.paramsPaths(pick, folders[flavour], flavour);
+    if (out.problem) { refused++; assert.ok(out.problem.message.length > 0); continue; }
+    accepted++;
+    // An INDEPENDENT containment check: `path.relative` (which the code under
+    // test deliberately does not use) over two absolute paths.
+    for (const key of ["previewDir", "dir", "paramsPath", "schemaPath", "gitignorePath"]) {
+      const rel = p.relative(folders[flavour], out[key]);
+      assert.ok(rel && !rel.startsWith("..") && !p.isAbsolute(rel),
+                key + " = " + out[key] + " escaped " + folders[flavour] + " (rel " + rel + ")");
+    }
+    assert.match(out.schemaRef, /^\.\/[A-Za-z_][A-Za-z0-9_']*\.schema\.json$/);
+  }
+  // MEASURED on this seed: accepted=1593, refused=4407.
+  assert.ok(accepted > 200 && refused > 2000, "accepted=" + accepted + " refused=" + refused);
+});
+
+// ------------------------------------------- D-1: a NESTED `$schema` stays illegal
+//
+// The S1 review found the design's own failure with the sign reversed: the
+// injection went into the SHARED `$defs` entry, so for a recursive params type
+// the editor ACCEPTED a nested `$schema` key that `paramsToSend` does not strip
+// (G20 is top-level-only, deliberately) and that the server refuses --
+// MEASURED against a real server as `400 "the key \"$schema\" is not allowed
+// here"` (`json/Decode.scala:755-756` via `:848-849`).
+
+const USER_TREE = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "fixtures", "user-tree.schema.json"), "utf8"));
+
+test("D-1: a shared `$defs` entry is injected through a ROOT-LEVEL COPY, never in place", () => {
+  // `Test.Tree` is the root `$ref`'s target AND what the `Node` arm's
+  // `args.prefixItems` refer to -- the whole point of this fixture.
+  assert.strictEqual(USER_TREE.$ref, "#/$defs/Test.Tree");
+  assert.deepStrictEqual(USER_TREE.$defs["Test.Tree"].oneOf[1].properties.args.prefixItems,
+                         [{ $ref: "#/$defs/Test.Tree" }, { $ref: "#/$defs/Test.Tree" }]);
+
+  const file = core.schemaFileFor(USER_TREE);
+  assert.strictEqual(file.$ref, "#/$defs/Test.Tree-params-root", "the ROOT points at the copy");
+  assert.deepStrictEqual(Object.keys(file.$defs), ["Test.Tree", "Test.Tree-params-root"]);
+  for (const arm of file.$defs["Test.Tree-params-root"].oneOf) {
+    assert.deepStrictEqual(Object.keys(arm.properties), ["$schema", "tag", "args"], "the COPY carries it");
+  }
+  for (const arm of file.$defs["Test.Tree"].oneOf) {
+    assert.deepStrictEqual(Object.keys(arm.properties), ["tag", "args"], "the SHARED entry does not");
+  }
+  // and the copy's own inner references still name the ORIGINAL, which is what
+  // makes it one level of `$schema` and no more
+  assert.deepStrictEqual(file.$defs["Test.Tree-params-root"].oneOf[1].properties.args.prefixItems,
+                         [{ $ref: "#/$defs/Test.Tree" }, { $ref: "#/$defs/Test.Tree" }]);
+  // the copy's name cannot collide with an exporter name: `Schema.sanitise`
+  // (json/Schema.scala:721-722) turns every character that is not a letter, a
+  // digit, `_` or `.` into `_`, so no exported $defs name holds a `-`
+  assert.ok(Object.keys(USER_TREE.$defs).every((n) => n.indexOf("-") < 0));
+});
+
+test("D-1: the editor and the server now agree in BOTH directions on UserTree", () => {
+  const file = core.schemaFileFor(USER_TREE);
+  const defs = file.$defs;
+  const bare = { tag: "Node", args: [{ tag: "Leaf", args: [0] }, { tag: "Leaf", args: [1] }] };
+  assert.strictEqual(validates(file, bare, defs, 0), true, "a plain value validates");
+
+  // TOP LEVEL: accepted, because that is the line we write and `paramsToSend`
+  // strips it before the request goes out.
+  const top = Object.assign({ $schema: "./report.schema.json" }, bare);
+  assert.strictEqual(validates(file, top, defs, 0), true);
+  assert.deepStrictEqual(core.paramsToSend(JSON.stringify(top)).params, bare, "and it IS stripped");
+
+  // NESTED: refused. This is the case that used to be accepted.
+  const nested = { tag: "Node",
+                   args: [Object.assign({ $schema: "./report.schema.json" }, bare.args[0]), bare.args[1]] };
+  assert.strictEqual(validates(file, nested, defs, 0), false,
+                     "a nested `$schema` must squiggle -- the server 400s on it");
+  // and `paramsToSend` does NOT strip it, which is why the schema has to refuse it
+  assert.strictEqual(core.paramsToSend(JSON.stringify(nested)).params.args[0].$schema,
+                     "./report.schema.json", "G20 is top-level-only, on purpose");
+  // the RAW exported schema refuses it too, at both levels -- the file is never
+  // more permissive than the server except for the one key we strip
+  assert.strictEqual(validates(USER_TREE, nested, USER_TREE.$defs, 0), false);
+  assert.strictEqual(validates(USER_TREE, top, USER_TREE.$defs, 0), false);
+});
+
+test("D-1: the skeleton still validates against the file, and the copy is not minted twice", () => {
+  const file = core.schemaFileFor(USER_TREE);
+  const out = core.skeletonFrom(USER_TREE, TODAY, "./report.schema.json");
+  assert.deepStrictEqual(out.value, { $schema: "./report.schema.json", tag: "Leaf", args: [0] });
+  assert.strictEqual(validates(file, out.value, file.$defs, 0), true);
+  // IDEMPOTENT: the root `$ref` already names the copy, the copy is referenced
+  // by nothing else, and its properties already declare `$schema`.
+  const twice = core.schemaFileFor(file);
+  assert.strictEqual(core.schemaFileText(twice), core.schemaFileText(file));
+  assert.deepStrictEqual(Object.keys(twice.$defs), ["Test.Tree", "Test.Tree-params-root"]);
+});
+
+test("D-1: an entry reached ONLY from the root is still injected in place (Sales is unchanged)", () => {
+  // The copy is not minted speculatively: `Sales.Query` is named by the root
+  // `$ref` and by nothing else, so the file stays exactly as it was before the
+  // fix -- which is what section 6's S1 done-when says.
+  const file = core.schemaFileFor(SALES_SCHEMA);
+  assert.deepStrictEqual(Object.keys(file.$defs), ["Sales.Query", "Sales.Sort"], "no copy");
+  assert.strictEqual(file.$ref, "#/$defs/Sales.Query");
+  assert.ok(Object.prototype.hasOwnProperty.call(file.$defs["Sales.Query"].properties, "$schema"));
+});
+
+test("D-1: nothing is copied when the injection would change nothing", () => {
+  // A shared entry that is an enum, or an OPEN object, has nowhere to put a
+  // `$schema` key, so no copy is minted and the file keeps the exporter's shape.
+  const sharedEnum = { $ref: "#/$defs/M.S",
+                       $defs: { "M.S": { enum: ["A", "B"] },
+                                "M.T": { type: "object", properties: { s: { $ref: "#/$defs/M.S" } },
+                                         required: ["s"], additionalProperties: false } } };
+  assert.deepStrictEqual(Object.keys(core.schemaFileFor(sharedEnum).$defs), ["M.S", "M.T"]);
+  const sharedOpen = { $ref: "#/$defs/M.O",
+                       $defs: { "M.O": { type: "object", properties: { a: { type: "string" } },
+                                         required: ["a"], additionalProperties: true },
+                                "M.U": { type: "object", properties: { o: { $ref: "#/$defs/M.O" } },
+                                         required: ["o"], additionalProperties: false } } };
+  const openFile = core.schemaFileFor(sharedOpen);
+  assert.deepStrictEqual(Object.keys(openFile.$defs), ["M.O", "M.U"]);
+  assert.strictEqual(openFile.$ref, "#/$defs/M.O");
+});
+
+test("D-1: a hand-edited file that already took the copy's name does not lose its entry", () => {
+  const taken = { $ref: "#/$defs/M.T",
+                  $defs: { "M.T": { type: "object", properties: { t: { $ref: "#/$defs/M.T" } },
+                                    required: [], additionalProperties: false },
+                           "M.T-params-root": { const: "mine" } } };
+  const file = core.schemaFileFor(taken);
+  assert.deepStrictEqual(file.$defs["M.T-params-root"], { const: "mine" }, "not overwritten");
+  assert.strictEqual(file.$ref, "#/$defs/M.T-params-root-");
+  assert.ok(Object.prototype.hasOwnProperty.call(file.$defs["M.T-params-root-"].properties, "$schema"));
+});
+
+// ------------------------------------------------------- I-1 and I-2
+
+test("I-1: a `__proto__` key is kept as DATA and never re-prototypes the answer", () => {
+  // `JSON.parse` makes `__proto__` an ordinary OWN property and `Object.keys`
+  // hands it over -- but `obj[key] = v` reaches `Object.prototype`'s setter.
+  // MEASURED before the fix: the key vanished and `"polluted" in params` was
+  // TRUE. The wire payload was safe either way; the glue that reads this
+  // object with `in` / `for...in` / spread was not.
+  const text = '{"__proto__":{"polluted":1},"a":1}';
+  assert.deepStrictEqual(Object.keys(JSON.parse(text)), ["__proto__", "a"], "it IS an own key");
+  const out = core.paramsToSend(text);
+  assert.ok(Object.prototype.hasOwnProperty.call(out.params, "__proto__"), "kept, as data");
+  assert.deepStrictEqual(out.params.__proto__, { polluted: 1 });
+  assert.strictEqual(Object.getPrototypeOf(out.params), Object.prototype, "the prototype is untouched");
+  assert.strictEqual("polluted" in out.params, false);
+  assert.strictEqual({}.polluted, undefined, "and Object.prototype is never polluted");
+  assert.strictEqual(JSON.stringify(out.params), '{"__proto__":{"polluted":1},"a":1}',
+                     "the key survives to the wire");
+  assert.deepStrictEqual(Object.keys(out.params), ["__proto__", "a"]);
+  // and a top-level `$schema` is still the only key ever removed
+  assert.deepStrictEqual(Object.keys(core.paramsToSend('{"$schema":"x","__proto__":1}').params),
+                         ["__proto__"]);
+});
+
+test("I-1: a required `__proto__` in a schema is a skeleton key, not a false `unsatisfiable`", () => {
+  // PARSED, not written as a literal: `{"__proto__": x}` in an object LITERAL
+  // is prototype-setting syntax and makes no own property at all, so a literal
+  // would not be the schema a real `.schema.json` file parses to. (Learned the
+  // hard way writing this test -- worth the two lines.)
+  const schema = JSON.parse(
+    '{"type":"object","properties":{"__proto__":{"type":"integer"},"a":{"type":"string"}},' +
+    '"required":["__proto__","a"],"additionalProperties":false}');
+  const out = core.skeletonFrom(schema, TODAY);
+  assert.strictEqual(out.problem, undefined, JSON.stringify(out.problem));
+  assert.strictEqual(JSON.stringify(out.value), '{"__proto__":0,"a":""}');
+  assert.strictEqual(Object.getPrototypeOf(out.value), Object.prototype);
+  assert.strictEqual({}.polluted, undefined);
+  // the required-key-with-no-schema arm too
+  const open = JSON.parse('{"type":"object","properties":{},"required":["__proto__"],"additionalProperties":true}');
+  assert.strictEqual(JSON.stringify(core.skeletonFrom(open, TODAY).value), '{"__proto__":null}');
+});
+
+test("I-2: a UTF-8 BOM is not a syntax error (VS Code writes one under files.encoding utf8bom)", () => {
+  const out = core.paramsToSend('﻿{"fromDay":"2026-01-05"}');
+  assert.strictEqual(out.problem, undefined, JSON.stringify(out.problem));
+  assert.deepStrictEqual(out.params, { fromDay: "2026-01-05" });
+  // ONE bom, and only a leading one: a stray U+FEFF anywhere else is still a
+  // genuine syntax error and still reports itself
+  assert.strictEqual(core.paramsToSend('﻿﻿{"a":1}').problem.reason, "invalid-json");
+  assert.strictEqual(core.paramsToSend('{"a":1}﻿').problem.reason, "invalid-json");
+  // a BOM-only file is still the EMPTY case, not a parse error (trim() drops it)
+  assert.strictEqual(core.paramsToSend("﻿").problem.reason, "empty");
+  assert.strictEqual(core.paramsToSend("﻿  \n").problem.reason, "empty");
+  // THE CAP COUNTS THE BOM: it is a bound on the file as read off the disk, so
+  // "the file is N bytes" in the refusal matches what the developer's tools say
+  assert.strictEqual(Buffer.byteLength('﻿{"a":1}', "utf8"), 3 + 7);
+  assert.strictEqual(core.paramsToSend('﻿{"a":1}', 9).problem.reason, "too-large");
+  assert.match(core.paramsToSend('﻿{"a":1}', 9).problem.message, /is 10 bytes/);
+  assert.strictEqual(core.paramsToSend('﻿{"a":1}', 10).problem, undefined);
+});
+
+/** Every object position in a value, as a path of keys and indices; `[]` is
+  * the root. Used to put a `$schema` key everywhere it could go. */
+function objectPaths(value, prefix, out) {
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => objectPaths(v, prefix.concat([i]), out));
+  } else if (value && typeof value === "object") {
+    out.push(prefix);
+    for (const key of Object.keys(value)) objectPaths(value[key], prefix.concat([key]), out);
+  }
+  return out;
+}
+
+/** A copy of `value` with `$schema` added at `path`. */
+function withSchemaAt(value, path) {
+  const copy = JSON.parse(JSON.stringify(value));
+  let node = copy;
+  for (const step of path) node = node[step];
+  node.$schema = "./report.schema.json";
+  return copy;
+}
+
+/**
+ * WHERE, IN A SCHEMA FILE, A `$ref` STANDS AT THE INSTANCE'S ROOT.
+ *
+ * The document itself (`{"$ref": ...}`), and anything reachable from it
+ * through `oneOf`/`anyOf` alone -- a branching keyword picks BETWEEN
+ * descriptions of the same position, so an alternative of an alternative is
+ * still the root.  Every `$ref` under `properties`, `items` or `prefixItems`
+ * names a NESTED position instead, because those keywords step INTO a value.
+ *
+ * This is read off JSON Schema's own semantics and the exporter's output
+ * shape, not off `preview-core.js`: it takes no view on how the injector
+ * decides anything, only on where a value can sit.
+ *
+ * (Written one level deep at first, which the property below then failed on a
+ * generated `anyOf` inside an `anyOf`. The helper was wrong, not the code --
+ * worth recording, because a too-narrow oracle is the way a property lies.)
+ */
+function rootLevelRefNodes(file) {
+  const nodes = [];
+  const visit = (node, depth) => {
+    if (!node || typeof node !== "object" || depth > 50) return;
+    if (typeof node.$ref === "string") nodes.push(node);
+    for (const key of ["oneOf", "anyOf"]) {
+      if (Array.isArray(node[key])) node[key].forEach((alt) => visit(alt, depth + 1));
+    }
+  };
+  visit(file, 0);
+  return nodes;
+}
+
+/** Does any node under `node` declare a `$schema` PROPERTY? */
+function declaresSchemaKey(node) {
+  if (!node || typeof node !== "object") return false;
+  if (Array.isArray(node)) return node.some(declaresSchemaKey);
+  if (node.properties && typeof node.properties === "object" &&
+      Object.prototype.hasOwnProperty.call(node.properties, "$schema")) return true;
+  return Object.keys(node).some((k) => declaresSchemaKey(node[k]));
+}
+
+/** Every `$ref` node in the document, with the ones standing at the instance
+  * root marked, so "is this entry reachable from a nested position" can be
+  * asked without borrowing the implementation's own answer. */
+function allRefNodes(node, out) {
+  if (!node || typeof node !== "object") return out;
+  if (Array.isArray(node)) { node.forEach((x) => allRefNodes(x, out)); return out; }
+  if (typeof node.$ref === "string") out.push(node);
+  for (const key of Object.keys(node)) allRefNodes(node[key], out);
+  return out;
+}
+
+/**
+ * THE STRUCTURAL HALF OF D-1, as one assertion over a finished schema file:
+ * a `$defs` entry that carries a `$schema` property must be named ONLY by
+ * root-level `$ref`s.  If a nested `$ref` can reach it, the editor accepts a
+ * nested `$schema` that `paramsToSend` does not strip and the server 400s.
+ *
+ * KNOWN BLIND SPOT, recorded rather than fixed: it does not follow a CHAINED
+ * `$ref` (root -> `A`, where `A` is itself `{"$ref": "#/$defs/B"}`), so it
+ * would put `B` in the wrong class.  The exporter never chains one -- a
+ * `$defs` body is an arm object, a `oneOf` of arms, or an `enum`
+ * (`json/Schema.scala:526-532`) -- and `generateSchema` never draws one, so
+ * no schema this code can be handed reaches it.  `allowSchemaKey` itself
+ * follows chains correctly; it is the ORACLE that is narrow here.
+ */
+function assertSchemaKeyIsRootOnly(file, what) {
+  const defs = file.$defs && typeof file.$defs === "object" ? file.$defs : {};
+  const rootRefs = new Set(rootLevelRefNodes(file));
+  const all = allRefNodes(file, []);
+  for (const name of Object.keys(defs)) {
+    if (!declaresSchemaKey(defs[name])) continue;
+    const target = "#/$defs/" + name;
+    for (const node of all) {
+      if (node.$ref !== target) continue;
+      assert.ok(rootRefs.has(node),
+                what + ": `" + name + "` declares a `$schema` property and is named from a NESTED " +
+                "position, so the editor would accept a nested `$schema` the server refuses");
+    }
+  }
+}
+
+test("D-1 (structural): a `$schema`-carrying entry is reachable ONLY from the instance root", () => {
+  assertSchemaKeyIsRootOnly(core.schemaFileFor(USER_TREE), "UserTree");
+  assertSchemaKeyIsRootOnly(core.schemaFileFor(SALES_SCHEMA), "Sales");
+  // and the check has teeth: the PRE-FIX behaviour (inject into the shared
+  // entry in place) is exactly what it refuses.
+  const broken = JSON.parse(JSON.stringify(USER_TREE));
+  delete broken.$id;
+  for (const arm of broken.$defs["Test.Tree"].oneOf) {
+    arm.properties = Object.assign({ $schema: { type: "string" } }, arm.properties);
+  }
+  assert.throws(() => assertSchemaKeyIsRootOnly(broken, "the pre-fix shape"), /NESTED position/);
+});
+
+test("PROPERTY: a `$schema` key is legal ONLY at the TOP LEVEL of the instance (D-1)", () => {
+  // THE INVARIANT, in one line: THE SCHEMA FILE WE WRITE IS NEVER MORE
+  // PERMISSIVE THAN THE SCHEMA THE SERVER EXPORTED -- except for exactly one
+  // key, at exactly one place, which `paramsToSend` strips before the request
+  // goes out. Anything else the editor accepts is a 400 the developer gets
+  // after the squiggle told them it was fine.
+  //
+  // TWO HALVES, because neither alone is enough. The STRUCTURAL half catches
+  // the D-1 shape even when no skeleton instance exhibits it -- and none does,
+  // because a skeleton of a recursive type takes the base arm and so has no
+  // nested occurrence of itself. The INSTANCE half is the semantic complement:
+  // it puts a `$schema` at every object position of a real value and compares
+  // the file's verdict with the server's.
+  const rnd = wp8Rnd(31313131);
+  let files = 0, clones = 0, rootChecked = 0, nestedClosed = 0, nestedOpen = 0;
+  for (let i = 0; i < 12000; i++) {
+    const schema = generateSchema(rnd);
+    const file = core.schemaFileFor(schema);
+    files++;
+    if (Object.keys(file.$defs || {}).some((n) => n.indexOf("-params-root") >= 0)) clones++;
+    assertSchemaKeyIsRootOnly(file, "generated #" + i);
+    const out = core.skeletonFrom(schema, TODAY, "./report.schema.json");
+    if (out.problem || !out.embeddable) continue;
+    const bare = core.skeletonFrom(schema, TODAY).value;
+    for (const p of objectPaths(bare, [], [])) {
+      const mutated = withSchemaAt(bare, p);
+      const byFile = validates(file, mutated, file.$defs, 0);
+      const byServer = validates(schema, mutated, schema.$defs, 0);
+      if (p.length === 0) {
+        rootChecked++;
+        assert.strictEqual(byFile, true,
+                           "the top-level line must NOT squiggle: " + JSON.stringify(mutated));
+        assert.deepStrictEqual(core.paramsToSend(JSON.stringify(mutated)).params, bare,
+                               "and it must be stripped before the request");
+      } else if (byServer) {
+        nestedOpen++;                                          // an open (Spread) object: legal both ways
+      } else {
+        nestedClosed++;
+        assert.strictEqual(byFile, false,
+                           "a nested `$schema` the SERVER refuses must be refused by the FILE too, at " +
+                           JSON.stringify(p) + " of " + JSON.stringify(mutated));
+      }
+    }
+  }
+  // MEASURED on this seed: files=12000, clones=2398 (the D-1 fix firing),
+  // rootChecked=6679, nestedClosed=482, nestedOpen=37. Every arm has to be
+  // reached or the property is testing less than it claims. `nestedOpen` is
+  // THIN and recorded as thin: a skeleton is the smallest value that decodes,
+  // so a nested object appears only for a required object-typed field, and an
+  // OPEN one only when that field's type also carries a Spread.
+  assert.deepStrictEqual(
+    [clones > 500, rootChecked > 2000, nestedClosed > 300, nestedOpen > 20],
+    [true, true, true, true],
+    "files=" + files + " clones=" + clones + " rootChecked=" + rootChecked +
+    " nestedClosed=" + nestedClosed + " nestedOpen=" + nestedOpen);
+});
+
+test("PROPERTY: the generator draws OPEN objects, so the short-circuit branch is exercised", () => {
+  // The S1 review measured `additionalProperties: true` at COUNT 0 over the
+  // shipped draws. It is the one branch `allowSchemaKey` returns early on, and
+  // the one place a nested `$schema` is legitimately legal, so it is drawn now.
+  const rnd = wp8Rnd(20260921);
+  let open = 0, closed = 0;
+  const count = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) return node.forEach(count);
+    if (node.type === "object") { if (node.additionalProperties === true) open++; else closed++; }
+    for (const key of Object.keys(node)) count(node[key]);
+  };
+  for (let i = 0; i < 2000; i++) count(generateSchema(rnd));
+  // MEASURED on this seed: open=577, closed=6873.
+  assert.ok(open > 200 && closed > 2000, "open=" + open + " closed=" + closed);
+});
+
+test("schemaFile: a schema whose own KEYS are named `__proto__` is copied as data", () => {
+  // PARSED, never a literal: `{"__proto__": x}` in an object literal is
+  // prototype-setting syntax and makes no own property, so a literal cannot
+  // express the file this test is about.
+  //
+  // Unreachable from the exporter (`Schema.defName` builds `<module>.<type>`,
+  // and `__proto__` is not an Ermine field name), reachable from a hand-edited
+  // `.schema.json`, and it used to fail SILENTLY: `cloneJson`'s `out[key] = `
+  // hit `Object.prototype`'s setter. MEASURED before the fix: a `properties`
+  // key called `__proto__` disappeared from the written file, and a `$defs`
+  // ENTRY called `__proto__` vanished entirely, leaving the root `$ref`
+  // dangling at a name the file no longer defined.
+  const props = JSON.parse('{"type":"object","properties":{"__proto__":{"type":"integer"},' +
+                           '"a":{"type":"string"}},"required":["a"],"additionalProperties":false}');
+  const file = core.schemaFileFor(props);
+  assert.deepStrictEqual(Object.keys(file.properties), ["$schema", "__proto__", "a"],
+                         "the key survives AND `$schema` is still first");
+  assert.deepStrictEqual(file.properties.__proto__, { type: "integer" });
+  assert.strictEqual(Object.getPrototypeOf(file.properties), Object.prototype);
+  assert.strictEqual({}.type, undefined, "and Object.prototype is never polluted");
+
+  const entry = JSON.parse(
+    '{"$ref":"#/$defs/__proto__","$defs":{' +
+    '"__proto__":{"type":"object","properties":{"a":{"type":"string"}},"required":["a"],' +
+    '"additionalProperties":false},' +
+    '"M.T":{"type":"object","properties":{"p":{"$ref":"#/$defs/__proto__"}},"required":["p"],' +
+    '"additionalProperties":false}}}');
+  const entryFile = core.schemaFileFor(entry);
+  assert.ok(Object.prototype.hasOwnProperty.call(entryFile.$defs, "__proto__"), "the entry survives");
+  assert.strictEqual(entryFile.$ref, "#/$defs/__proto__-params-root");
+  assert.ok(Object.prototype.hasOwnProperty.call(entryFile.$defs, "__proto__-params-root"),
+            "and the root `$ref` is not left dangling");
+  // the shared entry is still shared and still uninjected, as D-1 requires
+  assert.deepStrictEqual(Object.keys(entryFile.$defs["__proto__"].properties), ["a"]);
+  assert.deepStrictEqual(Object.keys(entryFile.$defs["__proto__-params-root"].properties),
+                         ["$schema", "a"]);
+  assertSchemaKeyIsRootOnly(entryFile, "a $defs entry named __proto__");
+});
+
+test("schemaFile: the S3 OBLIGATION -- a copy tracks its original only WITHIN one call", () => {
+  // `schemaFileFor` is a pure function of what it is handed. It cannot diff a
+  // root-level copy against a LATER version of the entry it was cloned from,
+  // so S3 must always feed it the server's fresh `ermine/schema` answer and
+  // must never read its own written `.schema.json` back in. This test does the
+  // forbidden thing on purpose, so the consequence is recorded rather than
+  // discovered.
+  const written = core.schemaFileFor(USER_TREE);
+  const drifted = JSON.parse(JSON.stringify(written));
+  drifted.$defs["Test.Tree"].oneOf[0].properties.note = { type: "string" };   // the params type changed
+  const again = core.schemaFileFor(drifted);
+  assert.ok(Object.prototype.hasOwnProperty.call(again.$defs["Test.Tree"].oneOf[0].properties, "note"),
+            "the shared entry has the new field");
+  assert.ok(!Object.prototype.hasOwnProperty.call(
+              again.$defs["Test.Tree-params-root"].oneOf[0].properties, "note"),
+            "THE COPY IS STALE -- this is why S3 must pass the FRESH answer, never its own file");
+  // and the fresh answer gets it right, which is the whole remedy
+  const fresh = JSON.parse(JSON.stringify(USER_TREE));
+  fresh.$defs["Test.Tree"].oneOf[0].properties.note = { type: "string" };
+  fresh.$defs["Test.Tree"].oneOf[0].required.push("note");
+  const correct = core.schemaFileFor(fresh);
+  assert.ok(Object.prototype.hasOwnProperty.call(
+              correct.$defs["Test.Tree-params-root"].oneOf[0].properties, "note"));
+  assert.deepStrictEqual(core.skeletonFrom(fresh, TODAY).value, { tag: "Leaf", args: [0], note: "" });
+});

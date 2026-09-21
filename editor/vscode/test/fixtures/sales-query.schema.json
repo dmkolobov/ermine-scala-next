@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ermine:Sales/Query",
+  "$ref": "#/$defs/Sales.Query",
+  "$defs": {
+    "Sales.Query": {
+      "type": "object",
+      "properties": {
+        "fromDay": {
+          "type": "string",
+          "format": "date"
+        },
+        "toDay": {
+          "type": "string",
+          "format": "date"
+        },
+        "onlyRegion": {
+          "type": "string"
+        },
+        "orderBy": {
+          "$ref": "#/$defs/Sales.Sort"
+        }
+      },
+      "required": [
+        "fromDay",
+        "toDay",
+        "orderBy"
+      ],
+      "additionalProperties": false
+    },
+    "Sales.Sort": {
+      "enum": [
+        "ByDay",
+        "ByAmount",
+        "ByUnits"
+      ]
+    }
+  }
+}

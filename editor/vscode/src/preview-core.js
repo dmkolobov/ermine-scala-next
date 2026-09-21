@@ -1827,6 +1827,1162 @@ function statusBarState(view) {
   return { hidden: false, text: "$(json) Ermine: " + label, tooltip, severity: "none" };
 }
 
+// ------------------------------------------------- params files (WP-8, S1)
+
+// WHAT THIS SECTION IS, AND WHAT IT DELIBERATELY IS NOT.
+//
+// Section 6 of tracker/JSON-WIDGET-PLAYGROUND.md makes a report's parameters
+// an ordinary committed file, `.ermine/preview/<Module>/<binding>.params.json`,
+// with a generated `<binding>.schema.json` beside it so the JSON editor can
+// complete keys and squiggle wrong ones.  That is three jobs -- WHERE the
+// files go, WHAT a first skeleton holds, and WHAT is actually sent -- and all
+// three are decisions, so all three are here and none of them touches a disk.
+//
+// S1 IS PURE.  Nothing below reads, writes, watches or creates a file, and
+// nothing below is wired into `src/extension.js` yet: the writes, the watcher
+// and the `ermine/schema` client are S2 and S3.  Everything here is a
+// function from plain data to plain data, and `test/preview-core.test.js`
+// holds a table row for every case and four properties over generated input.
+//
+// THE THREE RULES THE WHOLE SECTION IS BUILT ON:
+//
+//  1. NEVER WRITE OUTSIDE A WORKSPACE FOLDER (review G1).  A report opened
+//     from `/tmp` has no business minting `.ermine/` in an unrelated repo, so
+//     `paramsPaths` REFUSES rather than guessing, and the caller falls back to
+//     the inline `{}` WP-7 already sends and says so once.
+//  2. THE SKELETON IS THE SMALLEST VALUE THAT DECODES.  Required keys get a
+//     value, optional (`Maybe`) keys are left out entirely -- `docs/JSON-GUIDE.md`
+//     is explicit that a `Maybe` field must be OMITTED and that `null` in its
+//     place is a 400 -- lists start empty, and a `Maybe` position takes the
+//     shortest alternative that decodes.  A skeleton the developer has to
+//     delete from is worse than one they have to fill in.
+//  3. A FILE IS NOT A SECRET STORE (section 8, A1/A5/A6/A9).  A params file is
+//     committed AND its value is spliced into the render body that goes to
+//     `ERMINE_LSP_LOG`, so a password in one is a password in the repository
+//     and in the log.  U5 decided the shape of the answer: WARN, once, never
+//     block -- a report may legitimately take a `token` parameter, and a
+//     refusal the developer cannot override is a feature that gets turned off.
+
+/**
+ * `paramsPaths`, `skeletonFrom` and `paramsToSend` all answer `{problem}`
+ * rather than throwing, and a problem is a NAMED REASON plus a sentence a
+ * human reads.  The reason is what the glue switches on (a fallback, a log
+ * line, a notification); the sentence is what it shows.  Neither is derived
+ * from the other, because a message that has to be re-parsed to be acted on
+ * is the bug `absoluteRoots`'s `problems` list already avoids.
+ */
+function problem(reason, message) {
+  return { problem: { reason: String(reason), message: String(message) } };
+}
+
+// -- where the files go ----------------------------------------------------
+
+/** `.ermine/preview` -- the two segments every generated path starts with. */
+const PREVIEW_SEGMENTS = [".ermine", "preview"];
+
+/**
+ * A NAME THIS CODE MINTS IS AN ERMINE IDENTIFIER OR IT IS NOT A FILE NAME.
+ *
+ * The picker takes free text for a binding (`extension.js`'s "Type a binding
+ * name..."), so `<+>` and `../../etc/passwd` both reach here.  Rather than
+ * enumerate what is illegal on some filesystem -- a list that is wrong on the
+ * next one -- the rule is a WHITELIST: a letter or `_`, then letters, digits,
+ * `_` and `'`.  That refuses, in one test, every case review G3 lists (an
+ * operator binding, `/`, `\`, `:`, a NUL byte, a leading dot, a trailing dot
+ * or space, the empty string) plus `..` and an absolute path, and it refuses
+ * them the same way on Linux and on Windows.
+ *
+ * IT IS NOT "AN ERMINE IDENTIFIER", AND THE COMMENT THAT SAID SO WAS WRONG
+ * (the S1 review's nits 1-3).  Against `scalaparsers/ParsingUtil.scala` it is
+ * both narrower and wider, and each departure is deliberate:
+ *   NARROWER -- `#` is a legal tail character (`tailChar`, `:351`), so
+ *     `report#` is a legal binding and gets NO params file.  Kept out on
+ *     purpose: the path becomes part of a `file:` URI in the editor, where
+ *     `#` opens a fragment and has to be percent-encoded, and nobody has run
+ *     VS Code on this branch to see whether that round-trips.  By convention
+ *     `#` marks a native (`List#`, `mkRelationWithHeader#`), which is not a
+ *     report, so the cost is small and it is named when it is paid;
+ *   NARROWER -- `letter` is `satisfy(_.isLetter)` (`:121`), so `Métier` and
+ *     `rapporté` are legal Ermine and get no params file either.  A
+ *     non-ASCII component is exactly where a Windows code page, a
+ *     case-folding rule and a `git` `core.precomposeunicode` setting
+ *     disagree, and all three are unobserved here;
+ *   WIDER -- a leading `_` and a lowercase module start are accepted and
+ *     cannot occur in Ermine (`identStart = letter`; `upper >> identTail`,
+ *     `SurfaceParsers.scala`).  Over-accepting a name that cannot exist
+ *     costs nothing.
+ * IN EVERY REFUSED CASE THE REPORT STILL RENDERS, with the inline `{}`, and
+ * the refusal is named; section 6 records the limitation out loud.
+ *
+ * REFUSING IS CHEAP AND SAFE: there is no params FILE for such a binding, the
+ * caller sends `{}` inline exactly as WP-7 does today, and the render still
+ * happens.  A false refusal costs a message; a false accept writes a file
+ * somewhere nobody looked.
+ */
+const SAFE_NAME = /^[A-Za-z_][A-Za-z0-9_']*$/;
+
+/** A module name is dotted and is ONE directory (`Layout.Report`), never a path. */
+const SAFE_MODULE = /^[A-Za-z_][A-Za-z0-9_']*(\.[A-Za-z_][A-Za-z0-9_']*)*$/;
+
+/**
+ * A name component is at most this long so that `<binding>.schema.json` (13
+ * more characters) stays well inside the 255-byte component limit every
+ * mainstream filesystem imposes, and so the generated tail
+ * `.ermine/preview/<Module>/<binding>.params.json` still fits inside Windows'
+ * 260-character MAX_PATH under a workspace folder of ordinary depth.
+ */
+const MAX_NAME_LENGTH = 120;
+
+/**
+ * Windows' reserved DEVICE names (review G4).  On Windows these cannot be a
+ * file OR a directory whatever the extension, so `NUL.params.json` and a
+ * module called `Con` are both unwritable -- and `§10` says the deployment
+ * machines are Windows.  They are refused on EVERY platform, on purpose: a
+ * params file is committed, so a Linux developer who gets away with `Aux`
+ * hands a checkout that cannot be cloned to the colleague who cannot.
+ */
+const RESERVED_DEVICE_NAMES = [
+  "CON", "PRN", "AUX", "NUL",
+  "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+  "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/**
+ * Windows reads the device name off the part BEFORE the first dot, so
+ * `NUL.params.json`, `nul.txt` and `NUL` are one name, and the match is
+ * case-insensitive.  A segment that begins with a dot (`.ermine`) has an
+ * empty part before it and is therefore never reserved.
+ */
+function isReservedDeviceName(segment) {
+  const base = String(segment).split(".")[0].toUpperCase();
+  return RESERVED_DEVICE_NAMES.indexOf(base) >= 0;
+}
+
+/**
+ * `"posix"` or `"win32"` -> the matching half of Node's `path`.
+ *
+ * The flavour is an ARGUMENT rather than the host's, for one reason: every
+ * Windows rule in this section (the separator, the case-insensitive compare,
+ * the device names) is a rule nobody here can run, and a rule that cannot be
+ * tested is a rule that is wrong.  `path.win32` is available on Linux, so
+ * both halves are table-tested on the machine that runs the gates.  The
+ * default is the host's, which is what the glue wants.
+ */
+function pathFlavour(flavour) {
+  if (flavour === "win32") return path.win32;
+  if (flavour === "posix") return path.posix;
+  if (flavour && typeof flavour === "object" && typeof flavour.join === "function") return flavour;
+  return path.sep === "\\" ? path.win32 : path.posix;
+}
+
+/** Trailing separators off, `.`/`..` collapsed, and folded for a win32 compare. */
+function comparablePath(p, value) {
+  let normalised = p.normalize(String(value));
+  while (normalised.length > 1 && normalised.endsWith(p.sep)) normalised = normalised.slice(0, -1);
+  return p === path.win32 ? normalised.toLowerCase() : normalised;
+}
+
+/**
+ * Is `child` strictly inside `folder`?
+ *
+ * A PREFIX COMPARE, NOT `path.relative`: `relative` calls `resolve`, which
+ * falls back to `process.cwd()` the moment either side is not absolute, and a
+ * containment test whose answer depends on where the editor was started is
+ * not a containment test.  Both sides are required to be absolute for the
+ * same reason.  The `+ sep` is what keeps `C:\workspace-old` out of
+ * `C:\workspace`.
+ */
+function isInsideFolder(p, folder, child) {
+  if (typeof folder !== "string" || typeof child !== "string") return false;
+  if (!folder || !child) return false;
+  if (!p.isAbsolute(folder) || !p.isAbsolute(child)) return false;
+  const f = comparablePath(p, folder);
+  const c = comparablePath(p, child);
+  if (c === f) return false;
+  const withSep = f.endsWith(p.sep) ? f : f + p.sep;
+  return c.startsWith(withSep);
+}
+
+/**
+ * WHERE THIS PICK'S PARAMS AND SCHEMA LIVE, or why they cannot live anywhere.
+ *
+ *   `.ermine/preview/<Module>/<binding>.params.json`
+ *   `.ermine/preview/<Module>/<binding>.schema.json`
+ *   `.ermine/preview/.gitignore`                       (U7, written by S3)
+ *
+ * A DIRECTORY PER MODULE, A FILE PER BINDING (section 6).  `<Module>` is the
+ * dotted module name used as ONE directory, never split on its dots, so
+ * `ls .ermine/preview` lists modules and `Layout.Widgets.Foo` is one entry
+ * rather than three nested ones.
+ *
+ * `schemaRef` is what goes in the params file's own `"$schema"` key: a
+ * RELATIVE `./<binding>.schema.json`, because the two files are siblings and
+ * VS Code's JSON language service resolves a relative `$schema` against the
+ * document.  Nothing is written into the user's `json.schemas` setting.
+ *
+ * THE REFUSALS, each named so the glue can act on it and each with a sentence
+ * for the developer:
+ *   `no-pick`            there is nothing to derive a path from;
+ *   `no-workspace-folder`/`outside-workspace` (G1) the report is not inside a
+ *                        workspace folder, so there is nowhere we may write;
+ *   `no-module`          (G6) `ermine/preview/reports` could not name the
+ *                        module, so there is no directory name;
+ *   `unsafe-module`/`unsafe-binding` (G3) the name is not a plain identifier;
+ *   `reserved-name`      (G4) a Windows device name.
+ * In every case the caller keeps rendering with the inline `{}` and says so
+ * once -- a params file is a convenience, never a precondition.
+ *
+ * SYMLINKS ARE OUT OF SCOPE HERE AND ARE S3'S.  Containment is decided by
+ * comparing STRINGS, which is all a pure function can do: a symlink inside
+ * the workspace folder pointing out of it passes this test and would be
+ * written through.  Resolving that needs `realpath`, i.e. the disk, i.e. the
+ * glue -- S3 resolves before it writes, and this function's answer is a
+ * candidate path, not a permission.
+ *
+ * KNOWN AND ACCEPTED (U4, review G2): the path is keyed by MODULE, not by
+ * file, so two files declaring `module Sales` under different roots share one
+ * params file.  A path hash would separate them and make the file unreadable
+ * and unreviewable, and the file is meant to be committed and read.
+ *
+ * @param {object} pick a `makePick` value
+ * @param {string} folderPath the workspace folder that owns the report
+ * @param {"posix"|"win32"=} flavour the path flavour, default the host's
+ */
+function paramsPaths(pick, folderPath, flavour) {
+  const p = pathFlavour(flavour);
+  if (!pick || typeof pick !== "object") {
+    return problem("no-pick", "No report is picked, so there is no params file to read or write.");
+  }
+  if (typeof folderPath !== "string" || !folderPath.trim()) {
+    return problem("no-workspace-folder",
+                   "This report is not in any open workspace folder, so the preview will not create a " +
+                   "params file for it; it renders with empty parameters instead.");
+  }
+  if (!isInsideFolder(p, folderPath, pick.fsPath)) {
+    return problem("outside-workspace",
+                   'The report "' + printable(pick.fsPath) + '" is not inside the workspace folder "' +
+                   printable(folderPath) + '", so the preview will not create a params file for it; ' +
+                   "it renders with empty parameters instead.");
+  }
+  if (!pick.module) {
+    return problem("no-module",
+                   "The module this file declares is not known yet, and a params file is stored under its " +
+                   "module name, so none is written; the report renders with empty parameters.");
+  }
+  const moduleName = String(pick.module);
+  const binding = String(pick.binding === undefined || pick.binding === null ? "" : pick.binding);
+  if (moduleName.length > MAX_NAME_LENGTH || !SAFE_MODULE.test(moduleName)) {
+    return problem("unsafe-module",
+                   'The module name "' + printable(moduleName) + '" cannot be a directory name: a params ' +
+                   "directory is a dotted run of plain names (letters, digits, _ and ') of at most " +
+                   MAX_NAME_LENGTH + " characters. The report renders with empty parameters.");
+  }
+  if (binding.length > MAX_NAME_LENGTH || !SAFE_NAME.test(binding)) {
+    return problem("unsafe-binding",
+                   'The binding "' + printable(binding) + '" cannot be a file name: a params file is named ' +
+                   "after a plain binding (a letter or _, then letters, digits, _ and ') of at most " +
+                   MAX_NAME_LENGTH + " characters, so an operator binding has no params file. " +
+                   "The report renders with empty parameters.");
+  }
+  const paramsName = binding + ".params.json";
+  const schemaName = binding + ".schema.json";
+  // Only the segments WE mint are checked: the workspace folder's own
+  // segments already exist on the developer's disk, so they are by
+  // construction creatable there.
+  const minted = PREVIEW_SEGMENTS.concat([moduleName, paramsName, schemaName]);
+  for (const segment of minted) {
+    if (isReservedDeviceName(segment)) {
+      return problem("reserved-name",
+                     'The name "' + printable(segment) + '" is a reserved device name on Windows (' +
+                     RESERVED_DEVICE_NAMES.slice(0, 4).join(", ") + ", COM1-9, LPT1-9), so a params file " +
+                     "could not be created there on a Windows machine. The report renders with empty " +
+                     "parameters; rename the module or the binding.");
+    }
+  }
+  const previewDir = p.join(folderPath, PREVIEW_SEGMENTS[0], PREVIEW_SEGMENTS[1]);
+  const dir = p.join(previewDir, moduleName);
+  const paths = {
+    previewDir: previewDir,
+    dir: dir,
+    paramsPath: p.join(dir, paramsName),
+    schemaPath: p.join(dir, schemaName),
+    // U7: the generated `.gitignore` sits at `.ermine/preview/`, beside every
+    // module's directory, so ONE file covers every generated `*.schema.json`
+    // and WP-13/WP-14's `*.db` in whatever workspace folder they land in.
+    gitignorePath: p.join(previewDir, ".gitignore"),
+    schemaRef: "./" + schemaName,
+  };
+  // BELT AND BRACES, and the property test's teeth: every path answered is
+  // inside the folder it was derived from. The whitelists above already make
+  // traversal unreachable; this makes "unreachable" an assertion rather than
+  // a claim, and it is the last thing that runs before a caller writes.
+  for (const key of ["previewDir", "dir", "paramsPath", "schemaPath", "gitignorePath"]) {
+    if (!isInsideFolder(p, folderPath, paths[key])) {
+      return problem("outside-workspace",
+                     "The generated params path would fall outside the workspace folder, so nothing is " +
+                     "written; the report renders with empty parameters.");
+    }
+  }
+  return paths;
+}
+
+/**
+ * Does saving THIS file mean re-rendering THIS pick? (review G9, D7's sibling)
+ *
+ * A params file is not a module, so the server's `invalidated` can never name
+ * it -- the trigger has to be the client's own, and the client's own has to
+ * compare two paths.  On win32 that compare is case-INSENSITIVE, because
+ * `report.params.json` and `Report.Params.JSON` are one file there and a save
+ * that did not re-render would look like the feature is broken.
+ *
+ * A pick with no derivable params file (every `paramsPaths` refusal) never
+ * matches: there is no file, so no save of one can be this pick's.
+ */
+function shouldRerenderOnParamsSave(pick, savedPath, folderPath, flavour) {
+  if (typeof savedPath !== "string" || !savedPath) return false;
+  const p = pathFlavour(flavour);
+  const paths = paramsPaths(pick, folderPath, flavour);
+  if (paths.problem) return false;
+  return comparablePath(p, savedPath) === comparablePath(p, paths.paramsPath);
+}
+
+/**
+ * IS THIS SCHEMA ANSWER STILL ABOUT THE REPORT THE USER IS LOOKING AT? (D7)
+ *
+ * `ermine/schema {uri, binding, roots}` carries no `generation` and no pick
+ * identity, so -- unlike a render -- a late answer cannot be recognised as
+ * late by the answer alone.  The glue therefore captures the pick AT SEND and
+ * hands both to this; an answer whose pick has moved is DROPPED, because
+ * acting on it writes `<binding>.schema.json` for a report nobody picked.
+ *
+ * FOUR FIELDS, NOT TWO, and each for a reason:
+ *   `uri` + `binding`  the report itself (`markKey`'s pair);
+ *   `module`           the DIRECTORY the schema file would be written into.
+ *                      A file whose header changed from `Sales` to `Sales2`
+ *                      keeps its uri and its binding and needs a different
+ *                      path, and the schema in flight is the old type's;
+ *   `roots`            the loader chain, in order.  The root set is the
+ *                      render session's discard key (section 2.4), so an
+ *                      answer computed under the old roots may describe a
+ *                      same-named module from another tree entirely.
+ * Dropping a good answer costs one re-request, which the `fx.schema` seam
+ * already knows how to make.  Keeping a bad one writes a wrong file.
+ */
+function isCurrentSchemaAnswer(pickAtSend, pickNow) {
+  if (!pickAtSend || typeof pickAtSend !== "object") return false;
+  if (!pickNow || typeof pickNow !== "object") return false;
+  if (String(pickAtSend.uri) !== String(pickNow.uri)) return false;
+  if (String(pickAtSend.binding) !== String(pickNow.binding)) return false;
+  const a = pickAtSend.module === null || pickAtSend.module === undefined ? null : String(pickAtSend.module);
+  const b = pickNow.module === null || pickNow.module === undefined ? null : String(pickNow.module);
+  if (a !== b) return false;
+  return rootsFingerprint(pickAtSend.roots) === rootsFingerprint(pickNow.roots);
+}
+
+// -- the skeleton ----------------------------------------------------------
+
+/** `format: uuid` -> the nil UUID, which is canonical 8-4-4-4-12 and decodes. */
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+
+/**
+ * `Long` is exported as `{"type":"string","pattern":"^-?[0-9]+$"}`
+ * (`json/Schema.scala:331`) -- a decimal STRING, because a JSON number cannot
+ * hold every `Long`.  `""` does not match that pattern and the decoder
+ * refuses it, so the one pattern the exporter emits is recognised here by its
+ * exact text and answered `"0"`.  Any OTHER pattern is a refusal rather than
+ * a guess: solving a regular expression is not this function's job, and a
+ * skeleton that does not validate is worse than no skeleton.
+ */
+const LONG_PATTERN = "^-?[0-9]+$";
+
+/** A skeleton must not be built past this depth: a hand-edited or hostile
+  * schema can nest deeper than the JavaScript stack, and "the editor's
+  * extension host died" is not an acceptable answer to a bad schema file.
+  * The `$ref` cycle check below already bounds every schema the exporter can
+  * emit; this bounds the ones it cannot. */
+const MAX_SKELETON_DEPTH = 200;
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * THE SKELETON THE FIRST PICK WRITES, from the exported schema.
+ *
+ * THE FIRST STEP IS A `$ref` HOP, NOT A PROPERTY WALK (defect D2).  The
+ * exporter splices the root schema's own fields next to `$schema`/`$id`
+ * (`json/Schema.scala:195`), so for a `data` params type -- every
+ * interesting one -- the document is
+ *
+ *     {"$schema": ..., "$id": "ermine:Sales/Query",
+ *      "$ref": "#/$defs/Sales.Query", "$defs": {...}}
+ *
+ * and the root has NO `properties` at all.  A `$defs` table and a visited set
+ * are therefore mandatory, not an optimisation.
+ *
+ * THE VOCABULARY IS THE EXPORTER'S, and only the exporter's, each case read
+ * off `json/Schema.scala` rather than guessed:
+ *   `$ref`                 -> hop into `$defs` (`:514`)
+ *   `enum`                 -> the FIRST member: an all-nullary `data` is its
+ *                             constructor name as a bare string (`:527`)
+ *   `oneOf`                -> the first ARM that yields a value: a
+ *                             multi-constructor `data` (`:530`), whose arms
+ *                             are `{tag, ...}` objects (`:571`, `:598-616`)
+ *   `anyOf`                -> `null` when any alternative admits it, else the
+ *                             first alternative that yields a value.
+ *                             `Nullable`/`Maybe#` export as `[a, null]`
+ *                             (`:371`) and a required key of that type gets
+ *                             the same "absent" default an optional `Maybe`
+ *                             key gets by omission -- see `skeletonWalk`
+ *   `const`                -> the value itself: this is what makes a `tag`
+ *                             come out right (`:571`)
+ *   `prefixItems`          -> one skeleton per position: a tuple (`:376-381`)
+ *                             or a positional constructor's `args` (`:610-616`)
+ *   `items`                -> `[]`, the shortest array that decodes (`:363`)
+ *   `format: date`         -> `today` (U2: no clock in a pure function, so the
+ *                             date is an ARGUMENT)
+ *   `format: date-time`    -> today at midnight UTC in the EXPORTER'S OWN
+ *                             spelling, `yyyy-MM-dd'T'HH:mm:ss.SSS'Z'`
+ *                             (`json/Encode.scala:203`), which is what the
+ *                             decoder's `ISO_OFFSET_DATE_TIME` wants -- an
+ *                             offset is mandatory there (`json/Decode.scala:461`)
+ *   `format: uuid`         -> the nil UUID (`:338`, `Decode.scala:463`)
+ *   `type: object`         -> required properties only, recursively (`:606`)
+ *   `string`/`integer`/`number`/`boolean`/`null` -> `""` / `0` / `0` / `false` / `null`
+ *
+ * OPTIONAL KEYS ARE OMITTED, NOT NULLED.  A `Maybe` field is an OPTIONAL key
+ * carrying the payload's schema (`json/Schema.scala:593`), and
+ * `docs/JSON-GUIDE.md` shows the 400 a `null` in its place earns:
+ * `expected an integer (Int), found null`.  So "not in `required`" means "not
+ * in the file", which is also rule 2 above: the smallest value that decodes.
+ *
+ * RECURSION IS A REFUSAL, NOT A LOOP -- BUT ONLY WHERE IT HAS TO BE.  A
+ * required property whose type is being built already has no finite skeleton,
+ * so that BRANCH fails, naming the `$defs` entry.  An `oneOf` then tries its
+ * next arm, which is why `data Tree = Leaf | Node {left: Tree, right: Tree}`
+ * still gets a skeleton (`{"tag":"Leaf","args":[]}`) instead of a refusal.
+ * Only when every arm recurses does the whole call answer `{problem}`.
+ *
+ * A NON-OBJECT ROOT IS NOT AN ERROR (review G5).  `report : Int -> Node` --
+ * WP-7's own `WpSpin` fixture -- wants a bare number, an all-nullary enum
+ * wants a bare string.  Those get their value and `embeddable: false`, which
+ * says NO `$schema` KEY CAN BE PUT IN THEM: a JSON number has nowhere to put
+ * one.  The caller states that the editor cannot validate such a file.
+ *
+ * @param {object} schema the exported schema document
+ * @param {string} today `YYYY-MM-DD`, the glue's clock
+ * @param {string=} schemaRef `./<binding>.schema.json`, if one is to be embedded
+ * @returns {{value: any, embeddable: boolean}|{problem: {reason, message}}}
+ */
+function skeletonFrom(schema, today, schemaRef) {
+  if (!isPlainObject(schema)) {
+    return problem("not-a-schema",
+                   "The params schema the server answered is not a JSON object, so no skeleton can be " +
+                   "derived from it.");
+  }
+  if (typeof today !== "string" || !ISO_DATE.test(today)) {
+    return problem("bad-today",
+                   "A skeleton needs today's date as YYYY-MM-DD to fill in a date field; it was given " +
+                   '"' + printable(today) + '".');
+  }
+  const defs = isPlainObject(schema.$defs) ? schema.$defs : {};
+  const walked = skeletonWalk(schema, defs, today, Object.create(null), 0);
+  if (walked.fail) return { problem: walked.fail };
+  const value = walked.ok;
+  const embeddable = isPlainObject(value);
+  if (embeddable && typeof schemaRef === "string" && schemaRef) {
+    // `$schema` FIRST, so the file opens with the line that makes the editor
+    // validate the rest of it. D1/U1 make that line legal: `schemaFileFor`
+    // injects a `$schema` property into the object the root `$ref` names,
+    // because `additionalProperties: false` only ever sees its own sibling
+    // `properties` and would otherwise squiggle the one line we added.
+    return { value: withLeadingKey("$schema", schemaRef, value), embeddable: true };
+  }
+  return { value: value, embeddable: embeddable };
+}
+
+/** Every walk answers `{ok}` or `{fail}`; `oneOf`/`anyOf` are the only things
+  * that look at a `fail` and carry on, which is what makes a recursive type
+  * with a nullary arm work. */
+function skelOk(value) { return { ok: value }; }
+function skelFail(reason, message) { return { fail: { reason: String(reason), message: String(message) } }; }
+
+function isPlainObject(v) {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/**
+ * ADD A KEY THAT CAME OUT OF JSON, WITHOUT LETTING IT RUN A SETTER (the S1
+ * review's I-1).
+ *
+ * `JSON.parse` makes `__proto__` an ORDINARY OWN property, and `Object.keys`
+ * hands it over like any other -- but `obj[key] = value` on a plain object
+ * then reaches `Object.prototype`'s `__proto__` SETTER, which re-prototypes
+ * the object and stores nothing.  MEASURED on Node 24 before the fix:
+ * `paramsToSend('{"__proto__":{"polluted":1},"a":1}')` answered `{"a":1}` --
+ * the key SILENTLY GONE -- with `"polluted" in params` TRUE.  The wire payload
+ * and the fingerprint were unaffected (`JSON.stringify` and `Object.keys`
+ * ignore a prototype), and `Object.prototype` itself was never touched, but
+ * the glue S2/S3 is about to write reads this object with `in`, `for...in`
+ * and spread.  `defineProperty` takes the key as data, every time.
+ *
+ * In `skeletonObject` the same assignment produced a WRONG DIAGNOSIS rather
+ * than a lost key: a required `__proto__` whose value is not an object was
+ * dropped by the setter and then reported "unsatisfiable", which it is not.
+ *
+ * `__proto__` cannot be an Ermine field name (`identStart = letter`), so a
+ * real params type never reaches this; a hand-edited params file does.
+ */
+function defineKey(target, key, value) {
+  Object.defineProperty(target, key, { value: value, enumerable: true, writable: true, configurable: true });
+}
+
+/**
+ * `{first: value, ...rest}` without `Object.assign`, which copies with
+ * `[[Set]]` and therefore hits the same `__proto__` setter `defineKey` exists
+ * to avoid.  Key order is the point: the new key comes FIRST, which is what
+ * puts `"$schema"` at the top of a params file and at the top of an injected
+ * `properties`.
+ */
+function withLeadingKey(key, value, rest) {
+  const out = {};
+  defineKey(out, key, value);
+  if (isPlainObject(rest)) {
+    for (const k of Object.keys(rest)) if (k !== key) defineKey(out, k, rest[k]);
+  }
+  return out;
+}
+
+function skeletonWalk(node, defs, today, visiting, depth) {
+  if (depth > MAX_SKELETON_DEPTH) {
+    return skelFail("too-deep",
+                    "The params schema nests more than " + MAX_SKELETON_DEPTH + " levels deep; no " +
+                    "skeleton is derived from it.");
+  }
+  // A boolean schema: `true` (and `{}`) allow anything, `false` allows
+  // nothing. The exporter emits `{}` for a `Json`-typed position
+  // (`json/Schema.scala:300`), where `null` is a value the decoder takes.
+  if (node === true) return skelOk(null);
+  if (node === false) {
+    return skelFail("unsatisfiable", "Part of the params schema allows no value at all (`false`).");
+  }
+  if (!isPlainObject(node)) {
+    return skelFail("not-a-schema", "Part of the params schema is not a JSON object, so it has no skeleton.");
+  }
+
+  if (typeof node.$ref === "string") {
+    const name = defNameOf(node.$ref);
+    if (name === null) {
+      return skelFail("unsupported",
+                      'The params schema has a reference this preview cannot follow: "' +
+                      printable(node.$ref) + '" (only "#/$defs/<name>" is used by the exporter).');
+    }
+    if (visiting[name]) {
+      return skelFail("recursive",
+                      "The type " + printable(name) + " contains itself in a required position, so it has " +
+                      "no finite default value; write the params file by hand.");
+    }
+    if (!Object.prototype.hasOwnProperty.call(defs, name)) {
+      return skelFail("unsupported",
+                      "The params schema refers to " + printable(name) + ", which it does not define.");
+    }
+    const nested = Object.create(visiting);
+    nested[name] = true;
+    return skeletonWalk(defs[name], defs, today, nested, depth + 1);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(node, "const")) return skelOk(node.const);
+
+  if (Array.isArray(node.enum)) {
+    if (!node.enum.length) {
+      return skelFail("unsatisfiable", "Part of the params schema is an empty `enum`, which no value satisfies.");
+    }
+    return skelOk(node.enum[0]);
+  }
+
+  // The two branching keywords, and the ONLY places a failed branch is not
+  // fatal. `oneOf` is a multi-constructor `data` (or a bare relation's two
+  // delivery arms); `anyOf` is a `Nullable`/`Maybe#` (`json/Schema.scala:371`).
+  //
+  // `anyOf` WITH A NULL ARM ANSWERS `null`, and the S1 review is why the rule
+  // now reads this way rather than "the first alternative that yields".
+  // Rule 2 of this section is "the smallest value that decodes", and `null` is
+  // smaller than any payload; more to the point it is the SAME answer an
+  // optional `Maybe` key gets by being left out. The alternative was actively
+  // WRONG as a default, not merely longer: a required `Nullable String` filter
+  // would have started life as `""`, which is not "no filter" but "match the
+  // empty string", and a required `Nullable Date` would have started at today,
+  // which is a real date range nobody asked for. `oneOf` keeps the
+  // first-that-yields rule: the exporter never puts a null arm in one, and a
+  // recursive union needs its base case.
+  for (const key of ["oneOf", "anyOf"]) {
+    if (Array.isArray(node[key])) {
+      if (!node[key].length) {
+        return skelFail("unsatisfiable",
+                        "Part of the params schema has an empty `" + key + "`, which no value satisfies.");
+      }
+      if (key === "anyOf" && node[key].some(admitsNull)) return skelOk(null);
+      let last = null;
+      for (const alternative of node[key]) {
+        const attempt = skeletonWalk(alternative, defs, today, visiting, depth + 1);
+        if (!attempt.fail) return attempt;
+        last = attempt;
+      }
+      return last;
+    }
+  }
+
+  const type = Array.isArray(node.type) ? node.type[0] : node.type;
+  switch (type) {
+    case "object":  return skeletonObject(node, defs, today, visiting, depth);
+    case "array":   return skeletonArray(node, defs, today, visiting, depth);
+    case "string":  return skeletonString(node, today);
+    case "integer":
+    case "number":  return skelOk(clampNumber(node));
+    case "boolean": return skelOk(false);
+    case "null":    return skelOk(null);
+    default:
+      // No `type` and no keyword above: the exporter's `Json` position, which
+      // accepts anything the parser can hold, and `null` is the shortest.
+      return skelOk(null);
+  }
+}
+
+/** Is this alternative the `{"type":"null"}` arm the exporter writes for a
+  * `Nullable`/`Maybe#` (`json/Schema.scala:371`)? A bare `true` schema admits
+  * null too, and so does an unconstrained `{}` -- both are "anything goes", so
+  * both are honest null arms. */
+function admitsNull(alternative) {
+  if (alternative === true) return true;
+  if (!isPlainObject(alternative)) return false;
+  if (alternative.type === "null") return true;
+  return Object.keys(alternative).length === 0;
+}
+
+/** `#/$defs/<name>` -> `<name>`; anything else -> null. The exporter writes no
+  * other pointer shape (`json/Schema.scala:514`) and a `$defs` name is
+  * sanitised to letters, digits, `_` and `.`, so no RFC 6901 escape can occur. */
+function defNameOf(ref) {
+  const prefix = "#/$defs/";
+  if (typeof ref !== "string" || ref.indexOf(prefix) !== 0) return null;
+  const name = ref.slice(prefix.length);
+  if (!name || name.indexOf("/") >= 0) return null;
+  return name;
+}
+
+function skeletonObject(node, defs, today, visiting, depth) {
+  const properties = isPlainObject(node.properties) ? node.properties : {};
+  const required = Array.isArray(node.required) ? node.required.map(String) : [];
+  const open = node.additionalProperties !== false;
+  const value = {};
+  // DECLARATION ORDER, not `required` order: the exporter writes a
+  // constructor's properties in the order the fields were declared
+  // (`json/Schema.scala:601`), and a skeleton the developer reads next to the
+  // source should be in the same order. The `tag` of a multi-constructor arm
+  // is first in `properties`, so it comes out first here too.
+  for (const key of Object.keys(properties)) {
+    if (required.indexOf(key) < 0) continue;                  // a `Maybe` key: OMITTED
+    const attempt = skeletonWalk(properties[key], defs, today, visiting, depth + 1);
+    if (attempt.fail) return attempt;
+    defineKey(value, key, attempt.ok);                          // review I-1
+  }
+  for (const key of required) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) continue;
+    if (!open) {
+      return skelFail("unsatisfiable",
+                      'The params schema requires the key "' + printable(key) + '" and forbids it in the ' +
+                      "same breath, so no value satisfies it.");
+    }
+    // A required key with no schema of its own is unconstrained, so `null`
+    // satisfies it. Unreachable from this exporter, which never requires a
+    // key it does not describe; kept so a hand-edited schema does not throw.
+    defineKey(value, key, null);                                // review I-1
+  }
+  return skelOk(value);
+}
+
+function skeletonArray(node, defs, today, visiting, depth) {
+  if (Array.isArray(node.prefixItems)) {
+    const value = [];
+    for (const item of node.prefixItems) {
+      const attempt = skeletonWalk(item, defs, today, visiting, depth + 1);
+      if (attempt.fail) return attempt;
+      value.push(attempt.ok);
+    }
+    return skelOk(value);
+  }
+  // `maxItems: 0` is the exporter's unit `()` and its nullary positional
+  // constructor's `args` (`json/Schema.scala:378`, `:610`); `[]` is what the
+  // decoder wants for both ("an array of exactly 0").
+  const minItems = typeof node.minItems === "number" && node.minItems > 0 ? Math.floor(node.minItems) : 0;
+  if (minItems === 0) return skelOk([]);
+  if (node.items === undefined) return skelOk([]);
+  const attempt = skeletonWalk(node.items, defs, today, visiting, depth + 1);
+  if (attempt.fail) return attempt;
+  const value = [];
+  for (let i = 0; i < minItems; i++) value.push(attempt.ok);
+  return skelOk(value);
+}
+
+function skeletonString(node, today) {
+  if (node.format === "date") return skelOk(today);
+  // The exporter's own spelling, so the decoder's ISO_OFFSET_DATE_TIME takes
+  // it: the offset is not optional there.
+  if (node.format === "date-time") return skelOk(today + "T00:00:00.000Z");
+  if (node.format === "uuid") return skelOk(NIL_UUID);
+  if (typeof node.pattern === "string") {
+    if (node.pattern === LONG_PATTERN) return skelOk("0");
+    return skelFail("unsupported",
+                    "Part of the params schema constrains a string to the pattern " +
+                    printable(node.pattern) + ", which this preview cannot invent a value for; " +
+                    "write the params file by hand.");
+  }
+  const min = typeof node.minLength === "number" && node.minLength > 0 ? Math.floor(node.minLength) : 0;
+  if (min === 0) return skelOk("");
+  const max = typeof node.maxLength === "number" ? Math.floor(node.maxLength) : min;
+  if (max < min) {
+    return skelFail("unsatisfiable",
+                    "Part of the params schema asks a string to be both longer than " + min +
+                    " and shorter than " + max + " characters.");
+  }
+  // `Char` is `minLength: 1, maxLength: 1` (`json/Schema.scala:335`) and any
+  // character does; `x` is one.
+  return skelOk("x".repeat(min));
+}
+
+/** `0` unless the schema puts it out of range: `Short` and `Byte` carry a
+  * `minimum`/`maximum` (`json/Schema.scala:329-330`) that 0 is inside, so
+  * this only ever moves for a hand-written schema. */
+function clampNumber(node) {
+  let value = 0;
+  if (typeof node.minimum === "number" && value < node.minimum) value = node.minimum;
+  if (typeof node.maximum === "number" && value > node.maximum) value = node.maximum;
+  return value;
+}
+
+// -- the schema file -------------------------------------------------------
+
+/**
+ * A JSON value copied field by field, key order kept.  Used so nothing this
+ * section answers can share structure with -- let alone mutate -- the schema
+ * the server sent, which the glue keeps and may hand out again.
+ *
+ * `defineKey`, not `out[key] =`, for the reason I-1 gives: a schema read off
+ * disk can hold a key literally named `__proto__`, and an assignment would
+ * silently drop it and re-prototype the copy.  MEASURED before this fix: a
+ * `properties` key called `__proto__` disappeared from the written file, and a
+ * `$defs` ENTRY called `__proto__` vanished entirely, leaving the root `$ref`
+ * dangling.  Neither is reachable from the exporter -- `Schema.defName` builds
+ * `<module>.<type>` and `__proto__` is not an Ermine field name -- and both
+ * failed in the SAFE direction (a key the editor then refuses, rather than one
+ * it wrongly allows), so this is hygiene rather than a hole.  It is still
+ * wrong, and the fix is one word.
+ */
+function cloneJson(value) {
+  if (Array.isArray(value)) return value.map(cloneJson);
+  if (isPlainObject(value)) {
+    const out = {};
+    for (const key of Object.keys(value)) defineKey(out, key, cloneJson(value[key]));
+    return out;
+  }
+  return value;
+}
+
+/**
+ * THE `.schema.json` FILE, from the schema the server exported.
+ *
+ * TWO EDITS, BOTH DECIDED BY THE USER, and nothing else touched:
+ *
+ * U1 -- `$id` IS DROPPED.  The exporter names it `ermine:Sales/Query`
+ * (`json/Schema.scala:191`), a CUSTOM-SCHEME base URI, and a fragment-only
+ * `#/$defs/X` resolves against whatever base is in scope.  VS Code's JSON
+ * language service has had 2020-12 support land in pieces, so whether it
+ * resolves a `$ref` under an `ermine:` base is UNVERIFIED BY ANYONE HERE.
+ * The file's own path is a perfectly good identity, so the risk is simply
+ * removed.  `$defs` and `$ref` stay: recursion needs them.
+ *
+ * D1/U1 -- `"$schema": {"type": "string"}` IS INJECTED WHERE THE PARAMS FILE'S
+ * OWN ROOT OBJECT IS DESCRIBED.  The params file carries a relative
+ * `"$schema"` line so the editor knows which schema to use; a record-style
+ * params type exports `additionalProperties: false`
+ * (`json/Schema.scala:606`); so, without this, the ONE LINE that makes
+ * validation work is the first thing validation complains about.
+ *
+ * "WHERE THE ROOT OBJECT IS DESCRIBED" IS NOT ALWAYS THE `$defs` ENTRY, and
+ * D1 only named that one case.  The exporter splices the root schema's fields
+ * next to `$schema`/`$id` (`json/Schema.scala:195`), so the root of the
+ * document is whatever the params type walks to, and three shapes of it can
+ * hold a `$schema` key:
+ *
+ *   `{"$ref": "#/$defs/Sales.Query"}`   a `data` params type -- D1's case,
+ *                                       inject into the `$defs` ENTRY, never
+ *                                       into the root: `additionalProperties`
+ *                                       constrains keys only against its OWN
+ *                                       SIBLING `properties`, so a
+ *                                       `properties` added at the root would
+ *                                       do precisely nothing;
+ *   `{"type":"object","properties":...,"additionalProperties":false}`
+ *                                       a RECORD params type
+ *                                       (`report : {..(|a,b|)} -> Node`,
+ *                                       `json/Schema.scala:412-419`), inlined
+ *                                       at the document root -- here the root
+ *                                       IS the sibling, so it is injected
+ *                                       there;
+ *   `{"oneOf": [arm, arm]}`             a multi-constructor `data`
+ *                                       (`:530`): EVERY arm is injected,
+ *                                       because the developer may retag the
+ *                                       file to any of them and the `$schema`
+ *                                       line has to survive that.  An
+ *                                       optional key added to every arm
+ *                                       cannot make two arms match one value:
+ *                                       the `tag` consts still discriminate.
+ *
+ * AND A FOURTH RULE THAT CUTS ACROSS ALL THREE (the S1 review's D-1): a
+ * `$defs` entry that ALSO describes a nested position is never injected in
+ * place -- a root-level COPY of it is, and the root `$ref` is pointed at the
+ * copy, so a nested `$schema` stays as illegal in the editor as it is on the
+ * wire.  `cloneForRoot` below has the measurement and the reasoning.
+ *
+ * LEFT ALONE, deliberately:
+ *   an OPEN object (a `Spread` field, `additionalProperties: true`) already
+ *   admits any key, so there is nothing to inject and injecting would change
+ *   what the file means;
+ *   a NON-OBJECT root (`Int`, an all-nullary enum, a tuple) has no properties
+ *   to inject into and no `$schema` key can appear in its params file either
+ *   (`skeletonFrom`'s `embeddable: false` says the same thing);
+ *   an object that already declares a `$schema` property.
+ *
+ * Never mutates its input, and is IDEMPOTENT: the file is rewritten whenever
+ * the params type changes (D8's write-if-different compares its bytes), so
+ * "run it twice, get the same bytes" is a property, not a nicety.
+ */
+function schemaFileFor(schema) {
+  if (!isPlainObject(schema)) return schema;
+  const out = cloneJson(schema);
+  delete out.$id;
+  allowSchemaKey(out, isPlainObject(out.$defs) ? out.$defs : {}, out, Object.create(null), 0);
+  return out;
+}
+
+/**
+ * Walk from a schema node to the object(s) THE INSTANCE'S ROOT could be, and
+ * let each closed one carry a `$schema` key.  Answers whether it injected
+ * anything, which is what decides whether a clone was worth minting.  Mutates
+ * the CLONE `schemaFileFor` made and nothing else.
+ *
+ * THE `seen` SET is over `$defs` names, so a recursive type is visited once;
+ * the exporter never chains one `$ref` to another, but following them costs
+ * nothing and a hand-edited file may.
+ *
+ * IT NEVER DESCENDS INTO `properties`, which is what keeps a nested field
+ * from being injected -- and the review's D-1 is the other half of that same
+ * rule: see `cloneForRoot` below.
+ */
+function allowSchemaKey(node, defs, doc, seen, depth) {
+  if (!isPlainObject(node) || depth > MAX_SKELETON_DEPTH) return false;
+  if (typeof node.$ref === "string") {
+    const name = defNameOf(node.$ref);
+    if (name === null || seen[name]) return false;
+    if (!Object.prototype.hasOwnProperty.call(defs, name)) return false;
+    const nested = Object.create(seen);
+    nested[name] = true;
+    if (!isReferencedElsewhere(doc, node, name)) {
+      // Reachable ONLY from the instance's root, so the entry itself may
+      // carry the key: this is Sales's case and the common one.
+      return allowSchemaKey(defs[name], defs, doc, nested, depth + 1);
+    }
+    return cloneForRoot(node, defs, doc, name, nested, depth);
+  }
+  for (const key of ["oneOf", "anyOf"]) {
+    if (Array.isArray(node[key])) {
+      let injected = false;
+      for (const alternative of node[key]) {
+        if (allowSchemaKey(alternative, defs, doc, seen, depth + 1)) injected = true;
+      }
+      return injected;
+    }
+  }
+  if (node.type !== "object") return false;
+  if (node.additionalProperties !== false) return false;         // already open
+  if (!isPlainObject(node.properties)) return false;
+  if (Object.prototype.hasOwnProperty.call(node.properties, "$schema")) return false;
+  node.properties = withLeadingKey("$schema", { type: "string" }, node.properties);
+  return true;
+}
+
+/**
+ * D-1 (the S1 REVIEW, 2026-09-21, MEASURED): A SHARED `$defs` ENTRY MUST NOT
+ * BE INJECTED IN PLACE -- IT WOULD MAKE A **NESTED** `$schema` LEGAL IN THE
+ * EDITOR THAT THE SERVER REFUSES.
+ *
+ * The committed golden `core/src/test/resources/schema/UserTree.schema.json`
+ * is the case: `Test.Tree` is the root `$ref`'s target AND what the `Node`
+ * arm's `args.prefixItems` refer to.  Injecting into that one entry lets the
+ * editor accept
+ *
+ *     {"tag":"Node","args":[{"$schema":"...","tag":"Leaf","args":[0]}, ...]}
+ *
+ * which `paramsToSend` does NOT strip -- G20's strip is top-level-only, on
+ * purpose -- and which the decoder then refuses: `json/Decode.scala:755-756`
+ * (`closed`) via `:848-849`, MEASURED against a real server by the review as
+ * `400 "the key \"$schema\" is not allowed here"`.  That is exactly the
+ * failure this whole edit exists to prevent, with the sign reversed.
+ *
+ * THE FIX IS A ROOT-LEVEL CLONE.  When the entry is reachable from anywhere
+ * but the root, its skeleton-carrying copy is minted under a NEW `$defs`
+ * name, the injection goes into the COPY, and the ROOT `$ref` is pointed at
+ * it.  The shared entry is left untouched, so every NESTED occurrence still
+ * forbids `$schema` -- editor and server agree again, in both directions.
+ * The copy's own inner `$ref`s still name the ORIGINAL, which is what makes
+ * one level of `$schema` and no more.
+ *
+ * THE CLONE'S NAME CANNOT COLLIDE WITH AN EXPORTER NAME.  `Schema.defName`
+ * runs every name through `sanitise` (`json/Schema.scala:721-722`), which
+ * replaces everything that is not a letter, a digit, `_` or `.` with `_` --
+ * so a `-` can never appear in an exported `$defs` name.  It is also
+ * unreserved in a URI (RFC 3986) and needs no JSON Pointer escaping (only `~`
+ * and `/` do), so `#/$defs/<name>-params-root` is a valid `$ref`.
+ *
+ * NOTHING IS CLONED SPECULATIVELY: the copy is made, the injection is tried
+ * on it, and if nothing was injected (an open object, an enum, a tuple) the
+ * copy is thrown away and the file is left as the exporter wrote it.  That is
+ * also what keeps `schemaFileFor` IDEMPOTENT: on a second run the root `$ref`
+ * already names the copy, the copy is referenced by nothing else, and its
+ * `properties` already declares `$schema`, so no second copy is minted.
+ *
+ * ONE OBLIGATION THIS PUTS ON S3, AND IT IS THE ONLY ONE IN THIS SECTION.
+ * A copy tracks the entry it was cloned from ONLY WITHIN THE CALL THAT MADE
+ * IT.  `schemaFileFor` is a pure function of what it is handed; it does not
+ * and cannot diff a copy against a later version of its original.  So **S3
+ * MUST ALWAYS PASS THE SERVER'S FRESH `ermine/schema` ANSWER AND MUST NEVER
+ * READ ITS OWN WRITTEN `.schema.json` BACK INTO THIS FUNCTION.**  Feed the
+ * written file back after the params type has changed and the copy silently
+ * keeps the OLD shape while the shared entry beside it carries the new one --
+ * MEASURED (a field added to the original does not appear in the copy), and
+ * pinned by a test that documents the hazard rather than forbidding it.  The
+ * fresh answer costs one request and is what D8's write-if-different compares
+ * against anyway.
+ */
+function cloneForRoot(refNode, defs, doc, name, seen, depth) {
+  const copy = cloneJson(defs[name]);
+  if (!allowSchemaKey(copy, defs, doc, seen, depth + 1)) return false;
+  const copyName = freeDefName(defs, name + "-params-root");
+  defs[copyName] = copy;
+  refNode.$ref = "#/$defs/" + copyName;
+  return true;
+}
+
+/** `<base>`, else `<base>-`, `<base>--`, ... -- a hand-edited file that has
+  * already taken the name does not get its entry overwritten. */
+function freeDefName(defs, base) {
+  let name = base;
+  while (Object.prototype.hasOwnProperty.call(defs, name)) name += "-";
+  return name;
+}
+
+/**
+ * Is `#/$defs/<name>` named by any `$ref` in the document OTHER than this
+ * one?  If it is, the entry describes a NESTED position as well as the root
+ * and must not be injected in place (see `cloneForRoot`).
+ *
+ * The whole document is scanned rather than only the positions the injector
+ * walks, because the question is about every place a VALUE can sit, and the
+ * injector deliberately does not visit those.
+ */
+function isReferencedElsewhere(doc, refNode, name) {
+  const target = "#/$defs/" + name;
+  let found = false;
+  const visit = (node) => {
+    if (found || !node || typeof node !== "object") return;
+    if (Array.isArray(node)) { node.forEach(visit); return; }
+    if (node !== refNode && node.$ref === target) { found = true; return; }
+    for (const key of Object.keys(node)) visit(node[key]);
+  };
+  visit(doc);
+  return found;
+}
+
+/**
+ * The bytes of the `.schema.json` file.
+ *
+ * Two spaces and a TRAILING NEWLINE: the file is generated on every change of
+ * the params type, and D8 says do not write it when it has not changed -- a
+ * comparison that is only meaningful if the same schema always renders to the
+ * same bytes.  The trailing newline is so `git diff` and every POSIX tool
+ * that reads the file in a checkout behave.
+ */
+function schemaFileText(value) {
+  return JSON.stringify(value, null, 2) + "\n";
+}
+
+/**
+ * The generated `.ermine/preview/.gitignore` (U7).
+ *
+ * U7 IS BOTH FILES, AND THIS IS ONE OF THEM: a self-contained
+ * `.ermine/preview/.gitignore` beside the generated files, PLUS the line in
+ * the checkout's root `.gitignore`.  The second file is not wrong and is not
+ * dropped -- it is simply not S1's: writing either of them is S3's job, and
+ * only the TEXT and the PATH of this one live here.  The generated file is
+ * needed because the repo line alone is inert in every OTHER workspace folder
+ * and leaves WP-13/WP-14's file-backed `local.db` tracked; the repo line is
+ * needed because a checkout should say what it ignores in the place people
+ * look.  The params files themselves are NOT ignored by either -- they are
+ * the point, they are the default a fresh clone renders, and `git status`
+ * showing them is a done-when.
+ */
+const paramsGitignoreText = [
+  "# Generated by the Ermine preview (tracker/JSON-WIDGET-PLAYGROUND.md, section 6, U7).",
+  "#",
+  "# The *.params.json files under here are ORDINARY COMMITTED SOURCE: they are",
+  "# the parameters a fresh clone renders the report with. What is ignored is",
+  "# only what the preview generates from them or beside them:",
+  "#   *.schema.json  rewritten from the report's parameter type on every change",
+  "#   *.db           the preview's own local database file",
+  "*.schema.json",
+  "*.db",
+  "",
+].join("\n");
+
+// -- what is actually sent -------------------------------------------------
+
+/** U6: one mebibyte of params, measured in the UTF-8 bytes of the FILE.
+  * The only other bound is the server's `Wire.MaxFrame` of 64 MiB, over which
+  * the reader CLOSES THE CONNECTION (`lsp/Rpc.scala:238`, `:331-337`) -- the
+  * render does not fail, the language server goes away. A named refusal a
+  * thousand times smaller is the difference between a message and a mystery. */
+const PARAMS_MAX_BYTES = 1024 * 1024;
+
+/**
+ * A TOP-LEVEL KEY THAT LOOKS LIKE A CREDENTIAL (U5, review G13).
+ *
+ * Only top-level keys, and only a warning.  A params file is committed AND
+ * the render body reaches `ERMINE_LSP_LOG` (clipped at 2000 characters,
+ * `lsp/Rpc.scala:244`; `Rpc.Redacted` holds `ermine/preview/connect` and nothing
+ * else), so a password in one is a password in two places that outlive the
+ * session.  It is NOT a refusal: a report may legitimately take a `token`
+ * parameter, and the user decided (U5) that a block the developer cannot
+ * override is the wrong trade.
+ *
+ * THE PATTERN IS THE USER'S, VERBATIM, AND IS NOT WIDENED HERE.  It over-warns
+ * (`passenger`, `bypass`, `tokenize`) and under-warns (`connectionString`,
+ * `dsn`, `jwt`, `auth`, `bearer`, `privateKey`, `credential`).  The S1 review
+ * found the second list, and the answer is to say so in the WARNING rather
+ * than to quietly extend a rule the user wrote down: `credentialKeyWarning`
+ * now states what the check actually looks for, so nobody reads its silence
+ * as a clearance.  Widening it is available to the user; section 6 records it.
+ */
+const CREDENTIAL_KEY = /pass|pwd|secret|token|api[-_]?key/i;
+
+/**
+ * A LEADING UTF-8 BYTE ORDER MARK IS NOT A SYNTAX ERROR (the S1 review's I-2).
+ *
+ * `JSON.parse` refuses U+FEFF, and VS Code writes one on every save whenever
+ * `files.encoding` is `utf8bom` -- not rare on the Windows machines section 10
+ * names as the deployment target.  The developer would be looking at a
+ * syntactically perfect file and reading "the params file is not valid JSON",
+ * which is the one thing a named refusal must never do.  One BOM is dropped;
+ * anything else stays, so a genuine syntax error still reports itself.
+ *
+ * THE BYTE CAP COUNTS THE BOM.  It is measured on the text AS READ, before
+ * this runs, because the cap is a bound on the FILE the glue picked up off the
+ * disk; three bytes out of a mebibyte is not worth a second rule, and "the
+ * file is N bytes" in the refusal then matches what the developer's own tools
+ * report.
+ */
+function withoutBom(text) {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+/**
+ * The sentence shown once per file when `paramsToSend` warns.
+ * Exported so the glue cannot reword the rule into something weaker.
+ */
+function credentialKeyWarning(keys) {
+  const named = (Array.isArray(keys) ? keys : []).map((k) => '"' + printable(k) + '"');
+  const subject = named.length === 1 ? "The key " + named[0] + " looks"
+                                     : "The keys " + named.join(", ") + " look";
+  return subject + " like a credential. A params file is committed to the repository and its value is " +
+         "written to the language server's log, so a password or an API token in one is a secret in " +
+         "both. Nothing is blocked: if the report really takes it as a parameter, ignore this. " +
+         "This is a check on the KEY NAME only -- it looks for pass, pwd, secret, token and apiKey, " +
+         "so it says nothing about a key called connectionString, dsn, jwt, auth, bearer, " +
+         "privateKey or credential.";
+}
+
+/**
+ * THE FILE'S TEXT -> WHAT GOES IN `params` ON THE WIRE, or a named refusal.
+ *
+ * THE ORDER OF THE CHECKS IS PART OF THE DESIGN:
+ *   1. THE CAP FIRST (U6), on the TEXT's UTF-8 bytes, because the point of a
+ *      cap is not to parse the thing;
+ *   2. an EMPTY or whitespace-only file, before the parser, because
+ *      `JSON.parse("")` says "Unexpected end of JSON input", which tells a
+ *      developer looking at an empty file nothing they did not know;
+ *   3. PARSE.  Invalid JSON is a REFUSAL and the render DOES NOT HAPPEN
+ *      (review G7): the alternative is rendering yesterday's parameters under
+ *      today's file, which looks like it worked.  The parser's own message
+ *      travels with the refusal, and the JSON editor's squiggle carries the
+ *      position;
+ *   4. STRIP `$schema`, and ONLY the top-level one, and ONLY when the root is
+ *      an object (review G20).  Every request key is closed
+ *      (`json/Runner.scala:101-103`), so the line that makes the EDITOR work
+ *      would be a 400 from the SERVER.  A consequence worth stating: a params
+ *      type with a `Spread` field is open, so it could in principle have a
+ *      genuine `$schema` field -- and it cannot have one here, ever;
+ *   5. WARN about credential-looking keys (U5).  Never a refusal.
+ *
+ * AN EMPTY FILE IS A NAMED REFUSAL, NOT AN EMPTY OBJECT, and this is the one
+ * decision here the tracker did not settle.  `docs/JSON-GUIDE.md` says a
+ * MISSING `params` key decodes as `null` -- but a missing key is a file that
+ * does not EXIST, which is S3's case and which WP-7 already measured an answer
+ * for (`{}`, whose 400 names the first key the developer must supply).  A file
+ * that exists and is empty is a different event: a truncated write, an editor
+ * crash, a `git checkout` caught mid-flight.  Rendering it as `{}` would
+ * silently throw away parameters the developer believes are there and show a
+ * document that looks fine.  So it is named, and it does not render -- the
+ * same answer invalid JSON gets, for the same reason.
+ *
+ * @param {string} text the params file's contents
+ * @param {number=} maxBytes the cap, default `PARAMS_MAX_BYTES`
+ * @returns {{params: any, warnings: string[]}|{problem: {reason, message}}}
+ */
+function paramsToSend(text, maxBytes) {
+  const cap = typeof maxBytes === "number" && maxBytes > 0 ? maxBytes : PARAMS_MAX_BYTES;
+  if (typeof text !== "string") {
+    return problem("not-text", "The params file could not be read as text.");
+  }
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > cap) {
+    return problem("too-large",
+                   "The params file is " + bytes + " bytes and the preview sends at most " + cap +
+                   " bytes of parameters, so it was not sent and the report was not rendered.");
+  }
+  if (!text.trim()) {
+    return problem("empty",
+                   "The params file is empty. An empty file is not JSON; write `{}` in it for a report " +
+                   "whose parameters are all optional, or fill in the keys the schema beside it names.");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(withoutBom(text));
+  } catch (err) {
+    return problem("invalid-json",
+                   "The params file is not valid JSON, so the report was not rendered: " +
+                   printable(err && err.message ? err.message : String(err)));
+  }
+  let params = parsed;
+  const warnings = [];
+  if (isPlainObject(parsed)) {
+    params = {};
+    const flagged = [];
+    for (const key of Object.keys(parsed)) {
+      if (key === "$schema") continue;                          // G20: top-level, object root, only
+      defineKey(params, key, parsed[key]);                      // review I-1
+      if (CREDENTIAL_KEY.test(key)) flagged.push(key);
+    }
+    if (flagged.length) warnings.push(credentialKeyWarning(flagged));
+  }
+  return { params: params, warnings: warnings };
+}
+
 module.exports = {
   absoluteRoots,
   makePick,
@@ -1885,4 +3041,20 @@ module.exports = {
   isDisplaced,
   errorAnswer,
   REQUEST_CANCELLED,
+  // WP-8 S1: params files, all pure, none of it wired yet.
+  paramsPaths,
+  shouldRerenderOnParamsSave,
+  isCurrentSchemaAnswer,
+  skeletonFrom,
+  schemaFileFor,
+  schemaFileText,
+  paramsToSend,
+  credentialKeyWarning,
+  paramsGitignoreText,
+  PARAMS_MAX_BYTES,
+  CREDENTIAL_KEY,
+  NIL_UUID,
+  MAX_NAME_LENGTH,
+  MAX_SKELETON_DEPTH,
+  RESERVED_DEVICE_NAMES,
 };
