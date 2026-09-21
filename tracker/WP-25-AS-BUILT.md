@@ -1,5 +1,7 @@
 # WP-25 as built — `Session.scrub`: any set of modules is safe to unload
 
+> **FOLDED INTO `tracker/JSON-WIDGET-PLAYGROUND.md` ON 2026-09-21** (§10's edits, plus §11's new `TestScrub` row and §14's new WP-28): **that document is the authority from here on**; this file is kept as the ticket's own record.
+
 Branch `wp25-scrub`, worktree `ermine-scala-wt-wp6-perfA`, forked from
 `widget-preview` at `f8fb9de7`.  Nothing committed, nothing pushed, no
 `scripts/gate.sh` run.  This file is a **new** tracker note on purpose:
