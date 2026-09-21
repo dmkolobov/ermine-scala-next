@@ -189,11 +189,23 @@ final class Resident(val log: String => Unit) {
   private def reloadModules(direct: Set[String]): Resident.Reloaded = {
     val r = booted.get
     implicit val env: SessionEnv = r.env
-    val dirty = Session.dependentsOf(env, direct ++ pendingReload)
-    if (dirty.isEmpty) Resident.Reloaded(Nil, 0.0, None)
+    val dependents = Session.dependentsOf(env, direct ++ pendingReload)
+    if (dependents.isEmpty) Resident.Reloaded(Nil, 0.0, None)
     else {
       val t0 = System.nanoTime
-      Session.scrub(env, builtinEnv, dirty)
+      // WP-25: `scrub` may unload MORE than it was asked to (it closes the
+      // set over re-exporters), and what it returns is the set it scrubbed
+      // BY -- a superset of what was passed, not necessarily what left
+      // `loadedModules` (intersect with the pre-scrub `loadedModules` for
+      // that).  The reload, the pending set and the `Reloaded` record all
+      // have to be that set, or the session sits missing a module while
+      // `loadedFiles` says it is there.  Naming a module that was not
+      // loaded is harmless and wanted here: `dependentsOf(direct ++
+      // pendingReload)` already carries unloaded pending modules, and a
+      // pending module is exactly what the next reload must retry.  With
+      // edges intact `dependentsOf` is already closed and this equals
+      // `dependents`.
+      val dirty = Session.scrub(env, builtinEnv, dependents)
       pendingReload = dirty
       def load(ms: List[String]): Option[String] =
         try { Session.loadModules(ms); None }
@@ -209,18 +221,21 @@ final class Resident(val log: String => Unit) {
       // failed make may have left partial state) and load ONE AT A TIME, so
       // a broken file costs only its own closure and the rest of the batch
       // comes back; what still fails stays pending.
+      var scrubbed = dirty
       val failure = load(dirty.toList.sorted) match {
         case None => pendingReload = Set(); None
         case Some(first) =>
-          Session.scrub(env, builtinEnv, dirty)
-          val errors = dirty.toList.sorted.flatMap { m =>
+          // the partial load may have put names back, so this scrub can
+          // widen again; take its answer for the same reason as above
+          scrubbed = Session.scrub(env, builtinEnv, dirty)
+          val errors = scrubbed.toList.sorted.flatMap { m =>
             if (env.loadedModules contains m) None else load(List(m)).map(m -> _)
           }
-          pendingReload = dirty.filterNot(env.loadedModules.contains)
+          pendingReload = scrubbed.filterNot(env.loadedModules.contains)
           Some(if (errors.isEmpty) first else errors.map { case (m, e) => m + ": " + e }.mkString("; "))
       }
       Phases.reset()
-      Resident.Reloaded(dirty.toList.sorted, (System.nanoTime - t0) / 1e9, failure)
+      Resident.Reloaded(scrubbed.toList.sorted, (System.nanoTime - t0) / 1e9, failure)
     }
   }
 
@@ -415,6 +430,14 @@ final class Resident(val log: String => Unit) {
     // :reload's scrubber does (Session.reloadChangedModules).
     val tScrub = Phases.now
     // Only what the SOURCE declares is scrubbed (see `Session.scrub`).
+    // WP-25: the returned set is DELIBERATELY IGNORED here.  `e` is a
+    // throwaway per-request copy: the modules the closure adds are this
+    // module's RE-EXPORTERS, which an acyclic import graph guarantees this
+    // module does not import, so the check never needs them back and
+    // nothing reloads them.  The cost is bounded -- the re-export closure
+    // of one module is at most 6 of the resident's 130 and 1.8 on average
+    // (MEASURED), against the importer closure's 96 -- which is why the
+    // closure is over re-exporters and not importers.
     if (e.loadedModules contains mh.name) Session.scrub(e, builtinEnv, Set(mh.name))
     Phases.add("scrub", tScrub)
 
