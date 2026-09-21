@@ -20,6 +20,9 @@
 // `path` is Node's own and has no editor in it, so it is allowed here.
 
 const path = require("path");
+// `crypto` is Node's own, like `path`: no editor in it, so the digest the
+// wedge mark stores (WP-22 review M3) can be computed here and tested here.
+const crypto = require("crypto");
 
 // ----------------------------------------------------------------- roots
 
@@ -373,6 +376,484 @@ function messageOf(event) {
   return typeof event.message === "string" && event.message ? event.message : "the preview is stuck";
 }
 
+// ------------------------------------------------------- the wedge guard
+//
+// WP-22 (section 14, Q13's re-decision, Q17).  THE USER'S PRINCIPLE, in
+// their words: "We'd want some sort of confirmation before rendering a
+// report which wedged and was killed the first time around and it didn't
+// change", and "I think 'remembering' is an extension concern".
+//
+// THE LOOP THIS EXISTS FOR, read from the code and UNOBSERVED in any
+// editor: a render wedges the preview; the watchdog answers it and marks
+// the preview stuck; the wedged evaluation keeps allocating until the JVM
+// hits -Xmx and exits; vscode-languageclient restarts the server; the
+// transition back into `Running` makes `stuckReduce` ask for a re-render
+// (`rerender: !s.running` above) -- of the very report that killed the
+// last process.  The SAME path is taken by the **Restart Language Server**
+// button in our own stuck notification, so the one remedy offered during a
+// wedge is itself a loop trigger.
+//
+// THE GUARD IS ONE MARK AND ONE CONSULTATION.
+//
+//   THE MARK is `{key, reason, at, rootsFingerprint, paramsFingerprint}`
+//   for the CURRENT pick and for no other -- never a map, because a map is
+//   an unbounded structure nobody ever clears.  Roots and params live in
+//   the VALUE, so changing either CLEARS the mark rather than minting a
+//   second one.
+//
+//   THE CONSULTATION is `shouldAutoRender`, and the glue calls it at
+//   EXACTLY ONE SITE: the `rerender` effect of the Stopped -> Running
+//   transition.  Every other automatic trigger is left alone, on purpose:
+//   `invalidated` (the server's own dependency closure), the Q11 watcher
+//   (the picked file changed), a roots change (the developer edited the
+//   setting) and `{stuck:false}` (the job CAME BACK -- it was slow, not
+//   wedged) are each evidence of change or of recovery.  The picker, the
+//   render command and "Render anyway" are consent.
+//
+// "IT DIDN'T CHANGE" IS A PROXY, NOT A PROOF, and the tracker says so in
+// the same words: the wedge is usually in a DEPENDENCY, so a content hash
+// of the picked file would be wrong.  The two signals used -- the server's
+// own `invalidated`, and any `.e` save -- err towards asking LESS.
+//
+// `stuckReduce` IS NOT TOUCHED.  It carries section 4's four client rules,
+// DD-2 and its own pinned properties; this is a reducer of its own over a
+// separate piece of state.  The one place they could have disagreed is
+// pinned instead: `stuckEventApplies` is exactly rule (1)/(3)'s acceptance
+// test, the glue feeds its answer to `guardReduce` as `applies`, and a
+// property here asserts it agrees with `stuckReduce` event for event.  Without
+// it a STALE `{stuck:false}` -- one `stuckReduce` ignores because its `seq`
+// is at or below the high-water mark -- would clear a mark that the banner
+// still says is live.
+
+/** The mark's key: the pick's identity, and nothing else. */
+const MARK_SEPARATOR = "␟";
+
+/** The closed reason vocabulary. A restored value carrying anything else is not a mark. */
+const WEDGE_WATCHDOG = "watchdog";
+const WEDGE_DIED_MID_RENDER = "died-mid-render";
+const WEDGE_REASONS = [WEDGE_WATCHDOG, WEDGE_DIED_MID_RENDER];
+
+/**
+ * The ONE trigger the mark is consulted for.  It is a constant rather than
+ * a string literal at the call site so that a typo cannot silently turn the
+ * guard off: every other trigger name means "not consulted", which is the
+ * safe direction for everything except this one.
+ */
+const TRIGGER_RESTART = "restart";
+
+function markKey(pick) {
+  if (!pick || typeof pick !== "object") return null;
+  if (pick.uri === undefined || pick.binding === undefined) return null;
+  return String(pick.uri) + MARK_SEPARATOR + String(pick.binding);
+}
+
+/**
+ * A canonical string for a plain value: object keys sorted, so the same
+ * params in a different key order fingerprint the same.  Anything JSON
+ * cannot hold (a function, a symbol, `undefined`, NaN) becomes `null`,
+ * which is what `JSON.stringify` does on the wire anyway.
+ */
+function canonicalJson(value) {
+  if (value === null || value === undefined) return "null";
+  const t = typeof value;
+  if (t === "function" || t === "symbol") return "null";
+  if (t !== "object") {
+    const s = JSON.stringify(value);
+    return s === undefined ? "null" : s;
+  }
+  if (Array.isArray(value)) return "[" + value.map(canonicalJson).join(",") + "]";
+  const keys = Object.keys(value).sort();
+  return "{" + keys.map((k) => JSON.stringify(k) + ":" + canonicalJson(value[k])).join(",") + "}";
+}
+
+/**
+ * A FINGERPRINT IS A DIGEST, NOT THE VALUE (WP-22 review M3).
+ *
+ * The mark is written into `workspaceState`, so whatever a fingerprint
+ * holds is persisted on the developer's disk.  `paramsFingerprint` is
+ * WP-8's hook and WP-8 will hand it the params it actually sends -- a
+ * connection string with a password in it, among other things -- and
+ * `rootsFingerprint` holds absolute paths that `PICK_KEY` does not persist
+ * today.  Neither is ever compared to anything but another fingerprint, so
+ * a SHA-256 of the canonical form does the whole job and stores nothing.
+ *
+ * THE UNFINGERPRINTABLE CASE HOLDS, DELIBERATELY, and the comment that used
+ * to stand here said the opposite of what the code does (review §5). A
+ * cyclic or absurdly deep value answers ONE fixed sentinel, so two of them
+ * compare EQUAL and the guard does NOT clear: the mark stands and the user
+ * is asked. That is the safe direction -- a spurious question costs one
+ * click, and a clear we cannot justify re-renders a wedge.
+ *
+ * `Date`s (and every other object with no own enumerable keys) canonicalise
+ * as `{}`, so two different `Date`s fingerprint the same. Unreachable from
+ * JSON params, recorded rather than fixed.
+ */
+const UNFINGERPRINTABLE = "\u0000unfingerprintable";
+
+function digest(text) {
+  return crypto.createHash("sha256").update(String(text), "utf8").digest("hex");
+}
+
+function fingerprint(value) {
+  let canonical;
+  try {
+    canonical = canonicalJson(value);
+  } catch (err) {
+    canonical = UNFINGERPRINTABLE;
+  }
+  return digest(canonical);
+}
+
+/** The roots are a loader CHAIN, so their order is part of the value. */
+function rootsFingerprint(roots) {
+  return fingerprint(Array.isArray(roots) ? roots.map(String) : []);
+}
+
+/**
+ * WP-8's hook, exported now and fed later: no params exist until WP-8, so
+ * today every mark carries the fingerprint of `{}` and a params change can
+ * never be observed.  WP-8 passes the params it actually sends.
+ */
+function paramsFingerprint(params) {
+  return fingerprint(params === undefined || params === null ? {} : params);
+}
+
+/** A value is a mark only if every field is the shape the guard wrote. */
+function isMark(value) {
+  return !!(
+    value &&
+    typeof value === "object" &&
+    typeof value.key === "string" && value.key.length > 0 &&
+    typeof value.reason === "string" && WEDGE_REASONS.indexOf(value.reason) >= 0 &&
+    (value.at === null || typeof value.at === "number") &&
+    typeof value.rootsFingerprint === "string" &&
+    typeof value.paramsFingerprint === "string"
+  );
+}
+
+/** Is this mark the CURRENT pick's? A mark for any other pick is never consulted. */
+function markMatches(mark, pick) {
+  const key = markKey(pick);
+  return !!(isMark(mark) && key !== null && mark.key === key);
+}
+
+const NO_GUARD_EFFECTS = { set: false, cleared: false, restored: false, reason: null, why: null, label: null };
+
+function guardEffects(over) {
+  return Object.assign({}, NO_GUARD_EFFECTS, over);
+}
+
+/**
+ * THE MARK'S WHOLE LIFECYCLE, as a reducer over plain events.  `at` comes
+ * IN with the event (the glue passes `Date.now()`), so this file holds no
+ * clock and every case is a table test.
+ *
+ * SET
+ *   answer        `{stuck:true, applies}` for the current pick  -> "watchdog"
+ *   notification  `{stuck:true, applies}`                       -> "watchdog"
+ *   clientState   `Stopped` while a render was in flight        -> "died-mid-render"
+ * CLEAR
+ *   notification  `{stuck:false}` -- the job came back; LOAD-BEARING, without
+ *                 it a 300 s scan under a 60 s watchdog is held for ever
+ *   invalidated   naming the pick's module
+ *   save          any `.e` document
+ *   pick          any pick change
+ *   roots         when the fingerprint differs
+ *   params        when the fingerprint differs (WP-8)
+ *   render        an explicit one: the picker, the render command,
+ *                 "Render anyway" -- that IS the confirmation
+ *   restore       a persisted mark whose key or roots do not match the
+ *                 restored pick
+ *
+ * SET IS IDEMPOTENT FOR A KEY: `{stuck:true}` and the wedged ANSWER arrive
+ * in either order (MEASURED over the wire: the answer came first in every
+ * run), and the server may die before the watchdog fires or after it, so
+ * the same incident can present two or three times.  The FIRST mark for a
+ * key stands, keeping its `at` and its reason; only a mark for a different
+ * pick is replaced.
+ *
+ * `applies` IS RULE (1)/(3)'s ANSWER, computed by `stuckEventApplies` from
+ * the stuck state BEFORE `stuckReduce` sees the event.  An event
+ * `stuckReduce` ignores must not move the mark either, or the banner and
+ * the guard would describe different worlds.
+ */
+function guardReduce(mark, event) {
+  const m = isMark(mark) ? mark : null;
+  const keep = { mark: m, effects: guardEffects({}) };
+  if (!event || typeof event !== "object") return keep;
+
+  const pick = event.pick;
+  const key = markKey(pick);
+
+  const clear = (why) => (m ? { mark: null, effects: guardEffects({ cleared: true, why }) } : keep);
+  const set = (reason) => {
+    if (key === null) return keep;                  // nothing is picked: nothing to mark
+    if (m && m.key === key) return keep;            // the first mark for this pick stands
+    return {
+      mark: {
+        key,
+        reason,
+        at: typeof event.at === "number" ? event.at : null,
+        rootsFingerprint: rootsFingerprint(pick && pick.roots),
+        paramsFingerprint: paramsFingerprint(event.params),
+      },
+      // The LABEL OF THE PICK THAT WAS MARKED, because it is not always the
+      // current one: a stuck answer marks the pick captured at send (N2),
+      // and the glue's log line must name that one rather than whatever is
+      // picked when the event lands.
+      effects: guardEffects({ set: true, reason, label: pickLabel(pick) }),
+    };
+  };
+
+  switch (event.type) {
+    case "answer":
+      // Rule (3): the marker on an answer is PER REQUEST. A refusal decided
+      // before a clear must not raise the banner, and must not mark either.
+      if (event.stuck !== true || event.applies === false) return keep;
+      return set(WEDGE_WATCHDOG);
+
+    case "notification":
+      if (event.applies === false) return keep;
+      if (event.stuck === true) return set(WEDGE_WATCHDOG);
+      return clear("the preview recovered: the wedged job returned");
+
+    case "clientState":
+      // The server died while a render of the pick was in flight. It may
+      // never have fired the watchdog at all -- at a small -Xmx the JVM
+      // exits first (MEASURED: WpBlow at 256m, exit 3 at 8.6 s, no fire).
+      if (event.to === "Stopped" && event.renderInFlight === true) return set(WEDGE_DIED_MID_RENDER);
+      return keep;
+
+    case "invalidated":
+      // The server's own dependency closure named the pick's module.
+      return shouldRerenderOnInvalidated(pick, event.modules)
+        ? clear("the server invalidated " + String(pick.module))
+        : keep;
+
+    case "save":
+      // The fallback `invalidated` cannot give: while the server is DEAD
+      // nothing sends `didChangeWatchedFiles`, so no notification can cover
+      // the window in which the developer fixes the loop. Deliberately
+      // imprecise -- it errs towards asking less.
+      return typeof event.path === "string" && /\.e$/.test(event.path)
+        ? clear("an Ermine source file was saved")
+        : keep;
+
+    case "pick":
+      return clear("the pick changed");
+
+    case "roots":
+      if (!m) return keep;
+      if (m.key !== key) return clear("the mark belongs to another pick");
+      return m.rootsFingerprint !== rootsFingerprint(pick && pick.roots)
+        ? clear("ermine.preview.roots changed")
+        : keep;
+
+    case "params":
+      if (!m) return keep;
+      if (key !== null && m.key !== key) return clear("the mark belongs to another pick");
+      return m.paramsFingerprint !== paramsFingerprint(event.params)
+        ? clear("the parameters changed")
+        : keep;
+
+    case "render":
+      // T1, T2 and "Render anyway". Asking for it IS the confirmation.
+      return event.explicit === true ? clear("the user asked for this render") : keep;
+
+    case "restore": {
+      // Activation: `workspaceState` hands back whatever was written last.
+      const saved = isMark(event.mark) ? event.mark : null;
+      if (!saved) return { mark: null, effects: guardEffects({}) };
+      if (key === null || saved.key !== key) {
+        return { mark: null, effects: guardEffects({ cleared: true, why: "the remembered mark is not this pick's" }) };
+      }
+      if (saved.rootsFingerprint !== rootsFingerprint(pick && pick.roots)) {
+        return { mark: null, effects: guardEffects({ cleared: true, why: "ermine.preview.roots changed while the window was closed" }) };
+      }
+      // N4: a restore is NOT a fresh incident, and the glue must not say
+      // it is. `restored` is what tells the two apart in the channel.
+      return { mark: saved, effects: guardEffects({ set: true, restored: true, reason: saved.reason, label: pickLabel(pick) }) };
+    }
+
+    default:
+      return keep;
+  }
+}
+
+/**
+ * Rule (1) and rule (3)'s acceptance test, so that the guard and the stuck
+ * banner cannot disagree about whether an event happened.  It is the ONE
+ * thing this file states twice, and the duplication is pinned by a property
+ * ("the guard and the stuck reducer accept exactly the same events").
+ */
+function stuckEventApplies(state, event) {
+  const s = state || initialStuckState();
+  if (!event || typeof event !== "object") return false;
+  // EXACTLY `stuckReduce`'s own test, as its negation rather than as its
+  // mirror image (WP-22 review §2): `<=` and `>` are NOT complements at
+  // NaN, and a `{seq: NaN}` notification is applied by `stuckReduce` (it
+  // poisons `highWater`) while `seq > highWater` would have said no. JSON
+  // cannot carry NaN, so this is latent rather than live -- but "exactly"
+  // was claimed here, and now it is true.
+  if (event.type === "notification") return !(typeof event.seq === "number" && event.seq <= s.highWater);
+  if (event.type === "answer") return event.stuck === true && s.highWater === event.seqAtSend;
+  return false;
+}
+
+/**
+ * THE ONE CONSULTATION.  `trigger` names which of section 3/5's render
+ * triggers is asking; only the restart one is ever refused, and only for a
+ * mark that is THIS pick's.
+ */
+function shouldAutoRender(mark, pick, trigger) {
+  if (trigger !== TRIGGER_RESTART) return true;
+  return !markMatches(mark, pick);
+}
+
+function heldPhrase(reason) {
+  return reason === WEDGE_DIED_MID_RENDER
+    ? "was still rendering when the language server stopped"
+    : "wedged the preview: the watchdog fired and the server did not come back";
+}
+
+/**
+ * The text of the one non-modal warning, and `null` when there is nothing
+ * to ask about -- a mark that is not this pick's is never consulted and
+ * never spoken about.
+ */
+function heldMessage(mark, pick) {
+  if (!markMatches(mark, pick)) return null;
+  return (
+    "Ermine: " + pickLabel(pick) + " " + heldPhrase(mark.reason) +
+    ". Nothing has changed since, so it was NOT re-rendered automatically."
+  );
+}
+
+/**
+ * M1 (WP-22 review). DOES THIS REJECTION MEAN THE SERVER WENT AWAY?
+ *
+ * `renderNow` awaits `sendRequest`. When the server dies mid-render the
+ * promise rejects AND the client reports `Stopped`, and WHICH OF THE TWO
+ * THE GLUE SEES FIRST IS DECIDED INSIDE `vscode-languageclient`, which
+ * nothing here can observe and whose source is not read (the standing
+ * rule). The guard must therefore not depend on the order: the in-flight
+ * fact is cleared only by a SETTLED RESULT, and the rejection path marks
+ * the wedge itself. `guardReduce`'s SET is idempotent per key, so doing it
+ * from both places is safe.
+ *
+ * THIS PREDICATE IS THE ONLY PLACE THE QUESTION IS ANSWERED, and it is
+ * deliberately asymmetric: a shape we can justify from a PUBLISHED
+ * SPECIFICATION means the peer answered; **everything else -- every shape
+ * we cannot name -- means the server went away**, and marks. A spurious
+ * "held" costs one click; a missed one re-renders a report that killed the
+ * last process.
+ *
+ * DOCUMENTED (JSON-RPC 2.0 §5.1, and the LSP specification's error codes):
+ *   -32700 parse error, -32600 invalid request, -32601 method not found,
+ *   -32602 invalid params;
+ *   -32002 ServerNotInitialized, -32001 UnknownErrorCode,
+ *   -32800 RequestCancelled, -32801 ContentModified,
+ *   -32802 ServerCancelled, -32803 RequestFailed.
+ * Each of those is an answer a PEER composes, so the connection was alive.
+ *
+ * **-32603 IS NOT IN THAT LIST, AND THE REASON IS THIS SERVER** (found by
+ * the WP-22 delta review, READ in the Scala, `file:line` because it decides
+ * the behaviour): `Rpc.InternalError` IS -32603 (`Rpc.scala:252`), and
+ * `Preview.scala:207-208` pre-allocates `crashAnswer = Left((InternalError,
+ * "the preview failed"))` for exactly one situation -- the preview THREAD
+ * died. `rescueInFlight` (`:1263`) hands it to the render that was in
+ * flight, `drainOnDeath` (`:1277`) to everything queued behind it, and
+ * `:523`/`:614` answer every LATER render "the preview thread is not
+ * running" with the same code. A FATAL error kills that thread without
+ * touching the JVM (`isFatal`, `:1086`: any `Error`, so a
+ * `StackOverflowError` out of a runaway recursive evaluation qualifies), so
+ * there is NO connection drop and NO `Stopped` edge -- only a -32603 where
+ * an answer should have been. Reading that as "the peer answered" would
+ * leave no mark, and the restart the user then reaches for would re-render
+ * the pick straight back into the same overflow: Q17's loop, by another
+ * door. So it marks. The cost when a handler merely threw is one prompt.
+ *
+ * ABOUT -32800 IN PARTICULAR, because it is the one that is not obvious:
+ * §2.5 names three producers and ALL THREE ARE THE SERVER'S OWN PREVIEW
+ * QUEUE -- a render this one displaced, a cancelled one, and the shutdown
+ * drain -- and the shutdown contract is explicit that it cannot hide a
+ * death: `Preview.scala:764-766` says every QUEUED job that owes an answer
+ * is answered -32800 while an IN-FLIGHT one "finishes and is answered
+ * normally". So a -32800 is never the answer a dying render gets; a crashed
+ * process sends none of them.
+ *
+ * A GUESS, AND NAMED AS ONE: that `vscode-languageclient` rejects the
+ * requests it has pending when a connection closes with something OUTSIDE
+ * that list (community reports say a `ResponseError` in its own private
+ * -32099..-32096 band, and there is no documentation page for it). UNVERIFIED,
+ * and the reason this predicate's default is "gone" rather than "settled":
+ * if the guess is wrong in either direction the cost is a question, never a
+ * silent re-render.
+ */
+const SETTLED_BY_PEER_CODES = [
+  -32700, -32600, -32601, -32602,
+  -32002, -32001,
+  -32800, -32801, -32802, -32803,
+];
+
+function rejectionCode(err) {
+  if (!err || typeof err !== "object") return undefined;
+  if (typeof err.code === "number") return err.code;
+  if (err.data && typeof err.data.code === "number") return err.data.code;
+  return undefined;
+}
+
+function rejectionMeansServerGone(err) {
+  const code = rejectionCode(err);
+  if (code === undefined) return true;          // a bare Error, a string, nothing at all
+  return SETTLED_BY_PEER_CODES.indexOf(code) < 0;
+}
+
+/**
+ * N2 (WP-22 review). WHICH PICK DOES A WEDGE EVENT NAME?
+ *
+ * A stuck ANSWER or a stuck NOTIFICATION arrives while the user may
+ * already have picked something else -- the default watchdog gives them a
+ * whole minute -- and marking whatever is current then lands the mark on
+ * an innocent report. The render that is IN FLIGHT is the better claim,
+ * and the current pick is the fallback for a notification that arrives
+ * with nothing running.
+ *
+ * IT IS STILL A PROXY, and the honest limit belongs here rather than in a
+ * ticket: once the preview is stuck the server refuses EVERY later render
+ * the same way (§2.5), so a `stuck: true` answer says "the preview is
+ * wedged", not "THIS report wedged it". The mark can therefore name a
+ * report that was merely refused. It errs towards ASKING, which is the
+ * direction that cannot reopen the loop.
+ */
+function markPickFor(inFlightPick, currentPick) {
+  return inFlightPick || currentPick;
+}
+
+/**
+ * M2 (WP-22 review). The held question has no deadline: the user may answer
+ * it after picking another report, and consent given for one report must
+ * not be spent on another.
+ *
+ * `askedKey` is `markKey(pick)` as it was when the question was SHOWN.
+ * Only the exact string "Render anyway" consents; a dismissal (`undefined`)
+ * and "Not now" are the same answer.
+ */
+function promptAnswerApplies(askedKey, pickNow, markNow, choice) {
+  if (choice !== "Render anyway") {
+    return { render: false, why: choice === undefined ? "the question was dismissed" : String(choice) };
+  }
+  if (askedKey === null || askedKey === undefined || markKey(pickNow) !== askedKey) {
+    return { render: false, why: "the pick changed while the question was open" };
+  }
+  if (!markMatches(markNow, pickNow)) {
+    // Cleared underneath the question -- a save, an `invalidated`, a
+    // recovery. The user still asked for this render, so it happens.
+    return { render: true, why: "the mark was already cleared" };
+  }
+  return { render: true, why: null };
+}
+
 // ------------------------------------------------------------- settings
 
 const TIMEOUT_MIN = 0;
@@ -584,17 +1065,32 @@ function bindingItems(reports, error) {
 /**
  * What the preview's status bar item says, as a function of the state.
  *
- * THE PRECEDENCE MATTERS AND IS TESTED (review IM-3): **not running beats
- * stuck**. §2.5 measured that a wedged server exits about two minutes after
- * the watchdog fires, so "stuck" and "the process is gone" is a state the
- * user really reaches -- and "preview: stuck" would then be advice to press
- * a Restart button on a server that is already restarting, or permanently
- * wrong if the restart failed.
+ * THE PRECEDENCE MATTERS AND IS TESTED (review IM-3, and WP-22 for `held`):
+ *
+ *     offline > stuck > held > rendering > idle
+ *
+ * **not running beats stuck**: §2.5 measured that a wedged server exits about
+ * two minutes after the watchdog fires, so "stuck" and "the process is gone"
+ * is a state the user really reaches -- and "preview: stuck" would then be
+ * advice to press a Restart button on a server that is already restarting, or
+ * permanently wrong if the restart failed.
+ *
+ * **stuck beats held**: `stuck` is now, and `held` is about the last time.
+ * A fresh server that has just wedged again is what the user has to act on.
+ *
+ * **held beats rendering**: a held pick is not being rendered, so the two
+ * cannot both be true of the same pick -- but a render of a DIFFERENT pick
+ * can be in flight, and the mark still names something the user must decide
+ * about. `held` is a question; `rendering` is only progress.
+ *
+ * `mark` is WP-22's wedge mark (or null) and is consulted the same way
+ * everywhere else: a mark that is not the current pick's is not held.
  */
 function statusBarState(view) {
   const v = view || {};
   const label = pickLabel(v.pick);
-  if (!v.pick && !v.stuck && v.running !== false) return { hidden: true };
+  const held = markMatches(v.mark, v.pick);
+  if (!v.pick && !v.stuck && !held && v.running !== false) return { hidden: true };
   if (v.running === false) {
     return {
       hidden: false,
@@ -608,6 +1104,17 @@ function statusBarState(view) {
       hidden: false,
       text: "$(warning) Ermine preview: stuck",
       tooltip: v.message || "the preview is stuck",
+      severity: "warning",
+    };
+  }
+  if (held) {
+    return {
+      hidden: false,
+      text: "$(warning) Ermine preview: held",
+      tooltip:
+        label + " " + heldPhrase(v.mark.reason) + ".\n" +
+        "Nothing has changed since, so the restart did not re-render it.\n" +
+        'Render it anyway with "Ermine: Render Report to JSON", or save the file you fixed.',
       severity: "warning",
     };
   }
@@ -636,6 +1143,23 @@ module.exports = {
   shouldRerenderOnInvalidated,
   initialStuckState,
   stuckReduce,
+  stuckEventApplies,
+  markKey,
+  markMatches,
+  isMark,
+  guardReduce,
+  shouldAutoRender,
+  heldMessage,
+  rootsFingerprint,
+  paramsFingerprint,
+  rejectionMeansServerGone,
+  markPickFor,
+  promptAnswerApplies,
+  SETTLED_BY_PEER_CODES,
+  MARK_SEPARATOR,
+  TRIGGER_RESTART,
+  WEDGE_WATCHDOG,
+  WEDGE_DIED_MID_RENDER,
   previewSettings,
   initializationOptions,
   didChangeConfigurationParams,

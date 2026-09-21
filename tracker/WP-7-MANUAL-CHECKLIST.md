@@ -17,13 +17,16 @@ JVM for an assertion a pure test already covers. The VS Code half -- the quick p
 the notification, the file watcher -- is unverified.
 
 This checklist ticks §14's WP-7 done-when and the two behaviours the ticket
-adds to it (stuck/recover, offline/online).
+adds to it (stuck/recover, offline/online), and -- since 2026-09-20 --
+**WP-22's wedge guard (§2.15-2.27), which is equally unrun**: it was built
+after this file was written, its pure half is unit-tested, and not one of its
+editor steps has been observed by anyone either.
 
 ## 0. Before you start
 
 | | |
 |---|---|
-| The extension | `editor/vscode` in this worktree, version **0.1.5** |
+| The extension | `editor/vscode` in this worktree, version **0.1.6** (0.1.5 plus WP-22's wedge guard, §2.15-2.27) |
 | `node_modules` | **Already there.** The build session copied it from `/home/dmitry/research/ermine/ermine-scala/editor/vscode/node_modules` (there is no network here, and it is gitignored, so it is in neither `git status` nor the commit). If it goes missing, copy it again the same way |
 | The server | `target/ermine-classpath` already exists here, so the first start does **not** shell out to sbt |
 | Do NOT package or install | this is an Extension Development Host session; nothing touches your installed 0.1.4 |
@@ -118,6 +121,48 @@ client restart it on its own -- also a valid way to see 2.11's transition.
 |---|---|---|
 | 2.13 | with `Sales.report` picked and rendered, kill the server process (`pkill` is not the way -- find the `java ... lsp.Main` child of the extension host and kill that pid) | the status bar reads `Ermine: preview offline` and the tab keeps its last document |
 | 2.14 | the client restarts it (up to 5 times in 3 minutes, `vscode-languageclient`'s own policy) | the channel logs `preview: the language server is running again` and then a render of the last pick, without you touching anything |
+
+### The wedge guard (WP-22) -- NEVER RUN BY ANYONE, like everything above
+
+**WHAT THESE STEPS ARE FOR.** Before WP-22, a report that wedged the server
+was re-rendered *by the restart that the wedge caused* -- and the **Restart
+Language Server** button in our own stuck notification took the same path, so
+the one remedy offered during a wedge was itself a loop trigger (§13's Q17,
+READ from the code and unobserved). The extension now keeps ONE mark for the
+current pick and asks before re-rendering it. **The decision is unit-tested
+(`npm run test:preview`, 67 tests); the ARRIVAL of every editor event below
+is unobserved, and these steps are the only thing that can observe it.**
+
+Use the same `WpSpin` fixture and `"ermine.preview.timeoutSeconds": 5` as
+§2.7-2.12 above, and start from a wedged preview. §2.26 and §2.27 need a
+different setup and say so in the step.
+
+| # | Step | What you should see |
+|---|---|---|
+| 2.15 | With `WpSpin.report` wedged (the ERROR notification of 2.7 is on screen), press its **Restart Language Server** button | the client stops and starts as in 2.11 -- and then **NOTHING RENDERS**. The status bar reads `$(warning) Ermine preview: held` (orange), and its tooltip names the report and the reason. The Ermine channel logs `preview: remembering that WpSpin.report wedged the preview (watchdog)` when the mark is set, then `preview: HELD — Ermine: WpSpin.report wedged the preview: …` and **no** `preview: render …` line |
+| 2.16 | Read the notification that appears with it | ONE non-modal WARNING (not an error, not a modal): `Ermine: WpSpin.report wedged the preview: the watchdog fired and the server did not come back. Nothing has changed since, so it was NOT re-rendered automatically.` with two buttons, **Render anyway** and **Not now** |
+| 2.17 | Press **Not now**, or dismiss it with Escape, or ignore it until it times out | the channel logs `preview: still held (Not now)` or `preview: still held (the question was dismissed)`. The status bar STAYS `held`; the mark is not cleared. **Dismissal is never consent** |
+| 2.18 | Restart a second time from the palette (**Ermine: Restart Language Server**) -- NOT by clicking the preview status bar item, which runs the picker and would clear the mark | you are asked again -- once per restart -- and still nothing renders by itself. If the first question is still on screen the channel logs `preview: the question is already on screen; not asking again` instead of stacking a second one |
+| 2.19 | Now press **Render anyway** | the channel logs `preview: the wedge mark is cleared (the user asked for this render)` and then `preview: render WpSpin.report (generation N; Render anyway)`, the tab is revealed, and after ~5 s **it wedges again** -- the report has not been fixed. That is the point: the guard asks, it does not decide |
+| 2.20 | Edit `/tmp/wp7/WpSpin.e` (add a comment line) and SAVE, while the status bar reads `held` | the channel logs `preview: the wedge mark is cleared (an Ermine source file was saved)` and the status bar leaves `held`. **Any `.e` save clears it**, deliberately: while the server is dead nothing sends `didChangeWatchedFiles`, so no `invalidated` can cover the window in which you fix the loop. A save of a `.md` or a `.json` clears nothing |
+| 2.21 | With the mark cleared, restart the server again | the last render IS re-sent, exactly as §2.11 and §2.14 describe. The channel logs `preview: render WpSpin.report (generation N; the language server restarted)` |
+| 2.22 | **The automatic path, no button.** Wedge it again and then WAIT instead of restarting (about two minutes at the default heap, §2.5) | the server exits at `-Xmx`, `vscode-languageclient` restarts it, and the tab does **NOT** re-render: the same `held` status bar and the same one question. This is the loop Q17 named, and this step is the only thing that can show it was closed |
+| 2.23 | **The mark survives a window reload.** While `held`, run **Developer: Reload Window** | after activation the channel logs `preview: remembered WpSpin.report` AND `preview: a wedge mark was restored from the last session (watchdog)` -- a RESTORE line, deliberately not the line a fresh wedge prints -- and the status bar reads `held` again: the mark is mirrored in `workspaceState` beside the pick. Nothing renders (activation never renders), so you are not asked until the next restart |
+| 2.24 | **The mark is the CURRENT pick's only.** While `held`, run **Ermine: Preview Report...** and pick `Sales.report` | the channel logs `preview: the wedge mark is cleared (the pick changed)`; `Sales.report` renders immediately (picking IS consent) and a later restart re-renders it without a question |
+| 2.25 | Set `"ermine.preview.timeoutSeconds"` back to `60` | |
+| 2.26 | **THE `died-mid-render` CASE, AND THE ONLY STEP THAT CAN OBSERVE M1.** Every step above runs at `timeoutSeconds: 5`, so the watchdog always wins and the mark is always set by the stuck edge. To get the OTHER reason, starve the heap instead: set `"ermine.maxHeap": "256m"` (the server restarts), set `"ermine.preview.timeoutSeconds": 600` so the watchdog CANNOT fire first, and render a report that allocates without bound -- §2.5's `WpBlow` shape, MEASURED there as exit code 3 at 8.6 s with no watchdog fire | the JVM dies mid-render: **no** stuck notification and **no** `Ermine preview: stuck`, but the channel logs `preview: render N was lost with the connection (...)` and/or the `Stopped` edge, then `preview: remembering that WpBlow.report wedged the preview (died-mid-render)`. After the restart the tab does **NOT** re-render, the status bar reads `held`, and the question names *…was still rendering when the language server stopped*. **This is the case the guard would lose if the mark depended on which of the two the library delivers first** (WP-22 review M1): the extension now marks from BOTH, and `guardReduce`'s SET is idempotent, so you should see exactly one mark however the race falls. Put `ermine.maxHeap` back to `""` afterwards |
+| 2.27 | **THE `{stuck:false}` RECOVERY CLEAR, which is the load-bearing one.** Wedge a report that is SLOW rather than infinite: set `"ermine.preview.timeoutSeconds": 5` and render something that takes ~30 s (a large fold, not a loop). The watchdog fires at 5 s and the preview is marked stuck; then the job FINISHES | the channel logs `preview: no longer stuck`, the toast `Ermine: the preview recovered`, `preview: the wedge mark is cleared (the preview recovered: the wedged job returned)`, and an automatic re-render with reason `the preview recovered`. **Without this clear a slow report would be held for ever** -- a 300 s scan under a 60 s watchdog is the real case (§13's Q10) -- and the status bar must leave both `stuck` and `held`. A restart after it re-renders without a question |
+
+**THE HOLES TO KNOW WHILE TICKING THESE**, each of them a design decision
+rather than a bug: a second VS Code window on the same folder keeps its own
+mark (per extension host; cross-window `Memento` visibility is *external* and
+unverified), `bin/ermine-serve` and every non-VS-Code client are unprotected
+(§13's Q18), and "it didn't change" is a PROXY -- the two signals used are the
+server's own `invalidated` and any `.e` save, and both err towards asking
+less. **WP-22(c) IS NOT BUILT**: nothing here kills the server on your behalf,
+so the wedged process still dies by itself at `-Xmx` (or when you press
+Restart), and there is no `ermine.preview.killAfterStuckSeconds` setting to
+find.
 
 ## 3. Deviations to read before ticking anything
 

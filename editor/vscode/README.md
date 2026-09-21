@@ -57,8 +57,8 @@ code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 gitignored, so build it yourself):
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.3.vsix
-code --install-extension ermine-lang-0.1.3.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.6.vsix
+code --install-extension ermine-lang-0.1.6.vsix
 ```
 
 `npm run package` does the same. Upgrading is the same command with the new
@@ -119,7 +119,7 @@ A **report** is any top-level binding whose type is `Node`, `Params -> Node`,
 server, in a second session of its own, and re-renders it when a file it
 depends on is saved — with no JVM restart and no build.
 
-At 0.1.5 there is **no webview panel** (that is a later ticket) and **no
+At 0.1.6 there is **no webview panel** (that is a later ticket) and **no
 params files** (likewise): the answer is shown as JSON in an ordinary editor
 tab, and a report with required parameters therefore shows the refusal that
 names the first missing key rather than a document.
@@ -166,7 +166,9 @@ warning when the preview is **stuck** (a render that never finished — the
 server's watchdog) with an error notification offering **Restart Language
 Server**, or **offline** when the server has stopped — which wins over
 "stuck", because a wedged server exits about two minutes after the watchdog
-fires. When it comes back the last render is re-sent.
+fires. When it comes back the last render is re-sent — **unless it is the
+render that wedged the server and nothing has changed since**, and then you
+are asked first (0.1.6, below).
 
 Settings: `ermine.preview.roots` (per folder), `ermine.preview.timeoutSeconds`
 (`0` turns the watchdog off, which is rarely what you want — see its
@@ -214,6 +216,20 @@ type one frame early and without its constraints (`go : List a -> a -> a` for
 a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
+
+### 0.1.6
+
+**A report that wedged the server is not re-rendered automatically.** A
+render that never finishes ends with the server out of heap, and the client
+restarts it — which used to re-send the same render, wedging it again; so
+did the **Restart Language Server** button in the stuck notification. The
+extension now remembers that the picked report wedged, and after a restart
+asks **Render anyway** / **Not now** instead of rendering, with the status bar
+reading `Ermine preview: held`. The memory is forgotten as soon as anything
+could have changed the answer: the server says the report's module was
+invalidated, any `.e` file is saved, the pick or the preview roots change, the
+wedged evaluation comes back by itself, or you render it on purpose. Nothing
+else is suppressed — a save still re-renders at once.
 
 ### 0.1.5
 
@@ -357,8 +373,9 @@ generation discard, the stuck state machine (the highest `seq` wins, the mark
 resets on a restart, an answer's marker is per-request, an accepted clear
 always re-renders), the two re-render rules, the three request builders —
 including that a render and a schema for one pick carry the SAME roots — both
-quick-pick lists, the status bar's text and precedence, the two settings
-payloads and the `ermine.maxHeap` spelling. What is NOT there is the glue that
+quick-pick lists, the status bar's text and precedence (now including
+`held`), the wedge guard's whole lifecycle and its one consultation, the two
+settings payloads and the `ermine.maxHeap` spelling. What is NOT there is the glue that
 needs an editor to observe: when a document is created or revealed, the
 watcher's registration, the coalescing timer. It runs under `node --test` with
 no `node_modules` at all.
