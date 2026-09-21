@@ -274,9 +274,15 @@ async function restart(context) {
 // a status bar item, one error notification with the restart button, and
 // ONE untitled JSON tab that is reused and updated in place.
 //
-// EVERY DECISION IS IN src/preview-core.js and is unit-tested there; this
-// section only reads the editor's state, calls those, and does what they
-// say.
+// WHAT IS DECIDED WHERE (WP-7's re-review corrected an overstatement here:
+// this used to say "EVERY DECISION IS IN src/preview-core.js"). The
+// decisions that can be made from DATA ALONE live in src/preview-core.js
+// and are unit-tested there -- which report a trigger names, whether a 404
+// is a placement failure, what the status bar should say, how a pick is
+// labelled. What stays in this file is what needs the editor itself and
+// therefore has no unit test: the coalescing window below, which file
+// watchers are installed and when, the lazy status bar item, the untitled
+// tab, and the restore-on-activate path.
 
 const PICK_KEY = "ermine.preview.pick";
 
@@ -313,9 +319,16 @@ let extContext;
 const warnedRoots = new Set();
 
 /**
- * LAZY on purpose. A second status bar item that says "no report picked"
- * before anyone has asked for a preview is noise, and test/load-test.js
- * counts the items activation creates.
+ * LAZY on purpose: a second status bar item that says "no report picked"
+ * before anyone has asked for a preview is noise.
+ *
+ * "NOT DURING ACTIVATION" IS NOT WHAT IT BUYS, and the earlier wording here
+ * said otherwise (WP-7's re-review). `restorePick` runs from `activate` and
+ * calls `setPreviewStatus`, so a workspace with a REMEMBERED PICK creates
+ * this item during activation after all -- which is right, because there
+ * really is something to show. test/load-test.js asserts exactly one status
+ * bar item because it activates with NO saved pick; a fixture that saved one
+ * would see two, and that would be correct rather than a regression.
  */
 function previewItem() {
   if (!previewStatus) {

@@ -1327,6 +1327,12 @@ object Lib {
       val r = e.extract[FFI[_]].eval
       t(Prim(r))
     } catch {
+      // WP-6 (tracker/JSON-WIDGET-PLAYGROUND.md section 14): a cooperative
+      // cancel is NOT an IO failure.  Without this arm the next case would
+      // hand the `Cancelled` to the Ermine program's own error continuation
+      // -- the cancel would be caught by the report being cancelled.
+      // `cx` and not `c`: `c` is this primitive's failure continuation.
+      case cx: Cancelled => throw cx
       case err: Throwable => c(Prim(err))
     }), FA(a => FA(r => (a ->: r) ->: (throwable ->: r) ->: ffi(a) ->: r)))
     primOp(Global("Native.Throwable","raise"), Fun("Native.Throwable.raise", { case Prim(e : Throwable) => Bottom(throw e) }), FA(a => throwable ->: a))

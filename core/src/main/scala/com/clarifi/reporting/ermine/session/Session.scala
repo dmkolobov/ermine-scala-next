@@ -1352,6 +1352,12 @@ object Session {
           try {
             resolve(self).invoke(self, args:_*)
           } catch {
+              // WP-6 (tracker/JSON-WIDGET-PLAYGROUND.md section 14): FIRST,
+              // because the `case e : Throwable` arm below re-wraps what it
+              // catches in a `RuntimeException` -- which IS `NonFatal`, so
+              // `Runtime.swhnf` would capture it as a `Bottom` and memoise
+              // the cancel into the thunk chain.
+              case c : Cancelled => throw c
               case d : Death => throw d // Don't catch ermine panics as a side effect of foreign interface
               case e : java.lang.reflect.InvocationTargetException =>
                 val ep = e.getTargetException

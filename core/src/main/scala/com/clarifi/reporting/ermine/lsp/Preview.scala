@@ -3,6 +3,7 @@ package com.clarifi.reporting.ermine.lsp
 import java.nio.file.Path
 
 import com.clarifi.reporting.backends.{ Backends, Runners }
+import com.clarifi.reporting.ermine.{ Cancelled, Runtime => ErmineRuntime }
 import com.clarifi.reporting.ermine.json.{ Request => RunRequest, Runner, RunnerConfig }
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
 import com.clarifi.reporting.ermine.session.Session
@@ -231,6 +232,35 @@ final class Preview(moduleRoots: () => List[String],
     * for the length of the write.  The test seam, as above. */
   @volatile private[reporting] var maxDocumentBytes: Long = DefaultMaxDocumentBytes
 
+  /** `ermine.preview.cancelOnTimeout` (WP-6, §2.5's cooperative-cancel row
+    * and §14's WP-6 row), DEFAULT FALSE and the USER'S to flip (stage 3 of
+    * the ticket).  It governs ONE thing: whether the watchdog's first
+    * deadline CANCELS the evaluation (`fireCancel`, phase 1) or goes
+    * straight to today's stuck path (`fireStuck`).  With it off, `fire`
+    * behaves EXACTLY as it did before WP-6 -- the same claim, the same
+    * drain, the same `{stuck: true}`.
+    *
+    * IT DOES NOT MAKE THE CHANGE FREE.  The load-and-branch WP-6 puts at the
+    * head of `Runtime.swhnf` is in the binary whatever this says; what this
+    * switch decides is only whether anything ever ARMS the flag.  Stage 2 of
+    * the ticket measures that cost.
+    *
+    * The test seam, as for `timeoutMillis`. */
+  @volatile private[reporting] var cancelOnTimeout: Boolean = false
+
+  /** How long PHASE 1 of the two-phase watchdog gives the cancel to take
+    * before phase 2 falls back to today's behaviour (WP-6).  A CONSTANT
+    * WITH A TEST SEAM AND NOT A USER SETTING: the number is about how long
+    * one `swhnf` step can take, not about how long a user will wait, and a
+    * client that could set it could only get it wrong.
+    *
+    * WHAT THE GRACE IS FOR -- everything the cancel CANNOT stop, because
+    * none of it reaches `Runtime.swhnf`: a loop inside ONE primitive, the
+    * relational row loop (`relational/package.scala`'s `driveLeftId`), a
+    * JDBC scan, and a thread parked in `SessionTask`'s `future.get` or in a
+    * thunk's `latch.await`.  Phase 2 is what still covers those. */
+  @volatile private[reporting] var graceMillis: Long = DefaultGraceMillis
+
   /** Whether the client declared `window.workDoneProgress` (§2.5).  Without
     * it NOTHING of the progress machinery runs: no `create` request, no
     * `$/progress` notification, and a boot is silent -- which is what the
@@ -260,6 +290,14 @@ final class Preview(moduleRoots: () => List[String],
         } else
           log("preview: timeoutSeconds of " + n + " ignored (outside 0..3600s) (" + how + ")")
       case other => illTyped("timeoutSeconds", "a number of seconds", other, how)
+    }
+    // WP-6's switch, read by BOTH routes exactly as the two settings around
+    // it are, and REFUSED OUT LOUD when it is ill-typed.
+    preview flatMap (_ / "cancelOnTimeout") foreach {
+      case Json.Bool(b) =>
+        cancelOnTimeout = b
+        log("preview: cancelOnTimeout = " + b + " (" + how + ")")
+      case other => illTyped("cancelOnTimeout", "true or false", other, how)
     }
     preview flatMap (_ / "maxDocumentBytes") foreach {
       case Json.Num(d) =>
@@ -380,6 +418,14 @@ final class Preview(moduleRoots: () => List[String],
     * plainly; a counter also covers re-arming the same job any number of
     * times, which the boot bracket does. */
   private var armEpoch = 0L
+
+  /** THE PHASE-2 TASK of WP-6's two-phase watchdog, or `null`.  Written
+    * under `lock` by the TIMER thread (`fireCancel` schedules it,
+    * `firePhase2` clears it) and by the PREVIEW thread (`clearCancel`, in
+    * `runJob`'s `finally`, cancels whatever is left).  Not `armed`: that
+    * field is preview-thread-only by its own contract, and this task is
+    * scheduled from the timer thread. */
+  private var cancelTask: java.util.TimerTask = null
 
   /** The timeout, in seconds, that the arming which FIRED was made with
     * (review S4), and the message built from it.  `stuckWhy` is what every
@@ -846,7 +892,21 @@ final class Preview(moduleRoots: () => List[String],
     * `dequeue` itself, which either leaves the job in the queue (the drain
     * takes it) or tears the deque mid-mutation, and nothing could name the
     * element then. */
-  private def takeJob(): Option[Job] =
+  private def takeJob(): Option[Job] = {
+    // WP-6: NO JOB IS EVER HANDED OUT WITH A CANCEL STILL ARMED.  Every
+    // path that arms one clears it again (`firePhase2` before it falls back,
+    // `clearCancel` in `runJob`'s `finally`, for every job), so this can
+    // only be a bug -- and the cost of the bug is that the NEXT render dies
+    // at its first force for no reason a user could see.  It is LOUD and it
+    // does not throw: ending the preview thread over it would be worse than
+    // the leak.  `Thread.currentThread` and not `thread`: this runs on the
+    // preview thread, and the field is still being assigned when the very
+    // first `takeJob` runs.
+    val leaked = ErmineRuntime.cancelArmedFor eq Thread.currentThread
+    if (leaked) {
+      ErmineRuntime.disarmCancel(Thread.currentThread)
+      guard(log("preview: BUG: a cancel was still armed when a job was taken; cleared"))
+    }
     lock.synchronized {
       try while (jobs.isEmpty && !stopping) lock.wait()
       catch { case _: InterruptedException => stopping = true; Thread.currentThread.interrupt() }
@@ -860,6 +920,7 @@ final class Preview(moduleRoots: () => List[String],
         Some(j)
       }
     }
+  }
 
   /** ONE job, and it cannot throw.  Three layers, innermost first:
     *  1. the job itself;
@@ -887,6 +948,16 @@ final class Preview(moduleRoots: () => List[String],
       * entirely: not "may the preview be believed" but "is the render
       * SESSION still usable".  See the discard in the `finally`. */
     var threw = false
+    /** Whether the job ended because WP-6's cooperative cancel took (phase
+      * 2a).  It decides two things the other two flags do not: the ANSWER
+      * (the watchdog's own 500, reworded, and without §4's `stuck` marker --
+      * nothing was ever marked stuck on this path) and an UNCONDITIONAL
+      * discard of the render session. */
+    var cancelled = false
+    /** Whether the cancel path's own discard found a session to throw away
+      * (DM-1): `recovered`'s message reads it, and the `finally` must not
+      * re-derive it from a `runner` the catch arm has already nulled. */
+    var cancelDiscarded = false
     // Cleared HERE, before anything of the job runs, so that what the
     // `finally` reads is this job's outcome and never the last one's.
     evalFailed = false
@@ -905,6 +976,54 @@ final class Preview(moduleRoots: () => List[String],
           case DiscardSession   => discardSession("asked to")
         }
       } catch {
+        // WP-6, PHASE 2a: THE CANCEL TOOK.  `Runtime.swhnf` threw this out
+        // of the evaluation on this very thread because the watchdog armed
+        // `Runtime.cancelTarget` at `timeoutMillis` (`fireCancel`).
+        //
+        // IT IS THE FIRST ARM, ahead of `case e: Throwable`: that arm would
+        // answer "the preview failed: ..." for what is not a failure of the
+        // report, and would call `isFatal` on it.
+        //
+        // NOTHING IS MARKED STUCK ON THIS PATH -- phase 1 deliberately does
+        // not -- so this is `refusal` and NOT `stuckRefusal` (§4: the marker
+        // means the WEDGE, and a cancel that worked is the opposite of one),
+        // no `ermine/preview/stuck` of either polarity is sent, and the
+        // queue is not drained: the jobs behind this one are simply served
+        // next, and the first of them boots a session.
+        //
+        // `threw` is set too, but the DISCARD does not ride on it: see the
+        // `finally`, which discards UNCONDITIONALLY for a cancel.
+        case c: Cancelled =>
+          cancelled = true
+          threw     = true
+          guard(log("preview: the evaluation was cancelled: " + c.why))
+          // DM-1 OF THE STAGE 1 REVIEW: CLEAR, DISCARD, *THEN* ANSWER, and
+          // the order is the whole of the fix.  The answer says the preview
+          // is serving renders again and that the next render boots a fresh
+          // session; BOTH MUST BE TRUE WHEN IT GOES ON THE WIRE, not a few
+          // microseconds later.  With the clear only in the `finally`, a
+          // client -- or a test thread that reads the flag the instant the
+          // answer arrives -- could see the answer while
+          // `Runtime.cancelTarget` still named this thread.  MEASURED by the
+          // review: two reds in three runs on an idle box, each time only
+          // the flag conjunct.
+          //
+          // NOTHING BETWEEN THE THREE STEPS FORCES, which is what makes the
+          // order safe to take before the answer: `clearCancel` takes `lock`
+          // and stores two references, and `discardSession` logs, calls
+          // `DelegatingRun.clear()` -- which swaps an `Option` and closes
+          // nothing -- and stores three fields.
+          //
+          // The `finally`'s own `clearCancel` STAYS, as the idempotent
+          // catch-all for every other way a job can end (and for a throw out
+          // of `guard` here).
+          guard(clearCancel())
+          cancelDiscarded = runner != null
+          guard(discardSession("the evaluation was cancelled, so its thunks are whiteholed"))
+          job match {
+            case a: Answering => guard(finish(a, a.refusal(c.why)))
+            case _            => ()
+          }
         case e: Throwable =>
           // Q10(b): FIRST, and by a store that cannot throw.  Everything
           // after it can fail, and a `finally` that then announced
@@ -924,6 +1043,12 @@ final class Preview(moduleRoots: () => List[String],
       }
     } finally {
       guard(disarm())
+      // WP-6: THE CANCEL FLAG IS CLEARED FOR EVERY JOB, however it ended,
+      // and the phase-2 task is called off.  MANDATORY, not tidiness: the
+      // flag is process-global and names this thread, so a leftover arming
+      // would kill the NEXT render at its first force -- including a
+      // legitimately slow scan that finished a moment after the fire.
+      guard(clearCancel())
       // The progress token this job carried, used or not, is spent: clear
       // it so the next boot can mint one (see `bootToken`).
       guard(job match {
@@ -945,6 +1070,32 @@ final class Preview(moduleRoots: () => List[String],
         case _ => ()
       }
       try lock.synchronized { inFlight = null } catch { case _: Throwable => () }
+      /** Whether the render session was thrown away while this job ended --
+        * WP-6's unconditional cancel discard, or Q10's recovery discard.
+        * ONE variable, because `recovered`'s message reads it and the two
+        * discards are mutually exclusive by construction. */
+      // WP-6: THE DISCARD IS UNCONDITIONAL ON A CANCEL, and it is what makes
+      // the cancel SAFE.  The escaping `Cancelled` is a `ControlThrowable`,
+      // so `Runtime.swhnf`'s `NonFatal` capture did NOT run and did NOT
+      // `writeback`: every thunk the unwind passed is still `Whitehole` with
+      // THIS thread in its `pending` queue (`Runtime.scala`), and a later
+      // force of one of them on this same thread would memoise
+      // `Bottom(sys.error("infinite loop detected"))` -- permanently, and
+      // wrongly, into a session the panel is being told is healthy.
+      //
+      // IT DOES NOT RIDE ON THE STUCK MACHINERY: on the cancel path `stuck`
+      // was NEVER set, so `clearStuck` answers 0 and the Q10 block below
+      // does nothing at all.
+      //
+      // SINCE DM-1 THE DISCARD ITSELF HAPPENS IN THE CATCH ARM, before the
+      // answer.  What is left here is the catch-all: normally a no-op,
+      // because that arm has already nulled `runner`, and a real discard
+      // only if a `guard` up there swallowed something.
+      var rebuilt = cancelDiscarded
+      if (cancelled && runner != null) {
+        rebuilt = true
+        guard(discardSession("the evaluation was cancelled, so its thunks are whiteholed"))
+      }
       // Q10, LAST, and after `inFlight` is cleared: the wedge is over only
       // if the job that just ended is the one the watchdog fired on, and
       // only if it ended in a way that leaves this JVM able to keep its
@@ -998,8 +1149,12 @@ final class Preview(moduleRoots: () => List[String],
             // `finally` did, so nothing is timing the discard.  That is
             // free today (`DelegatingRun.clear()` closes nothing), and
             // WP-14 must not make it otherwise -- see that ticket's row.
-            var rebuilt = false
-            if (threw || evalFailed) {
+            // NOT ON THE CANCEL PATH: the discard above has already run,
+            // unconditionally, and `runner` is already `null`.  This is the
+            // race in which phase 2b fired FIRST (the grace ran out) and the
+            // cancel then took anyway, so the state really is stuck and
+            // really is over.
+            if (!cancelled && (threw || evalFailed)) {
               // TRUTHFULLY (review S2): `discardSession` on a preview that
               // never booted does nothing and logs nothing, so there is no
               // session to say was discarded.  The next render boots either
@@ -1082,9 +1237,30 @@ final class Preview(moduleRoots: () => List[String],
     * `Bottom`, and the recovery path discards the session for exactly that
     * (see `runJob`'s `threw`).  What is left of the gap is (1) alone:
     * a JVM that may be sick is called healthy.  Unwrapping causes would be
-    * a guess about a chain this file did not build. */
+    * a guess about a chain this file did not build.
+    *
+    * WP-6 ADDS ONE DELIBERATE EXCEPTION, and it is the only one: a
+    * `Cancelled` is NOT fatal, although it is a `ControlThrowable` and
+    * therefore fails half (2) exactly as the paragraph above describes.
+    * Half (2)'s worry is real for it -- a cancel DOES leave whiteholed
+    * thunks behind, which is the whole reason it is thrown out of `swhnf`
+    * without a `writeback`.
+    *
+    * IT IS SOUND ONLY BECAUSE THE CANCEL PATH DISCARDS THE SESSION
+    * UNCONDITIONALLY.  `runJob`'s `finally` throws the `Runner` away the
+    * moment `cancelled` is set, whatever the outcome and whether or not
+    * anything was ever marked stuck -- so the whiteholed thunks half (2)
+    * is about are garbage before this method's answer is used for
+    * anything.  IF THAT DISCARD IS EVER MADE CONDITIONAL, THIS EXCEPTION
+    * MUST GO WITH IT.
+    *
+    * In practice `runJob` matches `case c: Cancelled` ahead of the arm
+    * that calls this, so the rule is stated here rather than exercised
+    * here: one place says what a `Cancelled` means to the stuck
+    * machinery. */
   private def isFatal(e: Throwable): Boolean =
-    e.isInstanceOf[Error] || !scala.util.control.NonFatal(e)
+    if (e.isInstanceOf[Cancelled]) false
+    else e.isInstanceOf[Error] || !scala.util.control.NonFatal(e)
 
   /** LEAVE THE STUCK STATE (Q10).  The ONE place `stuck`, `stuckWhy` and
     * `stuckJob` are put back, so that WP-6's cooperative cancel -- which
@@ -1977,7 +2153,7 @@ final class Preview(moduleRoots: () => List[String],
             // `java.util.Timer` KILLS ITS THREAD on a throw out of `run`,
             // and every later `schedule` then throws: one guard here, and
             // `fire` guards each of its own steps separately.
-            def run(): Unit = guard(fire(job, epoch, why))
+            def run(): Unit = guard(fire(job, epoch, why, ms))
           }
           armed = t
           try {
@@ -2066,7 +2242,129 @@ final class Preview(moduleRoots: () => List[String],
     * (the extension renders, then asks for the params schema), so the
     * stranded request is the happy path.  Each one is answered with ITS OWN
     * refusal shape, separately guarded, outside the lock. */
-  private def fire(job: Answering, epoch: Long, why: String): Unit = {
+  private def fire(job: Answering, epoch: Long, why: String, ms: Long): Unit =
+    // WP-6's SWITCH, and the whole of what it decides.  Off -- the default,
+    // and the user's to change (stage 3) -- this is exactly the call the
+    // watchdog made before WP-6 existed.
+    //
+    // `ms` AND NOT THE BUILT MESSAGE (S4 of the stage 1 review): the cancel
+    // text is a five-fragment concatenation and, built at ARM time, it was
+    // built for every job of every render even with the switch OFF, where
+    // nothing could ever read it.  `fireCancel` builds it, from the very
+    // timeout this arming used, which is what the arm-time build was for.
+    if (cancelOnTimeout) fireCancel(job, epoch, why, ms)
+    else fireStuck(job, epoch, why)
+
+  /** WP-6, PHASE 1 OF TWO, on the TIMER thread.  `timeoutMillis` have
+    * passed; ARM THE CANCEL and do nothing else.
+    *
+    * NOTHING IS ANSWERED, NOTHING IS MARKED STUCK, NOTHING IS DRAINED AND
+    * NOTHING IS NOTIFIED HERE.  If the cancel takes, the incident ends with
+    * one 500 and a rebuilt session and the client never sees a stuck state
+    * at all (§4: a cancel that succeeds sends NO `ermine/preview/stuck`
+    * pair, so a client must not expect one per incident).  If it does not
+    * take within `graceMillis`, phase 2 does every one of those things,
+    * unchanged.
+    *
+    * THE CLAIM TEST IS THE SAME ONE `fireStuck` USES -- same job, same
+    * arming, nothing answered -- plus `!stopping`, because a cancel armed
+    * into a shutdown would have no phase 2 to take it back.
+    *
+    * THE WRITE ORDER IS THE CONTRACT `Runtime.cancelTarget` states:
+    * `cancelWhy` FIRST, `cancelTarget` SECOND.  Both happen under `lock`,
+    * which the preview thread is not holding while it evaluates. */
+  private def fireCancel(job: Answering, epoch: Long, why: String, ms: Long): Unit = {
+    var armedIt   = false
+    var refused   = false
+    var scheduled = false
+    try lock.synchronized {
+      if ((inFlight eq job) && epoch == armEpoch && !answeredInFlight && !stopping) {
+        // S1/S2: `armCancel` enforces the write order (the reason before
+        // the target) and REFUSES if another thread's arming is live --
+        // which in the shipped server cannot happen (one `Preview`) and in
+        // the unforked test JVM can.  A refusal means nothing was armed, so
+        // this fire degrades to phase 2b, which is the fallback for every
+        // other case the cancel cannot reach.
+        armedIt = ErmineRuntime.armCancel(thread, new Cancelled(cancelledMessage(ms), false))
+        refused = !armedIt
+        if (armedIt) {
+          val t = new java.util.TimerTask {
+            def run(): Unit = guard(firePhase2(job, epoch, why))
+          }
+          cancelTask = t
+          try {
+            if (timer eq null) timer = new java.util.Timer("ermine-preview-watchdog", true)
+            timer.schedule(t, math.max(1L, graceMillis))
+            scheduled = true
+          } catch { case _: Throwable => cancelTask = null }
+        }
+      }
+    } catch { case _: Throwable => () }
+    if (armedIt)
+      guard(log("preview: WATCHDOG: cancelling the evaluation" +
+                (if (scheduled) "" else " (the grace timer could not be scheduled)") +
+                ": " + why))
+    // SAID OUT LOUD, and then handled: a refused arming is not a silent
+    // no-op, it is a fire that falls straight through to the stuck path.
+    if (refused) {
+      guard(log("preview: WATCHDOG: another thread's cancel is live, so this one cannot be " +
+                "armed; falling back to the stuck state"))
+      fireStuck(job, epoch, why)
+    }
+  }
+
+  /** WP-6, PHASE 2b, on the TIMER thread: `graceMillis` after the cancel was
+    * armed the job is STILL in flight, so the cancel did not take.
+    *
+    * WHAT CAN BE IN THAT STATE, and none of it reaches `Runtime.swhnf`: a
+    * loop inside ONE primitive, the relational row loop
+    * (`relational/package.scala`'s `driveLeftId`), a JDBC scan, or a thread
+    * parked in `SessionTask`'s `future.get` or in a thunk's `latch.await`.
+    * For all of those the cancel is simply not a mechanism, and today's
+    * behaviour is the answer.
+    *
+    * THE FLAG IS CLEARED FIRST AND THAT IS MANDATORY.  A scan that
+    * legitimately finishes a second after the fire must not die at its next
+    * force for a cancel nobody is waiting on any more.  Only then does this
+    * do exactly what the watchdog did before WP-6 -- claim, stuck, drain,
+    * `stuckRefusal`, `window/showMessage`, `{stuck: true}` -- and Q10's
+    * recovery applies to it unchanged. */
+  private def firePhase2(job: Answering, epoch: Long, why: String): Unit = {
+    var fallBack = false
+    try lock.synchronized {
+      if ((inFlight eq job) && epoch == armEpoch && !answeredInFlight) {
+        ErmineRuntime.disarmCancel(thread)
+        cancelTask = null
+        fallBack   = true
+      }
+    } catch { case _: Throwable => () }
+    if (fallBack) {
+      guard(log("preview: WATCHDOG: the cancel did not take within " + graceMillis +
+                "ms; falling back to the stuck state"))
+      fireStuck(job, epoch, why)
+    }
+  }
+
+  /** WP-6: CALL OFF A CANCEL, on the PREVIEW thread, from `runJob`'s
+    * `finally` and for EVERY job.  See the comment there for why this is
+    * mandatory rather than tidy.
+    *
+    * `Thread.currentThread` and not `thread`: this runs on the preview
+    * thread by construction, and it must never clear an arming that some
+    * OTHER `Preview` in this JVM made (the unforked test JVM builds
+    * several).  The phase-2 task is cancelled outside the monitor, like
+    * every other `TimerTask.cancel` in this file. */
+  private def clearCancel(): Unit = {
+    val t = lock.synchronized {
+      ErmineRuntime.disarmCancel(Thread.currentThread)
+      val x = cancelTask
+      cancelTask = null
+      x
+    }
+    if (t ne null) try { t.cancel(); () } catch { case _: Throwable => () }
+  }
+
+  private def fireStuck(job: Answering, epoch: Long, why: String): Unit = {
     var mine      = false
     var cancelled = false
     var seq       = 0L
@@ -2178,6 +2476,18 @@ final class Preview(moduleRoots: () => List[String],
     "It recovers by itself if that evaluation ever finishes; if it does not, restart the " +
     "language server -- run \"" + RestartTitle + "\" (" + RestartCommand + ")"
 
+  /** WP-6: what the CANCEL path answers with.  It keeps `timedOutMessage`'s
+    * own opening words -- "evaluation did not finish after Ns" -- because
+    * that is the substring §2.5 and the properties pin, and REPLACES the
+    * tail, which would otherwise say the preview is stuck when the whole
+    * point of this path is that it is not.  No restart is named: there is
+    * nothing to restart. */
+  private def cancelledMessage(millis: Long): String =
+    "evaluation did not finish after " + (millis / 1000L) + "s, so it was CANCELLED. " +
+    "The render session was discarded -- a cancelled evaluation leaves its thunks " +
+    "half-forced -- so the next render boots a fresh one. The preview is serving " +
+    "renders again and nothing needs to be restarted."
+
   /** End the watchdog's thread IF ONE WAS EVER STARTED (review S7).  It
     * READS the field and never creates one: a `Preview` that shut down
     * without arming a watchdog must not start a timer thread in order to
@@ -2187,6 +2497,21 @@ final class Preview(moduleRoots: () => List[String],
   private def cancelTimer(): Unit = {
     val t = try lock.synchronized { timer } catch { case _: Throwable => timer }
     if (t ne null) try t.cancel() catch { case _: Throwable => () }
+    // DM-2 OF THE STAGE 1 REVIEW: THE FOURTH PATH THAT COULD LEAVE THE FLAG
+    // ARMED, and the one no other clear reaches.  Phase 1 arms; a
+    // `shutdown()` inside the grace cancels this timer so phase 2b never
+    // runs; and the preview thread is wedged -- which is the very case WP-6
+    // exists for -- so it reaches neither `runJob`'s `finally` nor
+    // `takeJob`.  In the shipped server that is harmless because the process
+    // is ending, but `core/test` is UNFORKED and `Bench.stop()` does this
+    // dozens of times: one stale non-null target makes EVERY later `swhnf`
+    // in EVERY suite take the slow side of the branch for the life of the
+    // JVM.  Both callers of this method -- `shutdown` (any thread) and
+    // `drainOnDeath` (the preview thread's own) -- are covered by putting it
+    // here, and the identity guard is `firePhase2`'s, so a `Preview` shutting
+    // down cannot clear another one's arming.
+    val me = thread
+    if (me ne null) try ErmineRuntime.disarmCancel(me) catch { case _: Throwable => () }
   }
 
   /** §4's `{error}` shape, with Q15's `reason` beside it when the front
@@ -2225,6 +2550,13 @@ object Preview {
     * (§2.3), as the design states them. */
   val DefaultTimeoutSeconds   = 60
   val DefaultMaxDocumentBytes = 16L * 1024L * 1024L
+
+  /** WP-6: how long the watchdog's PHASE 1 gives the cooperative cancel to
+    * take before phase 2 falls back to the stuck state.  A CONSTANT, not a
+    * user setting (see `Preview.graceMillis`): one second is many thousands
+    * of `swhnf` steps, and an evaluation that has not reached one in that
+    * time is not in the evaluator at all. */
+  val DefaultGraceMillis      = 1000L
 
   /** The three LSP methods stage B speaks, and the two strings §2.5's
     * notification names.  `RestartCommand` is the extension's own command
@@ -2394,6 +2726,15 @@ object Preview {
     * `reason` key at all, and an old server carries none anywhere, so a
     * client that reads `reason` as "placement" degrades to never triggering
     * rather than to triggering wrongly.
+    *
+    * WHAT BREAKS IF THAT INVARIANT IS EVER BROKEN, stated because the
+    * consequence is on the CLIENT and nothing here would fail (WP-7's
+    * re-review): a `reason` put on a 404 that is NOT a placement failure
+    * silently ARMS WP-7's Q11 watcher for that pick.  The extension would
+    * then re-render on every create-or-change of the picked file while the
+    * answer stands -- and, for a `Runner` 404, `ermine/preview/invalidated`
+    * fires for that module too, so the report is rendered TWICE per save.
+    * No test in this repository sees it; the rule is the whole defence.
     *
     * THE VOCABULARY IS CLOSED AND STABLE -- it is wire contract, so these
     * spellings do not change and nothing outside this object's front half

@@ -12,6 +12,37 @@ class FFI[A](e: => A) {
   def eval = e
 }
 
+/** A COOPERATIVE CANCEL in flight (WP-6, tracker/JSON-WIDGET-PLAYGROUND.md
+  * sections 2.5 and 14).  Thrown by `Runtime.swhnf` on the ONE thread that
+  * `Runtime.cancelTarget` names, so that an evaluation nothing can interrupt
+  * from outside ends at its next force.
+  *
+  * A `ControlThrowable`, and each of the three reasons is load-bearing:
+  *
+  *  - it is STACKLESS (`Throwable(message, null, false, false)`), so the
+  *    throw costs nothing on a path a long unwind takes many times;
+  *  - `scala.util.control.NonFatal` EXCLUDES it, so `swhnf`'s own capture --
+  *    `catch { case NonFatal(e) => r = Bottom(throw e) }` below -- does NOT
+  *    memoise it into the thunk.  A cancelled force therefore leaves no
+  *    poisoned `Bottom` for a later render to re-throw.  What it DOES leave
+  *    is WHITEHOLED thunks with this thread still in their `pending` queue,
+  *    which a later force on the same thread would memoise as "infinite loop
+  *    detected" -- and that is why the canceller must throw the whole
+  *    session away (`lsp/Preview.scala`'s cancel path, which discards the
+  *    render session unconditionally);
+  *  - it is NOT a `java.lang.Error`.  `parsing/ForeignClasses.Recoverable`
+  *    swallows an arbitrary `Error` into a failed reflective lookup, and the
+  *    arm that lets this class through is `case _: ControlThrowable => None`
+  *    (`ForeignClasses.scala:26`).  An `Error` here would be turned into
+  *    "error loading '...'" instead of ending the evaluation.
+  *
+  * `userAsked` tells a cancel the CLIENT asked for from the watchdog's own.
+  * NOTHING SETS IT TRUE IN STAGE 1: a user `$/cancelRequest` deliberately
+  * does not interrupt (section 14's WP-6 row), and the field is here for the client
+  * that one day sends one. */
+final class Cancelled(val why: String, val userAsked: Boolean)
+  extends scala.util.control.ControlThrowable(why)
+
 sealed abstract class Runtime {
   def extract[A]: A
   def nf: Runtime = this
@@ -55,7 +86,12 @@ object Prim {
       case r: Runtime => r
       case p => new Prim(p)
     }
-  } catch { case e: Throwable => Bottom(throw e) }
+  // WP-6: a `Cancelled` is NOT a failure of this primitive and must not be
+  // turned into a value.  Without this arm the catch below would wrap the
+  // cancel in a `Bottom` whose forcing re-throws it, which `writeback`
+  // then memoises -- and the cancel would silently not work at all.
+  } catch { case c: Cancelled => throw c
+            case e: Throwable => Bottom(throw e) }
   def unapply(p: Prim) = Some(p.extract[Any])
 }
 
@@ -84,7 +120,9 @@ object Box {
       case r: Runtime => r
       case b => new Box(b)
     }
-  } catch { case e: Throwable => Bottom(throw e) }
+  // WP-6, exactly as in `Prim.apply` above.
+  } catch { case c: Cancelled => throw c
+            case e: Throwable => Bottom(throw e) }
   def unapply(b: Box) = Some(b.extract[Any])
 }
 
@@ -144,7 +182,18 @@ class Bottom(msg: => Nothing) extends Runtime {
   def extract[A] = msg
   def exn: Exception = try msg catch { case e: Exception => e }
   /** @todo SMRC Use NonFatal for this? */
-  private[ermine] def thrown: Throwable = try msg catch { case e: Throwable => e }
+  // WP-6, DM-3 of the stage 1 review.  A `Bottom`'s body is USUALLY a bare
+  // `throw`, but not always: `session/Lib.scala`'s stdlib `error` is
+  // `Bottom(error(s.extract[String]))` and its `pipe#` failure is
+  // `Bottom(... + rel.whnf)`, and both FORCE.  Without this arm a cancel
+  // raised by that forcing would be CAUGHT HERE AND RETURNED AS A VALUE --
+  // and `thrown` is what `json/Encode.scala`, `json/Doc.scala`,
+  // `Pretty.ppRuntime` and `toString` below all call, so the cancel would
+  // come back as a bogus error node inside a 200, or as a job that
+  // "succeeded" with the cancel's own text embedded in it.
+  private[ermine] def thrown: Throwable = try msg catch {
+    case c: Cancelled => throw c
+    case e: Throwable => e }
   override def apply1(r: Runtime) = this
   override def err(caller: String) = this
   override def toString = "Bottom(" + thrown.toString + ")"
@@ -192,6 +241,75 @@ object Fun {
 object Runtime {
   val arrUnit = Arr()
 
+  /** WP-6's COOPERATIVE CANCEL: the ONE thread a cancel may stop, and the
+    * `Cancelled` it is to be stopped with.  `null` -- the case every
+    * ordinary run is in -- means no cancel is armed anywhere in this JVM.
+    *
+    * ONE GLOBAL REFERENCE, not a `ThreadLocal` and not `Thread.interrupt`.
+    * The interrupt was rejected outright: `lsp/Preview.takeJob` reads an
+    * `InterruptedException` as "stop", `backends`' chunk offering and
+    * `parsing/ForeignClasses.Recoverable` both react to interrupts, third
+    * party code may clear the flag before this evaluator ever sees it, and
+    * a JDBC driver may abort its connection on one.  A `ThreadLocal` would
+    * cost a map lookup on every force instead of one volatile read.
+    *
+    * THE WRITE ORDER IS PART OF THE CONTRACT: a canceller writes
+    * `cancelWhy` FIRST and `cancelTarget` SECOND, and clears them in the
+    * opposite order, so that a thread which has seen the target has almost
+    * always already seen the reason.  `swhnf` tolerates the remaining
+    * window by throwing a generic `Cancelled` rather than an NPE.
+    *
+    * THE FIELDS ARE `private[Runtime]` AND THE WRITES GO THROUGH
+    * `armCancel` / `disarmCancel` (S1 and S2 of the stage 1 review).  The
+    * write ORDER and the identity guard are the whole contract, and five
+    * call sites each re-implementing them is five chances to get one
+    * wrong; `cancelArmedFor` is the read accessor the guards and the
+    * properties use.  The HOT PATH -- `swhnf` below -- still reads the
+    * field DIRECTLY: it is in this object, and a method call with a
+    * monitor in it is exactly what must not be on every force. */
+  @volatile private[Runtime] var cancelTarget: Thread = null
+  @volatile private[Runtime] var cancelWhy: Cancelled = null
+
+  /** The monitor `armCancel` and `disarmCancel` share.  OFF THE HOT PATH by
+    * construction: nothing in `swhnf` touches it, and the two operations
+    * run once per watchdog fire and once per job. */
+  private val cancelLock = new Object
+
+  /** ARM a cooperative cancel for `target`, or answer `false` because
+    * ANOTHER thread's arming is already live.
+    *
+    * The refusal is the point: the flag is ONE global reference, so a
+    * second arming would silently replace the first and the thread that
+    * was to be stopped would run on. A caller that is refused has not
+    * armed anything and must say so and fall back (`lsp/Preview`'s
+    * `fireCancel` degrades to phase 2b).  Re-arming the SAME target is
+    * allowed and simply refreshes the reason.
+    *
+    * THE WRITE ORDER IS ENFORCED HERE, not asked of the caller: the reason
+    * first, the target second, so a thread that has seen the target has
+    * already seen the reason. */
+  private[reporting] def armCancel(target: Thread, why: Cancelled): Boolean =
+    cancelLock.synchronized {
+      val live = cancelTarget
+      if ((live ne null) && (live ne target)) false
+      else { cancelWhy = why; cancelTarget = target; true }
+    }
+
+  /** DISARM `target`'s own arming, and nothing else.  Idempotent, safe on a
+    * `null` target, and safe to call from any thread: the identity guard is
+    * what keeps two `Preview`s (or a test and a `Preview`) in one unforked
+    * JVM from clearing each other.  The order is the reverse of `armCancel`'s. */
+  private[reporting] def disarmCancel(target: Thread): Unit =
+    cancelLock.synchronized {
+      if ((target ne null) && (cancelTarget eq target)) {
+        cancelTarget = null
+        cancelWhy    = null
+      }
+    }
+
+  /** Which thread a cancel is armed for, or `null`.  READ ONLY. */
+  private[reporting] def cancelArmedFor: Thread = cancelTarget
+
   private sealed abstract class ThunkState { def result: Runtime }
   private case object Whitehole extends ThunkState { def result = Bottom(sys.error("infinite loop detected")) }
   private class Unevaluated(e: => Runtime) extends ThunkState { def result = e }
@@ -214,6 +332,28 @@ object Runtime {
   @annotation.tailrec
   def swhnf(r: Runtime, chain: List[Thunk] = Nil): Runtime = {
     import scala.jdk.CollectionConverters._
+    // WP-6'S CANCEL CHECK, AT THE HEAD AND ON EVERY CALL.  In the ordinary
+    // case it is ONE VOLATILE LOAD and one perfectly predicted null branch;
+    // `Thread.currentThread` is reached only while a cancel is armed
+    // somewhere in this JVM.
+    //
+    // IT IS AT THE HEAD AND NOT INSIDE THE `case old =>` BRANCH BELOW, and
+    // that is a measured decision rather than a careless one.  The cheaper
+    // placement -- inside the branch that actually FORCES something -- was
+    // proposed first and then falsified: `json/Encode.scala`'s `spine` walks
+    // a list with `while (true) { Runtime.swhnf(cur) ... }`, and on a CYCLIC
+    // list (the stdlib's `repeat a = t where t = a :: t`) every thunk it
+    // re-reads is ALREADY `Evaluated`, so that loop never enters `case old`
+    // at all and a check placed there would never fire.
+    val ct = cancelTarget
+    if ((ct ne null) && (ct eq Thread.currentThread)) {
+      // READ ONLY AFTER THE TARGET TEST PASSED, and tolerant of `null`: the
+      // canceller writes `cancelWhy` before `cancelTarget`, but a reader
+      // that lands between the two must end the evaluation, not raise an
+      // NPE inside the evaluator.
+      val c = cancelWhy
+      throw (if (c ne null) c else new Cancelled("the evaluation was cancelled", false))
+    }
     r match {
       case t : Thunk => t.state match {
         case Evaluated(e) => writeback(e, chain)
