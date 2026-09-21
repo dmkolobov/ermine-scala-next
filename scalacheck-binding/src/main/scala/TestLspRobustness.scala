@@ -36,7 +36,11 @@ import java.nio.file.{ Files, Path, Paths }
   * runs a Properties object's properties on a pool and `Resident.supply`
   * is one single-threaded Supply.  Everything whose VERDICT reads
   * `Session.depCache` holds `ErmineFixture.literalLock` as well and
-  * re-primes the cache first -- see `withDepCache`.
+  * re-primes the cache first -- see `withDepCache`.  SINCE ROBUST-3
+  * (2026-09-20) that is not the only rule: every group-D property that
+  * DRIVES THE RENDER SESSION holds `literalLock` too, whatever its verdict
+  * is about, because a render reads that cache whether the property asks it
+  * to or not -- see `renderingD`.
   */
 object TestLspRobustness extends Properties("LSP robustness") {
 
@@ -760,6 +764,20 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * suite out while the property runs, and `primeDepCache` repairs a clear
     * that landed BEFORE it started, which exclusion cannot.
     *
+    * THE OTHER HALF OF THE CONVENTION, ROBUST-3 (2026-09-20), AND IT IS NOT
+    * ABOUT VERDICTS.  This block, and the header above it, used to read as
+    * though `literalLock` were owed only by a property whose ANSWER is
+    * computed from the cache.  It is not.  EVERY RENDER READS THE CACHE:
+    * `Preview.placeAndSession` runs §2.5's mtime scan at the head of every
+    * render AND every schema (`lsp/Preview.scala:1339`), which is
+    * `Runner.invalidateStale` (`json/Runner.scala:599`) -- one
+    * `Session.depCache.get` plus one `File.lastModified` per loaded file
+    * (`Runner.staleFiles`, `:568-575`; ~20 files for a render session),
+    * then `invalidate0` builds the importer graph from that same cache.  So
+    * a foreign `clear()` is dangerous to a property that never mentions the
+    * cache at all, and `renderingD` below is where group D takes the lock
+    * for that reason rather than for this one.
+    *
     * LOCK ORDER, fixed here and nowhere else in this file: `residentLock`
     * first, then `literalLock`.  It cannot deadlock: `residentLock` is
     * `private` to this object, so no code that holds `literalLock` -- every
@@ -774,7 +792,15 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * elsewhere whose initializer TAKES `literalLock`,
     * `TestInterfaceConcreteRow.corpus` (`:229`), is forced as a
     * call-by-value argument (`prop2(corpus)`, `:372`) before its property's
-    * own locked block, and nothing in this file names it.
+    * own locked block, and nothing in this file names it.  SINCE ROBUST-3
+    * THERE IS A SECOND ONE, `PreviewSupport.bench`'s: its `bootMillis`
+    * warm-up render is itself a render and so takes `literalLock` (see
+    * `renderingD`, and `Bench.bootMillis` for why).  It cannot deadlock
+    * either way round: every force of `bench` is under `previewLock`, so
+    * only one thread is ever inside that initializer, and the one group-D
+    * property that forces it while already holding `literalLock` -- this
+    * very `withDepCache` at `ermine/preview/reports`, through `timedD`'s
+    * `bench.bootMillis` -- re-enters a Java monitor it already owns.
     *
     * WHAT THIS STILL DOES NOT COVER, stated rather than fixed:
     * `TestTolerantCheck` keeps its own resident (`:912`) behind its own
@@ -1568,8 +1594,111 @@ object TestLspRobustness extends Properties("LSP robustness") {
   }
 
 
+  /** `timedD` PLUS `ErmineFixture.literalLock`: the wrapper EVERY group-D
+    * property that drives the render session must use, and the whole of
+    * ROBUST-3's test-side fix.
+    *
+    * WHY EVERY RENDER, and not only a verdict that reads the cache.
+    * `Preview.placeAndSession` runs §2.5's mtime scan at the head of every
+    * render and every schema (`lsp/Preview.scala:1339`), so every one of
+    * them walks the process-global `Session.depCache` through
+    * `Runner.invalidateStale` (`json/Runner.scala:599`).  A `clear()` from
+    * one of the four suites listed in `withDepCache` that lands PART WAY
+    * THROUGH that walk is the one interleaving that hurts: the files
+    * already examined kept their entries and look CURRENT, the rest look
+    * STALE, and by the time `invalidate0` runs the cache is empty, so
+    * `Session.dependentsOf` (`session/Session.scala:771-783`) finds no
+    * importer edges at all and the dirty set is an arbitrary suffix that is
+    * NOT closed under importers.  `Session.scrub` (`:811-830`) is then
+    * asymmetric in exactly the wrong way -- it filters `env` by the V's OWN
+    * defining module but `termNames` by the KEY's module -- so it deletes a
+    * definer's name while every re-exporter's key survives pointing at it,
+    * and the next load of a module that resolves the spelling to the ORIGIN
+    * dies inside a stdlib file nobody touched.  That is the gate red on
+    * tree key `cae6f47f42cc3a6cf0c99b0c46e61f1a1d4ff890`:
+    * `module WpQueue does not load: .../Maybe.e:53:16: error: undefined
+    * term`, on the queue/cancel property, which mentions neither the cache
+    * nor an import closure.  The PRODUCT half of it -- `scrub` relying on
+    * its caller's set being importer-closed -- is ticket WP-25, and the
+    * shared-cache-per-session question is WP-26.
+    *
+    * EXCLUSION ALONE; NO RE-PRIME, unlike `withDepCache`.  A clear that
+    * lands BEFORE the walk is benign -- every file then looks stale, the
+    * closure is everything, the scrub is consistent and the session simply
+    * reloads (MEASURED by ROBUST-3's probe 2) -- so only the mid-walk
+    * landing has to be excluded, and `literalLock` excludes exactly that.
+    * The re-prime answers a different question (a verdict computed from a
+    * cache somebody already emptied) and is not needed here.
+    *
+    * LOCK ORDER, and the two boots that are forced OUTSIDE the lock.
+    * `previewLock` (the caller's), then `residentLock`, then `literalLock`
+    * -- `PreviewSupport`'s declared order.  A LAZY VAL'S INITIALIZER
+    * MONITOR IS A LOCK TOO, so `bench` (whose initializer boots a render
+    * session) and, when `withResident` is set, `resident` (176 modules,
+    * tens of seconds) are forced HERE, before `literalLock` is taken;
+    * otherwise the first property to run would hold the four clearing
+    * suites off for the whole of a boot.  `withResident` also TAKES
+    * `residentLock`, which is what keeps the order right for the
+    * properties whose BODY takes it -- taking `literalLock` first and
+    * `residentLock` inside it would deadlock against group C's
+    * `withDepCache`, which takes them the declared way round.  It is
+    * re-entrant for the properties that already hold `residentLock`
+    * themselves.  Nothing that holds `literalLock` can name `previewLock`
+    * or `residentLock`: both are `PreviewSupport`'s, and no other suite in
+    * `scalacheck-binding/src/main/scala` mentions either (checked
+    * 2026-09-20), so there is no cycle to deadlock on.
+    *
+    * WHAT IT COSTS: group D and the four clearing suites are now mutually
+    * exclusive for as long as each wrapped property runs, so the bound on
+    * the hold is the longest wrapped property.  MEASURED on this tree,
+    * THREE runs: group D 30.3 s and 29.4 s for `core/testOnly
+    * *TestLspRobustness` ALONE and 31.1 s with the four clearing suites in
+    * the same JVM, against §11's 60 s cap; boot 2.3-2.9 s; and the longest
+    * wrapped property is `DD-1: the poisoned session is discarded` at
+    * 4.7-5.6 s (it pays TWO render-session boots), then `Q6: zero
+    * configuration` 4.4-4.7 s and `Q6: one name, two roots` 4.0-4.4 s.
+    * THE RED RUN'S 23.7 s FOR `Q7: the shadowed pick` IS NOT A BOUND ON
+    * THE HOLD: that figure is the RESIDENT's own ~13 s boot landing on
+    * whichever property forces it first (§11 names the effect), and
+    * `withResident` forces it BEFORE `literalLock` is taken, which is the
+    * whole reason that parameter exists -- the same property costs
+    * 1.9-2.7 s on these runs.  The WEDGE properties are NOT wrapped
+    * and cannot hold the lock for the length of a wedge: they hold their
+    * render in `beforeJob`, which runs before the job does any work, so
+    * they never build a `Runner` and never read the cache (see the list
+    * below).  `TestDateAndScan.underZone` takes `literalLock` as its fence
+    * for a JVM-default-timezone change, so the exclusion runs the other way
+    * too, and that is a gain: a render is a module load, which is what that
+    * fence exists to keep out of the window.
+    *
+    * WHICH GROUP-D PROPERTIES ARE DELIBERATELY *NOT* WRAPPED, and why --
+    * all READ, one by one, not guessed.  `daemon and shutdown` (installs a
+    * second `Preview` and stops it; no job runs).  `watchdog, the stuck
+    * state and the recovery`, `the watchdog drains the queue`, `watchdog
+    * over a cancelled request`, `Q10: isFatal keeps the stuck state`,
+    * `IM-1: the stuck notification's seq`, `the schema job at shutdown`:
+    * every job they post is held or thrown in `beforeJob`, so `doRender` /
+    * `doSchema` never run and no `Runner` is ever built.  `Q9:
+    * applySettings on timeoutSeconds`: no bench, no boot, no job.  `Q7: the
+    * missing uri, and the resident's forms`: its binding form is refused by
+    * `SchemaRequest.parse` on the DISPATCH thread before any job is
+    * enqueued (`lsp/Preview.scala:603-605`), and its `type`/`name` forms
+    * are answered from the resident by `LspSchema`, never by the preview.
+    * `ermine/preview/reports` keeps `withDepCache`, which is strictly
+    * stronger.  The two crash-handler properties at the end of the file
+    * take neither `previewLock` nor `timedD` and throw in `beforeJob`. */
+  private def renderingD(what: String, withResident: Boolean = false)(body: => Prop): Prop = {
+    def go: Prop = {
+      val _ = bench          // force the render-session boot OUTSIDE `literalLock`
+      ErmineFixture.literalLock.synchronized { timedD(what)(body) }
+    }
+    if (withResident) residentLock.synchronized { val _ = resident; go }
+    else go
+  }
+
+
   property("D: a render answers a document, echoes the generation, and follows the file once invalidated") = secure {
-    previewLock.synchronized { timedD("render/invalidate/render") {
+    previewLock.synchronized { renderingD("render/invalidate/render") {
       val vacuous = !salesSource.contains("module Sales where") ||
                     !salesSource.contains("Heading \"Sales\"")
       val sales = writeFixture("WpSales", wpSalesSource("Sales"))
@@ -1580,7 +1709,13 @@ object TestLspRobustness extends Properties("LSP robustness") {
       // document differ is the reload
       writeFixture("WpSales", wpSalesSource("Sales (edited)"))
       bench.preview.invalidate(Set(sales))
-      val inv = bench.notification("ermine/preview/invalidated")
+      // ROBUST-3: content-matched, for the reason the importer-closure
+      // property below gives -- `notification` matches the METHOD only and
+      // the bench is shared, so an earlier property's `invalidated` would be
+      // taken instead and this property asserts the modules EXACTLY.
+      val inv = bench.await(60000L)(j =>
+        (j / "method" flatMap (_.str)) == Some("ermine/preview/invalidated") &&
+        modulesOf(Some(j)).exists(_.contains("WpSales")))
       bench.render(11, sales, "report", wpSalesParams, 42)
       val a2 = bench.answer(11)
       ((!vacuous) :| "Sales.e no longer contains the header or the heading this property rewrites") &&
@@ -1599,8 +1734,11 @@ object TestLspRobustness extends Properties("LSP robustness") {
 
   property("D: invalidating a module the report IMPORTS names the report, and the next render carries it") = secure {
     previewLock.synchronized {
-      val _ = bench          // force the boot HERE: see LOCK ORDER above
-      ErmineFixture.literalLock.synchronized { timedD("importer closure") {
+      // ROBUST-3: `renderingD` is this property's own defence, generalised.
+      // It forces the bench and takes `ErmineFixture.literalLock` exactly as
+      // the three lines that used to stand here did; every group-D property
+      // that renders now goes through it.
+      renderingD("importer closure") {
         // EXCLUSION plus FRESHNESS, as `TestRunner`'s (inv2) does it: both
         // modules are written AND loaded inside this locked block, so their
         // `Session.depCache` entries are made after the last moment a
@@ -1612,7 +1750,16 @@ object TestLspRobustness extends Properties("LSP robustness") {
         val a1 = bench.answer(20)
         writeFixture("WpWidgetB", wpWidget("WpWidgetB", 4222))
         bench.preview.invalidate(Set(wid))
-        val inv  = bench.notification("ermine/preview/invalidated")
+        // MATCHED ON ITS CONTENT, not just its method (ROBUST-3, failure
+        // (2) of the gate red on tree key
+        // `cae6f47f42cc3a6cf0c99b0c46e61f1a1d4ff890`): `bench.notification`
+        // takes the FIRST buffered message with that method, the bench is
+        // shared, and the queue/cancel property's `{"modules":["WpQueue"]}`
+        // -- left behind by failure (1) -- was consumed here and falsified
+        // this property.  The sibling below has always done it this way.
+        val inv  = bench.await(60000L)(j =>
+          (j / "method" flatMap (_.str)) == Some("ermine/preview/invalidated") &&
+          modulesOf(Some(j)).exists(_.contains("WpWidgetB")))
         val mods = modulesOf(inv)
         bench.render(21, rep, "report", "1", 52)
         val a2 = bench.answer(21)
@@ -1624,7 +1771,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
           ((okOf(a2) ?= Some(true)) :| ("the second render: " + show(a2))) &&
           (docOf(a2).exists(_.contains("4222")) :|
             ("the document did not follow the imported module: " + docOf(a2).map(_.take(300))))
-      } }
+      }
     }
   }
 
@@ -1636,16 +1783,18 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * fixed it, `Preview` sent no `ermine/preview/invalidated` (§3 step 5
     * sends nothing for an empty set), and the extension never re-rendered.
     *
-    * NO `literalLock`: the verdict does not depend on the import closure.
-    * The broken module is loaded by nothing, so `invalidate` never reaches
+    * ITS VERDICT does not depend on the import closure: the broken module
+    * is loaded by nothing, so `invalidate` never reaches
     * `Session.dependentsOf` and the process-global `Session.depCache` cannot
-    * change the answer -- the pending set alone names the module.
+    * change the answer -- the pending set alone names the module.  IT STILL
+    * GOES THROUGH `renderingD` (ROBUST-3): it RENDERS, and a render walks
+    * that cache whatever the verdict is about.
     *
     * IT LEAVES THE PENDING SET EMPTY, which the properties around it need:
     * D1 asserts that an `invalidated` names EXACTLY `List("WpSales")`, and a
     * module still pending here would be named alongside it. */
   property("D: a report whose LOAD failed is named by the invalidate for its fix, and the next render carries it") = secure {
-    previewLock.synchronized { timedD("the broken report's fix") {
+    previewLock.synchronized { renderingD("the broken report's fix") {
       val m = "WpFixMe"
       val p = writeFixture(m, wpBrokenReport(m))
       bench.render(100, p, "report", "1", 111)
@@ -1678,7 +1827,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     previewLock.synchronized {
       val boom = writeFixture("WpBoom", wpBoom)
       val good = writeFixture("WpGood", wpSimple("WpGood", 7311))
-      timedD("throwing report") {
+      renderingD("throwing report", withResident = true) {
         bench.render(30, boom, "report", "1", 61)
         val a1 = bench.answer(30)
         // the resident, on the other side of the process, with a render
@@ -1700,7 +1849,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   }
 
   property("D: one render in flight, one queued, latest wins, and $/cancelRequest answers -32800") = secure {
-    previewLock.synchronized { timedD("queue, cancel and latest-wins") {
+    previewLock.synchronized { renderingD("queue, cancel and latest-wins") {
       val good = writeFixture("WpQueue", wpSimple("WpQueue", 9001))
       // THE SEAM.  The hook runs on the preview thread, holding no lock at
       // all, before the job does anything -- so the render carrying
@@ -1785,7 +1934,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   }
 
   property("D: a save nobody reported is seen by the next render's own mtime scan") = secure {
-    previewLock.synchronized { timedD("mtime scan") {
+    previewLock.synchronized { renderingD("mtime scan") {
       val m = writeFixture("WpStale", wpSimple("WpStale", 3301))
       bench.render(70, m, "report", "1", 101)
       val a1 = bench.answer(70)
@@ -1831,7 +1980,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
       // Forcing it here makes the property self-contained, and the lock is
       // the group's declared order -- `previewLock`, then `residentLock` --
       // because that initializer reaches the resident.
-      residentLock.synchronized { timedD("404 and 400") {
+      residentLock.synchronized { renderingD("404 and 400", withResident = true) {
       val _d = bench.docs
       // A path under none of `moduleRoots ++ inferredRoot(uri) ++ roots`.
       // It must not EXIST: §2.4 puts the file's OWN inferred root in the
@@ -1966,7 +2115,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   }
 
   property("D: the dispatch thread answers while a render is in flight") = secure {
-    previewLock.synchronized { timedD("dispatch not blocked") {
+    previewLock.synchronized { renderingD("dispatch not blocked") {
       val good    = writeFixture("WpBlock", wpSimple("WpBlock", 5501))
       val held    = 90
       val started = new java.util.concurrent.CountDownLatch(1)
@@ -2287,7 +2436,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   }
 
   property("D (DD-1): a wedge that comes back FAILED discards the render session; one that comes back OK keeps it") = secure {
-    previewLock.synchronized { timedD("DD-1: the poisoned session is discarded") {
+    previewLock.synchronized { renderingD("DD-1: the poisoned session is discarded") {
       // DM-1, AS CORRECTED BY DD-1 OF THE SECOND Q8-Q12 REVIEW.
       // `Runtime.swhnf` memoises a failure into EVERY thunk on the chain
       // (`Runtime.scala:231`, `:245-250`), including the render session's
@@ -2572,7 +2721,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   }
 
   property("D: a document over ermine.preview.maxDocumentBytes is a 500 before it is sent, and the default renders") = secure {
-    previewLock.synchronized { timedD("document size cap") {
+    previewLock.synchronized { renderingD("document size cap") {
       val m   = writeFixture("WpBig", wpSimple("WpBig", 8801))
       val was = bench.preview.maxDocumentBytes
       try {
@@ -2609,7 +2758,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
       // `residentLock` -- both handlers below reach the resident, one to
       // answer the `name` form and one because `Definitions.install` is
       // forced here.
-      residentLock.synchronized { timedD("ermine/schema {binding}") {
+      residentLock.synchronized { renderingD("ermine/schema {binding}", withResident = true) {
         val _ = resident
         val d = bench.docs
         val sales = writeFixture("WpSales", wpSalesSource("Sales"))
@@ -2677,7 +2826,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     // its own -- the shutdown drain below, and the watchdog drain above --
     // and this one is about the QUEUE's ordering rules and nothing else.
     previewLock.synchronized {
-      residentLock.synchronized { timedD("the schema job in the queue") {
+      residentLock.synchronized { renderingD("the schema job in the queue", withResident = true) {
         val _ = resident
         val _d = bench.docs
         val sales = writeFixture("WpSales", wpSalesSource("Sales"))
@@ -2988,7 +3137,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   }
 
   property("D: the boot is not watched by the watchdog, and a create the client refused sends no $/progress") = secure {
-    previewLock.synchronized { timedD("boot bracket and a refused token") {
+    previewLock.synchronized { renderingD("boot bracket and a refused token") {
       // REVIEW M2 and S1, on ONE bench and therefore ONE extra boot: both
       // claims are about what happens AROUND a real boot, and a boot is the
       // most expensive thing in this group (§11's 60 s cap).  Its own bench,
@@ -3112,7 +3261,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   }
 
   property("D: the boot reports work-done progress, and only to a client that declared the capability") = secure {
-    previewLock.synchronized { timedD("boot progress") {
+    previewLock.synchronized { renderingD("boot progress") {
       // THE GROUP'S ONE BOOT is the shared bench's first render, and this
       // bench's client declares `window.workDoneProgress` (see `Bench`), so
       // the create / begin / end of §2.5 are already on this wire and no
@@ -3201,7 +3350,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * WHAT FALSIFIES IT: on the old `rootSet` the three renders below boot
     * three times, once each. */
   property("D (Q6): two reports in two CONFIGURED directories share one render session") = secure {
-    previewLock.synchronized { timedD("Q6: two configured directories") {
+    previewLock.synchronized { renderingD("Q6: two configured directories") {
       val a = writeFixtureIn(q6RootA, "WpQ6A", wpSimple("WpQ6A", 9101))
       val c = writeFixtureIn(q6RootB, "WpQ6B", wpSimple("WpQ6B", 9102))
       val roots = List(q6RootA, q6RootB)
@@ -3232,7 +3381,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * and that DOES move the root set, so it re-boots -- the existing
     * behaviour, pinned so the Q6 branch cannot quietly swallow it. */
   property("D (Q6): a report outside every configured root still renders, and re-boots") = secure {
-    previewLock.synchronized { timedD("Q6: zero configuration") {
+    previewLock.synchronized { renderingD("Q6: zero configuration") {
       val inside  = writeFixtureIn(q6RootA, "WpQ6Cfg",  wpSimple("WpQ6Cfg", 9103))
       val outside = writeFixtureIn(q6Outside, "WpQ6Zero", wpSimple("WpQ6Zero", 9104))
       val roots   = List(q6RootA, q6RootB)
@@ -3271,7 +3420,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * fires and the configured chain already answers with the picked file;
     * picked under the LATER root, where it must not fire. */
   property("D (Q6): with one module name under two configured roots, the PICKED file is rendered") = secure {
-    previewLock.synchronized { timedD("Q6: one name, two roots") {
+    previewLock.synchronized { renderingD("Q6: one name, two roots") {
       val inA = writeFixtureIn(q6RootA, "WpQ6Dup", wpSimple("WpQ6Dup", 9111))
       val inB = writeFixtureIn(q6RootB, "WpQ6Dup", wpSimple("WpQ6Dup", 9222))
       val roots = List(q6RootA, q6RootB)
@@ -3319,7 +3468,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * module root: WpSales.e"}}`. */
   property("D (Q7): a schema asked BEFORE any render boots the session and answers the params schema") = secure {
     previewLock.synchronized {
-      residentLock.synchronized { timedD("Q7: schema first, then render") {
+      residentLock.synchronized { renderingD("Q7: schema first, then render", withResident = true) {
         val _     = resident
         val sales = writeFixture("WpSales", wpSalesSource("Sales"))
         val b7    = new Bench(warm = false)
@@ -3424,7 +3573,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * still renders, from its own contents, without a second boot. */
   property("D (Q7): a pick shadowed by a resident module root is refused, and names both files") = secure {
     previewLock.synchronized {
-      residentLock.synchronized { timedD("Q7: the shadowed pick") {
+      residentLock.synchronized { renderingD("Q7: the shadowed pick", withResident = true) {
         val _      = resident
         val shadow = writeFixtureIn(q7Shadow, "WpQ7Dup",  wpSimple("WpQ7Dup", 7777))
         val pick   = writeFixtureIn(q7Pick,   "WpQ7Dup",  wpSimple("WpQ7Dup", 8888))
@@ -3485,7 +3634,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * resident root holds the real directory and therefore LEADS the chain,
     * so the pick through the link is refused as a shadow of itself. */
   property("D (Q7): a pick that reaches its root through a symlink is not shadowed by that root's own spelling") = secure {
-    previewLock.synchronized { timedD("Q7: two spellings of one file") {
+    previewLock.synchronized { renderingD("Q7: two spellings of one file") {
       val real = writeFixtureIn(q7Real, "WpQ7Link", wpSimple("WpQ7Link", 5150))
       val link =
         try {

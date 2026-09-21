@@ -124,15 +124,20 @@ private[reporting] object PreviewSupport {
     *
     * LOCK ORDER: `previewLock`, then `residentLock` (one property checks
     * that the resident still answers with a render session loaded beside
-    * it), then `ErmineFixture.literalLock` (one property's verdict is an
-    * invalidation closure, which reads the process-global `Session.depCache`
-    * -- see `withDepCache` for who empties it and why that matters).
-    * Nothing anywhere takes them the other way round: `previewLock` is
-    * private to this object and named by nothing that holds either of the
-    * others.  The bench -- whose lazy initializer BOOTS a render session,
-    * so that its initializer monitor is a lock held for seconds -- is forced
-    * under `previewLock` and BEFORE `literalLock`, for the reason
-    * `withDepCache`'s LOCK ORDER note gives.
+    * it), then `ErmineFixture.literalLock` -- which SINCE ROBUST-3
+    * (2026-09-20) is taken by every group-D property that RENDERS and not
+    * only by the one whose verdict is an invalidation closure: a render
+    * walks the process-global `Session.depCache` through
+    * `Runner.invalidateStale` whether the property asks it to or not (see
+    * `TestLspRobustness.renderingD`, and `withDepCache` for who empties
+    * that cache).  Nothing anywhere takes them the other way round:
+    * `previewLock` is private to this object and named by nothing that
+    * holds either of the others.  The bench -- whose lazy initializer BOOTS
+    * a render session, so that its initializer monitor is a lock held for
+    * seconds -- is forced under `previewLock` and BEFORE `literalLock`, for
+    * the reason `withDepCache`'s LOCK ORDER note gives; the boot itself
+    * then takes `literalLock` for its own warm-up render, which is the one
+    * render `renderingD` cannot wrap (see `Bench.bootMillis`).
     *
     * NO SHAPE OF `Sales.*` IS EVER REGISTERED HERE.  `DataConDecl`'s maps
     * are process-wide and both `TestRunner` and the registration property
@@ -436,10 +441,35 @@ private[reporting] object PreviewSupport {
       q
     }
 
-    /** §2.4's lazy boot, paid ONCE and inside this initializer, so that no
-      * property pays it under `literalLock` and the figure below is the
-      * group's one boot. */
-    val bootMillis: Long = if (!warm) 0L else {
+    /** §2.4's lazy boot, paid ONCE and inside this initializer, so that the
+      * figure below is the group's one boot.
+      *
+      * UNDER `ErmineFixture.literalLock` SINCE ROBUST-3 (2026-09-20), WHICH
+      * IS THE OPPOSITE OF WHAT THIS COMMENT USED TO SAY ("so that no
+      * property pays it under `literalLock`").  The warm-up below is a REAL
+      * render, so `Preview.placeAndSession` runs §2.5's mtime scan on it
+      * like any other (`lsp/Preview.scala:1339` ->
+      * `Runner.invalidateStale`), and a foreign `Session.depCache.clear()`
+      * landing part way through THAT walk is what leaves the render session
+      * with `termNames` entries whose values are gone -- the gate red on
+      * tree key `cae6f47f42cc3a6cf0c99b0c46e61f1a1d4ff890`
+      * (`TestLspRobustness.renderingD` has the whole chain, and the product
+      * half is ticket WP-25).  The boot has to be excluded as well, and it
+      * is the ONE render `renderingD` cannot cover: it forces this lazy val
+      * before taking the lock, precisely so that no property pays a boot
+      * under it.  What the exclusion costs is one hold of `literalLock` for
+      * the length of this boot -- MEASURED at 2.6 s on the red gate run --
+      * once per JVM, against the 23.7 s the longest wrapped property holds
+      * it for anyway.
+      *
+      * THE LOCK ORDER IS KEPT: every force of `bench` happens under
+      * `previewLock` (and, for the resident properties, under
+      * `residentLock`), and nothing that holds `literalLock` can name
+      * either -- so `previewLock` -> `residentLock` -> `literalLock` still
+      * describes every path to this line.  A `new Bench` made INSIDE a
+      * wrapped property boots under a `literalLock` this thread already
+      * holds; a Java monitor is re-entrant. */
+    val bootMillis: Long = if (!warm) 0L else ErmineFixture.literalLock.synchronized {
       val p  = writeFixture("WpWarm", wpSimple("WpWarm", 1))
       val t0 = System.currentTimeMillis
       render(1, p, "report", "1", 0)
