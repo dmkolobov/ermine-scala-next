@@ -645,7 +645,10 @@ happens with symbolic links, are in **Params files** above.
 for the example `Sales.report` selects no rows, and the first render is a
 `500` — *"an empty relation built from no rows carries no columns"*. Edit
 `fromDay`/`toDay` into 2026-01-05..2026-03-17 and it renders. See Q21 in
-`tracker/JSON-WIDGET-PLAYGROUND.md`.
+`tracker/JSON-WIDGET-PLAYGROUND.md`. **Since 2026-09-23** (Q21 decided by the
+user) `Sales.e` gives that table a header with `relationWithHeader`, so the
+first render is a document with an empty table; a report that builds an empty
+relation with plain `relation` still gets the `500` (ticket WP-29).
 
 ### 0.1.8
 

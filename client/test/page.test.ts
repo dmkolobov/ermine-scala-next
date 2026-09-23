@@ -263,7 +263,7 @@ test("(pg-h7-real) every captured real answer, folded through the real reducer, 
     "ok-wpint": { banner: null, doc: true },
     "error-400-sales-key": { banner: "error", text: /^400: the key "fromDy" is not allowed here \(\$\.params\.fromDy\)$/, doc: false },
     "error-404-placement": { banner: "error", text: /^404: cannot read Missing\.e$/, doc: false },
-    "error-500-sales": { banner: "error", text: /^500: Sales\.report produced a document that cannot be encoded/, doc: false },
+    "error-500-wpempty": { banner: "error", text: /^500: WpEmpty\.report produced a document that cannot be encoded/, doc: false },
     "stuck-wpspin": { banner: "stuck", text: /^evaluation did not finish after 4s; the preview is stuck/, doc: false },
     "burst-1": { banner: "initial", doc: false },
   };

@@ -304,6 +304,7 @@ which steps use it.
 | `WpSpin.e` | **wedges** — a bare self-call | at `timeoutSeconds: 5` the render is answered **7.18 s** after the request with `status 500, stuck: true`; the `ermine/preview/stuck` notification (`seq: 1`) arrived **after** the answer; a second render was refused in **0.00 s** with its own generation echoed |
 | `WpChain.e` | **wedges** — a fold over a cyclic list, the same wedge by a different mechanism | at `timeoutSeconds: 5` answered **6.70 s** after the request, same shape |
 | `WpBlow.e` | **kills the JVM** — an unbounded allocation off a retained top-level list | at `ERMINE_LSP_XMX=256m` and `timeoutSeconds: 600` the server **died 6.85 s** after the render, **exit code 3**, with `Terminating due to java.lang.OutOfMemoryError: Java heap space` on **stderr** and nothing after the last complete frame on stdout (Q12's `-XX:+DisplayVMOutputToStderr` is working here) |
+| `WpEmpty.e` | **refuses to encode on purpose** — `report : Int -> Node` returning a table over `relation []`, a header-less empty relation (TestRunner's (b7) `RgEmpty` shape; the engine gap is WP-29). Not a checklist step: it keeps the 500 that `Sales` used to answer reproducible for `editor/vscode/test/fixtures/panel-answers.json` | `ok=false, status 500`, *"WpEmpty.report produced a document that cannot be encoded: an empty relation built from no rows carries no columns; give it a header (mkRelationWithHeader#) or a static hint"*, path `$.props` (`scratch-widget-preview/q21-sales/captures.json`) |
 
 **`Sales.e` is not in that directory and must not be moved there.** It stays at
 `core/src/test/resources/doc/Sales.e`; other suites read it. Measured: its
@@ -399,12 +400,16 @@ At the end of a session `liveness.sh` should read `sbt=0 … lsp=0 … ermine-jv
 - **The render tab is untitled and always dirty.** Closing it offers to save a
   throwaway render: **Don't Save**. There is no way round it for an untitled
   document.
-- **The first pick of `Sales.report` answers a 500, not a document.** The
-  skeleton is written with **today's** dates and `Sales`'s rows are all in
-  2026-01..2026-03, so nothing matches and an empty relation carries no
-  columns. **Measured twice against a real server.** That is open question Q21
-  and it is yours; edit the dates to `2026-01-05` / `2026-03-17` and it renders
-  `ok=true`.
+- **The first pick of `Sales.report` renders an EMPTY table.** The skeleton
+  is written with **today's** dates and `Sales`'s rows are all in
+  2026-01..2026-03, so nothing matches: the heading says `matched: 0` and the
+  `byDay` table has its four columns and no rows. It used to be a 500 ("an
+  empty relation built from no rows carries no columns"); the user decided Q21
+  on 2026-09-23 (fix the example, ticket the engine: WP-29), and `Sales.e`
+  now gives that table a header. **Measured 2026-09-23 against a real
+  server.** Edit the dates to `2026-01-05` / `2026-03-17` and the rows
+  appear. A report of your own that builds an empty relation with plain
+  `relation` still gets the 500 (WP-29).
 - **No database, no backends.** Profiles, the held connection, the driver and
   everything in §7 of `tracker/JSON-WIDGET-PLAYGROUND.md` are not built. The
   `mssql-jdbc` driver is not even in `build.sbt`.

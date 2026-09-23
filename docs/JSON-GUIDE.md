@@ -1016,6 +1016,14 @@ import them.
 import List using {filter; length; nub; sum'; map_List; empty_Bracket; cons_Bracket}
 ```
 
+In the same way a `{region, day, ..}` Row literal desugars to `single_Brace` and
+`snoc_Brace`, which `Relation.Row` provides; the report needs one for the header
+below:
+
+```
+import Relation.Row using {single_Brace; snoc_Brace}
+```
+
 The relation columns are ordinary `field` declarations — primitive DB column
 types only, which is the standing record restriction:
 
@@ -1055,8 +1063,13 @@ report : Query -> Node
 report q =
   let picked = filter (keep q) sales
       total  = sum' (map_List sAmount picked)
-      byDay  = relation (map_List (s -> { region = sRegion s, day = sDay s,
-                                     amount = sAmount s, units = sUnits s }) picked)
+      -- `picked` is empty when the range matches nothing, so the header is
+      -- given explicitly rather than read off a first row
+      byDay  = relationWithHeader {region, day, amount, units}
+                 (map_List (s -> { region = sRegion s, day = sDay s,
+                                   amount = sAmount s, units = sUnits s }) picked)
+      -- `regions` and `items` are built from the whole `sales` list, never
+      -- empty, so plain `relation` is enough there.
       -- bare: the request's "data.default" decides how it is delivered
       regions = relation (map_List (r -> { region = r }) (nub (map_List sRegion sales)))
       -- always deferred, whatever the request asks for
@@ -1068,6 +1081,12 @@ report q =
               , [ rawWidget "table" items, rawWidget "text" "line items on demand" ] ]
        ]
 ```
+
+`byDay` is the one relation that can be empty (a date range that matches no
+sale), so it is built with `relationWithHeader`: plain `relation` reads the
+columns off the first row, an empty list has none, and the encoder would answer
+the `Headerless` 500 shown under the errors below. With the header the empty
+range renders a table with its four columns and `"rows": []`.
 
 Three relations, one of each delivery kind; a `VFlow` whose second child is a
 2x2 `Grid`; the parameters echoed back into a widget's props. The widget names

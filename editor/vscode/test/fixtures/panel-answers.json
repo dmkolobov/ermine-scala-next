@@ -6,7 +6,8 @@
     "`answer` is the JSON-RPC `result` verbatim; `rejection` is the JSON-RPC `error` verbatim (burst-1 is the server's own -32800 for a render displaced by a newer one).",
     "The burst: three renders sent back to back (generations 8, 9, 10); the server keeps one in flight and one queued, latest wins, so 9 was displaced.",
     "The wedge: WpSpin with a 4 s watchdog answers stuck:true; every later render in that process (WpInt, WpChain, WpBlow) is refused with the same stuck:true 500 -- WpChain and WpBlow therefore appear ONLY as stuck refusals, since one boot can wedge once.",
-    "`notifications` holds the ermine/* notifications the server sent during the run, in arrival order."
+    "`notifications` holds the ermine/* notifications the server sent during the run, in arrival order.",
+    "RE-CAPTURED 2026-09-23 (HEAD 69abc962 + the uncommitted Q21 change), one entry only: `error-500-wpempty` REPLACES `error-500-sales`. Since the user's Q21 decision Sales builds its byDay table with relationWithHeader, so Sales with an empty date range now renders (ok=true, an empty four-column table) and no longer answers this 500. The 500 is kept reproducible by tracker/playtest/fixtures/WpEmpty.e (`rawWidget \"table\" (relation [])`, TestRunner's (b7) RgEmpty shape). Harness: scratch-widget-preview/q21-sales/capture.py, same wire helpers, launch and env as above except preview.timeoutSeconds:30; its request paths are that scratch directory's. The other cases are the fbfb5ed3 captures, unchanged; ok-sales still matches the edited Sales.e (same document, deferred token and expiry aside, measured in the same boot)."
   ],
   "cases": {
     "ok-wpint": {
@@ -268,26 +269,21 @@
         "generation": 6
       }
     },
-    "error-500-sales": {
+    "error-500-wpempty": {
       "request": {
-        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/Sales.e",
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/q21-sales/ws/doc/WpEmpty.e",
         "binding": "report",
-        "params": {
-          "fromDay": "2099-01-01",
-          "toDay": "2099-01-02",
-          "onlyRegion": "north",
-          "orderBy": "ByAmount"
-        },
+        "params": 1,
         "roots": [
-          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+          "/home/dmitry/research/ermine/scratch-widget-preview/q21-sales/ws/doc"
         ],
         "generation": 7
       },
       "answer": {
         "ok": false,
         "status": 500,
-        "message": "Sales.report produced a document that cannot be encoded: an empty relation built from no rows carries no columns; give it a header (mkRelationWithHeader#) or a static hint",
-        "path": "$.children[1].cells[0][0].props",
+        "message": "WpEmpty.report produced a document that cannot be encoded: an empty relation built from no rows carries no columns; give it a header (mkRelationWithHeader#) or a static hint",
+        "path": "$.props",
         "generation": 7
       }
     },

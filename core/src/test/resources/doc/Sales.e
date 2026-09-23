@@ -26,7 +26,12 @@ module Sales where
 --     items), which goes out as columns plus a token whatever the request
 --     asks for, to be fetched from GET /data/<token>;
 --   * VFlow / Grid layout, and the parameters echoed back into a widget's
---     props.
+--     props;
+--   * a date range that matches NO sale still renders: `byDay` is built with
+--     `relationWithHeader`, so an empty table keeps its four columns.  A
+--     plain `relation []` has no columns to send (the header is read off the
+--     first row) and the runner would answer a 500 (tracker/JSON-WIDGET-
+--     PLAYGROUND.md, WP-29).
 
 import Bool
 import Date
@@ -40,6 +45,9 @@ import List using {filter; length; nub; sum'; map_List; empty_Bracket; cons_Brac
 import Maybe
 import Primitive
 import Relation
+-- `{region, day, ..}` (a Row, the header `relationWithHeader` takes)
+-- desugars to these two
+import Relation.Row using {single_Brace; snoc_Brace}
 
 -- the columns of the relations below
 field region : String
@@ -108,8 +116,13 @@ report : Query -> Node
 report q =
   let picked = filter (keep q) sales
       total  = sum' (map_List sAmount picked)
-      byDay  = relation (map_List (s -> { region = sRegion s, day = sDay s,
-                                     amount = sAmount s, units = sUnits s }) picked)
+      -- `picked` is empty when the range matches nothing, so the header is
+      -- given explicitly rather than read off a first row
+      byDay  = relationWithHeader {region, day, amount, units}
+                 (map_List (s -> { region = sRegion s, day = sDay s,
+                                   amount = sAmount s, units = sUnits s }) picked)
+      -- `regions` and `items` are built from the whole `sales` list, never
+      -- empty, so plain `relation` is enough there.
       -- bare: the request's "data.default" decides how it is delivered
       regions = relation (map_List (r -> { region = r }) (nub (map_List sRegion sales)))
       -- always deferred, whatever the request asks for

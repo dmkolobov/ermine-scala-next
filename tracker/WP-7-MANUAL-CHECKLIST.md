@@ -64,17 +64,22 @@ The settings this guide touches, with their defaults:
 
 ### Open decisions that change what you should see
 
-Five, and **none of them has been put to you yet**. The first three are the
-ones this file has always carried; 4 and 5 are new with the panel (WP-10).
+Five. **Q21 was DECIDED by you on 2026-09-23; none of the other four has
+been put to you yet.** The first three are the ones this file has always
+carried; 4 and 5 are new with the panel (WP-10).
 `tracker/PLAYTEST-RESULTS.md` has a row for each, for your answer.
 
-1. **Q21 (§13 of `tracker/JSON-WIDGET-PLAYGROUND.md`) is OPEN and it is YOURS.**
-   The first pick of `Sales.report` writes a skeleton with **today's** dates,
-   and `Sales`'s rows all fall in 2026-01..2026-03, so that first render
-   answers `ok=false, status=500` — *"an empty relation built from no rows
-   carries no columns; give it a header (mkRelationWithHeader#) or a static
-   hint"*. **MEASURED twice against a real server.** It is not a defect of the
-   step that shows it. Steps **A4**, **B1** and **B4** all point here.
+1. **Q21 (§13 of `tracker/JSON-WIDGET-PLAYGROUND.md`) is DECIDED (you,
+   2026-09-23): fix the example, ticket the engine.** The first pick of
+   `Sales.report` writes a skeleton with **today's** dates, and `Sales`'s rows
+   all fall in 2026-01..2026-03, so that first render selects no rows. It USED
+   to answer a 500 (*"an empty relation built from no rows carries no
+   columns"*); `Sales.e` now builds that table with `relationWithHeader`, so it
+   renders **`ok=true`: a heading with `matched: 0`, and a `byDay` table with
+   its four columns and zero rows** (MEASURED against a real server,
+   `scratch-widget-preview/q21-sales/`). The engine gap — any report that
+   builds an empty relation with plain `relation` still gets that 500 — is
+   ticket **WP-29**. Steps **A4**, **B1** and **B4** all point here.
 2. **The automatic restart's DEFAULT is the orchestrator's, and you have not
    been asked.** `ermine.preview.restartAfterStuckSeconds` ships at `0` = never,
    *because this file had never been run*. **C21 [2.28]** checks that the
@@ -128,7 +133,7 @@ with `ermine.preview.target` at `json` (the settings file's value); set it to
 | 3 | **A4** | a render reaches a tab — the whole point of WP-7 |
 | 4 | **A5** | save → re-render in place, generation 2: the loop is a loop |
 | 5 | **B1** | the disk-writing half: three files written, params file opened |
-| 6 | **B4** | edit the dates → a **document**. This is the first minute Q21 is about |
+| 6 | **B4** | edit the dates → a document with rows (the first pick already renders an empty one, Q21) |
 | 7 | **B5** | the `$schema` line is not squiggled and a wrong key is (D1 go/no-go) |
 | 8 | **B11** | invalid JSON refuses in the tab instead of rendering yesterday's parameters |
 | 9 | **C1** | the watchdog fires, the banner appears, the status bar turns orange |
@@ -179,7 +184,7 @@ rest of WP-7's done-when. A15–A18 are an optional settings-validation tail.
 - **Setup:** A3's pick open. **This is also the first pick of `Sales.report`, so it WRITES THREE FILES** — that is Group B's subject; here you only need the tab.
 - **Do:** pick `report`.
 - **Expect:** the right-hand status bar item shows `$(sync~spin) Ermine: Sales.report` while the render runs and settles to `$(json) Ermine: Sales.report` (tooltip: the file path, `binding: report`, `roots: …`). An **untitled JSON tab** opens beside your editor. The channel logs `preview: render Sales.report (generation 1; the report was picked; …)`.
-- **Expect, in the tab — AND THIS IS Q21:** on a clean workspace the skeleton written by this very pick carries **today's** dates, and the answer is `ok=false, status=500`, message *"Sales.report produced a document that cannot be encoded: an empty relation built from no rows carries no columns; give it a header (mkRelationWithHeader#) or a static hint"*, path `$.children[1].cells[0][0].props`. **That is expected, it is MEASURED, and it is not this step's defect — it is Q21, which is yours.** If instead no params file could be written you get the WP-7 answer, MEASURED exactly: `{"ok": false, "status": 400, "message": "the required key \"fromDay\" is missing", "path": "$.params", "generation": 1}` — and no `reason` key, because this is the decoder's refusal and not a placement one (read Appendix 1.1 before calling that wrong).
+- **Expect, in the tab — AND THIS IS Q21:** on a clean workspace the skeleton written by this very pick carries **today's** dates, which select no sale, and the answer is a **document** — `ok=true`, the heading's props `{"title": "Sales", "sortColumn": "day", "matched": 0, "total": 0}`, and the first table (`byDay`) with its four columns (`amount`, `day`, `region`, `units`), `"rows": []`, `"rowCount": 0`. **MEASURED 2026-09-23** (`scratch-widget-preview/q21-sales/`). Before your Q21 decision this was a 500 (*"an empty relation built from no rows carries no columns"*, path `$.children[1].cells[0][0].props`); **that 500 in the tab is now a FAILURE** (it means `Sales.e` is not the fixed one). If instead no params file could be written you get the WP-7 answer, MEASURED exactly: `{"ok": false, "status": 400, "message": "the required key \"fromDay\" is missing", "path": "$.params", "generation": 1}` — and no `reason` key, because this is the decoder's refusal and not a placement one (read Appendix 1.1 before calling that wrong).
 - **Failure:** no tab; or the status bar stays on `$(sync~spin)` for ever; or the tab holds something that is neither a document nor an `{ok:false, …}` object.
 - **Bears on:** WP-7 done-when; **Q21**; Group B.
 
@@ -194,7 +199,7 @@ rest of WP-7's done-when. A15–A18 are an optional settings-validation tail.
 
 ### A6 [new] — Invalidation of an IMPORTING module — **NEVER RUN**
 
-- **Setup:** `Sales.report` picked and rendered (A4). **There is no fixture for this** — `WpChain.e` is a second wedge by a different mechanism (a fold over a cyclic list), NOT an import chain, and it imports only stdlib modules. So this step uses a module `Sales.e` really does import: `core/src/main/resources/modules/Json.e` (`Sales.e:34`). Its siblings `Date`, `Layout/Doc`, `List`, `Relation` would do as well.
+- **Setup:** `Sales.report` picked and rendered (A4). **There is no fixture for this** — `WpChain.e` is a second wedge by a different mechanism (a fold over a cyclic list), NOT an import chain, and it imports only stdlib modules. So this step uses a module `Sales.e` really does import: `core/src/main/resources/modules/Json.e` (`Sales.e:39`). Its siblings `Date`, `Layout/Doc`, `List`, `Relation` would do as well.
 - **Do:** add a comment line to `core/src/main/resources/modules/Json.e` and **save**. Do NOT touch `Sales.e`.
 - **Expect:** the tab re-renders although you edited a different file, and the channel's render line names the IMPORTER, not the file you edited: `preview: render Sales.report (generation N; invalidated: Sales; …)`. **The server names the modules IT invalidated, and `Sales` is in that set because it imports `Json`.**
 - **Failure:** no render line at all — the server's dependency edges did not reach the importer, which is Q4's territory.
@@ -319,7 +324,7 @@ Everything here assumes a local folder.
 - **Shortcut for later steps:** `tracker/playtest/params/Sales.report.params.json` is a ready-made params file with dates that RENDER; its `README` says where to copy it. **Do not copy it before this step** — B1 is about the file the extension writes for itself.
 - **Expect, on disk:** three files — `.ermine/preview/.gitignore`, `.ermine/preview/Sales/report.schema.json`, `.ermine/preview/Sales/report.params.json`. The params file holds exactly `{"$schema": "./report.schema.json", "fromDay": "<today>", "toDay": "<today>", "orderBy": "ByDay"}`, pretty-printed. **`onlyRegion` is ABSENT** — a `Maybe` key is omitted, not nulled. **The dates are TODAY's in YOUR timezone**, not UTC's.
 - **Expect, in the channel** (`preview-core.js:3934-3941`, said ONCE per report): `preview: wrote <…>/report.params.json from the report's parameter type, with <…>/report.schema.json beside it (generated, and gitignored by <…>/.ermine/preview/.gitignore). It is ordinary committed source: edit it, save it, and the preview re-renders.`
-- **Expect, in the tab:** **the Q21 500.** `ok=false, status=500`, *"an empty relation built from no rows carries no columns; give it a header (mkRelationWithHeader#) or a static hint"* at `$.children[1].cells[0][0].props`. **MEASURED twice. This step PASSES with that 500 in the tab.** B4 is where you fix it.
+- **Expect, in the tab:** **a document with an EMPTY table** (Q21, decided 2026-09-23): `ok=true`, the heading at `matched: 0`, the `byDay` table with its four columns and zero rows. **MEASURED 2026-09-23.** The old 500 (*"an empty relation built from no rows carries no columns"*) in the tab is a FAILURE now. B4 is where the rows appear.
 - **Failure:** fewer than three files; a params file with `onlyRegion` in it or with `null` values; UTC dates when your timezone differs; or the channel line missing (it is `once per report`, so a second pick will not repeat it).
 - **Bears on:** WP-8 S3; **Q21 (yours)**; U2.
 
@@ -338,13 +343,13 @@ Everything here assumes a local folder.
 - **Failure:** **ZERO** renders, or two renders that DIFFER. And [2.45b]: on a report that previously wedged the preview and whose params type has NO required fields (so the skeleton sends `{}`), **a Render anyway / Not now question INSTEAD OF a document is the defect** (review N-3): the scheduled render carries the trigger of the render that wrote the file — `explicit` for a pick — so consent stays consent. **One residue, and it is small (N-d):** if the watcher's event lands OUTSIDE the window it is a SECOND render still carrying `params-file`, so on that same empty-params report it can ASK — but the document has already arrived from the first one, so what you see is a question BESIDE a rendered tab. Answer it either way; **a question with NO document is the defect.**
 - **Bears on:** WP-8 S3 review M-4, N-3, N-d.
 
-### B4 [2.49 first half; Q21] — Edit the dates, get a document — **NEVER RUN**
+### B4 [2.49 first half; Q21] — Edit the dates, get a document with rows — **NEVER RUN**
 
 - **Setup:** B1 done; the params file open (B2 opened it for you).
 - **Do:** change `"fromDay"` to `"2026-01-05"` and `"toDay"` to `"2026-03-17"`, and **save**.
-- **Expect:** the SAME tab updates in place and now holds a **document** — `{"kind": "doc", …}`. **MEASURED against a real server: `ok=true`, a 1407-byte document.** The channel logs ONE render line whose reason is `the params file was saved` and whose tail is `params from <…>/report.params.json`.
-- **Failure:** still a 500 (then the dates did not reach the server — check the render line's tail says `params from`, not `empty parameters`); or two render lines for one save (the editor's save event and the file watcher both fire and the 150 ms window should collapse them).
-- **Bears on:** WP-8 S2/S3; **Q21 — this is the step that shows what option (a) costs the first minute**.
+- **Expect:** the SAME tab updates in place and now holds a **document with rows** — `{"kind": "doc", …}`, heading `matched: 8`. **MEASURED against a real server: `ok=true`, a 1407-byte document** (re-measured 2026-09-23 on the fixed `Sales.e`: 1407 bytes, and the same document as before the fix, deferred token and expiry aside). The channel logs ONE render line whose reason is `the params file was saved` and whose tail is `params from <…>/report.params.json`.
+- **Failure:** still the empty table or a 500 (then the dates did not reach the server — check the render line's tail says `params from`, not `empty parameters`); or two render lines for one save (the editor's save event and the file watcher both fire and the 150 ms window should collapse them).
+- **Bears on:** WP-8 S2/S3; **Q21** (decided: the first pick renders an empty table; this step fills it).
 
 ### B5 [2.47] — The `$schema` line is not squiggled; a wrong key is — **NEVER RUN**
 
@@ -490,7 +495,7 @@ Everything here assumes a local folder.
 - **Expect, on disk:** `report.params.json` now holds the SAME skeleton B1 wrote — `{"$schema": "./report.schema.json", "fromDay": "<today>", "toDay": "<today>", "orderBy": "ByDay"}`, pretty-printed, `onlyRegion` absent. **Your edited dates are gone**, which is what you confirmed.
 - **Expect, in the channel:** `preview: replaced <…>/report.params.json with a fresh skeleton from the report's parameter type, and refreshed <…>/report.schema.json beside it. Edit it, save it, and the preview re-renders.`
 - **Expect, in the editor:** the params document is opened (and opened AGAIN on a second run of the command, unlike the first pick's once-per-session open), and the render tab is revealed.
-- **Expect, renders:** **ONE**, or two identical ones — the file watcher sees our write too, and `scheduleRender` merges the two inside its 150 ms window; outside it you get a second identical render, which is harmless (same session, no boot). **ZERO renders is the defect.** The tab shows the Q21 500 again, because the dates are today's again.
+- **Expect, renders:** **ONE**, or two identical ones — the file watcher sees our write too, and `scheduleRender` merges the two inside its 150 ms window; outside it you get a second identical render, which is harmless (same session, no boot). **ZERO renders is the defect.** The tab shows the empty `byDay` table again (heading `matched: 0`), because the dates are today's again.
 - **Failure:** the file unchanged; the schema file not rewritten when the type had moved; no render; or a **Render anyway / Not now** question — an explicit command is consent and must never be held.
 - **Also (added by the S4 fix round, 2026-09-23):** run the command again, and while the modal is on screen switch to the params document, change a date and **save** (Ctrl+S; the modal may need to be moved or the save done from a second window), then click **Replace**. **Expect:** nothing is written, no render, and a warning plus the channel line `preview: the params file "<…>/report.params.json" changed after you were asked (while the question was on screen or while the schema was being worked out), so nothing was written; run the command again`. **Your saved edit is still in the file.** If VS Code will not let you save behind a modal, record SKIP — the case is covered by the unit model and by the fake-vscode probe over a real disk (`scratch-widget-preview/wp8s4-fix/probe/overwrite.log`, cases 4 and 4b).
 - **Bears on:** WP-8 S4, **U3**; Q21.
@@ -883,7 +888,7 @@ describes), no *unsaved* hint (nothing produces one yet), and never shows
 - **Setup:** E1's panel.
 - **Do:** look at it.
 - **Expect:** a **scorecard titled `Sales by region`** (`core/src/test/resources/modules/Doc/SalesReport.e:43`) with three cards, EMEA, APAC and AMER (`SalesReport.e:35` and the two lines after it); below it the table, the bar chart and the pie, which E9 and E10 judge. **No banner at all**: the banner is hidden whenever there is nothing to say (`banner.hidden = p.banner === null;`, `client/src/host/page.ts:253`), and the document is not dimmed. The scorecard needs no writers, so it is the part of this step that does not depend on WP-11. **The channel carries no `preview panel: widget …` line**: the page logs one per widget that failed (`client/src/host/page.ts:300`).
-- **`Sales.report` in the panel looks broken, and it is not this step's defect** (INFERRED from its MEASURED answer, `scratch-widget-preview/wp10-s1/captures.json` `ok-sales`, and the dispatcher): its document holds two INLINE tables, which go through the writers' `runTabular` like E9's (whether their props are what the table widget accepts is not checked here), and a `heading` and a `text` widget, which no renderer is registered for, so each is a box headed ``widget "${widget}" could not be rendered`` (`client/src/dispatcher.ts:74`) saying `no renderer is registered under that name` (`client/src/dispatcher.ts:219`); and its third relation is `Deferred` by construction (`core/src/test/resources/doc/Sales.e:115`, "always deferred, whatever the request asks for"), so that `table` is a box saying ``a deferred relation could not be resolved: …`` (`client/src/dispatcher.ts:236`) with the page's own refusal, `this preview does not fetch deferred relations, and the report asked for deferred delivery of` (`client/src/host/page.ts:179`), the token, and `(the panel has no network access: its CSP has no connect-src)` (`client/src/host/page.ts:183`). Nothing is fetched. **This contradicts the design review's F2** ("the preview never mints a deferred token"), on which U6 was taken: see Q24 in §13 of the tracker, which is yours.
+- **`Sales.report` in the panel looks broken, and it is not this step's defect** (INFERRED from its MEASURED answer, `scratch-widget-preview/wp10-s1/captures.json` `ok-sales`, and the dispatcher): its document holds two INLINE tables, which go through the writers' `runTabular` like E9's (whether their props are what the table widget accepts is not checked here), and a `heading` and a `text` widget, which no renderer is registered for, so each is a box headed ``widget "${widget}" could not be rendered`` (`client/src/dispatcher.ts:74`) saying `no renderer is registered under that name` (`client/src/dispatcher.ts:219`); and its third relation is `Deferred` by construction (`core/src/test/resources/doc/Sales.e:128`, "always deferred, whatever the request asks for"), so that `table` is a box saying ``a deferred relation could not be resolved: …`` (`client/src/dispatcher.ts:236`) with the page's own refusal, `this preview does not fetch deferred relations, and the report asked for deferred delivery of` (`client/src/host/page.ts:179`), the token, and `(the panel has no network access: its CSP has no connect-src)` (`client/src/host/page.ts:183`). Nothing is fetched. **This contradicts the design review's F2** ("the preview never mints a deferred token"), on which U6 was taken: see Q24 in §13 of the tracker, which is yours.
 - **Failure:** a blank panel; the `Pick a report: Ermine: Preview Report...` banner (`client/src/host/index.ts:299`) after the render line has appeared; or a red box saying `the client bundle (window.ErmineClient) is not loaded, so the document cannot be drawn` (`client/src/host/page.ts:282`). **Paste:** the Ermine channel, and the developer tools' console (E3's window) as text.
 - **Bears on:** WP-10 done-when "`Sales` renders inline" — **NOT met by `Sales` as written**: one of its relations is deferred by the report itself and is refused, and two of its widgets have no renderer (see above and the F2 finding in §5 of the tracker). Which fixture the done-when should name is the user's call (**Q24**); `Doc/SalesReport.e` rendering here is the evidence for option (a). Also WP-9's bundle in a real webview.
 

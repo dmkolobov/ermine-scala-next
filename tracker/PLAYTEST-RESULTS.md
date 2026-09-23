@@ -3,9 +3,10 @@
 **Who fills this in:** you, while you run `tracker/WP-7-MANUAL-CHECKLIST.md`.
 **Who reads it:** the orchestrator. I read this file and act on it — every
 FAIL becomes a ticket or a fix, every SKIP becomes a decision about whether
-we still need that step, and the five open questions at the top of the guide
-(Q21, the restart default, the U7 `.gitignore` reading, the command's title,
-the panel's U1-U7) get asked again with your answers in hand.
+we still need that step, and the open questions at the top of the guide (the
+restart default, the U7 `.gitignore` reading, the command's title, the panel's
+U1-U7, Q24) get asked again with your answers in hand. Q21 is DECIDED (the user,
+2026-09-23: fix `Sales.e`, ticket WP-29); its row below records the answer.
 
 **Date run:** ______  **Extension:** 0.1.14 —
 `editor/vscode/ermine-lang-0.1.14.vsix`, packaged 2026-09-23 by WP-10 stage 5
@@ -37,7 +38,7 @@ become meaningless)
 | **A1** | [§0] | Activate; the session boots (`Ermine session ready: …`) |  |  |  |
 | **A2** | [1.1] | The file quick pick |  |  |  |
 | **A3** | [1.2] | The binding quick pick, populated by type |  |  |  |
-| **A4** | [1.3, 1.4] | The render: status bar, untitled tab, the answer (Q21's 500) |  |  |  |
+| **A4** | [1.3, 1.4] | The render: status bar, untitled tab, the answer (Q21: an EMPTY table, `matched: 0`; a 500 is a FAIL) |  |  |  |
 | **A5** | [1.5] | Edit the report's file and save -> generation 2, in place |  |  |  |
 | **A6** | [new] | Invalidation of an IMPORTING module (stdlib `Json.e`) |  |  |  |
 | **A7** | [1.8] | Render Report to JSON re-renders into the same tab |  |  |  |
@@ -57,10 +58,10 @@ become meaningless)
 
 | Step | Was | What it checks | Result | What you saw | Notes |
 |---|---|---|---|---|---|
-| **B1** | [2.43, 2.33] | The first pick writes three files (Q21's 500 is a PASS) |  |  |  |
+| **B1** | [2.43, 2.33] | The first pick writes three files (Q21: the tab shows an empty table; a 500 is a FAIL) |  |  |  |
 | **B2** | [2.44] | …and opens the params file without stealing focus |  |  |  |
 | **B3** | [2.45, 2.45b] | One render per coalescing window; the second is not a question |  |  |  |
-| **B4** | [2.49a] | Edit the dates -> a document (Q21) |  |  |  |
+| **B4** | [2.49a] | Edit the dates -> a document with rows (Q21) |  |  |  |
 | **B5** | [2.47] | `$schema` not squiggled; a wrong key is (D1 go/no-go) |  |  |  |
 | **B6** | [2.48] | Completion offers the keys and the enum values (D3 go/no-go) |  |  |  |
 | **B7** | [2.50] | Editing the params TYPE updates the schema file (G17) |  |  |  |
@@ -187,12 +188,12 @@ Ermine session ready: 129 modules in 11.8s
 
 | | Question | Your answer |
 |---|---|---|
-| **Q21** | The first pick of `Sales.report` answers a 500 with today's dates (A4, B1, B4). Options recorded neutrally in §13 of `tracker/JSON-WIDGET-PLAYGROUND.md`: **(a)** keep today's dates and accept the 500 until you edit them; **(b)** give `Sales.e`'s relations a header hint so an empty result encodes — which raises the wider question of whether ANY report returning no rows hitting this 500 is an engine limitation deserving its own ticket; **(c)** change the date rule itself |  |
+| **Q21** | The first pick of `Sales.report` answers a 500 with today's dates (A4, B1, B4). Options recorded neutrally in §13 of `tracker/JSON-WIDGET-PLAYGROUND.md`: **(a)** keep today's dates and accept the 500 until you edit them; **(b)** give `Sales.e`'s relations a header hint so an empty result encodes — which raises the wider question of whether ANY report returning no rows hitting this 500 is an engine limitation deserving its own ticket; **(c)** change the date rule itself | **DECIDED by the user 2026-09-23: "Let's fix Sales.e now, and file a ticket for zero-rows."** `Sales.e` builds `byDay` with `relationWithHeader`, so the first pick renders an empty four-column table (MEASURED, `scratch-widget-preview/q21-sales/`); the engine gap is ticket WP-29 (§14), not scheduled. |
 | **Restart default** | `ermine.preview.restartAfterStuckSeconds` ships at `0` = never, only because this file had never been run. After C21–C28, should the default move, and to what? |  |
 | **U7 `.gitignore`** | S3 writes only the self-contained `.ermine/preview/.gitignore` and this repository carries `**/.ermine/preview/**/*.schema.json` in its own root `.gitignore` (B16). The alternative — the extension OFFERING to add the line to YOUR root `.gitignore` — is named and not built. Which do you want? |  |
 | **Q22 the command's title** | **Ermine: Render Report to JSON** renders into the PANEL under the default target (E12, E13). Keep the title, or rename it (e.g. **Ermine: Render Report**)? A rename changes the palette entry every checklist step names, so it was not done (the WP-10 S2 review's N4) |  |
 | **Q23 the panel's U1-U7** | Seven design choices for the panel were TAKEN BY THE ORCHESTRATOR on the WP-10 design review's recommendations; **you were not asked any of them**: U1 a `target` setting, default `panel`, tab kept; U2 `retainContextWhenHidden` on plus a resync; U3 the bundle from the checkout, the writers from a setting with a sibling default; U4 Restart as the panel's only button; U5 no `blob:`; U6 deferred relations refused, not fetched (**taken on a premise that proved FALSE: see Q24**); U7 the extension's tests gate every commit. Which, if any, do you want changed? (E5 and E8 are the steps whose results bear most on U2 and U3) |  |
-| **Q24 deferred relations and WP-10's done-when fixture** | U6 (refuse deferred relations, no fetch) was taken on the design review's F2, "the preview never mints a deferred token". **That is false**: `core/src/test/resources/doc/Sales.e:115` asks for `Deferred` itself, and the S1 capture of its render holds a token, so in the panel that table is an error box (E2). WP-10's done-when says "`Sales` renders inline", which Sales as written cannot meet. Options: **(a)** keep the refusal and make an inline fixture the done-when (`Doc/SalesReport.e`, E2/E9/E10); **(b)** a preview-side override that forces inline delivery, so Sales's deferred table arrives inline; **(c)** build the fetch message pair U6 deferred (the panel asks the extension, the extension asks the server); **(d)**, with any of these, register `heading`/`text` renderers so Sales's other two boxes draw. Which? |  |
+| **Q24 deferred relations and WP-10's done-when fixture** | U6 (refuse deferred relations, no fetch) was taken on the design review's F2, "the preview never mints a deferred token". **That is false**: `core/src/test/resources/doc/Sales.e:129 (was :116 before the Q21 fix moved it)` asks for `Deferred` itself, and the S1 capture of its render holds a token, so in the panel that table is an error box (E2). WP-10's done-when says "`Sales` renders inline", which Sales as written cannot meet. Options: **(a)** keep the refusal and make an inline fixture the done-when (`Doc/SalesReport.e`, E2/E9/E10); **(b)** a preview-side override that forces inline delivery, so Sales's deferred table arrives inline; **(c)** build the fetch message pair U6 deferred (the panel asks the extension, the extension asks the server); **(d)**, with any of these, register `heading`/`text` renderers so Sales's other two boxes draw. Which? |  |
 
 ## Anything else
 

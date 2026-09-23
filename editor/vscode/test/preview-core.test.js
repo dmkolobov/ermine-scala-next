@@ -3385,7 +3385,7 @@ test("2b: a stop that TIMED OUT still reaches the guard's one consultation, and 
 // REAL SERVER.  `test/fixtures/sales-query.schema.json` was built by reading
 // `core/src/main/scala/com/clarifi/reporting/ermine/json/Schema.scala`
 // (`exportType` :184-196, the root splice :195, `dataType` :512-536, `constructor` :571-616, the
-// builtins :327-339), `core/src/test/resources/doc/Sales.e:53-63` and the
+// builtins :327-339), `core/src/test/resources/doc/Sales.e:61-71` and the
 // commit-tier `lsp` gate's own assertions (`tracker/tools/lsp-client.py:3398-3407`,
 // which pin `$id`, `$ref` and Query's four properties and three required keys).
 // The S1 REVIEW (2026-09-21) then started a real `bin/ermine-lsp`, sent one
@@ -3649,21 +3649,17 @@ test("skeleton: THE SALES CASE -- the done-when of S1, from the read-derived fix
   // validate.
   assert.deepStrictEqual(Object.keys(out.value), ["$schema", "fromDay", "toDay", "orderBy"]);
   // `ByDay` is the FIRST constructor of `data Sort = ByDay | ByAmount | ByUnits`
-  // (Sales.e:53), which is what `enum`'s member order is (Schema.scala:527).
+  // (Sales.e:61), which is what `enum`'s member order is (Schema.scala:527).
   assert.strictEqual(SALES_SCHEMA.$defs["Sales.Sort"].enum[0], "ByDay");
   // U2/D4, said out loud: TODAY selects NONE of Sales's 2026-01-05..2026-03-17
-  // rows. What the server then answers was MEASURED by the S1 review against a
-  // real render, and it is NOT an empty document -- it is
-  //   ok=false, status=500, "Sales.report produced a document that cannot be
-  //   encoded: an empty relation built from no rows carries no columns; give it
-  //   a header (mkRelationWithHeader#) or a static hint"
-  //   at $.children[1].cells[0][0].props
-  // and the same review's controls show the skeleton itself DECODES: a
-  // wrong-typed date and a missing key each earn a 400 naming the key, and the
-  // gate's in-range params render ok=true. So this is a property of `Sales.e`
-  // and of empty relations, not of the skeleton. What to do about it is the
-  // USER'S -- section 13, Q21 -- and WP-8's first done-when clause is BLOCKED
-  // on that answer. The assertion below is the part that is true and stays.
+  // rows. Until 2026-09-23 the server answered that with a 500 ("an empty
+  // relation built from no rows carries no columns", MEASURED by the S1
+  // review); the skeleton itself always DECODED (a wrong-typed date and a
+  // missing key each earn a 400 naming the key). The user decided Q21 (section
+  // 13): Sales.e now builds that table with `relationWithHeader`, and the
+  // first pick renders ok=true with an empty four-column table (MEASURED,
+  // scratch-widget-preview/q21-sales/); the engine gap is WP-29. The assertion
+  // below is the part about the skeleton, and it stays.
   assert.ok(out.value.fromDay > "2026-03-17", "the skeleton's range is after every Sales row");
 });
 
@@ -10557,7 +10553,7 @@ test("panel (generation): an answer behind the current generation is discarded, 
 });
 
 test("panel (answers): an error keeps the last GOOD document, which the snapshot re-sends below it", () => {
-  const v = panelAfter([answerOutcome("ok-sales"), answerOutcome("error-500-sales")]);
+  const v = panelAfter([answerOutcome("ok-sales"), answerOutcome("error-500-wpempty")]);
   const msgs = core.panelMessagesFor(v);
   assert.deepStrictEqual(kinds(msgs).slice(0, 2), ["render", "error"]);
   assert.deepStrictEqual(msgs[0].document, captured("ok-sales").answer.document);
@@ -10660,7 +10656,7 @@ test("panel (real answers): every captured answer from a real bin/ermine-lsp map
     "error-400-sales-key": { first: "error", status: 400, path: "$.params.fromDy" },
     "error-404-binding":   { first: "error", status: 404, reason: null },
     "error-404-placement": { first: "error", status: 404, reason: "unreadable" },
-    "error-500-sales":     { first: "error", status: 500 },
+    "error-500-wpempty":   { first: "error", status: 500, path: "$.props" },
     "stuck-wpspin":        { first: "error", status: 500, stuck: true },
     "while-stuck-wpint":   { first: "error", status: 500, stuck: true },
     "while-stuck-wpchain": { first: "error", status: 500, stuck: true },
