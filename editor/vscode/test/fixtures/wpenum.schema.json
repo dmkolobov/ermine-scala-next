@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ermine:WpEnum/Season",
+  "$ref": "#/$defs/WpEnum.Season",
+  "$defs": {
+    "WpEnum.Season": {
+      "enum": [
+        "Spring",
+        "Summer",
+        "Autumn"
+      ]
+    }
+  }
+}

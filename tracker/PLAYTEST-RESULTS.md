@@ -1,4 +1,4 @@
-# Playtest results: the Ermine preview in VS Code (0.1.9)
+# Playtest results: the Ermine preview in VS Code (0.1.10)
 
 **Who fills this in:** you, while you run `tracker/WP-7-MANUAL-CHECKLIST.md`.
 **Who reads it:** the orchestrator. I read this file and act on it — every
@@ -7,7 +7,12 @@ we still need that step, and the three open questions at the top of the guide
 (Q21, the restart default, the U7 `.gitignore` reading) get asked again with
 your answers in hand.
 
-**Date run:** ______  **Extension:** 0.1.9 (`editor/vscode/ermine-lang-0.1.9.vsix`)
+**Date run:** ______  **Extension:** 0.1.10 — **THE `.vsix` IS NOT BUILT YET.**
+`editor/vscode/ermine-lang-0.1.9.vsix` is the packaged 0.1.9 and does NOT
+contain WP-8 S4 (B22-B27). Build 0.1.10 first — `cd editor/vscode && npx
+@vscode/vsce package` — or run the extension from source
+(`code --extensionDevelopmentPath=editor/vscode`). The S4 implementer could
+not package it: that stage was run with no `npm install`.
 **VS Code:** ______  **OS:** ______  **Window:** single-root (if you ever added a
 second folder, say so — three settings stop working and several Group C rows
 become meaningless)
@@ -73,7 +78,13 @@ become meaningless)
 | **B18** | [2.40] | A report outside every workspace folder |  |  |  |
 | **B19** | [2.52b] | OPTIONAL a symlink anywhere on the way refuses |  |  |  |
 | **B20** | [2.51] | OPTIONAL a read-only workspace falls back to `{}` |  |  |  |
-| **B21** | [new] | OPTIONAL WpInt: a params type that is NOT a JSON object |  |  |  |
+| **B21** | [new] | OPTIONAL WpInt: a params type that is NOT a JSON object (its sentence CHANGED in 0.1.10) |  |  |  |
+| **B22** | [new] | `Ermine: Write Params Skeleton` asks in a MODAL; declining leaves the file |  |  |  |
+| **B23** | [new] | …accepting replaces it, refreshes the schema, opens it, re-renders |  |  |  |
+| **B24** | [new] | The command with NO params file: no dialog, a create |  |  |  |
+| **B25** | [new] | The ORPHAN notice after renaming a binding, once per session |  |  |  |
+| **B26** | [new] | The orphan notice's button writes for the CURRENT pick |  |  |  |
+| **B27** | [new] | OPTIONAL WpEnum/WpMaybe/WpJson/WpUnit: each non-object root's sentence |  |  |  |
 
 ## Group C — the wedge guard and the restart
 

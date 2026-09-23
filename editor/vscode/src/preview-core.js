@@ -3904,6 +3904,31 @@ function schemaFileNeedsWrite(existingText, nextText) {
  * @param {string} today `YYYY-MM-DD`
  */
 function paramsWritePlan(paths, schema, today) {
+  return writePlanWith(paths, schema, today, WRITE_IF_ABSENT);
+}
+
+/**
+ * **S4: THE SAME PLAN, WITH THE PARAMS FILE'S MODE AS AN ARGUMENT, AND ONLY
+ * U3's EXPLICIT COMMAND MAY ASK FOR THE OVERWRITE ONE.**
+ *
+ * The two plans must be byte-identical apart from that one mode, or the
+ * command would write a different skeleton from the one a first pick writes
+ * -- which nobody would notice until a developer compared two checkouts. So
+ * there is ONE body and two entry points, and the mode is the only thing
+ * that moves.
+ *
+ * `replace` is a STRICT `true`, the same discipline `schemaOrder`'s
+ * `fileMissing` has: an "I do not know" must never be read as "the user
+ * confirmed an overwrite". And the mode alone is not authority either --
+ * `writeStep` refuses `explicitOverwrite` unless its caller ALSO passes the
+ * permission, so a plan that leaks out of this function writes nothing.
+ */
+function skeletonCommandPlan(paths, schema, today, replace) {
+  return writePlanWith(paths, schema, today, replace === true ? WRITE_EXPLICIT_OVERWRITE : WRITE_IF_ABSENT);
+}
+
+/** The shared body of the two plans above. Not exported: the entry points are. */
+function writePlanWith(paths, schema, today, paramsMode) {
   if (!paths || typeof paths !== "object" || paths.problem || !paths.paramsPath) {
     return problem("no-params-path",
                    "There is nowhere to write a params file for this report, so nothing was written.");
@@ -3922,23 +3947,34 @@ function paramsWritePlan(paths, schema, today) {
   return {
     embeddable: skeleton.embeddable === true,
     skeleton: skeleton.value,
+    // S4: what the value MEANS, for the sentence a non-object root gets.
+    shape: paramsRootShape(schema),
     files: [
       { what: WRITE_GITIGNORE, path: paths.gitignorePath, text: paramsGitignoreText, mode: WRITE_IF_ABSENT },
       { what: WRITE_SCHEMA, path: paths.schemaPath, text: schemaFileText(file), mode: WRITE_IF_DIFFERENT },
-      { what: WRITE_PARAMS, path: paths.paramsPath, text: schemaFileText(skeleton.value), mode: WRITE_IF_ABSENT },
+      { what: WRITE_PARAMS, path: paths.paramsPath, text: schemaFileText(skeleton.value), mode: paramsMode },
     ],
   };
 }
 
 /** What the channel says once, after the three files are written. */
-function paramsWrittenNotice(paths, embeddable) {
+function paramsWrittenNotice(paths, embeddable, shape) {
   const head = "wrote " + printable(paths && paths.paramsPath) +
                " from the report's parameter type, with " + printable(paths && paths.schemaPath) +
                " beside it (generated, and gitignored by " + printable(paths && paths.gitignorePath) + ").";
-  return embeddable === false
-    ? head + " Its parameters are not a JSON object, so the file carries no \"$schema\" line and the " +
-             "editor will not validate it; the server still checks it and answers a 400 with a path."
-    : head + " It is ordinary committed source: edit it, save it, and the preview re-renders.";
+  if (embeddable !== false) {
+    return head + " It is ordinary committed source: edit it, save it, and the preview re-renders.";
+  }
+  // **S4: SAY WHAT THE VALUE IS, not only that it is not an object.** S3's
+  // sentence told the developer what the file is NOT ("not a JSON object")
+  // and left them to open it and guess. Every non-object root this exporter
+  // can produce is MEASURED (section 6's S4 table), so the notice can name
+  // the shape: `report : Int -> Node` holds a bare number, an all-nullary
+  // enum holds one of its tag strings, a `Maybe` holds `null`, `Json` holds
+  // anything, and `()` holds `[]`.
+  return head + " " + rootShapeSentence(shape) +
+         " The file therefore carries no \"$schema\" line and the editor will not validate it; the " +
+         "server still checks it and answers a 400 with a path.";
 }
 
 /** What the channel says once when the schema could not be had at all. The
@@ -3955,6 +3991,604 @@ function schemaProblemNotice(problem0, paramsPath) {
   * `paramsNoticeKey`, which is what keeps the two from colliding. */
 function schemaNoticeKey(pick, reason) {
   return String(markKey(pick)) + MARK_SEPARATOR + "schema" + MARK_SEPARATOR + String(reason);
+}
+
+// ==========================================================================
+// WP-8 S4 -- THE EDGES: U3's EXPLICIT COMMAND, D6's ORPHAN NOTICE, AND WHAT
+// A NON-OBJECT PARAMS ROOT ACTUALLY MEANS.
+//
+// Everything here is pure and every sentence below that describes a schema
+// shape was MEASURED against a real `bin/ermine-lsp`, one boot, no editor
+// (section 6's S4 block; `scratchpad/wp8-s4/measure.py`, `measure.log`):
+//
+//   report : Int -> Node        `{"type":"integer"}`                skeleton `0`
+//   an all-nullary `data`       `$ref` -> `{"enum":["Spring",...]}` skeleton `"Spring"`
+//   report : Maybe String       `{"anyOf":[{string},{null}]}`       skeleton `null`
+//   report : Json -> Node       `{}` (only `$schema`/`$id`)         skeleton `null`
+//   report : () -> Node         `{"type":"array","maxItems":0}`     skeleton `[]`
+//
+// and all five RENDER (`ok=true`), which is the "the skeleton decodes" half
+// of S4's own done-when.
+// ==========================================================================
+
+/** The `enum` members a sentence will name before it gives up and counts. */
+const SHAPE_ENUM_SHOWN = 6;
+
+/**
+ * WHAT THE PARAMS ROOT IS, in one word and one sentence.
+ *
+ * Used ONLY for the non-object roots (G5): an object root needs no
+ * explanation, because the `$schema` line and the editor's own completion
+ * explain it.  A bare number in a file called `report.params.json` explains
+ * nothing at all, which is what S3's notice left the developer with -- it
+ * said what the file is NOT.
+ *
+ * It does ONE `$ref` hop into `$defs`, exactly as `skeletonFrom` does and
+ * for the same reason (the exported root of a `data` params type is
+ * `{$ref: "#/$defs/<Module>.<Type>"}` and carries nothing else, D2).  It
+ * never follows a chain, because the exporter emits none
+ * (`json/Schema.scala:526-532`), and a `$ref` it cannot follow answers
+ * `unknown` rather than guessing.
+ *
+ * `kind` is a closed vocabulary so a caller can switch on it; `sentence` is
+ * what the developer reads.  An `object` answers a null sentence: it has
+ * nothing to say that the file does not already say.
+ */
+function paramsRootShape(schema) {
+  const unknown = { kind: "unknown", sentence: null };
+  if (schema === true) return anyRootShape();
+  if (!isPlainObject(schema)) return unknown;
+  const defs = isPlainObject(schema.$defs) ? schema.$defs : {};
+  let node = schema;
+  if (typeof node.$ref === "string") {
+    const name = defNameOf(node.$ref);
+    if (name === null || !Object.prototype.hasOwnProperty.call(defs, name)) return unknown;
+    node = defs[name];
+    if (node === true) return anyRootShape();
+    if (!isPlainObject(node)) return unknown;
+  }
+  if (Object.prototype.hasOwnProperty.call(node, "const")) {
+    return { kind: "const", sentence: "Its parameters are always " + stringify(node.const) + "." };
+  }
+  if (Array.isArray(node.enum)) {
+    const shown = node.enum.slice(0, SHAPE_ENUM_SHOWN).map((v) => stringify(v)).join(", ");
+    const rest = node.enum.length - SHAPE_ENUM_SHOWN;
+    return {
+      kind: "enum",
+      sentence: "Its parameters are one of " + shown + (rest > 0 ? " (and " + rest + " more)" : "") +
+                ", so the file holds just that value.",
+    };
+  }
+  // A `Maybe`/`Nullable` root: the exporter writes `anyOf` with a null arm
+  // (`json/Schema.scala:371`), and S1's corrected rule skeletonises it to
+  // `null` -- which is what `docs/JSON-GUIDE.md:1295-1297` says such a
+  // report wants. MEASURED on `WpMaybe`.
+  if (Array.isArray(node.anyOf) && node.anyOf.some(admitsNull)) {
+    const payload = node.anyOf.filter((a) => !admitsNull(a))[0];
+    const inner = payload === undefined ? null : paramsRootShape(withDefs(payload, defs));
+    return {
+      kind: "optional",
+      sentence: "Its parameters are optional" +
+                (inner && inner.noun ? " (" + inner.noun + ")" : "") +
+                ", so the file holds just that value, and `null` means there is none.",
+    };
+  }
+  if (Array.isArray(node.oneOf)) {
+    return { kind: "union", sentence: "Its parameters are one of " + node.oneOf.length +
+                                      " shapes, so the file holds just that value." };
+  }
+  const type = Array.isArray(node.type) ? node.type[0] : node.type;
+  switch (type) {
+    case "object": return { kind: "object", sentence: null };
+    case "array":
+      // `()` is the empty tuple, and the exporter says so exactly:
+      // `{"type":"array","maxItems":0}` (MEASURED on `WpUnit`).
+      if (node.maxItems === 0) {
+        return { kind: "unit", noun: "the empty tuple `()`",
+                 sentence: "Its parameters are the empty tuple `()`, so the file holds just the empty " +
+                           "array `[]` and there is nothing in it to edit." };
+      }
+      return { kind: "array", noun: "a JSON array",
+               sentence: "Its parameters are a JSON array, so the file holds just that array." };
+    case "integer": return { kind: "integer", noun: "a single whole number",
+                             sentence: "Its parameters are a single whole number, so the file holds just " +
+                                       "that number." };
+    case "number": return { kind: "number", noun: "a single number",
+                            sentence: "Its parameters are a single number, so the file holds just that " +
+                                      "number." };
+    case "boolean": return { kind: "boolean", noun: "a single true or false",
+                             sentence: "Its parameters are a single true or false, so the file holds just " +
+                                       "that word." };
+    case "null": return { kind: "null", noun: "nothing at all",
+                          sentence: "Its parameters are nothing at all, so the file holds just `null`." };
+    case "string": return stringRootShape(node);
+    default:
+      // No `type` and no keyword: the exporter's `Json` position, which is
+      // `Json.jEmptyObject` (`json/Schema.scala:300`) and accepts anything.
+      // MEASURED on `WpJson`: the whole answer is `$schema` and `$id`.
+      return anyRootShape();
+  }
+}
+
+/** The `Json` root's shape. ONE builder, so the boolean schema `true` (which
+  * also accepts anything) gets the same measured sentence as `{}` rather than
+  * the generic fallback (the S4 review's nit 6; unreachable from today's
+  * exporter, which never writes a bare `true`). */
+function anyRootShape() {
+  return { kind: "any", noun: "any JSON value at all",
+           sentence: "Its parameters are any JSON value at all (the report takes a `Json`), so the " +
+                     "file holds just that value; `null` is the smallest one that decodes." };
+}
+
+/** A `$defs`-carrying view of a nested node, so `paramsRootShape` can recurse
+  * into a `Maybe`'s payload without losing the table its `$ref`s name. */
+function withDefs(node, defs) {
+  if (!isPlainObject(node)) return node;
+  const out = cloneJson(node);
+  if (!Object.prototype.hasOwnProperty.call(out, "$defs")) out.$defs = defs;
+  return out;
+}
+
+/** The `string` builtins, each with the schema `json/Schema.scala:327-339`
+  * writes for it, so the sentence names the Ermine type rather than "string". */
+function stringRootShape(node) {
+  if (node.format === "date") {
+    return { kind: "date", noun: "a single date",
+             sentence: "Its parameters are a single date, so the file holds just that date as a " +
+                       "\"YYYY-MM-DD\" string." };
+  }
+  if (node.format === "date-time") {
+    return { kind: "timestamp", noun: "a single timestamp",
+             sentence: "Its parameters are a single timestamp, so the file holds just that timestamp as " +
+                       "an ISO-8601 string with an offset." };
+  }
+  if (node.format === "uuid") {
+    return { kind: "guid", noun: "a single GUID",
+             sentence: "Its parameters are a single GUID, so the file holds just that GUID as a string." };
+  }
+  if (node.pattern === LONG_PATTERN) {
+    return { kind: "long", noun: "a single whole number written as a string",
+             sentence: "Its parameters are a single `Long`, so the file holds just that number WRITTEN AS " +
+                       "A STRING -- a JSON number cannot carry 64 bits exactly." };
+  }
+  if (node.minLength === 1 && node.maxLength === 1) {
+    return { kind: "char", noun: "a single character",
+             sentence: "Its parameters are a single character, so the file holds just that one-character " +
+                       "string." };
+  }
+  return { kind: "string", noun: "a single string",
+           sentence: "Its parameters are a single string, so the file holds just that string." };
+}
+
+/** The sentence for a shape, with a fallback that is honest rather than
+  * silent: a shape nothing above recognised still gets told that the file is
+  * not an object. */
+function rootShapeSentence(shape) {
+  if (shape && typeof shape === "object" && typeof shape.sentence === "string") return shape.sentence;
+  return "Its parameters are not a JSON object, so the file holds just that value.";
+}
+
+// -- U3 / G16: `Ermine: Write Params Skeleton` ------------------------------
+
+/** The command's id, in one place, because `package.json`, `activate` and the
+  * orphan notice's button all have to agree about it. */
+const SKELETON_COMMAND = "ermine.writeParamsSkeleton";
+
+/** The ONE string that consents. A dismissal (`undefined`), an Escape and
+  * every other answer are a decline -- `holdRender`'s rule, for the same
+  * reason: this one destroys committed source. */
+const SKELETON_REPLACE = "Replace";
+
+/**
+ * MAY THE COMMAND RUN AT ALL?  (Everything it needs, before anything is
+ * shown to the user or asked of the server.)
+ *
+ * It is NOT asked whether the report is HELD, and that is a decision with an
+ * argument.  An explicit command is the user in front of the machine asking
+ * for this exact thing, which is the same consent WP-22 accepts from
+ * "Render anyway" and from the render command -- so the command may run
+ * while held, and the glue CLEARS the mark exactly as `renderCommand` does
+ * before it asks the server anything.  The consultation is still asked (with
+ * `explicit`, which it never refuses), so the site exists, is pinned, and
+ * cannot quietly become an automatic one: a trigger that is not `explicit`
+ * would be judged on its merits.
+ */
+function skeletonCommandVerdict(pick, paths, hasClient) {
+  if (!pick || typeof pick !== "object" || markKey(pick) === null) {
+    return { run: false, reason: "no-pick",
+             message: "No report is picked, so there is no params file to write. Run " +
+                      "\"Ermine: Preview Report...\" first." };
+  }
+  if (hasClient !== true) {
+    return { run: false, reason: "no-client",
+             message: "The Ermine language server is not running, so the parameter schema cannot be " +
+                      "worked out and no params file was written." };
+  }
+  if (!paths || typeof paths !== "object") {
+    return { run: false, reason: "no-params-path",
+             message: "There is nowhere to write a params file for " + pickLabel(pick) + "." };
+  }
+  if (paths.problem) {
+    // The SAME named reason and the SAME sentence `paramsPaths` already
+    // answers (`no-module`, `unsafe-binding`, `outside-workspace`, ...), so
+    // the command and the automatic path cannot disagree about why a report
+    // has no params file. S4 item 4 is this line for the two cases it names.
+    return { run: false, reason: paths.problem.reason, message: paths.problem.message };
+  }
+  if (!paths.paramsPath) {
+    return { run: false, reason: "no-params-path",
+             message: "There is nowhere to write a params file for " + pickLabel(pick) + "." };
+  }
+  return { run: true, reason: null, message: null };
+}
+
+/**
+ * THE MODAL, WORD FOR WORD.  It NAMES THE FILE and says what happens to what
+ * is in it -- U3's own two requirements -- and it says what will not be
+ * touched, because "replace" beside three file names would read as all three.
+ */
+function skeletonConfirmation(paths) {
+  return {
+    message: "Replace " + printable(paths && paths.paramsPath) + " with a fresh skeleton?\n\n" +
+             "Everything in that file now -- every value you have edited, and anything you have not " +
+             "committed -- is REPLACED by the defaults derived from the report's parameter type. This " +
+             "cannot be undone from here; git can. The generated schema file beside it is refreshed too.",
+    confirm: SKELETON_REPLACE,
+  };
+}
+
+/** Only the exact consenting string is consent. */
+function skeletonConfirmed(choice) {
+  return choice === SKELETON_REPLACE;
+}
+
+/**
+ * DOES THE ANSWER TO THE MODAL STILL DESCRIBE THE REPORT IT WAS ASKED ABOUT?
+ *
+ * A modal is an `await` the user can hold open for minutes, and in that time
+ * the pick can change, a header edit can move the MODULE (which is the
+ * DIRECTORY the file would be written into) and `ermine.preview.roots` can
+ * resolve somewhere else.  `isCurrentSchemaAnswer` is exactly those four
+ * fields and it is already the D7 guard, so it is REUSED rather than a
+ * second identity test being minted -- but the answer is dressed with a
+ * sentence, because unlike D7 this one is shown to the person who answered.
+ *
+ * **`mayStillSend` IS DELIBERATELY NOT USED HERE**, and the reason is its
+ * `superseded` arm: it refuses when the generation has moved, which is right
+ * for a render (a newer one is already going) and WRONG for this command (a
+ * background save-triggered render must not cancel what the user explicitly
+ * asked for). The restart/stop arms it also carries are not needed either:
+ * the snapshot this command sends its schema request on is taken AFTER the
+ * modal, so a restart during the modal is simply a request to the fresh
+ * server, which is what the user wants.
+ */
+function skeletonStillApplies(askedPick, pickNow) {
+  if (isCurrentSchemaAnswer(askedPick, pickNow)) return { apply: true, why: null };
+  return {
+    apply: false,
+    why: "the picked report moved from " + pickLabel(askedPick) + " to " + pickLabel(pickNow) +
+         " while the question was on screen, so nothing was written",
+  };
+}
+
+/** What the channel and the notification say when the command replaced a file. */
+function skeletonReplacedNotice(paths, embeddable, shape) {
+  const head = "replaced " + printable(paths && paths.paramsPath) +
+               " with a fresh skeleton from the report's parameter type, and refreshed " +
+               printable(paths && paths.schemaPath) + " beside it.";
+  return embeddable === false
+    ? head + " " + rootShapeSentence(shape)
+    : head + " Edit it, save it, and the preview re-renders.";
+}
+
+/**
+ * THE ONE SENTENCE A WRITTEN SKELETON GETS, for BOTH writers (the automatic
+ * first pick and U3's command). **A SHARED BUILDER, BECAUSE THE MODEL
+ * DRIFTED** (the S4 review's M-4): the glue passed `plan.shape` and the
+ * first-pick model did not, so every model test of the automatic notice read
+ * the generic fallback sentence and dropping `plan.shape` from the glue was
+ * caught by a source pin only. Glue and models now hand over the PLAN, and
+ * which of its fields reach the sentence is decided here, once.
+ */
+function skeletonWrittenNotice(paths, plan, replace) {
+  const embeddable = plan && typeof plan === "object" ? plan.embeddable : undefined;
+  const shape = plan && typeof plan === "object" ? plan.shape : undefined;
+  return replace === true
+    ? skeletonReplacedNotice(paths, embeddable, shape)
+    : paramsWrittenNotice(paths, embeddable, shape);
+}
+
+/**
+ * U2's "ONCE PER PATH PER SESSION", and S4's `always` (U3's command), as ONE
+ * decision the glue's `openParamsDocument` and both models call (the S4
+ * review's M-4: neither model reproduced the dedupe, so dropping `always`
+ * was caught by a definition pin only). It ADDS the path when it answers
+ * true -- the glue's set is mutated here, the same way, at the same moment,
+ * in the glue and in the model (the header rule of the test file).
+ */
+function claimParamsDocument(opened, fsPath, always) {
+  if (opened.has(fsPath) && always !== true) return false;
+  opened.add(fsPath);
+  return true;
+}
+
+/**
+ * THE MODAL-TO-WRITE TOCTOU, DECIDED: RE-READ AND REFUSE (2026-09-23).
+ *
+ * `existing` is read BEFORE the modal, and between the user's Replace and
+ * the write there is a whole `ermine/schema` round trip (a compile and an
+ * evaluation: seconds). MEASURED by the S4 review (probe/overwrite.js case
+ * 4): a file edited and saved in that window was DESTROYED, and the bytes
+ * destroyed were not the bytes the modal named -- `files.autoSave:
+ * onFocusChange` can flush a dirty buffer into that window by machinery,
+ * with nobody racing on purpose. S4 already applied this discipline to the
+ * PICK (`skeletonStillApplies`); this is the same rule for the BYTES.
+ *
+ * The glue re-reads the params file AFTER the schema answer and BEFORE the
+ * write and passes both reads. A replace proceeds only when they are the
+ * SAME STRING; a file that changed OR VANISHED is refused by name, nothing
+ * is written, nothing is rendered and the wedge mark is not spent. A CREATE
+ * (`replace !== true`) is not judged here: it goes through the race-safe
+ * create, which never overwrites and already answers `existed`.
+ *
+ * It narrows the window to the re-read-to-write gap; it does not close it
+ * (`workspace.fs` has no compare-and-swap), and it does not claim to. It
+ * compares DECODED UTF-8 text, so two different invalid byte sequences can
+ * compare equal (re-review nit 2); a params file is JSON, so this is stated
+ * rather than fixed. A re-read that FAILS answers null and is refused too.
+ */
+function skeletonBytesStillApply(replace, before, now, paramsPath) {
+  if (replace !== true) return { apply: true, reason: null, message: null };
+  if (typeof before === "string" && typeof now === "string" && before === now) {
+    return { apply: true, reason: null, message: null };
+  }
+  return {
+    apply: false,
+    reason: "params-changed",
+    message: 'the params file "' + printable(paramsPath) + '" ' + (now === null ? "was removed or could not be read" : "changed") +
+             " after you were asked (while the question was on screen or while the schema was being " +
+             "worked out), so nothing was written; run the command again",
+  };
+}
+
+/** `writeParamsSkeleton`'s answer, minted once so the model cannot drift from
+  * the glue (the S3 review's M-1, applied to S4's own new shape). */
+function skeletonCommandResult(over) {
+  const o = over && typeof over === "object" ? over : {};
+  return {
+    wrote: o.wrote === true,
+    replaced: o.replaced === true,
+    existed: o.existed === true,
+    abandoned: o.abandoned === true,
+    problem: o.problem || null,
+  };
+}
+
+// -- D6: the ORPHAN notice -------------------------------------------------
+
+/** `vscode.FileType.File`. Written here for the reason `FILE_TYPE_SYMLINK` is
+  * (`@types/vscode` `index.d.ts`): this file never requires `vscode`, and the
+  * load test's stub answers 0 for a member it does not define. */
+const FILE_TYPE_FILE = 1;
+
+/** The suffix that makes a directory entry one of ours. */
+const PARAMS_SUFFIX = ".params.json";
+
+/** The notification's button. It runs the command for the CURRENT pick --
+  * the stale binding is gone, so there is nothing to write for IT. */
+const ORPHAN_BUTTON = "Write Params Skeleton";
+
+/**
+ * **THE SHAPE A DIRECTORY LISTING REACHES A DECISION IN, MINTED ONCE** (the
+ * S3 review's M-1 and the delta re-review's D-1, applied before the defect
+ * rather than after it).  `vscode.workspace.fs.readDirectory` answers
+ * `[name, FileType][]`; the glue converts, the model calls THIS, and the
+ * three arms are always all present so `if (listing.problem)` cannot read
+ * `undefined` off a shape that forgot to declare itself.
+ *
+ *   `entries`  the directory was read;
+ *   `missing`  there is no such directory (the ordinary case before the
+ *              first write, and NOT a problem);
+ *   `problem`  it is there and we could not read it -- which is NOT "there
+ *              is nothing stale", the same distinction `statType`'s third
+ *              answer exists for (D-2).
+ */
+function directoryListing(over) {
+  const o = over && typeof over === "object" ? over : {};
+  const out = { entries: null, missing: false, problem: null };
+  if (o.problem !== undefined && o.problem !== null) {
+    out.problem = o.problem && o.problem.problem ? o.problem.problem : o.problem;
+    return out;
+  }
+  if (o.missing === true) {
+    out.missing = true;
+    out.entries = [];
+    return out;
+  }
+  if (Array.isArray(o.entries)) {
+    out.entries = o.entries.map((e) => {
+      if (Array.isArray(e)) return { name: String(e[0]), type: typeof e[1] === "number" ? e[1] : null };
+      if (e && typeof e === "object") {
+        return { name: String(e.name), type: typeof e.type === "number" ? e.type : null };
+      }
+      return { name: String(e), type: null };
+    });
+    return out;
+  }
+  // FAIL CLOSED, like every other unknown in this file.
+  out.problem = problem("bad-listing",
+                        "The preview was handed a directory listing it cannot read (" +
+                        printable(typeName(o.entries)) + "), so nothing was called stale.").problem;
+  return out;
+}
+
+/**
+ * **D6: WHICH PARAMS FILES UNDER THIS MODULE'S DIRECTORY NAME A BINDING THE
+ * SERVER NO LONGER OFFERS?**
+ *
+ * Renaming or deleting a report's binding leaves its params file behind
+ * under the old name.  Nothing breaks -- the new binding gets its own file
+ * on the next pick -- but the old one stays in the repository, committed,
+ * looking current, and the developer finds it months later.  §6's Rename row
+ * says "nothing fails silently"; this is the half that says it.
+ *
+ * **IT IS A COMPARISON AND NOTHING ELSE.  NOTHING IS EVER DELETED**, here or
+ * in the glue: the file is committed source, `git status` already shows it,
+ * and an extension that deletes a developer's committed file because a
+ * server answer did not mention it is one bad answer away from losing work.
+ * The notice names it and offers U3's command; the `rm` is the developer's.
+ *
+ * **IT FAILS CLOSED IN THREE PLACES, and each is a way of calling a file
+ * stale when it is not:**
+ *   the listing could not be read     -> a problem, no orphans;
+ *   `reports` is not an ARRAY         -> the server could not list the file
+ *                                        (a parse error, a 404), so nothing
+ *                                        can be called stale;
+ *   `reports` is EMPTY                -> the module compiles to no
+ *                                        report-typed binding at all, which
+ *                                        is almost always a module that is
+ *                                        broken right now.  Calling EVERY
+ *                                        params file stale at that moment is
+ *                                        exactly wrong.
+ * A name that is not one we could have minted (`SAFE_NAME`) is skipped too,
+ * and so is any entry that is not a plain FILE -- a directory called
+ * `x.params.json`, or a symbolic link, which this extension never touches.
+ *
+ * **WHAT IT DOES NOT COVER, SAID OUT LOUD: A RENAMED MODULE.**  When the
+ * module's own name moves, the whole `.ermine/preview/<OldModule>/`
+ * directory is stale and nothing here looks inside it -- this function is
+ * only ever asked about the CURRENT pick's module directory.  Detecting it
+ * means knowing every module declared under the roots, and the extension has
+ * no such map: `ermine/preview/reports` answers for ONE file, so the cheapest
+ * honest implementation is one request per `.e` file in the workspace, on
+ * the preview queue, each of which COMPILES a module.  That is not cheap, it
+ * is not what a pick should cost, and so it is NOT BUILT.  The stale
+ * directory is visible in `git status` like any other committed file, and
+ * section 6's S4 block records this as a known gap rather than a surprise.
+ *
+ * @param {object} listing `directoryListing`'s answer
+ * @param {Array} reports `ermine/preview/reports`'s `reports` array
+ * @param {object} paths `paramsPaths`'s answer, for the orphans' full paths
+ * @param {"posix"|"win32"=} flavour the path flavour, default the host's
+ */
+function orphanParamsFiles(listing, reports, paths, flavour) {
+  const none = (why) => ({ orphans: [], problem: null, why: why });
+  if (!listing || typeof listing !== "object") {
+    return { orphans: [], problem: problem("bad-listing", "There is no directory listing to compare.").problem,
+             why: null };
+  }
+  if (listing.problem) return { orphans: [], problem: listing.problem, why: null };
+  if (listing.missing === true) {
+    return none("there is no params directory for this module yet, so nothing can be stale");
+  }
+  if (!Array.isArray(listing.entries)) {
+    return { orphans: [], problem: problem("bad-listing", "The directory listing is not a list.").problem,
+             why: null };
+  }
+  if (!Array.isArray(reports)) {
+    return none("the language server did not list this file's reports, so nothing can be called stale");
+  }
+  if (!reports.length) {
+    return none("the language server offered no report-typed binding at all -- which usually means the " +
+                "module does not compile right now -- so nothing is called stale");
+  }
+  const p = pathFlavour(flavour);
+  // WIN32 ONLY: THE FILE SYSTEM FOLDS CASE, SO THE COMPARE DOES (the S4
+  // review's nit 2). `Report.params.json` on NTFS IS the file the extension
+  // reads for binding `report`, so calling it an orphan of `report` would be
+  // advice to delete a live file. On POSIX the names are distinct files and
+  // the compare stays exact.
+  const fold = p === path.win32 ? (x) => x.toLowerCase() : (x) => x;
+  const offered = {};
+  for (const r of reports) {
+    if (r && r.binding !== undefined && r.binding !== null) defineKey(offered, fold(String(r.binding)), true);
+  }
+  const orphans = [];
+  for (const entry of listing.entries) {
+    if (!entry || typeof entry.name !== "string") continue;
+    if (entry.name.length <= PARAMS_SUFFIX.length) continue;
+    if (fold(entry.name.slice(-PARAMS_SUFFIX.length)) !== PARAMS_SUFFIX) continue;
+    // A plain FILE and nothing else: a symbolic link (the `SymbolicLink` bit)
+    // and a directory are both left alone, because we never touch either and
+    // naming one "stale" would be advice to delete something we did not write.
+    if (entry.type !== FILE_TYPE_FILE) continue;
+    const binding = entry.name.slice(0, entry.name.length - PARAMS_SUFFIX.length);
+    if (binding.length > MAX_NAME_LENGTH || !SAFE_NAME.test(binding)) continue;
+    if (Object.prototype.hasOwnProperty.call(offered, fold(binding))) continue;
+    orphans.push({
+      binding: binding,
+      fileName: entry.name,
+      path: paths && paths.dir ? p.join(paths.dir, entry.name) : entry.name,
+    });
+  }
+  return { orphans: orphans, problem: null,
+           why: orphans.length ? null : "every params file here names a binding the server still offers" };
+}
+
+/** ONE NOTICE PER (MODULE, BINDING) PER SESSION -- keyed by the MODULE and
+  * not by the pick, because the orphan belongs to the directory and the same
+  * stale file is found again from every binding in that module. */
+function orphanNoticeKey(pick, binding) {
+  return String(pick && pick.module) + MARK_SEPARATOR + "orphan" + MARK_SEPARATOR + String(binding);
+}
+
+/**
+ * WHAT THE ORPHAN NOTICE SAYS.  It names the file, says why it is being
+ * mentioned, says the file is the developer's to delete, and says what the
+ * button does -- which is NOT "fix this file": the stale binding is gone, so
+ * the button writes a fresh skeleton for the report that is picked NOW.
+ */
+function orphanNoticeText(orphan, pick) {
+  // "OR HAS MADE IT PRIVATE" (the S4 review's nit 1): a binding made private
+  // leaves the offered list exactly as a deleted one does
+  // (`Definitions.scala:308` filters private names), so the sentence does
+  // not claim to know which of the two happened.
+  return printable(orphan && orphan.path) + " is left over: " + printable(pick && pick.module) +
+         ' no longer offers a report called "' + printable(orphan && orphan.binding) + '"' +
+         " (it was renamed or removed, or the module has made it private), so nothing reads that file. It is committed source, so the preview will not delete it -- " +
+         "delete it yourself once you are sure. \"" + ORPHAN_BUTTON + "\" writes a fresh skeleton for " +
+         pickLabel(pick) + ", the report picked now.";
+}
+
+/**
+ * WHAT THE SCAN SAYS, AND WHAT IT HAS ALREADY SAID -- one decision for the
+ * glue's `noticeOrphanParamsFiles` and the model (the S4 review's nit 3:
+ * R24, "the unreadable-directory line is never said", SURVIVED because the
+ * glue decided it inline and the model's copy was never asserted). It
+ * ADDS to `seen` (the glue's `orphanNotices`) exactly the keys it answers
+ * for, so "once per (module, binding) per session" is decided here too.
+ *
+ * Answers `{listingLine, orphans: [{orphan, text}]}`: a line for the channel
+ * when the directory could not be listed (once per module), else one entry
+ * per orphan not yet noticed, whose text is both logged and notified.
+ */
+function orphanNoticePlan(found, pick, seen, dir) {
+  const out = { listingLine: null, orphans: [] };
+  if (!found || typeof found !== "object") return out;
+  if (found.problem) {
+    const key = orphanNoticeKey(pick, "listing");
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.listingLine = orphanListingNotice(found.problem, dir);
+    }
+    return out;
+  }
+  for (const orphan of found.orphans || []) {
+    const key = orphanNoticeKey(pick, orphan.binding);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.orphans.push({ orphan, text: orphanNoticeText(orphan, pick) });
+  }
+  return out;
+}
+
+/** What the channel says when the params directory is there and unreadable.
+  * NOT a refusal of anything: the render and the writes are unaffected. */
+function orphanListingNotice(problem0, dir) {
+  const p = problem0 && problem0.problem ? problem0.problem : problem0;
+  return "could not list " + printable(dir) + " (" +
+         (p && p.message ? String(p.message) : "the editor did not say why") +
+         "), so left-over params files under it were not looked for. Nothing else is affected.";
 }
 
 // -- S3 review: the shapes the glue hands its own decisions ----------------
@@ -4045,6 +4679,33 @@ function preparedParams(paths, outcome) {
 const WRITE_IF_ABSENT = "ifAbsent";
 /** Rewrite it only when its bytes differ (D8). */
 const WRITE_IF_DIFFERENT = "ifDifferent";
+/**
+ * **S4 / U3: REPLACE IT, WHATEVER IS THERE -- THE ONE MODE THAT MAY TOUCH
+ * COMMITTED SOURCE, AND IT IS NOT REACHABLE FROM ANY ANSWER.**
+ *
+ * U3 is the user's decision: *"an explicit `Ermine: Write Params Skeleton`
+ * command that overwrites after confirmation; never a silent merge into
+ * committed source."*  Everything about this mode exists to keep the second
+ * half of that sentence true:
+ *
+ *   the MODE is not authority.  `writeStep` refuses it unless its caller
+ *   ALSO passes `allowExplicitOverwrite === true`, so a plan carrying this
+ *   mode that reaches any other write loop writes NOTHING.  M-2's lesson was
+ *   that a fail-OPEN default at this site destroys committed source, and a
+ *   mode that authorised itself would be the same defect wearing a name;
+ *
+ *   it applies to the PARAMS FILE and to nothing else.  A `.gitignore` or a
+ *   `<binding>.schema.json` carrying it is refused: those two already have
+ *   their own modes, and a mode that works everywhere is a mode that will
+ *   one day be pasted somewhere;
+ *
+ *   there is exactly ONE plan that mints it (`skeletonCommandPlan`, with a
+ *   strict `replace === true`), exactly one caller of that plan, and exactly
+ *   one caller of the write loop that passes the permission -- the command
+ *   handler `activate` registers.  Source pins hold all three, because the
+ *   chain is the safety argument and no behavioural test can see it.
+ */
+const WRITE_EXPLICIT_OVERWRITE = "explicitOverwrite";
 /** The plan's `what` values, so producer and consumer cannot drift. */
 const WRITE_GITIGNORE = "gitignore";
 const WRITE_SCHEMA = "schema";
@@ -4071,8 +4732,18 @@ const WRITE_PARAMS = "params";
  *   **the params file is refused by any route but the create**, whatever the
  *   mode says -- identified BOTH by `what` and by its path, so neither a
  *   mislabelled entry nor a retyped mode can reach an overwrite.
+ *
+ * **S4 ADDS EXACTLY ONE DOOR AND LOCKS IT FROM THE OUTSIDE.**  U3's command
+ * must replace a params file, so `WRITE_EXPLICIT_OVERWRITE` exists -- but
+ * the MODE does not authorise itself: the caller must pass
+ * `allowExplicitOverwrite === true` as well, and only the command's own
+ * write loop does.  Every pre-S4 caller passes two arguments, so for them
+ * the third is `undefined` and the mode is refused, which is what makes the
+ * rule above ("refused by any route but the create") still true of the
+ * first-pick path word for word.  The overwrite is also refused for
+ * anything that is not the params file.
  */
-function writeStep(file, paramsPath) {
+function writeStep(file, paramsPath, allowExplicitOverwrite) {
   if (!file || typeof file !== "object" || typeof file.path !== "string" || !file.path) {
     return { problem: problem("bad-write-entry",
                               "The preview was handed a write it cannot describe, so nothing was written.").problem };
@@ -4080,6 +4751,28 @@ function writeStep(file, paramsPath) {
   if (file.mode === WRITE_IF_ABSENT) return { act: WRITE_IF_ABSENT, problem: null };
   const isParams = file.what === WRITE_PARAMS ||
                    (typeof paramsPath === "string" && paramsPath !== "" && file.path === paramsPath);
+  if (file.mode === WRITE_EXPLICIT_OVERWRITE) {
+    if (allowExplicitOverwrite !== true) {
+      return { problem: problem("overwrite-not-permitted",
+                                'The preview was asked to REPLACE "' + printable(file.path) +
+                                "\" from somewhere that may not replace anything. Only the " +
+                                "\"Ermine: Write Params Skeleton\" command overwrites a params file, and " +
+                                "only after you confirm it, so nothing was written.").problem };
+    }
+    // M-1 of the S4 review: the OVERWRITE needs BOTH the label AND the path.
+    // `isParams` above is a DISJUNCTION, which is right for the refusal
+    // below (either sign is enough to refuse) and fail-OPEN here: MEASURED,
+    // {what:"params", path:<the schema file>} overwrote the schema file.
+    const isTheParamsFile = file.what === WRITE_PARAMS &&
+                            typeof paramsPath === "string" && paramsPath !== "" && file.path === paramsPath;
+    if (!isTheParamsFile) {
+      return { problem: problem("overwrite-not-params",
+                                'The preview was asked to REPLACE "' + printable(file.path) +
+                                "\", which is not the params file. Only the params file is ever replaced, " +
+                                "so nothing was written.").problem };
+    }
+    return { act: WRITE_EXPLICIT_OVERWRITE, problem: null };
+  }
   if (isParams) {
     return { problem: problem("params-not-creatable",
                               'The params file "' + printable(file.path) + '" would have been written by ' +
@@ -4544,6 +5237,31 @@ module.exports = {
   WRITE_SCHEMA,
   WRITE_PARAMS,
   writeStep,
+  // WP-8 S4: U3's command, D6's orphan notice, and what a non-object root is.
+  WRITE_EXPLICIT_OVERWRITE,
+  skeletonCommandPlan,
+  paramsRootShape,
+  rootShapeSentence,
+  SKELETON_COMMAND,
+  SKELETON_REPLACE,
+  skeletonCommandVerdict,
+  skeletonConfirmation,
+  skeletonConfirmed,
+  skeletonStillApplies,
+  skeletonReplacedNotice,
+  skeletonWrittenNotice,
+  claimParamsDocument,
+  skeletonBytesStillApply,
+  skeletonCommandResult,
+  directoryListing,
+  orphanParamsFiles,
+  orphanNoticeKey,
+  orphanNoticeText,
+  orphanListingNotice,
+  orphanNoticePlan,
+  ORPHAN_BUTTON,
+  FILE_TYPE_FILE,
+  PARAMS_SUFFIX,
   // S3 review M-3: symlinks.
   FILE_TYPE_SYMLINK,
   writeTargetPaths,

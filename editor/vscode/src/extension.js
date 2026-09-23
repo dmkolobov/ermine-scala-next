@@ -957,6 +957,16 @@ let firstPickTried = new Set();
 /** What we have already SAID about this pick's schema, once per reason. */
 let schemaNotices = new Set();
 /**
+ * S4 / D6: which LEFT-OVER params files we have already mentioned.
+ *
+ * Keyed by (module, binding) and **NOT forgotten on a pick change**, which
+ * is the whole point: the same stale `Sales/old.params.json` is found again
+ * from every binding in `Sales`, and a notification per pick would be a
+ * notification per pick for the rest of the session. It dies with the
+ * window, like every other "once per session" set here.
+ */
+let orphanNotices = new Set();
+/**
  * THE REVEAL THE FIRST PICK WOULD OTHERWISE LOSE.
  *
  * `pickReport` renders with `reveal: true`, and on a first pick that render
@@ -1170,7 +1180,7 @@ async function statType(fsPath) {
  * render that its `onDidCreate` schedules runs, the schema it points at is
  * already on disk.
  */
-async function applyWritePlan(files, paramsPath) {
+async function applyWritePlan(files, paramsPath, allowExplicitOverwrite) {
   const wrote = [];
   const problems = [];
   for (const file of files) {
@@ -1178,10 +1188,23 @@ async function applyWritePlan(files, paramsPath) {
     // M-2). The `else` here used to be an UNCONDITIONAL overwrite, so a mode
     // that was not the exact string `"ifAbsent"` destroyed whatever the
     // entry named -- MEASURED on a real disk with `"ifabsent"`.
-    const step = core.writeStep(file, paramsPath);
+    // **S4: THE PERMISSION IS THE CALLER'S, NOT THE ENTRY'S** (U3). The mode
+    // `explicitOverwrite` writes NOTHING unless this argument is a strict
+    // `true`, and exactly one call site passes it: the command's own write,
+    // after a modal the user confirmed. A plan that leaks anywhere else is
+    // refused by name.
+    const step = core.writeStep(file, paramsPath, allowExplicitOverwrite);
     if (step.problem) {
       problems.push(step.problem);
       if (file.what === core.WRITE_PARAMS) return core.writeOutcome({ wrote, problems });
+      continue;
+    }
+    if (step.act === core.WRITE_EXPLICIT_OVERWRITE) {
+      // THE ONE WRITE IN THIS EXTENSION THAT REPLACES COMMITTED SOURCE, and
+      // it is unconditional on purpose: the user asked for a FRESH skeleton,
+      // so "it already differs" is not a reason to leave their edits there.
+      await writeTextFile(file.path, file.text);
+      wrote.push(file.what);
       continue;
     }
     if (step.act === core.WRITE_IF_ABSENT) {
@@ -1207,10 +1230,16 @@ async function applyWritePlan(files, paramsPath) {
 }
 
 /** U2: show the params document beside the render, once, WITHOUT taking the
-  * cursor away from whatever the developer is typing in. */
-async function openParamsDocument(fsPath) {
-  if (openedParamsFiles.has(fsPath)) return;
-  openedParamsFiles.add(fsPath);
+  * cursor away from whatever the developer is typing in.
+  *
+  * **S4: `always` IS U3's COMMAND AND NOTHING ELSE.** "Once per path per
+  * session" is right for a file that appears because the user picked a
+  * report; it is wrong for a file the user has just explicitly asked to be
+  * rewritten, where showing nothing looks like the command did nothing. */
+async function openParamsDocument(fsPath, always) {
+  // The dedupe is `core.claimParamsDocument`, which the models call too
+  // (the S4 review's M-4).
+  if (!core.claimParamsDocument(openedParamsFiles, fsPath, always)) return;
   try {
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fsPath));
     await vscode.window.showTextDocument(doc, {
@@ -1324,7 +1353,11 @@ async function firstPickSchemaAndWrite(attempt, paths) {
     return core.firstPickResult({ wrote: true, raced: true });
   }
   if (applied.wrote.indexOf(core.WRITE_PARAMS) < 0) return core.firstPickResult({});
-  schemaNoticeOnce(attempt.pick, "written", core.paramsWrittenNotice(paths, plan.embeddable));
+  // S4: the notice now says what a NON-OBJECT root's value MEANS (`plan.shape`),
+  // because "not a JSON object" told the developer what the file is not.
+  // The sentence is `core.skeletonWrittenNotice`, handed the PLAN, which the
+  // model calls too (the S4 review's M-4: the model dropped `plan.shape`).
+  schemaNoticeOnce(attempt.pick, "written", core.skeletonWrittenNotice(paths, plan, false));
   await openParamsDocument(paths.paramsPath);
   return core.firstPickResult({ wrote: true });
 }
@@ -2326,6 +2359,11 @@ async function refreshModule() {
       forgetSchemaAttempts();
       installWatcher();
       setPreviewStatus();
+      // S4 / D6: the module is the DIRECTORY, so this is the first moment a
+      // left-over params file under it can be looked for at all, and the
+      // `reports` answer that named the module is the list to compare against.
+      noticeOrphanParamsFiles(picked, answer).catch((err) =>
+        log(`preview: could not look for left-over params files: ${err && err.message ? err.message : err}`));
       // AND RENDER (S2 review M4). Until the module was known there was no
       // params PATH, so this render went out with `{}` and a params file
       // sitting on disk was ignored -- and nothing else would have
@@ -2472,6 +2510,8 @@ function disposePreview() {
   // WP-8 S3: nothing is written after a teardown, and a first-pick attempt
   // sitting in its schema request abandons on `pick-cleared` above.
   forgetSchemaAttempts();
+  // S4: the orphan notices are per SESSION, so this is the one place they go.
+  orphanNotices = new Set();
   revealNextRender = false;
   inFlightRender = null;
   // WP-22 (c): the grace dies with the window. The reducer is asked rather
@@ -2614,6 +2654,12 @@ async function pickReport(context) {
   rememberPick();
   installWatcher();
   setPreviewStatus();
+  // S4 / D6: `listed` is the answer this pick already paid for, so the
+  // left-over params files under this module's directory cost one
+  // `readDirectory` and no server request. NOT awaited: the render is what
+  // the user is waiting for.
+  noticeOrphanParamsFiles(picked, listed).catch((err) =>
+    log(`preview: could not look for left-over params files: ${err && err.message ? err.message : err}`));
   // The user asked for this one, so it reveals the tab.
   await renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
 }
@@ -2629,6 +2675,227 @@ async function renderCommand(context) {
   // WP-22: asking for a render IS the confirmation (T2).
   applyGuard(core.guardReduce(wedgeMark, { type: "render", explicit: true }));
   await renderNow("Ermine: Render Report to JSON", true, core.TRIGGER_EXPLICIT);
+}
+
+// =========================================================== WP-8 S4 (U3, D6)
+
+/**
+ * **U3: `Ermine: Write Params Skeleton` -- THE ONLY THING IN THIS EXTENSION
+ * THAT MAY REPLACE A PARAMS FILE, AND ONLY AFTER A MODAL THE USER ANSWERS.**
+ *
+ * The user's decision, verbatim: *"an explicit `Ermine: Write Params
+ * Skeleton` command that overwrites after confirmation; never a silent merge
+ * into committed source."*
+ *
+ * THE ORDER, AND EVERY STEP OF IT IS PINNED:
+ *   1. `core.skeletonCommandVerdict` -- a pick, a client, and a params path.
+ *      A refusal is SHOWN as well as logged: the user just asked for this,
+ *      so silence in a channel they may not have open is not an answer;
+ *   2. read the file. There is one ONLY to protect -- with none, this is a
+ *      first pick and takes the SAME race-safe create path, with no modal,
+ *      because nothing can be lost;
+ *   3. the MODAL, naming the file. Only the exact string `Replace` consents;
+ *   4. `core.skeletonStillApplies` -- the modal is an await the user can
+ *      hold open for minutes, and a pick change, a header edit (the module
+ *      IS the directory) or a roots change in that time means the answer is
+ *      about a different file;
+ *   5. the guard: the consultation is asked with `explicit`, which it never
+ *      refuses. **The site exists so that it cannot quietly become an
+ *      automatic one** -- if anything ever calls this with another trigger,
+ *      the mark decides. The mark itself is NOT cleared here: it is spent
+ *      only once the file WAS written, beside the render it is spent on
+ *      (the S4 review's M-3 -- clearing it first spent the hold on every
+ *      failing path, MEASURED);
+ *   6. the snapshot, taken HERE and not before the modal, so the schema
+ *      request belongs to the server that is running now;
+ *   7. the schema, the symlink check, the RE-READ (a replace goes ahead only
+ *      over the bytes the modal was about -- the 2026-09-23 TOCTOU decision),
+ *      the write, the document, and then -- only after a write -- the mark
+ *      is cleared and the render scheduled.
+ */
+async function writeParamsSkeletonCommand(context) {
+  extContext = context || extContext;
+  const paths = paramsPathsFor(picked);
+  const verdict = core.skeletonCommandVerdict(picked, paths, !!client);
+  if (!verdict.run) {
+    log(`preview: Write Params Skeleton did nothing (${verdict.reason}): ${verdict.message}`);
+    vscode.window.showWarningMessage("Ermine: " + verdict.message);
+    return core.skeletonCommandResult({ problem: { reason: verdict.reason, message: verdict.message } });
+  }
+  const askedPick = picked;
+  const existing = await readTextIfPresent(paths.paramsPath);
+  if (existing !== null) {
+    const question = core.skeletonConfirmation(paths);
+    const choice = await vscode.window.showWarningMessage(question.message, { modal: true }, question.confirm);
+    if (!core.skeletonConfirmed(choice)) {
+      log(`preview: Write Params Skeleton was declined for ${paths.paramsPath}; it is untouched`);
+      return core.skeletonCommandResult({ abandoned: true });
+    }
+  }
+  const still = core.skeletonStillApplies(askedPick, picked);
+  if (!still.apply) {
+    log(`preview: Write Params Skeleton was abandoned — ${still.why}`);
+    return core.skeletonCommandResult({ abandoned: true });
+  }
+  // WP-22: THE MARK IS NOT CLEARED HERE (the S4 review's M-3). The first
+  // cut cleared it at this point, BEFORE the work, and MEASURED: a schema
+  // request that died, or a symlink refusal, then left nothing written,
+  // nothing rendered -- and the hold gone, so the next save re-ran the
+  // report that wedged the machine. The modal consented to replacing a
+  // FILE, not to re-running that report; the mark is spent only when the
+  // file WAS written and the render is scheduled (below).
+  //
+  // THE CONSULTATION IS STILL ASKED. It cannot refuse `explicit` -- that
+  // is `mayAutoRender`'s first line -- and asking anyway is what keeps every
+  // route to an `ermine/schema` job going through the ONE site, so a future
+  // caller with another trigger is judged rather than waved through.
+  const permitted = core.mayAutoRender(wedgeMark, picked, core.TRIGGER_EXPLICIT);
+  if (!permitted.render) {
+    log(`preview: Write Params Skeleton is HELD (${permitted.why})`);
+    return core.skeletonCommandResult({ abandoned: true });
+  }
+  const attempt = core.renderAttempt(generation, picked, clientEpoch, stopCount, stuckState.highWater);
+  const written = await writeSkeletonNow(attempt, paths, existing !== null, existing);
+  if (written.wrote) {
+    // M-3: the mark is spent HERE, beside the render it is spent on, and
+    // on no failing path. An explicit command is consent to THIS render.
+    applyGuard(core.guardReduce(wedgeMark, { type: "render", explicit: true }));
+    // The user asked for this, so the render tab is revealed -- and the
+    // render is SCHEDULED rather than issued, for M-4's reason: the params
+    // watcher sees our write too, and `scheduleRender` merges the two into
+    // one inside the 150 ms window. It carries `explicit`, because consent
+    // stays consent (N-3).
+    revealNextRender = true;
+    scheduleRender("the params skeleton was written by the Write Params Skeleton command",
+                   core.TRIGGER_EXPLICIT);
+  }
+  return written;
+}
+
+/**
+ * THE COMMAND'S OWN SCHEMA REQUEST AND WRITE.
+ *
+ * It is NOT `firstPickSchemaAndWrite`, and the two are deliberately separate
+ * functions rather than one with a flag: that one is reachable from
+ * `renderNow` and must never overwrite anything, and giving it a parameter
+ * that turns the protection off would put the switch inside the function
+ * whose single caller is the automatic path. **Here the permission is passed
+ * explicitly, at one call site, from a handler `activate` registers as a VS
+ * Code command** -- which is what makes "reachable only from the command"
+ * something a source pin can check.
+ *
+ * Its failures are SAID EVERY TIME, not once per pick: `schemaNoticeOnce`
+ * dedupes for the automatic path, where a line per render would be a storm;
+ * a command the user ran twice must answer twice.
+ */
+async function writeSkeletonNow(attempt, paths, replace, existing) {
+  const say = (reason, message) => {
+    log(`preview: ${message}`);
+    vscode.window.showWarningMessage("Ermine: " + message);
+    return core.skeletonCommandResult({ problem: { reason, message } });
+  };
+  const outcome = await requestSchema(attempt);
+  if (outcome.abandoned) {
+    log(`preview: Write Params Skeleton was abandoned (${outcome.abandoned.why})`);
+    return core.skeletonCommandResult({ abandoned: true });
+  }
+  if (outcome.problem) return say(outcome.problem.reason, outcome.problem.message);
+  // ALWAYS THE SERVER'S FRESH ANSWER (the S1 review's D-1 obligation), and
+  // the plan that carries the explicit-overwrite mode -- which writes
+  // nothing without the permission `applyWritePlan` is given below.
+  const plan = core.skeletonCommandPlan(paths, outcome.schema, todayForSkeleton(), replace === true);
+  if (plan.problem) return say(plan.problem.reason, plan.problem.message);
+  // M-3, BEFORE THE DIRECTORY IS MADE, over the same three targets.
+  const linked = await symlinkProblem(paths, [paths.gitignorePath, paths.schemaPath, paths.paramsPath]);
+  if (linked) return say(linked.reason, linked.message);
+  // THE TOCTOU, DECIDED (2026-09-23): RE-READ AND REFUSE. `existing` was
+  // read before the modal and a whole schema round trip has passed since;
+  // MEASURED by the S4 review, a file saved in that window was destroyed.
+  // A replace goes ahead only over the SAME bytes the user was asked about,
+  // re-read as late as possible: after the answer and the symlink check,
+  // immediately before the write.
+  const bytes = core.skeletonBytesStillApply(replace, existing,
+                                             replace === true ? await readTextIfPresent(paths.paramsPath) : null,
+                                             paths.paramsPath);
+  if (!bytes.apply) return say(bytes.reason, bytes.message);
+  let applied;
+  try {
+    await ensureDirectory(paths.dir);
+    applied = await applyWritePlan(plan.files, paths.paramsPath, true);
+  } catch (err) {
+    return say("write-failed",
+               'could not write under "' + paths.dir + '" (' +
+               (err && err.message ? err.message : String(err)) + "), so nothing was written.");
+  }
+  // EVERY problem is said in the channel; only a run that did NOT produce the
+  // params file interrupts the user with a notification. N-5's rule, applied
+  // to a command: a generated `.gitignore` that could not be written is a
+  // convenience that failed, not an answer to what was asked.
+  for (const problem of applied.problems) log(`preview: ${problem.message}`);
+  if (applied.problems.length && applied.wrote.indexOf(core.WRITE_PARAMS) < 0) {
+    vscode.window.showWarningMessage("Ermine: " + applied.problems[0].message);
+  }
+  if (applied.existed) {
+    log(`preview: a params file appeared at ${paths.paramsPath} while the parameter schema was being ` +
+        "worked out; it was left exactly as it is. Run the command again to replace it");
+    return core.skeletonCommandResult({ existed: true });
+  }
+  if (applied.wrote.indexOf(core.WRITE_PARAMS) < 0) return core.skeletonCommandResult({});
+  const line = core.skeletonWrittenNotice(paths, plan, replace === true);
+  log("preview: " + line);
+  await openParamsDocument(paths.paramsPath, true);
+  return core.skeletonCommandResult({ wrote: true, replaced: replace === true });
+}
+
+/**
+ * **D6: THE ORPHAN NOTICE -- a params file whose binding the server no
+ * longer offers.**
+ *
+ * Asked exactly where a `ermine/preview/reports` answer is already in hand
+ * (the picker, and `refreshModule` learning the module name), so it costs
+ * ONE `readDirectory` and no server request at all.
+ *
+ * **NOTHING IS EVER DELETED HERE.** The file is committed source; the notice
+ * names it and offers U3's command, and the `rm` is the developer's. The
+ * button runs the COMMAND through `executeCommand`, the same door the
+ * palette uses, which is also what keeps `writeParamsSkeletonCommand` with
+ * exactly one direct caller.
+ *
+ * A RENAMED MODULE IS NOT COVERED and `core.orphanParamsFiles`'s comment
+ * says why: this looks inside the CURRENT pick's module directory only, and
+ * knowing which module directories no longer correspond to anything would
+ * cost one `ermine/preview/reports` -- a job that COMPILES a module -- per
+ * `.e` file in the workspace.
+ */
+async function noticeOrphanParamsFiles(pick, listed) {
+  if (!pick || !pick.module) return;
+  const paths = paramsPathsFor(pick);
+  if (paths.problem) return;
+  let listing;
+  try {
+    const entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(paths.dir));
+    listing = core.directoryListing({ entries });
+  } catch (err) {
+    listing = core.meansFileMissing(err)
+      ? core.directoryListing({ missing: true })
+      : core.directoryListing({ problem: { reason: "unreadable",
+                                           message: err && err.message ? String(err.message) : String(err) } });
+  }
+  const found = core.orphanParamsFiles(listing, listed && listed.reports, paths);
+  // What is said, and the once-per-session memory, are `core.orphanNoticePlan`,
+  // which the model calls too (the S4 review's nit 3 / R24).
+  const plan = core.orphanNoticePlan(found, pick, orphanNotices, paths.dir);
+  if (plan.listingLine !== null) log("preview: " + plan.listingLine);
+  for (const { text } of plan.orphans) {
+    log("preview: " + text);
+    vscode.window.showWarningMessage("Ermine: " + text, core.ORPHAN_BUTTON).then(
+      (choice) => {
+        if (choice !== core.ORPHAN_BUTTON) return;
+        vscode.commands.executeCommand(core.SKELETON_COMMAND);
+      },
+      () => { /* a notification that will not settle is not worth a failed pick */ }
+    );
+  }
 }
 
 // ----------------------------------------------------------------- activate
@@ -2651,7 +2918,11 @@ async function activate(context) {
       );
     }),
     vscode.commands.registerCommand("ermine.previewReport", () => pickReport(context)),
-    vscode.commands.registerCommand("ermine.renderReport", () => renderCommand(context))
+    vscode.commands.registerCommand("ermine.renderReport", () => renderCommand(context)),
+    // WP-8 S4 / U3: THE ONE COMMAND THAT MAY REPLACE A PARAMS FILE. This is
+    // the ONLY caller of `writeParamsSkeletonCommand`; the orphan notice's
+    // button goes through `executeCommand`, the same door the palette uses.
+    vscode.commands.registerCommand(core.SKELETON_COMMAND, () => writeParamsSkeletonCommand(context))
     // NOT "ermine.reloadModules": the server advertises it in
     // executeCommandProvider, and vscode-languageclient registers every such
     // command as a VS Code command itself (ExecuteCommandFeature), forwarding

@@ -2438,9 +2438,39 @@ function flush() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+/**
+ * A promise the TEST settles by hand -- BOUNDED (the S4 review's nit 5).
+ *
+ * Unbounded, a mutant that widens consent (R13: any modal answer counts as
+ * Replace) made a model await a schema answer the test never gives, and
+ * the WHOLE SUITE HUNG instead of failing the test by name (MEASURED: 60 s,
+ * then killed). Now an awaited deferred that nobody settles within
+ * `DEFERRED_BOUND_MS` REJECTS with a sentence saying so, and the test that
+ * awaited it fails by name.
+ *
+ * The timer is `unref`ed and both promises carry a no-op catch, so the
+ * deferreds an ordinary test leaves pending on purpose (an orphan notice
+ * never clicked, a render superseded before its read) neither keep the
+ * process alive nor surface as unhandled rejections: the whole suite runs
+ * in about two seconds, far inside the bound.
+ */
+const DEFERRED_BOUND_MS = 8000;
+
 function deferred() {
   let settle;
-  const promise = new Promise((resolve) => { settle = resolve; });
+  const raw = new Promise((resolve) => { settle = resolve; });
+  let timer = null;
+  const bound = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(
+      "a deferred was awaited and never settled within " + DEFERRED_BOUND_MS + " ms -- the code under " +
+      "test is waiting for an answer this test never gives (a consent- or step-widening mutant, or a " +
+      "model that reaches a step the test did not drive)")), DEFERRED_BOUND_MS);
+    if (timer && typeof timer.unref === "function") timer.unref();
+  });
+  bound.catch(() => {});
+  raw.then(() => clearTimeout(timer));
+  const promise = Promise.race([raw, bound]);
+  promise.catch(() => {});
   return { promise, settle };
 }
 
@@ -5264,6 +5294,11 @@ function sendModel(opts) {
   m.serverStopped = () => { m.stopCount += 1; };            // onClientStopped
   m.serverRestarted = () => { m.clientEpoch += 1; };        // startClient
   m.tearDown = () => { m.disposed = true; m.picked = undefined; };   // disposePreview
+  /** S4: `pickReport` REPLACES the pick with a fresh `core.makePick`, which
+    * is how a pick change differs from `rootsChangeInPlace` above. */
+  m.pickAnother = (binding) => {
+    m.picked = core.makePick(m.picked.uri, m.picked.fsPath, binding, m.picked.module, m.picked.roots);
+  };
   /** "Not now": the glue stores the token the question was shown with. */
   m.notNow = () => { m.heldRefusedToken = core.heldPromptToken(m.mark); };
   return m;
@@ -6535,8 +6570,8 @@ test("S3: a NON-OBJECT params root still gets its file, without a $schema line (
   // either way, and the refresh path then needs no second rule -- and the
   // notice says the editor will not validate the params file.
   assert.strictEqual(plan.files[1].what, "schema");
-  assert.match(core.paramsWrittenNotice(paths, false), /no "\$schema" line/);
-  assert.match(core.paramsWrittenNotice(paths, false), /editor will not validate/);
+  assert.match(core.paramsWrittenNotice(paths, false, plan.shape), /no "\$schema" line/);
+  assert.match(core.paramsWrittenNotice(paths, false, plan.shape), /editor will not validate/);
   assert.match(core.paramsWrittenNotice(paths, true), /ordinary committed source/);
 });
 
@@ -6705,6 +6740,41 @@ function diskModel(opts) {
     mkdir() { if (this.readOnly) throw new Error("EROFS: read-only file system"); },
     /** `readTextIfPresent`: null for anything that is not there. */
     read(p) { const r = this.real(p); return files.has(r) ? files.get(r) : null; },
+    /**
+     * S4: `vscode.workspace.fs.readDirectory`, in ITS OWN shape --
+     * `[name, FileType][]`, one level, THROWING for a directory that is not
+     * there (`FileNotFound`) exactly as the editor's API documents.
+     * `o.readDirThrows` is any other failure (EACCES), which is the arm the
+     * orphan scan must not read as "there is nothing stale".
+     */
+    readDirectory(dir) {
+      if (o.readDirThrows) throw o.readDirThrows;
+      const prefix = dir.endsWith("/") ? dir : dir + "/";
+      const out = [];
+      const seen = new Set();
+      for (const p of files.keys()) {
+        if (!p.startsWith(prefix)) continue;
+        const rest = p.slice(prefix.length);
+        const cut = rest.indexOf("/");
+        const name = cut < 0 ? rest : rest.slice(0, cut);
+        if (seen.has(name)) continue;
+        seen.add(name);
+        out.push([name, cut < 0 ? (links.has(p) ? DIR_LINKED_FILE : DIR_FILE) : DIR_DIRECTORY]);
+      }
+      for (const d of o.directories || []) {
+        if (!d.startsWith(prefix)) continue;
+        const name = d.slice(prefix.length);
+        if (name.indexOf("/") >= 0 || seen.has(name)) continue;
+        seen.add(name);
+        out.push([name, DIR_DIRECTORY]);
+      }
+      if (!out.length && !(o.directories || []).includes(dir.replace(/\/$/, ""))) {
+        const err = new Error("EntryNotFound (FileSystemError)");
+        err.code = "FileNotFound";
+        throw err;
+      }
+      return out;
+    },
     /** `writeTextFile`: OVERWRITES, like `workspace.fs.writeFile`. */
     write(p, text) {
       if (this.readOnly) throw new Error("EROFS: read-only file system");
@@ -6761,7 +6831,14 @@ function firstPickModel(opts) {
   m.disk = o.disk || diskModel();
   m.schemas = [];            // one deferred per ermine/schema request
   m.scheduled = [];          // scheduleRender calls
-  m.opened = [];             // U2
+  m.opened = [];             // U2: the documents actually SHOWN
+  // `openedParamsFiles`, and `openParamsDocument` through the SAME pure
+  // dedupe the glue calls (the S4 review's M-4: the model pushed
+  // unconditionally, so "once per path per session" was pinned, not tested).
+  m.openedParamsFiles = new Set();
+  m.openParamsDocument = (fsPath, always) => {
+    if (core.claimParamsDocument(m.openedParamsFiles, fsPath, always)) m.opened.push(fsPath);
+  };
   m.notices = [];
   m.firstPickTried = new Set();
   m.revealNextRender = false;
@@ -6794,8 +6871,10 @@ function firstPickModel(opts) {
     return core.schemaAnswerOutcome(reply);
   };
 
-  /** `applyWritePlan(files, paramsPath)`, statement for statement. */
-  m.applyWritePlan = function (files, paramsPath) {
+  /** `applyWritePlan(files, paramsPath, allowExplicitOverwrite)`, statement
+    * for statement -- INCLUDING S4's third argument, which is the PERMISSION
+    * to replace a params file and which only U3's command ever passes. */
+  m.applyWritePlan = function (files, paramsPath, allowExplicitOverwrite) {
     const wrote = [];
     const problems = [];
     for (const file of files) {
@@ -6803,10 +6882,15 @@ function firstPickModel(opts) {
       // fail-OPEN `else` the first cut shipped.
       const step = o.mutantParamsOverwrite
         ? { act: file.mode === core.WRITE_IF_ABSENT ? "MUTANT" : core.WRITE_IF_DIFFERENT, problem: null }
-        : core.writeStep(file, paramsPath);
+        : core.writeStep(file, paramsPath, allowExplicitOverwrite);
       if (step.problem) {
         problems.push(step.problem);
         if (file.what === core.WRITE_PARAMS) return core.writeOutcome({ wrote, problems });
+        continue;
+      }
+      if (step.act === core.WRITE_EXPLICIT_OVERWRITE) {   // S4/U3, after the modal
+        m.disk.write(file.path, file.text);
+        wrote.push(file.what);
         continue;
       }
       if (step.act === "MUTANT") {                   // the unconditional overwrite
@@ -6878,8 +6962,11 @@ function firstPickModel(opts) {
       return core.firstPickResult({ wrote: true, raced: true });
     }
     if (applied.wrote.indexOf(core.WRITE_PARAMS) < 0) return core.firstPickResult({});
-    notice("written", core.paramsWrittenNotice(paths, plan.embeddable));
-    m.opened.push(paths.paramsPath);
+    // M-4 of the S4 review: the PLAN, through the builder the glue calls --
+    // this line used to drop `plan.shape`, so every model test of this
+    // notice read the generic fallback sentence.
+    notice("written", core.skeletonWrittenNotice(paths, plan, false));
+    m.openParamsDocument(paths.paramsPath);
     return core.firstPickResult({ wrote: true });
   };
 
@@ -7445,9 +7532,83 @@ test("S3 MUTANT: feeding the WRITTEN schema file back leaves the root-level copy
  * Every pin below that matches STATEMENT text now matches against this.
  * Pins that match a log SENTENCE deliberately do not, because a sentence is
  * allowed to be quoted in a comment.
+ *
+ * **IT WAS TWO REGULAR EXPRESSIONS AND THAT WAS A LIVE TRAP, FOUND AND
+ * MEASURED BY S4.** `\/\*[\s\S]*?\*\/` does not know what a STRING is, and
+ * `extension.js` contains one: `vscode.workspace.findFiles("**\/*.e")` in
+ * `pickReport` holds the two characters that open a block comment. Nothing
+ * closed it, so the non-greedy regex simply failed to match and the file
+ * survived **by luck**. S4 added a JSDoc block after `renderCommand`, whose
+ * `*\/` closed it -- and `codeOf` then deleted **124 lines** of
+ * `pickReport`, `renderCommand` and the head of `activate`. MEASURED: the
+ * picker's own `renderNow("the report was picked", true,
+ * core.TRIGGER_EXPLICIT)` pin went from passing to failing while the source
+ * line was untouched, and had S4's block been added a few lines further on
+ * the same deletion would have been SILENT -- every pin inside those 124
+ * lines would have stopped protecting anything, which is precisely the
+ * failure N-1 exists to prevent, one level down in the tool N-1 built.
+ *
+ * So this is a scanner rather than a pair of regexes: it knows single,
+ * double and template strings (with their escapes) and regular-expression
+ * literals, and it strips comments and nothing else. A `/` is read as a
+ * regex only where one may begin -- after an operator or an opening
+ * bracket -- which covers every regex literal in `preview-core.js` (`=`,
+ * `(`, `[`, `,`) and leaves division alone. There is a table test for it
+ * below, and an assertion that the stripped `extension.js` still contains
+ * its last function.
  */
+const REGEX_MAY_START = /[=(,:[!&|?{};+\-*%~^<>]/;
+
 function codeOf(text) {
-  return String(text).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const s = String(text);
+  let out = "";
+  let prev = "";                         // the last significant character kept
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    const d = s[i + 1];
+    if (c === "/" && d === "/") {        // a line comment: to the newline
+      while (i < s.length && s[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && d === "*") {        // a block comment: to its close
+      i += 2;
+      while (i < s.length && !(s[i] === "*" && s[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      out += c;
+      i += 1;
+      while (i < s.length) {
+        if (s[i] === "\\") { out += s.slice(i, i + 2); i += 2; continue; }
+        out += s[i];
+        i += 1;
+        if (s[i - 1] === c) break;
+      }
+      prev = c;
+      continue;
+    }
+    if (c === "/" && REGEX_MAY_START.test(prev)) {
+      out += c;
+      i += 1;
+      let inClass = false;
+      while (i < s.length) {
+        if (s[i] === "\\") { out += s.slice(i, i + 2); i += 2; continue; }
+        if (s[i] === "[") inClass = true;
+        else if (s[i] === "]") inClass = false;
+        out += s[i];
+        i += 1;
+        if (s[i - 1] === "/" && !inClass) break;
+      }
+      prev = "/";
+      continue;
+    }
+    out += c;
+    if (!/\s/.test(c)) prev = c;
+    i += 1;
+  }
+  return out;
 }
 
 test("glue pins (S3): the first-pick branch, the write path and the guard", () => {
@@ -7499,7 +7660,7 @@ test("glue pins (S3): the first-pick branch, the write path and the guard", () =
   const order = renderBody.indexOf("core.schemaOrder(");
   const write = renderBody.indexOf("firstPickSchemaAndWrite(");
   const latch = renderBody.indexOf("inFlightRender = {");
-  assert.ok(order > consult && write > order && write < latch,
+  assert.ok(consult > 0 && order > consult && write > order && write < latch,
     pin("renderNow's no-file branch is no longer BETWEEN the consultation and the wire",
         "that a report which wedged the preview is not handed an ermine/schema job — which " +
         "COMPILES AND EVALUATES the binding on the preview queue (json/Runner.scala:849-852, and " +
@@ -7580,8 +7741,15 @@ test("glue pins (S3): the first-pick branch, the write path and the guard", () =
   assert.strictEqual((src.match(/firstPickSchemaAndWrite\(/g) || []).length, 2,
     pin("firstPickSchemaAndWrite has more than its definition and renderNow's one call",
         "the same: one definition, one caller, and that caller is the no-file branch"));
-  assert.strictEqual((src.match(/applyWritePlan\(/g) || []).length, 2,
-    pin("applyWritePlan has more than its definition and one caller", "the same"));
+  // **S4 MOVED THIS FROM 2 TO 3, AND THE THIRD IS U3's COMMAND.** The rule
+  // is unchanged and is now spelled out below: the write loop has exactly
+  // two callers, one of which may replace a params file and one of which may
+  // not, and the difference is the third ARGUMENT rather than the mode.
+  assert.strictEqual((src.match(/applyWritePlan\(/g) || []).length, 3,
+    pin("applyWritePlan has more than its definition and its two callers",
+        "that the write loop is reachable from `firstPickSchemaAndWrite` (the automatic path, which " +
+        "may never overwrite) and from `writeSkeletonNow` (U3's command, which may, once the user has " +
+        "confirmed it) and from nothing else"));
   const refreshBody = src.slice(src.indexOf("async function refreshSchemaFile("),
                                 src.indexOf("async function refreshSchemaFor("));
   assert.ok(refreshBody.length > 0 && !/paramsPath/.test(refreshBody),
@@ -7612,11 +7780,15 @@ test("glue pins (S3): the first-pick branch, the write path and the guard", () =
   assert.strictEqual((src.match(/core\.schemaFileNeedsWrite\(/g) || []).length, 1,
     pin("core.schemaFileNeedsWrite is asked from more than the one write-if-different site",
         "the same (N-2): one site is one thing to pin"));
-  assert.strictEqual((src.match(/writeTextFile\(/g) || []).length, 3,
+  // **S4 MOVED THIS FROM 3 TO 4**: U3's explicit overwrite is the fourth,
+  // and it is reachable only through `core.writeStep`'s `explicitOverwrite`
+  // act, which refuses without the caller's permission (pinned below).
+  assert.strictEqual((src.match(/writeTextFile\(/g) || []).length, 4,
     pin("writeTextFile — the OVERWRITING primitive — has call sites other than its definition, " +
-        "the create's zero-byte branch and writeIfDifferent",
-        "that the only unconditional write in this extension is over zero bytes or over a " +
-        "generated file whose bytes differ"));
+        "the create's zero-byte branch, writeIfDifferent and U3's confirmed overwrite",
+        "that the only unconditional write in this extension is over zero bytes, over a " +
+        "generated file whose bytes differ, or over a params file the user has just confirmed " +
+        "replacing in a modal"));
 
   // ---- M-2: the plan's step is a DECISION, and it fails CLOSED -----------
   const applyBody = src.slice(src.indexOf("async function applyWritePlan("),
@@ -7628,9 +7800,13 @@ test("glue pins (S3): the first-pick branch, the write path and the guard", () =
     pin("applyWritePlan is called without the params path to compare against",
         "M-2: the belt as well as the braces — a params entry is refused by any route but the " +
         "create whether its LABEL says so or only its PATH does"));
-  assert.ok(/async function applyWritePlan\(files, paramsPath\) \{/.test(applyBody),
-    pin("applyWritePlan no longer takes the params path", "the same (M-2)"));
-  assert.ok(/const step = core\.writeStep\(file, paramsPath\);/.test(applyBody) &&
+  assert.ok(/async function applyWritePlan\(files, paramsPath, allowExplicitOverwrite\) \{/.test(applyBody),
+    pin("applyWritePlan no longer takes the params path, or no longer takes the overwrite permission " +
+        "as an argument of its own",
+        "the same (M-2), and S4's U3: the permission to REPLACE a params file belongs to the CALLER, " +
+        "not to the plan entry — a plan carrying `explicitOverwrite` that reaches any other caller " +
+        "writes nothing"));
+  assert.ok(/const step = core\.writeStep\(file, paramsPath, allowExplicitOverwrite\);/.test(applyBody) &&
             /if \(step\.problem\) \{/.test(applyBody),
     pin("applyWritePlan decides what to do with an entry inline again instead of asking " +
         "core.writeStep, or ignores its answer",
@@ -7694,8 +7870,11 @@ test("glue pins (S3): the first-pick branch, the write path and the guard", () =
         "control flow"));
 
   // ---- M-3: SYMLINKS, which S1 handed to S3 ------------------------------
-  assert.strictEqual((src.match(/await symlinkProblem\(/g) || []).length, 2,
-    pin("the symlink check is gone from one of the two write paths",
+  // S4 MOVED THIS FROM 2 TO 3: U3's command is a third write path and is
+  // held to exactly the same rule (its own `if (linked)` statement is pinned
+  // with the other two below).
+  assert.strictEqual((src.match(/await symlinkProblem\(/g) || []).length, 3,
+    pin("the symlink check is gone from one of the three write paths",
         "M-3: node's fs FOLLOWS symlinks and the editor's API is UNVERIFIED either way. MEASURED: " +
         "a <binding>.schema.json symlinked outside the workspace was written THROUGH from the " +
         "REFRESH path — which is reachable from an ANSWER, the one thing the tracker says an " +
@@ -7790,10 +7969,19 @@ test("glue pins (S3): the first-pick branch, the write path and the guard", () =
     pin("a params file that APPEARED during the schema request is no longer reported as such",
         "that the render is still scheduled for it (M-4's one call covers both) and that it is " +
         "never announced or opened as one we wrote"));
-  assert.ok(/if \(applied\.wrote\.indexOf\(core\.WRITE_PARAMS\) < 0\) return core\.firstPickResult\(\{\}\);/.test(firstPickBody) &&
-            firstPickBody.indexOf("openParamsDocument(paths.paramsPath)") >
-            firstPickBody.indexOf("core.paramsWrittenNotice(paths, plan.embeddable)"),
-    pin("the params document is opened, or announced, for a file this branch did not write",
+  // **THE `-1` HAZARD, WHICH S4 HIT.** This used to compare two `indexOf`s
+  // and the second needle moved (S4 passes `plan.shape` as well), so it went
+  // to `-1` -- and `anything > -1` is TRUE, leaving the pin green and
+  // protecting nothing. Both needles are now asserted PRESENT first.
+  // M-4 of the S4 review: the sentence is now `core.skeletonWrittenNotice`,
+  // handed the WHOLE plan -- the builder the model calls too, so dropping
+  // `plan.shape` is now a behaviour change the model sees, not only a pin.
+  const announce = firstPickBody.indexOf("core.skeletonWrittenNotice(paths, plan, false)");
+  const openIt = firstPickBody.indexOf("openParamsDocument(paths.paramsPath)");
+  assert.ok(announce > 0 && openIt > 0 && openIt > announce &&
+            /if \(applied\.wrote\.indexOf\(core\.WRITE_PARAMS\) < 0\) return core\.firstPickResult\(\{\}\);/.test(firstPickBody),
+    pin("the params document is opened, or announced, for a file this branch did not write — or the " +
+        "notice no longer says what a non-object root's value MEANS (S4's `plan.shape`)",
         "U2: the document that opens is the skeleton we just wrote, and nothing else"));
 
   // ---- Q7: ONE BOOT, THE SAME ROOTS --------------------------------------
@@ -7867,7 +8055,9 @@ test("glue pins (S3): the first-pick branch, the write path and the guard", () =
   // ---- U2: the params document is opened once, without stealing focus -----
   const openBody = src.slice(src.indexOf("async function openParamsDocument("),
                              src.indexOf("async function requestSchema("));
-  assert.ok(/openedParamsFiles\.has\(fsPath\)/.test(openBody) && /openedParamsFiles\.add\(fsPath\)/.test(openBody),
+  // S4 fix round (M-4): the has/add pair is `core.claimParamsDocument`, the
+  // one dedupe the models call as well.
+  assert.ok(/if \(!core\.claimParamsDocument\(openedParamsFiles, fsPath, always\)\) return;/.test(openBody),
     pin("the params document is opened more than once per path",
         "U2: it is opened right after it is written, and never again"));
   assert.ok(/preserveFocus: true/.test(openBody) && /ViewColumn\.Beside/.test(openBody),
@@ -8173,7 +8363,7 @@ test("S3 N-4: the consenting render DOES qualify for a schema refresh", () => {
     type: "answer", stuck: true, applies: true, pick: SALES_PICK, params: {}, at: 1 }).mark;
   assert.strictEqual(core.mayAutoRender(mark, SALES_PICK, core.TRIGGER_EXPLICIT, 5).render, true);
   const fsMod = require("node:fs");
-  const src = fsMod.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  const src = codeOf(fsMod.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8"));
   assert.ok(/renderNow\("Render anyway", true, core\.TRIGGER_EXPLICIT\)/.test(src),
     "source pin: the consenting render no longer carries `explicit`, so N-4 becomes real");
 });
@@ -8195,12 +8385,28 @@ test("S3 N-6: a refresh whose attempt is no longer current writes NOTHING", asyn
   // And the glue returns on `abandoned` before its symlink check and before
   // its write -- pinned in the glue pins, because the order is glue.
   const fsMod = require("node:fs");
-  const src = fsMod.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
-  const body = src.slice(src.indexOf("async function refreshSchemaFile("),
-                         src.indexOf("async function refreshSchemaFor("));
-  assert.ok(body.indexOf("if (outcome.abandoned)") < body.indexOf("await symlinkProblem("),
+  // M-2 of the S4 review: this pin was -1-TOLERANT (`-1 < anything` is
+  // true), so deleting the guard left the suite GREEN (MEASURED, R16). Every
+  // position is now bound and asserted PRESENT first, and the source is read
+  // through `codeOf`, so a commented-out guard is absent too.
+  const src = codeOf(fsMod.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8"));
+  const from = src.indexOf("async function refreshSchemaFile(");
+  const to = src.indexOf("async function refreshSchemaFor(");
+  assert.ok(from > 0 && to > from, "source pin: refreshSchemaFile / refreshSchemaFor not found");
+  const body = src.slice(from, to);
+  const guard = body.indexOf("if (outcome.abandoned)");
+  const symlink = body.indexOf("await symlinkProblem(");
+  const write = body.indexOf("writeIfDifferent(");
+  assert.ok(guard > 0, "source pin: refreshSchemaFile no longer returns on an abandoned answer");
+  assert.ok(symlink > 0, "source pin: refreshSchemaFile no longer checks for symlinks");
+  assert.ok(write > 0, "source pin: refreshSchemaFile no longer writes through writeIfDifferent");
+  const problemArm = body.indexOf("if (outcome.problem)");
+  assert.ok(problemArm > guard, "source pin: refreshSchemaFile's problem arm moved above its abandoned guard");
+  assert.ok(/\breturn;/.test(body.slice(guard, problemArm)),
+    "source pin: the abandoned guard no longer RETURNS");
+  assert.ok(guard < symlink,
     "source pin: the refresh acts on a stale answer before it checks anything");
-  assert.ok(body.indexOf("if (outcome.abandoned)") < body.indexOf("writeIfDifferent("),
+  assert.ok(guard < write,
     "source pin: the refresh writes before it notices the world moved");
 });
 
@@ -8436,4 +8642,1676 @@ test("S3 D-2: a link to a DIRECTORY is 66, not 65 (N-c)", () => {
     assert.strictEqual(core.writeTargetProblem([{ path: "/w/.ermine/preview", type }]), null,
                        "FileType " + type);
   }
+});
+
+// ==========================================================================
+// WP-8 S4 -- THE EDGES.  U3's explicit command, D6's orphan notice, the
+// non-object params roots, and the two picks that can have no params file at
+// all.
+//
+// WHAT IS TESTED WHERE, and why each kind is here:
+//   1. TABLE TESTS for every new decision, over the FIVE REAL `ermine/schema`
+//      answers this stage captured (`test/fixtures/wp*.schema.json`, verbatim
+//      from `scratchpad/wp8-s4/measure.log`) as well as hand-made shapes;
+//   2. the ASYNC MODEL extended with the COMMAND path -- a modal is an
+//      `await` the user can hold open for minutes, which is a wider gap than
+//      any S2/S3 await, and with the ORPHAN path, whose listing shapes are a
+//      table of their own;
+//   3. a property that the overwrite mode is reachable ONLY from the command
+//      (a model assertion AND a grep pin, because neither sees the other);
+//   4. SOURCE PINS for the chain that makes "only the command overwrites"
+//      structural rather than careful.
+// ==========================================================================
+
+const WPINT_SCHEMA = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "fixtures", "wpint.schema.json"), "utf8"));
+const WPENUM_SCHEMA = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "fixtures", "wpenum.schema.json"), "utf8"));
+const WPMAYBE_SCHEMA = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "fixtures", "wpmaybe.schema.json"), "utf8"));
+const WPJSON_SCHEMA = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "fixtures", "wpjson.schema.json"), "utf8"));
+const WPUNIT_SCHEMA = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "fixtures", "wpunit.schema.json"), "utf8"));
+
+// ------------------------------------------------- codeOf, the pins' own tool
+
+test("S4: codeOf knows what a STRING is, and the trap it used to fall into", () => {
+  // **THE LIVE TRAP S4 FOUND.** `extension.js` contains
+  // `findFiles("**/*.e")`, whose `/*` opened a block comment for the two
+  // regexes codeOf used to be. Nothing closed it, so the file survived by
+  // LUCK; S4 added a JSDoc after it, its `*/` closed the block, and 124
+  // lines of pickReport/renderCommand/activate were deleted from what every
+  // pin reads. MEASURED: the picker's trigger pin failed with the source
+  // line untouched.
+  const old = (t) => String(t).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const trap = 'const a = findFiles("**/*.e");\nconst KEEP = 1;\n/** doc */\nconst ALSO = 2;\n';
+  assert.ok(!/KEEP/.test(old(trap)), "the old codeOf really did eat the line between them");
+  assert.ok(/KEEP/.test(codeOf(trap)), "the scanner keeps it");
+  assert.ok(/ALSO/.test(codeOf(trap)));
+  assert.ok(!/doc/.test(codeOf(trap)), "and it still strips a real block comment");
+
+  // Line comments, block comments, and comment-looking text inside strings.
+  assert.strictEqual(codeOf('a; // gone\nb;'), "a; \nb;");
+  assert.strictEqual(codeOf("a; /* gone */ b;"), "a;  b;");
+  assert.strictEqual(codeOf('const u = "http://x/y"; // gone'), 'const u = "http://x/y"; ');
+  assert.strictEqual(codeOf("const t = `a // b ${x} /* c */`;"), "const t = `a // b ${x} /* c */`;");
+  assert.strictEqual(codeOf('const e = "a \\" // still a string";'), 'const e = "a \\" // still a string";');
+  // A regex literal carrying a quote -- `preview-core.js`'s SAFE_NAME does.
+  assert.strictEqual(codeOf("const r = /^[A-Za-z_][A-Za-z0-9_']*$/; // gone\nnext;"),
+                     "const r = /^[A-Za-z_][A-Za-z0-9_']*$/; \nnext;");
+  // A regex whose character class holds a slash must not end early.
+  assert.strictEqual(codeOf("x.replace(/[/]/g, \"\"); // gone"), 'x.replace(/[/]/g, ""); ');
+  // Division is not a regex.
+  assert.strictEqual(codeOf("const n = a / b; // gone"), "const n = a / b; ");
+
+  // AND THE ASSERTION THAT WOULD HAVE CAUGHT THE TRAP: the stripped
+  // extension really does still contain what comes after that string.
+  const ext = codeOf(require("node:fs").readFileSync(
+    path.join(__dirname, "..", "src", "extension.js"), "utf8"));
+  for (const needle of ["async function pickReport(", "async function renderCommand(",
+                        "async function activate(", "function deactivate("]) {
+    assert.ok(ext.indexOf(needle) > 0,
+      "source pin (test/preview-core.test.js): codeOf lost " + needle + " — every pin that reads a " +
+      "slice at or after it has silently stopped protecting anything");
+  }
+});
+
+// ------------------------------------------ G5: what a non-object root MEANS
+
+test("S4 G5: paramsRootShape names every non-object root the exporter can make", () => {
+  // THE FIVE ARE REAL ANSWERS, captured in one boot from a real
+  // `bin/ermine-lsp` (scratchpad/wp8-s4/measure.log), not hand-made.
+  assert.strictEqual(core.paramsRootShape(SALES_SCHEMA).kind, "object");
+  assert.strictEqual(core.paramsRootShape(SALES_SCHEMA).sentence, null,
+    "an object root has nothing to explain: the $schema line and completion do it");
+
+  const int = core.paramsRootShape(WPINT_SCHEMA);
+  assert.strictEqual(int.kind, "integer");
+  assert.match(int.sentence, /a single whole number, so the file holds just that number/);
+
+  // AN ALL-NULLARY ENUM IS BEHIND A `$ref`, so this is also the hop test.
+  const season = core.paramsRootShape(WPENUM_SCHEMA);
+  assert.strictEqual(season.kind, "enum");
+  assert.match(season.sentence, /one of "Spring", "Summer", "Autumn"/);
+
+  const maybe = core.paramsRootShape(WPMAYBE_SCHEMA);
+  assert.strictEqual(maybe.kind, "optional");
+  assert.match(maybe.sentence, /optional \(a single string\)/);
+  assert.match(maybe.sentence, /`null` means there is none/);
+
+  const anyJson = core.paramsRootShape(WPJSON_SCHEMA);
+  assert.strictEqual(anyJson.kind, "any");
+  assert.match(anyJson.sentence, /any JSON value at all/);
+
+  const unit = core.paramsRootShape(WPUNIT_SCHEMA);
+  assert.strictEqual(unit.kind, "unit");
+  assert.match(unit.sentence, /the empty tuple `\(\)`/);
+  assert.match(unit.sentence, /\[\]/);
+});
+
+test("S4 G5: the rest of the exporter's builtin string and scalar roots", () => {
+  const shape = (node) => core.paramsRootShape(node);
+  const rows = [
+    [{ type: "string", format: "date" }, "date", /"YYYY-MM-DD" string/],
+    [{ type: "string", format: "date-time" }, "timestamp", /ISO-8601 string with an offset/],
+    [{ type: "string", format: "uuid" }, "guid", /GUID as a string/],
+    [{ type: "string", pattern: "^-?[0-9]+$" }, "long", /WRITTEN AS A STRING/],
+    [{ type: "string", minLength: 1, maxLength: 1 }, "char", /one-character string/],
+    [{ type: "string" }, "string", /a single string/],
+    [{ type: "number" }, "number", /a single number/],
+    [{ type: "boolean" }, "boolean", /a single true or false/],
+    [{ type: "null" }, "null", /just `null`/],
+    [{ type: "array", items: { type: "integer" } }, "array", /a JSON array/],
+    [{ type: "array", maxItems: 0 }, "unit", /empty tuple/],
+    [{ const: 7 }, "const", /always 7/],
+    [{ oneOf: [{ type: "string" }, { type: "integer" }] }, "union", /one of 2 shapes/],
+    [{ type: "object", properties: {} }, "object", null],
+    // Nit 6: the boolean schema `true` accepts anything, exactly as `{}`
+    // does, so it gets `{}`'s measured sentence, not the generic fallback.
+    [true, "any", /any JSON value at all/],
+    [{ $ref: "#/$defs/A", $defs: { A: true } }, "any", /any JSON value at all/],
+  ];
+  for (const [node, kind, sentence] of rows) {
+    const answer = shape(node);
+    assert.strictEqual(answer.kind, kind, JSON.stringify(node));
+    if (sentence === null) assert.strictEqual(answer.sentence, null, JSON.stringify(node));
+    else assert.match(answer.sentence, sentence, JSON.stringify(node));
+  }
+  // AND THE UNKNOWNS, each of which must not guess.
+  assert.strictEqual(shape(undefined).kind, "unknown");
+  assert.strictEqual(shape(null).kind, "unknown");
+  assert.strictEqual(shape(7).kind, "unknown");
+  assert.strictEqual(shape({ $ref: "#/$defs/Nope" }).kind, "unknown", "a $ref it cannot follow");
+  assert.strictEqual(shape({ $ref: "http://elsewhere#/x" }).kind, "unknown", "a $ref it does not do");
+  // A long enum is counted rather than listed.
+  const many = shape({ enum: ["a", "b", "c", "d", "e", "f", "g", "h"] });
+  assert.match(many.sentence, /\(and 2 more\)/);
+  // An `anyOf` with a null arm and NO payload still says something.
+  assert.match(shape({ anyOf: [{ type: "null" }] }).sentence, /optional, so the file holds/);
+});
+
+test("S4 G5: the write notice SAYS what the value means, and only for a non-object root", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  const objectNotice = core.paramsWrittenNotice(paths, true, core.paramsRootShape(SALES_SCHEMA));
+  assert.match(objectNotice, /ordinary committed source/);
+  assert.ok(objectNotice.indexOf("$schema") < 0, "an object root is not told its file has no $schema line");
+
+  const intNotice = core.paramsWrittenNotice(paths, false, core.paramsRootShape(WPINT_SCHEMA));
+  // S3's sentence said what the file is NOT. S4's says what it IS -- and it
+  // KEEPS the half that matters operationally.
+  assert.match(intNotice, /Its parameters are a single whole number, so the file holds just that number\./);
+  assert.match(intNotice, /carries no "\$schema" line and the editor will not validate it/);
+  assert.match(intNotice, /the server still checks it and answers a 400 with a path/);
+
+  // A shape nothing recognised is still honest rather than silent.
+  assert.match(core.paramsWrittenNotice(paths, false, { kind: "unknown", sentence: null }),
+               /not a JSON object, so the file holds just that value/);
+  assert.match(core.paramsWrittenNotice(paths, false, undefined),
+               /not a JSON object, so the file holds just that value/);
+  assert.strictEqual(core.rootShapeSentence(null), core.rootShapeSentence({ kind: "x" }));
+});
+
+test("S4 G5: the plan carries the shape, and the skeleton of each real root decodes to itself", () => {
+  // MEASURED end to end (section 6's S4 table): each of these five renders
+  // `ok=true` on a real server. What a unit test can add is that the SHIPPED
+  // plan writes exactly the bytes that were sent.
+  const rows = [
+    [WPINT_SCHEMA, "integer", 0, false],
+    [WPENUM_SCHEMA, "enum", "Spring", false],
+    [WPMAYBE_SCHEMA, "optional", null, false],
+    [WPJSON_SCHEMA, "any", null, false],
+    [WPUNIT_SCHEMA, "unit", [], false],
+    [SALES_SCHEMA, "object", undefined, true],
+  ];
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  for (const [schema, kind, value, embeddable] of rows) {
+    const plan = core.paramsWritePlan(paths, schema, TODAY);
+    assert.ok(!plan.problem, kind);
+    assert.strictEqual(plan.shape.kind, kind);
+    assert.strictEqual(plan.embeddable, embeddable, kind);
+    if (value !== undefined) assert.deepStrictEqual(plan.skeleton, value, kind);
+    const params = plan.files[2];
+    assert.strictEqual(params.what, core.WRITE_PARAMS);
+    assert.strictEqual(params.mode, core.WRITE_IF_ABSENT, "the automatic path never overwrites");
+    // The bytes on disk ARE the value: a non-object root has no `$schema`
+    // key, because a JSON number has nowhere to put one.
+    assert.deepStrictEqual(JSON.parse(params.text), plan.skeleton, kind);
+    if (!embeddable) assert.ok(params.text.indexOf("$schema") < 0, kind + " must carry no $schema key");
+    else assert.ok(params.text.indexOf('"$schema": "./report.schema.json"') > 0);
+  }
+});
+
+// -------------------------------------- U3: the explicit-overwrite mode alone
+
+test("S4 U3: the overwrite mode needs the CALLER's permission, not just the mode", () => {
+  const params = { what: core.WRITE_PARAMS, path: "/w/p.params.json", text: "x",
+                   mode: core.WRITE_EXPLICIT_OVERWRITE };
+  // WITHOUT the permission -- which is what every pre-S4 call site passes,
+  // because it passes two arguments and this is the third.
+  for (const allow of [undefined, false, null, 0, "true", 1, {}]) {
+    const step = core.writeStep(params, "/w/p.params.json", allow);
+    assert.strictEqual(step.act, undefined, JSON.stringify(allow));
+    assert.strictEqual(step.problem.reason, "overwrite-not-permitted", JSON.stringify(allow));
+    assert.match(step.problem.message, /Write Params Skeleton/);
+  }
+  // WITH it.
+  assert.strictEqual(core.writeStep(params, "/w/p.params.json", true).act, core.WRITE_EXPLICIT_OVERWRITE);
+  assert.strictEqual(core.writeStep(params, "/w/p.params.json", true).problem, null);
+
+  // AND ONLY FOR THE PARAMS FILE. A `.gitignore` or a schema file carrying
+  // the mode is refused even WITH the permission: those two have their own
+  // modes, and a mode that works everywhere is one that will be pasted.
+  for (const what of [core.WRITE_GITIGNORE, core.WRITE_SCHEMA]) {
+    const other = { what, path: "/w/.ermine/preview/.gitignore", text: "x",
+                    mode: core.WRITE_EXPLICIT_OVERWRITE };
+    const step = core.writeStep(other, "/w/p.params.json", true);
+    assert.strictEqual(step.act, undefined, what);
+    assert.strictEqual(step.problem.reason, "overwrite-not-params", what);
+  }
+  // THE OVERWRITE NEEDS BOTH SIGNS (M-1 of the S4 review). A MISLABELLED
+  // entry aimed at the params file is REFUSED: the one door is opened only
+  // by an entry that says it is the params file AND names its path. (S4 as
+  // first built let this row through "identified by its path"; the fix
+  // round made the arm a conjunction, which is strictly more closed.)
+  const mislabelled = { what: core.WRITE_SCHEMA, path: "/w/p.params.json", text: "x",
+                        mode: core.WRITE_EXPLICIT_OVERWRITE };
+  assert.strictEqual(core.writeStep(mislabelled, "/w/p.params.json", true).act, undefined,
+                     "a schema label never opens the overwrite, even on the params path");
+  assert.strictEqual(core.writeStep(mislabelled, "/w/p.params.json", true).problem.reason,
+                     "overwrite-not-params");
+  assert.strictEqual(core.writeStep(mislabelled, "/w/other.params.json", true).problem.reason,
+                     "overwrite-not-params");
+  // AND THE ROW THE S4 TABLE NEVER HAD, which is the review's MEASURED hole:
+  // {what: PARAMS, path: <not the params file>} with the permission. Before
+  // the fix every one of these OVERWROTE (the schema file, the .gitignore,
+  // a path outside the workspace), whether paramsPath was known or not.
+  for (const pp of ["/w/p.params.json", undefined, "", null]) {
+    for (const target of ["/w/.ermine/preview/m/report.schema.json", "/w/.ermine/preview/.gitignore",
+                          "/etc/passwd"]) {
+      const labelled = { what: core.WRITE_PARAMS, path: target, text: "x",
+                         mode: core.WRITE_EXPLICIT_OVERWRITE };
+      const step = core.writeStep(labelled, pp, true);
+      assert.strictEqual(step.act, undefined, target + " with paramsPath " + JSON.stringify(pp));
+      assert.strictEqual(step.problem.reason, "overwrite-not-params",
+                         target + " with paramsPath " + JSON.stringify(pp));
+    }
+  }
+  // With no paramsPath at all even the right label on the right-looking
+  // path is refused: there is nothing to compare it with.
+  assert.strictEqual(core.writeStep(params, undefined, true).problem.reason, "overwrite-not-params");
+});
+
+test("S4 U3: M-2's rules are UNCHANGED by the new mode", () => {
+  // Every row of the S3 table still answers what it answered, with and
+  // without the new permission -- the door S4 opened is the only one.
+  const rows = [
+    [{ what: core.WRITE_GITIGNORE, path: "/w/.gitignore", mode: core.WRITE_IF_ABSENT },
+     core.WRITE_IF_ABSENT, null],
+    [{ what: core.WRITE_SCHEMA, path: "/w/s.schema.json", mode: core.WRITE_IF_DIFFERENT },
+     core.WRITE_IF_DIFFERENT, null],
+    [{ what: core.WRITE_PARAMS, path: "/w/p.params.json", mode: core.WRITE_IF_ABSENT },
+     core.WRITE_IF_ABSENT, null],
+    [{ what: core.WRITE_PARAMS, path: "/w/p.params.json", mode: core.WRITE_IF_DIFFERENT },
+     undefined, "params-not-creatable"],
+    [{ what: core.WRITE_SCHEMA, path: "/w/p.params.json", mode: core.WRITE_IF_DIFFERENT },
+     undefined, "params-not-creatable"],
+    [{ what: core.WRITE_SCHEMA, path: "/w/s.schema.json", mode: "ifabsent" },
+     undefined, "unknown-write-mode"],
+    [{ what: core.WRITE_PARAMS, path: "/w/p.params.json", mode: "ifabsent" },
+     undefined, "params-not-creatable"],
+    [{ path: "" }, undefined, "bad-write-entry"],
+    [null, undefined, "bad-write-entry"],
+  ];
+  for (const allow of [undefined, true]) {
+    for (const [file, act, reason] of rows) {
+      const step = core.writeStep(file, "/w/p.params.json", allow);
+      assert.strictEqual(step.act, act, JSON.stringify(file) + " allow=" + allow);
+      assert.strictEqual(step.problem ? step.problem.reason : null, reason,
+                         JSON.stringify(file) + " allow=" + allow);
+    }
+  }
+});
+
+test("S4 U3: the command's plan is the first pick's plan with ONE mode moved", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  const automatic = core.paramsWritePlan(paths, SALES_SCHEMA, TODAY);
+  const replacing = core.skeletonCommandPlan(paths, SALES_SCHEMA, TODAY, true);
+  const creating = core.skeletonCommandPlan(paths, SALES_SCHEMA, TODAY, false);
+
+  // BYTE-IDENTICAL apart from the params entry's mode -- two skeletons that
+  // could differ is two checkouts that disagree about the same report.
+  assert.deepStrictEqual(replacing.skeleton, automatic.skeleton);
+  assert.deepStrictEqual(replacing.files.map((f) => [f.what, f.path, f.text]),
+                         automatic.files.map((f) => [f.what, f.path, f.text]));
+  assert.deepStrictEqual(automatic.files.map((f) => f.mode),
+                         [core.WRITE_IF_ABSENT, core.WRITE_IF_DIFFERENT, core.WRITE_IF_ABSENT]);
+  assert.deepStrictEqual(replacing.files.map((f) => f.mode),
+                         [core.WRITE_IF_ABSENT, core.WRITE_IF_DIFFERENT, core.WRITE_EXPLICIT_OVERWRITE]);
+  assert.deepStrictEqual(creating.files.map((f) => f.mode), automatic.files.map((f) => f.mode));
+
+  // `replace` IS A STRICT `true`, the same discipline `schemaOrder`'s
+  // `fileMissing` has: an "I do not know" must not read as a confirmation.
+  for (const loose of [undefined, null, 0, 1, "true", "yes", {}, []]) {
+    assert.strictEqual(core.skeletonCommandPlan(paths, SALES_SCHEMA, TODAY, loose).files[2].mode,
+                       core.WRITE_IF_ABSENT, JSON.stringify(loose));
+  }
+  // And its refusals are the plan's own, unchanged.
+  assert.strictEqual(core.skeletonCommandPlan({ problem: { reason: "x" } }, SALES_SCHEMA, TODAY, true)
+                       .problem.reason, "no-params-path");
+  assert.strictEqual(core.skeletonCommandPlan(paths, "not a schema", TODAY, true).problem.reason,
+                     "not-a-schema");
+});
+
+// ------------------------------------------------ U3: may the command run?
+
+test("S4 U3: whether the command may run at all, one decision", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  const ok = core.skeletonCommandVerdict(SALES_PICK, paths, true);
+  assert.strictEqual(ok.run, true);
+  assert.strictEqual(ok.reason, null);
+
+  const noPick = core.skeletonCommandVerdict(undefined, paths, true);
+  assert.strictEqual(noPick.run, false);
+  assert.strictEqual(noPick.reason, "no-pick");
+  assert.match(noPick.message, /Ermine: Preview Report/);
+
+  for (const has of [false, undefined, null, "yes"]) {
+    const noClient = core.skeletonCommandVerdict(SALES_PICK, paths, has);
+    assert.strictEqual(noClient.run, false, JSON.stringify(has));
+    assert.strictEqual(noClient.reason, "no-client", JSON.stringify(has));
+  }
+  assert.strictEqual(core.skeletonCommandVerdict(SALES_PICK, undefined, true).reason, "no-params-path");
+  assert.strictEqual(core.skeletonCommandVerdict(SALES_PICK, {}, true).reason, "no-params-path");
+});
+
+test("S4 item 4: a pick with NO MODULE and a NON-IDENTIFIER binding are refused BY NAME everywhere", () => {
+  // The two edges the S4 row names. Each must (a) have a named reason and a
+  // sentence, (b) be said as a log line, (c) write nothing, and (d) be
+  // unreachable for the orphan machinery.
+  const rows = [
+    [core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "report", null, ["/w/doc"]), "no-module"],
+    [core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "<+>", "Sales", ["/w/doc"]), "unsafe-binding"],
+    [core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "report", "Not A Module", ["/w/doc"]),
+     "unsafe-module"],
+    [core.makePick("file:///w/doc/Sales.e", "/w/doc/Sales.e", "NUL", "Sales", ["/w/doc"]), "reserved-name"],
+  ];
+  for (const [pick, reason] of rows) {
+    const paths = core.paramsPaths(pick, "/w", "posix");
+    assert.strictEqual(paths.problem.reason, reason);
+    assert.ok(paths.problem.message.length > 40, reason + " must have a sentence, not just a reason");
+    assert.match(paths.problem.message, /empty parameters/, reason);
+
+    // (b) the NAMED LOG LINE: `prepareParams` carries the problem's own
+    // reason and sentence through the builder both sides call, and the
+    // notice key is per (pick, reason) so it is said once.
+    const prepared = core.preparedParams(paths, { kind: core.PREPARED_PATH_PROBLEM });
+    assert.strictEqual(prepared.notice.reason, reason);
+    assert.strictEqual(prepared.notice.line, paths.problem.message);
+    assert.deepStrictEqual(prepared.params, {}, "and it still renders, with the inline {}");
+    assert.strictEqual(prepared.paths, paths, "M-1: `paths` is ALWAYS carried");
+    assert.notStrictEqual(core.paramsNoticeKey(pick, reason), core.paramsNoticeKey(pick, "other"));
+
+    // (c) NOTHING IS WRITTEN and no schema is asked for.
+    const order = core.schemaOrder(paths, true);
+    assert.strictEqual(order.first, "render", reason);
+    assert.strictEqual(order.write, false, reason);
+    assert.strictEqual(core.paramsWritePlan(paths, SALES_SCHEMA, TODAY).problem.reason, "no-params-path");
+    assert.strictEqual(core.skeletonCommandPlan(paths, SALES_SCHEMA, TODAY, true).problem.reason,
+                       "no-params-path");
+
+    // (d) THE COMMAND refuses with the SAME named reason and sentence, so
+    // the two paths cannot disagree about why there is no params file.
+    const verdict = core.skeletonCommandVerdict(pick, paths, true);
+    assert.strictEqual(verdict.run, false, reason);
+    assert.strictEqual(verdict.reason, reason);
+    assert.strictEqual(verdict.message, paths.problem.message);
+  }
+});
+
+// ------------------------------------------------------------ U3: the modal
+
+test("S4 U3: the confirmation NAMES the file and only one word consents", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  const q = core.skeletonConfirmation(paths);
+  assert.ok(q.message.indexOf(paths.paramsPath) > 0, "U3: it must name the file");
+  assert.match(q.message, /REPLACED/);
+  assert.match(q.message, /cannot be undone from here; git can/);
+  assert.match(q.message, /schema file beside it is refreshed too/);
+  assert.strictEqual(q.confirm, core.SKELETON_REPLACE);
+
+  // A dismissal, an Escape and every near miss are a DECLINE -- `holdRender`'s
+  // rule, and this one destroys committed source.
+  assert.strictEqual(core.skeletonConfirmed(core.SKELETON_REPLACE), true);
+  for (const choice of [undefined, null, "", "replace", "Replace ", "REPLACE", "Yes", 0, true, {}]) {
+    assert.strictEqual(core.skeletonConfirmed(choice), false, JSON.stringify(choice));
+  }
+});
+
+test("S4 U3: an answer given to the modal stops applying when the report moves", () => {
+  const same = core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report", "Sales", ["/w/doc"]);
+  assert.strictEqual(core.skeletonStillApplies(SALES_PICK, same).apply, true);
+
+  const rows = [
+    ["another binding", core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "other", "Sales", ["/w/doc"])],
+    ["another file", core.makePick("file:///w/doc/Other.e", "/w/doc/Other.e", "report", "Sales", ["/w/doc"])],
+    // THE MODULE IS THE DIRECTORY, and `markKey` does not know about it --
+    // which is why this is `isCurrentSchemaAnswer` and not `mayStillSend`.
+    ["a header edit", core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report", "Sales2", ["/w/doc"])],
+    ["a roots change", core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report", "Sales", ["/w/lib"])],
+    ["a roots REORDER", core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report", "Sales",
+                                      ["/w/lib", "/w/doc"])],
+    ["nothing picked", undefined],
+  ];
+  for (const [what, now] of rows) {
+    const answer = core.skeletonStillApplies(SALES_PICK, now);
+    assert.strictEqual(answer.apply, false, what);
+    assert.match(answer.why, /while the question was on screen, so nothing was written/, what);
+  }
+  // `markKey` alone would have said YES to the header edit -- the gap this
+  // decision exists for, asserted rather than described.
+  assert.strictEqual(core.markKey(SALES_PICK),
+                     core.markKey(core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report", "Sales2",
+                                                ["/w/doc"])));
+});
+
+test("S4 U3: what the command says when it replaced a file", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  const object = core.skeletonReplacedNotice(paths, true, core.paramsRootShape(SALES_SCHEMA));
+  assert.match(object, /^replaced/);
+  assert.ok(object.indexOf(paths.paramsPath) > 0);
+  assert.ok(object.indexOf(paths.schemaPath) > 0, "the schema file is refreshed too");
+  const int = core.skeletonReplacedNotice(paths, false, core.paramsRootShape(WPINT_SCHEMA));
+  assert.match(int, /a single whole number/);
+});
+
+test("S4: the command's result shape is minted once and fails safe", () => {
+  assert.deepStrictEqual(core.skeletonCommandResult({ wrote: true, replaced: true }),
+                         { wrote: true, replaced: true, existed: false, abandoned: false, problem: null });
+  assert.deepStrictEqual(core.skeletonCommandResult(undefined),
+                         { wrote: false, replaced: false, existed: false, abandoned: false, problem: null });
+  // Every field is a STRICT boolean, so a truthy accident is not a write.
+  assert.strictEqual(core.skeletonCommandResult({ wrote: 1 }).wrote, false);
+});
+
+// ------------------------------------------------------ D6: the orphan notice
+
+/** `vscode.workspace.fs.readDirectory` answers `[name, FileType][]`; the glue
+  * hands THAT to `core.directoryListing` and so does every test below. */
+const DIR_FILE = core.FILE_TYPE_FILE;
+const DIR_DIRECTORY = 2;
+const DIR_LINKED_FILE = core.FILE_TYPE_SYMLINK | core.FILE_TYPE_FILE;
+
+const SALES_PATHS_S4 = core.paramsPaths(SALES_PICK, "/w", "posix");
+const REPORTS = [{ binding: "report", type: "Query -> Node" }, { binding: "summary", type: "() -> Node" }];
+
+test("S4 D6: the directory listing is one shape with three arms, and it fails closed", () => {
+  const read = core.directoryListing({ entries: [["report.params.json", DIR_FILE]] });
+  assert.deepStrictEqual(read, { entries: [{ name: "report.params.json", type: DIR_FILE }],
+                                 missing: false, problem: null });
+  // The `{name, type}` spelling is accepted too, so a model need not fake
+  // tuples if it holds its disk differently.
+  assert.deepStrictEqual(core.directoryListing({ entries: [{ name: "a", type: 1 }] }).entries,
+                         [{ name: "a", type: 1 }]);
+  assert.deepStrictEqual(core.directoryListing({ entries: [] }).entries, []);
+
+  const missing = core.directoryListing({ missing: true });
+  assert.strictEqual(missing.missing, true);
+  assert.deepStrictEqual(missing.entries, []);
+  assert.strictEqual(missing.problem, null);
+
+  const bad = core.directoryListing({ problem: { reason: "unreadable", message: "EACCES" } });
+  assert.strictEqual(bad.problem.reason, "unreadable");
+  assert.strictEqual(bad.entries, null);
+
+  // FAIL CLOSED: anything else is a problem, not an empty directory --
+  // "we could not read it" is not "there is nothing stale", which is the
+  // same distinction `statType`'s third answer exists for (D-2).
+  for (const over of [undefined, null, {}, { entries: "nope" }, { entries: 7 }, "x"]) {
+    assert.strictEqual(core.directoryListing(over).problem.reason, "bad-listing", JSON.stringify(over));
+  }
+  // Every key is ALWAYS present, so `if (listing.problem)` cannot read
+  // `undefined` off a shape that forgot to declare itself (D-1's class).
+  for (const over of [{ entries: [] }, { missing: true }, { problem: { reason: "x", message: "y" } }, {}]) {
+    const listing = core.directoryListing(over);
+    for (const key of ["entries", "missing", "problem"]) {
+      assert.ok(Object.prototype.hasOwnProperty.call(listing, key), key + " for " + JSON.stringify(over));
+    }
+  }
+});
+
+test("S4 D6: which params files name a binding the server no longer offers", () => {
+  const listing = (entries) => core.directoryListing({ entries });
+  const find = (entries, reports) =>
+    core.orphanParamsFiles(listing(entries), reports, SALES_PATHS_S4, "posix");
+
+  // NONE: an empty directory, and a directory that is not there.
+  assert.deepStrictEqual(find([], REPORTS).orphans, []);
+  assert.deepStrictEqual(
+    core.orphanParamsFiles(core.directoryListing({ missing: true }), REPORTS, SALES_PATHS_S4, "posix"),
+    { orphans: [], problem: null,
+      why: "there is no params directory for this module yet, so nothing can be stale" });
+
+  // MATCHING: every file names a binding that is still offered.
+  assert.deepStrictEqual(find([["report.params.json", DIR_FILE],
+                               ["summary.params.json", DIR_FILE],
+                               ["report.schema.json", DIR_FILE]], REPORTS).orphans, []);
+
+  // ONE STALE -- the D6 case: the binding was renamed and its file lingers.
+  const one = find([["report.params.json", DIR_FILE], ["oldName.params.json", DIR_FILE]], REPORTS);
+  assert.deepStrictEqual(one.orphans, [{ binding: "oldName", fileName: "oldName.params.json",
+                                         path: "/w/.ermine/preview/Sales/oldName.params.json" }]);
+  assert.strictEqual(one.problem, null);
+
+  // SEVERAL, in the order the directory gave them.
+  assert.deepStrictEqual(
+    find([["b.params.json", DIR_FILE], ["a.params.json", DIR_FILE]], REPORTS).orphans.map((o) => o.binding),
+    ["b", "a"]);
+
+  // A STALE MODULE DIRECTORY, and everything else that is not a plain FILE.
+  // `Sales.params.json` as a DIRECTORY, and a SYMLINK, are both left alone:
+  // this extension never touches either, and calling one stale is advice to
+  // delete something we did not write.
+  assert.deepStrictEqual(find([["OldModule", DIR_DIRECTORY],
+                               ["weird.params.json", DIR_DIRECTORY],
+                               ["linked.params.json", DIR_LINKED_FILE],
+                               ["typeless.params.json", null]], REPORTS).orphans, []);
+
+  // NOT ONE OF OURS: a name we could never have minted, and a file that is
+  // not a params file at all.
+  assert.deepStrictEqual(find([["report.schema.json", DIR_FILE],
+                               [".gitignore", DIR_FILE],
+                               [".params.json", DIR_FILE],
+                               ["params.json", DIR_FILE],
+                               ["not an identifier.params.json", DIR_FILE],
+                               ["../escape.params.json", DIR_FILE],
+                               ["x".repeat(200) + ".params.json", DIR_FILE]], REPORTS).orphans, []);
+
+  // AN UNREADABLE DIRECTORY: a problem, and NOTHING is called stale.
+  const unreadable = core.orphanParamsFiles(
+    core.directoryListing({ problem: { reason: "unreadable", message: "EACCES: permission denied" } }),
+    REPORTS, SALES_PATHS_S4, "posix");
+  assert.deepStrictEqual(unreadable.orphans, []);
+  assert.strictEqual(unreadable.problem.reason, "unreadable");
+
+  // AND THE THREE FAIL-CLOSED ARMS, each of which would otherwise call every
+  // file in the directory stale at the worst possible moment.
+  const stale = [["oldName.params.json", DIR_FILE]];
+  for (const reports of [undefined, null, "reports", 7, {}]) {
+    const answer = find(stale, reports);
+    assert.deepStrictEqual(answer.orphans, [], JSON.stringify(reports));
+    assert.match(answer.why, /did not list this file's reports/, JSON.stringify(reports));
+  }
+  const empty = find(stale, []);
+  assert.deepStrictEqual(empty.orphans, []);
+  assert.match(empty.why, /offered no report-typed binding at all/);
+  assert.match(empty.why, /does not compile right now/);
+
+  // A `reports` entry with no binding does not hide anything and does not throw.
+  assert.deepStrictEqual(find(stale, [{ type: "x" }, null, { binding: "report" }]).orphans.map((o) => o.binding),
+                         ["oldName"]);
+  // A binding called `__proto__` is an ORDINARY key here (I-1's lesson).
+  assert.deepStrictEqual(find([["__proto__.params.json", DIR_FILE]],
+                              [{ binding: "__proto__" }]).orphans, [],
+                         "a __proto__ binding that IS offered must not read as an orphan");
+  assert.deepStrictEqual(find([["toString.params.json", DIR_FILE]], REPORTS).orphans.map((o) => o.binding),
+                         ["toString"],
+                         "and a prototype method name that is NOT offered must not read as offered");
+
+  // A listing that is not a listing at all.
+  assert.strictEqual(core.orphanParamsFiles(undefined, REPORTS, SALES_PATHS_S4).problem.reason, "bad-listing");
+  assert.strictEqual(core.orphanParamsFiles({ entries: "no", missing: false, problem: null }, REPORTS,
+                                            SALES_PATHS_S4).problem.reason, "bad-listing");
+});
+
+test("S4 D6: win32 orphan paths are joined the win32 way", () => {
+  const winPick = core.makePick("file:///C:/w/doc/Sales.e", "C:\\w\\doc\\Sales.e", "report", "Sales",
+                                ["C:\\w\\doc"]);
+  const winPaths = core.paramsPaths(winPick, "C:\\w", "win32");
+  const found = core.orphanParamsFiles(core.directoryListing({ entries: [["old.params.json", DIR_FILE]] }),
+                                       REPORTS, winPaths, "win32");
+  assert.strictEqual(found.orphans[0].path, "C:\\w\\.ermine\\preview\\Sales\\old.params.json");
+});
+
+test("S4 D6: ONE notice per (module, binding) per session, and what it says", () => {
+  const other = core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "summary", "Sales", ["/w/doc"]);
+  // THE SAME stale file is found again from every binding in the module, so
+  // the key is the MODULE's and not the pick's -- a per-pick key would be a
+  // notification per pick for the rest of the session.
+  assert.strictEqual(core.orphanNoticeKey(SALES_PICK, "old"), core.orphanNoticeKey(other, "old"));
+  assert.notStrictEqual(core.orphanNoticeKey(SALES_PICK, "old"), core.orphanNoticeKey(SALES_PICK, "older"));
+  const elsewhere = core.makePick("file:///w/doc/Other.e", "/w/doc/Other.e", "report", "Other", ["/w/doc"]);
+  assert.notStrictEqual(core.orphanNoticeKey(SALES_PICK, "old"), core.orphanNoticeKey(elsewhere, "old"));
+  // It cannot collide with S2's or S3's notice keys for the same pick.
+  assert.notStrictEqual(core.orphanNoticeKey(SALES_PICK, "old"), core.paramsNoticeKey(SALES_PICK, "old"));
+  assert.notStrictEqual(core.orphanNoticeKey(SALES_PICK, "old"), core.schemaNoticeKey(SALES_PICK, "old"));
+
+  const text = core.orphanNoticeText(
+    { binding: "oldName", fileName: "oldName.params.json",
+      path: "/w/.ermine/preview/Sales/oldName.params.json" }, SALES_PICK);
+  assert.ok(text.indexOf("/w/.ermine/preview/Sales/oldName.params.json") >= 0, "it names the FILE");
+  assert.match(text, /no longer offers a report called "oldName"/);
+  // Nit 1 of the S4 review: a binding made PRIVATE looks exactly like a
+  // deleted one to `ermine/preview/reports`, so the sentence says so.
+  assert.match(text, /renamed or removed, or the module has made it private/);
+  assert.match(text, /the preview will not delete it/, "D6: nothing is ever deleted");
+  assert.match(text, /delete it yourself/);
+  assert.ok(text.indexOf(core.ORPHAN_BUTTON) > 0, "it says what the button does");
+  assert.match(text, /the report picked now/, "and that the button is about the CURRENT pick");
+
+  assert.match(core.orphanListingNotice({ reason: "unreadable", message: "EACCES" }, "/w/x"),
+               /could not list \/w\/x \(EACCES\), so left-over params files under it were not looked for/);
+  assert.match(core.orphanListingNotice(null, "/w/x"), /the editor did not say why/);
+});
+
+// ------------------------- the async model of U3's command and D6's scan
+//
+// `firstPickModel` with the COMMAND and the ORPHAN SCAN on it, statement for
+// statement from `extension.js`, calling the SAME pure decisions and the SAME
+// builders. What is modelled is the ORDER and the AWAITS, and this stage adds
+// the widest await the extension has: a MODAL, which the user can leave on
+// screen for minutes while the pick changes, the server restarts and renders
+// come and go.
+//
+// THE MUTANTS, each an option so that each is run against the SAME
+// interleavings:
+//   `mutantNoConfirm`       the modal is never shown;
+//   `mutantLooseConfirm`    anything but `undefined` counts as consent;
+//   `mutantNoStillApplies`  the answer is applied to whatever is picked now;
+//   `mutantNoPermission`    the write loop is called WITHOUT the permission;
+//   `mutantCommandAutoTrigger` the command consults with an AUTOMATIC trigger
+//                           (the laundering question, from both ends);
+//   `mutantOrphanDeletes`   the scan deletes what it finds (D6's one rule);
+//   `mutantClearMarkEarly`  the wedge mark is cleared BEFORE the work, as the
+//                           first cut did (the S4 review's M-3);
+//   `mutantNoReread`        the replace is written without re-reading the
+//                           file after the schema answer (the TOCTOU).
+
+function commandModel(opts) {
+  const o = opts || {};
+  const m = firstPickModel(o);
+  m.modals = [];              // one deferred per modal shown
+  m.messages = [];            // showWarningMessage, non-modal
+  m.commandLog = [];
+  m.orphanNotices = new Set();
+  m.orphanShown = [];         // {text, button, settle}
+  m.executed = [];            // vscode.commands.executeCommand
+  m.deleted = [];             // must stay EMPTY for ever (D6)
+  m.revealed = [];
+
+  const log = (line) => m.commandLog.push(line);
+  const paramsPathsFor = (pick) => core.paramsPaths(pick, "/w", "posix");
+
+  /** `writeSkeletonNow(attempt, paths, replace, existing)`. */
+  m.writeSkeletonNow = async function (attempt, paths, replace, existing) {
+    const say = (reason, message) => {
+      log(message);
+      m.messages.push(message);
+      return core.skeletonCommandResult({ problem: { reason, message } });
+    };
+    const outcome = await m.requestSchema(attempt);
+    if (outcome.abandoned) {
+      log("command abandoned (" + outcome.abandoned.reason + ")");
+      return core.skeletonCommandResult({ abandoned: true });
+    }
+    if (outcome.problem) return say(outcome.problem.reason, outcome.problem.message);
+    const plan = core.skeletonCommandPlan(paths, outcome.schema, m.today, replace === true);
+    if (plan.problem) return say(plan.problem.reason, plan.problem.message);
+    if (!o.mutantNoSymlinkCheck) {
+      const seen = [];
+      for (const target of core.writeTargetPaths(
+             paths, [paths.gitignorePath, paths.schemaPath, paths.paramsPath], "posix")) {
+        const type = m.disk.type(target);
+        if (type !== null) seen.push({ path: target, type });
+      }
+      const linked = core.writeTargetProblem(seen);
+      if (linked) return say(linked.reason, linked.message);
+    }
+    // THE TOCTOU DECISION (2026-09-23): re-read, and refuse a replace over
+    // bytes the modal was not about. `mutantNoReread` is the first cut.
+    const now = replace === true ? await Promise.resolve(m.disk.read(paths.paramsPath)) : null;
+    const bytes = o.mutantNoReread
+      ? { apply: true }
+      : core.skeletonBytesStillApply(replace, existing, now, paths.paramsPath);
+    if (!bytes.apply) return say(bytes.reason, bytes.message);
+    let applied;
+    try {
+      m.disk.mkdir(paths.dir);
+      // **THE PERMISSION, AND IT IS THE CALLER'S.** The mutant drops it,
+      // which must make the whole command a no-op rather than a quiet
+      // create.
+      applied = m.applyWritePlan(plan.files, paths.paramsPath, o.mutantNoPermission ? undefined : true);
+    } catch (err) {
+      return say("write-failed", String(err && err.message ? err.message : err));
+    }
+    for (const problem of applied.problems) log(problem.message);
+    if (applied.problems.length && applied.wrote.indexOf(core.WRITE_PARAMS) < 0) {
+      m.messages.push(applied.problems[0].message);
+    }
+    if (applied.existed) {
+      log("a params file appeared while the parameter schema was being worked out");
+      return core.skeletonCommandResult({ existed: true });
+    }
+    if (applied.wrote.indexOf(core.WRITE_PARAMS) < 0) return core.skeletonCommandResult({});
+    log(core.skeletonWrittenNotice(paths, plan, replace === true));
+    m.openParamsDocument(paths.paramsPath, true);
+    return core.skeletonCommandResult({ wrote: true, replaced: replace === true });
+  };
+
+  /** `writeParamsSkeletonCommand(context)`. */
+  m.writeParamsSkeleton = async function () {
+    const paths = paramsPathsFor(m.picked);
+    const verdict = core.skeletonCommandVerdict(m.picked, paths, m.hasClient);
+    if (!verdict.run) {
+      log(verdict.message);
+      m.messages.push(verdict.message);
+      return core.skeletonCommandResult({ problem: { reason: verdict.reason, message: verdict.message } });
+    }
+    const askedPick = m.picked;
+    const existing = await Promise.resolve(m.disk.read(paths.paramsPath));
+    if (existing !== null && !o.mutantNoConfirm) {
+      const question = core.skeletonConfirmation(paths);
+      const d = deferred();
+      m.modals.push({ message: question.message, confirm: question.confirm, settle: d.settle });
+      const choice = await d.promise;
+      const consented = o.mutantLooseConfirm ? choice !== undefined : core.skeletonConfirmed(choice);
+      if (!consented) {
+        log("declined; " + paths.paramsPath + " is untouched");
+        return core.skeletonCommandResult({ abandoned: true });
+      }
+    }
+    const still = o.mutantNoStillApplies ? { apply: true } : core.skeletonStillApplies(askedPick, m.picked);
+    if (!still.apply) {
+      log("abandoned — " + still.why);
+      return core.skeletonCommandResult({ abandoned: true });
+    }
+    // WP-22 / M-3: the mark is NOT cleared here; `mutantClearMarkEarly` is
+    // the first cut, which spent it before the work on every failing path.
+    if (o.mutantClearMarkEarly) m.mark = core.guardReduce(m.mark, { type: "render", explicit: true }).mark;
+    const trigger = o.mutantCommandAutoTrigger ? core.TRIGGER_PARAMS_FILE : core.TRIGGER_EXPLICIT;
+    const permitted = core.mayAutoRender(m.mark, m.picked, trigger);
+    if (!permitted.render) {
+      log("HELD (" + permitted.why + ")");
+      m.held.push({ generation: m.generation, trigger, mark: m.mark, why: permitted.why });
+      return core.skeletonCommandResult({ abandoned: true });
+    }
+    const attempt = core.renderAttempt(m.generation, m.picked, m.clientEpoch, m.stopCount, m.stuck.highWater);
+    const written = await m.writeSkeletonNow(attempt, paths, existing !== null, existing);
+    if (written.wrote) {
+      // M-3: spent HERE, beside the render, and on no failing path.
+      m.mark = core.guardReduce(m.mark, { type: "render", explicit: true }).mark;
+      m.revealNextRender = true;
+      m.revealed.push(true);
+      m.scheduled.push({ reason: "the params skeleton was written by the Write Params Skeleton command",
+                         trigger: core.TRIGGER_EXPLICIT });
+    }
+    return written;
+  };
+
+  /** `noticeOrphanParamsFiles(pick, listed)`. */
+  m.noticeOrphans = async function (pick, listed) {
+    if (!pick || !pick.module) return;
+    const paths = paramsPathsFor(pick);
+    if (paths.problem) return;
+    let listing;
+    try {
+      const entries = await Promise.resolve(m.disk.readDirectory(paths.dir));
+      listing = core.directoryListing({ entries });
+    } catch (err) {
+      listing = core.meansFileMissing(err)
+        ? core.directoryListing({ missing: true })
+        : core.directoryListing({ problem: { reason: "unreadable",
+                                             message: err && err.message ? String(err.message) : String(err) } });
+    }
+    const found = core.orphanParamsFiles(listing, listed && listed.reports, paths, "posix");
+    // Nit 3 of the S4 review: the SAME plan the glue calls, so what is said
+    // (including the unreadable-directory line R24 silenced) is modelled.
+    const plan = core.orphanNoticePlan(found, pick, m.orphanNotices, paths.dir);
+    if (plan.listingLine !== null) log(plan.listingLine);
+    for (const { orphan, text } of plan.orphans) {
+      log(text);
+      if (o.mutantOrphanDeletes) m.deleted.push(orphan.path);       // the one thing D6 forbids
+      const d = deferred();
+      m.orphanShown.push({ text, button: core.ORPHAN_BUTTON, settle: d.settle, path: orphan.path });
+      d.promise.then((choice) => {
+        if (choice !== core.ORPHAN_BUTTON) return;
+        m.executed.push(core.SKELETON_COMMAND);
+      });
+    }
+  };
+
+  m.answerModal = (i, choice) => m.modals[i].settle(choice);
+  m.clickOrphan = (i, choice) => m.orphanShown[i].settle(choice);
+  return m;
+}
+
+const COMMITTED = '{"fromDay": "2026-01-05", "toDay": "2026-03-17", "orderBy": "ByAmount"}';
+const PARAMS_PATH = "/w/.ermine/preview/Sales/report.params.json";
+const SCHEMA_PATH = "/w/.ermine/preview/Sales/report.schema.json";
+
+test("S4 ASYNC: the ordinary command — confirm, schema, replace, refresh, open, ONE render", async () => {
+  const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED]] });
+  const m = commandModel({ disk });
+  const run = m.writeParamsSkeleton();
+  await flush();
+  assert.strictEqual(m.modals.length, 1, "a file is there, so it ASKS");
+  assert.ok(m.modals[0].message.indexOf(PARAMS_PATH) > 0, "U3: the modal names the file");
+  assert.strictEqual(m.schemas.length, 0, "and it asks the user BEFORE it asks the server");
+  assert.strictEqual(disk.read(PARAMS_PATH), COMMITTED, "nothing has been touched yet");
+
+  m.answerModal(0, core.SKELETON_REPLACE);
+  await flush();
+  assert.strictEqual(m.schemas.length, 1, "one ermine/schema, and only one");
+  m.answerSchema(0, SALES_SCHEMA);
+  const result = await run;
+
+  assert.strictEqual(result.wrote, true);
+  assert.strictEqual(result.replaced, true);
+  assert.strictEqual(disk.read(PARAMS_PATH),
+                     core.schemaFileText(core.paramsWritePlan(SALES_PATHS_S4, SALES_SCHEMA, m.today).skeleton),
+                     "the file holds the SAME skeleton a first pick would have written");
+  assert.notStrictEqual(disk.read(PARAMS_PATH), COMMITTED);
+  assert.ok(disk.read(SCHEMA_PATH) !== null, "the schema file is refreshed too");
+  assert.ok(disk.read("/w/.ermine/preview/.gitignore") !== null, "and the generated .gitignore is made");
+  assert.deepStrictEqual(m.opened, [PARAMS_PATH], "and the document is opened");
+  assert.deepStrictEqual(m.scheduled.map((s) => s.trigger), [core.TRIGGER_EXPLICIT],
+    "ONE render, carrying the command's own EXPLICIT trigger (N-3: consent stays consent)");
+  assert.strictEqual(m.revealNextRender, true, "and it reveals, because the user asked for it");
+  assert.ok(m.commandLog.some((l) => /^replaced/.test(l)), "and it says so");
+});
+
+test("S4 ASYNC: declining leaves the file EXACTLY as it is, and asks the server nothing", async () => {
+  for (const choice of [undefined, "Cancel", "", null, "replace"]) {
+    const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED]] });
+    const m = commandModel({ disk });
+    const run = m.writeParamsSkeleton();
+    await flush();
+    m.answerModal(0, choice);
+    const result = await run;
+    assert.strictEqual(result.abandoned, true, JSON.stringify(choice));
+    assert.strictEqual(result.wrote, false, JSON.stringify(choice));
+    assert.strictEqual(disk.read(PARAMS_PATH), COMMITTED, JSON.stringify(choice));
+    assert.deepStrictEqual(disk.writes, [], JSON.stringify(choice));
+    assert.strictEqual(m.schemas.length, 0, "no schema job is queued for a command nobody confirmed");
+    assert.deepStrictEqual(m.scheduled, []);
+    assert.deepStrictEqual(m.opened, []);
+  }
+});
+
+test("S4 ASYNC: with NO params file it behaves like a FIRST PICK — no modal, a race-safe create", async () => {
+  const m = commandModel({});
+  const run = m.writeParamsSkeleton();
+  await flush();
+  assert.strictEqual(m.modals.length, 0, "nothing can be lost, so nothing is asked");
+  assert.strictEqual(m.schemas.length, 1);
+  m.answerSchema(0, SALES_SCHEMA);
+  const result = await run;
+  assert.strictEqual(result.wrote, true);
+  assert.strictEqual(result.replaced, false, "it CREATED, it did not replace");
+  assert.ok(m.disk.writes.indexOf(PARAMS_PATH) < 0,
+    "and the params file went through the CREATE, not through an overwrite (only the generated " +
+    "schema file is ever written unconditionally on this path)");
+  assert.deepStrictEqual(m.disk.creates, ["/w/.ermine/preview/.gitignore", PARAMS_PATH]);
+  assert.ok(m.disk.read(PARAMS_PATH) !== null);
+  assert.ok(m.commandLog.some((l) => /^wrote/.test(l)), "so it says `wrote`, not `replaced`");
+});
+
+test("S4 ASYNC: a params file that APPEARS while the schema is worked out is left alone", async () => {
+  // The check-then-act race, answered rather than narrowed: with no file the
+  // command takes the `ifAbsent` create, so a `git checkout` landing in the
+  // gap keeps ITS bytes and the user is told to run the command again.
+  const m = commandModel({});
+  const run = m.writeParamsSkeleton();
+  await flush();
+  m.disk.files.set(PARAMS_PATH, COMMITTED);            // somebody else's write
+  m.answerSchema(0, SALES_SCHEMA);
+  const result = await run;
+  assert.strictEqual(result.existed, true);
+  assert.strictEqual(result.wrote, false);
+  assert.strictEqual(m.disk.read(PARAMS_PATH), COMMITTED, "THE RACE: their bytes survive");
+  assert.deepStrictEqual(m.scheduled, [], "and no render is scheduled for a file we did not write");
+  assert.ok(m.commandLog.some((l) => /Run the command again/.test(l) || /appeared/.test(l)));
+});
+
+test("S4 ASYNC: the pick changes while the question is on screen — nothing is written", async () => {
+  const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED]] });
+  const m = commandModel({ disk });
+  const run = m.writeParamsSkeleton();
+  await flush();
+  m.pickAnother("other");                               // the glue's own mutator
+  m.answerModal(0, core.SKELETON_REPLACE);
+  const result = await run;
+  assert.strictEqual(result.abandoned, true);
+  assert.strictEqual(disk.read(PARAMS_PATH), COMMITTED);
+  assert.strictEqual(m.schemas.length, 0, "and no schema job was queued for the report they left");
+  assert.ok(m.commandLog.some((l) => /while the question was on screen/.test(l)));
+});
+
+test("S4 ASYNC: a HEADER EDIT during the question also abandons — markKey would not have seen it", async () => {
+  const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED]] });
+  const m = commandModel({ disk });
+  const run = m.writeParamsSkeleton();
+  await flush();
+  // `module Sales` -> `module Sales2`, which MOVES the directory the file
+  // would be written into and leaves uri and binding alone.
+  m.picked = core.makePick(m.picked.uri, m.picked.fsPath, m.picked.binding, "Sales2", m.picked.roots);
+  m.answerModal(0, core.SKELETON_REPLACE);
+  const result = await run;
+  assert.strictEqual(result.abandoned, true);
+  assert.strictEqual(disk.read(PARAMS_PATH), COMMITTED);
+  assert.strictEqual(disk.read("/w/.ermine/preview/Sales2/report.params.json"), null,
+    "and nothing was written under the NEW module either");
+});
+
+test("S4 ASYNC: a SERVER RESTART during the question is fine; one during the SCHEMA abandons", async () => {
+  // The snapshot is taken AFTER the modal, on purpose: a restart while the
+  // question is on screen simply means the request goes to the server that
+  // is running when the user answers, which is what they asked for.
+  const during = commandModel({ disk: diskModel({ files: [[PARAMS_PATH, COMMITTED]] }) });
+  const runA = during.writeParamsSkeleton();
+  await flush();
+  during.serverRestarted();
+  during.answerModal(0, core.SKELETON_REPLACE);
+  await flush();
+  assert.strictEqual(during.schemas.length, 1, "the fresh server is asked");
+  during.answerSchema(0, SALES_SCHEMA);
+  assert.strictEqual((await runA).wrote, true);
+
+  // A restart DURING the schema request is D7's own case and abandons.
+  const after = commandModel({ disk: diskModel({ files: [[PARAMS_PATH, COMMITTED]] }) });
+  const runB = after.writeParamsSkeleton();
+  await flush();
+  after.answerModal(0, core.SKELETON_REPLACE);
+  await flush();
+  after.serverRestarted();
+  after.answerSchema(0, SALES_SCHEMA);
+  const result = await runB;
+  assert.strictEqual(result.abandoned, true);
+  assert.strictEqual(after.disk.read(PARAMS_PATH), COMMITTED, "the committed file survives");
+});
+
+test("S4 ASYNC: every way the schema can fail says so and writes NOTHING", async () => {
+  const rows = [
+    ["an {error}", (m) => m.answerSchema(0, { error: "Sales.e:12: not in scope" })],
+    ["Q8's stuck refusal", (m) => m.answerSchema(0, { error: "the preview is stuck", stuck: true })],
+    ["an answer that is not an object", (m) => m.answerSchema(0, "nope")],
+    ["a transport rejection", (m) => m.rejectSchema(0, new Error("socket closed"))],
+  ];
+  for (const [what, settle] of rows) {
+    const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED]] });
+    const m = commandModel({ disk });
+    const run = m.writeParamsSkeleton();
+    await flush();
+    m.answerModal(0, core.SKELETON_REPLACE);
+    await flush();
+    settle(m);
+    const result = await run;
+    assert.strictEqual(result.wrote, false, what);
+    assert.ok(result.problem, what);
+    assert.strictEqual(disk.read(PARAMS_PATH), COMMITTED, what);
+    assert.deepStrictEqual(disk.writes, [], what);
+    // A COMMAND ANSWERS EVERY TIME. `schemaNoticeOnce` dedupes the automatic
+    // path, where a line per render would be a storm; a command the user ran
+    // twice must not be silent the second time.
+    assert.strictEqual(m.messages.length, 1, what);
+  }
+});
+
+test("S4 ASYNC: a read-only workspace refuses by name and leaves the file alone", async () => {
+  const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED]], readOnly: true });
+  const m = commandModel({ disk });
+  const run = m.writeParamsSkeleton();
+  await flush();
+  m.answerModal(0, core.SKELETON_REPLACE);
+  await flush();
+  m.answerSchema(0, SALES_SCHEMA);
+  const result = await run;
+  assert.strictEqual(result.wrote, false);
+  assert.strictEqual(result.problem.reason, "write-failed");
+  assert.strictEqual(disk.read(PARAMS_PATH), COMMITTED);
+  assert.deepStrictEqual(m.scheduled, []);
+});
+
+test("S4 ASYNC: a SYMLINK anywhere on the way refuses the command too (M-3)", async () => {
+  const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED], ["/outside/precious", "PRECIOUS"]] });
+  disk.symlink(PARAMS_PATH, "/outside/precious");
+  const m = commandModel({ disk });
+  const run = m.writeParamsSkeleton();
+  await flush();
+  m.answerModal(0, core.SKELETON_REPLACE);
+  await flush();
+  m.answerSchema(0, SALES_SCHEMA);
+  const result = await run;
+  assert.strictEqual(result.wrote, false);
+  assert.strictEqual(result.problem.reason, "symlink");
+  assert.strictEqual(disk.read("/outside/precious"), "PRECIOUS");
+});
+
+test("S4 ASYNC: the command runs while HELD, and CLEARS the mark — it is consent", async () => {
+  const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED]] });
+  const m = commandModel({ disk });
+  // The report wedged the preview and nothing has changed since.
+  m.mark = core.guardReduce(null, { type: "answer", stuck: true, applies: true, pick: m.picked,
+                                    params: {}, at: 1000 }).mark;
+  assert.ok(core.markMatches(m.mark, m.picked), "it really is held");
+  assert.strictEqual(core.mayAutoRender(m.mark, m.picked, core.TRIGGER_PARAMS_FILE).render, false,
+    "and an automatic save of its params file would be refused");
+
+  const run = m.writeParamsSkeleton();
+  await flush();
+  m.answerModal(0, core.SKELETON_REPLACE);
+  await flush();
+  m.answerSchema(0, SALES_SCHEMA);
+  const result = await run;
+  assert.strictEqual(result.wrote, true, "an explicit command is never refused");
+  assert.strictEqual(m.mark, null, "and it CLEARS the mark, exactly as the render command does");
+  assert.deepStrictEqual(m.held, []);
+  assert.deepStrictEqual(m.scheduled.map((s) => s.trigger), [core.TRIGGER_EXPLICIT]);
+});
+
+test("S4 ASYNC: the OVERWRITE mode is reachable ONLY with the caller's permission", async () => {
+  // **THE PROPERTY THIS STAGE TURNS ON.** The mode alone must write nothing:
+  // drop the permission at the one call site and the command becomes a
+  // no-op that says why, rather than a quiet create or a quiet overwrite.
+  const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED]] });
+  const m = commandModel({ disk, mutantNoPermission: true });
+  const run = m.writeParamsSkeleton();
+  await flush();
+  m.answerModal(0, core.SKELETON_REPLACE);
+  await flush();
+  m.answerSchema(0, SALES_SCHEMA);
+  const result = await run;
+  assert.strictEqual(result.wrote, false, "the mutant writes NOTHING");
+  assert.strictEqual(disk.read(PARAMS_PATH), COMMITTED, "and the committed source is untouched");
+  assert.ok(m.messages.some((x) => /may not replace anything/.test(x)),
+    "and it is REFUSED BY NAME rather than silently skipped");
+
+  // AND THE SAME PLAN, HANDED TO THE AUTOMATIC PATH, WRITES NOTHING EITHER.
+  // `firstPickSchemaAndWrite` calls `applyWritePlan(plan.files, paramsPath)`
+  // with two arguments, so the third is `undefined` for it, for ever.
+  const auto = firstPickModel({ disk: diskModel({ files: [[PARAMS_PATH, COMMITTED]] }) });
+  const leaked = core.skeletonCommandPlan(SALES_PATHS_S4, SALES_SCHEMA, TODAY, true);
+  const applied = auto.applyWritePlan(leaked.files, SALES_PATHS_S4.paramsPath);
+  assert.ok(applied.wrote.indexOf(core.WRITE_PARAMS) < 0);
+  assert.strictEqual(applied.problems[0].reason, "overwrite-not-permitted");
+  assert.strictEqual(auto.disk.read(PARAMS_PATH), COMMITTED);
+});
+
+test("S4 ASYNC: the command cannot LAUNDER an automatic render", async () => {
+  // The worry: the command clears the wedge mark, so anything that can make
+  // the command run can un-hold a report that wedged the server. Two halves.
+  //
+  // (1) THE TRIGGER IS THE COMMAND'S OWN, and if it were ever an automatic
+  //     one the consultation REFUSES it -- the site is not decorative. Since
+  //     the S4 review's M-3 the mark is no longer cleared BEFORE the
+  //     consultation, so this is now observable end to end: held, nothing
+  //     asked of the server, nothing written, the mark intact. (Under the
+  //     first cut the early clear hid the mark from the consultation.)
+  const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED]] });
+  const m = commandModel({ disk, mutantCommandAutoTrigger: true });
+  const wedged = core.guardReduce(null, { type: "answer", stuck: true, applies: true, pick: m.picked,
+                                          params: {}, at: 1000 }).mark;
+  m.mark = wedged;
+  const run = m.writeParamsSkeleton();
+  await flush();
+  m.answerModal(0, core.SKELETON_REPLACE);
+  await flush();
+  const held = await run;
+  assert.strictEqual(held.abandoned, true, "an automatic trigger is HELD by the mark");
+  assert.strictEqual(m.schemas.length, 0, "and nothing is asked of the server");
+  assert.strictEqual(disk.read(PARAMS_PATH), COMMITTED, "and nothing is written");
+  assert.strictEqual(m.mark, wedged, "and the hold is intact");
+  // The command's OWN trigger over the same mark: consent, so it runs --
+  // and the mark is spent only because the file WAS written (M-3).
+  const own = commandModel({ disk: diskModel({ files: [[PARAMS_PATH, COMMITTED]] }) });
+  own.mark = core.guardReduce(null, { type: "answer", stuck: true, applies: true, pick: own.picked,
+                                      params: {}, at: 1000 }).mark;
+  const ran = own.writeParamsSkeleton();
+  await flush();
+  own.answerModal(0, core.SKELETON_REPLACE);
+  await flush();
+  own.answerSchema(0, SALES_SCHEMA);
+  assert.strictEqual((await ran).wrote, true);
+  assert.strictEqual(own.mark, null);
+
+  // (2) NOTHING AUTOMATIC REACHES IT. The only two doors are the palette's
+  //     registration and the orphan notification's BUTTON, and the button is
+  //     a click: a notification that is dismissed, ignored or answered with
+  //     anything else runs nothing.
+  const scan = commandModel({ disk: diskModel({ files: [[PARAMS_PATH, COMMITTED],
+                                                        ["/w/.ermine/preview/Sales/old.params.json", "{}"]] }) });
+  await scan.noticeOrphans(scan.picked, { reports: REPORTS });
+  assert.strictEqual(scan.orphanShown.length, 1, "the orphan is noticed");
+  assert.deepStrictEqual(scan.executed, [], "and NOTHING has run");
+  for (const dismissal of [undefined, null, "", "Dismiss", core.SKELETON_REPLACE]) {
+    scan.clickOrphan(0, dismissal);
+    await flush();
+    assert.deepStrictEqual(scan.executed, [], JSON.stringify(dismissal));
+  }
+  const clicked = commandModel({ disk: diskModel({ files: [["/w/.ermine/preview/Sales/old.params.json", "{}"]] }) });
+  await clicked.noticeOrphans(clicked.picked, { reports: REPORTS });
+  clicked.clickOrphan(0, core.ORPHAN_BUTTON);
+  await flush();
+  assert.deepStrictEqual(clicked.executed, [core.SKELETON_COMMAND],
+    "only the button runs it, and it runs it through executeCommand -- the palette's own door");
+});
+
+// ------------------------------------------------- D6: the scan, interleaved
+
+test("S4 ASYNC D6: the listing shapes, end to end through the glue's own order", async () => {
+  // NONE -- there is no params directory yet (the ordinary case).
+  const none = commandModel({});
+  await none.noticeOrphans(none.picked, { reports: REPORTS });
+  assert.deepStrictEqual(none.orphanShown, []);
+  assert.deepStrictEqual(none.commandLog, []);
+
+  // MATCHING -- every file names a binding the server still offers.
+  const matching = commandModel({ disk: diskModel({ files: [
+    [PARAMS_PATH, COMMITTED],
+    ["/w/.ermine/preview/Sales/summary.params.json", "{}"],
+    [SCHEMA_PATH, "{}"]] }) });
+  await matching.noticeOrphans(matching.picked, { reports: REPORTS });
+  assert.deepStrictEqual(matching.orphanShown, []);
+
+  // ONE STALE -- D6 itself.
+  const stale = commandModel({ disk: diskModel({ files: [
+    [PARAMS_PATH, COMMITTED],
+    ["/w/.ermine/preview/Sales/oldName.params.json", "{}"]] }) });
+  await stale.noticeOrphans(stale.picked, { reports: REPORTS });
+  assert.strictEqual(stale.orphanShown.length, 1);
+  assert.ok(stale.orphanShown[0].text.indexOf("oldName.params.json") > 0);
+  assert.deepStrictEqual(stale.deleted, [], "**NOTHING IS EVER DELETED**");
+  assert.ok(stale.disk.read("/w/.ermine/preview/Sales/oldName.params.json") !== null);
+
+  // ONCE PER (MODULE, BINDING) PER SESSION, over three scans and TWO PICKS
+  // in the same module -- which is exactly what a per-pick key would have
+  // turned into a notification per pick.
+  await stale.noticeOrphans(stale.picked, { reports: REPORTS });
+  stale.pickAnother("summary");
+  await stale.noticeOrphans(stale.picked, { reports: REPORTS });
+  assert.strictEqual(stale.orphanShown.length, 1, "still one");
+
+  // A STALE MODULE DIRECTORY -- NOT COVERED, and the test records it as the
+  // known gap rather than pretending. `.ermine/preview/OldModule/` is never
+  // looked inside, because the scan is only ever asked about the CURRENT
+  // pick's module.
+  const moduleGone = commandModel({ disk: diskModel({ files: [
+    [PARAMS_PATH, COMMITTED],
+    ["/w/.ermine/preview/OldModule/report.params.json", "{}"]] }) });
+  await moduleGone.noticeOrphans(moduleGone.picked, { reports: REPORTS });
+  assert.deepStrictEqual(moduleGone.orphanShown, [],
+    "a renamed MODULE is NOT detected: knowing it would cost one ermine/preview/reports — a job " +
+    "that COMPILES a module — per .e file in the workspace. Recorded, not fixed (section 6's S4 block)");
+
+  // AN UNREADABLE DIRECTORY -- said once, and nothing is called stale.
+  const unreadable = commandModel({ disk: diskModel({
+    files: [[PARAMS_PATH, COMMITTED]],
+    readDirThrows: Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" }) }) });
+  await unreadable.noticeOrphans(unreadable.picked, { reports: REPORTS });
+  await unreadable.noticeOrphans(unreadable.picked, { reports: REPORTS });
+  assert.deepStrictEqual(unreadable.orphanShown, []);
+  assert.strictEqual(unreadable.commandLog.length, 1);
+  assert.match(unreadable.commandLog[0], /could not list/);
+});
+
+test("S4 ASYNC D6: the scan never runs for a pick that can have no params file", async () => {
+  // Item 4 again, from the orphan side: no module, an operator binding, a
+  // module name that is not a directory name. None of them may reach a
+  // `readDirectory`, and none may be told anything is stale.
+  for (const pick of [
+    core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report", null, ["/w/doc"]),
+    core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "<+>", "Sales", ["/w/doc"]),
+    core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report", "Not A Module", ["/w/doc"]),
+    undefined,
+  ]) {
+    const m = commandModel({ disk: diskModel({ files: [
+      ["/w/.ermine/preview/Sales/oldName.params.json", "{}"]] }) });
+    await m.noticeOrphans(pick, { reports: REPORTS });
+    assert.deepStrictEqual(m.orphanShown, [], core.pickLabel(pick));
+    assert.deepStrictEqual(m.commandLog, [], core.pickLabel(pick));
+  }
+});
+
+test("S4 ASYNC D6: a server that could not list the file calls NOTHING stale", async () => {
+  for (const listed of [undefined, null, {}, { error: "Sales.e:1: expected `where`" }, { reports: [] }]) {
+    const m = commandModel({ disk: diskModel({ files: [
+      ["/w/.ermine/preview/Sales/oldName.params.json", "{}"]] }) });
+    await m.noticeOrphans(m.picked, listed);
+    assert.deepStrictEqual(m.orphanShown, [], JSON.stringify(listed));
+    assert.deepStrictEqual(m.deleted, [], JSON.stringify(listed));
+  }
+});
+
+// ------------------------------------------------------------ S4 SOURCE PINS
+//
+// The chain that makes "only U3's command overwrites a params file"
+// STRUCTURAL rather than careful is a shape of `extension.js`, and no model
+// in this file can see it: a model is written from the glue, so a model and
+// a glue that drift agree with each other and with nothing else. Each pin
+// says what it is and what it protects.
+
+// ------------------------------------------------ the S4 fix round (2026-09-23)
+
+test("S4 fix (nit 2): on WIN32 the orphan compare folds case; on POSIX it does not", () => {
+  const listing = core.directoryListing({ entries: [
+    ["Report.params.json", DIR_FILE],           // the live file for `report`, on NTFS
+    ["gone.PARAMS.JSON", DIR_FILE],             // a real orphan, spelled loudly
+  ] });
+  const reports = [{ binding: "report" }];
+  const win = core.orphanParamsFiles(listing, reports, { dir: "C:\\w\\.ermine\\preview\\Sales" }, "win32");
+  assert.deepStrictEqual(win.orphans.map((o) => o.binding), ["gone"],
+    "on a case-insensitive file system Report.params.json IS report's file, so it is not an orphan");
+  const posix = core.orphanParamsFiles(listing, reports, { dir: "/w/.ermine/preview/Sales" }, "posix");
+  assert.deepStrictEqual(posix.orphans.map((o) => o.binding), ["Report"],
+    "on POSIX they are different files, and `gone.PARAMS.JSON` is not a name we mint");
+});
+
+test("S4 fix (M-4): ONE open-once decision for the glue and both models", () => {
+  const opened = new Set();
+  assert.strictEqual(core.claimParamsDocument(opened, "/p", undefined), true, "first time: open");
+  assert.strictEqual(core.claimParamsDocument(opened, "/p", undefined), false, "then: once per path");
+  assert.strictEqual(core.claimParamsDocument(opened, "/p", false), false);
+  assert.strictEqual(core.claimParamsDocument(opened, "/p", "true"), false, "only `true` is always");
+  assert.strictEqual(core.claimParamsDocument(opened, "/p", true), true, "U3's command: every time");
+  assert.strictEqual(core.claimParamsDocument(opened, "/q", false), true, "another path is its own");
+  assert.deepStrictEqual([...opened].sort(), ["/p", "/q"]);
+});
+
+test("S4 fix (M-4): the AUTOMATIC first-pick notice says what a non-object root MEANS", async () => {
+  // Through the model, which now hands the PLAN to the same builder the glue
+  // does. Before the fix this model read the generic fallback, so dropping
+  // `plan.shape` was visible to a source pin only (R15).
+  const rows = [
+    [WPINT_SCHEMA, /a single whole number, so the file holds just that number/],
+    [WPUNIT_SCHEMA, /the empty tuple `\(\)`/],
+    [WPJSON_SCHEMA, /any JSON value at all/],
+  ];
+  for (const [schema, sentence] of rows) {
+    const m = firstPickModel();
+    m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+    await flush();
+    m.readMissing(0);
+    await flush();
+    m.answerSchema(0, schema);
+    await flush();
+    const written = m.notices.filter((n) => n.reason === "written");
+    assert.strictEqual(written.length, 1, String(sentence));
+    assert.match(written[0].line, sentence);
+    assert.match(written[0].line, /carries no "\$schema" line/);
+    assert.deepStrictEqual(m.opened, [PARAMS_PATH]);
+  }
+});
+
+test("S4 fix (re-review nit 4): the COMMAND's notice says what a non-object root MEANS", async () => {
+  const disk = diskModel({ files: [[PARAMS_PATH, "0"]] });
+  const m = commandModel({ disk });
+  const run = m.writeParamsSkeleton();
+  await flush();
+  m.answerModal(0, core.SKELETON_REPLACE);
+  await flush();
+  m.answerSchema(0, WPINT_SCHEMA);
+  assert.strictEqual((await run).replaced, true);
+  const line = m.commandLog.filter((l) => /^replaced /.test(l));
+  assert.strictEqual(line.length, 1);
+  assert.match(line[0], /a single whole number, so the file holds just that number/);
+});
+
+test("S4 fix (M-4): the document opens once per path automatically, and EVERY time for the command", async () => {
+  const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED]] });
+  const m = commandModel({ disk });
+  for (let i = 0; i < 2; i++) {
+    const run = m.writeParamsSkeleton();
+    await flush();
+    m.answerModal(i, core.SKELETON_REPLACE);
+    await flush();
+    m.answerSchema(i, SALES_SCHEMA);
+    assert.strictEqual((await run).wrote, true);
+  }
+  assert.deepStrictEqual(m.opened, [PARAMS_PATH, PARAMS_PATH],
+    "the user who asked twice is shown the file twice (R14: dropping `always` showed nothing)");
+  // And the automatic open, which is once per path: the command has already
+  // claimed it, so an automatic open of the same path shows nothing more.
+  m.openParamsDocument(PARAMS_PATH);
+  assert.deepStrictEqual(m.opened, [PARAMS_PATH, PARAMS_PATH]);
+});
+
+test("S4 fix (TOCTOU): the decision, as a table", () => {
+  const P = "/w/p.params.json";
+  const ok = (r, b, n) => core.skeletonBytesStillApply(r, b, n, P).apply;
+  assert.strictEqual(ok(true, "A", "A"), true, "the same bytes: replace");
+  assert.strictEqual(ok(true, "A", "A\n"), false, "one byte more: refuse");
+  assert.strictEqual(ok(true, "A", ""), false, "emptied: refuse");
+  assert.strictEqual(ok(true, "A", null), false, "gone: refuse");
+  assert.strictEqual(ok(true, null, null), false, "nothing was asked about: refuse (never a replace)");
+  assert.strictEqual(ok(false, null, "B"), true, "a CREATE is the race-safe create's business");
+  assert.strictEqual(ok(undefined, "A", "B"), true, "and only `true` is a replace");
+  const refused = core.skeletonBytesStillApply(true, "A", "B", P);
+  assert.strictEqual(refused.reason, "params-changed");
+  assert.ok(refused.message.indexOf(P) > 0, "it names the file");
+  assert.match(refused.message, /changed after you were asked/);
+  assert.match(refused.message, /nothing was written; run the command again/);
+  assert.match(core.skeletonBytesStillApply(true, "A", null, P).message, /was removed or could not be read after you were asked/);
+});
+
+/** The TOCTOU scenario the review MEASURED (probe/overwrite.js case 4):
+  * Replace is clicked, then the file is edited and SAVED while the schema
+  * request runs. Answers the model and the run's result. */
+async function editedDuringSchema(opts, edit) {
+  const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED]] });
+  const m = commandModel(Object.assign({ disk }, opts));
+  m.mark = core.guardReduce(null, { type: "answer", stuck: true, applies: true, pick: m.picked,
+                                    params: {}, at: 1000 }).mark;
+  const mark = m.mark;
+  const run = m.writeParamsSkeleton();
+  await flush();
+  m.answerModal(0, core.SKELETON_REPLACE);
+  await flush();
+  edit(disk);                                          // autoSave, or the developer
+  m.answerSchema(0, SALES_SCHEMA);
+  return { m, disk, mark, result: await run };
+}
+
+const FRESH_EDIT = '{"fromDay": "2026-02-01", "toDay": "2026-02-28", "orderBy": "ByDay"}';
+
+test("S4 fix (TOCTOU): a file SAVED while the schema request runs is NOT replaced — refused by name", async () => {
+  const { m, disk, mark, result } = await editedDuringSchema({}, (d) => d.files.set(PARAMS_PATH, FRESH_EDIT));
+  assert.strictEqual(result.wrote, false);
+  assert.strictEqual(result.problem.reason, "params-changed");
+  assert.strictEqual(disk.read(PARAMS_PATH), FRESH_EDIT, "THE FRESH EDIT SURVIVES");
+  assert.deepStrictEqual(disk.writes, [], "and nothing else is written either");
+  assert.deepStrictEqual(m.scheduled, [], "no render");
+  assert.strictEqual(m.mark, mark, "and the wedge hold is not spent (M-3)");
+  assert.strictEqual(m.messages.length, 1, "said, as a notification");
+  assert.ok(m.messages[0].indexOf(PARAMS_PATH) > 0 &&
+            /changed after you were asked/.test(m.messages[0]), m.messages[0]);
+
+  // A file DELETED in the same window is refused too: the user consented to
+  // replacing bytes that are no longer there.
+  const gone = await editedDuringSchema({}, (d) => d.files.delete(PARAMS_PATH));
+  assert.strictEqual(gone.result.problem.reason, "params-changed");
+  assert.strictEqual(gone.disk.read(PARAMS_PATH), null);
+  assert.match(gone.m.messages[0], /was removed or could not be read after you were asked/);
+});
+
+test("S4 fix MUTANT (TOCTOU): without the re-read, the fresh edit is DESTROYED", async () => {
+  const { disk, result } = await editedDuringSchema({ mutantNoReread: true },
+                                                    (d) => d.files.set(PARAMS_PATH, FRESH_EDIT));
+  assert.strictEqual(result.wrote, true, "the first cut wrote");
+  assert.notStrictEqual(disk.read(PARAMS_PATH), FRESH_EDIT, "over bytes the modal never named");
+});
+
+/** Every way the command can END WITHOUT WRITING, each over a held report. */
+const COMMAND_FAILURES = [
+  ["the schema request dies", {}, (m) => m.rejectSchema(0, new Error("socket closed")), "fails"],
+  ["the server answers an error", {}, (m) => m.answerSchema(0, { error: "Sales.e:3: nope" }), "fails"],
+  ["a symlinked params file", { link: true }, (m) => m.answerSchema(0, SALES_SCHEMA), "fails"],
+  ["the file changed under the modal", { edit: true }, (m) => m.answerSchema(0, SALES_SCHEMA), "fails"],
+  ["declined", { decline: true }, null, "declined"],
+];
+
+async function heldCommand(opts, row) {
+  const [, how, settle] = row;
+  const disk = diskModel({ files: [[PARAMS_PATH, COMMITTED], ["/outside/precious", "PRECIOUS"]] });
+  if (how.link) disk.symlink(PARAMS_PATH, "/outside/precious");
+  const m = commandModel(Object.assign({ disk }, opts));
+  const mark = core.guardReduce(null, { type: "answer", stuck: true, applies: true, pick: m.picked,
+                                        params: {}, at: 1000 }).mark;
+  m.mark = mark;
+  const run = m.writeParamsSkeleton();
+  await flush();
+  m.answerModal(0, how.decline ? "Cancel" : core.SKELETON_REPLACE);
+  await flush();
+  if (how.edit) disk.files.set(PARAMS_PATH, FRESH_EDIT);
+  if (settle) settle(m);
+  return { m, mark, result: await run };
+}
+
+test("S4 fix (M-3): a command that writes NOTHING leaves the wedge hold exactly as it was", async () => {
+  for (const row of COMMAND_FAILURES) {
+    const { m, mark, result } = await heldCommand({}, row);
+    assert.notStrictEqual(result.wrote, true, row[0]);
+    assert.strictEqual(m.mark, mark, row[0] + ": the hold is intact");
+    assert.deepStrictEqual(m.scheduled, [], row[0] + ": nothing is rendered");
+    // And so the automatic save of the params file is STILL refused.
+    assert.strictEqual(core.mayAutoRender(m.mark, m.picked, core.TRIGGER_PARAMS_FILE).render, false, row[0]);
+  }
+});
+
+test("S4 fix MUTANT (M-3): clearing the mark BEFORE the work spends it on every failing path", async () => {
+  for (const row of COMMAND_FAILURES.filter((r) => r[3] === "fails")) {
+    const { m, result } = await heldCommand({ mutantClearMarkEarly: true }, row);
+    assert.notStrictEqual(result.wrote, true, row[0]);
+    assert.strictEqual(m.mark, null, row[0] + ": the first cut spent the hold for nothing");
+    assert.strictEqual(core.mayAutoRender(m.mark, m.picked, core.TRIGGER_PARAMS_FILE).render, true, row[0]);
+  }
+});
+
+test("glue pins (S4): U3's command, the overwrite chain, and D6's scan", () => {
+  const fsMod = require("node:fs");
+  const raw = fsMod.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  const src = codeOf(raw);
+  const pin = (what, fix) =>
+    "source pin (test/preview-core.test.js): extension.js changed shape — " + what +
+    ". If you meant it, update this pin; the behaviour it protects is " + fix;
+  const commandBody = src.slice(src.indexOf("async function writeParamsSkeletonCommand("),
+                                src.indexOf("async function writeSkeletonNow("));
+  const writeBody = src.slice(src.indexOf("async function writeSkeletonNow("),
+                              src.indexOf("async function noticeOrphanParamsFiles("));
+  const scanBody = src.slice(src.indexOf("async function noticeOrphanParamsFiles("),
+                             src.indexOf("async function activate("));
+  assert.ok(commandBody.length > 400 && writeBody.length > 400 && scanBody.length > 400,
+    "the three S4 slices must be the three S4 functions");
+
+  // ---- THE OVERWRITE IS REACHABLE FROM ONE CALL SITE, AND THAT IS THE POINT
+  assert.strictEqual((src.match(/core\.skeletonCommandPlan\(/g) || []).length, 1,
+    pin("core.skeletonCommandPlan has more than one caller",
+        "that the plan which can carry `explicitOverwrite` is built in exactly ONE place — U3's " +
+        "command, after a modal the user answered"));
+  assert.ok(writeBody.indexOf("core.skeletonCommandPlan(") > 0,
+    pin("the overwrite plan is built somewhere other than writeSkeletonNow", "the same"));
+  assert.strictEqual((src.match(/applyWritePlan\(plan\.files, paths\.paramsPath, true\)/g) || []).length, 1,
+    pin("the PERMISSION to replace a params file is passed from more or fewer than one call site",
+        "U3: `explicitOverwrite` is refused unless its caller passes the permission, and exactly one " +
+        "caller does — so a plan that leaks anywhere else writes nothing (asserted in the model too)"));
+  assert.ok(writeBody.indexOf("applyWritePlan(plan.files, paths.paramsPath, true)") > 0,
+    pin("the permission is passed from somewhere other than writeSkeletonNow", "the same"));
+  assert.ok(/applyWritePlan\(plan\.files, paths\.paramsPath\)/.test(
+              src.slice(src.indexOf("async function firstPickSchemaAndWrite("),
+                        src.indexOf("async function refreshSchemaFile("))),
+    pin("the AUTOMATIC first-pick path now passes something as the overwrite permission",
+        "that the first-pick write can never replace committed source, whatever mode an entry " +
+        "carries — it passes two arguments, so the third is `undefined` for it, for ever"));
+  const overwriteBranch = src.slice(src.indexOf("if (step.act === core.WRITE_EXPLICIT_OVERWRITE) {"),
+                                    src.indexOf("if (step.act === core.WRITE_IF_ABSENT) {"));
+  assert.ok(overwriteBranch.length > 0 && /\n      await writeTextFile\(file\.path, file\.text\);/.test(overwriteBranch),
+    pin("the explicit overwrite is no longer a statement of its own, or no longer writes",
+        "the neutered-guard class: `if (false && ...)` keeps every word and every call. This branch " +
+        "is the ONE unconditional write over committed source in the extension"));
+
+  // ---- THE COMMAND'S ORDER, WHICH IS ITS SAFETY -------------------------
+  const verdictAt = commandBody.indexOf("core.skeletonCommandVerdict(");
+  const readAt = commandBody.indexOf("await readTextIfPresent(paths.paramsPath)");
+  const modalAt = commandBody.indexOf("showWarningMessage(question.message, { modal: true }, question.confirm)");
+  const appliesAt = commandBody.indexOf("core.skeletonStillApplies(askedPick, picked)");
+  const guardAt = commandBody.indexOf('applyGuard(core.guardReduce(wedgeMark, { type: "render", explicit: true }))');
+  const consultAt = commandBody.indexOf("core.mayAutoRender(wedgeMark, picked, core.TRIGGER_EXPLICIT)");
+  const snapshotAt = commandBody.indexOf("core.renderAttempt(generation, picked, clientEpoch, stopCount, stuckState.highWater)");
+  const writeAt = commandBody.indexOf("await writeSkeletonNow(attempt, paths, existing !== null, existing)");
+  const wroteAt = commandBody.indexOf("if (written.wrote) {");
+  for (const [what, at] of [["the verdict", verdictAt], ["the read", readAt], ["the modal", modalAt],
+                            ["the still-applies check", appliesAt], ["the guard's clear", guardAt],
+                            ["the consultation", consultAt], ["the snapshot", snapshotAt],
+                            ["the write", writeAt], ["the written branch", wroteAt]]) {
+    assert.ok(at > 0, pin("the command no longer has " + what + " in the shape this pin reads",
+                          "U3's order, every step of which is load-bearing"));
+  }
+  assert.ok(verdictAt < readAt && readAt < modalAt && modalAt < appliesAt &&
+            appliesAt < consultAt && consultAt < snapshotAt && snapshotAt < writeAt,
+    pin("the command's steps are out of order",
+        "U3: it checks it CAN run, then asks the user, then re-checks that the answer is still about " +
+        "the same report, then consults the mark, then takes its snapshot (AFTER the modal, so the " +
+        "schema request belongs to the server running when they answered), then writes"));
+  // **M-3 OF THE S4 REVIEW: THE MARK IS SPENT ONLY AFTER A WRITE.** The
+  // first cut cleared it before the consultation, so every failing path
+  // (the schema request dies, a symlink refusal) spent the user's hold for
+  // nothing (MEASURED, probe/mark.js). The clear is now the FIRST statement
+  // of the written branch, and it is the only one in the command.
+  assert.strictEqual((commandBody.match(/applyGuard\(/g) || []).length, 1,
+    pin("the command clears the wedge mark from more or fewer than one place",
+        "M-3: the hold is spent only on the path that wrote the file and schedules its render"));
+  assert.ok(/\n  if \(written\.wrote\) \{\s*applyGuard\(core\.guardReduce\(wedgeMark, \{ type: "render", explicit: true \}\)\);/.test(commandBody) &&
+            guardAt > wroteAt && guardAt > writeAt,
+    pin("the wedge mark is cleared somewhere other than the start of the written branch",
+        "M-3: a command that wrote nothing (schema request died, symlink refused, file changed " +
+        "under the modal, declined) leaves the hold exactly as it was"));
+  assert.ok(commandBody.indexOf("await requestSchema(") < 0 && writeBody.indexOf("await requestSchema(") > 0,
+    pin("the command asks the server for a schema before, or instead of, asking the user",
+        "U3: nothing is asked of the preview queue — a job that COMPILES and EVALUATES the report — " +
+        "until the user has confirmed"));
+  assert.ok(/if \(!core\.skeletonConfirmed\(choice\)\) \{/.test(commandBody),
+    pin("the modal's answer is no longer read by core.skeletonConfirmed",
+        "that ONLY the exact string `Replace` consents: a dismissal, an Escape and every near miss " +
+        "are a decline, because this write destroys committed source"));
+  assert.ok(!/choice ===/.test(commandBody) && !/choice !==/.test(commandBody),
+    pin("the command compares the modal's answer by hand again", "the same"));
+  assert.ok(/\{ modal: true \}/.test(commandBody),
+    pin("the confirmation is no longer MODAL",
+        "U3: a non-modal notification can be missed entirely, and the thing being destroyed is " +
+        "committed source"));
+  // **THE WHOLE `if`, WITH ITS CONDITION** -- MEASURED: `if (false) {` around
+  // the modal block keeps every word of the two pins above, so the command
+  // overwrote committed source with no question at all and 303 tests stayed
+  // green. It is the neutered-guard class at the one place it matters most.
+  assert.ok(/\n  if \(existing !== null\) \{\n    const question = core\.skeletonConfirmation\(paths\);/.test(commandBody),
+    pin("the modal is guarded away, or is no longer asked for a file that EXISTS",
+        "U3's whole sentence: a params file that is there is replaced only after a confirmation. " +
+        "A file that is NOT there is a first pick — nothing to lose, so nothing to confirm"));
+  // EACH IS THE WHOLE STATEMENT AND ITS CONSEQUENCE: `if (false && ...)`
+  // keeps every word, and so does an `if` whose body has been emptied.
+  assert.ok(/\n  if \(!still\.apply\) \{\n    log\([\s\S]{0,160}?return core\.skeletonCommandResult\(\{ abandoned: true \}\);/.test(commandBody),
+    pin("the still-applies check is guarded away, or its answer no longer abandons",
+        "that an answer given to the modal is not applied to a report the user has since left"));
+  assert.ok(/\n  if \(!permitted\.render\) \{[\s\S]{0,200}?return core\.skeletonCommandResult\(\{ abandoned: true \}\);/.test(commandBody),
+    pin("the consultation is asked and its answer discarded",
+        "the neutered-guard class: a helper called and ignored is the mutation no pin that only " +
+        "counts calls can see. This site can refuse nothing today (`explicit` is never refused), " +
+        "and it is here so that a future caller with another trigger IS judged"));
+  assert.ok(/\n  if \(!verdict\.run\) \{[\s\S]{0,320}?return core\.skeletonCommandResult\(\{ problem:/.test(commandBody),
+    pin("the command's own verdict is asked and its answer discarded", "the same"));
+  assert.ok(/\n    scheduleRender\(/.test(commandBody) &&
+            /scheduleRender\([\s\S]{0,140}?core\.TRIGGER_EXPLICIT\);/.test(commandBody) &&
+            (commandBody.match(/scheduleRender\(/g) || []).length === 1,
+    pin("the command renders directly after writing, or schedules more than one render, or the " +
+        "render it schedules no longer carries EXPLICIT",
+        "M-4 and N-3: at most ONE render per coalescing window (the params watcher sees our write " +
+        "too and merges), and consent stays consent — a `params-file` trigger here would answer an " +
+        "explicit command with the held question"));
+  assert.ok(/revealNextRender = true;/.test(commandBody),
+    pin("the command no longer reveals the render tab", "that the user who asked for this sees the result"));
+
+  // ---- ONE REGISTRATION, ONE DIRECT CALLER ------------------------------
+  assert.strictEqual((src.match(/writeParamsSkeletonCommand\(/g) || []).length, 2,
+    pin("writeParamsSkeletonCommand has more than its definition and the command registration",
+        "that the ONLY way to reach the overwrite is a command the user ran: the palette, or the " +
+        "orphan notification's BUTTON, which goes through executeCommand — the same door"));
+  assert.ok(/registerCommand\(core\.SKELETON_COMMAND, \(\) => writeParamsSkeletonCommand\(context\)\)/.test(src),
+    pin("the command is not registered under core.SKELETON_COMMAND", "the same"));
+  assert.strictEqual((src.match(/writeSkeletonNow\(/g) || []).length, 2,
+    pin("writeSkeletonNow has more than its definition and the command's one call", "the same"));
+  assert.strictEqual((src.match(/openParamsDocument\(paths\.paramsPath, true\)/g) || []).length, 1,
+    pin("the `always` open is used from more or fewer than one place",
+        "U2 stays once-per-path for the automatic path; the user who explicitly asked for a rewrite " +
+        "is shown the file every time"));
+  // AND THE OTHER END OF IT -- MEASURED: dropping `&& always !== true` from
+  // the function's own guard left the call site untouched, so the count
+  // above still said 1 while the second run of the command showed nothing.
+  const openS4 = src.slice(src.indexOf("async function openParamsDocument("),
+                           src.indexOf("async function requestSchema("));
+  // M-4 of the S4 review: the dedupe is `core.claimParamsDocument`, which
+  // BOTH models call, so dropping `always` inside it is caught by behaviour;
+  // this pin is only that the glue still goes through it with `always`.
+  assert.ok(/async function openParamsDocument\(fsPath, always\) \{\s*if \(!core\.claimParamsDocument\(openedParamsFiles, fsPath, always\)\) return;/.test(openS4),
+    pin("openParamsDocument ignores its `always` argument, or no longer takes one",
+        "that running the command twice shows the file twice: 'once per path per session' is right " +
+        "for a file that appears because a report was picked, and wrong for one the user has just " +
+        "explicitly asked to be rewritten"));
+
+  // ---- THE TOCTOU DECISION (2026-09-23): RE-READ AND REFUSE -------------
+  // The bytes are re-read AFTER the schema answer and the symlink check and
+  // BEFORE the write, and a replace over different bytes is REFUSED by name.
+  // The decision is `core.skeletonBytesStillApply` (tested with the model);
+  // this is that the glue still asks it, with a FRESH read, and obeys it.
+  const schemaAt = writeBody.indexOf("await requestSchema(attempt)");
+  const linkAt0 = writeBody.indexOf("await symlinkProblem(");
+  const rereadAt = writeBody.indexOf(
+    "core.skeletonBytesStillApply(replace, existing,\n" +
+    "                                             replace === true ? await readTextIfPresent(paths.paramsPath) : null,");
+  const obeyAt = writeBody.indexOf("if (!bytes.apply) return say(bytes.reason, bytes.message);");
+  const applyAt = writeBody.indexOf("applyWritePlan(plan.files, paths.paramsPath, true)");
+  assert.ok(schemaAt > 0 && linkAt0 > 0 && rereadAt > 0 && obeyAt > 0 && applyAt > 0 &&
+            schemaAt < linkAt0 && linkAt0 < rereadAt && rereadAt < obeyAt && obeyAt < applyAt,
+    pin("the command no longer re-reads the params file between the schema answer and the write, " +
+        "or no longer refuses on what it finds",
+        "the TOCTOU decision: MEASURED, a file saved while the schema request ran was destroyed; a " +
+        "replace now goes ahead only over the bytes the modal was about"));
+  // RE-REVIEW M-1 (2026-09-23): ORDER ALONE LET FOUR MUTANTS THROUGH 312/312
+  // -- a post-modal read re-assigned into `existing` (V3/V3b: the wrong
+  // baseline; MEASURED on a real disk, the edit made during the question was
+  // destroyed), `bytes.apply = true` between ask and obey (V4), and the
+  // decision `&& { apply: true }` (V6). The ask-and-obey is pinned as ONE
+  // contiguous block, and the pre-modal read as the ONLY assignment.
+  assert.ok(/\n  const bytes = core\.skeletonBytesStillApply\(replace, existing,\n\s+replace === true \? await readTextIfPresent\(paths\.paramsPath\) : null,\n\s+paths\.paramsPath\);\n  if \(!bytes\.apply\) return say\(bytes\.reason, bytes\.message\);\n/.test(writeBody),
+    pin("the TOCTOU decision is no longer one contiguous ask-and-obey", "the same"));
+  assert.ok(!/\bexisting\s*=(?!=)/.test(writeBody) &&
+            (commandBody.match(/\bexisting\s*=(?!=)/g) || []).length === 1 &&
+            /\n  const existing = await readTextIfPresent\(paths\.paramsPath\);\n/.test(commandBody),
+    pin("the pre-modal read is re-assigned, so the TOCTOU compares against the wrong baseline", "the same"));
+  // Re-review nit 1: V8 (`wedgeMark = null` in `say`), V11 (the command's
+  // notice told `replace = false`) and V21 (`plan.listingLine = null`).
+  assert.strictEqual((src.match(/\bwedgeMark\s*=(?!=)/g) || []).length, 2,
+    pin("the wedge mark is assigned somewhere other than its declaration and applyGuard",
+        "M-3: the hold changes only through the guard's reducer"));
+  assert.ok(/const line = core\.skeletonWrittenNotice\(paths, plan, replace === true\);/.test(writeBody),
+    pin("the command's notice no longer says `replaced` for a replace", "B23's channel line"));
+  assert.ok(!/\bplan\.(listingLine|orphans)\s*=(?!=)/.test(scanBody),
+    pin("the orphan scan overrides what core.orphanNoticePlan decided", "R24 by another route"));
+  assert.ok(/async function writeSkeletonNow\(attempt, paths, replace, existing\) \{/.test(writeBody),
+    pin("writeSkeletonNow no longer receives the bytes read before the modal", "the same"));
+
+  // ---- NIT 3 (R24): the scan says what `core.orphanNoticePlan` decides -----
+  assert.ok(/const plan = core\.orphanNoticePlan\(found, pick, orphanNotices, paths\.dir\);/.test(scanBody) &&
+            /\n  if \(plan\.listingLine !== null\) log\("preview: " \+ plan\.listingLine\);/.test(scanBody) &&
+            /for \(const \{ text \} of plan\.orphans\) \{\s*log\("preview: " \+ text\);/.test(scanBody),
+    pin("the orphan scan no longer says what core.orphanNoticePlan decides",
+        "D6: an unreadable params directory is SAID (R24 silenced it with every test green), and each " +
+        "orphan is logged as well as notified"));
+
+  // ---- M-3 AGAIN, AT THE THIRD WRITE PATH -------------------------------
+  assert.ok(/\n  const linked = await symlinkProblem\(paths, \[paths\.gitignorePath, paths\.schemaPath, paths\.paramsPath\]\);/.test(writeBody),
+    pin("the command's symlink check is gone, is no longer a statement of its own, or no longer " +
+        "covers all three targets",
+        "M-3: a params file symlinked outside the workspace would be written THROUGH by the one " +
+        "write in this extension that does not go through the create"));
+  assert.ok(/\n  if \(linked\) return say\(linked\.reason, linked\.message\);/.test(writeBody),
+    pin("the command's symlink refusal is guarded away or no longer said", "the same (D-3's shape)"));
+  const linkAt = writeBody.indexOf("await symlinkProblem(");
+  const mkdirAt = writeBody.indexOf("await ensureDirectory(");
+  assert.ok(linkAt > 0 && mkdirAt > linkAt,
+    pin("the command creates the directory before it checks for symbolic links",
+        "M-3: createDirectory would happily make the module directory inside a symlinked preview/"));
+
+  // ---- D6: THE SCAN NEVER DELETES ---------------------------------------
+  assert.ok(!/workspace\.fs\.delete/.test(src) && !/fs\.unlink/.test(src) && !/rmSync/.test(src),
+    pin("the extension can delete a file",
+        "D6, and it is the whole rule of the orphan notice: a params file is COMMITTED SOURCE, and " +
+        "an extension that deletes one because a server answer did not mention it is one bad answer " +
+        "away from losing work. It names the file; the rm is the developer's"));
+  assert.strictEqual((src.match(/noticeOrphanParamsFiles\(/g) || []).length, 3,
+    pin("the orphan scan has more or fewer than its definition and its two call sites",
+        "that it runs exactly where an `ermine/preview/reports` answer is ALREADY in hand — the " +
+        "picker and `refreshModule` — so it costs one readDirectory and no server request"));
+  assert.ok(/noticeOrphanParamsFiles\(picked, listed\)/.test(src) &&
+            /noticeOrphanParamsFiles\(picked, answer\)/.test(src),
+    pin("the orphan scan is handed something other than the answer that named the module", "the same"));
+  assert.ok(/if \(!pick \|\| !pick\.module\) return;/.test(scanBody) && /if \(paths\.problem\) return;/.test(scanBody),
+    pin("the orphan scan runs for a pick that can have no params file at all",
+        "S4 item 4: a pick with no module, an operator binding and an unsafe module name have no " +
+        "params DIRECTORY, so there is nothing to compare and nothing to call stale"));
+  assert.ok(/core\.orphanParamsFiles\(listing, listed && listed\.reports, paths\)/.test(scanBody),
+    pin("the orphan scan compares against something other than the server's own reports list",
+        "D6: `reports` that is absent or empty means the server could not list the file — which must " +
+        "call NOTHING stale, not everything"));
+  assert.ok(/core\.directoryListing\(\{ entries \}\)/.test(scanBody) &&
+            /core\.directoryListing\(\{ missing: true \}\)/.test(scanBody) &&
+            /core\.directoryListing\(\{ problem:/.test(scanBody),
+    pin("the directory listing reaches the decision without going through its builder, or one of " +
+        "its three arms is gone",
+        "M-1's class, closed before the defect rather than after it: `missing` (no directory yet) " +
+        "and `problem` (there IS one and we could not read it) are different answers, and the " +
+        "second must not read as `nothing is stale`"));
+  assert.strictEqual((src.match(/executeCommand\(core\.SKELETON_COMMAND\)/g) || []).length, 1,
+    pin("the orphan notification's button runs something other than the command, or runs it from " +
+        "more than one place",
+        "that the button is a CLICK, and that it goes through the palette's own door rather than " +
+        "calling the handler — which is what keeps the handler with one direct caller"));
+  assert.ok(/if \(choice !== core\.ORPHAN_BUTTON\) return;/.test(scanBody),
+    pin("a dismissed orphan notification can run the command",
+        "that nothing automatic reaches the one thing that overwrites committed source"));
+
+  // ---- THE NOTICES ARE PER SESSION, NOT PER PICK ------------------------
+  for (const [what, needle, until] of [
+    ["forgetting the schema attempts", "function forgetSchemaAttempts(", "function schemaNoticeOnce("],
+    ["forgetting the params notices", "function forgetParamsNotices(", "async function readParamsFile("],
+    ["a pick change", "async function pickReport(", "async function renderCommand("],
+    ["learning the module name", "async function refreshModule(", "function installWatcher("],
+  ]) {
+    const start = src.indexOf(needle);
+    assert.ok(start > 0 && src.slice(start, src.indexOf(until, start)).indexOf("orphanNotices") < 0,
+      pin(what + " now clears the orphan notices",
+          "D6: ONE notice per (module, binding) per SESSION. The same stale file is found again from " +
+          "every binding in that module, so clearing on a pick change would be a notification per pick"));
+  }
+  const disposeBody = src.slice(src.indexOf("function disposePreview("), src.indexOf("function restorePick("));
+  assert.ok(/orphanNotices = new Set\(\);/.test(disposeBody),
+    pin("the orphan notices outlive the window", "the same: they die with the session and nowhere else"));
 });

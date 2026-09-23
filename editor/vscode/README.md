@@ -57,8 +57,8 @@ code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 gitignored, so build it yourself):
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.9.vsix
-code --install-extension ermine-lang-0.1.9.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.10.vsix
+code --install-extension ermine-lang-0.1.10.vsix
 ```
 
 `npm run package` does the same. Upgrading is the same command with the new
@@ -119,7 +119,7 @@ A **report** is any top-level binding whose type is `Node`, `Params -> Node`,
 server, in a second session of its own, and re-renders it when a file it
 depends on is saved — with no JVM restart and no build.
 
-At 0.1.9 there is **no webview panel** (that is a later ticket): the answer is
+At 0.1.10 there is **no webview panel** (that is a later ticket): the answer is
 shown as JSON in an ordinary editor tab. Parameters come from a file you write
 yourself — see **Params files** below; with no such file the render still sends
 empty parameters, so a report with required ones shows the refusal that names
@@ -208,15 +208,52 @@ whatever you are typing:
 | `.ermine/preview/<Module>/<binding>.schema.json` | the JSON Schema the `"$schema"` line above points at, generated from the parameter type | no — ignored |
 | `.ermine/preview/.gitignore` | generated once per workspace folder; ignores `*.schema.json` and `*.db` and says in the file itself that the `*.params.json` beside them are not ignored | yes, it is tiny |
 
-**The params file is NEVER overwritten.** Not on a second pick, not on a
-restart, not when the parameter type changes: the extension only ever
-*creates* it, through an editor operation that skips a file which is already
-there, and then reads the file back to be sure of what is on disk. If a `git
-checkout` or another window puts one there while the schema is being worked
-out, yours is what stays. The **schema** file is the generated one and is
-rewritten whenever the parameter type moves, and only when its bytes really
-change — so saving a `.e` file does not churn it, or the editor's cache of
-it.
+**The params file is NEVER overwritten by anything automatic.** Not on a
+second pick, not on a restart, not when the parameter type changes: the
+extension only ever *creates* it, through an editor operation that skips a
+file which is already there, and then reads the file back to be sure of what
+is on disk. If a `git checkout` or another window puts one there while the
+schema is being worked out, yours is what stays. The **schema** file is the
+generated one and is rewritten whenever the parameter type moves, and only
+when its bytes really change — so saving a `.e` file does not churn it, or the
+editor's cache of it.
+
+**The one thing that replaces it is a command you run: `Ermine: Write Params
+Skeleton`** (0.1.10). Use it when the report's parameter type has changed and
+you would rather start from a fresh skeleton than patch the file by hand. It
+asks first, in a modal that names the file and says the contents will be
+replaced; **Escape, Cancel and anything but the `Replace` button leave the
+file exactly as it is**, and nothing is asked of the language server until you
+have answered. It then refreshes the generated schema file beside it, opens
+the params file, and re-renders. If there is no params file it behaves like a
+first pick — nothing to lose, so nothing to confirm. If you change the picked
+report while the question is on screen, it writes nothing and says so. **If
+the file itself changes after you were asked** — you, or `files.autoSave`,
+save it while the question is on screen or while the schema is being worked
+out — it writes nothing and says so by name: run the command again to replace
+what is there now. An explicit command is consent, so it also runs for a
+report that wedged the language server; the hold is cleared **only once the
+file has been written** and the render is on its way. A command that writes
+nothing — declined, refused, or failed — leaves the hold exactly as it was.
+
+**A left-over params file is pointed out, never deleted.** Rename or remove a
+report's binding (or make it `private`) and its params file stays behind
+under the old name, still
+committed, still looking current. When the preview next lists that file's
+reports it compares them with the params files under
+`.ermine/preview/<Module>/` and, once per left-over file per session, says so:
+which file it is, that nothing reads it, that it is yours to delete, and a
+**Write Params Skeleton** button that writes a fresh skeleton for the report
+you have picked now. **Nothing is ever deleted for you.** If the server could
+not list that file's reports — a parse error, a module that does not
+compile — nothing is called stale.
+
+**A renamed MODULE is not covered**, and that is a known gap rather than a
+surprise: the whole `.ermine/preview/<OldModule>/` directory is then stale and
+nothing looks inside it. Finding out would mean asking the server which module
+every `.e` file in the workspace declares, and each of those answers compiles
+a module. The directory is visible in `git status` like any other committed
+file.
 
 **The one exception, stated because it is your committed source:** if the
 create leaves a file of **zero length** — which happens only if this VS Code
@@ -243,6 +280,18 @@ why, once per report. A parameter type that is not a JSON object
 (`report : Int -> Node`) gets its params file *without* a `$schema` line,
 because a JSON number has nowhere to put one, and the notice says the editor
 will not validate that file; the server still does.
+
+**Since 0.1.10 that notice also says what the value IS**, because "not a JSON
+object" leaves you opening the file to guess. Every shape the exporter can put
+at the root was measured against a real server, and each renders:
+
+| the report takes | the file holds | the notice says |
+|---|---|---|
+| `Int -> Node` | `0` | its parameters are a single whole number |
+| an all-nullary `data` (`Spring \| Summer \| Autumn`) | `"Spring"` | one of `"Spring"`, `"Summer"`, `"Autumn"` |
+| `Maybe String -> Node` | `null` | optional (a single string); `null` means there is none |
+| `Json -> Node` | `null` | any JSON value at all |
+| `() -> Node` | `[]` | the empty tuple `()`, and there is nothing in it to edit |
 
 **Working out the parameter schema runs the report.** It compiles the module
 and evaluates the binding on the same queue a render uses, so it is not a
@@ -357,6 +406,38 @@ type one frame early and without its constraints (`go : List a -> a -> a` for
 a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
+
+### 0.1.10
+
+**`Ermine: Write Params Skeleton`**, a command you run, is the only thing in
+this extension that replaces a params file — and it asks first, in a modal
+that names the file and says the contents will be replaced. Escape, Cancel and
+every answer but the `Replace` button leave the file alone, and nothing is
+asked of the language server until you have answered. It then refreshes the
+generated schema file, opens the params file and re-renders. With no params
+file it behaves like a first pick: nothing to lose, so nothing to confirm.
+Change the picked report while the question is on screen and it writes nothing
+and says so; so does a params file that changes after you were asked. The
+wedge hold is cleared only once the file is written.
+
+**A left-over params file is pointed out.** Rename or remove a report's
+binding and its params file stays behind under the old name. The preview now
+compares the bindings the server offers for a file with the params files under
+`.ermine/preview/<Module>/` and says, once per left-over file per session,
+which file it is, that nothing reads it, and that it is yours to delete —
+with a **Write Params Skeleton** button for the report you have picked now.
+**It never deletes anything.** A server that could not list the file's reports
+calls nothing stale, and a renamed *module* is not covered (see **Params
+files**).
+
+**A params file whose root is not a JSON object now says what it holds.** All
+five shapes the exporter can produce there were measured against a real server
+and all five render: `Int` (`0`), an all-nullary `data` (`"Spring"`),
+`Maybe X` (`null`), `Json` (`null`) and `()` (`[]`).
+
+**Nothing else moved.** No server change, no wire change, and the automatic
+paths still cannot overwrite a params file: the permission to replace one is
+an argument the command passes and nothing else does.
 
 ### 0.1.9
 
@@ -589,11 +670,15 @@ Three costs, in the order you meet them:
 | `ermine.preview.maxDocumentBytes` | `16777216` | Largest rendered document the server will send |
 | `ermine.trace.server` | `off` | Trace LSP traffic to the output channel |
 
-Commands: **Ermine: Restart Language Server**, **Ermine: Toggle Fast Mode**,
-**Ermine: Show Language Server Output**, **Ermine: Reload Modules** (declared
-by the server and registered by the language client; the extension only adds
-the status-bar line), **Ermine: Preview Report...** and **Ermine: Render
-Report to JSON**.
+| Command | |
+|---|---|
+| **Ermine: Restart Language Server** | Stops the server and starts a fresh one |
+| **Ermine: Toggle Fast Mode** | Flips `ermine.fastMode` for this workspace |
+| **Ermine: Show Language Server Output** | Opens the Ermine output channel |
+| **Ermine: Reload Modules** | Declared by the *server* and registered by the language client; the extension only adds the status-bar line |
+| **Ermine: Preview Report...** | Picks a file and a binding, and renders it |
+| **Ermine: Render Report to JSON** | Re-renders the picked report into the same tab |
+| **Ermine: Write Params Skeleton** | Replaces the picked report's params file with a fresh skeleton, **after a modal you answer** — see **Params files**. The only thing in this extension that overwrites a params file |
 
 There is no setting for the completion trigger character, the code-action
 kinds or anything else the protocol negotiates: the server advertises them and

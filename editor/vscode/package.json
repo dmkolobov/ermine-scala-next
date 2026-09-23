@@ -2,7 +2,7 @@
   "name": "ermine-lang",
   "displayName": "Ermine",
   "description": "Ermine language support: syntax highlighting, diagnostics, navigation, hover types, references, rename, symbols, completion and quick fixes, backed by bin/ermine-lsp.",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "clarifi",
   "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {
@@ -135,6 +135,10 @@
       {
         "command": "ermine.renderReport",
         "title": "Ermine: Render Report to JSON"
+      },
+      {
+        "command": "ermine.writeParamsSkeleton",
+        "title": "Ermine: Write Params Skeleton"
       }
     ]
   },

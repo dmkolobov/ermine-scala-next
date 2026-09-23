@@ -1,4 +1,4 @@
-# Playtest guide: the Ermine preview in VS Code (extension 0.1.9)
+# Playtest guide: the Ermine preview in VS Code (extension 0.1.10)
 
 **NOTHING IN THIS FILE HAS EVER BEEN RUN BY ANYONE.** Not one step. Nothing in
 this repository runs VS Code; every expectation below is READ from
@@ -19,13 +19,14 @@ cannot tell you" paragraphs as Group D. Nothing was dropped.
 
 | | |
 |---|---|
-| Setup | **`tracker/PLAYTEST-SETUP.md` is the prerequisite and is written separately. Do all of it before step A1.** It produced: the packaged extension `editor/vscode/ermine-lang-0.1.9.vsix` (gitignored); four fixtures, `tracker/playtest/fixtures/WpSpin.e`, `WpChain.e`, `WpBlow.e`, `WpInt.e`; two ready-made params files, `tracker/playtest/params/Sales.report.params.json` and `WpSpin.report.params.json`, with `tracker/playtest/params/README.md` saying where to copy each; `tracker/playtest/settings.example.json`; and a server verifier, `tracker/playtest/check-server.py` |
+| Setup | **`tracker/PLAYTEST-SETUP.md` is the prerequisite and is written separately. Do all of it before step A1.** It produced: the packaged extension `editor/vscode/ermine-lang-0.1.9.vsix` (gitignored) — **which is 0.1.9 and does NOT contain WP-8 S4 (B22-B27): package 0.1.10 yourself (`cd editor/vscode && npx @vscode/vsce package`) or run from source, because the S4 stage was run with no `npm install`**; eight fixtures, `tracker/playtest/fixtures/WpSpin.e`, `WpChain.e`, `WpBlow.e`, `WpInt.e`, and S4's `WpEnum.e`, `WpMaybe.e`, `WpJson.e`, `WpUnit.e`; two ready-made params files, `tracker/playtest/params/Sales.report.params.json` and `WpSpin.report.params.json`, with `tracker/playtest/params/README.md` saying where to copy each; `tracker/playtest/settings.example.json`; and a server verifier, `tracker/playtest/check-server.py` |
 | `Sales` is NOT a fixture | **`Sales.report` is the repository's own `core/src/test/resources/doc/Sales.e`** and stays there — other suites read it. Any step that edits it says how to undo it (`git checkout -- core/src/test/resources/doc/Sales.e`) |
 | ONE workspace folder, and keep it that way | **No step needs a second folder.** All four fixtures live inside this worktree. **Do NOT use File > Add Folder to Workspace:** a second folder makes the window MULTI-ROOT, and VS Code then stops reading the three WINDOW-scoped settings — `ermine.preview.timeoutSeconds`, `ermine.preview.restartAfterStuckSeconds` and `ermine.maxHeap` — from `.vscode/settings.json` (documented; unobserved here). Every "add `/tmp/wp7` to the workspace" instruction in the old checklist is obsolete and has been removed. The one step that still wants a report outside every folder (**B18**) copies a fixture to `/tmp/wp7` and deliberately does NOT add it |
 | Where you record | **`tracker/PLAYTEST-RESULTS.md`**, in this directory. One row per step id, pre-filled in the order below. Fill in PASS / FAIL / SKIP, one line of what you saw, and anything else in the notes column. **For any FAIL, paste the Ermine output channel's text into a fenced block under the table.** The orchestrator reads that file and acts on it |
 | The channel | **Ermine: Show Language Server Output** opens the output channel named **Ermine**. Both the extension's own lines (`preview: …`, `restart: …`, `settings: …`, `client N: …`) and the server's log go to that one channel. Every quoted line below appears there |
 | The render tab is UNTITLED and DIRTY | every update is a `WorkspaceEdit`, so the tab always has unsaved changes and closing it offers to save a throwaway render: **Don't Save**. There is no way round it for an untitled document, and it is one of the motivations for WP-10's panel (*external*, not exercised here) |
-| 0.1.9 WRITES TO YOUR DISK | it is the first version that does. On the first pick of a report with no params file it creates three files under `.ermine/preview/`. Nothing else in the extension writes anything. Group B is where you look at them |
+| 0.1.9 WRITES TO YOUR DISK | it is the first version that does. On the first pick of a report with no params file it creates three files under `.ermine/preview/`. Group B is where you look at them |
+| 0.1.10 CAN REPLACE ONE | and **only** through the command **Ermine: Write Params Skeleton**, and **only** after a modal you answer. Nothing automatic overwrites a params file, and nothing in the extension ever deletes one. B22-B26 are those steps |
 | Undo | any step that edits a checked-in file says so and says how to undo it. **At the end (A14) `git status --short` should show `.ermine/`, `.vscode/`, `tracker/PLAYTEST-SETUP.md` and `tracker/playtest/` and nothing else** — `.vscode/` is not gitignored here, and the setup agent's files are untracked until the orchestrator commits them. `core/src/test/resources/doc/Sales.e` must be clean |
 
 **The fixtures, one line each.** `WpSpin.e` diverges — it is the wedge, and
@@ -82,7 +83,7 @@ The settings this guide touches, with their defaults:
 ## If you only have 30 minutes
 
 Ten steps, in this order. They are the cheapest ten that between them say
-whether the loop works at all, whether 0.1.9's new disk-writing half works, and
+whether the loop works at all, whether the disk-writing half works, and
 whether the wedge guard closes the loop it was built for. Everything else is
 detail on top of these.
 
@@ -92,7 +93,7 @@ detail on top of these.
 | 2 | **A3** | the server answers `ermine/preview/reports` and the binding pick is populated **by type** |
 | 3 | **A4** | a render reaches a tab — the whole point of WP-7 |
 | 4 | **A5** | save → re-render in place, generation 2: the loop is a loop |
-| 5 | **B1** | 0.1.9's new behaviour: three files written, params file opened |
+| 5 | **B1** | the disk-writing half: three files written, params file opened |
 | 6 | **B4** | edit the dates → a **document**. This is the first minute Q21 is about |
 | 7 | **B5** | the `$schema` line is not squiggled and a wrong key is (D1 go/no-go) |
 | 8 | **B11** | invalid JSON refuses in the tab instead of rendering yesterday's parameters |
@@ -135,7 +136,7 @@ rest of WP-7's done-when. A15–A18 are an optional settings-validation tail.
 
 ### A4 [1.3, 1.4] — The render: status bar, untitled tab, the answer — **NEVER RUN**
 
-- **Setup:** A3's pick open. **This is also the first pick of `Sales.report`, so at 0.1.9 it WRITES THREE FILES** — that is Group B's subject; here you only need the tab.
+- **Setup:** A3's pick open. **This is also the first pick of `Sales.report`, so it WRITES THREE FILES** — that is Group B's subject; here you only need the tab.
 - **Do:** pick `report`.
 - **Expect:** the right-hand status bar item shows `$(sync~spin) Ermine: Sales.report` while the render runs and settles to `$(json) Ermine: Sales.report` (tooltip: the file path, `binding: report`, `roots: …`). An **untitled JSON tab** opens beside your editor. The channel logs `preview: render Sales.report (generation 1; the report was picked; …)`.
 - **Expect, in the tab — AND THIS IS Q21:** on a clean workspace the skeleton written by this very pick carries **today's** dates, and the answer is `ok=false, status=500`, message *"Sales.report produced a document that cannot be encoded: an empty relation built from no rows carries no columns; give it a header (mkRelationWithHeader#) or a static hint"*, path `$.children[1].cells[0][0].props`. **That is expected, it is MEASURED, and it is not this step's defect — it is Q21, which is yours.** If instead no params file could be written you get the WP-7 answer, MEASURED exactly: `{"ok": false, "status": 400, "message": "the required key \"fromDay\" is missing", "path": "$.params", "generation": 1}` — and no `reason` key, because this is the decoder's refusal and not a placement one (read Appendix 1.1 before calling that wrong).
@@ -255,9 +256,10 @@ rest of WP-7's done-when. A15–A18 are an optional settings-validation tail.
 A report's parameters come from
 `<workspace folder>/.ermine/preview/<Module>/<binding>.params.json`, read from
 DISK at the moment a render is sent. The pure half is unit-tested (`npm run
-test:preview`, 266 tests at 0.1.9); the send half and the three writes were
-MEASURED against a real `bin/ermine-lsp` with no editor. **Everything about VS
-Code's own behaviour below is unobserved by anyone.**
+test:preview`, 313 tests at 0.1.10 after the S4 fix round, round 2); the send half, the three writes and the
+five non-object params roots were MEASURED against a real `bin/ermine-lsp`
+with no editor. **Everything about VS Code's own behaviour below is unobserved
+by anyone.**
 
 **START CLEAN:** `rm -rf .ermine` in the worktree root, and `git status --short`
 must show nothing under it before B1. If you did Group A you already have a
@@ -428,9 +430,72 @@ Everything here assumes a local folder.
 
 - **Setup:** no `.ermine/preview/WpInt/` yet. `tracker/playtest/fixtures/WpInt.e` takes an `Int`.
 - **Do:** pick `WpInt`'s `report`.
-- **Expect:** a params file is written **WITHOUT a `$schema` line** — a JSON number has nowhere to put one — and the channel's write notice ends, verbatim: `Its parameters are not a JSON object, so the file carries no "$schema" line and the editor will not validate it; the server still checks it and answers a 400 with a path.` The schema file is still written (**MEASURED: 105 bytes**). **MEASURED, the document this fixture renders with the parameter `0`:** `{"version":1,"settings":{},"root":{"tag":"Widget","name":"int","props":0}}`
-- **Failure:** a `$schema` line in the params file (VS Code would squiggle a bare number against an object schema), or no notice about validation.
-- **Bears on:** WP-8 S3; it is also the cheapest report in the set to re-render.
+- **Expect:** a params file holding just `0`, **WITHOUT a `$schema` line** — a JSON number has nowhere to put one — and the channel's write notice ends, verbatim (**the sentence CHANGED in 0.1.10**): `Its parameters are a single whole number, so the file holds just that number. The file therefore carries no "$schema" line and the editor will not validate it; the server still checks it and answers a 400 with a path.` The schema file is still written (**MEASURED: 105 bytes**). **MEASURED, the document this fixture renders with the parameter `0`:** `{"version":1,"settings":{},"root":{"tag":"Widget","name":"int","props":0}}`
+- **Failure:** a `$schema` line in the params file (VS Code would squiggle a bare number against an object schema); no notice about validation; or 0.1.9's sentence (`Its parameters are not a JSON object, …`), which means the shape never reached the notice.
+- **Bears on:** WP-8 S3 and S4 item 3; it is also the cheapest report in the set to re-render.
+
+### B22 [new] — `Ermine: Write Params Skeleton` asks first, and DECLINING leaves the file — **NEVER RUN**
+
+- **Setup:** B1 and B4 done, so `.ermine/preview/Sales/report.params.json` exists and holds the dates you EDITED (2026-01-05..2026-03-17). Note its exact contents — `cat` it, or keep it open.
+- **Do:** run **Ermine: Write Params Skeleton** from the command palette. When the dialog appears, press **Escape**. Run it again and press **Cancel**. Run it a third time and click anything that is not **Replace**, if your dialog offers one.
+- **Expect:** a **MODAL** dialog (the window dims; you cannot carry on typing behind it) whose text begins, verbatim: `Replace <…>/.ermine/preview/Sales/report.params.json with a fresh skeleton?` and continues `Everything in that file now -- every value you have edited, and anything you have not committed -- is REPLACED by the defaults derived from the report's parameter type. This cannot be undone from here; git can. The generated schema file beside it is refreshed too.` The buttons are **Replace** and the dialog's own Cancel. After each dismissal: **the params file is byte-for-byte what it was**, `git diff` on it is empty, **no render happens** (no new `preview: render N` line), and the channel says `preview: Write Params Skeleton was declined for <…>/report.params.json; it is untouched`.
+- **Failure:** a non-modal toast instead of a dialog; the file changing; a render; or **anything at all in the Ermine channel about `ermine/schema`** — nothing may be asked of the language server before you answer.
+- **Bears on:** WP-8 S4, **U3**.
+
+### B23 [new] — …and ACCEPTING replaces it, refreshes the schema and re-renders — **NEVER RUN**
+
+- **Setup:** as B22 — the params file still holds your edited dates. Have the Ermine channel visible.
+- **Do:** run **Ermine: Write Params Skeleton** and click **Replace**.
+- **Expect, on disk:** `report.params.json` now holds the SAME skeleton B1 wrote — `{"$schema": "./report.schema.json", "fromDay": "<today>", "toDay": "<today>", "orderBy": "ByDay"}`, pretty-printed, `onlyRegion` absent. **Your edited dates are gone**, which is what you confirmed.
+- **Expect, in the channel:** `preview: replaced <…>/report.params.json with a fresh skeleton from the report's parameter type, and refreshed <…>/report.schema.json beside it. Edit it, save it, and the preview re-renders.`
+- **Expect, in the editor:** the params document is opened (and opened AGAIN on a second run of the command, unlike the first pick's once-per-session open), and the render tab is revealed.
+- **Expect, renders:** **ONE**, or two identical ones — the file watcher sees our write too, and `scheduleRender` merges the two inside its 150 ms window; outside it you get a second identical render, which is harmless (same session, no boot). **ZERO renders is the defect.** The tab shows the Q21 500 again, because the dates are today's again.
+- **Failure:** the file unchanged; the schema file not rewritten when the type had moved; no render; or a **Render anyway / Not now** question — an explicit command is consent and must never be held.
+- **Also (added by the S4 fix round, 2026-09-23):** run the command again, and while the modal is on screen switch to the params document, change a date and **save** (Ctrl+S; the modal may need to be moved or the save done from a second window), then click **Replace**. **Expect:** nothing is written, no render, and a warning plus the channel line `preview: the params file "<…>/report.params.json" changed after you were asked (while the question was on screen or while the schema was being worked out), so nothing was written; run the command again`. **Your saved edit is still in the file.** If VS Code will not let you save behind a modal, record SKIP — the case is covered by the unit model and by the fake-vscode probe over a real disk (`scratch-widget-preview/wp8s4-fix/probe/overwrite.log`, cases 4 and 4b).
+- **Bears on:** WP-8 S4, **U3**; Q21.
+
+### B24 [new] — The command with NO params file behaves like a first pick — **NEVER RUN**
+
+- **Setup:** `rm .ermine/preview/Sales/report.params.json` (leave the schema file and the `.gitignore`).
+- **Do:** run **Ermine: Write Params Skeleton**.
+- **Expect:** **NO dialog at all** — there is nothing to lose, so nothing is confirmed — the file is created, the channel line begins `preview: wrote <…>/report.params.json from the report's parameter type` (`wrote`, not `replaced`), and the report renders.
+- **Failure:** a dialog; or the file created through an overwrite rather than a create (you cannot see that from here — it is unit-tested; what you CAN see is that a file which appears under you, e.g. from a `git checkout` while the schema is being worked out, is left alone and the channel says `a params file appeared at …`).
+- **Bears on:** WP-8 S4, U3.
+
+### B25 [new] — The ORPHAN notice after a binding is renamed — **NEVER RUN**
+
+- **Setup:** B1 done, so `.ermine/preview/Sales/report.params.json` exists. Reload the window first (the notice is once per left-over file per SESSION, so a session that has already said it will not say it again).
+- **Do:** in `core/src/test/resources/doc/Sales.e`, rename the binding `report` to `report2` — **both the signature and the equation** — and save. Then run **Ermine: Preview Report…** → `Sales.e` → `report2`.
+- **Expect:** a warning notification, and the same text in the channel, verbatim in shape: `Ermine: <…>/.ermine/preview/Sales/report.params.json is left over: Sales no longer offers a report called "report" (it was renamed or removed, or the module has made it private), so nothing reads that file. It is committed source, so the preview will not delete it -- delete it yourself once you are sure. "Write Params Skeleton" writes a fresh skeleton for Sales.report2, the report picked now.` The notification carries ONE button, **Write Params Skeleton**. **The old file is still on disk** — check it.
+- **Expect, again:** pick `report2` a second time. **No second notification** (once per module+binding per session).
+- **Failure:** the old file deleted or changed — **that is a serious failure, report it with the channel text**; no notice at all; or a notice on every pick.
+- **Cleanup:** put `Sales.e` back (`git checkout core/src/test/resources/doc/Sales.e`) and delete the left-over file.
+- **Bears on:** WP-8 S4, **D6**.
+
+### B26 [new] — The orphan notice's button runs the command for the CURRENT pick — **NEVER RUN**
+
+- **Setup:** as B25, with the notification on screen and `report2` picked. `report2` now has its own params file (the pick wrote one) — note its contents.
+- **Do:** click **Write Params Skeleton** on the notification.
+- **Expect:** the B22 modal, naming **`report2.params.json`** — the report picked NOW, not the stale `report.params.json` the notice is about. Answer **Replace** and B23's outcome follows for `report2`. **The stale `report.params.json` is never touched, whatever you answer.**
+- **Failure:** the modal naming the stale file; the stale file changing; or the button doing nothing.
+- **Bears on:** WP-8 S4, D6, U3.
+
+### B27 [new] — Every non-object params root says what its value MEANS (OPTIONAL) — **NEVER RUN**
+
+- **Setup:** copy the four fixtures beside `WpInt.e` into the worktree root (they are `tracker/playtest/fixtures/WpEnum.e`, `WpMaybe.e`, `WpJson.e`, `WpUnit.e`), and make sure there is no `.ermine/preview/<Module>/` for any of them.
+- **Do:** pick each one's `report` in turn. B21 already covers `WpInt`.
+- **Expect** — each writes a params file with **no `$schema` line**, each renders `ok=true`, and each channel notice carries its own sentence, verbatim (**all four MEASURED against a real server, 2026-09-23**):
+
+| module | the file holds | the notice says | the document |
+|---|---|---|---|
+| `WpEnum` | `"Spring"` | `Its parameters are one of "Spring", "Summer", "Autumn", so the file holds just that value.` | `{"version":1,"settings":{},"root":{"tag":"Widget","name":"season","props":"Spring"}}` |
+| `WpMaybe` | `null` | ``Its parameters are optional (a single string), so the file holds just that value, and `null` means there is none.`` | `{"version":1,"settings":{},"root":{"tag":"Widget","name":"maybe","props":null}}` |
+| `WpJson` | `null` | ``Its parameters are any JSON value at all (the report takes a `Json`), so the file holds just that value; `null` is the smallest one that decodes.`` | `{"version":1,"settings":{},"root":{"tag":"Widget","name":"json","props":null}}` |
+| `WpUnit` | `[]` | ``Its parameters are the empty tuple `()`, so the file holds just the empty array `[]` and there is nothing in it to edit.`` | `{"version":1,"settings":{},"root":{"tag":"Widget","name":"unit","props":[]}}` |
+
+- **Failure:** a `$schema` line in any of the four files; a render that is not `ok=true`; the generic sentence (`Its parameters are not a JSON object…`) for any of them, which means the shape was not recognised; or `WpMaybe`'s file holding `""` rather than `null` (that would be "match the empty string", not "no filter").
+- **Cleanup:** delete the four copied `.e` files and their `.ermine/preview/` directories.
+- **Bears on:** WP-8 S4 item 3; G5.
 
 ---
 
@@ -766,7 +831,10 @@ and the notes column is where to say why:
 | **C20**, **C23** | a report that is SLOW but FINISHES — a fixture `tracker/PLAYTEST-SETUP.md` has to provide |
 | **C26** | one more wedge cycle, purely to read a number in a sentence |
 | **C31** | deleting `target/ermine-classpath` and paying for a full sbt classpath build |
-| **B21** | almost nothing — the cheapest optional step here, and the only one that sees the "params are not a JSON object" branch |
+| **B21** | almost nothing — the cheapest optional step here, and one of the five that see a non-object params root |
+| **B22-B24** | nothing, except that B23 REPLACES a params file you may have edited. That is what the modal is for; `git checkout` puts it back |
+| **B25-B26** | they edit `core/src/test/resources/doc/Sales.e` and leave a stale params file behind. Both are `git checkout`-able, and the step says so |
+| **B27** | it copies four `.e` files into the worktree root and writes four `.ermine/preview/` directories. Delete them afterwards |
 
 ---
 
@@ -879,5 +947,5 @@ every "write this module into `/tmp/wp7`" (the fixtures are checked in under
 **Remove Folder from Workspace** (a second folder makes the window multi-root
 and VS Code then ignores the window-scoped settings this guide sets), and the
 old §0 claim that `node_modules` is already in place (the extension is now
-installed from `editor/vscode/ermine-lang-0.1.9.vsix`; `tracker/PLAYTEST-SETUP.md`
+installed from a `.vsix` YOU PACKAGE at 0.1.10 (the checked-in one is 0.1.9); `tracker/PLAYTEST-SETUP.md`
 owns that).
