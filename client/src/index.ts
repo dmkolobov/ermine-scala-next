@@ -37,6 +37,8 @@ export * from "./charts";
 export { scorecardWidget, deltaDirection } from "./widgets/scorecard";
 export { headlineWidget, HEADLINE_FIGURES } from "./widgets/headline";
 export { crosstabWidget, EMPTY_CELL, TOTAL_LABEL } from "./widgets/crosstab";
+export { headingWidget, HeadingPropsSchema } from "./widgets/heading";
+export { textWidget, TextPropsSchema } from "./widgets/text";
 export { WIDGET_PROP_SCHEMAS, UNSUPPORTED_WIDGETS } from "./generated";
 
 import type { Registry } from "./dispatcher";
@@ -46,6 +48,8 @@ import { axisChartWidget, drilldownBarWidget, pieChartWidget, styleBoxWidget } f
 import { scorecardWidget } from "./widgets/scorecard";
 import { headlineWidget } from "./widgets/headline";
 import { crosstabWidget } from "./widgets/crosstab";
+import { headingWidget } from "./widgets/heading";
+import { textWidget } from "./widgets/text";
 
 /** Every widget Stage 3 ships.
  *
@@ -54,7 +58,13 @@ import { crosstabWidget } from "./widgets/crosstab";
  *  bundle and the Local branch of `HTMLWriter.treeMap` is `sys.error("todo")` --
  *  so leaving it unregistered makes the dispatcher draw its error box naming the
  *  widget, which IS the "unsupported widget" behaviour.  `UNSUPPORTED_WIDGETS`
- *  names it; `test/charts.test.ts` `(x-treemap)` pins the box. */
+ *  names it; `test/charts.test.ts` `(x-treemap)` pins the box.
+ *
+ *  `heading` and `text` (Q24 (d), 2026-09-23) are the two names `Sales.e` uses
+ *  that are NOT typed `Layout.Widgets.*` modules: they have no generated zod,
+ *  so each carries its own schema (`Widget.schema`) and is absent from the
+ *  generated `WIDGET_PROP_SCHEMAS`.  `(w-own-schema)` pins that every
+ *  registered name has exactly one of the two. */
 export function defaultRegistry(env?: FormatEnv): Registry {
   return {
     table: tableWidget(env) as Registry[string],
@@ -67,5 +77,7 @@ export function defaultRegistry(env?: FormatEnv): Registry {
     drilldownPieChart: pieChartWidget(true, env) as Registry[string],
     styleBox: styleBoxWidget(env) as Registry[string],
     drilldownBar: drilldownBarWidget() as Registry[string],
+    heading: headingWidget() as Registry[string],
+    text: textWidget() as Registry[string],
   };
 }

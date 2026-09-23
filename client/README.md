@@ -324,6 +324,18 @@ is deliberately left out of `defaultRegistry()` and a document asking for one ge
 the dispatcher's error box naming it. `UNSUPPORTED_WIDGETS` says so in code;
 `test/charts.test.ts` `(x-treemap)` pins it.
 
+`heading` and `text` (Q24 (d), 2026-09-23) are registered but are NOT reserved
+`Layout.Widgets.*` names: they are the untyped widgets
+`core/src/test/resources/doc/Sales.e` builds with `rawWidget`, so there is no
+Ermine module, no `generate.sh` entry and no generated zod for them. Each
+component supplies its own schema through `Widget.schema` (the dispatcher uses it
+in place of `WIDGET_PROP_SCHEMAS`): `src/widgets/heading.ts` a strict
+`{title, sortColumn, matched, total}` record, `src/widgets/text.ts` a bare string,
+both MEASURED from the captured Sales answer. `test/widgets.test.ts`
+`(w-own-schema)` pins that every registered name has exactly one schema, generated
+or its own. A widget that belongs in the library should still take the three-edit
+route above; this is for names a report invents. The client's `text` is PLAIN text: the Ermine-side `Layout.Report.text` (a legacy Report builder, not a registry name) means markdown, so a typed `Layout.Widgets.Text` added later would have to settle which meaning the name keeps (`(w-own-schema)` fires the day a generated `text` appears).
+
 ## Charts and the style box
 
 `src/charts.ts` rebuilds, on the client, the argument objects

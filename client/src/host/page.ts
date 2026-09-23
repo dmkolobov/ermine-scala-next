@@ -159,21 +159,26 @@ export interface BootWindow {
 }
 
 /**
- * U6, TAKEN: the preview never mints a deferred token (design review F2 --
- * `Preview.scala` sends `params` only, so `json.Request`'s defaults apply and
- * every relation is delivered INLINE), and the CSP's `default-src 'none'` keeps
- * `connect-src` shut, so the panel could not fetch even if it tried.  So
- * `fetchData` is a stub that REJECTS, naming the token, and touches nothing:
- * no `fetch`, no `XMLHttpRequest`, no message to the extension (there is no
- * `fetch` message pair).  The dispatcher turns the rejection into that
- * widget's own error box (`div.ermine-widget-error[data-widget]`, "a deferred
- * relation could not be resolved: ..."), which therefore says why by itself.
+ * U6: `fetchData` is a stub that REJECTS, naming the token, and touches
+ * nothing: no `fetch`, no `XMLHttpRequest`, no message to the extension (there
+ * is no fetch message pair), and the CSP's `default-src 'none'` keeps
+ * `connect-src` shut, so the panel could not fetch even if it tried.  The
+ * dispatcher turns the rejection into that widget's own error box
+ * (`div.ermine-widget-error[data-widget]`, "a deferred relation could not be
+ * resolved: ..."), which therefore says why by itself.
  *
- * AMENDED BY WP-10 S5 (round 2): F2's premise is FALSE for a report that asks
- * for `Deferred` itself -- `core/src/test/resources/doc/Sales.e` does, and the
- * S1 capture of its render holds a token -- so a document made by the
- * preview's own render request CAN reach this.  The text therefore says what
- * is true in every case: this preview does not fetch, and the report asked.
+ * U6 was TAKEN on the design review's F2, "the preview never mints a deferred
+ * token" (`Preview.scala` sends `params` only, so `json.Request`'s defaults
+ * deliver every relation inline).  F2 DOES NOT HOLD: a report that asks for
+ * `Deferred` itself gets a token whatever the request says --
+ * `core/src/test/resources/doc/Sales.e` does, and the S1 capture of its render
+ * holds one -- so a document made by the preview's own render request CAN
+ * reach this stub.  The refusal STAYS by the user's decision on Q24
+ * (2026-09-23: "Do (a) and (d) now, file (c)"): WP-10's done-when is an inline
+ * fixture (`Doc/SalesReport.e`), and fetching deferred rows through the
+ * extension is WP-30 (the fetch message pair), filed and NOT built.  The text
+ * below says what is true in every case: this preview does not fetch, and the
+ * report asked.
  */
 const DEFERRED_REFUSAL =
   "this preview does not fetch deferred relations, and the report asked for deferred delivery of";

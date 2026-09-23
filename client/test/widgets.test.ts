@@ -10,6 +10,10 @@ import { legacyFormat, legacyFormatTuple, tableSkeleton, drilldownRows, tabularC
 import { defaultFormatEnv, formatDisplay } from "../src/format";
 import { newDom, stubHtmlWriter, inlineRelation } from "./harness";
 import type { CellFormat } from "../src/props";
+import { WIDGET_PROP_SCHEMAS } from "../src/generated";
+import { refuseDeferred } from "../src/host/page";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 const rel = inlineRelation(
   [{ name: "region", type: "String" }, { name: "sales", type: "Double", nullable: true }],
@@ -345,4 +349,122 @@ test("(w-no-writer) the missing-writer box names the REAL global and its DOMCont
   assert.match(result.errors[0]!.message, /window\.ermine_htmlwriter/);
   assert.match(result.errors[0]!.message, /DOMContentLoaded/);
   assert.ok(target.querySelector(".ermine-widget-error"));
+});
+
+// ------------------------------------------ Q24 (d): `heading` and `text`
+//
+// The two names `core/src/test/resources/doc/Sales.e` uses that are not typed
+// `Layout.Widgets.*` modules.  Their props are taken from the REAL answer the
+// extension's fixture holds (CAPTURED from one `bin/ermine-lsp` boot, WP-10 S1),
+// never written by hand here.
+
+function findPanelAnswers(): string {
+  let dir = __dirname;
+  for (let i = 0; i < 6; i++) {
+    const p = path.join(dir, "editor", "vscode", "test", "fixtures", "panel-answers.json");
+    if (fs.existsSync(p)) return p;
+    dir = path.dirname(dir);
+  }
+  throw new Error("editor/vscode/test/fixtures/panel-answers.json not found above " + __dirname);
+}
+
+const SALES_DOC = (JSON.parse(fs.readFileSync(findPanelAnswers(), "utf8")) as
+  { cases: Record<string, { answer: { document: { root: { children: unknown[] } } } }> })
+  .cases["ok-sales"]!.answer.document;
+const SALES_HEADING = SALES_DOC.root.children[0] as { tag: string; name: string; props: Record<string, unknown> };
+const SALES_TEXT = ((SALES_DOC.root.children[1] as { cells: unknown[][] }).cells[1]![1]) as
+  { tag: string; name: string; props: unknown };
+
+test("(w-heading) the captured Sales heading draws: title, matched, total, sort column", async () => {
+  assert.equal(SALES_HEADING.name, "heading");
+  assert.deepStrictEqual(Object.keys(SALES_HEADING.props).sort(), ["matched", "sortColumn", "title", "total"]);
+  const { document, target } = newDom();
+  const result = await render(target, parseDocument(docOf(SALES_HEADING)), defaultRegistry(),
+    { document, fetchData: refuseDeferred });
+  assert.deepStrictEqual(result.errors, []);
+  const section = target.querySelector("section.ermine-heading") as HTMLElement;
+  assert.ok(section);
+  assert.equal(section.querySelector("h2.ermine-heading-title")?.textContent, "Sales");
+  assert.equal(section.querySelector(".ermine-heading-summary")?.textContent,
+    "3 matched, total 4350.75, sorted by amount");
+  assert.equal(target.querySelectorAll(".ermine-widget-error").length, 0);
+});
+
+test("(w-text) the captured Sales text widget -- a BARE string on the wire -- draws as a paragraph", async () => {
+  assert.equal(SALES_TEXT.name, "text");
+  assert.equal(SALES_TEXT.props, "line items on demand");
+  const { document, target } = newDom();
+  const result = await render(target, parseDocument(docOf(SALES_TEXT)), defaultRegistry(),
+    { document, fetchData: refuseDeferred });
+  assert.deepStrictEqual(result.errors, []);
+  assert.equal(target.querySelector("p.ermine-text")?.textContent, "line items on demand");
+});
+
+test("(w-heading-text-escape) markup in the props is TEXT, never parsed", async () => {
+  const evil = "<img src=x onerror=\"window.pwned=1\"><b>bold</b>";
+  const { document, target } = newDom();
+  const result = await render(target, parseDocument(docOf({ tag: "VFlow", children: [
+    { tag: "Widget", name: "heading", props: { ...SALES_HEADING.props, title: evil, sortColumn: evil } },
+    { tag: "Widget", name: "text", props: evil },
+  ] })), defaultRegistry(), { document, fetchData: refuseDeferred });
+  assert.deepStrictEqual(result.errors, []);
+  assert.equal(target.querySelectorAll("img").length, 0, "an <img> was parsed out of the props");
+  assert.equal(target.querySelectorAll("b").length, 0, "a <b> was parsed out of the props");
+  assert.equal(target.querySelector(".ermine-heading-title")?.textContent, evil);
+  assert.equal(target.querySelector(".ermine-heading-sort")?.textContent, `sorted by ${evil}`);
+  assert.equal(target.querySelector(".ermine-text")?.textContent, evil);
+});
+
+test("(w-heading-text-invalid) malformed props draw the error box naming the widget", async () => {
+  const bad: [string, unknown, RegExp][] = [
+    ["heading", { ...SALES_HEADING.props, title: 7 }, /props are invalid -- title: Expected string/],
+    ["heading", { ...SALES_HEADING.props, matched: 1.5 }, /props are invalid -- matched/],
+    ["heading", { title: "Sales", sortColumn: "day", matched: 1 }, /props are invalid -- total: Required/],
+    ["heading", { ...SALES_HEADING.props, extra: 1 }, /props are invalid/],   // strict, as the generated schemas are
+    ["heading", "Sales", /props are invalid/],
+    ["text", 42, /props are invalid/],
+    ["text", { text: "line items on demand" }, /props are invalid/],        // the wire carries a bare string
+    ["text", null, /props are invalid/],
+  ];
+  for (const [name, props, why] of bad) {
+    const { document, target } = newDom();
+    const result = await render(target, parseDocument(docOf({ tag: "Widget", name, props })), defaultRegistry(),
+      { document, fetchData: refuseDeferred });
+    assert.equal(result.errors.length, 1, `${name} ${JSON.stringify(props)} was accepted`);
+    assert.match(result.errors[0]!.message, why, `${name} ${JSON.stringify(props)}`);
+    const box = target.querySelector(".ermine-widget-error");
+    assert.equal(box?.getAttribute("data-widget"), name);
+    assert.equal(target.querySelectorAll(".ermine-heading, .ermine-text").length, 0);
+  }
+});
+
+test("(w-own-schema) every registered name has EXACTLY ONE schema: generated, or its own; heading and text are the own ones", () => {
+  const reg = defaultRegistry() as Record<string, { schema?: unknown }>;
+  const own: string[] = [];
+  for (const [name, w] of Object.entries(reg)) {
+    const generated = WIDGET_PROP_SCHEMAS[name] !== undefined;
+    const mine = w.schema !== undefined;
+    assert.ok(generated !== mine, `${name}: generated=${generated} own=${mine}`);
+    if (mine) own.push(name);
+  }
+  assert.deepStrictEqual(own.sort(), ["heading", "text"]);
+  assert.deepStrictEqual(Object.keys(reg).sort(),
+    [...Object.keys(WIDGET_PROP_SCHEMAS), "heading", "text"].sort());
+});
+
+test("(w-sales-panel) the captured Sales document with the panel's refusing fetchData: heading and text draw, the three tables are boxes", async () => {
+  const { document, target } = newDom();
+  const result = await render(target, parseDocument(SALES_DOC), defaultRegistry(),
+    { document, fetchData: refuseDeferred, htmlwriter: stubHtmlWriter() });
+  assert.equal(target.querySelector(".ermine-heading-title")?.textContent, "Sales");
+  assert.equal(target.querySelector(".ermine-text")?.textContent, "line items on demand");
+  // MEASURED, Q24: Sales hands `table` a BARE relation, not TableProps, so all
+  // three tables -- the deferred one included -- fail VALIDATION, which comes
+  // before any fetch: the page's refusal is never reached for this document.
+  assert.deepStrictEqual(result.errors.map((e) => [e.widget, e.path, e.message]), [
+    ["table", "$.root.children[1].cells[0][0]", "its props are invalid -- columns.0.column: Required"],
+    ["table", "$.root.children[1].cells[0][1]", "its props are invalid -- columns.0.column: Required"],
+    ["table", "$.root.children[1].cells[1][0]", "its props are invalid -- columns.0.column: Required"],
+  ]);
+  assert.equal(target.querySelectorAll(".ermine-widget-error").length, 3);
 });

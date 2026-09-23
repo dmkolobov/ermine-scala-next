@@ -30,7 +30,7 @@ does is marked *(unobserved)*.
 | A compiled `core` | **already compiled, and it matches HEAD.** Checked: the newest class under `core/target/scala-3.3.8/classes` is 2026-09-21 03:10:38 and the last commit touching `core/src/main/scala` is 2026-09-21 02:44:40; `parsers`, `machines`, `scalaz-compat` and `f0` are all likewise newer than their last source commit; `core/src/main/resources` is byte-identical to the copied resources. **No `sbt core/compile` is needed and none was run** |
 | Node and npm | node v24.20.0, npm 11.19.0. Needed only to package the `.vsix` |
 | `editor/vscode/node_modules` | already there (3.4 MB, gitignored). If it goes missing, copy it from `/home/dmitry/research/ermine/ermine-scala/editor/vscode/node_modules` |
-| **The client bundle** (for the panel, Group E) | `cd client && npm ci && npm run bundle` — **already done in this worktree**: MEASURED 2026-09-23 by `ls -l client/dist/browser`, `ermine-client.js` **327,103 B** and `ermine-host.js` **25,390 B** (plus their two `.map` files), both newer than the last change under `client/src`. **Rebuilt by S5's round 2 (13:49)** after one string in `client/src/host/page.ts` changed (the deferred-relation refusal, Q24): `ermine-host.js` is now **25,639 B**, `ermine-client.js` unchanged at 327,103 B (MEASURED, `ls -l`). **A `client/` change needs only this rebuild, not a new `.vsix`**: the `.vsix` carries `editor/vscode` and nothing of `client/`, and the panel loads the bundle from the checkout (an open panel reloads by itself, E7). It is gitignored and NOT in the `.vsix`: the panel loads it from the checkout that holds `bin/ermine-lsp`. **Without it the panel shows the static page *"The preview bundle is not built"*** with the folder it looked in and the two commands to run — the designed first experience, not a failure (checklist E8). `npm ci` needs the network once, or an npm cache |
+| **The client bundle** (for the panel, Group E) | `cd client && npm ci && npm run bundle` — **already done in this worktree**: MEASURED 2026-09-23 by `ls -l client/dist/browser`, `ermine-client.js` **327,103 B** and `ermine-host.js` **25,390 B** (plus their two `.map` files), both newer than the last change under `client/src`. **Rebuilt by S5's round 2 (13:49)** after one string in `client/src/host/page.ts` changed (the deferred-relation refusal, Q24): `ermine-host.js` is now **25,639 B**, `ermine-client.js` unchanged at 327,103 B (MEASURED, `ls -l`). **Rebuilt again by Q24 (d), 2026-09-23** (the `heading`/`text` renderers and `page.ts`'s U6 comment): `ermine-client.js` **333,377 B**, `ermine-host.js` **25,908 B** (MEASURED, `ls -l client/dist/browser`). **A `client/` change needs only this rebuild, not a new `.vsix`**: the `.vsix` carries `editor/vscode` and nothing of `client/`, and the panel loads the bundle from the checkout (an open panel reloads by itself, E7). It is gitignored and NOT in the `.vsix`: the panel loads it from the checkout that holds `bin/ermine-lsp`. **Without it the panel shows the static page *"The preview bundle is not built"*** with the folder it looked in and the two commands to run — the designed first experience, not a failure (checklist E8). `npm ci` needs the network once, or an npm cache |
 | **The writers checkout** (for the panel's `table`, charts and `styleBox`) | `/home/dmitry/research/ermine/ermine-writers`, a sibling of this worktree. The panel's default for `ermine.preview.writersPath` (empty) is `<checkout>/../ermine-writers/writers/html/src/main/resources/web`, which from here resolves to `/home/dmitry/research/ermine/ermine-writers/writers/html/src/main/resources/web` and holds `htmlwriter.js` (MEASURED by the WP-11 review). **Without it** the panel still loads, the scorecard, headline and crosstab still draw, every legacy widget is an error box, and a banner (plus one channel line) says *"the legacy writers are not loaded: no htmlwriter.js in …"* — with the document dimmed under it (checklist E14). The folder is not watched: fix the path and run **Ermine: Preview Report...** again |
 
 ## 2. Verify the server, before any editor is involved
@@ -392,11 +392,19 @@ At the end of a session `liveness.sh` should read `sbt=0 … lsp=0 … ermine-jv
   either way (checklist E8); a **style-box click** does nothing, by design
   (the page may not open a connection), and **no report in this repository
   draws a style box**, so E11 has no fixture.
-- **`Sales.report` in the panel is mostly error boxes** (its `heading` and
-  `text` widgets have no renderer, and one of its relations is `Deferred` by
-  construction, which the panel refuses by name). It is a test of names and
-  parameters, not a widget document; checklist E2 uses
-  `core/src/test/resources/modules/Doc/SalesReport.e` instead.
+- **Deferred relations in the panel (WP-30, filed, NOT built).** The panel
+  refuses every deferred relation by name (U6, kept by the user's Q24 decision,
+  2026-09-23); fetching them through the extension is ticket WP-30.
+  **`Sales.report` in the panel is a heading, a paragraph and three table
+  boxes**: since Q24 (d) its `heading` and `text` widgets draw, but all three of
+  its tables are refused by the table schema (`its props are invalid --
+  columns.0.column: Required`: `Sales.e` hands `table` a bare relation) before
+  any fetch, the deferred one included (MEASURED in jsdom, checklist E2's
+  `Sales` sub-step). It is a test of names and parameters, not a widget
+  document; WP-10's done-when and checklist E2 use
+  `core/src/test/resources/modules/Doc/SalesReport.e`. A `client/` change such
+  as Q24 (d) needs only `npm run bundle` in `client/`, **no new `.vsix`** (§3's
+  bundle row).
 - **The render tab is untitled and always dirty.** Closing it offers to save a
   throwaway render: **Don't Save**. There is no way round it for an untitled
   document.

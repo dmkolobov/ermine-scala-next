@@ -975,7 +975,7 @@ undefined in the legacy bundle and the Local branch of `HTMLWriter.treeMap` is
 `sys.error("todo")`), so it is deliberately left out of the client registry and a
 document asking for one gets an error box naming it.
 
-`Layout.Widgets.widgetNames` lists all nine.
+`Layout.Widgets.widgetNames` lists eleven: the nine above plus `headline` and `crosstab`. Two more names are registered in the CLIENT only, outside this vocabulary: `heading` and `text`, the untyped widgets `Sales.e` builds with `rawWidget` (Q24 (d), 2026-09-23). They have no Ermine module and no generated zod; each component carries its own schema (`client/src/widgets/heading.ts`: a strict `{title, sortColumn, matched, total}` record; `client/src/widgets/text.ts`: a bare string).
 
 ### `CellFormat`
 
@@ -1092,7 +1092,7 @@ Three relations, one of each delivery kind; a `VFlow` whose second child is a
 2x2 `Grid`; the parameters echoed back into a widget's props. The widget names
 here (`heading`, `text`, `table` over a bare relation) are deliberately outside
 the typed widget vocabulary — this report exercises the RUNNER, not the client,
-so its props are whatever `toJson` makes of them.
+so its props are whatever `toJson` makes of them. Since Q24 (d) the client draws `heading` and `text` (each with a hand-written schema); `table` over a bare relation is still refused by the client's `TableProps` schema (`its props are invalid -- columns.0.column: Required`) for all three of this report's tables, the deferred one included, because validation comes before any fetch.
 
 ### `Doc/SalesReport.e`, line by line
 
